@@ -1,0 +1,32 @@
+# Godot's project-local import/build cache. It is always reconstructible.
+/.godot/
+
+# Disposable developer output. Keep only the Godot scan barriers themselves.
+/artifacts/*
+!/artifacts/.gdignore
+/captures/*
+!/captures/.gdignore
+/.test-appdata/
+*.log
+
+# C# and IDE-generated state.
+**/bin/
+**/obj/
+/.vs/
+/.idea/
+/.vscode/
+*.user
+*.suo
+RingworldTechDemo.csproj.old*
+
+# OS/editor debris.
+Thumbs.db
+Desktop.ini
+*.tmp
+*.bak
+*~
+
+# User-provided LOLIPOP source archives; extracted review assets are tracked separately.
+/realistic_fir_trees_pack_lods_gameready.zip
+/pine_trees_pack_lowpoly_game_ready_lods.zip
+/maple_trees_pack_lowpoly_game_ready_lods.zip

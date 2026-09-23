@@ -1,0 +1,757 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Godot;
+using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Voxel.Phase3;
+using RingworldTechDemo.Voxel.Integration;
+using RingworldTechDemo.Voxel.LOD;
+
+namespace RingworldTechDemo.Terrain.Editable;
+
+/// <summary>Opt-in Stage-2 streamer. It is deliberately unattached to live scenes and legacy terrain.</summary>
+public partial class SmoothTerrainGrid : Node3D
+{
+    [Export] public NodePath SourceGridPath { get; set; } = new();
+    [Export] public int RadiusAround { get; set; } = 1;
+    [Export] public int RadiusAcross { get; set; } = 1;
+    [Export] public int RadiusVertical { get; set; } = 0;
+    [Export] public int CollisionRadius { get; set; } = 1;
+    [Export] public int MaxWorkers { get; set; } = 2;
+    [Export] public int MaxInstallsPerFrame { get; set; } = 1;
+    [Export] public float InstallBudgetMilliseconds { get; set; } = 1.5f;
+    [Export] public NodePath StreamingFocusPath { get; set; } = new();
+    [Export] public float StreamingUpdateIntervalSeconds { get; set; } = .1f;
+    private readonly Dictionary<SmoothTerrainChunkCoordinate, Entry> _entries = new();
+    private readonly HashSet<SmoothTerrainChunkCoordinate> _collisionDesired = new();
+    private readonly Queue<SmoothTerrainPresenter> _pool = new();
+    private readonly ConcurrentQueue<Result> _ready = new();
+    private readonly ConcurrentDictionary<Task, byte> _tasks = new();
+    private readonly object _lifetimeGate = new();
+    private readonly List<Task> _trackedTasks = new();
+    private readonly ConcurrentDictionary<SmoothTerrainChunkCoordinate, DiagnosticRecord> _diagnostics = new();
+    private bool _stopping;
+    private readonly List<SmoothTerrainEditCommand> _commands = new();
+    private SmoothTerrainEditSnapshot? _editSnapshot;
+    private RingLodSurfaceEditSnapshot? _cachedLodSurfaceEditSnapshot;
+    private ulong _visualCoverageRevision = 1;
+    private CancellationTokenSource _cancel = new();
+    private RingTerrainSampler? _sourceSampler;
+    private VoxelChunkGridManager? _sourceGrid;
+    private RingTerrainSmoothBaseline? _baseline;
+    private ShaderMaterial? _terrainMaterial;
+    private DirectionalLight3D? _sunLight;
+    private RingLodGeometrySnapshot _geometry;
+    private RingCanonicalPosition _focus;
+    private ulong _generation;
+    private ulong _editRevision;
+    private SemaphoreSlim _workers = new(1, 1);
+    private int _activeWorkers;
+    private int _maxActiveWorkers;
+    private int _ownedPresenters;
+    private TaskCompletionSource _shutdown = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Node3D? _streamingFocus; private double _focusElapsed; private SmoothTerrainChunkCoordinate? _lastFocusCenter; private ulong _nextCommandId=1; private long _nextSequence=1;
+    private double _materialElapsed;
+    private double _metricsElapsed;
+    private int _cancelRequestCount;
+    private int _lastRadiusAround=int.MinValue,_lastRadiusAcross=int.MinValue,_lastRadiusVertical=int.MinValue,_lastCollisionRadius=int.MinValue;
+    private readonly List<SmoothTerrainEditCommand> _queryScratch=new();
+    // Local stamps are interactive work.  Keep their small affected set ahead
+    // of ordinary streaming so an edit never waits behind a just-entered visual
+    // window.
+    private readonly HashSet<SmoothTerrainChunkCoordinate> _urgentRebuilds=new();
+    private readonly Dictionary<SmoothTerrainChunkCoordinate,SmoothTerrainChunkSnapshot> _urgentSnapshots=new();
+    private readonly object _testGateLock=new();
+    private TaskCompletionSource? _testWorkerGate;
+    /// <summary>Test-only: leaves completed worker output queued until explicitly cleared.</summary>
+    public bool SuspendInstallsForTests { get; set; }
+    /// <summary>Test-only: pauses a worker before snapshot capture; inert unless explicitly called.</summary>
+    public void PauseWorkersForTests(){lock(_testGateLock)_testWorkerGate=new(TaskCreationOptions.RunContinuationsAsynchronously);}
+    public void ReleaseWorkersForTests(){lock(_testGateLock){_testWorkerGate?.TrySetResult();_testWorkerGate=null;}}
+    /// <summary>Test-only rebuild using the same desired-coordinate scheduler and current revision.</summary>
+    public bool RebuildCoordinateForTests(SmoothTerrainChunkCoordinate coordinate)
+    {
+        if(_baseline==null||!_entries.TryGetValue(coordinate,out Entry? entry))return false;
+        RemoveEntry(coordinate,entry); _generation++; Schedule(coordinate,_generation,new SmoothTerrainEditSnapshot(_commands,_editRevision,_baseline.AroundLength)); UpdateCurrentMetrics(); return true;
+    }
+    /// <summary>Test-only immutable current presenter origins.</summary>
+    public IReadOnlyDictionary<SmoothTerrainChunkCoordinate,Vector3> CapturePresenterPositionsForTests(){var r=new Dictionary<SmoothTerrainChunkCoordinate,Vector3>();foreach(var p in _entries)if(p.Value.Presenter!=null)r[p.Key]=p.Value.Presenter.Position;return r;}
+    public SmoothTerrainRuntimeMetrics Metrics { get; private set; }
+    public void ResetMetricPeaks() { Interlocked.Exchange(ref _maxActiveWorkers,0); Metrics = Metrics with { MaxActiveWorkers=0,MaxWorkerMilliseconds = 0, MaxInstallMilliseconds = 0, LastWorkerMilliseconds = 0, LastInstallMilliseconds = 0 }; }
+    public int ReadyRenderCount { get; private set; }
+    public int ReadyCollisionCount { get; private set; }
+    public int CreatedPresenterCount { get; private set; }
+    public int ReusedPresenterCount { get; private set; }
+    public int PoolCount => _pool.Count;
+    public int TaskCount { get { lock(_lifetimeGate) return _trackedTasks.Count; } }
+    public int ReadyResultCount => _ready.Count;
+    public int PresenterCount => _ownedPresenters;
+    public bool TexturedTerrainMaterialReady => _terrainMaterial != null
+        && _terrainMaterial.GetShaderParameter("pilot_triplanar_enabled").AsBool();
+    public ulong StreamingFocusPollCount { get; private set; }
+    public bool IsQuiescent
+    {
+        get
+        {
+            if (!_tasks.IsEmpty || !_ready.IsEmpty || Volatile.Read(ref _activeWorkers) != 0) return false;
+            foreach (Entry entry in _entries.Values) if (!entry.Ready) return false;
+            return true;
+        }
+    }
+    public readonly record struct ChunkDebugState(ulong Generation,bool Ready,bool Collision,int Builds,int Installs);
+    public IReadOnlyDictionary<SmoothTerrainChunkCoordinate,ChunkDebugState> CaptureDebugState(){var r=new Dictionary<SmoothTerrainChunkCoordinate,ChunkDebugState>();foreach(var p in _entries)r[p.Key]=new(p.Value.Generation,p.Value.Ready,p.Value.Collision,p.Value.Builds,p.Value.Installs);return r;}
+    public readonly record struct ChunkDiagnostics(int ScheduleCount,int CompletedBuildCount,int InstallCount,int CancelRequestCount,int StaleResultCount,bool Resident,bool Ready,bool HasRenderMesh,bool HasCollision,SmoothTerrainRevision LastInstalledRevision,ulong LastInstalledMeshHash,ulong LastInstalledGeneration);
+    public IReadOnlyDictionary<SmoothTerrainChunkCoordinate,ChunkDiagnostics> CaptureDiagnostics()
+    {
+        var copy=new Dictionary<SmoothTerrainChunkCoordinate,ChunkDiagnostics>();
+        foreach(var pair in _diagnostics) copy[pair.Key]=pair.Value.Snapshot();
+        return copy;
+    }
+    public Task AwaitShutdownForTestsAsync() => _shutdown.Task;
+
+    public override void _Ready()
+    {
+        var source = GetNodeOrNull<VoxelChunkGridManager>(SourceGridPath);
+        if (source == null) { GD.PushWarning("SmoothTerrainGrid is opt-in and needs SourceGridPath."); return; }
+        _sourceGrid=source; _workers.Dispose(); _workers=new SemaphoreSlim(Math.Max(1,MaxWorkers),Math.Max(1,MaxWorkers));
+        _sourceSampler = source.CreateIndependentTerrainSampler(); if(_sourceSampler==null){GD.PushWarning("SmoothTerrainGrid source could not create terrain sampler.");return;} _baseline = new RingTerrainSmoothBaseline(_sourceSampler);
+        _editSnapshot=new SmoothTerrainEditSnapshot(_commands,_editRevision,_baseline.AroundLength);
+        _geometry = source.CaptureLodGeometrySnapshot(); _focus = new RingCanonicalPosition(0, 0, 0);
+        _streamingFocus=GetNodeOrNull<Node3D>(StreamingFocusPath);
+        _sunLight=source.GetNodeOrNull<DirectionalLight3D>(source.RingSunLightPath);
+        _terrainMaterial=CreateTerrainMaterial();
+        source.CanonicalFloatingOriginAnchorChanged += OnGeometryChanged;
+    }
+    public override void _ExitTree()
+    {
+        Task[] pending;
+        ReleaseWorkersForTests();
+        lock(_lifetimeGate) { _stopping=true; _cancel.Cancel(); foreach(var pair in _entries) if(pair.Value.RequestCancel()){Interlocked.Increment(ref _cancelRequestCount);_diagnostics.GetOrAdd(pair.Key,_=>new DiagnosticRecord()).Cancelled();} pending=_trackedTasks.ToArray(); }
+        if(_sourceGrid!=null)_sourceGrid.CanonicalFloatingOriginAnchorChanged-=OnGeometryChanged;
+        foreach(var entry in _entries.Values) if(entry.Presenter!=null) entry.Presenter.QueueFree();
+        while(_pool.Count>0) _pool.Dequeue().QueueFree();
+        _entries.Clear();
+        _ownedPresenters=0;
+        ReadyRenderCount=0;
+        ReadyCollisionCount=0;
+        while(_ready.TryDequeue(out Result ignoredBeforeDrain)){}
+        RingTerrainSampler? sampler=_sourceSampler; SemaphoreSlim workers=_workers; CancellationTokenSource rootCancel=_cancel;
+        _=Task.WhenAll(pending).ContinueWith(_=>
+        {
+            // Workers can enqueue after the main-thread pre-drain, so this must run after WhenAll.
+            while(_ready.TryDequeue(out Result ignoredAfterDrain)){}
+            lock(_lifetimeGate)
+            {
+                _trackedTasks.Clear();
+                _tasks.Clear();
+            }
+            Metrics=Metrics with { Desired=0, QueueDepth=0, Pending=0, ActiveWorkers=0, Resident=0, Ready=0, Pool=0, EstimatedBytes=0 };
+            sampler?.Dispose();
+            workers.Dispose();
+            rootCancel.Dispose();
+            _shutdown.TrySetResult();
+        }, TaskScheduler.Default);
+    }
+    private void OnGeometryChanged(RingLodGeometrySnapshot previous,RingLodGeometrySnapshot current,RingCanonicalPosition anchor){_geometry=current;foreach(var e in _entries)if(e.Value.Presenter!=null)e.Value.Presenter.Position=ChunkWorldOrigin(e.Key);}
+    public void SetCanonicalFocus(RingCanonicalPosition focus) { SetFocusIfCenterChanged(focus); }
+    public ulong EditRevision => _editRevision;
+    public ulong VisualCoverageRevision => _visualCoverageRevision;
+    public ulong TerrainDefinitionHash => _baseline?.Revision ?? 0;
+    public double CircumferenceMeters => _baseline?.AroundLength ?? 0;
+    public SmoothTerrainJournalEnvelope CaptureJournalEnvelope()=>new(SmoothTerrainEditJournalStore.FormatVersion,TerrainDefinitionHash,CircumferenceMeters,_editRevision,_nextCommandId,_nextSequence,_commands.ToArray());
+    public bool RestoreJournalEnvelope(SmoothTerrainJournalEnvelope envelope)
+    {
+        if(_baseline==null)return false;try{SmoothTerrainEditJournalStore.ValidateEnvelope(envelope,TerrainDefinitionHash,CircumferenceMeters);var snapshot=new SmoothTerrainEditSnapshot(envelope.Commands,envelope.Revision,_baseline.AroundLength);_commands.Clear();foreach(var c in snapshot.Ordered)_commands.Add(c);_editRevision=envelope.Revision;_nextCommandId=envelope.NextCommandId;_nextSequence=envelope.NextSequence;_editSnapshot=snapshot;_cachedLodSurfaceEditSnapshot=null;}catch(Exception){return false;}foreach(var p in new List<KeyValuePair<SmoothTerrainChunkCoordinate,Entry>>(_entries))RemoveEntry(p.Key,p.Value);RefreshDesired();return true;
+    }
+    public void AddEdit(SmoothTerrainEditCommand command)
+    {
+        if(!command.IsValid || _baseline==null || command.Radius>SmoothTerrainEditSnapshot.MaximumStampRadiusMeters || command.Radius>_baseline.AroundLength*.5f || !Enum.IsDefined((SmoothTerrainMaterial)command.Material) || _commands.Exists(c=>c.CommandId==command.CommandId))
+            throw new ArgumentException("Invalid smooth terrain edit.",nameof(command));
+        command=command with { Around=RingCoordMath.WrapAround(command.Around,_baseline.AroundLength) };
+        ulong previousEditRevision=_editRevision;
+        RingLodSurfaceEditSnapshot? previousLodSnapshot=_cachedLodSurfaceEditSnapshot;
+        bool appendOrdered=_commands.Count==0
+            || command.Sequence>_commands[^1].Sequence
+            || (command.Sequence==_commands[^1].Sequence&&command.CommandId>_commands[^1].CommandId);
+        _commands.Add(command); _editRevision++; _nextCommandId=Math.Max(_nextCommandId,checked(command.CommandId+1));_nextSequence=Math.Max(_nextSequence,checked(command.Sequence+1));_editSnapshot=new SmoothTerrainEditSnapshot(_commands,_editRevision,_baseline.AroundLength);
+        _cachedLodSurfaceEditSnapshot=appendOrdered&&previousLodSnapshot?.Version==previousEditRevision
+            ? ProjectAppendedEditToLod(previousLodSnapshot,command)
+            : null;
+        var affected=new HashSet<SmoothTerrainChunkCoordinate>();
+        foreach(var pair in _entries)
+            if(StampOverlaps(pair.Key,command)) affected.Add(pair.Key);
+        _urgentSnapshots.Clear();
+        if(appendOrdered)
+        {
+            var expectedPrevious=new SmoothTerrainRevision(_baseline.Revision,previousEditRevision);
+            foreach(SmoothTerrainChunkCoordinate coordinate in affected)
+                if(_entries.TryGetValue(coordinate,out Entry? entry)
+                    && entry.TargetSnapshot is SmoothTerrainChunkSnapshot cached
+                    && cached.Revision==expectedPrevious)
+                    _urgentSnapshots[coordinate]=SmoothTerrainSnapshotCapture.ApplyAppendedEdit(cached,_baseline,command,_editRevision);
+        }
+        // Cancel only jobs that have not acquired a worker.  Active builds are
+        // left to their normal cancellation path; aborting the queued visual
+        // tail lets the affected collision mesh take the next free worker.
+        // A ready presenter remains attached through an edit.  RefreshDesired
+        // replaces it atomically when the new mesh arrives, rather than
+        // revealing a proxy underlay (or a hole) while the worker runs.
+        foreach(var pair in new List<KeyValuePair<SmoothTerrainChunkCoordinate,Entry>>(_entries))
+            if(affected.Count>0 && !affected.Contains(pair.Key) && !pair.Value.Ready && !pair.Value.WorkStarted)
+                RemoveEntry(pair.Key,pair.Value);
+        _urgentRebuilds.Clear();
+        _urgentRebuilds.UnionWith(affected);
+        RefreshDesired();
+    }
+    public IReadOnlyList<SmoothTerrainEditCommand> CaptureEditCommands()=>_commands.ToArray();
+    /// <summary>Read-only projection used by non-editable proxy LODs.</summary>
+    public RingLodSurfaceEditSnapshot CaptureLodSurfaceEditSnapshot()
+    {
+        if (_baseline == null || _sourceSampler == null || _editSnapshot == null)
+            return new RingLodSurfaceEditSnapshot(0, 1L, new Dictionary<RingTerrainColumnCoordinate, int>());
+        if (_cachedLodSurfaceEditSnapshot?.Version == _editRevision)
+            return _cachedLodSurfaceEditSnapshot;
+
+        var bounds = new Dictionary<RingTerrainColumnCoordinate, (int Minimum, int Maximum)>();
+        foreach (SmoothTerrainEditCommand stamp in _commands)
+        {
+            int radius = (int)Math.Ceiling(stamp.Radius);
+            int minimumAcross = Math.Max(0, stamp.Across - radius);
+            int maximumAcross = Math.Min(_baseline.AcrossWidth, stamp.Across + radius);
+            for (int across = minimumAcross; across <= maximumAcross; across++)
+            for (long rawAround = stamp.Around - radius; rawAround <= stamp.Around + radius; rawAround++)
+            {
+                long around = RingCoordMath.WrapAround(rawAround, _baseline.AroundLength);
+                long dx = around - stamp.Around;
+                dx %= _baseline.AroundLength;
+                if (dx > _baseline.AroundLength / 2) dx -= _baseline.AroundLength;
+                if (dx < -_baseline.AroundLength / 2) dx += _baseline.AroundLength;
+                long dz = across - stamp.Across;
+                double horizontalSquared = (double)dx * dx + (double)dz * dz;
+                double radiusSquared = (double)stamp.Radius * stamp.Radius;
+                if (horizontalSquared > radiusSquared) continue;
+
+                int verticalExtent = (int)Math.Ceiling(Math.Sqrt(radiusSquared - horizontalSquared));
+                int minimum = (int)Math.Max(int.MinValue, (long)stamp.Vertical - verticalExtent - 2L);
+                int maximum = (int)Math.Min(int.MaxValue, (long)stamp.Vertical + verticalExtent + 2L);
+                var key = new RingTerrainColumnCoordinate(around, across);
+                if (bounds.TryGetValue(key, out var current))
+                    bounds[key] = (Math.Min(current.Minimum, minimum), Math.Max(current.Maximum, maximum));
+                else
+                    bounds.Add(key, (minimum, maximum));
+            }
+        }
+
+        var heights = new Dictionary<RingTerrainColumnCoordinate, int>();
+        var dirty = new HashSet<RingTerrainColumnCoordinate>();
+        var scratch = new List<SmoothTerrainEditCommand>();
+        foreach ((RingTerrainColumnCoordinate column, (int Minimum, int Maximum) range) in bounds)
+        {
+            int baseline = _sourceSampler.GetSurfaceHeight(column.AroundVoxel, column.AcrossVoxel);
+            int top = (int)Math.Min(int.MaxValue, Math.Max((long)baseline + 2L, range.Maximum));
+            int bottom = (int)Math.Max(int.MinValue, Math.Min((long)baseline - 2L, range.Minimum));
+            int surface = baseline;
+            bool found = false;
+            for (int vertical = top; ; vertical--)
+            {
+                if (_editSnapshot.SampleContinuous(_baseline, column.AroundVoxel, vertical, column.AcrossVoxel, scratch).Density <= 0.0f)
+                {
+                    surface = vertical;
+                    found = true;
+                    break;
+                }
+                if (vertical == bottom) break;
+            }
+            dirty.Add(column);
+            if (found && surface != baseline) heights[column] = surface;
+        }
+
+        _cachedLodSurfaceEditSnapshot = new RingLodSurfaceEditSnapshot(
+            _editRevision,
+            _baseline.AroundLength,
+            heights,
+            dirty);
+        return _cachedLodSurfaceEditSnapshot;
+    }
+    private RingLodSurfaceEditSnapshot ProjectAppendedEditToLod(RingLodSurfaceEditSnapshot previous,SmoothTerrainEditCommand stamp)
+    {
+        if(_baseline==null||_sourceSampler==null||_editSnapshot==null)
+            return new RingLodSurfaceEditSnapshot(_editRevision,1L,new Dictionary<RingTerrainColumnCoordinate,int>());
+        var heights=new Dictionary<RingTerrainColumnCoordinate,int>(previous.CanonicalEditedColumns);
+        var dirty=new HashSet<RingTerrainColumnCoordinate>();
+        var scratch=new List<SmoothTerrainEditCommand>();
+        int radius=(int)Math.Ceiling(stamp.Radius);
+        int minimumAcross=Math.Max(0,stamp.Across-radius);
+        int maximumAcross=Math.Min(_baseline.AcrossWidth,stamp.Across+radius);
+        double radiusSquared=(double)stamp.Radius*stamp.Radius;
+        for(int across=minimumAcross;across<=maximumAcross;across++)
+        for(long rawAround=stamp.Around-radius;rawAround<=stamp.Around+radius;rawAround++)
+        {
+            long around=RingCoordMath.WrapAround(rawAround,_baseline.AroundLength);
+            long dx=Shortest(around,stamp.Around,_baseline.AroundLength);
+            long dz=across-stamp.Across;
+            double horizontalSquared=(double)dx*dx+(double)dz*dz;
+            if(horizontalSquared>radiusSquared)continue;
+            var column=new RingTerrainColumnCoordinate(around,across);
+            if(!dirty.Add(column))continue;
+            int baseline=_sourceSampler.GetSurfaceHeight(around,across);
+            int prior=heights.TryGetValue(column,out int previousHeight)?previousHeight:baseline;
+            int verticalExtent=(int)Math.Ceiling(Math.Sqrt(radiusSquared-horizontalSquared));
+            int stampMinimum=(int)Math.Max(int.MinValue,(long)stamp.Vertical-verticalExtent-2L);
+            int stampMaximum=(int)Math.Min(int.MaxValue,(long)stamp.Vertical+verticalExtent+2L);
+            int top=(int)Math.Min(int.MaxValue,Math.Max(Math.Max((long)baseline+2L,(long)prior+2L),stampMaximum));
+            int bottom=(int)Math.Max(int.MinValue,Math.Min(Math.Min((long)baseline-2L,(long)prior-2L),stampMinimum));
+            int surface=baseline;
+            bool found=false;
+            for(int vertical=top;;vertical--)
+            {
+                if(_editSnapshot.SampleContinuous(_baseline,around,vertical,across,scratch).Density<=0.0f)
+                {
+                    surface=vertical;
+                    found=true;
+                    break;
+                }
+                if(vertical==bottom)break;
+            }
+            if(found&&surface!=baseline)heights[column]=surface;
+            else heights.Remove(column);
+        }
+        return new RingLodSurfaceEditSnapshot(_editRevision,_baseline.AroundLength,heights,dirty);
+    }
+    public bool IsSurfaceRegionVisualReady(long around0,long around1,int across0,int across1)
+    {
+        if (_baseline == null || _sourceSampler == null) return false;
+        long aroundMinimum = Math.Min(around0, around1);
+        long aroundMaximum = Math.Max(around0, around1);
+        int acrossMinimum = Math.Max(0, Math.Min(across0, across1));
+        int acrossMaximum = Math.Min(_baseline.AcrossWidth, Math.Max(across0, across1));
+        if (aroundMaximum <= aroundMinimum || acrossMaximum <= acrossMinimum) return false;
+
+        long firstAroundChunk = FloorDiv(aroundMinimum, SmoothTerrainChunkSnapshot.Cells);
+        long lastAroundChunk = FloorDiv(aroundMaximum - 1, SmoothTerrainChunkSnapshot.Cells);
+        int firstAcrossChunk = RingCoordMath.FloorDiv(acrossMinimum, SmoothTerrainChunkSnapshot.Cells);
+        int lastAcrossChunk = RingCoordMath.FloorDiv(acrossMaximum - 1, SmoothTerrainChunkSnapshot.Cells);
+        long aroundChunkCount = Math.Max(1, _baseline.AroundLength / SmoothTerrainChunkSnapshot.Cells);
+        for (int acrossChunk = firstAcrossChunk; acrossChunk <= lastAcrossChunk; acrossChunk++)
+        for (long rawAroundChunk = firstAroundChunk; rawAroundChunk <= lastAroundChunk; rawAroundChunk++)
+        {
+            long aroundChunk = RingCoordMath.WrapAroundChunk(rawAroundChunk, aroundChunkCount);
+            GetColumnSurfaceChunkRange(aroundChunk,acrossChunk,out int minimumSurfaceChunk,out int maximumSurfaceChunk);
+            bool hasRenderMesh=false;
+            for(int verticalChunk=minimumSurfaceChunk;verticalChunk<=maximumSurfaceChunk;verticalChunk++)
+            {
+                var coordinate=new SmoothTerrainChunkCoordinate(aroundChunk,verticalChunk,acrossChunk);
+                if(!_entries.TryGetValue(coordinate,out Entry? entry)
+                    ||!entry.Ready
+                    ||entry.Presenter?.Visible!=true)
+                    return false;
+                hasRenderMesh|=entry.Presenter.HasRenderMesh;
+            }
+            // Empty halo chunks can be ready, but they cannot by themselves
+            // replace a proxy surface. At least one chunk in the complete
+            // sampled surface span must actually own triangles.
+            if(!hasRenderMesh)return false;
+        }
+        return true;
+    }
+    public bool IsSurfaceCollisionReady(long around,int across)
+    {
+        if(_baseline==null||_sourceSampler==null)return false;
+        long canonicalAround=RingCoordMath.WrapAround(around,_baseline.AroundLength);
+        int canonicalAcross=Math.Clamp(across,0,_baseline.AcrossWidth);
+        var coordinate=new SmoothTerrainChunkCoordinate(
+            canonicalAround/SmoothTerrainChunkSnapshot.Cells,
+            GetSurfaceVerticalChunk(canonicalAround,canonicalAcross),
+            RingCoordMath.FloorDiv(canonicalAcross,SmoothTerrainChunkSnapshot.Cells));
+        return _entries.TryGetValue(coordinate,out Entry? entry)
+            && entry.Ready
+            && entry.Presenter?.HasCollision==true;
+    }
+    public bool IsSurfaceCollisionNeighborhoodReady(long around,int across,int radiusChunks=1)
+    {
+        if(_baseline==null)return false;
+        int radius=Math.Max(0,radiusChunks);
+        long centerAround=RingCoordMath.WrapAround(around,_baseline.AroundLength)/SmoothTerrainChunkSnapshot.Cells;
+        int centerAcross=RingCoordMath.FloorDiv(Math.Clamp(across,0,_baseline.AcrossWidth),SmoothTerrainChunkSnapshot.Cells);
+        long aroundChunkCount=Math.Max(1,(_baseline.AroundLength+SmoothTerrainChunkSnapshot.Cells-1)/SmoothTerrainChunkSnapshot.Cells);
+        for(int z=-radius;z<=radius;z++)
+        for(int x=-radius;x<=radius;x++)
+        {
+            int acrossChunk=centerAcross+z;
+            if(acrossChunk*SmoothTerrainChunkSnapshot.Cells>_baseline.AcrossWidth
+                ||(acrossChunk+1)*SmoothTerrainChunkSnapshot.Cells<0)continue;
+            long aroundChunk=RingCoordMath.WrapAroundChunk(centerAround+x,aroundChunkCount);
+            long sampleAround=aroundChunk*SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Cells/2;
+            int sampleAcross=Math.Clamp(
+                acrossChunk*SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Cells/2,
+                0,
+                _baseline.AcrossWidth);
+            if(!IsSurfaceCollisionReady(sampleAround,sampleAcross))return false;
+        }
+        return true;
+    }
+    public bool IsMovementSurfaceCollisionReady(double around,double across,float bodyRadius)
+    {
+        int probe=Math.Max(1,(int)Math.Ceiling(Math.Max(0.0f,bodyRadius)+.1f));
+        long centerAround=(long)Math.Floor(around);
+        int centerAcross=(int)Math.Floor(across);
+        return IsSurfaceCollisionReady(centerAround,centerAcross)
+            &&IsSurfaceCollisionReady(centerAround-probe,centerAcross)
+            &&IsSurfaceCollisionReady(centerAround+probe,centerAcross)
+            &&IsSurfaceCollisionReady(centerAround,centerAcross-probe)
+            &&IsSurfaceCollisionReady(centerAround,centerAcross+probe);
+    }
+    public bool ReplaceEditCommands(IEnumerable<SmoothTerrainEditCommand> commands,ulong revision)
+    { if(_baseline==null)return false;var copy=new List<SmoothTerrainEditCommand>(commands);try{var snap=new SmoothTerrainEditSnapshot(copy,revision,_baseline.AroundLength);ulong maxId=0;long maxSequence=0;foreach(var c in copy){if(c.CommandId>maxId)maxId=c.CommandId;if(c.Sequence>maxSequence)maxSequence=c.Sequence;}_commands.Clear();foreach(var c in snap.Ordered)_commands.Add(c);_editRevision=revision;_editSnapshot=snap;_cachedLodSurfaceEditSnapshot=null;_nextCommandId=copy.Count==0?1:checked(maxId+1);_nextSequence=copy.Count==0?1:checked(maxSequence+1);}catch(Exception){return false;}foreach(var p in new List<KeyValuePair<SmoothTerrainChunkCoordinate,Entry>>(_entries))RemoveEntry(p.Key,p.Value);RefreshDesired();return true; }
+    public bool TryApplyNaturalBrushAtWorldPosition(Vector3 worldPosition,bool addsMatter,float radius,SmoothTerrainMaterial material,out SmoothTerrainEditCommand command)
+    { command=default;if(_sourceGrid==null||!float.IsFinite(radius)||radius<=0||radius>SmoothTerrainEditSnapshot.MaximumStampRadiusMeters||!Enum.IsDefined(material)||_nextCommandId==ulong.MaxValue||_nextSequence==long.MaxValue)return false;var p=_sourceGrid.WorldToCanonicalRingPosition64(worldPosition);var candidate=new SmoothTerrainEditCommand(SmoothTerrainEditCommand.CurrentVersion,_nextCommandId,_nextSequence,addsMatter,(long)Math.Floor(p.AroundMeters),(int)Math.Floor(p.VerticalMeters),(int)Math.Floor(p.AcrossMeters),radius,(int)material);try{AddEdit(candidate);command=candidate;return true;}catch(ArgumentException){return false;}}
+    /// <summary>Main-thread fallback raycast. Density is negative in solid, so its gradient points outward to air.</summary>
+    public bool TryRaycastEditableSurface(Vector3 origin,Vector3 direction,float maxDistance,out Vector3 hitPosition,out Vector3 hitNormal)
+    {hitPosition=default;hitNormal=Vector3.Up;if(_sourceGrid==null||_baseline==null||!origin.IsFinite()||!direction.IsFinite()||!float.IsFinite(maxDistance)||maxDistance<=0||maxDistance>1024||direction.LengthSquared()<1e-8f)return false;direction=direction.Normalized();int steps=Math.Min(4096,(int)Math.Ceiling(maxDistance/.25f));float prev=SampleWorld(origin);if(!float.IsFinite(prev))return false;for(int i=1;i<=steps;i++){float t=Math.Min(maxDistance,i*.25f),current=SampleWorld(origin+direction*t);if(!float.IsFinite(current))return false;if((prev<=0)!=(current<=0)){float lo=Math.Max(0,t-.25f),hi=t;for(int q=0;q<10;q++){float mid=(lo+hi)*.5f,midValue=SampleWorld(origin+direction*mid);if(!float.IsFinite(midValue))return false;if((SampleWorld(origin+direction*lo)<=0)==(midValue<=0))lo=mid;else hi=mid;}hitPosition=origin+direction*((lo+hi)*.5f);float e=.1f;Vector3 gradient=new(SampleWorld(hitPosition+Vector3.Right*e)-SampleWorld(hitPosition-Vector3.Right*e),SampleWorld(hitPosition+Vector3.Up*e)-SampleWorld(hitPosition-Vector3.Up*e),SampleWorld(hitPosition+Vector3.Back*e)-SampleWorld(hitPosition-Vector3.Back*e));if(!gradient.IsFinite()||gradient.LengthSquared()<.81f)return false;hitNormal=gradient.Normalized();return hitPosition.IsFinite()&&hitNormal.IsFinite();}prev=current;}return false;}
+    // Main-thread raycast helper: _queryScratch is intentionally reused and is not worker-safe.
+    private float SampleWorld(Vector3 world){var p=_sourceGrid!.WorldToCanonicalRingPosition64(world);return _editSnapshot!.SampleContinuous(_baseline!,p.AroundMeters,p.VerticalMeters,p.AcrossMeters,_queryScratch).Density;}
+    /// <summary>Main-thread diagnostic/query helper using the same immutable baseline and edit snapshot as raycast.</summary>
+    public bool TryQueryEditableDensityAtWorldPosition(Vector3 worldPosition,out float density){density=0;if(_sourceGrid==null||_baseline==null||!worldPosition.IsFinite())return false;density=SampleWorld(worldPosition);return float.IsFinite(density);}
+    public override void _Process(double delta)
+    {
+        // Material uniforms and diagnostic counters do not need render-frame
+        // frequency.  The former hot path also rescanned every resident and all
+        // historical diagnostics every frame, making performance decay as the
+        // player travelled.
+        if((_materialElapsed+=delta)>=.1){_materialElapsed=0;UpdateTerrainMaterial();}
+        if(_streamingFocus!=null&&(_focusElapsed+=delta)>=Math.Max(.01,StreamingUpdateIntervalSeconds))
+        {
+            _focusElapsed=0;
+            StreamingFocusPollCount++;
+            var p=_streamingFocus is RingVoxelExplorerController explorer
+                ? explorer.CanonicalPosition
+                : _sourceGrid!.WorldToCanonicalRingPosition64(_streamingFocus.GlobalPosition);
+            SetFocusIfCenterChanged(p);
+        }
+        if(_lastFocusCenter.HasValue&&(_lastRadiusAround!=RadiusAround||_lastRadiusAcross!=RadiusAcross||_lastRadiusVertical!=RadiusVertical||_lastCollisionRadius!=CollisionRadius))RefreshDesired();
+        InstallReady();
+        if((_metricsElapsed+=delta)>=.25){_metricsElapsed=0;RecountReady();UpdateCurrentMetrics();}
+    }
+    private void SetFocusIfCenterChanged(RingCanonicalPosition focus)
+    {
+        if(_baseline==null)return;
+        long focusAround=RingCoordMath.WrapAround((long)Math.Floor(focus.AroundMeters),_baseline.AroundLength);
+        long aroundChunk=focusAround/SmoothTerrainChunkSnapshot.Cells;
+        int focusAcross=Math.Clamp((int)Math.Floor(focus.AcrossMeters),0,_baseline.AcrossWidth);
+        int acrossChunk=RingCoordMath.FloorDiv(focusAcross,SmoothTerrainChunkSnapshot.Cells);
+        int verticalChunk=GetSurfaceVerticalChunk(focusAround,focusAcross);
+        var center=new SmoothTerrainChunkCoordinate(aroundChunk,verticalChunk,acrossChunk);
+        _focus=focus;
+        if(_lastFocusCenter==center)return;
+        _lastFocusCenter=center;
+        RefreshDesired();
+    }
+    public void RefreshDesired()
+    {
+        if (_baseline == null) return; _generation++; ulong generation = _generation;
+        _lastRadiusAround=RadiusAround;_lastRadiusAcross=RadiusAcross;_lastRadiusVertical=RadiusVertical;_lastCollisionRadius=CollisionRadius;
+        var edits = _editSnapshot ?? new SmoothTerrainEditSnapshot(_commands, _editRevision, _baseline.AroundLength);
+        long focusAround = RingCoordMath.WrapAround((long)Math.Floor(_focus.AroundMeters), _baseline.AroundLength);
+        int focusAcross = Math.Clamp((int)Math.Floor(_focus.AcrossMeters), 0, _baseline.AcrossWidth);
+        long centerAround = focusAround / SmoothTerrainChunkSnapshot.Cells;
+        int centerAcross = RingCoordMath.FloorDiv(focusAcross, SmoothTerrainChunkSnapshot.Cells);
+        long aroundChunkCount=Math.Max(1,(_baseline.AroundLength+SmoothTerrainChunkSnapshot.Cells-1)/SmoothTerrainChunkSnapshot.Cells);
+        var desired = new HashSet<SmoothTerrainChunkCoordinate>();
+        var collisionDesired = new HashSet<SmoothTerrainChunkCoordinate>();
+        for(int z=-RadiusAcross;z<=RadiusAcross;z++)
+        for(long x=-RadiusAround;x<=RadiusAround;x++)
+        {
+            long aroundChunk=RingCoordMath.WrapAroundChunk(centerAround+x,aroundChunkCount);
+            int acrossChunk=centerAcross+z;
+            if(acrossChunk*SmoothTerrainChunkSnapshot.Cells>_baseline.AcrossWidth
+                ||(acrossChunk+1)*SmoothTerrainChunkSnapshot.Cells<0)continue;
+            GetColumnSurfaceChunkRange(aroundChunk,acrossChunk,out int minimumSurfaceChunk,out int maximumSurfaceChunk);
+            bool collisionColumn=Math.Abs(x)<=CollisionRadius&&Math.Abs(z)<=CollisionRadius;
+            int padding=Math.Max(RadiusVertical,collisionColumn?CollisionRadius:0);
+            for(int y=minimumSurfaceChunk-padding;y<=maximumSurfaceChunk+padding;y++)
+                desired.Add(new SmoothTerrainChunkCoordinate(aroundChunk,y,acrossChunk));
+            if(collisionColumn)
+                for(int y=minimumSurfaceChunk-CollisionRadius;y<=maximumSurfaceChunk+CollisionRadius;y++)
+                    collisionDesired.Add(new SmoothTerrainChunkCoordinate(aroundChunk,y,acrossChunk));
+        }
+        foreach(var pair in new List<KeyValuePair<SmoothTerrainChunkCoordinate,Entry>>(_entries)) if(!desired.Contains(pair.Key)) RemoveEntry(pair.Key,pair.Value);
+        _collisionDesired.Clear();
+        _collisionDesired.UnionWith(collisionDesired);
+        ApplyCollisionDesired();
+        // A HashSet's traversal order is not a streaming policy.  Submit the
+        // exact collision window first, then spiral outward by chunk distance,
+        // so the player gets a physical surface before the outer visual shell.
+        foreach(var c in desired.OrderBy(c=>_urgentRebuilds.Contains(c)?0:_collisionDesired.Contains(c)?1:2).ThenBy(ChunkDistanceToFocus))
+            if(!_entries.ContainsKey(c) || _urgentRebuilds.Contains(c))
+                Schedule(c,generation,edits,_urgentSnapshots.TryGetValue(c,out SmoothTerrainChunkSnapshot? snapshot)?snapshot:null);
+        _urgentRebuilds.Clear();
+        _urgentSnapshots.Clear();
+        PruneHistoricalDiagnostics();
+        RecountReady(); UpdateCurrentMetrics(desired.Count);
+    }
+    private void Schedule(SmoothTerrainChunkCoordinate c,ulong generation,SmoothTerrainEditSnapshot edits,SmoothTerrainChunkSnapshot? preparedSnapshot=null)
+    {
+        if(_baseline==null)return;
+        SmoothTerrainPresenter? retainedPresenter=null;
+        bool retainedReady=false,retainedCollision=false;
+        if(_entries.TryGetValue(c,out Entry? old))
+        {
+            if(old.RequestCancel()){Interlocked.Increment(ref _cancelRequestCount);_diagnostics.GetOrAdd(c,_=>new DiagnosticRecord()).Cancelled();}
+            // Retaining the old, proven mesh is important for both visual
+            // continuity and physics.  The incoming result installs into this
+            // same presenter on the main thread, so replacement is atomic.
+            retainedPresenter=old.Presenter;
+            retainedReady=old.Ready;
+            retainedCollision=old.Collision;
+        }
+        RingLodGeometrySnapshot geometry=_geometry; Transform3D ownerInverse=GlobalTransform.AffineInverse();
+        Entry entry; Task work;
+        lock(_lifetimeGate)
+        {
+            if(_stopping)return;
+            entry=new Entry(generation,new SmoothTerrainRevision(_baseline.Revision,edits.Revision),CancellationTokenSource.CreateLinkedTokenSource(_cancel.Token))
+            { Presenter=retainedPresenter, Ready=retainedReady, Collision=retainedCollision, TargetSnapshot=preparedSnapshot };
+            _entries[c]=entry;
+            _diagnostics.GetOrAdd(c,_=>new DiagnosticRecord()).Scheduled();
+            CancellationToken token=entry.Token;
+            work=Task.Run(async()=> { bool acquired=false;try { await _workers.WaitAsync(token);acquired=true;entry.MarkWorkStarted();int active=Interlocked.Increment(ref _activeWorkers);int prior;do{prior=_maxActiveWorkers;if(active<=prior)break;}while(Interlocked.CompareExchange(ref _maxActiveWorkers,active,prior)!=prior);Task? gate;lock(_testGateLock)gate=_testWorkerGate?.Task;if(gate!=null)await gate.WaitAsync(token);var timer=Stopwatch.StartNew(); token.ThrowIfCancellationRequested(); SmoothTerrainChunkSnapshot snapshot=preparedSnapshot??SmoothTerrainSnapshotCapture.Capture(c,_baseline,edits);entry.TargetSnapshot=snapshot; // Collision faces are expanded only if this presenter enters the collision radius.
+                SmoothTerrainMeshData mesh=TransformWorker(SmoothTerrainMesher.Build(snapshot,false),c,geometry,ownerInverse); token.ThrowIfCancellationRequested(); timer.Stop(); ulong hash=SmoothTerrainMeshHash.Compute(mesh); _diagnostics.GetOrAdd(c,_=>new DiagnosticRecord()).Completed(); _ready.Enqueue(new Result(c,generation,snapshot.Revision,snapshot,mesh,hash,timer.Elapsed.TotalMilliseconds)); } catch(OperationCanceledException) { } finally {if(acquired){Interlocked.Decrement(ref _activeWorkers);_workers.Release();} entry.CompleteWorkAndDisposeToken();} },CancellationToken.None);
+            _trackedTasks.Add(work); _tasks.TryAdd(work,0);
+        }
+        _=work.ContinueWith(_=> { lock(_lifetimeGate) { _trackedTasks.Remove(work); _tasks.TryRemove(work,out byte ignored); } },TaskScheduler.Default);
+    }
+    private void InstallReady()
+    {
+        if(SuspendInstallsForTests){RecountReady();UpdateCurrentMetrics();return;}
+        if(_ready.IsEmpty)return;
+        var timer=Stopwatch.StartNew();int installed=0;bool coverageChanged=false;while(installed<MaxInstallsPerFrame&&timer.Elapsed.TotalMilliseconds<InstallBudgetMilliseconds&&_ready.TryDequeue(out Result r))
+        { if(!_entries.TryGetValue(r.Coordinate,out Entry? e)||e.Generation!=r.Generation||e.ExpectedRevision!=r.Revision){_diagnostics.GetOrAdd(r.Coordinate,_=>new DiagnosticRecord()).Stale();Metrics=Metrics with{StaleResults=Metrics.StaleResults+1};continue;} SmoothTerrainPresenter p;if(e.Presenter!=null)p=e.Presenter;else if(_pool.Count>0){p=_pool.Dequeue();ReusedPresenterCount++;}else p=NewPresenter();e.Presenter=p;e.TargetSnapshot=r.Snapshot;p.Visible=true;p.Install(r.Mesh,WithinCollision(r.Coordinate),_terrainMaterial);p.Position=ChunkWorldOrigin(r.Coordinate);e.Ready=true;e.Collision=p.HasCollision;e.Installs++;coverageChanged=true;_diagnostics.GetOrAdd(r.Coordinate,_=>new DiagnosticRecord()).Installed(r.Revision,r.Hash,r.Generation,p.HasRenderMesh,p.HasCollision);Metrics=Metrics with{LastWorkerMilliseconds=r.WorkerMilliseconds,MaxWorkerMilliseconds=Math.Max(Metrics.MaxWorkerMilliseconds,r.WorkerMilliseconds),Installed=Metrics.Installed+1};installed++; }
+        if(coverageChanged)BumpVisualCoverageRevision();
+        RecountReady(); UpdateCurrentMetrics(); Metrics=Metrics with{LastInstallMilliseconds=timer.Elapsed.TotalMilliseconds,MaxInstallMilliseconds=Math.Max(Metrics.MaxInstallMilliseconds,timer.Elapsed.TotalMilliseconds)};
+    }
+    private bool StampOverlaps(SmoothTerrainChunkCoordinate c,SmoothTerrainEditCommand e)
+    {
+        if(_baseline==null)return false; var o=c.Origin; long center=RingCoordMath.WrapAround(e.Around,_baseline.AroundLength);
+        // Select the periodic image nearest this chunk, then measure point-to-AABB
+        // distance against the actual capture domain [-Halo, Cells+Halo].
+        long around=center + _baseline.AroundLength * (long)Math.Round((o.AroundVoxel-center)/(double)_baseline.AroundLength);
+        float dx=around-Math.Clamp(around,o.AroundVoxel-SmoothTerrainChunkSnapshot.Halo,o.AroundVoxel+32+SmoothTerrainChunkSnapshot.Halo);
+        float dy=e.Vertical-Math.Clamp(e.Vertical,o.VerticalVoxel-SmoothTerrainChunkSnapshot.Halo,o.VerticalVoxel+32+SmoothTerrainChunkSnapshot.Halo);
+        float dz=e.Across-Math.Clamp(e.Across,o.AcrossVoxel-SmoothTerrainChunkSnapshot.Halo,o.AcrossVoxel+32+SmoothTerrainChunkSnapshot.Halo);
+        return dx*dx+dy*dy+dz*dz<=e.Radius*e.Radius;
+    }
+    private void RemoveEntry(SmoothTerrainChunkCoordinate coordinate,Entry entry)
+    {
+        if(entry.RequestCancel())
+        {
+            Interlocked.Increment(ref _cancelRequestCount);
+            _diagnostics.GetOrAdd(coordinate,_=>new DiagnosticRecord()).Cancelled();
+        }
+        if(entry.Presenter!=null){entry.Presenter.Reset();_pool.Enqueue(entry.Presenter);}
+        _entries.Remove(coordinate);
+        BumpVisualCoverageRevision();
+        _diagnostics.GetOrAdd(coordinate,_=>new DiagnosticRecord()).Current(false,false,false,false);
+    }
+    // Pending is the number of desired entries without an installed result. A queued result
+    // remains represented by its non-ready entry, so it is intentionally not double-counted.
+    private void UpdateCurrentMetrics(int? desiredOverride=null)
+    {
+        int pending=0; long bytes=0;
+        foreach(var pair in _entries)
+        {
+            Entry e=pair.Value; bool render=e.Presenter?.HasRenderMesh??false, collision=e.Presenter?.HasCollision??false;
+            if(!e.Ready) pending++;
+            if(e.Presenter!=null) bytes+=e.Presenter.RetainedByteSize;
+            _diagnostics.GetOrAdd(pair.Key,_=>new DiagnosticRecord()).Current(true,e.Ready,render,collision);
+        }
+        Metrics=Metrics with { Desired=Math.Max(0,desiredOverride??Metrics.Desired), QueueDepth=Math.Max(0,_tasks.Count), Pending=Math.Max(0,pending), ActiveWorkers=Math.Max(0,Volatile.Read(ref _activeWorkers)), MaxActiveWorkers=Math.Max(0,Volatile.Read(ref _maxActiveWorkers)), Resident=Math.Max(0,_entries.Count), Ready=Math.Max(0,ReadyRenderCount), Pool=Math.Max(0,_pool.Count), Cancelled=Math.Max(0,Volatile.Read(ref _cancelRequestCount)), EstimatedBytes=Math.Max(0,bytes) };
+    }
+    private void BumpVisualCoverageRevision(){unchecked{_visualCoverageRevision++;if(_visualCoverageRevision==0)_visualCoverageRevision=1;}}
+    private static long FloorDiv(long value,long divisor){long quotient=value/divisor,remainder=value%divisor;return remainder<0?quotient-1:quotient;}
+    private long Shortest(long a,long b,long length){long d=a-b;d%=length;if(d>length/2)d-=length;if(d<-length/2)d+=length;return d;}
+    private bool WithinCollision(SmoothTerrainChunkCoordinate c)
+    {
+        return _collisionDesired.Contains(c);
+    }
+    private long ChunkDistanceToFocus(SmoothTerrainChunkCoordinate c)
+    {
+        if(_baseline==null)return long.MaxValue;
+        SmoothTerrainChunkCoordinate center=_lastFocusCenter??default;
+        long count=Math.Max(1,(_baseline.AroundLength+SmoothTerrainChunkSnapshot.Cells-1)/SmoothTerrainChunkSnapshot.Cells);
+        return Math.Abs(Shortest(c.AroundChunk,center.AroundChunk,count))
+            +Math.Abs(c.AcrossChunk-center.AcrossChunk)
+            +Math.Abs(c.VerticalChunk-center.VerticalChunk);
+    }
+    private int GetSurfaceVerticalChunk(long around,int across)
+    {
+        if(_baseline==null||_sourceSampler==null)return 0;
+        long canonicalAround=RingCoordMath.WrapAround(around,_baseline.AroundLength);
+        int canonicalAcross=Math.Clamp(across,0,_baseline.AcrossWidth);
+        RingLodSurfaceEditSnapshot edits=CaptureLodSurfaceEditSnapshot();
+        double surface=edits.TryGetEditedSurfaceHeight(canonicalAround,canonicalAcross,out int edited)
+            ? edited+.5
+            : _baseline.GetSmoothSurfaceHeight(canonicalAround,canonicalAcross)+.5;
+        return (int)Math.Floor(surface/SmoothTerrainChunkSnapshot.Cells);
+    }
+    private void GetColumnSurfaceChunkRange(long aroundChunk,int acrossChunk,out int minimum,out int maximum)
+    {
+        if(_baseline==null){minimum=maximum=0;return;}
+        minimum=int.MaxValue;
+        maximum=int.MinValue;
+        for(int z=0;z<=2;z++)
+        for(int x=0;x<=2;x++)
+        {
+            long around=aroundChunk*SmoothTerrainChunkSnapshot.Cells+x*(SmoothTerrainChunkSnapshot.Cells/2);
+            int across=Math.Clamp(
+                acrossChunk*SmoothTerrainChunkSnapshot.Cells+z*(SmoothTerrainChunkSnapshot.Cells/2),
+                0,
+                _baseline.AcrossWidth);
+            int vertical=GetSurfaceVerticalChunk(around,across);
+            minimum=Math.Min(minimum,vertical);
+            maximum=Math.Max(maximum,vertical);
+        }
+        if(minimum==int.MaxValue)minimum=maximum=0;
+    }
+    private void ApplyCollisionDesired()
+    {
+        foreach(var pair in _entries)
+        {
+            bool want=_collisionDesired.Contains(pair.Key);
+            Entry entry=pair.Value;
+            if(!entry.Ready||entry.Collision==want||entry.Presenter==null)continue;
+            entry.Presenter.SetCollision(want);
+            entry.Collision=entry.Presenter.HasCollision;
+        }
+    }
+    private void PruneHistoricalDiagnostics()
+    {
+        const int maximumRecords=1024,targetRecords=768;
+        if(_diagnostics.Count<=maximumRecords)return;
+        foreach(var pair in _diagnostics)
+        {
+            if(_diagnostics.Count<=targetRecords)break;
+            if(!_entries.ContainsKey(pair.Key))_diagnostics.TryRemove(pair.Key,out _);
+        }
+    }
+    private Vector3 ChunkWorldOrigin(SmoothTerrainChunkCoordinate c)=>GlobalTransform.AffineInverse()*_geometry.CanonicalToWorld(c.AroundChunk*32,c.VerticalChunk*32,c.AcrossChunk*32);
+    internal static SmoothTerrainMeshData TransformWorker(SmoothTerrainMeshData mesh,SmoothTerrainChunkCoordinate c,RingLodGeometrySnapshot g,Transform3D inverse)
+    {
+        long aroundOrigin=c.AroundChunk*SmoothTerrainChunkSnapshot.Cells;
+        int verticalOrigin=c.VerticalChunk*SmoothTerrainChunkSnapshot.Cells;
+        int acrossOrigin=c.AcrossChunk*SmoothTerrainChunkSnapshot.Cells;
+        Vector3 origin=inverse*g.CanonicalToWorld(aroundOrigin,verticalOrigin,acrossOrigin);
+        var vertices=new Vector3[mesh.Vertices.Length];
+        var normals=new Vector3[vertices.Length];
+        Basis normalTransform=inverse.Basis.Inverse().Transposed();
+        for(int i=0;i<vertices.Length;i++)
+        {
+            Vector3 local=mesh.Vertices[i];
+            // Around coordinates exceed float's one-metre precision on the
+            // certified ring. Never add a local vertex to a float canonical
+            // origin: at the user's 28,779 km site that rounded alternate
+            // lattice rows onto each other and opened arch-facing ribbons.
+            double around=aroundOrigin+(double)local.X;
+            double vertical=verticalOrigin+(double)local.Y;
+            double acrossValue=acrossOrigin+(double)local.Z;
+            vertices[i]=inverse*g.CanonicalToWorld(around,vertical,acrossValue)-origin;
+            Vector3 aroundAxis=(g.CanonicalToWorld(around+1.0,vertical,acrossValue)-g.CanonicalToWorld(around-1.0,vertical,acrossValue)).Normalized();
+            Vector3 upAxis=(g.CanonicalToWorld(around,vertical+1.0,acrossValue)-g.CanonicalToWorld(around,vertical-1.0,acrossValue)).Normalized();
+            Vector3 acrossAxis=(g.CanonicalToWorld(around,vertical,acrossValue+1.0)-g.CanonicalToWorld(around,vertical,acrossValue-1.0)).Normalized();
+            Vector3 sourceNormal=mesh.Normals[i];
+            normals[i]=(normalTransform*(aroundAxis*sourceNormal.X+upAxis*sourceNormal.Y+acrossAxis*sourceNormal.Z)).Normalized();
+        }
+        var indices=(int[])mesh.Indices.Clone();
+        for(int i=0;i<indices.Length;i+=3)
+        {
+            Vector3 face=(vertices[indices[i+1]]-vertices[indices[i]]).Cross(vertices[indices[i+2]]-vertices[indices[i]]);
+            if(face.Dot(normals[indices[i]]+normals[indices[i+1]]+normals[indices[i+2]])>0)
+                (indices[i+1],indices[i+2])=(indices[i+2],indices[i+1]);
+        }
+        Vector3[] faces=mesh.CollisionFaces.Length==0?Array.Empty<Vector3>():indices.Select(index=>vertices[index]).ToArray();
+        return new SmoothTerrainMeshData{Vertices=vertices,Normals=normals,Materials=mesh.Materials,Indices=indices,CollisionFaces=faces};
+    }
+    private SmoothTerrainPresenter NewPresenter(){CreatedPresenterCount++;_ownedPresenters++;var p=new SmoothTerrainPresenter();AddChild(p);return p;}
+    private ShaderMaterial? CreateTerrainMaterial()
+    {
+        if (_sourceGrid == null) return null;
+        Shader? shader=GD.Load<Shader>("res://materials/voxel_ring_terrain.gdshader");
+        if(shader==null){GD.PushWarning("Smooth terrain shader could not be loaded; using vertex-color fallback.");return null;}
+        var material=new ShaderMaterial{Shader=shader};
+        material.SetShaderParameter("pilot_grass_albedo",GD.Load<Texture2D>("res://materials/third_party/voxelgame/grass_albedo.png"));
+        material.SetShaderParameter("pilot_dirt_albedo",GD.Load<Texture2D>("res://materials/third_party/voxelgame/dirt_albedo.png"));
+        material.SetShaderParameter("pilot_triplanar_enabled",_sourceGrid.UseSmoothTerrainPilotTextures);
+        material.SetShaderParameter("pilot_texture_scale",Mathf.Clamp(_sourceGrid.SmoothTerrainPilotTextureScale,.01f,2f));
+        RingAtmosphereModel.ConfigureMaterial(material,_sourceGrid.GetCanonicalRingCircumferenceMeters64()/Math.Tau);
+        global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
+        UpdateTerrainMaterial(material);
+        return material;
+    }
+    private void UpdateTerrainMaterial()=>UpdateTerrainMaterial(_terrainMaterial);
+    private void UpdateTerrainMaterial(ShaderMaterial? material)
+    {
+        if(material==null||_sourceGrid==null)return;
+        if(_sunLight==null||!GodotObject.IsInstanceValid(_sunLight))_sunLight=_sourceGrid.GetNodeOrNull<DirectionalLight3D>(_sourceGrid.RingSunLightPath);
+        material.SetShaderParameter("ring_center",_sourceGrid.GetCanonicalRingCenterWorld());
+        material.SetShaderParameter("camera_world_position",_streamingFocus?.GlobalPosition??Vector3.Zero);
+        material.SetShaderParameter("sun_direction",_sunLight?.GlobalTransform.Basis.Z.Normalized()??Vector3.Right);
+        material.SetShaderParameter("day_start_dot",_sourceGrid.RingDayStartDot);
+        material.SetShaderParameter("day_full_dot",Mathf.Max(_sourceGrid.RingDayStartDot+.001f,_sourceGrid.RingDayFullDot));
+        material.SetShaderParameter("night_tint",new Vector3(_sourceGrid.RingNightTint.R,_sourceGrid.RingNightTint.G,_sourceGrid.RingNightTint.B));
+        material.SetShaderParameter("night_direct_light_factor",_sourceGrid.RingNightDirectLightFactor);
+        material.SetShaderParameter("day_direct_light_factor",_sourceGrid.RingDayDirectLightFactor);
+        material.SetShaderParameter("shadow_floor",_sourceGrid.RingShadowFloor);
+    }
+    private void RecountReady(){ReadyRenderCount=0;ReadyCollisionCount=0;foreach(var e in _entries.Values)if(e.Ready){ReadyRenderCount++;if(e.Presenter?.HasCollision==true)ReadyCollisionCount++;}}
+    private sealed class Entry
+    {
+        private readonly object _tokenGate = new();
+        private CancellationTokenSource? _cancel;
+        public Entry(ulong generation, SmoothTerrainRevision expectedRevision, CancellationTokenSource cancel) { Generation = generation; ExpectedRevision=expectedRevision; _cancel = cancel; }
+        public ulong Generation { get; }
+        public SmoothTerrainRevision ExpectedRevision { get; }
+        public CancellationToken Token { get { lock (_tokenGate) return _cancel?.Token ?? new CancellationToken(true); } }
+        public bool RequestCancel() { lock (_tokenGate) { if(_cancel==null||_cancel.IsCancellationRequested)return false;_cancel.Cancel();return true; } }
+        public void CompleteWorkAndDisposeToken() { lock (_tokenGate) { _cancel?.Dispose(); _cancel = null; } }
+        private int _workStarted;
+        public bool WorkStarted => Volatile.Read(ref _workStarted)!=0;
+        public void MarkWorkStarted()=>Interlocked.Exchange(ref _workStarted,1);
+        private SmoothTerrainChunkSnapshot? _targetSnapshot;
+        public SmoothTerrainChunkSnapshot? TargetSnapshot { get => Volatile.Read(ref _targetSnapshot); set => Volatile.Write(ref _targetSnapshot,value); }
+        public SmoothTerrainPresenter? Presenter; public bool Ready; public bool Collision; public int Builds = 1; public int Installs;
+    }
+    private sealed class DiagnosticRecord
+    {
+        private readonly object _gate=new(); private int _schedule,_completed,_install,_cancel,_stale; private bool _resident,_ready,_render,_collision; private SmoothTerrainRevision _revision; private ulong _hash,_generation;
+        public void Scheduled(){lock(_gate)_schedule++;}
+        public void Completed(){lock(_gate)_completed++;}
+        public void Stale(){lock(_gate)_stale++;}
+        public void Cancelled(){lock(_gate)_cancel++;}
+        public void Installed(SmoothTerrainRevision revision,ulong hash,ulong generation,bool render,bool collision){lock(_gate){_install++;_revision=revision;_hash=hash;_generation=generation;_resident=true;_ready=true;_render=render;_collision=collision;}}
+        public void Current(bool resident,bool ready,bool render,bool collision){lock(_gate){_resident=resident;_ready=ready;_render=render;_collision=collision;}}
+        public ChunkDiagnostics Snapshot(){lock(_gate)return new(_schedule,_completed,_install,_cancel,_stale,_resident,_ready,_render,_collision,_revision,_hash,_generation);}
+    }
+    private readonly record struct Result(SmoothTerrainChunkCoordinate Coordinate,ulong Generation,SmoothTerrainRevision Revision,SmoothTerrainChunkSnapshot Snapshot,SmoothTerrainMeshData Mesh,ulong Hash,double WorkerMilliseconds);
+}
+public readonly record struct SmoothTerrainRuntimeMetrics(int Desired=0,int QueueDepth=0,int Pending=0,int ActiveWorkers=0,int MaxActiveWorkers=0,int Resident=0,int Ready=0,int Pool=0,int Installed=0,int StaleResults=0,int Cancelled=0,long EstimatedBytes=0,double LastWorkerMilliseconds=0,double MaxWorkerMilliseconds=0,double LastInstallMilliseconds=0,double MaxInstallMilliseconds=0);
+public partial class SmoothTerrainPresenter : Node3D
+{
+    private readonly MeshInstance3D _mesh=new(); private readonly StaticBody3D _body=new(); private readonly CollisionShape3D _shape=new();
+    public SmoothTerrainPresenter(){AddChild(_mesh);AddChild(_body);_body.AddChild(_shape);}
+    private Vector3[] _faces=Array.Empty<Vector3>();
+    private Vector3[] _vertices=Array.Empty<Vector3>();
+    private int[] _indices=Array.Empty<int>();
+    private long _retainedByteSize;
+    public bool HasRenderMesh => _mesh.Mesh != null;
+    public bool HasCollision => _shape.Shape != null;
+    public long RetainedByteSize => _retainedByteSize;
+    public int CollisionFaceExpansionCount { get; private set; }
+    private static readonly StandardMaterial3D SharedMaterial=new(){VertexColorUseAsAlbedo=true,Roughness=0.95f};
+    public void Install(SmoothTerrainMeshData data,bool collision,Material? terrainMaterial=null){_faces=data.CollisionFaces;_vertices=data.Vertices;_indices=data.Indices;if(data.Indices.Length==0){_mesh.Mesh=null;_shape.Shape=null;_retainedByteSize=0;return;}_retainedByteSize=(long)data.Vertices.Length*12+(long)data.Normals.Length*12+(long)data.Materials.Length*4+(long)data.Indices.Length*4+(long)data.CollisionFaces.Length*12;var colors=new Color[data.Materials.Length];for(int i=0;i<colors.Length;i++)colors[i]=data.Materials[i] switch{0=>new Color(0.18f,0.18f,0.20f),1=>new Color(0.34f,0.28f,0.18f),_=>new Color(0.22f,0.40f,0.16f)};var arrays=new Godot.Collections.Array();arrays.Resize((int)Mesh.ArrayType.Max);arrays[(int)Mesh.ArrayType.Vertex]=data.Vertices;arrays[(int)Mesh.ArrayType.Normal]=data.Normals;arrays[(int)Mesh.ArrayType.Color]=colors;arrays[(int)Mesh.ArrayType.Index]=data.Indices;var mesh=new ArrayMesh();mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles,arrays);_mesh.Mesh=mesh;_mesh.MaterialOverride=terrainMaterial??SharedMaterial;SetCollision(collision);}
+    public void SetCollision(bool enabled){if(enabled){if(_faces.Length==0&&_indices.Length>0){_faces=new Vector3[_indices.Length];for(int i=0;i<_indices.Length;i++)_faces[i]=_vertices[_indices[i]];_retainedByteSize+=(long)_faces.Length*12;CollisionFaceExpansionCount++;}if(_faces.Length>0){var shape=new ConcavePolygonShape3D{BackfaceCollision=true};shape.Data=_faces;_shape.Shape=shape;return;}}_shape.Shape=null;}
+    public void Reset(){Visible=false;_mesh.Mesh=null;_mesh.MaterialOverride=null;_shape.Shape=null;_faces=Array.Empty<Vector3>();_vertices=Array.Empty<Vector3>();_indices=Array.Empty<int>();_retainedByteSize=0;}
+}

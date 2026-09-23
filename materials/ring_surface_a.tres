@@ -1,0 +1,17 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://cjwueop16ovqk"]
+
+[ext_resource type="Shader" uid="uid://c6rcbyj03n5nc" path="res://materials/ring_surface_daynight.gdshader" id="1"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/base_color = Color(0.44, 0.46, 0.5, 1)
+shader_parameter/night_tint = Color(0.3, 0.4, 0.58, 1)
+shader_parameter/ring_center = Vector3(0, 0, 0)
+shader_parameter/sun_direction = Vector3(0, 1, 0)
+shader_parameter/day_start_dot = -0.04
+shader_parameter/day_full_dot = 0.2
+shader_parameter/night_brightness = 0.45
+shader_parameter/direct_light_night_factor = 0.0
+shader_parameter/roughness_value = 0.95
+shader_parameter/metallic_value = 0.05

@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cs552c6ck2lgv"
+path="res://.godot/imported/fft_mipmap.glsl-1224b378da7f21a9e4c1b1b23eecff33.res"
+
+[deps]
+
+source_file="res://third_party/godot_ocean_waves/compute/fft_mipmap.glsl"
+dest_files=["res://.godot/imported/fft_mipmap.glsl-1224b378da7f21a9e4c1b1b23eecff33.res"]
+
+[params]
+

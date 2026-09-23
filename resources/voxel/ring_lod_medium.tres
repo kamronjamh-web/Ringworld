@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="RingLodQualityProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/LOD/RingLodQualityProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+DisplayName = "Medium"
+ActiveLevelCount = 5
+Lod1OutMeters = Vector2(240, 320)
+Lod2OutMeters = Vector2(480, 640)
+Lod3OutMeters = Vector2(960, 1280)
+Lod4OutMeters = Vector2(1920, 2560)
+Lod5OutMeters = Vector2(4000, 5500)
+GlobalAroundSegments = 512
+GlobalAcrossSegments = 32
+SectorUploadsPerFrame = 3
+ConcurrentWorkers = 2
+ExpandSectorWindowsToFadeEnd = true
+UseScreenSpaceError = true
+TargetPixelError = 3.0
+TransitionFraction = 0.18
+UploadBudgetMilliseconds = 1.75

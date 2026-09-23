@@ -1,0 +1,97 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/grass_meadow_benchmark.gd" id="1_script"]
+[ext_resource type="Script" path="res://tools/GrassMeadowBenchmarkDriver.cs" id="2_driver"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial_meadow"]
+sky_top_color = Color(0.17, 0.34, 0.58, 1)
+sky_horizon_color = Color(0.67, 0.77, 0.86, 1)
+ground_bottom_color = Color(0.12, 0.16, 0.12, 1)
+ground_horizon_color = Color(0.5, 0.58, 0.52, 1)
+
+[sub_resource type="Sky" id="Sky_meadow"]
+sky_material = SubResource("SkyMaterial_meadow")
+
+[sub_resource type="Environment" id="Environment_meadow"]
+background_mode = 2
+sky = SubResource("Sky_meadow")
+ambient_light_source = 2
+ambient_light_color = Color(0.68, 0.76, 0.9, 1)
+ambient_light_energy = 0.5
+tonemap_mode = 2
+tonemap_exposure = 1.15
+glow_enabled = true
+
+[sub_resource type="StandardMaterial3D" id="GroundMaterial"]
+albedo_color = Color(0.14, 0.25, 0.06, 1)
+roughness = 1.0
+
+[sub_resource type="PlaneMesh" id="GroundMesh"]
+material = SubResource("GroundMaterial")
+size = Vector2(60, 60)
+
+[sub_resource type="StandardMaterial3D" id="PathMaterial"]
+albedo_color = Color(0.38, 0.29, 0.16, 1)
+roughness = 1.0
+
+[sub_resource type="BoxMesh" id="PathMesh"]
+material = SubResource("PathMaterial")
+size = Vector3(2, 0.08, 48)
+
+[sub_resource type="StandardMaterial3D" id="RockMaterial"]
+albedo_color = Color(0.31, 0.34, 0.31, 1)
+roughness = 0.92
+
+[sub_resource type="SphereMesh" id="RockMesh"]
+material = SubResource("RockMaterial")
+radius = 1.3
+height = 1.8
+
+[node name="GrassMeadowBenchmark" type="Node3D"]
+script = ExtResource("1_script")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_meadow")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-42, -35, 0)
+light_color = Color(1, 0.86, 0.65, 1)
+light_energy = 1.6
+shadow_enabled = true
+directional_shadow_max_distance = 80.0
+
+[node name="Ground" type="MeshInstance3D" parent="."]
+mesh = SubResource("GroundMesh")
+
+[node name="Path" type="MeshInstance3D" parent="."]
+mesh = SubResource("PathMesh")
+position = Vector3(0, 0.03, 0)
+
+[node name="RockA" type="MeshInstance3D" parent="."]
+mesh = SubResource("RockMesh")
+position = Vector3(9.5, 0.85, 6.5)
+
+[node name="RockB" type="MeshInstance3D" parent="."]
+mesh = SubResource("RockMesh")
+position = Vector3(-11, 0.85, -8)
+
+[node name="RockC" type="MeshInstance3D" parent="."]
+mesh = SubResource("RockMesh")
+position = Vector3(8, 0.7, -10)
+
+[node name="Meadow" type="Node3D" parent="."]
+script = ExtResource("2_driver")
+Density = 96.0
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(-12, 1.6, 12)
+current = true
+far = 100.0
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Status" type="Label" parent="CanvasLayer"]
+offset_left = 20.0
+offset_top = 18.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 18

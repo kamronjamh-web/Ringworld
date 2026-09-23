@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="BiomeAuthoringPreset" format=3 uid="uid://ccofdgba253el"]
+
+[ext_resource type="Script" uid="uid://dnr4qwmijbfh" path="res://scripts/Biomes/BiomeAuthoringPreset.cs" id="1_ao62x"]
+
+[resource]
+script = ExtResource("1_ao62x")
+Identity = "a5bbdce0-4270-4316-a063-18c1fb32d767"
+DisplayName = "Lush Forest"
+Temperature = 0.56
+TreeDensity = 0.6
+MinimumTreeSpacingMeters = 4.0
+TreeClustering = 1.0
+ClearingStrength = 0.95
+MapleWeight = 0.5
+FirWeight = 0.5
+PineWeight = 0.5
+MinimumTreeHeightMeters = 60.0
+MaximumTreeHeightMeters = 80.0
+GrassDensity = 2.0
+GrassHeightMeters = 4.0

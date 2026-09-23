@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b2ruxule06br"
+path="res://.godot/imported/ring_gpu_vegetation_indirect.glsl-44dbfb04789a2ed0086723574bec09bf.res"
+
+[deps]
+
+source_file="res://materials/vegetation_gpu/ring_gpu_vegetation_indirect.glsl"
+dest_files=["res://.godot/imported/ring_gpu_vegetation_indirect.glsl-44dbfb04789a2ed0086723574bec09bf.res"]
+
+[params]
+

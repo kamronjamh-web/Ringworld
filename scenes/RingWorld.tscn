@@ -1,0 +1,40 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ringworld_generator.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/gravity_controller.gd" id="2"]
+
+[node name="RingWorld" type="Node3D"]
+script = ExtResource("1")
+ring_radius = 80000.0
+ring_width = 20000.0
+segment_count = 252
+auto_segment_count_from_arc_length = true
+target_segment_arc_length = 2000.0
+traversal_time_seconds = 300.0
+auto_calculate_player_speed = false
+player_speed = 8.0
+gravity_strength = 42.0
+enable_streaming = true
+high_lod_segment_range = 32
+streaming_updates_per_second = 8.0
+build_far_ring_lod = true
+far_ring_segment_count = 1024
+far_ring_surface_offset = 256.0
+far_tint_min_distance = 20000.0
+far_tint_max_distance = 260000.0
+far_day_start_dot = -0.2
+far_day_full_dot = 0.35
+section_day_start_dot = -0.2
+section_day_full_dot = 0.35
+section_night_brightness = 0.45
+section_night_direct_light_factor = 0.0
+
+[node name="Segments" type="Node3D" parent="."]
+
+[node name="FarRing" type="Node3D" parent="."]
+
+[node name="GravityController" type="Node3D" parent="."]
+script = ExtResource("2")
+ring_radius = 80000.0
+ring_width = 20000.0
+gravity_strength = 42.0

@@ -1,0 +1,47 @@
+using System;
+using System.Collections.Generic;
+using Godot;
+
+namespace RingworldTechDemo.Terrain.Editable;
+
+public sealed class SmoothTerrainMeshData { public required Vector3[] Vertices { get; init; } public required Vector3[] Normals { get; init; } public required int[] Materials { get; init; } public required int[] Indices { get; init; } public required Vector3[] CollisionFaces { get; init; } public Color[]? BiomeTextureWeights { get; init; } }
+
+/// <summary>Managed indexed Transvoxel regular-cell reference mesher. Transition cells are deliberately Stage-2 work.</summary>
+public static class SmoothTerrainMesher
+{
+    private static readonly (int X,int Y,int Z)[] C={(0,0,0),(1,0,0),(0,1,0),(1,1,0),(0,0,1),(1,0,1),(0,1,1),(1,1,1)};
+    public static SmoothTerrainMeshData Build(SmoothTerrainChunkSnapshot s,bool buildCollisionFaces=false)
+        => Build(s, 0, 0, 0, SmoothTerrainChunkSnapshot.Cells, SmoothTerrainChunkSnapshot.Cells, SmoothTerrainChunkSnapshot.Cells, buildCollisionFaces);
+
+    /// <summary>
+    /// Builds a cell-aligned portion of a parent snapshot.  Coordinates in the
+    /// returned mesh deliberately remain parent-local: adjacent patches sample
+    /// the same lattice values at their shared boundary and can therefore be
+    /// installed under one parent transform without cracks.
+    /// </summary>
+    public static SmoothTerrainMeshData Build(SmoothTerrainChunkSnapshot s,int minimumX,int minimumY,int minimumZ,int maximumX,int maximumY,int maximumZ,bool buildCollisionFaces=false)
+    {
+        const int n=SmoothTerrainChunkSnapshot.Cells;
+        minimumX=Math.Clamp(minimumX,0,n); minimumY=Math.Clamp(minimumY,0,n); minimumZ=Math.Clamp(minimumZ,0,n);
+        maximumX=Math.Clamp(maximumX,minimumX,n); maximumY=Math.Clamp(maximumY,minimumY,n); maximumZ=Math.Clamp(maximumZ,minimumZ,n);
+        var v=new List<Vector3>();var no=new List<Vector3>();var ma=new List<int>();var ix=new List<int>();var cache=new Dictionary<(int,int,int,int,int,int),int>();
+        Span<int> local=stackalloc int[12];
+        for(int z=minimumZ;z<maximumZ;z++)for(int y=minimumY;y<maximumY;y++)for(int x=minimumX;x<maximumX;x++){
+            int code=0;for(int c=0;c<8;c++){var p=C[c];if(s.Density(x+p.X,y+p.Y,z+p.Z)<0)code|=1<<c;}if(code==0||code==255)continue;
+            int cl=SmoothTerrainRegularCellTables.Class[code], g=SmoothTerrainRegularCellTables.Geometry[cl], vc=g>>4, tc=g&15;
+            // This is strictly per-cell bookkeeping.  Heap-allocating it for
+            // every mixed marching cell dominated cave streaming allocation.
+            // The span is consumed before this iteration ends and never
+            // escapes, so stack storage is ownership-safe here.
+            for(int q=0;q<vc;q++){ushort e=SmoothTerrainRegularCellTables.Vertex[code*12+q];int a=(e&255)>>4,b=(e&255)&15;var pa=C[a];var pb=C[b];int ax=x+pa.X,ay=y+pa.Y,az=z+pa.Z,bx=x+pb.X,by=y+pb.Y,bz=z+pb.Z;var key=Key(ax,ay,az,bx,by,bz);if(!cache.TryGetValue(key,out int vi)){float da=s.Density(ax,ay,az),db=s.Density(bx,by,bz),t=da/(da-db);Vector3 p=new(ax+(bx-ax)*t,ay+(by-ay)*t,az+(bz-az)*t);vi=v.Count;cache.Add(key,vi);v.Add(p);no.Add(Gradient(s,p));ma.Add(da<0?s.Material(ax,ay,az):s.Material(bx,by,bz));}local[q]=vi;}
+            // Godot's front-face convention is clockwise.  The mathematical
+            // cross product must therefore oppose the outward density gradient
+            // or cull_back presents the terrain from inside the solid.
+            for(int t=0;t<tc;t++){int o=cl*15+t*3;int a=local[SmoothTerrainRegularCellTables.Indices[o]],b=local[SmoothTerrainRegularCellTables.Indices[o+1]],c=local[SmoothTerrainRegularCellTables.Indices[o+2]];Vector3 f=(v[b]-v[a]).Cross(v[c]-v[a]);if(f.LengthSquared()<=1e-12f)continue;if(f.Dot(no[a]+no[b]+no[c])>0)(b,c)=(c,b);ix.Add(a);ix.Add(b);ix.Add(c);}
+        }
+        Vector3[] collision=buildCollisionFaces?Expand(v,ix):Array.Empty<Vector3>();return new SmoothTerrainMeshData{Vertices=v.ToArray(),Normals=no.ToArray(),Materials=ma.ToArray(),Indices=ix.ToArray(),CollisionFaces=collision};
+    }
+    private static (int,int,int,int,int,int) Key(int ax,int ay,int az,int bx,int by,int bz)=> ax<bx||(ax==bx&&(ay<by||(ay==by&&az<=bz)))?(ax,ay,az,bx,by,bz):(bx,by,bz,ax,ay,az);
+    private static Vector3 Gradient(SmoothTerrainChunkSnapshot s,Vector3 p){int x0=Math.Clamp((int)MathF.Floor(p.X),-1,33),y0=Math.Clamp((int)MathF.Floor(p.Y),-1,33),z0=Math.Clamp((int)MathF.Floor(p.Z),-1,33);int x1=x0+1,y1=y0+1,z1=z0+1;float tx=p.X-x0,ty=p.Y-y0,tz=p.Z-z0;Vector3 g=Vector3.Zero;for(int z=0;z<2;z++)for(int y=0;y<2;y++)for(int x=0;x<2;x++){int X=x==0?x0:x1,Y=y==0?y0:y1,Z=z==0?z0:z1;float w=(x==0?1-tx:tx)*(y==0?1-ty:ty)*(z==0?1-tz:tz);g+=new Vector3(s.Density(X+1,Y,Z)-s.Density(X-1,Y,Z),s.Density(X,Y+1,Z)-s.Density(X,Y-1,Z),s.Density(X,Y,Z+1)-s.Density(X,Y,Z-1))*w;}return g.LengthSquared()>1e-12f?g.Normalized():Vector3.Up;}
+    private static Vector3[] Expand(List<Vector3> v,List<int> i){var r=new Vector3[i.Count];for(int x=0;x<i.Count;x++)r[x]=v[i[x]];return r;}
+}

@@ -1,0 +1,62 @@
+struct CGUBO {
+	vec3 light_pos;
+	float dist_limit;
+
+	vec3 pos;
+	float radius;
+
+	float atmo_alt;
+	
+	// Cloud
+	float cl_beers;
+	float cl_powder;
+	float cl_light_pen;
+	vec2 cl_threshold;
+	float cl_density_scalar;
+	float cl_layer_falloff;
+	vec3 cl_scale;
+	float cl_global_scale;
+	vec3 cl_color;
+	int cl_steps;
+	float cl_step_scalar;
+	float cl_max_step_size;
+	float cl_deband;
+	float cl_deband_scalar;
+	vec3 cl_offset;
+	float cl_wisp;
+	vec2 cl_mask_offset;
+	float cl_light_scatter;
+	float cl_wisp_scale;
+	vec3 cl_anim_pos_rate;
+	float cl_anim_detail_rate;
+	vec2 cl_anim_mask_rate;
+	float cl_anim_time;
+	float reserved_1;
+	// vec4 keeps the following frame vectors on their required std140
+	// 16-byte boundary. X is the enable flag; YZW are reserved.
+	vec4 flat_frame_control;
+	vec4 flat_frame_origin;
+	vec4 flat_frame_x;
+	vec4 flat_frame_y;
+	vec4 flat_frame_z;
+
+	// Atmo
+	vec3 atmo_rayleigh_coefs;
+	float atmo_light_absorb;
+	vec3 atmo_mie_coefs;
+	float atmo_star_glow;
+	vec3 atmo_color_star;
+	float atmo_density_falloff;
+	float atmo_sunset_start;
+	float atmo_sunset_max;
+	float atmo_density;
+	float atmo_overhead_scatter;
+	vec2 reserved_2;
+	float atmo_haze_start;
+	float atmo_haze_max;
+
+	bool atmo_enable;
+	bool cloud_enable;
+	bool cloud_atmo_light_enable;
+	float reserved_3;
+};

@@ -1,0 +1,104 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
+[application]
+
+config/name="RingworldTechDemo"
+run/main_scene="res://scenes/StartMenu.tscn"
+config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+config/icon="res://icon.svg"
+
+[autoload]
+
+WorldSession="*res://scripts/world_session.gd"
+HardwareProfile="*res://scripts/hardware_profile.gd"
+
+[debug]
+
+file_logging/log_path="user://generated/logs/godot.log"
+file_logging/max_log_files=3
+
+[display]
+
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+window/size/window_width_override=1600
+window/size/window_height_override=900
+
+[dotnet]
+
+project/assembly_name="RingworldTechDemo"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/SunshineClouds2/plugin.cfg", "res://addons/biome_workshop/plugin.cfg")
+
+[rendering]
+
+lights_and_shadows/directional_shadow/size=8192
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=0
+environment/ssao/blur_passes=1
+environment/ssao/fadeout_from=80.0
+environment/ssao/fadeout_to=350.0
+environment/screen_space_reflection/half_size=false
+limits/global_shader_variables/buffer_size=131072
+environment/volumetric_fog/volume_size=96
+environment/volumetric_fog/volume_depth=80
+environment/defaults/default_clear_color=Color(0.01, 0.01, 0.015, 1)
+anti_aliasing/quality/screen_space_aa=1
+occlusion_culling/use_occlusion_culling=true
+environment/screen_space_reflection/roughness_quality=2
+
+[shader_globals]
+
+ringworld_solar_visibility={
+"type": "float",
+"value": 1.0
+}
+ring_local_wind_enabled={
+"type": "float",
+"value": 0.0
+}
+ring_local_wind_vector={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_local_wind_wave={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_local_wind_center={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+ring_local_wind_axis={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+ring_grass_terrain_coverage_enabled={
+"type": "float",
+"value": 1.0
+}
+ring_grass_terrain_coverage_start_meters={
+"type": "float",
+"value": 200.0
+}
+ring_grass_terrain_coverage_end_meters={
+"type": "float",
+"value": 700.0
+}
+ring_grass_terrain_coverage_strength={
+"type": "float",
+"value": 0.45
+}

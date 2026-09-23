@@ -1,0 +1,46 @@
+[gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_br3u8"]
+
+[resource]
+script = ExtResource("1_br3u8")
+Overrides = {
+"AnvilRadiusMultiplier": 2.7,
+"BlurPower": 0.7,
+"BlurQuality": 1,
+"CastCloudShadows": true,
+"CloudAmbientMultiplier": 1.0,
+"CloudCoverageBias": -0.09,
+"CloudDensityMultiplier": 1.0,
+"CloudDirectLightMultiplier": 1.0,
+"CloudLodBias": 2.0,
+"CloudRenderingEnabled": true,
+"CloudResolutionScale": 0,
+"CloudSharpness": 0.49,
+"CloudWindMultiplier": 3.0,
+"DayCloudAmbientColor": Color(0.93, 0.93, 0.93, 1),
+"DitherSpeed": 0.0,
+"FastReconstruction": false,
+"GpuFarShadowMapResolution": 256,
+"GpuFarShadowRadiusMeters": 95000.0,
+"GpuFarShadowUpdatesPerSecond": 5.0,
+"GpuNearShadowMapResolution": 1024,
+"GpuNearShadowRadiusMeters": 25000.0,
+"GpuNearShadowUpdatesPerSecond": 9.5,
+"GpuShadowVerticalSamples": 16,
+"HandoffEndMeters": 50000.0,
+"HandoffStartMeters": 35500.0,
+"LightingSteps": 8,
+"LightingTravelKm": 7.3,
+"MaxStepDistanceMeters": 521.0,
+"MinStepDistanceMeters": 500.0,
+"MovingHistoryWeight": 0.95,
+"NaturalCloudTopAltitudeMeters": 6050.0,
+"NightCloudAmbientColor": Color(0, 0, 0, 1),
+"RayStartJitterStrength": 1.0,
+"RaymarchSteps": 256,
+"StormAmbientOcclusionStrength": 0.73,
+"StormFrontCloudBaseAltitudeMeters": 500.0,
+"StormPillarRadiusMeters": 4500.0,
+"StormSculptStrength": 1.0
+}

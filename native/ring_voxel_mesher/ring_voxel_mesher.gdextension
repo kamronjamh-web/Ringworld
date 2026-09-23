@@ -1,0 +1,10 @@
+[configuration]
+
+entry_symbol = "ring_voxel_mesher_library_init"
+compatibility_minimum = "4.3"
+reloadable = false
+
+[libraries]
+
+windows.debug.x86_64 = "res://native/ring_voxel_mesher/bin/windows/ring_voxel_mesher.dll"
+windows.release.x86_64 = "res://native/ring_voxel_mesher/bin/windows/ring_voxel_mesher.dll"

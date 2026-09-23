@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="RingLodQualityProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/LOD/RingLodQualityProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+DisplayName = "Ultra / Video"
+ActiveLevelCount = 8
+Lod1OutMeters = Vector2(650, 800)
+Lod2OutMeters = Vector2(1500, 1900)
+Lod3OutMeters = Vector2(3500, 4400)
+Lod4OutMeters = Vector2(8000, 10000)
+Lod5OutMeters = Vector2(18000, 22000)
+Lod6OutMeters = Vector2(38000, 46000)
+Lod7OutMeters = Vector2(75000, 90000)
+Lod8OutMeters = Vector2(140000, 180000)
+GlobalAroundSegments = 3072
+GlobalAcrossSegments = 192
+SectorUploadsPerFrame = 8
+ConcurrentWorkers = 16
+ExpandSectorWindowsToFadeEnd = true
+UseScreenSpaceError = true
+TargetPixelError = 0.85
+TransitionFraction = 0.12
+UploadBudgetMilliseconds = 6.0

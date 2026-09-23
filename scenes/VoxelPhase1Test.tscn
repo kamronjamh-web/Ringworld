@@ -1,0 +1,42 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/Phase1/VoxelChunkNode.cs" id="1"]
+[ext_resource type="Script" path="res://scripts/Voxel/Phase1/VoxelEditController.cs" id="2"]
+[ext_resource type="Resource" path="res://materials/voxel_block_color_map_default.tres" id="3"]
+
+[sub_resource type="Environment" id="1"]
+background_mode = 1
+background_color = Color(0.09, 0.11, 0.14, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.76, 0.79, 0.83, 1)
+ambient_light_energy = 0.65
+
+[node name="VoxelPhase1Test" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.9063078, -0.3659981, 0.2113091, 0, 0.4999999, 0.86602545, -0.4226183, -0.78488564, 0.4531538, 0, 0, 0)
+light_energy = 2.0
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(16, 21, 48)
+rotation_degrees = Vector3(-18, 0, 0)
+current = true
+near = 0.03
+far = 500.0
+
+[node name="VoxelChunk" type="Node3D" parent="."]
+script = ExtResource("1")
+GenerateOnReady = true
+InitialSolidHeight = 10
+BlockColorMap = ExtResource("3")
+
+[node name="VoxelEditController" type="Node3D" parent="."]
+script = ExtResource("2")
+CameraPath = NodePath("../Camera3D")
+ChunkPath = NodePath("../VoxelChunk")
+MaxEditDistance = 64.0
+PlaceBlockType = 4

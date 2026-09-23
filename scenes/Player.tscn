@@ -1,0 +1,26 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/player_controller.gd" id="1"]
+
+[sub_resource type="CapsuleShape3D" id="1"]
+radius = 0.45
+height = 1.4
+
+[node name="Player" type="CharacterBody3D"]
+script = ExtResource("1")
+gravity_controller_path = NodePath("../RingWorld/GravityController")
+debug_label_path = NodePath("../DebugUI/DebugLabel")
+position = Vector3(0, 0, 0)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+position = Vector3(0, 0.9, 0)
+shape = SubResource("1")
+
+[node name="Head" type="Node3D" parent="."]
+position = Vector3(0, 1.55, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Head"]
+current = true
+fov = 80.0
+near = 0.25
+far = 300000.0

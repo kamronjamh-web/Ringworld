@@ -1,0 +1,47 @@
+[gd_scene format=3 uid="uid://ceors61g4w1ru"]
+
+[ext_resource type="Script" uid="uid://bjml65phhgj4w" path="res://scripts/Tools/TreeAssetPreview.gd" id="1_script"]
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_mode = 1
+background_color = Color(0.18, 0.25, 0.34, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.72, 0.8, 0.9, 1)
+ambient_light_energy = 0.8
+tonemap_mode = 2
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_ground"]
+size = Vector2(40, 40)
+
+[node name="TreeAssetPreview" type="Node3D" unique_id=1822751949]
+script = ExtResource("1_script")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1499823572]
+environment = SubResource("Environment_preview")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=616284845]
+transform = Transform3D(0.88294756, 0.36994863, -0.2890356, 0, 0.6156615, 0.7880107, 0.46947157, -0.6957722, 0.5435968, 0, 0, 0)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="Ground" type="MeshInstance3D" parent="." unique_id=1006580390]
+mesh = SubResource("PlaneMesh_ground")
+
+[node name="CameraTarget" type="Node3D" parent="." unique_id=1709304528]
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=191094252]
+current = true
+far = 500.0
+
+[node name="Specimens" type="Node3D" parent="." unique_id=1873176352]
+
+[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=2108929845]
+
+[node name="Status" type="Label" parent="CanvasLayer" unique_id=722389669]
+offset_left = 24.0
+offset_top = 24.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 1)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 18

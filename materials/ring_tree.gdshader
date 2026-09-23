@@ -1,0 +1,82 @@
+shader_type spatial;
+render_mode cull_disabled, depth_draw_opaque;
+
+uniform bool use_albedo_texture = false;
+uniform sampler2D tree_albedo_texture : source_color, filter_nearest_mipmap_anisotropic, repeat_disable;
+uniform vec3 tree_tint : source_color = vec3(1.0);
+uniform float cloud_shadow_albedo_strength : hint_range(0.0, 1.0) = 0.34;
+uniform float cloud_shadow_ao_strength : hint_range(0.0, 1.0) = 0.72;
+uniform vec3 ring_center = vec3(0.0);
+uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
+uniform float day_start_dot = -0.2;
+uniform float day_full_dot = 0.35;
+uniform vec3 night_tint = vec3(0.30, 0.45, 0.70);
+uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
+uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
+uniform bool vegetation_wind_enabled = true;
+
+#include "res://materials/ring_cloud_shadow.gdshaderinc"
+#include "res://materials/celestial_lighting.gdshaderinc"
+#include "res://materials/ring_local_wind.gdshaderinc"
+
+varying float tree_cloud_occlusion;
+varying float tree_day_factor;
+
+void vertex() {
+	vec3 tree_root_world = MODEL_MATRIX[3].xyz;
+	vec3 tree_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	if (vegetation_wind_enabled) {
+		float root_weight = clamp(VERTEX.y, 0.0, 1.0);
+		float instance_height = length(MODEL_MATRIX[1]);
+		vec3 displacement = ring_local_wind_displacement(tree_root_world, root_weight, instance_height);
+		mat3 basis = mat3(MODEL_MATRIX);
+		vec3 squared_lengths = max(vec3(0.000001), vec3(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2])));
+		VERTEX += transpose(basis) * displacement / squared_lengths;
+		tree_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	}
+	// A cloud-map texel covers tens of metres, so evaluating per tree vertex is
+	// visually equivalent to per fragment while avoiding foliage overdraw cost.
+	tree_cloud_occlusion = sample_local_cloud_shadow(tree_world_position);
+	vec3 radial = tree_world_position - ring_center;
+	radial.y = 0.0;
+	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
+	tree_day_factor = ringworld_effective_solar_day(smoothstep(
+		day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
+}
+
+void fragment() {
+	vec3 sampled_color = use_albedo_texture
+		? texture(tree_albedo_texture, UV).rgb
+		: vec3(1.0);
+	// Fade the daylight cloud term with solar visibility so a retained cloud
+	// map cannot dim nighttime or total-eclipse ambient/planet lighting.
+	float cloud_occlusion = tree_cloud_occlusion * tree_day_factor;
+	ALBEDO = sampled_color * tree_tint * mix(night_tint, vec3(1.0), tree_day_factor)
+		* (1.0 - cloud_occlusion * cloud_shadow_albedo_strength);
+	ROUGHNESS = 0.92;
+	SPECULAR = 0.04;
+	METALLIC = 0.0;
+	AO = 1.0 - cloud_occlusion * cloud_shadow_ao_strength;
+	// AO handles the daytime ambient term. Direct solar cloud attenuation is
+	// handled in light(), avoiding an extra AO multiplier on all direct lights.
+	AO_LIGHT_AFFECT = 0.0;
+}
+
+void light() {
+	float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
+	// Only the star light follows the ring terminator/eclipses. Other directional
+	// lights are moon/planet fill and local lights remain available at night.
+	vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
+	float primary_sun_weight = LIGHT_IS_DIRECTIONAL
+		? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
+		: 0.0;
+	float sun_direct = mix(night_direct_light_factor, day_direct_light_factor, tree_day_factor);
+	float direct_visibility = mix(1.0, sun_direct, primary_sun_weight);
+	float cloud_visibility = LIGHT_IS_DIRECTIONAL
+		? 1.0 - tree_cloud_occlusion * tree_day_factor
+		: 1.0;
+	// LIGHT_COLOR includes Godot's PI scaling. Divide it back out for a matte,
+	// bounded Lambert response while retaining engine ambient and non-sun lights.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * ATTENUATION
+		* direct_visibility * mix(1.0, cloud_visibility, primary_sun_weight);
+}

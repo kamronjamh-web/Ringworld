@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="GasGiantConfiguration" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Celestial/GasGiantConfiguration.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Enabled = true
+RadiusKm = 70000.0
+DistanceKm = 136610.390625
+OrbitSeconds = 28187.36649295002
+GrazingMissDegrees = 10.87182510946549
+InitialPhaseDegrees = 180.0
+SeasonMissAmplitudeDegrees = 0.0
+SeasonSeconds = 0.0
+SeasonPhaseDegrees = 0.0
+MassKg = 1.898e+27
+VisualSeedOffset = 0
+AxialTiltDegrees = 3.13
+RotationPeriodSeconds = 35730.0

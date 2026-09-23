@@ -1,0 +1,47 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/Phase2/VoxelChunkGridManager.cs" id="1"]
+[ext_resource type="Resource" path="res://materials/voxel_block_color_map_default.tres" id="2"]
+[ext_resource type="Script" path="res://scripts/Voxel/Phase2/VoxelGridEditController.cs" id="3"]
+
+[sub_resource type="Environment" id="1"]
+background_mode = 1
+background_color = Color(0.07, 0.09, 0.13, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.76, 0.79, 0.83, 1)
+ambient_light_energy = 0.65
+
+[node name="VoxelPhase2GridTest" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.9063078, -0.3659981, 0.2113091, 0, 0.4999999, 0.86602545, -0.4226183, -0.78488564, 0.4531538, 0, 0, 0)
+light_energy = 2.0
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(16, 45, 120)
+rotation_degrees = Vector3(-17, 0, 0)
+current = true
+near = 0.03
+far = 1000.0
+
+[node name="ChunkGridManager" type="Node3D" parent="."]
+script = ExtResource("1")
+BuildOnReady = true
+ChunkRadiusAround = 1
+ChunkRadiusAcross = 1
+InitialSolidHeight = 10
+BlockColorMap = ExtResource("2")
+UseDebouncedRebuildQueue = true
+RebuildDebounceSeconds = 0.04
+MaxQueuedRebuildsPerFrame = 2
+
+[node name="GridEditController" type="Node3D" parent="."]
+script = ExtResource("3")
+CameraPath = NodePath("../Camera3D")
+GridManagerPath = NodePath("../ChunkGridManager")
+MaxEditDistance = 128.0
+PlaceBlockType = 4

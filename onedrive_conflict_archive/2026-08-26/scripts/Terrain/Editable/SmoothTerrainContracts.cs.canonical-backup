@@ -1,0 +1,334 @@
+using System;
+using System.Collections.Generic;
+using Godot;
+using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.Phase3;
+
+namespace RingworldTechDemo.Terrain.Editable;
+
+/// <summary>Immutable command format for the replacement natural-terrain edit journal.</summary>
+public readonly record struct SmoothTerrainEditCommand(
+    int Version,
+    ulong CommandId,
+    long Sequence,
+    bool AddsMatter,
+    long Around,
+    int Vertical,
+    int Across,
+    float Radius,
+    int Material)
+{
+    public const int CurrentVersion = 1;
+    public bool IsValid => Version == CurrentVersion && Sequence >= 0 && float.IsFinite(Radius) && Radius > 0.0f && Material >= 0;
+}
+
+/// <summary>Natural-only material classes. Construction is intentionally absent.</summary>
+public enum SmoothTerrainMaterial { Bedrock = 0, Rock = 1, Soil = 2 }
+public readonly record struct SmoothTerrainRevision(ulong Baseline, ulong Edits)
+{
+    public ulong Value => Mix(Baseline, Edits);
+    private static ulong Mix(ulong a, ulong b) { unchecked { return (a ^ 0x9E3779B97F4A7C15UL) * 1099511628211UL ^ b; } }
+}
+
+/// <summary>Locale-independent FNV-1a identity for a fully transformed mesh result.</summary>
+public static class SmoothTerrainMeshHash
+{
+    public static ulong Compute(SmoothTerrainMeshData mesh)
+    {
+        const ulong offset = 14695981039346656037UL, prime = 1099511628211UL;
+        ulong hash = offset;
+        void Add(int value) { unchecked { hash ^= (uint)value; hash *= prime; } }
+        foreach (Vector3 v in mesh.Vertices) { Add(BitConverter.SingleToInt32Bits(v.X)); Add(BitConverter.SingleToInt32Bits(v.Y)); Add(BitConverter.SingleToInt32Bits(v.Z)); }
+        foreach (Vector3 n in mesh.Normals) { Add(BitConverter.SingleToInt32Bits(n.X)); Add(BitConverter.SingleToInt32Bits(n.Y)); Add(BitConverter.SingleToInt32Bits(n.Z)); }
+        foreach (int m in mesh.Materials) Add(m);
+        foreach (int i in mesh.Indices) Add(i);
+        foreach (Vector3 f in mesh.CollisionFaces) { Add(BitConverter.SingleToInt32Bits(f.X)); Add(BitConverter.SingleToInt32Bits(f.Y)); Add(BitConverter.SingleToInt32Bits(f.Z)); }
+        return hash;
+    }
+}
+
+public readonly record struct SmoothTerrainChunkCoordinate(long AroundChunk, int VerticalChunk, int AcrossChunk)
+{
+    public const int Cells = 32;
+    public RingTerrainSampleCoordinate Origin => new(AroundChunk * Cells, VerticalChunk * Cells, AcrossChunk * Cells);
+}
+
+public readonly record struct SmoothTerrainSample(float Density, int Material, ulong Revision);
+
+/// <summary>
+/// Immutable 32-cell snapshot. Samples run from -2 through Cells + 2 on every
+/// axis, allowing central differences at every lattice point and ghost edge
+/// used by the regular-cell mesher.
+/// </summary>
+public sealed class SmoothTerrainChunkSnapshot
+{
+    public const int Cells = 32;
+    public const int Halo = 2;
+    public const int SampleCount = Cells + 1 + Halo * 2;
+    private readonly float[] _densities;
+    private readonly int[] _materials;
+
+    public SmoothTerrainChunkSnapshot(SmoothTerrainChunkCoordinate coordinate, SmoothTerrainRevision revision, float[] densities, int[] materials)
+        : this(coordinate, revision, densities, materials, takeOwnership: false)
+    {
+    }
+
+    private SmoothTerrainChunkSnapshot(SmoothTerrainChunkCoordinate coordinate, SmoothTerrainRevision revision, float[] densities, int[] materials, bool takeOwnership)
+    {
+        if (densities.Length != SampleCount * SampleCount * SampleCount || materials.Length != densities.Length)
+            throw new ArgumentException("Snapshot arrays must include the complete 37^3 lattice.");
+        Coordinate = coordinate;
+        Revision = revision;
+        _densities = takeOwnership ? densities : (float[])densities.Clone();
+        _materials = takeOwnership ? materials : (int[])materials.Clone();
+    }
+    public SmoothTerrainChunkCoordinate Coordinate { get; }
+    public SmoothTerrainRevision Revision { get; }
+    public ReadOnlySpan<float> Densities => _densities;
+    public ReadOnlySpan<int> Materials => _materials;
+    public float Density(int x, int y, int z) => _densities[Index(x, y, z)];
+    public int Material(int x, int y, int z) => _materials[Index(x, y, z)];
+    public static int Index(int x, int y, int z) => (z + Halo) * SampleCount * SampleCount + (y + Halo) * SampleCount + x + Halo;
+    internal static SmoothTerrainChunkSnapshot FromOwnedArrays(SmoothTerrainChunkCoordinate coordinate, SmoothTerrainRevision revision, float[] densities, int[] materials)
+        => new(coordinate, revision, densities, materials, takeOwnership: true);
+}
+
+/// <summary>Read-only baseline used by snapshot capture. RingTerrainSampler is adapted below.</summary>
+public interface ISmoothTerrainBaseline
+{
+    long AroundLength { get; }
+    int AcrossWidth { get; }
+    ulong Revision { get; }
+    SmoothTerrainSample Sample(long around, int vertical, int across);
+}
+
+public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
+{
+    private readonly RingTerrainSampler _sampler;
+    public RingTerrainSmoothBaseline(RingTerrainSampler sampler) => _sampler = sampler;
+    public long AroundLength => _sampler.AroundRingVoxelLength;
+    public int AcrossWidth => _sampler.RingAcrossWidthMeters;
+    public ulong Revision => _sampler.TerrainDefinitionHash;
+    public SmoothTerrainSample Sample(long around, int vertical, int across)
+    {
+        long canonicalAround = RingCoordMath.WrapAround(around, AroundLength);
+        if (across < 0 || across > AcrossWidth) return new SmoothTerrainSample(1.0f, (int)SmoothTerrainMaterial.Rock, Revision);
+        float surface = _sampler.GetSmoothSurfaceHeight(canonicalAround, across);
+        return SampleWithKnownSurface(canonicalAround, vertical, across, surface);
+    }
+    public float GetSmoothSurfaceHeight(long around, int across) =>
+        _sampler.GetSmoothSurfaceHeight(RingCoordMath.WrapAround(around, AroundLength), across);
+    public SmoothTerrainSample SampleWithKnownSurface(long around, int vertical, int across, float surface)
+    {
+        long canonicalAround = RingCoordMath.WrapAround(around, AroundLength);
+        if (across < 0 || across > AcrossWidth) return new SmoothTerrainSample(1.0f, (int)SmoothTerrainMaterial.Rock, Revision);
+        float density = _sampler.SampleNaturalTerrainDensityWithSurface(canonicalAround, vertical, across, surface);
+        int material = vertical <= _sampler.BedrockY ? (int)SmoothTerrainMaterial.Bedrock
+            : density < 0.0f && vertical >= surface - _sampler.SoilDepthVoxels
+                ? (int)SmoothTerrainMaterial.Soil : (int)SmoothTerrainMaterial.Rock;
+        return new SmoothTerrainSample(density, material, Revision);
+    }
+}
+
+/// <summary>Deterministic immutable stamp set with a bounded uniform-grid query.</summary>
+public sealed class SmoothTerrainEditSnapshot
+{
+    private const int BucketSize = 32;
+    public const float MaximumStampRadiusMeters = 256.0f;
+    private readonly SmoothTerrainEditCommand[] _ordered;
+    private readonly Dictionary<(long X, int Y, int Z), int[]> _buckets;
+    private readonly long _aroundLength;
+    public SmoothTerrainEditSnapshot(IEnumerable<SmoothTerrainEditCommand> commands, ulong revision, long aroundLength)
+    {
+        if (aroundLength <= 0) throw new ArgumentOutOfRangeException(nameof(aroundLength));
+        _aroundLength = aroundLength;
+        Revision = revision;
+        var sorted = new List<SmoothTerrainEditCommand>();
+        var ids = new HashSet<ulong>();
+        foreach (SmoothTerrainEditCommand command in commands)
+        {
+            if (!command.IsValid
+                || command.Radius > MaximumStampRadiusMeters
+                || command.Radius > aroundLength * 0.5f
+                || !Enum.IsDefined((SmoothTerrainMaterial)command.Material))
+                throw new ArgumentException("Invalid smooth terrain stamp.", nameof(commands));
+            if (!ids.Add(command.CommandId)) throw new ArgumentException("Duplicate smooth terrain command identity.", nameof(commands));
+            sorted.Add(command with { Around = RingCoordMath.WrapAround(command.Around, aroundLength) });
+        }
+        sorted.Sort(static (a, b) => a.Sequence != b.Sequence ? a.Sequence.CompareTo(b.Sequence) : a.CommandId.CompareTo(b.CommandId));
+        _ordered = sorted.ToArray();
+        var mutable = new Dictionary<(long, int, int), List<int>>();
+        for (int i = 0; i < _ordered.Length; i++)
+        {
+            SmoothTerrainEditCommand s = _ordered[i]; int r = (int)MathF.Ceiling(s.Radius);
+            AddToBuckets(s.Around);
+            // Mirror only the small edge range so a stamp crossing the ring seam
+            // is found from either canonical side without a global scan.
+            if (s.Around - r < 0) AddToBuckets(s.Around + aroundLength);
+            if (s.Around + r >= aroundLength) AddToBuckets(s.Around - aroundLength);
+            void AddToBuckets(long centerAround)
+            {
+                long minX = FloorDiv(centerAround - r); long maxX = FloorDiv(centerAround + r);
+                int minY = FloorDiv(s.Vertical - r); int maxY = FloorDiv(s.Vertical + r);
+                int minZ = FloorDiv(s.Across - r); int maxZ = FloorDiv(s.Across + r);
+                for (long x = minX; x <= maxX; x++) for (int y = minY; y <= maxY; y++) for (int z = minZ; z <= maxZ; z++)
+                    (mutable.TryGetValue((x, y, z), out List<int>? list) ? list : mutable[(x, y, z)] = new List<int>()).Add(i);
+            }
+        }
+        _buckets = new Dictionary<(long, int, int), int[]>(mutable.Count);
+        foreach (var pair in mutable)
+        {
+            // Commands are inserted in sorted index order. Mirroring at the ring
+            // seam can insert the same index twice into one bucket, so compact
+            // adjacent duplicates once when the immutable snapshot is built.
+            var compact = new List<int>(pair.Value.Count);
+            int previous = -1;
+            foreach (int index in pair.Value)
+            {
+                if (index == previous) continue;
+                compact.Add(index);
+                previous = index;
+            }
+            _buckets.Add(pair.Key, compact.ToArray());
+        }
+    }
+    public ulong Revision { get; }
+    public bool IsEmpty => _ordered.Length == 0;
+    public ReadOnlySpan<SmoothTerrainEditCommand> Ordered => _ordered;
+    public void Query(long around, int vertical, int across, List<SmoothTerrainEditCommand> output)
+    {
+        output.Clear();
+        around = RingCoordMath.WrapAround(around, _aroundLength);
+        if (_buckets.TryGetValue((FloorDiv(around), FloorDiv(vertical), FloorDiv(across)), out int[]? indices))
+            foreach (int index in indices) output.Add(_ordered[index]);
+    }
+    internal static bool CommandOccupiesSampleBucket(SmoothTerrainEditCommand command,long around,int vertical,int across,long aroundLength)
+    {
+        command=command with { Around=RingCoordMath.WrapAround(command.Around,aroundLength) };
+        around=RingCoordMath.WrapAround(around,aroundLength);
+        int radius=(int)MathF.Ceiling(command.Radius);
+        int y=FloorDiv(vertical),z=FloorDiv(across);
+        if(y<FloorDiv(command.Vertical-radius)||y>FloorDiv(command.Vertical+radius)
+            ||z<FloorDiv(command.Across-radius)||z>FloorDiv(command.Across+radius))return false;
+        long x=FloorDiv(around);
+        if(InRange(command.Around))return true;
+        if(command.Around-radius<0&&InRange(command.Around+aroundLength))return true;
+        return command.Around+radius>=aroundLength&&InRange(command.Around-aroundLength);
+        bool InRange(long center)=>x>=FloorDiv(center-radius)&&x<=FloorDiv(center+radius);
+    }
+    /// <summary>Composes this immutable ordered journal at a continuous canonical point.</summary>
+    public SmoothTerrainSample SampleContinuous(ISmoothTerrainBaseline baseline,double around,double vertical,double across,List<SmoothTerrainEditCommand> scratch)
+    {
+        long x0=(long)Math.Floor(around);int y0=(int)Math.Floor(vertical),z0=(int)Math.Floor(across);float fx=(float)(around-x0),fy=(float)(vertical-y0),fz=(float)(across-z0);float density=0;int material=(int)SmoothTerrainMaterial.Rock;float best=float.NegativeInfinity;
+        for(int z=0;z<2;z++)for(int y=0;y<2;y++)for(int x=0;x<2;x++){float w=(x==0?1-fx:fx)*(y==0?1-fy:fy)*(z==0?1-fz:fz);var s=baseline.Sample(RingCoordMath.WrapAround(x0+x,baseline.AroundLength),y0+y,z0+z);density+=s.Density*w;if(w>best){best=w;material=s.Material;}}
+        Query(RingCoordMath.WrapAround(x0,baseline.AroundLength),y0,z0,scratch);
+        foreach(var stamp in scratch){double dx=around-stamp.Around;dx%=baseline.AroundLength;if(dx>baseline.AroundLength*.5)dx-=baseline.AroundLength;if(dx<-baseline.AroundLength*.5)dx+=baseline.AroundLength;float sdf=MathF.Sqrt((float)(dx*dx)+(float)((vertical-stamp.Vertical)*(vertical-stamp.Vertical))+(float)((across-stamp.Across)*(across-stamp.Across)))-stamp.Radius;if(stamp.AddsMatter){if(sdf<density){density=sdf;material=stamp.Material;}}else density=MathF.Max(density,-sdf);}
+        return new SmoothTerrainSample(density,material,Revision);
+    }
+    private static long FloorDiv(long value) => value >= 0 ? value / BucketSize : (value - (BucketSize - 1)) / BucketSize;
+    private static int FloorDiv(int value) => value >= 0 ? value / BucketSize : (value - (BucketSize - 1)) / BucketSize;
+}
+
+public static class SmoothTerrainSnapshotCapture
+{
+    public static SmoothTerrainChunkSnapshot Capture(SmoothTerrainChunkCoordinate coordinate, ISmoothTerrainBaseline baseline, SmoothTerrainEditSnapshot edits)
+    {
+        int total = SmoothTerrainChunkSnapshot.SampleCount * SmoothTerrainChunkSnapshot.SampleCount * SmoothTerrainChunkSnapshot.SampleCount;
+        var density = new float[total]; var materials = new int[total]; var candidates = new List<SmoothTerrainEditCommand>();
+        RingTerrainSampleCoordinate origin = coordinate.Origin;
+        // The production baseline's macro surface depends on X/Z, never Y.
+        // Walking the snapshot by column avoids recomputing all regional noise
+        // 37 times for each column (and avoids a second surface query for soil).
+        for (int z = -SmoothTerrainChunkSnapshot.Halo; z <= SmoothTerrainChunkSnapshot.Cells + SmoothTerrainChunkSnapshot.Halo; z++)
+        for (int x = -SmoothTerrainChunkSnapshot.Halo; x <= SmoothTerrainChunkSnapshot.Cells + SmoothTerrainChunkSnapshot.Halo; x++)
+        {
+            long around = RingCoordMath.WrapAround(origin.AroundVoxel + x, baseline.AroundLength);
+            int across = origin.AcrossVoxel + z;
+            float surface = baseline is RingTerrainSmoothBaseline ring && across >= 0 && across <= baseline.AcrossWidth
+                ? ring.GetSmoothSurfaceHeight(around, across)
+                : 0.0f;
+            for (int y = -SmoothTerrainChunkSnapshot.Halo; y <= SmoothTerrainChunkSnapshot.Cells + SmoothTerrainChunkSnapshot.Halo; y++)
+            {
+                int vertical = origin.VerticalVoxel + y;
+                SmoothTerrainSample sample = baseline is RingTerrainSmoothBaseline production
+                    ? production.SampleWithKnownSurface(around, vertical, across, surface)
+                    : baseline.Sample(around, vertical, across);
+                float value = sample.Density;
+                int material = sample.Material;
+                if (!edits.IsEmpty)
+                {
+                    edits.Query(around, vertical, across, candidates);
+                    foreach (SmoothTerrainEditCommand stamp in candidates)
+                    {
+                        long dx = ShortestDelta(around, stamp.Around, baseline.AroundLength);
+                        float dy = vertical - stamp.Vertical;
+                        float dz = across - stamp.Across;
+                        float sdf = MathF.Sqrt(dx * dx + dy * dy + dz * dz) - stamp.Radius;
+                        if (stamp.AddsMatter) { if (sdf < value) { value = sdf; material = stamp.Material; } }
+                        else value = MathF.Max(value, -sdf);
+                    }
+                }
+                int index = SmoothTerrainChunkSnapshot.Index(x, y, z);
+                density[index] = value;
+                materials[index] = material;
+            }
+        }
+        return SmoothTerrainChunkSnapshot.FromOwnedArrays(coordinate, new SmoothTerrainRevision(baseline.Revision, edits.Revision), density, materials);
+    }
+
+    /// <summary>
+    /// Applies one append-ordered command to an already composed immutable
+    /// lattice. This preserves every preceding edit while avoiding another
+    /// baseline/noise capture for rapid interactive digging.
+    /// </summary>
+    public static SmoothTerrainChunkSnapshot ApplyAppendedEdit(
+        SmoothTerrainChunkSnapshot previous,
+        ISmoothTerrainBaseline baseline,
+        SmoothTerrainEditCommand command,
+        ulong editRevision)
+    {
+        if (!command.IsValid || command.Radius > SmoothTerrainEditSnapshot.MaximumStampRadiusMeters)
+            throw new ArgumentException("Invalid appended smooth terrain stamp.", nameof(command));
+        if (previous.Revision.Baseline != baseline.Revision)
+            throw new ArgumentException("The cached lattice belongs to a different terrain baseline.", nameof(previous));
+
+        float[] density = previous.Densities.ToArray();
+        int[] materials = previous.Materials.ToArray();
+        RingTerrainSampleCoordinate origin = previous.Coordinate.Origin;
+        command = command with { Around = RingCoordMath.WrapAround(command.Around, baseline.AroundLength) };
+        for (int z = -SmoothTerrainChunkSnapshot.Halo; z <= SmoothTerrainChunkSnapshot.Cells + SmoothTerrainChunkSnapshot.Halo; z++)
+        for (int y = -SmoothTerrainChunkSnapshot.Halo; y <= SmoothTerrainChunkSnapshot.Cells + SmoothTerrainChunkSnapshot.Halo; y++)
+        for (int x = -SmoothTerrainChunkSnapshot.Halo; x <= SmoothTerrainChunkSnapshot.Cells + SmoothTerrainChunkSnapshot.Halo; x++)
+        {
+            long around = RingCoordMath.WrapAround(origin.AroundVoxel + x, baseline.AroundLength);
+            int vertical = origin.VerticalVoxel + y;
+            int across = origin.AcrossVoxel + z;
+            if(!SmoothTerrainEditSnapshot.CommandOccupiesSampleBucket(command,around,vertical,across,baseline.AroundLength))continue;
+            long dx = ShortestDelta(around, command.Around, baseline.AroundLength);
+            float dy = vertical - command.Vertical;
+            float dz = across - command.Across;
+            float sdf = MathF.Sqrt(dx * dx + dy * dy + dz * dz) - command.Radius;
+            int index = SmoothTerrainChunkSnapshot.Index(x, y, z);
+            if (command.AddsMatter)
+            {
+                if (sdf < density[index])
+                {
+                    density[index] = sdf;
+                    materials[index] = command.Material;
+                }
+            }
+            else
+            {
+                density[index] = MathF.Max(density[index], -sdf);
+            }
+        }
+
+        return SmoothTerrainChunkSnapshot.FromOwnedArrays(
+            previous.Coordinate,
+            new SmoothTerrainRevision(baseline.Revision, editRevision),
+            density,
+            materials);
+    }
+
+    private static long ShortestDelta(long a, long b, long length) { long d = a - b; if (length <= 0) return d; d %= length; if (d > length / 2) d -= length; if (d < -length / 2) d += length; return d; }
+}

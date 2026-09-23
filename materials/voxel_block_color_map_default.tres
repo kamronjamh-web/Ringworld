@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="VoxelBlockColorMap" format=3 uid="uid://crx53xmidbulo"]
+
+[ext_resource type="Script" uid="uid://ggugiigbjf0d" path="res://scripts/Voxel/Phase1/VoxelBlockColorMap.cs" id="1"]
+
+[resource]
+script = ExtResource("1")

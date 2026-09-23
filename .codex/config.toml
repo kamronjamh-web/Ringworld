@@ -1,0 +1,32 @@
+# ============================================================
+# RINGWORLD CODEX MULTI-AGENT CONFIGURATION
+# ============================================================
+
+# Primary/root agent.
+# Astra owns architecture, planning, decomposition, integration,
+# and final acceptance.
+model = "gpt-6-astra"
+model_reasoning_effort = "max"
+
+# Give planning maximum reasoning as well.
+plan_mode_reasoning_effort = "max"
+
+model_reasoning_summary = "auto"
+model_verbosity = "medium"
+
+# Allow Codex to edit the project.
+sandbox_mode = "workspace-write"
+
+[agents]
+
+# Enable the multi-agent system.
+enabled = true
+
+# Enough room for investigation/review agents without allowing
+# Astra to create an unnecessarily huge swarm.
+max_concurrent_threads_per_session = 6
+
+# If Codex creates an unspecified worker, prefer Terra.
+# Important tasks should use the named profiles below instead.
+default_subagent_model = "gpt-5.6-terra"
+default_subagent_reasoning_effort = "low"

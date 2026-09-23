@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="CelestialConfiguration" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/Celestial/CelestialConfiguration.cs" id="1"]
+[ext_resource type="Resource" path="res://resources/celestial/gas_giant_default.tres" id="2"]
+
+[resource]
+script = ExtResource("1")
+RingDaySeconds = 4500.0
+RingTiltDegrees = 15.0
+NominalRingRadiusKm = 5000.0
+StarAngularRadiusDegrees = 0.265
+GameplayEclipseDarknessCap = 0.95
+DaylightStartDot = -0.2
+DaylightFullDot = 0.35
+AstronomicalTwilightElevationDegrees = -18.0
+HorizonEventElevationDegrees = -0.833
+SunriseBandDegrees = 1.5
+VisualSeed = 0
+GasGiant = ExtResource("2")

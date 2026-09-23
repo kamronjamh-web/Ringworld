@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://lluflsbi3jp3"
+path="res://.godot/imported/fft_compute_256.glsl-41df4f306f9bfb0ed7f69a8ce8086182.res"
+
+[deps]
+
+source_file="res://third_party/godot_ocean_waves/compute/fft_compute_256.glsl"
+dest_files=["res://.godot/imported/fft_compute_256.glsl-41df4f306f9bfb0ed7f69a8ce8086182.res"]
+
+[params]
+

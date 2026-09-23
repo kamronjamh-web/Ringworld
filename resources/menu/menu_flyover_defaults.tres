@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="MenuFlyoverSettings" format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/MenuFlyoverSettings.cs" id="1_br5fp"]
+
+[resource]
+script = ExtResource("1_br5fp")
+CloudResolution = 0
+CloudRayStartJitterStrength = 0.96
+CloudStationaryHistoryWeight = 0.95

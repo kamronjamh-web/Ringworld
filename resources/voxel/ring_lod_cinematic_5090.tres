@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="RingLodQualityProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/LOD/RingLodQualityProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+DisplayName = "Cinematic / RTX 5090"
+ActiveLevelCount = 8
+Lod1OutMeters = Vector2(900, 1100)
+Lod2OutMeters = Vector2(2100, 2600)
+Lod3OutMeters = Vector2(5000, 6200)
+Lod4OutMeters = Vector2(11000, 14000)
+Lod5OutMeters = Vector2(24000, 30000)
+Lod6OutMeters = Vector2(50000, 62000)
+Lod7OutMeters = Vector2(95000, 120000)
+Lod8OutMeters = Vector2(180000, 240000)
+GlobalAroundSegments = 4096
+GlobalAcrossSegments = 256
+SectorUploadsPerFrame = 12
+ConcurrentWorkers = 24
+ExpandSectorWindowsToFadeEnd = true
+UseScreenSpaceError = true
+TargetPixelError = 0.5
+TransitionFraction = 0.10
+UploadBudgetMilliseconds = 8.0

@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="RingLodQualityProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/LOD/RingLodQualityProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+DisplayName = "Desktop High"
+ActiveLevelCount = 8
+Lod1OutMeters = Vector2(500, 600)
+Lod2OutMeters = Vector2(1200, 1500)
+Lod3OutMeters = Vector2(3000, 3500)
+Lod4OutMeters = Vector2(7000, 8000)
+Lod5OutMeters = Vector2(15000, 18000)
+Lod6OutMeters = Vector2(30000, 35000)
+Lod7OutMeters = Vector2(60000, 70000)
+Lod8OutMeters = Vector2(110000, 140000)
+GlobalAroundSegments = 2048
+GlobalAcrossSegments = 128
+SectorUploadsPerFrame = 6
+ConcurrentWorkers = 8
+ExpandSectorWindowsToFadeEnd = true
+UseScreenSpaceError = true
+TargetPixelError = 1.25
+TransitionFraction = 0.14
+UploadBudgetMilliseconds = 4.0

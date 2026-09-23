@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="GameplayWaterSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/GameplayWaterSettings.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Overrides = {
+"FftCascadeCount": 2,
+"FftCrestLightingStrength": 0.35,
+"FftGeometryChoppiness": 0.75,
+"FftGeometryDistanceMeters": 1100.0,
+"FftGeometryFilterMeters": 2.0,
+"FftGeometryHeightScale": 1.0,
+"FftGeometryUpdatesPerSecond": 60.0,
+"FftDetailDistanceMeters": 1100.0,
+"FftDeepWaterWaveDepthMeters": 100.0,
+"FftLargeWaveLengthMeters": 79.0,
+"FftResolution": 128,
+"FftSmallWaveLengthMeters": 12.0,
+"FftUpdatesPerSecond": 24.0,
+"WaterAbsorptionCoefficients": Color(0.3, 0.12, 0.035, 1),
+"WaterCrestTransmissionStrength": 0.95,
+"WaterDetailFilteringStrength": 1.0,
+"WaterDistantFoamVisibility": 0.2,
+"WaterFoamPatchiness": 0.65,
+"WaterSwellVariation": 0.65,
+"WaterShallowInscatterStrength": 0.58
+}

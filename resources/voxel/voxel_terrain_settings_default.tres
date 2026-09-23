@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="VoxelTerrainSettings" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/Phase3/VoxelTerrainSettings.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Seed = 1337
+BaseSurfaceHeightVoxels = 16
+HeightAmplitudeVoxels = 12
+BaseFrequency = 0.015
+DetailAmplitudeVoxels = 4
+DetailFrequency = 0.06
+SoilDepthVoxels = 3
+BedrockY = 0

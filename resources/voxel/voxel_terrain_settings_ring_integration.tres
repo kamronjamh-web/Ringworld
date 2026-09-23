@@ -1,0 +1,43 @@
+[gd_resource type="Resource" script_class="VoxelTerrainSettings" format=3 uid="uid://o7begkkb7atw"]
+
+[ext_resource type="Script" uid="uid://cueymptppwnoo" path="res://scripts/Voxel/Phase3/VoxelTerrainSettings.cs" id="1"]
+[ext_resource type="Resource" uid="uid://bon60017jrfju" path="res://resources/voxel/terrain_biome_catalog_default.tres" id="2"]
+[ext_resource type="Script" uid="uid://qvpdu1syt3c5" path="res://scripts/Voxel/Phase3/CaveGenerationSettings.cs" id="3"]
+
+[sub_resource type="Resource" id="CaveGenerationSettings_default"]
+script = ExtResource("3")
+
+[resource]
+script = ExtResource("1")
+DesignedCaveGenerationContractSettings = SubResource("CaveGenerationSettings_default")
+BiomeCatalog = ExtResource("2")
+BaseFrequency = 0.0008
+DetailFrequency = 0.006
+BedrockY = -256
+ContinentalFrequency = 3.5e-06
+ErosionFrequency = 1.2e-05
+RidgeFrequency = 8e-06
+TemperatureFrequency = 2.5e-06
+MoistureFrequency = 5e-06
+CoastalBeachStrength = 0.82
+ContinentalContrast = 1.45
+MountainMaskStart = 0.23
+MountainMaskFull = 0.6
+MountainWarpFrequency = 4e-06
+MountainWarpDistanceMeters = 16000.0
+MountainBeltBroadness = 0.5
+ErodedMountainStrength = 0.5
+ValleyFrequency = 1.4e-05
+ValleyDepthVoxels = 340.0
+ValleyNarrowness = 7.6
+EscarpmentFrequency = 1.1e-05
+EscarpmentHeightMeters = 420.0
+EscarpmentSharpness = 0.88
+LakeCellSizeMeters = 128000
+LakeSpawnChance = 0.22
+LakeMinimumRadiusMeters = 6000.0
+LakeMaximumRadiusMeters = 24000.0
+RiverFrequency = 1.2e-05
+RiverChannelThreshold = 0.055
+RiverBankSharpness = 2.4
+RiverMinimumMoisture = 0.38

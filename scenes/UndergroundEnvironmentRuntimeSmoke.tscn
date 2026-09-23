@@ -1,0 +1,10 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/Integration/UndergroundEnvironmentRuntimeSmoke.cs" id="1"]
+[ext_resource type="Script" path="res://tools/underground_environment_lighting_smoke_test.gd" id="2"]
+
+[node name="UndergroundEnvironmentRuntimeSmoke" type="Node"]
+script = ExtResource("1")
+
+[node name="LightingProperties" type="Node" parent="."]
+script = ExtResource("2")

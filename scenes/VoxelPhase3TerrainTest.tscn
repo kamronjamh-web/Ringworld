@@ -1,0 +1,81 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/Phase2/VoxelChunkGridManager.cs" id="1"]
+[ext_resource type="Resource" path="res://materials/voxel_block_color_map_default.tres" id="2"]
+[ext_resource type="Script" path="res://scripts/Voxel/Phase2/VoxelGridEditController.cs" id="3"]
+[ext_resource type="Resource" path="res://resources/voxel/voxel_terrain_settings_default.tres" id="4"]
+[ext_resource type="Script" path="res://scripts/Voxel/Phase3/VoxelTestExplorerController.cs" id="5"]
+
+[sub_resource type="Environment" id="1"]
+background_mode = 1
+background_color = Color(0.07, 0.09, 0.13, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.76, 0.79, 0.83, 1)
+ambient_light_energy = 0.65
+
+[sub_resource type="CapsuleShape3D" id="2"]
+radius = 0.45
+height = 1.4
+
+[node name="VoxelPhase3TerrainTest" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("1")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.9063078, -0.3659981, 0.2113091, 0, 0.4999999, 0.86602545, -0.4226183, -0.78488564, 0.4531538, 0, 0, 0)
+light_energy = 2.0
+shadow_enabled = true
+
+[node name="Explorer" type="CharacterBody3D" parent="."]
+script = ExtResource("5")
+position = Vector3(32, 90, 160)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Explorer"]
+position = Vector3(0, 0.9, 0)
+shape = SubResource("2")
+
+[node name="Head" type="Node3D" parent="Explorer"]
+position = Vector3(0, 1.55, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Explorer/Head"]
+current = true
+fov = 80.0
+near = 0.03
+far = 2000.0
+
+[node name="ChunkGridManager" type="Node3D" parent="."]
+script = ExtResource("1")
+BuildOnReady = true
+ChunkRadiusAround = 2
+ChunkRadiusAcross = 2
+ChunkRadiusVertical = 0
+EnableChunkStreaming = true
+StreamingFocusPath = NodePath("../Explorer/Head/Camera3D")
+StreamingUpdateIntervalSeconds = 0.1
+StreamingVisualRadiusAround = 2
+StreamingVisualRadiusAcross = 2
+StreamingVisualRadiusVertical = 1
+StreamingCollisionRadiusAround = 1
+StreamingCollisionRadiusAcross = 1
+StreamingCollisionRadiusVertical = 0
+InitialSolidHeight = 10
+BlockColorMap = ExtResource("2")
+UseDeterministicTerrainGeneration = true
+TerrainSettings = ExtResource("4")
+EnforceExcavationLimits = true
+MinExcavationGlobalY = -256
+EnforceBedrockLayer = true
+FlatTerrainBedrockY = 0
+EnforceBuildHeightLimit = true
+MaxBuildHeightAboveSurfaceVoxels = 128
+UseDebouncedRebuildQueue = true
+RebuildDebounceSeconds = 0.04
+MaxQueuedRebuildsPerFrame = 2
+
+[node name="GridEditController" type="Node3D" parent="."]
+script = ExtResource("3")
+CameraPath = NodePath("../Explorer/Head/Camera3D")
+GridManagerPath = NodePath("../ChunkGridManager")
+MaxEditDistance = 160.0
+PlaceBlockType = 4

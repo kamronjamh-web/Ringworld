@@ -1,0 +1,39 @@
+[gd_scene format=3 uid="uid://21r6ygv83ibk"]
+
+[ext_resource type="Script" path="res://scripts/voxel_phase1/Runtime/VoxelPhase1Controller.cs" id="1"]
+[ext_resource type="Script" path="res://scripts/voxel_phase1/Runtime/Phase1FlyCamera.cs" id="2"]
+[ext_resource type="Script" path="res://scripts/voxel_phase1/Runtime/VoxelChunkNode.cs" id="3"]
+
+[sub_resource type="ProceduralSkyMaterial" id="1"]
+sky_top_color = Color(0.28, 0.4, 0.58, 1)
+sky_horizon_color = Color(0.56, 0.66, 0.78, 1)
+ground_bottom_color = Color(0.16, 0.16, 0.18, 1)
+ground_horizon_color = Color(0.2, 0.2, 0.22, 1)
+
+[sub_resource type="Sky" id="2"]
+sky_material = SubResource("1")
+
+[sub_resource type="Environment" id="3"]
+background_mode = 2
+sky = SubResource("2")
+ambient_light_source = 3
+ambient_light_energy = 0.6
+
+[node name="VoxelPhase1" type="Node3D" unique_id=1717604767]
+script = ExtResource("1")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1802733724]
+environment = SubResource("3")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1593242493]
+transform = Transform3D(0.76604444, -0.3686878, 0.52654076, 0, 0.81915206, 0.57357645, -0.6427876, -0.43938506, 0.62750685, 0, 0, 0)
+light_energy = 2.5
+
+[node name="VoxelChunk" type="Node3D" parent="." unique_id=1920536130]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -16, 0, -16)
+script = ExtResource("3")
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=410963198]
+transform = Transform3D(1, 0, 0, 0, 0.95105654, 0.309017, 0, -0.309017, 0.95105654, 16, 24, 54)
+current = true
+script = ExtResource("2")

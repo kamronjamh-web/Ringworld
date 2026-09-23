@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="LauncherDefaultConfig" format=3 uid="uid://ddcql05ys5tnr"]
+
+[ext_resource type="Script" uid="uid://cemllsqu38inp" path="res://scripts/launcher_default_config.gd" id="1"]
+
+[resource]
+script = ExtResource("1")

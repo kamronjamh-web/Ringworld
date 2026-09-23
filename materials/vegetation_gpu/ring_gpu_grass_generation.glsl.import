@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://nvurfxq0gspf"
+path="res://.godot/imported/ring_gpu_grass_generation.glsl-2ef40cabaa19572ddbf3abb18555aeb5.res"
+
+[deps]
+
+source_file="res://materials/vegetation_gpu/ring_gpu_grass_generation.glsl"
+dest_files=["res://.godot/imported/ring_gpu_grass_generation.glsl-2ef40cabaa19572ddbf3abb18555aeb5.res"]
+
+[params]
+

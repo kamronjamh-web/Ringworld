@@ -1,0 +1,56 @@
+[gd_resource type="Resource" script_class="TerrainBiomeCatalog" format=3 uid="uid://bon60017jrfju"]
+
+[ext_resource type="Script" uid="uid://5gwugxnj26fm" path="res://scripts/Voxel/Phase3/TerrainBiomeCatalog.cs" id="1_catalog"]
+[ext_resource type="Script" uid="uid://be0v1n011g386" path="res://scripts/Voxel/Phase3/TerrainBiomeDefinition.cs" id="2_definition"]
+
+[sub_resource type="Resource" id="Tundra"]
+script = ExtResource("2_definition")
+Id = 3
+Priority = 30
+MaximumTemperature = 0.28
+MaximumRidgeStrength = 0.75
+BlendWidth = 0.14
+LocalReliefMeters = 20.0
+SurfaceColor = Color(0.6, 0.64, 0.57, 1)
+
+[sub_resource type="Resource" id="Desert"]
+script = ExtResource("2_definition")
+Id = 4
+Priority = 20
+MinimumTemperature = 0.35
+MaximumMoisture = 0.3
+MaximumRidgeStrength = 0.7
+BlendWidth = 0.12
+LocalReliefMeters = 34.0
+SurfaceColor = Color(0.51, 0.42, 0.22, 1)
+
+[sub_resource type="Resource" id="Forest"]
+script = ExtResource("2_definition")
+Id = 6
+Priority = 20
+MinimumTemperature = 0.28
+MaximumTemperature = 0.82
+MinimumMoisture = 0.58
+MaximumRidgeStrength = 0.62
+BlendWidth = 0.12
+LocalReliefMeters = 18.0
+SurfaceColor = Color(0.1, 0.3, 0.12, 1)
+
+[sub_resource type="Resource" id="Alpine"]
+script = ExtResource("2_definition")
+Id = 7
+Priority = 40
+MinimumRidgeStrength = 0.62
+BlendWidth = 0.1
+LocalReliefMeters = 56.0
+SurfaceColor = Color(0.38, 0.39, 0.4, 1)
+
+[sub_resource type="Resource" id="Grassland"]
+script = ExtResource("2_definition")
+BlendWidth = 0.16
+SelectionWeightMultiplier = 0.22
+LocalReliefMeters = 12.0
+
+[resource]
+script = ExtResource("1_catalog")
+Biomes = Array[ExtResource("2_definition")]([SubResource("Tundra"), SubResource("Desert"), SubResource("Forest"), SubResource("Alpine"), SubResource("Grassland")])

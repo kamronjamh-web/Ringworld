@@ -1,0 +1,28 @@
+[gd_resource type="Resource" script_class="RingLodQualityProfile" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/Voxel/LOD/RingLodQualityProfile.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+DisplayName = "Mega Regional / 8 Mm"
+ActiveLevelCount = 11
+Lod1OutMeters = Vector2(240, 320)
+Lod2OutMeters = Vector2(480, 640)
+Lod3OutMeters = Vector2(960, 1280)
+Lod4OutMeters = Vector2(1920, 2560)
+Lod5OutMeters = Vector2(4500, 6000)
+Lod6OutMeters = Vector2(15000, 20000)
+Lod7OutMeters = Vector2(45000, 60000)
+Lod8OutMeters = Vector2(140000, 180000)
+Lod9OutMeters = Vector2(550000, 700000)
+Lod10OutMeters = Vector2(2000000, 2500000)
+Lod11OutMeters = Vector2(6500000, 8000000)
+GlobalAroundSegments = 1024
+GlobalAcrossSegments = 64
+SectorUploadsPerFrame = 4
+ConcurrentWorkers = 4
+ExpandSectorWindowsToFadeEnd = true
+UseScreenSpaceError = false
+TargetPixelError = 3.0
+TransitionFraction = 0.16
+UploadBudgetMilliseconds = 3.0

@@ -1,0 +1,20 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://bh6drhhxaqpc7"]
+
+[ext_resource type="Shader" uid="uid://b02ge3vgr7dj0" path="res://materials/ring_surface_far.gdshader" id="1"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1")
+shader_parameter/base_color = Color(0.23, 0.29, 0.37, 1)
+shader_parameter/day_atmosphere_color = Color(0.35, 0.52, 0.74, 1)
+shader_parameter/night_atmosphere_color = Color(0.06, 0.1, 0.16, 1)
+shader_parameter/ring_center = Vector3(0, 0, 0)
+shader_parameter/sun_direction = Vector3(0, 1, 0)
+shader_parameter/day_start_dot = -0.2
+shader_parameter/day_full_dot = 0.35
+shader_parameter/tint_strength = 0.0
+shader_parameter/min_tint_distance = 1500000.0
+shader_parameter/max_tint_distance = 14000000.0
+shader_parameter/atmospheric_mix = 0.8
+shader_parameter/emission_strength = 0.12
+shader_parameter/roughness_value = 0.98

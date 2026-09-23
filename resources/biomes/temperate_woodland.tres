@@ -1,0 +1,32 @@
+[gd_resource type="Resource" script_class="BiomeAuthoringPreset" format=3]
+
+[ext_resource type="Script" path="res://scripts/Biomes/BiomeAuthoringPreset.cs" id="1"]
+
+[resource]
+script = ExtResource("1")
+Identity = "8e157463-a4ca-49de-b0d0-61b52c5c4fc4"
+DisplayName = "Temperate Woodland"
+Seed = 1337
+BaseBiome = 5
+MeanElevationMeters = 140.0
+ElevationVariationMeters = 95.0
+BroadFeatureScaleMeters = 2600.0
+DetailAmplitudeMeters = 24.0
+DetailFeatureScaleMeters = 280.0
+Humidity = 0.62
+Temperature = 0.56
+TreeDensity = 0.48
+MinimumTreeSpacingMeters = 7.5
+TreeClustering = 0.5
+ClearingStrength = 0.18
+MapleWeight = 0.7
+FirWeight = 0.15
+PineWeight = 0.15
+MinimumTreeHeightMeters = 5.0
+MaximumTreeHeightMeters = 19.0
+MaximumTreeSlopeDegrees = 24.0
+GrassDensity = 0.9
+GrassHeightMeters = 1.1
+GrassTint = Color(0.2, 0.4, 0.15, 1)
+GroundMaterial = 1
+GroundTextureScale = 4.0

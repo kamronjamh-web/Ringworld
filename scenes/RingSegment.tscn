@@ -1,0 +1,10 @@
+[gd_scene format=3]
+
+[node name="RingSegment" type="StaticBody3D"]
+
+[node name="Visual" type="MeshInstance3D" parent="."]
+
+[node name="Collider" type="CollisionShape3D" parent="."]
+
+[node name="GuideLine" type="MeshInstance3D" parent="."]
+cast_shadow = 0

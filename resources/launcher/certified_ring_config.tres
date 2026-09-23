@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="LauncherDefaultConfig" format=3 uid="uid://cse2pm7vtejaw"]
+
+[ext_resource type="Script" uid="uid://cemllsqu38inp" path="res://scripts/launcher_default_config.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+preset_name = "Certified Ring"
+certification_target = true
+default_radius_km = 5000.0
+ring_width_km = 318.0
+build_height_y = 8000.0
+height_amplitude = 180.0
+detail_amplitude = 30.0
+rare_peak_height = 5200.0

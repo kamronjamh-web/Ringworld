@@ -1,0 +1,45 @@
+// Conservative curved-cylinder pre-entry skip.  Returns only whole existing
+// maxstep lattice intervals; callers retain their jittered first sample.
+float cloud_entry_skip_altitude(vec3 point, vec3 around, vec3 up, float ring_radius) {
+	float tangent = dot(point, around);
+	float inward = dot(point, up);
+	return ring_radius - length(vec2(tangent, ring_radius - inward));
+}
+int cloud_entry_skip_steps(vec3 origin, vec3 direction, vec3 around, vec3 up,
+	float ring_radius, float floor_altitude, float ceiling_altitude,
+	float jitter_distance, float max_step, int step_count, float depth_limit) {
+	if (max_step <= 0.0 || step_count <= 1 || ring_radius <= 1.0) return 0;
+	float jitter_altitude = cloud_entry_skip_altitude(origin + direction * jitter_distance, around, up, ring_radius);
+	if (jitter_altitude >= floor_altitude && jitter_altitude <= ceiling_altitude) return 0;
+	float jitter_next_altitude = cloud_entry_skip_altitude(origin + direction * (jitter_distance + max_step), around, up, ring_radius);
+	float initial_motion = jitter_next_altitude - jitter_altitude;
+	if (abs(initial_motion) <= 1e-5) return 0;
+	float boundary = jitter_altitude < floor_altitude ? floor_altitude : ceiling_altitude;
+	if ((jitter_altitude < floor_altitude && initial_motion <= 0.0) || (jitter_altitude > ceiling_altitude && initial_motion >= 0.0)) return 0;
+	float t = dot(origin, around);
+	float h = dot(origin, up);
+	float da = dot(direction, around);
+	float du = dot(direction, up);
+	float a = da * da + du * du;
+	float b = t * da - (ring_radius - h) * du;
+	float c = t * t + (boundary - h) * (2.0 * ring_radius - h - boundary);
+	float disc = b * b - a * c;
+	if (a < 1e-10 || disc <= 1e-8) return 0;
+	float root_disc = sqrt(disc);
+	float q = -b - (b < 0.0 ? -root_disc : root_disc);
+	if (abs(q) < 1e-8) return 0;
+	float r0 = q / a;
+	float r1 = c / q;
+	float entry = 1e30;
+	if (r0 > jitter_distance) entry = r0;
+	if (r1 > jitter_distance && r1 < entry) entry = r1;
+	if (entry == 1e30 || entry >= depth_limit || isnan(entry) || isinf(entry)) return 0;
+	float skip_float = clamp(floor((entry - jitter_distance) / max_step) - 1.0, 0.0, float(step_count - 1));
+	int skip = int(skip_float);
+	float pre_distance = jitter_distance + float(skip) * max_step;
+	float pre_altitude = cloud_entry_skip_altitude(origin + direction * pre_distance, around, up, ring_radius);
+	float pre_next_altitude = cloud_entry_skip_altitude(origin + direction * (pre_distance + max_step), around, up, ring_radius);
+	bool same_side = (jitter_altitude < floor_altitude && pre_altitude < floor_altitude) || (jitter_altitude > ceiling_altitude && pre_altitude > ceiling_altitude);
+	if (!same_side || (pre_altitude < floor_altitude && pre_next_altitude <= pre_altitude) || (pre_altitude > ceiling_altitude && pre_next_altitude >= pre_altitude)) return 0;
+	return clamp(skip, 0, step_count - 1);
+}

@@ -1,0 +1,1039 @@
+extends Node
+
+@export var player_path: NodePath = NodePath("../Player")
+@export var gravity_controller_path: NodePath = NodePath("../RingWorld/GravityController")
+@export var canonical_grid_path: NodePath = NodePath("../ChunkGridManager")
+@export var sun_light_path: NodePath = NodePath("../StarLight")
+@export var planet_light_path: NodePath = NodePath("../PlanetLight")
+@export var celestial_clock_path: NodePath = NodePath("../RingDayNightCycle")
+@export var world_environment_path: NodePath = NodePath("../SpaceEnvironment")
+@export var cloud_lighting_bridge_path: NodePath = NodePath("../SunshineCloudBridge")
+@export var underground_environment_path: NodePath = NodePath("../UndergroundEnvironment")
+@export var ring_sky_shader_path: String = "res://materials/ring_local_sky.gdshader"
+
+@export_group("Day/Night Split")
+@export var day_start_dot: float = -0.2
+@export var day_full_dot: float = 0.35
+@export var blend_speed: float = 2.5
+@export var invert_day_side: bool = false
+
+@export_group("Sun Near-Bubble")
+@export var day_sun_energy: float = 4.0
+@export var night_sun_energy: float = 0.02
+@export var day_shadow_distance: float = 4000.0
+@export var night_shadow_distance: float = 2000.0
+@export var shadow_fade_ratio: float = 0.82
+@export var keep_half_ring_lit_globally: bool = true
+
+@export_group("Grazing Eclipse Presentation")
+# Geometry remains in RingDayNightCycle. Legacy presentation controls are kept
+# for serialized-scene compatibility; received-light day/night is canonical.
+@export var eclipse_lighting_enabled: bool = true
+# Deprecated compatibility export. Canonical direct sunlight follows raw solar
+# visibility and therefore reaches exact zero at totality.
+@export_range(0.0, 1.0, 0.01) var eclipse_direct_darkness: float = 1.0
+# Deprecated compatibility export. It no longer lifts eclipse ambient above the
+# effective night baseline, so totality cannot retain a daytime ambient floor.
+@export_range(0.0, 1.0, 0.01) var eclipse_ambient_floor: float = 0.25
+@export var eclipse_sky_color: Color = Color(0.13, 0.19, 0.29, 1.0)
+@export var eclipse_fog_color: Color = Color(0.20, 0.27, 0.36, 1.0)
+@export_range(0.0, 1.0, 0.01) var eclipse_sky_tint_strength: float = 0.42
+@export_range(0.0, 1.0, 0.01) var eclipse_fog_tint_strength: float = 0.28
+
+@export_group("Ambient Blend")
+@export var day_ambient_color: Color = Color(0.53, 0.58, 0.65, 1.0)
+@export var night_ambient_color: Color = Color(0.34, 0.40, 0.52, 1.0)
+@export var day_ambient_energy: float = 0.35
+@export var night_ambient_energy: float = 0.30
+@export_range(0.0, 1.0, 0.01) var ambient_sky_contribution: float = 0.35
+
+@export_group("Underground lighting")
+@export var underground_ambient_color: Color = Color(0.002, 0.003, 0.006, 1.0)
+@export_range(0.0, 0.1, 0.001) var underground_ambient_energy: float = 0.003
+@export_range(0.0, 1.0, 0.001) var underground_fog_sky_affect: float = 0.0
+
+@export_group("Cloud-filtered Daylight")
+@export var cloud_filtered_lighting_enabled: bool = true
+@export var storm_ambient_color: Color = Color(0.16, 0.21, 0.29, 1.0)
+@export_range(0.0, 1.0, 0.01) var storm_sky_contribution_scale: float = 0.16
+@export_range(0.0, 1.0, 0.01) var storm_fog_light_scale: float = 0.28
+@export_range(0.0, 1.0, 0.01) var storm_fog_sun_scatter_scale: float = 0.12
+@export_range(0.1, 8.0, 0.1) var cloud_lighting_blend_speed: float = 1.4
+
+@export_group("Constrained Eye Adaptation")
+@export var storm_auto_exposure_enabled: bool = true
+@export_range(1.0, 800.0, 1.0) var auto_exposure_min_sensitivity: float = 50.0
+@export_range(1.0, 1600.0, 1.0) var auto_exposure_max_sensitivity: float = 160.0
+@export_range(0.01, 8.0, 0.01) var auto_exposure_speed: float = 0.65
+@export_range(0.05, 1.0, 0.01) var auto_exposure_scale: float = 0.30
+
+@export_group("HDR Output")
+@export var use_agx_tonemapping: bool = true
+@export_range(6.0, 32.0, 0.1) var agx_white: float = 16.29
+@export_range(0.8, 1.5, 0.01) var agx_contrast: float = 1.20
+@export_range(0.5, 1.5, 0.01) var tonemap_exposure: float = 1.0
+
+@export_group("Sky Blend")
+@export var day_sky_top_color: Color = Color(0.12, 0.28, 0.52, 1.0)
+@export var day_sky_horizon_color: Color = Color(0.50, 0.60, 0.69, 1.0)
+@export var day_ground_bottom_color: Color = Color(0.08, 0.12, 0.18, 1.0)
+@export var day_ground_horizon_color: Color = Color(0.44, 0.54, 0.64, 1.0)
+@export var night_sky_top_color: Color = Color(0.002, 0.004, 0.012, 1.0)
+@export var night_sky_horizon_color: Color = Color(0.008, 0.015, 0.035, 1.0)
+@export var night_ground_bottom_color: Color = Color(0.002, 0.003, 0.008, 1.0)
+@export var night_ground_horizon_color: Color = Color(0.006, 0.012, 0.025, 1.0)
+
+@export_group("Localized Atmosphere Altitude")
+@export var sky_fade_start_height_meters: float = 8000.0
+@export var space_black_height_meters: float = 20000.0
+@export_range(100.0, 10000.0, 100.0) var ring_side_atmosphere_fade_meters: float = 1500.0
+@export var altitude_blend_speed: float = 1.5
+@export var space_sky_color: Color = Color(0.0, 0.0, 0.0, 1.0)
+@export var space_ambient_color: Color = Color(0.002, 0.003, 0.006, 1.0)
+@export var space_ambient_energy: float = 0.015
+
+@export_group("Space Stars")
+@export var stars_enabled: bool = true
+@export_range(0.0, 100000.0, 100.0) var stars_fade_start_height_meters: float = 20000.0
+@export_range(1000.0, 150000.0, 100.0) var stars_full_height_meters: float = 26000.0
+@export_range(32.0, 1024.0, 1.0) var star_cell_density: float = 420.0
+@export_range(0.0, 0.25, 0.001) var star_density: float = 0.045
+@export_range(0.0, 8.0, 0.05) var star_brightness: float = 2.2
+@export var star_color: Color = Color(0.76, 0.84, 1.0, 1.0)
+@export var stars_visible_on_night_side: bool = true
+@export_range(0.0, 1.0, 0.01) var night_surface_star_visibility: float = 0.62
+@export_range(0.05, 0.8, 0.01) var night_star_twilight_end_day_factor: float = 0.35
+
+@export_group("Opposite-Sun Planet")
+@export var planet_enabled: bool = true
+@export_range(0.25, 89.9, 0.05) var planet_angular_radius_degrees: float = 30.8242334
+@export_range(0.0, 4.0, 0.05) var planet_brightness: float = 1.15
+@export_range(0.5, 24.0, 0.25) var planet_detail_scale: float = 7.0
+@export var planet_ocean_color: Color = Color(0.035, 0.13, 0.28, 1.0)
+@export var planet_land_color: Color = Color(0.25, 0.34, 0.20, 1.0)
+@export var planet_highland_color: Color = Color(0.48, 0.40, 0.27, 1.0)
+@export var planet_cloud_color: Color = Color(0.78, 0.84, 0.88, 1.0)
+@export var planet_atmosphere_color: Color = Color(0.18, 0.52, 1.0, 1.0)
+@export_range(0.0, 4.0, 0.05) var planet_atmosphere_rim_brightness: float = 1.35
+@export var gas_giant_light_band_color: Color = Color(0.83, 0.68, 0.45, 1.0)
+@export var gas_giant_dark_band_color: Color = Color(0.38, 0.20, 0.12, 1.0)
+@export var gas_giant_cream_color: Color = Color(0.94, 0.83, 0.62, 1.0)
+@export var gas_giant_storm_color: Color = Color(0.78, 0.28, 0.13, 1.0)
+@export_range(4.0, 32.0, 0.5) var gas_giant_band_count: float = 13.0
+
+@export_group("Celestial Atmospheric Scattering")
+@export_range(0.0, 8.0, 0.05) var exterior_day_scattering_boost: float = 1.0
+@export_range(0.0, 8.0, 0.05) var exterior_night_scattering_boost: float = 1.8
+@export_range(0.0, 2.0, 0.01) var atmosphere_sun_forward_scattering: float = 0.30
+@export_range(0.0, 2.0, 0.01) var planet_haze_scattering_energy: float = 0.18
+
+@export_group("Planet Reflected Light")
+@export var planet_light_enabled: bool = true
+@export_range(0.0, 2.0, 0.01) var planet_light_night_energy: float = 0.32
+@export var planet_light_color: Color = Color(0.62, 0.72, 0.90, 1.0)
+@export_range(-0.25, 0.25, 0.01) var planet_light_horizon_fade_start_dot: float = -0.02
+@export_range(0.01, 0.8, 0.01) var planet_light_horizon_full_dot: float = 0.24
+@export_range(0.05, 0.8, 0.01) var planet_light_twilight_end_day_factor: float = 0.32
+@export_range(0.0, 1.0, 0.01) var planet_light_specular: float = 0.45
+@export var planet_light_cast_shadows: bool = true
+@export_range(0.0, 5.0, 0.05) var planet_light_angular_distance_degrees: float = 0.50
+@export_range(100.0, 25000.0, 100.0) var planet_light_shadow_distance_meters: float = 6000.0
+@export_range(0.5, 1.0, 0.01) var planet_light_shadow_fade_ratio: float = 0.85
+
+@export_group("Opposite Side Visibility")
+@export var preserve_opposite_side_visibility: bool = true
+@export var day_side_opposite_visibility: float = 0.2
+@export var night_side_opposite_visibility: float = 0.35
+
+@export_group("Day Fog")
+# This is deliberately only a thin background veil. Terrain, hull, and cloud
+# shaders integrate the shared curved ring-local atmosphere, so the central
+# vacuum adds no fog and the opposite side remains visible.
+@export var day_fog_density: float = 0.000004
+@export var day_fog_color: Color = Color(0.50, 0.60, 0.69, 1.0)
+@export var day_fog_energy: float = 0.85
+@export var day_fog_aerial_perspective: float = 0.82
+@export var day_fog_sky_affect: float = 0.62
+@export var day_fog_sun_scatter: float = 0.16
+@export var enable_global_depth_fog: bool = false
+
+@export_group("Night Fog")
+@export var night_fog_density: float = 0.000002
+@export var night_fog_color: Color = Color(0.04, 0.07, 0.12, 1.0)
+@export var night_fog_energy: float = 0.38
+@export var night_fog_aerial_perspective: float = 0.2
+@export var night_fog_sky_affect: float = 0.18
+@export var night_fog_sun_scatter: float = 0.04
+
+@export_group("Underwater")
+@export var underwater_fog_color: Color = Color(0.008, 0.115, 0.145, 1.0)
+@export var underwater_deep_fog_color: Color = Color(0.002, 0.028, 0.050, 1.0)
+@export_range(0.001, 0.2, 0.001) var underwater_fog_density: float = 0.010
+@export_range(0.0, 0.02, 0.0001) var underwater_depth_density_gain: float = 0.00022
+@export_range(0.005, 0.2, 0.001) var underwater_max_fog_density: float = 0.032
+@export_range(1.0, 250.0, 1.0) var underwater_optical_depth_meters: float = 45.0
+@export_range(0.0, 1.0, 0.01) var underwater_fog_energy: float = 0.56
+@export_range(0.0, 1.0, 0.01) var underwater_deep_fog_energy: float = 0.20
+@export_range(0.0, 1.0, 0.01) var underwater_fog_sky_affect: float = 0.82
+@export_range(0.0, 0.25, 0.005) var underwater_sun_scatter: float = 0.015
+@export_range(0.0, 1.0, 0.01) var underwater_ambient_energy: float = 0.30
+@export_range(0.0, 1.0, 0.01) var underwater_deep_ambient_energy: float = 0.07
+@export var underwater_ambient_color: Color = Color(0.018, 0.155, 0.175, 1.0)
+@export var underwater_deep_ambient_color: Color = Color(0.004, 0.042, 0.068, 1.0)
+@export var underwater_sun_color: Color = Color(0.48, 0.82, 0.86, 1.0)
+@export var underwater_deep_sun_color: Color = Color(0.16, 0.44, 0.58, 1.0)
+@export_range(0.0, 1.0, 0.01) var underwater_sun_energy_scale: float = 0.52
+@export_range(0.0, 1.0, 0.01) var underwater_deep_sun_energy_scale: float = 0.10
+@export_range(0.1, 20.0, 0.1) var underwater_transition_speed: float = 6.0
+
+@export_group("Underwater No-Goggles View")
+@export var underwater_view_shader_path: String = "res://materials/underwater_no_goggles.gdshader"
+@export_range(0.0, 4.0, 0.05) var underwater_focus_blur_lod: float = 1.15
+@export_range(0.0, 1.0, 0.01) var underwater_view_tint_strength: float = 0.24
+@export_range(0.0, 1.0, 0.01) var underwater_red_absorption: float = 0.30
+
+var player: Node3D = null
+var gravity_controller = null
+var canonical_grid = null
+var sun_light: DirectionalLight3D = null
+var planet_light: DirectionalLight3D = null
+var celestial_clock: Node = null
+var world_environment: WorldEnvironment = null
+var cloud_lighting_bridge: Node = null
+var underground_environment: Node = null
+var ring_sky_material: ShaderMaterial = null
+# Public render-facing daylight: geometric daylight after raw solar occlusion.
+# Keep the astronomical value separately so eclipse presentation never changes
+# RingDayNightCycle's orbit/timing contract.
+var current_day_factor: float = 0.0
+var current_geometric_day_factor: float = 0.0
+var current_solar_visibility: float = 1.0
+var current_atmosphere_factor: float = 1.0
+var current_underwater_factor: float = 0.0
+var underwater_view_layer: CanvasLayer = null
+var underwater_view_rect: ColorRect = null
+var underwater_view_material: ShaderMaterial = null
+var surface_sun_color: Color = Color.WHITE
+var surface_sun_color_captured: bool = false
+var underwater_optics_test_reported: bool = false
+var current_cloud_ambient_transmittance: float = 1.0
+var current_eclipse_coverage: float = 0.0
+var current_gameplay_eclipse_darkness: float = 0.0
+var current_giant_direction: Vector3 = Vector3.ZERO
+var current_giant_angular_radius_degrees: float = 0.0
+
+
+func _ready() -> void:
+	_publish_solar_visibility(1.0)
+	_resolve_references()
+	_capture_surface_sun_color()
+	_ensure_underwater_view_effect()
+	if world_environment != null and world_environment.environment != null:
+		_configure_hdr_output(world_environment.environment)
+		_configure_eye_adaptation()
+		world_environment.environment.ambient_light_sky_contribution = clampf(
+			ambient_sky_contribution,
+			0.0,
+			1.0)
+	if "--certified-smoke-test" in OS.get_cmdline_user_args():
+		var midpoint := (sky_fade_start_height_meters + space_black_height_meters) * 0.5
+		var surface_factor := _atmosphere_factor_for_height(0.0)
+		var midpoint_factor := _atmosphere_factor_for_height(midpoint)
+		var space_factor := _atmosphere_factor_for_height(space_black_height_meters)
+		if surface_factor < 0.999 or midpoint_factor < 0.45 or midpoint_factor > 0.55 or space_factor > 0.001:
+			push_error("Altitude sky atmosphere self-test failed: surface=%.3f midpoint=%.3f space=%.3f" % [surface_factor, midpoint_factor, space_factor])
+		else:
+			print("Altitude sky atmosphere self-test passed: fade=%.0f-%.0fm, surface=%.3f midpoint=%.3f space=%.3f" % [sky_fade_start_height_meters, space_black_height_meters, surface_factor, midpoint_factor, space_factor])
+	if "--certified-smoke-test" in OS.get_cmdline_user_args() or "--underground-environment-smoke-test" in OS.get_cmdline_user_args():
+		_run_ring_interior_boundary_smoke_test()
+
+
+func _process(delta: float) -> void:
+	_resolve_references()
+
+	if player == null or sun_light == null or world_environment == null:
+		_publish_solar_visibility(1.0)
+		return
+	if not _has_canonical_atmosphere_provider() and gravity_controller == null:
+		_publish_solar_visibility(1.0)
+		return
+
+	var environment: Environment = world_environment.environment
+	if environment == null:
+		_publish_solar_visibility(1.0)
+		return
+	_configure_hdr_output(environment)
+	_configure_eye_adaptation()
+	_ensure_ring_sky(environment)
+
+	# Day side factor is based on local ring surface up and sun direction.
+	var surface_up := _get_surface_up()
+	var light_ray_direction: Vector3 = -sun_light.global_transform.basis.z.normalized()
+	var to_sun: Vector3 = -light_ray_direction
+	if celestial_clock != null:
+		to_sun = _get_celestial_value("ToSun", "to_sun", to_sun) as Vector3
+	var ndotl: float = surface_up.dot(to_sun)
+
+	if invert_day_side:
+		ndotl = -ndotl
+
+	var target_day_factor: float = smoothstep(day_start_dot, day_full_dot, ndotl)
+	if celestial_clock != null:
+		target_day_factor = float(_get_celestial_value("DaylightFactor", "daylight_factor", target_day_factor))
+	# Smooth the geometric day/night transition first. Solar visibility is applied
+	# afterwards so an exact totality is immediately and exactly night, including
+	# during preview/scrub jumps.
+	current_geometric_day_factor = lerpf(
+		current_geometric_day_factor,
+		target_day_factor,
+		minf(1.0, blend_speed * delta))
+	_evaluate_giant(to_sun)
+	current_eclipse_coverage = clampf(float(_get_celestial_value(
+			"GiantEclipseCoverage", "giant_eclipse_coverage", 0.0)), 0.0, 1.0) if eclipse_lighting_enabled else 0.0
+	_publish_solar_visibility(1.0 - current_eclipse_coverage)
+	current_day_factor = current_geometric_day_factor * current_solar_visibility
+	current_gameplay_eclipse_darkness = float(_get_celestial_value(
+			"GameplayEclipseDarkness", "gameplay_eclipse_darkness", current_eclipse_coverage)) if eclipse_lighting_enabled else 0.0
+	current_giant_direction = _get_celestial_value("GiantDirection", "giant_direction", -to_sun) as Vector3
+	current_giant_angular_radius_degrees = float(_get_celestial_value(
+		"GiantAngularRadiusDegrees", "giant_angular_radius_degrees", planet_angular_radius_degrees))
+	_update_cloud_day_factor(current_day_factor)
+	var player_height := _get_player_height_meters()
+	var ring_interior_factor := _structural_shell_atmosphere_factor()
+	var target_atmosphere_factor := _atmosphere_factor_for_height(player_height) * ring_interior_factor
+	var star_visibility := _star_visibility_for_height_and_day(player_height, current_day_factor)
+	star_visibility = maxf(star_visibility, 1.0 - ring_interior_factor)
+	# Exterior space must take effect this frame. Blending here would retain the
+	# interior atmosphere beyond a wall for several frames.
+	if ring_interior_factor <= 0.0:
+		current_atmosphere_factor = 0.0
+	else:
+		current_atmosphere_factor = lerpf(
+			current_atmosphere_factor,
+			target_atmosphere_factor,
+			minf(1.0, maxf(0.01, altitude_blend_speed) * delta))
+	var target_cloud_ambient := _get_cloud_ambient_transmittance()
+	current_cloud_ambient_transmittance = lerpf(
+		current_cloud_ambient_transmittance,
+		target_cloud_ambient,
+		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
+	var cloud_storm_factor := 1.0 - current_cloud_ambient_transmittance
+
+	# Keep global hemisphere lighting stable: day/night on the ring should not depend on player position.
+	# Atmosphere owns dynamic daylight presentation. A graphics-quality controller,
+	# when present, owns the static sun-shadow settings so its preset and live-menu
+	# choices are not rewritten every frame.
+	_capture_surface_sun_color()
+	sun_light.light_color = surface_sun_color
+	var quality_owns_sun_shadows := sun_light.has_meta("ringworld_shadow_quality_owned") \
+		and bool(sun_light.get_meta("ringworld_shadow_quality_owned"))
+	if not quality_owns_sun_shadows:
+		sun_light.shadow_enabled = true
+		sun_light.light_angular_distance = 0.0
+	var shadow_distance: float = day_shadow_distance
+	# Eclipse geometry is global: direct sunlight must vanish at totality even
+	# while the globally lit ring hemisphere is being rendered.
+	var eclipse_day_coverage := current_gameplay_eclipse_darkness * current_day_factor
+	var eclipse_direct_factor := current_solar_visibility
+	if keep_half_ring_lit_globally:
+		sun_light.light_energy = maxf(day_sun_energy, 0.0) * eclipse_direct_factor
+	else:
+		sun_light.light_energy = lerpf(night_sun_energy, day_sun_energy, current_day_factor) * eclipse_direct_factor
+		shadow_distance = lerpf(night_shadow_distance, day_shadow_distance, current_day_factor)
+
+	if not quality_owns_sun_shadows:
+		shadow_distance = maxf(shadow_distance, 100.0)
+		sun_light.set("directional_shadow_max_distance", shadow_distance)
+		sun_light.set("directional_shadow_fade_start", clampf(shadow_fade_ratio, 0.0, 1.0))
+	_update_planet_light(surface_up, current_giant_direction, to_sun, current_day_factor)
+
+	var effective_day_density: float = day_fog_density
+	var effective_night_density: float = night_fog_density
+	if preserve_opposite_side_visibility:
+		effective_day_density = _cap_density_for_opposite_visibility(day_fog_density, day_side_opposite_visibility)
+		effective_night_density = _cap_density_for_opposite_visibility(night_fog_density, night_side_opposite_visibility)
+
+	var haze_enabled := bool(ProjectSettings.get_setting("ringworld/runtime/haze_enabled", true))
+	# The far ring is rendered in a scaled secondary viewport. Ordinary depth
+	# fog cannot produce the same physical distance in both views, so it remains
+	# an optional diagnostic layer; the curved air-shell shaders own normal haze.
+	environment.fog_enabled = haze_enabled and enable_global_depth_fog
+	environment.fog_density = lerpf(effective_night_density, effective_day_density, current_day_factor) * current_atmosphere_factor
+	var eclipse_fog_factor := eclipse_day_coverage * clampf(eclipse_fog_tint_strength, 0.0, 1.0)
+	environment.fog_light_color = night_fog_color.lerp(day_fog_color, current_day_factor).lerp(
+		storm_ambient_color,
+		cloud_storm_factor * 0.72).lerp(eclipse_fog_color, eclipse_fog_factor)
+	environment.fog_light_energy = lerpf(night_fog_energy, day_fog_energy, current_day_factor) \
+		* lerpf(1.0, storm_fog_light_scale, cloud_storm_factor) \
+		* lerpf(1.0, 0.78, eclipse_day_coverage)
+	environment.fog_aerial_perspective = lerpf(night_fog_aerial_perspective, day_fog_aerial_perspective, current_day_factor)
+	environment.fog_sky_affect = lerpf(night_fog_sky_affect, day_fog_sky_affect, current_day_factor) * current_atmosphere_factor
+	environment.fog_sun_scatter = lerpf(night_fog_sun_scatter, day_fog_sun_scatter, current_day_factor) \
+		* lerpf(1.0, storm_fog_sun_scatter_scale, cloud_storm_factor) \
+		* eclipse_direct_factor
+	var surface_ambient_color := night_ambient_color.lerp(day_ambient_color, current_day_factor).lerp(
+		storm_ambient_color,
+		cloud_storm_factor * 0.88)
+	var surface_ambient_energy := lerpf(night_ambient_energy, day_ambient_energy, current_day_factor) \
+		* current_cloud_ambient_transmittance
+	environment.ambient_light_color = space_ambient_color.lerp(surface_ambient_color, current_atmosphere_factor)
+	environment.ambient_light_energy = lerpf(space_ambient_energy, surface_ambient_energy, current_atmosphere_factor)
+	# A contribution of 1.0 makes Godot ignore the explicit ambient color and
+	# energy above. Blend a restrained sky irradiance term with those controls
+	# so the visible sun disk and bright horizon do not flatten every shadow.
+	environment.ambient_light_sky_contribution = clampf(
+		ambient_sky_contribution * lerpf(1.0, storm_sky_contribution_scale, cloud_storm_factor),
+		0.0,
+		1.0)
+	var camera_underwater := player.has_meta("ring_camera_underwater") \
+		and bool(player.get_meta("ring_camera_underwater", false))
+	var underwater_depth := maxf(0.0, float(player.get_meta("ring_water_depth_meters", 0.0)))
+	var underwater_target := 1.0 if camera_underwater else 0.0
+	current_underwater_factor = move_toward(
+		current_underwater_factor,
+		underwater_target,
+		maxf(0.1, underwater_transition_speed) * delta)
+	var underwater_depth_factor := 1.0 - exp(
+		-underwater_depth / maxf(1.0, underwater_optical_depth_meters))
+	if current_underwater_factor > 0.001:
+		_apply_underwater_environment(
+			environment,
+			underwater_depth,
+			underwater_depth_factor,
+			current_underwater_factor)
+	_update_underwater_view_effect(current_underwater_factor, underwater_depth_factor)
+	# The C# controller only reports canonical, density-backed roof access.
+	# This script owns Environment and directional-light color/energy; the clock
+	# owns sun direction and graphics quality owns its static shadow settings.
+	var underground_sky_access := _get_underground_sky_access()
+	_apply_underground_lighting(environment, underground_sky_access)
+	star_visibility *= 1.0 - current_underwater_factor
+	star_visibility *= underground_sky_access
+	_update_sky(
+		environment,
+		current_day_factor,
+		current_atmosphere_factor * underground_sky_access,
+		star_visibility,
+		surface_up,
+		to_sun,
+		current_giant_direction)
+
+
+func _apply_underground_lighting(environment: Environment, sky_access: float) -> void:
+	var access := clampf(sky_access, 0.0, 1.0)
+	var attributes := world_environment.camera_attributes as CameraAttributesPractical \
+		if world_environment != null else null
+	if access >= 0.999:
+		return
+	environment.ambient_light_color = underground_ambient_color.lerp(
+		environment.ambient_light_color, access)
+	environment.ambient_light_energy = lerpf(
+		underground_ambient_energy, environment.ambient_light_energy, access)
+	environment.ambient_light_sky_contribution *= access
+	environment.fog_sky_affect = lerpf(
+		underground_fog_sky_affect, environment.fog_sky_affect, access)
+	environment.fog_sun_scatter *= access
+	environment.fog_light_energy *= access
+	environment.fog_aerial_perspective *= access
+	if sun_light != null:
+		sun_light.light_energy *= access
+	if planet_light != null:
+		planet_light.light_energy *= access
+	if attributes != null:
+		# Disable adaptation in darkness, then tightly bound it through the
+		# opening transition instead of allowing a sudden jump to surface ISO.
+		var adaptation_access := smoothstep(0.15, 1.0, access)
+		attributes.auto_exposure_enabled = storm_auto_exposure_enabled and adaptation_access > 0.0
+		attributes.auto_exposure_max_sensitivity = lerpf(
+			attributes.auto_exposure_min_sensitivity,
+			maxf(attributes.auto_exposure_min_sensitivity, auto_exposure_max_sensitivity),
+			adaptation_access)
+		attributes.auto_exposure_scale = lerpf(
+			minf(0.10, auto_exposure_scale),
+			auto_exposure_scale,
+			adaptation_access)
+
+
+func _apply_underwater_environment(
+		environment: Environment,
+		depth_meters: float,
+		depth_factor: float,
+		transition: float) -> void:
+	var clear_water_density := minf(
+		maxf(underwater_fog_density, underwater_max_fog_density),
+		underwater_fog_density + depth_meters * underwater_depth_density_gain)
+	var water_color := underwater_fog_color.lerp(underwater_deep_fog_color, depth_factor)
+	var water_fog_energy := lerpf(underwater_fog_energy, underwater_deep_fog_energy, depth_factor)
+	var water_ambient_color := underwater_ambient_color.lerp(underwater_deep_ambient_color, depth_factor)
+	var water_ambient_energy := lerpf(
+		underwater_ambient_energy,
+		underwater_deep_ambient_energy,
+		depth_factor)
+
+	environment.fog_enabled = true
+	environment.fog_density = lerpf(environment.fog_density, clear_water_density, transition)
+	environment.fog_light_color = environment.fog_light_color.lerp(water_color, transition)
+	environment.fog_light_energy = lerpf(environment.fog_light_energy, water_fog_energy, transition)
+	# Aerial perspective samples the bright ring sky and was the source of the
+	# white underwater wash. Water uses its own blue-green in-scattering instead.
+	environment.fog_aerial_perspective = lerpf(environment.fog_aerial_perspective, 0.0, transition)
+	environment.fog_sky_affect = lerpf(environment.fog_sky_affect, underwater_fog_sky_affect, transition)
+	environment.fog_sun_scatter = lerpf(
+		environment.fog_sun_scatter,
+		underwater_sun_scatter * current_day_factor,
+		transition)
+	environment.ambient_light_color = environment.ambient_light_color.lerp(water_ambient_color, transition)
+	environment.ambient_light_energy = lerpf(environment.ambient_light_energy, water_ambient_energy, transition)
+	environment.ambient_light_sky_contribution = lerpf(
+		environment.ambient_light_sky_contribution,
+		0.02,
+		transition)
+
+	_capture_surface_sun_color()
+	var water_sun_color := underwater_sun_color.lerp(underwater_deep_sun_color, depth_factor)
+	var water_sun_scale := lerpf(
+		underwater_sun_energy_scale,
+		underwater_deep_sun_energy_scale,
+		depth_factor)
+	sun_light.light_color = surface_sun_color.lerp(water_sun_color, transition)
+	sun_light.light_energy *= lerpf(1.0, water_sun_scale, transition)
+	if planet_light != null:
+		planet_light.light_energy *= 1.0 - transition * 0.90
+	_validate_underwater_optics(environment, clear_water_density, water_color, transition)
+
+
+func _validate_underwater_optics(
+		environment: Environment,
+		density: float,
+		water_color: Color,
+		transition: float) -> void:
+	if underwater_optics_test_reported \
+		or transition < 0.999 \
+		or "--swimming-smoke-test" not in OS.get_cmdline_user_args():
+		return
+	underwater_optics_test_reported = true
+	var visibility_at_25m := exp(-density * 25.0)
+	var density_valid := density <= maxf(underwater_fog_density, underwater_max_fog_density) + 0.0001
+	var color_valid := water_color.b > water_color.r and water_color.g > water_color.r
+	var aerial_valid := environment.fog_aerial_perspective < 0.001
+	if not density_valid or not color_valid or not aerial_valid or visibility_at_25m < 0.40:
+		push_error(
+			"Underwater optics self-test failed: density=%.4f, visibility25m=%.3f, color=%s, aerial=%.3f" \
+			% [density, visibility_at_25m, water_color, environment.fog_aerial_perspective])
+		return
+	print(
+		"Underwater optics self-test passed: density=%.4f, visibility25m=%.3f, blueGreen=%s, aerialPerspective=%.3f, noGogglesBlur=%.2f." \
+		% [density, visibility_at_25m, water_color, environment.fog_aerial_perspective, underwater_focus_blur_lod])
+
+
+func _capture_surface_sun_color() -> void:
+	if surface_sun_color_captured or sun_light == null:
+		return
+	surface_sun_color = sun_light.light_color
+	surface_sun_color_captured = true
+
+
+func _ensure_underwater_view_effect() -> void:
+	if underwater_view_rect != null:
+		return
+	var shader := load(underwater_view_shader_path) as Shader
+	if shader == null:
+		push_error("Underwater no-goggles shader could not be loaded: %s" % underwater_view_shader_path)
+		return
+	underwater_view_material = ShaderMaterial.new()
+	underwater_view_material.shader = shader
+	underwater_view_layer = CanvasLayer.new()
+	underwater_view_layer.name = "UnderwaterNoGogglesLayer"
+	# Layer zero processes the 3D view before the gameplay HUD CanvasLayers.
+	underwater_view_layer.layer = 0
+	add_child(underwater_view_layer)
+	underwater_view_rect = ColorRect.new()
+	underwater_view_rect.name = "UnderwaterNoGogglesView"
+	underwater_view_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	underwater_view_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	underwater_view_rect.material = underwater_view_material
+	underwater_view_rect.visible = false
+	underwater_view_layer.add_child(underwater_view_rect)
+
+
+func _update_underwater_view_effect(strength: float, depth_factor: float) -> void:
+	_ensure_underwater_view_effect()
+	if underwater_view_rect == null or underwater_view_material == null:
+		return
+	underwater_view_rect.visible = strength > 0.001
+	underwater_view_material.set_shader_parameter("effect_strength", clampf(strength, 0.0, 1.0))
+	underwater_view_material.set_shader_parameter("depth_factor", clampf(depth_factor, 0.0, 1.0))
+	underwater_view_material.set_shader_parameter("focus_blur_lod", maxf(0.0, underwater_focus_blur_lod))
+	underwater_view_material.set_shader_parameter("tint_strength", clampf(underwater_view_tint_strength, 0.0, 1.0))
+	underwater_view_material.set_shader_parameter("red_absorption", clampf(underwater_red_absorption, 0.0, 1.0))
+
+
+func _ensure_ring_sky(environment: Environment) -> void:
+	if ring_sky_material != null:
+		return
+	if environment.sky == null:
+		environment.sky = Sky.new()
+	var shader := load(ring_sky_shader_path) as Shader
+	if shader == null:
+		push_error("Ring-aware sky shader could not be loaded: %s" % ring_sky_shader_path)
+		return
+	ring_sky_material = ShaderMaterial.new()
+	ring_sky_material.shader = shader
+	environment.sky.sky_material = ring_sky_material
+	# The local-up uniform changes as the player travels around the ring.
+	environment.sky.process_mode = Sky.PROCESS_MODE_REALTIME
+	environment.sky.radiance_size = Sky.RADIANCE_SIZE_256
+	print("Ring-aware sky ready: horizon follows player surface-up.")
+
+
+func _configure_hdr_output(environment: Environment) -> void:
+	# AgX preserves hue and highlight detail from the deliberately strong ring
+	# sunlight. The scaled far viewport copies these properties so its canvas
+	# handoff uses the same output response.
+	environment.tonemap_mode = Environment.TONE_MAPPER_AGX if use_agx_tonemapping else Environment.TONE_MAPPER_LINEAR
+	environment.tonemap_agx_white = maxf(6.0, agx_white)
+	environment.tonemap_agx_contrast = clampf(agx_contrast, 0.8, 1.5)
+	environment.tonemap_exposure = maxf(0.01, tonemap_exposure)
+
+
+func _configure_eye_adaptation() -> void:
+	if world_environment == null:
+		return
+	var attributes := world_environment.camera_attributes as CameraAttributesPractical
+	if attributes == null:
+		attributes = CameraAttributesPractical.new()
+		world_environment.camera_attributes = attributes
+	attributes.auto_exposure_enabled = storm_auto_exposure_enabled
+	attributes.auto_exposure_min_sensitivity = maxf(1.0, auto_exposure_min_sensitivity)
+	attributes.auto_exposure_max_sensitivity = maxf(
+		attributes.auto_exposure_min_sensitivity,
+		auto_exposure_max_sensitivity)
+	attributes.auto_exposure_speed = maxf(0.01, auto_exposure_speed)
+	attributes.auto_exposure_scale = clampf(auto_exposure_scale, 0.05, 1.0)
+
+
+func _get_cloud_ambient_transmittance() -> float:
+	if not cloud_filtered_lighting_enabled or cloud_lighting_bridge == null:
+		return 1.0
+	if cloud_lighting_bridge.has_method("GetCameraAmbientTransmittance"):
+		return clampf(
+			float(cloud_lighting_bridge.call("GetCameraAmbientTransmittance")),
+			0.02,
+			1.0)
+	if cloud_lighting_bridge.has_method("get_camera_ambient_transmittance"):
+		return clampf(
+			float(cloud_lighting_bridge.call("get_camera_ambient_transmittance")),
+			0.02,
+			1.0)
+	return 1.0
+
+
+func _update_cloud_day_factor(day_factor: float) -> void:
+	if cloud_lighting_bridge == null:
+		return
+	# Local cloud presentation follows received daylight. Cloud-density attenuation
+	# remains an independent bridge output used by the ambient blend above.
+	if cloud_lighting_bridge.has_method("SetLocalDayFactor"):
+		cloud_lighting_bridge.call("SetLocalDayFactor", day_factor)
+	elif cloud_lighting_bridge.has_method("set_local_day_factor"):
+		cloud_lighting_bridge.call("set_local_day_factor", day_factor)
+
+
+func _publish_solar_visibility(visibility: float) -> void:
+	current_solar_visibility = clampf(visibility, 0.0, 1.0)
+	RenderingServer.global_shader_parameter_set(
+		"ringworld_solar_visibility",
+		current_solar_visibility)
+
+
+func _exit_tree() -> void:
+	# Global shader parameters survive scene changes; reset before returning to
+	# menus or scenes with no celestial clock.
+	_publish_solar_visibility(1.0)
+
+
+func _update_sky(
+		environment: Environment,
+		day_factor: float,
+		atmosphere_factor: float,
+		star_visibility: float,
+		surface_up: Vector3,
+		to_sun: Vector3,
+		giant_direction: Vector3) -> void:
+	_ensure_ring_sky(environment)
+	if ring_sky_material == null:
+		return
+	var top_color := night_sky_top_color.lerp(day_sky_top_color, day_factor)
+	var horizon_color := night_sky_horizon_color.lerp(day_sky_horizon_color, day_factor)
+	var eclipse_sky_factor := current_eclipse_coverage * day_factor * clampf(eclipse_sky_tint_strength, 0.0, 1.0)
+	top_color = top_color.lerp(eclipse_sky_color, eclipse_sky_factor)
+	horizon_color = horizon_color.lerp(eclipse_fog_color, eclipse_sky_factor)
+	ring_sky_material.set_shader_parameter("local_surface_up", surface_up.normalized())
+	var ring_radius := _get_ring_radius_meters()
+	var ring_axis := (canonical_grid as Node3D).global_basis.y.normalized() \
+			if canonical_grid is Node3D else Vector3.UP
+	var viewer_across := 0.0
+	var viewer_radial := -surface_up.normalized() * ring_radius
+	var viewer_outward := -surface_up.normalized()
+	if _has_canonical_atmosphere_provider():
+		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
+		viewer_across = canonical_position.z - _get_ring_width_meters() * 0.5
+		viewer_radial = viewer_outward * maxf(0.0, ring_radius - canonical_position.y)
+	else:
+		var viewer_position: Vector3 = _get_viewer_position()
+		var relative_viewer: Vector3 = viewer_position - Vector3(gravity_controller.get_ring_center())
+		viewer_across = relative_viewer.dot(ring_axis)
+		viewer_radial = relative_viewer - ring_axis * viewer_across
+		viewer_outward = viewer_radial.normalized() if viewer_radial.length_squared() > 0.000001 else -surface_up.normalized()
+	ring_sky_material.set_shader_parameter("local_surface_up", -viewer_outward)
+	ring_sky_material.set_shader_parameter("ring_axis_direction", ring_axis)
+	# The sky shader uses normalized ray geometry, but still needs the real radius
+	# to convert its normalized air path back into physical extinction metres.
+	# GraphicsQuality also registers the material with RingAtmosphereModel in the
+	# exploration build; setting the radius here keeps standalone demo scenes
+	# correct without changing the shared authored atmosphere controls.
+	ring_sky_material.set_shader_parameter("ring_radius_meters", ring_radius)
+	ring_sky_material.set_shader_parameter("camera_radial_ratio", viewer_radial.length() / ring_radius)
+	ring_sky_material.set_shader_parameter("camera_across_ratio", viewer_across / ring_radius)
+	ring_sky_material.set_shader_parameter(
+		"ring_half_width_ratio",
+		maxf(_get_ring_width_meters() * 0.5 / ring_radius, 0.000001))
+	ring_sky_material.set_shader_parameter("ring_interior_factor", _structural_shell_atmosphere_factor())
+	var active_day_start_dot := float(_get_celestial_value(
+			"DaylightStartDot", "daylight_start_dot", day_start_dot))
+	var active_day_full_dot := float(_get_celestial_value(
+			"DaylightFullDot", "daylight_full_dot", day_full_dot))
+	ring_sky_material.set_shader_parameter("day_start_dot", active_day_start_dot)
+	ring_sky_material.set_shader_parameter("day_full_dot", active_day_full_dot)
+	ring_sky_material.set_shader_parameter("sky_top_color", Vector3(top_color.r, top_color.g, top_color.b))
+	ring_sky_material.set_shader_parameter("sky_horizon_color", Vector3(horizon_color.r, horizon_color.g, horizon_color.b))
+	ring_sky_material.set_shader_parameter("space_color", Vector3(space_sky_color.r, space_sky_color.g, space_sky_color.b))
+	ring_sky_material.set_shader_parameter("atmosphere_factor", atmosphere_factor)
+	ring_sky_material.set_shader_parameter("sun_direction", to_sun.normalized())
+	ring_sky_material.set_shader_parameter("sun_color", Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b))
+	ring_sky_material.set_shader_parameter("sun_disk_angular_radius_degrees", maxf(0.01, float(_get_celestial_value(
+			"StarAngularRadiusDegrees", "star_angular_radius_degrees", 0.265))))
+	# Compatibility uniform mirrors the canonical shared raw solar visibility.
+	# Do not use GameplayEclipseDarkness: its legacy safety cap is not received
+	# stellar light and must not prevent totality.
+	ring_sky_material.set_shader_parameter("eclipse_coverage", current_eclipse_coverage)
+	ring_sky_material.set_shader_parameter("eclipse_solar_transmittance", current_solar_visibility)
+	ring_sky_material.set_shader_parameter("ring_atmosphere_planet_direction", giant_direction.normalized())
+	ring_sky_material.set_shader_parameter("atmosphere_sun_forward_scattering", atmosphere_sun_forward_scattering)
+	ring_sky_material.set_shader_parameter("exterior_day_scattering_boost", exterior_day_scattering_boost)
+	ring_sky_material.set_shader_parameter("exterior_night_scattering_boost", exterior_night_scattering_boost)
+	ring_sky_material.set_shader_parameter("stars_enabled", stars_enabled)
+	ring_sky_material.set_shader_parameter("star_visibility", star_visibility)
+	ring_sky_material.set_shader_parameter("star_cell_density", star_cell_density)
+	ring_sky_material.set_shader_parameter("star_density", star_density)
+	ring_sky_material.set_shader_parameter("star_brightness", star_brightness)
+	ring_sky_material.set_shader_parameter("star_color", Vector3(star_color.r, star_color.g, star_color.b))
+	# The procedural star domain is ring-local. Feed it the authoritative frame
+	# angle rather than elapsed render time, so pause, scrubbing, and restored
+	# simulation state all reproduce the same sky.
+	var starfield_rotation_radians := deg_to_rad(fposmod(float(_get_celestial_value(
+			"RingRotationAngleDegrees", "ring_rotation_angle_degrees", 0.0)), 360.0))
+	ring_sky_material.set_shader_parameter("starfield_rotation_radians", starfield_rotation_radians)
+	var giant_enabled := bool(_get_gas_giant_configuration_value("Enabled", planet_enabled))
+	var physical_giant_radius := maxf(0.0, float(_get_gas_giant_configuration_value("RadiusKm", 1.0)))
+	var visual_giant_enabled := planet_enabled and giant_enabled and physical_giant_radius > 0.0 \
+		and current_giant_angular_radius_degrees > 0.0
+	ring_sky_material.set_shader_parameter("planet_enabled", visual_giant_enabled)
+	ring_sky_material.set_shader_parameter("giant_direction", giant_direction.normalized())
+	var celestial_visual_seed := int(_get_celestial_value("DeterministicVisualSeed", "deterministic_visual_seed", 1))
+	ring_sky_material.set_shader_parameter("celestial_seed_offset", _celestial_seed_offset(celestial_visual_seed))
+	# Zero is a valid physical result: do not resurrect the old inspector disk.
+	ring_sky_material.set_shader_parameter("planet_angular_radius_degrees", current_giant_angular_radius_degrees)
+	ring_sky_material.set_shader_parameter("planet_brightness", planet_brightness)
+	ring_sky_material.set_shader_parameter("planet_detail_scale", planet_detail_scale)
+	ring_sky_material.set_shader_parameter("gas_giant_light_band_color", Vector3(gas_giant_light_band_color.r, gas_giant_light_band_color.g, gas_giant_light_band_color.b))
+	ring_sky_material.set_shader_parameter("gas_giant_dark_band_color", Vector3(gas_giant_dark_band_color.r, gas_giant_dark_band_color.g, gas_giant_dark_band_color.b))
+	ring_sky_material.set_shader_parameter("gas_giant_cream_color", Vector3(gas_giant_cream_color.r, gas_giant_cream_color.g, gas_giant_cream_color.b))
+	ring_sky_material.set_shader_parameter("gas_giant_storm_color", Vector3(gas_giant_storm_color.r, gas_giant_storm_color.g, gas_giant_storm_color.b))
+	ring_sky_material.set_shader_parameter("gas_giant_band_count", gas_giant_band_count)
+	ring_sky_material.set_shader_parameter("gas_giant_axial_tilt_radians", deg_to_rad(float(_get_gas_giant_configuration_value("AxialTiltDegrees", 3.13))))
+	var giant_rotation_period := maxf(1.0, float(_get_gas_giant_configuration_value("RotationPeriodSeconds", 35730.0)))
+	var giant_simulation_seconds := float(celestial_clock.call("get_simulation_seconds")) if celestial_clock != null and celestial_clock.has_method("get_simulation_seconds") else 0.0
+	ring_sky_material.set_shader_parameter("gas_giant_spin_radians", fposmod(giant_simulation_seconds / giant_rotation_period * TAU, TAU))
+	ring_sky_material.set_shader_parameter("planet_ocean_color", Vector3(planet_ocean_color.r, planet_ocean_color.g, planet_ocean_color.b))
+	ring_sky_material.set_shader_parameter("planet_land_color", Vector3(planet_land_color.r, planet_land_color.g, planet_land_color.b))
+	ring_sky_material.set_shader_parameter("planet_highland_color", Vector3(planet_highland_color.r, planet_highland_color.g, planet_highland_color.b))
+	ring_sky_material.set_shader_parameter("planet_cloud_color", Vector3(planet_cloud_color.r, planet_cloud_color.g, planet_cloud_color.b))
+	ring_sky_material.set_shader_parameter("planet_atmosphere_color", Vector3(planet_atmosphere_color.r, planet_atmosphere_color.g, planet_atmosphere_color.b))
+	ring_sky_material.set_shader_parameter("planet_atmosphere_rim_brightness", planet_atmosphere_rim_brightness)
+	ring_sky_material.set_shader_parameter("planet_light_color", Vector3(planet_light_color.r, planet_light_color.g, planet_light_color.b))
+	ring_sky_material.set_shader_parameter("planet_haze_scattering_energy", planet_haze_scattering_energy)
+	var giant_visible_phase := clampf((1.0 - giant_direction.normalized().dot(to_sun.normalized())) * 0.5, 0.0, 1.0)
+	ring_sky_material.set_shader_parameter("planet_haze_enabled", visual_giant_enabled and planet_light_enabled and giant_visible_phase > 0.05)
+	ring_sky_material.set_shader_parameter("planet_haze_horizon_start_dot", planet_light_horizon_fade_start_dot)
+	ring_sky_material.set_shader_parameter("planet_haze_horizon_full_dot", planet_light_horizon_full_dot)
+	ring_sky_material.set_shader_parameter("planet_haze_twilight_end_day_factor", planet_light_twilight_end_day_factor)
+
+
+func _get_viewer_position() -> Vector3:
+	var active_camera := get_viewport().get_camera_3d()
+	return active_camera.global_position if active_camera != null else player.global_position
+
+
+func _get_player_height_meters() -> float:
+	if player == null:
+		return 0.0
+	if _has_canonical_atmosphere_provider():
+		return maxf(0.0, float(player.call("GetCanonicalAtmosphereHeightMeters")))
+	if gravity_controller == null:
+		return 0.0
+	var center: Vector3 = gravity_controller.get_ring_center()
+	var ring_axis: Vector3 = Vector3(gravity_controller.global_basis.y).normalized()
+	var relative_viewer: Vector3 = _get_viewer_position() - center
+	var radial: Vector3 = relative_viewer - ring_axis * relative_viewer.dot(ring_axis)
+	# Distance from the habitable surface works on both sides of the shell: flying
+	# inward reaches the central vacuum, while flying beneath the structural hull
+	# also restores the black, star-filled exterior sky.
+	return absf(float(gravity_controller.ring_radius) - radial.length())
+
+
+func _atmosphere_factor_for_height(height_meters: float) -> float:
+	var fade_start := maxf(0.0, sky_fade_start_height_meters)
+	var fade_end := maxf(fade_start + 1.0, space_black_height_meters)
+	return 1.0 - smoothstep(fade_start, fade_end, maxf(0.0, height_meters))
+
+
+func _star_visibility_for_height_and_day(height_meters: float, day_factor: float) -> float:
+	if not stars_enabled:
+		return 0.0
+	var fade_start := maxf(space_black_height_meters, stars_fade_start_height_meters)
+	var fade_end := maxf(fade_start + 1.0, stars_full_height_meters)
+	var space_visibility := smoothstep(fade_start, fade_end, maxf(0.0, height_meters))
+	if not stars_visible_on_night_side:
+		return space_visibility
+	var twilight_end := maxf(0.05, night_star_twilight_end_day_factor)
+	var night_factor := 1.0 - smoothstep(0.0, twilight_end, clampf(day_factor, 0.0, 1.0))
+	var atmospheric_night_visibility := night_factor * clampf(night_surface_star_visibility, 0.0, 1.0)
+	return maxf(space_visibility, atmospheric_night_visibility)
+
+
+func _update_planet_light(surface_up: Vector3, planet_direction: Vector3, to_sun: Vector3, day_factor: float) -> void:
+	if planet_light == null:
+		return
+	planet_direction = planet_direction.normalized()
+	planet_light.global_basis = _basis_with_z_axis(planet_direction)
+	planet_light.light_color = planet_light_color
+	planet_light.light_specular = clampf(planet_light_specular, 0.0, 1.0)
+	planet_light.light_angular_distance = clampf(planet_light_angular_distance_degrees, 0.0, 5.0)
+	planet_light.directional_shadow_max_distance = maxf(100.0, planet_light_shadow_distance_meters)
+	planet_light.directional_shadow_fade_start = clampf(planet_light_shadow_fade_ratio, 0.5, 1.0)
+	planet_light.directional_shadow_blend_splits = true
+
+	var giant_enabled := bool(_get_gas_giant_configuration_value("Enabled", planet_enabled))
+	var physical_giant_radius := maxf(0.0, float(_get_gas_giant_configuration_value("RadiusKm", 1.0)))
+	if not planet_enabled or not planet_light_enabled or not giant_enabled \
+		or physical_giant_radius <= 0.0 or current_giant_angular_radius_degrees <= 0.0:
+		planet_light.light_energy = 0.0
+		planet_light.shadow_enabled = false
+		return
+	var horizon_start := clampf(planet_light_horizon_fade_start_dot, -0.25, 0.25)
+	var horizon_full := maxf(horizon_start + 0.01, planet_light_horizon_full_dot)
+	var above_horizon := smoothstep(
+		horizon_start,
+		horizon_full,
+		surface_up.normalized().dot(planet_direction))
+	var twilight_end := maxf(0.05, planet_light_twilight_end_day_factor)
+	var night_factor := 1.0 - smoothstep(0.0, twilight_end, clampf(day_factor, 0.0, 1.0))
+	# At conjunction the giant is backlit (dark rim); at opposition it is full.
+	var visible_phase := clampf((1.0 - planet_direction.dot(to_sun.normalized())) * 0.5, 0.0, 1.0)
+	planet_light.light_energy = maxf(0.0, planet_light_night_energy) * above_horizon * night_factor * visible_phase
+	# A zero-energy directional light does not need a shadow-map pass. This keeps
+	# full-moon shadows local to the actual planet-lit portion of the night side.
+	planet_light.shadow_enabled = planet_light_cast_shadows and planet_light.light_energy > 0.001
+
+
+func _basis_with_z_axis(z_axis: Vector3) -> Basis:
+	var z := z_axis.normalized()
+	var reference := Vector3.UP
+	if absf(reference.dot(z)) > 0.98:
+		reference = Vector3.RIGHT
+	var x := reference.cross(z).normalized()
+	var y := z.cross(x).normalized()
+	return Basis(x, y, z).orthonormalized()
+
+
+func _cap_density_for_opposite_visibility(requested_density: float, target_visibility: float) -> float:
+	if not _has_canonical_atmosphere_provider() and gravity_controller == null:
+		return requested_density
+
+	var ring_diameter := maxf(_get_ring_radius_meters() * 2.0, 1.0)
+	var visibility: float = clampf(target_visibility, 0.01, 0.99)
+	var density_cap: float = -log(visibility) / ring_diameter
+	return minf(requested_density, density_cap)
+
+
+func _resolve_references() -> void:
+	if player == null:
+		player = get_node_or_null(player_path) as Node3D
+
+	if gravity_controller == null:
+		gravity_controller = get_node_or_null(gravity_controller_path)
+
+	if canonical_grid == null:
+		canonical_grid = get_node_or_null(canonical_grid_path)
+
+	if sun_light == null:
+		sun_light = get_node_or_null(sun_light_path) as DirectionalLight3D
+
+	if planet_light == null:
+		planet_light = get_node_or_null(planet_light_path) as DirectionalLight3D
+
+	if celestial_clock == null:
+		celestial_clock = get_node_or_null(celestial_clock_path)
+
+	if world_environment == null:
+		world_environment = get_node_or_null(world_environment_path) as WorldEnvironment
+
+	if cloud_lighting_bridge == null:
+		cloud_lighting_bridge = get_node_or_null(cloud_lighting_bridge_path)
+
+	if underground_environment == null:
+		underground_environment = get_node_or_null(underground_environment_path)
+
+
+func _evaluate_giant(to_sun: Vector3) -> void:
+	# RingDayNightCycle evaluates the immutable frame at priority -100.
+	pass
+
+
+func _get_celestial_value(pascal_property: String, legacy_property: String, fallback: Variant) -> Variant:
+	if celestial_clock == null:
+		return fallback
+	var pascal_value: Variant = celestial_clock.get(pascal_property)
+	if pascal_value != null:
+		return pascal_value
+	var legacy_value: Variant = celestial_clock.get(legacy_property)
+	return legacy_value if legacy_value != null else fallback
+
+
+func _get_gas_giant_configuration_value(property_name: String, fallback: Variant) -> Variant:
+	# The clock owns the effective nested Configuration resource. Reading it here
+	# keeps sky presentation in lockstep with the same physical giant it evaluates.
+	if celestial_clock == null:
+		return fallback
+	var configuration: Variant = celestial_clock.get("Configuration")
+	if configuration == null:
+		return fallback
+	var giant_configuration: Variant = configuration.get("GasGiant")
+	if giant_configuration == null:
+		return fallback
+	var value: Variant = giant_configuration.get(property_name)
+	return value if value != null else fallback
+
+
+func _celestial_seed_offset(seed: int) -> Vector3:
+	# Keep domains compact before they reach the GPU: high world seeds otherwise
+	# lose their low bits in float arithmetic and can collapse to the same pattern.
+	var compact_seed := posmod(seed, 104729)
+	return Vector3(
+		float(posmod(compact_seed * 73 + 19, 997)) / 997.0,
+		float(posmod(compact_seed * 193 + 47, 991)) / 991.0,
+		float(posmod(compact_seed * 389 + 71, 983)) / 983.0)
+
+
+func _get_underground_sky_access() -> float:
+	if underground_environment == null:
+		return 1.0
+	return clampf(float(underground_environment.get("CurrentSkyAccess")), 0.0, 1.0)
+
+
+func _has_canonical_atmosphere_provider() -> bool:
+	return player != null \
+		and canonical_grid != null \
+		and player.has_method("GetCanonicalSurfaceUp") \
+		and player.has_method("GetCanonicalAtmospherePositionMeters") \
+		and player.has_method("GetCanonicalAtmosphereHeightMeters") \
+		and canonical_grid.has_method("GetCanonicalRingRadiusMeters")
+
+
+func _get_surface_up() -> Vector3:
+	if _has_canonical_atmosphere_provider():
+		var canonical_up := player.call("GetCanonicalSurfaceUp") as Vector3
+		if canonical_grid is Node3D:
+			canonical_up = (canonical_grid as Node3D).global_basis.orthonormalized() * canonical_up
+		return canonical_up.normalized()
+	return gravity_controller.get_surface_up(player.global_position)
+
+
+func _get_ring_radius_meters() -> float:
+	if _has_canonical_atmosphere_provider():
+		return maxf(1.0, float(canonical_grid.call("GetCanonicalRingRadiusMeters")))
+	return maxf(float(gravity_controller.ring_radius), 1.0)
+
+
+func _get_ring_width_meters() -> float:
+	if _has_canonical_atmosphere_provider():
+		return maxf(1.0, float(canonical_grid.get("RingAcrossWidthMeters")))
+	return maxf(float(gravity_controller.ring_width), 1.0)
+
+
+func _ring_interior_factor() -> float:
+	var width := _get_ring_width_meters()
+	var half_width := width * 0.5
+	var across := half_width
+	if _has_canonical_atmosphere_provider():
+		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
+		across = canonical_position.z
+	elif gravity_controller != null:
+		var relative_viewer := _get_viewer_position() - Vector3(gravity_controller.get_ring_center())
+		across = relative_viewer.dot(Vector3.UP) + half_width
+	return _ring_interior_factor_for_across(across, width)
+
+
+# The visual atmosphere shares the same finite lower-hull boundary as shell
+# lighting. Canonical coordinates are authoritative; only scenes without that
+# provider retain the legacy across-only fallback.
+func _structural_shell_atmosphere_factor() -> float:
+	var width := _get_ring_width_meters()
+	if _has_canonical_atmosphere_provider():
+		# A canonical scene missing the structural-domain API must fail closed;
+		# falling back to a geometric estimate here could light exterior vacuum.
+		if not canonical_grid.has_method("GetStructuralBottomGlobalY"):
+			return 0.0
+		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
+		return _ring_interior_factor_for_shell(
+			canonical_position.z,
+			width,
+			canonical_position.y,
+			float(canonical_grid.call("GetStructuralBottomGlobalY")))
+	return _ring_interior_factor()
+
+
+# Ring occupancy is [0, width) across and [structural bottom, +inf) vertically.
+# The exact lower-hull plane remains in the shell; only positions below it are
+# exterior vacuum.
+func _ring_interior_factor_for_shell(
+		across: float, width: float, vertical: float, structural_bottom: float) -> float:
+	if vertical < structural_bottom:
+		return 0.0
+	return _ring_interior_factor_for_across(across, width)
+
+
+# Canonical ring occupancy is the half-open interval [0, width). The hard
+# guard prevents atmosphere or shell lighting from bleeding beyond either wall;
+# the visual feather is deliberately contained inside that interval.
+func _ring_interior_factor_for_across(across: float, width: float) -> float:
+	if width <= 0.0 or across < 0.0 or across >= width:
+		return 0.0
+	var half_width := width * 0.5
+	var feather := minf(maxf(100.0, ring_side_atmosphere_fade_meters), half_width)
+	return 1.0 - smoothstep(half_width - feather, half_width, absf(across - half_width))
+
+
+func _run_ring_interior_boundary_smoke_test() -> void:
+	const TEST_WIDTH := 128.0
+	const EPSILON := 0.001
+	var points := [-EPSILON, 0.0, 1.0, TEST_WIDTH * 0.5, TEST_WIDTH - 1.0, TEST_WIDTH, TEST_WIDTH + EPSILON]
+	var factors: Array[float] = []
+	for point in points:
+		factors.append(_ring_interior_factor_for_across(point, TEST_WIDTH))
+	if factors[0] != 0.0 or factors[5] != 0.0 or factors[6] != 0.0 \
+		or factors[1] < 0.0 or factors[2] <= 0.0 or factors[3] < 0.999 or factors[4] <= 0.0:
+		push_error("Ring interior boundary smoke test failed: %s" % [factors])
+	else:
+		print("RING_INTERIOR_BOUNDARY_SMOKE_TEST=PASS")

@@ -1,0 +1,92 @@
+/* Main for atmo separated so cloud methods can include atmo as "library"
+*/
+
+void main() {
+	ivec2 uv = ivec2(gl_GlobalInvocationID.xy);
+	if (uv.x >= scene.data.viewport_size.x || uv.y >= scene.data.viewport_size.y) return;
+	seed = rand_seed_2d(vec2(uv));
+
+	vec2 screen_uv = get_screen_uv(uv, scene.data.viewport_size);
+
+	float depth_planar = texture(in_depth_sampler, screen_uv).r;
+	vec4 ndc = get_ndc(screen_uv, depth_planar);
+	float depth_planar_linear = get_depth_linear(scene.data.inv_projection_matrix, ndc);
+	vec3 cam_forward = get_cam_forward(scene.data.inv_view_matrix);
+	vec3 cam_pos = get_cam_world_pos(scene.data.inv_view_matrix);
+	vec3 dir = ray_screen(scene.data.inv_view_matrix, scene.data.inv_projection_matrix, screen_uv);
+	#ifdef FLAT_WORLD
+	if (config.data.flat_frame_control.x > 0.5) {
+		vec3 rel = cam_pos - config.data.flat_frame_origin.xyz;
+		cam_pos = vec3(dot(rel, config.data.flat_frame_x.xyz), dot(rel, config.data.flat_frame_y.xyz), dot(rel, config.data.flat_frame_z.xyz));
+		cam_forward = vec3(dot(cam_forward, config.data.flat_frame_x.xyz), dot(cam_forward, config.data.flat_frame_y.xyz), dot(cam_forward, config.data.flat_frame_z.xyz));
+		dir = vec3(dot(dir, config.data.flat_frame_x.xyz), dot(dir, config.data.flat_frame_y.xyz), dot(dir, config.data.flat_frame_z.xyz));
+	}
+	#endif
+	float depth_lim = depth_planar_linear / dot(dir, cam_forward);
+	vec4 color = imageLoad(inout_image, uv);
+
+	// Depth past render far plane
+	if (depth_lim >= scene.data.z_far - 0.01) {
+		depth_lim = MAX_DIST;
+	}
+
+	bool is_valid = false;
+	vec2 hit;
+	float atmo_travel_dist = 0.0;
+	vec3 start_pos = vec3(0.0);
+	float max_travel_dist = 0.0;
+	
+	#ifdef FLAT_WORLD
+		hit = vbox_intersect(cam_pos, dir, config.data.pos, config.data.atmo_alt);
+		if (config.data.dist_limit > 0.0 && hit.x > config.data.dist_limit) {
+			hit.y = 0.0;
+		}
+		if (hit.y > 0.0 && hit.x <= depth_lim) {
+			start_pos = cam_pos + dir * hit.x;
+			max_travel_dist = min(depth_lim - hit.x, hit.y);
+			is_valid = true;
+		}
+	#else
+		if (sphere_in_view(cam_pos, dir, config.data.pos, config.data.radius + config.data.atmo_alt, depth_lim)) {
+			hit = sphere_intersect_prechecked(cam_pos, dir, config.data.pos, config.data.radius + config.data.atmo_alt);
+			// Invalidate any distances beyond dist_limit when used
+			if (config.data.dist_limit > 0.0 && hit.x > config.data.dist_limit) {
+				hit.y = 0.0;
+			}
+			if (hit.y > 0.0 && hit.x <= depth_lim) {
+				atmo_travel_dist = hit.y;
+				start_pos = cam_pos + dir * hit.x;
+				max_travel_dist = min(depth_lim - hit.x, hit.y);
+				is_valid = true;
+			}
+		}
+	#endif
+
+	if (is_valid) {
+		bool star_visible = true;
+		if (depth_lim < MAX_DIST) {
+			star_visible = false;
+		}
+
+		if (config.data.atmo_enable) {
+			vec4 atmo_color = atmo_draw(start_pos, dir, max_travel_dist, 10, star_visible);
+			color.rgb = mix(color.rgb, atmo_color.rgb, atmo_color.a);
+		}
+
+		if (config.data.cloud_enable) {
+			float cloud_depth = imageLoad(in_depth_clouds, uv).r;
+			if (cloud_depth < depth_lim - 0.01) {
+				/* DEBUG: Render combined depth */
+				// depth_lim = cloud_depth;
+				vec4 cloud_color = imageLoad(in_image_clouds, uv);
+				color.rgb = mix(color.rgb, cloud_color.rgb, cloud_color.a);
+				color.a = mix(color.a, 1.0, cloud_color.a);
+			}
+		}
+	}
+
+	/* DEBUG: Render combined depth */
+	// color = vec4(vec3(depth_lim / scene.data.z_far, color.g, color.b), 1.0);
+
+	imageStore(inout_image, uv, color);
+}

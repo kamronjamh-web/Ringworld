@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://ciglnlhaauxe6"
+path="res://.godot/imported/fft_surface_query.glsl-714cbfe1d83b6906082b3a6aaf48e268.res"
+
+[deps]
+
+source_file="res://third_party/godot_ocean_waves/compute/fft_surface_query.glsl"
+dest_files=["res://.godot/imported/fft_surface_query.glsl-714cbfe1d83b6906082b3a6aaf48e268.res"]
+
+[params]
+

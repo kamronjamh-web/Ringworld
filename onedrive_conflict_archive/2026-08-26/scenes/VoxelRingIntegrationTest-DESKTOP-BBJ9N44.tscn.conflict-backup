@@ -1,0 +1,503 @@
+[gd_scene format=3 uid="uid://c1w30hes5j4ew"]
+
+[ext_resource type="PackedScene" path="res://scenes/RingWorld.tscn" id="1"]
+[ext_resource type="Script" uid="uid://bmq87o3b56g2o" path="res://scripts/Voxel/Phase2/VoxelChunkGridManager.cs" id="2"]
+[ext_resource type="Resource" uid="uid://crx53xmidbulo" path="res://materials/voxel_block_color_map_default.tres" id="3"]
+[ext_resource type="Resource" path="res://resources/voxel/voxel_terrain_settings_ring_integration.tres" id="4"]
+[ext_resource type="Script" uid="uid://d2n8ahditje7c" path="res://scripts/Voxel/Phase2/VoxelGridEditController.cs" id="5"]
+[ext_resource type="Script" path="res://scripts/Terrain/Editable/SmoothTerrainGrid.cs" id="41"]
+[ext_resource type="Script" path="res://scripts/Terrain/Editable/SmoothConstructionOverlay.cs" id="42"]
+[ext_resource type="Script" uid="uid://b7w4aag080td5" path="res://scripts/Voxel/Integration/RingVoxelExplorerController.cs" id="6"]
+[ext_resource type="Script" uid="uid://cftpht3qt6kyc" path="res://scripts/Voxel/LOD/RingTerrainProxySector.cs" id="7"]
+[ext_resource type="Script" uid="uid://dt8xuq6ef561a" path="res://scripts/Voxel/LOD/RingTerrainGlobalLod.cs" id="8"]
+[ext_resource type="Script" uid="uid://bjr0mwx6fo1p8" path="res://scripts/Voxel/LOD/RingLodDebugHud.cs" id="9"]
+[ext_resource type="Script" uid="uid://cnl4vmd75rg4j" path="res://scripts/Voxel/LOD/RingLodPauseMenu.cs" id="10"]
+[ext_resource type="Script" uid="uid://7w8bdgi7v20r" path="res://scripts/day_side_atmosphere.gd" id="11"]
+[ext_resource type="Script" uid="uid://by7nkewq7bfqh" path="res://scripts/floating_origin.gd" id="12"]
+[ext_resource type="Script" uid="uid://da7rvhxancdu5" path="res://scripts/Voxel/LOD/RingTerrainLodCoordinator.cs" id="13"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_low.tres" id="14"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_medium.tres" id="15"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_high.tres" id="16"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_very_high.tres" id="17"]
+[ext_resource type="Script" uid="uid://cadvumnqmbjgb" path="res://scripts/RingCloudLayer.cs" id="18"]
+[ext_resource type="Script" uid="uid://cq3m7mawearx4" path="res://scripts/Voxel/LOD/RingCertificationMonitor.cs" id="19"]
+[ext_resource type="Script" uid="uid://c753xf3ms4mvq" path="res://scripts/Voxel/LOD/RingAnalyticGlobalLod.cs" id="20"]
+[ext_resource type="Script" uid="uid://dnwhsvt16n4dt" path="res://scripts/Voxel/LOD/RingScaledFarViewport.cs" id="21"]
+[ext_resource type="Script" uid="uid://cpc5ha57npjpq" path="res://scripts/Voxel/LOD/RingTerrainMinimap.cs" id="22"]
+[ext_resource type="Script" uid="uid://dgyclc1eeg4nl" path="res://scripts/RingVolumetricCloudLayer.cs" id="23"]
+[ext_resource type="Script" uid="uid://dy0ghjo3cmywq" path="res://scripts/Voxel/Save/RingWorldSaveManager.cs" id="24"]
+[ext_resource type="Script" uid="uid://duu22c4card0s" path="res://scripts/RingAmbientOcclusionController.cs" id="25"]
+[ext_resource type="Script" uid="uid://drmnaq0urpjcn" path="res://scripts/ui/RingPresentationHud.cs" id="26"]
+[ext_resource type="Script" uid="uid://d01x5wi1ycbc8" path="res://scripts/ui/RingShortsCaptureDirector.cs" id="27"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_ultra_video.tres" id="28"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_cinematic_5090.tres" id="29"]
+[ext_resource type="Resource" path="res://resources/voxel/ring_lod_mega_regional.tres" id="39"]
+[ext_resource type="Script" uid="uid://vf4r34dwqcwg" path="res://scripts/Voxel/LOD/RingGraphicsQualityController.cs" id="30"]
+[ext_resource type="Script" uid="uid://l0xttrbj3whr" path="res://scripts/Voxel/LOD/RingScaleAnchorLayer.cs" id="31"]
+[ext_resource type="Script" path="res://scripts/Voxel/LOD/RingBiomeDecorationLayer.cs" id="40"]
+[ext_resource type="Script" uid="uid://clvced3a6u1xm" path="res://scripts/RingLocalVolumetricCloudRenderer.cs" id="32"]
+[ext_resource type="Script" uid="uid://d06w5ivn1sifg" path="res://scripts/RingLocalWeatherEffects.cs" id="33"]
+[ext_resource type="Script" uid="uid://djusduuxf0voj" path="res://addons/SunshineClouds2/SunshineCloudsDriver.gd" id="34"]
+[ext_resource type="CompositorEffect" path="res://resources/clouds/sunshine_ring_local.tres" id="35"]
+[ext_resource type="Script" uid="uid://c3lgd3me5trln" path="res://scripts/RingSunshineCloudBridge.cs" id="36"]
+[ext_resource type="Script" uid="uid://dldopq76731f8" path="res://scripts/Voxel/LOD/RingTerrainCoarseSdfPilot.cs" id="37"]
+[ext_resource type="Script" uid="uid://cqkmuatyta2xh" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="38"]
+
+[sub_resource type="ProceduralSkyMaterial" id="1"]
+sky_top_color = Color(0.02, 0.03, 0.06, 1)
+sky_horizon_color = Color(0.01, 0.02, 0.03, 1)
+ground_bottom_color = Color(0.01, 0.01, 0.02, 1)
+ground_horizon_color = Color(0.01, 0.01, 0.02, 1)
+
+[sub_resource type="Sky" id="2"]
+sky_material = SubResource("1")
+
+[sub_resource type="Environment" id="3"]
+background_mode = 2
+sky = SubResource("2")
+ambient_light_source = 3
+ambient_light_color = Color(0.53, 0.58, 0.65, 1)
+ambient_light_energy = 0.4
+ssr_enabled = true
+ssr_max_steps = 96
+ssr_fade_in = 0.12
+ssr_fade_out = 1.6
+ssr_depth_tolerance = 0.12
+fog_enabled = true
+fog_light_color = Color(0.29, 0.38, 0.5, 1)
+fog_density = 0.00014
+fog_aerial_perspective = 0.78
+
+[sub_resource type="CapsuleShape3D" id="4"]
+radius = 0.45
+height = 1.4
+
+[node name="VoxelRingIntegrationTest" type="Node3D" unique_id=1422005730]
+
+[node name="FloatingOrigin" type="Node" parent="." unique_id=1642501874]
+script = ExtResource("12")
+enabled = false
+player_path = NodePath("../Explorer")
+canonical_shift_bridge_group = &""
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=247037556]
+environment = SubResource("3")
+
+[node name="StarLight" type="DirectionalLight3D" parent="." unique_id=662915680]
+transform = Transform3D(0.81915206, 0.43938506, -0.36868784, 0, 0.64278764, 0.76604444, 0.57357645, -0.62750685, 0.5265408, 0, 0, 0)
+light_energy = 3.0
+shadow_enabled = true
+shadow_bias = 0.08
+shadow_normal_bias = 1.5
+directional_shadow_split_1 = 0.015
+directional_shadow_split_2 = 0.08
+directional_shadow_split_3 = 0.3
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 0.85
+directional_shadow_max_distance = 4000.0
+
+[node name="PlanetLight" type="DirectionalLight3D" parent="." unique_id=1834129439]
+light_color = Color(0.62, 0.72, 0.9, 1)
+light_energy = 0.0
+light_angular_distance = 0.5
+light_specular = 0.45
+shadow_bias = 0.08
+shadow_normal_bias = 1.5
+directional_shadow_split_1 = 0.04
+directional_shadow_split_2 = 0.14
+directional_shadow_split_3 = 0.42
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 0.85
+directional_shadow_max_distance = 6000.0
+
+[node name="DaySideAtmosphere" type="Node" parent="." unique_id=1070348410]
+script = ExtResource("11")
+player_path = NodePath("../Explorer")
+world_environment_path = NodePath("../WorldEnvironment")
+
+[node name="AmbientOcclusion" type="Node" parent="." unique_id=1870297751]
+script = ExtResource("25")
+
+[node name="RingWorld" parent="." unique_id=233676741 instance=ExtResource("1")]
+build_high_lod_segments = false
+enable_streaming = false
+build_far_ring_lod = false
+player_path = NodePath("../Explorer")
+
+[node name="Explorer" type="CharacterBody3D" parent="." unique_id=1060598049]
+transform = Transform3D(-4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 0, 0, 1, 79977, 0, 0)
+script = ExtResource("6")
+UseSmoothTerrainPhysics = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Explorer" unique_id=1380201851]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("4")
+disabled = true
+
+[node name="Head" type="Node3D" parent="Explorer" unique_id=1460850961]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.55, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Explorer/Head" unique_id=1642304166]
+current = true
+fov = 80.0
+near = 0.1
+far = 220000.0
+
+[node name="ChunkGridManager" type="Node3D" parent="." unique_id=336223067]
+script = ExtResource("2")
+BuildOnReady = false
+DormantEditableBackend = true
+EnableCanonicalFloatingOriginAnchor = true
+ChunkRadiusAround = 2
+ChunkRadiusAcross = 2
+ChunkRadiusVertical = 1
+EnableChunkStreaming = false
+StreamingFocusPath = NodePath("../Explorer/Head/Camera3D")
+StreamingVisualRadiusAround = 7
+StreamingVisualRadiusAcross = 7
+StreamingVisualRadiusVertical = 7
+StreamingCollisionRadiusAround = 2
+StreamingCollisionRadiusAcross = 2
+StreamingCollisionRadiusVertical = 1
+BlockColorMap = ExtResource("3")
+UseDeterministicTerrainGeneration = true
+TerrainSettings = ExtResource("4")
+UseSmoothNaturalTerrainPilot = false
+FlatTerrainBedrockY = -256
+MaxBuildGlobalY = 4096
+MaxChunkLoadsPerFrame = 1
+UseRingCurvedPlacement = true
+AroundRingChunkLength = 15708
+UseHabitableRingAxisLayout = true
+RingRadiusMeters = 80000.19
+RingAcrossBaseOffsetMeters = -10000.0
+EnforceRingAcrossBounds = true
+GenerateStructuralBedrockEdgeChunks = true
+GenerateStructuralBedrockUndersideChunks = true
+EnableCurvatureVertexWarp = true
+EnableCurvatureWarpHotkeys = false
+RunAroundRingSeamSelfTestsOnReady = true
+CompensateBridgeForManagerGlobalMotion = false
+
+[node name="GridEditController" type="Node3D" parent="." unique_id=1451173773]
+script = ExtResource("5")
+CameraPath = NodePath("../Explorer/Head/Camera3D")
+GridManagerPath = NodePath("../ChunkGridManager")
+UseSmoothTerrainBackend = true
+MaxEditDistance = 160.0
+SmoothTerrainPath = NodePath("../SmoothTerrainGrid")
+ConstructionOverlayPath = NodePath("../SmoothConstructionOverlay")
+
+[node name="SmoothTerrainGrid" type="Node3D" parent="."]
+script = ExtResource("41")
+EnableHotChunkPatches = true
+SourceGridPath = NodePath("../ChunkGridManager")
+StreamingFocusPath = NodePath("../Explorer")
+RadiusAround = 2
+RadiusAcross = 2
+RadiusVertical = 1
+CollisionRadius = 1
+MaxWorkers = 2
+
+[node name="SmoothConstructionOverlay" type="Node3D" parent="."]
+script = ExtResource("42")
+SourceGridPath = NodePath("../ChunkGridManager")
+
+[node name="Lod1Terrain2m" type="MeshInstance3D" parent="." unique_id=1300253991]
+script = ExtResource("7")
+LodLabel = "LOD1 2m"
+CoordinatorManaged = true
+SectorSizeMeters = 128
+SampleSpacingMeters = 2
+AlignSurfaceToTerrainSdf = true
+PredictionMaxDistanceMeters = 256.0
+EnableFarFade = true
+FadeOutStartMeters = 240.0
+FadeOutEndMeters = 320.0
+ShadowIgnoresTerrainFade = false
+
+[node name="CoarseSdfLod1Pilot" type="Node3D" parent="." unique_id=707711974]
+script = ExtResource("37")
+
+[node name="LiveTuningDrawer" type="CanvasLayer" parent="." unique_id=1703818586]
+layer = 12
+script = ExtResource("38")
+
+[node name="Lod2Terrain4m" type="MeshInstance3D" parent="." unique_id=171830018]
+script = ExtResource("7")
+LodLabel = "LOD2 4m"
+CoordinatorManaged = true
+SampleSpacingMeters = 4
+UseBlockyHeightfield = false
+AlignSurfaceToTerrainSdf = true
+FadeStartMeters = 240.0
+FadeEndMeters = 320.0
+EnableFarFade = true
+CastTerrainShadows = false
+
+[node name="Lod3Terrain8m" type="MeshInstance3D" parent="." unique_id=775001035]
+script = ExtResource("7")
+LodLabel = "LOD3 8m"
+CoordinatorManaged = true
+SectorSizeMeters = 512
+AlignSurfaceToTerrainSdf = true
+BlockyHeightQuantumMeters = 4
+StreamingUpdateIntervalSeconds = 0.35
+PredictionMaxDistanceMeters = 1024.0
+SectorSkirtDepthMeters = 16.0
+RadialUnderlayOffsetMeters = 0.5
+FadeStartMeters = 480.0
+FadeEndMeters = 640.0
+EnableFarFade = true
+FadeOutStartMeters = 960.0
+FadeOutEndMeters = 1280.0
+CastTerrainShadows = false
+
+[node name="Lod4Terrain16m" type="MeshInstance3D" parent="." unique_id=687165185]
+script = ExtResource("7")
+LodLabel = "LOD4 16m"
+CoordinatorManaged = true
+SectorSizeMeters = 1024
+SampleSpacingMeters = 16
+StreamingUpdateIntervalSeconds = 0.4
+PredictionLookAheadSeconds = 1.0
+PredictionMaxDistanceMeters = 2048.0
+SectorSkirtDepthMeters = 32.0
+RadialUnderlayOffsetMeters = 1.0
+FadeStartMeters = 960.0
+FadeEndMeters = 1280.0
+EnableFarFade = true
+FadeOutStartMeters = 1920.0
+FadeOutEndMeters = 2560.0
+CastTerrainShadows = false
+
+[node name="Lod5Terrain32m" type="MeshInstance3D" parent="." unique_id=252993222]
+script = ExtResource("7")
+LodLabel = "LOD5 32m"
+CoordinatorManaged = true
+SectorSizeMeters = 2048
+SampleSpacingMeters = 32
+StreamingUpdateIntervalSeconds = 0.5
+PredictionLookAheadSeconds = 1.5
+PredictionMaxDistanceMeters = 4096.0
+SectorSkirtDepthMeters = 64.0
+RadialUnderlayOffsetMeters = 2.0
+FadeStartMeters = 1920.0
+FadeEndMeters = 2560.0
+EnableFarFade = true
+FadeOutStartMeters = 4000.0
+FadeOutEndMeters = 5500.0
+LowTerrainColor = Color(0.17, 0.25, 0.15, 1)
+HighTerrainColor = Color(0.38, 0.34, 0.25, 1)
+CastTerrainShadows = false
+
+[node name="Lod6Terrain64m" type="MeshInstance3D" parent="." unique_id=2124003175]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD6 64m"
+CoordinatorManaged = true
+SectorSizeMeters = 4096
+SampleSpacingMeters = 64
+StreamingUpdateIntervalSeconds = 0.75
+PredictionLookAheadSeconds = 1.75
+PredictionMaxDistanceMeters = 8192.0
+SectorSkirtDepthMeters = 128.0
+RadialUnderlayOffsetMeters = 4.0
+FadeStartMeters = 4000.0
+FadeEndMeters = 5500.0
+EnableFarFade = true
+FadeOutStartMeters = 15000.0
+FadeOutEndMeters = 20000.0
+CastTerrainShadows = false
+
+[node name="Lod7Terrain128m" type="MeshInstance3D" parent="." unique_id=1812991418]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD7 128m"
+CoordinatorManaged = true
+SectorSizeMeters = 8192
+SampleSpacingMeters = 128
+StreamingUpdateIntervalSeconds = 1.0
+PredictionLookAheadSeconds = 2.0
+PredictionMaxDistanceMeters = 16384.0
+SectorSkirtDepthMeters = 256.0
+RadialUnderlayOffsetMeters = 8.0
+FadeStartMeters = 15000.0
+FadeEndMeters = 20000.0
+EnableFarFade = true
+FadeOutStartMeters = 40000.0
+FadeOutEndMeters = 55000.0
+CastTerrainShadows = false
+
+[node name="Lod8Terrain256m" type="MeshInstance3D" parent="." unique_id=1970110092]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD8 256m"
+CoordinatorManaged = true
+SectorSizeMeters = 16384
+SampleSpacingMeters = 256
+StreamingUpdateIntervalSeconds = 1.25
+PredictionLookAheadSeconds = 2.5
+PredictionMaxDistanceMeters = 32768.0
+SectorSkirtDepthMeters = 512.0
+RadialUnderlayOffsetMeters = 16.0
+FadeStartMeters = 40000.0
+FadeEndMeters = 55000.0
+EnableFarFade = true
+FadeOutStartMeters = 110000.0
+FadeOutEndMeters = 140000.0
+CastTerrainShadows = false
+
+[node name="Lod9Terrain2km" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD9 2km"
+CoordinatorManaged = true
+SectorSizeMeters = 131072
+SampleSpacingMeters = 2048
+StreamingUpdateIntervalSeconds = 1.5
+PredictionLookAheadSeconds = 3.0
+PredictionMaxDistanceMeters = 262144.0
+SectorSkirtDepthMeters = 2048.0
+RadialUnderlayOffsetMeters = 128.0
+FadeStartMeters = 140000.0
+FadeEndMeters = 180000.0
+EnableFarFade = true
+FadeOutStartMeters = 550000.0
+FadeOutEndMeters = 700000.0
+CastTerrainShadows = false
+
+[node name="Lod10Terrain8km" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD10 8km"
+CoordinatorManaged = true
+SectorSizeMeters = 524288
+SampleSpacingMeters = 8192
+StreamingUpdateIntervalSeconds = 2.0
+PredictionLookAheadSeconds = 4.0
+PredictionMaxDistanceMeters = 1048576.0
+SectorSkirtDepthMeters = 8192.0
+RadialUnderlayOffsetMeters = 512.0
+FadeStartMeters = 550000.0
+FadeEndMeters = 700000.0
+EnableFarFade = true
+FadeOutStartMeters = 2000000.0
+FadeOutEndMeters = 2500000.0
+CastTerrainShadows = false
+
+[node name="Lod11Terrain32km" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD11 32km"
+CoordinatorManaged = true
+SectorSizeMeters = 2097152
+SampleSpacingMeters = 32768
+StreamingUpdateIntervalSeconds = 3.0
+PredictionLookAheadSeconds = 5.0
+PredictionMaxDistanceMeters = 4194304.0
+SectorSkirtDepthMeters = 32768.0
+RadialUnderlayOffsetMeters = 2048.0
+FadeStartMeters = 2000000.0
+FadeEndMeters = 2500000.0
+EnableFarFade = true
+FadeOutStartMeters = 6500000.0
+FadeOutEndMeters = 8000000.0
+CastTerrainShadows = false
+
+[node name="TerrainLodCoordinator" type="Node" parent="." unique_id=640571862]
+script = ExtResource("13")
+LowProfile = ExtResource("14")
+MediumProfile = ExtResource("15")
+HighProfile = ExtResource("16")
+VeryHighProfile = ExtResource("17")
+UltraVideoProfile = ExtResource("28")
+Cinematic5090Profile = ExtResource("29")
+MegaRegionalProfile = ExtResource("39")
+
+[node name="GlobalTerrainLod3" type="MeshInstance3D" parent="." unique_id=1063047958]
+script = ExtResource("8")
+
+[node name="AnalyticGlobalRing" type="MeshInstance3D" parent="." unique_id=1633746160]
+script = ExtResource("20")
+
+[node name="RingCloudLayer" type="MeshInstance3D" parent="." unique_id=1428274939]
+script = ExtResource("18")
+
+[node name="LocalVolumetricCloudRenderer" type="Node3D" parent="." unique_id=1645272778]
+script = ExtResource("32")
+
+[node name="RingVolumetricClouds" type="Node3D" parent="." unique_id=1514532413]
+script = ExtResource("23")
+SunshineCloudsPrimaryRenderer = true
+
+[node name="SunshineCloudsDriver" type="Node" parent="." unique_id=1176026951 node_paths=PackedStringArray("tracked_directional_lights", "tracked_point_lights")]
+script = ExtResource("34")
+update_continuously = true
+clouds_resource = ExtResource("35")
+ambience_sample_environment = SubResource("3")
+tracked_directional_lights = [NodePath("../StarLight")]
+tracked_directional_light_shadow_steps = Array[int]([8])
+tracked_point_lights = [NodePath("../LocalWeatherEffects/LocalStormFlash")]
+directional_light_power_multiplier = 0.34
+point_light_power_multiplier = 0.35
+
+[node name="SunshineCloudBridge" type="Node" parent="." unique_id=1280994918]
+script = ExtResource("36")
+
+[node name="LocalWeatherEffects" type="Node3D" parent="." unique_id=308293362]
+script = ExtResource("33")
+Enabled = true
+
+[node name="LocalStormFlash" type="OmniLight3D" parent="LocalWeatherEffects"]
+top_level = true
+light_color = Color(0.72, 0.86, 1, 1)
+light_energy = 0.0
+light_volumetric_fog_energy = 2.4
+omni_range = 6000.0
+shadow_enabled = false
+
+[node name="ScaledFarViewport" type="Node" parent="." unique_id=12184627]
+script = ExtResource("21")
+
+[node name="GraphicsQuality" type="Node" parent="." unique_id=1462204187]
+script = ExtResource("30")
+
+[node name="ScaleAnchors" type="Node3D" parent="." unique_id=1112973490]
+script = ExtResource("31")
+
+[node name="BiomeDecorations" type="Node3D" parent="."]
+script = ExtResource("40")
+
+[node name="TerrainMinimap" type="CanvasLayer" parent="." unique_id=2020526394]
+script = ExtResource("22")
+
+[node name="CertificationMonitor" type="Node" parent="." unique_id=655864338]
+script = ExtResource("19")
+
+[node name="WorldSaveManager" type="Node" parent="." unique_id=753704887]
+script = ExtResource("24")
+
+[node name="PresentationHud" type="CanvasLayer" parent="." unique_id=34311840]
+script = ExtResource("26")
+
+[node name="ShortsCaptureDirector" type="Node" parent="." unique_id=1737502636]
+script = ExtResource("27")
+
+[node name="Instructions" type="Label" parent="." unique_id=1965023012]
+visible = false
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 720.0
+offset_bottom = 120.0
+text = "Voxel Ring Integration
+WASD move | Shift sprint | Space jump | V noclip | Left remove | Right place
+Swimming: WASD steer | Shift sprint | Space/E rise | C/Q dive
+Noclip: wheel speed | 1-5 presets | Shift boost | Space/E up | C/Q down
+80 km radius | 20 km width | build range Y=-256..2048 | global terrain always visible"
+
+[node name="LodDebugHud" type="CanvasLayer" parent="." unique_id=794575983]
+script = ExtResource("9")
+
+[node name="LodPauseMenu" type="CanvasLayer" parent="." unique_id=1060747674]
+script = ExtResource("10")

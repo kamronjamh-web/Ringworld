@@ -1,0 +1,104 @@
+[gd_scene load_steps=6 format=3 uid="uid://c5fnbl2jovgmy"]
+
+[ext_resource type="PackedScene" path="res://scenes/RingWorld.tscn" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="2"]
+[ext_resource type="Script" uid="uid://by7nkewq7bfqh" path="res://scripts/floating_origin.gd" id="3"]
+[ext_resource type="Script" uid="uid://7w8bdgi7v20r" path="res://scripts/day_side_atmosphere.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/sun_visual_anchor.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="6"]
+
+[sub_resource type="ProceduralSkyMaterial" id="1"]
+sky_top_color = Color(0.02, 0.03, 0.06, 1)
+sky_horizon_color = Color(0.01, 0.02, 0.03, 1)
+ground_bottom_color = Color(0.01, 0.01, 0.02, 1)
+ground_horizon_color = Color(0.01, 0.01, 0.02, 1)
+
+[sub_resource type="Sky" id="2"]
+sky_material = SubResource("1")
+
+[sub_resource type="Environment" id="3"]
+background_mode = 2
+sky = SubResource("2")
+ambient_light_source = 3
+ambient_light_color = Color(0.53, 0.58, 0.65, 1)
+ambient_light_energy = 0.35
+fog_enabled = true
+fog_light_color = Color(0.29, 0.38, 0.5, 1)
+fog_light_energy = 0.9
+fog_sun_scatter = 0.2
+fog_density = 0.00014
+fog_aerial_perspective = 0.78
+fog_sky_affect = 0.6
+
+[sub_resource type="StandardMaterial3D" id="5"]
+albedo_color = Color(1, 0.92, 0.68, 1)
+roughness = 0.1
+emission_enabled = true
+emission = Color(1, 0.92, 0.65, 1)
+emission_energy_multiplier = 4.0
+
+[sub_resource type="SphereMesh" id="4"]
+radius = 120.0
+height = 240.0
+
+[node name="Main" type="Node3D" unique_id=1760013748]
+
+[node name="SpaceEnvironment" type="WorldEnvironment" parent="." unique_id=42382223]
+environment = SubResource("3")
+
+[node name="StarLight" type="DirectionalLight3D" parent="." unique_id=871486764]
+transform = Transform3D(0.6967067, -0.4050497, 0.59205955, 0, 0.8253356, 0.5646425, -0.7173561, -0.3933902, 0.57501686, 0, 0, 0)
+light_energy = 4.0
+light_angular_distance = 0.0
+shadow_enabled = true
+directional_shadow_mode = 2
+directional_shadow_max_distance = 4000.0
+directional_shadow_split_1 = 0.015
+directional_shadow_split_2 = 0.08
+directional_shadow_split_3 = 0.3
+directional_shadow_fade_start = 0.85
+directional_shadow_blend_splits = false
+shadow_bias = 0.1
+shadow_normal_bias = 1.5
+
+[node name="StarCore" type="MeshInstance3D" parent="." unique_id=620208239]
+script = ExtResource("5")
+material_override = SubResource("5")
+mesh = SubResource("4")
+
+[node name="RingWorld" parent="." unique_id=1963435193 instance=ExtResource("1")]
+ring_radius = 80000.0
+ring_width = 20000.0
+enable_streaming = false
+far_ring_segment_count = 1024
+
+[node name="Player" parent="." unique_id=966300857 instance=ExtResource("2")]
+
+[node name="FloatingOrigin" type="Node" parent="." unique_id=538125924]
+script = ExtResource("3")
+
+[node name="DaySideAtmosphere" type="Node" parent="." unique_id=832360261]
+script = ExtResource("4")
+
+[node name="DebugUI" type="CanvasLayer" parent="." unique_id=205909710]
+
+[node name="LiveTuningDrawer" type="CanvasLayer" parent="."]
+layer = 12
+script = ExtResource("6")
+WorldEnvironmentPath = NodePath("../SpaceEnvironment")
+
+[node name="DebugPanel" type="ColorRect" parent="DebugUI" unique_id=1154605424]
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 392.0
+offset_bottom = 220.0
+mouse_filter = 2
+color = Color(0, 0, 0, 0.45)
+
+[node name="DebugLabel" type="Label" parent="DebugUI" unique_id=1336181101]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 384.0
+offset_bottom = 212.0
+theme_override_font_sizes/font_size = 18
+text = "Ringworld debug stats will appear here."
