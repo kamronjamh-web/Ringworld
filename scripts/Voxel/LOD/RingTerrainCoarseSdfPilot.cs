@@ -64,7 +64,7 @@ public partial class RingTerrainCoarseSdfPilot : Node3D
 
     private void UpdatePresentation(bool force)
     {
-        if (!Enabled || (_grid?.IsSmoothTerrainReplacementActive ?? false))
+        if (!Enabled || (_grid?.DormantEditableBackend ?? false))
         {
             ClearTiles();
             RestoreLod1ProxyVisibility();
@@ -146,7 +146,7 @@ public partial class RingTerrainCoarseSdfPilot : Node3D
                 && generation == result.Generation)
                 _tilesBuilding.Remove(result.Origin);
             if (result.Generation != _presentationGeneration
-                || (_grid?.IsSmoothTerrainReplacementActive ?? false)
+                || (_grid?.DormantEditableBackend ?? false)
                 || !Enabled
                 || !result.HasGeometry
                 || !_desiredTiles.Contains(result.Origin)

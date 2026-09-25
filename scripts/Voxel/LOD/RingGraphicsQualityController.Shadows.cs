@@ -25,6 +25,13 @@ public partial class RingGraphicsQualityController
     private int _lastAppliedShadowAtlas = -1;
     private int _lastAppliedShadowDepthBits = -1;
     private int _lastAppliedShadowFilter = -1;
+    private bool _macroShadowBaselineCaptured;
+    private bool _macroShadowBaselineEnabled;
+    private bool _macroShadowBaselineWallShadowsEnabled;
+    private bool _macroShadowOptionsApplied;
+    private bool _macroShadowOptionsInitialized;
+    private bool _lastAppliedMacroShadowEnabled;
+    private bool _lastAppliedMacroWallShadowsEnabled;
     private bool _shadowAtlasLimitResolved;
     public float EffectiveShadowDistanceMeters => _sun?.DirectionalShadowMaxDistance ?? 0.0f;
     public int RequestedDirectionalShadowAtlasSize { get; private set; }
@@ -35,6 +42,13 @@ public partial class RingGraphicsQualityController
     public int EffectiveDirectionalShadowFilter { get; private set; }
     public int DirectionalShadowAtlasHardwareLimit { get; private set; } = UnverifiedDirectionalShadowAtlasLimit;
     public bool DirectionalShadowAtlasLimitIsUnverified { get; private set; } = true;
+    public bool EffectiveTerrainMacroShadowsEnabled => _globalLod?.EnableMacroTerrainShadows ?? true;
+    public bool EffectiveTerrainMacroWallShadowsEnabled => _globalLod?.EnableMacroTerrainWallShadows ?? true;
+    public float EffectiveTerrainMacroShadowStrength => _globalLod?.MacroTerrainShadowStrength ?? 0.0f;
+    public float EffectiveTerrainMacroShadowFadeStartMeters => _globalLod?.MacroTerrainShadowFadeStartMeters ?? 0.0f;
+    public float EffectiveTerrainMacroShadowFadeEndMeters => _globalLod?.MacroTerrainShadowFadeEndMeters ?? 0.0f;
+    public int EffectiveTerrainMacroShadowTraceSteps => _globalLod?.MacroTerrainShadowTraceSteps ?? 1;
+    public float EffectiveTerrainMacroShadowMaxTraceMeters => _globalLod?.MacroTerrainShadowMaxTraceMeters ?? 0.0f;
 
     public void SetShadowTuningOverrides(Godot.Collections.Dictionary overrides)
     {
@@ -43,6 +57,7 @@ public partial class RingGraphicsQualityController
             if (key.VariantType == Variant.Type.String && TryValidateShadowOverride(key.AsString(), overrides[key], out Variant value))
                 _shadowTuningOverrides[key.AsString()] = value;
         ApplyShadowTuningOverrides();
+        ApplyTerrainMacroShadowOverrides();
     }
 
     public bool SetShadowTuningOverride(string key, Variant value)
@@ -52,7 +67,69 @@ public partial class RingGraphicsQualityController
         else if (key == "Split1") _shadowTuningOverrides.Remove("NearCascadeMeters");
         _shadowTuningOverrides[key] = clean;
         ApplyShadowTuningOverrides();
+        ApplyTerrainMacroShadowOverrides();
         return true;
+    }
+
+    private void ApplyTerrainMacroShadowOverrides()
+    {
+        Tuning profile = ResolveTuning(CurrentPreset);
+        float strength = UseInspectorShadowTransitionOverrides
+            ? InspectorTerrainMacroShadowStrength
+            : profile.MacroShadowStrength;
+        float fadeStart = UseInspectorShadowTransitionOverrides
+            ? InspectorTerrainMacroFadeStartMeters
+            : profile.MacroFadeStartMeters;
+        float fadeEnd = UseInspectorShadowTransitionOverrides
+            ? InspectorTerrainMacroFadeEndMeters
+            : profile.MacroFadeEndMeters;
+        ApplyTerrainMacroShadowOverrides(strength, fadeStart, fadeEnd, profile.MacroTraceSteps, profile.MacroTraceMeters);
+    }
+
+    private void ApplyTerrainMacroShadowOverrides(
+        float defaultStrength,
+        float defaultFadeStartMeters,
+        float defaultFadeEndMeters,
+        int defaultTraceSteps,
+        float defaultTraceMeters)
+    {
+        if (_globalLod == null) return;
+        if (!_macroShadowBaselineCaptured)
+        {
+            _macroShadowBaselineEnabled = _globalLod.EnableMacroTerrainShadows;
+            _macroShadowBaselineWallShadowsEnabled = _globalLod.EnableMacroTerrainWallShadows;
+            _macroShadowBaselineCaptured = true;
+        }
+
+        float strength = _shadowTuningOverrides.TryGetValue("TerrainMacroStrength", out Variant strengthOverride)
+            ? strengthOverride.AsSingle() : defaultStrength;
+        float fadeStart = _shadowTuningOverrides.TryGetValue("TerrainMacroFadeStartMeters", out Variant fadeStartOverride)
+            ? fadeStartOverride.AsSingle() : defaultFadeStartMeters;
+        float fadeEnd = _shadowTuningOverrides.TryGetValue("TerrainMacroFadeEndMeters", out Variant fadeEndOverride)
+            ? fadeEndOverride.AsSingle() : defaultFadeEndMeters;
+        int traceSteps = _shadowTuningOverrides.TryGetValue("TerrainMacroTraceSteps", out Variant traceStepsOverride)
+            ? traceStepsOverride.AsInt32() : defaultTraceSteps;
+        float traceMeters = _shadowTuningOverrides.TryGetValue("TerrainMacroMaxTraceMeters", out Variant traceMetersOverride)
+            ? traceMetersOverride.AsSingle() : defaultTraceMeters;
+        _globalLod.ApplyRuntimeShadowQuality(strength, fadeStart, fadeEnd, traceSteps, traceMeters);
+
+        bool hasEnabledOverride = _shadowTuningOverrides.TryGetValue("TerrainMacroEnabled", out Variant enabledOverride);
+        bool hasWallOverride = _shadowTuningOverrides.TryGetValue("TerrainMacroWallShadowsEnabled", out Variant wallOverride);
+        if (hasEnabledOverride || hasWallOverride || _macroShadowOptionsApplied)
+        {
+            bool enabled = hasEnabledOverride ? enabledOverride.AsBool() : _macroShadowBaselineEnabled;
+            bool wallShadowsEnabled = hasWallOverride ? wallOverride.AsBool() : _macroShadowBaselineWallShadowsEnabled;
+            if (!_macroShadowOptionsInitialized
+                || _lastAppliedMacroShadowEnabled != enabled
+                || _lastAppliedMacroWallShadowsEnabled != wallShadowsEnabled)
+            {
+                _globalLod.ApplyRuntimeMacroShadowOptions(enabled, wallShadowsEnabled);
+                _lastAppliedMacroShadowEnabled = enabled;
+                _lastAppliedMacroWallShadowsEnabled = wallShadowsEnabled;
+                _macroShadowOptionsInitialized = true;
+            }
+            _macroShadowOptionsApplied = hasEnabledOverride || hasWallOverride;
+        }
     }
 
     private void ApplyShadowTuningOverrides()
@@ -213,7 +290,7 @@ public partial class RingGraphicsQualityController
     public static bool TryValidateShadowOverride(string key, Variant value, out Variant clean)
     {
         clean = default;
-        if (key == "Enabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if (key == "SunStabilizationEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if (key == "AtlasSize" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { double raw = value.AsDouble(); if (!double.IsFinite(raw) || raw != System.Math.Truncate(raw) || raw < int.MinValue || raw > int.MaxValue) return false; int v = (int)raw; if (IsDirectionalShadowAtlasSize(v)) { clean = v; return true; } return false; }
@@ -222,8 +299,10 @@ public partial class RingGraphicsQualityController
         if (key == "Filter" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
-        (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), _ => (1, 0) };
+        (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), _ => (1, 0) };
         if (min > max) return false;
-        clean = Mathf.Clamp(value.AsSingle(), min, max); return true;
+        float clamped = Mathf.Clamp(value.AsSingle(), min, max);
+        if (key == "TerrainMacroTraceSteps") clean = Mathf.RoundToInt(clamped); else clean = clamped;
+        return true;
     }
 }

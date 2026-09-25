@@ -60,6 +60,14 @@ public partial class ShadowSettingsSmoke : RefCounted
         bool stepClamped = RingGraphicsQualityController.TryValidateShadowOverride("SunStepDegrees", .051f, out Variant clampedStep) && Mathf.IsEqualApprox(clampedStep.AsSingle(), .05f);
         bool softnessRange = RingGraphicsQualityController.TryValidateShadowOverride("SunAngularDistance", 2.5f, out Variant softness) && Mathf.IsEqualApprox(softness.AsSingle(), 2.5f);
         bool rejectedSoftness = !RingGraphicsQualityController.TryValidateShadowOverride("SunAngularDistance", float.NaN, out _);
+        bool terrainMacroValidation = RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroEnabled", true, out Variant macroEnabled) && macroEnabled.AsBool()
+            && RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroWallShadowsEnabled", true, out Variant wallShadows) && wallShadows.AsBool()
+            && RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroStrength", .42f, out Variant macroStrength) && Mathf.IsEqualApprox(macroStrength.AsSingle(), .42f)
+            && RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroTraceSteps", 13.6f, out Variant macroSteps) && macroSteps.AsInt32() == 14
+            && RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroMaxTraceMeters", 128000f, out Variant macroDistance) && Mathf.IsEqualApprox(macroDistance.AsSingle(), 128000f)
+            && RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroFadeStartMeters", 4200f, out Variant macroNear) && Mathf.IsEqualApprox(macroNear.AsSingle(), 4200f)
+            && RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroFadeEndMeters", 8200f, out Variant macroFar) && Mathf.IsEqualApprox(macroFar.AsSingle(), 8200f)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("TerrainMacroTraceSteps", float.NaN, out _);
         var controller = new RingGraphicsQualityController();
         var sun = new DirectionalLight3D { ShadowEnabled = true, ShadowBias = .17f, ShadowNormalBias = 2.3f };
         controller.AddChild(sun);
@@ -67,6 +75,13 @@ public partial class ShadowSettingsSmoke : RefCounted
         sun.Name = "Sun";
         SceneTree? tree = Engine.GetMainLoop() as SceneTree;
         if (tree?.Root == null) throw new InvalidOperationException("Shadow smoke requires an active SceneTree root.");
+        var globalLod = new RingTerrainGlobalLod
+        {
+            Name = "GlobalTerrainLod3",
+            EnableMacroTerrainShadows = true,
+            EnableMacroTerrainWallShadows = false
+        };
+        tree.Root.AddChild(globalLod);
         tree.Root.AddChild(controller);
         controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
         bool defaultNearFocus = Mathf.IsEqualApprox(controller.EffectiveNearCascadeMeters, RingGraphicsQualityController.DefaultNearCascadeMeters)
@@ -105,8 +120,18 @@ public partial class ShadowSettingsSmoke : RefCounted
             && controller.RequestedDirectionalShadowAtlasSize == directRequestedBeforeUnsupported;
         var settings = new GameplayShadowDefaults(path);
         settings.Initialize(controller);
-        bool set = settings.SetOverride(controller, "AtlasSize", 4096) && settings.SetOverride(controller, "DepthBits", 32) && settings.SetOverride(controller, "Split1", .18f);
+        bool set = settings.SetOverride(controller, "AtlasSize", 4096) && settings.SetOverride(controller, "DepthBits", 32) && settings.SetOverride(controller, "Split1", .18f)
+            && settings.SetOverride(controller, "TerrainMacroEnabled", false) && settings.SetOverride(controller, "TerrainMacroWallShadowsEnabled", true)
+            && settings.SetOverride(controller, "TerrainMacroStrength", .42f) && settings.SetOverride(controller, "TerrainMacroTraceSteps", 14)
+            && settings.SetOverride(controller, "TerrainMacroMaxTraceMeters", 128000f) && settings.SetOverride(controller, "TerrainMacroFadeStartMeters", 4200f) && settings.SetOverride(controller, "TerrainMacroFadeEndMeters", 8200f);
         bool legacyRatio = controller.EffectiveDirectionalShadowAtlasSize == 4096 && Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, .18f);
+        bool macroRuntimeApplied = !globalLod.EnableMacroTerrainShadows
+            && globalLod.EnableMacroTerrainWallShadows
+            && Mathf.IsEqualApprox(globalLod.MacroTerrainShadowStrength, .42f)
+            && globalLod.MacroTerrainShadowTraceSteps == 14
+            && Mathf.IsEqualApprox(globalLod.MacroTerrainShadowMaxTraceMeters, 128000f)
+            && Mathf.IsEqualApprox(globalLod.MacroTerrainShadowFadeStartMeters, 4200f)
+            && Mathf.IsEqualApprox(globalLod.MacroTerrainShadowFadeEndMeters, 8200f);
         bool nearWins = settings.SetOverride(controller, "NearCascadeMeters", 75f)
             && !settings.Settings.Overrides.ContainsKey("Split1")
             && Mathf.IsEqualApprox(controller.EffectiveNearCascadeMeters, 75f);
@@ -130,7 +155,14 @@ public partial class ShadowSettingsSmoke : RefCounted
             && reloaded.EffectiveDirectionalShadowDepthBits == 32
             && Mathf.IsEqualApprox(reloaded.EffectiveNearCascadeMeters, 75f)
             && loaded.Settings.Overrides.ContainsKey("DepthBits")
-            && loaded.Settings.Overrides.ContainsKey("NearCascadeMeters");
+            && loaded.Settings.Overrides.ContainsKey("NearCascadeMeters")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroEnabled")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroWallShadowsEnabled")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroStrength")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroTraceSteps")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroMaxTraceMeters")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroFadeStartMeters")
+            && loaded.Settings.Overrides.ContainsKey("TerrainMacroFadeEndMeters");
         bool unsupportedPreferenceRejected = !loaded.SetOverride(reloaded, "AtlasSize", 65536)
             && !loaded.Dirty
             && loaded.Settings.Overrides["AtlasSize"].AsInt32() == 4096
@@ -180,17 +212,21 @@ public partial class ShadowSettingsSmoke : RefCounted
             && Mathf.IsEqualApprox(sun.DirectionalShadowFadeStart, .88f)
             && Mathf.IsEqualApprox(sun.ShadowBias, .17f)
             && Mathf.IsEqualApprox(sun.ShadowNormalBias, 2.3f)
-            && sun.ShadowEnabled;
+            && sun.ShadowEnabled
+            && globalLod.EnableMacroTerrainShadows
+            && !globalLod.EnableMacroTerrainWallShadows;
         var result = new Godot.Collections.Dictionary();
-        result["pass"] = supportedAtlas && expandedAtlases && rejectedAtlas && rejectedFractionalAtlas && rejectedPreciseFractionalAtlas && rejectedNanAtlas && rejectedOversizedAtlas && rejectedNegativeAtlas && resolver && memoryEstimates && depthValidation && nearValidation && supportedFilter && rejectedFilter && rejectedDistance && rejectedNaN && stabilizationEnabled && rejectedStabilizationType && stepRange && stepClamped && softnessRange && rejectedSoftness && defaultNearFocus && formatToggleSameAtlas && directSwitching && mixedPrecedence && upperNearClamped && directUnsupportedRejected && unsupportedPreferenceRejected && set && effective && survivesPreset && reset && saved && roundTrip && legacyLoadCompatibility && highSaved && portableHighClamped;
+        result["pass"] = supportedAtlas && expandedAtlases && rejectedAtlas && rejectedFractionalAtlas && rejectedPreciseFractionalAtlas && rejectedNanAtlas && rejectedOversizedAtlas && rejectedNegativeAtlas && resolver && memoryEstimates && depthValidation && nearValidation && supportedFilter && rejectedFilter && rejectedDistance && rejectedNaN && stabilizationEnabled && rejectedStabilizationType && stepRange && stepClamped && softnessRange && rejectedSoftness && terrainMacroValidation && defaultNearFocus && formatToggleSameAtlas && directSwitching && mixedPrecedence && upperNearClamped && directUnsupportedRejected && unsupportedPreferenceRejected && set && macroRuntimeApplied && effective && survivesPreset && reset && saved && roundTrip && legacyLoadCompatibility && highSaved && portableHighClamped;
         result["unsupportedPreferenceRejected"] = unsupportedPreferenceRejected;
-        result["detail"] = $"atlas={supportedAtlas}/{expandedAtlases}/{rejectedAtlas}/{rejectedFractionalAtlas}/{rejectedPreciseFractionalAtlas}/{rejectedNanAtlas}/{rejectedOversizedAtlas}/{rejectedNegativeAtlas} resolver={resolver} memory={memoryEstimates} depth={depthValidation}/{formatToggleSameAtlas} near={nearValidation}/{defaultNearFocus}/{directSwitching}/{mixedPrecedence}/{upperNearClamped} filter={supportedFilter}/{rejectedFilter} rangeRejected={rejectedDistance} nan={rejectedNaN} stabilization={stabilizationEnabled}/{rejectedStabilizationType} step={stepRange}/{stepClamped} softness={softnessRange}/{rejectedSoftness} directUnsupportedRejected={directUnsupportedRejected} set={set} effective={effective} survivesPreset={survivesPreset} reset={reset} saved={saved} roundTrip={roundTrip} legacyLoad={legacyLoadCompatibility} highSaved={highSaved} portableHighClamped={portableHighClamped}; fixture path={path}";
+        result["detail"] = $"atlas={supportedAtlas}/{expandedAtlases}/{rejectedAtlas}/{rejectedFractionalAtlas}/{rejectedPreciseFractionalAtlas}/{rejectedNanAtlas}/{rejectedOversizedAtlas}/{rejectedNegativeAtlas} resolver={resolver} memory={memoryEstimates} depth={depthValidation}/{formatToggleSameAtlas} near={nearValidation}/{defaultNearFocus}/{directSwitching}/{mixedPrecedence}/{upperNearClamped} filter={supportedFilter}/{rejectedFilter} rangeRejected={rejectedDistance} nan={rejectedNaN} stabilization={stabilizationEnabled}/{rejectedStabilizationType} step={stepRange}/{stepClamped} softness={softnessRange}/{rejectedSoftness} terrainMacro={terrainMacroValidation}/{macroRuntimeApplied} directUnsupportedRejected={directUnsupportedRejected} set={set} effective={effective} survivesPreset={survivesPreset} reset={reset} saved={saved} roundTrip={roundTrip} legacyLoad={legacyLoadCompatibility} highSaved={highSaved} portableHighClamped={portableHighClamped}; fixture path={path}";
         tree.Root.RemoveChild(controller);
         controller.Free();
         tree.Root.RemoveChild(reloaded);
         reloaded.Free();
         tree.Root.RemoveChild(legacyController);
         legacyController.Free();
+        tree.Root.RemoveChild(globalLod);
+        globalLod.Free();
         highReloadedController.Free();
         return result;
     }

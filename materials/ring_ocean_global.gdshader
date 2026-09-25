@@ -141,7 +141,7 @@ void light() {
 			world_position,
 			ring_center,
 			camera_world_position,
-			ring_width_meters) * ring_day_factor
+			ring_width_meters) * primary_sun_weight * ring_day_factor
 		: 0.0;
 	float cloud_shadow = LIGHT_IS_DIRECTIONAL
 		? sample_combined_cloud_shadow(world_position, ring_day_factor)

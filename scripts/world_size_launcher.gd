@@ -67,9 +67,13 @@ var regional_detail_spin: SpinBox
 var rare_peak_spin: SpinBox
 var unified_density_toggle: CheckBox
 var designed_caves_toggle: CheckBox
+var terrain_backend_selector: OptionButton
 var advanced_popup: PopupPanel
 var advanced_summary_label: Label
 var launch_defaults: Dictionary = {}
+var selected_slot_has_saved_settings := false
+var terrain_backend_default_applied := false
+var terrain_backend_explicitly_chosen := false
 var suppress_readout_refresh := false
 var exact_radius_override_km := -1.0
 var mega_ring_selected := false
@@ -84,6 +88,21 @@ func _use_smooth_editable_backend() -> bool:
 	# intentionally retained behind explicit development-only rollback switches.
 	var args := OS.get_cmdline_user_args()
 	return not ("--legacy-editable-terrain" in args or "--hybrid-smooth-terrain-pilot" in args)
+
+
+func _legacy_backend_forced() -> bool:
+	var args := OS.get_cmdline_user_args()
+	return "--legacy-editable-terrain" in args or "--hybrid-smooth-terrain-pilot" in args
+
+
+func _selected_terrain_backend() -> String:
+	if terrain_backend_selector == null or terrain_backend_selector.selected != 1:
+		return "smooth_terrain_v1"
+	return "terrain3d_surface_v1"
+
+
+func _surface_backend_selected_for_certified(is_certified: bool) -> bool:
+	return is_certified and not _legacy_backend_forced() and _selected_terrain_backend() == "terrain3d_surface_v1"
 
 
 func _configure_editable_backend(game: Node, grid: Node) -> void:
@@ -121,8 +140,10 @@ func _configure_editable_backend(game: Node, grid: Node) -> void:
 func _ready() -> void:
 	launch_defaults = _build_default_values()
 	var saved_settings := _get_selected_slot_settings()
+	selected_slot_has_saved_settings = not saved_settings.is_empty()
 	if not saved_settings.is_empty():
 		launch_defaults.merge(saved_settings, true)
+		exact_radius_override_km = clampf(float(saved_settings.get("radius_km", MIN_RADIUS_KM)), MIN_RADIUS_KM, MAX_RADIUS_KM)
 	# Migrate only the exact pre-cavity Certified profile. Its old -2000 value
 	# did double duty as physical cutoff and bedrock material threshold. The new
 	# floor moves to -8192 while the material threshold stays fixed, preserving
@@ -137,9 +158,6 @@ func _ready() -> void:
 		print("Migrated legacy Certified Ring vertical domain: terrain bottom -2000 -> -8192 m; bedrock material threshold retained.")
 	_build_ui()
 	_apply_default_config_to_controls()
-	if not saved_settings.is_empty():
-		exact_radius_override_km = clampf(float(saved_settings.get("radius_km", MIN_RADIUS_KM)), MIN_RADIUS_KM, MAX_RADIUS_KM)
-		_update_readout(size_slider.value)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if "--mega-spawn-smoke-test" in OS.get_cmdline_user_args() or "--mega-terrain-variation-smoke-test" in OS.get_cmdline_user_args() or "--mega-ground-capture-preset" in OS.get_cmdline_user_args():
 		_on_mega_ring_preset_pressed()
@@ -151,8 +169,10 @@ func _ready() -> void:
 	if _consume_load_world_request():
 		call_deferred("_start_game")
 		return
-	if "--certification-benchmark" in OS.get_cmdline_user_args() or "--certified-smoke-test" in OS.get_cmdline_user_args() or "--certified-walk-precision-probe" in OS.get_cmdline_user_args() or "--capture-cavity-lighting" in OS.get_cmdline_user_args() or "--capture-cloud-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-diagnostics" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-history-off" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-sunshine-only" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-far-only" in OS.get_cmdline_user_args() or "--lod-voxel-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-hierarchy-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-roof-coverage-smoke-test" in OS.get_cmdline_user_args() or "--capture-band-site" in OS.get_cmdline_user_args() or "--capture-band-site-smooth-only" in OS.get_cmdline_user_args() or "--capture-band-site-proxy-only" in OS.get_cmdline_user_args():
+	if "--certification-benchmark" in OS.get_cmdline_user_args() or "--certified-smoke-test" in OS.get_cmdline_user_args() or "--terrain3d-certified-smoke-test" in OS.get_cmdline_user_args() or "--certified-walk-precision-probe" in OS.get_cmdline_user_args() or "--capture-cavity-lighting" in OS.get_cmdline_user_args() or "--capture-cloud-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-diagnostics" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-history-off" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-sunshine-only" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-far-only" in OS.get_cmdline_user_args() or "--lod-voxel-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-hierarchy-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-roof-coverage-smoke-test" in OS.get_cmdline_user_args() or "--capture-band-site" in OS.get_cmdline_user_args() or "--capture-band-site-smooth-only" in OS.get_cmdline_user_args() or "--capture-band-site-proxy-only" in OS.get_cmdline_user_args():
 		_on_certified_preset_pressed()
+		if "--terrain3d-certified-smoke-test" in OS.get_cmdline_user_args() and terrain_backend_selector != null:
+			terrain_backend_selector.select(1)
 		call_deferred("_start_game")
 
 
@@ -437,8 +457,20 @@ func _build_advanced_menu() -> void:
 		bool(launch_defaults.get("designed_cave_density_composition", false)),
 		"Generates deterministic chambers and corridors in streamed smooth terrain. Existing worlds remain unchanged unless enabled."
 	)
+	var backend_label := Label.new()
+	backend_label.text = "Surface terrain backend\nSurface edits and player state save separately. Caves later."
+	backend_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	backend_label.tooltip_text = "Terrain3D surface editing is available only for the Certified Ring. Surface edits and player state save separately. Caves are planned for a later update."
+	knobs_grid.add_child(backend_label)
+	terrain_backend_selector = OptionButton.new()
+	terrain_backend_selector.add_item("Smooth terrain (existing worlds)", 0)
+	terrain_backend_selector.add_item("Terrain3D surface (Certified only)", 1)
+	terrain_backend_selector.tooltip_text = backend_label.tooltip_text
+	terrain_backend_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	knobs_grid.add_child(terrain_backend_selector)
 	unified_density_toggle.toggled.connect(_on_knob_changed)
 	designed_caves_toggle.toggled.connect(_on_knob_changed)
+	terrain_backend_selector.item_selected.connect(_on_terrain_backend_selected)
 
 	for spin in [
 		ring_width_spin,
@@ -550,6 +582,7 @@ func _build_values_from_config(config: Resource) -> Dictionary:
 		"rare_peak_height": clampf(_read_config_float(config, "rare_peak_height", _read_terrain_float("RarePeakY", 1848.0)), 512.0, 6500.0),
 		"unified_3d_density_terrain": _read_config_bool(config, "unified_3d_density_terrain", _read_terrain_bool("EnableUnified3dDensityTerrain", false)),
 		"designed_cave_density_composition": _read_config_bool(config, "designed_cave_density_composition", false),
+		"terrain_backend": "smooth_terrain_v1",
 		"auto_raise_peak_to_build_limit": false
 	}
 
@@ -637,6 +670,13 @@ func _on_knob_toggled(_pressed: bool) -> void:
 	_update_readout(size_slider.value)
 
 
+func _on_terrain_backend_selected(_index: int) -> void:
+	if suppress_readout_refresh:
+		return
+	terrain_backend_explicitly_chosen = true
+	_update_readout(size_slider.value)
+
+
 func _on_reset_defaults_pressed() -> void:
 	_clear_mega_ring_selection()
 	exact_radius_override_km = -1.0
@@ -653,6 +693,10 @@ func _on_certified_preset_pressed() -> void:
 func _on_mega_ring_preset_pressed() -> void:
 	mega_ring_selected = true
 	exact_radius_override_km = -1.0
+	if terrain_backend_selector != null:
+		terrain_backend_selector.select(0)
+	_refresh_backend_selector(false)
+	_update_advanced_summary()
 	size_label.text = "MEGA RING / 150 MILLION KM DIAMETER"
 	circumference_label.text = "Local playable bubble | 1.6 million km habitat width"
 	warning_label.text = "Mega Ring runs procedural local terrain only. Whole-ring legacy LODs are disabled."
@@ -716,6 +760,10 @@ func _apply_values_to_controls(values: Dictionary) -> void:
 		unified_density_toggle.button_pressed = bool(values.get("unified_3d_density_terrain", false))
 	if designed_caves_toggle != null:
 		designed_caves_toggle.button_pressed = bool(values.get("designed_cave_density_composition", false))
+	if terrain_backend_selector != null:
+		# Missing backend metadata belongs to an existing world and deliberately
+		# retains the pre-Terrain3D smooth backend.
+		terrain_backend_selector.select(1 if str(values.get("terrain_backend", "smooth_terrain_v1")) == "terrain3d_surface_v1" else 0)
 	suppress_readout_refresh = false
 	_update_readout(size_slider.value if size_slider != null else 0.0)
 
@@ -740,8 +788,10 @@ func _update_readout(value: float) -> void:
 		build_ceiling,
 		structural_depth_km
 	]
+	var certified := _matches_certified_dimensions(radius_km, ring_width_km, terrain_floor, build_ceiling, structural_depth_km)
+	_refresh_backend_selector(certified)
 	_update_advanced_summary()
-	if _matches_certified_dimensions(radius_km, ring_width_km, terrain_floor, build_ceiling, structural_depth_km):
+	if certified:
 		warning_label.text = "CERTIFIED TARGET DIMENSIONS: High targets Arc 140V at 1080p, 60 FPS / 45 FPS minimum."
 		warning_label.modulate = Color(0.45, 0.9, 0.68)
 	elif radius_km > 2000.0:
@@ -763,7 +813,9 @@ func _update_advanced_summary() -> void:
 	var cave_version_value := int(round(cave_generator_version_spin.value)) if cave_generator_version_spin != null else 1
 	var peak_value := int(round(rare_peak_spin.value)) if rare_peak_spin != null else 1848
 	var designed_caves_state := "ON" if designed_caves_toggle != null and designed_caves_toggle.button_pressed else "OFF"
-	advanced_summary_label.text = "Advanced: width %s km | terrain Y=%d..%d | sea 0 m | structure %.1f km | shared world seed %d | cave v%d | designed caves %s | routine peaks <=%d m | one seeded summit <=7600 m" % [
+	var backend := "Terrain3D surface" if _selected_terrain_backend() == "terrain3d_surface_v1" else "Smooth terrain"
+	advanced_summary_label.text = "Advanced: %s | width %s km | terrain Y=%d..%d | sea 0 m | structure %.1f km | shared world seed %d | cave v%d | designed caves %s | routine peaks <=%d m | one seeded summit <=7600 m" % [
+		backend,
 		_format_distance(ring_width_spin.value if ring_width_spin != null else DEFAULT_RING_WIDTH_KM),
 		int(round(terrain_floor_spin.value)) if terrain_floor_spin != null else -256,
 		int(round(build_height_spin.value)) if build_height_spin != null else int(MAX_BUILD_MAX_Y),
@@ -773,6 +825,27 @@ func _update_advanced_summary() -> void:
 		designed_caves_state,
 		peak_value
 	]
+
+
+func _refresh_backend_selector(certified: bool) -> void:
+	if terrain_backend_selector == null:
+		return
+	var available := certified and not _legacy_backend_forced()
+	if available and not selected_slot_has_saved_settings and not terrain_backend_default_applied and not terrain_backend_explicitly_chosen:
+		terrain_backend_selector.select(1)
+		terrain_backend_default_applied = true
+	if _selected_terrain_backend() == "terrain3d_surface_v1" and not available:
+		terrain_backend_selector.select(0)
+	terrain_backend_selector.disabled = not available
+	var surface := _selected_terrain_backend() == "terrain3d_surface_v1"
+	if designed_caves_toggle != null:
+		designed_caves_toggle.disabled = surface
+		if surface:
+			designed_caves_toggle.button_pressed = false
+	if unified_density_toggle != null:
+		unified_density_toggle.disabled = surface
+		if surface:
+			unified_density_toggle.button_pressed = false
 
 
 func _matches_certified_dimensions(radius_km: float, width_km: float, floor_y: int, ceiling_y: int, depth_km: float) -> bool:
@@ -822,6 +895,9 @@ func _start_game() -> void:
 		return
 	var host := get_parent()
 	host.add_child(game)
+	var terrain3d_gameplay := game.get_node_or_null("Terrain3DGameplay")
+	if terrain3d_gameplay != null:
+		terrain3d_gameplay.call_deferred("EnsureInitialized")
 	if host == get_tree().root:
 		get_tree().current_scene = game
 	queue_free()
@@ -1090,7 +1166,8 @@ func _save_selected_slot_settings() -> void:
 		"regional_detail_strength": regional_detail_spin.value if regional_detail_spin != null else 0.65,
 		"rare_peak_height": rare_peak_spin.value if rare_peak_spin != null else 1848.0,
 		"unified_3d_density_terrain": unified_density_toggle.button_pressed if unified_density_toggle != null else false,
-		"designed_cave_density_composition": designed_caves_toggle.button_pressed if designed_caves_toggle != null else false
+		"designed_cave_density_composition": designed_caves_toggle.button_pressed if designed_caves_toggle != null else false,
+		"terrain_backend": _selected_terrain_backend()
 	}
 	session.save_active_world_settings(settings)
 
@@ -1114,6 +1191,7 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 		max_build_y,
 		structural_depth_m / 1000.0)
 	var bedrock_material_y := CERTIFIED_BEDROCK_MATERIAL_Y if is_certified else min_terrain_y
+	var use_surface_terrain := _surface_backend_selected_for_certified(is_certified)
 	var desktop_mid_high := str(ProjectSettings.get_setting(
 		"ringworld/runtime/hardware_tier",
 		"laptop_140v_baseline")) == "desktop_mid_high"
@@ -1168,13 +1246,15 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 		grid.set("SeamGapDebugUpdateIntervalSeconds", 0.1)
 	_configure_terrain_lod_widths(game, width_m)
 
-	var runtime_terrain_settings := _build_runtime_terrain_settings(grid, min_terrain_y, max_build_y, bedrock_material_y)
+	var runtime_terrain_settings := _build_runtime_terrain_settings(grid, min_terrain_y, max_build_y, bedrock_material_y, use_surface_terrain)
 	if runtime_terrain_settings != null:
 		grid.set("TerrainSettings", runtime_terrain_settings)
-		grid.set("UseSmoothNaturalTerrainPilot", not _use_smooth_editable_backend() and bool(runtime_terrain_settings.get("EnableUnified3dDensityTerrain")))
+		grid.set("UseSmoothNaturalTerrainPilot", not use_surface_terrain and not _use_smooth_editable_backend() and bool(runtime_terrain_settings.get("EnableUnified3dDensityTerrain")))
 		grid.call("RefreshRuntimeTerrainDefinition")
 
 	var explorer := game.get_node("Explorer") as Node3D
+	if use_surface_terrain and runtime_terrain_settings != null:
+		_configure_certified_surface_terrain(game, grid, explorer, runtime_terrain_settings)
 	explorer.position = Vector3.ZERO
 	explorer.call("SetCanonicalSpawnMeters", 0.0, 128.0, width_m * 0.5)
 	_disable_legacy_radius_space_nodes(game)
@@ -1442,7 +1522,7 @@ func _configure_terrain_lod_widths(game: Node, width_m: float) -> void:
 	global_lod.set("AcrossSegments", across_segments)
 
 
-func _build_runtime_terrain_settings(grid: Node, min_terrain_y: int, max_build_y: int, bedrock_material_y: int) -> Resource:
+func _build_runtime_terrain_settings(grid: Node, min_terrain_y: int, max_build_y: int, bedrock_material_y: int, surface_only: bool = false) -> Resource:
 	var source_settings: Variant = grid.get("TerrainSettings")
 	if source_settings == null:
 		source_settings = DEFAULT_TERRAIN_SETTINGS
@@ -1480,10 +1560,10 @@ func _build_runtime_terrain_settings(grid: Node, min_terrain_y: int, max_build_y
 	runtime_settings.set("DetailAmplitudeVoxels", int(round(detail_amplitude_value)))
 	runtime_settings.set("ContinentalContrast", float(continental_contrast_value))
 	runtime_settings.set("RegionalDetailStrength", float(regional_detail_value))
-	runtime_settings.set(
-		"EnableUnified3dDensityTerrain",
-		unified_density_toggle.button_pressed if unified_density_toggle != null else false)
-	runtime_settings.set("EnableDesignedCaveDensityComposition", designed_caves_toggle.button_pressed if designed_caves_toggle != null else false)
+	runtime_settings.set("EnableUnified3dDensityTerrain", false if surface_only else unified_density_toggle.button_pressed if unified_density_toggle != null else false)
+	runtime_settings.set("EnableDesignedCaveDensityComposition", false if surface_only else designed_caves_toggle.button_pressed if designed_caves_toggle != null else false)
+	if surface_only:
+		runtime_settings.set("EnableProceduralCaves", false)
 
 	var rare_peak_value := rare_peak_spin.value if rare_peak_spin != null else float(launch_defaults.get("rare_peak_height", 1848.0))
 	var rare_peak := int(round(rare_peak_value))
@@ -1492,3 +1572,29 @@ func _build_runtime_terrain_settings(grid: Node, min_terrain_y: int, max_build_y
 	runtime_settings.set("AutoRaiseRarePeakToBuildLimit", false)
 
 	return runtime_settings
+
+
+func _configure_certified_surface_terrain(game: Node, grid: Node, explorer: Node, runtime_settings: Resource) -> void:
+	grid.set("UseTerrain3DSurface", true)
+	grid.set("DormantEditableBackend", true)
+	grid.set("BuildOnReady", false)
+	grid.set("EnableChunkStreaming", false)
+	var smooth := game.get_node_or_null("SmoothTerrainGrid")
+	if smooth != null:
+		smooth.free()
+	var construction := game.get_node_or_null("SmoothConstructionOverlay")
+	if construction != null:
+		construction.free()
+	var editor := game.get_node_or_null("GridEditController")
+	if editor != null:
+		editor.set("UseTerrain3DSurfaceBackend", true)
+		editor.set("UseSmoothTerrainBackend", false)
+	explorer.set("UseTerrain3DSurfacePhysics", true)
+	explorer.set("UseSmoothTerrainPhysics", false)
+	var gameplay_script := load("res://scripts/Terrain/Surface/RingTerrain3DGameplay.cs")
+	if gameplay_script == null:
+		push_error("Terrain3D gameplay backend is unavailable.")
+		return
+	var gameplay: Node = gameplay_script.new()
+	gameplay.name = "Terrain3DGameplay"
+	game.add_child(gameplay)

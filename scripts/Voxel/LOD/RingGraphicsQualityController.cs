@@ -308,7 +308,7 @@ public partial class RingGraphicsQualityController : Node
 
         if (_coordinator != null)
             _coordinator.TerrainShadowCoverageMeters = shadowDistanceMeters;
-        _globalLod?.ApplyRuntimeShadowQuality(
+        ApplyTerrainMacroShadowOverrides(
             macroShadowStrength,
             macroFadeStartMeters,
             macroFadeEndMeters,

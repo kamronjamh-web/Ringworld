@@ -2,6 +2,7 @@ using System;
 using Godot;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Voxel.Phase3;
 using RingworldTechDemo.Diagnostics;
 
 namespace RingworldTechDemo.UI;
@@ -10,6 +11,21 @@ namespace RingworldTechDemo.UI;
 public partial class RingLiveTuningDrawer : CanvasLayer
 {
     public const string MouseOwnershipMeta = "ringworld_live_tuning_mouse_open";
+    private static VoxelTerrainSettings? _pendingSurfaceTerrainSettings;
+    private static double _pendingSurfaceStartAroundMeters;
+    private static double _pendingSurfaceStartAcrossMeters;
+
+    /// <summary>Consumes the one-time terrain and position handoff for the isolated surface prototype.</summary>
+    public static bool TryConsumeSurfaceTerrainPrototypeLaunch(out VoxelTerrainSettings? terrainSettings, out double startAroundMeters, out double startAcrossMeters)
+    {
+        terrainSettings = _pendingSurfaceTerrainSettings;
+        startAroundMeters = _pendingSurfaceStartAroundMeters;
+        startAcrossMeters = _pendingSurfaceStartAcrossMeters;
+        _pendingSurfaceTerrainSettings = null;
+        _pendingSurfaceStartAroundMeters = 0;
+        _pendingSurfaceStartAcrossMeters = 0;
+        return terrainSettings != null;
+    }
 
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath CoordinatorPath { get; set; } = new("../TerrainLodCoordinator");
@@ -30,6 +46,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     [Export] public NodePath SunblockerDemoPath { get; set; } = new NodePath();
     /// <summary>Optional authoring-preview root. When set, F6 exposes only the biome preset controls.</summary>
     [Export] public NodePath BiomeAuthoringPreviewPath { get; set; } = new NodePath();
+    /// <summary>Optional isolated Certified Terrain3D surface prototype root.</summary>
+    [Export] public NodePath SurfaceTerrainPilotPath { get; set; } = new NodePath();
     [Export(PropertyHint.Range, "280,620,10")] public float DrawerWidth { get; set; } = 420.0f;
 
     private VoxelChunkGridManager? _grid;
@@ -58,6 +76,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private readonly System.Collections.Generic.HashSet<string> _cloudControlKeys = new();
     private global::RingworldTechDemo.SunblockerDemoController? _sunblockerDemo;
     private Node? _biomeAuthoringPreview;
+    private Node? _surfaceTerrainPilot;
+    private Node? _surfaceTerrainGameplay;
 
     public override void _Ready()
     {
@@ -69,8 +89,16 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             SetOpen(false, immediate: true);
             return;
         }
+        _surfaceTerrainPilot = GetNodeOrNull<Node>(SurfaceTerrainPilotPath);
+        if (_surfaceTerrainPilot != null)
+        {
+            InitializeSurfaceTerrainTuning();
+            BuildDrawer();
+            SetOpen(false, immediate: true);
+            return;
+        }
         _sunblockerDemo = GetNodeOrNull<global::RingworldTechDemo.SunblockerDemoController>(SunblockerDemoPath);
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null)
+        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _surfaceTerrainPilot != null)
         {
             BuildDrawer();
             SetOpen(false, immediate: true);
@@ -90,12 +118,15 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         _weatherAmbience = GetNodeOrNull<global::RingworldTechDemo.RingWeatherAmbience>(WeatherAmbiencePath);
         _performanceMonitor = GetNodeOrNull<RingPerformanceMonitor>(PerformanceMonitorPath);
         _performanceHud = GetNodeOrNull<RingLodDebugHud>("../LodDebugHud");
+        _surfaceTerrainGameplay = GetNodeOrNull<Node>("../Terrain3DGameplay");
         InitializeAntiAliasingTuning();
         InitializeMotionTuning();
         InitializeWaterTuning();
         InitializeGrassTuning();
         InitializeVegetationTuning();
         InitializeShadowTuning();
+        if (_surfaceTerrainGameplay != null)
+            InitializeSurfaceTerrainTuning();
         // The bridge owns the shared, startup-initialized sparse overrides.
         _cloudDefaults = _cloudBridge?.GameplayCloudDefaults ?? new GameplayCloudDefaults();
         BuildDrawer();
@@ -121,8 +152,9 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     public override void _ExitTree()
     {
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null)
+        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _surfaceTerrainPilot != null)
         {
+            FlushSurfaceTerrainDefaults();
             GetTree().Root.SetMeta(MouseOwnershipMeta, false);
             return;
         }
@@ -133,6 +165,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushGrassDefaults();
         _vegetationDefaults?.Save();
         FlushShadowDefaults();
+        FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
         if (_open)
             Input.MouseMode = Input.MouseModeEnum.Captured;
@@ -140,7 +173,13 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     public override void _Process(double delta)
     {
+        if (_surfaceTerrainPilot != null)
+        {
+            ProcessSurfaceTerrainTuning(delta);
+            return;
+        }
         if (_sunblockerDemo != null || _biomeAuthoringPreview != null) return;
+        ProcessSurfaceTerrainPrototypeLaunch(delta);
         if (_open)
         {
             _cloudRefreshDelay -= delta;
@@ -150,6 +189,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessShadowTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
+        if (_surfaceTerrainGameplay != null)
+            ProcessSurfaceTerrainTuning(delta);
         _grassApplyDelay -= delta;
         CommitQueuedGrassValues();
         ProcessGrassTuning(delta);
@@ -218,6 +259,13 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             TuningMenuUi.ConfigureNumericScrolling(_drawer);
             return;
         }
+        if (_surfaceTerrainPilot != null)
+        {
+            BuildSurfaceTerrainTab(tabs);
+            DisableKeyboardFocus(_drawer);
+            TuningMenuUi.ConfigureNumericScrolling(_drawer);
+            return;
+        }
         BuildLightingTab(tabs);
         BuildShadowsTab(tabs);
         BuildCloudsTab(tabs);
@@ -226,6 +274,10 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         BuildMotionTab(tabs);
         BuildLodTab(tabs);
         BuildTerrainTab(tabs);
+        if (_surfaceTerrainGameplay != null)
+            BuildSurfaceTerrainGameplayTab(tabs);
+        else
+            BuildSurfaceTerrainPrototypeLaunch(tabs);
         BuildWaterTab(tabs);
         BuildGrassTab(tabs);
         BuildVegetationTab(tabs);
@@ -627,9 +679,9 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     {
         VBoxContainer tabRoot = CreateTab(tabs, "LODs");
         VBoxContainer tab = TuningMenuUi.CreateSection(tabRoot, "Voxel streaming");
-        bool legacyPresentationDisabled = _grid?.IsSmoothTerrainReplacementActive ?? false;
+        bool legacyPresentationDisabled = _grid?.DormantEditableBackend ?? false;
         if (legacyPresentationDisabled)
-            tab.AddChild(new Label { Text = "Legacy voxel streaming is disabled while SmoothTerrainGrid owns terrain presentation.", AutowrapMode = TextServer.AutowrapMode.WordSmart });
+            tab.AddChild(new Label { Text = "Legacy voxel streaming is disabled while active surface terrain owns presentation.", AutowrapMode = TextServer.AutowrapMode.WordSmart });
         AddToggle(tab, "Voxel streaming", _grid?.EnableChunkStreaming ?? false, value => { if (_grid != null) _grid.EnableChunkStreaming = value; }, !legacyPresentationDisabled);
         AddSlider(tab, "Streaming update", 0.01, 1, 0.01, _grid?.StreamingUpdateIntervalSeconds ?? 0.1, value => { if (_grid != null) _grid.StreamingUpdateIntervalSeconds = (float)value; }, !legacyPresentationDisabled);
         AddSlider(tab, "Voxel radius", 2, 16, 1, _grid?.StreamingVisualRadiusAround ?? 7, value =>
@@ -664,10 +716,10 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         VBoxContainer editing = TuningMenuUi.CreateSection(tabRoot, "Editing / debug");
         AddSlider(editing, "Natural terrain brush radius", 0.5, 8, 0.25, _grid?.NaturalTerrainSdfBrushRadiusMeters ?? 1.5, value => { if (_grid != null) _grid.NaturalTerrainSdfBrushRadiusMeters = (float)value; });
         AddToggle(editing, "Excavation limits", _grid?.EnforceExcavationLimits ?? true, value => { if (_grid != null) _grid.EnforceExcavationLimits = value; }); AddToggle(editing, "Build height limit", _grid?.EnforceBuildHeightLimit ?? true, value => { if (_grid != null) _grid.EnforceBuildHeightLimit = value; }); AddToggle(editing, "Seam gap visualization", _grid?.EnableSeamGapDebugVisualization ?? false, value => { if (_grid != null) _grid.EnableSeamGapDebugVisualization = value; }); AddSlider(editing, "Seam debug interval", 0.02, 1, 0.01, _grid?.SeamGapDebugUpdateIntervalSeconds ?? 0.2, value => { if (_grid != null) _grid.SeamGapDebugUpdateIntervalSeconds = (float)value; });
-        bool legacyPresentationDisabled = _grid?.IsSmoothTerrainReplacementActive ?? false;
+        bool legacyPresentationDisabled = _grid?.DormantEditableBackend ?? false;
         VBoxContainer coarsePilot = TuningMenuUi.CreateSection(tabRoot, "Coarse pilot");
         if (legacyPresentationDisabled)
-            coarsePilot.AddChild(new Label { Text = "Coarse SDF pilot is unavailable while SmoothTerrainGrid is active.", AutowrapMode = TextServer.AutowrapMode.WordSmart });
+            coarsePilot.AddChild(new Label { Text = "Coarse SDF pilot is unavailable while active surface terrain is in use.", AutowrapMode = TextServer.AutowrapMode.WordSmart });
         AddToggle(coarsePilot, "Coarse SDF LOD1 pilot", _coarsePilot?.Enabled ?? false, value => { if (_coarsePilot != null) _coarsePilot.Enabled = value; }, !legacyPresentationDisabled); AddSlider(coarsePilot, "Coarse pilot radius", 0, 2, 1, _coarsePilot?.RadiusInCoarseChunks ?? 1, value => { if (_coarsePilot != null) _coarsePilot.RadiusInCoarseChunks = Mathf.RoundToInt(value); }, !legacyPresentationDisabled); AddToggle(coarsePilot, "Hide legacy LOD1", _coarsePilot?.HideLod1ProxyWhileEnabled ?? true, value => { if (_coarsePilot != null) _coarsePilot.HideLod1ProxyWhileEnabled = value; }, !legacyPresentationDisabled);
     }
 
@@ -774,18 +826,19 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private void SetOpen(bool open, bool immediate)
     {
         if (_drawer == null) return;
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null)
+        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _surfaceTerrainPilot != null)
         {
             _open = open;
             GetTree().Root.SetMeta(MouseOwnershipMeta, open);
-            Input.MouseMode = Input.MouseModeEnum.Visible;
+            Input.MouseMode = _surfaceTerrainPilot != null && !open
+                ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
             float authoringWidth = Mathf.Max(DrawerWidth, _drawer.GetCombinedMinimumSize().X);
             _drawer.OffsetLeft = open ? -authoringWidth : 0;
             _drawer.OffsetRight = open ? 0 : authoringWidth;
             _drawer.Visible = open;
             return;
         }
-        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); }
+        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RefreshSurfaceTerrainStatus(); }
         else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);

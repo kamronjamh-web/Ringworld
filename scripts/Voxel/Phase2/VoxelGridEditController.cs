@@ -1,6 +1,8 @@
 using Godot;
 using RingworldTechDemo.Terrain.Editable;
 using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Terrain.Surface;
+using RingworldTechDemo.UI;
 
 namespace RingworldTechDemo.Voxel.Phase2;
 
@@ -11,6 +13,8 @@ public partial class VoxelGridEditController : Node3D
     [Export] public NodePath SmoothTerrainPath { get; set; } = new NodePath();
     [Export] public NodePath ConstructionOverlayPath { get; set; } = new NodePath();
     [Export] public bool UseSmoothTerrainBackend { get; set; }
+    [Export] public bool UseTerrain3DSurfaceBackend { get; set; }
+    [Export] public NodePath Terrain3DGameplayPath { get; set; } = new NodePath("../Terrain3DGameplay");
     [Export] public float MaxEditDistance { get; set; } = 64.0f;
     [Export] public BlockType PlaceBlockType { get; set; } = BlockType.Concrete;
     [Export] public bool EnableAnchoredPlacementDebug { get; set; } = false;
@@ -22,6 +26,7 @@ public partial class VoxelGridEditController : Node3D
     private VoxelChunkGridManager? _gridManager;
     private SmoothTerrainGrid? _smoothTerrain;
     private SmoothConstructionOverlay? _constructionOverlay;
+    private RingTerrain3DGameplay? _terrain3DGameplay;
 
     public override void _Ready()
     {
@@ -39,6 +44,7 @@ public partial class VoxelGridEditController : Node3D
         // Using _Input here prevents decorative HUD Controls from swallowing
         // clicks before the terrain editor can see them.
         if (Input.MouseMode != Input.MouseModeEnum.Captured
+            || GetTree().Root.GetMeta(RingLiveTuningDrawer.MouseOwnershipMeta, false).AsBool()
             || !mouseButton.Pressed
             || mouseButton.IsEcho())
         {
@@ -66,6 +72,14 @@ public partial class VoxelGridEditController : Node3D
         if (_camera == null || _gridManager == null)
         {
             return false;
+        }
+
+        if (UseTerrain3DSurfaceBackend)
+        {
+            _terrain3DGameplay ??= GetNodeOrNull<RingTerrain3DGameplay>(Terrain3DGameplayPath);
+            if (_terrain3DGameplay?.IsReady != true || !TryGetSurfaceTerrainPhysicsHit(out Vector3 surfaceHit)) return false;
+            RingCanonicalPosition canonical = _gridManager.WorldToCanonicalRingPosition64(surfaceHit);
+            return _terrain3DGameplay.ApplySurfaceBrushAtCanonical(canonical.AroundMeters, canonical.AcrossMeters, place ? _terrain3DGameplay.BrushStepMeters : -_terrain3DGameplay.BrushStepMeters);
         }
 
         if (UseSmoothTerrainBackend && _smoothTerrain != null)
@@ -207,6 +221,21 @@ public partial class VoxelGridEditController : Node3D
         query.CollideWithAreas = false;
         Godot.Collections.Dictionary hit = GetWorld3D().DirectSpaceState.IntersectRay(query);
         return hit.Count > 0 && TryResolveHit(hit, out hitPosition, out hitNormal);
+    }
+
+    private bool TryGetSurfaceTerrainPhysicsHit(out Vector3 hitPosition)
+    {
+        hitPosition=Vector3.Zero;
+        if(!TryGetCursorRay(out Vector3 origin,out Vector3 direction))return false;
+        PhysicsRayQueryParameters3D query=PhysicsRayQueryParameters3D.Create(origin,origin+direction*MaxEditDistance);
+        query.CollideWithAreas=false;
+        if(_camera?.GetParent()?.GetParent() is CollisionObject3D explorerBody)
+            query.Exclude=new Godot.Collections.Array<Rid>{explorerBody.GetRid()};
+        Godot.Collections.Dictionary hit=GetWorld3D().DirectSpaceState.IntersectRay(query);
+        if(hit.Count==0||!hit.ContainsKey("collider"))return false;
+        Node? collider=hit["collider"].AsGodotObject() as Node;
+        if(collider?.Name.ToString()!="RingTerrainSurfaceCollision")return false;
+        hitPosition=hit["position"].AsVector3(); return true;
     }
 
     private bool TryGetCursorRay(out Vector3 origin, out Vector3 direction)

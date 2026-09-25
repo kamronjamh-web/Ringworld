@@ -20,6 +20,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath SmoothTerrainPath { get; set; } = new("../SmoothTerrainGrid");
     [Export] public bool UseSmoothTerrainPhysics { get; set; }
+    [Export] public bool UseTerrain3DSurfacePhysics { get; set; }
+    [Export] public NodePath Terrain3DGameplayPath { get; set; } = new("../Terrain3DGameplay");
     [Export(PropertyHint.Range, "0.3,0.9,0.05")] public float BodyWidth { get; set; } = 0.6f;
     [Export(PropertyHint.Range, "1.0,2.5,0.05")] public float BodyHeight { get; set; } = 1.8f;
     [Export(PropertyHint.Range, "0.0,1.0,0.05")] public float StepHeight { get; set; } = 0.6f;
@@ -675,7 +677,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         _bodyCollisionShape = GetNodeOrNull<CollisionShape3D>("CollisionShape3D");
         if (_bodyCollisionShape != null)
         {
-            _bodyCollisionShape.Disabled = !UseSmoothTerrainPhysics;
+            _bodyCollisionShape.Disabled = !UseSmoothTerrainPhysics && !UseTerrain3DSurfacePhysics;
             if(_bodyCollisionShape.Shape is CapsuleShape3D capsule)
             {
                 capsule.Radius=Mathf.Max(.1f,BodyWidth*.5f);
@@ -732,7 +734,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         }
         if(_smoothDeepShaftSmokeTest) BeginSpawnTerrainSettle();
         if (_crossRingSmokeTest) BeginCrossRingSmokeTest();
-        if(!UseSmoothTerrainPhysics)
+        if(!UseSmoothTerrainPhysics && !UseTerrain3DSurfacePhysics)
         {
             SnapOutOfSolidOnStartup();
             Callable.From(SnapOutOfSolidOnStartup).CallDeferred();
@@ -940,7 +942,15 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 -MaxFallSpeed);
         }
 
-        if (UseSmoothTerrainPhysics && _smoothTerrain != null)
+        if (UseTerrain3DSurfacePhysics)
+        {
+            if (!MoveWithTerrain3DSurfacePhysics(swimming: false))
+            {
+                _canonicalVelocity=Vector3.Zero;
+                ApplyWorldTransform();
+            }
+        }
+        else if (UseSmoothTerrainPhysics && _smoothTerrain != null)
         {
             MoveWithSmoothTerrainPhysics(swimming: false);
         }
@@ -1217,7 +1227,15 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         CurrentGravityFactor = 0.0f;
         _grounded = false;
 
-        if (UseSmoothTerrainPhysics && _smoothTerrain != null)
+        if (UseTerrain3DSurfacePhysics)
+        {
+            if (!MoveWithTerrain3DSurfacePhysics(swimming: true))
+            {
+                _canonicalVelocity = Vector3.Zero;
+                ApplyWorldTransform();
+            }
+        }
+        else if (UseSmoothTerrainPhysics && _smoothTerrain != null)
         {
             MoveWithSmoothTerrainPhysics(swimming: true);
         }
@@ -1909,6 +1927,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private float ResolveAltitudeAboveTerrainMeters()
     {
+        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters,out float surfaceHeight))
+            return Mathf.Max(0,(float)_canonicalPosition.VerticalMeters-surfaceHeight);
         if (_grid?.TerrainSampler == null)
             return Mathf.Max(0.0f, (float)_canonicalPosition.VerticalMeters);
 
@@ -2272,6 +2292,11 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private void BeginSpawnTerrainSettle()
     {
+        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters,out float surfaceHeight))
+        {
+            _canonicalPosition=_canonicalPosition with { VerticalMeters=surfaceHeight+1.05 };
+            _undergroundSpawnSettling=false; _spawnTerrainSettling=true; _spawnTerrainSettleRemaining=Math.Max(.1f,SpawnTerrainSettleTimeoutSeconds); return;
+        }
         if (_grid?.TerrainSampler == null) return;
         int across = Mathf.Clamp(
             Mathf.RoundToInt((float)_canonicalPosition.AcrossMeters),
@@ -2292,6 +2317,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private bool IsCanonicalPositionBelowTerrain(in RingCanonicalPosition position)
     {
+        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(position.AroundMeters,position.AcrossMeters,out float terrainHeight))
+            return position.VerticalMeters < terrainHeight-Math.Max(BodyHeight,2.0f);
         if (_grid?.TerrainSampler == null) return false;
         int across = Mathf.Clamp(
             Mathf.RoundToInt((float)position.AcrossMeters),
@@ -2351,7 +2378,19 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     {
         if (!_spawnTerrainSettling || _grid?.TerrainSampler == null) return false;
         bool collisionReady;
-        if (UseSmoothTerrainPhysics && _smoothTerrain != null)
+        if (UseTerrain3DSurfacePhysics)
+        {
+            _terrain3DSurfaceGameplay ??= GetNodeOrNull<RingworldTechDemo.Terrain.Surface.RingTerrain3DGameplay>(Terrain3DGameplayPath);
+            if(_terrain3DSurfaceGameplay?.EnsureInitialized()!=true || !_terrain3DSurfaceGameplay.IsReady)
+            {
+                _canonicalVelocity=Vector3.Zero; _grounded=true; RecenterCollisionOrigin(force:false); ApplyWorldTransform(); return true;
+            }
+            _terrain3DSurfaceGameplay.EnsureCoverage(_canonicalPosition);
+            float exactSurface=_terrain3DSurfaceGameplay.SampleHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters);
+            if(float.IsFinite(exactSurface)) _canonicalPosition=_canonicalPosition with { VerticalMeters=exactSurface+1.05 };
+            collisionReady=_terrain3DSurfaceGameplay.IsReady;
+        }
+        else if (UseSmoothTerrainPhysics && _smoothTerrain != null)
         {
             _smoothTerrain.SetCanonicalFocus(_canonicalPosition);
             collisionReady = _undergroundSpawnSettling
@@ -2383,10 +2422,12 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         {
             _spawnTerrainSettling = false;
             _undergroundSpawnSettling = false;
-            if(UseSmoothTerrainPhysics)
+            if(UseTerrain3DSurfacePhysics || UseSmoothTerrainPhysics)
             {
                 _grounded=false;
-                GD.Print("Smooth terrain physical mesh ready at spawn.");
+                GD.Print(UseTerrain3DSurfacePhysics
+                    ? "Terrain3D surface physical mesh ready at spawn."
+                    : "Smooth terrain physical mesh ready at spawn.");
             }
             else
             {

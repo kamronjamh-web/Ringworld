@@ -40,6 +40,7 @@ public partial class RingScaledFarViewport : Node
 		Vector3[] Vertices,
 		Vector3[] Normals,
 		Color[] Colors,
+		Vector2[] MacroShadowUvs,
 		int[] Indices,
 		double InnerRadius,
 		double OuterRadius);
@@ -1322,6 +1323,12 @@ public partial class RingScaledFarViewport : Node
 		var vertices = new Vector3[(radialSteps + 1) * (angularSteps + 1)];
 		var normals = new Vector3[vertices.Length];
 		var colors = new Color[vertices.Length];
+		// Keep this coordinate unwrapped while a regional band crosses the
+		// circumference seam. The shader applies fract() only at lookup time,
+		// so interpolation never blends opposite sides of the shadow texture.
+		var macroShadowUvs = new Vector2[vertices.Length];
+		double canonicalAnchorAround = anchorAround % circumference;
+		if (canonicalAnchorAround < 0.0) canonicalAnchorAround += circumference;
 		for (int radial = 0; radial <= radialSteps; radial++)
 		for (int angular = 0; angular <= angularSteps; angular++)
 		{
@@ -1337,6 +1344,10 @@ public partial class RingScaledFarViewport : Node
 				anchorAround, 0.0, anchorAcross,
 				circumference, radius, width, scale);
 			colors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, displayedHeight, sampler, low, high);
+			double unwrappedAround = canonicalAnchorAround + (around - anchorAround);
+			macroShadowUvs[index] = new Vector2(
+				(float)(unwrappedAround / circumference),
+				across / (float)Mathf.Max(1, width));
 		}
 
 		int row = angularSteps + 1;
@@ -1354,7 +1365,7 @@ public partial class RingScaledFarViewport : Node
 		}
 		for (int i = 0; i < normals.Length; i++)
 			normals[i] = normals[i].LengthSquared() > 0.0000001f ? normals[i].Normalized() : Vector3.Up;
-		return new FarRegionalBandData(name, vertices, normals, colors, indices, innerRadius, outerRadius);
+		return new FarRegionalBandData(name, vertices, normals, colors, macroShadowUvs, indices, innerRadius, outerRadius);
 	}
 
 	private void ActivateRegionalRenderOrigin(long around, int across)
@@ -1388,11 +1399,13 @@ public partial class RingScaledFarViewport : Node
 		arrays[(int)Mesh.ArrayType.Vertex] = data.Vertices;
 		arrays[(int)Mesh.ArrayType.Normal] = data.Normals;
 		arrays[(int)Mesh.ArrayType.Color] = data.Colors;
+		arrays[(int)Mesh.ArrayType.TexUV] = data.MacroShadowUvs;
 		arrays[(int)Mesh.ArrayType.Index] = data.Indices;
 		var mesh = new ArrayMesh();
 		mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
 		instance.Mesh = mesh;
 		material = (ShaderMaterial)_terrainMaterial!.Duplicate();
+		global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(material, CoordinateScale);
 		// This band receives a fresh material after an asynchronous rebuild.
 		// Force the cached regional camera/ring uniforms onto that new instance
 		// during the same process frame.
@@ -1410,9 +1423,10 @@ public partial class RingScaledFarViewport : Node
 		material.SetShaderParameter(
 			"regional_surface_up",
 			SurfaceUpForAround(_regionalRenderOriginAround, _circumferenceMeters, _radiusMeters));
-		// The detailed atmosphere and shadow fields reconstruct a global
-		// cylinder from shader floats, which camera-relative regional meshes
-		// cannot retain. The far-shroud branch needs no global reconstruction.
+		// The detailed atmosphere reconstructs a global cylinder from shader
+		// floats, which camera-relative regional meshes cannot retain. The
+		// far-shroud branch needs no global reconstruction. Macro terrain
+		// shadows instead use the stable canonical UV stored on this mesh.
 		material.SetShaderParameter("ring_atmosphere_enabled", true);
 		material.SetShaderParameter("ring_atmosphere_far_shroud_enabled", true);
 		material.SetShaderParameter(
@@ -1421,7 +1435,7 @@ public partial class RingScaledFarViewport : Node
 		material.SetShaderParameter(
 			"ring_atmosphere_far_shroud_visibility",
 			_farAtmosphereShroudVisibility);
-		material.SetShaderParameter("terrain_macro_shadow_enabled", false);
+		material.SetShaderParameter("terrain_macro_shadow_use_uv", true);
 		material.SetShaderParameter("analytic_cloud_shadow_enabled", false);
 		instance.MaterialOverride = material;
 		instance.Visible = true;

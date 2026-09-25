@@ -524,7 +524,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         RegisterFftWaterDemandProvider();
         if (SampleSpacingMeters <= 2) FinestOceanGeometryInstance = this;
         if (SampleSpacingMeters is 2 or 4 or 8) FftOceanGeometryInstances.Add(this);
-        _smoothTerrain = _grid?.DormantEditableBackend == true
+        _smoothTerrain = _grid?.IsSmoothTerrainReplacementActive == true
             ? GetNodeOrNull<SmoothTerrainGrid>(SmoothTerrainPath)
             : null;
         _focus = GetNodeOrNull<Node3D>(FocusPath);
@@ -4458,6 +4458,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _material = new ShaderMaterial { Shader = shader };
         _material.SetShaderParameter("fade_start_meters", FadeStartMeters);
         _material.SetShaderParameter("fade_end_meters", Mathf.Max(FadeStartMeters + 1.0f, FadeEndMeters));
+        _material.SetShaderParameter("near_fade_enabled", ResolveTerrain3DNearFadeEnabled());
         _material.SetShaderParameter("far_fade_enabled", EnableFarFade);
         _material.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _material.SetShaderParameter("fade_out_end_meters", Mathf.Max(FadeOutStartMeters + 1.0f, FadeOutEndMeters));
@@ -4541,6 +4542,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private void UpdateCameraUniform()
     {
         if (_focus == null) return;
+        _material?.SetShaderParameter("near_fade_enabled", ResolveTerrain3DNearFadeEnabled());
         if (ReferenceEquals(FinestOceanGeometryInstance, this))
         {
             UpdateSharedFftOceanCoverage();
@@ -5250,6 +5252,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         InnerClipRadiusMeters = Mathf.Max(0.0f, innerClipRadius);
         _material?.SetShaderParameter("fade_start_meters", FadeStartMeters);
         _material?.SetShaderParameter("fade_end_meters", FadeEndMeters);
+        _material?.SetShaderParameter("near_fade_enabled", ResolveTerrain3DNearFadeEnabled());
         _material?.SetShaderParameter("far_fade_enabled", EnableFarFade);
         _material?.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _material?.SetShaderParameter("fade_out_end_meters", FadeOutEndMeters);
@@ -5292,6 +5295,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _structuralWallMaterial.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _structuralWallMaterial.SetShaderParameter("fade_out_end_meters", FadeOutEndMeters);
     }
+
+    private bool ResolveTerrain3DNearFadeEnabled() => _grid?.UseTerrain3DSurface == true
+        && _grid.SurfaceTerrainVisualReady && _hasVoxelCoverageProvider;
 
     private static bool ResolveStructuralShellNearFadeEnabled(bool innermostActiveLevel)
         => !innermostActiveLevel;

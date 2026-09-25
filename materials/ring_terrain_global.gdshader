@@ -43,6 +43,7 @@ uniform vec3 debug_color = vec3(1.0, 1.0, 0.0);
 
 varying vec3 world_position;
 varying float ring_day_factor;
+varying vec2 terrain_macro_shadow_uv;
 // Both ambient occlusion and the directional-light path consume the same
 // day-gated strongest cloud estimate for this fragment.
 varying float combined_cloud_shadow_occlusion;
@@ -72,6 +73,7 @@ void vertex() {
 	// vertex, so establish the normal path before optionally compressing it.
 	POSITION = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	terrain_macro_shadow_uv = UV;
 	if (far_space_enabled) {
 		// Compress in view space using Godot's combined model-view transform.
 		// This avoids subtracting multi-million-metre world-space floats and uses
@@ -138,11 +140,16 @@ void light() {
 		ring_day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
 	float terrain_shadow = LIGHT_IS_DIRECTIONAL
-		? sample_terrain_macro_shadow(
-			world_position,
-			ring_center,
-			camera_world_position,
-			ring_width_meters) * ring_day_factor
+		? (terrain_macro_shadow_use_uv
+			? sample_terrain_macro_shadow_uv(
+				terrain_macro_shadow_uv,
+				world_position,
+				camera_world_position)
+			: sample_terrain_macro_shadow(
+				world_position,
+				ring_center,
+				camera_world_position,
+				ring_width_meters)) * ring_day_factor * primary_sun_weight
 		: 0.0;
 	float cloud_shadow = LIGHT_IS_DIRECTIONAL
 		? combined_cloud_shadow_occlusion

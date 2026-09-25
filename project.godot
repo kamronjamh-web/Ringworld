@@ -19,6 +19,10 @@ run/main_scene="res://scenes/StartMenu.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 
+[audio]
+
+buses/default_bus_layout="uid://bg7j2e1mk3215"
+
 [autoload]
 
 WorldSession="*res://scripts/world_session.gd"

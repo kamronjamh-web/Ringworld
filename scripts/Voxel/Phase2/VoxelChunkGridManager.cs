@@ -10,6 +10,7 @@ using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase1;
 using RingworldTechDemo.Voxel.Phase5;
 using RingworldTechDemo.Voxel.Phase3;
+using RingworldTechDemo.Terrain.Surface;
 
 namespace RingworldTechDemo.Voxel.Phase2;
 
@@ -25,13 +26,14 @@ public partial class VoxelChunkGridManager : Node3D
 	/// SmoothTerrainGrid owns editable presentation when this is enabled.
 	/// </summary>
 	[Export] public bool DormantEditableBackend { get; set; }
+	[Export] public bool UseTerrain3DSurface { get; set; }
 
 	/// <summary>
 	/// True when SmoothTerrainGrid owns terrain presentation. The editable grid
 	/// remains available as the canonical terrain/noise and edit-data provider,
 	/// but must not allocate or render legacy chunk meshes.
 	/// </summary>
-	public bool IsSmoothTerrainReplacementActive => DormantEditableBackend;
+	public bool IsSmoothTerrainReplacementActive => DormantEditableBackend && !UseTerrain3DSurface;
 	[Export(PropertyHint.Range, "1,8,1")] public int ChunkRadiusAround { get; set; } = 1;
 	[Export(PropertyHint.Range, "1,8,1")] public int ChunkRadiusAcross { get; set; } = 1;
 	[Export(PropertyHint.Range, "0,8,1")] public int ChunkRadiusVertical { get; set; } = 0;
@@ -273,9 +275,9 @@ public partial class VoxelChunkGridManager : Node3D
 		* sizeof(byte);
 	public float LastPredictionDistanceMeters { get; private set; }
 	public float LastBrakingDistanceMeters { get; private set; }
-	public ulong LodSurfaceEditVersion => _lodSurfaceEditVersion;
+	public ulong LodSurfaceEditVersion { get { RefreshSurfaceTerrainRevision(); return _lodSurfaceEditVersion; } }
 	/// <summary>Changes for every retained voxel edit, including roofs whose natural surface height is unchanged.</summary>
-	public ulong RainSurfaceEditVersion => _rainSurfaceEditVersion;
+	public ulong RainSurfaceEditVersion { get { RefreshSurfaceTerrainRevision(); return _rainSurfaceEditVersion; } }
 	public bool HasStreamingCanonicalFocusOverride => _streamingCanonicalFocusOverride.HasValue;
 	public bool TryGetStreamingCanonicalFocusOverride(out RingCanonicalPosition position)
 	{
@@ -1617,6 +1619,7 @@ public partial class VoxelChunkGridManager : Node3D
 
 	public RingLodSurfaceEditSnapshot CaptureLodSurfaceEditSnapshot()
 	{
+		if (SurfaceHeightField != null) return CaptureSurfaceTerrainLodSnapshot();
 		if (_cachedLodSurfaceEditSnapshot != null
 			&& _cachedLodSurfaceEditSnapshot.Version == _lodSurfaceEditVersion)
 		{

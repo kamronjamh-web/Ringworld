@@ -11,6 +11,7 @@ using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
 using RingworldTechDemo.Terrain.Editable;
+using RingworldTechDemo.Terrain.Surface;
 
 namespace RingworldTechDemo.Voxel.Save;
 
@@ -23,6 +24,7 @@ public partial class RingWorldSaveManager : Node
     [Export] public NodePath CloudPath { get; set; } = new("../RingVolumetricClouds");
     [Export] public NodePath SmoothTerrainPath { get; set; } = new("../SmoothTerrainGrid");
     [Export] public NodePath ConstructionOverlayPath { get; set; } = new("../SmoothConstructionOverlay");
+    [Export] public NodePath SurfaceTerrainPath { get; set; } = new("../Terrain3DGameplay");
     [Export] public NodePath CelestialClockPath { get; set; } = new("../RingDayNightCycle");
     [Export(PropertyHint.Range, "5,300,1")] public float AutosaveSeconds { get; set; } = 30.0f;
     [Export(PropertyHint.Range, "0,4,1")] public int ActiveRegionRadius { get; set; } = 1;
@@ -38,8 +40,11 @@ public partial class RingWorldSaveManager : Node
     private RingworldTechDemo.RingVolumetricCloudLayer? _clouds;
     private SmoothTerrainGrid? _smoothTerrain;
     private SmoothConstructionOverlay? _constructionOverlay;
+    private RingTerrain3DGameplay? _surfaceTerrain;
     private Node? _celestialClock;
     private bool _smoothBackendActive;
+    private bool _surfaceBackendActive;
+    private bool _loadRejected;
     private string _worldDirectory = string.Empty;
     private string _statePath = string.Empty;
     private string _deltaPath = string.Empty;
@@ -64,6 +69,7 @@ public partial class RingWorldSaveManager : Node
     private sealed class SaveDocument
     {
         public int FormatVersion { get; set; } = SaveFormatVersion;
+        public string Backend { get; set; } = string.Empty;
         public int TerrainGeneratorVersion { get; set; }
         public ulong TerrainDefinitionHash { get; set; }
         public double CircumferenceMeters { get; set; }
@@ -119,8 +125,16 @@ public partial class RingWorldSaveManager : Node
         _clouds = GetNodeOrNull<RingworldTechDemo.RingVolumetricCloudLayer>(CloudPath);
         _smoothTerrain = GetNodeOrNull<SmoothTerrainGrid>(SmoothTerrainPath);
         _constructionOverlay = GetNodeOrNull<SmoothConstructionOverlay>(ConstructionOverlayPath);
+        _surfaceTerrain = GetNodeOrNull<RingTerrain3DGameplay>(SurfaceTerrainPath);
         _celestialClock = GetNodeOrNull<Node>(CelestialClockPath);
-        _smoothBackendActive = _grid?.DormantEditableBackend == true;
+        _surfaceBackendActive = _grid?.UseTerrain3DSurface == true;
+        _smoothBackendActive = _grid?.IsSmoothTerrainReplacementActive == true;
+        if (_surfaceBackendActive)
+        {
+            _smoothBackendActive = false;
+            _smoothTerrain = null;
+            _constructionOverlay = null;
+        }
         if (!_smoothBackendActive)
         {
             _smoothTerrain = null;
@@ -138,7 +152,7 @@ public partial class RingWorldSaveManager : Node
         Directory.CreateDirectory(_worldDirectory);
         Directory.CreateDirectory(Path.Combine(_worldDirectory, "regions"));
         Directory.CreateDirectory(Path.Combine(_worldDirectory, "lod_cache"));
-        _statePath = Path.Combine(_worldDirectory, "world_state.json");
+        _statePath = Path.Combine(_worldDirectory, _surfaceBackendActive ? "world_state_terrain3d_v1.json" : "world_state.json");
         _deltaPath = configured.TrimEnd('/', '\\') + "/voxel_deltas.json";
         _deltaJournalPath = Path.Combine(_worldDirectory, "voxel_delta_journal.ndjson");
         _smoothJournalPath = Path.Combine(_worldDirectory, "smooth_terrain_edits_v1.json");
@@ -150,7 +164,7 @@ public partial class RingWorldSaveManager : Node
     {
         if (!_loaded) return;
         CompleteBackgroundSaveIfReady();
-        QueueRegionActivation();
+        if (!_surfaceBackendActive) QueueRegionActivation();
         _elapsed += delta;
         if (_elapsed < Math.Max(5.0f, AutosaveSeconds)) return;
         _elapsed = 0.0;
@@ -180,21 +194,31 @@ public partial class RingWorldSaveManager : Node
 
     public Error SaveWorld()
     {
+        if (!IsSavePermittedForLoadState(_loaded, _loadRejected)) return _loadRejected ? Error.Failed : Error.Busy;
         if (_grid?.TerrainSampler == null || _explorer == null || string.IsNullOrEmpty(_statePath))
             return Error.Unconfigured;
         if (_saveTask != null)
             return Error.Busy;
 
-        if (_smoothBackendActive && (_smoothTerrain == null || _constructionOverlay == null))
+        if (_surfaceBackendActive)
+        {
+            if (_surfaceTerrain == null || !_surfaceTerrain.IsReady || !_surfaceTerrain.SaveSurfaceEdits())
+            {
+                GD.PushError($"Surface terrain save failed: {_surfaceTerrain?.LastError ?? "Terrain3D gameplay node is unavailable."}");
+                return Error.Failed;
+            }
+        }
+        else if (_smoothBackendActive && (_smoothTerrain == null || _constructionOverlay == null))
             return Error.Unconfigured;
         VoxelChunkDeltaSnapshot delta = _smoothBackendActive
-            ? new VoxelChunkDeltaSnapshot()
+            || _surfaceBackendActive ? new VoxelChunkDeltaSnapshot()
             : _grid.CaptureDirtyChunkDeltaSnapshot();
         RingCanonicalPosition position = _explorer.CanonicalPosition;
         RingCanonicalPosition? checkpoint = _explorer.UndergroundCheckpoint;
         Vector3 velocity = _explorer.CanonicalVelocity;
         var document = new SaveDocument
         {
+            Backend = GetBackendName(),
             TerrainGeneratorVersion = _grid.TerrainSampler.TerrainGeneratorVersion,
             TerrainDefinitionHash = _grid.TerrainSampler.TerrainDefinitionHash,
             CircumferenceMeters = _grid.GetCanonicalRingCircumferenceMeters64(),
@@ -234,21 +258,48 @@ public partial class RingWorldSaveManager : Node
             }
         };
 
-        _inFlightDelta = _smoothBackendActive ? null : delta;
+        _inFlightDelta = _smoothBackendActive || _surfaceBackendActive ? null : delta;
         SmoothTerrainJournalEnvelope? smooth = _smoothBackendActive ? _smoothTerrain!.CaptureJournalEnvelope() : null;
         IReadOnlyList<SmoothConstructionCommand>? construction = _smoothBackendActive ? _constructionOverlay!.CaptureCommands() : null;
         bool smoothBackend = _smoothBackendActive;
-        _saveTask = Task.Run(() => WriteSaveFiles(document, delta, smooth, construction, smoothBackend));
+        bool surfaceBackend = _surfaceBackendActive;
+        _saveTask = Task.Run(() => WriteSaveFiles(document, delta, smooth, construction, smoothBackend, surfaceBackend));
         return Error.Ok;
     }
 
-    private SaveResult WriteSaveFiles(SaveDocument document, VoxelChunkDeltaSnapshot delta, SmoothTerrainJournalEnvelope? smooth, IReadOnlyList<SmoothConstructionCommand>? construction, bool smoothBackend)
+    /// <summary>Completes a durable save before a scene transition destroys this world.</summary>
+    public Error SaveForSceneTransition()
+    {
+        if (_saveTask != null)
+        {
+            SaveResult pending;
+            try { pending = _saveTask.GetAwaiter().GetResult(); }
+            catch (Exception exception) { pending = new SaveResult(false, exception.Message); }
+            CompleteBackgroundSaveIfReady();
+            if (!pending.Success) return Error.Failed;
+        }
+
+        Error queued = SaveWorld();
+        if (queued != Error.Ok) return queued;
+        SaveResult completed;
+        try { completed = _saveTask!.GetAwaiter().GetResult(); }
+        catch (Exception exception) { completed = new SaveResult(false, exception.Message); }
+        CompleteBackgroundSaveIfReady();
+        return completed.Success ? Error.Ok : Error.Failed;
+    }
+
+    private SaveResult WriteSaveFiles(SaveDocument document, VoxelChunkDeltaSnapshot delta, SmoothTerrainJournalEnvelope? smooth, IReadOnlyList<SmoothConstructionCommand>? construction, bool smoothBackend, bool surfaceBackend)
     {
         string temporary = _statePath + ".tmp";
         string constructionTemporary = _constructionPath + ".tmp";
         try
         {
-            if (smoothBackend)
+            if (surfaceBackend)
+            {
+                // The Terrain3D gameplay node durably committed its isolated
+                // surface_terrain3d_edits_v1.json before this shared state task.
+            }
+            else if (smoothBackend)
             {
                 if (!smooth.HasValue || construction == null)
                     throw new InvalidOperationException("Smooth editable save snapshot is incomplete.");
@@ -352,12 +403,14 @@ public partial class RingWorldSaveManager : Node
                 document = JsonSerializer.Deserialize<SaveDocument>(File.ReadAllText(_statePath));
                 if (document == null)
                     throw new InvalidDataException("World state document is empty.");
+                if (!IsBackendCompatible(document, out string backendReason))
+                    throw new InvalidDataException(backendReason);
                 compatibility = EvaluateCompatibility(document);
                 if (!compatibility.Value.CanLoad)
                 {
                     GD.PushWarning(
                         $"World preserved read-only before edit restoration: {compatibility.Value.Reason}");
-                    SetProcess(false);
+                    RejectLoad(compatibility.Value.Reason);
                     return;
                 }
             }
@@ -365,7 +418,7 @@ public partial class RingWorldSaveManager : Node
             {
                 GD.PushWarning(
                     $"World state could not be validated and was preserved read-only: {exception.Message}");
-                SetProcess(false);
+                RejectLoad(exception.Message);
                 return;
             }
         }
@@ -373,12 +426,25 @@ public partial class RingWorldSaveManager : Node
         // Smooth mode owns a separate journal and must never hydrate the dormant
         // legacy grid from old voxel files.  A conversion is deliberately
         // fail-closed until every legacy record can be mapped without loss.
-        Error deltaError = _smoothBackendActive ? Error.Unavailable : LoadLegacyVoxelDeltas();
-        if (_smoothBackendActive)
+        Error deltaError = Error.Unavailable;
+        if (_surfaceBackendActive)
+        {
+            if (_surfaceTerrain == null || !_surfaceTerrain.EnsureInitialized() || !_surfaceTerrain.IsReady)
+            {
+                GD.PushWarning($"Surface terrain save could not be loaded and was preserved read-only: {_surfaceTerrain?.LastError ?? "Terrain3D gameplay node is unavailable."}");
+                RejectLoad(_surfaceTerrain?.LastError ?? "Terrain3D gameplay node is unavailable.");
+                return;
+            }
+        }
+        else if (_smoothBackendActive)
         {
             if (LegacyEditableSaveExists())
                 GD.PushWarning("Legacy editable save detected and left read-only; no smooth importer is certified for this slot.");
             LoadSmoothTerrainState();
+        }
+        else
+        {
+            deltaError = LoadLegacyVoxelDeltas();
         }
 
         if (document != null)
@@ -388,7 +454,7 @@ public partial class RingWorldSaveManager : Node
                 GD.Print($"World save compatibility migration accepted: {compatibility.Value.Reason}");
         }
         int activatedRegions = 0;
-        if (!_smoothBackendActive)
+        if (!_smoothBackendActive && !_surfaceBackendActive)
         {
             DiscoverRegionJournals();
             activatedRegions = ActivateRegionsAroundExplorer(force: true);
@@ -415,6 +481,39 @@ public partial class RingWorldSaveManager : Node
             catch (Exception exception) { GD.PushWarning($"Smooth construction journal ignored (preserved read-only): {exception.Message}"); }
         }
     }
+
+    private string GetBackendName()
+    {
+        if (_surfaceBackendActive) return "surface_terrain3d";
+        if (_smoothBackendActive) return "smooth_editable";
+        return "legacy_voxel";
+    }
+
+    private bool IsBackendCompatible(SaveDocument document, out string reason)
+    {
+        string expected = GetBackendName();
+        if (string.IsNullOrWhiteSpace(document.Backend))
+        {
+            // Historical world-state documents predate the marker. They are
+            // accepted only by the existing backends; Terrain3D is isolated.
+            if (!_surfaceBackendActive) { reason = string.Empty; return true; }
+            reason = "World state has no terrain backend marker and cannot be loaded by Terrain3D.";
+            return false;
+        }
+        if (string.Equals(document.Backend, expected, StringComparison.Ordinal)) { reason = string.Empty; return true; }
+        reason = $"World state terrain backend '{document.Backend}' is incompatible with active backend '{expected}'.";
+        return false;
+    }
+
+    private void RejectLoad(string reason)
+    {
+        _loadRejected = true;
+        if (_surfaceBackendActive)
+            _surfaceTerrain?.BlockSavingAndEditing("World state rejected: " + reason);
+        SetProcess(false);
+    }
+
+    internal static bool IsSavePermittedForLoadState(bool loaded, bool loadRejected) => loaded && !loadRejected;
 
     private bool LegacyEditableSaveExists()
     {
@@ -490,7 +589,7 @@ public partial class RingWorldSaveManager : Node
 
     private void QueueRegionActivation()
     {
-        if (_smoothBackendActive || _grid == null || _explorer == null || _regionJournals.Count == 0) return;
+        if (_smoothBackendActive || _surfaceBackendActive || _grid == null || _explorer == null || _regionJournals.Count == 0) return;
         RegionKey center = GetRegionKey(_explorer.CanonicalPosition);
         if (_pendingActivationCenter == center)
         {

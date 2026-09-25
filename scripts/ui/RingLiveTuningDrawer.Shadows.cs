@@ -11,6 +11,8 @@ public partial class RingLiveTuningDrawer
     private readonly System.Collections.Generic.Dictionary<string, Label> _shadowValueLabels = new();
     private readonly System.Collections.Generic.Dictionary<string, OptionButton> _shadowOptions = new();
     private CheckButton? _shadowEnabled;
+    private CheckButton? _terrainMacroShadowEnabled;
+    private CheckButton? _terrainMacroWallShadowsEnabled;
     private CheckButton? _sunStabilizationEnabled;
     private CheckButton? _pauseDayNight;
     private string? _shadowDefaultsPathOverride;
@@ -24,6 +26,18 @@ public partial class RingLiveTuningDrawer
         VBoxContainer quality = TuningMenuUi.CreateSection(tab, "Quality");
         _shadowEnabled = new CheckButton { Name="SunShadows", Text="Sun shadows", ButtonPressed=_sun?.ShadowEnabled ?? true }; _shadowEnabled.Toggled += v => SetShadowValue("Enabled", v); quality.AddChild(_shadowEnabled);
         AddShadowDepthOption(quality, _shadowGraphics?.EffectiveDirectionalShadowDepthBits ?? 16); AddShadowAtlasOption(quality, _shadowGraphics?.EffectiveDirectionalShadowAtlasSize ?? 8192); AddShadowOption(quality, "Filter", "Soft-shadow filter", new[] { "Hard", "Soft very low", "Soft low", "Soft medium", "Soft high", "Soft ultra" }, new[] { 0,1,2,3,4,5 }, _shadowGraphics?.EffectiveDirectionalShadowFilter ?? 3);
+        VBoxContainer terrainMacro = TuningMenuUi.CreateSection(tab, "Terrain macro shadows");
+        _terrainMacroShadowEnabled = new CheckButton { Name="TerrainMacroShadows", Text="Enable terrain macro shadows", ButtonPressed=_shadowGraphics?.EffectiveTerrainMacroShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Uses the terrain height summary to cast distant mountain shadows." };
+        _terrainMacroShadowEnabled.Toggled += value => SetShadowValue("TerrainMacroEnabled", value);
+        terrainMacro.AddChild(_terrainMacroShadowEnabled);
+        _terrainMacroWallShadowsEnabled = new CheckButton { Name="TerrainMacroWallShadows", Text="Enable structural wall casting", ButtonPressed=_shadowGraphics?.EffectiveTerrainMacroWallShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Includes the ring's structural walls as terrain macro shadow casters." };
+        _terrainMacroWallShadowsEnabled.Toggled += value => SetShadowValue("TerrainMacroWallShadowsEnabled", value);
+        terrainMacro.AddChild(_terrainMacroWallShadowsEnabled);
+        AddShadowSlider(terrainMacro, "TerrainMacroStrength", "Terrain shadow strength", 0, .8, .01, _shadowGraphics?.EffectiveTerrainMacroShadowStrength ?? .34);
+        AddShadowSpinBox(terrainMacro, "TerrainMacroTraceSteps", "Terrain trace steps", 1, 32, 1, _shadowGraphics?.EffectiveTerrainMacroShadowTraceSteps ?? 10);
+        AddShadowSpinBox(terrainMacro, "TerrainMacroMaxTraceMeters", "Maximum trace distance (m)", 4000, 320000, 1000, _shadowGraphics?.EffectiveTerrainMacroShadowMaxTraceMeters ?? 96000);
+        AddShadowSpinBox(terrainMacro, "TerrainMacroFadeStartMeters", "Macro handoff near (m)", 0, 50000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeStartMeters ?? 3200);
+        AddShadowSpinBox(terrainMacro, "TerrainMacroFadeEndMeters", "Macro handoff far (m)", 100, 60000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeEndMeters ?? 6500);
         VBoxContainer cascades = TuningMenuUi.CreateSection(tab, "Cascade coverage");
         AddShadowSpinBox(cascades, "NearCascadeMeters", "Near cascade distance (m)", RingGraphicsQualityController.MinimumNearCascadeMeters, RingGraphicsQualityController.MaximumNearCascadeMeters, 1, _shadowGraphics?.EffectiveNearCascadeMeters ?? RingGraphicsQualityController.DefaultNearCascadeMeters,
             "Focuses near shadow coverage, up to 40% of the shadow range. The requested distance is kept across presets.");
@@ -179,6 +193,13 @@ public partial class RingLiveTuningDrawer
         SetOption("DepthBits", _shadowGraphics.EffectiveDirectionalShadowDepthBits);
         SetOption("Filter", _shadowGraphics.EffectiveDirectionalShadowFilter);
         SetRange("NearCascadeMeters", _shadowGraphics.EffectiveNearCascadeMeters);
+        SetRange("TerrainMacroStrength", _shadowGraphics.EffectiveTerrainMacroShadowStrength);
+        SetRange("TerrainMacroTraceSteps", _shadowGraphics.EffectiveTerrainMacroShadowTraceSteps);
+        SetRange("TerrainMacroMaxTraceMeters", _shadowGraphics.EffectiveTerrainMacroShadowMaxTraceMeters);
+        SetRange("TerrainMacroFadeStartMeters", _shadowGraphics.EffectiveTerrainMacroShadowFadeStartMeters);
+        SetRange("TerrainMacroFadeEndMeters", _shadowGraphics.EffectiveTerrainMacroShadowFadeEndMeters);
+        _terrainMacroShadowEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveTerrainMacroShadowsEnabled);
+        _terrainMacroWallShadowsEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveTerrainMacroWallShadowsEnabled);
         if (_shadowOptions.TryGetValue("AtlasSize", out OptionButton? atlas))
             UpdateShadowAtlasOptionPresentation(atlas, _shadowGraphics.EffectiveDirectionalShadowDepthBits, _shadowGraphics.DirectionalShadowAtlasHardwareLimit, _shadowGraphics.DirectionalShadowAtlasLimitIsUnverified);
         UpdateShadowStatus();

@@ -11,6 +11,8 @@
 
 # C# and IDE-generated state.
 **/bin/
+# Terrain3D ships native runtime dependencies; retain these vendored assets.
+!/addons/terrain_3d/bin/
 **/obj/
 /.vs/
 /.idea/

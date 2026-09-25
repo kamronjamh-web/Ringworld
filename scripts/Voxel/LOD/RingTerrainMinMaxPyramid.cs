@@ -27,7 +27,7 @@ public sealed class RingTerrainMinMaxPyramid
         float MaximumTraceDistanceMeters);
 
     private const uint CacheMagic = 0x504D4D52; // RMMP
-    private const int CacheFormatVersion = 3;
+    private const int CacheFormatVersion = 4;
     public readonly record struct HeightRange(int MinHeight, int MaxHeight);
 
     private sealed record Level(int Width, int Height, int CellSize, HeightRange[] Cells);
@@ -38,6 +38,10 @@ public sealed class RingTerrainMinMaxPyramid
     private readonly int _baseCellSize;
     private readonly HeightRange[] _baseline;
     private readonly HeightRange[] _activeBase;
+    // One exact height per mask receiver cell. Unlike the range hierarchy this
+    // remains valid after the worker-owned sampler has been disposed.
+    private readonly int[] _baselineReceiverHeights;
+    private readonly int[] _activeReceiverHeights;
     private readonly List<Level> _levels = new();
     private readonly Dictionary<Vector2I, int> _editedColumns = new();
 
@@ -47,8 +51,9 @@ public sealed class RingTerrainMinMaxPyramid
     public int BaseWidth => _levels.Count > 0 ? _levels[0].Width : 0;
     public int BaseHeight => _levels.Count > 0 ? _levels[0].Height : 0;
     public int TotalCellCount { get; private set; }
-    public long EstimatedBytes => ((long)_baseline.Length + TotalCellCount) * sizeof(int) * 2L;
-    public long EstimatedCacheBytes => 64L + (long)_baseline.Length * sizeof(int) * 2L;
+    public long EstimatedBytes => ((long)_baseline.Length + TotalCellCount) * sizeof(int) * 2L
+        + (long)_baselineReceiverHeights.Length * sizeof(int) * 2L;
+    public long EstimatedCacheBytes => 64L + (long)_baseline.Length * sizeof(int) * 3L;
     public int LastDirtyBaseCellCount { get; private set; }
 
     public RingTerrainMinMaxPyramid(RingTerrainSampler sampler, int ringWidth, int baseCellSize = 512, CancellationToken cancellation = default)
@@ -60,8 +65,10 @@ public sealed class RingTerrainMinMaxPyramid
         int width = Mathf.Max(1, Mathf.CeilToInt(_aroundLength / (float)_baseCellSize));
         int height = Mathf.Max(1, Mathf.CeilToInt(_ringWidth / (float)_baseCellSize));
         _baseline = new HeightRange[width * height];
+        _baselineReceiverHeights = new int[width * height];
         BuildBaseline(width, height, cancellation);
         _activeBase = (HeightRange[])_baseline.Clone();
+        _activeReceiverHeights = (int[])_baselineReceiverHeights.Clone();
         BuildLevels(_activeBase, cancellation);
     }
 
@@ -70,6 +77,7 @@ public sealed class RingTerrainMinMaxPyramid
         int ringWidth,
         int baseCellSize,
         HeightRange[] baseline,
+        int[] baselineReceiverHeights,
         CancellationToken cancellation)
     {
         _sampler = sampler;
@@ -77,7 +85,9 @@ public sealed class RingTerrainMinMaxPyramid
         _ringWidth = Mathf.Max(1, ringWidth);
         _baseCellSize = Mathf.Max(32, baseCellSize);
         _baseline = baseline;
+        _baselineReceiverHeights = baselineReceiverHeights;
         _activeBase = (HeightRange[])baseline.Clone();
+        _activeReceiverHeights = (int[])baselineReceiverHeights.Clone();
         BuildLevels(_activeBase, cancellation);
     }
 
@@ -119,8 +129,14 @@ public sealed class RingTerrainMinMaxPyramid
                 if ((i & 4095) == 0) cancellation.ThrowIfCancellationRequested();
                 baseline[i] = new HeightRange(reader.ReadInt32(), reader.ReadInt32());
             }
+            var receiverHeights = new int[count];
+            for (int i = 0; i < count; i++)
+            {
+                if ((i & 4095) == 0) cancellation.ThrowIfCancellationRequested();
+                receiverHeights[i] = reader.ReadInt32();
+            }
             if (stream.Position != stream.Length) return false;
-            pyramid = new RingTerrainMinMaxPyramid(sampler, ringWidth, baseCellSize, baseline, cancellation);
+            pyramid = new RingTerrainMinMaxPyramid(sampler, ringWidth, baseCellSize, baseline, receiverHeights, cancellation);
             return true;
         }
         catch (OperationCanceledException)
@@ -171,6 +187,11 @@ public sealed class RingTerrainMinMaxPyramid
                     writer.Write(_baseline[i].MinHeight);
                     writer.Write(_baseline[i].MaxHeight);
                 }
+                for (int i = 0; i < _baselineReceiverHeights.Length; i++)
+                {
+                    if ((i & 4095) == 0) cancellation.ThrowIfCancellationRequested();
+                    writer.Write(_baselineReceiverHeights[i]);
+                }
             }
             File.Move(temporaryPath, path, overwrite: true);
         }
@@ -215,13 +236,20 @@ public sealed class RingTerrainMinMaxPyramid
                 dirtyBaseCells.Add(GetBaseCellIndex(column, width, baseHeight));
         }
 
-        foreach (int index in dirtyBaseCells) _activeBase[index] = _baseline[index];
+        foreach (int index in dirtyBaseCells)
+        {
+            _activeBase[index] = _baseline[index];
+            _activeReceiverHeights[index] = _baselineReceiverHeights[index];
+        }
         foreach ((Vector2I column, int height) in snapshot.EditedColumns)
         {
             int index = GetBaseCellIndex(column, width, baseHeight);
             if (!dirtyBaseCells.Contains(index)) continue;
             HeightRange range = _activeBase[index];
             _activeBase[index] = new HeightRange(Mathf.Min(range.MinHeight, height), Mathf.Max(range.MaxHeight, height));
+            // The shadow receiver is the fixed base-cell center. Only an edit
+            // at that exact canonical column changes its sampled surface.
+            if (IsReceiverCenter(column, index, width)) _activeReceiverHeights[index] = height;
         }
 
         PropagateDirtyCells(dirtyBaseCells);
@@ -252,7 +280,10 @@ public sealed class RingTerrainMinMaxPyramid
         Vector3 sunDirection,
         CancellationToken cancellation = default,
         int maximumTraceSteps = 10,
-        float requestedMaximumTraceDistanceMeters = 96000.0f)
+        float requestedMaximumTraceDistanceMeters = 96000.0f,
+        bool includeStructuralWalls = false,
+        float structuralWallTopMeters = 0.0f,
+        float structuralWallBottomMeters = 0.0f)
     {
         int width = BaseWidth;
         int height = BaseHeight;
@@ -281,51 +312,33 @@ public sealed class RingTerrainMinMaxPyramid
                     _aroundLength - 0.5f,
                     (x + 0.5f) * _baseCellSize);
                 double angle = around / radius;
-                var radialOut = new Vector3(
-                    (float)Math.Cos(angle),
-                    0.0f,
-                    (float)Math.Sin(angle));
+                var radialOut = new Vector3((float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle));
                 Vector3 surfaceUp = -radialOut;
-                var tangent = new Vector3(-radialOut.Z, 0.0f, radialOut.X);
                 float sunUp = sun.Dot(surfaceUp);
-                var planarSun = new Vector2(sun.Dot(tangent), sun.Y);
-                float planarLength = planarSun.Length();
-                if (sunUp <= 0.06f || planarLength <= 0.02f)
+                if (sunUp <= 0.000001f)
                     continue;
 
-                Vector2 planarDirection = planarSun / planarLength;
-                // Start from the conservative cell top. This keeps the mask
-                // usable after the sampler that built a cached hierarchy has
-                // been released and avoids broad cells self-shadowing.
-                int receiverHeight = Query(
-                    around,
-                    across,
-                    _baseCellSize).MaxHeight;
-                float rayRisePerPlanarMeter = sunUp / planarLength;
+                // Receiver heights must be sampled independently from the
+                // conservative hierarchy maxima used for potential casters.
+                int receiverHeight = _activeReceiverHeights[y * width + x];
+                RingTerrainShadowGeometry.RingPoint receiver = RingTerrainShadowGeometry.ReceiverPosition(
+                    radius, around, across, receiverHeight);
                 float occlusion = 0.0f;
                 float traceDistance = _baseCellSize * 1.5f;
                 for (int step = 0;
                      step < traceSteps && traceDistance <= maximumTraceDistance;
                      step++, traceDistance *= 1.55f)
                 {
-                    float sampleAround = around + planarDirection.X * traceDistance;
-                    float sampleAcross = across + planarDirection.Y * traceDistance;
-                    if (sampleAcross < 0.0f || sampleAcross > _ringWidth)
+                    RingTerrainShadowGeometry.RingRaySample ray =
+                        RingTerrainShadowGeometry.SampleStraightRay(radius, receiver, sun, traceDistance);
+                    if (ray.AcrossMeters < 0.0 || ray.AcrossMeters > _ringWidth)
                         break;
 
                     HeightRange obstacle = Query(
-                        sampleAround,
-                        sampleAcross,
+                        (float)ray.AroundMeters,
+                        (float)ray.AcrossMeters,
                         _baseCellSize);
-                    double aroundDistance = planarDirection.X * traceDistance;
-                    float curvatureRise = (float)(
-                        aroundDistance * aroundDistance
-                        / Math.Max(2.0 * radius, 1.0));
-                    float rayHeight = receiverHeight
-                        + traceDistance * rayRisePerPlanarMeter;
-                    float clearance = obstacle.MaxHeight
-                        + curvatureRise
-                        - rayHeight;
+                    float clearance = obstacle.MaxHeight - (float)ray.HeightMeters;
                     float softness = Mathf.Max(64.0f, _baseCellSize * 0.35f);
                     float blocked = SmoothStep(0.0f, softness, clearance);
                     float rangeFade = 1.0f - SmoothStep(
@@ -334,6 +347,19 @@ public sealed class RingTerrainMinMaxPyramid
                         traceDistance);
                     occlusion = Mathf.Max(occlusion, blocked * rangeFade);
                     if (occlusion >= 0.995f) break;
+                }
+                if (includeStructuralWalls
+                    && RingTerrainShadowGeometry.RayHitsStructuralWall(
+                        radius,
+                        receiver,
+                        sun,
+                        _ringWidth,
+                        structuralWallBottomMeters,
+                        structuralWallTopMeters,
+                        maximumTraceDistance,
+                        1.0))
+                {
+                    occlusion = 1.0f;
                 }
                 pixels[y * width + x] = (byte)Mathf.RoundToInt(
                     Mathf.Clamp(occlusion, 0.0f, 1.0f) * 255.0f);
@@ -479,13 +505,16 @@ public sealed class RingTerrainMinMaxPyramid
                 int a1 = Mathf.Min(_aroundLength - 1, a0 + _baseCellSize);
                 int z0 = y * _baseCellSize;
                 int z1 = Mathf.Min(_ringWidth, z0 + _baseCellSize);
-                int ac = a0 + (a1 - a0) / 2;
-                int zc = z0 + (z1 - z0) / 2;
+                // Match the R8 receiver location, including its clipped final
+                // partial cell, so cached receiver heights cannot drift.
+                int ac = Mathf.Min(_aroundLength - 1, x * _baseCellSize + _baseCellSize / 2);
+                int zc = Mathf.Min(_ringWidth - 1, y * _baseCellSize + _baseCellSize / 2);
                 int h00 = cornerHeights[y * cornerWidth + x];
                 int h10 = cornerHeights[y * cornerWidth + x + 1];
                 int h01 = cornerHeights[(y + 1) * cornerWidth + x];
                 int h11 = cornerHeights[(y + 1) * cornerWidth + x + 1];
                 int hc = _sampler.GetSurfaceHeight(ac, zc);
+                _baselineReceiverHeights[y * width + x] = hc;
                 _baseline[y * width + x] = new HeightRange(
                     Mathf.Min(Mathf.Min(h00, h10), Mathf.Min(Mathf.Min(h01, h11), hc)),
                     Mathf.Max(Mathf.Max(h00, h10), Mathf.Max(Mathf.Max(h01, h11), hc)));
@@ -500,6 +529,15 @@ public sealed class RingTerrainMinMaxPyramid
         int x = Mathf.Clamp(around / _baseCellSize, 0, width - 1);
         int y = Mathf.Clamp(across / _baseCellSize, 0, height - 1);
         return y * width + x;
+    }
+
+    private bool IsReceiverCenter(Vector2I column, int index, int width)
+    {
+        int x = index % width;
+        int y = index / width;
+        int around = Mathf.Min(_aroundLength - 1, x * _baseCellSize + _baseCellSize / 2);
+        int across = Mathf.Min(_ringWidth - 1, y * _baseCellSize + _baseCellSize / 2);
+        return Mathf.PosMod(column.X, _aroundLength) == around && column.Y == across;
     }
 
     private void BuildLevels(HeightRange[] baseCells, CancellationToken cancellation = default)

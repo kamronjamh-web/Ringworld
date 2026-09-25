@@ -1,0 +1,22 @@
+diff --git a/src/terrain_3d_mesher.cpp b/src/terrain_3d_mesher.cpp
+index 3892280..cffe258 100644
+--- a/src/terrain_3d_mesher.cpp
++++ b/src/terrain_3d_mesher.cpp
+@@ -453,5 +453,17 @@ void Terrain3DMesher::update_aabbs() {
+ 		aabb.size.y = height_range.y + cull_margin * 2.f;
+ 		RS->mesh_set_custom_aabb(mesh, aabb);
+ 	}
++	// The mesh AABB only expands vertically. Ringworld's vertex shader bends the
++	// terrain into a curved frame, so the renderer must also receive the caller's
++	// bounded cull margin as an all-axis instance visibility margin.
++	for (int lod = 0; lod < _clipmap_rids.size(); ++lod) {
++		Array lod_array = _clipmap_rids[lod];
++		for (int mesh = 0; mesh < lod_array.size(); ++mesh) {
++			Array mesh_array = lod_array[mesh];
++			for (int instance = 0; instance < mesh_array.size(); ++instance) {
++				RS->instance_set_extra_visibility_margin(mesh_array[instance], cull_margin);
++			}
++		}
++	}
+ 	return;
+ }
