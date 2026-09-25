@@ -1,657 +1,265 @@
-# Ringworld Tech Demo (Godot 4)
+# Ringworld Tech Demo
 
-Disposable captures, benchmark reports, and runtime logs are stored outside the
-OneDrive checkout. See [Generated data and OneDrive](docs/GENERATED_DATA.md) for
-the size report, cleanup, and before-travel workflow.
+Ringworld Tech Demo is a Godot 4 .NET game prototype for exploring a procedurally generated curved ring habitat. It combines large-world traversal, configurable terrain backends, local editing, distant ring rendering, weather, water, vegetation, celestial lighting, and local save slots.
 
-This project is a playable greybox prototype focused on:
+The normal path is **Start Menu → local world slot → World Foundry → configured gameplay world**. This is an evolving technical demo; isolated pilots and retained development backends are deliberate parts of the repository.
 
-- continuous full-ring traversal
-- curved massive-scale ring perception
-- custom ring gravity and orientation
-- stable movement and debug telemetry
+## Features at a glance
 
-## Folder Layout
+- Three local world slots with create, load, duplicate, and delete flows.
+- Custom, Certified halo-scale, and specialized Mega Ring world configurations.
+- Canonical double-precision positions, floating-origin support, radial gravity, swimming, and high-speed cross-ring noclip travel.
+- Certified Terrain3D surface editing for new Certified worlds; retained SmoothTerrain construction/cave path; legacy voxel rollback switches.
+- Seeded terrain/biomes, regional LODs, analytic/scaled far-ring presentation, cloud and terrain-shadow prototypes.
+- Ocean, lakes, rivers, local weather/audio, volumetric clouds, celestial day/night, imported trees, and GPU grass.
+- Grave-key live tuning, diagnostic HUDs, alternate scenes, and targeted smoke scripts.
 
-- `scenes/Main.tscn`
-- `scenes/Player.tscn`
-- `scenes/RingWorld.tscn`
-- `scenes/RingSegment.tscn`
-- `scripts/player_controller.gd`
-- `scripts/ringworld_generator.gd`
-- `scripts/gravity_controller.gd`
-- `scripts/floating_origin.gd`
-- `materials/*.tres`
-
-## Tuning Formula
-
-The ring generator uses the relationship:
-
-- `circumference = 2 * PI * ring_radius`
-- `player_speed = circumference / traversal_time_seconds`
-
-For this preset, the project keeps a truly large world and on-foot speeds:
-
-- `ring_width = 20000.0` (comfortably fits a GTA-scale map)
-- `ring_radius = 80000.0` (exactly 4x width)
-- `circumference ~= 502655 m`
-- `500 m/s craft` loop time `~= 1005 s` (about 16.8 minutes)
-- `2000 m/s craft` loop time `~= 251 s` (about 4.2 minutes)
-- `10000 m/s hyper craft` loop time `~= 50 s`
-- `8 m/s on-foot` loop time `~= 62832 s` (about 17.5 hours)
-
-Equivalent radius equation for a target craft speed/time:
-
-- `ring_radius = (craft_speed * traversal_time_seconds) / (2 * PI)`
-
-## Quick Start
-
-1. Open this folder in Godot 4.x.
-2. Run `scenes/Main.tscn`.
-3. Move with WASD, sprint with Shift, jump with Space.
-4. Switch mobility tiers with `1`, `2`, `3`:
-   - `1`: on foot `8 m/s`
-   - `2`: fast craft `500 m/s`
-   - `3`: very fast craft `2000 m/s`
-5. Press Esc to release/capture mouse.
-
-## Main Tuning Controls
-
-Edit `RingWorld` node in `scenes/Main.tscn`:
-
-- `ring_radius`
-- `ring_width`
-- `segment_count`
-- `traversal_time_seconds`
-- `player_speed` (auto-computed by default)
-- `gravity_strength`
-
-The player receives runtime settings from `RingWorld` when the scene starts.
-
-## Current Scale Preset
-
-- `RingWorld.ring_radius = 80000.0`
-- `RingWorld.ring_width = 20000.0`
-- `RingWorld.auto_segment_count_from_arc_length = true`
-- `RingWorld.target_segment_arc_length = 2000.0`
-- `RingWorld.auto_calculate_player_speed = false`
-- `RingWorld.player_speed = 8.0`
-
-## LOD + Streaming Preset
-
-- High LOD ring sectors stream around the player (`high_lod_segment_range = 32`)
-- Full-loop far ring shell stays visible for horizon continuity (`build_far_ring_lod = true`)
-- Far ring detail is reduced with `far_ring_segment_count = 1024`
-
-This keeps nearby collision/detail stable while preserving the visual cue of the opposite side of the ring.
-
-## Opposite Side Visibility
-
-The certified voxel-ring path keeps opposite-side visibility without extending
-the gameplay camera across the full 10,000 km diameter:
-
-- The normal camera is capped at 1,200 km, just beyond regional HLOD.
-- Structural edge walls top out at +10 km, retaining a 2 km rim above the
-  certified +8 km terrain/build ceiling without increasing the player build limit.
-- The analytic surface, structural shell, and full-ring clouds render in an
-  isolated `World3D` at a uniform 1:1,000 coordinate scale.
-- Near the ground, the scaled analytic surface has a 625 km camera-local cutout
-  so its coarse 30 km chords cannot rise above the true horizon. The cutout
-  shrinks smoothly from 2-20 km altitude, restoring the fallback for flight.
-- A dedicated far camera copies the gameplay camera's canonical transform and
-  projection, then composites that scaled render behind nearby terrain.
-- Fog density remains capped in `scripts/day_side_atmosphere.gd` so the
-  opposite side is not extinguished before the analytic tier shades it.
-
-This keeps the certified 10,000 km diameter out of the gameplay camera's
-frustum and avoids nonlinear vertex-depth warping. Nearby voxels and regional
-HLOD render over the far backdrop and retain normal coordinates, depth, and
-precision. The legacy compressed full-ring meshes are not built for the
-certified preset.
-
-### Cloud and weather hierarchy
-
-The camera-local volumetric tier now uses the MIT-licensed Sunshine Clouds 2
-2.7 compositor, vendored from Bonkahe's upstream revision
-`e4ecc2da53f0b675f5998a08eb7225fb83712054`. A ring-specific bridge maps its
-world-space raymarch into canonical around/up/across coordinates, including
-the ring's curvature, and feeds it the existing deterministic weather, wind,
-cloud-height, and sunlight state. The existing merged clouds remain a fallback;
-the curved far shell and projected terrain-shadow mask are unchanged.
-
-The current runtime selects Sunshine for local clouds and retains the merged
-mesh hierarchy as a reversible fallback. The older camera-local FogVolume and
-its precipitation/lightning companion remain disabled. The bridge yields back
-to the seeded curved shell during fast travel and upper-atmosphere flight;
-scaled space continues to own distant clouds in every mode.
-
-Cloud placement is deterministic for the selected terrain seed but no longer
-reads as a uniform cell grid. Seeded 32 km macro cells can produce cumulus
-clusters, elongated cloud banks, major fronts, and rare exceptional systems
-with footprints up to 110 km. Individual merged formations use strong position
-jitter and a heavy-tail size distribution; neighboring formations inherit the
-system orientation so a large bank reads as one weather feature instead of
-unrelated ovals.
-
-Touching formations now become one true implicit surface instead of being
-replaced by a larger generic cloud or joined by an overlapping connector mesh.
-A spatial hash finds connected groups across every cloud profile and weather
-system. The union extractor reuses every member's original metaball lobes,
-rotation, dimensions, and vertical profile, then smooth-unions the complete
-group and extracts one outer surface. Individual silhouettes therefore remain
-legible while internal intersections and visible join seams are removed.
-
-True unions are camera-local by design. Groups within the default 14 km union
-range are built on a worker; more distant transition clouds retain the cheap
-instanced representation until approached, and the continuous seeded far field
-owns the horizon and space view. Original instances remain visible while a
-worker result is pending, then swap atomically to the union surface. Detailed
-and transition grids use separate adaptive cell sizes and per-axis caps.
-Completed groups are batched into at most three meshes: conventional-shadow,
-detailed, and transition. This keeps expensive remeshing off the main thread
-and preserves bounded draw ownership without limiting which clouds are allowed
-to merge when they enter the local range.
-
-The merged-mesh pool contains four geometry classes rather than scaling one
-generic oval into every role:
-
-- Fair cumulus bases sit 0.8-1.8 km above the local visible surface.
-- Low cloud banks begin as low as 350 m and remain broad and shallow.
-- Rain-capable storm towers begin around 0.45-1.3 km and can reach 11 km above
-  local ground.
-- Rare anvil storms can reach 15 km, with broad cauliflower towers and flattened
-  caps instead of vertically stretched cumulus meshes.
-
-Each formation samples the edited terrain column and resolves ocean or lake
-surface height before placing its base. Clouds therefore retain their intended
-ground clearance over mountains and do not follow submerged seafloor beneath
-open water.
-
-The same moving hierarchy drives the 3D cloud patch, the 10-50 km transition
-clouds, the scaled far-shell density field, and the 50 km projected shadow
-mask. The default weather wind is 2.2 m/s around the ring and 0.7 m/s across
-it. Existing near clouds, merged surfaces, and their projected-shadow frame
-move continuously with that wind. Geometry is rebuilt only when the player or
-wind enters another formation cell, relevant terrain edits change, cloud
-quality changes, or an explicit coordinate refresh is required. Shared wind
-does not change member contact topology, so it no longer causes periodic union
-extraction.
-
-Nearby conventional shadow casters are retained in a separate, non-duplicated
-instance group inside 6.5 km. Its bounds always contain the player and the full
-height and width of every retained storm, so turning the camera away cannot
-frustum-cull a cloud whose shadow still reaches the local scene. Clouds between
-6.5 and 50 km remain visible through the normal detail/transition hierarchy and
-cast through the projected mask instead of consuming directional-shadow
-cascades.
-
-The unshaded merged-cloud material now supplies its own height-aware internal
-lighting: lower lobes darken beneath their sunlit tops, with stronger depth in
-storm towers and rain-heavy formations. It also samples the shared 50 km cloud
-mask by projecting each cloud fragment along the sun ray into the player-local
-ring frame. This gives overlapping upper cloud masses a soft, coarse
-cloud-on-cloud occlusion cue without making hundreds of merged meshes receive
-the directional shadow map or adding another cloud draw pool. The inspector
-exposes `CloudSelfShadowStrength` and `CloudLayerOcclusionStrength` for the
-remaining visual-tuning pass.
-
-`RingVolumetricCloudLayer.QueryLocalWeather` exposes the current deterministic
-system ID and type, influence, moving center, major/minor radii, orientation,
-dominant formation profile, cloud coverage, precipitation potential, wind, and
-cloud base/top above local ground at any canonical ring position. This is the
-contract for localized rain and lightning, so weather effects can follow the
-same fronts instead of using an unrelated random field.
-
-The active Sunshine true-volumetric tier now consumes that full spatial
-contract. `StormTower` cells grow kilometer-wide convective pillars through the
-weather column; `AnvilStorm` cells add flattened upper caps that spread beyond
-their cores while remaining clipped to the moving front ellipse. Defaults are
-4.2 km pillar radius, 2.6x anvil radius, a cap beginning at 70% of the local
-cloud column, and 92% sculpt strength. These are exposed on
-`SunshineCloudBridge` as `StormPillarRadiusMeters`, `AnvilRadiusMultiplier`,
-`AnvilStartFraction`, and `StormSculptStrength`. The same GPU density sampler
-drives the projected shadow mask, with single-sample anvil shadows taken from
-the upper cap rather than only the narrower middle of the tower.
-
-Beyond the 50 km mesh handoff, the scaled shell preserves the weather system's
-coverage and movement but does not reproduce individual tower silhouettes.
-
-## Certified terrain elevation contract
-
-The +8,000 m value is a construction ceiling, not the normal terrain target.
-Generated terrain uses an absolute sea datum of Y=0 m. Routine mountain belts
-are limited to 5,200 m. Each ring seed selects one exceptional continental
-summit from 64 candidates; its 40 km footprint can reach 7,600 m while retaining
-400 m of construction headroom. The same deterministic sampler supplies local
-voxels, the minimap, regional HLOD, and the scaled far ring.
-
-All proxy, regional, and analytic terrain tiers use the same seeded terrain
-sampler and shared continent/climate/elevation palette. Global-summary caches
-are keyed by a complete terrain-definition fingerprint, not the seed alone.
-
-The older non-voxel prototype still uses the radius-aware clip logic in
-`scripts/player_controller.gd` and the legacy far ring in
-`scripts/ringworld_generator.gd`.
-
-### Cross-ring flight handoff
-
-Noclip flight now moves through the ring interior in double-precision
-ring-centric Cartesian space instead of treating high-altitude movement as a
-flat surface coordinate. Near the center, the canonical chart rebases to the
-opposite surface while preserving camera heading and physical velocity.
-
-While noclip is active, the mouse wheel adjusts flight speed logarithmically
-from 1 m/s to 1,000 km/s and movement eases smoothly toward the selected
-target. Keys `1` normal, `2` fast, `3` hyper, `4` warp, and `5` trans-ring
-remain as snap presets. On the certified ring, preset 5 targets an
-approximately 15-second surface-to-surface crossing before the Shift
-multiplier. The selected wheel speed persists in the world save.
-
-The destination voxel window is preloaded before the center crossing. During
-arrival, the scaled far surface fades below 500-750 km, regional HLOD takes
-over inside the 1,200 km gameplay frustum, and the authoritative seeded terrain
-surface becomes physical. On direct arrival, flight mode disengages at the
-terrain surface so the normal voxel motor and collision resume.
-
-High-speed noclip now enters a speed-aware streaming mode at 750 m/s. Ordinary
-local voxel scheduling, regional proxy rebuilds, structural-wall preparation,
-local cloud placement, cloud unions, and projected-shadow refreshes pause while
-their already-built terrain/cloud tiers remain visible. A cross-ring landing
-focus is exempt from the voxel pause so its collision window can continue
-preloading. Leaving fast travel schedules one current-position refresh instead
-of processing every obsolete location crossed during flight.
-
-Voxel classification, terrain population, procedural neighbor sampling, greedy
-meshing, streaming-window planning, cloud-shadow mask rasterization, seamless
-cloud-union extraction, proxy terrain generation, and structural-wall vertex
-generation run as cancellable or latest-wins worker jobs. The main thread keeps
-only scene-tree/RID work, bounded mesh and texture installation, physics state,
-input, and the final transform assignment required by Godot. Floating-origin
-refreshes reuse one geometry snapshot across all resident chunks.
-
-The editable tier keeps 32 x 32 x 32 one-metre logical chunks. Its managed
-greedy mesher uses direct axis scans and thread-local reusable work buffers,
-avoiding per-face delegates and transient list/mask allocations. An optional
-Windows x64 C++ GDExtension performs the face scan and greedy merge through one
-batched C ABI call per chunk; curved-ring vertex warping and Godot mesh upload
-remain in C#. If the native binary is missing or fails validation, workers fall
-back to the managed implementation automatically.
-
-Build the native release library with
-`./native/ring_voxel_mesher/build_windows.ps1 -Configuration Release`.
-`--disable-native-voxel-mesher` forces the managed path, while
-`--require-native-voxel-mesher` makes missing/loading failures explicit.
-`--voxel-mesher-self-test --voxel-mesher-benchmark` runs deterministic topology,
-boundary, collision, warp, non-greedy, and concurrent-worker checks followed by
-managed/native microbenchmarks. On the development laptop's fixed rugged-chunk
-case, the original managed path measured 4.569 ms/chunk, the optimized managed
-path 2.576 ms/chunk, and native 1.514 ms/chunk; all emitted the identical
-`0xE8ADBDA7F6F2F0F0` geometry hash. These are mesher-throughput figures rather
-than guaranteed whole-frame FPS gains.
-
-Local artificial gravity is altitude-bounded for gameplay. It remains at full
-strength through 10 km above the local seeded terrain, fades smoothly between
-10 and 20 km, and applies no additional acceleration at or above 20 km.
-
-### 3D terrain minimap
-
-The voxel-ring scene includes a lightweight player-centered 3D scanner in the
-bottom right. It builds an independent local heightfield from the authoritative
-seeded terrain sampler and runtime edit snapshot; it does not render the voxel
-world a second time. The player remains fixed at the scanner origin while
-terrain scrolls continuously beneath them and moves vertically with altitude.
-The display includes biome/elevation colour, 250 m contours, a player heading
-marker, landing tether and surface marker, map span, terrain elevation,
-altitude, and current gravity percentage. Terrain leaves the scanner volume at
-high altitude rather than being artificially pinned beneath the player.
-
-`RingMinimapTrackable` can be attached to stations, asteroids, ships, waypoints,
-or simplified ring proxies. Each trackable supplies its category, map colour,
-display size, detection range, and either a live world position or a canonical
-position override.
-
-Below a 3 km span, the orthographic map smoothly tilts and frames slightly
-screen-up, reaching a 34-degree local terrain-diorama view at 500 m. Close mode
-uses a denser 96-cell mesh, 10 m contours, 32 m terrain recentering, and
-screen-appropriate player and landing markers. Wide zoom remains the strategic
-map view, while high-altitude terrain and trackables retain their vertical
-landing tether.
-
-- `M`: show or hide the minimap
-- `+` / `-`: zoom in or out from 500 m to 128 km
-- `N`: toggle north-up and heading-up
-
-The default display is 288 x 288 pixels and covers a 32 km player-centered
-volume. A larger hidden terrain border moves smoothly every frame; terrain is
-resampled after 256 m of travel or an edit. Viewport refresh remains capped at
-30 FPS.
-
-Tune these for night-side/day-side readability:
-
-- `DaySideAtmosphere.preserve_opposite_side_visibility`
-- `DaySideAtmosphere.day_side_opposite_visibility`
-- `DaySideAtmosphere.night_side_opposite_visibility`
-
-If the opposite side is still too faint, raise these visibility values (for example `0.30` day, `0.45` night).
-
-## Opposite Day-Side Atmosphere Tint
-
-The far LOD ring now uses a shader (`materials/ring_surface_far.gdshader`) that tints each far segment by:
-
-- local day/night side (dot of local surface up vs sun direction)
-- camera distance (stronger atmospheric shroud at long range)
-
-Main tuning exports are on `RingWorld`:
-
-- `far_day_atmosphere_color`
-- `far_night_atmosphere_color`
-- `far_tint_strength`
-- `far_tint_min_distance`
-- `far_tint_max_distance`
-- `far_day_start_dot`
-- `far_day_full_dot`
-
-Result: from the night side, the opposite day hemisphere stays visible but appears shrouded blue rather than fully crisp.
-
-## Section Day/Night Lighting Fix
-
-Ring section materials now use `materials/ring_surface_daynight.gdshader`, so local ring hemisphere controls brightness (not only surface normal vs sun).
-
-This prevents walls from staying brightly lit on the ring's night side.
-
-Tune on `RingWorld`:
-
-- `section_day_start_dot`
-- `section_day_full_dot`
-- `section_night_brightness`
-- `section_night_direct_light_factor`
-
-Lower `section_night_brightness` (for example `0.04`) for darker night-side section walls.
-Keep `section_night_direct_light_factor = 0.0` for a strong ring-only eclipse shadow where sun-blocked regions receive no direct sunlight.
-
-## Sun Lighting Stack (Near Gameplay)
-
-`scripts/day_side_atmosphere.gd` now drives a practical sun simulation for massive scale:
-
-- One `DirectionalLight3D` for the local gameplay area
-- Local shadow bubble distance (not ring-wide shadows)
-- Day/night fog and ambient blending with a shared hemisphere day factor
-
-Core exports:
-
-- `day_start_dot`, `day_full_dot` (twilight band width)
-- `day_sun_energy`, `night_sun_energy`
-- `day_shadow_distance`, `night_shadow_distance`
-- `shadow_fade_ratio`
-- `keep_half_ring_lit_globally`
-- `day_ambient_color`, `night_ambient_color`
-- `day_ambient_energy`, `night_ambient_energy`
-
-Default behavior keeps `keep_half_ring_lit_globally = true`, so at least half the ring remains sun-illuminated at all times regardless of player position.
-
-Far ring is kept mostly shader-lit (`materials/ring_surface_far.gdshader` uses `unshaded`) with realtime shadows disabled on far segments.
-
-### HDR and massive-scale sunlight calibration
-
-The local and scaled far viewports now use the same AgX output curve. The
-defaults retain the `4.0` directional-sun energy while rolling HDR highlights
-off with AgX white `16.29`, contrast `1.20`, and exposure `1.0`. This preserves
-a forceful sun without linear-tone-map clipping. `DaySideAtmosphere` also limits
-sky-derived ambient contribution to `0.35`, allowing its explicit day/night
-ambient color and energy controls to affect the scene instead of the bright
-sky and visible sun disk supplying all ambient illumination.
-
-Analytic ring atmosphere now attenuates lit surface albedo and adds
-in-scattered radiance through an unlit term. Terrain, ocean, hull, and cloud
-materials no longer mix the atmosphere into albedo and then illuminate that
-atmospheric color a second time. Day fog energy is `0.85`, sun scatter is
-`0.16`, cloud daytime readability emission is reduced, and rough terrain uses
-a low explicit specular response.
-
-The existing procedural vertex palettes were checked under the certified
-ground and 26 km capture paths. Full sRGB conversion crushed their mountain and
-space-view midtones, showing that these palettes are already calibrated for the
-current linear vertex-color path. `materials/ring_color_space.gdshaderinc`
-keeps conversion available for future imported sRGB palettes but leaves it
-disabled for the current procedural terrain.
-
-### Terrain macro sunlight shadows
-
-`RingTerrainGlobalLod` builds one whole-ring R8 direct-sun visibility mask from
-the existing min/max terrain hierarchy. It searches unloaded terrain toward the
-sun, accounts for ring curvature, wraps the circumference, clips at both
-structural edges, and samples by normalized ring coordinates so floating-origin
-shifts do not move the shadows.
-
-The mask begins replacing conventional cascades at `3.2 km` and reaches its
-default `0.34` strength by `6.5 km`. At certified scale it is `7670 x 78`
-(about `0.57 MiB`), traces up to `96 km` in ten increasingly spaced steps, and
-builds off-thread in roughly `1.1-1.4 seconds` on the Arc 140V test machine.
-Regional terrain, global terrain, oceans, the analytic whole-ring tier, and the
-scaled far viewport share this single texture. It multiplies directional
-sunlight only; ambient, atmosphere, emission, and local lights remain intact.
-
-## Static Sun Visual
-
-`StarCore` now uses `scripts/sun_visual_anchor.gd` so the sun appears in a fixed sky direction (distant-star behavior) instead of orbiting around the character.
-
-Tune on `StarCore`:
-
-- `visual_distance`
-- `follow_smoothing`
-
-## On-Foot Anti-Clip Ground Probe
-
-`scripts/player_controller.gd` includes an on-foot ground probe correction pass to reduce slight capsule penetration on the ring surface.
-
-Key exports:
-
-- `enable_ground_probe`
-- `ground_probe_start_up_offset`
-- `ground_probe_length`
-- `ground_probe_push_gain`
-- `ground_probe_max_push_per_frame`
-- `on_foot_safe_margin`
-
-If foot clipping persists, raise `on_foot_safe_margin` slightly (for example `0.10`) and/or increase `ground_probe_push_gain`.
-
-## Distance Haze Settings
-
-Distance haze and far color shift are configured in `scenes/Main.tscn` on the `Environment` sub-resource:
-
-- `fog_enabled = true`
-- `fog_density = 0.00014`
-- `fog_aerial_perspective = 0.78`
-- `fog_sky_affect = 0.6`
-- `fog_light_color = Color(0.29, 0.38, 0.5, 1)`
-
-Increase `fog_density` to compress the horizon harder. Shift `fog_light_color` cooler/warmer to change long-distance color mood.
-
-### Water surface synthesis
-
-The near and global ocean tiers share five directional sine-wave bands with
-progressively higher frequencies and lower amplitudes. This fractional
-Brownian-motion-style stack supplies broad swells and controlled small-scale
-detail without relying on temporally unstable noise. Mild domain warping keeps
-the wave trains from looking mechanically regular. Each band's complete warped
-phase gradient is tested against the pixel footprint independently; octaves are
-retired from shortest to longest before they cross the screen-space Nyquist
-limit. `WaterWaveBandlimitStartRadians` and
-`WaterWaveBandlimitEndRadians` control that transition.
-
-Each sine is blended with a zero-mean exponential profile, producing narrower,
-sharper crests without raising the average water level. The shader evaluates the
-closed-form partial derivatives of the complete profile, including the domain
-warp, so displaced geometry and per-pixel normals remain synchronized without
-extra central-difference samples. `WaterWaveCrestSharpness`,
-`WaterWaveCrestBlend`, and `WaterWaveNormalStrength` expose the main shape and
-normal controls through `RingGraphicsQualityController`.
-
-Calm open-ocean crests no longer produce foam merely by crossing a repeating
-height threshold. Whitecaps require both a high crest and a filtered physical
-slope above `WaterBreakingFoamSlopeStart`, then receive broad spatial breakup.
-This prevents constructive wave interference from stamping a regular pale-dot
-lattice across the surface. Screen-space normal variance also raises the
-minimum reflection roughness through `WaterSpecularAaStrength`, while distant
-normal detail now fades over `500-3000 m` instead of surviving to `5 km`.
-
-Reflection weighting uses Schlick Fresnel with a clear-water dielectric
-reflectance of `F0 = 0.020`: the surface remains transmissive face-on and
-becomes strongly reflective toward grazing angles. `WaterFresnelF0` and
-`WaterFresnelStrength` tune the physical baseline and its artistic intensity,
-and are applied consistently to both ocean rendering tiers.
-
-Surface refraction now uses the same Beer-Lambert extinction as the depth tint,
-so copied scene color falls to zero instead of retaining a transmission floor.
-Deep-water opacity defaults to `0.995`; kilometer-deep seafloor geometry and
-terrain LOD boundaries therefore cannot leak through the ocean surface, while
-shallow shore water remains transparent.
-
-### Underwater visibility
-
-`scripts/day_side_atmosphere.gd` replaces the ordinary air haze while the
-camera is submerged. Clear-water distance extinction starts at `0.010`, gains
-modestly with depth, and is capped at `0.032`, preserving useful near-field
-visibility even in deep water. Underwater aerial perspective is disabled so
-the bright sky cannot turn the water fog white. Fog, ambient light, and direct
-sunlight instead shift from shallow cyan toward a darker blue-green as red
-light is absorbed with depth.
-
-`materials/underwater_no_goggles.gdshader` adds a restrained mip-filtered focus
-blur and extra red attenuation. It approximates the loss of corneal focusing
-power for unaided eyes in water while keeping nearby terrain readable for
-gameplay. The effect fades smoothly when the camera crosses the water surface
-and renders before the HUD.
-
-## Day-Side Blue Atmosphere Only
-
-Day-side-only atmosphere blending is handled by `scripts/day_side_atmosphere.gd` and attached in `scenes/Main.tscn` as `DaySideAtmosphere`.
-
-The controller computes a local day factor using:
-
-- player local ring surface up direction
-- directional sun light direction
-- smoothstep blend from night side to day side
-
-Tune these exports on `DaySideAtmosphere`:
-
-- `day_start_dot`, `day_full_dot`: where day-side blend begins/fully applies
-- `day_fog_color`, `day_fog_density`: blue daytime atmosphere look
-- `night_fog_color`, `night_fog_density`: dark/night-side thin atmosphere look
-- `blend_speed`: transition responsiveness while moving around the ring
-- `invert_day_side`: flip if day/night appears reversed
-
-## LOLIPOP Tree Asset Preview
-
-`scenes/TreeAssetPreview.tscn` is an isolated import-review gallery for the
-Fir, Pine, and Maple LOLIPOP packs; it is not wired into production vegetation.
-Run it with **F6** (Current Scene). Keys `1`–`4` select author LOD0–LOD3;
-`F`, `P`, and `M` focus Fir, Pine, and Maple; `R` resets the view. Drag with
-the left mouse button to orbit, use the wheel to zoom, and use WASD to pan.
-
-The gallery preserves each imported LOD root's composed, non-identity transform
-chain while removing the source demo-layout translation before placing the
-specimen at its gallery origin. It does not assume identity wrapper transforms.
-
-Remaining production work includes distribution/placement, render shader and
-wind integration, day/night/eclipse/cloud-shadow response, batching and LOD
-budgets. Maple bark also needs an adaptation for Godot's mixed-UV material
-import limitation; see `resources/trees/lolipop/README.md`.
-
-## Regional Forest Map Preview
-
-Open `scenes/ForestRegionPreview.tscn` and run the current scene with **F6**.
-This isolated map previews seeded woodland, dense forest, clearings, and
-maple/fir/pine preferences over the Certified preset's terrain. Use the map-mode,
-pan, zoom, and seed controls; hover for sample details. Production trees are
-unchanged. See [the forest implementation checklist](docs/forest-region-implementation-checklist.md)
-for tests, milestone status, and remaining playable-forest/performance work.
-
-## Cinematic Space Main Menu
-
-Press **F5**, or open `scenes/StartMenu.tscn` and press **F6**. The menu now flies
-over a random Certified-style ring at approximately 20 km above terrain and
-5 km/s, looking forward/down at 25 degrees. The menu uses a 125 m fine cache
-(2049 x 1537, 3,149,313 samples) over a real 2048 x 65 full-ring terrain backdrop;
-the two indexed meshes total 6,553,600 triangles. Fine sampling is bounded to
-about 2 ms/2,048 samples per frame, far initial sampling to 2 ms/512 samples,
-and texture uploads are batched near 10 Hz. Missing fine rows fall back to the
-far ring. Initial fine-detail preparation took about 26 seconds in the local
-1440p test; the coarse ring appears first and navigation remains available.
-
-Menu-only SunshineClouds2 renders at half resolution with 128 view steps, five
-light steps, a 2.2-6 km layer, and cached 512 x 512 RG cloud shadows at up to 5 Hz;
-it uses no directional shadow-map pass. Haze is limited to 12% across roughly
-250-1500 km. Rendering is isolated at native resolution up to 4K with 4x MSAA,
-debanding, tone mapping, and restrained glow; it never overwrites gameplay
-settings. Gameplay voxel/LOD streaming, trees, physics, and weather simulation
-remain off. The local RTX 4070 test delivered about 60 backdrop updates/second
-at 2560 x 1440 over a 15-second moving sample; this is not a full-game or
-all-hardware performance guarantee.
-
-Press **grave/backtick (`)** or click **Live Tuning** for menu-only Camera,
-Lighting, Clouds, Shadows, Quality, and Terrain tabs (50 controls). Edits apply
-live and autosave after 0.5 seconds to `resources/menu/menu_flyover_defaults.tres`, the project-wide
-preset that ships with the game. Watch for **Saved**, then restart to confirm.
-**Escape** closes the drawer; **Reset factory defaults** requires confirmation.
-Exported builds use a labeled local override because packed resources are
-read-only. Gameplay settings and world saves are unaffected. The drawer
-offers 125/250/500 m terrain spacing and independent distant-ring detail. Choosing
-250/500 m cuts fine sample/triangle counts by roughly 4x/16x; changes rebuild
-the preview after a short debounce without rerolling the seed or route. Motion
-pauses while detail is prepared. Visible-first generation, background workers,
-and optional preview caching remain proposed.
-
-Advanced cloud controls expose march distances, sunlight sampling reach, detail
-falloff, reconstruction blur, and shadow vertical samples. The menu can use
-four-tap reconstruction for tiny blur at half/quarter resolution, and disabled
-atmospheric integration is skipped. Existing saved menu tuning is preserved;
-factory camera/cloud values above apply only when not overridden by your preset.
-
-The menu also exposes gameplay's compatible blue-noise motion, ray-start jitter,
-stationary/moving history, and day/night cloud ambient brightness controls.
-Ambient brightness follows the manually tuned sun elevation. Shadow controls add
-extinction, an 8-200 km map radius, 128-2048 resolution choices, 0.25-20 Hz refresh,
-and independent generation/receiver switches. The menu uses one shared GPU map,
-so gameplay's separate near/far cascades, CPU fallback, cloud handoff, storm
-sculpting, and preview buttons are not included. These menu controls autosave
-only to the menu preset; gameplay cloud defaults remain separate.
-
-Menu cloud history now gets fresh samples on every rendered frame, even with
-the flyover paused and blue-noise motion set to zero. History follows ring
-scrolling and bulk cloud drift; camera/appearance edits and route jumps clear
-stale samples. With nonzero ray-start jitter, compare history 0 and 0.9-0.95 in
-Quality, allowing 1-2 seconds to settle. Stationary history controls a paused
-view; moving history controls the flyover. Higher values reduce grain but can
-soften moving edges. This fix preserves saved tuning and gameplay behavior.
-
-StartMenu is the current startup scene. See the
-[space-menu checklist](docs/main-menu-space-checklist.md) for what to look for,
-test commands, rendering limits, and remaining optional polish.
-
-In gameplay, **grave/backtick (`)** now exposes matching Sunshine **Clouds**,
-**Shadows**, and **Quality** controls, including Native/Half/Quarter resolution,
-view/light samples, march distances, detail falloff, blur, and fast reconstruction.
-Appearance controls bias the live weather instead of freezing its current state.
-Only cloud edits autosave, after 0.5 seconds, to the separate project preset
-`resources/clouds/gameplay_cloud_defaults.tres`. The shipped empty resource keeps
-existing graphics-profile defaults until you edit a control. Your explicit cloud
-overrides survive graphics-profile changes; confirmed **Reset cloud overrides**
-restores the current profile/scene baseline. Exported builds use a local override.
-Provider selection, profiling toggles, audio, terrain, and world saves are not
-included in cloud autosave. Check the saved status, then restart gameplay to test
-persistence. Use the tab arrows if later tabs are hidden on a narrow drawer.
-
-## Ring/Voxel Integration Test
-
-- New scene: `scenes/VoxelRingIntegrationTest.tscn`
-- Uses the tech-demo scale: approximately 80 km radius and 20 km width.
-- Uses 15,708 32-meter chunks around the circumference; the exact voxel radius is derived from that integer seam-closing length.
-- `UseHabitableRingAxisLayout` maps voxel Y to radial terrain height/depth and voxel Z across the ring width.
-- Terrain bedrock is at canonical voxel Y `-256`; the surface baseline remains near Y `+16`.
-- Local voxel chunks provide terrain mesh and collision. `RingWorld` runs in far-ring-only mode so the opposite side remains visible without overlapping legacy near geometry.
-- The integration explorer uses radial gravity and surface-relative movement.
-- Player movement now uses a Minecraft-style swept AABB against authoritative voxel cells. The rendered concave chunk mesh is not used for player collision.
-- Baseline height and block generation now come from the shared `RingTerrainSampler`; future proxy and far LOD meshes can consume the same seed and canonical samples as voxel chunks.
-- The motor resolves radial, around-ring, and across-ring movement separately and compares normal movement with a 0.6-meter step-up route when blocked.
-- Run this scene directly while integration remains under test; the project default scene is intentionally unchanged.
+## Requirements
+
+| Requirement | Details |
+| --- | --- |
+| Engine | Godot **4.7.2 .NET**. |
+| SDK | .NET **8.0** SDK; [RingworldTechDemo.csproj](RingworldTechDemo.csproj) targets `net8.0`. |
+| Renderer | Forward+ graphics renderer. |
+| Terrain3D native validation | Current native patch validation is Windows x64 only. |
+| Native voxel mesher | Optional Windows/Linux packages and C ABI checks; managed fallback remains available. |
+
+## Quick start
+
+1. Open the repository in Godot 4.7.2 .NET.
+2. Press **F5** to open [StartMenu.tscn](scenes/StartMenu.tscn).
+3. Select **Enter Ringworld**, then create or load one of the three local world slots.
+4. Use the World Foundry to select a scale or **HALO-SCALE PRESET**.
+5. Use **Advanced** for generation and eligible terrain-backend settings.
+6. Start the world. [world_size_launcher.gd](scripts/world_size_launcher.gd) configures [VoxelRingIntegrationTest.tscn](scenes/VoxelRingIntegrationTest.tscn) before it enters the tree.
+
+[Main.tscn](scenes/Main.tscn) is a retained legacy prototype, not the normal launch scene.
+
+The initial World Foundry choice is the **Development Ring** at 80 km radius and 20 km width. Press **HALO-SCALE PRESET** to select the Certified 5,000 km / 318 km configuration.
+
+## World scales and backends
+
+| Mode | Scale | Notes |
+| --- | --- | --- |
+| Custom | Radius 80–8,000 km; width 5–318 km | Configured from the World Foundry slider and advanced controls. |
+| Certified Ring | Nominal radius 5,000 km; width 318 km | 981,748 × 32 m chunks; circumference **31,415,936 m**. Enables Certified presentation paths. |
+| Mega Ring | Radius 75,000,000 km; width 1,600,000 km | Specialized local-bubble/scaled-far backend; Terrain3D is unavailable. |
+
+| Backend | Use | Edits and compatibility |
+| --- | --- | --- |
+| Terrain3D surface | Certified worlds only | 2 m raise/lower surface lattice, curved collision, recentering, separate surface/player-state saves. Caves and construction are unavailable. |
+| SmoothTerrain | Retained default for old slots; selectable when supported | Volumetric edits, construction overlay, and optional designed caves. |
+| Legacy voxel rollback | Development only | `--legacy-editable-terrain`. |
+| Hybrid smooth pilot | Development only | `--hybrid-smooth-terrain-pilot`. |
+
+New Certified worlds select Terrain3D once when the launcher first recognizes Certified dimensions. Existing world metadata without a backend marker retains SmoothTerrain. An explicit player selection remains respected. No old journal or cave conversion is automatic.
+
+Terrain3D renders a moving nine-region window spanning 768 m, with curved collision and a near-to-proxy transition at 84 m. A native culling patch keeps the curved surface visible; that patch has been validated on Windows x64. Environmental integration and broader traversal validation are still in progress; see [limitations and remaining work](#limitations-and-remaining-work).
+
+## Main gameplay controls
+
+The table applies to normal gameplay. Isolated pilots and preview scenes have their own test controls.
+
+| Input | Action |
+| --- | --- |
+| `W A S D` | Move. |
+| `Shift` | Sprint. |
+| `Space` | Jump; rise while swimming/flying. |
+| `V` | Toggle flight/noclip. |
+| `E` or `Space` | Rise while swimming/flying. |
+| `C` or `Q` | Descend while swimming/flying. |
+| Mouse wheel | Adjust flight speed. |
+| `1`–`5` | Normal, fast, hyper, warp, and trans-ring flight presets. |
+| Left / right mouse | Lower / raise Terrain3D; excavate / place construction in SmoothTerrain; remove / place blocks in legacy voxel terrain. |
+| Grave key | Toggle live tuning. |
+| `Esc` | Close grave drawer first, otherwise open/close the pause menu and release mouse. |
+| Click, with menus closed | Recapture mouse. |
+| `M` | Toggle minimap. |
+| `N` | Switch between heading-up and north-up minimap views. |
+| `+` / `-` | Zoom the minimap in / out. |
+| `F1` | Toggle control hints. |
+| `F6` / `F7` | Toggle performance diagnostics / detailed diagnostics. |
+| `F8` | Toggle the presentation HUD for a clearer view. |
+| `F9` | Toggle celestial diagnostics. |
+
+The pause menu provides resume, nearest-surface return, graphics presets, display resolution/aspect settings, FSR/internal resolution, and worker/chunk controls. Underground recovery/checkpoints belong to retained cave backends.
+
+## Terrain generation and rendering
+
+### Terrain generation and editable surfaces
+
+The launcher duplicates and configures runtime terrain settings: seed, vertical domain, terrain profile, cave contract, and world scale. Canonical terrain samples are shared with systems that need deterministic height or biome data.
+
+Terrain generation combines continental structure, coasts, erosion, mountain belts, ridges, valleys, and regional detail. Current biome coverage includes grassland, forest, desert, tundra, alpine, and water, with blended grass/forest-floor/sand/tundra/rock terrain textures. The Certified profile uses sea datum 0 m, terrain floor -8192 m, routine mountains at or below 5200 m, one exceptional summit at or below 7600 m, build ceiling 8000 m, and structural walls to 10000 m.
+
+The launcher installs the selected terrain backend before gameplay initializes. In Terrain3D mode, the surface field supplies terrain editing and player collision and owns a separate edit store. Retained smooth and voxel journals remain available to their original backends.
+
+Terrain3D brushes use falloff over the 2 m edit lattice. Edits persist in the surface store and update both the surface and curved collision while the moving 768 m window follows the player. Broader long-distance and high-speed traversal validation remains pending.
+
+The Terrain3D tab exposes brush radius, brush height step, mesh LOD count, and movement speed. Those settings apply live and have their own per-user defaults. The isolated pilot uses the same surface controls, offers diagnostics for the loaded field, and saves edits before returning to its menu.
+
+SmoothTerrain retains volumetric excavation, construction overlays, optional procedural/designed caves, and underground recovery checkpoints. Validation can make incompatible saves read-only to preserve their data.
+
+### Regional LOD, quality, and ring scale
+
+Retained terrain applies sparse edits and schedules terrain LOD work on workers. Terrain3D currently updates its local surface and collision synchronously in the moving window, and its surface field supplies edit snapshots to the surrounding LOD terrain.
+
+Regional LOD terrain, proxy tiers, analytic/global terrain, scaled far presentation, and ring structural edges are configured by [world_size_launcher.gd](scripts/world_size_launcher.gd). Desktop/laptop profiles and graphics presets expose detail choices. The optional native voxel mesher includes compatibility checks and a managed fallback.
+
+Nearby collision/detail terrain renders in ordinary local coordinates. Regional proxy terrain extends the visible landscape, while analytic/global and scaled-far presentation provide horizon continuity. The Certified Ring uses complete scaled far-ring presentation without putting the full physical ring in one normal gameplay-camera coordinate range; Mega uses its specialized local-bubble/far-view path. Static scene values are not necessarily the values used after launcher configuration.
+
+Certified terrain plus finite wall heightmap shadows are a coarse asynchronous CPU whole-ring prototype with stable canonical UVs and persisted controls. Visual placement remains inconclusive; water/wall receiver heights, sparse GPU tiles, and Mega support are unfinished. Local geometry and cloud shadows are separate active systems.
+
+Deterministic landmark towers, foundations, and beacons provide visual scale references in main gameplay.
+
+References: [Terrain3D surface port](docs/terrain3d-surface-port.md), [far-ring shadow plan](docs/far-ring-heightmap-shadow-plan.md), and [performance diagnostics](docs/performance_diagnostics.md).
+
+## Traversal and minimap
+
+Explorer movement keeps a double-precision position in around/up/across ring coordinates while local rendering recenters around the player. Walking, jumping, sprinting, swimming, flight, and cross-ring noclip support exploration at different scales. Radial gravity is fully active near the terrain, fades between approximately 10 and 20 km above the local surface, and stops adding acceleration above that range. Cross-ring noclip preserves heading and velocity through coordinate changes.
+
+The player-centered 3D minimap derives seeded terrain plus current edit snapshots and shows biome/elevation data, contours, heading, landing markers, altitude, and gravity information. Its zoom spans roughly 500 m–128 km, with a tilted close view and heading-up or north-up orientation. The marker system also supports registered trackable objects.
+
+## Water
+
+The water stack supports ocean, lake, and river presentation. FFT simulation is ocean-only and follows shared wind when available, with an analytical fallback. Shore, open-water, river, and underwater audio paths are active.
+
+Water rendering includes depth absorption, Fresnel response, refraction, screen-space reflections, shoreline foam, and breaking-wave foam. Underwater presentation adds depth-responsive fog, color absorption, and focus blur. Lakes and rivers use their own surface paths rather than the ocean FFT simulation.
+
+The live Water controls cover analytical and FFT detail, absorption, foam, refraction, and reflection settings. Swimming and buoyancy are implemented for the explorer; general rigid-body buoyancy remains outside the current water system.
+
+## Clouds, weather, and audio
+
+SunshineClouds2 is the primary local volumetric cloud path, driven by deterministic weather and ring coordinates: wind, fronts, cumulus, cloud banks, storms, and anvils. A curved far shell and merged-mesh fallback extend cloud coverage. Distant rain curtains carry visible storm precipitation beyond the local particle field.
+
+Weather fronts share wind and lightning state with local effects. Temperature and weather drive rain or snow; terrain and construction shelter attenuate precipitation and audio. Lightning combines bolts, flashes, cloud illumination, and distance-delayed thunder. Weather audio includes light/heavy rain, wind, distant storms, and rain impacts on soil, hard surfaces, and water. Wetness accumulates and dries as a shared value, with broader material application still pending.
+
+Terrain3D currently lacks macro/cloud projector and atmosphere-material integration. See [water checklist](docs/water-system-implementation-checklist.md) and [weather checklist](docs/weather-system-checklist.md).
+
+## Celestial lighting and shadows
+
+`RingDayNightCycle` runs a 75-minute default ring day and offers 1×–100× live tuning. The current sky uses [ring_local_sky.gdshader](materials/ring_local_sky.gdshader) with [day_side_atmosphere.gd](scripts/day_side_atmosphere.gd): procedural stars, a banded rotating gas giant with storms, phase, solar eclipses, lighting events, and saved time.
+
+Main and far presentation use AgX tonemapping. Day/night, altitude, storms, and eclipses affect atmosphere and lighting. SSAO adds contact shading; directional shadow cascades expose distance, filtering, resolution, and bias controls. Stepped sunlight updates help stabilize shadows. Projected cloud masks are active on supported materials; the coarse terrain/wall shadow prototype remains limited as described above.
+
+The celestial and shadow controls are available from the live drawer alongside diagnostic HUDs. Time, weather clock data, and the ring day state are retained with each world slot.
+
+## Vegetation and grass
+
+Imported LOLIPOP trees include 30 variants, authored LODs, nearby collision, persistent asynchronous tiles, GPU culling, and CPU fallback. Forest regions place Maple, Fir, and Pine species around deterministic clearings and regional rules. Authored mesh LODs and crossed-card far representations carry the forest through distance transitions.
+
+Standing GPU grass uses deterministic placement, wind motion, player bending and recovery, GPU culling, and a CPU fallback. Optional distance LOD is implemented and defaults off. Live controls expose grass density, distance, appearance, wind, and interaction settings.
+
+References: [Biome workshop](docs/biome-workshop.md), [forest-region checklist](docs/forest-region-implementation-checklist.md), [grass checklist](docs/grass-system-implementation-checklist.md), and [Sunblocker demo](docs/sunblocker-demo.md).
+
+## Menus and live tuning
+
+The Start Menu has its own cinematic moving seeded terrain/cloud flyover and separate persistent menu controls. It manages the three local slots.
+
+The World Foundry stores the selected scale, seed, terrain profile, and eligible backend marker with the slot metadata before it creates the gameplay scene. The normal world is configured dynamically; scene inspector defaults alone are not the final runtime world configuration.
+
+The normal grave-key drawer exposes these tabs when their systems are present:
+
+| Tab | Scope |
+| --- | --- |
+| Lighting, Shadows, Clouds, Quality | Lighting, weather audio, cloud quality, cloud/shadow controls. |
+| Anti-aliasing | FXAA, SMAA, TAA, MSAA, plus FSR 2 render-resolution presets. Native is default; adaptive resolution defaults off; AA resumes on leaving FSR. |
+| Motion | Player physics interpolation and maximum walkable slope. |
+| LODs, Terrain | Streaming/proxy and retained terrain controls where active backend permits them. |
+| Terrain3D | Active Certified Terrain3D surface controls, or isolated prototype launcher. |
+| Water, Grass, Vegetation | Render, interaction, tree, and grass controls. |
+| Diagnostics | Rolling frame/CPU/GPU graphs, mean/p95/worst timing, workload/memory, and manual JSON slowdown capture. GPU intervals are scoped, not whole-game cost. |
+
+Some lighting, weather-audio, and LOD controls are session-only. Persistence varies by system; not every control autosaves.
+
+The pause menu is separate from the live drawer. It can resume play, return the explorer to the nearest surface, select graphics presets, adjust display resolution or aspect ratio, configure FSR/internal resolution, and adjust worker/chunk settings.
+
+## Saves and preferences
+
+Slots live at `user://worlds/slot_1` through `slot_3`; metadata is `world.json`. The standard manager defaults to a 30-second autosave and records player pose, velocity, flight state, runtime state, and celestial/weather clock data.
+
+Terrain3D uses `world_state_terrain3d_v1.json` and `surface_terrain3d_edits_v1.json`, separate from retained `world_state.json`, SmoothTerrain/construction journals, and voxel journals. Rejected surface state blocks editing and overwrites to preserve existing data.
+
+Persistent settings are grouped by system; some live controls remain session-only.
+
+| Setting group | Factory/load behavior | Persistent path |
+| --- | --- | --- |
+| Menu flyover | Project resource in the editor; user resource in exported builds | `res://resources/menu/menu_flyover_defaults.tres` or `user://menu_flyover_defaults.tres` |
+| Clouds | Factory resource in the editor; user override in exported builds | `res://resources/clouds/gameplay_cloud_defaults.tres` or `user://gameplay_cloud_defaults.tres` |
+| Water | Loads the factory resource then the user override | `user://gameplay_water_defaults.tres` |
+| Gameplay groups | Per-system overrides | `user://gameplay_{shadow,grass,vegetation,motion,anti_aliasing,render_resolution,surface_terrain}_defaults.tres` |
+| Diagnostics | Per-user telemetry settings | `user://ring_performance_telemetry.tres` |
+
+The menu flyover preferences are separate from gameplay cloud/water settings. Slot generation metadata is separate from runtime state; the backend marker selects a launch path and never converts old journals. Retained world validation includes terrain definition hashes, scale/circumference compatibility, and cave contract data. A mismatch can preserve data read-only rather than fabricate a conversion.
+
+On Windows, `user://` normally resolves to `%APPDATA%\Godot\app_userdata\RingworldTechDemo\`. Generated captures and logs are mostly under `user://generated`, while some Terrain3D test fixtures use `.godot`; see [Generated data](docs/GENERATED_DATA.md).
+
+## Alternate scenes and tools
+
+Open a scene in the editor and use **F6** to run that scene independently.
+
+| Scene/tool | Purpose |
+| --- | --- |
+| [Terrain3DSurfacePilot.tscn](scenes/Terrain3DSurfacePilot.tscn) | Isolated Certified Terrain3D surface pilot. |
+| [BiomeAuthoringPreview.tscn](scenes/BiomeAuthoringPreview.tscn) | Rule-based biome preset authoring; world assignment is separate. |
+| [ForestRegionPreview.tscn](scenes/ForestRegionPreview.tscn) | Forest-region preview/validation. |
+| [Biome Workshop plugin](addons/biome_workshop) | Active rule-based biome-preset editor; world assignment remains separate. |
+| [PlayableForest.tscn](scenes/PlayableForest.tscn) | Alternate forest route validation. |
+| [TreeAssetPreview.tscn](scenes/TreeAssetPreview.tscn) | Asset inspection. |
+| [SunblockerDemo.tscn](scenes/SunblockerDemo.tscn) | Dedicated shadow-caster comparison with separate controls. |
+| [GrassMeadowBenchmark.tscn](scenes/GrassMeadowBenchmark.tscn) | Grass-focused benchmark. |
+| `VoxelPhase1`–`VoxelPhase5` scenes | Retained legacy voxel development scenes. |
+
+The retained Voxel Phase 5 tools include optional anchored build objects, chunk navigation invalidation with a `NavigationRegion` bridge, revisioned edit commands, and replication snapshots. The retained voxel backend also has dynamic fluid-source propagation, with `F` and `G` placing or removing fluid sources in loaded voxel data. These systems are available as development infrastructure; full multiplayer remains unfinished. Terrain3D does not use the voxel-fluid tooling.
+
+## Build and targeted checks
+
+```powershell
+$Godot = 'C:\path\to\Godot_v4.7.2-stable_mono_win64_console.exe'
+
+dotnet restore RingworldTechDemo.csproj
+dotnet build RingworldTechDemo.csproj --no-restore
+
+# Configured gameplay Terrain3D smoke
+& $Godot --headless --path . --script res://tools/terrain3d_gameplay_smoke.gd
+
+# Isolated pilot, launcher selection, and surface-settings persistence
+& $Godot --headless --path . --script res://tools/terrain3d_surface_pilot_smoke.gd
+& $Godot --headless --path . --script res://tools/terrain3d_launcher_smoke.gd
+& $Godot --headless --path . --script res://tools/surface_terrain_settings_smoke.gd
+
+# Surface data, ring coordinate transforms, and LOD edit propagation
+& $Godot --headless --path . --script res://tools/ring_surface_height_field_test.gd
+& $Godot --headless --path . --script res://tools/ring_surface_frame_test.gd
+& $Godot --headless --path . --script res://tools/ring_surface_lod_bridge_test.gd
+
+# GPU visibility check: run with a working Forward+ GPU, not --headless
+& $Godot --path . --script res://tools/terrain3d_ring_visibility_gpu_test.gd
+```
+
+Headless checks exercise configuration, data, and scene initialization. Rendering checks require a working Forward+ GPU. For native voxel-mesher validation, pass `--disable-native-voxel-mesher` or `--require-native-voxel-mesher` after Godot's `--` argument separator.
+
+## Limitations and remaining work
+
+- Terrain3D is Certified-only, surface-only, and still needs long-traversal validation.
+- Terrain3D caves, construction, full environmental edit propagation, macro/cloud projectors, and atmosphere integration remain incomplete.
+- Terrain3D and retained terrain stores are intentionally separate; old data is not automatically converted.
+- Mega Ring cannot use Terrain3D.
+- Whole-ring heightmap terrain/wall shadows remain a coarse CPU prototype with known unfinished receiver/GPU/Mega work.
+- Development scenes, rollback switches, and isolated tools are retained for verification rather than polished gameplay.
+- Wetness is not yet broadly applied to materials, and water does not provide general rigid-body buoyancy.
+
+## Documentation, source, and attribution
+
+| Area | Starting points |
+| --- | --- |
+| Launch and slots | [start_menu.gd](scripts/start_menu.gd), [world_session.gd](scripts/world_session.gd), [world_size_launcher.gd](scripts/world_size_launcher.gd) |
+| Gameplay scene | [VoxelRingIntegrationTest.tscn](scenes/VoxelRingIntegrationTest.tscn) |
+| Terrain3D | [terrain3d-surface-port.md](docs/terrain3d-surface-port.md), [scripts/Terrain/Surface](scripts/Terrain/Surface) |
+| Terrain rendering | [scripts/Voxel/LOD](scripts/Voxel/LOD), [far-ring plan](docs/far-ring-heightmap-shadow-plan.md) |
+| UI/menu | [main-menu checklist](docs/main-menu-space-checklist.md) |
+| Water/weather/grass | [water](docs/water-system-implementation-checklist.md), [weather](docs/weather-system-checklist.md), [grass](docs/grass-system-implementation-checklist.md) |
+| Generated data | [GENERATED_DATA.md](docs/GENERATED_DATA.md) |
+| Assets | [THIRD_PARTY_ASSETS.md](THIRD_PARTY_ASSETS.md) |
+
+Terrain3D provenance is in [third_party/Terrain3D/PROVENANCE.md](third_party/Terrain3D/PROVENANCE.md), with the native addon license at [addons/terrain_3d/LICENSE.txt](addons/terrain_3d/LICENSE.txt). Ocean-wave licensing is at [third_party/godot_ocean_waves/LICENSE](third_party/godot_ocean_waves/LICENSE). Sunshine Clouds 2 is vendored under [addons/SunshineClouds2](addons/SunshineClouds2). Other imported assets and dependencies are listed in [THIRD_PARTY_ASSETS.md](THIRD_PARTY_ASSETS.md).
