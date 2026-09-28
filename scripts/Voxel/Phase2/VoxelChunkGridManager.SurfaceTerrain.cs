@@ -55,6 +55,7 @@ public partial class VoxelChunkGridManager
         RingSurfaceHeightField? field = _surfaceHeightField;
         long aroundLength = GetAroundRingVoxelLength();
         var heights = new Dictionary<RingTerrainColumnCoordinate, int>();
+        var floatHeights = new Dictionary<RingTerrainColumnCoordinate, float>();
         if (field == null || _terrainSampler == null)
             return _cachedLodSurfaceEditSnapshot = new RingLodSurfaceEditSnapshot(_lodSurfaceEditVersion, aroundLength, heights);
 
@@ -66,17 +67,32 @@ public partial class VoxelChunkGridManager
             for (int across = Math.Max(0, edit.AcrossMeters - 1); across <= Math.Min(field.WidthMeters - (int)field.SpacingMeters, edit.AcrossMeters + 1); across++)
             {
                 float height = field.SampleHeight(around, across);
-                int surfaceHeight = checked((int)Math.Round(height - .5f));
                 long canonicalAround = CanonicalizeSurfaceAround(around, field.CircumferenceMeters);
+                var column = new RingTerrainColumnCoordinate(canonicalAround, across);
+                float presentationBaseline = _terrainSampler.GetPresentationSurfaceHeight(canonicalAround, across);
+                if (height != presentationBaseline)
+                    floatHeights[column] = height;
+
+                int surfaceHeight = _terrainSampler.UsesRuntimeSurfaceGeneration
+                    ? checked((int)Math.Floor(height))
+                    : checked((int)Math.Round(height - _terrainSampler.SurfaceHeightOffset));
                 int baseline = _terrainSampler.GetSurfaceHeight(canonicalAround, across);
-                if (surfaceHeight != baseline) heights[new RingTerrainColumnCoordinate(canonicalAround, across)] = surfaceHeight;
+                if (surfaceHeight != baseline) heights[column] = surfaceHeight;
             }
         }
         var dirtyColumns = new HashSet<RingTerrainColumnCoordinate>(_previousSurfaceTerrainColumns);
         foreach (RingTerrainColumnCoordinate column in heights.Keys) dirtyColumns.Add(column);
+        foreach (RingTerrainColumnCoordinate column in floatHeights.Keys) dirtyColumns.Add(column);
         _previousSurfaceTerrainColumns.Clear();
         foreach (RingTerrainColumnCoordinate column in heights.Keys) _previousSurfaceTerrainColumns.Add(column);
-        return _cachedLodSurfaceEditSnapshot = new RingLodSurfaceEditSnapshot(_lodSurfaceEditVersion, aroundLength, heights, dirtyColumns);
+        foreach (RingTerrainColumnCoordinate column in floatHeights.Keys) _previousSurfaceTerrainColumns.Add(column);
+        return _cachedLodSurfaceEditSnapshot = new RingLodSurfaceEditSnapshot(
+            _lodSurfaceEditVersion,
+            aroundLength,
+            heights,
+            floatHeights,
+            usesFloatSurface: true,
+            dirtyColumns: dirtyColumns);
     }
 
     private static long CanonicalizeSurfaceAround(long around, long circumference)

@@ -1,5 +1,7 @@
 shader_type spatial;
-render_mode cull_disabled, depth_draw_opaque;
+// The project runtime's historical default is Lambert; state it explicitly so
+// the custom direct-light path and engine reference remain stable by renderer.
+render_mode cull_disabled, depth_draw_opaque, diffuse_lambert, specular_schlick_ggx;
 uniform vec3 grass_base_color : source_color = vec3(.11, .20, .065);
 uniform vec3 grass_tip_color : source_color = vec3(.38, .49, .19);
 #include "res://materials/ring_grass_appearance.gdshaderinc"
@@ -24,6 +26,7 @@ instance uniform bool grass_gpu_culled = false;
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_grass_interaction.gdshaderinc"
 #include "res://materials/ring_grass_debug.gdshaderinc"
+#include "res://materials/ring_grass_lighting.gdshaderinc"
 varying float grass_cloud_occlusion;
 varying float grass_tint_variation;
 varying float grass_lod_root_hash;
@@ -31,6 +34,9 @@ varying float grass_lod_instance_rank;
 varying float grass_lod_handoff;
 varying float grass_lod_final_fade;
 varying vec2 grass_debug_deformation;
+// light() cannot read fragment output SPECULAR; retain the debug override
+// through an interpolant consumed by the custom direct-light path.
+varying float grass_light_specular;
 
 float phased_wave(vec2 clock, float phase) {
 	float a = phase * 6.28318530718;
@@ -155,6 +161,7 @@ void fragment() {
 	ALBEDO = albedo * (1.0 - cloud * .32);
 	ROUGHNESS = 1.0;
 	SPECULAR = .05;
+	grass_light_specular = .05;
 	// Darker roots ground the meadow while leaving tips responsive to the sun.
 	AO = mix(.72, 1.0, blade) * (1.0 - cloud * .70);
 	AO_LIGHT_AFFECT = 1.0;
@@ -163,7 +170,30 @@ void fragment() {
 		ALBEDO = vec3(0.0);
 		EMISSION = debug;
 		SPECULAR = 0.0;
+		grass_light_specular = 0.0;
 		AO = 1.0;
 		BACKLIGHT = vec3(0.0);
 	}
+}
+
+void light() {
+	// Keep this in the stage entry point: Godot's LIGHT, ATTENUATION and output
+	// accumulators are stage-local shader built-ins.
+	vec3 sun_view = normalize((VIEW_MATRIX * vec4(grass_primary_sun_direction, 0.0)).xyz);
+	float attenuation = ATTENUATION * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
+	float c_n_dot_l = max(min(dot(NORMAL, LIGHT), 1.0), 0.0);
+	float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);
+	vec3 half_vector = normalize(VIEW + LIGHT);
+	float c_l_dot_h = clamp(dot(LIGHT, half_vector), 0.0, 1.0);
+	float diffuse_brdf_nl = c_n_dot_l * (1.0 / PI);
+	DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
+	DIFFUSE_LIGHT += LIGHT_COLOR * ((1.0 / PI) - diffuse_brdf_nl) * BACKLIGHT * attenuation;
+	float c_n_dot_h = clamp(dot(NORMAL, half_vector), 0.0, 1.0);
+	float d = grass_d_ggx(c_n_dot_h, 1.0);
+	float g = grass_v_ggx(c_n_dot_l, c_n_dot_v, 1.0);
+	float f0 = .16 * grass_light_specular * grass_light_specular;
+	// Godot evaluates dot(vec3(f0), vec3(50.0 * .33)), hence three terms.
+	float f90 = clamp(f0 * (3.0 * 50.0 * .33), 0.0, 1.0);
+	float fresnel = f0 + (f90 - f0) * grass_schlick_fresnel(c_l_dot_h);
+	SPECULAR_LIGHT += vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
 }

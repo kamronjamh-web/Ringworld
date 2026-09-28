@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Core;
 
 namespace RingworldTechDemo.Voxel.Phase3;
@@ -10,13 +12,15 @@ namespace RingworldTechDemo.Voxel.Phase3;
 /// LOD must sample this class so identical canonical coordinates produce the same
 /// surface and subsurface blocks at every representation level.
 /// </summary>
-public sealed class RingTerrainSampler : IDisposable
+public sealed partial class RingTerrainSampler : IDisposable
 {
     // Keep the Certified Ring generator/cache contract unchanged. The Mega
     // precision domain is keyed independently by its explicit settings flag.
     // Versioned so stale global-LOD and height-pyramid caches cannot be reused
     // after the coupled continental/climate/hydrology field revision.
     public const int GeneratorVersion = 16;
+    public const int RuntimeSurfaceGeneratorVersion = 17;
+    public const string RuntimeSurfaceGenerationContractId = "surface_runtime_generation_v1";
     public readonly record struct HydrologyAudit(
         int DrySamples,
         int OceanSamples,
@@ -129,6 +133,9 @@ public sealed class RingTerrainSampler : IDisposable
     private readonly long _exceptionalSummitAround;
     private readonly int _exceptionalSummitAcross;
     private readonly object _noiseLock = new();
+    private readonly TerrainGenerationParameters? _runtimeSurfaceParameters;
+    private readonly TerrainGenerationHeightModel? _runtimeSurfaceModel;
+    private readonly float _runtimeAltitudeTemperatureDropPerKilometre;
     private bool _disposed;
 
     // Float coordinates cannot represent metre-scale detail on a 75 Gm radius
@@ -154,18 +161,22 @@ public sealed class RingTerrainSampler : IDisposable
     public CaveWallNoiseApplicator CaveWallNoiseApplicator { get; }
     public CaveFeaturePlacementPolicy CavePlacementPolicy { get; }
     public CaveTopologyDensityComposer CaveTopologyDensityComposer { get; }
-    public int TerrainGeneratorVersion => GeneratorVersion;
+    public int TerrainGeneratorVersion => UsesRuntimeSurfaceGeneration ? RuntimeSurfaceGeneratorVersion : GeneratorVersion;
+    public bool UsesRuntimeSurfaceGeneration => _runtimeSurfaceModel != null;
+    public string SurfaceGenerationRecipeJson => _runtimeSurfaceParameters?.CanonicalJson ?? string.Empty;
+    public string SurfaceGenerationContractId => UsesRuntimeSurfaceGeneration ? RuntimeSurfaceGenerationContractId : string.Empty;
+    public float SurfaceHeightOffset => UsesRuntimeSurfaceGeneration ? 0.0f : 0.5f;
     public ulong TerrainDefinitionHash { get; }
     public long AroundRingVoxelLength => _aroundRingVoxelLength;
     public double RingRadiusMeters => _ringRadiusMeters;
-    public int BedrockY => _settings.BedrockY;
+    public int BedrockY => UsesRuntimeSurfaceGeneration ? -8000 : _settings.BedrockY;
     /// <summary>Read-only natural-material depth contract for editable terrain snapshots.</summary>
     public int SoilDepthVoxels => Math.Max(1, _settings.SoilDepthVoxels);
-    public int SeaLevelY => _settings.SeaLevelY;
+    public int SeaLevelY => UsesRuntimeSurfaceGeneration ? 0 : _settings.SeaLevelY;
     public int RingAcrossWidthMeters => _ringAcrossWidthMeters;
-    public int MaximumPossibleSurfaceHeight => ResolveMaximumSurfaceHeight();
-    public int RoutineMountainCeilingY => ResolveRoutineMountainCeiling();
-    public bool HasExceptionalSummit => _hasExceptionalSummit;
+    public int MaximumPossibleSurfaceHeight => UsesRuntimeSurfaceGeneration ? 8000 : ResolveMaximumSurfaceHeight();
+    public int RoutineMountainCeilingY => UsesRuntimeSurfaceGeneration ? 8000 : ResolveRoutineMountainCeiling();
+    public bool HasExceptionalSummit => !UsesRuntimeSurfaceGeneration && _hasExceptionalSummit;
     public (long Around, int Across) ExceptionalSummitCanonical =>
         (_exceptionalSummitAround, _exceptionalSummitAcross);
     public int ExceptionalSummitSurfaceHeight => _hasExceptionalSummit
@@ -183,7 +194,10 @@ public sealed class RingTerrainSampler : IDisposable
             _maxBuildGlobalY,
             CaveGenerationContract,
             CavePlacementPolicy,
-            CaveRegionFeatureSnapshotGenerator);
+            CaveRegionFeatureSnapshotGenerator,
+            _runtimeSurfaceParameters,
+            _runtimeAltitudeTemperatureDropPerKilometre,
+            UsesRuntimeSurfaceGeneration ? _biomeProfiles : null);
     }
 
     /// <summary>
@@ -228,17 +242,41 @@ public sealed class RingTerrainSampler : IDisposable
         int maxBuildGlobalY,
         CaveGenerationContract? caveGenerationContractOverride,
         CaveFeaturePlacementPolicy? caveFeaturePlacementPolicy,
-        CaveRegionFeatureSnapshotGenerator? sharedRegionFeatures = null)
+        CaveRegionFeatureSnapshotGenerator? sharedRegionFeatures = null,
+        TerrainGenerationParameters? runtimeSurfaceParametersOverride = null,
+        float? runtimeAltitudeTemperatureDropOverride = null,
+        BiomeProfile[]? biomeProfilesOverride = null)
     {
-        _settings = settings;
+        // The root runtime sampler freezes its Godot Resource once on the main
+        // thread. Independent worker copies receive that immutable instance with
+        // a runtime-parameter override, so they must not call Resource.Duplicate.
+        bool freezeRuntimeSettings = runtimeSurfaceParametersOverride == null
+            && !string.IsNullOrWhiteSpace(settings.SurfaceGenerationRecipeJson);
+        _settings = freezeRuntimeSettings
+            ? settings.Duplicate(true) as VoxelTerrainSettings
+                ?? throw new InvalidOperationException("Runtime surface settings could not be frozen.")
+            : settings;
+        if (runtimeSurfaceParametersOverride != null)
+        {
+            _runtimeSurfaceParameters = runtimeSurfaceParametersOverride;
+            _runtimeSurfaceModel = new TerrainGenerationHeightModel(runtimeSurfaceParametersOverride);
+            _runtimeAltitudeTemperatureDropPerKilometre = runtimeAltitudeTemperatureDropOverride
+                ?? _settings.AltitudeTemperatureDropPerKilometre;
+        }
+        else
+        {
+            (_runtimeSurfaceParameters, _runtimeSurfaceModel, _runtimeAltitudeTemperatureDropPerKilometre) =
+                CreateRuntimeSurfaceGeneration(_settings, periodicAroundRing, aroundRingVoxelLength,
+                    ringAcrossWidthMeters, maxBuildGlobalY);
+        }
         if (caveGenerationContractOverride is { } overrideContract)
-            overrideContract.ValidateTerrainSeed(settings.Seed);
+            overrideContract.ValidateTerrainSeed(_settings.Seed);
         // Validate and freeze the terrain-seed-derived cave identity before
         // allocating native noise resources. Copies retain this exact contract
         // even if an editor Resource is mutated after construction.
         CaveGenerationContract = caveGenerationContractOverride
-            ?? settings.DesignedCaveGenerationContractSettings?.CaptureContract(settings.Seed)
-            ?? CaveGenerationContract.Create(settings.Seed);
+            ?? _settings.DesignedCaveGenerationContractSettings?.CaptureContract(_settings.Seed)
+            ?? CaveGenerationContract.Create(_settings.Seed);
         _periodicAroundRing = periodicAroundRing;
         _aroundRingVoxelLength = Math.Max(1L, aroundRingVoxelLength);
         CaveTopologyPartition = new CaveTopologyPartition(CaveGenerationContract, _aroundRingVoxelLength);
@@ -272,28 +310,30 @@ public sealed class RingTerrainSampler : IDisposable
         _maxBuildGlobalY = Mathf.Max(_settings.BedrockY + 1, maxBuildGlobalY);
         _baseTerrainNoise = new FastNoiseLite
         {
-            Seed = settings.Seed,
-            Frequency = Mathf.Max(0.0001f, settings.BaseFrequency)
+            Seed = _settings.Seed,
+            Frequency = Mathf.Max(0.0001f, _settings.BaseFrequency)
         };
         _detailTerrainNoise = new FastNoiseLite
         {
-            Seed = settings.Seed + 1907,
-            Frequency = Mathf.Max(0.0001f, settings.DetailFrequency)
+            Seed = _settings.Seed + 1907,
+            Frequency = Mathf.Max(0.0001f, _settings.DetailFrequency)
         };
-        _continentalNoise = CreateRegionalNoise(settings.Seed + 3109, settings.ContinentalFrequency);
-        _erosionNoise = CreateRegionalNoise(settings.Seed + 4721, settings.ErosionFrequency);
-        _ridgeNoise = CreateRegionalNoise(settings.Seed + 6151, settings.RidgeFrequency);
-        _temperatureNoise = CreateRegionalNoise(settings.Seed + 7919, settings.TemperatureFrequency);
-        _moistureNoise = CreateRegionalNoise(settings.Seed + 9341, settings.MoistureFrequency);
-        _mountainWarpAroundNoise = CreateRegionalNoise(settings.Seed + 11003, settings.MountainWarpFrequency);
-        _mountainWarpAcrossNoise = CreateRegionalNoise(settings.Seed + 12721, settings.MountainWarpFrequency);
-        _valleyNoise = CreateRegionalNoise(settings.Seed + 14503, settings.ValleyFrequency);
-        _escarpmentNoise = CreateRegionalNoise(settings.Seed + 15209, settings.EscarpmentFrequency);
-        _riverNoise = CreateRegionalNoise(settings.Seed + 16381, settings.RiverFrequency);
-        _caveNoise = CreateRegionalNoise(settings.Seed + 18121, settings.CaveFrequency);
-        _overhangNoise = CreateRegionalNoise(settings.Seed + 19763, settings.OverhangFrequency);
-        _biomeProfiles = CaptureBiomeProfiles(settings.BiomeCatalog);
-        (_hasExceptionalSummit, _exceptionalSummitAround, _exceptionalSummitAcross) = ResolveExceptionalSummit();
+        _continentalNoise = CreateRegionalNoise(_settings.Seed + 3109, _settings.ContinentalFrequency);
+        _erosionNoise = CreateRegionalNoise(_settings.Seed + 4721, _settings.ErosionFrequency);
+        _ridgeNoise = CreateRegionalNoise(_settings.Seed + 6151, _settings.RidgeFrequency);
+        _temperatureNoise = CreateRegionalNoise(_settings.Seed + 7919, _settings.TemperatureFrequency);
+        _moistureNoise = CreateRegionalNoise(_settings.Seed + 9341, _settings.MoistureFrequency);
+        _mountainWarpAroundNoise = CreateRegionalNoise(_settings.Seed + 11003, _settings.MountainWarpFrequency);
+        _mountainWarpAcrossNoise = CreateRegionalNoise(_settings.Seed + 12721, _settings.MountainWarpFrequency);
+        _valleyNoise = CreateRegionalNoise(_settings.Seed + 14503, _settings.ValleyFrequency);
+        _escarpmentNoise = CreateRegionalNoise(_settings.Seed + 15209, _settings.EscarpmentFrequency);
+        _riverNoise = CreateRegionalNoise(_settings.Seed + 16381, _settings.RiverFrequency);
+        _caveNoise = CreateRegionalNoise(_settings.Seed + 18121, _settings.CaveFrequency);
+        _overhangNoise = CreateRegionalNoise(_settings.Seed + 19763, _settings.OverhangFrequency);
+        _biomeProfiles = biomeProfilesOverride ?? CaptureBiomeProfiles(_settings.BiomeCatalog);
+        (_hasExceptionalSummit, _exceptionalSummitAround, _exceptionalSummitAcross) = UsesRuntimeSurfaceGeneration
+            ? (false, 0L, 0)
+            : ResolveExceptionalSummit();
         TerrainDefinitionHash = CalculateTerrainDefinitionHash();
     }
 
@@ -315,10 +355,12 @@ public sealed class RingTerrainSampler : IDisposable
         _riverNoise.Dispose();
         _caveNoise.Dispose();
         _overhangNoise.Dispose();
+        _runtimeSurfaceModel?.Dispose();
     }
 
     private int ResolveMaximumSurfaceHeight()
     {
+        if (UsesRuntimeSurfaceGeneration) return 8000;
         int ceiling = ResolveRoutineMountainCeiling();
         if (_hasExceptionalSummit)
         {
@@ -330,6 +372,7 @@ public sealed class RingTerrainSampler : IDisposable
 
     private int ResolveRoutineMountainCeiling()
     {
+        if (UsesRuntimeSurfaceGeneration) return 8000;
         int safeBuildCeiling = Mathf.Max(
             _settings.BedrockY + 1,
             _maxBuildGlobalY - Mathf.Max(0, _settings.TerrainToBuildClearanceMeters));
@@ -338,6 +381,7 @@ public sealed class RingTerrainSampler : IDisposable
 
     private int ResolveExceptionalSummitCeiling()
     {
+        if (UsesRuntimeSurfaceGeneration) return 8000;
         int safeBuildCeiling = Mathf.Max(
             _settings.BedrockY + 1,
             _maxBuildGlobalY - Mathf.Max(0, _settings.TerrainToBuildClearanceMeters));
@@ -346,6 +390,8 @@ public sealed class RingTerrainSampler : IDisposable
 
     public int GetSurfaceHeight(long globalAroundVoxel, int globalAcrossVoxel)
     {
+        if (UsesRuntimeSurfaceGeneration)
+            return Mathf.FloorToInt(GetPresentationSurfaceHeight(globalAroundVoxel, globalAcrossVoxel));
         lock (_noiseLock)
         {
             RegionalCoordinate coordinate = ResolveRegionalCoordinate(globalAroundVoxel, globalAcrossVoxel);
@@ -369,6 +415,8 @@ public sealed class RingTerrainSampler : IDisposable
 
     public float GetSmoothSurfaceHeight(long globalAroundVoxel, int globalAcrossVoxel)
     {
+        if (UsesRuntimeSurfaceGeneration)
+            return GetPresentationSurfaceHeight(globalAroundVoxel, globalAcrossVoxel);
         lock (_noiseLock)
         {
             RegionalCoordinate coordinate = ResolveRegionalCoordinate(globalAroundVoxel, globalAcrossVoxel);
@@ -391,6 +439,57 @@ public sealed class RingTerrainSampler : IDisposable
                 ? hydrology.TerrainHeight
                 : terrain.Height;
         }
+    }
+
+    /// <summary>Exact presentation surface. Runtime recipes own this value; generation 16 keeps its historic half-voxel offset.</summary>
+    public float GetPresentationSurfaceHeight(long globalAroundVoxel, int globalAcrossVoxel)
+    {
+        if (UsesRuntimeSurfaceGeneration)
+        {
+            lock (_noiseLock)
+            {
+                return GetRuntimePresentationSurfaceHeightLocked(globalAroundVoxel, globalAcrossVoxel);
+            }
+        }
+        return GetSmoothSurfaceHeight(globalAroundVoxel, globalAcrossVoxel) + SurfaceHeightOffset;
+    }
+
+    /// <summary>
+    /// Presentation-space surface query. Runtime generation reconstructs its
+    /// canonical 2m triangle lattice, while generation 16 retains its historic
+    /// one-metre bilinear presentation surface.
+    /// </summary>
+    public float GetPresentationSurfaceHeight(double globalAroundVoxel, double globalAcrossVoxel)
+    {
+        if (!double.IsFinite(globalAroundVoxel) || !double.IsFinite(globalAcrossVoxel))
+            throw new ArgumentOutOfRangeException("Presentation surface coordinates must be finite.");
+        if (UsesRuntimeSurfaceGeneration)
+        {
+            lock (_noiseLock)
+            {
+                return GetRuntimePresentationSurfaceHeightLocked(globalAroundVoxel, globalAcrossVoxel);
+            }
+        }
+
+        return GetLegacyPresentationSurfaceHeight(globalAroundVoxel, globalAcrossVoxel);
+    }
+
+    private float GetLegacyPresentationSurfaceHeight(double globalAroundVoxel, double globalAcrossVoxel)
+    {
+        double across = Math.Clamp(globalAcrossVoxel, 0.0, _ringAcrossWidthMeters);
+        long around0 = checked((long)Math.Floor(globalAroundVoxel));
+        int across0 = (int)Math.Floor(across);
+        long around1 = around0 + 1;
+        int across1 = Math.Min(across0 + 1, _ringAcrossWidthMeters);
+        double tx = globalAroundVoxel - Math.Floor(globalAroundVoxel);
+        double tz = across - across0;
+        float h00 = GetPresentationSurfaceHeight(around0, across0);
+        float h10 = GetPresentationSurfaceHeight(around1, across0);
+        float h01 = GetPresentationSurfaceHeight(around0, across1);
+        float h11 = GetPresentationSurfaceHeight(around1, across1);
+        double low = h00 + (h10 - h00) * tx;
+        double high = h01 + (h11 - h01) * tx;
+        return (float)(low + (high - low) * tz);
     }
 
     /// <summary>
@@ -421,7 +520,7 @@ public sealed class RingTerrainSampler : IDisposable
         int globalAcrossVoxel,
         float surface)
     {
-        float density = globalY - (surface + 0.5f);
+        float density = globalY - (surface + SurfaceHeightOffset);
         if (!_settings.EnableUnified3dDensityTerrain
             || globalAcrossVoxel < 0
             || globalAcrossVoxel > _ringAcrossWidthMeters)
@@ -537,6 +636,8 @@ public sealed class RingTerrainSampler : IDisposable
 
     private TerrainSample GetTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel)
     {
+        if (UsesRuntimeSurfaceGeneration)
+            return GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel);
         RegionalCoordinate coordinate = ResolveRegionalCoordinate(globalAroundVoxel, globalAcrossVoxel);
         TerrainFields fields = SampleTerrainFieldsLocked(globalAroundVoxel, globalAcrossVoxel, coordinate);
         TerrainRegion region = ClassifyRegion(fields.Continentalness);
@@ -822,6 +923,8 @@ public sealed class RingTerrainSampler : IDisposable
 
     private TerrainMacroRegion GetMacroRegionLocked(long globalAroundVoxel, int globalAcrossVoxel)
     {
+        if (UsesRuntimeSurfaceGeneration)
+            return GetRuntimeMacroRegionLocked(globalAroundVoxel, globalAcrossVoxel);
         int size = Mathf.Max(16_000, _settings.MacroRegionSizeMeters);
         long around = _periodicAroundRing
             ? RingCoordMath.WrapAround(globalAroundVoxel, _aroundRingVoxelLength)
@@ -1510,7 +1613,7 @@ public sealed class RingTerrainSampler : IDisposable
 
     public BlockType GetBaselineBlock(long globalAroundVoxel, int globalVerticalVoxel, int globalAcrossVoxel)
     {
-        if (globalVerticalVoxel <= _settings.BedrockY)
+        if (globalVerticalVoxel <= BedrockY)
         {
             return BlockType.Bedrock;
         }
@@ -2055,7 +2158,10 @@ public sealed class RingTerrainSampler : IDisposable
             hash = MixHash(hash, profile.SelectionWeightMultiplier);
             hash = MixHash(hash, profile.LocalReliefMeters);
         }
-        return hash;
+        // Climate, soil and biome colour settings still feed production consumers.
+        // Append the new recipe contract to their existing full identity, retaining
+        // the exact generation-16 sequence for every legacy world.
+        return UsesRuntimeSurfaceGeneration ? CalculateRuntimeTerrainDefinitionHash(hash) : hash;
     }
 
     private static ulong MixHash(ulong hash, int value) => MixHash(hash, unchecked((ulong)(uint)value));

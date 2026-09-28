@@ -67,6 +67,46 @@ Reports use unique `ring-performance-*.json` names under
 64 MiB of matching report files. It does not delete old reports automatically.
 The capture action reports the output path or error in the drawer.
 
+## Correlating a walking hitch
+
+The isolated gameplay travel fixture can export the retained diagnostics at the
+end of a route:
+
+```powershell
+& $Godot --path . --resolution 1920x1080 --script tools/terrain3d_gameplay_travel_benchmark.gd -- --speed=12 --distance=256 --telemetry
+```
+
+`travel-benchmark.json` links the exported report in `telemetry_report`. With
+`--telemetry`, each measured frame also records cumulative managed allocation,
+GC collection counts and pause duration, proxy main-thread/worker allocations,
+and structural-wall worker allocations and maximum requested around-cell count.
+Subtract adjacent counter values to examine a frame interval. A worker's
+allocation counter is published when its build completes, so its delta can
+include work from several preceding frames; it is not an allocation stack trace.
+Add `--detailed-gpu` alongside `--telemetry` to include the existing asynchronous
+GPU intervals. Those samples retain their source-frame identifiers and may
+arrive later than the CPU work that submitted them.
+
+The per-frame `runtime_counters.stopwatch_seconds` and completed CPU events use
+the same monotonic clock. `timestamp_usec` uses Godot process uptime instead.
+An event's completion time and elapsed duration locate its interval; inclusive
+proxy timings contain the structural, camera, coverage, and install child calls.
+Global terrain timings separate sampling from mesh construction and installation.
+Sampling rows are worker time; mesh construction and installation are main-thread
+time. Per-frame `global_terrain` data records active and queued segments, remaining
+vertex samples, worker state, detail settings, and estimated installed mesh bytes.
+The initial-build duration counters measure the main-thread service call that
+publishes a segment, not its total background preparation latency. A completed
+worker can wait for the next publication opportunity without blocking the frame.
+GC suspension can occur inside any measured call, so consult the pause counter
+before assigning a long wall duration entirely to that method's work. Check
+dropped samples before treating a missing event as evidence of no work.
+
+The fixture isolates world files, preferences, and reports beneath `.godot`.
+Run GPU comparisons sequentially with other game windows closed. It does not
+disable adaptive quality protection; its log can report a memory-pressure
+fallback, which must be considered when comparing results.
+
 ## Validation
 
 - Build: `dotnet build RingworldTechDemo.csproj --no-restore`.

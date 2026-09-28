@@ -284,9 +284,12 @@ public partial class RingPresentationHud : CanvasLayer
     {
         if (_explorer == null || _grid?.TerrainSampler == null) return;
         var canonical = _explorer.CanonicalPosition;
-        int around = (int)Math.Round(canonical.AroundMeters);
+        long around = (long)Math.Round(canonical.AroundMeters);
         int across = Mathf.Clamp(Mathf.RoundToInt((float)canonical.AcrossMeters), 0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters));
-        int surface = _grid.TerrainSampler.GetSurfaceHeight(around, across);
+        var edits = _grid.CaptureLodSurfaceEditSnapshot();
+        float surface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+            ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+            : _grid.TerrainSampler.GetSurfaceHeight(around, across);
         double altitude = canonical.VerticalMeters - surface;
         float speed = _explorer.NoclipEnabled ? _explorer.NoclipCurrentSpeedMetersPerSecond : _explorer.Velocity.Length();
         if (_modeLabel != null)

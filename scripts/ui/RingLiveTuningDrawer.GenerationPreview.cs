@@ -1,0 +1,159 @@
+using System;
+using Godot;
+
+namespace RingworldTechDemo.UI;
+
+/// <summary>Recipe controls for the isolated GDScript terrain reference preview.</summary>
+public partial class RingLiveTuningDrawer
+{
+    private Label? _generationPreviewStatus;
+    private readonly System.Collections.Generic.List<(HSlider Slider, Label Value, string Property)> _generationPreviewControls = new();
+    private readonly System.Collections.Generic.List<(SpinBox Spin, string Property)> _generationPreviewSpins = new();
+    private double _generationPreviewRefreshDelay;
+
+    private void BuildGenerationPreviewTab(TabContainer tabs)
+    {
+        VBoxContainer tab = CreateTab(tabs, "Terrain3D");
+        tab.AddChild(new Label { Text = "REFERENCE GENERATION PREVIEW", ThemeTypeVariation = "HeaderSmall" });
+        tab.AddChild(new Label { Text = "Shape controls regenerate this preview after a short pause. Use Save recipe to keep your changes.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
+        if (_generationPreview == null)
+            return;
+
+        Resource? recipe = _generationPreview.Call("get_recipe_snapshot").AsGodotObject() as Resource;
+        if (recipe == null)
+        {
+            tab.AddChild(new Label { Text = "The generation recipe is unavailable.", AutowrapMode = TextServer.AutowrapMode.WordSmart });
+            return;
+        }
+        VBoxContainer settings = TuningMenuUi.CreateSection(tab, "Recipe shape settings");
+        AddRecipeSpin(settings, recipe, "seed", "Seed", 0, 2147483647, 1);
+        AddRecipeSlider(settings, recipe, "land_balance", "Land / ocean balance", -.35, .35, .01);
+        AddRecipeSlider(settings, recipe, "continental_scale_m", "Continental scale (m)", 50000, 600000, 1000);
+        AddRecipeSlider(settings, recipe, "mountain_scale_m", "Range scale (m)", 10000, 250000, 1000);
+        AddRecipeSlider(settings, recipe, "basin_depth_m", "Basin depth (m)", 1250, 7500, 50);
+        if (recipe.Get("generator_id").AsString() == "ringworld_surface_coastal_v2")
+        {
+            AddRecipeSlider(settings, recipe, "beach_slope", "Beach slope", .005, .1, .001);
+            AddRecipeSlider(settings, recipe, "shelf_width_m", "Shelf width approximation (m)", 2000, 100000, 500);
+            AddRecipeSlider(settings, recipe, "shelf_depth_m", "Shelf depth (m)", 50, 300, 5);
+            AddRecipeSlider(settings, recipe, "continental_slope_width_m", "Continental slope width (m)", 5000, 100000, 500);
+        }
+        else settings.AddChild(new Label { Text = "Legacy v1 recipe preserved; coastal controls are unavailable.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
+        AddRecipeSlider(settings, recipe, "trench_depth_m", "Trench depth (m)", 0, 6000, 50);
+        AddRecipeSlider(settings, recipe, "trench_threshold", "Trench rarity", .5, .98, .01);
+        AddRecipeSlider(settings, recipe, "mountain_amplitude_m", "Mountain amplitude (m)", 0, 7500, 50);
+        AddRecipeSlider(settings, recipe, "valley_width", "Valley width", .01, .75, .01);
+        AddRecipeSlider(settings, recipe, "flattening", "Lowland flattening", 0, 8, .1);
+        AddRecipeSlider(settings, recipe, "ridge_scale_m", "Ridge scale (m)", 1000, 30000, 250);
+        AddRecipeSlider(settings, recipe, "ridge_sharpness", "Ridge sharpness", .1, 4, .05);
+        AddRecipeSlider(settings, recipe, "secondary_amplitude_m", "Secondary relief (m)", 0, 200, 1);
+        AddRecipeSlider(settings, recipe, "micro_amplitude_m", "Micro relief (m)", 0, 12, .1);
+        AddRecipeSlider(settings, recipe, "detail_start_m", "Detail starts (m)", 0, 6000, 50);
+        AddRecipeSlider(settings, recipe, "detail_full_m", "Detail full (m)", 0, 8000, 50);
+        AddRecipeSlider(settings, recipe, "warp_amplitude_m", "Warp amplitude (m)", 0, 15000, 100);
+        AddRecipeSlider(settings, recipe, "noise_gain", "Noise gain", 0, 1, .01);
+        AddRecipeSlider(settings, recipe, "secondary_scale_m", "Secondary scale (m)", 16, 10000, 16);
+        AddRecipeSlider(settings, recipe, "micro_scale_m", "Micro scale (m)", 16, 1000, 4);
+        AddRecipeSpin(settings, recipe, "continental_octaves", "Continental octaves", 1, 8, 1);
+        AddRecipeSpin(settings, recipe, "mountain_octaves", "Mountain octaves", 1, 8, 1);
+        AddRecipeSpin(settings, recipe, "ridge_octaves", "Ridge octaves", 1, 8, 1);
+
+        var actions = new HBoxContainer();
+        var regenerate = new Button { Text = "Regenerate", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        regenerate.Pressed += () => _generationPreview?.Call("regenerate");
+        actions.AddChild(regenerate);
+        var save = new Button { Text = "Save recipe", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        save.Pressed += () => _generationPreview?.Call("save_recipe");
+        actions.AddChild(save);
+        tab.AddChild(actions);
+        var reset = new Button { Text = "Reset recipe" };
+        reset.Pressed += () => { _generationPreview?.Call("reset_recipe"); RefreshGenerationPreviewControls(); };
+        tab.AddChild(reset);
+        _generationPreviewStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        tab.AddChild(_generationPreviewStatus);
+    }
+
+    private void AddRecipeSlider(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step)
+    {
+        double initial = recipe.Get(property).AsDouble();
+        parent.AddChild(new Label { Text = label });
+        var row = new HBoxContainer();
+        var slider = new HSlider { Name = property, MinValue = min, MaxValue = max, Step = step, Value = initial, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        var value = new Label { Text = initial.ToString("0.###"), CustomMinimumSize = new Vector2(58, 0) };
+        slider.ValueChanged += current => { value.Text = current.ToString("0.###"); _generationPreview?.Call("apply_recipe_setting", property, current); _generationPreviewRefreshDelay = 0; };
+        row.AddChild(slider); row.AddChild(value); parent.AddChild(row);
+        _generationPreviewControls.Add((slider, value, property));
+    }
+
+    private void AddRecipeSpin(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step)
+    {
+        parent.AddChild(new Label { Text = label });
+        var spin = new SpinBox { Name = property, MinValue = min, MaxValue = max, Step = step, Value = recipe.Get(property).AsDouble(), AllowGreater = false, AllowLesser = false };
+        spin.ValueChanged += value => _generationPreview?.Call("apply_recipe_setting", property, (long)Math.Round(value));
+        parent.AddChild(spin);
+        _generationPreviewSpins.Add((spin, property));
+    }
+
+    private void RefreshGenerationPreviewControls()
+    {
+        if (_generationPreview == null) return;
+        Resource? recipe = _generationPreview.Call("get_recipe_snapshot").AsGodotObject() as Resource;
+        if (recipe == null) return;
+        foreach (var control in _generationPreviewControls)
+        {
+            double current = recipe.Get(control.Property).AsDouble();
+            control.Slider.SetValueNoSignal(current);
+            control.Value.Text = current.ToString("0.###");
+        }
+        foreach (var control in _generationPreviewSpins)
+            control.Spin.SetValueNoSignal(recipe.Get(control.Property).AsDouble());
+    }
+
+    private void ProcessGenerationPreviewTuning(double delta)
+    {
+        _generationPreviewRefreshDelay -= delta;
+        if (_generationPreviewRefreshDelay > 0) return;
+        _generationPreviewRefreshDelay = .2;
+        RefreshGenerationPreviewControls();
+        if (_generationPreviewStatus == null || _generationPreview == null) return;
+        Godot.Collections.Dictionary state = _generationPreview.Call("get_preview_diagnostics").AsGodotDictionary();
+        string error = state.TryGetValue("error", out Variant errorValue) ? errorValue.AsString() : "";
+        bool ready = state.TryGetValue("ready", out Variant readyValue) && readyValue.AsBool();
+        long revision = state.TryGetValue("revision", out Variant revisionValue) ? revisionValue.AsInt64() : 0;
+        long committed = state.TryGetValue("committed_revision", out Variant committedValue) ? committedValue.AsInt64() : revision;
+        bool updating = state.TryGetValue("updating", out Variant updatingValue) ? updatingValue.AsBool() : !ready;
+        _generationPreviewStatus.Text = error.Length > 0 ? error : ready
+            ? updating ? $"Revision {committed} active; preparing revision {revision}." : $"Revision {committed} ready."
+            : $"Generating revision {revision}.";
+        RefreshGenerationStreamingDiagnostics(state);
+    }
+
+    private void RefreshGenerationStreamingDiagnostics(Godot.Collections.Dictionary state)
+    {
+        if (_generationStreamingDiagnostics == null) return;
+        Godot.Collections.Dictionary stream = state.TryGetValue("stream", out Variant streamValue)
+            ? streamValue.AsGodotDictionary() : new();
+        Godot.Collections.Dictionary native = state.TryGetValue("native", out Variant nativeValue)
+            ? nativeValue.AsGodotDictionary() : new();
+        Godot.Collections.Dictionary preparation = native.TryGetValue("preparation", out Variant preparationValue)
+            ? preparationValue.AsGodotDictionary() : new();
+        string phase = preparation.TryGetValue("phase", out Variant phaseValue) ? phaseValue.AsString() : "Idle";
+        long inflight = stream.TryGetValue("inflight", out Variant inflightValue) ? inflightValue.AsInt64() : 0;
+        long pending = stream.TryGetValue("pending", out Variant pendingValue) ? pendingValue.AsInt64() : 0;
+        long cacheBytes = stream.TryGetValue("cache_bytes", out Variant cacheValue) ? cacheValue.AsInt64() : 0;
+        long cacheLimit = stream.TryGetValue("cache_limit_bytes", out Variant limitValue) ? limitValue.AsInt64() : 0;
+        long tilesDone = preparation.TryGetValue("tiles_done", out Variant tilesDoneValue) ? tilesDoneValue.AsInt64() : 0;
+        long tilesTotal = preparation.TryGetValue("tiles_total", out Variant tilesTotalValue) ? tilesTotalValue.AsInt64() : 0;
+        double stepMax = preparation.TryGetValue("step_max_ms", out Variant stepValue) ? stepValue.AsDouble() : 0;
+        long uploadOverruns = preparation.TryGetValue("upload_budget_overruns", out Variant uploadOverrunValue) ? uploadOverrunValue.AsInt64() : 0;
+        long collisionOverruns = preparation.TryGetValue("collision_budget_overruns", out Variant collisionOverrunValue) ? collisionOverrunValue.AsInt64() : 0;
+        double uploadMs = preparation.TryGetValue("upload_ms", out Variant uploadValue) ? uploadValue.AsDouble() : 0;
+        double shapeMs = preparation.TryGetValue("shape_ms", out Variant shapeValue) ? shapeValue.AsDouble() : 0;
+        double installMs = preparation.TryGetValue("installation_ms", out Variant installValue) ? installValue.AsDouble() : 0;
+        long edgeWaits = state.TryGetValue("edge_waits", out Variant edgeValue) ? edgeValue.AsInt64() : 0;
+        _generationStreamingDiagnostics.Text = $"Preparation: {phase} | tiles {tilesDone}/{tilesTotal} | step {stepMax:0.##} ms\n"
+            + $"Workers: {inflight} in flight, {pending} pending | cache {cacheBytes / 1048576.0:0.0}/{cacheLimit / 1048576.0:0.0} MiB\n"
+            + $"Upload {uploadMs:0.##} ms | shape {shapeMs:0.##} ms | install {installMs:0.##} ms\n"
+            + $"Budget overruns: upload {uploadOverruns}, collision {collisionOverruns} | edge waits {edgeWaits}";
+    }
+}

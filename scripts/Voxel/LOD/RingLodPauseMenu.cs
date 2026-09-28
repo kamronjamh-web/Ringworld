@@ -90,6 +90,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         ApplySavedRenderResolution(updateStatus: false);
         _renderResolutionReady = true;
         SetAtmosphericHaze(HazeEnabledByDefault);
+        SyncAtmosphericHazeToggle();
         ApplyLodProfile(DefaultChunkRadius, DefaultVerticalChunkRadius);
         SetMenuOpen(false);
     }
@@ -118,6 +119,7 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (_renderResolutionStatusElapsed >= 0.25)
             {
                 _renderResolutionStatusElapsed = 0.0;
+                SyncAtmosphericHazeToggle();
                 UpdateRenderResolutionStatus();
             }
         }
@@ -471,6 +473,11 @@ public partial class RingLodPauseMenu : CanvasLayer
         ApplyAtmosphereSettingRecursively(GetTree().CurrentScene, enabled);
     }
 
+    private void SyncAtmosphericHazeToggle()
+    {
+        _hazeToggle?.SetPressedNoSignal(RingAtmosphereModel.Enabled);
+    }
+
     private static void ApplyAtmosphereSettingRecursively(Node? node, bool enabled)
     {
         if (node == null) return;
@@ -811,6 +818,7 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (open)
             {
                 SuppressGameplayHud();
+                SyncAtmosphericHazeToggle();
                 _renderResolutionStatusElapsed = 0.0;
                 UpdateRenderResolutionStatus();
             }

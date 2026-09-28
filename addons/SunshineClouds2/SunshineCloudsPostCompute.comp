@@ -25,6 +25,7 @@ layout(binding = 8, std140) uniform SceneDataBlock {
 	SceneData data;
 	SceneData prev_data;
 } scene_data_block;
+layout(binding = 9) uniform sampler2D far_opaque_depth_image;
 
 
 // Helpers
@@ -100,6 +101,64 @@ vec4 texture2D_bicubic(sampler2D tex, vec2 uv, vec2 res)
                         g1x * texture(tex, p3));
 }
 
+// The colour reconstruction must not borrow a bilinear tap whose opaque-depth
+// break belongs to the opposite side of a foreground silhouette. The data tap
+// is intentionally bilinear: a fractional break flag already proves that its
+// colour footprint crosses the boundary, so it is rejected and cannot create
+// a bright halo around a depth-writing leaf/card edge.
+float depth_break_at_center(sampler2D dataTex, vec2 uv, vec2 res)
+{
+	ivec2 centerTexel = clamp(ivec2(floor(uv * res)), ivec2(0), ivec2(res) - ivec2(1));
+	return texelFetch(dataTex, centerTexel, 0).a;
+}
+
+vec4 texture2D_bicubic_depth_aware(
+	sampler2D colorTex,
+	sampler2D dataTex,
+	vec4 centerColor,
+	float centerBreak,
+	vec2 uv,
+	vec2 res)
+{
+	uv = uv * res + 0.5;
+	vec2 iuv = floor(uv);
+	vec2 fuv = fract(uv);
+
+	float g0x = g0(fuv.x);
+	float g1x = g1(fuv.x);
+	float h0x = h0(fuv.x);
+	float h1x = h1(fuv.x);
+	float h0y = h0(fuv.y);
+	float h1y = h1(fuv.y);
+
+	vec2 p0 = (vec2(iuv.x + h0x, iuv.y + h0y) - 0.5) / res;
+	vec2 p1 = (vec2(iuv.x + h1x, iuv.y + h0y) - 0.5) / res;
+	vec2 p2 = (vec2(iuv.x + h0x, iuv.y + h1y) - 0.5) / res;
+	vec2 p3 = (vec2(iuv.x + h1x, iuv.y + h1y) - 0.5) / res;
+	vec4 weights = vec4(
+		g0(fuv.y) * g0x,
+		g0(fuv.y) * g1x,
+		g1(fuv.y) * g0x,
+		g1(fuv.y) * g1x);
+
+	vec4 samples[4] = vec4[4](
+		texture(colorTex, p0),
+		texture(colorTex, p1),
+		texture(colorTex, p2),
+		texture(colorTex, p3));
+	vec2 points[4] = vec2[4](p0, p1, p2, p3);
+	vec4 sum = vec4(0.0);
+	float weightSum = 0.0;
+	for (int tap = 0; tap < 4; ++tap) {
+		float tapBreak = texture(dataTex, points[tap]).a;
+		if (abs(tapBreak - centerBreak) <= 0.0001) {
+			sum += samples[tap] * weights[tap];
+			weightSum += weights[tap];
+		}
+	}
+	return weightSum > 0.000001 ? sum / weightSum : centerColor;
+}
+
 vec4 radialBlurColor(vec4 startColor, sampler2D colorImage, sampler2D depthImage, vec2 uv, vec2 size, float Directions, float blurVertical, float blurHorizontal, float Quality){
     float Pi = 6.28318530718;
     float count = 1.0;
@@ -108,24 +167,17 @@ vec4 radialBlurColor(vec4 startColor, sampler2D colorImage, sampler2D depthImage
     vec4 Color = startColor;
 	//float CurrentDepth = startingDepth;
 	vec2 newUV = uv;
+	float centerBreak = depth_break_at_center(depthImage, uv, size);
     for( float d=0.0; d<Pi; d+=Pi/Directions)
     {
 		for(float i=1.0/Quality; i<=1.0; i+=1.0/Quality)
         {
 			newUV = uv + vec2(cos(d) * blurHorizontal * i, sin(d) * blurVertical * i);
-			Color += texture2D_bicubic(colorImage, newUV, size);
+			Color += texture2D_bicubic_depth_aware(colorImage, depthImage, startColor, centerBreak, newUV, size);
 			count += 1.0;
-			//float newDepth = texture(depthImage, newUV).g;
-			//startingDepth = max(startingDepth, texture(depthImage, newUV).g);
-			// if (startingDepth - newDepth > genericData.max_step_distance){
-			// 	CurrentDepth = max(CurrentDepth, newDepth);
-			// 	Color += texture2D_bicubic(colorImage, newUV, size);
-			// 	count += 1.0;
-			// }
         }
     }
-	//startingDepth = CurrentDepth
-    Color /= count;
+	Color /= count;
     return Color;
 }
 
@@ -306,11 +358,11 @@ void main() {
 	if (blurPower > 0.0 && genericData.data.temporal_controls.z <= 0.5) {
 		if (genericData.data.menu_optimization_controls.x > 0.5 && blurPower <= 0.1) {
 			currentAccumilation = mix(currentAccumilation,
-				texture2D_bicubic(input_color_image, accumUV, lowres_sizefloat), 0.8);
+				texture2D_bicubic_depth_aware(input_color_image, input_data_image, currentAccumilation, depth_break_at_center(input_data_image, accumUV, lowres_sizefloat), accumUV, lowres_sizefloat), 0.8);
 		}
 		else if (resolutionScale == 1 && blurPower <= 0.1) {
 			currentAccumilation = mix(currentAccumilation,
-				texture2D_bicubic(input_color_image, accumUV, lowres_sizefloat), 0.8);
+				texture2D_bicubic_depth_aware(input_color_image, input_data_image, currentAccumilation, depth_break_at_center(input_data_image, accumUV, lowres_sizefloat), accumUV, lowres_sizefloat), 0.8);
 		}
 		else {
 			float blurHorizontal = blurPower / float(size.x);
@@ -345,6 +397,8 @@ void main() {
 		if (linear_depth >= scene_data_block.data.z_far){ 
 			linear_depth *= 100.0;
 		}
+		float far_depth = texture(far_opaque_depth_image, depthUV).r;
+		if (far_depth > 0.0 && !isnan(far_depth) && !isinf(far_depth)) linear_depth = min(linear_depth, far_depth);
 		float density = clamp(currentAccumilation.a, 0.0, 1.0);
 		// Raw capture intentionally precedes scene-depth occlusion. It isolates
 		// the ray-marched cloud shape from every post-composition decision.

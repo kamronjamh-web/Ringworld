@@ -34,6 +34,8 @@ public partial class RingGraphicsQualityController
     private bool _lastAppliedMacroWallShadowsEnabled;
     private bool _shadowAtlasLimitResolved;
     public float EffectiveShadowDistanceMeters => _sun?.DirectionalShadowMaxDistance ?? 0.0f;
+    /// <summary>The user/preset choice before the local nighttime handoff is applied.</summary>
+    public bool RequestedSunShadowsEnabled { get; private set; } = true;
     public int RequestedDirectionalShadowAtlasSize { get; private set; }
     public int EffectiveDirectionalShadowAtlasSize { get; private set; }
     public int EffectiveDirectionalShadowDepthBits { get; private set; } = 16;
@@ -170,9 +172,9 @@ public partial class RingGraphicsQualityController
         _sun.DirectionalShadowFadeStart = .88f;
         _sun.ShadowBias = _shadowBaselineBias;
         _sun.ShadowNormalBias = _shadowBaselineNormalBias;
-        _sun.ShadowEnabled = _shadowBaselineEnabled;
+        RequestedSunShadowsEnabled = _shadowBaselineEnabled;
         _sun.LightAngularDistance = profile.SunAngularDistanceDegrees;
-        if (_shadowTuningOverrides.TryGetValue("Enabled", out Variant enabled)) _sun.ShadowEnabled = enabled.AsBool();
+        if (_shadowTuningOverrides.TryGetValue("Enabled", out Variant enabled)) RequestedSunShadowsEnabled = enabled.AsBool();
         if (_shadowTuningOverrides.TryGetValue("NearCascadeMeters", out Variant nearCascade))
             _sun.DirectionalShadowSplit1 = Mathf.Clamp(nearCascade.AsSingle() / Mathf.Max(_sun.DirectionalShadowMaxDistance, .0001f), .0001f, .40f);
         else if (_shadowTuningOverrides.TryGetValue("Split1", out Variant split1)) _sun.DirectionalShadowSplit1 = split1.AsSingle();
@@ -184,6 +186,7 @@ public partial class RingGraphicsQualityController
         if (_shadowTuningOverrides.TryGetValue("NormalBias", out Variant normalBias)) _sun.ShadowNormalBias = normalBias.AsSingle();
         if (_shadowTuningOverrides.TryGetValue("SunAngularDistance", out Variant angularDistance)) _sun.LightAngularDistance = angularDistance.AsSingle();
         NormalizeShadowSplits();
+        UpdateLocalShadowHandoff();
     }
 
     private void ResolveDirectionalShadowAtlasHardwareLimit()
@@ -290,7 +293,7 @@ public partial class RingGraphicsQualityController
     public static bool TryValidateShadowOverride(string key, Variant value, out Variant clean)
     {
         clean = default;
-        if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled" || key == "LocalShadowHandoffEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if (key == "SunStabilizationEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if (key == "AtlasSize" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { double raw = value.AsDouble(); if (!double.IsFinite(raw) || raw != System.Math.Truncate(raw) || raw < int.MinValue || raw > int.MaxValue) return false; int v = (int)raw; if (IsDirectionalShadowAtlasSize(v)) { clean = v; return true; } return false; }
@@ -299,7 +302,7 @@ public partial class RingGraphicsQualityController
         if (key == "Filter" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
-        (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), _ => (1, 0) };
+        (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), _ => (1, 0) };
         if (min > max) return false;
         float clamped = Mathf.Clamp(value.AsSingle(), min, max);
         if (key == "TerrainMacroTraceSteps") clean = Mathf.RoundToInt(clamped); else clean = clamped;

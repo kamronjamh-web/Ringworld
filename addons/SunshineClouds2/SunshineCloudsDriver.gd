@@ -87,7 +87,11 @@ func _ready():
 
 func _process(delta : float):
 	if clouds_resource != null:
-		clouds_resource.current_time = wrap(clouds_resource.current_time + delta * clouds_resource.dither_speed, 0.0, clouds_resource.dither_speed * 64.0)
+		# The dither volume wraps at one z period.  Advancing 60 whole slices per
+		# second aliases at 60 Hz and leaves the same noise slice every callback.
+		# Store phase, not an unbounded slice index; zero speed remains finite.
+		clouds_resource.current_time = fposmod(clouds_resource.current_time
+			+ delta * clouds_resource.dither_speed / 64.0, 1.0)
 		
 		if update_continuously:
 			_updating_settings = false

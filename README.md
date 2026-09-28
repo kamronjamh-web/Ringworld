@@ -27,7 +27,7 @@ The normal path is **Start Menu → local world slot → World Foundry → confi
 ## Quick start
 
 1. Open the repository in Godot 4.7.2 .NET.
-2. Press **F5** to open [StartMenu.tscn](scenes/StartMenu.tscn).
+2. Open [StartMenu.tscn](scenes/StartMenu.tscn) and press **F6** for the normal menu flow. The current **F5** main scene is the isolated [playable terrain generation preview](scenes/TerrainGenerationPlayable.tscn).
 3. Select **Enter Ringworld**, then create or load one of the three local world slots.
 4. Use the World Foundry to select a scale or **HALO-SCALE PRESET**.
 5. Use **Advanced** for generation and eligible terrain-backend settings.
@@ -48,11 +48,12 @@ The initial World Foundry choice is the **Development Ring** at 80 km radius and
 | Backend | Use | Edits and compatibility |
 | --- | --- | --- |
 | Terrain3D surface | Certified worlds only | 2 m raise/lower surface lattice, curved collision, recentering, separate surface/player-state saves. Caves and construction are unavailable. |
+| Terrain3D runtime generation | Certified worlds only; Advanced backend item 2 | Opt-in `surface_runtime_generation_v1`: frozen canonical preview recipe, generator v17, fractional 2 m surface/collision edits, and isolated runtime state. |
 | SmoothTerrain | Retained default for old slots; selectable when supported | Volumetric edits, construction overlay, and optional designed caves. |
 | Legacy voxel rollback | Development only | `--legacy-editable-terrain`. |
 | Hybrid smooth pilot | Development only | `--hybrid-smooth-terrain-pilot`. |
 
-New Certified worlds select Terrain3D once when the launcher first recognizes Certified dimensions. Existing world metadata without a backend marker retains SmoothTerrain. An explicit player selection remains respected. No old journal or cave conversion is automatic.
+New Certified worlds select the original Terrain3D surface once when the launcher first recognizes Certified dimensions. Advanced item 2 explicitly selects runtime generation. It copies the saved preview recipe (or its default), applies the launcher seed, canonicalizes it through the shared C# generator, and freezes it in the new world. Existing runtime-generation worlds cannot convert backend or alter geography; existing metadata without a backend marker retains SmoothTerrain. No old journal or cave conversion is automatic.
 
 Terrain3D renders a moving nine-region window spanning 768 m, with curved collision and a near-to-proxy transition at 84 m. A native culling patch keeps the curved surface visible; that patch has been validated on Windows x64. Environmental integration and broader traversal validation are still in progress; see [limitations and remaining work](#limitations-and-remaining-work).
 
@@ -94,19 +95,39 @@ Terrain generation combines continental structure, coasts, erosion, mountain bel
 
 The launcher installs the selected terrain backend before gameplay initializes. In Terrain3D mode, the surface field supplies terrain editing and player collision and owns a separate edit store. Retained smooth and voxel journals remain available to their original backends.
 
+Runtime-generation Terrain3D worlds use terrain -8000 to +8000 m, sea level 0 m, an 8400 m reserved build ceiling, and a 10400 m structural wall top. They are surface-only: caves and natural overhangs are disabled. The grave-key Terrain3D panel shows the immutable policy and definition hash; change geography in the preview before creating a new world. The shared C# math authority has a GDScript wrapper for bulk 8-row strips. Production-local runtime generation is separate from the bounded asynchronous M1–M4 preview window.
+
 Terrain3D brushes use falloff over the 2 m edit lattice. Edits persist in the surface store and update both the surface and curved collision while the moving 768 m window follows the player. Broader long-distance and high-speed traversal validation remains pending.
 
-The Terrain3D tab exposes brush radius, brush height step, mesh LOD count, and movement speed. Those settings apply live and have their own per-user defaults. The isolated pilot uses the same surface controls, offers diagnostics for the loaded field, and saves edits before returning to its menu.
+Milestone 6 applies bounded asynchronous preparation to both gameplay Terrain3D backends while retaining their generation and save contracts. Private worker-pool jobs produce exact height and RGBA8 biome payloads; each immutable cache tile is 128 × 128 samples at 2 m spacing, or 256 m per side, and the cache defaults to 8 MiB. It is primed from the synchronously loaded initial window, so a compatible 256 m axial recenter can reuse six of nine tiles. Workers pack RF payloads and project curved collision geometry. Two initial mesh owners are prewarmed and publish distinct active/staged rebased world transforms. Native upload is budgeted at 1 ms and collision work at 0.75 ms by default, although an indivisible native operation can exceed either budget. The rendered surface plus committed collision/query revision stays authoritative while a replacement prepares; movement holds at supported coverage when it is late. Edits apply immediately to the authoritative field and persist through the existing save path, debounce replacement work for 100 ms, and public field queries can observe pending edits before committed collision publication.
+
+The grave-key Terrain3D controls persist workers, prefetch, cache, upload budget, collision budget, and tile size separately from world definition settings. A guarded synchronous-baseline mode exists only for the `m6-*` test fixture and cannot be enabled by normal world slots. A clean sequential 60 m/s out/back fixture at 1920 × 1080 Forward+ with VSync 1 reduced the worst measured interval from 1256 ms to 473 ms; intervals above 500 ms dropped from four to zero. Both runs had 713 support rays with no misses. Short asynchronous routes at 12 and 108 m/s also had no missing support or coverage waits. These runs do not establish 60 FPS: the 60 m/s asynchronous median was 31.343 ms, and substantial residual spikes occurred while terrain streaming was idle. See the [M6 measurements and remaining acceptance](docs/terrain3d-runtime-generation-checklist.md#6-gameplay-streaming--implemented-performance-and-human-acceptance-remain-open) for the full results and reproduction commands. Longer travel/edit routes, production-flight validation, human inspection, Mega support, and caves remain open.
+
+The Terrain3D tab exposes brush radius, brush height step, mesh LOD count, and movement speed. Gameplay also exposes dry roughness, wet roughness, and rain wetness strength. Rain gradually darkens and smooths the near terrain material; dry terrain uses a matte surface, snow does not add liquid wetness, and biome-map alpha remains the alpine weight. These appearance and traversal settings apply live and have their own per-user defaults. The isolated pilot offers diagnostics for the loaded field and saves edits before returning to its menu.
+
+New runtime-generation recipes use `ringworld_surface_coastal_v2`. Beach slope, approximate shelf width, shelf depth, and continental slope width are adjustable in the preview's grave-key menu and saved with the recipe. The default profile reaches 2 m depth at about 90 m and 6 m at about 280 m of estimated shore distance, with a 12 km shelf and a 30 km transition toward the basin. Shore distance is an approximation from the continental field, so actual transects vary. Previously frozen `ringworld_surface_reference_v1` recipes retain their exact geography and canonical identity; the new preview uses a separate `recipe_v2.tres` path. Coast changes apply when creating a new world, not when loading an existing one.
+
+Runtime terrain proxy transitions use the same triangle diagonal as the 2 m surface lattice and morph to the parent's full curved triangle position. Terrain3D suppresses surrounding proxies only while its uploaded map covers the complete handoff area. Structural wall streaming uses the nearest periodic prediction across coordinate zero, preventing an accidental full-ring mesh request and its large allocation/upload stalls. See the [terrain and cloud fix validation](docs/terrain-rendering-fixes.md) for the regression tests and remaining visual/performance acceptance.
+
+Global terrain samples replacement segments on a background worker, then constructs and installs their meshes on the main thread. Edits, cancellation, and floating-origin changes invalidate stale preparations while visible terrain remains installed. Quality changes rebuild only the affected geometry. Distant terrain still fills progressively during startup, and individual mesh commits can exceed the service budget.
+
+Runtime lattice sampling combines height and biome evaluation, avoiding duplicate procedural-model work when preparing Terrain3D tiles. Smooth proxy builds also avoid intermediate vertex-buffer copies while retaining independently owned published mesh arrays. Exact sample comparisons and all 18 proxy payload comparisons matched the original outputs; focused sampling and allocation measurements are recorded in [the optimization report](docs/atmosphere-terrain-implementation.md).
+
+The separate runtime-generation preview supports a regional overview and a playable curved patch. Select a point in the overview and choose **Explore selected patch** to walk or fly over the reference terrain. Bounded background workers sample terrain, pack RF images, and project curved collision vertices. The surface recenters in 256 m steps, reuses compatible cached samples and two native terrain windows, and keeps the current terrain and collision usable until a replacement is ready. Native region uploads and 16- or 32-cell curved collision tiles install over multiple frames. Predictive prefetch follows actual movement; missed deadlines pause traversal at supported coverage.
+
+The grave-key **Playable** tab provides worker count, prefetch distance, cache size, upload/collision budgets, collider tile size, and staged coordinate travel alongside movement/mesh controls. Its diagnostics show preparation progress, publication timings, budget overruns, cache use, and boundary waits. Preferences persist separately from world slots. Milestones 1–4 remain this Certified preview, while M5 adds the separate opt-in gameplay runtime definition and persistence path described above. Mega, caves, preview brush editing, near Terrain3D macro/cloud projector integration, GPU geography inspection, and M6 full-stack performance acceptance remain open. First-use native setup can still hitch, and per-frame budgets cannot interrupt an individual native operation. See the [implementation checklist](docs/terrain3d-runtime-generation-checklist.md) for measurements, validation, controls, and remaining acceptance work.
 
 SmoothTerrain retains volumetric excavation, construction overlays, optional procedural/designed caves, and underground recovery checkpoints. Validation can make incompatible saves read-only to preserve their data.
 
 ### Regional LOD, quality, and ring scale
 
-Retained terrain applies sparse edits and schedules terrain LOD work on workers. Terrain3D currently updates its local surface and collision synchronously in the moving window, and its surface field supplies edit snapshots to the surrounding LOD terrain.
+Retained terrain applies sparse edits and schedules terrain LOD work on workers. Both production Terrain3D backends use bounded asynchronous local-surface preparation while their surface fields supply edit snapshots to surrounding LOD terrain. The separate runtime-generation preview uses the same publication model.
 
 Regional LOD terrain, proxy tiers, analytic/global terrain, scaled far presentation, and ring structural edges are configured by [world_size_launcher.gd](scripts/world_size_launcher.gd). Desktop/laptop profiles and graphics presets expose detail choices. The optional native voxel mesher includes compatibility checks and a managed fallback.
 
 Nearby collision/detail terrain renders in ordinary local coordinates. Regional proxy terrain extends the visible landscape, while analytic/global and scaled-far presentation provide horizon continuity. The Certified Ring uses complete scaled far-ring presentation without putting the full physical ring in one normal gameplay-camera coordinate range; Mega uses its specialized local-bubble/far-view path. Static scene values are not necessarily the values used after launcher configuration.
+
+Runtime Terrain3D and its proxy tiers share the surface lattice's triangle orientation, and proxy transitions match the parent's curved triangles and underlay. The pinned Windows addon includes the matching standard-grid diagonal; the near shader uses stable small-angle curvature to align its visible surface with collision. The rendered spike fixture agrees with physics within 2.55 mm across its sampled rays. Restart Godot after updating the native addon. See the [terrain and cloud fixes](docs/terrain-rendering-fixes.md) for regression results, coast research, and remaining frame-time limitations.
 
 Certified terrain plus finite wall heightmap shadows are a coarse asynchronous CPU whole-ring prototype with stable canonical UVs and persisted controls. Visual placement remains inconclusive; water/wall receiver heights, sparse GPU tiles, and Mega support are unfinished. Local geometry and cloud shadows are separate active systems.
 
@@ -132,9 +153,13 @@ The live Water controls cover analytical and FFT detail, absorption, foam, refra
 
 SunshineClouds2 is the primary local volumetric cloud path, driven by deterministic weather and ring coordinates: wind, fronts, cumulus, cloud banks, storms, and anvils. A curved far shell and merged-mesh fallback extend cloud coverage. Distant rain curtains carry visible storm precipitation beyond the local particle field.
 
-Weather fronts share wind and lightning state with local effects. Temperature and weather drive rain or snow; terrain and construction shelter attenuate precipitation and audio. Lightning combines bolts, flashes, cloud illumination, and distance-delayed thunder. Weather audio includes light/heavy rain, wind, distant storms, and rain impacts on soil, hard surfaces, and water. Wetness accumulates and dries as a shared value, with broader material application still pending.
+Cloud reconstruction rejects blur samples that cross foreground depth boundaries, removing the reproduced bright outlines around tree leaves while keeping blur enabled. Gameplay temporal filtering also retains valid history when jitter changes which part of a cloud a ray hits, smoothing the reproduced persistent interior grain. Ordinary foliage aliasing remains a separate quality limit. See the [night rendering diagnostics](docs/night-vegetation-atmosphere-diagnostics.md) and [cloud-history investigation](docs/cloud-history-grain-fix.md).
 
-Terrain3D currently lacks macro/cloud projector and atmosphere-material integration. See [water checklist](docs/water-system-implementation-checklist.md) and [weather checklist](docs/weather-system-checklist.md).
+Weather fronts share wind and lightning state with local effects. Temperature and weather drive rain or snow; terrain and construction shelter attenuate precipitation and audio. Lightning combines bolts, flashes, cloud illumination, and distance-delayed thunder. Weather audio includes light/heavy rain, wind, distant storms, and rain impacts on soil, hard surfaces, and water. Rain wetness accumulates and dries as a shared value and now drives the gameplay Terrain3D surface material; broader material application remains pending.
+
+Gameplay cloud history uses fractional-pixel color reprojection with separate nearest depth metadata. Valid history retains the selected moving weight during continuous camera turns, without the former two-pixel cutoff or extra motion taper. Callback-paired cloud frames preserve correspondence across floating-origin recentering; invalid frame changes, offscreen samples, and foreground depth changes still reject history. Opacity is bounded before accumulation. A fixed blue-noise seed plus a changing scalar phase distributes ray-start samples over time, including when blue-noise motion is zero. Existing stationary/moving history and jitter controls remain live in the grave-key menu; the saved moving-history preference is 0.85. The scaled far viewport publishes opaque depth in physical metres directly on the GPU, allowing both the cloud march and final composition to stop at far terrain. This depth path also handles viewport resize and keeps old GPU resources alive while submitted frames finish.
+
+Terrain3D now receives the shared terrain haze model; macro/cloud projector integration remains open. See [water checklist](docs/water-system-implementation-checklist.md) and [weather checklist](docs/weather-system-checklist.md).
 
 ## Celestial lighting and shadows
 
@@ -142,13 +167,19 @@ Terrain3D currently lacks macro/cloud projector and atmosphere-material integrat
 
 Main and far presentation use AgX tonemapping. Day/night, altitude, storms, and eclipses affect atmosphere and lighting. SSAO adds contact shading; directional shadow cascades expose distance, filtering, resolution, and bias controls. Stepped sunlight updates help stabilize shadows. Projected cloud masks are active on supported materials; the coarse terrain/wall shadow prototype remains limited as described above.
 
+Local sun shadows automatically suspend during deep night while planet illumination and planet shadows remain available. The handoff uses the sun's elevation over the local shadow coverage, with separate suspend/resume thresholds to keep twilight stable. It preserves sun direction and energy for clouds and the distant daytime ring, respects the saved sun-shadow preference, and keeps sun shadows when custom nighttime direct lighting or uncertain geometry requires them. The grave-key **Shadows** tab persists the automatic handoff toggle and elevation thresholds and reports the current state. See the [night-horizon investigation](docs/night-horizon-slowdown.md).
+
 The celestial and shadow controls are available from the live drawer alongside diagnostic HUDs. Time, weather clock data, and the ring day state are retained with each world slot.
+
+The **Atmosphere** tab provides an **Atmospheric haze** switch, Natural and Cinematic presets, visibility distance, density, altitude falloff, aerosol strength, forward scattering, and sun warmth. Its status reports when haze is off or density is zero. The switch follows the world's saved haze setting and stays synchronized with the pause menu; profile controls apply live and save as user preferences. Terrain haze uses camera-relative paths through the ring's finite-width air layer, so near terrain, proxies, and the scaled far ring can share physical distances. This is an analytic distance-haze approximation; a second remote air shell across the central vacuum is excluded. Local volumetric fog and a lookup-table atmosphere renderer remain future options. See [implementation and validation](docs/atmosphere-terrain-implementation.md).
 
 ## Vegetation and grass
 
 Imported LOLIPOP trees include 30 variants, authored LODs, nearby collision, persistent asynchronous tiles, GPU culling, and CPU fallback. Forest regions place Maple, Fir, and Pine species around deterministic clearings and regional rules. Authored mesh LODs and crossed-card far representations carry the forest through distance transitions.
 
 Standing GPU grass uses deterministic placement, wind motion, player bending and recovery, GPU culling, and a CPU fallback. Optional distance LOD is implemented and defaults off. Live controls expose grass density, distance, appearance, wind, and interaction settings.
+
+Grass follows the local ring day/night lighting: the globally active sun no longer lights blades on the local night side. Ambient and nearby lights remain active. Daytime shading is checked against Godot's built-in material lighting. See the [night vegetation and atmosphere follow-up](docs/night-vegetation-atmosphere-diagnostics.md) for the fix, cloud-edge diagnostics, and optional mist investigation.
 
 References: [Biome workshop](docs/biome-workshop.md), [forest-region checklist](docs/forest-region-implementation-checklist.md), [grass checklist](docs/grass-system-implementation-checklist.md), and [Sunblocker demo](docs/sunblocker-demo.md).
 
@@ -163,6 +194,7 @@ The normal grave-key drawer exposes these tabs when their systems are present:
 | Tab | Scope |
 | --- | --- |
 | Lighting, Shadows, Clouds, Quality | Lighting, weather audio, cloud quality, cloud/shadow controls. |
+| Atmosphere | Haze enable switch and status, Natural/Cinematic presets, and persistent visibility, density, altitude, aerosol, scattering, and warmth controls. |
 | Anti-aliasing | FXAA, SMAA, TAA, MSAA, plus FSR 2 render-resolution presets. Native is default; adaptive resolution defaults off; AA resumes on leaving FSR. |
 | Motion | Player physics interpolation and maximum walkable slope. |
 | LODs, Terrain | Streaming/proxy and retained terrain controls where active backend permits them. |
@@ -178,7 +210,7 @@ The pause menu is separate from the live drawer. It can resume play, return the 
 
 Slots live at `user://worlds/slot_1` through `slot_3`; metadata is `world.json`. The standard manager defaults to a 30-second autosave and records player pose, velocity, flight state, runtime state, and celestial/weather clock data.
 
-Terrain3D uses `world_state_terrain3d_v1.json` and `surface_terrain3d_edits_v1.json`, separate from retained `world_state.json`, SmoothTerrain/construction journals, and voxel journals. Rejected surface state blocks editing and overwrites to preserve existing data.
+The original Terrain3D surface uses `world_state_terrain3d_v1.json` and `surface_terrain3d_edits_v1.json`. Runtime generation uses `world_state_surface_runtime_v1.json` and `surface_runtime_edits_v1.json`. Both remain separate from retained `world_state.json`, SmoothTerrain/construction journals, and voxel journals. Rejected surface state blocks editing and overwrites to preserve existing data.
 
 Persistent settings are grouped by system; some live controls remain session-only.
 
@@ -187,6 +219,7 @@ Persistent settings are grouped by system; some live controls remain session-onl
 | Menu flyover | Project resource in the editor; user resource in exported builds | `res://resources/menu/menu_flyover_defaults.tres` or `user://menu_flyover_defaults.tres` |
 | Clouds | Factory resource in the editor; user override in exported builds | `res://resources/clouds/gameplay_cloud_defaults.tres` or `user://gameplay_cloud_defaults.tres` |
 | Water | Loads the factory resource then the user override | `user://gameplay_water_defaults.tres` |
+| Atmosphere | Per-user haze profile and tuning | `user://atmosphere_visual_defaults.tres` |
 | Gameplay groups | Per-system overrides | `user://gameplay_{shadow,grass,vegetation,motion,anti_aliasing,render_resolution,surface_terrain}_defaults.tres` |
 | Diagnostics | Per-user telemetry settings | `user://ring_performance_telemetry.tres` |
 
@@ -201,6 +234,8 @@ Open a scene in the editor and use **F6** to run that scene independently.
 | Scene/tool | Purpose |
 | --- | --- |
 | [Terrain3DSurfacePilot.tscn](scenes/Terrain3DSurfacePilot.tscn) | Isolated Certified Terrain3D surface pilot. |
+| [TerrainGenerationPreview.tscn](scenes/TerrainGenerationPreview.tscn) | Isolated reference generator with regional height/zone/detail/slope maps, selectable 2 m detail samples, saved grave-key recipe controls, and **Explore selected patch** navigation. |
+| [TerrainGenerationPlayable.tscn](scenes/TerrainGenerationPlayable.tscn) | Curved Terrain3D walking/flying preview with bounded asynchronous preparation, reusable native windows, budgeted uploads and tiled collision, safe handoffs, coordinate travel, live recipe tuning, diagnostics, and saved performance preferences. See the [implementation checklist](docs/terrain3d-runtime-generation-checklist.md). |
 | [BiomeAuthoringPreview.tscn](scenes/BiomeAuthoringPreview.tscn) | Rule-based biome preset authoring; world assignment is separate. |
 | [ForestRegionPreview.tscn](scenes/ForestRegionPreview.tscn) | Forest-region preview/validation. |
 | [Biome Workshop plugin](addons/biome_workshop) | Active rule-based biome-preset editor; world assignment remains separate. |
@@ -233,6 +268,12 @@ dotnet build RingworldTechDemo.csproj --no-restore
 & $Godot --headless --path . --script res://tools/ring_surface_frame_test.gd
 & $Godot --headless --path . --script res://tools/ring_surface_lod_bridge_test.gd
 
+# M6 runtime gameplay streaming and persistence
+& $Godot --headless --path . --script res://tools/terrain_generation_stream_test.gd
+& $Godot --headless --path . --script res://tools/terrain3d_gameplay_stream_test.gd
+& $Godot --headless --path . --script res://tools/terrain3d_gameplay_smoke.gd
+& $Godot --headless --path . --script res://tools/terrain_generation_world_smoke.gd
+
 # GPU visibility check: run with a working Forward+ GPU, not --headless
 & $Godot --path . --script res://tools/terrain3d_ring_visibility_gpu_test.gd
 ```
@@ -242,7 +283,7 @@ Headless checks exercise configuration, data, and scene initialization. Renderin
 ## Limitations and remaining work
 
 - Terrain3D is Certified-only, surface-only, and still needs long-traversal validation.
-- Terrain3D caves, construction, full environmental edit propagation, macro/cloud projectors, and atmosphere integration remain incomplete.
+- Terrain3D caves, construction, full environmental edit propagation, and macro/cloud projectors remain incomplete.
 - Terrain3D and retained terrain stores are intentionally separate; old data is not automatically converted.
 - Mega Ring cannot use Terrain3D.
 - Whole-ring heightmap terrain/wall shadows remain a coarse CPU prototype with known unfinished receiver/GPU/Mega work.
@@ -256,6 +297,7 @@ Headless checks exercise configuration, data, and scene initialization. Renderin
 | Launch and slots | [start_menu.gd](scripts/start_menu.gd), [world_session.gd](scripts/world_session.gd), [world_size_launcher.gd](scripts/world_size_launcher.gd) |
 | Gameplay scene | [VoxelRingIntegrationTest.tscn](scenes/VoxelRingIntegrationTest.tscn) |
 | Terrain3D | [terrain3d-surface-port.md](docs/terrain3d-surface-port.md), [scripts/Terrain/Surface](scripts/Terrain/Surface) |
+| Runtime generation preview | [generation plan](docs/terrain3d-runtime-generation-plan.md), [implementation checklist](docs/terrain3d-runtime-generation-checklist.md), [scripts/Terrain/Generation](scripts/Terrain/Generation) |
 | Terrain rendering | [scripts/Voxel/LOD](scripts/Voxel/LOD), [far-ring plan](docs/far-ring-heightmap-shadow-plan.md) |
 | UI/menu | [main-menu checklist](docs/main-menu-space-checklist.md) |
 | Water/weather/grass | [water](docs/water-system-implementation-checklist.md), [weather](docs/weather-system-checklist.md), [grass](docs/grass-system-implementation-checklist.md) |

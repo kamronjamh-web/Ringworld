@@ -4,6 +4,7 @@
 
 shader_type spatial;
 render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlick_ggx,skip_vertex_transform;
+#include "res://materials/ring_atmosphere.gdshaderinc"
 
 #define SKIP_PASS 0
 #define VERTEX_PASS 1
@@ -28,7 +29,6 @@ uniform highp sampler2DArray _control_maps : repeat_disable;
 uniform highp sampler2DArray _color_maps : repeat_disable;
 
 // Set by RingTerrain3DSurface through the Terrain3D material override.
-uniform float ring_radius_meters = 5000000.0;
 uniform float ring_anchor_height = 0.0;
 uniform float ring_cull_margin_meters = 1.0;
 uniform mat3 ring_frame_basis = mat3(1.0);
@@ -46,7 +46,16 @@ uniform sampler2D biome_desert_albedo : source_color, filter_linear_mipmap_aniso
 uniform sampler2D biome_forest_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D biome_tundra_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+// Weather is supplied separately from the packed biome weights. The COLOR map's
+// alpha channel remains the alpine biome weight.
+uniform float surface_wetness : hint_range(0.0, 1.0) = 0.0;
+uniform float surface_wetness_strength : hint_range(0.0, 1.0) = 1.0;
+uniform float surface_dry_roughness : hint_range(0.65, 0.98) = 0.92;
+uniform float surface_wet_roughness : hint_range(0.10, 0.75) = 0.35;
 uniform bool flat_terrain_normals = false;
+uniform vec3 ring_atmosphere_camera_world = vec3(0.0);
+uniform vec3 ring_atmosphere_center_world = vec3(0.0);
+uniform float ring_atmosphere_day_factor = 1.0;
 varying float v_vertex_xz_dist;
 varying vec3 v_vertex;
 
@@ -71,6 +80,17 @@ ivec3 get_index_coord(const vec2 uv, const int search) {
 vec3 curve_ring(vec3 planar, float h) {
     float theta = planar.x / ring_radius_meters;
     float radius_at_height = ring_radius_meters - (h + ring_anchor_height);
+    // Terrain3D's bounded window is normally below |theta| = 0.0002. Some GPU
+    // sin implementations lose enough precision near zero to visibly move the
+    // local X coordinate. Through |theta| < .01, these series omit less than
+    // 1e-10 m at the certified 5,000 km radius.
+    if (abs(theta) < .01) {
+        float theta2 = theta * theta;
+        float sin_theta = theta * (1.0 - theta2 * (1.0 / 6.0 - theta2 / 120.0));
+        float one_minus_cos = .5 * theta2 * (1.0 - theta2 * (1.0 / 12.0 - theta2 / 360.0));
+        return vec3(radius_at_height * sin_theta,
+            h + radius_at_height * one_minus_cos, planar.z);
+    }
     return vec3(radius_at_height * sin(theta),
         h + 2.0 * radius_at_height * sin(theta * .5) * sin(theta * .5), planar.z);
 }
@@ -158,6 +178,19 @@ void fragment() {
         surface += sample_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend) * packed.a;
         ground = mix(dirt, surface / total, ground_facing);
     }
-    ALBEDO = mix(ground, vec3(.78, .82, .86), snow);
-    ROUGHNESS = mix(.9, .55, slope);
+    float ground_facing = smoothstep(.45, .78, planar_normal.y);
+    float wet = clamp(surface_wetness * surface_wetness_strength, 0.0, 1.0) * ground_facing * (1.0 - snow);
+    // Keep exposed rock subtly smoother while preserving a matte dry surface.
+    float dry_roughness = surface_dry_roughness - slope * .08;
+    vec3 dry_albedo = ground * (1.0 - wet * .15);
+    ALBEDO = mix(dry_albedo, vec3(.78, .82, .86), snow);
+	vec4 atmosphere = sample_ring_atmosphere(
+		ring_atmosphere_camera_world,
+		v_vertex,
+		ring_atmosphere_center_world,
+		ringworld_effective_solar_day(ring_atmosphere_day_factor));
+	ALBEDO *= 1.0 - atmosphere.a;
+	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+    ROUGHNESS = mix(dry_roughness, surface_wet_roughness, wet);
+    SPECULAR = mix(.20, .50, wet);
 }

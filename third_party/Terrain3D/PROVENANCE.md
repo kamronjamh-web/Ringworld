@@ -11,18 +11,20 @@
 
 The upstream v1.0.2-stable release states support for Godot 4.4--4.6+. This project uses Godot 4.7.2, so compatibility is verified by the native API smoke test in `tools/terrain3d_addon_smoke.gd` rather than claimed by the upstream release notes.
 
-## Windows-only Ringworld culling patch
+## Windows-only Ringworld patches
 
-`patches/all_axis_culling.patch` applies to Terrain3D source commit `0077405b52e353c5e5dc3a094e7ede49833ba6fe` from tag `v1.0.2-stable`; its pinned `godot-cpp` submodule is `6388e26dd8a42071f65f764a3ef3d9523dda3d6e`.
+`patches/all_axis_culling.patch` and `patches/standard_grid_diagonal.patch` apply to Terrain3D source commit `0077405b52e353c5e5dc3a094e7ede49833ba6fe` from tag `v1.0.2-stable`; its pinned `godot-cpp` submodule is `6388e26dd8a42071f65f764a3ef3d9523dda3d6e`.
 
-The patch keeps Terrain3D's existing height-range Y AABB update and applies that same bounded `cull_margin` as `instance_set_extra_visibility_margin` to every clipmap instance. Ringworld's terrain vertex shader curves the local terrain frame, so the additional bounded instance margin prevents CPU culling on rotated/negative-Z sections of the ring.
+`all_axis_culling.patch` keeps Terrain3D's existing height-range Y AABB update and applies that same bounded `cull_margin` as `instance_set_extra_visibility_margin` to every clipmap instance. Ringworld's terrain vertex shader curves the local terrain frame, so the additional bounded instance margin prevents CPU culling on rotated/negative-Z sections of the ring.
+
+`standard_grid_diagonal.patch` adds an opt-in `standard_grid_diagonal_flipped` Terrain3D property. RingTerrain3DSurface enables it before tree entry, so every standard grid uses the ring surface's canonical-positive lattice diagonal, including LOD0 tiles, standard edges, and standard trims. The local Terrain3D frame sees that diagonal as negative because `AcrossDirection` is `-1`; this is the same orientation after the coordinate transform. Terrain3D's nonstandard alternating grids retain their upstream parity and index order.
 
 Windows x64 binaries are rebuilt with LLVM-MinGW `20260922` UCRT x64 (`llvm-mingw-20260922-ucrt-x86_64.zip`, SHA-256 `e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666`) and SCons `4.10.1`, both staged only below `.godot`. `build_windows.ps1` records the reproducible commands and pin checks. Patched Windows binaries use distinct `libterrain.ringworld.windows.*.dll` names; the official release DLLs remain in place. Linux, macOS, Android, iOS, and web binaries remain the unmodified upstream release pending their own rebuilds.
 
 Built Windows x64 artifact hashes:
 
-- `libterrain.ringworld.windows.debug.x86_64.dll`: `692c3fc43e42f4ef96922c8ba8425a0d3901aecd027f66f86ab86e7703fb0662`
-- `libterrain.ringworld.windows.release.x86_64.dll`: `d339729fa7d03602aa8fe2fcb223f4c185d1a528725cb99db3ccd6a11e63e267`
+- `libterrain.ringworld.windows.debug.x86_64.dll`: `3494f0ebdd8face266b8e62257da6b547ed6dc2d749059a0ee6092d33f160ffb`
+- `libterrain.ringworld.windows.release.x86_64.dll`: `5d588368cccd98c4f48723f5934987894a0593be097f92e4b55926d86316675c`
 
 These identify the vendored artifacts; rebuilds can differ because the PE linker records a build timestamp.
 
@@ -41,3 +43,5 @@ python -m pip install --target .godot/terrain3d-native-tools/python scons==4.10.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./third_party/Terrain3D/build_windows.ps1 -Target template_debug
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./third_party/Terrain3D/build_windows.ps1 -Target template_release
 ```
+
+Pass `-BuildOnly` to compile and hash an artifact without replacing the checked-in Ringworld DLL.

@@ -403,7 +403,7 @@ public partial class RingVolumetricCloudLayer : Node3D
     private long _lastHandoffAroundCell = long.MinValue;
     private int _lastHandoffAcrossCell = int.MinValue;
     private ulong _lastHandoffEditVersion = ulong.MaxValue;
-    private int _cachedHandoffSurfaceHeight;
+    private float _cachedHandoffSurfaceHeight;
 
     private readonly record struct CloudShowcaseRequest(
         CloudFormationProfile Profile,
@@ -686,10 +686,10 @@ public partial class RingVolumetricCloudLayer : Node3D
             || acrossCell != _lastHandoffAcrossCell
             || editVersion != _lastHandoffEditVersion)
         {
-            _cachedHandoffSurfaceHeight = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-                _grid.TerrainSampler,
-                around,
-                across);
+			RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+			_cachedHandoffSurfaceHeight = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+				? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+				: edits.GetSurfaceHeight(_grid.TerrainSampler, around, across);
             _lastHandoffAroundCell = aroundCell;
             _lastHandoffAcrossCell = acrossCell;
             _lastHandoffEditVersion = editVersion;

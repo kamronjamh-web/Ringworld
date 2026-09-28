@@ -74,6 +74,9 @@ signal external_texture_retirement_requested(generation_id: int)
 # Capture-only diagnostic. Disables temporal color history while preserving the
 # normal lit compositor result; this is intentionally off in production.
 @export var diagnostic_disable_temporal_history : bool = false
+# Capture-only diagnostic. Adds CPU readback usage to accumulation textures;
+# keep disabled so normal gameplay allocations and rendering stay unchanged.
+@export var diagnostic_temporal_readback : bool = false
 # Opt-in main RenderingDevice timestamp scopes. The bridge mirrors the global profiler state.
 @export var gpu_timestamp_diagnostics_enabled : bool = false
 @export var gpu_timestamp_begin_marker : String = ""
@@ -92,6 +95,9 @@ var last_menu_bulk_delta := Vector2.ZERO
 var last_menu_history_static : bool = false
 var last_menu_history_discontinuity : bool = false
 @export var diagnostic_menu_history_weights : bool = false
+# Published by RingScaledFarViewport's POST_OPAQUE compositor.  This is an
+# R32F physical ray distance in metres; null means main scene depth only.
+@export var far_opaque_depth_texture : Texture2D
 @export_range(0, 20) var blur_power : float = 0.1
 @export_range(0, 6) var blur_quality : float = 1.0
 
@@ -196,6 +202,7 @@ var accumulation_textures : Array[RID] = []
 var cloud_backdrop_texture_wrappers : Array[Texture2DRD] = []
 var cloud_backdrop_published_texture_wrappers : Array[Texture2DRD] = []
 var resized_depth : RID = RID()
+var far_opaque_depth_fallback : RID = RID()
 var last_size : Vector2i = Vector2i(0, 0)
 var color_images : Array[RID] = []
 var blit_screen_images : Array[RID] = []
@@ -241,6 +248,8 @@ var ignore_accumilation : bool = false
 var first_run : bool = true
 var previous_callback_camera_transform: Transform3D
 var previous_callback_camera_projection: Projection
+var gameplay_cloud_frame_snapshot := {}
+var previous_callback_gameplay_cloud_frame := {}
 var previous_callback_menu_around_precise : float = 0.0
 var previous_callback_bulk_wind := Vector2.ZERO
 var previous_callback_detail_wind := Vector3.ZERO
@@ -252,8 +261,100 @@ var msaa_mode := RenderingServer.ViewportMSAA.VIEWPORT_MSAA_DISABLED
 var diagnostic_last_callback_target := RID()
 var diagnostic_last_callback_size := Vector2i.ZERO
 var diagnostic_last_callback_projection_y := NAN
+# Read-only temporal-history observability. These snapshots intentionally stay
+# on the compositor object: querying them neither touches RD resources nor
+# changes the accumulation path.
+var temporal_history_explicit_refresh_request_count := 0
+var temporal_history_accumulation_rebuild_count := 0
+var temporal_history_last_rebuild_reason := "none"
+var temporal_history_render_target_change_count := 0
+var temporal_history_zero_packed_decay_callback_count := 0
+var temporal_history_last_requested_decay := 0.0
+var temporal_history_last_packed_decay := 0.0
+var temporal_history_last_render_target_id := 0
+var temporal_history_last_internal_size := Vector2i.ZERO
+var temporal_history_last_raster_size := Vector2i.ZERO
+var temporal_history_last_callback_source_reset := false
+var temporal_history_explicit_refresh_pending := false
+
+func get_temporal_history_diagnostics() -> Dictionary:
+	return {
+		"callback_serial": render_callback_serial,
+		"explicit_refresh_request_count": temporal_history_explicit_refresh_request_count,
+		"accumulation_resource_rebuild_count": temporal_history_accumulation_rebuild_count,
+		"last_accumulation_rebuild_reason": temporal_history_last_rebuild_reason,
+		"render_target_change_count": temporal_history_render_target_change_count,
+		"zero_packed_history_callback_count": temporal_history_zero_packed_decay_callback_count,
+		"last_requested_decay": temporal_history_last_requested_decay,
+		"last_packed_decay": temporal_history_last_packed_decay,
+		"last_render_target_id": temporal_history_last_render_target_id,
+		"last_internal_size": temporal_history_last_internal_size,
+		"last_raster_size": temporal_history_last_raster_size,
+		"ping_pong_selector_is_a": accumulation_is_a,
+		"source_reset_since_last_callback": temporal_history_last_callback_source_reset,
+		"explicit_refresh_pending": temporal_history_explicit_refresh_pending,
+	}
+
+# Main-thread bridge publication. Replace the dictionary reference so one
+# compositor callback observes one immutable frame snapshot.
+func set_gameplay_cloud_frame(frame: Transform3D, around: float, across: float, radius: float) -> void:
+	gameplay_cloud_frame_snapshot = {"frame": frame, "around": around, "across": across, "radius": radius}
+
+static func _gameplay_frame_is_finite(frame: Transform3D) -> bool:
+	for value in [frame.basis.x, frame.basis.y, frame.basis.z, frame.origin]:
+		if not is_finite(value.x) or not is_finite(value.y) or not is_finite(value.z):
+			return false
+	return true
+
+# Express the previous callback camera in the current presentation coordinates.
+# Canonical subtraction stays in doubles; only the small relative arc enters a
+# Transform3D. This preserves history across floating-origin moves without
+# adding another transform to the shader's existing uniform buffer.
+static func gameplay_frame_remap(current: Dictionary, previous: Dictionary,
+		previous_camera: Transform3D, jump_limit: float) -> Dictionary:
+	var has_contract := not current.is_empty() or not previous.is_empty()
+	var result := {"has_contract": has_contract, "valid": false, "mapped_camera": previous_camera}
+	if current.is_empty() or previous.is_empty():
+		return result
+	var radius := float(current.get("radius", NAN))
+	var old_radius := float(previous.get("radius", NAN))
+	var around := float(current.get("around", NAN))
+	var old_around := float(previous.get("around", NAN))
+	var across := float(current.get("across", NAN))
+	var old_across := float(previous.get("across", NAN))
+	if not is_finite(radius) or radius <= 0.0 or radius != old_radius \
+			or not is_finite(around) or not is_finite(old_around) \
+			or not is_finite(across) or not is_finite(old_across):
+		return result
+	var circumference := TAU * radius
+	var delta := fposmod(around - old_around + circumference * .5, circumference) - circumference * .5
+	var across_delta := across - old_across
+	if absf(delta) > jump_limit or absf(across_delta) > jump_limit:
+		return result
+	var frame: Transform3D = current.get("frame", Transform3D.IDENTITY)
+	var old_frame: Transform3D = previous.get("frame", Transform3D.IDENTITY)
+	if not _gameplay_frame_is_finite(frame) or not _gameplay_frame_is_finite(old_frame):
+		return result
+	var determinant := frame.basis.determinant()
+	var old_determinant := old_frame.basis.determinant()
+	if not is_finite(determinant) or not is_finite(old_determinant) \
+			or absf(determinant) <= .000001 or absf(old_determinant) <= .000001:
+		return result
+	var theta := delta / radius
+	var sine := sin(theta)
+	var cosine := cos(theta)
+	var arc := Transform3D(
+		Basis(Vector3(cosine, sine, 0), Vector3(-sine, cosine, 0), Vector3(0, 0, 1)),
+		Vector3(radius * sine, 2.0 * radius * pow(sin(theta * .5), 2.0), across_delta))
+	var candidate := (old_frame * arc * frame.affine_inverse()).affine_inverse() * previous_camera
+	if _gameplay_frame_is_finite(candidate):
+		result.valid = true
+		result.mapped_camera = candidate
+	return result
 
 func refresh_compute():
+	temporal_history_explicit_refresh_request_count += 1
+	temporal_history_explicit_refresh_pending = true
 	# Publication is a contract with scene materials, not merely an RD handle.
 	# Stop handing out the old wrappers immediately; their RIDs remain alive in
 	# the delayed-retirement generation until submitted draws have completed.
@@ -263,6 +364,8 @@ func refresh_compute():
 	last_size = Vector2i.ZERO
 
 func update_mask(newMask : RID):
+	temporal_history_explicit_refresh_request_count += 1
+	temporal_history_explicit_refresh_pending = true
 	invalidate_gpu_cloud_shadow_publication()
 	invalidate_cloud_backdrop_texture_publication()
 	maskDrawnRid = newMask
@@ -274,9 +377,9 @@ func update_mask(newMask : RID):
 func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: Vector3,
 		around: Vector3, across: Vector3, up: Vector3,
 		canonical_center: Vector2, ring_radius: float, radius: float,
-                sun_direction: Vector3, floor: float, ceiling: float,
-                vertical_samples: int, extinction: float,
-                reset_history: bool = false) -> bool:
+				sun_direction: Vector3, floor: float, ceiling: float,
+				vertical_samples: int, extinction: float,
+				reset_history: bool = false) -> bool:
 	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
 		cloud_shadow_last_error = "Invalid cloud shadow cascade index."
 		return false
@@ -298,8 +401,8 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 		"sun_direction": sun_direction.normalized(),
 		"floor": floor,
 		"ceiling": ceiling,
-                "vertical_samples": vertical_samples,
-                "extinction": maxf(extinction, 0.0),
+				"vertical_samples": vertical_samples,
+				"extinction": maxf(extinction, 0.0),
 		"reset_history": reset_history,
 	}
 	if reset_history:
@@ -552,6 +655,7 @@ func _retire_current_generation():
 			display_pipeline, display_shader, display_vertex_array, display_vertex_buffer,
 			nearest_sampler, linear_sampler, linear_sampler_no_repeat, light_data_buffer,
 			point_sample_data_buffer, resized_depth, cloud_shadow_pipeline, cloud_shadow_shader]
+			+ [far_opaque_depth_fallback]
 			+ accumulation_textures.duplicate() + blit_screen_images.duplicate()
 			+ cloud_shadow_param_buffers.duplicate() + cloud_shadow_textures.duplicate()
 	})
@@ -574,6 +678,7 @@ func _retire_current_generation():
 	display_vertex_array = RID(); display_vertex_buffer = RID()
 	nearest_sampler = RID(); linear_sampler = RID(); linear_sampler_no_repeat = RID()
 	light_data_buffer = RID(); point_sample_data_buffer = RID(); resized_depth = RID()
+	far_opaque_depth_fallback = RID()
 	cloud_shadow_pipeline = RID(); cloud_shadow_shader = RID()
 	accumulation_textures.clear(); blit_screen_images.clear()
 	if requires_external_texture_ack:
@@ -692,6 +797,9 @@ func clear_compute(preserve_general_data_buffers: bool = false, retire_generatio
 		if resized_depth.is_valid():
 			rd.free_rid(resized_depth)
 		resized_depth = RID()
+		if far_opaque_depth_fallback.is_valid():
+			rd.free_rid(far_opaque_depth_fallback)
+		far_opaque_depth_fallback = RID()
 		
 		if accumulation_textures.size() > 0:
 			for item in accumulation_textures:
@@ -946,6 +1054,10 @@ func _render_callback(effect_callback_type, render_data):
 					#resscale = 8
 			
 			var new_size = size / resscale
+			temporal_history_last_internal_size = size
+			temporal_history_last_raster_size = new_size
+			temporal_history_last_callback_source_reset = temporal_history_explicit_refresh_pending
+			temporal_history_explicit_refresh_pending = false
 			var view_count = buffers.get_view_count()
 			var rendersceneData : RenderSceneData = render_data.get_render_scene_data();
 			# Rebuilt ping-pong textures have no valid temporal history, even when
@@ -956,6 +1068,22 @@ func _render_callback(effect_callback_type, render_data):
 			
 			if size != last_size or uniform_sets == null or uniform_sets.size() != view_count * 4 or color_images.size() == 0 or color_images[0] != buffers.get_color_layer(0) or blit_screen_images.size() == 0 or msaa_mode != last_msaa_mode:
 				accumulation_resources_rebuilt = true
+				previous_callback_gameplay_cloud_frame = {}
+				temporal_history_accumulation_rebuild_count += 1
+				if temporal_history_last_callback_source_reset:
+					temporal_history_last_rebuild_reason = "explicit_refresh"
+				elif size != last_size:
+					temporal_history_last_rebuild_reason = "size"
+				elif uniform_sets == null:
+					temporal_history_last_rebuild_reason = "uniform_sets"
+				elif uniform_sets.size() != view_count * 4:
+					temporal_history_last_rebuild_reason = "view_count"
+				elif color_images.size() == 0 or color_images[0] != buffers.get_color_layer(0):
+					temporal_history_last_rebuild_reason = "color_attachment"
+				elif blit_screen_images.size() == 0:
+					temporal_history_last_rebuild_reason = "blit"
+				else:
+					temporal_history_last_rebuild_reason = "msaa"
 				initialize_compute()
 				initialize_raster_pipelines(buffers.get_color_layer(0, is_msaa_on), buffers.get_depth_layer(0, is_msaa_on))
 
@@ -980,6 +1108,17 @@ func _render_callback(effect_callback_type, render_data):
 					general_data_uniform_sets.append([])
 				general_data_buffer = general_data_buffers[0] # fixed slot used by cloud shadows
 
+				# A valid zero-distance texture keeps the optional far-depth sampler
+				# bound before the far compositor has produced its first frame.
+				var far_depth_format := RDTextureFormat.new()
+				far_depth_format.format = RenderingDevice.DATA_FORMAT_R32_SFLOAT
+				far_depth_format.width = 1; far_depth_format.height = 1
+				far_depth_format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+				far_opaque_depth_fallback = rd.texture_create(far_depth_format, RDTextureView.new(), [PackedByteArray([0, 0, 0, 0])])
+				var far_depth_rid := far_opaque_depth_fallback
+				if far_opaque_depth_texture != null and is_instance_valid(far_opaque_depth_texture):
+					var candidate := RenderingServer.texture_get_rd_texture(far_opaque_depth_texture.get_rid())
+					if candidate.is_valid(): far_depth_rid = candidate
 				for view in range(view_count):
 					color_images.append(buffers.get_color_layer(view, false))
 
@@ -997,6 +1136,8 @@ func _render_callback(effect_callback_type, render_data):
 					base_colorformat.format = RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT
 					base_colorformat.width = new_size.x
 					base_colorformat.height = new_size.y
+					if diagnostic_temporal_readback:
+						base_colorformat.usage_bits |= RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 					
 					accumulation_textures.append(rd.texture_create(base_colorformat, RDTextureView.new(), [blankImageData]))
 					accumulation_textures.append(rd.texture_create(base_colorformat, RDTextureView.new(), [blankImageData]))
@@ -1169,6 +1310,12 @@ func _render_callback(effect_callback_type, render_data):
 					camera_data_uniform.binding = 17
 					camera_data_uniform.add_id(cameraData)
 					uniforms_array.append(camera_data_uniform)
+					var far_depth_uniform = RDUniform.new()
+					far_depth_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					far_depth_uniform.binding = 18
+					far_depth_uniform.add_id(nearest_sampler)
+					far_depth_uniform.add_id(far_depth_rid)
+					uniforms_array.append(far_depth_uniform)
 					
 					var compute_uniform_set := rd.uniform_set_create(uniforms_array, shader, 0)
 					uniform_sets.append(compute_uniform_set)
@@ -1240,6 +1387,12 @@ func _render_callback(effect_callback_type, render_data):
 					postpass_camera_data_uniform.binding = 8
 					postpass_camera_data_uniform.add_id(cameraData)
 					postpass_uniforms_array.append(postpass_camera_data_uniform)
+					var postpass_far_depth_uniform = RDUniform.new()
+					postpass_far_depth_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					postpass_far_depth_uniform.binding = 9
+					postpass_far_depth_uniform.add_id(nearest_sampler)
+					postpass_far_depth_uniform.add_id(far_depth_rid)
+					postpass_uniforms_array.append(postpass_far_depth_uniform)
 					
 					var postpass_uniform_set := rd.uniform_set_create(postpass_uniforms_array, postpass_shader, 0)
 					uniform_sets.append(postpass_uniform_set)
@@ -1293,6 +1446,7 @@ func _render_callback(effect_callback_type, render_data):
 			var viewProj : Projection = rendersceneData.get_cam_projection();
 			
 			var rendertarget: RID = buffers.get_render_target()
+			temporal_history_last_render_target_id = rendertarget.get_id()
 			if diagnostic_raw_density_matte and (rendertarget != diagnostic_last_callback_target \
 					or size != diagnostic_last_callback_size \
 					or not is_equal_approx(viewProj.y.y, diagnostic_last_callback_projection_y)):
@@ -1308,6 +1462,8 @@ func _render_callback(effect_callback_type, render_data):
 				diagnostic_last_callback_size = size
 				diagnostic_last_callback_projection_y = viewProj.y.y
 			if accumulation_resources_rebuilt or rendertarget != last_render_target:
+				if rendertarget != last_render_target:
+					temporal_history_render_target_change_count += 1
 				last_render_target = rendertarget
 				ignore_accumilation = true
 			else:
@@ -1417,6 +1573,7 @@ func retrieve_position_queries(data : PackedByteArray):
 			#self.effect_callback_type = CompositorEffect.EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
 
 func update_matrices(camera_tr, view_proj, new_size: Vector2i):
+	var current_gameplay_frame: Dictionary = gameplay_cloud_frame_snapshot
 	if general_data.size() != GENERAL_DATA_BUFFER_BYTES:
 		general_data.resize(GENERAL_DATA_BUFFER_BYTES)
 	
@@ -1607,22 +1764,41 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	# The menu path samples once per actual compositor callback. dither_speed is
 	# expressed in slices per second, avoiding a 60 Hz integer alias;
 	# zero still retains callback-driven temporal sampling.
-	var menu_sample_phase := 0.0
-	if menu_temporal_sampling:
-		var reversed := 0
-		var callback_slice := render_callback_serial % 64
-		for bit_index in 6:
-			reversed = (reversed << 1) | ((callback_slice >> bit_index) & 1)
-		menu_sample_phase = (float(reversed) + 0.5) / 64.0
+	var reversed := 0
+	var callback_slice := render_callback_serial % 64
+	for bit_index in 6:
+		reversed = (reversed << 1) | ((callback_slice >> bit_index) & 1)
+	var callback_sample_phase := (float(reversed) + 0.5) / 64.0
+	var menu_sample_phase := callback_sample_phase if menu_temporal_sampling else 0.0
 	last_menu_sample_phase = menu_sample_phase
 	var menu_dither_time := fposmod(menu_sample_phase + fposmod(menu_animation_seconds_precise * dither_speed / 64.0, 1.0), 1.0)
-	general_data.encode_float(idx, menu_dither_time if menu_temporal_sampling else current_time); idx += 4
+	# Menu retains its paired bit-reversal sequence. Gameplay uses a callback-
+	# driven scalar rotation plus the optional driver phase. Its compute shader
+	# adds this phase to a fixed spatial seed, distributing ray offsets over time
+	# even when dither_speed is zero.
+	var gameplay_dither_time := fposmod(float(render_callback_serial) * 0.6180339887498949 + current_time, 1.0)
+	general_data.encode_float(idx, menu_dither_time if menu_temporal_sampling else gameplay_dither_time); idx += 4
 	general_data.encode_float(idx, clouds_coverage); idx += 4
 	general_data.encode_float(idx, clouds_density); idx += 4
 	general_data.encode_float(idx, clouds_detail_power); idx += 4
 	
 	general_data.encode_float(idx, lighting_density); idx += 4
-	general_data.encode_float(idx, accumulation_decay if !ignore_accumilation and !menu_frame_discontinuity else 0.0); idx += 4
+	# Gameplay rebase remap is CPU-only and uses the paired bridge snapshots.
+	# Menu retains its existing callback contract unchanged.
+	var gameplay_remap_valid := false
+	var mapped_previous_camera := previous_callback_camera_transform
+	var gameplay_frame_contract_supplied := not current_gameplay_frame.is_empty() or not previous_callback_gameplay_cloud_frame.is_empty()
+	if not menu_temporal_sampling and not first_run:
+		var remap_result := gameplay_frame_remap(current_gameplay_frame, previous_callback_gameplay_cloud_frame, previous_callback_camera_transform, maxf(4000.0, 2.0 * max_step_distance))
+		gameplay_frame_contract_supplied = bool(remap_result.has_contract)
+		gameplay_remap_valid = bool(remap_result.valid)
+		mapped_previous_camera = remap_result.mapped_camera as Transform3D
+	var packed_accumulation_decay := accumulation_decay if !ignore_accumilation and !menu_frame_discontinuity and (menu_temporal_sampling or first_run or not gameplay_frame_contract_supplied or gameplay_remap_valid) else 0.0
+	temporal_history_last_requested_decay = accumulation_decay
+	temporal_history_last_packed_decay = packed_accumulation_decay
+	if packed_accumulation_decay == 0.0:
+		temporal_history_zero_packed_decay_callback_count += 1
+	general_data.encode_float(idx, packed_accumulation_decay); idx += 4
 	if (accumulation_is_a):
 		general_data.encode_float(idx, 1.0); idx += 4
 	else:
@@ -1674,7 +1850,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	# First-frame history maps to the current callback camera. Later frames use
 	# the callback values saved after the preceding upload, not SceneData's
 	# private previous-frame UBO payload.
-	var previous_transform: Transform3D = camera_tr if first_run else previous_callback_camera_transform
+	var previous_transform: Transform3D = camera_tr if first_run else mapped_previous_camera
 	var previous_projection: Projection = view_proj if first_run else previous_callback_camera_projection
 	var previous_view: Transform3D = previous_transform.affine_inverse()
 	var previous_view_columns = [previous_view.basis.x, previous_view.basis.y, previous_view.basis.z, previous_view.origin]
@@ -1737,6 +1913,8 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	var callback_data_buffer: RID = general_data_buffers[general_data_ring_index]
 	rd.buffer_update(callback_data_buffer, 0, general_data.size(), general_data)
 	rd.buffer_update(general_data_buffer, 0, general_data.size(), general_data)
+	if not menu_temporal_sampling:
+		previous_callback_gameplay_cloud_frame = current_gameplay_frame
 
 
 func update_lights():

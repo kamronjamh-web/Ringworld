@@ -1369,6 +1369,8 @@ public partial class VoxelChunkGridManager : Node3D
 
 	public bool IsSolidCanonicalVoxel(long aroundVoxel, int verticalVoxel, int acrossVoxel)
 	{
+		if (TryGetRuntimeSurfaceBlock(aroundVoxel, verticalVoxel, acrossVoxel, out BlockType runtimeBlock))
+			return runtimeBlock != BlockType.Air;
 		if (IsStructuralBedrockVoxel(verticalVoxel, acrossVoxel))
 		{
 			return true;
@@ -1412,6 +1414,7 @@ public partial class VoxelChunkGridManager : Node3D
 	/// It deliberately falls back to the deterministic baseline when a chunk is not streamed.</summary>
 	public BlockType GetCanonicalBlockType(long aroundVoxel, int verticalVoxel, int acrossVoxel)
 	{
+		if (TryGetRuntimeSurfaceBlock(aroundVoxel, verticalVoxel, acrossVoxel, out BlockType runtimeBlock)) return runtimeBlock;
 		if (IsStructuralBedrockVoxel(verticalVoxel, acrossVoxel)) return BlockType.Bedrock;
 		int maximumY = IsAcrossVoxelInStructuralHull(acrossVoxel) ? GetStructuralWallTopGlobalY() : MaxBuildGlobalY;
 		if (verticalVoxel < MinExcavationGlobalY || verticalVoxel > maximumY) return BlockType.Air;
@@ -1421,6 +1424,21 @@ public partial class VoxelChunkGridManager : Node3D
 		if (_chunks.TryGetValue(canonicalChunk, out VoxelChunkNode? chunk)
 			&& chunk.TryGetRetainedBlock(localVoxel, out BlockType retainedBlock)) return retainedBlock;
 		return SampleBlockAcrossGrid(canonicalChunk, localVoxel.X, localVoxel.Y, localVoxel.Z);
+	}
+
+	/// <summary>Surface-runtime worlds have no voxel-edit or protected-roof authority. Their exact presentation surface is the natural solid boundary.</summary>
+	private bool TryGetRuntimeSurfaceBlock(long aroundVoxel, int verticalVoxel, int acrossVoxel, out BlockType block)
+	{
+		block = BlockType.Air;
+		if (_terrainSampler?.UsesRuntimeSurfaceGeneration != true) return false;
+		if (IsStructuralBedrockVoxel(verticalVoxel, acrossVoxel)) { block = BlockType.Bedrock; return true; }
+		if (acrossVoxel < 0 || acrossVoxel >= RingAcrossWidthMeters || verticalVoxel > 8400) return true;
+		if (verticalVoxel <= -8000) { block = BlockType.Bedrock; return true; }
+		RingLodSurfaceEditSnapshot edits = CaptureLodSurfaceEditSnapshot();
+		float surface = edits.GetPresentationSurfaceHeight(_terrainSampler, aroundVoxel, acrossVoxel);
+		if (verticalVoxel > surface) return true;
+		block = verticalVoxel >= surface - _terrainSampler.SoilDepthVoxels ? BlockType.Soil : BlockType.Rock;
+		return true;
 	}
 
 	/// <summary>Authoritative top-of-column query for rain/shelter. Baseline plus every retained non-air override.</summary>

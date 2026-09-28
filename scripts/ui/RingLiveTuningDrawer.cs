@@ -46,8 +46,11 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     [Export] public NodePath SunblockerDemoPath { get; set; } = new NodePath();
     /// <summary>Optional authoring-preview root. When set, F6 exposes only the biome preset controls.</summary>
     [Export] public NodePath BiomeAuthoringPreviewPath { get; set; } = new NodePath();
+    /// <summary>Optional isolated reference-generation preview. It has its own versioned recipe save.</summary>
+    [Export] public NodePath GenerationPreviewPath { get; set; } = new NodePath();
     /// <summary>Optional isolated Certified Terrain3D surface prototype root.</summary>
     [Export] public NodePath SurfaceTerrainPilotPath { get; set; } = new NodePath();
+    [Export] public string SurfaceTerrainDefaultsPathOverride { get; set; } = "";
     [Export(PropertyHint.Range, "280,620,10")] public float DrawerWidth { get; set; } = 420.0f;
 
     private VoxelChunkGridManager? _grid;
@@ -76,6 +79,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private readonly System.Collections.Generic.HashSet<string> _cloudControlKeys = new();
     private global::RingworldTechDemo.SunblockerDemoController? _sunblockerDemo;
     private Node? _biomeAuthoringPreview;
+    private Node? _generationPreview;
     private Node? _surfaceTerrainPilot;
     private Node? _surfaceTerrainGameplay;
 
@@ -83,6 +87,13 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     {
         ProcessMode = ProcessModeEnum.Always;
         _biomeAuthoringPreview = GetNodeOrNull<Node>(BiomeAuthoringPreviewPath);
+        _generationPreview = GetNodeOrNull<Node>(GenerationPreviewPath);
+        if (_generationPreview != null)
+        {
+            BuildDrawer();
+            SetOpen(false, immediate: true);
+            return;
+        }
         if (_biomeAuthoringPreview != null)
         {
             BuildDrawer();
@@ -92,13 +103,16 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         _surfaceTerrainPilot = GetNodeOrNull<Node>(SurfaceTerrainPilotPath);
         if (_surfaceTerrainPilot != null)
         {
+            if (!string.IsNullOrWhiteSpace(SurfaceTerrainDefaultsPathOverride))
+                _surfaceTerrainDefaultsPathOverride = SurfaceTerrainDefaultsPathOverride;
             InitializeSurfaceTerrainTuning();
+            if (_surfaceTerrainPilot.HasMethod("get_recipe_snapshot")) _generationPreview = _surfaceTerrainPilot;
             BuildDrawer();
             SetOpen(false, immediate: true);
             return;
         }
         _sunblockerDemo = GetNodeOrNull<global::RingworldTechDemo.SunblockerDemoController>(SunblockerDemoPath);
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _surfaceTerrainPilot != null)
+        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             BuildDrawer();
             SetOpen(false, immediate: true);
@@ -125,6 +139,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeGrassTuning();
         InitializeVegetationTuning();
         InitializeShadowTuning();
+        InitializeAtmosphereTuning();
         if (_surfaceTerrainGameplay != null)
             InitializeSurfaceTerrainTuning();
         // The bridge owns the shared, startup-initialized sparse overrides.
@@ -152,7 +167,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     public override void _ExitTree()
     {
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _surfaceTerrainPilot != null)
+        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             FlushSurfaceTerrainDefaults();
             GetTree().Root.SetMeta(MouseOwnershipMeta, false);
@@ -165,6 +180,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushGrassDefaults();
         _vegetationDefaults?.Save();
         FlushShadowDefaults();
+        FlushAtmosphereDefaults();
         FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
         if (_open)
@@ -176,8 +192,10 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         if (_surfaceTerrainPilot != null)
         {
             ProcessSurfaceTerrainTuning(delta);
+            if (_generationPreview != null) ProcessGenerationPreviewTuning(delta);
             return;
         }
+        if (_generationPreview != null) { ProcessGenerationPreviewTuning(delta); return; }
         if (_sunblockerDemo != null || _biomeAuthoringPreview != null) return;
         ProcessSurfaceTerrainPrototypeLaunch(delta);
         if (_open)
@@ -187,6 +205,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         }
         ProcessWaterTuning(delta);
         ProcessShadowTuning(delta);
+        ProcessAtmosphereTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
         if (_surfaceTerrainGameplay != null)
@@ -259,6 +278,16 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             TuningMenuUi.ConfigureNumericScrolling(_drawer);
             return;
         }
+        if (_generationPreview != null)
+        {
+            BuildGenerationPreviewTab(tabs);
+            if (_surfaceTerrainPilot == null)
+            {
+                DisableKeyboardFocus(_drawer);
+                TuningMenuUi.ConfigureNumericScrolling(_drawer);
+                return;
+            }
+        }
         if (_surfaceTerrainPilot != null)
         {
             BuildSurfaceTerrainTab(tabs);
@@ -267,6 +296,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         BuildLightingTab(tabs);
+        BuildAtmosphereTab(tabs);
         BuildShadowsTab(tabs);
         BuildCloudsTab(tabs);
         BuildCloudQualityTab(tabs);
@@ -826,7 +856,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private void SetOpen(bool open, bool immediate)
     {
         if (_drawer == null) return;
-        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _surfaceTerrainPilot != null)
+        if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             _open = open;
             GetTree().Root.SetMeta(MouseOwnershipMeta, open);
@@ -838,8 +868,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             _drawer.Visible = open;
             return;
         }
-        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RefreshSurfaceTerrainStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); }
+        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

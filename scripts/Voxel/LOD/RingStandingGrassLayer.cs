@@ -224,6 +224,9 @@ public partial class RingStandingGrassLayer : Node3D
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass update (inclusive)");
         _ = d;
+        // Lighting must update even while streaming remains stationary: the
+        // canonical frame and primary sun change independently of tile work.
+        UpdateGrassLightingMaterials();
         if (_grid?.TerrainSampler is RingTerrainSampler s && _explorer != null)
         {
             RingLodSurfaceEditSnapshot edits = _smooth?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
@@ -239,7 +242,11 @@ public partial class RingStandingGrassLayer : Node3D
         bool dense = BladesPerSquareMeter > 0 && float.IsFinite(BladesPerSquareMeter);
         _mesh = dense ? _denseMesh ??= CreateDenseBladeMesh() : _legacyMesh ??= CreateBladeMesh();
         if (GrassBladesPerSource > 1) _clumpMesh ??= RingGrassMeshFactory.CreateClump();
-        _material ??= CreateGrassMaterial(0);
+        if (_material == null)
+        {
+            _material = CreateGrassMaterial(0);
+            _grassLightingStateValid = false;
+        }
         if (EnableDistanceLod)
         {
             _intermediateMesh ??= RingGrassMeshFactory.CreateIntermediate();
@@ -249,8 +256,13 @@ public partial class RingStandingGrassLayer : Node3D
                 _intermediateClumpMesh ??= RingGrassMeshFactory.CreateIntermediateClump();
                 _farClumpMesh ??= RingGrassMeshFactory.CreateFarClump();
             }
-            _intermediateMaterial ??= CreateGrassMaterial(1);
+            if (_intermediateMaterial == null)
+            {
+                _intermediateMaterial = CreateGrassMaterial(1);
+                _grassLightingStateValid = false;
+            }
         }
+        UpdateGrassLightingMaterials();
     }
     internal void StepForTests(RingTerrainSampler s, RingLodSurfaceEditSnapshot e, RingCanonicalPosition f, RingLodGeometrySnapshot g, float altitudeAboveTerrain = 0, float speed = 0, SmoothTerrainVolumetricDensitySnapshot? field = null, RingGrassExclusionSnapshot? exclusions = null) => StepStreaming(s, e, f, g, altitudeAboveTerrain, speed, field, exclusions);
     /// <summary>Test-only presentation refresh that cannot plan or schedule workers.</summary>

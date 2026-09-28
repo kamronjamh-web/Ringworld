@@ -29,6 +29,7 @@ public partial class RingTerrainProxySector
         Color[] colors = { color, color, color, color };
         var data = new SectorData(coordinate, 1, 1, Vector3.Zero,
             new Vector3[4], new Vector3[4], colors, uvs, new Vector2[4],
+            new Vector3[4], false,
             new[] { 0, 1, 2, 0, 2, 3 }, new[] { 0, 1, 2, 0, 2, 3 }, null, null, false, null);
         InstallFftWaterDemandMetadata(data);
     }

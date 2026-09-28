@@ -22,4 +22,9 @@ public readonly record struct TerrainSample(
         => HasSurfaceWater && terrainHeight < WaterSurfaceHeight
             ? WaterSurfaceHeight
             : terrainHeight;
+
+    public float ResolveDisplayedHeight(float terrainHeight)
+        => HasSurfaceWater && terrainHeight < WaterSurfaceHeight
+            ? WaterSurfaceHeight
+            : terrainHeight;
 }

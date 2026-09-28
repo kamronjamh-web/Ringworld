@@ -5,7 +5,7 @@ extends SceneTree
 func _init() -> void:
 	var helper := FileAccess.get_file_as_string("res://materials/ring_water_fft.gdshaderinc")
 	var proxy := FileAccess.get_file_as_string("res://materials/ring_ocean_proxy.gdshader")
-	var sector := FileAccess.get_file_as_string("res://scripts/Voxel/LOD/RingTerrainProxySector.cs")
+	var sector := FileAccess.get_file_as_string("res://scripts/Voxel/LOD/RingTerrainProxySector.cs").replace("\r\n", "\n")
 	var passed := helper.contains("return distant_factors") \
 		and helper.contains("vec2 ring_fft_shoreline_factors(vec2 canonical, vec2 distant_factors)") \
 		and helper.contains("fft_shoreline_field_mode != 2") \

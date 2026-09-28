@@ -555,6 +555,20 @@ public partial class RingSunshineCloudBridge : Node
         return _clouds.Call("get_cloud_backdrop_texture", 0).AsGodotObject() as Texture2D;
     }
 
+    /// <summary>Publishes the scaled far viewport's GPU-only physical-depth texture.
+    /// The Sunshine resource owns the RD binding and falls back to main depth until
+    /// the far compositor has produced its first frame.</summary>
+    public void SetFarOpaqueDepthTexture(Texture2D? texture)
+    {
+        if (_clouds == null) return;
+        Texture2D? previous = _clouds.Get("far_opaque_depth_texture").AsGodotObject() as Texture2D;
+        if (ReferenceEquals(previous, texture)) return;
+        _clouds.Set("far_opaque_depth_texture", texture is null ? default(Variant) : (Variant)texture);
+        // Descriptor sets capture Texture2DRD RIDs.  Rebuild only when the
+        // far producer publishes a replacement generation, never per frame.
+        _clouds.Call("refresh_compute");
+    }
+
     public void SetLocalDayFactor(float dayFactor)
     {
         float clampedDayFactor = Mathf.Clamp(dayFactor, 0.0f, 1.0f);
@@ -773,28 +787,31 @@ public partial class RingSunshineCloudBridge : Node
         Vector3 around = (geometry.CanonicalToWorld(viewer.AroundMeters + 10.0, 0.0, viewer.AcrossMeters) - origin).Normalized();
         Vector3 up = (geometry.CanonicalToWorld(viewer.AroundMeters, 10.0, viewer.AcrossMeters) - origin).Normalized();
         Vector3 across = (geometry.CanonicalToWorld(viewer.AroundMeters, 0.0, viewer.AcrossMeters + 10.0) - origin).Normalized();
-        float radius = (float)(_grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
+        double preciseRadius = _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau;
+        float radius = (float)preciseRadius;
 
         Vector4 frameAround = new(around.X, around.Y, around.Z, (float)viewer.AroundMeters);
         Vector4 frameUp = new(up.X, up.Y, up.Z, radius);
         Vector4 frameAcross = new(across.X, across.Y, across.Z, (float)viewer.AcrossMeters);
         float ringWidth = (float)_grid.RingAcrossWidthMeters;
-        if (!_lastCloudFrameOrigin.IsEqualApprox(origin))
+        // Canonical .w values can be hundreds of metres apart while still
+        // comparing approximately equal. These are callback-frame inputs.
+        if (_lastCloudFrameOrigin != origin)
         {
             _clouds.Set("cloud_frame_origin", origin);
             _lastCloudFrameOrigin = origin;
         }
-        if (!_lastCloudFrameAround.IsEqualApprox(frameAround))
+        if (_lastCloudFrameAround != frameAround)
         {
             _clouds.Set("cloud_frame_around", frameAround);
             _lastCloudFrameAround = frameAround;
         }
-        if (!_lastCloudFrameUp.IsEqualApprox(frameUp))
+        if (_lastCloudFrameUp != frameUp)
         {
             _clouds.Set("cloud_frame_up", frameUp);
             _lastCloudFrameUp = frameUp;
         }
-        if (!_lastCloudFrameAcross.IsEqualApprox(frameAcross))
+        if (_lastCloudFrameAcross != frameAcross)
         {
             _clouds.Set("cloud_frame_across", frameAcross);
             _lastCloudFrameAcross = frameAcross;
@@ -804,6 +821,9 @@ public partial class RingSunshineCloudBridge : Node
             _clouds.Set("ring_width_meters", ringWidth);
             _lastCloudFrameRingWidth = ringWidth;
         }
+        // This is deliberately a CPU-only, callback-paired contract. The
+        // compositor snapshots it once when it uploads its existing UBO.
+        _clouds.Call("set_gameplay_cloud_frame", new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
     }
 
     public void ApplyLiveTuning(
@@ -1879,7 +1899,9 @@ public partial class RingSunshineCloudBridge : Node
                     Mathf.RoundToInt((float)targetAcross),
                     0,
                     Mathf.RoundToInt(_grid.RingAcrossWidthMeters));
-                int surface = surfaceSnapshot.GetSurfaceHeight(_grid.TerrainSampler, aroundVoxel, acrossVoxel);
+				float surface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || surfaceSnapshot.UsesFloatSurface
+					? surfaceSnapshot.GetPresentationSurfaceHeight(_grid.TerrainSampler, aroundVoxel, acrossVoxel)
+					: surfaceSnapshot.GetSurfaceHeight(_grid.TerrainSampler, aroundVoxel, acrossVoxel);
                 Vector3 ground = geometry.CanonicalToWorld(targetAround, surface, targetAcross);
                 Vector3 up = (geometry.CanonicalToWorld(targetAround, surface + 10.0, targetAcross) - ground).Normalized();
                 float sunVertical = Mathf.Max(0.10f, toSun.Dot(up));
@@ -2189,7 +2211,7 @@ public partial class RingSunshineCloudBridge : Node
         _lastVisible = visible;
     }
 
-    private int ResolveSurfaceHeight(in RingCanonicalPosition position)
+	private float ResolveSurfaceHeight(in RingCanonicalPosition position)
     {
         if (_grid?.TerrainSampler == null) return 0;
         long around = (long)Math.Round(position.AroundMeters);
@@ -2197,6 +2219,9 @@ public partial class RingSunshineCloudBridge : Node
             (int)Math.Round(position.AcrossMeters),
             0,
             (int)Math.Round(_grid.RingAcrossWidthMeters));
-        return _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(_grid.TerrainSampler, around, across);
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+		return _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+			? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+			: edits.GetSurfaceHeight(_grid.TerrainSampler, around, across);
     }
 }

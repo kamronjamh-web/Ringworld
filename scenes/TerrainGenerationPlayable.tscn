@@ -1,0 +1,57 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/Terrain/Generation/terrain_generation_playable.gd" id="1_playable"]
+[ext_resource type="Script" path="res://scripts/Terrain/Surface/RingTerrain3DSurface.cs" id="2_surface"]
+[ext_resource type="Script" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="3_drawer"]
+
+[sub_resource type="Environment" id="Environment_playable"]
+background_mode = 1
+background_color = Color(0.12, 0.2, 0.36, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.55, 0.65, 0.8, 1)
+ambient_light_energy = 0.65
+
+[sub_resource type="CapsuleShape3D" id="Capsule_playable"]
+radius = 0.4
+height = 1.8
+
+[node name="TerrainGenerationPlayable" type="Node3D"]
+script = ExtResource("1_playable")
+
+[node name="RingTerrain3DSurface" type="Node3D" parent="."]
+script = ExtResource("2_surface")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_playable")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-52, -28, 0)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="Player" type="CharacterBody3D" parent="."]
+collision_mask = 1
+
+[node name="Collision" type="CollisionShape3D" parent="Player"]
+shape = SubResource("Capsule_playable")
+
+[node name="Head" type="Node3D" parent="Player"]
+position = Vector3(0, 0.65, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Player/Head"]
+current = true
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="Status" type="Label" parent="CanvasLayer"]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 1100.0
+offset_bottom = 72.0
+text = "Preparing Terrain3D generation preview..."
+autowrap_mode = 2
+
+[node name="RingLiveTuningDrawer" type="CanvasLayer" parent="."]
+script = ExtResource("3_drawer")
+SurfaceTerrainPilotPath = NodePath("..")
+SurfaceTerrainDefaultsPathOverride = "user://terrain_generation_preview/playable_preferences.tres"

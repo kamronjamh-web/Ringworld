@@ -49,6 +49,7 @@ public partial class RingScaledFarViewport : Node
 		long AnchorAround,
 		int AnchorAcross,
 		long TransitGeneration,
+		ulong EditVersion,
 		FarRegionalBandData Lod9,
 		FarRegionalBandData Lod10,
 		FarRegionalBandData Lod11);
@@ -235,6 +236,9 @@ public partial class RingScaledFarViewport : Node
 	private ShaderMaterial? _scaledCloudVolumeMaterial;
 	private FogVolume? _scaledCloudVolume;
 	private Godot.Environment? _farEnvironment;
+	// GPU-only physical-distance export of the opaque whole-ring depth.  Sunshine
+	// consumes this before its raymarch; never read this texture on the CPU.
+	private CompositorEffect? _farDepthCapture;
 	private TextureRect? _backdrop;
 	private TextureRect? _regionalBackdrop;
 	private ShaderMaterial? _backdropCloudCompositeMaterial;
@@ -260,11 +264,13 @@ public partial class RingScaledFarViewport : Node
 	private int _lastFallbackAcrossCell = int.MinValue;
 	private ulong _lastFallbackEditVersion = ulong.MaxValue;
 	private ulong _lastManualWeatherRevision = ulong.MaxValue;
-	private int _cachedFallbackSurfaceHeight;
+	private float _cachedFallbackSurfaceHeight;
+	private ulong _lastSeededSurfaceEditVersion = ulong.MaxValue;
 	private long _lastFarRegionalAnchorAround = long.MinValue;
 	private int _lastFarRegionalAnchorAcross = int.MinValue;
 	private long _requestedFarRegionalAnchorAround = long.MinValue;
 	private int _requestedFarRegionalAnchorAcross = int.MinValue;
+	private ulong _lastFarRegionalEditVersion = ulong.MaxValue;
 	private Task<FarRegionalBuildResult>? _farRegionalBuildTask;
 	private FarRegionalBuildResult? _farRegionalUpload;
 	private int _farRegionalUploadBand;
@@ -412,6 +418,7 @@ public partial class RingScaledFarViewport : Node
 		CreateBackdrop();
 		ConfigureMainBackground();
 		SyncCameraAndLighting();
+		_sunshineClouds?.SetFarOpaqueDepthTexture(GetOpaquePhysicalDepthTexture());
 		UpdateViewportSize(force: true);
 		UpdateCloudTransmittanceMask(0.0);
 		GD.Print($"Scaled far viewport ready: scale=1:{1.0f / CoordinateScale:0}, radius={_radiusMeters * CoordinateScale:0.0}, cameraFar={_farCamera?.Far:0.0}, seed={_grid.TerrainSampler.Seed}, localAltitude={CurrentTerrainFallbackAltitudeMeters:0}m, localCutout={CurrentTerrainFallbackCutoutMeters / 1000.0f:0.0}km");
@@ -419,11 +426,13 @@ public partial class RingScaledFarViewport : Node
 
 	public override void _Process(double delta)
 	{
+		RefreshSeededSurfaceForEdits();
 		if (_captureUnderside) AimSourceCameraAtRingUnderside();
 		else if (_captureDirectView) AimSourceCameraAtOppositeRing();
 		BuildFarRegionalTerrain(force: false, delta);
 		UpdateFarWeatherAtlas();
 		SyncCameraAndLighting();
+		_sunshineClouds?.SetFarOpaqueDepthTexture(GetOpaquePhysicalDepthTexture());
 		UpdateFarStormLightningMaterials();
 		UpdateViewportSize(force: false);
 		UpdateCloudTransmittanceMask(delta);
@@ -431,8 +440,21 @@ public partial class RingScaledFarViewport : Node
 			CaptureDirectViewAndQuit();
 	}
 
+	private void RefreshSeededSurfaceForEdits()
+	{
+		if (_farViewport == null || _grid == null) return;
+		ulong revision = _grid.LodSurfaceEditVersion;
+		if (revision == _lastSeededSurfaceEditVersion) return;
+		RemoveFarViewportChild("ScaledSeededRingSurface");
+		RemoveFarViewportChild("ScaledWaterSurface");
+		BuildSeededSurface();
+	}
+
 	public override void _ExitTree()
 	{
+		// Detach the compositor-owned far texture before its producer is disposed.
+		if (_sunshineClouds != null && GodotObject.IsInstanceValid(_sunshineClouds))
+			_sunshineClouds.SetFarOpaqueDepthTexture(null);
 		_farWeatherAtlasBuild?.Image.Dispose();
 		_farWeatherAtlasBuild = null;
 		base._ExitTree();
@@ -825,7 +847,9 @@ public partial class RingScaledFarViewport : Node
 		environment.VolumetricFogAnisotropy = 0.55f;
 		environment.VolumetricFogTemporalReprojectionEnabled = false;
 		_farEnvironment = environment;
-		_farViewport.AddChild(new WorldEnvironment { Name = "FarWorldEnvironment", Environment = environment });
+		var farWorldEnvironment = new WorldEnvironment { Name = "FarWorldEnvironment", Environment = environment };
+		_farViewport.AddChild(farWorldEnvironment);
+		InstallFarDepthCapture(farWorldEnvironment);
 
 		_farSun = new DirectionalLight3D
 		{
@@ -845,6 +869,23 @@ public partial class RingScaledFarViewport : Node
 		};
 		_farViewport.AddChild(_farPlanetLight);
 	}
+
+	private void InstallFarDepthCapture(WorldEnvironment worldEnvironment)
+	{
+		GDScript? script = GD.Load<GDScript>("res://scripts/render/RingFarDepthCapture.gd");
+		_farDepthCapture = script?.New().AsGodotObject() as CompositorEffect;
+		if (_farDepthCapture == null)
+		{
+			GD.PushWarning("Scaled far depth capture unavailable; Sunshine will use main depth only.");
+			return;
+		}
+		_farDepthCapture.Set("coordinate_scale", CoordinateScale);
+		worldEnvironment.Compositor ??= new Compositor();
+		worldEnvironment.Compositor.CompositorEffects = new Godot.Collections.Array<CompositorEffect> { _farDepthCapture };
+	}
+
+	public Texture2D? GetOpaquePhysicalDepthTexture()
+		=> _farDepthCapture?.Call("get_depth_texture").AsGodotObject() as Texture2D;
 
 	private void CreateRegionalFarViewport()
 	{
@@ -1083,6 +1124,7 @@ public partial class RingScaledFarViewport : Node
 	private void BuildSeededSurface()
 	{
 		if (_farViewport == null || _grid?.TerrainSampler is not RingTerrainSampler sampler) return;
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
 		int aroundCount = Mathf.Max(128, AroundSegments);
 		int acrossCount = Mathf.Max(4, AcrossSegments);
 		int row = aroundCount + 1;
@@ -1098,18 +1140,26 @@ public partial class RingScaledFarViewport : Node
 		{
 			double around = x * aroundStep;
 			double across = z * acrossStep;
-			TerrainSample sample = sampler.GetTerrainSample((long)Math.Round(around), (int)Math.Round(across));
+			long sampleAround = (long)Math.Round(around);
+			int sampleAcross = (int)Math.Round(across);
+			bool usesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration;
+			TerrainSample sample = usesPresentationSurface
+				? edits.GetPresentationTerrainSample(sampler, sampleAround, sampleAcross)
+				: sampler.GetTerrainSample(sampleAround, sampleAcross);
 			int index = z * row + x;
-			int terrainHeight = sample.SurfaceHeight;
-			int waterHeight = sample.ResolveDisplayedHeight(terrainHeight);
+			float terrainHeight = usesPresentationSurface
+				? edits.GetPresentationSurfaceHeight(sampler, sampleAround, sampleAcross)
+				: sample.SurfaceHeight;
+			float waterHeight = sample.ResolveDisplayedHeight(terrainHeight);
 			terrainVertices[index] = ScaledPoint(around, terrainHeight - 150.0, across);
-			terrainColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, terrainHeight, sampler, LowTerrainColor, HighTerrainColor);
+			terrainColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(terrainHeight), sampler, LowTerrainColor, HighTerrainColor);
 			waterVertices[index] = ScaledPoint(around, waterHeight - 150.0, across);
 			waterColors[index] = RingWaterModel.EncodeWaterKind(
-				RingTerrainVisuals.ResolveMacroTextureColor(sample, waterHeight, sampler, LowTerrainColor, HighTerrainColor),
+				RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(waterHeight), sampler, LowTerrainColor, HighTerrainColor),
 				sample.WaterKind);
 			displayedWater[index] = sample.HasSurfaceWater && terrainHeight < sample.WaterSurfaceHeight;
 		}
+		_lastSeededSurfaceEditVersion = edits.Version;
 
 		var terrainSurface = new SurfaceTool();
 		var waterSurface = new SurfaceTool();
@@ -1178,6 +1228,11 @@ public partial class RingScaledFarViewport : Node
 			return;
 
 		CompleteFarRegionalBuild();
+		if (_farRegionalUpload != null && _farRegionalUpload.EditVersion != _grid.LodSurfaceEditVersion)
+		{
+			_farRegionalUpload = null;
+			_farRegionalUploadBand = 0;
+		}
 		if (_farRegionalUpload != null)
 		{
 			if (_farRegionalUploadBand == 0)
@@ -1196,6 +1251,7 @@ public partial class RingScaledFarViewport : Node
 				ApplyFarRegionalBand(ref _farLod11Terrain, ref _farLod11Material, _farRegionalUpload.Lod11);
 				_lastFarRegionalAnchorAround = _farRegionalUpload.AnchorAround;
 				_lastFarRegionalAnchorAcross = _farRegionalUpload.AnchorAcross;
+				_lastFarRegionalEditVersion = _farRegionalUpload.EditVersion;
 				GD.Print(
 					$"Scaled far regional LOD refreshed: around={_lastFarRegionalAnchorAround}, "
 					+ $"across={_lastFarRegionalAnchorAcross}, async=true.");
@@ -1223,9 +1279,11 @@ public partial class RingScaledFarViewport : Node
 		anchorAcross = Mathf.Clamp(anchorAcross, 0, Mathf.Max(1, RingWidthMeters));
 		if (_farRegionalBuildTask != null)
 			return;
+		ulong editVersion = _grid.LodSurfaceEditVersion;
 		if (!force
 			&& anchorAround == _lastFarRegionalAnchorAround
-			&& anchorAcross == _lastFarRegionalAnchorAcross)
+			&& anchorAcross == _lastFarRegionalAnchorAcross
+			&& editVersion == _lastFarRegionalEditVersion)
 			return;
 		if (!force
 			&& anchorAround == _requestedFarRegionalAnchorAround
@@ -1234,6 +1292,7 @@ public partial class RingScaledFarViewport : Node
 
 		_requestedFarRegionalAnchorAround = anchorAround;
 		_requestedFarRegionalAnchorAcross = anchorAcross;
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
 		RingTerrainSampler workerSampler = sampler.CreateIndependentCopy();
 		double circumference = _circumferenceMeters;
 		double radius = _radiusMeters;
@@ -1248,14 +1307,14 @@ public partial class RingScaledFarViewport : Node
 			{
 				FarRegionalBandData lod9 = BuildFarRegionalBandData(
 					"ScaledFarLod9", workerSampler, anchorAround, anchorAcross,
-					125000.0, 625000.0, 2048.0, circumference, radius, width, scale, low, high);
+					125000.0, 625000.0, 2048.0, circumference, radius, width, scale, low, high, edits);
 				FarRegionalBandData lod10 = BuildFarRegionalBandData(
 					"ScaledFarLod10", workerSampler, anchorAround, anchorAcross,
-					625000.0, 2250000.0, 8192.0, circumference, radius, width, scale, low, high);
+					625000.0, 2250000.0, 8192.0, circumference, radius, width, scale, low, high, edits);
 				FarRegionalBandData lod11 = BuildFarRegionalBandData(
 					"ScaledFarLod11", workerSampler, anchorAround, anchorAcross,
-					2250000.0, 7960000.0, 32768.0, circumference, radius, width, scale, low, high);
-				return new FarRegionalBuildResult(anchorAround, anchorAcross, transitGeneration, lod9, lod10, lod11);
+					2250000.0, 7960000.0, 32768.0, circumference, radius, width, scale, low, high, edits);
+				return new FarRegionalBuildResult(anchorAround, anchorAcross, transitGeneration, edits.Version, lod9, lod10, lod11);
 			}
 			finally
 			{
@@ -1275,7 +1334,8 @@ public partial class RingScaledFarViewport : Node
 			return;
 		}
 		if (completed.IsCanceled) return;
-		if (completed.Result.TransitGeneration != _regionalTransitGeneration)
+		if (completed.Result.TransitGeneration != _regionalTransitGeneration
+			|| _grid?.LodSurfaceEditVersion != completed.Result.EditVersion)
 			return;
 		_farRegionalUpload = completed.Result;
 		_farRegionalUploadBand = 0;
@@ -1316,7 +1376,8 @@ public partial class RingScaledFarViewport : Node
 		int width,
 		float scale,
 		Color low,
-		Color high)
+		Color high,
+		RingLodSurfaceEditSnapshot edits)
 	{
 		int radialSteps = Mathf.Clamp(Mathf.CeilToInt((float)((outerRadius - innerRadius) / sampleSpacing)), 8, 256);
 		const int angularSteps = 96;
@@ -1336,14 +1397,20 @@ public partial class RingScaledFarViewport : Node
 			double angle = Math.Tau * angular / angularSteps;
 			long around = anchorAround + (long)Math.Round(Math.Cos(angle) * distance);
 			int across = Mathf.Clamp(anchorAcross + Mathf.RoundToInt((float)(Math.Sin(angle) * distance)), 0, width);
-			TerrainSample sample = sampler.GetTerrainSample(around, across);
-			int displayedHeight = sample.ResolveDisplayedHeight(sample.SurfaceHeight);
+			bool usesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration;
+			TerrainSample sample = usesPresentationSurface
+				? edits.GetPresentationTerrainSample(sampler, around, across)
+				: sampler.GetTerrainSample(around, across);
+			float terrainHeight = usesPresentationSurface
+				? edits.GetPresentationSurfaceHeight(sampler, around, across)
+				: sample.SurfaceHeight;
+			float displayedHeight = sample.ResolveDisplayedHeight(terrainHeight);
 			int index = radial * (angularSteps + 1) + angular;
 			vertices[index] = ScaledPointRelativeForBuild(
 				around, displayedHeight - 150.0, across,
 				anchorAround, 0.0, anchorAcross,
 				circumference, radius, width, scale);
-			colors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, displayedHeight, sampler, low, high);
+			colors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(displayedHeight), sampler, low, high);
 			double unwrappedAround = canonicalAnchorAround + (around - anchorAround);
 			macroShadowUvs[index] = new Vector2(
 				(float)(unwrappedAround / circumference),
@@ -1405,6 +1472,7 @@ public partial class RingScaledFarViewport : Node
 		mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
 		instance.Mesh = mesh;
 		material = (ShaderMaterial)_terrainMaterial!.Duplicate();
+		RingAtmosphereModel.ConfigureMaterial(material, _radiusMeters, CoordinateScale);
 		global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(material, CoordinateScale);
 		// This band receives a fresh material after an asynchronous rebuild.
 		// Force the cached regional camera/ring uniforms onto that new instance
@@ -1988,6 +2056,10 @@ public partial class RingScaledFarViewport : Node
 		if (!IsUsableBasis(worldToCanonical)) worldToCanonical = Basis.Identity;
 
 		Transform3D sourceTransform = _sourceCamera.GetCameraTransform();
+		// The explorer canonical position tracks feet. The render camera can be
+		// offset by head bob, vehicle mounts, or a free camera, so derive the
+		// ray origin from the actual renderer eye.
+		RingCanonicalPosition eyeCanonical = _grid.WorldToCanonicalRingPosition64(sourceTransform.Origin);
 		float coordinateScale = IsFinite(CoordinateScale) && CoordinateScale > 0.0f
 			? CoordinateScale
 			: 0.001f;
@@ -2078,8 +2150,11 @@ public partial class RingScaledFarViewport : Node
 			if (!Mathf.IsEqualApprox(_farPlanetLight.LightSpecular, farPlanetSpecular)) _farPlanetLight.LightSpecular = farPlanetSpecular;
 		}
 		SyncSharedMaterialUniforms(scaledPosition, sunDirection);
+		ApplyAtmosphereRayFrame(eyeCanonical, scaledPosition, sunDirection,
+			_terrainMaterial, _waterMaterial, _hullMaterial, _cavityShellMaterial, _cloudMaterial);
 		SyncRegionalCameraAndLighting(
 			canonical,
+			eyeCanonical,
 			worldToCanonical,
 			sourceTransform,
 			farCameraBasis,
@@ -2093,6 +2168,7 @@ public partial class RingScaledFarViewport : Node
 
 	private void SyncRegionalCameraAndLighting(
 		RingCanonicalPosition canonical,
+		RingCanonicalPosition eyeCanonical,
 		Basis worldToCanonical,
 		Transform3D sourceTransform,
 		Basis cameraBasis,
@@ -2163,6 +2239,30 @@ public partial class RingScaledFarViewport : Node
 			if (!Mathf.IsEqualApprox(_regionalFarPlanetLight.LightSpecular, regionalPlanetSpecular)) _regionalFarPlanetLight.LightSpecular = regionalPlanetSpecular;
 		}
 		SyncRegionalMaterialUniforms(regionalPosition, sunDirection);
+		ApplyAtmosphereRayFrame(eyeCanonical, regionalPosition, sunDirection,
+			_farLod9Material, _farLod10Material, _farLod11Material);
+	}
+
+	private void ApplyAtmosphereRayFrame(
+		in RingCanonicalPosition canonical,
+		Vector3 rendererCameraPosition,
+		Vector3 toSun,
+		params ShaderMaterial?[] materials)
+	{
+		if (_radiusMeters <= 0.0 || RingWidthMeters <= 0) return;
+		double angle = canonical.AroundMeters / _radiusMeters;
+		Vector3 outward = new((float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle));
+		var frame = new RingAtmosphereRayFrame(
+			true,
+			rendererCameraPosition,
+			(float)canonical.VerticalMeters,
+			outward,
+			Vector3.Up,
+			(float)canonical.AcrossMeters,
+			(float)((double)RingWidthMeters - canonical.AcrossMeters),
+			Mathf.Max(0.000001f, CoordinateScale),
+			toSun);
+		foreach (ShaderMaterial? material in materials) frame.Apply(material);
 	}
 
 	private void SyncSharedMaterialUniforms(Vector3 cameraPosition, Vector3 sunDirection)
@@ -2361,10 +2461,10 @@ public partial class RingScaledFarViewport : Node
 			|| acrossCell != _lastFallbackAcrossCell
 			|| editVersion != _lastFallbackEditVersion)
 		{
-			_cachedFallbackSurfaceHeight = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-				_grid.TerrainSampler,
-				around,
-				across);
+			RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+			_cachedFallbackSurfaceHeight = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+				? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+				: edits.GetSurfaceHeight(_grid.TerrainSampler, around, across);
 			_lastFallbackAroundCell = aroundCell;
 			_lastFallbackAcrossCell = acrossCell;
 			_lastFallbackEditVersion = editVersion;

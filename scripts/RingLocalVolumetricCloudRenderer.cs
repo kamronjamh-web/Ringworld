@@ -1,6 +1,7 @@
 using System;
 using Godot;
 using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -80,7 +81,7 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
     private long _surfaceAroundCell = long.MinValue;
     private int _surfaceAcrossCell = int.MinValue;
     private ulong _surfaceEditVersion = ulong.MaxValue;
-    private int _cachedSurfaceHeight;
+	private float _cachedSurfaceHeight;
     private RingTerrainColumnCoordinate _lastAnchorCell = new(long.MinValue, int.MinValue);
     private Vector3 _lastGridOrigin = new(float.PositiveInfinity, 0.0f, 0.0f);
     private bool _lastOwnsClouds;
@@ -439,7 +440,7 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
     private float ResolveViewerAltitudeAboveTerrain(in RingCanonicalPosition position)
         => Mathf.Max(0.0f, (float)(position.VerticalMeters - ResolveSurfaceHeight(position)));
 
-    private int ResolveSurfaceHeight(in RingCanonicalPosition position)
+	private float ResolveSurfaceHeight(in RingCanonicalPosition position)
     {
         if (_grid?.TerrainSampler == null) return 0;
         const int cacheCellMeters = 256;
@@ -455,10 +456,10 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
             || acrossCell != _surfaceAcrossCell
             || editVersion != _surfaceEditVersion)
         {
-            _cachedSurfaceHeight = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-                _grid.TerrainSampler,
-                around,
-                across);
+			RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+			_cachedSurfaceHeight = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+				? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+				: edits.GetSurfaceHeight(_grid.TerrainSampler, around, across);
             _surfaceAroundCell = aroundCell;
             _surfaceAcrossCell = acrossCell;
             _surfaceEditVersion = editVersion;

@@ -1067,9 +1067,11 @@ public partial class RingBiomeDecorationLayer
 				if (across < 4 || across > request.RingWidth - 4) continue;
 				long canonicalAround = Math.Clamp((long)Math.Round(around), 0L, maximumCanonicalAround);
 				int candidateAcross = (int)Math.Round(across);
-				TerrainSample sample = sampler.GetTerrainSample(canonicalAround, candidateAcross);
-				if (sample.HasSurfaceWater || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
-				float surface = request.Edits.GetSurfaceHeight(sampler, canonicalAround, candidateAcross);
+				TerrainSample sample = request.Edits.GetPresentationTerrainSample(sampler, canonicalAround, candidateAcross);
+				float surface = sampler.UsesRuntimeSurfaceGeneration
+					? PresentationSurfaceHeight(request.Edits, sampler, around, across)
+					: PresentationSurfaceHeight(request.Edits, sampler, canonicalAround, candidateAcross);
+				if (IsSurfaceWater(request.Edits, sampler, sample, surface) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
 				if (request.UseRegionalForest && !HasStableForestRootSupport(request.Edits, sampler, canonicalAround, candidateAcross)) continue;
 				if (!IsSlopeSuitable(default, sampler, request.Edits, canonicalAround, candidateAcross, surface, request.MaximumSlope)) continue;
 				ForestRegionSample regional = request.UseRegionalForest
@@ -1150,10 +1152,10 @@ public partial class RingBiomeDecorationLayer
 		long around = Math.Clamp((long)Math.Round((cellX + .06 + Hash01(cellX, cellZ, request.Seed, salt) * .88) * request.AroundCellMeters), 0L, maximumCanonicalAround);
 		int across = (int)Math.Round((cellZ + .06 + Hash01(cellX, cellZ, request.Seed, salt + 1) * .88) * request.AcrossCellMeters);
 		if (across < 4 || across > request.RingWidth - 4) return cache[id] = default;
-		TerrainSample terrain = request.Sampler.GetTerrainSample(around, across);
-		if (terrain.HasSurfaceWater || (terrain.Biome != TerrainBiomeId.Forest && terrain.Biome != TerrainBiomeId.Grassland)) return cache[id] = default;
+		TerrainSample terrain = request.Edits.GetPresentationTerrainSample(request.Sampler, around, across);
+		float surface = PresentationSurfaceHeight(request.Edits, request.Sampler, around, across);
+		if (IsSurfaceWater(request.Edits, request.Sampler, terrain, surface) || (terrain.Biome != TerrainBiomeId.Forest && terrain.Biome != TerrainBiomeId.Grassland)) return cache[id] = default;
 		if (!HasStableForestRootSupport(request.Edits, request.Sampler, around, across)) return cache[id] = default;
-		float surface = request.Edits.GetSurfaceHeight(request.Sampler, around, across);
 		float slope = EstimateSlopeDegrees(request.Sampler, request.Edits, around, across);
 		if (slope > request.MaximumSlope) return cache[id] = default;
 		ForestRegionSample regional = regions.Sample(around, across, terrain, slope);
@@ -1167,7 +1169,7 @@ public partial class RingBiomeDecorationLayer
 		for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++)
 		{
 			long probeAround = around + dx; int probeAcross = across + dz;
-			if (edits.TryGetEditedSurfaceHeight(probeAround, probeAcross, out int edited)
+			if (!UsesFloatPresentation(edits, sampler) && edits.TryGetEditedSurfaceHeight(probeAround, probeAcross, out int edited)
 				&& edited != sampler.GetSurfaceHeight(probeAround, probeAcross)) return false;
 		}
 		return true;
@@ -1183,8 +1185,8 @@ public partial class RingBiomeDecorationLayer
 	private static float EstimateSlopeDegrees(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, long around, int across)
 	{
 		const int probe = 2;
-		float riseX = edits.GetSurfaceHeight(sampler, around + probe, across) - edits.GetSurfaceHeight(sampler, around - probe, across);
-		float riseZ = edits.GetSurfaceHeight(sampler, around, across + probe) - edits.GetSurfaceHeight(sampler, around, across - probe);
+		float riseX = PresentationSurfaceHeight(edits, sampler, around + probe, across) - PresentationSurfaceHeight(edits, sampler, around - probe, across);
+		float riseZ = PresentationSurfaceHeight(edits, sampler, around, across + probe) - PresentationSurfaceHeight(edits, sampler, around, across - probe);
 		return Mathf.RadToDeg(Mathf.Atan(Mathf.Sqrt(riseX * riseX + riseZ * riseZ) / (probe * 2.0f)));
 	}
 

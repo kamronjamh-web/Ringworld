@@ -134,7 +134,7 @@ public partial class RingTerrainLodCoordinator : Node
     private long _lastAltitudeAroundCell = long.MinValue;
     private int _lastAltitudeAcrossCell = int.MinValue;
     private ulong _lastAltitudeEditVersion = ulong.MaxValue;
-    private int _cachedAltitudeSurfaceHeight;
+    private float _cachedAltitudeSurfaceHeight;
     public bool MeshMemoryPressureActive { get; private set; }
 
     public int LastFrameUploadCount { get; private set; }
@@ -398,10 +398,10 @@ public partial class RingTerrainLodCoordinator : Node
             || acrossCell != _lastAltitudeAcrossCell
             || editVersion != _lastAltitudeEditVersion)
         {
-            _cachedAltitudeSurfaceHeight = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-                _grid.TerrainSampler,
-                around,
-                across);
+            RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+            _cachedAltitudeSurfaceHeight = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+                ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+                : edits.GetSurfaceHeight(_grid.TerrainSampler, around, across);
             _lastAltitudeAroundCell = aroundCell;
             _lastAltitudeAcrossCell = acrossCell;
             _lastAltitudeEditVersion = editVersion;

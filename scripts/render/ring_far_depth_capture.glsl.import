@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cbtb8mcdkw2h5"
+path="res://.godot/imported/ring_far_depth_capture.glsl-9030e1e206e61135ae0ac3d1cf2afe20.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_far_depth_capture.glsl"
+dest_files=["res://.godot/imported/ring_far_depth_capture.glsl-9030e1e206e61135ae0ac3d1cf2afe20.res"]
+
+[params]
+

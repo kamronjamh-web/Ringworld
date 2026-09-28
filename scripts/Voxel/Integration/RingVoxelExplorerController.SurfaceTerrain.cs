@@ -17,7 +17,7 @@ public partial class RingVoxelExplorerController
         _terrain3DSurfaceGameplay ??= GetNodeOrNull<RingTerrain3DGameplay>(Terrain3DGameplayPath);
         if (_terrain3DSurfaceGameplay == null || !_terrain3DSurfaceGameplay.IsNodeReady()) return false;
         if (IsInsideTree() && !_terrain3DSurfaceGameplay.EnsureInitialized()) return false;
-        height = _terrain3DSurfaceGameplay.SampleHeight(aroundMeters, acrossMeters);
+        height = _terrain3DSurfaceGameplay.SampleCollisionHeight(aroundMeters, acrossMeters);
         return float.IsFinite(height);
     }
 
@@ -27,8 +27,17 @@ public partial class RingVoxelExplorerController
         if (_terrain3DSurfaceGameplay?.IsReady != true || _grid == null) return false;
         _terrain3DSurfaceGameplay.EnsureCoverage(_canonicalPosition);
         double delta = Math.Max(.0001, GetPhysicsProcessDeltaTime());
-        _terrain3DSurfaceGameplay.EnsureCoverage(new RingCanonicalPosition(_canonicalPosition.AroundMeters + _canonicalVelocity.X * delta, _canonicalPosition.VerticalMeters + _canonicalVelocity.Y * delta, _canonicalPosition.AcrossMeters + _canonicalVelocity.Z * delta));
-        if (!_terrain3DSurfaceGameplay.IsReady) return false;
+        // Coverage requests use actual position plus velocity lookahead. Feeding
+        // an unsupported predicted point back as a teleport would cancel the
+        // readying corridor every tick at the safety boundary.
+        if (!_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition))
+        {
+            _canonicalVelocity = _terrain3DSurfaceGameplay.ConstrainSurfaceVelocity(_canonicalPosition, _canonicalVelocity, delta);
+            Velocity = Vector3.Zero;
+            RecenterCollisionOrigin(force: false); ApplyWorldTransform();
+            return true;
+        }
+        _canonicalVelocity = _terrain3DSurfaceGameplay.ConstrainSurfaceVelocity(_canonicalPosition, _canonicalVelocity, delta);
         RecenterCollisionOrigin(force: false); ApplyWorldTransform();
         double angle = _canonicalPosition.AroundMeters / _grid.GetCanonicalRingCircumferenceMeters64() * Math.Tau;
         Vector3 outward = new((float)Math.Cos(angle), 0, (float)Math.Sin(angle));
@@ -43,7 +52,12 @@ public partial class RingVoxelExplorerController
         _grounded = !swimming && IsOnFloor();
         if (_grounded) { _lastSmoothGroundedPosition = _canonicalPosition; _hasLastSmoothGroundedPosition = true; }
         _terrain3DSurfaceGameplay.EnsureCoverage(_canonicalPosition);
-        if (!_terrain3DSurfaceGameplay.IsReady) return false;
+        if (!_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition))
+        {
+            _canonicalVelocity = Vector3.Zero;
+            RecenterCollisionOrigin(force: false); ApplyWorldTransform();
+            return true;
+        }
         RecenterCollisionOrigin(force: false); ApplyWorldTransform();
         return true;
     }

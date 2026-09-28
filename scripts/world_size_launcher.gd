@@ -26,6 +26,7 @@ const CERTIFIED_BEDROCK_MATERIAL_Y := -2000
 const LEGACY_CERTIFIED_TERRAIN_FLOOR_Y := -2000
 const VERTICAL_DOMAIN_VERSION := 1
 const CERTIFIED_BUILD_MAX_Y := 8000
+const RUNTIME_SURFACE_BUILD_MAX_Y := 8400
 const CERTIFIED_SEA_LEVEL_Y := 0
 const CERTIFIED_ROUTINE_PEAK_CEILING_Y := 5200
 const CERTIFIED_EXCEPTIONAL_SUMMIT_Y := 7600
@@ -47,6 +48,11 @@ const FAR_FIELD_START_METERS := 850000.0
 const FAR_FIELD_RENDER_END_METERS := 1050000.0
 const FAR_FIELD_CAMERA_LIMIT_METERS := 1200000.0
 const SUPPORTED_CAVE_GENERATOR_VERSION := 1
+const RUNTIME_SURFACE_BACKEND := "surface_runtime_generation_v1"
+const RUNTIME_SURFACE_CONTRACT := "surface_runtime_generation_v1"
+const SURFACE_RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
+const SURFACE_RECIPE_STORE := preload("res://scripts/Terrain/Generation/terrain_generation_preview_store.gd")
+const TERRAIN_GENERATION_SAMPLER := preload("res://scripts/Terrain/Generation/TerrainGenerationSampler.cs")
 
 var size_slider: HSlider
 var size_label: Label
@@ -81,6 +87,8 @@ var mega_terrain_variation_smoke_passed := true
 var active_vertical_domain_version := VERTICAL_DOMAIN_VERSION
 var active_protected_roof_thickness_m := CERTIFIED_PROTECTED_ROOF_THICKNESS_M
 var active_lower_hull_thickness_m := CERTIFIED_LOWER_HULL_THICKNESS_M
+var pending_surface_generation_recipe_json := ""
+var pending_surface_generation_contract_id := ""
 
 
 func _use_smooth_editable_backend() -> bool:
@@ -96,13 +104,21 @@ func _legacy_backend_forced() -> bool:
 
 
 func _selected_terrain_backend() -> String:
-	if terrain_backend_selector == null or terrain_backend_selector.selected != 1:
+	if terrain_backend_selector == null:
 		return "smooth_terrain_v1"
-	return "terrain3d_surface_v1"
+	if terrain_backend_selector.selected == 1:
+		return "terrain3d_surface_v1"
+	if terrain_backend_selector.selected == 2:
+		return RUNTIME_SURFACE_BACKEND
+	return "smooth_terrain_v1"
 
 
 func _surface_backend_selected_for_certified(is_certified: bool) -> bool:
-	return is_certified and not _legacy_backend_forced() and _selected_terrain_backend() == "terrain3d_surface_v1"
+	return is_certified and not _legacy_backend_forced() and _selected_terrain_backend() in ["terrain3d_surface_v1", RUNTIME_SURFACE_BACKEND]
+
+
+func _runtime_surface_backend_selected_for_certified(is_certified: bool) -> bool:
+	return is_certified and not _legacy_backend_forced() and _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
 
 
 func _configure_editable_backend(game: Node, grid: Node) -> void:
@@ -465,6 +481,7 @@ func _build_advanced_menu() -> void:
 	terrain_backend_selector = OptionButton.new()
 	terrain_backend_selector.add_item("Smooth terrain (existing worlds)", 0)
 	terrain_backend_selector.add_item("Terrain3D surface (Certified only)", 1)
+	terrain_backend_selector.add_item("Terrain3D runtime generation (Certified only)", 2)
 	terrain_backend_selector.tooltip_text = backend_label.tooltip_text
 	terrain_backend_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	knobs_grid.add_child(terrain_backend_selector)
@@ -649,6 +666,8 @@ func _slider_from_radius_km(radius_km: float) -> float:
 
 
 func _on_size_slider_changed(value: float) -> void:
+	if _runtime_surface_slot_locked():
+		return
 	if suppress_readout_refresh:
 		return
 	_clear_mega_ring_selection()
@@ -657,6 +676,8 @@ func _on_size_slider_changed(value: float) -> void:
 
 
 func _on_knob_changed(_value: Variant) -> void:
+	if _runtime_surface_slot_locked():
+		return
 	if suppress_readout_refresh:
 		return
 	_clear_mega_ring_selection()
@@ -671,6 +692,8 @@ func _on_knob_toggled(_pressed: bool) -> void:
 
 
 func _on_terrain_backend_selected(_index: int) -> void:
+	if _runtime_surface_slot_locked():
+		return
 	if suppress_readout_refresh:
 		return
 	terrain_backend_explicitly_chosen = true
@@ -678,12 +701,16 @@ func _on_terrain_backend_selected(_index: int) -> void:
 
 
 func _on_reset_defaults_pressed() -> void:
+	if _runtime_surface_slot_locked():
+		return
 	_clear_mega_ring_selection()
 	exact_radius_override_km = -1.0
 	_apply_values_to_controls(launch_defaults)
 
 
 func _on_certified_preset_pressed() -> void:
+	if _runtime_surface_slot_locked():
+		return
 	mega_ring_selected = false
 	_apply_values_to_controls(_build_values_from_config(CERTIFIED_RING_CONFIG))
 	exact_radius_override_km = CERTIFIED_RADIUS_KM
@@ -691,6 +718,8 @@ func _on_certified_preset_pressed() -> void:
 
 
 func _on_mega_ring_preset_pressed() -> void:
+	if _runtime_surface_slot_locked():
+		return
 	mega_ring_selected = true
 	exact_radius_override_km = -1.0
 	if terrain_backend_selector != null:
@@ -737,6 +766,7 @@ func _apply_values_to_controls(values: Dictionary) -> void:
 	if terrain_floor_spin != null:
 		terrain_floor_spin.value = float(values.get("terrain_floor_y", -256.0))
 	if build_height_spin != null:
+		build_height_spin.max_value = RUNTIME_SURFACE_BUILD_MAX_Y if str(values.get("terrain_backend", "")) == RUNTIME_SURFACE_BACKEND else MAX_BUILD_MAX_Y
 		build_height_spin.value = float(values.get("build_height_y", MAX_BUILD_MAX_Y))
 	if structural_depth_spin != null:
 		structural_depth_spin.value = float(values.get("structural_depth_km", CERTIFIED_STRUCTURAL_DEPTH_KM))
@@ -763,7 +793,8 @@ func _apply_values_to_controls(values: Dictionary) -> void:
 	if terrain_backend_selector != null:
 		# Missing backend metadata belongs to an existing world and deliberately
 		# retains the pre-Terrain3D smooth backend.
-		terrain_backend_selector.select(1 if str(values.get("terrain_backend", "smooth_terrain_v1")) == "terrain3d_surface_v1" else 0)
+		var backend := str(values.get("terrain_backend", "smooth_terrain_v1"))
+		terrain_backend_selector.select(2 if backend == RUNTIME_SURFACE_BACKEND else 1 if backend == "terrain3d_surface_v1" else 0)
 	suppress_readout_refresh = false
 	_update_readout(size_slider.value if size_slider != null else 0.0)
 
@@ -788,7 +819,7 @@ func _update_readout(value: float) -> void:
 		build_ceiling,
 		structural_depth_km
 	]
-	var certified := _matches_certified_dimensions(radius_km, ring_width_km, terrain_floor, build_ceiling, structural_depth_km)
+	var certified := _matches_certified_dimensions(radius_km, ring_width_km, terrain_floor, build_ceiling, structural_depth_km, _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND)
 	_refresh_backend_selector(certified)
 	_update_advanced_summary()
 	if certified:
@@ -813,7 +844,10 @@ func _update_advanced_summary() -> void:
 	var cave_version_value := int(round(cave_generator_version_spin.value)) if cave_generator_version_spin != null else 1
 	var peak_value := int(round(rare_peak_spin.value)) if rare_peak_spin != null else 1848
 	var designed_caves_state := "ON" if designed_caves_toggle != null and designed_caves_toggle.button_pressed else "OFF"
-	var backend := "Terrain3D surface" if _selected_terrain_backend() == "terrain3d_surface_v1" else "Smooth terrain"
+	var backend := "Terrain3D runtime generation" if _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND else "Terrain3D surface" if _selected_terrain_backend() == "terrain3d_surface_v1" else "Smooth terrain"
+	if _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND:
+		advanced_summary_label.text = "Advanced: %s | immutable canonical recipe and seed | terrain Y=-8000..8000 m | sea 0 m | reserved build ceiling 8400 m | caves disabled | existing worlds cannot change generation." % backend
+		return
 	advanced_summary_label.text = "Advanced: %s | width %s km | terrain Y=%d..%d | sea 0 m | structure %.1f km | shared world seed %d | cave v%d | designed caves %s | routine peaks <=%d m | one seeded summit <=7600 m" % [
 		backend,
 		_format_distance(ring_width_spin.value if ring_width_spin != null else DEFAULT_RING_WIDTH_KM),
@@ -834,25 +868,31 @@ func _refresh_backend_selector(certified: bool) -> void:
 	if available and not selected_slot_has_saved_settings and not terrain_backend_default_applied and not terrain_backend_explicitly_chosen:
 		terrain_backend_selector.select(1)
 		terrain_backend_default_applied = true
-	if _selected_terrain_backend() == "terrain3d_surface_v1" and not available:
+	if _selected_terrain_backend() in ["terrain3d_surface_v1", RUNTIME_SURFACE_BACKEND] and not available:
 		terrain_backend_selector.select(0)
-	terrain_backend_selector.disabled = not available
-	var surface := _selected_terrain_backend() == "terrain3d_surface_v1"
+	var runtime_existing := selected_slot_has_saved_settings and _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
+	terrain_backend_selector.disabled = not available or runtime_existing
+	if size_slider != null:
+		size_slider.editable = not runtime_existing
+	for control in [ring_width_spin, terrain_floor_spin, build_height_spin, structural_depth_spin, terrain_seed_spin, cave_generator_version_spin, base_surface_spin, height_amplitude_spin, detail_amplitude_spin, continental_contrast_spin, regional_detail_spin, rare_peak_spin]:
+		if control != null:
+			control.editable = not runtime_existing
+	var surface := _selected_terrain_backend() in ["terrain3d_surface_v1", RUNTIME_SURFACE_BACKEND]
 	if designed_caves_toggle != null:
-		designed_caves_toggle.disabled = surface
+		designed_caves_toggle.disabled = surface or runtime_existing
 		if surface:
 			designed_caves_toggle.button_pressed = false
 	if unified_density_toggle != null:
-		unified_density_toggle.disabled = surface
+		unified_density_toggle.disabled = surface or runtime_existing
 		if surface:
 			unified_density_toggle.button_pressed = false
 
 
-func _matches_certified_dimensions(radius_km: float, width_km: float, floor_y: int, ceiling_y: int, depth_km: float) -> bool:
+func _matches_certified_dimensions(radius_km: float, width_km: float, floor_y: int, ceiling_y: int, depth_km: float, allow_runtime_surface_ceiling: bool = false) -> bool:
 	return is_equal_approx(radius_km, CERTIFIED_RADIUS_KM) \
 		and is_equal_approx(width_km, CERTIFIED_RING_WIDTH_KM) \
 		and floor_y == CERTIFIED_TERRAIN_FLOOR_Y \
-		and ceiling_y == CERTIFIED_BUILD_MAX_Y \
+		and (ceiling_y == CERTIFIED_BUILD_MAX_Y or (allow_runtime_surface_ceiling and ceiling_y == RUNTIME_SURFACE_BUILD_MAX_Y)) \
 		and is_equal_approx(depth_km, CERTIFIED_STRUCTURAL_DEPTH_KM)
 
 
@@ -878,6 +918,15 @@ func _start_game() -> void:
 		warning_label.text = "Cave generator version %d is not supported by this build (supported: v%d)." % [selected_cave_version, SUPPORTED_CAVE_GENERATOR_VERSION]
 		warning_label.modulate = Color(1.0, 0.45, 0.35)
 		push_error(warning_label.text)
+		return
+	var is_certified := _matches_certified_dimensions(
+		_radius_km_from_slider(size_slider.value),
+		ring_width_spin.value if ring_width_spin != null else DEFAULT_RING_WIDTH_KM,
+		int(round(terrain_floor_spin.value)) if terrain_floor_spin != null else -256,
+		int(round(build_height_spin.value)) if build_height_spin != null else int(MAX_BUILD_MAX_Y),
+		structural_depth_spin.value if structural_depth_spin != null else CERTIFIED_STRUCTURAL_DEPTH_KM,
+		_selected_terrain_backend() == RUNTIME_SURFACE_BACKEND)
+	if not _prepare_runtime_surface_generation(is_certified):
 		return
 	start_button.disabled = true
 	start_button.text = "Configuring world..."
@@ -1148,11 +1197,12 @@ func _save_selected_slot_settings() -> void:
 	var session := get_node_or_null("/root/WorldSession")
 	if session == null:
 		return
+	var runtime_surface := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
 	var settings := {
 		"radius_km": _radius_km_from_slider(size_slider.value),
 		"ring_width_km": ring_width_spin.value if ring_width_spin != null else DEFAULT_RING_WIDTH_KM,
 		"terrain_floor_y": terrain_floor_spin.value if terrain_floor_spin != null else -256.0,
-		"build_height_y": build_height_spin.value if build_height_spin != null else MAX_BUILD_MAX_Y,
+		"build_height_y": RUNTIME_SURFACE_BUILD_MAX_Y if runtime_surface else build_height_spin.value if build_height_spin != null else MAX_BUILD_MAX_Y,
 		"structural_depth_km": structural_depth_spin.value if structural_depth_spin != null else CERTIFIED_STRUCTURAL_DEPTH_KM,
 		"vertical_domain_version": active_vertical_domain_version,
 		"protected_roof_thickness_m": active_protected_roof_thickness_m,
@@ -1169,7 +1219,102 @@ func _save_selected_slot_settings() -> void:
 		"designed_cave_density_composition": designed_caves_toggle.button_pressed if designed_caves_toggle != null else false,
 		"terrain_backend": _selected_terrain_backend()
 	}
+	if runtime_surface:
+		settings["surface_definition_version"] = 1
+		settings["surface_generation_contract_id"] = pending_surface_generation_contract_id
+		settings["surface_generation_recipe_json"] = pending_surface_generation_recipe_json
 	session.save_active_world_settings(settings)
+
+
+func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
+	pending_surface_generation_recipe_json = ""
+	pending_surface_generation_contract_id = ""
+	var saved := _get_selected_slot_settings()
+	var stored_runtime_surface := str(saved.get("terrain_backend", "")) == RUNTIME_SURFACE_BACKEND
+	if stored_runtime_surface and _selected_terrain_backend() != RUNTIME_SURFACE_BACKEND:
+		return _reject_runtime_surface_launch("This existing runtime surface world has immutable backend and generation settings.")
+	if _selected_terrain_backend() != RUNTIME_SURFACE_BACKEND:
+		return true
+	if not is_certified:
+		return _reject_runtime_surface_launch("Runtime surface generation is available only for Certified Ring dimensions.")
+	var bridge := TERRAIN_GENERATION_SAMPLER.new()
+	if selected_slot_has_saved_settings:
+		if not stored_runtime_surface:
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("An existing non-runtime world cannot be converted to runtime surface generation.")
+		if not _runtime_surface_controls_match_saved(saved):
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Runtime surface world generation settings differ from its immutable saved definition.")
+		if int(saved.get("surface_definition_version", 0)) != 1 \
+			or str(saved.get("surface_generation_contract_id", "")) != RUNTIME_SURFACE_CONTRACT:
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("This runtime surface world is missing required immutable generation metadata.")
+		var stored_json := str(saved.get("surface_generation_recipe_json", ""))
+		if stored_json.is_empty() or not bool(bridge.call("ConfigureJson", stored_json)):
+			var error := str(bridge.get("LastError"))
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Stored runtime surface recipe is invalid: %s" % error)
+		if str(bridge.get("CanonicalJson")) != stored_json:
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Stored runtime surface recipe is not canonical.")
+		var parsed_recipe: Variant = JSON.parse_string(stored_json)
+		var stored_seed := int((parsed_recipe as Dictionary).get("seed", -1)) if parsed_recipe is Dictionary else -1
+		if stored_seed != int(round(float(saved.get("terrain_seed", -1)))):
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Stored runtime surface recipe seed does not match the immutable world seed.")
+		pending_surface_generation_recipe_json = stored_json
+		pending_surface_generation_contract_id = RUNTIME_SURFACE_CONTRACT
+		bridge.call("Release")
+		return true
+	var loaded: Dictionary = SURFACE_RECIPE_STORE.load_recipe()
+	if not str(loaded.get("error", "")).is_empty():
+		bridge.call("Release")
+		return _reject_runtime_surface_launch("Saved preview recipe is invalid: %s" % str(loaded.get("error", "")))
+	var recipe := loaded.get("recipe", null) as Resource
+	if recipe == null:
+		recipe = SURFACE_RECIPE.new()
+	recipe.set("seed", int(round(terrain_seed_spin.value)) if terrain_seed_spin != null else 1337)
+	if not bool(bridge.call("Configure", recipe.call("to_normalized_dictionary"))):
+		var error := str(bridge.get("LastError"))
+		bridge.call("Release")
+		return _reject_runtime_surface_launch("Preview surface recipe is invalid: %s" % error)
+	pending_surface_generation_recipe_json = str(bridge.get("CanonicalJson"))
+	pending_surface_generation_contract_id = RUNTIME_SURFACE_CONTRACT
+	bridge.call("Release")
+	return not pending_surface_generation_recipe_json.is_empty()
+
+
+func _reject_runtime_surface_launch(message: String) -> bool:
+	warning_label.text = message
+	warning_label.modulate = Color(1.0, 0.45, 0.35)
+	push_error(message)
+	return false
+
+
+func _runtime_surface_slot_locked() -> bool:
+	return selected_slot_has_saved_settings and str(_get_selected_slot_settings().get("terrain_backend", "")) == RUNTIME_SURFACE_BACKEND
+
+
+func _runtime_surface_controls_match_saved(saved: Dictionary) -> bool:
+	var expected := {
+		"radius_km": _radius_km_from_slider(size_slider.value),
+		"ring_width_km": ring_width_spin.value if ring_width_spin != null else DEFAULT_RING_WIDTH_KM,
+		"terrain_floor_y": terrain_floor_spin.value if terrain_floor_spin != null else CERTIFIED_TERRAIN_FLOOR_Y,
+		"build_height_y": build_height_spin.value if build_height_spin != null else RUNTIME_SURFACE_BUILD_MAX_Y,
+		"structural_depth_km": structural_depth_spin.value if structural_depth_spin != null else CERTIFIED_STRUCTURAL_DEPTH_KM,
+		"terrain_seed": terrain_seed_spin.value if terrain_seed_spin != null else 1337.0,
+		"cave_generator_version": cave_generator_version_spin.value if cave_generator_version_spin != null else 1.0,
+		"base_surface_height": base_surface_spin.value if base_surface_spin != null else 16.0,
+		"height_amplitude": height_amplitude_spin.value if height_amplitude_spin != null else 12.0,
+		"detail_amplitude": detail_amplitude_spin.value if detail_amplitude_spin != null else 4.0,
+		"continental_contrast": continental_contrast_spin.value if continental_contrast_spin != null else 1.35,
+		"regional_detail_strength": regional_detail_spin.value if regional_detail_spin != null else 0.65,
+		"rare_peak_height": rare_peak_spin.value if rare_peak_spin != null else 1848.0
+	}
+	for key in expected:
+		if not is_equal_approx(float(expected[key]), float(saved.get(key, NAN))):
+			return false
+	return not bool(saved.get("unified_3d_density_terrain", false)) and not bool(saved.get("designed_cave_density_composition", false))
 
 
 func _configure_game(game: Node, requested_radius_m: float) -> void:
@@ -1189,9 +1334,14 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 		width_km,
 		min_terrain_y,
 		max_build_y,
-		structural_depth_m / 1000.0)
+		structural_depth_m / 1000.0,
+		_selected_terrain_backend() == RUNTIME_SURFACE_BACKEND)
 	var bedrock_material_y := CERTIFIED_BEDROCK_MATERIAL_Y if is_certified else min_terrain_y
 	var use_surface_terrain := _surface_backend_selected_for_certified(is_certified)
+	var use_runtime_surface_generation := _runtime_surface_backend_selected_for_certified(is_certified)
+	if use_runtime_surface_generation:
+		# Validate Certified dimensions before reserving the surface-only build band.
+		max_build_y = RUNTIME_SURFACE_BUILD_MAX_Y
 	var desktop_mid_high := str(ProjectSettings.get_setting(
 		"ringworld/runtime/hardware_tier",
 		"laptop_140v_baseline")) == "desktop_mid_high"
@@ -1248,6 +1398,15 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 
 	var runtime_terrain_settings := _build_runtime_terrain_settings(grid, min_terrain_y, max_build_y, bedrock_material_y, use_surface_terrain)
 	if runtime_terrain_settings != null:
+		if use_runtime_surface_generation:
+			runtime_terrain_settings.set("BedrockY", -8000)
+			runtime_terrain_settings.set("SeaLevelY", 0)
+			runtime_terrain_settings.set("SurfaceGenerationRecipeJson", pending_surface_generation_recipe_json)
+			runtime_terrain_settings.set("SurfaceGenerationContractId", RUNTIME_SURFACE_CONTRACT)
+			runtime_terrain_settings.set("EnableProceduralCaves", false)
+			runtime_terrain_settings.set("EnableDesignedCaveDensityComposition", false)
+			runtime_terrain_settings.set("EnableUnified3dDensityTerrain", false)
+			runtime_terrain_settings.set("EnableNaturalOverhangs", false)
 		grid.set("TerrainSettings", runtime_terrain_settings)
 		grid.set("UseSmoothNaturalTerrainPilot", not use_surface_terrain and not _use_smooth_editable_backend() and bool(runtime_terrain_settings.get("EnableUnified3dDensityTerrain")))
 		grid.call("RefreshRuntimeTerrainDefinition")
@@ -1406,7 +1565,8 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 			int(round(cave_generator_version_spin.value)) if cave_generator_version_spin != null else SUPPORTED_CAVE_GENERATOR_VERSION,
 			chunks_around,
 			circumference_m,
-			radius_m)
+			radius_m,
+			use_runtime_surface_generation)
 
 
 func _disable_legacy_radius_space_nodes(game: Node) -> void:
@@ -1430,8 +1590,11 @@ func _validate_certified_runtime_configuration(
 	expected_cave_version: int,
 	chunks_around: int,
 	circumference_m: float,
-	effective_radius_m: float) -> void:
+	effective_radius_m: float,
+	runtime_surface_generation: bool = false) -> void:
 	var expected_chunks := int(round(TAU * CERTIFIED_RADIUS_KM * 1000.0 / CHUNK_ARC_METERS))
+	var expected_build_ceiling := RUNTIME_SURFACE_BUILD_MAX_Y if runtime_surface_generation else CERTIFIED_BUILD_MAX_Y
+	var expected_wall_top := expected_build_ceiling + CERTIFIED_STRUCTURAL_WALL_CLEARANCE_M
 	var cave_settings: Variant = grid.get("TerrainSettings").get("DesignedCaveGenerationContractSettings") if grid.get("TerrainSettings") != null else null
 	var valid := chunks_around == expected_chunks \
 		and active_vertical_domain_version == VERTICAL_DOMAIN_VERSION \
@@ -1443,18 +1606,19 @@ func _validate_certified_runtime_configuration(
 		and int(grid.get("TerrainBottomGlobalY")) == CERTIFIED_TERRAIN_FLOOR_Y \
 		and int(grid.get("ProtectedRoofThicknessMeters")) == CERTIFIED_PROTECTED_ROOF_THICKNESS_M \
 		and int(grid.get("LowerHullThicknessMeters")) == CERTIFIED_LOWER_HULL_THICKNESS_M \
-		and int(grid.get("MaxBuildGlobalY")) == CERTIFIED_BUILD_MAX_Y \
+		and int(grid.get("MaxBuildGlobalY")) == expected_build_ceiling \
 		and is_equal_approx(float(grid.get("StructuralWallClearanceMeters")), CERTIFIED_STRUCTURAL_WALL_CLEARANCE_M) \
 		and grid.get("TerrainSettings") != null \
 		and int(grid.get("TerrainSettings").get("Seed")) == expected_seed \
 		and cave_settings is Resource \
 		and int(cave_settings.get("ContractVersion")) == expected_cave_version \
-		and int(grid.get("TerrainSettings").get("BedrockY")) == CERTIFIED_BEDROCK_MATERIAL_Y \
+		and int(grid.get("TerrainSettings").get("BedrockY")) == (-8000 if runtime_surface_generation else CERTIFIED_BEDROCK_MATERIAL_Y) \
 		and int(grid.get("TerrainSettings").get("SeaLevelY")) == CERTIFIED_SEA_LEVEL_Y \
-		and int(grid.get("TerrainSettings").get("RarePeakY")) == CERTIFIED_ROUTINE_PEAK_CEILING_Y \
-		and not bool(grid.get("TerrainSettings").get("AutoRaiseRarePeakToBuildLimit")) \
-		and int(grid.get("TerrainSettings").get("ExceptionalSummitCount")) == 1 \
-		and int(grid.get("TerrainSettings").get("ExceptionalSummitY")) == CERTIFIED_EXCEPTIONAL_SUMMIT_Y \
+		and (runtime_surface_generation or int(grid.get("TerrainSettings").get("RarePeakY")) == CERTIFIED_ROUTINE_PEAK_CEILING_Y) \
+		and (runtime_surface_generation or not bool(grid.get("TerrainSettings").get("AutoRaiseRarePeakToBuildLimit"))) \
+		and (runtime_surface_generation or int(grid.get("TerrainSettings").get("ExceptionalSummitCount")) == 1) \
+		and (runtime_surface_generation or int(grid.get("TerrainSettings").get("ExceptionalSummitY")) == CERTIFIED_EXCEPTIONAL_SUMMIT_Y) \
+		and (not runtime_surface_generation or (str(grid.get("TerrainSettings").get("SurfaceGenerationContractId")) == RUNTIME_SURFACE_CONTRACT and not bool(grid.get("TerrainSettings").get("EnableNaturalOverhangs")))) \
 		and int(grid.get("TerrainSettings").get("TerrainToBuildClearanceMeters")) == CERTIFIED_TERRAIN_BUILD_CLEARANCE_M \
 		and is_equal_approx(float(grid.get("StructuralDepthMeters")), CERTIFIED_STRUCTURAL_DEPTH_KM * 1000.0) \
 		and is_equal_approx(float(global_lod.get("StructuralDepthMeters")), CERTIFIED_STRUCTURAL_DEPTH_KM * 1000.0) \
@@ -1463,13 +1627,17 @@ func _validate_certified_runtime_configuration(
 		and bool(scaled_far_viewport.get("Enabled")) \
 		and is_equal_approx(float(scaled_far_viewport.get("CoordinateScale")), 0.001) \
 		and int(scaled_far_viewport.get("RingWidthMeters")) == int(CERTIFIED_RING_WIDTH_KM * 1000.0) \
-		and is_equal_approx(float(scaled_far_viewport.get("StructuralWallTopMeters")), CERTIFIED_STRUCTURAL_WALL_TOP_Y) \
+		and is_equal_approx(float(scaled_far_viewport.get("StructuralWallTopMeters")), expected_wall_top) \
 		and not bool(analytic_global_lod.get("BuildEnabled")) \
 		and not bool(cloud_layer.get("BuildEnabled"))
 	if not valid:
 		push_error("Certified ring runtime configuration self-test failed.")
 		return
 
+	if runtime_surface_generation:
+		print("Certified runtime surface configuration passed: sharedSeed=%d, chunks=%d, terrain=-8000..8000 m, sea=0 m, buildCeiling=%d m, wallTop=%d m, caves=disabled, immutable recipe contract=%s." % [
+			expected_seed, chunks_around, expected_build_ceiling, expected_wall_top, RUNTIME_SURFACE_CONTRACT])
+		return
 	print("Certified ring runtime self-test passed: sharedSeed=%d, cave=v%d, chunks=%d, circumference=%.3f km, effectiveRadius=%.6f km, width=%.1f km, terrain=%d..%d m, sea=%d m, routinePeak<=%d m, summit=%d m, wallTop=%d m, structure=%.1f km, cameraFar=%.0f km, farViewportScale=1:%.0f" % [
 		expected_seed,
 		expected_cave_version,

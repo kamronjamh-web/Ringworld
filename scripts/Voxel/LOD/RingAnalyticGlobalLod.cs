@@ -109,6 +109,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         }
         int aroundCount = Mathf.Max(128, AroundSegments);
         int acrossCount = Mathf.Max(2, AcrossSegments);
+        RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
         double aroundStep = _grid.GetCanonicalRingCircumferenceMeters64() / aroundCount;
         double acrossStep = RingWidthMeters / (double)acrossCount;
         int row = aroundCount + 1;
@@ -120,13 +121,21 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         {
             double around = x * aroundStep;
             double across = z * acrossStep;
-            TerrainSample sample = sampler.GetTerrainSample((int)Math.Round(around), (int)Math.Round(across));
+            long sampleAround = (long)Math.Round(around);
+            int sampleAcross = (int)Math.Round(across);
+            bool usesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration;
+            TerrainSample sample = usesPresentationSurface
+                ? edits.GetPresentationTerrainSample(sampler, sampleAround, sampleAcross)
+                : sampler.GetTerrainSample(sampleAround, sampleAcross);
             int index = z * row + x;
-            int displayedHeight = sample.ResolveDisplayedHeight(sample.SurfaceHeight);
+            float terrainHeight = usesPresentationSurface
+                ? edits.GetPresentationSurfaceHeight(sampler, sampleAround, sampleAcross)
+                : sample.SurfaceHeight;
+            float displayedHeight = sample.ResolveDisplayedHeight(terrainHeight);
             vertices[index] = Point(around, displayedHeight - SurfaceUnderlayMeters, across);
             colors[index] = RingTerrainVisuals.ResolveSeededColor(
                 sample,
-                displayedHeight,
+                Mathf.RoundToInt(displayedHeight),
                 sampler,
                 LowColor,
                 HighColor);
@@ -236,11 +245,16 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         Vector3 camera = _focus.GlobalPosition;
         Vector3 center = _grid.GetCanonicalRingCenterWorld();
         Vector3 sun = _sunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+        Camera3D? activeCamera = GetViewport()?.GetCamera3D();
+        RingAtmosphereRayFrame frame = activeCamera == null
+            ? RingAtmosphereRayFrame.Invalid
+            : RingAtmosphereRayFrame.FromMainCamera(_grid, activeCamera, sun);
         foreach (ShaderMaterial? material in new[] { _surfaceMaterial, _hullMaterial })
         {
             material?.SetShaderParameter("camera_world_position", camera);
             material?.SetShaderParameter("ring_center", center);
             material?.SetShaderParameter("sun_direction", sun);
+            frame.Apply(material);
         }
     }
 

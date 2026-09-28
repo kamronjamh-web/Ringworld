@@ -297,14 +297,14 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             Mathf.Max(0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters)));
         RingLodSurfaceEditSnapshot surfaceEdits = _smoothTerrain?.CaptureLodSurfaceEditSnapshot()
             ?? _grid.CaptureLodSurfaceEditSnapshot();
-        int surface = surfaceEdits.GetSurfaceHeight(
-            _grid.TerrainSampler,
-            around,
-            across);
+		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || surfaceEdits.UsesFloatSurface;
+		float surface = floatSurface
+			? surfaceEdits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+			: surfaceEdits.GetSurfaceHeight(_grid.TerrainSampler, around, across);
 
         _canonicalPosition = new RingCanonicalPosition(
             around,
-            surface + 1.05,
+			surface + (floatSurface ? 0.05 : 1.05),
             across).Wrap(_grid.GetCanonicalRingCircumferenceMeters64());
         _canonicalVelocity = Vector3.Zero;
         _noclip = false;
@@ -1003,7 +1003,19 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             Mathf.RoundToInt((float)_canonicalPosition.AcrossMeters),
             0,
             Mathf.Max(0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters)));
-        TerrainSample sample = _grid.TerrainSampler.GetTerrainSample(around, across);
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+		TerrainSample sample = edits.GetPresentationTerrainSample(_grid.TerrainSampler, around, across);
+        float exactSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration
+            ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, _canonicalPosition.AroundMeters, _canonicalPosition.AcrossMeters)
+            : floatSurface ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across) : sample.SurfaceHeight;
+        if (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration)
+            sample = sample with
+            {
+                SurfaceHeight = Mathf.FloorToInt(exactSurface),
+                WaterKind = exactSurface < 0 ? SurfaceWaterKind.Ocean : SurfaceWaterKind.None,
+                WaterSurfaceHeight = exactSurface < 0 ? 0 : Mathf.FloorToInt(exactSurface)
+            };
         UpdateWaterAmbienceMetadata(sample, around, across);
         // Ambience is independent from swimming mechanics. A game mode may
         // disable buoyancy while shore, river, and open-water sound remains.
@@ -1015,7 +1027,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         // Generated hydrology is a finite surface column, not an infinite
         // "everything below the waterline" volume. A tunnel beneath a
         // lake/ocean bed is dry unless dynamic fluid cells actually fill it.
-        float generatedWaterSurface = sample.WaterSurfaceHeight + 1.0f;
+		float generatedWaterSurface = sample.WaterSurfaceHeight + (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration ? 0.0f : 1.0f);
         // The FFT is an ocean-only surface.  Its offset is relative to the
         // gameplay water top, not the proxy mesh (which is radially underlaid
         // for z-fighting).  Ask before finalizing the finite column so a crest
@@ -1027,8 +1039,9 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         {
             generatedWaterSurface += fftSurfaceOffset;
         }
-        bool generatedWater = IsWithinGeneratedWaterColumn(
-            sample, _canonicalPosition.VerticalMeters, generatedWaterSurface);
+		bool generatedWater = floatSurface
+			? sample.HasSurfaceWater && _canonicalPosition.VerticalMeters > exactSurface && _canonicalPosition.VerticalMeters <= generatedWaterSurface
+			: IsWithinGeneratedWaterColumn(sample, _canonicalPosition.VerticalMeters, generatedWaterSurface);
         // A finite hydrology column must still be air at the player. This
         // keeps solid terrain and later cavity edits from masquerading as water.
         if (generatedWater && _smoothTerrain != null
@@ -2386,9 +2399,9 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 _canonicalVelocity=Vector3.Zero; _grounded=true; RecenterCollisionOrigin(force:false); ApplyWorldTransform(); return true;
             }
             _terrain3DSurfaceGameplay.EnsureCoverage(_canonicalPosition);
-            float exactSurface=_terrain3DSurfaceGameplay.SampleHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters);
+            float exactSurface=_terrain3DSurfaceGameplay.SampleCollisionHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters);
             if(float.IsFinite(exactSurface)) _canonicalPosition=_canonicalPosition with { VerticalMeters=exactSurface+1.05 };
-            collisionReady=_terrain3DSurfaceGameplay.IsReady;
+            collisionReady=_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition);
         }
         else if (UseSmoothTerrainPhysics && _smoothTerrain != null)
         {

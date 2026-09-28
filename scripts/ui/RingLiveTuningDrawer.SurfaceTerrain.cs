@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Save;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase3;
@@ -12,8 +13,11 @@ public partial class RingLiveTuningDrawer
 {
     private GameplaySurfaceTerrainDefaults _surfaceTerrainDefaults = null!;
     private Label? _surfaceTerrainStatus;
+    private Label? _runtimeSurfaceDefinitionStatus;
+    private Label? _generationStreamingDiagnostics;
     private double _surfaceTerrainSaveDelay;
     private double _surfaceTerrainSaveRetryDelay;
+    private double _surfaceTerrainDiagnosticsRefreshDelay;
     private string? _surfaceTerrainDefaultsPathOverride;
     private readonly System.Collections.Generic.List<(HSlider Slider, Label Value)> _surfaceTerrainControls = new();
     private bool _surfacePrototypeOpenPending;
@@ -28,6 +32,16 @@ public partial class RingLiveTuningDrawer
 
     private void ProcessSurfaceTerrainTuning(double delta)
     {
+        if (_runtimeSurfaceDefinitionStatus != null)
+        {
+            _surfaceTerrainDiagnosticsRefreshDelay -= delta;
+            if (_surfaceTerrainDiagnosticsRefreshDelay <= 0)
+            {
+                _surfaceTerrainDiagnosticsRefreshDelay = .25;
+                RefreshSurfaceTerrainControls();
+                RefreshSurfaceTerrainStatus();
+            }
+        }
         if (!_surfaceTerrainDefaults.Dirty) return;
         _surfaceTerrainSaveDelay -= delta;
         _surfaceTerrainSaveRetryDelay -= delta;
@@ -44,6 +58,34 @@ public partial class RingLiveTuningDrawer
 
     private void BuildSurfaceTerrainTab(TabContainer tabs)
     {
+        if (_generationPreview != null)
+        {
+            VBoxContainer playable = CreateTab(tabs, "Playable");
+            playable.AddChild(new Label { Text = "STREAMING TERRAIN PATCH", ThemeTypeVariation = "HeaderSmall" });
+            playable.AddChild(new Label { Text = "Terrain streams ahead while you travel. A handoff keeps the current patch active until the next patch is ready.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
+            VBoxContainer movement = TuningMenuUi.CreateSection(playable, "Movement and mesh");
+            AddSurfaceTerrainSlider(movement, "Mesh detail levels", GameplaySurfaceTerrainDefaults.MinimumMeshLods, GameplaySurfaceTerrainDefaults.MaximumMeshLods, 1, _surfaceTerrainDefaults.Settings.MeshLods, value => _surfaceTerrainDefaults.SetMeshLods(Mathf.RoundToInt(value)));
+            AddSurfaceTerrainSlider(movement, "Movement speed (m/s)", GameplaySurfaceTerrainDefaults.MinimumMoveSpeedMetersPerSecond, GameplaySurfaceTerrainDefaults.MaximumMoveSpeedMetersPerSecond, 1, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, value => _surfaceTerrainDefaults.SetMoveSpeedMetersPerSecond((float)value));
+            VBoxContainer streaming = TuningMenuUi.CreateSection(playable, "Terrain streaming");
+            AddSurfaceTerrainStreamingControls(streaming);
+            _generationStreamingDiagnostics = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+            streaming.AddChild(_generationStreamingDiagnostics);
+            VBoxContainer travel = TuningMenuUi.CreateSection(playable, "Travel to coordinates");
+            var around = new SpinBox { MinValue = 0, MaxValue = 31415936, Step = 2, AllowGreater = true, Name = "TravelAroundMeters" };
+            var across = new SpinBox { MinValue = 80, MaxValue = 317664, Step = 2, Name = "TravelAcrossMeters" };
+            if (_surfaceTerrainPilot != null) { around.Value = _surfaceTerrainPilot.Get("_canonical_around").AsDouble(); across.Value = _surfaceTerrainPilot.Get("_canonical_across").AsDouble(); }
+            travel.AddChild(new Label { Text = "Around (m)" }); travel.AddChild(around); travel.AddChild(new Label { Text = "Across (m)" }); travel.AddChild(across);
+            var travelButton = new Button { Text = "Travel to coordinates" };
+            travelButton.Pressed += () => _surfaceTerrainPilot?.Call("request_teleport", around.Value, across.Value);
+            travel.AddChild(travelButton);
+            var returnOverview = new Button { Text = "Return to overview" };
+            returnOverview.Pressed += () => _surfaceTerrainPilot?.Call("return_to_overview");
+            playable.AddChild(returnOverview);
+            _surfaceTerrainStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+            playable.AddChild(_surfaceTerrainStatus);
+            RefreshSurfaceTerrainStatus();
+            return;
+        }
         VBoxContainer tab = CreateTab(tabs, "Terrain3D");
         tab.AddChild(new Label { Text = "CERTIFIED SURFACE PROTOTYPE", ThemeTypeVariation = "HeaderSmall" });
         tab.AddChild(new Label { Text = "Edit the isolated surface and adjust brush, mesh, and camera controls. Surface edits save separately from the main world.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
@@ -71,11 +113,18 @@ public partial class RingLiveTuningDrawer
         VBoxContainer tab = CreateTab(tabs, "Terrain3D");
         tab.AddChild(new Label { Text = "CERTIFIED SURFACE EDITING", ThemeTypeVariation = "HeaderSmall" });
         tab.AddChild(new Label { Text = "This Certified world uses the Terrain3D surface editor. Caves are unavailable in this surface-only mode.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
+		_runtimeSurfaceDefinitionStatus = new Label { Name = "RuntimeSurfaceDefinition", Text = "Loading runtime surface definition…", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+		tab.AddChild(_runtimeSurfaceDefinitionStatus);
         VBoxContainer controls = TuningMenuUi.CreateSection(tab, "Surface editing and camera");
         AddSurfaceTerrainSlider(controls, "Brush radius (m)", GameplaySurfaceTerrainDefaults.MinimumBrushRadiusMeters, GameplaySurfaceTerrainDefaults.MaximumBrushRadiusMeters, .25, _surfaceTerrainDefaults.Settings.BrushRadiusMeters, value => _surfaceTerrainDefaults.SetBrushRadiusMeters((float)value));
         AddSurfaceTerrainSlider(controls, "Brush step (m)", GameplaySurfaceTerrainDefaults.MinimumBrushStepMeters, GameplaySurfaceTerrainDefaults.MaximumBrushStepMeters, .25, _surfaceTerrainDefaults.Settings.BrushStepMeters, value => _surfaceTerrainDefaults.SetBrushStepMeters((float)value));
         AddSurfaceTerrainSlider(controls, "Mesh detail levels", GameplaySurfaceTerrainDefaults.MinimumMeshLods, GameplaySurfaceTerrainDefaults.MaximumMeshLods, 1, _surfaceTerrainDefaults.Settings.MeshLods, value => _surfaceTerrainDefaults.SetMeshLods(Mathf.RoundToInt(value)));
         AddSurfaceTerrainSlider(controls, "Movement speed (m/s)", GameplaySurfaceTerrainDefaults.MinimumMoveSpeedMetersPerSecond, GameplaySurfaceTerrainDefaults.MaximumMoveSpeedMetersPerSecond, 1, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, value => _surfaceTerrainDefaults.SetMoveSpeedMetersPerSecond((float)value));
+        AddSurfaceTerrainAppearanceControls(controls);
+        VBoxContainer streaming = TuningMenuUi.CreateSection(tab, "Terrain streaming");
+        AddSurfaceTerrainStreamingControls(streaming);
+        _generationStreamingDiagnostics = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        streaming.AddChild(_generationStreamingDiagnostics);
         var save = new Button { Text = "Save surface edits" };
         save.Pressed += SaveSurfaceTerrainGameplay;
         tab.AddChild(save);
@@ -112,8 +161,28 @@ public partial class RingLiveTuningDrawer
         _surfaceTerrainControls.Add((slider, value));
     }
 
+    private void AddSurfaceTerrainStreamingControls(VBoxContainer parent)
+    {
+        AddSurfaceTerrainSlider(parent, "Generation workers", GameplaySurfaceTerrainDefaults.MinimumGenerationWorkerCount, GameplaySurfaceTerrainDefaults.MaximumGenerationWorkerCount, 1, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, value => _surfaceTerrainDefaults.SetGenerationWorkerCount(Mathf.RoundToInt(value)));
+        AddSurfaceTerrainSlider(parent, "Prefetch distance (m)", GameplaySurfaceTerrainDefaults.MinimumGenerationPrefetchMeters, GameplaySurfaceTerrainDefaults.MaximumGenerationPrefetchMeters, 1, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, value => _surfaceTerrainDefaults.SetGenerationPrefetchMeters((float)value));
+        AddSurfaceTerrainSlider(parent, "Generation cache (MiB)", GameplaySurfaceTerrainDefaults.MinimumGenerationCacheMiB, GameplaySurfaceTerrainDefaults.MaximumGenerationCacheMiB, 1, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, value => _surfaceTerrainDefaults.SetGenerationCacheMiB(Mathf.RoundToInt(value)));
+        AddSurfaceTerrainSlider(parent, "Upload budget (ms)", GameplaySurfaceTerrainDefaults.MinimumGenerationUploadBudgetMs, GameplaySurfaceTerrainDefaults.MaximumGenerationUploadBudgetMs, .1, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, value => _surfaceTerrainDefaults.SetGenerationUploadBudgetMs((float)value));
+        AddSurfaceTerrainSlider(parent, "Collision budget (ms)", GameplaySurfaceTerrainDefaults.MinimumGenerationCollisionBudgetMs, GameplaySurfaceTerrainDefaults.MaximumGenerationCollisionBudgetMs, .05, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, value => _surfaceTerrainDefaults.SetGenerationCollisionBudgetMs((float)value));
+        AddSurfaceTerrainSlider(parent, "Collider tile cells", 16, 32, 16, _surfaceTerrainDefaults.Settings.GenerationColliderTileCells, value => _surfaceTerrainDefaults.SetGenerationColliderTileCells(Mathf.RoundToInt(value)));
+    }
+
+    private void AddSurfaceTerrainAppearanceControls(VBoxContainer parent)
+    {
+        AddSurfaceTerrainSlider(parent, "Dry roughness", GameplaySurfaceTerrainDefaults.MinimumDryRoughness, GameplaySurfaceTerrainDefaults.MaximumDryRoughness, .01, _surfaceTerrainDefaults.Settings.DryRoughness, value => _surfaceTerrainDefaults.SetDryRoughness((float)value));
+        AddSurfaceTerrainSlider(parent, "Wet roughness", GameplaySurfaceTerrainDefaults.MinimumWetRoughness, GameplaySurfaceTerrainDefaults.MaximumWetRoughness, .01, _surfaceTerrainDefaults.Settings.WetRoughness, value => _surfaceTerrainDefaults.SetWetRoughness((float)value));
+        AddSurfaceTerrainSlider(parent, "Rain wetness strength", GameplaySurfaceTerrainDefaults.MinimumRainWetnessStrength, GameplaySurfaceTerrainDefaults.MaximumRainWetnessStrength, .01, _surfaceTerrainDefaults.Settings.RainWetnessStrength, value => _surfaceTerrainDefaults.SetRainWetnessStrength((float)value));
+    }
+
     private Node? SurfaceTerrainTarget => _surfaceTerrainPilot ?? _surfaceTerrainGameplay;
-    private void ApplySurfaceTerrainSettings() => SurfaceTerrainTarget?.Call("ApplySurfaceSettings", _surfaceTerrainDefaults.Settings);
+    private void ApplySurfaceTerrainSettings()
+    {
+        SurfaceTerrainTarget?.Call("ApplySurfaceSettings", _surfaceTerrainDefaults.Settings);
+    }
 
     private bool FlushSurfaceTerrainDefaults()
     {
@@ -227,9 +296,14 @@ public partial class RingLiveTuningDrawer
     private void RefreshSurfaceTerrainStatus(string? success = null)
     {
         if (_surfaceTerrainStatus == null) return;
+        // The gameplay node is installed after the drawer in runtime-surface worlds.
+        // Resolve it lazily so opening the grave menu always exposes the frozen policy.
+        _surfaceTerrainGameplay ??= GetTree().CurrentScene?.GetNodeOrNull<RingTerrain3DGameplay>("Terrain3DGameplay");
         if (_surfaceTerrainGameplay != null)
         {
             Godot.Collections.Dictionary diagnostics = _surfaceTerrainGameplay.Call("GetSurfaceDiagnostics").AsGodotDictionary();
+            RefreshRuntimeSurfaceDefinition(diagnostics);
+            RefreshGameplayStreamingDiagnostics(diagnostics);
             string error = diagnostics.TryGetValue("error", out Variant errorValue) ? errorValue.AsString() : "";
             bool saveBlocked = diagnostics.TryGetValue("save_blocked", out Variant blockedValue) && blockedValue.AsBool();
             bool ready = diagnostics.TryGetValue("ready", out Variant readyValue) && readyValue.AsBool();
@@ -247,10 +321,69 @@ public partial class RingLiveTuningDrawer
         _surfaceTerrainStatus.Text = success ?? (_surfaceTerrainDefaults is null ? "" : _surfaceTerrainDefaults.Dirty ? "Surface controls pending save." : _surfaceTerrainDefaults.LastError.Length > 0 ? "Surface control save error: " + _surfaceTerrainDefaults.LastError : "Surface controls saved.");
     }
 
+	private void RefreshRuntimeSurfaceDefinition(Godot.Collections.Dictionary diagnostics)
+	{
+		if (_runtimeSurfaceDefinitionStatus == null) return;
+		if (!diagnostics.TryGetValue("runtime_surface_generation", out Variant runtimeValue) || !runtimeValue.AsBool())
+		{
+			_runtimeSurfaceDefinitionStatus.Text = "Terrain3D surface definition active.";
+			return;
+		}
+		int generator = diagnostics.TryGetValue("terrain_generator_version", out Variant generatorValue) ? generatorValue.AsInt32() : 0;
+		string hash = diagnostics.TryGetValue("terrain_definition_hash", out Variant hashValue) ? hashValue.AsString() : "";
+		_runtimeSurfaceDefinitionStatus.Text = $"Runtime surface generator v{generator} | hash {hash}\nTerrain -8000..+8000 m | sea level 0 m | reserved build ceiling +8400 m.\nThis world's recipe is frozen. Save a recipe in the terrain preview before creating a new runtime surface world to change its geography.";
+	}
+
+    private void RefreshGameplayStreamingDiagnostics(Godot.Collections.Dictionary diagnostics)
+    {
+        if (_generationStreamingDiagnostics == null) return;
+        Godot.Collections.Dictionary stream = diagnostics.TryGetValue("streaming", out Variant streamingValue)
+            ? streamingValue.AsGodotDictionary() : new();
+        if (stream.Count == 0)
+        {
+            _generationStreamingDiagnostics.Text = "Streaming diagnostics are unavailable.";
+            return;
+        }
+
+        string state = stream.TryGetValue("state", out Variant stateValue) ? stateValue.AsString() : "Unknown";
+        long requestRevision = stream.TryGetValue("request_revision", out Variant requestValue) ? requestValue.AsInt64() : 0;
+        long committedRevision = stream.TryGetValue("committed_revision", out Variant committedValue) ? committedValue.AsInt64() : 0;
+        long pendingEditRevision = stream.TryGetValue("pending_edit_revision", out Variant pendingEditValue) ? pendingEditValue.AsInt64() : 0;
+        long committedEditRevision = stream.TryGetValue("committed_edit_revision", out Variant committedEditValue) ? committedEditValue.AsInt64() : 0;
+        long workers = stream.TryGetValue("worker_count", out Variant workersValue) ? workersValue.AsInt64() : 0;
+        long activeJobs = stream.TryGetValue("active_jobs", out Variant jobsValue) ? jobsValue.AsInt64() : 0;
+        long cacheBytes = stream.TryGetValue("cache_bytes", out Variant cacheValue) ? cacheValue.AsInt64() : 0;
+        long cacheHits = stream.TryGetValue("cache_hits", out Variant hitsValue) ? hitsValue.AsInt64() : 0;
+        long cacheMisses = stream.TryGetValue("cache_misses", out Variant missesValue) ? missesValue.AsInt64() : 0;
+        double generationMs = stream.TryGetValue("last_generation_ms", out Variant generationValue) ? generationValue.AsDouble() : 0;
+        double readinessMs = stream.TryGetValue("last_readiness_ms", out Variant readinessValue) ? readinessValue.AsDouble() : 0;
+        double maxReadinessMs = stream.TryGetValue("max_readiness_ms", out Variant maxReadinessValue) ? maxReadinessValue.AsDouble() : 0;
+        long coverageWaits = stream.TryGetValue("coverage_waits", out Variant waitsValue) ? waitsValue.AsInt64() : 0;
+        Godot.Collections.Dictionary native = diagnostics.TryGetValue("native", out Variant nativeValue)
+            && nativeValue.VariantType == Variant.Type.Dictionary ? nativeValue.AsGodotDictionary() : new();
+        Godot.Collections.Dictionary preparation = native.TryGetValue("preparation", out Variant preparationValue)
+            ? preparationValue.AsGodotDictionary() : new();
+        string phase = preparation.TryGetValue("phase", out Variant phaseValue) ? phaseValue.AsString() : "Idle";
+        long regions = native.TryGetValue("regions", out Variant regionsValue) ? regionsValue.AsInt64() : 0;
+        long tilesDone = preparation.TryGetValue("tiles_done", out Variant tilesDoneValue) ? tilesDoneValue.AsInt64() : 0;
+        long tilesTotal = preparation.TryGetValue("tiles_total", out Variant tilesTotalValue) ? tilesTotalValue.AsInt64() : 0;
+        double maxStep = preparation.TryGetValue("step_max_ms", out Variant maxStepValue) ? maxStepValue.AsDouble() : 0;
+
+        _generationStreamingDiagnostics.Text = $"State: {state} | request {requestRevision}, committed {committedRevision} | edits pending {pendingEditRevision}, committed {committedEditRevision}\n"
+            + $"Workers {workers} | active jobs {activeJobs} | cache {cacheBytes / 1048576.0:0.0} MiB | hits {cacheHits}, misses {cacheMisses}\n"
+            + $"Generation {generationMs:0.##} ms | readiness {readinessMs:0.##}/{maxReadinessMs:0.##} ms | coverage waits {coverageWaits}\n"
+            + $"Native preparation: {phase} | regions {regions}/9 | tiles {tilesDone}/{tilesTotal} | max step {maxStep:0.##} ms";
+    }
+
     private void RefreshSurfaceTerrainControls()
     {
-        if (_surfaceTerrainDefaults is null || _surfaceTerrainControls.Count != 4) return;
-        double[] values = { _surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond };
+        if (_surfaceTerrainDefaults is null || _surfaceTerrainControls.Count == 0) return;
+        double[] values = _generationPreview != null
+            ? new[] { (double)_surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
+            : _runtimeSurfaceDefinitionStatus != null
+                ? new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.DryRoughness, _surfaceTerrainDefaults.Settings.WetRoughness, _surfaceTerrainDefaults.Settings.RainWetnessStrength, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
+                : new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond };
+        if (_surfaceTerrainControls.Count != values.Length) return;
         for (int index = 0; index < values.Length; index++)
         {
             _surfaceTerrainControls[index].Slider.SetValueNoSignal(values[index]);

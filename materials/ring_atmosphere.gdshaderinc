@@ -3,9 +3,8 @@
 // volume is vacuum and therefore contributes no extinction.
 #include "res://materials/celestial_lighting.gdshaderinc"
 uniform bool ring_atmosphere_enabled = true;
-// Scaled-space far-ring materials are always beyond the detailed haze range.
-// Give them one cheap, uniform shroud instead of evaluating shell intersections
-// and elevation-aware visibility for every fragment.
+// Legacy fallback for scaled-space materials without a dynamic ray frame.
+// Bound far-ring materials use the camera-relative air path below.
 uniform bool ring_atmosphere_far_shroud_enabled = false;
 uniform float ring_atmosphere_far_shroud_visibility : hint_range(0.0, 1.0) = 1.0;
 uniform float ring_radius_meters = 5000000.0;
@@ -29,6 +28,12 @@ uniform float atmosphere_night_density_factor : hint_range(0.0, 1.0) = 0.08;
 uniform vec3 atmosphere_day_color : source_color = vec3(0.34, 0.46, 0.60);
 uniform vec3 atmosphere_night_color : source_color = vec3(0.026, 0.035, 0.055);
 uniform float atmosphere_scattering_energy : hint_range(0.0, 2.0) = 0.26;
+uniform float atmosphere_aerosol : hint_range(0.0, 1.0) = 0.35;
+uniform float atmosphere_forward_scattering : hint_range(0.0, 0.85) = 0.22;
+uniform float atmosphere_sun_warmth : hint_range(0.0, 1.0) = 0.25;
+// Direction from the shaded point toward the star. Facing the star brightens
+// the view ray; the opposite direction contributes no warm forward lobe.
+uniform vec3 ring_atmosphere_to_sun = vec3(0.0, 1.0, 0.0);
 // Defaults preserve existing materials that do not participate in the
 // celestial presentation bridge.
 uniform vec3 ring_atmosphere_planet_direction = vec3(-1.0, 0.0, 0.0);
@@ -37,6 +42,7 @@ uniform float eclipse_solar_transmittance : hint_range(0.0, 1.0) = 1.0;
 // width guard prevents its haze from continuing beyond the physical side walls.
 // A large default preserves materials that are not ring-width-aware.
 uniform float ring_atmosphere_half_width_meters = 1000000000.0;
+#include "res://materials/ring_atmosphere_paths.gdshaderinc"
 
 float ring_atmosphere_altitude_blend(float camera_altitude) {
 	return smoothstep(
@@ -50,6 +56,17 @@ vec2 ring_atmosphere_visibility_distances(float camera_altitude) {
 	return vec2(
 		mix(atmosphere_clear_distance_meters, atmosphere_high_altitude_clear_distance_meters, altitude_blend),
 		mix(atmosphere_full_distance_meters, atmosphere_high_altitude_full_distance_meters, altitude_blend));
+}
+
+vec3 ring_atmosphere_scattering_color(vec3 ray_direction, float day_factor) {
+	float daylight = clamp(day_factor, 0.0, 1.0);
+	float sun_alignment = clamp(dot(normalize(ray_direction), normalize(ring_atmosphere_to_sun)), -1.0, 1.0);
+	float g = atmosphere_forward_scattering;
+	float forward_lobe = min(3.0, (1.0 - g * g) / max(0.08, pow(1.0 + g * g - 2.0 * g * sun_alignment, 1.5)));
+	vec3 base = mix(atmosphere_night_color, atmosphere_day_color, daylight);
+	float forward_excess = max(forward_lobe - 1.0, 0.0) * daylight;
+	vec3 warm = vec3(1.0, 0.55, 0.26) * atmosphere_sun_warmth * forward_excess;
+	return base + warm + base * atmosphere_aerosol * forward_excess;
 }
 
 float ring_segment_length_inside_cylinder(vec3 start_world, vec3 end_world, vec3 center_world, float radius) {
@@ -362,16 +379,35 @@ vec4 sample_ring_atmosphere(vec3 camera_world, vec3 target_world, vec3 center_wo
 		half_width - width_feather,
 		half_width + width_feather,
 		abs(target_world.y - center_world.y));
+	// The legacy cylinder fallback has no camera-local frame, so it retains the
+	// caller's target-surface illumination. A valid frame instead integrates
+	// camera-local air and must not inherit night/day from a remote target.
+	float legacy_day_factor = clamp(day_factor, 0.0, 1.0);
+	vec3 legacy_color = ring_atmosphere_scattering_color(target_world - camera_world, legacy_day_factor);
+	vec3 camera_relative_paths = ring_atmosphere_first_air_paths(target_world);
+	if (camera_relative_paths.x >= 0.0) {
+		float local_air_geometric_day = smoothstep(-0.2, 0.35,
+			dot(-normalize(ring_atmosphere_outward_world), normalize(ring_atmosphere_to_sun)));
+		float local_air_day = ringworld_effective_solar_day(local_air_geometric_day);
+		vec3 local_air_color = ring_atmosphere_scattering_color(target_world - camera_world, local_air_day);
+		float path_scale = max(ring_atmosphere_coordinate_scale, 0.000001);
+		float local_air_boundary_opacity = (1.0 - exp(-(camera_relative_paths.y * path_scale) / max(atmosphere_boundary_extinction_meters, 1.0))) * atmosphere_boundary_max_opacity;
+		float local_air_upper_opacity = (1.0 - exp(-(camera_relative_paths.z * path_scale) / max(atmosphere_upper_extinction_meters, 1.0))) * atmosphere_upper_max_opacity;
+		float local_air_shell_opacity = 1.0 - (1.0 - local_air_boundary_opacity) * (1.0 - local_air_upper_opacity);
+		vec2 local_air_distances = ring_atmosphere_visibility_distances(ring_atmosphere_camera_height_meters * path_scale);
+		float local_air_distance_weight = smoothstep(local_air_distances.x, max(local_air_distances.x + 1.0, local_air_distances.y), camera_relative_paths.x * path_scale);
+		float local_air_haze = local_air_distance_weight * atmosphere_distance_haze_max_opacity;
+		float local_air_opacity = min(1.0 - (1.0 - local_air_shell_opacity * local_air_distance_weight) * (1.0 - local_air_haze), atmosphere_total_max_opacity);
+		return vec4(local_air_color, clamp(local_air_opacity * atmosphere_opacity_multiplier, 0.0, 1.0));
+	}
 	if (target_width_fade <= 0.0001) return vec4(0.0);
-	float clamped_day_factor = clamp(day_factor, 0.0, 1.0);
-	vec3 color = mix(atmosphere_night_color, atmosphere_day_color, clamped_day_factor);
 	if (ring_atmosphere_far_shroud_enabled) {
 		float far_shroud_opacity = min(
 			atmosphere_distance_haze_max_opacity,
 			atmosphere_total_max_opacity)
 			* clamp(ring_atmosphere_far_shroud_visibility, 0.0, 1.0)
 			* target_width_fade;
-		return vec4(color, clamp(far_shroud_opacity, 0.0, 1.0));
+		return vec4(legacy_color, clamp(far_shroud_opacity, 0.0, 1.0));
 	}
 	float outer_radius = ring_radius_meters + max(atmosphere_floor_depth_meters, 0.0);
 	float boundary_inner_radius = max(1.0, ring_radius_meters - max(atmosphere_boundary_height_meters, 1.0));
@@ -410,5 +446,5 @@ vec4 sample_ring_atmosphere(vec3 camera_world, vec3 target_world, vec3 center_wo
 		1.0 - (1.0 - physical_distance_opacity) * (1.0 - distance_haze_opacity),
 		atmosphere_total_max_opacity);
 	atmosphere_opacity *= atmosphere_opacity_multiplier * target_width_fade;
-	return vec4(color, clamp(atmosphere_opacity, 0.0, 1.0));
+	return vec4(legacy_color, clamp(atmosphere_opacity, 0.0, 1.0));
 }

@@ -11,6 +11,7 @@ public partial class RingLiveTuningDrawer
     private readonly System.Collections.Generic.Dictionary<string, Label> _shadowValueLabels = new();
     private readonly System.Collections.Generic.Dictionary<string, OptionButton> _shadowOptions = new();
     private CheckButton? _shadowEnabled;
+    private CheckButton? _localShadowHandoffEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
     private CheckButton? _sunStabilizationEnabled;
@@ -24,7 +25,10 @@ public partial class RingLiveTuningDrawer
     {
         tab.AddChild(new Label { Text = "Directional shadow quality. Changes are saved and reapply after graphics presets.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
         VBoxContainer quality = TuningMenuUi.CreateSection(tab, "Quality");
-        _shadowEnabled = new CheckButton { Name="SunShadows", Text="Sun shadows", ButtonPressed=_sun?.ShadowEnabled ?? true }; _shadowEnabled.Toggled += v => SetShadowValue("Enabled", v); quality.AddChild(_shadowEnabled);
+        _shadowEnabled = new CheckButton { Name="SunShadows", Text="Sun shadows", ButtonPressed=_shadowGraphics?.RequestedSunShadowsEnabled ?? true }; _shadowEnabled.Toggled += v => SetShadowValue("Enabled", v); quality.AddChild(_shadowEnabled);
+        _localShadowHandoffEnabled = new CheckButton { Name="LocalShadowHandoff", Text="Suspend sun shadows below local horizon", ButtonPressed=_shadowGraphics?.LocalShadowHandoffEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Keeps planet shadows available while the sun is safely below the local ring horizon." }; _localShadowHandoffEnabled.Toggled += value => SetShadowValue("LocalShadowHandoffEnabled", value); quality.AddChild(_localShadowHandoffEnabled);
+        AddShadowSlider(quality, "SunShadowOffElevationDegrees", "Suspend below elevation (degrees)", -45, -1, .1, _shadowGraphics?.EffectiveSunShadowOffElevationDegrees ?? -18);
+        AddShadowSlider(quality, "SunShadowOnElevationDegrees", "Resume above elevation (degrees)", -45, -1, .1, _shadowGraphics?.EffectiveSunShadowOnElevationDegrees ?? -16);
         AddShadowDepthOption(quality, _shadowGraphics?.EffectiveDirectionalShadowDepthBits ?? 16); AddShadowAtlasOption(quality, _shadowGraphics?.EffectiveDirectionalShadowAtlasSize ?? 8192); AddShadowOption(quality, "Filter", "Soft-shadow filter", new[] { "Hard", "Soft very low", "Soft low", "Soft medium", "Soft high", "Soft ultra" }, new[] { 0,1,2,3,4,5 }, _shadowGraphics?.EffectiveDirectionalShadowFilter ?? 3);
         VBoxContainer terrainMacro = TuningMenuUi.CreateSection(tab, "Terrain macro shadows");
         _terrainMacroShadowEnabled = new CheckButton { Name="TerrainMacroShadows", Text="Enable terrain macro shadows", ButtonPressed=_shadowGraphics?.EffectiveTerrainMacroShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Uses the terrain height summary to cast distant mountain shadows." };
@@ -181,7 +185,8 @@ public partial class RingLiveTuningDrawer
             SetRange("Bias", _sun.ShadowBias);
             SetRange("NormalBias", _sun.ShadowNormalBias);
             SetRange("SunAngularDistance", _sun.LightAngularDistance);
-            _shadowEnabled?.SetPressedNoSignal(_sun.ShadowEnabled);
+            _shadowEnabled?.SetPressedNoSignal(_shadowGraphics.RequestedSunShadowsEnabled);
+            _localShadowHandoffEnabled?.SetPressedNoSignal(_shadowGraphics.LocalShadowHandoffEnabled);
         }
         if (_dayNightCycle != null)
         {
@@ -198,6 +203,8 @@ public partial class RingLiveTuningDrawer
         SetRange("TerrainMacroMaxTraceMeters", _shadowGraphics.EffectiveTerrainMacroShadowMaxTraceMeters);
         SetRange("TerrainMacroFadeStartMeters", _shadowGraphics.EffectiveTerrainMacroShadowFadeStartMeters);
         SetRange("TerrainMacroFadeEndMeters", _shadowGraphics.EffectiveTerrainMacroShadowFadeEndMeters);
+        SetRange("SunShadowOffElevationDegrees", _shadowGraphics.EffectiveSunShadowOffElevationDegrees);
+        SetRange("SunShadowOnElevationDegrees", _shadowGraphics.EffectiveSunShadowOnElevationDegrees);
         _terrainMacroShadowEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveTerrainMacroShadowsEnabled);
         _terrainMacroWallShadowsEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveTerrainMacroWallShadowsEnabled);
         if (_shadowOptions.TryGetValue("AtlasSize", out OptionButton? atlas))
@@ -225,6 +232,7 @@ public partial class RingLiveTuningDrawer
         _shadowStatus.Text = $"{state} Effective: {_shadowGraphics.EffectiveDirectionalShadowAtlasSize}px atlas, "
             + $"{_shadowGraphics.EffectiveDirectionalShadowDepthBits}-bit depth ({FormatShadowDepthMemory(depthBytes)} estimated raw depth), filter {_shadowGraphics.EffectiveDirectionalShadowFilter}, "
             + $"near cascade {_shadowGraphics.EffectiveNearCascadeMeters:0} m, total range {_shadowGraphics.EffectiveShadowDistanceMeters:0} m."
+            + $" Sun handoff: {_shadowGraphics.LocalShadowHandoffReason}."
             + requested + atlasLimit + $"{stabilization} Presets coordinate this range with terrain and cloud-shadow handoffs.";
     }
 }

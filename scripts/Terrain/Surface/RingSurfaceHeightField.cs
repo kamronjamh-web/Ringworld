@@ -12,9 +12,10 @@ public sealed class RingSurfaceHeightField
     private readonly Func<long, int, float> _baseline;
     private readonly Dictionary<(long Around, int Across), float> _edits = new();
     private readonly int _spacingMeters;
+    private readonly bool _useTriangleInterpolation;
 
     public RingSurfaceHeightField(ulong terrainDefinitionHash, long circumferenceMeters, int widthMeters, float minimumHeight, float maximumHeight,
-        Func<long, int, float> baseline, float spacingMeters = DefaultSpacingMeters)
+        Func<long, int, float> baseline, float spacingMeters = DefaultSpacingMeters, bool useTriangleInterpolation = false)
     {
         if (terrainDefinitionHash == 0 || circumferenceMeters <= 0 || widthMeters <= 0 || baseline == null || !float.IsFinite(spacingMeters) || spacingMeters <= 0 || spacingMeters != MathF.Round(spacingMeters) || spacingMeters > int.MaxValue ||
             !float.IsFinite(minimumHeight) || !float.IsFinite(maximumHeight) || minimumHeight > maximumHeight)
@@ -24,6 +25,7 @@ public sealed class RingSurfaceHeightField
         TerrainDefinitionHash = terrainDefinitionHash; CircumferenceMeters = circumferenceMeters; WidthMeters = widthMeters;
         CircumferenceSamples = circumferenceMeters / _spacingMeters; WidthSamples = widthMeters / _spacingMeters;
         SpacingMeters = spacingMeters; MinimumHeight = minimumHeight; MaximumHeight = maximumHeight; _baseline = baseline;
+        _useTriangleInterpolation = useTriangleInterpolation;
     }
 
     public ulong TerrainDefinitionHash { get; }
@@ -37,6 +39,7 @@ public sealed class RingSurfaceHeightField
     public ulong Revision { get; private set; }
     public int ChangedSampleCount => _edits.Count;
     public int EditCount => _edits.Count;
+    public bool UsesTriangleInterpolation => _useTriangleInterpolation;
 
     public float GetSample(long around, int across)
     {
@@ -66,8 +69,14 @@ public sealed class RingSurfaceHeightField
         long a1 = a0 + 1; int x1 = Math.Min(x0 + 1, WidthSamples - 1);
         double ta = aroundSample - Math.Floor(aroundSample), tx = acrossSample - x0;
         long around0 = LatticeAround(a0), around1 = LatticeAround(a1); int across0 = LatticeAcross(x0), across1 = LatticeAcross(x1);
-        double low = GetSample(around0, across0) + (GetSample(around1, across0) - GetSample(around0, across0)) * ta;
-        double high = GetSample(around0, across1) + (GetSample(around1, across1) - GetSample(around0, across1)) * ta;
+        float h00 = GetSample(around0, across0);
+        float h10 = GetSample(around1, across0);
+        float h01 = GetSample(around0, across1);
+        float h11 = GetSample(around1, across1);
+        if (_useTriangleInterpolation)
+            return RingSurfaceLattice.TriangleInterpolate(h00, h10, h01, h11, ta, tx);
+        double low = h00 + ((double)h10 - h00) * ta;
+        double high = h01 + ((double)h11 - h01) * ta;
         return (float)(low + (high - low) * tx);
     }
 

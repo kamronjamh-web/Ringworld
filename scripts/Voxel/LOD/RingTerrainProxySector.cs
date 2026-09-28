@@ -9,7 +9,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 using Godot;
+using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
@@ -173,6 +175,19 @@ public partial class RingTerrainProxySector : MeshInstance3D
     public double AverageWorkerBuildMilliseconds => _completedWorkerBatches > 0 ? _totalWorkerBuildMilliseconds / _completedWorkerBatches : 0.0;
     public double AverageUploadMilliseconds => _completedUploadBatches > 0 ? _totalUploadMilliseconds / _completedUploadBatches : 0.0;
     public double AverageSectorUploadMilliseconds => _totalUploadedSectors > 0 ? _totalUploadMilliseconds / _totalUploadedSectors : 0.0;
+    // Diagnostic-only counter.  This reports allocations made on the scene
+    // thread while servicing this level; worker allocations are deliberately
+    // not folded into it because a parallel batch has several allocating
+    // threads.
+    public long MainThreadAllocatedBytesSinceStartup => Interlocked.Read(ref _mainThreadAllocatedBytesSinceStartup);
+    public static long MainThreadAllocatedBytesSinceStartupAllLevels =>
+        Interlocked.Read(ref _mainThreadAllocatedBytesSinceStartupAllLevels);
+    public static long WorkerAllocatedBytesSinceStartup =>
+        Interlocked.Read(ref _workerAllocatedBytesSinceStartup);
+    public static long StructuralWorkerAllocatedBytesSinceStartup =>
+        Interlocked.Read(ref _structuralWorkerAllocatedBytesSinceStartup);
+    public static int MaximumStructuralWallRequestedAroundCellsSinceStartup =>
+        Volatile.Read(ref _maximumStructuralWallRequestedAroundCellsSinceStartup);
     public long EstimatedActiveMeshBytes { get; private set; }
     public long EstimatedPendingUploadBytes { get; private set; }
     public long EstimatedVisibleMeshBytes => Math.Max(0L, EstimatedActiveMeshBytes - EstimatedWarmMeshBytes);
@@ -191,6 +206,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
     public bool StructuralWallMeshReady => _structuralWallMesh?.Mesh != null;
 
     private VoxelChunkGridManager? _grid;
+    private long _mainThreadAllocatedBytesSinceStartup;
+    private static long _mainThreadAllocatedBytesSinceStartupAllLevels;
+    private static long _workerAllocatedBytesSinceStartup;
+    private static long _structuralWorkerAllocatedBytesSinceStartup;
+    private static int _maximumStructuralWallRequestedAroundCellsSinceStartup;
     private SmoothTerrainGrid? _smoothTerrain;
     private bool _transitHidden;
     private Node3D? _focus;
@@ -350,13 +370,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> Masks,
         HashSet<RingTerrainSectorCoordinate> FullyWet);
 
-    private sealed record SectorData(RingTerrainSectorCoordinate Coordinate, ulong RequestVersion, ulong EditVersion, Vector3 LocalOrigin, Vector3[] Vertices, Vector3[] Normals, Color[] Colors, Vector2[] Uvs, Vector2[] MorphData, int[] Indices, int[] OceanIndices, SurfaceCoverageMask? CoverageMask, SurfaceCoverageMask? OceanSurfaceMask, bool FullyOceanSurface, FftShorelineTile? ShorelineTile)
+    private sealed record SectorData(RingTerrainSectorCoordinate Coordinate, ulong RequestVersion, ulong EditVersion, Vector3 LocalOrigin, Vector3[] Vertices, Vector3[] Normals, Color[] Colors, Vector2[] Uvs, Vector2[] MorphData, Vector3[] ParentChordOffsets, bool UsesRuntimeParentChord, int[] Indices, int[] OceanIndices, SurfaceCoverageMask? CoverageMask, SurfaceCoverageMask? OceanSurfaceMask, bool FullyOceanSurface, FftShorelineTile? ShorelineTile)
     {
         public long EstimatedBytes => Vertices.LongLength * 12L
             + Normals.LongLength * 12L
             + Colors.LongLength * 16L
             + Uvs.LongLength * 8L
             + MorphData.LongLength * 8L
+            + ParentChordOffsets.LongLength * 12L
             + (Indices.LongLength + OceanIndices.LongLength) * 4L
             + (ShorelineTile?.InteriorBytes.LongLength ?? 0L);
     }
@@ -385,10 +406,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Vector2[] Uv2,
         int[] Indices,
         ulong Version);
+    private readonly record struct StructuralWallSectorRange(long StartSector, long EndSectorExclusive)
+    {
+        public long SectorCount => EndSectorExclusive - StartSector;
+    }
     private const uint LodSectorCacheMagic = 0x53444F4C; // LODS
     // The disk cache stores authoritative terrain samples, not render-time
     // vertex colors, so biome material changes do not invalidate this format.
-    private const int LodSectorCacheVersion = 8;
+    private const int LodSectorCacheVersion = 10;
     private const float ShorelineOverlapMeters = 0.35f;
     private const int MaximumCachedSampleCount = 1_000_000;
     private static readonly ConcurrentDictionary<string, byte> UnavailableCacheDirectories = new();
@@ -396,9 +421,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         TerrainSample Sample,
         int TerrainHeight,
         int DisplayedHeight,
-        float SmoothTerrainHeight)
+        float SmoothTerrainHeight,
+        float PresentationTerrainHeight,
+        float PresentationDisplayedHeight,
+        bool UsesPresentationSurface,
+        bool UsesRuntimeWaterPlane)
     {
-        public bool IsDisplayedWater => Sample.HasSurfaceWater && TerrainHeight < Sample.WaterSurfaceHeight;
+        public bool IsDisplayedWater => Sample.HasSurfaceWater
+            && (UsesPresentationSurface ? PresentationTerrainHeight : TerrainHeight) < Sample.WaterSurfaceHeight;
     }
 
     private readonly record struct CachedTerrainSampleRecord(
@@ -445,6 +475,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _ringWidth = ringWidth;
         }
 
+        public bool UsesPresentationSurface => _edits.UsesFloatSurface || _sampler.UsesRuntimeSurfaceGeneration;
+        public bool UsesRuntimeWaterPlane => _sampler.UsesRuntimeSurfaceGeneration;
+
         public CachedTerrainPoint Get(long around, int across)
         {
             int clampedAcross = Mathf.Clamp(across, 0, _ringWidth);
@@ -453,17 +486,29 @@ public partial class RingTerrainProxySector : MeshInstance3D
             if (_points.TryGetValue(key, out CachedTerrainPoint cached)) return cached;
 
             TerrainSample sample = _sampler.GetTerrainSample(around, clampedAcross);
+            bool usesPresentationSurface = _edits.UsesFloatSurface || _sampler.UsesRuntimeSurfaceGeneration;
+            if (usesPresentationSurface)
+                sample = _edits.GetPresentationTerrainSample(_sampler, around, clampedAcross);
             int terrainHeight = _edits.TryGetEditedSurfaceHeight(around, clampedAcross, out int editedHeight)
                 ? editedHeight
                 : sample.SurfaceHeight;
-            float smoothTerrainHeight = _edits.TryGetEditedSurfaceHeight(around, clampedAcross, out _)
-                ? terrainHeight
-                : _sampler.GetSmoothSurfaceHeight(around, clampedAcross);
+            float presentationTerrainHeight = usesPresentationSurface
+                ? _edits.GetPresentationSurfaceHeight(_sampler, around, clampedAcross)
+                : 0.0f;
+            float smoothTerrainHeight = usesPresentationSurface
+                ? presentationTerrainHeight
+                : _edits.TryGetEditedSurfaceHeight(around, clampedAcross, out _)
+                    ? terrainHeight
+                    : _sampler.GetSmoothSurfaceHeight(around, clampedAcross);
             cached = new CachedTerrainPoint(
                 sample,
                 terrainHeight,
                 sample.ResolveDisplayedHeight(terrainHeight),
-                smoothTerrainHeight);
+                smoothTerrainHeight,
+                presentationTerrainHeight,
+                usesPresentationSurface ? sample.ResolveDisplayedHeight(presentationTerrainHeight) : 0.0f,
+                usesPresentationSurface,
+                _sampler.UsesRuntimeSurfaceGeneration);
             _points[key] = cached;
             return cached;
         }
@@ -545,19 +590,35 @@ public partial class RingTerrainProxySector : MeshInstance3D
     public int ServiceStreaming(double delta, int uploadBudget, double uploadBudgetMilliseconds = double.PositiveInfinity)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy update (inclusive)");
-        ReportCompletedDiskCacheMaintenance();
-        ServiceStructuralWallBuild();
-        UpdateCameraUniform();
-        UpdateLightingUniforms();
-        int uploaded = ApplyCompletedBatch(Mathf.Max(0, uploadBudget), uploadBudgetMilliseconds);
-        if (!StreamingActive || _fastTravelSuspended) return uploaded;
-        _elapsed += delta;
-        if (_elapsed >= Mathf.Max(0.05f, StreamingUpdateIntervalSeconds))
+        long allocationsBefore = GC.GetAllocatedBytesForCurrentThread();
+        try
         {
-            _elapsed = 0.0;
-            QueueStreamingUpdate(false);
+            ReportCompletedDiskCacheMaintenance();
+            using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy structural completion"))
+                ServiceStructuralWallBuild();
+            using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy camera uniforms"))
+                UpdateCameraUniform();
+            UpdateLightingUniforms();
+            int uploaded = ApplyCompletedBatch(Mathf.Max(0, uploadBudget), uploadBudgetMilliseconds);
+            if (!StreamingActive || _fastTravelSuspended) return uploaded;
+            _elapsed += delta;
+            if (_elapsed >= Mathf.Max(0.05f, StreamingUpdateIntervalSeconds))
+            {
+                _elapsed = 0.0;
+                using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy streaming request"))
+                    QueueStreamingUpdate(false);
+            }
+            return uploaded;
         }
-        return uploaded;
+        finally
+        {
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
+            if (allocated > 0)
+            {
+                Interlocked.Add(ref _mainThreadAllocatedBytesSinceStartup, allocated);
+                Interlocked.Add(ref _mainThreadAllocatedBytesSinceStartupAllLevels, allocated);
+            }
+        }
     }
 
     public bool CoordinatorBuildRequested => _coordinatorBuildRequested;
@@ -1108,22 +1169,25 @@ public partial class RingTerrainProxySector : MeshInstance3D
         bool coverageHandoff = EnableClipmapExclusion
             && (_finerCoverageLevel != null || _hasVoxelCoverageProvider);
         ulong coverageRefreshStartUsec = Time.GetTicksUsec();
-        Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>? coverageMasks =
-            coverageHandoff ? CaptureSurfaceCoverageMasks(
-                desired, size, spacing, cells, canonical.AroundMeters, canonical.AcrossMeters,
-                proxyHandoffVerticalDistance) : null;
-        if (!coverageHandoff)
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy coverage mask atlas"))
         {
-            ClearCoverageMasks(desired);
+            Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>? coverageMasks =
+                coverageHandoff ? CaptureSurfaceCoverageMasks(
+                    desired, size, spacing, cells, canonical.AroundMeters, canonical.AcrossMeters,
+                    proxyHandoffVerticalDistance) : null;
+            if (!coverageHandoff)
+            {
+                ClearCoverageMasks(desired);
+            }
+            _lastFinerCoverageRevision = finerCoverageRevision;
+            // This is intentionally synchronous and GPU-only.  A provider revision
+            // must not enqueue terrain sampling or mesh uploads merely to change
+            // which already-resident quads are visible.
+            if (coverageMasks != null) ApplyCoverageMasks(coverageMasks, cells);
+            if (_finerCoverageLevel != null && coverageMasks != null)
+                ApplyOceanReplacementMasks(CaptureOceanReplacementMasks(coverageMasks.Keys, size, spacing, canonical.AroundMeters, canonical.AcrossMeters, proxyHandoffVerticalDistance));
+            else ClearOceanReplacementMasks();
         }
-        _lastFinerCoverageRevision = finerCoverageRevision;
-        // This is intentionally synchronous and GPU-only.  A provider revision
-        // must not enqueue terrain sampling or mesh uploads merely to change
-        // which already-resident quads are visible.
-        if (coverageMasks != null) ApplyCoverageMasks(coverageMasks, cells);
-        if (_finerCoverageLevel != null && coverageMasks != null)
-            ApplyOceanReplacementMasks(CaptureOceanReplacementMasks(coverageMasks.Keys, size, spacing, canonical.AroundMeters, canonical.AcrossMeters, proxyHandoffVerticalDistance));
-        else ClearOceanReplacementMasks();
         // Ocean masks follow the fixed mesh-quad count, independent of the
         // sector's world size. The separate FFT atlas still protects troughs.
         LastCoverageRefreshMilliseconds = (Time.GetTicksUsec() - coverageRefreshStartUsec) / 1000.0;
@@ -1345,6 +1409,39 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private static long WrapAroundSector(long sector, long aroundSectorLength)
         => RingCoordMath.WrapAround(sector, Math.Max(1L, aroundSectorLength));
+
+    /// <summary>
+    /// Places a periodic sector index on the closest unwrapped copy beside the
+    /// reference.  Structural wall strips are continuous physical spans, so a
+    /// 0/last-sector prediction crossing must never be interpreted as a strip
+    /// around the entire ring.
+    /// </summary>
+    private static long NearestPeriodicSector(long referenceSector, long candidateSector,
+        long aroundSectorLength)
+    {
+        long length = Math.Max(1L, aroundSectorLength);
+        long reference = WrapAroundSector(referenceSector, length);
+        long candidate = WrapAroundSector(candidateSector, length);
+        long forward = WrapAroundSector(candidate - reference, length);
+        long half = length / 2;
+        long signed = forward > half ? forward - length : forward;
+        // For an even sector count, either copy is equally near. Keep the
+        // caller's signed direction so ordinary unwrapped ranges stay stable.
+        if ((length & 1L) == 0 && forward == half)
+            signed = candidateSector >= referenceSector ? half : -half;
+        return referenceSector + signed;
+    }
+
+    private static StructuralWallSectorRange ResolveStructuralWallSectorRange(
+        long currentAroundSector, long predictedAroundSector, long aroundSectorLength,
+        int radius)
+    {
+        long predictedNearest = NearestPeriodicSector(
+            currentAroundSector, predictedAroundSector, aroundSectorLength);
+        return new StructuralWallSectorRange(
+            Math.Min(currentAroundSector, predictedNearest) - Math.Max(1, radius),
+            Math.Max(currentAroundSector, predictedNearest) + Math.Max(1, radius) + 1);
+    }
 
     private double ResolveAroundCircumferenceMeters()
         => Math.Max(
@@ -2283,6 +2380,16 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double acrossEnd)
     {
         if (!StreamingActive || _transitHidden) return false;
+        // Terrain3D owns only its shader-discard disk, not the whole finer
+        // level. Mesh residency cannot prove visibility inside that disk.
+        if (ResolveTerrain3DNearFadeEnabled() && _focus != null)
+        {
+            RingCanonicalPosition focus = _velocityProvider?.CanonicalPosition
+                ?? _grid!.WorldToCanonicalRingPosition64(_focus.GlobalPosition);
+            float radius = (FadeStartMeters + Mathf.Max(FadeEndMeters, FadeStartMeters + 1f)) * .5f;
+            if (RectangleIntersectsTerrain3DDiscard(aroundStart, aroundEnd, acrossStart, acrossEnd,
+                focus.AroundMeters, focus.AcrossMeters, ResolveAroundCircumferenceMeters(), radius)) return false;
+        }
         int size = Mathf.Max(32, SectorSizeMeters);
         long around0 = (long)Math.Floor(Math.Min(aroundStart, aroundEnd) / size);
         long around1 = (long)Math.Floor((Math.Max(aroundStart, aroundEnd) - 0.001) / size);
@@ -2302,6 +2409,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 return false;
         }
         return true;
+    }
+
+    internal static bool RectangleIntersectsTerrain3DDiscard(double aroundStart, double aroundEnd,
+        double acrossStart, double acrossEnd, double focusAround, double focusAcross,
+        double circumference, double radius)
+    {
+        double center = (aroundStart + aroundEnd) * .5;
+        double halfAround = Math.Abs(aroundEnd - aroundStart) * .5;
+        double aroundDistance = Math.Max(0, Math.Abs(SignedPeriodicDistance(focusAround, center, circumference)) - halfAround);
+        double lowAcross = Math.Min(acrossStart, acrossEnd), highAcross = Math.Max(acrossStart, acrossEnd);
+        double acrossDistance = focusAcross < lowAcross ? lowAcross - focusAcross : focusAcross > highAcross ? focusAcross - highAcross : 0;
+        return aroundDistance * aroundDistance + acrossDistance * acrossDistance <= radius * radius;
     }
 
     private Vector3 GetCappedPredictionOffset()
@@ -2620,6 +2739,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 int waterSurfaceHeight = reader.ReadInt32();
                 int terrainHeight = reader.ReadInt32();
                 float smoothTerrainHeight = reader.ReadSingle();
+                float presentationTerrainHeight = reader.ReadSingle();
+                float presentationDisplayedHeight = reader.ReadSingle();
+                bool usesPresentationSurface = reader.ReadBoolean();
+                bool usesRuntimeWaterPlane = reader.ReadBoolean();
                 if (regionValue < (int)TerrainRegion.DeepOcean
                     || regionValue > (int)TerrainRegion.MountainBelt
                     || biomeValue < (int)TerrainBiomeId.Ocean
@@ -2630,7 +2753,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     || !float.IsFinite(erosion)
                     || !float.IsFinite(ridgeStrength)
                     || !float.IsFinite(temperature)
-                    || !float.IsFinite(moisture))
+                    || !float.IsFinite(moisture)
+                    || !float.IsFinite(smoothTerrainHeight)
+                    || !float.IsFinite(presentationTerrainHeight)
+                    || !float.IsFinite(presentationDisplayedHeight)
+                    || usesPresentationSurface != sampleCache.UsesPresentationSurface
+                    || usesRuntimeWaterPlane != sampleCache.UsesRuntimeWaterPlane)
                 {
                     throw new InvalidDataException("Invalid LOD terrain sample payload.");
                 }
@@ -2653,7 +2781,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
                         sample,
                         terrainHeight,
                         sample.ResolveDisplayedHeight(terrainHeight),
-                        smoothTerrainHeight));
+                        smoothTerrainHeight,
+                        presentationTerrainHeight,
+                        presentationDisplayedHeight,
+                        usesPresentationSurface,
+                        usesRuntimeWaterPlane));
             }
 
             sampleCache.Import(records);
@@ -2712,6 +2844,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     writer.Write(sample.WaterSurfaceHeight);
                     writer.Write(record.Point.TerrainHeight);
                     writer.Write(record.Point.SmoothTerrainHeight);
+                    writer.Write(record.Point.PresentationTerrainHeight);
+                    writer.Write(record.Point.PresentationDisplayedHeight);
+                    writer.Write(record.Point.UsesPresentationSurface);
+                    writer.Write(record.Point.UsesRuntimeWaterPlane);
                 }
             }
             cancellation.ThrowIfCancellationRequested();
@@ -2747,6 +2883,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private static SectorData BuildRawSector(ulong requestVersion, RingTerrainSectorCoordinate coordinate, RingLodSurfaceEditSnapshot editSnapshot, RingTerrainSampler sampler, TerrainBuildSampleCache sampleCache, RingLodGeometrySnapshot geometry, Transform3D ownerInverse, int size, int spacing, int cells, float underlay, float parentUnderlay, bool parentRestoresWaterUnderlay, int ringWidth, bool buildWalls, bool buildSkirts, float skirtDepth, bool blocky, bool alignSurfaceToTerrainSdf, int heightQuantum, Color low, Color high, SurfaceCoverageMask? coverageMask)
     {
+        long allocationsBefore = GC.GetAllocatedBytesForCurrentThread();
         (double centerAround, double centerAcross) = ResolveSectorCanonicalCenter(coordinate, size, ringWidth);
         // Build vertex positions relative to the sector center.  This keeps
         // adjacent vertices within a few hundred metres of zero even after a
@@ -2757,16 +2894,28 @@ public partial class RingTerrainProxySector : MeshInstance3D
         var vertexTransform = ownerInverse;
         if (blocky)
         {
-            return BuildRawBlockySector(requestVersion, coordinate, editSnapshot, sampler, sampleCache, geometry, vertexTransform, localOrigin, size, spacing, cells, underlay, ringWidth, buildWalls, buildSkirts, skirtDepth, heightQuantum, low, high, coverageMask);
+            SectorData blockyResult = BuildRawBlockySector(requestVersion, coordinate, editSnapshot, sampler, sampleCache, geometry, vertexTransform, localOrigin, size, spacing, cells, underlay, ringWidth, buildWalls, buildSkirts, skirtDepth, heightQuantum, low, high, coverageMask);
+            long blockyAllocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
+            if (blockyAllocated > 0) Interlocked.Add(ref _workerAllocatedBytesSinceStartup, blockyAllocated);
+            return blockyResult;
         }
 
         int row = cells + 1;
         int surfaceVertexCount = row * row;
-        var vertices = new Vector3[surfaceVertexCount * 2];
-        var normals = new Vector3[vertices.Length];
-        var colors = new Color[vertices.Length];
-        var uvs = new Vector2[vertices.Length];
-        var morphData = new Vector2[vertices.Length];
+        int initialVertexCount = surfaceVertexCount * 2;
+        var vertices = new List<Vector3>(initialVertexCount);
+        var normals = new List<Vector3>(initialVertexCount);
+        var colors = new List<Color>(initialVertexCount);
+        var uvs = new List<Vector2>(initialVertexCount);
+        var morphData = new List<Vector2>(initialVertexCount);
+        var parentChordOffsets = new List<Vector3>(initialVertexCount);
+        CollectionsMarshal.SetCount(vertices, initialVertexCount);
+        CollectionsMarshal.SetCount(normals, initialVertexCount);
+        CollectionsMarshal.SetCount(colors, initialVertexCount);
+        CollectionsMarshal.SetCount(uvs, initialVertexCount);
+        CollectionsMarshal.SetCount(morphData, initialVertexCount);
+        CollectionsMarshal.SetCount(parentChordOffsets, initialVertexCount);
+        bool runtimeParentChord = sampler.UsesRuntimeSurfaceGeneration;
         var waterVertices = new bool[surfaceVertexCount];
         var terrainGeometryHeights = new float[surfaceVertexCount];
         var aroundCoordinates = new double[surfaceVertexCount];
@@ -2786,27 +2935,24 @@ public partial class RingTerrainProxySector : MeshInstance3D
             TerrainSample terrainSample = point.Sample;
             int i = z * row + x;
             int waterIndex = surfaceVertexCount + i;
-            int terrainHeight = point.TerrainHeight;
-            float terrainGeometryHeight = alignSurfaceToTerrainSdf
-                ? point.SmoothTerrainHeight
-                : terrainHeight;
-            int waterHeight = point.DisplayedHeight;
-            float terrainSurface = terrainGeometryHeight + (alignSurfaceToTerrainSdf ? 0.5f : 1.0f) - underlay;
+            float terrainGeometryHeight = GetTerrainMorphHeight(point, alignSurfaceToTerrainSdf);
+            float waterHeight = GetWaterMorphHeight(point);
+            float terrainSurface = GetTerrainRenderHeight(point, alignSurfaceToTerrainSdf) - underlay;
             vertices[i] = vertexTransform * geometry.CanonicalToWorld(around, terrainSurface, across);
             colors[i] = ResolveBiomeTextureWeight(
                 sampler, around, across, ringWidth, biomeSampleSpacing, biomeWeightCache);
-            vertices[waterIndex] = vertexTransform * geometry.CanonicalToWorld(around, waterHeight + 1.0 - underlay, across);
+            vertices[waterIndex] = vertexTransform * geometry.CanonicalToWorld(around, GetWaterRenderHeight(point) - underlay, across);
             uvs[i] = new Vector2(x / (float)cells, z / (float)cells);
             uvs[waterIndex] = uvs[i];
             colors[waterIndex] = RingWaterModel.EncodeWaterKind(
-                RingTerrainVisuals.ResolveSeededColor(terrainSample, waterHeight, sampler, low, high),
+                RingTerrainVisuals.ResolveSeededColor(terrainSample, Mathf.RoundToInt(waterHeight), sampler, low, high),
                 terrainSample.WaterKind);
             waterVertices[i] = point.IsDisplayedWater;
             terrainGeometryHeights[i] = terrainGeometryHeight;
             aroundCoordinates[i] = around;
             acrossCoordinates[i] = across;
             terrainPoints[i] = point;
-            float parentTerrainHeight = SampleParentTerrainHeight(sampleCache, around, across, spacing * 2, ringWidth, alignSurfaceToTerrainSdf);
+            float parentTerrainHeight = SampleParentTerrainHeight(sampleCache, around, across, spacing * 2, ringWidth, alignSurfaceToTerrainSdf, runtimeParentChord);
             float parentWaterHeight = SampleParentWaterHeight(sampleCache, around, across, spacing * 2, ringWidth);
             // UV2.x is a displacement along the ring's radial-up vector. Match
             // the parent mesh's rendered base, rather than just its sampled
@@ -2822,6 +2968,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
             morphData[waterIndex] = new Vector2(
                 parentWaterHeight - waterHeight + underlay - ownWaterRestore - parentUnderlay + parentWaterRestore,
                 0.0f);
+            if (runtimeParentChord)
+                parentChordOffsets[i] = SampleRuntimeParentChordOffset(sampleCache, geometry, vertexTransform,
+                    around, across, spacing * 2, ringWidth, alignSurfaceToTerrainSdf, parentUnderlay, vertices[i]);
         }
 
         // Do not derive smooth-surface normals from only the triangles owned by
@@ -2873,8 +3022,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
             if (rawAcross1 <= 0 || rawAcross0 >= ringWidth) continue;
             validWaterCoverageCells++;
             int i00 = z * row + x, i10 = i00 + 1, i01 = i00 + row, i11 = i01 + 1;
-            indexList.Add(i01); indexList.Add(i10); indexList.Add(i00);
-            indexList.Add(i10); indexList.Add(i01); indexList.Add(i11);
+            if (runtimeParentChord)
+            {
+                // Preserve the existing clockwise winding while changing only
+                // the diagonal: (00,11), rather than legacy (01,10).
+                indexList.Add(i00); indexList.Add(i11); indexList.Add(i10);
+                indexList.Add(i00); indexList.Add(i01); indexList.Add(i11);
+            }
+            else
+            {
+                indexList.Add(i01); indexList.Add(i10); indexList.Add(i00);
+                indexList.Add(i10); indexList.Add(i01); indexList.Add(i11);
+            }
             int firstWetCount = CountWaterVertices(waterVertices, i01, i10, i00);
             bool firstIsOcean = firstWetCount == 3
                 && terrainPoints[i01].Sample.WaterKind == SurfaceWaterKind.Ocean
@@ -2914,11 +3073,6 @@ public partial class RingTerrainProxySector : MeshInstance3D
             }
         }
         fullyOceanSurface &= validWaterCoverageCells > 0;
-        var vertexList = new List<Vector3>(vertices);
-        var normalList = new List<Vector3>(normals);
-        var colorList = new List<Color>(colors);
-        var uvList = new List<Vector2>(uvs);
-        var morphList = new List<Vector2>(morphData);
         foreach (PartialWaterTriangle triangle in partialWaterTriangles)
         {
             AppendClippedWaterTriangle(
@@ -2936,31 +3090,50 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 underlay,
                 low,
                 high,
-                vertexList,
-                normalList,
-                colorList,
-                uvList,
-                morphList,
+                vertices,
+                normals,
+                colors,
+                uvs,
+                morphData,
                 oceanIndexList);
         }
         if (buildSkirts)
-            AppendSectorSkirts(vertexList, normalList, colorList, uvList, morphList, indexList, coordinate, sampleCache, sampler, geometry, vertexTransform, size, spacing, underlay, parentUnderlay, ringWidth, skirtDepth, buildWalls, low, high, alignSurfaceToTerrainSdf, geomorph: true);
-        while (morphList.Count < vertexList.Count) morphList.Add(Vector2.Zero);
-        while (uvList.Count < vertexList.Count) uvList.Add(new Vector2(-1.0f, -1.0f));
+            AppendSectorSkirts(vertices, normals, colors, uvs, morphData, indexList, coordinate, sampleCache, sampler, geometry, vertexTransform, size, spacing, underlay, parentUnderlay, ringWidth, skirtDepth, buildWalls, low, high, alignSurfaceToTerrainSdf, geomorph: true);
+        while (morphData.Count < vertices.Count) morphData.Add(Vector2.Zero);
+        while (uvs.Count < vertices.Count) uvs.Add(new Vector2(-1.0f, -1.0f));
+        while (parentChordOffsets.Count < vertices.Count) parentChordOffsets.Add(Vector3.Zero);
 
-        for (int i = 0; i < normalList.Count; i++) normalList[i] = normalList[i].Normalized();
+        for (int i = 0; i < normals.Count; i++) normals[i] = normals[i].Normalized();
         FftShorelineTile? shorelineTile = spacing == (int)SharedFftShorelineFieldCellMeters && !blocky
             ? BuildFftShorelineTile(coordinate, size, ringWidth, sampleCache, alignSurfaceToTerrainSdf)
             : null;
-        return new SectorData(coordinate, requestVersion, editSnapshot.Version, localOrigin, vertexList.ToArray(), normalList.ToArray(), colorList.ToArray(), uvList.ToArray(), morphList.ToArray(), indexList.ToArray(), oceanIndexList.ToArray(), coverageMask, new SurfaceCoverageMask(cells, 1, oceanSurfaceCells, oceanDeepWaterVertexDepths), fullyOceanSurface, shorelineTile);
+        SectorData result = new(coordinate, requestVersion, editSnapshot.Version, localOrigin, vertices.ToArray(), normals.ToArray(), colors.ToArray(), uvs.ToArray(), morphData.ToArray(), parentChordOffsets.ToArray(), runtimeParentChord, indexList.ToArray(), oceanIndexList.ToArray(), coverageMask, new SurfaceCoverageMask(cells, 1, oceanSurfaceCells, oceanDeepWaterVertexDepths), fullyOceanSurface, shorelineTile);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
+        if (allocated > 0) Interlocked.Add(ref _workerAllocatedBytesSinceStartup, allocated);
+        return result;
     }
+
+    private static float GetTerrainMorphHeight(CachedTerrainPoint point, bool alignSurfaceToTerrainSdf)
+    {
+        if (point.UsesPresentationSurface) return point.PresentationTerrainHeight;
+        return alignSurfaceToTerrainSdf ? point.SmoothTerrainHeight : point.TerrainHeight;
+    }
+
+    private static float GetTerrainRenderHeight(CachedTerrainPoint point, bool alignSurfaceToTerrainSdf)
+    {
+        if (point.UsesPresentationSurface) return point.PresentationTerrainHeight;
+        return (alignSurfaceToTerrainSdf ? point.SmoothTerrainHeight + 0.5f : point.TerrainHeight + 1.0f);
+    }
+
+    private static float GetWaterMorphHeight(CachedTerrainPoint point)
+        => point.UsesRuntimeWaterPlane ? point.PresentationDisplayedHeight : point.DisplayedHeight;
+
+    private static float GetWaterRenderHeight(CachedTerrainPoint point)
+        => point.UsesRuntimeWaterPlane ? point.PresentationDisplayedHeight : point.DisplayedHeight + 1.0f;
 
     private static float ResolveFftOceanDepth(CachedTerrainPoint point, bool alignSurfaceToTerrainSdf)
     {
-        float terrainSurfaceHeight = alignSurfaceToTerrainSdf
-            ? point.SmoothTerrainHeight + 0.5f
-            : point.TerrainHeight + 1.0f;
-        return point.Sample.WaterSurfaceHeight + 1.0f - terrainSurfaceHeight;
+        return GetWaterRenderHeight(point) - GetTerrainRenderHeight(point, alignSurfaceToTerrainSdf);
     }
 
     /// <summary>
@@ -3032,9 +3205,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Vector3 Sample(long sampleAround, int sampleAcross)
         {
             CachedTerrainPoint point = sampleCache.Get(sampleAround, sampleAcross);
-            float height = water
-                ? point.DisplayedHeight + 1.0f - underlay
-                : (alignSurfaceToTerrainSdf ? point.SmoothTerrainHeight + 0.5f : point.TerrainHeight + 1.0f) - underlay;
+            float height = (water
+                ? GetWaterRenderHeight(point)
+                : GetTerrainRenderHeight(point, alignSurfaceToTerrainSdf)) - underlay;
             return vertexTransform * geometry.CanonicalToWorld(sampleAround, height, sampleAcross);
         }
 
@@ -3052,9 +3225,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // increasing-height fallback rather than publishing a NaN normal.
         Vector3 center = Sample(around, across);
         CachedTerrainPoint centerPoint = sampleCache.Get(around, across);
-        float centerHeight = water
-            ? centerPoint.DisplayedHeight + 1.0f - underlay
-            : (alignSurfaceToTerrainSdf ? centerPoint.SmoothTerrainHeight + 0.5f : centerPoint.TerrainHeight + 1.0f) - underlay;
+        float centerHeight = (water
+            ? GetWaterRenderHeight(centerPoint)
+            : GetTerrainRenderHeight(centerPoint, alignSurfaceToTerrainSdf)) - underlay;
         Vector3 increasingHeight = CalculateIncreasingCanonicalHeightDirection(
             geometry, vertexTransform, around, across, centerHeight, center);
         return increasingHeight.LengthSquared() > 0.0000001f ? increasingHeight : Vector3.Down;
@@ -3091,10 +3264,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         const int biomeSampleSpacing = 16;
         var biomeWeightCache = new Dictionary<TerrainColumnKey, Color>();
 
-        int QuantizedHeight(long around, int across)
+        float QuantizedHeight(long around, int across)
         {
-            int raw = sampleCache.Get(around, across).TerrainHeight;
-            return Mathf.RoundToInt(raw / (float)heightQuantum) * heightQuantum;
+            CachedTerrainPoint point = sampleCache.Get(around, across);
+            float raw = point.UsesPresentationSurface ? point.PresentationTerrainHeight : point.TerrainHeight;
+            return Mathf.Round(raw / heightQuantum) * heightQuantum;
         }
 
         Vector3 Point(double around, float vertical, float across)
@@ -3115,8 +3289,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             int sampleAcross = Mathf.Clamp(z0, 0, ringWidth);
             CachedTerrainPoint point = sampleCache.Get(a0, sampleAcross);
             TerrainSample terrainSample = point.Sample;
-            int height = Mathf.RoundToInt(point.TerrainHeight / (float)heightQuantum) * heightQuantum;
-            float topY = height + 1.0f - underlay;
+            float height = QuantizedHeight(a0, sampleAcross);
+            float topY = height + (point.UsesPresentationSurface ? 0.0f : 1.0f) - underlay;
             Color terrainColor = ResolveBiomeTextureWeight(
                 sampler, a0, sampleAcross, ringWidth, biomeSampleSpacing, biomeWeightCache);
             Vector2 coverageUv = new((x + 0.5f) / cells, (z + 0.5f) / cells);
@@ -3126,29 +3300,31 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 terrainColor, reverse: false, blockyUvs, coverageUv);
             if (point.IsDisplayedWater)
             {
-                int waterHeight = point.Sample.WaterSurfaceHeight;
-                float waterTopY = waterHeight + 1.0f - underlay;
-                Color waterColor = RingTerrainVisuals.ResolveSeededColor(terrainSample, waterHeight, sampler, low, high);
+                float waterHeight = GetWaterMorphHeight(point);
+                float waterTopY = GetWaterRenderHeight(point) - underlay;
+                Color waterColor = RingTerrainVisuals.ResolveSeededColor(terrainSample, Mathf.RoundToInt(waterHeight), sampler, low, high);
                 AddBlockyQuad(vertices, normals, colors, oceanIndices,
                     Point(a0, waterTopY, z0), Point(a1, waterTopY, z0), Point(a1, waterTopY, z1), Point(a0, waterTopY, z1),
                     waterColor, reverse: false, blockyUvs, coverageUv);
             }
 
-            int aroundNeighborHeight = QuantizedHeight(a1, z0);
+            float aroundNeighborHeight = QuantizedHeight(a1, z0);
             if (aroundNeighborHeight != height)
             {
-                float lowY = Mathf.Min(height, aroundNeighborHeight) + 1.0f - underlay;
-                float highY = Mathf.Max(height, aroundNeighborHeight) + 1.0f - underlay;
+                float surfaceOffset = point.UsesPresentationSurface ? 0.0f : 1.0f;
+                float lowY = Mathf.Min(height, aroundNeighborHeight) + surfaceOffset - underlay;
+                float highY = Mathf.Max(height, aroundNeighborHeight) + surfaceOffset - underlay;
                 AddBlockyQuad(vertices, normals, colors, indices,
                     Point(a1, lowY, z0), Point(a1, lowY, z1), Point(a1, highY, z1), Point(a1, highY, z0),
                     terrainColor, reverse: height < aroundNeighborHeight, blockyUvs, coverageUv);
             }
 
-            int acrossNeighborHeight = QuantizedHeight(a0, z1);
+            float acrossNeighborHeight = QuantizedHeight(a0, z1);
             if (acrossNeighborHeight != height && z1 < ringWidth)
             {
-                float lowY = Mathf.Min(height, acrossNeighborHeight) + 1.0f - underlay;
-                float highY = Mathf.Max(height, acrossNeighborHeight) + 1.0f - underlay;
+                float surfaceOffset = point.UsesPresentationSurface ? 0.0f : 1.0f;
+                float lowY = Mathf.Min(height, acrossNeighborHeight) + surfaceOffset - underlay;
+                float highY = Mathf.Max(height, acrossNeighborHeight) + surfaceOffset - underlay;
                 AddBlockyQuad(vertices, normals, colors, indices,
                     Point(a0, lowY, z1), Point(a1, lowY, z1), Point(a1, highY, z1), Point(a0, highY, z1),
                     terrainColor, reverse: height > acrossNeighborHeight, blockyUvs, coverageUv);
@@ -3164,7 +3340,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // Blocky geometry has no continuous shoreline contour. Fail closed so it
         // cannot publish terrain data that disagrees with the rendered surface.
         while (blockyMorphs.Count < vertices.Count) blockyMorphs.Add(Vector2.Zero);
-        return new SectorData(coordinate, requestVersion, editSnapshot.Version, localOrigin, vertices.ToArray(), normals.ToArray(), colors.ToArray(), blockyUvs.ToArray(), blockyMorphs.ToArray(), indices.ToArray(), oceanIndices.ToArray(), coverageMask, null, false, null);
+        return new SectorData(coordinate, requestVersion, editSnapshot.Version, localOrigin, vertices.ToArray(), normals.ToArray(), colors.ToArray(), blockyUvs.ToArray(), blockyMorphs.ToArray(), new Vector3[vertices.Count], false, indices.ToArray(), oceanIndices.ToArray(), coverageMask, null, false, null);
     }
 
     private static FftShorelineTile BuildFftShorelineTile(
@@ -3184,7 +3360,6 @@ public partial class RingTerrainProxySector : MeshInstance3D
         var seeds = new bool[side * side];
         long originAround = coordinate.AroundSector * sectorSize - halo * (long)SharedFftShorelineFieldCellMeters;
         int originAcross = coordinate.AcrossSector * sectorSize - halo * (int)SharedFftShorelineFieldCellMeters;
-        float terrainDisplayOffset = alignSurfaceToTerrainSdf ? 0.5f : 1.0f;
         for (int z = 0; z < side; z++)
         for (int x = 0; x < side; x++)
         {
@@ -3192,9 +3367,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             int index = z * side + x;
             if (rawAcross < 0 || rawAcross > ringWidth) continue;
             CachedTerrainPoint point = sampleCache.Get(originAround + x * (long)SharedFftShorelineFieldCellMeters, rawAcross);
-            float terrainHeight = alignSurfaceToTerrainSdf ? point.SmoothTerrainHeight : point.TerrainHeight;
             float signedDepth = point.Sample.WaterKind == SurfaceWaterKind.Ocean
-                ? point.Sample.WaterSurfaceHeight + 1.0f - (terrainHeight + terrainDisplayOffset)
+                ? GetWaterRenderHeight(point) - GetTerrainRenderHeight(point, alignSurfaceToTerrainSdf)
                 : -FftShorelineFieldHaloMeters;
             valid[index] = true;
             // Match the actual water index generation; smooth SDF height only
@@ -3310,8 +3484,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double[] aroundCoordinates,
         float[] acrossCoordinates,
         CachedTerrainPoint[] terrainPoints,
-        Vector2[] uvs,
-        Vector2[] morphData,
+        IReadOnlyList<Vector2> uvs,
+        IReadOnlyList<Vector2> morphData,
         RingTerrainSampler sampler,
         RingLodGeometrySnapshot geometry,
         Transform3D vertexTransform,
@@ -3335,7 +3509,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             int sourceIndex = sourceIndices[index];
             if (!wetVertices[sourceIndex]) continue;
             CachedTerrainPoint point = terrainPoints[sourceIndex];
-            representativeWaterHeight += point.Sample.WaterSurfaceHeight;
+            representativeWaterHeight += GetWaterMorphHeight(point);
             wetCount++;
             if (representativeKind == SurfaceWaterKind.None)
             {
@@ -3352,7 +3526,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             int sourceIndex = sourceIndices[index];
             CachedTerrainPoint point = terrainPoints[sourceIndex];
             float waterHeight = wetVertices[sourceIndex]
-                ? point.Sample.WaterSurfaceHeight
+                ? GetWaterMorphHeight(point)
                 : representativeWaterHeight;
             float rawCoverage = waterHeight - terrainGeometryHeights[sourceIndex];
             float signedCoverage = wetVertices[sourceIndex]
@@ -3396,7 +3570,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         {
             vertices.Add(vertexTransform * geometry.CanonicalToWorld(
                 clippedVertex.Around,
-                clippedVertex.WaterHeight + 1.0f - underlay,
+                clippedVertex.WaterHeight + (terrainPoints[sourceIndices[0]].UsesRuntimeWaterPlane ? 0.0f : 1.0f) - underlay,
                 clippedVertex.Across));
             normals.Add(Vector3.Zero);
             colors.Add(waterColor);
@@ -3407,7 +3581,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             AddTriangle(indices, vertices, normals, baseIndex, baseIndex + index, baseIndex + index + 1);
     }
 
-    private static float ResolveClippedWaterMorph(Vector2[] morphData, int surfaceVertexCount, int sourceIndex)
+    private static float ResolveClippedWaterMorph(IReadOnlyList<Vector2> morphData, int surfaceVertexCount, int sourceIndex)
         => morphData[surfaceVertexCount + sourceIndex].X;
 
     private static ShorelineClipVertex IntersectShoreline(
@@ -3437,7 +3611,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             Mathf.Lerp(from.Morph, to.Morph, interpolation));
     }
 
-    private static float SampleParentTerrainHeight(TerrainBuildSampleCache sampleCache, long around, int across, int parentSpacing, int ringWidth, bool useSmoothTerrainHeight)
+    private static float SampleParentTerrainHeight(TerrainBuildSampleCache sampleCache, long around, int across, int parentSpacing, int ringWidth, bool useSmoothTerrainHeight, bool positiveDiagonal = false)
     {
         int spacing = Mathf.Max(1, parentSpacing);
         long a0 = (long)Math.Floor(around / (double)spacing) * spacing;
@@ -3450,11 +3624,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         CachedTerrainPoint p10 = sampleCache.Get(a1, z0);
         CachedTerrainPoint p01 = sampleCache.Get(a0, z1);
         CachedTerrainPoint p11 = sampleCache.Get(a1, z1);
-        float h00 = useSmoothTerrainHeight ? p00.SmoothTerrainHeight : p00.TerrainHeight;
-        float h10 = useSmoothTerrainHeight ? p10.SmoothTerrainHeight : p10.TerrainHeight;
-        float h01 = useSmoothTerrainHeight ? p01.SmoothTerrainHeight : p01.TerrainHeight;
-        float h11 = useSmoothTerrainHeight ? p11.SmoothTerrainHeight : p11.TerrainHeight;
-        return SampleParentTriangleHeight(h00, h10, h01, h11, tx, tz);
+        float h00 = GetTerrainMorphHeight(p00, useSmoothTerrainHeight);
+        float h10 = GetTerrainMorphHeight(p10, useSmoothTerrainHeight);
+        float h01 = GetTerrainMorphHeight(p01, useSmoothTerrainHeight);
+        float h11 = GetTerrainMorphHeight(p11, useSmoothTerrainHeight);
+        return positiveDiagonal ? SamplePositiveParentTriangleHeight(h00, h10, h01, h11, tx, tz) : SampleParentTriangleHeight(h00, h10, h01, h11, tx, tz);
     }
 
     private static float SampleParentWaterHeight(TerrainBuildSampleCache sampleCache, long around, int across, int parentSpacing, int ringWidth)
@@ -3466,10 +3640,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int z1 = Mathf.Clamp(z0 + spacing, 0, ringWidth);
         float tx = (float)((around - a0) / (double)spacing);
         float tz = z1 == z0 ? 0.0f : (across - z0) / (float)(z1 - z0);
-        float h00 = sampleCache.Get(a0, z0).DisplayedHeight;
-        float h10 = sampleCache.Get(a1, z0).DisplayedHeight;
-        float h01 = sampleCache.Get(a0, z1).DisplayedHeight;
-        float h11 = sampleCache.Get(a1, z1).DisplayedHeight;
+        float h00 = GetWaterMorphHeight(sampleCache.Get(a0, z0));
+        float h10 = GetWaterMorphHeight(sampleCache.Get(a1, z0));
+        float h01 = GetWaterMorphHeight(sampleCache.Get(a0, z1));
+        float h11 = GetWaterMorphHeight(sampleCache.Get(a1, z1));
         return SampleParentTriangleHeight(h00, h10, h01, h11, tx, tz);
     }
 
@@ -3482,6 +3656,115 @@ public partial class RingTerrainProxySector : MeshInstance3D
         return tx + tz <= 1.0f
             ? h00 + (h10 - h00) * tx + (h01 - h00) * tz
             : h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
+    }
+
+    private static float SamplePositiveParentTriangleHeight(float h00, float h10, float h01, float h11, float tx, float tz) =>
+        tx >= tz ? h00 + (h10 - h00) * tx + (h11 - h10) * tz : h00 + (h11 - h01) * tx + (h01 - h00) * tz;
+
+    private static Vector3 SampleRuntimeParentChordOffset(TerrainBuildSampleCache cache, RingLodGeometrySnapshot geometry, Transform3D inverse,
+        long around, int across, int spacing, int width, bool smooth, float parentUnderlay, Vector3 own)
+    {
+        long a0 = (long)Math.Floor(around / (double)spacing) * spacing; long a1 = a0 + spacing;
+        int z0 = Mathf.Clamp(Mathf.FloorToInt(across / (float)spacing) * spacing, 0, width), z1 = Mathf.Clamp(z0 + spacing, 0, width);
+        float tx = (float)((around - a0) / (double)spacing), tz = z1 == z0 ? 0f : (across - z0) / (float)(z1 - z0);
+        Vector3 p00 = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z0), smooth) - parentUnderlay, z0);
+        Vector3 p10 = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z0), smooth) - parentUnderlay, z0);
+        Vector3 p01 = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z1), smooth) - parentUnderlay, z1);
+        Vector3 p11 = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z1), smooth) - parentUnderlay, z1);
+        Vector3 parent = tx >= tz
+            ? p00 * (1f - tx) + p10 * (tx - tz) + p11 * tz
+            : p00 * (1f - tz) + p01 * (tz - tx) + p11 * tx;
+        return parent - own;
+    }
+
+    /// <summary>
+    /// Exercises the runtime parent-chord helper against independently formed
+    /// parent triangle vertices.  This deliberately uses float presentation
+    /// edits so a height-only or bilinear comparison cannot pass by accident.
+    /// </summary>
+    private static bool RunRuntimeParentChordContract()
+    {
+        int width = CertifiedRingScale.RingWidthMeters;
+        double circumference = CertifiedRingScale.EffectiveCircumferenceMeters;
+        using var settings = new VoxelTerrainSettings
+        {
+            SurfaceGenerationRecipeJson = TerrainGenerationParameters.Default().CanonicalJson,
+            SurfaceGenerationContractId = RingTerrainSampler.RuntimeSurfaceGenerationContractId,
+            BedrockY = -8000,
+            SeaLevelY = 0,
+            EnableUnified3dDensityTerrain = false,
+            EnableProceduralCaves = false,
+            EnableNaturalOverhangs = false,
+            EnableDesignedCaveDensityComposition = false
+        };
+        using var sampler = new RingTerrainSampler(settings, true, CertifiedRingScale.AroundVoxelLength,
+            CertifiedRingScale.EffectiveRadiusMeters, width, 8400);
+        long baseAround = sampler.AroundRingVoxelLength - 16;
+        const int baseAcross = 158000;
+        var floatEdits = new Dictionary<RingTerrainColumnCoordinate, float>();
+        foreach (int parentSpacing in new[] { 4, 8, 16 })
+        for (int dz = 0; dz <= 1; dz++)
+        for (int dx = 0; dx <= 1; dx++)
+        {
+            long around = baseAround + dx * parentSpacing;
+            int across = baseAcross + dz * parentSpacing;
+            // Every parent cell is a non-planar saddle with exact fractional
+            // presentation values, independent of procedural baseline shape.
+            long canonicalAround = around % sampler.AroundRingVoxelLength;
+            if (canonicalAround < 0) canonicalAround += sampler.AroundRingVoxelLength;
+            floatEdits[new RingTerrainColumnCoordinate(canonicalAround, across)] = 100 + parentSpacing * 3 + dx * 17 + dz * 29 + dx * dz * 11.25f;
+        }
+        var edits = new RingLodSurfaceEditSnapshot(1, sampler.AroundRingVoxelLength,
+            new Dictionary<RingTerrainColumnCoordinate, int>(), floatEdits, true);
+        var cache = new TerrainBuildSampleCache(edits, sampler, width);
+        var placements = new[]
+        {
+            new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero,
+                CertifiedRingScale.EffectiveRadiusMeters, 0, 0, circumference, -1000, 1000,
+                new RingCanonicalPosition(baseAround + 4, 0, baseAcross + 4)),
+            new RingLodGeometrySnapshot(new Transform3D(Basis.FromEuler(new Vector3(.03f, -.07f, .02f)), new Vector3(13, -7, 19)),
+                new Vector3(3, 5, -11), new Vector3(17, 0, -23), CertifiedRingScale.EffectiveRadiusMeters,
+                31, -9, circumference, -1000, 1000,
+                new RingCanonicalPosition(12, 0, baseAcross + 40))
+        };
+        foreach (RingLodGeometrySnapshot placement in placements)
+        foreach (int parentSpacing in new[] { 4, 8, 16 })
+        {
+            foreach ((int x, int z) fraction in new[] { (parentSpacing * 3 / 4, parentSpacing / 4), (parentSpacing / 4, parentSpacing * 3 / 4), (parentSpacing / 2, parentSpacing / 2), (0, parentSpacing / 2) })
+            {
+                long around = baseAround + fraction.x;
+                int across = baseAcross + fraction.z;
+                const float ownUnderlay = .17f;
+                const float parentUnderlay = .63f;
+                Transform3D inverse = new Transform3D(Basis.FromEuler(new Vector3(-.02f, .04f, -.01f)), new Vector3(-4, 8, 2)).AffineInverse();
+                Vector3 own = inverse * placement.CanonicalToWorld(around,
+                    GetTerrainRenderHeight(cache.Get(around, across), false) - ownUnderlay, across);
+                Vector3 actual = SampleRuntimeParentChordOffset(cache, placement, inverse, around, across,
+                    parentSpacing, width, false, parentUnderlay, own);
+                Vector3 expected = IndependentlySampleRuntimeParentChord(cache, placement, inverse, around, across,
+                    parentSpacing, width, parentUnderlay);
+                if (!((own + actual).DistanceTo(expected) < .001f)) return false;
+            }
+        }
+        return true;
+    }
+
+    private static Vector3 IndependentlySampleRuntimeParentChord(TerrainBuildSampleCache cache,
+        RingLodGeometrySnapshot geometry, Transform3D inverse, long around, int across, int spacing, int width, float underlay)
+    {
+        long a0 = (long)Math.Floor(around / (double)spacing) * spacing;
+        long a1 = a0 + spacing;
+        int z0 = Mathf.Clamp(Mathf.FloorToInt(across / (float)spacing) * spacing, 0, width);
+        int z1 = Mathf.Clamp(z0 + spacing, 0, width);
+        float tx = (float)((around - a0) / (double)spacing);
+        float tz = z1 == z0 ? 0.0f : (across - z0) / (float)(z1 - z0);
+        Vector3 lowerLeft = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z0), false) - underlay, z0);
+        Vector3 lowerRight = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z0), false) - underlay, z0);
+        Vector3 upperLeft = inverse * geometry.CanonicalToWorld(a0, GetTerrainRenderHeight(cache.Get(a0, z1), false) - underlay, z1);
+        Vector3 upperRight = inverse * geometry.CanonicalToWorld(a1, GetTerrainRenderHeight(cache.Get(a1, z1), false) - underlay, z1);
+        return tx >= tz
+            ? lowerLeft * (1.0f - tx) + lowerRight * (tx - tz) + upperRight * tz
+            : lowerLeft * (1.0f - tz) + upperLeft * (tz - tx) + upperRight * tx;
     }
 
     /// <summary>CPU contract callable from a Godot test scene without workers.</summary>
@@ -3522,6 +3805,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // Non-planar parent corners must follow the submitted i01--i10 diagonal.
         if (!Mathf.IsEqualApprox(SampleParentTriangleHeight(0, 0, 0, 4, 0.5f, 0.5f), 0.0f)) return false;
         if (!Mathf.IsEqualApprox(SampleParentTriangleHeight(0, 0, 0, 4, 0.75f, 0.75f), 2.0f)) return false;
+        // Runtime Terrain3D submits the opposite diagonal.  These fractional
+        // samples exercise both triangles and keep the legacy water rule apart.
+        if (!Mathf.IsEqualApprox(SamplePositiveParentTriangleHeight(0, 4, 8, 12, .75f, .25f), 5.0f)) return false;
+        if (!Mathf.IsEqualApprox(SamplePositiveParentTriangleHeight(0, 4, 8, 12, .25f, .75f), 7.0f)) return false;
+        if (!Mathf.IsEqualApprox(SamplePositiveParentTriangleHeight(0, 0, 0, 4, .5f, .5f), 2.0f)) return false;
+        if (!RunRuntimeParentChordContract()) return false;
+        if (!RectangleIntersectsTerrain3DDiscard(-8, 8, 92, 108, circumference - 2, 100, circumference, 20)) return false;
+        if (RectangleIntersectsTerrain3DDiscard(200, 240, 200, 240, 0, 0, circumference, 20)) return false;
         // A clipped water vertex addresses the water lattice half, not terrain.
         Vector2[] morphs = { new(1, 0), new(2, 0), new(10, 0), new(20, 0) };
         int terrainVertexCount = 2;
@@ -3539,6 +3830,87 @@ public partial class RingTerrainProxySector : MeshInstance3D
             && skirtMorphs.All(value => Mathf.IsEqualApprox(value.Y, 1.0f))
             && Mathf.IsEqualApprox(skirtMorphs[0].X, 1.25f) && Mathf.IsEqualApprox(skirtMorphs[1].X, 2.5f)
             && indices[0] == 3 && indices[1] == 1 && indices[2] == 0;
+    }
+
+    /// <summary>CPU-only regression for periodic structural wall request ranges.</summary>
+    public bool RunStructuralWallPeriodicRangeContract()
+    {
+        try
+        {
+            const int radius = 3;
+            foreach (int size in new[] { 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 131072, 524288, 2097152 })
+            {
+                long length = Math.Max(1L, (long)Math.Ceiling(CertifiedRingScale.EffectiveCircumferenceMeters / size));
+                // The final physical sector is partial for these sizes. A seam
+                // prediction must request the local strip, never all sectors.
+                StructuralWallSectorRange forward = ResolveStructuralWallSectorRange(length - 1, 0, length, radius);
+                StructuralWallSectorRange backward = ResolveStructuralWallSectorRange(0, length - 1, length, radius);
+                if (forward.SectorCount != 2L * radius + 2L
+                    || backward.SectorCount != 2L * radius + 2L
+                    || forward.SectorCount >= length || backward.SectorCount >= length)
+                    return false;
+            }
+
+            if (ResolveStructuralWallSectorRange(10, 14, 97, radius) is not { StartSector: 7, EndSectorExclusive: 18 }
+                || ResolveStructuralWallSectorRange(14, 10, 97, radius) is not { StartSector: 7, EndSectorExclusive: 18 }
+                || ResolveStructuralWallSectorRange(10, 10, 97, radius) is not { StartSector: 7, EndSectorExclusive: 14 }
+                || ResolveStructuralWallSectorRange(-1, 0, 97, radius) is not { StartSector: -4, EndSectorExclusive: 4 }
+                || ResolveStructuralWallSectorRange(96, 97, 97, radius) is not { StartSector: 93, EndSectorExclusive: 101 })
+                return false;
+
+            // Even-period ties keep the caller's direction, preventing a
+            // direction flip when prediction lies exactly opposite the focus.
+            if (NearestPeriodicSector(0, 4, 8) != 4
+                || NearestPeriodicSector(0, -4, 8) != -4
+                || NearestPeriodicSector(6, 2, 8) != 2)
+                return false;
+
+            const int fixtureSectorSize = 128;
+            const int fixtureSubdivisions = 2;
+            long fixtureLength = Math.Max(1L, (long)Math.Ceiling(
+                CertifiedRingScale.EffectiveCircumferenceMeters / fixtureSectorSize));
+            StructuralWallSectorRange fixtureRange = ResolveStructuralWallSectorRange(
+                0, fixtureLength - 1, fixtureLength, radius);
+            int fixtureAroundCells = checked((int)fixtureRange.SectorCount * fixtureSubdivisions);
+            double fixtureStep = fixtureSectorSize / (double)fixtureSubdivisions;
+            var request = new StructuralWallRequest(
+                new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero,
+                    CertifiedRingScale.EffectiveRadiusMeters, 0.0, 0.0,
+                    CertifiedRingScale.EffectiveCircumferenceMeters, -1_000.0, 1_000.0,
+                    new RingCanonicalPosition(0.0, 0.0, 0.0)),
+                Transform3D.Identity, fixtureRange.StartSector * (double)fixtureSectorSize,
+                fixtureStep, fixtureAroundCells, 1_000.0, 2, 128,
+                true, true, false, false, -1_500.0, 0.0, Colors.White, 1);
+            StructuralWallData wall = BuildStructuralWallData(request);
+            if (fixtureRange.SectorCount != 8 || fixtureAroundCells != 16
+                || wall.Vertices.Length != 320 || wall.Indices.Length != 480
+                || wall.Normals.Length != wall.Vertices.Length || wall.Colors.Length != wall.Vertices.Length)
+                return false;
+            for (int cell = 0; cell < fixtureAroundCells; cell++)
+            {
+                float chord = wall.Vertices[cell * 4].DistanceTo(wall.Vertices[cell * 4 + 1]);
+                if (!float.IsFinite(chord) || chord <= 0.0f || chord > fixtureStep * 1.1)
+                    return false;
+            }
+            for (int i = 0; i < wall.Indices.Length; i += 3)
+            {
+                int a = wall.Indices[i], b = wall.Indices[i + 1], c = wall.Indices[i + 2];
+                if ((uint)a >= (uint)wall.Vertices.Length || (uint)b >= (uint)wall.Vertices.Length || (uint)c >= (uint)wall.Vertices.Length)
+                    return false;
+                Vector3 face = (wall.Vertices[c] - wall.Vertices[a]).Cross(wall.Vertices[b] - wall.Vertices[a]);
+                if (!face.IsFinite() || face.LengthSquared() <= 0.000001f
+                    || !wall.Normals[a].IsFinite() || wall.Normals[a].LengthSquared() <= 0.000001f
+                    || face.Dot(wall.Normals[a]) <= 0.0f)
+                    return false;
+            }
+            GD.Print("STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT_PASS: seam prediction requests a bounded local strip.");
+            return true;
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT_FAIL: {exception.Message}");
+            return false;
+        }
     }
 
     private static void AppendSectorSkirts(List<Vector3> vertices, List<Vector3> normals, List<Color> colors, List<Vector2> uvs, List<Vector2> morphs, List<int> indices, RingTerrainSectorCoordinate coordinate, TerrainBuildSampleCache sampleCache, RingTerrainSampler sampler, RingLodGeometrySnapshot geometry, Transform3D ownerInverse, int size, int spacing, float underlay, float parentUnderlay, int ringWidth, float skirtDepth, bool structuralWalls, Color low, Color high, bool useSmoothTerrainHeight = false, bool geomorph = false)
@@ -3564,10 +3936,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
             int across1 = Mathf.Min(acrossEnd, across0 + spacing);
             CachedTerrainPoint point0 = sampleCache.Get(around, across0);
             CachedTerrainPoint point1 = sampleCache.Get(around, across1);
-            float height0 = useSmoothTerrainHeight ? point0.SmoothTerrainHeight : point0.TerrainHeight;
-            float height1 = useSmoothTerrainHeight ? point1.SmoothTerrainHeight : point1.TerrainHeight;
-            float top0 = height0 + (useSmoothTerrainHeight ? 0.5f : 1.0f) - underlay;
-            float top1 = height1 + (useSmoothTerrainHeight ? 0.5f : 1.0f) - underlay;
+            float height0 = GetTerrainMorphHeight(point0, useSmoothTerrainHeight);
+            float height1 = GetTerrainMorphHeight(point1, useSmoothTerrainHeight);
+            float top0 = GetTerrainRenderHeight(point0, useSmoothTerrainHeight) - underlay;
+            float top1 = GetTerrainRenderHeight(point1, useSmoothTerrainHeight) - underlay;
             Color color = ResolveElevationColor(Mathf.RoundToInt(Mathf.Max(height0, height1)), sampler, low, high);
             AddSkirtQuad(vertices, normals, colors, uvs, morphs, indices,
                 ownerInverse * geometry.CanonicalToWorld(around, top0 - skirtDepth, across0),
@@ -3589,10 +3961,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
             long around1 = Math.Min(aroundEnd, around0 + spacing);
             CachedTerrainPoint point0 = sampleCache.Get(around0, across);
             CachedTerrainPoint point1 = sampleCache.Get(around1, across);
-            float height0 = useSmoothTerrainHeight ? point0.SmoothTerrainHeight : point0.TerrainHeight;
-            float height1 = useSmoothTerrainHeight ? point1.SmoothTerrainHeight : point1.TerrainHeight;
-            float top0 = height0 + (useSmoothTerrainHeight ? 0.5f : 1.0f) - underlay;
-            float top1 = height1 + (useSmoothTerrainHeight ? 0.5f : 1.0f) - underlay;
+            float height0 = GetTerrainMorphHeight(point0, useSmoothTerrainHeight);
+            float height1 = GetTerrainMorphHeight(point1, useSmoothTerrainHeight);
+            float top0 = GetTerrainRenderHeight(point0, useSmoothTerrainHeight) - underlay;
+            float top1 = GetTerrainRenderHeight(point1, useSmoothTerrainHeight) - underlay;
             Color color = ResolveElevationColor(Mathf.RoundToInt(Mathf.Max(height0, height1)), sampler, low, high);
             AddSkirtQuad(vertices, normals, colors, uvs, morphs, indices,
                 ownerInverse * geometry.CanonicalToWorld(around0, top0 - skirtDepth, across),
@@ -3670,8 +4042,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // light strip at both physical edges around the current/predicted window
         // even when the streamed terrain window is hundreds of kilometres inland.
         int radius = Mathf.Max(1, SectorRadiusAround + 1);
-        long startSector = Math.Min(currentAroundSector, predictedAroundSector) - radius;
-        long endSector = Math.Max(currentAroundSector, predictedAroundSector) + radius + 1;
+        StructuralWallSectorRange wallRange = ResolveStructuralWallSectorRange(
+            currentAroundSector, predictedAroundSector,
+            ResolveAroundSectorLength(sectorSize), radius);
+        long startSector = wallRange.StartSector;
+        long endSector = wallRange.EndSectorExclusive;
         if (!force
             && startSector == _lastWallAroundStart
             && endSector == _lastWallAroundEnd
@@ -3689,7 +4064,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double aroundEnd = (double)endSector * sectorSize;
         int aroundCells = Mathf.Max(
             1,
-            checked((int)((endSector - startSector) * Mathf.Clamp(StructuralWallAroundSubdivisionsPerSector, 1, 16))));
+            checked((int)(wallRange.SectorCount * Mathf.Clamp(StructuralWallAroundSubdivisionsPerSector, 1, 16))));
+        UpdateMaximumStructuralWallRequestedAroundCells(aroundCells);
         int verticalCells = Mathf.Clamp(StructuralWallVerticalCells, 1, 32);
         double aroundStep = (aroundEnd - aroundStart) / aroundCells;
         double verticalStep = (geometry.StructuralWallTopGlobalY - geometry.StructuralBottomGlobalY)
@@ -3725,9 +4101,19 @@ public partial class RingTerrainProxySector : MeshInstance3D
             BuildStructuralWallData(request));
     }
 
+    private static void UpdateMaximumStructuralWallRequestedAroundCells(int aroundCells)
+    {
+        int observed;
+        while (aroundCells > (observed = Volatile.Read(ref _maximumStructuralWallRequestedAroundCellsSinceStartup))
+            && Interlocked.CompareExchange(ref _maximumStructuralWallRequestedAroundCellsSinceStartup,
+                aroundCells, observed) != observed) { }
+    }
+
     private static StructuralWallData BuildStructuralWallData(
         StructuralWallRequest request)
     {
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy structural wall build", worker: true);
+        long allocationsBefore = GC.GetAllocatedBytesForCurrentThread();
         int wallQuads = request.BuildEdgeWalls
             ? request.AroundCells * request.VerticalCells * 2
             : 0;
@@ -3780,13 +4166,16 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Vector3[] normalArray = normals.ToArray();
         for (int index = 0; index < normalArray.Length; index++)
             normalArray[index] = normalArray[index].Normalized();
-        return new StructuralWallData(
+        StructuralWallData result = new(
             vertices.ToArray(),
             normalArray,
             colors.ToArray(),
             uv2.ToArray(),
             indices.ToArray(),
             request.Version);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
+        if (allocated > 0) Interlocked.Add(ref _structuralWorkerAllocatedBytesSinceStartup, allocated);
+        return result;
     }
 
     private static void AppendStructuralWallData(
@@ -4124,17 +4513,27 @@ public partial class RingTerrainProxySector : MeshInstance3D
             arrays[(int)Godot.Mesh.ArrayType.Color] = data.Colors;
             arrays[(int)Godot.Mesh.ArrayType.TexUV] = data.Uvs;
             arrays[(int)Godot.Mesh.ArrayType.TexUV2] = data.MorphData;
+            if (data.UsesRuntimeParentChord)
+            {
+                var custom = new float[data.ParentChordOffsets.Length * 3];
+                for (int i = 0; i < data.ParentChordOffsets.Length; i++)
+                { custom[i * 3] = data.ParentChordOffsets[i].X; custom[i * 3 + 1] = data.ParentChordOffsets[i].Y; custom[i * 3 + 2] = data.ParentChordOffsets[i].Z; }
+                arrays[(int)Godot.Mesh.ArrayType.Custom0] = custom;
+            }
             var mesh = new ArrayMesh();
+            Mesh.ArrayFormat meshFormat = data.UsesRuntimeParentChord
+                ? (Mesh.ArrayFormat)((ulong)Mesh.ArrayCustomFormat.RgbFloat << (int)Mesh.ArrayFormat.FormatCustom0Shift)
+                : 0;
             if (data.Indices.Length > 0)
             {
                 arrays[(int)Godot.Mesh.ArrayType.Index] = data.Indices;
-                mesh.AddSurfaceFromArrays(Godot.Mesh.PrimitiveType.Triangles, arrays);
+                mesh.AddSurfaceFromArrays(Godot.Mesh.PrimitiveType.Triangles, arrays, null, null, meshFormat);
                 mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _material);
             }
             if (data.OceanIndices.Length > 0)
             {
                 arrays[(int)Godot.Mesh.ArrayType.Index] = data.OceanIndices;
-                mesh.AddSurfaceFromArrays(Godot.Mesh.PrimitiveType.Triangles, arrays);
+                mesh.AddSurfaceFromArrays(Godot.Mesh.PrimitiveType.Triangles, arrays, null, null, meshFormat);
                 mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _oceanMaterial);
             }
             node.Mesh = mesh;
@@ -4433,6 +4832,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _opaqueShadowMaterial.SetShaderParameter("morph_start_meters", FadeOutStartMeters);
             _opaqueShadowMaterial.SetShaderParameter("morph_end_meters", FadeOutEndMeters);
             _opaqueShadowMaterial.SetShaderParameter("geomorph_enabled", EnableGeomorphing && !UseBlockyHeightfield);
+            _opaqueShadowMaterial.SetShaderParameter("runtime_parent_chord_enabled", _grid?.TerrainSampler?.UsesRuntimeSurfaceGeneration == true);
         }
         shadowCaster.Mesh = enabled ? mesh : null;
         shadowCaster.MaterialOverride = enabled ? _opaqueShadowMaterial : null;
@@ -4465,6 +4865,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _material.SetShaderParameter("morph_start_meters", FadeOutStartMeters);
         _material.SetShaderParameter("morph_end_meters", Mathf.Max(FadeOutStartMeters + 1.0f, FadeOutEndMeters));
         _material.SetShaderParameter("geomorph_enabled", EnableGeomorphing && !UseBlockyHeightfield);
+        _material.SetShaderParameter("runtime_parent_chord_enabled", _grid?.TerrainSampler?.UsesRuntimeSurfaceGeneration == true);
         _material.SetShaderParameter("ring_width_meters", RingWidthMeters);
         _material.SetShaderParameter("biome_texture_weights_enabled", true);
         _material.SetShaderParameter("biome_texture_scale", Mathf.Clamp(BiomeTextureScale, 0.01f, 2.0f));
@@ -4691,6 +5092,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_sharedFftOceanCoverageRevision == _coverageRevision
             && _sharedFftOceanCoverageCenterCellX == centerCellX
             && _sharedFftOceanCoverageCenterCellZ == centerCellZ) return;
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy FFT ocean coverage atlas");
         double circumference = ResolveAroundCircumferenceMeters();
         double gridAround = centerCellX * 32.0;
         double gridAcross = centerCellZ * 32.0;
@@ -4774,6 +5176,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_sharedFftShorelineFieldSourceRevision == _coverageRevision
             && _sharedFftShorelineFieldCenterCellX == centerCellX
             && _sharedFftShorelineFieldCenterCellZ == centerCellZ) return;
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy FFT shoreline atlas");
         double originAround = centerCellX * 32.0 - SharedFftShorelineFieldResolution * SharedFftShorelineFieldCellMeters * 0.5;
         double originAcross = centerCellZ * 32.0 - SharedFftShorelineFieldResolution * SharedFftShorelineFieldCellMeters * 0.5;
         _sharedFftShorelineFieldStagingBytes ??= new byte[SharedFftShorelineFieldResolution * SharedFftShorelineFieldResolution * 8];
@@ -5194,6 +5597,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _lastLightingSunDirection = sunDirection;
         }
 
+        ApplyAtmosphereRayFrame(sunDirection);
+
         var configuration = new LightingUniformConfiguration(
             DayStartDot,
             Mathf.Max(DayStartDot + 0.001f, DayFullDot),
@@ -5208,6 +5613,34 @@ public partial class RingTerrainProxySector : MeshInstance3D
         SetLightingConfiguration(_structuralWallMaterial, configuration);
         _lastLightingConfiguration = configuration;
         _hasLightingUniformConfiguration = true;
+    }
+
+    private void ApplyAtmosphereRayFrame(Vector3 toSun)
+    {
+        if (_grid == null || _focus == null) return;
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        Vector3 cameraWorld = camera?.GlobalPosition ?? _focus.GlobalPosition;
+        RingCanonicalPosition canonical = _grid.WorldToCanonicalRingPosition64(cameraWorld);
+        RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
+        double angle = canonical.AroundMeters / geometry.RingRadiusMeters;
+        Vector3 outwardLocal = new((float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle));
+        Vector3 outwardWorld = (geometry.GridGlobalTransform.Basis * outwardLocal).Normalized();
+        Vector3 axisWorld = (geometry.GridGlobalTransform.Basis * Vector3.Up).Normalized();
+        double width = _grid.RingAcrossWidthMeters;
+        var frame = new RingAtmosphereRayFrame(
+            true,
+            cameraWorld,
+            (float)canonical.VerticalMeters,
+            outwardWorld,
+            axisWorld,
+            (float)canonical.AcrossMeters,
+            (float)(width - canonical.AcrossMeters),
+            1.0f,
+            toSun);
+        frame.Apply(_material);
+        frame.Apply(_oceanMaterial);
+        frame.Apply(_structuralWallMaterial);
+        frame.Apply(_opaqueShadowMaterial);
     }
 
     private static void SetRingCenter(ShaderMaterial? material, Vector3 ringCenter)

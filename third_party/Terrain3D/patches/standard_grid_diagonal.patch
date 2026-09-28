@@ -1,0 +1,70 @@
+diff --git a/src/terrain_3d.cpp b/src/terrain_3d.cpp
+index c0ef171..70a1c63 100644
+--- a/src/terrain_3d.cpp
++++ b/src/terrain_3d.cpp
+@@ -603,6 +603,15 @@ void Terrain3D::set_vertex_spacing(const real_t p_spacing) {
+ 	}
+ }
+ 
++void Terrain3D::set_standard_grid_diagonal_flipped(const bool p_enabled) {
++	if (_standard_grid_diagonal_flipped != p_enabled) {
++		_standard_grid_diagonal_flipped = p_enabled;
++		if (_mesher) {
++			_mesher->initialize(this);
++		}
++	}
++}
++
+ void Terrain3D::set_render_layers(const uint32_t p_layers) {
+ 	LOG(INFO, "Setting terrain render layers to: ", p_layers);
+ 	_render_layers = p_layers;
+@@ -1054,6 +1063,8 @@ void Terrain3D::_bind_methods() {
+ 	ClassDB::bind_method(D_METHOD("get_mesh_size"), &Terrain3D::get_mesh_size);
+ 	ClassDB::bind_method(D_METHOD("set_vertex_spacing", "scale"), &Terrain3D::set_vertex_spacing);
+ 	ClassDB::bind_method(D_METHOD("get_vertex_spacing"), &Terrain3D::get_vertex_spacing);
++	ClassDB::bind_method(D_METHOD("set_standard_grid_diagonal_flipped", "enabled"), &Terrain3D::set_standard_grid_diagonal_flipped);
++	ClassDB::bind_method(D_METHOD("get_standard_grid_diagonal_flipped"), &Terrain3D::get_standard_grid_diagonal_flipped);
+ 	ClassDB::bind_method(D_METHOD("get_snapped_position"), &Terrain3D::get_snapped_position);
+ 
+ 	// Rendering
+@@ -1160,5 +1171,6 @@ void Terrain3D::_bind_methods() {
+ 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_lods", PROPERTY_HINT_RANGE, "1,10,1"), "set_mesh_lods", "get_mesh_lods");
+ 	ADD_PROPERTY(PropertyInfo(Variant::INT, "mesh_size", PROPERTY_HINT_RANGE, "8,64,2"), "set_mesh_size", "get_mesh_size");
+ 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vertex_spacing", PROPERTY_HINT_RANGE, "0.25,10.0,0.05,or_greater"), "set_vertex_spacing", "get_vertex_spacing");
++	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "standard_grid_diagonal_flipped"), "set_standard_grid_diagonal_flipped", "get_standard_grid_diagonal_flipped");
+ 
+ 	ADD_GROUP("Rendering", "");
+diff --git a/src/terrain_3d.h b/src/terrain_3d.h
+index 61afcb5..5b1e873 100644
+--- a/src/terrain_3d.h
++++ b/src/terrain_3d.h
+@@ -78,6 +78,7 @@ private:
+ 	int _mesh_lods = 7;
+ 	int _mesh_size = 48;
+ 	real_t _vertex_spacing = 1.0f;
++	bool _standard_grid_diagonal_flipped = false;
+ 	Vector3 _snapped_position = V3_ZERO;
+ 
+ 	// Rendering
+@@ -167,6 +168,8 @@ public:
+ 	int get_mesh_size() const { return _mesh_size; }
+ 	void set_vertex_spacing(const real_t p_spacing);
+ 	real_t get_vertex_spacing() const { return _vertex_spacing; }
++	void set_standard_grid_diagonal_flipped(const bool p_enabled);
++	bool get_standard_grid_diagonal_flipped() const { return _standard_grid_diagonal_flipped; }
+ 	Vector3 get_snapped_position() const { return _snapped_position; }
+ 
+ 	// Rendering
+diff --git a/src/terrain_3d_mesher.cpp b/src/terrain_3d_mesher.cpp
+index 3892280..e25b3cf 100644
+--- a/src/terrain_3d_mesher.cpp
++++ b/src/terrain_3d_mesher.cpp
+@@ -61,7 +61,7 @@ RID Terrain3DMesher::_generate_mesh(const Vector2i &p_size, const bool p_standar
+ 			int topLeft = (y + 1) * (p_size.x + 1) + x;
+ 			int topRight = topLeft + 1;
+ 
+-			if ((x + y) % 2 == 0 || p_standard_grid) {
++			if (p_standard_grid ? !_terrain->get_standard_grid_diagonal_flipped() : (x + y) % 2 == 0) {
+ 				indices.push_back(bottomLeft);
+ 				indices.push_back(topRight);
+ 				indices.push_back(topLeft);

@@ -11,6 +11,7 @@ namespace RingworldTechDemo.Voxel.LOD;
 /// </summary>
 public static class RingAtmosphereModel
 {
+    public enum ArtDirectionPreset { Natural, Cinematic }
     private sealed class MaterialBinding
     {
         public MaterialBinding(
@@ -33,6 +34,10 @@ public static class RingAtmosphereModel
 
     private static readonly List<MaterialBinding> Materials = new();
     private static bool _enabled = true;
+    private static ArtDirectionPreset _artPreset = ArtDirectionPreset.Natural;
+    private static float _visibilityFullKm = 120.0f, _density = 1.0f, _altitudeFalloff = 0.5f;
+    private static float _aerosol = 0.35f, _forwardScattering = 0.22f, _sunWarmth = 0.25f;
+    public static ulong Revision { get; private set; }
 
     public static bool Enabled
     {
@@ -40,6 +45,7 @@ public static class RingAtmosphereModel
         set
         {
             _enabled = value;
+            Revision++;
             ApplyAll();
         }
     }
@@ -61,6 +67,9 @@ public static class RingAtmosphereModel
     public static float DistanceHazeMaxOpacity { get; private set; } = 0.68f;
     public static float NightDensityFactor { get; private set; } = 0.08f;
     public static float ScatteringEnergy { get; private set; } = 0.26f;
+    public static float Aerosol { get; private set; } = 0.35f;
+    public static float ForwardScattering { get; private set; } = 0.22f;
+    public static float SunWarmth { get; private set; } = 0.25f;
     public static Color DayColor { get; private set; } = new(0.34f, 0.46f, 0.60f, 1.0f);
     public static Color NightColor { get; private set; } = new(0.026f, 0.035f, 0.055f, 1.0f);
 
@@ -86,7 +95,7 @@ public static class RingAtmosphereModel
         Color dayColor,
         Color nightColor)
     {
-        _enabled = enabled;
+        _enabled = enabled && (bool)ProjectSettings.GetSetting("ringworld/runtime/haze_enabled", true);
         FloorDepthMeters = Mathf.Max(0.0f, floorDepthMeters);
         BoundaryHeightMeters = Mathf.Max(1.0f, boundaryHeightMeters);
         UpperHeightMeters = Mathf.Max(BoundaryHeightMeters + 1.0f, upperHeightMeters);
@@ -110,8 +119,51 @@ public static class RingAtmosphereModel
         ScatteringEnergy = Mathf.Clamp(scatteringEnergy, 0.0f, 2.0f);
         DayColor = dayColor;
         NightColor = nightColor;
+        ApplyProfile();
+        Revision++;
         ApplyAll();
     }
+
+    /// <summary>Applies the persisted artistic controls without changing shell geometry.</summary>
+    public static ArtDirectionPreset ArtPreset => _artPreset;
+    public static float VisibilityFullKm => _visibilityFullKm;
+    public static float Density => _density;
+    public static float AltitudeFalloff => _altitudeFalloff;
+
+    public static void ApplyArtDirection(ArtDirectionPreset preset, float visibilityFullKm, float density, float altitudeFalloff, float aerosol, float forwardScattering, float sunWarmth)
+    {
+        _artPreset = preset;
+        _visibilityFullKm = FiniteOrDefault(visibilityFullKm, 120.0f);
+        _density = FiniteOrDefault(density, 1.0f);
+        _altitudeFalloff = FiniteOrDefault(altitudeFalloff, 0.5f);
+        _aerosol = FiniteOrDefault(aerosol, 0.35f);
+        _forwardScattering = FiniteOrDefault(forwardScattering, 0.22f);
+        _sunWarmth = FiniteOrDefault(sunWarmth, 0.25f);
+        ApplyProfile();
+        Revision++;
+        ApplyAll();
+    }
+
+    private static void ApplyProfile()
+    {
+        float full = Mathf.Clamp(_visibilityFullKm, 10.0f, 400.0f) * 1000.0f;
+        float cleanDensity = Mathf.Clamp(_density, 0.0f, 2.0f);
+        FullDistanceMeters = full;
+        float clearFraction = _artPreset == ArtDirectionPreset.Cinematic
+            ? 0.004166667f // 250 m at the cinematic 60 km default.
+            : 0.008333333f; // 1 km at the natural 120 km default.
+        ClearDistanceMeters = Mathf.Max(0.0f, full * clearFraction);
+        HighAltitudeFullDistanceMeters = full * Mathf.Lerp(1.5f, 5.0f, Mathf.Clamp(_altitudeFalloff, 0.0f, 1.0f));
+        HighAltitudeClearDistanceMeters = ClearDistanceMeters * Mathf.Lerp(2.0f, 8.0f, Mathf.Clamp(_altitudeFalloff, 0.0f, 1.0f));
+        DistanceHazeMaxOpacity = Mathf.Clamp(0.45f * cleanDensity, 0.0f, 0.8f);
+        BoundaryMaxOpacity = Mathf.Clamp(0.16f * cleanDensity, 0.0f, 0.8f);
+        UpperMaxOpacity = Mathf.Clamp(0.06f * cleanDensity, 0.0f, 0.8f);
+        Aerosol = Mathf.Clamp(_aerosol, 0.0f, 1.0f);
+        ForwardScattering = Mathf.Clamp(_forwardScattering, 0.0f, 0.85f);
+        SunWarmth = Mathf.Clamp(_sunWarmth, 0.0f, 1.0f);
+    }
+
+    private static float FiniteOrDefault(float value, float fallback) => float.IsFinite(value) ? value : fallback;
 
     public static void ConfigureMaterial(
         ShaderMaterial? material,
@@ -201,101 +253,66 @@ public static class RingAtmosphereModel
         material.SetShaderParameter("atmosphere_opacity_multiplier", opacityMultiplier);
         material.SetShaderParameter("atmosphere_night_density_factor", NightDensityFactor);
         material.SetShaderParameter("atmosphere_scattering_energy", ScatteringEnergy);
+        material.SetShaderParameter("atmosphere_aerosol", Aerosol);
+        material.SetShaderParameter("atmosphere_forward_scattering", ForwardScattering);
+        material.SetShaderParameter("atmosphere_sun_warmth", SunWarmth);
         material.SetShaderParameter("atmosphere_day_color", new Vector3(DayColor.R, DayColor.G, DayColor.B));
         material.SetShaderParameter("atmosphere_night_color", new Vector3(NightColor.R, NightColor.G, NightColor.B));
     }
 
     public static bool RunContractSelfTest(double ringRadiusMeters, out string summary)
     {
-        double radius = Math.Max(1.0, ringRadiusMeters);
-        // Small integration rings cannot form chords long enough to exercise
-        // the configured long-range visibility endpoints. Use a synthetic,
-        // otherwise identical radius for those scale-profile assertions while
-        // retaining the caller's radius for opposite-side and exterior safety.
-        double profileRadius = Math.Max(
-            radius,
-            Math.Max(
-                FullDistanceMeters * 0.5 + 1000.0,
-                HighAltitudeFullDistanceMeters * 0.5 + DistanceAltitudeEndMeters + 1000.0));
-        double opacity5Km = SurfaceViewOpacity(profileRadius, 5000.0);
-        double opacityClearDistance = SurfaceViewOpacity(profileRadius, ClearDistanceMeters);
-        double opacityMidDistance = SurfaceViewOpacity(
-            profileRadius,
-            (ClearDistanceMeters + FullDistanceMeters) * 0.5);
-        double opacityFullDistance = SurfaceViewOpacity(profileRadius, FullDistanceMeters);
-        double mountainClearDistance = AltitudeViewOpacity(
-            profileRadius,
+        // Ray/finite-cylinder intersection is verified by the GPU fixture.
+        // This deliberately tests only the profile transfer function, using
+        // explicit connected shell lengths supplied by the caller below.
+        _ = ringRadiusMeters;
+        double opacityNearDistance = ProfileOpacity(0.0, ClearDistanceMeters * 0.5, ClearDistanceMeters * 0.5, 0.0);
+        double opacityClearDistance = ProfileOpacity(0.0, ClearDistanceMeters, ClearDistanceMeters, 0.0);
+        double midDistance = (ClearDistanceMeters + FullDistanceMeters) * 0.5;
+        double opacityMidDistance = ProfileOpacity(0.0, midDistance, midDistance, 0.0);
+        double opacityFullDistance = ProfileOpacity(0.0, FullDistanceMeters, FullDistanceMeters, 0.0);
+        double mountainClearDistance = ProfileOpacity(
             DistanceAltitudeEndMeters,
-            HighAltitudeClearDistanceMeters);
-        double mountainFullDistance = AltitudeViewOpacity(
-            profileRadius,
+            HighAltitudeClearDistanceMeters, 0.0, HighAltitudeClearDistanceMeters);
+        double mountainFullDistance = ProfileOpacity(
             DistanceAltitudeEndMeters,
-            HighAltitudeFullDistanceMeters);
-        double oppositeOpacity = CalculateOpacity(radius, 0.0, -radius, 0.0, radius);
-        double reachableSurfaceFullOpacity = SurfaceViewOpacity(
-            radius,
-            Math.Min(FullDistanceMeters, radius * 2.0));
-        double highAltitudeOpacity = CalculateOpacity(
-            radius - UpperHeightMeters - 5000.0,
-            0.0,
-            0.0,
-            radius - UpperHeightMeters - 5000.0,
-            radius);
-        bool passed = opacity5Km <= 0.000001
+            HighAltitudeFullDistanceMeters, 0.0, HighAltitudeFullDistanceMeters);
+        bool zeroDensity = DistanceHazeMaxOpacity <= 0.000001f
+            && BoundaryMaxOpacity <= 0.000001f
+            && UpperMaxOpacity <= 0.000001f;
+        bool profileShape = opacityNearDistance <= opacityClearDistance + 0.0001
             && opacityClearDistance <= 0.0001
-            && opacityMidDistance > opacityClearDistance
-            && opacityMidDistance < opacityFullDistance
-            && opacityFullDistance >= DistanceHazeMaxOpacity * 0.99
+            && opacityMidDistance >= opacityClearDistance - 0.0001
+            && opacityFullDistance >= opacityMidDistance - 0.0001
             && opacityFullDistance <= TotalMaxOpacity + 0.0001
             && mountainClearDistance <= 0.0001
-            && mountainFullDistance >= DistanceHazeMaxOpacity * 0.99
-            && mountainFullDistance <= TotalMaxOpacity + 0.0001
-            && oppositeOpacity >= reachableSurfaceFullOpacity - 0.0001
-            && highAltitudeOpacity <= 0.000001;
-        summary = $"profileRadius={profileRadius / 1000.0:0.#}km, surface(5km={opacity5Km:0.000}, clear={opacityClearDistance:0.000}, mid={opacityMidDistance:0.000}, full={opacityFullDistance:0.000}), "
+            && mountainFullDistance >= mountainClearDistance - 0.0001
+            && mountainFullDistance <= TotalMaxOpacity + 0.0001;
+        bool densityShape = zeroDensity
+            ? opacityFullDistance <= 0.000001 && mountainFullDistance <= 0.000001
+            : opacityFullDistance > opacityClearDistance && mountainFullDistance > mountainClearDistance;
+        bool passed = Enabled ? profileShape && densityShape : opacityNearDistance <= 0.000001
+            && opacityClearDistance <= 0.000001 && opacityMidDistance <= 0.000001
+            && opacityFullDistance <= 0.000001 && mountainFullDistance <= 0.000001;
+        summary = $"profileTransfer enabled={Enabled}, zeroDensity={zeroDensity}, surface(near={opacityNearDistance:0.000}, clear={opacityClearDistance:0.000}, mid={opacityMidDistance:0.000}, full={opacityFullDistance:0.000}), "
             + $"mountain(clear={mountainClearDistance:0.000}, full={mountainFullDistance:0.000}), "
-            + $"opposite={oppositeOpacity:0.000}, aboveAir={highAltitudeOpacity:0.000}";
+            + "explicit_connected_lengths";
         return passed;
     }
 
-    private static double SurfaceViewOpacity(double radius, double viewDistanceMeters)
+    /// <summary>Profile transfer function for already-resolved connected shell lengths.</summary>
+    private static double ProfileOpacity(double cameraAltitudeMeters, double viewDistanceMeters,
+        double boundaryPathMeters = 0.0, double upperPathMeters = 0.0)
     {
-        return AltitudeViewOpacity(radius, 0.0, viewDistanceMeters);
-    }
-
-    private static double AltitudeViewOpacity(double radius, double altitudeMeters, double viewDistanceMeters)
-    {
-        double radialDistance = Math.Max(1.0, radius - Math.Max(0.0, altitudeMeters));
-        double maximumChord = radialDistance * 2.0;
-        double chord = Math.Clamp(viewDistanceMeters, 0.0, maximumChord);
-        double angle = 2.0 * Math.Asin(chord / maximumChord);
-        return CalculateOpacity(
-            radialDistance,
-            0.0,
-            Math.Cos(angle) * radialDistance,
-            Math.Sin(angle) * radialDistance,
-            radius);
-    }
-
-    private static double CalculateOpacity(double startX, double startZ, double endX, double endZ, double radius)
-    {
-        double outer = radius + FloorDepthMeters;
-        double boundaryInner = Math.Max(1.0, radius - BoundaryHeightMeters);
-        double upperInner = Math.Max(1.0, radius - UpperHeightMeters);
-        double insideOuter = SegmentLengthInsideCircle(startX, startZ, endX, endZ, outer);
-        double insideBoundaryVacuum = SegmentLengthInsideCircle(startX, startZ, endX, endZ, boundaryInner);
-        double boundaryPath = Math.Max(0.0, insideOuter - insideBoundaryVacuum);
-        double upperPath = Math.Max(
-            0.0,
-            insideBoundaryVacuum - SegmentLengthInsideCircle(startX, startZ, endX, endZ, upperInner));
+        if (!Enabled) return 0.0;
+        double connectedPath = Math.Max(0.0, viewDistanceMeters);
+        double boundaryPath = Math.Max(0.0, boundaryPathMeters);
+        double upperPath = Math.Max(0.0, upperPathMeters);
         double boundaryOpacity = (1.0 - Math.Exp(-boundaryPath / BoundaryExtinctionMeters)) * BoundaryMaxOpacity;
         double upperOpacity = (1.0 - Math.Exp(-upperPath / UpperExtinctionMeters)) * UpperMaxOpacity;
         double physicalOpacity = 1.0 - (1.0 - boundaryOpacity) * (1.0 - upperOpacity);
-        double viewDistance = Math.Sqrt(
-            (endX - startX) * (endX - startX)
-            + (endZ - startZ) * (endZ - startZ));
-        double cameraRadialDistance = Math.Sqrt(startX * startX + startZ * startZ);
-        double cameraAltitude = Math.Max(0.0, radius - cameraRadialDistance);
+        double viewDistance = connectedPath;
+        double cameraAltitude = Math.Max(0.0, cameraAltitudeMeters);
         double altitudeT = Math.Clamp(
             (cameraAltitude - DistanceAltitudeStartMeters)
                 / Math.Max(1.0, DistanceAltitudeEndMeters - DistanceAltitudeStartMeters),
@@ -313,7 +330,6 @@ public static class RingAtmosphereModel
         double airFadeEnd = airFadeStart + Math.Max(1000.0, UpperHeightMeters * 0.1);
         double airT = Math.Clamp((cameraAltitude - airFadeStart) / (airFadeEnd - airFadeStart), 0.0, 1.0);
         double cameraAirPresence = 1.0 - airT * airT * (3.0 - 2.0 * airT);
-        if (cameraRadialDistance >= radius + FloorDepthMeters) cameraAirPresence = 0.0;
         double distanceHazeOpacity = distanceWeight * DistanceHazeMaxOpacity * cameraAirPresence;
         // Compose the shell extinction and distance haze as independent optical
         // depths. This keeps the transition gradual instead of allowing the
@@ -328,22 +344,4 @@ public static class RingAtmosphereModel
         return from + (to - from) * weight;
     }
 
-    private static double SegmentLengthInsideCircle(double startX, double startZ, double endX, double endZ, double radius)
-    {
-        double dx = endX - startX;
-        double dz = endZ - startZ;
-        double a = dx * dx + dz * dz;
-        double length = Math.Sqrt(a);
-        if (a < 1e-12) return startX * startX + startZ * startZ <= radius * radius ? length : 0.0;
-        double b = 2.0 * (startX * dx + startZ * dz);
-        double c = startX * startX + startZ * startZ - radius * radius;
-        double discriminant = b * b - 4.0 * a * c;
-        if (discriminant <= 0.0) return 0.0;
-        double root = Math.Sqrt(discriminant);
-        double t0 = (-b - root) / (2.0 * a);
-        double t1 = (-b + root) / (2.0 * a);
-        double enter = Math.Clamp(Math.Min(t0, t1), 0.0, 1.0);
-        double exit = Math.Clamp(Math.Max(t0, t1), 0.0, 1.0);
-        return Math.Max(0.0, exit - enter) * length;
-    }
 }

@@ -6,6 +6,11 @@ namespace RingworldTechDemo.Voxel.Phase3;
 public partial class VoxelTerrainSettings : Resource
 {
     [Export] public int Seed { get; set; } = 1337;
+    [ExportGroup("Runtime Surface Generation")]
+    /// <summary>Optional normalized v1 surface recipe. Empty preserves generation 16 exactly.</summary>
+    [Export(PropertyHint.MultilineText)] public string SurfaceGenerationRecipeJson { get; set; } = string.Empty;
+    /// <summary>Required alongside a runtime surface recipe to prevent accidental backend changes.</summary>
+    [Export] public string SurfaceGenerationContractId { get; set; } = string.Empty;
     [ExportGroup("Designed Cave Generation")]
     // This resource contains cave contract settings only. Designed caves always
     // derive their deterministic key from Seed above; no separate cave seed is

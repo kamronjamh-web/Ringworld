@@ -44,6 +44,7 @@ public partial class RingWorldSaveManager : Node
     private Node? _celestialClock;
     private bool _smoothBackendActive;
     private bool _surfaceBackendActive;
+    private bool _surfaceRuntimeGenerationActive;
     private bool _loadRejected;
     private string _worldDirectory = string.Empty;
     private string _statePath = string.Empty;
@@ -54,6 +55,7 @@ public partial class RingWorldSaveManager : Node
     private double _elapsed;
     private bool _loaded;
     private bool _shutdownSaved;
+    private bool _isExiting;
     private Task<SaveResult>? _saveTask;
     private VoxelChunkDeltaSnapshot? _inFlightDelta;
     private readonly VoxelChunkDeltaSnapshot _legacyDelta = new();
@@ -73,6 +75,9 @@ public partial class RingWorldSaveManager : Node
         public int TerrainGeneratorVersion { get; set; }
         public ulong TerrainDefinitionHash { get; set; }
         public double CircumferenceMeters { get; set; }
+        public int SurfaceDefinitionVersion { get; set; }
+        public string SurfaceGenerationRecipeJson { get; set; } = string.Empty;
+        public string SurfaceGenerationContractId { get; set; } = string.Empty;
         public RingWorldDesignedCaveContractSnapshot? DesignedCaveContract { get; set; }
         public long SavedUnix { get; set; }
         public PlayerDocument Player { get; set; } = new();
@@ -128,6 +133,8 @@ public partial class RingWorldSaveManager : Node
         _surfaceTerrain = GetNodeOrNull<RingTerrain3DGameplay>(SurfaceTerrainPath);
         _celestialClock = GetNodeOrNull<Node>(CelestialClockPath);
         _surfaceBackendActive = _grid?.UseTerrain3DSurface == true;
+        _surfaceRuntimeGenerationActive = _surfaceBackendActive
+            && _grid?.TerrainSampler?.UsesRuntimeSurfaceGeneration == true;
         _smoothBackendActive = _grid?.IsSmoothTerrainReplacementActive == true;
         if (_surfaceBackendActive)
         {
@@ -152,7 +159,11 @@ public partial class RingWorldSaveManager : Node
         Directory.CreateDirectory(_worldDirectory);
         Directory.CreateDirectory(Path.Combine(_worldDirectory, "regions"));
         Directory.CreateDirectory(Path.Combine(_worldDirectory, "lod_cache"));
-        _statePath = Path.Combine(_worldDirectory, _surfaceBackendActive ? "world_state_terrain3d_v1.json" : "world_state.json");
+        _statePath = Path.Combine(
+            _worldDirectory,
+            _surfaceRuntimeGenerationActive
+                ? "world_state_surface_runtime_v1.json"
+                : _surfaceBackendActive ? "world_state_terrain3d_v1.json" : "world_state.json");
         _deltaPath = configured.TrimEnd('/', '\\') + "/voxel_deltas.json";
         _deltaJournalPath = Path.Combine(_worldDirectory, "voxel_delta_journal.ndjson");
         _smoothJournalPath = Path.Combine(_worldDirectory, "smooth_terrain_edits_v1.json");
@@ -173,6 +184,7 @@ public partial class RingWorldSaveManager : Node
 
     public override void _ExitTree()
     {
+        _isExiting = true;
         if (_loaded && !_shutdownSaved)
         {
             SaveWorld();
@@ -200,11 +212,23 @@ public partial class RingWorldSaveManager : Node
         if (_saveTask != null)
             return Error.Busy;
 
+        string runtimeSurfaceRecipeJson = string.Empty;
+        string runtimeSurfaceContractId = string.Empty;
+        if (_surfaceRuntimeGenerationActive
+            && !TryGetRuntimeSurfaceGenerationIdentity(
+                out runtimeSurfaceRecipeJson,
+                out runtimeSurfaceContractId,
+                out string identityError))
+        {
+            GD.PushError($"Runtime surface save failed: {identityError}");
+            return Error.Failed;
+        }
+
         if (_surfaceBackendActive)
         {
-            if (_surfaceTerrain == null || !_surfaceTerrain.IsReady || !_surfaceTerrain.SaveSurfaceEdits())
+            if (!TrySaveSurfaceEditsForWorldSave())
             {
-                GD.PushError($"Surface terrain save failed: {_surfaceTerrain?.LastError ?? "Terrain3D gameplay node is unavailable."}");
+                GD.PushError($"Surface terrain save failed: {GetSurfaceSaveError()}");
                 return Error.Failed;
             }
         }
@@ -257,6 +281,12 @@ public partial class RingWorldSaveManager : Node
                 CelestialTimeScale = GetCelestialTimeScale()
             }
         };
+        if (_surfaceRuntimeGenerationActive)
+        {
+            document.SurfaceDefinitionVersion = 1;
+            document.SurfaceGenerationRecipeJson = runtimeSurfaceRecipeJson;
+            document.SurfaceGenerationContractId = runtimeSurfaceContractId;
+        }
 
         _inFlightDelta = _smoothBackendActive || _surfaceBackendActive ? null : delta;
         SmoothTerrainJournalEnvelope? smooth = _smoothBackendActive ? _smoothTerrain!.CaptureJournalEnvelope() : null;
@@ -265,6 +295,36 @@ public partial class RingWorldSaveManager : Node
         bool surfaceBackend = _surfaceBackendActive;
         _saveTask = Task.Run(() => WriteSaveFiles(document, delta, smooth, construction, smoothBackend, surfaceBackend));
         return Error.Ok;
+    }
+
+    private bool TrySaveSurfaceEditsForWorldSave()
+    {
+        if (_surfaceTerrain == null)
+            return false;
+        if (!GodotObject.IsInstanceValid(_surfaceTerrain))
+            return _isExiting && _surfaceTerrain.SurfaceEditsSavedOnExit;
+
+        // During ordinary saves the visible Terrain3D node must be fully ready.
+        // Scene teardown can remove that renderer before this sibling writes the
+        // final player document; its own _ExitTree already committed the field.
+        if (!_isExiting)
+            return _surfaceTerrain.IsReady && _surfaceTerrain.SaveSurfaceEdits();
+
+        return !_surfaceTerrain.IsInsideTree()
+            ? _surfaceTerrain.SurfaceEditsSavedOnExit
+            : _surfaceTerrain.SaveSurfaceEdits();
+    }
+
+    private string GetSurfaceSaveError()
+    {
+        if (_surfaceTerrain == null) return "Terrain3D gameplay node is unavailable.";
+        if (GodotObject.IsInstanceValid(_surfaceTerrain))
+            return string.IsNullOrWhiteSpace(_surfaceTerrain.LastError)
+                ? "Terrain3D gameplay node did not commit edits."
+                : _surfaceTerrain.LastError;
+        return string.IsNullOrWhiteSpace(_surfaceTerrain.SurfaceEditsExitSaveError)
+            ? "Terrain3D gameplay node exited without a successful edit commit."
+            : _surfaceTerrain.SurfaceEditsExitSaveError;
     }
 
     /// <summary>Completes a durable save before a scene transition destroys this world.</summary>
@@ -423,6 +483,14 @@ public partial class RingWorldSaveManager : Node
             }
         }
 
+        if (_surfaceRuntimeGenerationActive && document == null && RuntimeSurfaceLegacySlotIsOccupied())
+        {
+            const string reason = "Legacy editable world data occupies this runtime-surface slot; no implicit migration is available.";
+            GD.PushWarning(reason);
+            RejectLoad(reason);
+            return;
+        }
+
         // Smooth mode owns a separate journal and must never hydrate the dormant
         // legacy grid from old voxel files.  A conversion is deliberately
         // fail-closed until every legacy record can be mapped without loss.
@@ -484,6 +552,7 @@ public partial class RingWorldSaveManager : Node
 
     private string GetBackendName()
     {
+        if (_surfaceRuntimeGenerationActive) return "surface_runtime_generation_v1";
         if (_surfaceBackendActive) return "surface_terrain3d";
         if (_smoothBackendActive) return "smooth_editable";
         return "legacy_voxel";
@@ -492,6 +561,28 @@ public partial class RingWorldSaveManager : Node
     private bool IsBackendCompatible(SaveDocument document, out string reason)
     {
         string expected = GetBackendName();
+        if (_surfaceRuntimeGenerationActive)
+        {
+            if (!string.Equals(document.Backend, expected, StringComparison.Ordinal))
+            {
+                reason = $"World state terrain backend '{document.Backend}' is incompatible with active backend '{expected}'.";
+                return false;
+            }
+            if (document.SurfaceDefinitionVersion != 1)
+            {
+                reason = "Runtime surface world state has an unsupported surface definition version.";
+                return false;
+            }
+            if (!TryGetRuntimeSurfaceGenerationIdentity(out string recipeJson, out string contractId, out reason))
+                return false;
+            if (!string.Equals(document.SurfaceGenerationRecipeJson, recipeJson, StringComparison.Ordinal)
+                || !string.Equals(document.SurfaceGenerationContractId, contractId, StringComparison.Ordinal))
+            {
+                reason = "Runtime surface generation recipe or contract does not match the active world.";
+                return false;
+            }
+            return true;
+        }
         if (string.IsNullOrWhiteSpace(document.Backend))
         {
             // Historical world-state documents predate the marker. They are
@@ -522,6 +613,43 @@ public partial class RingWorldSaveManager : Node
         string regionsDirectory = Path.Combine(_worldDirectory, "regions");
         return Directory.Exists(regionsDirectory)
             && Directory.EnumerateFiles(regionsDirectory, "*.ndjson", SearchOption.TopDirectoryOnly).Any();
+    }
+
+    private bool RuntimeSurfaceLegacySlotIsOccupied()
+    {
+        return File.Exists(Path.Combine(_worldDirectory, "world_state.json"))
+            || File.Exists(Path.Combine(_worldDirectory, "world_state_terrain3d_v1.json"))
+            || File.Exists(Path.Combine(_worldDirectory, "surface_terrain3d_edits_v1.json"))
+            || File.Exists(_smoothJournalPath)
+            || File.Exists(_constructionPath)
+            || LegacyEditableSaveExists();
+    }
+
+    private bool TryGetRuntimeSurfaceGenerationIdentity(
+        out string recipeJson,
+        out string contractId,
+        out string reason)
+    {
+        RingTerrainSampler? sampler = _grid?.TerrainSampler;
+        recipeJson = sampler?.SurfaceGenerationRecipeJson ?? string.Empty;
+        contractId = sampler?.SurfaceGenerationContractId ?? string.Empty;
+        if (sampler?.UsesRuntimeSurfaceGeneration != true)
+        {
+            reason = "Active terrain sampler is not using runtime surface generation.";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(recipeJson))
+        {
+            reason = "Active runtime surface generation recipe is missing.";
+            return false;
+        }
+        if (!string.Equals(contractId, RingTerrainSampler.RuntimeSurfaceGenerationContractId, StringComparison.Ordinal))
+        {
+            reason = "Active runtime surface generation contract is unsupported.";
+            return false;
+        }
+        reason = string.Empty;
+        return true;
     }
 
     private Error LoadLegacyVoxelDeltas()

@@ -89,8 +89,10 @@ internal static class RingGrassTileBuilder
         long anchorAround = CanonicalCell((long)Math.Round(bounds.AroundCenter), circumference);
         int anchorAcross = Math.Clamp((int)Math.Round(bounds.AcrossCenter), 0, width - 1);
         var resolver = field == null ? null : new RingGrassSurfaceResolver(field, edits, sampler, cancellation, surfaceCache);
-        double anchorHeight = resolver != null && resolver.TryResolve(bounds.AroundCenter, bounds.AcrossCenter, out RingGrassSurfaceHit anchor)
-            ? anchor.Height : edits.GetSurfaceHeight(sampler, anchorAround, anchorAcross);
+		double anchorHeight = resolver != null && resolver.TryResolve(bounds.AroundCenter, bounds.AcrossCenter, out RingGrassSurfaceHit anchor)
+			? anchor.Height : sampler.UsesRuntimeSurfaceGeneration
+				? edits.GetPresentationSurfaceHeight(sampler, bounds.AroundCenter, bounds.AcrossCenter)
+				: PresentationHeight(edits, sampler, anchorAround, anchorAcross);
         int cappedCandidates = Math.Clamp(candidates, 1, 16);
         int cappedInstances = Math.Max(0, maxInstances);
         sourceFraction = float.IsFinite(sourceFraction) ? Mathf.Clamp(sourceFraction, 0, 1) : 1;
@@ -113,7 +115,7 @@ internal static class RingGrassTileBuilder
             // without perturbing the established near/mid/far hierarchy.
             if (useGrassClumps && bladesPerSquareMeter > 0
                 && Hash01(aroundCell, acrossCell, sampler.Seed, salt + 193) >= .25f) return;
-            TerrainSample sample = sampler.GetTerrainSample(canonicalAround, canonicalAcross);
+			TerrainSample sample = edits.GetPresentationTerrainSample(sampler, canonicalAround, canonicalAcross);
             // Water metadata describes its own column: filled terrain above the
             // water plane is dry and may retain grass.
             RingTerrainSampler.BiomeTextureWeights weights = sampler.GetBiomeTextureWeights(sample);
@@ -155,7 +157,9 @@ internal static class RingGrassTileBuilder
             else
             {
                 if (!SlopeSuitable(edits, sampler, canonicalAround, canonicalAcross, maxSlope)) return;
-                surfaceHeight = edits.GetSurfaceHeight(sampler, canonicalAround, canonicalAcross);
+				surfaceHeight = sampler.UsesRuntimeSurfaceGeneration
+					? edits.GetPresentationSurfaceHeight(sampler, around, across)
+					: PresentationHeight(edits, sampler, canonicalAround, canonicalAcross);
             }
             if (IsWaterCovered(sample, surfaceHeight)) return;
             float clumpRadius = useGrassClumps && bladesPerSquareMeter > 0 ? Mathf.Max(.3f, bladeWidth * 3.6f) : 0;
@@ -264,10 +268,11 @@ internal static class RingGrassTileBuilder
     private static bool SlopeSuitable(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, long around, int across, float maximumSlope)
     {
         const int offset = 1;
-        float dx = edits.GetSurfaceHeight(sampler, around + offset, across) - edits.GetSurfaceHeight(sampler, around - offset, across);
-        float dz = edits.GetSurfaceHeight(sampler, around, across + offset) - edits.GetSurfaceHeight(sampler, around, across - offset);
-        return Mathf.RadToDeg(Mathf.Atan(Mathf.Sqrt(dx * dx + dz * dz) / (2 * offset))) <= maximumSlope;
-    }
+		float dx = PresentationHeight(edits, sampler, around + offset, across) - PresentationHeight(edits, sampler, around - offset, across);
+		float dz = PresentationHeight(edits, sampler, around, across + offset) - PresentationHeight(edits, sampler, around, across - offset);
+		return Mathf.RadToDeg(Mathf.Atan(Mathf.Sqrt(dx * dx + dz * dz) / (2 * offset))) <= maximumSlope;
+	}
+	private static float PresentationHeight(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, long around, int across) => sampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface ? edits.GetPresentationSurfaceHeight(sampler, around, across) : edits.GetSurfaceHeight(sampler, around, across);
 
     internal static bool IsWaterCovered(in TerrainSample sample, double surfaceHeight)
         => sample.HasSurfaceWater && surfaceHeight <= sample.WaterSurfaceHeight;

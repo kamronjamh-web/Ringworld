@@ -471,7 +471,14 @@ public partial class RingWeatherAmbience : Node
             }
             if (!found) return false;
         }
-        else natural = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(_grid.TerrainSampler, around, across) + 1.0f;
+		else
+		{
+			RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+			bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+			natural = floatSurface
+				? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+				: edits.GetSurfaceHeight(_grid.TerrainSampler, around, across) + 1.0f;
+		}
         int naturalInteger = Mathf.FloorToInt(natural);
         float top = natural;
         BlockType material = _grid.GetCanonicalBlockType(around, Mathf.FloorToInt(natural - .01f), across);
@@ -483,9 +490,10 @@ public partial class RingWeatherAmbience : Node
         }
         if (_grid.TryGetHighestRainSurface(around, across, int.MinValue, out int constructedTop, out BlockType constructedMaterial) && constructedTop + 1.0f > top)
         { top = constructedTop + 1.0f; material = constructedMaterial; }
-        TerrainSample sample = _grid.TerrainSampler.GetTerrainSample(around, across);
+		TerrainSample sample = _grid.CaptureLodSurfaceEditSnapshot().GetPresentationTerrainSample(_grid.TerrainSampler, around, across);
         SurfaceMaterial kind = material == BlockType.Soil ? SurfaceMaterial.Soil : SurfaceMaterial.Hard;
-        if (sample.HasSurfaceWater && sample.WaterSurfaceHeight + 1.0f > top) { top = sample.WaterSurfaceHeight + 1.0f; kind = SurfaceMaterial.Water; }
+		float waterTop = sample.WaterSurfaceHeight + (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration ? 0.0f : 1.0f);
+		if (sample.HasSurfaceWater && waterTop > top) { top = waterTop; kind = SurfaceMaterial.Water; }
         else if (_grid.TryGetDynamicWaterSurfaceAtCanonical(new RingCanonicalPosition(around, Mathf.CeilToInt(top), across), out float dynamicTop) && dynamicTop > top) { top = dynamicTop; kind = SurfaceMaterial.Water; }
         result = new RainColumn(natural, top, kind);
         return true;

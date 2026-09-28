@@ -12,6 +12,7 @@ uniform bool far_fade_enabled = false;
 uniform float fade_out_start_meters = 480.0;
 uniform float fade_out_end_meters = 640.0;
 uniform bool geomorph_enabled = true;
+uniform bool runtime_parent_chord_enabled = false;
 uniform float morph_start_meters = 480.0;
 uniform float morph_end_meters = 640.0;
 uniform float roughness_value : hint_range(0.0, 1.0) = 1.0;
@@ -94,7 +95,7 @@ void vertex() {
 		original_radial.y = 0.0;
 		vec3 morph_surface_up_world = length(original_radial) > 0.0001 ? -normalize(original_radial) : vec3(-1.0, 0.0, 0.0);
 		vec3 surface_up_local = normalize(inverse(mat3(MODEL_MATRIX)) * morph_surface_up_world);
-		VERTEX += surface_up_local * UV2.x * morph;
+		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? CUSTOM0.xyz * morph : surface_up_local * UV2.x * morph;
 	}
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 radial = world_position - ring_center;

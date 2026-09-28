@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -43,6 +44,7 @@ public partial class RingDistantRainCurtains : Node3D
     private double _cachedCircumference, _cachedWidth;
     private float _cachedCellMeters;
     private double _aroundSpacing;
+    private ulong _surfaceEditVersion = ulong.MaxValue;
 
     private sealed class Curtain
     {
@@ -87,6 +89,11 @@ public partial class RingDistantRainCurtains : Node3D
         float dt = double.IsFinite(delta) ? (float)Math.Clamp(delta, 0.0, 0.25) : 0.0f;
         RingCanonicalPosition player = _explorer.CanonicalPosition;
         ReconcileCells(player);
+        if (_surfaceEditVersion != _grid.LodSurfaceEditVersion)
+        {
+            _surfaceEditVersion = _grid.LodSurfaceEditVersion;
+            foreach (Curtain curtain in _curtains) curtain.TerrainCached = false;
+        }
         _refreshAccumulator += dt;
         if (_refreshAccumulator >= 0.1)
         {
@@ -167,9 +174,12 @@ public partial class RingDistantRainCurtains : Node3D
         // Assignment/teleport never performs a 25-column catch-up burst.
         if (!c.TerrainCached)
         {
-            var terrain = _grid!.TerrainSampler!.GetTerrainSample(c.Around, c.Across);
-            c.Temperature = terrain.Temperature;
-            c.Surface = terrain.ResolveDisplayedHeight(terrain.SurfaceHeight);
+			RingLodSurfaceEditSnapshot edits = _grid!.CaptureLodSurfaceEditSnapshot();
+			var terrain = edits.GetPresentationTerrainSample(_grid.TerrainSampler!, c.Around, c.Across);
+			c.Temperature = terrain.Temperature;
+			c.Surface = _grid.TerrainSampler!.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface
+				? Mathf.Max(edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, c.Around, c.Across), terrain.HasSurfaceWater ? terrain.WaterSurfaceHeight : float.NegativeInfinity)
+				: terrain.ResolveDisplayedHeight(terrain.SurfaceHeight);
             c.TerrainCached = true;
             TerrainQueriesLastFrame++;
         }

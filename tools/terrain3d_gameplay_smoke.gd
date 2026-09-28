@@ -234,10 +234,18 @@ func _presentation_isolated(game: Node) -> bool:
 
 
 func _ground_height(surface: Node, explorer: Node) -> float:
-	for _i in 90:
+	var deadline := Time.get_ticks_msec() + 10000
+	while Time.get_ticks_msec() < deadline:
 		await physics_frame
 		if explorer.has_method("is_on_floor") and bool(explorer.call("is_on_floor")):
 			var diagnostics: Dictionary = surface.call("GetSurfaceDiagnostics")
+			var streaming: Dictionary = diagnostics.get("streaming", {})
+			if int(streaming.get("committed_edit_revision", -1)) != int(diagnostics.get("revision", 0)):
+				continue
+			# IsOnFloor still describes the previous MoveAndSlide immediately
+			# after an atomic collider swap. Wait for contact with the new floor.
+			if absf(float(diagnostics.get("player_height", NAN)) - float(diagnostics.get("surface_height", NAN))) > .2:
+				continue
 			return float(diagnostics.get("player_height", NAN))
 	return NAN
 

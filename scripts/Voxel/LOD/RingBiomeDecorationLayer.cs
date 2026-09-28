@@ -732,9 +732,11 @@ public partial class RingBiomeDecorationLayer : Node3D
 			double acrossDelta = sampleAcross - request.Focus.AcrossMeters;
 			double scanMargin = request.CellSizeMeters * .71;
 			if (aroundDelta * aroundDelta + acrossDelta * acrossDelta > (request.MaximumDistanceMeters + scanMargin) * (request.MaximumDistanceMeters + scanMargin)) continue;
-			TerrainSample sample = sampler.GetTerrainSample((long)Math.Round(sampleAround), (int)Math.Round(sampleAcross));
-			if (sample.HasSurfaceWater || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
-			Vector3 cellWorld = request.Geometry.CanonicalToWorld(sampleAround, sample.SurfaceHeight, sampleAcross);
+			long cellAround = (long)Math.Round(sampleAround); int cellAcross = (int)Math.Round(sampleAcross);
+			TerrainSample sample = request.SurfaceEdits.GetPresentationTerrainSample(sampler, cellAround, cellAcross);
+			float cellSurface = PresentationSurfaceHeight(request.SurfaceEdits, sampler, cellAround, cellAcross);
+			if (IsSurfaceWater(request.SurfaceEdits, sampler, sample, cellSurface) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
+			Vector3 cellWorld = request.Geometry.CanonicalToWorld(sampleAround, cellSurface, sampleAcross);
 			Vector3 toCell = cellWorld - request.PlayerWorldPosition;
 			float cellDistance = toCell.Length();
 			bool behindFallback = cellDistance <= request.BehindCameraFallbackRadiusMeters;
@@ -767,11 +769,13 @@ public partial class RingBiomeDecorationLayer : Node3D
 				// sampling prevents trees hovering over edits, water, and biome edges.
 				long candidateAround = (long)Math.Round(around);
 				int candidateAcross = (int)Math.Round(across);
-				TerrainSample sample = sampler.GetTerrainSample(candidateAround, candidateAcross);
-				if (sample.HasSurfaceWater || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
+				TerrainSample sample = request.SurfaceEdits.GetPresentationTerrainSample(sampler, candidateAround, candidateAcross);
+				float surfaceHeight = sampler.UsesRuntimeSurfaceGeneration
+					? PresentationSurfaceHeight(request.SurfaceEdits, sampler, around, across)
+					: PresentationSurfaceHeight(request.SurfaceEdits, sampler, candidateAround, candidateAcross);
+				if (IsSurfaceWater(request.SurfaceEdits, sampler, sample, surfaceHeight) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
 				float treeChance = sample.Biome == TerrainBiomeId.Forest ? request.ForestChance : request.GrasslandChance;
 				if (Hash01(x, z, sampler.Seed, salt + 2) >= ApplyGroveDensity(treeChance, request.GroveDensity, x, z, sampler.Seed)) continue;
-				float surfaceHeight = request.SurfaceEdits.GetSurfaceHeight(sampler, candidateAround, candidateAcross);
 				if (!IsSlopeSuitable(request.Geometry, sampler, request.SurfaceEdits, candidateAround, candidateAcross, surfaceHeight, request.MaximumSlopeDegrees)) continue;
 				float height = 5f + 9f * Hash01(x, z, sampler.Seed, salt + 3);
 				float width = height * (.20f + .14f * Hash01(x, z, sampler.Seed, salt + 4));
@@ -851,13 +855,21 @@ public partial class RingBiomeDecorationLayer : Node3D
 		RingLodSurfaceEditSnapshot edits, long around, int across, float height, float maximumDegrees)
 	{
 		const int probe = 2;
-		float x0 = edits.GetSurfaceHeight(sampler, around - probe, across);
-		float x1 = edits.GetSurfaceHeight(sampler, around + probe, across);
-		float z0 = edits.GetSurfaceHeight(sampler, around, across - probe);
-		float z1 = edits.GetSurfaceHeight(sampler, around, across + probe);
+		float x0 = PresentationSurfaceHeight(edits, sampler, around - probe, across);
+		float x1 = PresentationSurfaceHeight(edits, sampler, around + probe, across);
+		float z0 = PresentationSurfaceHeight(edits, sampler, around, across - probe);
+		float z1 = PresentationSurfaceHeight(edits, sampler, around, across + probe);
 		_ = geometry; _ = height; // Heights are canonical vertical metres; ring curvature does not alter local grade.
 		return IsSlopeAngleSuitable(x1 - x0, z1 - z0, probe, maximumDegrees);
 	}
+
+	internal static bool UsesFloatPresentation(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler) => sampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+	internal static float PresentationSurfaceHeight(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, long around, int across) => UsesFloatPresentation(edits, sampler) ? edits.GetPresentationSurfaceHeight(sampler, around, across) : edits.GetSurfaceHeight(sampler, around, across);
+	internal static float PresentationSurfaceHeight(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, double around, double across)
+		=> sampler.UsesRuntimeSurfaceGeneration
+			? edits.GetPresentationSurfaceHeight(sampler, around, across)
+			: PresentationSurfaceHeight(edits, sampler, (long)Math.Round(around), (int)Math.Round(across));
+	internal static bool IsSurfaceWater(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, TerrainSample sample, float surfaceHeight) => sample.HasSurfaceWater || (UsesFloatPresentation(edits, sampler) && surfaceHeight < 0.0f);
 
 	private static long FloorDiv(long value, int divisor)
 	{

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
@@ -114,7 +115,11 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private readonly List<MeshInstance3D> _hullSegments = new();
     private Node3D? _occluderRoot;
     private readonly List<MeshInstance3D> _terrainSegments = new();
-    private readonly HashSet<Vector2I> _knownEditedColumns = new();
+    // During a partition-size change, old nodes remain installed until every
+    // replacement node has published.  They are intentionally included in the
+    // byte estimate through _segmentEstimatedBytes.
+    private readonly List<MeshInstance3D> _retainedTerrainSegments = new();
+    private readonly HashSet<RingTerrainColumnCoordinate> _knownEditedColumns = new();
     private readonly Queue<int> _dirtySegmentQueue = new();
     private readonly HashSet<int> _queuedDirtySegments = new();
     private RingTerrainMinMaxPyramid? _heightPyramid;
@@ -127,6 +132,13 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private ulong _macroShadowInvalidatedEditVersion;
     private Vector3 _lastMacroShadowRequestedSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
     private readonly Queue<int> _initialSegmentQueue = new();
+    // Sampling a global segment runs in one cancellable worker.  Only mesh
+    // publication is indivisible on the main thread.
+    private PendingSegmentPreparation? _pendingPreparation;
+    private Task? _pendingSamplingTask;
+    private CancellationTokenSource? _pendingSamplingCancellation;
+    private ulong _pendingPreparationVersion;
+    private bool _pendingSamplingReady;
     private readonly Dictionary<MeshInstance3D, long> _segmentEstimatedBytes = new();
     private RingLodSurfaceEditSnapshot? _initialSegmentEdits;
     private int _initialSegmentCount;
@@ -152,8 +164,13 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     public int LastDirtyMinMaxCellCount => _heightPyramid?.LastDirtyBaseCellCount ?? 0;
     public int LastSegmentRebuildCount { get; private set; }
     public double LastSegmentRebuildMilliseconds { get; private set; }
+    public double LastInitialSegmentBuildMilliseconds { get; private set; }
+    public double MaxInitialSegmentBuildMilliseconds { get; private set; }
     public bool GlobalSummaryBuildPending => _heightPyramidTask != null;
     public bool InitialGlobalMeshBuildPending => _initialSegmentQueue.Count > 0;
+    public int PendingInitialSegmentCount => _initialSegmentQueue.Count;
+    public int PendingSegmentSampleCount => _pendingPreparation == null ? 0 : _pendingPreparation.VertexCount - _pendingPreparation.NextVertex;
+    public bool GlobalSegmentSamplingWorkerPending => _pendingSamplingTask != null && !_pendingSamplingTask.IsCompleted;
     public long EstimatedSummaryBytes => _heightPyramid?.EstimatedBytes ?? 0L;
     public long EstimatedGlobalMeshBytes { get; private set; }
     public ulong HeightRangeRevision => _heightPyramid == null ? 0UL : _heightPyramid.EditVersion + 1UL;
@@ -200,6 +217,24 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     public override void _ExitTree()
     {
+        InvalidatePendingPreparation();
+        Task? samplingTask = _pendingSamplingTask;
+        CancellationTokenSource? samplingCancellation = _pendingSamplingCancellation;
+        _pendingSamplingTask = null;
+        _pendingSamplingCancellation = null;
+        _pendingSamplingReady = false;
+        if (samplingTask != null)
+        {
+            _ = samplingTask.ContinueWith(
+                static (completed, state) =>
+                {
+                    _ = completed.Exception;
+                    ((CancellationTokenSource?)state)?.Dispose();
+                },
+                samplingCancellation,
+                TaskScheduler.Default);
+        }
+        else samplingCancellation?.Dispose();
         if (_grid != null)
             _grid.CanonicalFloatingOriginAnchorChanged -= HandleCanonicalFloatingOriginAnchorChanged;
         _heightPyramidCancellation?.Cancel();
@@ -223,10 +258,14 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             - previousGeometry.CanonicalToWorld(
                 anchor.AroundMeters, anchor.VerticalMeters, anchor.AcrossMeters);
         GlobalPosition += anchorDelta;
+        // Prepared vertices were expressed in the old local coordinate frame.
+        // Keep the queue head and restart it from a coherent snapshot instead.
+        InvalidatePendingPreparation();
     }
 
     public override void _Process(double delta)
     {
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain global LOD update (inclusive)");
         _ = delta;
         UpdateCameraUniform();
         UpdateLightingUniforms();
@@ -234,8 +273,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         CompleteHeightPyramidBuildIfReady();
         CompleteMacroShadowBuildIfReady();
         RequestMacroShadowRebuildForSunChange();
-        ServiceInitialGlobalBuild();
         RefreshEditedSegments();
+        ServiceInitialGlobalBuild();
         ServiceSegmentRebuilds();
     }
 
@@ -257,6 +296,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (!configurationChanged && _visibilityRefreshElapsed < 0.5) return;
         _visibilityRefreshElapsed = 0.0;
         foreach (MeshInstance3D segment in _terrainSegments)
+        {
+            UpdateRegionalInstanceVisibility(segment);
+        }
+        foreach (MeshInstance3D segment in _retainedTerrainSegments)
         {
             UpdateRegionalInstanceVisibility(segment);
         }
@@ -473,19 +516,26 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (EnableMacroTerrainShadows
             && (!initialMaskMatchesCurrentSettings
                 || !initialMaskMatchesCurrentSun
-                || initialEdits.EditedColumns.Count > 0))
+                || initialEdits.HasEdits))
             QueueMacroShadowRebuild();
         if (_grid.AroundRingChunkLength * VoxelConstants.ChunkSizeX == CertifiedRingScale.AroundVoxelLength
             && Mathf.RoundToInt(_grid.RingAcrossWidthMeters) == CertifiedRingScale.RingWidthMeters)
         {
-            RingTerrainMinMaxPyramid.ElevationAudit audit = _heightPyramid.CaptureBaselineElevationAudit(
-                CertifiedRingScale.RoutineMountainCeilingMeters,
-                7000);
-            bool distributionValid = audit.MinimumHeight >= CertifiedRingScale.TerrainFloorMeters
-                && audit.MaximumHeight <= CertifiedRingScale.ExceptionalSummitMeters
-                && audit.CellsAboveRoutineCeiling <= 128
-                && audit.CellsAtOrAboveNearSummit <= 32;
-            string message = $"Certified elevation audit: range={audit.MinimumHeight}..{audit.MaximumHeight}m, above5200={audit.CellsAboveRoutineCeiling}, atOrAbove7000={audit.CellsAtOrAboveNearSummit}, baseCells={audit.TotalBaseCells}";
+            RingTerrainSampler sampler = _grid.TerrainSampler!;
+            RingTerrainMinMaxPyramid.ElevationAudit audit = sampler.UsesRuntimeSurfaceGeneration
+                ? _heightPyramid.CaptureBaselineElevationAudit(8000, 8000)
+                : _heightPyramid.CaptureBaselineElevationAudit(
+                    CertifiedRingScale.RoutineMountainCeilingMeters,
+                    7000);
+            bool distributionValid = sampler.UsesRuntimeSurfaceGeneration
+                ? audit.MinimumHeight >= -8000 && audit.MaximumHeight <= 8000
+                : audit.MinimumHeight >= CertifiedRingScale.TerrainFloorMeters
+                    && audit.MaximumHeight <= CertifiedRingScale.ExceptionalSummitMeters
+                    && audit.CellsAboveRoutineCeiling <= 128
+                    && audit.CellsAtOrAboveNearSummit <= 32;
+            string message = sampler.UsesRuntimeSurfaceGeneration
+                ? $"Runtime surface elevation audit: range={audit.MinimumHeight}..{audit.MaximumHeight}m, finiteRange=-8000..8000m, baseCells={audit.TotalBaseCells}"
+                : $"Certified elevation audit: range={audit.MinimumHeight}..{audit.MaximumHeight}m, above5200={audit.CellsAboveRoutineCeiling}, atOrAbove7000={audit.CellsAtOrAboveNearSummit}, baseCells={audit.TotalBaseCells}";
             if (distributionValid) GD.Print(message);
             else GD.PushError($"{message} (distribution contract failed)");
 
@@ -494,7 +544,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
         _observedEditVersion = initialEdits.Version;
         _knownEditedColumns.Clear();
-        foreach (Vector2I column in initialEdits.EditedColumns.Keys) _knownEditedColumns.Add(column);
+        foreach (RingTerrainColumnCoordinate column in initialEdits.CanonicalDirtyColumns) _knownEditedColumns.Add(column);
         BuildGlobalRing();
     }
 
@@ -516,7 +566,48 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
         if (UseMinMaxFeaturePreservation && _heightPyramid == null) return;
 
-        ClearTerrainSegments();
+        InvalidatePendingPreparation();
+        // Reuse existing nodes when the segment partition is unchanged.  This
+        // keeps visible terrain alive until each replacement is published.
+        bool reuseExisting = _terrainSegments.Count == Mathf.Clamp(GlobalSegmentCount, 1, Mathf.Max(1, AroundSegments));
+        if (!reuseExisting && _terrainSegments.Count > 0)
+        {
+            if (_retainedTerrainSegments.Count == 0)
+                _retainedTerrainSegments.AddRange(_terrainSegments);
+            else
+            {
+                // A newer replacement supersedes incomplete replacement nodes;
+                // retain only the last fully published fallback partition.
+                foreach (MeshInstance3D segment in _terrainSegments)
+                {
+                    if (_segmentEstimatedBytes.Remove(segment, out long bytes)) EstimatedGlobalMeshBytes -= bytes;
+                    RemoveChild(segment);
+                    segment.QueueFree();
+                }
+            }
+            _terrainSegments.Clear();
+            _dirtySegmentQueue.Clear();
+            _queuedDirtySegments.Clear();
+            _pendingSegmentEdits = null;
+            _initialSegmentQueue.Clear();
+        }
+        else if (!reuseExisting)
+        {
+            // The previous branch can leave a stable fallback with no current
+            // replacement nodes yet.  Do not clear that fallback on a second
+            // quality request before its first replacement publishes.
+            _dirtySegmentQueue.Clear();
+            _queuedDirtySegments.Clear();
+            _pendingSegmentEdits = null;
+            _initialSegmentQueue.Clear();
+        }
+        else
+        {
+            _dirtySegmentQueue.Clear();
+            _queuedDirtySegments.Clear();
+            _pendingSegmentEdits = null;
+            _initialSegmentQueue.Clear();
+        }
         RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
         _initialSegmentEdits = PrepareGlobalEditSnapshot(edits, sampler);
         _initialSegmentCount = Mathf.Clamp(GlobalSegmentCount, 1, Mathf.Max(1, AroundSegments));
@@ -528,28 +619,61 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     private void ServiceInitialGlobalBuild()
     {
-        if (_initialSegmentEdits == null || _initialSegmentQueue.Count == 0) return;
+        if (_initialSegmentEdits == null || _initialSegmentQueue.Count == 0 || _grid?.LodSurfaceEditVersion != _observedEditVersion) return;
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain global initial segment service");
         ulong start = Time.GetTicksUsec();
+        ulong deadline = start + (ulong)Math.Max(1.0, MaxSegmentRebuildMillisecondsPerFrame * 1000.0);
         int buildCount = 0;
         int buildBudget = Mathf.Max(1, MaxSegmentRebuildsPerFrame);
         while (buildCount < buildBudget && _initialSegmentQueue.Count > 0)
         {
-            if (buildCount > 0
-                && (Time.GetTicksUsec() - start) / 1000.0 >= MaxSegmentRebuildMillisecondsPerFrame)
-                break;
-            int index = _initialSegmentQueue.Dequeue();
-            BuildGlobalSegment(index, _initialSegmentCount, null, _initialSegmentEdits);
+            int index = _initialSegmentQueue.Peek();
+            MeshInstance3D? existing = index < _terrainSegments.Count ? _terrainSegments[index] : null;
+            if (!ServicePreparedSegment(index, _initialSegmentCount, existing, _initialSegmentEdits, deadline, out bool published)) break;
+            if (!published) break;
+            _initialSegmentQueue.Dequeue();
             buildCount++;
+            LastInitialSegmentBuildMilliseconds = (Time.GetTicksUsec() - start) / 1000.0;
+            MaxInitialSegmentBuildMilliseconds = Math.Max(MaxInitialSegmentBuildMilliseconds, LastInitialSegmentBuildMilliseconds);
         }
 
         if (_initialSegmentQueue.Count != 0) return;
         _initialSegmentEdits = null;
+        RetireRetainedTerrainSegments();
         GD.Print($"Segmented global terrain HLOD ready: segments={_terrainSegments.Count}, around={AroundSegments}, across={AcrossSegments}");
     }
 
-    private void BuildGlobalSegment(int segmentIndex, int segmentCount, MeshInstance3D? existing, RingLodSurfaceEditSnapshot edits)
+    private sealed class PendingSegmentPreparation
     {
-        if (_grid?.TerrainSampler is not RingTerrainSampler sampler) return;
+        public required int SegmentIndex, SegmentCount, AroundStartIndex, LocalAroundCount, AcrossCount;
+        public required MeshInstance3D? Existing;
+        public required RingTerrainSampler Sampler;
+        public required RingLodSurfaceEditSnapshot Edits;
+        public required double AroundSpacing, AcrossSpacing;
+        public required bool UsesPresentationSurface, PreserveFeatures;
+        public required float Underlay;
+        public required Color LowColor, HighColor;
+        public required Transform3D WorldToLocal;
+        public required RingLodGeometrySnapshot Geometry;
+        public required RingTerrainMinMaxPyramid? HeightPyramid;
+        public required Vector3[] TerrainVertices, WaterVertices;
+        public required Color[] TerrainColors, WaterColors;
+        public required bool[] DisplayedWater;
+        public required ulong Version;
+        public int NextVertex;
+        public int VertexCount => TerrainVertices.Length;
+    }
+
+    private void InvalidatePendingPreparation()
+    {
+        _pendingPreparationVersion++;
+        _pendingSamplingCancellation?.Cancel();
+        _pendingPreparation = null;
+    }
+
+    private PendingSegmentPreparation CreatePendingSegment(int segmentIndex, int segmentCount, MeshInstance3D? existing, RingLodSurfaceEditSnapshot edits)
+    {
+        RingTerrainSampler sampler = _grid!.TerrainSampler!;
         int aroundCount = Mathf.Max(64, AroundSegments);
         int acrossCount = Mathf.Max(4, AcrossSegments);
         int aroundStartIndex = segmentIndex * aroundCount / segmentCount;
@@ -559,113 +683,211 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         double aroundSpacing = circumference / aroundCount;
         double acrossSpacing = RingWidthMeters / (double)acrossCount;
         var terrainVertices = new Vector3[(localAroundCount + 1) * (acrossCount + 1)];
-        var terrainColors = new Color[terrainVertices.Length];
-        var waterVertices = new Vector3[terrainVertices.Length];
-        var waterColors = new Color[terrainVertices.Length];
-        var displayedWater = new bool[terrainVertices.Length];
+        return new PendingSegmentPreparation {
+            SegmentIndex = segmentIndex, SegmentCount = segmentCount, AroundStartIndex = aroundStartIndex, LocalAroundCount = localAroundCount, AcrossCount = acrossCount,
+            Existing = existing, Sampler = sampler.CreateIndependentCopy(), Edits = edits, AroundSpacing = aroundSpacing, AcrossSpacing = acrossSpacing,
+            UsesPresentationSurface = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration,
+            PreserveFeatures = UseMinMaxFeaturePreservation && _heightPyramid != null, Underlay = RadialUnderlayOffsetMeters,
+            LowColor = LowTerrainColor, HighColor = HighTerrainColor, WorldToLocal = GlobalTransform.AffineInverse(),
+            Geometry = _grid.CaptureLodGeometrySnapshot(), HeightPyramid = _heightPyramid,
+            TerrainVertices = terrainVertices, TerrainColors = new Color[terrainVertices.Length], WaterVertices = new Vector3[terrainVertices.Length],
+            WaterColors = new Color[terrainVertices.Length], DisplayedWater = new bool[terrainVertices.Length], Version = _pendingPreparationVersion };
+    }
 
-        for (int z = 0; z <= acrossCount; z++)
-        for (int x = 0; x <= localAroundCount; x++)
-        {
-            double around = (aroundStartIndex + x) * aroundSpacing;
-            double across = z * acrossSpacing;
-            int sampleAround = (int)Math.Round(around);
-            int sampleAcross = (int)Math.Round(across);
-            TerrainSample terrainSample = sampler.GetTerrainSample(sampleAround, sampleAcross);
-            int sampledHeight = edits.TryGetEditedSurfaceHeight(sampleAround, sampleAcross, out int editedHeight)
+    private static void SamplePreparedVertex(PendingSegmentPreparation state, int index)
+    {
+        int row = state.LocalAroundCount + 1;
+        int z = index / row, x = index % row;
+        double around = (state.AroundStartIndex + x) * state.AroundSpacing;
+        double across = z * state.AcrossSpacing;
+        int sampleAround = (int)Math.Round(around), sampleAcross = (int)Math.Round(across);
+        TerrainSample terrainSample = state.UsesPresentationSurface
+            ? state.Edits.GetPresentationTerrainSample(state.Sampler, sampleAround, sampleAcross)
+            : state.Sampler.GetTerrainSample(sampleAround, sampleAcross);
+        float sampledHeight = state.UsesPresentationSurface
+            ? state.Sampler.UsesRuntimeSurfaceGeneration
+                ? state.Edits.GetPresentationSurfaceHeight(state.Sampler, around, across)
+                : state.Edits.GetPresentationSurfaceHeight(state.Sampler, sampleAround, sampleAcross)
+            : state.Edits.TryGetEditedSurfaceHeight(sampleAround, sampleAcross, out int editedHeight)
                 ? editedHeight
                 : terrainSample.SurfaceHeight;
-            int terrainHeight = UseMinMaxFeaturePreservation && _heightPyramid != null
-                ? _heightPyramid.PreserveFeatureHeight(sampledHeight, (float)around, (float)across, (float)Math.Max(aroundSpacing, acrossSpacing))
-                : sampledHeight;
-            int waterHeight = terrainSample.ResolveDisplayedHeight(terrainHeight);
-            int index = z * (localAroundCount + 1) + x;
-            terrainColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(
-                terrainSample,
-                terrainHeight,
-                sampler,
-                LowTerrainColor,
-                HighTerrainColor);
-            waterColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(
-                terrainSample,
-                waterHeight,
-                sampler,
-                LowTerrainColor,
-                HighTerrainColor);
-            waterColors[index] = RingWaterModel.EncodeWaterKind(waterColors[index], terrainSample.WaterKind);
-            displayedWater[index] = terrainSample.HasSurfaceWater && terrainHeight < terrainSample.WaterSurfaceHeight;
-            terrainVertices[index] = ToLocal(_grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(
-                around,
-                terrainHeight + 1.0 - RadialUnderlayOffsetMeters,
-                across)));
-            waterVertices[index] = ToLocal(_grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(
-                around,
-                waterHeight + 1.0 - RadialUnderlayOffsetMeters,
-                across)));
-        }
+        float sampleFootprint = (float)Math.Max(state.AroundSpacing, state.AcrossSpacing);
+        float terrainHeight = state.PreserveFeatures
+            ? state.UsesPresentationSurface
+                ? state.HeightPyramid!.PreserveFeatureHeight(sampledHeight, (float)around, (float)across, sampleFootprint)
+                : state.HeightPyramid!.PreserveFeatureHeight((int)sampledHeight, (float)around, (float)across, sampleFootprint)
+            : sampledHeight;
+        float waterHeight = terrainSample.ResolveDisplayedHeight(terrainHeight);
+        state.TerrainColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(terrainHeight), state.Sampler, state.LowColor, state.HighColor);
+        state.WaterColors[index] = RingWaterModel.EncodeWaterKind(RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(waterHeight), state.Sampler, state.LowColor, state.HighColor), terrainSample.WaterKind);
+        state.DisplayedWater[index] = terrainSample.HasSurfaceWater && terrainHeight < terrainSample.WaterSurfaceHeight;
+        state.TerrainVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, terrainHeight + (state.UsesPresentationSurface ? 0.0 : 1.0) - state.Underlay, across);
+        state.WaterVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, waterHeight + (state.Sampler.UsesRuntimeSurfaceGeneration ? 0.0 : 1.0) - state.Underlay, across);
+    }
 
-        var terrainSurface = new SurfaceTool();
-        var oceanSurface = new SurfaceTool();
-        terrainSurface.Begin(Mesh.PrimitiveType.Triangles);
-        oceanSurface.Begin(Mesh.PrimitiveType.Triangles);
-        int terrainTriangleCount = 0;
-        int oceanTriangleCount = 0;
-        int row = localAroundCount + 1;
-        for (int z = 0; z < acrossCount; z++)
-        for (int x = 0; x < localAroundCount; x++)
+    private bool ServicePreparedSegment(int segmentIndex, int segmentCount, MeshInstance3D? existing, RingLodSurfaceEditSnapshot edits, ulong deadline, out bool published)
+    {
+        published = false;
+        if (_grid?.TerrainSampler == null) return false;
+        if (_pendingPreparation == null || _pendingPreparation.SegmentIndex != segmentIndex || _pendingPreparation.SegmentCount != segmentCount || _pendingPreparation.Existing != existing)
         {
-            int i00 = z * row + x, i10 = i00 + 1, i01 = i00 + row, i11 = i01 + 1;
-            AddVertex(terrainSurface, terrainVertices[i01], terrainColors[i01]); AddVertex(terrainSurface, terrainVertices[i10], terrainColors[i10]); AddVertex(terrainSurface, terrainVertices[i00], terrainColors[i00]);
-            AddVertex(terrainSurface, terrainVertices[i10], terrainColors[i10]); AddVertex(terrainSurface, terrainVertices[i01], terrainColors[i01]); AddVertex(terrainSurface, terrainVertices[i11], terrainColors[i11]);
-            terrainTriangleCount += 2;
-            if (IsWaterTriangle(displayedWater, i01, i10, i00))
+            if (_pendingSamplingTask != null && !_pendingSamplingTask.IsCompleted) return true;
+            ObserveCompletedSamplingWorker();
+            _pendingPreparation = CreatePendingSegment(segmentIndex, segmentCount, existing, edits);
+            _pendingSamplingCancellation?.Dispose();
+            _pendingSamplingCancellation = new CancellationTokenSource();
+            _pendingSamplingReady = false;
+            PendingSegmentPreparation prepared = _pendingPreparation;
+            CancellationToken cancellation = _pendingSamplingCancellation.Token;
+            _pendingSamplingTask = Task.Run(() =>
             {
-                AddVertex(oceanSurface, waterVertices[i01], waterColors[i01]); AddVertex(oceanSurface, waterVertices[i10], waterColors[i10]); AddVertex(oceanSurface, waterVertices[i00], waterColors[i00]);
-                oceanTriangleCount++;
-            }
-            if (IsWaterTriangle(displayedWater, i10, i01, i11))
+                using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu(
+                    "Terrain global segment sampling", worker: true);
+                using (prepared.Sampler)
+                {
+                    while (prepared.NextVertex < prepared.VertexCount)
+                    {
+                        cancellation.ThrowIfCancellationRequested();
+                        SamplePreparedVertex(prepared, prepared.NextVertex++);
+                        if ((prepared.NextVertex & 15) == 0) cancellation.ThrowIfCancellationRequested();
+                    }
+                }
+            });
+            return true;
+        }
+        PendingSegmentPreparation state = _pendingPreparation;
+        if (state.Version != _pendingPreparationVersion || _pendingSamplingCancellation?.IsCancellationRequested == true) return true;
+        if (!_pendingSamplingReady)
+        {
+            if (_pendingSamplingTask == null || !_pendingSamplingTask.IsCompleted) return true;
+            try { _pendingSamplingTask.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException)
             {
-                AddVertex(oceanSurface, waterVertices[i10], waterColors[i10]); AddVertex(oceanSurface, waterVertices[i01], waterColors[i01]); AddVertex(oceanSurface, waterVertices[i11], waterColors[i11]);
-                oceanTriangleCount++;
+                _pendingPreparation = null;
+                ObserveCompletedSamplingWorker();
+                return true;
+            }
+            catch (Exception)
+            {
+                _pendingPreparation = null;
+                ObserveCompletedSamplingWorker();
+                return false;
+            }
+            _pendingSamplingReady = true;
+        }
+        if (Time.GetTicksUsec() >= deadline) return true;
+        FinalizePreparedSegment(state);
+        _pendingPreparation = null;
+        _pendingSamplingTask = null;
+        _pendingSamplingCancellation?.Dispose();
+        _pendingSamplingCancellation = null;
+        _pendingSamplingReady = false;
+        published = true;
+        return true;
+    }
+
+    private void ObserveCompletedSamplingWorker()
+    {
+        if (_pendingSamplingTask == null || !_pendingSamplingTask.IsCompleted) return;
+        try { _pendingSamplingTask.GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { GD.PushError($"Global terrain segment sampling failed: {exception.GetBaseException().Message}"); }
+        finally
+        {
+            _pendingSamplingTask = null;
+            _pendingSamplingCancellation?.Dispose();
+            _pendingSamplingCancellation = null;
+            _pendingSamplingReady = false;
+        }
+    }
+
+    private void FinalizePreparedSegment(PendingSegmentPreparation state)
+    {
+        MeshInstance3D? existing = state.Existing;
+        int segmentIndex = state.SegmentIndex, localAroundCount = state.LocalAroundCount, acrossCount = state.AcrossCount;
+        Vector3[] terrainVertices = state.TerrainVertices, waterVertices = state.WaterVertices;
+        Color[] terrainColors = state.TerrainColors, waterColors = state.WaterColors;
+        bool[] displayedWater = state.DisplayedWater;
+
+        ArrayMesh mesh;
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain global segment mesh build"))
+        {
+            var terrainSurface = new SurfaceTool();
+            var oceanSurface = new SurfaceTool();
+            terrainSurface.Begin(Mesh.PrimitiveType.Triangles);
+            oceanSurface.Begin(Mesh.PrimitiveType.Triangles);
+            int terrainTriangleCount = 0;
+            int oceanTriangleCount = 0;
+            int row = localAroundCount + 1;
+            for (int z = 0; z < acrossCount; z++)
+            for (int x = 0; x < localAroundCount; x++)
+            {
+                int i00 = z * row + x, i10 = i00 + 1, i01 = i00 + row, i11 = i01 + 1;
+                AddVertex(terrainSurface, terrainVertices[i01], terrainColors[i01]); AddVertex(terrainSurface, terrainVertices[i10], terrainColors[i10]); AddVertex(terrainSurface, terrainVertices[i00], terrainColors[i00]);
+                AddVertex(terrainSurface, terrainVertices[i10], terrainColors[i10]); AddVertex(terrainSurface, terrainVertices[i01], terrainColors[i01]); AddVertex(terrainSurface, terrainVertices[i11], terrainColors[i11]);
+                terrainTriangleCount += 2;
+                if (IsWaterTriangle(displayedWater, i01, i10, i00))
+                {
+                    AddVertex(oceanSurface, waterVertices[i01], waterColors[i01]); AddVertex(oceanSurface, waterVertices[i10], waterColors[i10]); AddVertex(oceanSurface, waterVertices[i00], waterColors[i00]);
+                    oceanTriangleCount++;
+                }
+                if (IsWaterTriangle(displayedWater, i10, i01, i11))
+                {
+                    AddVertex(oceanSurface, waterVertices[i10], waterColors[i10]); AddVertex(oceanSurface, waterVertices[i01], waterColors[i01]); AddVertex(oceanSurface, waterVertices[i11], waterColors[i11]);
+                    oceanTriangleCount++;
+                }
+            }
+            mesh = new ArrayMesh();
+            if (terrainTriangleCount > 0)
+            {
+                terrainSurface.GenerateNormals();
+                terrainSurface.Index();
+                terrainSurface.Commit(mesh);
+                mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _material);
+            }
+            if (oceanTriangleCount > 0)
+            {
+                oceanSurface.GenerateNormals();
+                oceanSurface.Index();
+                oceanSurface.Commit(mesh);
+                mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _oceanMaterial);
             }
         }
-        var mesh = new ArrayMesh();
-        if (terrainTriangleCount > 0)
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain global segment install"))
         {
-            terrainSurface.GenerateNormals();
-            terrainSurface.Index();
-            terrainSurface.Commit(mesh);
-            mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _material);
+            MeshInstance3D segment = existing ?? new MeshInstance3D { Name = $"GlobalTerrainSegment_{segmentIndex:D3}" };
+            long estimatedBytes = terrainVertices.LongLength * 2L * (12L + 12L + 16L)
+                + (long)localAroundCount * acrossCount * 12L * sizeof(int);
+            if (_segmentEstimatedBytes.TryGetValue(segment, out long previousBytes))
+                EstimatedGlobalMeshBytes -= previousBytes;
+            _segmentEstimatedBytes[segment] = estimatedBytes;
+            EstimatedGlobalMeshBytes += estimatedBytes;
+            segment.Mesh = mesh;
+            segment.MaterialOverride = null;
+            segment.CastShadow = CastTerrainShadows ? ShadowCastingSetting.On : ShadowCastingSetting.Off;
+            segment.IgnoreOcclusionCulling = true;
+            if (existing == null)
+            {
+                AddChild(segment);
+                _terrainSegments.Add(segment);
+            }
+            if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
         }
-        if (oceanTriangleCount > 0)
-        {
-            oceanSurface.GenerateNormals();
-            oceanSurface.Index();
-            oceanSurface.Commit(mesh);
-            mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _oceanMaterial);
-        }
-        MeshInstance3D segment = existing ?? new MeshInstance3D { Name = $"GlobalTerrainSegment_{segmentIndex:D3}" };
-        long estimatedBytes = terrainVertices.LongLength * 2L * (12L + 12L + 16L)
-            + (long)localAroundCount * acrossCount * 12L * sizeof(int);
-        if (_segmentEstimatedBytes.TryGetValue(segment, out long previousBytes))
-            EstimatedGlobalMeshBytes -= previousBytes;
-        _segmentEstimatedBytes[segment] = estimatedBytes;
-        EstimatedGlobalMeshBytes += estimatedBytes;
-        segment.Mesh = mesh;
-        segment.MaterialOverride = null;
-        segment.CastShadow = CastTerrainShadows ? ShadowCastingSetting.On : ShadowCastingSetting.Off;
-        segment.IgnoreOcclusionCulling = true;
-        if (existing == null)
-        {
-            AddChild(segment);
-            _terrainSegments.Add(segment);
-        }
-        if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
     }
 
     private void RefreshEditedSegments()
     {
-        if (_grid == null || _heightPyramid == null || _initialSegmentQueue.Count > 0 || _grid.LodSurfaceEditVersion == _observedEditVersion) return;
+        if (_grid == null
+            || (UseMinMaxFeaturePreservation && _heightPyramid == null)
+            || _grid.LodSurfaceEditVersion == _observedEditVersion) return;
+        // A worker holds an immutable pyramid snapshot. Cancel it before
+        // mutating that pyramid; it checks cancellation before every sample.
+        if (_pendingSamplingTask != null)
+        {
+            InvalidatePendingPreparation();
+            if (!_pendingSamplingTask.IsCompleted) return;
+            ObserveCompletedSamplingWorker();
+        }
         // The background trace reads the pyramid's hierarchy.  Defer mutation
         // until it has stopped, and reject its now-obsolete mask immediately.
         if (_macroShadowTask != null)
@@ -677,25 +899,37 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             }
             return;
         }
+        InvalidatePendingPreparation();
         RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
-        var dirtyColumns = new HashSet<Vector2I>(edits.DirtyColumns);
-        _heightPyramid.ApplyEdits(edits);
-        int segmentCount = _terrainSegments.Count;
+        var dirtyColumns = new HashSet<RingTerrainColumnCoordinate>(edits.CanonicalDirtyColumns);
+        _heightPyramid?.ApplyEdits(edits);
+        int segmentCount = _initialSegmentQueue.Count > 0 ? _initialSegmentCount : _terrainSegments.Count;
+        int publishedSegmentCount = _terrainSegments.Count;
         int aroundLength = (int)Math.Max(1L, Math.Min(
             int.MaxValue,
             _grid.TerrainSampler?.AroundRingVoxelLength ?? 1L));
-        foreach (Vector2I column in dirtyColumns)
+        foreach (RingTerrainColumnCoordinate column in dirtyColumns)
         {
-            int around = Mathf.PosMod(column.X, aroundLength);
-            int segment = Mathf.Clamp(around * segmentCount / aroundLength, 0, Mathf.Max(0, segmentCount - 1));
-            QueueDirtySegment(segment, segmentCount);
-            QueueDirtySegment(Mathf.PosMod(segment - 1, segmentCount), segmentCount);
-            QueueDirtySegment(Mathf.PosMod(segment + 1, segmentCount), segmentCount);
+            if (segmentCount <= 0) break;
+            int around = Mathf.PosMod((int)(column.AroundVoxel % aroundLength), aroundLength);
+            int segment = Mathf.Clamp(
+                (int)((long)around * segmentCount / aroundLength),
+                0,
+                Mathf.Max(0, segmentCount - 1));
+            if (segment < publishedSegmentCount) QueueDirtySegment(segment, publishedSegmentCount);
+            int previous = Mathf.PosMod(segment - 1, segmentCount);
+            int next = Mathf.PosMod(segment + 1, segmentCount);
+            if (previous < publishedSegmentCount) QueueDirtySegment(previous, publishedSegmentCount);
+            if (next < publishedSegmentCount) QueueDirtySegment(next, publishedSegmentCount);
         }
         if (_grid.TerrainSampler != null)
+        {
             _pendingSegmentEdits = PrepareGlobalEditSnapshot(edits, _grid.TerrainSampler);
+            if (_initialSegmentQueue.Count > 0)
+                _initialSegmentEdits = _pendingSegmentEdits;
+        }
         _knownEditedColumns.Clear();
-        foreach (Vector2I column in edits.EditedColumns.Keys) _knownEditedColumns.Add(column);
+        foreach (RingTerrainColumnCoordinate column in edits.CanonicalDirtyColumns) _knownEditedColumns.Add(column);
         _observedEditVersion = edits.Version;
         _macroShadowInvalidatedEditVersion = 0;
         QueueMacroShadowRebuild();
@@ -720,18 +954,22 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     {
         LastSegmentRebuildCount = 0;
         LastSegmentRebuildMilliseconds = 0.0;
-        if (_pendingSegmentEdits == null || _dirtySegmentQueue.Count == 0 || _terrainSegments.Count == 0) return;
+        if (_grid?.LodSurfaceEditVersion != _observedEditVersion || _initialSegmentQueue.Count > 0 || _pendingSegmentEdits == null || _dirtySegmentQueue.Count == 0 || _terrainSegments.Count == 0) return;
         ulong start = Time.GetTicksUsec();
+        ulong deadline = start + (ulong)Math.Max(1.0, MaxSegmentRebuildMillisecondsPerFrame * 1000.0);
         int rebuildBudget = Mathf.Max(1, MaxSegmentRebuildsPerFrame);
         while (LastSegmentRebuildCount < rebuildBudget && _dirtySegmentQueue.Count > 0)
         {
-            if (LastSegmentRebuildCount > 0
-                && (Time.GetTicksUsec() - start) / 1000.0 >= MaxSegmentRebuildMillisecondsPerFrame)
-                break;
-            int index = _dirtySegmentQueue.Dequeue();
+            int index = _dirtySegmentQueue.Peek();
+            if (index < 0 || index >= _terrainSegments.Count)
+            {
+                _dirtySegmentQueue.Dequeue();
+                _queuedDirtySegments.Remove(index);
+                continue;
+            }
+            if (!ServicePreparedSegment(index, _terrainSegments.Count, _terrainSegments[index], _pendingSegmentEdits, deadline, out bool published) || !published) break;
+            _dirtySegmentQueue.Dequeue();
             _queuedDirtySegments.Remove(index);
-            if (index >= 0 && index < _terrainSegments.Count)
-                BuildGlobalSegment(index, _terrainSegments.Count, _terrainSegments[index], _pendingSegmentEdits);
             LastSegmentRebuildCount++;
         }
         LastSegmentRebuildMilliseconds = (Time.GetTicksUsec() - start) / 1000.0;
@@ -739,6 +977,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     private void ClearTerrainSegments()
     {
+        InvalidatePendingPreparation();
         _dirtySegmentQueue.Clear();
         _queuedDirtySegments.Clear();
         _pendingSegmentEdits = null;
@@ -751,9 +990,26 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             segment.QueueFree();
         }
         _terrainSegments.Clear();
+        foreach (MeshInstance3D segment in _retainedTerrainSegments)
+        {
+            RemoveChild(segment);
+            segment.QueueFree();
+        }
+        _retainedTerrainSegments.Clear();
         _segmentEstimatedBytes.Clear();
         EstimatedGlobalMeshBytes = 0L;
         _lastRegionalVisibilityFocusPosition = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
+    }
+
+    private void RetireRetainedTerrainSegments()
+    {
+        foreach (MeshInstance3D segment in _retainedTerrainSegments)
+        {
+            if (_segmentEstimatedBytes.Remove(segment, out long bytes)) EstimatedGlobalMeshBytes -= bytes;
+            RemoveChild(segment);
+            segment.QueueFree();
+        }
+        _retainedTerrainSegments.Clear();
     }
 
     private void BuildGlobalTerrainOccluder()
@@ -904,13 +1160,21 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     private void UpdateLightingUniforms()
     {
-        if (_grid == null || _sunLight == null)
+        if (_grid == null)
         {
             return;
         }
 
         Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
-        Vector3 sunDirection = _sunLight.GlobalTransform.Basis.Z.Normalized();
+        Vector3 sunDirection = _sunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        if (camera != null)
+        {
+            RingAtmosphereRayFrame frame = RingAtmosphereRayFrame.FromMainCamera(_grid, camera, sunDirection);
+            frame.Apply(_material);
+            frame.Apply(_oceanMaterial);
+            frame.Apply(_hullMaterial);
+        }
         if (!_lastLightingRingCenter.IsEqualApprox(ringCenter))
         {
             _material?.SetShaderParameter("ring_center", ringCenter);
@@ -1141,23 +1405,28 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     public void ApplyRuntimeQuality(int aroundSegments, int acrossSegments, float fadeStart, float fadeEnd)
     {
-        AroundSegments = Mathf.Clamp(aroundSegments, 64, 4096);
-        AcrossSegments = Mathf.Clamp(acrossSegments, 4, 256);
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain global runtime quality");
+        int nextAround = Mathf.Clamp(aroundSegments, 64, 4096);
+        int nextAcross = Mathf.Clamp(acrossSegments, 4, 256);
+        bool aroundChanged = nextAround != AroundSegments;
+        bool acrossChanged = nextAcross != AcrossSegments;
+        AroundSegments = nextAround;
+        AcrossSegments = nextAcross;
         ApplyRuntimeFade(fadeStart, fadeEnd);
-        if (_grid?.TerrainSampler == null) return;
+        if (_grid?.TerrainSampler == null || (!aroundChanged && !acrossChanged)) return;
 
         Mesh = null;
-        ClearHullSegments();
-        if (_occluderRoot != null)
+        // Hull longitudinal resolution follows around segments; terrain across
+        // quality does not change it. Occluder inputs are independent of both.
+        if (aroundChanged)
         {
-            RemoveChild(_occluderRoot);
-            _occluderRoot.QueueFree();
-            _occluderRoot = null;
+            ClearHullSegments();
         }
 
         BuildGlobalRing();
-        if (BuildStructuralEdgeWalls || BuildStructuralUnderside || BuildTerrainRoofUnderside || BuildLowerHullCavityFloor) BuildGlobalHullWalls();
-        if (BuildTerrainOccluder) BuildGlobalTerrainOccluder();
+        if (aroundChanged
+            && (BuildStructuralEdgeWalls || BuildStructuralUnderside || BuildTerrainRoofUnderside || BuildLowerHullCavityFloor))
+            BuildGlobalHullWalls();
     }
 
     public void ApplyRuntimeShadowQuality(

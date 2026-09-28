@@ -761,8 +761,11 @@ public partial class RingLocalWeatherEffects : Node3D
 
     private void UpdateWetness(float delta)
     {
-        float gain = PrecipitationIntensity * Mathf.Max(0.0f, WetnessGainPerSecond);
-        float drying = (1.0f - PrecipitationIntensity) * Mathf.Max(0.0f, WetnessDryingPerSecond);
+        // Snow does not create liquid sheen. Both accumulation and drying use
+        // liquid-rain intensity, so stored rain moisture can dry during snow.
+        float rainIntensity = Snowing ? 0.0f : PrecipitationIntensity;
+        float gain = rainIntensity * Mathf.Max(0.0f, WetnessGainPerSecond);
+        float drying = (1.0f - rainIntensity) * Mathf.Max(0.0f, WetnessDryingPerSecond);
         SurfaceWetness = Mathf.Clamp(SurfaceWetness + (gain - drying) * delta, 0.0f, 1.0f);
     }
 
@@ -834,11 +837,12 @@ public partial class RingLocalWeatherEffects : Node3D
             Mathf.RoundToInt((float)targetAcross),
             0,
             Mathf.Max(0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters)));
-        int surface = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-            _grid.TerrainSampler,
-            aroundVoxel,
-            acrossVoxel);
-        if (sharedEvent.HasValue) surface = (int)Math.Round(sharedEvent.Value.GroundPosition.VerticalMeters);
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+		double surface = floatSurface
+			? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, aroundVoxel, acrossVoxel)
+			: edits.GetSurfaceHeight(_grid.TerrainSampler, aroundVoxel, acrossVoxel);
+		if (sharedEvent.HasValue) surface = sharedEvent.Value.GroundPosition.VerticalMeters;
         double cloudBase = sharedEvent?.CloudPosition.VerticalMeters ?? Math.Max(surface + MinimumBoltHeightMeters, weather.CloudBaseAltitudeMeters);
         double cloudTop = Math.Max(cloudBase + 250.0, weather.CloudTopAltitudeMeters);
         double desiredSourceHeight = sharedEvent?.CloudPosition.VerticalMeters ?? _random.RandfRange((float)cloudBase, (float)cloudTop);

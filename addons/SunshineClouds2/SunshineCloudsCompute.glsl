@@ -45,6 +45,7 @@ layout(binding = 17, std140) uniform SceneDataBlock {
 	SceneData data;
 	SceneData prev_data;
 } scene_data_block;
+layout(binding = 18) uniform sampler2D far_opaque_depth_image;
 
 // Our push constant
 // layout(push_constant, std430) uniform Params {
@@ -652,13 +653,20 @@ float temporal_alpha_agreement_decay(vec4 history, vec4 current, float decay) {
 	return decay * (1.0 - smoothstep(0.20, 0.65, alphaMismatch));
 }
 
-// Ray-start jitter can flip soft cloud coverage between adjacent moving-menu
-// samples. Only retain a bounded floor when reprojection is subpixel and the
-// same cloud body/depth-break state remains coherent; all other cases keep the
-// legacy alpha rejection, including teleports and silhouette/disocclusion loss.
-float menu_coherent_history_decay(vec4 history, vec4 current, float decay,
+// Ray-start jitter can flip soft cloud coverage between adjacent samples.
+// Gameplay gates coherent rays by scene depth; menu also gates by cloud-body
+// distance. Other cases keep legacy alpha rejection and disocclusion handling.
+float coherent_history_decay(vec4 history, vec4 current, float decay,
 		bool depthBreakAgrees, bool cloudDistanceAgrees, float pixelMotion) {
 	float legacyDecay = temporal_alpha_agreement_decay(history, current, decay);
+	if (genericData.data.menu_optimization_controls.y <= 0.5) {
+		if (!depthBreakAgrees) {
+			return legacyDecay;
+		}
+		// On coherent gameplay rays, stochastic cloud-body distance can change
+		// with jitter without a disocclusion; scene depth and screen bounds still reject.
+		return decay;
+	}
 	if (!depthBreakAgrees || !cloudDistanceAgrees) {
 		return legacyDecay;
 	}
@@ -688,6 +696,8 @@ void main() {
 	if (linear_depth >= scene_data_block.data.z_far){ 
 		linear_depth *= 100.0;
 	}
+	float far_depth = texture(far_opaque_depth_image, depthUV).r;
+	if (far_depth > 0.0 && !isnan(far_depth) && !isinf(far_depth)) linear_depth = min(linear_depth, far_depth);
 	
 	// Convert screen coordinates to normalized device coordinates
 	vec2 clipUV = vec2(depthUV.x, depthUV.y);
@@ -716,10 +726,19 @@ void main() {
 	// float ditherValue = ign_noise;
 
 	float ditherScale = 40.037;
-	vec3 ditherUV = vec3(depthUV.x * ditherScale , depthUV.y * ditherScale , genericData.data.time);
-	float smallNoise = texture(dither_small, ditherUV).r;
-
-	float ditherValue = smallNoise;
+	float ditherValue;
+	if (genericData.data.menu_optimization_controls.y > 0.5) {
+		// Preserve the menu renderer's existing time-driven 3D blue-noise slice.
+		vec3 ditherUV = vec3(depthUV.x * ditherScale , depthUV.y * ditherScale , genericData.data.time);
+		float smallNoise = texture(dither_small, ditherUV).r;
+		ditherValue = smallNoise;
+	} else {
+		// Gameplay advances one scalar low-discrepancy sample instead of selecting
+		// per-pixel finite-slice sampling bias that persists in history.
+		vec3 ditherUV = vec3(depthUV.x * ditherScale , depthUV.y * ditherScale , 0.5 / 64.0);
+		float seed = texture(dither_small, ditherUV).r;
+		ditherValue = fract(seed + genericData.data.time);
+	}
 
 	//ATMOSPHERICS
 	vec3 ambientfogdistancecolor = genericData.data.ambientfogdistancecolor.rgb;
@@ -1188,7 +1207,8 @@ void main() {
 	}
 	lightColor.rgb += ambientLight;
 	// lightColor.rgb = ambientLight + clamp(lightColor.rgb / lightingSamples, vec3(0.0), vec3(1.0));
-	lightColor.a = density;
+	// Keep the temporal opacity input physical; display compositing clamps later.
+	lightColor.a = clamp(density, 0.0, 1.0);
 
 	vec3 physicalFogColor = lightColor.rgb;
 	float fogweight = 0.0;
@@ -1290,6 +1310,12 @@ void main() {
 	// color; retain nearest metadata for silhouette/disocclusion decisions.
 	vec2 historyPixel = vec2(uv) + screen_position * vec2(size);
 	float reprojectedPixelMotion = length(screen_position * vec2(size));
+	if (genericData.data.menu_optimization_controls.y <= 0.5) {
+		// Gameplay uses fractional reprojection, so reject before integer truncation
+		// can admit a narrow offscreen strip at the texture edge.
+		historyOutsideImage = any(lessThan(historyPixel, vec2(0.0)))
+			|| any(greaterThan(historyPixel, vec2(size - ivec2(1))));
+	}
 	ivec2 historyBase = ivec2(floor(historyPixel));
 	vec2 historyFraction = fract(historyPixel);
 	ivec2 history00 = clamp(historyBase, ivec2(0), size - ivec2(1));
@@ -1298,11 +1324,17 @@ void main() {
 	ivec2 history11 = clamp(historyBase + ivec2(1), ivec2(0), size - ivec2(1));
 	bool menuStaticHistory = genericData.data.menu_optimization_controls.y > 0.5
 		&& genericData.data.menu_temporal_controls.z > 0.5;
-	bool menuBilinearHistory = genericData.data.menu_optimization_controls.y > 0.5
-		&& !menuStaticHistory && genericData.data.accumilation_decay > 0.0
+	// Reprojection normally lands between low-resolution cloud pixels.  The
+	// menu implementation already proved that bilinear *colour* with nearest
+	// metadata converges without leaking silhouettes.  Gameplay previously kept
+	// the integer fetch, so camera motion repeatedly compared unrelated noisy
+	// samples and defeated a user-selected high history weight.
+	bool coherentBilinearHistory = !menuStaticHistory
+		&& genericData.data.accumilation_decay > 0.0
 		&& abs(genericData.data.temporal_controls.z) <= 0.5
-		&& genericData.data.temporal_controls.w <= 0.5;
-	if (genericData.data.menu_optimization_controls.y > 0.5) {
+		&& genericData.data.temporal_controls.w <= 0.5
+		&& (genericData.data.menu_optimization_controls.y <= 0.5 || reprojectedPixelMotion <= 2.0);
+	if (genericData.data.menu_optimization_controls.y > 0.5 || coherentBilinearHistory) {
 		// Metadata remains nearest, but menu reprojection rounds the true
 		// fractional history coordinate instead of legacy integer motion.
 		clampedUV = clamp(ivec2(floor(historyPixel + vec2(0.5))), ivec2(0), size - ivec2(1));
@@ -1328,7 +1360,7 @@ void main() {
 	float travelspeed = length(delta) + maxstep;
 	//bool debugCollisions = false;
 	if (usingaccumA > 0.0){
-		currentColorAccumilation = menuBilinearHistory
+		currentColorAccumilation = coherentBilinearHistory
 			? mix(mix(imageLoad(accum_1A_image, history00).rgba, imageLoad(accum_1A_image, history10).rgba, historyFraction.x), mix(imageLoad(accum_1A_image, history01).rgba, imageLoad(accum_1A_image, history11).rgba, historyFraction.x), historyFraction.y)
 			: imageLoad(accum_1A_image, clampedUV).rgba;
 		currentDataAccumilation = imageLoad(accum_2A_image, clampedUV).rgba;
@@ -1352,8 +1384,8 @@ void main() {
 			currentDataAccumilation.b = finalDensityDistance;
 		}
 		else{
-			float agreementDecay = menuStaticHistory ? accumdecay : (menuBilinearHistory
-				? menu_coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
+			float agreementDecay = menuStaticHistory ? accumdecay : (coherentBilinearHistory
+				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
 				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay));
 			diagnosticHistoryWeight = agreementDecay;
 			diagnosticHistoryReason = agreementDecay < accumdecay ? 0.25 : 0.0; // alpha fade / accepted
@@ -1370,7 +1402,7 @@ void main() {
 		imageStore(accum_2B_image, uv, currentDataAccumilation);
 	}
 	else{
-		currentColorAccumilation = menuBilinearHistory
+		currentColorAccumilation = coherentBilinearHistory
 			? mix(mix(imageLoad(accum_1B_image, history00).rgba, imageLoad(accum_1B_image, history10).rgba, historyFraction.x), mix(imageLoad(accum_1B_image, history01).rgba, imageLoad(accum_1B_image, history11).rgba, historyFraction.x), historyFraction.y)
 			: imageLoad(accum_1B_image, clampedUV).rgba;
 		currentDataAccumilation = imageLoad(accum_2B_image, clampedUV).rgba;
@@ -1394,8 +1426,8 @@ void main() {
 			currentDataAccumilation.b = finalDensityDistance;
 		}
 		else{
-			float agreementDecay = menuStaticHistory ? accumdecay : (menuBilinearHistory
-				? menu_coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
+			float agreementDecay = menuStaticHistory ? accumdecay : (coherentBilinearHistory
+				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
 				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay));
 			diagnosticHistoryWeight = agreementDecay;
 			diagnosticHistoryReason = agreementDecay < accumdecay ? 0.25 : 0.0; // alpha fade / accepted

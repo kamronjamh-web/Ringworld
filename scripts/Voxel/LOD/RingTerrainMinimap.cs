@@ -71,7 +71,7 @@ public partial class RingTerrainMinimap : CanvasLayer
     private float _markerHeight;
     private ulong _lastEditVersion;
     private RingCanonicalPosition _meshCenter;
-    private int _meshCenterElevation;
+    private float _meshCenterElevation;
     private bool _hasMeshCenter;
     private float _landingRelativeY;
     private double _trackableScanAccumulator;
@@ -95,7 +95,7 @@ public partial class RingTerrainMinimap : CanvasLayer
         Color[] Colors,
         Vector2[] Uvs,
         int[] Indices,
-        int CenterElevation,
+        float CenterElevation,
         float MaximumDisplayHeight,
         RingCanonicalPosition Center,
         ulong EditVersion);
@@ -506,21 +506,18 @@ public partial class RingTerrainMinimap : CanvasLayer
             int row = cells + 1;
             int count = row * row;
             float step = span / cells;
-            var heights = new int[count];
+			var heights = new float[count];
             var vertices = new Vector3[count];
             var normals = new Vector3[count];
             var colors = new Color[count];
             var uvs = new Vector2[count];
             int centerAcross = Mathf.Clamp(Mathf.RoundToInt((float)center.AcrossMeters), 0, Mathf.RoundToInt(ringWidth));
             int centerAround = (int)Math.Round(center.AroundMeters);
-            TerrainSample centerSample = sampler.GetTerrainSample(centerAround, centerAcross);
-            int centerTerrainHeight = edits.TryGetEditedSurfaceHeight(
-                centerAround,
-                centerAcross,
-                out int centerEditedHeight)
-                ? centerEditedHeight
-                : centerSample.SurfaceHeight;
-            int centerHeight = centerSample.ResolveDisplayedHeight(centerTerrainHeight);
+			TerrainSample centerSample = edits.GetPresentationTerrainSample(sampler, centerAround, centerAcross);
+			bool floatSurface = sampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+			float centerHeight = floatSurface
+				? Mathf.Max(edits.GetPresentationSurfaceHeight(sampler, centerAround, centerAcross), centerSample.HasSurfaceWater ? centerSample.WaterSurfaceHeight : float.NegativeInfinity)
+				: centerSample.ResolveDisplayedHeight(edits.TryGetEditedSurfaceHeight(centerAround, centerAcross, out int centerEditedHeight) ? centerEditedHeight : centerSample.SurfaceHeight);
             float maximumHeight = float.NegativeInfinity;
 
             for (int z = 0; z <= cells; z++)
@@ -532,20 +529,19 @@ public partial class RingTerrainMinimap : CanvasLayer
                 int across = (int)Math.Round(center.AcrossMeters + localZ);
                 bool outside = across < 0 || across > ringWidth;
                 int sampleAcross = Mathf.Clamp(across, 0, Mathf.RoundToInt(ringWidth));
-                TerrainSample sample = sampler.GetTerrainSample(around, sampleAcross);
-                int terrainHeight = outside
-                    ? Mathf.RoundToInt(-structuralDepth)
-                    : edits.TryGetEditedSurfaceHeight(around, sampleAcross, out int editedHeight)
-                        ? editedHeight
-                        : sample.SurfaceHeight;
-                int height = outside ? terrainHeight : sample.ResolveDisplayedHeight(terrainHeight);
+				TerrainSample sample = edits.GetPresentationTerrainSample(sampler, around, sampleAcross);
+				float height = outside
+					? -structuralDepth
+					: floatSurface
+						? Mathf.Max(edits.GetPresentationSurfaceHeight(sampler, around, sampleAcross), sample.HasSurfaceWater ? sample.WaterSurfaceHeight : float.NegativeInfinity)
+						: sample.ResolveDisplayedHeight(edits.TryGetEditedSurfaceHeight(around, sampleAcross, out int editedHeight) ? editedHeight : sample.SurfaceHeight);
                 int index = z * row + x;
                 heights[index] = height;
                 vertices[index] = new Vector3(localX, (height - centerHeight) * verticalScale, localZ);
                 colors[index] = outside
                     ? new Color(0.07f, 0.09f, 0.12f, 1.0f)
                     : RingTerrainVisuals.ResolveSeededColor(
-                        sample, height, sampler,
+						 sample, Mathf.FloorToInt(height), sampler,
                         new Color(0.10f, 0.19f, 0.11f),
                         new Color(0.48f, 0.44f, 0.36f));
                 uvs[index] = new Vector2(x / (float)cells, z / (float)cells);
@@ -628,11 +624,12 @@ public partial class RingTerrainMinimap : CanvasLayer
         RingCanonicalPosition position = _explorer.CanonicalPosition;
         int across = Mathf.Clamp(Mathf.RoundToInt((float)position.AcrossMeters), 0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters));
         RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
-        TerrainSample sample = _grid.TerrainSampler.GetTerrainSample((int)Math.Round(position.AroundMeters), across);
+		TerrainSample sample = edits.GetPresentationTerrainSample(_grid.TerrainSampler, (int)Math.Round(position.AroundMeters), across);
         int around = (int)Math.Round(position.AroundMeters);
-        int elevation = edits.TryGetEditedSurfaceHeight(around, across, out int editedElevation)
-            ? editedElevation
-            : sample.SurfaceHeight;
+		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+		float elevation = floatSurface
+			? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across)
+			: edits.TryGetEditedSurfaceHeight(around, across, out int editedElevation) ? editedElevation : sample.SurfaceHeight;
         double altitude = position.VerticalMeters - elevation;
         _landingRelativeY = (float)(-altitude * VerticalScale);
         if (_coordinateLabel != null)
@@ -924,7 +921,11 @@ public partial class RingTerrainMinimap : CanvasLayer
         if (_grid?.TerrainSampler == null || _explorer == null) return;
         RingCanonicalPosition current = _explorer.CanonicalPosition;
         int across = Mathf.Clamp(Mathf.RoundToInt((float)current.AcrossMeters), 0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters));
-        int surface = _grid.TerrainSampler.GetSurfaceHeight((int)Math.Round(current.AroundMeters), across);
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+		float surface = floatSurface
+			? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, (int)Math.Round(current.AroundMeters), across)
+			: _grid.TerrainSampler.GetSurfaceHeight((int)Math.Round(current.AroundMeters), across);
         RingCanonicalPosition elevated = current with
         {
             VerticalMeters = surface + Math.Max(100.0, altitudeMeters)
@@ -947,10 +948,11 @@ public partial class RingTerrainMinimap : CanvasLayer
             Mathf.RoundToInt((float)current.AcrossMeters),
             0,
             Mathf.RoundToInt(_grid.RingAcrossWidthMeters));
-        int surface = _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-            _grid.TerrainSampler,
-            (int)Math.Round(current.AroundMeters),
-            across);
+		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+		float surface = floatSurface
+			? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, (int)Math.Round(current.AroundMeters), across)
+			: edits.GetSurfaceHeight(_grid.TerrainSampler, (int)Math.Round(current.AroundMeters), across);
         _explorer.SetBenchmarkCanonicalPosition(current with { VerticalMeters = surface + 2.0 });
     }
 

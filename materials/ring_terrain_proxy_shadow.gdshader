@@ -9,6 +9,7 @@ instance uniform vec4 coverage_atlas_rect = vec4(0.0, 0.0, 0.0, 0.0);
 uniform vec3 camera_world_position = vec3(0.0);
 uniform vec3 ring_center = vec3(0.0);
 uniform bool geomorph_enabled = true;
+uniform bool runtime_parent_chord_enabled = false;
 uniform float morph_start_meters = 480.0;
 uniform float morph_end_meters = 640.0;
 varying vec2 proxy_coverage_uv;
@@ -23,7 +24,7 @@ void vertex() {
 		vec3 radial = original_world_position - ring_center;
 		radial.y = 0.0;
 		vec3 surface_up_world = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
-		VERTEX += normalize(inverse(mat3(MODEL_MATRIX)) * surface_up_world) * UV2.x * morph;
+		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? CUSTOM0.xyz * morph : normalize(inverse(mat3(MODEL_MATRIX)) * surface_up_world) * UV2.x * morph;
 	}
 }
 

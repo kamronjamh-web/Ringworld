@@ -4,6 +4,7 @@ using System.Diagnostics;
 using Godot;
 using RingworldTechDemo.Lightning;
 using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo;
 
@@ -265,9 +266,15 @@ public partial class RingVolumetricCloudLayer
         if (id <= 0) id = 1;
         double across = target.AcrossMeters;
         double around = WrapAround(target.AroundMeters);
-        int surface = _grid?.TerrainSampler == null ? 0 : _grid.CaptureLodSurfaceEditSnapshot().GetSurfaceHeight(
-            _grid.TerrainSampler, (long)Math.Round(around), Mathf.RoundToInt((float)across));
-        RingCanonicalPosition ground = new RingCanonicalPosition(around, surface + 1.0, across);
+		float surface = 0;
+		bool floatSurface = false;
+		if (_grid?.TerrainSampler != null)
+		{
+			RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+			floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+			surface = floatSurface ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, (long)Math.Round(around), Mathf.RoundToInt((float)across)) : edits.GetSurfaceHeight(_grid.TerrainSampler, (long)Math.Round(around), Mathf.RoundToInt((float)across));
+		}
+		RingCanonicalPosition ground = new RingCanonicalPosition(around, surface + (floatSurface ? 0.0 : 1.0), across);
         RingCanonicalPosition cloud = ground with { VerticalMeters = Math.Max(ground.VerticalMeters + 250.0, Math.Max(weather.CloudBaseAltitudeMeters, CloudBaseMeters) + 180.0) };
         return new RingLightningEvent(id, systemId, start, ground, cloud, unchecked((int)hash), Unit(hash ^ 0xa31f) * Mathf.Tau,
             Mathf.Clamp(0.45f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f), 2500.0f + Unit(hash ^ 0xf00d) * 9000.0f, preview);

@@ -1,4 +1,5 @@
 using Godot;
+using RingworldTechDemo.UI;
 using System.Collections.Generic;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -180,6 +181,7 @@ public partial class RingGraphicsQualityController : Node
     private DirectionalLight3D? _sun;
     private WorldEnvironment? _worldEnvironment;
     private bool _skyAtmosphereRegistered;
+    private AtmosphereVisualDefaults? _atmosphereDefaults;
     private readonly Dictionary<string, Variant> _grassTuningOverrides = new();
     /// <summary>Live drawer target; null when a scene intentionally has no standing grass.</summary>
     public RingStandingGrassLayer? GrassLayer => _grass;
@@ -208,11 +210,52 @@ public partial class RingGraphicsQualityController : Node
         RingTerrainLodCoordinator.QualityPreset startupPreset = ResolveCommandLinePreset(DefaultPreset);
         bool terrainAlreadyConfigured = _coordinator?.CurrentPreset == startupPreset;
         ApplyPreset(startupPreset, applyTerrainPreset: !terrainAlreadyConfigured, userSelected: false);
+        EnsureAtmosphereDefaults();
     }
+
+    /// <summary>
+    /// The shared atmosphere profile. The live drawer is earlier in this scene,
+    /// so this must be ready on first access rather than only from _Ready().
+    /// </summary>
+    public AtmosphereVisualDefaults AtmosphereDefaults => EnsureAtmosphereDefaults();
+
+    private AtmosphereVisualDefaults EnsureAtmosphereDefaults()
+    {
+        if (_atmosphereDefaults != null) return _atmosphereDefaults;
+        _atmosphereDefaults = new AtmosphereVisualDefaults();
+        _atmosphereDefaults.Initialize();
+        return _atmosphereDefaults;
+    }
+
+    public void InstallAtmosphereDefaults(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", System.StringComparison.Ordinal)
+            && !isolatedPath.StartsWith("user://generated/", System.StringComparison.Ordinal)) return;
+        AtmosphereVisualDefaults replacement = new(isolatedPath);
+        replacement.Initialize();
+        _atmosphereDefaults = replacement;
+    }
+    public void SetAtmosphereEnabled(bool enabled)
+    {
+        ProjectSettings.SetSetting("ringworld/runtime/haze_enabled", enabled);
+        RingAtmosphereModel.Enabled = enabled;
+    }
+    public Godot.Collections.Dictionary GetAtmosphereTuningDiagnostics() => new()
+    {
+        ["visibility_km"] = RingAtmosphereModel.VisibilityFullKm,
+        ["density"] = RingAtmosphereModel.Density,
+        ["preset"] = (int)RingAtmosphereModel.ArtPreset,
+        ["enabled"] = RingAtmosphereModel.Enabled,
+        ["revision"] = (long)RingAtmosphereModel.Revision,
+        ["settings_path"] = AtmosphereDefaults.Path,
+        ["dirty"] = AtmosphereDefaults.Dirty,
+        ["error"] = AtmosphereDefaults.LastError
+    };
 
     public override void _Process(double delta)
     {
         _ = delta;
+        UpdateLocalShadowHandoff();
         if (_skyAtmosphereRegistered || _grid == null) return;
         if (_worldEnvironment?.Environment?.Sky?.SkyMaterial is not ShaderMaterial skyMaterial) return;
         if (skyMaterial.Shader == null
