@@ -8,7 +8,7 @@ namespace RingworldTechDemo.Diagnostics;
 /// <summary>Non-blocking main-RD timestamp bridge. Samples are asynchronous partial GPU intervals, never frame totals.</summary>
 public static class RingPerformanceGpu
 {
-    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds";
+    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite";
     private const string Prefix = "RingPerfGpu:";
     private const int MaximumCSharpMarkersPerFrame = 30, MaximumTimestampScan = 512;
     private static int _enabled, _generation, _pendingGeneration, _markersThisFrame;
@@ -94,7 +94,7 @@ public static class RingPerformanceGpu
     }
 
     private static string Marker(int generation, string category, char boundary) => Prefix + generation + ":" + category + ":" + boundary;
-    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds;
+    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite;
     private static bool TryParseMarker(string name, int expectedGeneration, out string category, out char boundary)
     {
         category = string.Empty; boundary = '\0'; if (!name.StartsWith(Prefix, StringComparison.Ordinal)) return false;

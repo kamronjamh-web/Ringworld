@@ -33,7 +33,10 @@ Detailed GPU mode adds asynchronous timestamp intervals for:
 
 - FFT cascade dispatches, aggregated by source GPU frame;
 - vegetation compute culling/compaction, excluding its CPU buffer uploads;
-- the Sunshine view-0 cloud prepass, raymarch, reconstruction, and composition.
+- the Sunshine view-0 cloud prepass, raymarch, reconstruction, and composition,
+  both as the inclusive `GPU.Clouds` interval and as the non-additive child
+  intervals `GPU.CloudPrepass`, `GPU.CloudRaymarch`, `GPU.CloudReconstruct`,
+  and `GPU.CloudComposite`.
 
 These are scoped GPU intervals, not the complete cost of drawing water, trees,
 or clouds. Cloud-shadow generation, individual tree shadows, materials, and SSR
@@ -51,7 +54,13 @@ Use a controlled profiling-off/on comparison before claiming a total overhead.
 Leave monitoring enabled, reproduce the problem, then use **Capture slowdown
 report**. Export is manual: no continuous disk recording runs in the background.
 The JSON contains retained frames, timestamped completed events, summary rows,
-and workload context. Frame context includes movement speed, terrain workers and
+workload context, and a `renderState` capture-time snapshot. `renderState` is
+collected only when **Capture slowdown report** is invoked on the main thread;
+it adds no per-frame polling and is not a history. It records JSON-safe light,
+shadow-handoff, viewport/focus/adapter, canonical explorer, celestial, and
+Sunshine cloud-resource settings when those nodes are available. A failed
+render-state read is recorded as `renderStateContextError` while the report
+still exports. Frame context includes movement speed, terrain workers and
 upload queues, tree-shadow renderer counts, shadow atlas size, and render scale.
 Context is refreshed at 5 Hz, not independently measured every frame.
 

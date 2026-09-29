@@ -9,6 +9,8 @@ public partial class RingTerrain3DSurface
     private float _surfaceDryRoughness = .92f;
     private float _surfaceWetRoughness = .35f;
     private float _rainWetnessStrength = 1.0f;
+    private bool _smoothTerrainShading = true;
+    private bool _appliedSmoothTerrainShading;
     private ulong _appearanceTerrainId;
     private Vector4 _appliedAppearance = new(float.NaN, float.NaN, float.NaN, float.NaN);
 
@@ -30,14 +32,24 @@ public partial class RingTerrain3DSurface
         ForwardSurfaceAppearance();
     }
 
+    public void SetSmoothTerrainShading(bool enabled)
+    {
+        if (_smoothTerrainShading == enabled) return;
+        _smoothTerrainShading = enabled;
+        ForwardSurfaceAppearance();
+    }
+
     private void ForwardSurfaceAppearance()
     {
         if (_activePreparedSurface != null)
         {
+            _activePreparedSurface.SetSmoothTerrainShading(_smoothTerrainShading);
             _activePreparedSurface.SetSurfaceAppearance(_surfaceDryRoughness, _surfaceWetRoughness, _rainWetnessStrength);
             _activePreparedSurface.SetSurfaceWetness(_surfaceWetness);
+            _stagedPreparedSurface?.SetSmoothTerrainShading(_smoothTerrainShading);
             _stagedPreparedSurface?.SetSurfaceAppearance(_surfaceDryRoughness, _surfaceWetRoughness, _rainWetnessStrength);
             _stagedPreparedSurface?.SetSurfaceWetness(_surfaceWetness);
+            _idlePreparedSurface?.SetSmoothTerrainShading(_smoothTerrainShading);
             _idlePreparedSurface?.SetSurfaceAppearance(_surfaceDryRoughness, _surfaceWetRoughness, _rainWetnessStrength);
             _idlePreparedSurface?.SetSurfaceWetness(_surfaceWetness);
             return;
@@ -50,8 +62,10 @@ public partial class RingTerrain3DSurface
         if (newOwner || !Mathf.IsEqualApprox(_appliedAppearance.Y, values.Y)) SetMaterialParameter("surface_dry_roughness", values.Y);
         if (newOwner || !Mathf.IsEqualApprox(_appliedAppearance.Z, values.Z)) SetMaterialParameter("surface_wet_roughness", values.Z);
         if (newOwner || !Mathf.IsEqualApprox(_appliedAppearance.W, values.W)) SetMaterialParameter("surface_wetness_strength", values.W);
+        if (newOwner || _appliedSmoothTerrainShading != _smoothTerrainShading) SetMaterialParameter("smooth_terrain_shading", _smoothTerrainShading);
         _appearanceTerrainId = terrainId;
         _appliedAppearance = values;
+        _appliedSmoothTerrainShading = _smoothTerrainShading;
     }
 
     /// <summary>Read-only test hook for the currently staged native material.</summary>

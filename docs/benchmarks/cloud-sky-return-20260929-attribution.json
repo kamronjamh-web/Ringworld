@@ -1,0 +1,1711 @@
+{
+	"baseline_provider_force": {
+		"CloudRenderingEnabled": true,
+		"RuntimeVisible": true,
+		"ownership": {
+			"bridge_process_mode": 0,
+			"cloud_callback_type": 4,
+			"cloud_mask_active": false,
+			"cloud_resolution": 0,
+			"cloud_resource_enabled": true,
+			"cloud_simulation_time_seconds": 0.283209000000001,
+			"conventional_mesh_cloud_geometry": [
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+					"visible": false
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+					"visible": false
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+					"visible": false
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+					"visible": false
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+					"visible": true
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+					"visible": true
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+					"visible": true
+				},
+				{
+					"layers": 1,
+					"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+					"visible": true
+				}
+			],
+			"effective_shadow_atlas": 8192,
+			"effective_shadow_filter": 1,
+			"exact_sunshine_backdrop_active": false,
+			"fallback_cloud_shell_visible": true,
+			"far_clipmap": true,
+			"local_fog_volumes": [],
+			"local_renderer_enabled": false,
+			"local_renderer_present": true,
+			"root_msaa_3d": 0,
+			"root_scaling_3d_scale": 1.0,
+			"root_use_taa": false,
+			"sunshine_bridge_enabled": true,
+			"world_compositor_effects": [
+				"res://resources/clouds/sunshine_ring_local.tres"
+			]
+		},
+		"resource_enabled": true
+	},
+	"cases": [
+		{
+			"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233618-8628637-9a1c0442.json",
+			"image": "res://.godot/cloud-slowdown-attribution/4951638/cloud_reference.png",
+			"label": "cloud_reference",
+			"ownership": {
+				"bridge_process_mode": 0,
+				"cloud_callback_type": 4,
+				"cloud_mask_active": false,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_simulation_time_seconds": 1229.80846788892,
+				"conventional_mesh_cloud_geometry": [
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+						"visible": true
+					}
+				],
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"exact_sunshine_backdrop_active": false,
+				"fallback_cloud_shell_visible": true,
+				"far_clipmap": true,
+				"local_fog_volumes": [],
+				"local_renderer_enabled": false,
+				"local_renderer_present": true,
+				"root_msaa_3d": 0,
+				"root_scaling_3d_scale": 1.0,
+				"root_use_taa": false,
+				"sunshine_bridge_enabled": true,
+				"world_compositor_effects": [
+					"res://resources/clouds/sunshine_ring_local.tres"
+				]
+			},
+			"pose": {
+				"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+				"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+				"canonical_eye_height": 5914.48231271748,
+				"cycle_time_seconds": 3539.94946289063,
+				"daylight": 1.0,
+				"explorer_saved_pitch_degrees": 0.0,
+				"explorer_saved_yaw_radians": 5.1982889175415,
+				"full_cycle_seconds": 4500.0,
+				"requested": {
+					"across": 253942.741390286,
+					"around": 156462.318399834,
+					"height": 5912.9323127009,
+					"pitch": 0.0,
+					"yaw": 297.84004
+				},
+				"simulation_seconds": 3539.94947688899,
+				"sun_elevation": 65.1770324707031
+			},
+			"sky_return_timing": {
+				"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233614-2265290-9cd7bc25.json",
+				"horizon_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 0.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"label": "cloud_reference_sky_return",
+				"screenshot": "not captured during transient interval",
+				"sky_hold_frames": 274,
+				"sky_hold_seconds": 3.000789,
+				"sky_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.244579, 0.854125, -0.458968), Z: (0.969235, 0.228862, -0.090589)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 75.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"sky_up_dot": 0.965925753116608,
+				"source_capture_path": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"timing": {
+					"capped": false,
+					"main_cpu_ms": {
+						"max": 2.79200005531311,
+						"median": 1.63800001144409,
+						"min": 1.28600001335144,
+						"p95": 2.09200000762939,
+						"samples": 259
+					},
+					"main_gpu_ms": {
+						"max": 41.3660011291504,
+						"median": 34.6269989013672,
+						"min": 6.88299989700317,
+						"p95": 39.7200012207031,
+						"samples": 259
+					},
+					"samples": 259,
+					"seconds": 10.017988,
+					"transient_window": "horizon return; no screenshot or warmup included"
+				}
+			},
+			"source_capture_paths": {
+				"fixture": "res://.godot/cloud-slowdown-attribution/4951638",
+				"performance": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"screenshot": "res://.godot/cloud-slowdown-attribution/4951638/cloud_reference.png"
+			},
+			"state": {
+				"bridge_process_mode": 0,
+				"cast_cloud_shadows": true,
+				"celestial_clock": 3539.94947688899,
+				"clock_paused": true,
+				"cloud_base_m": 2000.0,
+				"cloud_clock": 1229.80846788892,
+				"cloud_coverage_bias": -0.670000016689301,
+				"cloud_density_multiplier": 1.04999995231628,
+				"cloud_rendering_requested": true,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_sharpness": 1.0,
+				"cloud_top_m": 6050.0,
+				"compute_shader_path": "",
+				"driver": {
+					"detail_position": "(846.6073, 888.4297, 269.3739)",
+					"driver_origin_offset": "(0.0, 0.0, 0.0)",
+					"extra_large_position": "(103.4743, 0.0, 32.92363)",
+					"large_position": "(258.6854, 0.0, 82.30896)",
+					"medium_position": "(470.3371, 0.0, 149.6524)",
+					"process_mode": 4,
+					"resource_current_time": 0.809277678571432,
+					"resource_origin_offset": "(0.0, 0.0, 0.0)",
+					"update_continuously": true
+				},
+				"driver_process_mode": 4,
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"explorer_process_mode": 4,
+				"gpu_shadow_generation": true,
+				"handoff": {
+					"actual_sun_shadows": true,
+					"handoff_enabled": true,
+					"max_local_sun_elevation_degrees": 65.2458801269531,
+					"off_elevation_degrees": -18.0,
+					"on_elevation_degrees": -16.0,
+					"reason": "sun at or above local shadow horizon",
+					"requested_sun_shadows": true,
+					"suspended": false
+				},
+				"lighting_steps": 8,
+				"max_step_distance_m": 958.0,
+				"min_step_distance_m": 500.0,
+				"ownership": {
+					"bridge_process_mode": 0,
+					"cloud_callback_type": 4,
+					"cloud_mask_active": false,
+					"cloud_resolution": 0,
+					"cloud_resource_enabled": true,
+					"cloud_simulation_time_seconds": 1229.80846788892,
+					"conventional_mesh_cloud_geometry": [
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+							"visible": true
+						}
+					],
+					"effective_shadow_atlas": 8192,
+					"effective_shadow_filter": 1,
+					"exact_sunshine_backdrop_active": false,
+					"fallback_cloud_shell_visible": true,
+					"far_clipmap": true,
+					"local_fog_volumes": [],
+					"local_renderer_enabled": false,
+					"local_renderer_present": true,
+					"root_msaa_3d": 0,
+					"root_scaling_3d_scale": 1.0,
+					"root_use_taa": false,
+					"sunshine_bridge_enabled": true,
+					"world_compositor_effects": [
+						"res://resources/clouds/sunshine_ring_local.tres"
+					]
+				},
+				"planet": {
+					"angular_distance": 0.5,
+					"direction": "(0.909342, -0.053156, -0.412639)",
+					"energy": 0.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": false
+				},
+				"prefer_gpu_cloud_shadows": true,
+				"raymarch_steps": 256,
+				"requested_sun_shadows": true,
+				"resource_coverage": 0.699999988079071,
+				"resource_density": 1.25999999046326,
+				"shader_variant": "reference",
+				"sun": {
+					"angular_distance": 0.0599999986588955,
+					"direction": "(-0.896823, 0.258819, -0.358777)",
+					"energy": 4.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": true
+				},
+				"sun_shadows": true,
+				"weather_process_mode": 4
+			},
+			"timing": {
+				"capped": false,
+				"draw_calls": {
+					"max": 1066.0,
+					"median": 1066.0,
+					"min": 1062.0,
+					"p95": 1066.0,
+					"samples": 54
+				},
+				"far_viewports": {
+					"/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport": {
+						"cpu_ms": {
+							"max": 0.809000015258789,
+							"median": 0.578000009059906,
+							"min": 0.0,
+							"p95": 0.697000026702881,
+							"samples": 54
+						},
+						"gpu_ms": {
+							"max": 1.64400005340576,
+							"median": 1.55299997329712,
+							"min": 0.0,
+							"p95": 1.62999999523163,
+							"samples": 54
+						}
+					}
+				},
+				"main_cpu_ms": {
+					"max": 3.98699998855591,
+					"median": 2.70000004768372,
+					"min": 2.17600011825562,
+					"p95": 3.66100001335144,
+					"samples": 54
+				},
+				"main_gpu_ms": {
+					"max": 40.1529998779297,
+					"median": 34.3230018615723,
+					"min": 27.757999420166,
+					"p95": 39.7750015258789,
+					"samples": 54
+				},
+				"primitives": {
+					"max": 3127411.0,
+					"median": 3127411.0,
+					"min": 3118833.0,
+					"p95": 3127411.0,
+					"samples": 54
+				},
+				"samples": 54,
+				"seconds": 2.015134
+			},
+			"warmup": {
+				"capped": false,
+				"frames": 24,
+				"seconds": 0.851359
+			}
+		},
+		{
+			"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233636-1209727-dcf21496.json",
+			"image": "res://.godot/cloud-slowdown-attribution/4951638/cloud_optimized.png",
+			"label": "cloud_optimized",
+			"ownership": {
+				"bridge_process_mode": 0,
+				"cloud_callback_type": 4,
+				"cloud_mask_active": false,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_simulation_time_seconds": 1229.80846788892,
+				"conventional_mesh_cloud_geometry": [
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+						"visible": true
+					}
+				],
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"exact_sunshine_backdrop_active": false,
+				"fallback_cloud_shell_visible": true,
+				"far_clipmap": true,
+				"local_fog_volumes": [],
+				"local_renderer_enabled": false,
+				"local_renderer_present": true,
+				"root_msaa_3d": 0,
+				"root_scaling_3d_scale": 1.0,
+				"root_use_taa": false,
+				"sunshine_bridge_enabled": true,
+				"world_compositor_effects": [
+					"res://resources/clouds/sunshine_ring_local.tres"
+				]
+			},
+			"pose": {
+				"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+				"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+				"canonical_eye_height": 5914.48231271748,
+				"cycle_time_seconds": 3539.94946289063,
+				"daylight": 1.0,
+				"explorer_saved_pitch_degrees": 0.0,
+				"explorer_saved_yaw_radians": 5.1982889175415,
+				"full_cycle_seconds": 4500.0,
+				"requested": {
+					"across": 253942.741390286,
+					"around": 156462.318399834,
+					"height": 5912.9323127009,
+					"pitch": 0.0,
+					"yaw": 297.84004
+				},
+				"simulation_seconds": 3539.94947688899,
+				"sun_elevation": 65.1770324707031
+			},
+			"sky_return_timing": {
+				"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233631-9810347-a9147708.json",
+				"horizon_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 0.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"label": "cloud_optimized_sky_return",
+				"screenshot": "not captured during transient interval",
+				"sky_hold_frames": 223,
+				"sky_hold_seconds": 3.014018,
+				"sky_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.244579, 0.854125, -0.458968), Z: (0.969235, 0.228862, -0.090589)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 75.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"sky_up_dot": 0.965925753116608,
+				"source_capture_path": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"timing": {
+					"capped": false,
+					"main_cpu_ms": {
+						"max": 6.9210000038147,
+						"median": 2.61400008201599,
+						"min": 1.93900001049042,
+						"p95": 4.05000019073486,
+						"samples": 458
+					},
+					"main_gpu_ms": {
+						"max": 24.67799949646,
+						"median": 17.8799991607666,
+						"min": 6.56099987030029,
+						"p95": 22.8209991455078,
+						"samples": 458
+					},
+					"samples": 458,
+					"seconds": 10.023194,
+					"transient_window": "horizon return; no screenshot or warmup included"
+				}
+			},
+			"source_capture_paths": {
+				"fixture": "res://.godot/cloud-slowdown-attribution/4951638",
+				"performance": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"screenshot": "res://.godot/cloud-slowdown-attribution/4951638/cloud_optimized.png"
+			},
+			"state": {
+				"bridge_process_mode": 0,
+				"cast_cloud_shadows": true,
+				"celestial_clock": 3539.94947688899,
+				"clock_paused": true,
+				"cloud_base_m": 2000.0,
+				"cloud_clock": 1229.80846788892,
+				"cloud_coverage_bias": -0.670000016689301,
+				"cloud_density_multiplier": 1.04999995231628,
+				"cloud_rendering_requested": true,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_sharpness": 1.0,
+				"cloud_top_m": 6050.0,
+				"compute_shader_path": "",
+				"driver": {
+					"detail_position": "(846.6073, 888.4297, 269.3739)",
+					"driver_origin_offset": "(0.0, 0.0, 0.0)",
+					"extra_large_position": "(103.4743, 0.0, 32.92363)",
+					"large_position": "(258.6854, 0.0, 82.30896)",
+					"medium_position": "(470.3371, 0.0, 149.6524)",
+					"process_mode": 4,
+					"resource_current_time": 0.809277678571432,
+					"resource_origin_offset": "(0.0, 0.0, 0.0)",
+					"update_continuously": true
+				},
+				"driver_process_mode": 4,
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"explorer_process_mode": 4,
+				"gpu_shadow_generation": true,
+				"handoff": {
+					"actual_sun_shadows": true,
+					"handoff_enabled": true,
+					"max_local_sun_elevation_degrees": 65.2458801269531,
+					"off_elevation_degrees": -18.0,
+					"on_elevation_degrees": -16.0,
+					"reason": "sun at or above local shadow horizon",
+					"requested_sun_shadows": true,
+					"suspended": false
+				},
+				"lighting_steps": 8,
+				"max_step_distance_m": 958.0,
+				"min_step_distance_m": 500.0,
+				"ownership": {
+					"bridge_process_mode": 0,
+					"cloud_callback_type": 4,
+					"cloud_mask_active": false,
+					"cloud_resolution": 0,
+					"cloud_resource_enabled": true,
+					"cloud_simulation_time_seconds": 1229.80846788892,
+					"conventional_mesh_cloud_geometry": [
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+							"visible": true
+						}
+					],
+					"effective_shadow_atlas": 8192,
+					"effective_shadow_filter": 1,
+					"exact_sunshine_backdrop_active": false,
+					"fallback_cloud_shell_visible": true,
+					"far_clipmap": true,
+					"local_fog_volumes": [],
+					"local_renderer_enabled": false,
+					"local_renderer_present": true,
+					"root_msaa_3d": 0,
+					"root_scaling_3d_scale": 1.0,
+					"root_use_taa": false,
+					"sunshine_bridge_enabled": true,
+					"world_compositor_effects": [
+						"res://resources/clouds/sunshine_ring_local.tres"
+					]
+				},
+				"planet": {
+					"angular_distance": 0.5,
+					"direction": "(0.909342, -0.053156, -0.412639)",
+					"energy": 0.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": false
+				},
+				"prefer_gpu_cloud_shadows": true,
+				"raymarch_steps": 256,
+				"requested_sun_shadows": true,
+				"resource_coverage": 0.699999988079071,
+				"resource_density": 1.25999999046326,
+				"shader_variant": "optimized",
+				"sun": {
+					"angular_distance": 0.0599999986588955,
+					"direction": "(-0.896823, 0.258819, -0.358777)",
+					"energy": 4.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": true
+				},
+				"sun_shadows": true,
+				"weather_process_mode": 4
+			},
+			"timing": {
+				"capped": false,
+				"draw_calls": {
+					"max": 1066.0,
+					"median": 1066.0,
+					"min": 1062.0,
+					"p95": 1066.0,
+					"samples": 82
+				},
+				"far_viewports": {
+					"/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport": {
+						"cpu_ms": {
+							"max": 1.14800000190735,
+							"median": 0.65200001001358,
+							"min": 0.551999986171722,
+							"p95": 0.915000021457672,
+							"samples": 82
+						},
+						"gpu_ms": {
+							"max": 1.62600004673004,
+							"median": 1.54200005531311,
+							"min": 1.33500003814697,
+							"p95": 1.59099996089935,
+							"samples": 82
+						}
+					}
+				},
+				"main_cpu_ms": {
+					"max": 4.47300004959106,
+					"median": 3.1340000629425,
+					"min": 2.57800006866455,
+					"p95": 4.04899978637695,
+					"samples": 82
+				},
+				"main_gpu_ms": {
+					"max": 37.6189994812012,
+					"median": 17.9260005950928,
+					"min": 15.835000038147,
+					"p95": 32.6150016784668,
+					"samples": 82
+				},
+				"primitives": {
+					"max": 3127411.0,
+					"median": 3127411.0,
+					"min": 3118833.0,
+					"p95": 3127411.0,
+					"samples": 82
+				},
+				"samples": 82,
+				"seconds": 2.004221
+			},
+			"warmup": {
+				"capped": false,
+				"frames": 24,
+				"seconds": 0.497692
+			}
+		},
+		{
+			"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233654-1167508-c99d0cee.json",
+			"image": "res://.godot/cloud-slowdown-attribution/4951638/cloud_reference_repeat.png",
+			"label": "cloud_reference_repeat",
+			"ownership": {
+				"bridge_process_mode": 0,
+				"cloud_callback_type": 4,
+				"cloud_mask_active": false,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_simulation_time_seconds": 1229.80846788892,
+				"conventional_mesh_cloud_geometry": [
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+						"visible": true
+					}
+				],
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"exact_sunshine_backdrop_active": false,
+				"fallback_cloud_shell_visible": true,
+				"far_clipmap": true,
+				"local_fog_volumes": [],
+				"local_renderer_enabled": false,
+				"local_renderer_present": true,
+				"root_msaa_3d": 0,
+				"root_scaling_3d_scale": 1.0,
+				"root_use_taa": false,
+				"sunshine_bridge_enabled": true,
+				"world_compositor_effects": [
+					"res://resources/clouds/sunshine_ring_local.tres"
+				]
+			},
+			"pose": {
+				"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+				"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+				"canonical_eye_height": 5914.48231271748,
+				"cycle_time_seconds": 3539.94946289063,
+				"daylight": 1.0,
+				"explorer_saved_pitch_degrees": 0.0,
+				"explorer_saved_yaw_radians": 5.1982889175415,
+				"full_cycle_seconds": 4500.0,
+				"requested": {
+					"across": 253942.741390286,
+					"around": 156462.318399834,
+					"height": 5912.9323127009,
+					"pitch": 0.0,
+					"yaw": 297.84004
+				},
+				"simulation_seconds": 3539.94947688899,
+				"sun_elevation": 65.1770324707031
+			},
+			"sky_return_timing": {
+				"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233649-2205925-66d516a3.json",
+				"horizon_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 0.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"label": "cloud_reference_repeat_sky_return",
+				"screenshot": "not captured during transient interval",
+				"sky_hold_frames": 251,
+				"sky_hold_seconds": 3.001893,
+				"sky_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.244579, 0.854125, -0.458968), Z: (0.969235, 0.228862, -0.090589)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 75.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"sky_up_dot": 0.965925753116608,
+				"source_capture_path": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"timing": {
+					"capped": false,
+					"main_cpu_ms": {
+						"max": 4.6100001335144,
+						"median": 2.22300004959106,
+						"min": 1.68499994277954,
+						"p95": 2.79699993133545,
+						"samples": 257
+					},
+					"main_gpu_ms": {
+						"max": 50.1969985961914,
+						"median": 34.556999206543,
+						"min": 6.51399993896484,
+						"p95": 39.726001739502,
+						"samples": 257
+					},
+					"samples": 257,
+					"seconds": 10.021605,
+					"transient_window": "horizon return; no screenshot or warmup included"
+				}
+			},
+			"source_capture_paths": {
+				"fixture": "res://.godot/cloud-slowdown-attribution/4951638",
+				"performance": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"screenshot": "res://.godot/cloud-slowdown-attribution/4951638/cloud_reference_repeat.png"
+			},
+			"state": {
+				"bridge_process_mode": 0,
+				"cast_cloud_shadows": true,
+				"celestial_clock": 3539.94947688899,
+				"clock_paused": true,
+				"cloud_base_m": 2000.0,
+				"cloud_clock": 1229.80846788892,
+				"cloud_coverage_bias": -0.670000016689301,
+				"cloud_density_multiplier": 1.04999995231628,
+				"cloud_rendering_requested": true,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_sharpness": 1.0,
+				"cloud_top_m": 6050.0,
+				"compute_shader_path": "",
+				"driver": {
+					"detail_position": "(846.6073, 888.4297, 269.3739)",
+					"driver_origin_offset": "(0.0, 0.0, 0.0)",
+					"extra_large_position": "(103.4743, 0.0, 32.92363)",
+					"large_position": "(258.6854, 0.0, 82.30896)",
+					"medium_position": "(470.3371, 0.0, 149.6524)",
+					"process_mode": 4,
+					"resource_current_time": 0.809277678571432,
+					"resource_origin_offset": "(0.0, 0.0, 0.0)",
+					"update_continuously": true
+				},
+				"driver_process_mode": 4,
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"explorer_process_mode": 4,
+				"gpu_shadow_generation": true,
+				"handoff": {
+					"actual_sun_shadows": true,
+					"handoff_enabled": true,
+					"max_local_sun_elevation_degrees": 65.2458801269531,
+					"off_elevation_degrees": -18.0,
+					"on_elevation_degrees": -16.0,
+					"reason": "sun at or above local shadow horizon",
+					"requested_sun_shadows": true,
+					"suspended": false
+				},
+				"lighting_steps": 8,
+				"max_step_distance_m": 958.0,
+				"min_step_distance_m": 500.0,
+				"ownership": {
+					"bridge_process_mode": 0,
+					"cloud_callback_type": 4,
+					"cloud_mask_active": false,
+					"cloud_resolution": 0,
+					"cloud_resource_enabled": true,
+					"cloud_simulation_time_seconds": 1229.80846788892,
+					"conventional_mesh_cloud_geometry": [
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+							"visible": true
+						}
+					],
+					"effective_shadow_atlas": 8192,
+					"effective_shadow_filter": 1,
+					"exact_sunshine_backdrop_active": false,
+					"fallback_cloud_shell_visible": true,
+					"far_clipmap": true,
+					"local_fog_volumes": [],
+					"local_renderer_enabled": false,
+					"local_renderer_present": true,
+					"root_msaa_3d": 0,
+					"root_scaling_3d_scale": 1.0,
+					"root_use_taa": false,
+					"sunshine_bridge_enabled": true,
+					"world_compositor_effects": [
+						"res://resources/clouds/sunshine_ring_local.tres"
+					]
+				},
+				"planet": {
+					"angular_distance": 0.5,
+					"direction": "(0.909342, -0.053156, -0.412639)",
+					"energy": 0.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": false
+				},
+				"prefer_gpu_cloud_shadows": true,
+				"raymarch_steps": 256,
+				"requested_sun_shadows": true,
+				"resource_coverage": 0.699999988079071,
+				"resource_density": 1.25999999046326,
+				"shader_variant": "reference",
+				"sun": {
+					"angular_distance": 0.0599999986588955,
+					"direction": "(-0.896823, 0.258819, -0.358777)",
+					"energy": 4.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": true
+				},
+				"sun_shadows": true,
+				"weather_process_mode": 4
+			},
+			"timing": {
+				"capped": false,
+				"draw_calls": {
+					"max": 1066.0,
+					"median": 1066.0,
+					"min": 1062.0,
+					"p95": 1066.0,
+					"samples": 55
+				},
+				"far_viewports": {
+					"/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport": {
+						"cpu_ms": {
+							"max": 0.83899998664856,
+							"median": 0.638000011444092,
+							"min": 0.549000024795532,
+							"p95": 0.818000018596649,
+							"samples": 55
+						},
+						"gpu_ms": {
+							"max": 1.66400003433228,
+							"median": 1.53999996185303,
+							"min": 1.44200003147125,
+							"p95": 1.64999997615814,
+							"samples": 55
+						}
+					}
+				},
+				"main_cpu_ms": {
+					"max": 4.85400009155273,
+					"median": 2.96600008010864,
+					"min": 2.5550000667572,
+					"p95": 4.17000007629395,
+					"samples": 55
+				},
+				"main_gpu_ms": {
+					"max": 40.3580017089844,
+					"median": 34.2470016479492,
+					"min": 26.9370002746582,
+					"p95": 40.0709991455078,
+					"samples": 55
+				},
+				"primitives": {
+					"max": 3127411.0,
+					"median": 3127411.0,
+					"min": 3118833.0,
+					"p95": 3127411.0,
+					"samples": 55
+				},
+				"samples": 55,
+				"seconds": 2.010639
+			},
+			"warmup": {
+				"capped": false,
+				"frames": 24,
+				"seconds": 0.846246
+			}
+		},
+		{
+			"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233711-1034654-47db189b.json",
+			"image": "res://.godot/cloud-slowdown-attribution/4951638/cloud_optimized_repeat.png",
+			"label": "cloud_optimized_repeat",
+			"ownership": {
+				"bridge_process_mode": 0,
+				"cloud_callback_type": 4,
+				"cloud_mask_active": false,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_simulation_time_seconds": 1229.80846788892,
+				"conventional_mesh_cloud_geometry": [
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+						"visible": false
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+						"visible": true
+					},
+					{
+						"layers": 1,
+						"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+						"visible": true
+					}
+				],
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"exact_sunshine_backdrop_active": false,
+				"fallback_cloud_shell_visible": true,
+				"far_clipmap": true,
+				"local_fog_volumes": [],
+				"local_renderer_enabled": false,
+				"local_renderer_present": true,
+				"root_msaa_3d": 0,
+				"root_scaling_3d_scale": 1.0,
+				"root_use_taa": false,
+				"sunshine_bridge_enabled": true,
+				"world_compositor_effects": [
+					"res://resources/clouds/sunshine_ring_local.tres"
+				]
+			},
+			"pose": {
+				"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+				"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+				"canonical_eye_height": 5914.48231271748,
+				"cycle_time_seconds": 3539.94946289063,
+				"daylight": 1.0,
+				"explorer_saved_pitch_degrees": 0.0,
+				"explorer_saved_yaw_radians": 5.1982889175415,
+				"full_cycle_seconds": 4500.0,
+				"requested": {
+					"across": 253942.741390286,
+					"around": 156462.318399834,
+					"height": 5912.9323127009,
+					"pitch": 0.0,
+					"yaw": 297.84004
+				},
+				"simulation_seconds": 3539.94947688899,
+				"sun_elevation": 65.1770324707031
+			},
+			"sky_return_timing": {
+				"gpu_report": "C:\\Projects\\RingworldTechDemo\\.godot\\cloud-slowdown-attribution\\4951638\\performance\\ring-performance-20260929-233707-2118786-fcc27d2e.json",
+				"horizon_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.99951, 0.0, -0.031287), Z: (0.014611, 0.884255, -0.466776)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 0.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"label": "cloud_optimized_repeat_sky_return",
+				"screenshot": "not captured during transient interval",
+				"sky_hold_frames": 204,
+				"sky_hold_seconds": 3.004864,
+				"sky_pose": {
+					"camera_basis": "[X: (0.027666, -0.467004, -0.883822), Y: (-0.244579, 0.854125, -0.458968), Z: (0.969235, 0.228862, -0.090589)]",
+					"camera_global_position": "(-1.549241, 0.0, -0.048495)",
+					"canonical_eye_height": 5914.48231271748,
+					"cycle_time_seconds": 3539.94946289063,
+					"daylight": 1.0,
+					"explorer_saved_pitch_degrees": 75.0,
+					"explorer_saved_yaw_radians": 5.1982889175415,
+					"full_cycle_seconds": 4500.0,
+					"requested": {
+						"across": 253942.741390286,
+						"around": 156462.318399834,
+						"height": 5912.9323127009,
+						"pitch": 0.0,
+						"yaw": 297.84004
+					},
+					"simulation_seconds": 3539.94947688899,
+					"sun_elevation": 65.1770324707031
+				},
+				"sky_up_dot": 0.965925753116608,
+				"source_capture_path": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"timing": {
+					"capped": false,
+					"main_cpu_ms": {
+						"max": 4.97599983215332,
+						"median": 2.39199995994568,
+						"min": 1.85899996757507,
+						"p95": 3.2409999370575,
+						"samples": 479
+					},
+					"main_gpu_ms": {
+						"max": 23.2600002288818,
+						"median": 17.6940002441406,
+						"min": 6.61999988555908,
+						"p95": 22.6189994812012,
+						"samples": 479
+					},
+					"samples": 479,
+					"seconds": 10.01387,
+					"transient_window": "horizon return; no screenshot or warmup included"
+				}
+			},
+			"source_capture_paths": {
+				"fixture": "res://.godot/cloud-slowdown-attribution/4951638",
+				"performance": "res://.godot/cloud-slowdown-attribution/4951638/performance",
+				"screenshot": "res://.godot/cloud-slowdown-attribution/4951638/cloud_optimized_repeat.png"
+			},
+			"state": {
+				"bridge_process_mode": 0,
+				"cast_cloud_shadows": true,
+				"celestial_clock": 3539.94947688899,
+				"clock_paused": true,
+				"cloud_base_m": 2000.0,
+				"cloud_clock": 1229.80846788892,
+				"cloud_coverage_bias": -0.670000016689301,
+				"cloud_density_multiplier": 1.04999995231628,
+				"cloud_rendering_requested": true,
+				"cloud_resolution": 0,
+				"cloud_resource_enabled": true,
+				"cloud_sharpness": 1.0,
+				"cloud_top_m": 6050.0,
+				"compute_shader_path": "",
+				"driver": {
+					"detail_position": "(846.6073, 888.4297, 269.3739)",
+					"driver_origin_offset": "(0.0, 0.0, 0.0)",
+					"extra_large_position": "(103.4743, 0.0, 32.92363)",
+					"large_position": "(258.6854, 0.0, 82.30896)",
+					"medium_position": "(470.3371, 0.0, 149.6524)",
+					"process_mode": 4,
+					"resource_current_time": 0.809277678571432,
+					"resource_origin_offset": "(0.0, 0.0, 0.0)",
+					"update_continuously": true
+				},
+				"driver_process_mode": 4,
+				"effective_shadow_atlas": 8192,
+				"effective_shadow_filter": 1,
+				"explorer_process_mode": 4,
+				"gpu_shadow_generation": true,
+				"handoff": {
+					"actual_sun_shadows": true,
+					"handoff_enabled": true,
+					"max_local_sun_elevation_degrees": 65.2458801269531,
+					"off_elevation_degrees": -18.0,
+					"on_elevation_degrees": -16.0,
+					"reason": "sun at or above local shadow horizon",
+					"requested_sun_shadows": true,
+					"suspended": false
+				},
+				"lighting_steps": 8,
+				"max_step_distance_m": 958.0,
+				"min_step_distance_m": 500.0,
+				"ownership": {
+					"bridge_process_mode": 0,
+					"cloud_callback_type": 4,
+					"cloud_mask_active": false,
+					"cloud_resolution": 0,
+					"cloud_resource_enabled": true,
+					"cloud_simulation_time_seconds": 1229.80846788892,
+					"conventional_mesh_cloud_geometry": [
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingCloudLayer",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionShadows",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/RingVolumetricClouds/MergedMeshCloudArchetypes/SeamlessCloudUnionTransitions",
+							"visible": false
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/ScaledCloudShell",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer0",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer1",
+							"visible": true
+						},
+						{
+							"layers": 1,
+							"path": "/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport/FarCloudClipmapLayer2",
+							"visible": true
+						}
+					],
+					"effective_shadow_atlas": 8192,
+					"effective_shadow_filter": 1,
+					"exact_sunshine_backdrop_active": false,
+					"fallback_cloud_shell_visible": true,
+					"far_clipmap": true,
+					"local_fog_volumes": [],
+					"local_renderer_enabled": false,
+					"local_renderer_present": true,
+					"root_msaa_3d": 0,
+					"root_scaling_3d_scale": 1.0,
+					"root_use_taa": false,
+					"sunshine_bridge_enabled": true,
+					"world_compositor_effects": [
+						"res://resources/clouds/sunshine_ring_local.tres"
+					]
+				},
+				"planet": {
+					"angular_distance": 0.5,
+					"direction": "(0.909342, -0.053156, -0.412639)",
+					"energy": 0.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": false
+				},
+				"prefer_gpu_cloud_shadows": true,
+				"raymarch_steps": 256,
+				"requested_sun_shadows": true,
+				"resource_coverage": 0.699999988079071,
+				"resource_density": 1.25999999046326,
+				"shader_variant": "optimized",
+				"sun": {
+					"angular_distance": 0.0599999986588955,
+					"direction": "(-0.896823, 0.258819, -0.358777)",
+					"energy": 4.0,
+					"shadow_distance": 6000.0,
+					"shadow_enabled": true
+				},
+				"sun_shadows": true,
+				"weather_process_mode": 4
+			},
+			"timing": {
+				"capped": false,
+				"draw_calls": {
+					"max": 1066.0,
+					"median": 1066.0,
+					"min": 1062.0,
+					"p95": 1066.0,
+					"samples": 95
+				},
+				"far_viewports": {
+					"/root/VoxelRingIntegrationTest/ScaledFarViewport/FarRingViewport": {
+						"cpu_ms": {
+							"max": 0.781000018119812,
+							"median": 0.462999999523163,
+							"min": 0.400999993085861,
+							"p95": 0.647000014781952,
+							"samples": 95
+						},
+						"gpu_ms": {
+							"max": 1.67999994754791,
+							"median": 1.56700003147125,
+							"min": 1.27199995517731,
+							"p95": 1.65299999713898,
+							"samples": 95
+						}
+					}
+				},
+				"main_cpu_ms": {
+					"max": 3.18499994277954,
+					"median": 2.12700009346008,
+					"min": 1.84099996089935,
+					"p95": 2.65000009536743,
+					"samples": 95
+				},
+				"main_gpu_ms": {
+					"max": 23.6639995574951,
+					"median": 17.8050003051758,
+					"min": 15.3339996337891,
+					"p95": 22.878999710083,
+					"samples": 95
+				},
+				"primitives": {
+					"max": 3127411.0,
+					"median": 3127411.0,
+					"min": 3118833.0,
+					"p95": 3127411.0,
+					"samples": 95
+				},
+				"samples": 95,
+				"seconds": 2.001224
+			},
+			"warmup": {
+				"capped": false,
+				"frames": 24,
+				"seconds": 0.434468
+			}
+		}
+	],
+	"created_utc": "2026-09-29 23:34:39",
+	"effective_source": {
+		"actual_celestial_time": 3539.94947688899,
+		"actual_cloud_time": 1229.80846788892,
+		"coverage_override": null,
+		"expected_recipe": {
+			"seed": 1337,
+			"version": 3
+		},
+		"explorer_process_mode": 4,
+		"saved_clock": {
+			"celestialtime": 3539.94947688899,
+			"cloudtime": 1229.80846788892
+		},
+		"saved_pose": {
+			"across": 253942.741390286,
+			"around": 156462.318399834,
+			"feet": 5912.9323127009,
+			"pitchDegrees": 0.0,
+			"yawRadians": 5.19828934227161
+		},
+		"weather_process_mode": 4
+	},
+	"elapsed_seconds": 152.148363,
+	"engine": {
+		"build": "official",
+		"hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+		"hex": 263938,
+		"major": 4,
+		"minor": 7,
+		"patch": 2,
+		"status": "stable",
+		"string": "4.7.2-stable (official)",
+		"timestamp": 0
+	},
+	"fixture": "res://.godot/cloud-slowdown-attribution/4951638",
+	"readiness_progress": {
+		"eye_height": 5914.48231271748,
+		"pending": [
+			"trees_ready"
+		],
+		"player_across": 253942.741390286,
+		"player_around": 156462.318399834,
+		"preparation": {
+			"begin_ms": 5.9849,
+			"collision_budget_overruns": 36,
+			"error": "",
+			"installation_ms": 35.8239,
+			"native_setup_ms": 1.588,
+			"ok": true,
+			"pending_geometry_bytes": 0,
+			"phase": "ready",
+			"projection_ms": 20.5081,
+			"ready": true,
+			"regions_done": 9,
+			"revision": 2,
+			"shape_ms": 38.1305,
+			"step_max_ms": 3.1275,
+			"tile_cells": 32,
+			"tiles_done": 36,
+			"tiles_total": 36,
+			"units_last": 2,
+			"units_max": 4,
+			"upload_budget_overruns": 4,
+			"upload_bytes": 1179648,
+			"upload_ms": 3.9488,
+			"validation_ms": 5.1132
+		},
+		"requested_height": 5912.9323127009,
+		"stable_frames": 0,
+		"streaming": {
+			"active_jobs": 0,
+			"cache_bytes": 2359296,
+			"cache_hits": 0,
+			"cache_limit_bytes": 8388608,
+			"cache_misses": 9,
+			"cancelled": 0,
+			"committed_edit_revision": 0,
+			"committed_revision": 2,
+			"completed": 9,
+			"coverage_waits": 0,
+			"error": "",
+			"highwater_jobs": 2,
+			"last_generation_ms": 2636.9127,
+			"last_readiness_ms": 3397.624,
+			"max_readiness_ms": 3397.624,
+			"packing": false,
+			"pending_edit_revision": 0,
+			"pending_jobs": 0,
+			"ready_revision": 2,
+			"request_revision": 2,
+			"state": "active",
+			"submitted": 10,
+			"worker_count": 2,
+			"workers": 2
+		},
+		"terrain_height": 5906.99853515625
+	},
+	"recipe_verification": {
+		"actual": {
+			"basin_depth_m": 4500.0,
+			"beach_slope": 0.025,
+			"circumference_m": 31415936.0,
+			"continental_octaves": 4.0,
+			"continental_scale_m": 300000.0,
+			"continental_slope_width_m": 30000.0,
+			"detail_full_m": 4500.0,
+			"detail_start_m": 2000.0,
+			"domain_id": "canonical_ring_noise_v1",
+			"erosion_octaves": 3.0,
+			"erosion_scale_m": 256.0,
+			"erosion_strength_m": 60.0,
+			"flattening": 3.0,
+			"foothill_amplitude_m": 100.0,
+			"foothill_scale_m": 1500.0,
+			"generator_id": "ringworld_surface_detail_v3",
+			"land_balance": 0.0,
+			"max_height_m": 8000.0,
+			"micro_amplitude_m": 4.0,
+			"micro_octaves": 2.0,
+			"micro_scale_m": 32.0,
+			"min_height_m": -8000.0,
+			"mountain_amplitude_m": 5400.0,
+			"mountain_detail_mode": 2.0,
+			"mountain_octaves": 4.0,
+			"mountain_scale_m": 80000.0,
+			"noise_gain": 0.5,
+			"noise_lacunarity": 2.0,
+			"ridge_octaves": 4.0,
+			"ridge_scale_m": 8000.0,
+			"ridge_sharpness": 1.5,
+			"secondary_amplitude_m": 60.0,
+			"secondary_octaves": 3.0,
+			"secondary_scale_m": 256.0,
+			"seed": 1337.0,
+			"shelf_depth_m": 150.0,
+			"shelf_width_m": 12000.0,
+			"spur_amplitude_m": 220.0,
+			"spur_scale_m": 1000.0,
+			"swiss_warp": 0.35,
+			"trench_depth_m": 3000.0,
+			"trench_octaves": 3.0,
+			"trench_threshold": 0.8,
+			"valley_octaves": 3.0,
+			"valley_width": 0.18,
+			"warp_amplitude_m": 6000.0,
+			"warp_octaves": 3.0,
+			"warp_scale_m": 180000.0,
+			"width_m": 318000.0
+		},
+		"deviations": [],
+		"matches_source": true
+	},
+	"reproduction_limitations": [
+		"The saved weather clock does not encode SunshineCloudsDriver's historical delta-integrated noise origins. The fixture freezes the initialized driver state after readiness; --wind-soak-seconds can intentionally advance that state before the fixed A/B.",
+		"Cloud defaults are factory-backed in editor runs; RingSunshineCloudBridge exposes no isolated cloud-default path override. This fixture does not save cloud defaults."
+	],
+	"requested_baseline": {
+		"CastCloudShadows": true,
+		"CloudCoverageBias": -0.670000016689301,
+		"CloudResolutionScale": 0,
+		"GpuFarShadowMapResolution": 64,
+		"GpuFarShadowRadiusMeters": 200000.0,
+		"GpuNearShadowMapResolution": 2048,
+		"GpuNearShadowRadiusMeters": 80000.0,
+		"GpuShadowGenerationEnabled": true,
+		"LightingSteps": 8,
+		"PreferGpuCloudShadows": true,
+		"RaymarchSteps": 256,
+		"camera_far": 1200000.0,
+		"camera_fov": 80.0,
+		"camera_near": 0.100000001490116,
+		"cloud_bands": {
+			"detail_position": "(846.6073, 888.4297, 269.3739)",
+			"driver_origin_offset": "(0.0, 0.0, 0.0)",
+			"extra_large_position": "(103.4743, 0.0, 32.92363)",
+			"large_position": "(258.6854, 0.0, 82.30896)",
+			"medium_position": "(470.3371, 0.0, 149.6524)",
+			"process_mode": 0,
+			"resource_current_time": 0.809277678571432,
+			"resource_origin_offset": "(0.0, 0.0, 0.0)",
+			"update_continuously": true
+		},
+		"render_size": "(1920, 1061)",
+		"resource_max_lighting_steps": 8.0,
+		"resource_max_step_count": 256.0,
+		"sun_shadows": true,
+		"viewport_size": "(1920.0, 1061.0)"
+	},
+	"requested_cases": [
+		"cloud_reference",
+		"cloud_optimized",
+		"cloud_reference_repeat",
+		"cloud_optimized_repeat"
+	],
+	"shader_variants": {
+		"include_resolution": "reference includes are expanded in memory against the production Sunshine include root; production include files remain unchanged",
+		"optimized_source": "res://addons/SunshineClouds2/SunshineCloudsCompute.glsl",
+		"original_resource_path": "res://addons/SunshineClouds2/SunshineCloudsCompute.glsl",
+		"reference_include_root": "res://addons/SunshineClouds2",
+		"reference_source": "res://.godot/cloud-slowdown-reference.glsl"
+	},
+	"sky_return_enabled": true,
+	"sky_return_measure_seconds": 10.0,
+	"sky_return_pitch_degrees": 75.0,
+	"source": {
+		"coverage_override": null,
+		"expected_recipe": {
+			"seed": 1337,
+			"version": 3
+		},
+		"saved_clock": {
+			"celestialtime": 3539.94947688899,
+			"cloudtime": 1229.80846788892
+		},
+		"saved_pose": {
+			"across": 253942.741390286,
+			"around": 156462.318399834,
+			"feet": 5912.9323127009,
+			"pitchDegrees": 0.0,
+			"yawRadians": 5.19828934227161
+		}
+	},
+	"status": "PASS",
+	"sunshine_driver_freeze": {
+		"detail_position": "(846.6073, 888.4297, 269.3739)",
+		"driver_origin_offset": "(0.0, 0.0, 0.0)",
+		"extra_large_position": "(103.4743, 0.0, 32.92363)",
+		"large_position": "(258.6854, 0.0, 82.30896)",
+		"medium_position": "(470.3371, 0.0, 149.6524)",
+		"process_mode": 4,
+		"resource_current_time": 0.809277678571432,
+		"resource_origin_offset": "(0.0, 0.0, 0.0)",
+		"update_continuously": true
+	},
+	"sweep": [],
+	"watchdog_seconds": 360.0,
+	"water_metadata_override": {
+		"ring_camera_underwater": false,
+		"ring_water_depth_meters": 0.0
+	}
+}

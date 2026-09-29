@@ -20,6 +20,7 @@ public partial class RingLiveTuningDrawer
     private double _surfaceTerrainDiagnosticsRefreshDelay;
     private string? _surfaceTerrainDefaultsPathOverride;
     private readonly System.Collections.Generic.List<(HSlider Slider, Label Value)> _surfaceTerrainControls = new();
+    private CheckButton? _surfaceTerrainSmoothShadingToggle;
     private bool _surfacePrototypeOpenPending;
     private double _surfacePrototypeOpenRetryDelay;
 
@@ -66,6 +67,7 @@ public partial class RingLiveTuningDrawer
             VBoxContainer movement = TuningMenuUi.CreateSection(playable, "Movement and mesh");
             AddSurfaceTerrainSlider(movement, "Mesh detail levels", GameplaySurfaceTerrainDefaults.MinimumMeshLods, GameplaySurfaceTerrainDefaults.MaximumMeshLods, 1, _surfaceTerrainDefaults.Settings.MeshLods, value => _surfaceTerrainDefaults.SetMeshLods(Mathf.RoundToInt(value)));
             AddSurfaceTerrainSlider(movement, "Movement speed (m/s)", GameplaySurfaceTerrainDefaults.MinimumMoveSpeedMetersPerSecond, GameplaySurfaceTerrainDefaults.MaximumMoveSpeedMetersPerSecond, 1, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, value => _surfaceTerrainDefaults.SetMoveSpeedMetersPerSecond((float)value));
+            AddSurfaceTerrainSmoothShadingToggle(movement);
             VBoxContainer streaming = TuningMenuUi.CreateSection(playable, "Terrain streaming");
             AddSurfaceTerrainStreamingControls(streaming);
             _generationStreamingDiagnostics = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
@@ -94,6 +96,7 @@ public partial class RingLiveTuningDrawer
         AddSurfaceTerrainSlider(controls, "Brush step (m)", GameplaySurfaceTerrainDefaults.MinimumBrushStepMeters, GameplaySurfaceTerrainDefaults.MaximumBrushStepMeters, .25, _surfaceTerrainDefaults.Settings.BrushStepMeters, value => _surfaceTerrainDefaults.SetBrushStepMeters((float)value));
         AddSurfaceTerrainSlider(controls, "Mesh detail levels", GameplaySurfaceTerrainDefaults.MinimumMeshLods, GameplaySurfaceTerrainDefaults.MaximumMeshLods, 1, _surfaceTerrainDefaults.Settings.MeshLods, value => _surfaceTerrainDefaults.SetMeshLods(Mathf.RoundToInt(value)));
         AddSurfaceTerrainSlider(controls, "Movement speed (m/s)", GameplaySurfaceTerrainDefaults.MinimumMoveSpeedMetersPerSecond, GameplaySurfaceTerrainDefaults.MaximumMoveSpeedMetersPerSecond, 1, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, value => _surfaceTerrainDefaults.SetMoveSpeedMetersPerSecond((float)value));
+        AddSurfaceTerrainSmoothShadingToggle(controls);
         var save = new Button { Text = "Save surface edits" };
         save.Pressed += SaveSurfaceTerrainEdits;
         tab.AddChild(save);
@@ -173,9 +176,17 @@ public partial class RingLiveTuningDrawer
 
     private void AddSurfaceTerrainAppearanceControls(VBoxContainer parent)
     {
+        AddSurfaceTerrainSmoothShadingToggle(parent);
         AddSurfaceTerrainSlider(parent, "Dry roughness", GameplaySurfaceTerrainDefaults.MinimumDryRoughness, GameplaySurfaceTerrainDefaults.MaximumDryRoughness, .01, _surfaceTerrainDefaults.Settings.DryRoughness, value => _surfaceTerrainDefaults.SetDryRoughness((float)value));
         AddSurfaceTerrainSlider(parent, "Wet roughness", GameplaySurfaceTerrainDefaults.MinimumWetRoughness, GameplaySurfaceTerrainDefaults.MaximumWetRoughness, .01, _surfaceTerrainDefaults.Settings.WetRoughness, value => _surfaceTerrainDefaults.SetWetRoughness((float)value));
         AddSurfaceTerrainSlider(parent, "Rain wetness strength", GameplaySurfaceTerrainDefaults.MinimumRainWetnessStrength, GameplaySurfaceTerrainDefaults.MaximumRainWetnessStrength, .01, _surfaceTerrainDefaults.Settings.RainWetnessStrength, value => _surfaceTerrainDefaults.SetRainWetnessStrength((float)value));
+    }
+
+    private void AddSurfaceTerrainSmoothShadingToggle(VBoxContainer parent)
+    {
+        _surfaceTerrainSmoothShadingToggle = new CheckButton { Name = "SmoothTerrainShading", Text = "Smooth terrain shading", ButtonPressed = _surfaceTerrainDefaults.Settings.SmoothTerrainShading };
+        _surfaceTerrainSmoothShadingToggle.Toggled += value => { _surfaceTerrainDefaults.SetSmoothTerrainShading(value); ApplySurfaceTerrainSettings(); _surfaceTerrainSaveDelay = .5; _surfaceTerrainSaveRetryDelay = 0; RefreshSurfaceTerrainStatus(); };
+        parent.AddChild(_surfaceTerrainSmoothShadingToggle);
     }
 
     private Node? SurfaceTerrainTarget => _surfaceTerrainPilot ?? _surfaceTerrainGameplay;
@@ -331,7 +342,17 @@ public partial class RingLiveTuningDrawer
 		}
 		int generator = diagnostics.TryGetValue("terrain_generator_version", out Variant generatorValue) ? generatorValue.AsInt32() : 0;
 		string hash = diagnostics.TryGetValue("terrain_definition_hash", out Variant hashValue) ? hashValue.AsString() : "";
-		_runtimeSurfaceDefinitionStatus.Text = $"Runtime surface generator v{generator} | hash {hash}\nTerrain -8000..+8000 m | sea level 0 m | reserved build ceiling +8400 m.\nThis world's recipe is frozen. Save a recipe in the terrain preview before creating a new runtime surface world to change its geography.";
+		string recipeId = "";
+		if (diagnostics.TryGetValue("surface_generation_recipe_json", out Variant recipeJsonValue))
+		{
+			Variant parsed = Json.ParseString(recipeJsonValue.AsString());
+			if (parsed.VariantType == Variant.Type.Dictionary)
+				recipeId = parsed.AsGodotDictionary().TryGetValue("generator_id", out Variant idValue) ? idValue.AsString() : "";
+		}
+		string recipeStyle = recipeId == "ringworld_surface_detail_v3" ? "detail v3"
+			: recipeId == "ringworld_surface_coastal_v2" ? "coastal v2"
+			: recipeId == "ringworld_surface_reference_v1" ? "reference v1" : "unknown recipe";
+		_runtimeSurfaceDefinitionStatus.Text = $"Runtime surface generator v{generator} | hash {hash} | recipe {recipeStyle}\nTerrain -8000..+8000 m | sea level 0 m | reserved build ceiling +8400 m.\nThis world's recipe is frozen. Save a recipe in the terrain preview before creating a new runtime surface world to change its geography.";
 	}
 
     private void RefreshGameplayStreamingDiagnostics(Godot.Collections.Dictionary diagnostics)
@@ -378,6 +399,7 @@ public partial class RingLiveTuningDrawer
     private void RefreshSurfaceTerrainControls()
     {
         if (_surfaceTerrainDefaults is null || _surfaceTerrainControls.Count == 0) return;
+        _surfaceTerrainSmoothShadingToggle?.SetPressedNoSignal(_surfaceTerrainDefaults.Settings.SmoothTerrainShading);
         double[] values = _generationPreview != null
             ? new[] { (double)_surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
             : _runtimeSurfaceDefinitionStatus != null

@@ -1,0 +1,42 @@
+RING PERFORMANCE SLOWDOWN REPORT ANALYSIS
+Source: ring-performance-20260929-223708-8850731-9af258b0.json
+Capture: i7-13700H laptop; historical weather/GPU configuration absent from report.
+
+frames=746; events=12192; rows=33; droppedSamples=52648; effectiveHistorySeconds=29.996; retainedTelemetryBytes=2377728
+frame_ms mean=40.254; p50=32.578; p95=113.456; p99=146.236; max=184.685; >16.67=739; >33.33=307; >50=94
+processMilliseconds: n=746; mean=47.006; p95=127.769; max=181.860
+physicsMilliseconds: n=746; mean=1.359; p95=2.321; max=8.965
+setupMilliseconds: n=746; mean=0.735; p95=1.017; max=2.011
+viewportCpuMilliseconds: n=746; mean=1.320; p95=1.982; max=3.504
+viewportGpuMilliseconds: n=746; mean=37.015; p95=107.467; max=177.903
+
+FRAME_TIME_SEGMENTS (10 chronological equal-frame-count bins; not equal-duration bins):
+bin1: n=74; mean=34.493; p95=38.082; max=38.950; speed=0.000; pendingUpload=0.000; activeWorkers=1.351; shadows=60.000; draws=975.689
+bin2: n=75; mean=34.049; p95=38.140; max=38.647; speed=0.000; pendingUpload=0.000; activeWorkers=0.400; shadows=60.000; draws=980.160
+bin3: n=74; mean=34.981; p95=39.556; max=40.843; speed=0.000; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=977.730
+bin4: n=75; mean=32.142; p95=39.600; max=40.614; speed=2.035; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=1036.800
+bin5: n=75; mean=22.551; p95=35.351; max=40.029; speed=2.970; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=1040.413
+bin6: n=74; mean=22.963; p95=30.056; max=31.472; speed=3.109; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=1008.500
+bin7: n=75; mean=22.483; p95=29.987; max=31.640; speed=7.151; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=1060.880
+bin8: n=74; mean=26.179; p95=37.711; max=38.134; speed=11.683; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=1062.635
+bin9: n=75; mean=60.238; p95=151.902; max=184.685; speed=17.639; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=1005.747
+bin10: n=75; mean=111.894; p95=130.359; max=152.460; speed=0.000; pendingUpload=0.000; activeWorkers=0.000; shadows=60.000; draws=963.320
+
+KEY TIMING ROWS (report-provided summaries; inclusive parents overlap children):
+GPU.Clouds|gpu interval|count=251|mean=31.999|p95=82.714|max=126.396|fresh at report end
+GPU.GrassCulling|gpu interval|count=183|mean=0.021|p95=0.035|max=0.045|last completion 7.447 sec before report end
+Grass build|worker job|count=63|mean=35.924|p95=134.419|max=148.950|last completion 8.543 sec before report end
+Trees update (inclusive)|main CPU call|count=251|mean=0.722|p95=0.926|max=19.703
+Trees queue|main CPU call|count=251|mean=0.076|p95=0.048|max=16.726
+Diagnostics UI refresh|observer partial CPU cost|count=34|mean=9.282|p95=31.789|max=31.968
+Diagnostics.Summary|observer partial CPU cost|count=34|mean=8.745|p95=31.436|max=31.632
+
+CONTEXT:
+Terrain: workers 0/2; queued uploads 0; active mesh 206.0 MiB; staged 0 KiB.
+Trees: shadow casters 60; gpu shadow renderers 0.
+Grass: roots 668; pending builds/uploads 0; GPU batches 12/12 dispatched, 0 deferred.
+Water: dormant; completed FFT updates 0.
+Graphics: Medium; render scale 1.0; directional shadow atlas 16384 px, 16-bit, estimated 512.0 MiB minimum depth allocation.
+
+LIMITS:
+GPU.Clouds is a scoped Sunshine interval and excludes cloud-shadow generation and far viewport rendering. GPU timing is asynchronous/source-frame scoped. The main viewport excludes far-ring viewports. Dropped samples prevent treating absent events as proof of no work. Worker wall time is not frame-blocking proof. This report does not establish a root cause or a completed fix.

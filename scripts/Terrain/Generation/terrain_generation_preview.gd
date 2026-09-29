@@ -80,7 +80,7 @@ func _enter_tree() -> void:
 func _initialize_recipe() -> void:
 	if _recipe != null: return
 	var loaded := TerrainGenerationPreviewStore.load_recipe(_recipe_path())
-	_recipe = loaded.recipe if loaded.recipe != null else TerrainGenerationRecipe.new()
+	_recipe = loaded.recipe if loaded.recipe != null else TerrainGenerationRecipe.create_detail_default()
 	_error = loaded.error
 	_save_blocked = not _error.is_empty()
 
@@ -269,4 +269,4 @@ func save_recipe() -> bool:
 	if _save_blocked: _error = "Saved recipe is protected. Use Reset recipe before saving."; _set_status(); return false
 	var error := TerrainGenerationPreviewStore.save_recipe(_recipe, _recipe_path()); _error = error; _set_status(); return error.is_empty()
 func reset_recipe() -> void:
-	_recipe = TerrainGenerationRecipe.new(); _error = ""; _save_blocked = false; regenerate(); save_recipe()
+	_recipe = TerrainGenerationRecipe.create_detail_default(); _error = ""; _save_blocked = false; regenerate(); save_recipe()

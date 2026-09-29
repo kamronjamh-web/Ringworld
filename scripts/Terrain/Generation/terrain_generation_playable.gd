@@ -77,6 +77,7 @@ var _stale_results := 0
 # from immediately requesting the window we just retired.
 var _last_handoff_around := 0.0
 var _last_handoff_across := 0.0
+var _smooth_terrain_shading := true
 
 func configure_test_fixture(recipe_path: String, around: int = 0, across: int = 159000) -> void:
 	assert(recipe_path.begins_with("res://.godot/terrain-generation-tests/"))
@@ -106,6 +107,8 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	_surface = get_node_or_null(surface_path)
+	if _surface != null:
+		_surface.call("SetSmoothTerrainShading", _smooth_terrain_shading)
 	_player = get_node_or_null(player_path) as CharacterBody3D
 	_camera = get_node_or_null(camera_path) as Camera3D
 	_head = get_node_or_null(head_path) as Node3D
@@ -122,7 +125,7 @@ func _initialize_recipe() -> void:
 	if _recipe != null:
 		return
 	var loaded := TerrainGenerationPreviewStore.load_recipe(_recipe_path())
-	_recipe = loaded.recipe if loaded.recipe != null else TerrainGenerationRecipe.new()
+	_recipe = loaded.recipe if loaded.recipe != null else TerrainGenerationRecipe.create_detail_default()
 	_error = loaded.error
 	_save_blocked = not _error.is_empty()
 
@@ -536,7 +539,7 @@ func save_recipe() -> bool:
 	return _error.is_empty()
 
 func reset_recipe() -> void:
-	_recipe = TerrainGenerationRecipe.new()
+	_recipe = TerrainGenerationRecipe.create_detail_default()
 	_error = ""
 	_save_blocked = false
 	regenerate()
@@ -563,6 +566,9 @@ func ApplySurfaceSettings(settings: Resource) -> void:
 		_stream.configure(_worker_count, _cache_mib, _collider_tile_cells)
 	if _surface != null:
 		_surface.call("SetMeshLods", _mesh_lods)
+	_smooth_terrain_shading = bool(settings.get("SmoothTerrainShading"))
+	if _surface != null:
+		_surface.call("SetSmoothTerrainShading", _smooth_terrain_shading)
 	if tile_cells_changed and _stream != null and (_preview_ready or not _requested.is_empty()):
 		if _teleport_pending:
 			_request_window(_lattice(int(round(_teleport_around))), _safe_across_anchor(int(round(_teleport_across))), true, false, "teleport")

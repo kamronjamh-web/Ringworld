@@ -1,0 +1,92 @@
+{
+  "capture": {
+    "flat": {
+      "image": "res://.godot/terrain-generation-tests/terrain-surface-shading-flat.png",
+      "sha256": "d8c9e715114d8e597a686ff59cc4b46b35902412565298db7ac8ee62d581c40a",
+      "portable_image": "terrain-surface-shading-flat.png"
+    },
+    "smooth": {
+      "image": "res://.godot/terrain-generation-tests/terrain-surface-shading-smooth.png",
+      "sha256": "3a5306dece471f5be88701f53018cfffe4970bde1437f9acbce46c535bbe5d02",
+      "portable_image": "terrain-surface-shading-smooth.png"
+    }
+  },
+  "checks": 18,
+  "failures": [],
+  "recipe": "ringworld_surface_detail_v3 mode 2",
+  "requested_mountain_point": {
+    "across": 159000.125,
+    "around": 1570796.925
+  },
+  "timings": {
+    "flat": {
+      "cpu_median_ms": 0.430000007152557,
+      "cpu_positive_samples": 120,
+      "cpu_timing_available": true,
+      "gpu_median_ms": 2.84100008010864,
+      "gpu_positive_samples": 120,
+      "gpu_timing_available": true,
+      "measured_frames": 120,
+      "note": "Viewport GPU and CPU values are renderer timing samples, not an FPS claim. A zero or unavailable value is recorded as unavailable without failing this visual regression.",
+      "warmup_frames": 60
+    },
+    "flat_repeat": {
+      "cpu_median_ms": 0.485000014305115,
+      "cpu_positive_samples": 120,
+      "cpu_timing_available": true,
+      "gpu_median_ms": 4.56500005722046,
+      "gpu_positive_samples": 120,
+      "gpu_timing_available": true,
+      "measured_frames": 120,
+      "note": "Viewport GPU and CPU values are renderer timing samples, not an FPS claim. A zero or unavailable value is recorded as unavailable without failing this visual regression.",
+      "warmup_frames": 60
+    },
+    "smooth": {
+      "cpu_median_ms": 0.485000014305115,
+      "cpu_positive_samples": 120,
+      "cpu_timing_available": true,
+      "gpu_median_ms": 4.56099987030029,
+      "gpu_positive_samples": 120,
+      "gpu_timing_available": true,
+      "measured_frames": 120,
+      "note": "Viewport GPU and CPU values are renderer timing samples, not an FPS claim. A zero or unavailable value is recorded as unavailable without failing this visual regression.",
+      "warmup_frames": 60
+    }
+  },
+  "uniform_checks": [
+    {
+      "actual": true,
+      "available": true,
+      "expected": true
+    },
+    {
+      "actual": false,
+      "available": true,
+      "expected": false
+    },
+    {
+      "actual": true,
+      "available": true,
+      "expected": true
+    },
+    {
+      "actual": false,
+      "available": true,
+      "expected": false
+    },
+    {
+      "actual": false,
+      "available": true,
+      "expected": false
+    }
+  ],
+  "measurement_environment": {
+    "godot": "4.7.2 Mono",
+    "renderer": "Vulkan Forward+",
+    "gpu": "NVIDIA RTX A1000 6GB Laptop GPU",
+    "cpu": "Intel Core i7-13700H",
+    "window_requested": "1920x1080",
+    "image_dimensions": "1920x1061",
+    "notes": "Viewport timings are not full frame times. Off medians drifted from 2.841 to 4.565 ms, so incremental GPU cost is inconclusive. Captured client height was smaller than the requested resolution. No 1080p acceptance claim."
+  }
+}

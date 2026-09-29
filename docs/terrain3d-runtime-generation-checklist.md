@@ -2,6 +2,8 @@
 
 This checklist tracks [the runtime generation plan](terrain3d-runtime-generation-plan.md). The isolated Certified Ring reference generator now has a regional overview and a playable curved Terrain3D patch. Production terrain definitions, existing world slots, the native curved-culling patch, and the surface edit contract remain in place while the reference is evaluated.
 
+The 2026-09-29 [terrain detail implementation](terrain-generation-detail-implementation.md) extends new recipes with foothills, spurs, and directional gullies while preserving existing world definitions. That document records the new controls, compatibility checks, and current performance limits; the original milestone evidence below remains historical.
+
 ## 1. Reference math and regional preview — implemented and validated
 
 - [x] Add a typed, versioned preview recipe with explicit seed, field scales, noise settings, height bounds, and detail controls.

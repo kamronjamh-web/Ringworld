@@ -30,6 +30,7 @@ public partial class RingTerrain3DSurface
 
         var active = new RingTerrain3DSurface { Name = "RingTerrain3DGameplayActive" };
         AddChild(active);
+        active.SetSmoothTerrainShading(_smoothTerrainShading);
         active.SetWorldFrame(_worldFrame);
         active.SetHandoffDistance(_handoffDistanceMeters);
         active.SetMeshLods(_preparedMeshLods);
@@ -50,6 +51,7 @@ public partial class RingTerrain3DSurface
         // collision shape yet, so startup does not resample a second window.
         var idle = new RingTerrain3DSurface { Name = "RingTerrain3DGameplayIdle", Visible = false, _stagingCandidate = true, _isBudgetedPreparation = true };
         AddChild(idle);
+        idle.SetSmoothTerrainShading(_smoothTerrainShading);
         idle.SetWorldFrame(_worldFrame);
         idle.SetHandoffDistance(_handoffDistanceMeters);
         idle.SetMeshLods(_preparedMeshLods);
@@ -102,6 +104,7 @@ public partial class RingTerrain3DSurface
             Name = "RingTerrain3DStaged", Visible = false, _stagingCandidate = true
         };
         AddChild(candidate);
+        candidate.SetSmoothTerrainShading(_smoothTerrainShading);
         candidate.SetWorldFrame(_worldFrame);
         candidate.SetHandoffDistance(_handoffDistanceMeters);
         candidate.SetMeshLods(_preparedMeshLods);

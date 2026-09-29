@@ -85,6 +85,7 @@ public sealed class GameplaySurfaceTerrainDefaults
     public bool SetDryRoughness(float value) { value = ClampDryRoughness(value); if (Mathf.IsEqualApprox(Settings.DryRoughness, value)) return false; Settings.DryRoughness = value; Dirty = true; return true; }
     public bool SetWetRoughness(float value) { value = ClampWetRoughness(value); if (Mathf.IsEqualApprox(Settings.WetRoughness, value)) return false; Settings.WetRoughness = value; Dirty = true; return true; }
     public bool SetRainWetnessStrength(float value) { value = ClampRainWetnessStrength(value); if (Mathf.IsEqualApprox(Settings.RainWetnessStrength, value)) return false; Settings.RainWetnessStrength = value; Dirty = true; return true; }
+    public bool SetSmoothTerrainShading(bool value) { if (Settings.SmoothTerrainShading == value) return false; Settings.SmoothTerrainShading = value; Dirty = true; return true; }
 
     public void Reset()
     {
@@ -139,6 +140,7 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.DryRoughness = ClampDryRoughness(loaded.DryRoughness);
             Settings.WetRoughness = ClampWetRoughness(loaded.WetRoughness);
             Settings.RainWetnessStrength = ClampRainWetnessStrength(loaded.RainWetnessStrength);
+            Settings.SmoothTerrainShading = loaded.SmoothTerrainShading;
         }
         catch (Exception error) { LastError = error.Message; }
         Dirty = false;

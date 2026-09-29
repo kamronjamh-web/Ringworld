@@ -19,4 +19,5 @@ public partial class GameplaySurfaceTerrainSettings : Resource
     [Export] public float DryRoughness { get; set; } = .92f;
     [Export] public float WetRoughness { get; set; } = .35f;
     [Export] public float RainWetnessStrength { get; set; } = 1.0f;
+    [Export] public bool SmoothTerrainShading { get; set; } = true;
 }

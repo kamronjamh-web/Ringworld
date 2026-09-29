@@ -1489,34 +1489,71 @@ func _render_callback(effect_callback_type, render_data):
 			var y_groups = ((size.y - 1) / 8 / resscale) + 1
 			
 			for view in view_count:
+				var gpu_timestamp_scope_active := false
 				var gpu_timestamp_end_marker_for_scope := ""
-				if gpu_timestamp_diagnostics_enabled and view == 0:
-					gpu_timestamp_end_marker_for_scope = gpu_timestamp_end_marker
-					rd.capture_timestamp(gpu_timestamp_begin_marker)
+				var gpu_timestamp_prepass_begin := ""
+				var gpu_timestamp_prepass_end := ""
+				var gpu_timestamp_raymarch_begin := ""
+				var gpu_timestamp_raymarch_end := ""
+				var gpu_timestamp_reconstruct_begin := ""
+				var gpu_timestamp_reconstruct_end := ""
+				var gpu_timestamp_composite_begin := ""
+				var gpu_timestamp_composite_end := ""
+				if gpu_timestamp_diagnostics_enabled and view == 0 and gpu_timestamp_begin_marker != "" and gpu_timestamp_end_marker != "":
+					var gpu_timestamp_begin_marker_for_scope := gpu_timestamp_begin_marker
+					var gpu_timestamp_candidate_end_marker := gpu_timestamp_end_marker
+					if gpu_timestamp_begin_marker_for_scope.contains(":Clouds:") and gpu_timestamp_candidate_end_marker.contains(":Clouds:"):
+						gpu_timestamp_scope_active = true
+						gpu_timestamp_end_marker_for_scope = gpu_timestamp_candidate_end_marker
+						gpu_timestamp_prepass_begin = gpu_timestamp_begin_marker_for_scope.replace(":Clouds:", ":CloudPrepass:")
+						gpu_timestamp_prepass_end = gpu_timestamp_candidate_end_marker.replace(":Clouds:", ":CloudPrepass:")
+						gpu_timestamp_raymarch_begin = gpu_timestamp_begin_marker_for_scope.replace(":Clouds:", ":CloudRaymarch:")
+						gpu_timestamp_raymarch_end = gpu_timestamp_candidate_end_marker.replace(":Clouds:", ":CloudRaymarch:")
+						gpu_timestamp_reconstruct_begin = gpu_timestamp_begin_marker_for_scope.replace(":Clouds:", ":CloudReconstruct:")
+						gpu_timestamp_reconstruct_end = gpu_timestamp_candidate_end_marker.replace(":Clouds:", ":CloudReconstruct:")
+						gpu_timestamp_composite_begin = gpu_timestamp_begin_marker_for_scope.replace(":Clouds:", ":CloudComposite:")
+						gpu_timestamp_composite_end = gpu_timestamp_candidate_end_marker.replace(":Clouds:", ":CloudComposite:")
+						rd.capture_timestamp(gpu_timestamp_begin_marker_for_scope)
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_prepass_begin)
 				var prepass_list = rd.compute_list_begin()
 				rd.compute_list_bind_compute_pipeline(prepass_list, prepass_pipeline)
 				rd.compute_list_bind_uniform_set(prepass_list, general_data_uniform_sets[general_data_ring_index][view * 3], 0)
 				rd.compute_list_dispatch(prepass_list, x_groups, y_groups, 1)
 				rd.compute_list_end()
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_prepass_end)
 
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_raymarch_begin)
 				var compute_list = rd.compute_list_begin()
 				rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
 				rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
 				rd.compute_list_dispatch(compute_list, x_groups, y_groups, 1)
 				rd.compute_list_end()
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_raymarch_end)
 
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_reconstruct_begin)
 				var postpass_list = rd.compute_list_begin()
 				rd.compute_list_bind_compute_pipeline(postpass_list, postpass_pipeline)
 				rd.compute_list_bind_uniform_set(postpass_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 2], 0)
 				rd.compute_list_dispatch(postpass_list, prepass_x_groups, prepass_y_groups, 1)
 				rd.compute_list_end()
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_reconstruct_end)
 
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_composite_begin)
 				var display_list := rd.draw_list_begin(framebuffer, RenderingDevice.DRAW_DEFAULT_ALL)
 				rd.draw_list_bind_render_pipeline(display_list, display_pipeline)
 				rd.draw_list_bind_uniform_set(display_list, uniform_sets[view * 4 + 3], 0)
 				rd.draw_list_bind_vertex_array(display_list, display_vertex_array)
 				rd.draw_list_draw(display_list, false, 1)
 				rd.draw_list_end()
+				if gpu_timestamp_scope_active:
+					rd.capture_timestamp(gpu_timestamp_composite_end)
 				if gpu_timestamp_end_marker_for_scope != "":
 					rd.capture_timestamp(gpu_timestamp_end_marker_for_scope)
 

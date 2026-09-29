@@ -23,6 +23,7 @@ public partial class RingTerrain3DSurface : Node3D
     private float[,]? _windowHeights;
     private float[,]? _baselineWindowHeights;
     private Color[,]? _biomeWeights;
+    private bool _biomeWeightsFusedWithHeightCache;
     private RingTerrainSampler? _biomeSampler;
     private Transform3D _worldFrame = Transform3D.Identity;
     private float _handoffDistanceMeters;
@@ -267,6 +268,7 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter("biome_tundra_albedo", GD.Load<Texture2D>("res://materials/biomes/tundra_ground_albedo.png"));
         SetMaterialParameter("biome_alpine_albedo", GD.Load<Texture2D>("res://materials/biomes/alpine_rock_albedo.png"));
         ApplyAtmosphereMaterialParameters();
+        ForwardSurfaceAppearance();
     }
 
     private void ApplyWorldFrameMaterial()
@@ -509,10 +511,38 @@ public partial class RingTerrain3DSurface : Node3D
     private void CacheWindowHeights()
     {
         if (_field == null) return;
+        _biomeWeightsFusedWithHeightCache = false;
         int side = RegionSideSamples * RegionSideCount;
         _baselineWindowHeights = new float[side, side];
         _windowHeights = new float[side, side];
         int origin = -RegionSideSamples;
+        if (CanFuseRuntimeHeightAndBiomeCache())
+        {
+            _biomeWeights = new Color[side, side];
+            for (int z = 0; z < side; z++) for (int x = 0; x < side; x++)
+            {
+                long around = _frame.AnchorAroundMeters + (long)(x + origin) * (long)_field.SpacingMeters;
+                int across = _frame.AnchorAcrossMeters + _frame.AcrossDirection * (int)((z + origin) * _field.SpacingMeters);
+                if (across >= 0 && across < _field.WidthMeters)
+                {
+                    _biomeSampler!.GetPresentationSurfaceHeightAndBiomeWeights(
+                        around, across, out float baseline, out RingTerrainSampler.BiomeTextureWeights weights);
+                    _baselineWindowHeights[x, z] = float.IsFinite(baseline)
+                        ? Math.Clamp(baseline, _field.MinimumHeight, _field.MaximumHeight)
+                        : _field.MinimumHeight;
+                    _biomeWeights[x, z] = weights.ToVertexColor();
+                }
+                else
+                {
+                    _baselineWindowHeights[x, z] = _field.MinimumHeight;
+                    _biomeWeights[x, z] = new Color(0, 0, 0, 0);
+                }
+            }
+            System.Array.Copy(_baselineWindowHeights, _windowHeights, _baselineWindowHeights.Length);
+            RefreshCachedEdits();
+            _biomeWeightsFusedWithHeightCache = true;
+            return;
+        }
         for (int z = 0; z < side; z++) for (int x = 0; x < side; x++)
         {
             long around = _frame.AnchorAroundMeters + (long)(x + origin) * (long)_field.SpacingMeters;
@@ -525,6 +555,7 @@ public partial class RingTerrain3DSurface : Node3D
 
     private void CacheBiomeWeights()
     {
+        if (_biomeWeightsFusedWithHeightCache) return;
         if (_field == null || _biomeSampler == null) { _biomeWeights = null; return; }
         int side = RegionSideSamples * RegionSideCount, origin = -RegionSideSamples;
         _biomeWeights = new Color[side, side];
@@ -581,9 +612,21 @@ public partial class RingTerrain3DSurface : Node3D
         _windowHeights = null;
         _baselineWindowHeights = null;
         _biomeWeights = null;
+        _biomeWeightsFusedWithHeightCache = false;
         if (_preparedOwnedImages != null) { foreach (Image image in _preparedOwnedImages) image.Dispose(); _preparedOwnedImages = null; }
         if (_preparedOwnedBiomeImages != null) { foreach (Image image in _preparedOwnedBiomeImages) image.Dispose(); _preparedOwnedBiomeImages = null; }
         _preparedBiomeWeights = false;
+    }
+
+    private bool CanFuseRuntimeHeightAndBiomeCache()
+    {
+        if (_field == null || _biomeSampler == null || !_biomeSampler.UsesRuntimeSurfaceGeneration)
+            return false;
+        return _field.SpacingMeters == RingSurfaceHeightField.DefaultSpacingMeters
+            && _field.CircumferenceMeters == _biomeSampler.AroundRingVoxelLength
+            && _field.WidthMeters == _biomeSampler.RingAcrossWidthMeters
+            && _field.TerrainDefinitionHash == _biomeSampler.TerrainDefinitionHash
+            && _field.HasBaseline(_biomeSampler.GetPresentationSurfaceHeight);
     }
 
     private static void EnableCanonicalStandardGridDiagonal(Node terrain)

@@ -1,0 +1,1349 @@
+{
+	"capture": {
+		"engine_hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+		"godot_version": "4.7.2-stable (official)",
+		"note": "Captured from the pre-optimization CPU terrain sampler.",
+		"os": "Windows",
+		"processor": "13th Gen Intel(R) Core(TM) i7-13700H"
+	},
+	"cases": [
+		{
+			"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":0,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "1877941916355389798",
+			"full_grid": {
+				"columns": 128,
+				"location": "known_mountain",
+				"rows": 128,
+				"sample_count": 16384,
+				"sha256": "ee388233231f7723422001698f3ab0f75c9bcc1aac541efe5290de5e36c13dd4",
+				"spacing_m": 2.0
+			},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4044b21b0abc61c04044b21b0abc61c000000040c7aeb5bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f42e6e72639a2e63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "56b51c4ecb9a44d07e7901cc5184c3cf84071a081e7760829f9f4ab2c3bdd199"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "09961e0ff1a100519e4a4260a96f31a9093aecd48dfa4d778c760e0db3a3adf6",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4353f4cbb1ca95409bfc3cd209e29440000000209b0ecf3f00000000000000006e8d5c98789ee33f24e546cf0ec3d83f000000000000000070276021c009d63f3e85d2e09cf2dd3f74a10fdbcd188f400000000000000000fad4ea36ff144d4010118a86505d304072cca5f356e644400000000000000000",
+						"sha256": "d33fef12dd4cd0d66f439cbf91c4ab6de5f732a25d2ba8e8acd52540652e34d1"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "1a48106a3e08d89233848b53f34b1eea2451150c6b46ff9d0e8e472ff7116c93",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "e535bc7b7968a0402a9fd0f8a3c39f4000000040080bd23f0000000000000000bf1db20a28d6e53f82c49beaaf53d43f4368ada54f99213f309bbc823640af3f5ba132fd5bf5eb3f52d70b4a9d629740000000000000000004ca7ceaefd4504063d5e1f9c49f4140530b9558c90940400000000000000000",
+						"sha256": "cc31e24a9df4c96e2e13d0b84e040d9e74fa3f140231a82965fb759b64ad4827"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7147cafa37bb4deec501f70634e2946046e8794adc89e8f0eba55e737ec6c227",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "f6d11379a95770c0f6d11379a95770c0000000c0d3fdc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f812899aa0b4cd43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "d9843d4e25814bcd677c057d2b9103095362cea032087cc61f32ed6aaf093e74"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9373be74e4203562ce7a2ff34d9c9a7a09e12410cdb0acb8b95412f55ade4ce5",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_0_seed_1337"
+		},
+		{
+			"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":1,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "4421557432691315223",
+			"full_grid": {
+				"columns": 128,
+				"location": "known_mountain",
+				"rows": 128,
+				"sample_count": 16384,
+				"sha256": "3872b7bbaa900533a252917782d0871d69d3d334609a66ea1e51b766ef7ab7c7",
+				"spacing_m": 2.0
+			},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4044b21b0abc61c04044b21b0abc61c000000040c7aeb5bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f42e6e72639a2e63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "56b51c4ecb9a44d07e7901cc5184c3cf84071a081e7760829f9f4ab2c3bdd199"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "09961e0ff1a100519e4a4260a96f31a9093aecd48dfa4d778c760e0db3a3adf6",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "3287245c24c895409bfc3cd209e29440000000209b0ecf3f00000000000000006e8d5c98789ee33f24e546cf0ec3d83f000000000000000070276021c009d63f3e85d2e09cf2dd3f74a10fdbcd188f400000000000000000e652f13c51c34c4010118a86505d30405e4aacf9a89444400000000000000000",
+						"sha256": "3db78a5129fbfa6f3651976351ceabe3dff28b2916d4a275a39c0bfcaa4ce416"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9bf05bfe9b9cfd757295a7a53671b9cb87b4f3c38eb683fe36bd8c6563e7dfac",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "81f0d67f266da0402a9fd0f8a3c39f4000000040080bd23f0000000000000000bf1db20a28d6e53f82c49beaaf53d43f4368ada54f99213f309bbc823640af3f5ba132fd5bf5eb3f52d70b4a9d62974000000000000000008d1dd46d906a514063d5e1f9c49f414065b2435f0a3541400000000000000000",
+						"sha256": "f594e7d6a8661dbea92aada0e54c32cf37e2c39d8d13249e369de12b847db620"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "f6bce8459659b0d0231a0a6367a429832c23a79e7fd482c07d4b8b6c0eb1162a",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "f6d11379a95770c0f6d11379a95770c0000000c0d3fdc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f812899aa0b4cd43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "d9843d4e25814bcd677c057d2b9103095362cea032087cc61f32ed6aaf093e74"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9373be74e4203562ce7a2ff34d9c9a7a09e12410cdb0acb8b95412f55ade4ce5",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_1_seed_1337"
+		},
+		{
+			"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":2,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "3042888440885633316",
+			"full_grid": {
+				"columns": 128,
+				"location": "known_mountain",
+				"rows": 128,
+				"sample_count": 16384,
+				"sha256": "15876acadae93c0be6a49d99d63eda4bda0cdaea6901af3b565d8ce724af89bf",
+				"spacing_m": 2.0
+			},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4044b21b0abc61c04044b21b0abc61c000000040c7aeb5bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f42e6e72639a2e63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "56b51c4ecb9a44d07e7901cc5184c3cf84071a081e7760829f9f4ab2c3bdd199"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "09961e0ff1a100519e4a4260a96f31a9093aecd48dfa4d778c760e0db3a3adf6",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "b9383c8855b995409bfc3cd209e29440000000209b0ecf3f00000000000000006e8d5c98789ee33f24e546cf0ec3d83f000000000000000070276021c009d63f3e85d2e09cf2dd3f74a10fdbcd188f400000000000000000ce83e7bf76e94a4010118a86505d304072cca5f356e6444064891ab8435c11c0",
+						"sha256": "59c4eb746ce6a29286fab85258e32f4ddcedf9e3633b7bd542678caf7ca7db78"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "22d4957facb71752aee0a6b690823049dea186b5a634568639af0f7f1d7400ef",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "383d0fe17e58a0402a9fd0f8a3c39f4000000040080bd23f0000000000000000bf1db20a28d6e53f82c49beaaf53d43f4368ada54f99213f309bbc823640af3f5ba132fd5bf5eb3f52d70b4a9d6297400000000000000000b868bb2939ab4d4063d5e1f9c49f4140530b9558c9094040845af15935f51fc0",
+						"sha256": "d06c0dd12542261585568ff0c26928e6ccb0fdac7a373d26aa9c18e75c79c1a1"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "54d34e3f94a8f7044aa5180fca714de1be474f52849e025d19ce94dd6287989e",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "f6d11379a95770c0f6d11379a95770c0000000c0d3fdc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f812899aa0b4cd43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "d9843d4e25814bcd677c057d2b9103095362cea032087cc61f32ed6aaf093e74"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9373be74e4203562ce7a2ff34d9c9a7a09e12410cdb0acb8b95412f55ade4ce5",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_2_seed_1337"
+		},
+		{
+			"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "9026487955341810525",
+			"full_grid": {
+				"columns": 128,
+				"location": "known_mountain",
+				"rows": 128,
+				"sample_count": 16384,
+				"sha256": "2b187455e2fe17433f18d7e6aca0efdf97aa38e1530c0150a368a5c164572464",
+				"spacing_m": 2.0
+			},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4044b21b0abc61c04044b21b0abc61c000000040c7aeb5bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f42e6e72639a2e63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "56b51c4ecb9a44d07e7901cc5184c3cf84071a081e7760829f9f4ab2c3bdd199"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "09961e0ff1a100519e4a4260a96f31a9093aecd48dfa4d778c760e0db3a3adf6",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "a96c6c18c8b695409bfc3cd209e29440000000209b0ecf3f00000000000000006e8d5c98789ee33f24e546cf0ec3d83f000000000000000070276021c009d63f3e85d2e09cf2dd3f74a10fdbcd188f400000000000000000ba01eec5c8974a4010118a86505d30405e4aacf9a894444064891ab8435c11c0",
+						"sha256": "3fb5b533f15cfd26feac6e2c516b384844b25f35e5ca9bbf20dc50f48d8a1b37"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b34e31e46cda4cc83e0197184ddee79e34eef7f7f1611792ac7e4e442e5410e0",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "d4f729e52b5da0402a9fd0f8a3c39f4000000040080bd23f0000000000000000bf1db20a28d6e53f82c49beaaf53d43f4368ada54f99213f309bbc823640af3f5ba132fd5bf5eb3f52d70b4a9d6297400000000000000000ca0f6a307ad64e4063d5e1f9c49f414065b2435f0a354140845af15935f51fc0",
+						"sha256": "9eb0089696904578053525910c245da143fc4ceb1e61a0726dc4442a388a6281"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "60662611fbf22ca165a08ab594a5a342d488bd25fd4c18652dd35be1ccc0497b",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "f6d11379a95770c0f6d11379a95770c0000000c0d3fdc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f812899aa0b4cd43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "d9843d4e25814bcd677c057d2b9103095362cea032087cc61f32ed6aaf093e74"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9373be74e4203562ce7a2ff34d9c9a7a09e12410cdb0acb8b95412f55ade4ce5",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_3_seed_1337"
+		},
+		{
+			"canonical_json": "{\"seed\":-913,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":0,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "12999274884933907822",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000003f90d7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f29aa9d4c054edc3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2dcc7882a160c5c6a6e0cb29a3383a917c6f5a92baa9bee1b4f9b2d94bfcba40"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "0f8102d7b20cdb3f0f8102d7b20cdb3f000000402b027b3f65618e9783b8ef3fb39cc9eb3821813f953ec11326bc373f0000000000000000000000000000f03f79c74507a6f3cd3f7a520c5e566ad13f00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "011ede40a4c4229156b546464258184490eec1a8c108e9ffe5a3944d0b97c5bd"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9fd77ff5393ec9483e3fda4352890cf16e92276d2c568ec31a884d3fa2f69c39",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "9719ab73c2b2a5c09719ab73c2b2a5c0000000007ab4c4bf000000000000f03f000000000000000000000000000000000000000000000000abe7dfb4d029e63fbbbf4c20606be63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "632f68f6531d685594c8d8f84a0d438c7d7ee579b6c57d3af878f12771f9b478"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "605d502c6093780b3e25bcbc2b33f1821de0df52fb051af29dd6b5aaf9b0345c",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "3c6909e511138b3f3c6909e511138b3f0000000022eb5f3f913d92c297f9ef3f79bc09b7f5a0493f00000000000000000000000000000000000000000000f03f74626098a5d5da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "10a0eefd003c23a91126968fdfbee5df99d7fb07173c09b77c93af0f57e52833"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "ba5105e90dcf07a9b7317af18c2d9f687823addc8e473b3b18f42b90fe92348f",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_0_seed_-913"
+		},
+		{
+			"canonical_json": "{\"seed\":-913,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":1,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "7832556731201825951",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000003f90d7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f29aa9d4c054edc3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2dcc7882a160c5c6a6e0cb29a3383a917c6f5a92baa9bee1b4f9b2d94bfcba40"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "0f8102d7b20cdb3f0f8102d7b20cdb3f000000402b027b3f65618e9783b8ef3fb39cc9eb3821813f953ec11326bc373f0000000000000000000000000000f03f79c74507a6f3cd3f7a520c5e566ad13f00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "011ede40a4c4229156b546464258184490eec1a8c108e9ffe5a3944d0b97c5bd"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9fd77ff5393ec9483e3fda4352890cf16e92276d2c568ec31a884d3fa2f69c39",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "9719ab73c2b2a5c09719ab73c2b2a5c0000000007ab4c4bf000000000000f03f000000000000000000000000000000000000000000000000abe7dfb4d029e63fbbbf4c20606be63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "632f68f6531d685594c8d8f84a0d438c7d7ee579b6c57d3af878f12771f9b478"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "605d502c6093780b3e25bcbc2b33f1821de0df52fb051af29dd6b5aaf9b0345c",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "3c6909e511138b3f3c6909e511138b3f0000000022eb5f3f913d92c297f9ef3f79bc09b7f5a0493f00000000000000000000000000000000000000000000f03f74626098a5d5da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "10a0eefd003c23a91126968fdfbee5df99d7fb07173c09b77c93af0f57e52833"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "ba5105e90dcf07a9b7317af18c2d9f687823addc8e473b3b18f42b90fe92348f",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_1_seed_-913"
+		},
+		{
+			"canonical_json": "{\"seed\":-913,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":2,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "4555347478963161164",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000003f90d7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f29aa9d4c054edc3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2dcc7882a160c5c6a6e0cb29a3383a917c6f5a92baa9bee1b4f9b2d94bfcba40"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "0f8102d7b20cdb3f0f8102d7b20cdb3f000000402b027b3f65618e9783b8ef3fb39cc9eb3821813f953ec11326bc373f0000000000000000000000000000f03f79c74507a6f3cd3f7a520c5e566ad13f00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "011ede40a4c4229156b546464258184490eec1a8c108e9ffe5a3944d0b97c5bd"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9fd77ff5393ec9483e3fda4352890cf16e92276d2c568ec31a884d3fa2f69c39",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "9719ab73c2b2a5c09719ab73c2b2a5c0000000007ab4c4bf000000000000f03f000000000000000000000000000000000000000000000000abe7dfb4d029e63fbbbf4c20606be63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "632f68f6531d685594c8d8f84a0d438c7d7ee579b6c57d3af878f12771f9b478"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "605d502c6093780b3e25bcbc2b33f1821de0df52fb051af29dd6b5aaf9b0345c",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "3c6909e511138b3f3c6909e511138b3f0000000022eb5f3f913d92c297f9ef3f79bc09b7f5a0493f00000000000000000000000000000000000000000000f03f74626098a5d5da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "10a0eefd003c23a91126968fdfbee5df99d7fb07173c09b77c93af0f57e52833"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "ba5105e90dcf07a9b7317af18c2d9f687823addc8e473b3b18f42b90fe92348f",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_2_seed_-913"
+		},
+		{
+			"canonical_json": "{\"seed\":-913,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "5789773927185451109",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000003f90d7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f29aa9d4c054edc3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2dcc7882a160c5c6a6e0cb29a3383a917c6f5a92baa9bee1b4f9b2d94bfcba40"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "0f8102d7b20cdb3f0f8102d7b20cdb3f000000402b027b3f65618e9783b8ef3fb39cc9eb3821813f953ec11326bc373f0000000000000000000000000000f03f79c74507a6f3cd3f7a520c5e566ad13f00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "011ede40a4c4229156b546464258184490eec1a8c108e9ffe5a3944d0b97c5bd"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9fd77ff5393ec9483e3fda4352890cf16e92276d2c568ec31a884d3fa2f69c39",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "9719ab73c2b2a5c09719ab73c2b2a5c0000000007ab4c4bf000000000000f03f000000000000000000000000000000000000000000000000abe7dfb4d029e63fbbbf4c20606be63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "632f68f6531d685594c8d8f84a0d438c7d7ee579b6c57d3af878f12771f9b478"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "605d502c6093780b3e25bcbc2b33f1821de0df52fb051af29dd6b5aaf9b0345c",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "3c6909e511138b3f3c6909e511138b3f0000000022eb5f3f913d92c297f9ef3f79bc09b7f5a0493f00000000000000000000000000000000000000000000f03f74626098a5d5da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "10a0eefd003c23a91126968fdfbee5df99d7fb07173c09b77c93af0f57e52833"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "ba5105e90dcf07a9b7317af18c2d9f687823addc8e473b3b18f42b90fe92348f",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "1161eb284f638c3f1161eb284f638c3f00000000a157603f2b38328748f9ef3f3b541f37e3dd4a3f00000000000000000000000000000000000000000000f03f51a0fe49d7d1da3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "5a43fd1d2a7812195467b82c26ddbb88cc922d0fd6ffa48d8bdefc0cccd724e6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "783468bcbba3a4227c7de4b47e00136317d8309781490b396d7c872d112d9d69",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_3_seed_-913"
+		},
+		{
+			"canonical_json": "{\"seed\":4294967401,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":0,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "5805186237258730524",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "c17c53e0848b60c0c17c53e0848b60c0000000804693b0bf000000000000f03f000000000000000000000000000000000000000000000000000000000000000057fa35fca33ceb3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "4b09a7c6bd3143ca9bf7e1a96cadaaabe7eb861ef778a431236057ff8a81f7cf"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "2e924c0081577e6ed7e24deae315b54b4a9a4e5fcca473d06a5c65e1d7ca015d",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e0913ddebf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f0ed46fc60e24dd3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "e9f9e398d6416d2f1ab3a64b269e8268df7fbb84eda2e4fc62e34cb45d688e93"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4e3635f57ed998c04e3635f57ed998c000000040e76ad3bf000000000000f03f000000000000000000000000000000000000000000000000246555819aa7d23fcb749e43ccaee13f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "be1f51bbc3ae0de6289c3425c50d742c3fa78ec97726204ba45e5e9ad2de0fa6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "4b3d1af1a37bb91fee3c4dcd259cdaa82f5966acc2fcaca409548bf09b78fd1d",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "e2376a8305325540c52f3a578d675440000000c0523ec23f0000000000000000000000000000f03f00000000000000000000000000000000d8a8d0a4c385c73fe26cac25402de23f000000000000000000000000000000009d030186054f09409d030186054f094000000000000000000000000000000000",
+						"sha256": "401de356ddca7be51d521568326c963e7e99a5e936d285898b28e181aea6856e"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "0605a80e7b5c40995347227a833526facd26198c608d5845c357a492aa25c441",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_0_seed_4294967401"
+		},
+		{
+			"canonical_json": "{\"seed\":4294967401,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":1,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "12880195628143745461",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "c17c53e0848b60c0c17c53e0848b60c0000000804693b0bf000000000000f03f000000000000000000000000000000000000000000000000000000000000000057fa35fca33ceb3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "4b09a7c6bd3143ca9bf7e1a96cadaaabe7eb861ef778a431236057ff8a81f7cf"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "2e924c0081577e6ed7e24deae315b54b4a9a4e5fcca473d06a5c65e1d7ca015d",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e0913ddebf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f0ed46fc60e24dd3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "e9f9e398d6416d2f1ab3a64b269e8268df7fbb84eda2e4fc62e34cb45d688e93"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4e3635f57ed998c04e3635f57ed998c000000040e76ad3bf000000000000f03f000000000000000000000000000000000000000000000000246555819aa7d23fcb749e43ccaee13f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "be1f51bbc3ae0de6289c3425c50d742c3fa78ec97726204ba45e5e9ad2de0fa6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "4b3d1af1a37bb91fee3c4dcd259cdaa82f5966acc2fcaca409548bf09b78fd1d",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "e2376a8305325540c52f3a578d675440000000c0523ec23f0000000000000000000000000000f03f00000000000000000000000000000000d8a8d0a4c385c73fe26cac25402de23f000000000000000000000000000000009d030186054f09409d030186054f094000000000000000000000000000000000",
+						"sha256": "401de356ddca7be51d521568326c963e7e99a5e936d285898b28e181aea6856e"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "0605a80e7b5c40995347227a833526facd26198c608d5845c357a492aa25c441",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_1_seed_4294967401"
+		},
+		{
+			"canonical_json": "{\"seed\":4294967401,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":2,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "498242087579167998",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "c17c53e0848b60c0c17c53e0848b60c0000000804693b0bf000000000000f03f000000000000000000000000000000000000000000000000000000000000000057fa35fca33ceb3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "4b09a7c6bd3143ca9bf7e1a96cadaaabe7eb861ef778a431236057ff8a81f7cf"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "2e924c0081577e6ed7e24deae315b54b4a9a4e5fcca473d06a5c65e1d7ca015d",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e0913ddebf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f0ed46fc60e24dd3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "e9f9e398d6416d2f1ab3a64b269e8268df7fbb84eda2e4fc62e34cb45d688e93"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4e3635f57ed998c04e3635f57ed998c000000040e76ad3bf000000000000f03f000000000000000000000000000000000000000000000000246555819aa7d23fcb749e43ccaee13f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "be1f51bbc3ae0de6289c3425c50d742c3fa78ec97726204ba45e5e9ad2de0fa6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "4b3d1af1a37bb91fee3c4dcd259cdaa82f5966acc2fcaca409548bf09b78fd1d",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "e2376a8305325540c52f3a578d675440000000c0523ec23f0000000000000000000000000000f03f00000000000000000000000000000000d8a8d0a4c385c73fe26cac25402de23f000000000000000000000000000000009d030186054f09409d030186054f094000000000000000000000000000000000",
+						"sha256": "401de356ddca7be51d521568326c963e7e99a5e936d285898b28e181aea6856e"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "0605a80e7b5c40995347227a833526facd26198c608d5845c357a492aa25c441",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_2_seed_4294967401"
+		},
+		{
+			"canonical_json": "{\"seed\":4294967401,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "14218788628877017647",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "c17c53e0848b60c0c17c53e0848b60c0000000804693b0bf000000000000f03f000000000000000000000000000000000000000000000000000000000000000057fa35fca33ceb3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "4b09a7c6bd3143ca9bf7e1a96cadaaabe7eb861ef778a431236057ff8a81f7cf"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "2e924c0081577e6ed7e24deae315b54b4a9a4e5fcca473d06a5c65e1d7ca015d",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e0913ddebf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f0ed46fc60e24dd3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "e9f9e398d6416d2f1ab3a64b269e8268df7fbb84eda2e4fc62e34cb45d688e93"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4e3635f57ed998c04e3635f57ed998c000000040e76ad3bf000000000000f03f000000000000000000000000000000000000000000000000246555819aa7d23fcb749e43ccaee13f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "be1f51bbc3ae0de6289c3425c50d742c3fa78ec97726204ba45e5e9ad2de0fa6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "4b3d1af1a37bb91fee3c4dcd259cdaa82f5966acc2fcaca409548bf09b78fd1d",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "e2376a8305325540c52f3a578d675440000000c0523ec23f0000000000000000000000000000f03f00000000000000000000000000000000d8a8d0a4c385c73fe26cac25402de23f000000000000000000000000000000009d030186054f09409d030186054f094000000000000000000000000000000000",
+						"sha256": "401de356ddca7be51d521568326c963e7e99a5e936d285898b28e181aea6856e"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "0605a80e7b5c40995347227a833526facd26198c608d5845c357a492aa25c441",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_mode_3_seed_4294967401"
+		},
+		{
+			"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":4.23,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.65,\"noise_lacunarity\":1.5,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":923.5,\"spur_amplitude_m\":220,\"spur_scale_m\":733.25,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":193.5,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "12426077097428758912",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "8db540296730a3c08db540296730a3c000000000b9f9c0bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03ff07483b9b133e33f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "a873e42e4cb1b14f97cb7576f77633e87eed9054df28c4193f9c11969bc64196"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8adaa186e59dd2415ab2133b7e40ece667e40083c5210719e727f973613211aa",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "14dd107b94d25b40f7d8b26ce5915a4000000040708ac93f0000000000000000000000000000f03f000000000000000000000000000000003026bafd765fe03f01ed578b78c6d73f00000000000000000000000000000000c841e0e5f00a1440c841e0e5f00a144000000000000000000000000000000000",
+						"sha256": "48b9c7c44b62bb018ae1d89228f7c24462d31255ed644380e0a437bac3b115ac"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "2eebe23c80dd61c01d0398a9c09c4a53f5687ab8d410cde0f05f73b4d9294ce9",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "d9d531277edf8e40a48e9565b9898c40000000a06134b83f285d4abb59a9bd3fde0c05bd53a0e53ff59d462e04aaca3f000000000000000000000000000000004174c3ad2fd7e63f058eee470d1c8c400000000000000000a839e20c26ae524052773eb6e8504740269f3161f6a63d409e725aa2f902f9bf",
+						"sha256": "ffa833b10afea3c261ebb559777a394dfa1ac554e44299577c43371bb049f44c"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "f770030c16a81f267619377ad2ddf592adf4df5462280edf8477846f37e4e118",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000200fd0cfbf000000000000f03f000000000000000000000000000000000000000000000000001030ebd1eb373f4fe5dd05d966e03f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "8b6421dd8a44bdf8612b806bbfbae92452452a48336b8acd9dc5e7bb6956434c"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e01ed1cfbf000000000000f03f0000000000000000000000000000000000000000000000000058036fcbd2393f0b443678b472e03f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "6333a5dd771d0dc809c90617bd6ab0ae9710a572cbeeb127699f397d00027955"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e01ed1cfbf000000000000f03f0000000000000000000000000000000000000000000000000058036fcbd2393f0b443678b472e03f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "6333a5dd771d0dc809c90617bd6ab0ae9710a572cbeeb127699f397d00027955"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_lacunarity_1_5_gain_0_65"
+		},
+		{
+			"canonical_json": "{\"seed\":-913,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":0,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":1,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "3071177724060422810",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e0ec0edcbf000000000000f03f0000000000000000000000000000000000000000000000000000000000000000e30682fdb9e2e13f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "a82ae6dc79a1a4899b69352d933f028d3f0dce5105f1905da5e0698cce24b1d8"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "f369448b7af64640f369448b7af64640000000009281bc3fc0be222c37608e3f05754f237f86ef3f00000000000000000000000000000000000000000000f03f395290c801a9c23f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "1f5cc621f7ce2c62fd913e006d04dbdd2c442f285c934ea0c7e91735eda93b19"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "eb63c69d6d4abba2e5bf57ba1ba2b6c70ffb29fd6d7cc0f18835b6b45246ae71",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "648e5819ec0783402ab9b27add908140000000e066c9af3f54c82f297b55de3f43a64d99dec3d83fd222057b4ccdc13f0000000000000000509d219d52e7be3fa81bd0db9ac7e63f5e5499250c2781400000000000000000a4535deae9704740af4477e5d2fe3540986243ef00e338400000000000000000",
+						"sha256": "87d9bfe0122f415e2533a553e925841874c1d48c2eebce841f1e26905b579187"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "bdb9698618ecf1689919fcef233b8bdbd9cc313b67d5f073527513f1f6e16ebd",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "cfd274e97a1562c0cfd274e97a1562c0000000200976b4bf000000000000f03f0000000000000000000000000000000000000000000000000000000000000000e821ea5f2bbbdb3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "aa3a21d265793029d83cf70fc84a1d39e99693242a5cd750aa0f38d3dc53164d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "c74697636b3e70290ccb7318eb67b8e71072451111e21fbe1d1a5e5313df41b8",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "299fc5a3a41362c0299fc5a3a41362c0000000608d71b4bf000000000000f03f00000000000000000000000000000000000000000000000000000000000000008fdbcea8dd98db3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "db58c54420a76cfa9e428bb318e1d921b0d3101af57028e34d654be1f55bbb50"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "87e5dbfc5f3be7e100e97cc4cfb22e35760e3f6c606e270ff3d8246e063ddca5",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "299fc5a3a41362c0299fc5a3a41362c0000000608d71b4bf000000000000f03f00000000000000000000000000000000000000000000000000000000000000008fdbcea8dd98db3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "db58c54420a76cfa9e428bb318e1d921b0d3101af57028e34d654be1f55bbb50"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "87e5dbfc5f3be7e100e97cc4cfb22e35760e3f6c606e270ff3d8246e063ddca5",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_zero_warp_noise_gain"
+		},
+		{
+			"canonical_json": "{\"seed\":4294967401,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":2,\"erosion_strength_m\":60,\"erosion_scale_m\":64,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+			"definition_hash": "14012075514457479667",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "c17c53e0848b60c0c17c53e0848b60c0000000804693b0bf000000000000f03f000000000000000000000000000000000000000000000000000000000000000057fa35fca33ceb3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "4b09a7c6bd3143ca9bf7e1a96cadaaabe7eb861ef778a431236057ff8a81f7cf"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "2e924c0081577e6ed7e24deae315b54b4a9a4e5fcca473d06a5c65e1d7ca015d",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "000000000094b1c0000000000094b1c0000000e0913ddebf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f0ed46fc60e24dd3f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "e9f9e398d6416d2f1ab3a64b269e8268df7fbb84eda2e4fc62e34cb45d688e93"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "7e15cefa7c847a5454f2387bb70f4bc54400eded83fd1fbbfc40dd9f941394ec",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4e3635f57ed998c04e3635f57ed998c000000040e76ad3bf000000000000f03f000000000000000000000000000000000000000000000000246555819aa7d23fcb749e43ccaee13f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "be1f51bbc3ae0de6289c3425c50d742c3fa78ec97726204ba45e5e9ad2de0fa6"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "4b3d1af1a37bb91fee3c4dcd259cdaa82f5966acc2fcaca409548bf09b78fd1d",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "e2376a8305325540c52f3a578d675440000000c0523ec23f0000000000000000000000000000f03f00000000000000000000000000000000d8a8d0a4c385c73fe26cac25402de23f000000000000000000000000000000009d030186054f09409d030186054f094000000000000000000000000000000000",
+						"sha256": "401de356ddca7be51d521568326c963e7e99a5e936d285898b28e181aea6856e"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "0605a80e7b5c40995347227a833526facd26198c608d5845c357a492aa25c441",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "aefa234f3c2b55404bffb2323a65544000000000773dc23f0000000000000000000000000000f03f00000000000000000000000000000000b42d7d269212c83f580e0ceb3a0ae23f000000000000000000000000000000006a6c1f8e43c008406a6c1f8e43c0084000000000000000000000000000000000",
+						"sha256": "3da7bd6e4513b0681dab6cf5f8941e642eea5a06779728ad85e0f9000d5eaae7"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8d268013c3de4c72aea4273aa5a7881c54761ec8ae98fcdd95a3f2306f688fa8",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_erosion_64m_4oct"
+		},
+		{
+			"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5296,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":32,\"micro_amplitude_m\":32,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":240,\"foothill_scale_m\":1500,\"spur_amplitude_m\":400,\"spur_scale_m\":1000,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":4,\"swiss_warp\":0.35}",
+			"definition_hash": "4812054897207897550",
+			"full_grid": {},
+			"locations": {
+				"across_boundary": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "4044b21b0abc61c04044b21b0abc61c000000040c7aeb5bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f42e6e72639a2e63f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "56b51c4ecb9a44d07e7901cc5184c3cf84071a081e7760829f9f4ab2c3bdd199"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "09961e0ff1a100519e4a4260a96f31a9093aecd48dfa4d778c760e0db3a3adf6",
+					"spacing_m": 4.0
+				},
+				"known_foothill": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "00513f12d44c964040b900f760959440000000209b0ecf3f00000000000000006e8d5c98789ee33f24e546cf0ec3d83f000000000000000070276021c009d63f3e85d2e09cf2dd3fbf1a97247c7f8e400000000000000000fc7be9b331775b40ae473f6e2da34340f8b7f9e2b0b5524032fdfd625e0111c0",
+						"sha256": "f1a0c233a73077658e1c4412b705e1c133e6bc5fa82a37cacdc5e2bbabffd316"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "a2e7fa3766dccb5289a1591abc994ba0740ae84550c935da5384f89e67a4984e",
+					"spacing_m": 4.0
+				},
+				"known_mountain": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "b32fcf1536bfa040c314e1be57509f4000000040080bd23f0000000000000000bf1db20a28d6e53f82c49beaaf53d43f383c5bd67b7ec13e309bbc823640af3f5ba132fd5bf5eb3feb4c1c1051ef964000000000000000001255ea65a3706140443342921f265540a05b92212a494f40c3f072afdb961ec0",
+						"sha256": "2771809ab9b819ec2264334d238e2f8d6c35df2e94f316629d380c9b05c2d8e2"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "8e94f801e104ed9f6185fdacc758374f3607449511860e89d6e41eeec5f252ad",
+					"spacing_m": 4.0
+				},
+				"known_ocean": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "f6d11379a95770c0f6d11379a95770c0000000c0d3fdc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f812899aa0b4cd43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "d9843d4e25814bcd677c057d2b9103095362cea032087cc61f32ed6aaf093e74"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "9373be74e4203562ce7a2ff34d9c9a7a09e12410cdb0acb8b95412f55ade4ce5",
+					"spacing_m": 4.0
+				},
+				"ring_seam_negative": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				},
+				"ring_seam_wrap": {
+					"columns": 17,
+					"diagnostics": {
+						"clamped": false,
+						"f64_le_hex": "7744603db35770c07744603db35770c0000000c09ffcc7bf000000000000f03f000000000000000000000000000000000000000000000000000000000000f03f1d625257f948d43f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+						"sha256": "2377259aeff73155214c4dbc8d7f31b217370259069b978a9b2b41f4e484081d"
+					},
+					"rows": 17,
+					"sample_count": 289,
+					"sha256": "b22c0e1c6f69e3805b3f046d6ae5ece1bbe32c200d20f4bb7beb2043d632c731",
+					"spacing_m": 4.0
+				}
+			},
+			"name": "v3_sanitized_max_amplitude_headroom"
+		}
+	],
+	"diagnostics": {
+		"encoding": "PackedFloat64Array.to_byte_array hex and SHA-256; field order is declared above",
+		"fields": [
+			"height",
+			"macro_height",
+			"continentalness",
+			"sea_weight",
+			"lowland_weight",
+			"alpine_weight",
+			"detail_mask",
+			"valley_weight",
+			"ridge_weight",
+			"mountain_uplift",
+			"trench_depth",
+			"detail_height",
+			"foothill_height",
+			"spur_height",
+			"erosion_height"
+		]
+	},
+	"format": "terrain_generation_cpu_parity_v1",
+	"grid": {
+		"columns": 17,
+		"encoding": "PackedFloat32Array.to_byte_array SHA-256",
+		"full_columns": 128,
+		"full_rows": 128,
+		"full_spacing_m": 2.0,
+		"rows": 17,
+		"spacing_m": 4.0
+	}
+}

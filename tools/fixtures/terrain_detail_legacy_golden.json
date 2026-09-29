@@ -1,0 +1,674 @@
+[
+	{
+		"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_reference_v1\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000}",
+		"definition_hash": "312246096424121328",
+		"generator_id": "ringworld_surface_reference_v1",
+		"samples": [
+			{
+				"across": 0.125,
+				"around": -0.125,
+				"height": -1771.26749231409
+			},
+			{
+				"across": 7759.75,
+				"around": 1008781.25,
+				"height": 12.4793021770461
+			},
+			{
+				"across": 15519.375,
+				"around": 2017562.625,
+				"height": 36.9984868809479
+			},
+			{
+				"across": 23279.0,
+				"around": 3026344.0,
+				"height": -49.3080871914161
+			},
+			{
+				"across": 31038.625,
+				"around": 4035125.375,
+				"height": 256.725282521856
+			},
+			{
+				"across": 38798.25,
+				"around": 5043906.75,
+				"height": -803.216822039278
+			},
+			{
+				"across": 46557.875,
+				"around": 6052688.125,
+				"height": 1112.41304804578
+			},
+			{
+				"across": 54317.5,
+				"around": 7061469.5,
+				"height": -133.804895491282
+			},
+			{
+				"across": 62077.125,
+				"around": 8070250.875,
+				"height": 0.806514742065084
+			},
+			{
+				"across": 69836.75,
+				"around": 9079032.25,
+				"height": -951.289044852938
+			},
+			{
+				"across": 77596.375,
+				"around": 10087813.625,
+				"height": 1514.98659866509
+			},
+			{
+				"across": 85356.0,
+				"around": 11096595.0,
+				"height": 1149.9040796348
+			},
+			{
+				"across": 93115.625,
+				"around": 12105376.375,
+				"height": 189.246910424363
+			},
+			{
+				"across": 100875.25,
+				"around": 13114157.75,
+				"height": 636.783594201403
+			},
+			{
+				"across": 108634.875,
+				"around": 14122939.125,
+				"height": 1557.104686243
+			},
+			{
+				"across": 116394.5,
+				"around": 15131720.5,
+				"height": 251.460119406372
+			},
+			{
+				"across": 124154.125,
+				"around": 16140501.875,
+				"height": 1611.37292637638
+			},
+			{
+				"across": 131913.75,
+				"around": 17149283.25,
+				"height": 213.991188736256
+			},
+			{
+				"across": 139673.375,
+				"around": 18158064.625,
+				"height": 3034.43065476641
+			},
+			{
+				"across": 147433.0,
+				"around": 19166846.0,
+				"height": -945.066294158362
+			},
+			{
+				"across": 155192.625,
+				"around": 20175627.375,
+				"height": 1802.6659256868
+			},
+			{
+				"across": 162952.25,
+				"around": 21184408.75,
+				"height": -1066.12700972114
+			},
+			{
+				"across": 170711.875,
+				"around": 22193190.125,
+				"height": -262.210466662807
+			},
+			{
+				"across": 178471.5,
+				"around": 23201971.5,
+				"height": 674.399410381265
+			},
+			{
+				"across": 186231.125,
+				"around": 24210752.875,
+				"height": -644.794971548709
+			},
+			{
+				"across": 193990.75,
+				"around": 25219534.25,
+				"height": 957.138015855896
+			},
+			{
+				"across": 201750.375,
+				"around": 26228315.625,
+				"height": -820.759403689853
+			},
+			{
+				"across": 209510.0,
+				"around": 27237097.0,
+				"height": 2.69925229256802
+			},
+			{
+				"across": 217269.625,
+				"around": 28245878.375,
+				"height": -899.402787704446
+			},
+			{
+				"across": 225029.25,
+				"around": 29254659.75,
+				"height": -83.1006854226525
+			},
+			{
+				"across": 232788.875,
+				"around": 30263441.125,
+				"height": 109.198350508585
+			},
+			{
+				"across": 240548.5,
+				"around": 31272222.5,
+				"height": 173.15780971944
+			}
+		],
+		"seed": 1337
+	},
+	{
+		"canonical_json": "{\"seed\":-12345,\"generator_id\":\"ringworld_surface_reference_v1\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000}",
+		"definition_hash": "355012798715241284",
+		"generator_id": "ringworld_surface_reference_v1",
+		"samples": [
+			{
+				"across": 0.125,
+				"around": -0.125,
+				"height": 8.47788961778301
+			},
+			{
+				"across": 7759.75,
+				"around": 1008781.25,
+				"height": -343.853537209461
+			},
+			{
+				"across": 15519.375,
+				"around": 2017562.625,
+				"height": 884.875996258675
+			},
+			{
+				"across": 23279.0,
+				"around": 3026344.0,
+				"height": 1853.63316691911
+			},
+			{
+				"across": 31038.625,
+				"around": 4035125.375,
+				"height": 54.0463080222343
+			},
+			{
+				"across": 38798.25,
+				"around": 5043906.75,
+				"height": 1528.93466779185
+			},
+			{
+				"across": 46557.875,
+				"around": 6052688.125,
+				"height": -138.651449048194
+			},
+			{
+				"across": 54317.5,
+				"around": 7061469.5,
+				"height": -1000.46359014497
+			},
+			{
+				"across": 62077.125,
+				"around": 8070250.875,
+				"height": 1538.02821518739
+			},
+			{
+				"across": 69836.75,
+				"around": 9079032.25,
+				"height": -12.4611683544234
+			},
+			{
+				"across": 77596.375,
+				"around": 10087813.625,
+				"height": -977.694542149377
+			},
+			{
+				"across": 85356.0,
+				"around": 11096595.0,
+				"height": 81.6310969683052
+			},
+			{
+				"across": 93115.625,
+				"around": 12105376.375,
+				"height": 1.65345831294204
+			},
+			{
+				"across": 100875.25,
+				"around": 13114157.75,
+				"height": -2339.57454355228
+			},
+			{
+				"across": 108634.875,
+				"around": 14122939.125,
+				"height": 289.789070451516
+			},
+			{
+				"across": 116394.5,
+				"around": 15131720.5,
+				"height": 1516.21652871881
+			},
+			{
+				"across": 124154.125,
+				"around": 16140501.875,
+				"height": 27.8738551825291
+			},
+			{
+				"across": 131913.75,
+				"around": 17149283.25,
+				"height": 66.234006156667
+			},
+			{
+				"across": 139673.375,
+				"around": 18158064.625,
+				"height": -1011.16427588349
+			},
+			{
+				"across": 147433.0,
+				"around": 19166846.0,
+				"height": -1129.64321646934
+			},
+			{
+				"across": 155192.625,
+				"around": 20175627.375,
+				"height": 61.3968543716846
+			},
+			{
+				"across": 162952.25,
+				"around": 21184408.75,
+				"height": 242.364019572597
+			},
+			{
+				"across": 170711.875,
+				"around": 22193190.125,
+				"height": 0.709648003319509
+			},
+			{
+				"across": 178471.5,
+				"around": 23201971.5,
+				"height": -79.4145394396025
+			},
+			{
+				"across": 186231.125,
+				"around": 24210752.875,
+				"height": -2974.35325394894
+			},
+			{
+				"across": 193990.75,
+				"around": 25219534.25,
+				"height": 416.135284270161
+			},
+			{
+				"across": 201750.375,
+				"around": 26228315.625,
+				"height": -719.591999254629
+			},
+			{
+				"across": 209510.0,
+				"around": 27237097.0,
+				"height": 576.278175284986
+			},
+			{
+				"across": 217269.625,
+				"around": 28245878.375,
+				"height": 155.818749067047
+			},
+			{
+				"across": 225029.25,
+				"around": 29254659.75,
+				"height": -198.897170310959
+			},
+			{
+				"across": 232788.875,
+				"around": 30263441.125,
+				"height": -10.2124237612865
+			},
+			{
+				"across": 240548.5,
+				"around": 31272222.5,
+				"height": 224.804843158467
+			}
+		],
+		"seed": -12345
+	},
+	{
+		"canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_coastal_v2\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000}",
+		"definition_hash": "1633810549962025238",
+		"generator_id": "ringworld_surface_coastal_v2",
+		"samples": [
+			{
+				"across": 0.125,
+				"around": -0.125,
+				"height": -4094.17545976532
+			},
+			{
+				"across": 7759.75,
+				"around": 1008781.25,
+				"height": 12.4793021770461
+			},
+			{
+				"across": 15519.375,
+				"around": 2017562.625,
+				"height": 36.9984868809479
+			},
+			{
+				"across": 23279.0,
+				"around": 3026344.0,
+				"height": -92.5144080237108
+			},
+			{
+				"across": 31038.625,
+				"around": 4035125.375,
+				"height": 256.725282521856
+			},
+			{
+				"across": 38798.25,
+				"around": 5043906.75,
+				"height": -1455.28202225454
+			},
+			{
+				"across": 46557.875,
+				"around": 6052688.125,
+				"height": 1112.41304804578
+			},
+			{
+				"across": 54317.5,
+				"around": 7061469.5,
+				"height": -497.008078262777
+			},
+			{
+				"across": 62077.125,
+				"around": 8070250.875,
+				"height": 0.806514742065084
+			},
+			{
+				"across": 69836.75,
+				"around": 9079032.25,
+				"height": -4500.0
+			},
+			{
+				"across": 77596.375,
+				"around": 10087813.625,
+				"height": 1514.98659866509
+			},
+			{
+				"across": 85356.0,
+				"around": 11096595.0,
+				"height": 1149.9040796348
+			},
+			{
+				"across": 93115.625,
+				"around": 12105376.375,
+				"height": 189.246910424363
+			},
+			{
+				"across": 100875.25,
+				"around": 13114157.75,
+				"height": 636.783594201403
+			},
+			{
+				"across": 108634.875,
+				"around": 14122939.125,
+				"height": 1557.104686243
+			},
+			{
+				"across": 116394.5,
+				"around": 15131720.5,
+				"height": 251.460119406372
+			},
+			{
+				"across": 124154.125,
+				"around": 16140501.875,
+				"height": 1611.37292637638
+			},
+			{
+				"across": 131913.75,
+				"around": 17149283.25,
+				"height": 213.991188736256
+			},
+			{
+				"across": 139673.375,
+				"around": 18158064.625,
+				"height": 3034.43065476641
+			},
+			{
+				"across": 147433.0,
+				"around": 19166846.0,
+				"height": -659.281361648478
+			},
+			{
+				"across": 155192.625,
+				"around": 20175627.375,
+				"height": 1802.6659256868
+			},
+			{
+				"across": 162952.25,
+				"around": 21184408.75,
+				"height": -4500.0
+			},
+			{
+				"across": 170711.875,
+				"around": 22193190.125,
+				"height": -95.17876509117
+			},
+			{
+				"across": 178471.5,
+				"around": 23201971.5,
+				"height": 674.399410381265
+			},
+			{
+				"across": 186231.125,
+				"around": 24210752.875,
+				"height": -4500.0
+			},
+			{
+				"across": 193990.75,
+				"around": 25219534.25,
+				"height": 957.138015855896
+			},
+			{
+				"across": 201750.375,
+				"around": 26228315.625,
+				"height": -1389.69158251208
+			},
+			{
+				"across": 209510.0,
+				"around": 27237097.0,
+				"height": 2.69925229256802
+			},
+			{
+				"across": 217269.625,
+				"around": 28245878.375,
+				"height": -4500.0
+			},
+			{
+				"across": 225029.25,
+				"around": 29254659.75,
+				"height": -94.0669542565288
+			},
+			{
+				"across": 232788.875,
+				"around": 30263441.125,
+				"height": 109.198350508585
+			},
+			{
+				"across": 240548.5,
+				"around": 31272222.5,
+				"height": 173.15780971944
+			}
+		],
+		"seed": 1337
+	},
+	{
+		"canonical_json": "{\"seed\":-12345,\"generator_id\":\"ringworld_surface_coastal_v2\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000}",
+		"definition_hash": "13817759417395041250",
+		"generator_id": "ringworld_surface_coastal_v2",
+		"samples": [
+			{
+				"across": 0.125,
+				"around": -0.125,
+				"height": 8.47788961778301
+			},
+			{
+				"across": 7759.75,
+				"around": 1008781.25,
+				"height": -798.566436860435
+			},
+			{
+				"across": 15519.375,
+				"around": 2017562.625,
+				"height": 884.875996258675
+			},
+			{
+				"across": 23279.0,
+				"around": 3026344.0,
+				"height": 1853.63316691911
+			},
+			{
+				"across": 31038.625,
+				"around": 4035125.375,
+				"height": 54.0463080222343
+			},
+			{
+				"across": 38798.25,
+				"around": 5043906.75,
+				"height": 1528.93466779185
+			},
+			{
+				"across": 46557.875,
+				"around": 6052688.125,
+				"height": -101.102727370986
+			},
+			{
+				"across": 54317.5,
+				"around": 7061469.5,
+				"height": -4500.0
+			},
+			{
+				"across": 62077.125,
+				"around": 8070250.875,
+				"height": 1538.02821518739
+			},
+			{
+				"across": 69836.75,
+				"around": 9079032.25,
+				"height": -32.6692008185268
+			},
+			{
+				"across": 77596.375,
+				"around": 10087813.625,
+				"height": -1097.46909876624
+			},
+			{
+				"across": 85356.0,
+				"around": 11096595.0,
+				"height": 81.6310969683052
+			},
+			{
+				"across": 93115.625,
+				"around": 12105376.375,
+				"height": 1.65345831294204
+			},
+			{
+				"across": 100875.25,
+				"around": 13114157.75,
+				"height": -4221.93358985224
+			},
+			{
+				"across": 108634.875,
+				"around": 14122939.125,
+				"height": 289.789070451516
+			},
+			{
+				"across": 116394.5,
+				"around": 15131720.5,
+				"height": 1516.21652871881
+			},
+			{
+				"across": 124154.125,
+				"around": 16140501.875,
+				"height": 27.8738551825291
+			},
+			{
+				"across": 131913.75,
+				"around": 17149283.25,
+				"height": 66.234006156667
+			},
+			{
+				"across": 139673.375,
+				"around": 18158064.625,
+				"height": -4500.0
+			},
+			{
+				"across": 147433.0,
+				"around": 19166846.0,
+				"height": -4500.0
+			},
+			{
+				"across": 155192.625,
+				"around": 20175627.375,
+				"height": 61.3968543716846
+			},
+			{
+				"across": 162952.25,
+				"around": 21184408.75,
+				"height": 242.364019572597
+			},
+			{
+				"across": 170711.875,
+				"around": 22193190.125,
+				"height": 0.709648003319509
+			},
+			{
+				"across": 178471.5,
+				"around": 23201971.5,
+				"height": -103.433915620638
+			},
+			{
+				"across": 186231.125,
+				"around": 24210752.875,
+				"height": -4500.0
+			},
+			{
+				"across": 193990.75,
+				"around": 25219534.25,
+				"height": 416.135284270161
+			},
+			{
+				"across": 201750.375,
+				"around": 26228315.625,
+				"height": -228.261392510109
+			},
+			{
+				"across": 209510.0,
+				"around": 27237097.0,
+				"height": 576.278175284986
+			},
+			{
+				"across": 217269.625,
+				"around": 28245878.375,
+				"height": 155.818749067047
+			},
+			{
+				"across": 225029.25,
+				"around": 29254659.75,
+				"height": -157.214297405998
+			},
+			{
+				"across": 232788.875,
+				"around": 30263441.125,
+				"height": -10.6539713064184
+			},
+			{
+				"across": 240548.5,
+				"around": 31272222.5,
+				"height": 224.804843158467
+			}
+		],
+		"seed": -12345
+	}
+]

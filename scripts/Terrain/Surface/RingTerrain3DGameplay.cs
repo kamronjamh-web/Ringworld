@@ -122,15 +122,16 @@ public partial class RingTerrain3DGameplay : Node3D
             bool runtimeSurfaceGeneration = _sampler.UsesRuntimeSurfaceGeneration;
             float minimumHeight = runtimeSurfaceGeneration ? -8000f : CertifiedRingScale.TerrainFloorMeters;
             float maximumHeight = runtimeSurfaceGeneration ? 8000f : CertifiedRingScale.TerrainCeilingMeters;
+            Func<long, int, float> baseline = runtimeSurfaceGeneration
+                ? _sampler.GetPresentationSurfaceHeight
+                : (around, across) => _sampler.GetSmoothSurfaceHeight(around, across) + .5f;
             _field = new RingSurfaceHeightField(
                 _sampler.TerrainDefinitionHash,
                 circumference,
                 width,
                 minimumHeight,
                 maximumHeight,
-                (around, across) => runtimeSurfaceGeneration
-                    ? _sampler.GetPresentationSurfaceHeight(around, across)
-                    : _sampler.GetSmoothSurfaceHeight(around, across) + .5f,
+                baseline,
                 useTriangleInterpolation: runtimeSurfaceGeneration);
             _savePath = ResolveSavePath();
             LoadEdits();

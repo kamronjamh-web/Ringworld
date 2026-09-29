@@ -699,7 +699,7 @@ public sealed partial class RingTerrainSampler : IDisposable
             1.0f);
 
         MountainShape mountain = SampleMountainShapeLocked(globalAroundVoxel, globalAcrossVoxel, coordinate);
-        float rawErosion = ToUnitRange(SampleRegionalNoiseLocked(_erosionNoise, coordinate));
+        float rawErosion = ToUnitRange(continentalSecondary);
         // Wet, strongly folded terrain erodes more than broad dry plateaus.
         float rawMoisture = ToUnitRange(SampleRegionalNoiseLocked(_moistureNoise, coordinate));
         float oceanProximity = 1.0f - SmoothStep(-0.08f, 0.62f, continentalness);

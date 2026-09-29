@@ -189,8 +189,25 @@ public partial class PerformanceDiagnosticsContractTest : Node
     {
         bool exists = File.Exists(path);
         long bytes = exists ? new FileInfo(path).Length : -1;
-        bool json = false;
-        try { if (exists) { using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path)); json = document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object; } } catch { }
-        return new GodotDictionary { ["pass"] = exists && bytes > 0 && bytes <= 64L * 1024 * 1024 && json, ["exists"] = exists, ["bytes"] = bytes, ["json"] = json };
+        bool json = false, renderState = false, missingNodesNull = false, contextErrorNull = false;
+        try
+        {
+            if (exists)
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+                json = document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object;
+                if (json && document.RootElement.TryGetProperty("renderState", out var state) && state.ValueKind == System.Text.Json.JsonValueKind.Object)
+                {
+                    renderState = state.TryGetProperty("lights", out var lights) && lights.ValueKind == System.Text.Json.JsonValueKind.Object;
+                    missingNodesNull = renderState && lights.TryGetProperty("star", out var star) && lights.TryGetProperty("planet", out var planet)
+                        && (star.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Object)
+                        && (planet.ValueKind is System.Text.Json.JsonValueKind.Null or System.Text.Json.JsonValueKind.Object);
+                }
+                contextErrorNull = document.RootElement.TryGetProperty("renderStateContextError", out var error) && error.ValueKind == System.Text.Json.JsonValueKind.Null;
+            }
+        }
+        catch { }
+        bool pass = exists && bytes > 0 && bytes <= 64L * 1024 * 1024 && json && renderState && missingNodesNull && contextErrorNull;
+        return new GodotDictionary { ["pass"] = pass, ["exists"] = exists, ["bytes"] = bytes, ["json"] = json, ["render_state"] = renderState, ["missing_nodes_null_or_object"] = missingNodesNull, ["render_state_context_error_null"] = contextErrorNull };
     }
 }

@@ -4,6 +4,8 @@ This document is the portable reference for the proposed generator. It includes 
 
 Implementation progress and validation results are tracked in the [runtime generation checklist](terrain3d-runtime-generation-checklist.md). The plan's performance and production-integration criteria remain open until that evidence is recorded.
 
+Follow-up [terrain detail research](terrain-generation-detail-research.md), prepared 2026-09-29, investigates smooth mountains and weak local relief. The resulting [v3 detail implementation](terrain-generation-detail-implementation.md) adds foothills, spurs, optional Swiss shaping, and directional gullies through the existing preview and runtime-world paths. Its checks and CPU sampling measurements do not complete the full performance acceptance below.
+
 ### M6 gameplay streaming status
 
 M6 is in progress. Both gameplay Terrain3D backends use private `WorkerThreadPool` jobs for exact float heights and RGBA8 biome maps while preserving their generation and save contracts. Each immutable cache tile is 128 × 128 samples at 2 m spacing (256 m per side); the 8 MiB default cache is primed from the synchronously loaded opening window, and a compatible 256 m axial recenter reuses six of nine tiles. Jobs prepare RF payloads and curved collision geometry; the main thread publishes region uploads and 32-cell collision tiles through two initial mesh owners that are prewarmed, with separate active/staged rebased world transforms. Default upload and collision budgets are 1 ms and 0.75 ms. They limit scheduling granularity only, because a native operation cannot be interrupted once started.

@@ -346,6 +346,10 @@ float sampleScene(
 	{
 	worldPosition = to_cloud_space(worldPosition);
 	vec3 canonicalCloudPosition = worldPosition;
+	float wallMask = ring_side_wall_mask(canonicalCloudPosition.z);
+	if (wallMask == 0.0) {
+		return 0.0;
+	}
 	float backgroundFloor = genericData.data.background_altitude.x;
 	float backgroundCeiling = genericData.data.background_altitude.y;
 	if (backgroundCeiling <= backgroundFloor + 1.0) {
@@ -358,16 +362,33 @@ float sampleScene(
 		backgroundCeiling,
 		0.0,
 		1.0);
-	vec4 gradientSample = texture(heightmask, vec2(clampedWorldHeight, 0.5)).rgba;
-	
-
 	float edgeFade = min(smoothstep(0.0, 0.1, clampedWorldHeight), smoothstep(1.0, 0.9, clampedWorldHeight));
-	float extraLargeShape = extralargeNoiseValue * gradientSample.b;
+	float stormFloor = genericData.data.storm_altitude.x;
+	float stormCeiling = genericData.data.storm_altitude.y;
+	if (stormCeiling <= stormFloor + 1.0) {
+		stormFloor = backgroundFloor;
+		stormCeiling = backgroundCeiling;
+	}
+	float stormHeight = remap(
+		canonicalCloudPosition.y,
+		stormFloor,
+		stormCeiling,
+		0.0,
+		1.0);
+	float stormAltitudeMask = min(
+		smoothstep(0.0, 0.06, stormHeight),
+		smoothstep(1.0, 0.94, stormHeight));
+	float stormDensity = 0.0;
+	if (stormAltitudeMask != 0.0) {
+		stormDensity = localized_storm_density(canonicalCloudPosition, stormHeight)
+			* stormAltitudeMask;
+	}
+	if (edgeFade == 0.0 && stormDensity == 0.0) {
+		return 0.0;
+	}
 
-	// Only directional sun transmittance may omit fine erosion. AO and point
-	// lightning retain their original density field even though both are sampled
-	// through this function.
-	float smallShape = coarseSunLighting ? 0.0 : texture(noise_small, (worldPosition - smallNoisePos) / smallnoisescale).r;
+	vec4 gradientSample = texture(heightmask, vec2(clampedWorldHeight, 0.5)).rgba;
+	float extraLargeShape = extralargeNoiseValue * gradientSample.b;
 
 	float curlHeightSample = (1.0 - gradientSample.a);
 
@@ -397,37 +418,31 @@ float sampleScene(
 
 	float largeShape = texture(large_noise, (worldPosition - largeNoisePos) / largenoisescale).r * extraLargeShape;
 	largeShape = smoothstep(coverage , coverage - 0.1, 1.0 - (largeShape * gradientSample.r)) + max(effectorAdditive, 0.0);
+	if (largeShape <= 0.0 && stormDensity <= 0.0) {
+		return 0.0;
+	}
 	vec4 mediumShapes = texture(noise_medium, (worldPosition - mediumNoisePos) / mediumnoisescale).rgba;
 	float mediumshape = 1.0 - mediumShapes.b;
+	// Only directional sun transmittance may omit fine erosion. Keep the
+	// original pre-warp coordinates when deferring this texture read.
+	float smallShape = coarseSunLighting ? 0.0 : texture(noise_small, (canonicalCloudPosition - smallNoisePos) / smallnoisescale).r;
 	smallShape = smallShape * gradientSample.g * pow((1.0 - mediumshape), smallscalePower);
 	
 
-	float shape = mediumshape + max(effectorAdditive, 0.0);
-	shape = clamp(remap(shape, 1.0 - largeShape, 1.0, 0.0, 1.0), 0.0, 1.0);
-	shape = clamp(remap(shape, smallShape, 1.0, 0.0, 1.0), 0.0, 1.0);
-	shape += min(effectorAdditive, 0.0);
-	float backgroundDensity = clamp(shape * edgeFade, 0.0, 1.0);
-	float stormFloor = genericData.data.storm_altitude.x;
-	float stormCeiling = genericData.data.storm_altitude.y;
-	if (stormCeiling <= stormFloor + 1.0) {
-		stormFloor = backgroundFloor;
-		stormCeiling = backgroundCeiling;
+	float backgroundDensity = 0.0;
+	if (largeShape > 0.0) {
+		float shape = mediumshape + max(effectorAdditive, 0.0);
+		shape = clamp(remap(shape, 1.0 - largeShape, 1.0, 0.0, 1.0), 0.0, 1.0);
+		shape = clamp(remap(shape, smallShape, 1.0, 0.0, 1.0), 0.0, 1.0);
+		shape += min(effectorAdditive, 0.0);
+		backgroundDensity = clamp(shape * edgeFade, 0.0, 1.0);
 	}
-	float stormHeight = remap(
-		canonicalCloudPosition.y,
-		stormFloor,
-		stormCeiling,
-		0.0,
-		1.0);
-	float stormAltitudeMask = min(
-		smoothstep(0.0, 0.06, stormHeight),
-		smoothstep(1.0, 0.94, stormHeight));
-	float stormDensity = localized_storm_density(canonicalCloudPosition, stormHeight)
-		* stormAltitudeMask;
+	// At exactly zero large shape, the original remap has equal input bounds
+	// and can produce NaN. This branch is mathematically empty background.
 	stormDensity *= mix(0.62, 1.0, mediumShapes.r);
 
 	return clamp(max(backgroundDensity, stormDensity), 0.0, 1.0)
-		* ring_side_wall_mask(canonicalCloudPosition.z);
+		* wallMask;
 }
 
 float sampleSceneCoarse(

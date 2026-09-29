@@ -14,8 +14,8 @@ public sealed partial class RingTerrainSampler
     /// exact canonical two-metre lattice vertices shares one model diagnostic
     /// evaluation; all other coordinates retain the established public calls.
     /// The streaming path can therefore use one runtime model sample per texel.
-    /// The synchronous field cache intentionally retains its field-owned height
-    /// baseline, reducing its prior three model samples to two.
+    /// The synchronous field cache can fuse the same field-owned baseline and
+    /// biome calculation when it proves that this sampler owns the baseline.
     /// </summary>
     public void GetPresentationSurfaceHeightAndBiomeWeights(
         long globalAroundVoxel,
@@ -123,7 +123,16 @@ public sealed partial class RingTerrainSampler
     {
         TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
         TerrainGenerationHeightModel.Diagnostics diagnostics = model.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel);
-        float presentationHeight = GetRuntimePresentationSurfaceHeightLocked(globalAroundVoxel, globalAcrossVoxel);
+        // Presentation sampling wraps before calling the model. Reuse is exact
+        // only when this diagnostic already received that canonical around value.
+        float presentationHeight = globalAroundVoxel >= 0
+            && globalAroundVoxel < _aroundRingVoxelLength
+            && (globalAroundVoxel & 1L) == 0
+            && (globalAcrossVoxel & 1) == 0
+            && globalAcrossVoxel >= 0
+            && globalAcrossVoxel <= _ringAcrossWidthMeters - 2
+            ? (float)diagnostics.Height
+            : GetRuntimePresentationSurfaceHeightLocked(globalAroundVoxel, globalAcrossVoxel);
         return CreateRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
     }
 

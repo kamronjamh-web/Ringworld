@@ -1,0 +1,1296 @@
+{
+  "date": "2026-09-29",
+  "description": "Frozen pre-optimization v3 model versus final CPU optimization, two sequential processes. Both models compiled together with Optimize=true, alternating order within each measured pair. CPU-only SampleGrid; no rendering, biome generation, collision or native map publication in the timer.",
+  "candidate_source_sha256": "31f62512e93ebc88ba7b4a38fb9457785e56301666aa12c0c5258545b4f0abbd",
+  "godot": "4.7.2-stable_mono",
+  "target_framework": "net8.0",
+  "csharp_optimize": true,
+  "environment_notes": [
+    "User confirmed the other Godot process was editor only; gameplay stopped.",
+    "Laptop power, clock speed, thermal state and CPU affinity were not controlled.",
+    "Godot reports hosted .NET runtime 9.0.20. Optimizer enabled was verified by assembly DebuggableAttribute.",
+    "Empty assembly paths are reported by Godot's in-memory assembly loading.",
+    "These are isolated optimized C# measurements, not a benchmark of a full exported release game.",
+    "Every cold and measured pair was checked for finite and bit-identical RF samples outside the timer."
+  ],
+  "runs": [
+    {
+      "metadata": {
+        "cpu": "13th Gen Intel(R) Core(TM) i7-13700H",
+        "cpu_logical_processors": 20,
+        "os": "Microsoft Windows NT 10.0.26200.0",
+        "dotnet": "9.0.20",
+        "stopwatch_frequency": 10000000,
+        "candidate_assembly": "",
+        "frozen_assembly": "",
+        "jit_optimizer_disabled": false,
+        "frozen_source_sha256": "4d7f67031fe1a2908f77e82aee35cd689aa970f30dada3155e3c932fb56c761d"
+      },
+      "grid": {
+        "columns": 128,
+        "rows": 128,
+        "spacing_m": 2,
+        "warmups": 3,
+        "repetitions": 12
+      },
+      "points": [
+        {
+          "name": "ocean",
+          "around": 0.125,
+          "across": 159000.125
+        },
+        {
+          "name": "foothill",
+          "around": 2356195.325,
+          "across": 159000.125
+        },
+        {
+          "name": "mountain",
+          "around": 1570796.925,
+          "across": 159000.125
+        }
+      ],
+      "recipes": [
+        {
+          "name": "detail_mode_0",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":0,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 24.0794,
+                "after": 23.8886,
+                "after_over_before": 0.9920762145236177
+              },
+              "before": {
+                "min_ms": 22.2959,
+                "median_ms": 42.42635,
+                "max_ms": 45.495,
+                "samples_ms": [
+                  22.2959,
+                  23.6036,
+                  23.9256,
+                  24.3732,
+                  24.2668,
+                  40.3058,
+                  44.7212,
+                  44.5469,
+                  44.6493,
+                  45.495,
+                  44.8463,
+                  44.827
+                ]
+              },
+              "after": {
+                "min_ms": 20.9548,
+                "median_ms": 28.8875,
+                "max_ms": 34.6534,
+                "samples_ms": [
+                  20.9548,
+                  22.2687,
+                  22.3838,
+                  22.4054,
+                  23.2215,
+                  23.8457,
+                  34.0431,
+                  34.6534,
+                  33.9293,
+                  34.0107,
+                  34.5096,
+                  34.2882
+                ]
+              },
+              "median_after_over_before": 0.6808858174224274,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 46.3772,
+                "after": 23.4824,
+                "after_over_before": 0.5063350094442959
+              },
+              "before": {
+                "min_ms": 32.5227,
+                "median_ms": 33.278,
+                "max_ms": 34.6647,
+                "samples_ms": [
+                  33.4007,
+                  33.5298,
+                  33.6689,
+                  33.4319,
+                  32.6162,
+                  33.2002,
+                  32.5227,
+                  33.2795,
+                  33.2765,
+                  33.2001,
+                  33.2749,
+                  34.6647
+                ]
+              },
+              "after": {
+                "min_ms": 23.1593,
+                "median_ms": 24.3644,
+                "max_ms": 24.9211,
+                "samples_ms": [
+                  24.0277,
+                  24.3443,
+                  24.8322,
+                  24.7805,
+                  23.1593,
+                  23.8616,
+                  24.1158,
+                  23.6006,
+                  24.4096,
+                  24.5063,
+                  24.3845,
+                  24.9211
+                ]
+              },
+              "median_after_over_before": 0.732147364625278,
+              "sha256": "d62617ade4bd5b675208bf254f189efe14492e89c4ac204da7135f7188f3c089"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 36.9839,
+                "after": 26.6818,
+                "after_over_before": 0.7214436552121328
+              },
+              "before": {
+                "min_ms": 35.9734,
+                "median_ms": 36.9214,
+                "max_ms": 38.3796,
+                "samples_ms": [
+                  36.1327,
+                  36.2625,
+                  36.2299,
+                  38.3796,
+                  35.9734,
+                  37.1775,
+                  36.9529,
+                  37.0056,
+                  37.0569,
+                  36.8899,
+                  36.4543,
+                  37.3587
+                ]
+              },
+              "after": {
+                "min_ms": 25.8364,
+                "median_ms": 26.4723,
+                "max_ms": 31.8346,
+                "samples_ms": [
+                  26.4691,
+                  26.0401,
+                  25.8364,
+                  26.9608,
+                  26.1094,
+                  26.2195,
+                  26.6731,
+                  26.4755,
+                  26.7621,
+                  26.3278,
+                  31.8346,
+                  26.7681
+                ]
+              },
+              "median_after_over_before": 0.7169906883270949,
+              "sha256": "ee388233231f7723422001698f3ab0f75c9bcc1aac541efe5290de5e36c13dd4"
+            }
+          ]
+        },
+        {
+          "name": "detail_mode_1",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":1,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 46.0597,
+                "after": 34.3455,
+                "after_over_before": 0.7456735497625908
+              },
+              "before": {
+                "min_ms": 40.0054,
+                "median_ms": 45.6882,
+                "max_ms": 47.8904,
+                "samples_ms": [
+                  47.8904,
+                  45.4525,
+                  46.8098,
+                  47.315,
+                  47.5179,
+                  44.8214,
+                  47.5025,
+                  44.9217,
+                  45.0603,
+                  45.9239,
+                  40.0054,
+                  44.7174
+                ]
+              },
+              "after": {
+                "min_ms": 32.3021,
+                "median_ms": 34.6268,
+                "max_ms": 36.0499,
+                "samples_ms": [
+                  36.0499,
+                  35.3426,
+                  32.3021,
+                  35.2827,
+                  35.2726,
+                  35.5879,
+                  33.8743,
+                  34.2143,
+                  34.0164,
+                  35.0393,
+                  33.8632,
+                  33.9882
+                ]
+              },
+              "median_after_over_before": 0.7578937231057472,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 76.049,
+                "after": 65.3876,
+                "after_over_before": 0.8598088074793883
+              },
+              "before": {
+                "min_ms": 48.5751,
+                "median_ms": 89.69364999999999,
+                "max_ms": 94.4962,
+                "samples_ms": [
+                  94.4962,
+                  90.9414,
+                  84.5571,
+                  65.1845,
+                  72.1206,
+                  90.5855,
+                  89.9183,
+                  83.6285,
+                  48.5751,
+                  92.1947,
+                  89.8398,
+                  89.5475
+                ]
+              },
+              "after": {
+                "min_ms": 59.4124,
+                "median_ms": 70.3582,
+                "max_ms": 72.2597,
+                "samples_ms": [
+                  70.5996,
+                  70.7201,
+                  69.929,
+                  59.4124,
+                  70.448,
+                  70.7022,
+                  70.2684,
+                  72.2597,
+                  68.6975,
+                  71.1329,
+                  69.4463,
+                  69.0968
+                ]
+              },
+              "median_after_over_before": 0.7844278831333099,
+              "sha256": "bd1a60392f8cecafe85717fae4688a9be0326934aaf6beec6301acfe6d684f7a"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 93.6672,
+                "after": 72.9833,
+                "after_over_before": 0.7791767021967135
+              },
+              "before": {
+                "min_ms": 51.6317,
+                "median_ms": 95.08575,
+                "max_ms": 97.3496,
+                "samples_ms": [
+                  92.5951,
+                  92.7786,
+                  97.1442,
+                  89.385,
+                  97.3496,
+                  97.0107,
+                  97.3361,
+                  94.8353,
+                  51.6317,
+                  97.2874,
+                  95.3362,
+                  62.4276
+                ]
+              },
+              "after": {
+                "min_ms": 48.4848,
+                "median_ms": 74.0645,
+                "max_ms": 75.9249,
+                "samples_ms": [
+                  61.6414,
+                  56.8024,
+                  75.9249,
+                  68.1567,
+                  75.3109,
+                  75.6573,
+                  74.8068,
+                  75.7241,
+                  69.1079,
+                  75.5581,
+                  73.3222,
+                  48.4848
+                ]
+              },
+              "median_after_over_before": 0.7789232350799147,
+              "sha256": "3872b7bbaa900533a252917782d0871d69d3d334609a66ea1e51b766ef7ab7c7"
+            }
+          ]
+        },
+        {
+          "name": "detail_mode_2",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":2,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 50.8496,
+                "after": 34.0775,
+                "after_over_before": 0.6701625971492401
+              },
+              "before": {
+                "min_ms": 37.8147,
+                "median_ms": 45.419,
+                "max_ms": 46.9723,
+                "samples_ms": [
+                  46.5678,
+                  46.8563,
+                  37.8392,
+                  44.067,
+                  46.3188,
+                  44.8902,
+                  45.2603,
+                  45.5777,
+                  45.8034,
+                  46.9723,
+                  45.1637,
+                  37.8147
+                ]
+              },
+              "after": {
+                "min_ms": 28.9618,
+                "median_ms": 35.5419,
+                "max_ms": 36.9436,
+                "samples_ms": [
+                  36.1817,
+                  35.9054,
+                  34.2372,
+                  28.9618,
+                  32.9017,
+                  34.7667,
+                  35.2181,
+                  35.8657,
+                  36.9436,
+                  36.7686,
+                  34.9952,
+                  36.6556
+                ]
+              },
+              "median_after_over_before": 0.7825337413857637,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 83.981,
+                "after": 59.6946,
+                "after_over_before": 0.7108107786284994
+              },
+              "before": {
+                "min_ms": 64.7994,
+                "median_ms": 67.33725,
+                "max_ms": 82.087,
+                "samples_ms": [
+                  68.086,
+                  68.9148,
+                  67.2563,
+                  64.7994,
+                  67.4182,
+                  69.3134,
+                  65.5135,
+                  66.9218,
+                  68.1902,
+                  67.1309,
+                  66.9554,
+                  82.087
+                ]
+              },
+              "after": {
+                "min_ms": 49.1589,
+                "median_ms": 50.591,
+                "max_ms": 54.7048,
+                "samples_ms": [
+                  51.2375,
+                  51.4171,
+                  50.6933,
+                  50.4804,
+                  51.1552,
+                  54.7048,
+                  50.7175,
+                  50.4887,
+                  49.335,
+                  49.1589,
+                  49.2077,
+                  49.2017
+                ]
+              },
+              "median_after_over_before": 0.7513077828393646,
+              "sha256": "2b5c22989860f7521e8774fbc3435852e5683c7ad20d066c4ef75be84c8db57b"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 70.5542,
+                "after": 53.1245,
+                "after_over_before": 0.7529601356120543
+              },
+              "before": {
+                "min_ms": 66.5313,
+                "median_ms": 70.57390000000001,
+                "max_ms": 73.9323,
+                "samples_ms": [
+                  69.4448,
+                  68.9308,
+                  68.35,
+                  73.1616,
+                  70.2596,
+                  70.8882,
+                  70.1033,
+                  73.2088,
+                  73.9323,
+                  72.2057,
+                  66.5313,
+                  73.5327
+                ]
+              },
+              "after": {
+                "min_ms": 50.5763,
+                "median_ms": 53.369749999999996,
+                "max_ms": 54.078,
+                "samples_ms": [
+                  51.0375,
+                  50.5763,
+                  53.5362,
+                  54.078,
+                  53.8268,
+                  53.6712,
+                  53.2033,
+                  53.8333,
+                  53.8646,
+                  52.6775,
+                  51.0256,
+                  51.6058
+                ]
+              },
+              "median_after_over_before": 0.756225035034198,
+              "sha256": "15876acadae93c0be6a49d99d63eda4bda0cdaea6901af3b565d8ce724af89bf"
+            }
+          ]
+        },
+        {
+          "name": "detail_mode_3",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 58.0079,
+                "after": 35.4573,
+                "after_over_before": 0.611249502222973
+              },
+              "before": {
+                "min_ms": 43.3304,
+                "median_ms": 45.915,
+                "max_ms": 46.93,
+                "samples_ms": [
+                  45.8491,
+                  45.9809,
+                  46.93,
+                  46.6498,
+                  43.3304,
+                  43.9339,
+                  45.7229,
+                  45.8457,
+                  45.9821,
+                  46.3728,
+                  46.1528,
+                  45.0576
+                ]
+              },
+              "after": {
+                "min_ms": 34.3193,
+                "median_ms": 35.19395,
+                "max_ms": 46.6459,
+                "samples_ms": [
+                  34.4802,
+                  34.4051,
+                  36.5101,
+                  36.1038,
+                  34.7003,
+                  34.3193,
+                  35.2624,
+                  34.5777,
+                  46.6459,
+                  35.235,
+                  35.6468,
+                  35.1529
+                ]
+              },
+              "median_after_over_before": 0.7665022323859305,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 125.6781,
+                "after": 98.3308,
+                "after_over_before": 0.7824020254921104
+              },
+              "before": {
+                "min_ms": 110.0192,
+                "median_ms": 122.4555,
+                "max_ms": 129.2641,
+                "samples_ms": [
+                  110.0192,
+                  129.2641,
+                  123.8996,
+                  122.9947,
+                  122.9084,
+                  119.3864,
+                  110.1525,
+                  122.0026,
+                  118.5827,
+                  127.9174,
+                  126.2409,
+                  110.5029
+                ]
+              },
+              "after": {
+                "min_ms": 95.6825,
+                "median_ms": 97.8886,
+                "max_ms": 101.6808,
+                "samples_ms": [
+                  95.7021,
+                  100.8319,
+                  97.4366,
+                  95.8777,
+                  100.2978,
+                  99.6831,
+                  95.6825,
+                  97.9065,
+                  98.8735,
+                  97.8707,
+                  95.8065,
+                  101.6808
+                ]
+              },
+              "median_after_over_before": 0.7993809996284365,
+              "sha256": "e07e6d039d98a4462d6f4e20d6e34671c6c3b7a91dbf8eaf9ac081ff57b9ba3c"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 127.4822,
+                "after": 96.6917,
+                "after_over_before": 0.758472163172584
+              },
+              "before": {
+                "min_ms": 87.1487,
+                "median_ms": 114.3053,
+                "max_ms": 131.8388,
+                "samples_ms": [
+                  117.1336,
+                  126.3377,
+                  131.8388,
+                  123.7674,
+                  128.7397,
+                  116.5125,
+                  110.6126,
+                  99.1878,
+                  112.0981,
+                  100.9531,
+                  87.1487,
+                  96.0018
+                ]
+              },
+              "after": {
+                "min_ms": 84.2424,
+                "median_ms": 98.352,
+                "max_ms": 114.1549,
+                "samples_ms": [
+                  98.5231,
+                  114.1549,
+                  103.4375,
+                  98.1809,
+                  97.7281,
+                  99.6339,
+                  99.5567,
+                  84.2424,
+                  102.7463,
+                  85.9725,
+                  91.8512,
+                  84.9043
+                ]
+              },
+              "median_after_over_before": 0.8604325433728794,
+              "sha256": "2b187455e2fe17433f18d7e6aca0efdf97aa38e1530c0150a368a5c164572464"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "cpu": "13th Gen Intel(R) Core(TM) i7-13700H",
+        "cpu_logical_processors": 20,
+        "os": "Microsoft Windows NT 10.0.26200.0",
+        "dotnet": "9.0.20",
+        "stopwatch_frequency": 10000000,
+        "candidate_assembly": "",
+        "frozen_assembly": "",
+        "jit_optimizer_disabled": false,
+        "frozen_source_sha256": "4d7f67031fe1a2908f77e82aee35cd689aa970f30dada3155e3c932fb56c761d"
+      },
+      "grid": {
+        "columns": 128,
+        "rows": 128,
+        "spacing_m": 2,
+        "warmups": 3,
+        "repetitions": 12
+      },
+      "points": [
+        {
+          "name": "ocean",
+          "around": 0.125,
+          "across": 159000.125
+        },
+        {
+          "name": "foothill",
+          "around": 2356195.325,
+          "across": 159000.125
+        },
+        {
+          "name": "mountain",
+          "around": 1570796.925,
+          "across": 159000.125
+        }
+      ],
+      "recipes": [
+        {
+          "name": "detail_mode_0",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":0,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 23.4158,
+                "after": 23.0418,
+                "after_over_before": 0.9840278786118773
+              },
+              "before": {
+                "min_ms": 44.4014,
+                "median_ms": 44.644800000000004,
+                "max_ms": 45.8496,
+                "samples_ms": [
+                  45.8496,
+                  44.4329,
+                  44.6473,
+                  44.5762,
+                  45.1294,
+                  44.7206,
+                  44.4014,
+                  44.4466,
+                  44.6124,
+                  44.6423,
+                  45.2182,
+                  45.5169
+                ]
+              },
+              "after": {
+                "min_ms": 33.9611,
+                "median_ms": 34.51455,
+                "max_ms": 37.8923,
+                "samples_ms": [
+                  34.7178,
+                  34.1723,
+                  33.9611,
+                  33.9717,
+                  35.818,
+                  34.4984,
+                  34.0993,
+                  34.5307,
+                  34.1354,
+                  35.2133,
+                  37.8923,
+                  35.1383
+                ]
+              },
+              "median_after_over_before": 0.7730922750241909,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 33.1801,
+                "after": 23.7924,
+                "after_over_before": 0.7170683632659335
+              },
+              "before": {
+                "min_ms": 32.5378,
+                "median_ms": 33.229299999999995,
+                "max_ms": 34.1778,
+                "samples_ms": [
+                  34.1778,
+                  33.0736,
+                  32.7972,
+                  33.3164,
+                  33.2729,
+                  32.5378,
+                  32.8402,
+                  33.6805,
+                  33.0886,
+                  33.1857,
+                  33.3543,
+                  33.7433
+                ]
+              },
+              "after": {
+                "min_ms": 23.1808,
+                "median_ms": 23.63035,
+                "max_ms": 24.4997,
+                "samples_ms": [
+                  23.6377,
+                  23.3991,
+                  23.2183,
+                  24.3506,
+                  23.623,
+                  23.1808,
+                  23.4809,
+                  24.2297,
+                  23.8132,
+                  23.9687,
+                  23.321,
+                  24.4997
+                ]
+              },
+              "median_after_over_before": 0.7111299365319163,
+              "sha256": "d62617ade4bd5b675208bf254f189efe14492e89c4ac204da7135f7188f3c089"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 36.3181,
+                "after": 26.9331,
+                "after_over_before": 0.741588904705918
+              },
+              "before": {
+                "min_ms": 32.5606,
+                "median_ms": 35.91275,
+                "max_ms": 38.0062,
+                "samples_ms": [
+                  36.0039,
+                  36.992,
+                  37.1616,
+                  37.353,
+                  37.8726,
+                  35.4817,
+                  35.8216,
+                  35.738,
+                  35.6884,
+                  34.9122,
+                  38.0062,
+                  32.5606
+                ]
+              },
+              "after": {
+                "min_ms": 25.3256,
+                "median_ms": 26.526400000000002,
+                "max_ms": 27.2417,
+                "samples_ms": [
+                  25.9624,
+                  26.6613,
+                  27.2227,
+                  25.6599,
+                  27.2417,
+                  26.206,
+                  25.8551,
+                  25.3256,
+                  26.3915,
+                  26.6993,
+                  26.943,
+                  27.2257
+                ]
+              },
+              "median_after_over_before": 0.7386346074861992,
+              "sha256": "ee388233231f7723422001698f3ab0f75c9bcc1aac541efe5290de5e36c13dd4"
+            }
+          ]
+        },
+        {
+          "name": "detail_mode_1",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":1,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 39.3761,
+                "after": 35.599,
+                "after_over_before": 0.9040763305660031
+              },
+              "before": {
+                "min_ms": 31.6909,
+                "median_ms": 45.84415,
+                "max_ms": 49.4308,
+                "samples_ms": [
+                  48.7864,
+                  46.0489,
+                  45.7537,
+                  36.7601,
+                  31.6909,
+                  44.3066,
+                  44.4315,
+                  45.0941,
+                  45.9346,
+                  46.7342,
+                  47.1511,
+                  49.4308
+                ]
+              },
+              "after": {
+                "min_ms": 30.5754,
+                "median_ms": 35.315,
+                "max_ms": 38.5535,
+                "samples_ms": [
+                  30.5754,
+                  30.6676,
+                  35.2085,
+                  35.6862,
+                  35.5913,
+                  34.0175,
+                  34.9667,
+                  35.1459,
+                  35.4215,
+                  35.5305,
+                  36.4269,
+                  38.5535
+                ]
+              },
+              "median_after_over_before": 0.7703272936677853,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 91.0683,
+                "after": 71.4384,
+                "after_over_before": 0.7844485951752697
+              },
+              "before": {
+                "min_ms": 70.3127,
+                "median_ms": 88.90465,
+                "max_ms": 92.931,
+                "samples_ms": [
+                  88.2862,
+                  88.6822,
+                  91.9778,
+                  88.7832,
+                  89.0261,
+                  91.891,
+                  77.1289,
+                  89.7022,
+                  70.3127,
+                  92.4993,
+                  92.931,
+                  86.5769
+                ]
+              },
+              "after": {
+                "min_ms": 60.7408,
+                "median_ms": 70.00280000000001,
+                "max_ms": 74.5414,
+                "samples_ms": [
+                  69.8239,
+                  72.0518,
+                  70.1817,
+                  67.8666,
+                  62.8214,
+                  70.1926,
+                  60.7408,
+                  67.6964,
+                  74.5414,
+                  67.8119,
+                  71.7118,
+                  71.0745
+                ]
+              },
+              "median_after_over_before": 0.7873918855762888,
+              "sha256": "bd1a60392f8cecafe85717fae4688a9be0326934aaf6beec6301acfe6d684f7a"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 95.5833,
+                "after": 73.402,
+                "after_over_before": 0.7679374953574527
+              },
+              "before": {
+                "min_ms": 51.3902,
+                "median_ms": 94.81155000000001,
+                "max_ms": 99.9988,
+                "samples_ms": [
+                  84.7972,
+                  93.7081,
+                  92.945,
+                  51.3902,
+                  84.1122,
+                  88.5837,
+                  99.9988,
+                  96.2316,
+                  96.1436,
+                  95.915,
+                  96.4673,
+                  96.4107
+                ]
+              },
+              "after": {
+                "min_ms": 65.3863,
+                "median_ms": 74.56295,
+                "max_ms": 75.918,
+                "samples_ms": [
+                  74.751,
+                  65.3863,
+                  72.312,
+                  67.3055,
+                  74.0965,
+                  74.4282,
+                  75.918,
+                  75.3756,
+                  74.3879,
+                  74.8561,
+                  75.157,
+                  74.6977
+                ]
+              },
+              "median_after_over_before": 0.7864331930023293,
+              "sha256": "3872b7bbaa900533a252917782d0871d69d3d334609a66ea1e51b766ef7ab7c7"
+            }
+          ]
+        },
+        {
+          "name": "detail_mode_2",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":2,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 45.0721,
+                "after": 34.821,
+                "after_over_before": 0.7725621837012253
+              },
+              "before": {
+                "min_ms": 44.0531,
+                "median_ms": 45.7754,
+                "max_ms": 48.9377,
+                "samples_ms": [
+                  45.9667,
+                  44.0531,
+                  46.3835,
+                  45.6521,
+                  46.155,
+                  45.8039,
+                  45.7469,
+                  45.7005,
+                  48.9377,
+                  45.1668,
+                  45.0926,
+                  46.098
+                ]
+              },
+              "after": {
+                "min_ms": 32.646,
+                "median_ms": 35.2772,
+                "max_ms": 37.327,
+                "samples_ms": [
+                  37.327,
+                  32.646,
+                  34.4052,
+                  34.5679,
+                  35.1388,
+                  35.3025,
+                  34.9259,
+                  35.8279,
+                  36.1892,
+                  35.2519,
+                  35.7628,
+                  36.1206
+                ]
+              },
+              "median_after_over_before": 0.7706584759499644,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 81.1149,
+                "after": 58.2032,
+                "after_over_before": 0.7175401806573145
+              },
+              "before": {
+                "min_ms": 60.4197,
+                "median_ms": 66.51385,
+                "max_ms": 72.698,
+                "samples_ms": [
+                  65.4881,
+                  67.1957,
+                  62.6365,
+                  66.1166,
+                  64.9273,
+                  72.698,
+                  66.9163,
+                  60.4197,
+                  65.2265,
+                  66.9111,
+                  67.2956,
+                  67.1656
+                ]
+              },
+              "after": {
+                "min_ms": 48.4621,
+                "median_ms": 49.171800000000005,
+                "max_ms": 57.901,
+                "samples_ms": [
+                  48.894,
+                  49.1133,
+                  49.3924,
+                  49.0037,
+                  49.2303,
+                  48.4621,
+                  50.4693,
+                  48.8258,
+                  50.5345,
+                  49.9563,
+                  57.901,
+                  48.6542
+                ]
+              },
+              "median_after_over_before": 0.7392715953143594,
+              "sha256": "2b5c22989860f7521e8774fbc3435852e5683c7ad20d066c4ef75be84c8db57b"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 70.6163,
+                "after": 50.7815,
+                "after_over_before": 0.719118673733968
+              },
+              "before": {
+                "min_ms": 62.7596,
+                "median_ms": 70.0843,
+                "max_ms": 72.236,
+                "samples_ms": [
+                  64.476,
+                  70.794,
+                  69.7723,
+                  71.01,
+                  72.236,
+                  62.7596,
+                  71.3274,
+                  66.0253,
+                  66.9521,
+                  65.8796,
+                  70.3963,
+                  71.116
+                ]
+              },
+              "after": {
+                "min_ms": 51.2166,
+                "median_ms": 52.5938,
+                "max_ms": 56.0277,
+                "samples_ms": [
+                  52.7849,
+                  53.2528,
+                  52.1717,
+                  56.0277,
+                  51.2166,
+                  53.6156,
+                  53.0433,
+                  54.4439,
+                  52.3455,
+                  52.4027,
+                  51.8708,
+                  52.0871
+                ]
+              },
+              "median_after_over_before": 0.7504362603322,
+              "sha256": "15876acadae93c0be6a49d99d63eda4bda0cdaea6901af3b565d8ce724af89bf"
+            }
+          ]
+        },
+        {
+          "name": "detail_mode_3",
+          "canonical_json": "{\"seed\":1337,\"generator_id\":\"ringworld_surface_detail_v3\",\"domain_id\":\"canonical_ring_noise_v1\",\"circumference_m\":31415936,\"width_m\":318000,\"min_height_m\":-8000,\"max_height_m\":8000,\"land_balance\":0,\"continental_scale_m\":300000,\"mountain_scale_m\":80000,\"basin_depth_m\":4500,\"trench_depth_m\":3000,\"trench_threshold\":0.8,\"mountain_amplitude_m\":5400,\"valley_width\":0.18,\"flattening\":3,\"ridge_scale_m\":8000,\"ridge_sharpness\":1.5,\"secondary_amplitude_m\":60,\"micro_amplitude_m\":4,\"detail_start_m\":2000,\"detail_full_m\":4500,\"warp_amplitude_m\":6000,\"continental_octaves\":4,\"mountain_octaves\":4,\"valley_octaves\":3,\"trench_octaves\":3,\"ridge_octaves\":4,\"secondary_octaves\":3,\"micro_octaves\":2,\"warp_octaves\":3,\"noise_gain\":0.5,\"noise_lacunarity\":2,\"secondary_scale_m\":256,\"micro_scale_m\":32,\"warp_scale_m\":180000,\"beach_slope\":0.025,\"shelf_width_m\":12000,\"shelf_depth_m\":150,\"continental_slope_width_m\":30000,\"foothill_amplitude_m\":100,\"foothill_scale_m\":1500,\"spur_amplitude_m\":220,\"spur_scale_m\":1000,\"mountain_detail_mode\":3,\"erosion_strength_m\":60,\"erosion_scale_m\":256,\"erosion_octaves\":3,\"swiss_warp\":0.35}",
+          "results": [
+            {
+              "point": "ocean",
+              "cold_first_grid_ms": {
+                "before": 44.2738,
+                "after": 34.9366,
+                "after_over_before": 0.7891032619743504
+              },
+              "before": {
+                "min_ms": 37.5979,
+                "median_ms": 45.220650000000006,
+                "max_ms": 54.4458,
+                "samples_ms": [
+                  45.377,
+                  43.7483,
+                  43.2342,
+                  41.3579,
+                  37.5979,
+                  44.7515,
+                  45.0643,
+                  46.083,
+                  54.4458,
+                  46.3001,
+                  46.265,
+                  45.4231
+                ]
+              },
+              "after": {
+                "min_ms": 30.2028,
+                "median_ms": 34.976600000000005,
+                "max_ms": 35.553,
+                "samples_ms": [
+                  34.8341,
+                  35.3358,
+                  32.9368,
+                  33.6486,
+                  30.2028,
+                  35.1191,
+                  35.553,
+                  35.2017,
+                  35.2074,
+                  35.1877,
+                  34.6442,
+                  34.3835
+                ]
+              },
+              "median_after_over_before": 0.7734652199824638,
+              "sha256": "29311854107819ca13f7331fd6fc83f6634901fa53e7ed734fbfb9456f9224be"
+            },
+            {
+              "point": "foothill",
+              "cold_first_grid_ms": {
+                "before": 124.8777,
+                "after": 98.3281,
+                "after_over_before": 0.7873951874514025
+              },
+              "before": {
+                "min_ms": 106.4213,
+                "median_ms": 119.03925000000001,
+                "max_ms": 126.2969,
+                "samples_ms": [
+                  126.2969,
+                  107.8962,
+                  123.4407,
+                  123.7155,
+                  124.8615,
+                  121.962,
+                  106.4213,
+                  111.5737,
+                  114.699,
+                  121.7241,
+                  116.3544,
+                  114.8516
+                ]
+              },
+              "after": {
+                "min_ms": 93.897,
+                "median_ms": 97.2698,
+                "max_ms": 120.1258,
+                "samples_ms": [
+                  96.6781,
+                  94.3628,
+                  97.1015,
+                  96.6122,
+                  98.813,
+                  99.6613,
+                  97.4381,
+                  98.4446,
+                  94.5951,
+                  93.897,
+                  101.0661,
+                  120.1258
+                ]
+              },
+              "median_after_over_before": 0.8171237638005951,
+              "sha256": "e07e6d039d98a4462d6f4e20d6e34671c6c3b7a91dbf8eaf9ac081ff57b9ba3c"
+            },
+            {
+              "point": "mountain",
+              "cold_first_grid_ms": {
+                "before": 119.0372,
+                "after": 97.6306,
+                "after_over_before": 0.8201688211752293
+              },
+              "before": {
+                "min_ms": 108.6231,
+                "median_ms": 125.48415,
+                "max_ms": 129.7529,
+                "samples_ms": [
+                  108.6231,
+                  125.7574,
+                  128.8144,
+                  111.1626,
+                  118.252,
+                  129.3685,
+                  114.1933,
+                  129.7529,
+                  122.7397,
+                  125.2109,
+                  127.1436,
+                  128.0779
+                ]
+              },
+              "after": {
+                "min_ms": 80.8402,
+                "median_ms": 98.7913,
+                "max_ms": 114.512,
+                "samples_ms": [
+                  98.4366,
+                  82.4981,
+                  103.0595,
+                  84.1133,
+                  114.512,
+                  102.6069,
+                  99.146,
+                  100.5351,
+                  97.1059,
+                  80.8402,
+                  101.0462,
+                  94.1478
+                ]
+              },
+              "median_after_over_before": 0.7872811028325092,
+              "sha256": "2b187455e2fe17433f18d7e6aca0efdf97aa38e1530c0150a368a5c164572464"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

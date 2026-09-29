@@ -100,6 +100,7 @@ public partial class RingTerrain3DSurface
             candidate._worldFrame = _worldFrame;
             candidate._handoffDistanceMeters = _handoffDistanceMeters;
             candidate._preparedMeshLods = _preparedMeshLods;
+            candidate.SetSmoothTerrainShading(_smoothTerrainShading);
             candidate.SetSurfaceAppearance(_surfaceDryRoughness, _surfaceWetRoughness, _rainWetnessStrength);
             candidate.SetSurfaceWetness(_surfaceWetness);
             candidate._budgetGeometry = geometry;

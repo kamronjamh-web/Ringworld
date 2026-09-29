@@ -41,6 +41,8 @@ public sealed class RingSurfaceHeightField
     public int EditCount => _edits.Count;
     public bool UsesTriangleInterpolation => _useTriangleInterpolation;
 
+    internal bool HasBaseline(Func<long, int, float> baseline) => _baseline == baseline;
+
     public float GetSample(long around, int across)
     {
         if (across < 0 || across >= WidthMeters) throw new ArgumentOutOfRangeException(nameof(across));

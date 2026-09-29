@@ -1,25 +1,25 @@
 [gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_1ae0i"]
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_r5d0k"]
 
 [resource]
-script = ExtResource("1_1ae0i")
+script = ExtResource("1_r5d0k")
 Overrides = {
 "AnvilRadiusMultiplier": 2.7,
-"BlurPower": 0.7,
+"BlurPower": 0.0,
 "BlurQuality": 1,
 "CastCloudShadows": true,
 "CloudAmbientMultiplier": 1.01,
-"CloudCoverageBias": 0.05,
-"CloudDensityMultiplier": 3.0,
+"CloudCoverageBias": -1.0,
+"CloudDensityMultiplier": 1.05,
 "CloudDirectLightMultiplier": 0.98,
-"CloudLodBias": 1.19,
-"CloudRenderingEnabled": false,
-"CloudResolutionScale": 0,
+"CloudLodBias": 1.37,
+"CloudRenderingEnabled": true,
+"CloudResolutionScale": 1,
 "CloudSharpness": 1.0,
 "CloudWindMultiplier": 3.0,
 "DayCloudAmbientColor": Color(1, 1, 1, 1),
-"DitherSpeed": 60.0,
+"DitherSpeed": 0.0,
 "FastReconstruction": false,
 "GpuFarShadowMapResolution": 64,
 "GpuFarShadowRadiusMeters": 200000.0,
@@ -32,16 +32,19 @@ Overrides = {
 "HandoffStartMeters": 46500.0,
 "LightingSteps": 8,
 "LightingTravelKm": 0.5,
-"MaxStepDistanceMeters": 958.0,
+"MaxStepDistanceMeters": 1052.0,
 "MinStepDistanceMeters": 500.0,
-"MovingHistoryWeight": 0.95,
+"MovingHistoryWeight": 0.85,
 "NaturalCloudTopAltitudeMeters": 6050.0,
-"NightCloudAmbientColor": Color(1, 1, 1, 1),
+"NightCloudAmbientColor": Color(0, 0, 0, 1),
 "PreferGpuCloudShadows": true,
 "RayStartJitterStrength": 1.0,
 "RaymarchSteps": 256,
+"SculptLocalizedStorms": true,
 "ShadowExtinctionPerKilometer": 2.0,
-"StationaryHistoryWeight": 0.95,
+"ShadowMapResolution": 16,
+"ShadowRadiusMeters": 8000.0,
+"StationaryHistoryWeight": 0.85,
 "StormAmbientFloor": 0.5,
 "StormAmbientOcclusionStrength": 0.62,
 "StormFrontCloudBaseAltitudeMeters": 500.0,
