@@ -100,7 +100,7 @@ public partial class MenuFlyoverSettings : Resource
         ShadowRadiusKm = Clamp(ShadowRadiusKm, 8, 200);
         ShadowResolution = ShadowResolution <= 128 ? 128 : ShadowResolution <= 256 ? 256 : ShadowResolution <= 512 ? 512 : ShadowResolution <= 1024 ? 1024 : 2048;
         ShadowUpdatesPerSecond = Clamp(ShadowUpdatesPerSecond, .25f, 20);
-        ShadowVerticalSamples = Math.Clamp(ShadowVerticalSamples, 1, 16);
+        ShadowVerticalSamples = Math.Clamp(ShadowVerticalSamples, 1, 64);
         TerrainSpacingMeters = TerrainSpacingMeters <= 125 ? 125 : TerrainSpacingMeters <= 250 ? 250 : 500;
         FarTerrainDetail = Math.Clamp(FarTerrainDetail, 0, 2);
     }

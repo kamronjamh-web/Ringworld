@@ -153,7 +153,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 180
+const GENERAL_DATA_FLOAT_COUNT := 220
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -239,6 +239,10 @@ var buffers : RenderSceneBuffersRD
 
 var uniform_sets : Array[RID] = []
 var general_data : PackedByteArray
+
+# Ten vec4s, populated by RingSunshineCloudBridge. Keeping this as an
+# immutable value array makes every compositor callback snapshot self-contained.
+@export var ring_atmosphere_profile : Array[Vector4] = []
 
 var light_data : PackedByteArray
 
@@ -383,7 +387,7 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
 		cloud_shadow_last_error = "Invalid cloud shadow cascade index."
 		return false
-	if resolution < 8 or resolution > 2048 or ring_radius <= 1.0 or radius <= 0.0 or ceiling <= floor or vertical_samples < 1 or vertical_samples > 32:
+	if resolution < 8 or resolution > 2048 or ring_radius <= 1.0 or radius <= 0.0 or ceiling <= floor or vertical_samples < 1 or vertical_samples > 64:
 		cloud_shadow_last_error = "Invalid cloud shadow cascade configuration."
 		return false
 	if around.length_squared() < 0.0001 or across.length_squared() < 0.0001 or up.length_squared() < 0.0001 or sun_direction.length_squared() < 0.0001:
@@ -1933,6 +1937,14 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	general_data.encode_float(idx, bulk_delta.x); idx += 4
 	general_data.encode_float(idx, 1.0 if menu_history_static else 0.0); idx += 4
 	general_data.encode_float(idx, 1.0 if diagnostic_menu_history_weights else 0.0); idx += 4
+	# Append-only shared atmosphere ABI. Missing/default values deliberately
+	# disable the path for standalone addon scenes and menu fixtures.
+	for profile_index in 10:
+		var profile_value := ring_atmosphere_profile[profile_index] if profile_index < ring_atmosphere_profile.size() else Vector4.ZERO
+		general_data.encode_float(idx, profile_value.x); idx += 4
+		general_data.encode_float(idx, profile_value.y); idx += 4
+		general_data.encode_float(idx, profile_value.z); idx += 4
+		general_data.encode_float(idx, profile_value.w); idx += 4
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
 	previous_callback_bulk_wind = current_bulk_wind
 	previous_callback_detail_wind = detail_clouds_position

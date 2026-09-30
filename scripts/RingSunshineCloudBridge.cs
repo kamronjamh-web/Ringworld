@@ -55,7 +55,7 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "16000,200000,1000")] public float GpuFarShadowRadiusMeters { get; set; } = 96000.0f;
     [Export(PropertyHint.Range, "1,20,0.25")] public float GpuNearShadowUpdatesPerSecond { get; set; } = 10.0f;
     [Export(PropertyHint.Range, "0.1,5,0.1")] public float GpuFarShadowUpdatesPerSecond { get; set; } = 0.5f;
-    [Export(PropertyHint.Range, "1,32,1")] public int GpuShadowVerticalSamples { get; set; } = 4;
+    [Export(PropertyHint.Range, "1,64,1")] public int GpuShadowVerticalSamples { get; set; } = 4;
     [ExportGroup("Cloud shadow profiling")]
     [Export] public bool GpuShadowGenerationEnabled { get; set; } = true;
     [Export] public bool CloudShadowReceiversEnabled { get; set; } = true;
@@ -202,6 +202,7 @@ public partial class RingSunshineCloudBridge : Node
     private WorldEnvironment? _worldEnvironment;
     private DirectionalLight3D? _sunLight;
     private Camera3D? _camera;
+    private Node? _daySideAtmosphere;
     private RingScaledFarViewport? _scaledFarViewport;
     private Callable? _externalTextureRetirementCallable;
     private double _weatherElapsed = double.PositiveInfinity;
@@ -311,6 +312,7 @@ public partial class RingSunshineCloudBridge : Node
         _worldEnvironment = GetNodeOrNull<WorldEnvironment>(WorldEnvironmentPath);
         _sunLight = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
         _camera = GetNodeOrNull<Camera3D>(CameraPath);
+        _daySideAtmosphere = GetParent()?.GetNodeOrNull<Node>("DaySideAtmosphere");
         _scaledFarViewport = GetNodeOrNull<RingScaledFarViewport>(ScaledFarViewportPath);
         if (_driver != null)
         {
@@ -821,9 +823,39 @@ public partial class RingSunshineCloudBridge : Node
             _clouds.Set("ring_width_meters", ringWidth);
             _lastCloudFrameRingWidth = ringWidth;
         }
+        UpdateAtmosphereProfile(preciseRadius);
         // This is deliberately a CPU-only, callback-paired contract. The
         // compositor snapshots it once when it uploads its existing UBO.
         _clouds.Call("set_gameplay_cloud_frame", new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
+    }
+
+    private void UpdateAtmosphereProfile(double preciseRadius)
+    {
+        if (_clouds == null || _grid == null) return;
+        _camera ??= GetViewport().GetCamera3D();
+        Vector3 toSun = _sunLight is null ? Vector3.Up : _sunLight.GlobalBasis.Z.Normalized();
+        RingAtmosphereRayFrame frame = _camera is null ? RingAtmosphereRayFrame.Invalid : RingAtmosphereRayFrame.FromMainCamera(_grid, _camera, toSun);
+        float solarVisibility = _daySideAtmosphere is null ? 1.0f : Mathf.Clamp(_daySideAtmosphere.Get("current_solar_visibility").AsSingle(), 0.0f, 1.0f);
+        // Sunshine declares this as Array[Vector4]. A managed Vector4[] is
+        // marshalled as a packed array instead, which the typed GDScript
+        // property rejects. Preserve all ten slots even while haze is off so
+        // the compositor's fixed UBO ABI always receives a complete profile.
+        var profile = new Godot.Collections.Array<Vector4>();
+        profile.Resize(10);
+        if (frame.Valid && RingAtmosphereModel.Enabled)
+        {
+            profile[0] = new(1, (float)preciseRadius, RingAtmosphereModel.FloorDepthMeters, RingAtmosphereModel.BoundaryHeightMeters);
+            profile[1] = new(RingAtmosphereModel.UpperHeightMeters, RingAtmosphereModel.BoundaryExtinctionMeters, RingAtmosphereModel.UpperExtinctionMeters, RingAtmosphereModel.TotalMaxOpacity);
+            profile[2] = new(RingAtmosphereModel.BoundaryMaxOpacity, RingAtmosphereModel.UpperMaxOpacity, RingAtmosphereModel.DistanceHazeMaxOpacity, RingAtmosphereModel.ScatteringEnergy);
+            profile[3] = new(RingAtmosphereModel.ClearDistanceMeters, RingAtmosphereModel.FullDistanceMeters, RingAtmosphereModel.HighAltitudeClearDistanceMeters, RingAtmosphereModel.HighAltitudeFullDistanceMeters);
+            profile[4] = new(RingAtmosphereModel.DistanceAltitudeStartMeters, RingAtmosphereModel.DistanceAltitudeEndMeters, RingAtmosphereModel.Aerosol, RingAtmosphereModel.ForwardScattering);
+            profile[5] = new(RingAtmosphereModel.DayColor.R, RingAtmosphereModel.DayColor.G, RingAtmosphereModel.DayColor.B, RingAtmosphereModel.SunWarmth);
+            profile[6] = new(RingAtmosphereModel.NightColor.R, RingAtmosphereModel.NightColor.G, RingAtmosphereModel.NightColor.B, solarVisibility);
+            profile[7] = new(frame.OutwardWorld.X, frame.OutwardWorld.Y, frame.OutwardWorld.Z, frame.CameraHeightMeters);
+            profile[8] = new(frame.AxisWorld.X, frame.AxisWorld.Y, frame.AxisWorld.Z, frame.SidewallNegativeMeters);
+            profile[9] = new(frame.ToSun.X, frame.ToSun.Y, frame.ToSun.Z, frame.SidewallPositiveMeters);
+        }
+        _clouds.Set("ring_atmosphere_profile", profile);
     }
 
     public void ApplyLiveTuning(
@@ -1752,7 +1784,7 @@ public partial class RingSunshineCloudBridge : Node
             Math.Clamp(resolution, 8, 2048), center, around, across, up,
             new Vector2((float)centerCanonical.AroundMeters, (float)centerCanonical.AcrossMeters),
             ResolveShadowRingRadiusMeters(), Mathf.Max(1000.0f, radius),
-            sun, floor, ceiling, Math.Clamp(GpuShadowVerticalSamples, 1, 32), Mathf.Max(0.0f, ShadowExtinctionPerKilometer), resetHistory).AsBool();
+            sun, floor, ceiling, Math.Clamp(GpuShadowVerticalSamples, 1, 64), Mathf.Max(0.0f, ShadowExtinctionPerKilometer), resetHistory).AsBool();
         if (!accepted)
             return;
         _clouds.Call("request_gpu_cloud_shadow_update", cascade);

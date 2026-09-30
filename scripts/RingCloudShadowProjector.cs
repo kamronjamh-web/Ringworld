@@ -12,11 +12,11 @@ public static class RingCloudShadowProjector
 {
     private sealed class Receiver
     {
-        public readonly WeakReference<ShaderMaterial> Material;
+        public readonly WeakReference<GodotObject> Material;
         public Snapshot Applied;
         public bool HasApplied;
 
-        public Receiver(ShaderMaterial material) => Material = new(material);
+        public Receiver(GodotObject material) => Material = new(material);
     }
 
     // This is deliberately a small typed cache beside the weak receiver list,
@@ -67,12 +67,12 @@ public static class RingCloudShadowProjector
     public static bool HasExternalTextures => _texture != null || _farTexture != null;
     public static void ResetParameterWriteCount() => ParameterWriteCount = 0;
 
-    public static void Register(ShaderMaterial? material)
+    public static void Register(GodotObject? material)
     {
-        if (material == null) return;
+        if (material == null || !GodotObject.IsInstanceValid(material) || !SupportsShaderParameters(material)) return;
         for (int index = Materials.Count - 1; index >= 0; index--)
         {
-            if (!Materials[index].Material.TryGetTarget(out ShaderMaterial? existing)
+            if (!Materials[index].Material.TryGetTarget(out GodotObject? existing)
                 || !GodotObject.IsInstanceValid(existing))
             {
                 Materials.RemoveAt(index);
@@ -270,12 +270,15 @@ public static class RingCloudShadowProjector
         return derived.LengthSquared() > 0.000001f ? derived.Normalized() : Vector3.Left;
     }
 
+    private static bool SupportsShaderParameters(GodotObject material)
+        => material is ShaderMaterial || material.HasMethod("set_shader_param");
+
     private static void ApplyAll()
     {
         int active = 0;
         for (int index = Materials.Count - 1; index >= 0; index--)
         {
-            if (!Materials[index].Material.TryGetTarget(out ShaderMaterial? material)
+            if (!Materials[index].Material.TryGetTarget(out GodotObject? material)
                 || !GodotObject.IsInstanceValid(material))
             {
                 Materials.RemoveAt(index);
@@ -287,7 +290,7 @@ public static class RingCloudShadowProjector
         ActiveReceiverCount = active;
     }
 
-    private static void Apply(ShaderMaterial material, Receiver receiver)
+    private static void Apply(GodotObject material, Receiver receiver)
     {
         Texture2D fallback = GetClearFallbackTexture();
         Snapshot next = new()
@@ -341,9 +344,10 @@ public static class RingCloudShadowProjector
         receiver.HasApplied = true;
     }
 
-    private static void SetParameter(ShaderMaterial material, StringName name, Variant value)
+    private static void SetParameter(GodotObject material, StringName name, Variant value)
     {
-        material.SetShaderParameter(name, value);
+        if (material is ShaderMaterial shaderMaterial) shaderMaterial.SetShaderParameter(name, value);
+        else material.Call("set_shader_param", name, value);
         ParameterWriteCount++;
     }
 

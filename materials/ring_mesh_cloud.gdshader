@@ -167,8 +167,8 @@ void fragment() {
 		world_position,
 		ring_center,
 		day);
-	float atmosphere_occlusion = atmosphere.a * 0.72;
-	ALBEDO = cloud_color * (1.0 - atmosphere_occlusion);
-	EMISSION = cloud_color * mix(0.16, 0.045, day)
-		+ atmosphere.rgb * atmosphere_occlusion * atmosphere_scattering_energy;
+	float atmosphere_transmittance = 1.0 - atmosphere.a;
+	ALBEDO = cloud_color * atmosphere_transmittance;
+	EMISSION = cloud_color * mix(0.16, 0.045, day) * atmosphere_transmittance
+		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
 }

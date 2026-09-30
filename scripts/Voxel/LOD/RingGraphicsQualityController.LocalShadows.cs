@@ -62,6 +62,38 @@ public partial class RingGraphicsQualityController
         if (_sun.ShadowEnabled != effectiveShadowEnabled) _sun.ShadowEnabled = effectiveShadowEnabled;
     }
 
+    /// <summary>
+    /// The proxy caster chain must cover whichever local directional atlas is
+    /// currently illuminating terrain. Daylight uses the quality-controlled
+    /// sun range; night can use the independently ranged planet light.
+    /// </summary>
+    private void UpdateTerrainShadowCasterCoverage()
+    {
+        if (_coordinator == null || !GodotObject.IsInstanceValid(_coordinator)) return;
+        float coverage = ResolveTerrainShadowCasterCoverage(_sun, _planet);
+        if (coverage > 0.0f) _coordinator.SetTerrainShadowCoverageMeters(coverage);
+    }
+
+    internal static float ResolveTerrainShadowCasterCoverage(
+        DirectionalLight3D? sun,
+        DirectionalLight3D? planet)
+    {
+        float coverage = 0.0f;
+        AccumulateActiveDirectionalShadowRange(sun, ref coverage);
+        AccumulateActiveDirectionalShadowRange(planet, ref coverage);
+        return coverage;
+    }
+
+    private static void AccumulateActiveDirectionalShadowRange(
+        DirectionalLight3D? light,
+        ref float coverage)
+    {
+        if (light == null || !GodotObject.IsInstanceValid(light)
+            || !light.ShadowEnabled || light.LightEnergy <= 0.001f) return;
+        float distance = light.DirectionalShadowMaxDistance;
+        if (float.IsFinite(distance) && distance > 0.0f) coverage = Mathf.Max(coverage, distance);
+    }
+
     private bool ResolveLocalShadowThresholds()
     {
         float off = _shadowTuningOverrides.TryGetValue("SunShadowOffElevationDegrees", out Variant offValue) ? offValue.AsSingle() : DefaultSunShadowOffElevationDegrees;

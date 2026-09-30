@@ -62,6 +62,48 @@ public partial class RingCloudShadowProjectorBehaviorTest : RefCounted
         return "PASS";
     }
 
+    /// <summary>Exercises the native Terrain3D material path after its owning node has entered the scene tree.</summary>
+    public string RunNative(GodotObject material)
+    {
+        if (!GodotObject.IsInstanceValid(material) || !material.HasMethod("set_shader_param"))
+            throw new System.InvalidOperationException("active Terrain3D material does not expose set_shader_param");
+
+        using ImageTexture near = MakeTexture(73);
+        using ImageTexture far = MakeTexture(149);
+        Vector3 nearCenter = new(17.0f, 23.0f, 31.0f);
+        Vector3 nearAround = new(0.0f, 0.0f, -1.0f);
+        Vector3 nearAcross = Vector3.Up;
+        Vector3 nearUp = Vector3.Right;
+        RingCloudShadowProjector.Register(material);
+        RingCloudShadowProjector.UpdateCascades(
+            near, nearCenter, nearAround, nearAcross, nearUp, 4321.0f, new Vector2(.125f, .25f),
+            far, new Vector3(-41.0f, 5.0f, 9.0f), nearAround, nearAcross, nearUp, 8765.0f, new Vector2(.5f, .75f),
+            5_000_000.0f, new Vector3(.2f, .3f, .4f), .37f);
+        Require(material.Call("get_shader_param", "local_cloud_shadow_texture").AsGodotObject() == near,
+            "native Terrain3D receiver did not receive the near texture");
+        Require(material.Call("get_shader_param", "local_cloud_shadow_center_world").AsVector3() == nearCenter,
+            "native Terrain3D receiver did not receive the cascade center");
+        Require(material.Call("get_shader_param", "local_cloud_shadow_axis_around").AsVector3() == nearAround,
+            "native Terrain3D receiver did not receive the cascade basis");
+        Require(Mathf.IsEqualApprox(material.Call("get_shader_param", "local_cloud_shadow_strength").AsSingle(), .37f),
+            "native Terrain3D receiver did not receive shadow strength");
+        RingCloudShadowProjector.ResetParameterWriteCount();
+        RingCloudShadowProjector.UpdateCascades(
+            near, nearCenter, nearAround, nearAcross, nearUp, 4321.0f, new Vector2(.125f, .25f),
+            far, new Vector3(-41.0f, 5.0f, 9.0f), nearAround, nearAcross, nearUp, 8765.0f, new Vector2(.5f, .75f),
+            5_000_000.0f, new Vector3(.2f, .3f, .4f), .37f);
+        Require(RingCloudShadowProjector.ParameterWriteCount == 0,
+            "identical native Terrain3D cascade update wrote parameters");
+        RingCloudShadowProjector.Disable();
+        Require(!material.Call("get_shader_param", "local_cloud_shadow_enabled").AsBool(),
+            "native Terrain3D receiver did not receive disable");
+        RingCloudShadowProjector.ReleaseTextures();
+        Require(material.Call("get_shader_param", "local_cloud_shadow_texture").AsGodotObject() != near,
+            "native Terrain3D receiver did not receive fallback after release");
+        GD.Print("NATIVE_TERRAIN3D_SHADOW_RECEIVER=PASS");
+        return "PASS";
+    }
+
     private static ImageTexture MakeTexture(byte value)
     {
         using Image image = Image.CreateFromData(1, 1, false, Image.Format.Rgba8, new byte[] { value, 0, 0, 255 });

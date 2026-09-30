@@ -42,6 +42,7 @@ uniform float eclipse_solar_transmittance : hint_range(0.0, 1.0) = 1.0;
 // width guard prevents its haze from continuing beyond the physical side walls.
 // A large default preserves materials that are not ring-width-aware.
 uniform float ring_atmosphere_half_width_meters = 1000000000.0;
+#include "res://materials/ring_atmosphere_shared.gdshaderinc"
 #include "res://materials/ring_atmosphere_paths.gdshaderinc"
 
 float ring_atmosphere_altitude_blend(float camera_altitude) {
@@ -59,14 +60,7 @@ vec2 ring_atmosphere_visibility_distances(float camera_altitude) {
 }
 
 vec3 ring_atmosphere_scattering_color(vec3 ray_direction, float day_factor) {
-	float daylight = clamp(day_factor, 0.0, 1.0);
-	float sun_alignment = clamp(dot(normalize(ray_direction), normalize(ring_atmosphere_to_sun)), -1.0, 1.0);
-	float g = atmosphere_forward_scattering;
-	float forward_lobe = min(3.0, (1.0 - g * g) / max(0.08, pow(1.0 + g * g - 2.0 * g * sun_alignment, 1.5)));
-	vec3 base = mix(atmosphere_night_color, atmosphere_day_color, daylight);
-	float forward_excess = max(forward_lobe - 1.0, 0.0) * daylight;
-	vec3 warm = vec3(1.0, 0.55, 0.26) * atmosphere_sun_warmth * forward_excess;
-	return base + warm + base * atmosphere_aerosol * forward_excess;
+	return ring_atmosphere_scattering_color_shared(ray_direction, day_factor, ring_atmosphere_to_sun, atmosphere_day_color, atmosphere_night_color, atmosphere_aerosol, atmosphere_forward_scattering, atmosphere_sun_warmth);
 }
 
 float ring_segment_length_inside_cylinder(vec3 start_world, vec3 end_world, vec3 center_world, float radius) {

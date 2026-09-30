@@ -86,7 +86,6 @@ public partial class RingScaledFarViewport : Node
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarCloudCoverage { get; set; } = 0.46f;
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarCloudOpacity { get; set; } = 0.68f;
 	[Export(PropertyHint.Range, "0.01,0.4,0.01")] public float FarCloudSoftness { get; set; } = 0.20f;
-	[Export(PropertyHint.Range, "0,1,0.01")] public float FarCloudAtmosphericAlphaFade { get; set; } = 0.42f;
 	[Export(PropertyHint.Range, "1000,50000,500")] public float LocalCloudRadiusMeters { get; set; } = 10000.0f;
 	[Export(PropertyHint.Range, "100,10000,100")] public float LocalCloudBaseMeters { get; set; } = 2000.0f;
 	[Export(PropertyHint.Range, "200,12000,100")] public float LocalCloudTopMeters { get; set; } = 3200.0f;
@@ -309,8 +308,7 @@ public partial class RingScaledFarViewport : Node
 		float Storm,
 		Vector3 SunDirection,
 		Vector3 SurfaceUp,
-		float ViewerHeight,
-		float ShroudVisibility);
+		float ViewerHeight);
 
 	private sealed class FarWeatherAtlasBuild
 	{
@@ -1081,7 +1079,6 @@ public partial class RingScaledFarViewport : Node
 			_cloudMaterial.SetShaderParameter("coverage", FarCloudCoverage);
 			_cloudMaterial.SetShaderParameter("opacity", FarCloudOpacity);
 			_cloudMaterial.SetShaderParameter("softness", FarCloudSoftness);
-			_cloudMaterial.SetShaderParameter("atmospheric_alpha_fade_strength", FarCloudAtmosphericAlphaFade);
 			_cloudMaterial.SetShaderParameter("local_volumetric_handoff_enabled", true);
 			_cloudMaterial.SetShaderParameter("local_handoff_start_meters", LocalCloudRadiusMeters * 0.76f * CoordinateScale);
 			_cloudMaterial.SetShaderParameter("local_handoff_end_meters", LocalCloudRadiusMeters * CoordinateScale);
@@ -1495,7 +1492,6 @@ public partial class RingScaledFarViewport : Node
 		// floats, which camera-relative regional meshes cannot retain. The
 		// far-shroud branch needs no global reconstruction. Macro terrain
 		// shadows instead use the stable canonical UV stored on this mesh.
-		material.SetShaderParameter("ring_atmosphere_enabled", true);
 		material.SetShaderParameter("ring_atmosphere_far_shroud_enabled", true);
 		material.SetShaderParameter(
 			"ring_atmosphere_half_width_meters",
@@ -1660,6 +1656,7 @@ public partial class RingScaledFarViewport : Node
 		for (int layer = 0; layer < _farCloudClipmapLayers.Length; layer++)
 		{
 			var material = new ShaderMaterial { Shader = shader, RenderPriority = 12 + layer };
+			RingAtmosphereModel.ConfigureMaterial(material, _radiusMeters, CoordinateScale);
 			material.SetShaderParameter("layer_index", (float)layer);
 			material.SetShaderParameter("opacity", FarCloudClipmapOpacity / (layer == 0 ? 1.0f : 1.45f));
 			material.SetShaderParameter("patch_radius_meters", GetEffectiveFarCloudClipmapRadiusMeters());
@@ -1668,22 +1665,6 @@ public partial class RingScaledFarViewport : Node
 			material.SetShaderParameter("ring_width_km", RingWidthMeters * 0.001f);
 			material.SetShaderParameter("ring_circumference_km", (float)(_circumferenceMeters * 0.001));
 			ConfigureFarWeatherMaterial(material);
-			material.SetShaderParameter("atmosphere_day_color", new Vector3(
-				RingAtmosphereModel.DayColor.R,
-				RingAtmosphereModel.DayColor.G,
-				RingAtmosphereModel.DayColor.B));
-			material.SetShaderParameter("atmosphere_night_color", new Vector3(
-				RingAtmosphereModel.NightColor.R,
-				RingAtmosphereModel.NightColor.G,
-				RingAtmosphereModel.NightColor.B));
-			material.SetShaderParameter(
-				"atmosphere_night_density_factor",
-				RingAtmosphereModel.NightDensityFactor);
-			material.SetShaderParameter(
-				"atmosphere_shroud_opacity",
-				Mathf.Min(
-					RingAtmosphereModel.DistanceHazeMaxOpacity,
-					RingAtmosphereModel.TotalMaxOpacity));
 			var instance = new MeshInstance3D
 			{
 				Name = $"FarCloudClipmapLayer{layer}",
@@ -1876,8 +1857,7 @@ public partial class RingScaledFarViewport : Node
 				storm,
 				sunDirection,
 				inward,
-				(float)canonical.VerticalMeters,
-				_farAtmosphereShroudVisibility);
+				(float)canonical.VerticalMeters);
 			if (!_hasFarCloudClipmapState[layer] || state != _lastFarCloudClipmapStates[layer])
 			{
 				if (instance.GlobalTransform != state.Transform) instance.GlobalTransform = state.Transform;
@@ -1887,7 +1867,6 @@ public partial class RingScaledFarViewport : Node
 				material.SetShaderParameter("sun_direction", state.SunDirection);
 				material.SetShaderParameter("surface_up", state.SurfaceUp);
 				material.SetShaderParameter("viewer_height_meters", state.ViewerHeight);
-				material.SetShaderParameter("atmosphere_shroud_visibility", state.ShroudVisibility);
 				_lastFarCloudClipmapStates[layer] = state;
 				_hasFarCloudClipmapState[layer] = true;
 			}
@@ -2054,6 +2033,7 @@ public partial class RingScaledFarViewport : Node
 		UpdateFarAtmosphereShroud(canonical);
 		Basis worldToCanonical = _grid.GlobalBasis.Orthonormalized().Inverse();
 		if (!IsUsableBasis(worldToCanonical)) worldToCanonical = Basis.Identity;
+		SyncTerrainMacroShadowReceiverDirections(worldToCanonical);
 
 		Transform3D sourceTransform = _sourceCamera.GetCameraTransform();
 		// The explorer canonical position tracks feet. The render camera can be
@@ -2150,8 +2130,11 @@ public partial class RingScaledFarViewport : Node
 			if (!Mathf.IsEqualApprox(_farPlanetLight.LightSpecular, farPlanetSpecular)) _farPlanetLight.LightSpecular = farPlanetSpecular;
 		}
 		SyncSharedMaterialUniforms(scaledPosition, sunDirection);
-		ApplyAtmosphereRayFrame(eyeCanonical, scaledPosition, sunDirection,
+		RingAtmosphereRayFrame wholeRingAtmosphereFrame = ApplyAtmosphereRayFrame(
+			eyeCanonical, scaledPosition, sunDirection,
 			_terrainMaterial, _waterMaterial, _hullMaterial, _cavityShellMaterial, _cloudMaterial);
+		foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
+			wholeRingAtmosphereFrame.Apply(material);
 		SyncRegionalCameraAndLighting(
 			canonical,
 			eyeCanonical,
@@ -2164,6 +2147,24 @@ public partial class RingScaledFarViewport : Node
 		SyncLocalCloudCanopy(canonical, sunDirection);
 		SyncFarCloudClipmap(canonical, sunDirection);
 		SyncScaledCloudVolume(canonical, sunDirection);
+	}
+
+	// The macro masks are generated from main-world light directions, while this
+	// viewport shades in canonical scaled-space coordinates. The projector keeps
+	// this receiver transform cached, so calling it from the frame sync does not
+	// write unchanged uniforms.
+	private void SyncTerrainMacroShadowReceiverDirections(Basis worldToCanonical)
+	{
+		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
+			_terrainMaterial, worldToCanonical);
+		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
+			_waterMaterial, worldToCanonical);
+		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
+			_farLod9Material, worldToCanonical);
+		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
+			_farLod10Material, worldToCanonical);
+		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
+			_farLod11Material, worldToCanonical);
 	}
 
 	private void SyncRegionalCameraAndLighting(
@@ -2243,13 +2244,13 @@ public partial class RingScaledFarViewport : Node
 			_farLod9Material, _farLod10Material, _farLod11Material);
 	}
 
-	private void ApplyAtmosphereRayFrame(
+	private RingAtmosphereRayFrame ApplyAtmosphereRayFrame(
 		in RingCanonicalPosition canonical,
 		Vector3 rendererCameraPosition,
 		Vector3 toSun,
 		params ShaderMaterial?[] materials)
 	{
-		if (_radiusMeters <= 0.0 || RingWidthMeters <= 0) return;
+		if (_radiusMeters <= 0.0 || RingWidthMeters <= 0) return RingAtmosphereRayFrame.Invalid;
 		double angle = canonical.AroundMeters / _radiusMeters;
 		Vector3 outward = new((float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle));
 		var frame = new RingAtmosphereRayFrame(
@@ -2263,6 +2264,7 @@ public partial class RingScaledFarViewport : Node
 			Mathf.Max(0.000001f, CoordinateScale),
 			toSun);
 		foreach (ShaderMaterial? material in materials) frame.Apply(material);
+		return frame;
 	}
 
 	private void SyncSharedMaterialUniforms(Vector3 cameraPosition, Vector3 sunDirection)

@@ -317,10 +317,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 			templates[i] = CreateInstances($"{prefix}_{variants[i].Index}", variants[i].Lods[lod], null, castsShadow, castsShadow ? lod : -1);
 			foreach (ShaderMaterial material in variants[i].Materials)
 			{
-				if (_treeMaterials.Contains(material)) continue;
-				global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
-				_treeMaterials.Add(material);
-				ConfigureTreeLightingMaterial(material, true, true, true);
+				RegisterTreeLightingMaterial(material);
 			}
 		}
 		return templates;
@@ -475,10 +472,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 				foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(mesh))
 				{
 					material.SetShaderParameter("simplified_tree_shading", SimplifyDistantTreeMaterials);
-					if (_treeMaterials.Contains(material)) continue;
-					global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
-					_treeMaterials.Add(material);
-					ConfigureTreeLightingMaterial(material, true, true, true);
+					RegisterTreeLightingMaterial(material);
 				}
 		}
 		if (_sharedFarTreeMaterial != null && GodotObject.IsInstanceValid(_sharedFarTreeMaterial))
@@ -520,9 +514,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 				"tree_albedo_texture",
 				GD.Load<Texture2D>("res://resources/trees/kaykit_forest/forest_texture.png"));
 		}
-		global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
-		_treeMaterials.Add(material);
-		ConfigureTreeLightingMaterial(material, true, true, true);
+		RegisterTreeLightingMaterial(material);
 		return material;
 	}
 
@@ -541,9 +533,12 @@ public partial class RingBiomeDecorationLayer : Node3D
 		bool centerChanged = _lastTreeMaterialRingCenter != ringCenter;
 		bool sunChanged = _lastTreeMaterialSunDirection != sunDirection;
 		bool configurationChanged = !_treeLightingConfigurationValid || configuration != _lastTreeLightingConfiguration;
-		if (!centerChanged && !sunChanged && !configurationChanged) return;
-		foreach (ShaderMaterial material in _treeMaterials)
-			ConfigureTreeLightingMaterial(material, centerChanged, sunChanged, configurationChanged);
+		if (centerChanged || sunChanged || configurationChanged)
+			foreach (ShaderMaterial material in _treeMaterials)
+				ConfigureTreeLightingMaterial(material, centerChanged, sunChanged, configurationChanged);
+		// The finite-cylinder air path is camera-relative, so publish it every
+		// frame even while celestial lighting and profile values are unchanged.
+		UpdateTreeAtmosphereRayFrame(sunDirection);
 		_lastTreeMaterialRingCenter = ringCenter;
 		_lastTreeMaterialSunDirection = sunDirection;
 		_lastTreeLightingConfiguration = configuration;

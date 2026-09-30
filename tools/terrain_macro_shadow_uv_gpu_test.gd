@@ -35,6 +35,20 @@ func _run() -> void:
 	# after the seam must remain equivalent when U is normalized with fract().
 	var seam_before := await _measure(Vector2(0.99, 0.25), true, "seam_before_099")
 	var seam_after := await _measure(Vector2(1.01, 0.25), true, "seam_after_101")
+	# PlanetLight is the night-side directional source. Its receiver mask must
+	# remain active when the local sun direction is opposite the surface normal.
+	_material.set_shader_parameter("sun_direction", Vector3.RIGHT)
+	_material.set_shader_parameter("terrain_planet_shadow_direction", Vector3.LEFT)
+	var planet_disabled := await _measure_planet(Vector2(0.01, 0.25), false, "planet_night_disabled")
+	var planet_occluded := await _measure_planet(Vector2(0.01, 0.25), true, "planet_night_occluded")
+	var planet_final_row := await _measure_planet(Vector2(0.01, 1.0), true, "planet_final_row_v_1")
+	var planet_seam_before := await _measure_planet(Vector2(0.99, 0.25), true, "planet_seam_before_099")
+	var planet_seam_after := await _measure_planet(Vector2(1.01, 0.25), true, "planet_seam_after_101")
+	# This lit directional source does not match PlanetLight's receiver vector,
+	# so enabling the planet mask must not darken it.
+	_material.set_shader_parameter("terrain_planet_shadow_direction", Vector3.UP)
+	var unrelated_disabled := await _measure_planet(Vector2(0.01, 0.25), false, "unrelated_light_disabled")
+	var unrelated_enabled := await _measure_planet(Vector2(0.01, 0.25), true, "unrelated_light_enabled")
 
 	if disabled <= 0.0001 or occluded <= 0.0001 or final_row <= 0.0001:
 		_fail("empty GPU terrain sample disabled=%.6f occluded=%.6f final_row=%.6f" % [disabled, occluded, final_row])
@@ -51,7 +65,25 @@ func _run() -> void:
 	if seam_before >= disabled * 0.45 or seam_after >= disabled * 0.45:
 		_fail("UV seam samples did not retain macro-shadow occlusion: disabled=%.6f before=%.6f after=%.6f" % [disabled, seam_before, seam_after])
 		return
-	print("TERRAIN_MACRO_SHADOW_UV_GPU=PASS disabled=%.6f occluded=%.6f final_row=%.6f seam_099=%.6f seam_101=%.6f" % [disabled, occluded, final_row, seam_before, seam_after])
+	if planet_disabled <= 0.0001 or planet_occluded <= 0.0001 or planet_final_row <= 0.0001:
+		_fail("empty night planet terrain sample disabled=%.6f occluded=%.6f final_row=%.6f" % [planet_disabled, planet_occluded, planet_final_row])
+		return
+	if planet_occluded >= planet_disabled * 0.45:
+		_fail("planet mask did not darken night-side directional illumination: disabled=%.6f occluded=%.6f" % [planet_disabled, planet_occluded])
+		return
+	if absf(planet_final_row - planet_disabled) > LUMA_TOLERANCE:
+		_fail("planet UV V=1.0 did not sample clear final row: disabled=%.6f final_row=%.6f" % [planet_disabled, planet_final_row])
+		return
+	if absf(planet_seam_before - planet_seam_after) > LUMA_TOLERANCE:
+		_fail("planet UV seam discontinuity: before=%.6f after=%.6f" % [planet_seam_before, planet_seam_after])
+		return
+	if planet_seam_before >= planet_disabled * 0.45 or planet_seam_after >= planet_disabled * 0.45:
+		_fail("planet UV seam did not retain occlusion: disabled=%.6f before=%.6f after=%.6f" % [planet_disabled, planet_seam_before, planet_seam_after])
+		return
+	if absf(unrelated_enabled - unrelated_disabled) > LUMA_TOLERANCE:
+		_fail("planet mask darkened unrelated directional light: disabled=%.6f enabled=%.6f" % [unrelated_disabled, unrelated_enabled])
+		return
+	print("TERRAIN_MACRO_SHADOW_UV_GPU=PASS disabled=%.6f occluded=%.6f final_row=%.6f seam_099=%.6f seam_101=%.6f planet_disabled=%.6f planet_occluded=%.6f planet_final_row=%.6f unrelated_enabled=%.6f" % [disabled, occluded, final_row, seam_before, seam_after, planet_disabled, planet_occluded, planet_final_row, unrelated_enabled])
 	quit(0)
 
 
@@ -112,12 +144,29 @@ func _make_material() -> ShaderMaterial:
 	material.set_shader_parameter("terrain_macro_shadow_strength", 0.8)
 	material.set_shader_parameter("terrain_macro_shadow_fade_start_meters", 0.0)
 	material.set_shader_parameter("terrain_macro_shadow_fade_end_meters", 1.0)
+	material.set_shader_parameter("terrain_planet_shadow_texture", _mask)
+	material.set_shader_parameter("terrain_planet_shadow_enabled", false)
+	material.set_shader_parameter("terrain_planet_shadow_direction", Vector3.LEFT)
+	material.set_shader_parameter("terrain_planet_shadow_strength", 0.8)
+	material.set_shader_parameter("terrain_planet_shadow_fade_start_meters", 0.0)
+	material.set_shader_parameter("terrain_planet_shadow_fade_end_meters", 1.0)
 	material.set_shader_parameter("debug_color_enabled", false)
 	return material
 
 
 func _measure(canonical_uv: Vector2, enabled: bool, label: String) -> float:
 	_material.set_shader_parameter("terrain_macro_shadow_enabled", enabled)
+	_material.set_shader_parameter("terrain_planet_shadow_enabled", false)
+	return await _capture(canonical_uv, label)
+
+
+func _measure_planet(canonical_uv: Vector2, enabled: bool, label: String) -> float:
+	_material.set_shader_parameter("terrain_macro_shadow_enabled", false)
+	_material.set_shader_parameter("terrain_planet_shadow_enabled", enabled)
+	return await _capture(canonical_uv, label)
+
+
+func _capture(canonical_uv: Vector2, label: String) -> float:
 	_surface.mesh = _inward_surface_mesh(canonical_uv)
 	_surface.material_override = _material
 	for settle in range(3):
@@ -142,7 +191,7 @@ func _measure(canonical_uv: Vector2, enabled: bool, label: String) -> float:
 			total += color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
 			samples += 1
 	var luma: float = total / maxf(float(samples), 1.0)
-	print("TERRAIN_MACRO_SHADOW_UV_CASE name=%s enabled=%s uv=(%.3f, %.3f) luma=%.6f" % [label, enabled, canonical_uv.x, canonical_uv.y, luma])
+	print("TERRAIN_MACRO_SHADOW_UV_CASE name=%s uv=(%.3f, %.3f) luma=%.6f" % [label, canonical_uv.x, canonical_uv.y, luma])
 	return luma
 
 

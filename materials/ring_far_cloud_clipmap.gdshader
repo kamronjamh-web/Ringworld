@@ -1,5 +1,4 @@
 shader_type spatial;
-#include "res://materials/celestial_lighting.gdshaderinc"
 // The camera-local curved mesh is transformed with tangent/inward/up, a
 // reflected basis (determinant -1). Its effective winding changes under that
 // transform, so directional culling can remove the inhabited-side underside.
@@ -33,11 +32,9 @@ uniform float opacity : hint_range(0.0, 1.0) = 0.62;
 uniform float viewer_height_meters = 0.0;
 uniform vec3 surface_up = vec3(0.0, 1.0, 0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
-uniform vec3 atmosphere_day_color : source_color = vec3(0.20, 0.40, 0.66);
-uniform vec3 atmosphere_night_color : source_color = vec3(0.026, 0.035, 0.055);
-uniform float atmosphere_night_density_factor : hint_range(0.0, 1.0) = 0.08;
-uniform float atmosphere_shroud_opacity : hint_range(0.0, 1.0) = 0.92;
-uniform float atmosphere_shroud_visibility : hint_range(0.0, 1.0) = 1.0;
+#include "res://materials/ring_atmosphere.gdshaderinc"
+
+varying vec3 world_position;
 
 float hash21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise2(vec2 p) {
@@ -65,6 +62,10 @@ vec2 far_lightning_glow(vec2 canonical_uv, vec4 event_data) {
 	float broad = (1.0 - smoothstep(0.35, 1.55, distance_normalized)) * event_data.w;
 	float core = (1.0 - smoothstep(0.0, core_radius, distance_normalized)) * event_data.w;
 	return vec2(core, broad);
+}
+
+void vertex() {
+	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
@@ -100,17 +101,12 @@ void fragment() {
 	vec3 bright = mix(vec3(0.30, 0.36, 0.46), vec3(0.90, 0.94, 1.0), day);
 	vec3 storm = mix(vec3(0.045, 0.065, 0.10), vec3(0.17, 0.21, 0.29), day);
 	vec3 color = mix(bright, storm, clamp(resolved_storm_factor * 0.88 + resolved_coverage * 0.18, 0.0, 1.0));
-	vec3 atmosphere_color = mix(atmosphere_night_color, atmosphere_day_color, day);
-	float shroud = atmosphere_shroud_opacity
-		* atmosphere_shroud_visibility
-		* mix(atmosphere_night_density_factor, 1.0, day);
-	// The far backdrop keeps its own full atmospheric haze. Cap only this
-	// cloud-color washout: the prior daytime 0.92 blend left 8% of the cloud
-	// colour, making a correctly rasterized canopy indistinguishable from sky.
-	// Keep the far backdrop hazy, but cap cloud washout more aggressively so
-	// the sparse physical silhouette remains legible at Certified distances.
-	color = mix(color, atmosphere_color, min(clamp(shroud, 0.0, 1.0), 0.33));
-	vec3 base_albedo = color;
+	vec4 atmosphere = sample_ring_atmosphere(
+		ring_atmosphere_camera_world_position,
+		world_position,
+		vec3(0.0),
+		day);
+	float atmosphere_transmittance = 1.0 - atmosphere.a;
 	vec2 event_uv = vec2(
 		p.x / max(ring_circumference_km, 1.0),
 		p.y / max(ring_width_km, 1.0));
@@ -137,7 +133,8 @@ void fragment() {
 	// Keep physical cloud alpha separate from the bounded validated flash.
 	// Premultiplied alpha makes a clear-carrier flash additive, never absorbing
 	// the bright ring it is meant to illuminate.
-	ALBEDO = base_albedo * base_alpha + flash_premultiplied;
-	EMISSION = color * mix(0.025, 0.12, day) * base_alpha;
+	ALBEDO = (color * base_alpha + flash_premultiplied) * atmosphere_transmittance;
+	EMISSION = color * mix(0.025, 0.12, day) * base_alpha * atmosphere_transmittance
+		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy * base_alpha;
 	ALPHA = base_alpha;
 }

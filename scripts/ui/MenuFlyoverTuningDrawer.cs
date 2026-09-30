@@ -48,7 +48,7 @@ public partial class MenuFlyoverTuningDrawer : Control
         ["CloudRayStartJitterStrength"] = new(0, 1, .01),
         ["CloudStationaryHistoryWeight"] = new(0, .95, .01),
         ["CloudMovingHistoryWeight"] = new(0, .95, .01),
-        ["ShadowVerticalSamples"] = new(1, 16, 1),
+        ["ShadowVerticalSamples"] = new(1, 64, 1),
         ["ShadowStrength"] = new(0, 1, .05),
         ["ShadowExtinctionPerKm"] = new(0, 10, .01, "/km"),
         ["ShadowRadiusKm"] = new(8, 200, 1, "km"),

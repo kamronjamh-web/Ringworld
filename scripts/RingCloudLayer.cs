@@ -23,7 +23,6 @@ public partial class RingCloudLayer : MeshInstance3D
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarCoverage { get; set; } = 0.46f;
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarOpacity { get; set; } = 0.68f;
 	[Export(PropertyHint.Range, "0.01,0.4,0.01")] public float FarSoftness { get; set; } = 0.20f;
-	[Export(PropertyHint.Range, "0,1,0.01")] public float AtmosphericAlphaFadeStrength { get; set; } = 0.42f;
 	[ExportGroup("Far-field depth compression")]
 	[Export] public bool EnableFarSpace { get; set; } = true;
 	[Export(PropertyHint.Range, "100000,2000000,10000")] public float FarSpaceStartMeters { get; set; } = 850000.0f;
@@ -79,9 +78,8 @@ public partial class RingCloudLayer : MeshInstance3D
 		_material.SetShaderParameter("coverage", FarCoverage);
 		_material.SetShaderParameter("opacity", FarOpacity);
 		_material.SetShaderParameter("softness", FarSoftness);
-		_material.SetShaderParameter("atmospheric_alpha_fade_strength", AtmosphericAlphaFadeStrength);
 		if (_grid != null)
-			RingAtmosphereModel.ConfigureMaterial(_material, _grid.GetCanonicalRingCircumferenceMeters64() / System.Math.Tau);
+			RingAtmosphereModel.ConfigureMaterial(_material, _grid.GetCanonicalRingCircumferenceMeters64() / System.Math.Tau, 1.0f);
 		MaterialOverride = _material;
 		UpdateShaderUniforms(forceStaticRefresh: true);
 	}
@@ -146,6 +144,12 @@ public partial class RingCloudLayer : MeshInstance3D
 			_material.SetShaderParameter("camera_world_position", cameraWorldPosition);
 			_lastCameraWorldPosition = cameraWorldPosition;
 		}
+		Vector3 atmosphereSun = _sunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+		Camera3D? activeCamera = GetViewport()?.GetCamera3D();
+		RingAtmosphereRayFrame atmosphereFrame = activeCamera == null
+			? RingAtmosphereRayFrame.Invalid
+			: RingAtmosphereRayFrame.FromMainCamera(_grid, activeCamera, atmosphereSun);
+		atmosphereFrame.Apply(_material);
 
 		if (forceStaticRefresh)
 		{

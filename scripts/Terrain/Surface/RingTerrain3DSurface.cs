@@ -31,6 +31,10 @@ public partial class RingTerrain3DSurface : Node3D
     private bool _hasLocalPhysicalCameraPosition;
     private DirectionalLight3D? _atmosphereSun;
     private bool _atmosphereSunResolved;
+    // Terrain3D exposes a native material rather than ShaderMaterial. Keep its
+    // managed wrapper alive while the native terrain owns it so cloud and
+    // terrain-macro shadow registration remains valid between updates.
+    private GodotObject? _cloudShadowMaterial;
     private ulong _atmosphereRevision = ulong.MaxValue;
     private ulong _uploadedRevision = ulong.MaxValue;
 
@@ -269,6 +273,10 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter("biome_alpine_albedo", GD.Load<Texture2D>("res://materials/biomes/alpine_rock_albedo.png"));
         ApplyAtmosphereMaterialParameters();
         ForwardSurfaceAppearance();
+        ForwardSurfaceLighting(ResolveLightingSunDirection());
+        _cloudShadowMaterial = material;
+        RingCloudShadowProjector.Register(_cloudShadowMaterial);
+        RingTerrainMacroShadowProjector.Register(_cloudShadowMaterial);
     }
 
     private void ApplyWorldFrameMaterial()
@@ -294,6 +302,11 @@ public partial class RingTerrain3DSurface : Node3D
         GodotObject? material = _terrain.Call("get_material").AsGodotObject();
         material?.Call("set_shader_param", "ring_radius_meters", (float)_frame.RadiusMeters);
         material?.Call("set_shader_param", "ring_anchor_height", _frame.AnchorHeight);
+        double circumferenceMeters = _field?.CircumferenceMeters ?? CertifiedRingScale.EffectiveCircumferenceMeters;
+        float ringWidthMeters = _field?.WidthMeters ?? CertifiedRingScale.RingWidthMeters;
+        SetMaterialParameter("ring_terrain_shadow_anchor_uv", new Vector2(
+            (float)(_frame.AnchorAroundMeters / circumferenceMeters),
+            _frame.AnchorAcrossMeters / Mathf.Max(ringWidthMeters, 1.0f)));
         SetMaterialParameter("ring_texture_anchor_around_meters", PositiveModulo(_frame.AnchorAroundMeters, 1000));
         SetMaterialParameter("ring_texture_anchor_across_meters", PositiveModulo(_frame.AnchorAcrossMeters, 1000));
         SetMaterialParameter("ring_across_direction", _frame.AcrossDirection);
@@ -310,8 +323,15 @@ public partial class RingTerrain3DSurface : Node3D
         _atmosphereRevision = RingAtmosphereModel.Revision;
         SetMaterialParameter("ring_atmosphere_enabled", RingAtmosphereModel.Enabled);
         SetMaterialParameter("ring_radius_meters", radius);
-        SetMaterialParameter("ring_atmosphere_center_world", _worldFrame * new Vector3(0.0f, radius, 0.0f));
-        SetMaterialParameter("ring_atmosphere_half_width_meters", _field?.WidthMeters * 0.5f ?? 0.0f);
+        Vector3 ringCenterWorld = _worldFrame * new Vector3(0.0f, radius, 0.0f);
+        float ringWidthMeters = _field?.WidthMeters ?? CertifiedRingScale.RingWidthMeters;
+        SetMaterialParameter("ring_atmosphere_center_world", ringCenterWorld);
+        SetMaterialParameter("ring_atmosphere_half_width_meters", ringWidthMeters * 0.5f);
+        // The curved Terrain3D vertex is already in this same authoritative
+        // world frame, so macro-shadow sampling uses the identical receiver
+        // coordinate contract as the proxy terrain.
+        SetMaterialParameter("ring_center", ringCenterWorld);
+        SetMaterialParameter("ring_width_meters", ringWidthMeters);
         SetMaterialParameter("atmosphere_floor_depth_meters", RingAtmosphereModel.FloorDepthMeters);
         SetMaterialParameter("atmosphere_boundary_height_meters", RingAtmosphereModel.BoundaryHeightMeters);
         SetMaterialParameter("atmosphere_upper_height_meters", RingAtmosphereModel.UpperHeightMeters);
@@ -365,6 +385,7 @@ public partial class RingTerrain3DSurface : Node3D
         frame.Apply(SetMaterialParameter);
         float inwardDotSun = (-outwardWorld).Dot(toSun);
         SetMaterialParameter("ring_atmosphere_day_factor", Mathf.SmoothStep(-0.2f, 0.35f, inwardDotSun));
+        ForwardSurfaceLighting(toSun);
     }
 
     private DirectionalLight3D? ResolveAtmosphereSun()
@@ -608,6 +629,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_collisionBody != null) { _collisionBody.GetParent()?.RemoveChild(_collisionBody); _collisionBody.Free(); _collisionBody = null; }
         if (_mesherCamera != null) { _mesherCamera.GetParent()?.RemoveChild(_mesherCamera); _mesherCamera.Free(); _mesherCamera = null; }
         if (_terrain != null) { _terrain.GetParent()?.RemoveChild(_terrain); _terrain.Free(); _terrain = null; }
+        _cloudShadowMaterial = null;
         _terrainData = null;
         _windowHeights = null;
         _baselineWindowHeights = null;

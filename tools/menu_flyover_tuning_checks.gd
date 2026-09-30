@@ -331,7 +331,7 @@ func _check_gpu(tree: SceneTree, backdrop: Node, drawer: Node) -> void:
 	_require(is_equal_approx(night_ambient.r, .1875) and is_equal_approx(night_ambient.g, .20) and is_equal_approx(night_ambient.b, .22), "night cloud ambient did not preserve the colored palette")
 	_require(bool(effect.get("menu_fast_reconstruction")), "menu fast reconstruction flag was not applied to Sunshine")
 	var packed: PackedByteArray = effect.get("general_data") as PackedByteArray
-	_require(packed.size() == 720 and is_equal_approx(packed.decode_float(688), 1.0) and is_equal_approx(packed.decode_float(692), 1.0), "menu reconstruction/temporal UBO flags were not packed")
+	_require(packed.size() == 880 and is_equal_approx(packed.decode_float(688), 1.0) and is_equal_approx(packed.decode_float(692), 1.0), "menu reconstruction/temporal UBO flags were not packed")
 	var shadow_serial: int = int(quality.get("shadow_wrapper_serial", 0))
 	drawer.call("SetTuningValue", "CloudFastReconstruction", false)
 	drawer.call("SetTuningValue", "ShadowVerticalSamples", 8)

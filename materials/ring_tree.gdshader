@@ -16,15 +16,17 @@ uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform bool vegetation_wind_enabled = true;
 
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
-#include "res://materials/celestial_lighting.gdshaderinc"
+#include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
+varying vec3 tree_world_position;
+varying float tree_haze_transmittance;
 
 void vertex() {
 	vec3 tree_root_world = MODEL_MATRIX[3].xyz;
-	vec3 tree_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (vegetation_wind_enabled) {
 		float root_weight = clamp(VERTEX.y, 0.0, 1.0);
 		float instance_height = length(MODEL_MATRIX[1]);
@@ -32,16 +34,19 @@ void vertex() {
 		mat3 basis = mat3(MODEL_MATRIX);
 		vec3 squared_lengths = max(vec3(0.000001), vec3(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2])));
 		VERTEX += transpose(basis) * displacement / squared_lengths;
-		tree_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	}
 	// A cloud-map texel covers tens of metres, so evaluating per tree vertex is
 	// visually equivalent to per fragment while avoiding foliage overdraw cost.
-	tree_cloud_occlusion = sample_local_cloud_shadow(tree_world_position);
-	vec3 radial = tree_world_position - ring_center;
+	tree_cloud_occlusion = sample_local_cloud_shadow(world_position);
+	vec3 radial = world_position - ring_center;
 	radial.y = 0.0;
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	tree_day_factor = ringworld_effective_solar_day(smoothstep(
 		day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
+	tree_world_position = world_position;
+	tree_haze_transmittance = 1.0 - sample_ring_atmosphere(
+		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor).a;
 }
 
 void fragment() {
@@ -53,6 +58,10 @@ void fragment() {
 	float cloud_occlusion = tree_cloud_occlusion * tree_day_factor;
 	ALBEDO = sampled_color * tree_tint * mix(night_tint, vec3(1.0), tree_day_factor)
 		* (1.0 - cloud_occlusion * cloud_shadow_albedo_strength);
+	vec4 atmosphere = sample_ring_atmosphere(ring_atmosphere_camera_world_position,
+		tree_world_position, ring_center, tree_day_factor);
+	ALBEDO *= tree_haze_transmittance;
+	EMISSION += atmosphere.rgb * (1.0 - tree_haze_transmittance) * atmosphere_scattering_energy;
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.04;
 	METALLIC = 0.0;

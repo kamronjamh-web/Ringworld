@@ -3135,6 +3135,10 @@ public partial class RingVolumetricCloudLayer : Node3D
         Vector3 radialOutLocal = new((float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle));
         Vector3 surfaceUp = (_grid.GlobalBasis.Orthonormalized() * -radialOutLocal).Normalized();
         Vector3 sunDirection = _sunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+        Camera3D? activeCamera = GetViewport()?.GetCamera3D();
+        RingAtmosphereRayFrame atmosphereFrame = activeCamera == null
+            ? RingAtmosphereRayFrame.Invalid
+            : RingAtmosphereRayFrame.FromMainCamera(_grid, activeCamera, sunDirection);
         foreach (ShaderMaterial material in new[]
                  {
                      _material,
@@ -3143,6 +3147,7 @@ public partial class RingVolumetricCloudLayer : Node3D
                      _unionTransitionMaterial
                  })
         {
+			atmosphereFrame.Apply(material);
             material.SetShaderParameter("camera_world_position", _explorer.GlobalPosition);
             material.SetShaderParameter("ring_center", _grid.GetCanonicalRingCenterWorld());
             material.SetShaderParameter("surface_up", surfaceUp);
@@ -3152,6 +3157,7 @@ public partial class RingVolumetricCloudLayer : Node3D
                 "cloud_layer_occlusion_strength",
                 CloudLayerOcclusionStrength);
         }
+        atmosphereFrame.Apply(_showcaseMaterial);
         float ownership = Mathf.Clamp(LocalMeshCloudOwnership, 0.0f, 1.0f);
         float effectiveDetailedRadius = Mathf.Max(1.0f, _activeRadiusMeters * ownership);
         float effectiveDetailedHandoffStart = Mathf.Min(

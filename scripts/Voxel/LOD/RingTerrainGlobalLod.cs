@@ -200,6 +200,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _focus = GetNodeOrNull<Node3D>(FocusPath);
         _sunLight = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
+        ResolvePlanetMacroShadowLight();
         if (_grid?.TerrainSampler == null || _focus == null)
         {
             GD.PushWarning("RingTerrainGlobalLod could not resolve the shared sampler or focus.");
@@ -243,6 +244,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _macroShadowCancellation?.Cancel();
         _macroShadowCancellation?.Dispose();
         _macroShadowCancellation = null;
+        CancelPlanetMacroShadowBuild();
+        DisablePlanetMacroShadows();
     }
 
     private void HandleCanonicalFloatingOriginAnchorChanged(
@@ -272,7 +275,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         UpdateRegionalSegmentVisibility(delta);
         CompleteHeightPyramidBuildIfReady();
         CompleteMacroShadowBuildIfReady();
+        CompletePlanetMacroShadowBuildIfReady();
         RequestMacroShadowRebuildForSunChange();
+        RequestPlanetMacroShadowRebuildForLightChange();
         RefreshEditedSegments();
         ServiceInitialGlobalBuild();
         ServiceSegmentRebuilds();
@@ -890,12 +895,13 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
         // The background trace reads the pyramid's hierarchy.  Defer mutation
         // until it has stopped, and reject its now-obsolete mask immediately.
-        if (_macroShadowTask != null)
+        if (_macroShadowTask != null || _planetMacroShadowTask != null)
         {
             if (_macroShadowInvalidatedEditVersion != _grid.LodSurfaceEditVersion)
             {
                 _macroShadowInvalidatedEditVersion = _grid.LodSurfaceEditVersion;
                 _macroShadowRequestVersion++;
+                _planetMacroShadowRequestVersion++;
             }
             return;
         }
@@ -933,6 +939,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _observedEditVersion = edits.Version;
         _macroShadowInvalidatedEditVersion = 0;
         QueueMacroShadowRebuild();
+        QueuePlanetMacroShadowRebuild();
     }
 
     private RingLodSurfaceEditSnapshot PrepareGlobalEditSnapshot(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler)
@@ -1452,7 +1459,11 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         MacroTerrainShadowFadeEndMeters = nextFadeEnd;
         MacroTerrainShadowTraceSteps = nextTraceSteps;
         MacroTerrainShadowMaxTraceMeters = nextTraceDistance;
-        if (changed) QueueMacroShadowRebuild();
+        if (changed)
+        {
+            QueueMacroShadowRebuild();
+            QueuePlanetMacroShadowRebuild();
+        }
     }
 
     public void ApplyRuntimeMacroShadowOptions(bool enabled, bool wallShadowsEnabled)
@@ -1465,9 +1476,14 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         {
             _macroShadowCancellation?.Cancel();
             global::RingworldTechDemo.RingTerrainMacroShadowProjector.Disable();
+            CancelPlanetMacroShadowBuild();
             return;
         }
-        if (changed) QueueMacroShadowRebuild();
+        if (changed)
+        {
+            QueueMacroShadowRebuild();
+            QueuePlanetMacroShadowRebuild();
+        }
     }
 
     private void RequestMacroShadowRebuildForSunChange()
@@ -1507,6 +1523,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         float wallBottom = (_grid?.GetStructuralBottomGlobalY() ?? 0) * VoxelConstants.VoxelSizeMeters;
         _macroShadowTask = Task.Run(() =>
         {
+            using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu(
+                "Terrain macro shadow build", worker: true);
             var watch = Stopwatch.StartNew();
             RingTerrainMinMaxPyramid.DirectionalShadowMask mask = pyramid.BuildDirectionalShadowMask(
                 sunDirection, cancellation, traceSteps, traceDistance,
@@ -1569,6 +1587,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         in RingTerrainMinMaxPyramid.DirectionalShadowMask mask,
         double buildMilliseconds)
     {
+        using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain macro shadow install");
         if (mask.Width <= 0
             || mask.Height <= 0
             || mask.Pixels.Length != mask.Width * mask.Height)

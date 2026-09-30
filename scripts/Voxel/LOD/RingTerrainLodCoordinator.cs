@@ -64,9 +64,9 @@ public partial class RingTerrainLodCoordinator : Node
     [Export(PropertyHint.Range, "32,2048,16")] public int MaximumStagedMeshMemoryMiB { get; set; } = 160;
     [Export(PropertyHint.Range, "25,95,5")] public int StagedMeshRecoveryPercent { get; set; } = 65;
     [Export(PropertyHint.Range, "1,16,1")] public int MemoryPressureWorkerLimit { get; set; } = 2;
-    // Legacy name retained for scene compatibility. When enabled, shadow
-    // casters are limited to the nearest active LOD plus one coarse LOD that
-    // covers the directional-light shadow bubble.
+    // Legacy name retained for scene compatibility. When enabled, only the
+    // active proxy tiers inside the local directional-light shadow bubble cast.
+    // Distant regional tiers remain out of the hardware shadow pass.
     [Export] public bool RestrictShadowsToNearestActiveLevel { get; set; } = true;
     [Export(PropertyHint.Range, "100,50000,100")] public float TerrainShadowCoverageMeters { get; set; } = 4000.0f;
 
@@ -494,6 +494,32 @@ public partial class RingTerrainLodCoordinator : Node
         }
     }
 
+    /// <summary>
+    /// Updates the local directional-shadow coverage and immediately reapplies
+    /// the caster policy when a light changes range.
+    /// </summary>
+    public void SetTerrainShadowCoverageMeters(float coverageMeters)
+    {
+        float clamped = Mathf.Clamp(coverageMeters, 100.0f, 50000.0f);
+        if (Mathf.IsEqualApprox(TerrainShadowCoverageMeters, clamped)) return;
+        TerrainShadowCoverageMeters = clamped;
+        ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
+    }
+
+    /// <summary>Pure caster selection contract for the active proxy chain.</summary>
+    public static bool ShouldCastTerrainShadowForLevel(
+        bool active,
+        int levelIndex,
+        int firstUsefulLevel,
+        int coverageShadowLevel,
+        bool restrictToLocalShadowCoverage,
+        bool inspectorDefault)
+    {
+        if (!active) return false;
+        if (!restrictToLocalShadowCoverage) return inspectorDefault;
+        return levelIndex >= firstUsefulLevel && levelIndex <= coverageShadowLevel;
+    }
+
     public void ConfigureVoxelTransition(float fadeStart, float fadeEnd)
     {
         _voxelFadeStart = Mathf.Max(0.0f, fadeStart);
@@ -576,9 +602,13 @@ public partial class RingTerrainLodCoordinator : Node
             // near/far handoff bands.
             level.ConfigureStructuralShellHandoff(finerActiveLevel == null);
 
-            bool castShadows = RestrictShadowsToNearestActiveLevel
-                ? i == firstUsefulLevel || i == coverageShadowLevel
-                : _inspectorShadowDefaults[i];
+            bool castShadows = ShouldCastTerrainShadowForLevel(
+                active,
+                i,
+                firstUsefulLevel,
+                coverageShadowLevel,
+                RestrictShadowsToNearestActiveLevel,
+                _inspectorShadowDefaults[i]);
             level.SetTerrainShadowCasting(castShadows);
             finerActiveLevel = level;
         }

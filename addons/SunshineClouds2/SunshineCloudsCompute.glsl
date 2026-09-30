@@ -4,6 +4,8 @@
 #define ABSORPTION_COEFFICIENT 0.9
 
 #include "./CloudsInc.comp"
+#include "../../materials/ring_atmosphere_shared.gdshaderinc"
+#include "./RingAtmosphereCompute.glslinc"
 
 // Invocations in the (x, y, z) dimension
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -691,6 +693,47 @@ float coherent_history_decay(vec4 history, vec4 current, float decay,
 	return max(legacyDecay, retainedFloor);
 }
 
+bool opaque_depth_history_agrees(float expectedDepth, float currentOpaqueDepth,
+		vec4 historyMetadata, float tolerance, float currentCloudEnd,
+		float cameraTranslation, float maxStep) {
+	float historyDepth = historyMetadata.a;
+	// A negative value is an explicit sky sentinel. Fresh accumulation textures
+	// contain zero, which must never be accepted as either sky or opaque scene.
+	if (expectedDepth < 0.0) {
+		return historyDepth == -1.0;
+	}
+	bool matchingOpaqueDepth = historyDepth > 0.0
+		&& !isnan(historyDepth)
+		&& !isinf(historyDepth)
+		&& abs(expectedDepth - historyDepth) <= tolerance;
+	if (matchingOpaqueDepth) {
+		return true;
+	}
+
+	// On a grazing but continuous terrain surface, adjacent reprojected pixels
+	// can have substantially different radial depths. They remain safe to blend
+	// when both cloud endpoint estimates lie in front of both opaque surfaces,
+	// including camera translation and a one-step margin for the filtered end.
+	float previousCloudEnd = historyMetadata.g;
+	bool finiteSegments = currentOpaqueDepth > 0.0
+		&& !isnan(currentOpaqueDepth)
+		&& !isinf(currentOpaqueDepth)
+		&& historyDepth > 0.0
+		&& !isnan(historyDepth)
+		&& !isinf(historyDepth)
+		&& currentCloudEnd > 0.0
+		&& !isnan(currentCloudEnd)
+		&& !isinf(currentCloudEnd)
+		&& previousCloudEnd > 0.0
+		&& !isnan(previousCloudEnd)
+		&& !isinf(previousCloudEnd);
+	if (!finiteSegments) {
+		return false;
+	}
+	return max(currentCloudEnd, previousCloudEnd + cameraTranslation) + maxStep < currentOpaqueDepth
+		&& max(previousCloudEnd, currentCloudEnd + cameraTranslation) + maxStep < historyDepth;
+}
+
 void main() {
 	//SETTING UP UVS/RAY DATA
 	ivec2 uv = ivec2(gl_GlobalInvocationID.xy);
@@ -707,12 +750,19 @@ void main() {
 	vec4 view = genericData.data.current_camera_inv_projection * vec4(depthUV*2.0-1.0,depth,1.0);
 	view.xyz /= view.w;
 	float linear_depth = length(view); //used to calculate depth based on the view angle, idk just works.
+	// Keep opaque-scene visibility separate from the ray march's stochastic
+	// terminal state. Godot's reversed-Z depth uses zero for sky; a radial view
+	// length cannot classify it because valid edge pixels may exceed z_far.
+	bool has_opaque_depth = depth > 0.0;
 	//4.4 doesn't work with this
 	if (linear_depth >= scene_data_block.data.z_far){ 
 		linear_depth *= 100.0;
 	}
 	float far_depth = texture(far_opaque_depth_image, depthUV).r;
-	if (far_depth > 0.0 && !isnan(far_depth) && !isinf(far_depth)) linear_depth = min(linear_depth, far_depth);
+	if (far_depth > 0.0 && far_depth < linear_depth && !isnan(far_depth) && !isinf(far_depth)) {
+		linear_depth = min(linear_depth, far_depth);
+		has_opaque_depth = true;
+	}
 	
 	// Convert screen coordinates to normalized device coordinates
 	vec2 clipUV = vec2(depthUV.x, depthUV.y);
@@ -987,10 +1037,25 @@ void main() {
 		newStep = maxstep;
 	}
 	for (int i = entrySkip; i < stepCount; i++) {
-		
+		bool terminalDepthInterval = false;
+		float terminalDensityWeight = 1.0;
 		if (traveledDistance > linear_depth){
-			// depthFade = 1.0 - smoothstep(linear_depth - newStep, linear_depth, traveledDistance);
 			depthBreak = true;
+			// Each point represents the interval that led to it. Preserve the visible
+			// portion of the terminal interval instead of evaluating the endpoint
+			// behind opaque geometry. The first jittered point still represents the
+			// nominal first maxstep interval starting at the ray origin.
+			float incomingStep = i == 0 ? maxstep : newStep;
+			float intervalStart = i == 0 ? 0.0 : traveledDistance - incomingStep;
+			float visibleLength = clamp(linear_depth - intervalStart, 0.0, incomingStep);
+			if (visibleLength <= 0.0) {
+				traveledDistance = linear_depth;
+				curPos = rayOrigin + raydirection * traveledDistance;
+				break;
+			}
+			terminalDepthInterval = true;
+			terminalDensityWeight = visibleLength / incomingStep;
+			traveledDistance = intervalStart + visibleLength * 0.5;
 		}
 		
 		curPos = rayOrigin + raydirection * traveledDistance;
@@ -1144,11 +1209,11 @@ void main() {
 				newStep = maxstep;
 			}
 
-			if (i == 0){
+			if (i == 0 && !terminalDepthInterval){
 				newdensity = mix(newdensity, 0.0, traveledDistance / maxstep);
 			}
 
-			density += newdensity;
+			density += newdensity * terminalDensityWeight;
 			if (density >= 1.0){
 				densityBreak = true;
 				break;
@@ -1179,12 +1244,19 @@ void main() {
 			
 			newStep = maxstep;
 		}
-		
-		traveledDistance += newStep;
-		if (depthBreak){
+
+		if (terminalDepthInterval) {
+			traveledDistance = linear_depth;
+			curPos = rayOrigin + raydirection * traveledDistance;
 			break;
 		}
 		
+		traveledDistance += newStep;
+
+	}
+	if (depthBreak) {
+		traveledDistance = linear_depth;
+		curPos = rayOrigin + raydirection * traveledDistance;
 	}
 
 	// GLSL leaves smoothstep undefined when edge0 is greater than edge1.
@@ -1350,13 +1422,21 @@ void main() {
 		&& genericData.data.temporal_controls.w <= 0.5
 		&& (genericData.data.menu_optimization_controls.y <= 0.5 || reprojectedPixelMotion <= 2.0);
 	if (genericData.data.menu_optimization_controls.y > 0.5 || coherentBilinearHistory) {
-		// Metadata remains nearest, but menu reprojection rounds the true
-		// fractional history coordinate instead of legacy integer motion.
+		// Menu metadata remains nearest. Gameplay separately validates every
+		// fractional tap against its stored opaque-depth history.
 		clampedUV = clamp(ivec2(floor(historyPixel + vec2(0.5))), ivec2(0), size - ivec2(1));
 	}
 	float diagnosticHistoryWeight = 0.0;
 	float diagnosticHistoryReason = 0.75; // .75 = invalid/offscreen rejection
 	float diagnosticAlphaMismatch = 0.0;
+	bool gameplayTemporalHistory = genericData.data.menu_optimization_controls.y <= 0.5;
+	float opaqueDepthMetadata = has_opaque_depth ? linear_depth : -1.0;
+	float expectedHistoryOpaqueDepth = opaqueDepthMetadata;
+	if (has_opaque_depth) {
+		vec3 opaqueWorldPosition = rayOrigin + raydirection * linear_depth;
+		expectedHistoryOpaqueDepth = length(opaqueWorldPosition - genericData.data.previous_camera_origin.xyz);
+	}
+	float opaqueDepthTolerance = max(2.0, max(expectedHistoryOpaqueDepth, 0.0) * 3.0 / max(float(size.y), 1.0));
 
         //execute accumilation.
         float accumdecay = genericData.data.accumilation_decay;
@@ -1372,26 +1452,51 @@ void main() {
 	
 	//float finalDensityDistance = max(traveledDistance, highestDensityDistance);
 	//linear_depth = max(linear_depth, traveledDistance);
-	float travelspeed = length(delta) + maxstep;
+	float cameraTranslation = length(delta);
+	float travelspeed = cameraTranslation + maxstep;
 	//bool debugCollisions = false;
 	if (usingaccumA > 0.0){
 		currentColorAccumilation = coherentBilinearHistory
 			? mix(mix(imageLoad(accum_1A_image, history00).rgba, imageLoad(accum_1A_image, history10).rgba, historyFraction.x), mix(imageLoad(accum_1A_image, history01).rgba, imageLoad(accum_1A_image, history11).rgba, historyFraction.x), historyFraction.y)
 			: imageLoad(accum_1A_image, clampedUV).rgba;
 		currentDataAccumilation = imageLoad(accum_2A_image, clampedUV).rgba;
-		diagnosticAlphaMismatch = abs(currentColorAccumilation.a - lightColor.a);
-
 		float currentDepthBreak = float(depthBreak);
 		bool depthBreakAgrees = currentDepthBreak == currentDataAccumilation.a;
 		bool cloudDistanceAgrees = abs(finalDensityDistance - currentDataAccumilation.b)
 			<= maxstep + 0.1 * max(finalDensityDistance, currentDataAccumilation.b);
+		bool gameplayVisibilityRejected = false;
+		if (gameplayTemporalHistory && !historyOutsideImage) {
+			if (coherentBilinearHistory) {
+				vec4 data00 = imageLoad(accum_2A_image, history00).rgba;
+				vec4 data10 = imageLoad(accum_2A_image, history10).rgba;
+				vec4 data01 = imageLoad(accum_2A_image, history01).rgba;
+				vec4 data11 = imageLoad(accum_2A_image, history11).rgba;
+				float weight00 = (1.0 - historyFraction.x) * (1.0 - historyFraction.y) * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data00, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float weight10 = historyFraction.x * (1.0 - historyFraction.y) * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data10, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float weight01 = (1.0 - historyFraction.x) * historyFraction.y * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data01, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float weight11 = historyFraction.x * historyFraction.y * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data11, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float validWeight = weight00 + weight10 + weight01 + weight11;
+				if (validWeight > 0.00001) {
+					currentColorAccumilation = (imageLoad(accum_1A_image, history00).rgba * weight00
+						+ imageLoad(accum_1A_image, history10).rgba * weight10
+						+ imageLoad(accum_1A_image, history01).rgba * weight01
+						+ imageLoad(accum_1A_image, history11).rgba * weight11) / validWeight;
+					currentDataAccumilation = (data00 * weight00 + data10 * weight10 + data01 * weight01 + data11 * weight11) / validWeight;
+				} else {
+					gameplayVisibilityRejected = true;
+				}
+			} else if (!opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, currentDataAccumilation, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)) {
+				gameplayVisibilityRejected = true;
+			}
+		}
+		diagnosticAlphaMismatch = abs(currentColorAccumilation.a - lightColor.a);
 
 		// bool lastDepthBreak = currentDataAccumilation.a < 0.0;
 		float if_break = max(float(override), historyOutsideImage ? 1.0 : 0.0);
 		// if_break = max(if_break, lightColor.a - 0.8 - currentColorAccumilation.a); //Lets super high accumilation still look passable, but at the cost of less soft edges.
 
-		if (if_break > 0.0 || (!menuStaticHistory && currentDepthBreak != currentDataAccumilation.a && abs(initialdistanceSample - currentDataAccumilation.r) > travelspeed * 0.5)){
-			diagnosticHistoryReason = if_break > 0.0 ? 0.75 : 0.5; // depth-break reject
+		if (if_break > 0.0 || gameplayVisibilityRejected || (!gameplayTemporalHistory && !menuStaticHistory && currentDepthBreak != currentDataAccumilation.a && abs(initialdistanceSample - currentDataAccumilation.r) > travelspeed * 0.5)){
+			diagnosticHistoryReason = if_break > 0.0 ? 0.75 : 0.5; // visibility/depth-break reject
 			currentColorAccumilation = lightColor;
 			//debugCollisions = true;
 			currentDataAccumilation.r = initialdistanceSample;
@@ -1399,9 +1504,9 @@ void main() {
 			currentDataAccumilation.b = finalDensityDistance;
 		}
 		else{
-			float agreementDecay = menuStaticHistory ? accumdecay : (coherentBilinearHistory
+			float agreementDecay = gameplayTemporalHistory ? accumdecay : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
 				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
-				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay));
+				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay)));
 			diagnosticHistoryWeight = agreementDecay;
 			diagnosticHistoryReason = agreementDecay < accumdecay ? 0.25 : 0.0; // alpha fade / accepted
 			currentColorAccumilation = (currentColorAccumilation * agreementDecay) + lightColor * (1.0 - agreementDecay);
@@ -1411,7 +1516,7 @@ void main() {
 			currentDataAccumilation.b = mix(currentDataAccumilation.b, finalDensityDistance,  (1.0 - agreementDecay));
 		}
 
-		currentDataAccumilation.a = currentDepthBreak;
+		currentDataAccumilation.a = gameplayTemporalHistory ? opaqueDepthMetadata : currentDepthBreak;
 
 		imageStore(accum_1B_image, uv, currentColorAccumilation);
 		imageStore(accum_2B_image, uv, currentDataAccumilation);
@@ -1421,19 +1526,43 @@ void main() {
 			? mix(mix(imageLoad(accum_1B_image, history00).rgba, imageLoad(accum_1B_image, history10).rgba, historyFraction.x), mix(imageLoad(accum_1B_image, history01).rgba, imageLoad(accum_1B_image, history11).rgba, historyFraction.x), historyFraction.y)
 			: imageLoad(accum_1B_image, clampedUV).rgba;
 		currentDataAccumilation = imageLoad(accum_2B_image, clampedUV).rgba;
-		diagnosticAlphaMismatch = abs(currentColorAccumilation.a - lightColor.a);
-
 		float currentDepthBreak = float(depthBreak);
 		bool depthBreakAgrees = currentDepthBreak == currentDataAccumilation.a;
 		bool cloudDistanceAgrees = abs(finalDensityDistance - currentDataAccumilation.b)
 			<= maxstep + 0.1 * max(finalDensityDistance, currentDataAccumilation.b);
+		bool gameplayVisibilityRejected = false;
+		if (gameplayTemporalHistory && !historyOutsideImage) {
+			if (coherentBilinearHistory) {
+				vec4 data00 = imageLoad(accum_2B_image, history00).rgba;
+				vec4 data10 = imageLoad(accum_2B_image, history10).rgba;
+				vec4 data01 = imageLoad(accum_2B_image, history01).rgba;
+				vec4 data11 = imageLoad(accum_2B_image, history11).rgba;
+				float weight00 = (1.0 - historyFraction.x) * (1.0 - historyFraction.y) * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data00, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float weight10 = historyFraction.x * (1.0 - historyFraction.y) * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data10, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float weight01 = (1.0 - historyFraction.x) * historyFraction.y * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data01, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float weight11 = historyFraction.x * historyFraction.y * float(opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, data11, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep));
+				float validWeight = weight00 + weight10 + weight01 + weight11;
+				if (validWeight > 0.00001) {
+					currentColorAccumilation = (imageLoad(accum_1B_image, history00).rgba * weight00
+						+ imageLoad(accum_1B_image, history10).rgba * weight10
+						+ imageLoad(accum_1B_image, history01).rgba * weight01
+						+ imageLoad(accum_1B_image, history11).rgba * weight11) / validWeight;
+					currentDataAccumilation = (data00 * weight00 + data10 * weight10 + data01 * weight01 + data11 * weight11) / validWeight;
+				} else {
+					gameplayVisibilityRejected = true;
+				}
+			} else if (!opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, currentDataAccumilation, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)) {
+				gameplayVisibilityRejected = true;
+			}
+		}
+		diagnosticAlphaMismatch = abs(currentColorAccumilation.a - lightColor.a);
 		
 		// bool lastDepthBreak = currentDataAccumilation.a < 0.0;
 		float if_break = max(float(override), historyOutsideImage ? 1.0 : 0.0);
 		// if_break = max(if_break, lightColor.a - 0.8 - currentColorAccumilation.a); //Lets super high accumilation still look passable, but at the cost of less soft edges.
 
-		if (if_break > 0.0 || (!menuStaticHistory && currentDepthBreak != currentDataAccumilation.a && abs(initialdistanceSample - currentDataAccumilation.r) > travelspeed * 0.5)){
-			diagnosticHistoryReason = if_break > 0.0 ? 0.75 : 0.5; // depth-break reject
+		if (if_break > 0.0 || gameplayVisibilityRejected || (!gameplayTemporalHistory && !menuStaticHistory && currentDepthBreak != currentDataAccumilation.a && abs(initialdistanceSample - currentDataAccumilation.r) > travelspeed * 0.5)){
+			diagnosticHistoryReason = if_break > 0.0 ? 0.75 : 0.5; // visibility/depth-break reject
 			currentColorAccumilation = lightColor;
 			//debugCollisions = true;
 			currentDataAccumilation.r = initialdistanceSample;
@@ -1441,9 +1570,9 @@ void main() {
 			currentDataAccumilation.b = finalDensityDistance;
 		}
 		else{
-			float agreementDecay = menuStaticHistory ? accumdecay : (coherentBilinearHistory
+			float agreementDecay = gameplayTemporalHistory ? accumdecay : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
 				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
-				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay));
+				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay)));
 			diagnosticHistoryWeight = agreementDecay;
 			diagnosticHistoryReason = agreementDecay < accumdecay ? 0.25 : 0.0; // alpha fade / accepted
 			currentColorAccumilation = (currentColorAccumilation * agreementDecay) + lightColor * (1.0 - agreementDecay);
@@ -1453,7 +1582,7 @@ void main() {
 			currentDataAccumilation.b = mix(currentDataAccumilation.b, finalDensityDistance,  (1.0 - agreementDecay));
 		}
 
-		currentDataAccumilation.a = currentDepthBreak;
+		currentDataAccumilation.a = gameplayTemporalHistory ? opaqueDepthMetadata : currentDepthBreak;
 
 		imageStore(accum_1A_image, uv, currentColorAccumilation);
 		imageStore(accum_2A_image, uv, currentDataAccumilation);
@@ -1478,14 +1607,25 @@ void main() {
 	
 	// Diagnostic output is intentionally after ping-pong stores: it cannot feed
 	// back into accumulation. R=used history weight; G=reason (0 accepted,
-	// .25 alpha fade, .5 depth-break, .75 invalid/offscreen); B=mismatch;
+	// .25 alpha fade, .5 visibility/depth-break, .75 invalid/offscreen); B=mismatch;
 	// A=current ray-marched alpha.
 	if (genericData.data.menu_temporal_controls.w > 0.5) {
 		imageStore(output_color_image, uv, vec4(diagnosticHistoryWeight, diagnosticHistoryReason,
 			diagnosticAlphaMismatch, lightColor.a));
 	} else {
+		// Apply once after history has been stored. The temporal buffers remain
+		// live-profile independent, while the published backdrop matches display.
+		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
+			float haze_distance = clamp(currentDataAccumilation.b, 0.0, max(0.0, linear_depth));
+			vec4 haze = ring_cloud_atmosphere_haze(rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
+			currentColorAccumilation.rgb = mix(currentColorAccumilation.rgb, haze.rgb, haze.a);
+		}
 		imageStore(output_color_image, uv, currentColorAccumilation);
 	}
+	// The private accumulation alpha holds opaque depth for gameplay history.
+	// output_data is consumed by post compute as a depth-break flag, so preserve
+	// that public contract after the history write.
+	currentDataAccumilation.a = float(depthBreak);
 	imageStore(output_data_image, uv, currentDataAccumilation);
 	//}
 }

@@ -58,7 +58,7 @@ The 2026-09-29 [terrain detail implementation](terrain-generation-detail-impleme
 - [x] Version runtime terrain identity: generator v17 versus legacy v16, a version-10 proxy cache, a version-5 pyramid, `world_state_surface_runtime_v1.json`, and `surface_runtime_edits_v1.json`.
 - [x] Define the runtime surface contract: terrain -8,000 to +8,000 m, sea level 0 m, reserved build ceiling 8,400 m, structural wall top 10,400 m, no caves or natural overhangs. Retained volumetric-domain metadata remains owned by older backends.
 - [x] Route the new field through the fractional-height presentation/edit consumers and use the same 2 m positive-diagonal collision lattice as the surface field.
-- [x] Validate fractional heights with shared-authority, field, native curved-collider, near-proxy, tree-root, and shadow-pyramid fixtures; review the far-mesh, minimap, water, and weather query paths. Full-environment visual and performance acceptance remains milestone 6. Near Terrain3D macro/cloud projector and atmosphere-material integration remains separate work.
+- [x] Validate fractional heights with shared-authority, field, native curved-collider, near-proxy, tree-root, and shadow-pyramid fixtures; review the far-mesh, minimap, water, and weather query paths. Full-environment visual and performance acceptance remains milestone 6. Near Terrain3D atmosphere, cloud-shadow, and sun/planet macro-terrain shadow material integration are implemented. See [near-surface shading parity](terrain3d-surface-port.md#near-surface-shading-parity).
 
 ### Milestone 5 implementation status
 

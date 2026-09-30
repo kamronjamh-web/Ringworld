@@ -52,6 +52,7 @@ public partial class RingGraphicsQualityController : Node
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath GrassLayerPath { get; set; } = new("../StandingGrass");
     [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
+    [Export] public NodePath PlanetLightPath { get; set; } = new("../PlanetLight");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
     [Export] public bool UseMegaRegionalFarBackdrop { get; set; }
 
@@ -179,6 +180,7 @@ public partial class RingGraphicsQualityController : Node
     private VoxelChunkGridManager? _grid;
     private RingStandingGrassLayer? _grass;
     private DirectionalLight3D? _sun;
+    private DirectionalLight3D? _planet;
     private WorldEnvironment? _worldEnvironment;
     private bool _skyAtmosphereRegistered;
     private AtmosphereVisualDefaults? _atmosphereDefaults;
@@ -205,6 +207,7 @@ public partial class RingGraphicsQualityController : Node
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _grass = GetNodeOrNull<RingStandingGrassLayer>(GrassLayerPath);
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
+        _planet = GetNodeOrNull<DirectionalLight3D>(PlanetLightPath);
         _worldEnvironment = GetNodeOrNull<WorldEnvironment>(WorldEnvironmentPath);
 
         RingTerrainLodCoordinator.QualityPreset startupPreset = ResolveCommandLinePreset(DefaultPreset);
@@ -256,6 +259,7 @@ public partial class RingGraphicsQualityController : Node
     {
         _ = delta;
         UpdateLocalShadowHandoff();
+        UpdateTerrainShadowCasterCoverage();
         if (_skyAtmosphereRegistered || _grid == null) return;
         if (_worldEnvironment?.Environment?.Sky?.SkyMaterial is not ShaderMaterial skyMaterial) return;
         if (skyMaterial.Shader == null
@@ -350,7 +354,7 @@ public partial class RingGraphicsQualityController : Node
         ApplyShadowTuningOverrides();
 
         if (_coordinator != null)
-            _coordinator.TerrainShadowCoverageMeters = shadowDistanceMeters;
+            _coordinator.SetTerrainShadowCoverageMeters(shadowDistanceMeters);
         ApplyTerrainMacroShadowOverrides(
             macroShadowStrength,
             macroFadeStartMeters,

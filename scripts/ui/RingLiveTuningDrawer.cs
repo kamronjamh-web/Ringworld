@@ -420,7 +420,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentToggle(cloudShadows, "PreferGpuCloudShadows", "GPU cascaded cloud shadows", _cloudBridge?.PreferGpuCloudShadows ?? true);
         AddToggle(cloudShadows, "Cloud shadow generation (profile)", _cloudBridge?.GpuShadowGenerationEnabled ?? true, value => { if (_cloudBridge != null) _cloudBridge.GpuShadowGenerationEnabled = value; });
         AddToggle(cloudShadows, "Cloud shadow receivers (profile)", _cloudBridge?.CloudShadowReceiversEnabled ?? true, value => { if (_cloudBridge != null) _cloudBridge.CloudShadowReceiversEnabled = value; });
-        AddPersistentSlider(cloudShadows, "GpuShadowVerticalSamples", "GPU vertical samples", 1, 16, 1, _cloudBridge?.GpuShadowVerticalSamples ?? 4);
+        AddPersistentSlider(cloudShadows, "GpuShadowVerticalSamples", "GPU vertical samples", 1, 64, 1, _cloudBridge?.GpuShadowVerticalSamples ?? 4);
         AddToggle(cloudShadows, "LOD1 terrain shadows", _lod1?.CastTerrainShadows ?? true, value => { if (_lod1 != null) _lod1.CastTerrainShadows = value; });
         VBoxContainer gpuNear = TuningMenuUi.CreateSection(tab, "GPU near map");
         AddPersistentSlider(gpuNear, "GpuNearShadowMapResolution", "GPU near map", 64, 2048, 64, _cloudBridge?.GpuNearShadowMapResolution ?? 1024); AddPersistentSlider(gpuNear, "GpuNearShadowRadiusMeters", "GPU near radius", 8000, 80000, 1000, _cloudBridge?.GpuNearShadowRadiusMeters ?? 24000); AddPersistentSlider(gpuNear, "GpuNearShadowUpdatesPerSecond", "GPU near updates/sec", 1, 20, .5, _cloudBridge?.GpuNearShadowUpdatesPerSecond ?? 10);

@@ -48,9 +48,25 @@ Edits save atomically to `surface_terrain3d_edits_v1.json` in the active world d
 
 This stage does not establish a performance gain. Region generation, upload, and collider rebuilds are synchronous; long travel and rapid editing need profiling and asynchronous work before production use.
 
-1. Validate and complete surface edit propagation through water shorelines, vegetation, distant terrain, and far-ring heightmap shadows; match near-surface lighting to those representations.
+1. Validate and complete surface edit propagation through water shorelines, vegetation, distant terrain, and far-ring heightmap shadows. Shared cloud-shadow, day/night, grass-tint shading, and native sun/planet macro-terrain shadow reception are implemented below.
 2. Add queued region generation, incremental edit uploads, and collider updates; measure frame times and memory while travelling and editing.
 3. Extend traversal and visual checks across biomes, structural walls, world seams, and quality presets with all environment systems active.
 4. Enable Mega Ring using the shared canonical-coordinate design after its own precision, streaming, and persistence validation.
 
 Caves remain a later system. This height field represents one surface height per canonical location; future underground geometry and surface entrances will require their own representation and integration.
+
+## Near-surface shading parity
+
+The near shader now receives the same projected cloud mask as the proxy LOD through `RingCloudShadowProjector`. Its receiver cache accepts both ordinary `ShaderMaterial` objects and Terrain3D's native parameter API. Each native owner registers after material setup; active, staged, and cached owners receive the shared lighting values without regenerating terrain or rewriting unchanged parameters.
+
+The shader uses the proxy's day/night thresholds, direct-light factors, night tint, cloud-shadow visibility and ambient darkening. Grassland and forest use the existing distance-based grass coverage tint and global live controls. This retains its authored distance fade; it does not tint the entire near surface when coverage is meant to begin farther away. The near-only 3,500–5,200 m snow override is removed. Wetness still darkens the surface and drives roughness/specular response, with an explicit GGX direct-specular term alongside the shared diffuse treatment. Atmospheric haze remains applied after the base surface tint.
+
+Dry near terrain now matches the proxy's environment-reflection coefficient (`SPECULAR = 0.18`) and contributes zero direct specular light. The explicit GGX highlight is weighted by accumulated surface wetness, including the existing rain-wetness strength and slope mask. Fully wet terrain retains its highlight, which fades out as the surface dries.
+
+Validation on the GPU uses an actual prepared Terrain3D window and a proxy surface under matched illumination. `tools/terrain_near_lod_parity_gpu_test.gd` measures clear-day luminance of approximately 0.20028 near / 0.19998 proxy, cloud-shadow luminance of 0.04749 / 0.04743, and night luminance of 0.01415 / 0.01413. Grass-coverage response agrees within the 0.02 normalized-response tolerance. Dry near luminance is 0.20220 with direct specular either enabled or disabled. Wet near luminance is 0.26906 with direct specular enabled versus 0.15037 disabled, isolating the wet highlight from wetness's diffuse darkening. Setting rain-wetness strength to zero returns to the dry result. These are controlled material checks, not a performance claim or a promise of pixel-identical terrain with different meshes and texture coordinates.
+
+The scene-backed surface-shading test verifies immediate forwarding of changed lighting settings through the prepared-owner wrapper. It also publishes cloud textures/transforms to the real native material, verifies that identical updates cause zero parameter writes, and checks disable/fallback behavior. Native collision/region checks and the existing shader-material receiver cache test pass. `tools/terrain_near_color_diagnostic.gd` provides isolated gameplay captures and dumps the six biome texture bindings and native debug flags.
+
+Reviewed gameplay captures are in `.godot/terrain_near_color/4645803/`: `normal_noon.png` and `normal_night.png`, plus haze-off/biome-disabled/dry controls and `report.json`. The lowland surface is at approximately 391 m, below the former snow threshold. All six biome textures are bound, the diagnostic checkerboard is off, and the native cloud receiver is enabled by day and disabled by the nighttime cloud-shadow policy. These captures preserve the user's settings through isolated fixture preferences.
+
+Native reception of the macro terrain-shadow projector is implemented for both sunlight and planet light. The native window derives canonical shadow UVs from a normalized double-precision anchor and its local planar offsets, preserving the same whole-ring mask through window replacement and reanchoring. Both diffuse light and rain highlights use the combined terrain/cloud visibility. Native Terrain3D already defaults to hardware shadow casting On; the missing work was macro-mask reception and the skipped proxy caster tiers. No additional grave-key settings are introduced: the existing lighting, terrain-shadow, cloud-shadow, grass-coverage, and rain controls govern these paths.

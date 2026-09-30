@@ -1,0 +1,7 @@
+// Sunshine adapter for the portable terrain/compute atmosphere math.
+vec4 ring_cloud_atmosphere_haze(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[10]) {
+	if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return vec4(0.0);
+	vec3 target = ray_origin + normalize(ray_direction) * distance_m;
+	return ring_atmosphere_local_haze_shared(target, ray_origin, p[7].xyz, p[9].xyz, p[6].w, p);
+}
+

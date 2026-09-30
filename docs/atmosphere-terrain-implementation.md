@@ -14,6 +14,28 @@ This implements the priorities from [the September 27 diagnostics](atmosphere-te
 - [x] Validate near, proxy, and scaled far material bindings and visual captures.
 - [x] Measure terrain, grass, tree, and shadow rendering independently.
 - [x] Run final gameplay movement and rendering checks.
+- [x] Extend the shared haze profile to tree mesh/impostor LODs and all cloud renderers.
+- [x] Validate cloud opacity preservation, zero-density/off equivalence, and terminal opaque-depth clipping.
+
+## Cloud and tree integration (September 29)
+
+The procedural tree shader, imported tree meshes, and shared far impostors now register with `RingAtmosphereModel`. Their camera-relative ray frames update even when celestial lighting has not changed. Surviving alpha-cutout fragments receive the same extinction and scattering; imported-tree specular light is attenuated as well. Discarded texels do not acquire haze colour.
+
+Sunshine receives a ten-vector atmosphere snapshot in its append-only callback buffer (880 bytes). Its final output applies shared haze after the temporal ping-pong stores, using a representative cloud distance bounded by opaque depth. This keeps accumulated history free of haze and preserves cloud alpha. Raw-density and history-weight diagnostics bypass haze. Portable finite-cylinder path and scattering functions are shared by compute and spatial shaders; compute includes are direct because Godot's compute importer does not expand nested includes.
+
+The nearby-cloud follow-up found that gameplay was not actually delivering this snapshot: the C# bridge passed a managed `Vector4[]`, while the GDScript property requires `Array[Vector4]`. The property remained empty, and the compositor consequently uploaded a disabled profile. The bridge now passes `Godot.Collections.Array<Vector4>` with ten entries, including ten zero entries when haze is disabled. The original isolated test injected a correctly typed profile directly and therefore missed the gameplay boundary. `tools/cloud_haze_gameplay_test.gd` now exercises the real bridge with a fixed overhead camera, frozen cloud sampling, and isolated preferences, comparing haze off against Cinematic visibility of 30 km and 10 km. This corrects delivery of the existing Atmosphere settings without changing haze strength or cloud opacity.
+
+The failing gameplay capture recorded zero profile entries in `.godot/cloud_haze_gameplay/4564081/report.json`. After the fix, `.godot/cloud_haze_gameplay/4654302/report.json` records all ten entries, the expected 30,000/10,000 m visibility distances, and a camera height of 393.706 m below the 2,000 m cloud floor. Cloud-pixel mean RGB differences from haze-off were 0.00716 at 30 km and 0.05365 at 10 km; mean alpha drift was below 0.0014. The existing isolated compute test also passed. A separate spatial `source_color` probe confirmed that the production Vector3 uploads agree with the compute profile's raw RGB convention; no color-space adjustment was needed. The .NET build passed without warnings or errors.
+
+The far cloud clipmap, whole-ring shell, and merged mesh clouds use the same live profile. Their final cloud and lightning radiance receives extinction once, with coverage-aware scattering in the premultiplied paths. The clipmap no longer uses its separate capped colour wash. All paths use the existing grave-key **Atmosphere** controls and persistence.
+
+Focused GPU checks passed for all three tree shaders, all three spatial cloud shaders, Sunshine's enabled/disabled/zero-density output, and 18 air-path cases at both physical and scaled coordinates. The controlled cloud-depth test passed 12 cases, including fractional final-interval integration; see [the terrain-awareness milestone](cloud-terrain-awareness-plan.md).
+
+Full runtime Terrain3D captures passed at noon, dusk, night, and 12 km above the ground for Natural/Cinematic presets, plus haze-off and zero-density states. Evidence: `.godot/atmosphere_visual/5122373/`. These establish runtime profile/frame correctness, not a new frame-rate comparison. The captures still show cloud grain and some night foliage-edge artifacts; this pass does not claim to resolve those separately reported visual issues.
+
+The existing foliage-edge GPU test passed, and the six-route continuous-motion/history regression passed at its established 0.85 setting with blue-noise motion set to zero. Saved gameplay preferences were not changed.
+
+A separate run using the current 0.95 moving-history preference exceeded that regression's fast-turn tolerance at 60 degrees/second, frame 48. The original HEAD compute shader, compiled separately and injected only into an isolated comparison fixture, failed at the same point. This remains a history-response limitation, not a regression attributed to this haze/depth change. Logs: `.godot/haze-cloud-motion-errors.log` and `.godot/haze-cloud-motion95-baseline-errors.log`.
 
 ## Terrain sampling
 

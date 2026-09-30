@@ -55,7 +55,7 @@ public sealed class GameplayCloudDefaults
         ["GpuFarShadowMapResolution"] = (64, 1024, true),
         ["GpuFarShadowRadiusMeters"] = (16000, 200000, false),
         ["GpuFarShadowUpdatesPerSecond"] = (.25f, 5, false),
-        ["GpuShadowVerticalSamples"] = (1, 16, true)
+        ["GpuShadowVerticalSamples"] = (1, 64, true)
     };
     private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "SculptLocalizedStorms", "FastReconstruction" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };

@@ -341,7 +341,7 @@ func _run_history_diagnostics() -> Dictionary:
 	for frame in range(6):
 		last = await _frame(around, time, false, true)
 		var packed: PackedByteArray = effect.get("general_data") as PackedByteArray
-		_require(packed.size() == 720 and is_equal_approx(packed.decode_float(716), 1.0), "history diagnostic flag did not reach the GPU")
+		_require(packed.size() == 880 and is_equal_approx(packed.decode_float(716), 1.0), "history diagnostic flag did not reach the GPU")
 		if failed: return {}
 		var sampled := _aggregate_history_diagnostics(last, counts, opaque_counts)
 		used_sum += float(sampled.used)
@@ -666,7 +666,7 @@ func _half_luma_error(a:Image,b:Image,left:bool)->float:
 
 func _controls(effect: Object) -> Dictionary:
 	var bytes: PackedByteArray = effect.get("general_data") as PackedByteArray
-	if bytes.size() < 720:
+	if bytes.size() < 880:
 		return {}
 	return {"fast": bytes.decode_float(688), "enabled": bytes.decode_float(692), "arc_minus_bulk": bytes.decode_float(696), "negative_bulk_z": bytes.decode_float(700), "phase": bytes.decode_float(704), "bulk_x": bytes.decode_float(708), "true_static": bytes.decode_float(712)}
 

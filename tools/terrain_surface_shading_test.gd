@@ -18,6 +18,7 @@ var _capture := false
 var _captures: Dictionary = {}
 var _timings: Dictionary = {}
 var _uniform_checks: Array[Dictionary] = []
+var _native_projector_checked := false
 var _run_fixture_directory := ""
 var _recipe_path := ""
 
@@ -174,7 +175,47 @@ func _uniform_matches(surface: Node, expected: bool) -> bool:
 		_failures.append("smooth_terrain_shading shader parameter has unexpected type %s" % typeof(actual))
 		return false
 	_uniform_checks.append({"expected": expected, "available": true, "actual": actual})
-	return actual == expected
+	if actual != expected:
+		return false
+	if not _native_projector_checked:
+		if not _verify_native_lighting_forwarding(surface, material):
+			return false
+		var behavior = load("res://tools/RingCloudShadowProjectorBehaviorTest.cs").new()
+		if behavior.call("RunNative", material) != "PASS":
+			_failures.append("native Terrain3D cloud-shadow receiver behavior failed")
+			return false
+		_native_projector_checked = true
+	# Terrain3D uses a native material object, so verify the near receiver has
+	# the same lighting and projected-cloud parameter contract as the LODs.
+	for parameter in ["sun_direction", "day_start_dot", "day_full_dot", "night_tint", "night_direct_light_factor", "day_direct_light_factor", "shadow_floor", "local_cloud_shadow_enabled", "local_cloud_shadow_center_world"]:
+		if material.call("get_shader_param", parameter) == null:
+			_failures.append("Terrain3D material did not receive " + parameter)
+			return false
+	return true
+
+func _verify_native_lighting_forwarding(surface: Node, material: Object) -> bool:
+	var previous := {}
+	for parameter in ["day_start_dot", "day_full_dot", "night_tint", "night_direct_light_factor", "day_direct_light_factor", "shadow_floor"]:
+		previous[parameter] = material.call("get_shader_param", parameter)
+		if previous[parameter] == null:
+			_failures.append("Terrain3D material is missing precondition " + parameter)
+			return false
+	surface.call("SetSurfaceLighting", -0.71, -0.22, Color(0.12, 0.34, 0.56), 0.19, 0.83, 0.27)
+	var expected := {"day_start_dot":-0.71, "day_full_dot":-0.22, "night_tint":Vector3(0.12, 0.34, 0.56), "night_direct_light_factor":0.19, "day_direct_light_factor":0.83, "shadow_floor":0.27}
+	var matches := true
+	for parameter in expected:
+		var actual = material.call("get_shader_param", parameter)
+		var equal: bool = false
+		if expected[parameter] is Vector3:
+			equal = actual is Vector3 and actual.is_equal_approx(expected[parameter])
+		else:
+			equal = actual != null and is_equal_approx(float(actual), float(expected[parameter]))
+		if not equal:
+			_failures.append("SetSurfaceLighting did not immediately forward %s: %s vs %s" % [parameter, actual, expected[parameter]])
+			matches = false
+	var tint: Vector3 = previous["night_tint"]
+	surface.call("SetSurfaceLighting", previous["day_start_dot"], previous["day_full_dot"], Color(tint.x, tint.y, tint.z), previous["night_direct_light_factor"], previous["day_direct_light_factor"], previous["shadow_floor"])
+	return matches
 
 func _measure_mode(mode: String, save_screenshot: bool) -> void:
 	var viewport_rid: RID = root.get_viewport_rid()

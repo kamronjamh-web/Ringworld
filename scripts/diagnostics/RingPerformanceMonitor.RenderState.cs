@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo;
 using RingworldTechDemo.Voxel.Integration;
+using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Diagnostics;
 
@@ -15,6 +17,7 @@ public partial class RingPerformanceMonitor
         DirectionalLight3D? star = root?.GetNodeOrNull<DirectionalLight3D>("StarLight");
         DirectionalLight3D? planet = root?.GetNodeOrNull<DirectionalLight3D>("PlanetLight");
         RingSunshineCloudBridge? bridge = root?.GetNodeOrNull<RingSunshineCloudBridge>("SunshineCloudBridge");
+        RingTerrainGlobalLod? globalTerrain = root?.GetNodeOrNull<RingTerrainGlobalLod>("GlobalTerrainLod3");
         Node? driver = root?.GetNodeOrNull<Node>("SunshineCloudsDriver");
         Node? clouds = root?.GetNodeOrNull<Node>("RingVolumetricClouds");
         RingDayNightCycle? cycle = root?.GetNodeOrNull<RingDayNightCycle>("RingDayNightCycle");
@@ -35,6 +38,14 @@ public partial class RingPerformanceMonitor
                 offElevationDegrees = Number(handoff, "off_elevation_degrees"), onElevationDegrees = Number(handoff, "on_elevation_degrees"), maxLocalSunElevationDegrees = Number(handoff, "max_local_sun_elevation_degrees"),
                 atlasSize = graphics?.EffectiveDirectionalShadowAtlasSize, depthBits = graphics?.EffectiveDirectionalShadowDepthBits, filter = graphics?.EffectiveDirectionalShadowFilter
             },
+            terrainShadows = CaptureTerrainShadowState(_contextCoordinator, globalTerrain),
+            pipelineCompilations = new
+            {
+                mesh = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.PipelineCompilationsMesh),
+                surface = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.PipelineCompilationsSurface),
+                draw = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.PipelineCompilationsDraw),
+                specialization = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.PipelineCompilationsSpecialization)
+            },
             explorer = Explorer(_contextExplorer),
             celestial = new { simulationTimeSeconds = Finite(cycle?.GetSimulationSeconds() ?? double.NaN), sunElevationDegrees = Number(cycle, "SunElevationDegrees"), cloudSimulationTimeSeconds = Number(clouds, "CloudSimulationTimeSeconds") },
             clouds = new
@@ -44,6 +55,53 @@ public partial class RingPerformanceMonitor
                 raymarch = new { steps = bridge?.RaymarchSteps, lightingSteps = bridge?.LightingSteps, minStepDistanceMeters = Finite(bridge?.MinStepDistanceMeters ?? float.NaN), maxStepDistanceMeters = Finite(bridge?.MaxStepDistanceMeters ?? float.NaN) },
                 cloudShadows = new { enabled = bridge?.CastCloudShadows, gpuGenerationEnabled = bridge?.GpuShadowGenerationEnabled, preferGpu = bridge?.PreferGpuCloudShadows, status = bridge?.GpuCloudShadowStatus, nearResolution = bridge?.GpuNearShadowMapResolution, farResolution = bridge?.GpuFarShadowMapResolution, nearUpdatesPerSecond = Finite(bridge?.GpuNearShadowUpdatesPerSecond ?? float.NaN), farUpdatesPerSecond = Finite(bridge?.GpuFarShadowUpdatesPerSecond ?? float.NaN) },
                 driver = new { currentTime = Number(cloudResource, "current_time"), extraLargeNoiseOrigin = Vector(cloudResource, "extra_large_scale_clouds_position"), largeNoiseOrigin = Vector(cloudResource, "large_scale_clouds_position"), mediumNoiseOrigin = Vector(cloudResource, "medium_scale_clouds_position"), detailNoiseOrigin = Vector(cloudResource, "detail_clouds_position") }
+            }
+        };
+    }
+
+    private static object? CaptureTerrainShadowState(
+        RingTerrainLodCoordinator? coordinator,
+        RingTerrainGlobalLod? globalTerrain)
+    {
+        if ((coordinator == null || !GodotObject.IsInstanceValid(coordinator))
+            && (globalTerrain == null || !GodotObject.IsInstanceValid(globalTerrain))) return null;
+
+        var levels = new List<object>();
+        if (coordinator != null && GodotObject.IsInstanceValid(coordinator))
+        {
+            foreach (RingTerrainProxySector level in coordinator.Levels)
+            {
+                if (!GodotObject.IsInstanceValid(level)) continue;
+                levels.Add(new
+                {
+                    label = level.LodLabel,
+                    spacingMeters = level.SampleSpacingMeters,
+                    streamingActive = level.StreamingActive,
+                    visible = level.IsVisibleInTree(),
+                    terrainShadowCasting = level.CastTerrainShadows,
+                    activeSectors = level.ActiveSectorCount,
+                    pendingUploads = level.PendingUploadCount,
+                    activeWorkerSlots = level.ActiveWorkerSlots
+                });
+            }
+        }
+
+        return new
+        {
+            coordinator = coordinator == null || !GodotObject.IsInstanceValid(coordinator) ? null : new
+            {
+                terrainShadowCoverageMeters = Finite(coordinator.TerrainShadowCoverageMeters),
+                restrictToLocalShadowCoverage = coordinator.RestrictShadowsToNearestActiveLevel,
+                activeWorkers = coordinator.ActiveWorkerCount,
+                pendingUploads = coordinator.PendingUploadCount
+            },
+            levels,
+            macro = globalTerrain == null || !GodotObject.IsInstanceValid(globalTerrain) ? null : new
+            {
+                enabled = globalTerrain.EnableMacroTerrainShadows,
+                wallShadowsEnabled = globalTerrain.EnableMacroTerrainWallShadows,
+                planetMaskActive = globalTerrain.PlanetMacroShadowMaskActive,
+                planetBuildPending = globalTerrain.PlanetMacroShadowBuildPending
             }
         };
     }

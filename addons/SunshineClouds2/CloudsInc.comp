@@ -343,6 +343,9 @@ struct GenericData{
 	// non-feedback menu history-weight diagnostic. Append-only after the
 	// previous 704-byte GenericData layout.
 	vec4 menu_temporal_controls;
+	// Ringworld shared atmosphere profile. Appended after the established
+	// 720-byte callback ABI; standalone fixtures leave this disabled.
+	vec4 ring_atmosphere_profile[10];
 };
 
 struct DirectionalLight {

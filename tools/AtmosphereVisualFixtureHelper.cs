@@ -32,4 +32,19 @@ public partial class AtmosphereVisualFixtureHelper : RefCounted
             return double.NaN;
         return grid.WorldToCanonicalRingPosition64(camera.GlobalPosition).VerticalMeters;
     }
+
+    /// <summary>Fixture-only deterministic noclip motion for renderer diagnostics.</summary>
+    public bool Move(Node explorer, double aroundMeters, double verticalMeters, double acrossMeters, float simulatedSpeedMetersPerSecond)
+    {
+        if (explorer is not RingVoxelExplorerController controller
+            || !double.IsFinite(aroundMeters)
+            || !double.IsFinite(verticalMeters)
+            || !double.IsFinite(acrossMeters))
+            return false;
+        controller.SetBenchmarkCanonicalPosition(
+            new RingCanonicalPosition(aroundMeters, verticalMeters, acrossMeters),
+            simulatedSpeedMetersPerSecond,
+            simulatedNoclip: true);
+        return true;
+    }
 }

@@ -42,10 +42,7 @@ public partial class RingBiomeDecorationLayer
         foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(mesh))
         {
             material.SetShaderParameter("simplified_tree_shading", SimplifyDistantTreeMaterials);
-            if (_treeMaterials.Contains(material)) continue;
-            global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
-            _treeMaterials.Add(material);
-            ConfigureTreeLightingMaterial(material, true, true, true);
+            RegisterTreeLightingMaterial(material);
         }
     }
 
@@ -102,10 +99,7 @@ public partial class RingBiomeDecorationLayer
         Mesh shadowMesh = ImportedTreeRenderMaterials.GetShadowMesh(shadowSource);
         foreach (ShaderMaterial material in ImportedTreeRenderMaterials.ShaderMaterials(shadowMesh))
         {
-            if (_treeMaterials.Contains(material)) continue;
-            global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
-            _treeMaterials.Add(material);
-            ConfigureTreeLightingMaterial(material, true, true, true);
+            RegisterTreeLightingMaterial(material);
         }
         var shadowMultiMesh = new MultiMesh
         {

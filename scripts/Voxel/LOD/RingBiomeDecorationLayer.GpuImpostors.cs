@@ -14,9 +14,6 @@ public partial class RingBiomeDecorationLayer
 
     private void RegisterSharedFarTreeMaterial(ShaderMaterial material)
     {
-        if (_treeMaterials.Contains(material)) return;
-        global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
-        _treeMaterials.Add(material);
-        ConfigureTreeLightingMaterial(material, true, true, true);
+        RegisterTreeLightingMaterial(material);
     }
 }

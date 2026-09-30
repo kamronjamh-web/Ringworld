@@ -1,13 +1,13 @@
 # Terrain-aware clouds and mountain intersections
 
-Assessment: 2026-09-29. Updated to the user's explicit requirement: clouds stop at mountains and do not form above their peaks. This supersedes the original regional cloud-lifting proposal. No cloud runtime code or saved cloud settings were changed, and the reported mountain artifact has not yet been reproduced in a controlled capture.
+Assessment: 2026-09-29. The user selected shared haze integration and the depth-cutoff milestone for this pass. The final march interval is now clipped and weighted against opaque terrain depth. The broader requirement that clouds remain absent above mountain peaks still requires the mountain-exclusion map below; it is not implemented by depth clipping. Authored layer heights and saved cloud settings were preserved. The original in-game mountain-grain appearance still needs user visual confirmation.
 
 ## Findings in this checkout
 
 - `scripts/RingSunshineCloudBridge.cs:87` defines a fixed cloud datum (0 m), an ordinary 2000-6000 m layer, and a separate 500 m storm-front base. The checked-in gameplay overrides currently set the ordinary top to 6050 m. These are repository settings; a running world's saved overrides may differ.
 - `ResolveNaturalCloudAltitude` and `ResolveNaturalStormCloudAltitude` use those authored altitudes. The terrain sample in `ResolveSurfaceHeight` is used for renderer visibility/handoff, not a spatial cloud-clearance field. Mountains extending to 8000 m can therefore intersect or rise above the ordinary layer.
 - Sunshine already clips against main opaque depth and the scaled far terrain's physical-depth texture. It also has depth-aware reconstruction and temporal filtering. Terrain awareness should extend these systems rather than replace their existing responsibilities.
-- `addons/SunshineClouds2/SunshineCloudsCompute.glsl:976` sets `depthBreak` when the current sample has passed opaque depth, but density/lighting work still runs before the break near line 1169. The post pass then applies an approximate range fade. The checked-in gameplay march steps are 500-958 m with full ray-start jitter. A sample can therefore lie appreciably behind a mountain. This is a concrete boundary condition to test, not proof of the user's artifact's cause.
+- The original Sunshine march set `depthBreak` after passing opaque depth but still evaluated density/lighting before breaking. A controlled GPU capture confirmed clouds behind a 300 m occluder even though the cloud band started at 500 m. The corrected path samples the visible terminal interval and scales its density by the visible fraction. Regression captures exercise 500 m and 958 m steps; user-configured march distances can differ.
 - `docs/cloud-history-grain-fix.md` documents prior fixes for persistent interior noise and continuous camera motion. Preserve those reprojection, floating-origin, opacity, and depth-rejection contracts; increasing history alone could hide a boundary problem or produce ghosting.
 - Near clouds, distant clipmap/shell clouds, and GPU cloud shadows use separate rendering paths. Their density evaluation must share the same mountain-exclusion rule.
 
@@ -30,6 +30,8 @@ If needed, refine a small number of terminal intervals rather than reducing the 
 A depth fade can soften the remaining contact, but should not erase an entire ray's foreground cloud. NVIDIA's [soft-particle discussion](https://developer.nvidia.com/gpugems/gpugems3/part-iv-image-effects/chapter-23-high-speed-screen-particles) supports depth-aware intersection fading and describes low-resolution depth edge artifacts. Applying it to this integrated volume requires interval-aware treatment, not copying a particle alpha formula onto the final accumulated cloud.
 
 ## 2. Publish cached terrain context
+
+**Deferred for this pass by user choice.** The depth correction does not remove cloud density above a mountain that is not occluding the view ray.
 
 Expose an immutable, revisioned terrain snapshot in canonical around/across coordinates. Use the existing height field and terrain LOD summaries as data sources; fill missing coverage asynchronously with independent samplers. Never run the expensive procedural generator for each cloud pixel or rebuild a full height atlas every frame.
 
@@ -110,6 +112,29 @@ Measure frame-time distribution, ray samples, GPU cloud/shadow timings, CPU atla
 - [x] Current architecture and likely altitude mismatch inspected.
 - [x] User requirement incorporated: clouds stop at mountains and remain absent above protected peaks; regional lifting removed.
 - [x] Concrete terrain-depth boundary behavior identified for a reproduction test.
-- [ ] User's mountain grain reproduced and cause confirmed.
-- [ ] Runtime changes implemented and regression tested.
+- [x] Terrain-facing stochastic history loss reproduced and corrected with stored opaque-depth validation; visual acceptance in the user's scene remains pending.
+- [x] Depth-boundary bug reproduced with controlled opaque geometry and physical far-depth input.
+- [x] Final interval clipped, sampled inside the visible portion, and fractionally weighted.
+- [x] Main/far depth regression covers a surface before the cloud layer and a surface inside it, with separate lit history-on/off captures.
+- [x] Uniform-density regression verifies a half-step extension adds 0.1000 opacity at both 500 m and 958 m step lengths, preserving foreground volume.
+- [x] Clouds and tree LODs connected to the existing shared atmosphere profile and live controls.
+- [ ] Shared mountain-exclusion and terrain-clearance context implemented (milestones 2 onward).
 - [ ] User visual acceptance and target desktop performance measured.
+
+### Depth-cutoff evidence
+
+`tools/cloud_mountain_depth_gpu_test.gd` uses production Sunshine shaders with controlled noise and an opaque proxy, plus a physical-metre far-depth texture. Its 12 cases include four fractional-integration checks. Before the fix, a 300 m occluder admitted cloud samples at roughly 603–1219 m in the measured cases. After the fix, all sampled near-occluder rays contain zero cloud and terminate at 300 m (within the planar proxy's perspective tolerance). The 1700 m occluder retains foreground clouds. The half-step alpha increment is approximately 0.100022 for the perspective main-depth proxy and 0.100000 for physical far depth.
+
+Local captures and JSON are under `.godot/cloud-mountain-depth/`; `baseline-report.json` preserves the original march result and `report.json` records the corrected result. These controlled tests establish the depth bug and its fix, not a guarantee of mountain-footprint exclusion or a measured game-frame-rate improvement.
+
+### Terrain-facing temporal history evidence
+
+The gameplay temporal path previously used `depthBreak` to validate history. A jittered ray could stop at full cloud opacity in one frame and at the terrain behind it in the next. That change could reduce or reject history even though the opaque scene had not changed. This is separate from cloud altitude limits and from shadow vertical samples.
+
+The private history metadata now stores the current opaque ray depth, or an explicit sky sentinel, without temporal averaging. Each of the four reprojected color taps is checked against its own depth metadata; accepted weights are renormalized for both color and cloud-distance metadata. Valid gameplay history keeps the configured weight. Near a terrain cutoff, validation uses depth agreement with a small screen-footprint tolerance. For clouds ending well before both surfaces, an endpoint check with camera translation and a full march-step margin allows history across grazing ground slopes. The endpoint is a filtered estimate, so this remains a temporal reconstruction heuristic, not exact volumetric reprojection.
+
+The public output retains the original depth-break flag for depth-aware reconstruction. Menu history, terminal interval integration, haze-after-history ordering, saved settings, and the 64-sample shadow cap are preserved. The fix reuses existing textures; it adds depth validation reads and arithmetic, but no additional ray-march samples or texture allocation.
+
+`tools/cloud_terrain_history_gpu_test.gd` compares production shaders against a saved pre-fix shader compiled in memory. Its ten cases cover stationary and translating/turning views at 1,200 m and 60,000 m through main and physical far depth, followed by newly appearing 300 m occluders. A controlled dither sequence changes the march termination without changing terrain or density. The fixed path retains 0.95 history in all eight stable-surface cases. Accumulated opacity variance falls by approximately 65–79% against the pre-fix shader. On the first frame of a new occluder, retained history and cloud alpha are both zero; the old shader retained 0.95 history and approximately 0.424 cloud alpha in this fixture.
+
+Evidence: `.godot/cloud-terrain-history/baseline-report.json` and `report.json`. These are controlled correctness comparisons, not a frame-rate measurement or a claim that every source of cloud grain is eliminated. The six-route motion regression also passes at its established 0.85 history setting, including 15/60/120-degree-per-second turns, translation, and a 128 m floating-origin rebase. The previously documented fast-turn response limit at 0.95 remains separate.

@@ -134,12 +134,15 @@ void light() {
 	float primary_sun_weight = LIGHT_IS_DIRECTIONAL
 		? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
 		: 0.0;
+	float primary_planet_weight = LIGHT_IS_DIRECTIONAL
+		? terrain_planet_directional_light_weight(LIGHT, VIEW_MATRIX)
+		: 0.0;
 	float sun_hemisphere_direct = mix(
 		night_direct_light_factor,
 		day_direct_light_factor,
 		ring_day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
-	float terrain_shadow = LIGHT_IS_DIRECTIONAL
+	float sun_terrain_shadow = LIGHT_IS_DIRECTIONAL
 		? (terrain_macro_shadow_use_uv
 			? sample_terrain_macro_shadow_uv(
 				terrain_macro_shadow_uv,
@@ -151,6 +154,19 @@ void light() {
 				camera_world_position,
 				ring_width_meters)) * ring_day_factor * primary_sun_weight
 		: 0.0;
+	float planet_terrain_shadow = LIGHT_IS_DIRECTIONAL
+		? (terrain_macro_shadow_use_uv
+			? sample_terrain_planet_shadow_uv(
+				terrain_macro_shadow_uv,
+				world_position,
+				camera_world_position)
+			: sample_terrain_planet_shadow(
+				world_position,
+				ring_center,
+				camera_world_position,
+				ring_width_meters)) * primary_planet_weight
+		: 0.0;
+	float terrain_shadow = max(sun_terrain_shadow, planet_terrain_shadow);
 	float cloud_shadow = LIGHT_IS_DIRECTIONAL
 		? combined_cloud_shadow_occlusion
 		: 0.0;

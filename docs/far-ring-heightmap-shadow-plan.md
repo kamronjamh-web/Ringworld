@@ -4,7 +4,23 @@ priority was confirmed on 2026-09-23. The intended first release covers shadows
 on distant terrain and visible water, plus terrain shadows on visible interior
 wall faces.
 
-## Implementation progress (2026-09-24)
+## Terrain LOD shadow coverage follow-up (2026-09-30)
+
+The runtime surface path now enables hardware casting on every active proxy tier through the local directional-light range. The previous policy chose only the finest tier and one coarse coverage tier, leaving visible intermediate terrain unable to cast. The range follows whichever sun/planet shadow lights are active; distant proxy tiers remain outside the hardware caster chain.
+
+Certified terrain now receives independent sun and planet height masks. The planet producer reuses the existing terrain summary and runs asynchronously while planet illumination is active, rebuilding for direction, terrain-edit, and trace-setting changes. Pyramid edits wait for both readers. The planet receiver matches its light direction without a daytime multiplier, and its fade is bounded by the planet's local shadow range. Scaled-far receivers transform the direction into their renderer's coordinate frame. Near Terrain3D registers through its native material API and samples canonical UVs computed from the prepared window anchor.
+
+The grave-key terrain-shadow enable, wall-caster enable, strength, trace, and fade controls govern these paths; the menu tooltip now identifies both sunlight and planet light. This does not add another large directional shadow atlas. The existing coarse-mask resolution, water/interior-wall receiver-height work, and Mega Ring limitations described below remain.
+
+Validation passed: C# build, headless caster/handoff and geometry checks, controlled GPU sun/planet mask sampling, and native Terrain3D/proxy shading comparisons. The full runtime-generation gameplay fixture passed day, night, day return, and same-direction night revisit (`.godot/terrain_shadow_lod/4069435/report.json`), including native/proxy/scaled-far receiver bindings and transformed light directions. Its night handoff was 5,100–6,000 m for a 6,000 m planet atlas, closing the previous 6,000–8,000 m coverage gap. These checks establish integration and controlled shading response; they do not establish a performance budget or complete the mountain-shadow placement acceptance work below.
+
+## Hitch investigation after the LOD coverage change (2026-09-30)
+
+The reported airborne movement/panning hitch remains unconfirmed in the isolated fixture. A paused-light camera-pan run (`.godot/terrain_shadow_hitch/4345097/report.json`) showed about 0.45 ms more median GPU work with the full local caster chain at night. Its early day samples were still streaming and are not a valid policy comparison. A subsequent night flight over a 1.5 km route used current/sparse/sparse/current caster policies (`.godot/terrain_shadow_hitch/4278456/report.json`): median viewport GPU times were 7.69/7.20/7.17/7.64 ms, with no new draw-time pipeline compilations. The retained full-frame diagnostics reached 57.17 ms maximum; the original route loop's narrower render-wait timing excluded fixture movement overhead and must not be treated as complete frame time. The fixture uses a paused celestial clock and does not rule out periodic mask-update stalls in normal gameplay.
+
+Diagnostics now separately time sun/planet mask builds as worker work and mask installation as main-thread work. Slowdown exports include per-LOD caster/streaming state, local shadow range, planet mask state, and pipeline compilation counters. No shadow coverage or quality reduction was made on the strength of these captures. A fresh report from the user's hitch location is needed to establish the actual regression. Build and shadow-coverage smoke passed; the broader diagnostics contract currently fails its synthetic buffer-eviction assertion, outside the capture-only changes made here.
+
+## Initial implementation progress (2026-09-24)
 
 The first Certified Ring prototype is implemented. Its existing whole-ring
 height summary now stores a separate center receiver height, traces straight

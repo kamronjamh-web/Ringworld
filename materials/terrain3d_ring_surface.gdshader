@@ -5,6 +5,9 @@
 shader_type spatial;
 render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlick_ggx,skip_vertex_transform;
 #include "res://materials/ring_atmosphere.gdshaderinc"
+#include "res://materials/ring_cloud_shadow.gdshaderinc"
+#include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
+#include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 
 #define SKIP_PASS 0
 #define VERTEX_PASS 1
@@ -59,8 +62,26 @@ uniform bool smooth_terrain_shading = true;
 uniform vec3 ring_atmosphere_camera_world = vec3(0.0);
 uniform vec3 ring_atmosphere_center_world = vec3(0.0);
 uniform float ring_atmosphere_day_factor = 1.0;
+uniform float ring_width_meters = 20000.0;
+// Canonical UV at the local Terrain3D window anchor, supplied in double on
+// the CPU before conversion so mega-ring positions retain macro-mask phase.
+uniform vec2 ring_terrain_shadow_anchor_uv = vec2(0.0);
+// Keep the Terrain3D window's direct-light response aligned with the proxy
+// terrain at its handoff. These defaults match ring_terrain_proxy.gdshader.
+uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
+uniform float day_start_dot = -0.2;
+uniform float day_full_dot = 0.35;
+uniform vec3 night_tint = vec3(0.30, 0.45, 0.70);
+uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
+uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
+uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 varying float v_vertex_xz_dist;
 varying vec3 v_vertex;
+varying float ring_day_factor;
+varying float combined_cloud_shadow_occlusion;
+varying float terrain_specular_f0;
+varying float terrain_direct_specular_weight;
+varying vec2 terrain_shadow_uv;
 
 ivec3 get_index_coord(const vec2 uv, const int search) {
     vec2 r_uv = round(uv);
@@ -223,11 +244,12 @@ void fragment() {
     TANGENT = mat3(VIEW_MATRIX) * tangent;
     BINORMAL = mat3(VIEW_MATRIX) * cross(ring_normal, tangent);
     float slope = 1.0 - clamp(planar_normal.y, 0.0, 1.0);
-    float snow = smoothstep(3500.0, 5200.0, surface_height + ring_anchor_height) * (1.0 - slope);
     vec3 ground = mix(vec3(.16, .13, .075), vec3(.34, .28, .13), clamp(1.0 - slope * 2.0, 0.0, 1.0));
+    float grass_coverage_eligibility = 0.0;
     if (biome_texture_weights_enabled) {
         vec4 packed = smooth_terrain_shading ? clamp(smooth_packed, 0.0, 1.0) : clamp(texelFetch(_color_maps, c, 0), 0.0, 1.0);
         float grass_weight = max(0.0, 1.0 - packed.r - packed.g - packed.b - packed.a);
+        grass_coverage_eligibility = clamp(grass_weight + packed.g * .55, 0.0, 1.0);
         float total = max(.0001, grass_weight + packed.r + packed.g + packed.b + packed.a);
         vec3 texture_normal = normalize(vec3(planar_normal.x, planar_normal.y, planar_normal.z * ring_across_direction));
         vec3 blend = pow(abs(texture_normal), vec3(8.0)); blend /= max(blend.x + blend.y + blend.z, .0001);
@@ -247,18 +269,122 @@ void fragment() {
         ground = mix(dirt, surface / total, ground_facing);
     }
     float ground_facing = smoothstep(.45, .78, planar_normal.y);
-    float wet = clamp(surface_wetness * surface_wetness_strength, 0.0, 1.0) * ground_facing * (1.0 - snow);
+    float wet = clamp(surface_wetness * surface_wetness_strength, 0.0, 1.0) * ground_facing;
     // Keep exposed rock subtly smoother while preserving a matte dry surface.
     float dry_roughness = surface_dry_roughness - slope * .08;
     vec3 dry_albedo = ground * (1.0 - wet * .15);
-    ALBEDO = mix(dry_albedo, vec3(.78, .82, .86), snow);
+    float grass_coverage = ring_terrain_grass_coverage(
+        v_vertex,
+        distance(v_vertex, ring_viewer_world_position),
+        ground_facing,
+        grass_coverage_eligibility);
+    vec3 terrain_color = ring_apply_terrain_grass_coverage(dry_albedo, grass_coverage);
+    ring_day_factor = ringworld_effective_solar_day(smoothstep(
+        day_start_dot,
+        day_full_dot,
+        dot(up, normalize(sun_direction))));
+    // Retain the proxy terrain's low-light chroma before atmosphere haze is
+    // composited, so the near and LOD surfaces carry the same night palette.
+    ALBEDO = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
 	vec4 atmosphere = sample_ring_atmosphere(
 		ring_atmosphere_camera_world,
 		v_vertex,
 		ring_atmosphere_center_world,
-		ringworld_effective_solar_day(ring_atmosphere_day_factor));
+		ring_day_factor);
 	ALBEDO *= 1.0 - atmosphere.a;
 	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
     ROUGHNESS = mix(dry_roughness, surface_wet_roughness, wet);
-    SPECULAR = mix(.20, .50, wet);
+    // Match the proxy's dry environment-reflection coefficient. Rain alone
+    // enables the added direct-light highlight below.
+    float terrain_specular = mix(.18, .50, wet);
+    SPECULAR = terrain_specular;
+    // A custom light() function has no SPECULAR input, so carry the fragment
+    // material's dielectric reflectance into that stage explicitly.
+    terrain_specular_f0 = .16 * terrain_specular * terrain_specular;
+    terrain_direct_specular_weight = wet;
+    combined_cloud_shadow_occlusion = sample_local_cloud_shadow(v_vertex) * ring_day_factor;
+    terrain_shadow_uv = vec2(
+        ring_terrain_shadow_anchor_uv.x
+            + UV.x / max(_vertex_density, 0.000001) / (6.28318530718 * ring_radius_meters),
+        ring_terrain_shadow_anchor_uv.y
+            + UV.y / max(_vertex_density, 0.000001) * ring_across_direction / max(ring_width_meters, 1.0));
+    AO = 1.0 - combined_cloud_shadow_occlusion * .72;
+    AO_LIGHT_AFFECT = 0.0;
+}
+
+// This is the isotropic Schlick-GGX direct-specular branch from Godot's
+// Forward+ renderer (scene_forward_lights_inc.glsl, MIT), expressed with the
+// spatial-shader light built-ins. It keeps the existing rain-driven ROUGHNESS
+// and SPECULAR values active after this shader takes ownership of lighting.
+float terrain_d_ggx(float no_h, float alpha) {
+    float a = no_h * alpha;
+    float k = alpha / max(1.0 - no_h * no_h + a * a, 0.000001);
+    // Godot's saturateHalf clamps only to the representable FP16 range, not
+    // the 0..1 color range. Preserve bright narrow wet highlights.
+    return min(k * k * (1.0 / PI), 65504.0);
+}
+
+float terrain_v_ggx(float no_l, float no_v, float alpha) {
+    return min(0.5 / max(mix(2.0 * no_l * no_v, no_l + no_v, alpha), 0.000001), 65504.0);
+}
+
+float terrain_schlick_fresnel(float u) {
+    float m = 1.0 - u;
+    float m2 = m * m;
+    return m2 * m2 * m;
+}
+
+void light() {
+    float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
+    float readable_shadow = max(ATTENUATION, shadow_floor);
+    vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
+    float primary_sun_weight = LIGHT_IS_DIRECTIONAL
+        ? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
+        : 0.0;
+    float primary_planet_weight = LIGHT_IS_DIRECTIONAL
+        ? terrain_planet_directional_light_weight(LIGHT, VIEW_MATRIX)
+        : 0.0;
+    float sun_hemisphere_direct = mix(
+        night_direct_light_factor,
+        day_direct_light_factor,
+        ring_day_factor);
+    float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
+    float cloud_shadow = LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0;
+    float sun_terrain_shadow = LIGHT_IS_DIRECTIONAL
+        ? sample_terrain_macro_shadow_uv(
+            terrain_shadow_uv,
+            v_vertex,
+            ring_viewer_world_position) * primary_sun_weight * ring_day_factor
+        : 0.0;
+    float planet_terrain_shadow = LIGHT_IS_DIRECTIONAL
+        ? sample_terrain_planet_shadow_uv(
+            terrain_shadow_uv,
+            v_vertex,
+            ring_viewer_world_position) * primary_planet_weight
+        : 0.0;
+    float terrain_shadow = max(sun_terrain_shadow, planet_terrain_shadow);
+    float combined_visibility = combine_ring_shadow_visibility(
+        readable_shadow,
+        cloud_shadow,
+        terrain_shadow);
+    float direct_visibility = combined_visibility * hemisphere_direct;
+    DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * n_dot_l * direct_visibility;
+
+    if (terrain_direct_specular_weight > 0.0 && ROUGHNESS > 0.0 && n_dot_l > 0.0) {
+        vec3 half_vector = normalize(VIEW + LIGHT);
+        float n_dot_v = max(dot(NORMAL, VIEW), 0.0001);
+        float n_dot_h = clamp(dot(NORMAL, half_vector), 0.0, 1.0);
+        float l_dot_h = clamp(dot(LIGHT, half_vector), 0.0, 1.0);
+        float alpha_ggx = ROUGHNESS * ROUGHNESS;
+        float distribution = terrain_d_ggx(n_dot_h, alpha_ggx);
+        float visibility = terrain_v_ggx(n_dot_l, n_dot_v, alpha_ggx);
+        float f90 = clamp(terrain_specular_f0 * (50.0 * 0.33 * 3.0), 0.0, 1.0);
+        float fresnel = terrain_specular_f0
+            + (f90 - terrain_specular_f0) * terrain_schlick_fresnel(l_dot_h);
+        SPECULAR_LIGHT += vec3(n_dot_l * distribution * visibility * fresnel)
+            * LIGHT_COLOR
+            * direct_visibility
+            * terrain_direct_specular_weight
+            * SPECULAR_AMOUNT;
+    }
 }

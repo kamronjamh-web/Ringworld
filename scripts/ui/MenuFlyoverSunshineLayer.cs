@@ -158,7 +158,7 @@ public sealed partial class MenuFlyoverSunshineLayer : Node
         bool extinctionChanged = SetChanged(ref _shadowExtinctionPerKm, Mathf.Clamp(settings.ShadowExtinctionPerKm, 0f, 10f));
         bool radiusChanged = SetChanged(ref _shadowRadiusKm, Mathf.Clamp(settings.ShadowRadiusKm, 8f, 200f));
         bool shadowResolutionChanged = SetChanged(ref _shadowResolution, ClampShadowResolution(settings.ShadowResolution));
-        bool shadowSamplesChanged = SetChanged(ref _shadowVerticalSamples, Mathf.Clamp(settings.ShadowVerticalSamples, 1, 16));
+        bool shadowSamplesChanged = SetChanged(ref _shadowVerticalSamples, Mathf.Clamp(settings.ShadowVerticalSamples, 1, 64));
         SetChanged(ref _shadowUpdatesPerSecond, Mathf.Clamp(settings.ShadowUpdatesPerSecond, .25f, 20f));
 
         Vector3 normalizedSun = NormalizeSun(sunDirection);

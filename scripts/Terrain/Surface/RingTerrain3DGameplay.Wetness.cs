@@ -19,6 +19,7 @@ public partial class RingTerrain3DGameplay
         _smoothTerrainShading = settings.SmoothTerrainShading;
         _surface?.SetSmoothTerrainShading(_smoothTerrainShading);
         _surface?.SetSurfaceAppearance(_dryRoughness, _wetRoughness, _wetnessStrength);
+        ForwardSurfaceLighting();
     }
 
     public void UpdateSurfaceAppearance()
@@ -28,5 +29,18 @@ public partial class RingTerrain3DGameplay
         _surface?.SetSmoothTerrainShading(_smoothTerrainShading);
         _surface?.SetSurfaceAppearance(_dryRoughness, _wetRoughness, _wetnessStrength);
         _surface?.SetSurfaceWetness(wetness);
+        ForwardSurfaceLighting();
+    }
+
+    private void ForwardSurfaceLighting()
+    {
+        if (_grid == null) return;
+        _surface?.SetSurfaceLighting(
+            _grid.RingDayStartDot,
+            _grid.RingDayFullDot,
+            _grid.RingNightTint,
+            _grid.RingNightDirectLightFactor,
+            _grid.RingDayDirectLightFactor,
+            _grid.RingShadowFloor);
     }
 }

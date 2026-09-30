@@ -2,6 +2,7 @@ extends SceneTree
 # Compiles the production finite-cylinder path include. The reference below is
 # deliberately scalar GDScript (double), rather than a copy of shader helpers.
 const INCLUDE_PATH := "res://materials/ring_atmosphere_paths.gdshaderinc"
+const SHARED_INCLUDE_PATH := "res://materials/ring_atmosphere_shared.gdshaderinc"
 const SCALES := [1.0, 0.001]
 const CASES := [
 	{"name":"zero", "r":5000000.0, "h":100.0, "target":[0.0, 0.0, 0.0], "width":1000.0},
@@ -32,11 +33,12 @@ func run() -> void:
 	if rd == null:
 		return fail("no local RenderingDevice")
 	var include := FileAccess.get_file_as_string(INCLUDE_PATH)
-	if include.is_empty():
+	var shared_include := FileAccess.get_file_as_string(SHARED_INCLUDE_PATH)
+	if include.is_empty() or shared_include.is_empty():
 		rd.free()
 		return fail("missing production include")
 	var shader_source := RDShaderSource.new()
-	shader_source.source_compute = build_compute_source(include)
+	shader_source.source_compute = build_compute_source(shared_include + "\n" + include)
 	var spirv := rd.shader_compile_spirv_from_source(shader_source)
 	if spirv.compile_error_compute != "":
 		rd.free()

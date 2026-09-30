@@ -16,7 +16,6 @@ uniform vec3 night_cloud_color : source_color = vec3(0.055, 0.085, 0.15);
 uniform float opacity : hint_range(0.0, 1.0) = 0.72;
 uniform float coverage : hint_range(0.0, 1.0) = 0.50;
 uniform float softness : hint_range(0.01, 0.4) = 0.18;
-uniform float atmospheric_alpha_fade_strength : hint_range(0.0, 1.0) = 0.42;
 uniform bool local_volumetric_handoff_enabled = false;
 uniform float local_handoff_start_meters = 7000.0;
 uniform float local_handoff_end_meters = 12000.0;
@@ -138,18 +137,15 @@ void fragment() {
 	vec3 exterior_color = mix(night_cloud_color * 0.72, day_color * vec3(1.04, 1.02, 0.98), ring_day_factor);
 	vec3 cloud_color = mix(underside_color, exterior_color, exterior_weight);
 	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, face_day_factor);
-	float atmosphere_occlusion = atmosphere.a * 0.82;
-	vec3 base_albedo = cloud_color * (1.0 - atmosphere_occlusion);
-	float base_alpha = cloud * opacity
-		* (1.0 - atmosphere.a * atmospheric_alpha_fade_strength);
+	float atmosphere_transmittance = 1.0 - atmosphere.a;
+	float base_alpha = cloud * opacity;
 	// The CPU selects real seeded storm systems and publishes the same bounded
 	// events to this whole-ring shell and the camera-local clipmap. This keeps a
 	// distant flash coherent instead of breaking it into sub-pixel atlas sparks.
 	float storm_gate = 1.0;
 	vec3 far_glow = vec3(0.18, 0.28, 0.46) * far_flash.y * storm_gate * 0.55
 		+ vec3(0.82, 0.91, 1.0) * far_flash.x * storm_gate * 2.4;
-	float flash_mask = flash_edge * opacity
-		* (1.0 - atmosphere.a * atmospheric_alpha_fade_strength);
+	float flash_mask = flash_edge * opacity;
 	float reference_alpha = max(base_alpha, raw_flash.y * 0.22 * flash_mask);
 	// Raw reference alpha restores the old full-weight response over an opaque
 	// body; weighted radiance keeps partial ownership linear.
@@ -157,8 +153,8 @@ void fragment() {
 	// Premultiplied blending lets zero-alpha flash radiance add over a bright
 	// far backdrop instead of making a translucent carrier darken it. Physical
 	// cloud opacity stays base-only; flash_carrier still bounds discard/radiance.
-	ALBEDO = base_albedo * base_alpha + flash_premultiplied;
-	EMISSION = (cloud_color * mix(0.22, 0.065, face_day_factor)
-		+ atmosphere.rgb * atmosphere_occlusion * atmosphere_scattering_energy) * base_alpha;
+	ALBEDO = (cloud_color * base_alpha + flash_premultiplied) * atmosphere_transmittance;
+	EMISSION = cloud_color * mix(0.22, 0.065, face_day_factor) * base_alpha * atmosphere_transmittance
+		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy * base_alpha;
 	ALPHA = base_alpha;
 }

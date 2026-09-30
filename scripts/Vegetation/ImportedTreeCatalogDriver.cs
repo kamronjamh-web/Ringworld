@@ -19,4 +19,14 @@ public partial class ImportedTreeCatalogDriver : Node
         foreach (ShaderMaterial material in variants[index].Materials) result.Add(material);
         return result;
     }
+
+    public ShaderMaterial? LoadVariantLodMaterial(int index, int lod)
+    {
+        Mesh? mesh = LoadVariantMesh(index, lod);
+        return mesh?.GetSurfaceCount() > 0 ? mesh.SurfaceGetMaterial(0) as ShaderMaterial : null;
+    }
+
+    public Mesh? LoadSharedImpostorMesh() => ImportedTreeImpostorCatalog.Load().Mesh;
+
+    public ShaderMaterial? LoadSharedImpostorMaterial() => ImportedTreeImpostorCatalog.Load().Material;
 }
