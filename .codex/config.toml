@@ -3,9 +3,9 @@
 # ============================================================
 
 # Primary/root agent.
-# Astra owns architecture, planning, decomposition, integration,
+# The primary agent owns architecture, planning, decomposition, integration,
 # and final acceptance.
-model = "gpt-6-astra"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "max"
 
 # Give planning maximum reasoning as well.
@@ -23,7 +23,7 @@ sandbox_mode = "workspace-write"
 enabled = true
 
 # Enough room for investigation/review agents without allowing
-# Astra to create an unnecessarily huge swarm.
+# the primary agent to create an unnecessarily huge swarm.
 max_concurrent_threads_per_session = 6
 
 # If Codex creates an unspecified worker, prefer Terra.

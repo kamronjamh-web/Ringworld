@@ -14,6 +14,10 @@ uniform float fade_end_meters = 5500.0;
 uniform bool far_fade_enabled = false;
 uniform float far_fade_start_meters = 500000.0;
 uniform float far_fade_end_meters = 1000000.0;
+// Regional scaled-far bands are already non-overlapping annuli about their
+// reanchor origin. Camera-distance clipping would shift those boundaries by up
+// to half an anchor cell and can open a gap between otherwise welded rings.
+uniform bool regional_band_distance_clip = true;
 uniform vec3 ring_center = vec3(0.0);
 // Camera-relative regional meshes are built near the origin, while their real
 // ring center can be billions of metres away. Keep their illumination normal
@@ -105,12 +109,14 @@ void fragment() {
 	// safety span expands into a 100 km overlap and makes adjacent LOD rings
 	// fight each other. A tiny non-zero span avoids a divide-by-zero while
 	// preserving the authored physical handoff distance.
-	float near_handoff = (fade_start_meters + max(fade_end_meters, fade_start_meters + 0.000001)) * 0.5;
-	if (distance_to_camera < near_handoff) discard;
-	if (far_fade_enabled) {
-		float far_handoff = (far_fade_start_meters + max(far_fade_end_meters, far_fade_start_meters + 0.000001)) * 0.5;
-		if (distance_to_camera > far_handoff) discard;
-	}
+        if (regional_band_distance_clip) {
+                float near_handoff = (fade_start_meters + max(fade_end_meters, fade_start_meters + 0.000001)) * 0.5;
+                if (distance_to_camera < near_handoff) discard;
+                if (far_fade_enabled) {
+                        float far_handoff = (far_fade_start_meters + max(far_fade_end_meters, far_fade_start_meters + 0.000001)) * 0.5;
+                        if (distance_to_camera > far_handoff) discard;
+                }
+        }
 
 	vec3 terrain_color = ring_vertex_color_to_linear(
 		debug_color_enabled ? debug_color : COLOR.rgb);

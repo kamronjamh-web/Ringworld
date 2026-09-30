@@ -36,6 +36,7 @@ public partial class RingTerrain3DPilot : Node3D
     private bool _fly;
     private float _brushRadius = 8, _brushStep = 2, _moveSpeed = 12;
     private int _meshLods = 4;
+    private int _meshSize = 48;
     private double _autosave = 20;
     private float _pitch;
     private bool _smoothTerrainShading = true;
@@ -75,6 +76,7 @@ public partial class RingTerrain3DPilot : Node3D
             _surface?.Initialize(_field, _frame);
             _surface?.SetSmoothTerrainShading(_smoothTerrainShading);
             _surface?.SetMeshLods(_meshLods);
+            _surface?.SetMeshSize(_meshSize);
             PlacePlayer(around, across, 2.0f);
             Input.MouseMode = Input.MouseModeEnum.Captured;
         }
@@ -157,7 +159,9 @@ public partial class RingTerrain3DPilot : Node3D
         _brushStep = GameplaySurfaceTerrainDefaults.ClampBrushStepMeters(settings.BrushStepMeters);
         _moveSpeed = GameplaySurfaceTerrainDefaults.ClampMoveSpeedMetersPerSecond(settings.MoveSpeedMetersPerSecond);
         _meshLods = GameplaySurfaceTerrainDefaults.ClampMeshLods(settings.MeshLods);
+        _meshSize = GameplaySurfaceTerrainDefaults.ClampMeshSize(settings.MeshSize);
         _surface?.SetMeshLods(_meshLods);
+        _surface?.SetMeshSize(_meshSize);
         _smoothTerrainShading = settings.SmoothTerrainShading;
         _surface?.SetSmoothTerrainShading(_smoothTerrainShading);
     }
@@ -241,6 +245,7 @@ public partial class RingTerrain3DPilot : Node3D
         _surface.RebuildWindow(_frame);
         _surface.SetSmoothTerrainShading(_smoothTerrainShading);
         _surface.SetMeshLods(_meshLods);
+        _surface.SetMeshSize(_meshSize);
         _player.GlobalTransform = new Transform3D(orientation, _frame.MapPosition(current.AroundMeters, current.AcrossMeters, current.Height));
         _player.Velocity = velocity;
     }

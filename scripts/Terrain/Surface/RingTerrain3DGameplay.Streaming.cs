@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using Godot.Collections;
+using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Core;
 
 namespace RingworldTechDemo.Terrain.Surface;
@@ -192,14 +193,29 @@ public partial class RingTerrain3DGameplay
     public bool HasVisualCoverage(RingCanonicalPosition position)
     {
         if (!HasCollisionCoverage(position)) return false;
-        const double mapMinimumMeters = -256.0;
-        const double mapMaximumMeters = 510.0;
         double around = _frame.SignedAroundDeltaMeters(position.AroundMeters);
         double across = (position.AcrossMeters - _frame.AnchorAcrossMeters) * _frame.AcrossDirection;
-        return around - HandoffDistance >= mapMinimumMeters
-            && around + HandoffDistance <= mapMaximumMeters
-            && across - HandoffDistance >= mapMinimumMeters
-            && across + HandoffDistance <= mapMaximumMeters;
+        return HasUploadedVisualFootprint(around, across, _handoffDistanceMeters);
+    }
+
+    /// <summary>
+    /// Tests the uploaded 384-sample, 2m height-map footprint only. Callers
+    /// must also require committed collision coverage before hiding proxies.
+    /// At normal recenter bounds (+/-128m), the certified 128m maximum just
+    /// reaches the negative uploaded edge and never expands collision reach.
+    /// </summary>
+    public static bool HasUploadedVisualFootprint(double localAroundMeters, double localAcrossMeters, float handoffDistanceMeters)
+    {
+        if (!double.IsFinite(localAroundMeters) || !double.IsFinite(localAcrossMeters) || !float.IsFinite(handoffDistanceMeters)
+            || handoffDistanceMeters < GameplaySurfaceTerrainDefaults.MinimumHandoffDistanceMeters
+            || handoffDistanceMeters > GameplaySurfaceTerrainDefaults.MaximumHandoffDistanceMeters) return false;
+        const double mapMinimumMeters = -256.0;
+        const double mapMaximumMeters = 510.0;
+        double radius = handoffDistanceMeters;
+        return localAroundMeters - radius >= mapMinimumMeters
+            && localAroundMeters + radius <= mapMaximumMeters
+            && localAcrossMeters - radius >= mapMinimumMeters
+            && localAcrossMeters + radius <= mapMaximumMeters;
     }
 
     public Vector3 ConstrainSurfaceVelocity(RingCanonicalPosition position, Vector3 velocity, double delta)

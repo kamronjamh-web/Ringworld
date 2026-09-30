@@ -452,6 +452,82 @@ FadeOutStartMeters = 550000.0
 FadeOutEndMeters = 700000.0
 CastTerrainShadows = false
 
+[node name="Lod8BridgeTerrain512m" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD8 bridge 512m"
+CoordinatorManaged = true
+SectorSizeMeters = 32768
+SampleSpacingMeters = 512
+StreamingUpdateIntervalSeconds = 1.35
+PredictionLookAheadSeconds = 2.75
+PredictionMaxDistanceMeters = 65536.0
+SectorSkirtDepthMeters = 1024.0
+RadialUnderlayOffsetMeters = 32.0
+FadeStartMeters = 110000.0
+FadeEndMeters = 140000.0
+EnableFarFade = true
+FadeOutStartMeters = 182000.0
+FadeOutEndMeters = 239000.0
+CastTerrainShadows = false
+
+[node name="Lod8BridgeTerrain1024m" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD8 bridge 1024m"
+CoordinatorManaged = true
+SectorSizeMeters = 65536
+SampleSpacingMeters = 1024
+StreamingUpdateIntervalSeconds = 1.4
+PredictionLookAheadSeconds = 2.9
+PredictionMaxDistanceMeters = 131072.0
+SectorSkirtDepthMeters = 1024.0
+RadialUnderlayOffsetMeters = 64.0
+FadeStartMeters = 182000.0
+FadeEndMeters = 239000.0
+EnableFarFade = true
+FadeOutStartMeters = 302000.0
+FadeOutEndMeters = 408000.0
+CastTerrainShadows = false
+
+[node name="Lod9BridgeTerrain4096m" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD9 bridge 4km"
+CoordinatorManaged = true
+SectorSizeMeters = 262144
+SampleSpacingMeters = 4096
+StreamingUpdateIntervalSeconds = 1.75
+PredictionLookAheadSeconds = 3.5
+PredictionMaxDistanceMeters = 524288.0
+SectorSkirtDepthMeters = 4096.0
+RadialUnderlayOffsetMeters = 256.0
+FadeStartMeters = 500000.0
+FadeEndMeters = 700000.0
+EnableFarFade = true
+FadeOutStartMeters = 950000.0
+FadeOutEndMeters = 1323000.0
+CastTerrainShadows = false
+
+[node name="Lod10BridgeTerrain16384m" type="MeshInstance3D" parent="."]
+visible = false
+script = ExtResource("7")
+LodLabel = "LOD10 bridge 16km"
+CoordinatorManaged = true
+SectorSizeMeters = 1048576
+SampleSpacingMeters = 16384
+StreamingUpdateIntervalSeconds = 2.5
+PredictionLookAheadSeconds = 4.5
+PredictionMaxDistanceMeters = 2097152.0
+SectorSkirtDepthMeters = 16384.0
+RadialUnderlayOffsetMeters = 1024.0
+FadeStartMeters = 1800000.0
+FadeEndMeters = 2500000.0
+EnableFarFade = true
+FadeOutStartMeters = 3286000.0
+FadeOutEndMeters = 4472000.0
+CastTerrainShadows = false
+
 [node name="Lod10Terrain8km" type="MeshInstance3D" parent="." unique_id=363274923]
 visible = false
 script = ExtResource("7")

@@ -152,4 +152,16 @@ public partial class RingTerrainGlobalLod
             if (vertex.DistanceTo(expected) < 0.001f) return true;
         return false;
     }
+
+    internal bool TryCapturePublishedGlobalMorphFixture(out RingTerrainGlobalMorphSnapshot snapshot)
+        => TryCaptureReadyMorphSnapshot(out snapshot);
+
+    internal bool TrySamplePublishedGlobalMorphFixture(double aroundMeters, double acrossMeters, out Vector3 worldPosition)
+    {
+        worldPosition = default;
+        return _grid != null
+            && TryCaptureReadyMorphSnapshot(out RingTerrainGlobalMorphSnapshot snapshot)
+            && snapshot.TrySampleTerrainWorld(
+                _grid.CaptureLodGeometrySnapshot(), aroundMeters, acrossMeters, out worldPosition);
+    }
 }

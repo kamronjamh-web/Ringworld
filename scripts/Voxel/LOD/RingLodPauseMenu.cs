@@ -26,6 +26,7 @@ public partial class RingLodPauseMenu : CanvasLayer
     [Export] public NodePath GlobalLodPath { get; set; } = new("../GlobalTerrainLod3");
     [Export] public NodePath AnalyticGlobalLodPath { get; set; } = new("../AnalyticGlobalRing");
     [Export] public NodePath LegacyFarRingPath { get; set; } = new("../RingWorld/FarRing");
+    [Export] public NodePath ScaledFarViewportPath { get; set; } = new("../ScaledFarViewport");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
     [Export] public bool HazeEnabledByDefault { get; set; } = false;
     [Export(PropertyHint.Range, "2,32,1")] public int DefaultChunkRadius { get; set; } = 7;
@@ -39,6 +40,7 @@ public partial class RingLodPauseMenu : CanvasLayer
     private RingTerrainGlobalLod? _globalLod;
     private RingAnalyticGlobalLod? _analyticGlobalLod;
     private Node3D? _legacyFarRing;
+    private RingScaledFarViewport? _scaledFarViewport;
     private WorldEnvironment? _worldEnvironment;
     private Control? _root;
     private Label? _radiusValue;
@@ -54,6 +56,16 @@ public partial class RingLodPauseMenu : CanvasLayer
     private CheckButton? _adaptiveRenderResolution;
     private Label? _renderResolutionStatus;
     private GameplayRenderResolutionDefaults _renderResolutionDefaults = new();
+    private CheckButton? _partialCoverageMeshCulling;
+    private Label? _partialCoverageMeshCullingStatus;
+    private GameplayProxyCoverageCullingDefaults _proxyCoverageCullingDefaults = new();
+    private double _proxyCoverageCullingSaveElapsed;
+    private double _proxyCoverageCullingRetryElapsed;
+    private CheckButton? _intermediateLodTiers;
+    private Label? _intermediateLodTiersStatus;
+    private GameplayLodTransitionDefaults _lodTransitionDefaults = new();
+    private double _lodTransitionSaveElapsed;
+    private double _lodTransitionRetryElapsed;
     private RingCertificationMonitor? _certificationMonitor;
     private double _renderResolutionSaveElapsed;
     private double _renderResolutionRetryElapsed;
@@ -82,10 +94,15 @@ public partial class RingLodPauseMenu : CanvasLayer
         _globalLod = GetNodeOrNull<RingTerrainGlobalLod>(GlobalLodPath);
         _analyticGlobalLod = GetNodeOrNull<RingAnalyticGlobalLod>(AnalyticGlobalLodPath);
         _legacyFarRing = GetNodeOrNull<Node3D>(LegacyFarRingPath);
+        _scaledFarViewport = GetNodeOrNull<RingScaledFarViewport>(ScaledFarViewportPath);
         _worldEnvironment = GetNodeOrNull<WorldEnvironment>(WorldEnvironmentPath);
         _certificationMonitor = GetNodeOrNull<RingCertificationMonitor>("../CertificationMonitor");
         _fsr2Available = RenderingServer.GetCurrentRenderingMethod() == "forward_plus";
         _renderResolutionDefaults.Load((int)DefaultUpscalingPreset);
+        _proxyCoverageCullingDefaults.Load();
+        ApplySavedProxyCoverageCulling();
+        _lodTransitionDefaults.Load();
+        ApplySavedIntermediateLodTiers();
         BuildMenu();
         ApplySavedRenderResolution(updateStatus: false);
         _renderResolutionReady = true;
@@ -113,6 +130,22 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (_renderResolutionSaveElapsed >= 0.5 && (_renderResolutionDefaults.LastError.Length == 0 || _renderResolutionRetryElapsed >= 5.0))
                 FlushRenderResolutionSettings();
         }
+        if (_proxyCoverageCullingDefaults.Dirty)
+        {
+            _proxyCoverageCullingSaveElapsed += delta;
+            _proxyCoverageCullingRetryElapsed += delta;
+            if (_proxyCoverageCullingSaveElapsed >= 0.5
+                && (_proxyCoverageCullingDefaults.LastError.Length == 0 || _proxyCoverageCullingRetryElapsed >= 5.0))
+                FlushProxyCoverageCullingSettings();
+        }
+        if (_lodTransitionDefaults.Dirty)
+        {
+            _lodTransitionSaveElapsed += delta;
+            _lodTransitionRetryElapsed += delta;
+            if (_lodTransitionSaveElapsed >= 0.5
+                && (_lodTransitionDefaults.LastError.Length == 0 || _lodTransitionRetryElapsed >= 5.0))
+                FlushLodTransitionSettings();
+        }
         if (_menuOpen)
         {
             _renderResolutionStatusElapsed += delta;
@@ -121,6 +154,8 @@ public partial class RingLodPauseMenu : CanvasLayer
                 _renderResolutionStatusElapsed = 0.0;
                 SyncAtmosphericHazeToggle();
                 UpdateRenderResolutionStatus();
+                UpdateProxyCoverageCullingStatus();
+                UpdateIntermediateLodTiersStatus();
             }
         }
         if (_debugColors?.ButtonPressed == true)
@@ -358,6 +393,36 @@ public partial class RingLodPauseMenu : CanvasLayer
         column.AddChild(workerNote);
 
         column.AddChild(new HSeparator());
+        column.AddChild(new Label { Text = "Proxy terrain coverage" });
+        _partialCoverageMeshCulling = new CheckButton
+        {
+            Name = "PartialCoverageMeshCulling",
+            Text = "Cull triangles covered by finer terrain",
+            ButtonPressed = _proxyCoverageCullingDefaults.Settings.PartialCoverageMeshCullingEnabled,
+            TooltipText = "Rebuilds partially covered proxy sectors with only their visible terrain triangles. This reduces GPU geometry work after finer terrain becomes ready."
+        };
+        _partialCoverageMeshCulling.Toggled += SetPartialCoverageMeshCulling;
+        column.AddChild(_partialCoverageMeshCulling);
+        _partialCoverageMeshCullingStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        _partialCoverageMeshCullingStatus.Modulate = RingUiStyle.Muted;
+        column.AddChild(_partialCoverageMeshCullingStatus);
+
+        column.AddChild(new HSeparator());
+        column.AddChild(new Label { Text = "Terrain LOD transitions" });
+        _intermediateLodTiers = new CheckButton
+        {
+            Name = "IntermediateLodTiers",
+            Text = "Use intermediate terrain LOD tiers",
+            ButtonPressed = _lodTransitionDefaults.Settings.IntermediateLodTiersEnabled,
+            TooltipText = "Adds intermediate transition bands between the established proxy tiers and in the scaled far-terrain view. Existing tiers remain active."
+        };
+        _intermediateLodTiers.Toggled += SetIntermediateLodTiers;
+        column.AddChild(_intermediateLodTiers);
+        _intermediateLodTiersStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        _intermediateLodTiersStatus.Modulate = RingUiStyle.Muted;
+        column.AddChild(_intermediateLodTiersStatus);
+
+        column.AddChild(new HSeparator());
         column.AddChild(new Label { Text = "Atmosphere" });
         _hazeToggle = new CheckButton
         {
@@ -565,6 +630,129 @@ public partial class RingLodPauseMenu : CanvasLayer
         {
             _applyStatus.Text = $"Applied: {_graphicsQuality?.CurrentPresetName ?? _coordinator?.CurrentPresetName ?? quality.ToString()}, surface {chunks}, vertical {verticalChunks}, workers {workers}";
         }
+    }
+
+    public void SetPartialCoverageMeshCulling(bool enabled)
+    {
+        bool changed = _proxyCoverageCullingDefaults.Set(enabled);
+        if (_partialCoverageMeshCulling != null && _partialCoverageMeshCulling.ButtonPressed != enabled)
+            _partialCoverageMeshCulling.SetPressedNoSignal(enabled);
+        ApplyPartialCoverageMeshCulling(enabled);
+        UpdateProxyCoverageCullingStatus();
+        if (changed) { _proxyCoverageCullingSaveElapsed = 0.0; _proxyCoverageCullingRetryElapsed = 0.0; }
+    }
+
+    public bool PartialCoverageMeshCullingEnabled => _proxyCoverageCullingDefaults.Settings.PartialCoverageMeshCullingEnabled;
+    public string PartialCoverageMeshCullingLastError => _proxyCoverageCullingDefaults.LastError;
+
+    public bool FlushProxyCoverageCullingSettings()
+    {
+        _proxyCoverageCullingSaveElapsed = 0.0;
+        _proxyCoverageCullingRetryElapsed = 0.0;
+        return _proxyCoverageCullingDefaults.Save();
+    }
+
+    public string GetPartialCoverageMeshCullingStatus() => BuildProxyCoverageCullingStatus();
+
+    public void SetIntermediateLodTiers(bool enabled)
+    {
+        bool changed = _lodTransitionDefaults.SetIntermediateLodTiersEnabled(enabled);
+        if (_intermediateLodTiers != null && _intermediateLodTiers.ButtonPressed != enabled)
+            _intermediateLodTiers.SetPressedNoSignal(enabled);
+        ApplyIntermediateLodTiers(enabled);
+        UpdateIntermediateLodTiersStatus();
+        if (changed) { _lodTransitionSaveElapsed = 0.0; _lodTransitionRetryElapsed = 0.0; }
+    }
+
+    public bool IntermediateLodTiersEnabled => _lodTransitionDefaults.Settings.IntermediateLodTiersEnabled;
+    public string IntermediateLodTiersLastError => _lodTransitionDefaults.LastError;
+
+    public bool FlushLodTransitionSettings()
+    {
+        _lodTransitionSaveElapsed = 0.0;
+        _lodTransitionRetryElapsed = 0.0;
+        return _lodTransitionDefaults.Save();
+    }
+
+    /// <summary>Test fixture hook that keeps LOD-transition preferences outside the player's user defaults.</summary>
+    public void InstallLodTransitionDefaults(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal)
+            && !isolatedPath.StartsWith("user://generated/", StringComparison.Ordinal)) return;
+        _lodTransitionDefaults = new GameplayLodTransitionDefaults(isolatedPath);
+        _lodTransitionDefaults.Load();
+        ApplySavedIntermediateLodTiers();
+        if (_intermediateLodTiers != null)
+            _intermediateLodTiers.SetPressedNoSignal(_lodTransitionDefaults.Settings.IntermediateLodTiersEnabled);
+        UpdateIntermediateLodTiersStatus();
+    }
+
+    private void ApplySavedIntermediateLodTiers()
+    {
+        ApplyIntermediateLodTiers(_lodTransitionDefaults.Settings.IntermediateLodTiersEnabled);
+    }
+
+    private void ApplyIntermediateLodTiers(bool enabled)
+    {
+        _coordinator?.SetIntermediateLodTiersEnabled(enabled);
+        _scaledFarViewport?.SetIntermediateLodTiers(enabled);
+    }
+
+    private void UpdateIntermediateLodTiersStatus()
+    {
+        if (_intermediateLodTiersStatus == null) return;
+        string saveState = _lodTransitionDefaults.LastError.Length > 0
+            ? "Save error: " + _lodTransitionDefaults.LastError
+            : _lodTransitionDefaults.Dirty ? "Saving setting..." : "Setting saved.";
+        string proxy = _coordinator == null ? "proxy unavailable" : "proxy configured";
+        string far = _scaledFarViewport == null ? "scaled far unavailable" : "scaled far configured";
+        _intermediateLodTiersStatus.Text = $"Intermediate tiers {(_lodTransitionDefaults.Settings.IntermediateLodTiersEnabled ? "on" : "off")} | {proxy}, {far} | {saveState}";
+    }
+
+    private void ApplySavedProxyCoverageCulling()
+    {
+        ApplyPartialCoverageMeshCulling(_proxyCoverageCullingDefaults.Settings.PartialCoverageMeshCullingEnabled);
+    }
+
+    private void ApplyPartialCoverageMeshCulling(bool enabled)
+    {
+        if (_coordinator == null) return;
+        foreach (RingTerrainProxySector level in _coordinator.Levels)
+            level.SetPartialCoverageMeshCulling(enabled);
+    }
+
+    private void UpdateProxyCoverageCullingStatus()
+    {
+        if (_partialCoverageMeshCullingStatus == null) return;
+        _partialCoverageMeshCullingStatus.Text = BuildProxyCoverageCullingStatus();
+    }
+
+    private string BuildProxyCoverageCullingStatus()
+    {
+        int pending = 0;
+        long removedTriangles = 0;
+        long activeRemovedTriangles = 0;
+        long sourceBytes = 0;
+        long filteredMeshBytes = 0;
+        if (_coordinator != null)
+        {
+            foreach (RingTerrainProxySector level in _coordinator.Levels)
+            {
+                pending += level.PartialCoveragePendingRebuildCount;
+                removedTriangles += level.PartialCoverageRemovedTriangleCount;
+                activeRemovedTriangles += level.PartialCoverageActiveRemovedTriangleCount;
+                sourceBytes += level.PartialCoverageSourceBytes;
+                filteredMeshBytes += level.PartialCoverageFilteredMeshBytes;
+            }
+        }
+        string enabled = _proxyCoverageCullingDefaults.Settings.PartialCoverageMeshCullingEnabled ? "on" : "off";
+        return $"Culling {enabled} | rebuild queue {pending} | resident triangles removed {activeRemovedTriangles:N0} | cumulative removed {removedTriangles:N0}\nSource {FormatByteCount(sourceBytes)} | filtered meshes {FormatByteCount(filteredMeshBytes)}";
+    }
+
+    private static string FormatByteCount(long bytes)
+    {
+        if (bytes < 1024L * 1024L) return $"{bytes / 1024.0:0.0} KiB";
+        return $"{bytes / (1024.0 * 1024.0):0.0} MiB";
     }
 
     private void OnUpscalingSelected(long index)
@@ -821,11 +1009,15 @@ public partial class RingLodPauseMenu : CanvasLayer
                 SyncAtmosphericHazeToggle();
                 _renderResolutionStatusElapsed = 0.0;
                 UpdateRenderResolutionStatus();
+                UpdateProxyCoverageCullingStatus();
+                UpdateIntermediateLodTiersStatus();
             }
             else
             {
                 RestoreGameplayHud();
                 FlushRenderResolutionSettings();
+                FlushProxyCoverageCullingSettings();
+                FlushLodTransitionSettings();
             }
             _menuOpen = open;
         }
@@ -841,6 +1033,8 @@ public partial class RingLodPauseMenu : CanvasLayer
     public override void _ExitTree()
     {
         FlushRenderResolutionSettings();
+        FlushProxyCoverageCullingSettings();
+        FlushLodTransitionSettings();
         base._ExitTree();
     }
 

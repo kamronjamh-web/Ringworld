@@ -188,6 +188,8 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
                 "initial queue stalled after accepting an edit snapshot");
             Require(lod.PublishedGlobalMeshContainsVertexFixture(0, afterInitialEdit),
                 "initial edited prepared height was not published into segment geometry");
+            VerifyPublishedGlobalMorphSnapshot(lod, grid, sampler);
+            RingTerrainGlobalMorphSnapshot initialMorph = CaptureMorphSnapshot(lod);
 
             MeshInstance3D seamSegment = lod.GetGlobalTerrainSegmentFixture(0) ?? throw new InvalidOperationException("seam segment missing");
             Mesh? beforeSeamMesh = seamSegment.Mesh;
@@ -195,6 +197,8 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             ulong editedVersion = grid.LodSurfaceEditVersion;
             lod.RefreshGlobalPreparationEditsFixture();
             Require(lod.PendingSegmentRebuildCount == 2, "seam edit did not queue both wrapped dirty neighbors");
+            Require(!lod.TryCapturePublishedGlobalMorphFixture(out _),
+                "mixed old/new global segments remained available as a morph receiver");
             Require(lod.InitialGlobalMeshBuildPending == false, "completed runtime initial queue unexpectedly restarted");
             // The edit path must use its new immutable snapshot when the queued
             // replacement runs, rather than retrying the snapshot it captured before the brush.
@@ -208,6 +212,17 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
                 "runtime edit did not progress the dirty queue with its new snapshot");
             Require(!ReferenceEquals(seamSegment.Mesh, beforeSeamMesh) && lod.PublishedGlobalMeshContainsVertexFixture(0, afterSeamEdit),
                 "seam-edited prepared height was not published into replacement geometry");
+            while (lod.PendingSegmentRebuildCount > 0)
+            {
+                lod.ServiceDirtyGlobalSegmentsFixture();
+                lod.WaitForGlobalPreparationWorkerFixture();
+            }
+            RingTerrainGlobalMorphSnapshot editedMorph = CaptureMorphSnapshot(lod);
+            Require(editedMorph.SnapshotIdentity.TopologyAndHeightHash != initialMorph.SnapshotIdentity.TopologyAndHeightHash,
+                "published global morph checksum ignored an edited receiver height");
+            VerifyPublishedGlobalMorphSnapshot(lod, grid, sampler);
+            grid.SetFloatingOriginCanonicalAnchor(new RingCanonicalPosition(4096.0, 0.0, 0.0));
+            VerifyPublishedGlobalMorphSnapshot(lod, grid, sampler, verifyInstalledMeshEndpoints: false);
             VerifyLateRingDirtyMapping(fixture, grid, sampler, lod.RingWidthMeters);
         }
         finally
@@ -240,6 +255,66 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             Require(actual.TerrainColor.IsEqualApprox(expectedColor), "runtime prepared color diverged from v2 sampler");
             Require(actual.DisplayedWater == (terrain.HasSurfaceWater && height < terrain.WaterSurfaceHeight), "runtime prepared water diverged from v2 sampler");
         }
+    }
+
+    private static RingTerrainGlobalMorphSnapshot CaptureMorphSnapshot(RingTerrainGlobalLod lod)
+    {
+        Require(lod.TryCapturePublishedGlobalMorphFixture(out RingTerrainGlobalMorphSnapshot snapshot),
+            "complete global receiver did not publish a morph snapshot");
+        Require(snapshot.SnapshotIdentity.TopologyAndHeightHash != 0UL,
+            "global morph snapshot omitted deterministic topology/height identity");
+        return snapshot;
+    }
+
+    private static void VerifyPublishedGlobalMorphSnapshot(RingTerrainGlobalLod lod, VoxelChunkGridManager grid, RingTerrainSampler sampler,
+        bool verifyInstalledMeshEndpoints = true)
+    {
+        RingTerrainGlobalMorphSnapshot snapshot = CaptureMorphSnapshot(lod);
+        double aroundSpacing = grid.GetCanonicalRingCircumferenceMeters64() / Mathf.Max(64, lod.AroundSegments);
+        double acrossSpacing = lod.RingWidthMeters / (double)Mathf.Max(4, lod.AcrossSegments);
+        // Use a nonuniform fractional point in the first cell. The global mesh
+        // diagonal is 01->10, so a height-then-bend interpolation would differ
+        // from this expected triangle plane on the curved ring.
+        double around = aroundSpacing * .75;
+        double across = acrossSpacing * .125;
+        RingLodGeometrySnapshot geometry = grid.CaptureLodGeometrySnapshot();
+        RingLodSurfaceEditSnapshot edits = grid.CaptureLodSurfaceEditSnapshot();
+        Vector3 p00 = GlobalReceiverVertex(geometry, edits, sampler, lod, 0.0, 0.0);
+        Vector3 p10 = GlobalReceiverVertex(geometry, edits, sampler, lod, aroundSpacing, 0.0);
+        Vector3 p01 = GlobalReceiverVertex(geometry, edits, sampler, lod, 0.0, acrossSpacing);
+        Vector3 expected = p00 * .125f + p10 * .75f + p01 * .125f;
+        Require(snapshot.TrySampleTerrainWorld(geometry, around, across, out Vector3 actual)
+                && actual.DistanceTo(expected) < .001f,
+            "global morph did not follow the actual curved 01-to-10 receiver triangle");
+        if (verifyInstalledMeshEndpoints)
+        {
+            Require(lod.PublishedGlobalMeshContainsVertexFixture(0, lod.GlobalTransform.AffineInverse() * p00)
+                    && lod.PublishedGlobalMeshContainsVertexFixture(0, lod.GlobalTransform.AffineInverse() * p10)
+                    && lod.PublishedGlobalMeshContainsVertexFixture(0, lod.GlobalTransform.AffineInverse() * p01),
+                "global morph endpoints were not the installed ArrayMesh receiver vertices");
+        }
+
+        // Canonical wrapping must select the final receiver cell for a point
+        // just below zero, rather than producing a seam gap.
+        double circumference = grid.GetCanonicalRingCircumferenceMeters64();
+        double seamAround = -aroundSpacing * .25;
+        double wrapped = circumference - aroundSpacing * .25;
+        Require(snapshot.TrySampleTerrainWorld(geometry, seamAround, across, out Vector3 seam)
+                && snapshot.TrySampleTerrainWorld(geometry, wrapped, across, out Vector3 wrappedSeam)
+                && seam.DistanceTo(wrappedSeam) < .001f,
+            "global morph canonical seam wrapping changed receiver geometry");
+    }
+
+    private static Vector3 GlobalReceiverVertex(
+        RingLodGeometrySnapshot geometry,
+        RingLodSurfaceEditSnapshot edits,
+        RingTerrainSampler sampler,
+        RingTerrainGlobalLod lod,
+        double around,
+        double across)
+    {
+        float height = edits.GetPresentationSurfaceHeight(sampler, around, across) - lod.RadialUnderlayOffsetMeters;
+        return geometry.CanonicalToWorld(around, height, across);
     }
 
     private static void VerifyLateRingDirtyMapping(Node3D fixture, VoxelChunkGridManager grid, RingTerrainSampler sampler, int width)

@@ -18,9 +18,12 @@ public partial class RingTerrain3DGameplay : Node3D
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath CoordinatorPath { get; set; } = new("../TerrainLodCoordinator");
     [Export] public NodePath CameraPath { get; set; } = new("../Explorer/Head/Camera3D");
-    // Midpoint of the 64–104m proxy transition. The current bounded collision
-    // window guarantees coverage for this near-surface radius during rebasing.
-    private const float HandoffDistance = 84f;
+    // The 384-sample, 2m map spans [-256,+510]m around its frame anchor.
+    // Normal recentering keeps the player within +/-128m, so a 128m disk is
+    // the largest fully uploaded visual footprint. Collision remains a
+    // separate, narrower readiness check.
+    private const float DefaultHandoffDistanceMeters = 112f;
+    private const float ProxyTransitionHalfWidthMeters = 20f;
     private const string RuntimeSurfaceEditFileName = "surface_runtime_edits_v1.json";
 
     private VoxelChunkGridManager? _grid;
@@ -41,6 +44,8 @@ public partial class RingTerrain3DGameplay : Node3D
     private float _brushRadius = 8;
     private float _brushStep = 2;
     private int _meshLods = 4;
+    private int _meshSize = 48;
+    private float _handoffDistanceMeters = DefaultHandoffDistanceMeters;
     private RingTerrain3DGameplayStream? _stream;
     private RingSurfaceFrame _pendingFrame;
     private bool _hasPendingFrame;
@@ -137,20 +142,22 @@ public partial class RingTerrain3DGameplay : Node3D
             LoadEdits();
             if (_saveBlocked) throw new InvalidDataException(_lastError);
             _grid.AttachSurfaceHeightField(_field);
-            _coordinator?.ConfigureVoxelTransition(64, 104);
+            ConfigureVoxelTransition();
             RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(0, 0, width * .5);
             _frame = BuildFrame(position);
             _lastWorldFrame = BuildWorldFrame(_frame);
             _surface = new RingTerrain3DSurface { Name = "Terrain3DSurface" };
             AddChild(_surface);
-            _surface.SetHandoffDistance(HandoffDistance);
+            _surface.SetHandoffDistance(_handoffDistanceMeters);
             _surface.SetMeshLods(_meshLods);
+            _surface.SetMeshSize(_meshSize);
             if (_synchronousBenchmark)
             {
                 _surface.SetBiomeSampler(_sampler);
                 _surface.Initialize(_field, _frame);
                 _surface.SetWorldFrame(_lastWorldFrame);
                 _surface.SetMeshLods(_meshLods);
+                _surface.SetMeshSize(_meshSize);
             }
             else
             {
@@ -233,9 +240,14 @@ public partial class RingTerrain3DGameplay : Node3D
         _brushRadius = GameplaySurfaceTerrainDefaults.ClampBrushRadiusMeters(settings.BrushRadiusMeters);
         _brushStep = GameplaySurfaceTerrainDefaults.ClampBrushStepMeters(settings.BrushStepMeters);
         _meshLods = GameplaySurfaceTerrainDefaults.ClampMeshLods(settings.MeshLods);
+        _meshSize = GameplaySurfaceTerrainDefaults.ClampMeshSize(settings.MeshSize);
+        _handoffDistanceMeters = GameplaySurfaceTerrainDefaults.ClampHandoffDistanceMeters(settings.HandoffDistanceMeters);
         _actualWalkSpeed = GameplaySurfaceTerrainDefaults.ClampMoveSpeedMetersPerSecond(settings.MoveSpeedMetersPerSecond);
         if (_explorer != null) _explorer.MoveSpeed = _actualWalkSpeed;
         _surface?.SetMeshLods(_meshLods);
+        _surface?.SetMeshSize(_meshSize);
+        _surface?.SetHandoffDistance(_handoffDistanceMeters);
+        ConfigureVoxelTransition();
         _generationPrefetchMeters = GameplaySurfaceTerrainDefaults.ClampGenerationPrefetchMeters(settings.GenerationPrefetchMeters);
         _generationUploadBudgetMs = GameplaySurfaceTerrainDefaults.ClampGenerationUploadBudgetMs(settings.GenerationUploadBudgetMs);
         _generationCollisionBudgetMs = GameplaySurfaceTerrainDefaults.ClampGenerationCollisionBudgetMs(settings.GenerationCollisionBudgetMs);
@@ -243,6 +255,12 @@ public partial class RingTerrain3DGameplay : Node3D
         _generationWorkers = GameplaySurfaceTerrainDefaults.ClampGenerationWorkerCount(settings.GenerationWorkerCount);
         _generationCacheMiB = GameplaySurfaceTerrainDefaults.ClampGenerationCacheMiB(settings.GenerationCacheMiB);
         _stream?.Configure(_generationWorkers, _generationCacheMiB);
+    }
+
+    private void ConfigureVoxelTransition()
+    {
+        float start = Mathf.Max(0.0f, _handoffDistanceMeters - ProxyTransitionHalfWidthMeters);
+        _coordinator?.ConfigureVoxelTransition(start, _handoffDistanceMeters + ProxyTransitionHalfWidthMeters);
     }
     public Dictionary GetSurfaceDiagnostics()
     {

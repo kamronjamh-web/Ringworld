@@ -103,7 +103,7 @@ public partial class RingTerrain3DSurface : Node3D
 
     public void SetHandoffDistance(float meters)
     {
-        if (_activePreparedSurface != null) { _activePreparedSurface.SetHandoffDistance(meters); _stagedPreparedSurface?.SetHandoffDistance(meters); _handoffDistanceMeters = Mathf.Max(0, meters); return; }
+        if (_activePreparedSurface != null) { _activePreparedSurface.SetHandoffDistance(meters); _stagedPreparedSurface?.SetHandoffDistance(meters); _idlePreparedSurface?.SetHandoffDistance(meters); _handoffDistanceMeters = Mathf.Max(0, meters); return; }
         if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetHandoffDistance(meters);
         _handoffDistanceMeters = Mathf.Max(0.0f, meters);
         SetMaterialParameter("ring_handoff_distance_meters", _handoffDistanceMeters);
@@ -153,6 +153,7 @@ public partial class RingTerrain3DSurface : Node3D
             _terrain.Name = "RingTerrain3D";
             _terrain.Set("free_editor_textures", false);
             _terrain.Set("vertex_spacing", _field.SpacingMeters);
+			_terrain.Set("mesh_size", _preparedMeshSize);
 			EnableCanonicalStandardGridDiagonal(_terrain);
             // A 768m window bends less than 2cm at the certified radius; do not inflate by world radius.
             _terrain.Set("cull_margin", 1.0f);
@@ -234,10 +235,20 @@ public partial class RingTerrain3DSurface : Node3D
     public void SetMeshLods(int meshLods)
     {
         _preparedMeshLods = Mathf.Clamp(meshLods, 1, 8);
-        if (_activePreparedSurface != null) { _activePreparedSurface.SetMeshLods(meshLods); _stagedPreparedSurface?.SetMeshLods(meshLods); return; }
+        if (_activePreparedSurface != null) { _activePreparedSurface.SetMeshLods(meshLods); _stagedPreparedSurface?.SetMeshLods(meshLods); _idlePreparedSurface?.SetMeshLods(meshLods); return; }
         if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetMeshLods(meshLods);
         if (_terrain == null) return;
         _terrain.Set("mesh_lods", Mathf.Clamp(meshLods, 1, 8));
+    }
+
+    /// <summary>Sets Terrain3D's native clipmap section size without changing the 2m height or collision lattice.</summary>
+    public void SetMeshSize(int meshSize)
+    {
+        _preparedMeshSize = Mathf.Clamp(Mathf.RoundToInt(meshSize / 8.0f) * 8, 16, 64);
+        if (_activePreparedSurface != null) { _activePreparedSurface.SetMeshSize(_preparedMeshSize); _stagedPreparedSurface?.SetMeshSize(_preparedMeshSize); _idlePreparedSurface?.SetMeshSize(_preparedMeshSize); return; }
+        if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetMeshSize(_preparedMeshSize);
+        if (_terrain == null) return;
+        _terrain.Set("mesh_size", _preparedMeshSize);
     }
 
     private void ConfigureMaterial()

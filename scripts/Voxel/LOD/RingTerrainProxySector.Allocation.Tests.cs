@@ -73,6 +73,8 @@ public partial class RingTerrainProxySector
                 ownerInverse: Transform3D.Identity,
                 size: size,
                 spacing: spacing,
+                parentSpacing: spacing * 2,
+                globalMorphTarget: null,
                 cells: cells,
                 underlay: 0.0f,
                 parentUnderlay: 0.0f,

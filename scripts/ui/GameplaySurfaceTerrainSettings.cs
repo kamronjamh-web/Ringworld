@@ -9,6 +9,12 @@ public partial class GameplaySurfaceTerrainSettings : Resource
     [Export] public float BrushRadiusMeters { get; set; } = 8.0f;
     [Export] public float BrushStepMeters { get; set; } = 2.0f;
     [Export] public int MeshLods { get; set; } = 4;
+    // Terrain3D native clipmap section size. Kept independent from the
+    // 2m height-cache lattice so mesh tuning never changes collision data.
+    [Export] public int MeshSize { get; set; } = 48;
+    // Radius of the Terrain3D-owned disk. The proxy transition is centered
+    // on this value and remains ready-coverage gated.
+    [Export] public float HandoffDistanceMeters { get; set; } = 112.0f;
     [Export] public float MoveSpeedMetersPerSecond { get; set; } = 12.0f;
     [Export] public int GenerationWorkerCount { get; set; } = 2;
     [Export] public float GenerationPrefetchMeters { get; set; } = 64.0f;

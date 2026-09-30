@@ -100,6 +100,7 @@ public partial class RingTerrain3DSurface
             candidate._worldFrame = _worldFrame;
             candidate._handoffDistanceMeters = _handoffDistanceMeters;
             candidate._preparedMeshLods = _preparedMeshLods;
+            candidate._preparedMeshSize = _preparedMeshSize;
             candidate.SetSmoothTerrainShading(_smoothTerrainShading);
             candidate.SetSurfaceAppearance(_surfaceDryRoughness, _surfaceWetRoughness, _rainWetnessStrength);
             candidate.SetSurfaceWetness(_surfaceWetness);
@@ -219,6 +220,7 @@ public partial class RingTerrain3DSurface
             // the cached facade appearance before this owner can be activated.
             ForwardSurfaceAppearance();
             SetMeshLods(_preparedMeshLods);
+            SetMeshSize(_preparedMeshSize);
             SetHandoffDistance(_handoffDistanceMeters);
             UpdateFrameMaterialParameters();
             ApplyWorldFrameMaterial();

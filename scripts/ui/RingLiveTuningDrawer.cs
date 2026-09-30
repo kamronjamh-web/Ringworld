@@ -29,6 +29,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath CoordinatorPath { get; set; } = new("../TerrainLodCoordinator");
+    [Export] public NodePath LodPauseMenuPath { get; set; } = new("../LodPauseMenu");
     [Export] public NodePath Lod1Path { get; set; } = new("../Lod1Terrain2m");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
     [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
@@ -55,6 +56,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     private VoxelChunkGridManager? _grid;
     private RingTerrainLodCoordinator? _coordinator;
+    private RingLodPauseMenu? _lodPauseMenu;
     private RingTerrainProxySector? _lod1;
     private WorldEnvironment? _environment;
     private DirectionalLight3D? _sun;
@@ -71,6 +73,10 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private Tween? _tween;
     private bool _open;
     private Label? _cloudStatus;
+    private CheckButton? _partialCoverageMeshCullingToggle;
+    private Label? _partialCoverageMeshCullingStatus;
+    private CheckButton? _intermediateLodTiersToggle;
+    private Label? _intermediateLodTiersStatus;
     private GameplayCloudDefaults _cloudDefaults = null!;
     private Label? _cloudSaveStatus;
     private double _cloudSaveDelay, _cloudSaveRetryDelay;
@@ -120,6 +126,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         }
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _coordinator = GetNodeOrNull<RingTerrainLodCoordinator>(CoordinatorPath);
+        _lodPauseMenu = GetNodeOrNull<RingLodPauseMenu>(LodPauseMenuPath);
         _lod1 = GetNodeOrNull<RingTerrainProxySector>(Lod1Path);
         _environment = GetNodeOrNull<WorldEnvironment>(WorldEnvironmentPath);
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
@@ -201,7 +208,13 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         if (_open)
         {
             _cloudRefreshDelay -= delta;
-            if (_cloudRefreshDelay <= 0) { _cloudRefreshDelay = .25; RefreshCloudControls(); }
+            if (_cloudRefreshDelay <= 0)
+            {
+                _cloudRefreshDelay = .25;
+                RefreshCloudControls();
+                RefreshPartialCoverageMeshCullingStatus();
+                RefreshIntermediateLodTiersStatus();
+            }
         }
         ProcessWaterTuning(delta);
         ProcessShadowTuning(delta);
@@ -733,6 +746,77 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddSlider(scheduling, "LOD workers", 1, 8, 1, _coordinator?.MaxConcurrentWorkerBuilds ?? 2, value => { if (_coordinator != null) _coordinator.MaxConcurrentWorkerBuilds = Mathf.RoundToInt(value); });
         AddSlider(scheduling, "LOD uploads/frame", 1, 16, 1, _coordinator?.TotalSectorUploadsPerFrame ?? 3, value => { if (_coordinator != null) _coordinator.TotalSectorUploadsPerFrame = Mathf.RoundToInt(value); }); AddSlider(scheduling, "LOD upload budget", 0.25, 8, 0.05, _coordinator?.MaxUploadMillisecondsPerFrame ?? 2, value => { if (_coordinator != null) _coordinator.MaxUploadMillisecondsPerFrame = (float)value; });
         VBoxContainer handoff = TuningMenuUi.CreateSection(tabRoot, "LOD handoff"); AddSlider(handoff, "Terrain shadow coverage", 100, 50000, 100, _coordinator?.TerrainShadowCoverageMeters ?? 4000, value => { if (_coordinator != null) _coordinator.TerrainShadowCoverageMeters = (float)value; }); AddSlider(handoff, "LOD1 fade start", 32, 600, 8, _lod1?.FadeOutStartMeters ?? 240, value => { if (_lod1 != null) _lod1.FadeOutStartMeters = (float)value; }); AddSlider(handoff, "LOD1 fade end", 64, 800, 8, _lod1?.FadeOutEndMeters ?? 320, value => { if (_lod1 != null) _lod1.FadeOutEndMeters = (float)value; });
+        VBoxContainer coverage = TuningMenuUi.CreateSection(tabRoot, "Proxy coverage culling");
+        _partialCoverageMeshCullingToggle = new CheckButton
+        {
+            Name = "PartialCoverageMeshCulling",
+            Text = "Cull triangles covered by finer terrain",
+            ButtonPressed = _lodPauseMenu?.PartialCoverageMeshCullingEnabled ?? true,
+            Disabled = _lodPauseMenu == null
+        };
+        _partialCoverageMeshCullingToggle.Toggled += value => _lodPauseMenu?.SetPartialCoverageMeshCulling(value);
+        coverage.AddChild(_partialCoverageMeshCullingToggle);
+        _partialCoverageMeshCullingStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        coverage.AddChild(_partialCoverageMeshCullingStatus);
+        RefreshPartialCoverageMeshCullingStatus();
+
+        VBoxContainer transitions = TuningMenuUi.CreateSection(tabRoot, "Terrain LOD transitions");
+        _intermediateLodTiersToggle = new CheckButton
+        {
+            Name = "IntermediateLodTiers",
+            Text = "Use intermediate terrain LOD tiers",
+            ButtonPressed = _lodPauseMenu?.IntermediateLodTiersEnabled ?? true,
+            TooltipText = "Adds bridge tiers between existing proxy levels and in the scaled far-terrain view. Existing tiers remain active.",
+            Disabled = _lodPauseMenu == null
+        };
+        _intermediateLodTiersToggle.Toggled += value => _lodPauseMenu?.SetIntermediateLodTiers(value);
+        transitions.AddChild(_intermediateLodTiersToggle);
+        _intermediateLodTiersStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        transitions.AddChild(_intermediateLodTiersStatus);
+        RefreshIntermediateLodTiersStatus();
+    }
+
+    private void RefreshPartialCoverageMeshCullingStatus()
+    {
+        if (_partialCoverageMeshCullingStatus == null) return;
+        if (_lodPauseMenu == null)
+        {
+            _lodPauseMenu = GetNodeOrNull<RingLodPauseMenu>(LodPauseMenuPath);
+            if (_lodPauseMenu != null && _partialCoverageMeshCullingToggle != null)
+                _partialCoverageMeshCullingToggle.Disabled = false;
+        }
+        if (_lodPauseMenu == null)
+        {
+            _partialCoverageMeshCullingStatus.Text = "Proxy coverage culling is unavailable until the LOD pause menu initializes.";
+            return;
+        }
+        if (_partialCoverageMeshCullingToggle != null)
+            _partialCoverageMeshCullingToggle.SetPressedNoSignal(_lodPauseMenu.PartialCoverageMeshCullingEnabled);
+        string saveError = _lodPauseMenu.PartialCoverageMeshCullingLastError;
+        _partialCoverageMeshCullingStatus.Text = _lodPauseMenu.GetPartialCoverageMeshCullingStatus()
+            + (saveError.Length == 0 ? "" : $"\nSave error: {saveError}");
+    }
+
+    private void RefreshIntermediateLodTiersStatus()
+    {
+        if (_intermediateLodTiersStatus == null) return;
+        if (_lodPauseMenu == null)
+        {
+            _lodPauseMenu = GetNodeOrNull<RingLodPauseMenu>(LodPauseMenuPath);
+        }
+        if (_lodPauseMenu == null)
+        {
+            _intermediateLodTiersStatus.Text = "Intermediate terrain LOD tiers are unavailable until the LOD menu initializes.";
+            return;
+        }
+        if (_intermediateLodTiersToggle != null)
+        {
+            _intermediateLodTiersToggle.Disabled = false;
+            _intermediateLodTiersToggle.SetPressedNoSignal(_lodPauseMenu.IntermediateLodTiersEnabled);
+        }
+        string saveError = _lodPauseMenu.IntermediateLodTiersLastError;
+        _intermediateLodTiersStatus.Text = $"Intermediate tiers {(_lodPauseMenu.IntermediateLodTiersEnabled ? "on" : "off")}."
+            + (saveError.Length == 0 ? "" : $"\nSave error: {saveError}");
     }
 
     private void BuildTerrainTab(TabContainer tabs)
@@ -868,7 +952,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             _drawer.Visible = open;
             return;
         }
-        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); }
+        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
         else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);

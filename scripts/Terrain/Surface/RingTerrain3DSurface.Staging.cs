@@ -14,6 +14,7 @@ public partial class RingTerrain3DSurface
     private long _stagedRevision;
     private string _stagingError = string.Empty;
     private int _preparedMeshLods = 4;
+    private int _preparedMeshSize = 48;
     private RingTerrain3DSurface? _idlePreparedSurface;
     private bool _isBudgetedPreparation;
 
@@ -34,10 +35,12 @@ public partial class RingTerrain3DSurface
         active.SetWorldFrame(_worldFrame);
         active.SetHandoffDistance(_handoffDistanceMeters);
         active.SetMeshLods(_preparedMeshLods);
+        active.SetMeshSize(_preparedMeshSize);
         active.SetBiomeSampler(sampler);
         active.Initialize(field, frame);
         if (!active.IsReady) throw new InvalidOperationException(active.LastError);
         active.SetMeshLods(_preparedMeshLods);
+        active.SetMeshSize(_preparedMeshSize);
         active._stagingCandidate = true;
         active._isBudgetedPreparation = true;
         if (active._collisionBody != null) { active._collisionBody.CollisionLayer = 1; active._collisionBody.CollisionMask = 1; }
@@ -55,6 +58,7 @@ public partial class RingTerrain3DSurface
         idle.SetWorldFrame(_worldFrame);
         idle.SetHandoffDistance(_handoffDistanceMeters);
         idle.SetMeshLods(_preparedMeshLods);
+        idle.SetMeshSize(_preparedMeshSize);
         idle.SetBiomeSampler(sampler);
         idle.EnsurePreparedNative(frame);
         idle.Visible = false;
@@ -108,6 +112,7 @@ public partial class RingTerrain3DSurface
         candidate.SetWorldFrame(_worldFrame);
         candidate.SetHandoffDistance(_handoffDistanceMeters);
         candidate.SetMeshLods(_preparedMeshLods);
+        candidate.SetMeshSize(_preparedMeshSize);
         if (!candidate.CommitPreparedWindow(absoluteHeights, heightImages, anchorAround, anchorAcross,
                 frameHeight, acrossDirection, revision, directRegions))
         {

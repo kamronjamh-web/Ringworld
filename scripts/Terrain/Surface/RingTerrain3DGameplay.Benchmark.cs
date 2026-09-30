@@ -37,8 +37,9 @@ public partial class RingTerrain3DGameplay
         _lastWorldFrame = BuildWorldFrame(_frame);
         _surface.RebuildWindow(_frame);
         _surface.SetWorldFrame(_lastWorldFrame);
-        _surface.SetHandoffDistance(HandoffDistance);
+        _surface.SetHandoffDistance(_handoffDistanceMeters);
         _surface.SetMeshLods(_meshLods);
+        _surface.SetMeshSize(_meshSize);
     }
 
     private RingSurfaceFrame BuildSynchronousBenchmarkFrame(RingCanonicalPosition position)

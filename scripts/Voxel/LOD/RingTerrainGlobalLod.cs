@@ -153,6 +153,14 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private bool _lastRegionalVisibilityEnabled;
     private RingLodSurfaceEditSnapshot? _pendingSegmentEdits;
     private ulong _observedEditVersion;
+    // The terminal proxy reads only this immutable, fully published receiver
+    // topology. A replacement generation stays private until every changed
+    // segment has been installed, so a worker never targets mixed geometry.
+    private RingTerrainGlobalMorphSnapshot? _readyMorphSnapshot;
+    private Dictionary<int, RingTerrainGlobalMorphSnapshot.Segment>? _stagedMorphSegments;
+    private int _stagedMorphSegmentCount;
+    private ulong _morphGeneration;
+    private ulong _stagedMorphEditVersion;
     private Vector3 _lastCameraWorldPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector3 _lastLightingRingCenter = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector3 _lastLightingSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
@@ -174,6 +182,14 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     public long EstimatedSummaryBytes => _heightPyramid?.EstimatedBytes ?? 0L;
     public long EstimatedGlobalMeshBytes { get; private set; }
     public ulong HeightRangeRevision => _heightPyramid == null ? 0UL : _heightPyramid.EditVersion + 1UL;
+    public bool HasReadyMorphSnapshot => _readyMorphSnapshot != null;
+
+    /// <summary>Captures the latest complete global receiver surface for a proxy worker.</summary>
+    public bool TryCaptureReadyMorphSnapshot(out RingTerrainGlobalMorphSnapshot snapshot)
+    {
+        snapshot = _readyMorphSnapshot!;
+        return snapshot != null;
+    }
 
     public bool TryGetTerrainHeightRange(
         double aroundStartMeters,
@@ -571,6 +587,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
         if (UseMinMaxFeaturePreservation && _heightPyramid == null) return;
 
+        BeginGlobalMorphGeneration(Mathf.Clamp(GlobalSegmentCount, 1, Mathf.Max(1, AroundSegments)), _grid.LodSurfaceEditVersion);
         InvalidatePendingPreparation();
         // Reuse existing nodes when the segment partition is unchanged.  This
         // keeps visible terrain alive until each replacement is published.
@@ -644,6 +661,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
         if (_initialSegmentQueue.Count != 0) return;
         _initialSegmentEdits = null;
+        TryPublishStagedMorphSnapshot();
         RetireRetainedTerrainSegments();
         GD.Print($"Segmented global terrain HLOD ready: segments={_terrainSegments.Count}, around={AroundSegments}, across={AcrossSegments}");
     }
@@ -662,11 +680,102 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         public required RingLodGeometrySnapshot Geometry;
         public required RingTerrainMinMaxPyramid? HeightPyramid;
         public required Vector3[] TerrainVertices, WaterVertices;
+        public required float[] TerrainCanonicalHeights;
         public required Color[] TerrainColors, WaterColors;
         public required bool[] DisplayedWater;
         public required ulong Version;
         public int NextVertex;
         public int VertexCount => TerrainVertices.Length;
+    }
+
+    private void BeginGlobalMorphGeneration(int segmentCount, ulong editVersion)
+    {
+        _morphGeneration++;
+        _stagedMorphSegmentCount = Math.Max(0, segmentCount);
+        _stagedMorphEditVersion = editVersion;
+        _stagedMorphSegments = new Dictionary<int, RingTerrainGlobalMorphSnapshot.Segment>(_stagedMorphSegmentCount);
+        // An unchanged segment remains exact. Reusing its immutable data avoids
+        // resampling the entire ring after a local edit, while the public
+        // snapshot remains unavailable until all dirty replacements publish.
+        if (_readyMorphSnapshot != null && _readyMorphSnapshot.SegmentCount == _stagedMorphSegmentCount)
+        {
+            RingTerrainGlobalMorphSnapshot.Segment[] previous = _readyMorphSnapshot.CopySegments();
+            for (int index = 0; index < previous.Length; index++) _stagedMorphSegments[index] = previous[index];
+        }
+        _readyMorphSnapshot = null;
+    }
+
+    private void StageGlobalMorphSegment(PendingSegmentPreparation state)
+    {
+        if (_stagedMorphSegments == null || state.Version != _pendingPreparationVersion) return;
+        // The copied height array is the receiver's exact published vertical
+        // data. The snapshot owns it and never shares mutable worker buffers.
+        float[] heights = (float[])state.TerrainCanonicalHeights.Clone();
+        _stagedMorphSegments[state.SegmentIndex] = new RingTerrainGlobalMorphSnapshot.Segment(
+            state.AroundStartIndex,
+            state.LocalAroundCount,
+            state.AcrossCount,
+            state.AroundSpacing,
+            state.AcrossSpacing,
+            heights);
+    }
+
+    private void TryPublishStagedMorphSnapshot()
+    {
+        if (_grid?.TerrainSampler is not RingTerrainSampler sampler
+            || _stagedMorphSegments == null
+            || _stagedMorphSegmentCount <= 0
+            || _stagedMorphSegments.Count != _stagedMorphSegmentCount
+            || _initialSegmentQueue.Count != 0
+            || _dirtySegmentQueue.Count != 0)
+            return;
+
+        var segments = new RingTerrainGlobalMorphSnapshot.Segment[_stagedMorphSegmentCount];
+        for (int index = 0; index < segments.Length; index++)
+            if (!_stagedMorphSegments.TryGetValue(index, out segments[index]!)) return;
+        var identity = new RingTerrainGlobalMorphSnapshot.Identity(
+            _morphGeneration,
+            _stagedMorphEditVersion,
+            sampler.TerrainDefinitionHash,
+            Mathf.Max(64, AroundSegments),
+            Mathf.Max(4, AcrossSegments),
+            segments.Length,
+            RingWidthMeters,
+            RadialUnderlayOffsetMeters,
+            ComputeMorphTopologyAndHeightHash(segments));
+        _readyMorphSnapshot = new RingTerrainGlobalMorphSnapshot(
+            identity,
+            _grid.GetCanonicalRingCircumferenceMeters64(),
+            segments);
+        _stagedMorphSegments = null;
+    }
+
+    private static ulong ComputeMorphTopologyAndHeightHash(RingTerrainGlobalMorphSnapshot.Segment[] segments)
+    {
+        // FNV-1a gives the worker cache a stable identity across process runs.
+        // Segment owns only immutable topology/heights by this point.
+        const ulong offset = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        ulong hash = offset;
+        foreach (RingTerrainGlobalMorphSnapshot.Segment segment in segments)
+        {
+            hash = MixMorphHash(hash, (ulong)segment.LocalAroundCount, prime);
+            hash = MixMorphHash(hash, (ulong)segment.AcrossCount, prime);
+            hash = MixMorphHash(hash, BitConverter.DoubleToUInt64Bits(segment.AroundStartMeters), prime);
+            hash = MixMorphHash(hash, BitConverter.DoubleToUInt64Bits(segment.AroundSpacing), prime);
+            hash = MixMorphHash(hash, BitConverter.DoubleToUInt64Bits(segment.AcrossSpacing), prime);
+            foreach (float height in segment.CopyCanonicalHeights())
+            {
+                hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(height), prime);
+            }
+        }
+        return hash;
+    }
+
+    private static ulong MixMorphHash(ulong hash, ulong value, ulong prime)
+    {
+        hash ^= value;
+        return hash * prime;
     }
 
     private void InvalidatePendingPreparation()
@@ -695,7 +804,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             PreserveFeatures = UseMinMaxFeaturePreservation && _heightPyramid != null, Underlay = RadialUnderlayOffsetMeters,
             LowColor = LowTerrainColor, HighColor = HighTerrainColor, WorldToLocal = GlobalTransform.AffineInverse(),
             Geometry = _grid.CaptureLodGeometrySnapshot(), HeightPyramid = _heightPyramid,
-            TerrainVertices = terrainVertices, TerrainColors = new Color[terrainVertices.Length], WaterVertices = new Vector3[terrainVertices.Length],
+            TerrainVertices = terrainVertices, TerrainCanonicalHeights = new float[terrainVertices.Length], TerrainColors = new Color[terrainVertices.Length], WaterVertices = new Vector3[terrainVertices.Length],
             WaterColors = new Color[terrainVertices.Length], DisplayedWater = new bool[terrainVertices.Length], Version = _pendingPreparationVersion };
     }
 
@@ -726,7 +835,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         state.TerrainColors[index] = RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(terrainHeight), state.Sampler, state.LowColor, state.HighColor);
         state.WaterColors[index] = RingWaterModel.EncodeWaterKind(RingTerrainVisuals.ResolveMacroTextureColor(terrainSample, Mathf.RoundToInt(waterHeight), state.Sampler, state.LowColor, state.HighColor), terrainSample.WaterKind);
         state.DisplayedWater[index] = terrainSample.HasSurfaceWater && terrainHeight < terrainSample.WaterSurfaceHeight;
-        state.TerrainVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, terrainHeight + (state.UsesPresentationSurface ? 0.0 : 1.0) - state.Underlay, across);
+        float terrainCanonicalHeight = terrainHeight + (state.UsesPresentationSurface ? 0.0f : 1.0f) - state.Underlay;
+        state.TerrainCanonicalHeights[index] = terrainCanonicalHeight;
+        state.TerrainVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, terrainCanonicalHeight, across);
         state.WaterVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, waterHeight + (state.Sampler.UsesRuntimeSurfaceGeneration ? 0.0 : 1.0) - state.Underlay, across);
     }
 
@@ -878,6 +989,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             }
             if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
         }
+        StageGlobalMorphSegment(state);
     }
 
     private void RefreshEditedSegments()
@@ -928,6 +1040,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             if (previous < publishedSegmentCount) QueueDirtySegment(previous, publishedSegmentCount);
             if (next < publishedSegmentCount) QueueDirtySegment(next, publishedSegmentCount);
         }
+        if (_dirtySegmentQueue.Count > 0)
+            BeginGlobalMorphGeneration(publishedSegmentCount, edits.Version);
         if (_grid.TerrainSampler != null)
         {
             _pendingSegmentEdits = PrepareGlobalEditSnapshot(edits, _grid.TerrainSampler);
@@ -979,6 +1093,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             _queuedDirtySegments.Remove(index);
             LastSegmentRebuildCount++;
         }
+        TryPublishStagedMorphSnapshot();
         LastSegmentRebuildMilliseconds = (Time.GetTicksUsec() - start) / 1000.0;
     }
 

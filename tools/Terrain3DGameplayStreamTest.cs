@@ -161,6 +161,10 @@ public partial class Terrain3DGameplayStreamTest : Node
 
     private void VerifyCoverageTargetSelection()
     {
+        Check(RingTerrain3DGameplay.HasUploadedVisualFootprint(-128, -128, 128), "maximum handoff remains inside uploaded map at the normal recenter edge");
+        Check(!RingTerrain3DGameplay.HasUploadedVisualFootprint(-128.01, 0, 128), "maximum handoff never claims coverage beyond the uploaded negative edge");
+        Check(RingTerrain3DGameplay.HasUploadedVisualFootprint(0, 0, 112), "default handoff fits the uploaded map");
+        Check(!RingTerrain3DGameplay.HasUploadedVisualFootprint(0, 0, float.NaN), "nonfinite handoff never claims visual coverage");
         var frame = new RingSurfaceFrame(256, 159000, 0, CertifiedRingScale.AroundVoxelLength,
             CertifiedRingScale.EffectiveRadiusMeters, 2, -1);
         foreach (double offset in new[] { -176.0, -128.0, 128.0, 176.0 })

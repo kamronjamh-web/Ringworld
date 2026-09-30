@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Lightning;
@@ -45,14 +46,24 @@ public partial class RingScaledFarViewport : Node
 		double InnerRadius,
 		double OuterRadius);
 
+	/// <summary>
+	/// A radial regional tier.  Sample spacing is a height-sampling target only:
+	/// the polar mesh deliberately keeps its 96 angular columns and bounded radial
+	/// row count, so adding a tier never silently multiplies angular geometry.
+	/// </summary>
+	internal readonly record struct FarRegionalBandSpec(
+		string Name,
+		double InnerRadius,
+		double OuterRadius,
+		double SampleSpacing);
+
 	private sealed record FarRegionalBuildResult(
 		long AnchorAround,
 		int AnchorAcross,
 		long TransitGeneration,
 		ulong EditVersion,
-		FarRegionalBandData Lod9,
-		FarRegionalBandData Lod10,
-		FarRegionalBandData Lod11);
+		long LayoutVersion,
+		IReadOnlyList<FarRegionalBandData> Bands);
 
 	[Export] public bool Enabled { get; set; }
 	[Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
@@ -117,6 +128,7 @@ public partial class RingScaledFarViewport : Node
 	[Export] public bool KeepLocalTerrainFallbackVisible { get; set; } = true;
 	[ExportGroup("Mega regional far LODs")]
 	[Export] public bool RegionalFarLodsEnabled { get; set; }
+	[Export] public bool IntermediateRegionalLodTiersEnabled { get; set; } = true;
 	[ExportGroup("Regional transit guard")]
 	// The scaled far terrain is a coverage guard, so it stays visible during
 	// high-speed noclip as well.
@@ -224,12 +236,10 @@ public partial class RingScaledFarViewport : Node
 	private MeshInstance3D? _scaledCloudShell;
 	private readonly MeshInstance3D?[] _farCloudClipmapLayers = new MeshInstance3D?[3];
 	private readonly ShaderMaterial?[] _farCloudClipmapMaterials = new ShaderMaterial?[3];
-	private MeshInstance3D? _farLod9Terrain;
-	private MeshInstance3D? _farLod10Terrain;
-	private MeshInstance3D? _farLod11Terrain;
-	private ShaderMaterial? _farLod9Material;
-	private ShaderMaterial? _farLod10Material;
-	private ShaderMaterial? _farLod11Material;
+	// Active meshes remain visible while an asynchronous replacement is uploaded.
+	// The candidate set is published only after every band has reached the GPU.
+	private readonly List<MeshInstance3D> _farRegionalTerrains = new();
+	private readonly List<MeshInstance3D> _farRegionalStagingTerrains = new();
 	private ShaderMaterial? _localCloudCanopyMaterial;
 	private MeshInstance3D? _localCloudCanopy;
 	private ShaderMaterial? _scaledCloudVolumeMaterial;
@@ -282,6 +292,7 @@ public partial class RingScaledFarViewport : Node
 	private bool _regionalTransitHidden;
 	private double _regionalTransitResumeElapsed;
 	private long _regionalTransitGeneration;
+	private long _farRegionalLayoutVersion;
 	private float _farAtmosphereShroudVisibility = 1.0f;
 	private Vector3 _lastSharedMaterialCameraPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
 	private Vector3 _lastSharedMaterialSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
@@ -1208,7 +1219,7 @@ public partial class RingScaledFarViewport : Node
 		DisableWholeRingFrustumCulling(waterMesh);
 	}
 
-	// LOD9-11 are drawn in scaled space so the primary Forward+ camera never
+	// The regional far bands are drawn in scaled space so the primary Forward+ camera never
 	// needs their multi-million-metre clip range. A polar grid keeps the mesh
 	// bounded (and inexpensive) while following the player through canonical
 	// space; the complete ring remains the backdrop beyond this regional band.
@@ -1229,32 +1240,25 @@ public partial class RingScaledFarViewport : Node
 		{
 			_farRegionalUpload = null;
 			_farRegionalUploadBand = 0;
+			DiscardFarRegionalStaging();
 		}
 		if (_farRegionalUpload != null)
 		{
-			if (_farRegionalUploadBand == 0)
+			// One ArrayMesh upload per frame. Candidate meshes are invisible and use
+			// their own anchor until the complete replacement can be published.
+			if (_farRegionalUploadBand < _farRegionalUpload.Bands.Count)
 			{
-				ActivateRegionalRenderOrigin(_farRegionalUpload.AnchorAround, _farRegionalUpload.AnchorAcross);
-				ApplyFarRegionalBand(ref _farLod9Terrain, ref _farLod9Material, _farRegionalUpload.Lod9);
-				_farRegionalUploadBand = 1;
+				ApplyFarRegionalBand(
+						_farRegionalStagingTerrains,
+						_farRegionalUpload.Bands[_farRegionalUploadBand],
+						_farRegionalUpload.AnchorAround,
+						_farRegionalUpload.AnchorAcross,
+						visible: false);
+				_farRegionalUploadBand++;
+				return;
 			}
-			else if (_farRegionalUploadBand == 1)
-			{
-				ApplyFarRegionalBand(ref _farLod10Terrain, ref _farLod10Material, _farRegionalUpload.Lod10);
-				_farRegionalUploadBand = 2;
-			}
-			else
-			{
-				ApplyFarRegionalBand(ref _farLod11Terrain, ref _farLod11Material, _farRegionalUpload.Lod11);
-				_lastFarRegionalAnchorAround = _farRegionalUpload.AnchorAround;
-				_lastFarRegionalAnchorAcross = _farRegionalUpload.AnchorAcross;
-				_lastFarRegionalEditVersion = _farRegionalUpload.EditVersion;
-				GD.Print(
-					$"Scaled far regional LOD refreshed: around={_lastFarRegionalAnchorAround}, "
-					+ $"across={_lastFarRegionalAnchorAcross}, async=true.");
-				_farRegionalUpload = null;
-				_farRegionalUploadBand = 0;
-			}
+
+			PublishFarRegionalStaging(_farRegionalUpload);
 			return;
 		}
 
@@ -1263,7 +1267,7 @@ public partial class RingScaledFarViewport : Node
 		// Select the nearest periodic image before snapping. Snapping the raw
 		// [0, circumference) coordinate can choose different 500 km cells on
 		// either side of the seam when the circumference is not a multiple of
-		// the reanchor distance, forcing a redundant LOD9-11 rebuild.
+		// the reanchor distance, forcing a redundant regional-band rebuild.
 		double signedAround = canonical.AroundMeters;
 		if (signedAround > _circumferenceMeters * 0.5)
 			signedAround -= _circumferenceMeters;
@@ -1298,20 +1302,22 @@ public partial class RingScaledFarViewport : Node
 		Color low = LowTerrainColor;
 		Color high = HighTerrainColor;
 		long transitGeneration = _regionalTransitGeneration;
+		long layoutVersion = _farRegionalLayoutVersion;
+		// Capture the layout on the main thread. The worker only receives immutable
+		// value data and an independent terrain sampler.
+		FarRegionalBandSpec[] bandSpecs = GetFarRegionalBandSpecs(IntermediateRegionalLodTiersEnabled).ToArray();
 		_farRegionalBuildTask = Task.Run(() =>
 		{
 			try
 			{
-				FarRegionalBandData lod9 = BuildFarRegionalBandData(
-					"ScaledFarLod9", workerSampler, anchorAround, anchorAcross,
-					125000.0, 625000.0, 2048.0, circumference, radius, width, scale, low, high, edits);
-				FarRegionalBandData lod10 = BuildFarRegionalBandData(
-					"ScaledFarLod10", workerSampler, anchorAround, anchorAcross,
-					625000.0, 2250000.0, 8192.0, circumference, radius, width, scale, low, high, edits);
-				FarRegionalBandData lod11 = BuildFarRegionalBandData(
-					"ScaledFarLod11", workerSampler, anchorAround, anchorAcross,
-					2250000.0, 7960000.0, 32768.0, circumference, radius, width, scale, low, high, edits);
-				return new FarRegionalBuildResult(anchorAround, anchorAcross, transitGeneration, edits.Version, lod9, lod10, lod11);
+				var bands = new List<FarRegionalBandData>();
+				foreach (FarRegionalBandSpec spec in bandSpecs)
+					bands.Add(BuildFarRegionalBandData(
+						spec.Name, workerSampler, anchorAround, anchorAcross,
+						spec.InnerRadius, spec.OuterRadius, spec.SampleSpacing,
+						circumference, radius, width, scale, low, high, edits));
+				WeldFarRegionalBandNormals(bands);
+				return new FarRegionalBuildResult(anchorAround, anchorAcross, transitGeneration, edits.Version, layoutVersion, bands);
 			}
 			finally
 			{
@@ -1332,6 +1338,7 @@ public partial class RingScaledFarViewport : Node
 		}
 		if (completed.IsCanceled) return;
 		if (completed.Result.TransitGeneration != _regionalTransitGeneration
+				|| completed.Result.LayoutVersion != _farRegionalLayoutVersion
 			|| _grid?.LodSurfaceEditVersion != completed.Result.EditVersion)
 			return;
 		_farRegionalUpload = completed.Result;
@@ -1352,9 +1359,7 @@ public partial class RingScaledFarViewport : Node
 			_requestedFarRegionalAnchorAround = long.MinValue;
 			_requestedFarRegionalAnchorAcross = int.MinValue;
 			if (_regionalBackdrop != null) _regionalBackdrop.Visible = true;
-			if (_farLod9Terrain != null) _farLod9Terrain.Visible = true;
-			if (_farLod10Terrain != null) _farLod10Terrain.Visible = true;
-			if (_farLod11Terrain != null) _farLod11Terrain.Visible = true;
+			foreach (MeshInstance3D terrain in _farRegionalTerrains) terrain.Visible = true;
 			GD.Print("Scaled far regional terrain visibility restored; speed-based hiding is disabled.");
 		}
 		return false;
@@ -1432,6 +1437,75 @@ public partial class RingScaledFarViewport : Node
 		return new FarRegionalBandData(name, vertices, normals, colors, macroShadowUvs, indices, innerRadius, outerRadius);
 	}
 
+	// Every band samples the shared circumference edge at the same 97 angles.
+	// Their triangle fans have different radial row widths, however, so their
+	// independently accumulated normal can differ at an otherwise welded edge.
+	private static void WeldFarRegionalBandNormals(IReadOnlyList<FarRegionalBandData> bands)
+	{
+		const int angularRowLength = 97;
+		for (int bandIndex = 1; bandIndex < bands.Count; bandIndex++)
+		{
+			FarRegionalBandData previous = bands[bandIndex - 1];
+			FarRegionalBandData next = bands[bandIndex];
+			int previousRow = previous.Vertices.Length - angularRowLength;
+			for (int angular = 0; angular < angularRowLength; angular++)
+			{
+				int previousIndex = previousRow + angular;
+				if (!previous.Vertices[previousIndex].IsEqualApprox(next.Vertices[angular]))
+					throw new InvalidOperationException($"Regional far band boundary mismatch: {previous.Name} -> {next.Name}.");
+				Vector3 normal = (previous.Normals[previousIndex] + next.Normals[angular]).Normalized();
+				if (normal.LengthSquared() <= 0.0000001f) normal = Vector3.Up;
+				previous.Normals[previousIndex] = normal;
+				next.Normals[angular] = normal;
+			}
+		}
+	}
+
+	/// <summary>Returns contiguous regional coverage while retaining the legacy reach.</summary>
+	internal static IReadOnlyList<FarRegionalBandSpec> GetFarRegionalBandSpecs(bool includeIntermediateTiers)
+	{
+		if (!includeIntermediateTiers)
+			return new[]
+			{
+				new FarRegionalBandSpec("ScaledFarLod9", 125000.0, 625000.0, 2048.0),
+				new FarRegionalBandSpec("ScaledFarLod10", 625000.0, 2250000.0, 8192.0),
+				new FarRegionalBandSpec("ScaledFarLod11", 2250000.0, 7960000.0, 32768.0)
+			};
+
+		return new[]
+		{
+			new FarRegionalBandSpec("ScaledFarLod9Bridge512", 125000.0, 187500.0, 512.0),
+			new FarRegionalBandSpec("ScaledFarLod9Bridge1024", 187500.0, 250000.0, 1024.0),
+			new FarRegionalBandSpec("ScaledFarLod9", 250000.0, 625000.0, 2048.0),
+			new FarRegionalBandSpec("ScaledFarLod10Bridge4096", 625000.0, 1125000.0, 4096.0),
+			new FarRegionalBandSpec("ScaledFarLod10", 1125000.0, 2250000.0, 8192.0),
+			new FarRegionalBandSpec("ScaledFarLod11Bridge16384", 2250000.0, 4500000.0, 16384.0),
+			new FarRegionalBandSpec("ScaledFarLod11", 4500000.0, 7960000.0, 32768.0)
+		};
+	}
+
+	public void SetIntermediateLodTiers(bool enabled)
+	{
+		if (IntermediateRegionalLodTiersEnabled == enabled) return;
+		IntermediateRegionalLodTiersEnabled = enabled;
+		_farRegionalLayoutVersion++;
+		_farRegionalUpload = null;
+		_farRegionalUploadBand = 0;
+		DiscardFarRegionalStaging();
+		// Invalidate only the publication marker. The active meshes stay visible
+		// until the fresh, complete candidate set is atomically published.
+		_lastFarRegionalAnchorAround = long.MinValue;
+		_lastFarRegionalAnchorAcross = int.MinValue;
+		_requestedFarRegionalAnchorAround = long.MinValue;
+		_requestedFarRegionalAnchorAcross = int.MinValue;
+	}
+
+	private void DiscardFarRegionalStaging()
+	{
+		foreach (MeshInstance3D mesh in _farRegionalStagingTerrains) mesh.QueueFree();
+		_farRegionalStagingTerrains.Clear();
+	}
+
 	private void ActivateRegionalRenderOrigin(long around, int across)
 	{
 		_regionalRenderOriginAround = around;
@@ -1441,23 +1515,37 @@ public partial class RingScaledFarViewport : Node
 			around, 0.0, across,
 			_circumferenceMeters, _radiusMeters, Mathf.Max(1, RingWidthMeters), CoordinateScale);
 
-		// Mesh data is relative to its anchor. Do not show a mesh from the
-		// preceding anchor during the one-frame upload split.
-		if (_farLod9Terrain != null) _farLod9Terrain.Visible = false;
-		if (_farLod10Terrain != null) _farLod10Terrain.Visible = false;
-		if (_farLod11Terrain != null) _farLod11Terrain.Visible = false;
+	}
+
+	private void PublishFarRegionalStaging(FarRegionalBuildResult result)
+	{
+		ActivateRegionalRenderOrigin(result.AnchorAround, result.AnchorAcross);
+		foreach (MeshInstance3D mesh in _farRegionalTerrains)
+		{
+			mesh.Visible = false;
+			mesh.QueueFree();
+		}
+		_farRegionalTerrains.Clear();
+		_farRegionalTerrains.AddRange(_farRegionalStagingTerrains);
+		_farRegionalStagingTerrains.Clear();
+		foreach (MeshInstance3D mesh in _farRegionalTerrains) mesh.Visible = true;
+		_lastFarRegionalAnchorAround = result.AnchorAround;
+		_lastFarRegionalAnchorAcross = result.AnchorAcross;
+		_lastFarRegionalEditVersion = result.EditVersion;
+		GD.Print($"Scaled far regional LOD refreshed: around={_lastFarRegionalAnchorAround}, across={_lastFarRegionalAnchorAcross}, bands={_farRegionalTerrains.Count}, async=true.");
+		_farRegionalUpload = null;
+		_farRegionalUploadBand = 0;
 	}
 
 	private void ApplyFarRegionalBand(
-		ref MeshInstance3D? instance,
-		ref ShaderMaterial? material,
-		FarRegionalBandData data)
+		List<MeshInstance3D> destination,
+		FarRegionalBandData data,
+		long anchorAround,
+		int anchorAcross,
+		bool visible)
 	{
-		if (instance == null)
-		{
-			instance = new MeshInstance3D { Name = data.Name, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, IgnoreOcclusionCulling = true };
-			_regionalFarViewport!.AddChild(instance);
-		}
+		var instance = new MeshInstance3D { Name = data.Name, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, IgnoreOcclusionCulling = true };
+		_regionalFarViewport!.AddChild(instance);
 		var arrays = new Godot.Collections.Array();
 		arrays.Resize((int)Mesh.ArrayType.Max);
 		arrays[(int)Mesh.ArrayType.Vertex] = data.Vertices;
@@ -1468,7 +1556,7 @@ public partial class RingScaledFarViewport : Node
 		var mesh = new ArrayMesh();
 		mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
 		instance.Mesh = mesh;
-		material = (ShaderMaterial)_terrainMaterial!.Duplicate();
+		ShaderMaterial material = (ShaderMaterial)_terrainMaterial!.Duplicate();
 		RingAtmosphereModel.ConfigureMaterial(material, _radiusMeters, CoordinateScale);
 		global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(material, CoordinateScale);
 		// This band receives a fresh material after an asynchronous rebuild.
@@ -1485,9 +1573,13 @@ public partial class RingScaledFarViewport : Node
 		material.SetShaderParameter("fade_out_start_meters", scaledOuter);
 		material.SetShaderParameter("fade_out_end_meters", scaledOuter);
 		material.SetShaderParameter("camera_relative_region", true);
+		// The mesh itself is an exact anchor-relative annulus. Do not apply the
+		// shared shader's camera-relative fade here: reanchoring can place the
+		// camera hundreds of kilometres from the annulus centre and shift a seam.
+		material.SetShaderParameter("regional_band_distance_clip", false);
 		material.SetShaderParameter(
 			"regional_surface_up",
-			SurfaceUpForAround(_regionalRenderOriginAround, _circumferenceMeters, _radiusMeters));
+			SurfaceUpForAround(anchorAround, _circumferenceMeters, _radiusMeters));
 		// The detailed atmosphere reconstructs a global cylinder from shader
 		// floats, which camera-relative regional meshes cannot retain. The
 		// far-shroud branch needs no global reconstruction. Macro terrain
@@ -1502,7 +1594,8 @@ public partial class RingScaledFarViewport : Node
 		material.SetShaderParameter("terrain_macro_shadow_use_uv", true);
 		material.SetShaderParameter("analytic_cloud_shadow_enabled", false);
 		instance.MaterialOverride = material;
-		instance.Visible = true;
+		instance.Visible = visible;
+		destination.Add(instance);
 	}
 
 	private static void AddRawTriangle(
@@ -2159,12 +2252,8 @@ public partial class RingScaledFarViewport : Node
 			_terrainMaterial, worldToCanonical);
 		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
 			_waterMaterial, worldToCanonical);
-		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
-			_farLod9Material, worldToCanonical);
-		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
-			_farLod10Material, worldToCanonical);
-		global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(
-			_farLod11Material, worldToCanonical);
+		foreach (ShaderMaterial material in GetRegionalMaterials())
+			global::RingworldTechDemo.RingTerrainMacroShadowProjector.SetReceiverDirectionTransform(material, worldToCanonical);
 	}
 
 	private void SyncRegionalCameraAndLighting(
@@ -2241,7 +2330,7 @@ public partial class RingScaledFarViewport : Node
 		}
 		SyncRegionalMaterialUniforms(regionalPosition, sunDirection);
 		ApplyAtmosphereRayFrame(eyeCanonical, regionalPosition, sunDirection,
-			_farLod9Material, _farLod10Material, _farLod11Material);
+			GetRegionalMaterials().ToArray());
 	}
 
 	private RingAtmosphereRayFrame ApplyAtmosphereRayFrame(
@@ -2322,30 +2411,22 @@ public partial class RingScaledFarViewport : Node
 	{
 		if (!_lastRegionalMaterialCameraPosition.IsEqualApprox(cameraPosition))
 		{
-			SetCameraWorldPosition(_farLod9Material, cameraPosition);
-			SetCameraWorldPosition(_farLod10Material, cameraPosition);
-			SetCameraWorldPosition(_farLod11Material, cameraPosition);
+			foreach (ShaderMaterial material in GetRegionalMaterials()) SetCameraWorldPosition(material, cameraPosition);
 			_lastRegionalMaterialCameraPosition = cameraPosition;
 		}
 		if (!_lastRegionalMaterialRingCenter.IsEqualApprox(_regionalRingCenter))
 		{
-			SetRingCenter(_farLod9Material, _regionalRingCenter);
-			SetRingCenter(_farLod10Material, _regionalRingCenter);
-			SetRingCenter(_farLod11Material, _regionalRingCenter);
+			foreach (ShaderMaterial material in GetRegionalMaterials()) SetRingCenter(material, _regionalRingCenter);
 			_lastRegionalMaterialRingCenter = _regionalRingCenter;
 		}
 		if (!_lastRegionalMaterialSunDirection.IsEqualApprox(sunDirection))
 		{
-			SetSunDirection(_farLod9Material, sunDirection);
-			SetSunDirection(_farLod10Material, sunDirection);
-			SetSunDirection(_farLod11Material, sunDirection);
+			foreach (ShaderMaterial material in GetRegionalMaterials()) SetSunDirection(material, sunDirection);
 			_lastRegionalMaterialSunDirection = sunDirection;
 		}
 		if (!Mathf.IsEqualApprox(_lastRegionalMaterialShroudVisibility, _farAtmosphereShroudVisibility))
 		{
-			SetShroudVisibility(_farLod9Material, _farAtmosphereShroudVisibility);
-			SetShroudVisibility(_farLod10Material, _farAtmosphereShroudVisibility);
-			SetShroudVisibility(_farLod11Material, _farAtmosphereShroudVisibility);
+			foreach (ShaderMaterial material in GetRegionalMaterials()) SetShroudVisibility(material, _farAtmosphereShroudVisibility);
 			_lastRegionalMaterialShroudVisibility = _farAtmosphereShroudVisibility;
 		}
 	}
@@ -2356,6 +2437,14 @@ public partial class RingScaledFarViewport : Node
 		_lastRegionalMaterialRingCenter = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
 		_lastRegionalMaterialSunDirection = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
 		_lastRegionalMaterialShroudVisibility = float.NaN;
+	}
+
+	private IEnumerable<ShaderMaterial> GetRegionalMaterials()
+	{
+		foreach (MeshInstance3D terrain in _farRegionalTerrains)
+			if (terrain.MaterialOverride is ShaderMaterial material) yield return material;
+		foreach (MeshInstance3D terrain in _farRegionalStagingTerrains)
+			if (terrain.MaterialOverride is ShaderMaterial material) yield return material;
 	}
 
 	private static void SetCameraWorldPosition(ShaderMaterial? material, Vector3 position) => material?.SetShaderParameter("camera_world_position", position);

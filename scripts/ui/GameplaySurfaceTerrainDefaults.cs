@@ -14,6 +14,10 @@ public sealed class GameplaySurfaceTerrainDefaults
     public const float MaximumBrushStepMeters = 8.0f;
     public const int MinimumMeshLods = 2;
     public const int MaximumMeshLods = 6;
+    public const int MinimumMeshSize = 16;
+    public const int MaximumMeshSize = 64;
+    public const float MinimumHandoffDistanceMeters = 84.0f;
+    public const float MaximumHandoffDistanceMeters = 128.0f;
     public const float MinimumMoveSpeedMetersPerSecond = 2.0f;
     public const float MaximumMoveSpeedMetersPerSecond = 60.0f;
     public const int MinimumGenerationWorkerCount = 1;
@@ -68,6 +72,20 @@ public sealed class GameplaySurfaceTerrainDefaults
         value = ClampMeshLods(value);
         if (Settings.MeshLods == value) return false;
         Settings.MeshLods = value; Dirty = true; return true;
+    }
+
+    public bool SetMeshSize(int value)
+    {
+        value = ClampMeshSize(value);
+        if (Settings.MeshSize == value) return false;
+        Settings.MeshSize = value; Dirty = true; return true;
+    }
+
+    public bool SetHandoffDistanceMeters(float value)
+    {
+        value = ClampHandoffDistanceMeters(value);
+        if (Mathf.IsEqualApprox(Settings.HandoffDistanceMeters, value)) return false;
+        Settings.HandoffDistanceMeters = value; Dirty = true; return true;
     }
 
     public bool SetMoveSpeedMetersPerSecond(float value)
@@ -130,6 +148,8 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.BrushRadiusMeters = ClampBrushRadiusMeters(loaded.BrushRadiusMeters);
             Settings.BrushStepMeters = ClampBrushStepMeters(loaded.BrushStepMeters);
             Settings.MeshLods = ClampMeshLods(loaded.MeshLods);
+            Settings.MeshSize = ClampMeshSize(loaded.MeshSize);
+            Settings.HandoffDistanceMeters = ClampHandoffDistanceMeters(loaded.HandoffDistanceMeters);
             Settings.MoveSpeedMetersPerSecond = ClampMoveSpeedMetersPerSecond(loaded.MoveSpeedMetersPerSecond);
             Settings.GenerationWorkerCount = ClampGenerationWorkerCount(loaded.GenerationWorkerCount);
             Settings.GenerationPrefetchMeters = ClampGenerationPrefetchMeters(loaded.GenerationPrefetchMeters);
@@ -151,6 +171,8 @@ public sealed class GameplaySurfaceTerrainDefaults
         Settings.BrushRadiusMeters = ClampBrushRadiusMeters(Settings.BrushRadiusMeters);
         Settings.BrushStepMeters = ClampBrushStepMeters(Settings.BrushStepMeters);
         Settings.MeshLods = ClampMeshLods(Settings.MeshLods);
+        Settings.MeshSize = ClampMeshSize(Settings.MeshSize);
+        Settings.HandoffDistanceMeters = ClampHandoffDistanceMeters(Settings.HandoffDistanceMeters);
         Settings.MoveSpeedMetersPerSecond = ClampMoveSpeedMetersPerSecond(Settings.MoveSpeedMetersPerSecond);
         Settings.GenerationWorkerCount = ClampGenerationWorkerCount(Settings.GenerationWorkerCount);
         Settings.GenerationPrefetchMeters = ClampGenerationPrefetchMeters(Settings.GenerationPrefetchMeters);
@@ -166,6 +188,8 @@ public sealed class GameplaySurfaceTerrainDefaults
     public static float ClampBrushRadiusMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushRadiusMeters, MaximumBrushRadiusMeters) : 8.0f;
     public static float ClampBrushStepMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushStepMeters, MaximumBrushStepMeters) : 2.0f;
     public static int ClampMeshLods(int value) => Mathf.Clamp(value, MinimumMeshLods, MaximumMeshLods);
+    public static int ClampMeshSize(int value) => Mathf.Clamp(Mathf.RoundToInt(value / 8.0f) * 8, MinimumMeshSize, MaximumMeshSize);
+    public static float ClampHandoffDistanceMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumHandoffDistanceMeters, MaximumHandoffDistanceMeters) : 112.0f;
     public static float ClampMoveSpeedMetersPerSecond(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumMoveSpeedMetersPerSecond, MaximumMoveSpeedMetersPerSecond) : 12.0f;
     public static int ClampGenerationWorkerCount(int value) => Mathf.Clamp(value, MinimumGenerationWorkerCount, MaximumGenerationWorkerCount);
     public static float ClampGenerationPrefetchMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGenerationPrefetchMeters, MaximumGenerationPrefetchMeters) : 64.0f;
