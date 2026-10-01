@@ -1,5 +1,5 @@
 #[compute]
-// GenericData ABI: 180 floats; retain the shared menu/gameplay buffer layout.
+// GenericData uses the append-only shared menu/gameplay layout in CloudsInc.comp.
 #version 450
 
 // GPU-resident cloud-occlusion producer.  This intentionally
@@ -7,6 +7,7 @@
 // shadow follows the visible volume instead of maintaining a second weather
 // simulation.
 #include "./CloudsInc.comp"
+#include "../../materials/ring_cloud_weather_shared.gdshaderinc"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -218,13 +219,9 @@ float sample_sunshine_density(vec3 world_position) {
     float large = texture(large_noise,
         (cloud_position - genericData.data.largenoiseposition) /
         max(genericData.data.large_noise_scale, 1.0)).r * extra;
-    float coverage = genericData.data.cloud_coverage * 1.01;
-    large = smoothstep(coverage, coverage - 0.1, 1.0 - large * gradient.r);
     // This is the exact pre-medium background coverage. smoothstep returns
     // literal zero in clear cells, so those cells can skip the expensive 3D
     // detail textures without introducing a visibility threshold.
-    float background_coverage = large * edge_fade;
-
     float storm_floor = genericData.data.storm_altitude.x;
     float storm_ceiling = genericData.data.storm_altitude.y;
     if (storm_ceiling <= storm_floor + 1.0) {
@@ -238,7 +235,20 @@ float sample_sunshine_density(vec3 world_position) {
         smoothstep(1.0, 0.94, storm_height));
     float storm_silhouette = localized_storm_density(cloud_position, storm_height)
         * storm_altitude_mask;
-    if (background_coverage <= 0.0 && storm_silhouette <= 0.0) return 0.0;
+    float weatherStorm = max(storm_silhouette, genericData.data.cloud_handoff.z);
+    float weatherCoverage = ring_cloud_weather_resolved_coverage(
+        genericData.data.cloud_weather_frame.w, weatherStorm, cloud_position,
+        genericData.data.cloud_weather_params, genericData.data.cloud_weather_frame);
+    float legacyCoverage = genericData.data.cloud_coverage * 1.01;
+    float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
+        ? mix(0.70, 0.90, weatherCoverage) : legacyCoverage;
+    large = smoothstep(1.0 - weatherBackgroundThreshold,
+        1.1 - weatherBackgroundThreshold, large * gradient.r);
+    float weather_gate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
+        genericData.data.cloud_weather_params);
+    float background_coverage = large * edge_fade;
+    if ((background_coverage <= 0.0 || weather_gate <= 0.0)
+        && storm_silhouette <= 0.0) return 0.0;
 
     // Storm-only samples need the medium channel for the existing storm
     // modulation, but not the small erosion texture used only by background.
@@ -255,7 +265,7 @@ float sample_sunshine_density(vec3 world_position) {
         small *= gradient.g * pow(max(1.0 - medium_shape, 0.0), genericData.data.small_noise_strength);
         float shape = clamp(remap(medium_shape, 1.0 - large, 1.0, 0.0, 1.0), 0.0, 1.0);
         shape = clamp(remap(shape, small, 1.0, 0.0, 1.0), 0.0, 1.0);
-        background_density = clamp(shape * edge_fade, 0.0, 1.0);
+        background_density = clamp(shape * edge_fade, 0.0, 1.0) * weather_gate;
     }
     float density = max(background_density, storm_density)
         * side_wall_mask;

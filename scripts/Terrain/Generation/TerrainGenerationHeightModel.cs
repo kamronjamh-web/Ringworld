@@ -12,7 +12,7 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     private readonly TerrainGenerationParameters _p;
     private readonly double[] _continentalHeights;
     private readonly FastNoiseLite _continental, _mountainBelt, _valley, _trench, _ridge, _secondary, _micro, _warpX, _warpZ;
-    // These resources exist only for the v3 recipe.  Earlier recipes retain their
+    // These resources exist only for mountain-detail recipes. Earlier recipes retain their
     // original resource set as well as their original sampling and arithmetic order.
     private readonly FastNoiseLite? _foothill, _spur;
     private readonly FastNoiseLite[]? _swissSpurs;
@@ -33,9 +33,9 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         _p=parameters ?? throw new ArgumentNullException(nameof(parameters));
         _radius=_p.CircumferenceM/Math.Tau;
         _continentalDerivativeEpsilon=Math.Clamp(_p.ContinentalScaleM*.02,128,16384);
-        bool swissEnabled=_p.GeneratorId==TerrainGenerationParameters.DetailGeneratorIdentity
+        bool swissEnabled=_p.HasMountainDetail
             && (_p.MountainDetailMode&1)!=0;
-        bool gullyEnabled=_p.GeneratorId==TerrainGenerationParameters.DetailGeneratorIdentity
+        bool gullyEnabled=_p.HasMountainDetail
             && (_p.MountainDetailMode&2)!=0 && _p.ErosionStrengthM>0d;
         _swissScales=swissEnabled ? new double[4] : Array.Empty<double>();
         _swissWeights=swissEnabled ? new double[4] : Array.Empty<double>();
@@ -73,7 +73,7 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         _micro=Noise(701,_p.MicroScaleM,_p.MicroOctaves,FastNoiseLite.FractalTypeEnum.Fbm);
         _warpX=Noise(809,_p.WarpScaleM,_p.WarpOctaves,FastNoiseLite.FractalTypeEnum.Fbm);
         _warpZ=Noise(907,_p.WarpScaleM,_p.WarpOctaves,FastNoiseLite.FractalTypeEnum.Fbm);
-        if (_p.GeneratorId==TerrainGenerationParameters.DetailGeneratorIdentity)
+        if (_p.HasMountainDetail)
         {
             _foothill=Noise(1009,_p.FoothillScaleM,3,FastNoiseLite.FractalTypeEnum.Fbm);
             _spur=Noise(1103,_p.SpurScaleM,4,FastNoiseLite.FractalTypeEnum.Ridged);
@@ -107,11 +107,22 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     {
         ThrowIfDisposed(); if(!double.IsFinite(around)||!double.IsFinite(across)) throw new ArgumentException("Coordinates must be finite.");
         CylindricalProjection unwarped=new(around,_p.CircumferenceM,_radius);
-        double warpedAround=Wrap(around+Sample(_warpX,unwarped,across)*_p.WarpAmplitudeM), warpedAcross=across+Sample(_warpZ,unwarped,across)*_p.WarpAmplitudeM;
+        double warpedAround, warpedAcross;
+        if(_p.HasEnhancedErosion && _p.WarpAmplitudeM==0d)
+        {
+            warpedAround=around;
+            warpedAcross=across;
+        }
+        else
+        {
+            // Retain the original evaluation order for all pre-v4 recipes.
+            warpedAround=Wrap(around+Sample(_warpX,unwarped,across)*_p.WarpAmplitudeM);
+            warpedAcross=across+Sample(_warpZ,unwarped,across)*_p.WarpAmplitudeM;
+        }
         CylindricalProjection warped=new(warpedAround,_p.CircumferenceM,_radius);
         double continentalRaw=Sample(_continental,warped,warpedAcross);
         double continental=Clamp(continentalRaw+_p.LandBalance,-1,1), macro=ContinentalHeight(continental);
-        if ((_p.GeneratorId == TerrainGenerationParameters.GeneratorIdentity || _p.GeneratorId == TerrainGenerationParameters.DetailGeneratorIdentity) && continental < 0)
+        if ((_p.GeneratorId == TerrainGenerationParameters.GeneratorIdentity || _p.HasMountainDetail) && continental < 0)
         {
             // Symmetric, landform-scale derivative.  This deliberately filters
             // local float/noise variation before converting continentalness to
@@ -125,11 +136,27 @@ public sealed class TerrainGenerationHeightModel : IDisposable
             macro=-OceanDepthForDistance(-continental/gradient);
         }
         double land=SmoothStep(0,.12,continental), belt=SmoothStep(.4,.8,Unit(Sample(_mountainBelt,warped,warpedAcross))), alpine=land*belt, sea=1-land, lowland=land*(1-belt), valley=Valley(Sample(_valley,warped,warpedAcross)), ridge=Math.Pow(Unit(Sample(_ridge,warped,warpedAcross)),_p.RidgeSharpness);
-        double uplift=_p.MountainAmplitudeM*land*belt*(.30+.70*ridge)*(1-.70*valley), trenchWeight=SmoothStep(_p.TrenchThreshold,1,Unit(Sample(_trench,warped,warpedAcross))), deepOcean=1-SmoothStep(-3000,-1000,macro), trench=_p.TrenchDepthM*trenchWeight*deepOcean;
+        double uplift=_p.MountainAmplitudeM*land*belt*(.30+.70*ridge)*(1-.70*valley);
+        double trenchWeight, deepOcean, trench;
+        if(_p.HasEnhancedErosion)
+        {
+            deepOcean=1-SmoothStep(-3000,-1000,macro);
+            trenchWeight=(_p.TrenchDepthM>0d && deepOcean>0d)
+                ? SmoothStep(_p.TrenchThreshold,1,Unit(Sample(_trench,warped,warpedAcross)))
+                : 0d;
+            trench=_p.TrenchDepthM*trenchWeight*deepOcean;
+        }
+        else
+        {
+            // Keep this expression byte-for-byte ordered for v1-v3 goldens.
+            trenchWeight=SmoothStep(_p.TrenchThreshold,1,Unit(Sample(_trench,warped,warpedAcross)));
+            deepOcean=1-SmoothStep(-3000,-1000,macro);
+            trench=_p.TrenchDepthM*trenchWeight*deepOcean;
+        }
         macro+=uplift-trench;
         // Keep this expression byte-for-byte ordered for v1/v2 goldens.
         double detailMask=DetailMaskFor(macro,alpine,ridge,valley,_p.DetailStartM,_p.DetailFullM), detail=detailMask>0 ? detailMask*(_p.SecondaryAmplitudeM*Sample(_secondary,warped,warpedAcross)+_p.MicroAmplitudeM*Sample(_micro,warped,warpedAcross)) : 0;
-        if (_p.GeneratorId!=TerrainGenerationParameters.DetailGeneratorIdentity)
+        if (!_p.HasMountainDetail)
         {
             double legacyRaw=macro+detail, legacyHeight=Clamp(legacyRaw,_p.MinHeightM,_p.MaxHeightM);
             return new(legacyHeight,macro,continental,sea,lowland,alpine,detailMask,valley,ridge,uplift,trench,detail,legacyRaw!=legacyHeight);
@@ -138,7 +165,11 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         double foothill=(_p.FoothillAmplitudeM>0d && coast>0d) ? _p.FoothillAmplitudeM*coast*basin*(1d-.65d*belt)*Unit(Sample(_foothill!,warped,warpedAcross)) : 0d;
         double spurMask=coast*basin*belt;
         double spur=(_p.SpurAmplitudeM>0d && spurMask>0d) ? _p.SpurAmplitudeM*spurMask*SpurField(warpedAround,warped,warpedAcross) : 0d;
-        double erosion=(_p.ErosionStrengthM>0d && spurMask>0d && (_p.MountainDetailMode&2)!=0) ? DirectionalGullies(warpedAround,warped,warpedAcross,alpine,valley,spurMask,macro) : 0d;
+        double erosion=(_p.ErosionStrengthM>0d && spurMask>0d && (_p.MountainDetailMode&2)!=0)
+            ? (_p.HasEnhancedErosion
+                ? EnhancedDirectionalGullies(warpedAround,warped,warpedAcross,alpine,valley,spurMask,macro)
+                : DirectionalGullies(warpedAround,warped,warpedAcross,alpine,valley,spurMask,macro))
+            : 0d;
         double totalDetail=detail+foothill+spur+erosion, raw=macro+totalDetail, height=Clamp(raw,_p.MinHeightM,_p.MaxHeightM);
         return new(height,macro,continental,sea,lowland,alpine,detailMask,valley,ridge,uplift,trench,totalDetail,raw!=height,foothill,spur,erosion);
     }
@@ -209,6 +240,92 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         }
         double amplitude=Math.Min(_p.ErosionStrengthM,Math.Max(0d,macro)*.5d);
         return weights>0d ? amplitude*mask*slopeMask*Clamp(total/weights,-1d,0d) : 0d;
+    }
+    /// <summary>
+    /// v4-only gully carve. Each octave can retain coherent sine-wave gullies without
+    /// allowing a weak complex interpolation to inflate their magnitude. Finer octaves
+    /// fade where the coarser carve has already established a ridge or crease.
+    /// </summary>
+    private double EnhancedDirectionalGullies(double around,CylindricalProjection projection,double across,double alpine,double valley,double mask,double macro)
+    {
+        double epsilon=_gullyDerivativeEpsilon;
+        double ridgeA=(Sample(_ridge,new CylindricalProjection(around+epsilon,_p.CircumferenceM,_radius),across)
+            -Sample(_ridge,new CylindricalProjection(around-epsilon,_p.CircumferenceM,_radius),across))/(2d*epsilon);
+        double ridgeZ=(Sample(_ridge,projection,across+epsilon)
+            -Sample(_ridge,projection,across-epsilon))/(2d*epsilon);
+        double approximateSlope=Math.Sqrt(ridgeA*ridgeA+ridgeZ*ridgeZ)*_p.MountainAmplitudeM*.7d*alpine*(1d-.7d*valley);
+        double slopeMask=SmoothStep(.01d,.35d,approximateSlope);
+        if(slopeMask<=0d) return 0d;
+
+        double guideA=-ridgeA, guideZ=-ridgeZ, appliedCarve=0d, weights=0d;
+        for(int octave=0;octave<_p.ErosionOctaves;octave++)
+        {
+            double scale=_gullyScales[octave];
+            double weight=_gullyWeights[octave];
+            if (!EnhancedCellGullyField(around,across,scale,octave,ref guideA,ref guideZ,out double field)) continue;
+            double carve=.5d*(1d-field);
+            double visibility=1d;
+            if(weights>0d)
+            {
+                double coarse=appliedCarve/weights;
+                double gate=SmoothStep(.15d,.65d,coarse);
+                visibility=Lerp(1d,gate,_p.ErosionRidgePreservation);
+            }
+            appliedCarve+=weight*carve*visibility;
+            weights+=weight;
+        }
+        double amplitude=Math.Min(_p.ErosionStrengthM,Math.Max(0d,macro)*.5d);
+        return weights>0d ? -amplitude*mask*slopeMask*Clamp(appliedCarve/weights,0d,1d) : 0d;
+    }
+    // v4 keeps the legacy stencil and guide feedback, but tracks the complex pair so
+    // normalization is only applied to coherent interpolation.
+    private bool EnhancedCellGullyField(double around,double across,double scale,int octave,ref double guideA,ref double guideZ,out double field)
+    {
+        double length=Math.Sqrt(guideA*guideA+guideZ*guideZ);
+        field=0d;
+        if(length<=1e-10d) return false;
+        guideA/=length; guideZ/=length;
+        int count=_gullyCellCounts[octave];
+        double cellA=_gullyCellWidths[octave];
+        int baseA=(int)Math.Floor(Wrap(around)/cellA);
+        double baseTurn=Math.Floor(around/_p.CircumferenceM), baseZ=Math.Floor(across/scale), cosineSum=0d, sineSum=0d, weightSum=0d, gradientA=0d, gradientZ=0d;
+        bool needsFeedback=octave+1<_p.ErosionOctaves;
+        int baseZInt=(int)baseZ;
+        RefillGullyStencil(octave,baseA,baseZInt,baseTurn,count,cellA,scale);
+        double perpendicularA=-guideZ, perpendicularZ=guideA;
+        for(int z=-1;z<=1;z++) for(int a=-1;a<=1;a++)
+        {
+            int cellIndex=octave*9+(z+1)*3+(a+1);
+            double pivotA=_gullyCells[cellIndex].PivotA, pivotZ=_gullyCells[cellIndex].PivotZ;
+            double offsetA=around-pivotA, offsetZ=across-pivotZ, normalizedA=offsetA/cellA, normalizedZ=offsetZ/scale, distanceSquared=normalizedA*normalizedA+normalizedZ*normalizedZ;
+            if(distanceSquared>=1d) continue;
+            double falloff=1d-distanceSquared;
+            double localWeight=falloff*falloff*falloff;
+            double phase=Math.Tau*(perpendicularA*offsetA+perpendicularZ*offsetZ)/scale;
+            (double sine,double cosine)=Math.SinCos(phase);
+            cosineSum+=localWeight*cosine;
+            sineSum+=localWeight*sine;
+            weightSum+=localWeight;
+            if(needsFeedback)
+            {
+                double derivative=-sine*Math.Tau/scale;
+                gradientA+=localWeight*derivative*perpendicularA;
+                gradientZ+=localWeight*derivative*perpendicularZ;
+            }
+        }
+        if(weightSum<=1e-12d) return false;
+        double legacy=cosineSum/weightSum;
+        double magnitude=Math.Sqrt(cosineSum*cosineSum+sineSum*sineSum);
+        double coherence=magnitude/weightSum;
+        double normalized=cosineSum/Math.Max(magnitude,1e-12d*weightSum);
+        double blend=_p.GullyNormalization*SmoothStep(.08d,.25d,coherence);
+        field=Clamp(Lerp(legacy,normalized,blend),-1d,1d);
+        if(needsFeedback)
+        {
+            guideA-=gradientA/weightSum*scale*.15d;
+            guideZ-=gradientZ/weightSum*scale*.15d;
+        }
+        return true;
     }
     // Wrapped integer around-cells and unwrapped local offsets make the pattern periodic at the ring seam.
     private bool CellGullyField(double around,double across,double scale,int octave,ref double guideA,ref double guideZ,out double field)

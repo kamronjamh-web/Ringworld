@@ -6,6 +6,7 @@ extends SceneTree
 const CASES := 4096
 const LIVE := "res://addons/SunshineClouds2/SunshineCloudsCompute.glsl"
 const FIXTURE := "res://tools/fixtures/cloud_density_reference.glslinc"
+const WEATHER_INCLUDE := "res://materials/ring_cloud_weather_shared.gdshaderinc"
 
 func _init() -> void:
 	var rd := RenderingServer.create_local_rendering_device()
@@ -14,7 +15,8 @@ func _init() -> void:
 		return
 	var live := FileAccess.get_file_as_string(LIVE)
 	var fixture := FileAccess.get_file_as_string(FIXTURE)
-	if live.is_empty() or fixture.is_empty():
+	var weather := FileAccess.get_file_as_string(WEATHER_INCLUDE)
+	if live.is_empty() or fixture.is_empty() or weather.is_empty():
 		rd.free(); _fail("could not read the live shader or portable baseline fixture"); return
 	var reference := _function_to_eof(fixture, "float sampleScene(")
 	if reference.is_empty():
@@ -27,7 +29,7 @@ func _init() -> void:
 	reference = _rewrite(reference.replace("float sampleScene(", "float sampleSceneReference("))
 	optimized = _rewrite(optimized.replace("float sampleScene(", "float sampleSceneOptimized("))
 	helpers = _rewrite(helpers)
-	var source := _shader_source(helpers, reference, optimized)
+	var source := _shader_source(weather, helpers, reference, optimized)
 	var shader_source := RDShaderSource.new(); shader_source.source_compute = source
 	var spirv := rd.shader_compile_spirv_from_source(shader_source)
 	if spirv.compile_error_compute != "":
@@ -84,16 +86,16 @@ func _function_to_eof(source: String, start_marker: String) -> String:
 
 func _rewrite(source: String) -> String:
 	var index := "[gl_GlobalInvocationID.x]"
-	var replacements := {"genericData.data.WindDirection": "testData" + index + ".wind.xy", "genericData.data.pointEffectorCount": "testData" + index + ".wind.z", "genericData.data.windSweptRange": "testData" + index + ".wind.w", "genericData.data.windSweptPower": "testData" + index + ".wind_power.x", "genericData.data.cloud_frame_origin": "testData" + index + ".cloud_frame_origin", "genericData.data.cloud_frame_around": "testData" + index + ".cloud_frame_around", "genericData.data.cloud_frame_up": "testData" + index + ".cloud_frame_up", "genericData.data.cloud_frame_across": "testData" + index + ".cloud_frame_across", "genericData.data.storm_system": "testData" + index + ".storm_system", "genericData.data.storm_shape": "testData" + index + ".storm_shape", "genericData.data.storm_detail": "testData" + index + ".storm_detail", "genericData.data.background_altitude": "testData" + index + ".background_altitude", "genericData.data.storm_altitude": "testData" + index + ".storm_altitude", "genericData.data.temporal_controls": "testData" + index + ".temporal_controls"}
+	var replacements := {"genericData.data.WindDirection": "testData" + index + ".wind.xy", "genericData.data.pointEffectorCount": "testData" + index + ".wind.z", "genericData.data.windSweptRange": "testData" + index + ".wind.w", "genericData.data.windSweptPower": "testData" + index + ".wind_power.x", "genericData.data.cloud_frame_origin": "testData" + index + ".cloud_frame_origin", "genericData.data.cloud_frame_around": "testData" + index + ".cloud_frame_around", "genericData.data.cloud_frame_up": "testData" + index + ".cloud_frame_up", "genericData.data.cloud_frame_across": "testData" + index + ".cloud_frame_across", "genericData.data.storm_system": "testData" + index + ".storm_system", "genericData.data.storm_shape": "testData" + index + ".storm_shape", "genericData.data.storm_detail": "testData" + index + ".storm_detail", "genericData.data.background_altitude": "testData" + index + ".background_altitude", "genericData.data.storm_altitude": "testData" + index + ".storm_altitude", "genericData.data.temporal_controls": "testData" + index + ".temporal_controls", "genericData.data.cloud_handoff": "testData" + index + ".cloud_handoff", "genericData.data.cloud_weather_params": "testData" + index + ".cloud_weather_params", "genericData.data.cloud_weather_frame": "testData" + index + ".cloud_weather_frame"}
 	for key in replacements: source = source.replace(key, replacements[key])
 	return source.replace("pointEffectors[i]", "effectors[gl_GlobalInvocationID.x * 2u + uint(i)]")
 
-func _shader_source(helpers: String, reference: String, optimized: String) -> String:
+func _shader_source(weather: String, helpers: String, reference: String, optimized: String) -> String:
 	return """#version 450
 #define PI 3.141592
 layout(local_size_x=1) in;
 struct PointEffector { vec3 position; float radius; float power; float attenuation; vec2 reserved; };
-struct TestData { vec4 wind; vec4 wind_power; vec4 cloud_frame_origin; vec4 cloud_frame_around; vec4 cloud_frame_up; vec4 cloud_frame_across; vec4 storm_system; vec4 storm_shape; vec4 storm_detail; vec4 background_altitude; vec4 storm_altitude; vec4 temporal_controls; };
+struct TestData { vec4 wind; vec4 wind_power; vec4 cloud_frame_origin; vec4 cloud_frame_around; vec4 cloud_frame_up; vec4 cloud_frame_across; vec4 storm_system; vec4 storm_shape; vec4 storm_detail; vec4 background_altitude; vec4 storm_altitude; vec4 temporal_controls; vec4 cloud_handoff; vec4 cloud_weather_params; vec4 cloud_weather_frame; };
 layout(set=0,binding=0,std430) readonly buffer Config { TestData testData[]; };
 layout(set=0,binding=1,std430) readonly buffer Effectors { PointEffector effectors[]; };
 layout(set=0,binding=2,std430) writeonly buffer Output { vec4 outData[]; };
@@ -102,7 +104,7 @@ layout(binding=4) uniform sampler3D large_noise;
 layout(binding=5) uniform sampler3D noise_medium;
 layout(binding=6) uniform sampler3D noise_small;
 layout(binding=7) uniform sampler3D curl_noise;
-""" + helpers + reference + optimized + """
+""" + weather + helpers + reference + optimized + """
 void main() { uint i=gl_GlobalInvocationID.x; float f=float(i); bool control=i<128u; vec3 p=control?vec3(2000.0,1200.0,5000.0):vec3(mod(f*137.0, 16000.0)-8000.0, 250.0+mod(f*71.0, 2100.0), mod(f*97.0, 14000.0)-1000.0); vec3 a=vec3(f*3.1, 0.0, f*1.7); float lod=(i&1u)==0u?0.0:1.0; float curl=(i%5u)==0u?0.0:72.0; bool ambient=(i%3u)==0u; bool coarse=(i%7u)==0u; float coverage=control?(1.1+float(i%2u)*0.1):((i%6u)==0u?0.0:((i%6u)==1u?0.33:((i%6u)==2u?0.67:(0.74+float(i%3u)*0.05)))); float old=sampleSceneReference(a,a*1.3,a*1.7,p,2400.0,100.0,1.0,900.0,600.0,240.0,coverage,0.8,curl,lod,ambient,coarse); float now=sampleSceneOptimized(a,a*1.3,a*1.7,p,2400.0,100.0,1.0,900.0,600.0,240.0,coverage,0.8,curl,lod,ambient,coarse); float background=(testData[i].storm_shape.z<=0.001&&old>0.001)?1.0:0.0; float storm=(testData[i].storm_shape.z>0.001&&now>0.001)?2.0:0.0; outData[i]=vec4(old,now,background+storm,abs(old-now)); }
 """
 
@@ -115,7 +117,8 @@ func _make_config_data() -> PackedFloat32Array:
 		var background_ceiling := 2400.0 if i % 4 != 0 else 1600.0
 		var storm_floor := 100.0 if i % 3 != 0 else 800.0
 		var storm_ceiling := 2400.0 if i % 3 != 0 else 2100.0
-		out.append_array([0.35,-0.2,2.0,1400.0, 35.0,0,0,0, 0,0,0,0, 1,0,0,around_offset, 0,1,0,80000, 0,0,1,0, 2000,5000,2600,1800, 1,0, influence,profile, 750,1.8,0.68,profile, background_floor,background_ceiling,0,0, storm_floor,storm_ceiling,0,0, 0,12000,0,0])
+		# Legacy parity intentionally disables the appended weather ABI fields.
+		out.append_array([0.35,-0.2,2.0,1400.0, 35.0,0,0,0, 0,0,0,0, 1,0,0,around_offset, 0,1,0,80000, 0,0,1,0, 2000,5000,2600,1800, 1,0, influence,profile, 750,1.8,0.68,profile, background_floor,background_ceiling,0,0, storm_floor,storm_ceiling,0,0, 0,12000,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])
 	return out
 
 func _sampler(rd: RenderingDevice) -> RID:

@@ -5,6 +5,7 @@ extends Resource
 const LEGACY_GENERATOR_ID: String = "ringworld_surface_reference_v1"
 const GENERATOR_ID: String = "ringworld_surface_coastal_v2"
 const DETAIL_GENERATOR_ID: String = "ringworld_surface_detail_v3"
+const EROSION_GENERATOR_ID: String = "ringworld_surface_erosion_v4"
 const DOMAIN_ID: String = "canonical_ring_noise_v1"
 const MIN_GEOMETRIC_WAVELENGTH_M: float = 16.0
 const CERTIFIED_CIRCUMFERENCE_M: float = 31415936.0
@@ -68,12 +69,14 @@ const MIN_BASIN_DEPTH_M: float = 1250.0
 @export_range(64.0, 2048.0, 1.0) var erosion_scale_m: float = 0.0
 @export_range(1, 4, 1) var erosion_octaves: int = 0
 @export_range(0.0, 1.0, 0.01) var swiss_warp: float = 0.0
+@export_range(0.0, 1.0, 0.01) var erosion_ridge_preservation: float = 0.75
+@export_range(0.0, 1.0, 0.01) var gully_normalization: float = 0.6
 
 var flatten_denominator: float = exp(3.0) - 1.0
 
 func validation_errors() -> PackedStringArray:
 	var errors := PackedStringArray()
-	if generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
+	if generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
 		errors.append("Unsupported generator_id: %s" % generator_id)
 	if domain_id != DOMAIN_ID:
 		errors.append("Unsupported domain_id: %s" % domain_id)
@@ -108,7 +111,7 @@ func snapshot() -> TerrainGenerationRecipe:
 	copy.trench_threshold = _finite_or(trench_threshold, 0.80, 0.0, 1.0)
 	copy.secondary_amplitude_m = _finite_or(secondary_amplitude_m, 60.0, 0.0, 240.0)
 	copy.micro_amplitude_m = _finite_or(micro_amplitude_m, 4.0, 0.0, 32.0)
-	if copy.generator_id == DETAIL_GENERATOR_ID:
+	if copy.generator_id == DETAIL_GENERATOR_ID or copy.generator_id == EROSION_GENERATOR_ID:
 		copy.foothill_amplitude_m = _finite_or(foothill_amplitude_m, 100.0, 0.0, 240.0)
 		copy.foothill_scale_m = _finite_or(foothill_scale_m, 1500.0, 128.0, 8192.0)
 		copy.spur_amplitude_m = _finite_or(spur_amplitude_m, 220.0, 0.0, 400.0)
@@ -117,6 +120,9 @@ func snapshot() -> TerrainGenerationRecipe:
 		copy.erosion_strength_m = _finite_or(erosion_strength_m, 60.0, 0.0, 160.0)
 		copy.erosion_scale_m = _finite_or(erosion_scale_m, 256.0, 64.0, 2048.0)
 		copy.swiss_warp = _finite_or(swiss_warp, 0.35, 0.0, 1.0)
+		if copy.generator_id == EROSION_GENERATOR_ID:
+			copy.erosion_ridge_preservation = _finite_or(erosion_ridge_preservation, 0.75, 0.0, 1.0)
+			copy.gully_normalization = _finite_or(gully_normalization, 0.6, 0.0, 1.0)
 	var mountain_headroom := copy.max_height_m - 2000.0 - copy.secondary_amplitude_m - copy.micro_amplitude_m - copy.foothill_amplitude_m - copy.spur_amplitude_m
 	copy.mountain_amplitude_m = _finite_or(mountain_amplitude_m, 5400.0, 0.0, maxf(0.0, mountain_headroom))
 	copy.valley_width = _finite_or(valley_width, 0.18, 0.01, 1.0)
@@ -131,7 +137,7 @@ func snapshot() -> TerrainGenerationRecipe:
 	copy.secondary_scale_m = _finite_or(secondary_scale_m, 256.0, MIN_GEOMETRIC_WAVELENGTH_M, 10000.0)
 	copy.micro_scale_m = _finite_or(micro_scale_m, 32.0, MIN_GEOMETRIC_WAVELENGTH_M, 1000.0)
 	copy.warp_scale_m = _finite_or(warp_scale_m, 180000.0, MIN_GEOMETRIC_WAVELENGTH_M, 1000000.0)
-	if copy.generator_id == GENERATOR_ID or copy.generator_id == DETAIL_GENERATOR_ID:
+	if copy.generator_id == GENERATOR_ID or copy.generator_id == DETAIL_GENERATOR_ID or copy.generator_id == EROSION_GENERATOR_ID:
 		copy.beach_slope = _finite_or(beach_slope, 0.025, 0.005, 0.1)
 		copy.shelf_width_m = _finite_or(shelf_width_m, 12000.0, 2000.0, 100000.0)
 		copy.shelf_depth_m = _finite_or(shelf_depth_m, 150.0, 50.0, 300.0)
@@ -144,7 +150,7 @@ func snapshot() -> TerrainGenerationRecipe:
 	copy.secondary_octaves = _safe_octaves(secondary_octaves, copy.secondary_scale_m, copy.noise_lacunarity, 5)
 	copy.micro_octaves = _safe_octaves(micro_octaves, copy.micro_scale_m, copy.noise_lacunarity, 2)
 	copy.warp_octaves = _safe_octaves(warp_octaves, copy.warp_scale_m, copy.noise_lacunarity, 5)
-	if copy.generator_id == DETAIL_GENERATOR_ID:
+	if copy.generator_id == DETAIL_GENERATOR_ID or copy.generator_id == EROSION_GENERATOR_ID:
 		copy.erosion_octaves = _safe_octaves(erosion_octaves, copy.erosion_scale_m, copy.noise_lacunarity, 4)
 	copy.flatten_denominator = exp(copy.flattening) - 1.0
 	return copy
@@ -175,12 +181,12 @@ func _normalized_dictionary_fields() -> Dictionary:
 		"secondary_scale_m": secondary_scale_m, "micro_scale_m": micro_scale_m,
 		"warp_scale_m": warp_scale_m
 	}
-	if generator_id == GENERATOR_ID or generator_id == DETAIL_GENERATOR_ID:
+	if generator_id == GENERATOR_ID or generator_id == DETAIL_GENERATOR_ID or generator_id == EROSION_GENERATOR_ID:
 		result["beach_slope"] = beach_slope
 		result["shelf_width_m"] = shelf_width_m
 		result["shelf_depth_m"] = shelf_depth_m
 		result["continental_slope_width_m"] = continental_slope_width_m
-	if generator_id == DETAIL_GENERATOR_ID:
+	if generator_id == DETAIL_GENERATOR_ID or generator_id == EROSION_GENERATOR_ID:
 		result["foothill_amplitude_m"] = foothill_amplitude_m
 		result["foothill_scale_m"] = foothill_scale_m
 		result["spur_amplitude_m"] = spur_amplitude_m
@@ -190,6 +196,9 @@ func _normalized_dictionary_fields() -> Dictionary:
 		result["erosion_scale_m"] = erosion_scale_m
 		result["erosion_octaves"] = erosion_octaves
 		result["swiss_warp"] = swiss_warp
+		if generator_id == EROSION_GENERATOR_ID:
+			result["erosion_ridge_preservation"] = erosion_ridge_preservation
+			result["gully_normalization"] = gully_normalization
 	return result
 
 static func create_detail_default() -> TerrainGenerationRecipe:
@@ -204,6 +213,13 @@ static func create_detail_default() -> TerrainGenerationRecipe:
 	recipe.erosion_scale_m = 256.0
 	recipe.erosion_octaves = 3
 	recipe.swiss_warp = 0.35
+	return recipe
+
+static func create_erosion_default() -> TerrainGenerationRecipe:
+	var recipe := create_detail_default()
+	recipe.generator_id = EROSION_GENERATOR_ID
+	recipe.erosion_ridge_preservation = 0.75
+	recipe.gully_normalization = 0.6
 	return recipe
 
 static func _finite_or(value: float, fallback: float, minimum: float, maximum: float) -> float:

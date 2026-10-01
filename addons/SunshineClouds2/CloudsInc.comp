@@ -346,6 +346,11 @@ struct GenericData{
 	// Ringworld shared atmosphere profile. Appended after the established
 	// 720-byte callback ABI; standalone fixtures leave this disabled.
 	vec4 ring_atmosphere_profile[10];
+	// Shared local/far weather ownership.  These remain append-only because
+	// retired compositor descriptors can outlive a callback.
+	vec4 cloud_handoff;
+	vec4 cloud_weather_params;
+	vec4 cloud_weather_frame;
 };
 
 struct DirectionalLight {

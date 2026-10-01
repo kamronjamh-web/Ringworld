@@ -1272,7 +1272,7 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 		return _reject_runtime_surface_launch("Saved preview recipe is invalid: %s" % str(loaded.get("error", "")))
 	var recipe := loaded.get("recipe", null) as Resource
 	if recipe == null:
-		recipe = SURFACE_RECIPE.create_detail_default()
+		recipe = SURFACE_RECIPE.create_erosion_default()
 	recipe.set("seed", int(round(terrain_seed_spin.value)) if terrain_seed_spin != null else 1337)
 	if not bool(bridge.call("Configure", recipe.call("to_normalized_dictionary"))):
 		var error := str(bridge.get("LastError"))

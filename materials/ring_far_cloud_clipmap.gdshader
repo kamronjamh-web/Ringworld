@@ -14,6 +14,7 @@ uniform float ring_width_km = 318.0;
 uniform float patch_radius_meters = 180000.0;
 uniform float patch_across_meters = 20000.0;
 uniform float handoff_start_meters = 48000.0;
+uniform float handoff_end_meters = 72000.0;
 uniform float layer_index = 0.0;
 uniform float coverage : hint_range(0.0, 1.0) = 0.55;
 uniform float storm_factor : hint_range(0.0, 1.0) = 0.0;
@@ -33,6 +34,8 @@ uniform float viewer_height_meters = 0.0;
 uniform vec3 surface_up = vec3(0.0, 1.0, 0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
 #include "res://materials/ring_atmosphere.gdshaderinc"
+#include "res://materials/ring_far_cloud_density.gdshaderinc"
+#include "res://materials/ring_cloud_weather_shared.gdshaderinc"
 
 varying vec3 world_position;
 
@@ -81,26 +84,49 @@ void fragment() {
 	float broad = weather_atlas_enabled ? sampled_coverage : fbm(p * (0.018 + layer_index * 0.004));
 	float detail = weather_atlas_enabled ? (weather.a * 0.72 + 0.14) : fbm(p * (0.070 + layer_index * 0.012) + 9.1);
 	float field = weather_atlas_enabled ? broad * 0.82 + detail * 0.18 : broad * 0.72 + detail * 0.28;
-	float resolved_storm_factor = max(storm_factor, sampled_storm);
-	float resolved_coverage = weather_atlas_enabled ? clamp(sampled_coverage * 1.15, 0.36, 0.98) : coverage;
-	// Retain a sparse visible field in a natural clear cell; the old 0.68
-	// threshold at the runtime 0.05 coverage floor made every clipmap layer
-	// effectively transparent in far-only captures.
+	float near_distance_meters = ring_cloud_physical_distance(world_position,
+		ring_atmosphere_camera_world_position, ring_atmosphere_coordinate_scale);
+	float handoff_blend = smoothstep(handoff_start_meters,
+		max(handoff_start_meters + 1.0, handoff_end_meters), near_distance_meters);
+	// Local storm ownership is needed at the near edge, but must yield to the
+	// regional atlas after the same physical handoff or it blankets clear cells.
+	float resolved_storm_factor = weather_atlas_enabled
+		? mix(storm_factor, sampled_storm, handoff_blend)
+		: max(storm_factor, sampled_storm);
+	// The overlap begins with the near resource's weather sample and arrives at
+	// atlas coverage only after the same physical handoff distance.
+	float atlas_coverage = weather_atlas_enabled
+		? clamp(sampled_coverage + far_density_coverage_bias, 0.0, 1.0) : coverage;
+	atlas_coverage = mix(cloud_weather_frame.w, atlas_coverage, handoff_blend);
+	float resolved_coverage = ring_cloud_weather_resolved_coverage(atlas_coverage,
+		resolved_storm_factor, vec3(p.x * 1000.0, 0.0, p.y * 1000.0),
+		cloud_weather_params, cloud_weather_frame);
+	float weather_gate = ring_cloud_weather_clear_gate(resolved_coverage,
+		resolved_storm_factor, cloud_weather_params);
+	float shared_atlas_coverage = mix(0.70, 0.90, resolved_coverage);
+	// The fallback field retains sparse cloud detail where weather permits it;
+	// the shared clear gate removes genuinely cloud-free weather regions.
 	float threshold = mix(0.62, 0.34, resolved_coverage) - resolved_storm_factor * 0.10;
-	float cloud = smoothstep(threshold - 0.10, threshold + 0.12, field);
+	float cloud = smoothstep(threshold - 0.10, threshold + 0.12, field) * weather_gate;
+	float near_fade = handoff_blend;
+	// p is canonical km; the local y component is the physical cloud altitude.
+	float shared_coverage = cloud_weather_params.y > 0.0
+		? shared_atlas_coverage
+		: mix(far_density_clouds_coverage, shared_atlas_coverage, near_fade);
+	float shared_density = far_density_sample_coverage(vec3(p.x * 1000.0, mix(far_density_background_altitude.x, far_density_background_altitude.y, layer_index * 0.3 + 0.2), p.y * 1000.0), shared_coverage);
+	if (shared_density >= 0.0) cloud = max(mix(cloud, shared_density * weather_gate, far_density_strength), resolved_storm_factor * 0.45);
 	float edge = 1.0 - smoothstep(0.72, 1.0, length((UV - vec2(0.5)) * 2.0));
 	float ring_edge = smoothstep(0.0, 1.5, p.y)
 		* (1.0 - smoothstep(ring_width_km - 1.5, ring_width_km, p.y));
-	// The annulus starts at Sunshine's handoff. Fade over 24 km rather than
-	// exposing a hard 48 km ring while keeping the curved canopy night-safe.
-	// UV is stretched over the full ring width, so measure the handoff in the
-	// actual anisotropic patch dimensions rather than treating it as a square.
-	float near_distance_meters = length((UV - vec2(0.5)) * patch_extent_km) * 1000.0;
-	float near_fade = smoothstep(handoff_start_meters, handoff_start_meters + 24000.0, near_distance_meters);
+	// The curved disk fades through the same physical camera-distance interval
+	// as Sunshine, including the camera's altitude above or below the canopy.
 	float day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(normalize(surface_up), normalize(sun_direction))));
 	vec3 bright = mix(vec3(0.30, 0.36, 0.46), vec3(0.90, 0.94, 1.0), day);
 	vec3 storm = mix(vec3(0.045, 0.065, 0.10), vec3(0.17, 0.21, 0.29), day);
-	vec3 color = mix(bright, storm, clamp(resolved_storm_factor * 0.88 + resolved_coverage * 0.18, 0.0, 1.0));
+	float slice_height = layer_index * 0.3 + 0.2;
+	float sun_rim = pow(clamp(dot(normalize(surface_up), normalize(sun_direction)), 0.0, 1.0), 2.0) * (0.18 + 0.16 * slice_height);
+	float underside = mix(0.64, 1.0, clamp(cloud + slice_height * 0.25 + sun_rim, 0.0, 1.0));
+	vec3 color = mix(bright, storm, clamp(resolved_storm_factor * 0.88 + resolved_coverage * 0.18, 0.0, 1.0)) * underside;
 	vec4 atmosphere = sample_ring_atmosphere(
 		ring_atmosphere_camera_world_position,
 		world_position,
@@ -122,11 +148,16 @@ void fragment() {
 	// CPU shared events are storm-validated; coarse atlas sampling must not
 	// suppress their bounded scattering carrier.
 	float storm_gate = 1.0;
-	vec3 far_glow = vec3(0.18, 0.28, 0.46) * far_flash.y * storm_gate * 0.55
-		+ vec3(0.82, 0.91, 1.0) * far_flash.x * storm_gate * 2.4;
-	float base_alpha = min(1.0, cloud * edge * ring_edge * near_fade * opacity * 1.5);
+	vec3 far_glow = (vec3(0.18, 0.28, 0.46) * far_flash.y * storm_gate * 0.55
+		+ vec3(0.82, 0.91, 1.0) * far_flash.x * storm_gate * 2.4)
+		* far_density_opacity_multiplier;
+	float path = clamp(1.0 / max(0.25, abs(dot(normalize(surface_up), normalize(world_position - ring_atmosphere_camera_world_position)))), 1.0, 3.5);
+	float detail_alpha = (1.0 - exp(-cloud * 1.4 * path));
+	float legacy_alpha = cloud;
+	float body_alpha = mix(legacy_alpha, detail_alpha, far_density_enabled ? far_density_strength : 0.0);
+	float base_alpha = min(1.0, body_alpha * edge * ring_edge * near_fade * opacity * far_density_opacity_multiplier * 1.5);
 	float flash_mask = ring_edge * opacity * 1.5;
-	float reference_alpha = min(1.0, max(base_alpha, raw_flash.y * 0.22 * flash_mask));
+	float reference_alpha = min(1.0, max(body_alpha * edge * ring_edge * near_fade * opacity * 1.5, raw_flash.y * 0.22 * flash_mask));
 	// At full ownership this is the old glow*alpha response over clear carrier
 	// or opaque body; partial ownership remains linear through far_glow.
 	vec3 flash_premultiplied = far_glow * reference_alpha;

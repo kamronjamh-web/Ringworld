@@ -12,6 +12,8 @@ var _local_rendering_toggle: CheckButton
 var _local_rendering_toggle_phase := 0
 var _local_rendering_recovery_frames := 0
 var _scales_started := false
+var _last_toggle_global_rect := Rect2()
+var _last_root_viewport_rect := Rect2()
 
 func _initialize() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
@@ -46,7 +48,9 @@ func _process(_delta: float) -> bool:
 		return false
 	if _frame == 2: _scene.get_node("RingDayNightCycle").call("set_cycle_fraction", 0.0)
 	if _frame == 10: return _begin_local_rendering_toggle()
-	if _local_rendering_toggle_phase == -1: return _click_prepared_local_rendering_checkbox()
+	if _local_rendering_toggle_phase == -1:
+		_prepare_local_rendering_checkbox_click()
+		return false
 	if _local_rendering_toggle_phase == 1 or _local_rendering_toggle_phase == 3: return _verify_local_rendering_recovery()
 	if _local_rendering_toggle_phase == 2: return _disable_local_rendering_again()
 	if _local_rendering_toggle_phase == 4 and not _scales_started:
@@ -95,18 +99,31 @@ func _begin_local_rendering_toggle() -> bool:
 			if tabs.get_tab_title(index) == "Clouds": tabs.current_tab = index
 	_local_rendering_toggle = _drawer.find_child("CloudRenderingEnabled", true, false) as CheckButton
 	if _local_rendering_toggle == null: return _fail("missing local Sunshine rendering control")
+	_unfold_foldable_ancestors(_local_rendering_toggle)
 	if _local_rendering_toggle.button_pressed or bool(_bridge.get("RuntimeVisible")) or bool(_clouds.get("enabled")):
 		return _fail("isolated persisted-off local Sunshine default was not applied")
 	# Wait for the next process frame so the selected tab has a resolved rect.
 	_local_rendering_toggle_phase = -1
 	return false
 
-func _click_prepared_local_rendering_checkbox() -> bool:
-	# Route a real press/release through the root viewport, then wait for both
-	# persistence and fresh compositor output.
+func _prepare_local_rendering_checkbox_click() -> void:
+	# Opening a tab can leave its child rect at the preceding panel's position
+	# for one draw. Keep the pointer route, but wait for two completed draws
+	# before reading the checkbox rect and dispatching the press/release.
+	_local_rendering_toggle_phase = -2
+	call_deferred("_settle_and_click_local_rendering_checkbox")
+
+func _settle_and_click_local_rendering_checkbox() -> void:
+	if DisplayServer.get_name() == "headless":
+		await process_frame
+		await process_frame
+	else:
+		await RenderingServer.frame_post_draw
+		await RenderingServer.frame_post_draw
+	if _local_rendering_toggle_phase != -2: return
 	_click_local_rendering_checkbox_input()
+	_local_rendering_recovery_frames = 0
 	_local_rendering_toggle_phase = 1
-	return false
 
 func _disable_local_rendering_again() -> bool:
 	if bool(_bridge.get("RuntimeVisible")) or bool(_clouds.get("enabled")):
@@ -122,7 +139,8 @@ func _verify_local_rendering_recovery() -> bool:
 	_local_rendering_recovery_frames += 1
 	if not bool(_bridge.get("RuntimeVisible")) or not bool(_clouds.get("enabled")):
 		if _local_rendering_recovery_frames < 30: return false
-		return _fail("local Sunshine rendering did not recover through its checkbox")
+		_capture_local_toggle_failure()
+		return _fail("local Sunshine rendering did not recover through its checkbox " + _local_toggle_diagnostics())
 	if DisplayServer.get_name() != "headless":
 		var backdrop := _bridge.call("GetCloudBackdropTexture") as Texture2D
 		if backdrop == null or backdrop.get_width() <= 0:
@@ -144,13 +162,35 @@ func _click_local_rendering_checkbox_input() -> void:
 	if DisplayServer.get_name() == "headless":
 		_local_rendering_toggle.button_pressed = not _local_rendering_toggle.button_pressed
 		return
-	var center := _local_rendering_toggle.get_global_rect().get_center()
+	_last_toggle_global_rect = _local_rendering_toggle.get_global_rect()
+	_last_root_viewport_rect = root.get_visible_rect()
+	var center := _last_toggle_global_rect.get_center()
 	var down := InputEventMouseButton.new()
 	down.button_index = MOUSE_BUTTON_LEFT; down.position = center; down.global_position = center; down.pressed = true
 	root.push_input(down, true)
 	var up := InputEventMouseButton.new()
 	up.button_index = MOUSE_BUTTON_LEFT; up.position = center; up.global_position = center; up.pressed = false
 	root.push_input(up, true)
+
+func _local_toggle_diagnostics() -> String:
+	var persisted: Variant = _probe.ReadOverride("CloudRenderingEnabled")
+	var explorer: Node = _scene.get_node_or_null("Explorer") as Node
+	var speed: Variant = explorer.get("ActualTravelSpeedMetersPerSecond") if explorer != null else "missing"
+	return "phase=%d frames=%d checkbox=%s persisted=%s bridge_enabled=%s runtime_visible=%s clouds_enabled=%s speed=%s click_rect=%s viewport_rect=%s" % [_local_rendering_toggle_phase, _local_rendering_recovery_frames, _local_rendering_toggle.button_pressed, persisted, _bridge.get("CloudRenderingEnabled"), _bridge.get("RuntimeVisible"), _clouds.get("enabled"), speed, _last_toggle_global_rect, _last_root_viewport_rect]
+
+func _capture_local_toggle_failure() -> void:
+	if DisplayServer.get_name() == "headless": return
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://.godot"))
+	var image: Image = root.get_texture().get_image()
+	if image != null and not image.is_empty():
+		image.save_png("res://.godot/gameplay_cloud_toggle_failure.png")
+
+func _unfold_foldable_ancestors(control: Control) -> void:
+	var ancestor: Node = control.get_parent()
+	while ancestor != null:
+		if ancestor is FoldableContainer:
+			(ancestor as FoldableContainer).folded = false
+		ancestor = ancestor.get_parent()
 
 
 func _start_scale(scale: int) -> void:
@@ -190,6 +230,8 @@ func _finish() -> bool:
 	for container: TabContainer in tabs:
 		for index in container.get_tab_count():
 			if container.get_tab_title(index) == "Quality": container.current_tab = index
+	var raymarch_control := _drawer.find_child("RaymarchSteps", true, false) as Control
+	if raymarch_control != null: _unfold_foldable_ancestors(raymarch_control)
 	# Keep the normal renderer active long enough to drain retired generations
 	# after the provider round-trip, and let the real autosave debounce run.
 	_completed_checks = true

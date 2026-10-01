@@ -108,6 +108,22 @@ func _setup_models() -> void:
 	erosion_two.erosion_octaves = 2
 	variants.append({"name": "v3_mode_2_erosion_octaves_2", "description": "v3 directional gullies with erosion_octaves=2", "recipe": erosion_two})
 
+	# Keep the v3 cases above as the historical baseline. These v4 cases isolate
+	# the cost of the two new erosion refinements under the same sampler workload.
+	var v4_default: TerrainGenerationRecipe = RECIPE.create_erosion_default()
+	v4_default.seed = SEED
+	variants.append({"name": "v4_default", "description": "v4 stacked-fade directional gullies with normalized cell fields", "recipe": v4_default})
+
+	var v4_no_normalization: TerrainGenerationRecipe = RECIPE.create_erosion_default()
+	v4_no_normalization.seed = SEED
+	v4_no_normalization.gully_normalization = 0.0
+	variants.append({"name": "v4_gully_normalization_0", "description": "v4 with gully normalization disabled", "recipe": v4_no_normalization})
+
+	var v4_no_preservation: TerrainGenerationRecipe = RECIPE.create_erosion_default()
+	v4_no_preservation.seed = SEED
+	v4_no_preservation.erosion_ridge_preservation = 0.0
+	variants.append({"name": "v4_ridge_preservation_0", "description": "v4 with stacked ridge preservation disabled", "recipe": v4_no_preservation})
+
 	for variant in variants:
 		var recipe: TerrainGenerationRecipe = variant.recipe
 		var bridge = BRIDGE.new()

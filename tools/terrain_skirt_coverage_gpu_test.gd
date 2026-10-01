@@ -91,7 +91,7 @@ func _fixture(material: ShaderMaterial) -> MeshInstance3D:
 	var node: MeshInstance3D = MeshInstance3D.new(); node.mesh = mesh; return node
 
 func _variant(source: Shader, shadow: bool) -> ShaderMaterial:
-	var code: String = source.code.replace("render_mode cull_back, depth_draw_opaque;", "render_mode unshaded, cull_back, depth_draw_opaque;")
+	var code: String = source.code.replace("\r\n", "\n").replace("render_mode cull_back, depth_draw_opaque;", "render_mode unshaded, cull_back, depth_draw_opaque;")
 	if shadow:
 		var anchor: String = "\t\t&& texture(coverage_atlas, coverage_atlas_rect.xy + min(proxy_coverage_uv, vec2(0.99999)) * coverage_atlas_rect.zw).r > 0.5) discard;\n}"
 		if not code.contains(anchor):

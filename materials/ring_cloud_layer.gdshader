@@ -36,6 +36,8 @@ uniform float far_clipmap_handoff_start_meters = 140000.0;
 uniform float far_clipmap_handoff_end_meters = 180000.0;
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
+#include "res://materials/ring_far_cloud_density.gdshaderinc"
+#include "res://materials/ring_cloud_weather_shared.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -93,7 +95,21 @@ void fragment() {
 	vec4 weather = texture(weather_atlas, weather_uv);
 	float field = weather_atlas_enabled ? weather.r : ring_far_cloud_field_raw(angle, across_km);
 	float storm_factor = weather_atlas_enabled ? weather.g : 0.0;
-	float cloud = smoothstep(coverage, min(1.0, coverage + softness), field);
+	vec3 canonical_meters = vec3(fract(UV.x) * ring_circumference_km * 1000.0, 0.0, UV.y * ring_width_km * 1000.0);
+	float resolved_coverage = ring_cloud_weather_resolved_coverage(
+		weather_atlas_enabled ? clamp(weather.r + far_density_coverage_bias, 0.0, 1.0) : coverage, storm_factor, canonical_meters,
+		cloud_weather_params, cloud_weather_frame);
+	float weather_gate = ring_cloud_weather_clear_gate(resolved_coverage, storm_factor, cloud_weather_params);
+	float cloud = smoothstep(coverage, min(1.0, coverage + softness), field) * weather_gate;
+	// Atlas channels are r=coverage, g=storm; b/a are seeded detail only.
+	float shell_coverage = weather_atlas_enabled
+		? mix(0.70, 0.90, resolved_coverage)
+		: far_density_clouds_coverage;
+	float shell_density = far_density_sample_coverage(vec3(
+		fract(UV.x) * ring_circumference_km * 1000.0,
+		(far_density_background_altitude.x + far_density_background_altitude.y) * 0.5,
+		UV.y * ring_width_km * 1000.0), shell_coverage);
+	if (shell_density >= 0.0) cloud = max(mix(cloud, shell_density * weather_gate, far_density_strength), storm_factor * 0.45);
 	float handoff_factor = 1.0;
 	if (local_volumetric_handoff_enabled) {
 		float camera_distance = distance(world_position, camera_world_position);
@@ -132,21 +148,23 @@ void fragment() {
 	// differs; radial_out would incorrectly make the top night-coloured at
 	// local noon.
 	float face_day_factor = ring_day_factor;
-	vec3 day_color = mix(day_cloud_shadow_color, day_cloud_color, clamp(cloud * 1.35, 0.0, 1.0));
+	float shell_rim = pow(clamp(dot(normalize(inhabited_surface_up), normalize(sun_direction)), 0.0, 1.0), 2.0);
+	vec3 day_color = mix(day_cloud_shadow_color * mix(0.72, 1.0, cloud), day_cloud_color, clamp(cloud * 1.35 + shell_rim * 0.18, 0.0, 1.0));
 	vec3 underside_color = mix(night_cloud_color, day_color * vec3(0.78, 0.83, 0.92), ring_day_factor);
 	vec3 exterior_color = mix(night_cloud_color * 0.72, day_color * vec3(1.04, 1.02, 0.98), ring_day_factor);
 	vec3 cloud_color = mix(underside_color, exterior_color, exterior_weight);
 	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, face_day_factor);
 	float atmosphere_transmittance = 1.0 - atmosphere.a;
-	float base_alpha = cloud * opacity;
+	float base_alpha = clamp(cloud * opacity * far_density_opacity_multiplier, 0.0, 1.0);
 	// The CPU selects real seeded storm systems and publishes the same bounded
 	// events to this whole-ring shell and the camera-local clipmap. This keeps a
 	// distant flash coherent instead of breaking it into sub-pixel atlas sparks.
 	float storm_gate = 1.0;
-	vec3 far_glow = vec3(0.18, 0.28, 0.46) * far_flash.y * storm_gate * 0.55
-		+ vec3(0.82, 0.91, 1.0) * far_flash.x * storm_gate * 2.4;
+	vec3 far_glow = (vec3(0.18, 0.28, 0.46) * far_flash.y * storm_gate * 0.55
+		+ vec3(0.82, 0.91, 1.0) * far_flash.x * storm_gate * 2.4) * far_density_opacity_multiplier;
 	float flash_mask = flash_edge * opacity;
-	float reference_alpha = max(base_alpha, raw_flash.y * 0.22 * flash_mask);
+	float unscaled_body_alpha = clamp(cloud * opacity, 0.0, 1.0);
+	float reference_alpha = max(unscaled_body_alpha, raw_flash.y * 0.22 * flash_mask);
 	// Raw reference alpha restores the old full-weight response over an opaque
 	// body; weighted radiance keeps partial ownership linear.
 	vec3 flash_premultiplied = far_glow * reference_alpha;

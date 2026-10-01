@@ -5,6 +5,7 @@ const MODEL := preload("res://scripts/Terrain/Generation/terrain_height_model.gd
 const WINDOW := preload("res://scripts/Terrain/Generation/terrain_generation_window.gd")
 const RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
 const GEOMETRY := preload("res://scripts/Terrain/Surface/RingTerrain3DCollisionGeometry.cs")
+const PACKING := preload("res://scripts/Terrain/Generation/TerrainGenerationPacking.cs")
 const SIDE := 128
 const WINDOW_SIDE := 384
 
@@ -46,8 +47,8 @@ func _sample() -> void:
 		result = {"ok": false, "error": "invalid sample job"}
 		return
 	var model := MODEL.new(recipe)
-	var samples := PackedFloat32Array()
-	samples.resize(SIDE * SIDE)
+	var strip_samples := PackedFloat32Array()
+	var packing := PACKING.new()
 	var circumference := int(RECIPE.CERTIFIED_CIRCUMFERENCE_M)
 	for strip_start in range(0, SIDE, 8):
 		if token.is_cancelled():
@@ -65,18 +66,14 @@ func _sample() -> void:
 		if strip.size() != SIDE * strip_rows:
 			result = {"ok": false, "error": "invalid sampled strip"}
 			return
-		for local_row in strip_rows:
-			var row: int = strip_start + local_row
-			var source_row: int = local_row if direction > 0 else strip_rows - 1 - local_row
-			var canonical_across: int = across + direction * row * 2
-			for column in SIDE:
-				var canonical_around: int = posmod(around + column * 2, circumference)
-				var key := Vector2i(canonical_around, canonical_across)
-				var value: float = float(edits[key]) if edits.has(key) else strip[source_row * SIDE + column]
-				if not is_finite(value) or value < -8000.0 or value > 8000.0:
-					result = {"ok": false, "error": "invalid sampled height"}
-					return
-				samples[row * SIDE + column] = value
+		strip_samples.append_array(strip)
+	var samples: PackedFloat32Array = packing.ComposeSampledTile(strip_samples, edits, around, across, direction, circumference, token)
+	if packing.WasCancelled or token.is_cancelled():
+		result = {"ok": false, "cancelled": true}
+		return
+	if samples.size() != SIDE * SIDE:
+		result = {"ok": false, "error": packing.LastError if not packing.LastError.is_empty() else "invalid sampled height"}
+		return
 	if token.is_cancelled():
 		result = {"ok": false, "cancelled": true}
 		return
@@ -87,22 +84,16 @@ func _pack() -> void:
 	if token == null or tiles.size() != 9:
 		result = {"ok": false, "error": "invalid pack job"}
 		return
-	var heights := PackedFloat32Array()
-	heights.resize(WINDOW_SIDE * WINDOW_SIDE)
-	for region_z in 3:
-		for region_x in 3:
-			var tile: PackedFloat32Array = tiles[region_z * 3 + region_x]
-			if tile.size() != SIDE * SIDE:
-				result = {"ok": false, "error": "invalid tile"}
-				return
-			for row in SIDE:
-				if row % 8 == 0 and token.is_cancelled():
-					result = {"ok": false, "cancelled": true}
-					return
-				for column in SIDE:
-					heights[(region_z * SIDE + row) * WINDOW_SIDE + region_x * SIDE + column] = tile[row * SIDE + column]
+	var packing := PACKING.new()
+	var heights: PackedFloat32Array = packing.AssembleAbsoluteWindow(tiles, token)
+	if packing.WasCancelled or token.is_cancelled():
+		result = {"ok": false, "cancelled": true}
+		return
+	if heights.size() != WINDOW_SIDE * WINDOW_SIDE:
+		result = {"ok": false, "error": packing.LastError if not packing.LastError.is_empty() else "invalid tile"}
+		return
 	var frame_height: float = heights[128 * WINDOW_SIDE + 128]
-	var images: Array[Image] = WINDOW.pack(heights, frame_height)
+	var images: Array[Image] = WINDOW.pack(heights, frame_height, token)
 	var packing_ms := float(Time.get_ticks_usec() - started) / 1000.0
 	if token.is_cancelled():
 		result = {"ok": false, "cancelled": true}

@@ -73,6 +73,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private Tween? _tween;
     private bool _open;
     private Label? _cloudStatus;
+    private Label? _effectiveCloudHandoffStatus;
     private CheckButton? _partialCoverageMeshCullingToggle;
     private Label? _partialCoverageMeshCullingStatus;
     private CheckButton? _intermediateLodTiersToggle;
@@ -460,7 +461,17 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         VBoxContainer tab = CreateTab(tabs, "Clouds");
         VBoxContainer appearance = TuningMenuUi.CreateSection(tab, "Appearance"); AddPersistentCloudControls(appearance);
         VBoxContainer handoff = TuningMenuUi.CreateSection(tab, "Handoff & altitudes");
-        AddPersistentToggle(handoff, "CastCloudShadows", "Cloud shadows", _cloudBridge?.CastCloudShadows ?? true); AddPersistentSlider(handoff, "HandoffStartMeters", "Near cloud handoff", 5000, 80000, 500, _cloudBridge?.HandoffStartMeters ?? 36000); AddPersistentSlider(handoff, "HandoffEndMeters", "Far cloud handoff", 6000, 100000, 500, _cloudBridge?.HandoffEndMeters ?? 48000); AddPersistentSlider(handoff, "NaturalCloudBaseAltitudeMeters", "Cloud base altitude", 0, 19000, 50, _cloudBridge?.NaturalCloudBaseAltitudeMeters ?? 2000); AddPersistentSlider(handoff, "NaturalCloudTopAltitudeMeters", "Cloud top altitude", 500, 20000, 50, _cloudBridge?.NaturalCloudTopAltitudeMeters ?? 6000); AddPersistentSlider(handoff, "StormFrontCloudBaseAltitudeMeters", "Storm-front base altitude", 0, 5000, 50, _cloudBridge?.StormFrontCloudBaseAltitudeMeters ?? 500);
+        AddPersistentToggle(handoff, "CastCloudShadows", "Cloud shadows", _cloudBridge?.CastCloudShadows ?? true);
+        AddPersistentToggle(handoff, "AutomaticCloudHandoff", "Automatic cloud handoff", _cloudBridge?.AutomaticCloudHandoff ?? true);
+        AddPersistentSlider(handoff, "CloudHandoffOverlapMeters", "Minimum cloud overlap (m)", 2000, RingSunshineCloudBridge.MaximumCloudHandoffOverlapMeters, 500, _cloudBridge?.CloudHandoffOverlapMeters ?? 16000);
+        AddPersistentSlider(handoff, "NearCloudRangeExtensionMeters", "Near range extension (m)", 0, RingSunshineCloudBridge.MaximumNearCloudRangeExtensionMeters, 500, _cloudBridge?.NearCloudRangeExtensionMeters ?? 8000);
+        AddPersistentSlider(handoff, "HandoffStartMeters", "Near-to-far blend start", 5000, RingSunshineCloudBridge.MaximumHandoffStartMeters, 500, _cloudBridge?.HandoffStartMeters ?? 36000);
+        AddPersistentSlider(handoff, "HandoffEndMeters", "Near-to-far blend end", 6000, RingSunshineCloudBridge.MaximumHandoffEndMeters, 500, _cloudBridge?.HandoffEndMeters ?? 48000);
+        _effectiveCloudHandoffStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        handoff.AddChild(_effectiveCloudHandoffStatus);
+        AddPersistentSlider(handoff, "NaturalCloudBaseAltitudeMeters", "Cloud base altitude", 0, 19000, 50, _cloudBridge?.NaturalCloudBaseAltitudeMeters ?? 2000); AddPersistentSlider(handoff, "NaturalCloudTopAltitudeMeters", "Cloud top altitude", 500, 20000, 50, _cloudBridge?.NaturalCloudTopAltitudeMeters ?? 6000); AddPersistentSlider(handoff, "StormFrontCloudBaseAltitudeMeters", "Storm-front base altitude", 0, 5000, 50, _cloudBridge?.StormFrontCloudBaseAltitudeMeters ?? 500);
+        VBoxContainer distant = TuningMenuUi.CreateSection(tab, "Distant clouds");
+        AddPersistentToggle(distant, "FarCloudDetailEnabled", "Reuse Sunshine density", _cloudBridge?.FarCloudDetailEnabled ?? true); AddPersistentSlider(distant, "FarCloudDetailStrength", "Shared detail strength", 0, 1, .01, _cloudBridge?.FarCloudDetailStrength ?? 1); AddPersistentSlider(distant, "FarCloudOpacityMultiplier", "Distant opacity", 0, 2, .01, _cloudBridge?.FarCloudOpacityMultiplier ?? 1); AddPersistentSlider(distant, "FarCloudRadiusMeters", "Distant cloud radius", 30000, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters, 5000, _cloudBridge?.FarCloudRadiusMeters ?? 180000); AddPersistentSlider(distant, "CloudPatchiness", "Coverage variation", 0, 1, .01, _cloudBridge?.CloudPatchiness ?? 1); AddPersistentSlider(distant, "CloudPatchScaleMeters", "Weather patch size", 16000, 256000, 1000, _cloudBridge?.CloudPatchScaleMeters ?? 64000); AddPersistentSlider(distant, "ClearSkyThreshold", "Clear-sky threshold", 0, .6, .01, _cloudBridge?.ClearSkyThreshold ?? .12);
         VBoxContainer storm = TuningMenuUi.CreateSection(tab, "Storm shaping"); AddPersistentToggle(storm, "SculptLocalizedStorms", "Sculpt local storms", _cloudBridge?.SculptLocalizedStorms ?? true); AddPersistentSlider(storm, "StormSculptStrength", "Storm sculpt strength", 0, 1, .01, _cloudBridge?.StormSculptStrength ?? .92); AddPersistentSlider(storm, "StormPillarRadiusMeters", "Storm pillar radius", 1000, 8000, 250, _cloudBridge?.StormPillarRadiusMeters ?? 4200); AddPersistentSlider(storm, "AnvilRadiusMultiplier", "Storm anvil spread", 1.2, 4, .1, _cloudBridge?.AnvilRadiusMultiplier ?? 2.6);
         VBoxContainer lighting = TuningMenuUi.CreateSection(tab, "Lighting & history"); AddPersistentColorSlider(lighting, "DayCloudAmbientColor", "Cloud ambient day", _cloudBridge?.DayCloudAmbientColor ?? Colors.White); AddPersistentColorSlider(lighting, "NightCloudAmbientColor", "Cloud ambient night", _cloudBridge?.NightCloudAmbientColor ?? Colors.White); AddPersistentSlider(lighting, "DitherSpeed", "Blue-noise motion", 0, 60, 1, _cloudBridge?.DitherSpeed ?? 0); AddPersistentSlider(lighting, "RayStartJitterStrength", "Ray-start jitter", 0, 1, .01, _cloudBridge?.RayStartJitterStrength ?? 1); AddPersistentSlider(lighting, "StationaryHistoryWeight", "Stationary history", 0, .95, .01, _cloudBridge?.StationaryHistoryWeight ?? .95); AddPersistentSlider(lighting, "MovingHistoryWeight", "Moving history", 0, .95, .01, _cloudBridge?.MovingHistoryWeight ?? .13); AddPersistentSlider(lighting, "ShadowExtinctionPerKilometer", "Shadow extinction / km", .05, 2, .05, _cloudBridge?.ShadowExtinctionPerKilometer ?? 1.4); AddPersistentSlider(lighting, "StormAmbientFloor", "Storm ambient floor", .02, .5, .01, _cloudBridge?.StormAmbientFloor ?? .14); AddPersistentSlider(lighting, "StormAmbientOcclusionStrength", "Storm ambient occlusion", 0, 1, .01, _cloudBridge?.StormAmbientOcclusionStrength ?? .86);
         VBoxContainer showcase = TuningMenuUi.CreateSection(tab, "Showcase"); AddCloudShowcaseControls(showcase);
@@ -472,7 +483,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     {
         VBoxContainer tab = CreateTab(tabs, "Quality");
         VBoxContainer raymarch = TuningMenuUi.CreateSection(tab, "Raymarch");
-        AddPersistentOption(raymarch, "CloudResolutionScale", "Resolution", new[] { "Native", "Half", "Quarter" }, _cloudBridge?.CloudResolutionScale ?? 0); AddPersistentSlider(raymarch, "RaymarchSteps", "View / raymarch steps", 64, 256, 8, _cloudBridge?.RaymarchSteps ?? 128); AddPersistentSlider(raymarch, "LightingSteps", "Lighting steps", 1, 8, 1, _cloudBridge?.LightingSteps ?? 8); AddPersistentSlider(raymarch, "MinStepDistanceMeters", "Minimum step", 10, 500, 1, _cloudBridge?.MinStepDistanceMeters ?? 90); AddPersistentSlider(raymarch, "MaxStepDistanceMeters", "Maximum step", 100, 4000, 1, _cloudBridge?.MaxStepDistanceMeters ?? 560); AddPersistentSlider(raymarch, "LightingTravelKm", "Lighting travel", .5, 20, .1, _cloudBridge?.LightingTravelKm ?? 7); AddPersistentSlider(raymarch, "CloudLodBias", "Cloud LOD bias", .1, 2, .01, _cloudBridge?.CloudLodBias ?? .9);
+        AddPersistentOption(raymarch, "CloudResolutionScale", "Resolution", new[] { "Native", "Half", "Quarter" }, _cloudBridge?.CloudResolutionScale ?? 0); AddPersistentSlider(raymarch, "RaymarchSteps", "View / raymarch steps", 64, RingSunshineCloudBridge.MaximumRaymarchSteps, 8, _cloudBridge?.RaymarchSteps ?? 128); AddPersistentSlider(raymarch, "LightingSteps", "Lighting steps", 1, RingSunshineCloudBridge.MaximumLightingSteps, 1, _cloudBridge?.LightingSteps ?? 8); AddPersistentSlider(raymarch, "MinStepDistanceMeters", "Minimum step", 10, RingSunshineCloudBridge.MaximumMinimumStepDistanceMeters, 1, _cloudBridge?.MinStepDistanceMeters ?? 90); AddPersistentSlider(raymarch, "MaxStepDistanceMeters", "Maximum step", 100, RingSunshineCloudBridge.MaximumStepDistanceMeters, 1, _cloudBridge?.MaxStepDistanceMeters ?? 560); AddPersistentSlider(raymarch, "LightingTravelKm", "Lighting travel", .5, RingSunshineCloudBridge.MaximumLightingTravelKm, .1, _cloudBridge?.LightingTravelKm ?? 7); AddPersistentSlider(raymarch, "CloudLodBias", "Cloud LOD bias", .1, RingSunshineCloudBridge.MaximumCloudLodBias, .01, _cloudBridge?.CloudLodBias ?? .9);
         VBoxContainer reconstruction = TuningMenuUi.CreateSection(tab, "Reconstruction");
         AddPersistentSlider(reconstruction, "BlurPower", "Upsample blur", 0, 6, .1, _cloudBridge?.BlurPower ?? .1); AddPersistentSlider(reconstruction, "BlurQuality", "Blur quality", 1, 4, 1, _cloudBridge?.BlurQuality ?? 1); AddPersistentToggle(reconstruction, "FastReconstruction", "Fast reconstruction", _cloudBridge?.FastReconstruction ?? false);
         AddCloudDefaultsFooter(tab);
@@ -567,16 +578,39 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         "LightingSteps" => "More lighting samples improve scattering at additional GPU cost.",
         "MinStepDistanceMeters" or "MaxStepDistanceMeters" => "Raymarch step distance in metres. Larger steps cost less but can miss fine cloud detail.",
         "LightingTravelKm" => "Maximum lighting travel in kilometres. Longer travel improves deep scattering at higher cost.",
+        "AutomaticCloudHandoff" => "Preserves the requested start and end range, then adapts it to the reachable near-cloud edge and the selected minimum overlap.",
+        "CloudHandoffOverlapMeters" => "Minimum overlap in metres between near and distant clouds when automatic handoff is enabled.",
+        "NearCloudRangeExtensionMeters" => "Additional near-cloud reach in metres used by automatic handoff, within the raymarch step budget.",
+        "HandoffStartMeters" or "HandoffEndMeters" => "Requested near-to-far range. Automatic mode preserves this range but caps it by the near step budget and widens the minimum overlap; manual mode uses these exact distances.",
+        "CloudPatchiness" => "Controls seeded, world-coherent coverage variation.",
+        "CloudPatchScaleMeters" => "Size of each weather patch in metres.",
+        "ClearSkyThreshold" => "Higher values clear more low-coverage background while storms retain clouds.",
         "FastReconstruction" => "Reduces reconstruction cost, with less stable fine detail.",
         "BlurPower" or "BlurQuality" => "Higher filtering can hide noise but costs more and softens detail.",
+        "FarCloudDetailEnabled" => "Uses Sunshine's existing noise textures for distant curved cloud layers.",
+        "FarCloudDetailStrength" => "Blends the lightweight distant shape toward Sunshine's background density.",
+        "FarCloudOpacityMultiplier" => "Scales distant cloud alpha without changing near Sunshine clouds.",
+        "FarCloudRadiusMeters" => "Outer radius of the curved distant canopy; larger values add visible geometry coverage.",
         _ => "Gameplay cloud override. Changes are saved separately from graphics presets."
     };
     private void RefreshCloudControls()
     {
         if (_drawer == null || _cloudBridge == null) return;
         RefreshCloudControlsRecursive(_drawer);
+        RefreshEffectiveCloudHandoffStatus();
         UpdateCloudStatus();
         UpdateCloudSaveStatus();
+    }
+
+    private void RefreshEffectiveCloudHandoffStatus()
+    {
+        if (_effectiveCloudHandoffStatus == null || _cloudBridge == null) return;
+        float effectiveStart = _cloudBridge.EffectiveHandoffStartMeters;
+        float effectiveEnd = _cloudBridge.EffectiveHandoffEndMeters;
+        float nearReach = _cloudBridge.NearCloudReachMeters;
+        string mode = _cloudBridge.AutomaticCloudHandoff ? "Automatic" : "Manual";
+        string providerState = _cloudBridge.RuntimeVisible ? "active" : "suspended";
+        _effectiveCloudHandoffStatus.Text = $"Sunshine {mode.ToLowerInvariant()} blend: {effectiveStart / 1000.0f:0.0}-{effectiveEnd / 1000.0f:0.0} km | ray budget {nearReach / 1000.0f:0.0} km | {providerState}";
     }
     private void RefreshCloudControlsRecursive(Node node)
     {
