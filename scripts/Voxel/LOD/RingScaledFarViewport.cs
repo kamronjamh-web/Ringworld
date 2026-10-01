@@ -106,7 +106,7 @@ public partial class RingScaledFarViewport : Node
 	public float FarAtmosphereExitFadeMeters { get; set; } = 3218.688f;
 	[ExportGroup("Far cloud clipmap")]
 	[Export] public bool FarCloudClipmapEnabled { get; set; } = true;
-	[Export(PropertyHint.Range, "30000,500000,5000")] public float FarCloudClipmapRadiusMeters { get; set; } = 180000.0f;
+	[Export(PropertyHint.Range, "30000,2000000,5000")] public float FarCloudClipmapRadiusMeters { get; set; } = 180000.0f;
 	[Export(PropertyHint.Range, "10000,200000,1000")] public float FarCloudClipmapHandoffStartMeters { get; set; } = 48000.0f;
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarCloudClipmapOpacity { get; set; } = 0.72f;
 	[ExportGroup("Far storm lightning")]
@@ -305,6 +305,19 @@ public partial class RingScaledFarViewport : Node
 	private float _lastRegionalMaterialShroudVisibility = float.NaN;
 	private readonly FarCloudClipmapState[] _lastFarCloudClipmapStates = new FarCloudClipmapState[3];
 	private readonly bool[] _hasFarCloudClipmapState = new bool[3];
+	// Ownership must survive a clipmap geometry rebuild while the local renderer
+	// is suspended; otherwise BuildFarCloudClipmap restores a stale fade range.
+	private bool _nearCloudOwnershipEnabled = true;
+	private Resource? _sunshineFarCloudResource;
+	private bool _sunshineFarCloudDetailEnabled;
+	private float _sunshineFarCloudDetailStrength;
+	private float _sunshineFarCloudOpacityMultiplier = 1.0f;
+	private float _sunshineFarCloudRadiusMeters = 180000.0f;
+	private Vector2 _sunshineBackgroundAltitudeMeters;
+	private GodotObject? _sunshineExtraTexture, _sunshineGradientTexture, _sunshineLargeTexture, _sunshineMediumTexture, _sunshineSmallTexture;
+	private FarCloudDetailStaticSnapshot _lastFarCloudDetailStatic;
+	private FarCloudDetailPositionSnapshot _lastFarCloudDetailPositions;
+	private bool _hasFarCloudDetailStatic, _hasFarCloudDetailPositions;
 	// Published snapshots carry their own weather epoch; lightning advances
 	// from that epoch using the authoritative saveable simulation clock.
 	private float _lastTerrainFadeStart = float.NaN;
@@ -320,6 +333,8 @@ public partial class RingScaledFarViewport : Node
 		Vector3 SunDirection,
 		Vector3 SurfaceUp,
 		float ViewerHeight);
+	private readonly record struct FarCloudDetailStaticSnapshot(bool Active, float Strength, float Opacity, float Coverage, float Density, float DetailPower, float ExtraScale, float LargeScale, float MediumScale, float SmallScale, float CoverageBias, Vector2 Altitude, float Circumference);
+	private readonly record struct FarCloudDetailPositionSnapshot(Vector3 Extra, Vector3 Large, Vector3 Medium, Vector3 Detail, Vector3 WindDirection, float WindRange, float WindStrength);
 
 	private sealed class FarWeatherAtlasBuild
 	{
@@ -1739,13 +1754,18 @@ public partial class RingScaledFarViewport : Node
 	private void BuildFarCloudClipmap()
 	{
 		if (_farViewport == null || !FarCloudClipmapEnabled) return;
+		Resource? pendingSunshineResource = _sunshineFarCloudResource;
+		// New materials need their imported texture bindings even if the shared
+		// Sunshine resource itself has not changed.
+		if (pendingSunshineResource != null) _sunshineFarCloudResource = null;
+		_hasFarCloudDetailStatic = false;
+		_hasFarCloudDetailPositions = false;
 		Shader? shader = GD.Load<Shader>("res://materials/ring_far_cloud_clipmap.gdshader");
 		if (shader == null) return;
 
-		// Three independently scrolling layers give the far horizon parallax.
-		// Their mesh is an annular, curved canopy rather than a planar quad:
-		// the open center is owned by Sunshine and the remaining canopy follows
-		// the ring instead of becoming a flat ceiling at night.
+		// Three height slices give the far horizon parallax. Their curved disks
+		// follow the ring; shader ownership fades their centres through Sunshine's
+		// handoff without removing geometry needed by a shorter-radius fallback.
 		for (int layer = 0; layer < _farCloudClipmapLayers.Length; layer++)
 		{
 			var material = new ShaderMaterial { Shader = shader, RenderPriority = 12 + layer };
@@ -1754,7 +1774,8 @@ public partial class RingScaledFarViewport : Node
 			material.SetShaderParameter("opacity", FarCloudClipmapOpacity / (layer == 0 ? 1.0f : 1.45f));
 			material.SetShaderParameter("patch_radius_meters", GetEffectiveFarCloudClipmapRadiusMeters());
 			material.SetShaderParameter("patch_across_meters", RingWidthMeters);
-			material.SetShaderParameter("handoff_start_meters", FarCloudClipmapHandoffStartMeters);
+			material.SetShaderParameter("handoff_start_meters", _nearCloudOwnershipEnabled ? FarCloudClipmapHandoffStartMeters : 0.0f);
+			material.SetShaderParameter("handoff_end_meters", _nearCloudOwnershipEnabled ? LocalCloudRadiusMeters : 1.0f);
 			material.SetShaderParameter("ring_width_km", RingWidthMeters * 0.001f);
 			material.SetShaderParameter("ring_circumference_km", (float)(_circumferenceMeters * 0.001));
 			ConfigureFarWeatherMaterial(material);
@@ -1768,13 +1789,16 @@ public partial class RingScaledFarViewport : Node
 				Visible = true
 			};
 			_farViewport.AddChild(instance);
-			// The annulus is camera-relative but its curved local AABB spans
+			// The canopy is camera-relative but its curved local AABB spans
 			// only a thin chord. Godot can reject it before the shader runs;
 			// use the same whole-ring culling exemption as ScaledCloudShell.
 			DisableWholeRingFrustumCulling(instance);
 			_farCloudClipmapLayers[layer] = instance;
 			_farCloudClipmapMaterials[layer] = material;
 		}
+		if (pendingSunshineResource != null)
+			ConfigureSunshineFarCloudDetail(pendingSunshineResource, _sunshineFarCloudDetailEnabled,
+				_sunshineFarCloudDetailStrength, _sunshineFarCloudOpacityMultiplier, _sunshineFarCloudRadiusMeters);
 	}
 
 	private float GetEffectiveFarCloudClipmapRadiusMeters()
@@ -1782,7 +1806,7 @@ public partial class RingScaledFarViewport : Node
 		// Do not let a camera-local cloud patch continue into the opposite
 		// side of an 80 km ring. The scaled whole-ring tiers own that view.
 		return Mathf.Min(
-			Mathf.Max(30000.0f, FarCloudClipmapRadiusMeters),
+			Mathf.Max(30000.0f, _sunshineFarCloudDetailEnabled ? _sunshineFarCloudRadiusMeters : FarCloudClipmapRadiusMeters),
 			Mathf.Max(30000.0f, (float)_radiusMeters * 1.35f));
 	}
 
@@ -1791,15 +1815,19 @@ public partial class RingScaledFarViewport : Node
 
 	private float GetFarCloudClipmapHeightMeters(int layer)
 	{
-		// A wider distant tower stack gives the far canopy readable vertical
-		// extent above the rising ring without adding geometry or passes.
-		return LocalCloudBaseMeters + 900.0f + layer * 2400.0f;
+		Vector2 band = _sunshineFarCloudDetailEnabled && _sunshineBackgroundAltitudeMeters.Y > _sunshineBackgroundAltitudeMeters.X
+			? _sunshineBackgroundAltitudeMeters
+			: new Vector2(LocalCloudBaseMeters, LocalCloudTopMeters);
+		return Mathf.Lerp(band.X, band.Y, 0.2f + 0.3f * layer);
 	}
 
 	private Mesh CreateCurvedFarCloudClipmapMesh(int layer)
 	{
 		float outerMeters = GetEffectiveFarCloudClipmapRadiusMeters();
-		float innerMeters = Mathf.Clamp(FarCloudClipmapHandoffStartMeters, 1000.0f, outerMeters - 1000.0f);
+		// A disk is required whenever the requested far radius falls inside the
+		// near handoff. Shader ownership keeps its clear centre inexpensive;
+		// an annular hole would expose the ring in that valid fallback state.
+		float innerMeters = 0.0f;
 		float acrossHalfMeters = Mathf.Max(1000.0f, RingWidthMeters * 0.5f);
 		float altitudeMeters = GetFarCloudClipmapHeightMeters(layer);
 		float curvedRadius = Mathf.Max(1.0f, (float)_radiusMeters - altitudeMeters) * CoordinateScale;
@@ -1893,9 +1921,11 @@ public partial class RingScaledFarViewport : Node
 		float curvedRadius)
 	{
 		float angle = aroundMeters / Mathf.Max(1.0f, (float)_radiusMeters);
+		// 1-cos loses the short-arc rise in float precision; this identity is stable.
+		float rise = curvedRadius * 2.0f * Mathf.Sin(angle * 0.5f) * Mathf.Sin(angle * 0.5f);
 		Vector3 point = new(
 			curvedRadius * Mathf.Sin(angle),
-			curvedRadius * (1.0f - Mathf.Cos(angle)),
+			rise,
 			acrossMeters * CoordinateScale);
 		Vector2 uv = new(
 			0.5f + 0.5f * aroundMeters / outerMeters,
@@ -1913,7 +1943,8 @@ public partial class RingScaledFarViewport : Node
 			instance.Mesh = CreateCurvedFarCloudClipmapMesh(layer);
 			material.SetShaderParameter("patch_radius_meters", GetEffectiveFarCloudClipmapRadiusMeters());
 			material.SetShaderParameter("patch_across_meters", RingWidthMeters);
-			material.SetShaderParameter("handoff_start_meters", FarCloudClipmapHandoffStartMeters);
+			material.SetShaderParameter("handoff_start_meters", _nearCloudOwnershipEnabled ? FarCloudClipmapHandoffStartMeters : 0.0f);
+			material.SetShaderParameter("handoff_end_meters", _nearCloudOwnershipEnabled ? LocalCloudRadiusMeters : 1.0f);
 			_hasFarCloudClipmapState[layer] = false;
 		}
 	}
@@ -1930,10 +1961,7 @@ public partial class RingScaledFarViewport : Node
 		global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeather(canonical)
 			?? default;
 		float storm = Mathf.Clamp(weather.SystemInfluence * 0.65f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
-		// The natural clear-cell floor (0.05) drives the clipmap threshold so
-		// high that all three distant layers resolve to transparent. Keep a
-		// sparse, visible canopy beyond Sunshine's 48 km handoff instead.
-		float coverage = Mathf.Clamp(weather.CloudCoverage, 0.36f, 0.98f);
+		float coverage = Mathf.Clamp(weather.CloudCoverage, 0.0f, 0.98f);
 		for (int layer = 0; layer < _farCloudClipmapLayers.Length; layer++)
 		{
 			MeshInstance3D? instance = _farCloudClipmapLayers[layer];
@@ -2813,8 +2841,9 @@ public partial class RingScaledFarViewport : Node
 			float cloudBase = Math.Min(altitude.X, altitude.Y);
 			float cloudTop = Math.Max(cloudBase + 500.0f, altitude.Y);
 			float volumeHeight = cloudTop - cloudBase;
-			handoffStart = _sunshineClouds.HandoffStartMeters;
-			handoffEnd = _sunshineClouds.HandoffEndMeters;
+			Vector3 effectiveHandoff = _sunshineClouds.GetEffectiveCloudHandoff();
+			handoffStart = effectiveHandoff.X;
+			handoffEnd = effectiveHandoff.Y;
 			float radius = Math.Max(2_000.0f, handoffEnd);
 			volumeCenterKm = new Vector3(
 				(float)(_explorer.CanonicalPosition.AroundMeters * 0.001),
@@ -3035,21 +3064,17 @@ public partial class RingScaledFarViewport : Node
 		float cloudTopMeters,
 		float handoffStartMeters = -1.0f)
 	{
+		_nearCloudOwnershipEnabled = enabled;
 		LocalCloudRadiusMeters = Mathf.Max(1000.0f, radiusMeters);
 		LocalCloudBaseMeters = cloudBaseMeters;
 		LocalCloudTopMeters = Mathf.Max(cloudBaseMeters + 100.0f, cloudTopMeters);
 		float resolvedHandoffStart = handoffStartMeters > 0.0f
 			? handoffStartMeters
 			: LocalCloudRadiusMeters * 0.76f;
-		resolvedHandoffStart = Mathf.Clamp(
-			resolvedHandoffStart,
-			1000.0f,
-			GetEffectiveFarCloudClipmapRadiusMeters() - 1000.0f);
-		if (!Mathf.IsEqualApprox(FarCloudClipmapHandoffStartMeters, resolvedHandoffStart))
-		{
-			FarCloudClipmapHandoffStartMeters = resolvedHandoffStart;
-			RebuildFarCloudClipmapMeshes();
-		}
+		resolvedHandoffStart = Mathf.Max(0.0f, resolvedHandoffStart);
+		// The clipmap is a full curved disk. Ownership is shader-only, so moving
+		// the dynamic handoff must not rebuild its three meshes every frame.
+		FarCloudClipmapHandoffStartMeters = resolvedHandoffStart;
 		float scaledRadius = LocalCloudRadiusMeters * CoordinateScale;
 		float scaledHandoffStart = Mathf.Min(resolvedHandoffStart, LocalCloudRadiusMeters - 1.0f) * CoordinateScale;
 		if (_cloudMaterial != null)
@@ -3064,7 +3089,119 @@ public partial class RingScaledFarViewport : Node
 				"local_handoff_end_meters",
 				scaledRadius);
 		}
+		for (int layer = 0; layer < _farCloudClipmapMaterials.Length; layer++)
+		{
+			ShaderMaterial? material = _farCloudClipmapMaterials[layer];
+			if (material == null) continue;
+			// When the near volume cannot reach a cloud band (for example above
+			// it), the regional tier owns the entire disk as a safe fallback.
+			material.SetShaderParameter("handoff_start_meters", enabled ? resolvedHandoffStart : 0.0f);
+			material.SetShaderParameter("handoff_end_meters", enabled ? LocalCloudRadiusMeters : 1.0f);
+		}
 		SetLocalVolumetricCloudsEnabled(false);
+	}
+
+	/// <summary>Publishes Sunshine's imported density resources to the cheap,
+	/// curved far tiers.  This never allocates or reads texture pixels.</summary>
+	public void ConfigureSunshineFarCloudDetail(
+		Resource? clouds, bool enabled, float strength, float opacityMultiplier, float radiusMeters, float coverageBias = 0.0f)
+	{
+		Texture2D? extra = clouds == null ? null : clouds.Get("extra_large_noise_patterns").AsGodotObject() as Texture2D;
+		Texture2D? gradient = clouds == null ? null : clouds.Get("height_gradient").AsGodotObject() as Texture2D;
+		Texture3D? large = clouds == null ? null : clouds.Get("large_scale_noise").AsGodotObject() as Texture3D;
+		Texture3D? medium = clouds == null ? null : clouds.Get("medium_scale_noise").AsGodotObject() as Texture3D;
+		Texture3D? small = clouds == null ? null : clouds.Get("small_scale_noise").AsGodotObject() as Texture3D;
+		bool texturesReady = extra != null && gradient != null && large != null && medium != null && small != null;
+		bool active = enabled && clouds != null && texturesReady;
+		strength = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 1.0f) : 1.0f;
+		opacityMultiplier = float.IsFinite(opacityMultiplier) ? Mathf.Clamp(opacityMultiplier, 0.0f, 2.0f) : 1.0f;
+		radiusMeters = float.IsFinite(radiusMeters) ? Mathf.Clamp(radiusMeters, 30000.0f, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters) : 180000.0f;
+		coverageBias = float.IsFinite(coverageBias) ? Mathf.Clamp(coverageBias, -1.0f, 1.0f) : 0.0f;
+		Vector4 background = active ? clouds!.Get("background_altitude").AsVector4() : Vector4.Zero;
+		Vector2 altitude = new(background.X, background.Y);
+		if (!float.IsFinite(altitude.X) || !float.IsFinite(altitude.Y)) altitude = Vector2.Zero;
+		if (altitude.Y <= altitude.X) altitude = active
+			? new Vector2(clouds!.Get("cloud_floor").AsSingle(), clouds.Get("cloud_ceiling").AsSingle())
+			: Vector2.Zero;
+		bool geometryChanged = active != _sunshineFarCloudDetailEnabled
+			|| !Mathf.IsEqualApprox(radiusMeters, _sunshineFarCloudRadiusMeters)
+			|| altitude != _sunshineBackgroundAltitudeMeters;
+		bool textureBindingChanged = !_sunshineFarCloudDetailEnabled || !_hasFarCloudDetailStatic || clouds != _sunshineFarCloudResource
+			|| extra != _sunshineExtraTexture || gradient != _sunshineGradientTexture
+			|| large != _sunshineLargeTexture || medium != _sunshineMediumTexture || small != _sunshineSmallTexture;
+		_sunshineFarCloudResource = clouds;
+		_sunshineFarCloudDetailEnabled = active;
+		_sunshineFarCloudDetailStrength = strength;
+		_sunshineFarCloudOpacityMultiplier = opacityMultiplier;
+		_sunshineFarCloudRadiusMeters = radiusMeters;
+		_sunshineBackgroundAltitudeMeters = altitude;
+		_sunshineExtraTexture = extra; _sunshineGradientTexture = gradient; _sunshineLargeTexture = large;
+		_sunshineMediumTexture = medium; _sunshineSmallTexture = small;
+		float sourceCoverage = active ? clouds!.Get("clouds_coverage").AsSingle() : 0.82f;
+		float sourceDensity = active ? clouds!.Get("clouds_density").AsSingle() : 1.0f;
+		float sourceDetail = active ? clouds!.Get("clouds_detail_power").AsSingle() : 1.0f;
+		var staticSnapshot = new FarCloudDetailStaticSnapshot(active, strength, opacityMultiplier, sourceCoverage, sourceDensity, sourceDetail,
+			active ? clouds!.Get("extra_large_noise_scale").AsSingle() : 320000.0f, active ? clouds!.Get("large_noise_scale").AsSingle() : 120000.0f,
+			active ? clouds!.Get("medium_noise_scale").AsSingle() : 20000.0f, active ? clouds!.Get("small_noise_scale").AsSingle() : 8500.0f, coverageBias, altitude, (float)_circumferenceMeters);
+		var positionSnapshot = active ? new FarCloudDetailPositionSnapshot(clouds!.Get("extra_large_scale_clouds_position").AsVector3(), clouds.Get("large_scale_clouds_position").AsVector3(), clouds.Get("medium_scale_clouds_position").AsVector3(), clouds.Get("detail_clouds_position").AsVector3(), clouds.Get("wind_direction").AsVector3(), clouds.Get("wind_swept_range").AsSingle(), clouds.Get("wind_swept_strength").AsSingle()) : default;
+		bool staticChanged = !_hasFarCloudDetailStatic || staticSnapshot != _lastFarCloudDetailStatic;
+		bool positionsChanged = active && (!_hasFarCloudDetailPositions || positionSnapshot != _lastFarCloudDetailPositions);
+		for (int materialIndex = 0; materialIndex < 4; materialIndex++)
+		{
+			ShaderMaterial? material = materialIndex < 3 ? _farCloudClipmapMaterials[materialIndex] : _cloudMaterial;
+			if (material == null) continue;
+			if (staticChanged)
+			{
+				material.SetShaderParameter("far_density_enabled", active);
+				material.SetShaderParameter("far_density_strength", strength);
+				material.SetShaderParameter("far_density_opacity_multiplier", opacityMultiplier);
+				material.SetShaderParameter("far_density_coverage_bias", coverageBias);
+				material.SetShaderParameter("far_density_clouds_coverage", sourceCoverage);
+				material.SetShaderParameter("far_density_clouds_density", sourceDensity);
+				material.SetShaderParameter("far_density_clouds_detail_power", sourceDetail);
+				material.SetShaderParameter("far_density_extra_large_scale", staticSnapshot.ExtraScale);
+				material.SetShaderParameter("far_density_large_scale", staticSnapshot.LargeScale);
+				material.SetShaderParameter("far_density_medium_scale", staticSnapshot.MediumScale);
+				material.SetShaderParameter("far_density_small_scale", staticSnapshot.SmallScale);
+				material.SetShaderParameter("far_density_background_altitude", altitude);
+				material.SetShaderParameter("far_density_ring_circumference_meters", (float)_circumferenceMeters);
+			}
+			if (active && textureBindingChanged)
+			{
+				material.SetShaderParameter("far_density_extra_large_noise_patterns", extra!);
+				material.SetShaderParameter("far_density_height_gradient", gradient!);
+				material.SetShaderParameter("far_density_large_scale_noise", large!);
+				material.SetShaderParameter("far_density_medium_scale_noise", medium!);
+				material.SetShaderParameter("far_density_small_scale_noise", small!);
+			}
+			// Weather policy belongs to the shared far ownership layer, not the
+			// optional imported Sunshine-detail path. Clear it explicitly when
+			// the resource disappears so an earlier provider cannot leave stale
+			// patch settings on these persistent materials.
+			if (clouds != null)
+			{
+				material.SetShaderParameter("cloud_weather_params", clouds.Get("cloud_weather_params").AsVector4());
+				material.SetShaderParameter("cloud_weather_frame", clouds.Get("cloud_weather_frame").AsVector4());
+			}
+			else
+			{
+				material.SetShaderParameter("cloud_weather_params", Vector4.Zero);
+				material.SetShaderParameter("cloud_weather_frame", Vector4.Zero);
+			}
+			if (positionsChanged)
+			{
+				material.SetShaderParameter("far_density_extra_large_position", positionSnapshot.Extra);
+				material.SetShaderParameter("far_density_large_position", positionSnapshot.Large);
+				material.SetShaderParameter("far_density_medium_position", positionSnapshot.Medium);
+				material.SetShaderParameter("far_density_detail_position", positionSnapshot.Detail);
+				material.SetShaderParameter("far_density_wind_direction", positionSnapshot.WindDirection);
+				material.SetShaderParameter("far_density_wind_swept_range", positionSnapshot.WindRange);
+				material.SetShaderParameter("far_density_wind_swept_strength", positionSnapshot.WindStrength);
+			}
+		}
+		_lastFarCloudDetailStatic = staticSnapshot; _hasFarCloudDetailStatic = true;
+		_lastFarCloudDetailPositions = positionSnapshot; _hasFarCloudDetailPositions = active;
+		if (geometryChanged) RebuildFarCloudClipmapMeshes();
 	}
 
 	/// <summary>

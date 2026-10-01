@@ -51,7 +51,7 @@ signal external_texture_retirement_requested(generation_id: int)
 		resolution_scale = value
 		last_size = Vector2i(0, 0)
 		lights_updated = true
-@export_range(0, 2) var lod_bias : float = 1.0
+@export_range(0, 8) var lod_bias : float = 1.0
 
 @export_subgroup("Noise Textures")
 @export var dither_noise : Texture3D
@@ -153,7 +153,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 220
+const GENERAL_DATA_FLOAT_COUNT := 232
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -243,6 +243,9 @@ var general_data : PackedByteArray
 # Ten vec4s, populated by RingSunshineCloudBridge. Keeping this as an
 # immutable value array makes every compositor callback snapshot self-contained.
 @export var ring_atmosphere_profile : Array[Vector4] = []
+@export var cloud_handoff : Vector4 = Vector4.ZERO
+@export var cloud_weather_params : Vector4 = Vector4.ZERO
+@export var cloud_weather_frame : Vector4 = Vector4.ZERO
 
 var light_data : PackedByteArray
 
@@ -1945,6 +1948,11 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		general_data.encode_float(idx, profile_value.y); idx += 4
 		general_data.encode_float(idx, profile_value.z); idx += 4
 		general_data.encode_float(idx, profile_value.w); idx += 4
+	for value in [cloud_handoff, cloud_weather_params, cloud_weather_frame]:
+		general_data.encode_float(idx, value.x); idx += 4
+		general_data.encode_float(idx, value.y); idx += 4
+		general_data.encode_float(idx, value.z); idx += 4
+		general_data.encode_float(idx, value.w); idx += 4
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
 	previous_callback_bulk_wind = current_bulk_wind
 	previous_callback_detail_wind = detail_clouds_position

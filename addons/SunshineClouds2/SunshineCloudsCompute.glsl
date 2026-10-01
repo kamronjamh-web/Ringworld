@@ -5,6 +5,7 @@
 
 #include "./CloudsInc.comp"
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
+#include "../../materials/ring_cloud_weather_shared.gdshaderinc"
 #include "./RingAtmosphereCompute.glslinc"
 
 // Invocations in the (x, y, z) dimension
@@ -419,8 +420,20 @@ float sampleScene(
 	}
 
 	float largeShape = texture(large_noise, (worldPosition - largeNoisePos) / largenoisescale).r * extraLargeShape;
-	largeShape = smoothstep(coverage , coverage - 0.1, 1.0 - (largeShape * gradientSample.r)) + max(effectorAdditive, 0.0);
-	if (largeShape <= 0.0 && stormDensity <= 0.0) {
+	// Background uses shared physical weather. Localized storm volume remains
+	// independently dense, so a strong front cannot be erased by a clear gate.
+	float weatherStorm = max(stormDensity, genericData.data.cloud_handoff.z);
+	float weatherCoverage = ring_cloud_weather_resolved_coverage(
+		genericData.data.cloud_weather_frame.w, weatherStorm, canonicalCloudPosition,
+		genericData.data.cloud_weather_params, genericData.data.cloud_weather_frame);
+	float weatherGate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
+		genericData.data.cloud_weather_params);
+	float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
+		? mix(0.70, 0.90, weatherCoverage) : coverage;
+	largeShape = smoothstep(1.0 - weatherBackgroundThreshold,
+		1.1 - weatherBackgroundThreshold, largeShape * gradientSample.r)
+		+ max(effectorAdditive, 0.0);
+	if ((largeShape <= 0.0 || weatherGate <= 0.0) && stormDensity <= 0.0) {
 		return 0.0;
 	}
 	vec4 mediumShapes = texture(noise_medium, (worldPosition - mediumNoisePos) / mediumnoisescale).rgba;
@@ -437,7 +450,7 @@ float sampleScene(
 		shape = clamp(remap(shape, 1.0 - largeShape, 1.0, 0.0, 1.0), 0.0, 1.0);
 		shape = clamp(remap(shape, smallShape, 1.0, 0.0, 1.0), 0.0, 1.0);
 		shape += min(effectorAdditive, 0.0);
-		backgroundDensity = clamp(shape * edgeFade, 0.0, 1.0);
+		backgroundDensity = clamp(shape * edgeFade, 0.0, 1.0) * weatherGate;
 	}
 	// At exactly zero large shape, the original remap has equal input bounds
 	// and can produce NaN. This branch is mathematically empty background.
@@ -838,6 +851,10 @@ void main() {
 
 	float minstep = genericData.data.min_step_distance;
 	float maxstep = genericData.data.max_step_distance;
+	if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
+		&& genericData.data.cloud_handoff.x > 0.0) {
+		maxstep = max(maxstep, genericData.data.cloud_handoff.y / float(stepCount));
+	}
 	
 
 	float curlPower = genericData.data.curlPower;
@@ -1037,6 +1054,11 @@ void main() {
 		newStep = maxstep;
 	}
 	for (int i = entrySkip; i < stepCount; i++) {
+		if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
+			&& genericData.data.cloud_handoff.x > 0.0
+			&& traveledDistance > genericData.data.cloud_handoff.y) {
+			break;
+		}
 		bool terminalDepthInterval = false;
 		float terminalDensityWeight = 1.0;
 		if (traveledDistance > linear_depth){
@@ -1100,6 +1122,11 @@ void main() {
 			curLod = 1.0 - clamp(traveledDistance / lodMaxDistance, 0.0, 1.0);
 			// newdensity = sampleSceneCoarse(largeNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, coverage, curLod);
 			newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false, false) * densityMultiplier, sharpness) * depthFade;
+			if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
+				&& genericData.data.cloud_handoff.x > 0.0) {
+				newdensity *= ring_cloud_handoff_near_weight(traveledDistance,
+					genericData.data.cloud_handoff);
+			}
 			// if (newdensity > 0.0) {
 			// 	newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false) * densityMultiplier, sharpness) * depthFade;
 			// }
@@ -1250,6 +1277,17 @@ void main() {
 			curPos = rayOrigin + raydirection * traveledDistance;
 			break;
 		}
+		// Adaptive dense-cloud steps can otherwise spend the finite ray budget
+		// before the explicit ownership fade. Reserve enough forward distance in
+		// each remaining iteration to reach its configured end; this changes
+		// interval length only, never the bounded step count or depth weighting.
+		if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
+			&& genericData.data.cloud_handoff.x > 0.0
+			&& traveledDistance < genericData.data.cloud_handoff.y) {
+			int remainingSteps = max(stepCount - i - 1, 1);
+			newStep = max(newStep, (genericData.data.cloud_handoff.y - traveledDistance)
+				/ float(remainingSteps));
+		}
 		
 		traveledDistance += newStep;
 
@@ -1262,10 +1300,9 @@ void main() {
 	// GLSL leaves smoothstep undefined when edge0 is greater than edge1.
 	// Express the same near-to-far fade with ordered edges so cloud alpha is
 	// stable across Vulkan drivers.
-	float cloudRangeFade = 1.0 - smoothstep(
-		minstep * stepCount,
-		maxstep * stepCount,
-		traveledDistance);
+	float cloudRangeFade = genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
+		&& genericData.data.cloud_handoff.x > 0.0 ? 1.0 : 1.0 - smoothstep(
+		minstep * stepCount, maxstep * stepCount, traveledDistance);
 	density *= clamp(cloudRangeFade, 0.0, 1.0);
 
 	// Empty rays have no lighting samples. Avoid feeding NaNs into temporal

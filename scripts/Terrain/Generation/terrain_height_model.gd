@@ -7,7 +7,7 @@ const TerrainGenerationSamplerBridge = preload("res://scripts/Terrain/Generation
 var _sampler
 
 func _init(recipe: TerrainGenerationRecipe = null) -> void:
-	var source := recipe if recipe != null else TerrainGenerationRecipe.create_detail_default()
+	var source := recipe if recipe != null else TerrainGenerationRecipe.create_erosion_default()
 	var errors := source.validation_errors()
 	assert(errors.is_empty(), "Terrain recipe identity/domain is incompatible: %s" % "; ".join(errors))
 	_sampler = TerrainGenerationSamplerBridge.new()

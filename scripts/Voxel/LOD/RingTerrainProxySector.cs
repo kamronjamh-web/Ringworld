@@ -256,6 +256,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private StructuralWallRequest? _queuedStructuralWall;
     private ulong _structuralWallRequestVersion;
     private readonly Dictionary<RingTerrainSectorCoordinate, MeshInstance3D> _active = new();
+    // Immutable sector-local visual bounds.  These are built from the complete
+    // source geometry before any optional partial-coverage filtering, and also
+    // contain the mesh's parent-morph endpoint.  The handoff proof transforms
+    // them through the current node transform, so floating-origin rebases do
+    // not invalidate the cache.
+    private readonly Dictionary<RingTerrainSectorCoordinate, Aabb> _activeVisualBounds = new();
     // Sectors outside the current window keep their GPU mesh for a short time.
     // Re-entering the window is then only a visibility change, not a resample/upload.
     private readonly Dictionary<RingTerrainSectorCoordinate, double> _warmUntil = new();
@@ -348,6 +354,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private bool _commandLineDiskCacheDisabled;
     private int _activeWorkerSlots;
     private ulong _coverageRevision;
+    private bool _hasCoverageSafetyFocus;
+    private double _coverageSafetyAround;
+    private double _coverageSafetyAcross;
+    private double _coverageSafetyVertical;
+    private ulong _coverageSafetyFinerRevision = ulong.MaxValue;
     private Vector3 _lastCameraWorldPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector3 _lastLightingRingCenter = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector3 _lastLightingSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
@@ -421,8 +432,20 @@ public partial class RingTerrainProxySector : MeshInstance3D
             + ParentChordOffsets.LongLength * 12L + (TerrainIndices.LongLength + OceanIndices.LongLength) * 4L;
     }
 
-    private sealed record SectorData(RingTerrainSectorCoordinate Coordinate, ulong RequestVersion, ulong EditVersion, Vector3 LocalOrigin, Vector3[] Vertices, Vector3[] Normals, Color[] Colors, Vector2[] Uvs, Vector2[] MorphData, Vector3[] ParentChordOffsets, bool UsesRuntimeParentChord, int[] Indices, int[] OceanIndices, SurfaceCoverageMask? CoverageMask, SurfaceCoverageMask? OceanSurfaceMask, bool FullyOceanSurface, FftShorelineTile? ShorelineTile)
+    private sealed record SectorData(RingTerrainSectorCoordinate Coordinate, ulong RequestVersion, ulong EditVersion, Vector3 LocalOrigin, Vector3[] Vertices, Vector3[] Normals, Color[] Colors, Vector2[] Uvs, Vector2[] MorphData, Vector3[] ParentChordOffsets, bool UsesRuntimeParentChord, Aabb VisualBounds, int[] Indices, int[] OceanIndices, SurfaceCoverageMask? CoverageMask, SurfaceCoverageMask? OceanSurfaceMask, bool FullyOceanSurface, FftShorelineTile? ShorelineTile)
     {
+        // Existing focused fixtures construct SectorData directly. Keep their
+        // compact form while production builds publish an explicit bound.
+        public SectorData(RingTerrainSectorCoordinate coordinate, ulong requestVersion, ulong editVersion,
+            Vector3 localOrigin, Vector3[] vertices, Vector3[] normals, Color[] colors, Vector2[] uvs,
+            Vector2[] morphData, Vector3[] parentChordOffsets, bool usesRuntimeParentChord,
+            int[] indices, int[] oceanIndices, SurfaceCoverageMask? coverageMask,
+            SurfaceCoverageMask? oceanSurfaceMask, bool fullyOceanSurface, FftShorelineTile? shorelineTile)
+            : this(coordinate, requestVersion, editVersion, localOrigin, vertices, normals, colors, uvs,
+                morphData, parentChordOffsets, usesRuntimeParentChord,
+                CalculateCompleteVisualBounds(vertices, morphData, parentChordOffsets, usesRuntimeParentChord),
+                indices, oceanIndices, coverageMask, oceanSurfaceMask, fullyOceanSurface, shorelineTile) { }
+
         public long EstimatedBytes => Vertices.LongLength * 12L
             + Normals.LongLength * 12L
             + Colors.LongLength * 16L
@@ -649,6 +672,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 ServiceStructuralWallBuild();
             using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy camera uniforms"))
                 UpdateCameraUniform();
+            ServiceCoverageSafetyInvalidation();
             UpdateLightingUniforms();
             int uploaded = ApplyCompletedBatch(Mathf.Max(0, uploadBudget), uploadBudgetMilliseconds);
             ServicePartialCoverageMeshCulling();
@@ -2082,6 +2106,67 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (changed) _coverageRevision++;
     }
 
+    // A completed mask is allowed to become less aggressive between normal
+    // streaming refreshes, never more aggressive. This is a cheap safety pass:
+    // it only revisits currently true proxy-provider bits and never samples
+    // terrain, schedules a worker, or turns a false bit back on.
+    private void ServiceCoverageSafetyInvalidation()
+    {
+        if (_finerCoverageLevel == null || _grid == null || _focus == null
+            || (_activeCoverageMasks.Count == 0 && _innerExcluded.Count == 0)) return;
+        RingCanonicalPosition focus = _velocityProvider?.CanonicalPosition
+            ?? _grid.WorldToCanonicalRingPosition64(_focus.GlobalPosition);
+        ulong finerRevision = _finerCoverageLevel.CoverageRevision;
+        if (_hasCoverageSafetyFocus
+            && focus.AroundMeters == _coverageSafetyAround
+            && focus.AcrossMeters == _coverageSafetyAcross
+            && focus.VerticalMeters == _coverageSafetyVertical
+            && finerRevision == _coverageSafetyFinerRevision) return;
+        _hasCoverageSafetyFocus = true;
+        _coverageSafetyAround = focus.AroundMeters;
+        _coverageSafetyAcross = focus.AcrossMeters;
+        _coverageSafetyVertical = focus.VerticalMeters;
+        _coverageSafetyFinerRevision = finerRevision;
+
+        var changed = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>();
+        int size = Mathf.Max(32, SectorSizeMeters);
+        int spacing = Mathf.Max(1, size / Mathf.Max(1, size / Mathf.Max(1, SampleSpacingMeters)));
+        foreach ((RingTerrainSectorCoordinate coordinate, SurfaceCoverageMask mask) in _activeCoverageMasks)
+        {
+            if (!mask.CoveredCells.Any(covered => covered)) continue;
+            bool[]? safeCells = null;
+            int providerCells = (mask.ProxyQuadCells + mask.QuadsPerProviderCell - 1) / mask.QuadsPerProviderCell;
+            double providerMeters = spacing * (double)mask.QuadsPerProviderCell;
+            for (int z = 0; z < providerCells; z++)
+            for (int x = 0; x < providerCells; x++)
+            {
+                int index = z * providerCells + x;
+                if (index >= mask.CoveredCells.Length || !mask.CoveredCells[index]) continue;
+                double around0 = coordinate.AroundSector * (double)size + x * providerMeters;
+                double around1 = Math.Min(around0 + providerMeters, coordinate.AroundSector * (double)size + size);
+                double across0 = coordinate.AcrossSector * (double)size + z * providerMeters;
+                double across1 = Math.Min(across0 + providerMeters, coordinate.AcrossSector * (double)size + size);
+                if (_finerCoverageLevel.IsSurfaceRegionVisuallyCovered(around0, around1, across0, across1)) continue;
+                safeCells ??= (bool[])mask.CoveredCells.Clone();
+                safeCells[index] = false;
+            }
+            if (safeCells != null)
+                changed[coordinate] = new SurfaceCoverageMask(mask.ProxyQuadCells,
+                    mask.QuadsPerProviderCell, safeCells, mask.FftDeepWaterVertexDepths);
+        }
+        if (changed.Count > 0) ApplyCoverageMasks(changed, Mathf.Max(1, size / spacing));
+
+        bool innerChanged = false;
+        foreach (RingTerrainSectorCoordinate coordinate in _innerExcluded.ToArray())
+        {
+            if (IsCoveredByFinerRepresentation(coordinate, size)) continue;
+            _innerExcluded.Remove(coordinate);
+            if (_active.ContainsKey(coordinate)) UpdateSectorVisibility(coordinate);
+            innerChanged = true;
+        }
+        if (innerChanged) _coverageRevision++;
+    }
+
     private Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> CaptureOceanReplacementMasks(
         IEnumerable<RingTerrainSectorCoordinate> coordinates,
         int size, int spacing, double focusAround, double focusAcross, double viewerAltitude)
@@ -2507,6 +2592,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double acrossEnd)
     {
         if (!StreamingActive || _transitHidden) return false;
+        if (_focus == null) return false;
         // Terrain3D owns only its shader-discard disk, not the whole finer
         // level. Mesh residency cannot prove visibility inside that disk.
         if (ResolveTerrain3DNearFadeEnabled() && _focus != null)
@@ -2530,10 +2616,53 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 WrapAroundSector(x, aroundSectorLength),
                 z);
             if (_warmUntil.ContainsKey(coordinate)) return false;
-            if (_innerExcluded.Contains(coordinate)) continue;
+            // An excluded sector has no mesh of its own. It can certify this
+            // query only if the immediately finer representation still proves
+            // the same region visible right now.
+            if (_innerExcluded.Contains(coordinate))
+            {
+                if (!IsCoveredByFinerRepresentation(coordinate, size)) return false;
+                continue;
+            }
             if (!_active.TryGetValue(coordinate, out MeshInstance3D? node)
                 || node.Mesh == null)
                 return false;
+            if (!_activeVisualBounds.TryGetValue(coordinate, out Aabb localVisualBounds)
+                || !IsCompleteVisualBoundInsideFarHandoff(node, localVisualBounds))
+                return false;
+        }
+        return true;
+    }
+
+    // The terrain shader evaluates this fade from each vertex's true world 3D
+    // position. A camera-height sample cannot prove every point on a mountain
+    // sector survives it. Test the cached complete source bounds instead.
+    private bool IsCompleteVisualBoundInsideFarHandoff(MeshInstance3D node, Aabb localVisualBounds)
+    {
+        if (!EnableFarFade) return true;
+        const float guardMeters = 2.0f;
+        float handoff = (FadeOutStartMeters
+            + Mathf.Max(FadeOutStartMeters + 1.0f, FadeOutEndMeters)) * 0.5f;
+        float allowedDistance = handoff - guardMeters;
+        if (!float.IsFinite(allowedDistance) || allowedDistance <= 0.0f
+            || !localVisualBounds.Position.IsFinite() || !localVisualBounds.Size.IsFinite()
+            || localVisualBounds.Size.X < 0.0f || localVisualBounds.Size.Y < 0.0f || localVisualBounds.Size.Z < 0.0f)
+            return false;
+        Vector3 viewer = _focus!.GlobalPosition;
+        if (!viewer.IsFinite()) return false;
+        Vector3 position = localVisualBounds.Position;
+        Vector3 end = position + localVisualBounds.Size;
+        Transform3D transform = node.GlobalTransform;
+        for (int z = 0; z < 2; z++)
+        for (int y = 0; y < 2; y++)
+        for (int x = 0; x < 2; x++)
+        {
+            Vector3 corner = new(
+                x == 0 ? position.X : end.X,
+                y == 0 ? position.Y : end.Y,
+                z == 0 ? position.Z : end.Z);
+            Vector3 worldCorner = transform * corner;
+            if (!worldCorner.IsFinite() || viewer.DistanceTo(worldCorner) >= allowedDistance) return false;
         }
         return true;
     }
@@ -3258,10 +3387,55 @@ public partial class RingTerrainProxySector : MeshInstance3D
         FftShorelineTile? shorelineTile = spacing == (int)SharedFftShorelineFieldCellMeters && !blocky
             ? BuildFftShorelineTile(coordinate, size, ringWidth, sampleCache, alignSurfaceToTerrainSdf)
             : null;
-        SectorData result = new(coordinate, requestVersion, editSnapshot.Version, localOrigin, vertices.ToArray(), normals.ToArray(), colors.ToArray(), uvs.ToArray(), morphData.ToArray(), parentChordOffsets.ToArray(), runtimeParentChord, indexList.ToArray(), oceanIndexList.ToArray(), coverageMask, new SurfaceCoverageMask(cells, 1, oceanSurfaceCells, oceanDeepWaterVertexDepths), fullyOceanSurface, shorelineTile);
+        Vector3[] finalVertices = vertices.ToArray();
+        Vector2[] finalMorphData = morphData.ToArray();
+        Vector3[] finalParentChordOffsets = parentChordOffsets.ToArray();
+        Aabb visualBounds = CalculateCompleteVisualBounds(
+            finalVertices, finalMorphData, finalParentChordOffsets, runtimeParentChord);
+        SectorData result = new(coordinate, requestVersion, editSnapshot.Version, localOrigin, finalVertices, normals.ToArray(), colors.ToArray(), uvs.ToArray(), finalMorphData, finalParentChordOffsets, runtimeParentChord, visualBounds, indexList.ToArray(), oceanIndexList.ToArray(), coverageMask, new SurfaceCoverageMask(cells, 1, oceanSurfaceCells, oceanDeepWaterVertexDepths), fullyOceanSurface, shorelineTile);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
         if (allocated > 0) Interlocked.Add(ref _workerAllocatedBytesSinceStartup, allocated);
         return result;
+    }
+
+    // The non-runtime shader endpoint moves along the ring radial-up direction.
+    // Expanding equally on all axes is deliberately conservative, while avoiding
+    // another per-frame pass over Godot mesh data. Runtime-parent chords are
+    // explicit local offsets and can be enclosed exactly at build time.
+    private static Aabb CalculateCompleteVisualBounds(
+        Vector3[] vertices, Vector2[] morphData, Vector3[] parentChordOffsets,
+        bool usesRuntimeParentChord)
+    {
+        if (vertices.Length == 0) return new Aabb(Vector3.Zero, Vector3.Zero);
+        Vector3 minimum = vertices[0];
+        Vector3 maximum = vertices[0];
+        float radialMorphReach = 0.0f;
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            Vector3 vertex = vertices[i];
+            IncludeBoundsPoint(ref minimum, ref maximum, vertex);
+            bool usesChordEndpoint = usesRuntimeParentChord
+                && i < parentChordOffsets.Length
+                && i < morphData.Length
+                && morphData[i].Y < 0.5f;
+            if (usesChordEndpoint)
+                IncludeBoundsPoint(ref minimum, ref maximum, vertex + parentChordOffsets[i]);
+            else if (i < morphData.Length)
+                radialMorphReach = Mathf.Max(radialMorphReach, Mathf.Abs(morphData[i].X));
+        }
+        if (radialMorphReach > 0.0f)
+        {
+            Vector3 reach = Vector3.One * radialMorphReach;
+            minimum -= reach;
+            maximum += reach;
+        }
+        return new Aabb(minimum, maximum - minimum);
+    }
+
+    private static void IncludeBoundsPoint(ref Vector3 minimum, ref Vector3 maximum, Vector3 point)
+    {
+        minimum = new Vector3(Mathf.Min(minimum.X, point.X), Mathf.Min(minimum.Y, point.Y), Mathf.Min(minimum.Z, point.Z));
+        maximum = new Vector3(Mathf.Max(maximum.X, point.X), Mathf.Max(maximum.Y, point.Y), Mathf.Max(maximum.Z, point.Z));
     }
 
     private static float GetTerrainMorphHeight(CachedTerrainPoint point, bool alignSurfaceToTerrainSdf)
@@ -3491,7 +3665,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // Blocky geometry has no continuous shoreline contour. Fail closed so it
         // cannot publish terrain data that disagrees with the rendered surface.
         while (blockyMorphs.Count < vertices.Count) blockyMorphs.Add(Vector2.Zero);
-        return new SectorData(coordinate, requestVersion, editSnapshot.Version, localOrigin, vertices.ToArray(), normals.ToArray(), colors.ToArray(), blockyUvs.ToArray(), blockyMorphs.ToArray(), new Vector3[vertices.Count], false, indices.ToArray(), oceanIndices.ToArray(), coverageMask, null, false, null);
+        Vector3[] finalVertices = vertices.ToArray();
+        Vector2[] finalMorphs = blockyMorphs.ToArray();
+        return new SectorData(coordinate, requestVersion, editSnapshot.Version, localOrigin, finalVertices, normals.ToArray(), colors.ToArray(), blockyUvs.ToArray(), finalMorphs, new Vector3[finalVertices.Length], false, CalculateCompleteVisualBounds(finalVertices, finalMorphs, Array.Empty<Vector3>(), false), indices.ToArray(), oceanIndices.ToArray(), coverageMask, null, false, null);
     }
 
     private static FftShorelineTile BuildFftShorelineTile(
@@ -4714,6 +4890,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             ConfigureOpaqueShadowCaster(node, mesh, useOpaqueShadowCaster);
             node.Visible = false;
             _active[data.Coordinate] = node;
+            _activeVisualBounds[data.Coordinate] = data.VisualBounds;
             InstallFftWaterDemandMetadata(data);
             if (data.OceanIndices.Length > 0) _activeWaterSectors.Add(data.Coordinate);
             else _activeWaterSectors.Remove(data.Coordinate);
@@ -4938,6 +5115,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_warmUntil.Remove(coordinate) && _activeMeshBytes.TryGetValue(coordinate, out long warmBytes))
             EstimatedWarmMeshBytes = Math.Max(0L, EstimatedWarmMeshBytes - warmBytes);
         _activeCoverageMasks.Remove(coordinate);
+        _activeVisualBounds.Remove(coordinate);
         ReleasePartialCoverageSource(coordinate);
         _latestCoverageMasks.Remove(coordinate);
         _activeOceanSurfaceMasks.Remove(coordinate);

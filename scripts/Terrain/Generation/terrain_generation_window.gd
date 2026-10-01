@@ -9,6 +9,17 @@ const REGION_COUNT: int = 3
 const SIDE: int = REGION_SIDE * REGION_COUNT
 const SPACING_M: float = 2.0
 const ORIGIN_SAMPLE: int = -REGION_SIDE
+const PACKING := preload("res://scripts/Terrain/Generation/TerrainGenerationPacking.cs")
+
+class CancellationProbe extends RefCounted:
+	var source: Variant
+	func is_cancelled() -> bool:
+		if source is Callable:
+			var callback: Callable = source
+			return callback.is_valid() and bool(callback.call())
+		if source is Object and source.has_method("is_cancelled"):
+			return bool(source.is_cancelled())
+		return false
 
 static func prepare(model: TerrainHeightModel, anchor_around: int, anchor_across: int, across_direction: int, revision: int) -> Dictionary:
 	var error := _validation_error(model, anchor_around, anchor_across, across_direction, revision)
@@ -52,26 +63,18 @@ static func prepare(model: TerrainHeightModel, anchor_around: int, anchor_across
 
 ## Packs row-major absolute window samples as nine RF images in native region
 ## order: z=-1..1, then x=-1..1. Each texel stores one common frame offset.
-static func pack(absolute_heights: PackedFloat32Array, frame_height: float) -> Array[Image]:
-	if absolute_heights.size() != SIDE * SIDE or not is_finite(frame_height) or frame_height < TerrainGenerationRecipe.CERTIFIED_MIN_HEIGHT_M or frame_height > TerrainGenerationRecipe.CERTIFIED_MAX_HEIGHT_M:
+static func pack(absolute_heights: PackedFloat32Array, frame_height: float, cancellation: Variant = Callable()) -> Array[Image]:
+	var packing := PACKING.new()
+	# C# receives a Godot object, not a Callable: native/custom GDS callables do
+	# not provide a reliable C# invocation target. The probe owns optionality.
+	var cancellation_probe := CancellationProbe.new()
+	cancellation_probe.source = cancellation
+	var packed = packing.PackRelativeImages(absolute_heights, frame_height, cancellation_probe)
+	if packing.WasCancelled or packed.size() != REGION_COUNT * REGION_COUNT:
 		return []
-	for height in absolute_heights:
-		if not is_finite(height) or height < TerrainGenerationRecipe.CERTIFIED_MIN_HEIGHT_M or height > TerrainGenerationRecipe.CERTIFIED_MAX_HEIGHT_M:
-			return []
 	var images: Array[Image] = []
-	for region_z in REGION_COUNT:
-		for region_x in REGION_COUNT:
-			var relative_heights := PackedFloat32Array()
-			relative_heights.resize(REGION_SIDE * REGION_SIDE)
-			for row in REGION_SIDE:
-				var source_offset := (region_z * REGION_SIDE + row) * SIDE + region_x * REGION_SIDE
-				var destination_offset := row * REGION_SIDE
-				for column in REGION_SIDE:
-					relative_heights[destination_offset + column] = absolute_heights[source_offset + column] - frame_height
-			var image := Image.create_from_data(REGION_SIDE, REGION_SIDE, false, Image.FORMAT_RF, relative_heights.to_byte_array())
-			if image == null or image.is_empty():
-				return []
-			images.append(image)
+	for image in packed:
+		images.append(image)
 	return images
 
 static func _validation_error(model: TerrainHeightModel, anchor_around: int, anchor_across: int, across_direction: int, revision: int) -> String:

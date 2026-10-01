@@ -16,29 +16,37 @@ public sealed class GameplayCloudDefaults
     private static readonly Dictionary<string, (float min, float max, bool integer)> Ranges = new()
     {
         ["CloudCoverageBias"] = (-1, 1, false),
+        ["CloudPatchiness"] = (0, 1, false),
+        ["CloudPatchScaleMeters"] = (16000, 256000, false),
+        ["ClearSkyThreshold"] = (0, .6f, false),
         ["CloudDensityMultiplier"] = (0, 3, false),
         ["CloudWindMultiplier"] = (0, 3, false),
         ["CloudDirectLightMultiplier"] = (0, 2, false),
         ["CloudAmbientMultiplier"] = (0, 2, false),
         ["CloudSharpness"] = (0, 1, false),
         ["CloudResolutionScale"] = (0, 2, true),
-        ["RaymarchSteps"] = (64, 256, true),
-        ["LightingSteps"] = (1, 8, true),
-        ["MinStepDistanceMeters"] = (10, 500, false),
-        ["MaxStepDistanceMeters"] = (100, 4000, false),
-        ["LightingTravelKm"] = (.5f, 20, false),
-        ["CloudLodBias"] = (.1f, 2, false),
+        ["RaymarchSteps"] = (64, RingSunshineCloudBridge.MaximumRaymarchSteps, true),
+        ["LightingSteps"] = (1, RingSunshineCloudBridge.MaximumLightingSteps, true),
+        ["MinStepDistanceMeters"] = (10, RingSunshineCloudBridge.MaximumMinimumStepDistanceMeters, false),
+        ["MaxStepDistanceMeters"] = (100, RingSunshineCloudBridge.MaximumStepDistanceMeters, false),
+        ["LightingTravelKm"] = (.5f, RingSunshineCloudBridge.MaximumLightingTravelKm, false),
+        ["CloudLodBias"] = (.1f, RingSunshineCloudBridge.MaximumCloudLodBias, false),
         ["BlurPower"] = (0, 6, false),
         ["BlurQuality"] = (1, 4, true),
         ["StationaryHistoryWeight"] = (0, .95f, false),
         ["MovingHistoryWeight"] = (0, .95f, false),
         ["DitherSpeed"] = (0, 120, false),
         ["RayStartJitterStrength"] = (0, 1, false),
-        ["HandoffStartMeters"] = (5000, 80000, false),
-        ["HandoffEndMeters"] = (6000, 100000, false),
+        ["HandoffStartMeters"] = (5000, RingSunshineCloudBridge.MaximumHandoffStartMeters, false),
+        ["HandoffEndMeters"] = (6000, RingSunshineCloudBridge.MaximumHandoffEndMeters, false),
+        ["CloudHandoffOverlapMeters"] = (2000, RingSunshineCloudBridge.MaximumCloudHandoffOverlapMeters, false),
+        ["NearCloudRangeExtensionMeters"] = (0, RingSunshineCloudBridge.MaximumNearCloudRangeExtensionMeters, false),
         ["NaturalCloudBaseAltitudeMeters"] = (0, 19000, false),
         ["NaturalCloudTopAltitudeMeters"] = (500, 20000, false),
         ["StormFrontCloudBaseAltitudeMeters"] = (0, 5000, false),
+        ["FarCloudDetailStrength"] = (0, 1, false),
+        ["FarCloudOpacityMultiplier"] = (0, 2, false),
+        ["FarCloudRadiusMeters"] = (30000, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters, false),
         ["StormSculptStrength"] = (0, 1, false),
         ["StormPillarRadiusMeters"] = (1000, 8000, false),
         ["AnvilRadiusMultiplier"] = (1.2f, 4, false),
@@ -57,7 +65,7 @@ public sealed class GameplayCloudDefaults
         ["GpuFarShadowUpdatesPerSecond"] = (.25f, 5, false),
         ["GpuShadowVerticalSamples"] = (1, 64, true)
     };
-    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "SculptLocalizedStorms", "FastReconstruction" };
+    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };
     private readonly Dictionary<string, Variant> _baseline = new();
     private readonly string? _pathOverride;

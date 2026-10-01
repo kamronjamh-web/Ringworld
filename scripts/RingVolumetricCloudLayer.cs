@@ -726,6 +726,10 @@ public partial class RingVolumetricCloudLayer : Node3D
                 + "the normal cell/origin guard will retain or refresh the cached patch "
                 + $"after {CachedCloudOwnerRebaseCount} cached owner rebases.");
         }
+        // A cached patch cannot promise local coverage while its rebuilds are
+        // suspended. Re-publish ownership only at this state transition.
+        _farOwnershipConfigured = false;
+        SyncFarCloudOwnership();
     }
 
     private void PreserveCachedCloudAlignmentDuringFastTravel()
@@ -878,6 +882,7 @@ public partial class RingVolumetricCloudLayer : Node3D
 
     private void ReleaseFallbackMeshArchetypes()
     {
+        bool archetypesWereReady = _archetypesReady;
         _archetypeCancellation?.Cancel();
         CancelUnionBuild(clearQueued: true, clearInstalled: true);
         ClearPhysicalCloudShowcase();
@@ -902,6 +907,11 @@ public partial class RingVolumetricCloudLayer : Node3D
         _archetypesReady = false;
         ArchetypeTriangleCount = 0;
         TransitionArchetypeTriangleCount = 0;
+        if (archetypesWereReady)
+        {
+            _farOwnershipConfigured = false;
+            SyncFarCloudOwnership();
+        }
     }
 
     /// <summary>
@@ -1233,12 +1243,18 @@ public partial class RingVolumetricCloudLayer : Node3D
         TransitionArchetypeTriangleCount = transitionTriangleCount;
         _archetypeProfiles = buildSet.Profiles;
 
+        bool archetypesWereReady = _archetypesReady;
         _archetypesReady = _archetypeInstances.Count > 0
             && _transitionArchetypeInstances.Count == _archetypeInstances.Count
             && (!CastCloudShadows
                 || !RetainNearbyConventionalShadowCasters
                 || _shadowArchetypeInstances.Count == _archetypeInstances.Count)
             && _archetypeProfiles.Length == _archetypeInstances.Count;
+        if (archetypesWereReady != _archetypesReady)
+        {
+            _farOwnershipConfigured = false;
+            SyncFarCloudOwnership();
+        }
         _lastAroundCell = int.MinValue;
         _lastAcrossCell = int.MinValue;
         RebuildCloudPatch(force: true);
@@ -1427,7 +1443,10 @@ public partial class RingVolumetricCloudLayer : Node3D
 
     private void SyncFarCloudOwnership()
     {
-        bool meshOwnershipEnabled = _runtimeEnabled && _localMeshCloudsVisible;
+        bool meshOwnershipEnabled = _runtimeEnabled
+            && _localMeshCloudsVisible
+            && _archetypesReady
+            && !FastTravelStreamingActive;
         bool localOwnershipEnabled = meshOwnershipEnabled || _externalVolumetricCloudsVisible;
         bool sunshineOwnsCloudRendering = _externalVolumetricRendererOwnsLocalClouds;
         float ownership = meshOwnershipEnabled

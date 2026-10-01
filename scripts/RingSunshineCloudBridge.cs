@@ -14,6 +14,17 @@ namespace RingworldTechDemo;
 /// </summary>
 public partial class RingSunshineCloudBridge : Node
 {
+	public const float MaximumHandoffStartMeters = 320000.0f;
+	public const float MaximumHandoffEndMeters = 400000.0f;
+	public const float MaximumCloudHandoffOverlapMeters = 200000.0f;
+	public const float MaximumNearCloudRangeExtensionMeters = 120000.0f;
+	public const float MaximumFarCloudRadiusMeters = 2000000.0f;
+	public const int MaximumRaymarchSteps = 1024;
+	public const int MaximumLightingSteps = 32;
+	public const float MaximumMinimumStepDistanceMeters = 2000.0f;
+	public const float MaximumStepDistanceMeters = 16000.0f;
+	public const float MaximumLightingTravelKm = 80.0f;
+	public const float MaximumCloudLodBias = 8.0f;
     private const string SunshinePreviewWeatherOwnerKey = "sunshine_preview";
     private const int SunshinePreviewWeatherSystemId = -1003;
     // Sunshine advects its coverage-defining extra-large/large structures at
@@ -36,8 +47,14 @@ public partial class RingSunshineCloudBridge : Node
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
     [Export] public NodePath CameraPath { get; set; } = new("../Explorer/Head/Camera3D");
     [Export] public NodePath ScaledFarViewportPath { get; set; } = new("../ScaledFarViewport");
-    [Export(PropertyHint.Range, "5000,80000,500")] public float HandoffStartMeters { get; set; } = 36000.0f;
-    [Export(PropertyHint.Range, "6000,100000,500")] public float HandoffEndMeters { get; set; } = 48000.0f;
+    [Export(PropertyHint.Range, "5000,320000,500")] public float HandoffStartMeters { get; set; } = 36000.0f;
+    [Export(PropertyHint.Range, "6000,400000,500")] public float HandoffEndMeters { get; set; } = 48000.0f;
+    [Export] public bool AutomaticCloudHandoff { get; set; } = true;
+    [Export(PropertyHint.Range, "2000,200000,500")] public float CloudHandoffOverlapMeters { get; set; } = 16000.0f;
+    [Export(PropertyHint.Range, "0,120000,500")] public float NearCloudRangeExtensionMeters { get; set; } = 8000.0f;
+    public float EffectiveHandoffStartMeters { get; private set; }
+    public float EffectiveHandoffEndMeters { get; private set; }
+    public float NearCloudReachMeters { get; private set; }
     [Export(PropertyHint.Range, "5000,1000000,1000")] public float SuspendSpeedMetersPerSecond { get; set; } = 10000.0f;
     [Export(PropertyHint.Range, "5000,50000,500")] public float AltitudeFadeStartMeters { get; set; } = 12000.0f;
     [Export(PropertyHint.Range, "6000,60000,500")] public float AltitudeFadeEndMeters { get; set; } = 22000.0f;
@@ -100,17 +117,17 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "1,360,1")] public float MinimumHistoryRotationDegreesPerSecond { get; set; } = 42.0f;
     [Export(PropertyHint.Range, "0.1,90,0.1")] public float MinimumHistorySunRotationDegreesPerSecond { get; set; } = 3.0f;
     [Export(PropertyHint.Range, "0.01,45,0.01")] public float SunHistoryDiscontinuityDegrees { get; set; } = 8.0f;
-    [Export(PropertyHint.Range, "64,256,8")] public int RaymarchSteps { get; set; } = 128;
+    [Export(PropertyHint.Range, "64,1024,8")] public int RaymarchSteps { get; set; } = 128;
     [Export(PropertyHint.Range, "0,120,1")] public float DitherSpeed { get; set; } = 0.0f;
     [Export(PropertyHint.Range, "0,1,0.01")] public float RayStartJitterStrength { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,6,0.1")] public float BlurPower { get; set; } = 0.1f;
     // These remain bridge-owned scalar overrides: weather refreshes continue
     // to own coverage, density, lighting color, altitude, and wind.
-    [Export(PropertyHint.Range, "10,500,1")] public float MinStepDistanceMeters { get; set; } = 90.0f;
-    [Export(PropertyHint.Range, "100,4000,1")] public float MaxStepDistanceMeters { get; set; } = 560.0f;
-    [Export(PropertyHint.Range, "0.5,20,0.1")] public float LightingTravelKm { get; set; } = 7.0f;
-    [Export(PropertyHint.Range, "0.1,2,0.01")] public float CloudLodBias { get; set; } = 0.9f;
-    [Export(PropertyHint.Range, "1,8,1")] public int LightingSteps { get; set; } = 8;
+    [Export(PropertyHint.Range, "10,2000,1")] public float MinStepDistanceMeters { get; set; } = 90.0f;
+    [Export(PropertyHint.Range, "100,16000,1")] public float MaxStepDistanceMeters { get; set; } = 560.0f;
+    [Export(PropertyHint.Range, "0.5,80,0.1")] public float LightingTravelKm { get; set; } = 7.0f;
+    [Export(PropertyHint.Range, "0.1,8,0.01")] public float CloudLodBias { get; set; } = 0.9f;
+    [Export(PropertyHint.Range, "1,32,1")] public int LightingSteps { get; set; } = 8;
     [Export(PropertyHint.Range, "1,4,1")] public int BlurQuality { get; set; } = 1;
     [Export] public bool FastReconstruction { get; set; } = false;
 
@@ -122,6 +139,15 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "0,2,0.01")] public float CloudDirectLightMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float CloudAmbientMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,1,0.01")] public float CloudSharpness { get; set; } = 0.62f;
+
+    [ExportGroup("Distant clouds")]
+    [Export] public bool FarCloudDetailEnabled { get; set; } = true;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float FarCloudDetailStrength { get; set; } = 1.0f;
+    [Export(PropertyHint.Range, "0,2,0.01")] public float FarCloudOpacityMultiplier { get; set; } = 1.0f;
+    [Export(PropertyHint.Range, "30000,2000000,5000")] public float FarCloudRadiusMeters { get; set; } = 180000.0f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float CloudPatchiness { get; set; } = 1.0f;
+    [Export(PropertyHint.Range, "16000,256000,1000")] public float CloudPatchScaleMeters { get; set; } = 64000.0f;
+    [Export(PropertyHint.Range, "0,0.6,0.01")] public float ClearSkyThreshold { get; set; } = 0.12f;
 
     [ExportGroup("Spawned weather preview")]
     [Export(PropertyHint.Range, "3000,50000,500")] public float SpawnDistanceMeters { get; set; } = 12000.0f;
@@ -442,6 +468,7 @@ public partial class RingSunshineCloudBridge : Node
     /// </summary>
     public void SetProviderActive(bool active)
     {
+        ResolveEffectiveCloudHandoff();
         Enabled = active;
         if (active)
         {
@@ -463,8 +490,8 @@ public partial class RingSunshineCloudBridge : Node
         _weather?.SetExternalLocalVolumetricCloudsState(
             ownsLocalClouds: false,
             localVolumeVisible: false,
-            HandoffStartMeters,
-            HandoffEndMeters);
+            EffectiveHandoffStartMeters,
+            EffectiveHandoffEndMeters);
         DetachCompositorFromTargetEnvironment();
         RuntimeVisible = false;
         _lastVisible = false;
@@ -481,12 +508,13 @@ public partial class RingSunshineCloudBridge : Node
 
     public override void _ExitTree()
     {
+        ResolveEffectiveCloudHandoff();
         if (_clouds != null && _externalTextureRetirementCallable is { } callback
             && _clouds.IsConnected("external_texture_retirement_requested", callback))
             _clouds.Disconnect("external_texture_retirement_requested", callback);
         CancelCloudShadowBuild();
         RingCloudShadowProjector.ReleaseTextures();
-        _weather?.SetExternalLocalVolumetricCloudsState(false, false, HandoffStartMeters, HandoffEndMeters);
+        _weather?.SetExternalLocalVolumetricCloudsState(false, false, EffectiveHandoffStartMeters, EffectiveHandoffEndMeters);
         _weather?.UnregisterManualWeather(SunshinePreviewWeatherOwnerKey);
         if (_clouds != null) _clouds.Set("enabled", false);
     }
@@ -525,6 +553,7 @@ public partial class RingSunshineCloudBridge : Node
         _weatherElapsed += Math.Max(0.0, delta);
         if (_weatherElapsed >= Math.Max(0.05, WeatherRefreshSeconds)) RefreshWeather();
         UpdateCloudFrame();
+        PublishFarCloudDetail();
         UpdateVisibility(force: false);
         UpdateCloudShadows(delta, force: false);
         UpdateCameraLightingState(delta);
@@ -590,6 +619,7 @@ public partial class RingSunshineCloudBridge : Node
         SanitizeCloudAppearanceTuning();
         RefreshWeather();
         ApplyCloudAppearanceScalarsToResource();
+        PublishFarCloudDetail();
         // A non-selected provider owns the external-cloud handoff. Appearance
         // values may be prepared privately while inactive, but must not publish
         // Sunshine's visibility/ownership state over that provider.
@@ -749,6 +779,27 @@ public partial class RingSunshineCloudBridge : Node
             Mathf.Clamp(AnvilStartFraction, 0.5f, 0.9f),
             (float)_currentWeather.DominantFormationProfile));
 
+        // Publish one canonical weather frame for both Sunshine and the far
+        // clipmap.  Time is owned by the weather simulation, never wall time.
+        CloudPatchiness = SanitizeFinite(CloudPatchiness, 1.0f, 0.0f, 1.0f);
+        CloudPatchScaleMeters = SanitizeFinite(CloudPatchScaleMeters, 64000.0f, 16000.0f, 256000.0f);
+        ClearSkyThreshold = SanitizeFinite(ClearSkyThreshold, 0.12f, 0.0f, 0.6f);
+        double circumferenceMeters = _grid == null ? 0.0 : _grid.GetCanonicalRingCircumferenceMeters64();
+        double simulationTime = _weather?.CloudSimulationTimeSeconds ?? 0.0;
+        // Weather queries evaluate position - authoritativeWind * time. Keep
+        // that sign and retain double precision until periodic around offset
+        // has been wrapped for the float GPU frame.
+        Vector2 authoritativeWind = _weather?.WeatherWindMetersPerSecond ?? _currentWeather.WindMetersPerSecond;
+        double windAroundOffset = -authoritativeWind.X * simulationTime;
+        if (circumferenceMeters > 0.0) windAroundOffset %= circumferenceMeters;
+        double windAcrossOffset = -authoritativeWind.Y * simulationTime;
+        ResolveEffectiveCloudHandoff();
+        _clouds.Set("cloud_handoff", new Vector4(EffectiveHandoffStartMeters, EffectiveHandoffEndMeters, _localStormFactor, 0.0f));
+        _clouds.Set("cloud_weather_params", new Vector4(CloudPatchiness, CloudPatchScaleMeters, ClearSkyThreshold,
+            _grid?.TerrainSampler?.Seed ?? 1337));
+        _clouds.Set("cloud_weather_frame", new Vector4((float)circumferenceMeters, (float)windAroundOffset, (float)windAcrossOffset,
+            Mathf.Clamp(_currentWeather.CloudCoverage + CloudCoverageBias, 0.0f, 1.0f)));
+
         Vector2 wind = _currentWeather.WindMetersPerSecond;
         Vector3 windDirection = new(wind.X, 0.0f, wind.Y);
         float unscaledSpeed = windDirection.Length();
@@ -758,6 +809,72 @@ public partial class RingSunshineCloudBridge : Node
         _driver.Set("large_structures_wind_speed", speed * 0.55f);
         _driver.Set("medium_structures_wind_speed", speed);
         _driver.Set("small_structures_wind_speed", speed * 1.8f);
+        PublishFarCloudDetail();
+    }
+
+    private void PublishFarCloudDetail()
+    {
+        FarCloudDetailStrength = SanitizeFinite(FarCloudDetailStrength, 1.0f, 0.0f, 1.0f);
+        FarCloudOpacityMultiplier = SanitizeFinite(FarCloudOpacityMultiplier, 1.0f, 0.0f, 2.0f);
+        FarCloudRadiusMeters = SanitizeFinite(FarCloudRadiusMeters, 180000.0f, 30000.0f, MaximumFarCloudRadiusMeters);
+        if (_scaledFarViewport != null)
+            _scaledFarViewport.ConfigureSunshineFarCloudDetail(_clouds,
+                Enabled && FarCloudDetailEnabled, FarCloudDetailStrength,
+                FarCloudOpacityMultiplier, FarCloudRadiusMeters, CloudCoverageBias);
+        // Configure the far radius before resolving the automatic cap so a
+        // live radius edit cannot publish a blend beyond this frame's disk.
+        ResolveEffectiveCloudHandoff();
+        // Handoff sliders own renderer coverage, not weather state. Publish
+        // them immediately so a live edit cannot wait for the next weather
+        // refresh before the near compute UBO receives the matching range.
+        if (_clouds != null)
+        {
+            Vector4 currentHandoff = _clouds.Get("cloud_handoff").AsVector4();
+            _clouds.Set("cloud_handoff", new Vector4(
+                EffectiveHandoffStartMeters,
+                EffectiveHandoffEndMeters,
+                currentHandoff.Z,
+                currentHandoff.W));
+        }
+        if (_scaledFarViewport == null) return;
+        // RingVolumetricCloudLayer is the sole ownership publisher.  It
+        // selects this external range only while Sunshine is active; while
+        // suspended it restores the legacy near-cloud edge instead of letting
+        // this bridge overwrite the visible fallback's transition.
+    }
+
+    /// <summary>Returns the current near/far blend start, end, and reachable near-cloud distance in metres.</summary>
+    public Vector3 GetEffectiveCloudHandoff() => new(EffectiveHandoffStartMeters, EffectiveHandoffEndMeters, NearCloudReachMeters);
+
+    private void ResolveEffectiveCloudHandoff()
+    {
+        float requestedStart = SanitizeFinite(HandoffStartMeters, 36000.0f, 1.0f, 1_000_000.0f);
+        float requestedEnd = SanitizeFinite(HandoffEndMeters, 48000.0f, requestedStart + 1.0f, 1_000_000.0f);
+        float maxStep = _clouds == null
+            ? SanitizeFinite(MaxStepDistanceMeters, 560.0f, 100.0f, MaximumStepDistanceMeters)
+            : SanitizeFinite(_clouds.Get("max_step_distance").AsSingle(), MaxStepDistanceMeters, 100.0f, MaximumStepDistanceMeters);
+        int steps = _clouds == null
+            ? Mathf.Clamp(RaymarchSteps, 64, MaximumRaymarchSteps)
+            : Mathf.Clamp(Mathf.RoundToInt(SanitizeFinite(_clouds.Get("max_step_count").AsSingle(), RaymarchSteps, 64.0f, MaximumRaymarchSteps)), 64, MaximumRaymarchSteps);
+        NearCloudReachMeters = Mathf.Max(1.0f, steps * maxStep);
+        if (!AutomaticCloudHandoff)
+        {
+            EffectiveHandoffStartMeters = requestedStart;
+            EffectiveHandoffEndMeters = requestedEnd;
+            return;
+        }
+        float extension = SanitizeFinite(NearCloudRangeExtensionMeters, 8000.0f, 0.0f, MaximumNearCloudRangeExtensionMeters);
+        float end = Mathf.Min(NearCloudReachMeters, requestedEnd + extension);
+        // The regional disk begins its outer fade at 72% of its radius. Keep
+        // automatic ownership inside that solid portion so a small far-radius
+        // setting cannot leave the local volume fading into an empty ring.
+        if (_scaledFarViewport != null)
+            end = Mathf.Min(end, _scaledFarViewport.EffectiveFarCloudClipmapRadiusMeters * 0.70f);
+        end = Mathf.Max(2.0f, end);
+        float overlap = SanitizeFinite(CloudHandoffOverlapMeters, 16000.0f, 2000.0f, MaximumCloudHandoffOverlapMeters);
+        overlap = Mathf.Min(end - 1.0f, Mathf.Max(overlap, maxStep * 4.0f));
+        EffectiveHandoffEndMeters = end;
+        EffectiveHandoffStartMeters = Mathf.Clamp(Mathf.Min(requestedStart - overlap * 0.5f, end - overlap), 1.0f, end - 1.0f);
     }
 
     private void ApplyLocalCloudAmbientLighting()
@@ -874,7 +991,7 @@ public partial class RingSunshineCloudBridge : Node
         CloudResolutionScale = Mathf.Clamp(resolutionScale, 0, 2);
         StationaryHistoryWeight = Mathf.Clamp(stationaryHistoryWeight, 0.0f, 0.95f);
         MovingHistoryWeight = Mathf.Clamp(movingHistoryWeight, 0.0f, StationaryHistoryWeight);
-        RaymarchSteps = Mathf.Clamp(raymarchSteps, 64, 256);
+        RaymarchSteps = Mathf.Clamp(raymarchSteps, 64, MaximumRaymarchSteps);
         DitherSpeed = Mathf.Clamp(ditherSpeed, 0.0f, 120.0f);
         RayStartJitterStrength = Mathf.Clamp(rayStartJitterStrength, 0.0f, 1.0f);
         BlurPower = Mathf.Clamp(blurPower, 0.0f, 6.0f);
@@ -1127,16 +1244,16 @@ public partial class RingSunshineCloudBridge : Node
     private void ApplyTuningToResource(bool refreshHistory, bool forceHistoryApply = true)
     {
         CloudResolutionScale = Mathf.Clamp(CloudResolutionScale, 0, 2);
-        RaymarchSteps = Mathf.Clamp(RaymarchSteps, 64, 256);
+        RaymarchSteps = Mathf.Clamp(RaymarchSteps, 64, MaximumRaymarchSteps);
         DitherSpeed = SanitizeFinite(DitherSpeed, 0.0f, 0.0f, 120.0f);
         RayStartJitterStrength = SanitizeFinite(RayStartJitterStrength, 1.0f, 0.0f, 1.0f);
         BlurPower = SanitizeFinite(BlurPower, 0.1f, 0.0f, 6.0f);
-        MinStepDistanceMeters = SanitizeFinite(MinStepDistanceMeters, 90.0f, 10.0f, 500.0f);
-        MaxStepDistanceMeters = SanitizeFinite(MaxStepDistanceMeters, 560.0f, 100.0f, 4000.0f);
+        MinStepDistanceMeters = SanitizeFinite(MinStepDistanceMeters, 90.0f, 10.0f, MaximumMinimumStepDistanceMeters);
+        MaxStepDistanceMeters = SanitizeFinite(MaxStepDistanceMeters, 560.0f, 100.0f, MaximumStepDistanceMeters);
         MaxStepDistanceMeters = Mathf.Max(MinStepDistanceMeters + 10.0f, MaxStepDistanceMeters);
-        LightingTravelKm = SanitizeFinite(LightingTravelKm, 7.0f, 0.5f, 20.0f);
-        CloudLodBias = SanitizeFinite(CloudLodBias, 0.9f, 0.1f, 2.0f);
-        LightingSteps = Mathf.Clamp(LightingSteps, 1, 8);
+        LightingTravelKm = SanitizeFinite(LightingTravelKm, 7.0f, 0.5f, MaximumLightingTravelKm);
+        CloudLodBias = SanitizeFinite(CloudLodBias, 0.9f, 0.1f, MaximumCloudLodBias);
+        LightingSteps = Mathf.Clamp(LightingSteps, 1, MaximumLightingSteps);
         BlurQuality = Mathf.Clamp(BlurQuality, 1, 4);
         if (_clouds == null) return;
         bool resolutionChanged = _appliedCloudResolutionScale != CloudResolutionScale;
@@ -2211,12 +2328,18 @@ public partial class RingSunshineCloudBridge : Node
     private void UpdateVisibility(bool force)
     {
         if (_clouds == null || _explorer == null || _weather == null) return;
+        ResolveEffectiveCloudHandoff();
         float altitude = Math.Max(0.0f, (float)_explorer.CanonicalPosition.VerticalMeters - ResolveSurfaceHeight(_explorer.CanonicalPosition));
+        float canonicalHeight = (float)_explorer.CanonicalPosition.VerticalMeters;
+        float verticalGap = canonicalHeight < CloudTraversalAltitudeMeters.X
+            ? CloudTraversalAltitudeMeters.X - canonicalHeight
+            : canonicalHeight > CloudTraversalAltitudeMeters.Y ? canonicalHeight - CloudTraversalAltitudeMeters.Y : 0.0f;
         bool visible = Enabled
             && CloudRenderingEnabled
             && _weather.Quality != RingVolumetricCloudLayer.CloudQuality.Off
             && _explorer.ActualTravelSpeedMetersPerSecond < SuspendSpeedMetersPerSecond
-            && altitude < AltitudeFadeEndMeters;
+            && altitude < AltitudeFadeEndMeters
+            && verticalGap < EffectiveHandoffEndMeters;
         RuntimeVisible = visible;
         // Sunshine keeps temporal color/data textures while its compositor is
         // disabled. Rebuild them before the first post-fast-travel frame so a
@@ -2226,18 +2349,18 @@ public partial class RingSunshineCloudBridge : Node
             RefreshCloudCompute();
         _clouds.Set("enabled", visible);
         if (force || visible != _lastVisible
-            || HandoffStartMeters != _publishedHandoffStartMeters
-            || HandoffEndMeters != _publishedHandoffEndMeters)
+            || EffectiveHandoffStartMeters != _publishedHandoffStartMeters
+            || EffectiveHandoffEndMeters != _publishedHandoffEndMeters)
         {
             _weather.SetExternalLocalVolumetricCloudsState(
                 // A disabled compositor cannot own local cloud presentation;
                 // hand ownership to the curved shell during high-speed noclip.
                 visible,
                 visible,
-                HandoffStartMeters,
-                HandoffEndMeters);
-            _publishedHandoffStartMeters = HandoffStartMeters;
-            _publishedHandoffEndMeters = HandoffEndMeters;
+                EffectiveHandoffStartMeters,
+                EffectiveHandoffEndMeters);
+            _publishedHandoffStartMeters = EffectiveHandoffStartMeters;
+            _publishedHandoffEndMeters = EffectiveHandoffEndMeters;
             GD.Print($"Sunshine local clouds: {(visible ? "visible" : "far-shell fallback")}, altitude={altitude:0}m.");
         }
         _lastVisible = visible;

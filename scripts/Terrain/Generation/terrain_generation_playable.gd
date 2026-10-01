@@ -125,7 +125,7 @@ func _initialize_recipe() -> void:
 	if _recipe != null:
 		return
 	var loaded := TerrainGenerationPreviewStore.load_recipe(_recipe_path())
-	_recipe = loaded.recipe if loaded.recipe != null else TerrainGenerationRecipe.create_detail_default()
+	_recipe = loaded.recipe if loaded.recipe != null else TerrainGenerationRecipe.create_erosion_default()
 	_error = loaded.error
 	_save_blocked = not _error.is_empty()
 
@@ -538,8 +538,21 @@ func save_recipe() -> bool:
 	_error = TerrainGenerationPreviewStore.save_recipe(_recipe, _recipe_path())
 	return _error.is_empty()
 
+func upgrade_to_enhanced_erosion() -> void:
+	_initialize_recipe()
+	if _recipe == null or _recipe.generator_id != TerrainGenerationRecipe.DETAIL_GENERATOR_ID:
+		return
+	var upgraded := _recipe.snapshot()
+	upgraded.generator_id = TerrainGenerationRecipe.EROSION_GENERATOR_ID
+	upgraded.erosion_ridge_preservation = 0.75
+	upgraded.gully_normalization = 0.6
+	_recipe = upgraded.snapshot()
+	_error = ""
+	_save_blocked = false
+	regenerate()
+
 func reset_recipe() -> void:
-	_recipe = TerrainGenerationRecipe.create_detail_default()
+	_recipe = TerrainGenerationRecipe.create_erosion_default()
 	_error = ""
 	_save_blocked = false
 	regenerate()
