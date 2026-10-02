@@ -184,6 +184,13 @@ public partial class RingSunshineCloudBridge : Node
     public float InstalledShadowPeakOpacity { get; private set; }
     public bool UsingGpuCloudShadows { get; private set; }
     public string GpuCloudShadowStatus { get; private set; } = "not requested";
+    /// <summary>Immutable copy published by the addon render thread; no RD resources are read back.</summary>
+    public Godot.Collections.Dictionary GetCloudRendererDiagnostics()
+    {
+        if (_clouds == null || !GodotObject.IsInstanceValid(_clouds) || !_clouds.HasMethod("get_renderer_diagnostic_snapshot")) return new Godot.Collections.Dictionary();
+        Variant value = _clouds.Call("get_renderer_diagnostic_snapshot");
+        return value.VariantType == Variant.Type.Dictionary ? value.AsGodotDictionary() : new Godot.Collections.Dictionary();
+    }
 
     /// <summary>Enables mutually exclusive compositor density capture modes.</summary>
     public bool SetDiagnosticDensityMattes(bool rawDensity, bool depthTestedDensity)
@@ -568,6 +575,10 @@ public partial class RingSunshineCloudBridge : Node
         GpuTimestampDiagnosticsEnabled = enabled;
         _clouds.Set("gpu_timestamp_begin_marker", beginMarker);
         _clouds.Set("gpu_timestamp_end_marker", endMarker);
+        _clouds.Set("gpu_timestamp_cloud_shadow_near_begin_marker", RingPerformanceGpu.CloudShadowNearBeginMarker);
+        _clouds.Set("gpu_timestamp_cloud_shadow_near_end_marker", RingPerformanceGpu.CloudShadowNearEndMarker);
+        _clouds.Set("gpu_timestamp_cloud_shadow_far_begin_marker", RingPerformanceGpu.CloudShadowFarBeginMarker);
+        _clouds.Set("gpu_timestamp_cloud_shadow_far_end_marker", RingPerformanceGpu.CloudShadowFarEndMarker);
         _clouds.Set("gpu_timestamp_diagnostics_enabled", enabled);
         _appliedGpuTimestampDiagnosticsEnabled = enabled;
         _appliedGpuTimestampBeginMarker = beginMarker; _appliedGpuTimestampEndMarker = endMarker;

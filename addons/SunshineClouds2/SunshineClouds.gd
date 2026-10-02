@@ -81,6 +81,10 @@ signal external_texture_retirement_requested(generation_id: int)
 @export var gpu_timestamp_diagnostics_enabled : bool = false
 @export var gpu_timestamp_begin_marker : String = ""
 @export var gpu_timestamp_end_marker : String = ""
+@export var gpu_timestamp_cloud_shadow_near_begin_marker : String = ""
+@export var gpu_timestamp_cloud_shadow_near_end_marker : String = ""
+@export var gpu_timestamp_cloud_shadow_far_begin_marker : String = ""
+@export var gpu_timestamp_cloud_shadow_far_end_marker : String = ""
 # MenuFlyoverSunshineLayer alone enables this opt-in reconstruction shortcut.
 # Keeping the default false preserves the normal Sunshine post-pass path.
 @export var menu_fast_reconstruction : bool = false
@@ -224,6 +228,7 @@ var cloud_shadow_resolutions : Array[Vector2i] = [Vector2i.ZERO, Vector2i.ZERO]
 var cloud_shadow_published_resolutions : Array[Vector2i] = [Vector2i.ZERO, Vector2i.ZERO]
 var cloud_shadow_configs : Array[Dictionary] = [{}, {}]
 var cloud_shadow_pending : Array[bool] = [false, false]
+var cloud_shadow_next_cascade : int = 0
 var cloud_shadow_dispatch_count : Array[int] = [0, 0]
 var cloud_shadow_phase : Array[int] = [0, 0]
 var cloud_shadow_reset_history : Array[bool] = [true, true]
@@ -283,6 +288,36 @@ var temporal_history_last_internal_size := Vector2i.ZERO
 var temporal_history_last_raster_size := Vector2i.ZERO
 var temporal_history_last_callback_source_reset := false
 var temporal_history_explicit_refresh_pending := false
+var diagnostic_renderer_snapshot_mutex := Mutex.new()
+var diagnostic_renderer_snapshot := {}
+var diagnostic_renderer_snapshot_serial := 0
+
+func get_renderer_diagnostic_snapshot() -> Dictionary:
+	diagnostic_renderer_snapshot_mutex.lock()
+	var copy := diagnostic_renderer_snapshot.duplicate(true)
+	diagnostic_renderer_snapshot_mutex.unlock()
+	return copy
+
+func publish_renderer_diagnostic_snapshot(size: Vector2i, raster_size: Vector2i, views: int, scale: int, msaa: int) -> void:
+	if not gpu_timestamp_diagnostics_enabled:
+		return
+	diagnostic_renderer_snapshot_serial += 1
+	var snapshot := {
+		"callback_serial": render_callback_serial, "published_ticks_usec": Time.get_ticks_usec(), "snapshot_serial": diagnostic_renderer_snapshot_serial,
+		"render_target_id": temporal_history_last_render_target_id, "internal_size": size, "raster_size": raster_size, "view_count": views, "resolution_divisor": scale, "resolution_enum": resolution_scale, "msaa": msaa,
+		"temporal_rebuilds": temporal_history_accumulation_rebuild_count,
+		"temporal_last_rebuild_reason": temporal_history_last_rebuild_reason,
+		"temporal_zero_history_callbacks": temporal_history_zero_packed_decay_callback_count,
+		"temporal_requested_decay": temporal_history_last_requested_decay,
+		"temporal_packed_decay": temporal_history_last_packed_decay,
+		"shadow_near_dispatches": cloud_shadow_dispatch_count[0], "shadow_far_dispatches": cloud_shadow_dispatch_count[1],
+		"shadow_near_resolution": cloud_shadow_resolutions[0], "shadow_far_resolution": cloud_shadow_resolutions[1],
+		"shadow_near_pending": cloud_shadow_pending[0], "shadow_far_pending": cloud_shadow_pending[1], "shadow_error": cloud_shadow_last_error,
+		"retired_generations": retired_generations.size(),
+	}
+	diagnostic_renderer_snapshot_mutex.lock()
+	diagnostic_renderer_snapshot = snapshot
+	diagnostic_renderer_snapshot_mutex.unlock()
 
 func get_temporal_history_diagnostics() -> Dictionary:
 	return {
@@ -571,7 +606,10 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 func dispatch_gpu_cloud_shadows():
 	if not cloud_shadow_generation_enabled or not cloud_shadow_pipeline.is_valid() or not general_data_buffer.is_valid():
 		return
-	for cascade in range(GPU_CLOUD_SHADOW_CASCADES):
+	# Requests can overlap after resource refreshes. Alternate at the producer
+	# too, so recurring near requests cannot starve an already-pending far map.
+	for offset_in_queue in range(GPU_CLOUD_SHADOW_CASCADES):
+		var cascade := (cloud_shadow_next_cascade + offset_in_queue) % GPU_CLOUD_SHADOW_CASCADES
 		if not cloud_shadow_pending[cascade] or cloud_shadow_configs[cascade].is_empty():
 			continue
 		var configuration = cloud_shadow_configs[cascade]
@@ -595,13 +633,20 @@ func dispatch_gpu_cloud_shadows():
 			bytes.encode_float(offset, value.z); offset += 4
 			bytes.encode_float(offset, value.w); offset += 4
 		rd.buffer_update(cloud_shadow_param_buffers[cascade], 0, bytes.size(), bytes)
+		var timestamp_begin := gpu_timestamp_cloud_shadow_near_begin_marker if cascade == 0 else gpu_timestamp_cloud_shadow_far_begin_marker
+		var timestamp_end := gpu_timestamp_cloud_shadow_near_end_marker if cascade == 0 else gpu_timestamp_cloud_shadow_far_end_marker
+		if gpu_timestamp_diagnostics_enabled and timestamp_begin != "" and timestamp_end != "":
+			rd.capture_timestamp(timestamp_begin)
 		var compute_list := rd.compute_list_begin()
 		rd.compute_list_bind_compute_pipeline(compute_list, cloud_shadow_pipeline)
 		rd.compute_list_bind_uniform_set(compute_list, cloud_shadow_uniform_sets[cascade], 0)
 		var size = cloud_shadow_resolutions[cascade]
 		rd.compute_list_dispatch(compute_list, int((size.x + 7) / 8), int((size.y + 7) / 8), 1)
 		rd.compute_list_end()
+		if gpu_timestamp_diagnostics_enabled and timestamp_begin != "" and timestamp_end != "":
+			rd.capture_timestamp(timestamp_end)
 		cloud_shadow_pending[cascade] = false
+		cloud_shadow_next_cascade = (cascade + 1) % GPU_CLOUD_SHADOW_CASCADES
 		cloud_shadow_dispatch_count[cascade] += 1
 		# The main thread can now bind this immutable wrapper on its next frame.
 		cloud_shadow_published_texture_wrappers[cascade] = cloud_shadow_texture_wrappers[cascade]
@@ -1569,6 +1614,7 @@ func _render_callback(effect_callback_type, render_data):
 				# wrapper on their following frame.
 				if view < cloud_backdrop_texture_wrappers.size():
 					cloud_backdrop_published_texture_wrappers[view] = cloud_backdrop_texture_wrappers[view]
+			publish_renderer_diagnostic_snapshot(size, new_size, view_count, resscale, msaa_mode)
 
 			if (!positionResetting && positionQuerying):
 				positionResetting = true

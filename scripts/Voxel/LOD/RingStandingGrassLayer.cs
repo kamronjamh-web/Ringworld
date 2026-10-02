@@ -19,6 +19,10 @@ public partial class RingStandingGrassLayer : Node3D
     private sealed class Resident
     {
         public required RingGrassTileData Data;
+        public readonly TilePresentationCache Presentation = new();
+        // Immutable source reduction computed when a tile becomes resident.
+        // Presentation must never walk every root each camera frame.
+        public float MaximumSourceHeight;
         public MultiMeshInstance3D? Renderer;
         // Both passes consume this one immutable, priority-sorted root buffer.
         // Changing camera LOD therefore never queues a terrain/placement rebuild.
@@ -43,6 +47,7 @@ public partial class RingStandingGrassLayer : Node3D
         public required float SourceFraction;
         public required byte SourceTier;
         public required bool Dirty;
+        public RingGrassModifierSnapshot? Modifiers;
         public double WorkerMilliseconds;
         public long RequestTick, PreparationStartTick, PreparationEndTick, TaskQueuedTick, WorkerStartTick, WorkerFinishTick;
         public long DiagnosticSession;
@@ -94,6 +99,9 @@ public partial class RingStandingGrassLayer : Node3D
     /// <summary>Rejects whole grass tiles outside the active camera presentation volume.</summary>
     [Export] public bool CullGrassTiles { get; set; } = true;
     [Export] public bool GpuFrustumCulling { get; set; } = true;
+    /// <summary>Extra world-space margin applied after the bounded grass bend envelope.
+    /// Increase only when a custom grass material adds displacement beyond the shared shader.</summary>
+    [Export(PropertyHint.Range, "0,8,0.01")] public float GrassFrustumPaddingMeters { get; set; } = .15f;
     /// <summary>Skips an identical GPU culling request after its initial indirect draw.
     /// Wind still updates in the material every frame.</summary>
     [Export] public bool SkipUnchangedGpuCulling { get; set; } = true;
@@ -113,6 +121,8 @@ public partial class RingStandingGrassLayer : Node3D
     public int GpuCullingRequestedBatchCount => _gpuCompute?.LastFrameRequestedBatchCount ?? 0;
     public int GpuCullingDispatchedBatchCount => _gpuCompute?.LastFrameDispatchedBatchCount ?? 0;
     public int GpuCullingDeferredBatchCount => _gpuCompute?.DeferredBatchCount ?? 0;
+    public int GrassFrustumRejectedTileCount { get; private set; }
+    public int GrassDistanceRejectedTileCount { get; private set; }
     public long GpuCullingCompletedUpdates => _gpuCompute?.CompletedUpdates ?? 0;
     public long GpuCullingSkippedUnchangedUpdates => _gpuCompute?.SkippedUnchangedUpdates ?? 0;
     private readonly Dictionary<RingGrassTileKey, Resident> _tiles = new();
@@ -149,6 +159,8 @@ public partial class RingStandingGrassLayer : Node3D
     private long _focusA = long.MinValue, _focusB = long.MinValue;
     private RingCanonicalPosition _lastPlannedFocus;
     private bool _hasCachedPlan;
+    private bool _requestQueueDirty = true;
+    internal long RequestQueueScans { get; private set; }
     private ulong _coverageSettings;
     private float _cachedPlanReuseMargin;
     private int _reserved;
@@ -156,6 +168,8 @@ public partial class RingStandingGrassLayer : Node3D
     private RingGpuVegetationCompute? _gpuCompute;
     private bool _gpuFailureLatched;
     private readonly List<RingGpuVegetationCompute.BatchFrameParameters> _gpuFrames = new();
+    private readonly HashSet<int> _gpuReadyBatches = new();
+    private (bool Near, bool Intermediate)? _lastGpuGeometrySelection;
     private readonly RingGrassSurfaceCache _surfaceCache = new(4L * 1024 * 1024);
     private Vector4[]? _gpuFrustum;
     private Plane[]? _cameraFrustumPlanes;
@@ -229,10 +243,20 @@ public partial class RingStandingGrassLayer : Node3D
         UpdateGrassLightingMaterials();
         if (_grid?.TerrainSampler is RingTerrainSampler s && _explorer != null)
         {
-            RingLodSurfaceEditSnapshot edits = _smooth?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
-            StepStreaming(s, edits, _explorer.CanonicalPosition, _grid.CaptureLodGeometrySnapshot(),
+            RingLodSurfaceEditSnapshot edits;
+            RingLodGeometrySnapshot geometry;
+            SmoothTerrainVolumetricDensitySnapshot? field;
+            RingGrassExclusionSnapshot? exclusions;
+            using (RingPerformanceTelemetry.MeasureCpu("Grass input snapshots"))
+            {
+                edits = _smooth?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
+                geometry = _grid.CaptureLodGeometrySnapshot();
+                field = _smooth?.CaptureVolumetricDensitySnapshot();
+                exclusions = CaptureExclusions(s);
+            }
+            StepStreaming(s, edits, _explorer.CanonicalPosition, geometry,
                 _explorer.CurrentAltitudeAboveTerrainMeters, _explorer.ActualTravelSpeedMetersPerSecond,
-                _smooth?.CaptureVolumetricDensitySnapshot(), CaptureExclusions(s));
+                field, exclusions);
             UpdateGrassInteraction((float)d);
         }
     }
@@ -318,6 +342,8 @@ public partial class RingStandingGrassLayer : Node3D
     private void StepStreaming(RingTerrainSampler s, RingLodSurfaceEditSnapshot e, RingCanonicalPosition f, RingLodGeometrySnapshot g, float altitude, float speed, SmoothTerrainVolumetricDensitySnapshot? field, RingGrassExclusionSnapshot? exclusions)
     {
         EnsureResources();
+        UpdateGrassGusts(0, s);
+        CaptureGrassModifiers(s);
         _surfaceCache.Configure((long)Math.Round(Mathf.Clamp(SurfaceCacheMegabytes, 0, 16) * 1024 * 1024));
         ulong fp = Fingerprint(s, g);
         if (fp != _settings)
@@ -369,6 +395,7 @@ public partial class RingStandingGrassLayer : Node3D
         Drain(e.Version, field, exclusions);
         if (StreamingSuspended)
         {
+            _requestQueueDirty = true;
             Cancel(null);
             _requests.Clear();
             _requested.Clear();
@@ -380,11 +407,13 @@ public partial class RingStandingGrassLayer : Node3D
         Evict();
         Queue();
         Start(s, e, g, field, exclusions);
+        RefreshGrassGeometrySelection();
         Install();
         Transforms(g, f, s.AroundRingVoxelLength);
     }
     private void Plan(RingCanonicalPosition f, RingTerrainSampler s)
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass coverage plan");
         ulong coverageSettings = CoverageFingerprint();
         // A stationary frame cannot change tile membership or conservative
         // tiers.  Keeping the prior nearest-first list avoids the full tile
@@ -395,6 +424,7 @@ public partial class RingStandingGrassLayer : Node3D
             return;
         }
         _lastPlannedFocus = f;
+        _requestQueueDirty = true;
         _hasCachedPlan = true;
         _coverageSettings = coverageSettings;
         long a = (long)Math.Floor(RingGrassCoordinates.Canonicalize(f.AroundMeters, s.AroundRingVoxelLength) / TileSize), b = (long)Math.Floor(f.AcrossMeters / TileSize);
@@ -440,6 +470,10 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void Queue()
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass request queue");
+        if (!_requestQueueDirty) return;
+        _requestQueueDirty = false;
+        RequestQueueScans++;
         // _wanted is a HashSet; enqueue in the canonical nearest-first order so
         // a full budget cannot repeatedly give distant tiles the first reservation.
         foreach (var entry in _ordered)
@@ -457,6 +491,7 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void Start(RingTerrainSampler s, RingLodSurfaceEditSnapshot e, RingLodGeometrySnapshot g, SmoothTerrainVolumetricDensitySnapshot? field, RingGrassExclusionSnapshot? exclusions)
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass build preparation");
         while (_jobs.Count < Math.Max(1, MaximumTileBuildsInFlight) && _requests.Count > 0)
         {
             var k = _requests.Dequeue();
@@ -486,6 +521,8 @@ public partial class RingStandingGrassLayer : Node3D
             int candidates = Mathf.Clamp(CandidatesPerCell, 1, 16);
             float density = Mathf.Clamp(BladesPerSquareMeter, 0, 96);
             bool useGrassClumps = GrassBladesPerSource > 1;
+            RingGrassModifierSnapshot? modifiers = CaptureGrassModifiers(s);
+            float modifierDensityStrength = Mathf.Clamp(GrassModifierDensityStrength, 0, 1);
             RingGrassAppearanceSnapshot appearance = GrassAppearanceProfile?.CapturePlacement() ?? RingGrassAppearanceSnapshot.Default;
             var job = new Job
             {
@@ -499,7 +536,8 @@ public partial class RingStandingGrassLayer : Node3D
                 Reserve = reserve,
                 SourceFraction = coverage.Fraction,
                 SourceTier = coverage.Tier,
-                Dirty = false
+                Dirty = false,
+                Modifiers = modifiers
             };
             job.DiagnosticTrace = DiagnosticTrace(k);
             job.DiagnosticSession = job.DiagnosticTrace?.Session ?? 0;
@@ -513,7 +551,7 @@ public partial class RingStandingGrassLayer : Node3D
                 {
                     job.WorkerStartTick = job.DiagnosticSession != 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                     var watch = System.Diagnostics.Stopwatch.StartNew();
-                    try { return BuildWorker(k, bounds, cell, candidates, density, reserve, slope, copy, e, g, c.Token, fieldWorkerContext, exclusions, appearance, _surfaceCache, coverage.Fraction, coverage.Tier, useGrassClumps); }
+                    try { return BuildWorker(k, bounds, cell, candidates, density, reserve, slope, copy, e, g, c.Token, fieldWorkerContext, exclusions, appearance, _surfaceCache, coverage.Fraction, coverage.Tier, useGrassClumps, modifiers, modifierDensityStrength); }
                     finally { watch.Stop(); job.WorkerMilliseconds = watch.Elapsed.TotalMilliseconds; job.WorkerFinishTick = job.DiagnosticSession != 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0; }
                 });
             }
@@ -529,7 +567,7 @@ public partial class RingStandingGrassLayer : Node3D
             TotalGrassBuildCount++;
         }
     }
-    private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps)
+    private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps, RingGrassModifierSnapshot? modifiers, float modifierDensityStrength)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass build", worker: true);
         using (sampler)
@@ -537,13 +575,15 @@ public partial class RingStandingGrassLayer : Node3D
             using (fieldWorkerContext)
             return RingGrassTileBuilder.Build(key, bounds, cell, candidates, density, reserve, slope,
                 fieldWorkerContext?.Sampler ?? sampler, edits, geometry, cancellation,
-                fieldWorkerContext?.Field, exclusions, appearance, surfaceCache: surfaceCache, sourceFraction: sourceFraction, sourceTier: sourceTier, useGrassClumps: useGrassClumps);
+                fieldWorkerContext?.Field, exclusions, appearance, surfaceCache: surfaceCache, sourceFraction: sourceFraction, sourceTier: sourceTier, useGrassClumps: useGrassClumps, modifiers: modifiers, modifierDensityStrength: modifierDensityStrength);
         }
     }
     private void Drain(ulong revision, SmoothTerrainVolumetricDensitySnapshot? field, RingGrassExclusionSnapshot? exclusions)
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass completed builds");
         _keys.Clear();
         foreach (var p in _jobs) if (p.Value.Task.IsCompleted) _keys.Add(p.Key);
+        if (_keys.Count > 0) _requestQueueDirty = true;
         foreach (var k in _keys)
         {
             var j = _jobs[k];
@@ -556,6 +596,7 @@ public partial class RingStandingGrassLayer : Node3D
                 if (j.Task.Status == TaskStatus.RanToCompletion && j.Task.Result is { } d
                     && !j.Dirty && j.Epoch == _epoch && _wanted.Contains(k)
                     && j.Revision == revision && j.FieldIdentity == field?.Identity && SameExclusions(j.Exclusions, exclusions)
+                    && SameModifiers(j.Modifiers, _modifierSnapshot)
                     && d.InstanceCount <= MaximumGrassSourceInstances - ResidentGrassInstanceCount
                         + (_tiles.TryGetValue(k, out Resident? previous) ? previous.Data.InstanceCount : 0))
                 {
@@ -566,10 +607,11 @@ public partial class RingStandingGrassLayer : Node3D
                     {
                         ResidentGrassInstanceCount -= prior.Data.InstanceCount;
                         prior.Data = d;
+                        prior.MaximumSourceHeight = MaximumSourceHeight(d);
                         _tiles[k] = prior;
                         GrassTierRebuildCount++;
                     }
-                    else _tiles[k] = new Resident { Data = d };
+                    else _tiles[k] = new Resident { Data = d, MaximumSourceHeight = MaximumSourceHeight(d) };
                     ResidentGrassInstanceCount += d.InstanceCount;
                     RecountTierRoots();
                     if (_uploadQueued.Add(k)) _uploads.Enqueue(k);
@@ -593,6 +635,7 @@ public partial class RingStandingGrassLayer : Node3D
             var k = _uploads.Dequeue();
             _uploadQueued.Remove(k);
             if (!_tiles.TryGetValue(k, out var t) || _mesh == null || _material == null) continue;
+            InstallGrassModifierTint(k, t.Data);
             long installStart = DiagnosticTimestamp();
             // A late intermediate-LOD upload must not reallocate a MultiMesh
             // still referenced by compute. Keep the node, replace its resource.
@@ -601,14 +644,14 @@ public partial class RingStandingGrassLayer : Node3D
                 _gpuCompute?.RemoveBatch(t.GpuNearBatch);
                 ReplaceCpuMultiMesh(t.Renderer, NearMeshFor(t.Data), t.Data.LocalAabb, t.Data.Buffer);
                 t.GpuNearBatch = -1;
-                SetGpuCulled(t.Renderer, false);
+                SetGpuCulled(t.Renderer, false, t.Presentation.Near);
             }
             if (t.GpuIntermediateBatch >= 0)
             {
                 _gpuCompute?.RemoveBatch(t.GpuIntermediateBatch);
                 ReplaceCpuMultiMesh(t.IntermediateRenderer, IntermediateMeshFor(t.Data), LodAabb(t.Data.LocalAabb), t.Data.Buffer);
                 t.GpuIntermediateBatch = -1;
-                SetGpuCulled(t.IntermediateRenderer, false);
+                SetGpuCulled(t.IntermediateRenderer, false, t.Presentation.Intermediate);
             }
             var r = t.Renderer;
             if (r == null)
@@ -656,6 +699,7 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void Transforms(RingLodGeometrySnapshot g, RingCanonicalPosition focus, long circumference)
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass presentation (inclusive)");
         ConfigureLodMaterials();
         int tiles = 0, instances = 0;
         var inv = GlobalTransform.AffineInverse();
@@ -665,29 +709,42 @@ public partial class RingStandingGrassLayer : Node3D
         Vector3 presentationCameraWorld = activeCameraWorld ?? Vector3.Zero;
         Plane[]? presentationFrustum = presentationCamera != null && GpuFrustumCulling
             ? CachedCameraFrustumPlanes(presentationCamera) : null;
+        GrassFrustumRejectedTileCount = 0;
+        GrassDistanceRejectedTileCount = 0;
         foreach (var p in _tiles)
         {
             var r = p.Value.Renderer;
             if (r == null) continue;
             bool show = _wanted.Contains(p.Key) && !StreamingSuspended;
-            if (show) r.Transform = inv * RingGrassCoordinates.CreateTileWorldTransform(p.Value.Data.Bounds, p.Value.Data.AnchorHeight, g);
+            if (show)
+            {
+                RefreshTilePresentation(p.Value.Presentation, r, p.Value.Data, g, inv, false);
+            }
             float tileDistanceMeters = ConservativePresentationDistance(p.Value.Data, r.GlobalTransform, activeCameraWorld, focus, circumference);
             bool useTilePresentationCulling = show && presentationCamera != null;
             float minimumTileDistance = tileDistanceMeters, maximumTileDistance = tileDistanceMeters;
             if (useTilePresentationCulling)
             {
-                Aabb tileAabb = r.GlobalTransform * LodAabb(p.Value.Data.LocalAabb);
+                Aabb tileAabb = ExpandedPresentationAabb(p.Value, r.GlobalTransform);
                 if (EnableDistanceLod)
                 {
                     ConservativeAabbCameraDistances(tileAabb, presentationCameraWorld, out minimumTileDistance, out maximumTileDistance);
-                    show &= minimumTileDistance <= LodFarDistanceMeters + LodTransitionWidthMeters * .5f;
+                    if (minimumTileDistance > LodFarDistanceMeters + LodTransitionWidthMeters * .5f)
+                    {
+                        show = false;
+                        GrassDistanceRejectedTileCount++;
+                    }
                 }
-                if (presentationFrustum != null) show &= AabbIntersectsFrustum(tileAabb, presentationFrustum);
+                if (show && presentationFrustum != null && !AabbIntersectsFrustum(tileAabb, presentationFrustum))
+                {
+                    show = false;
+                    GrassFrustumRejectedTileCount++;
+                }
             }
             int prefix = VisiblePrefix(p.Value.Data.InstanceCount, tileDistanceMeters);
             // The transformed world AABB already includes tile extent. Keep a
             // finite deformation guard for wind/lean outside root placement.
-            float slop = 8;
+            float slop = Math.Max(0, GrassFrustumPaddingMeters);
             float halfTransition = LodTransitionWidthMeters * .5f;
             bool showNear = show && (!EnableDistanceLod || tileDistanceMeters <= LodNearDistanceMeters + halfTransition + slop);
             bool showIntermediate = show && EnableDistanceLod
@@ -706,15 +763,18 @@ public partial class RingStandingGrassLayer : Node3D
             p.Value.NearWanted = showNear;
             p.Value.IntermediateWanted = showIntermediate;
             int nearPrefix = Math.Min(prefix, r.Multimesh!.InstanceCount);
-            if (p.Value.GpuNearBatch < 0) r.Multimesh.VisibleInstanceCount = nearPrefix;
-            r.Visible = showNear;
+            if (p.Value.GpuNearBatch < 0 && r.Multimesh.VisibleInstanceCount != nearPrefix) r.Multimesh.VisibleInstanceCount = nearPrefix;
+            if (p.Value.GpuNearBatch < 0 && r.Visible != showNear) r.Visible = showNear;
             MultiMeshInstance3D? intermediate = p.Value.IntermediateRenderer;
             if (intermediate != null)
             {
-                if (show) intermediate.Transform = r.Transform;
+                if (show)
+                {
+                    RefreshTilePresentation(p.Value.Presentation, intermediate, p.Value.Data, g, inv, true);
+                }
                 int intermediatePrefix = Math.Min(prefix, intermediate.Multimesh!.InstanceCount);
-                if (p.Value.GpuIntermediateBatch < 0) intermediate.Multimesh.VisibleInstanceCount = intermediatePrefix;
-                intermediate.Visible = showIntermediate;
+                if (p.Value.GpuIntermediateBatch < 0 && intermediate.Multimesh.VisibleInstanceCount != intermediatePrefix) intermediate.Multimesh.VisibleInstanceCount = intermediatePrefix;
+                if (p.Value.GpuIntermediateBatch < 0 && intermediate.Visible != showIntermediate) intermediate.Visible = showIntermediate;
             }
             else if (EnableDistanceLod)
             {
@@ -737,6 +797,7 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void Invalidate(RingLodSurfaceEditSnapshot e, RingTerrainSampler s)
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass terrain invalidation");
         bool sequential = _revision != ulong.MaxValue && e.Version == _revision + 1 && e.CanonicalDirtyColumns.Count > 0;
         _revision = e.Version;
         if (!sequential)
@@ -766,6 +827,7 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void InvalidateExclusions(RingGrassExclusionSnapshot? current, RingTerrainSampler sampler)
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass exclusion invalidation");
         if (SameExclusions(_previousExclusions, current)) return;
         float clumpMargin = GrassBladesPerSource > 1 ? .3f : 0;
         RingGrassExclusionRegion[] dirty = current?.GetDirtyRegionsSince(_previousExclusions, clumpMargin)
@@ -809,12 +871,15 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void Evict()
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass eviction");
         _keys.Clear();
         foreach (var k in _tiles.Keys) if (!_wanted.Contains(k)) _keys.Add(k);
         foreach (var k in _keys) Remove(k);
     }
     private void Remove(RingGrassTileKey k)
     {
+        _requestQueueDirty = true;
+        ReleaseGrassModifierTint(k);
         if (_tiles.Remove(k, out var t))
         {
             ResidentGrassInstanceCount -= t.Data.InstanceCount;
@@ -835,6 +900,7 @@ public partial class RingStandingGrassLayer : Node3D
         _keys.Clear();
         _keys.AddRange(_tiles.Keys);
         foreach (var k in _keys) Remove(k);
+        DisposeGrassModifierTint();
         _uploads.Clear();
         _uploadQueued.Clear();
         RecountTierRoots();
@@ -855,6 +921,7 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void Reset()
     {
+        _requestQueueDirty = true;
         _epoch++;
         ClearTiles();
         Cancel(null);
@@ -997,11 +1064,21 @@ public partial class RingStandingGrassLayer : Node3D
         return data;
     }
     private Mesh NearMeshFor(RingGrassTileData data)
-        => data.BladesPerSource > 1 ? _clumpMesh ?? _mesh! : _mesh!;
+        => SelectNearGrassGeometry(data, data.BladesPerSource > 1 ? _clumpMesh ?? _mesh! : _mesh!);
     private Mesh IntermediateMeshFor(RingGrassTileData data)
-        => data.SourceTier >= 2
+        => SelectIntermediateGrassGeometry(data, data.SourceTier >= 2
             ? data.BladesPerSource > 1 ? _farClumpMesh ?? _farMesh ?? _intermediateMesh! : _farMesh ?? _intermediateMesh!
-            : data.BladesPerSource > 1 ? _intermediateClumpMesh ?? _intermediateMesh! : _intermediateMesh!;
+            : data.BladesPerSource > 1 ? _intermediateClumpMesh ?? _intermediateMesh! : _intermediateMesh!);
+    private void RefreshGrassGeometrySelection()
+    {
+        var selection = (UseReducedNearGrassGeometry, IsSingleRibbonIntermediateGrassActive);
+        if (_lastGpuGeometrySelection == selection) return;
+        _lastGpuGeometrySelection = selection;
+        // Rebind resident outputs through the established upload/retirement budget.
+        // Geometry experiments do not change placement, reservations, or worker epochs.
+        foreach (var key in _tiles.Keys)
+            if (_uploadQueued.Add(key)) _uploads.Enqueue(key);
+    }
     private void RegisterGpuBatches(RingGrassTileKey key, Resident resident)
     {
         long gpuRegistrationStart = DiagnosticTimestamp();
@@ -1030,6 +1107,7 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void RequestGpuCulling()
     {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Grass GPU request preparation");
         if (!UseGpuCulling)
         {
             _gpuFailureLatched = false;
@@ -1079,9 +1157,8 @@ public partial class RingStandingGrassLayer : Node3D
             AddGpuFrame(_gpuFrames, resident.GpuNearBatch, resident.Renderer, 0, resident.NearWanted, resident.NearVisibilityRevision);
             AddGpuFrame(_gpuFrames, resident.GpuIntermediateBatch, resident.IntermediateRenderer, 1, resident.IntermediateWanted, resident.IntermediateVisibilityRevision);
         }
-        bool firstVisibilityHandoff = false;
-        foreach (RingGpuVegetationCompute.BatchFrameParameters parameters in _gpuFrames)
-            if (!_gpuCompute.IsBatchReady(parameters.BatchId, parameters.VisibilityRevision)) { firstVisibilityHandoff = true; break; }
+        _gpuCompute.CaptureReadyBatches(_gpuFrames, _gpuReadyBatches);
+        bool firstVisibilityHandoff = _gpuReadyBatches.Count != _gpuFrames.Count;
         // Submit the empty transition too, so backend requested/deferred counts
         // describe this camera frame after whole-tile culling hides every pass.
         _gpuCompute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(camera.GlobalPosition,
@@ -1092,12 +1169,12 @@ public partial class RingStandingGrassLayer : Node3D
             // A compacted INSTANCE_ID is no longer the canonical root rank.
             // Bypass vertex/fragment LOD from the first indirect draw and keep
             // the output hidden until its first compute dispatch is ready.
-            SetGpuCulled(resident.Renderer, resident.GpuNearBatch >= 0);
-            SetGpuCulled(resident.IntermediateRenderer, resident.GpuIntermediateBatch >= 0);
-            if (resident.Renderer != null) resident.Renderer.Visible = resident.NearWanted
-                && (resident.GpuNearBatch < 0 || _gpuCompute.IsBatchReady(resident.GpuNearBatch, resident.NearVisibilityRevision));
-            if (resident.IntermediateRenderer != null) resident.IntermediateRenderer.Visible = resident.IntermediateWanted
-                && (resident.GpuIntermediateBatch < 0 || _gpuCompute.IsBatchReady(resident.GpuIntermediateBatch, resident.IntermediateVisibilityRevision));
+            SetGpuCulled(resident.Renderer, resident.GpuNearBatch >= 0, resident.Presentation.Near);
+            SetGpuCulled(resident.IntermediateRenderer, resident.GpuIntermediateBatch >= 0, resident.Presentation.Intermediate);
+            SetRendererVisible(resident.Renderer, resident.NearWanted
+                && (resident.GpuNearBatch < 0 || _gpuReadyBatches.Contains(resident.GpuNearBatch)));
+            SetRendererVisible(resident.IntermediateRenderer, resident.IntermediateWanted
+                && (resident.GpuIntermediateBatch < 0 || _gpuReadyBatches.Contains(resident.GpuIntermediateBatch)));
         }
         GpuCullingStatus = _gpuCompute.Status;
         UpdateGpuDiagnostics();
@@ -1107,7 +1184,7 @@ public partial class RingStandingGrassLayer : Node3D
             if (id < 0 || renderer == null || !wanted) return;
             target.Add(new RingGpuVegetationCompute.BatchFrameParameters(id, renderer.GlobalTransform, true, pass,
                 LodNearDistanceMeters, LodFarDistanceMeters, LodTransitionWidthMeters, LodNearDensity, LodFarDensity,
-                EnableDistanceLod, 1, false, frustum, 8, VisibilityRevision: visibilityRevision));
+                EnableDistanceLod, 1, false, frustum, GrassFrustumPaddingMeters, VisibilityRevision: visibilityRevision));
         }
     }
     private Vector4[] CachedCameraFrustum(Camera3D camera)
@@ -1139,16 +1216,50 @@ public partial class RingStandingGrassLayer : Node3D
         {
             Plane plane = planes[i];
             // Camera3D.GetFrustum() uses negative distances inside the camera
-            // volume.  The support vertex with the lowest plane projection
-            // proves every point is outside only when it is beyond the finite
-            // wind/lean allowance; intersecting tiles stay eligible.
+            // volume. The input AABB already includes the deformation envelope
+            // and configurable padding, so no second guard belongs here.
             Vector3 support = new(
                 plane.Normal.X >= 0 ? aabb.Position.X : end.X,
                 plane.Normal.Y >= 0 ? aabb.Position.Y : end.Y,
                 plane.Normal.Z >= 0 ? aabb.Position.Z : end.Z);
-            if (plane.DistanceTo(support) > 8) return false;
+            if (plane.DistanceTo(support) > 0) return false;
         }
         return true;
+    }
+
+    private Aabb ExpandedPresentationAabb(Resident resident, Transform3D transform)
+    {
+        Aabb aabb = transform * LodAabb(resident.Data.LocalAabb);
+        Vector3 x = transform.Basis.X, y = transform.Basis.Y, z = transform.Basis.Z;
+        float transformBound = MathF.Sqrt(x.LengthSquared() + y.LengthSquared() + z.LengthSquared());
+        if (!float.IsFinite(transformBound) || !float.IsFinite(resident.MaximumSourceHeight))
+            return aabb.Grow(Math.Max(8, GrassFrustumPaddingMeters));
+        // Tile bounds already include a two-height mesh/lean envelope from the
+        // builder. Extend only the remaining .25-height conservative bend plus
+        // the user-controlled material allowance.
+        // The material floors MODEL_MATRIX height at .05 m. Apply that floor
+        // after the parent bound, because it is a world-space shader clamp.
+        float rawWorldHeight = resident.MaximumSourceHeight * transformBound;
+        float worldHeight = Math.Max(rawWorldHeight, .05f);
+        // Builder bounds include 2x the raw source height. A tiny source gets
+        // a larger shader displacement from the .05m floor, so its original
+        // bound cannot be credited with that missing extent.
+        float envelopeRemainder = rawWorldHeight < .05f ? worldHeight * 2.25f : worldHeight * .25f;
+        float padding = envelopeRemainder + Math.Max(0, GrassFrustumPaddingMeters);
+        return float.IsFinite(padding) ? aabb.Grow(padding) : aabb.Grow(Math.Max(8, GrassFrustumPaddingMeters));
+    }
+
+    private static float MaximumSourceHeight(RingGrassTileData data)
+    {
+        float maximum = 0;
+        for (int offset = 0; offset + RingGrassTileData.FloatsPerInstance <= data.Buffer.Length; offset += RingGrassTileData.FloatsPerInstance)
+        {
+            float x = data.Buffer[offset + 1], y = data.Buffer[offset + 5], z = data.Buffer[offset + 9];
+            float height = MathF.Sqrt(x * x + y * y + z * z);
+            if (!float.IsFinite(height)) return float.NaN;
+            maximum = Math.Max(maximum, height);
+        }
+        return maximum;
     }
     private void RestoreCpuGrassPresentation()
     {
@@ -1162,7 +1273,7 @@ public partial class RingStandingGrassLayer : Node3D
             if (resident.GpuNearBatch >= 0) ReplaceCpuMultiMesh(resident.Renderer, NearMeshFor(resident.Data), resident.Data.LocalAabb, resident.Data.Buffer);
             if (resident.GpuIntermediateBatch >= 0) ReplaceCpuMultiMesh(resident.IntermediateRenderer, IntermediateMeshFor(resident.Data), LodAabb(resident.Data.LocalAabb), resident.Data.Buffer);
             resident.GpuNearBatch = resident.GpuIntermediateBatch = -1;
-            SetGpuCulled(resident.Renderer, false); SetGpuCulled(resident.IntermediateRenderer, false);
+            SetGpuCulled(resident.Renderer, false, resident.Presentation.Near); SetGpuCulled(resident.IntermediateRenderer, false, resident.Presentation.Intermediate);
             if (resident.Renderer != null) resident.Renderer.Visible = resident.NearWanted;
             if (resident.IntermediateRenderer != null) resident.IntermediateRenderer.Visible = resident.IntermediateWanted;
         }
@@ -1237,9 +1348,23 @@ public partial class RingStandingGrassLayer : Node3D
         multi.Buffer = buffer;
         renderer.Multimesh = multi;
     }
-    private static void SetGpuCulled(MultiMeshInstance3D? renderer, bool enabled)
+    private static void SetRendererVisible(MultiMeshInstance3D? renderer, bool visible)
     {
-        renderer?.SetInstanceShaderParameter("grass_gpu_culled", enabled);
+        if (renderer != null && renderer.Visible != visible) renderer.Visible = visible;
+    }
+    private static void SetGpuCulled(MultiMeshInstance3D? renderer, bool enabled, RendererPresentationCache state)
+    {
+        if (renderer == null) return;
+        if (!ReferenceEquals(state.Renderer, renderer))
+        {
+            state.Renderer = renderer;
+            state.Mapping = null;
+            state.GustUv = null;
+            state.GpuCulled = null;
+        }
+        if (state.GpuCulled == enabled) return;
+        renderer.SetInstanceShaderParameter("grass_gpu_culled", enabled);
+        state.GpuCulled = enabled;
     }
     private MultiMeshInstance3D CreateRenderer(RingGrassTileKey key, Mesh mesh, ShaderMaterial material, string suffix)
     {
@@ -1274,6 +1399,14 @@ public partial class RingStandingGrassLayer : Node3D
     }
     private void ConfigureLodMaterials()
     {
+        ConfigureGrassGpuShadingMaterial(_material);
+        ConfigureGrassGpuShadingMaterial(_intermediateMaterial);
+        ConfigureGrassGustMaterial(_material);
+        ConfigureGrassGustMaterial(_intermediateMaterial);
+        ConfigureGrassCameraFacingMaterial(_material);
+        ConfigureGrassCameraFacingMaterial(_intermediateMaterial);
+        ConfigureGrassModifierMaterial(_material);
+        ConfigureGrassModifierMaterial(_intermediateMaterial);
         ulong fingerprint = unchecked((ulong)BitConverter.SingleToInt32Bits(LodNearDistanceMeters)
             ^ ((ulong)BitConverter.SingleToInt32Bits(LodFarDistanceMeters) << 1)
             ^ ((ulong)BitConverter.SingleToInt32Bits(LodTransitionWidthMeters) << 2)
@@ -1375,6 +1508,8 @@ public partial class RingStandingGrassLayer : Node3D
     private static Mesh CreateDenseBladeMesh() => RingGrassMeshFactory.Create();
     public override void _ExitTree()
     {
+        DisposeGrassGustResources();
+        DisposeGrassModifierTint();
         CancelGpuGenerationPrototype();
         // Retire render-thread compute resources before the MultiMeshes that
         // own their indirect command buffers are freed.

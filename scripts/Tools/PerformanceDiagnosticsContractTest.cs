@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using Godot;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using GodotDictionary = Godot.Collections.Dictionary;
@@ -120,14 +122,79 @@ public partial class PerformanceDiagnosticsContractTest : Node
         if (monitor.GetSnapshot().History.Last().Seconds != 101)
             failures.Add("display refresh setting reset the monotonic frame clock");
 
+        // Replay a minute at 1000 CPU samples/second, covering the gameplay
+        // report's observed event rate without sleeping or using fake GPU data.
+        monitor.ResetForTests();
+        monitor.HistorySeconds = 60;
+        monitor.MemoryBudgetMiB = 16;
+        monitor._Process(.016);
+        monitor.ResetForTests();
+        double minuteStart = RingPerformanceMonitor.NowSeconds;
+        for (int second = 0; second < 60; second++)
+        {
+            monitor.InjectFrameForTests(minuteStart + second, 58);
+            for (int sample = 0; sample < 1000; sample++)
+                monitor.InjectCompletedSampleForTests("minute.cpu", 1, completedSeconds: minuteStart + second + sample / 1000.0);
+        }
+        var minute = monitor.GetSnapshot();
+        if (minute.Rows.FirstOrDefault(row => row.Name == "minute.cpu").Count != 60_000
+            || minute.DroppedSamples != 0 || minute.RetainedTelemetryBytes > 16L * 1024 * 1024)
+            failures.Add("16 MiB budget did not retain a minute at the observed CPU event rate");
+
+        monitor.InjectCompletedSampleForTests("capture.only.old", 100, completedSeconds: minuteStart);
+        var live = monitor.GetLiveSnapshot();
+        int liveBuilds = monitor.LiveSummaryBuildCount;
+        if (monitor.LastLiveSummarySampleCount > 5120 || live.History.Count > 300
+            || live.Rows.Any(row => row.Name == "capture.only.old")
+            || live.Rows.FirstOrDefault(row => row.Name == "minute.cpu").Count > 4096)
+            failures.Add("live summary did not bound sample work or respect its recent window");
+        monitor.InjectCompletedSampleForTests("live.new", 2, completedSeconds: minuteStart + 59);
+        if (!ReferenceEquals(live, monitor.GetLiveSnapshot()) || monitor.LiveSummaryBuildCount != liveBuilds)
+            failures.Add("new telemetry forced an immediate live summary rebuild");
+        var fullAfterLive = monitor.GetSnapshot();
+        if (!fullAfterLive.Rows.Any(row => row.Name == "capture.only.old")
+            || !fullAfterLive.Rows.Any(row => row.Name == "live.new")
+            || fullAfterLive.Rows.FirstOrDefault(row => row.Name == "minute.cpu").Count != 60_000)
+            failures.Add("live summary modified or truncated full export statistics");
+        monitor.ClearHistory();
+        if (monitor.GetLiveSnapshot().Rows.Count != 0 || monitor.GetLiveSnapshot().History.Count != 0)
+            failures.Add("history clear retained a stale live summary");
+
         // The monitor's ring buffer must remain bounded even with many rows.
         monitor.ResetForTests();
         monitor.MemoryBudgetMiB = 2;
         monitor._Process(.016);
-        for (var i = 0; i < 33_000; i++) monitor.InjectCompletedSampleForTests("cap." + (i % 129), 1, completedSeconds: i);
+        double cpuFloodNow = RingPerformanceMonitor.NowSeconds;
+        for (var i = 0; i < 33_000; i++) monitor.InjectCompletedSampleForTests("cap." + (i % 129), 1, completedSeconds: cpuFloodNow + i * .00001);
         var capped = monitor.GetSnapshot();
         if (capped.Rows.Count > 129 || capped.DroppedSamples <= 0 || capped.RetainedTelemetryBytes > 2L * 1024 * 1024)
             failures.Add("global telemetry buffer did not evict bounded synthetic categories");
+
+        monitor.ResetForTests();
+        monitor.MemoryBudgetMiB = 2;
+        double protectedGpuNow = RingPerformanceMonitor.NowSeconds;
+        monitor.InjectCompletedSampleForTests("gpu.survives.cpu.flood", 1, gpu: true, sourceFrameId: 77, completedSeconds: protectedGpuNow);
+        for (var i = 0; i < 33_000; i++)
+            monitor.InjectCompletedSampleForTests("cpu.flood.unique." + i, 1, completedSeconds: protectedGpuNow + i * .00001);
+        if (!monitor.GetSnapshot().Rows.Any(row => row.Name == "gpu.survives.cpu.flood" && row.Gpu))
+            failures.Add("CPU unique-name flood evicted independent GPU retention");
+
+        // GPU retention is deliberately separate: a flood of delayed GPU
+        // completions must neither evict CPU rows nor exceed the same budget.
+        monitor.ResetForTests();
+        monitor.MemoryBudgetMiB = 2;
+        double gpuFloodNow = RingPerformanceMonitor.NowSeconds;
+        monitor.InjectCompletedSampleForTests("cpu.survives.gpu.flood", 1, completedSeconds: gpuFloodNow);
+        for (var i = 0; i < 33_000; i++)
+            monitor.InjectCompletedSampleForTests("gpu.flood." + (i % 97), 1, gpu: true, sourceFrameId: i / 3, completedSeconds: gpuFloodNow + i * .00001);
+        var gpuCapped = monitor.GetSnapshot();
+        if (!gpuCapped.Rows.Any(row => row.Name == "cpu.survives.gpu.flood" && !row.Gpu)
+            || !gpuCapped.Rows.Any(row => row.Gpu) || gpuCapped.DroppedSamples <= 0
+            || gpuCapped.RetainedTelemetryBytes > 2L * 1024 * 1024)
+            failures.Add("GPU retention flood did not preserve CPU rows within the telemetry budget");
+        monitor.ClearHistory();
+        if (monitor.GetSnapshot().Rows.Count != 0 || monitor.GetSnapshot().History.Count != 0)
+            failures.Add("history clear did not reset CPU and GPU retention together");
 
         // A scope opened in one generation cannot arrive after disable/re-enable.
         RingPerformanceTelemetry.Configure(true);
@@ -143,6 +210,7 @@ public partial class PerformanceDiagnosticsContractTest : Node
         monitor.MarkSettingsDirty();
         if (!monitor.SaveSettings()) failures.Add("disabled diagnostics settings did not save");
         else { monitor.ApplySettings(); if (monitor.Enabled || monitor.HistorySeconds != 60 || monitor.MemoryBudgetMiB != 2 || Math.Abs(monitor.RefreshSeconds - .2f) > .001f) failures.Add("saved settings were not clamped/reloaded"); }
+        if (!VerifyPrepareCloudCapture()) failures.Add("prepare cloud slowdown capture control did not apply its complete diagnostic preset");
         RingPerformanceTelemetry.Configure(false);
         return new GodotDictionary
         {
@@ -152,6 +220,31 @@ public partial class PerformanceDiagnosticsContractTest : Node
             ["gpu_available"] = snapshot.GpuAvailable,
             ["caveat"] = snapshot.Caveat,
         };
+    }
+
+    private static bool VerifyPrepareCloudCapture()
+    {
+        RingPerformanceMonitor monitor = new();
+        RingLiveTuningDrawer drawer = new();
+        TabContainer tabs = new();
+        try
+        {
+            typeof(RingPerformanceMonitor).GetMethod("EnsureCapacity", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(monitor, null);
+            monitor.InjectFrameForTests(1, 16);
+            monitor.Enabled = false;
+            monitor.DetailedGpuEnabled = false;
+            monitor.HistorySeconds = 5;
+            monitor.MemoryBudgetMiB = 2;
+            typeof(RingLiveTuningDrawer).GetField("_performanceMonitor", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(drawer, monitor);
+            typeof(RingLiveTuningDrawer).GetMethod("BuildDiagnosticsTab", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(drawer, new object[] { tabs });
+            Button? prepare = tabs.FindChild("DiagnosticsPrepareCloudSlowdown", recursive: true, owned: false) as Button;
+            if (prepare == null) return false;
+            prepare.EmitSignal("pressed");
+            return monitor.Enabled && monitor.DetailedGpuEnabled && monitor.HistorySeconds == 60 && monitor.MemoryBudgetMiB == 16
+                && monitor.GetSnapshot().History.Count == 0;
+        }
+        catch { return false; }
+        finally { tabs.Free(); drawer.Free(); monitor.Free(); }
     }
 
     /// <summary>Typed snapshot bridge; records are not Godot Variants.</summary>
@@ -172,6 +265,59 @@ public partial class PerformanceDiagnosticsContractTest : Node
         return new GodotDictionary { ["pass"] = valid, ["count"] = water.Count, ["max_ms"] = water.MaxMilliseconds, ["p95_ms"] = water.P95Milliseconds, ["gpu_available"] = snapshot.GpuAvailable };
     }
 
+    /// <summary>Requires actual timestamp rows; it never injects synthetic GPU samples.</summary>
+    public GodotDictionary ValidateCloudGpuProfiler(RingPerformanceMonitor monitor)
+    {
+        var rows = monitor.GetSnapshot().Rows;
+        string[] required = { "GPU.Clouds", "GPU.CloudPrepass", "GPU.CloudRaymarch", "GPU.CloudReconstruct", "GPU.CloudComposite", "GPU.CloudShadowNear", "GPU.CloudShadowFar" };
+        string[] missing = required.Where(name => !rows.Any(row => row.Gpu && row.Name == name && row.Count > 0 && double.IsFinite(row.MaxMilliseconds) && row.MaxMilliseconds > 0)).ToArray();
+        return new GodotDictionary { ["pass"] = missing.Length == 0, ["missing"] = missing, ["gpu_available"] = monitor.GetSnapshot().GpuAvailable, ["rows"] = rows.Count };
+    }
+
+    /// <summary>Fixture-only marker/cascade wiring for the real Sunshine resource.</summary>
+    public bool ConfigureEffectProfiler(GodotObject effect)
+    {
+        if (effect == null || !effect.HasMethod("configure_gpu_cloud_shadow_cascade")) return false;
+        effect.Set("gpu_timestamp_diagnostics_enabled", true);
+        effect.Set("gpu_timestamp_begin_marker", RingPerformanceGpu.CloudBeginMarker);
+        effect.Set("gpu_timestamp_end_marker", RingPerformanceGpu.CloudEndMarker);
+        effect.Set("gpu_timestamp_cloud_shadow_near_begin_marker", RingPerformanceGpu.CloudShadowNearBeginMarker);
+        effect.Set("gpu_timestamp_cloud_shadow_near_end_marker", RingPerformanceGpu.CloudShadowNearEndMarker);
+        effect.Set("gpu_timestamp_cloud_shadow_far_begin_marker", RingPerformanceGpu.CloudShadowFarBeginMarker);
+        effect.Set("gpu_timestamp_cloud_shadow_far_end_marker", RingPerformanceGpu.CloudShadowFarEndMarker);
+        Vector3 center = Vector3.Zero, around = Vector3.Forward, across = Vector3.Right, up = Vector3.Up, sun = new Vector3(.4f, .75f, .5f).Normalized();
+        for (int cascade = 0; cascade < 2; cascade++)
+        {
+            bool configured = effect.Call("configure_gpu_cloud_shadow_cascade", cascade, 64, center, around, across, up,
+                Vector2.Zero, 5_000_000f, cascade == 0 ? 20_000f : 80_000f, sun, 2_000f, 8_000f, 8, .5f, true).AsBool();
+            if (!configured) return false;
+            effect.Call("request_gpu_cloud_shadow_update", cascade);
+        }
+        return true;
+    }
+
+    /// <summary>Supplies a read-only bridge resource to the monitor's cloud-history sampler.</summary>
+    public bool AttachCloudHistoryBridgeForTests(GodotObject bridge, GodotObject effect)
+    {
+        FieldInfo? field = typeof(RingSunshineCloudBridge).GetField("_clouds", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field == null) return false;
+        field.SetValue(bridge, effect);
+        return true;
+    }
+
+    public Node CreateCloudHistoryBridgeForTests(GodotObject effect)
+    {
+        var bridge = new FixtureCloudHistoryBridge { Name = "SunshineCloudBridge", Enabled = false };
+        if (!AttachCloudHistoryBridgeForTests(bridge, effect)) { bridge.Free(); throw new InvalidOperationException("Cloud bridge resource field unavailable"); }
+        return bridge;
+    }
+
+    public GodotDictionary ReadCloudHistoryDiagnostics(RingPerformanceMonitor monitor)
+    {
+        RingCloudHistoryDiagnostics diagnostics = monitor.CloudHistoryDiagnostics;
+        return new GodotDictionary { ["count"] = diagnostics.Count, ["capacity"] = diagnostics.Capacity, ["status"] = diagnostics.Status, ["errors"] = diagnostics.CaptureErrors };
+    }
+
     public GodotDictionary ReadContext(RingPerformanceMonitor monitor)
     {
         var context = monitor.GetSnapshot().Context;
@@ -189,13 +335,28 @@ public partial class PerformanceDiagnosticsContractTest : Node
     {
         bool exists = File.Exists(path);
         long bytes = exists ? new FileInfo(path).Length : -1;
-        bool json = false, renderState = false, missingNodesNull = false, contextErrorNull = false;
+        bool json = false, renderState = false, missingNodesNull = false, contextErrorNull = false, v2 = false, timeBins = false, gpuGroups = false, retention = false;
         try
         {
             if (exists)
             {
                 using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
                 json = document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object;
+                v2 = json && document.RootElement.TryGetProperty("schemaVersion", out var schema) && schema.ValueKind == System.Text.Json.JsonValueKind.Number && schema.GetInt32() == 2;
+                if (v2 && document.RootElement.TryGetProperty("metadata", out var metadata) && metadata.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    retention = metadata.TryGetProperty("retention", out var retained) && retained.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && metadata.TryGetProperty("gpuTimestampStatus", out var gpuStatus) && gpuStatus.ValueKind == System.Text.Json.JsonValueKind.String;
+                if (v2 && document.RootElement.TryGetProperty("captureOnlyOneSecondBins", out var bins) && bins.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    timeBins = bins.GetArrayLength() > 0 && bins.EnumerateArray().All(bin => bin.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && bin.TryGetProperty("startSeconds", out var start) && start.ValueKind == System.Text.Json.JsonValueKind.Number
+                        && bin.TryGetProperty("endSeconds", out var end) && end.ValueKind == System.Text.Json.JsonValueKind.Number
+                        && end.GetDouble() - start.GetDouble() == 1
+                        && bin.TryGetProperty("timestampQuality", out var quality) && quality.ValueKind == System.Text.Json.JsonValueKind.String);
+                if (v2 && document.RootElement.TryGetProperty("gpuBySourceFrame", out var groups) && groups.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    gpuGroups = groups.EnumerateArray().All(group => group.ValueKind == System.Text.Json.JsonValueKind.Object
+                        && group.TryGetProperty("sourceFrameId", out var source) && source.ValueKind == System.Text.Json.JsonValueKind.Number
+                        && group.TryGetProperty("categories", out var categories) && categories.ValueKind == System.Text.Json.JsonValueKind.Array
+                        && group.TryGetProperty("timestampQuality", out var quality) && quality.ValueKind == System.Text.Json.JsonValueKind.String);
                 if (json && document.RootElement.TryGetProperty("renderState", out var state) && state.ValueKind == System.Text.Json.JsonValueKind.Object)
                 {
                     renderState = state.TryGetProperty("lights", out var lights) && lights.ValueKind == System.Text.Json.JsonValueKind.Object;
@@ -207,7 +368,14 @@ public partial class PerformanceDiagnosticsContractTest : Node
             }
         }
         catch { }
-        bool pass = exists && bytes > 0 && bytes <= 64L * 1024 * 1024 && json && renderState && missingNodesNull && contextErrorNull;
-        return new GodotDictionary { ["pass"] = pass, ["exists"] = exists, ["bytes"] = bytes, ["json"] = json, ["render_state"] = renderState, ["missing_nodes_null_or_object"] = missingNodesNull, ["render_state_context_error_null"] = contextErrorNull };
+        bool pass = exists && bytes > 0 && bytes <= 64L * 1024 * 1024 && json && v2 && retention && timeBins && gpuGroups && renderState && missingNodesNull && contextErrorNull;
+        return new GodotDictionary { ["pass"] = pass, ["exists"] = exists, ["bytes"] = bytes, ["json"] = json, ["schema_v2"] = v2, ["retention"] = retention, ["one_second_bins"] = timeBins, ["gpu_source_groups"] = gpuGroups, ["render_state"] = renderState, ["missing_nodes_null_or_object"] = missingNodesNull, ["render_state_context_error_null"] = contextErrorNull };
     }
+}
+
+/// <summary>Fixture-only bridge keeps cloud-history type lookup without production scene discovery.</summary>
+internal sealed partial class FixtureCloudHistoryBridge : global::RingworldTechDemo.RingSunshineCloudBridge
+{
+    public override void _Ready() { }
+    public override void _ExitTree() { }
 }

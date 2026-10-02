@@ -93,7 +93,7 @@ public partial class RingLodDebugHud : CanvasLayer
         string header = $"LOD STREAMING — F6 toggle | F7 details\nFPS: {Engine.GetFramesPerSecond()}";
         string grid = FormatGrid(_grid, _verbose);
         var text = new StringBuilder("PERFORMANCE DIAGNOSTICS - F6 toggle | F7 streaming details");
-        AppendPerformanceSummary(text, _performanceMonitor, _performanceMonitor?.GetSnapshot());
+        AppendPerformanceSummary(text, _performanceMonitor, _performanceMonitor?.GetLiveSnapshot());
         if (!_verbose)
         {
             _label.Text = text.ToString();
@@ -148,6 +148,7 @@ public partial class RingLodDebugHud : CanvasLayer
         AppendTopRows(text, "Main CPU worst call", snapshot.Rows.Where(row => !row.Worker && !row.Gpu));
         AppendTopRows(text, "Worker longest job", snapshot.Rows.Where(row => row.Worker));
         AppendTopRows(text, "GPU worst scoped frame", snapshot.Rows.Where(row => row.Gpu));
+        text.Append("\nScope rows: recent 5s, sample-capped; full history in slowdown export.");
         text.Append("\nWorker durations and GPU intervals can overlap; do not sum them as frame time.");
     }
 

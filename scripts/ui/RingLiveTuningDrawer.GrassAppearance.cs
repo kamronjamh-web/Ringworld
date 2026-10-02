@@ -18,6 +18,18 @@ public partial class RingLiveTuningDrawer
         AddGrassAppearanceColor(appearance, "GrasslandBiomeTint", "Grassland tint");
         AddGrassAppearanceColor(appearance, "ForestBiomeTint", "Forest tint");
         AddGrassAppearanceColor(appearance, "SparseBiomeTint", "Sparse tint");
+
+        VBoxContainer modifiers = AddGrassGroup(tab, "Local ground detail", "A placed test zone can thin and tint grass for paths, worn ground, or future gameplay marks.");
+        AddGrassToggle(modifiers, "EnableGrassModifiers", "Enable local ground detail");
+        AddGrassSlider(modifiers, "GrassModifierDensityStrength", "Density response", 0, 1, .01);
+        AddGrassSlider(modifiers, "GrassModifierTintStrength", "Tint response", 0, 1, .01);
+        AddGrassToggle(modifiers, "GrassModifierPreviewEnabled", "Show placed test zone");
+        AddGrassSlider(modifiers, "GrassModifierPreviewRadiusMeters", "Test zone radius (m)", .25, 128, .25);
+        AddGrassSlider(modifiers, "GrassModifierPreviewFeatherMeters", "Test zone soft edge (m)", 0, 128, .25);
+        AddGrassSlider(modifiers, "GrassModifierPreviewDensity", "Test zone density", 0, 1, .01);
+        AddGrassAppearanceColor(modifiers, "GrassModifierPreviewTint", "Test zone tint");
+        AddGrassSlider(modifiers, "GrassModifierPreviewTintStrength", "Test zone tint strength", 0, 1, .01);
+        AddGrassModifierPreviewButton(modifiers);
     }
 
     private void AddGrassAppearanceColor(VBoxContainer tab, string key, string label)

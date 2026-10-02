@@ -24,11 +24,14 @@ instance uniform float grass_instance_count = 1.0;
 instance uniform bool grass_gpu_culled = false;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
+#include "res://materials/ring_grass_gust.gdshaderinc"
+#include "res://materials/ring_grass_modifiers.gdshaderinc"
 #include "res://materials/ring_grass_interaction.gdshaderinc"
 #include "res://materials/ring_grass_debug.gdshaderinc"
 #include "res://materials/ring_grass_lighting.gdshaderinc"
 varying float grass_cloud_occlusion;
 varying float grass_tint_variation;
+varying vec4 grass_local_modifier_tint;
 varying float grass_lod_root_hash;
 varying float grass_lod_instance_rank;
 varying float grass_lod_handoff;
@@ -37,6 +40,15 @@ varying vec2 grass_debug_deformation;
 // light() cannot read fragment output SPECULAR; retain the debug override
 // through an interpolant consumed by the custom direct-light path.
 varying float grass_light_specular;
+// Resolve the per-instance LOD pass in fragment(), then carry the decision to
+// light(). Near grass always retains its established direct-light specular.
+uniform bool grass_simplified_intermediate_shading = false;
+varying float grass_light_full_shading;
+// Experimental comparison path. Only non-near LOD passes consume it.
+uniform bool grass_camera_facing_enabled = false;
+uniform float grass_camera_facing_strength = 1.0;
+uniform float grass_camera_facing_start = 12.0;
+uniform float grass_camera_facing_end = 48.0;
 
 float phased_wave(vec2 clock, float phase) {
 	float a = phase * 6.28318530718;
@@ -70,6 +82,7 @@ void vertex() {
 	float curve = mix(.5, clamp(INSTANCE_CUSTOM.x, 0.0, 1.0), present);
 	grass_tint_variation = mix(.5, clamp(INSTANCE_CUSTOM.y, 0.0, 1.0), present);
 	vec3 root = MODEL_MATRIX[3].xyz;
+	grass_local_modifier_tint = grass_modifier_tint(root);
 	mat3 basis = mat3(MODEL_MATRIX);
 	vec3 lengths2 = max(vec3(.000001), vec3(dot(basis[0],basis[0]),dot(basis[1],basis[1]),dot(basis[2],basis[2])));
 	float height = clamp(length(MODEL_MATRIX[1]), .05, 20.0);
@@ -110,11 +123,51 @@ void vertex() {
 		? mix(1.0, clamp(grass_lod_max_width_scale, 1.0, 2.0), handoff * edge_on) : 1.0;
 	float width_k = width_target - 1.0;
 	float local_width = 1.0 + width_k * t * t;
+	// Keep clump source roots fixed when the distant width compensation is
+	// active. The default mode retains the historical whole-instance origin.
+	float width_origin = grass_camera_facing_enabled && grass_lod_pass != 0 ? CUSTOM0.x : 0.0;
 	float original_x = VERTEX.x;
-	VERTEX.x = original_x * local_width;
+	float width_relative_x = original_x - width_origin;
+	VERTEX.x = width_origin + width_relative_x * local_width;
 	// Inverse-transpose for x' = x * (1 + k*y^2), then the bend Jacobian below.
 	NORMAL.x /= local_width;
-	NORMAL.y -= NORMAL.x * (2.0 * width_k * t * original_x);
+	NORMAL.y -= NORMAL.x * (2.0 * width_k * t * width_relative_x);
+	// CUSTOM0 stores each source's local root x/z and its rest width axis x/z.
+	// Both crossed cards of a tuft use the same source data, preserving their
+	// crossed silhouette while the whole source turns around its planted root.
+	if (grass_camera_facing_enabled && grass_lod_pass != 0) {
+		vec3 source_root_local = vec3(CUSTOM0.x, 0.0, CUSTOM0.y);
+		vec3 source_root_world = (MODEL_MATRIX * vec4(source_root_local, 1.0)).xyz;
+		vec3 camera_flat = MAIN_CAM_INV_VIEW_MATRIX[3].xyz - source_root_world;
+		camera_flat -= up * dot(camera_flat, up);
+		float camera_flat_length = length(camera_flat);
+		vec3 source_side_world = basis * vec3(CUSTOM0.z, 0.0, CUSTOM0.w);
+		source_side_world -= up * dot(source_side_world, up);
+		float source_side_length = length(source_side_world);
+		if (camera_flat_length > .0001 && source_side_length > .0001) {
+			vec3 target_side = normalize(cross(up, camera_flat / camera_flat_length));
+			vec3 rest_side = source_side_world / source_side_length;
+			float signed_angle = atan(dot(up, cross(rest_side, target_side)), dot(rest_side, target_side));
+			float facing_t = smoothstep(grass_camera_facing_start, max(grass_camera_facing_start + .001, grass_camera_facing_end), root_distance);
+			float angle = signed_angle * clamp(grass_camera_facing_strength, 0.0, 1.0) * facing_t;
+			float c = cos(angle);
+			float s = sin(angle);
+			// Rodrigues rotation around the local tangent-plane normal.
+			vec3 local_relative = VERTEX - source_root_local;
+			vec3 world_relative = basis * local_relative;
+			vec3 rotated_relative = world_relative * c + cross(up, world_relative) * s + up * dot(up, world_relative) * (1.0 - c);
+			VERTEX = source_root_local + transpose(basis) * rotated_relative / lengths2;
+			// Rest curve and lean are source-frame vectors, so turn them with the
+			// card. Wind and interaction remain world-directed below.
+			side = side * c + cross(up, side) * s + up * dot(up, side) * (1.0 - c);
+			face = face * c + cross(up, face) * s + up * dot(up, face) * (1.0 - c);
+			// Convert the local normal through the non-uniform instance basis,
+			// rotate it in world space, then return the matching local covector.
+			vec3 world_normal = normalize(basis * (NORMAL / lengths2));
+			vec3 rotated_normal = world_normal * c + cross(up, world_normal) * s + up * dot(up, world_normal) * (1.0 - c);
+			NORMAL = normalize(transpose(basis) * rotated_normal);
+		}
+	}
 	if (lod_visible < .5) VERTEX = vec3(0.0);
 	// Grass deliberately amplifies the shared weather motion, then bounds it
 	// below two thirds of blade height. Curve is height-scaled, never width-scaled.
@@ -123,6 +176,11 @@ void vertex() {
 	vec3 tip_wind = ring_local_wind_displacement(root, 1.0, height);
 	vec3 lateral = tip_wind * (4.8 + grass_gust(INSTANCE_CUSTOM, present) * 3.0 * grass_wind_gust_multiplier) * grass_wind_strength_multiplier * flexible;
 	float lateral_limit = height * mix(.20, .58, wind_strength);
+	if (length(lateral) > lateral_limit) lateral *= lateral_limit / length(lateral);
+	// Apply the broad texture field after the established weather clamp, then
+	// bound it again. Strong storms retain visible lulls without exceeding the
+	// original blade-tip envelope; disabled texture gusts multiply by exactly 1.
+	lateral *= grass_texture_gust(root);
 	if (length(lateral) > lateral_limit) lateral *= lateral_limit / length(lateral);
 	vec3 curve_world = side * ((curve - .5) * height * .34);
 	// Each dense ribbon starts with a real height-scaled lean through its face
@@ -157,11 +215,13 @@ void fragment() {
 	vec3 albedo = mix(grass_base_color, grass_tip_color, blade) * mix(.86, 1.14, grass_tint_variation);
 	vec3 debug = grass_debug_color(clamp(grass_lod_instance_rank, 0.0, 1.0), grass_debug_deformation.x, grass_debug_deformation.y, grass_lod_pass);
 	albedo = grass_appearance_albedo(albedo, COLOR, grass_lod_final_fade);
+	albedo = mix(albedo, grass_local_modifier_tint.rgb, clamp(grass_local_modifier_tint.a, 0.0, 1.0));
 	float cloud = grass_cloud_occlusion;
 	ALBEDO = albedo * (1.0 - cloud * .32);
 	ROUGHNESS = 1.0;
 	SPECULAR = .05;
 	grass_light_specular = .05;
+	grass_light_full_shading = grass_simplified_intermediate_shading && grass_lod_pass != 0 ? 0.0 : 1.0;
 	// Darker roots ground the meadow while leaving tips responsive to the sun.
 	AO = mix(.72, 1.0, blade) * (1.0 - cloud * .70);
 	AO_LIGHT_AFFECT = 1.0;
@@ -182,18 +242,20 @@ void light() {
 	vec3 sun_view = normalize((VIEW_MATRIX * vec4(grass_primary_sun_direction, 0.0)).xyz);
 	float attenuation = ATTENUATION * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
 	float c_n_dot_l = max(min(dot(NORMAL, LIGHT), 1.0), 0.0);
-	float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);
-	vec3 half_vector = normalize(VIEW + LIGHT);
-	float c_l_dot_h = clamp(dot(LIGHT, half_vector), 0.0, 1.0);
 	float diffuse_brdf_nl = c_n_dot_l * (1.0 / PI);
 	DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
 	DIFFUSE_LIGHT += LIGHT_COLOR * ((1.0 / PI) - diffuse_brdf_nl) * BACKLIGHT * attenuation;
-	float c_n_dot_h = clamp(dot(NORMAL, half_vector), 0.0, 1.0);
-	float d = grass_d_ggx(c_n_dot_h, 1.0);
-	float g = grass_v_ggx(c_n_dot_l, c_n_dot_v, 1.0);
-	float f0 = .16 * grass_light_specular * grass_light_specular;
-	// Godot evaluates dot(vec3(f0), vec3(50.0 * .33)), hence three terms.
-	float f90 = clamp(f0 * (3.0 * 50.0 * .33), 0.0, 1.0);
-	float fresnel = f0 + (f90 - f0) * grass_schlick_fresnel(c_l_dot_h);
-	SPECULAR_LIGHT += vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
+	if (grass_light_full_shading > .5) {
+		float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);
+		vec3 half_vector = normalize(VIEW + LIGHT);
+		float c_l_dot_h = clamp(dot(LIGHT, half_vector), 0.0, 1.0);
+		float c_n_dot_h = clamp(dot(NORMAL, half_vector), 0.0, 1.0);
+		float d = grass_d_ggx(c_n_dot_h, 1.0);
+		float g = grass_v_ggx(c_n_dot_l, c_n_dot_v, 1.0);
+		float f0 = .16 * grass_light_specular * grass_light_specular;
+		// Godot evaluates dot(vec3(f0), vec3(50.0 * .33)), hence three terms.
+		float f90 = clamp(f0 * (3.0 * 50.0 * .33), 0.0, 1.0);
+		float fresnel = f0 + (f90 - f0) * grass_schlick_fresnel(c_l_dot_h);
+		SPECULAR_LIGHT += vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
+	}
 }

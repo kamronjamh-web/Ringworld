@@ -5,19 +5,32 @@ using Godot;
 
 namespace RingworldTechDemo.Diagnostics;
 
+public readonly record struct RingPerformanceGpuDiagnostics(bool Enabled, string Status, long LastSourceFrameId,
+    int MarkerBudgetPerFrame, int TimestampScanLimit, long ReadbackRequests, long ReadbackSkippedPending,
+    long FreshReadbacks, long StaleReadbacks, long TruncatedReadbacks, long UnmatchedReadbacks, long MarkerBudgetRejected);
+
 /// <summary>Non-blocking main-RD timestamp bridge. Samples are asynchronous partial GPU intervals, never frame totals.</summary>
 public static class RingPerformanceGpu
 {
-    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite";
+    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite", CloudShadowNear = "CloudShadowNear", CloudShadowFar = "CloudShadowFar";
     private const string Prefix = "RingPerfGpu:";
     private const int MaximumCSharpMarkersPerFrame = 30, MaximumTimestampScan = 512;
     private static int _enabled, _generation, _pendingGeneration, _markersThisFrame;
     private static long _lastCapturedFrame = -1;
+    private static long _readbackRequests, _readbackSkippedPending, _freshReadbacks, _staleReadbacks, _truncatedReadbacks, _unmatchedReadbacks, _markerBudgetRejected;
     private static string _status = "Disabled";
     public static bool Enabled => Volatile.Read(ref _enabled) != 0;
     public static string Status => Volatile.Read(ref _status);
     public static string CloudBeginMarker => Marker(Volatile.Read(ref _generation), Clouds, 'B');
     public static string CloudEndMarker => Marker(Volatile.Read(ref _generation), Clouds, 'E');
+    public static string CloudShadowNearBeginMarker => Marker(Volatile.Read(ref _generation), CloudShadowNear, 'B');
+    public static string CloudShadowNearEndMarker => Marker(Volatile.Read(ref _generation), CloudShadowNear, 'E');
+    public static string CloudShadowFarBeginMarker => Marker(Volatile.Read(ref _generation), CloudShadowFar, 'B');
+    public static string CloudShadowFarEndMarker => Marker(Volatile.Read(ref _generation), CloudShadowFar, 'E');
+    public static RingPerformanceGpuDiagnostics GetDiagnostics() => new(Enabled, Status, Volatile.Read(ref _lastCapturedFrame),
+        MaximumCSharpMarkersPerFrame, MaximumTimestampScan, Volatile.Read(ref _readbackRequests), Volatile.Read(ref _readbackSkippedPending),
+        Volatile.Read(ref _freshReadbacks), Volatile.Read(ref _staleReadbacks), Volatile.Read(ref _truncatedReadbacks),
+        Volatile.Read(ref _unmatchedReadbacks), Volatile.Read(ref _markerBudgetRejected));
 
     public static void Configure(bool enabled)
     {
@@ -33,7 +46,7 @@ public static class RingPerformanceGpu
     {
         if (!Enabled || !KnownCategory(category)) return default;
         if (Interlocked.Add(ref _markersThisFrame, 2) > MaximumCSharpMarkersPerFrame)
-        { Interlocked.Add(ref _markersThisFrame, -2); Volatile.Write(ref _status, "Timestamp marker budget reached"); return default; }
+        { Interlocked.Add(ref _markersThisFrame, -2); Interlocked.Increment(ref _markerBudgetRejected); Volatile.Write(ref _status, "Timestamp marker budget reached"); return default; }
         int generation = Volatile.Read(ref _generation); string begin = Marker(generation, category, 'B'), end = Marker(generation, category, 'E');
         RenderingDevice? rd = RenderingServer.GetRenderingDevice();
         if (rd is null) { Interlocked.Add(ref _markersThisFrame, -2); Volatile.Write(ref _status, "Unavailable: no main RenderingDevice"); return default; }
@@ -51,8 +64,9 @@ public static class RingPerformanceGpu
     public static void RequestReadback()
     {
         if (!Enabled) return;
+        Interlocked.Increment(ref _readbackRequests);
         int generation = Volatile.Read(ref _generation);
-        if (Interlocked.CompareExchange(ref _pendingGeneration, generation, 0) != 0) return;
+        if (Interlocked.CompareExchange(ref _pendingGeneration, generation, 0) != 0) { Interlocked.Increment(ref _readbackSkippedPending); return; }
         RenderingServer.CallOnRenderThread(Callable.From(() => ReadbackOnRenderThread(generation)));
     }
 
@@ -66,7 +80,7 @@ public static class RingPerformanceGpu
             ulong frame = rd.GetCapturedTimestampsFrame();
             if (frame > long.MaxValue) { Volatile.Write(ref _status, "Unavailable: invalid captured timestamp frame"); return; }
             long sourceFrame = (long)frame;
-            if (sourceFrame <= Volatile.Read(ref _lastCapturedFrame)) { Volatile.Write(ref _status, "Waiting for fresh GPU timestamp results"); return; }
+            if (sourceFrame <= Volatile.Read(ref _lastCapturedFrame)) { Interlocked.Increment(ref _staleReadbacks); Volatile.Write(ref _status, "Waiting for fresh GPU timestamp results"); return; }
             uint count = rd.GetCapturedTimestampsCount(), first = count > MaximumTimestampScan ? count - MaximumTimestampScan : 0;
             bool truncated = first != 0; var starts = new Dictionary<string, List<ulong>>(3, StringComparer.Ordinal); var totals = new Dictionary<string, double>(3, StringComparer.Ordinal); int scopes = 0;
             for (uint i = first; i < count; i++)
@@ -85,6 +99,7 @@ public static class RingPerformanceGpu
             }
             if (!Enabled || callbackGeneration != Volatile.Read(ref _generation)) return;
             foreach ((string category, double milliseconds) in totals) RingPerformanceTelemetry.RecordGpuMilliseconds("GPU." + category, milliseconds, sourceFrame);
+            Interlocked.Increment(ref _freshReadbacks); if (truncated) Interlocked.Increment(ref _truncatedReadbacks); if (scopes == 0) Interlocked.Increment(ref _unmatchedReadbacks);
             Volatile.Write(ref _lastCapturedFrame, sourceFrame);
             string tail = truncated ? $"; inspected tail {MaximumTimestampScan}/{count}" : string.Empty;
             Volatile.Write(ref _status, scopes > 0 ? $"GPU timestamps: {scopes} partial interval(s), source frame {sourceFrame}{tail}" : $"Fresh GPU timestamps contained no complete owned scopes{tail}");
@@ -94,7 +109,7 @@ public static class RingPerformanceGpu
     }
 
     private static string Marker(int generation, string category, char boundary) => Prefix + generation + ":" + category + ":" + boundary;
-    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite;
+    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite or CloudShadowNear or CloudShadowFar;
     private static bool TryParseMarker(string name, int expectedGeneration, out string category, out char boundary)
     {
         category = string.Empty; boundary = '\0'; if (!name.StartsWith(Prefix, StringComparison.Ordinal)) return false;

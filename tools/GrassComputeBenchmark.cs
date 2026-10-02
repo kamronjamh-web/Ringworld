@@ -31,9 +31,9 @@ public partial class GrassComputeBenchmark : Node3D
     private RingGpuVegetationCompute? _compute;
     private Camera3D? _camera;
     private int _roots, _fixtureRoots, _fixtureSources, _candidatesPerTile, _warmup, _frames, _repetitions, _computeSources, _staticSources;
-    private bool _quick;
+    private bool _quick, _renderMatrix;
 
-    private sealed record Profile(string Name, bool TileReject, int SourceDivisor, bool StaticFar, bool Card, bool Grouped);
+    private sealed record Profile(string Name, bool TileReject, int SourceDivisor, bool StaticFar, bool Card, bool Grouped, bool ReducedNear = false, bool SingleRibbon = false, bool Simplified = false, bool Hidden = false, bool Frozen = false);
     private sealed record Sample(string Case, int Repetition, int Roots, int Sources, int ActiveBatches,
         int SubmittedBatches, long CandidateTests, long Dispatches, long RootBufferBytes, long OutputBytes,
         double CpuSubmitMedianMs, double WallMedianMs, double WallP95Ms, double? ViewportCpuMedianMs,
@@ -50,7 +50,14 @@ public partial class GrassComputeBenchmark : Node3D
             RenderingServer.ViewportSetMeasureRenderTime(GetViewport().GetViewportRid(), true);
             RenderingServer.GlobalShaderParameterSet("ring_local_wind_enabled", 1.0f); RenderingServer.GlobalShaderParameterSet("ring_local_wind_vector", new Vector2(4, .9f)); RenderingServer.GlobalShaderParameterSet("ring_local_wind_wave", Vector4.Zero);
             RingPerformanceTelemetry.Configure(true, 8192); RingPerformanceGpu.Configure(true);
-            var profiles = new[] {
+            var profiles = _renderMatrix ? new[] {
+                new Profile("frozen_grass_hidden", false, 4, false, false, false, Hidden: true, Frozen: true),
+                new Profile("frozen_four_segment_crossed_baseline", false, 4, false, false, false, Frozen: true),
+                new Profile("frozen_two_segment_near", false, 4, false, false, false, ReducedNear: true, Frozen: true),
+                new Profile("frozen_single_ribbon_mid", false, 4, false, false, false, SingleRibbon: true, Frozen: true),
+                new Profile("frozen_simplified_mid_lighting", false, 4, false, false, false, Simplified: true, Frozen: true),
+                new Profile("frozen_combined", false, 4, false, false, false, ReducedNear: true, SingleRibbon: true, Simplified: true, Frozen: true),
+            } : new[] {
                 new Profile("baseline_per_batch_3_phase", false, 1, false, false, false),
                 new Profile("tile_frustum_whole_tile_impossible_lod", true, 1, false, false, false),
                 new Profile("solid_four_blade_clumps", false, 4, false, false, false),
@@ -75,6 +82,7 @@ public partial class GrassComputeBenchmark : Node3D
     {
         string[] args = OS.GetCmdlineUserArgs();
         _quick = args.Contains("--grass-compute-benchmark-quick");
+        _renderMatrix = args.Contains("--grass-render-matrix");
         _roots = ReadInt(args, "--grass-compute-roots", DefaultRoots);
         if (_roots is < 32_768 or > 2_097_152) throw new ArgumentOutOfRangeException("--grass-compute-roots", "must be 32768..2097152");
         _warmup = _quick ? 12 : Math.Max(60, ReadInt(args, "--grass-compute-warmup", 60));
@@ -86,6 +94,7 @@ public partial class GrassComputeBenchmark : Node3D
     {
         RingPerformanceGpu.Configure(true);
         TearDown(); await Frames(4); Build(profile);
+        RenderingServer.GlobalShaderParameterSet("ring_local_wind_enabled", profile.Frozen ? 0.0f : 1.0f);
         for (int i = 0; i < _warmup; i++) { Submit(profile, i, false, out _); await Frame(); RingPerformanceGpu.RequestReadback(); DrainTelemetry(false, null); }
         RingPerformanceGpu.Configure(false); DrainTelemetry(false, null); RingPerformanceGpu.Configure(true);
         _caseGrassGpu.Clear();
@@ -118,8 +127,13 @@ public partial class GrassComputeBenchmark : Node3D
     private void Build(Profile p)
     {
         _compute = new RingGpuVegetationCompute(p.Grouped); // companion backend adds the optional diagnostic argument.
-        Mesh mesh = p.Card ? GrassComputeBenchmarkAssets.MakeCardClump() : p.SourceDivisor == 4 ? GrassComputeBenchmarkAssets.MakeSolidClump(4) : RingGrassMeshFactory.Create();
+        Mesh mesh = p.Card ? GrassComputeBenchmarkAssets.MakeCardClump() : p.SourceDivisor == 4 ? (_renderMatrix ? RingGrassMeshFactory.CreateClump(p.ReducedNear ? 2 : 4) : GrassComputeBenchmarkAssets.MakeSolidClump(4)) : RingGrassMeshFactory.Create();
         ShaderMaterial productionMaterial = MakeProductionMaterial();
+        productionMaterial.SetShaderParameter("grass_simplified_intermediate_shading", p.Simplified);
+        productionMaterial.SetShaderParameter("grass_camera_facing_enabled", _renderMatrix || p.SingleRibbon);
+        productionMaterial.SetShaderParameter("grass_camera_facing_strength", 1f);
+        productionMaterial.SetShaderParameter("grass_camera_facing_start", 0f);
+        productionMaterial.SetShaderParameter("grass_camera_facing_end", 1f);
         ShaderMaterial material = p.Card ? GrassComputeBenchmarkAssets.MakeCardMaterial(productionMaterial) : productionMaterial;
         int perTile = Math.Max(1, _roots / 64 / p.SourceDivisor); _candidatesPerTile = perTile; _computeSources = _staticSources = 0;
         _fixtureSources = perTile * 64; _fixtureRoots = _fixtureSources * p.SourceDivisor;
@@ -130,9 +144,15 @@ public partial class GrassComputeBenchmark : Node3D
             AddComputeOutput($"grass-benchmark-near-{tx}-{tz}", roots, mesh, material, aabb, 0);
             _computeSources += roots.Length / RingGpuVegetationCompute.GrassFloats;
             if (p.StaticFar) AddStaticFarTile(TakeEveryFour(roots), material);
-            else { AddComputeOutput($"grass-benchmark-mid-{tx}-{tz}", roots, p.Card ? mesh : p.SourceDivisor == 4 ? GrassComputeBenchmarkAssets.MakeIntermediateClump() : RingGrassMeshFactory.CreateIntermediate(), material, aabb, 1); _computeSources += roots.Length / RingGpuVegetationCompute.GrassFloats; }
+            else { AddComputeOutput($"grass-benchmark-mid-{tx}-{tz}", roots, p.Card ? mesh : p.SourceDivisor == 4 ? (_renderMatrix ? RingGrassMeshFactory.CreateIntermediateClump(p.SingleRibbon) : GrassComputeBenchmarkAssets.MakeIntermediateClump()) : RingGrassMeshFactory.CreateIntermediate(), material, aabb, 1); _computeSources += roots.Length / RingGpuVegetationCompute.GrassFloats; }
         }
         _compute.Initialize();
+        foreach (Node node in _renderers)
+        {
+            if (node is MultiMeshInstance3D renderer) renderer.Layers = p.Hidden ? 0u : 1u;
+        }
+        if (p.Hidden && _renderers.OfType<MultiMeshInstance3D>().Any(x => x.Layers != 0))
+            throw new InvalidOperationException("hidden grass still has active draw layers");
     }
 
     private void AddComputeOutput(string identity, float[] roots, Mesh mesh, Material material, Aabb aabb, int lodPass)
@@ -165,6 +185,7 @@ public partial class GrassComputeBenchmark : Node3D
     {
         Stopwatch? watch = timed ? Stopwatch.StartNew() : null;
         if (_camera == null || _compute == null) throw new InvalidOperationException("fixture unavailable");
+        if (p.Frozen) { _camera.GlobalPosition = new Vector3(-9, 1.8f, -16); _camera.LookAt(new Vector3(3, 1, 25), Vector3.Up); canonical = true; }
         float t = (frame % _frames) / (float)(_frames - 1);
         // Walk, pan, and a deliberately sharp turn each change request inputs.
         Vector3 position = canonical ? _camera.GlobalPosition : new Vector3(Mathf.Lerp(-82, 82, t), 4.5f, Mathf.Sin(t * Mathf.Tau) * 58);
@@ -187,7 +208,7 @@ public partial class GrassComputeBenchmark : Node3D
             batches.Add(new RingGpuVegetationCompute.BatchFrameParameters(id, Transform3D.Identity, true, _passById[id], 30, 145, 28, 1, .25f, true, 1, false, planes, 5.3f));
         }
         requested = batches.Count;
-        if (!_compute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(position, new uint[] { (uint)_roots, (uint)_roots, (uint)_roots, (uint)_roots, (uint)_roots }, batches, false))) throw new InvalidOperationException("compute request failed");
+        if (!_compute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(position, new uint[] { (uint)_roots, (uint)_roots, (uint)_roots, (uint)_roots, (uint)_roots }, batches, p.Frozen))) throw new InvalidOperationException("compute request failed");
         watch?.Stop(); if (watch != null) _pendingSubmit.Add(watch.Elapsed.TotalMilliseconds);
     }
     private readonly List<double> _pendingSubmit = new();
@@ -223,6 +244,7 @@ public partial class GrassComputeBenchmark : Node3D
     {
         string dir = ProjectSettings.GlobalizePath("res://artifacts/grass-compute-benchmark"); Directory.CreateDirectory(dir);
         Vector2 actual = GetViewport().GetVisibleRect().Size;
+        File.WriteAllText(Path.Combine(dir, "matrix-settings.json"), JsonSerializer.Serialize(new { render_matrix = _renderMatrix, frozen_camera = _renderMatrix, wind_enabled = !_renderMatrix, baseline_near_segments = 4, reduced_near_segments = 2, baseline_intermediate_ribbons = 2, reduced_intermediate_ribbons = 1, matrix_camera_facing = "all cases enabled strength 1 start 0 end 1; equal orientation isolates ribbon count", hidden_control = "removes draw layers only; identical compute submissions retained", near_density = 1f, intermediate_compute_density = .25f, source_divisor = _renderMatrix ? 4 : 0, roots_requested = _roots, fixture_tiles = 64, output_batches = 128, warmup_frames = _warmup, sample_frames = _frames, repetitions = _repetitions }, new JsonSerializerOptions { WriteIndented = true }));
         var report = new { benchmark = "isolated rendered grass compute fixture; not full-game FPS", window_requested = "1280x720", viewport_resolution = new { width = actual.X, height = actual.Y }, renderer = RenderingServer.GetCurrentRenderingMethod(), gpu_adapter = RenderingServer.GetVideoAdapterName(), vsync = "disabled", fps_cap = "disabled", roots_requested = _roots, fixture_tiles = 64, fixture_compute_outputs = 128, production_reference = "grass-registration-fix: 1,118,430 unique roots / 464 batches; fixture differs intentionally", warmup_frames = _warmup, timed_frames = _frames, repetitions = _repetitions, gpu_timestamp_note = "asynchronous GrassCulling timestamps only; unavailable is never replaced with CPU time", cases = _samples };
         File.WriteAllText(Path.Combine(dir, "report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         File.WriteAllText(Path.Combine(dir, "raw-samples.json"), JsonSerializer.Serialize(_raw, new JsonSerializerOptions { WriteIndented = true }));

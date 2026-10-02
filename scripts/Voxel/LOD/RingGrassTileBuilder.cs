@@ -25,9 +25,11 @@ internal sealed class RingGrassTileData
     public float SourceFraction { get; }
     public byte SourceTier { get; }
     public int BladesPerSource { get; }
+    /// <summary>Optional 32x32 sRGB RGBA tint/weight map, generated entirely on the worker.</summary>
+    public byte[]? ModifierTintBytes { get; }
 
     public RingGrassTileData(RingGrassTileKey key, RingGrassTileBounds bounds, double anchorHeight,
-        float[] buffer, Aabb localAabb, ulong placementHash, float sourceFraction = 1, byte sourceTier = 0, int bladesPerSource = 1)
+        float[] buffer, Aabb localAabb, ulong placementHash, float sourceFraction = 1, byte sourceTier = 0, int bladesPerSource = 1, byte[]? modifierTintBytes = null)
     {
         Key = key;
         Bounds = bounds;
@@ -38,6 +40,7 @@ internal sealed class RingGrassTileData
         SourceFraction = sourceFraction;
         SourceTier = sourceTier;
         BladesPerSource = Math.Clamp(bladesPerSource, 1, 4);
+        ModifierTintBytes = modifierTintBytes;
     }
 }
 
@@ -81,7 +84,8 @@ internal static class RingGrassTileBuilder
         RingGrassAppearanceSnapshot appearance = default,
         Func<double, double, RingGrassSurfaceHit?>? surfaceOverride = null,
         bool surfaceOverrideOnly = false, RingGrassSurfaceCache? surfaceCache = null,
-        float sourceFraction = 1, byte sourceTier = 0, bool useGrassClumps = false)
+        float sourceFraction = 1, byte sourceTier = 0, bool useGrassClumps = false,
+        RingGrassModifierSnapshot? modifiers = null, float modifierDensityStrength = 1)
     {
         double safeCell = Math.Max(1.0, cellSize);
         long circumference = Math.Max(1L, sampler.AroundRingVoxelLength);
@@ -95,6 +99,7 @@ internal static class RingGrassTileBuilder
 				: PresentationHeight(edits, sampler, anchorAround, anchorAcross);
         int cappedCandidates = Math.Clamp(candidates, 1, 16);
         int cappedInstances = Math.Max(0, maxInstances);
+        RingGrassModifierSnapshot? tileModifiers = modifiers?.FilterForTile(bounds);
         sourceFraction = float.IsFinite(sourceFraction) ? Mathf.Clamp(sourceFraction, 0, 1) : 1;
         var placements = new BoundedPlacements(cappedInstances);
 
@@ -162,6 +167,13 @@ internal static class RingGrassTileBuilder
 					: PresentationHeight(edits, sampler, canonicalAround, canonicalAcross);
             }
             if (IsWaterCovered(sample, surfaceHeight)) return;
+            // Modifiers thin actual roots after eligibility/surface resolution;
+            // their independent hash preserves every pre-existing placement when disabled.
+            if (tileModifiers != null && tileModifiers.HasDensity && modifierDensityStrength > 0)
+            {
+                float factor = Mathf.Lerp(1, tileModifiers.DensityAt(around, across), Mathf.Clamp(modifierDensityStrength, 0, 1));
+                if (factor <= 0 || (factor < 1 && Hash01(aroundCell, acrossCell, sampler.Seed, salt + 401) > factor)) return;
+            }
             float clumpRadius = useGrassClumps && bladesPerSquareMeter > 0 ? Mathf.Max(.3f, bladeWidth * 3.6f) : 0;
             if (exclusions?.IsExcluded(around, surfaceHeight, across, bladeHeight, clumpRadius) == true) return;
             surfaceHeight -= .035;
@@ -220,7 +232,58 @@ internal static class RingGrassTileBuilder
         Aabb localAabb = BuildBounds(selected, useGrassClumps && bladesPerSquareMeter > 0);
         for (int index = 0; index < selected.Count; index++) Pack(buffer, index * RingGrassTileData.FloatsPerInstance, selected[index]);
         return new RingGrassTileData(key, bounds, anchorHeight, buffer, localAabb, HashBuffer(buffer), sourceFraction, sourceTier,
-            useGrassClumps && bladesPerSquareMeter > 0 ? 4 : 1);
+            useGrassClumps && bladesPerSquareMeter > 0 ? 4 : 1, BuildTintMap(bounds, tileModifiers));
+    }
+
+    private static byte[]? BuildTintMap(in RingGrassTileBounds bounds, RingGrassModifierSnapshot? modifiers)
+    {
+        if (modifiers == null || modifiers.Entries.Count == 0) return null;
+        List<RingGrassModifierSnapshot.Entry> zones = new();
+        foreach (var entry in modifiers.Entries)
+            if (entry.Zone.TintStrength > 0 && Overlaps(bounds, entry.Zone, modifiers.AroundLength)) zones.Add(entry);
+        if (zones.Count == 0) return null;
+
+        const int size = 32;
+        bool anyAlpha = false;
+        byte[] bytes = new byte[size * size * 4];
+        for (int y = 0; y < size; y++) for (int x = 0; x < size; x++)
+        {
+            double around = bounds.AroundMin + (x + .5) / size * (bounds.AroundMax - bounds.AroundMin);
+            double across = bounds.AcrossMin + (y + .5) / size * (bounds.AcrossMax - bounds.AcrossMin);
+            Vector3 sum = Vector3.Zero;
+            float alpha = 0;
+            foreach (var entry in zones)
+            {
+                float weight = RingGrassModifierSnapshot.Weight(entry.Zone, around, across, modifiers.AroundLength)
+                    * entry.Zone.TintStrength;
+                if (weight <= 0) continue;
+                Color tint = entry.Zone.Tint;
+                Vector3 linear = new(ToLinear(tint.R), ToLinear(tint.G), ToLinear(tint.B));
+                sum = sum * (1 - weight) + linear * weight;
+                alpha = alpha + (1 - alpha) * weight;
+            }
+            if (alpha > 0) anyAlpha = true;
+            Vector3 color = alpha > .00001f ? sum / alpha : Vector3.Zero;
+            int i = (y * size + x) * 4;
+            bytes[i] = (byte)Mathf.Round(ToSrgb(color.X) * 255);
+            bytes[i + 1] = (byte)Mathf.Round(ToSrgb(color.Y) * 255);
+            bytes[i + 2] = (byte)Mathf.Round(ToSrgb(color.Z) * 255);
+            bytes[i + 3] = (byte)Mathf.Round(alpha * 255);
+        }
+        return anyAlpha ? bytes : null;
+    }
+    private static float ToSrgb(float value) { value=Mathf.Clamp(value,0,1); return value<=.0031308f ? value*12.92f : 1.055f*Mathf.Pow(value,1f/2.4f)-.055f; }
+    private static float ToLinear(float value) { value=Mathf.Clamp(value,0,1); return value<=.04045f ? value/12.92f : Mathf.Pow((value+.055f)/1.055f,2.4f); }
+    private static bool Overlaps(in RingGrassTileBounds bounds, in RingGrassModifierZone zone, long length)
+    {
+        double aroundExtent = zone.HalfSizeMeters.X;
+        double acrossExtent = zone.HalfSizeMeters.Y;
+        if (bounds.AcrossMin >= zone.AcrossMeters + acrossExtent || bounds.AcrossMax <= zone.AcrossMeters - acrossExtent) return false;
+        double aroundMin = bounds.AroundMin, aroundMax = bounds.AroundMax;
+        double center = RingGrassCoordinates.Canonicalize(zone.AroundMeters, length);
+        bool OverlapsAround(double shifted) => aroundMin < shifted + aroundExtent && aroundMax > shifted - aroundExtent;
+        return OverlapsAround(center) || (center < aroundExtent && OverlapsAround(center + length))
+            || (center > length - aroundExtent && OverlapsAround(center - length));
     }
 
     private static Aabb BuildBounds(IReadOnlyList<Candidate> placements, bool clumps)

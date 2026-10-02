@@ -491,6 +491,22 @@ public partial class RingGraphicsQualityController : Node
         _grass.GrassWindStrengthMultiplier = 1.0f;
         _grass.GrassWindGustMultiplier = 1.0f;
         _grass.GrassMaximumWidthScale = 1.35f;
+        _grass.GrassFrustumPaddingMeters = .15f;
+        _grass.EnableGrassGustTexture = true;
+        _grass.GrassGustStrength = .45f;
+        _grass.GrassGustScaleMeters = 600f;
+        _grass.GrassGustTravelSpeedMultiplier = 1f;
+        _grass.GrassGustBaseBreeze = .65f;
+        _grass.EnableGrassModifiers = true;
+        _grass.GrassModifierDensityStrength = 1f;
+        _grass.GrassModifierTintStrength = 1f;
+        _grass.GrassModifierPreviewEnabled = false;
+        _grass.GrassModifierPreviewRadiusMeters = 8f;
+        _grass.GrassModifierPreviewFeatherMeters = 2f;
+        _grass.GrassModifierPreviewDensity = .35f;
+        _grass.GrassModifierPreviewTint = new Color(.65f, .45f, .18f, 1f);
+        _grass.GrassModifierPreviewTintStrength = .6f;
+        ApplyGrassGeometryGameplayDefaults(preserveOverrides: false);
         _grass.GrassDebugMode = RingStandingGrassLayer.GrassDebugView.Off;
         _grass.ShowGrassTileBounds = false;
         _grass.GrassAppearanceProfile = new RingGrassAppearanceProfile();
@@ -520,6 +536,28 @@ public partial class RingGraphicsQualityController : Node
             : 250.0f;
         _grass.LodMidDistanceMeters = Mathf.Clamp(requestedMid,
             _grass.LodNearDistanceMeters + 1, _grass.LodFarDistanceMeters - 1);
+        // LOD overrides determine the handoff. Derive untouched facing ranges
+        // after applying them, while preserving every explicit facing choice.
+        ApplyGrassGeometryGameplayDefaults(preserveOverrides: true);
+    }
+
+    private void ApplyGrassGeometryGameplayDefaults(bool preserveOverrides)
+    {
+        if (_grass == null) return;
+        bool Untouched(string property) => !preserveOverrides || !_grassTuningOverrides.ContainsKey(property);
+        if (Untouched("UseReducedNearGrassGeometry")) _grass.UseReducedNearGrassGeometry = true;
+        if (Untouched("UseSingleRibbonIntermediateGrass")) _grass.UseSingleRibbonIntermediateGrass = true;
+        if (Untouched("UseSimplifiedIntermediateGrassShading")) _grass.UseSimplifiedIntermediateGrassShading = false;
+        if (Untouched("EnableGrassCameraFacing")) _grass.EnableGrassCameraFacing = true;
+        if (Untouched("GrassCameraFacingStrength")) _grass.GrassCameraFacingStrength = 1f;
+
+        float handoffStart = _grass.LodNearDistanceMeters - Mathf.Max(1f, _grass.LodTransitionWidthMeters) * .5f;
+        // The facing shader accepts an end of at least one metre. Extremely
+        // short custom handoffs retain the existing crossed-ribbon fallback.
+        if (Untouched("GrassCameraFacingEndMeters"))
+            _grass.GrassCameraFacingEndMeters = Mathf.Max(1f, Mathf.Min(48f, handoffStart - .5f));
+        if (Untouched("GrassCameraFacingStartMeters"))
+            _grass.GrassCameraFacingStartMeters = Mathf.Max(0f, Mathf.Min(12f, _grass.GrassCameraFacingEndMeters - 1f));
     }
 
     /// <summary>Applies only water uniforms; live tuning must not reapply the graphics preset.</summary>

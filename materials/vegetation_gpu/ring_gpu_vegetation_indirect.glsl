@@ -48,8 +48,27 @@ bool accepted(uint id) {
         return distance_to_camera >= p[3] && distance_to_camera < p[4];
     }
     // Godot frustum normals point outwards: positive signed distance is outside.
-    float height = length(basis * vec3(source[base + 1u], source[base + 5u], source[base + 9u]));
-    float guard = max(p[9], height * 2.0);
+    vec3 local_x = vec3(source[base], source[base + 4u], source[base + 8u]);
+    vec3 local_y = vec3(source[base + 1u], source[base + 5u], source[base + 9u]);
+    vec3 local_z = vec3(source[base + 2u], source[base + 6u], source[base + 10u]);
+    float raw_height = length(basis * local_y);
+    // Match the standing-grass material's MODEL_MATRIX height clamp. Keep the
+    // raw extent too: oversized source geometry must still fit its sphere.
+    float deformation_height = clamp(raw_height, .05, 20.0);
+    // The visual envelope includes the bounded tip wind, rest lean/curve and
+    // interaction bend (2.25 heights), then the widest camera-facing blade.
+    // p[61] is the root-local mesh radius captured on the main thread.
+    vec3 world_x = basis * local_x;
+    vec3 world_z = basis * local_z;
+    // Frobenius bound covers non-uniform parent scale and shear/rotated clump
+    // source axes, unlike max(column length).
+    float source_radius = sqrt(dot(world_x, world_x) + dot(world_z, world_z));
+    // A tall source retains its raw geometry *and* can bend sideways. Applying
+    // the full envelope to the larger height avoids under-bounding tall blades.
+    float guard = p[9] + max(raw_height, deformation_height) * 2.25 + p[61] * source_radius * 2.0;
+    // Invalid transforms must remain visible: a bad source must not make a
+    // blade vanish at a frustum edge.
+    if (isnan(guard) || isinf(guard) || guard < 0.0) return true;
     for (int i = 0; i < int(p[13]); ++i) {
         uint a = 28u + uint(i) * 4u;
         if (dot(vec3(p[a], p[a + 1u], p[a + 2u]), world) - p[a + 3u] > guard) return false;

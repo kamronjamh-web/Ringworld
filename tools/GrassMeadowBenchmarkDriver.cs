@@ -17,11 +17,16 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
     [Export] public float Density { get; set; } = 48;
     public int InstanceCount => _layer?.ResidentGrassInstanceCount ?? 0;
     public int TileCount => _layer?.ResidentGrassTileCount ?? 0;
+    /// <summary>Benchmark-only control for capture A/B checks.</summary>
+    public RingStandingGrassLayer? GetGrassLayerForTests() => _layer;
     public bool ReadyForCapture { get; private set; }
     public Vector3 WindCenter { get; private set; }
     public Vector3 WindAxis { get; private set; }
+    private const long MeadowCircumference = 981_748L * 32L;
     private RingStandingGrassLayer? _layer;
     private SmoothTerrainVolumetricDensitySnapshot? _field;
+    private RingCanonicalPosition _focus;
+    private RingLodGeometrySnapshot _geometry;
 
     public override async void _Ready()
     {
@@ -31,11 +36,12 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
 
     private async Task BuildAsync()
     {
-        const long circumference = 981_748L * 32L;
+        const long circumference = MeadowCircumference;
         const int width = 318_000;
         var settings = (VoxelTerrainSettings)(GD.Load<VoxelTerrainSettings>("res://resources/voxel/voxel_terrain_settings_ring_integration.tres")?.Duplicate(true) ?? throw new InvalidOperationException("terrain settings missing"));
         using var sampler = new RingTerrainSampler(settings, true, circumference, 5_000_000d, width, 8000);
         RingCanonicalPosition focus = FindGrasslandFocus(sampler);
+        _focus = focus;
         var hints = new Dictionary<RingTerrainColumnCoordinate, int>();
         for (long around = (long)focus.AroundMeters - 80; around <= focus.AroundMeters + 80; around++)
         for (int across = (int)focus.AcrossMeters - 80; across <= focus.AcrossMeters + 80; across++)
@@ -46,6 +52,7 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
         var source = new Basis(new Vector3((float)-Math.Cos(angle), 0, (float)-Math.Sin(angle)), Vector3.Up, new Vector3((float)-Math.Sin(angle), 0, (float)Math.Cos(angle)));
         var target = new Basis(Vector3.Up, Vector3.Right, Vector3.Back);
         var geometry = new RingLodGeometrySnapshot(new Transform3D(target * source.Transposed(), Vector3.Zero), Vector3.Zero, Vector3.Zero, 5_000_000d, 0, 0, circumference, -1000, 1000, focus);
+        _geometry = geometry;
         WindCenter = new Vector3(0, 5_000_000f - (float)focus.VerticalMeters, 0);
         WindAxis = geometry.GridGlobalTransform.Basis.Y;
         var baseline = new MeadowPlaneBaseline(circumference, width);
@@ -56,6 +63,7 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
             MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2, MaximumSlopeDegrees = 35
         };
         AddChild(_layer); _layer.InitializeForTests();
+        _layer.InitializeGrassGustTextureForTests(sampler.Seed);
         // The walkway and three rocks are canonical occupancy volumes, so this visibly exercises the same exclusion route as construction.
         var exclusions = new RingGrassExclusionSnapshot(1, circumference, new[] {
             new RingGrassExclusionBox(focus.AroundMeters - 24, focus.AroundMeters + 24, 41, 46, focus.AcrossMeters - 1, focus.AcrossMeters + 1),
@@ -72,7 +80,8 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
         {
             _layer.StepForTests(sampler, edits, focus, geometry, field: _field, exclusions: exclusions);
             await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-            if (_layer.PendingGrassTileBuildCount == 0 && _layer.PendingGrassUploadCount == 0 && _layer.ResidentGrassInstanceCount > 0)
+            if (_layer.PendingGrassTileBuildCount == 0 && _layer.PendingGrassUploadCount == 0 && _layer.ResidentGrassInstanceCount > 0
+                && (!_layer.EnableGrassGustTexture || _layer.GrassGustTextureReady))
             {
                 int bladeEquivalentCount = _layer.ResidentGrassInstanceCount * _layer.GrassBladesPerSource;
                 if (bladeEquivalentCount < 25_000) throw new InvalidOperationException($"dense meadow underfilled: {bladeEquivalentCount} blade-equivalents");
@@ -80,6 +89,16 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
             }
         }
         throw new TimeoutException("production grass layer did not settle");
+    }
+
+    /// <summary>The benchmark has no production weather node, so it publishes its simulation clock directly.</summary>
+    public void SetGrassGustWeatherForTests(Vector2 wind, double simulationTime)
+    {
+        if (_layer == null || !GodotObject.IsInstanceValid(_layer)) return;
+        _layer.SetGrassGustWeatherForTests(wind, simulationTime, MeadowCircumference);
+        // The fixture settles once then stops streaming. Refresh presentation so
+        // every existing tile receives the new canonical UV origin each frame.
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, MeadowCircumference);
     }
 
     public override void _ExitTree()

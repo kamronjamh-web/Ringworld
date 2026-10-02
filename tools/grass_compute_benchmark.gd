@@ -27,8 +27,25 @@ func _process(_delta: float) -> bool:
 			push_error("GRASS_COMPUTE_BENCHMARK=" + result)
 			quit(1)
 		return true
-	# Full run needs 6 cases x 3 repetitions x 240+ frames; timeout is deliberately generous.
-	if frames > 12000:
+	# Scale timeout for explicitly requested larger sample/repetition counts.
+	if frames > _frame_budget():
 		push_error("GRASS_COMPUTE_BENCHMARK=FAIL timeout")
 		quit(1)
 	return false
+
+func _frame_budget() -> int:
+	var args := OS.get_cmdline_user_args()
+	var samples := 180
+	var warmup := 60
+	var repetitions := 3
+	for key in ["--grass-compute-samples", "--grass-compute-warmup", "--grass-compute-repetitions"]:
+		var index := args.find(key)
+		if index >= 0 and index + 1 < args.size():
+			var value := int(args[index + 1])
+			if key == "--grass-compute-samples":
+				samples = maxi(samples, value)
+			elif key == "--grass-compute-warmup":
+				warmup = maxi(warmup, value)
+			else:
+				repetitions = maxi(repetitions, value)
+	return maxi(12000, 6 * repetitions * (samples + warmup + 64))

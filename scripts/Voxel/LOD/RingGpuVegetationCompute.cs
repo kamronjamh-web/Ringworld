@@ -50,6 +50,9 @@ public sealed class RingGpuVegetationCompute : IDisposable
         public int Stride => SourceStride;
         public int Count => Registration.Candidates.Length / SourceStride;
         public int Groups => (Count + 63) / 64;
+        // Read on the main thread during registration. RenderingDevice work must
+        // never query a Godot Mesh.
+        public float PrototypeHorizontalRadius;
     }
     private sealed class OutputMirror
     {
@@ -154,6 +157,21 @@ public sealed class RingGpuVegetationCompute : IDisposable
             && Volatile.Read(ref batch.CompletedVisibilityRevision) == visibilityRevision;
     }
 
+    /// <summary>One coherent readiness snapshot for the caller's visibility decisions.
+    /// A dispatch completing after this snapshot becomes visible on the next refresh.</summary>
+    public void CaptureReadyBatches(IReadOnlyList<BatchFrameParameters> frames, HashSet<int> ready)
+    {
+        ready.Clear();
+        lock (_gate)
+        {
+            if (!_ready || _failed) return;
+            foreach (BatchFrameParameters frame in frames)
+                if (_batches.TryGetValue(frame.BatchId, out Batch? batch) && batch.Dispatched && !batch.Retired
+                    && Volatile.Read(ref batch.CompletedVisibilityRevision) == frame.VisibilityRevision)
+                    ready.Add(frame.BatchId);
+        }
+    }
+
     public void Initialize()
     {
         lock (_gate) if (!_disposed && !_failed && !_ready) QueueWork();
@@ -172,6 +190,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
             PrepareResource(registration);
             int id = ++_nextId;
             _batches.Add(id, new Batch { Id = id, Registration = registration,
+                PrototypeHorizontalRadius = PrototypeHorizontalRadius(registration.Mesh),
                 UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) });
             _membershipRevision++;
             QueueWork();
@@ -192,6 +211,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
             previous.Retired = true;
             _retired.Enqueue(previous);
             _batches[id] = new Batch { Id = id, Registration = registration,
+                PrototypeHorizontalRadius = PrototypeHorizontalRadius(registration.Mesh),
                 UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) };
             _membershipRevision++;
             QueueWork();
@@ -716,7 +736,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[3] = Finite(p.NearDistance, 0); data[4] = Math.Max(data[3], Finite(p.FarDistance, 1));
         data[5] = Math.Max(.001f, Finite(p.TransitionDistance, 1));
         data[6] = Mathf.Clamp(Finite(p.NearDensity, 1), 0, 1); data[7] = Mathf.Clamp(Finite(p.FarDensity, 1), 0, 1);
-        data[8] = Mathf.Clamp(Finite(p.TreeRankGate, 1), 0, 1); data[9] = Math.Max(0, Finite(p.RadiusGuard, 8));
+        data[8] = Mathf.Clamp(Finite(p.TreeRankGate, 1), 0, 1); data[9] = Math.Max(0, Finite(p.RadiusGuard, 0));
         data[10] = p.Grass ? 1 : 0; data[11] = Math.Clamp(p.LodPass, 0, 4); data[12] = p.EnableLod ? 1 : 0;
         data[13] = p.Grass ? Math.Min(6, p.GrassFrustumPlanes?.Length ?? 0) : 0;
         data[14] = !p.Grass && batch.Registration.TreeCustomData ? 1 : 0;
@@ -741,7 +761,23 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[56] = Finite(p.TreeFadeInStart, -1); data[57] = Finite(p.TreeFadeInEnd, -1);
         data[58] = Finite(p.TreeFadeOutStart, -1); data[59] = Finite(p.TreeFadeOutEnd, -1);
         data[60] = batch.Registration.TreeDitherData ? 1 : 0;
+        // Grass-only: local mesh radius around its root. The shader combines
+        // this with the source and parent transforms before frustum rejection.
+        data[61] = p.Grass ? batch.PrototypeHorizontalRadius : 0;
         Buffer.BlockCopy(data, 0, bytes, 0, ParameterBytes);
+    }
+
+    private static float PrototypeHorizontalRadius(Mesh mesh)
+    {
+        if (mesh is null) return 0;
+        Aabb aabb = mesh.GetAabb();
+        if (!aabb.Position.IsFinite() || !aabb.Size.IsFinite()) return 0;
+        Vector3 center = aabb.GetCenter();
+        Vector3 half = aabb.Size * .5f;
+        float x = Math.Max(Math.Abs(center.X - half.X), Math.Abs(center.X + half.X));
+        float z = Math.Max(Math.Abs(center.Z - half.Z), Math.Abs(center.Z + half.Z));
+        float radius = MathF.Sqrt(x * x + z * z);
+        return float.IsFinite(radius) && radius >= 0 ? radius : 0;
     }
 
     private void WritePush(uint phase, uint count, uint capacity, uint surfaces, uint sweep, uint protectedBaseValid)

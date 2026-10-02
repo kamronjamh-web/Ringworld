@@ -52,6 +52,20 @@ The user tested an 8K directional atlas and reported that it did not resolve the
 
 ## Reproduction
 
+### Live diagnostic capture
+
+Use the grave-key **Diagnostics** tab's **Prepare cloud slowdown capture** action before a new investigation. It enables monitoring and detailed GPU intervals, selects a 60-second history with a 16 MiB telemetry budget, clears old history, and marks those choices for normal diagnostics-settings persistence. It does not change cloud quality, cloud rendering, weather, shadows, or graphics-preset settings.
+
+Run one game instance only. After preparation, close the diagnostics menu before reproducing the slowdown so its refresh work is absent from the capture. Reproduce the sky/horizon or long-session condition, reopen the menu, and choose **Capture slowdown report**. The report's cloud parent and child pass timings overlap; use them to locate work, never sum them as an exclusive total. GPU intervals are asynchronous and grouped by their source frame, while CPU and worker rows have independent timing domains.
+
+Treat absent or dropped rows as missing evidence rather than proof a pass did not run. The capture records only the monitor's retained history and configured budget; it does not recreate a previous weather state, GPU clocks, thermal state, or window-focus conditions.
+
+The October 2 profiler exports schema v2 and preserves the original `snapshot`, `events`, and `renderState` fields. It adds one-second wall-time summaries, detailed GPU categories grouped by source frame, separate CPU/GPU retention and name-admission counters, and a bounded 5 Hz cloud-context history. The history includes camera direction and position, actual cloud resource settings and clocks, renderer dimensions, temporal rebuild/decay counters, near/far shadow dispatches, focus, memory, and pipeline-compilation counters. Null means unavailable; the renderer snapshot has its own callback serial and Godot tick stamp. These CPU context samples are not exact pairs with delayed GPU source frames. Near/far cloud-shadow GPU intervals sit outside the inclusive `GPU.Clouds` interval. Far/regional viewport rendering remains unmeasured by this live monitor.
+
+The capture preset requests up to 60 seconds; bounded buffers can retain less, especially at high event rates. Check `metadata.coverage`, cloud-history bounds, and loss counters. Normal history-window expiry is not counted as dropped data. Storage estimates include pending queues and reserved cloud snapshots, while report serialization is transient work outside that estimate.
+
+Primary-agent validation on 2026-10-02: .NET build passed with zero warnings/errors; `performance_diagnostics_contract_test.gd` passed for bounded CPU/GPU retention, independent GPU name admission, generation reset, settings and the capture preset. `cloud_profiler_gpu_smoke.gd` passed on RTX A1000 / Forward+ with all seven actual cloud GPU rows, camera movement, nonempty cloud history and schema-v2 export. The exported JSON was inspected for numeric renderer dimensions and actual resource values. This validates collection, not a cloud optimization or a reproduction of the slowdown. Existing native-extension/UID/certificate and addon shutdown RID diagnostics remain in the fixture logs.
+
 Capture exports now also include a capture-time `renderState` object: camera pose,
 viewport scale and focus, actual sun/planet state, cloud settings, altitude bands,
 and driver noise origins. These fields describe the instant of capture, not the
@@ -172,3 +186,112 @@ view, and clock overrides are recorded in the sky-return report. Shader variants
 are assigned with Godot's documented
 [`RDShaderFile.set_bytecode`](https://docs.godotengine.org/en/stable/classes/class_rdshaderfile.html#class-rdshaderfile-method-set-bytecode)
 API and refreshed through the existing bridge resource-retirement path.
+
+### October 2: optimization before additional threading
+
+The 19:52 UTC gameplay report retained 7.3 seconds without dropped samples. It
+averaged 91.15 ms per frame and 86.43 ms viewport GPU time. Near cloud-shadow
+generation averaged 47.55 ms; visible clouds averaged 4.50 ms inclusive. The
+far cascade remained pending with zero dispatches while the near dispatch
+count advanced on every observed renderer callback. Temporal rebuild count
+remained constant during the retained window.
+
+The producer now rotates its starting cascade after each successful dispatch,
+preserving the one-map-per-frame limit while preventing recurring near work
+from starving pending far work. The cloud profiler GPU smoke continuously
+requests near updates and asserts that the initially pending far cascade
+dispatches by its fifth observed render frame.
+
+Grass now caches the world transform and shared ground covectors per resident
+tile. Near and intermediate outputs share the calculation. Renderer mapping
+parameters are published only when their values or renderer identity change;
+gust UVs remain independently dynamic. Cache validity includes immutable tile
+data and the complete geometry snapshot. Local transforms still account for
+the current layer transform, and live gust scales and modifier atlas slots
+are checked during publication.
+
+New CPU profiler rows expose input snapshots, coverage planning, request
+queuing, build preparation, completed-build servicing, eviction, terrain and
+exclusion invalidation, presentation (inclusive), and GPU request preparation.
+Presentation includes GPU request preparation; do not add those overlapping
+rows together. This pass adds no worker jobs and changes no density or quality
+defaults. Queue/selection redesign remains measurement-driven follow-up work.
+
+Validation: .NET build has zero warnings/errors; grass presentation cache and
+localized modifier streaming contracts pass, including dynamic wind, scale
+changes, shared mapping, unchanged writes, and transformed-geometry parity
+against the uncached calculation. Rendered modifier tint and camera-facing
+regressions pass. Actual cloud GPU timestamps and the far-cascade fairness
+assertion pass. Existing missing native extension/UID, certificate, user-log
+access, and isolated compositor shutdown RID warnings remain in fixture logs.
+These checks establish behavior; gameplay frame-time savings and human visual
+acceptance still require a comparable gameplay capture and inspection.
+
+### October 2: second grass CPU pass and retention correction
+
+The 20:49 UTC report retained 60 seconds of frame/GPU/cloud history, but only
+18.2 seconds of detailed CPU events because its 16,384-slot CPU ring filled.
+Grass presentation averaged 20.75 ms inclusive in that shorter interval, with
+7.02 ms of GPU request preparation and 1.86 ms of request-queue scanning.
+Both cloud cascades were active; the captured near map was 1024 at 10 Hz and
+the far map 128 at 2.5 Hz. These settings and the larger resident grass count
+prevent attributing the full frame-time improvement to code changes alone.
+
+The next pass skips unchanged visibility and CPU instance-count writes, caches
+the GPU-culling instance flag across renderer handoffs/fallback, and captures
+all wanted batch readiness under one backend lock. Readiness still requires the
+current visibility revision; a completion after the snapshot is presented on
+the next refresh. GPU-backed outputs no longer toggle visible in the CPU
+presentation loop before the readiness gate hides them again.
+
+The grass request queue scans only after coverage/residency/job-completion
+changes or streaming suspension/resumption, preserving nearest-first order.
+Modifier invalidation and removal dirty that queue through the existing tile
+removal path. No worker or density changes are introduced.
+
+The telemetry allocator removes its old 32,768-total-slot ceiling and gives a
+larger share of retention to CPU events while preserving bounded pending queues
+and the configured memory budget. Export metadata now includes oldest/newest
+CPU completion timestamps. A replay of 60,000 events over a simulated minute
+passes without drops at 16 MiB; arbitrary higher event rates can still overflow
+and must be assessed using the coverage timestamps and drop counters.
+
+Validation: .NET build has zero warnings/errors; profiler contracts pass with
+the minute replay and existing low-budget overflow/isolation checks; grass
+modifier streaming passes including stationary queue reuse and resume; GPU
+frustum/readiness tests pass for unpublished outputs and stale visibility
+revisions; actual cloud GPU timestamps and schema export smoke pass. Gameplay
+CPU/GPU savings remain unmeasured until the next comparable slowdown report.
+
+### October 2: bounded live profiler summaries
+
+The 21:04 UTC report retained 59.7 seconds with zero drops. Grass presentation
+averaged 11.67 ms and GPU request preparation 2.55 ms, but repeated full-history
+summary builds consumed 5.83 seconds of main-thread time over the capture.
+The performance HUD invoked GetSnapshot during display refresh; telemetry
+arrival invalidated that full-history cache every frame. Summary cost grew
+with retained history, reaching 74.8 ms for an individual call.
+
+The HUD and tuning drawer now use GetLiveSnapshot. Its scope rows use samples
+from the latest five seconds, capped at 4096 CPU and 1024 GPU events. A reusable
+scratch array groups and sorts those samples without allocating lists per
+category. Display statistics rebuild at most twice per second, or more slowly
+when the existing display-refresh setting requests that. Arrival of new
+telemetry does not invalidate the live cache. The frame display retains its
+existing last-300-frame view; retention metadata still reports the full frame
+history duration. UI text identifies the recent/sample-capped row statistics.
+
+GetSnapshot remains the full-history statistics path for exports and contract
+queries. Live summaries never modify retained events. ClearHistory invalidates
+both caches. A 512 KiB conservative workspace allowance is included in the
+allocator and reported retained bytes, preserving the existing memory budget.
+No worker threads or gameplay settings are changed.
+
+Validation: .NET build has zero warnings/errors. Profiler contracts verify
+bounded live sample work, cache reuse after new telemetry, exclusion of old
+scope samples from live rows, immediate cache invalidation on history clear,
+and complete full-history statistics after live refreshes. The simulated
+60,000-event minute still passes without drops at 16 MiB, and existing smaller
+budget/overflow tests pass. Graphical cloud GPU timing and report export smoke
+passes. Runtime savings and hitch reduction require a new gameplay capture;
+functional checks are not visual acceptance or a measured FPS improvement.

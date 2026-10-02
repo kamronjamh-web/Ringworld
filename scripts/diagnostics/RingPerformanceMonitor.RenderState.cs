@@ -47,6 +47,23 @@ public partial class RingPerformanceMonitor
                 specialization = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.PipelineCompilationsSpecialization)
             },
             explorer = Explorer(_contextExplorer),
+            grass = _contextGrass == null ? null : new
+            {
+                enabled = _contextGrass.Enabled,
+                clumps = _contextGrass.UseGrassClumps,
+                reducedNearGeometry = _contextGrass.UseReducedNearGrassGeometry,
+                singleRibbonIntermediateRequested = _contextGrass.UseSingleRibbonIntermediateGrass,
+                singleRibbonIntermediateEligible = _contextGrass.IsSingleRibbonIntermediateGrassActive,
+                simplifiedIntermediateShading = _contextGrass.UseSimplifiedIntermediateGrassShading,
+                pendingRendererUploads = _contextGrass.PendingGrassUploadCount,
+                cameraFacing = new { enabled = _contextGrass.EnableGrassCameraFacing,
+                    strength = Finite(_contextGrass.GrassCameraFacingStrength),
+                    startMeters = Finite(_contextGrass.GrassCameraFacingStartMeters),
+                    endMeters = Finite(_contextGrass.GrassCameraFacingEndMeters) },
+                distanceLod = new { enabled = _contextGrass.EnableDistanceLod,
+                    nearMeters = Finite(_contextGrass.LodNearDistanceMeters),
+                    transitionWidthMeters = Finite(_contextGrass.LodTransitionWidthMeters) }
+            },
             celestial = new { simulationTimeSeconds = Finite(cycle?.GetSimulationSeconds() ?? double.NaN), sunElevationDegrees = Number(cycle, "SunElevationDegrees"), cloudSimulationTimeSeconds = Number(clouds, "CloudSimulationTimeSeconds") },
             clouds = new
             {

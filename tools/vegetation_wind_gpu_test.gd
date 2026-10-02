@@ -5,6 +5,7 @@ extends SceneTree
 const DRIVER := preload("res://tools/VegetationWindTestDriver.cs")
 const OUT := "user://generated/grass/vegetation_wind_gpu"
 const SIZE := 512
+var output_path := OUT
 var vp: SubViewport
 var camera: Camera3D
 var geometry: MultiMeshInstance3D
@@ -16,6 +17,10 @@ var pose := Transform3D.IDENTITY
 var failed := false
 
 func _initialize() -> void:
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--vegetation-wind-output="):
+			var requested := argument.trim_prefix("--vegetation-wind-output=").strip_edges()
+			if not requested.is_empty(): output_path = requested
 	if RenderingServer.get_rendering_device() == null:
 		fail("RenderingDevice required; Dummy rendering is not GPU evidence")
 		return
@@ -230,8 +235,8 @@ func capture(label := "") -> Image:
 	var im := vp.get_texture().get_image()
 	if im == null or im.is_empty(): fail("empty GPU capture"); return Image.new()
 	if not label.is_empty():
-		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT))
-		if im.save_png(OUT.path_join(label + ".png")) != OK: fail("capture save failed")
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_path))
+		if im.save_png(output_path.path_join(label + ".png")) != OK: fail("capture save failed")
 	return im
 
 func metrics(im: Image) -> Dictionary:
