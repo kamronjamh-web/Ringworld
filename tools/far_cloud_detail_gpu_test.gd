@@ -8,6 +8,7 @@ const DEFAULTS_SCRIPT := preload("res://tools/GameplayCloudTuningProbe.cs")
 const PROBE_SCRIPT := preload("res://tools/FarCloudDetailProbe.cs")
 const OUT_DIR := "res://.godot/far_cloud_detail"
 const ISOLATED_PATH := "res://.godot/far_cloud_detail_gpu_defaults.tres"
+const ISOLATION := preload("res://scripts/Tools/MinimapWindContractTest.cs")
 var _world: Node3D
 var _far: Node
 var _clouds: Resource
@@ -15,13 +16,15 @@ var _probe: RefCounted
 var _elapsed := 0.0
 var _cloud_nodes: Array[Node] = []
 var _shell_nodes: Array[Node] = []
+var _failed := false
 
 func _initialize() -> void:
 	call_deferred("_run")
 
 func _process(delta: float) -> bool:
 	_elapsed += delta
-	if _elapsed > 60.0: _fail("timed out"); return true
+	if _failed: return true
+	if _elapsed > fixture_timeout_seconds(): _fail("timed out"); return true
 	return false
 
 func _run() -> void:
@@ -31,6 +34,9 @@ func _run() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
 	_world = SCENE.instantiate() as Node3D
+	var preference_directory := "res://.godot/far-cloud-detail-preferences/%s" % Time.get_ticks_usec()
+	var isolation: Dictionary = ISOLATION.new().ExecuteFixture("isolation", _world, preference_directory)
+	if not bool(isolation.get("pass", false)): return _fail("preference isolation failed: " + str(isolation))
 	_far = _world.get_node("ScaledFarViewport")
 	_clouds = _world.get_node("SunshineCloudsDriver").get("clouds_resource") as Resource
 	_probe = PROBE_SCRIPT.new()
@@ -40,7 +46,8 @@ func _run() -> void:
 	root.add_child(launcher)
 	await process_frame
 	launcher.call("_on_certified_preset_pressed")
-	launcher.call("_configure_game", _world, 5000000.0)
+	launcher.call("_configure_game", _world, fixture_radius())
+	configure_fixture_renderer()
 	launcher.free()
 	_world.get_node("RingDayNightCycle").set_process(false)
 	root.add_child(_world)
@@ -139,7 +146,7 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
-	quit(0)
+	if not _failed: quit(0)
 
 func _weather_atlas(coverage: float, storm: float) -> ImageTexture:
 	var image: Image = Image.create(16, 16, false, Image.FORMAT_RGBA8)
@@ -166,6 +173,7 @@ func _apply_weather_material(material: ShaderMaterial, atlas: ImageTexture, para
 	material.set_shader_parameter("far_density_coverage_bias", 0.0)
 
 func _capture(label: String, hide_clouds := false, sync_far := true, hide_shell := false) -> Image:
+	if _failed: return Image.new()
 	var viewport := _far.get_node_or_null("FarRingViewport") as SubViewport
 	if viewport == null: _fail("production far viewport unavailable"); return Image.new()
 	if sync_far:
@@ -191,6 +199,15 @@ func _capture(label: String, hide_clouds := false, sync_far := true, hide_shell 
 	if image == null or image.is_empty(): _fail("empty far viewport capture " + label); return Image.new()
 	if image.save_png(OUT_DIR.path_join(label + ".png")) != OK: _fail("could not save capture " + label)
 	return image
+
+func fixture_radius() -> float:
+	return 5000000.0
+
+func fixture_timeout_seconds() -> float:
+	return 60.0
+
+func configure_fixture_renderer() -> void:
+	pass
 
 func _place_certified_camera() -> void:
 	var grid: Node = _world.get_node_or_null("ChunkGridManager") as Node
@@ -250,6 +267,8 @@ func _pixel_change_stats(a: Image, b: Image, threshold: float) -> Vector2:
 	return Vector2(float(changed), maximum)
 
 func _fail(message: String) -> void:
+	if _failed: return
+	_failed = true
 	push_error("FAR_CLOUD_DETAIL_GPU_TEST=FAIL " + message)
 	if _world != null: _world.queue_free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))

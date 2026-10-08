@@ -1,5 +1,7 @@
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
+uniform float terrain_cloud_receiver_height_meters = 0.0;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 #include "res://materials/celestial_lighting.gdshaderinc"
 
 uniform vec2 canonical_origin_km = vec2(0.0);
@@ -36,8 +38,8 @@ float value_noise(vec2 p) {
 }
 
 void fragment() {
-	vec2 p = canonical_origin_km + (UV - vec2(0.5)) * patch_size_km
-		+ wind_km_per_second * TIME;
+	vec2 receiver_km = canonical_origin_km + (UV - vec2(0.5)) * patch_size_km;
+	vec2 p = receiver_km + wind_km_per_second * TIME;
 	float broad = value_noise(p * 0.18);
 	float shape = value_noise(p * 0.52 + vec2(0.61, -0.37));
 	float detail = value_noise(p * 1.35 + vec2(-1.7, 2.1));
@@ -54,6 +56,8 @@ void fragment() {
 	float day = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot,
 		dot(normalize(surface_up), normalize(sun_direction))));
 	vec3 day_color = mix(shadow_color, sunlit_color, clamp(cloud * 1.15, 0.0, 1.0));
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(vec3(receiver_km.x * 1000.0, terrain_cloud_receiver_height_meters, receiver_km.y * 1000.0));
+	day_color -= (day_color - shadow_color) * (1.0 - terrain_sun);
 	ALBEDO = mix(night_color, day_color, day);
 	EMISSION = ALBEDO * mix(0.20, 0.34, day);
 	ALPHA = cloud * cheap_handoff * outer_edge * opacity * mix(1.0, 0.16, inside_band);

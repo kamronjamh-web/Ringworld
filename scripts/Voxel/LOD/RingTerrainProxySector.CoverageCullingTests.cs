@@ -31,7 +31,11 @@ public partial class RingTerrainProxySector
             SampleSpacingMeters = 2;
             CastTerrainShadows = true;
             ShadowIgnoresTerrainFade = true;
-            _opaqueShadowMaterial = new ShaderMaterial();
+            // Exercise lazy production material creation, including geomorph inputs.
+            FadeOutStartMeters = 240;
+            FadeOutEndMeters = 320;
+            EnableGeomorphing = true;
+            UseBlockyHeightfield = false;
             SetPartialCoverageMeshCulling(false);
 
             (Vector3[] vertices, Vector3[] normals, Color[] colors, Vector2[] uvs,
@@ -48,8 +52,11 @@ public partial class RingTerrainProxySector
             var data = new SectorData(coordinate, 0, 0, Vector3.Zero, vertices, normals, colors, uvs,
                 new Vector2[vertices.Length], chords, false, terrainIndices, oceanIndices,
                 null, null, false, null);
-            node = new MeshInstance3D { Mesh = fullMesh };
+            node = new MeshInstance3D { Mesh = fullMesh,
+                MaterialOverride = new ShaderMaterial { Shader = GD.Load<Shader>("res://materials/ring_terrain_proxy.gdshader") } };
             AddChild(node);
+            var atlasRect = new Vector4(.125f, .25f, .0625f, .0625f);
+            node.SetInstanceShaderParameter("coverage_atlas_rect", atlasRect);
             _active[coordinate] = node;
             RetainPartialCoverageSource(coordinate, data, fullMesh);
             if (!_partialCoverageSources.TryGetValue(coordinate, out PartialCoverageMeshSource? source))
@@ -71,6 +78,21 @@ public partial class RingTerrainProxySector
             MeshInstance3D? shadowCaster = node.GetNodeOrNull<MeshInstance3D>("OpaqueShadowCaster");
             if (shadowCaster == null || !ReferenceEquals(shadowCaster.Mesh, fullMesh))
                 throw new InvalidOperationException("Opaque shadow caster did not retain the original full mesh.");
+            SetTerrainShadowCasting(true);
+            if (node.CastShadow != ShadowCastingSetting.Off
+                || shadowCaster.CastShadow != ShadowCastingSetting.ShadowsOnly
+                || !shadowCaster.Visible
+                || shadowCaster.GetInstanceShaderParameter("coverage_atlas_rect").AsVector4() != atlasRect)
+                throw new InvalidOperationException("Persistent terrain caster did not preserve atlas ownership independently of visual casting.");
+            if (_opaqueShadowMaterial?.Shader?.ResourcePath != "res://materials/ring_terrain_proxy_shadow.gdshader"
+                || !_opaqueShadowMaterial.GetShaderParameter("geomorph_enabled").AsBool()
+                || _opaqueShadowMaterial.GetShaderParameter("morph_start_meters").AsSingle() != FadeOutStartMeters
+                || _opaqueShadowMaterial.GetShaderParameter("morph_end_meters").AsSingle() != FadeOutEndMeters)
+                throw new InvalidOperationException("Persistent terrain caster lost production geomorph configuration.");
+            SetTerrainShadowCasting(false);
+            if (shadowCaster.CastShadow != ShadowCastingSetting.Off || shadowCaster.Visible)
+                throw new InvalidOperationException("Disabling terrain shadows left the persistent caster active.");
+            SetTerrainShadowCasting(true);
 
             // A second candidate in the same process frame must remain queued: one mesh
             // rebuild per frame is the culling path's scene-thread budget.

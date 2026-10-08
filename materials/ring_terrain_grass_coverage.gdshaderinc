@@ -13,6 +13,12 @@ float ring_terrain_grass_hash(vec2 cell) {
 }
 
 float ring_terrain_grass_coverage(vec3 position, float camera_distance, float upward, float grass_eligibility) {
+	// The field contributes nothing here; avoid both hashes on the near surface
+	// and on fragments excluded by the existing terrain masks.
+	if (ring_grass_terrain_coverage_enabled < 0.5
+		|| camera_distance <= ring_grass_terrain_coverage_start_meters
+		|| upward <= 0.0 || grass_eligibility <= 0.0
+		|| ring_grass_terrain_coverage_strength <= 0.0) return 0.0;
 	float enabled = step(0.5, ring_grass_terrain_coverage_enabled);
 	float distance_fade = smoothstep(
 		ring_grass_terrain_coverage_start_meters,

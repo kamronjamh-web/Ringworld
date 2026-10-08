@@ -23,7 +23,7 @@ public partial class GpuGrassIntegrationTest : Node
     public async void Start()
     {
         string result;
-        try { await Run(); result = "PASS production grass LOD union, stationary skip, frustum, rebase, edit, CPU fallback"; }
+        try { await Run(); result = "PASS production grass LOD union, presentation caching, stationary skip, frustum, rebase, edit, CPU fallback"; }
         catch (Exception error) { result = "FAIL " + error; }
         if (_layer != null) _layer.QueueFree();
         if (_camera != null) _camera.QueueFree();
@@ -42,10 +42,20 @@ public partial class GpuGrassIntegrationTest : Node
         _camera = new Camera3D { Far = 2000 };
         AddChild(_camera);
         _camera.Current = true;
-        _layer = new RingStandingGrassLayer { UseGpuCulling = true, GpuFrustumCulling = false,
-            VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumInstances = 2000,
-            MaximumInstancesPerTile = 256, MaximumResidentTiles = 8, MaximumTileBuildsInFlight = 2,
-            MaximumTileUploadsPerFrame = 2, LodNearDensity = 1, LodFarDensity = 1 };
+        _layer = new RingStandingGrassLayer
+        {
+            UseGpuCulling = true,
+            GpuFrustumCulling = false,
+            VisibilityRadiusMeters = 72,
+            SpatialTileMeters = 48,
+            MaximumInstances = 2000,
+            MaximumInstancesPerTile = 256,
+            MaximumResidentTiles = 8,
+            MaximumTileBuildsInFlight = 2,
+            MaximumTileUploadsPerFrame = 2,
+            LodNearDensity = 1,
+            LodFarDensity = 1
+        };
         AddChild(_layer);
         _geometry = Geometry(Vector3.Zero);
         _edits = new RingLodSurfaceEditSnapshot(1, Circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
@@ -73,6 +83,7 @@ public partial class GpuGrassIntegrationTest : Node
         long cameraCompleted = _layer.GpuCullingCompletedUpdates;
         await StepFrames(2);
         Check(_layer.GpuCullingCompletedUpdates > cameraCompleted, "camera transform did not refresh GPU grass culling");
+        VerifyPresentationSnapshotContract();
         int builds = _layer.TotalGrassBuildCount;
         _layer.ApplyGrassQuality(true, 40, 200, 64, 1, 1);
         await Settle();
@@ -84,6 +95,8 @@ public partial class GpuGrassIntegrationTest : Node
             "late distance LOD rebuilt near roots or failed hierarchical preparation");
         builds = _layer.TotalGrassBuildCount;
         Check(renderer.GetInstanceShaderParameter("grass_gpu_culled").AsBool(), "GPU draw repeated vertex LOD");
+        VerifyPresentationSnapshotContract();
+        await StepFrames(4);
         var near = await Read(tile, false);
         var middle = await Read(tile, true);
         Check(near.Count > 0 && middle.Count > 0, $"transition passes empty: {near.Count}, {middle.Count}");
@@ -95,17 +108,27 @@ public partial class GpuGrassIntegrationTest : Node
         Transform3D previous = renderer.GlobalTransform;
         Transform3D cameraBefore = _camera.GlobalTransform;
         _geometry = Geometry(new Vector3(100, 0, 0));
-        _layer.StepForTests(_sampler, _edits, _focus, _geometry);
-        Transform3D relocation = renderer.GlobalTransform * previous.AffineInverse();
+        RingGrassTileData rebasingData = _layer.CaptureTileDataForTests().First(data => data.Key.Around == tile.Around && data.Key.Across == tile.Across);
+        Transform3D relocation = RingGrassCoordinates.CreateTileWorldTransform(rebasingData.Bounds, rebasingData.AnchorHeight, _geometry) * previous.AffineInverse();
         _camera.GlobalTransform = relocation * cameraBefore;
+        _layer.StepForTests(_sampler, _edits, _focus, _geometry);
         await StepFrames(4);
         Check(Find(tile).RenderInstanceId == tile.RenderInstanceId && _layer.TotalGrassBuildCount == builds,
             "rebase rebuilt resident roots");
         var rebasedNear = await Read(tile, false);
         var rebasedMiddle = await Read(tile, true);
         Check(Same(near.Rows, rebasedNear.Rows) && Same(middle.Rows, rebasedMiddle.Rows), "rebase changed GPU ownership or payload");
+        VerifyPresentationParity();
 
         _layer.ApplyGrassQuality(false, 40, 200, 64, 1, 1);
+        // Disabling distance LOD restores full source coverage in neighboring
+        // hierarchical tiers. Finish those legitimate worker replacements
+        // before measuring the camera-only output lifetime transition.
+        await Settle();
+        tile = Find(tile);
+        renderer = Renderer(tile);
+        Check(_layer.TryGetGpuGrassSourceForTests(tile.Around, tile.Across, out source), "source missing after quality change");
+        builds = _layer.TotalGrassBuildCount;
         _layer.GpuFrustumCulling = true;
         center = Center(source, renderer.GlobalTransform);
         up = renderer.GlobalBasis.Y.Normalized();
@@ -113,13 +136,20 @@ public partial class GpuGrassIntegrationTest : Node
         _camera.GlobalPosition = center + up * 80;
         _camera.LookAt(_camera.GlobalPosition + up, cameraUp);
         int requestedBeforeTileCull = _layer.GpuCullingRequestedBatchCount;
+        int buildsBeforeTileCull = _layer.TotalGrassBuildCount;
         await StepFrames(4);
-        Check(!renderer.Visible && _layer.GpuCullingRequestedBatchCount < requestedBeforeTileCull,
-            "coarse tile culling did not hide the off-frustum renderer or reduce GPU requests");
+        Check(!GodotObject.IsInstanceValid(renderer) && Find(tile).RenderInstanceId == 0
+            && _layer.GpuCullingRequestedBatchCount < requestedBeforeTileCull,
+            "coarse tile culling did not retire the off-frustum renderer or reduce GPU requests");
+        Check(Find(tile).PlacementHash == tile.PlacementHash && _layer.TotalGrassBuildCount == buildsBeforeTileCull,
+            "off-frustum presentation retirement rebuilt canonical roots");
         _camera.LookAt(center, cameraUp);
         await WaitGpu(tile, false);
         await StepFrames(2);
+        tile = Find(tile);
+        renderer = Renderer(tile);
         Check(renderer.Visible && (await Read(tile, false)).Count > 0, "coarse tile culling did not restore a fresh visible GPU batch");
+        VerifyPresentationParity();
 
         // The coarse path intentionally prevents a dispatch for a fully hidden
         // tile. Disable only that layer to retain coverage for the shader/compute
@@ -161,16 +191,114 @@ public partial class GpuGrassIntegrationTest : Node
         await WaitGpu(edited, false);
         await StepFrames(3);
         Check((await Read(edited, false)).Count > 0, "edited grass failed to return");
+        VerifyPresentationSnapshotContract();
+    }
+
+    private void VerifyPresentationSnapshotContract()
+    {
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        long boundsBefore = _layer.PresentationBoundsBuilds;
+        long readsBefore = _layer.PresentationWorldSnapshotReads;
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        var audits = _layer.CapturePresentationAuditsForTests();
+        Check(_layer.PresentationWorldSnapshotReads == readsBefore,
+            "stationary presentation repeated native world reads");
+        Check(_layer.PresentationBoundsBuilds == boundsBefore, "stationary frame rebuilt transformed bounds");
+        VerifyPresentationParity();
+        GD.Print($"GRASS_PRESENTATION_CACHE renderers={audits.Length} actual_world_reads={_layer.PresentationWorldSnapshotReads - readsBefore} stationary_bounds_rebuilds={_layer.PresentationBoundsBuilds - boundsBefore}");
+
+        var externalAudit = audits.First(audit => GodotObject.InstanceFromId(audit.RendererId) is MultiMeshInstance3D { Visible: true });
+        var externallyMoved = GodotObject.InstanceFromId(externalAudit.RendererId) as MultiMeshInstance3D
+            ?? throw new InvalidOperationException("external transform fixture renderer missing");
+        Transform3D expectedLocal = externallyMoved.Transform;
+        var notifiedRenderer = externallyMoved as GrassPresentationRenderer
+            ?? throw new InvalidOperationException("production grass renderer lacks notification tracking");
+        long notificationBefore = notifiedRenderer.LocalRevision;
+        externallyMoved.Transform = new Transform3D(expectedLocal.Basis, expectedLocal.Origin + new Vector3(7, 3, -11));
+        Check(notifiedRenderer.LocalRevision > notificationBefore, "external transform did not deliver immediate native notification");
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        Check(externallyMoved.Transform == expectedLocal, "external local transform bypassed presentation ownership");
+        Check(_layer.PresentationWorldSnapshotReads > readsBefore, "external transform did not invalidate world snapshot");
+        VerifyPresentationParity();
+        readsBefore = _layer.PresentationWorldSnapshotReads;
+        externallyMoved.GlobalPosition += new Vector3(-9, 4, 6);
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        Check(externallyMoved.Transform == expectedLocal && _layer.PresentationWorldSnapshotReads > readsBefore,
+            "external global transform did not refresh actual renderer state immediately");
+        VerifyPresentationParity();
+
+        float padding = _layer.GrassFrustumPaddingMeters;
+        _layer.GrassFrustumPaddingMeters = padding + 3;
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        Check(_layer.PresentationBoundsBuilds > boundsBefore, "live padding retained stale bounds");
+        VerifyPresentationParity();
+        _layer.GrassFrustumPaddingMeters = padding;
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+
+        bool reducedGeometry = _layer.UseReducedNearGrassGeometry;
+        _layer.UseReducedNearGrassGeometry = !reducedGeometry;
+        long beforeGeometry = _layer.PresentationBoundsBuilds;
+        _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        Check(_layer.PresentationBoundsBuilds > beforeGeometry, "geometry selection retained stale bounds");
+        VerifyPresentationParity();
+        _layer.UseReducedNearGrassGeometry = reducedGeometry;
+
+        Transform3D original = _layer.Transform;
+        try
+        {
+            _layer.Transform = new Transform3D(new Basis(Vector3.Up, .43f).Scaled(new Vector3(1.3f, .7f, 1.1f)), new Vector3(180, -30, 70));
+            _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+            VerifyPresentationParity();
+        }
+        finally
+        {
+            _layer.Transform = original;
+            _layer.RefreshLodPresentationForTests(_focus, _geometry, Circumference);
+        }
+    }
+
+    private void VerifyPresentationParity()
+    {
+        var data = _layer.CaptureTileDataForTests().ToDictionary(item => (item.Key.Around, item.Key.Across));
+        foreach (var audit in _layer.CapturePresentationAuditsForTests())
+        {
+            var renderer = GodotObject.InstanceFromId(audit.RendererId) as MultiMeshInstance3D
+                ?? throw new InvalidOperationException("presentation renderer missing");
+            Check(audit.World == renderer.GlobalTransform, "world snapshot differs from actual renderer");
+            Check(!audit.GpuFrameWorld.HasValue || audit.GpuFrameWorld.Value == audit.World,
+                "GPU frame payload differs from presentation world snapshot");
+            Check(renderer.GetInstanceShaderParameter("grass_modifier_origin_world").AsVector3() == audit.World.Origin,
+                "mapping origin differs from actual world snapshot");
+            if (audit.Intermediate) continue;
+            Aabb local = data[(audit.Around, audit.Across)].LocalAabb;
+            Vector3 allowance = new(.023f, 0, .023f);
+            Aabb raw = audit.World * new Aabb(local.Position - allowance, local.Size + allowance * 2);
+            float bound = MathF.Sqrt(audit.World.Basis.X.LengthSquared() + audit.World.Basis.Y.LengthSquared() + audit.World.Basis.Z.LengthSquared());
+            float rawHeight = audit.MaximumHeight * bound;
+            float height = Math.Max(rawHeight, .05f);
+            float remainder = rawHeight < .05f ? height * 2.25f : height * .25f;
+            Aabb expanded = raw.Grow(remainder + Math.Max(0, _layer.GrassFrustumPaddingMeters));
+            Check(audit.RawBounds == raw && audit.ExpandedBounds == expanded,
+                "cached world bounds differ from uncached deformation oracle");
+        }
     }
 
     private async Task VerifyDenseClumpLayerContract()
     {
         var layer = new RingStandingGrassLayer
         {
-            UseGpuCulling = false, UseGrassClumps = false, BladesPerSquareMeter = 16,
-            VisibilityRadiusMeters = 24, SpatialTileMeters = 16, MaximumResidentTiles = 4,
-            MaximumInstances = 800, MaximumInstancesPerTile = 800,
-            MaximumTileBuildsInFlight = 1, MaximumTileUploadsPerFrame = 2, LodNearDensity = 1, LodFarDensity = 1
+            UseGpuCulling = false,
+            UseGrassClumps = false,
+            BladesPerSquareMeter = 16,
+            VisibilityRadiusMeters = 24,
+            SpatialTileMeters = 16,
+            MaximumResidentTiles = 4,
+            MaximumInstances = 800,
+            MaximumInstancesPerTile = 800,
+            MaximumTileBuildsInFlight = 1,
+            MaximumTileUploadsPerFrame = 2,
+            LodNearDensity = 1,
+            LodFarDensity = 1
         };
         AddChild(layer); layer.InitializeForTests();
         try
@@ -184,12 +312,12 @@ public partial class GpuGrassIntegrationTest : Node
             RingStandingGrassLayer.TileAudit clumped = layer.CaptureTileAuditsForTests().First(tile => tile.Around == baseline.Around && tile.Across == baseline.Across);
             RingGrassTileData clumpedData = layer.CaptureTileDataForTests().First(data => data.Key.Around == baseline.Around && data.Key.Across == baseline.Across);
             Mesh mesh = Renderer(clumped).Multimesh?.Mesh ?? throw new InvalidOperationException("dense clump CPU mesh missing");
-            int vertices = mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length;
+            int triangleIndices = mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Index].AsInt32Array().Length;
             Check(layer.TotalGrassBuildCount > builds && clumpedData.BladesPerSource == 4
                 && layer.GrassBladesPerSource == 4 && layer.MaximumGrassSourceInstances == 200
                 && layer.MaximumGrassSourcesPerTile == 200 && layer.ResidentGrassInstanceCount <= 200
                 && clumped.InstanceCount <= 200 && clumped.InstanceCount * 4 <= Math.Max(4, baselineSources)
-                && vertices == 32 * 3, "dense clump toggle did not rebuild under source budgets with the CPU clump mesh");
+                && triangleIndices == 32 * 3, "dense clump toggle did not rebuild under source budgets with the CPU clump mesh");
         }
         finally { layer.QueueFree(); await Frames(2); }
     }

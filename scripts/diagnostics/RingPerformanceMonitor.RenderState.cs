@@ -24,6 +24,8 @@ public partial class RingPerformanceMonitor
         Viewport viewport = GetViewport();
         var graphics = _contextGraphics;
         Godot.Collections.Dictionary handoff = graphics?.GetLocalShadowHandoffDiagnostics() ?? new();
+        // Refresh public compute counters at this capture boundary, including retired/reset state.
+        _contextGrass?.CaptureGrassStreamingDiagnostics();
         Variant resource = driver?.Get("clouds_resource") ?? default;
         GodotObject? cloudResource = resource.VariantType == Variant.Type.Object ? resource.AsGodotObject() : null;
         return new
@@ -31,6 +33,7 @@ public partial class RingPerformanceMonitor
             capturedUtc = DateTime.UtcNow.ToString("O"),
             note = "Capture-time render-state snapshot only; it is not sampled per frame or a full history.",
             viewport = new { viewportSize = new[] { viewport.GetVisibleRect().Size.X, viewport.GetVisibleRect().Size.Y }, scaling3DScale = Finite(viewport.Scaling3DScale), windowFocused = DisplayServer.WindowIsFocused(), gpuAdapter = RenderingServer.GetVideoAdapterName() },
+            runtime = CaptureRuntimeState(),
             lights = new { star = Light(star), planet = Light(planet) },
             shadows = new
             {
@@ -38,6 +41,7 @@ public partial class RingPerformanceMonitor
                 offElevationDegrees = Number(handoff, "off_elevation_degrees"), onElevationDegrees = Number(handoff, "on_elevation_degrees"), maxLocalSunElevationDegrees = Number(handoff, "max_local_sun_elevation_degrees"),
                 atlasSize = graphics?.EffectiveDirectionalShadowAtlasSize, depthBits = graphics?.EffectiveDirectionalShadowDepthBits, filter = graphics?.EffectiveDirectionalShadowFilter
             },
+            farViewports = CaptureFarViewportState(),
             terrainShadows = CaptureTerrainShadowState(_contextCoordinator, globalTerrain),
             pipelineCompilations = new
             {
@@ -50,6 +54,28 @@ public partial class RingPerformanceMonitor
             grass = _contextGrass == null ? null : new
             {
                 enabled = _contextGrass.Enabled,
+                streamingSuspended = _contextGrass.StreamingSuspended,
+                processing = _contextGrass.IsProcessing(),
+                visible = _contextGrass.Visible,
+                residentTiles = _contextGrass.ResidentGrassTileCount,
+                residentRoots = _contextGrass.ResidentGrassInstanceCount,
+                pendingBuilds = _contextGrass.PendingGrassTileBuildCount,
+                gpu = new
+                {
+                    requested = _contextGrass.UseGpuCulling,
+                    status = _contextGrass.GpuCullingStatus,
+                    registeredBatches = _contextGrass.GpuCullingBatchCount,
+                    requestedBatches = _contextGrass.GpuCullingRequestedBatchCount,
+                    dispatchedBatches = _contextGrass.GpuCullingDispatchedBatchCount,
+                    deferredBatches = _contextGrass.GpuCullingDeferredBatchCount,
+                    reportedBufferBytes = _contextGrass.GpuCullingBytes,
+                    reportedSharedSourceBytes = _contextGrass.GpuCullingSharedSourceBytes,
+                    reportedOutputBytes = _contextGrass.GpuCullingOutputBytes,
+                    sharedSources = _contextGrass.GpuCullingSharedSourceCount,
+                    completedUpdates = _contextGrass.GpuCullingCompletedUpdates,
+                    skippedUnchangedUpdates = _contextGrass.GpuCullingSkippedUnchangedUpdates
+                },
+                nativeGeometry = CaptureGrassNativeGeometry(_contextGrass),
                 clumps = _contextGrass.UseGrassClumps,
                 reducedNearGeometry = _contextGrass.UseReducedNearGrassGeometry,
                 singleRibbonIntermediateRequested = _contextGrass.UseSingleRibbonIntermediateGrass,
@@ -68,12 +94,41 @@ public partial class RingPerformanceMonitor
             clouds = new
             {
                 bridgeRequested = bridge?.CloudRenderingEnabled, resourceEnabled = Bool(cloudResource, "enabled"), resolutionEnum = Number(cloudResource, "resolution_scale"),
+                actualSkipEmptyCloudMaskSamples = Bool(cloudResource, "skip_empty_cloud_mask_samples"), requestedFarCloudPatchCullingEnabled = bridge?.FarCloudPatchCullingEnabled,
                 actualMaxStepCount = Number(cloudResource, "max_step_count"), actualMaxLightingSteps = Number(cloudResource, "max_lighting_steps"), resourceDensity = Number(cloudResource, "clouds_density"), bridgeDensityMultiplier = Finite(bridge?.CloudDensityMultiplier ?? float.NaN), coverage = Number(cloudResource, "clouds_coverage"), sharpness = Number(cloudResource, "clouds_sharpness"), cloudFloor = Number(cloudResource, "cloud_floor"), cloudCeiling = Number(cloudResource, "cloud_ceiling"), backgroundAltitude = Vector4(cloudResource, "background_altitude"), stormAltitude = Vector4(cloudResource, "storm_altitude"),
                 raymarch = new { steps = bridge?.RaymarchSteps, lightingSteps = bridge?.LightingSteps, minStepDistanceMeters = Finite(bridge?.MinStepDistanceMeters ?? float.NaN), maxStepDistanceMeters = Finite(bridge?.MaxStepDistanceMeters ?? float.NaN) },
                 cloudShadows = new { enabled = bridge?.CastCloudShadows, gpuGenerationEnabled = bridge?.GpuShadowGenerationEnabled, preferGpu = bridge?.PreferGpuCloudShadows, status = bridge?.GpuCloudShadowStatus, nearResolution = bridge?.GpuNearShadowMapResolution, farResolution = bridge?.GpuFarShadowMapResolution, nearUpdatesPerSecond = Finite(bridge?.GpuNearShadowUpdatesPerSecond ?? float.NaN), farUpdatesPerSecond = Finite(bridge?.GpuFarShadowUpdatesPerSecond ?? float.NaN) },
                 driver = new { currentTime = Number(cloudResource, "current_time"), extraLargeNoiseOrigin = Vector(cloudResource, "extra_large_scale_clouds_position"), largeNoiseOrigin = Vector(cloudResource, "large_scale_clouds_position"), mediumNoiseOrigin = Vector(cloudResource, "medium_scale_clouds_position"), detailNoiseOrigin = Vector(cloudResource, "detail_clouds_position") }
             }
         };
+    }
+
+    // Native counts describe allocated slots and CPU visibility flags. Indirect
+    // output occupancy is not read back from the GPU. Enumerate only on capture.
+    private static object CaptureGrassNativeGeometry(RingStandingGrassLayer grass)
+    {
+        int total = 0, visible = 0, layered = 0, shadowed = 0, multiMeshes = 0;
+        long instances = 0, visibleInstances = 0;
+        var pending = new Stack<Node>();
+        pending.Push(grass);
+        while (pending.Count > 0)
+        {
+            Node node = pending.Pop();
+            if (!GodotObject.IsInstanceValid(node) || node.IsQueuedForDeletion()) continue;
+            foreach (Node child in node.GetChildren(includeInternal: true)) pending.Push(child);
+            if (node is not GeometryInstance3D geometry) continue;
+            total++;
+            if (geometry.IsVisibleInTree()) visible++;
+            if (geometry.Layers != 0) layered++;
+            if (geometry.CastShadow != GeometryInstance3D.ShadowCastingSetting.Off) shadowed++;
+            if (geometry is not MultiMeshInstance3D { Multimesh: { } mesh }) continue;
+            multiMeshes++;
+            instances += mesh.InstanceCount;
+            visibleInstances += mesh.VisibleInstanceCount < 0 ? mesh.InstanceCount : mesh.VisibleInstanceCount;
+        }
+        return new { total, visible, layered, shadowed, multiMeshes, nativeInstanceSlots = instances,
+            nativeVisibleInstanceSlots = visibleInstances,
+            note = "Capture-only native allocation/visibility counts; indirect GPU output occupancy is not read back." };
     }
 
     private static object? CaptureTerrainShadowState(

@@ -4,9 +4,14 @@ const TEST_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const PROBE_SCRIPT := preload("res://tools/GameplayCloudTuningProbe.cs")
 const SETTINGS_SCRIPT := preload("res://scripts/ui/GameplayCloudSettings.cs")
 const ISOLATED_PATH := "res://.godot/gameplay_cloud_tuning_smoke.tres"
+const ISOLATION := preload("res://scripts/Tools/MinimapWindContractTest.cs")
+const EXTRA_PREFS := "res://.godot/gameplay-cloud-tuning-preferences"
 var _scene: Node; var _bridge: Node; var _driver: Node; var _clouds: Resource; var _drawer: Node; var _probe: RefCounted
 var _frame := 0; var _stage := 0; var _stage_frame := 0; var _widths: Array[int] = []; var _point_baseline := 1.0
 var _completed_checks := false
+var _finishing := false
+var _failed := false
+var _teardown_frames := 0
 var _autosave_elapsed := 0.0
 var _local_rendering_toggle: CheckButton
 var _local_rendering_toggle_phase := 0
@@ -20,6 +25,10 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
 	_scene = TEST_SCENE.instantiate(); _bridge = _scene.get_node("SunshineCloudBridge"); _driver = _scene.get_node("SunshineCloudsDriver")
 	_clouds = _driver.get("clouds_resource") as Resource; _drawer = _scene.get_node("LiveTuningDrawer"); _point_baseline = float(_driver.get("point_light_power_multiplier"))
+	for name in ["aa", "motion", "water", "wind", "legacy-grass", "grass", "vegetation", "shadows", "surface", "atmosphere", "resolution", "lod", "coverage", "clouds", "rain-haze"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(EXTRA_PREFS + "/" + str(name) + ".tres"))
+	var isolation: Dictionary = ISOLATION.new().ExecuteFixture("isolation", _scene, EXTRA_PREFS)
+	if not bool(isolation.get("pass", false)): _fail("preference isolation failed"); return
 	_probe = PROBE_SCRIPT.new()
 	if not _probe.InstallShared(_bridge, ISOLATED_PATH): _fail("could not install isolated shared defaults"); return
 	# Seed the same persisted-off state a player can leave behind, before the
@@ -32,6 +41,12 @@ func _initialize() -> void:
 	_scene.get_node("RingDayNightCycle").set_process(false)
 
 func _process(_delta: float) -> bool:
+	if _finishing:
+		_teardown_frames += 1
+		if _teardown_frames > 120:
+			push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_FAIL: teardown timed out")
+			quit(1)
+		return false
 	_frame += 1
 	if _completed_checks:
 		_autosave_elapsed += _delta
@@ -41,10 +56,9 @@ func _process(_delta: float) -> bool:
 		if _frame >= _stage_frame + 40 and _autosave_elapsed >= 1.0:
 			if bool(_probe.Status().get("dirty", true)): return _fail("live cloud autosave debounce did not save")
 			_drawer.call("FlushCloudDefaults")
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
-			print("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_PASS widths=%s" % str(_widths))
-			quit(0)
-			return true
+			_finishing = true
+			_teardown.call_deferred()
+			return false
 		return false
 	if _frame == 2: _scene.get_node("RingDayNightCycle").call("set_cycle_fraction", 0.0)
 	if _frame == 10: return _begin_local_rendering_toggle()
@@ -70,9 +84,11 @@ func _exercise_drawer() -> bool:
 	if bool(_probe.Status().get("dirty", true)): return _fail("drawer open/close dirtied defaults")
 	if str(_drawer.call("GetCloudTuningDiagnostics").get("path", "")) != ISOLATED_PATH: return _fail("drawer is not using isolated shared service")
 	if not bool(_probe.VerifySupportedOverrideEquality()): return _fail("supported override equality regression")
+	if not bool(_probe.VerifyCullingPreferenceContract(ISOLATED_PATH + ".culling.tres")): return _fail("culling preference defaults/false/preset/reset contract failed")
+	if not bool(_probe.VerifyTerrainHistoryPreferenceContract(ISOLATED_PATH + ".terrain-history.tres")): return _fail("terrain/history preference false/zero/validation/preset/reset contract failed")
 	# Exercise actual control signals, including all shadow controls that were
 	# previously wired only to temporary fields.
-	for key in ["LightingSteps", "GpuNearShadowMapResolution", "GpuNearShadowRadiusMeters", "GpuNearShadowUpdatesPerSecond", "GpuFarShadowMapResolution", "GpuFarShadowRadiusMeters", "GpuFarShadowUpdatesPerSecond", "GpuShadowVerticalSamples", "ShadowRadiusMeters", "ShadowMapResolution", "ShadowRefreshSeconds"]:
+	for key in ["LightingSteps", "GpuNearShadowMapResolution", "GpuNearShadowRadiusMeters", "GpuNearShadowUpdatesPerSecond", "GpuFarShadowMapResolution", "GpuFarShadowRadiusMeters", "GpuFarShadowUpdatesPerSecond", "GpuShadowVerticalSamples", "ShadowRadiusMeters", "ShadowMapResolution", "ShadowRefreshSeconds", "TerrainCloudShadowStrength", "TerrainCloudShadowGlobalAroundResolution", "TerrainCloudShadowGlobalAcrossResolution", "TerrainCloudShadowAltitudeSlices", "TerrainCloudShadowRegionalResolution", "TerrainCloudShadowRegionalExtentMeters", "TerrainCloudShadowRefreshSeconds", "TerrainCloudShadowTraceVisitBudget", "TerrainCloudShadowTexelsPerFrame", "TerrainCloudShadowSunValidityDegrees", "HistoryDepthToleranceMultiplier"]:
 		var slider := _drawer.find_child(key, true, false) as HSlider
 		if slider == null: return _fail("missing cloud control " + key)
 		slider.value = slider.value - slider.step if slider.value > slider.min_value else slider.value + slider.step
@@ -82,12 +98,29 @@ func _exercise_drawer() -> bool:
 	if not is_equal_approx(float(_probe.ReadOverride("MovingHistoryWeight")), .05): return _fail("history slider companion was not persisted")
 	_probe.Reset(_bridge)
 	_drawer.call("FlushCloudDefaults")
+	for key in ["SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled"]:
+		var toggle := _drawer.find_child(key, true, false) as CheckButton
+		if toggle == null or _drawer.find_children(key, "CheckButton", true, false).size() != 1: return _fail("missing or duplicate culling control " + key)
+		_drawer.call("SetCloudTuningValue", key, true)
+		toggle.button_pressed = false
+		if _probe.ReadOverride(key) != false or bool(_bridge.get(key)): return _fail("culling toggle did not persist false " + key)
+	if not _probe.Save(): return _fail("culling false save failed")
+	_probe.Reload(_bridge)
+	if bool(_clouds.get("skip_empty_cloud_mask_samples")): return _fail("mask sample skip false was not forwarded")
+	if bool(_scene.get_node("ScaledFarViewport").get("FarCloudPatchCullingEnabled")): return _fail("far patch culling false was not forwarded")
+	for key in ["depth_history_rejection_enabled", "cloud_history_compatibility_enabled", "lightning_history_isolation_enabled"]:
+		if bool(_clouds.get(key)): return _fail("history false was not forwarded " + key)
+	var terrain_visibility := _scene.get_node_or_null("TerrainCloudSunVisibility")
+	if terrain_visibility == null: return _fail("terrain sunlight producer missing")
+	_probe.Reset(_bridge)
+	_drawer.call("FlushCloudDefaults")
+	if not bool(_clouds.get("skip_empty_cloud_mask_samples")) or not bool(_scene.get_node("ScaledFarViewport").get("FarCloudPatchCullingEnabled")): return _fail("culling reset did not restore authored forwarding")
 	if _probe.Set(_bridge, "UnknownCloudKey", 1.0) or _probe.Set(_bridge, "Enabled", false) or _probe.Set(_bridge, "CloudDensityMultiplier", NAN): return _fail("invalid override accepted")
 	# UI sliders send floats for integer fields.
 	for pair in [["CloudResolutionScale", 2.0], ["RaymarchSteps", 192.0], ["LightingSteps", 7.0], ["MinStepDistanceMeters", 490.0], ["MaxStepDistanceMeters", 100.0]]: _drawer.call("SetCloudTuningValue", pair[0], pair[1])
 	if int(_bridge.get("CloudResolutionScale")) != 2 or int(_bridge.get("RaymarchSteps")) != 192: return _fail("drawer integer values not applied")
 	if float(_bridge.get("MaxStepDistanceMeters")) < float(_bridge.get("MinStepDistanceMeters")) + 10.0: return _fail("min/max companion failed")
-	if not _verify_live(): return true
+	if not _verify_live(): return false
 	_drawer.call("SetBenchmarkDrawerOpen", false)
 	if bool(_probe.Status().get("dirty", true)): return _fail("drawer close did not flush")
 	return false
@@ -255,4 +288,30 @@ func _verify_live() -> bool:
 	return true
 
 func _fail(reason: String) -> bool:
-	push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_FAIL: " + reason); DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH)); quit(1); return true
+	if _failed: return false
+	_failed = true
+	push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_FAIL: " + reason)
+	if not _finishing:
+		_finishing = true
+		_teardown.call_deferred()
+	return false
+
+func _teardown() -> void:
+	# Free outside the SceneTree _process callback. Give scene-owner cleanup,
+	# cancelled streaming work, and rendering resource retirement time to drain.
+	if is_instance_valid(_scene):
+		if _scene.is_inside_tree(): _scene.queue_free()
+		else: _scene.free()
+	for _settle in range(8): await process_frame
+	_scene = null
+	_bridge = null
+	_driver = null
+	_drawer = null
+	_clouds = null
+	_probe = null
+	for _settle in range(4): await process_frame
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
+	for name in ["aa", "motion", "water", "wind", "legacy-grass", "grass", "vegetation", "shadows", "surface", "atmosphere", "resolution", "lod", "coverage", "clouds", "rain-haze"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(EXTRA_PREFS + "/" + str(name) + ".tres"))
+	if not _failed: print("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_PASS widths=%s" % str(_widths))
+	quit(1 if _failed else 0)

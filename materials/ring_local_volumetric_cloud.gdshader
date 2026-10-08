@@ -1,4 +1,5 @@
 shader_type fog;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 #include "res://materials/celestial_lighting.gdshaderinc"
 
 // Camera-local density tier. Canonical coordinates make the field stationary
@@ -64,6 +65,7 @@ vec3 periodic_ring_position(vec3 canonical_km) {
 void fog() {
 	vec3 local_meters = (UVW - vec3(0.5)) * SIZE;
 	vec3 canonical_km = canonical_origin_km + local_meters * 0.001;
+	vec3 receiver_metres = canonical_km * 1000.0;
 	canonical_km.x -= wind_km_per_second.x * weather_time_seconds;
 	canonical_km.z -= wind_km_per_second.y * weather_time_seconds;
 	vec3 ring_position = periodic_ring_position(canonical_km);
@@ -128,7 +130,11 @@ void fog() {
 		* max(storm_influence, precipitation);
 	vec3 weather_shadow = mix(shadow_color, storm_color, clamp(lower_darkening * 0.92, 0.0, 1.0));
 	vec3 daylight = mix(weather_shadow, sunlit_color, clamp(cloud_height * 0.72 + field * 0.35, 0.0, 1.0));
+	vec3 unshadowed_color = mix(night_color, daylight, day);
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(receiver_metres);
+	daylight -= (daylight - weather_shadow) * (1.0 - terrain_sun);
+	// Native directional fog scattering cannot be intercepted by a fog shader.
 	ALBEDO = mix(night_color, daylight, day);
 	DENSITY = cloud * density_scale * mix(0.82, 1.28, storm_influence);
-	EMISSION = ALBEDO * cloud * mix(0.012, 0.038, day);
+	EMISSION = unshadowed_color * cloud * mix(0.012, 0.038, day);
 }

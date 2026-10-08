@@ -77,8 +77,11 @@ bool accepted(uint id) {
     float half_width = p[5] * .5;
     float handoff = smoothstep(p[3] - half_width, p[3] + half_width, distance_to_camera);
     float final_fade = smoothstep(p[4] - half_width, p[4] + half_width, distance_to_camera);
-    float rank = (float(id) + .5) / float(q.count);
-    float hash = root_hash(vec2(source[base + 16u], source[base + 17u]), id);
+    // Grouped grass retains the canonical leaf rank and leaf-local hash ID.
+    bool canonical_leaf = metadata[id].z > .5;
+    float rank = canonical_leaf ? metadata[id].x : (float(id) + .5) / float(q.count);
+    uint hash_id = canonical_leaf ? uint(metadata[id].y) : id;
+    float hash = root_hash(vec2(source[base + 16u], source[base + 17u]), hash_id);
     if (rank > mix(p[6], p[7], handoff) || hash < final_fade) return false;
     return int(p[11]) == 0 ? hash >= handoff : hash < handoff;
 }

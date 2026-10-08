@@ -8,7 +8,7 @@ using RingworldTechDemo.Voxel.Phase2;
 
 namespace RingworldTechDemo;
 
-/// <summary>Small, canonical-cell anchored rain field for storms seen beyond local particles.</summary>
+/// <summary>Small, canonical-cell anchored rain field for storms seen beyond local rain haze.</summary>
 public partial class RingDistantRainCurtains : Node3D
 {
     [Export] public bool Enabled { get; set; } = true;
@@ -74,6 +74,8 @@ public partial class RingDistantRainCurtains : Node3D
     {
         SamplesLastFrame = 0;
         TerrainQueriesLastFrame = 0;
+        if (_localEffects == null || !GodotObject.IsInstanceValid(_localEffects))
+            _localEffects = GetParent().GetNodeOrNull<RingLocalWeatherEffects>("LocalWeatherEffects");
         ProviderEligible = Enabled && _localEffects?.Enabled == true && _sunshine?.Enabled == true
             && _weather?.Enabled == true && _weather.SunshineCloudsPrimaryRenderer
             && _weather.Quality != RingVolumetricCloudLayer.CloudQuality.Off

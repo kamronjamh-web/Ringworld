@@ -11,7 +11,8 @@ namespace RingworldTechDemo.Voxel.LOD;
 public sealed class RingGpuVegetationCompute : IDisposable
 {
     public const int TreeFloats = 12, TreeCustomFloats = 16, GrassFloats = 20;
-    private const int ParameterBytes = 256, MaximumRootsPerBatch = 1_048_576;
+    private const int ParameterBytes = 256;
+    internal const int MaximumRootsPerBatch = 1_048_576;
     public sealed record BatchRegistration(string Identity, MultiMesh MultiMesh, Mesh Mesh,
         float[] Candidates, Vector4[]? Metadata, int Capacity, Aabb CustomAabb, bool Grass,
         bool TreeCustomData = false, bool TreeDitherData = false);
@@ -24,7 +25,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         float TreeFadeOutStart = -1, float TreeFadeOutEnd = -1);
     public sealed record FrameRequest(Vector3 CameraWorld, uint[] LodBudgets,
         IReadOnlyList<BatchFrameParameters> Batches, bool SkipUnchanged = true,
-        int MaximumBatchesPerDispatch = 0);
+        int MaximumBatchesPerDispatch = 0, int MaximumCandidatesPerDispatch = 0);
 
     private sealed class Batch
     {
@@ -91,6 +92,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private Rid _shader, _pipeline, _budgets;
     private FrameRequest? _pending, _lastRequest;
     private int _pendingGrassFrameRevision, _grassFrameRevision;
+    private int _lastDispatchedCandidateCount;
     private bool _queued, _disposed, _ready, _failed;
     private int _nextId;
     private long _completedUpdates, _skippedUnchangedUpdates, _dispatchCount, _barrierCount, _parameterUploads, _estimatedBytes;
@@ -126,6 +128,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
     public int LastFrameRequestedBatchCount => Volatile.Read(ref _lastFrameRequestedBatchCount);
     /// <summary>Number of batches whose indirect output was updated by the most recently serviced frame.</summary>
     public int LastFrameDispatchedBatchCount => Volatile.Read(ref _lastFrameDispatchedBatchCount);
+    public int LastDispatchedCandidateCount => Volatile.Read(ref _lastDispatchedCandidateCount);
+    public int LastFrameDispatchedCandidateCount => LastDispatchedCandidateCount;
     /// <summary>Valid requested batches retaining their prior indirect result because a grass dispatch budget deferred them.</summary>
     public int DeferredBatchCount => Volatile.Read(ref _deferredBatchCount);
 
@@ -297,13 +301,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
             { Interlocked.Increment(ref _skippedUnchangedUpdates); return true; }
         }
         // Snapshot small frame inputs; callers may reuse their lists next frame.
-        var frames = new BatchFrameParameters[request.Batches.Count];
-        for (int i = 0; i < frames.Length; i++)
-        {
-            BatchFrameParameters frame = request.Batches[i];
-            frames[i] = frame with { GrassFrustumPlanes = frame.GrassFrustumPlanes is null
-                ? null : (Vector4[])frame.GrassFrustumPlanes.Clone() };
-        }
+        BatchFrameParameters[] frames = SnapshotBatchFrames(request.Batches, out _);
         lock (_gate)
         {
             if (_disposed || _failed) return false;
@@ -317,12 +315,40 @@ public sealed class RingGpuVegetationCompute : IDisposable
             if (!unchanged) _grassFrameRevision++;
             _pendingGrassFrameRevision = budgetedGrass ? _grassFrameRevision : 0;
             _pending = new FrameRequest(request.CameraWorld, (uint[])request.LodBudgets.Clone(), frames,
-                request.SkipUnchanged, request.MaximumBatchesPerDispatch);
+                request.SkipUnchanged, request.MaximumBatchesPerDispatch, request.MaximumCandidatesPerDispatch);
             _lastRequest = _pending;
             _lastRequestMembershipRevision = _membershipRevision;
             QueueWork();
             return true;
         }
+    }
+
+    // Arrays are immutable after publication to the render thread. Share only
+    // request-owned copies, never caller arrays or copies from an earlier request.
+    internal static BatchFrameParameters[] SnapshotBatchFrames(
+        IReadOnlyList<BatchFrameParameters> batches, out int frustumCloneCount)
+    {
+        var frames = new BatchFrameParameters[batches.Count];
+        Dictionary<Vector4[], Vector4[]>? copies = null;
+        frustumCloneCount = 0;
+        for (int i = 0; i < frames.Length; i++)
+        {
+            BatchFrameParameters frame = batches[i];
+            Vector4[]? planes = frame.GrassFrustumPlanes;
+            if (planes is not null)
+            {
+                copies ??= new Dictionary<Vector4[], Vector4[]>(ReferenceEqualityComparer.Instance);
+                if (!copies.TryGetValue(planes, out Vector4[]? copy))
+                {
+                    copy = (Vector4[])planes.Clone();
+                    copies.Add(planes, copy);
+                    frustumCloneCount++;
+                }
+                planes = copy;
+            }
+            frames[i] = frame with { GrassFrustumPlanes = planes };
+        }
+        return frames;
     }
 
     private void QueueWork()
@@ -528,11 +554,14 @@ public sealed class RingGpuVegetationCompute : IDisposable
         _selectedWork.Clear();
         bool grassOnly = _work.Count > 0 && AllGrass(_work);
         int maximum = Math.Max(0, frame.MaximumBatchesPerDispatch);
-        if (grassOnly && maximum > 0 && _work.Count > maximum)
-            SelectBudgetedGrassWork(maximum);
+        if (grassOnly && maximum > 0 && (_work.Count > maximum || frame.MaximumCandidatesPerDispatch > 0))
+            SelectBudgetedGrassWork(maximum, frame.MaximumCandidatesPerDispatch);
         else
             _selectedWork.AddRange(_work);
         Volatile.Write(ref _lastFrameDispatchedBatchCount, _selectedWork.Count);
+        int dispatchedCandidates = 0;
+        foreach (var item in _selectedWork) dispatchedCandidates += item.Batch.Count;
+        Volatile.Write(ref _lastDispatchedCandidateCount, dispatchedCandidates);
         Volatile.Write(ref _deferredBatchCount, _work.Count - _selectedWork.Count);
         foreach (var item in _selectedWork)
         {
@@ -673,13 +702,22 @@ public sealed class RingGpuVegetationCompute : IDisposable
     /// of deferred batches. First exposure is favored, then the stable caller order
     /// advances round-robin so a continuously requested batch is reached within
     /// ceil(requested/budget) dispatches.</summary>
-    private void SelectBudgetedGrassWork(int maximum)
+    private void SelectBudgetedGrassWork(int maximum, int maximumCandidates)
     {
         int count = _work.Count;
         if (count == 0 || maximum <= 0) return;
         maximum = Math.Min(maximum, count);
         int start = PositiveModulo(_grassDispatchCursor, count);
         var selected = new HashSet<int>();
+        long candidates = 0;
+        bool TrySelect((Batch Batch, BatchFrameParameters Frame) item)
+        {
+            if (selected.Contains(item.Batch.Id)) return false;
+            // Permit one bounded oversized group so a user-raised group cap cannot starve it forever.
+            if (maximumCandidates > 0 && _selectedWork.Count > 0 && candidates + item.Batch.Count > maximumCandidates) return false;
+            selected.Add(item.Batch.Id); candidates += item.Batch.Count; _selectedWork.Add(item);
+            return true;
+        }
         // New, replaced, or visibility-stale outputs are refreshed before an
         // already-current batch receives another pass. The cursor determines order.
         for (int offset = 0; offset < count && _selectedWork.Count < maximum; offset++)
@@ -687,16 +725,15 @@ public sealed class RingGpuVegetationCompute : IDisposable
             int index = (start + offset) % count;
             var item = _work[index];
             if ((!item.Batch.Dispatched || Volatile.Read(ref item.Batch.CompletedVisibilityRevision) != item.Frame.VisibilityRevision)
-                && selected.Add(item.Batch.Id)) _selectedWork.Add(item);
+                ) TrySelect(item);
         }
         int cursor = start;
         for (int offset = 0; offset < count && _selectedWork.Count < maximum; offset++)
         {
             int index = (start + offset) % count;
             var item = _work[index];
-            if (selected.Add(item.Batch.Id))
+            if (TrySelect(item))
             {
-                _selectedWork.Add(item);
                 cursor = (index + 1) % count;
             }
         }
@@ -869,7 +906,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
 
     private static bool FrameEquals(FrameRequest a, FrameRequest b)
     {
-        if (!a.CameraWorld.Equals(b.CameraWorld) || a.MaximumBatchesPerDispatch != b.MaximumBatchesPerDispatch || a.LodBudgets.Length != b.LodBudgets.Length || a.Batches.Count != b.Batches.Count) return false;
+        if (!a.CameraWorld.Equals(b.CameraWorld) || a.MaximumBatchesPerDispatch != b.MaximumBatchesPerDispatch || a.MaximumCandidatesPerDispatch != b.MaximumCandidatesPerDispatch || a.LodBudgets.Length != b.LodBudgets.Length || a.Batches.Count != b.Batches.Count) return false;
         for (int i = 0; i < a.LodBudgets.Length; i++) if (a.LodBudgets[i] != b.LodBudgets[i]) return false;
         for (int i = 0; i < a.Batches.Count; i++)
         {

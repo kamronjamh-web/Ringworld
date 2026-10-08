@@ -193,7 +193,7 @@ public static class ImportedTreeCatalog
             }
         }
         if (output.GetSurfaceCount() == 0) throw new InvalidOperationException($"{anchor.Name} has no mesh surfaces.");
-        return output;
+        return ImportedTreeWindAttachments.Bake(output);
     }
 
     private static void CopyChannel(Godot.Collections.Array source, Godot.Collections.Array destination, Mesh.ArrayType channel)
@@ -219,6 +219,8 @@ public static class ImportedTreeCatalog
         material.SetShaderParameter("metallic_factor", baseMaterial.Metallic);
         material.SetShaderParameter("roughness_factor", baseMaterial.Roughness);
         bool foliageCutout = baseMaterial.Transparency != BaseMaterial3D.TransparencyEnum.Disabled;
+        bool billboard = baseMaterial.ResourceName.Contains("Billboard", StringComparison.OrdinalIgnoreCase);
+        material.SetShaderParameter("tree_foliage_mode", billboard ? 2 : foliageCutout ? 1 : 0);
         material.SetShaderParameter("use_alpha_cutout", foliageCutout);
         material.SetShaderParameter("alpha_cutoff", baseMaterial.Transparency == BaseMaterial3D.TransparencyEnum.AlphaScissor ? baseMaterial.AlphaScissorThreshold : .25f);
         // Maple's glTF bark metallic/roughness map explicitly uses TEXCOORD_1.

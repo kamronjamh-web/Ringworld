@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://ciytl0qlnqxl5"
+path="res://.godot/imported/ring_rain_haze_composite.glsl-619926274d18b26ae067de0a703f6496.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_rain_haze_composite.glsl"
+dest_files=["res://.godot/imported/ring_rain_haze_composite.glsl-619926274d18b26ae067de0a703f6496.res"]
+
+[params]
+

@@ -95,7 +95,7 @@ void fragment() {
 			soil_surface = smoothstep(1.5, 1.9, UV2.x);
 		}
 		float upward = smoothstep(0.45, 0.78, dot(world_normal, normalize(surface_up_world)));
-		grass_coverage_upward = upward;
+		grass_coverage_upward = upward * soil_surface;
 		float biome_surface = upward * soil_surface;
 		base_color = mix(dirt, surface_texture, biome_surface);
 		if (!biome_texture_weights_enabled) {

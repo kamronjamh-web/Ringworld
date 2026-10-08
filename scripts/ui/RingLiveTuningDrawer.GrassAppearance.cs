@@ -6,15 +6,19 @@ public partial class RingLiveTuningDrawer
 {
     private void BuildGrassAppearanceControls(VBoxContainer tab)
     {
-        VBoxContainer appearance = AddGrassGroup(tab, "Biome appearance", "Choose density, height and tint for each environment, and how grass blends into distant terrain.");
+        VBoxContainer appearance = AddGrassGroup(tab, "Biome appearance", "Choose density, height and tint for each environment. Both blade faces use ground-facing illumination by default. Enable legacy blade side shading for directional blade darkening. Terrain color match applies at every distance, retaining blade brightness variation nearby. The distance band finishes ground lighting and brightness convergence before roots disappear.");
         AddGrassToggle(appearance, "EnableGrassAppearance", "Enable biome grass appearance");
+        AddGrassToggle(appearance, "EnableGrassBladeShading", "Blade side shading (legacy)");
         AddGrassSlider(appearance, "GrasslandBiomeDensity", "Grassland density", 0, 2, .01);
         AddGrassSlider(appearance, "ForestBiomeDensity", "Forest density", 0, 2, .01);
         AddGrassSlider(appearance, "SparseBiomeDensity", "Sparse density", 0, 2, .01);
         AddGrassSlider(appearance, "GrasslandBiomeHeight", "Grassland height", .25, 2, .01);
         AddGrassSlider(appearance, "ForestBiomeHeight", "Forest height", .25, 2, .01);
         AddGrassSlider(appearance, "SparseBiomeHeight", "Sparse height", .25, 2, .01);
-        AddGrassSlider(appearance, "GrassTerrainHandoffStrength", "Terrain color handoff", 0, 1, .01);
+        AddGrassSlider(appearance, "GrassTerrainHandoffStrength", "Terrain color match", 0, 1, .01);
+        AddGrassSlider(appearance, "GrassTerrainBlendStartPercent", "Ground convergence start (% of draw distance)", 0, 99, 1);
+        AddGrassSlider(appearance, "GrassTerrainBlendEndPercent", "Ground convergence end (% of draw distance)", 1, 100, 1);
+        AddGrassSlider(appearance, "GrassTerrainLightingMatch", "Ground lighting match", 0, 1, .01);
         AddGrassAppearanceColor(appearance, "GrasslandBiomeTint", "Grassland tint");
         AddGrassAppearanceColor(appearance, "ForestBiomeTint", "Forest tint");
         AddGrassAppearanceColor(appearance, "SparseBiomeTint", "Sparse tint");

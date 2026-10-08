@@ -70,6 +70,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     private RingPerformanceMonitor? _performanceMonitor;
     private RingLodDebugHud? _performanceHud;
     private PanelContainer? _drawer;
+    private TuningPopupIsolation? _popupIsolation;
     private Tween? _tween;
     private bool _open;
     private Label? _cloudStatus;
@@ -93,6 +94,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     public override void _Ready()
     {
         ProcessMode = ProcessModeEnum.Always;
+        _popupIsolation = new TuningPopupIsolation(this);
         _biomeAuthoringPreview = GetNodeOrNull<Node>(BiomeAuthoringPreviewPath);
         _generationPreview = GetNodeOrNull<Node>(GenerationPreviewPath);
         if (_generationPreview != null)
@@ -144,6 +146,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeAntiAliasingTuning();
         InitializeMotionTuning();
         InitializeWaterTuning();
+        InitializeWindTuning();
+        InitializeRainHazeTuning();
         InitializeGrassTuning();
         InitializeVegetationTuning();
         InitializeShadowTuning();
@@ -175,6 +179,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     public override void _ExitTree()
     {
+        _popupIsolation?.Dispose();
+        _popupIsolation = null;
         if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
             FlushSurfaceTerrainDefaults();
@@ -185,6 +191,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushAntiAliasingDefaults();
         FlushMotionDefaults();
         FlushWaterDefaults();
+        FlushWindDefaults();
+        FlushRainHazeDefaults();
         FlushGrassDefaults();
         _vegetationDefaults?.Save();
         FlushShadowDefaults();
@@ -218,6 +226,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             }
         }
         ProcessWaterTuning(delta);
+        ProcessWindTuning(delta);
+        ProcessRainHazeTuning(delta);
         ProcessShadowTuning(delta);
         ProcessAtmosphereTuning(delta);
         ProcessAntiAliasingTuning(delta);
@@ -323,6 +333,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         else
             BuildSurfaceTerrainPrototypeLaunch(tabs);
         BuildWaterTab(tabs);
+        BuildWindTab(tabs);
         BuildGrassTab(tabs);
         BuildVegetationTab(tabs);
         BuildDiagnosticsTab(tabs);
@@ -428,6 +439,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     {
         VBoxContainer tab = CreateTab(tabs, "Shadows");
         BuildPersistentShadowControls(tab);
+        AddTerrainCloudShadowControls(tab);
         VBoxContainer cloudShadows = TuningMenuUi.CreateSection(tab, "Cloud shadow state");
         AddPersistentToggle(cloudShadows, "CastCloudShadows", "Cloud shadows", _cloudBridge?.CastCloudShadows ?? true);
         AddPersistentSlider(cloudShadows, "ShadowStrength", "Cloud shadow strength", 0, 1, .01, _cloudBridge?.ShadowStrength ?? .98);
@@ -471,10 +483,13 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         handoff.AddChild(_effectiveCloudHandoffStatus);
         AddPersistentSlider(handoff, "NaturalCloudBaseAltitudeMeters", "Cloud base altitude", 0, 19000, 50, _cloudBridge?.NaturalCloudBaseAltitudeMeters ?? 2000); AddPersistentSlider(handoff, "NaturalCloudTopAltitudeMeters", "Cloud top altitude", 500, 20000, 50, _cloudBridge?.NaturalCloudTopAltitudeMeters ?? 6000); AddPersistentSlider(handoff, "StormFrontCloudBaseAltitudeMeters", "Storm-front base altitude", 0, 5000, 50, _cloudBridge?.StormFrontCloudBaseAltitudeMeters ?? 500);
         VBoxContainer distant = TuningMenuUi.CreateSection(tab, "Distant clouds");
+        AddPersistentToggle(distant, "FarCloudPatchCullingEnabled", "Cull off-screen distant cloud patches", _cloudBridge?.FarCloudPatchCullingEnabled ?? true);
         AddPersistentToggle(distant, "FarCloudDetailEnabled", "Reuse Sunshine density", _cloudBridge?.FarCloudDetailEnabled ?? true); AddPersistentSlider(distant, "FarCloudDetailStrength", "Shared detail strength", 0, 1, .01, _cloudBridge?.FarCloudDetailStrength ?? 1); AddPersistentSlider(distant, "FarCloudOpacityMultiplier", "Distant opacity", 0, 2, .01, _cloudBridge?.FarCloudOpacityMultiplier ?? 1); AddPersistentSlider(distant, "FarCloudRadiusMeters", "Distant cloud radius", 30000, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters, 5000, _cloudBridge?.FarCloudRadiusMeters ?? 180000); AddPersistentSlider(distant, "CloudPatchiness", "Coverage variation", 0, 1, .01, _cloudBridge?.CloudPatchiness ?? 1); AddPersistentSlider(distant, "CloudPatchScaleMeters", "Weather patch size", 16000, 256000, 1000, _cloudBridge?.CloudPatchScaleMeters ?? 64000); AddPersistentSlider(distant, "ClearSkyThreshold", "Clear-sky threshold", 0, .6, .01, _cloudBridge?.ClearSkyThreshold ?? .12);
         VBoxContainer storm = TuningMenuUi.CreateSection(tab, "Storm shaping"); AddPersistentToggle(storm, "SculptLocalizedStorms", "Sculpt local storms", _cloudBridge?.SculptLocalizedStorms ?? true); AddPersistentSlider(storm, "StormSculptStrength", "Storm sculpt strength", 0, 1, .01, _cloudBridge?.StormSculptStrength ?? .92); AddPersistentSlider(storm, "StormPillarRadiusMeters", "Storm pillar radius", 1000, 8000, 250, _cloudBridge?.StormPillarRadiusMeters ?? 4200); AddPersistentSlider(storm, "AnvilRadiusMultiplier", "Storm anvil spread", 1.2, 4, .1, _cloudBridge?.AnvilRadiusMultiplier ?? 2.6);
         VBoxContainer lighting = TuningMenuUi.CreateSection(tab, "Lighting & history"); AddPersistentColorSlider(lighting, "DayCloudAmbientColor", "Cloud ambient day", _cloudBridge?.DayCloudAmbientColor ?? Colors.White); AddPersistentColorSlider(lighting, "NightCloudAmbientColor", "Cloud ambient night", _cloudBridge?.NightCloudAmbientColor ?? Colors.White); AddPersistentSlider(lighting, "DitherSpeed", "Blue-noise motion", 0, 60, 1, _cloudBridge?.DitherSpeed ?? 0); AddPersistentSlider(lighting, "RayStartJitterStrength", "Ray-start jitter", 0, 1, .01, _cloudBridge?.RayStartJitterStrength ?? 1); AddPersistentSlider(lighting, "StationaryHistoryWeight", "Stationary history", 0, .95, .01, _cloudBridge?.StationaryHistoryWeight ?? .95); AddPersistentSlider(lighting, "MovingHistoryWeight", "Moving history", 0, .95, .01, _cloudBridge?.MovingHistoryWeight ?? .13); AddPersistentSlider(lighting, "ShadowExtinctionPerKilometer", "Shadow extinction / km", .05, 2, .05, _cloudBridge?.ShadowExtinctionPerKilometer ?? 1.4); AddPersistentSlider(lighting, "StormAmbientFloor", "Storm ambient floor", .02, .5, .01, _cloudBridge?.StormAmbientFloor ?? .14); AddPersistentSlider(lighting, "StormAmbientOcclusionStrength", "Storm ambient occlusion", 0, 1, .01, _cloudBridge?.StormAmbientOcclusionStrength ?? .86);
+        AddCloudHistoryPolicyControls(lighting);
         VBoxContainer showcase = TuningMenuUi.CreateSection(tab, "Showcase"); AddCloudShowcaseControls(showcase);
+        BuildRainHazeControls(tab);
         AddCloudDefaultsFooter(tab);
         AddCloudProviderControls(TuningMenuUi.CreateSection(tab, "Provider"));
     }
@@ -483,9 +498,11 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     {
         VBoxContainer tab = CreateTab(tabs, "Quality");
         VBoxContainer raymarch = TuningMenuUi.CreateSection(tab, "Raymarch");
+        AddPersistentToggle(raymarch, "SkipEmptyCloudMaskSamples", "Skip empty cloud mask samples", _cloudBridge?.SkipEmptyCloudMaskSamples ?? true);
         AddPersistentOption(raymarch, "CloudResolutionScale", "Resolution", new[] { "Native", "Half", "Quarter" }, _cloudBridge?.CloudResolutionScale ?? 0); AddPersistentSlider(raymarch, "RaymarchSteps", "View / raymarch steps", 64, RingSunshineCloudBridge.MaximumRaymarchSteps, 8, _cloudBridge?.RaymarchSteps ?? 128); AddPersistentSlider(raymarch, "LightingSteps", "Lighting steps", 1, RingSunshineCloudBridge.MaximumLightingSteps, 1, _cloudBridge?.LightingSteps ?? 8); AddPersistentSlider(raymarch, "MinStepDistanceMeters", "Minimum step", 10, RingSunshineCloudBridge.MaximumMinimumStepDistanceMeters, 1, _cloudBridge?.MinStepDistanceMeters ?? 90); AddPersistentSlider(raymarch, "MaxStepDistanceMeters", "Maximum step", 100, RingSunshineCloudBridge.MaximumStepDistanceMeters, 1, _cloudBridge?.MaxStepDistanceMeters ?? 560); AddPersistentSlider(raymarch, "LightingTravelKm", "Lighting travel", .5, RingSunshineCloudBridge.MaximumLightingTravelKm, .1, _cloudBridge?.LightingTravelKm ?? 7); AddPersistentSlider(raymarch, "CloudLodBias", "Cloud LOD bias", .1, RingSunshineCloudBridge.MaximumCloudLodBias, .01, _cloudBridge?.CloudLodBias ?? .9);
         VBoxContainer reconstruction = TuningMenuUi.CreateSection(tab, "Reconstruction");
         AddPersistentSlider(reconstruction, "BlurPower", "Upsample blur", 0, 6, .1, _cloudBridge?.BlurPower ?? .1); AddPersistentSlider(reconstruction, "BlurQuality", "Blur quality", 1, 4, 1, _cloudBridge?.BlurQuality ?? 1); AddPersistentToggle(reconstruction, "FastReconstruction", "Fast reconstruction", _cloudBridge?.FastReconstruction ?? false);
+        BuildRainHazeControls(tab);
         AddCloudDefaultsFooter(tab);
     }
 
@@ -495,7 +512,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentToggle(tab, "CloudRenderingEnabled", "Sunshine local rendering", _cloudBridge?.CloudRenderingEnabled ?? true);
         AddPersistentSlider(tab, "CloudCoverageBias", "Coverage bias", -1, 1, .01, _cloudBridge?.CloudCoverageBias ?? 0);
         AddPersistentSlider(tab, "CloudDensityMultiplier", "Density multiplier", 0, 3, .01, _cloudBridge?.CloudDensityMultiplier ?? 1);
-        AddPersistentSlider(tab, "CloudWindMultiplier", "Wind multiplier", 0, 3, .01, _cloudBridge?.CloudWindMultiplier ?? 1);
+        AddPersistentSlider(tab, "CloudWindMultiplier", "Cloud travel multiplier", 0, 3, .01, _cloudBridge?.CloudWindMultiplier ?? 1);
         AddPersistentSlider(tab, "CloudDirectLightMultiplier", "Direct light multiplier", 0, 2, .01, _cloudBridge?.CloudDirectLightMultiplier ?? 1);
         AddPersistentSlider(tab, "CloudAmbientMultiplier", "Ambient multiplier", 0, 2, .01, _cloudBridge?.CloudAmbientMultiplier ?? 1);
         AddPersistentSlider(tab, "CloudSharpness", "Cloud sharpness", 0, 1, .01, _cloudBridge?.CloudSharpness ?? .62);
@@ -573,6 +590,21 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     }
     private static string CloudTooltip(string key) => key switch
     {
+        "SkipEmptyCloudMaskSamples" => "Skips weather-texture reads outside the cloud layer while preserving ray positions, fog, and cloud history.",
+        "TerrainCloudShadowEnabled" => "Uses terrain sunlight visibility to shade clouds behind ring terrain. Does not control cloud shadows cast onto terrain.",
+        "TerrainCloudShadowStrength" => "Strength of terrain sunlight occlusion in clouds. Zero preserves unoccluded cloud lighting.",
+        "TerrainCloudShadowGlobalAroundResolution" or "TerrainCloudShadowGlobalAcrossResolution" or "TerrainCloudShadowRegionalResolution" => "Sunlight visibility map resolution. Rounded up to a power of two; larger maps improve detail and increase work and memory.",
+        "TerrainCloudShadowAltitudeSlices" => "Vertical sunlight visibility layers. More slices distinguish cloud heights at greater cost.",
+        "TerrainCloudShadowRegionalExtentMeters" => "Span of the higher-detail terrain visibility map around the explorer.",
+        "TerrainCloudShadowRefreshSeconds" => "Minimum interval between terrain visibility refreshes. Larger intervals reduce work but react more slowly.",
+        "TerrainCloudShadowTraceVisitBudget" => "Maximum terrain hierarchy visits per texel. More visits improve difficult terrain traces at higher cost.",
+        "TerrainCloudShadowTexelsPerFrame" => "Maximum visibility texels processed per frame. Larger budgets publish refreshed maps sooner with more frame work.",
+        "TerrainCloudShadowSunValidityDegrees" => "Maximum sun-angle change before cached terrain visibility becomes stale. Smaller values demand fresher maps.",
+        "DepthHistoryRejectionEnabled" => "Rejects cloud history whose opaque depth no longer matches the current view.",
+        "HistoryDepthToleranceMultiplier" => "Scales depth-history acceptance tolerance. Lower values reject more aggressively; higher values retain more history.",
+        "CloudHistoryCompatibilityEnabled" => "Rejects cloud history when cloud density or lighting is incompatible with the current sample.",
+        "LightningHistoryIsolationEnabled" => "Keeps transient lightning illumination from persisting in normal cloud history.",
+        "FarCloudPatchCullingEnabled" => "Conservatively hides distant cloud mesh patches outside their viewport's frustum. Visible patches keep the same density and shading.",
         "CloudResolutionScale" => "Native is sharpest and most expensive; Half and Quarter reduce cloud render cost.",
         "RaymarchSteps" => "More view steps improve detail but increase GPU raymarch cost.",
         "LightingSteps" => "More lighting samples improve scattering at additional GPU cost.",
@@ -681,7 +713,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             if (_cloudProvider == null) return;
             _cloudProvider.ClpCoverage = (float)value; _cloudProvider.ApplyClpTuning();
         }, clpAvailable);
-        AddSlider(tab, "CLP wind", 0.05, 4, 0.05, _cloudProvider?.ClpWind ?? 1, value =>
+        AddSlider(tab, "CLP provider travel", 0.05, 4, 0.05, _cloudProvider?.ClpWind ?? 1, value =>
         {
             if (_cloudProvider == null) return;
             _cloudProvider.ClpWind = (float)value; _cloudProvider.ApplyClpTuning();
@@ -986,8 +1018,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             _drawer.Visible = open;
             return;
         }
-        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); }
+        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

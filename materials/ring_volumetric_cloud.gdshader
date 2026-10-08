@@ -1,4 +1,6 @@
 shader_type fog;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
+uniform float terrain_cloud_receiver_height_meters = 0.0;
 #include "res://materials/celestial_lighting.gdshaderinc"
 
 // Camera-local cloud detail. The enclosing FogVolume supplies the finite
@@ -62,7 +64,13 @@ void fog() {
 	float day = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot,
 		dot(normalize(surface_up), normalize(sun_direction))));
 	vec3 day_color = mix(shadow_color, sunlit_color, clamp(height * 0.55 + cloud * 0.65, 0.0, 1.0));
+	vec3 unshadowed_color = mix(night_color, day_color, day);
+	vec2 receiver_km = canonical_origin_km + local_km;
+	float receiver_height = terrain_cloud_receiver_height_meters + (UVW.y - 0.5) * SIZE.y * world_units_to_km * 1000.0;
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(vec3(receiver_km.x * 1000.0, receiver_height, receiver_km.y * 1000.0));
+	day_color -= (day_color - shadow_color) * (1.0 - terrain_sun);
+	// Only authored solar tint is masked; native fog light scattering is unchanged.
 	ALBEDO = mix(night_color, day_color, day);
 	DENSITY = cloud * density_scale;
-	EMISSION = ALBEDO * cloud * mix(0.025, 0.065, day);
+	EMISSION = unshadowed_color * cloud * mix(0.025, 0.065, day);
 }

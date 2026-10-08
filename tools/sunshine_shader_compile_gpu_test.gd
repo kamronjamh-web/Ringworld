@@ -9,6 +9,8 @@ const SOURCES := [
 	"res://addons/SunshineClouds2/SunshineCloudShadowCompute.glsl",
 	"res://addons/SunshineClouds2/SunshineCloudsDisplay.glsl",
 	"res://addons/SunshineClouds2/SunshineCloudsDisplay.msaa.glsl",
+	"res://scripts/render/ring_rain_haze_composite.glsl",
+	"res://materials/ring_terrain_cloud_sun_generate.glsl",
 ]
 
 func _initialize() -> void:
@@ -35,14 +37,22 @@ func _initialize() -> void:
 			_fail("%s compile failed: %s" % [source_path, compile_error])
 			return
 		var imported := ResourceLoader.load(source_path) as RDShaderFile
-		if imported != null:
-			var imported_spirv: RDShaderSPIRV = imported.get_spirv()
-			if is_raster:
-				var vertex_match: bool = imported_spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_VERTEX) == spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_VERTEX)
-				var fragment_match: bool = imported_spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_FRAGMENT) == spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_FRAGMENT)
-				print("Sunshine raster import/source bytecode match: %s vertex=%s fragment=%s" % [source_path, vertex_match, fragment_match])
-			else:
-				print("Sunshine import/source bytecode match: %s = %s" % [source_path, imported_spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_COMPUTE) == spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_COMPUTE)])
+		if imported == null:
+			rd.free()
+			_fail("%s imported shader missing" % source_path)
+			return
+		var imported_spirv: RDShaderSPIRV = imported.get_spirv()
+		if imported_spirv == null:
+			rd.free()
+			_fail("%s imported SPIR-V missing" % source_path)
+			return
+		var stages := [RenderingDevice.SHADER_STAGE_VERTEX, RenderingDevice.SHADER_STAGE_FRAGMENT] if is_raster else [RenderingDevice.SHADER_STAGE_COMPUTE]
+		for stage in stages:
+			if imported_spirv.get_stage_bytecode(stage) != spirv.get_stage_bytecode(stage):
+				rd.free()
+				_fail("%s imported stage %d differs from fresh source; reimport the shader" % [source_path, stage])
+				return
+		print("Sunshine import/source bytecode match: %s" % source_path)
 		var shader: RID = rd.shader_create_from_spirv(spirv)
 		if not shader.is_valid():
 			rd.free()

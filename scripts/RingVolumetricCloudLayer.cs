@@ -19,6 +19,8 @@ public partial class RingVolumetricCloudLayer : Node3D
 {
     /// <summary>Authoritative persistent simulation clock for every seeded weather consumer.</summary>
     public double CloudSimulationTimeSeconds { get; set; }
+    /// <summary>Session-only capture pause; weather queries and presentation continue processing.</summary>
+    public bool CloudSimulationPaused { get; set; }
     public enum CloudQuality
     {
         Off = 0,
@@ -49,7 +51,8 @@ public partial class RingVolumetricCloudLayer : Node3D
         Vector2 WindMetersPerSecond,
         CloudFormationProfile DominantFormationProfile,
         float CloudBaseAltitudeMeters,
-        float CloudTopAltitudeMeters);
+        float CloudTopAltitudeMeters)
+    { public bool InheritWind { get; init; } }
 
     [Export] public bool Enabled { get; set; } = true;
     [Export] public CloudQuality Quality { get; set; } = CloudQuality.High;
@@ -418,6 +421,8 @@ public partial class RingVolumetricCloudLayer : Node3D
 
     public override void _Ready()
     {
+        RingworldTechDemo.Weather.RingWindSettings.Current = new();
+        RingworldTechDemo.UI.GameplayWindDefaults.ApplyStartup(string.IsNullOrEmpty(WindPreferencesPath) ? null : WindPreferencesPath, string.IsNullOrEmpty(LegacyGrassPreferencesPath) ? null : LegacyGrassPreferencesPath);
         _externalVolumetricRendererOwnsLocalClouds = SunshineCloudsPrimaryRenderer;
         if (!CloudPhysicalCatalog.Validate(out string catalogSummary))
             GD.PushError(catalogSummary);
@@ -556,6 +561,8 @@ public partial class RingVolumetricCloudLayer : Node3D
 
     public override void _ExitTree()
     {
+        RingTerrainCloudSunVisibility.Instance?.UnregisterRequiredAltitudeRange("mesh_clouds");
+        SharedWindField.Dispose();
         RingCloudShadowProjector.Disable();
         _archetypeCancellation?.Cancel();
         _archetypeCancellation?.Dispose();
@@ -572,7 +579,7 @@ public partial class RingVolumetricCloudLayer : Node3D
     {
         // Advance before the Sunshine early-out: Sunshine, the far atlas and
         // mesh fallback must all query the same continuous weather timeline.
-        CloudSimulationTimeSeconds += Math.Max(0.0, delta);
+        if (!CloudSimulationPaused) CloudSimulationTimeSeconds += Math.Max(0.0, delta);
         ProcessSharedLightning();
         if (_grid == null || _explorer == null || _cloudContainer == null) return;
         // Sunshine queries this node's deterministic weather field directly.
@@ -583,6 +590,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         // available for runtime handoffs, but skip the legacy presentation work.
         if (IsLegacyMeshFallbackIdle())
         {
+            RingTerrainCloudSunVisibility.Instance?.SetReceiverDemand("mesh_clouds", false);
             if (!_farOwnershipConfigured) SyncFarCloudOwnership();
             return;
         }
@@ -3148,6 +3156,27 @@ public partial class RingVolumetricCloudLayer : Node3D
         {
             return;
         }
+        float terrainCloudMinimum = CloudBaseMeters, terrainCloudMaximum = CloudTopMeters;
+        foreach (CloudPhysicalDefinition cloud in CloudPhysicalCatalog.All)
+        {
+            terrainCloudMinimum = Math.Min(terrainCloudMinimum, cloud.MinimumAltitudeMeters);
+            terrainCloudMaximum = Math.Max(terrainCloudMaximum, cloud.MaximumAltitudeMeters);
+        }
+        RingTerrainCloudSunVisibility.Instance?.RegisterRequiredAltitudeRange("mesh_clouds", terrainCloudMinimum, terrainCloudMaximum);
+        RingTerrainCloudSunVisibility.Instance?.SetReceiverDemand("mesh_clouds",
+            (_runtimeEnabled && _localMeshCloudsVisible) || (_showcaseInstance?.Visible ?? false));
+        RingLodGeometrySnapshot terrainCloudGeometry = _grid.CaptureLodGeometrySnapshot();
+        foreach (ShaderMaterial? receiver in new[] { _material, _transitionMaterial, _unionMaterial, _unionTransitionMaterial, _showcaseMaterial })
+        {
+            if (receiver == null) continue;
+            receiver.SetShaderParameter("terrain_cloud_world_to_ring", _grid.GlobalBasis.Inverse());
+            receiver.SetShaderParameter("terrain_cloud_ring_geometry", new Vector3(
+                (float)terrainCloudGeometry.RingRadiusMeters,
+                (float)terrainCloudGeometry.RingVerticalBaseOffsetMeters,
+                (float)terrainCloudGeometry.RingAcrossBaseOffsetMeters));
+            receiver.SetShaderParameter("ring_center", _grid.GetCanonicalRingCenterWorld());
+            RingTerrainCloudSunVisibility.Instance?.BindToMaterial(receiver);
+        }
         RingCanonicalPosition player = _explorer.CanonicalPosition;
         double circumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
         double angle = WrapAround(player.AroundMeters) / circumference * Math.Tau;
@@ -3232,9 +3261,9 @@ public partial class RingVolumetricCloudLayer : Node3D
     /// Far atlas snapshots and restored sessions must use this instead of an
     /// elapsed-frame approximation.
     /// </summary>
-    public LocalWeatherState QueryLocalWeatherAtTime(
+    private LocalWeatherState QueryRawWeatherAtTime(
         in RingCanonicalPosition position,
-        double timeSeconds)
+        double timeSeconds, bool windHistory = false, bool ignoreManual = false)
     {
         if (_grid == null) return default;
         timeSeconds = double.IsFinite(timeSeconds) ? Math.Max(0.0, timeSeconds) : 0.0;
@@ -3300,7 +3329,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         Vector2 systemRadii = hasWeatherSystem
             ? new Vector2(macro.RadiusMeters, macro.MinorRadiusMeters)
             : Vector2.Zero;
-        return ApplyManualWeather(position, new LocalWeatherState(
+        var natural = new LocalWeatherState(
             macro.SystemId,
             macro.Kind,
             macro.CombinedInfluence,
@@ -3313,7 +3342,8 @@ public partial class RingVolumetricCloudLayer : Node3D
             WeatherWindMetersPerSecond,
             dominantProfile,
             verticalProfile.BaseAltitudeMeters,
-            verticalProfile.TopAltitudeMeters));
+            verticalProfile.TopAltitudeMeters) { InheritWind = true };
+        return ignoreManual ? natural : ApplyManualWeather(position, natural, windHistory ? timeSeconds : null);
     }
 
     /// <summary>Godot-friendly deterministic sample for smoke diagnostics.</summary>

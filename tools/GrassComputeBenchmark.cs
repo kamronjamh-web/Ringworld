@@ -31,9 +31,13 @@ public partial class GrassComputeBenchmark : Node3D
     private RingGpuVegetationCompute? _compute;
     private Camera3D? _camera;
     private int _roots, _fixtureRoots, _fixtureSources, _candidatesPerTile, _warmup, _frames, _repetitions, _computeSources, _staticSources;
-    private bool _quick, _renderMatrix;
+    private bool _quick, _renderMatrix, _indexingMatrix;
+    private readonly List<object> _geometry = new();
+    private readonly List<object> _equivalence = new();
+    private readonly Dictionary<(int Repetition, string View, string Case), Image> _captures = new();
+    private string ArtifactDirectory => _indexingMatrix ? "res://artifacts/grass-indexing-benchmark" : "res://artifacts/grass-compute-benchmark";
 
-    private sealed record Profile(string Name, bool TileReject, int SourceDivisor, bool StaticFar, bool Card, bool Grouped, bool ReducedNear = false, bool SingleRibbon = false, bool Simplified = false, bool Hidden = false, bool Frozen = false);
+    private sealed record Profile(string Name, bool TileReject, int SourceDivisor, bool StaticFar, bool Card, bool Grouped, bool ReducedNear = false, bool SingleRibbon = false, bool Simplified = false, bool Hidden = false, bool Frozen = false, bool Indexed = true);
     private sealed record Sample(string Case, int Repetition, int Roots, int Sources, int ActiveBatches,
         int SubmittedBatches, long CandidateTests, long Dispatches, long RootBufferBytes, long OutputBytes,
         double CpuSubmitMedianMs, double WallMedianMs, double WallP95Ms, double? ViewportCpuMedianMs,
@@ -50,7 +54,11 @@ public partial class GrassComputeBenchmark : Node3D
             RenderingServer.ViewportSetMeasureRenderTime(GetViewport().GetViewportRid(), true);
             RenderingServer.GlobalShaderParameterSet("ring_local_wind_enabled", 1.0f); RenderingServer.GlobalShaderParameterSet("ring_local_wind_vector", new Vector2(4, .9f)); RenderingServer.GlobalShaderParameterSet("ring_local_wind_wave", Vector4.Zero);
             RingPerformanceTelemetry.Configure(true, 8192); RingPerformanceGpu.Configure(true);
-            var profiles = _renderMatrix ? new[] {
+            var profiles = _indexingMatrix ? new[] {
+                new Profile("adopted_hidden", false, 4, false, false, false, ReducedNear: true, SingleRibbon: true, Hidden: true, Frozen: true),
+                new Profile("adopted_unindexed", false, 4, false, false, false, ReducedNear: true, SingleRibbon: true, Frozen: true, Indexed: false),
+                new Profile("adopted_indexed", false, 4, false, false, false, ReducedNear: true, SingleRibbon: true, Frozen: true),
+            } : _renderMatrix ? new[] {
                 new Profile("frozen_grass_hidden", false, 4, false, false, false, Hidden: true, Frozen: true),
                 new Profile("frozen_four_segment_crossed_baseline", false, 4, false, false, false, Frozen: true),
                 new Profile("frozen_two_segment_near", false, 4, false, false, false, ReducedNear: true, Frozen: true),
@@ -70,12 +78,21 @@ public partial class GrassComputeBenchmark : Node3D
                 // Alternating direction prevents a fixed thermal/order bias.
                 IEnumerable<Profile> order = (repetition & 1) == 0 ? profiles : profiles.Reverse();
                 foreach (Profile profile in order) await Measure(profile, repetition + 1);
+                if (_indexingMatrix) VerifyIndexingCaptures(repetition + 1);
             }
             await DrainOutsideTimedWindow(12);
-            WriteArtifacts(); Result = "PASS wrote artifacts/grass-compute-benchmark/report.json";
+            WriteArtifacts(); Result = "PASS wrote " + ArtifactDirectory + "/report.json";
         }
-        catch (Exception e) { Result = "FAIL " + e.GetType().Name + ": " + e.Message; }
-        finally { TearDown(); RingPerformanceGpu.Configure(false); RingPerformanceTelemetry.Configure(false); }
+        catch (Exception e)
+        {
+            Result = "FAIL " + e.GetType().Name + ": " + e.Message;
+            if (_indexingMatrix) { try { WriteArtifacts(); } catch (Exception writeError) { GD.PushError("indexing failure report: " + writeError.Message); } }
+        }
+        finally
+        {
+            foreach (Image image in _captures.Values) image.Dispose(); _captures.Clear();
+            TearDown(); RingPerformanceGpu.Configure(false); RingPerformanceTelemetry.Configure(false);
+        }
     }
 
     private void Configure()
@@ -83,6 +100,8 @@ public partial class GrassComputeBenchmark : Node3D
         string[] args = OS.GetCmdlineUserArgs();
         _quick = args.Contains("--grass-compute-benchmark-quick");
         _renderMatrix = args.Contains("--grass-render-matrix");
+        _indexingMatrix = args.Contains("--grass-indexing-matrix");
+        if (_renderMatrix && _indexingMatrix) throw new ArgumentException("choose either render or indexing matrix");
         _roots = ReadInt(args, "--grass-compute-roots", DefaultRoots);
         if (_roots is < 32_768 or > 2_097_152) throw new ArgumentOutOfRangeException("--grass-compute-roots", "must be 32768..2097152");
         _warmup = _quick ? 12 : Math.Max(60, ReadInt(args, "--grass-compute-warmup", 60));
@@ -127,10 +146,17 @@ public partial class GrassComputeBenchmark : Node3D
     private void Build(Profile p)
     {
         _compute = new RingGpuVegetationCompute(p.Grouped); // companion backend adds the optional diagnostic argument.
-        Mesh mesh = p.Card ? GrassComputeBenchmarkAssets.MakeCardClump() : p.SourceDivisor == 4 ? (_renderMatrix ? RingGrassMeshFactory.CreateClump(p.ReducedNear ? 2 : 4) : GrassComputeBenchmarkAssets.MakeSolidClump(4)) : RingGrassMeshFactory.Create();
+        Mesh mesh = p.Card ? GrassComputeBenchmarkAssets.MakeCardClump() : p.SourceDivisor == 4 ? ((_renderMatrix || _indexingMatrix) ? RingGrassMeshFactory.CreateClump(p.ReducedNear ? 2 : 4, indexed: p.Indexed) : GrassComputeBenchmarkAssets.MakeSolidClump(4)) : RingGrassMeshFactory.Create();
+        Mesh? intermediateMesh = !p.StaticFar && !p.Card && p.SourceDivisor == 4 && _indexingMatrix
+            ? RingGrassMeshFactory.CreateIntermediateClump(p.SingleRibbon, indexed: p.Indexed) : null;
+        if (_indexingMatrix)
+        {
+            _geometry.Add(new { profile = p.Name, pass = "near", counts = MeshCounts(mesh) });
+            _geometry.Add(new { profile = p.Name, pass = "intermediate", counts = MeshCounts(intermediateMesh!) });
+        }
         ShaderMaterial productionMaterial = MakeProductionMaterial();
         productionMaterial.SetShaderParameter("grass_simplified_intermediate_shading", p.Simplified);
-        productionMaterial.SetShaderParameter("grass_camera_facing_enabled", _renderMatrix || p.SingleRibbon);
+        productionMaterial.SetShaderParameter("grass_camera_facing_enabled", _renderMatrix || _indexingMatrix || p.SingleRibbon);
         productionMaterial.SetShaderParameter("grass_camera_facing_strength", 1f);
         productionMaterial.SetShaderParameter("grass_camera_facing_start", 0f);
         productionMaterial.SetShaderParameter("grass_camera_facing_end", 1f);
@@ -144,7 +170,7 @@ public partial class GrassComputeBenchmark : Node3D
             AddComputeOutput($"grass-benchmark-near-{tx}-{tz}", roots, mesh, material, aabb, 0);
             _computeSources += roots.Length / RingGpuVegetationCompute.GrassFloats;
             if (p.StaticFar) AddStaticFarTile(TakeEveryFour(roots), material);
-            else { AddComputeOutput($"grass-benchmark-mid-{tx}-{tz}", roots, p.Card ? mesh : p.SourceDivisor == 4 ? (_renderMatrix ? RingGrassMeshFactory.CreateIntermediateClump(p.SingleRibbon) : GrassComputeBenchmarkAssets.MakeIntermediateClump()) : RingGrassMeshFactory.CreateIntermediate(), material, aabb, 1); _computeSources += roots.Length / RingGpuVegetationCompute.GrassFloats; }
+            else { AddComputeOutput($"grass-benchmark-mid-{tx}-{tz}", roots, p.Card ? mesh : intermediateMesh ?? (p.SourceDivisor == 4 ? (_renderMatrix ? RingGrassMeshFactory.CreateIntermediateClump(p.SingleRibbon) : GrassComputeBenchmarkAssets.MakeIntermediateClump()) : RingGrassMeshFactory.CreateIntermediate()), material, aabb, 1); _computeSources += roots.Length / RingGpuVegetationCompute.GrassFloats; }
         }
         _compute.Initialize();
         foreach (Node node in _renderers)
@@ -218,8 +244,76 @@ public partial class GrassComputeBenchmark : Node3D
         if (_camera == null) return; _camera.GlobalPosition = new Vector3(-9, 1.8f, -16); _camera.LookAt(new Vector3(3, 1, 25), Vector3.Up);
         for (int i = 0; i < 8; i++) { Submit(p, 91, false, out _, true); await Frame(); }
         await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-        string path = ProjectSettings.GlobalizePath($"res://artifacts/grass-compute-benchmark/{p.Name}_{repetition}.png"); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        Image image = GetViewport().GetTexture().GetImage(); if (image != null && !image.IsEmpty()) image.SavePng(path);
+        await SaveCapture(p, repetition, "combined");
+        if (_indexingMatrix)
+        {
+            foreach (var view in new[] { (Name: "near", Pass: 0), (Name: "intermediate", Pass: 1) })
+            {
+                foreach (int id in _ids) _rendererById[id].Layers = !p.Hidden && _passById[id] == view.Pass ? 1u : 0u;
+                await Frames(8);
+                await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+                await SaveCapture(p, repetition, view.Name);
+            }
+            foreach (int id in _ids) _rendererById[id].Layers = p.Hidden ? 0u : 1u;
+        }
+    }
+
+    private Task SaveCapture(Profile p, int repetition, string view)
+    {
+        string path = ProjectSettings.GlobalizePath($"{ArtifactDirectory}/{p.Name}_{repetition}_{view}.png");
+        // Preserve the existing matrix's historical screenshot names.
+        if (!_indexingMatrix) path = ProjectSettings.GlobalizePath($"{ArtifactDirectory}/{p.Name}_{repetition}.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        Image image = GetViewport().GetTexture().GetImage();
+        if (image == null || image.IsEmpty()) throw new InvalidOperationException("empty canonical capture");
+        if (image.SavePng(path) != Error.Ok) throw new IOException("capture write failed");
+        if (_indexingMatrix) { image.Convert(Image.Format.Rgb8); _captures.Add((repetition, view, p.Name), image); }
+        else image.Dispose();
+        return Task.CompletedTask;
+    }
+
+    private void VerifyIndexingCaptures(int repetition)
+    {
+        foreach (string view in new[] { "combined", "near", "intermediate" })
+        {
+            Image baseline = _captures[(repetition, view, "adopted_unindexed")];
+            Image indexed = _captures[(repetition, view, "adopted_indexed")];
+            Image hidden = _captures[(repetition, view, "adopted_hidden")];
+            if (baseline.GetSize() != indexed.GetSize() || baseline.GetSize() != hidden.GetSize())
+                throw new InvalidOperationException("capture dimensions differ");
+            byte[] a = baseline.GetData(), b = indexed.GetData(), h = hidden.GetData();
+            int differingPixels = 0, populatedPixels = 0, maximumChannelDifference = 0;
+            long absoluteDifference = 0;
+            for (int i = 0; i < a.Length; i += 3)
+            {
+                int pairDifference = 0, populationDifference = 0;
+                for (int channel = 0; channel < 3; channel++)
+                {
+                    int difference = Math.Abs(a[i + channel] - b[i + channel]);
+                    pairDifference = Math.Max(pairDifference, difference);
+                    populationDifference = Math.Max(populationDifference, Math.Abs(a[i + channel] - h[i + channel]));
+                    maximumChannelDifference = Math.Max(maximumChannelDifference, difference);
+                    absoluteDifference += difference;
+                }
+                if (pairDifference > 2) differingPixels++;
+                if (populationDifference > 2) populatedPixels++;
+            }
+            int pixels = a.Length / 3;
+            bool equivalent = differingPixels <= pixels * .001 && populatedPixels >= 100;
+            _equivalence.Add(new { repetition, view, pixels, populated_pixels = populatedPixels, differing_pixels_over_two_levels = differingPixels,
+                maximum_channel_difference = maximumChannelDifference, mean_absolute_channel_difference = absoluteDifference / (double)a.Length,
+                allowed_differing_fraction = .001, minimum_populated_pixels = 100, equivalent });
+            if (!equivalent) throw new InvalidOperationException($"indexed visual equivalence failed for {view}: differing={differingPixels}/{pixels}, populated={populatedPixels}");
+        }
+        foreach (var key in _captures.Keys.Where(x => x.Repetition == repetition).ToArray()) { _captures[key].Dispose(); _captures.Remove(key); }
+    }
+
+    private static object MeshCounts(Mesh mesh)
+    {
+        var arrays = mesh.SurfaceGetArrays(0);
+        int vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array().Length;
+        int indices = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? 0 : arrays[(int)Mesh.ArrayType.Index].AsInt32Array().Length;
+        return new { vertices, indices, triangles = (indices > 0 ? indices : vertices) / 3 };
     }
 
     private async Task DrainOutsideTimedWindow(int frames)
@@ -242,12 +336,22 @@ public partial class GrassComputeBenchmark : Node3D
     }
     private void WriteArtifacts()
     {
-        string dir = ProjectSettings.GlobalizePath("res://artifacts/grass-compute-benchmark"); Directory.CreateDirectory(dir);
+        string dir = ProjectSettings.GlobalizePath(ArtifactDirectory); Directory.CreateDirectory(dir);
         Vector2 actual = GetViewport().GetVisibleRect().Size;
-        File.WriteAllText(Path.Combine(dir, "matrix-settings.json"), JsonSerializer.Serialize(new { render_matrix = _renderMatrix, frozen_camera = _renderMatrix, wind_enabled = !_renderMatrix, baseline_near_segments = 4, reduced_near_segments = 2, baseline_intermediate_ribbons = 2, reduced_intermediate_ribbons = 1, matrix_camera_facing = "all cases enabled strength 1 start 0 end 1; equal orientation isolates ribbon count", hidden_control = "removes draw layers only; identical compute submissions retained", near_density = 1f, intermediate_compute_density = .25f, source_divisor = _renderMatrix ? 4 : 0, roots_requested = _roots, fixture_tiles = 64, output_batches = 128, warmup_frames = _warmup, sample_frames = _frames, repetitions = _repetitions }, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(Path.Combine(dir, "matrix-settings.json"), JsonSerializer.Serialize(new { render_matrix = _renderMatrix, indexing_matrix = _indexingMatrix, frozen_camera = _renderMatrix || _indexingMatrix, wind_enabled = !(_renderMatrix || _indexingMatrix), baseline_near_segments = _indexingMatrix ? 2 : 4, reduced_near_segments = 2, baseline_intermediate_ribbons = _indexingMatrix ? 1 : 2, reduced_intermediate_ribbons = 1, matrix_camera_facing = "all cases enabled strength 1 start 0 end 1; equal orientation isolates ribbon count", hidden_control = "removes draw layers only; identical compute submissions retained", near_density = 1f, intermediate_compute_density = .25f, source_divisor = _renderMatrix || _indexingMatrix ? 4 : 0, roots_requested = _roots, fixture_tiles = 64, output_batches = 128, warmup_frames = _warmup, sample_frames = _frames, repetitions = _repetitions }, new JsonSerializerOptions { WriteIndented = true }));
         var report = new { benchmark = "isolated rendered grass compute fixture; not full-game FPS", window_requested = "1280x720", viewport_resolution = new { width = actual.X, height = actual.Y }, renderer = RenderingServer.GetCurrentRenderingMethod(), gpu_adapter = RenderingServer.GetVideoAdapterName(), vsync = "disabled", fps_cap = "disabled", roots_requested = _roots, fixture_tiles = 64, fixture_compute_outputs = 128, production_reference = "grass-registration-fix: 1,118,430 unique roots / 464 batches; fixture differs intentionally", warmup_frames = _warmup, timed_frames = _frames, repetitions = _repetitions, gpu_timestamp_note = "asynchronous GrassCulling timestamps only; unavailable is never replaced with CPU time", cases = _samples };
         File.WriteAllText(Path.Combine(dir, "report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         File.WriteAllText(Path.Combine(dir, "raw-samples.json"), JsonSerializer.Serialize(_raw, new JsonSerializerOptions { WriteIndented = true }));
+        if (_indexingMatrix)
+        {
+            File.WriteAllText(Path.Combine(dir, "indexing-settings.json"), JsonSerializer.Serialize(new {
+                indexing_matrix = true, near_segments = 2, intermediate_ribbons_per_source = 1, full_intermediate_lighting = true,
+                camera_facing = "enabled strength 1 start 0 end 1", wind_enabled = false, clock_wave = "fixed zero; no gameplay simulation",
+                roots_requested = _roots, fixture_roots = _fixtureRoots, fixture_sources = _fixtureSources, tile_count = 64, compute_outputs = 128,
+                geometry = _geometry, rendered_equivalence = _equivalence,
+                limitations = "isolated frozen 1280x720 fixture, not gameplay FPS or streaming; unchanged compute requests can produce no timed dispatches; raster comparison uses RGB8 capture tolerance and isolated near/intermediate population checks"
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
         File.WriteAllText(Path.Combine(dir, "README.md"), "# Grass compute benchmark\n\nThis is an isolated, repeatable rendered grass fixture, **not full-game FPS**. It uses a deterministic tiled field with a sloped surface and excluded center path, production grass shader/compute, and a normalized moving camera. GPU GrassCulling values are asynchronous timestamps; `null` means unavailable.\n");
     }
     private void TearDown()

@@ -160,6 +160,7 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
 
     public override void _ExitTree()
     {
+        RingTerrainCloudSunVisibility.Instance?.UnregisterRequiredAltitudeRange("local_fog");
         _weatherSource?.SetExternalLocalVolumetricCloudsState(
             ownsLocalClouds: false,
             localVolumeVisible: false,
@@ -384,8 +385,12 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
     private void UpdateMaterialUniforms()
     {
         if (_material == null || _weatherSource == null || _grid == null || _sunLight == null) return;
+        RingTerrainCloudSunVisibility.Instance?.BindToMaterial(_material);
         float minimumAgl = Mathf.Max(0.0f, VolumeMinimumAltitudeMeters);
         float maximumAgl = Mathf.Max(minimumAgl + 1000.0f, VolumeMaximumAltitudeMeters);
+        RingTerrainCloudSunVisibility.Instance?.RegisterRequiredAltitudeRange("local_fog",
+            FixedCloudAltitudeDatumMeters + minimumAgl, FixedCloudAltitudeDatumMeters + maximumAgl);
+        RingTerrainCloudSunVisibility.Instance?.SetReceiverDemand("local_fog", LocalVolumeVisible);
         float heightRange = maximumAgl - minimumAgl;
         float cloudBase = CurrentWeather.CloudBaseAltitudeMeters >= 0.0f
             ? CurrentWeather.CloudBaseAltitudeMeters

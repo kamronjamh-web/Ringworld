@@ -77,7 +77,7 @@ public partial class RingPerformanceMonitor
         }
     }
 
-    private long EstimatedRetainedBytes() => (long)_frames.Length * 192L
+    private long EstimatedRetainedBytes() => (long)_frames.Length * 224L
         + ((long)_events.Length + _gpuEvents.Length + _drain.Length + _gpuDrain.Length
             + RingPerformanceTelemetry.PendingCpuCapacity + RingPerformanceTelemetry.PendingGpuCapacity) * 64L
         + CloudHistoryEstimatedBytes + 32768 + LiveWorkspaceReserve;

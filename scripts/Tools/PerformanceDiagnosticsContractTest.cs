@@ -211,6 +211,7 @@ public partial class PerformanceDiagnosticsContractTest : Node
         if (!monitor.SaveSettings()) failures.Add("disabled diagnostics settings did not save");
         else { monitor.ApplySettings(); if (monitor.Enabled || monitor.HistorySeconds != 60 || monitor.MemoryBudgetMiB != 2 || Math.Abs(monitor.RefreshSeconds - .2f) > .001f) failures.Add("saved settings were not clamped/reloaded"); }
         if (!VerifyPrepareCloudCapture()) failures.Add("prepare cloud slowdown capture control did not apply its complete diagnostic preset");
+        if (!VerifyPrepareFarRingCapture()) failures.Add("prepare far-ring capture did not clear history, sync/persist settings, or preserve detailed GPU mode");
         RingPerformanceTelemetry.Configure(false);
         return new GodotDictionary
         {
@@ -245,6 +246,42 @@ public partial class PerformanceDiagnosticsContractTest : Node
         }
         catch { return false; }
         finally { tabs.Free(); drawer.Free(); monitor.Free(); }
+    }
+
+    private static bool VerifyPrepareFarRingCapture()
+    {
+        const string path = "res://.godot/performance-diagnostics-contract/far-prepare-settings.tres";
+        RingPerformanceMonitor monitor = new(); RingLiveTuningDrawer drawer = new(); TabContainer tabs = new();
+        try
+        {
+            monitor.InstallSettingsPathForTests(path);
+            typeof(RingPerformanceMonitor).GetMethod("EnsureCapacity", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(monitor, null);
+            typeof(RingLiveTuningDrawer).GetField("_performanceMonitor", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(drawer, monitor);
+            typeof(RingLiveTuningDrawer).GetMethod("BuildDiagnosticsTab", BindingFlags.Instance | BindingFlags.NonPublic)?.Invoke(drawer, new object[] { tabs });
+            var prepare = tabs.FindChild("DiagnosticsPrepareFarRingCapture", true, false) as Button;
+            var capture = tabs.FindChild("DiagnosticsCaptureFarRingViewports", true, false) as Button;
+            var enabled = tabs.FindChild("DiagnosticsMonitoringToggle", true, false) as CheckButton;
+            var detailed = tabs.FindChild("DiagnosticsGpuToggle", true, false) as CheckButton;
+            var history = tabs.FindChild("DiagnosticsHistorySeconds", true, false) as HSlider;
+            var memory = tabs.FindChild("DiagnosticsMemoryMiB", true, false) as HSlider;
+            if (prepare == null || capture == null || enabled == null || detailed == null || history == null || memory == null || capture.Disabled) return false;
+            foreach (bool detailedMode in new[] { false, true })
+            {
+                monitor.Enabled = false; monitor.DetailedGpuEnabled = detailedMode; monitor.HistorySeconds = 5; monitor.MemoryBudgetMiB = 2;
+                monitor.InjectFrameForTests(1, 16);
+                prepare.EmitSignal("pressed");
+                bool dirty = (bool)(typeof(RingPerformanceMonitor).GetField("_settingsDirty", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(monitor) ?? false);
+                if (!monitor.Enabled || monitor.DetailedGpuEnabled != detailedMode || monitor.HistorySeconds != 60 || monitor.MemoryBudgetMiB != 16
+                    || monitor.GetSnapshot().History.Count != 0 || !dirty || !enabled.ButtonPressed || detailed.ButtonPressed != detailedMode || history.Value != 60 || memory.Value != 16) return false;
+                if (!monitor.SaveSettings()) return false;
+                monitor.Enabled = false; monitor.HistorySeconds = 5; monitor.MemoryBudgetMiB = 2; monitor.DetailedGpuEnabled = !detailedMode;
+                monitor.ApplySettings();
+                if (!monitor.Enabled || monitor.DetailedGpuEnabled != detailedMode || monitor.HistorySeconds != 60 || monitor.MemoryBudgetMiB != 16) return false;
+            }
+            return true;
+        }
+        catch { return false; }
+        finally { tabs.Free(); drawer.Free(); monitor.Free(); File.Delete(ProjectSettings.GlobalizePath(path)); }
     }
 
     /// <summary>Typed snapshot bridge; records are not Godot Variants.</summary>

@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -20,6 +22,16 @@ public partial class RingStandingGrassLayer
     private RingLodGeometrySnapshot _interactionGeometry;
     private bool _hasInteractionGeometry;
     public int ActiveGrassInteractionSampleCount { get; private set; }
+    private readonly record struct InteractionControls(float Radius, float Strength, float Wind, float Gust, float Width);
+    private sealed class InteractionMaterialCache
+    {
+        internal InteractionControls? Controls;
+        internal bool? Enabled;
+        internal int? Count;
+        internal Vector4[]? Points;
+    }
+    private readonly Dictionary<ulong, InteractionMaterialCache> _interactionMaterialCaches = new();
+    internal long InteractionParameterWrites { get; private set; }
 
     private void UpdateGrassInteraction(float delta)
     {
@@ -42,13 +54,42 @@ public partial class RingStandingGrassLayer
     private void ConfigureInteractionMaterial(ShaderMaterial? material, Vector4[] points)
     {
         if (material == null) return;
-        material.SetShaderParameter("grass_interaction_enabled", EnableGrassInteraction && ActiveGrassInteractionSampleCount > 0);
-        material.SetShaderParameter("grass_interaction_points", points);
-        material.SetShaderParameter("grass_interaction_count", ActiveGrassInteractionSampleCount);
-        material.SetShaderParameter("grass_interaction_radius", GrassInteractionRadiusMeters);
-        material.SetShaderParameter("grass_interaction_strength", GrassInteractionStrength);
-        material.SetShaderParameter("grass_wind_strength_multiplier", GrassWindStrengthMultiplier);
-        material.SetShaderParameter("grass_wind_gust_multiplier", GrassWindGustMultiplier);
-        material.SetShaderParameter("grass_lod_max_width_scale", GrassMaximumWidthScale);
+        ulong id = material.GetInstanceId();
+        if (!_interactionMaterialCaches.TryGetValue(id, out InteractionMaterialCache? cache))
+            _interactionMaterialCaches[id] = cache = new InteractionMaterialCache();
+        bool enabled = EnableGrassInteraction && ActiveGrassInteractionSampleCount > 0;
+        if (cache.Enabled != enabled)
+        {
+            material.SetShaderParameter("grass_interaction_enabled", enabled);
+            cache.Enabled = enabled; InteractionParameterWrites++;
+        }
+        if (cache.Count != ActiveGrassInteractionSampleCount)
+        {
+            material.SetShaderParameter("grass_interaction_count", ActiveGrassInteractionSampleCount);
+            cache.Count = ActiveGrassInteractionSampleCount; InteractionParameterWrites++;
+        }
+        // Project reuses its array; retain a separate content snapshot rather than its reference.
+        bool pointsChanged = cache.Points == null || cache.Points.Length != points.Length;
+        if (!pointsChanged)
+            for (int i = 0; i < points.Length; i++)
+                if (cache.Points![i] != points[i]) { pointsChanged = true; break; }
+        if (pointsChanged)
+        {
+            material.SetShaderParameter("grass_interaction_points", points);
+            if (cache.Points == null || cache.Points.Length != points.Length) cache.Points = new Vector4[points.Length];
+            Array.Copy(points, cache.Points, points.Length);
+            InteractionParameterWrites++;
+        }
+        var controls = new InteractionControls(GrassInteractionRadiusMeters, GrassInteractionStrength,
+            GrassWindStrengthMultiplier, GrassWindGustMultiplier, GrassMaximumWidthScale);
+        if (cache.Controls != controls)
+        {
+            material.SetShaderParameter("grass_interaction_radius", controls.Radius);
+            material.SetShaderParameter("grass_interaction_strength", controls.Strength);
+            material.SetShaderParameter("grass_wind_strength_multiplier", controls.Wind);
+            material.SetShaderParameter("grass_wind_gust_multiplier", controls.Gust);
+            material.SetShaderParameter("grass_lod_max_width_scale", controls.Width);
+            cache.Controls = controls; InteractionParameterWrites += 5;
+        }
     }
 }

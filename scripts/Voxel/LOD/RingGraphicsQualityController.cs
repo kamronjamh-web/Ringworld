@@ -476,6 +476,13 @@ public partial class RingGraphicsQualityController : Node
         _grass.SkipUnchangedGpuCulling = true;
         _grass.GroupGrassComputePhases = true;
         _grass.CullGrassTiles = true;
+        _grass.EnableAdaptiveGrassGrouping = true;
+        _grass.GrassGroupingStartMeters = 128f;
+        _grass.GrassGroupingFarStartMeters = 256f;
+        _grass.GrassGroupingMaximumLevel = 1;
+        _grass.GrassGroupingHysteresisMeters = 16f;
+        _grass.MaximumGrassSourcesPerGroup = 16384;
+        _grass.CacheGrassPresentation = true;
         _grass.UseGrassClumps = true;
         _grass.MaximumGpuCullingBatchesPerFrame = 96;
         _grass.GpuGenerationPrototypeTileCount = 4;
@@ -526,6 +533,8 @@ public partial class RingGraphicsQualityController : Node
     {
         if (_grass == null) return;
         foreach (var item in _grassTuningOverrides) _grass.Set(item.Key, item.Value);
+        _grass.GrassGroupingFarStartMeters = Mathf.Max(
+            _grass.GrassGroupingStartMeters + 1f, _grass.GrassGroupingFarStartMeters);
         // Preserve the scheduler's required near < mid < far ordering when
         // independently tuned values cross. If the player did not explicitly
         // choose a midpoint, retain the coverage system's useful 250 m target

@@ -13,7 +13,7 @@ namespace RingworldTechDemo.Voxel.LOD;
 /// and by long-range sun queries in Phase F. Level zero stores conservative
 /// ranges over fixed surface cells; each parent aggregates four children.
 /// </summary>
-public sealed class RingTerrainMinMaxPyramid
+public sealed partial class RingTerrainMinMaxPyramid
 {
     public readonly record struct ElevationAudit(
         int MinimumHeight,

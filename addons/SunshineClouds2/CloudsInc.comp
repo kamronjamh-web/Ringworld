@@ -339,7 +339,8 @@ struct GenericData{
 	// negated macro wind across delta.
 	vec4 menu_optimization_controls;
 	// x is a 64-slice low-discrepancy callback sample; y is macro wind around
-	// delta; z is verified true-static history confidence; w enables the
+	// delta; z is true-static menu confidence or bounded density-field
+	// continuity for gameplay sky jitter; w enables the
 	// non-feedback menu history-weight diagnostic. Append-only after the
 	// previous 704-byte GenericData layout.
 	vec4 menu_temporal_controls;
@@ -351,6 +352,11 @@ struct GenericData{
 	vec4 cloud_handoff;
 	vec4 cloud_weather_params;
 	vec4 cloud_weather_frame;
+	// Append-only: x skips unused weather-mask fetches outside the cloud band.
+	vec4 cloud_mask_controls;
+	vec4 history_controls;
+	vec4 terrain_cloud_sun_profile[5];
+	vec4 terrain_cloud_sun_canonical_frame[4];
 };
 
 struct DirectionalLight {

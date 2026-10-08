@@ -9,6 +9,7 @@ using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
+using RingworldTechDemo.Diagnostics;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
@@ -19,6 +20,9 @@ namespace RingworldTechDemo.Voxel.LOD;
 /// </summary>
 public partial class RingScaledFarViewport : Node
 {
+	/// <summary>Read-only render targets for diagnostics; each remains a separate GPU interval.</summary>
+	public SubViewport? OuterViewportForDiagnostics => _farViewport != null && GodotObject.IsInstanceValid(_farViewport) ? _farViewport : null;
+	public SubViewport? RegionalViewportForDiagnostics => _regionalFarViewport != null && GodotObject.IsInstanceValid(_regionalFarViewport) ? _regionalFarViewport : null;
 	/// <summary>
 	/// The far ring is a canvas background and therefore cannot receive main
 	/// viewport volumetric depth. Either supported local-cloud renderer must
@@ -386,7 +390,7 @@ public partial class RingScaledFarViewport : Node
 				: layer.GlobalPosition.DistanceTo(_farCamera.GlobalPosition);
 			layers.Add($"{index}:visible={layer.Visible},triangles={layerTriangles},aabb={aabb},origin={layer.GlobalPosition},camera_distance={cameraDistance:0.###}");
 		}
-		return $"enabled={FarCloudClipmapEnabled},built={built},visible={visible},triangles={triangles},camera={_farCamera?.GlobalPosition},camera_forward={(_farCamera == null ? Vector3.Zero : -_farCamera.GlobalBasis.Z)},layers=[{string.Join(";", layers)}]";
+		return $"enabled={FarCloudClipmapEnabled},built={built},visible={visible},triangles={triangles},patches={GetFarCloudPatchDiagnostics()},camera={_farCamera?.GlobalPosition},camera_forward={(_farCamera == null ? Vector3.Zero : -_farCamera.GlobalBasis.Z)},layers=[{string.Join(";", layers)}]";
 	}
 
 	public override void _Ready()
@@ -450,16 +454,20 @@ public partial class RingScaledFarViewport : Node
 
 	public override void _Process(double delta)
 	{
+		using var inclusive = RingPerformanceTelemetry.MeasureCpu("Far ring update (inclusive)");
 		RefreshSeededSurfaceForEdits();
 		if (_captureUnderside) AimSourceCameraAtRingUnderside();
 		else if (_captureDirectView) AimSourceCameraAtOppositeRing();
-		BuildFarRegionalTerrain(force: false, delta);
-		UpdateFarWeatherAtlas();
-		SyncCameraAndLighting();
-		_sunshineClouds?.SetFarOpaqueDepthTexture(GetOpaquePhysicalDepthTexture());
-		UpdateFarStormLightningMaterials();
-		UpdateViewportSize(force: false);
-		UpdateCloudTransmittanceMask(delta);
+		using (RingPerformanceTelemetry.MeasureCpu("Far ring regional terrain")) BuildFarRegionalTerrain(force: false, delta);
+		using (RingPerformanceTelemetry.MeasureCpu("Far ring weather atlas")) UpdateFarWeatherAtlas();
+		using (RingPerformanceTelemetry.MeasureCpu("Far ring camera and lighting")) SyncCameraAndLighting();
+		using (RingPerformanceTelemetry.MeasureCpu("Far ring cloud masks and materials"))
+		{
+			_sunshineClouds?.SetFarOpaqueDepthTexture(GetOpaquePhysicalDepthTexture());
+			UpdateFarStormLightningMaterials();
+			UpdateViewportSize(force: false);
+			UpdateCloudTransmittanceMask(delta);
+		}
 		if (_captureDirectView && ++_captureFrame == (_captureUnderside ? 30 : 8))
 			CaptureDirectViewAndQuit();
 	}
@@ -476,6 +484,7 @@ public partial class RingScaledFarViewport : Node
 
 	public override void _ExitTree()
 	{
+		RingTerrainCloudSunVisibility.Instance?.UnregisterRequiredAltitudeRange("far_clouds");
 		// Detach the compositor-owned far texture before its producer is disposed.
 		if (_sunshineClouds != null && GodotObject.IsInstanceValid(_sunshineClouds))
 			_sunshineClouds.SetFarOpaqueDepthTexture(null);
@@ -1749,6 +1758,7 @@ public partial class RingScaledFarViewport : Node
 		};
 		_farViewport.AddChild(_scaledCloudShell);
 		DisableWholeRingFrustumCulling(_scaledCloudShell);
+		ConfigureCloudPatches(_scaledCloudShell, true);
 	}
 
 	private void BuildFarCloudClipmap()
@@ -1795,6 +1805,7 @@ public partial class RingScaledFarViewport : Node
 			DisableWholeRingFrustumCulling(instance);
 			_farCloudClipmapLayers[layer] = instance;
 			_farCloudClipmapMaterials[layer] = material;
+			ConfigureCloudPatches(instance, false);
 		}
 		if (pendingSunshineResource != null)
 			ConfigureSunshineFarCloudDetail(pendingSunshineResource, _sunshineFarCloudDetailEnabled,
@@ -1941,6 +1952,7 @@ public partial class RingScaledFarViewport : Node
 			ShaderMaterial? material = _farCloudClipmapMaterials[layer];
 			if (instance == null || material == null) continue;
 			instance.Mesh = CreateCurvedFarCloudClipmapMesh(layer);
+			ConfigureCloudPatches(instance, false);
 			material.SetShaderParameter("patch_radius_meters", GetEffectiveFarCloudClipmapRadiusMeters());
 			material.SetShaderParameter("patch_across_meters", RingWidthMeters);
 			material.SetShaderParameter("handoff_start_meters", _nearCloudOwnershipEnabled ? FarCloudClipmapHandoffStartMeters : 0.0f);
@@ -2268,6 +2280,7 @@ public partial class RingScaledFarViewport : Node
 		SyncLocalCloudCanopy(canonical, sunDirection);
 		SyncFarCloudClipmap(canonical, sunDirection);
 		SyncScaledCloudVolume(canonical, sunDirection);
+		BindTerrainCloudShadowReceiverMaterials();
 	}
 
 	// The macro masks are generated from main-world light directions, while this
@@ -2918,6 +2931,7 @@ public partial class RingScaledFarViewport : Node
 			aroundAxis,
 			verticalAxis,
 			acrossAxis);
+		PublishCloudMaskAtmosphere(material, aroundAxis, verticalAxis, acrossAxis, sunDirection);
 		Vector2 visibleSize = GetViewport().GetVisibleRect().Size;
 		float aspect = visibleSize.Y > 0.0f ? visibleSize.X / visibleSize.Y : 1.0f;
 		material.SetShaderParameter("camera_canonical_km", cameraCanonicalKm);

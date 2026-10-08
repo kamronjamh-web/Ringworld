@@ -10,7 +10,7 @@ using RingworldTechDemo.Weather;
 namespace RingworldTechDemo;
 
 /// <summary>
-/// Camera-local precipitation and storm lighting driven by the same weather
+/// Camera-local snow particles, depth-aware rain haze and storm lighting driven by the same weather
 /// state as the volumetric clouds. Particle cost is bounded independently of
 /// ring size; SurfaceWetness is exposed for later terrain/material consumers.
 /// </summary>
@@ -66,7 +66,7 @@ public partial class RingLocalWeatherEffects : Node3D
     [Export(PropertyHint.Range, "0,32,0.5")] public float BoltGlowEmissionEnergy { get; set; } = 5.0f;
 
     public float PrecipitationIntensity { get; private set; }
-    /// <summary>The exact resolved local wind currently driving precipitation particles.</summary>
+    /// <summary>The exact resolved local wind currently driving snow particles and rain haze.</summary>
     public Vector2 ResolvedWindMetersPerSecond { get; private set; }
     public RingVolumetricCloudLayer.LocalWeatherState LastResolvedWeather { get; private set; }
     private bool _externalWeatherOverrideActive;
@@ -75,6 +75,12 @@ public partial class RingLocalWeatherEffects : Node3D
     /// <summary>Lets an alternate cloud compositor drive existing rain and lightning.</summary>
     public void SetExternalWeatherOverride(bool active, RingVolumetricCloudLayer.LocalWeatherState weather = default)
     {
+        if (active && weather.InheritWind && !_externalWindEnvelope) {
+            _externalFilteredMean = HasCurrentWindSnapshot ? CurrentWindSnapshot.MeanWind : _weatherSource?.WeatherWindMetersPerSecond ?? Vector2.Zero;
+            _externalWindTime = _weatherSource?.CloudSimulationTimeSeconds ?? double.NaN;
+            _externalWindEnvelope = true;
+        }
+        if (active && !weather.InheritWind) _externalWindEnvelope = false;
         _externalWeatherOverrideActive = active;
         _externalWeatherOverride = weather;
     }
@@ -94,10 +100,6 @@ public partial class RingLocalWeatherEffects : Node3D
     private Vector3 _lastVegetationAxis = new(float.NaN, 0, 0);
     public int ParticleRestartCount { get; private set; }
     public int RainConfigurationPushCount { get; private set; }
-    private float _lastRainRatio = -1.0f, _lastRainLength = -1.0f, _lastRainWidth = -1.0f;
-    private float _lastRainAlpha = -1.0f, _lastRainSpeed = -1.0f, _lastRainSpread = -1.0f;
-    private Color _lastRainColor = new(float.NaN, 0, 0, 0);
-    private Vector3 _lastRainGravity = new(float.NaN, float.NaN, float.NaN);
 
     private RingVoxelExplorerController? _explorer;
     private VoxelChunkGridManager? _grid;
@@ -164,8 +166,10 @@ public partial class RingLocalWeatherEffects : Node3D
         }
         _vegetationWindClaimed = true;
         _activeVegetationWindOwner = _vegetationWindOwner;
+        _weatherSource.SharedWindField.InvalidatePublication();
 
         CreatePrecipitationParticles();
+        CreateRainHaze();
         if (GetParent().GetNodeOrNull<RingDistantRainCurtains>("DistantRainCurtains") == null)
         {
             var curtains = new RingDistantRainCurtains { Name = "DistantRainCurtains" };
@@ -175,7 +179,7 @@ public partial class RingLocalWeatherEffects : Node3D
         CreateBoltVisuals();
         UpdatePrecipitationTransform(force: true);
         GD.Print(
-            $"Local weather effects ready: particles={MaximumParticleCount}, radius={PrecipitationRadiusMeters:0}m, "
+            $"Local weather effects ready: snow pool={MaximumParticleCount}, rain haze enabled, radius={PrecipitationRadiusMeters:0}m, "
             + $"sharedLightning={(EnableLightning ? "on" : "off")}, range={LightningRangeMeters:0}m, boltLod={BoltLod}.");
 
         _lightningSmokeTest = Array.Exists(
@@ -335,13 +339,46 @@ public partial class RingLocalWeatherEffects : Node3D
         return delta;
     }
 
+    public RingWindSnapshot CurrentWindSnapshot { get; private set; }
+    public bool HasCurrentWindSnapshot { get; private set; }
+    private Vector2 _externalFilteredMean;
+    private bool _externalWindEnvelope;
+    private double _externalWindTime = double.NaN;
+    public bool SharedWindFieldReady => _weatherSource?.SharedWindField.Ready == true;
+    public Vector2 GustOffsetMeters => _weatherSource?.SharedWindField.OffsetMeters ?? Vector2.Zero;
+    public double GustSimulationTime => CurrentWindSnapshot.SimulationTime;
+    public double GustAroundPeriodMeters => _weatherSource?.SharedWindField.AroundPeriodMeters ?? 600;
+    public double GustAcrossPeriodMeters => _weatherSource?.SharedWindField.AcrossPeriodMeters ?? 600;
+    private Vector2 _treeTrunkWind, _treeCanopyWind;
+    private double _lastWindTime = double.NaN;
+
     public override void _Process(double delta)
     {
         if (_explorer == null || _grid == null || _weatherSource == null || _particles == null) return;
         float dt = (float)Math.Clamp(delta, 0.0, 0.25);
         RingVolumetricCloudLayer.LocalWeatherState weather = ResolveCurrentWeather();
         LastResolvedWeather = weather;
-        ResolvedWindMetersPerSecond = weather.WindMetersPerSecond;
+        if (_externalWindEnvelope) {
+            double now = _weatherSource.CloudSimulationTimeSeconds;
+            double elapsed = double.IsFinite(_externalWindTime) && now >= _externalWindTime ? now - _externalWindTime : 0;
+            if (now < _externalWindTime) _externalFilteredMean = weather.WindMetersPerSecond;
+            float seconds = _externalWeatherOverrideActive ? _weatherSource.WindSettings.StormRiseSeconds : _weatherSource.WindSettings.StormDecaySeconds;
+            _externalFilteredMean = _externalFilteredMean.Lerp(weather.WindMetersPerSecond, (float)(1-Math.Exp(-elapsed/Math.Max(.1,seconds))));
+            _externalWindTime = now;
+            weather = weather with { WindMetersPerSecond = _externalFilteredMean, InheritWind = true };
+            if (!_externalWeatherOverrideActive && _externalFilteredMean.DistanceSquaredTo(LastResolvedWeather.WindMetersPerSecond) < .0001f) _externalWindEnvelope = false;
+        }
+        CurrentWindSnapshot = _weatherSource.CaptureWindSnapshot(_explorer.CanonicalPosition, weather, _weatherSource.CloudSimulationTimeSeconds, _externalWeatherOverrideActive && !weather.InheritWind);
+        HasCurrentWindSnapshot = true;
+        ResolvedWindMetersPerSecond = CurrentWindSnapshot.InstantWind;
+        weather = weather with { WindMetersPerSecond = ResolvedWindMetersPerSecond };
+        var settings = _weatherSource.WindSettings;
+        double sourceTime = CurrentWindSnapshot.SimulationTime;
+        double step = double.IsFinite(_lastWindTime) ? Math.Clamp(sourceTime - _lastWindTime, 0, 1) : 0;
+        if (!double.IsFinite(_lastWindTime) || sourceTime < _lastWindTime) _treeTrunkWind = _treeCanopyWind = CurrentWindSnapshot.MeanWind;
+        _lastWindTime = sourceTime;
+        _treeTrunkWind = _treeTrunkWind.Lerp(CurrentWindSnapshot.MeanWind, (float)(1-Math.Exp(-step/Math.Max(.05,settings.TreeTrunkResponseSeconds))));
+        _treeCanopyWind = _treeCanopyWind.Lerp(CurrentWindSnapshot.MeanWind, (float)(1-Math.Exp(-step/Math.Max(.05,settings.TreeCanopyResponseSeconds))));
         PublishVegetationWind();
         bool localCloudsVisible = LocalCloudsVisible();
         float start = Mathf.Clamp(PrecipitationStart, 0.0f, 0.99f);
@@ -356,8 +393,11 @@ public partial class RingLocalWeatherEffects : Node3D
         if (Snowing != _lastSnowing) ConfigureParticleAppearance();
         _lastSnowing = Snowing;
 
-        _particles.Emitting = PrecipitationIntensity > 0.01f;
-        UpdateRainProfile(weather);
+        // Liquid rain is a soft depth-aware veil; this stable pool is snow only.
+        _particles.Emitting = Snowing && PrecipitationIntensity > 0.01f;
+        _particles.Visible = _particles.Emitting;
+        UpdateSnowParticleProfile();
+        UpdateRainHaze();
         UpdateParticleMotion(weather);
         UpdatePrecipitationTransform(force: false);
         UpdateWetness(dt);
@@ -395,7 +435,20 @@ public partial class RingLocalWeatherEffects : Node3D
         if (!center.IsFinite()) center = Vector3.Zero;
         Vector3 axis = _grid?.GlobalBasis.Y.Normalized() ?? Vector3.Up;
         if (!axis.IsFinite() || axis.LengthSquared() < .001f) axis = Vector3.Up;
-        float enabled = wind.LengthSquared() > .0001f ? 1.0f : 0.0f;
+        bool active = EnableVegetationWind && Enabled && _weatherSource?.Enabled == true && CurrentWindSnapshot.Enabled;
+        if (!active) _treeTrunkWind = _treeCanopyWind = Vector2.Zero;
+        float enabled = active && (wind.LengthSquared() + _treeTrunkWind.LengthSquared() + _treeCanopyWind.LengthSquared() > .0001f) ? 1f : 0f;
+        if (_grid != null && _weatherSource != null) {
+            var settings = _weatherSource.WindSettings;
+            _weatherSource.SharedWindField.Publish(_grid.CaptureLodGeometrySnapshot(), _explorer?.CanonicalPosition ?? default, CurrentWindSnapshot.MeanWind, CurrentWindSnapshot.MeanWind, settings, active);
+            _weatherSource.SharedWindField.SetCached("ring_tree_wind_response", new Vector4(settings.TreeBendStrength,settings.TreeMaximumBendRatio,settings.TreeTrunkResponseSeconds,settings.TreeCanopyResponseSeconds));
+            _weatherSource.SharedWindField.SetCached("ring_tree_wind_parts", new Vector2(
+                float.IsFinite(settings.TreeTrunkBendStrength) ? Mathf.Clamp(settings.TreeTrunkBendStrength, 0, 1) : .15f,
+                float.IsFinite(settings.TreeCanopyFlexStrength) ? Mathf.Clamp(settings.TreeCanopyFlexStrength, 0, 3) : 1f));
+            _weatherSource.SharedWindField.SetCached("ring_tree_wind_trunk", _treeTrunkWind);
+            _weatherSource.SharedWindField.SetCached("ring_tree_wind_canopy", _treeCanopyWind);
+            _weatherSource.SharedWindField.SetCached("ring_wind_phase", wave);
+        }
 
         // Only changed payloads cross the rendering boundary. Exact vector checks
         // retain metre-sized rebases even when the ring center is millions away.
@@ -449,9 +502,17 @@ public partial class RingLocalWeatherEffects : Node3D
 
     public override void _ExitTree()
     {
+        ReleaseRainHaze();
+        HasCurrentWindSnapshot = false;
         if (_vegetationWindClaimed && _activeVegetationWindOwner == _vegetationWindOwner)
         {
             RenderingServer.GlobalShaderParameterSet("ring_local_wind_enabled", 0.0f);
+            RenderingServer.GlobalShaderParameterSet("ring_wind_field_enabled", 0.0f);
+            RenderingServer.GlobalShaderParameterSet("ring_wind_mean_vector", Vector2.Zero);
+            RenderingServer.GlobalShaderParameterSet("ring_tree_wind_trunk", Vector2.Zero);
+            RenderingServer.GlobalShaderParameterSet("ring_tree_wind_canopy", Vector2.Zero);
+            RenderingServer.GlobalShaderParameterSet("ring_tree_wind_parts", new Vector2(.15f, 1f));
+            RenderingServer.GlobalShaderParameterSet("ring_wind_gust_texture", ResourceLoader.Load<Texture2D>("res://materials/ring_wind_neutral.tres"));
             _activeVegetationWindOwner = 0;
         }
     }
@@ -461,10 +522,6 @@ public partial class RingLocalWeatherEffects : Node3D
 
     private void CreatePrecipitationParticles()
     {
-        float initialSpeed = float.IsFinite(RainFallSpeedMetersPerSecond) ? Mathf.Clamp(RainFallSpeedMetersPerSecond, 1.0f, 120.0f) : 34.0f;
-        float initialLength = float.IsFinite(RainStreakLengthMeters) ? Mathf.Clamp(RainStreakLengthMeters, .1f, 12.0f) : 1.7f;
-        Color initialColor = RainColor;
-        if (!float.IsFinite(initialColor.R) || !float.IsFinite(initialColor.G) || !float.IsFinite(initialColor.B) || !float.IsFinite(initialColor.A)) initialColor = new Color(.52f, .68f, .82f, .42f);
         _particleProcess = new ParticleProcessMaterial
         {
             EmissionShape = ParticleProcessMaterial.EmissionShapeEnum.Box,
@@ -474,20 +531,20 @@ public partial class RingLocalWeatherEffects : Node3D
                 Mathf.Max(5.0f, PrecipitationRadiusMeters)),
             Direction = Vector3.Down,
             Spread = 4.0f,
-            InitialVelocityMin = initialSpeed * 0.88f,
-            InitialVelocityMax = initialSpeed * 1.12f,
-            Gravity = new Vector3(0.0f, -8.0f, 0.0f)
+            InitialVelocityMin = 1.2f,
+            InitialVelocityMax = 3.8f,
+            Gravity = new Vector3(0.0f, -.8f, 0.0f)
         };
         _particleMaterial = new StandardMaterial3D
         {
             Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Disabled,
-            AlbedoColor = initialColor
+            AlbedoColor = SnowColor
         };
         _particleMesh = new QuadMesh
         {
-            Size = new Vector2(0.035f, initialLength),
+            Size = new Vector2(.11f, .11f),
             Material = _particleMaterial
         };
         _particles = new GpuParticles3D
@@ -496,16 +553,17 @@ public partial class RingLocalWeatherEffects : Node3D
             TopLevel = true,
             Amount = Math.Clamp(MaximumParticleCount, 256, 12000),
             AmountRatio = 0.0f,
-            Lifetime = 2.2,
-            Randomness = 0.45f,
+            Lifetime = 6.0,
+            Randomness = .82f,
             VisibilityAabb = new Aabb(
                 new Vector3(-PrecipitationRadiusMeters, -PrecipitationHeightMeters, -PrecipitationRadiusMeters),
                 new Vector3(PrecipitationRadiusMeters * 2.0f, PrecipitationHeightMeters * 2.0f, PrecipitationRadiusMeters * 2.0f)),
             ProcessMaterial = _particleProcess,
             DrawPass1 = _particleMesh,
             Emitting = false,
+            Visible = false,
             LocalCoords = true,
-            TransformAlign = GpuParticles3D.TransformAlignEnum.ZBillboardYToVelocity
+            TransformAlign = GpuParticles3D.TransformAlignEnum.Disabled
         };
         AddChild(_particles);
     }
@@ -585,20 +643,14 @@ public partial class RingLocalWeatherEffects : Node3D
         }
         else
         {
-            _particles.TransformAlign = GpuParticles3D.TransformAlignEnum.ZBillboardYToVelocity;
-            _particleMaterial.BillboardMode = BaseMaterial3D.BillboardModeEnum.Disabled;
-            float length = float.IsFinite(RainStreakLengthMeters) ? Mathf.Clamp(RainStreakLengthMeters, .1f, 12.0f) : 1.7f;
-            Color color = RainColor;
-            if (!float.IsFinite(color.R) || !float.IsFinite(color.G) || !float.IsFinite(color.B) || !float.IsFinite(color.A)) color = new Color(.52f, .68f, .82f, .42f);
-            _particleMesh.Size = new Vector2(0.035f, length);
-            _particleMaterial.AlbedoColor = color;
-            _particles.Lifetime = 2.2;
-            _particles.Randomness = 0.45f;
+            // Hide immediately; stopping emission alone leaves live flakes on
+            // screen for the remaining snow lifetime when liquid rain begins.
+            _particles.Visible = false;
+            _particles.Emitting = false;
+            _particles.AmountRatio = 0;
         }
         _particles.Restart();
         ParticleRestartCount++;
-        _lastRainRatio = _lastRainLength = _lastRainWidth = _lastRainAlpha = _lastRainSpeed = _lastRainSpread = -1.0f;
-        _lastRainColor = new Color(float.NaN, 0, 0, 0);
     }
 
     private void UpdateParticleMotion(in RingVolumetricCloudLayer.LocalWeatherState weather)
@@ -617,63 +669,12 @@ public partial class RingLocalWeatherEffects : Node3D
         }
     }
 
-    private void UpdateRainProfile(in RingVolumetricCloudLayer.LocalWeatherState weather)
+    private void UpdateSnowParticleProfile()
     {
-        if (_particles == null || _particleMesh == null || _particleMaterial == null || _particleProcess == null) return;
-        if (Snowing)
-        {
-            _particles.AmountRatio = Mathf.Clamp(PrecipitationIntensity, 0.0f, 1.0f);
-            return;
-        }
-
-        // Presentation consumes the existing smoothed intensity. It must not
-        // remap the shared intensity used by audio, wetness, or storm consumers.
-        float i = float.IsFinite(PrecipitationIntensity) ? Mathf.Clamp(PrecipitationIntensity, 0.0f, 1.0f) : 0.0f;
-        RainPrecipitationProfile profile = RainPrecipitationProfile.Resolve(i);
-        float heavyBlend = profile.HeavyWeight + profile.SteadyWeight * .45f;
-        float referenceLength = float.IsFinite(RainStreakLengthMeters) ? Mathf.Clamp(RainStreakLengthMeters, .1f, 12.0f) : 1.7f;
-        float referenceSpeed = float.IsFinite(RainFallSpeedMetersPerSecond) ? Mathf.Clamp(RainFallSpeedMetersPerSecond, 1.0f, 120.0f) : 34.0f;
-        Color color = RainColor;
-        if (!float.IsFinite(color.R) || !float.IsFinite(color.G) || !float.IsFinite(color.B) || !float.IsFinite(color.A)) color = new Color(.52f, .68f, .82f, .42f);
-        float ratio = Mathf.Clamp(i * Mathf.Lerp(.52f, 1.0f, heavyBlend), 0.0f, 1.0f);
-        float length = referenceLength * Mathf.Lerp(.52f, 1.62f, heavyBlend);
-        float width = Mathf.Lerp(.022f, .046f, profile.HeavyWeight);
-        float alpha = Mathf.Clamp(color.A * Mathf.Lerp(.50f, 1.35f, heavyBlend), 0.0f, 1.0f);
-        float speed = referenceSpeed * Mathf.Lerp(.72f, 1.35f, heavyBlend);
-        float spread = Mathf.Lerp(12.0f, 2.5f, heavyBlend);
-        Vector2 wind = weather.WindMetersPerSecond;
-        if (!float.IsFinite(wind.X) || !float.IsFinite(wind.Y)) wind = Vector2.Zero;
-        wind = wind.LimitLength(300.0f);
-        float windResponse = Mathf.Lerp(.36f, .16f, profile.HeavyWeight);
-        Vector3 gravity = new(wind.X * windResponse, -8.0f, wind.Y * windResponse);
-        bool changed = !Mathf.IsEqualApprox(ratio, _lastRainRatio)
-            || !Mathf.IsEqualApprox(length, _lastRainLength)
-            || !Mathf.IsEqualApprox(width, _lastRainWidth)
-            || !Mathf.IsEqualApprox(alpha, _lastRainAlpha)
-            || !Mathf.IsEqualApprox(speed, _lastRainSpeed)
-            || !Mathf.IsEqualApprox(spread, _lastRainSpread)
-            || _lastRainColor != color || !_lastRainGravity.IsEqualApprox(gravity);
-        if (!changed) return;
-
-        // AmountRatio changes emission density without clearing live drops.
-        // Keep Amount, Lifetime, Randomness and Restart out of rain-stage updates.
+        if (_particles == null) return;
+        float ratio = Snowing && float.IsFinite(PrecipitationIntensity) ? Mathf.Clamp(PrecipitationIntensity, 0, 1) : 0;
+        if (Mathf.IsEqualApprox(_particles.AmountRatio, ratio)) return;
         _particles.AmountRatio = ratio;
-        _particleMesh.Size = new Vector2(width, length);
-        _particleMaterial.AlbedoColor = new Color(color.R, color.G, color.B, alpha);
-        _particleProcess.Direction = Vector3.Down;
-        _particleProcess.Spread = spread;
-        _particleProcess.InitialVelocityMin = speed * .88f;
-        _particleProcess.InitialVelocityMax = speed * 1.12f;
-        _particleProcess.Gravity = gravity;
-        _lastRainRatio = ratio;
-        _lastRainLength = length;
-        _lastRainWidth = width;
-        _lastRainAlpha = alpha;
-        _lastRainSpeed = speed;
-        _lastRainSpread = spread;
-        _lastRainColor = color;
-        _lastRainGravity = gravity;
-        RainConfigurationPushCount++;
     }
 
     public Godot.Collections.Dictionary GetPrecipitationDiagnostics()
@@ -690,7 +691,10 @@ public partial class RingLocalWeatherEffects : Node3D
             ["heavy_weight"] = p.HeavyWeight,
             ["shared_intensity"] = PrecipitationIntensity,
             ["amount_ratio"] = _particles?.AmountRatio ?? 0.0f,
-            ["effective_count"] = (_particles?.Amount ?? 0) * (_particles?.AmountRatio ?? 0.0f),
+            ["effective_count"] = (_particles?.Visible == true ? _particles.Amount : 0) * (_particles?.AmountRatio ?? 0.0f),
+            ["particle_visible"] = _particles?.Visible == true,
+            ["particle_emitting"] = _particles?.Emitting == true,
+            ["presentation"] = Snowing ? "Snow particles" : "Rain haze",
             ["allocated_pool"] = _particles?.Amount ?? 0,
             ["streak_size"] = _particleMesh?.Size ?? Vector2.Zero,
             ["material_alpha"] = _particleMaterial?.AlbedoColor.A ?? 0.0f,

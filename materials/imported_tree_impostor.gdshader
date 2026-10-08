@@ -2,6 +2,7 @@ shader_type spatial;
 render_mode cull_disabled, depth_draw_opaque;
 
 uniform sampler2D vertex_data : filter_nearest;
+uniform sampler2D attachment_data : filter_nearest;
 uniform sampler2D normal_data : filter_nearest;
 uniform sampler2D uv_data : filter_nearest;
 uniform sampler2D tangent_data : filter_nearest;
@@ -17,6 +18,8 @@ uniform vec3 night_tint = vec3(0.30, 0.45, 0.70);
 uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
 uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform bool vegetation_wind_enabled = true;
+uniform int tree_foliage_mode = 0;
+uniform bool tree_foliage_attachments = false;
 uniform bool simplified_tree_shading = false;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
@@ -59,12 +62,14 @@ void vertex() {
 	tree_parameters = texelFetch(variant_parameters, ivec2(variant, 1), 0);
 	vec3 root_world = MODEL_MATRIX[3].xyz;
 	if (vegetation_wind_enabled) {
-		float root_weight = clamp(VERTEX.y, 0.0, 1.0);
-		float instance_height = length(MODEL_MATRIX[1]);
-		vec3 displacement = ring_local_wind_displacement(root_world, root_weight, instance_height);
 		mat3 basis = mat3(MODEL_MATRIX);
-		vec3 squared_lengths = max(vec3(0.000001), vec3(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2])));
-		VERTEX += transpose(basis) * displacement / squared_lengths;
+		vec3 offset; mat3 jacobian;
+		vec4 wind_flags = texelFetch(variant_parameters, ivec2(variant, 2), 0);
+		ring_tree_wind_geometry(root_world, VERTEX, basis, texelFetch(attachment_data, ivec2(VERTEX_ID, variant), 0), int(round(wind_flags.g)), wind_flags.b > .5, offset, jacobian);
+		VERTEX += offset;
+		NORMAL = ring_tree_deformed_normal(jacobian, NORMAL);
+		if (length(TANGENT) > .0001) TANGENT = normalize(jacobian * TANGENT);
+		if (length(BINORMAL) > .0001) BINORMAL = normalize(jacobian * BINORMAL);
 	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	tree_cloud_occlusion = sample_local_cloud_shadow(world_position);

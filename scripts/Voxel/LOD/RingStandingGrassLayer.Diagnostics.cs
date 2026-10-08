@@ -65,11 +65,22 @@ public partial class RingStandingGrassLayer
         {
             if (_wanted.Count == 0 || _requests.Count != 0 || _jobs.Count != 0 || _uploads.Count != 0) return false;
             if (UseGpuCulling && (_gpuCompute == null || !_gpuCompute.Ready || _gpuCompute.Failed)) return false;
+            if (!IsAdaptiveGrassGroupingSettled) return false;
+            foreach (var group in _adaptiveGroups.Values)
+            {
+                Resident output = group.Resident;
+                if (!group.Active || group.Splitting) return false;
+                if (output.IntermediateWanted && (output.IntermediateRenderer == null || output.GpuIntermediateBatch < 0
+                    || _gpuCompute == null || !_gpuCompute.IsBatchReady(output.GpuIntermediateBatch, output.IntermediateVisibilityRevision))) return false;
+            }
             bool budgetFull = ResidentGrassInstanceCount >= MaximumGrassSourceInstances;
             foreach (RingGrassTileKey key in _wanted)
             {
                 if (!_tiles.TryGetValue(key, out Resident? resident)) { if (budgetFull) continue; return false; }
-                if (resident.Renderer == null) return false;
+                // The active group's output owns presentation while leaves retain canonical placement and reservation identities.
+                if (_adaptiveLeafOwners.TryGetValue(key, out var owner) && owner.Active && !owner.Splitting) continue;
+                if ((!_presentationOutputCullingActive || resident.NearWanted) && resident.Renderer == null) return false;
+                if (resident.IntermediateWanted && resident.IntermediateRenderer == null) return false;
                 // Zero-root tiles are intentionally not registered for an indirect draw.
                 if (resident.Data.InstanceCount == 0) continue;
                 if (!UseGpuCulling || _gpuCompute == null) continue;
@@ -89,6 +100,7 @@ public partial class RingStandingGrassLayer
 
     public Godot.Collections.Dictionary CaptureGenerationDiagnostics()
     {
+        UpdateGpuDiagnostics();
         Godot.Collections.Dictionary surfaceCache = SurfaceCacheDiagnostics;
         var records = new Godot.Collections.Array<Godot.Collections.Dictionary>();
         foreach (GenerationTrace trace in _generationTraceRecords)
@@ -114,6 +126,7 @@ public partial class RingStandingGrassLayer
             ["evicted_records"] = _generationDiagnosticEvictions,
             ["pending_requests"] = _requests.Count, ["active_jobs"] = _jobs.Count, ["pending_uploads"] = _uploads.Count,
             ["resident_tiles"] = _tiles.Count, ["gpu_batches"] = GpuCullingBatchCount,
+            ["gpu_registered_batches"] = GpuCullingBatchCount, ["streaming_suspended"] = StreamingSuspended,
             ["gpu_requested_batches"] = GpuCullingRequestedBatchCount,
             ["gpu_dispatched_batches"] = GpuCullingDispatchedBatchCount,
             ["gpu_deferred_batches"] = GpuCullingDeferredBatchCount,
@@ -143,9 +156,19 @@ public partial class RingStandingGrassLayer
             ["use_clumps"] = UseGrassClumps,
             ["cull_tiles"] = CullGrassTiles,
             ["group_compute_phases"] = GroupGrassComputePhases,
+            ["cache_grass_presentation"] = CacheGrassPresentation,
+            ["adaptive_grass_grouping"] = EnableAdaptiveGrassGrouping,
+            ["grass_grouping_start_meters"] = GrassGroupingStartMeters,
+            ["grass_grouping_far_start_meters"] = GrassGroupingFarStartMeters,
+            ["grass_grouping_maximum_level"] = GrassGroupingMaximumLevel,
+            ["grass_grouping_hysteresis_meters"] = GrassGroupingHysteresisMeters,
+            ["maximum_grass_sources_per_group"] = MaximumGrassSourcesPerGroup,
             ["maximum_resident_tiles"] = MaximumResidentTiles, ["maximum_builds_in_flight"] = MaximumTileBuildsInFlight, ["maximum_uploads_per_frame"] = MaximumTileUploadsPerFrame,
             ["maximum_upload_ms"] = MaximumTileUploadMilliseconds, ["maximum_gpu_batches_per_frame"] = MaximumGpuCullingBatchesPerFrame,
             ["surface_cache_megabytes"] = SurfaceCacheMegabytes, ["gpu_culling"] = UseGpuCulling,
+            ["cull_grass_tiles"] = CullGrassTiles, ["gpu_frustum_culling"] = GpuFrustumCulling,
+            ["maximum_viewer_altitude_above_terrain_meters"] = MaximumViewerAltitudeAboveTerrainMeters,
+            ["suspend_streaming_above_speed_meters_per_second"] = SuspendStreamingAboveSpeedMetersPerSecond,
             ["grassland_biome_density"] = GrasslandBiomeDensity, ["forest_biome_density"] = ForestBiomeDensity, ["sparse_biome_density"] = SparseBiomeDensity
         };
         result["wanted_tiles"] = _wanted.Count;
@@ -156,6 +179,24 @@ public partial class RingStandingGrassLayer
         result["resident_mid_roots"] = ResidentGrassMidRootCount;
         result["resident_far_roots"] = ResidentGrassFarRootCount;
         result["tier_rebuilds"] = GrassTierRebuildCount;
+        result["adaptive_grass_group_count"] = AdaptiveGrassGroupCount;
+        result["adaptive_grass_level1_group_count"] = AdaptiveGrassLevel1GroupCount;
+        result["adaptive_grass_level2_group_count"] = AdaptiveGrassLevel2GroupCount;
+        result["adaptive_grass_grouped_source_count"] = AdaptiveGrassGroupedSourceCount;
+        result["adaptive_grass_active_presentation_count"] = AdaptiveGrassActivePresentationCount;
+        result["adaptive_grass_visibility_check_count"] = AdaptiveGrassVisibilityCheckCount;
+        result["adaptive_grass_grouping_status"] = AdaptiveGrassGroupingStatus;
+        result["adaptive_grass_grouping_settled"] = IsAdaptiveGrassGroupingSettled;
+        result["adaptive_grass_pending_group_count"] = _adaptiveGroups.Values.Count(group => !group.Active);
+        result["adaptive_grass_splitting_group_count"] = _adaptiveGroups.Values.Count(group => group.Splitting);
+        result["adaptive_grass_pending_output_requests"] = _adaptiveOutputRequests.Count;
+        result["adaptive_grass_remaining_candidates"] = Math.Max(0, _adaptiveCandidates.Count - _adaptiveCandidateCursor);
+        result["grass_visibility_cache_hits"] = GrassVisibilityCacheHits;
+        result["grass_visibility_scans"] = GrassVisibilityScans;
+        result["grass_presentation_cache_hits"] = GrassPresentationCacheHits;
+        result["grass_presentation_scans"] = GrassPresentationScans;
+        result["grass_gpu_request_cache_hits"] = GrassGpuRequestCacheHits;
+        result["grass_gpu_request_scans"] = GrassGpuRequestScans;
         result["idle_at_root_budget"] = _requests.Count == 0 && _jobs.Count == 0 && _uploads.Count == 0 && ResidentGrassInstanceCount >= MaximumGrassSourceInstances;
         return result;
     }

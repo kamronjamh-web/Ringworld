@@ -132,7 +132,7 @@ public partial class RingPresentationHud : CanvasLayer
         var hintMargin = CreateMargin(_hintCard, 15, 9, 15, 9);
         var hint = new Label
         {
-            Text = "WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  V FLIGHT\nIN WATER: WASD SWIM  •  SPACE/E RISE  •  C/Q DIVE\nLMB REMOVE  •  RMB PLACE  •  M MAP  •  WHEEL FLIGHT SPEED",
+            Text = "WASD MOVE  •  SHIFT SPRINT  •  SPACE JUMP  •  V FLIGHT\nIN WATER: WASD SWIM  •  SPACE/E RISE  •  C/Q DIVE\nLMB REMOVE  •  RMB PLACE  •  M MAP DETAILS  •  WHEEL FLIGHT SPEED",
             HorizontalAlignment = HorizontalAlignment.Center
         };
         hint.AddThemeFontSizeOverride("font_size", 10);

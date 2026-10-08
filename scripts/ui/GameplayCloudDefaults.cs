@@ -63,9 +63,20 @@ public sealed class GameplayCloudDefaults
         ["GpuFarShadowMapResolution"] = (64, 1024, true),
         ["GpuFarShadowRadiusMeters"] = (16000, 200000, false),
         ["GpuFarShadowUpdatesPerSecond"] = (.25f, 5, false),
-        ["GpuShadowVerticalSamples"] = (1, 64, true)
+        ["GpuShadowVerticalSamples"] = (1, 64, true),
+        ["TerrainCloudShadowStrength"] = (0, 1, false),
+        ["TerrainCloudShadowGlobalAroundResolution"] = (256, 4096, true),
+        ["TerrainCloudShadowGlobalAcrossResolution"] = (8, 128, true),
+        ["TerrainCloudShadowAltitudeSlices"] = (2, 16, true),
+        ["TerrainCloudShadowRegionalResolution"] = (32, 256, true),
+        ["TerrainCloudShadowRegionalExtentMeters"] = (8000, 128000, false),
+        ["TerrainCloudShadowRefreshSeconds"] = (.1f, 10, false),
+        ["TerrainCloudShadowTraceVisitBudget"] = (8, 128, true),
+        ["TerrainCloudShadowTexelsPerFrame"] = (4096, 131072, true),
+        ["TerrainCloudShadowSunValidityDegrees"] = (.01f, 2, false),
+        ["HistoryDepthToleranceMultiplier"] = (.25f, 4, false)
     };
-    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff" };
+    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };
     private readonly Dictionary<string, Variant> _baseline = new();
     private readonly string? _pathOverride;
@@ -318,6 +329,8 @@ public sealed class GameplayCloudDefaults
         double raw = value.AsDouble();
         if (!double.IsFinite(raw)) return false;
         float number = (float)Math.Clamp(raw, range.min, range.max);
+        if (key is "TerrainCloudShadowGlobalAroundResolution" or "TerrainCloudShadowGlobalAcrossResolution" or "TerrainCloudShadowRegionalResolution")
+            number = Mathf.Pow(2, Mathf.Ceil(Mathf.Log(number) / Mathf.Log(2)));
         clean = range.integer ? (Variant)Mathf.RoundToInt(number) : (Variant)number;
         return true;
     }

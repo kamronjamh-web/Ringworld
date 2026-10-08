@@ -58,6 +58,10 @@ public partial class TreeLightingShadowBehaviorTest : RefCounted
             Require((bool)material.GetShaderParameter("ring_atmosphere_ray_frame_valid")
                 && (Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position") == camera.GlobalPosition,
                 "tree atmosphere ray frame did not use the active camera");
+            ValidateAtmosphereFrameWrites(layer, material.Shader!, RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()));
+            using (var proxy = new RingTerrainProxySector())
+                ValidateAtmosphereFrameWrites(proxy, material.Shader!, RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()),
+                    "ApplyProxyAtmosphereMaterialFrame", "_proxyAtmosphereParameterWrites", "PROXY");
             RingAtmosphereModel.Enabled = !originalAtmosphereEnabled;
             Require((bool)imported.GetShaderParameter("ring_atmosphere_enabled") == !originalAtmosphereEnabled
                 && (bool)impostor.GetShaderParameter("ring_atmosphere_enabled") == !originalAtmosphereEnabled,
@@ -122,6 +126,59 @@ public partial class TreeLightingShadowBehaviorTest : RefCounted
 
     private static object? Invoke(object instance, string name, params object?[] arguments) =>
         instance.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(instance, arguments);
+    private static void ValidateAtmosphereFrameWrites(object layer, Shader shader, RingAtmosphereRayFrame initial,
+        string applyMethod = "ApplyTreeAtmosphereRayFrame", string counterField = "_treeAtmosphereParameterWrites", string label = "TREE")
+    {
+        using var material = new ShaderMaterial { Shader = shader };
+        long Writes() => (long)layer.GetType().GetField(counterField, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(layer)!;
+        void Apply(RingAtmosphereRayFrame frame, int expected, string observation)
+        {
+            long before = Writes();
+            Invoke(layer, applyMethod, material, frame);
+            long delta = Writes() - before;
+            Require(delta == expected, $"{observation}: expected {expected} atmosphere writes, got {delta}");
+            GD.Print($"{label}_ATMOSPHERE_WRITES observation={observation} writes={delta}");
+        }
+        Apply(initial, 9, "first_material");
+        Apply(initial, 0, "stationary");
+        var sunOnly = initial with { ToSun = new Vector3(.2f, .8f, .5f).Normalized() };
+        Apply(sunOnly, 1, "sun_only");
+        Require(((Vector3)material.GetShaderParameter("ring_atmosphere_to_sun")).Equals(sunOnly.ToSun), "sun-only ray update was lost");
+        var moved = sunOnly with { CameraWorld = sunOnly.CameraWorld + Vector3.Right };
+        Apply(moved, 1, "camera_movement");
+        var rebased = moved with { CameraWorld = moved.CameraWorld + new Vector3(4_000_000, 0, 0), OutwardWorld = Vector3.Right };
+        Apply(rebased, moved.OutwardWorld.Equals(Vector3.Right) ? 1 : 2, "rebase");
+        var smallRebase = rebased with { CameraWorld = rebased.CameraWorld + Vector3.Right };
+        Apply(smallRebase, 1, "small_rebase_large_coordinates");
+        Require(((Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position")).Equals(smallRebase.CameraWorld), "small rebase ray update was lost");
+        var geometry = smallRebase with { SidewallPositiveMeters = smallRebase.SidewallPositiveMeters + 32, AxisWorld = Vector3.Right };
+        Apply(geometry, smallRebase.AxisWorld.Equals(Vector3.Right) ? 1 : 2, "geometry");
+        Require(((Vector3)material.GetShaderParameter("ring_atmosphere_outward_world")).Equals(geometry.OutwardWorld)
+            && ((Vector3)material.GetShaderParameter("ring_atmosphere_axis_world")).Equals(geometry.AxisWorld)
+            && ((float)material.GetShaderParameter("ring_atmosphere_sidewall_positive_meters")).Equals(geometry.SidewallPositiveMeters),
+            "geometry/rebase atmosphere shader values were stale");
+        var dimensions = geometry with { CameraHeightMeters = geometry.CameraHeightMeters + 8,
+            SidewallNegativeMeters = geometry.SidewallNegativeMeters + 16, CoordinateScale = .5f };
+        Apply(dimensions, 3, "height_sidewall_scale");
+        Require(((float)material.GetShaderParameter("ring_atmosphere_camera_height_meters")).Equals(dimensions.CameraHeightMeters)
+            && ((float)material.GetShaderParameter("ring_atmosphere_sidewall_negative_meters")).Equals(dimensions.SidewallNegativeMeters)
+            && ((float)material.GetShaderParameter("ring_atmosphere_coordinate_scale")).Equals(dimensions.CoordinateScale),
+            "height/sidewall/scale atmosphere shader values were stale");
+        Apply(RingAtmosphereRayFrame.Invalid, 1, "invalid");
+        Require(!(bool)material.GetShaderParameter("ring_atmosphere_ray_frame_valid"), "invalid atmosphere frame remained active");
+        Apply(RingAtmosphereRayFrame.Invalid, 0, "invalid_stationary");
+        Apply(dimensions, 9, "valid_again");
+        Require((bool)material.GetShaderParameter("ring_atmosphere_ray_frame_valid"), "recovered atmosphere frame remained inactive");
+        using var replacement = new ShaderMaterial { Shader = shader };
+        long beforeReplacement = Writes();
+        Invoke(layer, applyMethod, replacement, dimensions);
+        Require(Writes() - beforeReplacement == 9, "replacement material missed full atmosphere publication");
+        Require((bool)replacement.GetShaderParameter("ring_atmosphere_ray_frame_valid")
+            && ((Vector3)replacement.GetShaderParameter("ring_atmosphere_camera_world_position")).Equals(dimensions.CameraWorld)
+            && ((Vector3)replacement.GetShaderParameter("ring_atmosphere_to_sun")).Equals(dimensions.ToSun),
+            "replacement atmosphere shader values were stale");
+        GD.Print($"{label}_ATMOSPHERE_WRITES observation=replacement_material writes=9");
+    }
     private static void SetField(object instance, string name, object value) =>
         instance.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(instance, value);
     private static bool Approximately(float a, float b) => Mathf.IsEqualApprox(a, b);

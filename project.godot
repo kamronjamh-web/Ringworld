@@ -90,6 +90,66 @@ ring_local_wind_axis={
 "type": "vec3",
 "value": Vector3(0, 1, 0)
 }
+ring_wind_field_enabled={
+"type": "float",
+"value": 0.0
+}
+ring_wind_gust_texture={
+"type": "sampler2D",
+"value": "res://materials/ring_wind_neutral.tres"
+}
+ring_wind_mean_vector={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_wind_gust_strength={
+"type": "float",
+"value": 0.9
+}
+ring_wind_gust_base={
+"type": "float",
+"value": 0.55
+}
+ring_wind_anchor_world={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+ring_wind_around_covector={
+"type": "vec4",
+"value": Vector4(0, 0, 1, 0.00166667)
+}
+ring_wind_across_covector={
+"type": "vec4",
+"value": Vector4(0, 1, 0, 0.00166667)
+}
+ring_wind_anchor_uv={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_wind_gust_velocity_uv={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_wind_phase={
+"type": "vec4",
+"value": Vector4(0, 1, 0, 1)
+}
+ring_tree_wind_response={
+"type": "vec4",
+"value": Vector4(1.7, 0.28, 2, 0.6)
+}
+ring_tree_wind_parts={
+"type": "vec2",
+"value": Vector2(0.15, 1)
+}
+ring_tree_wind_trunk={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_tree_wind_canopy={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
 ring_grass_terrain_coverage_enabled={
 "type": "float",
 "value": 1.0

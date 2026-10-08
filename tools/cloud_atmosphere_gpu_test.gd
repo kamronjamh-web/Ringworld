@@ -48,7 +48,7 @@ func _build() -> void:
 	viewport_3d = SubViewport.new(); viewport_3d.own_world_3d = true; viewport_3d.size = SIZE; viewport_3d.render_target_update_mode = SubViewport.UPDATE_ALWAYS; root.add_child(viewport_3d)
 	var world := WorldEnvironment.new(); world.environment = Environment.new(); world.environment.background_mode = Environment.BG_COLOR; viewport_3d.add_child(world)
 	var camera := Camera3D.new(); camera.current = true; camera.position = Vector3(0,20112,0); camera.rotation_degrees = Vector3(-8,0,0); viewport_3d.add_child(camera)
-	var light := DirectionalLight3D.new(); light.look_at(Vector3(.4,-.75,.5),Vector3.UP); viewport_3d.add_child(light)
+	var light := DirectionalLight3D.new(); viewport_3d.add_child(light); light.look_at(Vector3(.4,-.75,.5),Vector3.UP)
 	adapter = (load("res://scripts/ui/MenuFlyoverSunshineLayer.cs") as Script).new(); root.add_child(adapter)
 	adapter.call("Configure",world,1337,RADIUS,WIDTH,Vector3(-.4,.75,-.5).normalized())
 	effect = adapter.get("Effect") as Object; settings = (load("res://scripts/ui/MenuFlyoverSettings.cs") as Script).new()

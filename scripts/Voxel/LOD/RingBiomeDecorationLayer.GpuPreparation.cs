@@ -238,13 +238,21 @@ public partial class RingBiomeDecorationLayer
         for (int i = 0; i < roots.Length; i++)
         {
             CachedTree tree = roots[i]; Transform3D transform = CreateTransform(plan.Geometry, inverse, Vector3.Zero, tree.Around, tree.Across, RootAltitude(tree.SurfaceHeight, plan.Settings.RootEmbed), tree.Width, tree.Height, false, tree.Yaw);
-            WriteGpuTreeTransform(rows, i * 12, transform); Aabb current = transform * prototype; bounds = first ? current : bounds.Merge(current); first = false;
+            WriteGpuTreeTransform(rows, i * 12, transform);
+            // The shader hard-limits tip displacement to .6 of world height.
+            // Include that envelope before merging so tall trees and shadow
+            // mirrors retain their canopy at frustum edges at every live setting.
+            Aabb current = TreeWindDeformationBounds(transform, prototype);
+            bounds = first ? current : bounds.Merge(current); first = false;
             Vector2 canonical = new((float)WrappedVegetationDelta(tree.Around - roots[0].Around, plan.Circumference), tree.Across - roots[0].Across); minimum = minimum.Min(canonical); maximum = maximum.Max(canonical);
             metadata[i] = new Vector4(tree.Rank, plan.ProtectedSnapshot.Contains(tree.Id) ? 1 : 0, canonical.X, canonical.Y);
             if (i % 128 == 127) yield return false;
         }
         plan.Built[key] = new GpuTreeGroup { Key = key, Roots = roots, Rows = rows, Metadata = metadata, Bounds = bounds.Grow(8), AroundOrigin = roots[0].Around, AcrossOrigin = roots[0].Across, CanonicalMin = minimum, CanonicalMax = maximum, HasProtected = Array.Exists(metadata, value => value.Y > .5f) };
     }
+
+    internal static Aabb TreeWindDeformationBounds(Transform3D transform, Aabb prototype)
+        => (transform * prototype).Grow(transform.Basis.Y.Length() * .6f);
 
     private IEnumerable<bool> BuildMergedGpuTreeGroupsSliced(GpuPreparationPlan plan)
     {

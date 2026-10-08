@@ -6231,10 +6231,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
             (float)(width - canonical.AcrossMeters),
             1.0f,
             toSun);
-        frame.Apply(_material);
-        frame.Apply(_oceanMaterial);
-        frame.Apply(_structuralWallMaterial);
-        frame.Apply(_opaqueShadowMaterial);
+        ApplyProxyAtmosphereMaterialFrame(_material, frame);
+        ApplyProxyAtmosphereMaterialFrame(_oceanMaterial, frame);
+        ApplyProxyAtmosphereMaterialFrame(_structuralWallMaterial, frame);
+        ApplyProxyAtmosphereMaterialFrame(_opaqueShadowMaterial, frame);
     }
 
     private static void SetRingCenter(ShaderMaterial? material, Vector3 ringCenter)

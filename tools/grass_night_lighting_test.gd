@@ -6,6 +6,7 @@ extends SceneTree
 const DRIVER := preload("res://tools/VegetationWindTestDriver.cs")
 const SIZE := 256
 const OUTPUT := "res://.godot/grass_night_lighting"
+var camera: Camera3D
 var viewport: SubViewport
 var grass: MultiMeshInstance3D
 var material: ShaderMaterial
@@ -60,7 +61,67 @@ func run() -> void:
 	var eclipse_totality := await capture("eclipse_totality")
 	if not require(foreground_luminance(eclipse_totality) < .002, "zero-energy eclipse primary still lit grass"): return
 	write_report(day, day_reference, night_front, night_back, secondary_lit, point_only, ambient_only, eclipse_totality)
-	print("GRASS_NIGHT_LIGHTING=PASS"); quit(0)
+	await verify_ground_facing_lighting()
+	if failed: return
+	print("GRASS_NIGHT_LIGHTING=PASS legacy BRDF and default two-face ground lighting"); quit(0)
+
+func verify_ground_facing_lighting() -> void:
+	# A symmetric vertical ribbon exposes both front/back and rotated side
+	# shading without clump overlap or changing the planted ring-surface up.
+	var ribbon := QuadMesh.new(); ribbon.size = Vector2(.6, .8)
+	grass.multimesh.mesh = ribbon
+	grass.multimesh.set_instance_transform(0, Transform3D(Basis.IDENTITY, Vector3(0, .5, 0)))
+	grass.material_override = material
+	material.set_shader_parameter("grass_blade_shading_enabled", false)
+	material.set_shader_parameter("grass_base_color", Vector3(.2, .42, .1))
+	material.set_shader_parameter("grass_tip_color", Vector3(.2, .42, .1))
+	environment.ambient_light_energy = 0.0
+	secondary.visible = false; point.visible = false
+	sun.visible = true; sun.light_energy = 4.0; sun.rotation_degrees = Vector3(-55, 25, 0)
+	configure_gate(true, 1.0)
+	camera.position = Vector3(0, .5, 5); camera.look_at(Vector3(0, .5, 0), Vector3.UP)
+	var front := await capture("default_ground_front")
+	camera.position.z = -5; camera.look_at(Vector3(0, .5, 0), Vector3.UP)
+	var back := await capture("default_ground_back")
+	grass.multimesh.set_instance_transform(0, Transform3D(Basis(Vector3.UP, .8), Vector3(0, .5, 0)))
+	var rotated := await capture("default_ground_rotated")
+	var front_level := interior_luminance(front)
+	var back_level := interior_luminance(back)
+	var rotated_level := interior_luminance(rotated)
+	if not require(front_level > .05 and absf(front_level-back_level) / front_level < .03 and absf(front_level-rotated_level) / front_level < .03, "default blade faces differed: front=%s back=%s rotated=%s" % [front_level, back_level, rotated_level]): return
+	grass.multimesh.set_instance_transform(0, Transform3D(Basis.IDENTITY, Vector3(0, .5, 0)))
+	material.set_shader_parameter("grass_blade_shading_enabled", true)
+	camera.position.z = 5; camera.look_at(Vector3(0, .5, 0), Vector3.UP)
+	var legacy_front := await capture("legacy_blade_front")
+	# Reverse the authored blade normal explicitly, so legacy restoration
+	# does not depend on the renderer's handling of cull-disabled backfaces.
+	grass.multimesh.set_instance_transform(0, Transform3D(Basis(Vector3.UP, PI), Vector3(0, .5, 0)))
+	var legacy_back := await capture("legacy_blade_back")
+	grass.multimesh.set_instance_transform(0, Transform3D(Basis.IDENTITY, Vector3(0, .5, 0)))
+	var face_mask := foreground_mask(front)
+	if not require(absf(masked_luminance(legacy_front, face_mask)-masked_luminance(legacy_back, face_mask)) > front_level * .1, "legacy shading did not restore directional blade sides"): return
+	material.set_shader_parameter("grass_blade_shading_enabled", false)
+	configure_gate(true, 0.0)
+	var default_night := await capture("default_ground_night")
+	if not require(masked_luminance(default_night, face_mask) < .002, "default ground-facing grass retained primary light at night"): return
+	sun.visible = false; point.visible = true
+	var default_point := await capture("default_ground_local_light")
+	if not require(masked_luminance(default_point, face_mask) > .02, "default ground-facing grass suppressed local lights"): return
+	point.visible = false; sun.visible = true; sun.light_energy = 0.0; configure_gate(true, 1.0)
+	var default_eclipse := await capture("default_ground_eclipse")
+	if not require(masked_luminance(default_eclipse, face_mask) < .002, "default ground-facing grass emitted light during totality"): return
+	print("GRASS_GROUND_LIGHTING front=%s back=%s rotated=%s" % [front_level, back_level, rotated_level])
+
+func interior_luminance(image: Image) -> float:
+	var total := 0.0; var count := 0
+	for y in range(1, SIZE - 1):
+		for x in range(1, SIZE - 1):
+			var interior := true
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					if image.get_pixel(x + dx, y + dy).get_luminance() <= .002: interior = false
+			if interior: total += image.get_pixel(x, y).get_luminance(); count += 1
+	return total / maxi(1, count)
 
 func setup() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT))
@@ -68,7 +129,7 @@ func setup() -> void:
 	var layer := CanvasLayer.new(); var consumer := TextureRect.new(); consumer.texture = viewport.get_texture(); consumer.size = Vector2(SIZE, SIZE); consumer.visible = true; layer.add_child(consumer); root.add_child(layer)
 	environment = Environment.new(); environment.background_mode = Environment.BG_COLOR; environment.background_color = Color.BLACK; environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR; environment.ambient_light_color = Color.WHITE; environment.ambient_light_energy = 0.0
 	var world := WorldEnvironment.new(); world.environment = environment; viewport.add_child(world)
-	var camera := Camera3D.new(); camera.current = true; camera.projection = Camera3D.PROJECTION_ORTHOGONAL; camera.size = 2.0; camera.far = 200.0; viewport.add_child(camera); camera.position = Vector3(0.0, .5, 5.0); camera.look_at(Vector3(0.0, .5, 0.0), Vector3.UP)
+	camera = Camera3D.new(); camera.current = true; camera.projection = Camera3D.PROJECTION_ORTHOGONAL; camera.size = 2.0; camera.far = 200.0; viewport.add_child(camera); camera.position = Vector3(0.0, .5, 5.0); camera.look_at(Vector3(0.0, .5, 0.0), Vector3.UP)
 	grass = MultiMeshInstance3D.new(); grass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF; viewport.add_child(grass)
 	var multi := MultiMesh.new(); multi.transform_format = MultiMesh.TRANSFORM_3D; multi.use_colors = true; multi.use_custom_data = true; multi.mesh = DRIVER.new().call("LoadMeadowMesh"); multi.instance_count = 1; multi.set_instance_transform(0, Transform3D.IDENTITY); multi.set_instance_color(0, Color(0, 0, 0, 0)); multi.set_instance_custom_data(0, Color(.5, .5, .1, .2)); grass.multimesh = multi
 	material = make_material(false); reference_material = make_material(true)
@@ -84,7 +145,7 @@ func make_material(engine_reference: bool) -> ShaderMaterial:
 		var light_start := source.find("\nvoid light() {")
 		if light_start >= 0: source = source.substr(0, light_start) + "\n"
 	shader.code = source
-	var output := ShaderMaterial.new(); output.shader = shader; output.set_shader_parameter("local_cloud_shadow_enabled", false); output.set_shader_parameter("ring_local_wind_enabled", false); output.set_shader_parameter("grass_lod_enabled", false); output.set_shader_parameter("grass_appearance_enabled", false); output.set_shader_parameter("grass_base_color", Vector3(.20, .42, .10)); output.set_shader_parameter("grass_tip_color", Vector3(.34, .66, .16)); return output
+	var output := ShaderMaterial.new(); output.shader = shader; output.set_shader_parameter("local_cloud_shadow_enabled", false); output.set_shader_parameter("ring_local_wind_enabled", false); output.set_shader_parameter("grass_lod_enabled", false); output.set_shader_parameter("grass_appearance_enabled", false); output.set_shader_parameter("grass_blade_shading_enabled", true); output.set_shader_parameter("grass_base_color", Vector3(.20, .42, .10)); output.set_shader_parameter("grass_tip_color", Vector3(.34, .66, .16)); return output
 
 func configure_gate(enabled: bool, day_factor: float) -> void:
 	material.set_shader_parameter("grass_primary_sun_gate_enabled", enabled); material.set_shader_parameter("grass_primary_sun_direction", sun.global_transform.basis.z.normalized()); material.set_shader_parameter("grass_primary_sun_day_factor", day_factor); material.set_shader_parameter("grass_primary_sun_night_direct", 0.0); material.set_shader_parameter("grass_primary_sun_day_direct", 1.0)

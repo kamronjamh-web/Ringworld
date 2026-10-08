@@ -101,6 +101,8 @@ public partial class RingWeatherAmbience : Node
     private float _coverTarget;
     private float _coverCurrent;
     private bool _deepShelter;
+    /// <summary>Cached precipitation cover; visual rain can share it without new terrain queries.</summary>
+    public bool IsRainSheltered => _deepShelter || _coverTarget >= .5f;
     private ThunderAcousticContext _lastDetailContext;
     private RingCanonicalPosition _previousDetailListener;
     private bool _hasPreviousDetailListener;

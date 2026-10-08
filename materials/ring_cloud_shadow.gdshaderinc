@@ -27,27 +27,18 @@ uniform float local_cloud_shadow_far_strength_end_meters = 5000.0;
 // 0.0 keeps overlapping shadow systems energy-conserving by using the darkest
 // single estimate. 1.0 restores fully compounded shadow darkening.
 uniform float shadow_overlap_darkening : hint_range(0.0, 1.0, 0.01) = 0.0;
-uniform float cloud_shadow_contrast_fade_start : hint_range(0.0, 1.0, 0.01) = 0.55;
-uniform float cloud_shadow_contrast_fade_end : hint_range(0.0, 1.0, 0.01) = 0.85;
 
 float combine_ring_shadow_visibility(
 	float realtime_visibility,
 	float cloud_occlusion,
 	float terrain_occlusion) {
 	float clamped_cloud_occlusion = clamp(cloud_occlusion, 0.0, 1.0);
-	float contrast_fade = smoothstep(
-		cloud_shadow_contrast_fade_start,
-		max(cloud_shadow_contrast_fade_start + 0.001, cloud_shadow_contrast_fade_end),
-		clamped_cloud_occlusion);
-	float close_visibility = mix(
-		clamp(realtime_visibility, 0.0, 1.0),
-		1.0,
-		contrast_fade);
+	// Clouds attenuate direct sunlight; they cannot restore direct light behind
+	// opaque geometry. Diffuse overcast illumination belongs to ambient lighting,
+	// so preserve both real shadow-map and terrain-mask occlusion at every cloud level.
+	float close_visibility = clamp(realtime_visibility, 0.0, 1.0);
 	float cloud_visibility = 1.0 - clamped_cloud_occlusion;
-	float terrain_visibility = mix(
-		1.0 - clamp(terrain_occlusion, 0.0, 1.0),
-		1.0,
-		contrast_fade);
+	float terrain_visibility = 1.0 - clamp(terrain_occlusion, 0.0, 1.0);
 	float strongest_visibility = min(close_visibility, min(cloud_visibility, terrain_visibility));
 	float compounded_visibility = close_visibility * cloud_visibility * terrain_visibility;
 	return mix(

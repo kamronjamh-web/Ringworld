@@ -1,19 +1,19 @@
 [gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_gwttm"]
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_dnvxt"]
 
 [resource]
-script = ExtResource("1_gwttm")
+script = ExtResource("1_dnvxt")
 Overrides = {
 "AnvilRadiusMultiplier": 2.7,
 "AutomaticCloudHandoff": true,
-"BlurPower": 0.0,
+"BlurPower": 1.2,
 "BlurQuality": 1,
 "CastCloudShadows": true,
 "CloudAmbientMultiplier": 1.0,
-"CloudCoverageBias": -0.01,
-"CloudDensityMultiplier": 3.0,
-"CloudDirectLightMultiplier": 0.98,
+"CloudCoverageBias": 0.01,
+"CloudDensityMultiplier": 0.9,
+"CloudDirectLightMultiplier": 1.0,
 "CloudHandoffOverlapMeters": 51000.0,
 "CloudLodBias": 1.65,
 "CloudRenderingEnabled": true,
@@ -22,8 +22,10 @@ Overrides = {
 "CloudWindMultiplier": 3.0,
 "DayCloudAmbientColor": Color(1, 1, 1, 1),
 "DitherSpeed": 0.0,
+"FarCloudDetailEnabled": true,
 "FarCloudDetailStrength": 1.0,
 "FarCloudOpacityMultiplier": 1.14,
+"FarCloudPatchCullingEnabled": true,
 "FarCloudRadiusMeters": 245000.0,
 "FastReconstruction": false,
 "GpuFarShadowMapResolution": 128,
@@ -35,22 +37,23 @@ Overrides = {
 "GpuShadowVerticalSamples": 64,
 "HandoffEndMeters": 320500.0,
 "HandoffStartMeters": 320000.0,
-"LightingSteps": 11,
+"LightingSteps": 30,
 "LightingTravelKm": 0.5,
 "MaxStepDistanceMeters": 958.0,
 "MinStepDistanceMeters": 500.0,
-"MovingHistoryWeight": 0.95,
+"MovingHistoryWeight": 0.0,
 "NaturalCloudBaseAltitudeMeters": 2000.0,
 "NaturalCloudTopAltitudeMeters": 6000.0,
 "NearCloudRangeExtensionMeters": 92000.0,
 "NightCloudAmbientColor": Color(0, 0, 0, 1),
 "PreferGpuCloudShadows": true,
 "RayStartJitterStrength": 1.0,
-"RaymarchSteps": 272,
+"RaymarchSteps": 328,
 "SculptLocalizedStorms": true,
 "ShadowExtinctionPerKilometer": 1.0,
 "ShadowMapResolution": 16,
 "ShadowRadiusMeters": 8000.0,
+"SkipEmptyCloudMaskSamples": true,
 "StationaryHistoryWeight": 0.95,
 "StormAmbientFloor": 0.5,
 "StormAmbientOcclusionStrength": 0.62,

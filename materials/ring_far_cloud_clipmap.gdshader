@@ -1,10 +1,12 @@
 shader_type spatial;
+render_mode unshaded, blend_premul_alpha, depth_draw_never, cull_disabled;
+uniform float terrain_cloud_receiver_height_meters = 0.0;
 // The camera-local curved mesh is transformed with tangent/inward/up, a
 // reflected basis (determinant -1). Its effective winding changes under that
 // transform, so directional culling can remove the inhabited-side underside.
 // Render both sides; the annular mesh and soft handoff still prevent a flat
 // night-time ceiling.
-render_mode unshaded, blend_premul_alpha, depth_draw_never, cull_disabled;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 
 // Camera-relative far cloud tier. It deliberately uses a dense procedural
 // field rather than the low-resolution whole-ring shell, while canonical
@@ -127,6 +129,10 @@ void fragment() {
 	float sun_rim = pow(clamp(dot(normalize(surface_up), normalize(sun_direction)), 0.0, 1.0), 2.0) * (0.18 + 0.16 * slice_height);
 	float underside = mix(0.64, 1.0, clamp(cloud + slice_height * 0.25 + sun_rim, 0.0, 1.0));
 	vec3 color = mix(bright, storm, clamp(resolved_storm_factor * 0.88 + resolved_coverage * 0.18, 0.0, 1.0)) * underside;
+	float ambient_underside = mix(0.64, 1.0, clamp(cloud + slice_height * 0.25, 0.0, 1.0));
+	vec3 ambient_color = mix(vec3(0.30, 0.36, 0.46), vec3(0.045, 0.065, 0.10), clamp(resolved_storm_factor * 0.88 + resolved_coverage * 0.18, 0.0, 1.0)) * mix(underside, ambient_underside, day);
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(vec3(p.x * 1000.0, terrain_cloud_receiver_height_meters, p.y * 1000.0));
+	color -= max(color - ambient_color, vec3(0.0)) * (1.0 - terrain_sun);
 	vec4 atmosphere = sample_ring_atmosphere(
 		ring_atmosphere_camera_world_position,
 		world_position,

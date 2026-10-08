@@ -1,4 +1,6 @@
 using Godot;
+using System;
+using RingworldTechDemo.Weather;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
@@ -11,6 +13,7 @@ public static partial class RingWaterModel
     private sealed class OceanMaterialSnapshot
     {
         public bool Initialized;
+        public long WindClockVersion = -1;
         public bool Ready;
         public Texture2DArrayRD? NormalFoam;
         public Texture2DArrayRD? Displacement;
@@ -57,6 +60,72 @@ public static partial class RingWaterModel
         ["skipped_refreshes"] = OceanMaterialSkippedRefreshes,
         ["last_refresh_pushes"] = LastOceanMaterialRefreshPushes
     };
+
+    private static double _windClock;
+    private static Vector2 _waterMeanWind;
+    private static bool _windClockEnabled;
+    private static bool _waterFollowWeather = true;
+    private static long _windClockVersion;
+    private static float _windWaveSpeed = float.NaN, _windAnalyticStrength = float.NaN, _windGustStrength = float.NaN;
+    private static readonly double[] WaterPhaseRates = { 1, -1.173, 1.619, -2.071, 2.513, .071, -.053, .041, -.063, .037, .23, -.13 };
+    private static readonly Vector3[] WaterPhases = new Vector3[12];
+
+    public static void UpdateWindClock(double simulationTime, Vector2 meanWind, bool followWeather = true)
+    {
+        if (!double.IsFinite(simulationTime)) return;
+        var settings = RingWindSettings.Current;
+        if (_windClockEnabled && _windClock == simulationTime && _waterMeanWind == meanWind
+            && _windWaveSpeed == WaveSpeed && _windAnalyticStrength == settings.AnalyticWaveResponseStrength
+            && _windGustStrength == settings.WaterGustResponseStrength && _waterFollowWeather == followWeather) return;
+        _waterFollowWeather = followWeather;
+        _windWaveSpeed = WaveSpeed;
+        _windAnalyticStrength = settings.AnalyticWaveResponseStrength;
+        _windGustStrength = settings.WaterGustResponseStrength;
+        _windClock = simulationTime;
+        _waterMeanWind = meanWind;
+        _windClockEnabled = true;
+        _windClockVersion++;
+        for (int index = 0; index < WaterPhases.Length; index++)
+            WaterPhases[index] = new Vector3(
+                RingWaterWindResponse.BoundedPhase(simulationTime, WaveSpeed, WaterPhaseRates[index]),
+                RingWaterWindResponse.BoundedPhase(simulationTime, WaveSpeed, WaterPhaseRates[index] * .42),
+                RingWaterWindResponse.BoundedPhase(simulationTime, WaveSpeed, WaterPhaseRates[index] * .18));
+    }
+
+    public static void ClearWindClock() { _windClockEnabled = false; _windClockVersion++; }
+
+    private static void ApplyWaterWind(ShaderMaterial material, float coordinateScale)
+    {
+        string? path = material.Shader?.ResourcePath;
+        if (path != "res://materials/ring_ocean_proxy.gdshader" && path != "res://materials/ring_ocean_global.gdshader") return;
+        OceanMaterialSnapshot snapshot = OceanMaterialSnapshots.GetOrCreateValue(material);
+        if (snapshot.WindClockVersion == _windClockVersion) return;
+        snapshot.WindClockVersion = _windClockVersion;
+        SetOceanParameter(material, "water_wind_clock_enabled", _windClockEnabled);
+        if (!_windClockEnabled)
+        {
+            SetOceanParameter(material, "water_mean_response", 1f);
+            SetOceanParameter(material, "water_mean_wind_speed", 0f);
+            SetOceanParameter(material, "water_spatial_gust_enabled", false);
+            return;
+        }
+        Vector2 direction = _waterMeanWind.LengthSquared() > .0001f ? _waterMeanWind.Normalized() : new Vector2(.916f, .401f).Normalized();
+        SetOceanParameter(material, "water_mean_wind_direction", direction);
+        SetOceanParameter(material, "water_mean_wind_speed", _waterMeanWind.Length());
+        SetOceanParameter(material, "water_wave_phases", WaterPhases);
+        SetOceanParameter(material, "water_mean_response", 1f + RingWindSettings.Current.AnalyticWaveResponseStrength * Mathf.Clamp(_waterMeanWind.Length() / 24f, 0, 1));
+        SetOceanParameter(material, "water_gust_response_strength", RingWindSettings.Current.WaterGustResponseStrength);
+        // Scaled-far positions cannot sample the main scene's tangent gust atlas.
+        SetOceanParameter(material, "water_spatial_gust_enabled", _waterFollowWeather && RingWindSettings.Current.Enabled && Mathf.IsEqualApprox(coordinateScale, 1f));
+        float radius = material.GetShaderParameter("ring_radius_meters").AsSingle();
+        double circumference = Math.Tau * Math.Max(1, radius);
+        static float Wrap(double value, double period) => (float)(value - Math.Floor(value / period) * period);
+        SetOceanParameter(material, "water_river_advection", Wrap(_windClock * WaveSpeed * 1.8 * coordinateScale, circumference * 2.15));
+        // Bounded broad group drift avoids narrowing an unbounded across offset.
+        SetOceanParameter(material, "water_far_group_translation", new Vector4(
+            Wrap(_windClock * .47 * coordinateScale, circumference), Mathf.Sin(RingWaterWindResponse.BoundedPhase(_windClock, 1, -.00023)) * 1000f * coordinateScale,
+            Wrap(-_windClock * .29 * coordinateScale, circumference), Mathf.Sin(RingWaterWindResponse.BoundedPhase(_windClock, 1, .00041)) * 1000f * coordinateScale));
+    }
 
     /// <summary>Refresh only the nearby ocean bindings as the canonical frame moves.</summary>
     public static void RefreshOceanMaterials()
@@ -110,6 +179,7 @@ public static partial class RingWaterModel
 
     private static void ApplyOceanMaterial(ShaderMaterial material, float coordinateScale)
     {
+        ApplyWaterWind(material, coordinateScale);
         // Global and scaled-far water deliberately retain their opaque, inexpensive path.
         if (!Mathf.IsEqualApprox(coordinateScale, 1f)
             || material.Shader?.ResourcePath != "res://materials/ring_ocean_proxy.gdshader") return;

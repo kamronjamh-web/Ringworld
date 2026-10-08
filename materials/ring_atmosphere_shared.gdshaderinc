@@ -67,8 +67,8 @@ vec4 ring_atmosphere_local_haze_shared(vec3 target, vec3 camera, vec3 outward, v
 	float upper = (1.0 - exp(-paths.z / max(p[1].z, 1.0))) * p[2].y;
 	float shell = 1.0 - (1.0 - boundary) * (1.0 - upper);
 	float altitude = smoothstep(p[4].x, max(p[4].x + 1.0, p[4].y), max(p[7].w, 0.0));
-	vec2 visibility = vec2(mix(p[3].x, p[3].z, altitude), mix(p[3].y, p[3].w, altitude));
-	float weight = smoothstep(visibility.x, max(visibility.x + 1.0, visibility.y), paths.x);
+	vec2 shared_air_visibility_distances = vec2(mix(p[3].x, p[3].z, altitude), mix(p[3].y, p[3].w, altitude));
+	float weight = smoothstep(shared_air_visibility_distances.x, max(shared_air_visibility_distances.x + 1.0, shared_air_visibility_distances.y), paths.x);
 	float haze = weight * p[2].z;
 	float shared_haze_opacity = min(1.0 - (1.0 - shell * weight) * (1.0 - haze), p[1].w);
 	float day = smoothstep(-0.2, 0.35, dot(-normalize(outward), normalize(to_sun))) * clamp(solar_visibility, 0.0, 1.0);

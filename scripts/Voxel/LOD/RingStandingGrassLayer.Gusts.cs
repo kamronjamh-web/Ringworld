@@ -27,11 +27,13 @@ public partial class RingStandingGrassLayer
     private readonly record struct GrassGustMaterialState(int Seed, bool TextureReady, bool Enabled, float Strength, float BaseBreeze);
     private readonly Dictionary<ShaderMaterial, GrassGustMaterialState> _grassGustMaterialStates = new();
 
-    public Vector2 GrassGustOffsetMeters => _grassGustState.OffsetMeters;
-    public double GrassGustSimulationTime => _grassGustState.SimulationTime;
+    private bool UsesSharedWindField => !_grassGustTestWeather && _grassGustWeather != null
+        && GodotObject.IsInstanceValid(_grassGustWeather) && _grassGustWeather.SharedWindFieldReady;
+    public Vector2 GrassGustOffsetMeters => UsesSharedWindField ? _grassGustWeather!.GustOffsetMeters : _grassGustState.OffsetMeters;
+    public double GrassGustSimulationTime => UsesSharedWindField ? _grassGustWeather!.GustSimulationTime : _grassGustState.SimulationTime;
     public float GrassGustEffectiveAroundScaleMeters { get; private set; }
     /// <summary>Set by NoiseTexture2D after Godot completes its asynchronous generation.</summary>
-    public bool GrassGustTextureReady => _grassGustTextureReady;
+    public bool GrassGustTextureReady => UsesSharedWindField || _grassGustTextureReady;
 
     /// <summary>Updates the field from the weather simulation clock; it never uses shader TIME.</summary>
     public void UpdateGrassGusts(double delta, RingTerrainSampler sampler)
@@ -40,7 +42,6 @@ public partial class RingStandingGrassLayer
         long circumference = Math.Max(1L, sampler.AroundRingVoxelLength);
         _grassGustCircumference = circumference;
         GetGrassGustPeriods(circumference, out double aroundPeriod, out double acrossPeriod);
-        if (EnableGrassGustTexture) EnsureGrassGustTexture(sampler.Seed);
         Vector2 wind;
         double time;
         if (_grassGustTestWeather) { wind = _grassGustTestWind; time = _grassGustTestTime; }
@@ -49,9 +50,15 @@ public partial class RingStandingGrassLayer
             if (_grassGustWeather == null || !GodotObject.IsInstanceValid(_grassGustWeather))
                 _grassGustWeather = GetNodeOrNull<RingLocalWeatherEffects>("../LocalWeatherEffects");
             if (_grassGustWeather == null) return;
+            if (UsesSharedWindField)
+            {
+                GrassGustEffectiveAroundScaleMeters = (float)_grassGustWeather.GustAroundPeriodMeters;
+                return;
+            }
             wind = _grassGustWeather.PublishedVegetationWind;
             time = _grassGustWeather.PublishedVegetationWindTime;
         }
+        if (EnableGrassGustTexture) EnsureGrassGustTexture(sampler.Seed);
         _grassGustState.Advance(wind, time, GrassGustTravelSpeedMultiplier, aroundPeriod, acrossPeriod);
     }
 
@@ -104,11 +111,11 @@ public partial class RingStandingGrassLayer
         if (material == null) return;
         float strength = float.IsFinite(GrassGustStrength) ? Mathf.Clamp(GrassGustStrength, 0, 2) : 0;
         float baseBreeze = float.IsFinite(GrassGustBaseBreeze) ? Mathf.Clamp(GrassGustBaseBreeze, 0, 1) : 0;
-        var state = new GrassGustMaterialState(_grassGustSeed, _grassGustTextureReady, EnableGrassGustTexture, strength, baseBreeze);
+        var state = new GrassGustMaterialState(_grassGustSeed, GrassGustTextureReady, EnableGrassGustTexture, strength, baseBreeze);
         if (!_grassGustMaterialStates.TryGetValue(material, out GrassGustMaterialState previous) || state != previous)
         {
             if (_grassGustTexture != null) material.SetShaderParameter("grass_gust_texture", _grassGustTexture);
-            material.SetShaderParameter("grass_gust_enabled", EnableGrassGustTexture && _grassGustTextureReady && _grassGustTexture != null);
+            material.SetShaderParameter("grass_gust_enabled", EnableGrassGustTexture && GrassGustTextureReady);
             material.SetShaderParameter("grass_gust_strength", strength);
             material.SetShaderParameter("grass_gust_base_breeze", baseBreeze);
             _grassGustMaterialStates[material] = state;

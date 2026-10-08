@@ -36,6 +36,7 @@
 [ext_resource type="Script" uid="uid://djusduuxf0voj" path="res://addons/SunshineClouds2/SunshineCloudsDriver.gd" id="34"]
 [ext_resource type="CompositorEffect" uid="uid://di5bbolw4gmy" path="res://resources/clouds/sunshine_ring_local.tres" id="35"]
 [ext_resource type="Script" uid="uid://c3lgd3me5trln" path="res://scripts/RingSunshineCloudBridge.cs" id="36"]
+[ext_resource type="Script" path="res://scripts/RingTerrainCloudSunVisibility.cs" id="terrain_cloud_sun"]
 [ext_resource type="Script" uid="uid://dldopq76731f8" path="res://scripts/Voxel/LOD/RingTerrainCoarseSdfPilot.cs" id="37"]
 [ext_resource type="Script" uid="uid://cqkmuatyta2xh" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="38"]
 [ext_resource type="Resource" path="res://resources/voxel/ring_lod_mega_regional.tres" id="39"]
@@ -297,7 +298,6 @@ PredictionMaxDistanceMeters = 256.0
 EnableFarFade = true
 FadeOutStartMeters = 240.0
 FadeOutEndMeters = 320.0
-ShadowIgnoresTerrainFade = false
 
 [node name="CoarseSdfLod1Pilot" type="Node3D" parent="." unique_id=707711974]
 script = ExtResource("37")
@@ -605,6 +605,13 @@ point_light_power_multiplier = 0.35
 
 [node name="SunshineCloudBridge" type="Node" parent="." unique_id=1280994918]
 script = ExtResource("36")
+
+[node name="TerrainCloudSunVisibility" type="Node" parent="."]
+script = ExtResource("terrain_cloud_sun")
+GridPath = NodePath("../ChunkGridManager")
+GlobalLodPath = NodePath("../GlobalTerrainLod3")
+FocusPath = NodePath("../Explorer")
+SunLightPath = NodePath("../StarLight")
 
 [node name="CloudProviderController" type="Node" parent="."]
 script = ExtResource("52_cloud_provider")
