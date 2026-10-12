@@ -10,6 +10,9 @@ $work = Join-Path $root '.godot/terrain3d-native-src'
 $tools = Join-Path $root '.godot/terrain3d-native-tools'
 $llvm = Join-Path $tools 'llvm-mingw-20260922-ucrt-x86_64'
 $pythonPackages = Join-Path $tools 'python'
+$pythonExecutable = Join-Path $tools 'python-runtime/python.exe'
+if (!(Test-Path $pythonExecutable)) { throw 'Stage official Python 3.13.7 embedded runtime in .godot/terrain3d-native-tools/python-runtime first.' }
+if ((Get-FileHash (Join-Path $tools 'python-3.13.7-embed-amd64.zip') -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'f6cca216a359be84797cabb54149ce5e062afb16cc7567eb7fc51cacb2d86b65') { throw 'Python embedded archive hash mismatch.' }
 $expectedLlvmHash = 'e3ad77d117a4bea19a7a3b333341824d79a5a371004a10e25b8504e7b3047666'
 
 if (!(Test-Path (Join-Path $work '.git'))) { throw 'Clone Terrain3D v1.0.2-stable with --recurse-submodules into .godot/terrain3d-native-src first.' }
@@ -21,21 +24,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the Terrain3D godot-cpp subm
 if ($submoduleStatus -notmatch '6388e26dd8a42071f65f764a3ef3d9523dda3d6e') { throw 'Unexpected godot-cpp submodule commit.' }
 if ((Get-FileHash (Join-Path $tools 'llvm-mingw-20260922-ucrt-x86_64.zip') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedLlvmHash) { throw 'LLVM-MinGW archive hash mismatch.' }
 
-foreach ($patchName in @('all_axis_culling.patch', 'standard_grid_diagonal.patch')) {
+foreach ($patchName in @('all_axis_culling.patch', 'standard_grid_diagonal.patch', 'godot_48_resource_methods.patch')) {
     $patch = Join-Path $root (Join-Path 'third_party/Terrain3D/patches' $patchName)
     $savedErrorAction = $ErrorActionPreference
     try {
         # PowerShell 5.1 can promote the expected nonzero reverse-check status to
         # a terminating native-command error under Stop, even when stderr is null.
         $ErrorActionPreference = 'Continue'
-        git -C $work apply --reverse --check $patch 2>$null
+        git -C $work apply --ignore-space-change --reverse --check $patch 2>$null
         $reverseCheckExit = $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $savedErrorAction }
     if ($reverseCheckExit -ne 0) {
-        git -C $work apply --check $patch
+        git -C $work apply --ignore-space-change --check $patch
         if ($LASTEXITCODE -ne 0) { throw "Terrain3D patch '$patchName' is neither clean nor already applied." }
-        git -C $work apply $patch
+        git -C $work apply --ignore-space-change $patch
         if ($LASTEXITCODE -ne 0) { throw "Terrain3D patch '$patchName' apply failed." }
     }
 }
@@ -47,10 +50,10 @@ try {
     $env:PYTHONPATH = $pythonPackages
     $env:CC = 'x86_64-w64-mingw32-clang.exe'; $env:CXX = 'x86_64-w64-mingw32-clang++.exe'
     $env:AR = 'x86_64-w64-mingw32-ar.exe'; $env:RANLIB = 'x86_64-w64-mingw32-ranlib.exe'
-    python -c "import os, SCons; expected=os.path.abspath(r'$pythonPackages'); actual=os.path.abspath(SCons.__file__); assert actual.startswith(expected), (actual, expected); assert getattr(SCons, '__version__', None) == '4.10.1', getattr(SCons, '__version__', None)"
+    & $pythonExecutable -c "import os, sys, SCons; assert sys.version_info[:3] == (3, 13, 7), sys.version; expected=os.path.abspath(r'$pythonPackages'); actual=os.path.abspath(SCons.__file__); assert actual.startswith(expected), (actual, expected); assert getattr(SCons, '__version__', None) == '4.10.1', getattr(SCons, '__version__', None)"
     if ($LASTEXITCODE -ne 0) { throw 'Pinned SCons 4.10.1 is unavailable.' }
     Push-Location $work
-    try { python -c "from SCons.Script.Main import main; main()" platform=windows target=$Target arch=x86_64 use_mingw=yes -j 8 }
+    try { & $pythonExecutable -c "from SCons.Script.Main import main; main()" platform=windows target=$Target arch=x86_64 use_mingw=yes -j 8 }
     finally { Pop-Location }
     if ($LASTEXITCODE -ne 0) { throw 'Terrain3D SCons build failed.' }
 }

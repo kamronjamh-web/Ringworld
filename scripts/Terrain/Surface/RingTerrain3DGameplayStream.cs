@@ -16,6 +16,9 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
 {
     private const int TileSide = 128, WindowSide = 384, Spacing = 2;
     private const int TileBytes = TileSide * TileSide * 8;
+    // Preserve Godot 4.7's byte representation in cached worlds. Godot 4.8
+    // Image.SetPixel rounds RGBA8 channels; these bulk buffers retain truncation.
+    internal static byte QuantizeBiomeChannel(float value) => (byte)(Math.Clamp(value, 0f, 1f) * 255f);
     private readonly RingTerrainSampler[] _samplers;
     private readonly bool[] _leased;
     private readonly float _minimumHeight, _maximumHeight;
@@ -254,16 +257,13 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
                         if (!float.IsFinite(height)) throw new InvalidOperationException("Terrain sampler returned a non-finite height.");
                         Heights[index] = Math.Clamp(height, _min, _max);
                         Color color = weights.ToVertexColor();
-                        int c = index * 4; Biomes[c] = ToByte(color.R); Biomes[c + 1] = ToByte(color.G); Biomes[c + 2] = ToByte(color.B); Biomes[c + 3] = ToByte(color.A);
+                        int c = index * 4; Biomes[c] = QuantizeBiomeChannel(color.R); Biomes[c + 1] = QuantizeBiomeChannel(color.G); Biomes[c + 2] = QuantizeBiomeChannel(color.B); Biomes[c + 3] = QuantizeBiomeChannel(color.A);
                     }
                 }
             }
             catch (Exception exception) { Error = exception.Message; }
         }
         private long Wrap(long value) { value %= _circ; return value < 0 ? value + _circ : value; }
-        // Image::set_pixel(FORMAT_RGBA8) truncates after scaling; rounding
-        // changes biome blending by a byte compared with existing worlds.
-        private static byte ToByte(float value) => (byte)(Math.Clamp(value, 0f, 1f) * 255f);
     }
 
     private sealed class PackJob : IDisposable

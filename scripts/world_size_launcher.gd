@@ -1134,9 +1134,9 @@ func _configure_mega_ring_game(game: Node) -> void:
 	scaled_far_viewport.set("Enabled", true)
 	scaled_far_viewport.set("RegionalFarLodsEnabled", true)
 	scaled_far_viewport.set("CoordinateScale", 0.0000001)
-	scaled_far_viewport.set("ResolutionScale", 0.5)
-	scaled_far_viewport.set("AroundSegments", 2048)
-	scaled_far_viewport.set("AcrossSegments", 32)
+	scaled_far_viewport.set("ResolutionScale", 1.0)
+	scaled_far_viewport.set("AroundSegments", 4096)
+	scaled_far_viewport.set("AcrossSegments", 64)
 	scaled_far_viewport.set("RingWidthMeters", int(MEGA_RING_WIDTH_METERS))
 	scaled_far_viewport.set("StructuralDepthMeters", MEGA_RING_STRUCTURAL_DEPTH_METERS)
 	scaled_far_viewport.set("StructuralWallTopMeters", 10000.0)
@@ -1491,9 +1491,9 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	scaled_far_viewport.set("RingWidthMeters", int(round(width_m)))
 	scaled_far_viewport.set("StructuralDepthMeters", structural_depth_m)
 	scaled_far_viewport.set("StructuralWallTopMeters", max_build_y + CERTIFIED_STRUCTURAL_WALL_CLEARANCE_M)
-	scaled_far_viewport.set("ResolutionScale", 1.0 if capture_max_quality or desktop_mid_high else 0.75)
-	scaled_far_viewport.set("AroundSegments", 2048 if capture_max_quality else (1536 if desktop_mid_high else 1024))
-	scaled_far_viewport.set("AcrossSegments", 32 if capture_max_quality else (24 if desktop_mid_high else 16))
+	scaled_far_viewport.set("ResolutionScale", 1.0)
+	scaled_far_viewport.set("AroundSegments", 4096)
+	scaled_far_viewport.set("AcrossSegments", 64)
 	# Keep the far-backdrop cloud transmittance path disabled. Its screen-space
 	# Sunshine texture arrives a frame late and leaves dark cloud afterimages
 	# during camera motion.

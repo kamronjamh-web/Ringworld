@@ -18,6 +18,7 @@ public partial class RingPerformanceMonitor
         DirectionalLight3D? planet = root?.GetNodeOrNull<DirectionalLight3D>("PlanetLight");
         RingSunshineCloudBridge? bridge = root?.GetNodeOrNull<RingSunshineCloudBridge>("SunshineCloudBridge");
         RingTerrainGlobalLod? globalTerrain = root?.GetNodeOrNull<RingTerrainGlobalLod>("GlobalTerrainLod3");
+        RingScaledFarViewport? far = root?.GetNodeOrNull<RingScaledFarViewport>("ScaledFarViewport");
         Node? driver = root?.GetNodeOrNull<Node>("SunshineCloudsDriver");
         Node? clouds = root?.GetNodeOrNull<Node>("RingVolumetricClouds");
         RingDayNightCycle? cycle = root?.GetNodeOrNull<RingDayNightCycle>("RingDayNightCycle");
@@ -39,6 +40,25 @@ public partial class RingPerformanceMonitor
                 atlasSize = graphics?.EffectiveDirectionalShadowAtlasSize, depthBits = graphics?.EffectiveDirectionalShadowDepthBits, filter = graphics?.EffectiveDirectionalShadowFilter
             },
             terrainShadows = CaptureTerrainShadowState(_contextCoordinator, globalTerrain),
+            farRing = far == null ? null : new
+            {
+                requestedScale = Finite(far.ResolutionScale), requestedAround = far.AroundSegments, requestedAcross = far.AcrossSegments,
+                adaptiveGeometry = far.AdaptiveGeometryEnabled, pixelError = Finite(far.GeometryTargetPixelError),
+                maxAngularSegments = far.GeometryMaxAngularSegments, verticesPerTerrainSet = far.GeometryMaxVertices,
+                geometryUploadsPerFrame = far.GeometryUploadsPerFrame, geometryUploadBudgetMilliseconds = Finite(far.GeometryUploadBudgetMilliseconds),
+                activeGlobalAround = far.ActiveGlobalAroundSegments, activeGlobalAcross = far.ActiveGlobalAcrossSegments,
+                activeRegionalAngular = far.ActiveGeometryAngularSegments, activeSectors = far.ActiveTerrainSectorCount, pendingSectors = far.PendingTerrainSectorCount,
+                activeGlobalVertices = far.ActiveGlobalVertexCount, activeRegionalVertices = far.ActiveRegionalVertexCount, submittedVisibleSectors = far.VisibleTerrainSectorCount,
+                surfaceTilesEnabled = far.FarSurfaceTilesEnabled, tileResolution = far.FarSurfaceTileResolution,
+                residentTiles = far.SurfaceTileResidentCount, pendingTiles = far.SurfaceTilePendingCount,
+                tileCpuBytes = far.SurfaceTileCpuBytes, tileGpuBytes = far.SurfaceTileGpuBytes,
+                tileCpuBudgetMiB = far.FarSurfaceTileCpuBudgetMb, tileGpuBudgetMiB = far.FarSurfaceTileGpuBudgetMb,
+                nativeStreamingAvailable = RingworldTechDemo.Rendering.NativeTextureStreaming.Available,
+                nativeStreamingEnabled = RingworldTechDemo.Rendering.NativeTextureStreaming.Enabled,
+                nativeStreamingStatus = RingworldTechDemo.Rendering.NativeTextureStreaming.Status,
+                nativeStreamingBytes = RingworldTechDemo.Rendering.NativeTextureStreaming.UsedBytes,
+                nativeStreamingBudgetMiB = RingworldTechDemo.Rendering.NativeTextureStreaming.MemoryBudgetMiB
+            },
             pipelineCompilations = new
             {
                 mesh = RenderingServer.GetRenderingInfo(RenderingServer.RenderingInfo.PipelineCompilationsMesh),

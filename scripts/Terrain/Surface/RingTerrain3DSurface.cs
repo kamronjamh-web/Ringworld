@@ -452,9 +452,8 @@ public partial class RingTerrain3DSurface : Node3D
             Image? biome = null;
             if (_biomeWeights != null)
             {
-                biome = Image.CreateEmpty(RegionSideSamples, RegionSideSamples, false, Image.Format.Rgba8);
-                for (int row = 0; row < RegionSideSamples; row++) for (int column = 0; column < RegionSideSamples; column++)
-                    biome.SetPixel(column, row, _biomeWeights[(x + half) * RegionSideSamples + column, (z + half) * RegionSideSamples + row]);
+                biome = CreateBiomeWeightImage(_biomeWeights, (x + half) * RegionSideSamples,
+                    (z + half) * RegionSideSamples, RegionSideSamples);
                 images[2] = biome;
             }
             _terrainData.Call("import_images", images, new Vector3(x * RegionSideSamples * _field.SpacingMeters, 0, z * RegionSideSamples * _field.SpacingMeters), 0.0f, 1.0f);

@@ -750,14 +750,14 @@ class ListEntry extends VBoxContainer:
 					draw_texture(add_icon, (get_size() / 2) - (add_icon.get_size() / 2))
 				else:
 					if type == Terrain3DAssets.TYPE_TEXTURE:
-						name_label.text = (resource as Terrain3DTextureAsset).get_name()
+						name_label.text = str((resource as Terrain3DTextureAsset).get("name"))
 						self_modulate = resource.get_albedo_color()
 						_thumbnail = resource.get_albedo_texture()
 						if _thumbnail:
 							draw_texture_rect(_thumbnail, rect, false)
 							texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
 					else:
-						name_label.text = (resource as Terrain3DMeshAsset).get_name()
+						name_label.text = str((resource as Terrain3DMeshAsset).get("name"))
 						var id: int = (resource as Terrain3DMeshAsset).get_id()
 						_thumbnail = resource.get_thumbnail()
 						if _thumbnail:

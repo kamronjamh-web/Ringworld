@@ -24,7 +24,7 @@ public partial class Terrain3DGameplayStreamTest : Node
     public bool Passed { get; private set; }
     public string Error { get; private set; } = string.Empty;
 
-    public void Start() { if (!Finished && _sampler == null) { _deadlineUsec = Time.GetTicksUsec() + 90_000_000; VerifyCoverageTargetSelection(); BeginCase(); } }
+    public void Start() { if (!Finished && _sampler == null) { _deadlineUsec = Time.GetTicksUsec() + 90_000_000; VerifyBiomeQuantizationContract(); VerifyCoverageTargetSelection(); BeginCase(); } }
     public bool IsFinished() => Finished;
     public bool IsPassed() => Passed;
     public override void _Process(double delta)
@@ -205,13 +205,41 @@ public partial class Terrain3DGameplayStreamTest : Node
         Image biome = prepared.BiomeImages[4];
         long centerAround = frame.AnchorAroundMeters; int centerAcross = frame.AnchorAcrossMeters;
         Color expectedBiome = sampler.GetBiomeTextureWeights(centerAround, centerAcross).ToVertexColor();
-        using Image expectedImage = Image.CreateEmpty(1, 1, false, Image.Format.Rgba8);
-        expectedImage.SetPixel(0, 0, expectedBiome);
-        byte[] expectedBytes = expectedImage.GetData();
         byte[] actualBytes = biome.GetData();
-        Check(actualBytes[0] == expectedBytes[0] && actualBytes[1] == expectedBytes[1]
-            && actualBytes[2] == expectedBytes[2] && actualBytes[3] == expectedBytes[3], "biome image uses Godot RGBA8 quantization");
+        // Check the produced image against the established truncation intervals,
+        // independently of the engine's version-dependent Image.SetPixel codec.
+        float[] channels = { expectedBiome.R, expectedBiome.G, expectedBiome.B, expectedBiome.A };
+        for (int channel = 0; channel < channels.Length; channel++)
+        {
+            double scaled = Math.Clamp(channels[channel], 0f, 1f) * 255f;
+            Check(actualBytes[channel] <= scaled && scaled < actualBytes[channel] + 1,
+                $"prepared biome channel {channel} preserves legacy byte interval");
+        }
         Check(prepared.Frame.AcrossDirection == -1 && prepared.Geometry != null, "reversed curved frame has gameplay collision geometry");
+    }
+
+    private void VerifyBiomeQuantizationContract()
+    {
+        // Literal 4.7-era bytes, deliberately distinct from dev7's native
+        // RGBA8 output [128,26,255,255] for [.5,.1,.999,1]. This protects
+        // unchanged biome blends when old worlds are streamed on the new engine.
+        float[] values = { -.5f, 0, .5f, .1f, .999f, 1, 1.5f };
+        byte[] expected = { 0, 0, 127, 25, 254, 255, 255 };
+        for (int index = 0; index < values.Length; index++)
+            Check(RingTerrain3DGameplayStream.QuantizeBiomeChannel(values[index]) == expected[index],
+                $"legacy biome byte fixture {index}");
+        var initialWeights = new Color[2, 2];
+        initialWeights[1, 1] = new Color(.5f, .1f, .999f, 1);
+        using Image initial = RingTerrain3DSurface.CreateBiomeWeightImage(initialWeights, 1, 1, 1);
+        byte[] initialBytes = initial.GetData();
+        Check(initialBytes.Length == 4 && initialBytes[0] == 127 && initialBytes[1] == 25
+            && initialBytes[2] == 254 && initialBytes[3] == 255,
+            "synchronous initial biome image preserves literal legacy bytes and field offset");
+        using Image reference = Image.CreateFromData(1, 1, false, Image.Format.Rgba8, new byte[] { 127, 25, 254, 255 });
+        Color decoded = reference.GetPixel(0, 0);
+        Check(Mathf.IsEqualApprox(decoded.R, 127f / 255) && Mathf.IsEqualApprox(decoded.G, 25f / 255)
+            && Mathf.IsEqualApprox(decoded.B, 254f / 255) && decoded.A == 1,
+            "raw biome bytes retain cross-version decoded weights");
     }
 
     private void Check(bool condition, string label) { _checks++; if (!condition) throw new InvalidOperationException(label); }

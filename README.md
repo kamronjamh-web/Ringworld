@@ -18,16 +18,16 @@ The normal path is **Start Menu → local world slot → World Foundry → confi
 
 | Requirement | Details |
 | --- | --- |
-| Engine | Godot **4.7.2 .NET**. |
-| SDK | .NET **8.0** SDK; [RingworldTechDemo.csproj](RingworldTechDemo.csproj) targets `net8.0`. |
+| Engine | Godot **4.8 dev7 .NET**, commit `c971f93e7`. |
+| SDK | .NET **10.0** SDK; [RingworldTechDemo.csproj](RingworldTechDemo.csproj) targets `net10.0` with `Godot.NET.Sdk/4.8.0-dev.7`. |
 | Renderer | Forward+ graphics renderer. |
 | Terrain3D native validation | Current native patch validation is Windows x64 only. |
 | Native voxel mesher | Optional Windows/Linux packages and C ABI checks; managed fallback remains available. |
 
 ## Quick start
 
-1. Open the repository in Godot 4.7.2 .NET.
-2. Open [StartMenu.tscn](scenes/StartMenu.tscn) and press **F6** for the normal menu flow. The current **F5** main scene is the isolated [playable terrain generation preview](scenes/TerrainGenerationPlayable.tscn).
+1. Prepare the workspace-local Godot 4.8 dev7 and .NET 10 toolchain using [the upgrade guide](docs/godot-48-native-texture-streaming.md), then run `./tools/use_godot_48.ps1 -Build` and `./tools/use_godot_48.ps1 --editor --import`.
+2. Open [StartMenu.tscn](scenes/StartMenu.tscn) and press **F6**, or press **F5** for the configured Start Menu main scene. The [playable terrain generation preview](scenes/TerrainGenerationPlayable.tscn) remains available as an isolated scene.
 3. Select **Enter Ringworld**, then create or load one of the three local world slots.
 4. Use the World Foundry to select a scale or **HALO-SCALE PRESET**.
 5. Use **Advanced** for generation and eligible terrain-backend settings.

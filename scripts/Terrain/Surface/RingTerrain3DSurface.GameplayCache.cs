@@ -43,5 +43,19 @@ public partial class RingTerrain3DSurface
         return true;
     }
 
-    private static byte ToByte(float value) => (byte)Math.Clamp((int)(Math.Clamp(value, 0.0f, 1.0f) * 255.0f), 0, 255);
+    private static byte ToByte(float value) => RingTerrain3DGameplayStream.QuantizeBiomeChannel(value);
+
+    internal static Image CreateBiomeWeightImage(Color[,] weights, int startX, int startZ, int side)
+    {
+        var bytes = new byte[side * side * 4];
+        for (int row = 0; row < side; row++)
+        for (int column = 0; column < side; column++)
+        {
+            Color color = weights[startX + column, startZ + row];
+            int offset = (row * side + column) * 4;
+            bytes[offset] = ToByte(color.R); bytes[offset + 1] = ToByte(color.G);
+            bytes[offset + 2] = ToByte(color.B); bytes[offset + 3] = ToByte(color.A);
+        }
+        return Image.CreateFromData(side, side, false, Image.Format.Rgba8, bytes);
+    }
 }

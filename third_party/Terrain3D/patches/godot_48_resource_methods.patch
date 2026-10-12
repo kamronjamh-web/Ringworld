@@ -1,0 +1,100 @@
+diff --git a/doc/doc_classes/Terrain3DMeshAsset.xml b/doc/doc_classes/Terrain3DMeshAsset.xml
+index 1e9c658..2e0418b 100644
+--- a/doc/doc_classes/Terrain3DMeshAsset.xml
++++ b/doc/doc_classes/Terrain3DMeshAsset.xml
+@@ -126,7 +126,7 @@
+ 		<member name="material_override" type="Material" setter="set_material_override" getter="get_material_override">
+ 			This sets [code skip-lint]GeometryInstance3D.material_override[/code], which replaces the rendered mesh material with this one.
+ 		</member>
+-		<member name="name" type="String" setter="set_name" getter="get_name" default="&quot;New Mesh&quot;">
++		<member name="name" type="String" setter="set_asset_name" getter="get_asset_name" default="&quot;New Mesh&quot;">
+ 			The user specified name for this asset.
+ 		</member>
+ 		<member name="scene_file" type="PackedScene" setter="set_scene_file" getter="get_scene_file">
+diff --git a/doc/doc_classes/Terrain3DRegion.xml b/doc/doc_classes/Terrain3DRegion.xml
+index 710f15f..2fd7acd 100644
+--- a/doc/doc_classes/Terrain3DRegion.xml
++++ b/doc/doc_classes/Terrain3DRegion.xml
+@@ -14,7 +14,7 @@
+ 				Recalculates the height range for this region by looking at every pixel in the heightmap.
+ 			</description>
+ 		</method>
+-		<method name="duplicate">
++		<method name="duplicate_region">
+ 			<return type="Terrain3DRegion" />
+ 			<param index="0" name="deep" type="bool" default="false" />
+ 			<description>
+diff --git a/doc/doc_classes/Terrain3DTextureAsset.xml b/doc/doc_classes/Terrain3DTextureAsset.xml
+index 4f0c2bd..246d7a7 100644
+--- a/doc/doc_classes/Terrain3DTextureAsset.xml
++++ b/doc/doc_classes/Terrain3DTextureAsset.xml
+@@ -34,7 +34,7 @@
+ 		<member name="id" type="int" setter="set_id" getter="get_id" default="0">
+ 			The user settable ID of the texture, between 0 and 31. You can change this to reorder textures in the list, however it won't change the ID painted on the terrain.
+ 		</member>
+-		<member name="name" type="String" setter="set_name" getter="get_name" default="&quot;New Texture&quot;">
++		<member name="name" type="String" setter="set_asset_name" getter="get_asset_name" default="&quot;New Texture&quot;">
+ 			A user specified name for this texture set.
+ 		</member>
+ 		<member name="normal_depth" type="float" setter="set_normal_depth" getter="get_normal_depth" default="0.5">
+diff --git a/src/terrain_3d_mesh_asset.cpp b/src/terrain_3d_mesh_asset.cpp
+index 4151a5f..9bc1dd6 100644
+--- a/src/terrain_3d_mesh_asset.cpp
++++ b/src/terrain_3d_mesh_asset.cpp
+@@ -466,8 +466,8 @@ void Terrain3DMeshAsset::_bind_methods() {
+ 	ADD_SIGNAL(MethodInfo("instancer_setting_changed"));
+ 
+ 	ClassDB::bind_method(D_METHOD("clear"), &Terrain3DMeshAsset::clear);
+-	ClassDB::bind_method(D_METHOD("set_name", "name"), &Terrain3DMeshAsset::set_name);
+-	ClassDB::bind_method(D_METHOD("get_name"), &Terrain3DMeshAsset::get_name);
++	ClassDB::bind_method(D_METHOD("set_asset_name", "name"), &Terrain3DMeshAsset::set_name);
++	ClassDB::bind_method(D_METHOD("get_asset_name"), &Terrain3DMeshAsset::get_name);
+ 	ClassDB::bind_method(D_METHOD("set_id", "id"), &Terrain3DMeshAsset::set_id);
+ 	ClassDB::bind_method(D_METHOD("get_id"), &Terrain3DMeshAsset::get_id);
+ 	ClassDB::bind_method(D_METHOD("set_enabled", "enabled"), &Terrain3DMeshAsset::set_enabled);
+@@ -528,7 +528,7 @@ void Terrain3DMeshAsset::_bind_methods() {
+ 	ClassDB::bind_method(D_METHOD("set_fade_margin", "distance"), &Terrain3DMeshAsset::set_fade_margin);
+ 	ClassDB::bind_method(D_METHOD("get_fade_margin"), &Terrain3DMeshAsset::get_fade_margin);
+ 
+-	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name", PROPERTY_HINT_NONE), "set_name", "get_name");
++	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name", PROPERTY_HINT_NONE), "set_asset_name", "get_asset_name");
+ 	ADD_PROPERTY(PropertyInfo(Variant::INT, "id", PROPERTY_HINT_NONE), "set_id", "get_id");
+ 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "enabled", PROPERTY_HINT_NONE), "set_enabled", "is_enabled");
+ 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "scene_file", PROPERTY_HINT_RESOURCE_TYPE, "PackedScene"), "set_scene_file", "get_scene_file");
+diff --git a/src/terrain_3d_region.cpp b/src/terrain_3d_region.cpp
+index 52134de..b333259 100644
+--- a/src/terrain_3d_region.cpp
++++ b/src/terrain_3d_region.cpp
+@@ -371,7 +371,7 @@ void Terrain3DRegion::_bind_methods() {
+ 
+ 	ClassDB::bind_method(D_METHOD("set_data", "data"), &Terrain3DRegion::set_data);
+ 	ClassDB::bind_method(D_METHOD("get_data"), &Terrain3DRegion::get_data);
+-	ClassDB::bind_method(D_METHOD("duplicate", "deep"), &Terrain3DRegion::duplicate, DEFVAL(false));
++	ClassDB::bind_method(D_METHOD("duplicate_region", "deep"), &Terrain3DRegion::duplicate, DEFVAL(false));
+ 
+ 	int ro_flags = PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_EDITOR | PROPERTY_USAGE_READ_ONLY;
+ 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "version", PROPERTY_HINT_NONE, "", ro_flags), "set_version", "get_version");
+diff --git a/src/terrain_3d_texture_asset.cpp b/src/terrain_3d_texture_asset.cpp
+index 180bf1a..e1ec55f 100644
+--- a/src/terrain_3d_texture_asset.cpp
++++ b/src/terrain_3d_texture_asset.cpp
+@@ -156,8 +156,8 @@ void Terrain3DTextureAsset::_bind_methods() {
+ 	ADD_SIGNAL(MethodInfo("setting_changed"));
+ 
+ 	ClassDB::bind_method(D_METHOD("clear"), &Terrain3DTextureAsset::clear);
+-	ClassDB::bind_method(D_METHOD("set_name", "name"), &Terrain3DTextureAsset::set_name);
+-	ClassDB::bind_method(D_METHOD("get_name"), &Terrain3DTextureAsset::get_name);
++	ClassDB::bind_method(D_METHOD("set_asset_name", "name"), &Terrain3DTextureAsset::set_name);
++	ClassDB::bind_method(D_METHOD("get_asset_name"), &Terrain3DTextureAsset::get_name);
+ 	ClassDB::bind_method(D_METHOD("set_id", "id"), &Terrain3DTextureAsset::set_id);
+ 	ClassDB::bind_method(D_METHOD("get_id"), &Terrain3DTextureAsset::get_id);
+ 	ClassDB::bind_method(D_METHOD("set_albedo_color", "color"), &Terrain3DTextureAsset::set_albedo_color);
+@@ -179,7 +179,7 @@ void Terrain3DTextureAsset::_bind_methods() {
+ 	ClassDB::bind_method(D_METHOD("set_detiling_shift", "detiling_shift"), &Terrain3DTextureAsset::set_detiling_shift);
+ 	ClassDB::bind_method(D_METHOD("get_detiling_shift"), &Terrain3DTextureAsset::get_detiling_shift);
+ 
+-	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name", PROPERTY_HINT_NONE), "set_name", "get_name");
++	ADD_PROPERTY(PropertyInfo(Variant::STRING, "name", PROPERTY_HINT_NONE), "set_asset_name", "get_asset_name");
+ 	ADD_PROPERTY(PropertyInfo(Variant::INT, "id", PROPERTY_HINT_NONE), "set_id", "get_id");
+ 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "albedo_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_albedo_color", "get_albedo_color");
+ 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "albedo_texture", PROPERTY_HINT_RESOURCE_TYPE, "ImageTexture,CompressedTexture2D"), "set_albedo_texture", "get_albedo_texture");

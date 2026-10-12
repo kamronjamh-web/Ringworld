@@ -51,7 +51,7 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
         }
         catch (Exception exception)
         {
-            GD.PushError($"IMPORTED_TREE_IMPOSTOR_CATALOG_SMOKE=FAIL: {exception.Message}");
+            GD.PushError($"IMPORTED_TREE_IMPOSTOR_CATALOG_SMOKE=FAIL: {exception}");
             GetTree().Quit(1);
         }
     }
@@ -68,9 +68,21 @@ public partial class ImportedTreeImpostorCatalogRegressionSmoke : Node
         if (catalog.Material.GetShaderParameter(parameter).AsGodotObject() is not Texture2DArray array)
             throw new InvalidOperationException($"missing {parameter}");
         Require(array.GetLayers() == ImportedTreeCatalog.VariantCount, $"{parameter} layer count");
+        Require(array.GetWidth() == ImportedTreeImpostorCatalog.TextureLayerSize
+            && array.GetHeight() == ImportedTreeImpostorCatalog.TextureLayerSize
+            && array.GetFormat() == Image.Format.Rgba8 && array.HasMipmaps(), $"{parameter} array metadata");
         for (int layer = 0; layer < array.GetLayers(); layer++)
         {
-            Image image = array.GetLayerData(layer);
+            Image? image = array.GetLayerData(layer);
+            // The dummy headless renderer retains layered texture metadata but
+            // dev7 does not return GPU layer images. Validate that metadata here;
+            // real renderer runs still require every layer to read back correctly.
+            if (image == null && DisplayServer.GetName() == "headless")
+            {
+                GD.Print($"IMPORTED_TREE_IMPOSTOR_LAYER_READBACK=SKIP_HEADLESS:{parameter}");
+                return;
+            }
+            if (image == null) throw new InvalidOperationException($"{parameter} layer {layer} readback");
             Require(image.GetWidth() == ImportedTreeImpostorCatalog.TextureLayerSize && image.GetHeight() == ImportedTreeImpostorCatalog.TextureLayerSize && image.HasMipmaps(), $"{parameter} layer {layer}");
         }
     }

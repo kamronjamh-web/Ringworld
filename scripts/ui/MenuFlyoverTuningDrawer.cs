@@ -424,7 +424,8 @@ public partial class MenuFlyoverTuningDrawer : Control
         else
         {
             NumericSpec spec = Ranges[property];
-            var spin = new SpinBox { MinValue = spec.Min, MaxValue = spec.Max, Step = spec.Step, Suffix = spec.Suffix };
+            var spin = new SpinBox { MinValue = spec.Min, MaxValue = spec.Max, Step = spec.Step,
+                Format = spec.Suffix.Length == 0 ? "" : "%s " + spec.Suffix.Replace("%", "%%") };
             spin.ValueChanged += value => SetTuningValue(property, value);
             control = spin;
         }

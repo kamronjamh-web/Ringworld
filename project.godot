@@ -16,7 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="RingworldTechDemo"
 run/main_scene="res://scenes/StartMenu.tscn"
-config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+config/features=PackedStringArray("4.8", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 
 [audio]
@@ -27,6 +27,7 @@ buses/default_bus_layout="uid://bg7j2e1mk3215"
 
 WorldSession="*res://scripts/world_session.gd"
 HardwareProfile="*res://scripts/hardware_profile.gd"
+NativeTextureStreamingBootstrap="*res://scripts/Rendering/native_texture_streaming_bootstrap.gd"
 
 [debug]
 
@@ -50,6 +51,8 @@ enabled=PackedStringArray("res://addons/SunshineClouds2/plugin.cfg", "res://addo
 
 [rendering]
 
+textures/streaming/enabled=true
+textures/streaming/memory_budget_enabled=true
 lights_and_shadows/directional_shadow/size=8192
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=0
 environment/ssao/blur_passes=1

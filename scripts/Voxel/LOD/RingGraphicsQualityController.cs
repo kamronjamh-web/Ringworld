@@ -222,6 +222,32 @@ public partial class RingGraphicsQualityController : Node
     /// </summary>
     public AtmosphereVisualDefaults AtmosphereDefaults => EnsureAtmosphereDefaults();
 
+    private GameplayFarRenderingDefaults? _farRenderingDefaults;
+    public GameplayFarRenderingDefaults FarRenderingDefaults
+    {
+        get
+        {
+            if (_farRenderingDefaults == null)
+            {
+                _farRenderingDefaults = new();
+                _farRenderingDefaults.Load();
+            }
+            return _farRenderingDefaults;
+        }
+    }
+
+    public void ApplyFarRenderingDefaults() => FarRenderingDefaults.Apply(
+        _scaledFarViewport ?? GetNodeOrNull<RingScaledFarViewport>(ScaledFarViewportPath));
+
+    public void InstallFarRenderingDefaults(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", System.StringComparison.Ordinal)
+            && !isolatedPath.StartsWith("user://generated/", System.StringComparison.Ordinal)) return;
+        _farRenderingDefaults = new(isolatedPath);
+        _farRenderingDefaults.Load();
+        ApplyFarRenderingDefaults();
+    }
+
     private AtmosphereVisualDefaults EnsureAtmosphereDefaults()
     {
         if (_atmosphereDefaults != null) return _atmosphereDefaults;
@@ -395,39 +421,12 @@ public partial class RingGraphicsQualityController : Node
 
 		ApplySunshineCloudQuality(preset);
 
-        // Mega's whole-ring backdrop needs denser terrain than the normal
-        // graphics ladder. Preserve that mesh after startup while retaining
-        // its user-selected render-scale progression. Cinematic remains the
-        // sole path that can select the 4096x64 far mesh.
-        float farViewportResolutionScale = tuning.FarViewportResolutionScale;
-        int farAroundSegments = tuning.FarAroundSegments;
-        int farAcrossSegments = tuning.FarAcrossSegments;
-        if (UseMegaRegionalFarBackdrop)
-        {
-            switch (preset)
-            {
-                case RingTerrainLodCoordinator.QualityPreset.Medium:
-                    farViewportResolutionScale = 0.5f;
-                    farAroundSegments = 2048;
-                    farAcrossSegments = 32;
-                    break;
-                case RingTerrainLodCoordinator.QualityPreset.High:
-                    farViewportResolutionScale = 0.75f;
-                    farAroundSegments = 2048;
-                    farAcrossSegments = 32;
-                    break;
-                case RingTerrainLodCoordinator.QualityPreset.VeryHigh:
-                case RingTerrainLodCoordinator.QualityPreset.UltraVideo:
-                    farViewportResolutionScale = 1.0f;
-                    farAroundSegments = 2048;
-                    farAcrossSegments = 32;
-                    break;
-            }
-        }
-        _scaledFarViewport?.ApplyRuntimeRenderQuality(
-            farViewportResolutionScale,
-            farAroundSegments,
-            farAcrossSegments);
+        // FAR uses the Cinematic target independently of grass, clouds and shadows.
+        // Sparse player overrides reapply after every graphics preset change.
+        ApplyFarRenderingDefaults();
+        float farViewportResolutionScale = FarRenderingDefaults.Value("ResolutionScale", GameplayFarRenderingDefaults.DefaultResolutionScale).AsSingle();
+        int farAroundSegments = FarRenderingDefaults.Value("AroundSegments", GameplayFarRenderingDefaults.DefaultAroundSegments).AsInt32();
+        int farAcrossSegments = FarRenderingDefaults.Value("AcrossSegments", GameplayFarRenderingDefaults.DefaultAcrossSegments).AsInt32();
 
         if (_worldEnvironment?.Environment is { } environment)
         {

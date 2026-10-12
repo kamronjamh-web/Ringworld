@@ -44,6 +44,7 @@ uniform float analytic_cloud_shadow_fade_end_meters = 50000.0;
 uniform float ring_width_meters = 20000.0;
 uniform bool debug_color_enabled = false;
 uniform vec3 debug_color = vec3(1.0, 1.0, 0.0);
+#include "res://materials/ring_far_surface_tile.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -119,7 +120,16 @@ void fragment() {
         }
 
 	vec3 terrain_color = ring_vertex_color_to_linear(
-		debug_color_enabled ? debug_color : COLOR.rgb);
+		debug_color_enabled ? debug_color : (surface_tile_enabled
+			? mix(COLOR.rgb, texture(surface_tile_color, surface_tile_sample_uv(UV2)).rgb, surface_tile_blend) : COLOR.rgb));
+	if (surface_tile_enabled) {
+		vec3 canonical_normal = normalize(texture(surface_tile_normal, surface_tile_sample_uv(UV2)).xyz * 2.0 - 1.0);
+		float angle = surface_tile_angle_start + UV2.x * surface_tile_angle_span;
+		vec3 tangent = vec3(-sin(angle), 0.0, cos(angle));
+		vec3 up = vec3(-cos(angle), 0.0, -sin(angle));
+		vec3 curved_normal = normalize(tangent * canonical_normal.x + up * canonical_normal.y + vec3(0.0, canonical_normal.z, 0.0));
+		NORMAL = normalize(mix(NORMAL, (VIEW_MATRIX * MODEL_MATRIX * vec4(curved_normal, 0.0)).xyz, surface_tile_blend));
+	}
 	float hemisphere_brightness = mix(night_brightness, 1.0, ring_day_factor);
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor) * hemisphere_brightness;
 	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);

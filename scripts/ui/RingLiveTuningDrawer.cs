@@ -148,6 +148,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeVegetationTuning();
         InitializeShadowTuning();
         InitializeAtmosphereTuning();
+        InitializeFarRenderingTuning();
         if (_surfaceTerrainGameplay != null)
             InitializeSurfaceTerrainTuning();
         // The bridge owns the shared, startup-initialized sparse overrides.
@@ -189,6 +190,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         _vegetationDefaults?.Save();
         FlushShadowDefaults();
         FlushAtmosphereDefaults();
+        FlushFarRenderingDefaults();
         FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
         if (_open)
@@ -220,6 +222,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessWaterTuning(delta);
         ProcessShadowTuning(delta);
         ProcessAtmosphereTuning(delta);
+        ProcessFarRenderingTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
         if (_surfaceTerrainGameplay != null)
@@ -317,6 +320,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         BuildAntiAliasingTab(tabs);
         BuildMotionTab(tabs);
         BuildLodTab(tabs);
+        BuildFarRenderingTab(tabs);
         BuildTerrainTab(tabs);
         if (_surfaceTerrainGameplay != null)
             BuildSurfaceTerrainGameplayTab(tabs);
@@ -987,7 +991,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

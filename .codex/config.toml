@@ -11,7 +11,7 @@ model_reasoning_effort = "max"
 # Give planning maximum reasoning as well.
 plan_mode_reasoning_effort = "max"
 
-model_reasoning_summary = "auto"
+model_reasoning_summary = "detailed"
 model_verbosity = "medium"
 
 # Allow Codex to edit the project.
@@ -26,7 +26,7 @@ enabled = true
 # the primary agent to create an unnecessarily huge swarm.
 max_concurrent_threads_per_session = 6
 
-# If Codex creates an unspecified worker, prefer Terra.
+# If Codex creates an unspecified worker, prefer luna.
 # Important tasks should use the named profiles below instead.
-default_subagent_model = "gpt-5.6-terra"
-default_subagent_reasoning_effort = "low"
+default_subagent_model = "gpt-6.1-sol"
+default_subagent_reasoning_effort = "medium"
