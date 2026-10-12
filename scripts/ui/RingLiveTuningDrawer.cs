@@ -41,6 +41,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     [Export] public NodePath WeatherAmbiencePath { get; set; } = new("../WeatherAmbience");
     [Export] public NodePath CoarsePilotPath { get; set; } = new("../CoarseSdfLod1Pilot");
     [Export] public NodePath GraphicsQualityPath { get; set; } = new("../GraphicsQuality");
+    /// <summary>Apply gameplay preferences at startup; create tuning controls on first open.</summary>
+    [Export] public bool DeferDrawerBuildUntilOpened { get; set; }
     [Export] public NodePath WaterFftPath { get; set; } = new("../WaterFftController");
     [Export] public NodePath PerformanceMonitorPath { get; set; } = new("../RingPerformanceMonitor");
     /// <summary>Set only by the isolated sunblocker scene.  It keeps the production drawer untouched.</summary>
@@ -153,12 +155,16 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeShadowTuning();
         InitializeAtmosphereTuning();
         InitializeFarRenderingTuning();
+        InitializeLoadingTuning();
         if (_surfaceTerrainGameplay != null)
             InitializeSurfaceTerrainTuning();
         // The bridge owns the shared, startup-initialized sparse overrides.
         _cloudDefaults = _cloudBridge?.GameplayCloudDefaults ?? new GameplayCloudDefaults();
-        BuildDrawer();
-        SetOpen(false, immediate: true);
+        if (!DeferDrawerBuildUntilOpened)
+        {
+            BuildDrawer();
+            SetOpen(false, immediate: true);
+        }
     }
 
     public override void _Input(InputEvent @event)
@@ -199,6 +205,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushShadowDefaults();
         FlushAtmosphereDefaults();
         FlushFarRenderingDefaults();
+        FlushLoadingPresentationDefaults();
         FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
         if (_open)
@@ -233,6 +240,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessShadowTuning(delta);
         ProcessAtmosphereTuning(delta);
         ProcessFarRenderingTuning(delta);
+        ProcessLoadingTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
         if (_surfaceTerrainGameplay != null)
@@ -331,6 +339,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         BuildMotionTab(tabs);
         BuildLodTab(tabs);
         BuildFarRenderingTab(tabs);
+        BuildLoadingTab(tabs);
         BuildTerrainTab(tabs);
         if (_surfaceTerrainGameplay != null)
             BuildSurfaceTerrainGameplayTab(tabs);
@@ -1009,6 +1018,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     private void SetOpen(bool open, bool immediate)
     {
+        if (_drawer == null && open) BuildDrawer();
         if (_drawer == null) return;
         if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
         {
@@ -1023,7 +1033,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

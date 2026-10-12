@@ -409,6 +409,13 @@ public partial class RingScaledFarViewport : Node
 
 	public override void _Ready()
 	{
+		if (!UseStagedStartup) { InitializeStartupOwner(); return; }
+		try { InitializeStartupOwner(); }
+		catch (Exception error) { FailStartup(error.Message); }
+	}
+
+	private void InitializeStartupOwner()
+	{
 		if (!Enabled)
 		{
 			SetProcess(false);
@@ -429,6 +436,7 @@ public partial class RingScaledFarViewport : Node
 		if (_grid?.TerrainSampler == null || _explorer == null || _sourceCamera == null || _mainWorldEnvironment?.Environment == null)
 		{
 			GD.PushError("RingScaledFarViewport could not resolve its grid, sampler, explorer, camera, or environment.");
+			FailStartup("The terrain, player camera, or environment is unavailable.");
 			SetProcess(false);
 			return;
 		}
@@ -436,7 +444,8 @@ public partial class RingScaledFarViewport : Node
 		_circumferenceMeters = _grid.GetCanonicalRingCircumferenceMeters64();
 		_radiusMeters = _circumferenceMeters / Math.Tau;
 		BeginFarWeatherAtlasRebuild(ResolveFarWeatherRawTimeSeconds());
-		while (_farWeatherAtlasBuild != null) UpdateFarWeatherAtlas(int.MaxValue);
+		if (!UseStagedStartup)
+			while (_farWeatherAtlasBuild != null) UpdateFarWeatherAtlas(int.MaxValue);
 		string[] userArguments = OS.GetCmdlineUserArgs();
 		_captureUnderside = Array.Exists(
 			userArguments,
@@ -450,6 +459,11 @@ public partial class RingScaledFarViewport : Node
 		if (RegionalFarLodsEnabled)
 			CreateRegionalFarViewport();
 		CreateMaterials();
+		if (UseStagedStartup && (_terrainMaterial == null || _waterMaterial == null || _cavityShellMaterial == null || _cloudMaterial == null))
+		{
+			FailStartup("A required far terrain, water, structure, or cloud material is unavailable.");
+			return;
+		}
 		BuildSeededSurface();
 		if (RegionalFarLodsEnabled)
 			BuildFarRegionalTerrain(force: true, delta: 0.0);
@@ -469,6 +483,8 @@ public partial class RingScaledFarViewport : Node
 	public override void _Process(double delta)
 	{
 		using var inclusive = RingPerformanceTelemetry.MeasureCpu("Far ring update (inclusive)");
+        using (RingPerformanceTelemetry.MeasureCpu("Far ring startup scene")) UpdateStartupScene();
+		if (StartupError.Length > 0) return;
 		BeginGeometryUploadFrame();
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring global terrain"))
 		{
@@ -502,6 +518,7 @@ public partial class RingScaledFarViewport : Node
 
 	public override void _ExitTree()
 	{
+        DisposeStartupScene();
 		DisposeGeometryWork();
 		DisposeFarSurfaceTiles();
 		RingTerrainCloudSunVisibility.Instance?.UnregisterRequiredAltitudeRange("far_clouds");
@@ -687,13 +704,14 @@ public partial class RingScaledFarViewport : Node
 		FarWeatherAtlasBuild? build = _farWeatherAtlasBuild;
 		if (build == null || _grid?.TerrainSampler == null) return;
 		Stopwatch stopwatch = Stopwatch.StartNew();
+		double workBudgetMilliseconds = FarWeatherAtlasWorkBudgetMilliseconds;
 		int completedItems = 0;
 		int sampleCap = forcedBudget ?? Mathf.Clamp(FarWeatherAtlasWorkBudgetPerFrame, 16, 128);
 		const int sampleWidth = 128, sampleHeight = 32;
 		int terrainSeed = _grid.TerrainSampler.Seed;
 		while (completedItems < sampleCap && build.SampleIndex < build.Samples.Length)
 		{
-			if (forcedBudget == null && stopwatch.Elapsed.TotalMilliseconds >= 1.5) break;
+			if (forcedBudget == null && stopwatch.Elapsed.TotalMilliseconds >= workBudgetMilliseconds) break;
 			int index = build.SampleIndex++;
 			int sx = index % sampleWidth;
 			int sy = index / sampleWidth;
@@ -708,7 +726,7 @@ public partial class RingScaledFarViewport : Node
 		uint seed = unchecked((uint)terrainSeed) ^ 0x9e3779b9u;
 		while (completedItems < 8192 && build.SampleIndex >= build.Samples.Length && build.TexelIndex < build.Width * build.Height)
 		{
-			if (forcedBudget == null && stopwatch.Elapsed.TotalMilliseconds >= 1.5) break;
+			if (forcedBudget == null && stopwatch.Elapsed.TotalMilliseconds >= workBudgetMilliseconds) break;
 			int index = build.TexelIndex++;
 			int x = index % build.Width;
 			int y = index / build.Width;
@@ -934,7 +952,9 @@ public partial class RingScaledFarViewport : Node
 		}
 		_farDepthCapture.Set("coordinate_scale", CoordinateScale);
 		worldEnvironment.Compositor ??= new Compositor();
-		worldEnvironment.Compositor.CompositorEffects = new Godot.Collections.Array<CompositorEffect> { _farDepthCapture };
+		var compositorEffects = new Godot.Collections.Array<CompositorEffect> { _farDepthCapture };
+		using Godot.Collections.Array compositorEffectsLifetime = (Godot.Collections.Array)compositorEffects;
+		worldEnvironment.Compositor.CompositorEffects = compositorEffects;
 	}
 
 	public Texture2D? GetOpaquePhysicalDepthTexture()
@@ -1641,8 +1661,19 @@ public partial class RingScaledFarViewport : Node
 	}
 
 	private void BuildStructuralShell()
+    {
+        if (UseStagedStartup)
+        {
+            _startupStructure?.Dispose();
+            _startupStructure = EnumerateBuildStructuralShell().GetEnumerator();
+            return;
+        }
+        foreach (bool _ in EnumerateBuildStructuralShell()) { }
+    }
+
+    private IEnumerable<bool> EnumerateBuildStructuralShell()
 	{
-		if (_farViewport == null || _cavityShellMaterial == null) return;
+		if (_farViewport == null || _cavityShellMaterial == null) yield break;
 		int aroundCount = Mathf.Max(128, AroundSegments / 2);
 		double aroundStep = _circumferenceMeters / aroundCount;
 		double bottom = _grid != null
@@ -1650,7 +1681,7 @@ public partial class RingScaledFarViewport : Node
 			: -Math.Max(1.0, StructuralDepthMeters);
 		double terrainBottom = _grid?.TerrainBottomGlobalY ?? -8192.0;
 		double lowerHullTop = _grid?.GetLowerHullTopGlobalY() ?? bottom;
-		var surface = new SurfaceTool();
+		using var surface = new SurfaceTool();
 		surface.Begin(Mesh.PrimitiveType.Triangles);
 		for (int x = 0; x < aroundCount; x++)
 		{
@@ -1674,7 +1705,9 @@ public partial class RingScaledFarViewport : Node
 			}
 			AddWall(surface, a0, a1, 0.0, bottom, StructuralWallTopMeters, true);
 			AddWall(surface, a0, a1, RingWidthMeters, bottom, StructuralWallTopMeters, false);
+            if ((x & 31) == 31) yield return true;
 		}
+		yield return true;
 		surface.GenerateNormals();
 		surface.Index();
 		var structuralShell = new MeshInstance3D
@@ -1690,13 +1723,25 @@ public partial class RingScaledFarViewport : Node
 	}
 
 	private void BuildCloudShell()
+    {
+        if (UseStagedStartup)
+        {
+            _startupClouds?.Dispose();
+            _scaledCloudShell = null;
+            _startupClouds = EnumerateBuildCloudShell().GetEnumerator();
+            return;
+        }
+        foreach (bool _ in EnumerateBuildCloudShell()) { }
+    }
+
+    private IEnumerable<bool> EnumerateBuildCloudShell()
 	{
-		if (_farViewport == null || _cloudMaterial == null) return;
+		if (_farViewport == null || _cloudMaterial == null) yield break;
 		int aroundCount = Mathf.Max(64, AroundSegments / 4);
 		int acrossCount = Mathf.Max(8, AcrossSegments);
 		double aroundStep = _circumferenceMeters / aroundCount;
 		double acrossStep = RingWidthMeters / (double)acrossCount;
-		var surface = new SurfaceTool();
+		using var surface = new SurfaceTool();
 		surface.Begin(Mesh.PrimitiveType.Triangles);
 		for (int z = 0; z < acrossCount; z++)
 		for (int x = 0; x < aroundCount; x++)
@@ -1707,7 +1752,9 @@ public partial class RingScaledFarViewport : Node
 			AddCloudVertex(surface, x + 1, z, aroundCount, acrossCount, aroundStep, acrossStep);
 			AddCloudVertex(surface, x, z + 1, aroundCount, acrossCount, aroundStep, acrossStep);
 			AddCloudVertex(surface, x + 1, z + 1, aroundCount, acrossCount, aroundStep, acrossStep);
+            if (((z * aroundCount + x) & 127) == 127) yield return true;
 		}
+		yield return true;
 		surface.Index();
 		_scaledCloudShell = new MeshInstance3D
 		{
@@ -1727,8 +1774,19 @@ public partial class RingScaledFarViewport : Node
 	}
 
 	private void BuildFarCloudClipmap()
+    {
+        if (UseStagedStartup)
+        {
+            _startupClipmap?.Dispose();
+            _startupClipmap = EnumerateBuildFarCloudClipmap().GetEnumerator();
+            return;
+        }
+        foreach (bool _ in EnumerateBuildFarCloudClipmap()) { }
+    }
+
+    private IEnumerable<bool> EnumerateBuildFarCloudClipmap()
 	{
-		if (_farViewport == null || !FarCloudClipmapEnabled) return;
+		if (_farViewport == null || !FarCloudClipmapEnabled) yield break;
 		Resource? pendingSunshineResource = _sunshineFarCloudResource;
 		// New materials need their imported texture bindings even if the shared
 		// Sunshine resource itself has not changed.
@@ -1736,7 +1794,11 @@ public partial class RingScaledFarViewport : Node
 		_hasFarCloudDetailStatic = false;
 		_hasFarCloudDetailPositions = false;
 		Shader? shader = GD.Load<Shader>("res://materials/ring_far_cloud_clipmap.gdshader");
-		if (shader == null) return;
+		if (shader == null)
+		{
+			if (UseStagedStartup) throw new InvalidOperationException("The far cloud canopy shader is unavailable.");
+			yield break;
+		}
 
 		// Three height slices give the far horizon parallax. Their curved disks
 		// follow the ring; shader ownership fades their centres through Sunshine's
@@ -1771,10 +1833,15 @@ public partial class RingScaledFarViewport : Node
 			_farCloudClipmapLayers[layer] = instance;
 			_farCloudClipmapMaterials[layer] = material;
 			ConfigureCloudPatches(instance, false);
+            yield return true;
 		}
-		if (pendingSunshineResource != null)
-			ConfigureSunshineFarCloudDetail(pendingSunshineResource, _sunshineFarCloudDetailEnabled,
+		Resource? finalSunshineResource = _sunshineFarCloudResource ?? pendingSunshineResource;
+		if (finalSunshineResource != null)
+        {
+            _sunshineFarCloudResource = null;
+			ConfigureSunshineFarCloudDetail(finalSunshineResource, _sunshineFarCloudDetailEnabled,
 				_sunshineFarCloudDetailStrength, _sunshineFarCloudOpacityMultiplier, _sunshineFarCloudRadiusMeters);
+        }
 	}
 
 	private float GetEffectiveFarCloudClipmapRadiusMeters()

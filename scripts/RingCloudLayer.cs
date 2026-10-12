@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System;
+using System.Diagnostics;
 using Godot;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
@@ -11,6 +14,40 @@ namespace RingworldTechDemo;
 /// </summary>
 public partial class RingCloudLayer : MeshInstance3D
 {
+    // Build the existing shell over several frames when the launcher opts in.
+    [Export] public bool UseStagedStartup { get; set; }
+    private IEnumerator<bool>? _startupBuild;
+    private bool _startupComplete;
+    public string StartupError { get; private set; } = string.Empty;
+    public bool StartupComplete => StartupError.Length == 0 && (!BuildEnabled || (!UseStagedStartup || (_startupComplete && Mesh != null)));
+    public Godot.Collections.Dictionary GetLoadingStatus() => new() { ["ready"] = StartupComplete, ["phase"] = "whole ring fallback", ["error"] = StartupError };
+    private void ServiceStartupGeometry()
+    {
+        if (_startupBuild == null) return;
+        try
+        {
+            long start = Stopwatch.GetTimestamp();
+            for (int units = 0; units < 4; units++)
+            {
+                if (!_startupBuild.MoveNext()) { _startupBuild.Dispose(); _startupBuild = null; _startupComplete = Mesh != null; if (!_startupComplete) FailStartup("The cloud shell did not produce a mesh."); break; }
+                if (Stopwatch.GetElapsedTime(start).TotalMilliseconds >= 3) break;
+            }
+        }
+        catch (Exception error) { FailStartup(error.Message); }
+    }
+    private void FailStartup(string error)
+    {
+        if (!UseStagedStartup || StartupError.Length > 0) return;
+        StartupError = "Ring cloud startup failed: " + error;
+        _startupBuild?.Dispose(); _startupBuild = null;
+        SetProcess(false);
+    }
+    public override void _ExitTree() { _startupBuild?.Dispose(); _startupBuild = null; }
+    private IEnumerable<bool> EnumerateStartup()
+    {
+        foreach (bool unit in EnumerateBuildCloudShell()) yield return unit;
+    }
+
 	[Export] public bool BuildEnabled { get; set; } = true;
 	[Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
 	[Export] public NodePath FocusPath { get; set; } = new("../Explorer");
@@ -43,6 +80,13 @@ public partial class RingCloudLayer : MeshInstance3D
 
 	public override void _Ready()
 	{
+		if (!UseStagedStartup) { InitializeStartupOwner(); return; }
+		try { InitializeStartupOwner(); }
+		catch (Exception error) { FailStartup(error.Message); }
+	}
+
+	private void InitializeStartupOwner()
+	{
 		if (!BuildEnabled) return;
 		_grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
 		_sunLight = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
@@ -50,15 +94,18 @@ public partial class RingCloudLayer : MeshInstance3D
 		if (_grid == null)
 		{
 			GD.PushWarning("RingCloudLayer could not resolve the voxel grid manager.");
+			FailStartup("The voxel grid manager is unavailable.");
 			return;
 		}
 
 		CreateMaterial();
-		BuildCloudShell();
+		if (UseStagedStartup && _material == null) { FailStartup("The cloud material is unavailable."); return; }
+		if (UseStagedStartup) _startupBuild = EnumerateStartup().GetEnumerator(); else BuildCloudShell();
 	}
 
 	public override void _Process(double delta)
 	{
+        ServiceStartupGeometry();
 		// Most uniforms describe immutable ring/configuration data. Avoid
 		// resubmitting them every render frame while standing still; the shader's
 		// built-in time still drives cloud motion independently.
@@ -84,16 +131,18 @@ public partial class RingCloudLayer : MeshInstance3D
 		UpdateShaderUniforms(forceStaticRefresh: true);
 	}
 
-	private void BuildCloudShell()
+	private void BuildCloudShell() { foreach (bool _ in EnumerateBuildCloudShell()) { } }
+
+    private IEnumerable<bool> EnumerateBuildCloudShell()
 	{
-		if (_grid == null) return;
+		if (_grid == null) yield break;
 
 		int aroundCount = Mathf.Max(64, AroundSegments);
 		int acrossCount = Mathf.Max(4, AcrossSegments);
 		double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
 		double aroundSpacing = circumference / aroundCount;
 		double acrossSpacing = RingWidthMeters / (double)acrossCount;
-		var surface = new SurfaceTool();
+		using var surface = new SurfaceTool();
 		surface.Begin(Mesh.PrimitiveType.Triangles);
 
 		for (int acrossIndex = 0; acrossIndex < acrossCount; acrossIndex++)
@@ -105,8 +154,10 @@ public partial class RingCloudLayer : MeshInstance3D
 			AddVertex(surface, aroundIndex + 1, acrossIndex, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
 			AddVertex(surface, aroundIndex, acrossIndex + 1, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
 			AddVertex(surface, aroundIndex + 1, acrossIndex + 1, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
+            if (((acrossIndex * aroundCount + aroundIndex) & 127) == 127) yield return true;
 		}
 
+        yield return true;
 		surface.Index();
 		Mesh = surface.Commit();
 		CastShadow = ShadowCastingSetting.Off;

@@ -4,6 +4,7 @@ const GENERATOR_SCENE := "res://scenes/WorldSizeLauncher.tscn"
 const UI_THEME := preload("res://scripts/ui/ring_ui_theme.gd")
 const SPACE_BACKDROP := preload("res://scripts/ui/RingMenuSpaceBackdrop.cs")
 const MENU_TUNING_DRAWER := preload("res://scripts/ui/MenuFlyoverTuningDrawer.cs")
+const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 
 @export var backdrop_seed: int = -1
 @export var freeze_backdrop: bool = false
@@ -349,7 +350,16 @@ func _load_selected_world() -> void:
 		action_details.text = "Could not open this world."
 		return
 	session.request_load_selected_world()
-	get_tree().change_scene_to_file(GENERATOR_SCENE)
+	var metadata: Dictionary = session.get_slot_metadata(selected_slot)
+	var settings: Dictionary = metadata.get("generation_settings", {})
+	WORLD_LOADING.ensure(self).open_saved_world({
+		"world_title": str(metadata.get("name", "World %d" % selected_slot)),
+		"seed": int(settings.get("terrain_seed", 1337)),
+		"radius_m": float(settings.get("radius_km", 80.0)) * 1000.0,
+		"circumference_m": TAU * float(settings.get("radius_km", 80.0)) * 1000.0,
+		"width_m": float(settings.get("ring_width_km", 20.0)) * 1000.0,
+		"is_existing": true,
+	})
 
 
 func _show_copy_targets() -> void:

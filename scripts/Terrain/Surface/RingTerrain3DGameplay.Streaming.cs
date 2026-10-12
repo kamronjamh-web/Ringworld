@@ -22,6 +22,11 @@ public partial class RingTerrain3DGameplay
 
     public override void _PhysicsProcess(double delta)
     {
+        if (_startupPending)
+        {
+            TryActivateStagedStartup();
+            return;
+        }
         if (_synchronousBenchmark) return;
         if (_saveBlocked || _surface == null || _explorer == null || !_hasPendingFrame || !_stageReady) return;
         RingCanonicalPosition current = _explorer.CanonicalPosition;

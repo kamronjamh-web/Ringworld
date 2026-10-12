@@ -167,6 +167,7 @@ public partial class RingLocalWeatherEffects
             || owner._rainHazeWorldEnvironment != environment || owner._rainHazeCompositor == null) return;
         environment.Compositor ??= new Compositor();
         var effects = environment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
         if (effects.Count > 0 && effects[^1] == owner._rainHazeCompositor) return;
         effects.Remove(owner._rainHazeCompositor); effects.Add(owner._rainHazeCompositor);
         environment.Compositor.CompositorEffects = effects;
@@ -176,6 +177,7 @@ public partial class RingLocalWeatherEffects
         if (_rainHazeWorldEnvironment != null && GodotObject.IsInstanceValid(_rainHazeWorldEnvironment) && _rainHazeWorldEnvironment.Compositor != null)
         {
             var effects = _rainHazeWorldEnvironment.Compositor.CompositorEffects;
+            using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
             if (_rainHazeCompositor != null && effects.Remove(_rainHazeCompositor)) _rainHazeWorldEnvironment.Compositor.CompositorEffects = effects;
         }
         _rainHazeWorldEnvironment = null;

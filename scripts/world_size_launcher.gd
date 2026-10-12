@@ -1,6 +1,7 @@
 extends Control
 
-const GAME_SCENE: PackedScene = preload("res://scenes/VoxelRingIntegrationTest.tscn")
+const GAME_SCENE_PATH := "res://scenes/VoxelRingIntegrationTest.tscn"
+const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 const DEFAULT_TERRAIN_SETTINGS: Resource = preload("res://resources/voxel/voxel_terrain_settings_ring_integration.tres")
 const DEFAULT_LAUNCH_CONFIG: Resource = preload("res://resources/launcher/world_size_default_config.tres")
 const CERTIFIED_RING_CONFIG: Resource = preload("res://resources/launcher/certified_ring_config.tres")
@@ -89,6 +90,8 @@ var active_protected_roof_thickness_m := CERTIFIED_PROTECTED_ROOF_THICKNESS_M
 var active_lower_hull_thickness_m := CERTIFIED_LOWER_HULL_THICKNESS_M
 var pending_surface_generation_recipe_json := ""
 var pending_surface_generation_contract_id := ""
+var _world_loading_started := false
+var _diagnostic_launch := false
 
 
 func _use_smooth_editable_backend() -> bool:
@@ -154,6 +157,8 @@ func _configure_editable_backend(game: Node, grid: Node) -> void:
 
 
 func _ready() -> void:
+	if bool(get_meta("world_loading_transition", false)):
+		hide()
 	launch_defaults = _build_default_values()
 	var saved_settings := _get_selected_slot_settings()
 	selected_slot_has_saved_settings = not saved_settings.is_empty()
@@ -176,10 +181,12 @@ func _ready() -> void:
 	_apply_default_config_to_controls()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	if "--mega-spawn-smoke-test" in OS.get_cmdline_user_args() or "--mega-terrain-variation-smoke-test" in OS.get_cmdline_user_args() or "--mega-ground-capture-preset" in OS.get_cmdline_user_args():
+		_diagnostic_launch = true
 		_on_mega_ring_preset_pressed()
 		call_deferred("_start_game")
 		return
 	if "--smooth-physical-terrain-smoke-test" in OS.get_cmdline_user_args() or "--smooth-terrain-traversal-smoke-test" in OS.get_cmdline_user_args() or "--smooth-deep-shaft-smoke-test" in OS.get_cmdline_user_args() or "--capture-ground-horizon" in OS.get_cmdline_user_args():
+		_diagnostic_launch = true
 		call_deferred("_start_game")
 		return
 	if _consume_load_world_request():
@@ -187,6 +194,7 @@ func _ready() -> void:
 		return
 	if "--certification-benchmark" in OS.get_cmdline_user_args() or "--certified-smoke-test" in OS.get_cmdline_user_args() or "--terrain3d-certified-smoke-test" in OS.get_cmdline_user_args() or "--certified-walk-precision-probe" in OS.get_cmdline_user_args() or "--capture-cavity-lighting" in OS.get_cmdline_user_args() or "--capture-cloud-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-diagnostics" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-history-off" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-sunshine-only" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-far-only" in OS.get_cmdline_user_args() or "--lod-voxel-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-hierarchy-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-roof-coverage-smoke-test" in OS.get_cmdline_user_args() or "--capture-band-site" in OS.get_cmdline_user_args() or "--capture-band-site-smooth-only" in OS.get_cmdline_user_args() or "--capture-band-site-proxy-only" in OS.get_cmdline_user_args():
 		_on_certified_preset_pressed()
+		_diagnostic_launch = true
 		if "--terrain3d-certified-smoke-test" in OS.get_cmdline_user_args() and terrain_backend_selector != null:
 			terrain_backend_selector.select(1)
 		call_deferred("_start_game")
@@ -913,11 +921,14 @@ func _format_distance(value: float) -> String:
 
 
 func _start_game() -> void:
+	if _world_loading_started:
+		return
 	var selected_cave_version := int(round(cave_generator_version_spin.value)) if cave_generator_version_spin != null else SUPPORTED_CAVE_GENERATOR_VERSION
 	if selected_cave_version != SUPPORTED_CAVE_GENERATOR_VERSION:
 		warning_label.text = "Cave generator version %d is not supported by this build (supported: v%d)." % [selected_cave_version, SUPPORTED_CAVE_GENERATOR_VERSION]
 		warning_label.modulate = Color(1.0, 0.45, 0.35)
 		push_error(warning_label.text)
+		_fail_active_world_loading(warning_label.text)
 		return
 	var is_certified := _matches_certified_dimensions(
 		_radius_km_from_slider(size_slider.value),
@@ -927,26 +938,100 @@ func _start_game() -> void:
 		structural_depth_spin.value if structural_depth_spin != null else CERTIFIED_STRUCTURAL_DEPTH_KM,
 		_selected_terrain_backend() == RUNTIME_SURFACE_BACKEND)
 	if not _prepare_runtime_surface_generation(is_certified):
+		_fail_active_world_loading(warning_label.text)
 		return
+	if _diagnostic_launch:
+		_start_diagnostic_game()
+		return
+	var loader: Node = WORLD_LOADING.ensure(self)
+	var session := get_node_or_null("/root/WorldSession")
+	var metadata: Dictionary = session.get_slot_metadata(session.active_slot) if session != null and session.active_slot > 0 else {}
+	var radius_m := MEGA_RING_RADIUS_METERS if mega_ring_selected else _radius_km_from_slider(size_slider.value) * 1000.0
+	if not loader.begin({"world_title": str(metadata.get("name", "New world")),
+		"seed": int(terrain_seed_spin.value) if terrain_seed_spin != null else 1337,
+		"radius_m": radius_m, "circumference_m": TAU * radius_m,
+		"width_m": MEGA_RING_WIDTH_METERS if mega_ring_selected else ring_width_spin.value * 1000.0,
+		"is_existing": selected_slot_has_saved_settings}):
+		return
+	_world_loading_started = true
+	process_mode = Node.PROCESS_MODE_DISABLED
 	start_button.disabled = true
 	start_button.text = "Configuring world..."
-	_save_selected_slot_settings()
-	var game := GAME_SCENE.instantiate()
+	await loader.present_frame()
+	if loader.cancelled or loader.failed:
+		return
+	var packed: PackedScene = await loader.load_scene(GAME_SCENE_PATH, .08, .26)
+	if packed == null or loader.cancelled or loader.failed:
+		return
+	if not await loader.prepare_resources():
+		return
+	loader.set_stage("preparing", "Assembling world systems.", .30)
+	await loader.present_frame()
+	if loader.cancelled or loader.failed:
+		return
+	var started := Time.get_ticks_usec()
+	var game := packed.instantiate()
+	loader.record_operation("instantiate", started)
+	await loader.present_frame()
+	if loader.cancelled or loader.failed:
+		game.free()
+		return
+	started = Time.get_ticks_usec()
 	if mega_ring_selected:
 		_configure_mega_ring_game(game)
 	else:
-		var radius_m := _radius_km_from_slider(size_slider.value) * 1000.0
 		_configure_game(game, radius_m)
+	loader.record_operation("configure", started)
 	if "--certified-walk-precision-probe" in OS.get_cmdline_user_args():
 		_configure_certified_walk_precision_probe(game)
 	if "--mega-terrain-variation-smoke-test" in OS.get_cmdline_user_args():
 		get_tree().quit(0 if mega_terrain_variation_smoke_passed else 1)
 		return
 	var host := get_parent()
+	loader.prepare_world(game, self)
+	loader.set_stage("terrain", "Restoring your world and preparing terrain.", .32)
+	await loader.present_frame()
+	if loader.cancelled or loader.failed:
+		if is_instance_valid(game):
+			game.queue_free()
+		return
+	started = Time.get_ticks_usec()
+	loader.begin_attachment_metrics(game)
 	host.add_child(game)
-	var terrain3d_gameplay := game.get_node_or_null("Terrain3DGameplay")
-	if terrain3d_gameplay != null:
-		terrain3d_gameplay.call_deferred("EnsureInitialized")
+	loader.world_attached()
+	loader.record_operation("attach", started)
+	hide()
+	await loader.wait_for_world()
+
+
+func _fail_active_world_loading(message: String) -> void:
+	var loader := get_node_or_null("/root/RingWorldLoading")
+	if loader != null and loader.active:
+		loader.fail(message)
+
+
+func _start_diagnostic_game() -> void:
+	# Existing capture/benchmark directors own their startup clocks and routes.
+	# Preserve that path independently of the interactive loading input gate.
+	_world_loading_started = true
+	_save_selected_slot_settings()
+	var packed := load(GAME_SCENE_PATH) as PackedScene
+	var game := packed.instantiate()
+	if mega_ring_selected:
+		_configure_mega_ring_game(game)
+	else:
+		_configure_game(game, _radius_km_from_slider(size_slider.value) * 1000.0)
+	if "--certified-walk-precision-probe" in OS.get_cmdline_user_args():
+		_configure_certified_walk_precision_probe(game)
+	if "--mega-terrain-variation-smoke-test" in OS.get_cmdline_user_args():
+		game.free()
+		get_tree().quit(0 if mega_terrain_variation_smoke_passed else 1)
+		return
+	var host := get_parent()
+	host.add_child(game)
+	var surface := game.get_node_or_null("Terrain3DGameplay")
+	if surface != null:
+		surface.call_deferred("EnsureInitialized")
 	if host == get_tree().root:
 		get_tree().current_scene = game
 	queue_free()

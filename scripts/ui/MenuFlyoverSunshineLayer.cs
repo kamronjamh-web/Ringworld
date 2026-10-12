@@ -108,7 +108,9 @@ public sealed partial class MenuFlyoverSunshineLayer : Node
         SetEffect("point_lights_data", new Godot.Collections.Array<Vector4>()); SetEffect("point_effector_data", new Godot.Collections.Array<Vector4>());
         SetSunlightData();
         _previousCompositor = _world.Compositor;
-        _ownedCompositor = new Compositor { CompositorEffects = new Godot.Collections.Array<CompositorEffect> { _effect } };
+        var compositorEffects = new Godot.Collections.Array<CompositorEffect> { _effect };
+        using Godot.Collections.Array compositorEffectsLifetime = (Godot.Collections.Array)compositorEffects;
+        _ownedCompositor = new Compositor { CompositorEffects = compositorEffects };
         _world.Compositor = _ownedCompositor;
         _effect.Enabled = _cloudsEnabled;
         SetShadowGenerationEnabled(_cloudsEnabled && _cloudShadowsEnabled && _shadowGenerationRequested, true);
@@ -470,7 +472,12 @@ public sealed partial class MenuFlyoverSunshineLayer : Node
     {
         if (_world is not null && ReferenceEquals(_world.Compositor, _ownedCompositor)) _world.Compositor = _previousCompositor;
         // Stop scheduling callbacks before releasing the owned GPU generation.
-        if (_ownedCompositor is not null) _ownedCompositor.CompositorEffects = new Godot.Collections.Array<CompositorEffect>();
+        if (_ownedCompositor is not null)
+        {
+            var emptyEffects = new Godot.Collections.Array<CompositorEffect>();
+            using Godot.Collections.Array emptyEffectsLifetime = (Godot.Collections.Array)emptyEffects;
+            _ownedCompositor.CompositorEffects = emptyEffects;
+        }
         if (_effect is not null && _ownedCompositor is not null)
         {
             _effect.Enabled = false;

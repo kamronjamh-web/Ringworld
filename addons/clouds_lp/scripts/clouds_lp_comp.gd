@@ -209,8 +209,20 @@ func _init() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
-		if is_instance_valid(self):
-			_cleanup()
+		# Instance method dispatch is unavailable once PREDELETE begins. Read the
+		# owned fields directly and hand only device + RIDs to the static callback.
+		_mutex.lock()
+		var device := _rd
+		var owned: Array[RID] = [
+			_pipeline_pass_1, _pipeline_pass_2, _pipeline_pass_3, _pipeline_pass_4,
+			_shader_scale_down, _shader_clouds, _shader_scale_up, _shader_atmo,
+			_config_data_rid, _sampler_linear, _sampler_linear_nr, _sampler_linear_mir,
+			_sampler_nearest, _sampler_nearest_nr,
+			_clouds_high, _clouds_low, _depth_high, _depth_low,
+		]
+		_mutex.unlock()
+		if is_instance_valid(device):
+			RenderingServer.call_on_render_thread(CloudsLP._free_owned_rids.bind(device, owned))
 
 
 func _setup() -> void:
@@ -221,74 +233,72 @@ func _setup() -> void:
 	_rd = RenderingServer.get_rendering_device()
 
 
+# Transfer only our allocations; external textures and cached uniform sets remain
+# owned by their providers. Pipelines precede shaders to avoid dependent RID frees.
+func _take_owned_rids(shaders := true, data := true) -> Array[RID]:
+	var owned: Array[RID] = []
+	if shaders:
+		owned.append_array([_pipeline_pass_1, _pipeline_pass_2, _pipeline_pass_3, _pipeline_pass_4,
+			_shader_scale_down, _shader_clouds, _shader_scale_up, _shader_atmo])
+		_pipeline_pass_1 = RID()
+		_pipeline_pass_2 = RID()
+		_pipeline_pass_3 = RID()
+		_pipeline_pass_4 = RID()
+		_shader_scale_down = RID()
+		_shader_clouds = RID()
+		_shader_scale_up = RID()
+		_shader_atmo = RID()
+	if data:
+		owned.append_array([_config_data_rid, _sampler_linear, _sampler_linear_nr,
+			_sampler_linear_mir, _sampler_nearest, _sampler_nearest_nr,
+			_clouds_high, _clouds_low, _depth_high, _depth_low])
+		_config_data_rid = RID()
+		_sampler_linear = RID()
+		_sampler_linear_nr = RID()
+		_sampler_linear_mir = RID()
+		_sampler_nearest = RID()
+		_sampler_nearest_nr = RID()
+		_clouds_high = RID()
+		_clouds_low = RID()
+		_depth_high = RID()
+		_depth_low = RID()
+		_longterm_uniforms_good = false
+	return owned
+
+
+static func _free_owned_rids(device: RenderingDevice, owned: Array[RID]) -> void:
+	if not is_instance_valid(device):
+		return
+	var freed := {}
+	for rid in owned:
+		if rid.is_valid() and not freed.has(rid):
+			device.free_rid(rid)
+			freed[rid] = true
+
+
+# Immediate cleanup is reserved for rebuilds within the render callback.
 func _cleanup(shaders := true, data := true) -> void:
 	_print_debug("Cleanup (shaders %s | data %s)" % [shaders, data])
-	
-	if shaders:
-		# Pipelines are auto cleared with corresponding shaders; but being explicit
-		if _pipeline_pass_1.is_valid():
-			_rd.free_rid(_pipeline_pass_1)
-		_pipeline_pass_1 = RID()
-		if _pipeline_pass_2.is_valid():
-			_rd.free_rid(_pipeline_pass_2)
-		_pipeline_pass_2 = RID()
-		if _pipeline_pass_3.is_valid():
-			_rd.free_rid(_pipeline_pass_3)
-		_pipeline_pass_3 = RID()
-		if _pipeline_pass_4.is_valid():
-			_rd.free_rid(_pipeline_pass_4)
-		_pipeline_pass_4 = RID()
-		if _shader_scale_down.is_valid():
-			_rd.free_rid(_shader_scale_down)
-		_shader_scale_down = RID()
-		if _shader_clouds.is_valid():
-			_rd.free_rid(_shader_clouds)
-		_shader_clouds = RID()
-		if _shader_scale_up.is_valid():
-			_rd.free_rid(_shader_scale_up)
-		_shader_scale_up = RID()
-		if _shader_atmo.is_valid():
-			_rd.free_rid(_shader_atmo)
-		_shader_atmo = RID()
-	
-	if data:
-		if _config_data_rid.is_valid():
-			_rd.free_rid(_config_data_rid)
-		_config_data_rid = RID()
-		if _sampler_linear.is_valid():
-			_rd.free_rid(_sampler_linear)
-		_sampler_linear = RID()
-		if _sampler_linear_nr.is_valid():
-			_rd.free_rid(_sampler_linear_nr)
-		_sampler_linear_nr = RID()
-		if _sampler_linear_mir.is_valid():
-			_rd.free_rid(_sampler_linear_mir)
-		_sampler_linear_mir = RID()
-		if _sampler_nearest.is_valid():
-			_rd.free_rid(_sampler_nearest)
-		_sampler_nearest = RID()
-		if _sampler_nearest_nr.is_valid():
-			_rd.free_rid(_sampler_nearest_nr)
-		_sampler_nearest_nr = RID()
-		if _clouds_high.is_valid():
-			_rd.free_rid(_clouds_high)
-		_clouds_high = RID()
-		if _clouds_low.is_valid():
-			_rd.free_rid(_clouds_low)
-		_clouds_low = RID()
-		if _depth_high.is_valid():
-			_rd.free_rid(_depth_high)
-		_depth_high = RID()
-		if _depth_low.is_valid():
-			_rd.free_rid(_depth_low)
-		_depth_low = RID()
+	CloudsLP._free_owned_rids(_rd, _take_owned_rids(shaders, data))
 
 
-## Runtime integrations can detach this RefCounted compositor without waiting
-## for garbage collection. Release its RenderingDevice allocations immediately.
+func _queue_owned_cleanup() -> void:
+	# Synchronize with the entire render callback before transferring allocations.
+	enabled = false
+	_mutex.lock()
+	var device := _rd
+	var owned := _take_owned_rids()
+	_rd = null
+	_reload_shaders = true
+	_mutex.unlock()
+	if is_instance_valid(device):
+		# Static callable captures only device + RIDs, never this dying resource.
+		RenderingServer.call_on_render_thread(CloudsLP._free_owned_rids.bind(device, owned))
+
+
+## Release native allocations on the render thread without retaining this resource.
 func release_runtime_resources() -> void:
-	_cleanup()
-
+	_queue_owned_cleanup()
 
 func _load_and_init() -> bool:
 	_cleanup(true, false)  # Cleanup shaders only
@@ -452,12 +462,18 @@ func _alloc_longterm_data(size: Vector2i) -> void:
 
 func _render_callback(_p_effect_callback_type: int, p_render_data: RenderData) -> void:
 	_mutex.lock()
+	_render_clouds(p_render_data)
+	_mutex.unlock()
+
+
+func _render_clouds(p_render_data: RenderData) -> void:
+	# A callback already queued before detachment must not recreate allocations.
+	if not _rd:
+		return
 	if _reload_shaders:
 		_reload_shaders = false
 		_load_and_init()
-		_mutex.unlock()
 		return
-	_mutex.unlock()
 	
 	if not (_rd and _pipeline_pass_1.is_valid() and _pipeline_pass_2.is_valid() and _pipeline_pass_3.is_valid() and _pipeline_pass_4.is_valid()):
 		return
@@ -470,14 +486,12 @@ func _render_callback(_p_effect_callback_type: int, p_render_data: RenderData) -
 	if size.x == 0 and size.y == 0: return
 	
 	#region uniforms
-	_mutex.lock()
 	if not _longterm_uniforms_good or _last_size.x != size.x or _last_size.y != size.y:
 		if not _longterm_uniforms_good:
 			_print_debug("Allocate triggered by stale uniforms")
 		elif not _last_size.x != size.x or _last_size.y != size.y:
 			_print_debug("Allocate triggered by resolution change (last %s): %s" % [_last_size, size])
 		_alloc_longterm_data(size)
-	_mutex.unlock()
 	_last_size = size
 	_update_config_data()
 	
@@ -562,6 +576,11 @@ func _render_callback(_p_effect_callback_type: int, p_render_data: RenderData) -
 	for view in range(view_count):
 		var color_image := render_scene_buffers.get_color_layer(view)
 		var depth_image := render_scene_buffers.get_depth_layer(view)
+		# Scene attachment/replacement can temporarily expose stale borrowed
+		# layers. Wait for the next frame instead of caching an invalid descriptor.
+		if not color_image.is_valid() or not depth_image.is_valid() or \
+				not _rd.texture_is_valid(color_image) or not _rd.texture_is_valid(depth_image):
+			continue
 		
 		#region on-demand uniforms
 		var depth_image_uniform: RDUniform = RDUniform.new()
@@ -630,7 +649,6 @@ func _render_callback(_p_effect_callback_type: int, p_render_data: RenderData) -
 		_rd.compute_list_end()
 		
 		if Engine.is_editor_hint():
-			_mutex.lock()
 			if _req_write_debug:
 				_print_debug("Try save...")
 				_req_write_debug = false
@@ -638,7 +656,6 @@ func _render_callback(_p_effect_callback_type: int, p_render_data: RenderData) -
 				_debug_save_rd_texture.call_deferred(_depth_low, _scaled_size, "cloud_low_depth", Image.FORMAT_RH)
 				_debug_save_rd_texture.call_deferred(_clouds_high, size, "cloud_high_color")
 				_debug_save_rd_texture.call_deferred(_depth_high, size, "cloud_high_depth", Image.FORMAT_RH)
-			_mutex.unlock()
 
 
 func _update_config_data() -> void:

@@ -267,6 +267,7 @@ public partial class RingCloudProviderController : Node
         if (_worldEnvironment == null) return;
         _worldEnvironment.Compositor ??= new Compositor();
         Godot.Collections.Array<CompositorEffect> effects = _worldEnvironment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
         if (!effects.Contains(effect))
         {
             effects.Add(effect);
@@ -292,6 +293,7 @@ public partial class RingCloudProviderController : Node
         if (_worldEnvironment?.Compositor != null)
         {
             Godot.Collections.Array<CompositorEffect> effects = _worldEnvironment.Compositor.CompositorEffects;
+            using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
             if (effects.Remove(_clpEffect)) _worldEnvironment.Compositor.CompositorEffects = effects;
         }
         _clpEffect.Set("enabled", false);
@@ -497,7 +499,9 @@ public partial class RingCloudProviderController : Node
     {
         if (_worldEnvironment?.Compositor == null) return 0;
         int count = 0;
-        foreach (CompositorEffect effect in _worldEnvironment.Compositor.CompositorEffects)
+        Godot.Collections.Array<CompositorEffect> effects = _worldEnvironment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
+        foreach (CompositorEffect effect in effects)
         {
             if (effect.GetScript().AsGodotObject() is Script script && script.GetGlobalName() == scriptClass)
                 count++;

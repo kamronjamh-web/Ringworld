@@ -663,6 +663,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     public int ServiceStreaming(double delta, int uploadBudget, double uploadBudgetMilliseconds = double.PositiveInfinity)
     {
+        if (_loadingShutdownRequested) return 0;
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy update (inclusive)");
         long allocationsBefore = GC.GetAllocatedBytesForCurrentThread();
         try
@@ -996,6 +997,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     public void StartCoordinatorBuildIfRequested(int workerSlots = 1)
     {
+        if (_loadingShutdownRequested) return;
         if (_fastTravelSuspended
             || !StreamingActive
             || !_coordinatorBuildRequested
@@ -1187,6 +1189,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void QueueStreamingUpdate(bool force)
     {
+        if (_loadingShutdownRequested) return;
         if (_fastTravelSuspended) return;
         if (CoordinatorManaged && _pending == null)
         {
@@ -1199,6 +1202,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void StartStreamingUpdate(bool force, int workerSlots = 1)
     {
+        if (_loadingShutdownRequested) return;
         if (_grid?.TerrainSampler is not RingTerrainSampler sampler || _focus == null) return;
         int size = Mathf.Max(32, SectorSizeMeters);
         RingLodSurfaceEditSnapshot editSnapshot = _smoothTerrain?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
@@ -4431,6 +4435,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void StartStructuralWallBuild(StructuralWallRequest request)
     {
+        if (_loadingShutdownRequested) return;
         _pendingStructuralWall = Task.Run(() =>
             BuildStructuralWallData(request));
     }

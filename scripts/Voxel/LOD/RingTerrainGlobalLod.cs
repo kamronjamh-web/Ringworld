@@ -14,6 +14,46 @@ namespace RingworldTechDemo.Voxel.LOD;
 /// <summary>Complete, low-resolution terrain-aware ring surface for global visibility.</summary>
 public partial class RingTerrainGlobalLod : MeshInstance3D
 {
+    // The launcher opts in before attachment. Each unit retains the original
+    // geometry order; a native mesh commit can exceed the soft time budget.
+    [Export] public bool UseStagedStartup { get; set; }
+    private IEnumerator<bool>? _startupHullBuild;
+    private IEnumerator<bool>? _startupOccluderBuild;
+    public string StartupError { get; private set; } = string.Empty;
+    public bool StartupComplete => StartupError.Length == 0 && (!UseStagedStartup || (_grid != null && _startupHullBuild == null && _startupOccluderBuild == null && HasReadyMorphSnapshot && !InitialGlobalMeshBuildPending));
+    public Godot.Collections.Dictionary GetLoadingStatus() => new() { ["ready"] = StartupComplete, ["phase"] = _startupHullBuild != null ? "structural hull" : _startupOccluderBuild != null ? "occluders" : "global terrain", ["pending_segments"] = PendingInitialSegmentCount, ["error"] = StartupError };
+    private void ServiceStartupGeometry()
+    {
+        if (!UseStagedStartup) return;
+        try
+        {
+            long start = Stopwatch.GetTimestamp();
+            for (int units = 0; units < 4; units++)
+            {
+                if (_startupHullBuild != null)
+                {
+                    if (!_startupHullBuild.MoveNext()) { _startupHullBuild.Dispose(); _startupHullBuild = null; }
+                }
+                else if (_startupOccluderBuild != null)
+                {
+                    if (!_startupOccluderBuild.MoveNext()) { _startupOccluderBuild.Dispose(); _startupOccluderBuild = null; }
+                }
+                else break;
+                if (Stopwatch.GetElapsedTime(start).TotalMilliseconds >= 3) break;
+            }
+        }
+        catch (Exception error) { FailStartup(error.Message); }
+    }
+    private void FailStartup(string error)
+    {
+        if (!UseStagedStartup || StartupError.Length > 0) return;
+        StartupError = "Global terrain startup failed: " + error;
+        _startupHullBuild?.Dispose(); _startupHullBuild = null;
+        _startupOccluderBuild?.Dispose(); _startupOccluderBuild = null;
+        _heightPyramidCancellation?.Cancel();
+        _pendingSamplingCancellation?.Cancel();
+        SetProcess(false);
+    }
     private readonly record struct SummaryBuildResult(
         RingTerrainMinMaxPyramid Pyramid,
         RingTerrainMinMaxPyramid.DirectionalShadowMask MacroShadowMask,
@@ -213,6 +253,13 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     public override void _Ready()
     {
+        if (!UseStagedStartup) { InitializeStartupOwner(); return; }
+        try { InitializeStartupOwner(); }
+        catch (Exception error) { FailStartup(error.Message); }
+    }
+
+    private void InitializeStartupOwner()
+    {
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _focus = GetNodeOrNull<Node3D>(FocusPath);
         _sunLight = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
@@ -220,12 +267,14 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (_grid?.TerrainSampler == null || _focus == null)
         {
             GD.PushWarning("RingTerrainGlobalLod could not resolve the shared sampler or focus.");
+            FailStartup("The terrain sampler or player focus is unavailable.");
             return;
         }
 
         _grid.CanonicalFloatingOriginAnchorChanged += HandleCanonicalFloatingOriginAnchorChanged;
 
         CreateMaterial();
+        if (UseStagedStartup && _material == null) { FailStartup("The global terrain material is unavailable."); return; }
         global::RingworldTechDemo.RingTerrainMacroShadowProjector.Disable();
         StartHeightPyramidBuild();
         if (BuildStructuralEdgeWalls || BuildStructuralUnderside || BuildTerrainRoofUnderside || BuildLowerHullCavityFloor) BuildGlobalHullWalls();
@@ -234,6 +283,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     public override void _ExitTree()
     {
+        _startupHullBuild?.Dispose(); _startupHullBuild = null;
+        _startupOccluderBuild?.Dispose(); _startupOccluderBuild = null;
         InvalidatePendingPreparation();
         Task? samplingTask = _pendingSamplingTask;
         CancellationTokenSource? samplingCancellation = _pendingSamplingCancellation;
@@ -284,18 +335,30 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     public override void _Process(double delta)
     {
+        if (!UseStagedStartup || StartupComplete) { ProcessGlobalTerrain(delta); return; }
+        if (StartupError.Length > 0) return;
+        try { ProcessGlobalTerrain(delta); }
+        catch (Exception error) { FailStartup(error.Message); }
+    }
+
+    private void ProcessGlobalTerrain(double delta)
+    {
+        ServiceStartupGeometry();
+        if (StartupError.Length > 0) return;
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain global LOD update (inclusive)");
         _ = delta;
         UpdateCameraUniform();
         UpdateLightingUniforms();
         UpdateRegionalSegmentVisibility(delta);
         CompleteHeightPyramidBuildIfReady();
+        if (StartupError.Length > 0) return;
         CompleteMacroShadowBuildIfReady();
         CompletePlanetMacroShadowBuildIfReady();
         RequestMacroShadowRebuildForSunChange();
         RequestPlanetMacroShadowRebuildForLightChange();
         RefreshEditedSegments();
         ServiceInitialGlobalBuild();
+        if (StartupError.Length > 0) return;
         ServiceSegmentRebuilds();
     }
 
@@ -513,7 +576,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (completed.IsCanceled) return;
         if (completed.IsFaulted)
         {
-            GD.PushError($"Global min/max summary failed: {completed.Exception?.GetBaseException().Message}");
+            string error = $"Global min/max summary failed: {completed.Exception?.GetBaseException().Message}";
+            GD.PushError(error);
+            FailStartup(error);
             return;
         }
 
@@ -522,7 +587,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         RingLodSurfaceEditSnapshot initialEdits = _grid!.CaptureLodSurfaceEditSnapshot();
         _heightPyramid.ApplyEdits(initialEdits);
         if (!_heightPyramid.ValidateHierarchy(out string hierarchyError))
+        {
             GD.PushError($"Phase C min/max hierarchy self-test failed: {hierarchyError}");
+            if (UseStagedStartup) { FailStartup(hierarchyError); return; }
+        }
         else
             GD.Print($"Phase C min/max hierarchy self-test passed: levels={_heightPyramid.LevelCount}, cells={_heightPyramid.TotalCellCount}, base={_heightPyramid.BaseWidth}x{_heightPyramid.BaseHeight}@{_heightPyramid.BaseCellSize}m, memory={_heightPyramid.EstimatedBytes / (1024.0 * 1024.0):0.0}MiB, source={(result.LoadedFromCache ? "cache" : "generated")}, buildMs={result.BuildMilliseconds:0.00}");
         Vector3 currentMacroSun = _sunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
@@ -907,7 +975,12 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (_pendingSamplingTask == null || !_pendingSamplingTask.IsCompleted) return;
         try { _pendingSamplingTask.GetAwaiter().GetResult(); }
         catch (OperationCanceledException) { }
-        catch (Exception exception) { GD.PushError($"Global terrain segment sampling failed: {exception.GetBaseException().Message}"); }
+        catch (Exception exception)
+        {
+            string error = $"Global terrain segment sampling failed: {exception.GetBaseException().Message}";
+            GD.PushError(error);
+            if (!StartupComplete) FailStartup(error);
+        }
         finally
         {
             _pendingSamplingTask = null;
@@ -1136,9 +1209,20 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     private void BuildGlobalTerrainOccluder()
     {
+        if (UseStagedStartup)
+        {
+            _startupOccluderBuild?.Dispose();
+            _startupOccluderBuild = EnumerateBuildGlobalTerrainOccluder().GetEnumerator();
+            return;
+        }
+        foreach (bool _ in EnumerateBuildGlobalTerrainOccluder()) { }
+    }
+
+    private IEnumerable<bool> EnumerateBuildGlobalTerrainOccluder()
+    {
         if (_grid?.TerrainSampler is not RingTerrainSampler sampler)
         {
-            return;
+            yield break;
         }
 
         int aroundCount = Mathf.Max(32, OccluderAroundSegments);
@@ -1183,6 +1267,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
                 Name = $"BedrockOccluder_{aroundIndex:D4}",
                 Occluder = occluderResource
             });
+            yield return true;
         }
 
         GD.Print($"Conservative bedrock occluders: segments={aroundCount}, bedrock={sampler.BedrockY}, safety={safetyMargin:0.0}m, chordDepth={safeCanonicalHeight - endpointCanonicalHeight:0.0}m");
@@ -1326,9 +1411,20 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
 
     private void BuildGlobalHullWalls()
     {
+        if (UseStagedStartup)
+        {
+            _startupHullBuild?.Dispose();
+            _startupHullBuild = EnumerateBuildGlobalHullWalls().GetEnumerator();
+            return;
+        }
+        foreach (bool _ in EnumerateBuildGlobalHullWalls()) { }
+    }
+
+    private IEnumerable<bool> EnumerateBuildGlobalHullWalls()
+    {
         if (_grid == null || _hullMaterial == null)
         {
-            return;
+            yield break;
         }
 
         ClearHullSegments();
@@ -1345,7 +1441,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         {
             int aroundStartIndex = segmentIndex * aroundCount / segmentCount;
             int aroundEndIndex = (segmentIndex + 1) * aroundCount / segmentCount;
-            var surface = new SurfaceTool();
+            using var surface = new SurfaceTool();
             surface.Begin(Mesh.PrimitiveType.Triangles);
             if (BuildStructuralEdgeWalls)
             {
@@ -1395,6 +1491,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             AddChild(segment);
             _hullSegments.Add(segment);
             if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
+            yield return true;
         }
         GD.Print($"Segmented regional structural hull HLOD: segments={segmentCount}, edges={(BuildStructuralEdgeWalls ? 2 : 0)}, underside={BuildStructuralUnderside}, roof={BuildTerrainRoofUnderside}, cavityFloor={BuildLowerHullCavityFloor}, around={aroundCount}, vertical={verticalCount}, depth={-hullBottom:0}m, fade={FadeStartMeters / 1000.0f:0.0}-{FarFadeEndMeters / 1000.0f:0.0}km");
     }

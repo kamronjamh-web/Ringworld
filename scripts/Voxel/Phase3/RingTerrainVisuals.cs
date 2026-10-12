@@ -25,6 +25,25 @@ public static class RingTerrainVisuals
     private static Color _tundraTextureColor = new(0.096062f, 0.092159f, 0.067381f, 1.0f);
     private static Color _alpineTextureColor = new(0.218961f, 0.222097f, 0.216046f, 1.0f);
 
+    internal static bool TexturePaletteReady { get { lock (TexturePaletteLock) return _texturePaletteLoaded; } }
+    internal static Color[] CaptureLoadingPaletteFallbacks()
+    {
+        lock (TexturePaletteLock)
+            return new[] { _grassTextureColor, _desertTextureColor, _forestTextureColor, _tundraTextureColor, _alpineTextureColor };
+    }
+    internal static void PublishLoadingTexturePalette(Color[] colors)
+    {
+        if (colors.Length != 5) throw new System.ArgumentException("Terrain texture palette requires five colors.", nameof(colors));
+        lock (TexturePaletteLock)
+        {
+            if (_texturePaletteLoaded) return;
+            _grassTextureColor = Multiply(colors[0], HealthyGrassMultiplier);
+            _desertTextureColor = colors[1]; _forestTextureColor = colors[2];
+            _tundraTextureColor = colors[3]; _alpineTextureColor = colors[4];
+            _texturePaletteLoaded = true;
+        }
+    }
+
     /// <summary>Caches the close-tier biome maps' representative linear colours.</summary>
     public static void PreloadTexturePalette()
     {

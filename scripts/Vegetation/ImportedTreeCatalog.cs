@@ -38,7 +38,7 @@ public sealed class ImportedTreeVariant
 /// meshes.  This is intentionally main-thread only: Godot scene resources and
 /// imported textures are not safe to construct on worker threads.
 /// </summary>
-public static class ImportedTreeCatalog
+public static partial class ImportedTreeCatalog
 {
     public const int CatalogVersion = 1;
     public const int VariantCount = 30;

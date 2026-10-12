@@ -406,7 +406,7 @@ public partial class RingSunshineCloudBridge : Node
             RuntimeVisible = false;
             _lastVisible = false;
             SetProcess(false);
-            int inactiveEffectCount = _worldEnvironment?.Compositor?.CompositorEffects.Count ?? 0;
+            int inactiveEffectCount = CountTargetCompositorEffects();
             GD.Print($"Sunshine Clouds 2 ring bridge ready but provider-inactive; compositorEffects={inactiveEffectCount}.");
             return;
         }
@@ -417,9 +417,18 @@ public partial class RingSunshineCloudBridge : Node
         PublishTerrainCloudSunVisibility();
         UpdateVisibility(force: true);
         UpdateCloudShadows(0.0, force: true);
-        int compositorEffectCount = _worldEnvironment?.Compositor?.CompositorEffects.Count ?? 0;
+        int compositorEffectCount = CountTargetCompositorEffects();
         GD.Print($"Sunshine Clouds 2 ring bridge ready: local handoff {HandoffStartMeters:0}-{HandoffEndMeters:0}m, compositorEffects={compositorEffectCount}.");
         if (LogStartupDensityProbe) GetTree().CreateTimer(1.0).Timeout += QueueStartupDensityProbe;
+    }
+
+    private int CountTargetCompositorEffects()
+    {
+        // Even a count-only getter retains effect resources in its native array.
+        // Release that temporary here instead of on the CLR finalizer thread.
+        Godot.Collections.Array<CompositorEffect>? effects = _worldEnvironment?.Compositor?.CompositorEffects;
+        using Godot.Collections.Array? effectsLifetime = (Godot.Collections.Array?)effects;
+        return effects?.Count ?? 0;
     }
 
     private void QueueStartupDensityProbe()
@@ -463,6 +472,7 @@ public partial class RingSunshineCloudBridge : Node
         if (_worldEnvironment == null || _clouds is not CompositorEffect effect) return;
         _worldEnvironment.Compositor ??= new Compositor();
         Godot.Collections.Array<CompositorEffect> effects = _worldEnvironment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
         if (!effects.Contains(effect))
         {
             effects.Add(effect);
@@ -515,6 +525,7 @@ public partial class RingSunshineCloudBridge : Node
     {
         if (_worldEnvironment?.Compositor == null || _clouds is not CompositorEffect effect) return;
         Godot.Collections.Array<CompositorEffect> effects = _worldEnvironment.Compositor.CompositorEffects;
+        using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
         if (effects.Remove(effect))
             _worldEnvironment.Compositor.CompositorEffects = effects;
     }

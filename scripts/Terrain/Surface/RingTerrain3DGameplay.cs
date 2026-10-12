@@ -14,6 +14,8 @@ namespace RingworldTechDemo.Terrain.Surface;
 /// <summary>Production-scene bridge for the bounded editable Terrain3D surface.</summary>
 public partial class RingTerrain3DGameplay : Node3D
 {
+    [Export] public bool UseStagedStartup { get; set; }
+    [Export] public bool WaitForSavedState { get; set; }
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath CoordinatorPath { get; set; } = new("../TerrainLodCoordinator");
@@ -61,7 +63,7 @@ public partial class RingTerrain3DGameplay : Node3D
     private bool _pendingEditReplacement;
     private bool _synchronousBenchmark;
 
-    public bool IsReady => _surface?.IsReady == true;
+    public bool IsReady => !InitializationPending && !_initializationFailed && _surface?.IsReady == true;
     public string LastError => _lastError.Length > 0 ? _lastError : _surface?.LastError ?? "";
     public float BrushStepMeters => _brushStep;
     /// <summary>Managed teardown result retained after the Godot renderer exits.</summary>
@@ -75,6 +77,16 @@ public partial class RingTerrain3DGameplay : Node3D
 
     public override void _ExitTree()
     {
+        if (InitializationPending) _saveBlocked = true;
+        _startupEditCancellation?.Cancel();
+        if (_startupEditLoad != null)
+            _ = _startupEditLoad.ContinueWith(task => { _ = task.Exception; }, System.Threading.CancellationToken.None,
+                System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted | System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously,
+                System.Threading.Tasks.TaskScheduler.Default);
+        _startupEditCancellation?.Dispose();
+        _startupEditCancellation = null;
+        _startupExited = true;
+        _startupPending = false;
         SurfaceEditsSavedOnExit = SaveSurfaceEdits();
         SurfaceEditsExitSaveError = SurfaceEditsSavedOnExit ? string.Empty : LastError;
         if (_grid != null)
@@ -91,6 +103,7 @@ public partial class RingTerrain3DGameplay : Node3D
 
     public override void _Process(double delta)
     {
+        if (_startupCleanupRequested) { PollStartupCancellation(); return; }
         if (!EnsureInitialized() || _grid == null || _explorer == null || _surface == null || _field == null) return;
         if (_synchronousBenchmark)
         {
@@ -111,12 +124,23 @@ public partial class RingTerrain3DGameplay : Node3D
     public bool EnsureInitialized()
     {
         if (_initializationFailed) return false;
+        if (UseStagedStartup && WaitForSavedState) return false;
+        if (_startupPending)
+        {
+            AdvanceStagedStartup();
+            return IsReady && !_saveBlocked;
+        }
         if (_field != null) return IsReady && !_saveBlocked;
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _coordinator = GetNodeOrNull<RingTerrainLodCoordinator>(CoordinatorPath);
         _camera = GetNodeOrNull<Camera3D>(CameraPath);
-        if (_grid == null) { _lastError = "Grid manager unavailable."; return false; }
+        if (_grid == null)
+        {
+            _lastError = "Grid manager unavailable.";
+            if (UseStagedStartup) FailStagedStartup(_lastError);
+            return false;
+        }
         try
         {
             _sampler = _grid.CreateIndependentTerrainSampler() ?? throw new InvalidOperationException("Terrain sampler unavailable.");
@@ -139,49 +163,71 @@ public partial class RingTerrain3DGameplay : Node3D
                 baseline,
                 useTriangleInterpolation: runtimeSurfaceGeneration);
             _savePath = ResolveSavePath();
+            if (UseStagedStartup && !_synchronousBenchmark)
+            {
+                BeginStagedSavedEdits(baseline);
+                return false;
+            }
             LoadEdits();
             if (_saveBlocked) throw new InvalidDataException(_lastError);
-            _grid.AttachSurfaceHeightField(_field);
-            ConfigureVoxelTransition();
-            RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(0, 0, width * .5);
-            _frame = BuildFrame(position);
-            _lastWorldFrame = BuildWorldFrame(_frame);
-            _surface = new RingTerrain3DSurface { Name = "Terrain3DSurface" };
-            AddChild(_surface);
-            _surface.SetHandoffDistance(_handoffDistanceMeters);
-            _surface.SetMeshLods(_meshLods);
-            _surface.SetMeshSize(_meshSize);
-            if (_synchronousBenchmark)
-            {
-                _surface.SetBiomeSampler(_sampler);
-                _surface.Initialize(_field, _frame);
-                _surface.SetWorldFrame(_lastWorldFrame);
-                _surface.SetMeshLods(_meshLods);
-                _surface.SetMeshSize(_meshSize);
-            }
-            else
-            {
-                _surface.InitializeGameplayWindow(_field, _frame, _sampler);
-                _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
-                _stream = new RingTerrain3DGameplayStream(_sampler, minimumHeight, maximumHeight, width, circumference);
-                _stream.Configure(_generationWorkers, _generationCacheMiB);
-                if (_surface.TryGetInitialGameplayCache(out RingSurfaceFrame cacheFrame, out float[] cacheHeights, out byte[] cacheBiomes))
-                    _stream.PrimeBaselineWindow(cacheFrame, cacheHeights, cacheBiomes);
-            }
-            _pendingEditRevision = _committedEditRevision = _field.Revision;
-            _grid.SurfaceTerrainVisualReady = HasVisualCoverage(position);
-            if (!_subscribed) { _grid.CanonicalFloatingOriginAnchorChanged += OnFloatingOriginChanged; _subscribed = true; }
-            if (_explorer != null) _explorer.MoveSpeed = _actualWalkSpeed;
-            return IsReady;
+            return CompleteSurfaceInitialization();
         }
         catch (Exception error)
         {
+            if (UseStagedStartup) FailStagedStartup(error.Message);
             _initializationFailed = true;
             _grid.SurfaceTerrainVisualReady = false;
             _lastError = error.Message;
             GD.PushError("Terrain3D gameplay: " + error.Message);
             return false;
         }
+    }
+
+    private bool CompleteSurfaceInitialization()
+    {
+        if (_grid == null || _field == null || _sampler == null) throw new InvalidOperationException("Terrain setup dependencies are missing.");
+        float minimumHeight = _field.MinimumHeight, maximumHeight = _field.MaximumHeight;
+        int width = _field.WidthMeters;
+        long circumference = _field.CircumferenceMeters;
+        _grid.AttachSurfaceHeightField(_field);
+        ConfigureVoxelTransition();
+        RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(0, 0, width * .5);
+        _frame = BuildFrame(position);
+        _lastWorldFrame = BuildWorldFrame(_frame);
+        _surface = new RingTerrain3DSurface { Name = "Terrain3DSurface" };
+        AddChild(_surface);
+        _surface.SetHandoffDistance(_handoffDistanceMeters);
+        _surface.SetMeshLods(_meshLods);
+        _surface.SetMeshSize(_meshSize);
+        if (_synchronousBenchmark)
+        {
+            _surface.SetBiomeSampler(_sampler);
+            _surface.Initialize(_field, _frame);
+            _surface.SetWorldFrame(_lastWorldFrame);
+            _surface.SetMeshLods(_meshLods);
+            _surface.SetMeshSize(_meshSize);
+        }
+        else if (UseStagedStartup)
+        {
+            _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
+            _stream = new RingTerrain3DGameplayStream(_sampler, minimumHeight, maximumHeight, width, circumference);
+            _stream.Configure(_generationWorkers, _generationCacheMiB);
+            BeginStagedStartup(position);
+        }
+        else
+        {
+            _surface.InitializeGameplayWindow(_field, _frame, _sampler);
+            _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
+            _stream = new RingTerrain3DGameplayStream(_sampler, minimumHeight, maximumHeight, width, circumference);
+            _stream.Configure(_generationWorkers, _generationCacheMiB);
+            if (_surface.TryGetInitialGameplayCache(out RingSurfaceFrame cacheFrame, out float[] cacheHeights, out byte[] cacheBiomes))
+                _stream.PrimeBaselineWindow(cacheFrame, cacheHeights, cacheBiomes);
+        }
+        if (!_startupPending) _pendingEditRevision = _committedEditRevision = _field.Revision;
+        _grid.SurfaceTerrainVisualReady = HasVisualCoverage(position);
+        if (!_subscribed) { _grid.CanonicalFloatingOriginAnchorChanged += OnFloatingOriginChanged; _subscribed = true; }
+        if (_explorer != null) _explorer.MoveSpeed = _actualWalkSpeed;
+        return IsReady;
     }
 
     public void EnsureCoverage(RingCanonicalPosition position)
@@ -208,7 +254,7 @@ public partial class RingTerrain3DGameplay : Node3D
     }
     public bool ApplySurfaceBrushAtCanonical(double around, double across, float delta)
     {
-        if (_field == null || _saveBlocked || !_field.ApplyBrush(around, across, _brushRadius, delta)) return false;
+        if (InitializationPending || _field == null || _saveBlocked || !_field.ApplyBrush(around, across, _brushRadius, delta)) return false;
         if (_synchronousBenchmark)
         {
             _surface?.RefreshEditedSurface();
@@ -224,6 +270,7 @@ public partial class RingTerrain3DGameplay : Node3D
     }
     public bool SaveSurfaceEdits()
     {
+        if (InitializationPending) return false;
         if (_field == null) return !_saveBlocked;
         if (_saveBlocked) return false;
         RingSurfaceEditStoreResult result = _field.Save(_savePath);

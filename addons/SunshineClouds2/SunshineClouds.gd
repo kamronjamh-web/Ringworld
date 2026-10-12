@@ -767,8 +767,66 @@ func _init():
 	RenderingServer.call_on_render_thread(initialize_compute)
 
 func _notification(what):
-	if what == NOTIFICATION_PREDELETE and is_instance_valid(self):
-		RenderingServer.call_on_render_thread(clear_compute)
+	if what != NOTIFICATION_PREDELETE or rd == null:
+		return
+	# A bound clear_compute callable targets an object that is being destroyed.
+	# Capture owned resources now; the queued release must not access that object.
+	var device := rd
+	var sets: Array[RID] = uniform_sets.duplicate()
+	for ring_sets in general_data_uniform_sets:
+		sets.append_array(ring_sets)
+	sets.append_array(cloud_shadow_uniform_sets)
+	sets.append(_terrain_sun_set)
+	var rids: Array[RID] = [pipeline, shader, prepass_pipeline, prepass_shader,
+		postpass_pipeline, postpass_shader, display_pipeline, display_shader,
+		display_vertex_array, display_vertex_buffer, nearest_sampler, linear_sampler,
+		linear_sampler_no_repeat, light_data_buffer, point_sample_data_buffer,
+		resized_depth, far_opaque_depth_fallback, cloud_shadow_pipeline,
+		cloud_shadow_shader, _terrain_sun_neutral]
+	rids.append_array(general_data_buffers)
+	rids.append_array(accumulation_textures)
+	rids.append_array(blit_screen_images)
+	rids.append_array(cloud_shadow_param_buffers)
+	rids.append_array(cloud_shadow_textures)
+	var keep_alive: Array = [cloud_shadow_texture_wrappers.duplicate(),
+		cloud_shadow_published_texture_wrappers.duplicate(),
+		cloud_backdrop_texture_wrappers.duplicate(),
+		cloud_backdrop_published_texture_wrappers.duplicate(),
+		_terrain_sun_texture_refs.duplicate()]
+	for generation in retired_generations:
+		sets.append_array(generation.uniform_sets)
+		sets.append_array(generation.shadow_uniform_sets)
+		rids.append_array(generation.rids)
+		keep_alive.append(generation.duplicate())
+	for cascade in retired_cloud_shadow_cascades:
+		sets.append(cascade.uniform_set)
+		rids.append(cascade.param_buffer)
+		rids.append(cascade.texture)
+		keep_alive.append(cascade.duplicate())
+	for entry in _terrain_sun_retired:
+		sets.append(entry.uniform_set)
+		keep_alive.append(entry.duplicate())
+	# Source noise/depth/color textures and terrain-sun receiver textures are
+	# borrowed. Their RIDs are deliberately absent from the owned release list.
+	var cleanup := {"sets": sets, "rids": rids, "keep_alive": keep_alive}
+	RenderingServer.call_on_render_thread(SunshineCloudsGD._release_shutdown_cleanup.bind(device, cleanup))
+
+static func _release_shutdown_cleanup(device: RenderingDevice, cleanup: Dictionary) -> void:
+	if not is_instance_valid(device):
+		cleanup.clear()
+		return
+	var freed := {}
+	# Release descriptors before their buffers, textures, and shaders.
+	for uniform_set: RID in cleanup["sets"]:
+		if uniform_set.is_valid() and not freed.has(uniform_set):
+			if device.uniform_set_is_valid(uniform_set): device.free_rid(uniform_set)
+			freed[uniform_set] = true
+	for rid: RID in cleanup["rids"]:
+		if rid.is_valid() and not freed.has(rid):
+			device.free_rid(rid)
+			freed[rid] = true
+	# Texture wrappers and retired generations stay alive through RID release.
+	cleanup.clear()
 
 func _retire_current_generation():
 	var delay := max(2, rd.get_frame_delay() + 2)

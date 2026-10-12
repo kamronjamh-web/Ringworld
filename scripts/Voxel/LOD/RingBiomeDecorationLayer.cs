@@ -196,10 +196,17 @@ public partial class RingBiomeDecorationLayer : Node3D
 		_smoothTerrain = GetNodeOrNull<SmoothTerrainGrid>(SmoothTerrainPath);
 		if (!Enabled || _grid?.TerrainSampler == null || _explorer == null)
 		{
+            if (Enabled && UseStagedStartup) _startupResourceError = "Tree startup is missing its terrain sampler or explorer.";
 			Visible = false;
 			SetProcess(false);
 			return;
 		}
+        if (UseStagedStartup) { _startupResources = PrepareStartupResources().GetEnumerator(); return; }
+        InitializeStartupResources();
+	}
+
+    private void InitializeStartupResources()
+    {
 		// Imported records carry immutable species/variant identity and therefore
 		// cannot use the obsolete camera-centred fallback builder.
 		if (UseRegionalImportedForest) UsePersistentVegetationTiles = true;
@@ -242,6 +249,11 @@ public partial class RingBiomeDecorationLayer : Node3D
 	public override void _Process(double delta)
 	{
 		using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Trees update (inclusive)");
+        if (UseStagedStartup && !StartupComplete)
+        {
+            ServiceStartupResources();
+            return;
+        }
 		// This must precede streaming's movement early-outs: celestial state and
 		// floating-origin canonical center change while a player stands still.
 		UpdateTreeLightingMaterials();

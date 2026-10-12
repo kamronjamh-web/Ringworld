@@ -658,6 +658,7 @@ public partial class RingBiomeDecorationLayer
 
 	public override void _ExitTree()
 	{
+        DisposeStartupResources();
 		ClearGpuTreeResidentSources("Disposed");
 		ShutdownVegetationJobs();
 	}

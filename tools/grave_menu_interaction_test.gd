@@ -16,6 +16,7 @@ const SHADOW_FIXTURE := "res://.godot/grave_menu_interaction_shadow.tres"
 
 var _failed := false
 var _watchdog: Timer
+var _fixture_viewport: SubViewport
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -26,19 +27,29 @@ func _run() -> void:
 	_watchdog.timeout.connect(func(): _fail("watchdog expired"))
 	root.add_child(_watchdog)
 	_watchdog.start(90.0)
-	root.get_viewport().notify_mouse_entered()
+	# A headless native Window may have no usable display dimensions. Give the
+	# controls and injected input one explicit canvas instead of OS window bounds.
+	_fixture_viewport = SubViewport.new()
+	_fixture_viewport.name = "GraveMenuInteractionViewport"
+	_fixture_viewport.size = Vector2i(1280, 720)
+	_fixture_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	root.add_child(_fixture_viewport)
+	_fixture_viewport.notify_mouse_entered()
+	await _frames(2)
+	print("GRAVE_MENU_FIXTURE_VIEWPORT=" + str(_fixture_viewport.get_visible_rect()))
 	_cleanup_fixture()
 	await _test_menu_drawer()
 	await _test_gameplay_drawer()
 	_cleanup_fixture()
 	_watchdog.stop()
+	_fixture_viewport.queue_free()
 	print("GRAVE_MENU_INTERACTION=%s" % ("FAIL" if _failed else "PASS"))
 	quit(1 if _failed else 0)
 
 func _test_menu_drawer() -> void:
 	var host := Control.new()
 	host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	root.add_child(host)
+	_fixture_viewport.add_child(host)
 	var drawer: Control = MENU_DRAWER.new()
 	drawer.name = "MenuFlyoverTuningDrawerInteractionFixture"
 	drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -83,7 +94,7 @@ func _test_gameplay_drawer() -> void:
 	# Use the certified configuration path, matching the supported large-ring
 	# launch rather than a synthetic drawer host.
 	var launcher: Node = LAUNCHER_SCENE.instantiate()
-	root.add_child(launcher)
+	_fixture_viewport.add_child(launcher)
 	await _frames(2)
 	launcher.call("_on_certified_preset_pressed")
 	var game: Node = GAME_SCENE.instantiate()
@@ -106,16 +117,20 @@ func _test_gameplay_drawer() -> void:
 		game.free()
 		return
 	if pre_ready_drawer != null:
+		pre_ready_drawer.set("DeferDrawerBuildUntilOpened", true)
+		pre_ready_drawer.call("InstallLoadingPresentationDefaults", GAMEPLAY_PREFS_DIRECTORY + "/loading.tres")
+		game.get_node("GraphicsQuality").call("InstallFarRenderingDefaults", GAMEPLAY_PREFS_DIRECTORY + "/far.tres")
 		# Retain the existing paths used by this fixture's water/grass/AA/shadow edits.
 		pre_ready_drawer.call("InstallWaterDefaults", WATER_FIXTURE)
 		pre_ready_drawer.call("InstallGrassDefaults", GRASS_FIXTURE)
 		pre_ready_drawer.call("InstallAntiAliasingDefaults", AA_FIXTURE)
 		pre_ready_drawer.call("InstallShadowDefaults", SHADOW_FIXTURE)
-	root.add_child(game)
+	_fixture_viewport.add_child(game)
 	await _frames(8)
 	var drawer := game.get_node_or_null("LiveTuningDrawer") as CanvasLayer
 	_require(drawer != null, "certified gameplay scene lacks LiveTuningDrawer")
 	if drawer != null:
+		_require(_find_panel(drawer) == null, "deferred gameplay drawer built before first open")
 		drawer.call("SetBenchmarkDrawerOpen", true)
 		await _frames(3)
 		await _exercise_drawer(drawer, "gameplay")
@@ -197,7 +212,7 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 		var first: Control = folds[0]
 		_ensure_visible(tabs.get_child(index), first)
 		await _frames(2)
-		await _click(first.get_global_rect().position + Vector2(12, minf(12, first.size.y * .5)))
+		await _click_section_header(first)
 		await _frames(1)
 		_require(not bool(first.get("folded")), label + " section header did not expand")
 		_require(_section_body_visible(first), label + " expanded section body is hidden")
@@ -205,17 +220,17 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 			var second: Control = folds[1]
 			_ensure_visible(tabs.get_child(index), second)
 			await _frames(2)
-			await _click(second.get_global_rect().position + Vector2(12, minf(12, second.size.y * .5)))
+			await _click_section_header(second)
 			await _frames(1)
 			_require(not bool(second.get("folded")) and not bool(first.get("folded")), label + " sections are not independently expanded")
 		_ensure_visible(tabs.get_child(index), first)
 		await _frames(2)
-		await _click(first.get_global_rect().position + Vector2(12, minf(12, first.size.y * .5)))
+		await _click_section_header(first)
 		await _frames(1)
 		_require(bool(first.get("folded")) and not _section_body_visible(first), label + " section did not collapse/hide content")
 		_ensure_visible(tabs.get_child(index), first)
 		await _frames(2)
-		await _click(first.get_global_rect().position + Vector2(12, minf(12, first.size.y * .5)))
+		await _click_section_header(first)
 		await _frames(1)
 		_require(not bool(first.get("folded")) and _section_body_visible(first), label + " section did not restore content")
 		if title == "Wind":
@@ -296,34 +311,66 @@ func _wheel_numeric(tab: Node, numeric: Control, label: String, focus_line_edit:
 	_require(scroll.scroll_vertical == int(max_scroll) and is_equal_approx((last as Range).value, boundary_value) and boundary_signals[0] == 0, label + " maximum wheel boundary changed state")
 
 func _wheel_over(position: Vector2, button: MouseButton, factor: float, expected: Control) -> void:
-	var move := InputEventMouseMotion.new(); move.position = position; root.get_viewport().push_input(move, true)
+	var move := InputEventMouseMotion.new(); move.position = position; _fixture_viewport.push_input(move, true)
 	await _frames(1)
-	var hovered := root.get_viewport().gui_get_hovered_control()
+	var hovered := _fixture_viewport.gui_get_hovered_control()
 	_require(hovered == expected or expected.is_ancestor_of(hovered), "wheel target did not become hovered")
 	var wheel := InputEventMouseButton.new(); wheel.position = position; wheel.button_index = button; wheel.pressed = true; wheel.factor = factor
-	root.get_viewport().push_input(wheel, true)
+	_fixture_viewport.push_input(wheel, true)
 	await _frames(1)
 
 func _click(position: Vector2) -> void:
-	var move := InputEventMouseMotion.new(); move.position = position; root.get_viewport().push_input(move, true)
-	var press := InputEventMouseButton.new(); press.position = position; press.button_index = MOUSE_BUTTON_LEFT; press.pressed = true; root.get_viewport().push_input(press, true)
-	var release := InputEventMouseButton.new(); release.position = position; release.button_index = MOUSE_BUTTON_LEFT; release.pressed = false; root.get_viewport().push_input(release, true)
+	var move := InputEventMouseMotion.new(); move.position = position; move.global_position = position; _fixture_viewport.push_input(move, true)
+	await _frames(1)
+	var press := InputEventMouseButton.new(); press.position = position; press.global_position = position; press.button_index = MOUSE_BUTTON_LEFT; press.pressed = true; _fixture_viewport.push_input(press, true)
+	var release := InputEventMouseButton.new(); release.position = position; release.global_position = position; release.button_index = MOUSE_BUTTON_LEFT; release.pressed = false; _fixture_viewport.push_input(release, true)
 	await _frames(1)
 
+func _click_section_header(section: Control) -> void:
+	# Use the native title's actual theme height, not an assumed 12-pixel icon
+	# offset. Font/icon/style metrics and canvas scaling vary between engines.
+	var folded := bool(section.get("folded"))
+	var style := section.get_theme_stylebox("title_collapsed_panel" if folded else "title_panel")
+	var font := section.get_theme_font("font")
+	var font_size := section.get_theme_font_size("font_size")
+	var icon := section.get_theme_icon("folded_arrow" if folded else "expanded_arrow")
+	var height := maxf(font.get_height(font_size), icon.get_height()) + style.get_minimum_size().y
+	var rect := section.get_global_rect()
+	var top := rect.position.y if int(section.get("title_position")) == 0 else rect.end.y - height
+	var header := Rect2(Vector2(rect.position.x, top), Vector2(rect.size.x, height))
+	var visible := header.intersection(_fixture_viewport.get_visible_rect())
+	var scroll := _closest_scroll(section)
+	if scroll != null:
+		visible = visible.intersection(scroll.get_global_rect())
+	if visible.size.x <= 0 or visible.size.y <= 0:
+		_require(false, "section title outside canvas: header=%s viewport=%s scroll=%s" % [header, _fixture_viewport.get_visible_rect(), scroll.get_global_rect() if scroll != null else "none"])
+		return
+	var point := visible.get_center()
+	var move := InputEventMouseMotion.new()
+	move.position = point
+	move.global_position = point
+	_fixture_viewport.push_input(move, true)
+	await _frames(1)
+	var hovered := _fixture_viewport.gui_get_hovered_control()
+	if hovered != section:
+		_require(false, "section title hit another control: section=%s header=%s click=%s hovered=%s viewport=%s" % [section.get_path(), header, point, hovered.get_path() if hovered != null else "null", _fixture_viewport.get_visible_rect()])
+		return
+	await _click(point)
+
 func _send_key(key: Key) -> void:
-	var event := InputEventKey.new(); event.keycode = key; event.pressed = true; root.get_viewport().push_input(event, true)
+	var event := InputEventKey.new(); event.keycode = key; event.pressed = true; _fixture_viewport.push_input(event, true)
 
 func _type_text(value: String) -> void:
 	for character in value:
 		var event := InputEventKey.new()
 		event.unicode = character.unicode_at(0)
 		event.pressed = true
-		root.get_viewport().push_input(event, true)
+		_fixture_viewport.push_input(event, true)
 
 func _drag(from: Vector2, to: Vector2) -> void:
-	var press := InputEventMouseButton.new(); press.position = from; press.button_index = MOUSE_BUTTON_LEFT; press.pressed = true; root.get_viewport().push_input(press, true)
-	var move := InputEventMouseMotion.new(); move.position = to; move.button_mask = MOUSE_BUTTON_MASK_LEFT; root.get_viewport().push_input(move, true)
-	var release := InputEventMouseButton.new(); release.position = to; release.button_index = MOUSE_BUTTON_LEFT; release.pressed = false; root.get_viewport().push_input(release, true)
+	var press := InputEventMouseButton.new(); press.position = from; press.button_index = MOUSE_BUTTON_LEFT; press.pressed = true; _fixture_viewport.push_input(press, true)
+	var move := InputEventMouseMotion.new(); move.position = to; move.button_mask = MOUSE_BUTTON_MASK_LEFT; _fixture_viewport.push_input(move, true)
+	var release := InputEventMouseButton.new(); release.position = to; release.button_index = MOUSE_BUTTON_LEFT; release.pressed = false; _fixture_viewport.push_input(release, true)
 	await _frames(2)
 
 func _find_panel(node: Node) -> Control:
@@ -386,7 +433,7 @@ func _capture(label: String) -> void:
 	if RenderingServer.get_rendering_device() == null: return
 	await RenderingServer.frame_post_draw
 	var path := "res://.godot/grave_menu_%s.png" % label
-	var result := root.get_texture().get_image().save_png(ProjectSettings.globalize_path(path))
+	var result := _fixture_viewport.get_texture().get_image().save_png(ProjectSettings.globalize_path(path))
 	_require(result == OK, "could not capture " + label)
 
 func _require(condition: bool, reason: String) -> void:
@@ -424,6 +471,6 @@ func _require_settings_grouped(tab: Node, label: String) -> void:
 func _cleanup_fixture() -> void:
 	for path in [FIXTURE, WATER_FIXTURE, GRASS_FIXTURE, AA_FIXTURE, SHADOW_FIXTURE]:
 		if FileAccess.file_exists(path): DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
-	for name in ["aa", "motion", "water", "wind", "legacy-grass", "grass", "vegetation", "shadows", "surface", "atmosphere", "resolution", "lod", "coverage", "clouds", "rain-haze"]:
+	for name in ["aa", "motion", "water", "wind", "legacy-grass", "grass", "vegetation", "shadows", "surface", "atmosphere", "resolution", "lod", "coverage", "clouds", "rain-haze", "far", "loading"]:
 		var path := GAMEPLAY_PREFS_DIRECTORY + "/" + str(name) + ".tres"
 		if FileAccess.file_exists(path): DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

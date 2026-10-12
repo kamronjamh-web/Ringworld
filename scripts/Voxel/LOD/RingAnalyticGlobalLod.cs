@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Diagnostics;
 using System;
 using Godot;
 using RingworldTechDemo.Voxel.Core;
@@ -12,6 +14,42 @@ namespace RingworldTechDemo.Voxel.LOD;
 /// </summary>
 public partial class RingAnalyticGlobalLod : MeshInstance3D
 {
+    // Sampling and triangle emission yield between bounded groups. The final
+    // native mesh commit remains atomic, preserving the existing mesh layout.
+    [Export] public bool UseStagedStartup { get; set; }
+    private IEnumerator<bool>? _startupBuild;
+    private bool _startupComplete;
+    public string StartupError { get; private set; } = string.Empty;
+    public bool StartupComplete => StartupError.Length == 0 && (!BuildEnabled || (!UseStagedStartup || (_startupComplete && Mesh != null)));
+    public Godot.Collections.Dictionary GetLoadingStatus() => new() { ["ready"] = StartupComplete, ["phase"] = "whole ring fallback", ["error"] = StartupError };
+    private void ServiceStartupGeometry()
+    {
+        if (_startupBuild == null) return;
+        try
+        {
+            long start = Stopwatch.GetTimestamp();
+            for (int units = 0; units < 4; units++)
+            {
+                if (!_startupBuild.MoveNext()) { _startupBuild.Dispose(); _startupBuild = null; _startupComplete = Mesh != null; if (!_startupComplete) FailStartup("The global fallback did not produce a mesh."); break; }
+                if (Stopwatch.GetElapsedTime(start).TotalMilliseconds >= 3) break;
+            }
+        }
+        catch (Exception error) { FailStartup(error.Message); }
+    }
+    private void FailStartup(string error)
+    {
+        if (!UseStagedStartup || StartupError.Length > 0) return;
+        StartupError = "Global fallback startup failed: " + error;
+        _startupBuild?.Dispose(); _startupBuild = null;
+        SetProcess(false);
+    }
+    public override void _ExitTree() { _startupBuild?.Dispose(); _startupBuild = null; }
+    private IEnumerable<bool> EnumerateStartup()
+    {
+        foreach (bool unit in EnumerateBuildSurface()) yield return unit;
+        foreach (bool unit in EnumerateBuildStructuralShell()) yield return unit;
+    }
+
     [Export] public bool BuildEnabled { get; set; } = true;
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath FocusPath { get; set; } = new("../Explorer");
@@ -42,6 +80,13 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
 
     public override void _Ready()
     {
+        if (!UseStagedStartup) { InitializeStartupOwner(); return; }
+        try { InitializeStartupOwner(); }
+        catch (Exception error) { FailStartup(error.Message); }
+    }
+
+    private void InitializeStartupOwner()
+    {
         if (!BuildEnabled) return;
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _focus = GetNodeOrNull<Node3D>(FocusPath);
@@ -49,16 +94,18 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         if (_grid == null || _focus == null)
         {
             GD.PushWarning("RingAnalyticGlobalLod could not resolve the grid or focus.");
+            FailStartup("The terrain grid or player focus is unavailable.");
             return;
         }
         CreateMaterials();
-        BuildSurface();
-        BuildStructuralShell();
+        if (UseStagedStartup && (_surfaceMaterial == null || _hullMaterial == null)) { FailStartup("The global terrain or hull material is unavailable."); return; }
+        if (UseStagedStartup) _startupBuild = EnumerateStartup().GetEnumerator(); else { BuildSurface(); BuildStructuralShell(); }
         UpdateUniforms();
     }
 
     public override void _Process(double delta)
     {
+        ServiceStartupGeometry();
         _ = delta;
         UpdateUniforms();
     }
@@ -99,13 +146,16 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         }
     }
 
-    private void BuildSurface()
+    private void BuildSurface() { foreach (bool _ in EnumerateBuildSurface()) { } }
+
+    private IEnumerable<bool> EnumerateBuildSurface()
     {
-        if (_grid == null) return;
+        if (_grid == null) yield break;
         if (_grid.TerrainSampler is not RingTerrainSampler sampler)
         {
             GD.PushWarning("RingAnalyticGlobalLod could not resolve the seeded terrain sampler.");
-            return;
+            if (UseStagedStartup) throw new InvalidOperationException("The seeded terrain sampler is unavailable.");
+            yield break;
         }
         int aroundCount = Mathf.Max(128, AroundSegments);
         int acrossCount = Mathf.Max(2, AcrossSegments);
@@ -139,9 +189,10 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
                 sampler,
                 LowColor,
                 HighColor);
+            if ((index & 127) == 127) yield return true;
         }
 
-        var surface = new SurfaceTool();
+        using var surface = new SurfaceTool();
         surface.Begin(Mesh.PrimitiveType.Triangles);
         for (int z = 0; z < acrossCount; z++)
         for (int x = 0; x < aroundCount; x++)
@@ -152,7 +203,9 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             int i11 = i01 + 1;
             AddTriangle(surface, vertices[i01], vertices[i10], vertices[i00], colors[i01], colors[i10], colors[i00]);
             AddTriangle(surface, vertices[i10], vertices[i01], vertices[i11], colors[i10], colors[i01], colors[i11]);
+            if (((z * aroundCount + x) & 127) == 127) yield return true;
         }
+        yield return true;
         surface.GenerateNormals();
         surface.Index();
         Mesh = surface.Commit();
@@ -163,13 +216,15 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         GD.Print($"Analytic seeded global ring surface: seed={sampler.Seed}, around={aroundCount}, across={acrossCount}, fade={FadeStartMeters / 1000.0f:0}-{FadeEndMeters / 1000.0f:0}km");
     }
 
-    private void BuildStructuralShell()
+    private void BuildStructuralShell() { foreach (bool _ in EnumerateBuildStructuralShell()) { } }
+
+    private IEnumerable<bool> EnumerateBuildStructuralShell()
     {
-        if (_grid == null || _hullMaterial == null) return;
+        if (_grid == null || _hullMaterial == null) yield break;
         int aroundCount = Mathf.Max(128, AroundSegments / 2);
         double aroundStep = _grid.GetCanonicalRingCircumferenceMeters64() / aroundCount;
         double top = _grid.GetStructuralWallTopGlobalY();
-        var surface = new SurfaceTool();
+        using var surface = new SurfaceTool();
         surface.Begin(Mesh.PrimitiveType.Triangles);
         for (int x = 0; x < aroundCount; x++)
         {
@@ -180,7 +235,9 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             AddTriangle(surface, Point(a0, bottom, 0.0), Point(a0, bottom, RingWidthMeters), Point(a1, bottom, RingWidthMeters), HullColor);
             AddWallQuad(surface, a0, a1, 0.0, bottom, top, true);
             AddWallQuad(surface, a0, a1, RingWidthMeters, bottom, top, false);
+            if ((x & 31) == 31) yield return true;
         }
+        yield return true;
         surface.GenerateNormals();
         surface.Index();
         _hull = new MeshInstance3D

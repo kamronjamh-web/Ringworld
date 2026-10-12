@@ -29,6 +29,8 @@ public partial class RingWorldSaveManager : Node
     [Export(PropertyHint.Range, "5,300,1")] public float AutosaveSeconds { get; set; } = 30.0f;
     [Export(PropertyHint.Range, "0,4,1")] public int ActiveRegionRadius { get; set; } = 1;
     [Export(PropertyHint.Range, "1,8,1")] public int RetainedRegionRadius { get; set; } = 2;
+    [Export] public bool UseStagedStartup { get; set; }
+    public bool HoldSavesUntilWorldReady { get; set; }
 
     // v3 records that caves derive from the terrain/world seed. v2 and v1 remain
     // readable only through the fail-closed policy below.
@@ -151,6 +153,7 @@ public partial class RingWorldSaveManager : Node
         if (string.IsNullOrWhiteSpace(configured) || _grid?.TerrainSampler == null || _explorer == null)
         {
             GD.PushWarning("World save manager disabled: no active save slot or required gameplay nodes.");
+            if (UseStagedStartup) RejectLoad("No active save slot or required gameplay nodes.");
             SetProcess(false);
             return;
         }
@@ -168,11 +171,13 @@ public partial class RingWorldSaveManager : Node
         _deltaJournalPath = Path.Combine(_worldDirectory, "voxel_delta_journal.ndjson");
         _smoothJournalPath = Path.Combine(_worldDirectory, "smooth_terrain_edits_v1.json");
         _constructionPath = Path.Combine(_worldDirectory, "smooth_construction_v1.json");
-        Callable.From(LoadWorld).CallDeferred();
+        if (UseStagedStartup) Callable.From(BeginStagedWorldLoad).CallDeferred();
+        else Callable.From(LoadWorld).CallDeferred();
     }
 
     public override void _Process(double delta)
     {
+        if (UseStagedStartup && !_loaded && !_loadRejected) AdvanceStagedWorldLoad();
         if (!_loaded) return;
         CompleteBackgroundSaveIfReady();
         if (!_surfaceBackendActive) QueueRegionActivation();
@@ -185,6 +190,7 @@ public partial class RingWorldSaveManager : Node
     public override void _ExitTree()
     {
         _isExiting = true;
+        if (UseStagedStartup && !_loaded) CancelWorldLoad();
         if (_loaded && !_shutdownSaved)
         {
             SaveWorld();
@@ -207,6 +213,7 @@ public partial class RingWorldSaveManager : Node
     public Error SaveWorld()
     {
         if (!IsSavePermittedForLoadState(_loaded, _loadRejected)) return _loadRejected ? Error.Failed : Error.Busy;
+        if (HoldSavesUntilWorldReady) return Error.Busy;
         if (_grid?.TerrainSampler == null || _explorer == null || string.IsNullOrEmpty(_statePath))
             return Error.Unconfigured;
         if (_saveTask != null)
@@ -599,8 +606,14 @@ public partial class RingWorldSaveManager : Node
     private void RejectLoad(string reason)
     {
         _loadRejected = true;
+        WorldLoadError = reason;
+        _loadingStage = "failed";
+        _loadingDetail = reason;
         if (_surfaceBackendActive)
-            _surfaceTerrain?.BlockSavingAndEditing("World state rejected: " + reason);
+        {
+            if (UseStagedStartup) _surfaceTerrain?.CancelStartup("World state rejected: " + reason);
+            else _surfaceTerrain?.BlockSavingAndEditing("World state rejected: " + reason);
+        }
         SetProcess(false);
     }
 
