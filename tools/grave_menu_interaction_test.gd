@@ -6,6 +6,8 @@ extends SceneTree
 const LAUNCHER_SCENE := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const MENU_DRAWER := preload("res://scripts/ui/MenuFlyoverTuningDrawer.cs")
+const PREFERENCE_ISOLATION := preload("res://scripts/Tools/MinimapWindContractTest.cs")
+const GAMEPLAY_PREFS_DIRECTORY := "res://.godot/grave-menu-interaction-preferences"
 const FIXTURE := "res://.godot/grave_menu_interaction_fixture.tres"
 const WATER_FIXTURE := "res://.godot/grave_menu_interaction_water.tres"
 const GRASS_FIXTURE := "res://.godot/grave_menu_interaction_grass.tres"
@@ -96,7 +98,15 @@ func _test_gameplay_drawer() -> void:
 	var pre_ready_drawer := game.get_node_or_null("LiveTuningDrawer")
 	_require(pre_ready_drawer != null, "missing gameplay drawer before preference isolation")
 	if pre_ready_drawer == null: return
+	# Isolate source startup/migration, cloud/atmosphere owners, pause preferences,
+	# and every drawer-owned preference before any node enters the tree.
+	var isolation: Dictionary = PREFERENCE_ISOLATION.new().ExecuteFixture("isolation", game, GAMEPLAY_PREFS_DIRECTORY)
+	_require(bool(isolation.get("pass", false)), "gameplay preference isolation failed: " + str(isolation.get("detail", "")))
+	if not bool(isolation.get("pass", false)):
+		game.free()
+		return
 	if pre_ready_drawer != null:
+		# Retain the existing paths used by this fixture's water/grass/AA/shadow edits.
 		pre_ready_drawer.call("InstallWaterDefaults", WATER_FIXTURE)
 		pre_ready_drawer.call("InstallGrassDefaults", GRASS_FIXTURE)
 		pre_ready_drawer.call("InstallAntiAliasingDefaults", AA_FIXTURE)
@@ -142,17 +152,46 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 	var tabs := _first_descendant(panel, TabContainer) as TabContainer
 	_require(tabs != null, label + " drawer has no TabContainer")
 	if tabs == null: return
-	_require(tabs.get_tab_count() == (6 if label == "menu" else 10), label + " tab count changed")
+	if label == "menu":
+		_require(tabs.get_tab_count() == 6, label + " tab count changed")
+	else:
+		var titles: Array[String] = []
+		for index in tabs.get_tab_count(): titles.append(tabs.get_tab_title(index))
+		for expected in ["Lighting", "Atmosphere", "Shadows", "Clouds", "Water", "Wind", "Grass", "Vegetation", "Diagnostics"]:
+			_require(titles.has(expected), label + " missing tab " + expected)
 	await _capture(label + "_collapsed")
+	var exercise_order: Array[int] = []
+	# Exercise the new feature first so unrelated older-tab failures cannot hide it.
+	if label != "menu":
+		for index in tabs.get_tab_count():
+			if tabs.get_tab_title(index) == "Wind": exercise_order.append(index)
 	for index in tabs.get_tab_count():
+		if not exercise_order.has(index): exercise_order.append(index)
+	for index in exercise_order:
 		tabs.current_tab = index
 		await _frames(2)
+		var title := tabs.get_tab_title(index)
 		var folds := _foldables(tabs.get_child(index))
-		_require(folds.size() > 0, "%s tab %s lacks FoldableContainer" % [label, tabs.get_tab_title(index)])
-		if folds.is_empty(): continue
+		# Atmosphere and the prototype-launch tab intentionally use plain controls.
+		# Diagnostics also has sections that contain only readouts.
+		var requires_folds := label == "menu" or title in ["Lighting", "Shadows", "Clouds", "Quality", "Anti-aliasing", "Motion", "LODs", "Terrain", "Water", "Wind", "Grass", "Vegetation", "Diagnostics"]
+		if requires_folds:
+			_require(folds.size() > 0, "%s tab %s lacks FoldableContainer" % [label, title])
+		if folds.is_empty():
+			var plain_tab := tabs.get_child(index)
+			var numeric := _first_visible(plain_tab, "HSlider") as Control
+			if numeric == null: numeric = _first_visible(plain_tab, "SpinBox") as Control
+			if numeric != null:
+				_ensure_visible(plain_tab, numeric)
+				await _frames(2)
+				_require(numeric.is_visible_in_tree(), "%s/%s numeric control is hidden" % [label, title])
+				await _wheel_guard(drawer, plain_tab, label + " " + title)
+			print("GRAVE_MENU_TAB %s/%s plain=true" % [label, title])
+			continue
 		for fold in folds:
 			_require(bool(fold.get("folded")), "%s section %s is not folded by default" % [label, fold.get("title")])
-			_require(_has_section_controls(fold), "%s section %s has no controls" % [label, fold.get("title")])
+			if label == "menu" or title == "Wind":
+				_require(_has_section_controls(fold), "%s section %s has no controls" % [label, fold.get("title")])
 		_require_settings_grouped(tabs.get_child(index), label)
 		print("GRAVE_MENU_TAB %s/%s sections=%d" % [label, tabs.get_tab_title(index), folds.size()])
 		var first: Control = folds[0]
@@ -179,6 +218,13 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 		await _click(first.get_global_rect().position + Vector2(12, minf(12, first.size.y * .5)))
 		await _frames(1)
 		_require(not bool(first.get("folded")) and _section_body_visible(first), label + " section did not restore content")
+		if title == "Wind":
+			_require(folds.size() == 6, "Wind must expose storm, gust, grass, tree, water and radar sections")
+			await _wheel_guard(drawer, tabs.get_child(index), label + " Wind")
+			var wind_scroll := _first_descendant(tabs.get_child(index), ScrollContainer) as ScrollContainer
+			if wind_scroll != null: wind_scroll.scroll_vertical = 0
+			await _frames(2)
+			await _capture(label + "_wind_expanded")
 		if tabs.get_tab_title(index) == "Water" or (label == "menu" and index == 0):
 			await _capture(label + "_expanded")
 	# Fold state belongs to live controls and must not be reset merely by closing.
@@ -211,8 +257,8 @@ func _wheel_numeric(tab: Node, numeric: Control, label: String, focus_line_edit:
 	_ensure_visible(tab, numeric)
 	await _frames(2)
 	var max_scroll := maxf(0.0, scroll.get_v_scroll_bar().max_value - scroll.get_v_scroll_bar().page)
-	_require(max_scroll > 0.0, label + " does not overflow for wheel test")
-	if max_scroll <= 0.0: return
+	if label.begins_with("gameplay Wind"):
+		_require(max_scroll > 0.0, label + " must overflow for shared-wind wheel coverage")
 	var before := (numeric as Range).value
 	var signals := [0]
 	(numeric as Range).value_changed.connect(func(_value): signals[0] += 1)
@@ -220,7 +266,14 @@ func _wheel_numeric(tab: Node, numeric: Control, label: String, focus_line_edit:
 	var target := (numeric as SpinBox).get_line_edit() as Control if focus_line_edit else numeric
 	if focus_line_edit: (numeric as SpinBox).get_line_edit().grab_focus()
 	await _wheel_over(target.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_DOWN, 1.0, target)
-	_require(is_equal_approx((numeric as Range).value, before) and signals[0] == 0 and scroll.scroll_vertical > start_scroll, label + " normal wheel was not guarded")
+	_require(is_equal_approx((numeric as Range).value, before) and signals[0] == 0, label + " normal wheel changed numeric value")
+	if max_scroll > 0.0:
+		_require(scroll.scroll_vertical > start_scroll, label + " normal wheel did not scroll overflowing panel")
+	else:
+		_require(scroll.scroll_vertical == start_scroll, label + " nonoverflowing panel changed scroll position")
+		await _wheel_over(target.get_global_rect().get_center(), MOUSE_BUTTON_WHEEL_UP, 0.5, target)
+		_require(is_equal_approx((numeric as Range).value, before) and signals[0] == 0 and scroll.scroll_vertical == start_scroll, label + " nonoverflowing reverse wheel changed state")
+		return
 	var numerics := _visible_numeric_controls(tab)
 	scroll.scroll_vertical = 0
 	_ensure_visible(tab, numerics[0])
@@ -370,4 +423,7 @@ func _require_settings_grouped(tab: Node, label: String) -> void:
 
 func _cleanup_fixture() -> void:
 	for path in [FIXTURE, WATER_FIXTURE, GRASS_FIXTURE, AA_FIXTURE, SHADOW_FIXTURE]:
+		if FileAccess.file_exists(path): DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	for name in ["aa", "motion", "water", "wind", "legacy-grass", "grass", "vegetation", "shadows", "surface", "atmosphere", "resolution", "lod", "coverage", "clouds", "rain-haze"]:
+		var path := GAMEPLAY_PREFS_DIRECTORY + "/" + str(name) + ".tres"
 		if FileAccess.file_exists(path): DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

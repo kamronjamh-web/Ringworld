@@ -58,6 +58,7 @@ public partial class MenuFlyoverTuningDrawer : Control
     private readonly Dictionary<string, Control> _controls = new();
     private RingMenuSpaceBackdrop? _backdrop;
     private PanelContainer? _drawer;
+    private TuningPopupIsolation? _popupIsolation;
     private Label? _status, _diagnostics;
     private TabContainer? _tabs;
     private ConfirmationDialog? _resetConfirmation;
@@ -70,6 +71,7 @@ public partial class MenuFlyoverTuningDrawer : Control
     public override void _Ready()
     {
         MouseFilter = MouseFilterEnum.Ignore;
+        _popupIsolation = new TuningPopupIsolation(this);
         _backdrop = GetNodeOrNull<RingMenuSpaceBackdrop>(BackdropPath);
         _settings = _backdrop?.GetMenuTuningSettings() ?? new MenuFlyoverSettings();
         _savePath = _backdrop?.GetMenuSettingsPath() ?? "";
@@ -119,6 +121,8 @@ public partial class MenuFlyoverTuningDrawer : Control
 
     public override void _ExitTree()
     {
+        _popupIsolation?.Dispose();
+        _popupIsolation = null;
         FlushPendingSave();
         _settings?.Dispose();
         _settings = null;

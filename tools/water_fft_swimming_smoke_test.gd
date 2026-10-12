@@ -5,11 +5,12 @@ extends SceneTree
 # production swim motor rather than calling private water-state methods.
 const TEST_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const LAUNCHER_SCENE := preload("res://scenes/WorldSizeLauncher.tscn")
-const OUTPUT_PATHS := preload("res://tools/generated_output_paths.gd")
+const PREFERENCE_ISOLATION = preload("res://scripts/Tools/MinimapWindContractTest.cs")
 const WATER_PROBE := preload("res://scripts/Tools/WaterRenderingProbe.cs")
 const SWIM_PROBE := preload("res://scripts/Tools/WaterFftSwimmingProbe.cs")
 const TIMEOUT_FRAMES := 1800
 const SWIM_FRAMES := 180
+const TERRAIN_IDENTITY_STABLE_PHYSICS_FRAMES := 60
 const SPAWN_SETTLE_GRACE_SECONDS := 0.25
 const SHUTDOWN_DRAIN_FRAMES := 6
 
@@ -29,9 +30,13 @@ var _start_vertical := 0.0
 var _base_surface := 0.0
 var _query_frames := 0
 var _query_ready_frames := 0
+var _fresh_query_ready_frames := 0
+var _consumed_query_samples: Dictionary = {}
 var _tracked_frames := 0
 var _nonzero_offset_frames := 0
 var _initial_underwater := false
+var _warm_terrain_identity := ""
+var _warm_terrain_identity_physics_frame := 0
 var _max_surface_error := 0.0
 var _exit_code := -1
 
@@ -43,8 +48,9 @@ func _boot() -> void:
 		_fail("Forward+ RenderingDevice required")
 		return
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
-	_defaults_path = OUTPUT_PATHS.smoke_capture_path("water_fft_swimming_smoke.tres")
-	if _defaults_path.is_empty():
+	var output_directory := "res://.godot/shared-wind-water/swim_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	_defaults_path = output_directory + "/waterprefs.tres"
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_directory)) != OK:
 		_fail("could not allocate isolated water defaults")
 		return
 	DirAccess.remove_absolute(_defaults_path)
@@ -56,12 +62,19 @@ func _boot() -> void:
 	if _drawer == null:
 		_fail("missing LiveTuningDrawer before scene entry")
 		return
-	_drawer.call("InstallWaterDefaults", _defaults_path)
 	var launcher := LAUNCHER_SCENE.instantiate()
 	root.add_child(launcher)
 	launcher.call("_on_certified_preset_pressed")
 	launcher.call("_configure_game", _scene, 5000000.0)
 	launcher.free()
+	# Install every preference path before scene Ready, including shared wind
+	# and legacy grass migration. Preserve this fixture's existing water path.
+	var preferences_path := "res://.godot/water_fft_swimming_preferences_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	var isolation: Dictionary = PREFERENCE_ISOLATION.new().ExecuteFixture("isolation", _scene, preferences_path)
+	if not bool(isolation.get("pass", false)):
+		_fail("preference isolation failed: " + str(isolation.get("detail", "")))
+		return
+	_drawer.call("InstallWaterDefaults", _defaults_path)
 	root.add_child(_scene)
 
 func _process(_delta: float) -> bool:
@@ -102,7 +115,18 @@ func _process(_delta: float) -> bool:
 		var geometry_ready := bool(binding.get("controller_ready", false)) \
 			and int(binding.get("active_cascades", 0)) == 2 \
 			and int(binding.get("geometry_meshes", 0)) > 0
-		if geometry_ready and query_ready:
+		# Settle the actual terrain/shoreline query identity after teleporting to
+		# the ocean. Wind spectrum configuration remains live and is excluded
+		# from this terrain key; the eventual swim still tests its invalidations.
+		var diagnostics: Dictionary = _fft.call("GetSurfaceQueryDiagnostics")
+		var terrain_identity := str(diagnostics.get("geometry_shoreline_identity", "unavailable"))
+		if not geometry_ready or terrain_identity != _warm_terrain_identity:
+			_warm_terrain_identity = terrain_identity
+			_warm_terrain_identity_physics_frame = Engine.get_physics_frames()
+		var terrain_stable := geometry_ready and terrain_identity != "unavailable" \
+			and Engine.get_physics_frames() - _warm_terrain_identity_physics_frame >= TERRAIN_IDENTITY_STABLE_PHYSICS_FRAMES
+		if terrain_stable and query_ready:
+			print("WATER_FFT_SWIMMING_SMOKE_TEST=TERRAIN_STABLE " + str(diagnostics))
 			var started: Dictionary = _swim_probe.call("BeginSwimming", _scene, _ocean)
 			if not bool(started.get("valid", false)): return _fail("could not release swimmer below ocean surface")
 			_start_vertical = float(started.get("start_vertical", NAN))
@@ -131,6 +155,8 @@ func _process(_delta: float) -> bool:
 				_start_vertical = float(sample.get("vertical", NAN))
 				if not is_finite(_start_vertical): return _fail("non-finite post-settle swimmer position; sample=" + str(sample))
 				_phase_frame = _frame
+				_fft.call("ResetSurfaceQueryDiagnostics")
+				_fresh_query_ready_frames = 0; _consumed_query_samples.clear()
 				_query_frames = 0; _query_ready_frames = 0; _tracked_frames = 0; _nonzero_offset_frames = 0; _max_surface_error = 0.0
 				print("WATER_FFT_SWIMMING_SMOKE_TEST=SWIM_READY physics_elapsed=%d sample=%s" % [physics_elapsed, sample])
 				return false
@@ -140,8 +166,17 @@ func _process(_delta: float) -> bool:
 		if not bool(sample.get("swimming", false)):
 			return _fail("swimmer left the finite ocean column; physics_elapsed=%d sample=%s" % [physics_elapsed, str(sample)])
 		_query_frames += 1
+		if bool(sample.get("fresh_query_ready", false)): _fresh_query_ready_frames += 1
 		if bool(sample.get("query_ready", false)):
 			_query_ready_frames += 1
+			var serial := int(sample.get("consumed_query_serial", 0))
+			var query_time := float(sample.get("consumed_query_time", NAN))
+			if serial <= 0 or not is_finite(query_time): return _fail("invalid consumed FFT query provenance")
+			_consumed_query_samples[serial] = query_time
+		# Independently resample at the consumed coordinate, and compare only
+		# while the accepted query serial still matches the physics sample.
+		# Async turnover is diagnosed separately, never treated as parity success.
+		if bool(sample.get("parity_ready", false)):
 			var offset := float(sample.get("offset", NAN))
 			var surface := float(sample.get("surface", NAN))
 			if not is_finite(offset) or not is_finite(surface): return _fail("FFT query returned non-finite values")
@@ -155,11 +190,14 @@ func _process(_delta: float) -> bool:
 			return _fail("swim motor did not provide meaningful buoyant rise: %.3fm" % rise)
 		if _query_ready_frames * 100 < _query_frames * 65:
 			return _fail("FFT surface cache was unavailable too often: %d/%d" % [_query_ready_frames, _query_frames])
+		if _consumed_query_samples.size() < 2:
+			return _fail("swim physics did not consume advancing FFT readbacks")
 		if _tracked_frames == 0 or _nonzero_offset_frames == 0:
 			return _fail("live water surface never tracked a nonzero FFT offset")
 		if _max_surface_error > 0.08:
 			return _fail("live water surface diverged from cached FFT offset: %.4fm" % _max_surface_error)
-		print("WATER_FFT_SWIMMING_SMOKE_TEST=PASS rise=%.3fm query=%d/%d nonzero=%d max_surface_error=%.4fm" % [rise, _query_ready_frames, _query_frames, _nonzero_offset_frames, _max_surface_error])
+		print("WATER_FFT_SWIMMING_QUERY_DIAGNOSTICS " + str(_fft.call("GetSurfaceQueryDiagnostics")))
+		print("WATER_FFT_SWIMMING_SMOKE_TEST=PASS rise=%.3fm consumed_query=%d/%d fresh_query=%d/%d unique_consumed_samples=%d matching_query=%d nonzero=%d max_surface_error=%.4fm" % [rise, _query_ready_frames, _query_frames, _fresh_query_ready_frames, _query_frames, _consumed_query_samples.size(), _tracked_frames, _nonzero_offset_frames, _max_surface_error])
 		return _begin_shutdown(0)
 	return false
 
@@ -167,6 +205,8 @@ func _cleanup() -> void:
 	if not _defaults_path.is_empty(): DirAccess.remove_absolute(_defaults_path)
 
 func _fail(reason: String) -> bool:
+	if _fft != null and is_instance_valid(_fft):
+		print("WATER_FFT_SWIMMING_QUERY_DIAGNOSTICS " + str(_fft.call("GetSurfaceQueryDiagnostics")))
 	push_error("WATER_FFT_SWIMMING_SMOKE_TEST=FAIL " + reason)
 	return _begin_shutdown(1)
 

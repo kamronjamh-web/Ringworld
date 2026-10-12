@@ -50,14 +50,18 @@ var omni: OmniLight3D
 var tree: MultiMeshInstance3D
 var receiver: MeshInstance3D
 var tree_mat: ShaderMaterial
+var shared_wind_texture: ImageTexture
+
+func _wind_test_enabled() -> bool:
+	return "--tree-wind-shadow" in OS.get_cmdline_user_args() or "--tree-shared-wind-shadow" in OS.get_cmdline_user_args()
 
 func _initialize() -> void:
 	if RenderingServer.get_rendering_device() == null: _fail("RenderingDevice required; Dummy renderer is invalid"); return
 	call_deferred("_run")
 
 func _run() -> void:
-	var wind_test := "--tree-wind-shadow" in OS.get_cmdline_user_args()
-	output_dir = OUT.path_join("wind" if wind_test else ("before" if "--tree-lighting-before" in OS.get_cmdline_user_args() else "after"))
+	var wind_test := _wind_test_enabled()
+	output_dir = OUT.path_join("shared_wind" if "--tree-shared-wind-shadow" in OS.get_cmdline_user_args() else ("wind" if wind_test else ("before" if "--tree-lighting-before" in OS.get_cmdline_user_args() else "after")))
 	_make_scene()
 	if failed: return
 	if wind_test: _set_fixture_wind(true)
@@ -83,7 +87,9 @@ func _run() -> void:
 	if failed: return
 	await _shadow_contract("res://materials/ring_terrain_proxy.gdshader", "proxy")
 	if failed: return
-	print("TREE_LIGHTING_SHADOW_GPU=PASS day=%.5f partial=%.5f night=%.5f total=%.5f" % [day, partial, night, total]); quit(0)
+	print("TREE_LIGHTING_SHADOW_GPU=PASS day=%.5f partial=%.5f night=%.5f total=%.5f" % [day, partial, night, total])
+	if "--tree-shared-wind-shadow" in OS.get_cmdline_user_args(): print("TREE_SHARED_WIND_SHADOW_GPU=PASS dramatic shared branch, voxel/proxy receivers, shadow-only/visible agreement")
+	quit(0)
 
 func _make_scene() -> void:
 	vp=SubViewport.new(); vp.size=Vector2i(SIZE,SIZE); vp.own_world_3d=true; vp.render_target_update_mode=SubViewport.UPDATE_ALWAYS; root.add_child(vp)
@@ -115,7 +121,7 @@ func _tree_luma(label:String, center:Vector3, visibility:float, sun_on:bool, moo
 
 func _shadow_contract(shader_path:String,label:String)->void:
 	receiver.visible=true; receiver.material_override=_receiver_material(shader_path); env.ambient_light_energy=0.0; RenderingServer.global_shader_parameter_set("ringworld_solar_visibility",1.0); tree_mat.set_shader_parameter("ring_center",Vector3.ZERO); tree_mat.set_shader_parameter("sun_direction",Vector3(-.6,.7,.2).normalized()); sun.visible=true; sun.look_at(-Vector3(-.6,.7,.2),Vector3.UP); planet.visible=false; omni.visible=false
-	var wind_test := "--tree-wind-shadow" in OS.get_cmdline_user_args()
+	var wind_test := _wind_test_enabled()
 	tree.visible=false; var off:=await _image(label+"_off")
 	if failed: return
 	var calm_only: Image
@@ -153,6 +159,30 @@ func _set_fixture_wind(active:bool)->void:
 	RenderingServer.global_shader_parameter_set("ring_local_wind_wave",Vector4(1.0,0.0,.55,.84))
 	RenderingServer.global_shader_parameter_set("ring_local_wind_center",Vector3.ZERO)
 	RenderingServer.global_shader_parameter_set("ring_local_wind_axis",Vector3.UP)
+	if "--tree-shared-wind-shadow" in OS.get_cmdline_user_args():
+		# Neutral common field isolates dramatic shared tree bending. The same
+		# production helper runs in visible and shadow-only raster passes.
+		tree_mat.set_shader_parameter("tree_foliage_mode", 2)
+		if shared_wind_texture == null:
+			var image := Image.create(2, 2, false, Image.FORMAT_RF)
+			image.fill(Color(.5, 0, 0, 1))
+			shared_wind_texture = ImageTexture.create_from_image(image)
+		RenderingServer.global_shader_parameter_set("ring_wind_gust_texture", shared_wind_texture)
+		RenderingServer.global_shader_parameter_set("ring_wind_field_enabled", 1.0)
+		RenderingServer.global_shader_parameter_set("ring_wind_gust_strength", 1.0)
+		RenderingServer.global_shader_parameter_set("ring_wind_gust_base", .2)
+		RenderingServer.global_shader_parameter_set("ring_wind_anchor_world", Vector3(X, 0, 0))
+		RenderingServer.global_shader_parameter_set("ring_wind_around_covector", Vector4(0, 0, 1, .01))
+		RenderingServer.global_shader_parameter_set("ring_wind_across_covector", Vector4(0, 1, 0, .01))
+		RenderingServer.global_shader_parameter_set("ring_wind_anchor_uv", Vector2.ZERO)
+		RenderingServer.global_shader_parameter_set("ring_wind_gust_velocity_uv", Vector2.ZERO)
+		RenderingServer.global_shader_parameter_set("ring_wind_phase", Vector4(0, 1, 0, 1))
+		var wind := Vector2(35, 0) if active else Vector2.ZERO
+		RenderingServer.global_shader_parameter_set("ring_wind_mean_vector", wind)
+		RenderingServer.global_shader_parameter_set("ring_tree_wind_trunk", wind)
+		RenderingServer.global_shader_parameter_set("ring_tree_wind_canopy", wind)
+		RenderingServer.global_shader_parameter_set("ring_tree_wind_response", Vector4(1.7, .28, 2, .6))
+		RenderingServer.global_shader_parameter_set("ring_tree_wind_parts", Vector2(.15, 1))
 
 func _receiver_material(path:String)->ShaderMaterial:
 	var m:=ShaderMaterial.new(); m.shader=load(path); m.set_shader_parameter("ring_center",Vector3.ZERO); m.set_shader_parameter("camera_world_position",Vector3(X-20,0,0)); m.set_shader_parameter("sun_direction",Vector3(-.6,.7,.2).normalized()); m.set_shader_parameter("day_start_dot",-.2); m.set_shader_parameter("day_full_dot",.35); m.set_shader_parameter("night_direct_light_factor",0.0); m.set_shader_parameter("day_direct_light_factor",1.0); m.set_shader_parameter("shadow_floor",0.0); m.set_shader_parameter("ring_atmosphere_enabled",false); m.set_shader_parameter("local_cloud_shadow_enabled",false)

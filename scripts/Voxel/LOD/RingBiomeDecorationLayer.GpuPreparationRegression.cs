@@ -15,6 +15,11 @@ public partial class RingBiomeDecorationLayer
     {
         try
         {
+            var windTransform = new Transform3D(Basis.FromScale(new Vector3(3, 40, 2)), new Vector3(10, 20, 30));
+            var windPrototype = new Aabb(new Vector3(-.5f, 0, -.5f), new Vector3(1, 1, 1));
+            Aabb expectedWindBounds = (windTransform * windPrototype).Grow(24);
+            if (TreeWindDeformationBounds(windTransform, windPrototype) != expectedWindBounds)
+                return "FAIL: configured maximum tree wind deformation missing from bounds";
             TreeStreamingBudgetMilliseconds = .25f; MaximumGpuTreeRoots = 4096;
             CellSizeMeters = 20; SpatialTileCells = 4;
             MergeFarGpuTreeBatches = true; MergeMidGpuTreeBatches = true; MidTreeBatchTileSpan = 2;

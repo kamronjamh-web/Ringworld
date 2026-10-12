@@ -7,6 +7,8 @@
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
 #include "../../materials/ring_cloud_weather_shared.gdshaderinc"
 #include "./RingAtmosphereCompute.glslinc"
+#include "./RingCloudHistory.gdshaderinc"
+#include "../../materials/ring_terrain_cloud_sun_shared.gdshaderinc"
 
 // Invocations in the (x, y, z) dimension
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -49,6 +51,22 @@ layout(binding = 17, std140) uniform SceneDataBlock {
 	SceneData prev_data;
 } scene_data_block;
 layout(binding = 18) uniform sampler2D far_opaque_depth_image;
+layout(set = 1, binding = 19) uniform sampler2D terrain_cloud_sun_global_image;
+layout(set = 1, binding = 20) uniform sampler2D terrain_cloud_sun_regional_image;
+
+float terrain_cloud_direct_sun_visibility(vec3 worldPosition) {
+	if (genericData.data.terrain_cloud_sun_profile[3].y <= 0.5
+		&& genericData.data.terrain_cloud_sun_profile[3].z <= 0.5) return 1.0;
+	vec3 cart = vec3(dot(genericData.data.terrain_cloud_sun_canonical_frame[0].xyz, worldPosition) + genericData.data.terrain_cloud_sun_canonical_frame[0].w,
+		dot(genericData.data.terrain_cloud_sun_canonical_frame[1].xyz, worldPosition) + genericData.data.terrain_cloud_sun_canonical_frame[1].w,
+		dot(genericData.data.terrain_cloud_sun_canonical_frame[2].xyz, worldPosition) + genericData.data.terrain_cloud_sun_canonical_frame[2].w);
+	vec4 geometry = genericData.data.terrain_cloud_sun_canonical_frame[3];
+	if (geometry.x <= 0.0 || geometry.w <= 0.0) return 1.0;
+	vec3 canonical = vec3(mod(atan(cart.z, cart.x) * geometry.x + geometry.w, geometry.w),
+		geometry.x - length(cart.xz) - geometry.y, cart.y - geometry.z);
+	return ring_terrain_cloud_sun_visibility(canonical, terrain_cloud_sun_global_image,
+		terrain_cloud_sun_regional_image, genericData.data.terrain_cloud_sun_profile).x;
+}
 
 // Our push constant
 // layout(push_constant, std430) uniform Params {
@@ -1008,6 +1026,7 @@ void main() {
 	
 	
 	vec4 lightColor = vec4(0.0);
+	vec3 transientLightColor = vec3(0.0);
 	vec3 paintedColor = vec3(0.0);
 	float initialdistanceSample = 0.0;
 
@@ -1111,7 +1130,12 @@ void main() {
 				}
 			}
 		}
-		vec4 maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
+		// This mask cannot affect density or lighting outside the altitude band.
+		// The disabled path retains the original fetch for parity comparisons.
+		vec4 maskSample = vec4(0.0);
+		if (genericData.data.cloud_mask_controls.x <= 0.5 || inCloudAltitudeBand) {
+			maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
+		}
 		//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
 		//ceilingSample = cloudceiling;
 		
@@ -1156,7 +1180,7 @@ void main() {
 					float densitySample = sampleLighting(thislightingStepCount, curPos, extralargeNoisePos, largeNoisePos, mediumNoisePos, smallNoisePos, sundir, densityMultiplier * lightingdensityMultiplier, sunUpWeight, lightingStepDistance, cloudceiling, cloudfloor, extralargenoiseScale, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, true);
 					densitySample = BeersLaw(lightingStepDistance, densitySample * henyeygreenstein);
 					//densitySample = Powder(lightingStepDistance, densitySample);
-					float thisStepLightingWeight = (pow(densitySample, lightingSharpness)) * sunUpWeight;
+					float thisStepLightingWeight = (pow(densitySample, lightingSharpness)) * sunUpWeight * terrain_cloud_direct_sun_visibility(curPos);
 					
 
 					lightColor.rgb += pow(directionalLights[lightI].color.rgb * directionalLights[lightI].color.a * thisStepLightingWeight, vec3(2.2)) * powderEffect;
@@ -1217,7 +1241,9 @@ void main() {
 						lightDistanceWeight = pointLights[lightI].color.a * pow((1.0 - lightDistanceWeight), 2.2) * densitySample;
 
 
-						lightColor.rgb += pow(pointLights[lightI].color.rgb * lightDistanceWeight, vec3(2.2));
+						vec3 pointContribution = pow(pointLights[lightI].color.rgb * lightDistanceWeight, vec3(2.2));
+						if (genericData.data.history_controls.w > 0.5) transientLightColor += pointContribution;
+						else lightColor.rgb += pointContribution;
 					}
 				}
 				
@@ -1473,7 +1499,24 @@ void main() {
 		vec3 opaqueWorldPosition = rayOrigin + raydirection * linear_depth;
 		expectedHistoryOpaqueDepth = length(opaqueWorldPosition - genericData.data.previous_camera_origin.xyz);
 	}
-	float opaqueDepthTolerance = max(2.0, max(expectedHistoryOpaqueDepth, 0.0) * 3.0 / max(float(size.y), 1.0));
+	float opaqueDepthTolerance = max(2.0, max(expectedHistoryOpaqueDepth, 0.0) * 3.0 / max(float(size.y), 1.0)) * genericData.data.history_controls.y;
+	// Opaque geometry follows its own previous-frame projection, not the cloud
+	// body's projection. Validate that pixel before admitting cloud history.
+	ivec2 opaqueHistoryPixel = clampedUV;
+	bool opaqueHistoryOutside = false;
+	if (has_opaque_depth) {
+		vec3 opaquePoint = rayOrigin + raydirection * linear_depth;
+		vec4 opaquePreviousView = genericData.data.previous_camera_view * vec4(opaquePoint, 1.0);
+		vec4 opaqueClip = genericData.data.previous_camera_projection * opaquePreviousView;
+		opaqueHistoryOutside = opaquePreviousView.z >= 0.0 || abs(opaqueClip.w) < 0.00001
+			|| any(isnan(opaqueClip)) || any(isinf(opaqueClip));
+		vec2 opaquePixel = opaqueHistoryOutside ? vec2(-1.0)
+			: (opaqueClip.xy / opaqueClip.w * 0.5 + 0.5) * vec2(size) - vec2(0.5);
+		opaqueHistoryOutside = opaqueHistoryOutside || any(lessThan(opaquePixel, vec2(0.0)))
+			|| any(greaterThan(opaquePixel, vec2(size - ivec2(1))));
+		opaqueHistoryPixel = clamp(ivec2(floor(opaquePixel + vec2(0.5))), ivec2(0), size - ivec2(1));
+	}
+
 
         //execute accumilation.
         float accumdecay = genericData.data.accumilation_decay;
@@ -1501,8 +1544,10 @@ void main() {
 		bool depthBreakAgrees = currentDepthBreak == currentDataAccumilation.a;
 		bool cloudDistanceAgrees = abs(finalDensityDistance - currentDataAccumilation.b)
 			<= maxstep + 0.1 * max(finalDensityDistance, currentDataAccumilation.b);
-		bool gameplayVisibilityRejected = false;
-		if (gameplayTemporalHistory && !historyOutsideImage) {
+		bool opaquePointAgrees = !opaqueHistoryOutside && ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
+			imageLoad(accum_2A_image, opaqueHistoryPixel).a, opaqueDepthTolerance);
+		bool gameplayVisibilityRejected = gameplayTemporalHistory && genericData.data.history_controls.x > 0.5 && !opaquePointAgrees;
+		if (gameplayTemporalHistory && !historyOutsideImage && genericData.data.history_controls.x > 0.5) {
 			if (coherentBilinearHistory) {
 				vec4 data00 = imageLoad(accum_2A_image, history00).rgba;
 				vec4 data10 = imageLoad(accum_2A_image, history10).rgba;
@@ -1541,7 +1586,18 @@ void main() {
 			currentDataAccumilation.b = finalDensityDistance;
 		}
 		else{
-			float agreementDecay = gameplayTemporalHistory ? accumdecay : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
+			bool terminalJitterAgrees = ring_cloud_history_terminal_jitter(
+				genericData.data.history_controls.x > 0.5 && opaquePointAgrees,
+				genericData.data.temporal_controls.x, reprojectedPixelMotion,
+				currentDataAccumilation.g, traveledDistance, currentDataAccumilation.b, finalDensityDistance,
+				currentDataAccumilation.a, opaqueDepthMetadata, cameraTranslation, maxstep, opaqueDepthTolerance);
+			bool skyJitterAgrees = ring_cloud_history_sky_jitter(
+				genericData.data.history_controls.x > 0.5 && opaquePointAgrees
+					&& opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0,
+				genericData.data.menu_temporal_controls.z > 0.5,
+				genericData.data.temporal_controls.x,reprojectedPixelMotion,cameraTranslation,maxstep);
+			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || skyJitterAgrees) ? accumdecay
+				: ring_cloud_history_compatible_weight(currentColorAccumilation, lightColor, currentDataAccumilation.b, finalDensityDistance, maxstep, accumdecay, genericData.data.history_controls.z > 0.5)) : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
 				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
 				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay)));
 			diagnosticHistoryWeight = agreementDecay;
@@ -1567,8 +1623,10 @@ void main() {
 		bool depthBreakAgrees = currentDepthBreak == currentDataAccumilation.a;
 		bool cloudDistanceAgrees = abs(finalDensityDistance - currentDataAccumilation.b)
 			<= maxstep + 0.1 * max(finalDensityDistance, currentDataAccumilation.b);
-		bool gameplayVisibilityRejected = false;
-		if (gameplayTemporalHistory && !historyOutsideImage) {
+		bool opaquePointAgrees = !opaqueHistoryOutside && ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
+			imageLoad(accum_2B_image, opaqueHistoryPixel).a, opaqueDepthTolerance);
+		bool gameplayVisibilityRejected = gameplayTemporalHistory && genericData.data.history_controls.x > 0.5 && !opaquePointAgrees;
+		if (gameplayTemporalHistory && !historyOutsideImage && genericData.data.history_controls.x > 0.5) {
 			if (coherentBilinearHistory) {
 				vec4 data00 = imageLoad(accum_2B_image, history00).rgba;
 				vec4 data10 = imageLoad(accum_2B_image, history10).rgba;
@@ -1607,7 +1665,18 @@ void main() {
 			currentDataAccumilation.b = finalDensityDistance;
 		}
 		else{
-			float agreementDecay = gameplayTemporalHistory ? accumdecay : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
+			bool terminalJitterAgrees = ring_cloud_history_terminal_jitter(
+				genericData.data.history_controls.x > 0.5 && opaquePointAgrees,
+				genericData.data.temporal_controls.x, reprojectedPixelMotion,
+				currentDataAccumilation.g, traveledDistance, currentDataAccumilation.b, finalDensityDistance,
+				currentDataAccumilation.a, opaqueDepthMetadata, cameraTranslation, maxstep, opaqueDepthTolerance);
+			bool skyJitterAgrees = ring_cloud_history_sky_jitter(
+				genericData.data.history_controls.x > 0.5 && opaquePointAgrees
+					&& opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0,
+				genericData.data.menu_temporal_controls.z > 0.5,
+				genericData.data.temporal_controls.x,reprojectedPixelMotion,cameraTranslation,maxstep);
+			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || skyJitterAgrees) ? accumdecay
+				: ring_cloud_history_compatible_weight(currentColorAccumilation, lightColor, currentDataAccumilation.b, finalDensityDistance, maxstep, accumdecay, genericData.data.history_controls.z > 0.5)) : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
 				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
 				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay)));
 			diagnosticHistoryWeight = agreementDecay;
@@ -1650,6 +1719,10 @@ void main() {
 		imageStore(output_color_image, uv, vec4(diagnosticHistoryWeight, diagnosticHistoryReason,
 			diagnosticAlphaMismatch, lightColor.a));
 	} else {
+		// Transient point lights never enter the persistent ping-pong history.
+		if (!any(isnan(transientLightColor)) && !any(isinf(transientLightColor))) {
+			currentColorAccumilation.rgb += transientLightColor;
+		}
 		// Apply once after history has been stored. The temporal buffers remain
 		// live-profile independent, while the published backdrop matches display.
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {

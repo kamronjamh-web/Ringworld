@@ -4,6 +4,8 @@ extends SceneTree
 const WORLD := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const DRIVER := preload("res://tools/RainPrecipitationTestDriver.cs")
 const EFFECTS := preload("res://scripts/RingLocalWeatherEffects.cs")
+const ISOLATION := preload("res://scripts/Tools/MinimapWindContractTest.cs")
+const WIND_DRIVER := preload("res://tools/VegetationWindTestDriver.cs")
 var world: Node
 var local: Node
 var weather: Node
@@ -12,6 +14,7 @@ var driver: RefCounted
 var failed := false
 var probe: SubViewport
 var probe_material: ShaderMaterial
+var wind_driver: RefCounted
 
 # GPU-side comparison avoids the editor-only GlobalShaderParameterGet API.
 const PAYLOAD_PROBE := """
@@ -21,17 +24,26 @@ global uniform vec2 ring_local_wind_vector;
 global uniform vec4 ring_local_wind_wave;
 global uniform vec3 ring_local_wind_center;
 global uniform vec3 ring_local_wind_axis;
+global uniform float ring_wind_field_enabled;
+global uniform vec2 ring_wind_mean_vector;
+global uniform vec2 ring_tree_wind_parts;
 uniform float expected_enabled;
 uniform vec2 expected_wind;
 uniform vec4 expected_wave;
 uniform vec3 expected_center;
 uniform vec3 expected_axis;
+uniform float expected_shared_enabled;
+uniform vec2 expected_mean;
+uniform vec2 expected_parts;
 void fragment() {
 	bool matches = abs(ring_local_wind_enabled - expected_enabled) < 0.00001
 		&& length(ring_local_wind_vector - expected_wind) < 0.00001
 		&& length(ring_local_wind_wave - expected_wave) < 0.00001
 		&& length(ring_local_wind_center - expected_center) == 0.0
-		&& length(ring_local_wind_axis - expected_axis) < 0.00001;
+		&& length(ring_local_wind_axis - expected_axis) < 0.00001
+		&& abs(ring_wind_field_enabled - expected_shared_enabled) < 0.00001
+		&& length(ring_wind_mean_vector - expected_mean) < 0.00001
+		&& length(ring_tree_wind_parts - expected_parts) < 0.00001;
 	COLOR = matches ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
 }
 """
@@ -41,6 +53,11 @@ func _initialize() -> void:
 
 func run() -> void:
 	world = WORLD.instantiate()
+	var preferences := "res://.godot/vegetation-wind-state/%d" % Time.get_ticks_msec()
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(preferences))
+	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
+	var isolated: Dictionary = ISOLATION.new().ExecuteFixture("isolation", world, preferences)
+	if not check(bool(isolated.get("pass", false)), "preference isolation failed: " + str(isolated.get("detail", ""))): return
 	if "--vegetation-wind-certified" in OS.get_cmdline_user_args():
 		var launcher := preload("res://scenes/WorldSizeLauncher.tscn").instantiate()
 		root.add_child(launcher)
@@ -59,6 +76,7 @@ func run() -> void:
 	local.set_process(false)
 	local.set("EnableLightning", false)
 	driver = DRIVER.new()
+	wind_driver = WIND_DRIVER.new()
 	set_wind(Vector2(12, -5), 120.0)
 	if not check_payload(Vector2(12, -5), true): return
 	if not await check_gpu_payload(diag(), "initial publish"): return
@@ -69,6 +87,19 @@ func run() -> void:
 	var count := int(diag().push_count)
 	for i in range(200): local.call("_Process", .016)
 	if not check(int(diag().push_count) == count, "stationary frozen field keeps sending shader globals"): return
+	# These use the actual live Resource and production publisher, with the
+	# clock frozen. No fixture manually assigns the shader's parts global.
+	for strengths in [Vector2(0, 1), Vector2(.15, 0), Vector2.ZERO,
+		Vector2(.42, 2.2), Vector2(2, 9), Vector2(NAN, INF), Vector2(.37, 1.8)]:
+		var sanitized: Vector2 = wind_driver.call("SetTreeWindParts", local, strengths)
+		local.call("_Process", .016)
+		var live_parts := diag()
+		if not check(Vector2(live_parts.parts).is_equal_approx(sanitized), "live tree parts expectation differs from sanitized settings"): return
+		if not await check_gpu_payload(live_parts, "live tree strengths " + str(strengths)): return
+	var frozen_parts := diag().duplicate()
+	for i in range(32): local.call("_Process", .016)
+	if not check(Vector2(diag().parts) == Vector2(frozen_parts.parts), "frozen live strengths changed"): return
+	if not await check_gpu_payload(frozen_parts, "frozen unchanged tree parts"): return
 	set_wind(Vector2(12, -5), 120.05)
 	if not check(int(diag().push_count) - count == 1, "time-only update should change exactly the wave payload"): return
 	# Large weather times must retain small-frame animation; no float phase cast.
@@ -178,9 +209,11 @@ func run() -> void:
 	local = next
 	set_wind(Vector2(-9, 4), 200.0)
 	var next_owner := int(diag().owner)
+	if not await check_gpu_payload(diag(), "replacement owner tree parts"): return
 	old.call("_Process", .016)
 	if not check(int(diag().active_owner) == next_owner, "old owner stole the active field"): return
 	if not check_payload(Vector2(-9, 4), true): return
+	if not await check_gpu_payload(diag(), "old owner cannot replace tree parts"): return
 	old.queue_free()
 	for i in range(3): await process_frame
 	if not check_payload(Vector2(-9, 4), true): return
@@ -190,7 +223,30 @@ func run() -> void:
 	for i in range(3): await process_frame
 	var cleared_payload := final_diagnostics.duplicate()
 	cleared_payload.enabled = 0.0
+	cleared_payload.shared_enabled = 0.0
+	cleared_payload.mean = Vector2.ZERO
+	cleared_payload.parts = Vector2(.15, 1)
 	if not await check_gpu_payload(cleared_payload, "active owner exit"): return
+	# A fresh local owner reuses the same authoritative weather/field object.
+	# Equal payload values must still restore globals after owner cleanup.
+	var restored := EFFECTS.new()
+	var unclaimed_diagnostics: Dictionary = restored.call("GetVegetationWindDiagnostics")
+	if not check(int(unclaimed_diagnostics.active_owner) == 0, "active owner exit retained ownership"):
+		restored.free()
+		return
+	restored.name = "WindOwnerReactivated"
+	restored.set("Enabled", true)
+	restored.set("EnableLightning", false)
+	world.add_child(restored)
+	restored.set_process(false)
+	local = restored
+	set_wind(Vector2(-9, 4), 200.0)
+	if not check(int(diag().active_owner) == int(diag().owner) and int(diag().owner) != next_owner, "fresh publisher did not claim owner"): return
+	if not check_payload(Vector2(-9, 4), true): return
+	if not await check_gpu_payload(diag(), "same source fresh owner reactivation"): return
+	local.queue_free()
+	for i in range(3): await process_frame
+	if not await check_gpu_payload(cleared_payload, "reactivated owner exit"): return
 	if probe: probe.queue_free()
 	world.queue_free()
 	for i in range(3): await process_frame
@@ -202,7 +258,9 @@ func set_wind(wind: Vector2, time: float) -> void:
 	weather.set("CloudSimulationTimeSeconds", time)
 	local.call("_Process", .016)
 func diag() -> Dictionary:
-	return local.call("GetVegetationWindDiagnostics")
+	var result: Dictionary = local.call("GetVegetationWindDiagnostics")
+	result.merge(wind_driver.call("GetSharedWindPayload", local))
+	return result
 func check_payload(wind: Vector2, enabled: bool) -> bool:
 	var d := diag()
 	if not check(Vector2(d.wind).is_equal_approx(wind) and (float(d.enabled) > .5) == enabled and Vector3(d.center).is_finite() and Vector3(d.axis).is_finite() and Vector4(d.wave).is_finite(), "invalid publisher payload"): return false
@@ -225,7 +283,7 @@ func check_gpu_payload(expected: Dictionary, label: String) -> bool:
 		quad.size = Vector2(128, 128)
 		quad.material = probe_material
 		probe.add_child(quad)
-	for key in ["enabled", "wind", "wave", "center", "axis"]:
+	for key in ["enabled", "wind", "wave", "center", "axis", "shared_enabled", "mean", "parts"]:
 		probe_material.set_shader_parameter("expected_" + key, expected[key])
 	for i in range(4): await RenderingServer.frame_post_draw
 	var image := probe.get_texture().get_image()

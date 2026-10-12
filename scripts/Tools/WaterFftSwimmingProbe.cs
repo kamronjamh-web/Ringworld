@@ -48,12 +48,24 @@ public partial class WaterFftSwimmingProbe : RefCounted
         RingWaterFftController? fft = game.GetNodeOrNull<RingWaterFftController>("WaterFftController");
         if (explorer is null || fft is null) return result;
 
-        bool queryReady = fft.TryGetOceanSurfaceOffset(explorer.CanonicalPosition, out float offset);
+        // Capture the sample consumed by UpdateWaterState, not a newer async
+        // readback which may have arrived after its physics tick.
+        bool queryReady = explorer.ConsumedOceanFftQueryReady;
+        bool freshQueryReady = fft.TryGetOceanSurfaceOffset(
+            queryReady ? explorer.ConsumedOceanFftQueryPosition : explorer.CanonicalPosition, out float freshOffset);
+        bool parityReady = queryReady && freshQueryReady
+            && explorer.ConsumedOceanFftQuerySerial == fft.SurfaceQuerySampleSerial;
+        result["parity_ready"] = parityReady;
+        result["fresh_query_ready"] = freshQueryReady;
+        result["fresh_offset"] = freshOffset;
+        result["consumed_query_serial"] = explorer.ConsumedOceanFftQuerySerial;
+        result["consumed_query_time"] = explorer.ConsumedOceanFftQueryTimeSeconds;
+        result["fresh_query_serial"] = fft.SurfaceQuerySampleSerial;
         result["valid"] = double.IsFinite(explorer.CanonicalPosition.VerticalMeters)
             && float.IsFinite(explorer.CurrentWaterSurfaceHeightMeters)
             && float.IsFinite(explorer.CurrentWaterDepthMeters);
         result["query_ready"] = queryReady;
-        result["offset"] = offset;
+        result["offset"] = freshOffset;
         result["vertical"] = explorer.CanonicalPosition.VerticalMeters;
         result["surface"] = explorer.CurrentWaterSurfaceHeightMeters;
         result["depth"] = explorer.CurrentWaterDepthMeters;

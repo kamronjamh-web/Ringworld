@@ -52,6 +52,7 @@ public partial class GrassModifierStreamingTest : Node
             layer.StepForTests(sampler, edits, focus, geometry, altitudeAboveTerrain: layer.MaximumViewerAltitudeAboveTerrainMeters + 1);
             layer.StepForTests(sampler, edits, focus, geometry);
             Require(layer.RequestQueueScans > queueScans, "resuming streaming failed to refresh request eligibility");
+            await Settle(layer, sampler, edits, focus, geometry);
             RingStandingGrassLayer.TileAudit[] baseline = layer.CaptureTileAuditsForTests();
             Require(baseline.Length >= 3, "baseline did not retain enough tiles");
             RingStandingGrassLayer.TileAudit target = baseline.FirstOrDefault(t => t.InstanceCount > 0);
@@ -182,8 +183,8 @@ public partial class GrassModifierStreamingTest : Node
     {
         RingGrassTileData data = layer.CaptureTileDataForTests().First(t => t.InstanceCount > 0);
         MultiMeshInstance3D source = layer.GetChildren().OfType<MultiMeshInstance3D>().First();
-        var near = new MultiMeshInstance3D { Multimesh = source.Multimesh, MaterialOverride = source.MaterialOverride };
-        var intermediate = new MultiMeshInstance3D { Multimesh = source.Multimesh, MaterialOverride = source.MaterialOverride };
+        var near = new GrassPresentationRenderer { Multimesh = source.Multimesh, MaterialOverride = source.MaterialOverride };
+        var intermediate = new GrassPresentationRenderer { Multimesh = source.Multimesh, MaterialOverride = source.MaterialOverride };
         layer.AddChild(near); layer.AddChild(intermediate);
         float originalGustScale = layer.GrassGustScaleMeters;
         try
@@ -195,9 +196,11 @@ public partial class GrassModifierStreamingTest : Node
             layer.RefreshTilePresentation(cache, intermediate, data, geometry, inverse, true);
             Require(layer.PresentationMappingBuilds == builds + 1, "near/intermediate did not share the ground mapping");
             long writes = layer.PresentationParameterWrites;
+            long nativeReads = layer.PresentationWorldSnapshotReads;
             layer.RefreshTilePresentation(cache, near, data, geometry, inverse, false);
             layer.RefreshTilePresentation(cache, intermediate, data, geometry, inverse, true);
             Require(layer.PresentationParameterWrites == writes, "stationary presentation repeated shader writes");
+            Require(layer.PresentationWorldSnapshotReads == nativeReads, "stationary mapping repeated native world reads");
             layer.SetGrassGustWeatherForTests(new Vector2(8, 3), 1, circumference);
             layer.SetGrassGustWeatherForTests(new Vector2(8, 3), 1.1, circumference);
             layer.RefreshTilePresentation(cache, near, data, geometry, inverse, false);
@@ -216,7 +219,24 @@ public partial class GrassModifierStreamingTest : Node
             {
                 Require(near.GetInstanceShaderParameter(name).Equals(intermediate.GetInstanceShaderParameter(name)), "cached mapping differs for " + name);
             }
-            GD.Print("GRASS_PRESENTATION_CACHE=PASS shared mapping, unchanged writes, wind, tuning, transformed geometry");
+            var replacementData = new RingGrassTileData(data.Key, data.Bounds, data.AnchorHeight + 2,
+                data.Buffer, data.LocalAabb, data.PlacementHash, data.SourceFraction, data.SourceTier, data.BladesPerSource, data.ModifierTintBytes);
+            long beforeReplacement = layer.PresentationWorldSnapshotReads;
+            layer.RefreshTilePresentation(cache, near, replacementData, moved, inverse, false);
+            Require(layer.PresentationWorldSnapshotReads > beforeReplacement && cache.Data == replacementData,
+                "data replacement retained old world snapshot");
+            var replacementRenderer = new GrassPresentationRenderer { Multimesh = source.Multimesh, MaterialOverride = source.MaterialOverride };
+            layer.AddChild(replacementRenderer);
+            try
+            {
+                beforeReplacement = layer.PresentationWorldSnapshotReads;
+                layer.RefreshTilePresentation(cache, replacementRenderer, replacementData, moved, inverse, false);
+                Require(layer.PresentationWorldSnapshotReads > beforeReplacement
+                    && cache.Near.WorldSnapshot == replacementRenderer.GlobalTransform,
+                    "renderer replacement retained old native snapshot");
+            }
+            finally { replacementRenderer.QueueFree(); }
+            GD.Print("GRASS_PRESENTATION_CACHE=PASS shared mapping, unchanged reads/writes, wind, tuning, transformed geometry, data/renderer replacement");
         }
         finally { layer.GrassGustScaleMeters = originalGustScale; near.QueueFree(); intermediate.QueueFree(); }
     }

@@ -33,6 +33,7 @@ instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_water_common.gdshaderinc"
+#include "res://materials/ring_wind_field.gdshaderinc"
 #include "res://materials/ring_water_depth.gdshaderinc"
 #include "res://materials/ring_water_fft.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
@@ -314,7 +315,7 @@ void vertex() {
 		if (wave_fade > 0.001) {
 			vec2 wave_coordinates = ring_water_coordinates(original_world_position, ring_center, ring_radius_meters);
 			VERTEX += surface_up_local
-				* ring_water_profile_height(wave_coordinates, TIME, water_kind_profile)
+				* ring_water_profile_height(wave_coordinates, (water_wind_clock_enabled ? 1.0 : TIME), water_kind_profile)
 				* wave_fade
 				* wave_geometry_strength;
 		}
@@ -363,6 +364,10 @@ void fragment() {
 		? ring_fft_shoreline_factors(fft_source_canonical, ring_fft_distant_ocean_factors(proxy_coverage_uv))
 		: vec2(0.0);
 	vec2 wave_coordinates = ring_water_coordinates(world_position, ring_center, ring_radius_meters);
+	float water_gust_response = water_spatial_gust_enabled && ring_wind_field_enabled > 0.5 && water_mean_wind_speed > 0.01
+        ? 1.0 + clamp(ring_wind_gust_at_world(world_position, 0.0) - 1.0, 0.0, 2.0) * water_gust_response_strength
+        : 1.0;
+    water_gust_response = clamp(water_gust_response, 1.0, 3.0);
 	vec2 wave_coordinate_dx = dFdx(wave_coordinates);
 	vec2 wave_coordinate_dy = dFdy(wave_coordinates);
 	float wave_distance_fade = 1.0 - smoothstep(
@@ -380,10 +385,11 @@ void fragment() {
 	if (wave_normal_detail > 0.001) {
 		filtered_gradient = ring_water_profile_gradient_filtered(
 			wave_coordinates,
-			TIME,
+			(water_wind_clock_enabled ? 1.0 : TIME),
 			wave_coordinate_dx,
 			wave_coordinate_dy,
 			water_kind_profile);
+        filtered_gradient *= water_mean_response * water_gust_response;
 		vec3 detailed_water_normal_world = ring_water_normal_world_from_gradient(
 			world_position,
 			ring_center,
@@ -391,7 +397,7 @@ void fragment() {
 		water_normal_world = normalize(mix(smooth_water_normal_world, detailed_water_normal_world, wave_normal_detail));
 		crest_wave_height = ring_water_profile_height_filtered(
 			wave_coordinates,
-			TIME,
+			(water_wind_clock_enabled ? 1.0 : TIME),
 			wave_coordinate_dx,
 			wave_coordinate_dy,
 			water_kind_profile);
@@ -455,12 +461,12 @@ void fragment() {
 	float small_shading_fade = use_fft_surface ? ring_fft_shading_fade(distance_to_camera) * centre_shoreline.x : 0.0;
 	if (use_fft_surface && fft_cascade_count > 1 && fft_normal_strength > 0.001 && small_shading_fade > 0.001) {
 		vec4 small = ring_fft_normal_foam_grad(fft_source_canonical, 0, fft_source_dx, fft_source_dy);
-		vec3 small_normal = normalize(water_normal_world - fft_around_axis * small.x * fft_normal_strength
-			- fft_across_axis * small.y * fft_normal_strength);
+		vec3 small_normal = normalize(water_normal_world - fft_around_axis * small.x * fft_normal_strength * water_gust_response
+			- fft_across_axis * small.y * fft_normal_strength * water_gust_response);
 		water_normal_world = normalize(mix(water_normal_world, small_normal, small_shading_fade));
-		wave_slope_magnitude += length(small.xy) * fft_normal_strength * small_shading_fade;
+		wave_slope_magnitude += length(small.xy) * fft_normal_strength * water_gust_response * small_shading_fade;
 		float small_residual = max(0.0, small.z - dot(small.xy, small.xy));
-		fft_detail.w += small_residual * fft_normal_strength * fft_normal_strength * small_shading_fade * small_shading_fade;
+		fft_detail.w += small_residual * fft_normal_strength * fft_normal_strength * water_gust_response * water_gust_response * small_shading_fade * small_shading_fade;
 	}
 	if (!FRONT_FACING) water_normal_world *= -1.0;
 	vec3 water_normal_view = normalize((VIEW_MATRIX * vec4(water_normal_world, 0.0)).xyz);
@@ -520,7 +526,9 @@ void fragment() {
 		* wave_normal_detail
 		* (water_kind_profile < 1.5 ? 1.0 : 0.18)
 		* (use_fft_surface ? 0.0 : 1.0);
-	float fft_foam = fft_detail.z * fft_foam_strength * foam_breakup * distant_nonshore_foam;
+    float gust_whitecap = smoothstep(0.22, 0.70, wave_slope_magnitude)
+        * (water_gust_response - 1.0) * 0.20 * small_shading_fade;
+	float fft_foam = (fft_detail.z * water_gust_response + gust_whitecap) * fft_foam_strength * foam_breakup * distant_nonshore_foam;
 	crest_foam *= distant_nonshore_foam;
 	float foam = clamp(shore_foam + crest_foam + fft_foam, 0.0, 1.0);
 	// Retain the established shallow/deep alpha controls as artist-facing volume

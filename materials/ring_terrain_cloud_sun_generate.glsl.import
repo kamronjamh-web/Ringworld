@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dg0v55rtpfr4a"
+path="res://.godot/imported/ring_terrain_cloud_sun_generate.glsl-3dcd8cd320a86848986883188ad93018.res"
+
+[deps]
+
+source_file="res://materials/ring_terrain_cloud_sun_generate.glsl"
+dest_files=["res://.godot/imported/ring_terrain_cloud_sun_generate.glsl-3dcd8cd320a86848986883188ad93018.res"]
+
+[params]
+

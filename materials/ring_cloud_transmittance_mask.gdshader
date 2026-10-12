@@ -1,6 +1,11 @@
 shader_type canvas_item;
 render_mode unshaded;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 #include "res://materials/celestial_lighting.gdshaderinc"
+#include "res://materials/ring_atmosphere_shared.gdshaderinc"
+// Physical-metre profile in the existing mask ray basis. Zero profile preserves
+// standalone fixtures and disabled atmosphere without changing cloud density.
+uniform vec4 ring_cloud_atmosphere_profile[10];
 
 // Low-resolution background-only integration of the camera-local cloud field.
 // This intentionally mirrors ring_local_volumetric_cloud.gdshader, but only
@@ -157,6 +162,8 @@ vec4 sample_cloud(vec3 canonical_km, vec3 local_meters) {
 		* max(storm_influence, precipitation);
 	vec3 weather_shadow = mix(shadow_color, storm_color, clamp(lower_darkening * 0.92, 0.0, 1.0));
 	vec3 daylight = mix(weather_shadow, sunlit_color, clamp(cloud_height * 0.72 + field * 0.35, 0.0, 1.0));
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(canonical_km * 1000.0);
+	daylight -= (daylight - weather_shadow) * (1.0 - terrain_sun);
 	vec3 color = mix(night_color, daylight, day);
 	return vec4(color, cloud * mix(0.82, 1.28, storm_influence));
 }
@@ -198,7 +205,16 @@ void fragment() {
 			float sample_alpha = (1.0 - exp(-max(0.0, optical_depth))) * opacity_scale;
 			sample_alpha = clamp(sample_alpha, 0.0, 1.0);
 			float contribution = (1.0 - accumulated_alpha) * sample_alpha;
-			accumulated_color += sample_value.rgb * contribution;
+			vec3 sample_color = sample_value.rgb;
+			if (ring_cloud_atmosphere_profile[0].x > 0.5 && contribution > 0.0) {
+				vec4 haze = ring_atmosphere_local_haze_shared(
+					ray_direction * distance_meters, vec3(0.0),
+					ring_cloud_atmosphere_profile[7].xyz,
+					ring_cloud_atmosphere_profile[9].xyz,
+					ringworld_solar_visibility, ring_cloud_atmosphere_profile);
+				sample_color = mix(sample_color, haze.rgb, haze.a);
+			}
+			accumulated_color += sample_color * contribution;
 			accumulated_alpha += contribution;
 		}
 		// Canvas blending into the transparent mask target premultiplies this

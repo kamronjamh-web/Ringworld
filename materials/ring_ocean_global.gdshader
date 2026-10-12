@@ -91,10 +91,12 @@ void fragment() {
 	vec3 smooth_water_normal_world = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	vec3 filtered_far_wave = ring_water_far_wave_gradient_filtered(
 		ring_water_coordinates(world_position, ring_center, ring_radius_meters),
-		TIME,
+		(water_wind_clock_enabled ? 1.0 : TIME),
 		water_kind_profile,
 		far_coordinate_dx,
 		far_coordinate_dy);
+    filtered_far_wave.xy *= water_mean_response;
+    filtered_far_wave.z *= water_mean_response * water_mean_response;
 	vec2 far_gradient = filtered_far_wave.xy;
 	vec3 animated_water_normal_world = ring_water_normal_world_from_gradient(
 		world_position,

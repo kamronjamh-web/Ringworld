@@ -51,8 +51,9 @@ public sealed class ImportedTreeImpostorCatalog
         ImageTexture normals = CreateDataTexture(maxVertices, geometries, DataChannel.Normal);
         ImageTexture uvs = CreateDataTexture(maxVertices, geometries, DataChannel.Uv);
         ImageTexture tangents = CreateDataTexture(maxVertices, geometries, DataChannel.Tangent);
+        ImageTexture attachments = CreateDataTexture(maxVertices, geometries, DataChannel.Attachment);
         ArrayMesh mesh = CreateSharedMesh(maxVertices, bounds);
-        ShaderMaterial material = CreateMaterial(variants, positions, normals, uvs, tangents);
+        ShaderMaterial material = CreateMaterial(variants, positions, normals, uvs, tangents, attachments);
         mesh.SurfaceSetMaterial(0, material);
 
         var counts = new List<int>(geometries.Count);
@@ -77,12 +78,13 @@ public sealed class ImportedTreeImpostorCatalog
         return mesh;
     }
 
-    private static ShaderMaterial CreateMaterial(IReadOnlyList<ImportedTreeVariant> variants, Texture2D positions, Texture2D normals, Texture2D uvs, Texture2D tangents)
+    private static ShaderMaterial CreateMaterial(IReadOnlyList<ImportedTreeVariant> variants, Texture2D positions, Texture2D normals, Texture2D uvs, Texture2D tangents, Texture2D attachments)
     {
         Shader shader = ResourceLoader.Load<Shader>("res://materials/imported_tree_impostor.gdshader") ?? throw new InvalidOperationException("Missing imported-tree impostor shader.");
         var material = new ShaderMaterial { Shader = shader };
         material.SetShaderParameter("vertex_data", positions); material.SetShaderParameter("normal_data", normals);
         material.SetShaderParameter("uv_data", uvs); material.SetShaderParameter("tangent_data", tangents);
+        material.SetShaderParameter("attachment_data", attachments);
         material.SetShaderParameter("albedo_layers", CreateTextureArray(variants, "albedo_texture", new Color(1, 1, 1, 1)));
         material.SetShaderParameter("normal_layers", CreateTextureArray(variants, "normal_texture", new Color(.5f, .5f, 1, 1)));
         material.SetShaderParameter("metallic_roughness_layers", CreateMetallicRoughnessArray(variants));
@@ -162,7 +164,9 @@ public sealed class ImportedTreeImpostorCatalog
             Color tint = material == null ? Colors.White : material.GetShaderParameter("albedo_tint").AsColor();
             image.SetPixel(i, 0, tint);
             image.SetPixel(i, 1, new Color(material == null ? 1 : material.GetShaderParameter("normal_scale").AsSingle(), material == null ? 0 : material.GetShaderParameter("metallic_factor").AsSingle(), material == null ? 1 : material.GetShaderParameter("roughness_factor").AsSingle(), material == null ? .25f : material.GetShaderParameter("alpha_cutoff").AsSingle()));
-            image.SetPixel(i, 2, new Color(material != null && material.GetShaderParameter("use_alpha_cutout").AsBool() ? 1 : 0, 0, 0, 1));
+            image.SetPixel(i, 2, new Color(material != null && material.GetShaderParameter("use_alpha_cutout").AsBool() ? 1 : 0,
+                material == null ? 2 : material.GetShaderParameter("tree_foliage_mode").AsInt32(),
+                material != null && material.GetShaderParameter("tree_foliage_attachments").AsBool() ? 1 : 0, 1));
         }
         return ImageTexture.CreateFromImage(image);
     }
@@ -178,8 +182,10 @@ public sealed class ImportedTreeImpostorCatalog
             Vector2[] uvs = ReadVector2Array(arrays, Mesh.ArrayType.TexUV);
             Vector2[] uv2s = ReadVector2Array(arrays, Mesh.ArrayType.TexUV2);
             float[] tangents = ReadFloatArray(arrays, Mesh.ArrayType.Tangent);
+            float[] attachments = ReadFloatArray(arrays, Mesh.ArrayType.Custom0);
             int[] indices = arrays[(int)Mesh.ArrayType.Index].VariantType == Variant.Type.Nil ? Sequential(positions.Length) : arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
-            foreach (int index in indices) result.Add(positions[index], normals.Length > index ? normals[index] : Vector3.Up, uvs.Length > index ? uvs[index] : Vector2.Zero, uv2s.Length > index ? uv2s[index] : Vector2.Zero, tangents.Length >= (index + 1) * 4 ? new Vector4(tangents[index * 4], tangents[index * 4 + 1], tangents[index * 4 + 2], tangents[index * 4 + 3]) : new Vector4(1, 0, 0, 1));
+            foreach (int index in indices) result.Add(positions[index], normals.Length > index ? normals[index] : Vector3.Up, uvs.Length > index ? uvs[index] : Vector2.Zero, uv2s.Length > index ? uv2s[index] : Vector2.Zero, tangents.Length >= (index + 1) * 4 ? new Vector4(tangents[index * 4], tangents[index * 4 + 1], tangents[index * 4 + 2], tangents[index * 4 + 3]) : new Vector4(1, 0, 0, 1),
+                attachments.Length >= (index + 1) * 4 ? new Vector4(attachments[index*4],attachments[index*4+1],attachments[index*4+2],attachments[index*4+3]) : Vector4.Zero);
         }
         return result;
     }
@@ -187,12 +193,13 @@ public sealed class ImportedTreeImpostorCatalog
     private static Vector2[] ReadVector2Array(Godot.Collections.Array arrays, Mesh.ArrayType type) => arrays[(int)type].VariantType == Variant.Type.Nil ? Array.Empty<Vector2>() : arrays[(int)type].AsVector2Array();
     private static float[] ReadFloatArray(Godot.Collections.Array arrays, Mesh.ArrayType type) => arrays[(int)type].VariantType == Variant.Type.Nil ? Array.Empty<float>() : arrays[(int)type].AsFloat32Array();
     private static int[] Sequential(int count) { var result = new int[count]; for (int i = 0; i < count; i++) result[i] = i; return result; }
-    private enum DataChannel { Position, Normal, Uv, Tangent }
+    private enum DataChannel { Position, Normal, Uv, Tangent, Attachment }
     private sealed class Geometry
     {
         private readonly List<Vector3> _positions = new(); private readonly List<Vector3> _normals = new(); private readonly List<Vector2> _uvs = new(); private readonly List<Vector2> _uv2s = new(); private readonly List<Vector4> _tangents = new();
+        private readonly List<Vector4> _attachments = new();
         public Vector3[] Positions => _positions.ToArray();
-        public void Add(Vector3 p, Vector3 n, Vector2 uv, Vector2 uv2, Vector4 tangent) { _positions.Add(p); _normals.Add(n); _uvs.Add(uv); _uv2s.Add(uv2); _tangents.Add(tangent); }
-        public Color Get(DataChannel channel, int index) { if (index >= _positions.Count) return channel == DataChannel.Position ? new Color(0, 0, 0, 0) : new Color(0, 1, 0, 1); return channel switch { DataChannel.Position => new Color(_positions[index].X, _positions[index].Y, _positions[index].Z, 1), DataChannel.Normal => new Color(_normals[index].X, _normals[index].Y, _normals[index].Z, 1), DataChannel.Uv => new Color(_uvs[index].X, _uvs[index].Y, _uv2s[index].X, _uv2s[index].Y), _ => new Color(_tangents[index].X, _tangents[index].Y, _tangents[index].Z, _tangents[index].W) }; }
+        public void Add(Vector3 p, Vector3 n, Vector2 uv, Vector2 uv2, Vector4 tangent, Vector4 attachment) { _positions.Add(p); _normals.Add(n); _uvs.Add(uv); _uv2s.Add(uv2); _tangents.Add(tangent); _attachments.Add(attachment); }
+        public Color Get(DataChannel channel, int index) { if (index >= _positions.Count) return channel == DataChannel.Position || channel == DataChannel.Attachment ? new Color(0, 0, 0, 0) : new Color(0, 1, 0, 1); return channel switch { DataChannel.Position => new Color(_positions[index].X, _positions[index].Y, _positions[index].Z, 1), DataChannel.Normal => new Color(_normals[index].X, _normals[index].Y, _normals[index].Z, 1), DataChannel.Uv => new Color(_uvs[index].X, _uvs[index].Y, _uv2s[index].X, _uv2s[index].Y), DataChannel.Attachment => new Color(_attachments[index].X,_attachments[index].Y,_attachments[index].Z,_attachments[index].W), _ => new Color(_tangents[index].X, _tangents[index].Y, _tangents[index].Z, _tangents[index].W) }; }
     }
 }

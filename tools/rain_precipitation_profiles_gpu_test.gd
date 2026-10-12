@@ -1,189 +1,171 @@
 extends SceneTree
 
-# Exercise the actual production emitter on Vulkan, first against a black
-# control world, then reattach it to the real terrain/cloud-composited scene.
+# Render the actual owner-created haze in a controlled camera world. No drop
+# material is shown or edited: the production publisher must keep its snow pool hidden.
 const WORLD := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const DRIVER := preload("res://tools/RainPrecipitationTestDriver.cs")
-const OUT := "res://.godot/rain_profiles_gpu"
+const ISOLATION := preload("res://scripts/Tools/MinimapWindContractTest.cs")
+const SIZE := Vector2i(640, 360)
 var world: Node
 var local: Node
-var particles: GPUParticles3D
 var driver: RefCounted
 var camera: Camera3D
-var probe: Camera3D
-var vp: SubViewport
+var viewport: SubViewport
+var rig: Node3D
+var output := ""
 var failed := false
-var label := "normal"
-var restart_count := 0
+var fixture_wind_anchor: Variant = null
 
 func _initialize() -> void:
-	if RenderingServer.get_rendering_device() == null:
-		fail("requires RenderingDevice; headless cannot prove particle rendering")
-		return
-	call_deferred("run")
+    if RenderingServer.get_rendering_device() == null:
+        fail("Forward+ required"); return
+    call_deferred("run")
 
 func run() -> void:
-	Engine.max_fps = 60
-	world = WORLD.instantiate()
-	if "--rain-profiles-certified" in OS.get_cmdline_user_args():
-		label = "certified"
-		var launcher := preload("res://scenes/WorldSizeLauncher.tscn").instantiate()
-		root.add_child(launcher)
-		if not launcher.is_node_ready(): await launcher.ready
-		launcher.call("_on_certified_preset_pressed")
-		launcher.call("_configure_game", world, 5000000.0)
-		launcher.free()
-	root.add_child(world)
-	for i in range(20): await process_frame
-	world.get_node("Explorer").set_physics_process(false)
-	world.get_node("RingDayNightCycle").set("Paused", true)
-	world.get_node("RingVolumetricClouds").set_process(false)
-	world.get_node("SunshineCloudBridge").set_process(false)
-	world.get_node("DistantRainCurtains").set_process(false)
-	local = world.get_node("LocalWeatherEffects")
-	local.set_process(false)
-	local.set("EnableLightning", false)
-	particles = local.get_node("CameraLocalPrecipitation")
-	camera = world.get_node("Explorer/Head/Camera3D")
-	driver = DRIVER.new()
-	driver.call("SetIntensity", local, 0.0, false, Vector2.ZERO)
-	for i in range(200): local.call("_Process", 1.0 / 60.0)
-	restart_count = int(local.get("ParticleRestartCount"))
-	setup_probe()
-	particles.speed_scale = 0.0
-	particles.use_fixed_seed = true
-	particles.seed = 371
-	particles.reparent(vp, true)
-	# Keep engine time advancing while manually seeking the GPU simulation.
-	# Only freeze the main scene's clock later, when no particle steps remain.
-	particles.hide()
-	var black := await capture(vp, "black")
-	particles.show()
-	var summaries := []
-	for intensity in [.15, .5, 1.0]:
-		driver.call("SetIntensity", local, intensity, false, Vector2(5, -2))
-		await advance(180)
-		print("RAIN_PROFILE_GPU_EMITTER state=", local.call("GetPrecipitationDiagnostics"), " position=", particles.global_transform, " camera=", probe.global_transform, " bounds=", particles.capture_aabb(), " visible=", particles.is_visible_in_tree(), " emitting=", particles.emitting)
-		var total := 0.0
-		var count := 0
-		for sample in range(4):
-			await advance(8)
-			var im := await capture(vp, str(int(intensity * 100)) + "_" + str(sample))
-			var change := difference(im, black)
-			if not require(change.count > 10 and change.mean > .000001, "invisible rain stage " + str(intensity)): return
-			total += float(change.mean)
-			count += int(change.count)
-		var result := {"intensity": intensity, "mean": total / 4, "pixels": count / 4}
-		summaries.append(result)
-		print("RAIN_PROFILE_GPU_STAGE ", result)
-	for i in range(1, summaries.size()):
-		if not require(float(summaries[i].mean) > float(summaries[i - 1].mean) * 1.2 and int(summaries[i].pixels) > int(summaries[i - 1].pixels), "stages did not visibly increase " + str(summaries)): return
-	var before := await capture(vp, "motion_before")
-	await advance(6)
-	var after := await capture(vp, "motion_after")
-	if not require(difference(before, after).count > 10, "particles do not move"): return
-	# Wet-to-wet transition must never blank the visible emitter or restart it.
-	for intensity in [.15, 1.0]:
-		driver.call("SetIntensity", local, intensity, false, Vector2.ZERO)
-		for sample in range(16):
-			await advance(6)
-			var live := await capture(vp)
-			if not require(difference(live, black).count > 10, "wet transition emptied the screen"): return
-	if not require(int(local.get("ParticleRestartCount")) == restart_count and particles.amount == 4096, "rain stage changed emitter lifecycle or allocation"): return
-	driver.call("SetIntensity", local, 0.0, false, Vector2.ZERO)
-	await advance(180)
-	var dry := await capture(vp, "dry")
-	if not require(not particles.emitting and difference(dry, black).count == 0, "dry weather left rain particles"): return
-	# Back to the actual scene, retaining its existing clouds/terrain/depth path.
-	particles.reparent(local, true)
-	driver.call("SetIntensity", local, 1.0, false, Vector2.ZERO)
-	await advance(180)
-	for layer: CanvasLayer in world.find_children("*", "CanvasLayer", true, false):
-		if layer.layer > 0: layer.hide()
-	var attributes := world.get_node("WorldEnvironment").get("camera_attributes") as CameraAttributesPractical
-	if attributes: attributes.auto_exposure_enabled = false
-	for name in ["SunshineCloudBridge", "SunshineCloudsDriver", "DaySideAtmosphere", "ScaledFarViewport"]:
-		var node := world.get_node_or_null(name)
-		if node: node.set_process(false)
-	Engine.time_scale = 0.0
-	particles.hide()
-	for i in range(100): await process_frame
-	var off_a: Image
-	var off_b: Image
-	var drift := INF
-	for attempt in range(30):
-		off_a = await capture(root)
-		off_b = await capture(root)
-		drift = float(difference(off_a, off_b).mean)
-		if drift < .00001: break
-	if not require(drift < .00001, "main OFF/OFF view did not settle: " + str(drift)): return
-	particles.show()
-	var on := await capture(root, "main_on")
-	particles.hide()
-	var off_after := await capture(root, "main_off")
-	drift = maxf(drift, float(difference(off_b, off_after).mean))
-	var effect := minf(float(difference(on, off_b).mean), float(difference(on, off_after).mean))
-	print("RAIN_PROFILE_MAIN_COMPOSITE effect=", effect, " drift=", drift)
-	if not require(effect > maxf(.000001, drift * 2.0), "no stable main-view particle contribution"): return
-	print("RAIN_PRECIPITATION_PROFILES_GPU=PASS preset=", label, " stages=", summaries)
-	quit(0)
+    # A bounded startup/test watchdog also exits if an asynchronous script
+    # exception aborts this coroutine before its normal quit path.
+    create_timer(90.0).timeout.connect(func(): fail("fixture watchdog expired"))
+    output = "res://.godot/rain_haze_gpu_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output))
+    world = WORLD.instantiate()
+    if "--rain-profiles-certified" in OS.get_cmdline_user_args():
+        var launcher := preload("res://scenes/WorldSizeLauncher.tscn").instantiate()
+        root.add_child(launcher); launcher.call("_on_certified_preset_pressed")
+        launcher.call("_configure_game", world, 5000000.0); launcher.free()
+    var isolation: Dictionary = ISOLATION.new().ExecuteFixture("isolation", world, output + "/preferences")
+    if not bool(isolation.get("pass", false)): fail("preference isolation " + str(isolation)); return
+    root.add_child(world)
+    for frame in range(8): await process_frame
+    for name in ["Explorer", "RingVolumetricClouds", "SunshineCloudBridge", "DistantRainCurtains", "LocalVolumetricCloudRenderer", "WeatherAmbience", "TerrainMinimap"]:
+        var node := world.get_node_or_null(name)
+        if node != null: node.set_process(false); node.set_physics_process(false)
+    world.get_node("RingDayNightCycle").set("Paused", true)
+    local = world.get_node("LocalWeatherEffects")
+    local.set_process(false); local.set("EnableLightning", false)
+    driver = DRIVER.new()
+    driver.call("SetShelterForFixture", world.get_node("WeatherAmbience"), false)
+    driver.call("SetUnderwaterForFixture", world.get_node("Explorer"), false)
+    driver.call("SetDaylightForFixture", world.get_node("RingDayNightCycle"), 1.0)
+    setup_view()
+    target(0.0)
+    var baseline := await capture("clear")
+    var previous_far := 0.0
+    for intensity: float in [.15, .5, 1.0]:
+        target(intensity)
+        if not no_drops(): return
+        var image := await capture("rain_%d" % int(intensity * 100))
+        # The projected foreground spans x123..299. Keep the assertion well
+        # inside its silhouette so sky haze cannot contaminate this budget.
+        var near_delta := region_delta(baseline, image, Rect2i(145, 100, 115, 160))
+        var far_delta := region_delta(baseline, image, Rect2i(420, 230, 120, 80))
+        var sky_delta := region_delta(baseline, image, Rect2i(480, 30, 120, 70))
+        print("RAIN_HAZE_DEPTH intensity=%.2f near_delta=%.6f far_delta=%.6f sky_delta=%.6f near_clear=%.3f near_before=%s near_after=%s" % [intensity, near_delta, far_delta, sky_delta, float(driver.call("GetHazeControl", "NearClearDistanceMeters")), str(baseline.get_pixel(200, 180)), str(image.get_pixel(200, 180))])
+        if not require(near_delta < .001, "near opaque foreground was fogged: %.6f" % near_delta): return
+        if not require(far_delta > previous_far + .002 and sky_delta > .005, "rain density did not visibly thicken distant/sky view"): return
+        previous_far = far_delta
+    var heavy := await capture("heavy_paused_a")
+    driver.call("HoldRainCompositorForFixture", local, true)
+    var fallback := await capture("heavy_fallback_parity")
+    if not require(bool(local.call("GetRainHazeDiagnostics").fallback_visible), "parity fixture did not activate fallback"): return
+    driver.call("HoldRainCompositorForFixture", local, false)
+    var restored := await capture("heavy_compositor_restored")
+    var parity := region_delta(heavy, fallback, Rect2i(Vector2i.ZERO, SIZE))
+    print("RAIN_HAZE_COMPOSITOR_FALLBACK_PARITY delta=%.6f" % parity)
+    if not require(parity < .003, "compositor/fallback tint, gust or depth mismatch: %.6f" % parity): return
+    if not require(not bool(local.call("GetRainHazeDiagnostics").fallback_visible) and region_delta(heavy, restored, Rect2i(Vector2i.ZERO, SIZE)) < .000001, "compositor restore changed paused haze"): return
+    var paused := await capture("heavy_paused_b")
+    if not require(region_delta(heavy, paused, Rect2i(Vector2i.ZERO, SIZE)) < .000001, "paused shared clock moved haze"): return
+    # Equivalent camera/geometry and gust-anchor translation preserves the veil.
+    var translation := Vector3(17321, -811, 4013)
+    var old_anchor: Vector3 = driver.call("PublishedWindAnchor", world)
+    rig.position = translation
+    fixture_wind_anchor = old_anchor + translation
+    var rebased := await capture("heavy_rebased")
+    if not require(region_delta(heavy, rebased, Rect2i(Vector2i.ZERO, SIZE)) < .001, "haze changed under equivalent rebase"): return
+    rig.position = Vector3.ZERO
+    fixture_wind_anchor = null
+    driver.call("PublishHazeWindAnchorForFixture", world, old_anchor)
+    driver.call("SetDaylightForFixture", world.get_node("RingDayNightCycle"), 0.0)
+    step(1)
+    var night := await capture("heavy_night")
+    if not require(luma(night.get_pixel(540, 45)) < luma(heavy.get_pixel(540, 45)) * .5, "night haze glows with daytime tint"): return
+    driver.call("SetDaylightForFixture", world.get_node("RingDayNightCycle"), 1.0)
+    driver.call("SetHazeControl", "Enabled", false); step(1)
+    var disabled := await capture("haze_disabled")
+    if not require(region_delta(baseline, disabled, Rect2i(Vector2i.ZERO, SIZE)) < .000001, "disabled haze changed baseline view"): return
+    driver.call("SetHazeControl", "Enabled", true)
+    driver.call("SetUnderwaterForFixture", world.get_node("Explorer"), true); step(1)
+    var underwater := await capture("underwater_haze_suppressed")
+    if not require(region_delta(baseline, underwater, Rect2i(Vector2i.ZERO, SIZE)) < .000001, "underwater haze retained overlay"): return
+    driver.call("SetUnderwaterForFixture", world.get_node("Explorer"), false)
+    driver.call("SetShelterForFixture", world.get_node("WeatherAmbience"), true); step(1)
+    var sheltered := await capture("sheltered_haze_suppressed")
+    if not require(region_delta(baseline, sheltered, Rect2i(Vector2i.ZERO, SIZE)) < .000001, "sheltered view retained exterior rain"): return
+    driver.call("SetShelterForFixture", world.get_node("WeatherAmbience"), false)
+    target(.5, true)
+    if not require(not bool(local.call("GetRainHazeDiagnostics").visible), "snow retained liquid-rain haze"): return
+    target(.5)
+    if not no_drops(): return
+    print("RAIN_PRECIPITATION_PROFILES_GPU=PASS checks=no_drops,monotonic_density,near_depth,distant,sky,pause,rebase,night,enabled,underwater,shelter,snow output=" + output)
+    world.queue_free(); viewport.queue_free()
+    for frame in range(4): await process_frame
+    quit(0)
 
-func setup_probe() -> void:
-	vp = SubViewport.new()
-	vp.size = Vector2i(1280, 720)
-	vp.own_world_3d = true
-	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	root.add_child(vp)
-	var we := WorldEnvironment.new()
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color.BLACK
-	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	we.environment = env
-	vp.add_child(we)
-	probe = Camera3D.new()
-	probe.current = true
-	probe.far = 1000
-	probe.fov = camera.fov
-	vp.add_child(probe)
-	probe.global_transform = camera.global_transform
+func setup_view() -> void:
+    viewport = SubViewport.new()
+    viewport.size = SIZE; viewport.own_world_3d = true
+    viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+    root.add_child(viewport)
+    rig = Node3D.new(); viewport.add_child(rig)
+    var environment := Environment.new()
+    environment.background_mode = Environment.BG_COLOR
+    environment.background_color = Color(.035, .05, .065)
+    environment.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+    var owner := WorldEnvironment.new(); owner.environment = environment; rig.add_child(owner)
+    camera = world.get_node("Explorer/Head/Camera3D")
+    camera.reparent(rig, false); camera.transform = Transform3D.IDENTITY
+    camera.fov = 80; camera.near = .1; camera.far = 2000; camera.make_current()
+    add_quad(Vector3(-1.6, 0, -3), Vector2(2.3, 6), Color(.12, .13, .14))
+    add_quad(Vector3(120, -80, -300), Vector2(300, 180), Color(.08, .09, .1))
 
-func advance(frames: int) -> void:
-	for i in range(frames):
-		local.call("_Process", 1.0 / 30.0)
-		if particles.emitting: particles.request_particles_process(1.0 / 30.0)
-		else: particles.request_particles_process(0.0, 1.0 / 30.0)
-		await RenderingServer.frame_post_draw
+func add_quad(position: Vector3, size: Vector2, color: Color) -> void:
+    var mesh := MeshInstance3D.new()
+    mesh.mesh = QuadMesh.new(); mesh.mesh.size = size
+    var material := StandardMaterial3D.new()
+    material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    material.albedo_color = color; mesh.material_override = material
+    mesh.position = position; rig.add_child(mesh)
 
-func capture(view: Viewport, suffix := "") -> Image:
-	for i in range(4): await RenderingServer.frame_post_draw
-	var im := view.get_texture().get_image()
-	if im == null or im.is_empty(): fail("empty GPU image"); return Image.new()
-	if not suffix.is_empty():
-		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT))
-		if im.save_png(OUT.path_join(label + "_" + suffix + ".png")) != OK: fail("capture save failed")
-	return im
-
-func difference(a: Image, b: Image) -> Dictionary:
-	var count := 0
-	var total := 0.0
-	var n := 0
-	for y in range(0, a.get_height(), 2):
-		for x in range(0, a.get_width(), 2):
-			var c := a.get_pixel(x, y).srgb_to_linear() - b.get_pixel(x, y).srgb_to_linear()
-			var d := (absf(c.r) + absf(c.g) + absf(c.b)) / 3.0
-			if not is_finite(d): fail("nonfinite capture"); return {"count": 0, "mean": 0.0}
-			if d > .001: count += 1
-			total += d
-			n += 1
-	return {"count": count, "mean": total / max(1, n)}
-
+func target(intensity: float, snow := false) -> void:
+    driver.call("SetIntensity", local, intensity, snow, Vector2(8, -3)); step(220)
+func step(count: int) -> void:
+    for frame in range(count): local.call("_Process", 1.0 / 60.0)
+func no_drops() -> bool:
+    var particles := local.get_node("CameraLocalPrecipitation") as GPUParticles3D
+    return require(not particles.emitting and not particles.visible and particles.amount_ratio == 0.0 and float(local.call("GetPrecipitationDiagnostics").effective_count) == 0.0, "rain retained visible drop pool")
+func capture(label: String) -> Image:
+    step(1)
+    if fixture_wind_anchor != null: driver.call("PublishHazeWindAnchorForFixture", world, fixture_wind_anchor)
+    for frame in range(6): await process_frame
+    await RenderingServer.frame_post_draw
+    var image := viewport.get_texture().get_image()
+    if image.is_empty(): fail("empty capture " + label); return image
+    image.save_png(output + "/" + label + ".png")
+    return image
+func luma(color: Color) -> float:
+    return color.r * .2126 + color.g * .7152 + color.b * .0722
+func region_delta(a: Image, b: Image, region: Rect2i) -> float:
+    if a.is_empty() or b.is_empty(): return INF
+    var total := 0.0; var count := 0
+    for y in range(region.position.y, region.end.y, 4):
+        for x in range(region.position.x, region.end.x, 4):
+            total += absf(luma(a.get_pixel(x, y)) - luma(b.get_pixel(x, y))); count += 1
+    return total / maxf(1.0, count)
 func require(ok: bool, message: String) -> bool:
-	if not ok: fail(message)
-	return ok
-
+    if not ok: fail(message)
+    return ok
 func fail(message: String) -> void:
-	if failed: return
-	failed = true
-	push_error("RAIN_PRECIPITATION_PROFILES_GPU=FAIL " + message)
-	quit(1)
+    if failed: return
+    failed = true
+    push_error("RAIN_PRECIPITATION_PROFILES_GPU=FAIL " + message)
+    quit(1)

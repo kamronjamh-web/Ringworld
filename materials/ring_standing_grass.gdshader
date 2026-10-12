@@ -4,6 +4,8 @@ shader_type spatial;
 render_mode cull_disabled, depth_draw_opaque, diffuse_lambert, specular_schlick_ggx;
 uniform vec3 grass_base_color : source_color = vec3(.11, .20, .065);
 uniform vec3 grass_tip_color : source_color = vec3(.38, .49, .19);
+// Optional legacy blade-face shading. Ground-facing illumination is the default.
+uniform bool grass_blade_shading_enabled = false;
 #include "res://materials/ring_grass_appearance.gdshaderinc"
 // The streaming layer enables this only when it has installed the paired near
 // and intermediate MultiMeshes. Keeping it off preserves the established
@@ -36,6 +38,11 @@ varying float grass_lod_root_hash;
 varying float grass_lod_instance_rank;
 varying float grass_lod_handoff;
 varying float grass_lod_final_fade;
+varying float grass_terrain_color_blend;
+varying float grass_terrain_root_coverage;
+varying vec3 grass_terrain_up_view;
+// fragment resolves the sanitized adaptation weight consumed by light().
+varying float grass_terrain_light_blend;
 varying vec2 grass_debug_deformation;
 // light() cannot read fragment output SPECULAR; retain the debug override
 // through an interpolant consumed by the custom direct-light path.
@@ -76,6 +83,34 @@ float grass_lod_hash(vec2 canonical_seed, float instance_id) {
 	return fract(sin(dot(canonical_seed, vec2(12.9898, 78.233)) + instance_id * .12345) * 43758.5453);
 }
 
+// Finish ground lighting and brightness relief convergence before roots disappear.
+// Keeping this band separate from final_fade leaves geometry and density selection intact.
+float grass_terrain_blend_at_distance(float root_distance, float transition_width) {
+	if (!grass_appearance_enabled || grass_terrain_handoff_strength <= 0.0
+		|| isnan(grass_terrain_handoff_strength) || isinf(grass_terrain_handoff_strength)
+		|| isnan(grass_terrain_draw_distance) || isinf(grass_terrain_draw_distance)) return 0.0;
+	float cutoff = grass_terrain_draw_distance > 0.0 ? grass_terrain_draw_distance : grass_lod_far_distance;
+	if (isnan(cutoff) || isinf(cutoff) || cutoff <= 0.0
+		|| isnan(root_distance) || isinf(root_distance)
+		|| isnan(transition_width) || isinf(transition_width)
+		|| isnan(grass_terrain_blend_start_fraction) || isinf(grass_terrain_blend_start_fraction)
+		|| isnan(grass_terrain_blend_end_fraction) || isinf(grass_terrain_blend_end_fraction)) return 0.0;
+	float requested_start = clamp(grass_terrain_blend_start_fraction, 0.0, 1.0) * cutoff;
+	float requested_end = clamp(grass_terrain_blend_end_fraction, 0.0, 1.0) * cutoff;
+	if (requested_end <= requested_start) return 0.0;
+	float fade_start = cutoff - transition_width * .5;
+	// A transition wider than the entire cutoff has no positive pre-fade
+	// range. Retain a finite band inside the cutoff rather than disabling tint.
+	float end = min(requested_end, fade_start > 0.0 ? fade_start : cutoff);
+	if (end <= 0.0) return 0.0;
+	// Ordered 99/100 controls can land beyond the capped end. Pull only the
+	// start back to reserve 1% of cutoff (at least .001m), leaving 70/90 intact.
+	float minimum_band = min(end, max(.001, cutoff * .01));
+	float start = min(requested_start, max(0.0, end - minimum_band));
+	if (end <= start) return 0.0;
+	return smoothstep(start, end, root_distance);
+}
+
 void vertex() {
 	float t = clamp(VERTEX.y, 0.0, 1.0);
 	float present = step(.0001, dot(abs(INSTANCE_CUSTOM), vec4(1.0)));
@@ -91,6 +126,15 @@ void vertex() {
 	vec3 face = normalize(basis[2]);
 	float root_distance = distance(root, CAMERA_POSITION_WORLD);
 	float transition_width = max(grass_lod_transition_width, .001);
+	grass_terrain_color_blend = grass_terrain_blend_at_distance(root_distance, transition_width);
+	grass_terrain_up_view = mat3(VIEW_MATRIX) * up;
+	grass_terrain_root_coverage = 0.0;
+	if (grass_appearance_enabled && grass_terrain_handoff_strength > 0.0) {
+		vec4 terrain_weights = clamp(COLOR, vec4(0.0), vec4(1.0));
+		float grassland = max(0.0, 1.0 - dot(terrain_weights, vec4(1.0)));
+		float eligibility = clamp(grassland + terrain_weights.y * .55, 0.0, 1.0);
+		grass_terrain_root_coverage = ring_terrain_grass_coverage(root, root_distance, 1.0, eligibility);
+	}
 	float handoff = smoothstep(grass_lod_near_distance - transition_width * .5,
 		grass_lod_near_distance + transition_width * .5, root_distance);
 	float density_fraction = mix(clamp(grass_lod_near_density, 0.0, 1.0),
@@ -171,16 +215,21 @@ void vertex() {
 	if (lod_visible < .5) VERTEX = vec3(0.0);
 	// Grass deliberately amplifies the shared weather motion, then bounds it
 	// below two thirds of blade height. Curve is height-scaled, never width-scaled.
-	float wind_strength = clamp(length(ring_local_wind_vector) / 20.0, 0.0, 1.0);
+	float wind_strength = clamp(length(ring_wind_field_enabled > .5 ? ring_wind_mean_vector : ring_local_wind_vector) / 20.0, 0.0, 1.0);
 	float flexible = mix(.82, 1.22, curve);
 	vec3 tip_wind = ring_local_wind_displacement(root, 1.0, height);
-	vec3 lateral = tip_wind * (4.8 + grass_gust(INSTANCE_CUSTOM, present) * 3.0 * grass_wind_gust_multiplier) * grass_wind_strength_multiplier * flexible;
+	vec3 lateral;
 	float lateral_limit = height * mix(.20, .58, wind_strength);
-	if (length(lateral) > lateral_limit) lateral *= lateral_limit / length(lateral);
-	// Apply the broad texture field after the established weather clamp, then
-	// bound it again. Strong storms retain visible lulls without exceeding the
-	// original blade-tip envelope; disabled texture gusts multiply by exactly 1.
-	lateral *= grass_texture_gust(root);
+	if (ring_wind_field_enabled>.5) {
+		float response = length(ring_wind_mean_vector)/20.0 * max(0.0,grass_wind_strength_multiplier)
+			* flexible * grass_texture_gust(root);
+		lateral = length(tip_wind)>.0001 ? normalize(tip_wind)*lateral_limit*(1.0-exp(-response)) : vec3(0.0);
+	} else {
+		lateral = tip_wind * (4.8 + grass_gust(INSTANCE_CUSTOM,present)*3.0*grass_wind_gust_multiplier)
+			*grass_wind_strength_multiplier*flexible;
+		if (length(lateral)>lateral_limit) lateral *= lateral_limit/length(lateral);
+		lateral *= grass_texture_gust(root);
+	}
 	if (length(lateral) > lateral_limit) lateral *= lateral_limit / length(lateral);
 	vec3 curve_world = side * ((curve - .5) * height * .34);
 	// Each dense ribbon starts with a real height-scaled lean through its face
@@ -214,18 +263,40 @@ void fragment() {
 	float blade = clamp(UV.y, 0.0, 1.0);
 	vec3 albedo = mix(grass_base_color, grass_tip_color, blade) * mix(.86, 1.14, grass_tint_variation);
 	vec3 debug = grass_debug_color(clamp(grass_lod_instance_rank, 0.0, 1.0), grass_debug_deformation.x, grass_debug_deformation.y, grass_lod_pass);
-	albedo = grass_appearance_albedo(albedo, COLOR, grass_lod_final_fade);
+	albedo = grass_appearance_albedo_with_coverage(albedo, COLOR, grass_terrain_color_blend, grass_terrain_root_coverage);
 	albedo = mix(albedo, grass_local_modifier_tint.rgb, clamp(grass_local_modifier_tint.a, 0.0, 1.0));
+	float terrain_lighting = grass_appearance_enabled
+		? grass_terrain_color_blend * clamp(grass_terrain_handoff_strength, 0.0, 1.0)
+			* clamp(grass_terrain_lighting_match, 0.0, 1.0) : 0.0;
+	if (isnan(terrain_lighting) || isinf(terrain_lighting)) terrain_lighting = 0.0;
+	grass_terrain_light_blend = terrain_lighting;
+	// Ground-facing diffuse and reduced blade self-shading close the brightness
+	// gap at the cutoff in legacy mode. Default mode uses ground normals everywhere.
+	if (!grass_blade_shading_enabled || terrain_lighting > 0.0) {
+		vec3 ground_normal = grass_terrain_up_view;
+		float ground_length2 = dot(ground_normal, ground_normal);
+		if (!isnan(ground_length2) && !isinf(ground_length2) && ground_length2 > .000001) {
+			ground_normal *= inversesqrt(ground_length2);
+			vec3 blended_normal = grass_blade_shading_enabled
+				? mix(NORMAL, ground_normal, terrain_lighting) : ground_normal;
+			float blended_length2 = dot(blended_normal, blended_normal);
+			NORMAL = !isnan(blended_length2) && !isinf(blended_length2) && blended_length2 > .000001
+				? blended_normal * inversesqrt(blended_length2) : ground_normal;
+		}
+	}
 	float cloud = grass_cloud_occlusion;
 	ALBEDO = albedo * (1.0 - cloud * .32);
 	ROUGHNESS = 1.0;
-	SPECULAR = .05;
-	grass_light_specular = .05;
-	grass_light_full_shading = grass_simplified_intermediate_shading && grass_lod_pass != 0 ? 0.0 : 1.0;
+	SPECULAR = grass_blade_shading_enabled ? .05 : 0.0;
+	grass_light_specular = SPECULAR;
+	grass_light_full_shading = grass_blade_shading_enabled
+		&& !(grass_simplified_intermediate_shading && grass_lod_pass != 0) ? 1.0 : 0.0;
 	// Darker roots ground the meadow while leaving tips responsive to the sun.
-	AO = mix(.72, 1.0, blade) * (1.0 - cloud * .70);
-	AO_LIGHT_AFFECT = 1.0;
-	BACKLIGHT = albedo * mix(.07, .20, blade) * (1.0 - cloud * .55);
+	AO = (grass_blade_shading_enabled ? mix(mix(.72, 1.0, blade), 1.0, terrain_lighting) : 1.0)
+		* (1.0 - cloud * .70);
+	AO_LIGHT_AFFECT = grass_blade_shading_enabled ? 1.0 - terrain_lighting : 0.0;
+	BACKLIGHT = grass_blade_shading_enabled
+		? albedo * mix(.07, .20, blade) * (1.0 - cloud * .55) * (1.0 - terrain_lighting) : vec3(0.0);
 	if (debug.x >= 0.0) {
 		ALBEDO = vec3(0.0);
 		EMISSION = debug;
@@ -241,9 +312,19 @@ void light() {
 	// accumulators are stage-local shader built-ins.
 	vec3 sun_view = normalize((VIEW_MATRIX * vec4(grass_primary_sun_direction, 0.0)).xyz);
 	float attenuation = ATTENUATION * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
-	float c_n_dot_l = max(min(dot(NORMAL, LIGHT), 1.0), 0.0);
+	// Read the planted up vector directly in default mode: neither the visible
+	// face nor a renderer backface-normal adjustment can darken one blade side.
+	vec3 lighting_normal = grass_blade_shading_enabled ? NORMAL : normalize(grass_terrain_up_view);
+	float c_n_dot_l = max(min(dot(lighting_normal, LIGHT), 1.0), 0.0);
 	float diffuse_brdf_nl = c_n_dot_l * (1.0 / PI);
-	DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
+	// The production terrain owns a custom ALBEDO-weighted direct-light
+	// expression. Approach that exact expression only in the distant band.
+	if (grass_terrain_light_blend > 0.0) {
+		vec3 diffuse_response = mix(vec3(diffuse_brdf_nl), ALBEDO * c_n_dot_l, grass_terrain_light_blend);
+		DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_response * attenuation;
+	} else {
+		DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
+	}
 	DIFFUSE_LIGHT += LIGHT_COLOR * ((1.0 / PI) - diffuse_brdf_nl) * BACKLIGHT * attenuation;
 	if (grass_light_full_shading > .5) {
 		float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);
@@ -256,6 +337,8 @@ void light() {
 		// Godot evaluates dot(vec3(f0), vec3(50.0 * .33)), hence three terms.
 		float f90 = clamp(f0 * (3.0 * 50.0 * .33), 0.0, 1.0);
 		float fresnel = f0 + (f90 - f0) * grass_schlick_fresnel(c_l_dot_h);
-		SPECULAR_LIGHT += vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
+		vec3 direct_specular = vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
+		if (grass_terrain_light_blend > 0.0) direct_specular *= 1.0 - grass_terrain_light_blend;
+		SPECULAR_LIGHT += direct_specular;
 	}
 }

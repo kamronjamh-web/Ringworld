@@ -338,6 +338,7 @@ public partial class RingSunshineCloudBridge : Node
 
     public override void _Ready()
     {
+        EnsureTerrainCloudSunVisibility();
         _driver = GetNodeOrNull<Node>(DriverPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
@@ -413,6 +414,7 @@ public partial class RingSunshineCloudBridge : Node
         AttachCompositorToTargetEnvironment();
         RefreshWeather();
         UpdateCloudFrame();
+        PublishTerrainCloudSunVisibility();
         UpdateVisibility(force: true);
         UpdateCloudShadows(0.0, force: true);
         int compositorEffectCount = _worldEnvironment?.Compositor?.CompositorEffects.Count ?? 0;
@@ -466,6 +468,7 @@ public partial class RingSunshineCloudBridge : Node
             effects.Add(effect);
             _worldEnvironment.Compositor.CompositorEffects = effects;
         }
+        RingLocalWeatherEffects.EnsureRainHazeCompositorLast(_worldEnvironment);
     }
 
     /// <summary>
@@ -486,10 +489,13 @@ public partial class RingSunshineCloudBridge : Node
             ApplyTemporalQualityTuning();
             SetProcess(true);
             UpdateVisibility(force: true);
+            PublishTerrainCloudSunVisibility();
             return;
         }
 
         CancelCloudShadowBuild();
+        if (_terrainCloudSunVisibility != null && GodotObject.IsInstanceValid(_terrainCloudSunVisibility))
+            _terrainCloudSunVisibility.UnregisterRequiredAltitudeRange("sunshine");
         RingCloudShadowProjector.ReleaseTextures();
         _shadowProjectorEnabled = false;
         _clouds?.Set("enabled", false);
@@ -515,6 +521,8 @@ public partial class RingSunshineCloudBridge : Node
 
     public override void _ExitTree()
     {
+        if (_terrainCloudSunVisibility != null && GodotObject.IsInstanceValid(_terrainCloudSunVisibility))
+            _terrainCloudSunVisibility.UnregisterRequiredAltitudeRange("sunshine");
         ResolveEffectiveCloudHandoff();
         if (_clouds != null && _externalTextureRetirementCallable is { } callback
             && _clouds.IsConnected("external_texture_retirement_requested", callback))
@@ -560,6 +568,7 @@ public partial class RingSunshineCloudBridge : Node
         _weatherElapsed += Math.Max(0.0, delta);
         if (_weatherElapsed >= Math.Max(0.05, WeatherRefreshSeconds)) RefreshWeather();
         UpdateCloudFrame();
+        PublishTerrainCloudSunVisibility();
         PublishFarCloudDetail();
         UpdateVisibility(force: false);
         UpdateCloudShadows(delta, force: false);
@@ -627,8 +636,10 @@ public partial class RingSunshineCloudBridge : Node
     /// </summary>
     public void ApplyCloudAppearanceTuning()
     {
+        ApplyCloudCullingTuning();
         SanitizeCloudAppearanceTuning();
         RefreshWeather();
+        ApplyTerrainHistoryTuning();
         ApplyCloudAppearanceScalarsToResource();
         PublishFarCloudDetail();
         // A non-selected provider owns the external-cloud handoff. Appearance
@@ -1033,7 +1044,11 @@ public partial class RingSunshineCloudBridge : Node
     /// bridge property alone does not update an already-running compositor.
     /// </summary>
     public void ApplyTemporalQualityTuning(bool refreshHistory = false)
-        => ApplyTuningToResource(refreshHistory, forceHistoryApply: true);
+    {
+        ApplyCloudCullingTuning();
+        ApplyHistoryPolicyTuning();
+        ApplyTuningToResource(refreshHistory, forceHistoryApply: true);
+    }
 
     public void SpawnStormFrontAhead()
     {
@@ -1212,6 +1227,7 @@ public partial class RingSunshineCloudBridge : Node
         CancelCloudShadowBuild();
         RefreshWeather();
         UpdateCloudFrame();
+        PublishTerrainCloudSunVisibility();
     }
 
     private static float SanitizeFinite(float value, float fallback, float minimum, float maximum)
@@ -1465,7 +1481,7 @@ public partial class RingSunshineCloudBridge : Node
         if (_clouds == null) return;
         float historyWeight = ResolveAppliedHistoryWeight(
             EffectiveHistoryWeight,
-            _lightningHistorySuppression,
+            LightningHistoryIsolationEnabled ? 0 : _lightningHistorySuppression,
             _sunHistorySuppression);
         if (!force && Mathf.IsEqualApprox(_lastAppliedHistoryWeight, historyWeight)) return;
         _clouds.Set("accumulation_decay", historyWeight);
@@ -1488,7 +1504,7 @@ public partial class RingSunshineCloudBridge : Node
             natural.SystemId, natural.SystemKind, natural.SystemInfluence, spawned.RadiiMeters.X,
             spawned.CenterMeters, spawned.RadiiMeters, spawned.OrientationRadians,
             natural.CloudCoverage, natural.PrecipitationPotential, natural.WindMetersPerSecond,
-            spawned.Profile, spawned.CloudBaseAboveDatumMeters, spawned.CloudTopAboveDatumMeters);
+            spawned.Profile, spawned.CloudBaseAboveDatumMeters, spawned.CloudTopAboveDatumMeters) { InheritWind = natural.InheritWind };
 
     }
 
@@ -1535,7 +1551,7 @@ public partial class RingSunshineCloudBridge : Node
                 SunshinePreviewWeatherSystemId, preview.Kind, 1.0f, preview.RadiiMeters.X,
                 preview.CenterMeters, preview.RadiiMeters, preview.OrientationRadians,
                 preview.Coverage, preview.Precipitation, Vector2.Zero, preview.Profile,
-                preview.CloudBaseAboveDatumMeters, preview.CloudTopAboveDatumMeters));
+                preview.CloudBaseAboveDatumMeters, preview.CloudTopAboveDatumMeters) { InheritWind = true });
         RefreshWeather();
         RefreshCloudCompute();
         GD.Print($"{preview.Label} at canonical {preview.CenterMeters}, radii={preview.RadiiMeters}m.");

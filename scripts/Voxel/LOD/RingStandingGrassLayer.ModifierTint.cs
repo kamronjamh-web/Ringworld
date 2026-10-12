@@ -11,13 +11,23 @@ public partial class RingStandingGrassLayer
     private readonly Dictionary<RingGrassTileKey, int> _grassModifierSlots = new();
     private readonly Stack<int> _freeGrassModifierSlots = new();
     private int _grassModifierCapacity;
+    private readonly record struct ModifierMaterialState(ulong AtlasId, bool Enabled, float Strength);
+    private readonly Dictionary<ulong, ModifierMaterialState> _grassModifierMaterialStates = new();
+    internal long ModifierParameterWrites { get; private set; }
 
     internal void ConfigureGrassModifierMaterial(ShaderMaterial? material)
     {
         if (material == null) return;
+        var state = new ModifierMaterialState(_grassModifierAtlas?.GetInstanceId() ?? 0,
+            EnableGrassModifiers && GrassModifierTintStrength > 0 && _grassModifierAtlas != null,
+            Mathf.Clamp(GrassModifierTintStrength, 0, 1));
+        ulong id = material.GetInstanceId();
+        if (_grassModifierMaterialStates.TryGetValue(id, out ModifierMaterialState previous) && state == previous) return;
         if (_grassModifierAtlas != null) material.SetShaderParameter("grass_modifier_atlas", _grassModifierAtlas);
-        material.SetShaderParameter("grass_modifier_enabled", EnableGrassModifiers && GrassModifierTintStrength > 0 && _grassModifierAtlas != null);
-        material.SetShaderParameter("grass_modifier_tint_strength", Mathf.Clamp(GrassModifierTintStrength, 0, 1));
+        material.SetShaderParameter("grass_modifier_enabled", state.Enabled);
+        material.SetShaderParameter("grass_modifier_tint_strength", state.Strength);
+        _grassModifierMaterialStates[id] = state;
+        ModifierParameterWrites += _grassModifierAtlas != null ? 3 : 2;
     }
     internal void ConfigureGrassModifierRenderer(MultiMeshInstance3D? renderer, RingGrassTileData data, RingLodGeometrySnapshot geometry)
     {
@@ -65,5 +75,5 @@ public partial class RingStandingGrassLayer
         for(int i=capacity-1;i>=slot;i--)_freeGrassModifierSlots.Push(i);
         ConfigureGrassModifierMaterial(_material); ConfigureGrassModifierMaterial(_intermediateMaterial);
     }
-    private void DisposeGrassModifierTint() { _grassModifierSlots.Clear(); _freeGrassModifierSlots.Clear(); _grassModifierAtlas?.Dispose(); _grassModifierAtlas=null; _grassModifierCapacity=0; }
+    private void DisposeGrassModifierTint() { _grassModifierSlots.Clear(); _freeGrassModifierSlots.Clear(); _grassModifierAtlas?.Dispose(); _grassModifierAtlas=null; _grassModifierCapacity=0; _grassModifierMaterialStates.Clear(); }
 }

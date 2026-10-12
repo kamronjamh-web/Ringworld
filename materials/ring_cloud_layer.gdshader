@@ -1,5 +1,7 @@
 shader_type spatial;
 render_mode unshaded, blend_premul_alpha, depth_draw_never, cull_disabled;
+uniform float terrain_cloud_receiver_height_meters = 0.0;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 
 uniform vec3 ring_center = vec3(0.0);
 uniform vec3 camera_world_position = vec3(0.0);
@@ -149,7 +151,10 @@ void fragment() {
 	// local noon.
 	float face_day_factor = ring_day_factor;
 	float shell_rim = pow(clamp(dot(normalize(inhabited_surface_up), normalize(sun_direction)), 0.0, 1.0), 2.0);
+	vec3 solar_ambient = day_cloud_shadow_color * mix(0.72, 1.0, cloud);
 	vec3 day_color = mix(day_cloud_shadow_color * mix(0.72, 1.0, cloud), day_cloud_color, clamp(cloud * 1.35 + shell_rim * 0.18, 0.0, 1.0));
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(vec3(canonical_meters.x, terrain_cloud_receiver_height_meters, canonical_meters.z));
+	day_color -= (day_color - solar_ambient) * (1.0 - terrain_sun);
 	vec3 underside_color = mix(night_cloud_color, day_color * vec3(0.78, 0.83, 0.92), ring_day_factor);
 	vec3 exterior_color = mix(night_cloud_color * 0.72, day_color * vec3(1.04, 1.02, 0.98), ring_day_factor);
 	vec3 cloud_color = mix(underside_color, exterior_color, exterior_weight);

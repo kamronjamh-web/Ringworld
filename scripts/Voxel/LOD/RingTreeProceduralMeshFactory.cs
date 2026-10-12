@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using RingworldTechDemo.Vegetation;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
@@ -62,7 +63,9 @@ internal static class RingTreeProceduralMeshFactory
 			AddLeafCluster(canopy, leafAnchors[i], .105f * scale, .075f * scale);
 		}
 
-		return new RingTreeMeshSet(trunk.Commit(), canopy.Commit());
+		ArrayMesh trunkMesh = trunk.Commit();
+		ArrayMesh canopyMesh = ImportedTreeWindAttachments.BakeCanopy(canopy.Commit(), trunkMesh);
+		return new RingTreeMeshSet(trunkMesh, canopyMesh);
 	}
 
 	private static void AddTaperedSegment(SurfaceTool surface, Vector3 start, Vector3 end, float startRadius, float endRadius, int sides)

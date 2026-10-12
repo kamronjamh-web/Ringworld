@@ -157,7 +157,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 232
+const GENERAL_DATA_FLOAT_COUNT := 276
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -248,6 +248,89 @@ var general_data : PackedByteArray
 # Ten vec4s, populated by RingSunshineCloudBridge. Keeping this as an
 # immutable value array makes every compositor callback snapshot self-contained.
 @export var ring_atmosphere_profile : Array[Vector4] = []
+@export var skip_empty_cloud_mask_samples : bool = true
+@export var depth_history_rejection_enabled : bool = true
+@export_range(0.25, 4.0) var history_depth_tolerance_multiplier : float = 1.0
+@export var cloud_history_compatibility_enabled : bool = true
+@export var lightning_history_isolation_enabled : bool = true
+var _history_reset_requested : bool = false
+
+# Reset temporal color only; GPU shadow and descriptor generations stay intact.
+func request_history_reset() -> void:
+	_history_reset_requested = true
+@export var terrain_cloud_sun_global_texture : Texture2D
+@export var terrain_cloud_sun_regional_texture : Texture2D
+@export var terrain_cloud_sun_profile : Array[Vector4] = []
+@export var terrain_cloud_sun_canonical_frame : Array[Vector4] = []
+var _terrain_sun_neutral := RID()
+var _terrain_sun_set := RID()
+var _terrain_sun_shader := RID()
+var _terrain_sun_bindings_present := false
+var _terrain_sun_texture_rids : Array[RID] = []
+var _terrain_sun_texture_refs : Array[Texture2D] = []
+var _terrain_sun_retired : Array[Dictionary] = []
+
+# Fixtures may supply a saved pre-atlas compute shader. Reflect only its
+# descriptor decorations once per shader generation; never bind an absent set.
+static func _has_terrain_sun_bindings(bytecode: PackedByteArray) -> bool:
+	var descriptor_sets := {}; var bindings := {}
+	var offset := 20 # SPIR-V header is five words.
+	while offset + 4 <= bytecode.size():
+		var instruction := bytecode.decode_u32(offset)
+		var words := int(instruction >> 16)
+		if words <= 0 or offset + words * 4 > bytecode.size(): return false
+		if (instruction & 65535) == 71 and words >= 4: # OpDecorate
+			var target := bytecode.decode_u32(offset + 4)
+			var decoration := bytecode.decode_u32(offset + 8)
+			var value := bytecode.decode_u32(offset + 12)
+			if decoration == 34: descriptor_sets[target] = value
+			elif decoration == 33: bindings[target] = value
+		offset += words * 4
+	var found := 0
+	for target in descriptor_sets:
+		if int(descriptor_sets[target]) == 1 and int(bindings.get(target, -1)) in [19,20]: found += 1
+	return found == 2
+
+func _retire_terrain_sun_sets(force := false) -> void:
+	var remaining : Array[Dictionary] = []
+	for entry in _terrain_sun_retired:
+		if force or render_callback_serial >= int(entry.release_after):
+			if rd.uniform_set_is_valid(entry.uniform_set): rd.free_rid(entry.uniform_set)
+		else: remaining.append(entry)
+	_terrain_sun_retired = remaining
+
+func _update_terrain_sun_set() -> void:
+	_retire_terrain_sun_sets()
+	if not _terrain_sun_neutral.is_valid():
+		var format := RDTextureFormat.new()
+		format.format = RenderingDevice.DATA_FORMAT_R32G32_SFLOAT
+		format.width = 1; format.height = 1
+		format.usage_bits = RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+		_terrain_sun_neutral = rd.texture_create(format, RDTextureView.new(), [PackedFloat32Array([1.0, 0.0]).to_byte_array()])
+	var textures : Array[Texture2D] = [terrain_cloud_sun_global_texture, terrain_cloud_sun_regional_texture]
+	var rids : Array[RID] = []
+	for texture in textures:
+		var texture_rid := _terrain_sun_neutral
+		if texture != null and is_instance_valid(texture):
+			var candidate := RenderingServer.texture_get_rd_texture(texture.get_rid())
+			if candidate.is_valid(): texture_rid = candidate
+		rids.append(texture_rid)
+	if _terrain_sun_set.is_valid() and rd.uniform_set_is_valid(_terrain_sun_set) and rids == _terrain_sun_texture_rids and _terrain_sun_shader == shader: return
+	if _terrain_sun_set.is_valid():
+		_terrain_sun_retired.append({"uniform_set":_terrain_sun_set, "textures":_terrain_sun_texture_refs,
+			"release_after":render_callback_serial + max(2, rd.get_frame_delay() + 2)})
+	var uniforms : Array[RDUniform] = []
+	for index in 2:
+		var uniform := RDUniform.new()
+		uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+		uniform.binding = 19 + index
+		uniform.add_id(linear_sampler_no_repeat); uniform.add_id(rids[index])
+		uniforms.append(uniform)
+	_terrain_sun_set = rd.uniform_set_create(uniforms, shader, 1)
+	_terrain_sun_shader = shader
+	_terrain_sun_texture_rids = rids
+	_terrain_sun_texture_refs = textures
+
 @export var cloud_handoff : Vector4 = Vector4.ZERO
 @export var cloud_weather_params : Vector4 = Vector4.ZERO
 @export var cloud_weather_frame : Vector4 = Vector4.ZERO
@@ -265,6 +348,7 @@ var previous_callback_gameplay_cloud_frame := {}
 var previous_callback_menu_around_precise : float = 0.0
 var previous_callback_bulk_wind := Vector2.ZERO
 var previous_callback_detail_wind := Vector3.ZERO
+var previous_callback_density_state : Array = []
 var filter_index = 0
 
 var last_render_target : RID
@@ -321,6 +405,8 @@ func publish_renderer_diagnostic_snapshot(size: Vector2i, raster_size: Vector2i,
 
 func get_temporal_history_diagnostics() -> Dictionary:
 	return {
+		"terrain_sun_descriptor_set_present": _terrain_sun_bindings_present,
+		"history_policy": Vector4(float(depth_history_rejection_enabled), history_depth_tolerance_multiplier, float(cloud_history_compatibility_enabled), float(lightning_history_isolation_enabled)),
 		"callback_serial": render_callback_serial,
 		"explicit_refresh_request_count": temporal_history_explicit_refresh_request_count,
 		"accumulation_resource_rebuild_count": temporal_history_accumulation_rebuild_count,
@@ -777,6 +863,12 @@ func clear_compute(preserve_general_data_buffers: bool = false, retire_generatio
 		# drain them before a full clear releases that ring.
 		retire_completed_gpu_cloud_shadow_cascades(true)
 		_retire_completed_generations(true)
+		_retire_terrain_sun_sets(true)
+		if _terrain_sun_set.is_valid() and rd.uniform_set_is_valid(_terrain_sun_set): rd.free_rid(_terrain_sun_set)
+		_terrain_sun_set = RID()
+		_terrain_sun_texture_refs.clear(); _terrain_sun_texture_rids.clear()
+		if _terrain_sun_neutral.is_valid(): rd.free_rid(_terrain_sun_neutral)
+		_terrain_sun_neutral = RID()
 		clear_gpu_cloud_shadow_resources()
 		if pipeline.is_valid():
 			rd.free_rid(pipeline)
@@ -979,6 +1071,7 @@ func initialize_compute():
 	
 	
 	var shader_spirv = compute_shader.get_spirv()
+	_terrain_sun_bindings_present = _has_terrain_sun_bindings(shader_spirv.get_stage_bytecode(RenderingDevice.SHADER_STAGE_COMPUTE))
 	shader = rd.shader_create_from_spirv(shader_spirv)
 	if shader.is_valid():
 		pipeline = rd.compute_pipeline_create(shader)
@@ -1492,6 +1585,7 @@ func _render_callback(effect_callback_type, render_data):
 				lights_updated = true
 
 			var framebuffer := FramebufferCacheRD.get_cache_multipass([buffers.get_color_layer(0, is_msaa_on), buffers.get_depth_layer(0, is_msaa_on)], [], view_count)
+			var deferred_msaa_end_markers: Array[String] = []
 			assert(framebuffer_format == rd.framebuffer_get_format(framebuffer))
 
 			var cameraTR : Transform3D = rendersceneData.get_cam_transform();
@@ -1578,9 +1672,11 @@ func _render_callback(effect_callback_type, render_data):
 
 				if gpu_timestamp_scope_active:
 					rd.capture_timestamp(gpu_timestamp_raymarch_begin)
+				if _terrain_sun_bindings_present: _update_terrain_sun_set()
 				var compute_list = rd.compute_list_begin()
 				rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
 				rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
+				if _terrain_sun_bindings_present: rd.compute_list_bind_uniform_set(compute_list, _terrain_sun_set, 1)
 				rd.compute_list_dispatch(compute_list, x_groups, y_groups, 1)
 				rd.compute_list_end()
 				if gpu_timestamp_scope_active:
@@ -1605,15 +1701,24 @@ func _render_callback(effect_callback_type, render_data):
 				rd.draw_list_draw(display_list, false, 1)
 				rd.draw_list_end()
 				if gpu_timestamp_scope_active:
-					rd.capture_timestamp(gpu_timestamp_composite_end)
+					if is_msaa_on: deferred_msaa_end_markers.append(gpu_timestamp_composite_end)
+					else: rd.capture_timestamp(gpu_timestamp_composite_end)
 				if gpu_timestamp_end_marker_for_scope != "":
-					rd.capture_timestamp(gpu_timestamp_end_marker_for_scope)
+					if is_msaa_on: deferred_msaa_end_markers.append(gpu_timestamp_end_marker_for_scope)
+					else: rd.capture_timestamp(gpu_timestamp_end_marker_for_scope)
 
 				# The compute commands that initialize color/density have now been
 				# submitted. Main-thread backdrop materials can bind this immutable
 				# wrapper on their following frame.
 				if view < cloud_backdrop_texture_wrappers.size():
 					cloud_backdrop_published_texture_wrappers[view] = cloud_backdrop_texture_wrappers[view]
+			if is_msaa_on:
+				# Godot resolves once before the POST_TRANSPARENT callback list.
+				# Publish all completed multiview display draws for subsequent
+				# effects and tonemapping, including dry frames.
+				for view in view_count:
+					rd.texture_resolve_multisample(buffers.get_color_layer(view, true), buffers.get_color_layer(view, false))
+				for marker in deferred_msaa_end_markers: rd.capture_timestamp(marker)
 			publish_renderer_diagnostic_snapshot(size, new_size, view_count, resscale, msaa_mode)
 
 			if (!positionResetting && positionQuerying):
@@ -1662,7 +1767,54 @@ func retrieve_position_queries(data : PackedByteArray):
 		#if (self.effect_callback_type != CompositorEffect.EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT):
 			#self.effect_callback_type = CompositorEffect.EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
 
+# Density continuity is an approximation at the configured integration scale,
+# not a claim that a moving field is identical. Shape/power changes exceeding
+# 0.1% and advection exceeding min(0.1 ray step, 0.1% noise scale) retire history.
+# Ordinary tiny drift remains eligible for stochastic sky-edge accumulation.
+func _capture_density_state() -> Array:
+	var shape: Array = [clouds_coverage, clouds_density, clouds_sharpness, clouds_detail_power,
+		wind_swept_range, wind_swept_strength, curl_noise_strength, extra_large_noise_scale,
+		large_noise_scale, medium_noise_scale, small_noise_scale, cloud_floor, cloud_ceiling,
+		min_step_distance, max_step_distance, max_step_count, lod_bias, ring_width_meters,
+		cloud_frame_up.w, cloud_handoff.x, cloud_handoff.y, cloud_handoff.z, float(extra_large_used_as_mask), mask_width_km, cloud_weather_params.x,
+		cloud_weather_params.y, cloud_weather_params.z, cloud_weather_frame.w]
+	for value in [storm_shape,storm_detail,background_altitude,storm_altitude]:
+		shape.append_array([value.x,value.y,value.z,value.w])
+	shape.append_array([storm_system.z,storm_system.w])
+	return [shape, [extra_large_noise_patterns,height_gradient,large_scale_noise,medium_scale_noise,
+		small_scale_noise,curl_noise], [extra_large_scale_clouds_position,large_scale_clouds_position,
+		medium_scale_clouds_position,detail_clouds_position], storm_system,cloud_weather_frame,
+		cloud_weather_params.w, point_effector_data.duplicate()]
+
+static func _small_density_delta(a: float,b: float) -> bool:
+	return is_finite(a) and is_finite(b) and absf(a-b) <= 0.0001 + 0.001*maxf(absf(a),absf(b))
+
+func _density_state_continuous(current: Array, previous: Array) -> bool:
+	if previous.size() != current.size() or current[0].size() != previous[0].size(): return false
+	if current[1] != previous[1] or current[5] != previous[5] or current[6] != previous[6]: return false
+	for index in current[0].size():
+		if not _small_density_delta(float(current[0][index]),float(previous[0][index])): return false
+	var scales := [extra_large_noise_scale,large_noise_scale,medium_noise_scale,small_noise_scale]
+	for index in 4:
+		var movement: Vector3 = current[2][index]-previous[2][index]
+		var noise_allowance := minf(maxf(min_step_distance,1.0)*0.1,maxf(float(scales[index]),1.0)*0.001)
+		if not _gameplay_vector_is_finite(movement) or movement.length() > noise_allowance: return false
+	var allowance := minf(maxf(min_step_distance,1.0)*0.1,maxf(cloud_weather_params.y,1.0)*0.001)
+	var storm_delta := Vector2(current[3].x-previous[3].x,current[3].y-previous[3].y)
+	if not is_finite(storm_delta.x) or not is_finite(storm_delta.y) or storm_delta.length() > allowance: return false
+	var weather: Vector4 = current[4]; var old_weather: Vector4 = previous[4]
+	if weather.x != old_weather.x: return false
+	var around_delta := weather.y-old_weather.y
+	if weather.x > 0.0: around_delta = fposmod(around_delta+weather.x*0.5,weather.x)-weather.x*0.5
+	var weather_delta := Vector2(around_delta,weather.z-old_weather.z)
+	return is_finite(weather_delta.x) and is_finite(weather_delta.y) and weather_delta.length() <= allowance
+
+static func _gameplay_vector_is_finite(value: Vector3) -> bool:
+	return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
+
 func update_matrices(camera_tr, view_proj, new_size: Vector2i):
+	var current_density_state: Array = [] if menu_temporal_sampling else _capture_density_state()
+	var density_continuous := not menu_temporal_sampling and not first_run and not ignore_accumilation and _density_state_continuous(current_density_state,previous_callback_density_state)
 	var current_gameplay_frame: Dictionary = gameplay_cloud_frame_snapshot
 	if general_data.size() != GENERAL_DATA_BUFFER_BYTES:
 		general_data.resize(GENERAL_DATA_BUFFER_BYTES)
@@ -1884,6 +2036,9 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		gameplay_remap_valid = bool(remap_result.valid)
 		mapped_previous_camera = remap_result.mapped_camera as Transform3D
 	var packed_accumulation_decay := accumulation_decay if !ignore_accumilation and !menu_frame_discontinuity and (menu_temporal_sampling or first_run or not gameplay_frame_contract_supplied or gameplay_remap_valid) else 0.0
+	if _history_reset_requested or (cloud_history_compatibility_enabled and not menu_temporal_sampling and not first_run and not density_continuous):
+		packed_accumulation_decay = 0.0
+		_history_reset_requested = false
 	temporal_history_last_requested_decay = accumulation_decay
 	temporal_history_last_packed_decay = packed_accumulation_decay
 	if packed_accumulation_decay == 0.0:
@@ -1984,7 +2139,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	general_data.encode_float(idx, -bulk_delta.y); idx += 4
 	general_data.encode_float(idx, menu_sample_phase); idx += 4
 	general_data.encode_float(idx, bulk_delta.x); idx += 4
-	general_data.encode_float(idx, 1.0 if menu_history_static else 0.0); idx += 4
+	general_data.encode_float(idx, 1.0 if (menu_history_static if menu_temporal_sampling else density_continuous) else 0.0); idx += 4
 	general_data.encode_float(idx, 1.0 if diagnostic_menu_history_weights else 0.0); idx += 4
 	# Append-only shared atmosphere ABI. Missing/default values deliberately
 	# disable the path for standalone addon scenes and menu fixtures.
@@ -1999,11 +2154,26 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		general_data.encode_float(idx, value.y); idx += 4
 		general_data.encode_float(idx, value.z); idx += 4
 		general_data.encode_float(idx, value.w); idx += 4
+	# Append-only cloud mask controls; reserved components remain zero.
+	general_data.encode_float(idx, 1.0 if skip_empty_cloud_mask_samples else 0.0); idx += 4
+	for unused in 3:
+		general_data.encode_float(idx, 0.0); idx += 4
+	for value in [1.0 if depth_history_rejection_enabled else 0.0, clampf(history_depth_tolerance_multiplier, 0.25, 4.0) if is_finite(history_depth_tolerance_multiplier) else 1.0, 1.0 if cloud_history_compatibility_enabled else 0.0, 1.0 if lightning_history_isolation_enabled else 0.0]:
+		general_data.encode_float(idx, value); idx += 4
+	for profile_index in 5:
+		var value := terrain_cloud_sun_profile[profile_index] if terrain_cloud_sun_profile.size() == 5 else Vector4.ZERO
+		for component in [value.x, value.y, value.z, value.w]:
+			general_data.encode_float(idx, component); idx += 4
+	for frame_index in 4:
+		var value := terrain_cloud_sun_canonical_frame[frame_index] if terrain_cloud_sun_canonical_frame.size() == 4 else Vector4.ZERO
+		for component in [value.x, value.y, value.z, value.w]:
+			general_data.encode_float(idx, component); idx += 4
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
 	previous_callback_bulk_wind = current_bulk_wind
 	previous_callback_detail_wind = detail_clouds_position
 	previous_callback_camera_transform = camera_tr
 	previous_callback_camera_projection = view_proj
+	previous_callback_density_state = current_density_state
 	first_run = false
 	#
 	#general_data.encode_float(idx, last_size.x); idx += 4

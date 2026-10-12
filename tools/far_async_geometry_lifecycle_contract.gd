@@ -18,6 +18,7 @@ var _render_capture_phase := 0
 var _render_phase_frame := 0
 var _terrain_reference: Image
 var _terrain_nodes: Array[MeshInstance3D] = []
+var _finished := false
 const CAPTURE_PATH := "res://.godot/far_adaptive_geometry_rendered.png"
 
 func _initialize() -> void:
@@ -38,6 +39,8 @@ func _initialize() -> void:
 	root.add_child(_scene)
 
 func _process(_delta: float) -> bool:
+	if _finished:
+		return false
 	_frames += 1
 	if _frames < 3:
 		return false
@@ -82,8 +85,7 @@ func _process(_delta: float) -> bool:
 		if _rendered:
 			_lifecycle_pass = true
 			return _wait_rendered_capture()
-		_scene.queue_free()
-		quit(0)
+		_finish_success()
 	elif result != "PENDING":
 		push_error("FAR_ASYNC_GEOMETRY_LIFECYCLE_CONTRACT=FAIL %s" % result)
 		_scene.queue_free()
@@ -205,9 +207,26 @@ func _wait_rendered_capture() -> bool:
 		return false
 	print("FAR_GEOMETRY_GPU_SUBMISSION_CONTRACT=PASS requested=4096x64 resolution=1.0 actual=%dx%d tiles=%d terrain_changed_samples=%d terrain_max_delta=%f screenshot=%s visual_acceptance=pending" % [
 		int(_far.get("ActiveGlobalAroundSegments")), int(_far.get("ActiveGlobalAcrossSegments")), resident, changed_samples, maximum_delta, ProjectSettings.globalize_path(CAPTURE_PATH)])
-	_scene.queue_free()
-	quit(0)
+	_finish_success()
 	return false
+
+func _finish_success() -> void:
+	_finished = true
+	_terrain_nodes.clear()
+	_terrain_reference = null
+	_scene.queue_free()
+	_scene = null
+	_far = null
+	# Scene exit queues compositor/RenderingDevice cleanup on the render thread.
+	# Keep the engine alive to process that work before final server shutdown.
+	await process_frame
+	if _rendered:
+		await RenderingServer.frame_post_draw
+	await process_frame
+	if _rendered:
+		await RenderingServer.frame_post_draw
+	print("FAR_ASYNC_GEOMETRY_FIXTURE_CLEANUP=PASS")
+	quit(0)
 
 func _prepare_terrain_only(node: Node) -> void:
 	if node is MeshInstance3D:

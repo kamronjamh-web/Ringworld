@@ -272,6 +272,7 @@ public partial class RingCloudProviderController : Node
             effects.Add(effect);
             _worldEnvironment.Compositor.CompositorEffects = effects;
         }
+        RingLocalWeatherEffects.EnsureRainHazeCompositorLast(_worldEnvironment);
     }
 
     private void ApplyClpQuality()
@@ -323,8 +324,8 @@ public partial class RingCloudProviderController : Node
             new Vector2(halfWidth * 1.75f, halfWidth), 0.0f,
             Mathf.Lerp(_preStormCoverage, targetCoverage, influence), Mathf.Pow(influence, 1.35f),
             // The front center advances toward decreasing canonical-around values.
-            new Vector2(-ClpStormFrontSpeedMetersPerSecond, 0), CloudFormationProfile.AnvilStorm,
-            ClpCloudBaseMeters, Mathf.Lerp(_preStormTopMeters, targetTop, influence));
+            new Vector2(-Mathf.Lerp(2.2f, RingworldTechDemo.Weather.RingWindSettings.Current.StormWindSpeed, influence), 0), CloudFormationProfile.AnvilStorm,
+            ClpCloudBaseMeters, Mathf.Lerp(_preStormTopMeters, targetTop, influence)) { InheritWind = true };
         _weatherEffects?.SetExternalWeatherOverride(true, storm);
     }
 

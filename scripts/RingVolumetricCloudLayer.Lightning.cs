@@ -36,6 +36,7 @@ public partial class RingVolumetricCloudLayer
     {
         if (string.IsNullOrWhiteSpace(ownerKey)) return;
         if (_manualWeather.TryGetValue(ownerKey, out LocalWeatherState existing) && existing.Equals(weather)) return;
+        RecordManualWind(ownerKey, weather);
         _manualWeather[ownerKey] = weather;
         ManualWeatherRevision++;
         _nextLightningLocalPriorityRefresh = 0.0;
@@ -44,7 +45,7 @@ public partial class RingVolumetricCloudLayer
     public void UnregisterManualWeather(string ownerKey)
     {
         if (string.IsNullOrWhiteSpace(ownerKey)) return;
-        if (_manualWeather.Remove(ownerKey)) { ManualWeatherRevision++; _nextLightningLocalPriorityRefresh = 0.0; }
+        if (_manualWeather.Remove(ownerKey)) { RecordManualWind(ownerKey, null); ManualWeatherRevision++; _nextLightningLocalPriorityRefresh = 0.0; }
     }
     public void unregister_manual_weather(string owner_key) => UnregisterManualWeather(owner_key);
 
@@ -98,7 +99,7 @@ public partial class RingVolumetricCloudLayer
             systemId, WeatherSystemKind.MajorFront, 1.0f, radius,
             new Vector2((float)WrapAround(around), (float)across), new Vector2(radius, radius * 0.6f),
             0.0f, 1.0f, 1.0f, Vector2.Zero, CloudFormationProfile.Cumulonimbus,
-            CloudBaseMeters, CloudTopMeters));
+            CloudBaseMeters, CloudTopMeters) { InheritWind = true });
     }
     public void register_manual_weather_at(string owner, double around, double across, float radius, int system_id = -9001) =>
         RegisterManualWeatherAt(owner, around, across, radius, system_id);
@@ -295,11 +296,11 @@ public partial class RingVolumetricCloudLayer
     }
     private static float Unit(uint hash) => (hash & 0x00ffffff) / 16777215.0f;
 
-    private LocalWeatherState ApplyManualWeather(in RingCanonicalPosition position, LocalWeatherState natural)
+    private LocalWeatherState ApplyManualWeather(in RingCanonicalPosition position, LocalWeatherState natural, double? historyTime = null)
     {
         if (_grid == null) return natural;
         LocalWeatherState best = natural;
-        foreach (LocalWeatherState manual in _manualWeather.Values)
+        foreach (LocalWeatherState manual in historyTime.HasValue ? ManualWindStatesAt(historyTime.Value) : _manualWeather.Values)
         {
             if (manual.SystemId == 0 || manual.SystemRadiiMeters.X <= 0 || manual.SystemRadiiMeters.Y <= 0) continue;
             double da = position.AroundMeters - manual.SystemCenterMeters.X;

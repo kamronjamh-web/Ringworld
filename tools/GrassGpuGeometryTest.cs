@@ -9,8 +9,8 @@ public partial class GrassGpuGeometryTest : RefCounted
     {
         try
         {
-            Validate(RingGrassMeshFactory.CreateClump(), RingGrassMeshFactory.CreateClump(2), 32, 16);
-            Validate(RingGrassMeshFactory.CreateIntermediateClump(), RingGrassMeshFactory.CreateIntermediateClump(true), 16, 8);
+            Validate(RingGrassMeshFactory.CreateClump(), RingGrassMeshFactory.CreateClump(2), 32, 16, 40, 24);
+            Validate(RingGrassMeshFactory.CreateIntermediateClump(), RingGrassMeshFactory.CreateIntermediateClump(true), 16, 8, 32, 16);
             ValidateGates();
             ValidateGameplayDefaults();
             return true;
@@ -18,7 +18,7 @@ public partial class GrassGpuGeometryTest : RefCounted
         catch (Exception error) { GD.PushError("GRASS_GPU_GEOMETRY=FAIL " + error.Message); return false; }
     }
 
-    private static void Validate(Mesh baseline, Mesh candidate, int baselineTriangles, int candidateTriangles)
+    private static void Validate(Mesh baseline, Mesh candidate, int baselineTriangles, int candidateTriangles, int baselineVertices, int candidateVertices)
     {
         using (baseline)
         using (candidate)
@@ -33,7 +33,10 @@ public partial class GrassGpuGeometryTest : RefCounted
             Vector2[] uvs = reduced[(int)Mesh.ArrayType.TexUV].AsVector2Array();
             float[] originalMetadata = source[(int)Mesh.ArrayType.Custom0].AsFloat32Array();
             float[] metadata = reduced[(int)Mesh.ArrayType.Custom0].AsFloat32Array();
-            Require(original.Length == baselineTriangles * 3 && vertices.Length == candidateTriangles * 3, "triangle budget changed");
+            int[] originalIndices = source[(int)Mesh.ArrayType.Index].AsInt32Array();
+            int[] indices = reduced[(int)Mesh.ArrayType.Index].AsInt32Array();
+            Require(originalIndices.Length == baselineTriangles * 3 && indices.Length == candidateTriangles * 3, "triangle budget changed");
+            Require(original.Length == baselineVertices && vertices.Length == candidateVertices, "adopted geometry unique vertex budget changed");
             Require(normals.Length == vertices.Length && uvs.Length == vertices.Length && metadata.Length == vertices.Length * 4, "missing geometry attributes");
             int roots = 0, tips = 0;
             for (int i = 0; i < vertices.Length; i++)
@@ -58,11 +61,11 @@ public partial class GrassGpuGeometryTest : RefCounted
                     && relative.X <= extent.X + .00001f && relative.Y <= extent.Y + .00001f && relative.Z <= extent.Z + .00001f, "mesh bounds exclude a vertex");
             }
             Require(roots > 0 && tips > 0, "pinned roots or normalized tips missing");
-            for (int i = 0; i < vertices.Length; i += 3)
+            for (int i = 0; i < indices.Length; i += 3)
             {
-                Vector3 cross = (vertices[i + 1] - vertices[i]).Cross(vertices[i + 2] - vertices[i]);
+                Vector3 cross = (vertices[indices[i + 1]] - vertices[indices[i]]).Cross(vertices[indices[i + 2]] - vertices[indices[i]]);
                 Require(cross.Length() > .000001f, "degenerate reduced triangle");
-                Require((-cross.Normalized()).Dot(normals[i]) > .85f, "clockwise winding changed");
+                Require((-cross.Normalized()).Dot(normals[indices[i]]) > .85f, "clockwise winding changed");
             }
         }
     }

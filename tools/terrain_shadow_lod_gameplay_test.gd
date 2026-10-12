@@ -89,7 +89,7 @@ func create_game() -> Node:
 func install_preferences(next: Node) -> void:
 	var drawer := next.get_node_or_null("LiveTuningDrawer")
 	if drawer == null: return
-	for item in [["InstallGrassDefaults","grass.tres"], ["InstallVegetationDefaults","vegetation.tres"], ["InstallWaterDefaults","water.tres"], ["InstallAntiAliasingDefaults","anti_aliasing.tres"], ["InstallShadowDefaults","shadows.tres"], ["InstallSurfaceTerrainDefaults","surface.tres"], ["InstallAtmosphereDefaults","atmosphere.tres"]]: drawer.call(str(item[0]), fixture.path_join(str(item[1])))
+	for item in [["InstallGrassDefaults","grass.tres"], ["InstallVegetationDefaults","vegetation.tres"], ["InstallWaterDefaults","water.tres"], ["InstallAntiAliasingDefaults","anti_aliasing.tres"], ["InstallShadowDefaults","shadows.tres"], ["InstallSurfaceTerrainDefaults","surface.tres"], ["InstallAtmosphereDefaults","atmosphere.tres"], ["InstallWindDefaults","wind.tres"], ["InstallRainHazeDefaults","rain_haze.tres"]]: drawer.call(str(item[0]), fixture.path_join(str(item[1])))
 
 func wait_ready() -> bool:
 	var stable := 0; var deadline := Time.get_ticks_msec() + 60000
@@ -127,6 +127,9 @@ func wait_shadow_data(label: String) -> void:
 		var masks_ready := bool(state.native.get("macro_texture", false)) and bool(state.global.get("macro_texture", false))
 		if label.begins_with("night"):
 			masks_ready = masks_ready and bool(global_lod.get("PlanetMacroShadowMaskActive")) and bool(state.native.get("planet_texture", false)) and bool(state.global.get("planet_texture", false)) and direction_matches(state.native.get("planet_direction"), planet.global_transform.basis.z.normalized())
+		for lod in lod_snapshot():
+			if bool(lod.StreamingActive) and bool(lod.CastTerrainShadows) and int(lod.SampleSpacingMeters) == 2:
+				masks_ready = masks_ready and bool(lod.ShadowIgnoresTerrainFade) and int(lod.visible_opaque_shadow_meshes) > 0
 		if masks_ready: return
 	fail("shadow masks did not settle for " + label + ": " + JSON.stringify(receiver_snapshot()))
 
@@ -143,11 +146,26 @@ func capture(label: String) -> void:
 	snapshot["planet_far_direction"] = (grid.global_basis.orthonormalized().inverse() * planet.global_basis.z).normalized()
 	var coverage := float(snapshot.terrain_shadow_coverage_meters)
 	var active_lods := 0
-	for lod in snapshot.lods:
+	var casting_chain_end := 0.0
+	var ordered_lods: Array = snapshot.lods.duplicate()
+	ordered_lods.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return int(a.SampleSpacingMeters) < int(b.SampleSpacingMeters))
+	for lod in ordered_lods:
 		var extent := maxf(float(lod.get("FadeEndMeters", 0.0)), float(lod.get("FadeOutEndMeters", 0.0)))
 		if bool(lod.get("StreamingActive", false)) and extent > 0.0: active_lods += 1
-		if bool(lod.get("StreamingActive", false)) and float(lod.get("FadeStartMeters", 0.0)) <= coverage and extent >= 0.0 and not bool(lod.get("CastTerrainShadows", false)): return fail("local-atlas proxy LOD lacks caster: " + JSON.stringify(lod))
+		if bool(lod.StreamingActive) and casting_chain_end < coverage:
+			# Visual ownership changes at the midpoint, not the overlap start.
+			# Persistent casters remove radial fades, but keep ownership atlas holes.
+			var near_handoff := (float(lod.FadeStartMeters) + float(lod.FadeEndMeters)) * .5
+			var far_handoff := (float(lod.FadeOutStartMeters) + float(lod.FadeOutEndMeters)) * .5
+			var nearest := int(lod.SampleSpacingMeters) == 2
+			if not bool(lod.CastTerrainShadows) or int(lod.visible_opaque_shadow_meshes) <= 0 or (not nearest and near_handoff > casting_chain_end + 1.0):
+				return fail("terrain caster chain has a gap before required range: " + JSON.stringify({"covered_through":casting_chain_end,"required_range":coverage,"lod":lod}))
+			casting_chain_end = maxf(casting_chain_end, far_handoff)
+		if bool(lod.StreamingActive) and bool(lod.CastTerrainShadows) and int(lod.SampleSpacingMeters) == 2:
+			if not bool(lod.ShadowIgnoresTerrainFade) or int(lod.visible_opaque_shadow_meshes) <= 0: return fail("nearest 2m proxy lacks persistent visible opaque shadow meshes: " + JSON.stringify(lod))
 	if active_lods == 0: return fail("no active proxy LODs to audit")
+	if casting_chain_end + 1.0 < coverage: return fail("terrain caster chain ends before required range: " + str(casting_chain_end) + " < " + str(coverage))
+	snapshot["casting_chain_covered_through_meters"] = casting_chain_end
 	report.captures.append(snapshot)
 
 func native_cast_shadow() -> int:
@@ -161,7 +179,11 @@ func lod_snapshot() -> Array:
 	for level in all_nodes(game):
 		var script = level.get_script()
 		if script == null or not script.resource_path.ends_with("/RingTerrainProxySector.cs"): continue
-		result.append({"LodLabel":level.get("LodLabel"), "StreamingActive":level.get("StreamingActive"), "Visible":level.get("Visible"), "CastTerrainShadows":level.get("CastTerrainShadows"), "ActiveSectorCount":level.get("ActiveSectorCount"), "FadeStartMeters":level.get("FadeStartMeters"), "FadeEndMeters":level.get("FadeEndMeters"), "FadeOutStartMeters":level.get("FadeOutStartMeters"), "FadeOutEndMeters":level.get("FadeOutEndMeters"), "ShadowIgnoresTerrainFade":level.get("ShadowIgnoresTerrainFade")})
+		var visible_opaque_shadow_meshes := 0
+		for candidate in all_nodes(level):
+			if candidate is MeshInstance3D and candidate.name == "OpaqueShadowCaster" and candidate.is_visible_in_tree() and candidate.mesh != null and candidate.cast_shadow == GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY:
+				visible_opaque_shadow_meshes += 1
+		result.append({"LodLabel":level.get("LodLabel"), "SampleSpacingMeters":level.get("SampleSpacingMeters"), "StreamingActive":level.get("StreamingActive"), "Visible":level.get("Visible"), "CastTerrainShadows":level.get("CastTerrainShadows"), "ActiveSectorCount":level.get("ActiveSectorCount"), "FadeStartMeters":level.get("FadeStartMeters"), "FadeEndMeters":level.get("FadeEndMeters"), "FadeOutStartMeters":level.get("FadeOutStartMeters"), "FadeOutEndMeters":level.get("FadeOutEndMeters"), "ShadowIgnoresTerrainFade":level.get("ShadowIgnoresTerrainFade"), "visible_opaque_shadow_meshes":visible_opaque_shadow_meshes})
 	return result
 
 func receiver_snapshot() -> Dictionary:

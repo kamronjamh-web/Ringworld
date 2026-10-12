@@ -41,14 +41,11 @@ void fragment() {
 	float x = UV.x + UV.y * wind * 0.08 + sin(phase) * wind;
 	float body = 0.28 + 0.52 * wisps(x * 9.0 + cell_phase)
 		+ 0.20 * wisps(x * 25.0 + cell_phase + sin(phase * 8.0) * 0.4);
-	float detail_fade = 1.0 - smoothstep(0.2, 0.6, fwidth(UV.x * 96.0));
-	float streak = 1.0 + 0.07 * detail_fade
-		* sin((UV.x * 96.0 + UV.y * 2.0) * 6.28318530718 - phase * 1024.0);
 	float footprint = clamp(storm_weight(storm_offset + (UV.x - 0.5) * storm_right_delta)
 		/ max(0.001, storm_weight(storm_offset)), 0.0, 1.0);
 	float effective_day = ringworld_effective_solar_day(geometric_day) * clamp(sun_energy, 0.0, 1.0);
 	ALBEDO = rain_tint.rgb * mix(0.035, 0.65, effective_day);
 	float edge = smoothstep(0.0, 0.2, UV.x) * smoothstep(0.0, 0.2, 1.0 - UV.x)
 		* smoothstep(0.0, 0.16, UV.y) * smoothstep(0.0, 0.12, 1.0 - UV.y);
-	ALPHA = clamp(opacity * body * streak * edge * footprint * 0.65, 0.0, 0.8);
+	ALPHA = clamp(opacity * body * edge * footprint * 0.65, 0.0, 0.8);
 }

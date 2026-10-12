@@ -62,6 +62,33 @@ public partial class GameplayCloudTuningProbe : RefCounted
             && !defaults.SetOverride(bridge, "DayCloudAmbientColor", new Color(.62f, .74f, .83f, 1.0f));
     }
 
+    public bool VerifyCullingPreferenceContract(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal) || isolatedPath.Contains("..", StringComparison.Ordinal)) return false;
+        using var bridge = new RingSunshineCloudBridge();
+        try
+        {
+            System.IO.File.Delete(ProjectSettings.GlobalizePath(isolatedPath));
+            var defaults = new GameplayCloudDefaults(isolatedPath); defaults.Initialize(bridge);
+            bool authored = bridge.SkipEmptyCloudMaskSamples && bridge.FarCloudPatchCullingEnabled;
+            bool edits = defaults.SetOverride(bridge, "SkipEmptyCloudMaskSamples", false)
+                && defaults.SetOverride(bridge, "FarCloudPatchCullingEnabled", false)
+                && !defaults.SetOverride(bridge, "SkipEmptyCloudMaskSamples", 0)
+                && !defaults.SetOverride(bridge, "FarCloudPatchCullingEnabled", 1);
+            defaults.OnGraphicsPresetApplied(bridge, new[] { "RaymarchSteps", "LightingSteps" });
+            bool preset = !bridge.SkipEmptyCloudMaskSamples && !bridge.FarCloudPatchCullingEnabled;
+            bool saved = defaults.Save();
+            bridge.SkipEmptyCloudMaskSamples = bridge.FarCloudPatchCullingEnabled = true;
+            defaults.LoadAndApply(bridge);
+            bool reloaded = !bridge.SkipEmptyCloudMaskSamples && !bridge.FarCloudPatchCullingEnabled
+                && defaults.Settings.Overrides.ContainsKey("SkipEmptyCloudMaskSamples") && defaults.Settings.Overrides.ContainsKey("FarCloudPatchCullingEnabled");
+            defaults.Reset(bridge);
+            return authored && edits && preset && saved && reloaded && bridge.SkipEmptyCloudMaskSamples
+                && bridge.FarCloudPatchCullingEnabled && defaults.Settings.Overrides.Count == 0;
+        }
+        finally { System.IO.File.Delete(ProjectSettings.GlobalizePath(isolatedPath)); }
+    }
+
     private static bool Verify(GameplayCloudDefaults defaults, RingSunshineCloudBridge bridge, string key, Variant value)
     {
         if (!defaults.SetOverride(bridge, key, value)) return false;
@@ -74,6 +101,43 @@ public partial class GameplayCloudTuningProbe : RefCounted
             Variant.Type.Color => current.VariantType == Variant.Type.Color && current.AsColor() == value.AsColor(),
             _ => false
         };
+    }
+
+    public bool VerifyTerrainHistoryPreferenceContract(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal) || isolatedPath.Contains("..", StringComparison.Ordinal)) return false;
+        string absolute = ProjectSettings.GlobalizePath(isolatedPath);
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(absolute)!);
+        using var bridge = new RingSunshineCloudBridge();
+        try
+        {
+            System.IO.File.Delete(absolute);
+            var defaults = new GameplayCloudDefaults(isolatedPath); defaults.Initialize(bridge);
+            bool baseline = bridge.TerrainCloudShadowEnabled && bridge.DepthHistoryRejectionEnabled
+                && bridge.CloudHistoryCompatibilityEnabled && bridge.LightningHistoryIsolationEnabled
+                && bridge.HistoryDepthToleranceMultiplier == 1 && bridge.StationaryHistoryWeight == .95f;
+            foreach (string key in new[] { "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled" })
+                if (!defaults.SetOverride(bridge, key, false) || defaults.SetOverride(bridge, key, 0)) return false;
+            if (!defaults.SetOverride(bridge, "TerrainCloudShadowStrength", 0)
+                || !defaults.SetOverride(bridge, "HistoryDepthToleranceMultiplier", .25f)
+                || !defaults.SetOverride(bridge, "TerrainCloudShadowGlobalAroundResolution", 768)
+                || bridge.TerrainCloudShadowGlobalAroundResolution != 1024
+                || defaults.SetOverride(bridge, "TerrainCloudShadowRefreshSeconds", double.NaN)) return false;
+            defaults.OnGraphicsPresetApplied(bridge, new[] { "RaymarchSteps", "LightingSteps" });
+            if (!defaults.Save()) return false;
+            var loaded = new GameplayCloudDefaults(isolatedPath); loaded.Initialize(bridge);
+            bool preserved = !bridge.TerrainCloudShadowEnabled && bridge.TerrainCloudShadowStrength == 0
+                && !bridge.DepthHistoryRejectionEnabled && !bridge.CloudHistoryCompatibilityEnabled
+                && !bridge.LightningHistoryIsolationEnabled && bridge.HistoryDepthToleranceMultiplier == .25f
+                && loaded.Settings.Overrides["TerrainCloudShadowStrength"].AsDouble() == 0
+                && loaded.Settings.Overrides["TerrainCloudShadowEnabled"].VariantType == Variant.Type.Bool;
+            defaults.Reset(bridge);
+            return baseline && preserved && bridge.TerrainCloudShadowEnabled && bridge.TerrainCloudShadowStrength == 1
+                && bridge.DepthHistoryRejectionEnabled && bridge.CloudHistoryCompatibilityEnabled
+                && bridge.LightningHistoryIsolationEnabled && bridge.HistoryDepthToleranceMultiplier == 1
+                && bridge.StationaryHistoryWeight == .95f && defaults.Settings.Overrides.Count == 0;
+        }
+        finally { System.IO.File.Delete(absolute); }
     }
 
     public bool Save() => _defaults?.Save() == true;

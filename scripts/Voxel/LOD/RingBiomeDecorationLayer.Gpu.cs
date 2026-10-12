@@ -859,7 +859,7 @@ public partial class RingBiomeDecorationLayer
         var rows = new float[transforms.Length * 12]; var meta = new Vector4[transforms.Length]; Aabb bounds = default;
         for (int i = 0; i < transforms.Length; i++)
         { WriteGpuTreeTransform(rows, i * 12, transforms[i]); meta[i] = new Vector4(ranks[i], protectedRoots[i] ? 1 : 0, 0, 0);
-            Aabb next = transforms[i] * meshes[0].GetAabb(); bounds = i == 0 ? next : bounds.Merge(next); }
+            Aabb next = TreeWindDeformationBounds(transforms[i], meshes[0].GetAabb()); bounds = i == 0 ? next : bounds.Merge(next); }
         var key = new GpuGroupKey(0, 0, 0);
         _gpuTreeGroups[key] = new GpuTreeGroup { Key = key, Roots = Array.Empty<CachedTree>(), Rows = rows, Metadata = meta, Bounds = bounds.Grow(8), HasProtected = Array.Exists(meta, item => item.Y > .5f) };
         GpuTreeSourceEpoch++;
@@ -939,7 +939,7 @@ public partial class RingBiomeDecorationLayer
             (double aroundOrigin, double acrossOrigin) = VegetationTileCenter(new VegetationTileKey(tileAround[g], tileAcross[g]), layout);
             long stableAroundOrigin = (long)aroundOrigin; int stableAcrossOrigin = (int)acrossOrigin;
             Vector2 minimum = new(float.PositiveInfinity, float.PositiveInfinity), maximum = -minimum;
-            for (int i = 0; i < count; i++) { WriteGpuTreeTransform(rows, i * 12, transforms[g][i]); double rootAround = canonicalRoots is not null ? (double)canonicalRoots[g][i].X : transforms[g][i].Origin.X; double rootAcross = canonicalRoots is not null ? (double)canonicalRoots[g][i].Y : transforms[g][i].Origin.Z; Vector2 canonical = new((float)WrappedVegetationDelta(rootAround - stableAroundOrigin, fixtureCircumference), (float)(rootAcross - stableAcrossOrigin)); meta[i] = new Vector4(ranks[g][i], protectedRoots[g][i] ? 1 : 0, canonical.X, canonical.Y); minimum = minimum.Min(canonical); maximum = maximum.Max(canonical); Aabb next = transforms[g][i] * meshes[0].GetAabb(); bounds = i == 0 ? next : bounds.Merge(next); }
+            for (int i = 0; i < count; i++) { WriteGpuTreeTransform(rows, i * 12, transforms[g][i]); double rootAround = canonicalRoots is not null ? (double)canonicalRoots[g][i].X : transforms[g][i].Origin.X; double rootAcross = canonicalRoots is not null ? (double)canonicalRoots[g][i].Y : transforms[g][i].Origin.Z; Vector2 canonical = new((float)WrappedVegetationDelta(rootAround - stableAroundOrigin, fixtureCircumference), (float)(rootAcross - stableAcrossOrigin)); meta[i] = new Vector4(ranks[g][i], protectedRoots[g][i] ? 1 : 0, canonical.X, canonical.Y); minimum = minimum.Min(canonical); maximum = maximum.Max(canonical); Aabb next = TreeWindDeformationBounds(transforms[g][i], meshes[0].GetAabb()); bounds = i == 0 ? next : bounds.Merge(next); }
             var key = new GpuGroupKey(tileAround[g], tileAcross[g], 0);
             _gpuTreeGroups[key] = new GpuTreeGroup { Key = key, Roots = Array.Empty<CachedTree>(), Rows = rows, Metadata = meta, Bounds = bounds.Grow(8), AroundOrigin = stableAroundOrigin, AcrossOrigin = stableAcrossOrigin, CanonicalMin = minimum, CanonicalMax = maximum, HasProtected = Array.Exists(meta, item => item.Y > .5f) };
         }

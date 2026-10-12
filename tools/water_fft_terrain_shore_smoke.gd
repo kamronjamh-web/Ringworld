@@ -4,7 +4,7 @@ extends SceneTree
 ## wet/dry transition, then validates the published shoreline field near it.
 const TEST_SCENE: PackedScene = preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const LAUNCHER_SCENE: PackedScene = preload("res://scenes/WorldSizeLauncher.tscn")
-const OUTPUT_PATHS = preload("res://tools/generated_output_paths.gd")
+const PREFERENCE_ISOLATION = preload("res://scripts/Tools/MinimapWindContractTest.cs")
 const WATER_PROBE = preload("res://scripts/Tools/WaterRenderingProbe.cs")
 const TIMEOUT_FRAMES: int = 1800
 const SETTLE_FRAMES: int = 120
@@ -27,9 +27,10 @@ func _boot() -> void:
 		_fail("Forward+ RenderingDevice required")
 		return
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
-	_defaults_path = OUTPUT_PATHS.smoke_capture_path("water_fft_terrain_shore_smoke.tres")
-	_capture_path = OUTPUT_PATHS.smoke_capture_path("water_fft_terrain_shore.png")
-	if _defaults_path.is_empty() or _capture_path.is_empty():
+	var output_directory := "res://.godot/shared-wind-water/shore_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	_defaults_path = output_directory + "/waterprefs.tres"
+	_capture_path = output_directory + "/capture.png"
+	if DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_directory)) != OK:
 		_fail("could not allocate isolated fixture outputs")
 		return
 	DirAccess.remove_absolute(_defaults_path)
@@ -38,8 +39,15 @@ func _boot() -> void:
 	if saves != null: saves.free()
 	_drawer = _scene.get_node_or_null("LiveTuningDrawer")
 	if _drawer == null: _fail("missing LiveTuningDrawer"); return
-	_drawer.call("InstallWaterDefaults", _defaults_path)
 	var launcher: Node = LAUNCHER_SCENE.instantiate(); root.add_child(launcher); launcher.call("_on_certified_preset_pressed"); launcher.call("_configure_game", _scene, 5000000.0); launcher.free()
+	# Install every preference path before scene Ready, including shared wind
+	# and legacy grass migration. Preserve this fixture's existing water path.
+	var preferences_path := "res://.godot/water_fft_terrain_shore_preferences_%d_%d" % [OS.get_process_id(), Time.get_ticks_usec()]
+	var isolation: Dictionary = PREFERENCE_ISOLATION.new().ExecuteFixture("isolation", _scene, preferences_path)
+	if not bool(isolation.get("pass", false)):
+		_fail("preference isolation failed: " + str(isolation.get("detail", "")))
+		return
+	_drawer.call("InstallWaterDefaults", _defaults_path)
 	root.add_child(_scene)
 
 func _process(_delta: float) -> bool:

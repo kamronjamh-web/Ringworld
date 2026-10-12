@@ -42,6 +42,18 @@ public static class RingTerrainVisuals
         }
     }
 
+    internal readonly record struct TerrainTexturePalette(
+        Vector3 Grass, Vector3 Desert, Vector3 Forest, Vector3 Tundra, Vector3 Alpine);
+
+    /// <summary>Returns cached linear averages with the terrain grass grade already applied.</summary>
+    internal static TerrainTexturePalette CaptureTexturePalette()
+    {
+        PreloadTexturePalette();
+        lock (TexturePaletteLock)
+            return new TerrainTexturePalette(ToVector3(_grassTextureColor), ToVector3(_desertTextureColor),
+                ToVector3(_forestTextureColor), ToVector3(_tundraTextureColor), ToVector3(_alpineTextureColor));
+    }
+
     /// <summary>
     /// Colour for whole-ring/global meshes. It mirrors the close-tier biome
     /// texture blend instead of the older illustrative biome palette, avoiding
@@ -85,11 +97,11 @@ public static class RingTerrainVisuals
     {
         Texture2D? texture = GD.Load<Texture2D>(path);
         Image? image = texture?.GetImage();
-        if (image == null || image.IsEmpty())
-            return fallback;
+        if (image == null) return fallback;
 
         try
         {
+            if (image.IsEmpty()) return fallback;
             // Imported textures may retain a compressed CPU image. GetPixel() is
             // unsupported for that format and can terminate the native C# bridge.
             // GetImage() returns an Image copy, so decompressing it cannot modify

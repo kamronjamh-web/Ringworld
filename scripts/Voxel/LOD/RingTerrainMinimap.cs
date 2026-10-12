@@ -42,7 +42,10 @@ public partial class RingTerrainMinimap : CanvasLayer
     [Export(PropertyHint.Range, "0.1,2.0,0.05")] public float RebuildIntervalSeconds { get; set; } = 0.25f;
     [Export(PropertyHint.Range, "5,60,1")] public float RenderFramesPerSecond { get; set; } = 30.0f;
     [Export] public bool HeadingUp { get; set; }
-    [Export] public bool StartVisible { get; set; } = false;
+    [Export] public bool StartVisible { get; set; } = true;
+    [Export] public NodePath LocalWeatherPath { get; set; } = new("../LocalWeatherEffects");
+    [Export] public NodePath WeatherSourcePath { get; set; } = new("../RingVolumetricClouds");
+    public bool DetailsExpanded { get; private set; }
 
     private VoxelChunkGridManager? _grid;
     private RingVoxelExplorerController? _explorer;
@@ -62,6 +65,12 @@ public partial class RingTerrainMinimap : CanvasLayer
     private Label? _modeLabel;
     private Label? _infoLabel;
     private Label? _coordinateLabel;
+    private Control? _header;
+    private Control? _windRow;
+    private Label? _windLabel;
+    private RingMinimapWindArrow? _windArrow;
+    private RingLocalWeatherEffects? _localWeather;
+    private RingVolumetricCloudLayer? _weather;
     private Task<MinimapMeshData>? _pendingBuild;
     private RingCanonicalPosition _lastRequestedCenter;
     private bool _hasRequestedCenter;
@@ -102,10 +111,14 @@ public partial class RingTerrainMinimap : CanvasLayer
 
     public override void _Ready()
     {
-        Layer = 40;
+        // The radar remains visible during tuning, but the drawer must paint
+        // above it so the instrument cannot obscure its controls.
+        Layer = (GetNodeOrNull<CanvasLayer>("../LiveTuningDrawer")?.Layer ?? 12) - 1;
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _sourceCamera = GetNodeOrNull<Camera3D>(SourceCameraPath);
+        _localWeather = GetNodeOrNull<RingLocalWeatherEffects>(LocalWeatherPath);
+        _weather = GetNodeOrNull<RingVolumetricCloudLayer>(WeatherSourcePath);
         if (_grid?.TerrainSampler == null || _explorer == null || _sourceCamera == null)
         {
             GD.PushError("RingTerrainMinimap could not resolve its grid, terrain sampler, explorer, or camera.");
@@ -217,6 +230,7 @@ public partial class RingTerrainMinimap : CanvasLayer
         UpdateMapOrientation();
         UpdatePlayerCenteredContent();
         UpdateTrackableVisuals(delta);
+        UpdateWindIndicator();
 
         bool bandCapture=_captureBandSite||_captureBandSmoothOnly||_captureBandProxyOnly;
         bool terrainReady=!bandCapture||GetNodeOrNull<SmoothTerrainGrid>("../SmoothTerrainGrid")?.IsQuiescent==true;
@@ -229,7 +243,7 @@ public partial class RingTerrainMinimap : CanvasLayer
         if (@event is not InputEventKey key || !key.Pressed || key.Echo) return;
         if (key.Keycode == Key.M)
         {
-            if (_panel != null) _panel.Visible = !_panel.Visible;
+            SetDetailsExpanded(!DetailsExpanded);
             GetViewport().SetInputAsHandled();
         }
         else if (key.Keycode == Key.N)
@@ -369,7 +383,7 @@ public partial class RingTerrainMinimap : CanvasLayer
     private void CreateHudPanel()
     {
         int panelWidth = PixelSize + 18;
-        int panelHeight = PixelSize + 104;
+        int panelHeight = PixelSize + 16;
         _panel = new PanelContainer
         {
             Name = "TerrainMinimapPanel",
@@ -415,6 +429,7 @@ public partial class RingTerrainMinimap : CanvasLayer
         margin.AddChild(column);
 
         var header = new HBoxContainer();
+        _header = header;
         column.AddChild(header);
         var title = new Label { Text = "TERRAIN MAP", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         title.AddThemeColorOverride("font_color", new Color(0.72f, 0.92f, 1.0f));
@@ -454,6 +469,52 @@ public partial class RingTerrainMinimap : CanvasLayer
         _infoLabel.AddThemeColorOverride("font_color", new Color(0.88f, 0.94f, 0.98f));
         _infoLabel.AddThemeFontSizeOverride("font_size", 12);
         column.AddChild(_infoLabel);
+        var windRow = new HBoxContainer { Name = "WindInformation", MouseFilter = Control.MouseFilterEnum.Ignore };
+        _windRow = windRow;
+        _windArrow = new RingMinimapWindArrow
+        {
+            CustomMinimumSize = new Vector2(56, 44),
+            TooltipText = "Wind destination relative to character facing. The upper tick is forward; looking up/down or rolling does not turn the compass."
+        };
+        windRow.AddChild(_windArrow);
+        _windLabel = new Label { Text = "Wind unavailable", ClipText = true, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _windLabel.AddThemeFontSizeOverride("font_size", 12);
+        windRow.AddChild(_windLabel);
+        column.AddChild(windRow);
+        SetDetailsExpanded(false);
+    }
+
+    public void SetDetailsExpanded(bool expanded)
+    {
+        DetailsExpanded = expanded;
+        if (_header != null) _header.Visible = expanded;
+        if (_coordinateLabel != null) _coordinateLabel.Visible = expanded;
+        if (_infoLabel != null) _infoLabel.Visible = expanded;
+        if (_windRow != null) _windRow.Visible = expanded;
+        if (_panel == null) return;
+        int height = PixelSize + (expanded ? 152 : 16);
+        _panel.CustomMinimumSize = new Vector2(PixelSize + 18, height);
+        _panel.OffsetTop = -height - 16;
+        _panel.Size = new Vector2(PixelSize + 18, height);
+        UpdateWindIndicator();
+    }
+
+    private void UpdateWindIndicator()
+    {
+        if (!DetailsExpanded || _windArrow == null || _windLabel == null || _explorer == null) return;
+        bool available = _localWeather != null && GodotObject.IsInstanceValid(_localWeather)
+            && _localWeather.CurrentWindSnapshot.Enabled;
+        Vector2 wind = available ? _localWeather!.CurrentWindSnapshot.InstantWind : Vector2.Zero;
+        float threshold = _weather?.WindSettings.RadarWindCalmThreshold ?? 0.1f;
+        bool enabled = _weather?.WindSettings.RadarWindArrowEnabled ?? true;
+        bool finite = float.IsFinite(wind.X) && float.IsFinite(wind.Y);
+        float speed = finite ? wind.Length() : 0.0f;
+        Vector2 direction = RingMinimapWindArrow.ResolveFacingRelativeWind(wind, _explorer.SavedYaw);
+        _windArrow.SetDirection(direction, enabled && available && finite && speed > Math.Max(0.0f, threshold));
+        _windLabel.Text = !available || !finite ? "Wind unavailable"
+            : speed <= Math.Max(0.0f, threshold) ? "Wind calm"
+            : $"Wind toward  |  {speed:0.0} m/s\nRelative to facing";
+        _windRow!.Visible = enabled;
     }
 
     private void QueueTerrainBuild(bool force)
@@ -654,7 +715,7 @@ public partial class RingTerrainMinimap : CanvasLayer
                     : FormatFlightSpeed(targetSpeed);
                 noclip = $"  |  noclip {transition}";
             }
-            _infoLabel.Text = $"{sample.Region}  |  ground {elevation:N0} m{hydrology}  |  alt {altitude:N0} m  |  gravity {_explorer.CurrentGravityFactor * 100.0f:0}%{noclip}\nPLAYER-TRACKED  •  M hide  •  +/- zoom  •  N rotate";
+            _infoLabel.Text = $"{sample.Region}  |  ground {elevation:N0} m{hydrology}  |  alt {altitude:N0} m  |  gravity {_explorer.CurrentGravityFactor * 100.0f:0}%{noclip}\nPLAYER-TRACKED  •  M details  •  +/- zoom  •  N rotate";
         }
     }
 

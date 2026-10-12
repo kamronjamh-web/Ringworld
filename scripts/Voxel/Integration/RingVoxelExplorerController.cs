@@ -217,6 +217,12 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     public bool IsCameraUnderwater { get; private set; }
     public float CurrentWaterSurfaceHeightMeters { get; private set; }
     public float CurrentWaterDepthMeters { get; private set; }
+    // Provenance of the exact accepted cache sample used to produce the current
+    // water state. Diagnostic readers must not compare it to a later readback.
+    public bool ConsumedOceanFftQueryReady { get; private set; }
+    public RingCanonicalPosition ConsumedOceanFftQueryPosition { get; private set; }
+    public long ConsumedOceanFftQuerySerial { get; private set; }
+    public double ConsumedOceanFftQueryTimeSeconds { get; private set; }
     /// <summary>Last explicit safe cave checkpoint; never inferred from an unverified void.</summary>
     public RingCanonicalPosition? UndergroundCheckpoint => _undergroundCheckpoint;
 
@@ -987,6 +993,10 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private void UpdateWaterState()
     {
+        ConsumedOceanFftQueryReady = false;
+        ConsumedOceanFftQueryPosition = default;
+        ConsumedOceanFftQuerySerial = 0;
+        ConsumedOceanFftQueryTimeSeconds = 0;
         if (_grid?.TerrainSampler == null
             || _canonicalPosition.AcrossMeters < 0.0
             || _canonicalPosition.AcrossMeters > _grid.RingAcrossWidthMeters)
@@ -1032,12 +1042,17 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         // gameplay water top, not the proxy mesh (which is radially underlaid
         // for z-fighting).  Ask before finalizing the finite column so a crest
         // can be entered and a trough can be left at its actual height.
+        RingWaterFftController? fftController = RingWaterFftController.Instance;
         if (sample.WaterKind == SurfaceWaterKind.Ocean
             && HasGeneratedWaterFloor(sample, _canonicalPosition.VerticalMeters)
-            && RingWaterFftController.Instance?.TryGetOceanSurfaceOffset(
+            && fftController?.TryGetOceanSurfaceOffset(
                 _canonicalPosition, out float fftSurfaceOffset) == true)
         {
             generatedWaterSurface += fftSurfaceOffset;
+            ConsumedOceanFftQueryReady = true;
+            ConsumedOceanFftQueryPosition = _canonicalPosition;
+            ConsumedOceanFftQuerySerial = fftController.SurfaceQuerySampleSerial;
+            ConsumedOceanFftQueryTimeSeconds = fftController.SurfaceQuerySampleTimeSeconds;
         }
 		bool generatedWater = floatSurface
 			? sample.HasSurfaceWater && _canonicalPosition.VerticalMeters > exactSurface && _canonicalPosition.VerticalMeters <= generatedWaterSurface
@@ -1060,6 +1075,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             return;
         }
 
+        // Dynamic fluid owns its own top; the generated FFT sample was not used.
+        if (dynamicWater) ConsumedOceanFftQueryReady = false;
         CurrentWaterSurfaceHeightMeters = dynamicWater
             ? dynamicWaterSurface
             : generatedWaterSurface;
@@ -1099,6 +1116,10 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private void ClearWaterState()
     {
+        ConsumedOceanFftQueryReady = false;
+        ConsumedOceanFftQueryPosition = default;
+        ConsumedOceanFftQuerySerial = 0;
+        ConsumedOceanFftQueryTimeSeconds = 0;
         IsSwimming = false;
         IsCameraUnderwater = false;
         CurrentWaterSurfaceHeightMeters = 0.0f;

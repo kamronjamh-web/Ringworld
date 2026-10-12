@@ -490,8 +490,13 @@ public partial class RingBiomeDecorationLayer : Node3D
 	private ShaderMaterial CreateTrunkMaterial() =>
 		CreateTreeMaterial(new Color(.19f, .105f, .045f, 1), useAuthoredPalette: false);
 
-	private ShaderMaterial CreateCanopyMaterial(Color color) =>
-		CreateTreeMaterial(color, useAuthoredPalette: false);
+	private ShaderMaterial CreateCanopyMaterial(Color color)
+	{
+		ShaderMaterial material = CreateTreeMaterial(color, useAuthoredPalette: false);
+		material.SetShaderParameter("tree_foliage_mode", 1);
+		material.SetShaderParameter("tree_foliage_attachments", true);
+		return material;
+	}
 
 	private ShaderMaterial CreateBillboardMaterial(Color color)
 	{
@@ -508,6 +513,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 		};
 		material.SetShaderParameter("tree_tint", new Vector3(color.R, color.G, color.B));
 		material.SetShaderParameter("use_albedo_texture", useAuthoredPalette);
+		material.SetShaderParameter("tree_foliage_mode", useAuthoredPalette ? 2 : 0);
 		if (useAuthoredPalette)
 		{
 			material.SetShaderParameter(
@@ -921,16 +927,21 @@ public partial class RingBiomeDecorationLayer : Node3D
 		// MultiMesh.Buffer is a 3x4 row-major transform stream. Bulk assignment
 		// avoids SetInstanceTransform's managed/native transition for every tree.
 		var buffer = new float[transforms.Count * 12];
+		float maximumWindEnvelope = 0;
 		for (int i = 0; i < transforms.Count; i++)
 		{
 			Transform3D transform = transforms[i];
 			Basis basis = transform.Basis;
+			maximumWindEnvelope = Mathf.Max(maximumWindEnvelope, (instance.GlobalBasis * basis.Y).Length() * .6f);
 			int offset = i * 12;
 			buffer[offset] = basis.X.X; buffer[offset + 1] = basis.Y.X; buffer[offset + 2] = basis.Z.X; buffer[offset + 3] = transform.Origin.X;
 			buffer[offset + 4] = basis.X.Y; buffer[offset + 5] = basis.Y.Y; buffer[offset + 6] = basis.Z.Y; buffer[offset + 7] = transform.Origin.Y;
 			buffer[offset + 8] = basis.X.Z; buffer[offset + 9] = basis.Y.Z; buffer[offset + 10] = basis.Z.Z; buffer[offset + 11] = transform.Origin.Z;
 		}
 		multiMesh.Buffer = buffer;
+		// CPU fallback includes the same hard shader envelope as GPU batches,
+		// including imported species taller than the historical 14 m fixtures.
+		instance.ExtraCullMargin = Mathf.Max(instance.ExtraCullMargin, maximumWindEnvelope + 8);
 	}
 
 	internal static long SpatialTileKey(Vector3 localOrigin, float tileMeters)

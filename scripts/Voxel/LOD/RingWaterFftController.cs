@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Integration;
@@ -50,6 +51,7 @@ public partial class RingWaterFftController : Node
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath WeatherSourcePath { get; set; } = new("../RingVolumetricClouds");
+    [Export] public NodePath LocalWeatherEffectsPath { get; set; } = new("../LocalWeatherEffects");
     public string Status { get; private set; } = "Waiting for scene";
     public new bool Ready => Enabled && _provider?.Ready == true;
     public Texture2DArrayRD? NormalFoamTexture => Ready ? _provider?.NormalFoamTexture : null;
@@ -64,6 +66,9 @@ public partial class RingWaterFftController : Node
     public Vector2 Phase3 { get; private set; }
     public int ActiveCascadeCount { get; private set; }
     public float ActualWindSpeedMetersPerSecond => _wind.Length();
+    public float ActualWindDirectionDegrees => Mathf.RadToDeg(Mathf.Atan2(_wind.Y, _wind.X));
+    public long SpectrumConfigurationCount { get; private set; }
+    public float StormResponseSeconds => global::RingworldTechDemo.Weather.RingWindSettings.Current.WaterResponseSeconds;
     public float ActualGeometryUpdatesPerSecond => WaterDemandStatus == "dormant" ? 0f : _provider?.PrimaryGeometryUpdatesPerSecond ?? 0f;
     public float ActualDetailUpdatesPerSecond => WaterDemandStatus == "dormant" ? 0f : _provider?.DetailUpdatesPerSecond ?? 0f;
     public int RelevantWaterSectorCount { get; private set; }
@@ -80,8 +85,11 @@ public partial class RingWaterFftController : Node
     private VoxelChunkGridManager? _grid;
     private RingVoxelExplorerController? _explorer;
     private global::RingworldTechDemo.RingVolumetricCloudLayer? _weather;
+    private global::RingworldTechDemo.RingLocalWeatherEffects? _localWeatherEffects;
     private RingWaterFftProvider? _provider;
     private RingWaterFftSettings _settings;
+    private RingWaterFftSettings _configuredSettings;
+    private readonly RingWaterWindResponse _windResponse = new();
     private Vector2 _wind;
     private Vector3 _canonicalAnchorWorld;
     private Vector3 _canonicalAroundAxis = Vector3.Forward;
@@ -114,6 +122,7 @@ public partial class RingWaterFftController : Node
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _weather = GetNodeOrNull<global::RingworldTechDemo.RingVolumetricCloudLayer>(WeatherSourcePath);
+        _localWeatherEffects = GetNodeOrNull<global::RingworldTechDemo.RingLocalWeatherEffects>(LocalWeatherEffectsPath);
         _wasEnabled = Enabled;
         if (!Enabled)
             Status = "Disabled: analytic water";
@@ -124,24 +133,40 @@ public partial class RingWaterFftController : Node
     }
     public override void _Process(double delta)
     {
+        // Scene replacement may overlap controller lifetimes for a frame. Only
+        // the active owner may advance/publish shared water clocks and bindings.
+        if (!ReferenceEquals(Instance, this)) return;
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Water update");
+        _fallbackClock += double.IsFinite(delta) ? Math.Max(0, delta) : 0;
+        double now = _weather?.CloudSimulationTimeSeconds ?? _fallbackClock;
+        if (!double.IsFinite(now)) now = _fallbackClock;
+        _wind = _windResponse.Step(ResolveWind(), now,
+            global::RingworldTechDemo.Weather.RingWindSettings.Current.WaterResponseSeconds, FollowWeatherWind);
+        RingWaterModel.UpdateWindClock(now, _wind, FollowWeatherWind);
+        // Analytic, disabled and headless water share the same direction/clock.
+        RingWaterModel.RefreshOceanMaterials();
         if (!Enabled) { if (_wasEnabled) { ClearSurfaceQueryCache(); _updateScheduler.Reset(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; Status = "Disabled: analytic water"; } _wasEnabled = false; ActiveCascadeCount = 0; WaterDemandStatus = "dormant"; TargetGeometryUpdatesPerSecond = 0; TargetDetailUpdatesPerSecond = 0; return; }
         if (!_wasEnabled) { ClearSurfaceQueryCache(); _hasSettings = false; _pending = true; _stable = 0; _updateScheduler.Reset(); CreateProvider(); RingWaterModel.RefreshOceanMaterials(); } _wasEnabled = true;
         if (_provider == null || _grid == null || _explorer == null) return;
         UpdateCanonicalFrame();
-        _fallbackClock += Math.Max(0, delta);
-        double now = Math.Max(0, _weather?.CloudSimulationTimeSeconds ?? _fallbackClock);
-        Vector2 wind = ResolveWind();
-        _wind = _hasSettings && FollowWeatherWind
-            ? _wind.Lerp(wind, Mathf.Clamp((float)delta * .75f, 0, 1))
-            : wind;
         RingWaterFftSettings next = Settings(_wind);
-        if (!_hasSettings || Different(next, _settings)) { _settings = next; _hasSettings = true; _pending = true; _stable = 0; } else _stable += Math.Max(0, delta);
-        if (_pending && _stable >= .30)
+        // Debounce artistic/topology edits, but let a continuously changing storm
+        // mean reach the spectrum at a bounded cadence instead of starving it.
+        if (!_hasSettings || ArtisticSettingsDifferent(next, _settings)
+            || (!FollowWeatherWind && Different(next, _settings))) _stable = 0;
+        else _stable += Math.Max(0, delta);
+        if (!_hasSettings || Different(next, _configuredSettings)) _pending = true;
+        _settings = next;
+        _hasSettings = true;
+        if (_pending && _stable >= .30 && (ArtisticSettingsDifferent(_settings, _configuredSettings)
+            || _windResponse.SpectrumUpdateDue(now, FollowWeatherWind)))
         {
             bool needsInitialDispatch = ActiveCascadeCount == 0;
             bool topologyChanged = _provider.Configure(_settings, RingWaterModel.RetireFftTextureBindings);
+            SpectrumConfigurationCount++;
             _pending = false;
+            _configuredSettings = _settings;
+            _windResponse.MarkSpectrumUpdated(now);
             ActiveCascadeCount = _settings.CascadeCount;
             ActiveResolution = _settings.Resolution;
             // Recompute from the requested across period in double precision.
@@ -183,7 +208,7 @@ public partial class RingWaterFftController : Node
         Status = _provider.Status; RingWaterModel.RefreshOceanMaterials();
         if (WaterDemandStatus != "dormant") RequestSurfaceQuery();
     }
-    public override void _ExitTree() { if (ReferenceEquals(Instance, this)) Instance = null; ClearSurfaceQueryCache(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; ActiveCascadeCount = 0; }
+    public override void _ExitTree() { if (ReferenceEquals(Instance, this)) { Instance = null; RingWaterModel.ClearWindClock(); } ClearSurfaceQueryCache(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; ActiveCascadeCount = 0; }
     private void CreateProvider() { if (DisplayServer.GetName() == "headless") { Status = "Headless: analytic water fallback"; return; } _provider ??= new RingWaterFftProvider(); Status = "Preparing FFT water"; }
     private RingWaterFftSettings Settings(Vector2 wind)
     {
@@ -215,6 +240,12 @@ public partial class RingWaterFftController : Node
             Math.Max(cameraDemand.WeightedAreaSquareMeters, explorerDemand.WeightedAreaSquareMeters),
             Math.Min(cameraDemand.NearestDistanceMeters, explorerDemand.NearestDistanceMeters));
     }
+    private static bool ArtisticSettingsDifferent(in RingWaterFftSettings a, in RingWaterFftSettings b)
+        => a.Resolution != b.Resolution || a.CascadeCount != b.CascadeCount
+            || a.Period0 != b.Period0 || a.Period1 != b.Period1
+            || !Mathf.IsEqualApprox(a.FoamAmount, b.FoamAmount)
+            || !Mathf.IsEqualApprox(a.Whitecap, b.Whitecap);
+
     private bool Different(in RingWaterFftSettings a, in RingWaterFftSettings b)
     {
         if (a.Resolution != b.Resolution
@@ -230,12 +261,96 @@ public partial class RingWaterFftController : Node
                 || !Mathf.IsEqualApprox(a.WindDirectionDegrees, b.WindDirectionDegrees);
 
         return Math.Abs(a.WindSpeedMetersPerSecond - b.WindSpeedMetersPerSecond) > .35f
-            || Math.Abs(a.WindDirectionDegrees - b.WindDirectionDegrees) > 3;
+            || RingWaterWindResponse.DirectionDifferenceDegrees(a.WindDirectionDegrees, b.WindDirectionDegrees) > 3;
     }
-    private Vector2 ResolveWind() { if (FollowWeatherWind && _weather != null) return _weather.QueryLocalWeather(_explorer!.CanonicalPosition).WindMetersPerSecond; float radians = Mathf.DegToRad(WindDirectionDegrees); return new Vector2(Mathf.Cos(radians), Mathf.Sin(radians)) * WindSpeedMetersPerSecond; }
+    private Vector2 ResolveWind()
+    {
+        float radians = Mathf.DegToRad(WindDirectionDegrees);
+        Vector2 manual = new Vector2(Mathf.Cos(radians), Mathf.Sin(radians)) * WindSpeedMetersPerSecond;
+        if (!FollowWeatherWind) return manual;
+        // This observer snapshot includes CLP/external weather overrides and is
+        // the same resolved source consumed by foliage, rain, and radar.
+        if (_localWeatherEffects != null && GodotObject.IsInstanceValid(_localWeatherEffects)
+            && _localWeatherEffects.HasCurrentWindSnapshot)
+        {
+            var snapshot = _localWeatherEffects.CurrentWindSnapshot;
+            if (float.IsFinite(snapshot.MeanWind.X) && float.IsFinite(snapshot.MeanWind.Y)) return snapshot.MeanWind;
+        }
+        if (_weather != null && GodotObject.IsInstanceValid(_weather) && _explorer != null)
+            return _weather.QueryWindSnapshot(_explorer.CanonicalPosition).MeanWind;
+        return manual;
+    }
     public Vector3 CanonicalAnchorWorld => _canonicalAnchorWorld;
     public Vector3 CanonicalAroundAxis => _canonicalAroundAxis;
     public Vector3 CanonicalAcrossAxis => _canonicalAcrossAxis;
+    private readonly Dictionary<string, long> _surfaceQueryRejections = new();
+    private readonly Dictionary<string, long> _surfaceCallbackRejections = new();
+    private static long _surfaceQuerySerialSequence;
+    private long _surfaceQuerySampleSerial;
+    public long SurfaceQuerySampleSerial => _surfaceQuerySampleSerial;
+    public double SurfaceQuerySampleTimeSeconds => _surfaceQueryTime;
+    private long _acceptedSurfaceQueries, _rejectedSurfaceCallbacks, _rejectedSurfaceRequests, _diagnosticSpectrumBaseline;
+    private string _lastSurfaceQueryStatus = "not_cached", _lastSurfaceCallbackStatus = "none";
+    public void ResetSurfaceQueryDiagnostics()
+    {
+        _surfaceQueryRejections.Clear();
+        _surfaceCallbackRejections.Clear();
+        _acceptedSurfaceQueries = _rejectedSurfaceCallbacks = _rejectedSurfaceRequests = 0;
+        _diagnosticSpectrumBaseline = SpectrumConfigurationCount;
+    }
+    public Godot.Collections.Dictionary GetSurfaceQueryDiagnostics()
+    {
+        var rejections = new Godot.Collections.Dictionary();
+        foreach (var pair in _surfaceQueryRejections) rejections[pair.Key] = pair.Value;
+        var callbackRejections = new Godot.Collections.Dictionary();
+        foreach (var pair in _surfaceCallbackRejections) callbackRejections[pair.Key] = pair.Value;
+        string terrainIdentity = _explorer is null ? "unavailable"
+            : (CaptureSurfaceQueryIdentity(_explorer.CanonicalPosition) with { ConfigurationVersion = 0 }).ToString();
+        return new()
+        {
+            ["geometry_shoreline_identity"] = terrainIdentity,
+            ["last_status"] = _lastSurfaceQueryStatus,
+            ["last_callback_status"] = _lastSurfaceCallbackStatus,
+            ["rejections"] = rejections,
+            ["callback_rejections"] = callbackRejections,
+            ["accepted_callbacks"] = _acceptedSurfaceQueries,
+            ["rejected_callbacks"] = _rejectedSurfaceCallbacks,
+            ["rejected_requests"] = _rejectedSurfaceRequests,
+            ["cache_age_seconds"] = double.IsFinite(_surfaceQueryTime) ? Time.GetTicksMsec() * .001 - _surfaceQueryTime : -1,
+            ["provider_generation"] = _provider?.Generation ?? -1,
+            ["provider_configuration"] = _provider?.ConfigurationVersion ?? -1,
+            ["cached_configuration"] = _hasSurfaceQueryIdentity ? _surfaceQueryIdentity.ConfigurationVersion : -1,
+            ["spectrum_configurations"] = SpectrumConfigurationCount,
+            ["spectrum_configurations_since_reset"] = SpectrumConfigurationCount - _diagnosticSpectrumBaseline
+        };
+    }
+    private bool RejectSurfaceQuery(string reason)
+    {
+        _lastSurfaceQueryStatus = reason;
+        _surfaceQueryRejections.TryGetValue(reason, out long count);
+        _surfaceQueryRejections[reason] = count + 1;
+        return false;
+    }
+    private void RejectSurfaceCallback(string reason)
+    {
+        _lastSurfaceCallbackStatus = reason;
+        _rejectedSurfaceCallbacks++;
+        _surfaceCallbackRejections.TryGetValue(reason, out long count);
+        _surfaceCallbackRejections[reason] = count + 1;
+    }
+    private static string SurfaceIdentityDifference(in SurfaceQueryIdentity a, in SurfaceQueryIdentity b)
+    {
+        if (a.Generation != b.Generation) return "generation_changed";
+        if (a.ConfigurationVersion != b.ConfigurationVersion) return "configuration_changed";
+        if (a.Resolution != b.Resolution || a.CascadeCount != b.CascadeCount || a.Cascade != b.Cascade) return "topology_changed";
+        if (a.Period != b.Period || a.Lod != b.Lod) return "period_or_lod_changed";
+        if (a.HeightScale != b.HeightScale || a.Choppiness != b.Choppiness || a.FilterMeters != b.FilterMeters) return "geometry_controls_changed";
+        if (a.GeometryDistanceMeters != b.GeometryDistanceMeters) return "geometry_distance_changed";
+        if (a.RequireShorelineField != b.RequireShorelineField) return "shoreline_mode_changed";
+        if (a.ShorelineFootprintSignature != b.ShorelineFootprintSignature) return "shoreline_footprint_changed";
+        return "shoreline_controls_changed";
+    }
+
     /// <summary>
     /// Returns an FFT-only delta above gameplay's existing ocean base height.
     /// It intentionally returns false until the bounded GPU point-query cache has
@@ -245,14 +360,20 @@ public partial class RingWaterFftController : Node
     public bool TryGetOceanSurfaceOffset(in RingCanonicalPosition position, out float offsetMeters)
     {
         offsetMeters = 0;
-        if (!RingTerrainProxySector.IsFftOceanGeometryAvailableAt(position)) return false;
-        if (!Ready || _surfaceQueryGeneration != _provider?.Generation || _surfaceQueryOffsets is null || !_hasSurfaceQueryIdentity || _surfaceQueryIdentity != CaptureSurfaceQueryIdentity(_surfaceQueryPosition) || Time.GetTicksMsec() * .001 - _surfaceQueryTime > .35) return false;
+        if (!RingTerrainProxySector.IsFftOceanGeometryAvailableAt(position)) return RejectSurfaceQuery("geometry_unavailable");
+        if (!Ready) return RejectSurfaceQuery("provider_not_ready");
+        if (_surfaceQueryOffsets is null || !_hasSurfaceQueryIdentity) return RejectSurfaceQuery("not_cached");
+        if (_surfaceQueryGeneration != _provider?.Generation) return RejectSurfaceQuery("generation_changed");
+        SurfaceQueryIdentity currentIdentity = CaptureSurfaceQueryIdentity(_surfaceQueryPosition);
+        if (_surfaceQueryIdentity.ConfigurationVersion != currentIdentity.ConfigurationVersion) return RejectSurfaceQuery("configuration_changed");
+        if (_surfaceQueryIdentity != currentIdentity) return RejectSurfaceQuery(SurfaceIdentityDifference(_surfaceQueryIdentity, currentIdentity));
+        if (Time.GetTicksMsec() * .001 - _surfaceQueryTime > .35) return RejectSurfaceQuery("expired");
         double signedAround = position.AroundMeters - _surfaceQueryPosition.AroundMeters;
         double circumference = _grid?.GetCanonicalRingCircumferenceMeters64() ?? 0;
         if (circumference > 0) signedAround = Modulo(signedAround + circumference * .5, circumference) - circumference * .5;
         double da = Math.Abs(signedAround);
         double dx = position.AcrossMeters - _surfaceQueryPosition.AcrossMeters;
-        if (!TryGetOceanBaseSurface(position, out float currentWaterBase)) return false;
+        if (!TryGetOceanBaseSurface(position, out float currentWaterBase)) return RejectSurfaceQuery("invalid_water_base");
         float cachedVerticalToBody = (float)_surfaceQueryPosition.VerticalMeters - _surfaceQueryWaterBase;
         float currentVerticalToBody = (float)position.VerticalMeters - currentWaterBase;
         // The 3x3 cache has a one-metre horizontal footprint. Within the
@@ -264,15 +385,17 @@ public partial class RingWaterFftController : Node
             && Math.Abs(cachedVerticalToBody) <= fullFadeRadius
             && Math.Sqrt(currentVerticalToBody * currentVerticalToBody + da * da + dx * dx) <= fullFadeRadius;
         float verticalLimit = fullyFaded ? 1.0f : .05f;
-        if (Math.Abs(currentVerticalToBody - cachedVerticalToBody) > verticalLimit) return false;
-        if (da > 1 || Math.Abs(dx) > 1) return false;
+        if (Math.Abs(currentVerticalToBody - cachedVerticalToBody) > verticalLimit) return RejectSurfaceQuery("vertical_footprint");
+        if (da > 1 || Math.Abs(dx) > 1) return RejectSurfaceQuery("horizontal_footprint");
         float fx = Mathf.Clamp((float)signedAround + 1, 0, 2), fy = Mathf.Clamp((float)dx + 1, 0, 2);
         int x0 = Mathf.FloorToInt(fx), y0 = Mathf.FloorToInt(fy), x1 = Math.Min(2, x0 + 1), y1 = Math.Min(2, y0 + 1);
         float tx = fx - x0, ty = fy - y0;
         float a = Mathf.Lerp(_surfaceQueryOffsets[y0 * 3 + x0], _surfaceQueryOffsets[y0 * 3 + x1], tx);
         float b = Mathf.Lerp(_surfaceQueryOffsets[y1 * 3 + x0], _surfaceQueryOffsets[y1 * 3 + x1], tx);
         offsetMeters = Mathf.Lerp(a, b, ty);
-        return float.IsFinite(offsetMeters);
+        if (!float.IsFinite(offsetMeters)) return RejectSurfaceQuery("nonfinite");
+        _lastSurfaceQueryStatus = "ready";
+        return true;
     }
     /// <summary>Shared geometry range, clamped so vertex displacement always has matching FFT shading.</summary>
     public float EffectiveGeometryDistanceMeters
@@ -326,20 +449,29 @@ public partial class RingWaterFftController : Node
         if (shorelineMode == 2 && !shorelineUvAvailable) shorelineMode = 1;
         if (!_provider.RequestSurfaceOffsets(uv, cascade, lod, period, heightScale, choppiness, geometryDistance, verticalToBody, result =>
         {
-            if (result is null || !Ready || !ReferenceEquals(_provider, requestProvider)
-                || _provider?.Generation != generation || _provider?.ConfigurationVersion != configurationVersion
-                || !Mathf.IsEqualApprox(heightScale, GeometryHeightScale)
+            if (!Ready || !ReferenceEquals(_provider, requestProvider) || _provider?.Generation != generation)
+            { RejectSurfaceCallback("owner_or_generation_changed"); return; }
+            if (_provider?.ConfigurationVersion != configurationVersion)
+            { RejectSurfaceCallback("configuration_changed"); return; }
+            if (result is null) { RejectSurfaceCallback("provider_null"); return; }
+            SurfaceQueryIdentity callbackIdentity = CaptureSurfaceQueryIdentity(p);
+            if (identity != callbackIdentity)
+            { RejectSurfaceCallback(SurfaceIdentityDifference(identity, callbackIdentity)); return; }
+            if (!Mathf.IsEqualApprox(heightScale, GeometryHeightScale)
                 || !Mathf.IsEqualApprox(choppiness, GeometryChoppiness)
-                || !Mathf.IsEqualApprox(filter, GeometryFilterMeters)
-                || identity != CaptureSurfaceQueryIdentity(p)
-                || !ValidSurfaceQuery(result.Value)) return;
+                || !Mathf.IsEqualApprox(filter, GeometryFilterMeters))
+            { RejectSurfaceCallback("geometry_controls_changed"); return; }
+            if (!ValidSurfaceQuery(result.Value)) { RejectSurfaceCallback("invalid_residual"); return; }
+            _acceptedSurfaceQueries++;
+            _surfaceQuerySampleSerial = System.Threading.Interlocked.Increment(ref _surfaceQuerySerialSequence);
+            _lastSurfaceCallbackStatus = "accepted";
             _surfaceQueryPosition = p; _surfaceQueryWaterBase = waterBase; _surfaceQueryOffsets = result.Value.Heights; _surfaceQueryTime = requestTime; _surfaceQueryGeneration = generation; _surfaceQueryIdentity = identity; _hasSurfaceQueryIdentity = true;
         }, uvs, periods, lods, geometryMask, RingTerrainProxySector.SharedFftShorelineFieldTexture,
             shorelineUvOrigin, 1f / shorelineSpan,
             Mathf.Clamp(ShorelineFadeDistanceMeters, 1f, 64f),
             Mathf.Clamp(ShorelineChopFadeDistanceMeters, 1f, 64f),
             Mathf.Clamp(ShorelineShallowDepthMeters, .1f, 20f),
-            Mathf.Clamp(DeepWaterWaveDepthMeters, 5f, 500f), shorelineMode)) return;
+            Mathf.Clamp(DeepWaterWaveDepthMeters, 5f, 500f), shorelineMode)) { _rejectedSurfaceRequests++; return; }
     }
     private bool TryGetOceanBaseSurface(in RingCanonicalPosition position, out float waterBase)
     {

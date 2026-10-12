@@ -1,6 +1,9 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_draw_opaque;
+#include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 
+uniform mat3 terrain_cloud_world_to_ring = mat3(1.0);
+uniform vec3 terrain_cloud_ring_geometry = vec3(1.0, 0.0, 0.0);
 uniform vec3 camera_world_position = vec3(0.0);
 uniform vec3 ring_center = vec3(0.0);
 uniform vec3 surface_up = vec3(-1.0, 0.0, 0.0);
@@ -111,10 +114,13 @@ void fragment() {
 	float body_light = smoothstep(0.08, max(0.09, edge_firmness), sunward * 0.72 + upward * 0.28);
 	vec3 daylight = mix(shadow_color, middle_color, upward * 0.55);
 	daylight = mix(daylight, sunlit_color, body_light);
+	vec3 solar_ambient = mix(shadow_color, middle_color, upward * 0.55);
 	float precipitation = clamp(cloud_data.b, 0.0, 1.0);
 	float formation_profile = clamp(cloud_data.a * 3.0, 0.0, 3.0);
 	float storm_profile = smoothstep(1.45, 2.15, formation_profile);
 	float anvil_profile = smoothstep(2.55, 2.95, formation_profile);
+	solar_ambient = mix(solar_ambient, shadow_color * 0.78, precipitation * (1.0 - upward) * 0.46);
+	solar_ambient = mix(solar_ambient, shadow_color * 0.72, storm_profile * (1.0 - upward) * 0.18);
 	daylight = mix(
 		daylight,
 		shadow_color * 0.78,
@@ -125,12 +131,14 @@ void fragment() {
 		storm_profile * (1.0 - upward) * 0.18);
 	daylight = mix(daylight, sunlit_color, anvil_profile * upward * body_light * 0.12);
 	daylight *= 1.0 - precipitation * 0.08;
+	solar_ambient *= 1.0 - precipitation * 0.08;
 	float lower_body = 1.0 - smoothstep(0.10, 0.78, formation_height);
 	float internal_occlusion = lower_body * mix(
 		0.55,
 		1.0,
 		max(storm_profile, precipitation));
 	daylight *= 1.0 - internal_occlusion * cloud_self_shadow_strength;
+	solar_ambient *= 1.0 - internal_occlusion * cloud_self_shadow_strength;
 	float dense_mass = max(
 		max(storm_profile, precipitation),
 		optical_depth_factor * 0.92);
@@ -140,6 +148,7 @@ void fragment() {
 		daylight,
 		shadow_color * 0.16,
 		deep_underside * 0.82);
+	solar_ambient = mix(solar_ambient, shadow_color * 0.16, deep_underside * 0.82);
 	vec2 layer_sample = sample_cloud_layer_occlusion(world_position, up, sun);
 	float receiver_altitude = dot(
 		world_position - cloud_layer_occlusion_center_world,
@@ -160,7 +169,13 @@ void fragment() {
 	float layer_receiver = lower_body * mix(0.35, 1.0, storm_profile);
 	daylight *= 1.0
 		- layer_occlusion * layer_receiver * cloud_layer_occlusion_strength;
+	solar_ambient *= (1.0 - layer_occlusion * layer_receiver * cloud_layer_occlusion_strength) * cloud_data.r;
 	daylight *= cloud_data.r;
+	vec3 ring_local = terrain_cloud_world_to_ring * (world_position - ring_center);
+	float ring_radius = terrain_cloud_ring_geometry.x;
+	vec3 receiver_metres = vec3(atan(ring_local.z, ring_local.x) * ring_radius, ring_radius - terrain_cloud_ring_geometry.y - length(ring_local.xz), ring_local.y - terrain_cloud_ring_geometry.z);
+	float terrain_sun = ring_terrain_cloud_receiver_visibility(receiver_metres);
+	daylight -= max(daylight - solar_ambient, vec3(0.0)) * (1.0 - terrain_sun);
 	vec3 cloud_color = mix(night_color, daylight, day);
 	vec4 atmosphere = sample_ring_atmosphere(
 		camera_world_position,

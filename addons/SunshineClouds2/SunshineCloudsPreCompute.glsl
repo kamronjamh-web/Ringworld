@@ -1,5 +1,5 @@
 #[compute]
-// GenericData ABI: 180 floats; includes menu callback-history controls.
+// GenericData ABI: 276 floats; includes cloud mask controls.
 #version 450
 
 #include "./CloudsInc.comp"

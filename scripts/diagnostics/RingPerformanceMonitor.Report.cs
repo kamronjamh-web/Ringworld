@@ -38,7 +38,7 @@ public partial class RingPerformanceMonitor
         }
         var result = new List<object>(bins.Count);
         foreach ((long second, List<RingPerformanceFrame> frames) in bins)
-            result.Add(new { startSeconds = second, endSeconds = second + 1, frameMilliseconds = Stats(frames, f => f.FrameMilliseconds), mainViewportCpuMilliseconds = Stats(frames, f => f.ViewportCpuMilliseconds), mainViewportGpuMilliseconds = Stats(frames, f => f.ViewportGpuMilliseconds), frameCount = frames.Count, gpuCompletionCategories = GpuCompletionBin(second), timestampQuality = "wall-time frame samples; GPU viewport values are renderer-delayed and not CPU-frame paired. Detailed GPU categories use completion-time seconds." });
+            result.Add(new { startSeconds = second, endSeconds = second + 1, frameMilliseconds = Stats(frames, f => f.FrameMilliseconds), mainViewportCpuMilliseconds = Stats(frames, f => f.ViewportCpuMilliseconds), mainViewportGpuMilliseconds = Stats(frames, f => f.ViewportGpuMilliseconds), outerFarViewportCpuMilliseconds = Stats(frames, f => f.FarViewportCpuMilliseconds), outerFarViewportGpuMilliseconds = Stats(frames, f => f.FarViewportGpuMilliseconds), regionalFarViewportCpuMilliseconds = Stats(frames, f => f.RegionalFarViewportCpuMilliseconds), regionalFarViewportGpuMilliseconds = Stats(frames, f => f.RegionalFarViewportGpuMilliseconds), frameCount = frames.Count, gpuCompletionCategories = GpuCompletionBin(second), timestampQuality = "wall-time frame samples; GPU viewport values are separate renderer-delayed intervals, not CPU-frame paired or an additive device total. Detailed GPU categories use completion-time seconds." });
         return result.ToArray();
     }
 

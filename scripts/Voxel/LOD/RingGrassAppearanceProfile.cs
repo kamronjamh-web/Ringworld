@@ -10,6 +10,8 @@ namespace RingworldTechDemo.Voxel.LOD;
 public partial class RingGrassAppearanceProfile : Resource
 {
     [Export] public bool Enabled { get; set; } = true;
+    /// <summary>Optional legacy blade-face diffuse, root AO, backlight and specular.</summary>
+    [Export] public bool EnableBladeShading { get; set; } = false;
     [Export(PropertyHint.Range, "0,2,0.01")] public float GrasslandDensityMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float ForestDensityMultiplier { get; set; } = .65f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float SparseDensityMultiplier { get; set; } = .22f;
@@ -19,7 +21,12 @@ public partial class RingGrassAppearanceProfile : Resource
     [Export] public Color GrasslandTint { get; set; } = new(.22f, .36f, .12f, 1);
     [Export] public Color ForestTint { get; set; } = new(.14f, .28f, .10f, 1);
     [Export] public Color SparseTint { get; set; } = new(.42f, .38f, .18f, 1);
-    [Export(PropertyHint.Range, "0,1,0.01")] public float TerrainHandoffStrength { get; set; } = .55f;
+    /// <summary>Terrain palette match at every distance; retains the persisted handoff key.</summary>
+    [Export(PropertyHint.Range, "0,1,0.01")] public float TerrainHandoffStrength { get; set; } = 1f;
+    /// <summary>Distance band for ground lighting and final blade brightness convergence.</summary>
+    [Export(PropertyHint.Range, "0,100,0.1")] public float TerrainBlendStartPercent { get; set; } = 70f;
+    [Export(PropertyHint.Range, "0,100,0.1")] public float TerrainBlendEndPercent { get; set; } = 90f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float TerrainLightingMatch { get; set; } = 1f;
 
     internal RingGrassAppearanceSnapshot CapturePlacement()
         => new(Enabled, GrasslandDensityMultiplier, ForestDensityMultiplier, SparseDensityMultiplier,

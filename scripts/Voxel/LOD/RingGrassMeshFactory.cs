@@ -12,7 +12,7 @@ namespace RingworldTechDemo.Voxel.LOD;
 public static class RingGrassMeshFactory
 {
     /// <summary>Creates one tapered, normalized meadow-blade ribbon.</summary>
-    public static Mesh Create(int segments = 4)
+    public static Mesh Create(int segments = 4, bool indexed = true)
     {
         segments = Mathf.Clamp(segments, 2, 12);
         var surface = new SurfaceTool();
@@ -22,7 +22,7 @@ public static class RingGrassMeshFactory
         // blade. Local X remains available for material curvature.
         AddBlade(surface, Vector3.Right, Vector3.Forward, .035f, segments, .50f);
 
-        return surface.Commit();
+        return CommitGrassSurface(surface, indexed);
     }
 
     /// <summary>
@@ -31,7 +31,7 @@ public static class RingGrassMeshFactory
     /// This deliberately stays at four triangles (the old two-section ribbon's
     /// cost), but reads as several blades from every ordinary viewing angle.
     /// </summary>
-    public static Mesh CreateIntermediate()
+    public static Mesh CreateIntermediate(bool indexed = true)
     {
         var surface = new SurfaceTool();
         BeginGrassSurface(surface);
@@ -40,11 +40,11 @@ public static class RingGrassMeshFactory
         // tiny prototype widths here would erase the density saving visually.
         AddBlade(surface, Vector3.Right, Vector3.Forward, .055f, 1, .40f);
         AddBlade(surface, Vector3.Forward, -Vector3.Right, -.040f, 1, .34f, sourceFacingAxis: Vector3.Right);
-        return surface.Commit();
+        return CommitGrassSurface(surface, indexed);
     }
 
     /// <summary>Four offset near sources; four segments cost 32 triangles, two cost 16.</summary>
-    public static Mesh CreateClump(int segments = 4)
+    public static Mesh CreateClump(int segments = 4, bool indexed = true)
     {
         segments = Mathf.Clamp(segments, 2, 12);
         var surface = new SurfaceTool(); BeginGrassSurface(surface);
@@ -53,14 +53,14 @@ public static class RingGrassMeshFactory
             SourceFrame(source, out Vector3 root, out Vector3 side, out Vector3 outward);
             AddBlade(surface, side, outward, .035f, segments, .50f, root);
         }
-        return surface.Commit();
+        return CommitGrassSurface(surface, indexed);
     }
 
     /// <summary>
     /// Four intermediate sources (16 triangles), optionally one ribbon per source
     /// (8 triangles). The single-ribbon variant requires distant camera facing.
     /// </summary>
-    public static Mesh CreateIntermediateClump(bool singleRibbonPerSource = false)
+    public static Mesh CreateIntermediateClump(bool singleRibbonPerSource = false, bool indexed = true)
     {
         var surface = new SurfaceTool(); BeginGrassSurface(surface);
         for (int source = 0; source < 4; source++)
@@ -70,11 +70,11 @@ public static class RingGrassMeshFactory
             if (!singleRibbonPerSource)
                 AddBlade(surface, outward, -side, -.040f, 1, .34f, root, side);
         }
-        return surface.Commit();
+        return CommitGrassSurface(surface, indexed);
     }
 
     /// <summary>Four offset copies of the production far source (16 triangles).</summary>
-    public static Mesh CreateFarClump()
+    public static Mesh CreateFarClump(bool indexed = true)
     {
         var surface = new SurfaceTool(); BeginGrassSurface(surface);
         for (int source = 0; source < 4; source++)
@@ -83,7 +83,7 @@ public static class RingGrassMeshFactory
             AddBlade(surface, side, outward, .070f, 1, 1.10f, root);
             AddBlade(surface, outward, -side, -.060f, 1, .95f, root, side);
         }
-        return surface.Commit();
+        return CommitGrassSurface(surface, indexed);
     }
 
     /// <summary>
@@ -91,7 +91,7 @@ public static class RingGrassMeshFactory
     /// <see cref="CreateIntermediate"/> so streamers can opt into it without
     /// changing the established near/intermediate handoff.
     /// </summary>
-    public static Mesh CreateFarCluster()
+    public static Mesh CreateFarCluster(bool indexed = true)
     {
         var surface = new SurfaceTool();
         BeginGrassSurface(surface);
@@ -103,11 +103,11 @@ public static class RingGrassMeshFactory
         // the four-triangle ceiling and avoiding additional roots/dispatches.
         AddBlade(surface, Vector3.Right, Vector3.Forward, .070f, 1, 1.10f);
         AddBlade(surface, Vector3.Forward, -Vector3.Right, -.060f, 1, .95f, sourceFacingAxis: Vector3.Right);
-        return surface.Commit();
+        return CommitGrassSurface(surface, indexed);
     }
 
     /// <summary>Compatibility prototype for callers that explicitly need cards.</summary>
-    public static Mesh CreateLegacyClump(int segments = 4)
+    public static Mesh CreateLegacyClump(int segments = 4, bool indexed = true)
     {
         segments = Mathf.Clamp(segments, 2, 12);
         var surface = new SurfaceTool();
@@ -119,6 +119,15 @@ public static class RingGrassMeshFactory
             Vector3 outward = new(-sideways.Z, 0.0f, sideways.X);
             AddBlade(surface, sideways, outward, blade == 0 ? .075f : -.055f, segments, .50f);
         }
+        return CommitGrassSurface(surface, indexed);
+    }
+
+    private static Mesh CommitGrassSurface(SurfaceTool surface, bool indexed)
+    {
+        // Deduplicate complete attribute tuples while retaining the authored
+        // triangle order. The unindexed reference supports exact regressions
+        // and measured comparisons without a second geometry implementation.
+        if (indexed) surface.Index();
         return surface.Commit();
     }
 

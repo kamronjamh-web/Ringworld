@@ -23,6 +23,8 @@ uniform vec3 night_tint = vec3(0.30, 0.45, 0.70);
 uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
 uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform bool vegetation_wind_enabled = true;
+uniform int tree_foliage_mode = 0;
+uniform bool tree_foliage_attachments = false;
 // GPU tree rows opt into the transition protocol with INSTANCE_CUSTOM.w == 2.
 // y is signed coverage and z is a stable per-root seed.  Older CPU rows retain
 // their original fully-visible behavior.
@@ -58,12 +60,13 @@ void vertex() {
 	tree_dither_seed = INSTANCE_CUSTOM.z;
 	vec3 root_world = MODEL_MATRIX[3].xyz;
 	if (vegetation_wind_enabled) {
-		float root_weight = clamp(VERTEX.y, 0.0, 1.0);
-		float instance_height = length(MODEL_MATRIX[1]);
-		vec3 displacement = ring_local_wind_displacement(root_world, root_weight, instance_height);
 		mat3 basis = mat3(MODEL_MATRIX);
-		vec3 squared_lengths = max(vec3(0.000001), vec3(dot(basis[0], basis[0]), dot(basis[1], basis[1]), dot(basis[2], basis[2])));
-		VERTEX += transpose(basis) * displacement / squared_lengths;
+		vec3 offset; mat3 jacobian;
+		ring_tree_wind_geometry(root_world, VERTEX, basis, CUSTOM0, tree_foliage_mode, tree_foliage_attachments, offset, jacobian);
+		VERTEX += offset;
+		NORMAL = ring_tree_deformed_normal(jacobian, NORMAL);
+		if (length(TANGENT) > .0001) TANGENT = normalize(jacobian * TANGENT);
+		if (length(BINORMAL) > .0001) BINORMAL = normalize(jacobian * BINORMAL);
 	}
 	vec3 world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	tree_cloud_occlusion = sample_local_cloud_shadow(world_position);
