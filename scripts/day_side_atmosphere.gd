@@ -9,6 +9,7 @@ extends Node
 @export var world_environment_path: NodePath = NodePath("../SpaceEnvironment")
 @export var cloud_lighting_bridge_path: NodePath = NodePath("../SunshineCloudBridge")
 @export var underground_environment_path: NodePath = NodePath("../UndergroundEnvironment")
+@export var underground_mode_path: NodePath = NodePath("../UndergroundMode")
 @export var ring_sky_shader_path: String = "res://materials/ring_local_sky.gdshader"
 
 @export_group("Day/Night Split")
@@ -201,6 +202,10 @@ var celestial_clock: Node = null
 var world_environment: WorldEnvironment = null
 var cloud_lighting_bridge: Node = null
 var underground_environment: Node = null
+var underground_mode: Node = null
+# Final darkening (1 - sky access) applied to sun, planet light and sky this frame. The underground mode
+# controller reads it next frame and only hides shadow-casting surface LODs once it is fully dark.
+var underground_lighting_darkness: float = 0.0
 var ring_sky_material: ShaderMaterial = null
 # Public render-facing daylight: geometric daylight after raw solar occlusion.
 # Keep the astronomical value separately so eclipse presentation never changes
@@ -249,6 +254,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
+	underground_lighting_darkness = 0.0
 	_resolve_references()
 
 	if player == null or sun_light == null or world_environment == null:
@@ -406,7 +412,8 @@ func _process(delta: float) -> void:
 	# This script owns Environment and directional-light color/energy; the clock
 	# owns sun direction and graphics quality owns its static shadow settings.
 	var underground_sky_access := _get_underground_sky_access()
-	_apply_underground_lighting(environment, underground_sky_access)
+	_apply_underground_lighting(environment, underground_sky_access, _get_enclosure_blend() * _get_structural_sky_access())
+	underground_lighting_darkness = 1.0 - clampf(underground_sky_access, 0.0, 1.0)
 	star_visibility *= 1.0 - current_underwater_factor
 	star_visibility *= underground_sky_access
 	_update_sky(
@@ -419,26 +426,39 @@ func _process(delta: float) -> void:
 		current_giant_direction)
 
 
-func _apply_underground_lighting(environment: Environment, sky_access: float) -> void:
+func _apply_underground_lighting(environment: Environment, sky_access: float, cave_weight: float = 0.0) -> void:
 	var access := clampf(sky_access, 0.0, 1.0)
 	var attributes := world_environment.camera_attributes as CameraAttributesPractical \
 		if world_environment != null else null
 	if access >= 0.999:
 		return
-	environment.ambient_light_color = underground_ambient_color.lerp(
+	# Decision D2: designed caves keep a faint, tunable ambient and fog colour so large shapes read as
+	# silhouettes. The weight is the enclosure blend, zero inside the structural cavity so its near-black
+	# lighting contract is unchanged.
+	var cave_mix := clampf(cave_weight, 0.0, 1.0)
+	var cave_ambient := _underground_cave_ambient_color()
+	var dark_ambient_color := underground_ambient_color.lerp(cave_ambient, cave_mix)
+	var dark_ambient_energy := lerpf(underground_ambient_energy, _underground_cave_ambient_energy(), cave_mix)
+	environment.ambient_light_color = dark_ambient_color.lerp(
 		environment.ambient_light_color, access)
 	environment.ambient_light_energy = lerpf(
-		underground_ambient_energy, environment.ambient_light_energy, access)
+		dark_ambient_energy, environment.ambient_light_energy, access)
 	environment.ambient_light_sky_contribution *= access
+	var cave_fog_mix := cave_mix * (1.0 - access)
+	environment.fog_light_color = environment.fog_light_color.lerp(_underground_cave_fog_color(), cave_fog_mix)
 	environment.fog_sky_affect = lerpf(
 		underground_fog_sky_affect, environment.fog_sky_affect, access)
 	environment.fog_sun_scatter *= access
 	environment.fog_light_energy *= access
+	environment.fog_light_energy = lerpf(environment.fog_light_energy, 1.0, cave_fog_mix)
 	environment.fog_aerial_perspective *= access
 	if sun_light != null:
 		sun_light.light_energy *= access
 	if planet_light != null:
 		planet_light.light_energy *= access
+		# A fully darkened planet light needs no shadow-map pass; the next frame re-evaluates it from scratch.
+		if planet_light.light_energy <= 0.001:
+			planet_light.shadow_enabled = false
 	if attributes != null:
 		# Disable adaptation in darkness, then tightly bound it through the
 		# opening transition instead of allowing a sudden jump to surface ISO.
@@ -895,6 +915,9 @@ func _resolve_references() -> void:
 	if underground_environment == null:
 		underground_environment = get_node_or_null(underground_environment_path)
 
+	if underground_mode == null:
+		underground_mode = get_node_or_null(underground_mode_path)
+
 
 func _evaluate_giant(to_sun: Vector3) -> void:
 	# RingDayNightCycle evaluates the immutable frame at priority -100.
@@ -936,10 +959,30 @@ func _celestial_seed_offset(seed: int) -> Vector3:
 		float(posmod(compact_seed * 389 + 71, 983)) / 983.0)
 
 
-func _get_underground_sky_access() -> float:
+func _get_structural_sky_access() -> float:
 	if underground_environment == null:
 		return 1.0
 	return clampf(float(underground_environment.get("CurrentSkyAccess")), 0.0, 1.0)
+
+
+func _get_enclosure_blend() -> float:
+	if underground_mode == null:
+		return 0.0
+	var blend: Variant = underground_mode.get("EnclosureBlend")
+	return clampf(float(blend), 0.0, 1.0) if blend != null else 0.0
+
+
+func _get_enclosure_lighting_weight() -> float:
+	if underground_mode == null:
+		return 0.0
+	var weight: Variant = underground_mode.get("EnclosureLightingWeight")
+	return clampf(float(weight), 0.0, 1.0) if weight != null else 0.0
+
+
+# Effective sky access: the structural cavity's verified roof access, further reduced by the
+# underground-mode enclosure blend so designed (terrain-domain) caves are truly dark (decision D1).
+func _get_underground_sky_access() -> float:
+	return minf(_get_structural_sky_access(), 1.0 - _get_enclosure_lighting_weight() * _get_enclosure_blend())
 
 
 func _has_canonical_atmosphere_provider() -> bool:
@@ -1037,3 +1080,24 @@ func _run_ring_interior_boundary_smoke_test() -> void:
 		push_error("Ring interior boundary smoke test failed: %s" % [factors])
 	else:
 		print("RING_INTERIOR_BOUNDARY_SMOKE_TEST=PASS")
+
+
+# Cave ambient and fog colour are tuned from the Underground section of the grave-key drawer and owned by the
+# underground-mode controller. These fallbacks apply only when that node is absent.
+func _underground_mode_value(property_name: String, fallback: Variant) -> Variant:
+	if underground_mode == null:
+		return fallback
+	var value: Variant = underground_mode.get(property_name)
+	return value if value != null else fallback
+
+
+func _underground_cave_ambient_color() -> Color:
+	return _underground_mode_value("CaveAmbientColor", Color(0.16, 0.20, 0.30, 1.0)) as Color
+
+
+func _underground_cave_ambient_energy() -> float:
+	return clampf(float(_underground_mode_value("CaveAmbientEnergy", 0.035)), 0.0, 1.0)
+
+
+func _underground_cave_fog_color() -> Color:
+	return _underground_mode_value("CaveFogColor", Color(0.05, 0.07, 0.11, 1.0)) as Color

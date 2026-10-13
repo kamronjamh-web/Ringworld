@@ -13,6 +13,8 @@ public sealed class GameplayUndergroundModeDefaults
     public const float MinimumOpenness = 0f, MaximumOpenness = 1f;
     public const float MaximumEnterHold = 5f, MaximumExitHold = 2f;
     public const float MinimumBlend = .1f, MaximumBlend = 5f;
+    public const float MinimumDeepHideDepth = 32f, MaximumDeepHideDepth = 2048f;
+    public const float MaximumCaveAmbientEnergy = .5f;
     private readonly string _path;
     public GameplayUndergroundModeSettings Settings { get; private set; } = new();
     public bool Dirty { get; private set; }
@@ -50,6 +52,17 @@ public sealed class GameplayUndergroundModeDefaults
         result.EnterHoldSeconds = Finite(input.EnterHoldSeconds, 1f, 0f, MaximumEnterHold);
         result.ExitHoldSeconds = Finite(input.ExitHoldSeconds, .15f, 0f, MaximumExitHold);
         result.BlendSeconds = Finite(input.BlendSeconds, 1f, MinimumBlend, MaximumBlend);
+        result.DeepHideDepthMeters = Finite(input.DeepHideDepthMeters, 128f, MinimumDeepHideDepth, MaximumDeepHideDepth);
+        result.AudioWeatherEnabled = input.AudioWeatherEnabled;
+        result.VegetationEnabled = input.VegetationEnabled;
+        result.CloudsEnabled = input.CloudsEnabled;
+        result.WaterEnabled = input.WaterEnabled;
+        result.FarTerrainEnabled = input.FarTerrainEnabled;
+        result.ShadowsEnabled = input.ShadowsEnabled;
+        result.EnclosureLightingWeight = Finite(input.EnclosureLightingWeight, 1f, 0f, 1f);
+        result.CaveAmbientColor = SanitizeColor(input.CaveAmbientColor, new Color(.16f, .20f, .30f, 1f));
+        result.CaveAmbientEnergy = Finite(input.CaveAmbientEnergy, .035f, 0f, MaximumCaveAmbientEnergy);
+        result.CaveFogColor = SanitizeColor(input.CaveFogColor, new Color(.05f, .07f, .11f, 1f));
         return result;
     }
 
@@ -66,12 +79,46 @@ public sealed class GameplayUndergroundModeDefaults
         to.EnterHoldSeconds = from.EnterHoldSeconds;
         to.ExitHoldSeconds = from.ExitHoldSeconds;
         to.BlendSeconds = from.BlendSeconds;
+        to.DeepHideDepthMeters = from.DeepHideDepthMeters;
+        to.AudioWeatherEnabled = from.AudioWeatherEnabled;
+        to.VegetationEnabled = from.VegetationEnabled;
+        to.CloudsEnabled = from.CloudsEnabled;
+        to.WaterEnabled = from.WaterEnabled;
+        to.FarTerrainEnabled = from.FarTerrainEnabled;
+        to.ShadowsEnabled = from.ShadowsEnabled;
+        to.EnclosureLightingWeight = from.EnclosureLightingWeight;
+        to.CaveAmbientColor = from.CaveAmbientColor;
+        to.CaveAmbientEnergy = from.CaveAmbientEnergy;
+        to.CaveFogColor = from.CaveFogColor;
     }
 
     private static bool Same(GameplayUndergroundModeSettings a, GameplayUndergroundModeSettings b) =>
         a.Enabled == b.Enabled && a.EnterDepthMeters == b.EnterDepthMeters && a.ExitDepthMeters == b.ExitDepthMeters
         && a.EnterOpennessMax == b.EnterOpennessMax && a.ExitOpennessMin == b.ExitOpennessMin
-        && a.EnterHoldSeconds == b.EnterHoldSeconds && a.ExitHoldSeconds == b.ExitHoldSeconds && a.BlendSeconds == b.BlendSeconds;
+        && a.EnterHoldSeconds == b.EnterHoldSeconds && a.ExitHoldSeconds == b.ExitHoldSeconds && a.BlendSeconds == b.BlendSeconds
+        && a.DeepHideDepthMeters == b.DeepHideDepthMeters && a.AudioWeatherEnabled == b.AudioWeatherEnabled
+        && a.VegetationEnabled == b.VegetationEnabled && a.CloudsEnabled == b.CloudsEnabled && a.WaterEnabled == b.WaterEnabled
+        && a.FarTerrainEnabled == b.FarTerrainEnabled && a.ShadowsEnabled == b.ShadowsEnabled
+        && a.EnclosureLightingWeight == b.EnclosureLightingWeight && a.CaveAmbientColor == b.CaveAmbientColor
+        && a.CaveAmbientEnergy == b.CaveAmbientEnergy && a.CaveFogColor == b.CaveFogColor;
+
+    private static Color SanitizeColor(Color value, Color fallback) =>
+        float.IsFinite(value.R) && float.IsFinite(value.G) && float.IsFinite(value.B)
+            ? new Color(Mathf.Clamp(value.R, 0f, 1f), Mathf.Clamp(value.G, 0f, 1f), Mathf.Clamp(value.B, 0f, 1f), 1f)
+            : fallback;
+
+    /// <summary>The participant groups enabled by the saved choices.</summary>
+    public UndergroundGroups EnabledGroups()
+    {
+        var groups = UndergroundGroups.None;
+        if (Settings.AudioWeatherEnabled) groups |= UndergroundGroups.AudioWeather;
+        if (Settings.VegetationEnabled) groups |= UndergroundGroups.Vegetation;
+        if (Settings.CloudsEnabled) groups |= UndergroundGroups.Clouds;
+        if (Settings.WaterEnabled) groups |= UndergroundGroups.Water;
+        if (Settings.FarTerrainEnabled) groups |= UndergroundGroups.FarTerrain;
+        if (Settings.ShadowsEnabled) groups |= UndergroundGroups.Shadows;
+        return groups;
+    }
 
     /// <summary>Stores sanitized choices; returns false when nothing changed.</summary>
     public bool Set(GameplayUndergroundModeSettings candidate)
@@ -97,6 +144,12 @@ public sealed class GameplayUndergroundModeDefaults
             ExitHoldSeconds = Settings.ExitHoldSeconds,
             BlendSeconds = Settings.BlendSeconds
         };
+        controller.DeepHideDepthMeters = Settings.DeepHideDepthMeters;
+        controller.EnabledGroups = EnabledGroups();
+        controller.EnclosureLightingWeight = Settings.EnclosureLightingWeight;
+        controller.CaveAmbientColor = Settings.CaveAmbientColor;
+        controller.CaveAmbientEnergy = Settings.CaveAmbientEnergy;
+        controller.CaveFogColor = Settings.CaveFogColor;
     }
 
     public void Reset() { Settings = new(); Dirty = true; LastError = ""; }

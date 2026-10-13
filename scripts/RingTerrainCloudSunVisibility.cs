@@ -54,6 +54,8 @@ public sealed record RingTerrainCloudSunVisibilitySnapshot
 public partial class RingTerrainCloudSunVisibility : Node
 {
     public static RingTerrainCloudSunVisibility? Instance { get; private set; }
+    /// <summary>Underground-mode hold: skip trace/generation without invalidating the published snapshot. The sun validity check regenerates on resume.</summary>
+    public bool UndergroundHold { get; set; }
     [Export] public NodePath GridPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath GlobalLodPath { get; set; } = new("../GlobalTerrainLod3");
     [Export] public NodePath FocusPath { get; set; } = new("../Explorer");
@@ -153,6 +155,7 @@ public partial class RingTerrainCloudSunVisibility : Node
     public override void _Process(double delta)
     {
         if(!ReferenceEquals(Instance,this))return;
+        if(UndergroundHold)return;
         if(!Settings.Enabled||!_receiverDemand.Values.Any(active=>active)){
             Invalidate(Settings.Enabled?"no active cloud receivers":"disabled");
             if(_pending!=null){_gpu?.Call("discard_generation");_pending=null;}return;}

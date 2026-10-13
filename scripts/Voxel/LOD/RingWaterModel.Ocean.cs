@@ -92,6 +92,8 @@ public static partial class RingWaterModel
                 RingWaterWindResponse.BoundedPhase(simulationTime, WaveSpeed, WaterPhaseRates[index] * .18));
     }
 
+    public static long CurrentWindClockVersion => _windClockVersion;
+    public static double CurrentWindClock => _windClock;
     public static void ClearWindClock() { _windClockEnabled = false; _windClockVersion++; }
 
     private static void ApplyWaterWind(ShaderMaterial material, float coordinateScale)

@@ -83,6 +83,15 @@ public partial class RingDistantRainCurtains : Node3D
             && (_provider == null || _provider.SelectedProvider == RingCloudProviderController.CloudProvider.Sunshine);
         if (!ProviderEligible || _explorer == null || _grid?.TerrainSampler == null || _weather == null)
         { Clear(); return; }
+        if (_localEffects!.UndergroundSuspended)
+        {
+            // Underground-mode hold: hide without discarding cells so resume re-fades them instantly.
+            foreach (Curtain c in _curtains) c.Node.Visible = false;
+            VisibleCurtainCount = 0;
+            double heldClock = _weather.CloudSimulationTimeSeconds;
+            if (double.IsFinite(heldClock)) _lastClock = heldClock;
+            return;
+        }
         double clock = _weather.CloudSimulationTimeSeconds;
         if (!double.IsFinite(clock)) { Clear(); _lastClock = double.NegativeInfinity; return; }
         bool discontinuity = double.IsFinite(_lastClock) && (clock < _lastClock || clock - _lastClock > 5.0);

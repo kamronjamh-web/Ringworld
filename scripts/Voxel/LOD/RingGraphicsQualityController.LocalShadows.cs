@@ -24,6 +24,8 @@ public partial class RingGraphicsQualityController
     public float EffectiveSunShadowOnElevationDegrees => _effectiveSunShadowOnElevationDegrees;
     public bool LocalSunShadowSuspended => _localSunShadowSuspended;
     public string LocalShadowHandoffReason => _localShadowHandoffReason;
+    /// <summary>Underground-mode reason: sun shadow maps are skipped while the player is fully enclosed (sun energy is already zero then).</summary>
+    public bool UndergroundShadowSuspended { get; set; }
 
     public Godot.Collections.Dictionary GetLocalShadowHandoffDiagnostics() => new()
     {
@@ -57,6 +59,7 @@ public partial class RingGraphicsQualityController
                 suspend = elevation <= _effectiveSunShadowOffElevationDegrees;
             _localShadowHandoffReason = suspend ? "sun safely below local shadow horizon" : "sun at or above local shadow horizon";
         }
+        if (UndergroundShadowSuspended && RequestedSunShadowsEnabled) { suspend = true; _localShadowHandoffReason = "underground enclosed"; }
         _localSunShadowSuspended = suspend;
         bool effectiveShadowEnabled = RequestedSunShadowsEnabled && !suspend;
         if (_sun.ShadowEnabled != effectiveShadowEnabled) _sun.ShadowEnabled = effectiveShadowEnabled;

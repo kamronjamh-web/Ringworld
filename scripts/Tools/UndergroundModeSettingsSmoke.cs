@@ -9,6 +9,8 @@ namespace RingworldTechDemo.Tools;
 [GlobalClass]
 public partial class UndergroundModeSettingsSmoke : RefCounted
 {
+    private static bool baselineGroups(GameplayUndergroundModeSettings s) => s.AudioWeatherEnabled && s.VegetationEnabled && s.CloudsEnabled && s.WaterEnabled && s.FarTerrainEnabled && s.ShadowsEnabled;
+
     public Godot.Collections.Dictionary Run(string isolatedPath)
     {
         var result = new Godot.Collections.Dictionary();
@@ -57,8 +59,51 @@ public partial class UndergroundModeSettingsSmoke : RefCounted
                 && bounded.Settings.ExitHoldSeconds == 2 && bounded.Settings.ExitDepthMeters <= bounded.Settings.EnterDepthMeters;
             bounded.Reset();
             bool reset = bounded.Settings.Enabled && bounded.Settings.EnterDepthMeters == 24 && bounded.Dirty && bounded.Save();
-            result["pass"] = baselineOk && noOp && changed && persisted && untouched && applied && noFileNoApply && sanitized && hysteresis && loadSanitized && reset;
-            result["detail"] = $"baseline={baselineOk} noop={noOp} changed={changed} persisted={persisted} untouched={untouched} applied={applied} nofile={noFileNoApply} sanitized={sanitized} hysteresis={hysteresis} loadSanitized={loadSanitized} reset={reset}";
+            // Per-group suspension toggles, cave lighting (D1/D2) and the deep-hide depth.
+            bool groupDefaults = baselineGroups(defaults.Settings) && defaults.EnabledGroups() == UndergroundGroups.All
+                && defaults.Settings.DeepHideDepthMeters == 128 && defaults.Settings.EnclosureLightingWeight == 1
+                && defaults.Settings.CaveAmbientEnergy == .035f && defaults.Settings.CaveAmbientColor == new Color(.16f, .20f, .30f, 1f)
+                && defaults.Settings.CaveFogColor == new Color(.05f, .07f, .11f, 1f);
+            var lightingPath = isolatedPath + ".lighting.tres";
+            var lighting = new GameplayUndergroundModeDefaults(lightingPath);
+            lighting.Load();
+            using var lightingCustom = new GameplayUndergroundModeSettings
+            {
+                AudioWeatherEnabled = false, VegetationEnabled = false, CloudsEnabled = true, WaterEnabled = false, FarTerrainEnabled = true, ShadowsEnabled = false,
+                DeepHideDepthMeters = 200, EnclosureLightingWeight = .5f, CaveAmbientEnergy = .08f,
+                CaveAmbientColor = new Color(.3f, .2f, .1f, 1f), CaveFogColor = new Color(.1f, .2f, .3f, 1f)
+            };
+            bool lightingSaved = lighting.Set(lightingCustom) && lighting.Save();
+            var lightingReloaded = new GameplayUndergroundModeDefaults(lightingPath);
+            lightingReloaded.Load();
+            var lightingController = new RingUndergroundModeController();
+            bool controllerDefaults = lightingController.EnabledGroups == UndergroundGroups.All && lightingController.DeepHideDepthMeters == 128 && lightingController.EnclosureLightingWeight == 1
+                && lightingController.CaveAmbientEnergy == .035f;
+            lightingReloaded.Apply(lightingController);
+            bool lightingApplied = lightingController.EnabledGroups == (UndergroundGroups.Clouds | UndergroundGroups.FarTerrain)
+                && lightingController.DeepHideDepthMeters == 200 && lightingController.EnclosureLightingWeight == .5f && lightingController.CaveAmbientEnergy == .08f
+                && lightingController.CaveAmbientColor == new Color(.3f, .2f, .1f, 1f) && lightingController.CaveFogColor == new Color(.1f, .2f, .3f, 1f);
+            lightingController.Free();
+            bool lightingPersisted = lightingSaved && !lightingReloaded.Settings.AudioWeatherEnabled && !lightingReloaded.Settings.VegetationEnabled && lightingReloaded.Settings.CloudsEnabled
+                && !lightingReloaded.Settings.WaterEnabled && lightingReloaded.Settings.FarTerrainEnabled && !lightingReloaded.Settings.ShadowsEnabled
+                && lightingReloaded.Settings.DeepHideDepthMeters == 200 && lightingReloaded.Settings.EnclosureLightingWeight == .5f;
+            using var wildLighting = new GameplayUndergroundModeSettings
+            {
+                DeepHideDepthMeters = 1, EnclosureLightingWeight = 5, CaveAmbientEnergy = 99, CaveAmbientColor = new Color(float.NaN, 2f, -1f, .2f), CaveFogColor = new Color(2f, -1f, .5f, 0f)
+            };
+            using var cleanLighting = GameplayUndergroundModeDefaults.Sanitize(wildLighting);
+            bool lightingSanitized = cleanLighting.DeepHideDepthMeters == GameplayUndergroundModeDefaults.MinimumDeepHideDepth && cleanLighting.EnclosureLightingWeight == 1
+                && cleanLighting.CaveAmbientEnergy == GameplayUndergroundModeDefaults.MaximumCaveAmbientEnergy
+                && cleanLighting.CaveAmbientColor == new Color(.16f, .20f, .30f, 1f) && cleanLighting.CaveFogColor == new Color(1f, 0f, .5f, 1f);
+            using var wildDepth = new GameplayUndergroundModeSettings { DeepHideDepthMeters = 99999, EnclosureLightingWeight = -2, CaveAmbientEnergy = float.NaN };
+            using var cleanDepth = GameplayUndergroundModeDefaults.Sanitize(wildDepth);
+            bool depthSanitized = cleanDepth.DeepHideDepthMeters == GameplayUndergroundModeDefaults.MaximumDeepHideDepth && cleanDepth.EnclosureLightingWeight == 0 && cleanDepth.CaveAmbientEnergy == .035f;
+            lighting.Reset();
+            bool lightingReset = lighting.Settings.AudioWeatherEnabled && lighting.Settings.ShadowsEnabled && lighting.Settings.EnclosureLightingWeight == 1 && lighting.Dirty && lighting.Save();
+            try { File.Delete(ProjectSettings.GlobalizePath(lightingPath)); } catch { }
+            bool groupsAndLighting = groupDefaults && controllerDefaults && lightingApplied && lightingPersisted && lightingSanitized && depthSanitized && lightingReset;
+            result["pass"] = groupsAndLighting && baselineOk && noOp && changed && persisted && untouched && applied && noFileNoApply && sanitized && hysteresis && loadSanitized && reset;
+            result["detail"] = $"groupsAndLighting={groupsAndLighting} (defaults={groupDefaults} controller={controllerDefaults} applied={lightingApplied} persisted={lightingPersisted} sanitized={lightingSanitized}/{depthSanitized} reset={lightingReset}) baseline={baselineOk} noop={noOp} changed={changed} persisted={persisted} untouched={untouched} applied={applied} nofile={noFileNoApply} sanitized={sanitized} hysteresis={hysteresis} loadSanitized={loadSanitized} reset={reset}";
         }
         catch (Exception error) { result["pass"] = false; result["detail"] = error.ToString(); }
         finally { try { string full = ProjectSettings.GlobalizePath(isolatedPath); if (File.Exists(full)) File.Delete(full); } catch { } }

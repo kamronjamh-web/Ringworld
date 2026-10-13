@@ -156,6 +156,8 @@ public partial class RingBiomeDecorationLayer : Node3D
 	private Task<BuildResult>? _pendingBuild;
 	private BuildRequest? _queuedBuild;
 	private bool _altitudeSuppressed;
+	/// <summary>Underground-mode hold: layer hidden and streaming skipped; nothing is freed or reset.</summary>
+	public bool UndergroundHold { get; set; }
 	private readonly Dictionary<MultiMeshInstance3D, int> _treeSunShadowLods = new();
 	private bool _treeSunShadowsSuppressed;
 	private bool _treeSunShadowTravelActive;
@@ -266,6 +268,12 @@ public partial class RingBiomeDecorationLayer : Node3D
 		// lingering during space flight.
 		bool shouldShow = _explorer == null || _explorer.CurrentAltitudeAboveTerrainMeters <= MaximumViewerAltitudeAboveTerrainMeters;
 		UpdateTreeSunShadowPolicy(delta, shouldShow);
+		// Underground-mode hold: hide without clearing colliders or the streaming cell cache so resume is instant.
+		if (shouldShow && UndergroundHold)
+		{
+			Visible = false;
+			return;
+		}
 		if (!shouldShow)
 		{
 			if (!_altitudeSuppressed && UsePersistentVegetationTiles)

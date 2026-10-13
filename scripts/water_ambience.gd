@@ -72,6 +72,12 @@ func _process(delta: float) -> void:
 		elif kind == 2: # Lake: quiet shore and a restrained open-water bed.
 			targets["shore"] *= 0.45
 			targets["open"] = proximity * 0.22
+	if not underwater:
+		# Underground mode publishes the enclosure blend; layers keep playing and simply fade.
+		var enclosure := float(_player.get_meta("ring_underground_ambience_blend", 0.0))
+		var enclosure_scale := 1.0 - clampf(enclosure, 0.0, 1.0) if is_finite(enclosure) else 1.0
+		for key in targets:
+			targets[key] = float(targets[key]) * enclosure_scale
 	_apply_targets(targets, delta)
 
 

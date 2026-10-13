@@ -8,6 +8,8 @@ using RingworldTechDemo.Voxel.Phase2;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
+public enum UndergroundProxyTier { None, Freeze, Hide }
+
 /// <summary>Coordinates the configurable nested terrain LOD stack.</summary>
 public partial class RingTerrainLodCoordinator : Node
 {
@@ -197,6 +199,15 @@ public partial class RingTerrainLodCoordinator : Node
 
     public int AdaptiveFallbackCount { get; private set; }
     public bool FastTravelStreamingActive => _fastTravelStreamingActive;
+    /// <summary>Underground-mode proxy tier. Freeze stops rebuilds and keeps meshes; Hide additionally hides surface sectors (never the structural sidewalls).</summary>
+    public UndergroundProxyTier UndergroundTier { get; private set; }
+
+    public void SetUndergroundTier(UndergroundProxyTier tier)
+    {
+        if (UndergroundTier == tier) return;
+        UndergroundTier = tier;
+        ApplyFastTravelTierPolicy();
+    }
     public bool HighAltitudeProxySuspended => _highAltitudeProxySuspended;
     public float CurrentViewerAltitudeAboveTerrainMeters { get; private set; }
 
@@ -827,10 +838,11 @@ public partial class RingTerrainLodCoordinator : Node
         {
             // Rebuild throttling and rendering are independent.  A velocity
             // threshold must never make authoritative terrain vanish.
-            _levels[i].SetFastTravelSuspended(_fastTravelStreamingActive);
+            _levels[i].SetFastTravelSuspended(_fastTravelStreamingActive || UndergroundTier != UndergroundProxyTier.None);
             _levels[i].SetTransitVisibility(ResolveTransitHidden(
                 _fastTravelStreamingActive,
                 HideProxyMeshesDuringFastTravel));
+            _levels[i].SetUndergroundHidden(UndergroundTier == UndergroundProxyTier.Hide);
         }
     }
 

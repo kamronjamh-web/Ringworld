@@ -149,6 +149,19 @@ public partial class RingCloudProviderController : Node
         _weatherEffects?.SetExternalWeatherOverride(false);
     }
 
+    /// <summary>
+    /// Underground-mode guard: only gates the active provider's compositor callback. Provider changes made
+    /// while suspended stay suspended, and nothing is detached, released or reloaded.
+    /// </summary>
+    public bool UndergroundRenderSuspended { get; private set; }
+
+    public void SetUndergroundRenderSuspended(bool suspended)
+    {
+        UndergroundRenderSuspended = suspended;
+        _sunshine?.SetRenderSuspended(suspended);
+        _clpEffect?.Set("enabled", !suspended);
+    }
+
     public void SetProvider(int provider) => SetProvider((CloudProvider)Mathf.Clamp(provider, 0, 1));
 
     public void SetProvider(CloudProvider provider)
@@ -255,6 +268,7 @@ public partial class RingCloudProviderController : Node
         _appliedScaleDownPower = -1;
         _appliedClpQuality = -1;
         AttachEffect(_clpEffect);
+        if (UndergroundRenderSuspended) _clpEffect.Set("enabled", false);
         ApplyClpTuning();
         DisableRingFarCloudsForClp();
         _weather?.SetExternalLocalVolumetricCloudsState(true, true, 36000.0f, 48000.0f);
