@@ -10,6 +10,8 @@ namespace RingworldTechDemo.Voxel.LOD;
 public partial class RingGrassAppearanceProfile : Resource
 {
     [Export] public bool Enabled { get; set; } = true;
+    /// <summary>Align distant terrain coverage with the standing grass fade band.</summary>
+    [Export] public bool CoordinatedTerrainHandoff { get; set; } = true;
     /// <summary>Optional legacy blade-face diffuse, root AO, backlight and specular.</summary>
     [Export] public bool EnableBladeShading { get; set; } = false;
     [Export(PropertyHint.Range, "0,2,0.01")] public float GrasslandDensityMultiplier { get; set; } = 1.0f;

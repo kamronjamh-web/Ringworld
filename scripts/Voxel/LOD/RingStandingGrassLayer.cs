@@ -70,6 +70,14 @@ public partial class RingStandingGrassLayer : Node3D
     [Export(PropertyHint.Range, "0,96,1")] public float BladesPerSquareMeter { get; set; }
     /// <summary>Groups four dense grass sources under one render instance.</summary>
     [Export] public bool UseGrassClumps { get; set; } = true;
+    [Export] public bool EnableMeadowTufts { get; set; } = true;
+    [Export(PropertyHint.Range, "0.25,2,0.01")] public float MeadowTuftSpread { get; set; } = 1f;
+    [Export(PropertyHint.Enum, "Mixed,Compact,Spreading,Leaning")] public int MeadowTuftVariant { get; set; }
+    [Export(PropertyHint.Range, "0.03,2,0.01")] public float GrassMinimumHeightMeters { get; set; } = .10f;
+    [Export(PropertyHint.Range, "0.03,2,0.01")] public float GrassMaximumHeightMeters { get; set; } = .20f;
+    private readonly RingMeadowGrassMeshLibrary _meadowMeshes = new();
+    private float EffectiveMeadowSpread => float.IsFinite(MeadowTuftSpread) ? Mathf.Clamp(MeadowTuftSpread, .25f, 2f) : 1f;
+    public int GrassPlacementUnitsPerSource => UseGrassClumps && float.IsFinite(BladesPerSquareMeter) && BladesPerSquareMeter > 0 ? 4 : 1;
     [Export(PropertyHint.Range, "100,100000,100")] public int MaximumInstancesPerTile { get; set; } = 6000;
     [Export(PropertyHint.Range, "1000,250000,1000")] public int MaximumInstances { get; set; } = 18000;
     [Export(PropertyHint.Range, "16,1024,16")] public int MaximumResidentTiles { get; set; } = 128;
@@ -226,9 +234,9 @@ public partial class RingStandingGrassLayer : Node3D
     private float TileSize => Mathf.Max(16, SpatialTileMeters);
     private float CellSize => Mathf.Max(4, CellSizeMeters);
     /// <summary>Blade-equivalent coverage represented by one source instance.</summary>
-    public int GrassBladesPerSource => UseGrassClumps && float.IsFinite(BladesPerSquareMeter) && BladesPerSquareMeter > 0 ? 4 : 1;
-    public int MaximumGrassSourceInstances => Math.Max(1, MaximumInstances / GrassBladesPerSource);
-    public int MaximumGrassSourcesPerTile => Math.Max(1, MaximumInstancesPerTile / GrassBladesPerSource);
+    public int GrassBladesPerSource => GrassPlacementUnitsPerSource > 1 ? EnableMeadowTufts ? 8 : 4 : 1;
+    public int MaximumGrassSourceInstances => Math.Max(1, MaximumInstances / GrassPlacementUnitsPerSource);
+    public int MaximumGrassSourcesPerTile => Math.Max(1, MaximumInstancesPerTile / GrassPlacementUnitsPerSource);
     public override void _Ready()
     {
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
@@ -240,11 +248,13 @@ public partial class RingStandingGrassLayer : Node3D
     public override void _Process(double d)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass update (inclusive)");
+        RefreshCoordinatedGrassHandoffGlobals();
         _ = d;
         if (ShouldSuspendStreaming(_explorer?.CurrentAltitudeAboveTerrainMeters ?? 0,
             _explorer?.ActualTravelSpeedMetersPerSecond ?? 0))
         {
             SuspendStreaming();
+            RefreshCoordinatedGrassHandoffGlobals();
             return;
         }
         // Lighting must update even while streaming remains stationary: the
@@ -360,10 +370,12 @@ public partial class RingStandingGrassLayer : Node3D
         if (ShouldSuspendStreaming(altitude, speed))
         {
             SuspendStreaming();
+            RefreshCoordinatedGrassHandoffGlobals();
             return;
         }
         StreamingSuspended = false;
         Visible = true;
+        RefreshCoordinatedGrassHandoffGlobals();
         EnsureResources();
         UpdateGrassGusts(0, s);
         CaptureGrassModifiers(s);
@@ -542,6 +554,9 @@ public partial class RingStandingGrassLayer : Node3D
                 int candidates = Mathf.Clamp(CandidatesPerCell, 1, 16);
                 float density = Mathf.Clamp(BladesPerSquareMeter, 0, 96);
                 bool useGrassClumps = GrassBladesPerSource > 1;
+                bool meadowTufts = EnableMeadowTufts && useGrassClumps;
+                float meadowSpread = EffectiveMeadowSpread;
+                float minimumHeight = GrassMinimumHeightMeters, maximumHeight = GrassMaximumHeightMeters;
                 RingGrassModifierSnapshot? modifiers = CaptureGrassModifiers(s);
                 float modifierDensityStrength = Mathf.Clamp(GrassModifierDensityStrength, 0, 1);
                 RingGrassAppearanceSnapshot appearance = GrassAppearanceProfile?.CapturePlacement() ?? RingGrassAppearanceSnapshot.Default;
@@ -570,7 +585,7 @@ public partial class RingStandingGrassLayer : Node3D
                 {
                     job.WorkerStartTick = job.DiagnosticSession != 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
                     var watch = System.Diagnostics.Stopwatch.StartNew();
-                    try { return BuildWorker(k, bounds, cell, candidates, density, reserve, slope, ownedSampler, e, g, c.Token, fieldWorkerContext, exclusions, appearance, _surfaceCache, coverage.Fraction, coverage.Tier, useGrassClumps, modifiers, modifierDensityStrength); }
+                    try { return BuildWorker(k, bounds, cell, candidates, density, reserve, slope, ownedSampler, e, g, c.Token, fieldWorkerContext, exclusions, appearance, _surfaceCache, coverage.Fraction, coverage.Tier, useGrassClumps, modifiers, modifierDensityStrength, meadowTufts, meadowSpread, minimumHeight, maximumHeight); }
                     finally { watch.Stop(); job.WorkerMilliseconds = watch.Elapsed.TotalMilliseconds; job.WorkerFinishTick = job.DiagnosticSession != 0 ? System.Diagnostics.Stopwatch.GetTimestamp() : 0; }
                 });
             }
@@ -586,7 +601,7 @@ public partial class RingStandingGrassLayer : Node3D
             TotalGrassBuildCount++;
         }
     }
-    private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler? ownedSampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps, RingGrassModifierSnapshot? modifiers, float modifierDensityStrength)
+    private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler? ownedSampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps, RingGrassModifierSnapshot? modifiers, float modifierDensityStrength, bool meadowTufts, float meadowSpread, float minimumHeight, float maximumHeight)
     {
         using (ownedSampler)
         using (fieldWorkerContext)
@@ -594,7 +609,7 @@ public partial class RingStandingGrassLayer : Node3D
             using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass build", worker: true);
             return RingGrassTileBuilder.Build(key, bounds, cell, candidates, density, reserve, slope,
                 fieldWorkerContext?.Sampler ?? ownedSampler ?? throw new InvalidOperationException("Grass worker requires a sampler."), edits, geometry, cancellation,
-                fieldWorkerContext?.Field, exclusions, appearance, surfaceCache: surfaceCache, sourceFraction: sourceFraction, sourceTier: sourceTier, useGrassClumps: useGrassClumps, modifiers: modifiers, modifierDensityStrength: modifierDensityStrength);
+                fieldWorkerContext?.Field, exclusions, appearance, surfaceCache: surfaceCache, sourceFraction: sourceFraction, sourceTier: sourceTier, useGrassClumps: useGrassClumps, modifiers: modifiers, modifierDensityStrength: modifierDensityStrength, meadowTufts: meadowTufts, meadowSpread: meadowSpread, minimumHeight: minimumHeight, maximumHeight: maximumHeight, useConfiguredHeightRange: true);
         }
     }
     private void Drain(ulong revision, SmoothTerrainVolumetricDensitySnapshot? field, RingGrassExclusionSnapshot? exclusions)
@@ -816,7 +831,7 @@ public partial class RingStandingGrassLayer : Node3D
     {
         using var scope = RingPerformanceTelemetry.MeasureCpu("Grass exclusion invalidation");
         if (SameExclusions(_previousExclusions, current)) return;
-        float clumpMargin = GrassBladesPerSource > 1 ? .3f : 0;
+        float clumpMargin = GrassBladesPerSource > 1 ? Mathf.Max(.3f, .082f * 3.7f) * (EnableMeadowTufts ? EffectiveMeadowSpread : 1f) : 0;
         RingGrassExclusionRegion[] dirty = current?.GetDirtyRegionsSince(_previousExclusions, clumpMargin)
             ?? _previousExclusions?.GetDirtyRegionsSince(null, clumpMargin) ?? Array.Empty<RingGrassExclusionRegion>();
         _previousExclusions = current;
@@ -1048,6 +1063,11 @@ public partial class RingStandingGrassLayer : Node3D
         M((ulong)BitConverter.SingleToInt32Bits(BladesPerSquareMeter));
         M(UseGrassClumps ? 1UL : 0UL);
         M((ulong)GrassBladesPerSource);
+        M(EnableMeadowTufts ? 1UL : 0UL);
+        M((ulong)Math.Clamp(MeadowTuftVariant, 0, 3));
+        M((ulong)BitConverter.SingleToInt32Bits(EffectiveMeadowSpread));
+        M((ulong)BitConverter.SingleToInt32Bits(GrassMinimumHeightMeters));
+        M((ulong)BitConverter.SingleToInt32Bits(GrassMaximumHeightMeters));
         M((ulong)MaximumInstancesPerTile);
         M((ulong)MaximumInstances);
         M((ulong)MaximumResidentTiles);
@@ -1242,7 +1262,7 @@ public partial class RingStandingGrassLayer : Node3D
         {
             if (id < 0 || renderer == null || !wanted) return;
             target.Add(new RingGpuVegetationCompute.BatchFrameParameters(id, CapturePresentationWorld(state, renderer), true, pass,
-                LodNearDistanceMeters, LodFarDistanceMeters, LodTransitionWidthMeters, LodNearDensity, LodFarDensity,
+                Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f), EffectiveGrassDrawDistance(), LodTransitionWidthMeters, LodNearDensity, LodFarDensity,
                 EnableDistanceLod, 1, false, frustum, GrassFrustumPaddingMeters, VisibilityRevision: visibilityRevision));
         }
     }
@@ -1468,8 +1488,9 @@ public partial class RingStandingGrassLayer : Node3D
     {
         if (!EnableDistanceLod) return count;
         float width = Mathf.Max(1, LodTransitionWidthMeters);
+        float nearDistance = Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f);
         float fraction = Mathf.SmoothStep(0, 1,
-            (minimumTileDistanceMeters - (LodNearDistanceMeters - width * .5f)) / width);
+            (minimumTileDistanceMeters - (nearDistance - width * .5f)) / width);
         return Mathf.Clamp(Mathf.CeilToInt(count * Mathf.Lerp(LodNearDensity, LodFarDensity, fraction)), 0, count);
     }
     private void ConfigureLodMaterials()
@@ -1483,7 +1504,7 @@ public partial class RingStandingGrassLayer : Node3D
         ConfigureGrassModifierMaterial(_material);
         ConfigureGrassModifierMaterial(_intermediateMaterial);
         ulong fingerprint = unchecked((ulong)BitConverter.SingleToInt32Bits(LodNearDistanceMeters)
-            ^ ((ulong)BitConverter.SingleToInt32Bits(LodFarDistanceMeters) << 1)
+            ^ ((ulong)BitConverter.SingleToInt32Bits(EffectiveGrassDrawDistance()) << 1)
             ^ ((ulong)BitConverter.SingleToInt32Bits(LodTransitionWidthMeters) << 2)
             ^ ((ulong)BitConverter.SingleToInt32Bits(LodNearDensity) << 3)
             ^ ((ulong)BitConverter.SingleToInt32Bits(LodFarDensity) << 4)
@@ -1505,8 +1526,8 @@ public partial class RingStandingGrassLayer : Node3D
     {
         if (material == null) return;
         material.SetShaderParameter("grass_lod_enabled", EnableDistanceLod);
-        material.SetShaderParameter("grass_lod_near_distance", LodNearDistanceMeters);
-        material.SetShaderParameter("grass_lod_far_distance", Mathf.Max(LodNearDistanceMeters + 1, LodFarDistanceMeters));
+        material.SetShaderParameter("grass_lod_near_distance", Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f));
+        material.SetShaderParameter("grass_lod_far_distance", EffectiveGrassDrawDistance());
         material.SetShaderParameter("grass_lod_transition_width", LodTransitionWidthMeters);
         material.SetShaderParameter("grass_lod_near_density", LodNearDensity);
         material.SetShaderParameter("grass_lod_far_density", LodFarDensity);
@@ -1582,6 +1603,8 @@ public partial class RingStandingGrassLayer : Node3D
     private static Mesh CreateDenseBladeMesh() => RingGrassMeshFactory.Create();
     public override void _ExitTree()
     {
+        ReleaseCoordinatedGrassHandoffGlobals();
+        _meadowMeshes.Dispose();
         DisposeGrassGustResources();
         DisposeGrassModifierTint();
         CancelGpuGenerationPrototype();

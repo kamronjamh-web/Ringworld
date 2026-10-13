@@ -26,9 +26,13 @@ public partial class RingStandingGrassLayer
         _presentationRevision++;
         _presentationLayerWorld = GlobalTransform;
         _presentationInverseLayer = _presentationLayerWorld.AffineInverse();
-        _presentationOutputCullingActive = CullGrassTiles && camera != null;
+        bool coordinated = EnableCoordinatedGrassHandoff && EnableGrassAppearance;
+        _presentationOutputCullingActive = (CullGrassTiles && camera != null) || coordinated;
+        float farDistance = EffectiveGrassDrawDistance();
+        float nearDistance = Mathf.Min(LodNearDistanceMeters, farDistance - .01f);
+        float halfTransition = EnableDistanceLod ? LodTransitionWidthMeters * .5f : 0f;
         Vector3? cameraWorld = camera?.GlobalPosition;
-        Plane[]? frustum = _presentationOutputCullingActive && GpuFrustumCulling
+        Plane[]? frustum = CullGrassTiles && camera != null && GpuFrustumCulling
             ? CachedCameraFrustumPlanes(camera!) : null;
         GrassFrustumRejectedTileCount = GrassDistanceRejectedTileCount = 0;
         AdaptiveGrassVisibilityCheckCount = 0;
@@ -47,18 +51,15 @@ public partial class RingStandingGrassLayer
             float distance = ConservativePresentationDistance(resident.Data, resident.Presentation.RawWorldBounds,
                 cameraWorld, focus, circumference);
             float minimum = distance, maximum = distance;
-            bool cull = show && _presentationOutputCullingActive;
+            bool cull = show && _presentationOutputCullingActive && cameraWorld != null;
             if (cull)
             {
                 Aabb bounds = resident.Presentation.ExpandedWorldBounds;
-                if (EnableDistanceLod)
+                ConservativeAabbCameraDistances(bounds, cameraWorld!.Value, out minimum, out maximum);
+                if (minimum > farDistance + halfTransition)
                 {
-                    ConservativeAabbCameraDistances(bounds, cameraWorld!.Value, out minimum, out maximum);
-                    if (minimum > LodFarDistanceMeters + LodTransitionWidthMeters * .5f)
-                    {
-                        show = false;
-                        GrassDistanceRejectedTileCount++;
-                    }
+                    show = false;
+                    GrassDistanceRejectedTileCount++;
                 }
                 if (show && frustum != null && !AabbIntersectsFrustum(bounds, frustum))
                 {
@@ -66,15 +67,19 @@ public partial class RingStandingGrassLayer
                     GrassFrustumRejectedTileCount++;
                 }
             }
-            float halfTransition = LodTransitionWidthMeters * .5f;
+            if (show && _presentationOutputCullingActive && !cull && distance > farDistance + halfTransition)
+            {
+                show = false;
+                GrassDistanceRejectedTileCount++;
+            }
             float slop = Math.Max(0, GrassFrustumPaddingMeters);
-            bool near = show && (!EnableDistanceLod || distance <= LodNearDistanceMeters + halfTransition + slop);
-            bool intermediate = show && EnableDistanceLod && distance <= LodFarDistanceMeters + halfTransition + slop;
+            bool near = show && (!EnableDistanceLod || distance <= nearDistance + halfTransition + slop);
+            bool intermediate = show && EnableDistanceLod && distance <= farDistance + halfTransition + slop;
             if (cull && EnableDistanceLod)
             {
-                near = show && minimum <= LodNearDistanceMeters + halfTransition;
-                intermediate = show && maximum >= LodNearDistanceMeters - halfTransition
-                    && minimum <= LodFarDistanceMeters + halfTransition;
+                near = show && minimum <= nearDistance + halfTransition;
+                intermediate = show && maximum >= nearDistance - halfTransition
+                    && minimum <= farDistance + halfTransition;
             }
             if (IsAdaptiveGroup(resident)) near = false;
             if (!resident.NearWanted && near) resident.NearVisibilityRevision++;

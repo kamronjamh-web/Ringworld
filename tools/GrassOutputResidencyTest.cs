@@ -50,7 +50,10 @@ public partial class GrassOutputResidencyTest : Node
             UseGpuCulling = true, GpuFrustumCulling = false, CullGrassTiles = false,
             EnableHierarchicalCoverage = false, VisibilityRadiusMeters = 72, SpatialTileMeters = 48,
             MaximumInstances = 2000, MaximumInstancesPerTile = 256, MaximumResidentTiles = 8,
-            MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 1
+            MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 1,
+            // This residency/pixel fixture retains its historical visible scale;
+            // the meadow comparison separately exercises production short grass.
+            GrassMinimumHeightMeters = .42f, GrassMaximumHeightMeters = .92f
         };
         _viewport.AddChild(_layer);
         _geometry = Geometry(Vector3.Zero);
@@ -125,7 +128,36 @@ public partial class GrassOutputResidencyTest : Node
         _camera.LookAt(_camera.GlobalPosition + up, forward); await Settle(); await StepFrames(4);
         Check(_layer.CaptureTileAuditsForTests().All(item => item.RenderInstanceId != 0 && item.IntermediateRenderInstanceId != 0), "coarse culling disabled still retired outputs");
         CheckRoots(baseline, builds);
+        await VerifyCoordinatedOutputCap(center, up, visibleCamera);
         GD.Print($"GRASS_OUTPUT_RESIDENCY_PIXELS before={originalPixels} restored={restoredPixels} roots={_layer.ResidentGrassInstanceCount}");
+    }
+
+    private async Task VerifyCoordinatedOutputCap(Vector3 center, Vector3 up, Transform3D visibleCamera)
+    {
+        // The effective resident window is much smaller than the requested range
+        // in this bounded fixture. Retire outputs at that cap even when the
+        // frustum A/B is off, and when distance LOD is disabled entirely.
+        _layer.EnableGrassAppearance = true;
+        _layer.EnableCoordinatedGrassHandoff = true;
+        _layer.CullGrassTiles = false;
+        _layer.GpuFrustumCulling = false;
+        foreach (bool distanceLod in new[] { true, false })
+        {
+            _layer.EnableDistanceLod = distanceLod;
+            _camera.GlobalTransform = visibleCamera;
+            await Settle();
+            var baseline = _layer.CaptureTileAuditsForTests().ToDictionary(item => (item.Around, item.Across), item => (item.PlacementHash, item.InstanceCount));
+            int builds = _layer.TotalGrassBuildCount;
+            float requested = distanceLod ? _layer.LodFarDistanceMeters : _layer.VisibilityRadiusMeters;
+            Check(_layer.EffectiveGrassDrawDistance() < requested * .5f, "coordinated fixture did not constrain its requested range");
+            _camera.GlobalPosition = center + up * 60f;
+            _camera.LookAt(center, visibleCamera.Basis.Z.Normalized());
+            await StepFrames(8);
+            Check(_layer.CaptureTileAuditsForTests().All(item => item.RenderInstanceId == 0 && item.IntermediateRenderInstanceId == 0),
+                $"coordinated cutoff retained native outputs with distance LOD {distanceLod}");
+            Check(_layer.GrassDistanceRejectedTileCount > 0, "coordinated output cutoff did not reject distant tiles");
+            CheckRoots(baseline, builds);
+        }
     }
 
     private async Task Settle()

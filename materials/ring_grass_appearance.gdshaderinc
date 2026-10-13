@@ -18,6 +18,8 @@ uniform float grass_terrain_blend_end_fraction = .90;
 // the effective draw distance, including non-LOD visibility limits.
 uniform float grass_terrain_draw_distance = 0.0;
 uniform float grass_terrain_lighting_match = 1.0;
+// Standalone fixtures retain their established geometry unless opted in.
+uniform bool grass_coordinated_handoff_enabled = false;
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 
 vec3 grass_appearance_albedo_with_coverage(vec3 blade_albedo, vec4 biome_weights, float handoff, float coverage) {

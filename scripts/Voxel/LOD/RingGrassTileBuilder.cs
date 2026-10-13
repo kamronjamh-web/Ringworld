@@ -39,7 +39,7 @@ internal sealed class RingGrassTileData
         PlacementHash = placementHash;
         SourceFraction = sourceFraction;
         SourceTier = sourceTier;
-        BladesPerSource = Math.Clamp(bladesPerSource, 1, 4);
+        BladesPerSource = Math.Clamp(bladesPerSource, 1, 8);
         ModifierTintBytes = modifierTintBytes;
     }
 }
@@ -85,7 +85,8 @@ internal static class RingGrassTileBuilder
         Func<double, double, RingGrassSurfaceHit?>? surfaceOverride = null,
         bool surfaceOverrideOnly = false, RingGrassSurfaceCache? surfaceCache = null,
         float sourceFraction = 1, byte sourceTier = 0, bool useGrassClumps = false,
-        RingGrassModifierSnapshot? modifiers = null, float modifierDensityStrength = 1)
+        RingGrassModifierSnapshot? modifiers = null, float modifierDensityStrength = 1,
+        bool meadowTufts = false, float meadowSpread = 1, float minimumHeight = .10f, float maximumHeight = .20f, bool useConfiguredHeightRange = false)
     {
         double safeCell = Math.Max(1.0, cellSize);
         long circumference = Math.Max(1L, sampler.AroundRingVoxelLength);
@@ -102,6 +103,9 @@ internal static class RingGrassTileBuilder
         RingGrassModifierSnapshot? tileModifiers = modifiers?.FilterForTile(bounds);
         sourceFraction = float.IsFinite(sourceFraction) ? Mathf.Clamp(sourceFraction, 0, 1) : 1;
         var placements = new BoundedPlacements(cappedInstances);
+        meadowSpread = meadowTufts && float.IsFinite(meadowSpread) ? Mathf.Clamp(meadowSpread, .25f, 2f) : 1f;
+        minimumHeight = float.IsFinite(minimumHeight) ? Mathf.Clamp(minimumHeight, .03f, 2f) : .10f;
+        maximumHeight = float.IsFinite(maximumHeight) ? Mathf.Clamp(maximumHeight, minimumHeight, 2f) : Mathf.Max(minimumHeight, .20f);
 
         void TryPlace(double around, double across, long aroundCell, long acrossCell, int salt)
         {
@@ -132,8 +136,10 @@ internal static class RingGrassTileBuilder
             if (chance < .02f || Hash01(aroundCell, acrossCell, sampler.Seed, salt + 2) > chance) return;
             float macro = MacroPatch(canonicalAround, canonicalAcross, sampler.Seed, circumference);
             float bladeWidth = Mathf.Lerp(.045f, .082f, Hash01(aroundCell, acrossCell, sampler.Seed, salt + 3));
-            float bladeHeight = Mathf.Lerp(.42f, .92f, Hash01(aroundCell, acrossCell, sampler.Seed, salt + 4)) * Mathf.Lerp(.82f, 1.16f, macro)
-                * appearance.HeightFor(weights.Forest, sparseWeight);
+            float bladeHeight = Mathf.Lerp((meadowTufts || useConfiguredHeightRange) ? minimumHeight : .42f, (meadowTufts || useConfiguredHeightRange) ? maximumHeight : .92f,
+                Hash01(aroundCell, acrossCell, sampler.Seed, salt + 4)) * Mathf.Lerp(.82f, 1.16f, macro);
+            if (meadowTufts || useConfiguredHeightRange) bladeHeight = Mathf.Clamp(bladeHeight, minimumHeight, maximumHeight);
+            bladeHeight *= appearance.HeightFor(weights.Forest, sparseWeight);
             double surfaceHeight;
             Vector3? normal = null;
             if (resolver != null)
@@ -174,9 +180,9 @@ internal static class RingGrassTileBuilder
                 float factor = Mathf.Lerp(1, tileModifiers.DensityAt(around, across), Mathf.Clamp(modifierDensityStrength, 0, 1));
                 if (factor <= 0 || (factor < 1 && Hash01(aroundCell, acrossCell, sampler.Seed, salt + 401) > factor)) return;
             }
-            float clumpRadius = useGrassClumps && bladesPerSquareMeter > 0 ? Mathf.Max(.3f, bladeWidth * 3.6f) : 0;
+            float clumpRadius = useGrassClumps && bladesPerSquareMeter > 0 ? Mathf.Max(.3f, bladeWidth * 3.7f) * meadowSpread : 0;
             if (exclusions?.IsExcluded(around, surfaceHeight, across, bladeHeight, clumpRadius) == true) return;
-            surfaceHeight -= .035;
+            surfaceHeight -= meadowTufts || useConfiguredHeightRange ? .005 : .035;
             float yaw = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 5) * Mathf.Tau;
             // Curve is normalized for the shader; tint contains a smooth meadow-scale patch.
             float curve = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 6);
@@ -229,10 +235,10 @@ internal static class RingGrassTileBuilder
 
         List<Candidate> selected = placements.ToSortedList();
         float[] buffer = new float[selected.Count * RingGrassTileData.FloatsPerInstance];
-        Aabb localAabb = BuildBounds(selected, useGrassClumps && bladesPerSquareMeter > 0);
+        Aabb localAabb = BuildBounds(selected, useGrassClumps && bladesPerSquareMeter > 0, meadowSpread);
         for (int index = 0; index < selected.Count; index++) Pack(buffer, index * RingGrassTileData.FloatsPerInstance, selected[index]);
         return new RingGrassTileData(key, bounds, anchorHeight, buffer, localAabb, HashBuffer(buffer), sourceFraction, sourceTier,
-            useGrassClumps && bladesPerSquareMeter > 0 ? 4 : 1, BuildTintMap(bounds, tileModifiers));
+            useGrassClumps && bladesPerSquareMeter > 0 ? meadowTufts ? 8 : 4 : 1, BuildTintMap(bounds, tileModifiers));
     }
 
     private static byte[]? BuildTintMap(in RingGrassTileBounds bounds, RingGrassModifierSnapshot? modifiers)
@@ -286,7 +292,7 @@ internal static class RingGrassTileBuilder
             || (center > length - aroundExtent && OverlapsAround(center - length));
     }
 
-    private static Aabb BuildBounds(IReadOnlyList<Candidate> placements, bool clumps)
+    private static Aabb BuildBounds(IReadOnlyList<Candidate> placements, bool clumps, float spread = 1)
     {
         if (placements.Count == 0) return new Aabb(Vector3.Zero, Vector3.Zero);
         bool initialized = false;
@@ -301,7 +307,7 @@ internal static class RingGrassTileBuilder
         {
             // Covers the near/intermediate radius 2.5 clumps and the far
             // source's 1.10 normalized half-width (2.5 + 1.10 + lean slack).
-            float extent = clumps ? 3.7f : .5f;
+            float extent = clumps ? 3.7f * spread : .5f;
             Vector3 point = placement.Transform * new Vector3(x * extent, y, z * extent);
             if (!initialized) { minimum = maximum = point; initialized = true; }
             else { minimum = minimum.Min(point); maximum = maximum.Max(point); }

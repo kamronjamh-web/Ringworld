@@ -21,7 +21,9 @@ internal static class RingGrassGpuGenerationPrototype
         int Candidates, float Density, int MaximumInstances, float MaximumSlope, RingTerrainSampler Sampler,
         RingLodSurfaceEditSnapshot Edits, RingLodGeometrySnapshot Geometry,
         SmoothTerrainVolumetricDensitySnapshot Field, RingGrassExclusionSnapshot? Exclusions,
-        RingGrassAppearanceSnapshot Appearance);
+        RingGrassAppearanceSnapshot Appearance, float SourceFraction = 1, byte SourceTier = 0,
+        bool UseGrassClumps = false, bool MeadowTufts = false, float MeadowSpread = 1,
+        float MinimumHeight = .10f, float MaximumHeight = .20f, bool UseConfiguredHeightRange = false);
     internal sealed record TileReport(bool Supported, bool Parity, string Status, int Queries, int CacheBytes,
         double CpuBaselineMilliseconds, double CpuWarmBaselineMilliseconds, double CollectionMilliseconds, double CacheMilliseconds, double CachedCpuMilliseconds,
         double InitializationMilliseconds, double UploadAndComputeMilliseconds, double ReadbackMilliseconds, double ReplayMilliseconds,
@@ -168,7 +170,9 @@ internal static class RingGrassGpuGenerationPrototype
         Func<double, double, RingGrassSurfaceHit?>? observer, bool surfaceOverrideOnly = false) =>
         RingGrassTileBuilder.Build(i.Key, i.Bounds, i.CellSize, i.Candidates, i.Density, i.MaximumInstances,
             i.MaximumSlope, i.Sampler, i.Edits, i.Geometry, cancellation, i.Field, i.Exclusions, i.Appearance,
-            observer, surfaceOverrideOnly);
+            observer, surfaceOverrideOnly, sourceFraction: i.SourceFraction, sourceTier: i.SourceTier,
+            useGrassClumps: i.UseGrassClumps, meadowTufts: i.MeadowTufts, meadowSpread: i.MeadowSpread,
+            minimumHeight: i.MinimumHeight, maximumHeight: i.MaximumHeight, useConfiguredHeightRange: i.UseConfiguredHeightRange);
 
     private static (RingGrassSurfaceHit?[] Hits, double UploadAndCompute, double Readback) ResolveWithDevice(
         RenderingDevice rd, Rid shader, Rid pipeline, RingGrassGpuQueryCache cache, CancellationToken cancellation)

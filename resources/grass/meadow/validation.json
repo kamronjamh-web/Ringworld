@@ -1,0 +1,198 @@
+{
+  "blenderVersion": "5.2.2 LTS",
+  "generator": "tools/author_meadow_grass.py",
+  "meshes": [
+    {
+      "name": "compact_far",
+      "vertices": 16,
+      "triangles": 8,
+      "bladeCount": 4,
+      "boundsMin": [
+        -2.1083453,
+        0.0,
+        -1.8972833
+      ],
+      "boundsMax": [
+        1.4939429,
+        1.0,
+        1.5486594
+      ]
+    },
+    {
+      "name": "compact_intermediate",
+      "vertices": 24,
+      "triangles": 12,
+      "bladeCount": 6,
+      "boundsMin": [
+        -2.0218167,
+        0.0,
+        -1.8243501
+      ],
+      "boundsMax": [
+        1.4000056,
+        1.0,
+        1.4934393
+      ]
+    },
+    {
+      "name": "compact_near",
+      "vertices": 48,
+      "triangles": 32,
+      "bladeCount": 8,
+      "boundsMin": [
+        -1.9698994,
+        0.0,
+        -1.7805901
+      ],
+      "boundsMax": [
+        1.3436432,
+        1.0,
+        1.4603074
+      ]
+    },
+    {
+      "name": "compact_near_reduced",
+      "vertices": 32,
+      "triangles": 16,
+      "bladeCount": 8,
+      "boundsMin": [
+        -1.9698994,
+        0.0,
+        -1.7805901
+      ],
+      "boundsMax": [
+        1.3436432,
+        1.0,
+        1.4603074
+      ]
+    },
+    {
+      "name": "leaning_far",
+      "vertices": 16,
+      "triangles": 8,
+      "bladeCount": 4,
+      "boundsMin": [
+        -2.2625272,
+        0.0,
+        -1.6562665
+      ],
+      "boundsMax": [
+        1.9380213,
+        1.0,
+        2.2541046
+      ]
+    },
+    {
+      "name": "leaning_intermediate",
+      "vertices": 24,
+      "triangles": 12,
+      "bladeCount": 6,
+      "boundsMin": [
+        -2.1622713,
+        0.0,
+        -1.5562766
+      ],
+      "boundsMax": [
+        1.8278115,
+        1.0,
+        2.1553946
+      ]
+    },
+    {
+      "name": "leaning_near",
+      "vertices": 48,
+      "triangles": 32,
+      "bladeCount": 8,
+      "boundsMin": [
+        -2.1021178,
+        0.0,
+        -1.4962827
+      ],
+      "boundsMax": [
+        1.7616856,
+        1.0,
+        2.0961685
+      ]
+    },
+    {
+      "name": "leaning_near_reduced",
+      "vertices": 32,
+      "triangles": 16,
+      "bladeCount": 8,
+      "boundsMin": [
+        -2.1021178,
+        0.0,
+        -1.4962827
+      ],
+      "boundsMax": [
+        1.7616856,
+        1.0,
+        2.0961685
+      ]
+    },
+    {
+      "name": "spreading_far",
+      "vertices": 16,
+      "triangles": 8,
+      "bladeCount": 4,
+      "boundsMin": [
+        -1.4435443,
+        0.0,
+        -1.7889403
+      ],
+      "boundsMax": [
+        1.9091935,
+        1.0,
+        1.2815716
+      ]
+    },
+    {
+      "name": "spreading_intermediate",
+      "vertices": 24,
+      "triangles": 12,
+      "bladeCount": 6,
+      "boundsMin": [
+        -1.3942281,
+        0.0,
+        -1.7741867
+      ],
+      "boundsMax": [
+        1.8454783,
+        1.0,
+        1.2044977
+      ]
+    },
+    {
+      "name": "spreading_near",
+      "vertices": 48,
+      "triangles": 32,
+      "bladeCount": 8,
+      "boundsMin": [
+        -1.3646383,
+        0.0,
+        -1.7653345
+      ],
+      "boundsMax": [
+        1.8072493,
+        1.0,
+        1.1582534
+      ]
+    },
+    {
+      "name": "spreading_near_reduced",
+      "vertices": 32,
+      "triangles": 16,
+      "bladeCount": 8,
+      "boundsMin": [
+        -1.3646383,
+        0.0,
+        -1.7653345
+      ],
+      "boundsMax": [
+        1.8072493,
+        1.0,
+        1.1582534
+      ]
+    }
+  ]
+}

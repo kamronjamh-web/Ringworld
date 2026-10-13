@@ -43,13 +43,13 @@ public partial class RingStandingGrassLayer
     }
 
     private readonly record struct GrassPresentationSettings(bool Enabled, bool Visible, bool Suspended,
-        bool CullTiles, bool FrustumCull, bool DistanceLod, float NearDistance, float FarDistance,
+        bool CullTiles, bool FrustumCull, bool DistanceLod, bool Coordinated, float NearDistance, float FarDistance,
         float Transition, float NearDensity, float FarDensity, float Padding,
         bool ReducedNear, bool SingleRibbon);
 
     private GrassPresentationSettings CaptureGrassPresentationSettings() => new(Enabled, IsVisibleInTree(),
-        StreamingSuspended, CullGrassTiles, GpuFrustumCulling, EnableDistanceLod,
-        LodNearDistanceMeters, LodFarDistanceMeters, LodTransitionWidthMeters,
+        StreamingSuspended, CullGrassTiles, GpuFrustumCulling, EnableDistanceLod, EnableCoordinatedGrassHandoff && EnableGrassAppearance,
+        LodNearDistanceMeters, EffectiveGrassDrawDistance(), LodTransitionWidthMeters,
         LodNearDensity, LodFarDensity, GrassFrustumPaddingMeters,
         UseReducedNearGrassGeometry, IsSingleRibbonIntermediateGrassActive);
 

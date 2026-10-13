@@ -27,6 +27,12 @@ public partial class RingGrassQualityProfile : Resource
     {
         // The worker builds one canonical near-density root set. Distance LOD
         // only hides a deterministic prefix, so camera movement never rebuilds it.
+        // Explicit sparse choices are reapplied by the graphics controller after this reset.
+        layer.EnableMeadowTufts = true;
+        layer.MeadowTuftSpread = 1f;
+        layer.MeadowTuftVariant = 0;
+        layer.GrassMinimumHeightMeters = .10f;
+        layer.GrassMaximumHeightMeters = .20f;
         layer.BladesPerSquareMeter = NearDensity;
         layer.SpatialTileMeters = TileMeters;
         layer.VisibilityRadiusMeters = VisibilityRadiusMeters;

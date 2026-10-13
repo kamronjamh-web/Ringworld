@@ -532,6 +532,18 @@ public partial class RingGraphicsQualityController : Node
     {
         if (_grass == null) return;
         foreach (var item in _grassTuningOverrides) _grass.Set(item.Key, item.Value);
+        // Keep loaded sparse height choices intact; adapt their effective companion
+        // when an inherited default or an authored pair crosses the requested bound.
+        _grass.GrassMinimumHeightMeters = Mathf.Clamp(_grass.GrassMinimumHeightMeters, .03f, 1.99f);
+        _grass.GrassMaximumHeightMeters = Mathf.Clamp(_grass.GrassMaximumHeightMeters, .04f, 2f);
+        if (_grass.GrassMaximumHeightMeters < _grass.GrassMinimumHeightMeters + .01f)
+        {
+            if (_grassTuningOverrides.ContainsKey("GrassMaximumHeightMeters")
+                && !_grassTuningOverrides.ContainsKey("GrassMinimumHeightMeters"))
+                _grass.GrassMinimumHeightMeters = _grass.GrassMaximumHeightMeters - .01f;
+            else
+                _grass.GrassMaximumHeightMeters = _grass.GrassMinimumHeightMeters + .01f;
+        }
         _grass.GrassGroupingFarStartMeters = Mathf.Max(
             _grass.GrassGroupingStartMeters + 1f, _grass.GrassGroupingFarStartMeters);
         // Preserve the scheduler's required near < mid < far ordering when

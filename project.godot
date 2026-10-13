@@ -169,3 +169,15 @@ ring_grass_terrain_coverage_strength={
 "type": "float",
 "value": 0.45
 }
+ring_grass_coordinated_handoff_enabled={
+"type": "float",
+"value": 0.0
+}
+ring_grass_coordinated_handoff_start_meters={
+"type": "float",
+"value": 0.0
+}
+ring_grass_coordinated_handoff_end_meters={
+"type": "float",
+"value": 1.0
+}

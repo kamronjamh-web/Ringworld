@@ -85,6 +85,8 @@ func boot() -> void:
 	for key in ["EnableAdaptiveGrassGrouping", "CacheGrassPresentation", "GrassGroupingStartMeters", "GrassGroupingFarStartMeters", "GrassGroupingMaximumLevel", "GrassGroupingHysteresisMeters", "MaximumGrassSourcesPerGroup"]:
 		if drawer.find_child(key, true, false) == null: return fail("adaptive grouping/cache control missing: " + key)
 	if not adaptive_grouping_defaults_match(grass): return fail("empty preferences did not restore grouping/cache defaults")
+	var meadow_reason := verify_meadow_tuning(grass, quality)
+	if not meadow_reason.is_empty(): return fail(meadow_reason)
 	var pointer_reason: String = await verify_adaptive_pointer_controls(grass, grass_tab)
 	if not pointer_reason.is_empty(): return fail(pointer_reason)
 	var original_density := float(grass.get("BladesPerSquareMeter"))
@@ -365,6 +367,19 @@ func verify_adaptive_pointer_controls(grass: Node, grass_tab: Control) -> String
 	drawer.call("SetGrassTuningValue", "GrassGroupingStartMeters", 16.0)
 	drawer.call("SetGrassTuningValue", "LodFarDistanceMeters", 200.0)
 	drawer.call("SetGrassTuningValue", "GrassGroupingMaximumLevel", 2)
+	# The fixture's active graphics preset may have enough residency for groups.
+	# Fix a small resident window explicitly before testing budget-limited coordination.
+	drawer.call("SetGrassTuningValue", "MaximumResidentTiles", 16)
+	await create_timer(.3).timeout
+	var range_status := drawer.find_child("GrassRuntimeStatus", true, false) as Label
+	var range_inputs := "tile=%s residents=%s instances=%s per_tile=%s coordination=%s appearance=%s far=%s" % [grass.get("SpatialTileMeters"), grass.get("MaximumResidentTiles"), grass.get("MaximumInstances"), grass.get("MaximumInstancesPerTile"), grass.get("EnableCoordinatedGrassHandoff"), grass.get("EnableGrassAppearance"), grass.get("LodFarDistanceMeters")]
+	if range_status == null or not range_status.text.contains("effective draw distance"):
+		return "Grass status omitted the effective range: " + range_inputs
+	if adaptive_inactive_reason(grass).is_empty() and not status.text.contains("geometry ends around"):
+		return "Small resident window hid the coordinated coverage budget limit: " + range_inputs + " " + status.text
+	print("GRASS_GROUPING_COORDINATED_RANGE " + range_inputs + " " + status.text)
+	# Exercise the eligible manual range separately from the budget-limited coordinated band.
+	drawer.call("SetGrassTuningValue", "EnableCoordinatedGrassHandoff", false)
 	await create_timer(.3).timeout
 	var counts := "2-by-2: %d; 4-by-4: %d. Maximum level: %d." % [int(grass.get("AdaptiveGrassLevel1GroupCount")), int(grass.get("AdaptiveGrassLevel2GroupCount")), int(grass.get("GrassGroupingMaximumLevel"))]
 	if not status.text.contains(counts): return "Local status omits actual level counts/configured maximum: " + status.text
@@ -419,3 +434,75 @@ func adaptive_grouping_overrides_match(grass: Node) -> bool:
 func camera_facing_defaults_safe(grass: Node) -> bool:
 	var handoff_start := float(grass.get("LodNearDistanceMeters")) - maxf(1.0, float(grass.get("LodTransitionWidthMeters"))) * .5
 	return bool(grass.get("EnableGrassCameraFacing")) and is_equal_approx(float(grass.get("GrassCameraFacingStrength")), 1.0) and float(grass.get("GrassCameraFacingStartMeters")) < float(grass.get("GrassCameraFacingEndMeters")) and float(grass.get("GrassCameraFacingEndMeters")) <= handoff_start
+
+# Exercise real controls plus the same sparse save/load/reset path as gameplay.
+func verify_meadow_tuning(grass: Node, quality: Node) -> String:
+	for key in ["EnableMeadowTufts", "GrassMinimumHeightMeters", "GrassMaximumHeightMeters", "MeadowTuftSpread", "MeadowTuftVariant", "EnableCoordinatedGrassHandoff"]:
+		if drawer.find_child(key, true, false) == null: return "Meadow tuning control missing: " + key
+	if not meadow_defaults_match(grass): return "Empty preferences did not restore short meadow defaults"
+	var height_entry := drawer.find_child("GrassMaximumHeightMetersEntry", true, false) as SpinBox
+	var coordination := drawer.find_child("EnableCoordinatedGrassHandoff", true, false) as CheckButton
+	height_entry.value = .28
+	coordination.button_pressed = false
+	if not is_equal_approx(float(grass.get("GrassMaximumHeightMeters")), .28) or bool(grass.get("EnableCoordinatedGrassHandoff")): return "Meadow controls did not apply to live grass"
+	drawer.call("SetGrassTuningValue", "GrassMinimumHeightMeters", 1.0)
+	if not is_equal_approx(float(grass.get("GrassMinimumHeightMeters")), .27): return "Meadow height range was not ordered"
+	drawer.call("SetGrassTuningValue", "GrassMinimumHeightMeters", .12)
+	drawer.call("SetGrassTuningValue", "MeadowTuftSpread", 100.0)
+	drawer.call("SetGrassTuningValue", "MeadowTuftVariant", 100)
+	if not is_equal_approx(float(grass.get("MeadowTuftSpread")), 2.0) or int(grass.get("MeadowTuftVariant")) != 3: return "Meadow shape limits were not clamped"
+	drawer.call("SetGrassTuningValue", "MeadowTuftSpread", NAN)
+	drawer.call("SetGrassTuningValue", "EnableMeadowTufts", 1)
+	if not is_equal_approx(float(grass.get("MeadowTuftSpread")), 2.0) or not bool(grass.get("EnableMeadowTufts")): return "Invalid meadow input changed live settings"
+	drawer.call("SetGrassTuningValue", "EnableMeadowTufts", false)
+	if not bool(drawer.call("FlushGrassDefaults")): return "Meadow settings save failed"
+	drawer.call("InstallGrassDefaults", PREFS)
+	if not meadow_overrides_match(grass): return "Meadow settings did not reload"
+	var preset: int = quality.get("CurrentPreset")
+	quality.call("ApplyPreset", 0, true, false)
+	if not meadow_overrides_match(grass): return "Quality preset replaced explicit meadow settings"
+	quality.call("ApplyPreset", preset, true, false)
+	drawer.call("ResetGrassSettings")
+	if not meadow_defaults_match(grass): return "Reset did not restore short meadow defaults"
+	var persistence_reason := verify_loaded_height_ordering(grass, quality)
+	if not persistence_reason.is_empty(): return persistence_reason
+	print("GRASS_MEADOW_TUNING=PASS controls, validation, sparse save/reload, quality preservation and reset")
+	return ""
+
+func meadow_defaults_match(grass: Node) -> bool:
+	return bool(grass.get("EnableMeadowTufts")) and bool(grass.get("EnableCoordinatedGrassHandoff")) and is_equal_approx(float(grass.get("GrassMinimumHeightMeters")), .10) and is_equal_approx(float(grass.get("GrassMaximumHeightMeters")), .20) and is_equal_approx(float(grass.get("MeadowTuftSpread")), 1.0) and int(grass.get("MeadowTuftVariant")) == 0
+
+func meadow_overrides_match(grass: Node) -> bool:
+	return not bool(grass.get("EnableMeadowTufts")) and not bool(grass.get("EnableCoordinatedGrassHandoff")) and is_equal_approx(float(grass.get("GrassMinimumHeightMeters")), .12) and is_equal_approx(float(grass.get("GrassMaximumHeightMeters")), .28) and is_equal_approx(float(grass.get("MeadowTuftSpread")), 2.0) and int(grass.get("MeadowTuftVariant")) == 3
+
+# Simulate authored/older sparse resources that cross the inherited height bound.
+# Effective companions may adapt, but loading must preserve the authored sparse keys.
+func verify_loaded_height_ordering(grass: Node, quality: Node) -> String:
+	var cases := [
+		{"saved": {"GrassMinimumHeightMeters": .8}, "minimum": .8, "maximum": .81},
+		{"saved": {"GrassMaximumHeightMeters": .05}, "minimum": .04, "maximum": .05},
+		{"saved": {"GrassMinimumHeightMeters": .8, "GrassMaximumHeightMeters": .05}, "minimum": .8, "maximum": .81}
+	]
+	var preset: int = quality.get("CurrentPreset")
+	for entry in cases:
+		var settings := ResourceLoader.load(PREFS, "", ResourceLoader.CACHE_MODE_IGNORE)
+		if settings == null: return "Height persistence fixture could not load isolated settings"
+		settings.set("Overrides", entry.saved)
+		if ResourceSaver.save(settings, PREFS) != OK: return "Height persistence fixture could not save crossed settings"
+		drawer.call("InstallGrassDefaults", PREFS)
+		for selected_preset in [0, preset]:
+			quality.call("ApplyPreset", selected_preset, true, false)
+			if not is_equal_approx(float(grass.get("GrassMinimumHeightMeters")), entry.minimum) or not is_equal_approx(float(grass.get("GrassMaximumHeightMeters")), entry.maximum): return "Loaded sparse height bounds were not ordered after preset change"
+			for key in ["GrassMinimumHeightMeters", "GrassMaximumHeightMeters"]:
+				var height_control := drawer.find_child(key + "Entry", true, false) as SpinBox
+				# Refresh is periodic after direct quality changes, while initial load refreshes immediately.
+				if height_control == null: return "Loaded height control missing"
+				if selected_preset == 0 and not is_equal_approx(height_control.value, float(grass.get(key))): return "Reloaded height UI disagreed with live bounds"
+		var persisted := ResourceLoader.load(PREFS, "", ResourceLoader.CACHE_MODE_IGNORE)
+		var overrides: Dictionary = persisted.get("Overrides")
+		if overrides.size() != entry.saved.size(): return "Height loading added persisted derived keys"
+		for key in entry.saved:
+			if not is_equal_approx(float(overrides.get(key, -1)), float(entry.saved[key])): return "Height loading discarded an authored bound"
+		drawer.call("ResetGrassSettings")
+	if not meadow_defaults_match(grass): return "Crossed height persistence reset did not restore defaults"
+	return ""

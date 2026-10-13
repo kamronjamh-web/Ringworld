@@ -15,6 +15,8 @@ public partial class RingLiveTuningDrawer
         AddGrassSlider(appearance, "GrasslandBiomeHeight", "Grassland height", .25, 2, .01);
         AddGrassSlider(appearance, "ForestBiomeHeight", "Forest height", .25, 2, .01);
         AddGrassSlider(appearance, "SparseBiomeHeight", "Sparse height", .25, 2, .01);
+        AddGrassToggle(appearance, "EnableCoordinatedGrassHandoff", "Coordinate terrain coverage with grass fade");
+        appearance.AddChild(new Label { Text = "Coordination brings terrain coverage into the grass fade band. Disable it to use the manual terrain coverage distances directly; saved manual distances remain available.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
         AddGrassSlider(appearance, "GrassTerrainHandoffStrength", "Terrain color match", 0, 1, .01);
         AddGrassSlider(appearance, "GrassTerrainBlendStartPercent", "Ground convergence start (% of draw distance)", 0, 99, 1);
         AddGrassSlider(appearance, "GrassTerrainBlendEndPercent", "Ground convergence end (% of draw distance)", 1, 100, 1);

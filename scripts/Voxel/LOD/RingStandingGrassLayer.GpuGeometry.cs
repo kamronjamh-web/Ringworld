@@ -5,7 +5,7 @@ namespace RingworldTechDemo.Voxel.LOD;
 public partial class RingStandingGrassLayer
 {
     [ExportGroup("Experimental Grass Geometry")]
-    /// <summary>Four near blades with two sections each (16 rather than 32 triangles).</summary>
+    /// <summary>Uses 16 near triangles: eight one-section meadow blades or four two-section legacy blades.</summary>
     [Export] public bool UseReducedNearGrassGeometry { get; set; }
     /// <summary>One intermediate ribbon per source; requires full camera facing before the LOD handoff.</summary>
     [Export] public bool UseSingleRibbonIntermediateGrass { get; set; }
@@ -23,13 +23,28 @@ public partial class RingStandingGrassLayer
             <= Mathf.Max(1f, LodNearDistanceMeters) - Mathf.Max(1f, LodTransitionWidthMeters) * .5f;
 
     private Mesh SelectNearGrassGeometry(RingGrassTileData data, Mesh establishedMesh)
-        => UseReducedNearGrassGeometry && data.BladesPerSource > 1
+        => EnableMeadowTufts && data.BladesPerSource == 8
+            ? MeadowMeshFor(data, UseReducedNearGrassGeometry ? "near_reduced" : "near")
+            : UseReducedNearGrassGeometry && data.BladesPerSource > 1
             ? _reducedNearGrassClumpMesh ??= RingGrassMeshFactory.CreateClump(2)
             : establishedMesh;
 
     private Mesh SelectIntermediateGrassGeometry(RingGrassTileData data, Mesh establishedMesh)
-        => IsSingleRibbonIntermediateGrassActive
+        => EnableMeadowTufts && data.BladesPerSource == 8
+            ? MeadowMeshFor(data, data.SourceTier >= 2 ? "far" : "intermediate")
+            : IsSingleRibbonIntermediateGrassActive
             && data.SourceTier < 2 && data.BladesPerSource > 1
             ? _singleRibbonIntermediateGrassClumpMesh ??= RingGrassMeshFactory.CreateIntermediateClump(true)
             : establishedMesh;
+    private Mesh MeadowMeshFor(RingGrassTileData data, string tier)
+    {
+        int variant = System.Math.Clamp(MeadowTuftVariant, 0, 3) - 1;
+        if (variant < 0)
+        {
+            ulong hash = unchecked((ulong)data.Key.Around * 0x9E3779B185EBCA87UL ^ (ulong)data.Key.Across * 0xC2B2AE3D27D4EB4FUL);
+            hash ^= hash >> 29;
+            variant = (int)(hash % 3);
+        }
+        return _meadowMeshes.Get(variant, tier, EffectiveMeadowSpread);
+    }
 }

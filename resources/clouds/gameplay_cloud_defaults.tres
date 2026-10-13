@@ -1,9 +1,9 @@
 [gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_dnvxt"]
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_iyxoa"]
 
 [resource]
-script = ExtResource("1_dnvxt")
+script = ExtResource("1_iyxoa")
 Overrides = {
 "AnvilRadiusMultiplier": 2.7,
 "AutomaticCloudHandoff": true,

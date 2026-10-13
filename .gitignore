@@ -7,6 +7,9 @@
 /captures/*
 !/captures/.gdignore
 /.test-appdata/
+# Local Godot editor downloads are not project assets.
+/Godot_v*.exe
+/GodotSharp/
 *.log
 
 # C# and IDE-generated state.

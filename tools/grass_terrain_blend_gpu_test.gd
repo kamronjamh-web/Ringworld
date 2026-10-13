@@ -26,6 +26,8 @@ func run() -> void:
 	driver = DRIVER.new()
 	if not bool(driver.call("VerifyRuntimeContract")): return fail("runtime appearance contract failed")
 	setup()
+	await immediate_color_geometry_regression()
+	if failed: return
 	set_distance(10.0)
 	set_old_blend()
 	var close_old := await capture("near_old")
@@ -220,6 +222,52 @@ func setup() -> void:
 	grass_material.set_shader_parameter("grass_terrain_average_dirt", Vector3(.3, .2, .1))
 	set_biome(Color(0, 0, 0, 0))
 
+func immediate_color_geometry_regression() -> void:
+	# The player's saved 0/1% color matching must not collapse nearby tufts.
+	# Flat debug emission isolates geometry from the intentionally different
+	# color/lighting settings; the near images should be pixel-identical.
+	var previous_mesh := grass.multimesh.mesh
+	var previous_transforms: Array[Transform3D] = []
+	grass.multimesh.mesh = driver.call("LoadMeadowMesh", "near")
+	for i in range(grass.multimesh.instance_count):
+		var transform := grass.multimesh.get_instance_transform(i)
+		previous_transforms.append(transform)
+		transform.basis = Basis(Vector3.UP, float(i) * .61).scaled(Vector3(.18, .15, .18))
+		grass.multimesh.set_instance_transform(i, transform)
+	set_new_blend()
+	for pair in [["grass_lod_near_distance", 40.0], ["grass_lod_far_distance", 41.2], ["grass_lod_transition_width", 1.0], ["grass_terrain_draw_distance", 41.2], ["grass_coordinated_handoff_enabled", true], ["grass_debug_mode", 1]]:
+		grass_material.set_shader_parameter(pair[0], pair[1])
+	camera.position = Vector3(-1.8, 0, 1.5)
+	camera.look_at(Vector3(-.4, 0, 0), Vector3.LEFT)
+	terrain_material.set_shader_parameter("camera_world_position", camera.position)
+	var near_standard := await capture("saved_color_geometry_near_70_90")
+	grass_material.set_shader_parameter("grass_terrain_blend_start_fraction", 0.0)
+	grass_material.set_shader_parameter("grass_terrain_blend_end_fraction", .01)
+	var near_immediate := await capture("saved_color_geometry_near_0_1")
+	grass.visible = false
+	var near_ground := await capture("saved_color_geometry_near_ground")
+	grass.visible = true
+	var near_metrics := contrast(near_standard, near_immediate, near_ground)
+	if not require(near_metrics.pixels > 100 and difference(near_standard, near_immediate) < .0001,
+		"saved immediate color matching removed or changed nearby geometry: " + str(near_metrics)): return
+	set_distance(39.0)
+	grass_material.set_shader_parameter("grass_coordinated_handoff_enabled", false)
+	var far_full := await capture("saved_color_geometry_far_uncoordinated")
+	grass_material.set_shader_parameter("grass_coordinated_handoff_enabled", true)
+	var far_collapsed := await capture("saved_color_geometry_far_coordinated")
+	grass.visible = false
+	var far_ground := await capture("saved_color_geometry_far_ground")
+	grass.visible = true
+	var far_metrics := contrast(far_full, far_collapsed, far_ground)
+	if not require(far_metrics.pixels > 100 and far_metrics.new_error < far_metrics.old_error * .25,
+		"geometry did not converge in its independent distant band: " + str(far_metrics)): return
+	report.checks.append({"name": "saved_0_1_color_preserves_near_geometry", "eye_height_meters": 1.8, "effective_draw_meters": 41.2, "near": near_metrics, "far": far_metrics})
+	grass.multimesh.mesh = previous_mesh
+	for i in range(previous_transforms.size()): grass.multimesh.set_instance_transform(i, previous_transforms[i])
+	for pair in [["grass_lod_near_distance", 20.0], ["grass_lod_far_distance", 90.0], ["grass_lod_transition_width", 10.0], ["grass_terrain_draw_distance", 90.0], ["grass_coordinated_handoff_enabled", false], ["grass_debug_mode", 0]]:
+		grass_material.set_shader_parameter(pair[0], pair[1])
+	set_new_blend()
+
 func constant_texture(color: Color) -> ImageTexture:
 	var image := Image.create(1, 1, false, Image.FORMAT_RGBA8); image.fill(color)
 	return ImageTexture.create_from_image(image)
@@ -350,6 +398,46 @@ func wide_review() -> void:
 	report["visual_review"] = {"purpose": "Actual terrain textures and production soil/grass shaders with current compact gameplay LOD, fixed daylight camera, before/after blend; not a gameplay scene or performance capture.", "source_count_per_pass": 12000, "paired_source_count": 24000, "represented_blade_roots": 48000, "near_distance": 22.0, "far_distance": 32.0, "transition_width": 4.0, "intermediate_density": .25, "geometry": "two-segment near clumps and camera-facing single-ribbon intermediate clumps", "populations_identical_before_after": true}
 	var readme := FileAccess.open(OUTPUT + "README.md", FileAccess.WRITE)
 	if readme != null: readme.store_string("# Grass terrain blend fixture\n\nThe constant-texture quantitative checks retain the original 90 m proof range. The actual-texture daylight comparison uses paired production near and intermediate clumps at a 22 m near / 32 m far distance with a 4 m transition, 25% intermediate density, and full camera-facing single ribbons. Both before and after retain 12,000 identical source identities per pass (24,000 paired sources / 48,000 represented blade roots); near and intermediate selection is complementary. Both passes are hidden together for the terrain reference. Terrain color matching applies at every distance while preserving restrained nearby blade brightness relief. Ground lighting and final brightness convergence blend over 70 to 90% of draw distance, completing before root disappearance. Improved outer-band and populated near-band contrast accompany the wide captures. These are controlled appearance checks, not gameplay performance measurements.\n")
+	await meadow_handoff_review(intermediate)
+
+func meadow_handoff_review(intermediate: MultiMeshInstance3D) -> void:
+	# Authored Blender tufts with deterministic 10--20 cm heights. Capture a
+	# moving camera at the conservative 32 m resident limit, with identical
+	# source identities for manual and coordinated modes at each camera pose.
+	grass.multimesh.mesh = driver.call("LoadMeadowMesh", "near")
+	intermediate.multimesh.mesh = driver.call("LoadMeadowMesh", "intermediate")
+	for i in range(grass.multimesh.instance_count):
+		var transform := grass.multimesh.get_instance_transform(i)
+		var height := .1 + .1 * float(i % 101) / 100.0
+		transform.basis = Basis(Vector3.UP, float(i) * .73).scaled(Vector3(.12, height, .12))
+		grass.multimesh.set_instance_transform(i, transform)
+		intermediate.multimesh.set_instance_transform(i, transform)
+	set_new_blend()
+	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_enabled", 1.0)
+	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_start_meters", 200.0)
+	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_end_meters", 700.0)
+	RenderingServer.global_shader_parameter_set("ring_grass_terrain_coverage_strength", .45)
+	RenderingServer.global_shader_parameter_set("ring_grass_coordinated_handoff_start_meters", 22.4)
+	RenderingServer.global_shader_parameter_set("ring_grass_coordinated_handoff_end_meters", 28.8)
+	var captures := []
+	for offset in [0.0, 1.0, 2.0]:
+		camera.position = Vector3(-1.0, 0, -2.0 + offset)
+		camera.look_at(Vector3(-.6, 0, 24.0 + offset), Vector3.LEFT)
+		terrain_material.set_shader_parameter("camera_world_position", camera.position)
+		grass_material.set_shader_parameter("grass_coordinated_handoff_enabled", false)
+		RenderingServer.global_shader_parameter_set("ring_grass_coordinated_handoff_enabled", 0.0)
+		var manual := await capture("meadow_moving_manual_" + str(int(offset)))
+		grass_material.set_shader_parameter("grass_coordinated_handoff_enabled", true)
+		RenderingServer.global_shader_parameter_set("ring_grass_coordinated_handoff_enabled", 1.0)
+		var coordinated := await capture("meadow_moving_coordinated_" + str(int(offset)))
+		grass.visible = false; intermediate.visible = false
+		var floor := await capture("meadow_moving_ground_" + str(int(offset)))
+		grass.visible = true; intermediate.visible = true
+		var change := difference(manual, coordinated)
+		if not require(is_finite(change) and is_finite(difference(coordinated, floor)), "moving meadow capture is nonfinite"): return
+		captures.append({"camera_offset_meters": offset, "mode_rgb_difference": change})
+	report["meadow_moving_review"] = {"height_meters": [.1, .2], "geometry": "Blender compact near/intermediate", "effective_draw_distance": 32.0, "coverage_band_meters": [22.4, 28.8], "captures": captures, "scope": "Controlled moving-camera appearance review; no gameplay performance or universal seamlessness assertion."}
+	RenderingServer.global_shader_parameter_set("ring_grass_coordinated_handoff_enabled", 0.0)
 
 func projected_band(start: float, end: float, maximum_height: float = 1.0) -> Rect2i:
 	var minimum := Vector2(INF, INF); var maximum := Vector2(-INF, -INF)

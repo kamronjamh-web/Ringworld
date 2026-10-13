@@ -85,7 +85,7 @@ float grass_lod_hash(vec2 canonical_seed, float instance_id) {
 
 // Finish ground lighting and brightness relief convergence before roots disappear.
 // Keeping this band separate from final_fade leaves geometry and density selection intact.
-float grass_terrain_blend_at_distance(float root_distance, float transition_width) {
+float grass_ground_handoff_at_distance(float root_distance, float transition_width, float start_fraction, float end_fraction) {
 	if (!grass_appearance_enabled || grass_terrain_handoff_strength <= 0.0
 		|| isnan(grass_terrain_handoff_strength) || isinf(grass_terrain_handoff_strength)
 		|| isnan(grass_terrain_draw_distance) || isinf(grass_terrain_draw_distance)) return 0.0;
@@ -93,10 +93,10 @@ float grass_terrain_blend_at_distance(float root_distance, float transition_widt
 	if (isnan(cutoff) || isinf(cutoff) || cutoff <= 0.0
 		|| isnan(root_distance) || isinf(root_distance)
 		|| isnan(transition_width) || isinf(transition_width)
-		|| isnan(grass_terrain_blend_start_fraction) || isinf(grass_terrain_blend_start_fraction)
-		|| isnan(grass_terrain_blend_end_fraction) || isinf(grass_terrain_blend_end_fraction)) return 0.0;
-	float requested_start = clamp(grass_terrain_blend_start_fraction, 0.0, 1.0) * cutoff;
-	float requested_end = clamp(grass_terrain_blend_end_fraction, 0.0, 1.0) * cutoff;
+		|| isnan(start_fraction) || isinf(start_fraction)
+		|| isnan(end_fraction) || isinf(end_fraction)) return 0.0;
+	float requested_start = clamp(start_fraction, 0.0, 1.0) * cutoff;
+	float requested_end = clamp(end_fraction, 0.0, 1.0) * cutoff;
 	if (requested_end <= requested_start) return 0.0;
 	float fade_start = cutoff - transition_width * .5;
 	// A transition wider than the entire cutoff has no positive pre-fade
@@ -109,6 +109,11 @@ float grass_terrain_blend_at_distance(float root_distance, float transition_widt
 	float start = min(requested_start, max(0.0, end - minimum_band));
 	if (end <= start) return 0.0;
 	return smoothstep(start, end, root_distance);
+}
+
+float grass_terrain_blend_at_distance(float root_distance, float transition_width) {
+	return grass_ground_handoff_at_distance(root_distance, transition_width,
+		grass_terrain_blend_start_fraction, grass_terrain_blend_end_fraction);
 }
 
 void vertex() {
@@ -252,6 +257,16 @@ void vertex() {
 	float normal_y_scale = max(.4, 1.0 + d_local.y);
 	NORMAL.y = (NORMAL.y - dot(NORMAL.xz, d_local.xz)) / normal_y_scale;
 	NORMAL = normalize(NORMAL);
+	// Lower the complete authored tuft into its planted root, including every
+	// wind/rest/interaction offset. Legacy color sliders control appearance,
+	// including immediate matching at 0/1%; they must never erase nearby grass.
+	// Geometry uses its own safe 70--90% band before stochastic retirement.
+	// Uniform scaling preserves normals and avoids flattened hovering ribbons.
+	if (grass_coordinated_handoff_enabled && grass_appearance_enabled) {
+		float collapse = grass_ground_handoff_at_distance(root_distance, transition_width, .70, .90)
+			* clamp(grass_terrain_handoff_strength, 0.0, 1.0);
+		if (!isnan(collapse) && !isinf(collapse)) VERTEX *= max(.001, 1.0 - collapse);
+	}
 	grass_cloud_occlusion = sample_local_cloud_shadow((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz);
 }
 
@@ -287,7 +302,7 @@ void fragment() {
 	float cloud = grass_cloud_occlusion;
 	ALBEDO = albedo * (1.0 - cloud * .32);
 	ROUGHNESS = 1.0;
-	SPECULAR = grass_blade_shading_enabled ? .05 : 0.0;
+	SPECULAR = grass_blade_shading_enabled ? .05 * (1.0 - terrain_lighting) : 0.0;
 	grass_light_specular = SPECULAR;
 	grass_light_full_shading = grass_blade_shading_enabled
 		&& !(grass_simplified_intermediate_shading && grass_lod_pass != 0) ? 1.0 : 0.0;

@@ -110,7 +110,7 @@ public partial class RingStandingGrassLayer
             GrassGroupingStartMeters, GrassGroupingFarStartMeters, GrassGroupingHysteresisMeters,
             Math.Clamp(MaximumGrassSourcesPerGroup, 256, RingGpuVegetationCompute.MaximumRootsPerBatch),
             UseGpuCulling && !_gpuFailureLatched && _gpuCompute is { Ready: true }, EnableDistanceLod, StreamingSuspended, legacyGust,
-            LodNearDistanceMeters, LodFarDistanceMeters, LodTransitionWidthMeters, GrassFrustumPaddingMeters, CullGrassTiles, GpuFrustumCulling);
+            Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f), EffectiveGrassDrawDistance(), LodTransitionWidthMeters, GrassFrustumPaddingMeters, CullGrassTiles, GpuFrustumCulling);
         bool enabled = settings.Enabled && settings.Gpu && settings.DistanceLod && !settings.Suspended && camera != null && !legacyGust;
         AdaptiveGrassGroupingStatus = !settings.Enabled ? "Disabled" : !settings.Gpu ? "Fine outputs: GPU unavailable"
             : legacyGust ? "Fine outputs: standalone gust mapping" : !settings.DistanceLod ? "Fine outputs: distance LOD disabled"
@@ -145,9 +145,14 @@ public partial class RingStandingGrassLayer
             bool configSplit = group.Key.Level > settings.Level || group.Resident.Data.InstanceCount > settings.Roots;
             if (!validateDistances && !group.Splitting && group.Active && !configSplit) continue;
             float minimum = AdaptiveGroupMinimumDistance(group.Resident, geometry, camera?.GlobalPosition, focus, circumference);
+            if (minimum > settings.FarLod + settings.Transition * .5f)
+            {
+                _adaptiveRetire.Add(pair.Key);
+                continue;
+            }
             float start = group.Key.Level == 2 ? settings.Far : settings.Start;
             float splitThreshold = Math.Max(start - Math.Max(0, settings.Hysteresis),
-                LodNearDistanceMeters + LodTransitionWidthMeters * .5f + Math.Max(4, settings.Hysteresis));
+                settings.NearLod + settings.Transition * .5f + Math.Max(4, settings.Hysteresis));
             if (!enabled || minimum < splitThreshold || (configSplit && (!transitionInProgress || group.Splitting)))
             { group.Splitting = true; transitionInProgress = true; }
             if (!group.Active && (group.Resident.GpuIntermediateBatch < 0 || !group.Resident.IntermediateWanted)) _adaptiveRetire.Add(pair.Key);
@@ -191,7 +196,7 @@ public partial class RingStandingGrassLayer
                 var bounds = new RingGrassTileBounds(sources[0].Bounds.AroundMin, sources[^1].Bounds.AroundMax,
                     sources[0].Bounds.AcrossMin, sources[^1].Bounds.AcrossMax);
                 float start = key.Level == 2 ? settings.Far : settings.Start;
-                float threshold = Math.Max(start, LodNearDistanceMeters + LodTransitionWidthMeters * .5f + Math.Max(4, settings.Hysteresis)) + Math.Max(4, settings.Hysteresis);
+                float threshold = Math.Max(start, settings.NearLod + settings.Transition * .5f + Math.Max(4, settings.Hysteresis)) + Math.Max(4, settings.Hysteresis);
                 // Cheap canonical gate avoids rebasing/allocating an ineligible near group.
                 if (Math.Sqrt(RingGrassCoordinates.TileDistanceSquared(bounds, focus, circumference)) < threshold) continue;
                 RingGrassTileData description = RingGrassGrouping.Describe(sources, geometry);
@@ -199,12 +204,12 @@ public partial class RingStandingGrassLayer
                 foreach (var source in sources) maximumHeight = Math.Max(maximumHeight, _tiles[source.Key].MaximumSourceHeight);
                 var preflight = new Resident { Data = description, MaximumSourceHeight = maximumHeight };
                 float expandedMinimum = AdaptiveGroupMinimumDistance(preflight, geometry, camera!.GlobalPosition, focus, circumference);
-                if (expandedMinimum < threshold || expandedMinimum > LodFarDistanceMeters + LodTransitionWidthMeters * .5f) continue;
+                if (expandedMinimum < threshold || expandedMinimum > EffectiveGrassDrawDistance() + LodTransitionWidthMeters * .5f) continue;
                 // Admission uses the same conservative pass distance even when whole-tile culling is disabled.
                 // A batch with no intermediate request cannot become ready and must never reserve the pending-group slot.
                 float passDistance = ConservativePresentationDistance(description, preflight.Presentation.RawWorldBounds,
                     camera.GlobalPosition, focus, circumference);
-                if (passDistance > LodFarDistanceMeters + LodTransitionWidthMeters * .5f + Math.Max(0, GrassFrustumPaddingMeters)) continue;
+                if (passDistance > EffectiveGrassDrawDistance() + LodTransitionWidthMeters * .5f + Math.Max(0, GrassFrustumPaddingMeters)) continue;
                 if (CullGrassTiles && GpuFrustumCulling && !AabbIntersectsFrustum(preflight.Presentation.ExpandedWorldBounds, CachedCameraFrustumPlanes(camera))) continue;
                 // Upgrade an eligible complete ancestor through its fine children. The same gate used for creation chooses the bridge.
                 bool upgrading = false;
