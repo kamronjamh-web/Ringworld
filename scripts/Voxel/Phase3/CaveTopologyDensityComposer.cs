@@ -245,25 +245,31 @@ public sealed class CaveTopologyDensityComposer
         CaveTopologyDensityRegion region,
         long around,
         long vertical,
-        long across)
+        long across,
+        bool regionValidated = false)
     {
         if (!ReferenceEquals(region.Composer, this))
             throw new ArgumentException("Cave density region belongs to another composer.", nameof(region));
-        if (!region.ContainsSample(around, vertical, across))
+        // Lattice builders prove containment once per lattice (see
+        // CaveTopologyDensityRegion.RequireContainsLattice) and skip the
+        // per-sample check; every other caller keeps the strict check.
+        if (!regionValidated && !region.ContainsSample(around, vertical, across))
             throw new ArgumentOutOfRangeException(nameof(around), "Point lies outside the captured cave sampling region.");
 
         double topologyDensity = double.NegativeInfinity;
         ulong dominantFeatureKey = 0;
-        foreach (CaveTerrainConnectivityEvaluation evaluation in region.TerrainConnectivityEvaluations)
+        ReadOnlySpan<CaveTerrainConnectivityEvaluation> connectivity = region.TerrainConnectivityEvaluations;
+        for (int index = 0; index < connectivity.Length; index++)
         {
-            if (!ConnectivityCanContribute(evaluation, around, vertical, across))
+            ref readonly CaveTerrainConnectivityEvaluation evaluation = ref connectivity[index];
+            if (!ConnectivityCanContribute(in evaluation, around, vertical, across))
                 continue;
             double candidate = evaluation.Feature.Kind switch
             {
                 CaveRegionFeatureKind.ChamberAnchor => ChamberDensity(
                     around, vertical, across, evaluation.Feature),
                 CaveRegionFeatureKind.CorridorSegment => CorridorDensity(
-                    around, vertical, across, evaluation),
+                    around, vertical, across, in evaluation),
                 _ => throw new InvalidOperationException("Unknown cave region feature kind.")
             };
             if (candidate > topologyDensity
@@ -274,26 +280,27 @@ public sealed class CaveTopologyDensityComposer
             }
         }
 
-        foreach (CaveFamilyDensityEvaluation evaluation in region.TerrainFamilyEvaluations)
+        ReadOnlySpan<CaveFamilyDensityEvaluation> families = region.TerrainFamilyEvaluations;
+        for (int index = 0; index < families.Length; index++)
         {
-            CaveFeatureShape shape = evaluation.Shape;
-            double aroundOffset = AroundDelta(around, shape.Around);
-            double verticalOffset = Difference(vertical, shape.Vertical);
-            double acrossOffset = Difference(across, shape.Across);
+            ref readonly CaveFamilyDensityEvaluation evaluation = ref families[index];
+            double aroundOffset = AroundDelta(around, evaluation.Shape.Around);
+            double verticalOffset = Difference(vertical, evaluation.Shape.Vertical);
+            double acrossOffset = Difference(across, evaluation.Shape.Across);
             if (Math.Abs(aroundOffset) >= evaluation.AroundReach
                 || Math.Abs(verticalOffset) >= evaluation.VerticalReach
                 || Math.Abs(acrossOffset) >= evaluation.AcrossReach)
                 continue;
             double candidate = EvaluateFamilyDensityAtOffset(
-                evaluation,
+                in evaluation,
                 aroundOffset,
                 verticalOffset,
                 acrossOffset);
             if (candidate > topologyDensity
-                || (candidate == topologyDensity && shape.Key < dominantFeatureKey))
+                || (candidate == topologyDensity && evaluation.Shape.Key < dominantFeatureKey))
             {
                 topologyDensity = candidate;
-                dominantFeatureKey = shape.Key;
+                dominantFeatureKey = evaluation.Shape.Key;
             }
         }
 
@@ -321,11 +328,195 @@ public sealed class CaveTopologyDensityComposer
             true);
     }
 
+    /// <summary>
+    /// Conservative interval bound of the terrain-contribution topology density
+    /// (the max-union <see cref="SampleTerrainContribution"/> feeds into wall
+    /// noise) over the closed integer box [start, start + extent] on every
+    /// axis. <paramref name="upper"/> bounds every candidate from above, so
+    /// <c>upper &lt;= -WallInfluenceMeters</c> proves no sample contributes.
+    /// <paramref name="lower"/> bounds the density from below using only
+    /// contributors that no sample in the box can skip, and is -infinity when
+    /// there are none. It is only a classification proof: callers must never use
+    /// it to fill densities. Returns false when the around interval cannot be
+    /// expressed as one unwrapped interval relative to a contributor.
+    /// </summary>
+    internal bool TryBoundTerrainTopology(
+        CaveTopologyDensityRegion region,
+        long aroundStart,
+        long verticalStart,
+        long acrossStart,
+        long extent,
+        out double lower,
+        out double upper)
+    {
+        const double margin = 1e-3;
+        lower = double.NegativeInfinity;
+        upper = double.NegativeInfinity;
+        if (!ReferenceEquals(region.Composer, this))
+            throw new ArgumentException("Cave density region belongs to another composer.", nameof(region));
+        double half = extent * 0.5;
+        double halfDiagonal = half * Math.Sqrt(3.0);
+        long aroundEnd = unchecked(aroundStart + extent);
+
+        ReadOnlySpan<CaveTerrainConnectivityEvaluation> connectivity = region.TerrainConnectivityEvaluations;
+        for (int index = 0; index < connectivity.Length; index++)
+        {
+            ref readonly CaveTerrainConnectivityEvaluation evaluation = ref connectivity[index];
+            CaveRegionFeature feature = evaluation.Feature;
+            double a0 = AroundDelta(aroundStart, feature.AroundA);
+            if (AroundDelta(aroundEnd, feature.AroundA) != a0 + extent)
+                return false;
+            double y0 = Difference(verticalStart, feature.VerticalA);
+            double x0 = Difference(acrossStart, feature.AcrossA);
+            double a1 = a0 + extent, y1 = y0 + extent, x1 = x0 + extent;
+
+            double candidateUpper;
+            double candidateLower;
+            if (feature.Kind == CaveRegionFeatureKind.ChamberAnchor)
+            {
+                // Exact: density is a radius minus the distance to the anchor.
+                double nearest = Math.Sqrt(
+                    NearestAxisSquared(a0, a1) + NearestAxisSquared(y0, y1) + NearestAxisSquared(x0, x1));
+                double farthest = Math.Sqrt(
+                    FarthestAxisSquared(a0, a1) + FarthestAxisSquared(y0, y1) + FarthestAxisSquared(x0, x1));
+                candidateUpper = ChamberConnectivityRadiusMeters - nearest;
+                candidateLower = ChamberConnectivityRadiusMeters - farthest;
+            }
+            else
+            {
+                // Distance to a segment is convex, so its maximum over the box is
+                // at a corner; its minimum is bounded by the 1-Lipschitz centre.
+                double farthest = 0.0;
+                for (int corner = 0; corner < 8; corner++)
+                {
+                    farthest = Math.Max(farthest, SegmentDistance(
+                        (corner & 1) == 0 ? a0 : a1,
+                        (corner & 2) == 0 ? y0 : y1,
+                        (corner & 4) == 0 ? x0 : x1,
+                        in evaluation));
+                }
+                double centre = SegmentDistance(a0 + half, y0 + half, x0 + half, in evaluation);
+                candidateUpper = CorridorConnectivityRadiusMeters - Math.Max(0.0, centre - halfDiagonal);
+                candidateLower = CorridorConnectivityRadiusMeters - farthest;
+            }
+            upper = Math.Max(upper, candidateUpper);
+
+            double reach = evaluation.Reach;
+            bool neverSkipped = a0 > Math.Min(0.0, evaluation.SegmentAround) - reach
+                && a1 < Math.Max(0.0, evaluation.SegmentAround) + reach
+                && y0 > Math.Min(0.0, evaluation.SegmentVertical) - reach
+                && y1 < Math.Max(0.0, evaluation.SegmentVertical) + reach
+                && x0 > Math.Min(0.0, evaluation.SegmentAcross) - reach
+                && x1 < Math.Max(0.0, evaluation.SegmentAcross) + reach;
+            if (neverSkipped)
+                lower = Math.Max(lower, candidateLower);
+        }
+
+        ReadOnlySpan<CaveFamilyDensityEvaluation> families = region.TerrainFamilyEvaluations;
+        for (int index = 0; index < families.Length; index++)
+        {
+            ref readonly CaveFamilyDensityEvaluation evaluation = ref families[index];
+            CaveFeatureShape shape = evaluation.Shape;
+            double a0 = AroundDelta(aroundStart, shape.Around);
+            if (AroundDelta(aroundEnd, shape.Around) != a0 + extent)
+                return false;
+            double y0 = Difference(verticalStart, shape.Vertical);
+            double x0 = Difference(acrossStart, shape.Across);
+            double centreDensity = EvaluateFamilyDensityAtOffset(
+                in evaluation, a0 + half, y0 + half, x0 + half);
+            double slack = FamilyLipschitzBound(shape) * halfDiagonal;
+            upper = Math.Max(upper, centreDensity + slack);
+
+            bool neverSkipped =
+                Math.Max(Math.Abs(a0), Math.Abs(a0 + extent)) < evaluation.AroundReach
+                && Math.Max(Math.Abs(y0), Math.Abs(y0 + extent)) < evaluation.VerticalReach
+                && Math.Max(Math.Abs(x0), Math.Abs(x0 + extent)) < evaluation.AcrossReach;
+            if (neverSkipped)
+                lower = Math.Max(lower, centreDensity - slack);
+        }
+
+        if (!double.IsNegativeInfinity(upper)) upper += margin;
+        if (!double.IsNegativeInfinity(lower)) lower -= margin;
+        return true;
+    }
+
+    private static double NearestAxisSquared(double low, double high)
+    {
+        double distance = low > 0.0 ? low : high < 0.0 ? -high : 0.0;
+        return distance * distance;
+    }
+
+    private static double FarthestAxisSquared(double low, double high)
+    {
+        double distance = Math.Max(Math.Abs(low), Math.Abs(high));
+        return distance * distance;
+    }
+
+    private static double SegmentDistance(
+        double pointAround,
+        double pointVertical,
+        double pointAcross,
+        in CaveTerrainConnectivityEvaluation evaluation)
+    {
+        double parameter = evaluation.LengthSquared <= 0.0
+            ? 0.0
+            : Math.Clamp(
+                (pointAround * evaluation.SegmentAround
+                    + pointVertical * evaluation.SegmentVertical
+                    + pointAcross * evaluation.SegmentAcross) / evaluation.LengthSquared,
+                0.0,
+                1.0);
+        double aroundDistance = pointAround - evaluation.SegmentAround * parameter;
+        double verticalDistance = pointVertical - evaluation.SegmentVertical * parameter;
+        double acrossDistance = pointAcross - evaluation.SegmentAcross * parameter;
+        return Math.Sqrt(
+            aroundDistance * aroundDistance
+            + verticalDistance * verticalDistance
+            + acrossDistance * acrossDistance);
+    }
+
+    /// <summary>
+    /// Lipschitz constant (w.r.t. Euclidean distance in around/vertical/across)
+    /// of <see cref="EvaluateFamilyDensityAtOffset(CaveFeatureShape,double,double,double)"/>.
+    /// Tilt is a rotation of the around/vertical plane (an isometry), and
+    /// min/max/abs never increase a Lipschitz constant, so only the sloped
+    /// terms need a constant above 1: the collapsed-region rubble plane and the
+    /// Basin, Buttress and Ruin landmark terms. Mirrors
+    /// <see cref="EvaluateFamilyBaseDensity"/> and <see cref="ApplyLandmarkDensity"/>.
+    /// </summary>
+    internal static double FamilyLipschitzBound(CaveFeatureShape shape)
+    {
+        double bound = shape.Family == CaveFeatureFamily.CollapsedRegion
+            ? Math.Sqrt(1.0 + CaveFeatureFamilyGenerator.CollapsedSlope * CaveFeatureFamilyGenerator.CollapsedSlope)
+            : 1.0;
+        CaveLandmarkTemplate landmark = shape.Landmark;
+        if (!landmark.IsDefined) return bound;
+        switch (landmark.Operation)
+        {
+            case CaveLandmarkOperation.Basin:
+                // floor = vertical + 0.08 * horizontal
+                return Math.Max(bound, Math.Sqrt(1.0 + 0.08 * 0.08));
+            case CaveLandmarkOperation.Ruin:
+                // block shear: vertical + 0.12 * around
+                return Math.Max(bound, Math.Sqrt(1.0 + 0.12 * 0.12));
+            case CaveLandmarkOperation.Buttress:
+            {
+                // diagonalWall: across - around * (radiusAcross / radiusAround) * 0.30
+                double radiusAround = Math.Max(4.0, shape.RadiusAround * landmark.BoundAround);
+                double radiusAcross = Math.Max(4.0, shape.RadiusAcross * landmark.BoundAcross);
+                double slope = 0.30 * radiusAcross / radiusAround;
+                return Math.Max(bound, Math.Sqrt(1.0 + slope * slope));
+            }
+            default:
+                return bound;
+        }
+    }
+
     private double ChamberDensity(
         long around,
         long vertical,
         long across,
-        CaveRegionFeature feature)
+        in CaveRegionFeature feature)
     {
         double aroundDelta = AroundDelta(around, feature.AroundA);
         double verticalDelta = Difference(vertical, feature.VerticalA);
@@ -340,7 +531,7 @@ public sealed class CaveTopologyDensityComposer
         long around,
         long vertical,
         long across,
-        CaveTerrainConnectivityEvaluation evaluation)
+        in CaveTerrainConnectivityEvaluation evaluation)
     {
         CaveRegionFeature feature = evaluation.Feature;
         double pointAround = AroundDelta(around, feature.AroundA);
@@ -367,7 +558,7 @@ public sealed class CaveTopologyDensityComposer
         long around,
         long vertical,
         long across,
-        CaveRegionFeature feature)
+        in CaveRegionFeature feature)
     {
         double pointAround = AroundDelta(around, feature.AroundA);
         double pointVertical = Difference(vertical, feature.VerticalA);
@@ -396,7 +587,7 @@ public sealed class CaveTopologyDensityComposer
     }
 
     private bool ConnectivityCanContribute(
-        CaveTerrainConnectivityEvaluation evaluation,
+        in CaveTerrainConnectivityEvaluation evaluation,
         long around,
         long vertical,
         long across)
@@ -437,7 +628,7 @@ public sealed class CaveTopologyDensityComposer
     }
 
     private static double EvaluateFamilyDensityAtOffset(
-        CaveFamilyDensityEvaluation evaluation,
+        in CaveFamilyDensityEvaluation evaluation,
         double aroundOffset,
         double verticalOffset,
         double acrossOffset)
@@ -806,15 +997,27 @@ public sealed class CaveTopologyDensityComposer
 
     private double AroundDelta(long value, long origin)
     {
-        Int128 delta = (Int128)Mod(value, WallNoise.AroundLengthMeters)
-            - Mod(origin, WallNoise.AroundLengthMeters);
-        Int128 length = WallNoise.AroundLengthMeters;
-        if (delta * 2 > length) delta -= length;
-        if (delta * 2 < -length) delta += length;
+        // Both operands are wrapped into [0, length), so the difference lies in
+        // (-length, length) and cannot overflow a long. "2 * delta > length" is
+        // exactly "delta > length / 2" (floor) for integers, which avoids the
+        // overflow a doubled delta could cause. The corrected delta is within
+        // [-length / 2 - 1, length / 2 + 1], also overflow-free.
+        long length = WallNoise.AroundLengthMeters;
+        long delta = Mod(value, length) - Mod(origin, length);
+        long half = length >> 1;
+        if (delta > half) delta -= length;
+        if (delta < -half) delta += length;
         return (double)delta;
     }
 
-    private static double Difference(long value, long origin) => (double)((Int128)value - origin);
+    private static double Difference(long value, long origin)
+    {
+        long delta = unchecked(value - origin);
+        // Signed-overflow check; fall back to the exact wide subtraction.
+        if (((value ^ origin) & (value ^ delta)) < 0)
+            return (double)((Int128)value - origin);
+        return (double)delta;
+    }
 
     private static long Mod(long value, long divisor)
     {
@@ -1064,6 +1267,48 @@ public sealed class CaveTopologyDensityRegion
         long around,
         long vertical,
         long across) => Composer.SampleTerrainContribution(this, around, vertical, across);
+
+    /// <summary>Interval bound over the cube [start, start + extent]; see
+    /// <see cref="CaveTopologyDensityComposer.TryBoundTerrainTopology"/>.</summary>
+    internal bool TryBoundTerrainTopology(
+        long aroundStart,
+        long verticalStart,
+        long acrossStart,
+        long extent,
+        out double lower,
+        out double upper) => Composer.TryBoundTerrainTopology(
+            this, aroundStart, verticalStart, acrossStart, extent, out lower, out upper);
+
+    /// <summary>
+    /// Sample path for lattice builders that have already proven containment
+    /// with <see cref="RequireContainsLattice"/>; skips the per-sample check.
+    /// </summary>
+    internal CaveTopologyDensityResult SampleTerrainContributionValidated(
+        long around,
+        long vertical,
+        long across) => Composer.SampleTerrainContribution(this, around, vertical, across, regionValidated: true);
+
+    /// <summary>
+    /// Proves once that an axis-aligned lattice (first/last sample coordinates
+    /// per axis, around measured along the ring) lies inside this region. The
+    /// region is axis-aligned and convex per axis, so the corners suffice.
+    /// </summary>
+    internal void RequireContainsLattice(
+        long firstAround, long lastAround,
+        long firstVertical, long lastVertical,
+        long firstAcross, long lastAcross)
+    {
+        for (int corner = 0; corner < 8; corner++)
+        {
+            long around = (corner & 1) == 0 ? firstAround : lastAround;
+            long vertical = (corner & 2) == 0 ? firstVertical : lastVertical;
+            long across = (corner & 4) == 0 ? firstAcross : lastAcross;
+            if (!ContainsSample(around, vertical, across))
+                throw new ArgumentOutOfRangeException(
+                    nameof(firstAround),
+                    "Lattice lies outside the captured cave sampling region.");
+        }
+    }
 
     internal bool ContainsSample(long around, long vertical, long across)
     {

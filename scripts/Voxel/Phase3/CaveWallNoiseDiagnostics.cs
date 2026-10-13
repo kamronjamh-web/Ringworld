@@ -39,8 +39,9 @@ public static class CaveWallNoiseDiagnostics
             ValidateMaskAndTopologyProtection(applicator, profile);
             ValidateNoRemoteOpenings(applicator, profile);
             ValidateRequestOrderIndependence(applicator, profile);
+            int optimizedComparisons = ValidateOptimizedMatchesReference(applicator, changedSeed, profile);
 
-            summary = $"identity={applicator.Identity:X16} range={minimum:F3}..{maximum:F3} seamStep={maximumSeamStep:F6}";
+            summary = $"identity={applicator.Identity:X16} range={minimum:F3}..{maximum:F3} seamStep={maximumSeamStep:F6} optimizedVsReference={optimizedComparisons}";
             return true;
         }
         catch (Exception exception)
@@ -259,6 +260,68 @@ public static class CaveWallNoiseDiagnostics
                 profile);
             if (actual != expected[(request.Around, request.Vertical, request.Across, request.Density)])
                 throw new InvalidOperationException("wall noise changed with reverse request order");
+        }
+    }
+
+    /// <summary>
+    /// Regression guard for the optimized path (zero-mask skip + per-thread lattice cache):
+    /// final density, mask and displacement must match the unoptimized reference path
+    /// bit for bit across cave (nonzero mask) and non-cave (zero mask) samples, including
+    /// repeated queries (cache hits), ring seam wrap, and interleaved applicators.
+    /// </summary>
+    private static int ValidateOptimizedMatchesReference(
+        CaveWallNoiseApplicator applicator,
+        CaveWallNoiseApplicator otherSeed,
+        CaveWallNoiseProfile profile)
+    {
+        double[] densities = { -40.0, -16.0, -8.0, -3.5, -0.25, 0.0, 0.5, 2.0, 3.999, 4.0, 9.0, 64.0 };
+        int compared = 0;
+        // A dense 37^3-style lattice (cache hits) plus a ring-seam and negative-coordinate sweep.
+        for (int pass = 0; pass < 2; pass++)
+        for (long z = 0; z < 37; z += 3)
+        for (long y = 0; y < 37; y += 3)
+        for (long x = 0; x < 37; x += 3)
+        {
+            long around = pass == 0 ? 4090 + x : -150 + x * 7;
+            long vertical = pass == 0 ? -300 + y : 1000 - y * 11;
+            long across = pass == 0 ? 77 + z : -9000 + z * 13;
+            double density = densities[(int)((x + y * 3 + z * 5) % densities.Length)];
+            // Touch the other applicator in between so a shared/stale cache would be exposed.
+            otherSeed.Apply(around, vertical, across, density, profile);
+            AssertBitIdentical(applicator, around, vertical, across, density, profile);
+            AssertBitIdentical(applicator, around, vertical, across, density, profile);
+            compared += 2;
+        }
+        foreach (double density in densities)
+        foreach (long coordinate in new[] { long.MinValue, -4097L, -1L, 0L, 1L, 4096L, 4097L, long.MaxValue })
+        {
+            AssertBitIdentical(applicator, coordinate, coordinate / 3, -coordinate / 5, density, profile);
+            compared++;
+        }
+        return compared;
+    }
+
+    private static void AssertBitIdentical(
+        CaveWallNoiseApplicator applicator,
+        long around,
+        long vertical,
+        long across,
+        double density,
+        CaveWallNoiseProfile profile)
+    {
+        CaveWallNoiseResult optimized = applicator.Apply(around, vertical, across, density, profile);
+        CaveWallNoiseResult reference = applicator.ApplyReference(around, vertical, across, density, profile);
+        bool sameNoiseWhenSampled = optimized.InfluenceMask == 0.0
+            ? optimized.NormalizedNoise == 0.0
+            : BitConverter.DoubleToInt64Bits(optimized.NormalizedNoise) == BitConverter.DoubleToInt64Bits(reference.NormalizedNoise);
+        if (BitConverter.DoubleToInt64Bits(optimized.FinalDensityMeters) != BitConverter.DoubleToInt64Bits(reference.FinalDensityMeters)
+            || BitConverter.DoubleToInt64Bits(optimized.InfluenceMask) != BitConverter.DoubleToInt64Bits(reference.InfluenceMask)
+            || optimized.AppliedDisplacementMeters != reference.AppliedDisplacementMeters
+            || optimized.TopologyDensityMeters != reference.TopologyDensityMeters
+            || !sameNoiseWhenSampled)
+        {
+            throw new InvalidOperationException(
+                $"optimized wall noise diverged from reference at {around}/{vertical}/{across} density={density}: optimized={optimized}, reference={reference}");
         }
     }
 
