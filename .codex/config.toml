@@ -26,7 +26,7 @@ enabled = true
 # the primary agent to create an unnecessarily huge swarm.
 max_concurrent_threads_per_session = 6
 
-# If Codex creates an unspecified worker, prefer luna.
+# Unspecified workers use Sol at medium (same as `sol_implementer`).
 # Important tasks should use the named profiles below instead.
 default_subagent_model = "gpt-6.1-sol"
 default_subagent_reasoning_effort = "medium"
