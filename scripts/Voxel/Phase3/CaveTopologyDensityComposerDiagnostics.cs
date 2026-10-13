@@ -201,13 +201,26 @@ public static class CaveTopologyDensityComposerDiagnostics
                 around,
                 vertical,
                 across);
-            if (exact.HasContribution ? terrain != exact : terrain.HasContribution)
+            // NormalizedWallNoise is deliberately excluded: the wall applicator skips
+            // sampling it when the influence mask is zero, so only the density,
+            // mask, displacement, dominant feature and contribution flag are compared.
+            if (exact.HasContribution
+                ? !SameDensityAndFlags(exact, terrain)
+                : terrain.HasContribution)
             {
                 throw new InvalidOperationException(
                     $"terrain contribution path diverged at {around}/{vertical}/{across}: exact={exact}, terrain={terrain}");
             }
         }
     }
+
+    private static bool SameDensityAndFlags(CaveTopologyDensityResult a, CaveTopologyDensityResult b) =>
+        BitConverter.DoubleToInt64Bits(a.TopologyDensityMeters) == BitConverter.DoubleToInt64Bits(b.TopologyDensityMeters)
+        && BitConverter.DoubleToInt64Bits(a.FinalDensityMeters) == BitConverter.DoubleToInt64Bits(b.FinalDensityMeters)
+        && BitConverter.DoubleToInt64Bits(a.WallInfluenceMask) == BitConverter.DoubleToInt64Bits(b.WallInfluenceMask)
+        && BitConverter.DoubleToInt64Bits(a.AppliedWallDisplacementMeters) == BitConverter.DoubleToInt64Bits(b.AppliedWallDisplacementMeters)
+        && a.DominantFeatureKey == b.DominantFeatureKey
+        && a.HasContribution == b.HasContribution;
 
     private static void AssertCompiledTerrainLatticePlan(
         CaveTopologyDensityComposer composer,

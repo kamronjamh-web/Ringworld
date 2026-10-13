@@ -7,6 +7,9 @@ namespace RingworldTechDemo.Voxel.Integration;
 
 public partial class RingVoxelExplorerController
 {
+    /// <summary>True while spawn terrain settle is holding the body; read-only for observers.</summary>
+    public bool IsSpawnTerrainSettling => _spawnTerrainSettling;
+
     /// <summary>Positions initial streaming without recovering against terrain edits still being loaded.</summary>
     public void RestoreWorldLoadingFocus(in RingCanonicalPosition position)
     {

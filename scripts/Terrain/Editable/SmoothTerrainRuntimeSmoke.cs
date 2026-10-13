@@ -655,6 +655,7 @@ public partial class SmoothTerrainRuntimeSmoke : Node
             ThrowsArgument(()=>hotGrid.AddEdit(new SmoothTerrainEditCommand(1,9906,9906,false,8,structuralBottom-1,8,2,(int)SmoothTerrainMaterial.Rock)),"structural lower-bound edit");
             ThrowsArgument(()=>hotGrid.AddEdit(new SmoothTerrainEditCommand(1,9907,9907,false,8,0,0,2,(int)SmoothTerrainMaterial.Rock)),"structural left-sidewall edit");
             Task hotShutdown = hotGrid.AwaitShutdownForTestsAsync(); hotGrid.QueueFree(); for (int i = 0; i < 360 && !hotShutdown.IsCompleted; i++) await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); await hotShutdown;
+            await RunCaveUniformProofDiagnostics();
             if (!Array.Exists(OS.GetCmdlineUserArgs(), argument => argument == "--skip-cave-viewpoint-benchmark"))
                 await RunDesignedCaveViewpointBenchmark();
             GD.Print("SMOOTH_TERRAIN_RUNTIME_SMOKE_TEST_PASS"); GetTree().Quit(0);
@@ -666,6 +667,31 @@ public partial class SmoothTerrainRuntimeSmoke : Node
         ulong deadline=Time.GetTicksMsec()+180_000;
         while(!grid.IsQuiescent&&Time.GetTicksMsec()<deadline)await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         if (!grid.IsQuiescent) throw new InvalidOperationException($"grid quiescence timeout pending={grid.Metrics.Pending} queue={grid.Metrics.QueueDepth} active={grid.Metrics.ActiveWorkers}");
+    }
+    private async Task RunCaveUniformProofDiagnostics()
+    {
+        // Same production-shaped cave worlds as the viewpoint benchmark, one per
+        // seed, so the interval proof is certified against full lattice sampling.
+        int lattices = 0, referenceChecks = 0, proven = 0, interior = 0, effective = 0;
+        foreach (int seed in new[] { 7331, 1, 424242 })
+        {
+            var settings = new VoxelTerrainSettings { Seed = seed, BaseSurfaceHeightVoxels = 8, HeightAmplitudeVoxels = 0, DetailAmplitudeVoxels = 0, BedrockY = -22304, EnableUnified3dDensityTerrain = true, EnableDesignedCaveDensityComposition = true, DesignedCaveGenerationContractSettings = new CaveGenerationSettings() };
+            var proofSource = new VoxelChunkGridManager { Name = $"CaveProofSource{seed}", BuildOnReady = false, EnableChunkStreaming = false, UseDeterministicTerrainGeneration = true, TerrainSettings = settings, UseRingCurvedPlacement = true, AroundRingChunkLength = 4096 * 512, RingAcrossWidthMeters = 50000, EnforceRingAcrossBounds = true, EnableCanonicalFloatingOriginAnchor = true };
+            AddChild(proofSource); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+            using (RingTerrainSampler proofSampler = proofSource.CreateIndependentTerrainSampler() ?? throw new InvalidOperationException("cave proof sampler unavailable"))
+            {
+                CaveUniformProofDiagnostics.SeedResult result = CaveUniformProofDiagnostics.RunSeed(
+                    seed, proofSampler, proofSource.GetStructuralBottomGlobalY(), proofSource.TerrainBottomGlobalY,
+                    proofSource.ProtectedRoofThicknessMeters, proofSource.GetLowerHullTopGlobalY(), proofSource.GetStructuralWallTopGlobalY());
+                GD.Print($"SMOOTH_TERRAIN_CAVE_UNIFORM_PROOF_SEED_PASS: {result.Summary}");
+                lattices += result.Lattices; referenceChecks += result.ReferenceChecks; proven += result.ProvenEmpty + result.ProvenFallThrough;
+                interior += result.EffectivenessInterior; effective += result.EffectivenessProven;
+            }
+            proofSource.QueueFree();
+        }
+        if (interior == 0 || effective * 2 < interior)
+            throw new InvalidOperationException($"cave uniform proof effectiveness below 50%: {effective}/{interior}");
+        GD.Print($"SMOOTH_TERRAIN_CAVE_UNIFORM_PROOF_PASS: lattices={lattices} proven={proven} referenceChecks={referenceChecks} mismatches=0 effectiveness={effective}/{interior}");
     }
     private async Task RunDesignedCaveViewpointBenchmark()
     {

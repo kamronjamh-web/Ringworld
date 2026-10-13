@@ -43,6 +43,26 @@ public sealed class CaveWallNoiseApplicator
     public long AroundLengthMeters { get; }
     public ulong Identity { get; }
 
+    // Per-octave lattice salt (octave hash ^ identity), constant per applicator.
+    private readonly ulong[] _octaveKeySalts;
+
+    // Pure memoization of LatticeValue, one table per thread so concurrent
+    // terrain workers never share mutable state. Entries are verified against
+    // the full key (including applicator identity), so a hit is always exactly
+    // the value the hash would produce and results stay bit-identical.
+    private const int LatticeCacheSize = 4096;
+    private struct LatticeCacheEntry
+    {
+        public ulong Identity;
+        public long Around;
+        public long Vertical;
+        public long Across;
+        public int Octave;
+        public bool Valid;
+        public double Value;
+    }
+    [ThreadStatic] private static LatticeCacheEntry[]? _latticeCache;
+
     public CaveWallNoiseApplicator(CaveGenerationContract contract, long aroundLengthMeters)
     {
         if (contract.Version != CaveGenerationContract.CurrentVersion
@@ -72,6 +92,9 @@ public sealed class CaveWallNoiseApplicator
         foreach (int weight in OctaveWeights)
             identity = MixIdentity(identity, weight);
         Identity = Avalanche(identity);
+        _octaveKeySalts = new ulong[OctaveCount];
+        for (int octave = 0; octave < OctaveCount; octave++)
+            _octaveKeySalts[octave] = MixIdentity(LatticeSalt, octave) ^ Identity;
     }
 
     /// <summary>
@@ -86,8 +109,12 @@ public sealed class CaveWallNoiseApplicator
         CaveWallNoiseProfile profile)
     {
         Validate(topologyDensityMeters, profile);
-        double normalizedNoise = SampleNormalized(around, vertical, across);
         double influenceMask = ResolveInfluenceMask(topologyDensityMeters, profile);
+        // A zero mask multiplies the noise away entirely, so skip sampling it.
+        // NormalizedNoise is reported as 0.0 in that case (not the true field value).
+        double normalizedNoise = influenceMask == 0.0
+            ? 0.0
+            : SampleNormalized(around, vertical, across);
         double appliedDisplacement = normalizedNoise
             * profile.MaximumDisplacementMeters
             * influenceMask;
@@ -104,8 +131,40 @@ public sealed class CaveWallNoiseApplicator
             finalDensity);
     }
 
+    /// <summary>
+    /// Unoptimized reference path: always samples the noise and never uses the
+    /// lattice cache. Used by diagnostics to prove the optimized path is bit-identical.
+    /// </summary>
+    internal CaveWallNoiseResult ApplyReference(
+        long around,
+        long vertical,
+        long across,
+        double topologyDensityMeters,
+        CaveWallNoiseProfile profile)
+    {
+        Validate(topologyDensityMeters, profile);
+        double normalizedNoise = SampleNormalized(around, vertical, across, useCache: false);
+        double influenceMask = ResolveInfluenceMask(topologyDensityMeters, profile);
+        double appliedDisplacement = normalizedNoise
+            * profile.MaximumDisplacementMeters
+            * influenceMask;
+        appliedDisplacement = Math.Clamp(
+            appliedDisplacement,
+            -profile.MaximumDisplacementMeters,
+            profile.MaximumDisplacementMeters);
+        return new CaveWallNoiseResult(
+            topologyDensityMeters,
+            normalizedNoise,
+            influenceMask,
+            appliedDisplacement,
+            topologyDensityMeters + appliedDisplacement);
+    }
+
     /// <summary>Samples a ring-periodic immutable three-octave value-noise field.</summary>
-    public double SampleNormalized(long around, long vertical, long across)
+    public double SampleNormalized(long around, long vertical, long across) =>
+        SampleNormalized(around, vertical, across, useCache: true);
+
+    internal double SampleNormalized(long around, long vertical, long across, bool useCache)
     {
         long canonicalAround = Mod(around, AroundLengthMeters);
         double weightedNoise = 0.0;
@@ -119,7 +178,8 @@ public sealed class CaveWallNoiseApplicator
                 vertical,
                 across,
                 wavelength,
-                octave) * weight;
+                octave,
+                useCache) * weight;
             totalWeight += weight;
         }
         return Math.Clamp(weightedNoise / totalWeight, -1.0, 1.0);
@@ -130,7 +190,8 @@ public sealed class CaveWallNoiseApplicator
         long vertical,
         long across,
         long wavelength,
-        int octave)
+        int octave,
+        bool useCache)
     {
         long aroundPointCount = Math.Max(1, AroundLengthMeters / wavelength);
         long aroundIndex = Math.Min(canonicalAround / wavelength, aroundPointCount - 1);
@@ -149,14 +210,14 @@ public sealed class CaveWallNoiseApplicator
         double verticalBlend = Fade(verticalFraction);
         double acrossBlend = Fade(acrossFraction);
 
-        double c000 = LatticeValue(aroundIndex, verticalIndex, acrossIndex, octave);
-        double c100 = LatticeValue(nextAroundIndex, verticalIndex, acrossIndex, octave);
-        double c010 = LatticeValue(aroundIndex, verticalIndex + 1, acrossIndex, octave);
-        double c110 = LatticeValue(nextAroundIndex, verticalIndex + 1, acrossIndex, octave);
-        double c001 = LatticeValue(aroundIndex, verticalIndex, acrossIndex + 1, octave);
-        double c101 = LatticeValue(nextAroundIndex, verticalIndex, acrossIndex + 1, octave);
-        double c011 = LatticeValue(aroundIndex, verticalIndex + 1, acrossIndex + 1, octave);
-        double c111 = LatticeValue(nextAroundIndex, verticalIndex + 1, acrossIndex + 1, octave);
+        double c000 = LatticeValue(aroundIndex, verticalIndex, acrossIndex, octave, useCache);
+        double c100 = LatticeValue(nextAroundIndex, verticalIndex, acrossIndex, octave, useCache);
+        double c010 = LatticeValue(aroundIndex, verticalIndex + 1, acrossIndex, octave, useCache);
+        double c110 = LatticeValue(nextAroundIndex, verticalIndex + 1, acrossIndex, octave, useCache);
+        double c001 = LatticeValue(aroundIndex, verticalIndex, acrossIndex + 1, octave, useCache);
+        double c101 = LatticeValue(nextAroundIndex, verticalIndex, acrossIndex + 1, octave, useCache);
+        double c011 = LatticeValue(aroundIndex, verticalIndex + 1, acrossIndex + 1, octave, useCache);
+        double c111 = LatticeValue(nextAroundIndex, verticalIndex + 1, acrossIndex + 1, octave, useCache);
 
         double lowVertical = Lerp(
             Lerp(c000, c100, aroundBlend),
@@ -169,14 +230,52 @@ public sealed class CaveWallNoiseApplicator
         return Lerp(lowVertical, highVertical, acrossBlend);
     }
 
-    private double LatticeValue(long aroundIndex, long verticalIndex, long acrossIndex, int octave)
+    private double LatticeValue(
+        long aroundIndex,
+        long verticalIndex,
+        long acrossIndex,
+        int octave,
+        bool useCache)
     {
-        ulong octaveSalt = MixIdentity(LatticeSalt, octave);
+        if (!useCache)
+            return ComputeLatticeValue(aroundIndex, verticalIndex, acrossIndex, octave);
+
+        LatticeCacheEntry[] cache = _latticeCache ??= new LatticeCacheEntry[LatticeCacheSize];
+        ulong mix = unchecked(
+            (ulong)aroundIndex * 0x9E3779B97F4A7C15UL
+            ^ (ulong)verticalIndex * 0xC2B2AE3D27D4EB4FUL
+            ^ (ulong)acrossIndex * 0x165667B19E3779F9UL
+            ^ (ulong)(octave + 1) * 0xD6E8FEB86659FD93UL);
+        int slot = (int)((mix ^ (mix >> 29)) % LatticeCacheSize);
+        ref LatticeCacheEntry entry = ref cache[slot];
+        if (entry.Valid
+            && entry.Identity == Identity
+            && entry.Octave == octave
+            && entry.Around == aroundIndex
+            && entry.Vertical == verticalIndex
+            && entry.Across == acrossIndex)
+        {
+            return entry.Value;
+        }
+
+        double value = ComputeLatticeValue(aroundIndex, verticalIndex, acrossIndex, octave);
+        entry.Identity = Identity;
+        entry.Around = aroundIndex;
+        entry.Vertical = verticalIndex;
+        entry.Across = acrossIndex;
+        entry.Octave = octave;
+        entry.Value = value;
+        entry.Valid = true;
+        return value;
+    }
+
+    private double ComputeLatticeValue(long aroundIndex, long verticalIndex, long acrossIndex, int octave)
+    {
         ulong key = Contract.GetCoordinateSaltKey(
             aroundIndex,
             verticalIndex,
             acrossIndex,
-            octaveSalt ^ Identity);
+            _octaveKeySalts[octave]);
         ulong random53Bits = Avalanche(key) >> 11;
         const double inverse53BitRange = 1.0 / (1UL << 53);
         return random53Bits * inverse53BitRange * 2.0 - 1.0;

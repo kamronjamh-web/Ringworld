@@ -198,7 +198,7 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
             verticalExtent,
             acrossExtent);
     }
-    public SmoothTerrainSample SampleWithKnownSurface(long around, int vertical, int across, float surface,CaveTopologyDensityRegion? designedCaves=null)
+    public SmoothTerrainSample SampleWithKnownSurface(long around, int vertical, int across, float surface,CaveTopologyDensityRegion? designedCaves=null,bool regionValidated=false)
     {
         long canonicalAround = RingCoordMath.WrapAround(around, AroundLength);
         if (across < -StructuralSidewallThickness || across > AcrossWidth + StructuralSidewallThickness - 1)
@@ -208,7 +208,7 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
         if(_enableDesignedCaves&&PermitsDesignedCaveDensity(vertical,across))
         {
             designedCaves??=CaptureDesignedCaveRegion(canonicalAround,vertical,across,1,1,1);
-            CaveTopologyDensityResult cave=designedCaves!.SampleTerrainContribution(canonicalAround,vertical,across);
+            CaveTopologyDensityResult cave=regionValidated?designedCaves!.SampleTerrainContributionValidated(canonicalAround,vertical,across):designedCaves!.SampleTerrainContribution(canonicalAround,vertical,across);
             if(cave.HasContribution&&cave.FinalDensityMeters>density)
             {
                 density=(float)cave.FinalDensityMeters;
@@ -280,19 +280,53 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
         out SmoothTerrainDensityRange range)
     {
         range = default;
-        if (designedCaves?.HasTerrainContributors == true)
-            return false;
-
         const int halo = SmoothTerrainChunkSnapshot.Halo;
         const int cells = SmoothTerrainChunkSnapshot.Cells;
         const int centralSamples = cells + 1;
         int spacing = key.SampleSpacingMeters;
+        bool hasCaveContributors = designedCaves?.HasTerrainContributors == true;
+        // The 1 m tier keeps full sampling whenever a cave primitive can touch it.
+        if (hasCaveContributors && spacing <= 1)
+            return false;
         int minimumVertical = checked(key.VerticalOrigin + halo * spacing);
         int maximumVertical = checked(minimumVertical + cells * spacing);
         int minimumAcross = checked(key.AcrossOrigin + halo * spacing);
         int maximumAcross = checked(minimumAcross + cells * spacing);
         if (minimumAcross < 0 || maximumAcross >= AcrossWidth)
             return false;
+        if (hasCaveContributors)
+        {
+            // Interval proof over the central 33^3 samples. It only classifies:
+            // either no cave candidate can reach the wall-influence band (fall
+            // through to the exact natural classifier below), or every sample is
+            // provably open cave air. Densities are never filled from the bounds.
+            long extent = (long)cells * spacing;
+            if (!designedCaves!.TryBoundTerrainTopology(
+                    checked(key.AroundOrigin + (long)halo * spacing),
+                    minimumVertical,
+                    minimumAcross,
+                    extent,
+                    out double caveLower,
+                    out double caveUpper))
+                return false;
+            if (caveUpper > -CaveTopologyDensityComposer.WallProfile.WallInfluenceMeters)
+            {
+                // Cave air wins max(natural, cave) everywhere; the roof/bottom
+                // terms only raise density, and the lower hull (the sole
+                // min() term) stays positive above its top. The designed-cave
+                // permit requires the box to sit above the structural bottom.
+                bool provenEmpty = caveLower >= CaveTopologyDensityComposer.WallProfile.MaximumDisplacementMeters
+                    && (_structuralBottomVertical == int.MinValue || minimumVertical > _structuralBottomVertical)
+                    && (_lowerHullTopVertical == int.MinValue || minimumVertical > _lowerHullTopVertical);
+                if (!provenEmpty)
+                    return false;
+                range = new SmoothTerrainDensityRange(
+                    (float)(caveLower - CaveTopologyDensityComposer.WallProfile.MaximumDisplacementMeters),
+                    float.PositiveInfinity,
+                    SmoothTerrainDensityClassification.Empty);
+                return true;
+            }
+        }
 
         Span<float> surfaces = stackalloc float[centralSamples * centralSamples];
         int surfaceIndex = 0;
@@ -787,14 +821,21 @@ public sealed class SmoothTerrainVolumetricDensitySnapshot
     {
         if(_baseline is not RingTerrainSmoothBaseline production||!production.DesignedCavesEnabled)return null;
         long span=checked((long)key.CellsPerAxis*key.SampleSpacingMeters);
-        return production.CaptureDesignedCaveRegion(
+        CaveTopologyDensityRegion? region=production.CaptureDesignedCaveRegion(
             key.AroundOrigin,key.VerticalOrigin,key.AcrossOrigin,
             span,span,span);
+        // Every lattice sample lies in [origin, origin+span]; prove it once so
+        // per-sample cave sampling can skip its containment check.
+        region?.RequireContainsLattice(
+            key.AroundOrigin,checked(key.AroundOrigin+span),
+            key.VerticalOrigin,checked(key.VerticalOrigin+span),
+            key.AcrossOrigin,checked(key.AcrossOrigin+span));
+        return region;
     }
     private float SampleDensity(long around, int vertical, int across, float surface, CaveTopologyDensityRegion? designedCaves,List<SmoothTerrainEditCommand> scratch, out int material)
     {
         SmoothTerrainSample baseline = _baseline is RingTerrainSmoothBaseline production
-            ? production.SampleWithKnownSurface(around, vertical, across, surface,designedCaves) : _baseline.Sample(around, vertical, across);
+            ? production.SampleWithKnownSurface(around, vertical, across, surface,designedCaves,regionValidated:true) : _baseline.Sample(around, vertical, across);
         float density = baseline.Density;
         material = baseline.Material;
         if (_edits.IsEmpty) return density;
@@ -849,7 +890,9 @@ public sealed class SmoothTerrainVolumetricDensitySnapshot
 
     private sealed class RegularChunkCache
     {
-        private const int MaximumEntries=32;
+        // Sized above the ~139-164 desired base chunks so near-transition jobs reuse
+        // captured lattices. Worst case ~256 x 405 KB (37^3 float+int) ~= 104 MB per live field.
+        private const int MaximumEntries=256;
         private readonly object _gate=new();
         private readonly Dictionary<SmoothTerrainChunkCoordinate,Lazy<SmoothTerrainChunkSnapshot>> _entries=new();
         private readonly Queue<(SmoothTerrainChunkCoordinate Coordinate,Lazy<SmoothTerrainChunkSnapshot> Entry)> _order=new();
@@ -1065,6 +1108,11 @@ public static class SmoothTerrainSnapshotCapture
                 SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Halo*2,
                 SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Halo*2)
             : null;
+        // Samples span [origin-Halo, origin+Cells+Halo] on each axis, exactly the captured region.
+        designedCaves?.RequireContainsLattice(
+            checked(origin.AroundVoxel-SmoothTerrainChunkSnapshot.Halo),checked(origin.AroundVoxel+SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Halo),
+            checked(origin.VerticalVoxel-SmoothTerrainChunkSnapshot.Halo),checked(origin.VerticalVoxel+SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Halo),
+            checked(origin.AcrossVoxel-SmoothTerrainChunkSnapshot.Halo),checked(origin.AcrossVoxel+SmoothTerrainChunkSnapshot.Cells+SmoothTerrainChunkSnapshot.Halo));
         long timingStart=Stopwatch.GetTimestamp();
         // The production baseline's macro surface depends on X/Z, never Y.
         // Walking the snapshot by column avoids recomputing all regional noise
@@ -1081,7 +1129,7 @@ public static class SmoothTerrainSnapshotCapture
             {
                 int vertical = origin.VerticalVoxel + y;
                 SmoothTerrainSample sample = baseline is RingTerrainSmoothBaseline production
-                    ? production.SampleWithKnownSurface(around, vertical, across, surface,designedCaves)
+                    ? production.SampleWithKnownSurface(around, vertical, across, surface,designedCaves,regionValidated:true)
                     : baseline.Sample(around, vertical, across);
                 float value = sample.Density;
                 int material = sample.Material;

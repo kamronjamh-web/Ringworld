@@ -48,12 +48,17 @@ public partial class SmoothTerrainGrid : Node3D
 	/// bridge work keeps the bounded fair scheduler; no tier is disabled.
 	/// </summary>
 	[Export] public bool EnableCavePreloadScheduling { get; set; } = true;
-	[Export] public int MaxWorkers { get; set; } = 2;
+	/// <summary>Automatic worker count: half the logical cores minus two for the main thread, render and physics, bounded to 2..8. 16 workers were ~3.5x faster on cave views but starved the main thread (35 ms frames).</summary>
+	public static int DefaultMaxWorkers => Math.Clamp(System.Environment.ProcessorCount / 2 - 2, 2, 8);
+	/// <summary>Concurrent mesh/lattice workers. Changes made while running are applied by <see cref="ApplyWorkerCountChange"/> on the next frame.</summary>
+	[Export(PropertyHint.Range, "1,64,1")] public int MaxWorkers { get; set; } = DefaultMaxWorkers;
 	/// <summary>Diagnostic escape hatch for controlled sampler contention benchmarks.</summary>
 	internal bool UseIndependentWorkerSamplers { get; set; } = true;
 	[Export(PropertyHint.Range, "1,256,1")] public int MaxOutstandingMeshWork { get; set; } = 32;
-	[Export] public int MaxInstallsPerFrame { get; set; } = 1;
-	[Export] public float InstallBudgetMilliseconds { get; set; } = 1.5f;
+	/// <summary>Safety cap on mesh installs per frame across all tiers; InstallBudgetMilliseconds is the normal limiter. Results with no mesh (uniform/empty) do not count.</summary>
+	[Export(PropertyHint.Range, "1,64,1")] public int MaxInstallsPerFrame { get; set; } = 8;
+	/// <summary>Main-thread time budget shared by every tier's installs in one frame; at least one install always proceeds.</summary>
+	[Export(PropertyHint.Range, "0.25,16,0.25")] public float InstallBudgetMilliseconds { get; set; } = 1.5f;
 	[Export] public NodePath StreamingFocusPath { get; set; } = new();
 	[Export] public float StreamingUpdateIntervalSeconds { get; set; } = .1f;
 	[ExportGroup("Fast travel streaming")]
@@ -144,7 +149,9 @@ public partial class SmoothTerrainGrid : Node3D
 	private bool _surfaceResidencyActive = true;
 	private ulong _generation;
 	private ulong _editRevision;
-	private SemaphoreSlim _workers = new(1, 1);
+	private const int MaxWorkerPermits = 256;
+	private SemaphoreSlim _workers = new(1, MaxWorkerPermits);
+	private int _appliedWorkerCount = 1;
 	private int _activeWorkers;
 	private int _maxActiveWorkers;
 	private int _ownedPresenters;
@@ -539,7 +546,7 @@ public partial class SmoothTerrainGrid : Node3D
 	{
 		var source = GetNodeOrNull<VoxelChunkGridManager>(SourceGridPath);
 		if (source == null) { GD.PushWarning("SmoothTerrainGrid is opt-in and needs SourceGridPath."); return; }
-		_sourceGrid=source; _workers.Dispose(); _workers=new SemaphoreSlim(Math.Max(1,MaxWorkers),Math.Max(1,MaxWorkers));
+		_sourceGrid=source; _workers.Dispose(); _appliedWorkerCount=Math.Clamp(MaxWorkers,1,MaxWorkerPermits); _workers=new SemaphoreSlim(_appliedWorkerCount,MaxWorkerPermits);
 		if(!source.ValidateDeepVerticalDomains(out string domainError)){GD.PushError($"SmoothTerrainGrid deep vertical-domain configuration is invalid: {domainError}");return;}
 		_sourceSampler = source.CreateIndependentTerrainSampler(); if(_sourceSampler==null){GD.PushWarning("SmoothTerrainGrid source could not create terrain sampler.");return;} _baseline = new RingTerrainSmoothBaseline(_sourceSampler,source.GetStructuralBottomGlobalY(),source.TerrainBottomGlobalY,source.ProtectedRoofThicknessMeters,source.GetLowerHullTopGlobalY(),source.GetStructuralWallTopGlobalY(),source.TerrainSettings?.EnableDesignedCaveDensityComposition==true);
 		_editSnapshot=new SmoothTerrainEditSnapshot(_commands,_editRevision,_baseline.AroundLength);
@@ -1080,7 +1087,9 @@ public partial class SmoothTerrainGrid : Node3D
 		// streaming; resume processing after the forced current-focus refresh.
 		if (!_fastTravelFocusSuspended) ServiceHotPatchDemotions(delta);
 		ServiceDeferredMeshWork();
+		ApplyWorkerCountChange();
 		long installStart=Stopwatch.GetTimestamp();
+		_installFrameStart=installStart;
 		int installLimit=Math.Max(1,MaxInstallsPerFrame);
 		int nearInstalls=InstallReady(installLimit);
 		int coarseInstalls=InstallCoarseReady(Math.Max(0,installLimit-nearInstalls));
@@ -1093,6 +1102,26 @@ public partial class SmoothTerrainGrid : Node3D
 		_lastAggregateInstalls=aggregateInstalls;_maxAggregateInstalls=Math.Max(_maxAggregateInstalls,aggregateInstalls);
 		if(aggregateInstalls>0&&aggregateMilliseconds>Math.Max(0.0,InstallBudgetMilliseconds))_installBudgetExceededFrames++;
 		if((_metricsElapsed+=delta)>=.25){_metricsElapsed=0;RecountReady();UpdateCurrentMetrics();}
+	}
+	private long _installFrameStart;
+	/// <summary>True while this frame's shared install time budget (all tiers combined) has not been spent.</summary>
+	private bool FrameInstallBudgetAvailable()=>Stopwatch.GetElapsedTime(_installFrameStart).TotalMilliseconds<Math.Max(0.0,InstallBudgetMilliseconds);
+	/// <summary>A mesh with no geometry (uniform solid/empty region) is pure bookkeeping and consumes neither install budget nor cap.</summary>
+	private static bool IsBookkeepingMesh(SmoothTerrainMeshData mesh)=>mesh.Vertices.Length==0;
+	private static bool IsBookkeepingSector(SmoothTerrainMeshData[] meshes){foreach(SmoothTerrainMeshData mesh in meshes)if(mesh.Vertices.Length!=0)return false;return true;}
+	/// <summary>
+	/// Applies a runtime MaxWorkers change to the live semaphore without replacing it (in-flight
+	/// workers release to the same instance). Raising adds permits at once; lowering absorbs
+	/// permits as running work completes, so it takes effect as current jobs finish.
+	/// </summary>
+	private void ApplyWorkerCountChange()
+	{
+		int desired=Math.Clamp(MaxWorkers,1,MaxWorkerPermits);
+		if(desired==_appliedWorkerCount||_stopping)return;
+		SemaphoreSlim workers=_workers;int delta=desired-_appliedWorkerCount;_appliedWorkerCount=desired;
+		if(delta>0){workers.Release(delta);return;}
+		CancellationToken token=_cancel.Token;
+		for(int i=0;i<-delta;i++)_=Task.Run(async()=>{try{await workers.WaitAsync(token);}catch(OperationCanceledException){}catch(ObjectDisposedException){}});
 	}
 	private void FlushPendingEditRefresh()
 	{
@@ -1633,9 +1662,9 @@ public partial class SmoothTerrainGrid : Node3D
 		  entry.Token.ThrowIfCancellationRequested();_nearTransitionReady.Enqueue(new NearTransitionResult(fine,entry.Generation,field.Identity,mask,mesh));
 	  }catch(OperationCanceledException){}finally{if(acquired)_workers.Release();entry.CompleteWorkAndDisposeToken();}},CancellationToken.None);TrackMeshWork(work);},entry.CompleteWorkAndDisposeToken); }
 	private int InstallNearTransitionReady(int limit)
-	{ if(SuspendInstallsForTests)return 0;int installed=0;while(installed<limit&&_nearTransitionReady.TryDequeue(out NearTransitionResult result)){
+	{ if(SuspendInstallsForTests)return 0;int installed=0;while(((installed<limit&&FrameInstallBudgetAvailable())||(_nearTransitionReady.TryPeek(out NearTransitionResult peeked)&&IsBookkeepingMesh(peeked.Mesh)))&&_nearTransitionReady.TryDequeue(out NearTransitionResult result)){
 		if(!_nearTransitionEntries.TryGetValue(result.Coordinate,out NearTransitionEntry? entry)||entry.Generation!=result.Generation||entry.Identity!=result.Identity||entry.FaceMask!=result.FaceMask)continue;
-		entry.Ready=true;entry.Presenter.Position=ChunkWorldOrigin(result.Coordinate);entry.Presenter.Install(result.Mesh,false,_terrainMaterial);installed++;}
+		entry.Ready=true;entry.Presenter.Position=ChunkWorldOrigin(result.Coordinate);entry.Presenter.Install(result.Mesh,false,_terrainMaterial);if(!IsBookkeepingMesh(result.Mesh))installed++;}
 	  ApplyNearTransitionOwnership();return installed; }
 	private void ApplyNearTransitionOwnership()
 	{ foreach(var pair in _nearTransitionEntries)pair.Value.Presenter.Visible=_nearTransitionDesired.Contains(pair.Key)&&pair.Value.Ready&&IsVisualRepresentationVisibleForTests(pair.Key); }
@@ -1743,7 +1772,7 @@ public partial class SmoothTerrainGrid : Node3D
 	{
 		if(SuspendInstallsForTests)return 0;
 		int installed=0;
-		while(installed<installLimit&&_mediumReady.TryDequeue(out MediumResult result))
+		while(((installed<installLimit&&FrameInstallBudgetAvailable())||(_mediumReady.TryPeek(out MediumResult peeked)&&IsBookkeepingSector(peeked.Meshes)))&&_mediumReady.TryDequeue(out MediumResult result))
 		{
 			if(!_mediumEntries.TryGetValue(result.Coordinate,out MediumEntry? entry)||entry.Generation!=result.Generation||entry.Identity!=result.Identity)continue;
 			entry.Classification=result.Range.Classification;
@@ -1752,7 +1781,7 @@ public partial class SmoothTerrainGrid : Node3D
 			// This tier is deliberately incapable of collision. Near remains
 			// the sole physical cave representation until a later LOD step.
 			for(int child=0;child<8;child++){entry.Presenters[child].Position=MediumSectorWorldOrigin(result.Coordinate);entry.Presenters[child].Install(result.Meshes[child],false,_terrainMaterial);}
-			installed++;
+			if(!IsBookkeepingSector(result.Meshes))installed++;
 		}
 		ApplyMediumVisualOwnership();
 		ApplyBridgeOwnership();
@@ -1880,7 +1909,7 @@ public partial class SmoothTerrainGrid : Node3D
 			vo+=mesh.Vertices.Length;io+=mesh.Indices.Length;
 		}
 	}
-	private int InstallBridgeReady(int limit){if(SuspendInstallsForTests)return 0;int installed=0;for(int i=_bridgeTiers.Length-1;i>=0;i--){BridgeTier tier=_bridgeTiers[i];while(installed<limit&&tier.Ready.TryDequeue(out BridgeResult r)){if(!tier.Entries.TryGetValue(r.Coordinate,out BridgeEntry? e)||e.Generation!=r.Generation||e.Identity!=r.Identity)continue;e.Classification=r.Range.Classification;e.UniformRejected=r.Range.Classification!=SmoothTerrainDensityClassification.Mixed;e.Ready=true;e.TransitionMask=CaptureTransitionMask(tier,r.Coordinate);e.TransitionTriangleCount=r.TransitionTriangleCount;e.Presenter.Position=ChunkWorldOrigin(r.Coordinate);e.Presenter.Install(r.Mesh,false,_terrainMaterial);installed++;}}ApplyBridgeOwnership();return installed;}
+	private int InstallBridgeReady(int limit){if(SuspendInstallsForTests)return 0;int installed=0;for(int i=_bridgeTiers.Length-1;i>=0;i--){BridgeTier tier=_bridgeTiers[i];while(((installed<limit&&FrameInstallBudgetAvailable())||(tier.Ready.TryPeek(out BridgeResult peeked)&&IsBookkeepingMesh(peeked.Mesh)))&&tier.Ready.TryDequeue(out BridgeResult r)){if(!tier.Entries.TryGetValue(r.Coordinate,out BridgeEntry? e)||e.Generation!=r.Generation||e.Identity!=r.Identity)continue;e.Classification=r.Range.Classification;e.UniformRejected=r.Range.Classification!=SmoothTerrainDensityClassification.Mixed;e.Ready=true;e.TransitionMask=CaptureTransitionMask(tier,r.Coordinate);e.TransitionTriangleCount=r.TransitionTriangleCount;e.Presenter.Position=ChunkWorldOrigin(r.Coordinate);e.Presenter.Install(r.Mesh,false,_terrainMaterial);if(!IsBookkeepingMesh(r.Mesh))installed++;}}ApplyBridgeOwnership();return installed;}
 	// Bit order: -/+ around, -/+ vertical, -/+ across. Exposed faces receive
 	// real 2:1 transition cells into the next coarser tier.
 	private byte CaptureTransitionMask(BridgeTier tier,SmoothTerrainChunkCoordinate c)
@@ -1960,7 +1989,7 @@ public partial class SmoothTerrainGrid : Node3D
 	}
 	private static MediumCapture CaptureVolumetric(SmoothTerrainChunkCoordinate c,SmoothTerrainVolumetricDensitySnapshot field,int spacing)
 	{ const int cells=32,halo=2;var key=new SmoothTerrainVolumetricDensityCacheKey(field.Identity,c.AroundChunk*32-halo*spacing,c.VerticalChunk*32-halo*spacing,c.AcrossChunk*32-halo*spacing,cells+halo*2,spacing);SmoothTerrainRegularChunkCapture capture=field.CaptureRegularChunk(key,c);return new MediumCapture(capture.Range,capture.Snapshot); }
-	private int InstallCoarseReady(int limit){if(SuspendInstallsForTests)return 0;int i=0;while(i<limit&&_coarseReady.TryDequeue(out CoarseResult r)){if(!_coarseEntries.TryGetValue(r.Coordinate,out CoarseEntry? e)||e.Generation!=r.Generation||e.Identity!=r.Identity)continue;e.Classification=r.Range.Classification;e.UniformRejected=r.Range.Classification!=SmoothTerrainDensityClassification.Mixed;e.Ready=true;e.Presenter.Position=ChunkWorldOrigin(r.Coordinate);e.Presenter.Install(r.Mesh,false,_terrainMaterial);i++;}ApplyBridgeOwnership();return i;}
+	private int InstallCoarseReady(int limit){if(SuspendInstallsForTests)return 0;int i=0;while(((i<limit&&FrameInstallBudgetAvailable())||(_coarseReady.TryPeek(out CoarseResult peeked)&&IsBookkeepingMesh(peeked.Mesh)))&&_coarseReady.TryDequeue(out CoarseResult r)){if(!_coarseEntries.TryGetValue(r.Coordinate,out CoarseEntry? e)||e.Generation!=r.Generation||e.Identity!=r.Identity)continue;e.Classification=r.Range.Classification;e.UniformRejected=r.Range.Classification!=SmoothTerrainDensityClassification.Mixed;e.Ready=true;e.Presenter.Position=ChunkWorldOrigin(r.Coordinate);e.Presenter.Install(r.Mesh,false,_terrainMaterial);if(!IsBookkeepingMesh(r.Mesh))i++;}ApplyBridgeOwnership();return i;}
 	private SmoothTerrainPresenter AcquireCoarsePresenter(){if(_coarsePool.Count>0)return _coarsePool.Dequeue();var p=new SmoothTerrainPresenter();AddChild(p);return p;}
 	private void RemoveCoarseEntry(SmoothTerrainChunkCoordinate c,CoarseEntry e){if(e.RequestCancel())Interlocked.Increment(ref _auxiliaryCancelRequestCount);e.Presenter.Reset();_coarsePool.Enqueue(e.Presenter);_coarseEntries.Remove(c);}
 	private void ClearCoarseVolumetricPresentation(){foreach(var p in _coarseEntries.ToArray())RemoveCoarseEntry(p.Key,p.Value);_coarseVolumetricVisualDesired.Clear();}
@@ -2062,7 +2091,7 @@ public partial class SmoothTerrainGrid : Node3D
 		using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Smooth terrain install");
 		if(SuspendInstallsForTests){RecountReady();UpdateCurrentMetrics();return 0;}
 		if(_ready.IsEmpty)return 0;
-		var timer=Stopwatch.StartNew();int installed=0,installLimit=requestedInstallLimit;bool coverageChanged=false,forceBatchCommit=false;while(installed<installLimit&&(forceBatchCommit||timer.Elapsed.TotalMilliseconds<InstallBudgetMilliseconds)&&_ready.TryDequeue(out Result r))
+		var timer=Stopwatch.StartNew();int installed=0,installLimit=requestedInstallLimit;bool coverageChanged=false,forceBatchCommit=false;while((((installed<installLimit)&&(forceBatchCommit||FrameInstallBudgetAvailable()))||(_ready.TryPeek(out Result peeked)&&peeked.Patches==null&&IsBookkeepingMesh(peeked.Mesh)))&&_ready.TryDequeue(out Result r))
 		{ if(!_entries.TryGetValue(r.Coordinate,out Entry? e)||e.Generation!=r.Generation||e.ExpectedRevision!=r.Revision){_diagnostics.GetOrAdd(r.Coordinate,_=>new DiagnosticRecord()).Stale();Metrics=Metrics with{StaleResults=Metrics.StaleResults+1};continue;}
 			if(_editBatch?.Revision==r.Revision.Edits&&_editBatch.Expected.Contains(r.Coordinate))
 			{
@@ -2106,7 +2135,7 @@ public partial class SmoothTerrainGrid : Node3D
 				e.PatchData=null;
 				e.Collision=p.HasCollision;
 			}
-			e.TargetSnapshot=r.Snapshot;e.Ready=true;e.Installs++;coverageChanged=true;_diagnostics.GetOrAdd(r.Coordinate,_=>new DiagnosticRecord()).Installed(r.Revision,r.Hash,r.Generation,EntryHasRender(e),e.Collision);Metrics=Metrics with{LastWorkerMilliseconds=r.WorkerMilliseconds,MaxWorkerMilliseconds=Math.Max(Metrics.MaxWorkerMilliseconds,r.WorkerMilliseconds),Installed=Metrics.Installed+1};installed++; }
+			e.TargetSnapshot=r.Snapshot;e.Ready=true;e.Installs++;coverageChanged=true;_diagnostics.GetOrAdd(r.Coordinate,_=>new DiagnosticRecord()).Installed(r.Revision,r.Hash,r.Generation,EntryHasRender(e),e.Collision);Metrics=Metrics with{LastWorkerMilliseconds=r.WorkerMilliseconds,MaxWorkerMilliseconds=Math.Max(Metrics.MaxWorkerMilliseconds,r.WorkerMilliseconds),Installed=Metrics.Installed+1};if(r.Patches!=null||!IsBookkeepingMesh(r.Mesh))installed++; }
 		if(coverageChanged){BumpVisualCoverageRevision();ApplyVisualOwnership();ApplyNearTransitionOwnership();ApplyMediumVisualOwnership();ApplyBridgeOwnership();}
 		if(_refreshAfterBatchCommit){_refreshAfterBatchCommit=false;RefreshDesired();}
 		RecountReady(); UpdateCurrentMetrics(); Metrics=Metrics with{LastInstallMilliseconds=timer.Elapsed.TotalMilliseconds,MaxInstallMilliseconds=Math.Max(Metrics.MaxInstallMilliseconds,timer.Elapsed.TotalMilliseconds)};return installed;
