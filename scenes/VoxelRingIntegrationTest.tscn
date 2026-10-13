@@ -70,6 +70,7 @@
 [ext_resource type="AudioStream" path="res://resources/audio/weather/rain_surface_water.ogg" id="67_rain_surface_water"]
 [ext_resource type="Script" path="res://scripts/Voxel/LOD/RingWaterFftController.cs" id="68_water_fft"]
 [ext_resource type="Script" path="res://scripts/diagnostics/RingPerformanceMonitor.cs" id="69_performance_monitor"]
+[ext_resource type="Script" path="res://scripts/Underground/RingUndergroundModeController.cs" id="70_underground_mode"]
 
 [sub_resource type="ProceduralSkyMaterial" id="1"]
 sky_top_color = Color(0.02, 0.03, 0.06, 1)
@@ -152,6 +153,9 @@ world_environment_path = NodePath("../WorldEnvironment")
 
 [node name="UndergroundEnvironment" type="Node" parent="." unique_id=1370683749]
 script = ExtResource("43")
+
+[node name="UndergroundMode" type="Node" parent="."]
+script = ExtResource("70_underground_mode")
 
 [node name="AmbientOcclusion" type="Node" parent="." unique_id=1870297751]
 script = ExtResource("25")

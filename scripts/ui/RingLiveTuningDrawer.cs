@@ -157,6 +157,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeFarRenderingTuning();
         InitializeLoadingTuning();
         InitializeTerrainStreamingTuning();
+        InitializeUndergroundModeTuning();
         if (_surfaceTerrainGameplay != null)
             InitializeSurfaceTerrainTuning();
         // The bridge owns the shared, startup-initialized sparse overrides.
@@ -208,6 +209,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushFarRenderingDefaults();
         FlushLoadingPresentationDefaults();
         FlushTerrainStreamingDefaults();
+        FlushUndergroundModeDefaults();
         FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
         if (_open)
@@ -244,6 +246,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessFarRenderingTuning(delta);
         ProcessLoadingTuning(delta);
         ProcessTerrainStreamingTuning(delta);
+        ProcessUndergroundModeTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
         if (_surfaceTerrainGameplay != null)
@@ -910,6 +913,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddToggle(tab, "Fine terrain near shadows", _grid?.LimitSmoothTerrainShadowsToCollisionRange ?? true, value => { _grid?.SetSmoothTerrainNearShadowLimit(value); });
         AddSlider(tab, "Pilot texture scale", 0.01, 1, 0.01, _grid?.SmoothTerrainPilotTextureScale ?? 0.2, value => { if (_grid != null) _grid.SmoothTerrainPilotTextureScale = (float)value; });
         BuildTerrainStreamingSection(tabRoot);
+        BuildUndergroundModeSection(tabRoot);
         VBoxContainer editing = TuningMenuUi.CreateSection(tabRoot, "Editing / debug");
         AddSlider(editing, "Natural terrain brush radius", 0.5, 8, 0.25, _grid?.NaturalTerrainSdfBrushRadiusMeters ?? 1.5, value => { if (_grid != null) _grid.NaturalTerrainSdfBrushRadiusMeters = (float)value; });
         AddToggle(editing, "Excavation limits", _grid?.EnforceExcavationLimits ?? true, value => { if (_grid != null) _grid.EnforceExcavationLimits = value; }); AddToggle(editing, "Build height limit", _grid?.EnforceBuildHeightLimit ?? true, value => { if (_grid != null) _grid.EnforceBuildHeightLimit = value; }); AddToggle(editing, "Seam gap visualization", _grid?.EnableSeamGapDebugVisualization ?? false, value => { if (_grid != null) _grid.EnableSeamGapDebugVisualization = value; }); AddSlider(editing, "Seam debug interval", 0.02, 1, 0.01, _grid?.SeamGapDebugUpdateIntervalSeconds ?? 0.2, value => { if (_grid != null) _grid.SeamGapDebugUpdateIntervalSeconds = (float)value; });
@@ -1037,7 +1041,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushUndergroundModeDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
