@@ -102,7 +102,11 @@ public partial class RingWeatherAmbience : Node
     private float _coverCurrent;
     private bool _deepShelter;
     /// <summary>Cached precipitation cover; visual rain can share it without new terrain queries.</summary>
-    public bool IsRainSheltered => _deepShelter || _coverTarget >= .5f;
+    /// <summary>Underground-mode enclosure blend (0..1); fades the exterior beds without stopping their streams.</summary>
+    public float UndergroundBlend { get; set; }
+    /// <summary>Underground-mode hold: skips detail-emitter placement and surface queries while fully enclosed.</summary>
+    public bool UndergroundSuspended { get; set; }
+    public bool IsRainSheltered =>_deepShelter || _coverTarget >= .5f;
     private ThunderAcousticContext _lastDetailContext;
     private RingCanonicalPosition _previousDetailListener;
     private bool _hasPreviousDetailListener;
@@ -181,7 +185,7 @@ public partial class RingWeatherAmbience : Node
         WeatherAmbienceMix.Targets(_sourceRain, _sourceSnow, _sourceWind, _stormProbe,
             out _target[0], out _target[1], out _target[2], out _target[3]);
         UpdateSurfaceDetail(context, realDelta);
-        float exteriorMix = _deepShelter ? 0.0f : Mathf.Lerp(1.0f, .12f, _coverCurrent);
+        float exteriorMix = (_deepShelter ? 0.0f : Mathf.Lerp(1.0f, .12f, _coverCurrent)) * (1.0f - UndergroundBlend);
         _target[0] *= exteriorMix;
         _target[1] *= exteriorMix;
         UpdateRainEmitterPositions(context);
@@ -283,6 +287,17 @@ public partial class RingWeatherAmbience : Node
 
     private void UpdateSurfaceDetail(in ThunderAcousticContext context, double realDelta)
     {
+        if (UndergroundSuspended)
+        {
+            // Fully enclosed: skip detail-emitter placement and surface queries; beds and streams keep playing.
+            _hasPreviousDetailListener = false;
+            _detailTraveling = false;
+            _surfaceLeadMeters = 0;
+            _detailVelocityAround = 0; _detailVelocityAcross = 0;
+            _coverTarget = 1; _deepShelter = true;
+            _coverCurrent = WeatherAmbienceMix.Smooth(_coverCurrent, 1, realDelta);
+            return;
+        }
         if (_sourceSnow || _sourceRain <= .0001f)
         {
             _hasPreviousDetailListener = false;

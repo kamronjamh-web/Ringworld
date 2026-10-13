@@ -78,6 +78,11 @@ public partial class RingWaterFftController : Node
     public float TargetGeometryUpdatesPerSecond { get; private set; }
     public float TargetDetailUpdatesPerSecond { get; private set; }
     public string WaterDemandStatus { get; private set; } = "dormant";
+    /// <summary>
+    /// Underground-mode hold: reports dormant demand and stops dispatching FFT work. Never disposes the provider, and the wind clock above keeps advancing.
+    /// </summary>
+    public bool ExternalDormant { get; set; }
+    private bool _externalDormantApplied;
     public double WaterDemandCheckMilliseconds { get; private set; }
     public long CompletedFftUpdates => _provider?.CompletedUpdates ?? 0;
     /// <summary>The topology currently published by the provider, retained while a new setting debounces.</summary>
@@ -147,6 +152,13 @@ public partial class RingWaterFftController : Node
         RingWaterModel.RefreshOceanMaterials();
         if (!Enabled) { if (_wasEnabled) { ClearSurfaceQueryCache(); _updateScheduler.Reset(); RingWaterModel.RefreshOceanMaterials(); _provider?.Dispose(); _provider = null; Status = "Disabled: analytic water"; } _wasEnabled = false; ActiveCascadeCount = 0; WaterDemandStatus = "dormant"; TargetGeometryUpdatesPerSecond = 0; TargetDetailUpdatesPerSecond = 0; return; }
         if (!_wasEnabled) { ClearSurfaceQueryCache(); _hasSettings = false; _pending = true; _stable = 0; _updateScheduler.Reset(); CreateProvider(); RingWaterModel.RefreshOceanMaterials(); } _wasEnabled = true;
+        if (ExternalDormant)
+        {
+            if (!_externalDormantApplied) { ClearSurfaceQueryCache(); _updateScheduler.Reset(); _externalDormantApplied = true; }
+            WaterDemandStatus = "dormant"; TargetGeometryUpdatesPerSecond = 0; TargetDetailUpdatesPerSecond = 0;
+            return;
+        }
+        _externalDormantApplied = false;
         if (_provider == null || _grid == null || _explorer == null) return;
         UpdateCanonicalFrame();
         RingWaterFftSettings next = Settings(_wind);

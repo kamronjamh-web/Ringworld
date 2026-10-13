@@ -58,6 +58,9 @@ func _process(delta: float) -> void:
 	# Weather ambience publishes a multiplicative duck only; water ownership remains unchanged.
 	var weather_duck := float(_player.get_meta("ring_weather_ambience_duck", 1.0))
 	target_gain *= clampf(weather_duck, 0.0, 1.0) if is_finite(weather_duck) else 1.0
+	# Underground mode publishes the enclosure blend; the stream keeps playing so resume never restarts it.
+	var enclosure := float(_player.get_meta("ring_underground_ambience_blend", 0.0))
+	target_gain *= 1.0 - clampf(enclosure, 0.0, 1.0) if is_finite(enclosure) else 1.0
 	_fade_to_gain(target_gain, delta)
 
 

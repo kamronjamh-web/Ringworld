@@ -352,6 +352,11 @@ public partial class RingLocalWeatherEffects : Node3D
     private Vector2 _treeTrunkWind, _treeCanopyWind;
     private double _lastWindTime = double.NaN;
 
+    /// <summary>Underground-mode hold: hides precipitation particles and the rain veil. Wind, wetness and lightning scheduling keep running.</summary>
+    public bool UndergroundSuspended { get; set; }
+    /// <summary>Underground-mode enclosure blend (0..1) applied to the storm flash energy; 1 forces the flash light to exactly zero.</summary>
+    public float UndergroundFlashSuppression { get; set; }
+
     public override void _Process(double delta)
     {
         if (_explorer == null || _grid == null || _weatherSource == null || _particles == null) return;
@@ -394,7 +399,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _lastSnowing = Snowing;
 
         // Liquid rain is a soft depth-aware veil; this stable pool is snow only.
-        _particles.Emitting = Snowing && PrecipitationIntensity > 0.01f;
+        _particles.Emitting = Snowing && PrecipitationIntensity > 0.01f && !UndergroundSuspended;
         _particles.Visible = _particles.Emitting;
         UpdateSnowParticleProfile();
         UpdateRainHaze();
@@ -402,6 +407,8 @@ public partial class RingLocalWeatherEffects : Node3D
         UpdatePrecipitationTransform(force: false);
         UpdateWetness(dt);
         UpdateLightning(delta, weather, localCloudsVisible);
+        // Underground mode: the omni flash has no shadows and would light cave interiors through rock.
+        if (UndergroundFlashSuppression >= 0.999f && _lightningLight != null) _lightningLight.LightEnergy = 0.0f;
     }
 
     private RingVolumetricCloudLayer.LocalWeatherState ResolveCurrentWeather()
@@ -1036,7 +1043,7 @@ public partial class RingLocalWeatherEffects : Node3D
             CurrentRenderedLightningPulse = shared;
             CurrentRenderedLightningVisualWeight = visualWeight;
             _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy)
-                * Mathf.Max(0.0f, _activeSharedEvent?.Energy ?? 1.0f) * shared * visualWeight;
+                * Mathf.Max(0.0f, _activeSharedEvent?.Energy ?? 1.0f) * shared * visualWeight * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f));
             _sunshineBridge?.SetLightningFlashIntensity(shared * visualWeight);
             _boltCoreMaterial?.SetShaderParameter("intensity", shared);
             _boltGlowMaterial?.SetShaderParameter("intensity", shared * 0.65f);
@@ -1056,7 +1063,7 @@ public partial class RingLocalWeatherEffects : Node3D
             glow = Mathf.Max(glow, Mathf.Max(0.0f, glowEnvelope) * strike.Intensity);
         }
         float sharedIntensity = Mathf.Max(core, glow * 0.42f);
-        _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy) * sharedIntensity;
+        _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy) * sharedIntensity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f));
         _sunshineBridge?.SetLightningFlashIntensity(sharedIntensity);
         _boltCoreMaterial?.SetShaderParameter("intensity", core);
         _boltGlowMaterial?.SetShaderParameter("intensity", glow);

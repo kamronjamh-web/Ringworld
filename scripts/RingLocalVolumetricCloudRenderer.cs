@@ -60,6 +60,8 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
 
     public bool LocalVolumeVisible { get; private set; }
     public bool FastTravelSuspended { get; private set; }
+    /// <summary>Underground-mode hold: hides the fog volume without changing ownership or any other state.</summary>
+    public bool UndergroundSuspended { get; set; }
     public float ViewerAltitudeAboveTerrainMeters { get; private set; }
     public RingVolumetricCloudLayer.LocalWeatherState CurrentWeather { get; private set; }
     public Vector3 VolumeCanonicalCenterKm { get; private set; }
@@ -86,6 +88,7 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
     private Vector3 _lastGridOrigin = new(float.PositiveInfinity, 0.0f, 0.0f);
     private bool _lastOwnsClouds;
     private bool _lastReportedVisible;
+    private bool _lastUndergroundSuspended;
     private RingVolumetricCloudLayer.CloudQuality _lastQuality = (RingVolumetricCloudLayer.CloudQuality)(-1);
     private bool _environmentCaptured;
     private bool _previousFogEnabled;
@@ -300,7 +303,8 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
         bool visible = ownsClouds && !FastTravelSuspended && altitudeOpacity > 0.001f;
         LocalVolumeVisible = visible;
         CurrentVisibility = visible ? altitudeOpacity : 0.0f;
-        _fogVolume.Visible = visible;
+        // Underground mode hides only the fog volume; ownership publication is unchanged so no fallback cloud renderer takes over.
+        _fogVolume.Visible = visible && !UndergroundSuspended;
         _material?.SetShaderParameter("visibility", CurrentVisibility);
 
         bool stateChanged = force
@@ -308,13 +312,17 @@ public partial class RingLocalVolumetricCloudRenderer : Node3D
             || ownsClouds != _lastOwnsClouds;
         if (stateChanged)
         {
-            ConfigureEnvironment(visible);
+            ConfigureEnvironment(visible && !UndergroundSuspended);
             _weatherSource.SetExternalLocalVolumetricCloudsState(
                 visible,
                 visible,
                 Mathf.Min(FarShellHandoffStartMeters, FarShellHandoffEndMeters - 1.0f),
                 Mathf.Max(FarShellHandoffStartMeters + 1.0f, FarShellHandoffEndMeters));
         }
+
+        if (!stateChanged && UndergroundSuspended != _lastUndergroundSuspended)
+            ConfigureEnvironment(visible && !UndergroundSuspended);
+        _lastUndergroundSuspended = UndergroundSuspended;
 
         if (stateChanged && LogStateChanges)
         {

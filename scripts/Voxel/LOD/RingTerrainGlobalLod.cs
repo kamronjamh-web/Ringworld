@@ -345,6 +345,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     {
         ServiceStartupGeometry();
         if (StartupError.Length > 0) return;
+        // Underground-mode hide: surface segments are invisible, so skip lighting, shadow and rebuild service.
+        if (UndergroundHidden && StartupComplete) return;
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain global LOD update (inclusive)");
         _ = delta;
         UpdateCameraUniform();

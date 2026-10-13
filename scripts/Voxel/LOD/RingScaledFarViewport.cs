@@ -485,6 +485,8 @@ public partial class RingScaledFarViewport : Node
 		using var inclusive = RingPerformanceTelemetry.MeasureCpu("Far ring update (inclusive)");
         using (RingPerformanceTelemetry.MeasureCpu("Far ring startup scene")) UpdateStartupScene();
 		if (StartupError.Length > 0) return;
+		// Underground-mode hold: the far viewports render nothing and the backdrop is hidden, so skip all far-ring work.
+		if (RenderSuspended && StartupComplete) return;
 		BeginGeometryUploadFrame();
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring global terrain"))
 		{

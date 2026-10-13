@@ -226,6 +226,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private static int _maximumStructuralWallRequestedAroundCellsSinceStartup;
     private SmoothTerrainGrid? _smoothTerrain;
     private bool _transitHidden;
+    private bool _fastTravelHidden;
+    private bool _undergroundHidden;
     private Node3D? _focus;
     private RingVoxelExplorerController? _velocityProvider;
     private DirectionalLight3D? _sunLight;
@@ -781,14 +783,41 @@ public partial class RingTerrainProxySector : MeshInstance3D
     /// </summary>
     public void SetTransitVisibility(bool hidden)
     {
-        if (_transitHidden == hidden) return;
-        InvalidateOceanCoverageDependents();
-        _transitHidden = hidden;
-        Visible = StreamingActive && !_transitHidden;
-        foreach (RingTerrainSectorCoordinate coordinate in _active.Keys)
-            UpdateSectorVisibility(coordinate);
+        if (_fastTravelHidden == hidden) return;
+        _fastTravelHidden = hidden;
+        ApplyTransitVisibility();
+    }
+
+    /// <summary>
+    /// Underground-mode hide tier: hides every surface sector mesh but, unlike fast-travel transit, keeps the
+    /// structural sidewall mesh drawn so the structural cavity retains its long-range walls. Streaming state,
+    /// meshes and collision are untouched.
+    /// </summary>
+    public void SetUndergroundHidden(bool hidden)
+    {
+        if (_undergroundHidden == hidden) return;
+        _undergroundHidden = hidden;
+        ApplyTransitVisibility();
+    }
+
+    public bool UndergroundHidden => _undergroundHidden;
+
+    // The node itself stays visible while only underground-hidden, so the structural wall child keeps rendering.
+    private bool ProxyNodeVisibleWhenActive => !_transitHidden || (!_fastTravelHidden && _structuralWallMesh != null);
+
+    private void ApplyTransitVisibility()
+    {
+        bool combined = _fastTravelHidden || _undergroundHidden;
+        if (_transitHidden != combined)
+        {
+            InvalidateOceanCoverageDependents();
+            _transitHidden = combined;
+            foreach (RingTerrainSectorCoordinate coordinate in _active.Keys)
+                UpdateSectorVisibility(coordinate);
+        }
+        Visible = StreamingActive && ProxyNodeVisibleWhenActive;
         if (_structuralWallMesh != null)
-            _structuralWallMesh.Visible = StreamingActive && !_transitHidden;
+            _structuralWallMesh.Visible = StreamingActive && !_fastTravelHidden;
     }
 
     public void SetCoverageSources(
@@ -1015,13 +1044,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         if (StreamingActive == active)
         {
-            Visible = active && !_transitHidden;
+            Visible = active && ProxyNodeVisibleWhenActive;
             return;
         }
 
         if (!active) InvalidateOceanCoverageDependents();
         StreamingActive = active;
-        Visible = active && !_transitHidden;
+        Visible = active && ProxyNodeVisibleWhenActive;
         if (active)
         {
             _lastAround = long.MinValue;
@@ -4390,7 +4419,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             && endSector == _lastWallAroundEnd
             && _structuralWallMesh?.Mesh != null)
         {
-            _structuralWallMesh.Visible = StreamingActive && !_transitHidden;
+            _structuralWallMesh.Visible = StreamingActive && !_fastTravelHidden;
             return;
         }
 
@@ -4723,7 +4752,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _structuralWallMesh.CastShadow = ResolveStructuralShadowCasting(
             BuildTerrainRoofUnderside || BuildLowerHullCavityFloor,
             CastTerrainShadows);
-        _structuralWallMesh.Visible = StreamingActive && !_transitHidden;
+        _structuralWallMesh.Visible = StreamingActive && !_fastTravelHidden;
         if (_loggedStructuralWallReady) return;
         _loggedStructuralWallReady = true;
         GD.Print(

@@ -156,6 +156,22 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "5000,50000,1000")] public float SpawnAnvilRadiusMeters { get; set; } = 24000.0f;
 
     public bool RuntimeVisible { get; private set; }
+    /// <summary>True while underground mode has stopped the compositor callback. Textures, ownership and shadow state are retained.</summary>
+    public bool RenderSuspended { get; private set; }
+    public bool CompositorRenderEnabled => _lastRenderOn;
+
+    /// <summary>
+    /// Stops (or resumes) the compositor render callback and driver wind updates without releasing any texture,
+    /// ownership or shadow state. Resume requests one temporal-history reset so stale accumulation never ghosts.
+    /// </summary>
+    public void SetRenderSuspended(bool suspended)
+    {
+        if (RenderSuspended == suspended) return;
+        RenderSuspended = suspended;
+        if (_clouds == null || _driver == null || !Enabled || !IsProcessing()) return;
+        _driver.Set("update_continuously", !suspended);
+        UpdateVisibility(force: false);
+    }
     public RingVolumetricCloudLayer.LocalWeatherState CurrentWeather => _currentWeather;
     public float EffectiveHistoryWeight { get; private set; }
     /// <summary>Read-only solar temporal-history diagnostics for continuous captures.</summary>
@@ -241,6 +257,7 @@ public partial class RingSunshineCloudBridge : Node
     private double _weatherElapsed = double.PositiveInfinity;
     private RingVolumetricCloudLayer.LocalWeatherState _currentWeather;
     private bool _lastVisible;
+    private bool _lastRenderOn;
     private float _publishedHandoffStartMeters = float.NaN;
     private float _publishedHandoffEndMeters = float.NaN;
     private int _pendingDensityProbes;
@@ -492,7 +509,7 @@ public partial class RingSunshineCloudBridge : Node
         Enabled = active;
         if (active)
         {
-            _driver?.Set("update_continuously", true);
+            _driver?.Set("update_continuously", !RenderSuspended);
             AttachCompositorToTargetEnvironment();
             // Provider switches must restore gameplay-selected scalars without
             // touching weather-owned values or rebuilding an unchanged target.
@@ -2385,7 +2402,13 @@ public partial class RingSunshineCloudBridge : Node
         // again when the player stops.
         if (visible && !_lastVisible)
             RefreshCloudCompute();
-        _clouds.Set("enabled", visible);
+        // Underground render suspension only gates the compositor callback. Ownership publication below still
+        // follows `visible`, so the legacy local-cloud renderer never reclaims clouds while the player is enclosed.
+        bool renderOn = visible && !RenderSuspended;
+        if (renderOn && !_lastRenderOn && _lastVisible && visible)
+            _clouds.Call("request_history_reset");
+        _clouds.Set("enabled", renderOn);
+        _lastRenderOn = renderOn;
         if (force || visible != _lastVisible
             || EffectiveHandoffStartMeters != _publishedHandoffStartMeters
             || EffectiveHandoffEndMeters != _publishedHandoffEndMeters)

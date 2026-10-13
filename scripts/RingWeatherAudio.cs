@@ -22,6 +22,8 @@ public partial class RingWeatherAudio : Node
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath GridPath { get; set; } = new("../ChunkGridManager");
 
+    /// <summary>Underground-mode enclosure blend (0..1): thunder is low-passed and attenuated by 12 dB, never muted or restarted.</summary>
+    public float UndergroundBlend { get; set; }
     private readonly ThunderPropagation _propagation = new();
     private readonly List<ThunderArrival> _arrivals = new();
     private readonly List<AudioStreamPlayer3D> _voices = new();
@@ -195,8 +197,10 @@ public partial class RingWeatherAudio : Node
         voice.VolumeDb = ResolveVolume() + Mathf.LinearToDb(Mathf.Clamp(energy, 0.01f, 1.0f))
             + (float)Math.Clamp(-distance / 3_000.0, -18.0, 0.0);
         float distant = Mathf.SmoothStep(500.0f, 10_000.0f, (float)distance);
-        voice.AttenuationFilterCutoffHz = Mathf.Lerp(18_000.0f, 1_000.0f, distant);
-        voice.AttenuationFilterDb = Mathf.Lerp(0.0f, -24.0f, distant);
+        float muffle = Mathf.Clamp(UndergroundBlend, 0.0f, 1.0f);
+        voice.VolumeDb -= 12.0f * muffle;
+        voice.AttenuationFilterCutoffHz = Mathf.Lerp(Mathf.Lerp(18_000.0f, 1_000.0f, distant), 600.0f, muffle);
+        voice.AttenuationFilterDb = Mathf.Lerp(Mathf.Lerp(0.0f, -24.0f, distant), -24.0f, muffle);
     }
 
     private float ResolveMaximumDistance() => float.IsFinite(MaxAudibleDistanceMeters)

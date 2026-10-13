@@ -221,6 +221,12 @@ public partial class RingStandingGrassLayer : Node3D
         get;
         private set;
     }
+    /// <summary>
+    /// Underground-mode hold: hides the layer and skips planning/builds while keeping every renderer, tile and
+    /// GPU resource alive. Unlike SuspendStreaming this never resets state, so resume is instant.
+    /// </summary>
+    public bool UndergroundHold { get; set; }
+    private bool _undergroundHeld;
     public double LastWorkerBuildMilliseconds
     {
         get;
@@ -250,6 +256,17 @@ public partial class RingStandingGrassLayer : Node3D
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass update (inclusive)");
         RefreshCoordinatedGrassHandoffGlobals();
         _ = d;
+        if (UndergroundHold)
+        {
+            _undergroundHeld = true;
+            Visible = false;
+            return;
+        }
+        if (_undergroundHeld)
+        {
+            _undergroundHeld = false;
+            Visible = !StreamingSuspended;
+        }
         if (ShouldSuspendStreaming(_explorer?.CurrentAltitudeAboveTerrainMeters ?? 0,
             _explorer?.ActualTravelSpeedMetersPerSecond ?? 0))
         {

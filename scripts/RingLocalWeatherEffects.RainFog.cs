@@ -77,7 +77,7 @@ public partial class RingLocalWeatherEffects
     {
         if (_rainHaze == null || !GodotObject.IsInstanceValid(_rainHaze) || _rainHazeMaterial == null) return;
         RingRainHazeSettings settings = RingRainHazeSettings.Current;
-        bool eligible = _activeRainHazeOwner == _rainHazeOwner && Enabled && _weatherSource?.Enabled == true
+        bool eligible = _activeRainHazeOwner == _rainHazeOwner && Enabled && !UndergroundSuspended && _weatherSource?.Enabled == true
             && settings.Enabled && !Snowing && _explorer?.IsCameraUnderwater != true
             && _rainHazeAmbience?.IsRainSheltered != true
             && _rainHazeCamera != null && GodotObject.IsInstanceValid(_rainHazeCamera) && _rainHazeCamera.Current;
