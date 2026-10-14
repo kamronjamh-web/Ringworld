@@ -1,0 +1,42 @@
+{
+  "height_m": 1800.0,
+  "z_min_m": 0.0,
+  "z_max_m": 1800.0,
+  "bounds_x_m": [
+    -308.0,
+    308.0
+  ],
+  "bounds_y_m": [
+    -308.0,
+    308.0
+  ],
+  "arm_count": 8,
+  "foot_center_radii_m": [
+    250.0,
+    250.0,
+    250.0,
+    250.0,
+    250.0,
+    250.0,
+    250.0,
+    250.0
+  ],
+  "arm_azimuth_degrees": [
+    0,
+    45,
+    90,
+    135,
+    180,
+    225,
+    270,
+    315
+  ],
+  "minimum_machine_surface_radius_m": 75.03994903198299,
+  "limiting_mesh": "Crown_Open_Annular_Focus",
+  "reserved_beam_radius_m": 75,
+  "intersecting_triangles": [],
+  "clear_beam_path": true,
+  "triangles_checked": 5712,
+  "machine_mesh_objects": 60,
+  "machine_vertices": 3216
+}

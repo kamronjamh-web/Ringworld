@@ -1,0 +1,82 @@
+{
+  "reserved_beam_radius_m": 75,
+  "minimum_surface_radius_m": 75.03994903198299,
+  "limiting_mesh": "Crown_Open_Annular_Focus",
+  "beam_intersections": [],
+  "clear_beam_path": true,
+  "triangle_count": 37580,
+  "mesh_objects": 937,
+  "bounds_min_m": [
+    -308.0,
+    -308.0,
+    -1.0
+  ],
+  "bounds_max_m": [
+    308.0,
+    308.0,
+    1800.0
+  ],
+  "validation_scope": "Triangle-level cylindrical beam clearance; measured bounds. Route audit is geometric only, not gameplay/navigation/collision testing.",
+  "sampled_routes": [
+    {
+      "route": "entry_to_ring",
+      "samples": 48,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "main_ring_clockwise",
+      "samples": 577,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ring_to_Command",
+      "samples": 27,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ring_to_Resonance",
+      "samples": 27,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ring_to_Maintenance",
+      "samples": 27,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ring_to_ramp_lower",
+      "samples": 15,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ramp_lower_landing",
+      "samples": 10,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ramp_ascent",
+      "samples": 145,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "ramp_upper_to_gallery",
+      "samples": 28,
+      "pass": true,
+      "failures": []
+    },
+    {
+      "route": "gallery_circuit",
+      "samples": 481,
+      "pass": true,
+      "failures": []
+    }
+  ]
+}

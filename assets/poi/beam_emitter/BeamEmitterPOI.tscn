@@ -1,0 +1,977 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S0.res" id="1_v5yu0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S1.res" id="2_bjc8j"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S2.res" id="3_jtm0e"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S3.res" id="4_dgy1a"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S4.res" id="5_r2x7u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S5.res" id="6_qak7x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S6.res" id="7_sj4x5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Deep_Recess_S7.res" id="8_tfeag"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S0.res" id="9_6vrpv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S1.res" id="10_cmq50"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S2.res" id="11_ge1l7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S3.res" id="12_2m8mp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S4.res" id="13_26ck8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S5.res" id="14_54bh8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S6.res" id="15_mea2b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Obsidian_Alloy_S7.res" id="16_2hjf2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S0.res" id="17_3f3ee"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S1.res" id="18_5mppx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S2.res" id="19_1js3x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S3.res" id="20_njxcc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S4.res" id="21_x6aqj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S5.res" id="22_gx23p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S6.res" id="23_cq75n"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Raised_Facet_Alloy_S7.res" id="24_rprwy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S0.res" id="25_fvylo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S1.res" id="26_wn7yl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S2.res" id="27_8n8g8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S3.res" id="28_l6w2f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S4.res" id="29_6po12"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S5.res" id="30_nivk1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S6.res" id="31_hpi0v"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Reactor_Teal_Inlay_S7.res" id="32_k88xw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S0.res" id="33_x0a28"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S1.res" id="34_wbkwo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S2.res" id="35_5kpbp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S3.res" id="36_43sko"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S4.res" id="37_45ibd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S5.res" id="38_177w3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S6.res" id="39_rdvd1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Spire_Worn_Silver_Edges_S7.res" id="40_8ckgj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S0.res" id="41_67xix"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S1.res" id="42_44g60"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S2.res" id="43_ue567"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S3.res" id="44_hmwvw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S4.res" id="45_unu8u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S5.res" id="46_vy7n8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S6.res" id="47_0qpg7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Deep_Recess_S7.res" id="48_08won"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Control_Surface_S0.res" id="49_vbnhr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Control_Surface_S1.res" id="50_2k20g"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Control_Surface_S2.res" id="51_rvlsd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Control_Surface_S3.res" id="52_o636f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Control_Surface_S4.res" id="53_6w273"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Control_Surface_S5.res" id="54_2yrad"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S0.res" id="55_cu7a8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S1.res" id="56_eiv6l"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S2.res" id="57_kkll2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S3.res" id="58_44rkj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S4.res" id="59_8c46f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S5.res" id="60_clwv6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S6.res" id="61_ikpwy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Floor_Basalt_Alloy_S7.res" id="62_guvk3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S0.res" id="63_k1cpu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S1.res" id="64_g6sh8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S2.res" id="65_wi6kg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S3.res" id="66_c6m05"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S4.res" id="67_m00ye"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S5.res" id="68_dgirh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S6.res" id="69_8uq7o"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Interior_Ceramic_S7.res" id="70_suox0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S0.res" id="71_xesj3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S1.res" id="72_x30fx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S2.res" id="73_8nsb2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S3.res" id="74_v2p1i"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S4.res" id="75_eubuf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S5.res" id="76_j81lv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S6.res" id="77_25h1r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Facility_Soft_Teal_Guide_S7.res" id="78_jtlrp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S0.res" id="79_414ux"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S1.res" id="80_53oaa"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S2.res" id="81_c2up8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S3.res" id="82_xxxuh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S4.res" id="83_pi67w"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S5.res" id="84_13mjd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S6.res" id="85_5ivbv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Obsidian_Alloy_S7.res" id="86_h3ojw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S0.res" id="87_2kurk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S1.res" id="88_47sit"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S2.res" id="89_ppyje"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S3.res" id="90_3jf8p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S4.res" id="91_34bf6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S5.res" id="92_y6pat"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S6.res" id="93_o16np"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Raised_Facet_Alloy_S7.res" id="94_1cv1t"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S0.res" id="95_djsvv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S1.res" id="96_h3bd7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S2.res" id="97_yww3r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S3.res" id="98_py7ft"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S4.res" id="99_u2867"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S5.res" id="100_kingw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S6.res" id="101_e35hk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Reactor_Teal_Inlay_S7.res" id="102_i05oo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S0.res" id="103_38lji"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S1.res" id="104_8q453"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S2.res" id="105_krwsc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S3.res" id="106_x7f3v"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S4.res" id="107_7e13q"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S5.res" id="108_3tnn1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S6.res" id="109_bvjr6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Facility_Worn_Silver_Edges_S7.res" id="110_rdg08"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S0.res" id="111_48qnd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S1.res" id="112_bq8it"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S2.res" id="113_lle23"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S3.res" id="114_s0qj2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S4.res" id="115_7uwmo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S5.res" id="116_qjac6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S6.res" id="117_hf76y"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Obsidian_Alloy_S7.res" id="118_mv6ex"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S0.res" id="119_4rim2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S1.res" id="120_ilbmj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S2.res" id="121_oi8ox"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S3.res" id="122_s8s8j"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S4.res" id="123_sydxs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S5.res" id="124_1pjs7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S6.res" id="125_73fna"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_Roof_Raised_Facet_Alloy_S7.res" id="126_5p02c"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/beam_emitter/merged/meshes/BeamEmitter_FarProxy.res" id="127_b77ax"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_GroundFloors.res" id="128_j5yxr"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_GalleryAndRamp.res" id="129_i3eie"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_01_Ground_Anchor.res" id="130_m2v7i"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_02_Ground_Anchor.res" id="131_hdkh4"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_03_Ground_Anchor.res" id="132_br7yk"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_04_Ground_Anchor.res" id="133_nn3ut"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_05_Ground_Anchor.res" id="134_or2pl"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_06_Ground_Anchor.res" id="135_a4ilo"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_07_Ground_Anchor.res" id="136_6re7f"]
+[ext_resource type="Shape3D" path="res://assets/poi/beam_emitter/collision/BeamEmitter_Foot_08_Ground_Anchor.res" id="137_bt0aj"]
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_2x84e"]
+transparency = 1
+cull_mode = 2
+shading_mode = 0
+albedo_color = Color(0.55, 1, 0.95, 0.35)
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_02v2e"]
+material = SubResource("StandardMaterial3D_2x84e")
+top_radius = 70.0
+bottom_radius = 70.0
+height = 8000.0
+radial_segments = 24
+rings = 1
+
+[node name="BeamEmitterPOI" type="Node3D" unique_id=2076633444]
+
+[node name="Detail" type="Node3D" parent="." unique_id=285157284]
+
+[node name="Spire" type="Node3D" parent="Detail" unique_id=1438650693]
+
+[node name="Deep_Recess_S0" type="MeshInstance3D" parent="Detail/Spire" unique_id=819312002]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("1_v5yu0")
+
+[node name="Deep_Recess_S1" type="MeshInstance3D" parent="Detail/Spire" unique_id=856511846]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("2_bjc8j")
+
+[node name="Deep_Recess_S2" type="MeshInstance3D" parent="Detail/Spire" unique_id=880320291]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("3_jtm0e")
+
+[node name="Deep_Recess_S3" type="MeshInstance3D" parent="Detail/Spire" unique_id=1991990748]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("4_dgy1a")
+
+[node name="Deep_Recess_S4" type="MeshInstance3D" parent="Detail/Spire" unique_id=1124489323]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("5_r2x7u")
+
+[node name="Deep_Recess_S5" type="MeshInstance3D" parent="Detail/Spire" unique_id=1842421212]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("6_qak7x")
+
+[node name="Deep_Recess_S6" type="MeshInstance3D" parent="Detail/Spire" unique_id=1712973453]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("7_sj4x5")
+
+[node name="Deep_Recess_S7" type="MeshInstance3D" parent="Detail/Spire" unique_id=266340073]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("8_tfeag")
+
+[node name="Obsidian_Alloy_S0" type="MeshInstance3D" parent="Detail/Spire" unique_id=22137265]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("9_6vrpv")
+
+[node name="Obsidian_Alloy_S1" type="MeshInstance3D" parent="Detail/Spire" unique_id=236094024]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("10_cmq50")
+
+[node name="Obsidian_Alloy_S2" type="MeshInstance3D" parent="Detail/Spire" unique_id=142590975]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("11_ge1l7")
+
+[node name="Obsidian_Alloy_S3" type="MeshInstance3D" parent="Detail/Spire" unique_id=170148228]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("12_2m8mp")
+
+[node name="Obsidian_Alloy_S4" type="MeshInstance3D" parent="Detail/Spire" unique_id=1511460779]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("13_26ck8")
+
+[node name="Obsidian_Alloy_S5" type="MeshInstance3D" parent="Detail/Spire" unique_id=1457908792]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("14_54bh8")
+
+[node name="Obsidian_Alloy_S6" type="MeshInstance3D" parent="Detail/Spire" unique_id=2007546409]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("15_mea2b")
+
+[node name="Obsidian_Alloy_S7" type="MeshInstance3D" parent="Detail/Spire" unique_id=951091954]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("16_2hjf2")
+
+[node name="Raised_Facet_Alloy_S0" type="MeshInstance3D" parent="Detail/Spire" unique_id=1622806276]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("17_3f3ee")
+
+[node name="Raised_Facet_Alloy_S1" type="MeshInstance3D" parent="Detail/Spire" unique_id=1826601453]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("18_5mppx")
+
+[node name="Raised_Facet_Alloy_S2" type="MeshInstance3D" parent="Detail/Spire" unique_id=207403079]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("19_1js3x")
+
+[node name="Raised_Facet_Alloy_S3" type="MeshInstance3D" parent="Detail/Spire" unique_id=635511629]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("20_njxcc")
+
+[node name="Raised_Facet_Alloy_S4" type="MeshInstance3D" parent="Detail/Spire" unique_id=1535622754]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("21_x6aqj")
+
+[node name="Raised_Facet_Alloy_S5" type="MeshInstance3D" parent="Detail/Spire" unique_id=196663558]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("22_gx23p")
+
+[node name="Raised_Facet_Alloy_S6" type="MeshInstance3D" parent="Detail/Spire" unique_id=1838787087]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("23_cq75n")
+
+[node name="Raised_Facet_Alloy_S7" type="MeshInstance3D" parent="Detail/Spire" unique_id=1301988619]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("24_rprwy")
+
+[node name="Reactor_Teal_Inlay_S0" type="MeshInstance3D" parent="Detail/Spire" unique_id=1685498227]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("25_fvylo")
+
+[node name="Reactor_Teal_Inlay_S1" type="MeshInstance3D" parent="Detail/Spire" unique_id=1348999995]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("26_wn7yl")
+
+[node name="Reactor_Teal_Inlay_S2" type="MeshInstance3D" parent="Detail/Spire" unique_id=347444396]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("27_8n8g8")
+
+[node name="Reactor_Teal_Inlay_S3" type="MeshInstance3D" parent="Detail/Spire" unique_id=836538579]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("28_l6w2f")
+
+[node name="Reactor_Teal_Inlay_S4" type="MeshInstance3D" parent="Detail/Spire" unique_id=139753762]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("29_6po12")
+
+[node name="Reactor_Teal_Inlay_S5" type="MeshInstance3D" parent="Detail/Spire" unique_id=759076816]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("30_nivk1")
+
+[node name="Reactor_Teal_Inlay_S6" type="MeshInstance3D" parent="Detail/Spire" unique_id=1015203800]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("31_hpi0v")
+
+[node name="Reactor_Teal_Inlay_S7" type="MeshInstance3D" parent="Detail/Spire" unique_id=261421878]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("32_k88xw")
+
+[node name="Worn_Silver_Edges_S0" type="MeshInstance3D" parent="Detail/Spire" unique_id=328971909]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("33_x0a28")
+
+[node name="Worn_Silver_Edges_S1" type="MeshInstance3D" parent="Detail/Spire" unique_id=1536005445]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("34_wbkwo")
+
+[node name="Worn_Silver_Edges_S2" type="MeshInstance3D" parent="Detail/Spire" unique_id=1325767324]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("35_5kpbp")
+
+[node name="Worn_Silver_Edges_S3" type="MeshInstance3D" parent="Detail/Spire" unique_id=1931126515]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("36_43sko")
+
+[node name="Worn_Silver_Edges_S4" type="MeshInstance3D" parent="Detail/Spire" unique_id=1504154508]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("37_45ibd")
+
+[node name="Worn_Silver_Edges_S5" type="MeshInstance3D" parent="Detail/Spire" unique_id=1099229977]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("38_177w3")
+
+[node name="Worn_Silver_Edges_S6" type="MeshInstance3D" parent="Detail/Spire" unique_id=151722726]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("39_rdvd1")
+
+[node name="Worn_Silver_Edges_S7" type="MeshInstance3D" parent="Detail/Spire" unique_id=1853672551]
+visibility_range_end = 12500.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("40_8ckgj")
+
+[node name="Facility" type="Node3D" parent="Detail" unique_id=1714601021]
+
+[node name="Deep_Recess_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=1759292257]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("41_67xix")
+
+[node name="Deep_Recess_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=908757657]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("42_44g60")
+
+[node name="Deep_Recess_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=760190899]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("43_ue567")
+
+[node name="Deep_Recess_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=1366219299]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("44_hmwvw")
+
+[node name="Deep_Recess_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=1888766637]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("45_unu8u")
+
+[node name="Deep_Recess_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=823009360]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("46_vy7n8")
+
+[node name="Deep_Recess_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=215783462]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("47_0qpg7")
+
+[node name="Deep_Recess_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=1938652781]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("48_08won")
+
+[node name="Facility_Control_Surface_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=1501974907]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("49_vbnhr")
+
+[node name="Facility_Control_Surface_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=890891553]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("50_2k20g")
+
+[node name="Facility_Control_Surface_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=316458440]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("51_rvlsd")
+
+[node name="Facility_Control_Surface_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=1855748940]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("52_o636f")
+
+[node name="Facility_Control_Surface_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=516230950]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("53_6w273")
+
+[node name="Facility_Control_Surface_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=1954873584]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("54_2yrad")
+
+[node name="Facility_Floor_Basalt_Alloy_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=587469297]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("55_cu7a8")
+
+[node name="Facility_Floor_Basalt_Alloy_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=540368271]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("56_eiv6l")
+
+[node name="Facility_Floor_Basalt_Alloy_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=1072980976]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("57_kkll2")
+
+[node name="Facility_Floor_Basalt_Alloy_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=2058429568]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("58_44rkj")
+
+[node name="Facility_Floor_Basalt_Alloy_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=1781341051]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("59_8c46f")
+
+[node name="Facility_Floor_Basalt_Alloy_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=2138393765]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("60_clwv6")
+
+[node name="Facility_Floor_Basalt_Alloy_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=1063811670]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("61_ikpwy")
+
+[node name="Facility_Floor_Basalt_Alloy_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=1689765895]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("62_guvk3")
+
+[node name="Facility_Interior_Ceramic_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=1633489527]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("63_k1cpu")
+
+[node name="Facility_Interior_Ceramic_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=543296457]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("64_g6sh8")
+
+[node name="Facility_Interior_Ceramic_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=1575154439]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("65_wi6kg")
+
+[node name="Facility_Interior_Ceramic_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=1547605775]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("66_c6m05")
+
+[node name="Facility_Interior_Ceramic_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=176267103]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("67_m00ye")
+
+[node name="Facility_Interior_Ceramic_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=498944288]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("68_dgirh")
+
+[node name="Facility_Interior_Ceramic_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=232887835]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("69_8uq7o")
+
+[node name="Facility_Interior_Ceramic_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=1405009018]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("70_suox0")
+
+[node name="Facility_Soft_Teal_Guide_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=848015007]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("71_xesj3")
+
+[node name="Facility_Soft_Teal_Guide_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=863075348]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("72_x30fx")
+
+[node name="Facility_Soft_Teal_Guide_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=1505764306]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("73_8nsb2")
+
+[node name="Facility_Soft_Teal_Guide_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=2120726652]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("74_v2p1i")
+
+[node name="Facility_Soft_Teal_Guide_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=1098656692]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("75_eubuf")
+
+[node name="Facility_Soft_Teal_Guide_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=1724070437]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("76_j81lv")
+
+[node name="Facility_Soft_Teal_Guide_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=126669655]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("77_25h1r")
+
+[node name="Facility_Soft_Teal_Guide_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=1726980623]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("78_jtlrp")
+
+[node name="Obsidian_Alloy_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=1012130383]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("79_414ux")
+
+[node name="Obsidian_Alloy_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=502921521]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("80_53oaa")
+
+[node name="Obsidian_Alloy_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=940789982]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("81_c2up8")
+
+[node name="Obsidian_Alloy_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=999943943]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("82_xxxuh")
+
+[node name="Obsidian_Alloy_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=1518655923]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("83_pi67w")
+
+[node name="Obsidian_Alloy_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=640829636]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("84_13mjd")
+
+[node name="Obsidian_Alloy_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=898814058]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("85_5ivbv")
+
+[node name="Obsidian_Alloy_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=549367464]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("86_h3ojw")
+
+[node name="Raised_Facet_Alloy_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=2086466283]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("87_2kurk")
+
+[node name="Raised_Facet_Alloy_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=2061143331]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("88_47sit")
+
+[node name="Raised_Facet_Alloy_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=641099570]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("89_ppyje")
+
+[node name="Raised_Facet_Alloy_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=1921776359]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("90_3jf8p")
+
+[node name="Raised_Facet_Alloy_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=1114879681]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("91_34bf6")
+
+[node name="Raised_Facet_Alloy_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=1003679628]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("92_y6pat")
+
+[node name="Raised_Facet_Alloy_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=671953329]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("93_o16np")
+
+[node name="Raised_Facet_Alloy_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=1174094160]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("94_1cv1t")
+
+[node name="Reactor_Teal_Inlay_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=1065133366]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("95_djsvv")
+
+[node name="Reactor_Teal_Inlay_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=2135215309]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("96_h3bd7")
+
+[node name="Reactor_Teal_Inlay_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=87972032]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("97_yww3r")
+
+[node name="Reactor_Teal_Inlay_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=853693128]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("98_py7ft")
+
+[node name="Reactor_Teal_Inlay_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=268470066]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("99_u2867")
+
+[node name="Reactor_Teal_Inlay_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=279863999]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("100_kingw")
+
+[node name="Reactor_Teal_Inlay_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=2032562106]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("101_e35hk")
+
+[node name="Reactor_Teal_Inlay_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=739291592]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("102_i05oo")
+
+[node name="Worn_Silver_Edges_S0" type="MeshInstance3D" parent="Detail/Facility" unique_id=154661873]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("103_38lji")
+
+[node name="Worn_Silver_Edges_S1" type="MeshInstance3D" parent="Detail/Facility" unique_id=1048255760]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("104_8q453")
+
+[node name="Worn_Silver_Edges_S2" type="MeshInstance3D" parent="Detail/Facility" unique_id=1136034706]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("105_krwsc")
+
+[node name="Worn_Silver_Edges_S3" type="MeshInstance3D" parent="Detail/Facility" unique_id=974317535]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("106_x7f3v")
+
+[node name="Worn_Silver_Edges_S4" type="MeshInstance3D" parent="Detail/Facility" unique_id=568261571]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("107_7e13q")
+
+[node name="Worn_Silver_Edges_S5" type="MeshInstance3D" parent="Detail/Facility" unique_id=1871020269]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("108_3tnn1")
+
+[node name="Worn_Silver_Edges_S6" type="MeshInstance3D" parent="Detail/Facility" unique_id=1327079452]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("109_bvjr6")
+
+[node name="Worn_Silver_Edges_S7" type="MeshInstance3D" parent="Detail/Facility" unique_id=991919]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("110_rdg08")
+
+[node name="Roof" type="Node3D" parent="Detail" unique_id=1423309938]
+
+[node name="Obsidian_Alloy_S0" type="MeshInstance3D" parent="Detail/Roof" unique_id=1278644884]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("111_48qnd")
+
+[node name="Obsidian_Alloy_S1" type="MeshInstance3D" parent="Detail/Roof" unique_id=913963156]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("112_bq8it")
+
+[node name="Obsidian_Alloy_S2" type="MeshInstance3D" parent="Detail/Roof" unique_id=1227077023]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("113_lle23")
+
+[node name="Obsidian_Alloy_S3" type="MeshInstance3D" parent="Detail/Roof" unique_id=1734445739]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("114_s0qj2")
+
+[node name="Obsidian_Alloy_S4" type="MeshInstance3D" parent="Detail/Roof" unique_id=21015316]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("115_7uwmo")
+
+[node name="Obsidian_Alloy_S5" type="MeshInstance3D" parent="Detail/Roof" unique_id=147640838]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("116_qjac6")
+
+[node name="Obsidian_Alloy_S6" type="MeshInstance3D" parent="Detail/Roof" unique_id=263607932]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("117_hf76y")
+
+[node name="Obsidian_Alloy_S7" type="MeshInstance3D" parent="Detail/Roof" unique_id=615871525]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("118_mv6ex")
+
+[node name="Raised_Facet_Alloy_S0" type="MeshInstance3D" parent="Detail/Roof" unique_id=594911895]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("119_4rim2")
+
+[node name="Raised_Facet_Alloy_S1" type="MeshInstance3D" parent="Detail/Roof" unique_id=387439600]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("120_ilbmj")
+
+[node name="Raised_Facet_Alloy_S2" type="MeshInstance3D" parent="Detail/Roof" unique_id=417414253]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("121_oi8ox")
+
+[node name="Raised_Facet_Alloy_S3" type="MeshInstance3D" parent="Detail/Roof" unique_id=298755796]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("122_s8s8j")
+
+[node name="Raised_Facet_Alloy_S4" type="MeshInstance3D" parent="Detail/Roof" unique_id=318705861]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("123_sydxs")
+
+[node name="Raised_Facet_Alloy_S5" type="MeshInstance3D" parent="Detail/Roof" unique_id=232109703]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("124_1pjs7")
+
+[node name="Raised_Facet_Alloy_S6" type="MeshInstance3D" parent="Detail/Roof" unique_id=378908132]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("125_73fna")
+
+[node name="Raised_Facet_Alloy_S7" type="MeshInstance3D" parent="Detail/Roof" unique_id=1960695498]
+visibility_range_end = 6000.0
+visibility_range_end_margin = 500.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("126_5p02c")
+
+[node name="FarProxy" type="MeshInstance3D" parent="." unique_id=1414663240]
+cast_shadow = 0
+visibility_range_begin = 11500.0
+visibility_range_begin_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("127_b77ax")
+
+[node name="Collision" type="StaticBody3D" parent="." unique_id=1711932909]
+
+[node name="GroundFloors" type="CollisionShape3D" parent="Collision" unique_id=1792858922]
+shape = ExtResource("128_j5yxr")
+
+[node name="GalleryAndRamp" type="CollisionShape3D" parent="Collision" unique_id=136641820]
+shape = ExtResource("129_i3eie")
+
+[node name="Foot_01_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=1430518110]
+shape = ExtResource("130_m2v7i")
+
+[node name="Foot_02_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=99507452]
+shape = ExtResource("131_hdkh4")
+
+[node name="Foot_03_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=1685406661]
+shape = ExtResource("132_br7yk")
+
+[node name="Foot_04_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=1128394713]
+shape = ExtResource("133_nn3ut")
+
+[node name="Foot_05_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=505760295]
+shape = ExtResource("134_or2pl")
+
+[node name="Foot_06_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=800628512]
+shape = ExtResource("135_a4ilo")
+
+[node name="Foot_07_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=1946432894]
+shape = ExtResource("136_6re7f")
+
+[node name="Foot_08_Ground_Anchor" type="CollisionShape3D" parent="Collision" unique_id=1519041935]
+shape = ExtResource("137_bt0aj")
+
+[node name="Markers" type="Node3D" parent="." unique_id=827740256]
+
+[node name="BeamOrigin" type="Marker3D" parent="Markers" unique_id=1777109948]
+
+[node name="ShaftBottom" type="Marker3D" parent="Markers" unique_id=1438069965]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1, 0)
+
+[node name="BeamCrownFocus" type="Marker3D" parent="Markers" unique_id=1381857887]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1743, 0)
+
+[node name="EntryApproach" type="Marker3D" parent="Markers" unique_id=210457401]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 88.782555, 0, 214.34006)
+
+[node name="PlaceholderBeam" type="MeshInstance3D" parent="." unique_id=1582612333]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4000, 0)
+visible = false
+cast_shadow = 0
+mesh = SubResource("CylinderMesh_02v2e")

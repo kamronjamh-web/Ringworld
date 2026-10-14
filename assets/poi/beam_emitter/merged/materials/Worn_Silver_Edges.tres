@@ -1,0 +1,8 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "Worn_Silver_Edges"
+cull_mode = 2
+albedo_color = Color(0.38857287, 0.46135613, 0.48452926, 1)
+metallic = 0.6
+roughness = 0.37

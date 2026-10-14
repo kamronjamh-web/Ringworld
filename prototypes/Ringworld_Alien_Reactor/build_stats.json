@@ -1,0 +1,11 @@
+{
+  "revision": "alien_megastructure_final",
+  "blender_version": "4.3.2",
+  "architecture_objects": 210,
+  "base_vertices": 7091,
+  "base_faces": 6597,
+  "scene_objects": 377,
+  "units": "meters",
+  "origin": "chamber center",
+  "export_triangles": 13394
+}

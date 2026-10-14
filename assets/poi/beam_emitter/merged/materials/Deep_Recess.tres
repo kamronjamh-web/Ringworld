@@ -1,0 +1,8 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "Deep_Recess"
+cull_mode = 2
+albedo_color = Color(0.07016479, 0.12315822, 0.14733289, 1)
+metallic = 0.45
+roughness = 0.45

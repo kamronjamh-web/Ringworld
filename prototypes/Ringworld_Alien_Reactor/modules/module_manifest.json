@@ -1,0 +1,47 @@
+{
+  "Reactor_Vessel": {
+    "objects": 48,
+    "source_pivot_blender_xyz": [
+      0,
+      0,
+      0
+    ],
+    "module_file": "Reactor_Vessel.glb"
+  },
+  "Suspension_Buttress": {
+    "objects": 4,
+    "source_pivot_blender_xyz": [
+      0,
+      0,
+      0
+    ],
+    "module_file": "Suspension_Buttress.glb"
+  },
+  "Wall_Anchor_and_Lift": {
+    "objects": 9,
+    "source_pivot_blender_xyz": [
+      0,
+      1255,
+      0
+    ],
+    "module_file": "Wall_Anchor_and_Lift.glb"
+  },
+  "Arrival_Overlook": {
+    "objects": 14,
+    "source_pivot_blender_xyz": [
+      0,
+      -1385,
+      80
+    ],
+    "module_file": "Arrival_Overlook.glb"
+  },
+  "Exhaust_Cavern_Segment": {
+    "objects": 16,
+    "source_pivot_blender_xyz": [
+      0,
+      0,
+      301
+    ],
+    "module_file": "Exhaust_Cavern_Segment.glb"
+  }
+}

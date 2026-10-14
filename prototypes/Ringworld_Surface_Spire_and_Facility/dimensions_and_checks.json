@@ -1,0 +1,22 @@
+{
+  "height_m": 1800,
+  "arms": 8,
+  "foot_center_radius_m": 250,
+  "foot_azimuth_degrees": [
+    0,
+    45,
+    90,
+    135,
+    180,
+    225,
+    270,
+    315
+  ],
+  "reserved_vertical_beam_radius_m": 75,
+  "crown_inner_vertex_radius_m": 75.13044973527946,
+  "machine_objects": 60,
+  "machine_vertices": 3216,
+  "machine_polygons": 2760,
+  "exported_glb": "Surface_Beam_Spire_Godot.glb",
+  "beam_preview_exported": false
+}

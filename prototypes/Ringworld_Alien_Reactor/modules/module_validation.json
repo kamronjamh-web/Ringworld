@@ -1,0 +1,27 @@
+{
+  "Arrival_Overlook.glb": {
+    "bytes": 42888,
+    "mesh_nodes": 14,
+    "sha256": "ab40c283ef03057f176e389f681fcf9f7caaeb3efee4057a0c92dd383e26a1a7"
+  },
+  "Exhaust_Cavern_Segment.glb": {
+    "bytes": 81152,
+    "mesh_nodes": 16,
+    "sha256": "63646a77a85831892b9b8c0d859fee6e32e1cde6b78079aab22ba55ea1682a53"
+  },
+  "Reactor_Vessel.glb": {
+    "bytes": 168836,
+    "mesh_nodes": 48,
+    "sha256": "39c4472a05e1114b470e0db0c6844013d59a44bf1db1c1411835211cd68ec9ab"
+  },
+  "Suspension_Buttress.glb": {
+    "bytes": 13776,
+    "mesh_nodes": 4,
+    "sha256": "2278f8f6e10fc999a860dc20c8a0d7b8389f72ae6392c61cb22b740d116814a6"
+  },
+  "Wall_Anchor_and_Lift.glb": {
+    "bytes": 17972,
+    "mesh_nodes": 9,
+    "sha256": "ff46edf105977ad477ddd2761af477538be1741b638cf53a87e8e404502ed821"
+  }
+}

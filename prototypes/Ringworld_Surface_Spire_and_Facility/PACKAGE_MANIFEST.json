@@ -1,0 +1,112 @@
+{
+  "title": "Ringworld \u2014 Surface Spire and Base Facility",
+  "authoring_application": "Blender4.3.2",
+  "import_verification": "Godot4.6.3, clean import and instantiation",
+  "files": [
+    {
+      "name": "Surface_Spire_with_Facility.blend",
+      "bytes": 7577284,
+      "sha256": "286386a4f4b75e03952f6d9c556737041cd47cad004306c0e23bb753d8bb89da"
+    },
+    {
+      "name": "Surface_Beam_Spire.blend",
+      "bytes": 1775572,
+      "sha256": "819c7bf3ed854a9bf80a9e8c515dbbda1dd42ea97d288dd1531c22fbf00d5152"
+    },
+    {
+      "name": "Surface_Spire_and_Facility_Godot.glb",
+      "bytes": 2412392,
+      "sha256": "31157cac3d255c64c410f0a3c9f262eca24a5694cd87d9596b43b237a90c96a1"
+    },
+    {
+      "name": "Surface_Base_Facility_Godot.glb",
+      "bytes": 2086248,
+      "sha256": "abda2642e2e6ab078e7b45114baf7930596a90cc102ba0925236a783ac51b7b1"
+    },
+    {
+      "name": "Surface_Beam_Spire_Godot.glb",
+      "bytes": 326472,
+      "sha256": "baf81af4f577363a1502e46de624d18ab80fa0df6fa80eb5882d0f9e2591bcb8"
+    },
+    {
+      "name": "build_surface_spire.py",
+      "bytes": 14266,
+      "sha256": "5d043513e3a751e08f357907b7d38bafb092e1460305a0f678b07065a8d85dab"
+    },
+    {
+      "name": "build_facility.py",
+      "bytes": 23979,
+      "sha256": "7e81a482c77a946df651d94ac66b5b7fa9d2334fcc8e92339da190ed50de453f"
+    },
+    {
+      "name": "render_previews.py",
+      "bytes": 5799,
+      "sha256": "7e843b3020c4491dfc3c5c166f99911c826671ba529b77538a567252dc96436f"
+    },
+    {
+      "name": "render_facility.py",
+      "bytes": 4619,
+      "sha256": "3fb72d4e434eee47d2663399fa8d0374fd1d4303ce17d338a2eb2fe05db6d0fc"
+    },
+    {
+      "name": "verify_geometry.py",
+      "bytes": 2318,
+      "sha256": "7fbfd218db65bf0746e08fd1515a5333a831ae0e4e3d085735498e5197759db9"
+    },
+    {
+      "name": "verify_facility.py",
+      "bytes": 3430,
+      "sha256": "8e986358dcb0230a5ef355c06dca1e41470cac0e95d8b62cda490676f6194580"
+    },
+    {
+      "name": "IMPORT_NOTES.md",
+      "bytes": 9148,
+      "sha256": "af4fa877ec91e324a97e31f8c321e7f01f1ea57a51e6b29456fad59521344afe"
+    },
+    {
+      "name": "GODOT_IMPORT_VALIDATION.md",
+      "bytes": 2266,
+      "sha256": "369636f6b51f29cbc59143d1d5d45c500c925b4644ed885791e543ad881d58fa"
+    },
+    {
+      "name": "geometry_validation.json",
+      "bytes": 671,
+      "sha256": "05975440058f4b09d3f6a748444b571a926ed66a00065370e2b9fc653c096980"
+    },
+    {
+      "name": "facility_validation.json",
+      "bytes": 1645,
+      "sha256": "33108d2edbc8cd7affac4f032db8c8d3d73dfbc220d42f69c4dd7b6e7d323b9c"
+    },
+    {
+      "name": "dimensions_and_checks.json",
+      "bytes": 424,
+      "sha256": "482df2f42289b7320eeb59d3c1e18549cf8d3bc79f7b9e5e57cbbb967d024974"
+    },
+    {
+      "name": "facility_geometry_manifest.json",
+      "bytes": 30456,
+      "sha256": "1846c351890e42ed89b787155a41aa5d3fbdf68d291aa294621651b90b5a0fcd"
+    },
+    {
+      "name": "facility_route_samples.json",
+      "bytes": 120384,
+      "sha256": "2ce825236ef76fa92f626a628a27cdb7cc9fd398bbafe89d7bc4512d8d70d763"
+    },
+    {
+      "name": "preview_06_facility_cutaway.png",
+      "bytes": 5387731,
+      "sha256": "83b3edeeeb47f24e8b37647e252c5eb941a5e4285e4835480b2d924983ec1521"
+    },
+    {
+      "name": "preview_07_facility_eye_level.png",
+      "bytes": 3978705,
+      "sha256": "1dfe109b010d987051084fffe1fa6e8e20843191bbbbcce0ae030a27fe5cdd35"
+    },
+    {
+      "name": "preview_08_complete_surface_poi.png",
+      "bytes": 3740770,
+      "sha256": "97297c51a8962fba9293694776c670af0fb694a93f06e90a7f35493ff5123b3f"
+    }
+  ]
+}

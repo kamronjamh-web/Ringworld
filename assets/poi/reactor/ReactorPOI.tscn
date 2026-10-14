@@ -1,0 +1,80 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Core_ALIEN_containment_seam_white_001.res" id="1_86up6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Core_ALIEN_dark_graphite_ceramic_alloy_001.res" id="2_7va4t"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Core_ALIEN_recessed_teal_energy_trace_001.res" id="3_5b8nx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Core_ALIEN_subtle_satin_inlay_001.res" id="4_lhkyg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Core_M04_Recess_graphite_002.res" id="5_ufkhr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Routes_ALIEN_containment_seam_white_001.res" id="6_3c0h0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Routes_ALIEN_dark_graphite_ceramic_alloy_001.res" id="7_80x0o"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Routes_ALIEN_monolithic_pale_ceramic_001.res" id="8_n70nm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Routes_ALIEN_recessed_teal_energy_trace_001.res" id="9_88vdi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Routes_M04_Recess_graphite_002.res" id="10_3q3co"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Exhaust_ALIEN_dark_graphite_ceramic_alloy_001.res" id="11_3pr40"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Exhaust_ALIEN_recessed_teal_energy_trace_001.res" id="12_njif6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/reactor/merged/meshes/Reactor_Exhaust_ALIEN_subtle_satin_inlay_001.res" id="13_y8lvi"]
+[ext_resource type="Shape3D" path="res://assets/poi/reactor/collision/Reactor_WalkableSurfaces.res" id="14_bpfx0"]
+
+[node name="ReactorPOI" type="Node3D" unique_id=475590281]
+
+[node name="Detail" type="Node3D" parent="." unique_id=1409385328]
+
+[node name="Core" type="Node3D" parent="Detail" unique_id=562120455]
+
+[node name="ALIEN_containment_seam_white_001" type="MeshInstance3D" parent="Detail/Core" unique_id=2030010811]
+mesh = ExtResource("1_86up6")
+
+[node name="ALIEN_dark_graphite_ceramic_alloy_001" type="MeshInstance3D" parent="Detail/Core" unique_id=810536491]
+mesh = ExtResource("2_7va4t")
+
+[node name="ALIEN_recessed_teal_energy_trace_001" type="MeshInstance3D" parent="Detail/Core" unique_id=329904346]
+mesh = ExtResource("3_5b8nx")
+
+[node name="ALIEN_subtle_satin_inlay_001" type="MeshInstance3D" parent="Detail/Core" unique_id=1326012473]
+mesh = ExtResource("4_lhkyg")
+
+[node name="M04_Recess_graphite_002" type="MeshInstance3D" parent="Detail/Core" unique_id=1481531634]
+mesh = ExtResource("5_ufkhr")
+
+[node name="Routes" type="Node3D" parent="Detail" unique_id=1831941411]
+
+[node name="ALIEN_containment_seam_white_001" type="MeshInstance3D" parent="Detail/Routes" unique_id=182285053]
+mesh = ExtResource("6_3c0h0")
+
+[node name="ALIEN_dark_graphite_ceramic_alloy_001" type="MeshInstance3D" parent="Detail/Routes" unique_id=491645371]
+mesh = ExtResource("7_80x0o")
+
+[node name="ALIEN_monolithic_pale_ceramic_001" type="MeshInstance3D" parent="Detail/Routes" unique_id=570178048]
+mesh = ExtResource("8_n70nm")
+
+[node name="ALIEN_recessed_teal_energy_trace_001" type="MeshInstance3D" parent="Detail/Routes" unique_id=250614922]
+mesh = ExtResource("9_88vdi")
+
+[node name="M04_Recess_graphite_002" type="MeshInstance3D" parent="Detail/Routes" unique_id=753849185]
+mesh = ExtResource("10_3q3co")
+
+[node name="Exhaust" type="Node3D" parent="Detail" unique_id=683537321]
+
+[node name="ALIEN_dark_graphite_ceramic_alloy_001" type="MeshInstance3D" parent="Detail/Exhaust" unique_id=913207110]
+mesh = ExtResource("11_3pr40")
+
+[node name="ALIEN_recessed_teal_energy_trace_001" type="MeshInstance3D" parent="Detail/Exhaust" unique_id=1659347289]
+mesh = ExtResource("12_njif6")
+
+[node name="ALIEN_subtle_satin_inlay_001" type="MeshInstance3D" parent="Detail/Exhaust" unique_id=1166070436]
+mesh = ExtResource("13_y8lvi")
+
+[node name="Collision" type="StaticBody3D" parent="." unique_id=1515852775]
+
+[node name="WalkableSurfaces" type="CollisionShape3D" parent="Collision" unique_id=1405379406]
+shape = ExtResource("14_bpfx0")
+
+[node name="Markers" type="Node3D" parent="." unique_id=1177536215]
+
+[node name="ChamberCenter" type="Marker3D" parent="Markers" unique_id=406690185]
+
+[node name="ExhaustTop" type="Marker3D" parent="Markers" unique_id=1254178844]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1039, 0)
+
+[node name="ArrivalOverlook" type="Marker3D" parent="Markers" unique_id=1451518861]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 80, 1385)
