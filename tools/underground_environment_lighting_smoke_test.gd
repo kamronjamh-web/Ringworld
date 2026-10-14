@@ -71,6 +71,50 @@ func _ready() -> void:
 	_assert_near(local_light.light_energy, 2.5, "local-light preservation")
 	_assert_near(emissive.emission_energy_multiplier, 3.0, "emissive preservation")
 
+	# Cave fog coupling (deep caves only): weight 0 leaves surface fog alone; a fog-off baseline lerps from zero density and sky tint.
+	const CAVE_DENSITY := 0.0045
+	environment.fog_enabled = false
+	environment.fog_density = 0.0
+	environment.fog_sky_affect = 0.0
+	environment.fog_light_energy = 0.9
+	environment.fog_aerial_perspective = 0.78
+	environment.fog_sun_scatter = 0.2
+	atmosphere.underground_fog_sky_affect = 0.5
+	atmosphere._apply_underground_fog_coupling(environment, 0.0, CAVE_DENSITY)
+	if environment.fog_enabled:
+		_fail("zero cave fog weight enabled the fog")
+	atmosphere._apply_underground_fog_coupling(environment, 0.01, CAVE_DENSITY)
+	if not environment.fog_enabled:
+		_fail("small cave fog weight did not enable the fog")
+	_assert_near(environment.fog_density, 0.01 * CAVE_DENSITY, "fog-off baseline density at weight 0.01")
+	_assert_near(environment.fog_sky_affect, 0.01 * 0.5, "fog-off baseline sky affect at weight 0.01")
+	environment.fog_enabled = false
+	environment.fog_density = 0.0
+	environment.fog_sky_affect = 0.0
+	environment.fog_light_color = Color(0.9, 0.9, 0.9)
+	atmosphere._apply_underground_fog_coupling(environment, 1.0, CAVE_DENSITY)
+	_assert_near(environment.fog_density, CAVE_DENSITY, "full-weight cave fog density")
+	_assert_near(environment.fog_sky_affect, 0.5, "full-weight cave fog sky affect")
+	_assert_near(environment.fog_aerial_perspective, atmosphere.underground_fog_aerial_perspective, "full-weight cave fog aerial perspective")
+	_assert_near(environment.fog_sun_scatter, 0.0, "full-weight cave fog sun scatter")
+	_assert_near(environment.fog_light_energy, 1.0, "full-weight cave fog light energy")
+	if not environment.fog_light_color.is_equal_approx(atmosphere._underground_cave_fog_color()):
+		_fail("full-weight cave fog color was not the cave fog color")
+	environment.fog_enabled = true
+	environment.fog_density = 0.02
+	atmosphere._apply_underground_fog_coupling(environment, 1.0, CAVE_DENSITY)
+	if environment.fog_density < 0.02 - 0.000001:
+		_fail("cave fog lowered a denser baseline fog")
+	var previous_density := -1.0
+	for step in range(11):
+		environment.fog_enabled = false
+		environment.fog_density = 0.0
+		environment.fog_sky_affect = 0.0
+		atmosphere._apply_underground_fog_coupling(environment, step / 10.0, CAVE_DENSITY)
+		if environment.fog_density < previous_density - 0.0000001:
+			_fail("cave fog density was not monotonic in weight")
+		previous_density = environment.fog_density
+
 	# Surface configuration must be restorable after the underground pass.
 	atmosphere._configure_eye_adaptation()
 	if not attributes.auto_exposure_enabled:

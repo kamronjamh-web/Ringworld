@@ -52,6 +52,7 @@ extends Node
 @export var underground_ambient_color: Color = Color(0.002, 0.003, 0.006, 1.0)
 @export_range(0.0, 0.1, 0.001) var underground_ambient_energy: float = 0.003
 @export_range(0.0, 1.0, 0.001) var underground_fog_sky_affect: float = 0.0
+@export_range(0.0, 1.0, 0.01) var underground_fog_aerial_perspective: float = 0.0
 
 @export_group("Cloud-filtered Daylight")
 @export var cloud_filtered_lighting_enabled: bool = true
@@ -414,6 +415,8 @@ func _process(delta: float) -> void:
 	var underground_sky_access := _get_underground_sky_access()
 	_apply_underground_lighting(environment, underground_sky_access, _get_enclosure_blend() * _get_structural_sky_access())
 	underground_lighting_darkness = 1.0 - clampf(underground_sky_access, 0.0, 1.0)
+	var cave_fog_weight := _get_enclosure_blend() * _get_structural_sky_access() * (1.0 - current_underwater_factor) * _underground_cave_fog_weight()
+	_apply_underground_fog_coupling(environment, cave_fog_weight, _underground_cave_fog_density())
 	star_visibility *= 1.0 - current_underwater_factor
 	star_visibility *= underground_sky_access
 	_update_sky(
@@ -472,6 +475,24 @@ func _apply_underground_lighting(environment: Environment, sky_access: float, ca
 			minf(0.10, auto_exposure_scale),
 			auto_exposure_scale,
 			adaptation_access)
+
+
+# Deep caves only: the controller publishes a zero weight unless its coarse underground latch is on. Surface depth
+# fog is off by default, so a fog-off baseline counts as zero density and zero sky tint rather than the stored values.
+func _apply_underground_fog_coupling(environment: Environment, weight: float, cave_density: float) -> void:
+	var w := clampf(weight, 0.0, 1.0)
+	if w <= 0.0 or cave_density <= 0.0:
+		return
+	var base_on := environment.fog_enabled
+	var base_density := environment.fog_density if base_on else 0.0
+	var base_sky := environment.fog_sky_affect if base_on else 0.0
+	environment.fog_enabled = true
+	environment.fog_density = lerpf(base_density, maxf(base_density, cave_density), w)
+	environment.fog_sky_affect = lerpf(base_sky, underground_fog_sky_affect, w)
+	environment.fog_aerial_perspective = lerpf(environment.fog_aerial_perspective, underground_fog_aerial_perspective, w)
+	environment.fog_light_color = environment.fog_light_color.lerp(_underground_cave_fog_color(), w)
+	environment.fog_light_energy = lerpf(environment.fog_light_energy, 1.0, w)
+	environment.fog_sun_scatter = lerpf(environment.fog_sun_scatter, 0.0, w)
 
 
 func _apply_underwater_environment(
@@ -1101,3 +1122,11 @@ func _underground_cave_ambient_energy() -> float:
 
 func _underground_cave_fog_color() -> Color:
 	return _underground_mode_value("CaveFogColor", Color(0.05, 0.07, 0.11, 1.0)) as Color
+
+
+func _underground_cave_fog_density() -> float:
+	return maxf(float(_underground_mode_value("CaveFogDensity", 0.0)), 0.0)
+
+
+func _underground_cave_fog_weight() -> float:
+	return clampf(float(_underground_mode_value("CaveFogWeight", 0.0)), 0.0, 1.0)

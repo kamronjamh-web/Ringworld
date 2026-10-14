@@ -15,6 +15,12 @@ public sealed class GameplayUndergroundModeDefaults
     public const float MinimumBlend = .1f, MaximumBlend = 5f;
     public const float MinimumDeepHideDepth = 32f, MaximumDeepHideDepth = 2048f;
     public const float MaximumCaveAmbientEnergy = .5f;
+    public const int MaximumCaveRadius = 4, MaximumCaveVerticalRadius = 3, MaximumCaveWorkerBonus = 8;
+    public const float MinimumCaveInstallBudget = .25f, MaximumCaveInstallBudget = 8f;
+    public const int MinimumCaveInstalls = 1, MaximumCaveInstalls = 32, MaximumCaveRetainMargin = 2;
+    public const float MaximumCaveShrinkDelay = 60f, MaximumCaveActivationHysteresis = 256f;
+    public const float MinimumFogEndFraction = .5f, MaximumFogEndFraction = 1f;
+    public const float MinimumUnfilledFogReach = 256f, MaximumUnfilledFogReach = 4096f;
     private readonly string _path;
     public GameplayUndergroundModeSettings Settings { get; private set; } = new();
     public bool Dirty { get; private set; }
@@ -63,6 +69,18 @@ public sealed class GameplayUndergroundModeDefaults
         result.CaveAmbientColor = SanitizeColor(input.CaveAmbientColor, new Color(.16f, .20f, .30f, 1f));
         result.CaveAmbientEnergy = Finite(input.CaveAmbientEnergy, .035f, 0f, MaximumCaveAmbientEnergy);
         result.CaveFogColor = SanitizeColor(input.CaveFogColor, new Color(.05f, .07f, .11f, 1f));
+        result.CaveCoarseRadiusAround = Math.Clamp(input.CaveCoarseRadiusAround, 0, MaximumCaveRadius);
+        result.CaveCoarseRadiusAcross = Math.Clamp(input.CaveCoarseRadiusAcross, 0, MaximumCaveRadius);
+        result.CaveCoarseRadiusVertical = Math.Clamp(input.CaveCoarseRadiusVertical, 0, MaximumCaveVerticalRadius);
+        result.CaveWorkerBonus = Math.Clamp(input.CaveWorkerBonus, 0, MaximumCaveWorkerBonus);
+        result.CaveInstallBudgetMilliseconds = Finite(input.CaveInstallBudgetMilliseconds, 3f, MinimumCaveInstallBudget, MaximumCaveInstallBudget);
+        result.CaveMaxInstallsPerFrame = Math.Clamp(input.CaveMaxInstallsPerFrame, MinimumCaveInstalls, MaximumCaveInstalls);
+        result.CaveCoarseRetainMarginSectors = Math.Clamp(input.CaveCoarseRetainMarginSectors, 0, MaximumCaveRetainMargin);
+        result.CaveProfileShrinkDelaySeconds = Finite(input.CaveProfileShrinkDelaySeconds, 10f, 0f, MaximumCaveShrinkDelay);
+        result.CaveCoarseActivationHysteresisMeters = Finite(input.CaveCoarseActivationHysteresisMeters, 64f, 0f, MaximumCaveActivationHysteresis);
+        result.CoupleFogToCaveDistance = input.CoupleFogToCaveDistance;
+        result.FogEndFraction = Finite(input.FogEndFraction, .9f, MinimumFogEndFraction, MaximumFogEndFraction);
+        result.UnfilledCaveFogReachMeters = Finite(input.UnfilledCaveFogReachMeters, 1024f, MinimumUnfilledFogReach, MaximumUnfilledFogReach);
         return result;
     }
 
@@ -90,6 +108,18 @@ public sealed class GameplayUndergroundModeDefaults
         to.CaveAmbientColor = from.CaveAmbientColor;
         to.CaveAmbientEnergy = from.CaveAmbientEnergy;
         to.CaveFogColor = from.CaveFogColor;
+        to.CaveCoarseRadiusAround = from.CaveCoarseRadiusAround;
+        to.CaveCoarseRadiusAcross = from.CaveCoarseRadiusAcross;
+        to.CaveCoarseRadiusVertical = from.CaveCoarseRadiusVertical;
+        to.CaveWorkerBonus = from.CaveWorkerBonus;
+        to.CaveInstallBudgetMilliseconds = from.CaveInstallBudgetMilliseconds;
+        to.CaveMaxInstallsPerFrame = from.CaveMaxInstallsPerFrame;
+        to.CaveCoarseRetainMarginSectors = from.CaveCoarseRetainMarginSectors;
+        to.CaveProfileShrinkDelaySeconds = from.CaveProfileShrinkDelaySeconds;
+        to.CaveCoarseActivationHysteresisMeters = from.CaveCoarseActivationHysteresisMeters;
+        to.CoupleFogToCaveDistance = from.CoupleFogToCaveDistance;
+        to.FogEndFraction = from.FogEndFraction;
+        to.UnfilledCaveFogReachMeters = from.UnfilledCaveFogReachMeters;
     }
 
     private static bool Same(GameplayUndergroundModeSettings a, GameplayUndergroundModeSettings b) =>
@@ -100,7 +130,14 @@ public sealed class GameplayUndergroundModeDefaults
         && a.VegetationEnabled == b.VegetationEnabled && a.CloudsEnabled == b.CloudsEnabled && a.WaterEnabled == b.WaterEnabled
         && a.FarTerrainEnabled == b.FarTerrainEnabled && a.ShadowsEnabled == b.ShadowsEnabled
         && a.EnclosureLightingWeight == b.EnclosureLightingWeight && a.CaveAmbientColor == b.CaveAmbientColor
-        && a.CaveAmbientEnergy == b.CaveAmbientEnergy && a.CaveFogColor == b.CaveFogColor;
+        && a.CaveAmbientEnergy == b.CaveAmbientEnergy && a.CaveFogColor == b.CaveFogColor
+        && a.CaveCoarseRadiusAround == b.CaveCoarseRadiusAround && a.CaveCoarseRadiusAcross == b.CaveCoarseRadiusAcross
+        && a.CaveCoarseRadiusVertical == b.CaveCoarseRadiusVertical && a.CaveWorkerBonus == b.CaveWorkerBonus
+        && a.CaveInstallBudgetMilliseconds == b.CaveInstallBudgetMilliseconds && a.CaveMaxInstallsPerFrame == b.CaveMaxInstallsPerFrame
+        && a.CaveCoarseRetainMarginSectors == b.CaveCoarseRetainMarginSectors && a.CaveProfileShrinkDelaySeconds == b.CaveProfileShrinkDelaySeconds
+        && a.CaveCoarseActivationHysteresisMeters == b.CaveCoarseActivationHysteresisMeters
+        && a.CoupleFogToCaveDistance == b.CoupleFogToCaveDistance && a.FogEndFraction == b.FogEndFraction
+        && a.UnfilledCaveFogReachMeters == b.UnfilledCaveFogReachMeters;
 
     private static Color SanitizeColor(Color value, Color fallback) =>
         float.IsFinite(value.R) && float.IsFinite(value.G) && float.IsFinite(value.B)
@@ -150,6 +187,14 @@ public sealed class GameplayUndergroundModeDefaults
         controller.CaveAmbientColor = Settings.CaveAmbientColor;
         controller.CaveAmbientEnergy = Settings.CaveAmbientEnergy;
         controller.CaveFogColor = Settings.CaveFogColor;
+        controller.UndergroundCaveProfile = new CaveLodProfile(Settings.CaveCoarseRadiusAround, Settings.CaveCoarseRadiusAcross, Settings.CaveCoarseRadiusVertical,
+            Settings.CaveWorkerBonus, Settings.CaveInstallBudgetMilliseconds, Settings.CaveMaxInstallsPerFrame);
+        controller.CoarseRetainMarginSectors = Settings.CaveCoarseRetainMarginSectors;
+        controller.CaveProfileShrinkDelaySeconds = Settings.CaveProfileShrinkDelaySeconds;
+        controller.CaveCoarseActivationHysteresisMeters = Settings.CaveCoarseActivationHysteresisMeters;
+        controller.CoupleFogToCaveDistance = Settings.CoupleFogToCaveDistance;
+        controller.FogEndFraction = Settings.FogEndFraction;
+        controller.UnfilledCaveFogReachMeters = Settings.UnfilledCaveFogReachMeters;
     }
 
     public void Reset() { Settings = new(); Dirty = true; LastError = ""; }

@@ -134,7 +134,9 @@ public partial class UndergroundModeRoundTripSmoke : Node
         GD.Print($"UNDERGROUND_MODE_ROUNDTRIP baseline handles: {_baselineHandles}");
         if (present < 8) { Fail($"only {present} participants bound"); return; }
         // The drawer section must have built every new control (group toggles, cave lighting). Toggling is left to the settings smoke so no user file is written.
-        foreach (string control in new[] { "UndergroundGroupAudioWeather", "UndergroundGroupVegetation", "UndergroundGroupClouds", "UndergroundGroupWater", "UndergroundGroupFarTerrain", "UndergroundGroupShadows", "UndergroundDeepHide", "UndergroundLightingWeight", "UndergroundCaveAmbientEnergy", "UndergroundCaveAmbientColor", "UndergroundCaveFogColor" })
+        foreach (string control in new[] { "UndergroundGroupAudioWeather", "UndergroundGroupVegetation", "UndergroundGroupClouds", "UndergroundGroupWater", "UndergroundGroupFarTerrain", "UndergroundGroupShadows", "UndergroundDeepHide", "UndergroundLightingWeight", "UndergroundCaveAmbientEnergy", "UndergroundCaveAmbientColor", "UndergroundCaveFogColor",
+            "UndergroundCaveRadiusAround", "UndergroundCaveRadiusAcross", "UndergroundCaveRadiusVertical", "UndergroundCaveWorkerBonus", "UndergroundCaveInstallBudget", "UndergroundCaveInstalls", "UndergroundCaveRetainMargin", "UndergroundCaveShrinkDelay", "UndergroundCaveActivationHysteresis",
+            "UndergroundCoupleFog", "UndergroundFogEndFraction", "UndergroundUnfilledFogReach" })
             if (_root!.FindChild(control, true, false) == null) { Fail($"tuning drawer control {control} was not built"); return; }
         StartCycle();
     }

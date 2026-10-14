@@ -14,6 +14,10 @@ public partial class RingLiveTuningDrawer
     private HSlider? _undergroundDeepHide, _undergroundLightingWeight, _undergroundCaveEnergy;
     private CheckButton? _undergroundAudioWeather, _undergroundVegetation, _undergroundClouds, _undergroundWater, _undergroundFarTerrain, _undergroundShadows;
     private ColorPickerButton? _undergroundCaveAmbientColor, _undergroundCaveFogColor;
+    private HSlider? _undergroundCaveRadiusAround, _undergroundCaveRadiusAcross, _undergroundCaveRadiusVertical, _undergroundCaveWorkerBonus, _undergroundCaveInstallBudget;
+    private HSlider? _undergroundCaveInstalls, _undergroundCaveRetainMargin, _undergroundCaveShrinkDelay, _undergroundCaveActivationHysteresis;
+    private CheckButton? _undergroundCoupleFog;
+    private HSlider? _undergroundFogEndFraction, _undergroundUnfilledFogReach;
     private Label? _undergroundStatus, _undergroundLive;
     private double _undergroundSaveDelay, _undergroundSaveRetry, _undergroundLiveDelay;
 
@@ -97,6 +101,39 @@ public partial class RingLiveTuningDrawer
             "Faint ambient light in designed caves so large cavern shapes read as silhouettes. The structural cavity stays near black.");
         _undergroundCaveAmbientColor = AddUndergroundColor(section, "UndergroundCaveAmbientColor", "Cave ambient color", _undergroundController?.CaveAmbientColor ?? new Color(.16f, .20f, .30f), "Color of the faint cave ambient light.");
         _undergroundCaveFogColor = AddUndergroundColor(section, "UndergroundCaveFogColor", "Cave fog color", _undergroundController?.CaveFogColor ?? new Color(.05f, .07f, .11f), "Fog color blended in by the enclosure so the distance fades into the cave color.");
+        section.AddChild(new Label { Text = "Cave LOD (underground profile)", Modulate = RingUiStyle.Muted });
+        var profile = _undergroundController?.UndergroundCaveProfile ?? CaveLodProfile.UndergroundDefault;
+        _undergroundCaveRadiusAround = AddUndergroundSlider(section, "UndergroundCaveRadiusAround", "Coarse radius along ring", 0, GameplayUndergroundModeDefaults.MaximumCaveRadius, 1, profile.CoarseRadiusAround,
+            "Coarse 2 km sectors drawn each way along the ring while underground. 2 reaches about 4 km; raises the user's coarse radius only while the profile is applied.");
+        _undergroundCaveRadiusAcross = AddUndergroundSlider(section, "UndergroundCaveRadiusAcross", "Coarse radius across", 0, GameplayUndergroundModeDefaults.MaximumCaveRadius, 1, profile.CoarseRadiusAcross,
+            "Coarse sectors drawn each way across the ring width while underground.");
+        _undergroundCaveRadiusVertical = AddUndergroundSlider(section, "UndergroundCaveRadiusVertical", "Coarse radius vertical", 0, GameplayUndergroundModeDefaults.MaximumCaveVerticalRadius, 1, profile.CoarseRadiusVertical,
+            "Coarse sectors drawn above the focus while underground (one extra sector is always kept below).");
+        _undergroundCaveWorkerBonus = AddUndergroundSlider(section, "UndergroundCaveWorkerBonus", "Worker bonus", 0, GameplayUndergroundModeDefaults.MaximumCaveWorkerBonus, 1, profile.WorkerBonus,
+            "Extra mesh workers while the profile is applied, capped by the machine's cores. Never lowers the Terrain streaming worker count.");
+        _undergroundCaveInstallBudget = AddUndergroundSlider(section, "UndergroundCaveInstallBudget", "Install budget (ms)", GameplayUndergroundModeDefaults.MinimumCaveInstallBudget, GameplayUndergroundModeDefaults.MaximumCaveInstallBudget, .25, profile.InstallBudgetMilliseconds,
+            "Main-thread mesh install budget while the profile is applied. Never lower than the Terrain streaming budget.");
+        _undergroundCaveInstalls = AddUndergroundSlider(section, "UndergroundCaveInstalls", "Installs per frame", GameplayUndergroundModeDefaults.MinimumCaveInstalls, GameplayUndergroundModeDefaults.MaximumCaveInstalls, 1, profile.MaxInstallsPerFrame,
+            "Mesh installs per frame cap while the profile is applied. Never lower than the Terrain streaming cap.");
+        _undergroundCaveRetainMargin = AddUndergroundSlider(section, "UndergroundCaveRetainMargin", "Retain margin (sectors)", 0, GameplayUndergroundModeDefaults.MaximumCaveRetainMargin, 1, _undergroundController?.CoarseRetainMarginSectors ?? 1,
+            "Ready coarse sectors this far outside the ring stay resident (hidden) so the ring can grow back without rebuilding. Also applies at the surface profile.");
+        _undergroundCaveShrinkDelay = AddUndergroundSlider(section, "UndergroundCaveShrinkDelay", "Shrink delay (s)", 0, GameplayUndergroundModeDefaults.MaximumCaveShrinkDelay, 1, _undergroundController?.CaveProfileShrinkDelaySeconds ?? 10,
+            "How long the cave profile is kept after returning to the surface, so brief exits do not thrash the coarse ring.");
+        _undergroundCaveActivationHysteresis = AddUndergroundSlider(section, "UndergroundCaveActivationHysteresis", "Activation hysteresis (m)", 0, GameplayUndergroundModeDefaults.MaximumCaveActivationHysteresis, 8, _undergroundController?.CaveCoarseActivationHysteresisMeters ?? 64,
+            "Extra height above the coarse activation depth the player must rise before the cave coarse tier releases.");
+        section.AddChild(new Label { Text = "Cave fog", Modulate = RingUiStyle.Muted });
+        _undergroundCoupleFog = new CheckButton
+        {
+            Name = "UndergroundCoupleFog", Text = "Fog to cave distance", Disabled = _undergroundController == null,
+            ButtonPressed = _undergroundController?.CoupleFogToCaveDistance ?? true,
+            TooltipText = "Deep caves only: while the coarse underground tier is active, fog fades in so the view ends where the coarse terrain ends. Off leaves the fog to the cave color blend alone."
+        };
+        _undergroundCoupleFog.Toggled += _ => QueueUndergroundMode();
+        section.AddChild(_undergroundCoupleFog);
+        _undergroundFogEndFraction = AddUndergroundSlider(section, "UndergroundFogEndFraction", "Fog end fraction", GameplayUndergroundModeDefaults.MinimumFogEndFraction, GameplayUndergroundModeDefaults.MaximumFogEndFraction, .01, _undergroundController?.FogEndFraction ?? .9,
+            "Fraction of the coarse reach at which the fog is nearly opaque (2% transmittance).");
+        _undergroundUnfilledFogReach = AddUndergroundSlider(section, "UndergroundUnfilledFogReach", "Unfilled fog reach (m)", GameplayUndergroundModeDefaults.MinimumUnfilledFogReach, GameplayUndergroundModeDefaults.MaximumUnfilledFogReach, 64, _undergroundController?.UnfilledCaveFogReachMeters ?? 1024,
+            "Fog reach used while the coarse tier is active but its ring is not filled yet. The 32 m bridge tier guarantees 1024 m.");
         var row = new HBoxContainer();
         var save = new Button { Name = "UndergroundModeSave", Text = "Save underground settings", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         save.Pressed += () => { QueueUndergroundMode(); FlushUndergroundModeDefaults(); };
@@ -158,7 +195,10 @@ public partial class RingLiveTuningDrawer
             || _undergroundExitOpenness == null || _undergroundEnterHold == null || _undergroundExitHold == null || _undergroundBlend == null || _undergroundDefaults == null
             || _undergroundDeepHide == null || _undergroundAudioWeather == null || _undergroundVegetation == null || _undergroundClouds == null || _undergroundWater == null
             || _undergroundFarTerrain == null || _undergroundShadows == null || _undergroundLightingWeight == null || _undergroundCaveEnergy == null
-            || _undergroundCaveAmbientColor == null || _undergroundCaveFogColor == null) return;
+            || _undergroundCaveAmbientColor == null || _undergroundCaveFogColor == null
+            || _undergroundCaveRadiusAround == null || _undergroundCaveRadiusAcross == null || _undergroundCaveRadiusVertical == null || _undergroundCaveWorkerBonus == null
+            || _undergroundCaveInstallBudget == null || _undergroundCaveInstalls == null || _undergroundCaveRetainMargin == null || _undergroundCaveShrinkDelay == null
+            || _undergroundCaveActivationHysteresis == null || _undergroundCoupleFog == null || _undergroundFogEndFraction == null || _undergroundUnfilledFogReach == null) return;
         using var candidate = new GameplayUndergroundModeSettings
         {
             Enabled = _undergroundEnabled.ButtonPressed,
@@ -179,7 +219,19 @@ public partial class RingLiveTuningDrawer
             EnclosureLightingWeight = (float)_undergroundLightingWeight.Value,
             CaveAmbientEnergy = (float)_undergroundCaveEnergy.Value,
             CaveAmbientColor = _undergroundCaveAmbientColor.Color,
-            CaveFogColor = _undergroundCaveFogColor.Color
+            CaveFogColor = _undergroundCaveFogColor.Color,
+            CaveCoarseRadiusAround = (int)_undergroundCaveRadiusAround.Value,
+            CaveCoarseRadiusAcross = (int)_undergroundCaveRadiusAcross.Value,
+            CaveCoarseRadiusVertical = (int)_undergroundCaveRadiusVertical.Value,
+            CaveWorkerBonus = (int)_undergroundCaveWorkerBonus.Value,
+            CaveInstallBudgetMilliseconds = (float)_undergroundCaveInstallBudget.Value,
+            CaveMaxInstallsPerFrame = (int)_undergroundCaveInstalls.Value,
+            CaveCoarseRetainMarginSectors = (int)_undergroundCaveRetainMargin.Value,
+            CaveProfileShrinkDelaySeconds = (float)_undergroundCaveShrinkDelay.Value,
+            CaveCoarseActivationHysteresisMeters = (float)_undergroundCaveActivationHysteresis.Value,
+            CoupleFogToCaveDistance = _undergroundCoupleFog.ButtonPressed,
+            FogEndFraction = (float)_undergroundFogEndFraction.Value,
+            UnfilledCaveFogReachMeters = (float)_undergroundUnfilledFogReach.Value
         };
         bool changed = _undergroundDefaults.Set(candidate);
         if (_undergroundController != null) _undergroundDefaults.Apply(_undergroundController);
@@ -212,6 +264,18 @@ public partial class RingLiveTuningDrawer
         SetUndergroundSliderNoSignal(_undergroundCaveEnergy, s.CaveAmbientEnergy);
         if (_undergroundCaveAmbientColor != null && _undergroundCaveAmbientColor.Color != s.CaveAmbientColor) _undergroundCaveAmbientColor.Color = s.CaveAmbientColor;
         if (_undergroundCaveFogColor != null && _undergroundCaveFogColor.Color != s.CaveFogColor) _undergroundCaveFogColor.Color = s.CaveFogColor;
+        SetUndergroundSliderNoSignal(_undergroundCaveRadiusAround, s.CaveCoarseRadiusAround);
+        SetUndergroundSliderNoSignal(_undergroundCaveRadiusAcross, s.CaveCoarseRadiusAcross);
+        SetUndergroundSliderNoSignal(_undergroundCaveRadiusVertical, s.CaveCoarseRadiusVertical);
+        SetUndergroundSliderNoSignal(_undergroundCaveWorkerBonus, s.CaveWorkerBonus);
+        SetUndergroundSliderNoSignal(_undergroundCaveInstallBudget, s.CaveInstallBudgetMilliseconds);
+        SetUndergroundSliderNoSignal(_undergroundCaveInstalls, s.CaveMaxInstallsPerFrame);
+        SetUndergroundSliderNoSignal(_undergroundCaveRetainMargin, s.CaveCoarseRetainMarginSectors);
+        SetUndergroundSliderNoSignal(_undergroundCaveShrinkDelay, s.CaveProfileShrinkDelaySeconds);
+        SetUndergroundSliderNoSignal(_undergroundCaveActivationHysteresis, s.CaveCoarseActivationHysteresisMeters);
+        _undergroundCoupleFog?.SetPressedNoSignal(s.CoupleFogToCaveDistance);
+        SetUndergroundSliderNoSignal(_undergroundFogEndFraction, s.FogEndFraction);
+        SetUndergroundSliderNoSignal(_undergroundUnfilledFogReach, s.UnfilledCaveFogReachMeters);
         RefreshUndergroundModeStatus();
     }
 

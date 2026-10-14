@@ -12,11 +12,12 @@ using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.LOD;
+using RingworldTechDemo.Underground;
 
 namespace RingworldTechDemo.Terrain.Editable;
 
 /// <summary>Opt-in Stage-2 streamer. It is deliberately unattached to live scenes and legacy terrain.</summary>
-public partial class SmoothTerrainGrid : Node3D
+public partial class SmoothTerrainGrid : Node3D, ICaveLodProfileTarget
 {
 	[Export] public NodePath SourceGridPath { get; set; } = new();
 	[Export] public int RadiusAround { get; set; } = 1;
@@ -40,6 +41,10 @@ public partial class SmoothTerrainGrid : Node3D
 	[Export(PropertyHint.Range,"0,4,1")] public int CoarseVisualRadiusAcross { get; set; } = 1;
 	[Export(PropertyHint.Range,"0,4,1")] public int CoarseVisualRadiusVertical { get; set; } = 1;
 	[Export(PropertyHint.Range,"32,4096,32")] public float CoarseUndergroundActivationDepthMeters { get; set; } = 256.0f;
+	/// <summary>Ready coarse sectors within this many sectors outside the wanted ring stay resident (hidden) so a brief shrink does not rebuild them.</summary>
+	[Export(PropertyHint.Range,"0,4,1")] public int CoarseRetainMarginSectors { get; set; } = 1;
+	/// <summary>Distance above the activation depth the focus must rise before the coarse underground state releases.</summary>
+	[Export(PropertyHint.Range,"0,1024,8")] public float CoarseActivationHysteresisMeters { get; set; } = 64.0f;
 	[ExportGroup("Cave LOD bridge-shell coverage")]
 	[Export] public bool EnableVolumetricBridgeShells { get; set; } = false;
 	/// <summary>
@@ -186,6 +191,8 @@ public partial class SmoothTerrainGrid : Node3D
 	private int _lastMediumVisualRadiusAround=int.MinValue,_lastMediumVisualRadiusAcross=int.MinValue,_lastMediumVisualRadiusVertical=int.MinValue;
 	private int _lastCoarseVisualRadiusAround=int.MinValue,_lastCoarseVisualRadiusAcross=int.MinValue,_lastCoarseVisualRadiusVertical=int.MinValue;
 	private float _lastCoarseUndergroundActivationDepth=float.NaN;
+	private int _lastCoarseRetainMargin=int.MinValue;
+	private float _lastCoarseActivationHysteresis=float.NaN;
 	private readonly List<SmoothTerrainEditCommand> _queryScratch=new();
 	// Local stamps are interactive work.  Keep their small affected set ahead
 	// of ordinary streaming so an edit never waits behind a just-entered visual
@@ -204,6 +211,43 @@ public partial class SmoothTerrainGrid : Node3D
 	private bool _refreshAfterBatchCommit;
 	private readonly object _testGateLock=new();
 	private TaskCompletionSource? _testWorkerGate;
+	private CaveLodProfile? _caveProfileOverride;
+	public CaveLodProfile? CaveProfileOverride=>_caveProfileOverride;
+	/// <summary>Stores a sanitized transient profile; the per-frame change detection applies it. Null restores the exported settings.</summary>
+	public void SetCaveProfileOverride(CaveLodProfile? profile)
+	{
+		if(profile is not { } p){_caveProfileOverride=null;return;}
+		_caveProfileOverride=new CaveLodProfile(Math.Clamp(p.CoarseRadiusAround,0,4),Math.Clamp(p.CoarseRadiusAcross,0,4),Math.Clamp(p.CoarseRadiusVertical,0,4),
+			Math.Clamp(p.WorkerBonus,0,64),float.IsFinite(p.InstallBudgetMilliseconds)?Math.Clamp(p.InstallBudgetMilliseconds,0.25f,16f):3f,Math.Clamp(p.MaxInstallsPerFrame,1,64));
+	}
+	private int EffectiveCoarseVisualRadiusAround=>_caveProfileOverride?.CoarseRadiusAround??CoarseVisualRadiusAround;
+	private int EffectiveCoarseVisualRadiusAcross=>_caveProfileOverride?.CoarseRadiusAcross??CoarseVisualRadiusAcross;
+	private int EffectiveCoarseVisualRadiusVertical=>_caveProfileOverride?.CoarseRadiusVertical??CoarseVisualRadiusVertical;
+	/// <summary>The profile only raises the user's worker count (bounded by the machine), never lowers it.</summary>
+	public int EffectiveMaxWorkers
+	{
+		get
+		{
+			int bonus=_caveProfileOverride?.WorkerBonus??0;
+			int workers=bonus<=0?MaxWorkers:Math.Max(MaxWorkers,Math.Min(MaxWorkers+bonus,Math.Max(1,System.Environment.ProcessorCount-2)));
+			return Math.Clamp(workers,1,MaxWorkerPermits);
+		}
+	}
+	public int EffectiveMaxInstallsPerFrame=>_caveProfileOverride is { } p?Math.Max(MaxInstallsPerFrame,p.MaxInstallsPerFrame):MaxInstallsPerFrame;
+	public float EffectiveInstallBudgetMilliseconds=>_caveProfileOverride is { } p?Math.Max(InstallBudgetMilliseconds,p.InstallBudgetMilliseconds):InstallBudgetMilliseconds;
+	public CaveLodProfileStatus CaptureCaveLodProfileStatus()
+	{
+		CaveLodTelemetry t=CaptureCaveLodTelemetry();
+		return new(IsCoarseUndergroundFocus(),t.Coarse.Desired,t.Coarse.Resident,t.Coarse.Ready,t.Coarse.Visible,t.TotalEstimatedBytes,EffectiveMaxWorkers,EffectiveCoarseVisualRadiusAround,EffectiveCoarseVisualRadiusAcross,EffectiveCoarseVisualRadiusVertical,CountCoarseDesiredReady());
+	}
+	private int CountCoarseDesiredReady(){int ready=0;foreach(SmoothTerrainChunkCoordinate c in _coarseVolumetricVisualDesired)if(_coarseEntries.TryGetValue(c,out CoarseEntry? e)&&e.Ready)ready++;return ready;}
+	/// <summary>Test-only: coarse sectors scheduled since startup.</summary>
+	public int CoarseScheduledCountForTests{get;private set;}
+	/// <summary>Test-only: coarse underground activation latch flips since startup.</summary>
+	public int CoarseUndergroundFocusTransitionCountForTests{get;private set;}
+	/// <summary>Test-only: whole-tier cave LOD presentation clears that removed at least one entry.</summary>
+	public int CaveLodPresentationClearCountForTests{get;private set;}
+	public ulong? CaptureCoarseEntryGenerationForTests(SmoothTerrainChunkCoordinate coordinate)=>_coarseEntries.TryGetValue(coordinate,out CoarseEntry? entry)?entry.Generation:null;
 	/// <summary>Test-only: leaves completed worker output queued until explicitly cleared.</summary>
 	public bool SuspendInstallsForTests { get; set; }
 	/// <summary>Test-only: pauses a worker before snapshot capture; inert unless explicitly called.</summary>
@@ -300,7 +344,7 @@ public partial class SmoothTerrainGrid : Node3D
 		while(total>peak){long prior=Interlocked.CompareExchange(ref _telemetryPeakBytes,total,peak);if(prior==peak){peak=total;break;}peak=prior;}
 		int tracked; int deferred=0; ulong submitted,cancelled; lock(_lifetimeGate){tracked=_trackedTasks.Count;foreach(Queue<DeferredMeshWork> queue in _deferredWork)deferred+=queue.Count;submitted=_deferredSubmitted;cancelled=_deferredCancelled;}
 		int pending=SafeCount(_ready)+SafeCount(_nearTransitionReady)+SafeCount(_mediumReady)+SafeCount(_coarseReady);foreach(BridgeTier tier in _bridgeTiers)pending+=SafeCount(tier.Ready);
-		int activePermits=Math.Clamp(Math.Max(1,MaxWorkers)-Math.Max(0,_workers.CurrentCount),0,Math.Max(1,MaxWorkers));
+		int activePermits=Math.Clamp(Math.Max(1,_appliedWorkerCount)-Math.Max(0,_workers.CurrentCount),0,Math.Max(1,_appliedWorkerCount));
 		return new(baseTier,near,medium,b4,b8,b16,b32,coarse,deferred,activePermits,tracked,submitted,cancelled,Math.Max(0,Volatile.Read(ref _cancelRequestCount)+Interlocked.Read(ref _auxiliaryCancelRequestCount)),_lastAggregateInstallMilliseconds,_maxAggregateInstallMilliseconds,_lastAggregateInstalls,_maxAggregateInstalls,_installBudgetExceededFrames,pending,queued,retained,densityCache,total,Math.Max(total,Interlocked.Read(ref _telemetryPeakBytes)));
 	}
 	private CaveLodTierTelemetry CaptureBaseTier(ref long queued,ref long retained){int ready=0,visible=0;foreach(Entry e in _entries.Values){if(e.Ready)ready++;if(e.Presenter?.Visible==true)visible++;if(e.Patches!=null)foreach(SmoothTerrainPresenter? p in e.Patches)if(p?.Visible==true)visible++;AddEntryBytes(e,ref retained);if(e.TargetSnapshot!=null)retained=AddSaturating(retained,SnapshotBytes(e.TargetSnapshot));}foreach(SmoothTerrainPresenter p in _pool)retained=AddSaturating(retained,p.RetainedByteSize);foreach(SmoothTerrainPresenter p in _physicsDeferredReleases)retained=AddSaturating(retained,p.RetainedByteSize);foreach(Result r in _ready)queued=AddSaturating(queued,ResultQueuedBytes(r));return new(_residentBuildDesired.Count,_entries.Count,ready,visible,SafeCount(_ready),_pool.Count,retained);}
@@ -546,7 +590,7 @@ public partial class SmoothTerrainGrid : Node3D
 	{
 		var source = GetNodeOrNull<VoxelChunkGridManager>(SourceGridPath);
 		if (source == null) { GD.PushWarning("SmoothTerrainGrid is opt-in and needs SourceGridPath."); return; }
-		_sourceGrid=source; _workers.Dispose(); _appliedWorkerCount=Math.Clamp(MaxWorkers,1,MaxWorkerPermits); _workers=new SemaphoreSlim(_appliedWorkerCount,MaxWorkerPermits);
+		_sourceGrid=source; _workers.Dispose(); _appliedWorkerCount=EffectiveMaxWorkers; _workers=new SemaphoreSlim(_appliedWorkerCount,MaxWorkerPermits);
 		if(!source.ValidateDeepVerticalDomains(out string domainError)){GD.PushError($"SmoothTerrainGrid deep vertical-domain configuration is invalid: {domainError}");return;}
 		_sourceSampler = source.CreateIndependentTerrainSampler(); if(_sourceSampler==null){GD.PushWarning("SmoothTerrainGrid source could not create terrain sampler.");return;} _baseline = new RingTerrainSmoothBaseline(_sourceSampler,source.GetStructuralBottomGlobalY(),source.TerrainBottomGlobalY,source.ProtectedRoofThicknessMeters,source.GetLowerHullTopGlobalY(),source.GetStructuralWallTopGlobalY(),source.TerrainSettings?.EnableDesignedCaveDensityComposition==true);
 		_editSnapshot=new SmoothTerrainEditSnapshot(_commands,_editRevision,_baseline.AroundLength);
@@ -1078,7 +1122,9 @@ public partial class SmoothTerrainGrid : Node3D
 			||_lastMediumVisualRadiusAround!=MediumVisualRadiusAround
 			||_lastMediumVisualRadiusAcross!=MediumVisualRadiusAcross
 			||_lastMediumVisualRadiusVertical!=MediumVisualRadiusVertical
-			||_lastCoarseVisualRadiusAround!=CoarseVisualRadiusAround||_lastCoarseVisualRadiusAcross!=CoarseVisualRadiusAcross||_lastCoarseVisualRadiusVertical!=CoarseVisualRadiusVertical
+			||_lastCoarseVisualRadiusAround!=EffectiveCoarseVisualRadiusAround||_lastCoarseVisualRadiusAcross!=EffectiveCoarseVisualRadiusAcross||_lastCoarseVisualRadiusVertical!=EffectiveCoarseVisualRadiusVertical
+			||_lastCoarseRetainMargin!=CoarseRetainMarginSectors
+			||_lastCoarseActivationHysteresis!=CoarseActivationHysteresisMeters
 			||_lastCoarseUndergroundActivationDepth!=CoarseUndergroundActivationDepthMeters
 			||_lastHotChunkPatches!=EnableHotChunkPatches))RefreshDesired();
 		if(_editRefreshQueued)FlushPendingEditRefresh();
@@ -1090,7 +1136,7 @@ public partial class SmoothTerrainGrid : Node3D
 		ApplyWorkerCountChange();
 		long installStart=Stopwatch.GetTimestamp();
 		_installFrameStart=installStart;
-		int installLimit=Math.Max(1,MaxInstallsPerFrame);
+		int installLimit=Math.Max(1,EffectiveMaxInstallsPerFrame);
 		int nearInstalls=InstallReady(installLimit);
 		int coarseInstalls=InstallCoarseReady(Math.Max(0,installLimit-nearInstalls));
 		int bridgeInstalls=InstallBridgeReady(Math.Max(0,installLimit-nearInstalls-coarseInstalls));
@@ -1100,12 +1146,12 @@ public partial class SmoothTerrainGrid : Node3D
 		double aggregateMilliseconds=Stopwatch.GetElapsedTime(installStart).TotalMilliseconds;
 		_lastAggregateInstallMilliseconds=aggregateMilliseconds;_maxAggregateInstallMilliseconds=Math.Max(_maxAggregateInstallMilliseconds,aggregateMilliseconds);
 		_lastAggregateInstalls=aggregateInstalls;_maxAggregateInstalls=Math.Max(_maxAggregateInstalls,aggregateInstalls);
-		if(aggregateInstalls>0&&aggregateMilliseconds>Math.Max(0.0,InstallBudgetMilliseconds))_installBudgetExceededFrames++;
+		if(aggregateInstalls>0&&aggregateMilliseconds>Math.Max(0.0,EffectiveInstallBudgetMilliseconds))_installBudgetExceededFrames++;
 		if((_metricsElapsed+=delta)>=.25){_metricsElapsed=0;RecountReady();UpdateCurrentMetrics();}
 	}
 	private long _installFrameStart;
 	/// <summary>True while this frame's shared install time budget (all tiers combined) has not been spent.</summary>
-	private bool FrameInstallBudgetAvailable()=>Stopwatch.GetElapsedTime(_installFrameStart).TotalMilliseconds<Math.Max(0.0,InstallBudgetMilliseconds);
+	private bool FrameInstallBudgetAvailable()=>Stopwatch.GetElapsedTime(_installFrameStart).TotalMilliseconds<Math.Max(0.0,EffectiveInstallBudgetMilliseconds);
 	/// <summary>A mesh with no geometry (uniform solid/empty region) is pure bookkeeping and consumes neither install budget nor cap.</summary>
 	private static bool IsBookkeepingMesh(SmoothTerrainMeshData mesh)=>mesh.Vertices.Length==0;
 	private static bool IsBookkeepingSector(SmoothTerrainMeshData[] meshes){foreach(SmoothTerrainMeshData mesh in meshes)if(mesh.Vertices.Length!=0)return false;return true;}
@@ -1116,7 +1162,7 @@ public partial class SmoothTerrainGrid : Node3D
 	/// </summary>
 	private void ApplyWorkerCountChange()
 	{
-		int desired=Math.Clamp(MaxWorkers,1,MaxWorkerPermits);
+		int desired=EffectiveMaxWorkers;
 		if(desired==_appliedWorkerCount||_stopping)return;
 		SemaphoreSlim workers=_workers;int delta=desired-_appliedWorkerCount;_appliedWorkerCount=desired;
 		if(delta>0){workers.Release(delta);return;}
@@ -1231,7 +1277,7 @@ public partial class SmoothTerrainGrid : Node3D
 		// can race ahead of the collision-first FIFO before acquiring the
 		// semaphore. Admit no more tasks than can actually execute now; the
 		// deferred queues are the only waiting area.
-		int capacity = Math.Max(1, Math.Min(MaxOutstandingMeshWork, MaxWorkers));
+		int capacity = Math.Max(1, Math.Min(MaxOutstandingMeshWork, EffectiveMaxWorkers));
 		bool cavePreload = IsCavePreloadSchedulingActive();
 		while (true)
 		{
@@ -1350,7 +1396,8 @@ public partial class SmoothTerrainGrid : Node3D
 		_focus=focus;
 		bool wasSurfaceResident=_surfaceResidencyActive;
 		UpdateSurfaceResidency(focus);
-		if(wasSurfaceResident!=_surfaceResidencyActive)
+		bool coarseLatchChanged=UpdateCoarseUndergroundLatch(focus);
+		if(wasSurfaceResident!=_surfaceResidencyActive||coarseLatchChanged)
 		{
 			_lastFocusCenter=null;
 			_lastHotPatchAnchor=null;
@@ -1365,6 +1412,7 @@ public partial class SmoothTerrainGrid : Node3D
 	{
 		_focus = focus;
 		UpdateSurfaceResidency(focus);
+		UpdateCoarseUndergroundLatch(focus);
 	}
 	public void RefreshDesired(bool force = false)
 	{
@@ -1373,7 +1421,9 @@ public partial class SmoothTerrainGrid : Node3D
 			FastTravelDeferredRefreshCount++;
 			return;
 		}
-		if (_baseline == null) return; _generation++; ulong generation = _generation;
+		if (_baseline == null) return;
+		UpdateCoarseUndergroundLatch(_focus);
+		_generation++; ulong generation = _generation;
 		_lastRadiusAround=RadiusAround;_lastRadiusAcross=RadiusAcross;_lastRadiusVertical=RadiusVertical;_lastCollisionRadius=CollisionRadius;
 		_lastFocusCenteredCollisionCoverage=EnableFocusCenteredCollisionCoverage;_lastHotChunkPatches=EnableHotChunkPatches;
 		_lastFocusCenteredVisualCoverage=EnableFocusCenteredVisualCoverage;
@@ -1382,7 +1432,8 @@ public partial class SmoothTerrainGrid : Node3D
 		_lastBridgeShells=EnableVolumetricBridgeShells;
 		_lastFocusVisualRadiusAround=FocusVisualRadiusAround;_lastFocusVisualRadiusAcross=FocusVisualRadiusAcross;_lastFocusVisualRadiusVertical=FocusVisualRadiusVertical;
 		_lastMediumVisualRadiusAround=MediumVisualRadiusAround;_lastMediumVisualRadiusAcross=MediumVisualRadiusAcross;_lastMediumVisualRadiusVertical=MediumVisualRadiusVertical;
-		_lastCoarseVisualRadiusAround=CoarseVisualRadiusAround;_lastCoarseVisualRadiusAcross=CoarseVisualRadiusAcross;_lastCoarseVisualRadiusVertical=CoarseVisualRadiusVertical;_lastCoarseUndergroundActivationDepth=CoarseUndergroundActivationDepthMeters;
+		_lastCoarseVisualRadiusAround=EffectiveCoarseVisualRadiusAround;_lastCoarseVisualRadiusAcross=EffectiveCoarseVisualRadiusAcross;_lastCoarseVisualRadiusVertical=EffectiveCoarseVisualRadiusVertical;_lastCoarseUndergroundActivationDepth=CoarseUndergroundActivationDepthMeters;
+		_lastCoarseRetainMargin=CoarseRetainMarginSectors;_lastCoarseActivationHysteresis=CoarseActivationHysteresisMeters;
 		// Deep focus remains resident because its altitude is negative; true
 		// space focus must still release every 1 m representation.
 		if(EnableAltitudeAwareResidency&&!_surfaceResidencyActive)
@@ -1916,22 +1967,32 @@ public partial class SmoothTerrainGrid : Node3D
 	{int s=tier.Extent/32;byte m=0;if(!tier.Desired.Contains(new SmoothTerrainChunkCoordinate(c.AroundChunk-s,c.VerticalChunk,c.AcrossChunk)))m|=1;if(!tier.Desired.Contains(new SmoothTerrainChunkCoordinate(c.AroundChunk+s,c.VerticalChunk,c.AcrossChunk)))m|=2;if(!tier.Desired.Contains(new SmoothTerrainChunkCoordinate(c.AroundChunk,c.VerticalChunk-s,c.AcrossChunk)))m|=4;if(!tier.Desired.Contains(new SmoothTerrainChunkCoordinate(c.AroundChunk,c.VerticalChunk+s,c.AcrossChunk)))m|=8;if(!tier.Desired.Contains(new SmoothTerrainChunkCoordinate(c.AroundChunk,c.VerticalChunk,c.AcrossChunk-s)))m|=16;if(!tier.Desired.Contains(new SmoothTerrainChunkCoordinate(c.AroundChunk,c.VerticalChunk,c.AcrossChunk+s)))m|=32;return m;}
 	private SmoothTerrainPresenter AcquireBridgePresenter(BridgeTier t){if(t.Pool.Count>0)return t.Pool.Dequeue();var p=new SmoothTerrainPresenter();AddChild(p);return p;}
 	private void RemoveBridgeEntry(BridgeTier t,SmoothTerrainChunkCoordinate c,BridgeEntry e){if(e.RequestCancel())Interlocked.Increment(ref _auxiliaryCancelRequestCount);e.Presenter.Reset();t.Pool.Enqueue(e.Presenter);t.Entries.Remove(c);}
-	private void ClearBridgeVolumetricPresentation(){foreach(var t in _bridgeTiers){foreach(var p in t.Entries.ToArray())RemoveBridgeEntry(t,p.Key,p.Value);t.Desired.Clear();}}
+	private void ClearBridgeVolumetricPresentation(){if(_bridgeTiers.Any(t=>t.Entries.Count>0))CaveLodPresentationClearCountForTests++;foreach(var t in _bridgeTiers){foreach(var p in t.Entries.ToArray())RemoveBridgeEntry(t,p.Key,p.Value);t.Desired.Clear();}}
 	private void RefreshCoarseVolumetricDesired(SmoothTerrainVolumetricDensitySnapshot field)
 	{
 		if(!EnableCoarseVolumetricVisualCoverage||!IsCoarseUndergroundFocus()){ClearCoarseVolumetricPresentation();return;}
-		const int meters=2048, parentScale=64;
-		long around=RingCoordMath.WrapAround((long)Math.Floor(_focus.AroundMeters),_baseline!.AroundLength);
-		int across=Math.Clamp((int)Math.Floor(_focus.AcrossMeters),0,_baseline.AcrossWidth);
-		long ca=FloorDiv(around,meters); int cc=RingCoordMath.FloorDiv(across,meters),cv=RingCoordMath.FloorDiv((int)Math.Floor(_focus.VerticalMeters),meters);
-		bool stitchedClipmap=IsStitchedCaveLodEnabled;
-		long count=Math.Max(1,(_baseline.AroundLength+meters-1)/meters);var wanted=new HashSet<SmoothTerrainChunkCoordinate>();
-		for(int z=-Math.Max(0,CoarseVisualRadiusAcross);z<=Math.Max(0,CoarseVisualRadiusAcross);z++)for(long x=-Math.Max(0,CoarseVisualRadiusAround);x<=Math.Max(0,CoarseVisualRadiusAround);x++)for(int y=-Math.Max(0,CoarseVisualRadiusVertical)-1;y<=Math.Max(0,CoarseVisualRadiusVertical);y++)
-		{ long sa=stitchedClipmap?ca+x:RingCoordMath.WrapAroundChunk(ca+x,count);int sc=cc+z,sv=cv+y,oa=sc*meters,ov=sv*meters;
-		  if(oa>_baseline.AcrossWidth||oa+meters<0||ov+meters<StructuralBottomVertical)continue;
-		  var c=new SmoothTerrainChunkCoordinate(sa*parentScale,sv*parentScale,sc*parentScale);wanted.Add(c);if(sc==0)wanted.Add(new SmoothTerrainChunkCoordinate(sa*parentScale,sv*parentScale,-parentScale)); }
+		int ra=Math.Max(0,EffectiveCoarseVisualRadiusAround),rc=Math.Max(0,EffectiveCoarseVisualRadiusAcross),rv=Math.Max(0,EffectiveCoarseVisualRadiusVertical);
+		HashSet<SmoothTerrainChunkCoordinate> wanted=BuildCoarseWanted(ra,rc,rv);
+		int margin=Math.Max(0,CoarseRetainMarginSectors);
+		HashSet<SmoothTerrainChunkCoordinate>? retain=margin>0?BuildCoarseWanted(ra+margin,rc+margin,rv+margin):null;
 		_coarseVolumetricVisualDesired.Clear();_coarseVolumetricVisualDesired.UnionWith(wanted);
-		foreach(var p in _coarseEntries.ToArray())if(!wanted.Contains(p.Key))RemoveCoarseEntry(p.Key,p.Value);
+		foreach(var p in _coarseEntries.ToArray())
+		{
+			if(wanted.Contains(p.Key))continue;
+			CoarseEntry e=p.Value;
+			// A ready sector just outside the shrunken ring stays resident but hidden (ApplyBridgeOwnership), so
+			// re-growing the ring costs nothing. It is never rescheduled; a stale one is dropped on the next edit overlap.
+			if(retain!=null&&e.Ready&&retain.Contains(p.Key))
+			{
+				if(e.Identity!=field.Identity)
+				{
+					if(HasOverlappingEditSince(e.CheckedThroughEditRevision,p.Key,64))RemoveCoarseEntry(p.Key,e);
+					else e.CheckedThroughEditRevision=_editRevision;
+				}
+				continue;
+			}
+			RemoveCoarseEntry(p.Key,e);
+		}
 		foreach(var c in wanted)
 			if(!_coarseEntries.TryGetValue(c,out CoarseEntry? e))ScheduleCoarse(c,field);
 			else if(e.Identity!=field.Identity&&HasOverlappingEditSince(e.CheckedThroughEditRevision,c,64))
@@ -1942,10 +2003,38 @@ public partial class SmoothTerrainGrid : Node3D
 			else if(e.Identity!=field.Identity)e.CheckedThroughEditRevision=_editRevision;
 		ApplyBridgeOwnership();
 	}
-	private bool IsCoarseUndergroundFocus()
-	{ if(_sourceSampler==null||_baseline==null)return false;long a=RingCoordMath.WrapAround((long)Math.Floor(_focus.AroundMeters),_baseline.AroundLength);int c=Math.Clamp((int)Math.Floor(_focus.AcrossMeters),0,_baseline.AcrossWidth);return _focus.VerticalMeters<=_sourceSampler.GetSurfaceHeight(a,c)-Math.Max(0,CoarseUndergroundActivationDepthMeters); }
+	private HashSet<SmoothTerrainChunkCoordinate> BuildCoarseWanted(int radiusAround,int radiusAcross,int radiusVertical)
+	{
+		const int meters=2048, parentScale=64;
+		long around=RingCoordMath.WrapAround((long)Math.Floor(_focus.AroundMeters),_baseline!.AroundLength);
+		int across=Math.Clamp((int)Math.Floor(_focus.AcrossMeters),0,_baseline.AcrossWidth);
+		long ca=FloorDiv(around,meters); int cc=RingCoordMath.FloorDiv(across,meters),cv=RingCoordMath.FloorDiv((int)Math.Floor(_focus.VerticalMeters),meters);
+		bool stitchedClipmap=IsStitchedCaveLodEnabled;
+		long count=Math.Max(1,(_baseline.AroundLength+meters-1)/meters);var wanted=new HashSet<SmoothTerrainChunkCoordinate>();
+		for(int z=-radiusAcross;z<=radiusAcross;z++)for(long x=-radiusAround;x<=radiusAround;x++)for(int y=-radiusVertical-1;y<=radiusVertical;y++)
+		{ long sa=stitchedClipmap?ca+x:RingCoordMath.WrapAroundChunk(ca+x,count);int sc=cc+z,sv=cv+y,oa=sc*meters,ov=sv*meters;
+		  if(oa>_baseline.AcrossWidth||oa+meters<0||ov+meters<StructuralBottomVertical)continue;
+		  var c=new SmoothTerrainChunkCoordinate(sa*parentScale,sv*parentScale,sc*parentScale);wanted.Add(c);if(sc==0)wanted.Add(new SmoothTerrainChunkCoordinate(sa*parentScale,sv*parentScale,-parentScale)); }
+		return wanted;
+	}
+	private bool _coarseUndergroundLatched;
+	/// <summary>Enter at the activation depth, release only after rising CoarseActivationHysteresisMeters above it. Returns true when the latch flipped.</summary>
+	private bool UpdateCoarseUndergroundLatch(in RingCanonicalPosition focus)
+	{
+		bool next=false;
+		if(_sourceSampler!=null&&_baseline!=null)
+		{
+			long a=RingCoordMath.WrapAround((long)Math.Floor(focus.AroundMeters),_baseline.AroundLength);int c=Math.Clamp((int)Math.Floor(focus.AcrossMeters),0,_baseline.AcrossWidth);
+			double depth=_sourceSampler.GetSurfaceHeight(a,c)-focus.VerticalMeters;
+			float enter=Math.Max(0,CoarseUndergroundActivationDepthMeters),exit=Math.Max(0,enter-Math.Max(0,CoarseActivationHysteresisMeters));
+			next=_coarseUndergroundLatched?depth>=exit:depth>=enter;
+		}
+		if(next==_coarseUndergroundLatched)return false;
+		_coarseUndergroundLatched=next;CoarseUndergroundFocusTransitionCountForTests++;return true;
+	}
+	private bool IsCoarseUndergroundFocus()=>_coarseUndergroundLatched;
 	private void ScheduleCoarse(SmoothTerrainChunkCoordinate c,SmoothTerrainVolumetricDensitySnapshot field)
-	{ if(_stopping)return;var cancel=CancellationTokenSource.CreateLinkedTokenSource(_cancel.Token);var p=AcquireCoarsePresenter();p.Visible=false;var e=new CoarseEntry(_generation,field.Identity,cancel,p);_coarseEntries.Add(c,e);RingLodGeometrySnapshot geo=_geometry;Transform3D inv=GlobalTransform.AffineInverse();Task work;DeferMeshWork(MeshWorkTier.Coarse,e.Token,()=>{work=Task.Run(async()=>{bool acquired=false;try{await _workers.WaitAsync(e.Token);acquired=true;e.Token.ThrowIfCancellationRequested();using SmoothTerrainVolumetricWorkerContext workerContext=field.CreateWorkerContext(UseIndependentWorkerSamplers);MediumCapture cap=CaptureCoarse(c,workerContext.Field);SmoothTerrainMeshData local=cap.Range.Classification==SmoothTerrainDensityClassification.Mixed?ScaleMesh(SmoothTerrainMesher.Build(cap.Snapshot!,false),64):EmptyMediumMesh;SmoothTerrainMeshData mesh=TransformWorker(local,c,geo,inv,workerContext.Sampler??_sourceSampler);e.Token.ThrowIfCancellationRequested();_coarseReady.Enqueue(new CoarseResult(c,e.Generation,field.Identity,mesh,cap.Range));}catch(OperationCanceledException){}finally{if(acquired)_workers.Release();e.CompleteWorkAndDisposeToken();}},CancellationToken.None);TrackMeshWork(work);},e.CompleteWorkAndDisposeToken); }
+	{ if(_stopping)return;CoarseScheduledCountForTests++;var cancel=CancellationTokenSource.CreateLinkedTokenSource(_cancel.Token);var p=AcquireCoarsePresenter();p.Visible=false;var e=new CoarseEntry(_generation,field.Identity,cancel,p);_coarseEntries.Add(c,e);RingLodGeometrySnapshot geo=_geometry;Transform3D inv=GlobalTransform.AffineInverse();Task work;DeferMeshWork(MeshWorkTier.Coarse,e.Token,()=>{work=Task.Run(async()=>{bool acquired=false;try{await _workers.WaitAsync(e.Token);acquired=true;e.Token.ThrowIfCancellationRequested();using SmoothTerrainVolumetricWorkerContext workerContext=field.CreateWorkerContext(UseIndependentWorkerSamplers);MediumCapture cap=CaptureCoarse(c,workerContext.Field);SmoothTerrainMeshData local=cap.Range.Classification==SmoothTerrainDensityClassification.Mixed?ScaleMesh(SmoothTerrainMesher.Build(cap.Snapshot!,false),64):EmptyMediumMesh;SmoothTerrainMeshData mesh=TransformWorker(local,c,geo,inv,workerContext.Sampler??_sourceSampler);e.Token.ThrowIfCancellationRequested();_coarseReady.Enqueue(new CoarseResult(c,e.Generation,field.Identity,mesh,cap.Range));}catch(OperationCanceledException){}finally{if(acquired)_workers.Release();e.CompleteWorkAndDisposeToken();}},CancellationToken.None);TrackMeshWork(work);},e.CompleteWorkAndDisposeToken); }
 	private static MediumCapture CaptureCoarse(SmoothTerrainChunkCoordinate c,SmoothTerrainVolumetricDensitySnapshot field)
 		=> CaptureVolumetric(c,field,64);
 	private bool StampOverlapsVolumetricCapture(SmoothTerrainChunkCoordinate c,in SmoothTerrainEditCommand edit,int spacing)
@@ -1992,7 +2081,7 @@ public partial class SmoothTerrainGrid : Node3D
 	private int InstallCoarseReady(int limit){if(SuspendInstallsForTests)return 0;int i=0;while(((i<limit&&FrameInstallBudgetAvailable())||(_coarseReady.TryPeek(out CoarseResult peeked)&&IsBookkeepingMesh(peeked.Mesh)))&&_coarseReady.TryDequeue(out CoarseResult r)){if(!_coarseEntries.TryGetValue(r.Coordinate,out CoarseEntry? e)||e.Generation!=r.Generation||e.Identity!=r.Identity)continue;e.Classification=r.Range.Classification;e.UniformRejected=r.Range.Classification!=SmoothTerrainDensityClassification.Mixed;e.Ready=true;e.Presenter.Position=ChunkWorldOrigin(r.Coordinate);e.Presenter.Install(r.Mesh,false,_terrainMaterial);if(!IsBookkeepingMesh(r.Mesh))i++;}ApplyBridgeOwnership();return i;}
 	private SmoothTerrainPresenter AcquireCoarsePresenter(){if(_coarsePool.Count>0)return _coarsePool.Dequeue();var p=new SmoothTerrainPresenter();AddChild(p);return p;}
 	private void RemoveCoarseEntry(SmoothTerrainChunkCoordinate c,CoarseEntry e){if(e.RequestCancel())Interlocked.Increment(ref _auxiliaryCancelRequestCount);e.Presenter.Reset();_coarsePool.Enqueue(e.Presenter);_coarseEntries.Remove(c);}
-	private void ClearCoarseVolumetricPresentation(){foreach(var p in _coarseEntries.ToArray())RemoveCoarseEntry(p.Key,p.Value);_coarseVolumetricVisualDesired.Clear();}
+	private void ClearCoarseVolumetricPresentation(){if(_coarseEntries.Count>0)CaveLodPresentationClearCountForTests++;foreach(var p in _coarseEntries.ToArray())RemoveCoarseEntry(p.Key,p.Value);_coarseVolumetricVisualDesired.Clear();}
 	private void UpdateSurfaceResidency(in RingCanonicalPosition focus)
 	{
 		if(!EnableAltitudeAwareResidency||_sourceSampler==null)

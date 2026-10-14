@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.Underground;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
@@ -488,6 +489,76 @@ public partial class SmoothTerrainRuntimeSmoke : Node
             if(localityChanged.Length==0||localityUnchanged==0||localityChanged.Any(c=>c.AroundChunk!=localityOwnerAroundChunk)||localityGrid.RetainedEditRevisionHistoryCountForTests!=0)throw new InvalidOperationException($"coarse locality regression: changed={string.Join(',',localityChanged)}, unchanged={localityUnchanged}, retainedHistory={localityGrid.RetainedEditRevisionHistoryCountForTests}");
             GD.Print($"SMOOTH_TERRAIN_EDIT_LOCALITY_SMOKE_PASS: coarseChanged={localityChanged.Length}, coarseUnchanged={localityUnchanged}, retainedHistory={localityGrid.RetainedEditRevisionHistoryCountForTests}");
             Task localityShutdown=localityGrid.AwaitShutdownForTestsAsync();localityGrid.QueueFree();for(int i=0;i<720&&!localityShutdown.IsCompleted;i++)await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);await localityShutdown;localitySource.QueueFree();await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);
+            // Cave LOD profile (P4): a transient override grows the coarse ring without rebuilding what is resident,
+            // shrinking retains ready sectors (hidden) so a re-grow is free, and the activation latch ignores jitter.
+            // A 16 km ring (8 sectors) keeps radius-3 windows free of wrap aliasing.
+            var profileSource=new VoxelChunkGridManager { Name="CaveProfileSource",BuildOnReady=false,EnableChunkStreaming=false,UseDeterministicTerrainGeneration=true,TerrainSettings=settings,UseRingCurvedPlacement=true,AroundRingChunkLength=512,RingAcrossWidthMeters=4096,EnforceRingAcrossBounds=true,EnableCanonicalFloatingOriginAnchor=true };
+            AddChild(profileSource);await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);
+            var profileGrid=new SmoothTerrainGrid { SourceGridPath=new NodePath("../CaveProfileSource"),RadiusAround=0,RadiusAcross=0,RadiusVertical=0,CollisionRadius=0,EnableCoarseVolumetricVisualCoverage=true,CoarseVisualRadiusAround=1,CoarseVisualRadiusAcross=0,CoarseVisualRadiusVertical=0,CoarseRetainMarginSectors=1,CoarseUndergroundActivationDepthMeters=256,EnableHotChunkPatches=false,MaxWorkers=2 };
+            AddChild(profileGrid);await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);
+            int ProfileDesired()=>profileGrid.CaptureCoverageOwnershipSnapshot().CoarseVolumetricVisualDesired;
+            int ProfileResident()=>profileGrid.CaptureCoarseVolumetricCoordinatesForTests().Count;
+            async Task ProfileSettle(){await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);await WaitForQuiescence(profileGrid);}
+            const long profileAround=5120;const int profileAcross=2048;const int profileVertical=-8180;
+            profileGrid.SetCanonicalFocus(new RingCanonicalPosition(profileAround,profileVertical,profileAcross));await WaitForQuiescence(profileGrid);
+            int profileD1=ProfileDesired();int profileR0=ProfileResident();
+            var profileBase=profileGrid.CaptureCoarseVolumetricCoordinatesForTests().ToDictionary(c=>c,c=>(Generation:profileGrid.CaptureCoarseEntryGenerationForTests(c),Identity:profileGrid.CaptureCoarseVolumetricIdentityForTests(c)));
+            if(profileD1==0||profileR0!=profileD1||!profileGrid.CaptureCaveLodProfileStatus().CoarseActive)throw new InvalidOperationException($"cave profile baseline failed: desired={profileD1}, resident={profileR0}");
+            // A: growing the ring adds sectors without touching resident ones.
+            int profileS0=profileGrid.CoarseScheduledCountForTests;
+            profileGrid.SetCaveProfileOverride(new CaveLodProfile(2,0,0,2,3f,12));await ProfileSettle();
+            int profileD2=ProfileDesired();int profileR2=ProfileResident();
+            if(profileD2<=profileD1||profileBase.Any(pair=>profileGrid.CaptureCoarseEntryGenerationForTests(pair.Key)!=pair.Value.Generation||profileGrid.CaptureCoarseVolumetricIdentityForTests(pair.Key)!=pair.Value.Identity))throw new InvalidOperationException($"cave profile grow rebuilt resident sectors: d1={profileD1}, d2={profileD2}");
+            if(profileGrid.CoarseScheduledCountForTests-profileS0!=profileR2-profileR0)throw new InvalidOperationException($"cave profile grow scheduled {profileGrid.CoarseScheduledCountForTests-profileS0} sectors for {profileR2-profileR0} new residents");
+            if(profileGrid.EffectiveMaxInstallsPerFrame!=Math.Max(profileGrid.MaxInstallsPerFrame,12)||profileGrid.EffectiveInstallBudgetMilliseconds!=Math.Max(profileGrid.InstallBudgetMilliseconds,3f)||profileGrid.EffectiveMaxWorkers<profileGrid.MaxWorkers
+                ||profileGrid.CoarseVisualRadiusAround!=1||profileGrid.MaxWorkers!=2||profileGrid.MaxInstallsPerFrame!=8||profileGrid.InstallBudgetMilliseconds!=1.5f)throw new InvalidOperationException($"cave profile effective settings wrong: installs={profileGrid.EffectiveMaxInstallsPerFrame}, budget={profileGrid.EffectiveInstallBudgetMilliseconds}, workers={profileGrid.EffectiveMaxWorkers}");
+            // B: shrinking keeps ready sectors resident but hidden, with no rebuild.
+            var profileGrown=profileGrid.CaptureCoarseVolumetricCoordinatesForTests().ToDictionary(c=>c,c=>profileGrid.CaptureCoarseEntryGenerationForTests(c));
+            int profileS1=profileGrid.CoarseScheduledCountForTests;
+            profileGrid.SetCaveProfileOverride(null);await ProfileSettle();
+            if(ProfileDesired()!=profileD1||ProfileResident()!=profileR2||profileGrid.CoarseScheduledCountForTests!=profileS1)throw new InvalidOperationException($"cave profile shrink: desired={ProfileDesired()}/{profileD1}, resident={ProfileResident()}/{profileR2}, scheduled={profileGrid.CoarseScheduledCountForTests-profileS1}");
+            foreach(var pair in profileGrown)
+            {
+                bool owner=profileGrid.IsCoarseVolumetricVisualCoverageOwnerForTests(pair.Key);
+                if(profileGrid.CaptureCoarseEntryGenerationForTests(pair.Key)!=pair.Value)throw new InvalidOperationException($"cave profile shrink changed generation of {pair.Key}");
+                if(!owner&&(profileGrid.IsCoarseVolumetricVisibleForTests(pair.Key)))throw new InvalidOperationException($"cave profile retained sector {pair.Key} is still visible");
+            }
+            // C: rapid toggling never rebuilds anything.
+            int profileS2=profileGrid.CoarseScheduledCountForTests;
+            for(int i=0;i<10;i++){profileGrid.SetCaveProfileOverride(new CaveLodProfile(2,0,0,2,3f,12));await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);profileGrid.SetCaveProfileOverride(null);await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);}
+            profileGrid.SetCaveProfileOverride(new CaveLodProfile(2,0,0,2,3f,12));await ProfileSettle();
+            if(profileGrid.CoarseScheduledCountForTests!=profileS2||ProfileResident()!=profileR2)throw new InvalidOperationException($"cave profile toggling rescheduled {profileGrid.CoarseScheduledCountForTests-profileS2} sectors");
+            // D: growing past the margin and shrinking back drops only what lies beyond the retain ring; margin 0 drops the rest.
+            profileGrid.SetCaveProfileOverride(new CaveLodProfile(3,0,0,2,3f,12));await ProfileSettle();
+            if(ProfileDesired()<=profileD2)throw new InvalidOperationException("cave profile radius 3 did not grow the ring");
+            profileGrid.SetCaveProfileOverride(null);await ProfileSettle();
+            if(ProfileResident()!=profileR2)throw new InvalidOperationException($"cave profile retained {ProfileResident()} sectors after radius 3 -> base, expected {profileR2}");
+            profileGrid.CoarseRetainMarginSectors=0;await ProfileSettle();
+            if(ProfileResident()!=ProfileDesired()||ProfileDesired()!=profileD1)throw new InvalidOperationException($"cave profile margin 0 left {ProfileResident()} resident for {ProfileDesired()} desired");
+            profileGrid.CoarseRetainMarginSectors=1;await ProfileSettle();
+            // E: the activation latch releases only after the hysteresis and does not flap on jitter.
+            int profileSurface=profileSource.TerrainSampler!.GetSurfaceHeight(profileAround,profileAcross);
+            async Task ProfileFocus(int depth){profileGrid.SetCanonicalFocus(new RingCanonicalPosition(profileAround,profileSurface-depth,profileAcross));await WaitForQuiescence(profileGrid);}
+            await ProfileFocus(300);int profileT0=profileGrid.CoarseUndergroundFocusTransitionCountForTests;
+            if(!profileGrid.CaptureCaveLodProfileStatus().CoarseActive)throw new InvalidOperationException("cave profile latch not active when deep");
+            await ProfileFocus(200);
+            if(!profileGrid.CaptureCaveLodProfileStatus().CoarseActive||profileGrid.CoarseUndergroundFocusTransitionCountForTests!=profileT0)throw new InvalidOperationException("cave profile latch released inside the hysteresis band");
+            await ProfileFocus(180);
+            if(profileGrid.CaptureCaveLodProfileStatus().CoarseActive||profileGrid.CoarseUndergroundFocusTransitionCountForTests!=profileT0+1||ProfileDesired()!=0)throw new InvalidOperationException("cave profile latch did not release past the hysteresis");
+            await ProfileFocus(240);
+            if(profileGrid.CaptureCaveLodProfileStatus().CoarseActive||profileGrid.CoarseUndergroundFocusTransitionCountForTests!=profileT0+1)throw new InvalidOperationException("cave profile latch re-entered below the activation depth");
+            await ProfileFocus(272);
+            if(!profileGrid.CaptureCaveLodProfileStatus().CoarseActive||profileGrid.CoarseUndergroundFocusTransitionCountForTests!=profileT0+2)throw new InvalidOperationException("cave profile latch did not re-enter at the activation depth");
+            int profileTransitions=profileGrid.CoarseUndergroundFocusTransitionCountForTests,profileClears=profileGrid.CaveLodPresentationClearCountForTests,profileCycleScheduled=0;
+            for(int cycle=0;cycle<10;cycle++)
+            {
+                int before=profileGrid.CoarseScheduledCountForTests;
+                await ProfileFocus(240);await ProfileFocus(272);
+                if(cycle>0)profileCycleScheduled+=profileGrid.CoarseScheduledCountForTests-before;
+            }
+            if(profileGrid.CoarseUndergroundFocusTransitionCountForTests!=profileTransitions||profileGrid.CaveLodPresentationClearCountForTests!=profileClears||profileCycleScheduled!=0)throw new InvalidOperationException($"cave profile jitter: transitions={profileGrid.CoarseUndergroundFocusTransitionCountForTests-profileTransitions}, clears={profileGrid.CaveLodPresentationClearCountForTests-profileClears}, scheduled={profileCycleScheduled}");
+            GD.Print($"SMOOTH_TERRAIN_CAVE_LOD_PROFILE_SMOKE_PASS: base={profileD1}, grown={profileD2}, retained={profileR2}, transitions={profileTransitions}, clears={profileClears}");
+            Task profileShutdown=profileGrid.AwaitShutdownForTestsAsync();profileGrid.QueueFree();for(int i=0;i<720&&!profileShutdown.IsCompleted;i++)await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);await profileShutdown;profileSource.QueueFree();await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame);
             // The live cave chain is a complete 1/2/4/8/16/32/64 m hierarchy.
             // Exercise all four bridge lifecycles together at the protected
             // roof, where every exposed horizontal envelope face intersects a

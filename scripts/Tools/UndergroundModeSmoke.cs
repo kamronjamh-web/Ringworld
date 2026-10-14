@@ -30,6 +30,8 @@ public partial class UndergroundModeSmoke : RefCounted
         {
             StateMachineChecks(failures);
             ProbeChecks(failures);
+            CaveProfilePolicyChecks(failures);
+            FogCouplingChecks(failures);
         }
         catch (Exception error) { failures.Add(error.ToString()); }
         result["pass"] = failures.Count == 0;
@@ -148,6 +150,141 @@ public partial class UndergroundModeSmoke : RefCounted
 
     private static float Cavity(double a, double v, double c) =>
         Math.Abs(a - 1) < 20 && Math.Abs(c - 1) < 20 && Math.Abs(v + 100) < 10 ? 1f : -1f;
+
+    /// <summary>Stand-in for the terrain backend: counts how often the controller would change the override.</summary>
+    private sealed class FakeCaveTarget
+    {
+        public CaveLodProfile? Applied;
+        public int SetCalls;
+        public void Drive(CaveLodProfilePolicy policy, double delta, UndergroundMode mode, bool disabled, in CaveLodProfile profile, float delay)
+        {
+            CaveLodProfile? wanted = policy.Step(delta, mode, disabled, profile, delay);
+            if (wanted != Applied) { Applied = wanted; SetCalls++; }
+        }
+    }
+
+    private static void CaveProfilePolicyChecks(List<string> fail)
+    {
+        CaveLodProfile profile = CaveLodProfile.UndergroundDefault;
+        if (profile != new CaveLodProfile(2, 2, 1, 2, 3f, 12)) fail.Add("underground default profile changed");
+        // Entering applies on the first frame.
+        var policy = new CaveLodProfilePolicy();
+        var target = new FakeCaveTarget();
+        target.Drive(policy, Frame, UndergroundMode.Surface, false, profile, 10f);
+        if (target.SetCalls != 0 || target.Applied != null || policy.Active) fail.Add("surface before entering applied the cave profile");
+        target.Drive(policy, Frame, UndergroundMode.Entering, false, profile, 10f);
+        if (target.SetCalls != 1 || target.Applied != profile) fail.Add($"entering did not apply the profile on its first frame (sets={target.SetCalls})");
+        for (int i = 0; i < 120; i++) target.Drive(policy, Frame, UndergroundMode.Underground, false, profile, 10f);
+        if (target.SetCalls != 1) fail.Add($"steady underground reapplied the profile (sets={target.SetCalls})");
+        // Surface keeps the profile for the whole delay, then clears once.
+        int surfaceFrames = 0;
+        while (target.Applied != null && surfaceFrames < 2000) { target.Drive(policy, Frame, UndergroundMode.Surface, false, profile, 10f); surfaceFrames++; }
+        double cleared = surfaceFrames * Frame;
+        if (cleared < 10.0 - 1.5 * Frame || cleared > 10.0 + 1.5 * Frame) fail.Add($"profile cleared after {cleared:0.000}s instead of 10 s");
+        if (target.SetCalls != 2 || policy.Active) fail.Add($"shrink delay expiry calls={target.SetCalls} active={policy.Active}");
+        for (int i = 0; i < 60; i++) target.Drive(policy, Frame, UndergroundMode.Surface, false, profile, 10f);
+        if (target.SetCalls != 2) fail.Add("surface after expiry reapplied the profile");
+        // Re-entry inside the delay resets the timer and does not touch the target.
+        policy = new CaveLodProfilePolicy();
+        target = new FakeCaveTarget();
+        target.Drive(policy, Frame, UndergroundMode.Underground, false, profile, 10f);
+        for (int i = 0; i < 60 * 5; i++) target.Drive(policy, Frame, UndergroundMode.Surface, false, profile, 10f);
+        target.Drive(policy, Frame, UndergroundMode.Entering, false, profile, 10f);
+        if (target.SetCalls != 1 || policy.SurfaceSeconds != 0 || target.Applied != profile) fail.Add($"re-entry in delay calls={target.SetCalls} surfaceSeconds={policy.SurfaceSeconds}");
+        for (int i = 0; i < 60 * 9; i++) target.Drive(policy, Frame, UndergroundMode.Surface, false, profile, 10f);
+        if (target.Applied == null || target.SetCalls != 1) fail.Add("timer was not reset by re-entry");
+        // Master toggle off reverts immediately and stays reverted.
+        target.Drive(policy, Frame, UndergroundMode.Underground, true, profile, 10f);
+        if (target.Applied != null || target.SetCalls != 2 || policy.Active) fail.Add("disabling did not revert the profile immediately");
+        target.Drive(policy, Frame, UndergroundMode.Underground, true, profile, 10f);
+        if (target.SetCalls != 2) fail.Add("disabled controller kept setting the profile");
+        // Editing the profile while active reapplies exactly once.
+        policy = new CaveLodProfilePolicy();
+        target = new FakeCaveTarget();
+        for (int i = 0; i < 10; i++) target.Drive(policy, Frame, UndergroundMode.Underground, false, profile, 10f);
+        CaveLodProfile edited = profile with { CoarseRadiusAround = 3 };
+        for (int i = 0; i < 10; i++) target.Drive(policy, Frame, UndergroundMode.Underground, false, edited, 10f);
+        if (target.SetCalls != 2 || target.Applied != edited) fail.Add($"profile edit calls={target.SetCalls}");
+        // A zero delay clears on the first surface frame.
+        policy = new CaveLodProfilePolicy();
+        target = new FakeCaveTarget();
+        target.Drive(policy, Frame, UndergroundMode.Underground, false, profile, 0f);
+        target.Drive(policy, Frame, UndergroundMode.Surface, false, profile, 0f);
+        if (target.Applied != null) fail.Add("zero shrink delay kept the profile");
+    }
+
+    private static void FogCouplingChecks(List<string> fail)
+    {
+        // Density gives 2% transmittance at the visible distance, and the end fraction clamps to 0.5..1.
+        float visible = UndergroundFogCoupling.VisibleDistance(1024f, .9f);
+        float transmittance = MathF.Exp(-UndergroundFogCoupling.DensityForVisibleDistance(visible) * visible);
+        if (Math.Abs(transmittance - .02f) > 1e-4f) fail.Add($"fog transmittance at the visible distance was {transmittance:0.00000}");
+        if (UndergroundFogCoupling.VisibleDistance(1000f, .1f) != 500f || UndergroundFogCoupling.VisibleDistance(1000f, 5f) != 1000f) fail.Add("fog end fraction did not clamp to 0.5..1");
+        // Deep caves only: no coupling without the latch, however deep; spatial fade 0 at release depth and 1 at +32 m.
+        const float release = 192f;
+        if (UndergroundFogCoupling.TargetCoupling(false, 1000f, release) != 0f) fail.Add("coupling target nonzero without the coarse latch");
+        if (UndergroundFogCoupling.TargetCoupling(true, release, release) != 0f || UndergroundFogCoupling.TargetCoupling(true, release + 32f, release) != 1f) fail.Add("spatial fade is not 0 at the release depth and 1 at release + 32 m");
+        var shallow = new UndergroundFogCoupling();
+        for (int i = 0; i < 300; i++) shallow.Step(Frame, true, false, 100f, release, 0f, 1024f, .9f);
+        if (shallow.CouplingWeight != 0f) fail.Add($"shallow cave fog weight {shallow.CouplingWeight:0.000}");
+        // Latching on at depth fades in smoothly instead of popping.
+        var rise = new UndergroundFogCoupling();
+        for (int i = 0; i < 60; i++) rise.Step(Frame, true, false, 300f, release, 0f, 1024f, .9f);
+        float previous = rise.CouplingWeight, maxJump = 0f;
+        for (int i = 0; i < 600; i++)
+        {
+            rise.Step(Frame, true, true, 300f, release, 0f, 1024f, .9f);
+            maxJump = MathF.Max(maxJump, Math.Abs(rise.CouplingWeight - previous));
+            previous = rise.CouplingWeight;
+        }
+        if (maxJump > .05f) fail.Add($"fog weight jumped {maxJump:0.000} in one frame after latching");
+        if (rise.CouplingWeight < .999f) fail.Add($"fog weight settled at {rise.CouplingWeight:0.000} instead of 1");
+        // Ascending at 10 m/s: the spatial fade finishes before the release depth.
+        var ascent = new UndergroundFogCoupling();
+        for (int i = 0; i < 300; i++) ascent.Step(Frame, true, true, 300f, release, 0f, 1024f, .9f);
+        float depth = 300f;
+        bool latched = true;
+        while (depth > release - 20f)
+        {
+            depth -= 10f * (float)Frame;
+            latched = depth > release;
+            ascent.Step(Frame, true, latched, depth, release, 0f, 1024f, .9f);
+            if (depth <= release && ascent.CouplingWeight > .05f) { fail.Add($"fog weight {ascent.CouplingWeight:0.000} at the release depth while ascending"); break; }
+        }
+        // Filled reach is sticky against ready drops at the same radius, grows with the radius, takes the minimum on shrink.
+        if (UndergroundFogCoupling.NextCoarseFilledReach(0f, true, 10, 10, 4096f) != 4096f) fail.Add("filled reach not granted once every desired sector is ready");
+        if (UndergroundFogCoupling.NextCoarseFilledReach(4096f, true, 10, 3, 4096f) != 4096f) fail.Add("filled reach dropped on a transient ready drop");
+        if (UndergroundFogCoupling.NextCoarseFilledReach(4096f, true, 10, 3, 6144f) != 4096f) fail.Add("filled reach grew before the larger ring filled");
+        if (UndergroundFogCoupling.NextCoarseFilledReach(6144f, true, 10, 3, 4096f) != 4096f) fail.Add("filled reach did not take the minimum on shrink");
+        if (UndergroundFogCoupling.NextCoarseFilledReach(4096f, false, 10, 10, 4096f) != 0f || UndergroundFogCoupling.NextCoarseFilledReach(4096f, true, 0, 0, 4096f) != 0f) fail.Add("filled reach not zero when inactive or nothing desired");
+        // Unfilled floor, then a monotonic, slow reach filter that shrinks faster than it grows.
+        var reach = new UndergroundFogCoupling();
+        reach.Step(Frame, true, true, 400f, release, 0f, 1024f, .9f);
+        if (Math.Abs(reach.ReachMeters - 1024f) > 1f) fail.Add($"unfilled reach was {reach.ReachMeters:0.0}");
+        for (int i = 0; i < 120; i++) reach.Step(Frame, true, true, 400f, release, 0f, 1024f, .9f);
+        float lastLog = MathF.Log(reach.ReachMeters), maxStep = 0f;
+        int growFrames = (int)(5 * UndergroundFogCoupling.ReachGrowSeconds / Frame);
+        for (int i = 0; i < growFrames; i++)
+        {
+            reach.Step(Frame, true, true, 400f, release, 4096f, 1024f, .9f);
+            float log = MathF.Log(reach.ReachMeters);
+            if (log < lastLog - 1e-6f) { fail.Add("reach shrank while growing"); break; }
+            maxStep = MathF.Max(maxStep, log - lastLog);
+            lastLog = log;
+        }
+        if (maxStep > .06f) fail.Add($"reach changed {maxStep:0.0000} ln per frame");
+        if (Math.Abs(reach.ReachMeters / 4096f - 1f) > .01f) fail.Add($"reach was {reach.ReachMeters:0.0} after 5 tau");
+        int shrinkFrames = 0;
+        while (reach.ReachMeters > 1024f * 1.0067f && shrinkFrames < 2000) { reach.Step(Frame, true, true, 400f, release, 0f, 1024f, .9f); shrinkFrames++; }
+        if (shrinkFrames >= growFrames) fail.Add($"reach shrink took {shrinkFrames} frames, not faster than growth ({growFrames})");
+        // Disabled gives no fog at all; NaN inputs stay finite.
+        reach.Step(Frame, false, true, 400f, release, 4096f, 1024f, .9f);
+        if (reach.Density != 0f || reach.CouplingWeight != 0f) fail.Add("disabled fog coupling still produced density or weight");
+        var junk = new UndergroundFogCoupling();
+        for (int i = 0; i < 5; i++) junk.Step(double.NaN, true, true, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN);
+        junk.Step(Frame, true, true, 400f, release, float.PositiveInfinity, float.NaN, float.NaN);
+        if (!float.IsFinite(junk.Density) || !float.IsFinite(junk.CouplingWeight) || !float.IsFinite(junk.ReachMeters) || !float.IsFinite(junk.VisibleDistanceMeters)) fail.Add("fog coupling produced a non-finite value from NaN inputs");
+    }
 
     private static void ProbeChecks(List<string> fail)
     {
