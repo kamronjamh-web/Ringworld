@@ -144,7 +144,7 @@ public partial class RingStandingGrassLayer
         result["settled"] = IsGrassStreamingDiagnosticsSettled;
         result["settings"] = new Godot.Collections.Dictionary
         {
-            ["enabled"] = Enabled, ["density"] = BladesPerSquareMeter, ["visibility_radius"] = VisibilityRadiusMeters, ["spatial_tile_meters"] = SpatialTileMeters, ["effective_tile_meters"] = TileSize,
+            ["enabled"] = Enabled, ["density"] = BladesPerSquareMeter, ["visibility_radius"] = VisibilityRadiusMeters, ["streaming_coverage_radius"] = GrassStreamingCoverageRadiusMeters, ["presentation_radius"] = GrassStreamingPresentationRadiusMeters, ["clamp_streaming_to_draw_distance"] = ClampGrassStreamingToDrawDistance, ["spatial_tile_meters"] = SpatialTileMeters, ["effective_tile_meters"] = TileSize,
             ["near_distance"] = LodNearDistanceMeters, ["mid_distance"] = LodMidDistanceMeters, ["far_distance"] = LodFarDistanceMeters,
             ["hierarchical_coverage"] = EnableHierarchicalCoverage,
             ["mid_source_density"] = LodMidSourceDensity, ["far_source_density"] = LodFarSourceDensity,

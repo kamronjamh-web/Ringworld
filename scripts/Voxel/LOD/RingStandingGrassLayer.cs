@@ -481,9 +481,11 @@ public partial class RingStandingGrassLayer : Node3D
         _requests.Clear();
         _requested.Clear();
         long n = RingGrassCoordinates.AroundTileCount(s.AroundRingVoxelLength, TileSize);
-        float coverageRadius = EnableDistanceLod
-            ? Mathf.Max(VisibilityRadiusMeters, LodFarDistanceMeters + LodTransitionWidthMeters * .5f)
-            : VisibilityRadiusMeters;
+        float coverageRadius = GrassStreamingCoverageRadius();
+        GrassStreamingCoverageRadiusMeters = coverageRadius;
+        GrassStreamingPresentationRadiusMeters = GrassPresentationRadius();
+        _grassTierClampRadius = ClampGrassStreamingToDrawDistance && EnableDistanceLod
+            ? GrassStreamingPresentationRadiusMeters : float.PositiveInfinity;
         // The halo lets a modest movement reuse the previous sorted plan with
         // no coverage hole at its outer edge.  We only reuse when every halo
         // tile fit the resident budget (see CanReusePlan).
@@ -506,9 +508,15 @@ public partial class RingStandingGrassLayer : Node3D
             var entry = _ordered[i];
             _wanted.Add(entry.Item1);
             double meters = Math.Sqrt(entry.Item2);
-            (float fraction, byte tier) = CoverageForDistance(meters);
+            (float fraction, byte tier) = CoverageForDistance(GrassTierDistance(meters));
             _wantedCoverage[entry.Item1] = (fraction, tier);
         }
+        // After moving d, every tile within R of the new focus was within R + d of the old one; if that is
+        // still inside the truncation edge E every such tile is already in the wanted prefix.
+        int cap = Math.Max(1, MaximumResidentTiles);
+        _cachedPlanSafeMovement = _ordered.Count > cap
+            ? Math.Sqrt(_ordered[cap].Item2) - (ClampGrassStreamingToDrawDistance ? GrassStreamingPresentationRadiusMeters : coverageRadius) - .001
+            : _cachedPlanReuseMargin;
         PruneUploads();
     }
     private void Queue()
@@ -696,17 +704,18 @@ public partial class RingStandingGrassLayer : Node3D
             long installStart = DiagnosticTimestamp();
             // A late intermediate-LOD upload must not reallocate a MultiMesh
             // still referenced by compute. Keep the node, replace its resource.
+            bool nearReplaced = false, intermediateReplaced = false;
             if (installNear && t.GpuNearBatch >= 0)
             {
                 _gpuCompute?.RemoveBatch(t.GpuNearBatch);
-                ReplaceCpuMultiMesh(t.Renderer, NearMeshFor(t.Data), t.Data.LocalAabb, t.Data.Buffer);
+                nearReplaced = ReplaceCpuMultiMesh(t.Renderer, NearMeshFor(t.Data), t.Data.LocalAabb, t.Data.Buffer);
                 t.GpuNearBatch = -1;
                 SetGpuCulled(t.Renderer, false, t.Presentation.Near);
             }
             if (installIntermediate && t.GpuIntermediateBatch >= 0)
             {
                 _gpuCompute?.RemoveBatch(t.GpuIntermediateBatch);
-                ReplaceCpuMultiMesh(t.IntermediateRenderer, IntermediateMeshFor(t.Data), LodAabb(t.Data.LocalAabb), t.Data.Buffer);
+                intermediateReplaced = ReplaceCpuMultiMesh(t.IntermediateRenderer, IntermediateMeshFor(t.Data), LodAabb(t.Data.LocalAabb), t.Data.Buffer);
                 t.GpuIntermediateBatch = -1;
                 SetGpuCulled(t.IntermediateRenderer, false, t.Presentation.Intermediate);
             }
@@ -733,22 +742,29 @@ public partial class RingStandingGrassLayer : Node3D
             }
             if (installNear && r != null)
             {
-                r.Multimesh!.InstanceCount = t.Data.InstanceCount;
-                r.Multimesh.VisibleInstanceCount = t.Data.InstanceCount;
-                r.Multimesh.Buffer = t.Data.Buffer;
-                r.Multimesh.CustomAabb = t.Data.LocalAabb;
-                r.Multimesh.Mesh = NearMeshFor(t.Data);
+                // A just-replaced MultiMesh already carries these exact values; rewriting would upload twice.
+                if (!nearReplaced)
+                {
+                    r.Multimesh!.InstanceCount = t.Data.InstanceCount;
+                    r.Multimesh.VisibleInstanceCount = t.Data.InstanceCount;
+                    r.Multimesh.Buffer = t.Data.Buffer;
+                    r.Multimesh.CustomAabb = t.Data.LocalAabb;
+                    r.Multimesh.Mesh = NearMeshFor(t.Data);
+                }
                 ConfigureLodPass(r, t.Data.InstanceCount, false, k);
             }
             if (installIntermediate && _intermediateMesh != null && _intermediateMaterial != null)
             {
                 Mesh lodMesh = IntermediateMeshFor(t.Data);
                 MultiMeshInstance3D ir = t.IntermediateRenderer ??= CreateRenderer(k, lodMesh, _intermediateMaterial, "Intermediate");
-                ir.Multimesh!.Mesh = lodMesh;
-                ir.Multimesh!.InstanceCount = t.Data.InstanceCount;
-                ir.Multimesh.VisibleInstanceCount = t.Data.InstanceCount;
-                ir.Multimesh.Buffer = t.Data.Buffer;
-                ir.Multimesh.CustomAabb = LodAabb(t.Data.LocalAabb);
+                if (!intermediateReplaced)
+                {
+                    ir.Multimesh!.Mesh = lodMesh;
+                    ir.Multimesh!.InstanceCount = t.Data.InstanceCount;
+                    ir.Multimesh.VisibleInstanceCount = t.Data.InstanceCount;
+                    ir.Multimesh.Buffer = t.Data.Buffer;
+                    ir.Multimesh.CustomAabb = LodAabb(t.Data.LocalAabb);
+                }
                 ConfigureLodPass(ir, t.Data.InstanceCount, true, k);
             }
             if (r is GrassPresentationRenderer nearPresentation)
@@ -987,6 +1003,43 @@ public partial class RingStandingGrassLayer : Node3D
         _hasCachedPlan = false;
         if (clearSurfaceCache) _surfaceCache.Clear();
     }
+    [Export] public bool ClampGrassStreamingToDrawDistance { get; set; } = true;
+    [Export(PropertyHint.Range, "0,64,0.5")] public float GrassStreamingMarginMeters { get; set; } = 4f;
+    public float GrassStreamingCoverageRadiusMeters { get; private set; }
+    public float GrassStreamingPresentationRadiusMeters { get; private set; }
+    // 8 m = wind/lean allowance subtracted in ConservativePresentationDistance/ConservativeAabbCameraDistances;
+    // +1 m = ExpandPresentationBounds bend envelope (<= ~0.5 m at the 2 m height cap).
+    private const float GrassPresentationSlackMeters = 9f;
+    private float _grassTierClampRadius = float.PositiveInfinity;
+    private double _cachedPlanSafeMovement;
+    internal double CachedPlanSafeMovementForTests => _cachedPlanSafeMovement;
+    internal int PlanningTilesInRadiusForTests => _ordered.Count;
+    internal int ResidentSourceTierForTests(long around, long across)
+        => _tiles.TryGetValue(new RingGrassTileKey(around, across), out Resident? resident) ? resident.Data.SourceTier : -1;
+    private float LegacyGrassCoverageRadius() => EnableDistanceLod
+        ? Mathf.Max(VisibilityRadiusMeters, LodFarDistanceMeters + LodTransitionWidthMeters * .5f) : VisibilityRadiusMeters;
+    private float GrassPresentationRadius() => EffectiveGrassDrawDistance()
+        + (EnableDistanceLod ? LodTransitionWidthMeters * .5f : 0f) + GrassPresentationSlackMeters + Mathf.Max(0, GrassFrustumPaddingMeters);
+    // Mirrors the UpdateAdaptiveGroups admission gate: a group is only built when its nearest point is inside
+    // the draw band, but its farthest leaf can lie a full group diagonal beyond that.
+    private float GrassGroupStreamingExtent()
+    {
+        if (!EnableAdaptiveGrassGrouping || !EnableDistanceLod) return 0;
+        float draw = EffectiveGrassDrawDistance(), halfT = LodTransitionWidthMeters * .5f;
+        float nearLod = Mathf.Min(LodNearDistanceMeters, draw - .01f), h = Mathf.Max(4, GrassGroupingHysteresisMeters);
+        float T(float start) => Mathf.Max(start, nearLod + halfT + h) + h;
+        int level = Math.Clamp(GrassGroupingMaximumLevel, 1, 2) >= 2 && T(GrassGroupingFarStartMeters) <= draw + halfT ? 2
+            : T(GrassGroupingStartMeters) <= draw + halfT ? 1 : 0;
+        return level == 0 ? 0 : TileSize * (1 << level) * Mathf.Sqrt2;
+    }
+    private float GrassStreamingCoverageRadius()
+    {
+        float legacy = LegacyGrassCoverageRadius();
+        if (!ClampGrassStreamingToDrawDistance) return legacy;
+        float margin = float.IsFinite(GrassStreamingMarginMeters) ? Mathf.Clamp(GrassStreamingMarginMeters, 0, 64) : 4;
+        return Mathf.Min(legacy, GrassPresentationRadius() + margin + GrassGroupStreamingExtent());
+    }
+    private double GrassTierDistance(double meters) => Math.Min(meters, _grassTierClampRadius);
     private (float Fraction, byte Tier) CoverageForDistance(double distanceMeters)
     {
         // Without the complementary far presentation pass, thinning source
@@ -1008,7 +1061,10 @@ public partial class RingStandingGrassLayer : Node3D
         h = unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(LodFarDistanceMeters));
         h = unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(LodMidSourceDensity));
         h = unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(LodFarSourceDensity));
-        return unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(LodTransitionWidthMeters));
+        h = unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(LodTransitionWidthMeters));
+        h = unchecked(h * 1099511628211UL ^ (ClampGrassStreamingToDrawDistance ? 1UL : 0UL));
+        h = unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(GrassStreamingCoverageRadius()));
+        return unchecked(h * 1099511628211UL ^ (uint)BitConverter.SingleToInt32Bits(GrassPresentationRadius()));
     }
     private bool CanReusePlan(RingCanonicalPosition focus, RingTerrainSampler sampler)
     {
@@ -1023,16 +1079,17 @@ public partial class RingStandingGrassLayer : Node3D
         // focus, however, membership and ordering are identical, so retain
         // the cached plan even when that cap is saturated.
         if (movement <= 1e-6) return true;
-        if (_ordered.Count >= Math.Max(1, MaximumResidentTiles)) return false;
-        if (movement > _cachedPlanReuseMargin) return false;
+        if (movement > _cachedPlanSafeMovement) return false;
         // A tier boundary requires a replacement, so it deliberately exits
         // the fast path even though the tile set itself remains safe.
-        foreach (var entry in _ordered)
+        int reuseCount = Math.Min(_ordered.Count, Math.Max(1, MaximumResidentTiles));
+        for (int i = 0; i < reuseCount; i++)
         {
+            var entry = _ordered[i];
             if (!_wantedCoverage.TryGetValue(entry.Item1, out var previous)) return false;
             RingGrassTileBounds bounds = RingGrassCoordinates.Bounds(entry.Item1.Around, entry.Item1.Across,
                 TileSize, sampler.AroundRingVoxelLength, sampler.RingAcrossWidthMeters);
-            var current = CoverageForDistance(Math.Sqrt(RingGrassCoordinates.TileDistanceSquared(bounds, focus, sampler.AroundRingVoxelLength)));
+            var current = CoverageForDistance(GrassTierDistance(Math.Sqrt(RingGrassCoordinates.TileDistanceSquared(bounds, focus, sampler.AroundRingVoxelLength))));
             if (current.Tier != previous.Tier || !Mathf.IsEqualApprox(current.Fraction, previous.Fraction)) return false;
         }
         return true;
@@ -1440,9 +1497,9 @@ public partial class RingStandingGrassLayer : Node3D
         GpuCullingOutputBytes = _gpuCompute.OutputBytes;
         GpuCullingSharedSourceCount = _gpuCompute.SharedSourceCount;
     }
-    private static void ReplaceCpuMultiMesh(MultiMeshInstance3D? renderer, Mesh? mesh, Aabb aabb, float[] buffer)
+    private static bool ReplaceCpuMultiMesh(MultiMeshInstance3D? renderer, Mesh? mesh, Aabb aabb, float[] buffer)
     {
-        if (renderer == null || mesh == null) return;
+        if (renderer == null || mesh == null) return false;
         var multi = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseColors = true, UseCustomData = true, Mesh = mesh };
         multi.InstanceCount = buffer.Length / RingGrassTileData.FloatsPerInstance;
         multi.VisibleInstanceCount = multi.InstanceCount;
@@ -1451,6 +1508,7 @@ public partial class RingStandingGrassLayer : Node3D
         renderer.Multimesh = multi;
         if (renderer is GrassPresentationRenderer presentation)
             presentation.RecordInstalledMultiMesh(multi, multi.InstanceCount);
+        return true;
     }
     private static void SetRendererVisible(MultiMeshInstance3D? renderer, bool visible)
     {

@@ -49,8 +49,7 @@ public partial class RingBiomeDecorationLayer
     private bool GpuTreePreparationMatches(RingLodGeometrySnapshot geometry, GpuSourceSettings settings)
         => _gpuTreePreparationPlan is { } plan && plan.Geometry == geometry && plan.Edit == _vegetationEditVersion
            && plan.ActualLayerTransform == GlobalTransform && plan.Settings == settings
-           && plan.ProtectionRevision == _gpuTreeProtectionRevision
-           && plan.ProtectedSnapshot.SetEquals(_importedForestBodies.Keys);
+           && plan.ProtectionRevision == _gpuTreeProtectionRevision;
 
     private void ReconcileGpuTreeSources(RingLodGeometrySnapshot geometry)
     {
@@ -60,6 +59,7 @@ public partial class RingBiomeDecorationLayer
 
     private void StartGpuTreeSourcePreparation(RingLodGeometrySnapshot geometry)
     {
+        FlushDeferredGpuTreeProtectedRefresh();
         using var scope = RingPerformanceTelemetry.MeasureCpu("Trees source snapshot");
         double circumference = _grid!.GetCanonicalRingCircumferenceMeters64();
         VegetationTile[] tiles = _vegetationTiles.Values.ToArray();
@@ -99,7 +99,13 @@ public partial class RingBiomeDecorationLayer
             && (_gpuTreeFrameDeadline == 0 || Time.GetTicksUsec() < _gpuTreeFrameDeadline))) && _gpuTreePreparation != null)
         {
             stepped = true;
-            if (!_gpuTreePreparation.MoveNext()) { _gpuTreePreparation.Dispose(); _gpuTreePreparation = null; _gpuTreePreparationPlan = null; break; }
+            if (!_gpuTreePreparation.MoveNext())
+            {
+                _gpuTreePreparation.Dispose(); _gpuTreePreparation = null; _gpuTreePreparationPlan = null;
+                // Reconcile colliders that changed while protection was frozen.
+                FlushDeferredGpuTreeProtectedRefresh();
+                break;
+            }
         }
         LastTreePreparationMilliseconds = watch.Elapsed.TotalMilliseconds;
     }
@@ -228,8 +234,7 @@ public partial class RingBiomeDecorationLayer
     private bool GpuTreePreparationStillValid(GpuPreparationPlan plan)
         => plan.Edit == _vegetationEditVersion && plan.Geometry == (_grid?.CaptureLodGeometrySnapshot() ?? plan.Geometry)
            && plan.ActualLayerTransform == GlobalTransform && plan.Settings == CaptureGpuTreeSourceSettings()
-           && plan.ProtectionRevision == _gpuTreeProtectionRevision
-           && plan.ProtectedSnapshot.SetEquals(_importedForestBodies.Keys);
+           && plan.ProtectionRevision == _gpuTreeProtectionRevision;
 
     private IEnumerable<bool> BuildGpuTreeGroupSliced(GpuPreparationPlan plan, GpuGroupKey key, CachedTree[] roots)
     {

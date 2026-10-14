@@ -594,12 +594,56 @@ public partial class RingScaledFarViewport : Node
 			if (written++ == 0) { first = encoded; firstId = (float)(lightning.EventId & 0x00ffffff); firstWeight = weight; }
 			else { second = encoded; secondId = (float)(lightning.EventId & 0x00ffffff); secondWeight = weight; }
 		}
-		material.SetShaderParameter("far_lightning_event_a", first);
-		material.SetShaderParameter("far_lightning_event_b", second);
-		material.SetShaderParameter("far_lightning_event_a_id", firstId);
-		material.SetShaderParameter("far_lightning_event_b_id", secondId);
-		material.SetShaderParameter("far_lightning_event_weights", new Vector2(firstWeight, secondWeight));
+		const RingMaterialWriteCounters.Site site = RingMaterialWriteCounters.Site.FarLightning;
+		_farLightningEventA.Set(material, FarLightningEventAName, first, site);
+		_farLightningEventB.Set(material, FarLightningEventBName, second, site);
+		_farLightningEventAId.Set(material, FarLightningEventAIdName, firstId, site);
+		_farLightningEventBId.Set(material, FarLightningEventBIdName, secondId, site);
+		_farLightningEventWeights.Set(material, FarLightningEventWeightsName, new Vector2(firstWeight, secondWeight), site);
 	}
+
+	/// <summary>
+	/// Last value written per material for one uniform. Godot queues a material update for
+	/// every set_shader_parameter call, so unchanged values are skipped. Entries are keyed by
+	/// material object, so recreated materials always receive their first write.
+	/// </summary>
+	private sealed class LastUniformValue<T> where T : IEquatable<T>
+	{
+		private readonly System.Runtime.CompilerServices.ConditionalWeakTable<GodotObject, System.Runtime.CompilerServices.StrongBox<T>> _values = new();
+
+		public void Set(ShaderMaterial? material, StringName name, T value,
+			RingMaterialWriteCounters.Site site = RingMaterialWriteCounters.Site.FarMisc)
+		{
+			if (material is null) return;
+			if (_values.TryGetValue(material, out var stored))
+			{
+				if (EqualityComparer<T>.Default.Equals(stored.Value!, value)) return;
+				stored.Value = value;
+			}
+			else _values.Add(material, new System.Runtime.CompilerServices.StrongBox<T>(value));
+			material.SetShaderParameter(name, Variant.From(value));
+			RingMaterialWriteCounters.Record(site);
+		}
+	}
+
+	private static readonly StringName FarLightningEventAName = "far_lightning_event_a";
+	private static readonly StringName FarLightningEventBName = "far_lightning_event_b";
+	private static readonly StringName FarLightningEventAIdName = "far_lightning_event_a_id";
+	private static readonly StringName FarLightningEventBIdName = "far_lightning_event_b_id";
+	private static readonly StringName FarLightningEventWeightsName = "far_lightning_event_weights";
+	private static readonly StringName CloudMaskEnabledName = "cloud_mask_enabled";
+	private static readonly StringName ExactSunshineCloudsEnabledName = "exact_sunshine_clouds_enabled";
+	private static readonly StringName CanonicalOriginKmName = "canonical_origin_km";
+	private static readonly StringName ViewerHeightMetersName = "viewer_height_meters";
+	private static readonly StringName SurfaceUpName = "surface_up";
+	private static readonly StringName SunDirectionName = "sun_direction";
+	private readonly LastUniformValue<Vector4> _farLightningEventA = new(), _farLightningEventB = new();
+	private readonly LastUniformValue<float> _farLightningEventAId = new(), _farLightningEventBId = new();
+	private readonly LastUniformValue<Vector2> _farLightningEventWeights = new();
+	private readonly LastUniformValue<bool> _cloudMaskEnabledApplied = new(), _exactSunshineEnabledApplied = new();
+	private readonly LastUniformValue<Vector2> _canopyOriginApplied = new(), _volumeOriginApplied = new();
+	private readonly LastUniformValue<float> _canopyViewerHeightApplied = new();
+	private readonly LastUniformValue<Vector3> _canopySurfaceUpApplied = new(), _canopySunApplied = new(), _volumeSurfaceUpApplied = new(), _volumeSunApplied = new();
 
 	private float ResolveFarLightningVisualWeight(in RingLightningEvent lightning, ShaderMaterial material)
 	{
@@ -2143,8 +2187,8 @@ public partial class RingScaledFarViewport : Node
 			"sunshine_cloud_texture",
 			_cloudMaskViewports[0]!.GetTexture());
 		_backdropCloudCompositeMaterial.SetShaderParameter("temporal_blend", 1.0f);
-		_backdropCloudCompositeMaterial.SetShaderParameter("cloud_mask_enabled", false);
-		_backdropCloudCompositeMaterial.SetShaderParameter("exact_sunshine_clouds_enabled", false);
+		_cloudMaskEnabledApplied.Set(_backdropCloudCompositeMaterial, CloudMaskEnabledName, false);
+		_exactSunshineEnabledApplied.Set(_backdropCloudCompositeMaterial, ExactSunshineCloudsEnabledName, false);
 	}
 
 	private void CreateBackdrop()
@@ -2297,11 +2341,18 @@ public partial class RingScaledFarViewport : Node
 			if (!Mathf.IsEqualApprox(_farPlanetLight.LightSpecular, farPlanetSpecular)) _farPlanetLight.LightSpecular = farPlanetSpecular;
 		}
 		SyncSharedMaterialUniforms(scaledPosition, sunDirection);
-		RingAtmosphereRayFrame wholeRingAtmosphereFrame = ApplyAtmosphereRayFrame(
-			eyeCanonical, scaledPosition, sunDirection,
-			_terrainMaterial, _waterMaterial, _hullMaterial, _cavityShellMaterial, _cloudMaterial);
-		foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
-			wholeRingAtmosphereFrame.Apply(material);
+		RingAtmosphereRayFrame wholeRingAtmosphereFrame = BuildAtmosphereRayFrame(eyeCanonical, scaledPosition, sunDirection);
+		const RingMaterialWriteCounters.Site wholeRingSite = RingMaterialWriteCounters.Site.FarRayFrameWholeRing;
+		if (AtmosphereRayFrameAvailable)
+		{
+			_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _terrainMaterial, wholeRingSite);
+			_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _waterMaterial, wholeRingSite);
+			_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _hullMaterial, wholeRingSite);
+			_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _cavityShellMaterial, wholeRingSite);
+			_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _cloudMaterial, wholeRingSite);
+			foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
+				_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, material, wholeRingSite);
+		}
 		SyncRegionalCameraAndLighting(
 			canonical,
 			eyeCanonical,
@@ -2404,15 +2455,19 @@ public partial class RingScaledFarViewport : Node
 			if (!Mathf.IsEqualApprox(_regionalFarPlanetLight.LightSpecular, regionalPlanetSpecular)) _regionalFarPlanetLight.LightSpecular = regionalPlanetSpecular;
 		}
 		SyncRegionalMaterialUniforms(regionalPosition, sunDirection);
-		ApplyAtmosphereRayFrame(eyeCanonical, regionalPosition, sunDirection,
-			GetRegionalMaterials().ToArray());
+		RingAtmosphereRayFrame regionalFrame = BuildAtmosphereRayFrame(eyeCanonical, regionalPosition, sunDirection);
+		if (AtmosphereRayFrameAvailable)
+			foreach (ShaderMaterial material in GetRegionalMaterials())
+				_atmosphereRayFrameCache.Apply(regionalFrame, material, RingMaterialWriteCounters.Site.FarRayFrameRegional);
 	}
 
-	private RingAtmosphereRayFrame ApplyAtmosphereRayFrame(
+	private readonly RingAtmosphereRayFrame.AppliedCache _atmosphereRayFrameCache = new();
+	private bool AtmosphereRayFrameAvailable => _radiusMeters > 0.0 && RingWidthMeters > 0;
+
+	private RingAtmosphereRayFrame BuildAtmosphereRayFrame(
 		in RingCanonicalPosition canonical,
 		Vector3 rendererCameraPosition,
-		Vector3 toSun,
-		params ShaderMaterial?[] materials)
+		Vector3 toSun)
 	{
 		if (_radiusMeters <= 0.0 || RingWidthMeters <= 0) return RingAtmosphereRayFrame.Invalid;
 		double angle = canonical.AroundMeters / _radiusMeters;
@@ -2427,7 +2482,6 @@ public partial class RingScaledFarViewport : Node
 			(float)((double)RingWidthMeters - canonical.AcrossMeters),
 			Mathf.Max(0.000001f, CoordinateScale),
 			toSun);
-		foreach (ShaderMaterial? material in materials) frame.Apply(material);
 		return frame;
 	}
 
@@ -2508,6 +2562,7 @@ public partial class RingScaledFarViewport : Node
 
 	private void InvalidateRegionalMaterialUniformCache()
 	{
+		_atmosphereRayFrameCache.Invalidate();
 		_lastRegionalMaterialCameraPosition = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
 		_lastRegionalMaterialRingCenter = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
 		_lastRegionalMaterialSunDirection = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
@@ -2658,12 +2713,12 @@ public partial class RingScaledFarViewport : Node
 		_localCloudCanopy.GlobalTransform = new Transform3D(
 			new Basis(tangent, inward, across),
 			ScaledPoint(canonical.AroundMeters, canopyHeight, canonical.AcrossMeters));
-		_localCloudCanopyMaterial.SetShaderParameter("canonical_origin_km", new Vector2(
+		_canopyOriginApplied.Set(_localCloudCanopyMaterial, CanonicalOriginKmName, new Vector2(
 			(float)(wrappedAround * 0.001),
 			(float)(canonical.AcrossMeters * 0.001)));
-		_localCloudCanopyMaterial.SetShaderParameter("viewer_height_meters", (float)canonical.VerticalMeters);
-		_localCloudCanopyMaterial.SetShaderParameter("surface_up", inward);
-		_localCloudCanopyMaterial.SetShaderParameter("sun_direction", sunDirection);
+		_canopyViewerHeightApplied.Set(_localCloudCanopyMaterial, ViewerHeightMetersName, (float)canonical.VerticalMeters);
+		_canopySurfaceUpApplied.Set(_localCloudCanopyMaterial, SurfaceUpName, inward);
+		_canopySunApplied.Set(_localCloudCanopyMaterial, SunDirectionName, sunDirection);
 	}
 
 	private void SyncScaledCloudVolume(in RingCanonicalPosition canonical, Vector3 sunDirection)
@@ -2680,11 +2735,11 @@ public partial class RingScaledFarViewport : Node
 		_scaledCloudVolume.GlobalTransform = new Transform3D(
 			new Basis(tangent, inward, across),
 			ScaledPoint(canonical.AroundMeters, centerHeight, canonical.AcrossMeters));
-		_scaledCloudVolumeMaterial.SetShaderParameter("canonical_origin_km", new Vector2(
+		_volumeOriginApplied.Set(_scaledCloudVolumeMaterial, CanonicalOriginKmName, new Vector2(
 			(float)(wrappedAround * 0.001),
 			(float)(canonical.AcrossMeters * 0.001)));
-		_scaledCloudVolumeMaterial.SetShaderParameter("surface_up", inward);
-		_scaledCloudVolumeMaterial.SetShaderParameter("sun_direction", sunDirection);
+		_volumeSurfaceUpApplied.Set(_scaledCloudVolumeMaterial, SurfaceUpName, inward);
+		_volumeSunApplied.Set(_scaledCloudVolumeMaterial, SunDirectionName, sunDirection);
 	}
 
 	/// <summary>Stops the canvas backdrop from retaining a compositor-owned Texture2DRD.</summary>
@@ -2695,7 +2750,7 @@ public partial class RingScaledFarViewport : Node
 		_sunshineBackdropTexture = null;
 		if (_backdropCloudCompositeMaterial != null)
 		{
-			_backdropCloudCompositeMaterial.SetShaderParameter("exact_sunshine_clouds_enabled", false);
+			_exactSunshineEnabledApplied.Set(_backdropCloudCompositeMaterial, ExactSunshineCloudsEnabledName, false);
 			if (_cloudMaskViewports[0] != null)
 				_backdropCloudCompositeMaterial.SetShaderParameter(
 					"sunshine_cloud_texture", _cloudMaskViewports[0]!.GetTexture());
@@ -2716,11 +2771,11 @@ public partial class RingScaledFarViewport : Node
 			legacyVisible,
 			sunshineVisible);
 		CloudMaskActive = active;
-		_backdropCloudCompositeMaterial?.SetShaderParameter("cloud_mask_enabled", active);
+		_cloudMaskEnabledApplied.Set(_backdropCloudCompositeMaterial, CloudMaskEnabledName, active);
 		if (!active)
 		{
 			ExactSunshineBackdropActive = false;
-			_backdropCloudCompositeMaterial?.SetShaderParameter("exact_sunshine_clouds_enabled", false);
+			_exactSunshineEnabledApplied.Set(_backdropCloudCompositeMaterial, ExactSunshineCloudsEnabledName, false);
 			if (_sunshineBackdropTexture != null && _cloudMaskViewports[0] != null)
 			{
 				_backdropCloudCompositeMaterial?.SetShaderParameter(
@@ -2741,15 +2796,13 @@ public partial class RingScaledFarViewport : Node
 			sunshineBackdrop = null;
 		bool useExactSunshineBackdrop = sunshineBackdrop != null;
 		ExactSunshineBackdropActive = useExactSunshineBackdrop;
-		_backdropCloudCompositeMaterial!.SetShaderParameter(
-			"exact_sunshine_clouds_enabled",
-			useExactSunshineBackdrop);
+		_exactSunshineEnabledApplied.Set(_backdropCloudCompositeMaterial, ExactSunshineCloudsEnabledName, useExactSunshineBackdrop);
 		if (useExactSunshineBackdrop)
 		{
 			if (_sunshineBackdropTexture != sunshineBackdrop)
 			{
 				_sunshineBackdropTexture = sunshineBackdrop;
-				_backdropCloudCompositeMaterial.SetShaderParameter(
+				_backdropCloudCompositeMaterial!.SetShaderParameter(
 					"sunshine_cloud_texture",
 					sunshineBackdrop!);
 			}
@@ -2769,7 +2822,7 @@ public partial class RingScaledFarViewport : Node
 		if (_sunshineBackdropTexture != null)
 		{
 			_sunshineBackdropTexture = null;
-			_backdropCloudCompositeMaterial.SetShaderParameter(
+			_backdropCloudCompositeMaterial!.SetShaderParameter(
 				"sunshine_cloud_texture",
 				_cloudMaskViewports[0]!.GetTexture());
 		}

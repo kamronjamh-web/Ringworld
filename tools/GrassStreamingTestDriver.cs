@@ -91,6 +91,7 @@ public partial class GrassStreamingTestDriver : Node
             await VerifyDenseDensity(sampler, clean, circumference);
             await VerifyAppearanceProfileStreaming(sampler, circumference);
             await VerifySeamReload(sampler, clean, circumference);
+            await VerifyDrawDistanceStreamingClamp(sampler, circumference);
             await VerifyAuthoritativeSurfaceAndExclusions(sampler, circumference);
             await VerifyProductionBaselineWorkerLease(sampler, circumference);
             VerifyWaterAndSlopeEligibility();
@@ -467,6 +468,80 @@ public partial class GrassStreamingTestDriver : Node
         Require(checkedRoots > 0, "dense buffered-root validation had no roots");
     }
 
+    private async Task VerifyDrawDistanceStreamingClamp(RingTerrainSampler sampler, long circumference)
+    {
+        // Draw distance is resident-window limited (about 41 m) while the legacy coverage is 200 m; the streaming
+        // clamp must keep only what presentation can show.  Variant 0 is untruncated, variant 1 hits the tile cap
+        // (with a wider margin) while the cap edge still lies beyond the presentation radius.
+        for (int variant = 0; variant < 2; variant++)
+        {
+            RingCanonicalPosition focus = new(186_000, 0, 141_000);
+            RingLodGeometrySnapshot geometry = Geometry(circumference, Vector3.Zero, focus);
+            var clean = new RingLodSurfaceEditSnapshot(1, circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
+            var layer = new RingStandingGrassLayer
+            {
+                EnableGrassAppearance = true, EnableCoordinatedGrassHandoff = true, SpatialTileMeters = 16, BladesPerSquareMeter = 1,
+                MaximumResidentTiles = variant == 0 ? 200 : 100, MaximumInstancesPerTile = 1000, MaximumInstances = 50_000,
+                MaximumTileBuildsInFlight = 4, MaximumTileUploadsPerFrame = 8, EnableHierarchicalCoverage = true, EnableDistanceLod = true,
+                LodNearDistanceMeters = 20, LodMidDistanceMeters = 60, LodFarDistanceMeters = 100,
+                EnableAdaptiveGrassGrouping = false, VisibilityRadiusMeters = 200, GrassStreamingMarginMeters = variant == 0 ? 16 : 40, ClampGrassStreamingToDrawDistance = true
+            };
+            AddChild(layer); layer.InitializeForTests();
+            try
+            {
+                await Settle(layer, sampler, clean, focus, geometry);
+                float draw = layer.EffectiveGrassDrawDistance(), halfT = layer.LodTransitionWidthMeters * .5f;
+                float presentation = draw + halfT + 9f + Mathf.Max(0, layer.GrassFrustumPaddingMeters);
+                float coverage = Mathf.Min(Mathf.Max(200f, 100f + halfT), presentation + layer.GrassStreamingMarginMeters);
+                Require(draw < 99f && Mathf.IsEqualApprox(layer.GrassStreamingPresentationRadiusMeters, presentation)
+                    && Mathf.IsEqualApprox(layer.GrassStreamingCoverageRadiusMeters, coverage),
+                    $"streaming clamp coverage {layer.GrassStreamingCoverageRadiusMeters} presentation {layer.GrassStreamingPresentationRadiusMeters} did not match draw {draw}");
+                RingStandingGrassLayer.TileAudit[] tiles = layer.CaptureTileAuditsForTests();
+                Require(tiles.Length > 0 && layer.ResidentGrassInstanceCount > 0, "clamp fixture installed no grass");
+                int beyondPresentation = 0;
+                byte expectedTier = presentation <= 20f ? (byte)0 : presentation <= 60f ? (byte)1 : (byte)2;
+                foreach (RingStandingGrassLayer.TileAudit tile in tiles)
+                {
+                    RingGrassTileBounds bounds = RingGrassCoordinates.Bounds(tile.Around, tile.Across, 16, circumference, sampler.RingAcrossWidthMeters);
+                    double distance = Math.Sqrt(RingGrassCoordinates.TileDistanceSquared(bounds, focus, circumference));
+                    Require(distance <= coverage + 16 * .125 + 1e-3, $"resident tile {distance:F1} m beyond clamped coverage {coverage:F1} m");
+                    if (distance > presentation)
+                    {
+                        beyondPresentation++;
+                        Require(layer.ResidentSourceTierForTests(tile.Around, tile.Across) == expectedTier,
+                            $"tile at {distance:F1} m beyond presentation radius did not carry the clamped tier {expectedTier}");
+                    }
+                }
+                if (variant == 0)
+                {
+                    Require(beyondPresentation > 0 && layer.CachedPlanSafeMovementForTests > 0,
+                        "untruncated clamp fixture had no tiles beyond the presentation radius");
+                    layer.ClampGrassStreamingToDrawDistance = false;
+                    layer.StepForTests(sampler, clean, focus, geometry);
+                    Require(Mathf.IsEqualApprox(layer.GrassStreamingCoverageRadiusMeters, Mathf.Max(200f, 100f + halfT)),
+                        "disabling the streaming clamp did not restore legacy coverage");
+                    layer.ClampGrassStreamingToDrawDistance = true;
+                    await Settle(layer, sampler, clean, focus, geometry);
+                }
+                else
+                {
+                    Require(layer.PlanningTilesInRadiusForTests > layer.MaximumResidentTiles && layer.CachedPlanSafeMovementForTests > .1,
+                        $"truncated fixture safe movement {layer.CachedPlanSafeMovementForTests:F2} m too small to reuse the plan");
+                }
+                long scans = layer.RequestQueueScans;
+                RingCanonicalPosition moving = focus;
+                for (int step = 0; step < 10; step++)
+                {
+                    moving = moving with { AroundMeters = moving.AroundMeters + .1 };
+                    layer.StepForTests(sampler, clean, moving, geometry);
+                    await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                }
+                Require(layer.RequestQueueScans == scans, $"small movement replanned the grass request queue (variant {variant})");
+                GD.Print($"GRASS_STREAMING_CLAMP variant={variant} draw={draw:F1} presentation={presentation:F1} coverage={coverage:F1} tiles={tiles.Length} safe={layer.CachedPlanSafeMovementForTests:F2}");
+            }
+            finally { layer.QueueFree(); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame); }
+        }
+    }
     private async Task VerifyProductionBaselineWorkerLease(RingTerrainSampler sampler, long circumference)
     {
         RingCanonicalPosition focus = new(186_000, 0, 141_000);

@@ -40,7 +40,12 @@ public partial class RingTerrainMinimap : CanvasLayer
     [Export(PropertyHint.Range, "1.5,3.0,0.05")] public float CloseTerrainOverscan { get; set; } = 2.5f;
     [Export(PropertyHint.Range, "64,128,1")] public int CloseTerrainCells { get; set; } = 96;
     [Export(PropertyHint.Range, "0.1,2.0,0.05")] public float RebuildIntervalSeconds { get; set; } = 0.25f;
-    [Export(PropertyHint.Range, "5,60,1")] public float RenderFramesPerSecond { get; set; } = 30.0f;
+    [Export(PropertyHint.Range, "5,60,1")]
+    public float RenderFramesPerSecond
+    {
+        get => _renderFramesPerSecond;
+        set => _renderFramesPerSecond = float.IsFinite(value) ? Mathf.Clamp(value, 5.0f, 60.0f) : 15.0f;
+    }
     [Export] public bool HeadingUp { get; set; }
     [Export] public bool StartVisible { get; set; } = true;
     [Export] public NodePath LocalWeatherPath { get; set; } = new("../LocalWeatherEffects");
@@ -76,6 +81,10 @@ public partial class RingTerrainMinimap : CanvasLayer
     private bool _hasRequestedCenter;
     private double _rebuildAccumulator;
     private double _renderAccumulator;
+    private float _renderFramesPerSecond = 15.0f;
+    private bool _minimapWasHidden;
+    private string? _lastModeViewMode;
+    private bool _lastModeHeadingUp;
     private double _infoAccumulator;
     private float _markerHeight;
     private ulong _lastEditVersion;
@@ -204,6 +213,22 @@ public partial class RingTerrainMinimap : CanvasLayer
         {
             GD.PushWarning($"Minimap terrain build failed: {faulted.Exception?.GetBaseException().Message}");
             _pendingBuild = null;
+        }
+
+        // A hidden radar costs nothing: skip the offscreen render, info refresh,
+        // and rebuilds, then catch up immediately when it is shown again.
+        bool shown = Visible && _panel?.Visible == true;
+        if (!shown && !_captureMinimap)
+        {
+            _minimapWasHidden = true;
+            return;
+        }
+        if (_minimapWasHidden)
+        {
+            _minimapWasHidden = false;
+            _renderAccumulator = double.MaxValue;
+            _infoAccumulator = double.MaxValue;
+            _rebuildAccumulator = double.MaxValue;
         }
 
         _rebuildAccumulator += delta;
@@ -785,6 +810,9 @@ public partial class RingTerrainMinimap : CanvasLayer
             : _close3DFactor > 0.05f
                 ? "3D TRANSITION"
                 : "MAP";
+        if (viewMode == _lastModeViewMode && HeadingUp == _lastModeHeadingUp) return;
+        _lastModeViewMode = viewMode;
+        _lastModeHeadingUp = HeadingUp;
         string orientation = HeadingUp ? "HDG-UP" : "N-UP";
         _modeLabel.Text = $"{viewMode}  •  {orientation}  [N]";
     }
@@ -866,7 +894,8 @@ public partial class RingTerrainMinimap : CanvasLayer
         {
             float length = Mathf.Abs(_landingRelativeY);
             _landingTether.Visible = terrainInVolume && length > 1.0f;
-            _landingTetherMesh.Height = Mathf.Max(1.0f, length);
+            float tetherScale = float.IsFinite(length) ? Mathf.Max(1.0f, length) : 1.0f;
+            _landingTether.Scale = new Vector3(1.0f, tetherScale, 1.0f);
             _landingTether.Position = new Vector3(0.0f, _landingRelativeY * 0.5f, 0.0f);
         }
         if (_landingMarker != null)

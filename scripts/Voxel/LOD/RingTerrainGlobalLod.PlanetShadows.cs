@@ -27,6 +27,8 @@ public partial class RingTerrainGlobalLod
     private CancellationTokenSource? _planetMacroShadowCancellation;
     private ulong _planetMacroShadowRequestVersion;
     private ulong _planetMacroShadowAppliedVersion;
+    private Image? _planetMacroShadowImage;
+    private ImageTexture? _planetMacroShadowTexture;
     private Vector3 _lastPlanetMacroShadowRequestedDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
 
     public bool PlanetMacroShadowBuildPending => _planetMacroShadowTask != null && !_planetMacroShadowTask.IsCompleted;
@@ -194,8 +196,21 @@ public partial class RingTerrainGlobalLod
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain planet macro shadow install");
         if (mask.Width <= 0 || mask.Height <= 0 || mask.Pixels.Length != mask.Width * mask.Height) return;
-        Image image = Image.CreateFromData(mask.Width, mask.Height, false, Image.Format.R8, mask.Pixels);
-        ImageTexture texture = ImageTexture.CreateFromImage(image);
+        ImageTexture texture;
+        if (_planetMacroShadowImage != null && _planetMacroShadowTexture != null
+            && _planetMacroShadowImage.GetWidth() == mask.Width
+            && _planetMacroShadowImage.GetHeight() == mask.Height)
+        {
+            _planetMacroShadowImage.SetData(mask.Width, mask.Height, false, Image.Format.R8, mask.Pixels);
+            _planetMacroShadowTexture.Update(_planetMacroShadowImage);
+            texture = _planetMacroShadowTexture;
+        }
+        else
+        {
+            _planetMacroShadowImage = Image.CreateFromData(mask.Width, mask.Height, false, Image.Format.R8, mask.Pixels);
+            _planetMacroShadowTexture = ImageTexture.CreateFromImage(_planetMacroShadowImage);
+            texture = _planetMacroShadowTexture;
+        }
         Vector2 handoff = ResolvePlanetMacroShadowHandoff();
         global::RingworldTechDemo.RingTerrainMacroShadowProjector.UpdatePlanet(texture, direction,
             MacroTerrainShadowStrength, handoff.X, handoff.Y);
