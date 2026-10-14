@@ -9,6 +9,10 @@ public partial class RingScaledFarViewport
     /// receiver. The field binder owns validity and unknown-sample fallback;
     /// this owner supplies physical receiver heights rather than density probes.
     /// </summary>
+    private static readonly StringName TerrainCloudReceiverHeightName = "terrain_cloud_receiver_height_meters";
+    private readonly LastUniformValue<float> _cloudReceiverHeightApplied = new(), _clipmapReceiverHeightApplied = new(),
+        _canopyReceiverHeightApplied = new(), _volumeReceiverHeightApplied = new();
+
     private void BindTerrainCloudShadowReceiverMaterials()
     {
         RingTerrainCloudSunVisibility? field = RingTerrainCloudSunVisibility.Instance;
@@ -34,7 +38,7 @@ public partial class RingScaledFarViewport
         field.SetReceiverDemand("far_clouds", visible);
         if (_cloudMaterial != null)
         {
-            _cloudMaterial.SetShaderParameter("terrain_cloud_receiver_height_meters", CloudAltitudeMeters);
+            _cloudReceiverHeightApplied.Set(_cloudMaterial, TerrainCloudReceiverHeightName, CloudAltitudeMeters);
             field.BindToMaterial(_cloudMaterial);
         }
 
@@ -42,7 +46,7 @@ public partial class RingScaledFarViewport
         {
             ShaderMaterial? material = _farCloudClipmapMaterials[layer];
             if (material == null) continue;
-            material.SetShaderParameter("terrain_cloud_receiver_height_meters", GetFarCloudClipmapHeightMeters(layer));
+            _clipmapReceiverHeightApplied.Set(material, TerrainCloudReceiverHeightName, GetFarCloudClipmapHeightMeters(layer));
             field.BindToMaterial(material);
         }
 
@@ -51,14 +55,14 @@ public partial class RingScaledFarViewport
 
         if (_localCloudCanopyMaterial != null)
         {
-            _localCloudCanopyMaterial.SetShaderParameter("terrain_cloud_receiver_height_meters",
+            _canopyReceiverHeightApplied.Set(_localCloudCanopyMaterial, TerrainCloudReceiverHeightName,
                 Mathf.Lerp(LocalCloudBaseMeters, LocalCloudTopMeters, 0.62f));
             field.BindToMaterial(_localCloudCanopyMaterial);
         }
 
         if (_scaledCloudVolumeMaterial != null)
         {
-            _scaledCloudVolumeMaterial.SetShaderParameter("terrain_cloud_receiver_height_meters",
+            _volumeReceiverHeightApplied.Set(_scaledCloudVolumeMaterial, TerrainCloudReceiverHeightName,
                 (LocalCloudBaseMeters + LocalCloudTopMeters) * 0.5f);
             field.BindToMaterial(_scaledCloudVolumeMaterial);
         }

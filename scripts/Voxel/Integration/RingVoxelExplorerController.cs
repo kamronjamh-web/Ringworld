@@ -197,6 +197,21 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     private float _waterAmbienceProximity;
     private float _waterAmbienceShoreProximity;
     private SurfaceWaterKind _waterAmbienceKind;
+    // UpdateWaterState runs every physics tick; the presentation sample and exact
+    // surface are pure in (sampler, edit snapshot, position), so reuse them until
+    // any of those change.
+    private static readonly StringName MetaCameraUnderwater = new("ring_camera_underwater");
+    private static readonly StringName MetaWaterDepthMeters = new("ring_water_depth_meters");
+    private static readonly StringName MetaWaterAmbienceKind = new("ring_water_ambience_kind");
+    private static readonly StringName MetaWaterAmbienceProximity = new("ring_water_ambience_proximity");
+    private static readonly StringName MetaWaterAmbienceShoreProximity = new("ring_water_ambience_shore_proximity");
+    private RingTerrainSampler? _waterCacheSampler;
+    private RingLodSurfaceEditSnapshot? _waterCacheEdits;
+    private long _waterCacheAround = long.MinValue;
+    private int _waterCacheAcross;
+    private TerrainSample _waterCacheSample;
+    private double _waterExactAround = double.NaN, _waterExactAcross = double.NaN;
+    private float _waterExactSurface;
 
     public RingCanonicalPosition CanonicalPosition => _canonicalPosition;
     public Vector3 CanonicalVelocity => _canonicalVelocity;
@@ -1015,10 +1030,31 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             Mathf.Max(0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters)));
 		RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
 		bool floatSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
-		TerrainSample sample = edits.GetPresentationTerrainSample(_grid.TerrainSampler, around, across);
-        float exactSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration
-            ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, _canonicalPosition.AroundMeters, _canonicalPosition.AcrossMeters)
-            : floatSurface ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across) : sample.SurfaceHeight;
+		RingTerrainSampler waterSampler = _grid.TerrainSampler;
+		if (!ReferenceEquals(waterSampler, _waterCacheSampler) || !ReferenceEquals(edits, _waterCacheEdits))
+		{
+			_waterCacheSampler = waterSampler;
+			_waterCacheEdits = edits;
+			_waterCacheAround = long.MinValue;
+			_waterExactAround = double.NaN;
+			_waterExactAcross = double.NaN;
+		}
+		if (_waterCacheAround != around || _waterCacheAcross != across)
+		{
+			_waterCacheSample = edits.GetPresentationTerrainSample(waterSampler, around, across);
+			_waterCacheAround = around;
+			_waterCacheAcross = across;
+		}
+		TerrainSample sample = _waterCacheSample;
+		if (_waterExactAround != _canonicalPosition.AroundMeters || _waterExactAcross != _canonicalPosition.AcrossMeters)
+		{
+			_waterExactSurface = _grid.TerrainSampler.UsesRuntimeSurfaceGeneration
+				? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, _canonicalPosition.AroundMeters, _canonicalPosition.AcrossMeters)
+				: floatSurface ? edits.GetPresentationSurfaceHeight(_grid.TerrainSampler, around, across) : sample.SurfaceHeight;
+			_waterExactAround = _canonicalPosition.AroundMeters;
+			_waterExactAcross = _canonicalPosition.AcrossMeters;
+		}
+		float exactSurface = _waterExactSurface;
         if (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration)
             sample = sample with
             {
@@ -1086,8 +1122,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         float cameraHeight = _head?.Position.Y ?? BodyHeight * 0.85f;
         IsCameraUnderwater = _canonicalPosition.VerticalMeters + cameraHeight
             < CurrentWaterSurfaceHeightMeters - 0.05f;
-        SetMeta("ring_camera_underwater", IsCameraUnderwater);
-        SetMeta("ring_water_depth_meters", Mathf.Max(
+        SetMeta(MetaCameraUnderwater, IsCameraUnderwater);
+        SetMeta(MetaWaterDepthMeters, Mathf.Max(
             0.0f,
             CurrentWaterSurfaceHeightMeters - (float)(_canonicalPosition.VerticalMeters + cameraHeight)));
     }
@@ -1124,8 +1160,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         IsCameraUnderwater = false;
         CurrentWaterSurfaceHeightMeters = 0.0f;
         CurrentWaterDepthMeters = 0.0f;
-        SetMeta("ring_camera_underwater", false);
-        SetMeta("ring_water_depth_meters", 0.0f);
+        SetMeta(MetaCameraUnderwater, false);
+        SetMeta(MetaWaterDepthMeters, 0.0f);
         PublishWaterAmbienceMetadata();
     }
 
@@ -1208,9 +1244,9 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private void PublishWaterAmbienceMetadata()
     {
-        SetMeta("ring_water_ambience_kind", (int)_waterAmbienceKind);
-        SetMeta("ring_water_ambience_proximity", _waterAmbienceProximity);
-        SetMeta("ring_water_ambience_shore_proximity", _waterAmbienceShoreProximity);
+        SetMeta(MetaWaterAmbienceKind, (int)_waterAmbienceKind);
+        SetMeta(MetaWaterAmbienceProximity, _waterAmbienceProximity);
+        SetMeta(MetaWaterAmbienceShoreProximity, _waterAmbienceShoreProximity);
     }
 
     private void ProcessSwimming(float dt)

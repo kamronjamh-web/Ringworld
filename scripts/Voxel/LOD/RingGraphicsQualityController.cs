@@ -480,6 +480,8 @@ public partial class RingGraphicsQualityController : Node
         _grass.GrassGroupingFarStartMeters = 256f;
         _grass.GrassGroupingMaximumLevel = 1;
         _grass.GrassGroupingHysteresisMeters = 16f;
+        _grass.ClampGrassStreamingToDrawDistance = true;
+        _grass.GrassStreamingMarginMeters = 4f;
         _grass.MaximumGrassSourcesPerGroup = 16384;
         _grass.CacheGrassPresentation = true;
         _grass.UseGrassClumps = true;

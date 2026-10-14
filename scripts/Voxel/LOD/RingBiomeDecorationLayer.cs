@@ -258,7 +258,8 @@ public partial class RingBiomeDecorationLayer : Node3D
         }
 		// This must precede streaming's movement early-outs: celestial state and
 		// floating-origin canonical center change while a player stands still.
-		UpdateTreeLightingMaterials();
+		using (RingPerformanceTelemetry.MeasureCpu("Trees lighting materials"))
+			UpdateTreeLightingMaterials();
 		UpdateDistantTreeMaterialPolicy();
 		ServiceGpuTreeShadowMirrors();
 		// Trees are independently streamed.  The terrain proxy is intentionally
@@ -400,29 +401,62 @@ public partial class RingBiomeDecorationLayer : Node3D
 	private void ApplyTreeSunShadowState(MultiMeshInstance3D renderer)
 	{
 		if (!_treeSunShadowLods.TryGetValue(renderer, out int lod)) return;
-		renderer.CastShadow = !_treeSunShadowsSuppressed && AllowsTreeSunShadowLod(lod)
-			? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off;
+		SetCastShadow(renderer, !_treeSunShadowsSuppressed && AllowsTreeSunShadowLod(lod)
+			? GeometryInstance3D.ShadowCastingSetting.On : GeometryInstance3D.ShadowCastingSetting.Off);
+	}
+
+	// Each property write crosses into the engine, so skip no-op writes.
+	private static void SetCastShadow(GeometryInstance3D node, GeometryInstance3D.ShadowCastingSetting value)
+	{
+		if (node.CastShadow != value) node.CastShadow = value;
+	}
+
+	private readonly HashSet<MultiMeshInstance3D> _treeSunShadowGpuRenderers = new();
+	private readonly HashSet<MultiMeshInstance3D> _treeSunShadowSelectedScratch = new();
+	private readonly List<MultiMeshInstance3D> _treeSunShadowInvalidScratch = new();
+	private readonly List<int> _treeSunShadowOrderScratch = new();
+	private Comparison<int>? _treeSunShadowIndexComparison;
+
+	// Distance first, original index second: identical to a stable OrderBy(Distance).
+	private int CompareTreeSunShadowIndices(int a, int b)
+	{
+		int distance = _gpuTreeOrder[a].Distance.CompareTo(_gpuTreeOrder[b].Distance);
+		return distance != 0 ? distance : a.CompareTo(b);
 	}
 
 	private void ApplyTreeSunShadowState()
 	{
-		foreach ((MultiMeshInstance3D renderer, _) in _treeSunShadowLods.ToArray())
+		using var applyScope = RingPerformanceTelemetry.MeasureCpu("Trees sun shadow apply");
+		// GPU outputs receive their final CastShadow from ApplyGpuTreeSunShadowChoice
+		// below (every branch writes it), so the generic pass skips them.
+		_treeSunShadowGpuRenderers.Clear();
+		foreach (GpuTreeOutput gpuOutput in _gpuTreeOutputs.Values) _treeSunShadowGpuRenderers.Add(gpuOutput.Renderer);
+		_treeSunShadowInvalidScratch.Clear();
+		foreach (MultiMeshInstance3D renderer in _treeSunShadowLods.Keys)
 		{
-			if (!GodotObject.IsInstanceValid(renderer)) { _treeSunShadowLods.Remove(renderer); continue; }
+			if (_treeSunShadowGpuRenderers.Contains(renderer)) continue;
+			if (!GodotObject.IsInstanceValid(renderer)) { _treeSunShadowInvalidScratch.Add(renderer); continue; }
 			ApplyTreeSunShadowState(renderer);
 		}
+		foreach (MultiMeshInstance3D invalid in _treeSunShadowInvalidScratch) _treeSunShadowLods.Remove(invalid);
 		// The GPU output list is already distance-sorted for gradual installation.
 		// Keep the directional atlas bounded even after a large traversal fills every
 		// visual tree batch. CPU fallback remains conservative through the distance
 		// policy above; GPU is the high-cardinality production path.
 		int remaining = Mathf.Max(0, MaximumTreeSunShadowBatches);
-		var selectedGpu = new HashSet<MultiMeshInstance3D>();
+		HashSet<MultiMeshInstance3D> selectedGpu = _treeSunShadowSelectedScratch;
+		selectedGpu.Clear();
 		if (!_treeSunShadowsSuppressed && remaining > 0)
 		{
-			foreach (var item in _gpuTreeOrder.OrderBy(item => item.Distance))
+			_treeSunShadowOrderScratch.Clear();
+			for (int i = 0; i < _gpuTreeOrder.Count; i++) _treeSunShadowOrderScratch.Add(i);
+			_treeSunShadowIndexComparison ??= CompareTreeSunShadowIndices;
+			_treeSunShadowOrderScratch.Sort(_treeSunShadowIndexComparison);
+			foreach (int index in _treeSunShadowOrderScratch)
 			{
-				if (item.Key.Lod >= 3 || !AllowsTreeSunShadowLod(item.Key.Lod)) continue;
-				if (_gpuTreeOutputs.TryGetValue(item.Key, out GpuTreeOutput? output) && selectedGpu.Add(output.Renderer) && --remaining == 0) break;
+				GpuOutputKey key = _gpuTreeOrder[index].Key;
+				if (key.Lod >= 3 || !AllowsTreeSunShadowLod(key.Lod)) continue;
+				if (_gpuTreeOutputs.TryGetValue(key, out GpuTreeOutput? output) && selectedGpu.Add(output.Renderer) && --remaining == 0) break;
 			}
 		}
 		foreach ((GpuOutputKey key, GpuTreeOutput output) in _gpuTreeOutputs)
@@ -550,10 +584,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 		ResolveTreeSunLight();
 		Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
 		Vector3 sunDirection = _treeSunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
-		var configuration = new TreeLightingConfiguration(_grid.RingDayStartDot,
-			Mathf.Max(_grid.RingDayStartDot + .001f, _grid.RingDayFullDot),
-			new Vector3(_grid.RingNightTint.R, _grid.RingNightTint.G, _grid.RingNightTint.B),
-			_grid.RingNightDirectLightFactor, _grid.RingDayDirectLightFactor);
+		TreeLightingConfiguration configuration = CaptureTreeLightingConfiguration();
 		// Exact comparisons retain small floating-origin shifts even when the
 		// canonical ring center has multi-million-metre components.
 		bool centerChanged = _lastTreeMaterialRingCenter != ringCenter;
@@ -561,7 +592,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 		bool configurationChanged = !_treeLightingConfigurationValid || configuration != _lastTreeLightingConfiguration;
 		if (centerChanged || sunChanged || configurationChanged)
 			foreach (ShaderMaterial material in _treeMaterials)
-				ConfigureTreeLightingMaterial(material, centerChanged, sunChanged, configurationChanged);
+				ApplyTreeLightingMaterialValues(material, ringCenter, sunDirection, configuration, centerChanged, sunChanged, configurationChanged);
 		// The finite-cylinder air path is camera-relative, so publish it every
 		// frame even while celestial lighting and profile values are unchanged.
 		UpdateTreeAtmosphereRayFrame(sunDirection);
@@ -583,14 +614,34 @@ public partial class RingBiomeDecorationLayer : Node3D
 		ResolveTreeSunLight();
 		Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
 		Vector3 sunDirection = _treeSunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
-		if (centerChanged) material.SetShaderParameter("ring_center", ringCenter);
-		if (sunChanged) material.SetShaderParameter("sun_direction", sunDirection);
+		ApplyTreeLightingMaterialValues(material, ringCenter, sunDirection, CaptureTreeLightingConfiguration(),
+			centerChanged, sunChanged, configurationChanged);
+	}
+
+	private TreeLightingConfiguration CaptureTreeLightingConfiguration()
+		=> new(_grid!.RingDayStartDot, Mathf.Max(_grid.RingDayStartDot + .001f, _grid.RingDayFullDot),
+			new Vector3(_grid.RingNightTint.R, _grid.RingNightTint.G, _grid.RingNightTint.B),
+			_grid.RingNightDirectLightFactor, _grid.RingDayDirectLightFactor);
+
+	private static readonly StringName RingCenterParameter = "ring_center";
+	private static readonly StringName SunDirectionParameter = "sun_direction";
+	private static readonly StringName DayStartDotParameter = "day_start_dot";
+	private static readonly StringName DayFullDotParameter = "day_full_dot";
+	private static readonly StringName NightTintParameter = "night_tint";
+	private static readonly StringName NightDirectLightFactorParameter = "night_direct_light_factor";
+	private static readonly StringName DayDirectLightFactorParameter = "day_direct_light_factor";
+
+	private static void ApplyTreeLightingMaterialValues(ShaderMaterial material, Vector3 ringCenter, Vector3 sunDirection,
+		in TreeLightingConfiguration configuration, bool centerChanged, bool sunChanged, bool configurationChanged)
+	{
+		if (centerChanged) material.SetShaderParameter(RingCenterParameter, ringCenter);
+		if (sunChanged) material.SetShaderParameter(SunDirectionParameter, sunDirection);
 		if (!configurationChanged) return;
-		material.SetShaderParameter("day_start_dot", _grid.RingDayStartDot);
-		material.SetShaderParameter("day_full_dot", Mathf.Max(_grid.RingDayStartDot + .001f, _grid.RingDayFullDot));
-		material.SetShaderParameter("night_tint", new Vector3(_grid.RingNightTint.R, _grid.RingNightTint.G, _grid.RingNightTint.B));
-		material.SetShaderParameter("night_direct_light_factor", _grid.RingNightDirectLightFactor);
-		material.SetShaderParameter("day_direct_light_factor", _grid.RingDayDirectLightFactor);
+		material.SetShaderParameter(DayStartDotParameter, configuration.DayStartDot);
+		material.SetShaderParameter(DayFullDotParameter, configuration.DayFullDot);
+		material.SetShaderParameter(NightTintParameter, configuration.NightTint);
+		material.SetShaderParameter(NightDirectLightFactorParameter, configuration.NightDirectLightFactor);
+		material.SetShaderParameter(DayDirectLightFactorParameter, configuration.DayDirectLightFactor);
 	}
 
 	private void QueueRebuild(bool force)

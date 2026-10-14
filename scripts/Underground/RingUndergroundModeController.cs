@@ -43,6 +43,16 @@ public partial class RingUndergroundModeController : Node
     private int _rebindCountdown;
     private bool _lightingDarkened;
     private bool _hideActive;
+    private ICaveLodProfileTarget? _caveTarget;
+    private readonly CaveLodProfilePolicy _caveProfilePolicy = new();
+    private CaveLodProfile? _appliedCaveOverride;
+    private int? _appliedRetainMargin;
+    private float? _appliedHysteresis;
+    private CaveLodProfileStatus _caveStatus;
+    private bool _hasCaveStatus;
+    private double _caveStatusElapsed;
+    private readonly UndergroundFogCoupling _fog = new();
+    private float _coarseFilledReach;
 
     /// <summary>Master toggle. Off behaves as permanent forced exit.</summary>
     public bool Enabled { get; set; } = true;
@@ -76,6 +86,30 @@ public partial class RingUndergroundModeController : Node
     /// <summary>Frames where a hide was applied without darkened lighting. Must stay zero.</summary>
     public int HideOrderingViolations { get; private set; }
     public IReadOnlyList<UndergroundParticipant> Participants => _participants;
+    /// <summary>Cave LOD profile applied to the terrain backend while underground (and for the shrink delay after).</summary>
+    public CaveLodProfile UndergroundCaveProfile { get; set; } = CaveLodProfile.UndergroundDefault;
+    public int CoarseRetainMarginSectors { get; set; } = 1;
+    public float CaveCoarseActivationHysteresisMeters { get; set; } = 64f;
+    /// <summary>Seconds the cave profile is kept after returning to the surface.</summary>
+    public float CaveProfileShrinkDelaySeconds { get; set; } = 10f;
+    /// <summary>True while the cave profile is applied (underground or inside the shrink delay).</summary>
+    public bool CaveLodProfileActive => _caveProfilePolicy.Active;
+    public double CaveProfileSurfaceSeconds => _caveProfilePolicy.SurfaceSeconds;
+    /// <summary>True while the terrain backend's coarse underground tier is active.</summary>
+    public bool CaveLodCoarseActive { get; private set; }
+    /// <summary>Distance in every ring direction the coarse tier covers at the smaller of its two horizontal radii; 0 without a terrain target.</summary>
+    public float GuaranteedCoarseReachMeters { get; private set; }
+    /// <summary>Fades the cave fog density to the coarse tier's filled reach. Deep caves only (needs the coarse latch).</summary>
+    public bool CoupleFogToCaveDistance { get; set; } = true;
+    /// <summary>Fraction of the coarse reach at which the fog is nearly opaque.</summary>
+    public float FogEndFraction { get; set; } = .9f;
+    /// <summary>Fog reach used while the coarse latch is on but the coarse ring is not yet filled (the 32 m bridge tier guarantees 1024 m).</summary>
+    public float UnfilledCaveFogReachMeters { get; set; } = 1024f;
+    /// <summary>0..1 smoothed weight the atmosphere multiplies its cave fog by; 0 outside the coarse underground latch.</summary>
+    public float CaveFogWeight => _fog.CouplingWeight;
+    public float CaveFogReachMeters => _fog.ReachMeters;
+    public float CaveFogVisibleDistanceMeters => _fog.VisibleDistanceMeters;
+    public float CaveFogDensity => _fog.Density;
 
     public event Action<UndergroundMode, UndergroundMode>? ModeChanged;
 
@@ -86,6 +120,7 @@ public partial class RingUndergroundModeController : Node
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _source = UndergroundProbeSourceFactory.Create(this, SmoothTerrainPath, GridManagerPath, Terrain3DGameplayPath);
+        _caveTarget = UndergroundProbeSourceFactory.CreateCaveLodTarget(this, SmoothTerrainPath);
         _machine.ModeChanged += (previous, next) => ModeChanged?.Invoke(previous, next);
         CallDeferred(nameof(BindParticipants));
         if (Array.Exists(OS.GetCmdlineUserArgs(), a => a.Equals("--underground-mode-roundtrip-smoke-test", StringComparison.OrdinalIgnoreCase)))
@@ -126,11 +161,14 @@ public partial class RingUndergroundModeController : Node
         _forcedExitReason = reason;
         _machine.Step(delta, new UndergroundEnclosureInput(depth, _probe.Openness, reason.Length > 0, ModeOverride));
         ApplyParticipants();
+        ApplyCaveLodProfile(delta);
+        UpdateCaveFog(delta);
     }
 
 
     public override void _ExitTree()
     {
+        if (HasValidCaveTarget()) _caveTarget!.SetCaveProfileOverride(null);
         // Leave every surface system running if this controller goes away.
         foreach (UndergroundParticipant participant in _participants)
             if (participant.Present) participant.Apply(UndergroundParticipantState.Clear);
@@ -149,6 +187,54 @@ public partial class RingUndergroundModeController : Node
             if (!participant.Present) participant.Bind(root);
         _atmosphere = GetNodeOrNull(AtmospherePath);
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
+        if (!HasValidCaveTarget()) _caveTarget = UndergroundProbeSourceFactory.CreateCaveLodTarget(this, SmoothTerrainPath);
+    }
+
+    private bool HasValidCaveTarget() => _caveTarget is GodotObject target && GodotObject.IsInstanceValid(target);
+
+    /// <summary>
+    /// Applies the cave LOD profile to the terrain backend. The policy decides when it is active (immediately on
+    /// entering, after a shrink delay on leaving, never while the master toggle is off); the backend only
+    /// stores it and its own change detection does the work. The target is only touched when a value changes.
+    /// </summary>
+    private void ApplyCaveLodProfile(double delta)
+    {
+        CaveLodProfile? wanted = _caveProfilePolicy.Step(delta, Mode, !Enabled, UndergroundCaveProfile, CaveProfileShrinkDelaySeconds);
+        if (!HasValidCaveTarget())
+        {
+            _caveTarget = null;
+            _appliedCaveOverride = null;
+            _appliedRetainMargin = null;
+            _appliedHysteresis = null;
+            _hasCaveStatus = false;
+            CaveLodCoarseActive = false;
+            GuaranteedCoarseReachMeters = 0f;
+            _coarseFilledReach = 0f;
+            return;
+        }
+        if (wanted != _appliedCaveOverride) { _caveTarget!.SetCaveProfileOverride(wanted); _appliedCaveOverride = wanted; }
+        if (_appliedRetainMargin != CoarseRetainMarginSectors) { _caveTarget!.CoarseRetainMarginSectors = CoarseRetainMarginSectors; _appliedRetainMargin = CoarseRetainMarginSectors; }
+        if (_appliedHysteresis != CaveCoarseActivationHysteresisMeters) { _caveTarget!.CoarseActivationHysteresisMeters = CaveCoarseActivationHysteresisMeters; _appliedHysteresis = CaveCoarseActivationHysteresisMeters; }
+        // The telemetry walk touches every resident entry, so refresh it at the drawer's rate rather than every frame.
+        if (!_hasCaveStatus || (_caveStatusElapsed += delta) >= .25)
+        {
+            _caveStatusElapsed = 0;
+            _caveStatus = _caveTarget!.CaptureCaveLodProfileStatus();
+            _hasCaveStatus = true;
+            CaveLodCoarseActive = _caveStatus.CoarseActive;
+            GuaranteedCoarseReachMeters = Math.Min(_caveStatus.EffectiveRadiusAround, _caveStatus.EffectiveRadiusAcross) * 2048f;
+            _coarseFilledReach = UndergroundFogCoupling.NextCoarseFilledReach(_coarseFilledReach, _caveStatus.CoarseActive,
+                _caveStatus.CoarseDesired, _caveStatus.CoarseDesiredReady, GuaranteedCoarseReachMeters);
+        }
+    }
+
+    /// <summary>Publishes the cave fog density and weight. Release depth mirrors the terrain's coarse latch exit.</summary>
+    private void UpdateCaveFog(double delta)
+    {
+        bool enabled = CoupleFogToCaveDistance && Enabled && IsAvailable && HasValidCaveTarget();
+        float releaseDepth = 0f;
+        if (enabled) releaseDepth = Math.Max(0f, _caveTarget!.CoarseUndergroundActivationDepthMeters - Math.Max(0f, CaveCoarseActivationHysteresisMeters));
+        _fog.Step(delta, enabled, CaveLodCoarseActive, DepthMeters, releaseDepth, _coarseFilledReach, UnfilledCaveFogReachMeters, FogEndFraction);
     }
 
     /// <summary>
@@ -212,6 +298,16 @@ public partial class RingUndergroundModeController : Node
         if (!IsAvailable) return "Underground mode: unavailable (no terrain probe source).";
         string forced = _forcedExitReason.Length > 0 ? $" (forced surface: {_forcedExitReason})" : "";
         string tier = SuspensionActive ? (_hideActive ? "freeze+hide" : "freeze") : "off";
-        return $"Mode {Mode}{forced}  blend {EnclosureBlend:0.00}  depth {DepthMeters:0.#} m  openness {Openness:0.00}  suspension {tier}  dark {(_lightingDarkened ? "yes" : "no")}  participants {_participants.Count(p => p.Present)}/{_participants.Count}  probe {LastProbeSamples} samples {LastProbeMilliseconds:0.000} ms";
+        return $"Mode {Mode}{forced}  blend {EnclosureBlend:0.00}  depth {DepthMeters:0.#} m  openness {Openness:0.00}  suspension {tier}  dark {(_lightingDarkened ? "yes" : "no")}  participants {_participants.Count(p => p.Present)}/{_participants.Count}  probe {LastProbeSamples} samples {LastProbeMilliseconds:0.000} ms{DescribeCaveLod()}  fog {CaveFogWeight:0.00} {CaveFogVisibleDistanceMeters:0} m";
+    }
+
+    private string DescribeCaveLod()
+    {
+        if (!_hasCaveStatus) return "";
+        CaveLodProfileStatus s = _caveStatus;
+        string phase = _caveProfilePolicy.Active ? "underground" : "surface";
+        string shrink = Mode == UndergroundMode.Surface && _caveProfilePolicy.Active
+            ? $" shrink in {Math.Max(0.0, CaveProfileShrinkDelaySeconds - _caveProfilePolicy.SurfaceSeconds):0.#}s" : "";
+        return $"  caveLOD {phase}{shrink} r{s.EffectiveRadiusAround}/{s.EffectiveRadiusAcross}/{s.EffectiveRadiusVertical} coarse desired/ready/visible/resident {s.CoarseDesired}/{s.CoarseReady}/{s.CoarseVisible}/{s.CoarseResident} workers {s.EffectiveWorkers} cave bytes {s.TotalEstimatedBytes / 1048576.0:0.0} MB reach {GuaranteedCoarseReachMeters:0} m";
     }
 }

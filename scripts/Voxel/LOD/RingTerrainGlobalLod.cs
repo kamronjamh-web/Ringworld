@@ -313,6 +313,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _macroShadowCancellation = null;
         CancelPlanetMacroShadowBuild();
         DisablePlanetMacroShadows();
+        _macroShadowImage = null;
+        _macroShadowTexture = null;
+        _planetMacroShadowImage = null;
+        _planetMacroShadowTexture = null;
     }
 
     private void HandleCanonicalFloatingOriginAnchorChanged(
@@ -1367,6 +1371,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         UpdateLightingUniforms();
     }
 
+    private readonly RingAtmosphereRayFrame.AppliedCache _rayFrameCache = new();
+    private Image? _macroShadowImage;
+    private ImageTexture? _macroShadowTexture;
+
     private void UpdateLightingUniforms()
     {
         if (_grid == null)
@@ -1380,9 +1388,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (camera != null)
         {
             RingAtmosphereRayFrame frame = RingAtmosphereRayFrame.FromMainCamera(_grid, camera, sunDirection);
-            frame.Apply(_material);
-            frame.Apply(_oceanMaterial);
-            frame.Apply(_hullMaterial);
+            // Writes only when the frame changed for a given material; new materials always receive it.
+            _rayFrameCache.Apply(frame, _material);
+            _rayFrameCache.Apply(frame, _oceanMaterial);
+            _rayFrameCache.Apply(frame, _hullMaterial);
         }
         if (!_lastLightingRingCenter.IsEqualApprox(ringCenter))
         {
@@ -1809,13 +1818,28 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             return;
         }
 
-        Image image = Image.CreateFromData(
-            mask.Width,
-            mask.Height,
-            false,
-            Image.Format.R8,
-            mask.Pixels);
-        ImageTexture texture = ImageTexture.CreateFromImage(image);
+        // Reuse the texture when the mask size is unchanged: updating in place
+        // avoids allocating a new GPU texture and re-binding every receiver.
+        ImageTexture texture;
+        if (_macroShadowImage != null && _macroShadowTexture != null
+            && _macroShadowImage.GetWidth() == mask.Width
+            && _macroShadowImage.GetHeight() == mask.Height)
+        {
+            _macroShadowImage.SetData(mask.Width, mask.Height, false, Image.Format.R8, mask.Pixels);
+            _macroShadowTexture.Update(_macroShadowImage);
+            texture = _macroShadowTexture;
+        }
+        else
+        {
+            _macroShadowImage = Image.CreateFromData(
+                mask.Width,
+                mask.Height,
+                false,
+                Image.Format.R8,
+                mask.Pixels);
+            _macroShadowTexture = ImageTexture.CreateFromImage(_macroShadowImage);
+            texture = _macroShadowTexture;
+        }
         global::RingworldTechDemo.RingTerrainMacroShadowProjector.Update(
             texture,
             MacroTerrainShadowStrength,

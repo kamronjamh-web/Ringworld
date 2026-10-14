@@ -68,6 +68,13 @@ public partial class RingTerrainLodCoordinator : Node
     [Export(PropertyHint.Range, "1,16,1")] public int TotalSectorUploadsPerFrame { get; set; } = 3;
     [Export(PropertyHint.Range, "1,32,1")] public int MaxConcurrentWorkerBuilds { get; set; } = 2;
     [Export(PropertyHint.Range, "0.25,8.0,0.05")] public float MaxUploadMillisecondsPerFrame { get; set; } = 2.0f;
+    [ExportGroup("LOD build starts")]
+    // Starting a build costs main-thread time (edit snapshot, sampler copy, cache setup).
+    // These bound how many starts happen per frame; starved levels jump the queue.
+    [Export(PropertyHint.Range, "1,8,1")] public int MaxBuildStartsPerFrame { get; set; } = 1;
+    [Export(PropertyHint.Range, "0.25,16.0,0.05")] public float MaxBuildStartMillisecondsPerFrame { get; set; } = 2.0f;
+    [Export(PropertyHint.Range, "5,300,1")] public int BuildStartStarvationFrames { get; set; } = 30;
+
     [ExportGroup("Mesh memory pressure")]
     [Export] public bool EnableMeshMemoryPressureThrottle { get; set; } = true;
     [Export(PropertyHint.Range, "32,2048,16")] public int MaximumStagedMeshMemoryMiB { get; set; } = 160;
@@ -138,7 +145,8 @@ public partial class RingTerrainLodCoordinator : Node
     private int _mediumGlobalAroundSegments = 512;
     private int _mediumGlobalAcrossSegments = 32;
     private int _roundRobinStart;
-    private int _workerRoundRobinStart;
+    private BuildStartCandidate[] _buildStartCandidates = new BuildStartCandidate[16];
+    private double _avgBuildStartMilliseconds;
     private float _lastViewportHeight;
     private float _lastCameraFov;
     private double _screenSpaceRefreshElapsed;
@@ -152,6 +160,9 @@ public partial class RingTerrainLodCoordinator : Node
     private float _cachedAltitudeSurfaceHeight;
     public bool MeshMemoryPressureActive { get; private set; }
 
+    public int LastFrameBuildStarts { get; private set; }
+    public double LastFrameBuildStartMilliseconds { get; private set; }
+    public long DeferredBuildStartCount { get; private set; }
     public int LastFrameUploadCount { get; private set; }
     public double LastFrameUploadMilliseconds { get; private set; }
     public long EstimatedActiveMeshBytes
@@ -305,10 +316,13 @@ public partial class RingTerrainLodCoordinator : Node
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain LOD coordinator update (inclusive)");
         if (_levels.Count == 0) return;
-        UpdateFastTravelStreamingState(delta);
-        UpdateHighAltitudeProxySuspension();
-        UpdateTerminalGlobalMorphTarget();
-        RefreshScreenSpaceSelectionIfNeeded(delta);
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain LOD coordinator prelude"))
+        {
+            UpdateFastTravelStreamingState(delta);
+            UpdateHighAltitudeProxySuspension();
+            UpdateTerminalGlobalMorphTarget();
+            RefreshScreenSpaceSelectionIfNeeded(delta);
+        }
         bool reserveRenderQueueForVoxel = _grid?.VoxelUploadBackpressureRequestedThisFrame == true
             || _grid?.VoxelMeshUploadedThisFrame == true;
         int remaining = reserveRenderQueueForVoxel
@@ -330,7 +344,8 @@ public partial class RingTerrainLodCoordinator : Node
         LastFrameUploadCount = initialBudget - remaining;
         LastFrameUploadMilliseconds = (Time.GetTicksUsec() - frameStart) / 1000.0;
         _roundRobinStart = (start + 1) % _levels.Count;
-        StartPendingWorkers();
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain LOD coordinator worker starts"))
+            StartPendingWorkers();
     }
 
     private void UpdateFastTravelStreamingState(double delta)
@@ -978,8 +993,47 @@ public partial class RingTerrainLodCoordinator : Node
         _inspectorRadiusDefaults.Add(new Vector2I(level.SectorRadiusAround, level.SectorRadiusAcross));
     }
 
+    internal readonly record struct BuildStartCandidate(int LevelIndex, ulong RequestedFrame);
+
+    /// <summary>
+    /// Orders pending build starts: levels that have waited at least
+    /// <paramref name="starvationFrames"/> go first (oldest first), then the rest
+    /// from finest (index 0) to coarsest. Allocation-free insertion sort.
+    /// </summary>
+    internal static void OrderBuildStartCandidates(Span<BuildStartCandidate> candidates, ulong frame, int starvationFrames)
+    {
+        ulong threshold = (ulong)Math.Max(1, starvationFrames);
+        for (int i = 1; i < candidates.Length; i++)
+        {
+            BuildStartCandidate value = candidates[i];
+            int j = i - 1;
+            while (j >= 0 && BuildStartComesBefore(value, candidates[j], frame, threshold))
+            {
+                candidates[j + 1] = candidates[j];
+                j--;
+            }
+            candidates[j + 1] = value;
+        }
+    }
+
+    private static bool BuildStartComesBefore(BuildStartCandidate a, BuildStartCandidate b, ulong frame, ulong threshold)
+    {
+        ulong ageA = frame > a.RequestedFrame ? frame - a.RequestedFrame : 0UL;
+        ulong ageB = frame > b.RequestedFrame ? frame - b.RequestedFrame : 0UL;
+        bool starvedA = ageA >= threshold;
+        bool starvedB = ageB >= threshold;
+        if (starvedA != starvedB) return starvedA;
+        if (starvedA && ageA != ageB) return ageA > ageB;
+        return a.LevelIndex < b.LevelIndex;
+    }
+
+    internal static int PlanBuildStartSlots(int available, int planned, int started)
+        => Math.Max(1, available / Math.Max(1, planned - started));
+
     private void StartPendingWorkers()
     {
+        LastFrameBuildStarts = 0;
+        LastFrameBuildStartMilliseconds = 0.0;
         UpdateMeshMemoryPressureState();
         long stagingBudgetBytes = Math.Max(32, MaximumStagedMeshMemoryMiB) * 1024L * 1024L;
         // Per-LOD queues are individually bounded by RingTerrainProxySector.
@@ -995,23 +1049,109 @@ public partial class RingTerrainLodCoordinator : Node
             : MaxConcurrentWorkerBuilds;
         int available = Mathf.Max(0, workerLimit - ActiveWorkerCount);
         if (available == 0 || _levels.Count == 0) return;
-        int start = _workerRoundRobinStart % _levels.Count;
-        var requesting = new List<RingTerrainProxySector>();
-        for (int offset = 0; offset < _levels.Count; offset++)
+        if (_buildStartCandidates.Length < _levels.Count)
         {
-            RingTerrainProxySector level = _levels[(start + offset) % _levels.Count];
-            if (!level.StreamingActive || !level.CoordinatorBuildRequested) continue;
-            requesting.Add(level);
+            _buildStartCandidates = new BuildStartCandidate[_levels.Count];
         }
-        int startCount = Mathf.Min(available, requesting.Count);
-        for (int i = 0; i < startCount; i++)
+        int count = 0;
+        for (int i = 0; i < _levels.Count; i++)
         {
-            int remainingRings = startCount - i;
-            int slots = Mathf.Max(1, available / remainingRings);
-            requesting[i].StartCoordinatorBuildIfRequested(slots);
-            available -= slots;
+            RingTerrainProxySector level = _levels[i];
+            if (!level.StreamingActive || !level.CoordinatorBuildRequested || !level.CanStartCoordinatorBuild) continue;
+            _buildStartCandidates[count++] = new BuildStartCandidate(i, level.CoordinatorBuildRequestedFrame);
         }
-        _workerRoundRobinStart = (start + 1) % _levels.Count;
+        if (count == 0) return;
+        ulong frame = Engine.GetProcessFrames();
+        var candidates = new Span<BuildStartCandidate>(_buildStartCandidates, 0, count);
+        OrderBuildStartCandidates(candidates, frame, BuildStartStarvationFrames);
+        int planned = Mathf.Min(available, count);
+        int limit = Mathf.Min(planned, Mathf.Max(1, MaxBuildStartsPerFrame));
+        double budgetMs = Mathf.Max(0.25f, MaxBuildStartMillisecondsPerFrame);
+        ulong startUsec = Time.GetTicksUsec();
+        int started = 0;
+        int attempts = 0;
+        for (int i = 0; i < count && started < limit && available > 0; i++)
+        {
+            double elapsedMs = (Time.GetTicksUsec() - startUsec) / 1000.0;
+            if (attempts > 0)
+            {
+                // The first start of a frame is never blocked; later ones wait
+                // when their predicted cost would exceed the frame budget.
+                double predicted = Math.Max(elapsedMs / attempts, _avgBuildStartMilliseconds);
+                if (elapsedMs + predicted > budgetMs)
+                {
+                    DeferredBuildStartCount++;
+                    break;
+                }
+            }
+            RingTerrainProxySector level = _levels[candidates[i].LevelIndex];
+            int slots = PlanBuildStartSlots(available, planned, started);
+            attempts++;
+            ulong levelStartUsec = Time.GetTicksUsec();
+            bool didStart = level.StartCoordinatorBuildIfRequested(slots);
+            double levelMs = (Time.GetTicksUsec() - levelStartUsec) / 1000.0;
+            _avgBuildStartMilliseconds = _avgBuildStartMilliseconds <= 0.0
+                ? levelMs
+                : _avgBuildStartMilliseconds * 0.8 + levelMs * 0.2;
+            if (didStart)
+            {
+                started++;
+                available -= slots;
+            }
+        }
+        LastFrameBuildStarts = started;
+        LastFrameBuildStartMilliseconds = (Time.GetTicksUsec() - startUsec) / 1000.0;
+    }
+
+    /// <summary>Verifies fair build-start ordering and slot planning without a scene.</summary>
+    public static string RunBuildStartSchedulingContract()
+    {
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException($"Build start scheduling contract failed: {message}");
+        }
+
+        // Finest first when nothing is starved.
+        var fresh = new[]
+        {
+            new BuildStartCandidate(3, 100), new BuildStartCandidate(0, 100), new BuildStartCandidate(1, 100)
+        };
+        OrderBuildStartCandidates(fresh, 101, 30);
+        Require(fresh[0].LevelIndex == 0 && fresh[1].LevelIndex == 1 && fresh[2].LevelIndex == 3,
+            "fresh candidates must order finest first");
+
+        // A starved coarse level beats a fresh fine level.
+        var starved = new[] { new BuildStartCandidate(0, 190), new BuildStartCandidate(5, 100) };
+        OrderBuildStartCandidates(starved, 200, 30);
+        Require(starved[0].LevelIndex == 5, "starved coarse level must precede fresh fine level");
+
+        // Two starved levels order by age, oldest first.
+        var twoStarved = new[] { new BuildStartCandidate(1, 150), new BuildStartCandidate(6, 120), new BuildStartCandidate(0, 195) };
+        OrderBuildStartCandidates(twoStarved, 200, 30);
+        Require(twoStarved[0].LevelIndex == 6 && twoStarved[1].LevelIndex == 1 && twoStarved[2].LevelIndex == 0,
+            "starved levels must order oldest first before fresh levels");
+
+        // Fine level re-requests every frame with a budget of one start per frame.
+        const int threshold = 30;
+        ulong fineRequested = 0;
+        ulong coarseRequested = 0;
+        int coarseStartFrame = -1;
+        var sim = new BuildStartCandidate[2];
+        for (int frame = 1; frame <= 40 && coarseStartFrame < 0; frame++)
+        {
+            sim[0] = new BuildStartCandidate(0, fineRequested);
+            sim[1] = new BuildStartCandidate(4, coarseRequested);
+            OrderBuildStartCandidates(sim, (ulong)frame, threshold);
+            if (sim[0].LevelIndex == 4) coarseStartFrame = frame;
+            else fineRequested = (ulong)frame;
+        }
+        Require(coarseStartFrame > 0 && coarseStartFrame <= threshold + 1,
+            $"coarse level starved past the threshold (started at frame {coarseStartFrame})");
+
+        Require(PlanBuildStartSlots(3, 3, 0) == 1, "3 workers across 3 starts must plan 1 slot");
+        Require(PlanBuildStartSlots(3, 1, 0) == 3, "3 workers for 1 start must plan 3 slots");
+        Require(PlanBuildStartSlots(0, 1, 0) == 1, "slot plan must never be below one");
+        return $"fresh=ok, starved=ok, age=ok, simStart={coarseStartFrame}, slots=ok";
     }
 
     private void UpdateMeshMemoryPressureState()

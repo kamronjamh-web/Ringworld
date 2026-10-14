@@ -18,6 +18,11 @@ public partial class RingBiomeDecorationLayer
 	[Export(PropertyHint.Range, "16,512,4")] public int MaximumImportedForestColliders { get; set; } = 192;
 
 	private readonly Dictionary<ulong, StaticBody3D> _importedForestBodies = new();
+	// Last pose written to each body. An unchanged pose skips the physics-server
+	// transform and shape writes entirely.
+	private readonly record struct ImportedForestColliderPose(Transform3D Transform, float Radius, float Height, Transform3D ParentGlobal);
+	private readonly Dictionary<ulong, ImportedForestColliderPose> _importedForestColliderPoses = new();
+	private readonly List<ulong> _importedForestBodyRemovalScratch = new();
 	private Node3D? _importedForestCollisionRoot;
 	private long _lastImportedForestCollisionAround = long.MinValue;
 	private long _lastImportedForestCollisionAcross = long.MinValue;
@@ -85,6 +90,9 @@ public partial class RingBiomeDecorationLayer
 	private void UpdateImportedForestCollisions()
 	{
 		using var collisionScope = RingPerformanceTelemetry.MeasureCpu("Trees collisions (inclusive)");
+		// A refresh deferred by an in-flight source plan lands here even when the
+		// scan below is skipped as unchanged.
+		FlushDeferredGpuTreeProtectedRefresh();
 		if (!UseRegionalImportedForest || !EnableImportedForestCollisions || _grid == null || _explorer == null) { ClearImportedForestCollisions(); return; }
 		_importedForestCollisionRoot ??= CreateImportedForestCollisionRoot();
 		RingCanonicalPosition focus = _explorer.CanonicalPosition;
@@ -110,16 +118,23 @@ public partial class RingBiomeDecorationLayer
 		_importedForestCollisionRequired.Clear();
 		using (RingPerformanceTelemetry.MeasureCpu("Trees collider maintenance"))
 		{
+			// These are identical for every collider in this pass.
+			IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
+			RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
+			Transform3D parentGlobal = _importedForestCollisionRoot.GlobalTransform;
 			foreach ((CachedTree tree, _) in _importedForestCollisionCandidates)
 			{
 				_importedForestCollisionRequired.Add(tree.Id);
-				InstallImportedForestCollider(tree);
+				InstallImportedForestCollider(tree, variants, geometry, parentGlobal);
 			}
-			foreach ((ulong id, StaticBody3D body) in new List<KeyValuePair<ulong, StaticBody3D>>(_importedForestBodies))
+			_importedForestBodyRemovalScratch.Clear();
+			foreach (ulong id in _importedForestBodies.Keys)
+				if (!_importedForestCollisionRequired.Contains(id)) _importedForestBodyRemovalScratch.Add(id);
+			foreach (ulong id in _importedForestBodyRemovalScratch)
 			{
-				if (_importedForestCollisionRequired.Contains(id)) continue;
-				body.QueueFree();
+				_importedForestBodies[id].QueueFree();
 				_importedForestBodies.Remove(id);
+				_importedForestColliderPoses.Remove(id);
 			}
 		}
 		using (RingPerformanceTelemetry.MeasureCpu("Trees protected-metadata refresh"))
@@ -199,13 +214,12 @@ public partial class RingBiomeDecorationLayer
 		return root;
 	}
 
-	private void InstallImportedForestCollider(in CachedTree tree)
+	private void InstallImportedForestCollider(in CachedTree tree, IReadOnlyList<ImportedTreeVariant> variants,
+		in RingLodGeometrySnapshot geometry, in Transform3D parentGlobal)
 	{
 		if (_grid == null || _importedForestCollisionRoot == null) return;
-		IReadOnlyList<ImportedTreeVariant> variants = ImportedTreeCatalog.Load();
 		if (tree.Variant < 0 || tree.Variant >= variants.Count) return;
 		ImportedTreeVariant variant = variants[tree.Variant];
-		RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
 		Vector3 baseWorld = geometry.CanonicalToWorld(tree.Around, RootAltitude(tree.SurfaceHeight, RootEmbedMeters), tree.Across);
 		float heightScale = tree.Height / Mathf.Max(.01f, variant.HeightMeters);
 		// Rendering applies the catalog's uniform height normalization, so physics
@@ -219,8 +233,11 @@ public partial class RingBiomeDecorationLayer
 		if (right.LengthSquared() < .001f) right = up.Cross(Vector3.Right).Normalized();
 		Vector3 forward = right.Cross(up).Normalized();
 		Transform3D transform = new(new Basis(right, up, forward), baseWorld.Lerp(trunkTop, .5f));
+		var pose = new ImportedForestColliderPose(transform, radius, height, parentGlobal);
 		if (_importedForestBodies.TryGetValue(tree.Id, out StaticBody3D? existing))
 		{
+			if (_importedForestColliderPoses.TryGetValue(tree.Id, out ImportedForestColliderPose stored) && stored == pose) return;
+			_importedForestColliderPoses[tree.Id] = pose;
 			existing.GlobalTransform = transform;
 			if (existing.GetNodeOrNull<CollisionShape3D>("Trunk")?.Shape is CylinderShape3D cylinder)
 			{
@@ -235,12 +252,14 @@ public partial class RingBiomeDecorationLayer
 		_importedForestCollisionRoot.AddChild(body);
 		body.GlobalTransform = transform;
 		_importedForestBodies.Add(tree.Id, body);
+		_importedForestColliderPoses[tree.Id] = pose;
 	}
 
 	private void ClearImportedForestCollisions()
 	{
 		foreach (StaticBody3D body in _importedForestBodies.Values) body.QueueFree();
 		_importedForestBodies.Clear();
+		_importedForestColliderPoses.Clear();
 		RefreshGpuTreeProtectedFlags();
 		_lastImportedForestCollisionAround = long.MinValue;
 		_lastImportedForestCollisionAcross = long.MinValue;

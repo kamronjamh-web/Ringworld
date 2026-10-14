@@ -3671,6 +3671,20 @@ public partial class RingVolumetricCloudLayer : Node3D
         int Generation, float Envelope, WeatherLifecycleStage Stage,
         double CycleSeconds, double OffsetSeconds);
 
+    /// <summary>Generation counter of EvaluateWeatherLifecycle, without the envelope work.</summary>
+    private int ResolveWeatherGeneration(int a, int z, int seed, double t)
+    {
+        if (!NaturalWeatherLifecyclesEnabled) return 0;
+        double cycle = Math.Max(1.0,
+            WeatherBirthSeconds + WeatherDevelopSeconds + WeatherMatureSeconds
+            + WeatherDissipateSeconds + WeatherQuietSeconds);
+        double offset = Hash01(a, z, seed, 109) * cycle;
+        return (int)Math.Floor((t + offset) / cycle);
+    }
+
+    private static int WeatherSystemIdForGeneration(int a, int z, int seed, int gen)
+        => WeatherSystemId(a, z, unchecked(seed ^ gen * 0x45D9F3B));
+
     private WeatherLifecycle EvaluateWeatherLifecycle(
         int aroundCell,
         int acrossCell,
@@ -3875,7 +3889,7 @@ public partial class RingVolumetricCloudLayer : Node3D
                 _ => 0.0f
             };
             system = new WeatherSystemDefinition(
-                WeatherSystemId(systemAroundCell, systemAcrossCell, unchecked(seed ^ lifecycle.Generation * 0x45D9F3B)),
+                WeatherSystemIdForGeneration(systemAroundCell, systemAcrossCell, seed, lifecycle.Generation),
                 kind,
                 centerAround,
                 centerAcross,

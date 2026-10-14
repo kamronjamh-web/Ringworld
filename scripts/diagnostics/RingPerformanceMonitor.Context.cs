@@ -46,7 +46,7 @@ public partial class RingPerformanceMonitor
         _frameShadowAtlasSize = graphics?.EffectiveDirectionalShadowAtlasSize ?? -1;
 
         string terrain = coordinator == null ? "unavailable" :
-            $"workers {coordinator.ActiveWorkerCount}/{coordinator.MaxConcurrentWorkerBuilds}; queued uploads {coordinator.PendingUploadCount}; active mesh {FormatBytes(coordinator.EstimatedActiveMeshBytes)}; staged {FormatBytes(coordinator.EstimatedPendingMeshBytes)}";
+            $"workers {coordinator.ActiveWorkerCount}/{coordinator.MaxConcurrentWorkerBuilds}; queued uploads {coordinator.PendingUploadCount}; build starts {coordinator.LastFrameBuildStarts} ({coordinator.LastFrameBuildStartMilliseconds:0.0} ms, deferred {coordinator.DeferredBuildStartCount}); active mesh {FormatBytes(coordinator.EstimatedActiveMeshBytes)}; staged {FormatBytes(coordinator.EstimatedPendingMeshBytes)}";
         string chunks = grid == null ? "unavailable" :
             $"loaded {grid.LoadedChunkCount}; loads {grid.PendingChunkLoadCount}; rebuilds {grid.PendingChunkRebuildCount}; mesh workers {grid.ActiveVoxelMeshWorkerCount}; mesh queued {grid.PendingVoxelMeshCount}; estimated data {FormatBytes(grid.EstimatedVoxelDataBytes)}";
         string smoothTerrain = smooth == null ? "unavailable" :

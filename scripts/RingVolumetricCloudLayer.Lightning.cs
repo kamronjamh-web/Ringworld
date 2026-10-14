@@ -17,6 +17,7 @@ public partial class RingVolumetricCloudLayer
     [Export(PropertyHint.Range, "1,64,1")] public int SharedLightningScanCellsPerFrame { get; set; } = 64;
 
     private readonly List<RingLightningEvent> _activeLightningEvents = new();
+    private readonly List<(int Around, int Across)> _lightningPruneScratch = new();
     private readonly Dictionary<(int Around, int Across), WeatherSystemDefinition> _lightningCandidateCache = new();
     private readonly Dictionary<string, LocalWeatherState> _manualWeather = new(StringComparer.Ordinal);
     private long _lightningSweepCursor;
@@ -56,7 +57,7 @@ public partial class RingVolumetricCloudLayer
         int previews = 0; foreach (RingLightningEvent active in _activeLightningEvents) if (active.IsPreview) previews++;
         if (previews >= 16) return null;
         RingLightningEvent result = CreateLightningEvent(weather.SystemId, CloudSimulationTimeSeconds, target, weather, true, 0);
-        if (!_activeLightningEvents.Exists(e => e.EventId == result.EventId)) _activeLightningEvents.Add(result);
+        if (FindActiveLightningIndex(result.EventId) < 0) _activeLightningEvents.Add(result);
         return result;
     }
 
@@ -138,7 +139,12 @@ public partial class RingVolumetricCloudLayer
             _nextLightningLocalPriorityRefresh = 0.0;
         }
         _lastLightningProcessedTime = now;
-        _activeLightningEvents.RemoveAll(e => e.StartTimeSeconds > now || now - e.StartTimeSeconds > RingLightningEvent.LifetimeSeconds);
+        for (int i = _activeLightningEvents.Count - 1; i >= 0; i--)
+        {
+            RingLightningEvent active = _activeLightningEvents[i];
+            if (active.StartTimeSeconds > now || now - active.StartTimeSeconds > RingLightningEvent.LifetimeSeconds)
+                _activeLightningEvents.RemoveAt(i);
+        }
         if (!Enabled || !EnableSharedLightning || _grid == null || _explorer == null) { _activeLightningEvents.Clear(); return; }
 
         ScanLightningCells(now);
@@ -153,7 +159,7 @@ public partial class RingVolumetricCloudLayer
 
     private void ScanLightningCells(double now)
     {
-        Stopwatch stopwatch=Stopwatch.StartNew();
+        long scanStart = Stopwatch.GetTimestamp();
         float cell = Mathf.Clamp(MacroWeatherCellMeters, 16000, 64000);
         int aroundCount = Math.Max(1, Mathf.CeilToInt((float)(_grid!.GetCanonicalRingCircumferenceMeters64() / cell)));
         float maxRadius = Mathf.Clamp(MaximumMacroSystemRadiusMeters, 40000, 160000);
@@ -162,12 +168,14 @@ public partial class RingVolumetricCloudLayer
         int acrossCount = Math.Max(1, maxAcross - minAcross + 1);
         long total = (long)aroundCount * acrossCount;
         int seed = _grid.TerrainSampler?.Seed ?? 1337;
-        foreach (var key in new List<(int Around,int Across)>(_lightningCandidateCache.Keys))
-            if (key.Across < minAcross || key.Across > maxAcross) _lightningCandidateCache.Remove(key);
+        _lightningPruneScratch.Clear();
+        foreach (var key in _lightningCandidateCache.Keys)
+            if (key.Across < minAcross || key.Across > maxAcross) _lightningPruneScratch.Add(key);
+        foreach (var key in _lightningPruneScratch) _lightningCandidateCache.Remove(key);
         int budget = Math.Clamp(SharedLightningScanCellsPerFrame, 1, 64);
         _lightningGlobalCellsScannedLastUpdate = 0;
         _lightningLocalCellsScannedLastUpdate = 0;
-        for (int i=0; i<budget && stopwatch.Elapsed.TotalMilliseconds<1.0; i++) {
+        for (int i=0; i<budget && Stopwatch.GetElapsedTime(scanStart).TotalMilliseconds<1.0; i++) {
             _lightningGlobalCellsScannedLastUpdate++;
             long index = _lightningSweepCursor++ % total;
             int a = (int)(index % aroundCount); int z = minAcross + (int)(index / aroundCount);
@@ -182,30 +190,31 @@ public partial class RingVolumetricCloudLayer
             _nextLightningLocalPriorityRefresh=now+1.0;
         }
         _lightningCandidatesScannedLastUpdate = _lightningGlobalCellsScannedLastUpdate + _lightningLocalCellsScannedLastUpdate;
-        _lightningScanMilliseconds=stopwatch.Elapsed.TotalMilliseconds;
+        _lightningScanMilliseconds=Stopwatch.GetElapsedTime(scanStart).TotalMilliseconds;
     }
 
     private void TryScheduleNaturalLightning(int a, int z, double now)
     {
         if (_activeLightningEvents.Count >= 128) return;
-        if (TryCreateNaturalEvent(a,z,now,out RingLightningEvent e) && !_activeLightningEvents.Exists(x=>x.EventId==e.EventId)) _activeLightningEvents.Add(e);
+        if (TryCreateNaturalEvent(a,z,now,out RingLightningEvent e) && FindActiveLightningIndex(e.EventId) < 0) _activeLightningEvents.Add(e);
     }
     private bool TryCreateNaturalEvent(int a,int z,double now,out RingLightningEvent created)
     {
         created=default;
         int seed = _grid!.TerrainSampler?.Seed ?? 1337;
+        // The present system id is a pure function of (cell, seed, generation), so
+        // reject cells whose lightning slot is not live before building the system.
+        int predictedId = WeatherSystemIdForGeneration(a, z, seed, ResolveWeatherGeneration(a, z, seed, now));
+        if (!TryResolveLightningSlot(seed, predictedId, now, out _, out _)) return false;
         if (!TryBuildWeatherSystem(a,z,seed,now,out WeatherSystemDefinition present)) return false;
-        double cadence = 7.0 + Unit(LightningHash(seed,present.SystemId,0,31))*17.0;
-        double phase = Unit(LightningHash(seed,present.SystemId,0,32))*cadence;
-        long slot=(long)Math.Floor((now-phase)/cadence); double start=phase+slot*cadence;
-        if (start < 0 || now-start > RingLightningEvent.LifetimeSeconds) return false;
+        if (!TryResolveLightningSlot(seed, present.SystemId, now, out long slot, out double start)) return false;
         if (!TryBuildWeatherSystem(a,z,seed,start,out WeatherSystemDefinition s) || s.SystemId != present.SystemId) return false;
         LocalWeatherState weather=ToLightningWeather(s,start);
         if (!IsLightningEligible(weather) || Unit(LightningHash(seed,s.SystemId,slot,33)) > 0.18f+weather.PrecipitationPotential*.42f) return false;
         uint hash = LightningHash(seed, s.SystemId, slot, 8);
         long id = ((long)(hash & 0x7fffffff) << 32) | LightningHash(seed ^ 0x51ed, s.SystemId, slot, 9);
         if (id <= 0) id = 1;
-        int liveIndex = _activeLightningEvents.FindIndex(x => x.EventId == id);
+        int liveIndex = FindActiveLightningIndex(id);
         if (liveIndex >= 0) { created = _activeLightningEvents[liveIndex]; return true; }
         if (!TrySampleStormPosition(weather, slot, out RingCanonicalPosition target)) return false;
         created=CreateLightningEvent(s.SystemId,start,target,weather,false,slot); return true;
@@ -228,14 +237,27 @@ public partial class RingVolumetricCloudLayer
     {
         if (_activeLightningEvents.Count >= 128 || !IsLightningEligible(weather)) return;
         int seed = _grid?.TerrainSampler?.Seed ?? 1337;
-        double cadence = 7.0 + Unit(LightningHash(seed, weather.SystemId, 0, 31)) * 17.0;
-        double phase = Unit(LightningHash(seed, weather.SystemId, 0, 32)) * cadence;
-        long slot = (long)Math.Floor((now - phase) / cadence);
-        double start = phase + slot * cadence;
-        if (start < 0.0 || now - start > RingLightningEvent.LifetimeSeconds
+        if (!TryResolveLightningSlot(seed, weather.SystemId, now, out long slot, out double start)
             || !TrySampleStormPosition(weather, slot, out RingCanonicalPosition target)) return;
         RingLightningEvent e = CreateLightningEvent(weather.SystemId, start, target, weather, false, slot);
-        if (!_activeLightningEvents.Exists(x => x.EventId == e.EventId)) _activeLightningEvents.Add(e);
+        if (FindActiveLightningIndex(e.EventId) < 0) _activeLightningEvents.Add(e);
+    }
+
+    /// <summary>Cadence/phase slot of a system's lightning; false when no slot is live at <paramref name="now"/>.</summary>
+    private static bool TryResolveLightningSlot(int seed, int systemId, double now, out long slot, out double start)
+    {
+        double cadence = 7.0 + Unit(LightningHash(seed, systemId, 0, 31)) * 17.0;
+        double phase = Unit(LightningHash(seed, systemId, 0, 32)) * cadence;
+        slot = (long)Math.Floor((now - phase) / cadence);
+        start = phase + slot * cadence;
+        return !(start < 0.0 || now - start > RingLightningEvent.LifetimeSeconds);
+    }
+
+    private int FindActiveLightningIndex(long id)
+    {
+        for (int i = 0; i < _activeLightningEvents.Count; i++)
+            if (_activeLightningEvents[i].EventId == id) return i;
+        return -1;
     }
     private LocalWeatherState ToLightningWeather(WeatherSystemDefinition s,double time) => new(s.SystemId,s.Kind,s.Density,s.MajorRadiusMeters,new Vector2((float)WrapAround(s.SourceAroundMeters+WeatherWindMetersPerSecond.X*time),(float)(s.SourceAcrossMeters+WeatherWindMetersPerSecond.Y*time)),new Vector2(s.MajorRadiusMeters,s.MinorRadiusMeters),s.OrientationRadians,s.Density,s.PrecipitationPotential,WeatherWindMetersPerSecond,CloudFormationProfile.Cumulonimbus,CloudBaseMeters,CloudTopMeters);
 

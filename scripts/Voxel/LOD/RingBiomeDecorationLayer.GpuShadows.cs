@@ -53,7 +53,7 @@ public partial class RingBiomeDecorationLayer
         if (!selected)
         {
             ReleaseGpuTreeShadowProxy(output);
-            output.Renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+            SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
             return;
         }
 
@@ -65,14 +65,14 @@ public partial class RingBiomeDecorationLayer
             || key.Group.Variant < 0 || key.Group.Variant >= _lod3AuthoredTemplates.Length || key.Group.Variant >= _lod4AuthoredTemplates.Length)
         {
             ReleaseGpuTreeShadowProxy(output);
-            output.Renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.On;
+            SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.On);
             return;
         }
 
         GpuTreeShadowProxy? proxy = GetOrCreateGpuTreeShadowProxy(key, output);
         if (proxy == null)
         {
-            output.Renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.On;
+            SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.On);
             return;
         }
 
@@ -83,9 +83,9 @@ public partial class RingBiomeDecorationLayer
         }
         // Keep the primary shadow until the GPU-side mirror has received a valid
         // indirect command and instance buffer. This prevents a visible gap.
-        output.Renderer.CastShadow = proxy.Ready
+        SetCastShadow(output.Renderer, proxy.Ready
             ? GeometryInstance3D.ShadowCastingSetting.Off
-            : GeometryInstance3D.ShadowCastingSetting.On;
+            : GeometryInstance3D.ShadowCastingSetting.On);
     }
 
     private GpuTreeShadowProxy? GetOrCreateGpuTreeShadowProxy(GpuOutputKey key, GpuTreeOutput output)
@@ -147,7 +147,7 @@ public partial class RingBiomeDecorationLayer
             foreach (GpuTreeOutput output in _gpuTreeOutputs.Values)
                 if (output.BatchId == batchId)
                 {
-                    output.Renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off;
+                    SetCastShadow(output.Renderer, GeometryInstance3D.ShadowCastingSetting.Off);
                     break;
                 }
         }

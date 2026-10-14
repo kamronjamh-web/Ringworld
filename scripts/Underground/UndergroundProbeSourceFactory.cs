@@ -16,4 +16,8 @@ public static class UndergroundProbeSourceFactory
         var terrain3D = owner.GetNodeOrNull<RingTerrain3DGameplay>(terrain3DPath);
         return terrain3D != null ? new Terrain3DUndergroundProbeSource(terrain3D) : null;
     }
+
+    /// <summary>The smooth terrain backend's cave LOD seam; null when another backend is active.</summary>
+    public static ICaveLodProfileTarget? CreateCaveLodTarget(Node owner, NodePath smoothTerrainPath) =>
+        owner.GetNodeOrNull(smoothTerrainPath) as ICaveLodProfileTarget;
 }

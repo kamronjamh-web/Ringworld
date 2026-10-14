@@ -98,12 +98,83 @@ public partial class UndergroundModeSettingsSmoke : RefCounted
             using var wildDepth = new GameplayUndergroundModeSettings { DeepHideDepthMeters = 99999, EnclosureLightingWeight = -2, CaveAmbientEnergy = float.NaN };
             using var cleanDepth = GameplayUndergroundModeDefaults.Sanitize(wildDepth);
             bool depthSanitized = cleanDepth.DeepHideDepthMeters == GameplayUndergroundModeDefaults.MaximumDeepHideDepth && cleanDepth.EnclosureLightingWeight == 0 && cleanDepth.CaveAmbientEnergy == .035f;
+            // Cave LOD profile: defaults match the controller, round trip, apply, and sanitize clamps.
+            var profileDefaults = new GameplayUndergroundModeDefaults(isolatedPath + ".profile.missing");
+            profileDefaults.Load();
+            var profileController = new RingUndergroundModeController();
+            var ps = profileDefaults.Settings;
+            bool profileDefaultsMatch = profileController.UndergroundCaveProfile == CaveLodProfile.UndergroundDefault
+                && ps.CaveCoarseRadiusAround == profileController.UndergroundCaveProfile.CoarseRadiusAround && ps.CaveCoarseRadiusAcross == profileController.UndergroundCaveProfile.CoarseRadiusAcross
+                && ps.CaveCoarseRadiusVertical == profileController.UndergroundCaveProfile.CoarseRadiusVertical && ps.CaveWorkerBonus == profileController.UndergroundCaveProfile.WorkerBonus
+                && ps.CaveInstallBudgetMilliseconds == profileController.UndergroundCaveProfile.InstallBudgetMilliseconds && ps.CaveMaxInstallsPerFrame == profileController.UndergroundCaveProfile.MaxInstallsPerFrame
+                && ps.CaveCoarseRetainMarginSectors == profileController.CoarseRetainMarginSectors && ps.CaveProfileShrinkDelaySeconds == profileController.CaveProfileShrinkDelaySeconds
+                && ps.CaveCoarseActivationHysteresisMeters == profileController.CaveCoarseActivationHysteresisMeters;
+            var profilePath = isolatedPath + ".profile.tres";
+            var profileSaved = new GameplayUndergroundModeDefaults(profilePath);
+            profileSaved.Load();
+            using var profileCustom = new GameplayUndergroundModeSettings
+            {
+                CaveCoarseRadiusAround = 3, CaveCoarseRadiusAcross = 1, CaveCoarseRadiusVertical = 2, CaveWorkerBonus = 4, CaveInstallBudgetMilliseconds = 5.5f,
+                CaveMaxInstallsPerFrame = 20, CaveCoarseRetainMarginSectors = 2, CaveProfileShrinkDelaySeconds = 25f, CaveCoarseActivationHysteresisMeters = 128f
+            };
+            bool profileWritten = profileSaved.Set(profileCustom) && profileSaved.Save();
+            var profileReloaded = new GameplayUndergroundModeDefaults(profilePath);
+            profileReloaded.Load();
+            var rs = profileReloaded.Settings;
+            bool profilePersisted = profileWritten && rs.CaveCoarseRadiusAround == 3 && rs.CaveCoarseRadiusAcross == 1 && rs.CaveCoarseRadiusVertical == 2 && rs.CaveWorkerBonus == 4
+                && rs.CaveInstallBudgetMilliseconds == 5.5f && rs.CaveMaxInstallsPerFrame == 20 && rs.CaveCoarseRetainMarginSectors == 2
+                && rs.CaveProfileShrinkDelaySeconds == 25f && rs.CaveCoarseActivationHysteresisMeters == 128f;
+            profileReloaded.Apply(profileController);
+            bool profileApplied = profileController.UndergroundCaveProfile == new CaveLodProfile(3, 1, 2, 4, 5.5f, 20) && profileController.CoarseRetainMarginSectors == 2
+                && profileController.CaveProfileShrinkDelaySeconds == 25f && profileController.CaveCoarseActivationHysteresisMeters == 128f;
+            profileController.Free();
+            try { File.Delete(ProjectSettings.GlobalizePath(profilePath)); } catch { }
+            using var wildProfile = new GameplayUndergroundModeSettings
+            {
+                CaveCoarseRadiusAround = 9, CaveCoarseRadiusAcross = -2, CaveCoarseRadiusVertical = 9, CaveWorkerBonus = -1, CaveInstallBudgetMilliseconds = float.NaN,
+                CaveMaxInstallsPerFrame = 0, CaveCoarseRetainMarginSectors = 5, CaveProfileShrinkDelaySeconds = -1f, CaveCoarseActivationHysteresisMeters = 999f
+            };
+            using var cleanProfile = GameplayUndergroundModeDefaults.Sanitize(wildProfile);
+            using var wildBudget = new GameplayUndergroundModeSettings { CaveInstallBudgetMilliseconds = 99f };
+            using var cleanBudget = GameplayUndergroundModeDefaults.Sanitize(wildBudget);
+            bool profileSanitized = cleanProfile.CaveCoarseRadiusAround == 4 && cleanProfile.CaveCoarseRadiusAcross == 0 && cleanProfile.CaveCoarseRadiusVertical == 3 && cleanProfile.CaveWorkerBonus == 0
+                && cleanProfile.CaveInstallBudgetMilliseconds == 3f && cleanProfile.CaveMaxInstallsPerFrame == 1 && cleanProfile.CaveCoarseRetainMarginSectors == 2
+                && cleanProfile.CaveProfileShrinkDelaySeconds == 0 && cleanProfile.CaveCoarseActivationHysteresisMeters == 256f
+                && cleanBudget.CaveInstallBudgetMilliseconds == GameplayUndergroundModeDefaults.MaximumCaveInstallBudget;
+            bool caveProfile = profileDefaultsMatch && profilePersisted && profileApplied && profileSanitized;
+            // Cave fog coupling: defaults match the controller, round trip, apply, and sanitize clamps.
+            var fogController = new RingUndergroundModeController();
+            var fs = profileDefaults.Settings;
+            bool fogDefaultsMatch = fs.CoupleFogToCaveDistance && fs.CoupleFogToCaveDistance == fogController.CoupleFogToCaveDistance
+                && fs.FogEndFraction == fogController.FogEndFraction && fs.UnfilledCaveFogReachMeters == fogController.UnfilledCaveFogReachMeters;
+            var fogPath = isolatedPath + ".fog.tres";
+            var fogSaved = new GameplayUndergroundModeDefaults(fogPath);
+            fogSaved.Load();
+            using var fogCustom = new GameplayUndergroundModeSettings { CoupleFogToCaveDistance = false, FogEndFraction = .7f, UnfilledCaveFogReachMeters = 2048f };
+            bool fogWritten = fogSaved.Set(fogCustom) && fogSaved.Save();
+            var fogReloaded = new GameplayUndergroundModeDefaults(fogPath);
+            fogReloaded.Load();
+            bool fogPersisted = fogWritten && !fogReloaded.Settings.CoupleFogToCaveDistance && fogReloaded.Settings.FogEndFraction == .7f && fogReloaded.Settings.UnfilledCaveFogReachMeters == 2048f;
+            fogReloaded.Apply(fogController);
+            bool fogApplied = !fogController.CoupleFogToCaveDistance && fogController.FogEndFraction == .7f && fogController.UnfilledCaveFogReachMeters == 2048f;
+            fogController.Free();
+            try { File.Delete(ProjectSettings.GlobalizePath(fogPath)); } catch { }
+            using var wildFogLow = new GameplayUndergroundModeSettings { FogEndFraction = .2f, UnfilledCaveFogReachMeters = 5f };
+            using var wildFogHigh = new GameplayUndergroundModeSettings { FogEndFraction = 3f, UnfilledCaveFogReachMeters = 99999f };
+            using var wildFogNaN = new GameplayUndergroundModeSettings { FogEndFraction = float.NaN, UnfilledCaveFogReachMeters = float.NaN };
+            using var cleanFogLow = GameplayUndergroundModeDefaults.Sanitize(wildFogLow);
+            using var cleanFogHigh = GameplayUndergroundModeDefaults.Sanitize(wildFogHigh);
+            using var cleanFogNaN = GameplayUndergroundModeDefaults.Sanitize(wildFogNaN);
+            bool fogSanitized = cleanFogLow.FogEndFraction == .5f && cleanFogLow.UnfilledCaveFogReachMeters == 256f
+                && cleanFogHigh.FogEndFraction == 1f && cleanFogHigh.UnfilledCaveFogReachMeters == 4096f
+                && cleanFogNaN.FogEndFraction == .9f && cleanFogNaN.UnfilledCaveFogReachMeters == 1024f;
+            bool caveFog = fogDefaultsMatch && fogPersisted && fogApplied && fogSanitized;
             lighting.Reset();
             bool lightingReset = lighting.Settings.AudioWeatherEnabled && lighting.Settings.ShadowsEnabled && lighting.Settings.EnclosureLightingWeight == 1 && lighting.Dirty && lighting.Save();
             try { File.Delete(ProjectSettings.GlobalizePath(lightingPath)); } catch { }
-            bool groupsAndLighting = groupDefaults && controllerDefaults && lightingApplied && lightingPersisted && lightingSanitized && depthSanitized && lightingReset;
+            bool groupsAndLighting = caveProfile && caveFog && groupDefaults && controllerDefaults && lightingApplied && lightingPersisted && lightingSanitized && depthSanitized && lightingReset;
             result["pass"] = groupsAndLighting && baselineOk && noOp && changed && persisted && untouched && applied && noFileNoApply && sanitized && hysteresis && loadSanitized && reset;
-            result["detail"] = $"groupsAndLighting={groupsAndLighting} (defaults={groupDefaults} controller={controllerDefaults} applied={lightingApplied} persisted={lightingPersisted} sanitized={lightingSanitized}/{depthSanitized} reset={lightingReset}) baseline={baselineOk} noop={noOp} changed={changed} persisted={persisted} untouched={untouched} applied={applied} nofile={noFileNoApply} sanitized={sanitized} hysteresis={hysteresis} loadSanitized={loadSanitized} reset={reset}";
+            result["detail"] = $"groupsAndLighting={groupsAndLighting} (caveFog={caveFog} [defaults={fogDefaultsMatch} persisted={fogPersisted} applied={fogApplied} sanitized={fogSanitized}] caveProfile={caveProfile} [defaults={profileDefaultsMatch} persisted={profilePersisted} applied={profileApplied} sanitized={profileSanitized}] defaults={groupDefaults} controller={controllerDefaults} applied={lightingApplied} persisted={lightingPersisted} sanitized={lightingSanitized}/{depthSanitized} reset={lightingReset}) baseline={baselineOk} noop={noOp} changed={changed} persisted={persisted} untouched={untouched} applied={applied} nofile={noFileNoApply} sanitized={sanitized} hysteresis={hysteresis} loadSanitized={loadSanitized} reset={reset}";
         }
         catch (Exception error) { result["pass"] = false; result["detail"] = error.ToString(); }
         finally { try { string full = ProjectSettings.GlobalizePath(isolatedPath); if (File.Exists(full)) File.Delete(full); } catch { } }

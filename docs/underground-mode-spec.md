@@ -6,9 +6,9 @@
 |---|---|
 | P1 detection core, P2 settings + drawer | Done (commit `8171c81`) |
 | P3a CPU participants, P3b render participants, P3c lighting + proxies | Done (commit after `8171c81` on `cave-perf-underground-mode`) |
-| P4 cave LOD profile (coarse radius 2, ~4 km) | Next |
-| P5 fog coupling | Not started |
-| P6 benchmark + human review | Not started |
+| P4 cave LOD profile (coarse radius 2, ~4 km) | Done (branch `cave-lod-profile-fog`) |
+| P5 fog coupling (deep caves only) | Done (branch `cave-lod-profile-fog`) |
+| P6 benchmark + human review | Next |
 
 Implementation notes that differ from the original spec below:
 - Probe sample budget default is 24 (not 160), and the probe is skipped above `ExitDepthMeters`.
@@ -16,6 +16,9 @@ Implementation notes that differ from the original spec below:
 - Hide tier and shadow suspension require the atmosphere's `underground_lighting_darkness` to be 1 and sun energy ~0 on the previous frame (`HideOrderingViolations` must stay 0).
 - Cave ambient (0.16, 0.20, 0.30) @ 0.035 and fog colour (0.05, 0.07, 0.11) are untuned first guesses.
 - Smokes: `tools/underground_mode_smoke_test.gd`, `tools/underground_mode_settings_smoke_test.gd`, and `-- --underground-mode-roundtrip-smoke-test --smooth-terrain-backend` (the flag keeps the Certified preset on the smooth backend).
+- P4: underground install budget / installs cap use `max(TerrainStreaming value, profile value)` (never lowers user settings, same as the worker bonus). Coarse activation hysteresis (64 m) is exposed in the Underground drawer. Retain margin also applies at the surface profile (watch coarse bytes in P6).
+- P5 (user decision): cave fog applies only while the coarse underground latch is on (≥256 m, released at 192 m); shallow caves stay unfogged. Coupling weight fades in over ~1 s at latch-on and out between release+32 m and release on ascent. Reach = coarse guaranteed reach once the desired coarse ring is fully ready, else `UnfilledCaveFogReachMeters` (1024 m, bridge 32 m tier). Surface depth fog is off by default, so a fog-off baseline counts as density 0 / sky affect 0.
+- P6 watch item: roundtrip child counts for Trees (301→316) and GlobalTerrainLod3 (222→257) grow over 20 cycles; the smoke passes, but check for slow leaks.
 - Pre-existing failures unrelated to this work: `smooth_terrain_pilot_smoke_test.gd`, `sunshine_menu_smoke`, `sunshine_shadow_toggle_smoke`, `distant_rain_curtains_smoke`, `rain_surface_behavior`.
 
 ## Cave roadmap and decisions
@@ -216,7 +219,7 @@ Controls:
 4. **P3b Render participants** — Sunshine `SetRenderSuspended` + provider guard + history reset, LocalVolumetric flag, LocalWeatherEffects (incl. flash), far viewport `SetRenderSuspended`, GlobalTerrainLod3 hide. Test: round-trip smoke + GPU perf delta.
 5. **P3c Lighting + proxies** — DaySideAtmosphere enclosure sky access (after D1), shadow suspension reason, coordinator Freeze/Hide tiers with structural-wall exception. Test: round-trip + cavity lighting capture (`--capture-cavity-lighting`) still passes.
 6. **P4 Cave LOD profile** — override layer, retain margin, activation hysteresis, worker bonus; controller applies profiles with shrink delay. Test: smoke #4.
-7. **P5 Fog coupling** — atmosphere fog lerp + menu controls. Test: manual + atmosphere smokes (`AtmosphereSettingsSmoke`).
+7. **P5 Fog coupling** — atmosphere fog lerp + menu controls. Test: `UndergroundModeSmoke` fog checks, `UndergroundModeSettingsSmoke`, and `tools/underground_environment_lighting_smoke_test.gd` (via `UndergroundEnvironmentRuntimeSmoke.tscn`). Deep caves only: no fog coupling unless the coarse latch is on.
 8. **P6 Benchmark + human review** — perf benchmark, tune defaults, update `CAVE_AND_DEEP_STRUCTURE_IMPLEMENTATION_CHECKLIST.md` Gate 4.
 
 ---

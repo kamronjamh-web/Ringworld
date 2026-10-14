@@ -25,4 +25,16 @@ public partial class GameplayUndergroundModeSettings : Resource
     [Export] public Color CaveAmbientColor { get; set; } = new(.16f, .20f, .30f, 1f);
     [Export] public float CaveAmbientEnergy { get; set; } = .035f;
     [Export] public Color CaveFogColor { get; set; } = new(.05f, .07f, .11f, 1f);
+    [Export] public int CaveCoarseRadiusAround { get; set; } = 2;
+    [Export] public int CaveCoarseRadiusAcross { get; set; } = 2;
+    [Export] public int CaveCoarseRadiusVertical { get; set; } = 1;
+    [Export] public int CaveWorkerBonus { get; set; } = 2;
+    [Export] public float CaveInstallBudgetMilliseconds { get; set; } = 3f;
+    [Export] public int CaveMaxInstallsPerFrame { get; set; } = 12;
+    [Export] public int CaveCoarseRetainMarginSectors { get; set; } = 1;
+    [Export] public float CaveProfileShrinkDelaySeconds { get; set; } = 10f;
+    [Export] public float CaveCoarseActivationHysteresisMeters { get; set; } = 64f;
+    [Export] public bool CoupleFogToCaveDistance { get; set; } = true;
+    [Export] public float FogEndFraction { get; set; } = .9f;
+    [Export] public float UnfilledCaveFogReachMeters { get; set; } = 1024f;
 }

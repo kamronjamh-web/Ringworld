@@ -10,6 +10,16 @@ public partial class RingBiomeDecorationLayer
     private readonly ConditionalWeakTable<ShaderMaterial, TreeAtmosphereMaterialFrame> _treeAtmosphereFrames = new();
     private long _treeAtmosphereParameterWrites;
 
+    private static readonly StringName AtmosphereRayFrameValidParameter = "ring_atmosphere_ray_frame_valid";
+    private static readonly StringName AtmosphereCameraWorldPositionParameter = "ring_atmosphere_camera_world_position";
+    private static readonly StringName AtmosphereCameraHeightMetersParameter = "ring_atmosphere_camera_height_meters";
+    private static readonly StringName AtmosphereOutwardWorldParameter = "ring_atmosphere_outward_world";
+    private static readonly StringName AtmosphereAxisWorldParameter = "ring_atmosphere_axis_world";
+    private static readonly StringName AtmosphereSidewallNegativeMetersParameter = "ring_atmosphere_sidewall_negative_meters";
+    private static readonly StringName AtmosphereSidewallPositiveMetersParameter = "ring_atmosphere_sidewall_positive_meters";
+    private static readonly StringName AtmosphereCoordinateScaleParameter = "ring_atmosphere_coordinate_scale";
+    private static readonly StringName AtmosphereToSunParameter = "ring_atmosphere_to_sun";
+
     private sealed class TreeAtmosphereMaterialFrame
     {
         public TreeAtmosphereMaterialFrame() { }
@@ -61,17 +71,17 @@ public partial class RingBiomeDecorationLayer
             material.SetShaderParameter(name, value);
             _treeAtmosphereParameterWrites++;
         }
-        if (!cached.Initialized || cached.Valid != valid) Set("ring_atmosphere_ray_frame_valid", valid);
+        if (!cached.Initialized || cached.Valid != valid) Set(AtmosphereRayFrameValidParameter, valid);
         if (valid)
         {
-            if (full || !previous.CameraWorld.Equals(frame.CameraWorld)) Set("ring_atmosphere_camera_world_position", frame.CameraWorld);
-            if (full || !previous.CameraHeightMeters.Equals(frame.CameraHeightMeters)) Set("ring_atmosphere_camera_height_meters", frame.CameraHeightMeters);
-            if (full || !previous.OutwardWorld.Equals(frame.OutwardWorld)) Set("ring_atmosphere_outward_world", frame.OutwardWorld);
-            if (full || !previous.AxisWorld.Equals(frame.AxisWorld)) Set("ring_atmosphere_axis_world", frame.AxisWorld);
-            if (full || !previous.SidewallNegativeMeters.Equals(frame.SidewallNegativeMeters)) Set("ring_atmosphere_sidewall_negative_meters", frame.SidewallNegativeMeters);
-            if (full || !previous.SidewallPositiveMeters.Equals(frame.SidewallPositiveMeters)) Set("ring_atmosphere_sidewall_positive_meters", frame.SidewallPositiveMeters);
-            if (full || !previous.CoordinateScale.Equals(frame.CoordinateScale)) Set("ring_atmosphere_coordinate_scale", frame.CoordinateScale);
-            if (full || !previous.ToSun.Equals(frame.ToSun)) Set("ring_atmosphere_to_sun", frame.ToSun);
+            if (full || !previous.CameraWorld.Equals(frame.CameraWorld)) Set(AtmosphereCameraWorldPositionParameter, frame.CameraWorld);
+            if (full || !previous.CameraHeightMeters.Equals(frame.CameraHeightMeters)) Set(AtmosphereCameraHeightMetersParameter, frame.CameraHeightMeters);
+            if (full || !previous.OutwardWorld.Equals(frame.OutwardWorld)) Set(AtmosphereOutwardWorldParameter, frame.OutwardWorld);
+            if (full || !previous.AxisWorld.Equals(frame.AxisWorld)) Set(AtmosphereAxisWorldParameter, frame.AxisWorld);
+            if (full || !previous.SidewallNegativeMeters.Equals(frame.SidewallNegativeMeters)) Set(AtmosphereSidewallNegativeMetersParameter, frame.SidewallNegativeMeters);
+            if (full || !previous.SidewallPositiveMeters.Equals(frame.SidewallPositiveMeters)) Set(AtmosphereSidewallPositiveMetersParameter, frame.SidewallPositiveMeters);
+            if (full || !previous.CoordinateScale.Equals(frame.CoordinateScale)) Set(AtmosphereCoordinateScaleParameter, frame.CoordinateScale);
+            if (full || !previous.ToSun.Equals(frame.ToSun)) Set(AtmosphereToSunParameter, frame.ToSun);
         }
         cached.Frame = frame; cached.Valid = valid; cached.Initialized = true;
     }

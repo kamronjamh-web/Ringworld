@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
@@ -122,7 +123,85 @@ public partial class RingScaledFarViewport
         ApplySurfaceTile(binding, new SurfaceTileEntry { Pixels = right });
         bounded &= !bound.GetShaderParameter("surface_tile_enabled").AsBool();
         ReleaseFarSurfaceMaterial(bound);
+        if (!bounded)
+        {
+            FarSurfaceTileCpuBudgetMb = savedBudget;
+            return "FAIL: Surface tile residency exceeded its CPU bound.";
+        }
+        string dirtyResult = RunSurfaceTileDirtyCheckContract(template, key, left);
         FarSurfaceTileCpuBudgetMb = savedBudget;
-        return bounded ? "PASS" : "FAIL: Surface tile residency exceeded its CPU bound.";
+        return dirtyResult;
+    }
+
+    private static (long Writes, long Textures) SurfaceTileApplyWrites()
+    {
+        long[] writes = new long[RingMaterialWriteCounters.SiteCount], textures = new long[RingMaterialWriteCounters.SiteCount];
+        RingMaterialWriteCounters.Snapshot(writes, textures);
+        return (writes[(int)RingMaterialWriteCounters.Site.FarSurfaceTileApply],
+            textures[(int)RingMaterialWriteCounters.Site.FarSurfaceTileApply]);
+    }
+
+    private static ImageTexture MakeContractTexture(Color color)
+    {
+        using Image image = Image.CreateFromData(2, 2, false, Image.Format.Rgba8,
+            new byte[] { (byte)(color.R * 255), (byte)(color.G * 255), (byte)(color.B * 255), 255,
+                (byte)(color.R * 255), (byte)(color.G * 255), (byte)(color.B * 255), 255,
+                (byte)(color.R * 255), (byte)(color.G * 255), (byte)(color.B * 255), 255,
+                (byte)(color.R * 255), (byte)(color.G * 255), (byte)(color.B * 255), 255 });
+        return ImageTexture.CreateFromImage(image);
+    }
+
+    // Unchanged tile state must not queue material updates; real changes and eviction still must.
+    private string RunSurfaceTileDirtyCheckContract(ShaderMaterial template, SurfaceTileKey key, SurfaceTilePixels pixels)
+    {
+        using var material = BindFarSurfaceMaterial(template, key.Around, key.Across, key.AroundExtent, key.AcrossExtent);
+        SurfaceTileBinding binding = _surfaceTileBindings[^1];
+        binding.Key = key;
+        var entry = new SurfaceTileEntry
+        {
+            Pixels = pixels,
+            Color = MakeContractTexture(Colors.Red),
+            Normal = MakeContractTexture(new Color(.5f, 1f, .5f)),
+            UploadedAtMilliseconds = Time.GetTicksMsec() - 1000
+        };
+        _surfaceTileCache[key] = entry;
+        var before = SurfaceTileApplyWrites();
+        ApplySurfaceTile(binding, entry);
+        var first = SurfaceTileApplyWrites();
+        if (first.Writes - before.Writes < 7 || first.Textures - before.Textures != 2
+            || !material.GetShaderParameter("surface_tile_enabled").AsBool())
+            return "FAIL: First surface tile apply did not publish all parameters.";
+        ApplySurfaceTile(binding, entry);
+        var second = SurfaceTileApplyWrites();
+        if (second != first) return "FAIL: Identical surface tile state rewrote material parameters.";
+        ImageTexture replacement = MakeContractTexture(Colors.Blue);
+        entry.Color = replacement;
+        ApplySurfaceTile(binding, entry);
+        var third = SurfaceTileApplyWrites();
+        if (third.Writes - second.Writes != 1 || third.Textures - second.Textures != 1
+            || !ReferenceEquals(material.GetShaderParameter("surface_tile_color").AsGodotObject(), replacement))
+            return "FAIL: New surface tile texture was not applied exactly once.";
+        // Eviction must clear the material and the cache even though the cache said it was enabled.
+        if (!MakeSurfaceTileRoom(1024L * 1024L, 0, default) || _surfaceTileCache.Count != 0
+            || material.GetShaderParameter("surface_tile_enabled").AsBool()
+            || material.GetShaderParameter("surface_tile_color").VariantType != Variant.Type.Nil
+            || binding.Applied.Color != null || binding.Applied.Enabled)
+            return "FAIL: Surface tile eviction did not clear the material or its applied cache.";
+        var entry2 = new SurfaceTileEntry
+        {
+            Pixels = pixels,
+            Color = MakeContractTexture(Colors.Green),
+            Normal = MakeContractTexture(new Color(.5f, 1f, .5f)),
+            UploadedAtMilliseconds = Time.GetTicksMsec() - 1000
+        };
+        var beforeRebind = SurfaceTileApplyWrites();
+        ApplySurfaceTile(binding, entry2);
+        var afterRebind = SurfaceTileApplyWrites();
+        bool rebound = afterRebind.Writes > beforeRebind.Writes
+            && material.GetShaderParameter("surface_tile_enabled").AsBool();
+        entry2.Color.Dispose();
+        entry2.Normal.Dispose();
+        ReleaseFarSurfaceMaterial(material);
+        return rebound ? "PASS" : "FAIL: Surface tile did not rebind after eviction.";
     }
 }

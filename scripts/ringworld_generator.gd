@@ -59,6 +59,8 @@ extends Node3D
 @export var surface_material_b: Material = preload("res://materials/ring_surface_b.tres")
 @export var landmark_material: Material = preload("res://materials/landmark_glow.tres")
 
+var _biome_palette: Dictionary = {}
+var _biome_palette_source: Resource = null
 @onready var segments_root: Node3D = $Segments
 @onready var far_ring_root: Node3D = $FarRing
 
@@ -81,7 +83,9 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	_update_dynamic_material_uniforms()
+	# Nothing consumes the shared materials until segments or far ring meshes exist.
+	if segments_root.get_child_count() > 0 or (far_ring_root != null and far_ring_root.get_child_count() > 0):
+		_update_dynamic_material_uniforms()
 
 	if not build_high_lod_segments or not enable_streaming:
 		return
@@ -121,6 +125,7 @@ func regenerate_ring() -> void:
 	if far_ring_root != null:
 		_clear_children(far_ring_root)
 
+	_rebuild_biome_palette()
 	_prepare_terrain_surface_materials()
 
 	loaded_high_lod_segments.clear()
@@ -307,6 +312,17 @@ func _update_far_ring_material_uniforms(to_sun: Vector3) -> void:
 
 
 func _configure_far_ring_biome_palette(shader_material: ShaderMaterial) -> void:
+	if _biome_palette.is_empty() or _biome_palette_source != terrain_biome_catalog:
+		_rebuild_biome_palette()
+	var palette: Dictionary = _biome_palette
+	shader_material.set_shader_parameter("biome_grassland_color", palette[5])
+	shader_material.set_shader_parameter("biome_tundra_color", palette[3])
+	shader_material.set_shader_parameter("biome_desert_color", palette[4])
+	shader_material.set_shader_parameter("biome_forest_color", palette[6])
+	shader_material.set_shader_parameter("biome_alpine_color", palette[7])
+
+
+func _rebuild_biome_palette() -> void:
 	# The legacy whole-ring renderer has no terrain mesh samples to upload. It
 	# still reads the actual biome catalog rather than carrying a second palette,
 	# so its analytic distant surface stays visually aligned with voxel terrain
@@ -335,11 +351,8 @@ func _configure_far_ring_biome_palette(shader_material: ShaderMaterial) -> void:
 				if biome_id != null and surface_color is Color:
 					palette[int(biome_id)] = surface_color
 
-	shader_material.set_shader_parameter("biome_grassland_color", palette[5])
-	shader_material.set_shader_parameter("biome_tundra_color", palette[3])
-	shader_material.set_shader_parameter("biome_desert_color", palette[4])
-	shader_material.set_shader_parameter("biome_forest_color", palette[6])
-	shader_material.set_shader_parameter("biome_alpine_color", palette[7])
+	_biome_palette = palette
+	_biome_palette_source = terrain_biome_catalog
 
 
 func _update_section_material_uniforms(to_sun: Vector3) -> void:

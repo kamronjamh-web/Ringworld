@@ -156,7 +156,9 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeAtmosphereTuning();
         InitializeFarRenderingTuning();
         InitializeLoadingTuning();
+        InitializeMinimapTuning();
         InitializeTerrainStreamingTuning();
+        InitializeLodSchedulingTuning();
         InitializeUndergroundModeTuning();
         if (_surfaceTerrainGameplay != null)
             InitializeSurfaceTerrainTuning();
@@ -208,7 +210,9 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushAtmosphereDefaults();
         FlushFarRenderingDefaults();
         FlushLoadingPresentationDefaults();
+        FlushMinimapDefaults();
         FlushTerrainStreamingDefaults();
+        FlushLodSchedulingDefaults();
         FlushUndergroundModeDefaults();
         FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
@@ -245,7 +249,9 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessAtmosphereTuning(delta);
         ProcessFarRenderingTuning(delta);
         ProcessLoadingTuning(delta);
+        ProcessMinimapTuning(delta);
         ProcessTerrainStreamingTuning(delta);
+        ProcessLodSchedulingTuning(delta);
         ProcessUndergroundModeTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
@@ -353,6 +359,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             BuildSurfaceTerrainPrototypeLaunch(tabs);
         BuildWaterTab(tabs);
         BuildWindTab(tabs);
+        BuildMinimapTab(tabs);
         BuildGrassTab(tabs);
         BuildVegetationTab(tabs);
         BuildDiagnosticsTab(tabs);
@@ -830,6 +837,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         VBoxContainer scheduling = TuningMenuUi.CreateSection(tabRoot, "Scheduling");
         AddSlider(scheduling, "LOD workers", 1, 8, 1, _coordinator?.MaxConcurrentWorkerBuilds ?? 2, value => { if (_coordinator != null) _coordinator.MaxConcurrentWorkerBuilds = Mathf.RoundToInt(value); });
         AddSlider(scheduling, "LOD uploads/frame", 1, 16, 1, _coordinator?.TotalSectorUploadsPerFrame ?? 3, value => { if (_coordinator != null) _coordinator.TotalSectorUploadsPerFrame = Mathf.RoundToInt(value); }); AddSlider(scheduling, "LOD upload budget", 0.25, 8, 0.05, _coordinator?.MaxUploadMillisecondsPerFrame ?? 2, value => { if (_coordinator != null) _coordinator.MaxUploadMillisecondsPerFrame = (float)value; });
+        BuildLodSchedulingSection(tabRoot);
         VBoxContainer handoff = TuningMenuUi.CreateSection(tabRoot, "LOD handoff"); AddSlider(handoff, "Terrain shadow coverage", 100, 50000, 100, _coordinator?.TerrainShadowCoverageMeters ?? 4000, value => { if (_coordinator != null) _coordinator.TerrainShadowCoverageMeters = (float)value; }); AddSlider(handoff, "LOD1 fade start", 32, 600, 8, _lod1?.FadeOutStartMeters ?? 240, value => { if (_lod1 != null) _lod1.FadeOutStartMeters = (float)value; }); AddSlider(handoff, "LOD1 fade end", 64, 800, 8, _lod1?.FadeOutEndMeters ?? 320, value => { if (_lod1 != null) _lod1.FadeOutEndMeters = (float)value; });
         VBoxContainer coverage = TuningMenuUi.CreateSection(tabRoot, "Proxy coverage culling");
         _partialCoverageMeshCullingToggle = new CheckButton
@@ -1041,7 +1049,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); RefreshIntermediateLodTiersStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushUndergroundModeDefaults(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushLodSchedulingDefaults(); FlushUndergroundModeDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

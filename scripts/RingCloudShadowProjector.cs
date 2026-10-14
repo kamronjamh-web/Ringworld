@@ -349,6 +349,9 @@ public static class RingCloudShadowProjector
         if (material is ShaderMaterial shaderMaterial) shaderMaterial.SetShaderParameter(name, value);
         else material.Call("set_shader_param", name, value);
         ParameterWriteCount++;
+        global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(
+            global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.CloudShadowProjector,
+            1, value.VariantType == Variant.Type.Object ? 1 : 0);
     }
 
     private static Texture2D GetClearFallbackTexture()

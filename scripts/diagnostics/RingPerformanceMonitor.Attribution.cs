@@ -10,6 +10,50 @@ public partial class RingPerformanceMonitor
     internal readonly record struct CloudStagePartition(long SourceFrameId, double? Prepass, double? Raymarch,
         double? Reconstruct, double? Composite, double? ParentClouds, bool Complete);
 
+    private static readonly int MaterialWriteSites = RingMaterialWriteCounters.SiteCount;
+    private readonly long[] _materialWriteLast = new long[MaterialWriteSites], _materialTextureLast = new long[MaterialWriteSites];
+    private readonly long[] _materialWriteScratch = new long[MaterialWriteSites], _materialTextureScratch = new long[MaterialWriteSites];
+    private readonly long[] _materialWriteSum = new long[MaterialWriteSites], _materialWriteMax = new long[MaterialWriteSites], _materialTextureSum = new long[MaterialWriteSites];
+    private long _materialWriteFrames;
+    private bool _materialWriteBaselineStale = true;
+
+    // Per-frame deltas of the main-thread material write counters; fixed arrays, no allocation.
+    private void SampleMaterialWrites()
+    {
+        RingMaterialWriteCounters.Snapshot(_materialWriteScratch, _materialTextureScratch);
+        if (!_materialWriteBaselineStale)
+        {
+            for (int i = 0; i < MaterialWriteSites; i++)
+            {
+                long writes = _materialWriteScratch[i] - _materialWriteLast[i];
+                _materialWriteSum[i] += writes;
+                if (writes > _materialWriteMax[i]) _materialWriteMax[i] = writes;
+                _materialTextureSum[i] += _materialTextureScratch[i] - _materialTextureLast[i];
+            }
+            _materialWriteFrames++;
+        }
+        _materialWriteBaselineStale = false;
+        Array.Copy(_materialWriteScratch, _materialWriteLast, MaterialWriteSites);
+        Array.Copy(_materialTextureScratch, _materialTextureLast, MaterialWriteSites);
+    }
+
+    private void ResetMaterialWrites()
+    {
+        Array.Clear(_materialWriteSum); Array.Clear(_materialWriteMax); Array.Clear(_materialTextureSum);
+        _materialWriteFrames = 0;
+        _materialWriteBaselineStale = true;
+    }
+
+    private object CaptureMaterialWrites()
+    {
+        var sites = new object[MaterialWriteSites];
+        double frames = Math.Max(1, _materialWriteFrames);
+        for (int i = 0; i < MaterialWriteSites; i++)
+            sites[i] = new { site = ((RingMaterialWriteCounters.Site)i).ToString(), meanWrites = _materialWriteSum[i] / frames,
+                maxWrites = _materialWriteMax[i], meanTextureWrites = _materialTextureSum[i] / frames };
+        return new { frames = _materialWriteFrames, perSite = sites };
+    }
+
     private object CaptureRuntimeState() => new
     {
         maxFps = Engine.MaxFps, timeScale = Engine.TimeScale,
@@ -47,6 +91,7 @@ public partial class RingPerformanceMonitor
                 globalDrawCalls = Stats(frames, f => f.DrawCalls < 0 ? null : f.DrawCalls),
                 globalPrimitives = Stats(frames, f => f.RenderPrimitives)
             },
+            materialWrites = CaptureMaterialWrites(),
             mainWorkload = CaptureMainWorkload(),
             gpuCategoryCoverage = CaptureGpuCoverage(gpu),
             cloudStages = new { completeSourceFrames = complete, observedSourceFrames = partitions.Length, partitions,

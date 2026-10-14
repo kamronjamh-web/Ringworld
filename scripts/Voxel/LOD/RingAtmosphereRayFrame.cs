@@ -1,5 +1,7 @@
 using System;
+using System.Runtime.CompilerServices;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -65,4 +67,41 @@ public readonly record struct RingAtmosphereRayFrame(
         setParameter(CoordinateScaleName, CoordinateScale);
         setParameter(ToSunName, ToSun);
     }
+
+    /// <summary>
+    /// Skips republishing a frame a material already holds. Godot queues a material
+    /// update for every set_shader_parameter call, so the nine uniforms are only
+    /// written when the frame differs from the last one applied to that material.
+    /// Newly created materials have no entry and always receive the frame.
+    /// </summary>
+    public sealed class AppliedCache
+    {
+        private ConditionalWeakTable<GodotObject, StrongBox<RingAtmosphereRayFrame>> _applied = new();
+
+        public bool Apply(in RingAtmosphereRayFrame frame, ShaderMaterial? material,
+            RingMaterialWriteCounters.Site site = RingMaterialWriteCounters.Site.FarMisc)
+        {
+            if (material is null) return false;
+            if (_applied.TryGetValue(material, out StrongBox<RingAtmosphereRayFrame>? stored))
+            {
+                if (stored.Value == frame) return false;
+                stored.Value = frame;
+            }
+            else _applied.Add(material, new StrongBox<RingAtmosphereRayFrame>(frame));
+            frame.Apply(material);
+            RingMaterialWriteCounters.Record(site, frame.WouldPublishValid() ? 9 : 1);
+            return true;
+        }
+
+        public void Invalidate() => _applied = new();
+    }
+
+    private bool WouldPublishValid() => Valid
+        && CameraWorld.IsFinite()
+        && float.IsFinite(CameraHeightMeters)
+        && OutwardWorld.IsFinite() && OutwardWorld.LengthSquared() > 0.000001f
+        && AxisWorld.IsFinite() && AxisWorld.LengthSquared() > 0.000001f
+        && float.IsFinite(SidewallNegativeMeters) && float.IsFinite(SidewallPositiveMeters)
+        && float.IsFinite(CoordinateScale) && CoordinateScale > 0.0f
+        && ToSun.IsFinite() && ToSun.LengthSquared() > 0.000001f;
 }

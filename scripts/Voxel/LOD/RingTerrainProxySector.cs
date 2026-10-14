@@ -701,6 +701,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
     }
 
     public bool CoordinatorBuildRequested => _coordinatorBuildRequested;
+    /// <summary>Process frame on which the pending coordinator build request first appeared.</summary>
+    public ulong CoordinatorBuildRequestedFrame { get; private set; }
+    public bool CanStartCoordinatorBuild => !_loadingShutdownRequested
+        && !_fastTravelSuspended
+        && StreamingActive
+        && _coordinatorBuildRequested
+        && _pending == null;
     public ulong CoverageRevision => _coverageRevision;
     public double LastCoverageRefreshMilliseconds { get; private set; }
     public double MaxCoverageRefreshMilliseconds { get; private set; }
@@ -1024,20 +1031,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         => _sharedFftOceanCoverageRevision = ulong.MaxValue;
 
 
-    public void StartCoordinatorBuildIfRequested(int workerSlots = 1)
+    public bool StartCoordinatorBuildIfRequested(int workerSlots = 1)
     {
-        if (_loadingShutdownRequested) return;
-        if (_fastTravelSuspended
-            || !StreamingActive
-            || !_coordinatorBuildRequested
-            || _pending != null)
-        {
-            return;
-        }
+        if (!CanStartCoordinatorBuild) return false;
         bool force = _coordinatorForceBuildRequested;
         _coordinatorBuildRequested = false;
         _coordinatorForceBuildRequested = false;
         StartStreamingUpdate(force, Mathf.Max(1, workerSlots));
+        return _pending != null;
     }
 
     public void SetLodActive(bool active)
@@ -1222,6 +1223,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_fastTravelSuspended) return;
         if (CoordinatorManaged && _pending == null)
         {
+            if (!_coordinatorBuildRequested) CoordinatorBuildRequestedFrame = Engine.GetProcessFrames();
             _coordinatorBuildRequested = true;
             _coordinatorForceBuildRequested |= force;
             return;
@@ -1233,6 +1235,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         if (_loadingShutdownRequested) return;
         if (_grid?.TerrainSampler is not RingTerrainSampler sampler || _focus == null) return;
+        using var startScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start (inclusive)");
+        var windowScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start window");
         int size = Mathf.Max(32, SectorSizeMeters);
         RingLodSurfaceEditSnapshot editSnapshot = _smoothTerrain?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
         _velocityProvider ??= ResolveVelocityProvider(_focus);
@@ -1278,7 +1282,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             && predictedAcross == _lastPredictedAcross
             && altitudeClipBucket == _lastAltitudeClipBucket
             && finerCoverageRevision == _lastFinerCoverageRevision
-            && heightRangeRevision == _lastHeightRangeRevision) return;
+            && heightRangeRevision == _lastHeightRangeRevision)
+        {
+            windowScope.Dispose();
+            return;
+        }
         var desired = new HashSet<RingTerrainSectorCoordinate>();
         var innerExcluded = new HashSet<RingTerrainSectorCoordinate>();
         AddDesiredSectorWindow(
@@ -1314,6 +1322,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int spacing = Mathf.Clamp(SampleSpacingMeters, 1, size);
         int cells = Mathf.Max(1, size / spacing);
         spacing = size / cells;
+        windowScope.Dispose();
 
         if (_pending != null)
         {
@@ -1374,7 +1383,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 $"LOD coverage profile {Name}: {LastCoverageRefreshMilliseconds:0.00}ms, "
                 + $"desired={desired.Count}, active={ActiveSectorCount}, providerRevision={finerCoverageRevision}");
         }
-        ActivateWarmSectors(desired);
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start warm sectors"))
+            ActivateWarmSectors(desired);
+        var missingScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start missing scan");
         var missing = new List<RingTerrainSectorCoordinate>();
         foreach (RingTerrainSectorCoordinate coordinate in desired)
         {
@@ -1395,7 +1406,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 missing.Add(coordinate);
             }
         }
-        if (missing.Count == 0) { ApplyDepartedSectors(desired); return; }
+        if (missing.Count == 0)
+        {
+            missingScope.Dispose();
+            using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy departed sectors"))
+                ApplyDepartedSectors(desired);
+            return;
+        }
 
         // A newer worker request supersedes existing queued uploads. Requeue all
         // still-needed coordinates so request-version rejection cannot leave holes.
@@ -1427,11 +1444,25 @@ public partial class RingTerrainProxySector : MeshInstance3D
             predictedAround,
             predictedAcross,
             aroundSectorLength));
+        missingScope.Dispose();
 
         RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
-        RingTerrainSampler workerSampler = sampler.CreateIndependentCopy();
+        RingTerrainSampler workerSampler;
+        using (RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start sampler copy"))
+            workerSampler = sampler.CreateIndependentCopy();
         _pendingWorkerSampler = workerSampler;
-        RingLodSurfaceEditSnapshot sampledEditSnapshot = editSnapshot.ForSampleSpacing(workerSampler, spacing, Mathf.Max(1, RingWidthMeters));
+        // The O(edited columns) projection runs on the worker. A previous build's
+        // result is reused when the immutable source snapshot and lattice match.
+        int projectionWidth = Mathf.Max(1, RingWidthMeters);
+        ulong definitionHash = sampler.TerrainDefinitionHash;
+        SampledEditProjection? cachedProjection = Volatile.Read(ref _sampledEditProjection);
+        RingLodSurfaceEditSnapshot? preProjected = cachedProjection != null
+            && ReferenceEquals(cachedProjection.Source, editSnapshot)
+            && cachedProjection.Spacing == spacing
+            && cachedProjection.RingWidth == projectionWidth
+            && cachedProjection.TerrainDefinitionHash == definitionHash
+                ? cachedProjection.Result
+                : null;
         Transform3D ownerInverse = GlobalTransform.AffineInverse();
         Color low = LowTerrainColor;
         Color high = HighTerrainColor;
@@ -1454,6 +1485,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _buildCancellation = new CancellationTokenSource();
         CancellationToken cancellation = _buildCancellation.Token;
         string cacheDirectory = string.Empty;
+        var diskCacheScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start disk cache");
         if (readDiskCache || writeDiskCache)
         {
             cacheDirectory = ResolveLodSectorCacheDirectory(
@@ -1464,9 +1496,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 ringWidth,
                 parentSpacing,
                 globalMorphTarget?.SnapshotIdentity);
-            if (writeDiskCache)
+            if (writeDiskCache && !_lodCacheDirectoryCreated)
             {
-                try { Directory.CreateDirectory(cacheDirectory); }
+                try
+                {
+                    Directory.CreateDirectory(cacheDirectory);
+                    _lodCacheDirectoryCreated = true;
+                }
                 catch (IOException) { cacheDirectory = string.Empty; }
                 catch (UnauthorizedAccessException) { cacheDirectory = string.Empty; }
             }
@@ -1482,12 +1518,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     TimeSpan.FromSeconds(Mathf.Max(10.0f, GeneratedLodDiskCacheMaintenanceSeconds)));
             }
         }
+        diskCacheScope.Dispose();
         _activeWorkerSlots = Mathf.Clamp(workerSlots, 1, missing.Count);
         int parallelism = _activeWorkerSlots;
+        using var dispatchScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy build start dispatch");
         _pending = Task.Run(
             () => BuildRawBatch(
                 requestVersion,
-                sampledEditSnapshot,
+                preProjected ?? ProjectEditsForWorker(editSnapshot, workerSampler, spacing, projectionWidth, definitionHash),
                 missing,
                 workerSampler,
                 data => PublishCompletedWorkerSector(data, cancellation),
@@ -1517,6 +1555,28 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 parallelism,
                 cancellation),
             cancellation);
+    }
+
+    private sealed record SampledEditProjection(
+        RingLodSurfaceEditSnapshot Source,
+        int Spacing,
+        int RingWidth,
+        ulong TerrainDefinitionHash,
+        RingLodSurfaceEditSnapshot Result);
+
+    private SampledEditProjection? _sampledEditProjection;
+
+    private RingLodSurfaceEditSnapshot ProjectEditsForWorker(
+        RingLodSurfaceEditSnapshot source,
+        RingTerrainSampler workerSampler,
+        int spacing,
+        int width,
+        ulong definitionHash)
+    {
+        using var scope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy edit projection", worker: true);
+        RingLodSurfaceEditSnapshot result = source.ForSampleSpacing(workerSampler, spacing, width);
+        Volatile.Write(ref _sampledEditProjection, new SampledEditProjection(source, spacing, width, definitionHash, result));
+        return result;
     }
 
     private static int CompareSectorPriority(
@@ -2394,8 +2454,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             && StreamingActive && !_transitHidden
             && ReferenceEquals(_oceanReplacementFinerSource, _finerCoverageLevel)
             && _finerCoverageLevel != null && _finerCoverageLevel.StreamingActive && !_finerCoverageLevel._transitHidden;
-        _oceanMaterial?.SetShaderParameter("ocean_replacement_coverage_enabled", oceanReplacementFresh);
-        _oceanMaterial?.SetShaderParameter("ocean_replacement_distance_meters", OceanReplacementDistanceMeters);
+        SetOceanReplacementCoverageEnabled(oceanReplacementFresh);
+        SetOceanReplacementDistanceMeters(OceanReplacementDistanceMeters);
     }
 
     private float OceanReplacementDistanceMeters => _finerCoverageLevel == null ? 0.0f
@@ -2408,7 +2468,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _latestOceanReplacementMasks.Clear(); _activeOceanReplacementMasks.Clear();
         _oceanReplacementFinerSource = null; _oceanReplacementFinerRevision = ulong.MaxValue;
         foreach (MeshInstance3D node in _active.Values) node.SetInstanceShaderParameter("ocean_replacement_coverage_rect", Vector4.Zero);
-        _oceanMaterial?.SetShaderParameter("ocean_replacement_coverage_enabled", false);
+        SetOceanReplacementCoverageEnabled(false);
     }
 
 
@@ -2435,7 +2495,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _oceanReplacementFinerSource = null;
         foreach (MeshInstance3D activeNode in _active.Values)
             activeNode.SetInstanceShaderParameter("ocean_replacement_coverage_rect", Vector4.Zero);
-        _oceanMaterial?.SetShaderParameter("ocean_replacement_coverage_enabled", false);
+        SetOceanReplacementCoverageEnabled(false);
         if (changed) _coverageRevision++;
     }
 
@@ -2867,7 +2927,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _grid.TerrainSettings.SoilDepthVoxels);
     }
 
-    private static string ResolveLodSectorCacheDirectory(
+    private string _lodCacheKey = string.Empty;
+    private string _lodCacheDirectory = string.Empty;
+    private bool _lodCacheDirectoryCreated;
+
+    private string ResolveLodSectorCacheDirectory(
         RingTerrainSampler sampler,
         int size,
         int spacing,
@@ -2882,13 +2946,19 @@ public partial class RingTerrainProxySector : MeshInstance3D
         string definition = BuildLodSectorCacheDefinition(
             sampler.TerrainGeneratorVersion, sampler.Seed, sampler.TerrainDefinitionHash,
             sampler.AroundRingVoxelLength, ringWidth, size, spacing, parentSpacing, cells, globalMorphIdentity);
+        string activeWorld = ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString();
+        // Hashing and path globalization only run when the definition or world changes.
+        string cacheKey = definition + "|" + activeWorld;
+        if (_lodCacheKey == cacheKey) return _lodCacheDirectory;
         byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(definition));
         string key = Convert.ToHexString(digest.AsSpan(0, 12));
-        string activeWorld = ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString();
         string root = string.IsNullOrWhiteSpace(activeWorld)
             ? "user://ring_cache"
             : activeWorld.TrimEnd('/', '\\') + "/lod_cache";
-        return ProjectSettings.GlobalizePath($"{root}/lod_sectors/{key}");
+        _lodCacheKey = cacheKey;
+        _lodCacheDirectory = ProjectSettings.GlobalizePath($"{root}/lod_sectors/{key}");
+        _lodCacheDirectoryCreated = false;
+        return _lodCacheDirectory;
     }
 
     private static string BuildLodSectorCacheDefinition(
@@ -4967,9 +5037,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // Temporary overlap is preferable to exposing a hole when the shared
         // frame budget spreads a clipmap shift across several frames.
         if (_pendingUploads.Count == 0 && _pending == null && _completedWorkerSectors.IsEmpty)
+        {
+            using var departedScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy departed sectors");
             ApplyDepartedSectors(desired);
+        }
         if (uploaded > 0)
         {
+            using var oceanPublishScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy install ocean publish");
             if (ReferenceEquals(FinestOceanGeometryInstance, this)) UpdateSharedFftOceanCoverage();
             NotifyOceanReplacementDependents();
         }
@@ -5436,9 +5510,17 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Shader? shader = GD.Load<Shader>("res://materials/ring_terrain_proxy.gdshader");
         if (shader == null) return;
         _material = new ShaderMaterial { Shader = shader };
+        // Fresh materials hold authored defaults; forget every cached per-frame uniform.
+        _uniformNearFadeEnabled = null;
+        _uniformFftCoverageDistance = null;
+        _uniformOceanReplacementEnabled = null;
+        _uniformOceanReplacementDistance = null;
+        _uniformFftCoverageEnabled = null;
+        _uniformFftCoverageAtlas = null;
+        _uniformFftCoverageCellMeters = null;
         _material.SetShaderParameter("fade_start_meters", FadeStartMeters);
         _material.SetShaderParameter("fade_end_meters", Mathf.Max(FadeStartMeters + 1.0f, FadeEndMeters));
-        _material.SetShaderParameter("near_fade_enabled", ResolveTerrain3DNearFadeEnabled());
+        SetNearFadeEnabled(ResolveTerrain3DNearFadeEnabled());
         _material.SetShaderParameter("far_fade_enabled", EnableFarFade);
         _material.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _material.SetShaderParameter("fade_out_end_meters", Mathf.Max(FadeOutStartMeters + 1.0f, FadeOutEndMeters));
@@ -5517,10 +5599,42 @@ public partial class RingTerrainProxySector : MeshInstance3D
         UpdateLightingUniforms();
     }
 
+    private static readonly StringName NearFadeEnabledName = "near_fade_enabled";
+    private static readonly StringName OceanReplacementCoverageEnabledName = "ocean_replacement_coverage_enabled";
+    private static readonly StringName OceanReplacementDistanceMetersName = "ocean_replacement_distance_meters";
+    private bool? _uniformNearFadeEnabled;
+    private float? _uniformFftCoverageDistance;
+    private bool? _uniformOceanReplacementEnabled;
+    private float? _uniformOceanReplacementDistance;
+    private bool? _uniformFftCoverageEnabled;
+    private Texture2D? _uniformFftCoverageAtlas;
+    private float? _uniformFftCoverageCellMeters;
+
+    private void SetNearFadeEnabled(bool enabled)
+    {
+        if (_material == null || _uniformNearFadeEnabled == enabled) return;
+        _material.SetShaderParameter(NearFadeEnabledName, enabled);
+        _uniformNearFadeEnabled = enabled;
+    }
+
+    private void SetOceanReplacementCoverageEnabled(bool enabled)
+    {
+        if (_oceanMaterial == null || _uniformOceanReplacementEnabled == enabled) return;
+        _oceanMaterial.SetShaderParameter(OceanReplacementCoverageEnabledName, enabled);
+        _uniformOceanReplacementEnabled = enabled;
+    }
+
+    private void SetOceanReplacementDistanceMeters(float meters)
+    {
+        if (_oceanMaterial == null || _uniformOceanReplacementDistance == meters) return;
+        _oceanMaterial.SetShaderParameter(OceanReplacementDistanceMetersName, meters);
+        _uniformOceanReplacementDistance = meters;
+    }
+
     private void UpdateCameraUniform()
     {
         if (_focus == null) return;
-        _material?.SetShaderParameter("near_fade_enabled", ResolveTerrain3DNearFadeEnabled());
+        SetNearFadeEnabled(ResolveTerrain3DNearFadeEnabled());
         if (ReferenceEquals(FinestOceanGeometryInstance, this))
         {
             UpdateSharedFftOceanCoverage();
@@ -5550,19 +5664,43 @@ public partial class RingTerrainProxySector : MeshInstance3D
             fineHandoff,
             fft?.EffectiveGeometryDistanceMeters ?? 0.0f,
             fft?.Enabled == true && fft.Ready);
-        _oceanMaterial?.SetShaderParameter("fft_ocean_coverage_distance_meters", fftCoverageDistance);
-        _oceanMaterial?.SetShaderParameter("ocean_replacement_coverage_enabled", _oceanReplacementAtlasTexture != null
-            && StreamingActive && !_transitHidden && ReferenceEquals(_oceanReplacementFinerSource, _finerCoverageLevel)
-            && _finerCoverageLevel != null && _finerCoverageLevel.StreamingActive && !_finerCoverageLevel._transitHidden);
-        _oceanMaterial?.SetShaderParameter("ocean_replacement_distance_meters", OceanReplacementDistanceMeters);
-        _oceanMaterial?.SetShaderParameter("fft_ocean_coverage_enabled", SampleSpacingMeters > 2
-            && _sharedFftOceanCoverageTexture != null
-            && _sharedFftOceanCoverageRevision != ulong.MaxValue);
-        if (_sharedFftOceanCoverageTexture != null)
+        if (_oceanMaterial != null)
         {
-            _oceanMaterial?.SetShaderParameter("fft_ocean_coverage_atlas", _sharedFftOceanCoverageTexture);
-            _oceanMaterial?.SetShaderParameter("fft_ocean_coverage_center_canonical", ResolveSharedFftCoverageShaderCenter());
-            _oceanMaterial?.SetShaderParameter("fft_ocean_coverage_cell_meters", SharedFftOceanCoverageCellMeters);
+            // Only write on change: re-setting a texture uniform rebuilds the
+            // material's uniform set even when the value is identical.
+            if (_uniformFftCoverageDistance != fftCoverageDistance)
+            {
+                _oceanMaterial.SetShaderParameter("fft_ocean_coverage_distance_meters", fftCoverageDistance);
+                _uniformFftCoverageDistance = fftCoverageDistance;
+            }
+            SetOceanReplacementCoverageEnabled(_oceanReplacementAtlasTexture != null
+                && StreamingActive && !_transitHidden && ReferenceEquals(_oceanReplacementFinerSource, _finerCoverageLevel)
+                && _finerCoverageLevel != null && _finerCoverageLevel.StreamingActive && !_finerCoverageLevel._transitHidden);
+            SetOceanReplacementDistanceMeters(OceanReplacementDistanceMeters);
+            bool fftCoverageEnabled = SampleSpacingMeters > 2
+                && _sharedFftOceanCoverageTexture != null
+                && _sharedFftOceanCoverageRevision != ulong.MaxValue;
+            if (_uniformFftCoverageEnabled != fftCoverageEnabled)
+            {
+                _oceanMaterial.SetShaderParameter("fft_ocean_coverage_enabled", fftCoverageEnabled);
+                _uniformFftCoverageEnabled = fftCoverageEnabled;
+            }
+            if (_sharedFftOceanCoverageTexture != null)
+            {
+                if (!ReferenceEquals(_uniformFftCoverageAtlas, _sharedFftOceanCoverageTexture))
+                {
+                    _oceanMaterial.SetShaderParameter("fft_ocean_coverage_atlas", _sharedFftOceanCoverageTexture);
+                    _uniformFftCoverageAtlas = _sharedFftOceanCoverageTexture;
+                }
+                // The center follows the camera and RingWaterModel also writes this
+                // uniform, so it is deliberately not cached here.
+                _oceanMaterial.SetShaderParameter("fft_ocean_coverage_center_canonical", ResolveSharedFftCoverageShaderCenter());
+                if (_uniformFftCoverageCellMeters != SharedFftOceanCoverageCellMeters)
+                {
+                    _oceanMaterial.SetShaderParameter("fft_ocean_coverage_cell_meters", SharedFftOceanCoverageCellMeters);
+                    _uniformFftCoverageCellMeters = SharedFftOceanCoverageCellMeters;
+                }
+            }
         }
         _lastCameraWorldPosition = cameraWorldPosition;
     }
@@ -6313,7 +6451,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         InnerClipRadiusMeters = Mathf.Max(0.0f, innerClipRadius);
         _material?.SetShaderParameter("fade_start_meters", FadeStartMeters);
         _material?.SetShaderParameter("fade_end_meters", FadeEndMeters);
-        _material?.SetShaderParameter("near_fade_enabled", ResolveTerrain3DNearFadeEnabled());
+        SetNearFadeEnabled(ResolveTerrain3DNearFadeEnabled());
         _material?.SetShaderParameter("far_fade_enabled", EnableFarFade);
         _material?.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _material?.SetShaderParameter("fade_out_end_meters", FadeOutEndMeters);

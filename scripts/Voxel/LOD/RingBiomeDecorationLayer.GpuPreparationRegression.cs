@@ -64,6 +64,33 @@ public partial class RingBiomeDecorationLayer
             epoch = GpuTreeSourceEpoch;
             if (!DrainRegressionPlan() || GpuTreeSourceEpoch != epoch) return "FAIL: stale protection plan published";
             body.Free();
+            // A collider appearing mid-plan must neither cancel the plan nor be lost:
+            // protection stays frozen until the plan commits, then one diff applies it.
+            MaximumGpuTreeRoots = 4096; _importedForestBodies.Clear();
+            PrepareRegressionPlan(geometry); if (!DrainRegressionPlan()) return "FAIL: deferred protection baseline plan";
+            RefreshGpuTreeProtectedFlags();
+            if (_gpuTreeProtectedIds.Count != 0) return "FAIL: deferred protection baseline protected set";
+            PrepareRegressionPlan(geometry);
+            if (!_gpuTreePreparation!.MoveNext()) return "FAIL: deferred protection plan did not yield";
+            long deferredRevision = _gpuTreeProtectionRevision, deferredEpoch = GpuTreeSourceEpoch;
+            var liveBody = new StaticBody3D(); _importedForestBodies[10] = liveBody;
+            RefreshGpuTreeProtectedFlags();
+            if (_gpuTreeProtectionRevision != deferredRevision || _gpuTreeProtectedIds.Contains(10) || _gpuTreePreparation == null)
+                return "FAIL: protection not frozen during plan";
+            if (!DrainRegressionPlan() || GpuTreeSourceEpoch == deferredEpoch) return "FAIL: deferred protection plan was cancelled";
+            if (!_gpuTreeProtectedIds.Contains(10) || !_gpuTreeRootLookup.TryGetValue(10, out var liveEntry)
+                || liveEntry.Group.Metadata[liveEntry.Index].Y != 1 || !liveEntry.Group.HasProtected) return "FAIL: deferred protection not applied after commit";
+            int mergedChecked = 0;
+            foreach (Dictionary<GpuGroupKey, GpuTreeGroup> map in _gpuTreeMergedGroups.Values)
+                foreach (GpuTreeGroup aggregate in map.Values)
+                {
+                    int member = aggregate.Members is null ? -1 : Array.IndexOf(aggregate.Members, liveEntry.Group);
+                    if (member < 0) continue;
+                    if (aggregate.Metadata[aggregate.MemberOffsets![member] + liveEntry.Index].Y != 1 || !aggregate.HasProtected) return "FAIL: deferred protection missing from merged aggregate";
+                    mergedChecked++;
+                }
+            if (mergedChecked == 0) return "FAIL: deferred protection merged aggregate not found";
+            _importedForestBodies.Clear(); liveBody.Free(); RefreshGpuTreeProtectedFlags();
             PrepareRegressionPlan(geometry); CancelGpuTreeSourcePreparation();
             if (_gpuTreePreparation != null || _gpuTreePreparationPlan != null) return "FAIL: cancellation state";
             GlobalPosition = new Vector3(5000, 0, 0);
