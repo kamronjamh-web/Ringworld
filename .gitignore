@@ -35,3 +35,7 @@ Desktop.ini
 /realistic_fir_trees_pack_lods_gameready.zip
 /pine_trees_pack_lowpoly_game_ready_lods.zip
 /maple_trees_pack_lowpoly_game_ready_lods.zip
+
+# PDA voice prototype: model/voice binaries and generated audio are local only.
+/prototypes/pda-voice/models/
+/prototypes/pda-voice/output/

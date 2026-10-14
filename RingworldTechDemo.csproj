@@ -8,4 +8,10 @@
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="prototypes/**" />
+    <None Remove="prototypes/**" />
+    <Content Remove="prototypes/**" />
+    <EmbeddedResource Remove="prototypes/**" />
+  </ItemGroup>
 </Project>

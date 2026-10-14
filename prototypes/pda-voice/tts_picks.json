@@ -1,0 +1,7 @@
+[
+  { "eventId": "eclipse_warning_5min", "source": "qwen3-0.6b", "text": "Eclipse in 5 minutes; secure a light source or find shelter." },
+  { "eventId": "eclipse_begun",        "source": "qwen3-0.6b", "text": "Eclipse in progress; ambient light at 0 percent; use suit lamp." },
+  { "eventId": "emitter_discovered",   "source": "qwen3-0.6b", "text": "Emitter structure detected 1.2 km north; origin unknown." },
+  { "eventId": "reactor_restored",     "source": "qwen3-0.6b", "text": "Reactor restored; output at 85 percent." },
+  { "eventId": "low_oxygen",           "source": "qwen3-0.6b", "text": "Oxygen at 15 percent; return to a breathable zone." }
+]
