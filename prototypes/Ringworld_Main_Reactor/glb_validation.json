@@ -1,0 +1,42 @@
+{
+  "file": "Main_Reactor_Architecture.glb",
+  "revision": "six_reactor_power_modules",
+  "bytes": 1825924,
+  "glb_version": 2,
+  "declared_size_matches": true,
+  "nodes": 827,
+  "mesh_instances": 827,
+  "unique_mesh_resources": 587,
+  "triangles_instantiated": 44626,
+  "triangles_unique_mesh_resources": 30986,
+  "materials": 7,
+  "cameras": 0,
+  "lights": 0,
+  "external_buffer_uris": [],
+  "images": 0,
+  "excluded_reference_name_hits": [],
+  "extensions_used": [
+    "KHR_materials_emissive_strength"
+  ],
+  "engine_test": {
+    "engine": "Godot 4.6.3",
+    "import": "PASS",
+    "instantiate": "PASS",
+    "warnings": [],
+    "errors": [],
+    "mesh_instances": 827,
+    "mesh_surfaces": 827,
+    "triangles": 44626,
+    "godot_y_up_aabb_position_metres": [
+      -2503.999,
+      -720,
+      -2695.428
+    ],
+    "godot_y_up_aabb_size_metres": [
+      5007.997,
+      2798,
+      5555.428
+    ],
+    "scope": "Headless import and scene instantiation. Does not test game lighting, collision, navigation, gameplay or target-device performance."
+  }
+}

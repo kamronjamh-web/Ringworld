@@ -1,0 +1,239 @@
+{
+  "Format": "emitter_site_baseline_v1",
+  "Cases": [
+    {
+      "Name": "gen17_v4_seed_1337",
+      "Description": "ringworld_surface_erosion_v4 default recipe, runtime surface generation",
+      "RecipeHash": "B0C572D10C941190",
+      "GeneratorVersion": 17,
+      "TerrainHash": "C62D22E76ED02DFA",
+      "Points": [
+        {
+          "Name": "lattice_mid",
+          "Around": 1570796,
+          "Across": 159000,
+          "HeightBits": 1157818513,
+          "SurfaceHeight": 2094,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_ridge",
+          "Around": 9000000,
+          "Across": 120000,
+          "HeightBits": 1123488208,
+          "SurfaceHeight": 123,
+          "Biome": 5,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_coast",
+          "Around": 15700000,
+          "Across": 26500,
+          "HeightBits": 1154111408,
+          "SurfaceHeight": 1618,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_far",
+          "Around": 23561940,
+          "Across": 291500,
+          "HeightBits": -1008182643,
+          "SurfaceHeight": -465,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "odd",
+          "Around": 1570797,
+          "Across": 159001,
+          "HeightBits": 1157818170,
+          "SurfaceHeight": 2094,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "seam_left",
+          "Around": 31415934,
+          "Across": 159000,
+          "HeightBits": -1014841753,
+          "SurfaceHeight": -262,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "seam_right",
+          "Around": 2,
+          "Across": 159000,
+          "HeightBits": -1014843454,
+          "SurfaceHeight": -262,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "wall_low",
+          "Around": 5000000,
+          "Across": 0,
+          "HeightBits": -1022202560,
+          "SurfaceHeight": -147,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "wall_high",
+          "Around": 5000000,
+          "Across": 317998,
+          "HeightBits": -1025393568,
+          "SurfaceHeight": -113,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "site_row0",
+          "Around": 314158,
+          "Across": 26500,
+          "HeightBits": 1160710309,
+          "SurfaceHeight": 2800,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row50",
+          "Around": 15707968,
+          "Across": 132500,
+          "HeightBits": 1150951003,
+          "SurfaceHeight": 1232,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row99",
+          "Around": 31101776,
+          "Across": 291500,
+          "HeightBits": -1001514448,
+          "SurfaceHeight": -825,
+          "Biome": 0,
+          "WaterKind": 1
+        }
+      ]
+    },
+    {
+      "Name": "gen16_certified_seed_1337",
+      "Description": "ring_integration settings, BedrockY -2000, sea 0, rare peak 1848, no auto-raise",
+      "RecipeHash": "",
+      "GeneratorVersion": 16,
+      "TerrainHash": "4C0FBE2240FD454A",
+      "Points": [
+        {
+          "Name": "lattice_mid",
+          "Around": 1570796,
+          "Across": 159000,
+          "HeightBits": 1105845332,
+          "SurfaceHeight": 28,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_ridge",
+          "Around": 9000000,
+          "Across": 120000,
+          "HeightBits": 1118748923,
+          "SurfaceHeight": 86,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_coast",
+          "Around": 15700000,
+          "Across": 26500,
+          "HeightBits": 1105390892,
+          "SurfaceHeight": 27,
+          "Biome": 5,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_far",
+          "Around": 23561940,
+          "Across": 291500,
+          "HeightBits": 1132600174,
+          "SurfaceHeight": 259,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "odd",
+          "Around": 1570797,
+          "Across": 159001,
+          "HeightBits": 1105798407,
+          "SurfaceHeight": 28,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "seam_left",
+          "Around": 31415934,
+          "Across": 159000,
+          "HeightBits": -1044065781,
+          "SurfaceHeight": -26,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "seam_right",
+          "Around": 2,
+          "Across": 159000,
+          "HeightBits": -1044426193,
+          "SurfaceHeight": -25,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "wall_low",
+          "Around": 5000000,
+          "Across": 0,
+          "HeightBits": 1146321545,
+          "SurfaceHeight": 845,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "wall_high",
+          "Around": 5000000,
+          "Across": 317998,
+          "HeightBits": 1077169711,
+          "SurfaceHeight": 2,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row0",
+          "Around": 314158,
+          "Across": 26500,
+          "HeightBits": 1133088464,
+          "SurfaceHeight": 274,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row50",
+          "Around": 15707968,
+          "Across": 132500,
+          "HeightBits": 1100950285,
+          "SurfaceHeight": 19,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row99",
+          "Around": 31101776,
+          "Across": 291500,
+          "HeightBits": 1137671783,
+          "SurfaceHeight": 414,
+          "Biome": 7,
+          "WaterKind": 0
+        }
+      ]
+    }
+  ]
+}

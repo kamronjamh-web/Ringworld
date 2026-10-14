@@ -1,0 +1,8 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "ALIEN | monolithic pale ceramic.001"
+cull_mode = 2
+albedo_color = Color(0.47312066, 0.49560964, 0.49010885, 1)
+metallic = 0.15
+roughness = 0.68

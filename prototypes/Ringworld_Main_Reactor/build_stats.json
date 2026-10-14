@@ -1,0 +1,78 @@
+{
+  "blender_version": "4.3.2",
+  "unit_metres": 1,
+  "origin": "local chamber center",
+  "baseline_bounds": {
+    "min": [
+      -1251.999267578125,
+      -1430.0,
+      -360.0
+    ],
+    "max": [
+      1251.999267578125,
+      1347.714111328125,
+      1039.0
+    ],
+    "dimensions": [
+      2503.99853515625,
+      2777.714111328125,
+      1399.0
+    ]
+  },
+  "scaled_baseline_bounds": {
+    "min": [
+      -2503.99853515625,
+      -2860.0,
+      -720.0
+    ],
+    "max": [
+      2503.99853515625,
+      2695.42822265625,
+      2078.0
+    ],
+    "dimensions": [
+      5007.9970703125,
+      5555.42822265625,
+      2798.0
+    ]
+  },
+  "new_architecture_bounds": {
+    "min": [
+      -2503.99853515625,
+      -2860.0,
+      -720.0
+    ],
+    "max": [
+      2503.99853515625,
+      2695.42822265625,
+      2078.0
+    ],
+    "dimensions": [
+      5007.9970703125,
+      5555.42822265625,
+      2798.0
+    ]
+  },
+  "axis_size_ratios": [
+    2.0,
+    2.0,
+    2.0
+  ],
+  "architecture_mesh_objects": 827,
+  "unique_architecture_mesh_datablocks": 587,
+  "power_module_count": 6,
+  "power_module_height_including_keel_metres": 815,
+  "power_module_max_containment_diameter_metres": 536,
+  "inherited_architecture_mesh_objects": 201,
+  "new_mesh_objects": 626,
+  "base_vertices": 23945,
+  "base_faces": 22023,
+  "reference_person_height": 1.8000030517578125,
+  "main_causeway_width_metres": 24,
+  "secondary_causeway_width_metres": 18,
+  "beam_clearance_required_radius_metres": 150,
+  "beam_clearance_z_range_metres": [
+    600,
+    2078
+  ]
+}

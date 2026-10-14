@@ -1,0 +1,29 @@
+{
+  "architecture_mesh_objects": 827,
+  "triangles_before_export": 44626,
+  "nonfinite_geometry_objects": [],
+  "all_architecture_unit_scale": true,
+  "exhaust_validation_z_metres": [
+    600,
+    2078
+  ],
+  "required_clear_radius_metres": 150,
+  "minimum_actual_clear_radius_metres": 152.0122528076172,
+  "limiting_object": "Exhaust | split monolith 3",
+  "exhaust_intersection_objects": [],
+  "entry_center_corridor_test": {
+    "width_metres": 8,
+    "height_metres": 2.1,
+    "y_range_metres": [
+      -2780,
+      -545
+    ],
+    "z_range_metres": [
+      162.31,
+      164.41
+    ],
+    "obstructing_objects": []
+  },
+  "reference_person_height_metres": 1.8000030517578125,
+  "test_limits": "Entry center-corridor geometry audit is not collision, navigation or player-controller verification. Secondary damaged route is deliberately discontinuous. Test geometry is not exported."
+}

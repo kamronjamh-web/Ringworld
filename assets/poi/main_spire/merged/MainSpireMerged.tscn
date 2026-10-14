@@ -1,0 +1,1258 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S0.res" id="1_6biru"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S1.res" id="2_m8dpd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S10.res" id="3_ipixk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S11.res" id="4_f7evk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S12.res" id="5_kwelk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S13.res" id="6_3wqnm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S14.res" id="7_ikll7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S15.res" id="8_clk0a"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S2.res" id="9_yw0jd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S3.res" id="10_66c83"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S4.res" id="11_eegx2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S5.res" id="12_87spo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S6.res" id="13_5x1d7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S7.res" id="14_sjch7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S8.res" id="15_omm7x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Deep_Recess_S9.res" id="16_a41d5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S0.res" id="17_4su3r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S1.res" id="18_utgjt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S10.res" id="19_bikhw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S11.res" id="20_twnqy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S12.res" id="21_kru3d"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S13.res" id="22_dc4wk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S14.res" id="23_545qn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S15.res" id="24_6jye5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S2.res" id="25_gkq4u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S3.res" id="26_b2lyq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S4.res" id="27_w5dkr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S5.res" id="28_hqmgp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S6.res" id="29_nvop3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S7.res" id="30_ieo36"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S8.res" id="31_85ggg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Main_Armor_Graphite_S9.res" id="32_wqcgl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S0.res" id="33_7n6ap"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S1.res" id="34_omstp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S10.res" id="35_1uwik"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S11.res" id="36_6cwpt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S12.res" id="37_00lul"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S13.res" id="38_d7vxq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S14.res" id="39_mupsl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S15.res" id="40_3vkoy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S2.res" id="41_ulw6p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S3.res" id="42_lsseu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S4.res" id="43_g20cw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S5.res" id="44_ei1s5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S6.res" id="45_h2d44"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S7.res" id="46_3v30p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S8.res" id="47_qfp35"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Obsidian_Alloy_S9.res" id="48_wnj68"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S0.res" id="49_qehbj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S1.res" id="50_ombnr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S10.res" id="51_arm2c"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S11.res" id="52_0vr5m"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S12.res" id="53_4had8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S13.res" id="54_rf7ln"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S14.res" id="55_08jsu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S15.res" id="56_ysk2y"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S2.res" id="57_2a1yh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S3.res" id="58_622n3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S4.res" id="59_p62fi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S5.res" id="60_oqsbs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S6.res" id="61_iu4iu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S7.res" id="62_8aldh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S8.res" id="63_ouedr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Raised_Facet_Alloy_S9.res" id="64_uo8df"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S0.res" id="65_wbfqb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S1.res" id="66_1grqx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S10.res" id="67_45oh8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S11.res" id="68_ky1sd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S12.res" id="69_2opga"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S13.res" id="70_yjgj0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S14.res" id="71_ahrin"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S15.res" id="72_sv47n"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S2.res" id="73_t5jxn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S3.res" id="74_w38eo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S4.res" id="75_p1ty5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S5.res" id="76_48xt8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S6.res" id="77_qtsl5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S7.res" id="78_fb84g"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S8.res" id="79_e8jcc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Reactor_Teal_Inlay_S9.res" id="80_tcyfl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S0.res" id="81_1u2rs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S1.res" id="82_n66uq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S10.res" id="83_eruwx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S11.res" id="84_g3nxa"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S12.res" id="85_83fwo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S13.res" id="86_hx2hi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S14.res" id="87_jm1xy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S15.res" id="88_s15h8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S2.res" id="89_k6fxo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S3.res" id="90_t2g1b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S4.res" id="91_3iuuc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S5.res" id="92_a4xxh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S6.res" id="93_rfwy4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S7.res" id="94_bl2bo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S8.res" id="95_oui8t"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Spire_Worn_Silver_Edges_S9.res" id="96_8hhna"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S0.res" id="97_vnv1w"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S1.res" id="98_xuei0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S10.res" id="99_iixsw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S11.res" id="100_bp50s"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S12.res" id="101_6snmq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S13.res" id="102_skj7q"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S14.res" id="103_n02jt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S15.res" id="104_aos3b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S2.res" id="105_ayfof"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S3.res" id="106_43c2l"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S4.res" id="107_ijrh1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S5.res" id="108_gqw08"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S6.res" id="109_1ybsw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S7.res" id="110_edln2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S8.res" id="111_645tw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Deep_Recess_S9.res" id="112_3kdwa"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S0.res" id="113_amdja"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S1.res" id="114_sbi3x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S10.res" id="115_fusbx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S11.res" id="116_nelaq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S12.res" id="117_o7lfc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S13.res" id="118_sd1na"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S14.res" id="119_quuq0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S15.res" id="120_b667o"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S2.res" id="121_fyl88"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S3.res" id="122_q6mft"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S4.res" id="123_n1jp0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S5.res" id="124_bekr4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S6.res" id="125_6i6q5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S7.res" id="126_6l06h"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S8.res" id="127_8gn4b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Control_Surface_S9.res" id="128_h7m6a"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S0.res" id="129_fdfbi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S1.res" id="130_i2pin"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S10.res" id="131_5fllw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S11.res" id="132_25icu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S12.res" id="133_jhl13"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S13.res" id="134_lkdjs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S14.res" id="135_557ug"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S15.res" id="136_v0035"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S2.res" id="137_781lp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S3.res" id="138_d2nf6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S4.res" id="139_imbe2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S5.res" id="140_tuinf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S6.res" id="141_jdvvy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S7.res" id="142_2cm40"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S8.res" id="143_hc237"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Floor_Basalt_Alloy_S9.res" id="144_7hfv3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S0.res" id="145_nfcbw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S1.res" id="146_bo64r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S10.res" id="147_46t63"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S11.res" id="148_b4yrq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S12.res" id="149_627vu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S13.res" id="150_ang27"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S14.res" id="151_pah1d"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S15.res" id="152_uqfi1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S2.res" id="153_0neub"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S3.res" id="154_2woa5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S4.res" id="155_r5s6b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S5.res" id="156_6cdf7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S6.res" id="157_1fvxv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S7.res" id="158_7xv8b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S8.res" id="159_11atb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Interior_Ceramic_S9.res" id="160_owvqb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S0.res" id="161_m2wph"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S1.res" id="162_vdfel"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S10.res" id="163_ehfks"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S11.res" id="164_27euc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S12.res" id="165_5wunn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S13.res" id="166_1pxhv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S14.res" id="167_a44iu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S15.res" id="168_yr1jt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S2.res" id="169_1lv6g"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S3.res" id="170_uc61t"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S4.res" id="171_i22v0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S5.res" id="172_njb3h"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S6.res" id="173_vl6j8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S7.res" id="174_0fa7v"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S8.res" id="175_q7okc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Facility_Soft_Teal_Guide_S9.res" id="176_85txc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S0.res" id="177_4l07v"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S1.res" id="178_5k5r2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S10.res" id="179_blc5f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S11.res" id="180_mxis3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S12.res" id="181_bqrwe"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S13.res" id="182_fsu0d"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S14.res" id="183_maixs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S15.res" id="184_htxjj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S2.res" id="185_cgon6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S3.res" id="186_whd8l"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S4.res" id="187_1fy7x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S5.res" id="188_ogjvd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S6.res" id="189_eapgo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S7.res" id="190_a62hr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S8.res" id="191_a46p2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Armor_Graphite_S9.res" id="192_g83g2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Control_Insulators_S1.res" id="193_vn5ui"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Control_Insulators_S5.res" id="194_uob3d"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Main_Control_Insulators_S9.res" id="195_n65xs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S0.res" id="196_p85r7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S1.res" id="197_8q1gi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S10.res" id="198_vu0tb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S11.res" id="199_7wium"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S12.res" id="200_irbvx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S13.res" id="201_7xlf1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S14.res" id="202_b510b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S15.res" id="203_nufr6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S2.res" id="204_2ocm5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S3.res" id="205_c5gd2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S4.res" id="206_makq8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S5.res" id="207_x8r6y"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S6.res" id="208_obyvn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S7.res" id="209_7x4i7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S8.res" id="210_vp2jr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Obsidian_Alloy_S9.res" id="211_c61ra"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S0.res" id="212_wumjk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S1.res" id="213_yeqnu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S10.res" id="214_qtugi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S11.res" id="215_soed2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S12.res" id="216_8q065"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S13.res" id="217_g1u1j"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S14.res" id="218_wxrd4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S15.res" id="219_o4c0b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S2.res" id="220_e35kh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S3.res" id="221_88cxu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S4.res" id="222_dvg03"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S5.res" id="223_alfbc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S6.res" id="224_2u421"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S7.res" id="225_on7q1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S8.res" id="226_oc02j"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Raised_Facet_Alloy_S9.res" id="227_fh3jr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S0.res" id="228_401kg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S1.res" id="229_d2cbu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S10.res" id="230_s3321"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S11.res" id="231_ucdve"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S12.res" id="232_wca4j"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S13.res" id="233_bpkr7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S14.res" id="234_t8kg3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S15.res" id="235_qwhpi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S2.res" id="236_sjgfr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S3.res" id="237_mt7un"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S4.res" id="238_n1ihm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S5.res" id="239_g73ra"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S6.res" id="240_rkcsb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S7.res" id="241_7febg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S8.res" id="242_i3s05"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Reactor_Teal_Inlay_S9.res" id="243_ppvsp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S0.res" id="244_kp1xe"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S1.res" id="245_8tv7f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S10.res" id="246_kmtw3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S11.res" id="247_lwkrh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S12.res" id="248_x8fcp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S13.res" id="249_e8deg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S14.res" id="250_itsnp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S15.res" id="251_a3vgh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S2.res" id="252_nh7hd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S3.res" id="253_do4yf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S4.res" id="254_qdowl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S5.res" id="255_tcwl1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S6.res" id="256_co0sm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S7.res" id="257_wynmd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S8.res" id="258_ca6ul"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Facility_Worn_Silver_Edges_S9.res" id="259_t2mbg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S0.res" id="260_jjk3x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S1.res" id="261_iwim7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S10.res" id="262_b2ajj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S11.res" id="263_3lpae"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S12.res" id="264_dbk56"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S13.res" id="265_peb18"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S14.res" id="266_p5amf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S15.res" id="267_f0jvs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S2.res" id="268_qeryx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S3.res" id="269_84d7s"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S4.res" id="270_27lda"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S5.res" id="271_1owde"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S6.res" id="272_gmd5v"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S7.res" id="273_0qvnx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S8.res" id="274_28y07"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Facility_Soft_Teal_Guide_S9.res" id="275_elygq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Main_Armor_Graphite_S13.res" id="276_keuy8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S0.res" id="277_woomi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S1.res" id="278_e7jcj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S10.res" id="279_61hac"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S11.res" id="280_0r85u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S12.res" id="281_tkju7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S13.res" id="282_lkctf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S14.res" id="283_adss4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S15.res" id="284_x2oe8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S2.res" id="285_kqcyj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S3.res" id="286_afr5r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S4.res" id="287_rxa5g"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S5.res" id="288_nnsnn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S6.res" id="289_16uaq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S7.res" id="290_58hl7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S8.res" id="291_tc03l"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Obsidian_Alloy_S9.res" id="292_d3yby"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S0.res" id="293_my0sm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S1.res" id="294_dckya"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S10.res" id="295_241wk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S11.res" id="296_1kppc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S12.res" id="297_pdr11"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S13.res" id="298_4mqcj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S14.res" id="299_acjb1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S15.res" id="300_cnjo8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S2.res" id="301_q0ogd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S3.res" id="302_pql6y"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S4.res" id="303_t0cmo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S5.res" id="304_56geo"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S6.res" id="305_26pwx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S7.res" id="306_p8o7b"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S8.res" id="307_sbsnr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Raised_Facet_Alloy_S9.res" id="308_w5330"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Reactor_Teal_Inlay_S13.res" id="309_734f6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Worn_Silver_Edges_S1.res" id="310_aw3aa"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Worn_Silver_Edges_S5.res" id="311_27t5r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/main_spire/merged/meshes/MainSpire_Roof_Worn_Silver_Edges_S9.res" id="312_844h7"]
+
+[node name="MainSpireMerged" type="Node3D" unique_id=1445369534]
+
+[node name="Spire" type="Node3D" parent="." unique_id=1278334013]
+
+[node name="Deep_Recess_S0" type="MeshInstance3D" parent="Spire" unique_id=969555507]
+mesh = ExtResource("1_6biru")
+
+[node name="Deep_Recess_S1" type="MeshInstance3D" parent="Spire" unique_id=1891734809]
+mesh = ExtResource("2_m8dpd")
+
+[node name="Deep_Recess_S10" type="MeshInstance3D" parent="Spire" unique_id=389703484]
+mesh = ExtResource("3_ipixk")
+
+[node name="Deep_Recess_S11" type="MeshInstance3D" parent="Spire" unique_id=1724351203]
+mesh = ExtResource("4_f7evk")
+
+[node name="Deep_Recess_S12" type="MeshInstance3D" parent="Spire" unique_id=4300344]
+mesh = ExtResource("5_kwelk")
+
+[node name="Deep_Recess_S13" type="MeshInstance3D" parent="Spire" unique_id=1741638051]
+mesh = ExtResource("6_3wqnm")
+
+[node name="Deep_Recess_S14" type="MeshInstance3D" parent="Spire" unique_id=357683093]
+mesh = ExtResource("7_ikll7")
+
+[node name="Deep_Recess_S15" type="MeshInstance3D" parent="Spire" unique_id=1066418187]
+mesh = ExtResource("8_clk0a")
+
+[node name="Deep_Recess_S2" type="MeshInstance3D" parent="Spire" unique_id=1450808008]
+mesh = ExtResource("9_yw0jd")
+
+[node name="Deep_Recess_S3" type="MeshInstance3D" parent="Spire" unique_id=1032717295]
+mesh = ExtResource("10_66c83")
+
+[node name="Deep_Recess_S4" type="MeshInstance3D" parent="Spire" unique_id=1593578016]
+mesh = ExtResource("11_eegx2")
+
+[node name="Deep_Recess_S5" type="MeshInstance3D" parent="Spire" unique_id=541578377]
+mesh = ExtResource("12_87spo")
+
+[node name="Deep_Recess_S6" type="MeshInstance3D" parent="Spire" unique_id=1284057942]
+mesh = ExtResource("13_5x1d7")
+
+[node name="Deep_Recess_S7" type="MeshInstance3D" parent="Spire" unique_id=222788666]
+mesh = ExtResource("14_sjch7")
+
+[node name="Deep_Recess_S8" type="MeshInstance3D" parent="Spire" unique_id=1717300791]
+mesh = ExtResource("15_omm7x")
+
+[node name="Deep_Recess_S9" type="MeshInstance3D" parent="Spire" unique_id=2012473189]
+mesh = ExtResource("16_a41d5")
+
+[node name="Main_Armor_Graphite_S0" type="MeshInstance3D" parent="Spire" unique_id=1815650117]
+mesh = ExtResource("17_4su3r")
+
+[node name="Main_Armor_Graphite_S1" type="MeshInstance3D" parent="Spire" unique_id=580098520]
+mesh = ExtResource("18_utgjt")
+
+[node name="Main_Armor_Graphite_S10" type="MeshInstance3D" parent="Spire" unique_id=1184711760]
+mesh = ExtResource("19_bikhw")
+
+[node name="Main_Armor_Graphite_S11" type="MeshInstance3D" parent="Spire" unique_id=2083278621]
+mesh = ExtResource("20_twnqy")
+
+[node name="Main_Armor_Graphite_S12" type="MeshInstance3D" parent="Spire" unique_id=1031564968]
+mesh = ExtResource("21_kru3d")
+
+[node name="Main_Armor_Graphite_S13" type="MeshInstance3D" parent="Spire" unique_id=1691122814]
+mesh = ExtResource("22_dc4wk")
+
+[node name="Main_Armor_Graphite_S14" type="MeshInstance3D" parent="Spire" unique_id=1845100642]
+mesh = ExtResource("23_545qn")
+
+[node name="Main_Armor_Graphite_S15" type="MeshInstance3D" parent="Spire" unique_id=1603611856]
+mesh = ExtResource("24_6jye5")
+
+[node name="Main_Armor_Graphite_S2" type="MeshInstance3D" parent="Spire" unique_id=934560960]
+mesh = ExtResource("25_gkq4u")
+
+[node name="Main_Armor_Graphite_S3" type="MeshInstance3D" parent="Spire" unique_id=1843381679]
+mesh = ExtResource("26_b2lyq")
+
+[node name="Main_Armor_Graphite_S4" type="MeshInstance3D" parent="Spire" unique_id=74092342]
+mesh = ExtResource("27_w5dkr")
+
+[node name="Main_Armor_Graphite_S5" type="MeshInstance3D" parent="Spire" unique_id=1067068421]
+mesh = ExtResource("28_hqmgp")
+
+[node name="Main_Armor_Graphite_S6" type="MeshInstance3D" parent="Spire" unique_id=1905707967]
+mesh = ExtResource("29_nvop3")
+
+[node name="Main_Armor_Graphite_S7" type="MeshInstance3D" parent="Spire" unique_id=1646359998]
+mesh = ExtResource("30_ieo36")
+
+[node name="Main_Armor_Graphite_S8" type="MeshInstance3D" parent="Spire" unique_id=1868211377]
+mesh = ExtResource("31_85ggg")
+
+[node name="Main_Armor_Graphite_S9" type="MeshInstance3D" parent="Spire" unique_id=84068816]
+mesh = ExtResource("32_wqcgl")
+
+[node name="Obsidian_Alloy_S0" type="MeshInstance3D" parent="Spire" unique_id=936454996]
+mesh = ExtResource("33_7n6ap")
+
+[node name="Obsidian_Alloy_S1" type="MeshInstance3D" parent="Spire" unique_id=572750617]
+mesh = ExtResource("34_omstp")
+
+[node name="Obsidian_Alloy_S10" type="MeshInstance3D" parent="Spire" unique_id=1638571190]
+mesh = ExtResource("35_1uwik")
+
+[node name="Obsidian_Alloy_S11" type="MeshInstance3D" parent="Spire" unique_id=518559739]
+mesh = ExtResource("36_6cwpt")
+
+[node name="Obsidian_Alloy_S12" type="MeshInstance3D" parent="Spire" unique_id=1302611369]
+mesh = ExtResource("37_00lul")
+
+[node name="Obsidian_Alloy_S13" type="MeshInstance3D" parent="Spire" unique_id=787413962]
+mesh = ExtResource("38_d7vxq")
+
+[node name="Obsidian_Alloy_S14" type="MeshInstance3D" parent="Spire" unique_id=450157742]
+mesh = ExtResource("39_mupsl")
+
+[node name="Obsidian_Alloy_S15" type="MeshInstance3D" parent="Spire" unique_id=795363288]
+mesh = ExtResource("40_3vkoy")
+
+[node name="Obsidian_Alloy_S2" type="MeshInstance3D" parent="Spire" unique_id=1814998877]
+mesh = ExtResource("41_ulw6p")
+
+[node name="Obsidian_Alloy_S3" type="MeshInstance3D" parent="Spire" unique_id=241632814]
+mesh = ExtResource("42_lsseu")
+
+[node name="Obsidian_Alloy_S4" type="MeshInstance3D" parent="Spire" unique_id=1570413522]
+mesh = ExtResource("43_g20cw")
+
+[node name="Obsidian_Alloy_S5" type="MeshInstance3D" parent="Spire" unique_id=1971738349]
+mesh = ExtResource("44_ei1s5")
+
+[node name="Obsidian_Alloy_S6" type="MeshInstance3D" parent="Spire" unique_id=893588868]
+mesh = ExtResource("45_h2d44")
+
+[node name="Obsidian_Alloy_S7" type="MeshInstance3D" parent="Spire" unique_id=1077548566]
+mesh = ExtResource("46_3v30p")
+
+[node name="Obsidian_Alloy_S8" type="MeshInstance3D" parent="Spire" unique_id=742426276]
+mesh = ExtResource("47_qfp35")
+
+[node name="Obsidian_Alloy_S9" type="MeshInstance3D" parent="Spire" unique_id=882695760]
+mesh = ExtResource("48_wnj68")
+
+[node name="Raised_Facet_Alloy_S0" type="MeshInstance3D" parent="Spire" unique_id=706846134]
+mesh = ExtResource("49_qehbj")
+
+[node name="Raised_Facet_Alloy_S1" type="MeshInstance3D" parent="Spire" unique_id=573505161]
+mesh = ExtResource("50_ombnr")
+
+[node name="Raised_Facet_Alloy_S10" type="MeshInstance3D" parent="Spire" unique_id=835301579]
+mesh = ExtResource("51_arm2c")
+
+[node name="Raised_Facet_Alloy_S11" type="MeshInstance3D" parent="Spire" unique_id=1014159110]
+mesh = ExtResource("52_0vr5m")
+
+[node name="Raised_Facet_Alloy_S12" type="MeshInstance3D" parent="Spire" unique_id=950953807]
+mesh = ExtResource("53_4had8")
+
+[node name="Raised_Facet_Alloy_S13" type="MeshInstance3D" parent="Spire" unique_id=1767008950]
+mesh = ExtResource("54_rf7ln")
+
+[node name="Raised_Facet_Alloy_S14" type="MeshInstance3D" parent="Spire" unique_id=1149893155]
+mesh = ExtResource("55_08jsu")
+
+[node name="Raised_Facet_Alloy_S15" type="MeshInstance3D" parent="Spire" unique_id=1893390317]
+mesh = ExtResource("56_ysk2y")
+
+[node name="Raised_Facet_Alloy_S2" type="MeshInstance3D" parent="Spire" unique_id=828196780]
+mesh = ExtResource("57_2a1yh")
+
+[node name="Raised_Facet_Alloy_S3" type="MeshInstance3D" parent="Spire" unique_id=1793398146]
+mesh = ExtResource("58_622n3")
+
+[node name="Raised_Facet_Alloy_S4" type="MeshInstance3D" parent="Spire" unique_id=1486939314]
+mesh = ExtResource("59_p62fi")
+
+[node name="Raised_Facet_Alloy_S5" type="MeshInstance3D" parent="Spire" unique_id=1268460750]
+mesh = ExtResource("60_oqsbs")
+
+[node name="Raised_Facet_Alloy_S6" type="MeshInstance3D" parent="Spire" unique_id=1389384614]
+mesh = ExtResource("61_iu4iu")
+
+[node name="Raised_Facet_Alloy_S7" type="MeshInstance3D" parent="Spire" unique_id=1597810602]
+mesh = ExtResource("62_8aldh")
+
+[node name="Raised_Facet_Alloy_S8" type="MeshInstance3D" parent="Spire" unique_id=1937185964]
+mesh = ExtResource("63_ouedr")
+
+[node name="Raised_Facet_Alloy_S9" type="MeshInstance3D" parent="Spire" unique_id=1484790130]
+mesh = ExtResource("64_uo8df")
+
+[node name="Reactor_Teal_Inlay_S0" type="MeshInstance3D" parent="Spire" unique_id=1741725534]
+mesh = ExtResource("65_wbfqb")
+
+[node name="Reactor_Teal_Inlay_S1" type="MeshInstance3D" parent="Spire" unique_id=910310286]
+mesh = ExtResource("66_1grqx")
+
+[node name="Reactor_Teal_Inlay_S10" type="MeshInstance3D" parent="Spire" unique_id=1775633372]
+mesh = ExtResource("67_45oh8")
+
+[node name="Reactor_Teal_Inlay_S11" type="MeshInstance3D" parent="Spire" unique_id=482599760]
+mesh = ExtResource("68_ky1sd")
+
+[node name="Reactor_Teal_Inlay_S12" type="MeshInstance3D" parent="Spire" unique_id=1368141683]
+mesh = ExtResource("69_2opga")
+
+[node name="Reactor_Teal_Inlay_S13" type="MeshInstance3D" parent="Spire" unique_id=2003468941]
+mesh = ExtResource("70_yjgj0")
+
+[node name="Reactor_Teal_Inlay_S14" type="MeshInstance3D" parent="Spire" unique_id=281703832]
+mesh = ExtResource("71_ahrin")
+
+[node name="Reactor_Teal_Inlay_S15" type="MeshInstance3D" parent="Spire" unique_id=557852413]
+mesh = ExtResource("72_sv47n")
+
+[node name="Reactor_Teal_Inlay_S2" type="MeshInstance3D" parent="Spire" unique_id=490311874]
+mesh = ExtResource("73_t5jxn")
+
+[node name="Reactor_Teal_Inlay_S3" type="MeshInstance3D" parent="Spire" unique_id=648749700]
+mesh = ExtResource("74_w38eo")
+
+[node name="Reactor_Teal_Inlay_S4" type="MeshInstance3D" parent="Spire" unique_id=2032591226]
+mesh = ExtResource("75_p1ty5")
+
+[node name="Reactor_Teal_Inlay_S5" type="MeshInstance3D" parent="Spire" unique_id=1678566785]
+mesh = ExtResource("76_48xt8")
+
+[node name="Reactor_Teal_Inlay_S6" type="MeshInstance3D" parent="Spire" unique_id=1815306960]
+mesh = ExtResource("77_qtsl5")
+
+[node name="Reactor_Teal_Inlay_S7" type="MeshInstance3D" parent="Spire" unique_id=1597829980]
+mesh = ExtResource("78_fb84g")
+
+[node name="Reactor_Teal_Inlay_S8" type="MeshInstance3D" parent="Spire" unique_id=103311385]
+mesh = ExtResource("79_e8jcc")
+
+[node name="Reactor_Teal_Inlay_S9" type="MeshInstance3D" parent="Spire" unique_id=1529812654]
+mesh = ExtResource("80_tcyfl")
+
+[node name="Worn_Silver_Edges_S0" type="MeshInstance3D" parent="Spire" unique_id=467571743]
+mesh = ExtResource("81_1u2rs")
+
+[node name="Worn_Silver_Edges_S1" type="MeshInstance3D" parent="Spire" unique_id=2076718934]
+mesh = ExtResource("82_n66uq")
+
+[node name="Worn_Silver_Edges_S10" type="MeshInstance3D" parent="Spire" unique_id=699989280]
+mesh = ExtResource("83_eruwx")
+
+[node name="Worn_Silver_Edges_S11" type="MeshInstance3D" parent="Spire" unique_id=628286551]
+mesh = ExtResource("84_g3nxa")
+
+[node name="Worn_Silver_Edges_S12" type="MeshInstance3D" parent="Spire" unique_id=1516181176]
+mesh = ExtResource("85_83fwo")
+
+[node name="Worn_Silver_Edges_S13" type="MeshInstance3D" parent="Spire" unique_id=1336986873]
+mesh = ExtResource("86_hx2hi")
+
+[node name="Worn_Silver_Edges_S14" type="MeshInstance3D" parent="Spire" unique_id=1977481508]
+mesh = ExtResource("87_jm1xy")
+
+[node name="Worn_Silver_Edges_S15" type="MeshInstance3D" parent="Spire" unique_id=1056040767]
+mesh = ExtResource("88_s15h8")
+
+[node name="Worn_Silver_Edges_S2" type="MeshInstance3D" parent="Spire" unique_id=1921801770]
+mesh = ExtResource("89_k6fxo")
+
+[node name="Worn_Silver_Edges_S3" type="MeshInstance3D" parent="Spire" unique_id=878944648]
+mesh = ExtResource("90_t2g1b")
+
+[node name="Worn_Silver_Edges_S4" type="MeshInstance3D" parent="Spire" unique_id=831322399]
+mesh = ExtResource("91_3iuuc")
+
+[node name="Worn_Silver_Edges_S5" type="MeshInstance3D" parent="Spire" unique_id=1526984752]
+mesh = ExtResource("92_a4xxh")
+
+[node name="Worn_Silver_Edges_S6" type="MeshInstance3D" parent="Spire" unique_id=1535824387]
+mesh = ExtResource("93_rfwy4")
+
+[node name="Worn_Silver_Edges_S7" type="MeshInstance3D" parent="Spire" unique_id=291931554]
+mesh = ExtResource("94_bl2bo")
+
+[node name="Worn_Silver_Edges_S8" type="MeshInstance3D" parent="Spire" unique_id=1458177732]
+mesh = ExtResource("95_oui8t")
+
+[node name="Worn_Silver_Edges_S9" type="MeshInstance3D" parent="Spire" unique_id=1519247163]
+mesh = ExtResource("96_8hhna")
+
+[node name="Facility" type="Node3D" parent="." unique_id=512758083]
+
+[node name="Deep_Recess_S0" type="MeshInstance3D" parent="Facility" unique_id=705894696]
+mesh = ExtResource("97_vnv1w")
+
+[node name="Deep_Recess_S1" type="MeshInstance3D" parent="Facility" unique_id=1915005950]
+mesh = ExtResource("98_xuei0")
+
+[node name="Deep_Recess_S10" type="MeshInstance3D" parent="Facility" unique_id=1923533186]
+mesh = ExtResource("99_iixsw")
+
+[node name="Deep_Recess_S11" type="MeshInstance3D" parent="Facility" unique_id=32958865]
+mesh = ExtResource("100_bp50s")
+
+[node name="Deep_Recess_S12" type="MeshInstance3D" parent="Facility" unique_id=1686838495]
+mesh = ExtResource("101_6snmq")
+
+[node name="Deep_Recess_S13" type="MeshInstance3D" parent="Facility" unique_id=1183871522]
+mesh = ExtResource("102_skj7q")
+
+[node name="Deep_Recess_S14" type="MeshInstance3D" parent="Facility" unique_id=514877248]
+mesh = ExtResource("103_n02jt")
+
+[node name="Deep_Recess_S15" type="MeshInstance3D" parent="Facility" unique_id=493336800]
+mesh = ExtResource("104_aos3b")
+
+[node name="Deep_Recess_S2" type="MeshInstance3D" parent="Facility" unique_id=891101495]
+mesh = ExtResource("105_ayfof")
+
+[node name="Deep_Recess_S3" type="MeshInstance3D" parent="Facility" unique_id=413438906]
+mesh = ExtResource("106_43c2l")
+
+[node name="Deep_Recess_S4" type="MeshInstance3D" parent="Facility" unique_id=1913356831]
+mesh = ExtResource("107_ijrh1")
+
+[node name="Deep_Recess_S5" type="MeshInstance3D" parent="Facility" unique_id=382351447]
+mesh = ExtResource("108_gqw08")
+
+[node name="Deep_Recess_S6" type="MeshInstance3D" parent="Facility" unique_id=24341733]
+mesh = ExtResource("109_1ybsw")
+
+[node name="Deep_Recess_S7" type="MeshInstance3D" parent="Facility" unique_id=1297076927]
+mesh = ExtResource("110_edln2")
+
+[node name="Deep_Recess_S8" type="MeshInstance3D" parent="Facility" unique_id=1312130703]
+mesh = ExtResource("111_645tw")
+
+[node name="Deep_Recess_S9" type="MeshInstance3D" parent="Facility" unique_id=1212562110]
+mesh = ExtResource("112_3kdwa")
+
+[node name="Facility_Control_Surface_S0" type="MeshInstance3D" parent="Facility" unique_id=689786853]
+mesh = ExtResource("113_amdja")
+
+[node name="Facility_Control_Surface_S1" type="MeshInstance3D" parent="Facility" unique_id=199511582]
+mesh = ExtResource("114_sbi3x")
+
+[node name="Facility_Control_Surface_S10" type="MeshInstance3D" parent="Facility" unique_id=1605575281]
+mesh = ExtResource("115_fusbx")
+
+[node name="Facility_Control_Surface_S11" type="MeshInstance3D" parent="Facility" unique_id=506583277]
+mesh = ExtResource("116_nelaq")
+
+[node name="Facility_Control_Surface_S12" type="MeshInstance3D" parent="Facility" unique_id=599018899]
+mesh = ExtResource("117_o7lfc")
+
+[node name="Facility_Control_Surface_S13" type="MeshInstance3D" parent="Facility" unique_id=487791747]
+mesh = ExtResource("118_sd1na")
+
+[node name="Facility_Control_Surface_S14" type="MeshInstance3D" parent="Facility" unique_id=423514212]
+mesh = ExtResource("119_quuq0")
+
+[node name="Facility_Control_Surface_S15" type="MeshInstance3D" parent="Facility" unique_id=851580148]
+mesh = ExtResource("120_b667o")
+
+[node name="Facility_Control_Surface_S2" type="MeshInstance3D" parent="Facility" unique_id=1687657659]
+mesh = ExtResource("121_fyl88")
+
+[node name="Facility_Control_Surface_S3" type="MeshInstance3D" parent="Facility" unique_id=952083660]
+mesh = ExtResource("122_q6mft")
+
+[node name="Facility_Control_Surface_S4" type="MeshInstance3D" parent="Facility" unique_id=1919554488]
+mesh = ExtResource("123_n1jp0")
+
+[node name="Facility_Control_Surface_S5" type="MeshInstance3D" parent="Facility" unique_id=1190536358]
+mesh = ExtResource("124_bekr4")
+
+[node name="Facility_Control_Surface_S6" type="MeshInstance3D" parent="Facility" unique_id=714765195]
+mesh = ExtResource("125_6i6q5")
+
+[node name="Facility_Control_Surface_S7" type="MeshInstance3D" parent="Facility" unique_id=1133565993]
+mesh = ExtResource("126_6l06h")
+
+[node name="Facility_Control_Surface_S8" type="MeshInstance3D" parent="Facility" unique_id=394272205]
+mesh = ExtResource("127_8gn4b")
+
+[node name="Facility_Control_Surface_S9" type="MeshInstance3D" parent="Facility" unique_id=179845142]
+mesh = ExtResource("128_h7m6a")
+
+[node name="Facility_Floor_Basalt_Alloy_S0" type="MeshInstance3D" parent="Facility" unique_id=1933567134]
+mesh = ExtResource("129_fdfbi")
+
+[node name="Facility_Floor_Basalt_Alloy_S1" type="MeshInstance3D" parent="Facility" unique_id=1840262305]
+mesh = ExtResource("130_i2pin")
+
+[node name="Facility_Floor_Basalt_Alloy_S10" type="MeshInstance3D" parent="Facility" unique_id=1462485264]
+mesh = ExtResource("131_5fllw")
+
+[node name="Facility_Floor_Basalt_Alloy_S11" type="MeshInstance3D" parent="Facility" unique_id=1822506011]
+mesh = ExtResource("132_25icu")
+
+[node name="Facility_Floor_Basalt_Alloy_S12" type="MeshInstance3D" parent="Facility" unique_id=858763006]
+mesh = ExtResource("133_jhl13")
+
+[node name="Facility_Floor_Basalt_Alloy_S13" type="MeshInstance3D" parent="Facility" unique_id=358217777]
+mesh = ExtResource("134_lkdjs")
+
+[node name="Facility_Floor_Basalt_Alloy_S14" type="MeshInstance3D" parent="Facility" unique_id=1532594883]
+mesh = ExtResource("135_557ug")
+
+[node name="Facility_Floor_Basalt_Alloy_S15" type="MeshInstance3D" parent="Facility" unique_id=400570401]
+mesh = ExtResource("136_v0035")
+
+[node name="Facility_Floor_Basalt_Alloy_S2" type="MeshInstance3D" parent="Facility" unique_id=624260425]
+mesh = ExtResource("137_781lp")
+
+[node name="Facility_Floor_Basalt_Alloy_S3" type="MeshInstance3D" parent="Facility" unique_id=1724663295]
+mesh = ExtResource("138_d2nf6")
+
+[node name="Facility_Floor_Basalt_Alloy_S4" type="MeshInstance3D" parent="Facility" unique_id=8823311]
+mesh = ExtResource("139_imbe2")
+
+[node name="Facility_Floor_Basalt_Alloy_S5" type="MeshInstance3D" parent="Facility" unique_id=1174220405]
+mesh = ExtResource("140_tuinf")
+
+[node name="Facility_Floor_Basalt_Alloy_S6" type="MeshInstance3D" parent="Facility" unique_id=1385110258]
+mesh = ExtResource("141_jdvvy")
+
+[node name="Facility_Floor_Basalt_Alloy_S7" type="MeshInstance3D" parent="Facility" unique_id=1394310127]
+mesh = ExtResource("142_2cm40")
+
+[node name="Facility_Floor_Basalt_Alloy_S8" type="MeshInstance3D" parent="Facility" unique_id=1766575247]
+mesh = ExtResource("143_hc237")
+
+[node name="Facility_Floor_Basalt_Alloy_S9" type="MeshInstance3D" parent="Facility" unique_id=1088431160]
+mesh = ExtResource("144_7hfv3")
+
+[node name="Facility_Interior_Ceramic_S0" type="MeshInstance3D" parent="Facility" unique_id=1689361430]
+mesh = ExtResource("145_nfcbw")
+
+[node name="Facility_Interior_Ceramic_S1" type="MeshInstance3D" parent="Facility" unique_id=1967782989]
+mesh = ExtResource("146_bo64r")
+
+[node name="Facility_Interior_Ceramic_S10" type="MeshInstance3D" parent="Facility" unique_id=369829707]
+mesh = ExtResource("147_46t63")
+
+[node name="Facility_Interior_Ceramic_S11" type="MeshInstance3D" parent="Facility" unique_id=849085419]
+mesh = ExtResource("148_b4yrq")
+
+[node name="Facility_Interior_Ceramic_S12" type="MeshInstance3D" parent="Facility" unique_id=282602986]
+mesh = ExtResource("149_627vu")
+
+[node name="Facility_Interior_Ceramic_S13" type="MeshInstance3D" parent="Facility" unique_id=1572872371]
+mesh = ExtResource("150_ang27")
+
+[node name="Facility_Interior_Ceramic_S14" type="MeshInstance3D" parent="Facility" unique_id=1602523427]
+mesh = ExtResource("151_pah1d")
+
+[node name="Facility_Interior_Ceramic_S15" type="MeshInstance3D" parent="Facility" unique_id=378282102]
+mesh = ExtResource("152_uqfi1")
+
+[node name="Facility_Interior_Ceramic_S2" type="MeshInstance3D" parent="Facility" unique_id=1713773987]
+mesh = ExtResource("153_0neub")
+
+[node name="Facility_Interior_Ceramic_S3" type="MeshInstance3D" parent="Facility" unique_id=786774743]
+mesh = ExtResource("154_2woa5")
+
+[node name="Facility_Interior_Ceramic_S4" type="MeshInstance3D" parent="Facility" unique_id=1981634877]
+mesh = ExtResource("155_r5s6b")
+
+[node name="Facility_Interior_Ceramic_S5" type="MeshInstance3D" parent="Facility" unique_id=1623420174]
+mesh = ExtResource("156_6cdf7")
+
+[node name="Facility_Interior_Ceramic_S6" type="MeshInstance3D" parent="Facility" unique_id=1849200156]
+mesh = ExtResource("157_1fvxv")
+
+[node name="Facility_Interior_Ceramic_S7" type="MeshInstance3D" parent="Facility" unique_id=659874504]
+mesh = ExtResource("158_7xv8b")
+
+[node name="Facility_Interior_Ceramic_S8" type="MeshInstance3D" parent="Facility" unique_id=1602114255]
+mesh = ExtResource("159_11atb")
+
+[node name="Facility_Interior_Ceramic_S9" type="MeshInstance3D" parent="Facility" unique_id=87924506]
+mesh = ExtResource("160_owvqb")
+
+[node name="Facility_Soft_Teal_Guide_S0" type="MeshInstance3D" parent="Facility" unique_id=1824103951]
+mesh = ExtResource("161_m2wph")
+
+[node name="Facility_Soft_Teal_Guide_S1" type="MeshInstance3D" parent="Facility" unique_id=1426506257]
+mesh = ExtResource("162_vdfel")
+
+[node name="Facility_Soft_Teal_Guide_S10" type="MeshInstance3D" parent="Facility" unique_id=723423584]
+mesh = ExtResource("163_ehfks")
+
+[node name="Facility_Soft_Teal_Guide_S11" type="MeshInstance3D" parent="Facility" unique_id=143504915]
+mesh = ExtResource("164_27euc")
+
+[node name="Facility_Soft_Teal_Guide_S12" type="MeshInstance3D" parent="Facility" unique_id=446046652]
+mesh = ExtResource("165_5wunn")
+
+[node name="Facility_Soft_Teal_Guide_S13" type="MeshInstance3D" parent="Facility" unique_id=1997898211]
+mesh = ExtResource("166_1pxhv")
+
+[node name="Facility_Soft_Teal_Guide_S14" type="MeshInstance3D" parent="Facility" unique_id=927467608]
+mesh = ExtResource("167_a44iu")
+
+[node name="Facility_Soft_Teal_Guide_S15" type="MeshInstance3D" parent="Facility" unique_id=1029404312]
+mesh = ExtResource("168_yr1jt")
+
+[node name="Facility_Soft_Teal_Guide_S2" type="MeshInstance3D" parent="Facility" unique_id=963089315]
+mesh = ExtResource("169_1lv6g")
+
+[node name="Facility_Soft_Teal_Guide_S3" type="MeshInstance3D" parent="Facility" unique_id=1035643432]
+mesh = ExtResource("170_uc61t")
+
+[node name="Facility_Soft_Teal_Guide_S4" type="MeshInstance3D" parent="Facility" unique_id=395744106]
+mesh = ExtResource("171_i22v0")
+
+[node name="Facility_Soft_Teal_Guide_S5" type="MeshInstance3D" parent="Facility" unique_id=891299244]
+mesh = ExtResource("172_njb3h")
+
+[node name="Facility_Soft_Teal_Guide_S6" type="MeshInstance3D" parent="Facility" unique_id=2069150154]
+mesh = ExtResource("173_vl6j8")
+
+[node name="Facility_Soft_Teal_Guide_S7" type="MeshInstance3D" parent="Facility" unique_id=739878819]
+mesh = ExtResource("174_0fa7v")
+
+[node name="Facility_Soft_Teal_Guide_S8" type="MeshInstance3D" parent="Facility" unique_id=687381309]
+mesh = ExtResource("175_q7okc")
+
+[node name="Facility_Soft_Teal_Guide_S9" type="MeshInstance3D" parent="Facility" unique_id=1973900585]
+mesh = ExtResource("176_85txc")
+
+[node name="Main_Armor_Graphite_S0" type="MeshInstance3D" parent="Facility" unique_id=1781628520]
+mesh = ExtResource("177_4l07v")
+
+[node name="Main_Armor_Graphite_S1" type="MeshInstance3D" parent="Facility" unique_id=975378222]
+mesh = ExtResource("178_5k5r2")
+
+[node name="Main_Armor_Graphite_S10" type="MeshInstance3D" parent="Facility" unique_id=1244620768]
+mesh = ExtResource("179_blc5f")
+
+[node name="Main_Armor_Graphite_S11" type="MeshInstance3D" parent="Facility" unique_id=1978769386]
+mesh = ExtResource("180_mxis3")
+
+[node name="Main_Armor_Graphite_S12" type="MeshInstance3D" parent="Facility" unique_id=836269182]
+mesh = ExtResource("181_bqrwe")
+
+[node name="Main_Armor_Graphite_S13" type="MeshInstance3D" parent="Facility" unique_id=605159737]
+mesh = ExtResource("182_fsu0d")
+
+[node name="Main_Armor_Graphite_S14" type="MeshInstance3D" parent="Facility" unique_id=1142551597]
+mesh = ExtResource("183_maixs")
+
+[node name="Main_Armor_Graphite_S15" type="MeshInstance3D" parent="Facility" unique_id=1064840657]
+mesh = ExtResource("184_htxjj")
+
+[node name="Main_Armor_Graphite_S2" type="MeshInstance3D" parent="Facility" unique_id=128081473]
+mesh = ExtResource("185_cgon6")
+
+[node name="Main_Armor_Graphite_S3" type="MeshInstance3D" parent="Facility" unique_id=1451218649]
+mesh = ExtResource("186_whd8l")
+
+[node name="Main_Armor_Graphite_S4" type="MeshInstance3D" parent="Facility" unique_id=1938516639]
+mesh = ExtResource("187_1fy7x")
+
+[node name="Main_Armor_Graphite_S5" type="MeshInstance3D" parent="Facility" unique_id=824521495]
+mesh = ExtResource("188_ogjvd")
+
+[node name="Main_Armor_Graphite_S6" type="MeshInstance3D" parent="Facility" unique_id=1823877972]
+mesh = ExtResource("189_eapgo")
+
+[node name="Main_Armor_Graphite_S7" type="MeshInstance3D" parent="Facility" unique_id=1582444736]
+mesh = ExtResource("190_a62hr")
+
+[node name="Main_Armor_Graphite_S8" type="MeshInstance3D" parent="Facility" unique_id=1895260504]
+mesh = ExtResource("191_a46p2")
+
+[node name="Main_Armor_Graphite_S9" type="MeshInstance3D" parent="Facility" unique_id=1074914242]
+mesh = ExtResource("192_g83g2")
+
+[node name="Main_Control_Insulators_S1" type="MeshInstance3D" parent="Facility" unique_id=1149879482]
+mesh = ExtResource("193_vn5ui")
+
+[node name="Main_Control_Insulators_S5" type="MeshInstance3D" parent="Facility" unique_id=665276902]
+mesh = ExtResource("194_uob3d")
+
+[node name="Main_Control_Insulators_S9" type="MeshInstance3D" parent="Facility" unique_id=732855794]
+mesh = ExtResource("195_n65xs")
+
+[node name="Obsidian_Alloy_S0" type="MeshInstance3D" parent="Facility" unique_id=572291458]
+mesh = ExtResource("196_p85r7")
+
+[node name="Obsidian_Alloy_S1" type="MeshInstance3D" parent="Facility" unique_id=1955305628]
+mesh = ExtResource("197_8q1gi")
+
+[node name="Obsidian_Alloy_S10" type="MeshInstance3D" parent="Facility" unique_id=671135440]
+mesh = ExtResource("198_vu0tb")
+
+[node name="Obsidian_Alloy_S11" type="MeshInstance3D" parent="Facility" unique_id=738350434]
+mesh = ExtResource("199_7wium")
+
+[node name="Obsidian_Alloy_S12" type="MeshInstance3D" parent="Facility" unique_id=92186465]
+mesh = ExtResource("200_irbvx")
+
+[node name="Obsidian_Alloy_S13" type="MeshInstance3D" parent="Facility" unique_id=979740531]
+mesh = ExtResource("201_7xlf1")
+
+[node name="Obsidian_Alloy_S14" type="MeshInstance3D" parent="Facility" unique_id=386508850]
+mesh = ExtResource("202_b510b")
+
+[node name="Obsidian_Alloy_S15" type="MeshInstance3D" parent="Facility" unique_id=2105075106]
+mesh = ExtResource("203_nufr6")
+
+[node name="Obsidian_Alloy_S2" type="MeshInstance3D" parent="Facility" unique_id=1129273977]
+mesh = ExtResource("204_2ocm5")
+
+[node name="Obsidian_Alloy_S3" type="MeshInstance3D" parent="Facility" unique_id=1413259017]
+mesh = ExtResource("205_c5gd2")
+
+[node name="Obsidian_Alloy_S4" type="MeshInstance3D" parent="Facility" unique_id=533930299]
+mesh = ExtResource("206_makq8")
+
+[node name="Obsidian_Alloy_S5" type="MeshInstance3D" parent="Facility" unique_id=1280287468]
+mesh = ExtResource("207_x8r6y")
+
+[node name="Obsidian_Alloy_S6" type="MeshInstance3D" parent="Facility" unique_id=83297175]
+mesh = ExtResource("208_obyvn")
+
+[node name="Obsidian_Alloy_S7" type="MeshInstance3D" parent="Facility" unique_id=299600188]
+mesh = ExtResource("209_7x4i7")
+
+[node name="Obsidian_Alloy_S8" type="MeshInstance3D" parent="Facility" unique_id=2044849096]
+mesh = ExtResource("210_vp2jr")
+
+[node name="Obsidian_Alloy_S9" type="MeshInstance3D" parent="Facility" unique_id=692037618]
+mesh = ExtResource("211_c61ra")
+
+[node name="Raised_Facet_Alloy_S0" type="MeshInstance3D" parent="Facility" unique_id=1396720760]
+mesh = ExtResource("212_wumjk")
+
+[node name="Raised_Facet_Alloy_S1" type="MeshInstance3D" parent="Facility" unique_id=186019868]
+mesh = ExtResource("213_yeqnu")
+
+[node name="Raised_Facet_Alloy_S10" type="MeshInstance3D" parent="Facility" unique_id=428821285]
+mesh = ExtResource("214_qtugi")
+
+[node name="Raised_Facet_Alloy_S11" type="MeshInstance3D" parent="Facility" unique_id=422579701]
+mesh = ExtResource("215_soed2")
+
+[node name="Raised_Facet_Alloy_S12" type="MeshInstance3D" parent="Facility" unique_id=340816045]
+mesh = ExtResource("216_8q065")
+
+[node name="Raised_Facet_Alloy_S13" type="MeshInstance3D" parent="Facility" unique_id=155388460]
+mesh = ExtResource("217_g1u1j")
+
+[node name="Raised_Facet_Alloy_S14" type="MeshInstance3D" parent="Facility" unique_id=1719531210]
+mesh = ExtResource("218_wxrd4")
+
+[node name="Raised_Facet_Alloy_S15" type="MeshInstance3D" parent="Facility" unique_id=49437451]
+mesh = ExtResource("219_o4c0b")
+
+[node name="Raised_Facet_Alloy_S2" type="MeshInstance3D" parent="Facility" unique_id=1972261057]
+mesh = ExtResource("220_e35kh")
+
+[node name="Raised_Facet_Alloy_S3" type="MeshInstance3D" parent="Facility" unique_id=2066424595]
+mesh = ExtResource("221_88cxu")
+
+[node name="Raised_Facet_Alloy_S4" type="MeshInstance3D" parent="Facility" unique_id=248624108]
+mesh = ExtResource("222_dvg03")
+
+[node name="Raised_Facet_Alloy_S5" type="MeshInstance3D" parent="Facility" unique_id=1474307852]
+mesh = ExtResource("223_alfbc")
+
+[node name="Raised_Facet_Alloy_S6" type="MeshInstance3D" parent="Facility" unique_id=98469273]
+mesh = ExtResource("224_2u421")
+
+[node name="Raised_Facet_Alloy_S7" type="MeshInstance3D" parent="Facility" unique_id=2023315219]
+mesh = ExtResource("225_on7q1")
+
+[node name="Raised_Facet_Alloy_S8" type="MeshInstance3D" parent="Facility" unique_id=2045759114]
+mesh = ExtResource("226_oc02j")
+
+[node name="Raised_Facet_Alloy_S9" type="MeshInstance3D" parent="Facility" unique_id=1026763755]
+mesh = ExtResource("227_fh3jr")
+
+[node name="Reactor_Teal_Inlay_S0" type="MeshInstance3D" parent="Facility" unique_id=350268496]
+mesh = ExtResource("228_401kg")
+
+[node name="Reactor_Teal_Inlay_S1" type="MeshInstance3D" parent="Facility" unique_id=343731856]
+mesh = ExtResource("229_d2cbu")
+
+[node name="Reactor_Teal_Inlay_S10" type="MeshInstance3D" parent="Facility" unique_id=79983977]
+mesh = ExtResource("230_s3321")
+
+[node name="Reactor_Teal_Inlay_S11" type="MeshInstance3D" parent="Facility" unique_id=842490171]
+mesh = ExtResource("231_ucdve")
+
+[node name="Reactor_Teal_Inlay_S12" type="MeshInstance3D" parent="Facility" unique_id=616109296]
+mesh = ExtResource("232_wca4j")
+
+[node name="Reactor_Teal_Inlay_S13" type="MeshInstance3D" parent="Facility" unique_id=926704953]
+mesh = ExtResource("233_bpkr7")
+
+[node name="Reactor_Teal_Inlay_S14" type="MeshInstance3D" parent="Facility" unique_id=994103696]
+mesh = ExtResource("234_t8kg3")
+
+[node name="Reactor_Teal_Inlay_S15" type="MeshInstance3D" parent="Facility" unique_id=1366283494]
+mesh = ExtResource("235_qwhpi")
+
+[node name="Reactor_Teal_Inlay_S2" type="MeshInstance3D" parent="Facility" unique_id=1133363302]
+mesh = ExtResource("236_sjgfr")
+
+[node name="Reactor_Teal_Inlay_S3" type="MeshInstance3D" parent="Facility" unique_id=1479892180]
+mesh = ExtResource("237_mt7un")
+
+[node name="Reactor_Teal_Inlay_S4" type="MeshInstance3D" parent="Facility" unique_id=1758221688]
+mesh = ExtResource("238_n1ihm")
+
+[node name="Reactor_Teal_Inlay_S5" type="MeshInstance3D" parent="Facility" unique_id=1284335271]
+mesh = ExtResource("239_g73ra")
+
+[node name="Reactor_Teal_Inlay_S6" type="MeshInstance3D" parent="Facility" unique_id=1456472814]
+mesh = ExtResource("240_rkcsb")
+
+[node name="Reactor_Teal_Inlay_S7" type="MeshInstance3D" parent="Facility" unique_id=1760682661]
+mesh = ExtResource("241_7febg")
+
+[node name="Reactor_Teal_Inlay_S8" type="MeshInstance3D" parent="Facility" unique_id=70617972]
+mesh = ExtResource("242_i3s05")
+
+[node name="Reactor_Teal_Inlay_S9" type="MeshInstance3D" parent="Facility" unique_id=2035705949]
+mesh = ExtResource("243_ppvsp")
+
+[node name="Worn_Silver_Edges_S0" type="MeshInstance3D" parent="Facility" unique_id=939973968]
+mesh = ExtResource("244_kp1xe")
+
+[node name="Worn_Silver_Edges_S1" type="MeshInstance3D" parent="Facility" unique_id=897672854]
+mesh = ExtResource("245_8tv7f")
+
+[node name="Worn_Silver_Edges_S10" type="MeshInstance3D" parent="Facility" unique_id=747766318]
+mesh = ExtResource("246_kmtw3")
+
+[node name="Worn_Silver_Edges_S11" type="MeshInstance3D" parent="Facility" unique_id=1286012691]
+mesh = ExtResource("247_lwkrh")
+
+[node name="Worn_Silver_Edges_S12" type="MeshInstance3D" parent="Facility" unique_id=1284515912]
+mesh = ExtResource("248_x8fcp")
+
+[node name="Worn_Silver_Edges_S13" type="MeshInstance3D" parent="Facility" unique_id=612811271]
+mesh = ExtResource("249_e8deg")
+
+[node name="Worn_Silver_Edges_S14" type="MeshInstance3D" parent="Facility" unique_id=380788615]
+mesh = ExtResource("250_itsnp")
+
+[node name="Worn_Silver_Edges_S15" type="MeshInstance3D" parent="Facility" unique_id=886786124]
+mesh = ExtResource("251_a3vgh")
+
+[node name="Worn_Silver_Edges_S2" type="MeshInstance3D" parent="Facility" unique_id=1158141029]
+mesh = ExtResource("252_nh7hd")
+
+[node name="Worn_Silver_Edges_S3" type="MeshInstance3D" parent="Facility" unique_id=579151979]
+mesh = ExtResource("253_do4yf")
+
+[node name="Worn_Silver_Edges_S4" type="MeshInstance3D" parent="Facility" unique_id=843205269]
+mesh = ExtResource("254_qdowl")
+
+[node name="Worn_Silver_Edges_S5" type="MeshInstance3D" parent="Facility" unique_id=1844511393]
+mesh = ExtResource("255_tcwl1")
+
+[node name="Worn_Silver_Edges_S6" type="MeshInstance3D" parent="Facility" unique_id=919522003]
+mesh = ExtResource("256_co0sm")
+
+[node name="Worn_Silver_Edges_S7" type="MeshInstance3D" parent="Facility" unique_id=580762216]
+mesh = ExtResource("257_wynmd")
+
+[node name="Worn_Silver_Edges_S8" type="MeshInstance3D" parent="Facility" unique_id=517496722]
+mesh = ExtResource("258_ca6ul")
+
+[node name="Worn_Silver_Edges_S9" type="MeshInstance3D" parent="Facility" unique_id=503031803]
+mesh = ExtResource("259_t2mbg")
+
+[node name="Roof" type="Node3D" parent="." unique_id=785693469]
+
+[node name="Facility_Soft_Teal_Guide_S0" type="MeshInstance3D" parent="Roof" unique_id=716629994]
+mesh = ExtResource("260_jjk3x")
+
+[node name="Facility_Soft_Teal_Guide_S1" type="MeshInstance3D" parent="Roof" unique_id=1956265638]
+mesh = ExtResource("261_iwim7")
+
+[node name="Facility_Soft_Teal_Guide_S10" type="MeshInstance3D" parent="Roof" unique_id=221335038]
+mesh = ExtResource("262_b2ajj")
+
+[node name="Facility_Soft_Teal_Guide_S11" type="MeshInstance3D" parent="Roof" unique_id=1954554695]
+mesh = ExtResource("263_3lpae")
+
+[node name="Facility_Soft_Teal_Guide_S12" type="MeshInstance3D" parent="Roof" unique_id=834148327]
+mesh = ExtResource("264_dbk56")
+
+[node name="Facility_Soft_Teal_Guide_S13" type="MeshInstance3D" parent="Roof" unique_id=64854429]
+mesh = ExtResource("265_peb18")
+
+[node name="Facility_Soft_Teal_Guide_S14" type="MeshInstance3D" parent="Roof" unique_id=1416911864]
+mesh = ExtResource("266_p5amf")
+
+[node name="Facility_Soft_Teal_Guide_S15" type="MeshInstance3D" parent="Roof" unique_id=842390536]
+mesh = ExtResource("267_f0jvs")
+
+[node name="Facility_Soft_Teal_Guide_S2" type="MeshInstance3D" parent="Roof" unique_id=877917321]
+mesh = ExtResource("268_qeryx")
+
+[node name="Facility_Soft_Teal_Guide_S3" type="MeshInstance3D" parent="Roof" unique_id=1295300598]
+mesh = ExtResource("269_84d7s")
+
+[node name="Facility_Soft_Teal_Guide_S4" type="MeshInstance3D" parent="Roof" unique_id=875189632]
+mesh = ExtResource("270_27lda")
+
+[node name="Facility_Soft_Teal_Guide_S5" type="MeshInstance3D" parent="Roof" unique_id=2023260337]
+mesh = ExtResource("271_1owde")
+
+[node name="Facility_Soft_Teal_Guide_S6" type="MeshInstance3D" parent="Roof" unique_id=185315779]
+mesh = ExtResource("272_gmd5v")
+
+[node name="Facility_Soft_Teal_Guide_S7" type="MeshInstance3D" parent="Roof" unique_id=815792962]
+mesh = ExtResource("273_0qvnx")
+
+[node name="Facility_Soft_Teal_Guide_S8" type="MeshInstance3D" parent="Roof" unique_id=460077193]
+mesh = ExtResource("274_28y07")
+
+[node name="Facility_Soft_Teal_Guide_S9" type="MeshInstance3D" parent="Roof" unique_id=407314063]
+mesh = ExtResource("275_elygq")
+
+[node name="Main_Armor_Graphite_S13" type="MeshInstance3D" parent="Roof" unique_id=1347062511]
+mesh = ExtResource("276_keuy8")
+
+[node name="Obsidian_Alloy_S0" type="MeshInstance3D" parent="Roof" unique_id=1290447794]
+mesh = ExtResource("277_woomi")
+
+[node name="Obsidian_Alloy_S1" type="MeshInstance3D" parent="Roof" unique_id=438873110]
+mesh = ExtResource("278_e7jcj")
+
+[node name="Obsidian_Alloy_S10" type="MeshInstance3D" parent="Roof" unique_id=1975196892]
+mesh = ExtResource("279_61hac")
+
+[node name="Obsidian_Alloy_S11" type="MeshInstance3D" parent="Roof" unique_id=720451698]
+mesh = ExtResource("280_0r85u")
+
+[node name="Obsidian_Alloy_S12" type="MeshInstance3D" parent="Roof" unique_id=1384532106]
+mesh = ExtResource("281_tkju7")
+
+[node name="Obsidian_Alloy_S13" type="MeshInstance3D" parent="Roof" unique_id=1747165692]
+mesh = ExtResource("282_lkctf")
+
+[node name="Obsidian_Alloy_S14" type="MeshInstance3D" parent="Roof" unique_id=642166297]
+mesh = ExtResource("283_adss4")
+
+[node name="Obsidian_Alloy_S15" type="MeshInstance3D" parent="Roof" unique_id=1476788482]
+mesh = ExtResource("284_x2oe8")
+
+[node name="Obsidian_Alloy_S2" type="MeshInstance3D" parent="Roof" unique_id=1065421185]
+mesh = ExtResource("285_kqcyj")
+
+[node name="Obsidian_Alloy_S3" type="MeshInstance3D" parent="Roof" unique_id=1937204271]
+mesh = ExtResource("286_afr5r")
+
+[node name="Obsidian_Alloy_S4" type="MeshInstance3D" parent="Roof" unique_id=1747147832]
+mesh = ExtResource("287_rxa5g")
+
+[node name="Obsidian_Alloy_S5" type="MeshInstance3D" parent="Roof" unique_id=163087314]
+mesh = ExtResource("288_nnsnn")
+
+[node name="Obsidian_Alloy_S6" type="MeshInstance3D" parent="Roof" unique_id=1030541427]
+mesh = ExtResource("289_16uaq")
+
+[node name="Obsidian_Alloy_S7" type="MeshInstance3D" parent="Roof" unique_id=72684455]
+mesh = ExtResource("290_58hl7")
+
+[node name="Obsidian_Alloy_S8" type="MeshInstance3D" parent="Roof" unique_id=529722292]
+mesh = ExtResource("291_tc03l")
+
+[node name="Obsidian_Alloy_S9" type="MeshInstance3D" parent="Roof" unique_id=1109899163]
+mesh = ExtResource("292_d3yby")
+
+[node name="Raised_Facet_Alloy_S0" type="MeshInstance3D" parent="Roof" unique_id=641206438]
+mesh = ExtResource("293_my0sm")
+
+[node name="Raised_Facet_Alloy_S1" type="MeshInstance3D" parent="Roof" unique_id=653233333]
+mesh = ExtResource("294_dckya")
+
+[node name="Raised_Facet_Alloy_S10" type="MeshInstance3D" parent="Roof" unique_id=803148972]
+mesh = ExtResource("295_241wk")
+
+[node name="Raised_Facet_Alloy_S11" type="MeshInstance3D" parent="Roof" unique_id=1420653597]
+mesh = ExtResource("296_1kppc")
+
+[node name="Raised_Facet_Alloy_S12" type="MeshInstance3D" parent="Roof" unique_id=1418218139]
+mesh = ExtResource("297_pdr11")
+
+[node name="Raised_Facet_Alloy_S13" type="MeshInstance3D" parent="Roof" unique_id=426078582]
+mesh = ExtResource("298_4mqcj")
+
+[node name="Raised_Facet_Alloy_S14" type="MeshInstance3D" parent="Roof" unique_id=2003450988]
+mesh = ExtResource("299_acjb1")
+
+[node name="Raised_Facet_Alloy_S15" type="MeshInstance3D" parent="Roof" unique_id=466819726]
+mesh = ExtResource("300_cnjo8")
+
+[node name="Raised_Facet_Alloy_S2" type="MeshInstance3D" parent="Roof" unique_id=1655597370]
+mesh = ExtResource("301_q0ogd")
+
+[node name="Raised_Facet_Alloy_S3" type="MeshInstance3D" parent="Roof" unique_id=1470467672]
+mesh = ExtResource("302_pql6y")
+
+[node name="Raised_Facet_Alloy_S4" type="MeshInstance3D" parent="Roof" unique_id=1952087344]
+mesh = ExtResource("303_t0cmo")
+
+[node name="Raised_Facet_Alloy_S5" type="MeshInstance3D" parent="Roof" unique_id=1258029011]
+mesh = ExtResource("304_56geo")
+
+[node name="Raised_Facet_Alloy_S6" type="MeshInstance3D" parent="Roof" unique_id=1293384412]
+mesh = ExtResource("305_26pwx")
+
+[node name="Raised_Facet_Alloy_S7" type="MeshInstance3D" parent="Roof" unique_id=790646655]
+mesh = ExtResource("306_p8o7b")
+
+[node name="Raised_Facet_Alloy_S8" type="MeshInstance3D" parent="Roof" unique_id=1288669918]
+mesh = ExtResource("307_sbsnr")
+
+[node name="Raised_Facet_Alloy_S9" type="MeshInstance3D" parent="Roof" unique_id=2083736512]
+mesh = ExtResource("308_w5330")
+
+[node name="Reactor_Teal_Inlay_S13" type="MeshInstance3D" parent="Roof" unique_id=1770309908]
+mesh = ExtResource("309_734f6")
+
+[node name="Worn_Silver_Edges_S1" type="MeshInstance3D" parent="Roof" unique_id=722009851]
+mesh = ExtResource("310_aw3aa")
+
+[node name="Worn_Silver_Edges_S5" type="MeshInstance3D" parent="Roof" unique_id=1380385876]
+mesh = ExtResource("311_27t5r")
+
+[node name="Worn_Silver_Edges_S9" type="MeshInstance3D" parent="Roof" unique_id=727489088]
+mesh = ExtResource("312_844h7")

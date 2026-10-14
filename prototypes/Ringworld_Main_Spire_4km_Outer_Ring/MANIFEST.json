@@ -1,0 +1,70 @@
+{
+  "Main_Spire_Outer_Ring.blend": {
+    "bytes": 18768496,
+    "sha256": "6c76201c067457e101f82f84816d72e22635711d2da8ec43f29fe91e199d0e5a"
+  },
+  "Main_Spire_Outer_Ring_Godot.glb": {
+    "bytes": 7080320,
+    "sha256": "f807a081d82f13da2188332936ed42d3812b713842ab99dfa7e98e50445ed1b7"
+  },
+  "README.md": {
+    "bytes": 6945,
+    "sha256": "e31c3fbc53cd3072fcb089bf14f596c7be1d2f633a06cb01a26b690487746a4d"
+  },
+  "GODOT_IMPORT_VALIDATION.md": {
+    "bytes": 723,
+    "sha256": "1532b0bfc8f45c232f14921cbe95949e3ce243e3f37ab79723b8a3dccad25443"
+  },
+  "previews/01_outer_ring_spire_hero.png": {
+    "bytes": 3720071,
+    "sha256": "8dce12b3940107bcb72b373db3df5365c55c16bfab5fd98c61e6a2ed37e7aa32"
+  },
+  "previews/02_outer_arm_entrance_cutaway.png": {
+    "bytes": 3121521,
+    "sha256": "7238adc63ecf5fab8266e0f24c0a80ec1e00cd2b80fe19560e7db358fc556640"
+  },
+  "previews/03_outer_arm_entrance_exterior.png": {
+    "bytes": 2440917,
+    "sha256": "a7f4afa42af69d45a72bc5c7eeab2e95f2469755b3ba533b8d26ed7e20372e62"
+  },
+  "scripts/build_outer_ring.py": {
+    "bytes": 16402,
+    "sha256": "a828bf75a3f3a91b8366a01add2ad638dcee9c716181a68a921ba3e29d95bc81"
+  },
+  "scripts/render_outer_ring.py": {
+    "bytes": 2716,
+    "sha256": "c0debfb7ef32d255e4542b52776545b6f98e21e0cdbb183e9e928e9522ac2748"
+  },
+  "scripts/export_outer_ring.py": {
+    "bytes": 1102,
+    "sha256": "059c380f77f28d778757a89457720989dfdd6bfcb522f21ad889bc39ce0cdf24"
+  },
+  "scripts/validate_outer_ring.py": {
+    "bytes": 46966,
+    "sha256": "46d7d960547858966741a6ac967f5c767cc263c600318a50709b531d0acc3187"
+  },
+  "scripts/package_outer_ring.py": {
+    "bytes": 2147,
+    "sha256": "2782940407ee8597392b5782d005ed36285745388260f3a9e612f2bd22eb842e"
+  },
+  "validation/revision_manifest.json": {
+    "bytes": 113064,
+    "sha256": "35d1e7ca31b4d39bf7afc45a62f3ff23505b7da3ebdeed74bb383b4f0ee512e6"
+  },
+  "validation/geometry_validation.json": {
+    "bytes": 208068,
+    "sha256": "69e0e33412f4e6a422b700edd820176995c07a45c12e167d8c0ffe332a39ede3"
+  },
+  "validation/validation_summary.txt": {
+    "bytes": 1470,
+    "sha256": "1dacacbe1245935279f2fc9ddd324b2708361bb9be3a184cf9a7580fc5f78ab8"
+  },
+  "validation/route_samples.json": {
+    "bytes": 144364,
+    "sha256": "e875189402952cb076f1a9548772ba3a69bb9d66f4ac8b0bb9950b6d9facd406"
+  },
+  "validation/source_route_samples.json": {
+    "bytes": 120640,
+    "sha256": "4c0bcd35b6b4b54d3c93df2748d83e4538fd9e38dd6d3980625636307f075daf"
+  }
+}

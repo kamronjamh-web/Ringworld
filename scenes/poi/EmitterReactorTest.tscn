@@ -1,32 +1,36 @@
 [gd_scene format=3]
 
-[ext_resource type="Script" path="res://scripts/poi/emitter_reactor_test.gd" id="1_m5oqj"]
-[ext_resource type="ArrayMesh" path="res://scenes/poi/EmitterReactorGround.res" id="2_c4g0d"]
-[ext_resource type="Shape3D" path="res://scenes/poi/EmitterReactorGroundShape.res" id="3_qfsx7"]
-[ext_resource type="PackedScene" path="res://assets/poi/beam_emitter/BeamEmitterPOI.tscn" id="4_241h7"]
-[ext_resource type="PackedScene" path="res://assets/poi/reactor/ReactorPOI.tscn" id="5_nls4p"]
-[ext_resource type="Script" path="res://scripts/poi/poi_fly_camera.gd" id="6_5wcn0"]
+[ext_resource type="Script" path="res://scripts/poi/emitter_reactor_test.gd" id="1_nls4p"]
+[ext_resource type="ArrayMesh" path="res://scenes/poi/EmitterReactorGround.res" id="2_5wcn0"]
+[ext_resource type="Shape3D" path="res://scenes/poi/EmitterReactorGroundShape.res" id="3_jnt6c"]
+[ext_resource type="PackedScene" path="res://assets/poi/beam_emitter/BeamEmitterPOI.tscn" id="4_xwkfy"]
+[ext_resource type="PackedScene" path="res://assets/poi/reactor/ReactorPOI.tscn" id="5_hekoe"]
+[ext_resource type="ArrayMesh" path="res://scenes/poi/MainEmitterReactorGround.res" id="6_3j6br"]
+[ext_resource type="Shape3D" path="res://scenes/poi/MainEmitterReactorGroundShape.res" id="7_6lx0e"]
+[ext_resource type="PackedScene" path="res://assets/poi/main_spire/MainSpirePOI.tscn" id="8_vtiao"]
+[ext_resource type="PackedScene" path="res://assets/poi/main_reactor/MainReactorPOI.tscn" id="9_4mxrn"]
+[ext_resource type="Script" path="res://scripts/poi/poi_fly_camera.gd" id="10_kvxn5"]
 
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_jnt6c"]
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_dpjbn"]
 sky_top_color = Color(0.17, 0.34, 0.58, 1)
 sky_horizon_color = Color(0.67, 0.77, 0.86, 1)
 ground_bottom_color = Color(0.03, 0.04, 0.05, 1)
 ground_horizon_color = Color(0.5, 0.58, 0.52, 1)
 
-[sub_resource type="Sky" id="Sky_xwkfy"]
-sky_material = SubResource("ProceduralSkyMaterial_jnt6c")
+[sub_resource type="Sky" id="Sky_cymys"]
+sky_material = SubResource("ProceduralSkyMaterial_dpjbn")
 
-[sub_resource type="Environment" id="Environment_hekoe"]
+[sub_resource type="Environment" id="Environment_yd5sq"]
 background_mode = 2
-sky = SubResource("Sky_xwkfy")
+sky = SubResource("Sky_cymys")
 ambient_light_source = 3
 tonemap_mode = 2
 glow_enabled = true
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_3j6br"]
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_xey4l"]
 albedo_color = Color(0.17, 0.2, 0.13, 1)
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_6lx0e"]
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_50u4h"]
 cull_mode = 2
 albedo_color = Color(0.12, 0.16, 0.18, 1)
 metallic = 0.4
@@ -35,8 +39,8 @@ emission_enabled = true
 emission = Color(0.1, 0.5, 0.5, 1)
 emission_energy_multiplier = 0.15
 
-[sub_resource type="CylinderMesh" id="CylinderMesh_vtiao"]
-material = SubResource("StandardMaterial3D_6lx0e")
+[sub_resource type="CylinderMesh" id="CylinderMesh_7xfg8"]
+material = SubResource("StandardMaterial3D_50u4h")
 top_radius = 76.0
 bottom_radius = 76.0
 height = 2960.0
@@ -45,73 +49,151 @@ rings = 1
 cap_top = false
 cap_bottom = false
 
-[node name="EmitterReactorTest" type="Node3D" unique_id=1861134853]
-script = ExtResource("1_m5oqj")
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_4se8i"]
+albedo_color = Color(0.17, 0.2, 0.13, 1)
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1788905769]
-environment = SubResource("Environment_hekoe")
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_56dwm"]
+cull_mode = 2
+albedo_color = Color(0.12, 0.16, 0.18, 1)
+metallic = 0.4
+roughness = 0.5
+emission_enabled = true
+emission = Color(0.1, 0.5, 0.5, 1)
+emission_energy_multiplier = 0.15
 
-[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1205856863]
+[sub_resource type="CylinderMesh" id="CylinderMesh_xl52i"]
+material = SubResource("StandardMaterial3D_56dwm")
+top_radius = 151.0
+bottom_radius = 151.0
+height = 1920.0
+radial_segments = 48
+rings = 1
+cap_top = false
+cap_bottom = false
+
+[node name="EmitterReactorTest" type="Node3D" unique_id=362380740]
+script = ExtResource("1_nls4p")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1600836763]
+environment = SubResource("Environment_yd5sq")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=2134404703]
 transform = Transform3D(0.81915206, -0.38379756, 0.42625037, 0, 0.7431448, 0.6691306, -0.57357645, -0.5481197, 0.6087486, 0, 0, 0)
 light_energy = 1.6
 light_cull_mask = 1
 shadow_enabled = true
 directional_shadow_max_distance = 700.0
 
-[node name="Ground" type="StaticBody3D" parent="." unique_id=1330487563]
+[node name="Regular" type="Node3D" parent="." unique_id=1295150085]
 
-[node name="GroundMesh" type="MeshInstance3D" parent="Ground" unique_id=917179225]
-material_override = SubResource("StandardMaterial3D_3j6br")
-mesh = ExtResource("2_c4g0d")
+[node name="Ground" type="StaticBody3D" parent="Regular" unique_id=30312445]
 
-[node name="GroundShape" type="CollisionShape3D" parent="Ground" unique_id=190207091]
-shape = ExtResource("3_qfsx7")
+[node name="GroundMesh" type="MeshInstance3D" parent="Regular/Ground" unique_id=744291301]
+material_override = SubResource("StandardMaterial3D_xey4l")
+mesh = ExtResource("2_5wcn0")
 
-[node name="BeamEmitterPOI" type="Node3D" parent="." unique_id=2076633444 instance=ExtResource("4_241h7")]
+[node name="GroundShape" type="CollisionShape3D" parent="Regular/Ground" unique_id=28135575]
+shape = ExtResource("3_jnt6c")
 
-[node name="ReactorPOI" type="Node3D" parent="." unique_id=475590281 instance=ExtResource("5_nls4p")]
+[node name="BeamEmitterPOI" type="Node3D" parent="Regular" unique_id=2076633444 instance=ExtResource("4_xwkfy")]
+
+[node name="ReactorPOI" type="Node3D" parent="Regular" unique_id=475590281 instance=ExtResource("5_hekoe")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4000, 0)
 
-[node name="ShaftLinerPlaceholder" type="MeshInstance3D" parent="." unique_id=292842987]
+[node name="ShaftLinerPlaceholder" type="MeshInstance3D" parent="Regular" unique_id=27775026]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1481, 0)
 layers = 2
 cast_shadow = 0
-mesh = SubResource("CylinderMesh_vtiao")
+mesh = SubResource("CylinderMesh_7xfg8")
 
-[node name="ReactorCoreLight" type="OmniLight3D" parent="." unique_id=853536452]
+[node name="ReactorCoreLight" type="OmniLight3D" parent="Regular" unique_id=1955821767]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4000, 0)
 light_color = Color(0.35, 1, 0.9, 1)
 light_energy = 12.0
 light_cull_mask = 2
 omni_range = 1400.0
 
-[node name="ArrivalLight" type="OmniLight3D" parent="." unique_id=1974576199]
+[node name="ArrivalLight" type="OmniLight3D" parent="Regular" unique_id=776377396]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3890, 1385)
 light_color = Color(0.7, 0.95, 0.95, 1)
 light_energy = 2.5
 light_cull_mask = 2
 omni_range = 500.0
 
-[node name="Bookmarks" type="Node3D" parent="." unique_id=435814986]
+[node name="Bookmarks" type="Node3D" parent="Regular" unique_id=1897868052]
 
-[node name="1_GroundEntry" type="Marker3D" parent="Bookmarks" unique_id=1803186805]
+[node name="1_GroundEntry" type="Marker3D" parent="Regular/Bookmarks" unique_id=1283465776]
 transform = Transform3D(0.9238795, 0.062332083, 0.37757292, 0, 0.9866456, -0.16288158, -0.38268343, 0.15048295, 0.9115417, 88.782555, 1.7, 214.34006)
 
-[node name="2_Gallery" type="Marker3D" parent="Bookmarks" unique_id=1741710244]
+[node name="2_Gallery" type="Marker3D" parent="Regular/Bookmarks" unique_id=589660657]
 transform = Transform3D(0, -0.08628415, 0.9962706, 0, 0.9962706, 0.08628415, -1, 0, 0, 112, 17.7, 0)
 
-[node name="3_Far20km" type="Marker3D" parent="Bookmarks" unique_id=1074256285]
+[node name="3_Far20km" type="Marker3D" parent="Regular/Bookmarks" unique_id=1901658884]
 transform = Transform3D(0, 0.034978583, 0.9993881, 0, 0.9993881, -0.034978583, -1, 0, 0, 20000, 200, 0)
 
-[node name="4_ReactorOverlook" type="Marker3D" parent="Bookmarks" unique_id=39032828]
+[node name="4_ReactorOverlook" type="Marker3D" parent="Regular/Bookmarks" unique_id=1191985950]
 transform = Transform3D(1, 0, 0, 0, 0.99954706, 0.030094631, 0, -0.030094631, 0.99954706, 0, -3918.3, 1385)
 
-[node name="5_ShaftTop" type="Marker3D" parent="Bookmarks" unique_id=512072578]
+[node name="5_ShaftTop" type="Marker3D" parent="Regular/Bookmarks" unique_id=1384729629]
 transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 30, 0)
 
-[node name="FlyCamera" type="Camera3D" parent="." unique_id=1430332050]
+[node name="Main" type="Node3D" parent="." unique_id=79600344]
+
+[node name="Ground" type="StaticBody3D" parent="Main" unique_id=1476715511]
+
+[node name="GroundMesh" type="MeshInstance3D" parent="Main/Ground" unique_id=926832798]
+material_override = SubResource("StandardMaterial3D_4se8i")
+mesh = ExtResource("6_3j6br")
+
+[node name="GroundShape" type="CollisionShape3D" parent="Main/Ground" unique_id=584505674]
+shape = ExtResource("7_6lx0e")
+
+[node name="MainSpirePOI" type="Node3D" parent="Main" unique_id=1109027809 instance=ExtResource("8_vtiao")]
+
+[node name="MainReactorPOI" type="Node3D" parent="Main" unique_id=1769605855 instance=ExtResource("9_4mxrn")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4000, 0)
+
+[node name="ShaftLinerPlaceholder" type="MeshInstance3D" parent="Main" unique_id=844756193]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -962, 0)
+layers = 2
+cast_shadow = 0
+mesh = SubResource("CylinderMesh_xl52i")
+
+[node name="ReactorCoreLight" type="OmniLight3D" parent="Main" unique_id=1255423885]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4000, 0)
+light_color = Color(0.35, 1, 0.9, 1)
+light_energy = 12.0
+light_cull_mask = 2
+omni_range = 2800.0
+
+[node name="ArrivalLight" type="OmniLight3D" parent="Main" unique_id=1336175704]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3780, 2770)
+light_color = Color(0.7, 0.95, 0.95, 1)
+light_energy = 2.5
+light_cull_mask = 2
+omni_range = 1000.0
+
+[node name="Bookmarks" type="Node3D" parent="Main" unique_id=429604305]
+
+[node name="1_GroundEntry" type="Marker3D" parent="Main/Bookmarks" unique_id=2075502532]
+transform = Transform3D(0.9238795, 0.004105638, 0.3826614, 0, 0.9999424, -0.010728549, -0.38268343, 0.009911886, 0.92382634, 367.3761, 1.7, 886.9244)
+
+[node name="2_InnerGallery" type="Marker3D" parent="Main/Bookmarks" unique_id=1886767138]
+transform = Transform3D(0, -0.016515607, 0.99986356, 0, 0.99986356, 0.016515607, -1, 0, 0, 224, 33.7, 0)
+
+[node name="3_Far40km" type="Marker3D" parent="Main/Bookmarks" unique_id=1857399511]
+transform = Transform3D(0, 0.034978583, 0.9993881, 0, 0.9993881, -0.034978583, -1, 0, 0, 40000, 400, 0)
+
+[node name="4_ReactorOverlook" type="Marker3D" parent="Main/Bookmarks" unique_id=465039824]
+transform = Transform3D(1, 0, 0, 0, 0.9995328, 0.030563315, 0, -0.030563315, 0.9995328, 0, -3835.3, 2770)
+
+[node name="5_ShaftTop" type="Marker3D" parent="Main/Bookmarks" unique_id=1916352095]
+transform = Transform3D(1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 30, 0)
+
+[node name="FlyCamera" type="Camera3D" parent="." unique_id=601750433]
 current = true
 fov = 70.0
 near = 0.2
 far = 120000.0
-script = ExtResource("6_5wcn0")
+script = ExtResource("10_kvxn5")
+bookmarks_path = NodePath("../Regular/Bookmarks")

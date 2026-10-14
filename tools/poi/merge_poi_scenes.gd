@@ -1,7 +1,7 @@
 extends SceneTree
 # Build-time merge of the imported Blender POI GLBs into draw-call friendly scenes.
 #
-#   godot --headless --path . --script res://tools/poi/merge_poi_scenes.gd [-- emitter|reactor|all]
+#   godot --headless --path . --script res://tools/poi/merge_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|all [sectors=N]]
 #
 # Loads the imported .glb scenes (the originals stay untouched), bakes every MeshInstance3D into
 # parent-space, and writes ONE surface per (group, material) with an importer-style LOD chain.
@@ -34,17 +34,63 @@ const JOBS := {
 		"classify": "_classify_reactor",
 		"groups": ["Core", "Routes", "Exhaust"],
 	},
+	# Main spire: 16 sectors, one per arm (8 inner at 0..315 deg, 8 outer at 22.5 + 45k deg), see README.
+	# Groups come from the top-level Blender collection (classify receives the collection node name).
+	"main_spire": {
+		"src": "res://assets/poi/main_spire/Main_Spire_Outer_Ring_Godot.glb",
+		"out_dir": "res://assets/poi/main_spire/merged",
+		"prefix": "MainSpire",
+		"classify": "_classify_main_spire",
+		"classify_by_collection": true,
+		"groups": ["Spire", "Facility", "Roof"],
+		"sectors": 16,
+	},
+	"main_reactor": {
+		"src": "res://assets/poi/main_reactor/Main_Reactor_Architecture.glb",
+		"out_dir": "res://assets/poi/main_reactor/merged",
+		"prefix": "MainReactor",
+		"classify": "_classify_main_reactor",
+		"groups": ["Core", "Routes", "Exhaust"],
+	},
 }
 
 func _init() -> void:
 	var which := "all"
+	var sectors_override := 0
 	var args := OS.get_cmdline_user_args()
-	if args.size() > 0:
-		which = args[0]
+	for a in args:
+		if a.begins_with("sectors="):
+			sectors_override = int(a.get_slice("=", 1))
+		else:
+			which = a
 	for key in JOBS:
 		if which == "all" or which == key:
-			_run_job(key, JOBS[key])
+			var job: Dictionary = JOBS[key].duplicate()
+			if sectors_override > 0 and job.has("sectors"):
+				job["sectors"] = sectors_override
+			_run_job(key, job)
 	quit()
+
+func _classify_main_spire(collection: String) -> String:
+	# 11/24/35 = removable roofs and roof details; 10/12/22/23/32/34 = facility, outer foundations, entrance hall.
+	for p in ["11_", "24_", "35_"]:
+		if collection.begins_with(p):
+			return "Roof"
+	for p in ["10_", "12_", "22_", "23_", "32_", "34_"]:
+		if collection.begins_with(p):
+			return "Facility"
+	return "Spire"  # 00 inner arms, 20/21 main spire, 25 accelerator stages, 31 outer arms, 33 outer rings, 36 crown
+
+func _classify_main_reactor(node_name: String) -> String:
+	var u := node_name.to_upper()
+	if u.begins_with("EXHAUST") or u.begins_with("CROWN"):
+		return "Exhaust"
+	for p in ["HEART", "CONTAINMENT", "CORE L", "MASTER CORE", "HALO", "POWER MODULE", "POWER TRUNK", "POWER B"]:
+		if u.begins_with(p):
+			return "Core"
+	if u.begins_with("B") and u.length() > 2 and u[1].is_valid_int() and (" | " in u) and not (u.begins_with("B1 UPPER") or u.begins_with("B2 LOWER DAMAGED")):
+		return "Core"  # buttress bodies: sweeping suspension, recessed upper channel, embedded field channel, lower separated root
+	return "Routes"  # terraces, causeways, anchors, entry/arrival tongues, wayfinding
 
 func _classify_emitter(node_name: String) -> String:
 	if "Removable" in node_name:
@@ -80,6 +126,14 @@ func _local_to_root(n: Node3D, root: Node) -> Transform3D:
 		cur = cur.get_parent()
 	return xf
 
+func _collection_of(n: Node, root: Node) -> String:
+	# Name of the top-level Blender collection node (child of the single assembly node under the GLB root).
+	var assembly := root.get_child(0)
+	var cur: Node = n
+	while cur != null and cur.get_parent() != assembly:
+		cur = cur.get_parent()
+	return String(cur.name) if cur != null else ""
+
 func _run_job(key: String, job: Dictionary) -> void:
 	var t0 := Time.get_ticks_usec()
 	var root := (load(job.src) as PackedScene).instantiate()
@@ -114,7 +168,11 @@ func _run_job(key: String, job: Dictionary) -> void:
 		var xf := _local_to_root(mi, root)
 		var basis_n := xf.basis.inverse().transposed()
 		var flip := xf.basis.determinant() < 0.0
-		var group: String = call(job.classify, String(mi.name))
+		var group: String
+		if job.get("classify_by_collection", false):
+			group = call(job.classify, _collection_of(mi, root))
+		else:
+			group = call(job.classify, String(mi.name))
 		for s in mesh.get_surface_count():
 			var arrays := mesh.surface_get_arrays(s)
 			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]

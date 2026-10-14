@@ -1,0 +1,273 @@
+{
+  "Format": "emitter_site_registry_v2",
+  "Backends": [
+    {
+      "Name": "gen17_v4_seed_1337",
+      "RecipeHash": "0F3B182C74717F23",
+      "RowPhaseM": 116562,
+      "NaturalIdentity": "C62D22E76ED02DFA",
+      "RegistryIdentity": "0F71B567A8285FDA",
+      "Land": 277,
+      "Island": 318,
+      "Mountain": 100,
+      "MainRow": 22,
+      "MainIndex": 594,
+      "MainFallback": false,
+      "RegularCount": 594,
+      "MainCount": 1,
+      "Samples": [
+        {
+          "Index": 0,
+          "Around": 116562,
+          "Across": 26500,
+          "Pad": 24,
+          "Beta": 157.5,
+          "Flags": 10,
+          "SiteHash": "79616B6131454660"
+        },
+        {
+          "Index": 50,
+          "Around": 2631542,
+          "Across": 131456,
+          "Pad": 154,
+          "Beta": 157.5,
+          "Flags": 65,
+          "SiteHash": "8527208206709EB2"
+        },
+        {
+          "Index": 100,
+          "Around": 5143112,
+          "Across": 238500,
+          "Pad": 24,
+          "Beta": 202.5,
+          "Flags": 10,
+          "SiteHash": "7FFA8DFB384D5DA4"
+        },
+        {
+          "Index": 150,
+          "Around": 8284706,
+          "Across": 26500,
+          "Pad": 302,
+          "Beta": 22.5,
+          "Flags": 1,
+          "SiteHash": "E1E1E97A716BC28B"
+        },
+        {
+          "Index": 200,
+          "Around": 10797980,
+          "Across": 132500,
+          "Pad": 24,
+          "Beta": 22.5,
+          "Flags": 10,
+          "SiteHash": "24F8A5405A45AD52"
+        },
+        {
+          "Index": 250,
+          "Around": 13314218,
+          "Across": 238024,
+          "Pad": 300,
+          "Beta": 0,
+          "Flags": 65,
+          "SiteHash": "233315A3A6393E9E"
+        },
+        {
+          "Index": 300,
+          "Around": 16135692,
+          "Across": 26608,
+          "Pad": 606,
+          "Beta": 45,
+          "Flags": 65,
+          "SiteHash": "2C50F18F4089E39D"
+        },
+        {
+          "Index": 350,
+          "Around": 18651964,
+          "Across": 132500,
+          "Pad": 20,
+          "Beta": 0,
+          "Flags": 1,
+          "SiteHash": "5520E921B832ECA5"
+        },
+        {
+          "Index": 400,
+          "Around": 21165240,
+          "Across": 238500,
+          "Pad": 24,
+          "Beta": 337.5,
+          "Flags": 10,
+          "SiteHash": "D2F3B9DAED4F8960"
+        },
+        {
+          "Index": 450,
+          "Around": 23992674,
+          "Across": 26500,
+          "Pad": 24,
+          "Beta": 22.5,
+          "Flags": 10,
+          "SiteHash": "E5F79F4F52509C12"
+        },
+        {
+          "Index": 500,
+          "Around": 26505948,
+          "Across": 132500,
+          "Pad": 24,
+          "Beta": 0,
+          "Flags": 10,
+          "SiteHash": "80AA7D7B9904EB21"
+        },
+        {
+          "Index": 550,
+          "Around": 29019224,
+          "Across": 238500,
+          "Pad": 24,
+          "Beta": 225,
+          "Flags": 10,
+          "SiteHash": "DF8D5590D00705D3"
+        },
+        {
+          "Index": 594,
+          "Around": 7028068,
+          "Across": 159000,
+          "Pad": 62,
+          "Beta": 0,
+          "Flags": 1,
+          "SiteHash": "E8D86A5C4E3D5C68"
+        }
+      ]
+    },
+    {
+      "Name": "gen16_certified_seed_1337",
+      "RecipeHash": "0F3B182C74717F23",
+      "RowPhaseM": 116562,
+      "NaturalIdentity": "4C0FBE2240FD454A",
+      "RegistryIdentity": "2E9F60BC2E5AF840",
+      "Land": 341,
+      "Island": 254,
+      "Mountain": 24,
+      "MainRow": 25,
+      "MainIndex": 594,
+      "MainFallback": false,
+      "RegularCount": 594,
+      "MainCount": 1,
+      "Samples": [
+        {
+          "Index": 0,
+          "Around": 116562,
+          "Across": 26500,
+          "Pad": 24,
+          "Beta": 157.5,
+          "Flags": 10,
+          "SiteHash": "AB351B789FFF48E4"
+        },
+        {
+          "Index": 50,
+          "Around": 2629836,
+          "Across": 132500,
+          "Pad": 24,
+          "Beta": 270,
+          "Flags": 10,
+          "SiteHash": "10A0CAB663D6E067"
+        },
+        {
+          "Index": 100,
+          "Around": 5143112,
+          "Across": 238500,
+          "Pad": 24,
+          "Beta": 202.5,
+          "Flags": 10,
+          "SiteHash": "D2FAB9A1C90AA608"
+        },
+        {
+          "Index": 150,
+          "Around": 8282762,
+          "Across": 29996,
+          "Pad": 31,
+          "Beta": 0,
+          "Flags": 65,
+          "SiteHash": "7E919B44162B6B58"
+        },
+        {
+          "Index": 200,
+          "Around": 10797980,
+          "Across": 132500,
+          "Pad": 280,
+          "Beta": 157.5,
+          "Flags": 1,
+          "SiteHash": "2BAB6022395FF27E"
+        },
+        {
+          "Index": 250,
+          "Around": 13312244,
+          "Across": 238342,
+          "Pad": 91,
+          "Beta": 0,
+          "Flags": 65,
+          "SiteHash": "63436ECBC08A7E2A"
+        },
+        {
+          "Index": 300,
+          "Around": 16138690,
+          "Across": 26500,
+          "Pad": 24,
+          "Beta": 180,
+          "Flags": 10,
+          "SiteHash": "56943FB4CC9C43FD"
+        },
+        {
+          "Index": 350,
+          "Around": 18652494,
+          "Across": 131652,
+          "Pad": 322,
+          "Beta": 22.5,
+          "Flags": 65,
+          "SiteHash": "1A7AB56E1E947F3D"
+        },
+        {
+          "Index": 400,
+          "Around": 21165240,
+          "Across": 238500,
+          "Pad": 24,
+          "Beta": 337.5,
+          "Flags": 2,
+          "SiteHash": "AAC6E993F61BC68C"
+        },
+        {
+          "Index": 450,
+          "Around": 23992674,
+          "Across": 26500,
+          "Pad": 331,
+          "Beta": 0,
+          "Flags": 1,
+          "SiteHash": "97F17752DE2268BE"
+        },
+        {
+          "Index": 500,
+          "Around": 26505948,
+          "Across": 132500,
+          "Pad": 26,
+          "Beta": 0,
+          "Flags": 2,
+          "SiteHash": "B4DABC859A4A68AF"
+        },
+        {
+          "Index": 550,
+          "Around": 29019224,
+          "Across": 238500,
+          "Pad": 293,
+          "Beta": 247.5,
+          "Flags": 1,
+          "SiteHash": "F963E1641925BEB7"
+        },
+        {
+          "Index": 594,
+          "Around": 7970546,
+          "Across": 159000,
+          "Pad": 21,
+          "Beta": 0,
+          "Flags": 1,
+          "SiteHash": "1F473854A22498F5"
+        }
+      ]
+    }
+  ]
+}

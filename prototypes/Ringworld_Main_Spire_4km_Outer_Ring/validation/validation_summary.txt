@@ -1,0 +1,17 @@
+OUTER-RING MAIN SPIRE: INDEPENDENT GEOMETRY VALIDATION
+Result: PASS WITH DIMENSIONAL FINDING
+Failed functional acceptance checks: none
+Source preserved: 2398 meshes, 45494 vertices; maximum world displacement 0.000000000 m; material definitions unchanged: True.
+Architecture: 2820 meshes; 106204 triangles; 422 new meshes.
+World Z bounds: -2.000000 to 4000.000000 m; 8 retained inner arms and 8 new staggered outer arms.
+Full-height R150 beam: closest triangle radius 150.079898 m; serialized GLB 150.079898 m.
+Structural contacts: 248/248 pass; six retained stages, six outer rings, 48 radial ties.
+Walking routes: 11/11 pass; 30264 supported human capsule checks.
+Nominal new frame: 20 x 20 m. Actual minimum free new opening: 19.599996567 x 19.989999390 m (19.6 x 19.99 m with float tolerance).
+Exact 20 x 20 m is NOT clear: 17 new decorative meshes intrude; retained source transition pieces: 2. Full new 19.6 x 19.99 m prism proof: True.
+Preserved old facility doorway: 16.0000 x 16.0000 m nominal frame; unchanged reveal locally narrows width to 15.519999 m. This is the overall route bottleneck.
+One assembled GLB with presentation excluded: True; serialized triangle equivalence: True.
+Read-only audit: source, asset and GLB hashes unchanged: True
+
+This is a geometric audit. Capsule routes are sampled at <=0.5 m. No collision/navigation/gameplay, reactor simulation, or structural-engineering certification.
+Full evidence and defects: geometry_validation.json

@@ -1,0 +1,11 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "Reactor_Teal_Inlay"
+cull_mode = 2
+albedo_color = Color(0.22091636, 0.7014107, 0.694361, 1)
+metallic = 0.15
+roughness = 0.3
+emission_enabled = true
+emission = Color(0.2402475, 1, 0.96288955, 1)
+emission_energy_multiplier = 1.785

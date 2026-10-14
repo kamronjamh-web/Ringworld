@@ -1,0 +1,8 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "Main_Armor_Graphite"
+cull_mode = 2
+albedo_color = Color(0.32272613, 0.3574912, 0.37342674, 1)
+metallic = 0.6
+roughness = 0.36
