@@ -763,6 +763,19 @@ public sealed partial class RingTerrainSampler : IDisposable
     /// macro colours match the close proxy shader's blended texture weights.
     /// </summary>
     public BiomeTextureWeights GetBiomeTextureWeights(in TerrainSample sample)
+        => ApplySiteSurfaceMask(GetNaturalBiomeTextureWeights(sample), sample.SiteMask);
+
+    /// <summary>Emitter-site rock (pads, cut faces) shifts weight into the Alpine channel and beach sand into the Desert channel.
+    /// A default mask (rock and sand both zero) returns the natural weights untouched.</summary>
+    private static BiomeTextureWeights ApplySiteSurfaceMask(BiomeTextureWeights w, in Terrain.Sites.SiteSurfaceMask m)
+    {
+        float rock = Mathf.Clamp(MathF.Max(m.Hardscape, m.Rock), 0.0f, 1.0f), sand = Mathf.Clamp(m.Sand, 0.0f, 1.0f);
+        if (rock <= 0.0f && sand <= 0.0f) return w;
+        w = new BiomeTextureWeights(w.Desert * (1.0f - rock), w.Forest * (1.0f - rock), w.Tundra * (1.0f - rock), w.Alpine * (1.0f - rock) + rock);
+        return new BiomeTextureWeights(w.Desert * (1.0f - sand) + sand, w.Forest * (1.0f - sand), w.Tundra * (1.0f - sand), w.Alpine * (1.0f - sand));
+    }
+
+    private BiomeTextureWeights GetNaturalBiomeTextureWeights(in TerrainSample sample)
     {
         // Reuse the fine sand surface for beaches and submerged beds so
         // ocean/lake/river terrain never falls back to dry grass.

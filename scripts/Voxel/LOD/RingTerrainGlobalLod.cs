@@ -153,6 +153,11 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private ShaderMaterial? _oceanMaterial;
     private ShaderMaterial? _hullMaterial;
     private readonly List<MeshInstance3D> _hullSegments = new();
+    // Roof underside and cavity floor are drawn opaque and would otherwise hide
+    // the backdrop where a terrain segment is not built yet, so they are separate
+    // instances gated on the matching terrain segment being published.
+    private readonly List<MeshInstance3D> _hullRoofSegments = new();
+    private int _hullRoofTotalCount = 1;
     private Node3D? _occluderRoot;
     private readonly List<MeshInstance3D> _terrainSegments = new();
     // During a partition-size change, old nodes remain installed until every
@@ -191,6 +196,12 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private Vector3 _lastRegionalVisibilityFocusPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
     private float _lastRegionalVisibilityDistance = float.NaN;
     private bool _lastRegionalVisibilityEnabled;
+    // The floating origin shifts this node (and every segment) without moving the
+    // focus in world space, so an anchor change or a newly published terrain
+    // segment must force an immediate refresh of the visible set.
+    private bool _regionalVisibilityDirty;
+    private Vector3 _lastRegionalVisibilityOrigin = new(float.PositiveInfinity, 0.0f, 0.0f);
+    public int RegionalVisibilityRefreshCount { get; private set; }
     private RingLodSurfaceEditSnapshot? _pendingSegmentEdits;
     private ulong _observedEditVersion;
     // The terminal proxy reads only this immutable, fully published receiver
@@ -332,6 +343,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             - previousGeometry.CanonicalToWorld(
                 anchor.AroundMeters, anchor.VerticalMeters, anchor.AcrossMeters);
         GlobalPosition += anchorDelta;
+        _regionalVisibilityDirty = true;
         // Prepared vertices were expressed in the old local coordinate frame.
         // Keep the queue head and restart it from a coherent snapshot instead.
         InvalidatePendingPreparation();
@@ -373,18 +385,31 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (_focus == null || !EnableFarDistanceFade)
         {
             _lastRegionalVisibilityEnabled = false;
+            if (_regionalVisibilityDirty)
+            {
+                _regionalVisibilityDirty = false;
+                RegionalVisibilityRefreshCount++;
+                for (int index = 0; index < _hullRoofSegments.Count; index++)
+                    UpdateHullRoofVisibility(index);
+            }
             return;
         }
 
         Vector3 focusPosition = _focus.GlobalPosition;
+        Vector3 originPosition = GlobalPosition;
         bool configurationChanged = !_lastRegionalVisibilityEnabled
+            || _regionalVisibilityDirty
             || !Mathf.IsEqualApprox(_lastRegionalVisibilityDistance, RegionalVisibilityDistanceMeters);
-        bool focusChanged = focusPosition != _lastRegionalVisibilityFocusPosition;
+        bool focusChanged = focusPosition != _lastRegionalVisibilityFocusPosition
+            || originPosition != _lastRegionalVisibilityOrigin;
         if (!configurationChanged && !focusChanged) return;
 
         _visibilityRefreshElapsed += delta;
         if (!configurationChanged && _visibilityRefreshElapsed < 0.5) return;
         _visibilityRefreshElapsed = 0.0;
+        _regionalVisibilityDirty = false;
+        _lastRegionalVisibilityOrigin = originPosition;
+        RegionalVisibilityRefreshCount++;
         foreach (MeshInstance3D segment in _terrainSegments)
         {
             UpdateRegionalInstanceVisibility(segment);
@@ -395,9 +420,32 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
         foreach (MeshInstance3D segment in _hullSegments)
             UpdateRegionalInstanceVisibility(segment);
+        for (int index = 0; index < _hullRoofSegments.Count; index++)
+            UpdateHullRoofVisibility(index);
         _lastRegionalVisibilityFocusPosition = focusPosition;
         _lastRegionalVisibilityDistance = RegionalVisibilityDistanceMeters;
         _lastRegionalVisibilityEnabled = true;
+    }
+
+    // Hull segment i is gated on the terrain segment covering the same ring arc.
+    private bool IsTerrainBehindHullSegmentReady(int hullIndex)
+    {
+        if (_initialSegmentCount <= 0 && _terrainSegments.Count == 0) return _retainedTerrainSegments.Count > 0;
+        // A quality rebuild keeps the retained terrain on screen as the fallback.
+        if (_retainedTerrainSegments.Count > 0) return true;
+        if (_initialSegmentQueue.Count == 0 && _initialSegmentCount > 0) return true;
+        int hullCount = Math.Max(1, _hullRoofTotalCount);
+        int terrainIndex = (int)((long)hullIndex * _initialSegmentCount / hullCount);
+        return terrainIndex < _terrainSegments.Count && !_initialSegmentQueue.Contains(terrainIndex);
+    }
+
+    private void UpdateHullRoofVisibility(int index)
+    {
+        MeshInstance3D roof = _hullRoofSegments[index];
+        if (!GodotObject.IsInstanceValid(roof)) return;
+        if (!IsTerrainBehindHullSegmentReady(index)) { roof.Visible = false; return; }
+        if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(roof);
+        else roof.Visible = true;
     }
 
     private void UpdateRegionalInstanceVisibility(MeshInstance3D instance)
@@ -1065,6 +1113,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             {
                 AddChild(segment);
                 _terrainSegments.Add(segment);
+                _regionalVisibilityDirty = true;
             }
             if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
         }
@@ -1294,6 +1343,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         Shader? shader = GD.Load<Shader>("res://materials/ring_terrain_global.gdshader");
         if (shader == null) return;
         _material = new ShaderMaterial { Shader = shader };
+        _material.SetShaderParameter("surface_apertures_enabled", true);
         _material.SetShaderParameter("camera_world_position", _focus!.GlobalPosition);
         _material.SetShaderParameter("fade_start_meters", FadeStartMeters);
         _material.SetShaderParameter("fade_end_meters", Mathf.Max(FadeStartMeters + 1.0f, FadeEndMeters));
@@ -1317,6 +1367,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         if (oceanShader != null)
         {
             _oceanMaterial = new ShaderMaterial { Shader = oceanShader };
+            _oceanMaterial.SetShaderParameter("surface_apertures_enabled", true);
             _oceanMaterial.SetShaderParameter("camera_world_position", _focus!.GlobalPosition);
             _oceanMaterial.SetShaderParameter("fade_start_meters", FadeStartMeters);
             _oceanMaterial.SetShaderParameter("fade_end_meters", Mathf.Max(FadeStartMeters + 1.0f, FadeEndMeters));
@@ -1441,6 +1492,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         ClearHullSegments();
         int aroundCount = Mathf.Max(64, AroundSegments);
         int segmentCount = Mathf.Clamp(GlobalSegmentCount, 1, aroundCount);
+        _hullRoofTotalCount = segmentCount;
         int verticalCount = Mathf.Max(1, HullVerticalSegments);
         double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
         double aroundSpacing = circumference / aroundCount;
@@ -1458,50 +1510,74 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             {
                 AppendHullWallSegment(surface, 0.0f, aroundStartIndex, aroundEndIndex, verticalCount, aroundSpacing, verticalSpacing, hullBottom, reverse: true);
                 AppendHullWallSegment(surface, RingWidthMeters, aroundStartIndex, aroundEndIndex, verticalCount, aroundSpacing, verticalSpacing, hullBottom, reverse: false);
+                surface.GenerateNormals();
+                surface.Index();
+                var segment = new MeshInstance3D
+                {
+                    Name = $"GlobalStructuralEdgeWalls_{segmentIndex:D3}",
+                    Mesh = surface.Commit(),
+                    MaterialOverride = _hullMaterial,
+                    CastShadow = (CastTerrainShadows || BuildTerrainRoofUnderside || BuildLowerHullCavityFloor)
+                        ? ShadowCastingSetting.On
+                        : ShadowCastingSetting.Off,
+                    IgnoreOcclusionCulling = true
+                };
+                AddChild(segment);
+                _hullSegments.Add(segment);
+                if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
             }
-            if (BuildStructuralUnderside)
-            {
-                AppendHullUndersideSegment(
-                    surface,
-                    aroundStartIndex,
-                    aroundEndIndex,
-                    aroundSpacing,
-                    hullBottom);
-            }
-            if (BuildTerrainRoofUnderside)
-            {
-                AppendHullRoofUndersideSegment(
-                    surface,
-                    aroundStartIndex,
-                    aroundEndIndex,
-                    aroundSpacing,
-                    _grid.TerrainBottomGlobalY);
-            }
-            if (BuildLowerHullCavityFloor)
-            {
-                AppendHullLowerCavityFloorSegment(
-                    surface, aroundStartIndex, aroundEndIndex, aroundSpacing,
-                    _grid.GetLowerHullTopGlobalY());
-            }
-            surface.GenerateNormals();
-            surface.Index();
 
-            var segment = new MeshInstance3D
+            // Underside, roof underside and cavity floor are opaque cull_disabled
+            // closure surfaces: seen from altitude through a not-yet-built terrain
+            // segment they read as a pale gridded floor, so they wait for it.
+            if (BuildStructuralUnderside || BuildTerrainRoofUnderside || BuildLowerHullCavityFloor)
             {
-                Name = $"GlobalStructuralEdgeWalls_{segmentIndex:D3}",
-                Mesh = surface.Commit(),
-                MaterialOverride = _hullMaterial,
-                // The terrain-bottom roof is structural closure, not optional
-                // distant terrain decoration; preserve its shadow caster even
-                // when this global surface LOD has terrain shadows disabled.
-                CastShadow = (CastTerrainShadows || BuildTerrainRoofUnderside || BuildLowerHullCavityFloor)
-                    ? ShadowCastingSetting.On
-                    : ShadowCastingSetting.Off,
-                IgnoreOcclusionCulling = true
-            };
-            AddChild(segment);
-            _hullSegments.Add(segment);
-            if (EnableFarDistanceFade) UpdateRegionalInstanceVisibility(segment);
+                using var roofSurface = new SurfaceTool();
+                roofSurface.Begin(Mesh.PrimitiveType.Triangles);
+                if (BuildStructuralUnderside)
+                {
+                    AppendHullUndersideSegment(
+                        roofSurface,
+                        aroundStartIndex,
+                        aroundEndIndex,
+                        aroundSpacing,
+                        hullBottom);
+                }
+                if (BuildTerrainRoofUnderside)
+                {
+                    AppendHullRoofUndersideSegment(
+                        roofSurface,
+                        aroundStartIndex,
+                        aroundEndIndex,
+                        aroundSpacing,
+                        _grid.TerrainBottomGlobalY);
+                }
+                if (BuildLowerHullCavityFloor)
+                {
+                    AppendHullLowerCavityFloorSegment(
+                        roofSurface, aroundStartIndex, aroundEndIndex, aroundSpacing,
+                        _grid.GetLowerHullTopGlobalY());
+                }
+                roofSurface.GenerateNormals();
+                roofSurface.Index();
+                var roof = new MeshInstance3D
+                {
+                    Name = $"GlobalStructuralRoof_{segmentIndex:D3}",
+                    Mesh = roofSurface.Commit(),
+                    MaterialOverride = _hullMaterial,
+                    // The terrain-bottom roof is structural closure, not optional
+                    // distant terrain decoration; preserve its shadow caster even
+                    // when this global surface LOD has terrain shadows disabled.
+                    CastShadow = ShadowCastingSetting.On,
+                    IgnoreOcclusionCulling = true,
+                    Visible = false
+                };
+                AddChild(roof);
+                _hullRoofSegments.Add(roof);
+                UpdateHullRoofVisibility(_hullRoofSegments.Count - 1);
+            }
+            // The roof count may now differ from before; re-evaluate earlier gates.
+            _regionalVisibilityDirty = true;
             yield return true;
         }
         GD.Print($"Segmented regional structural hull HLOD: segments={segmentCount}, edges={(BuildStructuralEdgeWalls ? 2 : 0)}, underside={BuildStructuralUnderside}, roof={BuildTerrainRoofUnderside}, cavityFloor={BuildLowerHullCavityFloor}, around={aroundCount}, vertical={verticalCount}, depth={-hullBottom:0}m, fade={FadeStartMeters / 1000.0f:0.0}-{FarFadeEndMeters / 1000.0f:0.0}km");
@@ -1619,6 +1695,12 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             segment.QueueFree();
         }
         _hullSegments.Clear();
+        foreach (MeshInstance3D segment in _hullRoofSegments)
+        {
+            RemoveChild(segment);
+            segment.QueueFree();
+        }
+        _hullRoofSegments.Clear();
     }
 
     public void ApplyRuntimeFade(float fadeStart, float fadeEnd)

@@ -116,6 +116,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         if (terrainShader != null)
         {
             _surfaceMaterial = new ShaderMaterial { Shader = terrainShader };
+            _surfaceMaterial.SetShaderParameter("surface_apertures_enabled", true);
             _surfaceMaterial.SetShaderParameter("fade_start_meters", FadeStartMeters);
             _surfaceMaterial.SetShaderParameter("fade_end_meters", Mathf.Max(FadeStartMeters + 1.0f, FadeEndMeters));
             _surfaceMaterial.SetShaderParameter("far_fade_enabled", false);

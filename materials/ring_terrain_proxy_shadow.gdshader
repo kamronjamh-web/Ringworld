@@ -12,7 +12,9 @@ uniform bool geomorph_enabled = true;
 uniform bool runtime_parent_chord_enabled = false;
 uniform float morph_start_meters = 480.0;
 uniform float morph_end_meters = 640.0;
+#include "res://materials/ring_surface_aperture.gdshaderinc"
 varying vec2 proxy_coverage_uv;
+varying vec3 aperture_world_position;
 
 void vertex() {
 	proxy_coverage_uv = UV;
@@ -26,9 +28,11 @@ void vertex() {
 		vec3 surface_up_world = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? CUSTOM0.xyz * morph : normalize(inverse(mat3(MODEL_MATRIX)) * surface_up_world) * UV2.x * morph;
 	}
+	aperture_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
+	if (ring_surface_aperture_discard(aperture_world_position)) discard;
 	if (coverage_atlas_rect.z > 0.0 && proxy_coverage_uv.x >= 0.0 && proxy_coverage_uv.y >= 0.0
 		&& texture(coverage_atlas, coverage_atlas_rect.xy + min(proxy_coverage_uv, vec2(0.99999)) * coverage_atlas_rect.zw).r > 0.5) discard;
 }

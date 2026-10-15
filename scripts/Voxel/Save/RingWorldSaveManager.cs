@@ -510,6 +510,7 @@ public partial class RingWorldSaveManager : Node
                 RejectLoad(_surfaceTerrain?.LastError ?? "Terrain3D gameplay node is unavailable.");
                 return;
             }
+            if (document == null) ApplyFreshWorldSpawn();
         }
         else if (_smoothBackendActive)
         {

@@ -1,3 +1,5 @@
+using RingworldTechDemo.Terrain.Sites;
+
 namespace RingworldTechDemo.Voxel.Phase3;
 
 public readonly record struct TerrainSample(
@@ -10,7 +12,8 @@ public readonly record struct TerrainSample(
     float Moisture,
     TerrainBiomeId Biome,
     SurfaceWaterKind WaterKind,
-    int WaterSurfaceHeight)
+    int WaterSurfaceHeight,
+    SiteSurfaceMask SiteMask = default)
 {
     public bool HasSurfaceWater => WaterKind != SurfaceWaterKind.None;
     public bool IsOcean => WaterKind == SurfaceWaterKind.Ocean;

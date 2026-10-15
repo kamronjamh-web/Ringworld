@@ -108,6 +108,7 @@ public partial class RingTerrain3DGameplay
         _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
         _requestRevision++;
         _pendingEditRevision = _field.Revision;
+        _pendingApertureRevision = _apertureRevision;
         _requestStartedUsec = Time.GetTicksUsec();
         Dictionary counters = _stream.Diagnostics;
         _startupCompletedBaseline = counters["completed"].AsInt64();
@@ -147,7 +148,7 @@ public partial class RingTerrain3DGameplay
             RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(_pendingFrame.AnchorAroundMeters, _pendingFrame.AnchorHeight, _pendingFrame.AnchorAcrossMeters);
             // Saved poses can arrive after the first request. Never publish an
             // initial map or collider around an obsolete location or edit revision.
-            if (!StartupFrameCovers(_pendingFrame, position) || _pendingEditRevision != _field.Revision)
+            if (!StartupFrameCovers(_pendingFrame, position) || _pendingEditRevision != _field.Revision || _pendingApertureRevision != _apertureRevision)
                 RequestStagedStartupWindow(position);
             _stream.Poll();
             if (_stream.Error.Length > 0) throw new InvalidOperationException(_stream.Error);
@@ -158,10 +159,10 @@ public partial class RingTerrain3DGameplay
                     if (prepared.Revision == _requestRevision && prepared.EditRevision == _field.Revision)
                     {
                         RingTerrain3DCollisionGeometry geometry = prepared.TransferGeometryOwnership();
-                        if (!_surface.BeginGameplayPreparedWindow(prepared.Heights, prepared.HeightImages, prepared.BiomeImages,
+                        if (!_surface.BeginGameplayPreparedWindowWithHoles(prepared.Heights, prepared.HeightImages, prepared.BiomeImages,
                             geometry, prepared.Frame.AnchorAroundMeters, prepared.Frame.AnchorAcrossMeters,
                             prepared.Frame.AnchorHeight, prepared.Frame.AcrossDirection, prepared.Revision,
-                            _field.MinimumHeight, _field.MaximumHeight))
+                            _field.MinimumHeight, _field.MaximumHeight, prepared.ControlImages, prepared.HoleMask))
                         {
                             geometry.Dispose();
                             throw new InvalidOperationException(_surface.LastError);
@@ -228,7 +229,7 @@ public partial class RingTerrain3DGameplay
         try
         {
             RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(_pendingFrame.AnchorAroundMeters, _pendingFrame.AnchorHeight, _pendingFrame.AnchorAcrossMeters);
-            if (_pendingEditRevision != _field.Revision || !StartupFrameCovers(_pendingFrame, position))
+            if (_pendingEditRevision != _field.Revision || _pendingApertureRevision != _apertureRevision || !StartupFrameCovers(_pendingFrame, position))
             {
                 RequestStagedStartupWindow(position);
                 return;
@@ -240,6 +241,7 @@ public partial class RingTerrain3DGameplay
             _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
             _committedRevision = _requestRevision;
             _committedEditRevision = _pendingEditRevision;
+            _committedApertureRevision = _pendingApertureRevision;
             _hasPendingFrame = _budgetStarted = _stageReady = false;
             _startupPending = false;
             _startupProgress = 1.0;
@@ -248,7 +250,7 @@ public partial class RingTerrain3DGameplay
             _lastReadinessMilliseconds = (Time.GetTicksUsec() - _requestStartedUsec) / 1000.0;
             _maxReadinessMilliseconds = Math.Max(_maxReadinessMilliseconds, _lastReadinessMilliseconds);
             _grid!.SurfaceTerrainVisualReady = HasVisualCoverage(position);
-            float height = _surface.SampleCommittedHeight(position.AroundMeters, position.AcrossMeters);
+            float height = SampleActivationHeight(position.AroundMeters, position.AcrossMeters);
             if (float.IsFinite(height)) _explorer?.LiftSurfaceTerrainCapsule(position.AroundMeters, position.AcrossMeters, height);
         }
         catch (Exception error) { FailStagedStartup(error.Message); }

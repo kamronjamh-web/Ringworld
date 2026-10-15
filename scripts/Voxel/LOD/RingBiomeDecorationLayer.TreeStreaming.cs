@@ -578,7 +578,7 @@ public partial class RingBiomeDecorationLayer
 			MaximumSlopeDegrees,
 			UseRegionalImportedForest);
 		string definition = FormattableString.Invariant(
-			$"v{VegetationDiskCacheVersion}|g{sampler.TerrainGeneratorVersion}|seed{sampler.Seed}|h{sampler.TerrainDefinitionHash:X16}|s{settings:X16}");
+			$"v{VegetationDiskCacheVersion}|g{sampler.TerrainGeneratorVersion}|seed{sampler.Seed}|h{sampler.TerrainDefinitionHash:X16}|s{settings:X16}{(sampler.EmitterSites != null ? "|es1" : "")}");
 		byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(definition));
 		string identity = Convert.ToHexString(digest.AsSpan(0, 12));
 		long shardAround = FloorDiv(key.Around, 64);
@@ -1072,7 +1072,7 @@ public partial class RingBiomeDecorationLayer
 				float surface = sampler.UsesRuntimeSurfaceGeneration
 					? PresentationSurfaceHeight(request.Edits, sampler, around, across)
 					: PresentationSurfaceHeight(request.Edits, sampler, canonicalAround, candidateAcross);
-				if (IsSurfaceWater(request.Edits, sampler, sample, surface) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
+				if (IsSurfaceWater(request.Edits, sampler, sample, surface) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland) || sample.SiteMask.BlocksVegetation) continue;
 				if (request.UseRegionalForest && !HasStableForestRootSupport(request.Edits, sampler, canonicalAround, candidateAcross)) continue;
 				if (!IsSlopeSuitable(default, sampler, request.Edits, canonicalAround, candidateAcross, surface, request.MaximumSlope)) continue;
 				ForestRegionSample regional = request.UseRegionalForest
@@ -1155,7 +1155,7 @@ public partial class RingBiomeDecorationLayer
 		if (across < 4 || across > request.RingWidth - 4) return cache[id] = default;
 		TerrainSample terrain = request.Edits.GetPresentationTerrainSample(request.Sampler, around, across);
 		float surface = PresentationSurfaceHeight(request.Edits, request.Sampler, around, across);
-		if (IsSurfaceWater(request.Edits, request.Sampler, terrain, surface) || (terrain.Biome != TerrainBiomeId.Forest && terrain.Biome != TerrainBiomeId.Grassland)) return cache[id] = default;
+		if (IsSurfaceWater(request.Edits, request.Sampler, terrain, surface) || (terrain.Biome != TerrainBiomeId.Forest && terrain.Biome != TerrainBiomeId.Grassland) || terrain.SiteMask.BlocksVegetation) return cache[id] = default;
 		if (!HasStableForestRootSupport(request.Edits, request.Sampler, around, across)) return cache[id] = default;
 		float slope = EstimateSlopeDegrees(request.Sampler, request.Edits, around, across);
 		if (slope > request.MaximumSlope) return cache[id] = default;

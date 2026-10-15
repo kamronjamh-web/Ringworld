@@ -130,6 +130,10 @@ public partial class RingLiveTuningDrawer
         AddSurfaceTerrainStreamingControls(streaming);
         _generationStreamingDiagnostics = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         streaming.AddChild(_generationStreamingDiagnostics);
+        BuildEmitterNavigationSection(tab);
+        BuildEmitterStandInSection(tab);
+        BuildEmitterPoiStreamerSection(tab);
+        BuildEmitterBoreSection(tab);
         var save = new Button { Text = "Save surface edits" };
         save.Pressed += SaveSurfaceTerrainGameplay;
         tab.AddChild(save);

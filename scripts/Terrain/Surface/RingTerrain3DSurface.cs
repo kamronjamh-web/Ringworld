@@ -43,6 +43,10 @@ public partial class RingTerrain3DSurface : Node3D
     public RingSurfaceFrame Frame => _activePreparedSurface?.Frame ?? _frame;
     public int RegionCount => IsReady ? RegionSideCount * RegionSideCount : 0;
     public bool IsReady => _activePreparedSurface?.IsReady ?? _isReady;
+    /// <summary>When false the synchronous (non-streamed) window build skips the emitter-site hole mask.</summary>
+    public bool SurfaceAperturesEnabled { get; set; } = true;
+    /// <summary>Hole vertices of the committed window (mirrors the <c>hole_vertices</c> diagnostic); 0 when nothing is committed.</summary>
+    public int CommittedHoleVertexCount => _activePreparedSurface != null ? _activePreparedSurface._windowHoleCount : IsReady ? _windowHoleCount : 0;
     public string LastError => _stagingError.Length > 0 ? _stagingError :
         _lastError.Length > 0 ? _lastError : _activePreparedSurface?.LastError ?? string.Empty;
     public Node? TerrainNode => _activePreparedSurface?.TerrainNode ?? _terrain;
@@ -173,6 +177,9 @@ public partial class RingTerrain3DSurface : Node3D
             CacheWindowHeights();
             cacheHeights.Stop();
             _lastCacheWindowHeightsMilliseconds = cacheHeights.Elapsed.TotalMilliseconds;
+            // Emitter-site hole mask: null for v4 and non-site worlds, so every hole branch below is skipped.
+            _windowHoles = RingTerrain3DApertureMask.Build(SurfaceAperturesEnabled ? _biomeSampler?.EmitterSites : null, _frame);
+            _windowHoleCount = RingTerrain3DApertureMask.CountHoles(_windowHoles);
 
             var cacheBiome = Stopwatch.StartNew();
             CacheBiomeWeights();
@@ -449,6 +456,12 @@ public partial class RingTerrain3DSurface : Node3D
                 height.SetPixel(column, row, new Color(value, 0, 0, 1));
             }
             var images = new Array<Image>(); images.Resize(3); images[0] = height;
+            Image? control = null;
+            if (_windowHoles != null)
+            {
+                control = CreateRegionControlImage(_windowHoles, (x + half) * RegionSideSamples, (z + half) * RegionSideSamples);
+                images[1] = control;
+            }
             Image? biome = null;
             if (_biomeWeights != null)
             {
@@ -458,8 +471,20 @@ public partial class RingTerrain3DSurface : Node3D
             }
             _terrainData.Call("import_images", images, new Vector3(x * RegionSideSamples * _field.SpacingMeters, 0, z * RegionSideSamples * _field.SpacingMeters), 0.0f, 1.0f);
             height.Dispose();
+            control?.Dispose();
             biome?.Dispose();
+            _regionControlHoles[(z + half) * RegionSideCount + x + half] = _windowHoles != null;
         }
+    }
+
+    private static Image CreateRegionControlImage(byte[] holes, int originX, int originZ)
+    {
+        byte[] data = new byte[RegionSideSamples * RegionSideSamples * 4];
+        for (int row = 0; row < RegionSideSamples; row++)
+        for (int column = 0; column < RegionSideSamples; column++)
+            BitConverter.TryWriteBytes(data.AsSpan((row * RegionSideSamples + column) * 4, 4),
+                RingTerrain3DApertureMask.DefaultControlBits | (holes[(originZ + row) * PreparedWindowSide + originX + column] != 0 ? RingTerrain3DApertureMask.HoleBit : 0u));
+        return Image.CreateFromData(RegionSideSamples, RegionSideSamples, false, Image.Format.Rf, data);
     }
 
     private void CreateMesherCamera()
@@ -487,6 +512,7 @@ public partial class RingTerrain3DSurface : Node3D
         {
             int cacheX = Mathf.RoundToInt(x / spacing) + RegionSideSamples;
             int cacheZ = Mathf.RoundToInt(z / spacing) + RegionSideSamples;
+            if (_windowHoles != null && _windowHoles[cacheZ * PreparedWindowSide + cacheX] != 0) continue; // native height is NaN on holes
             float expected = _windowHeights[cacheX, cacheZ] - _frame.AnchorHeight;
             float actual = GetNativeHeight(new Vector3(x, 0.0f, z));
             if (!float.IsFinite(actual) || !Mathf.IsEqualApprox(actual, expected))
@@ -510,6 +536,7 @@ public partial class RingTerrain3DSurface : Node3D
         const int firstCache = RegionSideSamples - side / 2;
         var projection = Stopwatch.StartNew();
         var triangles = new Vector3[(side - 1) * (side - 1) * 6]; int triangleIndex = 0;
+        byte[]? holes = _windowHoles;
         Vector3[,] points = new Vector3[side, side];
         for (int z = 0; z < side; z++) for (int x = 0; x < side; x++)
         {
@@ -523,17 +550,27 @@ public partial class RingTerrain3DSurface : Node3D
         {
             Vector3 a = points[x, z], b = points[x + 1, z], c = points[x, z + 1], d = points[x + 1, z + 1];
             // Godot concave faces use clockwise winding when viewed from above.
-            triangles[triangleIndex++] = a; triangles[triangleIndex++] = b; triangles[triangleIndex++] = c;
-            triangles[triangleIndex++] = b; triangles[triangleIndex++] = d; triangles[triangleIndex++] = c;
+            if (holes == null)
+            {
+                triangles[triangleIndex++] = a; triangles[triangleIndex++] = b; triangles[triangleIndex++] = c;
+                triangles[triangleIndex++] = b; triangles[triangleIndex++] = d; triangles[triangleIndex++] = c;
+                continue;
+            }
+            // Same per-triangle rule as RingTerrain3DCollisionGeometry: drop a triangle when any of its samples is a hole.
+            bool ha = holes[(firstCache + z) * PreparedWindowSide + firstCache + x] != 0, hb = holes[(firstCache + z) * PreparedWindowSide + firstCache + x + 1] != 0;
+            bool hc = holes[(firstCache + z + 1) * PreparedWindowSide + firstCache + x] != 0, hd = holes[(firstCache + z + 1) * PreparedWindowSide + firstCache + x + 1] != 0;
+            if (!ha && !hb && !hc) { triangles[triangleIndex++] = a; triangles[triangleIndex++] = b; triangles[triangleIndex++] = c; }
+            if (!hb && !hd && !hc) { triangles[triangleIndex++] = b; triangles[triangleIndex++] = d; triangles[triangleIndex++] = c; }
         }
+        if (triangleIndex != triangles.Length) System.Array.Resize(ref triangles, triangleIndex);
         projection.Stop();
         _collisionProjectionMilliseconds = projection.Elapsed.TotalMilliseconds;
         var shapeTiming = Stopwatch.StartNew();
-        var shape = new ConcavePolygonShape3D { Data = triangles };
+        var shape = triangles.Length == 0 ? null : new ConcavePolygonShape3D { Data = triangles };
         shapeTiming.Stop();
         _collisionShapeMilliseconds = shapeTiming.Elapsed.TotalMilliseconds;
         var installation = Stopwatch.StartNew();
-        _collisionBody.AddChild(new CollisionShape3D { Shape = shape });
+        _collisionBody.AddChild(new CollisionShape3D { Shape = shape, Disabled = shape == null });
         _collisionBody.Transform = _worldFrame;
         installation.Stop();
         _collisionInstallationMilliseconds = installation.Elapsed.TotalMilliseconds;
@@ -648,6 +685,10 @@ public partial class RingTerrain3DSurface : Node3D
         if (_preparedOwnedImages != null) { foreach (Image image in _preparedOwnedImages) image.Dispose(); _preparedOwnedImages = null; }
         if (_preparedOwnedBiomeImages != null) { foreach (Image image in _preparedOwnedBiomeImages) image.Dispose(); _preparedOwnedBiomeImages = null; }
         _preparedBiomeWeights = false;
+        if (_budgetControlImages != null) { foreach (Image image in _budgetControlImages) image.Dispose(); _budgetControlImages = null; }
+        if (_preparedOwnedControlImages != null) { foreach (Image image in _preparedOwnedControlImages) image.Dispose(); _preparedOwnedControlImages = null; }
+        _windowHoles = null; _windowHoleCount = 0;
+        System.Array.Clear(_regionControlHoles);
     }
 
     private bool CanFuseRuntimeHeightAndBiomeCache()

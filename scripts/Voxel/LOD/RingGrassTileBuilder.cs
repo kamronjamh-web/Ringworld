@@ -125,6 +125,7 @@ internal static class RingGrassTileBuilder
             if (useGrassClumps && bladesPerSquareMeter > 0
                 && Hash01(aroundCell, acrossCell, sampler.Seed, salt + 193) >= .25f) return;
 			TerrainSample sample = edits.GetPresentationTerrainSample(sampler, canonicalAround, canonicalAcross);
+            if (sample.SiteMask.BlocksVegetation) return;
             // Water metadata describes its own column: filled terrain above the
             // water plane is dry and may retain grass.
             RingTerrainSampler.BiomeTextureWeights weights = sampler.GetBiomeTextureWeights(sample);

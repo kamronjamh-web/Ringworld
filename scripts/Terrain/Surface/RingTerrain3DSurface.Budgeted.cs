@@ -15,6 +15,14 @@ public partial class RingTerrain3DSurface
     private bool _ownsBudgetGeometry;
     private Image[]? _budgetImages;
     private Image[]? _budgetBiomeImages;
+    // Emitter-site hole payload (null when the window has no hole). The control images are referenced by their regions
+    // after install, so they are kept alive in _preparedOwnedControlImages like the height and biome images.
+    private Image[]? _budgetControlImages;
+    private Image[]? _preparedOwnedControlImages;
+    // Per resident region: true while its native control map carries hole bits that a later window must clear.
+    private readonly bool[] _regionControlHoles = new bool[RegionSideCount * RegionSideCount];
+    private byte[]? _windowHoles;
+    private int _windowHoleCount;
     private Vector2[]? _budgetBounds;
     private long _budgetRevision;
     private int _budgetUploadIndex;
@@ -43,11 +51,21 @@ public partial class RingTerrain3DSurface
         RingTerrain3DCollisionGeometry geometry, long around, int across, float frameHeight, int direction,
         long revision, float minimumHeight, float maximumHeight)
         => BeginBudgetedPreparedWindowInternal(heights, heightImages, biomeImages, geometry, around, across, frameHeight,
-            direction, revision, minimumHeight, maximumHeight, true);
+            direction, revision, minimumHeight, maximumHeight, true, null, null);
+
+    /// <summary>
+    /// Gameplay replacement carrying the emitter-site hole payload: nine RF control images (hole bit 2) and the matching
+    /// 384 x 384 mask the geometry was prepared with. Both null means no hole.
+    /// </summary>
+    public bool BeginGameplayPreparedWindowWithHoles(float[] heights, Array<Image> heightImages, Array<Image> biomeImages,
+        RingTerrain3DCollisionGeometry geometry, long around, int across, float frameHeight, int direction,
+        long revision, float minimumHeight, float maximumHeight, Array<Image>? controlImages, byte[]? holeMask)
+        => BeginBudgetedPreparedWindowInternal(heights, heightImages, biomeImages, geometry, around, across, frameHeight,
+            direction, revision, minimumHeight, maximumHeight, true, controlImages, holeMask);
 
     private bool BeginBudgetedPreparedWindowInternal(float[] heights, Array<Image> images, Array<Image>? biomeImages,
         RingTerrain3DCollisionGeometry geometry, long around, int across, float frameHeight, int direction,
-        long revision, float minimumHeight, float maximumHeight, bool gameplay)
+        long revision, float minimumHeight, float maximumHeight, bool gameplay, Array<Image>? controlImages = null, byte[]? holeMask = null)
     {
         var begin = Stopwatch.StartNew();
         long live = _activePreparedSurface?._committedPreparedRevision ?? _committedPreparedRevision;
@@ -75,16 +93,29 @@ public partial class RingTerrain3DSurface
             _stagingError = "Collision geometry does not match the prepared heights and frame.";
             return false;
         }
+        if ((controlImages == null) != (holeMask == null) || (holeMask != null && !gameplay) ||
+            (holeMask != null && holeMask.Length != PreparedWindowSide * PreparedWindowSide) || !ValidateControlImages(controlImages))
+        {
+            _stagingError = "Prepared hole payload is invalid.";
+            return false;
+        }
+        if (!geometry.MatchesHoles(holeMask))
+        {
+            _stagingError = "Collision geometry does not match the prepared hole mask.";
+            return false;
+        }
         validation.Stop();
 
         // Validate and copy before retiring even an incomplete previous candidate.
         var copies = new Image[images.Count];
         Image[]? biomeCopies = biomeImages == null ? null : new Image[biomeImages.Count];
+        Image[]? controlCopies = controlImages == null ? null : new Image[controlImages.Count];
         RingTerrain3DSurface? candidate = null;
         try
         {
             for (int i = 0; i < copies.Length; i++) copies[i] = (Image)images[i].Duplicate();
             if (biomeCopies != null) for (int i = 0; i < biomeCopies.Length; i++) biomeCopies[i] = (Image)biomeImages![i].Duplicate();
+            if (controlCopies != null) for (int i = 0; i < controlCopies.Length; i++) controlCopies[i] = (Image)controlImages![i].Duplicate();
             float[,] window = ToWindow(heights);
             DiscardStagedWindow();
             candidate = _idlePreparedSurface ?? new RingTerrain3DSurface { Name = "RingTerrain3DBudgetedStage" };
@@ -107,6 +138,9 @@ public partial class RingTerrain3DSurface
             candidate._budgetGeometry = geometry;
             candidate._budgetImages = copies;
             candidate._budgetBiomeImages = biomeCopies;
+            candidate._budgetControlImages = controlCopies;
+            candidate._windowHoles = holeMask == null ? null : (byte[])holeMask.Clone();
+            candidate._windowHoleCount = RingTerrain3DApertureMask.CountHoles(holeMask);
             candidate._budgetBounds = bounds;
             candidate._budgetRevision = revision;
             candidate._budgetTileCount = geometry.TileCount;
@@ -142,10 +176,13 @@ public partial class RingTerrain3DSurface
         {
             foreach (Image? image in copies) image?.Dispose();
             if (biomeCopies != null) foreach (Image? image in biomeCopies) image?.Dispose();
+            if (controlCopies != null) foreach (Image? image in controlCopies) image?.Dispose();
             if (candidate != null)
             {
                 candidate._budgetImages = null;
                 candidate._budgetBiomeImages = null;
+                candidate._budgetControlImages = null;
+                candidate._windowHoles = null;
                 candidate.Free();
             }
             _stagingError = exception.Message;
@@ -254,6 +291,7 @@ public partial class RingTerrain3DSurface
     {
         Vector2I location = new(index % 3 - 1, index / 3 - 1);
         GodotObject? region = _terrainData!.Call("get_region", location).AsGodotObject();
+        bool controlTouched = false;
         if (region == null)
         {
             region = ClassDB.Instantiate("Terrain3DRegion").AsGodotObject()
@@ -263,12 +301,27 @@ public partial class RingTerrain3DSurface
             region.Call("set_location", location);
             region.Call("set_height_map", _budgetImages![index]);
             if (_budgetBiomeImages != null) region.Call("set_color_map", _budgetBiomeImages[index]);
+            if (_budgetControlImages != null) region.Call("set_control_map", _budgetControlImages[index]);
             if (_terrainData.Call("add_region", region, false).AsInt32() != 0)
                 throw new InvalidOperationException("Terrain3D rejected a prepared region.");
             _budgetArraysReady = false;
         }
         else
         {
+            // A hole written by an earlier window must never persist into a window that has none there:
+            // reused regions are overwritten with this window's control image or the default texel.
+            if (_budgetControlImages != null || _regionControlHoles[index])
+            {
+                Image control = region.Call("get_control_map").As<Image>();
+                Image? blank = _budgetControlImages == null ? RingTerrain3DApertureMask.CreateBlankControlImage() : null;
+                try
+                {
+                    control.BlitRect(_budgetControlImages != null ? _budgetControlImages[index] : blank!,
+                        new Rect2I(Vector2I.Zero, new Vector2I(RegionSideSamples, RegionSideSamples)), Vector2I.Zero);
+                }
+                finally { blank?.Dispose(); }
+                controlTouched = true;
+            }
             Image target = region.Call("get_height_map").As<Image>();
             target.BlitRect(_budgetImages![index], new Rect2I(Vector2I.Zero,
                 new Vector2I(RegionSideSamples, RegionSideSamples)), Vector2I.Zero);
@@ -292,8 +345,28 @@ public partial class RingTerrain3DSurface
                 _terrainData.Call("update_maps", 2, false, true);
                 _budgetUploadedBytes += RegionSideSamples * RegionSideSamples * 4L;
             }
+            if (controlTouched)
+            {
+                region.Call("set_edited", true);
+                _terrainData.Call("update_maps", 1, false, false);
+                _budgetUploadedBytes += RegionSideSamples * RegionSideSamples * sizeof(float);
+            }
         }
+        _regionControlHoles[index] = _budgetControlImages != null;
         region.Call("set_edited", false);
+    }
+
+    private static bool ValidateControlImages(Array<Image>? controlImages)
+    {
+        if (controlImages == null) return true;
+        if (controlImages.Count != RegionSideCount * RegionSideCount) return false;
+        for (int i = 0; i < controlImages.Count; i++)
+        {
+            Image? image = controlImages[i];
+            if (image == null || image.GetFormat() != Image.Format.Rf || image.GetWidth() != RegionSideSamples || image.GetHeight() != RegionSideSamples
+                || image.GetData().Length != RegionSideSamples * RegionSideSamples * sizeof(float)) return false;
+        }
+        return true;
     }
 
     private void AdvanceCollisionUnit()
@@ -331,6 +404,9 @@ public partial class RingTerrain3DSurface
             if (_preparedOwnedBiomeImages != null) foreach (Image image in _preparedOwnedBiomeImages) image.Dispose();
             _preparedOwnedBiomeImages = _budgetBiomeImages;
             _budgetBiomeImages = null;
+            if (_preparedOwnedControlImages != null) foreach (Image image in _preparedOwnedControlImages) image.Dispose();
+            _preparedOwnedControlImages = _budgetControlImages;
+            _budgetControlImages = null;
             _budgetBounds = null;
             if (_ownsBudgetGeometry) _budgetGeometry?.Dispose();
             _budgetGeometry = null;
@@ -341,7 +417,9 @@ public partial class RingTerrain3DSurface
     private void InstallBudgetTile(int index, Vector3[] vertices)
     {
         var shapeClock = Stopwatch.StartNew();
-        var shape = new ConcavePolygonShape3D { Data = vertices };
+        // A fully emptied tile (every triangle touches a hole) cannot back a concave shape: park its node disabled.
+        bool empty = vertices.Length == 0;
+        ConcavePolygonShape3D? shape = empty ? null : new ConcavePolygonShape3D { Data = vertices };
         _collisionShapeMilliseconds += shapeClock.Elapsed.TotalMilliseconds;
         var installation = Stopwatch.StartNew();
         if (_collisionBody == null)
@@ -355,9 +433,10 @@ public partial class RingTerrain3DSurface
             var node = (CollisionShape3D)_collisionBody.GetChild(index);
             Shape3D? previous = node.Shape;
             node.Shape = shape;
+            node.Disabled = empty;
             previous?.Dispose();
         }
-        else _collisionBody.AddChild(new CollisionShape3D { Shape = shape });
+        else _collisionBody.AddChild(new CollisionShape3D { Shape = shape, Disabled = empty });
         _collisionInstallationMilliseconds += installation.Elapsed.TotalMilliseconds;
     }
 
@@ -367,6 +446,8 @@ public partial class RingTerrain3DSurface
         _budgetImages = null;
         if (_budgetBiomeImages != null) foreach (Image image in _budgetBiomeImages) image.Dispose();
         _budgetBiomeImages = null;
+        if (_budgetControlImages != null) foreach (Image image in _budgetControlImages) image.Dispose();
+        _budgetControlImages = null;
         _budgetBounds = null;
         if (_ownsBudgetGeometry) _budgetGeometry?.Dispose();
         _budgetGeometry = null;

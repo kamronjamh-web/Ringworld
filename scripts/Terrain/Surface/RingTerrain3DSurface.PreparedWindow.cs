@@ -157,6 +157,7 @@ public partial class RingTerrain3DSurface
         ["regions"] = RegionCount,
         ["direct_mode"] = _preparedDirectRegions,
         ["prepared_biomes"] = _preparedBiomeWeights,
+        ["hole_vertices"] = _windowHoleCount,
         ["upload_ms"] = _lastPreparedUploadMilliseconds,
         ["collision_ms"] = _lastPreparedCollisionMilliseconds,
         ["projection_ms"] = _collisionProjectionMilliseconds,
@@ -342,6 +343,8 @@ public partial class RingTerrain3DSurface
         int[] points = { 0, RegionSideSamples, PreparedWindowSide - 1 };
         foreach (int z in points) foreach (int x in points)
         {
+            // Native get_height returns NaN on hole vertices, and the anchor sample may be one.
+            if (_windowHoles != null && _windowHoles[z * PreparedWindowSide + x] != 0) continue;
             float actual = GetNativeHeight(new Vector3((x - RegionSideSamples) * 2, 0, (z - RegionSideSamples) * 2));
             float expected = _windowHeights[x, z] - _frame.AnchorHeight;
             if (!float.IsFinite(actual) || !Mathf.IsEqualApprox(actual, expected)) throw new InvalidOperationException($"Prepared native height mismatch at {x},{z}.");

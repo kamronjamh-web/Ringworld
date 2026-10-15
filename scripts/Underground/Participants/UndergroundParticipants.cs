@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.Poi;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Underground;
@@ -14,7 +15,7 @@ public static class UndergroundParticipantFactory
         new CloudSunVisibilityParticipant(), new SunshineCloudsParticipant(), new LocalVolumetricCloudsParticipant(),
         new WeatherEffectsParticipant(), new WeatherAudioParticipant(), new AmbienceFadeParticipant(),
         new WaterFftParticipant(),
-        new TerrainProxyParticipant(), new GlobalTerrainParticipant(), new FarViewportParticipant(),
+        new TerrainProxyParticipant(), new GlobalTerrainParticipant(), new EmitterStandInParticipant(), new FarViewportParticipant(),
         new ShadowParticipant()
     };
 }
@@ -203,6 +204,23 @@ internal sealed class GlobalTerrainParticipant : UndergroundParticipant
     public override void Apply(in UndergroundParticipantState state) { if (_global != null && GodotObject.IsInstanceValid(_global)) _global.SetUndergroundHidden(state.Hide); }
     public override string Describe() => _global == null ? "absent" : $"hidden={_global.UndergroundHidden} segments={_global.ActiveSegmentCount} children={_global.GetChildCount()}";
     public override ulong[] RetainedInstanceIds() => new[] { IdOf(_global) };
+}
+
+internal sealed class EmitterStandInParticipant : UndergroundParticipant
+{
+    private EmitterStandInLayer? _layer;
+    public override string Name => "EmitterStandIns";
+    public override UndergroundGroups Group => UndergroundGroups.FarTerrain;
+    public override void Bind(Node root) { _layer = Find<EmitterStandInLayer>(root, "EmitterStandIns"); Present = _layer != null; }
+    public override void Apply(in UndergroundParticipantState state)
+    {
+        if (_layer == null || !GodotObject.IsInstanceValid(_layer)) return;
+        _layer.UndergroundHold = state.Suspend;
+        _layer.SetUndergroundHidden(state.Hide);
+    }
+    public override string Describe() => _layer == null ? "absent"
+        : $"hidden={_layer.UndergroundHidden} hold={_layer.UndergroundHold} visible={_layer.Visible} bound={_layer.IsBound} instances={_layer.RegularInstanceCount + _layer.MainInstanceCount}";
+    public override ulong[] RetainedInstanceIds() => new[] { IdOf(_layer), IdOf(_layer?.RegularInstances), IdOf(_layer?.MainInstances), IdOf(_layer?.RegularInstances?.Multimesh), IdOf(_layer?.MainInstances?.Multimesh) };
 }
 
 internal sealed class FarViewportParticipant : UndergroundParticipant

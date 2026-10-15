@@ -2,9 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using Godot;
 using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Terrain.Sites;
+using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
+using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tools;
@@ -54,6 +58,7 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
 
             CheckVersioning(v4, v5, failures);
             CheckV4Identity(v4, failures);
+            CheckV4Fingerprint(v4, failures);
             using var natural = new TerrainGenerationHeightModel(v5.SurfaceGenerationRecipeJson.Length > 0
                 ? TerrainGenerationParameters.FromJson(v5.SurfaceGenerationRecipeJson) : throw new InvalidOperationException(), false);
             CheckRegistryMatchesV4Natural(v4, registry, failures);
@@ -61,6 +66,7 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
             CheckPadFlat(v5, registry, failures);
             CheckIslandsDry(v5, registry, failures);
             CheckDiagnostics(v5, registry, natural, failures);
+            CheckSurfaceConsumers(v4, v5, registry, failures);
             Benchmark(v4, v5, registry, failures);
         }
         catch (Exception exception) { failures.Add(exception.ToString()); }
@@ -109,6 +115,86 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
         }
         if (mismatches != 0) failures.Add($"v4 heights differ from the natural model at {mismatches} points");
         Console.WriteLine($"EMITTER_V5_V4_IDENTITY hash={v4.TerrainDefinitionHash:X16} sampled=20000 mismatches={mismatches}");
+    }
+
+
+    // M1-6 v4 fingerprint: FNV-1a over terrain samples, biome weights (unfused and fused), one grass tile and one tree tile.
+    // Surface-mask consumers must leave every one of these bit-identical on a v4 sampler.
+    // Fixed tree review tile (found once by a seeded search on the v4 sampler; the 186000/141000 grass focus tile has no trees).
+    static readonly (long Around, long Across) FingerprintTreeTile = (84509L, 762L);
+    const ulong ExpectedFingerprintTerrain = 0xD82EFCF9C4FCE3E4UL;
+    const ulong ExpectedFingerprintGrass = 0x071B8B28921E7298UL;
+    const ulong ExpectedFingerprintTrees = 0x9C6BDB7DF0127E66UL;
+
+    static ulong Fnv(ulong h, ulong v)
+    {
+        for (int i = 0; i < 8; i++) { h ^= (v >> (i * 8)) & 0xFF; h *= 0x100000001B3UL; }
+        return h;
+    }
+
+    static ulong FnvF(ulong h, float f) => Fnv(h, (ulong)(uint)BitConverter.SingleToInt32Bits(f));
+
+    static ulong FnvWeights(ulong h, RingTerrainSampler.BiomeTextureWeights w)
+        => FnvF(FnvF(FnvF(FnvF(h, w.Desert), w.Forest), w.Tundra), w.Alpine);
+
+    static ulong FingerprintTerrain(RingTerrainSampler s)
+    {
+        ulong h = 0xCBF29CE484222325UL;
+        var rng = new Random(4096);
+        for (int i = 0; i < 4096; i++)
+        {
+            long a = (long)(rng.NextDouble() * (Circumference / 2)) * 2L;
+            int x = (int)(rng.NextDouble() * (Width / 2 - 1)) * 2;
+            TerrainSample t = s.GetTerrainSample(a, x);
+            h = Fnv(h, (ulong)t.SurfaceHeight); h = Fnv(h, (ulong)t.Region); h = FnvF(h, t.Continentalness); h = FnvF(h, t.Erosion);
+            h = FnvF(h, t.RidgeStrength); h = FnvF(h, t.Temperature); h = FnvF(h, t.Moisture); h = Fnv(h, (ulong)t.Biome);
+            h = Fnv(h, (ulong)t.WaterKind); h = Fnv(h, (ulong)t.WaterSurfaceHeight);
+            h = FnvWeights(h, s.GetBiomeTextureWeights(t));
+            s.GetPresentationSurfaceHeightAndBiomeWeights(a, x, out float height, out RingTerrainSampler.BiomeTextureWeights fused);
+            h = FnvF(h, height); h = FnvWeights(h, fused);
+        }
+        return h;
+    }
+
+    static RingGrassTileData BuildGrassTile(RingTerrainSampler sampler, double aroundCenter, double acrossCenter)
+    {
+        var focus = new RingCanonicalPosition(aroundCenter, 0, acrossCenter);
+        var geometry = new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero, Circumference / Math.Tau,
+            0, 0, Circumference, -1000, 1000, focus);
+        var edits = new RingLodSurfaceEditSnapshot(1, Circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
+        var bounds = new RingGrassTileBounds(aroundCenter - 16, aroundCenter + 16, acrossCenter - 16, acrossCenter + 16);
+        var key = new RingGrassTileKey((long)(aroundCenter / 32), (long)(acrossCenter / 32));
+        return RingGrassTileBuilder.Build(key, bounds, 4, 4, 16, 16_384, 60, sampler, edits, geometry, CancellationToken.None,
+            sourceFraction: 1, useGrassClumps: false);
+    }
+
+    static List<RingBiomeDecorationLayer.ImportedForestPlacementRecord> BuildTreeTile(RingTerrainSampler sampler, long tileAround, long tileAcross)
+        => RingBiomeDecorationLayer.BuildImportedForestReviewTile(sampler, tileAround, tileAcross, (long)Math.Ceiling(Circumference / 30d), 30d, Seed, Circumference, Width);
+
+    static ulong HashTrees(List<RingBiomeDecorationLayer.ImportedForestPlacementRecord> records)
+    {
+        ulong h = 0xCBF29CE484222325UL;
+        foreach (var r in records)
+        {
+            h = Fnv(h, r.Id); h = Fnv(h, (ulong)r.Around); h = Fnv(h, (ulong)r.Across); h = FnvF(h, r.SurfaceHeight);
+            h = FnvF(h, r.Width); h = FnvF(h, r.Height); h = FnvF(h, r.Yaw); h = Fnv(h, (ulong)r.Variant); h = Fnv(h, (ulong)r.Species);
+        }
+        return Fnv(h, (ulong)records.Count);
+    }
+
+    static void CheckV4Fingerprint(RingTerrainSampler v4, List<string> failures)
+    {
+        ulong terrain = FingerprintTerrain(v4);
+        RingGrassTileData grass = BuildGrassTile(v4, 186_016d, 141_016d);
+        ulong grassHash = Fnv((ulong)grass.PlacementHash, (ulong)grass.InstanceCount);
+        var trees = BuildTreeTile(v4, FingerprintTreeTile.Around, FingerprintTreeTile.Across);
+        ulong treeHash = HashTrees(trees);
+        Console.WriteLine($"EMITTER_V5_V4_FINGERPRINT terrain=0x{terrain:X16} grass=0x{grassHash:X16} grass_instances={grass.InstanceCount} trees=0x{treeHash:X16} tree_records={trees.Count}");
+        if (grass.InstanceCount == 0) failures.Add("v4 fingerprint grass tile is empty");
+        if (trees.Count == 0) failures.Add("v4 fingerprint tree tile is empty");
+        if (terrain != ExpectedFingerprintTerrain) failures.Add($"v4 terrain/weights fingerprint 0x{terrain:X16} != expected");
+        if (grassHash != ExpectedFingerprintGrass) failures.Add($"v4 grass fingerprint 0x{grassHash:X16} != expected");
+        if (treeHash != ExpectedFingerprintTrees) failures.Add($"v4 tree fingerprint 0x{treeHash:X16} != expected");
     }
 
     // The v5 registry is built from the same natural height v4 exposes: positions, pads and flags equal a registry built through a v4 sampler.
@@ -273,6 +359,123 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
             }
         }
         Console.WriteLine($"EMITTER_V5_DIAGNOSTICS scanned={total} rock_gt_half={rock} sand_gt_half={sand} hardscape_gt_half={hard}");
+    }
+
+    static bool NearAnySite(EmitterSiteRegistry r, long around, int across, double halfExtent)
+    {
+        foreach ((double du, double dw) in new[] { (0d, 0d), (-halfExtent, -halfExtent), (halfExtent, -halfExtent), (-halfExtent, halfExtent), (halfExtent, halfExtent) })
+        {
+            long a = ((around + (long)du) % Circumference + Circumference) % Circumference;
+            int x = Math.Clamp(across + (int)dw, 0, Width - 2);
+            if (r.TryGetInfluencingSite(a, x, out _, out _, out _)) return true;
+        }
+        return false;
+    }
+
+    // M1-6 (spec P4a): surface-mask consumers (biome texture weights, grass, trees).
+    static void CheckSurfaceConsumers(RingTerrainSampler v4, RingTerrainSampler v5, EmitterSiteRegistry r, List<string> failures)
+    {
+        int padPoints = 0, padBad = 0;
+        foreach (int index in TestSites(r))
+        {
+            EmitterSite s = r[index];
+            double padR = r.Recipe.ShapeFor(s.Kind).PadRadiusM;
+            foreach (double radius in new[] { 0d, 0.5 * padR })
+            for (int az = 0; az < 360; az += 45)
+            {
+                var (a, x) = Offset(s, radius, az);
+                if (x < 0 || x > Width - 2) continue;
+                TerrainSample t = v5.GetTerrainSample(a, x);
+                RingTerrainSampler.BiomeTextureWeights w = v5.GetBiomeTextureWeights(t);
+                v5.GetPresentationSurfaceHeightAndBiomeWeights(a, x, out _, out RingTerrainSampler.BiomeTextureWeights fused);
+                padPoints++;
+                bool ok = t.SiteMask.Class == SiteSurfaceClass.Pad && t.SiteMask.BlocksVegetation && w.Alpine >= 0.999f
+                    && w.Desert <= 1e-3f && w.Forest <= 1e-3f && w.Tundra <= 1e-3f && fused == w;
+                if (!ok) { padBad++; if (padBad <= 5) failures.Add($"site {index} pad r={radius:F0} az={az}: class={t.SiteMask.Class} blocks={t.SiteMask.BlocksVegetation} weights={w} fused={fused}"); }
+            }
+        }
+
+        int rockFound = 0, rockBad = 0, sandFound = 0, sandBad = 0, fusedBad = 0;
+        foreach (int index in TestSites(r))
+        {
+            EmitterSite s = r[index];
+            EmitterSiteKindShape shape = r.Recipe.ShapeFor(s.Kind);
+            for (double radius = shape.PadRadiusM; radius < shape.ShelfRadiusM + 100d && radius < s.InfluenceRadius; radius += 40d)
+            for (int az = 0; az < 360; az += 40)
+            {
+                var (a, x) = Offset(s, radius, az);
+                if (x < 0 || x > Width - 2) continue;
+                TerrainSample t = v5.GetTerrainSample(a, x);
+                SiteSurfaceMask m = t.SiteMask;
+                if (m.Rock <= 0.5f && m.Sand <= 0.5f) continue;
+                RingTerrainSampler.BiomeTextureWeights w = v5.GetBiomeTextureWeights(t);
+                v5.GetPresentationSurfaceHeightAndBiomeWeights(a, x, out _, out RingTerrainSampler.BiomeTextureWeights fused);
+                if (fused != w) fusedBad++;
+                if (m.Rock > 0.5f) { rockFound++; if (w.Alpine < m.Rock - 1e-4f) rockBad++; }
+                if (m.Sand > 0.5f) { sandFound++; if (w.Desert < m.Sand - 1e-4f) sandBad++; }
+            }
+        }
+        // Beach: radial search on every island starting just outside the enclosure edge.
+        foreach (EmitterSite s in r.Sites.ToArray().Where(s => s.IsIsland))
+        {
+            double enclosure = r.Recipe.ShapeFor(s.Kind).EnclosureRadiusM;
+            for (double radius = enclosure + 100d; radius < enclosure + 1500d && radius < s.InfluenceRadius; radius += 20d)
+            for (int az = 0; az < 360; az += 90)
+            {
+                var (a, x) = Offset(s, radius, az);
+                if (x < 0 || x > Width - 2) continue;
+                TerrainSample t = v5.GetTerrainSample(a, x);
+                if (t.SiteMask.Sand <= 0.5f) continue;
+                RingTerrainSampler.BiomeTextureWeights w = v5.GetBiomeTextureWeights(t);
+                sandFound++;
+                if (w.Desert < t.SiteMask.Sand - 1e-4f) sandBad++;
+            }
+        }
+        if (rockFound == 0) failures.Add("no cut-face sample with Rock > 0.5 found");
+        if (sandFound == 0) failures.Add("no beach sample with Sand > 0.5 found");
+        if (rockBad != 0 || sandBad != 0 || fusedBad != 0) failures.Add($"weights: rock_bad={rockBad} sand_bad={sandBad} fused_vs_unfused_bad={fusedBad}");
+
+        // Grass: no instances on pads, identical to v4 beyond influence.
+        EmitterSite main = r.MainSite;
+        EmitterSite regular = r[TestSites(r).First(i => i != r.MainIndex && !r[i].IsIsland)];
+        int mainGrass = BuildGrassTile(v5, main.Around, main.Across).InstanceCount;
+        int regularGrass = BuildGrassTile(v5, regular.Around, regular.Across).InstanceCount;
+        int regularGrassV4 = BuildGrassTile(v4, regular.Around, regular.Across).InstanceCount;
+        if (mainGrass != 0) failures.Add($"main pad grass tile has {mainGrass} instances");
+        if (regularGrass != 0) failures.Add($"regular pad grass tile has {regularGrass} instances");
+        int farGrassChecked = 0, farGrassNonEmpty = 0;
+        var grng = new Random(21);
+        for (int i = 0; i < 60 && farGrassChecked < 3; i++)
+        {
+            double a = Math.Floor(grng.NextDouble() * Circumference / 32d) * 32d + 16d, x = Math.Floor(grng.NextDouble() * (Width - 64) / 32d) * 32d + 48d;
+            if (NearAnySite(r, (long)a, (int)x, 40d)) continue;
+            RingGrassTileData g4 = BuildGrassTile(v4, a, x), g5 = BuildGrassTile(v5, a, x);
+            farGrassChecked++;
+            if (g4.InstanceCount > 0) farGrassNonEmpty++;
+            if (g4.PlacementHash != g5.PlacementHash || g4.InstanceCount != g5.InstanceCount) failures.Add($"far grass tile at {a},{x}: v5 hash differs from v4");
+        }
+        if (farGrassChecked == 0 || farGrassNonEmpty == 0) failures.Add($"far grass check had no populated tiles (checked={farGrassChecked} nonempty={farGrassNonEmpty})");
+
+        // Trees: the review tile (8 cells of 30 m) containing each pad centre is empty; a tile far from all sites equals v4.
+        int treePadTiles = 0, treePadV4Records = 0;
+        foreach (int index in TestSites(r).Where(i => !r[i].IsIsland))
+        {
+            EmitterSite s = r[index];
+            long ta = (long)Math.Floor(s.Around / 30d) / 8, tz = (long)Math.Floor(s.Across / 30d) / 8;
+            var records = BuildTreeTile(v5, ta, tz);
+            treePadTiles++;
+            treePadV4Records += BuildTreeTile(v4, ta, tz).Count;
+            if (records.Count != 0) failures.Add($"site {index} pad tile ({ta},{tz}) has {records.Count} tree records");
+        }
+        long fa = FingerprintTreeTile.Around, fz = FingerprintTreeTile.Across;
+        var farV4 = BuildTreeTile(v4, fa, fz);
+        var farV5 = BuildTreeTile(v5, fa, fz);
+        if (NearAnySite(r, fa * 240L + 120L, (int)(fz * 240L + 120L), 160d)) failures.Add("fixed far tree tile is within a site influence disc");
+        if (farV4.Count == 0 || !farV4.SequenceEqual(farV5)) failures.Add($"far tree tile v4 ({farV4.Count}) != v5 ({farV5.Count})");
+
+        // The v4 fingerprint is enforced in CheckV4Fingerprint.
+        Console.WriteLine($"EMITTER_V5_SURFACE_CONSUMERS pad_points={padPoints} pad_bad={padBad} rock_found={rockFound} sand_found={sandFound} grass_main={mainGrass} grass_regular={regularGrass} (v4 {regularGrassV4}) far_grass_tiles={farGrassChecked} nonempty={farGrassNonEmpty} tree_pad_tiles={treePadTiles} (v4 records {treePadV4Records}) far_tree_records={farV5.Count}");
+        if (padBad != 0) failures.Add($"pad weight / class mismatches: {padBad}");
     }
 
     // (f) throughput.

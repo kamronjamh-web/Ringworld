@@ -26,7 +26,7 @@ public enum SiteMaterialHint : byte
 /// Per-sample classification produced by <see cref="EmitterSiteSurfaceOperator"/> (spec 2.8, no road).
 /// Weights are 0..1. All zero / <see cref="SiteSurfaceClass.None"/> outside a site's influence disc.
 /// </summary>
-public readonly struct SiteSurfaceMask
+public readonly record struct SiteSurfaceMask
 {
     public SiteSurfaceClass Class { get; init; }
     public SiteMaterialHint Material { get; init; }
@@ -40,6 +40,8 @@ public readonly struct SiteSurfaceMask
     public float Sand { get; init; }
     /// <summary>False where grass and trees must not spawn (hardscape, cut faces, beach).</summary>
     public bool VegetationAllowed { get; init; }
+    /// <summary>True wherever a site surface class applies; grass and trees must not spawn. Unlike <see cref="VegetationAllowed"/> this is false for default(...).</summary>
+    public bool BlocksVegetation => Material != SiteMaterialHint.None;
 }
 
 /// <summary>

@@ -28,6 +28,7 @@ uniform float ring_width_meters = 20000.0;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
+#include "res://materials/ring_surface_aperture.gdshaderinc"
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float analytic_cloud_shadow_strength : hint_range(0.0, 0.8) = 0.60;
 uniform float analytic_cloud_shadow_fade_start_meters = 38000.0;
@@ -78,6 +79,7 @@ void fragment() {
 	vec3 world_dy = dFdy(world_position);
 	vec2 far_coordinate_dx = vec2(dot(world_dx, footprint_around), world_dx.y);
 	vec2 far_coordinate_dy = vec2(dot(world_dy, footprint_around), world_dy.y);
+	if (ring_surface_aperture_discard(world_position)) discard;
 	float distance_to_camera = distance(world_position, camera_world_position);
 	float near_handoff = (fade_start_meters + max(fade_end_meters, fade_start_meters + 0.01)) * 0.5;
 	if (distance_to_camera < near_handoff) discard;

@@ -71,6 +71,9 @@
 [ext_resource type="Script" path="res://scripts/Voxel/LOD/RingWaterFftController.cs" id="68_water_fft"]
 [ext_resource type="Script" path="res://scripts/diagnostics/RingPerformanceMonitor.cs" id="69_performance_monitor"]
 [ext_resource type="Script" path="res://scripts/Underground/RingUndergroundModeController.cs" id="70_underground_mode"]
+[ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterStandInLayer.cs" id="71_emitter_standins"]
+[ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterPoiStreamer.cs" id="72_emitter_poi_streamer"]
+[ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterBoreLayer.cs" id="73_emitter_bores"]
 
 [sub_resource type="ProceduralSkyMaterial" id="1"]
 sky_top_color = Color(0.02, 0.03, 0.06, 1)
@@ -639,6 +642,15 @@ script = ExtResource("30")
 
 [node name="ScaleAnchors" type="Node3D" parent="." unique_id=1112973490]
 script = ExtResource("31")
+
+[node name="EmitterStandIns" type="Node3D" parent="."]
+script = ExtResource("71_emitter_standins")
+
+[node name="EmitterSites" type="Node3D" parent="."]
+script = ExtResource("72_emitter_poi_streamer")
+
+[node name="EmitterBores" type="Node3D" parent="."]
+script = ExtResource("73_emitter_bores")
 
 [node name="BiomeDecorations" type="Node3D" parent="." unique_id=284974064]
 script = ExtResource("40")

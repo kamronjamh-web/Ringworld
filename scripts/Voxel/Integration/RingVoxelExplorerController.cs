@@ -560,19 +560,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         }
 
         CaveFeatureShape target = nearest.Value;
-        _canonicalPosition = new RingCanonicalPosition(target.Around, target.Vertical, target.Across)
-            .Wrap(_grid.GetCanonicalRingCircumferenceMeters64());
-        _canonicalVelocity = Vector3.Zero;
-        _noclip = true;
-        EnsureNoclipSpeedInitialized();
-        _grounded = false;
-        EndCrossRingTransit();
-        RecenterCollisionOrigin(force: true);
-        _cameraBasisInitialized = false;
-        ApplyWorldTransform();
-        ApplyCameraRotation();
-        _smoothTerrain?.SetCanonicalFocus(_canonicalPosition);
-        _grid.SetStreamingCanonicalFocusOverride(_canonicalPosition);
+        TryTeleportToCanonical(new RingCanonicalPosition(target.Around, target.Vertical, target.Across), float.NaN, float.NaN, true, out _);
         CaveGameplayEligibility gameplayEligibility = new CaveGameplayIntegrationContract().Evaluate(true, placement, target);
         SetMeta("ring_cave_gameplay_handoffs", (int)gameplayEligibility.Handoffs);
         bool completeFamilyIsVisible = placement.Permits(target)
@@ -594,6 +582,53 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private static long FloorDiv(long value, long divisor) =>
         value / divisor - (value < 0 && value % divisor != 0 ? 1 : 0);
+
+    /// <summary>Feedback of the last <see cref="TeleportToCanonicalMeters"/> call (also set by <see cref="TryTeleportToCanonical"/>).</summary>
+    public string LastTeleportFeedback { get; private set; } = "";
+
+    /// <summary>
+    /// Instant jump to a canonical position. Grounded arrivals (noclip false) hold in the spawn terrain settle until collision exists;
+    /// flights arrive in noclip. Yaw and pitch (degrees) are applied only when both are finite.
+    /// </summary>
+    public bool TryTeleportToCanonical(in RingCanonicalPosition target, float yawDeg, float pitchDeg, bool noclip, out string feedback)
+    {
+        if (_grid == null) { feedback = "Teleport unavailable: no chunk grid."; LastTeleportFeedback = feedback; return false; }
+        if (!double.IsFinite(target.AroundMeters) || !double.IsFinite(target.VerticalMeters) || !double.IsFinite(target.AcrossMeters))
+        {
+            feedback = "Teleport target is not finite.";
+            LastTeleportFeedback = feedback;
+            return false;
+        }
+        _benchmarkOverrideActive = false;
+        _canonicalPosition = target.Wrap(_grid.GetCanonicalRingCircumferenceMeters64());
+        _canonicalVelocity = Vector3.Zero;
+        _noclip = noclip;
+        if (noclip) EnsureNoclipSpeedInitialized();
+        _grounded = false;
+        _hasLastSmoothGroundedPosition = false;
+        EndCrossRingTransit();
+        ClearWaterState();
+        if (float.IsFinite(yawDeg) && float.IsFinite(pitchDeg))
+        {
+            _yaw = Mathf.PosMod(Mathf.DegToRad(yawDeg), Mathf.Tau);
+            _pitch = Mathf.Clamp(pitchDeg, -85.0f, 85.0f);
+        }
+        if (noclip) { _spawnTerrainSettling = false; _undergroundSpawnSettling = false; }
+        else BeginSpawnTerrainSettle();
+        RecenterCollisionOrigin(force: true);
+        _cameraBasisInitialized = false;
+        ApplyWorldTransform();
+        ApplyCameraRotation();
+        _smoothTerrain?.SetCanonicalFocus(_canonicalPosition);
+        _grid.SetStreamingCanonicalFocusOverride(_canonicalPosition);
+        feedback = $"Teleported to around {_canonicalPosition.AroundMeters:0}, vertical {_canonicalPosition.VerticalMeters:0}, across {_canonicalPosition.AcrossMeters:0}.";
+        LastTeleportFeedback = feedback;
+        return true;
+    }
+
+    /// <summary>GDScript entry point of <see cref="TryTeleportToCanonical"/>; a flight arrives in noclip, otherwise grounded.</summary>
+    public bool TeleportToCanonicalMeters(double aroundMeters, double verticalMeters, double acrossMeters, float yawDeg, float pitchDeg, bool flight)
+        => TryTeleportToCanonical(new RingCanonicalPosition(aroundMeters, verticalMeters, acrossMeters), yawDeg, pitchDeg, flight, out _);
 
     public void SetCanonicalSpawnMeters(double aroundMeters, double verticalMeters, double acrossMeters)
     {
