@@ -353,3 +353,5 @@ M1-3 can start as soon as P1 lands. M1-4/M1-5 can be developed against unshaped 
 - Exactly one main site. It sits on the ring centre line (across = W/2 = 159 km) and REPLACES ALL SIX regular sites in its row. Totals: 99 rows x 6 = 594 regular + 1 main = 595 sites. Main beam is vertical to the hub (zero tilt).
 - Main row selection: seed-driven, preferring good land; if no row offers acceptable land, the main site still goes on the centre line and gets an (enlarged) island.
 - Event vision: at eclipse ignition every spire fires and converges on the hub to light the artificial sun; the main spire then sustains it for the whole eclipse, with the ~594 regular spires periodically sending pulses to the false sun to keep it fuelled.
+- Main row selection prefers a pad as close to sea level as possible (lowland bias), among rows with acceptable land.
+- Structures may break bedrock: reactor caverns/shafts may be carved below the configured bedrock level (e.g. BedrockY -2000 in the gen-16 integration settings); milestone 2's SDF carve must not clamp to bedrock.

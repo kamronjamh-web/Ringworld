@@ -52,7 +52,7 @@ public sealed class EmitterSiteKindShape
 /// </summary>
 public sealed class EmitterSiteRecipe
 {
-    public const int CurrentAlgorithmVersion = 3;
+    public const int CurrentAlgorithmVersion = 4;
     public const double CertifiedCircumferenceMeters = 31_415_936d;
     public const double CertifiedWidthMeters = 318_000d;
 

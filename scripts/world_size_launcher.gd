@@ -1358,7 +1358,11 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 		return _reject_runtime_surface_launch("Saved preview recipe is invalid: %s" % str(loaded.get("error", "")))
 	var recipe := loaded.get("recipe", null) as Resource
 	if recipe == null:
-		recipe = SURFACE_RECIPE.create_erosion_default()
+		recipe = SURFACE_RECIPE.create_sites_default()
+	elif str(recipe.get("generator_id")) == SURFACE_RECIPE.EROSION_GENERATOR_ID:
+		# New worlds adopt the v5 emitter-site recipe; the previewed v4 shape settings carry over unchanged.
+		# Existing slots keep their frozen stored recipe (handled above), so their terrain never changes.
+		recipe.set("generator_id", SURFACE_RECIPE.SITES_GENERATOR_ID)
 	recipe.set("seed", int(round(terrain_seed_spin.value)) if terrain_seed_spin != null else 1337)
 	if not bool(bridge.call("Configure", recipe.call("to_normalized_dictionary"))):
 		var error := str(bridge.get("LastError"))

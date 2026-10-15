@@ -351,7 +351,8 @@ public partial class RingLiveTuningDrawer
 			if (parsed.VariantType == Variant.Type.Dictionary)
 				recipeId = parsed.AsGodotDictionary().TryGetValue("generator_id", out Variant idValue) ? idValue.AsString() : "";
 		}
-		string recipeStyle = recipeId == "ringworld_surface_erosion_v4" ? "enhanced erosion v4"
+		string recipeStyle = recipeId == "ringworld_surface_sites_v5" ? "emitter sites v5"
+			: recipeId == "ringworld_surface_erosion_v4" ? "enhanced erosion v4"
 			: recipeId == "ringworld_surface_detail_v3" ? "detail v3"
 			: recipeId == "ringworld_surface_coastal_v2" ? "coastal v2"
 			: recipeId == "ringworld_surface_reference_v1" ? "reference v1" : "unknown recipe";

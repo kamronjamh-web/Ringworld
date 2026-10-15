@@ -12,9 +12,13 @@ public static class EmitterSiteHeightSources
     {
         if (sampler == null) throw new ArgumentNullException(nameof(sampler));
         return sampler.UsesRuntimeSurfaceGeneration
-            ? new Gen17NaturalHeightSource(TerrainGenerationParameters.FromJson(sampler.SurfaceGenerationRecipeJson), sampler.TerrainDefinitionHash)
+            ? CreateGen17(TerrainGenerationParameters.FromJson(sampler.SurfaceGenerationRecipeJson), sampler.TerrainDefinitionHash)
             : new Gen16NaturalHeightSource(sampler, false);
     }
+
+    /// <summary>v5 definition hashes include the registry itself, so its natural identity is the recipe-only hash (the shaper cache key).</summary>
+    private static INaturalHeightSource CreateGen17(TerrainGenerationParameters parameters, ulong samplerHash)
+        => new Gen17NaturalHeightSource(parameters, parameters.HasEmitterSites ? parameters.DefinitionHash : samplerHash);
 }
 
 /// <summary>Gen-17 heightmap backend: <see cref="TerrainGenerationHeightModel"/> height with no site operator.</summary>
@@ -27,7 +31,7 @@ public sealed class Gen17NaturalHeightSource : INaturalHeightSource
     public Gen17NaturalHeightSource(TerrainGenerationParameters parameters, ulong identity)
     {
         _parameters = parameters ?? throw new ArgumentNullException(nameof(parameters));
-        _model = new TerrainGenerationHeightModel(parameters);
+        _model = new TerrainGenerationHeightModel(parameters, false);
         _circumference = parameters.CircumferenceM;
         Identity = identity;
     }

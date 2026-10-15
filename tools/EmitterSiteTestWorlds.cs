@@ -17,9 +17,17 @@ public static class EmitterSiteTestWorlds
         => TerrainGenerationParameters.FromJson(
             TerrainGenerationParameters.ErosionDefault().CanonicalJson.Replace("\"seed\":1337", "\"seed\":" + seed));
 
-    public static RingTerrainSampler CreateGen17(int seed)
+    /// <summary>Gen-17 v5 (ringworld_surface_sites_v5) default recipe with the given seed.</summary>
+    public static TerrainGenerationParameters Gen17SitesRecipe(int seed)
+        => TerrainGenerationParameters.FromJson(
+            TerrainGenerationParameters.SitesDefault().CanonicalJson.Replace("\"seed\":1337", "\"seed\":" + seed));
+
+    public static RingTerrainSampler CreateGen17(int seed) => CreateGen17(Gen17Recipe(seed), seed);
+
+    public static RingTerrainSampler CreateGen17Sites(int seed) => CreateGen17(Gen17SitesRecipe(seed), seed);
+
+    static RingTerrainSampler CreateGen17(TerrainGenerationParameters recipe, int seed)
     {
-        TerrainGenerationParameters recipe = Gen17Recipe(seed);
         using var settings = new VoxelTerrainSettings
         {
             Seed = seed, SurfaceGenerationRecipeJson = recipe.CanonicalJson,

@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Terrain.Sites;
 
 namespace RingworldTechDemo.Terrain.Generation;
 
@@ -7,7 +8,7 @@ namespace RingworldTechDemo.Terrain.Generation;
 /// <remarks>Each worker must own its model, or callers must serialize access to its mutable gully cache.</remarks>
 public sealed class TerrainGenerationHeightModel : IDisposable
 {
-    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d);
+    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default);
     private static readonly double[] ContinentalKnots = { -1d, -.55d, -.20d, -.06d, 0d, .45d, 1d };
     private readonly TerrainGenerationParameters _p;
     private readonly double[] _continentalHeights;
@@ -27,10 +28,17 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     private readonly GullyCell[] _gullyCells;
     private bool _disposed;
     public TerrainGenerationParameters Parameters => _p;
+    private readonly EmitterSiteTerrainShaper? _sites;
+    /// <summary>Shared immutable emitter-site shaper (null unless the recipe is v5 and the model is the shaped one).</summary>
+    public EmitterSiteTerrainShaper? EmitterSites => _sites;
 
-    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters)
+    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters) : this(parameters, true) { }
+
+    /// <param name="applyEmitterSites">False builds the unshaped natural model (used only to build the site registry). Ignored unless the recipe enables emitter sites.</param>
+    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites)
     {
         _p=parameters ?? throw new ArgumentNullException(nameof(parameters));
+        _sites=applyEmitterSites && _p.HasEmitterSites ? EmitterSiteTerrainShaper.GetOrCreate(_p) : null;
         _radius=_p.CircumferenceM/Math.Tau;
         _continentalDerivativeEpsilon=Math.Clamp(_p.ContinentalScaleM*.02,128,16384);
         bool swissEnabled=_p.HasMountainDetail
@@ -84,7 +92,11 @@ public sealed class TerrainGenerationHeightModel : IDisposable
             }
         }
     }
-    public double CalculateHeight(double around, double across) => SampleDiagnostics(around,across).Height;
+    public double CalculateHeight(double around, double across)
+    {
+        if(_sites==null) return SampleNaturalDiagnostics(around,across).Height;
+        return _sites.ShapeHeight(around,across,SampleNaturalDiagnostics(around,across).Height);
+    }
     public float[] SampleGrid(double around,double across,int columns,int rows,double spacing)
     { if(columns<0||rows<0||!double.IsFinite(spacing)||spacing<=0) throw new ArgumentOutOfRangeException(nameof(spacing)); checked { var output=new float[columns*rows]; for(int row=0;row<rows;row++) for(int col=0;col<columns;col++) output[row*columns+col]=(float)CalculateHeight(around+col*spacing,across+row*spacing); return output; } }
     public double ContinentalHeight(double continentalness)
@@ -103,7 +115,16 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         if(d<=shelf+_p.ContinentalSlopeWidthM) return Lerp(depth,_p.BasinDepthM,SmoothStep(shelf,shelf+_p.ContinentalSlopeWidthM,d));
         return _p.BasinDepthM;
     }
+    /// <summary>Natural (unshaped) diagnostics plus, for v5 recipes, the emitter-site shaped height, mask and site weight.</summary>
     public Diagnostics SampleDiagnostics(double around,double across)
+    {
+        Diagnostics natural=SampleNaturalDiagnostics(around,across);
+        if(_sites==null) return natural;
+        double shaped=_sites.ShapeHeight(around,across,natural.Height,out SiteSurfaceMask mask,out int siteIndex,out double siteWeight);
+        return natural with { Height=shaped, SiteIndex=siteIndex, SiteWeight=siteWeight, SiteMask=mask };
+    }
+    /// <summary>Unshaped diagnostics: identical for every recipe, with no emitter-site operator applied.</summary>
+    public Diagnostics SampleNaturalDiagnostics(double around,double across)
     {
         ThrowIfDisposed(); if(!double.IsFinite(around)||!double.IsFinite(across)) throw new ArgumentException("Coordinates must be finite.");
         CylindricalProjection unwarped=new(around,_p.CircumferenceM,_radius);

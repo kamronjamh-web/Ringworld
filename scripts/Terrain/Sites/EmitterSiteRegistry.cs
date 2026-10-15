@@ -173,7 +173,7 @@ public sealed class EmitterSiteRegistry
     }
 
     /// <summary>
-    /// Main row selection. Rank acceptable rows by (score + MainSeedWeight * rowHash) and take the first whose dense
+    /// Main row selection. Rank acceptable rows by (10 * pad height above sea + score + MainSeedWeight * rowHash), i.e. lowest pad first, flatness and seed hash secondary, and take the first whose dense
     /// 40 x 96 enclosure check is dry; if none exists, take the first row (in order from the seed-preferred row) whose grid
     /// point is clear of the summit exclusion zone and make it an enlarged island at its grid point.
     /// </summary>
@@ -185,7 +185,7 @@ public sealed class EmitterSiteRegistry
         {
             if (!e.Acceptable) continue;
             double rowHash = EmitterSiteHash.Unit(EmitterSiteHash.Derive(recipe.Seed, "emitter-main-rank", e.Row));
-            ranked.Add((e.Score + recipe.MainSeedWeight * rowHash, e.Row));
+            ranked.Add(((e.Pad - source.SeaLevel) * 10d + e.Score + recipe.MainSeedWeight * rowHash, e.Row));
         }
         acceptableCount = ranked.Count;
         ranked.Sort((a, b) => a.Key != b.Key ? a.Key.CompareTo(b.Key) : a.Row.CompareTo(b.Row));
@@ -207,7 +207,7 @@ public sealed class EmitterSiteRegistry
         throw new InvalidOperationException("No row is available for the main emitter site.");
     }
 
-    private int RowOf(long wrappedAround)
+    private int RowOf(double wrappedAround)
     {
         int row = (int)Math.Floor((wrappedAround - _phase) / _pitch + 0.5);
         row %= _rows;
@@ -236,6 +236,34 @@ public sealed class EmitterSiteRegistry
         long d = a - site.Around;
         long half = _circumference >> 1;
         if (d > half) d -= _circumference; else if (d < -half) d += _circumference;
+        du = d;
+        dw = across - site.Across;
+        siteIndex = index;
+        return du * du + dw * dw < _influenceSquared[index];
+    }
+
+    /// <summary>
+    /// Same lookup for a non-integer around coordinate (terrain sampling between lattice points). Bit-identical to the
+    /// <see cref="long"/> overload for integer-valued input.
+    /// </summary>
+    public bool TryGetInfluencingSite(double around, double across, out int siteIndex, out double du, out double dw)
+    {
+        double circumference = _circumference;
+        double a = around % circumference;
+        if (a < 0d) a += circumference;
+        int row = RowOf(a);
+        int index;
+        if (row == MainRow) index = _sites.Length - 1;
+        else
+        {
+            int col = (int)Math.Round((across - _firstColumn) / _columnSpacing);
+            if (col < 0) col = 0; else if (col >= _columns) col = _columns - 1;
+            index = (row < MainRow ? row : row - 1) * _columns + col;
+        }
+        ref readonly EmitterSite site = ref _sites[index];
+        double d = a - site.Around;
+        double half = _circumference >> 1;
+        if (d > half) d -= circumference; else if (d < -half) d += circumference;
         du = d;
         dw = across - site.Across;
         siteIndex = index;

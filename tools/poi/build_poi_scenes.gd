@@ -2,7 +2,8 @@ extends SceneTree
 # Builds the POI wrapper scenes and the standalone test scene from the imported GLBs and the
 # output of merge_poi_scenes.gd. Run merge_poi_scenes.gd first.
 #
-#   godot --headless --path . --script res://tools/poi/build_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|test|all]
+#   godot --headless --path . --script res://tools/poi/build_poi_scenes.gd [-- emitter|reactor|main_spire|main_spire_proxy|main_reactor|test|all]
+#   main_spire_proxy writes only MainSpire_FarProxy.res (no wrapper, merged detail, or collision changes).
 #
 # Writes:
 #   res://assets/poi/beam_emitter/BeamEmitterPOI.tscn  (+ collision/*.res, merged/meshes/BeamEmitter_FarProxy.res)
@@ -46,6 +47,12 @@ const MAIN_ENTRY_APPROACH_R := 930.0 # hall floor ends at R ~890 on the 292.5 de
 const MAIN_BORE_RADIUS := 150.0
 const MAIN_EXTRA_FLOOR_PATTERNS_GROUND := ["Outer_Entrance_Continuous_Walkable_Floor", "Outer_Entrance_Under_Apron_Join_Floor"]
 
+# Imported mesh compression introduces up to 0.055 m of same-profile radial spread and 0.000043 rad
+# of angular displacement in this GLB. These weld tolerances stay well below its distinct profile/row gaps.
+const PROXY_PROFILE_RADIUS_EPSILON := 0.075
+const PROXY_PROFILE_HEIGHT_EPSILON := 0.002
+const PROXY_ANGLE_EPSILON := 0.0001
+
 const EMITTER_FLOOR_PATTERNS_GROUND := [
 	"Entry_Throat_Level_", "Entry_Level_Exterior_Approach_Apron", "Ring_Continuous_Level_",
 	"_Connection_Floor", "_Foundation_Floor", "Ramp_Lower_Access_Floor", "Ramp_Lower_Flat_Turn_Landing", "Ground_Throat_150m_Clear",
@@ -64,12 +71,25 @@ func _init() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.size() > 0:
 		which = args[0]
+	if which == "main_spire_proxy":
+		var source_scene := load(MAIN_SPIRE_GLB) as PackedScene
+		if source_scene == null:
+			push_error("Could not load main spire far proxy source: " + MAIN_SPIRE_GLB)
+			quit(1)
+			return
+		var src := source_scene.instantiate()
+		var proxy_mesh := _build_main_spire_far_proxy(src)
+		src.free()
+		quit(0 if proxy_mesh != null else 1)
+		return
 	if which in ["all", "emitter"]:
 		_build_emitter()
 	if which in ["all", "reactor"]:
 		_build_reactor()
 	if which in ["all", "main_spire"]:
-		_build_main_spire()
+		if not _build_main_spire():
+			quit(1)
+			return
 	if which in ["all", "main_reactor"]:
 		_build_main_reactor()
 	if which in ["all", "test"]:
@@ -163,7 +183,7 @@ func _clone_merged(merged_path: String, parent: Node, owner_node: Node, group_ra
 # --------------------------------------------------------------------------------------------
 # far proxy: loft columns following the real arm cross-sections. `arms` = [[mesh name, azimuth deg (Blender), slice heights]];
 # empty = the regular emitter's 8 arms.
-func _build_far_proxy(src_root: Node, mat: Material, out_path: String, arms: Array = []) -> ArrayMesh:
+func _build_far_proxy(src_root: Node, mat: Material, out_path: String, arms: Array = [], extra_faces: PackedVector3Array = PackedVector3Array()) -> ArrayMesh:
 	if arms.is_empty():
 		for k in range(1, 9):
 			arms.append(["Arm_%02d_Faceted_Monolith" % k, 45.0 * (k - 1), [1.0, 250.0, 600.0, 1000.0, 1400.0, 1799.0]])
@@ -176,6 +196,9 @@ func _build_far_proxy(src_root: Node, mat: Material, out_path: String, arms: Arr
 		for mi in _collect_meshes(src_root):
 			if String(mi.name) == arm_def[0]:
 				arm = mi
+		if arm == null or arm.mesh == null:
+			push_error("Missing far proxy arm mesh: " + String(arm_def[0]))
+			return null
 		var slice_h: Array = arm_def[2]
 		var faces := _faces_of(arm, src_root)
 		var theta := deg_to_rad(float(arm_def[1]))
@@ -192,6 +215,9 @@ func _build_far_proxy(src_root: Node, mat: Material, out_path: String, arms: Arr
 						var p := a.lerp(b, (h - a.y) / (b.y - a.y))
 						var r := p.dot(d); var tt := p.dot(t)
 						rmin = minf(rmin, r); rmax = maxf(rmax, r); tmin = minf(tmin, tt); tmax = maxf(tmax, tt)
+			if not is_finite(rmin) or not is_finite(rmax) or not is_finite(tmin) or not is_finite(tmax) or rmin >= rmax or tmin >= tmax:
+				push_error("Invalid far proxy arm section: %s at Y %s" % [arm_def[0], h])
+				return null
 			rings.append([
 				d * rmin + t * tmin + Vector3(0, h, 0), d * rmax + t * tmin + Vector3(0, h, 0),
 				d * rmax + t * tmax + Vector3(0, h, 0), d * rmin + t * tmax + Vector3(0, h, 0)])
@@ -225,12 +251,174 @@ func _build_far_proxy(src_root: Node, mat: Material, out_path: String, arms: Arr
 			st.add_vertex(tv[i + 2] if flip_tri else tv[i + 1])
 			st.add_vertex(tv[i + 1] if flip_tri else tv[i + 2])
 		print("  proxy ", arm_def[0], " flipped ", flipped, "/", tv.size() / 3, " triangles to face outward")
+	for v in extra_faces:
+		st.add_vertex(v)
+		min_radius = minf(min_radius, Vector2(v.x, v.z).length())
 	st.generate_normals()
 	var mesh := st.commit()
 	mesh.resource_name = out_path.get_file().get_basename()
-	ResourceSaver.save(mesh, out_path)
-	print("far proxy: triangles=", mesh.get_faces().size() / 3, " min axis radius=", min_radius)
+	var error := ResourceSaver.save(mesh, out_path)
+	if error != OK:
+		push_error("Could not save far proxy %s: %s" % [out_path, error_string(error)])
+		return null
+	print("far proxy: triangles=", mesh.get_faces().size() / 3, " min vertex axis radius=", min_radius)
 	return load(out_path)
+
+# The main spire's annuli and collectors are surfaces of revolution with polygonal end caps.
+# Collapse alternate angular rows, retaining every source radial/Y profile point, cap, and winding.
+# Welding the profile coordinates first removes float noise from the baked GLB's repeated vertices.
+func _proxy_angle(v: Vector3) -> float:
+	var angle := fposmod(atan2(v.z, v.x), TAU)
+	return 0.0 if minf(angle, TAU - angle) < PROXY_ANGLE_EPSILON else angle
+
+func _reduce_proxy_angular_rows(faces: PackedVector3Array, mesh_name: String, source_segments: int, closed: bool, stride := 2) -> PackedVector3Array:
+	var angles: Array[float] = []
+	var profiles: Array[Vector2] = []
+	var angle_sums: Array[float] = []
+	var angle_counts: Array[int] = []
+	var profile_sums: Array[Vector2] = []
+	var profile_counts: Array[int] = []
+	for v in faces:
+		var angle := _proxy_angle(v)
+		var profile := Vector2(Vector2(v.x, v.z).length(), v.y)
+		var angle_index := -1
+		for i in angles.size():
+			if absf(angles[i] - angle) < PROXY_ANGLE_EPSILON:
+				angle_index = i
+				break
+		if angle_index < 0:
+			angles.append(angle)
+			angle_sums.append(angle)
+			angle_counts.append(1)
+		else:
+			angle_sums[angle_index] += angle
+			angle_counts[angle_index] += 1
+		var profile_index := -1
+		for i in profiles.size():
+			if absf(profiles[i].x - profile.x) < PROXY_PROFILE_RADIUS_EPSILON and absf(profiles[i].y - profile.y) < PROXY_PROFILE_HEIGHT_EPSILON:
+				profile_index = i
+				break
+		if profile_index < 0:
+			profiles.append(profile)
+			profile_sums.append(profile)
+			profile_counts.append(1)
+		else:
+			profile_sums[profile_index] += profile
+			profile_counts[profile_index] += 1
+	for i in angles.size():
+		angles[i] = angle_sums[i] / angle_counts[i]
+	for i in profiles.size():
+		profiles[i] = profile_sums[i] / profile_counts[i]
+	angles.sort()
+	var expected_rows := source_segments if closed else source_segments + 1
+	if angles.size() != expected_rows or profiles.size() < 3:
+		push_error("Invalid far proxy angular profile: %s (%s rows, %s profile points)" % [mesh_name, angles.size(), profiles.size()])
+		return PackedVector3Array()
+	var step: float = TAU / source_segments if closed else (angles.back() - angles.front()) / source_segments
+	for i in range(1, angles.size()):
+		if absf(angles[i] - angles[i - 1] - step) > 2.0 * PROXY_ANGLE_EPSILON:
+			push_error("Nonuniform far proxy angular rows: " + mesh_name)
+			return PackedVector3Array()
+	if closed and absf(angles.front() + TAU - angles.back() - step) > 2.0 * PROXY_ANGLE_EPSILON:
+		push_error("Incomplete far proxy annulus: " + mesh_name)
+		return PackedVector3Array()
+	if stride == 1:
+		return faces
+	var reduced := PackedVector3Array()
+	var triangle: Array[Vector3] = []
+	for v in faces:
+		var angle := _proxy_angle(v)
+		var row := -1
+		for i in angles.size():
+			if absf(angles[i] - angle) < PROXY_ANGLE_EPSILON:
+				row = i
+				break
+		var profile := Vector2(Vector2(v.x, v.z).length(), v.y)
+		var found_profile := false
+		for p in profiles:
+			if absf(p.x - profile.x) < PROXY_PROFILE_RADIUS_EPSILON and absf(p.y - profile.y) < PROXY_PROFILE_HEIGHT_EPSILON:
+				profile = p
+				found_profile = true
+				break
+		if row < 0 or not found_profile:
+			push_error("Unmatched far proxy angular/profile vertex: " + mesh_name)
+			return PackedVector3Array()
+		var target_angle := angles[row - row % stride]
+		triangle.append(Vector3(cos(target_angle) * profile.x, profile.y, sin(target_angle) * profile.x))
+		if triangle.size() == 3:
+			if (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]).length_squared() > 0.000001:
+				reduced.append_array(PackedVector3Array(triangle))
+			triangle.clear()
+	if reduced.is_empty():
+		push_error("Empty reduced far proxy mesh: " + mesh_name)
+	return reduced
+
+func _build_main_spire_far_proxy(src: Node) -> ArrayMesh:
+	# Keep the existing 8 inner + 8 staggered outer arm lofts and entrance-arm start height.
+	var arms := []
+	var inner_slices := [1.0, 300.0, 700.0, 1200.0, 1800.0, 2400.0, 3000.0, 3590.0]
+	var entry_slices := [26.0, 300.0, 700.0, 1200.0, 1800.0, 2400.0, 3000.0, 3500.0, 3990.0]
+	var outer_slices := [1.0, 300.0, 700.0, 1200.0, 1800.0, 2400.0, 3000.0, 3500.0, 3990.0]
+	var required := []
+	for k in range(1, 9):
+		arms.append(["Arm_%02d_Faceted_Monolith" % k, 45.0 * (k - 1), inner_slices])
+		# Outer arm 07's monolith starts at Y 24; its portal jambs carry the lower part.
+		arms.append(["Outer_Arm_%02d_Main_Monolith" % k, 22.5 + 45.0 * (k - 1), entry_slices if k == 7 else outer_slices])
+	for arm in arms:
+		required.append(arm[0])
+	var structures := []
+	for stage in range(1, 7):
+		structures.append(["Outer_Connector_Ring_Stage_%02d" % stage, 64, true, 2])
+		for k in range(1, 9):
+			structures.append(["Outer_Ring_Stage_%02d_Radial_Tie_%02d" % [stage, k], 0, false, 1])
+			structures.append(["Accelerator_Stage_%02d_Collector_Sector_%02d" % [stage, k], 4, false, 2])
+			structures.append(["Accelerator_Stage_%02d_Arm_Feed_Clamp_%02d" % [stage, k], 0, false, 1])
+	structures.append(["Outer_Crown_Open_4000m_Focus_Ring", 128, true, 2])
+	# The inner crown's R 150.2609 bore needs all 64 source segments to keep triangle interiors outside R 150.
+	structures.append(["Crown_Open_Annular_Focus", 64, true, 1])
+	for structure in structures:
+		required.append(structure[0])
+	var source_faces := {}
+	for mi in _collect_meshes(src):
+		var mesh_name := String(mi.name)
+		if mesh_name not in required:
+			continue
+		if source_faces.has(mesh_name) or mi.mesh == null:
+			push_error("Duplicate or invalid main spire proxy source mesh: " + mesh_name)
+			return null
+		var faces := _faces_of(mi, src)
+		if faces.is_empty() or faces.size() % 3 != 0:
+			push_error("Invalid main spire proxy source faces: " + mesh_name)
+			return null
+		for v in faces:
+			if not v.is_finite():
+				push_error("Non-finite main spire proxy source vertex: " + mesh_name)
+				return null
+		for i in range(0, faces.size(), 3):
+			if (faces[i + 1] - faces[i]).cross(faces[i + 2] - faces[i]).length_squared() <= 0.000001:
+				push_error("Degenerate main spire proxy source triangle: " + mesh_name)
+				return null
+		source_faces[mesh_name] = faces
+	for mesh_name in required:
+		if not source_faces.has(mesh_name):
+			push_error("Missing main spire proxy source mesh: " + mesh_name)
+			return null
+	var extra_faces := PackedVector3Array()
+	for structure in structures:
+		var faces: PackedVector3Array = source_faces[structure[0]]
+		if structure[1] > 0:
+			faces = _reduce_proxy_angular_rows(faces, structure[0], structure[1], structure[2], structure[3])
+			if faces.is_empty():
+				return null
+		extra_faces.append_array(faces)
+	print("main spire proxy structure: 6 annuli (32 segments), 48 radial ties, 48 collectors (2 spans), 48 arm clamps, 2 crowns (64 segments each); triangles=", extra_faces.size() / 3)
+	var proxy_mat := load("res://assets/poi/main_spire/merged/materials/Raised_Facet_Alloy.tres") as Material
+	if proxy_mat == null:
+		push_error("Missing main spire far proxy material")
+		return null
+	var out_path := "res://assets/poi/main_spire/merged/meshes/MainSpire_FarProxy.res"
+	_mkdir(out_path.get_base_dir())
+	return _build_far_proxy(src, proxy_mat, out_path, arms, extra_faces)
 
 # --------------------------------------------------------------------------------------------
 func _build_emitter() -> void:
@@ -378,7 +566,7 @@ func _build_reactor() -> void:
 	src.free()
 # --------------------------------------------------------------------------------------------
 # Main spire / main reactor (see assets/poi/README.md). Same structure as the regular wrappers.
-func _build_main_spire() -> void:
+func _build_main_spire() -> bool:
 	var src := (load(MAIN_SPIRE_GLB) as PackedScene).instantiate()
 	var coll_dir := "res://assets/poi/main_spire/collision"
 	_mkdir(coll_dir)
@@ -396,17 +584,11 @@ func _build_main_spire() -> void:
 		"Roof": {"end": MAIN_FACILITY_DETAIL_END, "margin": MAIN_FACILITY_MARGIN},
 	})
 
-	# Far proxy: 8 inner + 8 outer arm columns lofted from the real arm cross-sections (R >= 150 m clear).
-	var arms := []
-	var inner_slices := [1.0, 300.0, 700.0, 1200.0, 1800.0, 2400.0, 3000.0, 3590.0]
-	var entry_slices := [26.0, 300.0, 700.0, 1200.0, 1800.0, 2400.0, 3000.0, 3500.0, 3990.0]
-	var outer_slices := [1.0, 300.0, 700.0, 1200.0, 1800.0, 2400.0, 3000.0, 3500.0, 3990.0]
-	for k in range(1, 9):
-		arms.append(["Arm_%02d_Faceted_Monolith" % k, 45.0 * (k - 1), inner_slices])
-		# Outer arm 07 (the entrance arm) has its monolith only from Y 24 up; the portal jambs carry the lower part.
-		arms.append(["Outer_Arm_%02d_Main_Monolith" % k, 22.5 + 45.0 * (k - 1), entry_slices if k == 7 else outer_slices])
-	var proxy_mat := load("res://assets/poi/main_spire/merged/materials/Raised_Facet_Alloy.tres") as Material
-	var proxy_mesh := _build_far_proxy(src, proxy_mat, "res://assets/poi/main_spire/merged/meshes/MainSpire_FarProxy.res", arms)
+	var proxy_mesh := _build_main_spire_far_proxy(src)
+	if proxy_mesh == null:
+		root.free()
+		src.free()
+		return false
 	var proxy := MeshInstance3D.new()
 	proxy.name = "FarProxy"
 	proxy.mesh = proxy_mesh
@@ -485,6 +667,7 @@ func _build_main_spire() -> void:
 	ResourceSaver.save(ps, "res://assets/poi/main_spire/MainSpirePOI.tscn")
 	root.free()
 	src.free()
+	return true
 
 func _build_main_reactor() -> void:
 	var src := (load(MAIN_REACTOR_GLB) as PackedScene).instantiate()

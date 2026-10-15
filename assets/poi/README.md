@@ -93,7 +93,8 @@ merge, build and verify tools handle them (`main_spire`, `main_reactor` argument
 
 - **MainSpirePOI**: origin is the ground centre of the spire (bore axis), Y 0 = ground, foundation slab to Y -2,
   tips Y 4000, footprint 1,642.78 m. 8 inner arms at Blender 0..315 deg (step 45), 8 outer arms at 22.5 + 45k deg.
-  The 300 m beam bore (R 150) is clear: closest source triangle R 150.08, far proxy minimum R 151.3.
+  The 300 m beam bore (R 150) is clear: closest source triangle R 150.08; the far proxy retains the source inner crown's
+  64 segments so its triangle interiors also remain outside R 150.
   The entrance is outer arm 07 at Blender 292.5 deg = Godot XZ 67.5 deg (the +Z/+X side); a 20 x 20 m hall
   (R 444..890) leads to the facility. Markers: `BeamOrigin` (0,0,0), `ShaftBottom` (0,-2,0),
   `BeamCrownFocus` (0,3989,0, centre of the outer open crown ring), `EntryApproach` (R 930 on the entry axis).
@@ -130,8 +131,13 @@ Draw-call reduction (`merge_poi_scenes.gd`, one surface per group / material / a
 
 Visibility ranges on `MainSpirePOI` (metres), the regular emitter's scaled up: spire detail ends 28,000 (2,000 fade margin; 12,500 x the 2.2 height ratio),
 `FarProxy` begins 26,000 (= end - margin, as for the regular emitter); facility and roof detail end 12,000 (1,000 margin; 6,000 x 2 for the ~2x footprint).
-`FarProxy` is 1,024 triangles: 16 lofted arm columns (8 inner 8-slice, 8 outer 9-slice; the entrance arm starts at Y 26 because its monolith starts at Y 24)
-from the real arm cross-sections, no connector rings. `MainReactorPOI` has no visibility ranges (it is only seen from inside the cavern).
+`FarProxy` is 8,640 triangles in one surface/material: the existing 16 lofted arm columns (8 inner 8-slice, 8 outer 9-slice; the entrance arm starts at Y 26
+because its monolith starts at Y 24), six continuous outer connector annuli, 48 radial ties, 48 broken accelerator collector sectors, 48 arm-feed clamps,
+and the inner and outer open crown rings. The ties, collectors, and clamps join the outer annuli back to the inner arms. All geometry comes from the source
+meshes in root space. Annuli use 32 angular segments (source 64), collectors two spans (source four, retaining the original 32-degree sector and gaps),
+and the outer crown 64 segments (source 128); radial/height profiles and cap faces are retained. The inner crown keeps all 64 source segments for bore clearance.
+Imported compression noise is welded with bounded radial/height/angular tolerances (0.075 m / 0.002 m / 0.0001 rad), averaging each source profile/row.
+`MainReactorPOI` has no visibility ranges (it is only seen from inside the cavern).
 
 Collision: same rule as the regular emitter (named walkable floors only, no walls/ceilings): ground floors + the outer entrance hall floor and its under-apron
 join as one trimesh (14 meshes, 1,608 tris), gallery + ramps as a second (39 meshes, 1,232 tris), and one convex hull per foot (8 inner anchors + 9 outer
@@ -176,13 +182,17 @@ with the pinned engine:
 ```
 godot --headless --path . --import
 godot --headless --path . --script res://tools/poi/merge_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|all [sectors=N]]
-godot --headless --path . --script res://tools/poi/build_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|test|all]
+godot --headless --path . --script res://tools/poi/build_poi_scenes.gd [-- emitter|reactor|main_spire|main_spire_proxy|main_reactor|test|all]
 godot --headless --path . --script res://tools/poi/verify_emitter_collision.gd [-- main_spire]
 ```
 
 `inspect_glb.gd` / `inspect_materials.gd` print mesh/surface/triangle/material stats for any scene.
 Floor mesh name patterns for collision live at the top of `build_poi_scenes.gd`; the group classifiers
 live in `merge_poi_scenes.gd`. Both tools overwrite their outputs.
+
+For a main-spire far-proxy-only update, use `build_poi_scenes.gd -- main_spire_proxy`. This writes only
+`assets/poi/main_spire/merged/meshes/MainSpire_FarProxy.res`; wrappers, merged detail, collision, and the regular emitter proxy are untouched.
+The main proxy build fails before saving if an expected source mesh is missing, duplicated, or invalid.
 
 Notes: a merge run deletes all `merged/meshes/*.res` of that POI (including the far proxy), so re-run the build step afterwards. Godot writes new `.glb.import`
 files with default settings (root type empty, light baking on, animation import on); the POI ones were edited to the settings listed at the top before the first

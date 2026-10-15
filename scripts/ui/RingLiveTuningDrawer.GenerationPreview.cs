@@ -32,9 +32,9 @@ public partial class RingLiveTuningDrawer
             return;
         }
         string generatorId = recipe.Get("generator_id").AsString();
-        bool coastalRecipe = generatorId == "ringworld_surface_coastal_v2" || generatorId == "ringworld_surface_detail_v3" || generatorId == "ringworld_surface_erosion_v4";
-        bool detailRecipe = generatorId == "ringworld_surface_detail_v3" || generatorId == "ringworld_surface_erosion_v4";
-        bool enhancedErosion = generatorId == "ringworld_surface_erosion_v4";
+        bool coastalRecipe = generatorId == "ringworld_surface_coastal_v2" || generatorId == "ringworld_surface_detail_v3" || IsErosionFamilyRecipe(generatorId);
+        bool detailRecipe = generatorId == "ringworld_surface_detail_v3" || IsErosionFamilyRecipe(generatorId);
+        bool enhancedErosion = IsErosionFamilyRecipe(generatorId);
         _generationPreviewRecipeIdentity = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId);
         tab.AddChild(_generationPreviewRecipeIdentity);
@@ -111,7 +111,7 @@ public partial class RingLiveTuningDrawer
     private void AddRecipeSlider(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step, bool detailOnly = false, bool coastalOnly = false, bool enhancedOnly = false)
     {
         string generatorId = recipe.Get("generator_id").AsString();
-        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && generatorId != "ringworld_surface_erosion_v4" || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && generatorId != "ringworld_surface_erosion_v4" || enhancedOnly && generatorId != "ringworld_surface_erosion_v4";
+        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || enhancedOnly && !IsErosionFamilyRecipe(generatorId);
         double initial = unavailable ? min : recipe.Get(property).AsDouble();
         parent.AddChild(new Label { Text = label });
         var row = new HBoxContainer();
@@ -126,7 +126,7 @@ public partial class RingLiveTuningDrawer
     {
         parent.AddChild(new Label { Text = label });
         string generatorId = recipe.Get("generator_id").AsString();
-        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && generatorId != "ringworld_surface_erosion_v4" || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && generatorId != "ringworld_surface_erosion_v4";
+        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId);
         double initial = unavailable ? min : recipe.Get(property).AsDouble();
         var spin = new SpinBox { Name = property, MinValue = min, MaxValue = max, Step = step, Value = initial, Editable = !unavailable, AllowGreater = false, AllowLesser = false };
         spin.ValueChanged += value => _generationPreview?.Call("apply_recipe_setting", property, (long)Math.Round(value));
@@ -139,7 +139,7 @@ public partial class RingLiveTuningDrawer
         parent.AddChild(new Label { Text = label });
         var option = new OptionButton { Name = property };
         foreach (string choice in choices) option.AddItem(choice);
-        int initial = detailOnly && recipe.Get("generator_id").AsString() != "ringworld_surface_detail_v3" && recipe.Get("generator_id").AsString() != "ringworld_surface_erosion_v4" ? 0 : recipe.Get(property).AsInt32();
+        int initial = detailOnly && recipe.Get("generator_id").AsString() != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(recipe.Get("generator_id").AsString()) ? 0 : recipe.Get(property).AsInt32();
         option.Select(Math.Clamp(initial, 0, choices.Length - 1));
         option.ItemSelected += index => _generationPreview?.Call("apply_recipe_setting", property, (long)index);
         parent.AddChild(option);
@@ -152,9 +152,9 @@ public partial class RingLiveTuningDrawer
         Resource? recipe = _generationPreview.Call("get_recipe_snapshot").AsGodotObject() as Resource;
         if (recipe == null) return;
         string generatorId = recipe.Get("generator_id").AsString();
-        bool detailRecipe = generatorId == "ringworld_surface_detail_v3" || generatorId == "ringworld_surface_erosion_v4";
+        bool detailRecipe = generatorId == "ringworld_surface_detail_v3" || IsErosionFamilyRecipe(generatorId);
         bool coastalRecipe = generatorId == "ringworld_surface_coastal_v2" || detailRecipe;
-        bool enhancedErosion = generatorId == "ringworld_surface_erosion_v4";
+        bool enhancedErosion = IsErosionFamilyRecipe(generatorId);
         if (_generationPreviewCoastalSection != null) _generationPreviewCoastalSection.Visible = coastalRecipe;
         if (_generationPreviewDetailSection != null) _generationPreviewDetailSection.Visible = detailRecipe;
         if (_generationPreviewLegacyCoastalNote != null) _generationPreviewLegacyCoastalNote.Visible = !coastalRecipe;
@@ -183,7 +183,11 @@ public partial class RingLiveTuningDrawer
         }
     }
 
-    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_erosion_v4"
+    private static bool IsErosionFamilyRecipe(string generatorId) => generatorId == "ringworld_surface_erosion_v4" || generatorId == "ringworld_surface_sites_v5";
+
+    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_sites_v5"
+        ? "Recipe: ringworld_surface_sites_v5 (enhanced erosion + emitter sites: 594 spires and 1 main spire with pads, islands and a terraced bowl; site layout is derived from the seed and frozen with the recipe)."
+        : generatorId == "ringworld_surface_erosion_v4"
         ? "Recipe: ringworld_surface_erosion_v4 (enhanced erosion enabled)."
         : generatorId == "ringworld_surface_detail_v3"
         ? "Recipe: ringworld_surface_detail_v3 (detail mountain shaping enabled)."

@@ -226,6 +226,14 @@ public sealed partial class RingTerrainSampler
     {
         ulong hash = MixHash(sharedSettingsHash, RuntimeSurfaceGeneratorVersion);
         hash = MixHash(hash, _runtimeSurfaceParameters!.DefinitionHash);
+        if (_runtimeSurfaceModel!.EmitterSites is { } sites)
+        {
+            // v5 only: the site recipe, its algorithm version and the registry identity (placement, pad heights, flags) all
+            // define the terrain, so caches and saves keyed by this hash invalidate whenever any of them changes.
+            hash = MixHash(hash, sites.Registry.Recipe.Hash);
+            hash = MixHash(hash, (ulong)sites.Registry.Recipe.AlgorithmVersion);
+            hash = MixHash(hash, sites.Registry.Identity);
+        }
         foreach (char character in RuntimeSurfaceGenerationContractId)
             hash = MixHash(hash, character);
         hash = MixHash(hash, _aroundRingVoxelLength);
