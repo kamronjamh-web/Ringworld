@@ -7,6 +7,7 @@ const OWNERS := [
 	preload("res://scripts/Voxel/LOD/RingAnalyticGlobalLod.cs"),
 	preload("res://scripts/Voxel/LOD/RingTerrainGlobalLod.cs"),
 	preload("res://scripts/Voxel/LOD/RingScaledFarViewport.cs"),
+	preload("res://scripts/poi/Emitters/EmitterPoiStreamer.cs"),
 ]
 
 var _errors := PackedStringArray()

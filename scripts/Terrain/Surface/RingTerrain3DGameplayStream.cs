@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using Godot;
 using Godot.Collections;
+using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Terrain.Surface;
@@ -20,6 +21,7 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
     // Image.SetPixel rounds RGBA8 channels; these bulk buffers retain truncation.
     internal static byte QuantizeBiomeChannel(float value) => (byte)(Math.Clamp(value, 0f, 1f) * 255f);
     private readonly RingTerrainSampler[] _samplers;
+    private readonly EmitterSiteRegistry? _sites;
     private readonly bool[] _leased;
     private readonly float _minimumHeight, _maximumHeight;
     private readonly int _width;
@@ -43,11 +45,14 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
             widthMeters <= 0 || circumferenceMeters <= 0 || circumferenceMeters % Spacing != 0)
             throw new ArgumentException("Gameplay stream definition is invalid.");
         _minimumHeight = minHeight; _maximumHeight = maxHeight; _width = widthMeters; _circumference = circumferenceMeters;
+        _sites = sampler.EmitterSites;
         _samplers = new RingTerrainSampler[4]; _leased = new bool[4];
         try { for (int i = 0; i < _samplers.Length; i++) _samplers[i] = sampler.CreateIndependentCopy(); }
         catch { for (int i = 0; i < _samplers.Length; i++) _samplers[i]?.Dispose(); throw; }
     }
 
+    /// <summary>When false the next pack builds no aperture mask (the hole closes when that window is committed).</summary>
+    public bool AperturesEnabled { get; set; } = true;
     public string Error => _error;
     public double LastGenerationMilliseconds => _lastGenerationMilliseconds;
     public void Configure(int workers, int cacheMiB)
@@ -198,7 +203,7 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
             if (!_cache.TryGetValue(key, out LinkedListNode<CachedTile>? node)) return;
             Touch(node.Value.Key); tiles[i++] = node.Value;
         }
-        _packer = new PackJob(request, tiles, _minimumHeight, _maximumHeight, _width);
+        _packer = new PackJob(request, tiles, _minimumHeight, _maximumHeight, _width, AperturesEnabled ? _sites : null);
         _packer.TaskId = WorkerThreadPool.AddTask(Callable.From(_packer.Run), false, "RingTerrain3DGameplay pack");
         _submitted++; _highWaterJobs = Math.Max(_highWaterJobs, ActiveHandleCount);
     }
@@ -269,14 +274,16 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
     private sealed class PackJob : IDisposable
     {
         private readonly RequestState _request; private readonly CachedTile[] _tiles; private readonly float _min, _max; private readonly int _width;
+        private readonly EmitterSiteRegistry? _sites;
         private PreparedWindow? _result;
-        public PackJob(RequestState request, CachedTile[] tiles, float min, float max, int width) { _request = request; _tiles = tiles; _min = min; _max = max; _width = width; }
+        public PackJob(RequestState request, CachedTile[] tiles, float min, float max, int width, EmitterSiteRegistry? sites) { _request = request; _tiles = tiles; _min = min; _max = max; _width = width; _sites = sites; }
         public long TaskId; public volatile bool Cancelled; public string Error = string.Empty; public long Revision => _request.Revision;
         public void Run()
         {
             var clock = Stopwatch.StartNew();
             Array<Image>? heightImages = null;
             Array<Image>? biomeImages = null;
+            Array<Image>? controlImages = null;
             RingTerrain3DCollisionGeometry? geometry = null;
             try
             {
@@ -293,6 +300,9 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
                     }
                 }
                 ApplyEdits(heights);
+                // Pure function of (registry, frame); null for v4 and non-site worlds so every hole branch is skipped.
+                byte[]? holeMask = RingTerrain3DApertureMask.Build(_sites, _request.Frame);
+                controlImages = holeMask == null ? null : RingTerrain3DApertureMask.CreateControlImages(holeMask);
                 heightImages = new Array<Image>(); biomeImages = new Array<Image>();
                 for (int z = 0; z < 3; z++) for (int x = 0; x < 3; x++)
                 {
@@ -307,11 +317,11 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
                     biomeImages.Add(Image.CreateFromData(TileSide, TileSide, false, Image.Format.Rgba8, b));
                 }
                 geometry = new RingTerrain3DCollisionGeometry();
-                if (!geometry.PrepareGameplay(heights, _request.Frame.AnchorAroundMeters, _request.Frame.AnchorAcrossMeters, _request.Frame.AnchorHeight, _request.Frame.AcrossDirection, _min, _max, _request.TileCells))
+                if (!geometry.PrepareGameplayWithHoles(heights, _request.Frame.AnchorAroundMeters, _request.Frame.AnchorAcrossMeters, _request.Frame.AnchorHeight, _request.Frame.AcrossDirection, _min, _max, _request.TileCells, holeMask))
                     throw new InvalidOperationException(geometry.GetDiagnostics()["error"].AsString());
                 clock.Stop(); _result = new PreparedWindow(heights, heightImages, biomeImages, geometry, _request.Frame, _request.Revision, _request.EditRevision,
-                    (Stopwatch.GetTimestamp() - _request.StartTimestamp) * 1000.0 / Stopwatch.Frequency);
-                heightImages = null; biomeImages = null; geometry = null;
+                    (Stopwatch.GetTimestamp() - _request.StartTimestamp) * 1000.0 / Stopwatch.Frequency, controlImages, holeMask);
+                heightImages = null; biomeImages = null; controlImages = null; geometry = null;
             }
             catch (Exception exception) { Error = exception.Message; }
             finally
@@ -320,6 +330,7 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
                 if (Cancelled && Error.Length == 0) Error = "Preparation cancelled.";
                 if (heightImages != null) foreach (Image image in heightImages) image.Dispose();
                 if (biomeImages != null) foreach (Image image in biomeImages) image.Dispose();
+                if (controlImages != null) foreach (Image image in controlImages) image.Dispose();
                 geometry?.Dispose();
             }
         }
@@ -340,10 +351,14 @@ public sealed class RingTerrain3DGameplayStream : IDisposable
 public sealed class PreparedWindow : IDisposable
 {
     private bool _disposed;
-    public PreparedWindow(float[] heights, Array<Image> heightImages, Array<Image> biomeImages, RingTerrain3DCollisionGeometry geometry, RingSurfaceFrame frame, long revision, ulong editRevision, double ms)
-    { Heights = heights; HeightImages = heightImages; BiomeImages = biomeImages; Geometry = geometry; Frame = frame; Revision = revision; EditRevision = editRevision; GenerationMilliseconds = ms; }
+    public PreparedWindow(float[] heights, Array<Image> heightImages, Array<Image> biomeImages, RingTerrain3DCollisionGeometry geometry, RingSurfaceFrame frame, long revision, ulong editRevision, double ms, Array<Image>? controlImages = null, byte[]? holeMask = null)
+    { Heights = heights; HeightImages = heightImages; BiomeImages = biomeImages; Geometry = geometry; Frame = frame; Revision = revision; EditRevision = editRevision; GenerationMilliseconds = ms; ControlImages = controlImages; HoleMask = holeMask; }
     public float[] Heights { get; } public Array<Image> HeightImages { get; } public Array<Image> BiomeImages { get; } public RingTerrain3DCollisionGeometry? Geometry { get; private set; }
+    /// <summary>Nine RF control images carrying the emitter-site hole bit, or null when the window has no hole.</summary>
+    public Array<Image>? ControlImages { get; private set; }
+    /// <summary>384 x 384 row-major hole mask (1 = hole), or null when the window has no hole.</summary>
+    public byte[]? HoleMask { get; }
     public RingSurfaceFrame Frame { get; } public long Revision { get; } public ulong EditRevision { get; } public double GenerationMilliseconds { get; }
     public RingTerrain3DCollisionGeometry TransferGeometryOwnership() { RingTerrain3DCollisionGeometry geometry = Geometry ?? throw new InvalidOperationException("Geometry already transferred."); Geometry = null; return geometry; }
-    public void Dispose() { if (_disposed) return; _disposed = true; foreach (Image image in HeightImages) image.Dispose(); foreach (Image image in BiomeImages) image.Dispose(); Geometry?.Dispose(); Geometry = null; }
+    public void Dispose() { if (_disposed) return; _disposed = true; foreach (Image image in HeightImages) image.Dispose(); foreach (Image image in BiomeImages) image.Dispose(); if (ControlImages != null) foreach (Image image in ControlImages) image.Dispose(); ControlImages = null; Geometry?.Dispose(); Geometry = null; }
 }

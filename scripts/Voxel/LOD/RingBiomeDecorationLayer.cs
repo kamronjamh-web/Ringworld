@@ -845,7 +845,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 				float surfaceHeight = sampler.UsesRuntimeSurfaceGeneration
 					? PresentationSurfaceHeight(request.SurfaceEdits, sampler, around, across)
 					: PresentationSurfaceHeight(request.SurfaceEdits, sampler, candidateAround, candidateAcross);
-				if (IsSurfaceWater(request.SurfaceEdits, sampler, sample, surfaceHeight) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland)) continue;
+				if (IsSurfaceWater(request.SurfaceEdits, sampler, sample, surfaceHeight) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland) || sample.SiteMask.BlocksVegetation) continue;
 				float treeChance = sample.Biome == TerrainBiomeId.Forest ? request.ForestChance : request.GrasslandChance;
 				if (Hash01(x, z, sampler.Seed, salt + 2) >= ApplyGroveDensity(treeChance, request.GroveDensity, x, z, sampler.Seed)) continue;
 				if (!IsSlopeSuitable(request.Geometry, sampler, request.SurfaceEdits, candidateAround, candidateAcross, surfaceHeight, request.MaximumSlopeDegrees)) continue;

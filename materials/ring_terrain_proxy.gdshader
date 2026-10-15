@@ -41,6 +41,7 @@ uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_aniso
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
+#include "res://materials/ring_surface_aperture.gdshaderinc"
 uniform float analytic_cloud_shadow_strength : hint_range(0.0, 0.8) = 0.60;
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float analytic_cloud_shadow_fade_start_meters = 38000.0;
@@ -118,6 +119,7 @@ vec3 sample_biome_triplanar(sampler2D texture_map, vec3 position, vec3 normal, v
 }
 
 void fragment() {
+	if (ring_surface_aperture_discard(world_position)) discard;
 	if (coverage_atlas_rect.z > 0.0 && proxy_coverage_uv.x >= 0.0 && proxy_coverage_uv.y >= 0.0
 		&& texture(coverage_atlas, coverage_atlas_rect.xy + min(proxy_coverage_uv, vec2(0.99999)) * coverage_atlas_rect.zw).r > 0.5) discard;
 	float distance_to_camera = distance(world_position, camera_world_position);

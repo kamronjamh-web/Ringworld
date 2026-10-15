@@ -39,6 +39,7 @@ instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
+#include "res://materials/ring_surface_aperture.gdshaderinc"
 
 vec2 ring_fft_distant_ocean_factors(vec2 mesh_uv) {
 	if (fft_distant_ocean_mask_rect.z <= 0.0 || fft_distant_ocean_mask_rect.w <= 0.0)
@@ -335,6 +336,7 @@ void fragment() {
 	vec2 fft_source_canonical = ring_fft_canonical(fft_source_world_position);
 	vec2 fft_source_dx = dFdx(fft_source_canonical);
 	vec2 fft_source_dy = dFdy(fft_source_canonical);
+	if (ring_surface_aperture_discard(world_position)) discard;
 	if (far_fade_enabled) {
 		float far_handoff = (fade_out_start_meters + max(fade_out_end_meters, fade_out_start_meters + 0.01)) * 0.5;
 		if (distance_to_camera > far_handoff) discard;

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Godot;
 using Godot.Collections;
+using RingworldTechDemo.Poi;
 using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.LOD;
@@ -65,7 +66,7 @@ public partial class RingWorldLoadingBridge : Node
             if (child.ProcessMode == ProcessModeEnum.Disabled) continue;
             // Read-only C# properties are callable, but do not appear in the
             // exported property list. Keep readiness ownership explicit.
-            if (child is RingScaledFarViewport or RingTerrainGlobalLod or RingAnalyticGlobalLod or RingCloudLayer or RingBiomeDecorationLayer)
+            if (child is RingScaledFarViewport or RingTerrainGlobalLod or RingAnalyticGlobalLod or RingCloudLayer or RingBiomeDecorationLayer or EmitterPoiStreamer)
                 _structureOwners.Add(child);
             foreach (Godot.Collections.Dictionary property in child.GetPropertyList())
             {
@@ -142,6 +143,7 @@ public partial class RingWorldLoadingBridge : Node
                 RingAnalyticGlobalLod analytic => analytic.StartupComplete,
                 RingCloudLayer clouds => clouds.StartupComplete,
                 RingBiomeDecorationLayer vegetation => vegetation.StartupComplete,
+                EmitterPoiStreamer emitters => emitters.StartupComplete,
                 _ => true
             };
             structureReady &= ready;
@@ -154,6 +156,8 @@ public partial class RingWorldLoadingBridge : Node
             }
             if (!ready && child is RingBiomeDecorationLayer)
                 surroundingsDetail = "Preparing trees around your arrival point.";
+            else if (!ready && child is EmitterPoiStreamer)
+                surroundingsDetail = "Preparing the emitter spires.";
         }
 
         bool saveReady = _saves == null || _saves.IsWorldLoadComplete;

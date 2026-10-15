@@ -5300,6 +5300,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             Shader? shadowShader = GD.Load<Shader>("res://materials/ring_terrain_proxy_shadow.gdshader");
             if (shadowShader == null) return;
             _opaqueShadowMaterial = new ShaderMaterial { Shader = shadowShader };
+            _opaqueShadowMaterial.SetShaderParameter("surface_apertures_enabled", true);
             if (_coverageAtlasTexture != null)
                 _opaqueShadowMaterial.SetShaderParameter("coverage_atlas", _coverageAtlasTexture);
             // This material is created lazily, possibly after the cached camera
@@ -5510,6 +5511,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         Shader? shader = GD.Load<Shader>("res://materials/ring_terrain_proxy.gdshader");
         if (shader == null) return;
         _material = new ShaderMaterial { Shader = shader };
+        _material.SetShaderParameter("surface_apertures_enabled", true);
         // Fresh materials hold authored defaults; forget every cached per-frame uniform.
         _uniformNearFadeEnabled = null;
         _uniformFftCoverageDistance = null;
@@ -5552,6 +5554,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (oceanShader != null)
         {
             _oceanMaterial = new ShaderMaterial { Shader = oceanShader };
+            _oceanMaterial.SetShaderParameter("surface_apertures_enabled", true);
             _oceanMaterial.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
             _oceanMaterial.SetShaderParameter("fade_out_end_meters", Mathf.Max(FadeOutStartMeters + 1.0f, FadeOutEndMeters));
             _oceanMaterial.SetShaderParameter("far_fade_enabled", EnableFarFade);
@@ -5588,6 +5591,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             global::RingworldTechDemo.RingCloudShadowProjector.Register(_oceanMaterial);
         }
         _structuralWallMaterial = (ShaderMaterial)_material.Duplicate();
+        _structuralWallMaterial.SetShaderParameter("surface_apertures_enabled", false);
         // Structural closures still use their authored HullColor, not the
         // sector COLOR weight payload.
         _structuralWallMaterial.SetShaderParameter("biome_texture_weights_enabled", false);

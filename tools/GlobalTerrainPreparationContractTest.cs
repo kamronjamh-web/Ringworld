@@ -165,6 +165,21 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             lod.InstallGlobalPreparationPyramidFixture(new RingTerrainMinMaxPyramid(sampler, lod.RingWidthMeters, 1_000_000),
                 grid.LodSurfaceEditVersion);
             lod.BuildGlobalRingFixture();
+            var gateFocus = new Node3D { Name = "HullGateFocus" };
+            fixture.AddChild(gateFocus);
+            lod.AddHullRoofGateFixtures(2);
+            lod.RunRegionalVisibilityFixture(gateFocus);
+            Require(!lod.IsHullRoofVisibleFixture(0) && !lod.IsHullRoofVisibleFixture(1),
+                "hull roof was visible before any terrain segment was built");
+            int refreshes = lod.RegionalVisibilityRefreshCount;
+            lod.RunRegionalVisibilityFixture(gateFocus);
+            Require(lod.RegionalVisibilityRefreshCount == refreshes, "unchanged focus and origin re-ran the regional visibility refresh");
+            // Floating-origin shift: the node moves, the focus does not.
+            lod.GlobalPosition += new Vector3(5000.0f, 0.0f, 0.0f);
+            lod.RunRegionalVisibilityFixture(gateFocus);
+            Require(lod.RegionalVisibilityRefreshCount == refreshes + 1,
+                "an origin shift with an unchanged focus did not refresh regional visibility");
+            lod.GlobalPosition -= new Vector3(5000.0f, 0.0f, 0.0f);
             lod.ServiceInitialGlobalBuildFixture();
             lod.WaitForGlobalPreparationWorkerFixture();
             VerifyRuntimePreparedVertices(lod, grid, sampler);
@@ -183,7 +198,20 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             Vector3 afterInitialEdit = lod.GetGlobalPreparedVertexFixture(0).TerrainVertex;
             Require(afterInitialEdit.DistanceTo(beforeInitialEdit) > .01f,
                 "initial edit snapshot did not change prepared v2 terrain height");
+            lod.ServiceInitialGlobalBuildFixture();
+            if (lod.PendingInitialSegmentCount == 1 && lod.ActiveSegmentCount == 1)
+            {
+                int beforePublishRefreshes = lod.RegionalVisibilityRefreshCount;
+                lod.RunRegionalVisibilityFixture(gateFocus);
+                Require(lod.RegionalVisibilityRefreshCount == beforePublishRefreshes + 1,
+                    "publishing a terrain segment did not refresh regional visibility");
+                Require(lod.IsHullRoofVisibleFixture(0) && !lod.IsHullRoofVisibleFixture(1),
+                    "hull roof 0 was not shown (or roof 1 not held) after terrain segment 0 published");
+            }
             lod.WaitForAllGlobalPreparationWorkersFixture();
+            lod.RunRegionalVisibilityFixture(gateFocus);
+            Require(lod.IsHullRoofVisibleFixture(0) && lod.IsHullRoofVisibleFixture(1),
+                "hull roofs stayed hidden after every terrain segment published");
             Require(lod.PendingInitialSegmentCount == 0 && grid.LodSurfaceEditVersion == initialEditVersion,
                 "initial queue stalled after accepting an edit snapshot");
             Require(lod.PublishedGlobalMeshContainsVertexFixture(0, afterInitialEdit),

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Terrain.Editable;
 using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.Phase2;
 
 namespace RingworldTechDemo.Voxel.Save;
 
@@ -102,6 +103,22 @@ public partial class RingWorldSaveManager
         }
     }
 
+    /// <summary>
+    /// A fresh world has no saved player state, so a runtime-surface world with emitter sites (v5) starts at the main spire's
+    /// 40 km viewpoint instead of the launcher's default spawn. Worlds without sites keep the default; saved positions never reach here.
+    /// </summary>
+    private void ApplyFreshWorldSpawn()
+    {
+        if (!_surfaceRuntimeGenerationActive || _explorer == null || _grid?.TerrainSampler == null) return;
+        RingLodGeometrySnapshot snapshot = _grid.CaptureLodGeometrySnapshot();
+        if (!RingworldTechDemo.Poi.EmitterSiteNavigator.TryComputeFreshSpawn(_grid.TerrainSampler,
+                snapshot.RingRadiusMeters - snapshot.RingVerticalBaseOffsetMeters, RingworldTechDemo.Poi.EmitterSiteNavigator.DefaultFarKm, out var pose))
+            return;
+        _explorer.TryTeleportToCanonical(new RingCanonicalPosition(pose.Around, pose.Vertical, pose.Across),
+            (float)pose.YawDeg, (float)pose.PitchDeg, pose.Flight, out string feedback);
+        GD.Print($"Fresh world spawn at the main spire ({pose.Detail}): {feedback}");
+    }
+
     private void AdvanceStagedWorldLoad()
     {
         if (_worldLoadCancellation.IsCancellationRequested || _isExiting) return;
@@ -134,6 +151,7 @@ public partial class RingWorldSaveManager
                 }
                 else if (_surfaceRuntimeGenerationActive && RuntimeSurfaceLegacySlotIsOccupied())
                     throw new InvalidDataException("Legacy editable world data occupies this runtime-surface slot; no implicit migration is available.");
+                else ApplyFreshWorldSpawn();
                 _stagedDocumentValidated = true;
                 _loadingStage = "restoring_terrain";
                 _loadingDetail = "Restoring saved terrain edits.";

@@ -37,6 +37,7 @@ uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
+#include "res://materials/ring_surface_aperture.gdshaderinc"
 uniform float analytic_cloud_shadow_strength : hint_range(0.0, 0.8) = 0.60;
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float analytic_cloud_shadow_fade_start_meters = 38000.0;
@@ -105,6 +106,7 @@ void vertex() {
 }
 
 void fragment() {
+	if (ring_surface_aperture_discard(world_position)) discard;
 	float distance_to_camera = distance(world_position, camera_world_position);
 	// Values are scaled world units. Mega Ring uses 1e-7, so a fixed 0.01
 	// safety span expands into a 100 km overlap and makes adjacent LOD rings

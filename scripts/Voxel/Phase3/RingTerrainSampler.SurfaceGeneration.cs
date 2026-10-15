@@ -75,7 +75,8 @@ public sealed partial class RingTerrainSampler
             climate.Moisture,
             biome,
             water,
-            waterSurface);
+            waterSurface,
+            diagnostics.SiteMask);
     }
 
     private static (TerrainGenerationParameters? Parameters, TerrainGenerationHeightModel? Model, float AltitudeDrop)

@@ -142,6 +142,24 @@ public partial class RingTerrainGlobalLod
         _occluderRoot = occluder;
     }
 
+    internal void AddHullRoofGateFixtures(int count)
+    {
+        _hullRoofTotalCount = count;
+        for (int index = 0; index < count; index++)
+        {
+            var roof = new MeshInstance3D { Name = $"GlobalStructuralRoofFixture_{index:D3}", Mesh = new BoxMesh(), Visible = false };
+            AddChild(roof);
+            _hullRoofSegments.Add(roof);
+        }
+    }
+    internal void RunRegionalVisibilityFixture(Node3D focus)
+    {
+        _focus = focus;
+        EnableFarDistanceFade = true;
+        UpdateRegionalSegmentVisibility(1.0);
+    }
+    internal bool IsHullRoofVisibleFixture(int index) => _hullRoofSegments[index].Visible;
+
     internal MeshInstance3D? FirstHullFixture => _hullSegments.Count == 0 ? null : _hullSegments[0];
     internal Node3D? OccluderFixture => _occluderRoot;
     internal bool PublishedGlobalMeshContainsVertexFixture(int segmentIndex, Vector3 expected)

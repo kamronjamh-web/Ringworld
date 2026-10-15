@@ -33,7 +33,7 @@ public partial class RingTerrain3DGameplay
         double activeAround = _frame.SignedAroundDeltaMeters(current.AroundMeters);
         double activeAcross = current.AcrossMeters - _frame.AnchorAcrossMeters;
         if (!_pendingEditReplacement && Math.Abs(activeAround) < 128.0 && Math.Abs(activeAcross) < 128.0) return;
-        if (_field == null || _pendingEditRevision != _field.Revision || !FrameContainsCollider(_pendingFrame, current)) return;
+        if (_field == null || _pendingEditRevision != _field.Revision || _pendingApertureRevision != _apertureRevision || !FrameContainsCollider(_pendingFrame, current)) return;
         Vector3 velocity = _explorer.CanonicalVelocity;
         var predicted = new RingCanonicalPosition(current.AroundMeters + velocity.X * delta,
             current.VerticalMeters, current.AcrossMeters + velocity.Z * delta);
@@ -46,9 +46,10 @@ public partial class RingTerrain3DGameplay
         _pendingEditReplacement = false;
         _committedRevision = _requestRevision;
         _committedEditRevision = _pendingEditRevision;
+        _committedApertureRevision = _pendingApertureRevision;
         _lastWorldFrame = BuildWorldFrame(_frame);
         _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
-        float height = _surface.SampleCommittedHeight(current.AroundMeters, current.AcrossMeters);
+        float height = SampleActivationHeight(current.AroundMeters, current.AcrossMeters);
         if (float.IsFinite(height)) _explorer.LiftSurfaceTerrainCapsule(current.AroundMeters, current.AcrossMeters, height);
         _coverageWaiting = false;
     }
@@ -71,9 +72,9 @@ public partial class RingTerrain3DGameplay
                 if (_hasPendingFrame && prepared.Revision == _requestRevision && prepared.EditRevision == _field.Revision)
                 {
                     RingTerrain3DCollisionGeometry geometry = prepared.TransferGeometryOwnership();
-                    if (!_surface.BeginGameplayPreparedWindow(prepared.Heights, prepared.HeightImages, prepared.BiomeImages,
+                    if (!_surface.BeginGameplayPreparedWindowWithHoles(prepared.Heights, prepared.HeightImages, prepared.BiomeImages,
                             geometry, prepared.Frame.AnchorAroundMeters, prepared.Frame.AnchorAcrossMeters, prepared.Frame.AnchorHeight,
-                            prepared.Frame.AcrossDirection, prepared.Revision, _field.MinimumHeight, _field.MaximumHeight))
+                            prepared.Frame.AcrossDirection, prepared.Revision, _field.MinimumHeight, _field.MaximumHeight, prepared.ControlImages, prepared.HoleMask))
                     {
                         geometry.Dispose();
                         _lastError = _surface.LastError;
@@ -127,6 +128,7 @@ public partial class RingTerrain3DGameplay
         if (_field == null || _surface == null || _stream == null || _saveBlocked ||
             !double.IsFinite(position.AroundMeters) || !double.IsFinite(position.AcrossMeters)) return;
         bool editsPending = _field.Revision != _committedEditRevision;
+        bool aperturesPending = _apertureRevision != _committedApertureRevision;
         if (editsPending && Time.GetTicksUsec() < _editDebounceUntilUsec) return;
         Vector3 velocity = _explorer?.CanonicalVelocity ?? Vector3.Zero;
         double speed = new Vector2(velocity.X, velocity.Z).Length();
@@ -138,8 +140,9 @@ public partial class RingTerrain3DGameplay
         RingCanonicalPosition target = SelectCoverageTarget(_frame, position, velocity, leadAround, leadAcross, unsupported);
         RingSurfaceFrame next = BuildFrame(target);
         if (_hasPendingFrame && next.AnchorAroundMeters == _pendingFrame.AnchorAroundMeters &&
-            next.AnchorAcrossMeters == _pendingFrame.AnchorAcrossMeters && _pendingEditRevision == _field.Revision) return;
-        if (!force && !editsPending && next.AnchorAroundMeters == _frame.AnchorAroundMeters && next.AnchorAcrossMeters == _frame.AnchorAcrossMeters)
+            next.AnchorAcrossMeters == _pendingFrame.AnchorAcrossMeters && _pendingEditRevision == _field.Revision &&
+            _pendingApertureRevision == _apertureRevision) return;
+        if (!force && !editsPending && !aperturesPending && next.AnchorAroundMeters == _frame.AnchorAroundMeters && next.AnchorAcrossMeters == _frame.AnchorAcrossMeters)
         {
             // A reversal can make a prepared corridor unnecessary.
             if (_hasPendingFrame) CancelPendingWindow();
@@ -148,10 +151,11 @@ public partial class RingTerrain3DGameplay
         CancelPendingWindow();
         _requestRevision++;
         _pendingEditRevision = _field.Revision;
+        _pendingApertureRevision = _apertureRevision;
         _stream.Request(next, CaptureWindowEdits(next), _pendingEditRevision, _requestRevision, _generationTileCells);
         _pendingFrame = next;
         _hasPendingFrame = true;
-        _pendingEditReplacement = editsPending;
+        _pendingEditReplacement = editsPending || aperturesPending;
         _budgetStarted = false;
         _requestStartedUsec = Time.GetTicksUsec();
     }
@@ -248,6 +252,7 @@ public partial class RingTerrain3DGameplay
     public float SampleCollisionHeight(double around, double across)
     {
         if (_synchronousBenchmark) return SampleHeight(around, across);
+        if (TryGetBoreFloorHeight(around, across, out float boreFloor)) return boreFloor;
         RingCanonicalPosition position = new(around, 0.0, across);
         if (_surface != null && HasCollisionCoverage(position))
         {
@@ -266,6 +271,9 @@ public partial class RingTerrain3DGameplay
         diagnostics["committed_revision"] = _committedRevision;
         diagnostics["pending_edit_revision"] = (long)_pendingEditRevision;
         diagnostics["committed_edit_revision"] = (long)_committedEditRevision;
+        diagnostics["surface_apertures_enabled"] = _aperturesEnabled;
+        diagnostics["surface_aperture_consumers_active"] = SurfaceApertureConsumersActive;
+        diagnostics["aperture_replacement_pending"] = ApertureReplacementPending;
         diagnostics["worker_count"] = _generationWorkers;
         diagnostics["active_jobs"] = (diagnostics.TryGetValue("pending_jobs", out Variant jobs) ? jobs.AsInt32() : 0)
             + (diagnostics.TryGetValue("packing", out Variant packing) && packing.AsBool() ? 1 : 0);

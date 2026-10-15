@@ -281,7 +281,7 @@ public partial class RingScaleAnchorLayer : Node3D
             double across = (acrossCell + 0.16 + Hash01(aroundCell, acrossCell, sampler.Seed, 3) * 0.68) * request.CellSizeMeters;
             if (across < request.CellSizeMeters * 0.15 || across > request.RingWidthMeters - request.CellSizeMeters * 0.15) continue;
             TerrainSample sample = sampler.GetTerrainSample((int)Math.Round(around), (int)Math.Round(across));
-            if (sample.HasSurfaceWater || sample.Region is TerrainRegion.DeepOcean or TerrainRegion.OceanShelf) continue;
+            if (sample.HasSurfaceWater || sample.Region is TerrainRegion.DeepOcean or TerrainRegion.OceanShelf || sample.SiteMask.BlocksVegetation) continue;
             bool major = Hash01(aroundCell, acrossCell, sampler.Seed, 4) < Math.Clamp(request.MajorChance, 0.0f, 1.0f);
             float variation = 0.82f + 0.36f * Hash01(aroundCell, acrossCell, sampler.Seed, 5);
             float height = (major ? request.MajorHeight : request.MinorHeight) * variation;

@@ -196,6 +196,7 @@ public partial class RingTerrain3DGameplay : Node3D
         _lastWorldFrame = BuildWorldFrame(_frame);
         _surface = new RingTerrain3DSurface { Name = "Terrain3DSurface" };
         AddChild(_surface);
+        _surface.SurfaceAperturesEnabled = _aperturesEnabled;
         _surface.SetHandoffDistance(_handoffDistanceMeters);
         _surface.SetMeshLods(_meshLods);
         _surface.SetMeshSize(_meshSize);
@@ -212,6 +213,7 @@ public partial class RingTerrain3DGameplay : Node3D
             _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
             _stream = new RingTerrain3DGameplayStream(_sampler, minimumHeight, maximumHeight, width, circumference);
             _stream.Configure(_generationWorkers, _generationCacheMiB);
+            ConfigureApertureFlags();
             BeginStagedStartup(position);
         }
         else
@@ -220,10 +222,15 @@ public partial class RingTerrain3DGameplay : Node3D
             _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
             _stream = new RingTerrain3DGameplayStream(_sampler, minimumHeight, maximumHeight, width, circumference);
             _stream.Configure(_generationWorkers, _generationCacheMiB);
+            ConfigureApertureFlags();
             if (_surface.TryGetInitialGameplayCache(out RingSurfaceFrame cacheFrame, out float[] cacheHeights, out byte[] cacheBiomes))
                 _stream.PrimeBaselineWindow(cacheFrame, cacheHeights, cacheBiomes);
         }
-        if (!_startupPending) _pendingEditRevision = _committedEditRevision = _field.Revision;
+        if (!_startupPending)
+        {
+            _pendingEditRevision = _committedEditRevision = _field.Revision;
+            _pendingApertureRevision = _committedApertureRevision = _apertureRevision;
+        }
         _grid.SurfaceTerrainVisualReady = HasVisualCoverage(position);
         if (!_subscribed) { _grid.CanonicalFloatingOriginAnchorChanged += OnFloatingOriginChanged; _subscribed = true; }
         if (_explorer != null) _explorer.MoveSpeed = _actualWalkSpeed;
@@ -324,6 +331,9 @@ public partial class RingTerrain3DGameplay : Node3D
             ["request_revision"] = _requestRevision,
             ["committed_revision"] = _committedRevision,
             ["pending_edit_revision"] = (long)_pendingEditRevision,
+            ["surface_apertures_enabled"] = _aperturesEnabled,
+            ["surface_aperture_consumers_active"] = SurfaceApertureConsumersActive,
+            ["aperture_replacement_pending"] = ApertureReplacementPending,
             ["last_generation_ms"] = _stream?.LastGenerationMilliseconds ?? 0.0,
             ["last_readiness_ms"] = _lastReadinessMilliseconds,
             ["max_readiness_ms"] = _maxReadinessMilliseconds,
