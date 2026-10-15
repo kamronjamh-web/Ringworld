@@ -28,6 +28,7 @@ public partial class RingTerrain3DGameplay
             return;
         }
         if (_synchronousBenchmark) return;
+        ServiceUndergroundRecovery(delta);
         if (_saveBlocked || _surface == null || _explorer == null || !_hasPendingFrame || !_stageReady) return;
         RingCanonicalPosition current = _explorer.CanonicalPosition;
         double activeAround = _frame.SignedAroundDeltaMeters(current.AroundMeters);
@@ -50,7 +51,7 @@ public partial class RingTerrain3DGameplay
         _lastWorldFrame = BuildWorldFrame(_frame);
         _surface.SetGameplayWorldFrames(_lastWorldFrame, _lastWorldFrame);
         float height = SampleActivationHeight(current.AroundMeters, current.AcrossMeters);
-        if (float.IsFinite(height)) _explorer.LiftSurfaceTerrainCapsule(current.AroundMeters, current.AcrossMeters, height);
+        if (float.IsFinite(height) && !SkipCapsuleLift(current)) _explorer.LiftSurfaceTerrainCapsule(current.AroundMeters, current.AcrossMeters, height);
         _coverageWaiting = false;
     }
 
@@ -230,6 +231,8 @@ public partial class RingTerrain3DGameplay
     public Vector3 ConstrainSurfaceVelocity(RingCanonicalPosition position, Vector3 velocity, double delta)
     {
         if (_synchronousBenchmark) return velocity;
+        // Inside the site underground (and the bore column above it) the surface window's coverage and recenter clamp do not apply.
+        if (IsInsideSiteUndergroundZone(position.AroundMeters, position.VerticalMeters, position.AcrossMeters)) { _coverageWaiting = false; return velocity; }
         if (_field == null || !HasCollisionCoverage(position)) { CountCoverageWait(); return Vector3.Zero; }
         double around = _frame.SignedAroundDeltaMeters(position.AroundMeters);
         double across = position.AcrossMeters - _frame.AnchorAcrossMeters;
@@ -252,7 +255,8 @@ public partial class RingTerrain3DGameplay
     public float SampleCollisionHeight(double around, double across)
     {
         if (_synchronousBenchmark) return SampleHeight(around, across);
-        if (TryGetBoreFloorHeight(around, across, out float boreFloor)) return boreFloor;
+        // Open plug (M2-3): a point inside the bore column has the site underground floor below it, not P-200.
+        if (TryGetBoreColumnFloor(around, across, out float boreFloor)) return boreFloor;
         RingCanonicalPosition position = new(around, 0.0, across);
         if (_surface != null && HasCollisionCoverage(position))
         {

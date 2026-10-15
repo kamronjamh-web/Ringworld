@@ -1,6 +1,7 @@
 using System;
 using Godot;
 using RingworldTechDemo.Terrain.Sites;
+using RingworldTechDemo.Voxel.Core;
 
 namespace RingworldTechDemo.Terrain.Surface;
 
@@ -42,14 +43,18 @@ public partial class RingTerrain3DGameplay
         if (_surface != null) _surface.SurfaceAperturesEnabled = _aperturesEnabled;
     }
 
-    /// <summary>The plug-top height when the point is inside a bore liner and bore consumers are active.</summary>
-    public bool TryGetBoreFloorHeight(double around, double across, out float height)
-    {
-        height = 0f;
-        return SurfaceApertureConsumersActive && EmitterSiteApertures.TryGetBoreFloorAt(_sampler?.EmitterSites, around, across, out height);
-    }
+    /// <summary>
+    /// The ground below a bore column point (M2-3: the plug is open, so this is the SDF floor of the site underground, not P-200)
+    /// when the point is inside a bore liner and bore consumers are active.
+    /// </summary>
+    public bool TryGetBoreFloorHeight(double around, double across, out float height) => TryGetBoreColumnFloor(around, across, out height);
 
-    /// <summary>Height used to lift the capsule when a window activates: the bore floor inside a liner, else the committed height.</summary>
-    private float SampleActivationHeight(double around, double across)
-        => TryGetBoreFloorHeight(around, across, out float floor) ? floor : _surface!.SampleCommittedHeight(around, across);
+    /// <summary>
+    /// Height used to lift the capsule when a window activates: the committed height. Callers skip the lift entirely inside the
+    /// site underground zone (<see cref="IsInsideSiteUndergroundZone"/>).
+    /// </summary>
+    private float SampleActivationHeight(double around, double across) => _surface!.SampleCommittedHeight(around, across);
+
+    private bool SkipCapsuleLift(RingCanonicalPosition position)
+        => IsInsideSiteUndergroundZone(position.AroundMeters, position.VerticalMeters, position.AcrossMeters);
 }

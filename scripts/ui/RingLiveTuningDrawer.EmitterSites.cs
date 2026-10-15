@@ -22,7 +22,7 @@ public partial class RingLiveTuningDrawer
     private EmitterBoreLayer? _emitterBores;
     private RingTerrain3DGameplay? _emitterGameplay;
     private bool _emitterGameplayApplied;
-    private CheckButton? _emitterBoreEnabled;
+    private CheckButton? _emitterBoreEnabled, _emitterUndergroundRecovery;
     private HSlider? _emitterBoreRange, _emitterBoreLight;
     private Label? _emitterBoreLive;
     private double _emitterBoreLiveDelay;
@@ -70,6 +70,7 @@ public partial class RingLiveTuningDrawer
             foreach (HSlider? slider in new[] { _emitterBoreRange, _emitterBoreLight })
                 if (slider != null && slider.Editable != present) slider.Editable = present;
             if (_emitterBoreEnabled != null && _emitterBoreEnabled.Disabled == present) _emitterBoreEnabled.Disabled = !present;
+            if (_emitterUndergroundRecovery != null && _emitterUndergroundRecovery.Disabled == present) _emitterUndergroundRecovery.Disabled = !present;
         }
         if (_open && _emitterLive != null && (_emitterLiveDelay -= delta) <= 0)
         {
@@ -160,7 +161,7 @@ public partial class RingLiveTuningDrawer
     private void BuildEmitterBoreSection(VBoxContainer tabRoot)
     {
         var section = TuningMenuUi.CreateSection(tabRoot, "Emitter bores",
-            "Opens the beam bore under each spire: the ground has no lid, the liner and a walkable plug 200 m down are drawn, and the plug glows teal. Applies with the next terrain window swap; the bore floor stays until the hole has closed.");
+            "Opens the beam bore under each spire: the ground has no lid, the liner is drawn, and an open iris rim 200 m down glows teal. Falling in drops you down the shaft. Applies with the next terrain window swap; the bore floor stays until the hole has closed.");
         _emitterBoreLive = new Label { Name = "EmitterBoreLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         section.AddChild(_emitterBoreLive);
         var s = _emitterSiteDefaults?.Settings ?? new GameplayEmitterSiteSettings();
@@ -168,6 +169,10 @@ public partial class RingLiveTuningDrawer
         _emitterBoreEnabled = new CheckButton { Name = "EmitterBoreEnabled", Text = "Bore apertures", ButtonPressed = s.BoreAperturesEnabled, Disabled = !present };
         _emitterBoreEnabled.Toggled += _ => QueueEmitterBoreSettings();
         section.AddChild(_emitterBoreEnabled);
+        _emitterUndergroundRecovery = new CheckButton { Name = "EmitterUndergroundRecovery", Text = "Underground recovery", ButtonPressed = s.UndergroundRecoveryEnabled, Disabled = !present,
+            TooltipText = "Teleports a player who falls out of a site's underground (below the cavern floor, or stuck in rock) to its arrival overlook." };
+        _emitterUndergroundRecovery.Toggled += _ => QueueEmitterBoreSettings();
+        section.AddChild(_emitterUndergroundRecovery);
         _emitterBoreRange = AddEmitterSlider(section, "EmitterBoreRange", "Bore visible range (m)", GameplayEmitterSiteDefaults.MinimumBoreRangeMeters, GameplayEmitterSiteDefaults.MaximumBoreRangeMeters, 500, s.BoreVisibleRangeMeters,
             "Distance within which a regular bore's liner and the far-terrain hole are drawn. The main bore scales with its larger radius.");
         _emitterBoreLight = AddEmitterSlider(section, "EmitterBoreLight", "Plug light energy", GameplayEmitterSiteDefaults.MinimumBoreLightEnergy, GameplayEmitterSiteDefaults.MaximumBoreLightEnergy, .1, s.BorePlugLightEnergy,
@@ -182,8 +187,9 @@ public partial class RingLiveTuningDrawer
 
     private void QueueEmitterBoreSettings()
     {
-        if (_emitterSiteDefaults == null || _emitterBoreEnabled == null || _emitterBoreRange == null || _emitterBoreLight == null) return;
+        if (_emitterSiteDefaults == null || _emitterBoreEnabled == null || _emitterBoreRange == null || _emitterBoreLight == null || _emitterUndergroundRecovery == null) return;
         bool changed = _emitterSiteDefaults.SetBoreAperturesEnabled(_emitterBoreEnabled.ButtonPressed);
+        changed |= _emitterSiteDefaults.SetUndergroundRecoveryEnabled(_emitterUndergroundRecovery.ButtonPressed);
         changed |= _emitterSiteDefaults.SetBoreVisibleRangeMeters((float)_emitterBoreRange.Value);
         changed |= _emitterSiteDefaults.SetBorePlugLightEnergy((float)_emitterBoreLight.Value);
         _emitterSiteDefaults.Apply(_emitterBores);
@@ -300,6 +306,7 @@ public partial class RingLiveTuningDrawer
         SetEmitterSliderNoSignal(_emitterRegularHandoff, s.RegularHandoffMeters);
         SetEmitterSliderNoSignal(_emitterMainHandoff, s.MainHandoffMeters);
         _emitterBoreEnabled?.SetPressedNoSignal(s.BoreAperturesEnabled);
+        _emitterUndergroundRecovery?.SetPressedNoSignal(s.UndergroundRecoveryEnabled);
         SetEmitterSliderNoSignal(_emitterBoreRange, s.BoreVisibleRangeMeters);
         SetEmitterSliderNoSignal(_emitterBoreLight, s.BorePlugLightEnergy);
         _emitterPoiEnabled?.SetPressedNoSignal(s.PoiStreamerEnabled);

@@ -21,7 +21,7 @@ public static class EmitterSiteApertures
     public const float MaxHoleRadiusM = 155f;
     public const float PlugDepthM = 200f;
 
-    // Bore liner (M1-8): generated code geometry just inside the POI bore wall; the plug top is the walkable floor.
+    // Bore liner (M1-8): generated code geometry just inside the POI bore wall; the plug is open (an iris rim at -200).
     public const float RegularLinerRadiusM = 76f;
     public const float MainLinerRadiusM = 151f;
     public const float LinerTopM = -0.5f;
@@ -88,8 +88,9 @@ public static class EmitterSiteApertures
     }
 
     /// <summary>
-    /// O(1): inside the bore liner (strictly inside <see cref="LinerRadius"/>) the walkable height is the plug top,
-    /// <c>PadHeight - PlugDepthM</c>. Outside the liner the normal field height applies.
+    /// O(1): true inside the bore liner column (strictly inside <see cref="LinerRadius"/>); <paramref name="floorHeight"/> is the
+    /// height of the open iris rim, <c>PadHeight - PlugDepthM</c>. Since M2-3 the plug is open, so this is NOT walkable ground:
+    /// gameplay uses it only as the bore-column predicate and the ground below comes from the underground SDF.
     /// </summary>
     public static bool TryGetBoreFloorAt(EmitterSiteRegistry? registry, double around, double across, out float floorHeight)
     {

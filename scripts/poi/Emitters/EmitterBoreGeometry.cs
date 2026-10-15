@@ -6,8 +6,8 @@ namespace RingworldTechDemo.Poi;
 
 /// <summary>
 /// Shared per-kind bore resources (liner, plug, inlay ring, rim cap, collision), in asset-local coordinates: the origin is
-/// the bore axis at the pad datum and +Y points inward (up). The liner runs from y = -200 to y = -0.5, the plug disk sits
-/// at y = -200 and is the walkable floor. Pure data: building it needs no scene nodes.
+/// the bore axis at the pad datum and +Y points inward (up). The liner runs from y = -200 to y = -0.5, the open iris rim sits
+/// at y = -200 (no floor, no plug collision). Pure data: building it needs no scene nodes.
 /// </summary>
 public sealed class EmitterBoreKindResources
 {
@@ -16,8 +16,6 @@ public sealed class EmitterBoreKindResources
     public float DiscardRadius { get; init; }
     public ArrayMesh Mesh { get; init; } = null!;
     public ConcavePolygonShape3D LinerShape { get; init; } = null!;
-    public CylinderShape3D PlugShape { get; init; } = null!;
-    public float PlugShapeCenterY { get; init; }
     public Material Dark { get; init; } = null!;
     public Material Inlay { get; init; } = null!;
     public Color InlayEmission { get; init; }
@@ -29,8 +27,8 @@ public static class EmitterBoreGeometry
     public const int RadialSegments = 64, VerticalSegments = 8;
     public const float PlugY = -EmitterSiteApertures.PlugDepthM;
     public const float PlugClearY = -EmitterSiteApertures.PlugDepthM + 0.02f;
-    public const float PlugShapeHeight = 4f;
-    public const float RegularInlayInner = 60f, RegularInlayOuter = 70f, MainInlayInner = 120f, MainInlayOuter = 140f;
+    // The teal inlay is the iris rim: an annulus at -200 whose outer edge is the liner radius (the plug itself is open since M2-3).
+    public const float RegularInlayInner = 70f, RegularInlayOuter = 76f, MainInlayInner = 140f, MainInlayOuter = 151f;
     public const float LightLocalY = -185f, RegularLightRange = 260f, MainLightRange = 420f;
     public static readonly Color FallbackTeal = new(0.2f, 0.9f, 0.85f);
     public const string RegularDarkPath = "res://assets/poi/beam_emitter/merged/materials/Obsidian_Alloy.tres";
@@ -61,27 +59,24 @@ public static class EmitterBoreGeometry
 
         BuildLiner(liner, out Vector3[] linerVertices, out Vector3[] linerNormals, out int[] linerIndices);
         BuildCap(liner, discard, out Vector3[] capVertices, out int[] capIndices);
-        BuildPlug(liner, out Vector3[] plugVertices, out int[] plugIndices);
         BuildInlay(InlayInner(kind), InlayOuter(kind), out Vector3[] inlayVertices, out int[] inlayIndices);
 
         var mesh = new ArrayMesh();
-        AddSurface(mesh, Join(linerVertices, capVertices, plugVertices), JoinNormals(linerNormals, capVertices.Length, plugVertices.Length),
-            Join(linerIndices, capIndices, plugIndices, linerVertices.Length, capVertices.Length), dark);
+        AddSurface(mesh, Join(linerVertices, capVertices), JoinNormals(linerNormals, capVertices.Length),
+            Join(linerIndices, capIndices, linerVertices.Length), dark);
         AddSurface(mesh, inlayVertices, UpNormals(inlayVertices.Length), inlayIndices, inlay);
 
-        // Collision faces: liner + rim cap (double sided through BackfaceCollision), then the plug as a thick cylinder.
+        // Collision faces: liner + rim cap (double sided through BackfaceCollision). There is no plug collision: the bore is open.
         var faces = new Vector3[linerIndices.Length + capIndices.Length];
         for (int i = 0; i < linerIndices.Length; i++) faces[i] = linerVertices[linerIndices[i]];
         for (int i = 0; i < capIndices.Length; i++) faces[linerIndices.Length + i] = capVertices[capIndices[i]];
         var linerShape = new ConcavePolygonShape3D { BackfaceCollision = true };
         linerShape.SetFaces(faces);
-        float centerY = PlugY - PlugShapeHeight * 0.5f;
-        var plugShape = new CylinderShape3D { Radius = liner, Height = PlugShapeHeight };
 
         return new EmitterBoreKindResources
         {
-            Kind = kind, LinerRadius = liner, DiscardRadius = discard, Mesh = mesh, LinerShape = linerShape, PlugShape = plugShape,
-            PlugShapeCenterY = centerY, Dark = dark, Inlay = inlay, InlayEmission = emission, LightRange = LightRange(kind)
+            Kind = kind, LinerRadius = liner, DiscardRadius = discard, Mesh = mesh, LinerShape = linerShape,
+            Dark = dark, Inlay = inlay, InlayEmission = emission, LightRange = LightRange(kind)
         };
     }
 
@@ -127,24 +122,7 @@ public static class EmitterBoreGeometry
     /// <summary>Outer cap vertices sit at R / cos(pi / 64) so the polygon edges are tangent to the discard circle.</summary>
     public static float CapOuterVertexRadius(float discardRadius) => discardRadius / Mathf.Cos(Mathf.Pi / RadialSegments);
 
-    /// <summary>Plug disk (triangle fan) at y = -200, facing up.</summary>
-    public static void BuildPlug(float radius, out Vector3[] vertices, out int[] indices)
-    {
-        vertices = new Vector3[RadialSegments + 1];
-        indices = new int[RadialSegments * 3];
-        vertices[RadialSegments] = new Vector3(0f, PlugY, 0f);
-        for (int c = 0; c < RadialSegments; c++)
-        {
-            float angle = c * Mathf.Tau / RadialSegments;
-            vertices[c] = new Vector3(Mathf.Cos(angle) * radius, PlugY, Mathf.Sin(angle) * radius);
-        }
-        for (int c = 0; c < RadialSegments; c++)
-        {
-            indices[c * 3] = RadialSegments; indices[c * 3 + 1] = (c + 1) % RadialSegments; indices[c * 3 + 2] = c;
-        }
-    }
-
-    /// <summary>Teal inlay annulus lying 2 cm above the plug.</summary>
+    /// <summary>Teal inlay annulus (the iris rim) lying 2 cm above y = -200, inside the liner radius.</summary>
     public static void BuildInlay(float inner, float outer, out Vector3[] vertices, out int[] indices)
         => BuildRing(inner, outer, PlugClearY, out vertices, out indices);
 
@@ -172,16 +150,16 @@ public static class EmitterBoreGeometry
 
     // ---- Mesh assembly ----------------------------------------------------------------------------------------------------
 
-    private static Vector3[] Join(Vector3[] a, Vector3[] b, Vector3[] c)
+    private static Vector3[] Join(Vector3[] a, Vector3[] b)
     {
-        var all = new Vector3[a.Length + b.Length + c.Length];
-        a.CopyTo(all, 0); b.CopyTo(all, a.Length); c.CopyTo(all, a.Length + b.Length);
+        var all = new Vector3[a.Length + b.Length];
+        a.CopyTo(all, 0); b.CopyTo(all, a.Length);
         return all;
     }
 
-    private static Vector3[] JoinNormals(Vector3[] liner, int capCount, int plugCount)
+    private static Vector3[] JoinNormals(Vector3[] liner, int capCount)
     {
-        var all = new Vector3[liner.Length + capCount + plugCount];
+        var all = new Vector3[liner.Length + capCount];
         liner.CopyTo(all, 0);
         for (int i = liner.Length; i < all.Length; i++) all[i] = Vector3.Up;
         return all;
@@ -194,12 +172,11 @@ public static class EmitterBoreGeometry
         return normals;
     }
 
-    private static int[] Join(int[] liner, int[] cap, int[] plug, int linerVertexCount, int capVertexCount)
+    private static int[] Join(int[] liner, int[] cap, int linerVertexCount)
     {
-        var all = new int[liner.Length + cap.Length + plug.Length];
+        var all = new int[liner.Length + cap.Length];
         liner.CopyTo(all, 0);
         for (int i = 0; i < cap.Length; i++) all[liner.Length + i] = cap[i] + linerVertexCount;
-        for (int i = 0; i < plug.Length; i++) all[liner.Length + cap.Length + i] = plug[i] + linerVertexCount + capVertexCount;
         return all;
     }
 

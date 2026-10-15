@@ -42,7 +42,7 @@ Passing tests: `emitter_bore_aperture_test`, `emitter_bore_gameplay_test`, `emit
 
 Milestone 1 is complete (all steps in the table above). Re-run the visual check any time with `tools/run_emitter_capture_route.ps1 [-Out DIR] [-Quick]`.
 
-Milestone 2 covers the underground parts: the SDF carve of bore, shaft and reactor cavern (structures may go below bedrock), placing `ReactorPOI`, and excluding designed caves. Gen-16 hooks (spec P5) also belong there.
+**Milestone 2 is in progress and paused:** see [emitter-milestone2-plan.md](emitter-milestone2-plan.md) for status, and [voxel-cave-direction-handoff.md](voxel-cave-direction-handoff.md) for the next direction (caves and voxels for gen-17 worlds). Original scope: the underground parts: the SDF carve of bore, shaft and reactor cavern (structures may go below bedrock), placing `ReactorPOI`, and excluding designed caves. Gen-16 hooks (spec P5) also belong there.
 
 ## Open items and known issues
 

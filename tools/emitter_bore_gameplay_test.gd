@@ -1,7 +1,8 @@
 extends SceneTree
 
-## M1-8 full-game bore fixture (v5 world): the player spawns inside a bore, walks on the plug at P-200, the surface
-## switch closes and reopens the hole, and the underground mode never leaves Surface. Optional `--capture=DIR` (run
+## M1-8 / M2-3 full-game bore fixture (v5 world): the plug is an open iris, so the player spawns over the bore and falls down the
+## shaft (no lift back to the plug or surface); a forced window swap and the cavern neither snap them up nor clamp them; recovery
+## returns them to the arrival overlook; the apertures switch removes the underground. Optional --capture=DIR (run
 ## windowed) saves pose PNGs at a regular and the main site.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
@@ -107,88 +108,212 @@ func _find_site(want_main: bool) -> Dictionary:
 		scan += 20000.0
 	return {}
 
+func _canon(info: Dictionary, lx: float, ly: float, lz: float) -> Array:
+	# Asset-local metres to canonical [around, vertical, across] (EmitterSiteNavigator.AssetLocalToCanonical).
+	var yaw := float(info["yaw_rad"]); var c := cos(yaw); var s := sin(yaw)
+	var fx := c * lx + s * lz; var fz := -s * lx + c * lz
+	return [float(info["origin_around"]) + fx, float(info["datum"]) + ly, float(info["origin_across"]) - fz]
+
+func _diag() -> Dictionary:
+	return surface.call("GetSurfaceDiagnostics")
+
+func _height() -> float:
+	return float(_diag().get("player_height", NAN))
+
+func _check(condition: bool, message: String) -> bool:
+	if not condition: _fail(message)
+	return condition
+
 func _run_site(label: String, info: Dictionary, full: bool) -> bool:
 	var around := float(info["around"]); var across := float(info["across"])
-	var pad := float(info["pad"]); var floor_h := float(info["floor"])
+	var pad := float(info["pad"]); var datum := float(info["datum"])
 	var liner := float(info["liner_radius"])
+	var is_main := bool(info["is_main"])
+	var floor_local := -6000.0 if is_main else -5000.0
 	print("EMITTER_BORE_SITE ", label, " ", JSON.stringify(info))
 	watch_holes = false
-	# 1. Spawn inside the bore, 50 m above the pad: the player ends on the plug.
+	watch_mode = false  # Underground mode thresholds are M2-6; the shaft and cavern may latch it for now.
+	surface.set("UndergroundRecoveryEnabled", false)
+	# 1. Spawn over the bore centre at P+50: the plug is open, so the player falls past -200 and nothing lifts them back.
 	explorer.call("SetCanonicalSpawnMeters", around + 20.0, pad + 50.0, across)
 	explorer.call("SetPresentationView", 0.0, 0.0)
-	var settled := 0
 	var saw_hole := false
-	while Time.get_ticks_msec() < deadline and settled < 40:
+	var reached := false
+	var prev := NAN
+	var frames := 0
+	while Time.get_ticks_msec() < deadline and frames < 2400:
 		if not await _step(): return false
-		var diag: Dictionary = surface.call("GetSurfaceDiagnostics")
+		frames += 1
+		var diag := _diag()
 		saw_hole = saw_hole or _holes(diag) > 0
 		var h := float(diag.get("player_height", NAN))
-		var on_floor := bool(explorer.call("is_on_floor")) and absf(h - floor_h) <= 0.25
-		settled = settled + 1 if on_floor and saw_hole else 0
-	if settled < 40: _fail("%s: player did not settle on the plug (saw_hole=%s diag=%s)" % [label, saw_hole, surface.call("GetSurfaceDiagnostics")]); return false
+		if saw_hole and not is_nan(prev) and h - prev > 5.0:
+			_fail("%s: upward jump %.2f m while falling (h=%.2f prev=%.2f)" % [label, h - prev, h - pad, prev - pad]); return false
+		if saw_hole: prev = h
+		if saw_hole and h < pad - 300.0: reached = true; break
+	if not reached: _fail("%s: player did not fall past P-300 (saw_hole=%s h=%s diag=%s)" % [label, saw_hole, _height() - pad, _diag()]); return false
 	watch_holes = true
-	var worst_error := 0.0
-	var max_vertical := -1.0e9
-	for i in 120:
-		if not await _step(): return false
-		var diag: Dictionary = surface.call("GetSurfaceDiagnostics")
-		var h := float(diag.get("player_height", NAN))
-		worst_error = maxf(worst_error, absf(h - floor_h))
-		max_vertical = maxf(max_vertical, h)
-	if worst_error > 0.1: _fail("%s: player height off the plug by %.3f m" % [label, worst_error]); return false
-	if max_vertical > pad - 190.0: _fail("%s: vertical reached %.2f (limit P-190)" % [label, max_vertical - pad]); return false
-	if not bool(explorer.call("is_on_floor")): _fail("%s: player not grounded on the plug" % label); return false
-	summary.append("%s_plug_error=%.3f" % [label, worst_error])
-	# 2. Collision height: plug inside the bore, field height outside.
+	summary.append("%s_fall_frames=%d" % [label, frames])
+	if capture_dir != "": await _capture_poses(label, liner, pad)
+	# 2. A window swap forced while the player is in the shaft must not lift them to the plug or the surface.
+	if full:
+		var rev0 := int(_diag().get("committed_revision", 0))
+		var h_before := _height()
+		surface.call("SetSurfaceAperturesEnabled", false)
+		surface.call("SetSurfaceAperturesEnabled", true)
+		var swapped := false
+		prev = h_before
+		var guard := 0
+		while Time.get_ticks_msec() < deadline and guard < 2400:
+			if not await _step(): return false
+			guard += 1
+			var diag := _diag()
+			var h := float(diag.get("player_height", NAN))
+			if h - prev > 5.0: _fail("%s: window swap lifted the player by %.2f m (h=%.2f)" % [label, h - prev, h - pad]); return false
+			prev = h
+			if int(diag.get("committed_revision", 0)) > rev0 and not bool(diag.get("aperture_replacement_pending", true)): swapped = true; break
+		if not _check(swapped, "%s: forced window swap never committed" % label): return false
+		if not _check(_height() < h_before + 1.0, "%s: height %.2f after the swap vs %.2f before" % [label, _height() - pad, h_before - pad]): return false
+		summary.append("swap_frames=%d" % guard)
+	# 3. The bore column above the iris no longer reports P-200: the ground is the true cavern floor.
 	var inside := float(surface.call("SampleCollisionHeight", around + 20.0, across))
-	if absf(inside - floor_h) > 0.001: _fail("%s: inside collision height %.3f != P-200" % [label, inside - pad]); return false
+	if not _check(absf(inside - (datum + floor_local)) < 1.0 and absf(inside - (pad - 200.0)) > 100.0,
+			"%s: bore column collision height %.3f is not the cavern floor %.3f (P-200 = %.3f)" % [label, inside, datum + floor_local, pad - 200.0]): return false
+	var below := float(surface.call("SampleGroundHeightAt", around + 20.0, pad - 1000.0, across))
+	if not _check(absf(below - (datum + floor_local)) < 1.0, "%s: ground below the shaft %.3f != cavern floor" % [label, below]): return false
 	var outside_c := float(surface.call("SampleCollisionHeight", around + liner + 14.0, across))
 	var outside_f := float(surface.call("SampleHeight", around + liner + 14.0, across))
-	if absf(outside_c - outside_f) > 0.05: _fail("%s: collision %.3f vs field %.3f outside the bore" % [label, outside_c, outside_f]); return false
-	# 4. Probe: air above the plug, solid below.
-	var air := float(probe.call("Density", surface, around + 20.0, pad - 100.0, across))
-	var solid := float(probe.call("Density", surface, around + 20.0, pad - 201.0, across))
-	if not (air > 0.0 and solid < 0.0): _fail("%s: probe air=%s solid=%s" % [label, air, solid]); return false
-	if not _surface_mode(): return false
-	if capture_dir != "": await _capture_poses(label, liner)
+	if not _check(absf(outside_c - outside_f) <= 0.05, "%s: collision %.3f vs field %.3f outside the bore" % [label, outside_c, outside_f]): return false
+	var in_shaft := float(probe.call("Density", surface, around + 20.0, pad - 100.0, across))
+	var deep_air := float(probe.call("Density", surface, around + 20.0, pad - 1000.0, across))
+	if not _check(in_shaft > 0.0 and deep_air > 0.0, "%s: probe shaft air=%s/%s" % [label, in_shaft, deep_air]): return false
+	if not _check(bool(surface.call("IsInsideSiteUnderground", around + 20.0, pad - 1000.0, across)), "%s: IsInsideSiteUnderground false in the shaft" % label): return false
+	summary.append("%s_column_floor=%.1f" % [label, inside - pad])
 	if not full: watch_holes = false; return true
-	# 5. Switch off: the bore stays while the committed window still has hole vertices, then everything releases.
+
+	# 4. Switch off: the committed hole closes, the underground disappears and heights are normal again; switch on restores it.
+	watch_holes = false
 	surface.call("SetSurfaceAperturesEnabled", false)
 	var closed := false
 	while Time.get_ticks_msec() < deadline:
 		if not await _step(): return false
-		var diag: Dictionary = surface.call("GetSurfaceDiagnostics")
+		var diag := _diag()
 		if _holes(diag) == 0 and not bool(diag.get("aperture_replacement_pending", true)): closed = true; break
-	if not closed: _fail("hole never closed after switching off"); return false
-	watch_holes = false
+	if not _check(closed, "hole never closed after switching off"): return false
 	if not await _wait_physics(10): return false
-	var after: Dictionary = surface.call("GetSurfaceDiagnostics")
-	if int(layer.get("ActiveBoreCount")) != 0: _fail("bores still active after the hole closed"); return false
+	var after := _diag()
+	if not _check(int(layer.get("ActiveBoreCount")) == 0, "bores still active after the hole closed"): return false
 	await _frames(3)
 	var global_value: Vector4 = layer.call("GetPublishedCenter", 0)
-	if global_value.w != 0.0: _fail("aperture global still published: %s" % global_value); return false
-	if bool(after.get("surface_aperture_consumers_active", true)): _fail("consumers still active after close"); return false
-	var player_h := float(after.get("player_height", NAN))
-	var field_h := float(surface.call("SampleHeight", float(after["player_around"]), float(after["player_across"])))
-	var collision_h := float(surface.call("SampleCollisionHeight", float(after["player_around"]), float(after["player_across"])))
-	if absf(collision_h - field_h) > 0.05: _fail("collision height %.3f vs field %.3f after close" % [collision_h, field_h]); return false
-	if absf(player_h - field_h) > 0.5 or player_h < pad - 5.0: _fail("player not lifted to the surface: %.3f (field %.3f, pad %.3f)" % [player_h, field_h, pad]); return false
-	summary.append("lift_error=%.3f" % absf(player_h - field_h))
-	if not _surface_mode(): return false
-	# 6. Switch on: the hole returns and the player falls to the plug.
+	if not _check(global_value.w == 0.0, "aperture global still published: %s" % global_value): return false
+	if not _check(not bool(after.get("surface_aperture_consumers_active", true)), "consumers still active after close"): return false
+	var off_c := float(surface.call("SampleCollisionHeight", around + 20.0, across))
+	var off_f := float(surface.call("SampleHeight", around + 20.0, across))
+	if not _check(absf(off_c - off_f) <= 0.05, "collision height %.3f vs field %.3f after close" % [off_c, off_f]): return false
+	if not _check(not bool(surface.call("IsInsideSiteUnderground", around + 20.0, pad - 1000.0, across)), "underground still reported with the apertures switched off"): return false
+	var off_solid := float(probe.call("Density", surface, around + 20.0, pad - 1000.0, across))
+	if not _check(off_solid < 0.0, "probe %s at the old shaft with the apertures off" % off_solid): return false
 	surface.call("SetSurfaceAperturesEnabled", true)
-	watch_holes = true
-	var fell := 0
 	var reopened := false
-	while Time.get_ticks_msec() < deadline and fell < 40:
+	var waited := 0
+	while Time.get_ticks_msec() < deadline and waited < 3000:
 		if not await _step(): return false
-		var diag: Dictionary = surface.call("GetSurfaceDiagnostics")
-		reopened = reopened or _holes(diag) > 0
-		var h := float(diag.get("player_height", NAN))
-		fell = fell + 1 if reopened and bool(explorer.call("is_on_floor")) and absf(h - floor_h) <= 0.25 else 0
-	if fell < 40: _fail("player did not fall back onto the plug (reopened=%s)" % reopened); return false
-	watch_holes = false
+		waited += 1
+		var diag := _diag()
+		if _holes(diag) > 0 and not bool(diag.get("aperture_replacement_pending", true)): reopened = true; break
+	if not _check(reopened, "hole did not reopen after switching on"): return false
+	if not await _wait_physics(20): return false
+	if not _check(bool(surface.call("IsInsideSiteUnderground", around + 20.0, pad - 1000.0, across)), "underground not restored after switching on"): return false
+	watch_holes = true
+
+	# 5. Recovery disabled: a player below the cavern floor keeps falling; nothing teleports them.
+	var deep := _canon(info, 0.0, floor_local - 100.0, 0.0)
+	explorer.call("TeleportToCanonicalMeters", deep[0], deep[1], deep[2], 0.0, 0.0, false)
+	if not await _wait_physics(90): return false
+	var count0 := int(surface.get("UndergroundRecoveryCount"))
+	if not _check(count0 == 0, "recovery fired while disabled (count=%d)" % count0): return false
+	if not _check(_height() <= float(deep[1]) + 1.0 and _height() < datum + floor_local - 20.0, "player was moved while recovery was disabled (h=%.2f)" % (_height() - datum)): return false
+	summary.append("no_recovery_while_off=ok")
+
+	# 6. Recovery enabled: the player returns to the arrival overlook (hovering in flight until the M2-4 reactor floor exists).
+	surface.set("UndergroundRecoveryEnabled", true)
+	var recovered := false
+	waited = 0
+	while Time.get_ticks_msec() < deadline and waited < 240:
+		if not await _step(): return false
+		waited += 1
+		if int(surface.get("UndergroundRecoveryCount")) >= 1: recovered = true; break
+	if not _check(recovered, "recovery never fired below the cavern floor (h=%.2f)" % (_height() - datum)): return false
+	if not await _wait_physics(5): return false
+	var overlook := _canon(info, 0.0, -4000.0 + 80.0, 1385.0)
+	var rd := _diag()
+	var err_h := Vector2(float(rd["player_around"]) - float(overlook[0]), float(rd["player_across"]) - float(overlook[2])).length()
+	var err_v := absf(float(rd["player_height"]) - float(overlook[1]))
+	if not _check(err_h < 3.0 and err_v < 3.0, "recovery pose off the overlook by %.2f m horizontally, %.2f m vertically" % [err_h, err_v]): return false
+	if not _check(int(surface.get("LastUndergroundRecoverySite")) == int(info["site"]), "recovery site mismatch"): return false
+	if not _check(bool(explorer.get("NoclipEnabled")), "recovery hover should be flight until M2-4"): return false
+	summary.append("recovery_err=%.2f" % maxf(err_h, err_v))
+	if not await _wait_physics(30): return false
+	if not _check(int(surface.get("UndergroundRecoveryCount")) == 1, "recovery fired again after arriving at the overlook"): return false
+
+	# 7. Cavern centre in noclip: nothing snaps the player up, the probe reads air inside and rock 50 m outside the wall.
+	var centre := _canon(info, 0.0, -4000.0, 0.0)
+	explorer.call("TeleportToCanonicalMeters", centre[0], centre[1], centre[2], 0.0, 0.0, true)
+	if not await _wait_physics(2): return false
+	var h0 := _height()
+	var worst_rise := 0.0
+	for i in 300:
+		if not await _step(): return false
+		worst_rise = maxf(worst_rise, _height() - h0)
+	if not _check(worst_rise < 0.5, "player snapped up %.2f m in the cavern" % worst_rise): return false
+	if not _check(bool(surface.call("IsInsideSiteUnderground", centre[0], centre[1], centre[2])), "cavern centre not underground"): return false
+	var air := float(probe.call("Density", surface, centre[0], centre[1], centre[2]))
+	var wall := _canon(info, 1240.0 + 50.0, -4000.0, 0.0)
+	var rock := float(probe.call("Density", surface, wall[0], wall[1], wall[2]))
+	if not _check(air > 0.0 and rock < 0.0, "probe cavern air=%s, 50 m outside the wall=%s" % [air, rock]): return false
+	if not _check(not bool(surface.call("IsInsideSiteUnderground", wall[0], wall[1], wall[2])), "rock outside the wall reported as underground"): return false
+	summary.append("cavern_rise=%.3f" % worst_rise)
+
+	# 8. Grounded physics in the cavern, 600 m from the bore (far outside the surface window): walking is not clamped or frozen.
+	surface.set("UndergroundRecoveryEnabled", false)
+	var far := _canon(info, 600.0, -4000.0, 0.0)
+	explorer.call("TeleportToCanonicalMeters", far[0], far[1], far[2], 0.0, 0.0, false)
+	if not await _wait_physics(5): return false
+	var clamp: Vector3 = probe.call("ConstrainedVelocity", surface, explorer, Vector3(50.0, 0.0, 50.0), 1.0 / 60.0)
+	if not _check(clamp.is_equal_approx(Vector3(50.0, 0.0, 50.0)), "velocity clamp active in the cavern: %s" % clamp): return false
+	var start := _diag()
+	_key(KEY_W, true)
+	var worst_up := 0.0
+	prev = float(start["player_height"])
+	for i in 120:
+		if not await _step():
+			_key(KEY_W, false)
+			return false
+		var h := _height()
+		worst_up = maxf(worst_up, h - prev)
+		prev = h
+	_key(KEY_W, false)
+	var end := _diag()
+	var moved := Vector2(float(end["player_around"]) - float(start["player_around"]), float(end["player_across"]) - float(start["player_across"])).length()
+	if not _check(moved > 4.0, "grounded walk in the cavern moved only %.2f m (clamped)" % moved): return false
+	if not _check(worst_up < 0.5, "player snapped up %.2f m while walking in the cavern" % worst_up): return false
+	summary.append("cavern_walk=%.1f" % moved)
+	surface.set("UndergroundRecoveryEnabled", true)
+
+	# 9. Recovery never fires for a player standing on the ground beside the spire (inside the volume's horizontal reach).
+	var count1 := int(surface.get("UndergroundRecoveryCount"))
+	var entry := _canon(info, 88.782555, 0.0, 214.34006)
+	explorer.call("TeleportToCanonicalMeters", entry[0], entry[1] + 2.0, entry[2], 0.0, 0.0, false)
+	if not await _wait_physics(180): return false
+	var stand := _diag()
+	if not _check(int(surface.get("UndergroundRecoveryCount")) == count1, "recovery fired for a player standing beside the spire"): return false
+	if not _check(absf(float(stand["player_height"]) - pad) < 40.0 and bool(explorer.call("is_on_floor")), "player not standing on the ground beside the spire (h=%.2f)" % (float(stand["player_height"]) - pad)): return false
 	return true
+
+func _key(code: Key, pressed: bool) -> void:
+	var event := InputEventKey.new()
+	event.keycode = code; event.physical_keycode = code; event.pressed = pressed
+	Input.parse_input_event(event)
 
 func _holes(diag: Dictionary) -> int:
 	var native: Dictionary = diag.get("native", {})
@@ -219,17 +344,19 @@ func _wait_physics(count: int) -> bool:
 		if not await _step(): return false
 	return true
 
-func _capture_poses(label: String, liner: float) -> void:
+
+func _capture_poses(label: String, liner: float, pad: float) -> void:
 	DirAccess.make_dir_recursive_absolute(capture_dir)
-	var origin: Vector3 = explorer.global_position
 	var up: Vector3 = explorer.global_basis.y.normalized()
+	# Origin: the open iris rim on the bore axis (200 m below the pad), from the player's own height.
+	var origin: Vector3 = explorer.global_position + up * (pad - 200.0 - _height())
 	var tangent: Vector3 = up.cross(Vector3.UP).normalized()
 	if tangent.length() < 0.1: tangent = up.cross(Vector3.RIGHT).normalized()
 	var scale := liner / 76.0
 	if camera == null:
 		camera = Camera3D.new(); camera.far = 400000.0; camera.name = "BoreCaptureCamera"; game.add_child(camera)
 	var rim := up * 200.0
-	await _shot(label + "_plug_looking_up", origin + up * 1.7, origin + up * 1.7 + up * 150.0 + tangent * 15.0 * scale, tangent)
+	await _shot(label + "_iris_looking_up", origin + up * 1.7, origin + up * 1.7 + up * 150.0 + tangent * 15.0 * scale, tangent)
 	await _shot(label + "_throat_down", origin + rim + up * 25.0 * scale, origin, tangent)
 	await _shot(label + "_rim_oblique", origin + rim + up * 40.0 * scale + tangent * 120.0 * scale, origin + rim - up * 60.0, up)
 	await _shot(label + "_altitude_2km", origin + rim + up * 2000.0 + tangent * 500.0, origin + rim, tangent)

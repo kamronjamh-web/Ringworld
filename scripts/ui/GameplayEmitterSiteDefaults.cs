@@ -70,6 +70,7 @@ public sealed class GameplayEmitterSiteDefaults
         BoreAperturesEnabled = input.BoreAperturesEnabled,
         BoreVisibleRangeMeters = Finite(input.BoreVisibleRangeMeters, 16000f, MinimumBoreRangeMeters, MaximumBoreRangeMeters),
         BorePlugLightEnergy = Finite(input.BorePlugLightEnergy, 2f, MinimumBoreLightEnergy, MaximumBoreLightEnergy),
+        UndergroundRecoveryEnabled = input.UndergroundRecoveryEnabled,
         TeleportViewpoint = Mathf.Clamp(input.TeleportViewpoint, MinimumTeleportViewpoint, MaximumTeleportViewpoint),
         FarViewpointDistanceKm = Finite(input.FarViewpointDistanceKm, 20f, MinimumFarViewpointKm, MaximumFarViewpointKm),
         HighViewpointAltitudeKm = Finite(input.HighViewpointAltitudeKm, 150f, MinimumHighViewpointKm, MaximumHighViewpointKm)
@@ -96,6 +97,7 @@ public sealed class GameplayEmitterSiteDefaults
         to.BoreAperturesEnabled = from.BoreAperturesEnabled;
         to.BoreVisibleRangeMeters = from.BoreVisibleRangeMeters;
         to.BorePlugLightEnergy = from.BorePlugLightEnergy;
+        to.UndergroundRecoveryEnabled = from.UndergroundRecoveryEnabled;
         to.TeleportViewpoint = from.TeleportViewpoint;
         to.FarViewpointDistanceKm = from.FarViewpointDistanceKm;
         to.HighViewpointAltitudeKm = from.HighViewpointAltitudeKm;
@@ -117,6 +119,7 @@ public sealed class GameplayEmitterSiteDefaults
     public bool SetBoreAperturesEnabled(bool value) => Change(Settings.BoreAperturesEnabled != value, () => Settings.BoreAperturesEnabled = value);
     public bool SetBoreVisibleRangeMeters(float value) { float v = Finite(value, 16000f, MinimumBoreRangeMeters, MaximumBoreRangeMeters); return Change(Settings.BoreVisibleRangeMeters != v, () => Settings.BoreVisibleRangeMeters = v); }
     public bool SetBorePlugLightEnergy(float value) { float v = Finite(value, 2f, MinimumBoreLightEnergy, MaximumBoreLightEnergy); return Change(Settings.BorePlugLightEnergy != v, () => Settings.BorePlugLightEnergy = v); }
+    public bool SetUndergroundRecoveryEnabled(bool value) => Change(Settings.UndergroundRecoveryEnabled != value, () => Settings.UndergroundRecoveryEnabled = value);
     public bool SetTeleportViewpoint(int value) { int v = Mathf.Clamp(value, MinimumTeleportViewpoint, MaximumTeleportViewpoint); return Change(Settings.TeleportViewpoint != v, () => Settings.TeleportViewpoint = v); }
     public bool SetFarViewpointDistanceKm(float value) { float v = Finite(value, 20f, MinimumFarViewpointKm, MaximumFarViewpointKm); return Change(Settings.FarViewpointDistanceKm != v, () => Settings.FarViewpointDistanceKm = v); }
     public bool SetHighViewpointAltitudeKm(float value) { float v = Finite(value, 150f, MinimumHighViewpointKm, MaximumHighViewpointKm); return Change(Settings.HighViewpointAltitudeKm != v, () => Settings.HighViewpointAltitudeKm = v); }
@@ -150,6 +153,7 @@ public sealed class GameplayEmitterSiteDefaults
     {
         if (gameplay == null || !GodotObject.IsInstanceValid(gameplay)) return;
         gameplay.SetSurfaceAperturesEnabled(Settings.BoreAperturesEnabled);
+        gameplay.UndergroundRecoveryEnabled = Settings.UndergroundRecoveryEnabled;
     }
 
     /// <summary>Copies the bore visible range and plug light energy onto the bore layer.</summary>
