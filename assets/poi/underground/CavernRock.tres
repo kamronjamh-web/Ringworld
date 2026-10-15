@@ -1,0 +1,7 @@
+[gd_resource type="StandardMaterial3D" format=3]
+
+[resource]
+resource_name = "CavernRock"
+cull_mode = 2
+albedo_color = Color(0.17, 0.15, 0.135, 1)
+roughness = 0.95

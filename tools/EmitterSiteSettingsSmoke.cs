@@ -19,6 +19,7 @@ public partial class EmitterSiteSettingsSmoke : Node
         && s.PoiStreamerEnabled && Mathf.IsEqualApprox(s.RegularLoadRadiusMeters, 14000) && Mathf.IsEqualApprox(s.MainLoadRadiusMeters, 32000)
         && Mathf.IsEqualApprox(s.UnloadMarginMeters, 2000) && Mathf.IsEqualApprox(s.MinDwellSeconds, 1) && Mathf.IsEqualApprox(s.CollisionOnMeters, 1500)
         && Mathf.IsEqualApprox(s.CollisionOffMarginMeters, 500)
+        && s.UndergroundRecoveryEnabled
         && s.BoreAperturesEnabled && Mathf.IsEqualApprox(s.BoreVisibleRangeMeters, 16000) && Mathf.IsEqualApprox(s.BorePlugLightEnergy, 2)
         && s.TeleportViewpoint == 0 && Mathf.IsEqualApprox(s.FarViewpointDistanceKm, 20) && Mathf.IsEqualApprox(s.HighViewpointAltitudeKm, 150);
 
@@ -34,6 +35,7 @@ public partial class EmitterSiteSettingsSmoke : Node
         first.SetCollisionOnMeters(1200); first.SetCollisionOffMarginMeters(300);
         if (!first.SetBoreAperturesEnabled(false) || first.SetBoreAperturesEnabled(false)) throw new InvalidOperationException("bore Set did not report the changed flag");
         first.SetBoreVisibleRangeMeters(9000); first.SetBorePlugLightEnergy(5.5f);
+        if (!first.SetUndergroundRecoveryEnabled(false) || first.SetUndergroundRecoveryEnabled(false)) throw new InvalidOperationException("recovery Set did not report the changed flag");
         if (!first.SetTeleportViewpoint(2) || first.SetTeleportViewpoint(2)) throw new InvalidOperationException("viewpoint Set did not report the changed flag");
         first.SetFarViewpointDistanceKm(35); first.SetHighViewpointAltitudeKm(250);
         if (!first.Dirty || !first.Save() || first.Dirty) throw new InvalidOperationException("emitter preferences did not save");
@@ -48,6 +50,7 @@ public partial class EmitterSiteSettingsSmoke : Node
         second.SetRegularLoadRadiusMeters(1); second.SetMainLoadRadiusMeters(1e9f); second.SetUnloadMarginMeters(float.NaN); second.SetMinDwellSeconds(-2);
         second.SetCollisionOnMeters(1e9f); second.SetCollisionOffMarginMeters(0);
         if (!Mathf.IsEqualApprox(second.Settings.BoreVisibleRangeMeters, 9000) || second.Settings.BoreAperturesEnabled || !Mathf.IsEqualApprox(second.Settings.BorePlugLightEnergy, 5.5f)) throw new InvalidOperationException("bore preferences did not round-trip");
+        if (second.Settings.UndergroundRecoveryEnabled) throw new InvalidOperationException("underground recovery switch did not round-trip");
         if (s.TeleportViewpoint != 2 || !Mathf.IsEqualApprox(s.FarViewpointDistanceKm, 35) || !Mathf.IsEqualApprox(s.HighViewpointAltitudeKm, 250)) throw new InvalidOperationException("navigation preferences did not round-trip");
         second.SetTeleportViewpoint(99); second.SetFarViewpointDistanceKm(1); second.SetHighViewpointAltitudeKm(9999);
         if (second.Settings.TeleportViewpoint != GameplayEmitterSiteDefaults.MaximumTeleportViewpoint || !Mathf.IsEqualApprox(second.Settings.FarViewpointDistanceKm, GameplayEmitterSiteDefaults.MinimumFarViewpointKm) || !Mathf.IsEqualApprox(second.Settings.HighViewpointAltitudeKm, GameplayEmitterSiteDefaults.MaximumHighViewpointKm)) throw new InvalidOperationException("navigation setter bounds were not enforced");

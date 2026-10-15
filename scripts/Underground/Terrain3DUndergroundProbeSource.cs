@@ -26,6 +26,8 @@ public sealed class Terrain3DUndergroundProbeSource : IUndergroundProbeSource
     public bool TryGetDensity(double around, double vertical, double across, out float density)
     {
         density = 0;
+        // M2-3: a site's underground volume (bore, shaft, cavern) is air, whatever the surface height above it says.
+        if (IsAvailable && _gameplay.IsInsideSiteUnderground(around, vertical, across)) { density = 1f; return true; }
         if (!TryGetSurfaceHeight(around, across, out float surface)) return false;
         density = vertical < surface ? -1f : 1f;
         return true;

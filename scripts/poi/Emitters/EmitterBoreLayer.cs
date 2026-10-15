@@ -12,7 +12,7 @@ using RingworldTechDemo.Voxel.Phase2;
 namespace RingworldTechDemo.Poi;
 
 /// <summary>
-/// Presents the code-generated bore liner, walkable plug, teal inlay and plug light for the (at most two) sites nearest the
+/// Presents the code-generated bore liner, rim cap, teal iris rim (the plug is open since M2-3) and its light for the (at most two) sites nearest the
 /// explorer and the camera, while the surface apertures are consumed (<see cref="RingTerrain3DGameplay.SurfaceApertureConsumersActive"/>).
 /// Two permanent slots; assigning a slot only sets a transform, visibility and collision. It also publishes the aperture
 /// shader globals the far terrain and ocean shaders discard against. Always present in the scene; inert in non-site worlds.
@@ -29,7 +29,7 @@ public partial class EmitterBoreLayer : Node3D
         public Node3D Root = null!;
         public MeshInstance3D Mesh = null!;
         public StaticBody3D Body = null!;
-        public CollisionShape3D LinerShape = null!, PlugShape = null!;
+        public CollisionShape3D LinerShape = null!;
         public OmniLight3D Light = null!;
         public int Site = -1;
         public SiteKind Kind;
@@ -91,14 +91,12 @@ public partial class EmitterBoreLayer : Node3D
         slot.Mesh = new MeshInstance3D { Name = "Bore", CastShadow = GeometryInstance3D.ShadowCastingSetting.On };
         slot.Body = new StaticBody3D { Name = "Collision", ProcessMode = ProcessModeEnum.Disabled };
         slot.LinerShape = new CollisionShape3D { Name = "Liner" };
-        slot.PlugShape = new CollisionShape3D { Name = "Plug" };
         slot.Light = new OmniLight3D
         {
             Name = "PlugLight", Position = new Vector3(0f, EmitterBoreGeometry.LightLocalY, 0f), ShadowEnabled = false, OmniAttenuation = 1f,
             OmniRange = EmitterBoreGeometry.RegularLightRange, LightColor = EmitterBoreGeometry.FallbackTeal, LightEnergy = _lightEnergy
         };
         slot.Body.AddChild(slot.LinerShape);
-        slot.Body.AddChild(slot.PlugShape);
         slot.Root.AddChild(slot.Mesh);
         slot.Root.AddChild(slot.Body);
         slot.Root.AddChild(slot.Light);
@@ -197,8 +195,6 @@ public partial class EmitterBoreLayer : Node3D
             EmitterBoreKindResources resources = EmitterBoreGeometry.Get(placement.Kind);
             slot.Mesh.Mesh = resources.Mesh;
             slot.LinerShape.Shape = resources.LinerShape;
-            slot.PlugShape.Shape = resources.PlugShape;
-            slot.PlugShape.Position = new Vector3(0f, resources.PlugShapeCenterY, 0f);
             slot.Light.OmniRange = resources.LightRange;
             slot.Light.LightColor = resources.InlayEmission;
             slot.Kind = placement.Kind;
@@ -333,7 +329,12 @@ public partial class EmitterBoreLayer : Node3D
         result["liner_radius"] = (double)EmitterSiteApertures.LinerRadius(site.Kind);
         result["hole_radius"] = (double)EmitterSiteApertures.HoleRadius(site.Kind);
         result["discard_radius"] = (double)EmitterSiteApertures.DiscardRadius(site.Kind);
-        result["floor"] = (double)(site.PadHeight - EmitterSiteApertures.PlugDepthM);
+        result["floor"] = (double)(site.PadHeight - EmitterSiteApertures.PlugDepthM); // iris rim height; not walkable since M2-3
+        EmitterSitePlacement placement = _placements.GetPlacement(index);
+        result["datum"] = placement.PadHeightMeters + EmitterSiteFrameMath.DefaultPadClearanceMeters;
+        result["origin_around"] = placement.AroundMeters;
+        result["origin_across"] = placement.AcrossMeters;
+        result["yaw_rad"] = placement.YawRadians;
         return result;
     }
 }

@@ -2032,7 +2032,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private float ResolveAltitudeAboveTerrainMeters()
     {
-        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters,out float surfaceHeight))
+        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(_canonicalPosition.AroundMeters,_canonicalPosition.VerticalMeters,_canonicalPosition.AcrossMeters,out float surfaceHeight))
             return Mathf.Max(0,(float)_canonicalPosition.VerticalMeters-surfaceHeight);
         if (_grid?.TerrainSampler == null)
             return Mathf.Max(0.0f, (float)_canonicalPosition.VerticalMeters);
@@ -2397,6 +2397,11 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private void BeginSpawnTerrainSettle()
     {
+        if (UseTerrain3DSurfacePhysics && IsInsideSiteUndergroundZone(_canonicalPosition))
+        {
+            // Inside a site's underground (or over its open bore) there is no terrain to settle on: the player falls or hovers where placed.
+            _undergroundSpawnSettling=false; _spawnTerrainSettling=false; return;
+        }
         if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters,out float surfaceHeight))
         {
             _canonicalPosition=_canonicalPosition with { VerticalMeters=surfaceHeight+1.05 };
@@ -2422,7 +2427,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     private bool IsCanonicalPositionBelowTerrain(in RingCanonicalPosition position)
     {
-        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(position.AroundMeters,position.AcrossMeters,out float terrainHeight))
+        if (UseTerrain3DSurfacePhysics && TryGetSurfaceTerrainHeight(position.AroundMeters,position.VerticalMeters,position.AcrossMeters,out float terrainHeight))
             return position.VerticalMeters < terrainHeight-Math.Max(BodyHeight,2.0f);
         if (_grid?.TerrainSampler == null) return false;
         int across = Mathf.Clamp(
@@ -2490,6 +2495,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             {
                 _canonicalVelocity=Vector3.Zero; _grounded=true; RecenterCollisionOrigin(force:false); ApplyWorldTransform(); return true;
             }
+            if (IsInsideSiteUndergroundZone(_canonicalPosition)) { _spawnTerrainSettling=false; return false; }
             _terrain3DSurfaceGameplay.EnsureCoverage(_canonicalPosition);
             float exactSurface=_terrain3DSurfaceGameplay.SampleCollisionHeight(_canonicalPosition.AroundMeters,_canonicalPosition.AcrossMeters);
             if(float.IsFinite(exactSurface)) _canonicalPosition=_canonicalPosition with { VerticalMeters=exactSurface+1.05 };

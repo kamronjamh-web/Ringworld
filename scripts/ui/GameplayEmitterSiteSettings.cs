@@ -22,6 +22,7 @@ public partial class GameplayEmitterSiteSettings : Resource
     [Export] public bool BoreAperturesEnabled { get; set; } = true;
     [Export] public float BoreVisibleRangeMeters { get; set; } = 16000f;
     [Export] public float BorePlugLightEnergy { get; set; } = 2f;
+    [Export] public bool UndergroundRecoveryEnabled { get; set; } = true;
     [Export] public int TeleportViewpoint { get; set; }
     [Export] public float FarViewpointDistanceKm { get; set; } = 20f;
     [Export] public float HighViewpointAltitudeKm { get; set; } = 150f;

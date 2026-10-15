@@ -192,16 +192,16 @@ func _check_on_pad(label: String, info: Dictionary, frames: int) -> bool:
 
 func _bore_escape(info: Dictionary) -> bool:
 	var around := float(info["around"]); var across := float(info["across"])
-	var pad := float(info["pad"]); var floor_h := float(info["floor"])
+	var pad := float(info["pad"])
+	# M2-3: the plug is open, so the player falls down the shaft; the entry teleport must still get them out from inside it.
 	explorer.call("SetCanonicalSpawnMeters", around + 20.0, pad + 50.0, across)
 	explorer.call("SetPresentationView", 0.0, 0.0)
-	var settled := 0
+	var in_shaft := false
 	var start := Time.get_ticks_msec()
-	while Time.get_ticks_msec() - start < 180000 and settled < 40:
+	while Time.get_ticks_msec() - start < 180000 and not in_shaft:
 		if not await _step(): return false
-		var h := float(_diag().get("player_height", NAN))
-		settled = settled + 1 if bool(explorer.call("is_on_floor")) and absf(h - floor_h) <= 0.25 else 0
-	if settled < 40: _fail("bore escape: never settled on the plug"); return false
+		in_shaft = float(_diag().get("player_height", NAN)) < pad - 300.0
+	if not in_shaft: _fail("bore escape: never fell down the shaft"); return false
 	if not bool(drawer.call("RequestEmitterTeleport", int(info["site"]), 0)): _fail("bore escape: request refused"); return false
 	if not await _wait_arrival("bore escape"): return false
 	return await _check_on_pad("bore escape", info, 40)

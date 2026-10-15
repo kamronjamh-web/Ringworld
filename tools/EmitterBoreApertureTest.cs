@@ -77,7 +77,7 @@ public partial class EmitterBoreApertureTest : RefCounted
                 foreach ((double da, double dc) in new[] { (r, 0d), (0d, r), (-r, 0d) })
                 {
                     bool ok = EmitterSiteApertures.TryGetBoreFloorAt(registry, site.Around + da, site.Across + dc, out float h);
-                    Expect(failures, ok && Math.Abs(h - floor) < 1e-3f, $"{label} r={r:0.0} inside gives P-200 (ok={ok} h={h})");
+                    Expect(failures, ok && Math.Abs(h - floor) < 1e-3f, $"{label} r={r:0.0} inside the liner column reports the iris rim P-200 (ok={ok} h={h})");
                     // The same point shifted by a full circumference (seam wrap) must agree.
                     bool wrapped = EmitterSiteApertures.TryGetBoreFloorAt(registry, site.Around + da - circumference, site.Across + dc, out float hw);
                     Expect(failures, wrapped && Math.Abs(hw - floor) < 1e-3f, $"{label} r={r:0.0} wrapped inside gives P-200");
@@ -121,8 +121,7 @@ public partial class EmitterBoreApertureTest : RefCounted
             Expect(failures, Math.Abs(minY + 200f) < Eps && Math.Abs(maxY + 0.5f) < Eps, label + " liner spans y -200..-0.5");
             Expect(failures, inward, label + " liner normals face inward");
 
-            EmitterBoreGeometry.BuildPlug(liner, out Vector3[] plug, out _);
-            Expect(failures, plug.All(v => Math.Abs(v.Y + 200f) < Eps), label + " plug top at -200");
+            // M2-3: the plug is open, so there is no plug disk builder any more; the iris rim is the inlay annulus checked below.
 
             EmitterBoreGeometry.BuildCap(liner, discard, out Vector3[] cap, out int[] capIndices);
             int n = EmitterBoreGeometry.RadialSegments;
@@ -143,13 +142,17 @@ public partial class EmitterBoreApertureTest : RefCounted
 
             EmitterBoreGeometry.BuildInlay(EmitterBoreGeometry.InlayInner(kind), EmitterBoreGeometry.InlayOuter(kind), out Vector3[] inlay, out _);
             Expect(failures, inlay.All(v => Math.Abs(v.Y + 199.98f) < Eps), label + " inlay at -199.98");
-            Expect(failures, kind == SiteKind.Main ? EmitterBoreGeometry.InlayInner(kind) == 120f && EmitterBoreGeometry.InlayOuter(kind) == 140f
-                : EmitterBoreGeometry.InlayInner(kind) == 60f && EmitterBoreGeometry.InlayOuter(kind) == 70f, label + " inlay radii");
+            Expect(failures, kind == SiteKind.Main ? EmitterBoreGeometry.InlayInner(kind) == 140f && EmitterBoreGeometry.InlayOuter(kind) == 151f
+                : EmitterBoreGeometry.InlayInner(kind) == 70f && EmitterBoreGeometry.InlayOuter(kind) == 76f, label + " iris rim radii");
+            Expect(failures, Math.Abs(EmitterBoreGeometry.InlayOuter(kind) - liner) < Eps, label + " iris rim outer edge is the liner radius");
+            Expect(failures, Math.Abs(inlay.Take(EmitterBoreGeometry.RadialSegments).Max(v => new Vector2(v.X, v.Z).Length()) - EmitterBoreGeometry.InlayInner(kind)) < Eps, label + " iris rim is an annulus (hollow centre)");
 
             EmitterBoreKindResources resources = EmitterBoreGeometry.Build(kind);
             Expect(failures, resources.LinerShape.BackfaceCollision, label + " liner collision is double sided");
-            Expect(failures, Math.Abs(resources.PlugShape.Radius - liner) < Eps && Math.Abs(resources.PlugShape.Height - 4f) < Eps
-                && Math.Abs(resources.PlugShapeCenterY + 202f) < Eps, label + " plug cylinder top at -200");
+            // Open iris: the body surface holds only the liner and rim cap vertices (no plug disk, no plug collision shape).
+            var bodyVertices = (Vector3[])resources.Mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+            Expect(failures, bodyVertices.Length == vertices.Length + cap.Length, label + " body mesh has no plug disk");
+            Expect(failures, !bodyVertices.Any(v => Math.Abs(v.Y + 200f) < Eps && new Vector2(v.X, v.Z).Length() < liner - 1f), label + " nothing spans the bore at -200");
             Expect(failures, resources.Mesh.GetSurfaceCount() == 2, label + " mesh has body and inlay surfaces");
             Expect(failures, resources.Dark is BaseMaterial3D { CullMode: BaseMaterial3D.CullModeEnum.Disabled }, label + " dark material is double sided");
             Expect(failures, resources.LinerShape.GetFaces().Length == (indices.Length + capIndices.Length), label + " collision faces");

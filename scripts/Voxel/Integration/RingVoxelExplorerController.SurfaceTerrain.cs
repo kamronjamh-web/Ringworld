@@ -10,6 +10,13 @@ public partial class RingVoxelExplorerController
     private RingTerrain3DGameplay? _terrain3DSurfaceGameplay;
 
     private bool TryGetSurfaceTerrainHeight(double aroundMeters, double acrossMeters, out float height)
+        => TryGetSurfaceTerrainHeight(aroundMeters, double.NaN, acrossMeters, out height);
+
+    /// <summary>
+    /// Ground height at a point. A finite <paramref name="verticalMeters"/> lets a point inside a site's underground volume see
+    /// the true floor below it (the plug is open) instead of the surface height.
+    /// </summary>
+    private bool TryGetSurfaceTerrainHeight(double aroundMeters, double verticalMeters, double acrossMeters, out float height)
     {
         height = float.NaN;
         if (!UseTerrain3DSurfacePhysics || _grid == null || acrossMeters < 0 || acrossMeters > _grid.RingAcrossWidthMeters - 2)
@@ -17,8 +24,19 @@ public partial class RingVoxelExplorerController
         _terrain3DSurfaceGameplay ??= GetNodeOrNull<RingTerrain3DGameplay>(Terrain3DGameplayPath);
         if (_terrain3DSurfaceGameplay == null || !_terrain3DSurfaceGameplay.IsNodeReady()) return false;
         if (IsInsideTree() && !_terrain3DSurfaceGameplay.EnsureInitialized()) return false;
-        height = _terrain3DSurfaceGameplay.SampleCollisionHeight(aroundMeters, acrossMeters);
+        height = double.IsFinite(verticalMeters)
+            ? _terrain3DSurfaceGameplay.SampleGroundHeightAt(aroundMeters, verticalMeters, acrossMeters)
+            : _terrain3DSurfaceGameplay.SampleCollisionHeight(aroundMeters, acrossMeters);
         return float.IsFinite(height);
+    }
+
+    /// <summary>True inside a site's underground volume or the bore column above it (see <see cref="RingTerrain3DGameplay.IsInsideSiteUndergroundZone"/>).</summary>
+    private bool IsInsideSiteUndergroundZone(in RingCanonicalPosition position)
+    {
+        if (!UseTerrain3DSurfacePhysics) return false;
+        _terrain3DSurfaceGameplay ??= GetNodeOrNull<RingTerrain3DGameplay>(Terrain3DGameplayPath);
+        return _terrain3DSurfaceGameplay != null && _terrain3DSurfaceGameplay.IsNodeReady()
+            && _terrain3DSurfaceGameplay.IsInsideSiteUndergroundZone(position.AroundMeters, position.VerticalMeters, position.AcrossMeters);
     }
 
     private bool MoveWithTerrain3DSurfacePhysics(bool swimming)
@@ -30,7 +48,8 @@ public partial class RingVoxelExplorerController
         // Coverage requests use actual position plus velocity lookahead. Feeding
         // an unsupported predicted point back as a teleport would cancel the
         // readying corridor every tick at the safety boundary.
-        if (!_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition))
+        bool underground = IsInsideSiteUndergroundZone(_canonicalPosition);
+        if (!underground && !_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition))
         {
             _canonicalVelocity = _terrain3DSurfaceGameplay.ConstrainSurfaceVelocity(_canonicalPosition, _canonicalVelocity, delta);
             Velocity = Vector3.Zero;
@@ -52,7 +71,7 @@ public partial class RingVoxelExplorerController
         _grounded = !swimming && IsOnFloor();
         if (_grounded) { _lastSmoothGroundedPosition = _canonicalPosition; _hasLastSmoothGroundedPosition = true; }
         _terrain3DSurfaceGameplay.EnsureCoverage(_canonicalPosition);
-        if (!_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition))
+        if (!IsInsideSiteUndergroundZone(_canonicalPosition) && !_terrain3DSurfaceGameplay.HasCollisionCoverage(_canonicalPosition))
         {
             _canonicalVelocity = Vector3.Zero;
             RecenterCollisionOrigin(force: false); ApplyWorldTransform();

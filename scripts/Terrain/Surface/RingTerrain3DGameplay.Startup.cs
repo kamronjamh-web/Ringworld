@@ -251,7 +251,7 @@ public partial class RingTerrain3DGameplay
             _maxReadinessMilliseconds = Math.Max(_maxReadinessMilliseconds, _lastReadinessMilliseconds);
             _grid!.SurfaceTerrainVisualReady = HasVisualCoverage(position);
             float height = SampleActivationHeight(position.AroundMeters, position.AcrossMeters);
-            if (float.IsFinite(height)) _explorer?.LiftSurfaceTerrainCapsule(position.AroundMeters, position.AcrossMeters, height);
+            if (float.IsFinite(height) && !SkipCapsuleLift(position)) _explorer?.LiftSurfaceTerrainCapsule(position.AroundMeters, position.AcrossMeters, height);
         }
         catch (Exception error) { FailStagedStartup(error.Message); }
     }
