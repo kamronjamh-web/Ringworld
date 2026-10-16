@@ -173,6 +173,9 @@ public partial class RingStandingGrassLayer
         };
         result["wanted_tiles"] = _wanted.Count;
         result["planning_tiles_in_radius"] = _ordered.Count;
+        result["streaming_hysteresis_meters"] = StreamingHysteresis;
+        result["build_new_tile"] = GrassBuildNewTileCount; result["build_tier_upgrade"] = GrassBuildTierUpgradeCount; result["build_tier_other"] = GrassBuildTierOtherCount;
+        result["tier_filtered"] = GrassTierFilterCount; result["tiles_evicted"] = GrassTilesEvictedCount;
         result["unbuilt_wanted_tiles"] = _wanted.Count - _wanted.Count(key => _tiles.ContainsKey(key));
         result["resident_roots"] = ResidentGrassInstanceCount;
         result["resident_near_roots"] = ResidentGrassNearRootCount;

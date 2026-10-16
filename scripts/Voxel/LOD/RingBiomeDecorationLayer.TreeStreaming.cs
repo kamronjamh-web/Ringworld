@@ -148,6 +148,9 @@ public partial class RingBiomeDecorationLayer
 	private readonly Dictionary<VegetationTileKey, VegetationBuildJob> _vegetationBuilds = new();
 	private HashSet<VegetationTileKey> _desiredVegetationTiles = new();
 	private HashSet<VegetationTileKey> _visibleVegetationTiles = new();
+	private HashSet<VegetationTileKey> _keepVegetationTiles = new();
+	private int _vegetationKeepPerimeterTiles;
+	private readonly HashSet<VegetationTileKey> _evictedVegetationKeys = new();
 	private ulong _vegetationEditVersion = ulong.MaxValue;
 	private long _vegetationUseClock;
 	private long _vegetationTileGenerationEpoch;
@@ -169,6 +172,13 @@ public partial class RingBiomeDecorationLayer
 	public long VegetationCacheMisses { get; private set; }
 	public long VegetationTilesGenerated { get; private set; }
 	public long VegetationTilesEvicted { get; private set; }
+	/// <summary>Completed tile builds (generated or disk-loaded) for a key that had been evicted earlier.</summary>
+	public long VegetationTilesReloadedAfterEviction { get; private set; }
+	/// <summary>Full desired/keep-set replans. A stationary or translation-rebased layer must not add to this.</summary>
+	public long VegetationPlanCount { get; private set; }
+	public long VegetationTranslationRebaseCount { get; private set; }
+	public long VegetationFullRebaseCount { get; private set; }
+	public long VegetationTileBuildsStarted { get; private set; }
 	public long VegetationTilesInvalidated { get; private set; }
 	public long VegetationTileBuildsCancelled { get; private set; }
 	public long VegetationTileResultsDiscarded { get; private set; }
@@ -198,11 +208,9 @@ public partial class RingBiomeDecorationLayer
 		Vector3 renderRingCenter = _grid.GetCanonicalRingCenterWorld();
 		bool geometryRebased = renderRingCenter != _lastVegetationRenderRingCenter;
 		_lastVegetationRenderRingCenter = renderRingCenter;
-		if (geometryRebased) { _pendingVegetationRenderPlan = null; RefreshGpuTreeResidentSources(true); }
-		long renderCellAround = Math.Clamp((long)Math.Floor(focus.AroundMeters / layout.AroundCellMeters), 0L, layout.AroundCellCount - 1L);
-		long renderCellAcross = FloorDiv((long)Math.Floor(focus.AcrossMeters), Mathf.Max(1, Mathf.RoundToInt(layout.AcrossCellMeters)));
-		long aroundTile = Math.Clamp(renderCellAround / layout.TileCells, 0L, layout.AroundTileCount - 1L);
-		long acrossTile = FloorDiv((long)Math.Floor(focus.AcrossMeters), Mathf.Max(1, Mathf.RoundToInt(layout.AcrossTileMeters)));
+		if (geometryRebased)
+			geometryRebased = ResolveVegetationRebase(_gpuTreePresentation && !_gpuTreeFailed && _gpuTreeGeometry is { } sourceGeometry
+				&& TryGetGpuTreePureTranslationDelta(sourceGeometry, _grid.CaptureLodGeometrySnapshot(), focus, out _));
 		Vector3 priorityForward = ResolveVegetationPriorityForward();
 		RingLodSurfaceEditSnapshot edits = _smoothTerrain?.CaptureLodSurfaceEditSnapshot() ?? _grid.CaptureLodSurfaceEditSnapshot();
 		if (edits.Version != _vegetationEditVersion)
@@ -216,9 +224,52 @@ public partial class RingBiomeDecorationLayer
 			force = true;
 		}
 
+		RingCanonicalPosition predictedFocus = PredictVegetationFocus(focus);
+		if (!PlanVegetationSets(focus, predictedFocus, layout, _grid.RingAcrossWidthMeters, geometryRebased, force, priorityForward, out bool priorityTurned))
+		{
+			if (priorityTurned)
+			{
+				RebuildVegetationRequestQueue(focus, predictedFocus, priorityForward, layout);
+				StartVegetationTileBuilds(sampler, edits, layout);
+			}
+			return;
+		}
+		RebuildVegetationRequestQueue(focus, predictedFocus, priorityForward, layout);
+		_vegetationRenderDirty = true;
+		_vegetationRenderMovementDirty = true;
+		StartVegetationTileBuilds(sampler, edits, layout);
+		EvictVegetationCache();
+		ScheduleVegetationDiskBudget();
+	}
+
+	// A floating-origin move that only translates the surface keeps every GPU source row valid
+	// (TryRebaseGpuTreeSources follows the delta), so it needs no replan, refresh or render-plan reset.
+	// Basis or shape changes, and the CPU renderer whose transforms are baked, take the full path (returns true).
+	private bool ResolveVegetationRebase(bool translationOnly)
+	{
+		if (translationOnly)
+		{
+			VegetationTranslationRebaseCount++;
+			return false;
+		}
+		VegetationFullRebaseCount++;
+		_pendingVegetationRenderPlan = null;
+		RefreshGpuTreeResidentSources(true);
+		return true;
+	}
+
+	// Tile membership planning, free of scene and sampler access so the headless streaming contract can drive it.
+	// Returns true when the desired/keep sets were recomputed; false when the focus stayed in its tile.
+	private bool PlanVegetationSets(RingCanonicalPosition focus, RingCanonicalPosition predictedFocus, in VegetationLayout layout,
+		double ringAcrossWidth, bool geometryRebased, bool force, Vector3 priorityForward, out bool priorityTurned)
+	{
+		long renderCellAround = Math.Clamp((long)Math.Floor(focus.AroundMeters / layout.AroundCellMeters), 0L, layout.AroundCellCount - 1L);
+		long renderCellAcross = FloorDiv((long)Math.Floor(focus.AcrossMeters), Mathf.Max(1, Mathf.RoundToInt(layout.AcrossCellMeters)));
+		long aroundTile = Math.Clamp(renderCellAround / layout.TileCells, 0L, layout.AroundTileCount - 1L);
+		long acrossTile = FloorDiv((long)Math.Floor(focus.AcrossMeters), Mathf.Max(1, Mathf.RoundToInt(layout.AcrossTileMeters)));
 		bool renderCellMoved = renderCellAround != _lastVegetationRenderCellAround
 			|| renderCellAcross != _lastVegetationRenderCellAcross;
-		bool priorityTurned = _lastVegetationPriorityForward.LengthSquared() > 0.01f
+		priorityTurned = _lastVegetationPriorityForward.LengthSquared() > 0.01f
 			&& _lastVegetationPriorityForward.Dot(priorityForward) < Mathf.Cos(Mathf.DegToRad(15.0f));
 		if (!force && !geometryRebased && aroundTile == _lastVegetationAroundTile && acrossTile == _lastVegetationAcrossTile)
 		{
@@ -229,15 +280,11 @@ public partial class RingBiomeDecorationLayer
 			}
 			_lastVegetationRenderCellAround = renderCellAround;
 			_lastVegetationRenderCellAcross = renderCellAcross;
-			if (priorityTurned)
-			{
-				_lastVegetationPriorityForward = priorityForward;
-				RebuildVegetationRequestQueue(focus, PredictVegetationFocus(focus), priorityForward, layout);
-				StartVegetationTileBuilds(sampler, edits, layout);
-			}
-			return;
+			if (priorityTurned) _lastVegetationPriorityForward = priorityForward;
+			return false;
 		}
 
+		VegetationPlanCount++;
 		_lastVegetationAroundTile = aroundTile;
 		_lastVegetationAcrossTile = acrossTile;
 		_lastVegetationRenderCellAround = renderCellAround;
@@ -246,28 +293,30 @@ public partial class RingBiomeDecorationLayer
 		float collisionCoverage = UseRegionalImportedForest && EnableImportedForestCollisions
 			? Mathf.Max(0.0f, ImportedForestCollisionRadiusMeters) + 4.0f : 0.0f;
 		float maxDistance = Mathf.Max(Mathf.Max(VisibilityRadiusMeters, MaximumLod5DistanceMeters), collisionCoverage);
-		RingCanonicalPosition predictedFocus = PredictVegetationFocus(focus);
-		HashSet<VegetationTileKey> visible = CollectVegetationTiles(focus, maxDistance, layout);
+		HashSet<VegetationTileKey> visible = CollectVegetationTiles(focus, maxDistance, layout, ringAcrossWidth);
 		var desired = new HashSet<VegetationTileKey>(visible);
-		if (VegetationPredictionLookAheadSeconds > 0.0f && VegetationPredictionMaximumMeters > 0.0f)
-			desired.UnionWith(CollectVegetationTiles(predictedFocus, maxDistance, layout));
+		bool predicts = VegetationPredictionLookAheadSeconds > 0.0f && VegetationPredictionMaximumMeters > 0.0f;
+		if (predicts) desired.UnionWith(CollectVegetationTiles(predictedFocus, maxDistance, layout, ringAcrossWidth));
+		// Keep band: the build radius plus one more tile. Tiles in it are never evicted or cancelled, so a focus
+		// jittering across a tile boundary re-adds nothing it just dropped.
+		float keepRadius = maxDistance + (float)Math.Max(layout.AroundTileMeters, layout.AcrossTileMeters);
+		HashSet<VegetationTileKey> keep = CollectVegetationTiles(focus, keepRadius, layout, ringAcrossWidth);
+		if (predicts) keep.UnionWith(CollectVegetationTiles(predictedFocus, keepRadius, layout, ringAcrossWidth));
+		keep.UnionWith(desired);
+		_keepVegetationTiles = keep;
+		_vegetationKeepPerimeterTiles = (int)Math.Ceiling(Math.PI * 2.0 * keepRadius / Math.Max(1.0, Math.Min(layout.AroundTileMeters, layout.AcrossTileMeters)));
 
 		_visibleVegetationTiles = visible;
 		RefreshGpuTreeResidentSources(true);
 		_desiredVegetationTiles = desired;
-		CancelObsoleteVegetationJobs(desired);
+		CancelObsoleteVegetationJobs(keep);
 		foreach (VegetationTile tile in _vegetationTiles.Values)
 		{
 			if (!desired.Contains(tile.Key)) continue;
 			tile.LastUsed = ++_vegetationUseClock;
 			VegetationCacheHits++;
 		}
-		RebuildVegetationRequestQueue(focus, predictedFocus, priorityForward, layout);
-		_vegetationRenderDirty = true;
-		_vegetationRenderMovementDirty = true;
-		StartVegetationTileBuilds(sampler, edits, layout);
-		EvictVegetationCache();
-		ScheduleVegetationDiskBudget();
+		return true;
 	}
 
 	private VegetationLayout CaptureVegetationLayout()
@@ -313,7 +362,7 @@ public partial class RingBiomeDecorationLayer
 		return new RingCanonicalPosition(around, focus.VerticalMeters, across);
 	}
 
-	private HashSet<VegetationTileKey> CollectVegetationTiles(RingCanonicalPosition center, float radiusMeters, in VegetationLayout layout)
+	private HashSet<VegetationTileKey> CollectVegetationTiles(RingCanonicalPosition center, float radiusMeters, in VegetationLayout layout, double ringAcrossWidth)
 	{
 		long centerAroundCell = Math.Clamp((long)Math.Floor(center.AroundMeters / layout.AroundCellMeters), 0L, layout.AroundCellCount - 1L);
 		long centerAroundTile = centerAroundCell / layout.TileCells;
@@ -325,7 +374,7 @@ public partial class RingBiomeDecorationLayer
 		var result = new HashSet<VegetationTileKey>();
 		for (long z = centerAcrossTile - acrossRadius; z <= centerAcrossTile + acrossRadius; z++)
 		{
-			if (z < 0 || z * layout.AcrossTileMeters >= _grid!.RingAcrossWidthMeters) continue;
+			if (z < 0 || z * layout.AcrossTileMeters >= ringAcrossWidth) continue;
 			for (long rawX = centerAroundTile - aroundRadius; rawX <= centerAroundTile + aroundRadius; rawX++)
 			{
 				long x = PositiveModulo(rawX, layout.AroundTileCount);
@@ -461,6 +510,7 @@ public partial class RingBiomeDecorationLayer
 				VegetationDiskCacheBudgetMiB * 1024L * 1024L,
 				VegetationDiskCacheMinimumFreeMiB * 1024L * 1024L,
 				allowDisk);
+			VegetationTileBuildsStarted++;
 			_vegetationBuilds[key] = new VegetationBuildJob
 			{
 				Cancellation = cancellation,
@@ -522,6 +572,7 @@ public partial class RingBiomeDecorationLayer
 			// render window. It was already paid for and remains useful to the LRU.
 			result.Tile.LastUsed = ++_vegetationUseClock;
 			_vegetationTiles[key] = result.Tile;
+			if (_evictedVegetationKeys.Remove(key)) VegetationTilesReloadedAfterEviction++;
 			_vegetationTileGenerationEpoch++;
 			if (!result.DiskHit) VegetationTilesGenerated++;
 			if (_visibleVegetationTiles.Contains(key))
@@ -638,10 +689,11 @@ public partial class RingBiomeDecorationLayer
 		_requestedVegetationTiles.Clear();
 	}
 
-	private void CancelObsoleteVegetationJobs(IReadOnlySet<VegetationTileKey> desired)
+	// Only builds that have left the keep band are worthless; one inside it still lands in the cache.
+	private void CancelObsoleteVegetationJobs(IReadOnlySet<VegetationTileKey> keep)
 	{
 		foreach ((VegetationTileKey key, VegetationBuildJob job) in _vegetationBuilds)
-			if (!desired.Contains(key)) job.Cancellation.Cancel();
+			if (!keep.Contains(key)) job.Cancellation.Cancel();
 	}
 
 	private void ShutdownVegetationJobs()
@@ -667,6 +719,7 @@ public partial class RingBiomeDecorationLayer
 	{
 		RequestCancelVegetationJobs();
 		_desiredVegetationTiles.Clear();
+		_keepVegetationTiles.Clear();
 		_visibleVegetationTiles.Clear();
 		_pendingVegetationRenderPlan = null;
 		ClearGpuTreeResidentSources("Suspended");
@@ -687,7 +740,9 @@ public partial class RingBiomeDecorationLayer
 
 	private void EvictVegetationCache()
 	{
-		int maximum = Mathf.Max(256, MaximumCachedVegetationTiles);
+		// The cache must hold the whole desired set plus a margin of two perimeters, whatever the setting says,
+		// or tiles are evicted the moment they leave the set and reloaded when the player turns back.
+		int maximum = Math.Max(Mathf.Max(256, MaximumCachedVegetationTiles), _desiredVegetationTiles.Count + 2 * _vegetationKeepPerimeterTiles);
 		long maximumBytes = Mathf.Max(16, MaximumVegetationCacheMemoryMiB) * 1024L * 1024L;
 		long bytes = 0;
 		foreach (VegetationTile tile in _vegetationTiles.Values) bytes += tile.EstimatedBytes;
@@ -695,10 +750,11 @@ public partial class RingBiomeDecorationLayer
 		{
 			VegetationTileKey victim = default; long oldest = long.MaxValue; bool found = false;
 			foreach ((VegetationTileKey key, VegetationTile tile) in _vegetationTiles)
-				if (!_desiredVegetationTiles.Contains(key) && tile.LastUsed < oldest) { victim = key; oldest = tile.LastUsed; found = true; }
+				if (!_keepVegetationTiles.Contains(key) && !_desiredVegetationTiles.Contains(key) && tile.LastUsed < oldest) { victim = key; oldest = tile.LastUsed; found = true; }
 			if (!found) break; // Never create a visible coverage hole merely to satisfy a too-small cache setting.
 			bytes -= _vegetationTiles[victim].EstimatedBytes;
 			_vegetationTiles.Remove(victim);
+			_evictedVegetationKeys.Add(victim);
 			VegetationTilesEvicted++;
 		}
 		VegetationCacheEstimatedBytes = Math.Max(0L, bytes);
@@ -1042,13 +1098,19 @@ public partial class RingBiomeDecorationLayer
 
 	private static TileBuildResult BuildVegetationTile(TileBuildRequest request)
 	{
-		using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Trees build", worker: true);
 		Stopwatch timer = Stopwatch.StartNew(); using RingTerrainSampler sampler = request.Sampler;
-		if (request.AllowDiskCache && TryLoadVegetationTile(request.DiskPath, request.Key, request.EditVersion, out VegetationTile? cached))
+		// Disk-cache loads are cheap reads, not generation: they report under their own scope so "Trees build"
+		// measures only tiles that were actually generated.
+		if (request.AllowDiskCache)
 		{
-			RingGeneratedLodCacheBudget.Touch(request.DiskPath);
-			return new TileBuildResult(request.Key, cached, timer.Elapsed.TotalMilliseconds, false, true, false);
+			using var loadScope = RingPerformanceTelemetry.MeasureCpu("Trees disk load", worker: true);
+			if (TryLoadVegetationTile(request.DiskPath, request.Key, request.EditVersion, out VegetationTile? cached))
+			{
+				RingGeneratedLodCacheBudget.Touch(request.DiskPath);
+				return new TileBuildResult(request.Key, cached, timer.Elapsed.TotalMilliseconds, false, true, false);
+			}
 		}
+		using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Trees build", worker: true);
 		var trees = new List<CachedTree>(request.TileCells * request.TileCells * 2);
 		CanonicalVegetationCellRange(request.Key.Around, request.TileCells, request.AroundCellCount, out long startX, out long endX);
 		long startZ = request.Key.Across * request.TileCells;

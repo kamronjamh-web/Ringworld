@@ -317,9 +317,9 @@ public partial class RingTerrain3DSurface : Node3D
     private void UpdateFrameMaterialParameters()
     {
         if (_terrain == null) return;
-        GodotObject? material = _terrain.Call("get_material").AsGodotObject();
-        material?.Call("set_shader_param", "ring_radius_meters", (float)_frame.RadiusMeters);
-        material?.Call("set_shader_param", "ring_anchor_height", _frame.AnchorHeight);
+        // Routed through SetMaterialParameter so follower materials see the same radius/anchor values.
+        SetMaterialParameter("ring_radius_meters", (float)_frame.RadiusMeters);
+        SetMaterialParameter("ring_anchor_height", _frame.AnchorHeight);
         double circumferenceMeters = _field?.CircumferenceMeters ?? CertifiedRingScale.EffectiveCircumferenceMeters;
         float ringWidthMeters = _field?.WidthMeters ?? CertifiedRingScale.RingWidthMeters;
         SetMaterialParameter("ring_terrain_shadow_anchor_uv", new Vector2(
@@ -429,6 +429,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_terrain == null) return;
         GodotObject? material = _terrain.Call("get_material").AsGodotObject();
         material?.Call("set_shader_param", name, value);
+        ForwardToFollowers(name, value);
     }
 
     /// <summary>Returns Terrain3D's imported planar height for diagnostics and headless certification.</summary>

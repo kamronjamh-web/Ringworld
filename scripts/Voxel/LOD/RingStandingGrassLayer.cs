@@ -140,7 +140,8 @@ public partial class RingStandingGrassLayer : Node3D
     private readonly Dictionary<RingGrassTileKey, Job> _jobs = new();
     private readonly Queue<RingGrassTileKey> _requests = new(), _uploads = new();
     private readonly HashSet<RingGrassTileKey> _requested = new(), _uploadQueued = new(), _wanted = new();
-    private readonly Dictionary<RingGrassTileKey, (float Fraction, byte Tier)> _wantedCoverage = new();
+    private Dictionary<RingGrassTileKey, (float Fraction, byte Tier)> _wantedCoverage = new(), _previousCoverage = new();
+    private readonly List<(RingGrassTileKey Key, double Distance, double SortKey)> _planScratch = new();
     private readonly List<RingGrassTileKey> _keys = new();
     private readonly List<(RingGrassTileKey, double)> _ordered = new();
     private readonly CancellationTokenSource _shutdown = new();
@@ -465,6 +466,10 @@ public partial class RingStandingGrassLayer : Node3D
             PruneUploads();
             return;
         }
+        // Tier hysteresis only holds against a plan made under identical coverage settings.
+        bool holdTiers = _hasCachedPlan && _coverageSettings == coverageSettings;
+        (_previousCoverage, _wantedCoverage) = (_wantedCoverage, _previousCoverage);
+        float hysteresis = StreamingHysteresis;
         _lastPlannedFocus = f;
         InvalidateGrassWork();
         _requestQueueDirty = true;
@@ -491,31 +496,41 @@ public partial class RingStandingGrassLayer : Node3D
         // tile fit the resident budget (see CanReusePlan).
         _cachedPlanReuseMargin = TileSize * .125f;
         float planningRadius = coverageRadius + _cachedPlanReuseMargin;
-        int r = (int)Math.Ceiling(planningRadius / TileSize) + 2;
+        // Add fast, drop slow: a tile that is already resident or building stays planned until it is more than
+        // the hysteresis beyond the planning radius, and competes for the resident cap with a head start of the
+        // same size, so a saturated cap ring cannot swap tiles back and forth under sub-tile motion.
+        float reach = planningRadius + hysteresis;
+        int r = (int)Math.Ceiling(reach / TileSize) + 2;
+        _planScratch.Clear();
         for (long z = b - r; z <= b + r; z++) for (long x = a - r; x <= a + r; x++)
             {
                 if (z < 0) continue;
                 var k = new RingGrassTileKey(RingGrassCoordinates.WrapTileIndex(x, n), z);
                 var q = RingGrassCoordinates.Bounds(k.Around, k.Across, TileSize, s.AroundRingVoxelLength, s.RingAcrossWidthMeters);
                 double d = RingGrassCoordinates.TileDistanceSquared(q, f, s.AroundRingVoxelLength);
-                if (q.AcrossMax > q.AcrossMin && d <= planningRadius * planningRadius) _ordered.Add((k, d));
+                if (q.AcrossMax <= q.AcrossMin) continue;
+                bool tracked = _tiles.ContainsKey(k) || _jobs.ContainsKey(k);
+                double limit = tracked ? reach : planningRadius;
+                if (d > limit * limit) continue;
+                _planScratch.Add((k, d, tracked ? Math.Sqrt(d) - hysteresis : Math.Sqrt(d)));
             }
-        _ordered.Sort((x, y) => x.Item2 != y.Item2 ? x.Item2.CompareTo(y.Item2)
-            : x.Item1.Around != y.Item1.Around ? x.Item1.Around.CompareTo(y.Item1.Around)
-            : x.Item1.Across.CompareTo(y.Item1.Across));
+        _planScratch.Sort((x, y) => x.SortKey != y.SortKey ? x.SortKey.CompareTo(y.SortKey)
+            : x.Key.Around != y.Key.Around ? x.Key.Around.CompareTo(y.Key.Around)
+            : x.Key.Across.CompareTo(y.Key.Across));
+        foreach (var entry in _planScratch) _ordered.Add((entry.Key, entry.Distance));
         for (int i = 0; i < _ordered.Count && i < Math.Max(1, MaximumResidentTiles); i++)
         {
             var entry = _ordered[i];
             _wanted.Add(entry.Item1);
-            double meters = Math.Sqrt(entry.Item2);
-            (float fraction, byte tier) = CoverageForDistance(GrassTierDistance(meters));
-            _wantedCoverage[entry.Item1] = (fraction, tier);
+            _wantedCoverage[entry.Item1] = ResolveCoverage(entry.Item1, Math.Sqrt(entry.Item2), holdTiers, _previousCoverage);
         }
         // After moving d, every tile within R of the new focus was within R + d of the old one; if that is
-        // still inside the truncation edge E every such tile is already in the wanted prefix.
+        // still inside the truncation edge E every such tile is already in the wanted prefix. Under cap
+        // truncation that margin can be zero, so the hysteresis (residents hold their place within it)
+        // bounds how stale the cached prefix may become instead.
         int cap = Math.Max(1, MaximumResidentTiles);
         _cachedPlanSafeMovement = _ordered.Count > cap
-            ? Math.Sqrt(_ordered[cap].Item2) - (ClampGrassStreamingToDrawDistance ? GrassStreamingPresentationRadiusMeters : coverageRadius) - .001
+            ? Math.Max(hysteresis * .5, Math.Sqrt(_ordered[cap].Item2) - (ClampGrassStreamingToDrawDistance ? GrassStreamingPresentationRadiusMeters : coverageRadius) - .001)
             : _cachedPlanReuseMargin;
         PruneUploads();
     }
@@ -527,18 +542,47 @@ public partial class RingStandingGrassLayer : Node3D
         RequestQueueScans++;
         // _wanted is a HashSet; enqueue in the canonical nearest-first order so
         // a full budget cannot repeatedly give distant tiles the first reservation.
+        int filtersLeft = MaximumTierFiltersPerFrame;
         foreach (var entry in _ordered)
         {
             RingGrassTileKey k = entry.Item1;
             bool needsReplacement = _tiles.TryGetValue(k, out Resident? resident)
                 && _wantedCoverage.TryGetValue(k, out var coverage)
                 && (resident.Data.SourceTier != coverage.Tier || !Mathf.IsEqualApprox(resident.Data.SourceFraction, coverage.Fraction));
+            // Tiers are nested subsets of one stable hash: a downgrade filters the resident roots instead of
+            // rebuilding them. The per-frame bound keeps a bulk change (e.g. an LOD slider) from spiking one frame.
+            if (needsReplacement && _wanted.Contains(k) && !_jobs.ContainsKey(k) && resident!.Data.TierKeys != null && _wantedCoverage.TryGetValue(k, out var want)
+                && want.Tier > resident.Data.SourceTier && want.Fraction <= resident.Data.SourceFraction)
+            {
+                if (filtersLeft-- <= 0) { _requestQueueDirty = true; continue; }
+                if (FilterResidentToTier(k, resident, want.Fraction, want.Tier)) continue;
+            }
             // Do not enqueue an impossible new-tile request every frame at the
             // global hard cap.  Replacements remain eligible because their old
             // allocation is credited when the worker reservation is made.
             if (!_tiles.ContainsKey(k) && MaximumGrassSourceInstances - ResidentGrassInstanceCount - _reserved <= 0) continue;
             if (_wanted.Contains(k) && (!_tiles.ContainsKey(k) || needsReplacement) && !_jobs.ContainsKey(k) && _requested.Add(k)) { _requests.Enqueue(k); DiagnosticRequested(k); }
         }
+    }
+    private const int MaximumTierFiltersPerFrame = 24;
+    public int GrassBuildNewTileCount { get; private set; }
+    public int GrassBuildTierUpgradeCount { get; private set; }
+    public int GrassBuildTierOtherCount { get; private set; }
+    public int GrassTierFilterCount { get; private set; }
+    public int GrassTilesEvictedCount { get; private set; }
+    private bool FilterResidentToTier(RingGrassTileKey k, Resident resident, float fraction, byte tier)
+    {
+        RingGrassTileData? filtered = RingGrassTileBuilder.FilterToTier(resident.Data, fraction, tier);
+        if (filtered == null) return false;
+        ResidentGrassInstanceCount += filtered.InstanceCount - resident.Data.InstanceCount;
+        resident.Data = filtered;
+        resident.MaximumSourceHeight = MaximumSourceHeight(filtered);
+        GrassTierFilterCount++;
+        AdaptiveLeafChanged(k);
+        InvalidateGrassWork();
+        RecountTierRoots();
+        if (_uploadQueued.Add(k)) _uploads.Enqueue(k);
+        return true;
     }
     private void Start(RingTerrainSampler s, RingLodSurfaceEditSnapshot e, RingLodGeometrySnapshot g, SmoothTerrainVolumetricDensitySnapshot? field, RingGrassExclusionSnapshot? exclusions)
     {
@@ -624,6 +668,9 @@ public partial class RingStandingGrassLayer : Node3D
             _jobs[k] = job;
             _reserved += reserve;
             TotalGrassBuildCount++;
+            if (!replacement) GrassBuildNewTileCount++;
+            else if (coverage.Tier < oldResident!.Data.SourceTier) GrassBuildTierUpgradeCount++;
+            else GrassBuildTierOtherCount++;
         }
     }
     private static RingGrassTileData BuildWorker(RingGrassTileKey key, RingGrassTileBounds bounds, float cell, int candidates, float density, int reserve, float slope, RingTerrainSampler? ownedSampler, RingLodSurfaceEditSnapshot edits, RingLodGeometrySnapshot geometry, CancellationToken cancellation, SmoothTerrainVolumetricWorkerContext? fieldWorkerContext, RingGrassExclusionSnapshot? exclusions, RingGrassAppearanceSnapshot appearance, RingGrassSurfaceCache surfaceCache, float sourceFraction, byte sourceTier, bool useGrassClumps, RingGrassModifierSnapshot? modifiers, float modifierDensityStrength, bool meadowTufts, float meadowSpread, float minimumHeight, float maximumHeight)
@@ -909,6 +956,7 @@ public partial class RingStandingGrassLayer : Node3D
         using var scope = RingPerformanceTelemetry.MeasureCpu("Grass eviction");
         _keys.Clear();
         foreach (var k in _tiles.Keys) if (!_wanted.Contains(k)) _keys.Add(k);
+        GrassTilesEvictedCount += _keys.Count;
         foreach (var k in _keys) Remove(k);
     }
     private void Remove(RingGrassTileKey k)
@@ -1039,7 +1087,40 @@ public partial class RingStandingGrassLayer : Node3D
         float margin = float.IsFinite(GrassStreamingMarginMeters) ? Mathf.Clamp(GrassStreamingMarginMeters, 0, 64) : 4;
         return Mathf.Min(legacy, GrassPresentationRadius() + margin + GrassGroupStreamingExtent());
     }
+    /// <summary>Streaming hysteresis H in meters. Zero selects the automatic value clamp(tile / 2, 2, 8).
+    /// Tiles are added and upgraded immediately but dropped and downgraded only once H past the boundary.</summary>
+    [Export(PropertyHint.Range, "0,32,0.5")] public float GrassStreamingHysteresisMeters { get; set; }
+    public float StreamingHysteresis => float.IsFinite(GrassStreamingHysteresisMeters) && GrassStreamingHysteresisMeters > 0
+        ? Mathf.Clamp(GrassStreamingHysteresisMeters, .5f, 32f) : Mathf.Clamp(TileSize * .5f, 2f, 8f);
     private double GrassTierDistance(double meters) => Math.Min(meters, _grassTierClampRadius);
+    private (float Fraction, byte Tier) CoverageForTier(byte tier)
+    {
+        if (!EnableHierarchicalCoverage || !EnableDistanceLod) return (1, 0);
+        return tier switch
+        {
+            0 => (1, (byte)0),
+            1 => (Mathf.Clamp(LodMidSourceDensity, .01f, 1), (byte)1),
+            _ => (Mathf.Clamp(LodFarSourceDensity, .01f, 1), (byte)2)
+        };
+    }
+    /// <summary>Coverage tier for a tile at <paramref name="meters"/>, holding the tier it already has (the previous
+    /// plan's decision, else its in-flight build, else its resident data). Upgrades apply at once; a downgrade needs
+    /// the tile to be more than the hysteresis beyond the boundary. <paramref name="hold"/> is false when the tier
+    /// boundaries themselves changed.</summary>
+    private (float Fraction, byte Tier) ResolveCoverage(RingGrassTileKey key, double meters, bool hold,
+        Dictionary<RingGrassTileKey, (float Fraction, byte Tier)> previous)
+    {
+        (float Fraction, byte Tier) raw = CoverageForDistance(GrassTierDistance(meters));
+        if (!hold || raw.Tier == 0) return raw;
+        byte held;
+        if (previous.TryGetValue(key, out var earlier)) held = earlier.Tier;
+        else if (_jobs.TryGetValue(key, out Job? job)) held = job.SourceTier;
+        else if (_tiles.TryGetValue(key, out Resident? resident)) held = resident.Data.SourceTier;
+        else return raw;
+        if (raw.Tier <= held) return raw;
+        (float Fraction, byte Tier) relaxed = CoverageForDistance(GrassTierDistance(meters - StreamingHysteresis));
+        return relaxed.Tier > held ? relaxed : CoverageForTier(held);
+    }
     private (float Fraction, byte Tier) CoverageForDistance(double distanceMeters)
     {
         // Without the complementary far presentation pass, thinning source
@@ -1089,7 +1170,7 @@ public partial class RingStandingGrassLayer : Node3D
             if (!_wantedCoverage.TryGetValue(entry.Item1, out var previous)) return false;
             RingGrassTileBounds bounds = RingGrassCoordinates.Bounds(entry.Item1.Around, entry.Item1.Across,
                 TileSize, sampler.AroundRingVoxelLength, sampler.RingAcrossWidthMeters);
-            var current = CoverageForDistance(GrassTierDistance(Math.Sqrt(RingGrassCoordinates.TileDistanceSquared(bounds, focus, sampler.AroundRingVoxelLength))));
+            var current = ResolveCoverage(entry.Item1, Math.Sqrt(RingGrassCoordinates.TileDistanceSquared(bounds, focus, sampler.AroundRingVoxelLength)), true, _wantedCoverage);
             if (current.Tier != previous.Tier || !Mathf.IsEqualApprox(current.Fraction, previous.Fraction)) return false;
         }
         return true;

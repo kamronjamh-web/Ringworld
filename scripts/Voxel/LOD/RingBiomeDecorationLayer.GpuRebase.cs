@@ -24,8 +24,13 @@ public partial class RingBiomeDecorationLayer
         _gpuTreeGeometry = current;
         _gpuTreeLayerTransform = GlobalTransform;
         InvalidateGpuTreeFrameCache();
-        if (TreePreparationPending) CancelGpuTreeSourcePreparation();
-        RefreshGpuTreeResidentSources(true);
+        // Source rows are layer-local and the layer followed the delta, so nothing needs rebuilding. Only a plan
+        // that was prepared against the old geometry is stale.
+        if (TreePreparationPending)
+        {
+            CancelGpuTreeSourcePreparation();
+            RefreshGpuTreeResidentSources(true);
+        }
         return true;
     }
 

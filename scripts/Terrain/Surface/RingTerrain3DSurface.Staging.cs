@@ -65,6 +65,7 @@ public partial class RingTerrain3DSurface
         _idlePreparedSurface = idle;
         _isReady = true;
         _lastError = _stagingError = string.Empty;
+        ReplayFollowersFromActive();
     }
 
     /// <summary>Applies independently rebased frames while a gameplay stage is pending.</summary>
@@ -168,6 +169,7 @@ public partial class RingTerrain3DSurface
             else previous.Free();
         }
         else DestroyNativeNodes();
+        ReplayFollowersFromActive();
         _stagingError = string.Empty;
         _lastError = string.Empty;
         return true;

@@ -8,6 +8,8 @@ render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlic
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
+#include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
+#include "res://materials/ring_terrain_lighting.gdshaderinc"
 
 #define SKIP_PASS 0
 #define VERTEX_PASS 1
@@ -42,13 +44,7 @@ uniform float ring_texture_anchor_around_meters = 0.0;
 uniform float ring_texture_anchor_across_meters = 0.0;
 uniform float ring_across_direction = 1.0;
 uniform bool biome_texture_weights_enabled = false;
-uniform float biome_texture_scale = .20;
-uniform sampler2D biome_grass_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2D biome_dirt_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2D biome_desert_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2D biome_forest_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2D biome_tundra_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+// Biome samplers and biome_texture_scale: ring_terrain_surface_albedo.gdshaderinc.
 // Weather is supplied separately from the packed biome weights. The COLOR map's
 // alpha channel remains the alpine biome weight.
 uniform float surface_wetness : hint_range(0.0, 1.0) = 0.0;
@@ -66,15 +62,8 @@ uniform float ring_width_meters = 20000.0;
 // Canonical UV at the local Terrain3D window anchor, supplied in double on
 // the CPU before conversion so mega-ring positions retain macro-mask phase.
 uniform vec2 ring_terrain_shadow_anchor_uv = vec2(0.0);
-// Keep the Terrain3D window's direct-light response aligned with the proxy
-// terrain at its handoff. These defaults match ring_terrain_proxy.gdshader.
-uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
-uniform float day_start_dot = -0.2;
-uniform float day_full_dot = 0.35;
-uniform vec3 night_tint = vec3(0.30, 0.45, 0.70);
-uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
-uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
-uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
+// Lighting uniforms (sun_direction, day dots, night tint, direct factors,
+// shadow_floor): ring_terrain_lighting.gdshaderinc.
 varying float v_vertex_xz_dist;
 varying vec3 v_vertex;
 varying float ring_day_factor;
@@ -248,9 +237,8 @@ void fragment() {
     float grass_coverage_eligibility = 0.0;
     if (biome_texture_weights_enabled) {
         vec4 packed = smooth_terrain_shading ? clamp(smooth_packed, 0.0, 1.0) : clamp(texelFetch(_color_maps, c, 0), 0.0, 1.0);
-        float grass_weight = max(0.0, 1.0 - packed.r - packed.g - packed.b - packed.a);
+        float grass_weight = ring_terrain_grass_weight(packed);
         grass_coverage_eligibility = clamp(grass_weight + packed.g * .55, 0.0, 1.0);
-        float total = max(.0001, grass_weight + packed.r + packed.g + packed.b + packed.a);
         vec3 texture_normal = normalize(vec3(planar_normal.x, planar_normal.y, planar_normal.z * ring_across_direction));
         vec3 blend = pow(abs(texture_normal), vec3(8.0)); blend /= max(blend.x + blend.y + blend.z, .0001);
         vec3 texture_position = vec3(
@@ -260,13 +248,12 @@ void fragment() {
         float ground_facing = smoothstep(.45, .78, planar_normal.y);
         vec3 dirt = ground_facing < 1.0 ? sample_biome_triplanar(biome_dirt_albedo, texture_position, texture_normal, blend) : vec3(0.0);
         vec3 grass = sample_biome_triplanar(biome_grass_albedo, texture_position, texture_normal, blend);
-        grass = mix(grass, grass * vec3(.72, 1.30, .62), .58);
-        vec3 surface = grass * grass_weight;
-        surface += sample_biome_triplanar(biome_desert_albedo, texture_position, texture_normal, blend) * packed.r;
-        surface += sample_biome_triplanar(biome_forest_albedo, texture_position, texture_normal, blend) * packed.g;
-        surface += sample_biome_triplanar(biome_tundra_albedo, texture_position, texture_normal, blend) * packed.b;
-        surface += sample_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend) * packed.a;
-        ground = mix(dirt, surface / total, ground_facing);
+        grass = ring_terrain_grass_tint(grass);
+        vec3 desert = sample_biome_triplanar(biome_desert_albedo, texture_position, texture_normal, blend);
+        vec3 forest = sample_biome_triplanar(biome_forest_albedo, texture_position, texture_normal, blend);
+        vec3 tundra = sample_biome_triplanar(biome_tundra_albedo, texture_position, texture_normal, blend);
+        vec3 alpine = sample_biome_triplanar(biome_alpine_albedo, texture_position, texture_normal, blend);
+        ground = mix(dirt, ring_terrain_biome_mix(grass, desert, forest, tundra, alpine, packed), ground_facing);
     }
     float ground_facing = smoothstep(.45, .78, planar_normal.y);
     float wet = clamp(surface_wetness * surface_wetness_strength, 0.0, 1.0) * ground_facing;
@@ -285,14 +272,17 @@ void fragment() {
         dot(up, normalize(sun_direction))));
     // Retain the proxy terrain's low-light chroma before atmosphere haze is
     // composited, so the near and LOD surfaces carry the same night palette.
-    ALBEDO = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
-	vec4 atmosphere = sample_ring_atmosphere(
-		ring_atmosphere_camera_world,
-		v_vertex,
-		ring_atmosphere_center_world,
-		ring_day_factor);
-	ALBEDO *= 1.0 - atmosphere.a;
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+    vec3 lit_albedo = ring_terrain_night_tint(terrain_color, ring_day_factor);
+    vec3 atmosphere_emission;
+    ring_terrain_apply_atmosphere(
+        lit_albedo,
+        atmosphere_emission,
+        ring_atmosphere_camera_world,
+        v_vertex,
+        ring_atmosphere_center_world,
+        ring_day_factor);
+    ALBEDO = lit_albedo;
+    EMISSION = atmosphere_emission;
     ROUGHNESS = mix(dry_roughness, surface_wet_roughness, wet);
     // Match the proxy's dry environment-reflection coefficient. Rain alone
     // enables the added direct-light highlight below.
@@ -335,40 +325,22 @@ float terrain_schlick_fresnel(float u) {
 }
 
 void light() {
+    float direct_visibility;
+    DIFFUSE_LIGHT += ring_terrain_direct_diffuse(
+        NORMAL,
+        LIGHT,
+        ATTENUATION,
+        LIGHT_IS_DIRECTIONAL,
+        LIGHT_COLOR,
+        ALBEDO,
+        VIEW_MATRIX,
+        ring_day_factor,
+        combined_cloud_shadow_occlusion,
+        terrain_shadow_uv,
+        v_vertex,
+        ring_viewer_world_position,
+        direct_visibility);
     float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
-    float readable_shadow = max(ATTENUATION, shadow_floor);
-    vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
-    float primary_sun_weight = LIGHT_IS_DIRECTIONAL
-        ? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
-        : 0.0;
-    float primary_planet_weight = LIGHT_IS_DIRECTIONAL
-        ? terrain_planet_directional_light_weight(LIGHT, VIEW_MATRIX)
-        : 0.0;
-    float sun_hemisphere_direct = mix(
-        night_direct_light_factor,
-        day_direct_light_factor,
-        ring_day_factor);
-    float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
-    float cloud_shadow = LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0;
-    float sun_terrain_shadow = LIGHT_IS_DIRECTIONAL
-        ? sample_terrain_macro_shadow_uv(
-            terrain_shadow_uv,
-            v_vertex,
-            ring_viewer_world_position) * primary_sun_weight * ring_day_factor
-        : 0.0;
-    float planet_terrain_shadow = LIGHT_IS_DIRECTIONAL
-        ? sample_terrain_planet_shadow_uv(
-            terrain_shadow_uv,
-            v_vertex,
-            ring_viewer_world_position) * primary_planet_weight
-        : 0.0;
-    float terrain_shadow = max(sun_terrain_shadow, planet_terrain_shadow);
-    float combined_visibility = combine_ring_shadow_visibility(
-        readable_shadow,
-        cloud_shadow,
-        terrain_shadow);
-    float direct_visibility = combined_visibility * hemisphere_direct;
-    DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * n_dot_l * direct_visibility;
 
     if (terrain_direct_specular_weight > 0.0 && ROUGHNESS > 0.0 && n_dot_l > 0.0) {
         vec3 half_vector = normalize(VIEW + LIGHT);
