@@ -28,6 +28,8 @@ public partial class RingStandingGrassLayer
     // startup, worker completion and camera movement must not move this band.
     internal float EffectiveGrassDrawDistance()
     {
+        // Cards: the reach. No resident-window clamp, because the resident cap is sized from the reach.
+        if (_style.IsCards) return _style.ReachMeters;
         float near = FiniteClamp(LodNearDistanceMeters, 0f, 0f, 100000f);
         float requested = EnableDistanceLod
             ? Mathf.Max(near + 1f, FiniteClamp(LodFarDistanceMeters, near + 1f, 0f, 100000f))

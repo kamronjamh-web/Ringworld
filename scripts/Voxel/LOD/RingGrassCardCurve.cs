@@ -8,8 +8,7 @@ internal readonly record struct RingGrassCardCurveParameters(
     float NearDensity = 14f, float BaseDensity = 2.5f, float FloorDensity = .15f, float FalloffExponent = 1.3f,
     float FalloffStartMeters = 20f, float NearBoostStartMeters = 8f, float NearBoostEndMeters = 45f,
     float CompensationMax = 2.5f, float NearWidthScale = .7f, float ReachMeters = 400f, float FadeBandPercent = 15f,
-    float LowLayerFullMeters = 8f, float LowLayerEndMeters = 22f,
-    float HeroThinMinimum = .4f, float HeroThinStartMeters = 3f, float HeroThinEndMeters = 7.5f)
+    float LowLayerFullMeters = 8f, float LowLayerEndMeters = 22f)
 {
     /// <summary>Use this, not default(...): a record struct does not apply its parameter defaults to default.</summary>
     public static readonly RingGrassCardCurveParameters Default = new(NearDensity: 14f);
@@ -74,13 +73,6 @@ internal static class RingGrassCardCurve
     public static float Fade(in RingGrassCardCurveParameters p, float distance)
         => 1f - Smooth(p.ReachMeters * (1f - p.FadeBandPercent * .01f), p.ReachMeters, distance);
 
-    /// <summary>Hero-layer thinning of the cards: 1 when disabled by the caller, else smooth(0,.15, keepNear - rank).</summary>
-    public static float HeroThin(in RingGrassCardCurveParameters p, float rank, float distance)
-    {
-        float keep = Mathf.Lerp(p.HeroThinMinimum, 1f, Smooth(p.HeroThinStartMeters, p.HeroThinEndMeters, distance));
-        return keep >= .999f ? 1f : Smooth(0f, .15f, keep - rank * .999f);
-    }
-
     /// <summary>Instance scale multiplier (0 = culled): the product the card shader applies to the baked transform.</summary>
     public static float Scale(in RingGrassCardCurveParameters p, float rank, float distance)
     {
@@ -88,7 +80,7 @@ internal static class RingGrassCardCurve
         if (rank >= keep) return 0f;
         float grow = GrowIn(keep, rank);
         if (grow < MinimumGrowIn) return 0f;
-        return Compensation(p, distance) * grow * NearWidth(p, distance) * Fade(p, distance) * HeroThin(p, rank, distance);
+        return Compensation(p, distance) * grow * NearWidth(p, distance) * Fade(p, distance);
     }
 
     /// <summary>Low upright layer: fully kept inside LowLayerFullMeters, gone by LowLayerEndMeters.</summary>

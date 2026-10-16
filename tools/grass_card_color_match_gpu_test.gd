@@ -1,14 +1,14 @@
 extends SceneTree
-# Synthetic GPU scene + tests for the grass-card / hero-blade shaders (grass-cards plan step S4).
-# A gently sloped analytic plane in a real Terrain3D window (the S1 regression fixture approach) carries cards + hero tufts
+# Synthetic GPU scene + tests for the grass-card shader (grass-cards plan step S4).
+# A gently sloped analytic plane in a real Terrain3D window (the S1 regression fixture approach) carries cards
 # placed by a stand-in placer (tools/GrassCardShaderFixture.cs). Windowed Vulkan only (do not pass --headless).
 #
 #   godot --path . --resolution 960x540 --script res://tools/grass_card_color_match_gpu_test.gd -- mode=color out=<dir>
 # modes:
 #   color    compile check + colour match: CIEDE2000 between grass pixels (neutral colour settings) and the same pose with the
-#            grass hidden, per pose (day / dusk / night / haze / biome borders / far), hero-vs-card agreement, screenshots
+#            grass hidden, per pose (day / dusk / night / haze / biome borders / far), screenshots
 #   curve    GLSL curve vs RingGrassCardCurve.cs parity
-#   measure  GPU ms of cards + hero (vsync off, >= 400 frames) at 1600x900
+#   measure  GPU ms of cards (vsync off, >= 400 frames) at 1600x900
 #   weather  wind on (globals) screenshot sanity
 const SURFACE = preload("res://scripts/Terrain/Surface/RingTerrain3DSurface.cs")
 const GEOMETRY = preload("res://scripts/Terrain/Surface/RingTerrain3DCollisionGeometry.cs")
@@ -26,13 +26,13 @@ const BLOCK := 32
 
 # name, cam (local x, z), eye height above ground, look (local x, z, extra height), sun = direction to the sun, delta-E target
 var POSES := [
-	{"name": "day_near", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-100, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "hero_card": true, "block": 64},
-	{"name": "day_down", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-114, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "hero_card": true, "block": 64},
+	{"name": "day_near", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-100, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
+	{"name": "day_down", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-114, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
 	{"name": "dusk", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-104, 0, 0), "sun": Vector3(0.92, 0.14, 0.20), "target": 4.0, "block": 64},
 	{"name": "night", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-104, 0, 0), "sun": Vector3(0.20, -0.95, 0.10), "planet": true, "target": 4.0, "block": 64},
 	{"name": "day_haze", "cam": Vector2(-120, 0), "eye": 1.7, "look": Vector3(-60, 0, 0), "sun": Vector3(0.40, 0.75, 0.10), "haze": true, "target": 4.0, "block": 64},
 	{"name": "border_forest", "cam": Vector2(30, 0), "eye": 1.7, "look": Vector3(58, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
-	{"name": "border_desert", "cam": Vector2(108, 0), "eye": 1.7, "look": Vector3(134, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
+	{"name": "border_desert", "cam": Vector2(125, 0), "eye": 1.7, "look": Vector3(125, 26, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 64},
 	{"name": "far", "cam": Vector2(-240, 0), "eye": 30.0, "look": Vector3(-90, 0, 0), "sun": Vector3(0.30, 0.85, 0.20), "target": 3.0, "block": 16},
 	{"name": "far_haze", "cam": Vector2(-240, 0), "eye": 30.0, "look": Vector3(-90, 0, 0), "sun": Vector3(0.40, 0.75, 0.10), "haze": true, "target": 4.0, "block": 16},
 ]
@@ -238,7 +238,7 @@ func _count_instance_uniforms(path: String, seen: Dictionary) -> int:
 
 
 func _audit_shaders() -> void:
-	for path in ["res://materials/ring_grass_cards.gdshader", "res://materials/ring_grass_hero.gdshader"]:
+	for path in ["res://materials/ring_grass_cards.gdshader"]:
 		var shader: Shader = load(path)
 		if shader == null:
 			_fail("shader failed to load " + path)
@@ -255,7 +255,7 @@ func _audit_followers() -> void:
 	if terrain_shader == null:
 		print("GRASS_S4_AUDIT follower audit skipped (no terrain shader)")
 		return
-	for material in [fixture.CardMaterial, fixture.HeroMaterial]:
+	for material in [fixture.CardMaterial]:
 		var shared: PackedStringArray = fixture.SharedUniformNames(terrain_shader, material.shader)
 		var missing: PackedStringArray = fixture.UnforwardedShared(shared)
 		print("GRASS_S4_AUDIT shared_with_terrain(%s)=%d unforwarded=%s" % [material.shader.resource_path.get_file(), shared.size(), missing])
@@ -271,7 +271,6 @@ func _frames(n: int) -> void:
 func _set_all(name: String, value) -> void:
 	_terrain_material().call("set_shader_param", name, value)
 	fixture.CardMaterial.set_shader_parameter(name, value)
-	fixture.HeroMaterial.set_shader_parameter(name, value)
 
 
 const HAZE := {
@@ -305,12 +304,12 @@ func _apply_pose(pose: Dictionary) -> void:
 		await process_frame
 
 
-func _rebuild_field(pose: Dictionary, cards: bool, hero: bool) -> void:
+func _rebuild_field(pose: Dictionary, cards: bool) -> void:
 	if is_instance_valid(field_root):
 		field_root.queue_free()
 		field_root = null
 	var cam: Vector2 = pose.cam
-	field_root = fixture.BuildField(cam.x, cam.y, float(pose.eye), 400.0, cards, hero, 20260)
+	field_root = fixture.BuildField(cam.x, cam.y, float(pose.eye), 400.0, cards, 20260)
 	scene_parent.add_child(field_root)
 
 
@@ -357,10 +356,9 @@ func _run_color() -> void:
 	var any_fail := false
 	for pose in POSES:
 		await _apply_pose(pose)
-		await _rebuild_field(pose, true, true)
-		print("POSE %s cards=%d low=%d hero=%d chunks=%d" % [pose.name, fixture.CardInstances, fixture.LowInstances, fixture.HeroInstances, fixture.ChunkCount])
+		await _rebuild_field(pose, true)
+		print("POSE %s cards=%d low=%d chunks=%d" % [pose.name, fixture.CardInstances, fixture.LowInstances, fixture.ChunkCount])
 		fixture.SetMode("production")
-		fixture.SetHeroThinning(true)
 		field_root.visible = false
 		await _settle()
 		var ground := await _grab()
@@ -389,11 +387,6 @@ func _run_color() -> void:
 			r16.mean, r16.p95, px.count, px.mean, pose.block, p.mean, p.mean_dl]
 		print(line)
 		rows.append(line)
-		if bool(pose.get("hero_card", false)):
-			var agree := await _hero_vs_card(pose, ground)
-			print(agree)
-			rows.append(agree)
-			any_fail = any_fail or agree.ends_with("FAIL")
 	var f := FileAccess.open(ProjectSettings.globalize_path(out_dir.path_join("color_results.txt")), FileAccess.WRITE)
 	f.store_string("\n".join(rows))
 	f.close()
@@ -402,26 +395,6 @@ func _run_color() -> void:
 		return
 	print("GRASS_S4_COLOR_MATCH=PASS poses=%d" % POSES.size())
 	await _finish(0)
-
-
-func _hero_vs_card(pose: Dictionary, ground: Image) -> String:
-	# Production colours, cards + low layer without hero thinning vs hero tufts alone, over the 4..6 m ground strip.
-	fixture.SetMode("production")
-	fixture.SetHeroThinning(false)
-	await _rebuild_field(pose, true, false)
-	await _settle()
-	var card_image := await _grab()
-	_shot(pose, "cards_only", card_image)
-	await _rebuild_field(pose, false, true)
-	await _settle()
-	var hero_image := await _grab()
-	_shot(pose, "hero_only", hero_image)
-	fixture.SetHeroThinning(true)
-	var strip := _strip_region(4.0, 6.0, 2.0, pose.cam)
-	var r: Dictionary = fixture.CompareCoveredMeans(card_image, hero_image, ground, strip, 6)
-	var ok: bool = r.delta_e >= 0.0 and float(r.delta_e) <= 3.0
-	return "GRASS_S4_HERO_CARD pose=%s strip=%s covered_cards=%d covered_hero=%d lab_cards=%s lab_hero=%s dE=%.2f target=3.0 %s" % [
-		pose.name, strip, r.count_a, r.count_b, r.get("lab_a", Vector3.ZERO), r.get("lab_b", Vector3.ZERO), r.delta_e, "PASS" if ok else "FAIL"]
 
 
 # ------------------------------------------------------------------ curve parity
@@ -545,24 +518,14 @@ func _run_measure() -> void:
 	for pose in [POSES[0], POSES[1], POSES[7]]:
 		await _apply_pose(pose)
 		fixture.SetMode("production")
-		fixture.SetHeroThinning(true)
-		await _rebuild_field(pose, true, true)
-		var counts := "cards=%d low=%d hero=%d" % [fixture.CardInstances, fixture.LowInstances, fixture.HeroInstances]
-		# Renderers: card chunks use the card material, hero chunks the hero material.
-		var card_nodes: Array = []
-		var hero_nodes: Array = []
-		for n in field_root.get_children():
-			if (n as MultiMeshInstance3D).material_override == fixture.HeroMaterial:
-				hero_nodes.append(n)
-			else:
-				card_nodes.append(n)
-		var states := [["hidden", false, false], ["cards", true, false], ["hero", false, true], ["cards+hero", true, true]]
+		await _rebuild_field(pose, true)
+		var counts := "cards=%d low=%d" % [fixture.CardInstances, fixture.LowInstances]
+		var card_nodes: Array = field_root.get_children()
+		var states := [["hidden", false], ["cards", true]]
 		var base := 0.0
 		for s in states:
 			for n in card_nodes:
 				n.visible = s[1]
-			for n in hero_nodes:
-				n.visible = s[2]
 			var w := await _window("%s/%s" % [pose.name, s[0]], samples)
 			if s[0] == "hidden":
 				base = w.gpu.median
@@ -581,7 +544,7 @@ func _run_measure() -> void:
 func _run_weather() -> void:
 	var pose: Dictionary = POSES[0]
 	await _apply_pose(pose)
-	await _rebuild_field(pose, true, true)
+	await _rebuild_field(pose, true)
 	fixture.SetMode("production")
 	await _settle()
 	var calm := await _grab()

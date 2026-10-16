@@ -28,6 +28,20 @@ float tree_distance(uint id, uint stride) {
     return distance(basis * root + vec3(p[25], p[26], p[27]), vec3(p[0], p[1], p[2]));
 }
 
+// Card mode: GLSL twin of RingGrassCardCurve.cs (Smooth/FarDensity/Density/Keep/GrowIn/LowKeep). Parity-tested; keep the
+// operation order identical. p[64..77] hold the curve inputs, see RingGpuVegetationCompute.WriteParameterWords.
+float card_smooth(float a, float b, float x) { float t = clamp((x - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
+float card_density(float d) {
+    float far_d = clamp(p[66] * pow(p[69] / max(d, p[69]), p[68]), p[67], p[66]);
+    if (p[65] <= p[66]) return far_d;
+    return far_d + (p[65] - far_d) * (1.0 - card_smooth(p[70], p[71], d));
+}
+bool card_keeps(float rank, float d, bool low) {
+    float keep = low ? 1.0 - card_smooth(p[72], p[73], d) : min(1.0, card_density(d) / max(0.01, p[65]));
+    if (!(rank < keep)) return false;
+    return card_smooth(0.0, 1.0, (keep - rank) / max(0.02, 0.2 * keep)) >= p[74];
+}
+
 bool accepted(uint id) {
     bool grass = p[10] > .5;
     uint stride = grass ? 20u : (p[14] > .5 ? 16u : 12u);
@@ -46,6 +60,27 @@ bool accepted(uint id) {
             ? distance_to_camera >= p[3] && distance_to_camera < p[4] : int(p[11]) == 0);
         if (protected_root || metadata[id].x > p[8]) return false;
         return distance_to_camera >= p[3] && distance_to_camera < p[4];
+    }
+    if (p[62] > .5) {
+        // Conservative card accept: the card vertex shader re-derives scale with the exact camera distance. Keep, grow-in and
+        // low keep never rise with distance, so testing at distance - margin yields a superset for any camera within margin.
+        float custom_x = source[base + 16u];
+        float kind_slot = floor(custom_x);
+        float card_rank = (custom_x - kind_slot) / 0.999;
+        bool low = floor(kind_slot * 0.25) > 0.5;
+        float d = max(0.0, distance_to_camera - p[75]);
+        if (!(d < p[64])) return false;
+        if (!card_keeps(card_rank, d, low)) return false;
+        vec3 wx = basis * vec3(source[base], source[base + 4u], source[base + 8u]);
+        vec3 wy = basis * vec3(source[base + 1u], source[base + 5u], source[base + 9u]);
+        vec3 wz = basis * vec3(source[base + 2u], source[base + 6u], source[base + 10u]);
+        float card_guard = p[9] + p[76] * sqrt(dot(wx, wx) + dot(wz, wz)) + p[77] * length(wy);
+        if (isnan(card_guard) || isinf(card_guard) || card_guard < 0.0) return true;
+        for (int i = 0; i < int(p[13]); ++i) {
+            uint a = 28u + uint(i) * 4u;
+            if (dot(vec3(p[a], p[a + 1u], p[a + 2u]), world) - p[a + 3u] > card_guard) return false;
+        }
+        return true;
     }
     // Godot frustum normals point outwards: positive signed distance is outside.
     vec3 local_x = vec3(source[base], source[base + 4u], source[base + 8u]);

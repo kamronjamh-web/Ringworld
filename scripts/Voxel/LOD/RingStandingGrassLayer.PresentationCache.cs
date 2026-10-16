@@ -79,6 +79,7 @@ public partial class RingStandingGrassLayer
         internal MultiMeshInstance3D? Renderer;
         internal MappingState? Mapping;
         internal Vector2? GustUv;
+        internal Vector4? TerrainOriginUv;
         internal bool? GpuCulled;
         internal long SnapshotRevision = -1;
         internal Transform3D WorldSnapshot;
@@ -105,6 +106,7 @@ public partial class RingStandingGrassLayer
             state.Renderer = renderer;
             state.Mapping = null;
             state.GustUv = null;
+            state.TerrainOriginUv = null;
             state.GpuCulled = null;
             state.SnapshotRevision = -1;
             state.LocalRevision = -1;
@@ -216,6 +218,17 @@ public partial class RingStandingGrassLayer
             renderer.SetInstanceShaderParameter("grass_gust_origin_uv", uv);
             state.GustUv = uv;
             PresentationParameterWrites++;
+        }
+        if (_style.IsCards)
+        {
+            // Canonical (unchanged by floating-origin rebases): written once per renderer, never per frame.
+            Vector4 terrainUv = CardTerrainOriginUv(data.Bounds, geometry.RingRadiusMeters, _ringAcrossWidthMeters, geometry.CircumferenceMeters, _cardFocusAroundMeters);
+            if (state.TerrainOriginUv != terrainUv)
+            {
+                renderer.SetInstanceShaderParameter("grass_terrain_origin_uv", terrainUv);
+                state.TerrainOriginUv = terrainUv;
+                PresentationParameterWrites++;
+            }
         }
         return world;
     }

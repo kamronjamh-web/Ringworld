@@ -10,7 +10,7 @@ using RingworldTechDemo.Voxel.LOD;
 namespace RingworldTechDemo.Tests;
 
 /// <summary>Headless contract test for the production grass-card asset factories (S2): atlas determinism/coverage/channels,
-/// card and hero mesh contracts, cache behaviour and parity with the P0 spike. Run via tools/grass_card_assets_test.gd.</summary>
+/// card mesh contract, cache behaviour and parity with the P0 spike. Run via tools/grass_card_assets_test.gd.</summary>
 public partial class GrassCardAssetsTest : Node
 {
     [Signal] public delegate void CompletedEventHandler(bool passed);
@@ -122,26 +122,6 @@ public partial class GrassCardAssetsTest : Node
         Require(cardMesh.GetSurfaceCount() == 1 && ReferenceEquals(cardMesh, cards.GetMesh()), "card ArrayMesh not stable");
         Require(cardMesh.GetFaces().Length == 36, "card mesh face count");
 
-        // Hero mesh contract.
-        var hero = RingGrassHeroTuftMeshFactory.BuildDefault();
-        Require(hero.Vertices.Length == 8 * 9 && hero.TriangleCount == 8 * 7, $"hero counts v={hero.Vertices.Length} t={hero.TriangleCount}");
-        Require(hero.Custom0Rg != null && hero.Custom0Rg.Length == hero.Vertices.Length * 2, "hero CUSTOM0 length");
-        var heroMesh = hero.GetMesh();
-        var heroArrays = heroMesh.SurfaceGetArrays(0);
-        Require(heroArrays[(int)Mesh.ArrayType.Color].VariantType == Variant.Type.Nil, "hero mesh still carries vertex COLOR");
-        var heroC0 = heroArrays[(int)Mesh.ArrayType.Custom0].AsFloat32Array();
-        Require(heroC0.Length == hero.Vertices.Length * 2 && heroC0.SequenceEqual(hero.Custom0Rg!), "hero CUSTOM0 not preserved in the ArrayMesh");
-        Require(((long)heroMesh.SurfaceGetFormat(0) & (long)Mesh.ArrayFormat.FormatColor) == 0, "hero surface format has COLOR");
-        // Each blade's 9 vertices share one root offset, and the offset is within the footprint.
-        for (int bl = 0; bl < 8; bl++)
-        {
-            float rx = hero.Custom0Rg![bl * 18], rz = hero.Custom0Rg[bl * 18 + 1];
-            for (int j = 0; j < 9; j++) Require(hero.Custom0Rg[bl * 18 + j * 2] == rx && hero.Custom0Rg[bl * 18 + j * 2 + 1] == rz, $"blade {bl} root offset varies");
-            Require(MathF.Sqrt(rx * rx + rz * rz) <= .15f * 1.1f + 1e-4f, $"blade {bl} root offset outside footprint");
-            Require(MathF.Abs(hero.Vertices[bl * 9].X - rx) < 1e-6f && MathF.Abs(hero.Vertices[bl * 9].Y) < 1e-6f, $"blade {bl} root vertex not at its offset");
-        }
-        Require(hero.Indices.All(i => i >= 0 && i < hero.Vertices.Length), "hero indices out of range");
-
         // Cache: hit returns the same resource, parameter change invalidates, timings.
         RingGrassCardAssets.ClearForTests();
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -153,7 +133,7 @@ public partial class GrassCardAssetsTest : Node
         Require(ReferenceEquals(s1, s2) && RingGrassCardAssets.BuildCount >= 1, "cache hit returned a different set");
         int builds = RingGrassCardAssets.BuildCount;
         Require(RingGrassCardAssets.TryGet(d, out var polled) && ReferenceEquals(polled, s1), "TryGet did not return the cached set");
-        Require(ReferenceEquals(s1.AtlasTexture, s2.AtlasTexture) && ReferenceEquals(s1.CardArrayMesh, s2.CardArrayMesh) && ReferenceEquals(s1.HeroArrayMesh, s2.HeroArrayMesh), "cache hit returned different Godot resources");
+        Require(ReferenceEquals(s1.AtlasTexture, s2.AtlasTexture) && ReferenceEquals(s1.CardArrayMesh, s2.CardArrayMesh), "cache hit returned different Godot resources");
         Require(s1.AtlasTexture.GetWidth() == 2048 && s1.AtlasTexture.GetHeight() == 512, "atlas texture size");
         Require(RingGrassCardAssets.BuildCount == builds, "resource access rebuilt data");
         var other = d with { Seed = 99 };
@@ -167,26 +147,50 @@ public partial class GrassCardAssetsTest : Node
         var spike = new GrassCardsSpikeAssets();
         ImageTexture spikeTex = spike.BuildAtlasFull(56, 1337, 0.16f, 0.24f, 1.2f);
         byte[] spikePixels = spikeTex.GetImage().GetData();
-        Require(spike.LastAtlasHash == a.Mip0Hash, $"spike atlas hash {spike.LastAtlasHash} != {a.Mip0Hash}");
-        Require(spikePixels.Length == a.Pixels.Length && spikePixels.AsSpan().SequenceEqual(a.Pixels), "atlas pixels differ from the spike (all mips)");
+        // Mip0Hash intentionally differs from the spike now: uncovered mip-0 texels carry push-pull filled G/B (covered texels are checked below).
+        // R (coverage) must match the spike on every mip; G/B only on mip-0 covered texels (G/B are now coverage weighted across mips).
+        Require(spikePixels.Length == a.Pixels.Length, "atlas pixel length differs from the spike");
+        {
+            int mw = a.Width, mh = a.Height, off = 0, mips = 0;
+            var sbMean = new List<string>();
+            double m0G = 0, m0B = 0;
+            while (true)
+            {
+                int n = mw * mh;
+                double sumG = 0, sumB = 0; int cnt = 0, rDiff = 0, gbDiff = 0;
+                for (int i = 0; i < n; i++)
+                {
+                    int o = off + i * 4;
+                    if (spikePixels[o] != a.Pixels[o]) rDiff++;
+                    if (a.Pixels[o] >= 128) { sumG += a.Pixels[o + 1] / 255.0; sumB += a.Pixels[o + 2] / 255.0; cnt++; }
+                    if (mips == 0 && a.Pixels[o] > 0 && (spikePixels[o + 1] != a.Pixels[o + 1] || spikePixels[o + 2] != a.Pixels[o + 2])) gbDiff++;
+                }
+                Require(rDiff == 0, $"mip {mips} R differs from the spike on {rDiff} texels");
+                Require(gbDiff == 0, $"mip 0 G/B differ from the spike on {gbDiff} covered texels");
+                double mg = cnt > 0 ? sumG / cnt : 0, mb = cnt > 0 ? sumB / cnt : 0;
+                if (mips == 0) { m0G = mg; m0B = mb; }
+                else if (cnt > 0)
+                {
+                    // Mips 1-4 (near/mid cards) must hold G within .03. From mip 5 the quantile-rescaled R >= 128 selection favours dense
+                    // root texels (low G), so the mean G legitimately drops; only guard against a return to box-filter dilution there.
+                    bool gOk = mips <= 4 ? Math.Abs(mg - m0G) <= .03 : mg >= m0G * .72;
+                    Require(gOk && Math.Abs(mb - m0B) <= .03, $"mip {mips} G/B diluted: meanG={mg:0.000} meanB={mb:0.000} vs mip0 {m0G:0.000}/{m0B:0.000}");
+                    sbMean.Add($"mip{mips}:G={mg:0.000},B={mb:0.000}");
+                }
+                else sbMean.Add($"mip{mips}:no-R>=128");
+                off += n * 4; mips++;
+                if (mw == 1 && mh == 1) break;
+                mw = Math.Max(1, mw / 2); mh = Math.Max(1, mh / 2);
+            }
+            Require(mips == a.MipCount, "mip walk count differs from the atlas mip count");
+            GD.Print($"GRASS_CARD_ASSETS antiDilution mip0:G={m0G:0.000},B={m0B:0.000} " + string.Join(" ", sbMean));
+        }
         Require(MathF.Abs(spike.LastOutlineWasteFraction - a.OutlineWasteFraction) < 1e-7f, "outline waste differs from the spike");
         ArrayMesh spikeCards = spike.BuildMesh();
         var sa = spikeCards.SurfaceGetArrays(0);
         Require(sa[(int)Mesh.ArrayType.Vertex].AsVector3Array().SequenceEqual(cards.Vertices) && sa[(int)Mesh.ArrayType.TexUV].AsVector2Array().SequenceEqual(cards.Uv)
             && sa[(int)Mesh.ArrayType.TexUV2].AsVector2Array().SequenceEqual(cards.Uv2) && sa[(int)Mesh.ArrayType.Index].AsInt32Array().SequenceEqual(cards.Indices), "card mesh differs from the spike");
-        ArrayMesh spikeHero = spike.BuildHeroTuftMesh(8, 4242, 0.15f, 0.013f);
-        var sh = spikeHero.SurfaceGetArrays(0);
-        Require(sh[(int)Mesh.ArrayType.Vertex].AsVector3Array().SequenceEqual(hero.Vertices) && sh[(int)Mesh.ArrayType.TexUV].AsVector2Array().SequenceEqual(hero.Uv)
-            && sh[(int)Mesh.ArrayType.TexUV2].AsVector2Array().SequenceEqual(hero.Uv2) && sh[(int)Mesh.ArrayType.Index].AsInt32Array().SequenceEqual(hero.Indices), "hero mesh differs from the spike");
-        var spikeColors = sh[(int)Mesh.ArrayType.Color].AsColorArray();
-        float worst = 0f;
-        for (int i = 0; i < spikeColors.Length; i++)
-        {
-            worst = MathF.Max(worst, MathF.Abs((spikeColors[i].R - .5f) * GrassCardsSpikeAssets.HeroRootRange - hero.Custom0Rg![i * 2]));
-            worst = MathF.Max(worst, MathF.Abs((spikeColors[i].G - .5f) * GrassCardsSpikeAssets.HeroRootRange - hero.Custom0Rg[i * 2 + 1]));
-        }
-        Require(spikeColors.Length == hero.Vertices.Length && worst < .005f, $"hero CUSTOM0 vs spike COLOR root offset max error {worst}");
-        GD.Print($"GRASS_CARD_ASSETS parity atlasPixels=identical({a.Pixels.Length}B) cardMesh=identical heroMesh=identical heroRootMaxErrVsSpikeColor={F(worst)}m");
+        GD.Print($"GRASS_CARD_ASSETS parity atlasR=identical atlasPixels=({a.Pixels.Length}B) cardMesh=identical");
 
         if (_failures.Count > 0) { foreach (string f in _failures) GD.PushError("GRASS_CARD_ASSETS fail: " + f); GD.Print("GRASS_CARD_ASSETS=FAIL " + _failures.Count); return false; }
         GD.Print("GRASS_CARD_ASSETS=PASS");

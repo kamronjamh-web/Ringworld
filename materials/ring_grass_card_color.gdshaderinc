@@ -1,4 +1,4 @@
-// Shared grass-card / hero-blade colour pipeline (grass-cards plan step S4). Both materials include this file and are fed
+// Shared grass-card colour pipeline (grass-cards plan step S4). Both materials include this file and are fed
 // the same uniform values from one C# config (RingGrassCardMaterialConfig), so blades and cards colour identically by
 // construction. The ground colour is the Terrain3D surface albedo (ring_terrain_surface_albedo.gdshaderinc) sampled with
 // textureLod on the top-down projection, at a terrain uv derived exactly like the terrain's own y-projection uv:
@@ -30,9 +30,13 @@ vec2 grass_card_canonical_offset(vec3 world, vec3 origin_world, vec4 around_cove
 	return vec2(dot(delta, around_covector.xyz), dot(delta, across_covector.xyz));
 }
 
+// Legacy (voxel) terrain has no Terrain3D surface to follow: the layer sets this and the uv becomes the planar world-xz
+// projection at the terrain texture scale, matching voxel_ring_terrain.gdshader.
+uniform bool grass_card_world_uv = false;
+
 // Terrain top-down texture uv of a world position.
-vec2 grass_card_terrain_uv(vec2 canonical_offset, vec4 origin_uv) {
-	return origin_uv.xy + canonical_offset * biome_texture_scale;
+vec2 grass_card_terrain_uv(vec2 canonical_offset, vec4 origin_uv, vec3 world) {
+	return grass_card_world_uv ? world.xz * biome_texture_scale : origin_uv.xy + canonical_offset * biome_texture_scale;
 }
 
 // Biome albedo at one uv/mip. Index: 0 grass (already carries the terrain grass tint), 1 desert, 2 forest, 3 tundra, 4 alpine.

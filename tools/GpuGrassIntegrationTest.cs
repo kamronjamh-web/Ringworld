@@ -289,6 +289,7 @@ public partial class GpuGrassIntegrationTest : Node
         {
             UseGpuCulling = false,
             UseGrassClumps = false,
+            EnableMeadowTufts = false,
             BladesPerSquareMeter = 16,
             VisibilityRadiusMeters = 24,
             SpatialTileMeters = 16,

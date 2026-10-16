@@ -24,7 +24,10 @@ public partial class RingLiveTuningDrawer
     private void BuildGrassTab(TabContainer tabs)
     {
         VBoxContainer tab = CreateTab(tabs, "Grass"); tab.AddChild(new Label { Text = "Live grass streaming controls. Only values you change are saved; other values follow the active graphics profile.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
-        var gpuCulling = AddGrassGroup(tab, "GPU culling", "GPU compaction keeps the canonical CPU placement buffer. Unsupported renderers retain CPU and vertex-LOD rendering."); AddGrassToggle(gpuCulling, "UseGpuCulling", "Use GPU grass culling"); AddGrassToggle(gpuCulling, "GpuFrustumCulling", "Cull grass outside the camera view"); AddGrassSlider(gpuCulling, "GrassFrustumPaddingMeters", "View-edge safety margin (m)", 0, 8, .01); AddGrassToggle(gpuCulling, "SkipUnchangedGpuCulling", "Skip unchanged GPU culling updates"); AddGrassToggle(gpuCulling, "GroupGrassComputePhases", "Group grass compute phases"); AddGrassToggle(gpuCulling, "CullGrassTiles", "Skip invisible grass tiles and unused LODs"); AddGrassDebouncedToggle(gpuCulling, "UseGrassClumps", "Group grass into tuft instances");
+        var style = AddGrassGroup(tab, "Render style", "Blades is the established grass. Cards draws terrain-coloured clump cards out to the reach with far fewer instances. Switching resets and rebuilds all grass; the blade settings below only apply to Blades.");
+        AddGrassRenderStyle(style);
+        BuildGrassCardControls(tab);
+        var gpuCulling = AddGrassGroup(tab, "GPU culling", "GPU compaction keeps the canonical CPU placement buffer. Unsupported renderers retain CPU and vertex-LOD rendering."); AddGrassToggle(gpuCulling, "UseGpuCulling", "Use GPU grass culling"); AddGrassToggle(gpuCulling, "GpuFrustumCulling", "Cull grass outside the camera view"); AddGrassSlider(gpuCulling, "GrassFrustumPaddingMeters", "View-edge safety margin (m)", 0, 8, .01); AddGrassSlider(gpuCulling, "GrassCardComputeMarginMeters", "Cards GPU distance margin (m)", 0, 8, .25); AddGrassToggle(gpuCulling, "SkipUnchangedGpuCulling", "Skip unchanged GPU culling updates"); AddGrassToggle(gpuCulling, "GroupGrassComputePhases", "Group grass compute phases"); AddGrassToggle(gpuCulling, "CullGrassTiles", "Skip invisible grass tiles and unused LODs"); AddGrassDebouncedToggle(gpuCulling, "UseGrassClumps", "Group grass into tuft instances");
         var grouping = AddGrassGroup(tab, "Adaptive grass groups", "Nearby grass retains individual tiles. Distant tiles share 2-by-2 groups, with optional 4-by-4 groups. This reduces renderer and culling bookkeeping while preserving grass density. Groups require compatible visible tiles beyond the near LOD transition and inside the far geometry distance. Source caps keep dense groups small; hysteresis steadies distance transitions.");
         AddGrassToggle(grouping, "EnableAdaptiveGrassGrouping", "Group distant grass tiles");
         AddGrassSlider(grouping, "GrassGroupingStartMeters", "2-by-2 group start distance (m)", 16, 1500, 1);
@@ -62,6 +65,16 @@ public partial class RingLiveTuningDrawer
     private void AddGrassSlider(VBoxContainer p, string key, string label, double min, double max, double step) { p.AddChild(new Label { Text = label }); _grassControlKeys.Add(key); var row = new HBoxContainer(); double initial = GrassNumber(key, min); var slider = new HSlider { Name = key, MinValue = min, MaxValue = max, Step = step, Value = initial, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, Editable = GrassAvailable }; var entry = new SpinBox { Name = key + "Entry", MinValue = min, MaxValue = max, Step = step, Value = initial, CustomMinimumSize = new Vector2(82, 0), Editable = GrassAvailable }; slider.ValueChanged += v => { entry.SetValueNoSignal(v); QueueGrassValue(key, v); }; entry.ValueChanged += v => { _pendingGrassValues.Remove(key); slider.SetValueNoSignal(v); SetGrassTuningValue(key, v); }; row.AddChild(slider); row.AddChild(entry); p.AddChild(row); }
     private void AddGrassToggle(VBoxContainer p, string key, string label) { _grassControlKeys.Add(key); var c = new CheckButton { Name = key, Text = label, ButtonPressed = GrassValue(key).AsBool(), Disabled = !GrassAvailable }; c.Toggled += v => SetGrassTuningValue(key, v); p.AddChild(c); }
     private void AddGrassDebouncedToggle(VBoxContainer p, string key, string label) { _grassControlKeys.Add(key); var c = new CheckButton { Name = key, Text = label, ButtonPressed = GrassValue(key).AsBool(), Disabled = !GrassAvailable }; c.Toggled += v => QueueGrassValue(key, v); p.AddChild(c); }
+    private void AddGrassRenderStyle(VBoxContainer parent)
+    {
+        parent.AddChild(new Label { Text = "Grass render style" });
+        _grassControlKeys.Add("GrassRenderStyle");
+        var option = new OptionButton { Name = "GrassRenderStyle", Disabled = !GrassAvailable };
+        foreach (string style in new[] { "Blades", "Cards" }) option.AddItem(style);
+        option.Selected = (int)GrassNumber("GrassRenderStyle", 0);
+        option.ItemSelected += index => SetGrassTuningValue("GrassRenderStyle", index);
+        parent.AddChild(option);
+    }
     private void AddGrassTuftVariant(VBoxContainer parent)
     {
         parent.AddChild(new Label { Text = "Tuft shape selection" });
@@ -143,10 +156,12 @@ public partial class RingLiveTuningDrawer
         RingStandingGrassLayer? layer = _grassGraphics?.GrassLayer;
         if (layer == null) { _grassGroupingStatus.Text = "Standing grass is unavailable in this scene."; return; }
         float margin = Math.Max(4f, layer.GrassGroupingHysteresisMeters);
-        float nearLimit = Math.Min(layer.LodNearDistanceMeters, layer.EffectiveGrassDrawDistance() - .01f) + layer.LodTransitionWidthMeters * .5f + margin;
-        float firstStart = Math.Max(layer.GrassGroupingStartMeters, nearLimit) + margin;
-        float secondStart = Math.Max(layer.GrassGroupingFarStartMeters, nearLimit) + margin;
-        float farLimit = layer.EffectiveGrassDrawDistance() + layer.LodTransitionWidthMeters * .5f;
+        // Cards has no distance LOD: the effective start is clamped beyond the density ladder and the geometry ends at the reach.
+        bool cardGroups = layer.IsCardStyle;
+        float nearLimit = cardGroups ? 0f : Math.Min(layer.LodNearDistanceMeters, layer.EffectiveGrassDrawDistance() - .01f) + layer.LodTransitionWidthMeters * .5f + margin;
+        float firstStart = Math.Max(cardGroups ? layer.EffectiveGrassGroupingStartMeters : layer.GrassGroupingStartMeters, nearLimit) + margin;
+        float secondStart = Math.Max(cardGroups ? layer.EffectiveGrassGroupingFarStartMeters : layer.GrassGroupingFarStartMeters, nearLimit) + margin;
+        float farLimit = layer.EffectiveGrassDrawDistance() + (cardGroups ? 0f : layer.LodTransitionWidthMeters * .5f);
         string counts = $"2-by-2: {layer.AdaptiveGrassLevel1GroupCount:N0}; 4-by-4: {layer.AdaptiveGrassLevel2GroupCount:N0}. Maximum level: {layer.GrassGroupingMaximumLevel}.";
         string grouping;
         bool inactive = !layer.Enabled || layer.StreamingSuspended || !layer.IsVisibleInTree();

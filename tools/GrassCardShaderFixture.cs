@@ -6,7 +6,7 @@ using RingworldTechDemo.Voxel.LOD;
 namespace RingworldTechDemo.Tests;
 
 /// <summary>
-/// Synthetic GPU fixture helper for the grass-card / hero-blade shaders (grass-cards plan step S4). GDScript
+/// Synthetic GPU fixture helper for the grass-card shader (grass-cards plan step S4). GDScript
 /// (tools/grass_card_color_match_gpu_test.gd) owns the Terrain3D scene; this class owns the pieces that need C# assets:
 /// material construction from the single RingGrassCardMaterialConfig, a deterministic stand-in placer (a jittered lattice cut
 /// by the real RingGrassCardCurve, until the S3/S5 tile builder feeds the layer), the Terrain3D ring-frame maths, and CIEDE2000.
@@ -29,10 +29,8 @@ public partial class GrassCardShaderFixture : RefCounted
     private RingGrassCardAssetSet _assets = null!;
     private RingGrassCardMaterialConfig _config = new();
     public ShaderMaterial CardMaterial { get; private set; } = null!;
-    public ShaderMaterial HeroMaterial { get; private set; } = null!;
     public int CardInstances { get; private set; }
     public int LowInstances { get; private set; }
-    public int HeroInstances { get; private set; }
     public int ChunkCount { get; private set; }
 
     public void InitAssets()
@@ -40,7 +38,6 @@ public partial class GrassCardShaderFixture : RefCounted
         _assets = RingGrassCardAssets.GetBlocking(RingGrassCardAtlasParameters.VariantD);
         _config = new RingGrassCardMaterialConfig();
         CardMaterial = _config.CreateCardMaterial(_assets.AtlasTexture);
-        HeroMaterial = _config.CreateHeroMaterial();
     }
 
     /// <summary>"production" (variant D colour), "neutral" (no AO / tip / jitter / pull / bend, so the card should equal the ground),
@@ -53,26 +50,21 @@ public partial class GrassCardShaderFixture : RefCounted
             c.GreenPull = 0f; c.RootAo = 1f; c.TipLight = 0f; c.TipTint = Vector3.One; c.BladeValueJitter = 0f; c.BladeHueJitter = 0f;
             c.DryFraction = -0.2f; c.TuftValueJitter = 0f; c.RootDark = 1f; c.TipGain = 1f; c.TipShift = Vector3.One; c.ColorVariation = 0f;
             c.NormalOut = 0f; c.NormalFace = 0f; c.Backlight = 0f;
-            if (mode == "mask") { c.DryFraction = 1f; c.GreenPull = 1f; }
+            if (mode == "mask")
+            {
+                c.DryFraction = 1f; c.GreenPull = 1f;
+                c.RootDark = 0f; c.TipGain = 0f; // far vertex-colour path goes black so cards beyond the converge range stay visible in the mask
+                c.ConvergeStartPercent = 99f; c.ConvergeEndPercent = 100f; // no convergence back to the ground colour
+            }
         }
         _config = c;
         _config.ApplyCard(CardMaterial, _assets.AtlasTexture);
-        _config.ApplyHero(HeroMaterial);
     }
 
     public void SetGreenPull(float value)
     {
         _config.GreenPull = value;
         _config.ApplyCard(CardMaterial);
-        _config.ApplyHero(HeroMaterial);
-    }
-
-    public void SetHeroThinning(bool enabled)
-    {
-        var p = _config.Curve;
-        _config.Curve = p with { HeroThinMinimum = enabled ? .4f : 1f };
-        _config.ApplyCard(CardMaterial);
-        _config.ApplyHero(HeroMaterial);
     }
 
     public void SetFrame(double radius, double anchorHeight, Vector3 frameOrigin, Basis frameBasis, float anchorAround, float anchorAcross, float acrossDirection)
@@ -172,7 +164,7 @@ public partial class GrassCardShaderFixture : RefCounted
         public int Count;
     }
 
-    private void Emit(Dictionary<(int, int), Chunk> chunks, float x, float z, float yaw, float width, float height, float lean, uint hx, int kind, float rank, bool hero)
+    private void Emit(Dictionary<(int, int), Chunk> chunks, float x, float z, float yaw, float width, float height, float lean, uint hx, int kind, float rank)
     {
         Vector3 pos = GroundWorld(x, z);
         Vector3 up = GroundNormal(x, z);
@@ -183,14 +175,11 @@ public partial class GrassCardShaderFixture : RefCounted
         Vector3 bx = (tx * cs - tz * sn) * width;
         Vector3 bz = (tx * sn + tz * cs) * width;
         Vector3 by = up * height;
-        if (!hero)
-        {
-            float lx = (Unit(Hash(hx, 17u, 18u)) - .5f) * 2f * lean * height, lz = (Unit(Hash(hx, 19u, 20u)) - .5f) * 2f * lean * height;
-            by += bx.Normalized() * lx + bz.Normalized() * lz;
-        }
+        float lx = (Unit(Hash(hx, 17u, 18u)) - .5f) * 2f * lean * height, lz = (Unit(Hash(hx, 19u, 20u)) - .5f) * 2f * lean * height;
+        by += bx.Normalized() * lx + bz.Normalized() * lz;
         Vector4 w = BiomeWeights(x);
         float variant = (int)(Unit(Hash(hx, 11u, 12u)) * 4f) % 4;
-        float custom = hero ? 0f : kind * 4f + variant + rank * .999f;
+        float custom = kind * 4f + variant + rank * .999f;
         var key = ((int)MathF.Floor(x / ChunkMeters), (int)MathF.Floor(z / ChunkMeters));
         if (!chunks.TryGetValue(key, out Chunk? chunk)) chunks[key] = chunk = new Chunk();
         List<float> b = chunk.Buffer;
@@ -203,13 +192,13 @@ public partial class GrassCardShaderFixture : RefCounted
         chunk.Count++;
     }
 
-    /// <summary>Builds card (+ low layer) and hero renderers around a camera at Terrain3D local (camX, camZ), eye height above ground.
+    /// <summary>Builds card (+ low layer) renderers around a camera at Terrain3D local (camX, camZ), eye height above ground.
     /// Instances are kept exactly as the real curve would accept them at that camera distance, so the field is static for the pose.</summary>
-    public Node3D BuildField(float camX, float camZ, float eyeHeight, float reach, bool cards, bool hero, int seed)
+    public Node3D BuildField(float camX, float camZ, float eyeHeight, float reach, bool cards, int seed)
     {
         var root = new Node3D { Name = "GrassField" };
         RingGrassCardCurveParameters p = _config.Curve with { ReachMeters = reach };
-        CardInstances = LowInstances = HeroInstances = 0;
+        CardInstances = LowInstances = 0;
         var chunks = new Dictionary<(int, int), Chunk>();
         uint s0 = (uint)seed;
         if (cards)
@@ -234,7 +223,7 @@ public partial class GrassCardShaderFixture : RefCounted
                     bool tall = Unit(Hash(hx, 5u, 6u)) < Smooth(.42f, .58f, n);
                     float h = (tall ? .6f : .3f) * (.85f + .3f * Unit(Hash(hx, 7u, 8u)));
                     float w = .45f + (tall ? .6f : .3f) * 1.1f;
-                    Emit(chunks, x, z, Unit(Hash(hx, 9u, 10u)) * Mathf.Tau, w, h, .12f, hx, 0, rank, false);
+                    Emit(chunks, x, z, Unit(Hash(hx, 9u, 10u)) * Mathf.Tau, w, h, .12f, hx, 0, rank);
                     CardInstances++;
                 }
             // Low upright layer: own lattice, kind 1, fully kept to 8 m, gone by 22 m.
@@ -252,40 +241,12 @@ public partial class GrassCardShaderFixture : RefCounted
                     float rank = Unit(Hash(hx, 3u, 4u));
                     if (RingGrassCardCurve.LowScale(p, rank, d) <= 0f) continue;
                     float h = .11f + .09f * Unit(Hash(hx, 7u, 8u)), w = .30f + .18f * Unit(Hash(hx, 21u, 22u));
-                    Emit(chunks, x, z, Unit(Hash(hx, 9u, 10u)) * Mathf.Tau, w, h, .12f, hx, 1, rank, false);
+                    Emit(chunks, x, z, Unit(Hash(hx, 9u, 10u)) * Mathf.Tau, w, h, .12f, hx, 1, rank);
                     LowInstances++;
                 }
         }
         ChunkCount = chunks.Count;
         foreach (var kv in chunks) root.AddChild(MakeRenderer(kv.Key, kv.Value, _assets.CardArrayMesh, CardMaterial, 3.5f));
-
-        if (hero)
-        {
-            var heroChunks = new Dictionary<(int, int), Chunk>();
-            // 50 tufts / m2 on a jittered lattice inside the hero ring (6 m fade + 1.4 m dither + margin).
-            float cell = 4f, density = 50f, heroReach = _config.HeroEndMeters + _config.HeroDitherMeters + 1f;
-            int n = (int)MathF.Ceiling(MathF.Sqrt(density * cell * cell));
-            float step = cell / n;
-            int cx0 = (int)MathF.Floor((camX - heroReach) / cell), cx1 = (int)MathF.Floor((camX + heroReach) / cell);
-            int cz0 = (int)MathF.Floor((camZ - heroReach) / cell), cz1 = (int)MathF.Floor((camZ + heroReach) / cell);
-            for (int cz = cz0; cz <= cz1; cz++)
-                for (int cx = cx0; cx <= cx1; cx++)
-                    for (int j = 0; j < n; j++)
-                        for (int i = 0; i < n; i++)
-                        {
-                            uint hx = Hash((uint)(cx * n + i), (uint)(cz * n + j), s0 + 77u);
-                            float x = cx * cell + (i + Unit(hx)) * step, z = cz * cell + (j + Unit(Hash(hx, 1u, 2u))) * step;
-                            float dx = x - camX, dz = z - camZ;
-                            if (dx * dx + dz * dz > heroReach * heroReach) continue;
-                            float nz = ValueNoise(x / 70f, z / 70f, 991u) * .65f + ValueNoise(x / 23f, z / 23f, 313u) * .35f;
-                            bool tall = Unit(Hash(hx, 5u, 6u)) < Smooth(.42f, .58f, nz);
-                            float height = (tall ? .6f : .3f) * (.85f + .3f * Unit(Hash(hx, 7u, 8u))) * .9f;
-                            float sx = height / RingGrassHeroTuftMeshFactory.UnitHeight * (.9f + .2f * Unit(Hash(hx, 21u, 22u)));
-                            Emit(heroChunks, x, z, Unit(Hash(hx, 9u, 10u)) * Mathf.Tau, sx, height, 0f, hx, 2, 0f, true);
-                            HeroInstances++;
-                        }
-            foreach (var kv in heroChunks) root.AddChild(MakeRenderer(kv.Key, kv.Value, _assets.HeroArrayMesh, HeroMaterial, 1.5f));
-        }
         return root;
     }
 
@@ -319,12 +280,11 @@ public partial class GrassCardShaderFixture : RefCounted
 
     private static double Mod(double v, double m) { double r = v % m; return r < 0 ? r + m : r; }
 
-    /// <summary>Registers the card and hero materials as followers of a RingTerrain3DSurface (lighting, atmosphere, biome samplers).</summary>
+    /// <summary>Registers the card material as a follower of a RingTerrain3DSurface (lighting, atmosphere, biome samplers).</summary>
     public void RegisterFollowers(Node surface)
     {
         var terrain = (RingworldTechDemo.Terrain.Surface.RingTerrain3DSurface)surface;
         terrain.RegisterSurfaceFollower(CardMaterial, RingGrassCardMaterialConfig.SurfaceFollowerNames);
-        terrain.RegisterSurfaceFollower(HeroMaterial, RingGrassCardMaterialConfig.SurfaceFollowerNames);
     }
 
     /// <summary>Shader uniform names present in both the Terrain3D surface shader and a grass shader (used to audit SurfaceFollowerNames).</summary>
@@ -462,7 +422,7 @@ public partial class GrassCardShaderFixture : RefCounted
     }
 
     /// <summary>Mean Lab colour of the covered pixels (differing from <paramref name="ground"/> by > threshold) of two renders in a region,
-    /// and the CIEDE2000 between the two means. Used for hero-vs-card agreement.</summary>
+    /// and the CIEDE2000 between the two means.</summary>
     public Godot.Collections.Dictionary CompareCoveredMeans(Image a, Image b, Image ground, Rect2I region, int threshold)
     {
         a.Convert(Image.Format.Rgba8); b.Convert(Image.Format.Rgba8); ground.Convert(Image.Format.Rgba8);

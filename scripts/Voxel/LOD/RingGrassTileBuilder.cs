@@ -63,7 +63,9 @@ internal sealed class RingGrassTileData
 /// <summary>Worker-only deterministic placement and instance-buffer builder.</summary>
 internal static class RingGrassTileBuilder
 {
-    private const int CardLatticeSalt = 5101, LowLatticeSalt = 5301, HeroLatticeSalt = 6101;
+    private const int CardLatticeSalt = 5101, LowLatticeSalt = 5301;
+    /// <summary>Tests: override the biome placement chance of card tiles (1 = every lattice cell that passes the other filters).</summary>
+    internal static volatile float ForceCardChanceForTests = -1f;
 
     /// <summary>Per canonical 1 m cell cache of the pure terrain lookups card mode repeats ~14x per cell.</summary>
     private sealed class CardCell
@@ -134,7 +136,7 @@ internal static class RingGrassTileBuilder
         // Card mode shares the whole TryPlace core; only the lattice, shape and payload differ.
         bool cardMode = cards != null;
         if (cardMode) { useGrassClumps = false; meadowTufts = false; useConfiguredHeightRange = false; }
-        BoundedPlacements lowPlacements = new BoundedPlacements(cardMode && cards!.IncludeLowLayer && !cards.Hero ? Math.Max(0, cards.LowLayerMaxInstances) : 0);
+        BoundedPlacements lowPlacements = new BoundedPlacements(cardMode && cards!.IncludeLowLayer ? Math.Max(0, cards.LowLayerMaxInstances) : 0);
         BoundedPlacements sink = placements;
         var cardSamples = cardMode ? new Dictionary<(long, int), CardCell>() : null;
         var cardGrid = cardMode ? new Dictionary<(long, long), Vector4>() : null;
@@ -165,7 +167,7 @@ internal static class RingGrassTileBuilder
         }
 
         // Height by biome: seam-periodic 70 m / 23 m value noise picks tall vs short tufts, tall mostly in grassland
-        // (less in forest, none in sparse biomes). Low layer and hero tufts follow the same rule where it applies.
+        // (less in forest, none in sparse biomes). The low layer follows the same rule where it applies.
         void CardShape(RingGrassCardPlacement options, RingGrassCardKind kind, double around, double across, long aroundCell, long acrossCell,
             int salt, float forestWeight, float grassWeight, out float cardWidth, out float cardHeight)
         {
@@ -181,12 +183,7 @@ internal static class RingGrassTileBuilder
             bool tall = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 6) < pTall;
             float nominal = tall ? options.TallHeight : options.ShortHeight;
             cardHeight = nominal * (.85f + .3f * Hash01(aroundCell, acrossCell, sampler.Seed, salt + 4));
-            if (kind == RingGrassCardKind.Hero)
-            {
-                cardHeight *= options.HeroHeightScale;
-                cardWidth = cardHeight / RingGrassCardPlacement.HeroUnitHeight * (.9f + .2f * Hash01(aroundCell, acrossCell, sampler.Seed, salt + 3));
-            }
-            else cardWidth = .45f + nominal * 1.1f;
+            cardWidth = .45f + nominal * 1.1f;
         }
 
         void TryPlace(double around, double across, long aroundCell, long acrossCell, int salt,
@@ -205,7 +202,7 @@ internal static class RingGrassTileBuilder
             float tierKey = -1;
             if (cardMode)
             {
-                // The rank is the tier key: a tier keeps rank < fraction, the low layer and hero tufts are untiered.
+                // The rank is the tier key: a tier keeps rank < fraction, the low layer is untiered.
                 tierKey = cardRank;
                 if (cardKind == RingGrassCardKind.Card && !(cardRank < sourceFraction)) return;
             }
@@ -246,6 +243,7 @@ internal static class RingGrassTileBuilder
             float chance = grassWeight * .82f + weights.Forest * .42f;
             if (appearance.Enabled) chance = Mathf.Clamp(chance * appearance.DensityFor(weights.Forest, sparseWeight)
                 + sparseWeight * .08f * appearance.SparseDensityMultiplier, 0, 1);
+            if (cardMode && ForceCardChanceForTests >= 0) chance = ForceCardChanceForTests;
             if (chance < .02f || Hash01(aroundCell, acrossCell, sampler.Seed, salt + 2) > chance) return;
             float macro = MacroPatch(canonicalAround, canonicalAcross, sampler.Seed, circumference);
             float bladeWidth, bladeHeight;
@@ -308,8 +306,8 @@ internal static class RingGrassTileBuilder
                 if (factor <= 0 || (factor < 1 && Hash01(aroundCell, acrossCell, sampler.Seed, salt + 401) > factor)) return;
             }
             float clumpRadius = useGrassClumps && bladesPerSquareMeter > 0 ? Mathf.Max(.3f, bladeWidth * 3.7f) * meadowSpread : 0;
-            // A card's footprint radius is half its width (0.3-0.7 m); a hero tuft's is the 0.15 m tuft footprint at its scale.
-            if (cardMode) clumpRadius = cardKind == RingGrassCardKind.Hero ? Mathf.Max(.05f, bladeWidth * .15f) : Mathf.Clamp(bladeWidth * .5f, .3f, .7f);
+            // A card's footprint radius is half its width (0.3-0.7 m).
+            if (cardMode) clumpRadius = Mathf.Clamp(bladeWidth * .5f, .3f, .7f);
             if (exclusions?.IsExcluded(around, surfaceHeight, across, bladeHeight, clumpRadius) == true) return;
             surfaceHeight -= cardMode ? .02 : meadowTufts || useConfiguredHeightRange ? .005 : .035;
             float yaw = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 5) * Mathf.Tau;
@@ -320,7 +318,7 @@ internal static class RingGrassTileBuilder
             {
                 // CUSTOM = (kind*4 + atlas variant + rank*0.999, tuft random, wind anchors); the rank rides in the fraction.
                 int variant = Math.Min(RingGrassCardPlacement.AtlasVariants - 1, (int)(Hash01(aroundCell, acrossCell, sampler.Seed, salt + 13) * RingGrassCardPlacement.AtlasVariants));
-                curve = (int)cardKind * 4 + variant + (cardKind == RingGrassCardKind.Hero ? 0f : cardRank * .999f);
+                curve = (int)cardKind * 4 + variant + cardRank * .999f;
                 tint = Hash01(aroundCell, acrossCell, sampler.Seed, salt + 15);
             }
             const double windPeriod = 48.0;
@@ -331,7 +329,7 @@ internal static class RingGrassTileBuilder
                 surfaceHeight, across, bladeWidth, bladeHeight, yaw, geometry, normal);
             if (cardMode)
             {
-                if (cardKind != RingGrassCardKind.Hero && cards!.Lean > 0)
+                if (cards!.Lean > 0)
                 {
                     // Lean is baked into the basis Y column (x/z of the lean in the yaw-free local frame).
                     Basis lean = transform.Basis;
@@ -363,17 +361,13 @@ internal static class RingGrassTileBuilder
             for (long acrossCell = acrossStart; acrossCell < acrossEnd; acrossCell++)
             for (long aroundCell = aroundStart; aroundCell < aroundEnd; aroundCell++)
             {
-                float rank = 0;
                 ulong priority = Hash64(aroundCell, acrossCell, sampler.Seed, salt + 9);
-                if (kind != RingGrassCardKind.Hero)
-                {
-                    // Bayer value of the LATTICE cell + a per-cell hash: every rank prefix is a jittered grid. The
-                    // priority orders by the exact 32-bit rank code, so a cap truncation is a rank prefix.
-                    uint code = RingGrassCardRank.Code(aroundCell, acrossCell, (int)(Hash64(aroundCell, acrossCell, sampler.Seed, salt + 97) >> 40));
-                    rank = RingGrassCardRank.ToRank(code);
-                    if (kind == RingGrassCardKind.Card && !(rank < sourceFraction)) continue;
-                    priority = ((ulong)code << 32) | (priority & 0xFFFFFFFFUL);
-                }
+                // Bayer value of the LATTICE cell + a per-cell hash: every rank prefix is a jittered grid. The
+                // priority orders by the exact 32-bit rank code, so a cap truncation is a rank prefix.
+                uint code = RingGrassCardRank.Code(aroundCell, acrossCell, (int)(Hash64(aroundCell, acrossCell, sampler.Seed, salt + 97) >> 40));
+                float rank = RingGrassCardRank.ToRank(code);
+                if (kind == RingGrassCardKind.Card && !(rank < sourceFraction)) continue;
+                priority = ((ulong)code << 32) | (priority & 0xFFFFFFFFUL);
                 double around = (aroundCell + .08 + Hash01(aroundCell, acrossCell, sampler.Seed, salt) * .84) * aroundSpacing;
                 double across = (acrossCell + .08 + Hash01(aroundCell, acrossCell, sampler.Seed, salt + 1) * .84) * acrossSpacing;
                 TryPlace(around, across, aroundCell, acrossCell, salt, kind, rank, priority);
@@ -383,12 +377,8 @@ internal static class RingGrassTileBuilder
         bladesPerSquareMeter = float.IsFinite(bladesPerSquareMeter) ? Mathf.Clamp(bladesPerSquareMeter, 0, 96) : 0;
         if (cardMode)
         {
-            if (cards!.Hero) RunCardLattice(cards.HeroDensity, HeroLatticeSalt, RingGrassCardKind.Hero, placements);
-            else
-            {
-                RunCardLattice(cards.NearDensity, CardLatticeSalt, RingGrassCardKind.Card, placements);
-                if (cards.IncludeLowLayer) RunCardLattice(cards.LowLayerDensity, LowLatticeSalt, RingGrassCardKind.Low, lowPlacements);
-            }
+            RunCardLattice(cards!.NearDensity, CardLatticeSalt, RingGrassCardKind.Card, placements);
+            if (cards.IncludeLowLayer) RunCardLattice(cards.LowLayerDensity, LowLatticeSalt, RingGrassCardKind.Low, lowPlacements);
         }
         else if (bladesPerSquareMeter > 0.0f)
         {
@@ -444,9 +434,8 @@ internal static class RingGrassTileBuilder
         }
         if (cardMode)
         {
-            bool hero = cards!.Hero;
-            return new RingGrassTileData(key, bounds, anchorHeight, buffer, localAabb, HashBuffer(buffer), hero ? 1 : sourceFraction, sourceTier,
-                1, BuildTintMap(bounds, tileModifiers), hero ? null : tierKeys, isCardPlacement: !hero, lowLayerInstanceCount: lowLayerCount, lowLayerIncluded: cards.IncludeLowLayer);
+            return new RingGrassTileData(key, bounds, anchorHeight, buffer, localAabb, HashBuffer(buffer), sourceFraction, sourceTier,
+                1, BuildTintMap(bounds, tileModifiers), tierKeys, isCardPlacement: true, lowLayerInstanceCount: lowLayerCount, lowLayerIncluded: cards!.IncludeLowLayer);
         }
         return new RingGrassTileData(key, bounds, anchorHeight, buffer, localAabb, HashBuffer(buffer), sourceFraction, sourceTier,
             useGrassClumps && bladesPerSquareMeter > 0 ? meadowTufts ? 8 : 4 : 1, BuildTintMap(bounds, tileModifiers), tierKeys);

@@ -49,7 +49,7 @@ public partial class RingStandingGrassLayer
         Vector4[] points = _hasInteractionGeometry && EnableGrassInteraction
             ? _interaction.Project(_interactionGeometry, GrassInteractionRecoverySeconds, out count) : EmptyInteractionPoints;
         ActiveGrassInteractionSampleCount = count;
-        ConfigureInteractionMaterial(_material, points); ConfigureInteractionMaterial(_intermediateMaterial, points);
+        ConfigureInteractionMaterial(_material, points); ConfigureInteractionMaterial(_intermediateMaterial, points); if (_style.IsCards) ConfigureInteractionMaterial(_cardMaterial, points);
     }
     private void ConfigureInteractionMaterial(ShaderMaterial? material, Vector4[] points)
     {

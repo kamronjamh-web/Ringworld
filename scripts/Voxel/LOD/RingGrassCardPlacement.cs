@@ -3,14 +3,12 @@ using Godot;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
-internal enum RingGrassCardKind : byte { Card = 0, Low = 1, Hero = 2 }
+internal enum RingGrassCardKind : byte { Card = 0, Low = 1 } // 2 was the retired hero kind; never reuse it (CUSTOM.x encodes kind*4)
 
-/// <summary>Worker-side options of the card placement mode of <see cref="RingGrassTileBuilder.Build"/> (and, with
-/// <see cref="Hero"/>, of the hero tuft lattice). Immutable; part of the placement fingerprint of a Cards layer.</summary>
+/// <summary>Worker-side options of the card placement mode of <see cref="RingGrassTileBuilder.Build"/>. Immutable; part of the placement fingerprint of a Cards layer.</summary>
 internal sealed record RingGrassCardPlacement
 {
     public const int AtlasVariants = 4;
-    public const float HeroUnitHeight = .45f;
 
     /// <summary>Main card lattice density per square metre (lattice cells, jittered, canonical).</summary>
     public float NearDensity { get; init; } = 14f;
@@ -28,10 +26,6 @@ internal sealed record RingGrassCardPlacement
     public float LowWidthMax { get; init; } = .48f;
     /// <summary>Spacing of the Terrain3D vertex grid the biome weights are interpolated from.</summary>
     public float BiomeGridSpacingMeters { get; init; } = 2f;
-    /// <summary>Hero tuft lattice mode: no tier key, no lean, tuft footprint scale instead of card width.</summary>
-    public bool Hero { get; init; }
-    public float HeroDensity { get; init; } = 50f;
-    public float HeroHeightScale { get; init; } = .9f;
 
     /// <summary>Largest horizontal reach of one instance in unit-width local space: card gain 1.6 x compensation 2.5 x 0.5.</summary>
     public const float BoundsHorizontalExtent = 2.0f;

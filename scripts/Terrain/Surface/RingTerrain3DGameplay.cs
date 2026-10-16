@@ -64,6 +64,8 @@ public partial class RingTerrain3DGameplay : Node3D
     private bool _synchronousBenchmark;
 
     public bool IsReady => !InitializationPending && !_initializationFailed && _surface?.IsReady == true;
+    /// <summary>The Terrain3D surface facade (null until created); grass-card materials register as its followers.</summary>
+    internal RingTerrain3DSurface? SurfaceForFollowers => _surface;
     public string LastError => _lastError.Length > 0 ? _lastError : _surface?.LastError ?? "";
     public float BrushStepMeters => _brushStep;
     /// <summary>Managed teardown result retained after the Godot renderer exits.</summary>

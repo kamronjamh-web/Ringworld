@@ -84,6 +84,9 @@ public partial class RingStandingGrassLayer
         return id >= 0 && _gpuCompute.IsBatchReady(id);
     }
 
+    internal long GpuDispatchCountForTests => _gpuCompute?.DispatchCount ?? 0;
+    internal long GpuParameterUploadsForTests => _gpuCompute?.ParameterUploads ?? 0;
+
     internal bool RequestGpuGrassReadbackForTests(long around, long across, bool intermediate, Action<uint[], float[]> callback)
     {
         if (_gpuCompute == null || !_tiles.TryGetValue(new RingGrassTileKey(around, across), out Resident? resident)) return false;

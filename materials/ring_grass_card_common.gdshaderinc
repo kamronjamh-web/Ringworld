@@ -1,4 +1,4 @@
-// Shared pieces of the grass-card and hero-blade materials (grass-cards plan step S4): the runtime density curve (GLSL
+// Shared pieces of the grass-card material (grass-cards plan step S4): the runtime density curve (GLSL
 // twin of RingGrassCardCurve.cs, parity-tested), wind/interaction bending, and the terrain-lit light() body. Lighting,
 // atmosphere and macro/cloud shadow uniforms come from ring_terrain_lighting.gdshaderinc (do not redeclare them); the
 // Terrain3D surface forwards them to followers. This file adds only the surface-frame values that live in the terrain
@@ -59,7 +59,7 @@ vec3 grass_card_tip_displacement(vec3 root, vec3 up, float height, float flexibi
 	return total;
 }
 
-// ---- Lighting (the terrain's own direct-light body; card/hero bases therefore match the ground) ----
+// ---- Lighting (the terrain's own direct-light body; card bases therefore match the ground) ----
 // Ground-frame day factor, identical to the terrain vertex stage.
 float grass_card_day_factor(vec3 ground_up) {
 	return ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(ground_up, normalize(sun_direction))));

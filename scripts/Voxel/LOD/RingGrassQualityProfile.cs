@@ -21,6 +21,9 @@ public partial class RingGrassQualityProfile : Resource
     [Export(PropertyHint.Range, "1,8,1")] public int MaximumBuildsInFlight { get; set; } = 2;
     [Export(PropertyHint.Range, "1,16,1")] public int MaximumUploadsPerFrame { get; set; } = 2;
     [Export(PropertyHint.Range, "0.1,20,0.1")] public float UploadBudgetMilliseconds { get; set; } = 2;
+    /// <summary>Cards style budgets: the reach and the near lattice density. Ignored by Blades.</summary>
+    [Export(PropertyHint.Range, "100,600,5")] public float CardReachMeters { get; set; } = 400;
+    [Export(PropertyHint.Range, "2,24,0.5")] public float CardNearDensity { get; set; } = 14;
 
     /// <summary>Applies only when the game graphics controller selects a preset.</summary>
     public void ApplyTo(RingStandingGrassLayer layer)
@@ -42,6 +45,8 @@ public partial class RingGrassQualityProfile : Resource
         layer.MaximumTileBuildsInFlight = MaximumBuildsInFlight;
         layer.MaximumTileUploadsPerFrame = MaximumUploadsPerFrame;
         layer.MaximumTileUploadMilliseconds = UploadBudgetMilliseconds;
+        layer.GrassCardReachMeters = CardReachMeters;
+        layer.GrassCardNearDensity = CardNearDensity;
         float farRatio = NearDensity > 0 ? Mathf.Clamp(FarDensity / NearDensity, .05f, 1) : .05f;
         layer.ApplyGrassQuality(Enabled, NearDistanceMeters, FarDistanceMeters, TransitionWidthMeters, 1, farRatio);
     }
@@ -65,20 +70,26 @@ public partial class RingGrassQualityProfile : Resource
     public static RingGrassQualityProfile For(RingTerrainLodCoordinator.QualityPreset preset, string hardwareTier = "desktop_mid_high")
     {
         if (string.Equals(hardwareTier, "laptop_140v_baseline", StringComparison.OrdinalIgnoreCase))
-            return Create(8, 2, 16, 28, 12, 28, 3, 49, 1500, 73500, 1, 1, 1.5f);
+            return Create(8, 2, 16, 28, 12, 28, 3, 49, 1500, 73500, 1, 1, 1.5f).WithCards(400, 14);
         return preset switch
         {
-        RingTerrainLodCoordinator.QualityPreset.Low => Create(4, 1, 16, 28, 12, 28, 3, 49, 1500, 73500, 1, 1, 1.5f),
-        RingTerrainLodCoordinator.QualityPreset.Medium => Create(8, 2, 16, 32, 16, 32, 4, 49, 3000, 147000, 2, 2, 2),
+        RingTerrainLodCoordinator.QualityPreset.Low => Create(4, 1, 16, 28, 12, 28, 3, 49, 1500, 73500, 1, 1, 1.5f).WithCards(300, 14),
+        RingTerrainLodCoordinator.QualityPreset.Medium => Create(8, 2, 16, 32, 16, 32, 4, 49, 3000, 147000, 2, 2, 2).WithCards(400, 14),
         // Per-tile caps bound the retained canonical root buffer. A dense source
         // grid is intentionally trimmed to 5,000 roots/tile under gameplay caps.
-        RingTerrainLodCoordinator.QualityPreset.High => Create(24, 6, 16, 32, 18, 32, 4, 49, 5000, 245000, 3, 3, 3),
-        RingTerrainLodCoordinator.QualityPreset.VeryHigh => Create(32, 8, 16, 32, 22, 32, 4, 49, 5000, 245000, 4, 3, 4),
+        RingTerrainLodCoordinator.QualityPreset.High => Create(24, 6, 16, 32, 18, 32, 4, 49, 5000, 245000, 3, 3, 3).WithCards(400, 14),
+        RingTerrainLodCoordinator.QualityPreset.VeryHigh => Create(32, 8, 16, 32, 22, 32, 4, 49, 5000, 245000, 4, 3, 4).WithCards(450, 16),
         // Capture-only tiers explicitly opt into the larger retained CPU and two-pass GPU buffers.
-        RingTerrainLodCoordinator.QualityPreset.UltraVideo => Create(48, 12, 16, 48, 28, 48, 6, 121, 12288, 1487000, 4, 4, 5),
-        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => Create(96, 24, 16, 64, 32, 64, 8, 169, 24576, 4154000, 6, 6, 7),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => Create(48, 12, 16, 48, 28, 48, 6, 121, 12288, 1487000, 4, 4, 5).WithCards(500, 18),
+        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => Create(96, 24, 16, 64, 32, 64, 8, 169, 24576, 4154000, 6, 6, 7).WithCards(600, 20),
         _ => For(RingTerrainLodCoordinator.QualityPreset.Medium, hardwareTier)
         };
+    }
+
+    private RingGrassQualityProfile WithCards(float reachMeters, float nearDensity)
+    {
+        CardReachMeters = reachMeters; CardNearDensity = nearDensity;
+        return this;
     }
 
     private static RingGrassQualityProfile Create(float nearDensity, float farDensity, float tileMeters,

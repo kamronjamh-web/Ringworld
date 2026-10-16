@@ -9,6 +9,7 @@ namespace RingworldTechDemo.Voxel.LOD;
 public partial class RingStandingGrassLayer
 {
     private bool _presentationOutputCullingActive;
+    private const float CardFrustumHoldMeters = 2f;
 
     private void PrepareGrassPresentation(RingLodGeometrySnapshot geometry, RingCanonicalPosition focus, long circumference)
     {
@@ -30,7 +31,9 @@ public partial class RingStandingGrassLayer
         _presentationOutputCullingActive = (CullGrassTiles && camera != null) || coordinated;
         float farDistance = EffectiveGrassDrawDistance();
         float nearDistance = Mathf.Min(LodNearDistanceMeters, farDistance - .01f);
-        float halfTransition = EnableDistanceLod ? LodTransitionWidthMeters * .5f : 0f;
+        bool cards = _style.IsCards;
+        bool distanceLod = EnableDistanceLod && !cards;
+        float halfTransition = distanceLod ? LodTransitionWidthMeters * .5f : 0f;
         Vector3? cameraWorld = camera?.GlobalPosition;
         Plane[]? frustum = CullGrassTiles && camera != null && GpuFrustumCulling
             ? CachedCameraFrustumPlanes(camera!) : null;
@@ -61,7 +64,10 @@ public partial class RingStandingGrassLayer
                     show = false;
                     GrassDistanceRejectedTileCount++;
                 }
-                if (show && frustum != null && !AabbIntersectsFrustum(bounds, frustum))
+                // Cards: a shown output is only retired once it is well outside the view (admit at the edge, retire CardFrustumHoldMeters
+                // beyond it), so a sub-metre camera oscillation never retires and re-uploads edge tiles (streaming idle = 0).
+                Aabb frustumBounds = cards && (resident.NearWanted || resident.IntermediateWanted) ? bounds.Grow(CardFrustumHoldMeters) : bounds;
+                if (show && frustum != null && !AabbIntersectsFrustum(frustumBounds, frustum))
                 {
                     show = false;
                     GrassFrustumRejectedTileCount++;
@@ -73,15 +79,15 @@ public partial class RingStandingGrassLayer
                 GrassDistanceRejectedTileCount++;
             }
             float slop = Math.Max(0, GrassFrustumPaddingMeters);
-            bool near = show && (!EnableDistanceLod || distance <= nearDistance + halfTransition + slop);
-            bool intermediate = show && EnableDistanceLod && distance <= farDistance + halfTransition + slop;
-            if (cull && EnableDistanceLod)
+            bool near = show && (!distanceLod || distance <= nearDistance + halfTransition + slop);
+            bool intermediate = show && distanceLod && distance <= farDistance + halfTransition + slop;
+            if (cull && distanceLod)
             {
                 near = show && minimum <= nearDistance + halfTransition;
                 intermediate = show && maximum >= nearDistance - halfTransition
                     && minimum <= farDistance + halfTransition;
             }
-            if (IsAdaptiveGroup(resident)) near = false;
+            if (IsAdaptiveGroup(resident)) { if (cards) intermediate = near; near = false; }
             if (!resident.NearWanted && near) resident.NearVisibilityRevision++;
             if (!resident.IntermediateWanted && intermediate) resident.IntermediateVisibilityRevision++;
             resident.NearWanted = near;
@@ -93,7 +99,7 @@ public partial class RingStandingGrassLayer
                 if (!intermediate) RetireGrassOutput(resident, true);
             }
             bool needsNear = resident.Renderer == null && (!_presentationOutputCullingActive || near);
-            bool needsIntermediate = EnableDistanceLod && resident.IntermediateRenderer == null
+            bool needsIntermediate = (distanceLod || (cards && IsAdaptiveGroup(resident))) && resident.IntermediateRenderer == null
                 && (!_presentationOutputCullingActive || intermediate);
             if (IsAdaptiveGroup(resident))
             {
@@ -122,6 +128,7 @@ public partial class RingStandingGrassLayer
         state.Renderer = null;
         state.Mapping = null;
         state.GustUv = null;
+        state.TerrainOriginUv = null;
         state.GpuCulled = null;
         state.SnapshotRevision = state.LocalRevision = -1;
         if (intermediate)

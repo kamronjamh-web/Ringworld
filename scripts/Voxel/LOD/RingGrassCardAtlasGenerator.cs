@@ -74,7 +74,7 @@ public sealed class RingGrassCardAtlasData
 public static class RingGrassCardAtlasGenerator
 {
     /// <summary>Bump when the generated pixels change so cached assets are invalidated.</summary>
-    public const int GeneratorVersion = 1;
+    public const int GeneratorVersion = 2;
     public const int Variants = 4;
     public const int TileSize = 512;
     public const int AtlasWidth = TileSize * Variants;
@@ -137,10 +137,16 @@ public static class RingGrassCardAtlasGenerator
             }
         float waste = inside > 0 ? 1f - covered / (float)inside : 0f;
 
-        // Mip chain: box filter for G/B/A; R is box filtered then rescaled per variant tile so the fraction of
-        // pixels at/above the cutoff equals mip 0 (quantile scale).
+        // Mip chain: R is box filtered then rescaled per variant tile so the fraction of pixels at/above the cutoff
+        // equals mip 0 (quantile scale). G/B are box filtered premultiplied by the raw coverage and divided back by it
+        // (coverage weighted), so their values on covered texels do not dilute towards the empty background; texels
+        // with no coverage take their parent's value (push-pull) so bilinear taps near the edge stay sane.
         var levelsData = new List<byte[]>();
-        var rawR = mask; var rawG = grad; var rawB = rand;
+        var levelR = new List<float[]>(); var levelPg = new List<float[]>(); var levelPb = new List<float[]>();
+        var levelW = new List<int>(); var levelH = new List<int>();
+        var rawR = mask;
+        var pg = new float[w * h]; var pb = new float[w * h];
+        for (int i = 0; i < pg.Length; i++) { pg[i] = grad[i] * mask[i]; pb[i] = rand[i] * mask[i]; }
         int lw = w, lh = h;
         var report = new System.Text.StringBuilder();
         var cov0 = new float[Variants];
@@ -181,15 +187,51 @@ public static class RingGrassCardAtlasGenerator
             for (int i = 0; i < lw * lh; i++)
             {
                 bytes[i * 4 + 0] = (byte)Math.Clamp((int)Math.Round(scaledR[i] * 255f), 0, 255);
-                bytes[i * 4 + 1] = (byte)Math.Clamp((int)Math.Round(rawG[i] * 255f), 0, 255);
-                bytes[i * 4 + 2] = (byte)Math.Clamp((int)Math.Round(rawB[i] * 255f), 0, 255);
-                bytes[i * 4 + 3] = 128;
+                bytes[i * 4 + 3] = 128; // G/B are filled once every level is known
             }
             levelsData.Add(bytes);
+            levelR.Add(rawR); levelPg.Add(pg); levelPb.Add(pb); levelW.Add(lw); levelH.Add(lh);
             if (lw == 1 && lh == 1) break;
             int nw = Math.Max(1, lw / 2), nh = Math.Max(1, lh / 2);
-            rawR = Down(rawR, lw, lh, nw, nh); rawG = Down(rawG, lw, lh, nw, nh); rawB = Down(rawB, lw, lh, nw, nh);
+            rawR = Down(rawR, lw, lh, nw, nh); pg = Down(pg, lw, lh, nw, nh); pb = Down(pb, lw, lh, nw, nh);
             lw = nw; lh = nh; level++;
+        }
+        // Coverage-weighted G/B, push-pull filled from the coarsest level down.
+        float[]? parentG = null, parentB = null;
+        for (int L = levelsData.Count - 1; L >= 0; L--)
+        {
+            int cw = levelW[L], ch = levelH[L];
+            var uG = new float[cw * ch]; var uB = new float[cw * ch];
+            var covR = levelR[L];
+            double sumG = 0, sumB = 0; int nCov = 0;
+            for (int i = 0; i < cw * ch; i++)
+            {
+                bool cov = L == 0 ? mask[i] > 0f : covR[i] > 1e-6f;
+                if (!cov) continue;
+                if (L == 0) { uG[i] = grad[i]; uB[i] = rand[i]; }
+                else { uG[i] = levelPg[L][i] / covR[i]; uB[i] = levelPb[L][i] / covR[i]; }
+                sumG += uG[i]; sumB += uB[i]; nCov++;
+            }
+            for (int y = 0; y < ch; y++)
+                for (int x = 0; x < cw; x++)
+                {
+                    int i = y * cw + x;
+                    if (L == 0 ? mask[i] > 0f : covR[i] > 1e-6f) continue;
+                    if (parentG != null)
+                    {
+                        int pw = levelW[L + 1], phh = levelH[L + 1];
+                        int pi = Math.Min(phh - 1, y / 2) * pw + Math.Min(pw - 1, x / 2);
+                        uG[i] = parentG[pi]; uB[i] = parentB![pi];
+                    }
+                    else if (nCov > 0) { uG[i] = (float)(sumG / nCov); uB[i] = (float)(sumB / nCov); }
+                }
+            var bytesL = levelsData[L];
+            for (int i = 0; i < cw * ch; i++)
+            {
+                bytesL[i * 4 + 1] = (byte)Math.Clamp((int)Math.Round(uG[i] * 255f), 0, 255);
+                bytesL[i * 4 + 2] = (byte)Math.Clamp((int)Math.Round(uB[i] * 255f), 0, 255);
+            }
+            parentG = uG; parentB = uB;
         }
         int total = 0; foreach (var b in levelsData) total += b.Length;
         var all = new byte[total]; int o = 0;

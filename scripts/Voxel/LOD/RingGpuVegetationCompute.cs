@@ -11,7 +11,8 @@ namespace RingworldTechDemo.Voxel.LOD;
 public sealed class RingGpuVegetationCompute : IDisposable
 {
     public const int TreeFloats = 12, TreeCustomFloats = 16, GrassFloats = 20;
-    private const int ParameterBytes = 256;
+    private const int ParameterBytes = 512;
+    private const int ParameterWordCount = ParameterBytes / 4;
     internal const int MaximumRootsPerBatch = 1_048_576;
     public sealed record BatchRegistration(string Identity, MultiMesh MultiMesh, Mesh Mesh,
         float[] Candidates, Vector4[]? Metadata, int Capacity, Aabb CustomAabb, bool Grass,
@@ -22,7 +23,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
         bool ProtectedSelection, Vector4[]? GrassFrustumPlanes, float RadiusGuard,
         Vector2? TreeCameraCanonicalLocal = null, long VisibilityRevision = 0,
         bool DistanceBasedTreeProtection = false, float TreeFadeInStart = -1, float TreeFadeInEnd = -1,
-        float TreeFadeOutStart = -1, float TreeFadeOutEnd = -1);
+        float TreeFadeOutStart = -1, float TreeFadeOutEnd = -1,
+        RingGrassCardComputeParameters? GrassCard = null);
     public sealed record FrameRequest(Vector3 CameraWorld, uint[] LodBudgets,
         IReadOnlyList<BatchFrameParameters> Batches, bool SkipUnchanged = true,
         int MaximumBatchesPerDispatch = 0, int MaximumCandidatesPerDispatch = 0);
@@ -41,7 +43,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         public SharedSource? SharedSource;
         public Vector4[]? PendingMetadata;
         public byte[] ParameterDataBytes = new byte[ParameterBytes];
-        public float[] ParameterWords = new float[64];
+        public float[] ParameterWords = new float[ParameterWordCount];
         public bool UploadedHasProtectedRoots;
         public int SurfaceCount;
         public bool Allocated;
@@ -768,6 +770,15 @@ public sealed class RingGpuVegetationCompute : IDisposable
 
     private static void ParameterData(FrameRequest frame, BatchFrameParameters p, Batch batch, float[] data, byte[] bytes)
     {
+        WriteParameterWords(frame, p, batch.Registration.TreeCustomData, batch.Registration.TreeDitherData,
+            batch.PrototypeHorizontalRadius, data);
+        Buffer.BlockCopy(data, 0, bytes, 0, ParameterBytes);
+    }
+
+    /// <summary>Pure fill of the shader parameter words (no RD); the layout test pins it.</summary>
+    internal static void WriteParameterWords(FrameRequest frame, BatchFrameParameters p, bool treeCustomData,
+        bool treeDitherData, float prototypeRadius, float[] data)
+    {
         Array.Clear(data);
         data[0] = frame.CameraWorld.X; data[1] = frame.CameraWorld.Y; data[2] = frame.CameraWorld.Z;
         data[3] = Finite(p.NearDistance, 0); data[4] = Math.Max(data[3], Finite(p.FarDistance, 1));
@@ -776,7 +787,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[8] = Mathf.Clamp(Finite(p.TreeRankGate, 1), 0, 1); data[9] = Math.Max(0, Finite(p.RadiusGuard, 0));
         data[10] = p.Grass ? 1 : 0; data[11] = Math.Clamp(p.LodPass, 0, 4); data[12] = p.EnableLod ? 1 : 0;
         data[13] = p.Grass ? Math.Min(6, p.GrassFrustumPlanes?.Length ?? 0) : 0;
-        data[14] = !p.Grass && batch.Registration.TreeCustomData ? 1 : 0;
+        data[14] = !p.Grass && treeCustomData ? 1 : 0;
         data[15] = p.LodPass >= 0 && p.LodPass < frame.LodBudgets.Length ? Math.Min(frame.LodBudgets[p.LodPass], MaximumRootsPerBatch) : 0;
         int offset = 16;
         Vector3 value = p.LocalToWorld.Basis.X;
@@ -797,11 +808,20 @@ public sealed class RingGpuVegetationCompute : IDisposable
         data[55] = p.DistanceBasedTreeProtection ? 1 : 0;
         data[56] = Finite(p.TreeFadeInStart, -1); data[57] = Finite(p.TreeFadeInEnd, -1);
         data[58] = Finite(p.TreeFadeOutStart, -1); data[59] = Finite(p.TreeFadeOutEnd, -1);
-        data[60] = batch.Registration.TreeDitherData ? 1 : 0;
+        data[60] = treeDitherData ? 1 : 0;
         // Grass-only: local mesh radius around its root. The shader combines
         // this with the source and parent transforms before frustum rejection.
-        data[61] = p.Grass ? batch.PrototypeHorizontalRadius : 0;
-        Buffer.BlockCopy(data, 0, bytes, 0, ParameterBytes);
+        data[61] = p.Grass ? prototypeRadius : 0;
+        // Card mode (grass only): p[62] flag, p[63] reserved, p[64..77] the conservative accept inputs.
+        if (p.Grass && p.GrassCard is { } c)
+        {
+            data[62] = 1;
+            data[64] = c.ReachMeters; data[65] = c.NearDensity; data[66] = c.BaseDensity; data[67] = c.FloorDensity;
+            data[68] = c.FalloffExponent; data[69] = c.FalloffStartMeters; data[70] = c.NearBoostStartMeters;
+            data[71] = c.NearBoostEndMeters; data[72] = c.LowLayerFullMeters; data[73] = c.LowLayerEndMeters;
+            data[74] = c.MinimumGrowIn; data[75] = c.DistanceMarginMeters; data[76] = c.GuardWidthFactor;
+            data[77] = c.GuardHeightFactor;
+        }
     }
 
     private static float PrototypeHorizontalRadius(Mesh mesh)
@@ -918,7 +938,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 || x.VisibilityRevision != y.VisibilityRevision || x.DistanceBasedTreeProtection != y.DistanceBasedTreeProtection
                 || x.TreeFadeInStart != y.TreeFadeInStart || x.TreeFadeInEnd != y.TreeFadeInEnd
                 || x.TreeFadeOutStart != y.TreeFadeOutStart || x.TreeFadeOutEnd != y.TreeFadeOutEnd
-                || !Nullable.Equals(x.TreeCameraCanonicalLocal, y.TreeCameraCanonicalLocal) || !PlanesEqual(x.GrassFrustumPlanes, y.GrassFrustumPlanes)) return false;
+                || !Nullable.Equals(x.TreeCameraCanonicalLocal, y.TreeCameraCanonicalLocal) || !Nullable.Equals(x.GrassCard, y.GrassCard) || !PlanesEqual(x.GrassFrustumPlanes, y.GrassFrustumPlanes)) return false;
         }
         return true;
     }

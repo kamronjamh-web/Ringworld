@@ -51,13 +51,13 @@ public partial class RingStandingGrassLayer
         if (!_grassModifierSlots.TryGetValue(key, out int slot)) { if (_freeGrassModifierSlots.Count == 0) return; slot=_freeGrassModifierSlots.Pop(); _grassModifierSlots[key]=slot; }
         using Image image=Image.CreateFromData(32,32,false,Image.Format.Rgba8,data.ModifierTintBytes);
         _grassModifierAtlas.UpdateLayer(image,slot);
-        ConfigureGrassModifierMaterial(_material); ConfigureGrassModifierMaterial(_intermediateMaterial);
+        ConfigureGrassModifierMaterial(_material); ConfigureGrassModifierMaterial(_intermediateMaterial); if (_style.IsCards) ConfigureGrassModifierMaterial(_cardMaterial);
     }
     private void ReleaseGrassModifierTint(RingGrassTileKey key)
     { if (_grassModifierSlots.Remove(key,out int slot)) _freeGrassModifierSlots.Push(slot); }
     private void EnsureGrassModifierAtlas()
     {
-        int capacity=Math.Clamp(MaximumResidentTiles,16,1024); if (_grassModifierAtlas != null && _grassModifierCapacity==capacity) return;
+        int capacity=Math.Clamp(ResidentTileCap,16,1024); if (_grassModifierAtlas != null && _grassModifierCapacity==capacity) return;
         var images=new Godot.Collections.Array<Image>();
         Image transparent=Image.CreateFromData(32,32,false,Image.Format.Rgba8,new byte[32*32*4]);
         for(int i=0;i<capacity;i++) images.Add(transparent);
@@ -73,7 +73,7 @@ public partial class RingStandingGrassLayer
         foreach(var pair in _tiles) if(pair.Value.Data.ModifierTintBytes != null && slot<capacity)
         { _grassModifierSlots[pair.Key]=slot; using Image image=Image.CreateFromData(32,32,false,Image.Format.Rgba8,pair.Value.Data.ModifierTintBytes); _grassModifierAtlas.UpdateLayer(image,slot++); }
         for(int i=capacity-1;i>=slot;i--)_freeGrassModifierSlots.Push(i);
-        ConfigureGrassModifierMaterial(_material); ConfigureGrassModifierMaterial(_intermediateMaterial);
+        ConfigureGrassModifierMaterial(_material); ConfigureGrassModifierMaterial(_intermediateMaterial); if (_style.IsCards) ConfigureGrassModifierMaterial(_cardMaterial);
     }
     private void DisposeGrassModifierTint() { _grassModifierSlots.Clear(); _freeGrassModifierSlots.Clear(); _grassModifierAtlas?.Dispose(); _grassModifierAtlas=null; _grassModifierCapacity=0; _grassModifierMaterialStates.Clear(); }
 }

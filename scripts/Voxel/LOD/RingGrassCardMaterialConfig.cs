@@ -5,15 +5,13 @@ using Godot;
 namespace RingworldTechDemo.Voxel.LOD;
 
 /// <summary>
-/// Single C# source of every uniform value of the grass-card and hero-blade materials (grass-cards plan step S4). The card and
-/// hero shaders share the colour/form uniform names (ring_grass_card_color.gdshaderinc), so feeding both from one config keeps
-/// blades and cards coloured identically. Defaults are variant D.
+/// Single C# source of every uniform value of the grass-card material (grass-cards plan step S4). The colour/form uniform names live in
+/// ring_grass_card_color.gdshaderinc. Defaults are variant D.
 /// </summary>
 public sealed class RingGrassCardMaterialConfig
 {
     public const string CardShaderPath = "res://materials/ring_grass_cards.gdshader";
-    public const string HeroShaderPath = "res://materials/ring_grass_hero.gdshader";
-    /// <summary>Instance uniforms declared by the card and hero shaders (Godot allows 16 per shader).</summary>
+    /// <summary>Instance uniforms declared by the card shader (Godot allows 16 per shader).</summary>
     public const int InstanceUniformCount = 9;
 
     // ---- Curve (mirrors RingGrassCardCurveParameters) ----
@@ -35,12 +33,12 @@ public sealed class RingGrassCardMaterialConfig
     public float VertexLodBias { get; set; } = 3f;
     public float FragmentColorMeters { get; set; } = 70f;
     public float FragmentLodBias { get; set; } = -.5f;
-    // ---- Form (cards + hero) ----
+    // ---- Form ----
     public float NormalOut { get; set; } = .45f;
     public float NormalFace { get; set; } = .25f;
     public float Backlight { get; set; } = .28f;
     public float NormalTipStart { get; set; } = .6f;
-    // ---- Colour (cards + hero, identical names) ----
+    // ---- Colour ----
     public float GreenPull { get; set; } = .15f;
     public Vector3 GrassHue { get; set; } = new(.62f, 1f, .36f);
     public float RootAo { get; set; } = .5f;
@@ -51,11 +49,6 @@ public sealed class RingGrassCardMaterialConfig
     public float DryFraction { get; set; } = .07f;
     public Vector3 DryTone { get; set; } = new(.70f, .58f, .24f);
     public float TuftValueJitter { get; set; } = .14f;
-    // ---- Hero ----
-    public float HeroStartMeters { get; set; } = 4f;
-    public float HeroEndMeters { get; set; } = 6f;
-    public float HeroDitherMeters { get; set; } = 1.4f;
-    public float HeroMinWidth { get; set; } = .45f;
 
     /// <summary>Terrain-surface shader parameters the grass materials mirror (feed to RingTerrain3DSurface.RegisterSurfaceFollower).
     /// Lighting, atmosphere (incl. the camera ray frame), anchors/frame values and the biome albedo samplers. Macro/cloud shadow
@@ -86,13 +79,6 @@ public sealed class RingGrassCardMaterialConfig
         return material;
     }
 
-    public ShaderMaterial CreateHeroMaterial()
-    {
-        var material = new ShaderMaterial { Shader = GD.Load<Shader>(HeroShaderPath) };
-        ApplyHero(material);
-        return material;
-    }
-
     public void ApplyCard(ShaderMaterial material, Texture2D? atlas = null)
     {
         if (atlas != null) material.SetShaderParameter("grass_card_atlas", atlas);
@@ -114,16 +100,6 @@ public sealed class RingGrassCardMaterialConfig
         ApplyShared(material);
     }
 
-    public void ApplyHero(ShaderMaterial material)
-    {
-        material.SetShaderParameter("grass_hero_start", HeroStartMeters);
-        material.SetShaderParameter("grass_hero_end", HeroEndMeters);
-        material.SetShaderParameter("grass_hero_dither", HeroDitherMeters);
-        material.SetShaderParameter("grass_hero_min_width", HeroMinWidth);
-        ApplyCurve(material);
-        ApplyShared(material);
-    }
-
     private void ApplyCurve(ShaderMaterial material)
     {
         RingGrassCardCurveParameters c = Curve;
@@ -138,7 +114,6 @@ public sealed class RingGrassCardMaterialConfig
         material.SetShaderParameter("grass_card_near_width", c.NearWidthScale);
         material.SetShaderParameter("grass_card_fade_band_percent", c.FadeBandPercent);
         material.SetShaderParameter("grass_card_low_layer", new Vector2(c.LowLayerFullMeters, c.LowLayerEndMeters));
-        material.SetShaderParameter("grass_card_hero_thin", new Vector3(c.HeroThinMinimum, c.HeroThinStartMeters, c.HeroThinEndMeters));
         material.SetShaderParameter("grass_card_min_grow_in", MinimumGrowIn);
     }
 

@@ -91,7 +91,6 @@ void vertex() {
 		near_width = grass_card_near_width_scale(dist);
 	}
 	float fade = grass_card_fade(dist);
-	scale *= grass_card_hero_thin_factor(rank, dist);
 	if (scale <= 0.0 || fade <= 0.0) {
 		VERTEX = vec3(0.0); // culled: zero-area triangles
 	} else {
@@ -139,7 +138,7 @@ void vertex() {
 	vec3 gp = root + offset_h;
 	v_ground_world = gp;
 	vec2 canonical = grass_card_canonical_offset(gp, grass_gust_origin_world, grass_gust_around_world, grass_gust_across_world);
-	v_terrain_uv = grass_card_terrain_uv(canonical, grass_terrain_origin_uv);
+	v_terrain_uv = grass_card_terrain_uv(canonical, grass_terrain_origin_uv, gp);
 	v_light.zw = grass_card_shadow_uv(canonical, grass_terrain_origin_uv);
 	float texel_width = float(textureSize(biome_grass_albedo, 0).x);
 	float lod = max(log2(max(0.6 * wscale * scale * biome_texture_scale * texel_width, 1.0)) - grass_card_vertex_lod_bias, 0.0);

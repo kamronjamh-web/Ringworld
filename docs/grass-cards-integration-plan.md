@@ -254,3 +254,9 @@ per-instance rank.
 - Keep D's green_pull = 0.15 as the default; the user will tune it later (expose it in the grave-key menu).
 - Grass colour targets Terrain3D (runtime-surface worlds). The legacy/smooth voxel terrain falls back to the existing approximate colour; revisit when the cave direction-B backend lands.
 - Gate S0 (streaming hysteresis) has landed in the working tree (uncommitted) — re-verify [RV] line references against it before each step.
+
+## USER DECISIONS (2026-10-15, later) — binding
+
+- **Hero blades are scrapped.** Variant D becomes cards-only: S7 is dropped, and hero-specific code, shaders, assets and tests are removed. Card hero-thinning is permanently off (cards keep full density at the camera). The S11 hero ≤ 0.6 ms gate is dropped.
+- **Card placement moves to the GPU compute path (S6).**
+- **Adaptive tile grouping is re-enabled for Cards** (S5 had disabled it).

@@ -85,7 +85,7 @@ func boot() -> void:
 	for key in ["EnableAdaptiveGrassGrouping", "CacheGrassPresentation", "GrassGroupingStartMeters", "GrassGroupingFarStartMeters", "GrassGroupingMaximumLevel", "GrassGroupingHysteresisMeters", "MaximumGrassSourcesPerGroup"]:
 		if drawer.find_child(key, true, false) == null: return fail("adaptive grouping/cache control missing: " + key)
 	if not adaptive_grouping_defaults_match(grass): return fail("empty preferences did not restore grouping/cache defaults")
-	var meadow_reason := verify_meadow_tuning(grass, quality)
+	var meadow_reason: String = await verify_meadow_tuning(grass, quality)
 	if not meadow_reason.is_empty(): return fail(meadow_reason)
 	var pointer_reason: String = await verify_adaptive_pointer_controls(grass, grass_tab)
 	if not pointer_reason.is_empty(): return fail(pointer_reason)
@@ -464,9 +464,184 @@ func verify_meadow_tuning(grass: Node, quality: Node) -> String:
 	quality.call("ApplyPreset", preset, true, false)
 	drawer.call("ResetGrassSettings")
 	if not meadow_defaults_match(grass): return "Reset did not restore short meadow defaults"
+	var style_reason := verify_render_style(grass, quality)
+	if not style_reason.is_empty(): return style_reason
+	var card_reason: String = await verify_card_settings(grass, quality)
+	if not card_reason.is_empty(): return card_reason
 	var persistence_reason := verify_loaded_height_ordering(grass, quality)
 	if not persistence_reason.is_empty(): return persistence_reason
 	print("GRASS_MEADOW_TUNING=PASS controls, validation, sparse save/reload, quality preservation and reset")
+	return ""
+
+# S5: the grass render style switch (Blades default, explicit saved style wins over the profile, Reset restores Blades).
+func verify_render_style(grass: Node, quality: Node) -> String:
+	for key in ["GrassRenderStyle", "GrassCardReachMeters", "GrassCardGreenPull", "GrassCardComputeMarginMeters"]:
+		if drawer.find_child(key, true, false) == null: return "Render style control missing: " + key
+	if int(grass.get("GrassRenderStyle")) != 0 or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 400.0) or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .15) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 2.0): return "Render style did not default to Blades / reach 400 / green pull 0.15 / compute margin 2"
+	var style_option := drawer.find_child("GrassRenderStyle", true, false) as OptionButton
+	style_option.select(1)
+	style_option.item_selected.emit(1)
+	if int(grass.get("GrassRenderStyle")) != 1: return "Render style option did not apply Cards"
+	drawer.call("SetGrassTuningValue", "GrassCardGreenPull", .4)
+	drawer.call("SetGrassTuningValue", "GrassCardReachMeters", 9999.0)
+	drawer.call("SetGrassTuningValue", "GrassCardComputeMarginMeters", 99.0)
+	if not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 8.0): return "Compute margin did not clamp"
+	drawer.call("SetGrassTuningValue", "GrassCardComputeMarginMeters", 3.5)
+	if not is_equal_approx(float(grass.get("GrassCardGreenPull")), .4) or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 600.0): return "Card settings did not apply / clamp"
+	drawer.call("SetGrassTuningValue", "GrassRenderStyle", 7)
+	if int(grass.get("GrassRenderStyle")) != 1: return "Out-of-range render style was not clamped to Cards"
+	if not bool(drawer.call("FlushGrassDefaults")): return "Render style save failed"
+	drawer.call("SetGrassTuningValue", "GrassRenderStyle", 0)
+	if int(grass.get("GrassRenderStyle")) != 0: return "Live switch back to Blades did not apply"
+	drawer.call("InstallGrassDefaults", PREFS)
+	if int(grass.get("GrassRenderStyle")) != 1: return "Saved Cards style did not reload over an unsaved live edit"
+	drawer.call("InstallGrassDefaults", PREFS)
+	if int(grass.get("GrassRenderStyle")) != 1 or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .4) or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 600.0) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 3.5): return "Render style settings did not reload"
+	var preset: int = quality.get("CurrentPreset")
+	quality.call("ApplyPreset", 0, true, false)
+	if int(grass.get("GrassRenderStyle")) != 1: return "Quality preset replaced the explicit render style"
+	quality.call("ApplyPreset", preset, true, false)
+	drawer.call("ResetGrassSettings")
+	if int(grass.get("GrassRenderStyle")) != 0 or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 400.0) or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .15) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 2.0): return "Reset did not restore Blades and the card defaults"
+	return ""
+
+# S8: Grass cards settings. Key, default, min, max, test value, rebuild class (label carries "(rebuilds)").
+const CARD_KEYS := [
+	["GrassCardReachMeters", 400.0, 100.0, 600.0, 350.0, true],
+	["GrassCardTileMeters", 32.0, 16.0, 64.0, 24.0, true],
+	["GrassCardNearDensity", 14.0, 2.0, 24.0, 10.0, true],
+	["GrassCardLowLayerDensity", 18.0, 0.0, 30.0, 10.0, true],
+	["GrassCardLowLayerEndMeters", 22.0, 10.0, 60.0, 30.0, false],
+	["GrassCardBaseDensity", 2.5, 0.5, 6.0, 3.0, false],
+	["GrassCardFloorDensity", 0.15, 0.02, 1.0, 0.3, false],
+	["GrassCardDensityFalloff", 1.3, 0.5, 2.5, 1.6, false],
+	["GrassCardNearBoostStartMeters", 8.0, 0.0, 100.0, 12.0, false],
+	["GrassCardNearBoostEndMeters", 45.0, 1.0, 200.0, 60.0, false],
+	["GrassCardScaleCompensationMax", 2.5, 1.0, 2.5, 2.0, false],
+	["GrassCardFadeBandPercent", 15.0, 1.0, 50.0, 25.0, false],
+	["GrassCardSingleCardStartMeters", 90.0, 20.0, 600.0, 100.0, false],
+	["GrassCardSingleCardEndMeters", 160.0, 30.0, 700.0, 200.0, false],
+	["GrassCardTallHeight", 0.6, 0.2, 1.5, 0.8, true],
+	["GrassCardShortHeight", 0.3, 0.1, 1.0, 0.2, true],
+	["GrassCardNearWidthScale", 0.7, 0.3, 1.0, 0.8, false],
+	["GrassCardLean", 0.12, 0.0, 0.5, 0.2, true],
+	["GrassCardTilt", 0.08, 0.0, 0.4, 0.2, false],
+	["GrassCardNormalOut", 0.45, 0.0, 1.0, 0.6, false],
+	["GrassCardNormalFace", 0.25, 0.0, 1.0, 0.35, false],
+	["GrassCardBacklight", 0.28, 0.0, 1.0, 0.4, false],
+	["GrassCardAlphaCutoff", 0.5, 0.1, 0.9, 0.7, false],
+	["GrassCardAtlasBlades", 56.0, 4.0, 96.0, 40.0, true],
+	["GrassCardGreenPull", 0.15, 0.0, 1.0, 0.4, false],
+	["GrassCardRootAo", 0.5, 0.0, 1.0, 0.3, false],
+	["GrassCardTipLight", 0.16, 0.0, 0.5, 0.25, false],
+	["GrassCardBladeValueJitter", 0.22, 0.0, 0.6, 0.3, false],
+	["GrassCardBladeHueJitter", 0.10, 0.0, 0.3, 0.15, false],
+	["GrassCardDryFraction", 0.07, 0.0, 0.5, 0.2, false],
+	["GrassCardTuftValueJitter", 0.14, 0.0, 0.5, 0.25, false],
+	["GrassCardFragmentColorMeters", 70.0, 10.0, 400.0, 120.0, false],
+	["GrassCardConvergeStartPercent", 60.0, 0.0, 99.0, 50.0, false],
+	["GrassCardConvergeEndPercent", 90.0, 1.0, 100.0, 80.0, false],
+]
+# Pairs that clamp each other: key set, value set, expected value of that key. Every case starts from the defaults.
+const CARD_COMPANIONS := [
+	["GrassCardNearBoostEndMeters", 5.0, 9.0],
+	["GrassCardNearBoostStartMeters", 99.0, 44.0],
+	["GrassCardSingleCardStartMeters", 600.0, 159.0],
+	["GrassCardSingleCardEndMeters", 30.0, 91.0],
+	["GrassCardConvergeStartPercent", 99.0, 89.0],
+	["GrassCardConvergeEndPercent", 10.0, 61.0],
+	["GrassCardShortHeight", 1.0, 0.59],
+	["GrassCardTallHeight", 0.2, 0.31],
+]
+
+func card_defaults_match(grass: Node) -> bool:
+	for entry in CARD_KEYS:
+		if not is_equal_approx(float(grass.get(entry[0])), float(entry[1])): return false
+	return true
+
+func verify_card_settings(grass: Node, quality: Node) -> String:
+	var baseline_overrides := int(drawer.call("GetGrassTuningDiagnostics").get("override_count", -1))
+	for title in ["Grass cards — coverage", "Grass cards — form", "Grass cards — colour"]:
+		var found := false
+		for section in drawer.find_children("*", "FoldableContainer", true, false):
+			if (section as FoldableContainer).title == title: found = true
+		if not found: return "Card group missing: " + title
+	if drawer.find_child("GrassStreamingHysteresisMeters", true, false) == null: return "Shared hysteresis slider missing"
+	for entry in CARD_KEYS:
+		var key: String = entry[0]
+		if drawer.find_child(key, true, false) == null or drawer.find_child(key + "Entry", true, false) == null: return "Card control missing: " + key
+	if not card_defaults_match(grass): return "Card settings do not default to the variant D values"
+	# Clamp both ways. Companion keys only have to stay inside their range (their partner may bound them first).
+	for entry in CARD_KEYS:
+		var key: String = entry[0]
+		drawer.call("SetGrassTuningValue", key, 1.0e6)
+		var high := float(grass.get(key))
+		drawer.call("SetGrassTuningValue", key, -1.0e6)
+		var low := float(grass.get(key))
+		if high > float(entry[3]) + 0.0001 or high < float(entry[2]) - 0.0001 or low > float(entry[3]) + 0.0001 or low < float(entry[2]) - 0.0001: return "Card setting left its range: %s high=%s low=%s" % [key, high, low]
+	drawer.call("SetGrassTuningValue", "GrassCardNearDensity", NAN)
+	if is_nan(float(grass.get("GrassCardNearDensity"))) or float(grass.get("GrassCardNearDensity")) < 2.0: return "A non-finite card setting was accepted"
+	drawer.call("ResetGrassSettings")
+	if not card_defaults_match(grass): return "Reset did not restore the card defaults"
+	if int(drawer.call("GetGrassTuningDiagnostics").get("override_count", -1)) != baseline_overrides: return "Card reset retained overrides"
+	# Companion clamps.
+	for case in CARD_COMPANIONS:
+		drawer.call("SetGrassTuningValue", case[0], case[1])
+		if absf(float(grass.get(case[0])) - float(case[2])) > 0.0001: return "Companion clamp %s=%s gave %s, expected %s" % [case[0], case[1], grass.get(case[0]), case[2]]
+		drawer.call("ResetGrassSettings")
+	drawer.call("SetGrassTuningValue", "GrassCardFloorDensity", 0.8)
+	drawer.call("SetGrassTuningValue", "GrassCardBaseDensity", 0.5)
+	if absf(float(grass.get("GrassCardBaseDensity")) - 0.8) > 0.0001: return "Base density was allowed below the floor density"
+	drawer.call("ResetGrassSettings")
+	# Debounce: rebuild-class sliders commit after the pause, never on the drag itself.
+	for key in ["GrassCardNearDensity", "GrassCardLean", "GrassCardAtlasBlades"]:
+		var slider := drawer.find_child(key, true, false) as HSlider
+		var before := float(grass.get(key))
+		slider.value = slider.max_value if before < slider.max_value else slider.min_value
+		if float(grass.get(key)) != before: return "Rebuild-class slider skipped the debounce: " + key
+		await create_timer(.3).timeout
+		if float(grass.get(key)) == before: return "Rebuild-class slider never committed: " + key
+	drawer.call("ResetGrassSettings")
+	# Persistence: every key saves and reloads.
+	for entry in CARD_KEYS:
+		drawer.call("SetGrassTuningValue", entry[0], entry[4])
+	for entry in CARD_KEYS:
+		if absf(float(grass.get(entry[0])) - float(entry[4])) > 0.0001: return "Card setting did not apply: %s=%s" % [entry[0], grass.get(entry[0])]
+	if not bool(drawer.call("FlushGrassDefaults")): return "Card settings save failed"
+	drawer.call("InstallGrassDefaults", PREFS)
+	for entry in CARD_KEYS:
+		if absf(float(grass.get(entry[0])) - float(entry[4])) > 0.0001: return "Card setting did not reload: %s=%s" % [entry[0], grass.get(entry[0])]
+	var slider_check := drawer.find_child("GrassCardLean", true, false) as HSlider
+	if absf(slider_check.value - 0.2) > 0.0001: return "Card slider did not follow the reloaded value"
+	var preset: int = quality.get("CurrentPreset")
+	quality.call("ApplyPreset", 0, true, false)
+	for entry in CARD_KEYS:
+		if absf(float(grass.get(entry[0])) - float(entry[4])) > 0.0001: return "Quality preset replaced explicit card setting " + entry[0]
+	quality.call("ApplyPreset", preset, true, false)
+	drawer.call("ResetGrassSettings")
+	if not card_defaults_match(grass): return "Reset after reload did not restore the card defaults"
+	# Quality profile budgets: Low gets reach 300, the current preset keeps the variant D reach; both follow the preset unless saved.
+	quality.call("ApplyPreset", 0, true, false)
+	if absf(float(grass.get("GrassCardReachMeters")) - 300.0) > 0.0001 or absf(float(grass.get("GrassCardNearDensity")) - 14.0) > 0.0001: return "Low preset card budget is not reach 300 / near density 14"
+	quality.call("ApplyPreset", preset, true, false)
+	if absf(float(grass.get("GrassCardReachMeters")) - 400.0) > 0.0001: return "Returning from Low did not restore the card reach"
+	drawer.call("ResetGrassSettings")
+	# Old saves: only legacy keys. New card settings stay at their defaults and the explicit style/reach still apply.
+	var legacy := ResourceLoader.load(PREFS, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if legacy == null: return "Could not reload the saved preferences to author a legacy save"
+	legacy.set("Overrides", {"BladesPerSquareMeter": 21.0, "GrassRenderStyle": 1, "GrassCardReachMeters": 350.0, "GrassCardGreenPull": 0.3})
+	if ResourceSaver.save(legacy, PREFS) != OK: return "Could not write the legacy save"
+	drawer.call("InstallGrassDefaults", PREFS)
+	if int(grass.get("GrassRenderStyle")) != 1 or absf(float(grass.get("GrassCardReachMeters")) - 350.0) > 0.0001 or absf(float(grass.get("GrassCardGreenPull")) - 0.3) > 0.0001: return "Legacy save lost its explicit style, reach or green pull"
+	for entry in CARD_KEYS:
+		if entry[0] in ["GrassCardReachMeters", "GrassCardGreenPull"]: continue
+		if absf(float(grass.get(entry[0])) - float(entry[1])) > 0.0001: return "Legacy save changed the default of " + entry[0]
+	# Blades-only keys never reach Cards: tweak blade keys under Cards, the card values stay put.
+	drawer.call("SetGrassTuningValue", "BladesPerSquareMeter", 90.0)
+	drawer.call("SetGrassTuningValue", "GrassMaximumHeightMeters", 0.9)
+	if absf(float(grass.get("GrassCardNearDensity")) - 14.0) > 0.0001 or int(grass.get("GrassCardAtlasBlades")) != 56: return "Blade keys changed card settings"
+	drawer.call("ResetGrassSettings")
+	if int(drawer.call("GetGrassTuningDiagnostics").get("override_count", -1)) != baseline_overrides: return "Legacy-save reset retained overrides"
 	return ""
 
 func meadow_defaults_match(grass: Node) -> bool:

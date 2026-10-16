@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
-/// <summary>One immutable asset bundle for a parameter set: atlas, card mesh, hero mesh. CPU data is final once the bundle exists;
+/// <summary>One immutable asset bundle for a parameter set: atlas and card mesh. CPU data is final once the bundle exists;
 /// Godot resources are created on first main-thread access and then reused.</summary>
 public sealed class RingGrassCardAssetSet
 {
@@ -14,15 +15,12 @@ public sealed class RingGrassCardAssetSet
     public ulong CacheKey { get; init; }
     public RingGrassCardAtlasData Atlas { get; init; } = null!;
     public RingGrassMeshData CardMesh { get; init; } = null!;
-    public RingGrassMeshData HeroMesh { get; init; } = null!;
     public double BuildMilliseconds { get; init; }
 
     /// <summary>Main thread only.</summary>
     public ImageTexture AtlasTexture => Atlas.GetTexture();
     /// <summary>Main thread only.</summary>
     public ArrayMesh CardArrayMesh => CardMesh.GetMesh();
-    /// <summary>Main thread only.</summary>
-    public ArrayMesh HeroArrayMesh => HeroMesh.GetMesh();
 }
 
 /// <summary>
@@ -38,13 +36,22 @@ public static class RingGrassCardAssets
     /// <summary>Number of asset sets actually generated in this process (cache hits do not count).</summary>
     public static int BuildCount => Volatile.Read(ref _buildCount);
 
-    /// <summary>Starts (or joins) the off-thread build. Safe to call every frame; returns the shared task.</summary>
+    /// <summary>Starts (or joins) the off-thread build. Safe to call every frame; returns the shared task. A faulted build is
+    /// reported once and evicted, so the next request retries instead of the layer silently showing nothing forever.</summary>
     public static Task<RingGrassCardAssetSet> RequestAsync(RingGrassCardAtlasParameters parameters)
     {
         RingGrassCardAtlasParameters p = parameters.Normalized();
         ulong key = p.CacheKey();
+        if (Cache.TryGetValue(key, out var existing) && existing.IsValueCreated && existing.Value.IsFaulted)
+        {
+            GD.PushError("Grass card asset build failed: " + (existing.Value.Exception?.GetBaseException().Message ?? "unknown error"));
+            Cache.TryRemove(new KeyValuePair<ulong, Lazy<Task<RingGrassCardAssetSet>>>(key, existing));
+        }
         return Cache.GetOrAdd(key, _ => new Lazy<Task<RingGrassCardAssetSet>>(() => Task.Run(() => BuildSet(p, key)), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
     }
+
+    /// <summary>Tests: make the next generated set throw (once).</summary>
+    internal static bool FailNextBuildForTests;
 
     /// <summary>Non-blocking poll for the layer: true once the set for these parameters is finished.</summary>
     public static bool TryGet(RingGrassCardAtlasParameters parameters, out RingGrassCardAssetSet? set)
@@ -66,15 +73,15 @@ public static class RingGrassCardAssets
     /// <summary>Pure generation, no caching: deterministic for equal parameters on any thread.</summary>
     public static RingGrassCardAssetSet BuildSet(RingGrassCardAtlasParameters parameters, ulong key = 0)
     {
+        if (FailNextBuildForTests) { FailNextBuildForTests = false; throw new InvalidOperationException("forced card asset failure (test)"); }
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         RingGrassCardAtlasParameters p = parameters.Normalized();
         var atlas = RingGrassCardAtlasGenerator.Build(p);
         var cards = RingGrassCardMeshFactory.Build();
-        var hero = RingGrassHeroTuftMeshFactory.BuildDefault();
         Interlocked.Increment(ref _buildCount);
         return new RingGrassCardAssetSet
         {
-            Parameters = p, CacheKey = key != 0 ? key : p.CacheKey(), Atlas = atlas, CardMesh = cards, HeroMesh = hero,
+            Parameters = p, CacheKey = key != 0 ? key : p.CacheKey(), Atlas = atlas, CardMesh = cards,
             BuildMilliseconds = (System.Diagnostics.Stopwatch.GetTimestamp() - started) * 1000.0 / System.Diagnostics.Stopwatch.Frequency,
         };
     }

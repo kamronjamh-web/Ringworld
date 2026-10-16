@@ -15,7 +15,7 @@ public partial class RingStandingGrassLayer
 
     private void UpdateGrassLightingMaterials()
     {
-        if (_material == null && _intermediateMaterial == null) return;
+        if (_material == null && _intermediateMaterial == null && _cardMaterial == null) return;
         if (_grid == null || _explorer == null)
         {
             ApplyGrassLightingState(new GrassLightingState(false, Vector3.Right, 1, 0, 1));
@@ -44,6 +44,7 @@ public partial class RingStandingGrassLayer
 
     private void ApplyGrassLightingState(GrassLightingState state)
     {
+        ApplyCardFallbackLighting(state);
         if (_grassLightingStateValid && state == _lastGrassLightingState) return;
         Apply(_material); Apply(_intermediateMaterial);
         _lastGrassLightingState = state;

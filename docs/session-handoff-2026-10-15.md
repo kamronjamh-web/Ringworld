@@ -166,3 +166,73 @@ None of the S4 files are referenced by the game yet. Gameplay is unaffected unti
 - `prototypes/Ringworld_MainSpire_FarProxy_Rings_Update.zip` was applied earlier. Keep or delete it.
 - The tracked `~libterrain…dll` temp file should probably be untracked, with `~*.dll` added to `.gitignore`.
 - The C# "trampoline" lines in `godot.err` are backtraces on warnings, not exceptions. The native voxel mesher DLL is not built; the managed fallback is used.
+
+## Update (2026-10-15, later): S4 finished, S5 done (uncommitted)
+
+**Machine:** these runs were on the RTX 4070 desktop. The `terrain_surface_include_regression` goldens are byte-exact A1000 captures and fail on the 4070 even with no terrain changes, so re-check them on the A1000. GPU ms below are 4070 numbers and do not compare with the A1000 baselines.
+
+**S4 fixes:**
+- Colour-match mask could not see cards beyond 70 m. Fixed in `GrassCardShaderFixture.SetMode`; far poses now cover 53 blocks.
+- border_desert framing was parallax-biased. The camera now looks along the border, giving 2.37.
+- Atlas G/B were diluted in the mips. They are now coverage-weighted with a push-pull fill, and `GeneratorVersion` is 2. Hero vs card is now 1.83–1.88. `GrassCardAssetsTest` has an anti-dilution check: strict ±0.03 on mips 1–4; from mip 5, R ≥ 128 selection bias toward root texels is expected.
+- Colour match passes, 9/9.
+- `measure` (4070): cards+hero cost +1.0 ms near and +0.24 ms far.
+- `weather`: grass moves.
+
+**S5 (GrassRenderStyle Blades/Cards inside `RingStandingGrassLayer`):**
+- New files: `RingGrassStyleProfile.cs`, `RingStandingGrassLayer.CardStyle.cs`, `tools/grass_card_style_test.gd`, `tools/grass_card_layer_gpu_smoke.gd`.
+- Grave-key Grass tab "Render style" exposes the style (default Blades), the reach (400) and green pull (0.15).
+- Blades fingerprint goldens are unchanged.
+- Card origin uv unwraps around the Terrain3D frame anchor, matching the terrain shader across the ring seam. The circumference is 1 mod 5.
+- Reach/lookahead/H/cap live in `CoverageFingerprint`, so they change tiers without a reset.
+- The instance budget is derived at chance 1 with held tiers.
+- Lead review findings are all addressed.
+- Tests: `grass_card_style_test`, `grass_card_layer_gpu_smoke` (frustum retire/re-upload, underground hold), colour match, hysteresis, tree contract, placement, assets and follower all PASS.
+- Pre-existing failure: `grass_live_tuning_smoke_test` fails identically at HEAD (clipped SectionAdaptivegrassgroups).
+
+**Next:**
+- The user does an in-game look at Cards, including walking across the ring seam (around = 0).
+- Then S6 (compute card mode; also re-enable adaptive grouping for Cards, which S5 disables) ‖ S7 (hero layer; then drop the `HeroThinMinimum = 1` override in Cards).
+
+## Update 2 (2026-10-15, late): hero scrapped, S6 done (uncommitted)
+
+USER DECISIONS: hero blades scrapped (S7 dropped), card placement on GPU, adaptive grouping on for Cards — recorded in `grass-cards-integration-plan.md`. Design: [grass-cards-s6-gpu-plan.md](grass-cards-s6-gpu-plan.md).
+
+- **A (hero removal):** hero files deleted, hero code stripped. New card placement goldens in `GrassCardPlacementTest` (`CardGolden`, 6 cases). `tools/grass_cards_spike_measure.gd` still mentions hero (spike tooling, left alone).
+- **B1 (compute):** `ParameterBytes` 256→512; card flag p[62], card values p[64..77]; `BatchFrameParameters.GrassCard` is optional. Card accept branch plus GLSL curve copy in `ring_gpu_vegetation_indirect.glsl`. Words 0..63 are pinned by `gpu_vegetation_parameter_layout_test`. GPU vs C# reference parity: `gpu_grass_card_culling_test`.
+- **B2 (layer):** Cards uses GPU culling when `UseGpuCulling` is on, with CPU MultiMesh as the fallback. Grave-key "Cards GPU distance margin" (0–8, default 2). GPU vs CPU image parity is exact. Idle shows 0 builds.
+- **C (grouping):** Cards groups start at ≥ last tier boundary + H + 4 + hysteresis (≈206 m), so the 2×2 start slider is a lower bound in Cards. The group output uses the intermediate slot. There is a 2 m Cards frustum hold. At reach 400 there are 122 batches (179 ungrouped).
+- **Lead review fixes:**
+  - F1: Cards re-captures GPU readiness after `RequestFrame`. This fixes a one-frame hole on every tier change. It relies on the default (non-separate) render thread model, and Blades still has the same hole.
+  - F2: when an active Cards group loses a leaf at the reach edge, it splits instead of being retired.
+- **Walk test:** `tools/grass_card_grouping_walk_test.gd` (about 12 min; `level4x4=0` shortens it). Walking 300 m out and back gives 0 holes, 0 double draws and at most 1 split per group.
+- **Pre-existing test failures**, confirmed at HEAD and fixed in the tests: `gpu_grass_integration_test` (meadow tufts default), `grass_adaptive_grouping_test` (EnableDistanceLod default).
+- **Open:**
+  - 122 batches exceed the 96 per-frame budget (`MaximumGpuCullingBatchesPerFrame`), so deferred tier handoffs can still drop for a frame.
+  - Frustum churn beyond ±0.75 m sway.
+  - The smoke's grouped-vs-ungrouped image parity probably sees no grouped pixels (camera pitched down).
+  - GPU memory for cards roughly doubles.
+  - Nothing measured on the A1000.
+- **Next:** S8 (settings/profiles/migration), S9 (Cards terrain coverage/sheen), S10, S11 (in-game A/B and perf on the A1000).
+
+## Update 3 (2026-10-16): Cards batch budget, S8 settings — grass closed out for now (uncommitted)
+
+- **Cards batch budget:** in Cards the GPU culling batch budget is `EffectiveGpuCullingBatchesPerFrame` = max(setting, batches + 16). At reach 400 that is 195, so there are 0 deferred batches. Blades keeps the setting. The F1 tier-handoff readiness fix stays Cards-only (user decision). The walk test passes with 0 holes and 0 doubles both ways.
+- **S8:**
+  - 34 card keys, from `GrassCardTileMeters` to `GrassCardConvergeEndPercent`. They live in `RingGrassCardSettings.cs` and `RingStandingGrassLayer.CardSettings.cs`.
+  - The drawer partial is `RingLiveTuningDrawer.GrassCards.cs`, with groups "Grass cards — coverage / form / colour".
+  - Rebuild classes:
+    - placement: tile, near/low density, heights, lean, atlas blades;
+    - coverage: curve, reach, fade, near width (no reset);
+    - material only: everything else.
+  - Quality presets carry the card reach and near density: Low 300/14, Laptop/Medium/High 400/14, VeryHigh 450/16, UltraVideo 500/18, Cinematic5090 600/20.
+  - The profile default is still Blades.
+  - `GrassCardTerrainSheen` is deferred to S9. Scale compensation is capped at 2.5, because the bounds and the GPU guard assume it.
+- **S8 verification:** headless tests all pass. The windowed suite has not been re-run since S8: card culling, layer smoke, colour match, integration, adaptive grouping, grouped phases and live tuning. Run it with `sh <scratchpad>/s8_suite.sh ...` or individually.
+- **Grass is closed out for now.** Remaining when it is reopened:
+  - S9 (Cards terrain coverage tint/sheen);
+  - S10 (full invariant suite);
+  - S11 (in-game A/B and perf on the A1000, then the default flip to Cards);
+  - frustum churn beyond ±0.75 m sway;
+  - the grouped image parity pose;
+  - the A1000 terrain goldens.

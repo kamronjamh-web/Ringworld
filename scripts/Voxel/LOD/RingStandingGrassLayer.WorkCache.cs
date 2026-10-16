@@ -45,13 +45,14 @@ public partial class RingStandingGrassLayer
     private readonly record struct GrassPresentationSettings(bool Enabled, bool Visible, bool Suspended,
         bool CullTiles, bool FrustumCull, bool DistanceLod, bool Coordinated, float NearDistance, float FarDistance,
         float Transition, float NearDensity, float FarDensity, float Padding,
-        bool ReducedNear, bool SingleRibbon);
+        bool ReducedNear, bool SingleRibbon, bool Cards, RingGrassCardComputeParameters? CardCompute);
 
     private GrassPresentationSettings CaptureGrassPresentationSettings() => new(Enabled, IsVisibleInTree(),
         StreamingSuspended, CullGrassTiles, GpuFrustumCulling, EnableDistanceLod, EnableCoordinatedGrassHandoff && EnableGrassAppearance,
         LodNearDistanceMeters, EffectiveGrassDrawDistance(), LodTransitionWidthMeters,
         LodNearDensity, LodFarDensity, GrassFrustumPaddingMeters,
-        UseReducedNearGrassGeometry, IsSingleRibbonIntermediateGrassActive);
+        UseReducedNearGrassGeometry, IsSingleRibbonIntermediateGrassActive, _style.IsCards,
+        _style.IsCards ? CardComputeFrame() : null);
 
     private GpuCameraState CaptureGrassCameraState(Camera3D camera) => new(camera.GetInstanceId(),
         camera.GlobalTransform, camera.Projection, camera.KeepAspect, camera.Fov, camera.Size,

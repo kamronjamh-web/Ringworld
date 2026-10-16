@@ -67,14 +67,33 @@ public partial class RingStandingGrassLayer
         foreach (var pair in _activeGrassPresentations) yield return pair.Value;
     }
     private bool IsAdaptiveGroup(Resident resident) => resident.Group != null;
+    // Cards: never group a tile whose tier can still change. The split threshold (start - hysteresis) stays beyond the last
+    // ladder boundary + downgrade hysteresis + 4 m camera/focus slack, so a group only ever holds floor-tier tiles.
+    internal float EffectiveGrassGroupingStartMeters => _style.IsCards
+        ? Math.Max(GrassGroupingStartMeters, _style.LastTierStartMeters + _style.HysteresisMeters + 4f + Math.Max(4f, GrassGroupingHysteresisMeters))
+        : GrassGroupingStartMeters;
+    internal float EffectiveGrassGroupingFarStartMeters => Math.Max(GrassGroupingFarStartMeters, EffectiveGrassGroupingStartMeters);
+    // While a Cards group is active and splitting, its leaves re-warm their near outputs; those stay hidden until the group
+    // retires, otherwise density would double for a few frames. Blades always shows.
+    private bool AdaptiveNearVisible(Resident resident) => !_style.IsCards || resident.Group != null
+        || !_adaptiveLeafOwners.TryGetValue(resident.Data.Key, out var owner) || !owner.Active;
     private bool AdaptiveIntermediateVisible(Resident resident) => resident.Group is { } group
         ? group.Active : !_adaptiveLeafOwners.TryGetValue(resident.Data.Key, out var owner) || !owner.Active;
 
+    /// <summary>Tests only (null in production): group transitions as (key, event, active). Events are "create", "activate",
+    /// "split:&lt;cause&gt;" (the first time a group is marked splitting) and "retire:&lt;cause&gt;".</summary>
+    internal Action<RingGrassGroupKey, string, bool>? AdaptiveGroupEventForTests { get; set; }
+    private void AdaptiveGroupEvent(AdaptiveGroup group, string what) => AdaptiveGroupEventForTests?.Invoke(group.Key, what, group.Active);
+    private void MarkAdaptiveSplitting(AdaptiveGroup group, string cause)
+    {
+        if (!group.Splitting && AdaptiveGroupEventForTests != null) AdaptiveGroupEvent(group, "split:" + cause);
+        group.Splitting = true;
+    }
     private void AdaptiveLeafChanged(RingGrassTileKey key)
     {
         _adaptiveSourcesDirty = _adaptivePresentationsDirty = true;
         _adaptiveCandidateRetryNeeded = true;
-        if (_adaptiveLeafOwners.TryGetValue(key, out var group)) group.Splitting = true;
+        if (_adaptiveLeafOwners.TryGetValue(key, out var group)) MarkAdaptiveSplitting(group, _tiles.ContainsKey(key) ? "leaf_changed" : "leaf_removed");
     }
     private void RefreshAdaptivePresentations()
     {
@@ -106,11 +125,14 @@ public partial class RingStandingGrassLayer
     private void UpdateAdaptiveGroups(RingLodGeometrySnapshot geometry, RingCanonicalPosition focus, long circumference, Camera3D? camera)
     {
         bool legacyGust = EnableGrassGustTexture && GrassGustTextureReady && !UsesSharedWindField;
+        // Cards groups use the intermediate slot with the card mesh/material; there is no distance LOD, so the near band is empty.
+        bool cards = _style.IsCards;
         var settings = new AdaptiveSettings(EnableAdaptiveGrassGrouping, Math.Clamp(GrassGroupingMaximumLevel, 1, 2),
-            GrassGroupingStartMeters, GrassGroupingFarStartMeters, GrassGroupingHysteresisMeters,
+            EffectiveGrassGroupingStartMeters, EffectiveGrassGroupingFarStartMeters, GrassGroupingHysteresisMeters,
             Math.Clamp(MaximumGrassSourcesPerGroup, 256, RingGpuVegetationCompute.MaximumRootsPerBatch),
-            UseGpuCulling && !_gpuFailureLatched && _gpuCompute is { Ready: true }, EnableDistanceLod, StreamingSuspended, legacyGust,
-            Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f), EffectiveGrassDrawDistance(), LodTransitionWidthMeters, GrassFrustumPaddingMeters, CullGrassTiles, GpuFrustumCulling);
+            UseGpuCulling && !_gpuFailureLatched && _gpuCompute is { Ready: true }, cards || EnableDistanceLod, StreamingSuspended, legacyGust,
+            cards ? 0f : Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f), EffectiveGrassDrawDistance(),
+            cards ? 0f : LodTransitionWidthMeters, GrassFrustumPaddingMeters, CullGrassTiles, GpuFrustumCulling);
         bool enabled = settings.Enabled && settings.Gpu && settings.DistanceLod && !settings.Suspended && camera != null && !legacyGust;
         AdaptiveGrassGroupingStatus = !settings.Enabled ? "Disabled" : !settings.Gpu ? "Fine outputs: GPU unavailable"
             : legacyGust ? "Fine outputs: standalone gust mapping" : !settings.DistanceLod ? "Fine outputs: distance LOD disabled"
@@ -141,12 +163,20 @@ public partial class RingStandingGrassLayer
         foreach (var pair in _adaptiveGroups)
         {
             AdaptiveGroup group = pair.Value;
-            if (validateSources && !GroupSourcesPresent(group)) { _adaptiveRetire.Add(pair.Key); continue; }
+            if (validateSources && !GroupSourcesPresent(group))
+            {
+                // Cards: a leaf of an active group left the wanted set (it lies beyond reach + streaming hysteresis, where every
+                // card has faded out). Split instead of retiring, so the group keeps drawing the remaining leaves until their own
+                // outputs are ready; retiring at once leaves them undrawn until they re-upload.
+                if (_style.IsCards && group.Active) { MarkAdaptiveSplitting(group, "sources"); transitionInProgress = true; }
+                else { AdaptiveGroupEvent(group, "retire:sources"); _adaptiveRetire.Add(pair.Key); continue; }
+            }
             bool configSplit = group.Key.Level > settings.Level || group.Resident.Data.InstanceCount > settings.Roots;
             if (!validateDistances && !group.Splitting && group.Active && !configSplit) continue;
             float minimum = AdaptiveGroupMinimumDistance(group.Resident, geometry, camera?.GlobalPosition, focus, circumference);
             if (minimum > settings.FarLod + settings.Transition * .5f)
             {
+                AdaptiveGroupEvent(group, "retire:beyond");
                 _adaptiveRetire.Add(pair.Key);
                 continue;
             }
@@ -154,9 +184,12 @@ public partial class RingStandingGrassLayer
             float splitThreshold = Math.Max(start - Math.Max(0, settings.Hysteresis),
                 settings.NearLod + settings.Transition * .5f + Math.Max(4, settings.Hysteresis));
             if (!enabled || minimum < splitThreshold || (configSplit && (!transitionInProgress || group.Splitting)))
-            { group.Splitting = true; transitionInProgress = true; }
-            if (!group.Active && (group.Resident.GpuIntermediateBatch < 0 || !group.Resident.IntermediateWanted)) _adaptiveRetire.Add(pair.Key);
-            if (group.Splitting && !group.Active) _adaptiveRetire.Add(pair.Key);
+            { MarkAdaptiveSplitting(group, !enabled ? "disabled" : minimum < splitThreshold ? "distance" : "config"); transitionInProgress = true; }
+            if (!group.Active && (group.Resident.GpuIntermediateBatch < 0 || !group.Resident.IntermediateWanted || group.Splitting))
+            {
+                AdaptiveGroupEvent(group, "retire:pending");
+                _adaptiveRetire.Add(pair.Key);
+            }
         }
         foreach (var key in _adaptiveRetire) RetireAdaptiveGroup(key);
         // Split children join the active traversal while their outputs warm. The group remains the sole intermediate owner.
@@ -185,7 +218,7 @@ public partial class RingStandingGrassLayer
             _adaptiveCandidateCursor = 0;
             _adaptiveCandidateRetryNeeded = false;
         }
-        if (enabled && !pending && _mesh != null && _intermediateMaterial != null)
+        if (enabled && !pending && (cards ? _cardMesh != null && _cardMaterial != null : _mesh != null && _intermediateMaterial != null))
         {
             int checks = Math.Min(8, _adaptiveCandidates.Count);
             for (int check = 0; check < checks; check++)
@@ -204,17 +237,17 @@ public partial class RingStandingGrassLayer
                 foreach (var source in sources) maximumHeight = Math.Max(maximumHeight, _tiles[source.Key].MaximumSourceHeight);
                 var preflight = new Resident { Data = description, MaximumSourceHeight = maximumHeight };
                 float expandedMinimum = AdaptiveGroupMinimumDistance(preflight, geometry, camera!.GlobalPosition, focus, circumference);
-                if (expandedMinimum < threshold || expandedMinimum > EffectiveGrassDrawDistance() + LodTransitionWidthMeters * .5f) continue;
+                if (expandedMinimum < threshold || expandedMinimum > EffectiveGrassDrawDistance() + settings.Transition * .5f) continue;
                 // Admission uses the same conservative pass distance even when whole-tile culling is disabled.
                 // A batch with no intermediate request cannot become ready and must never reserve the pending-group slot.
                 float passDistance = ConservativePresentationDistance(description, preflight.Presentation.RawWorldBounds,
                     camera.GlobalPosition, focus, circumference);
-                if (passDistance > EffectiveGrassDrawDistance() + LodTransitionWidthMeters * .5f + Math.Max(0, GrassFrustumPaddingMeters)) continue;
+                if (passDistance > EffectiveGrassDrawDistance() + settings.Transition * .5f + Math.Max(0, GrassFrustumPaddingMeters)) continue;
                 if (CullGrassTiles && GpuFrustumCulling && !AabbIntersectsFrustum(preflight.Presentation.ExpandedWorldBounds, CachedCameraFrustumPlanes(camera))) continue;
                 // Upgrade an eligible complete ancestor through its fine children. The same gate used for creation chooses the bridge.
                 bool upgrading = false;
                 foreach (var source in sources) if (_adaptiveLeafOwners.TryGetValue(source.Key, out var owner))
-                { owner.Splitting = true; upgrading = true; }
+                { MarkAdaptiveSplitting(owner, "upgrade"); upgrading = true; }
                 if (upgrading) { _adaptivePresentationsDirty = true; _adaptiveCandidateCursor = 0; break; }
                 RingGrassTileData data = RingGrassGrouping.Build(sources, geometry, out Vector4[] metadata);
                 var resident = new Resident { Data = data, MaximumSourceHeight = maximumHeight, GroupMetadata = metadata };
@@ -224,6 +257,7 @@ public partial class RingStandingGrassLayer
                 _adaptiveHasTransitions = true;
                 foreach (var leaf in sources) _adaptiveLeafOwners.Add(leaf.Key, group);
                 InstallAdaptiveGroup(group);
+                AdaptiveGroupEvent(group, "create");
                 _adaptivePresentationsDirty = true;
                 break;
             }
@@ -250,7 +284,7 @@ public partial class RingStandingGrassLayer
         foreach (var leaf in group.Sources)
         {
             if (!_tiles.TryGetValue(leaf.Key, out var resident) || !_wanted.Contains(leaf.Key)) return false;
-            if (!ReferenceEquals(leaf, resident.Data)) group.Splitting = true;
+            if (!ReferenceEquals(leaf, resident.Data)) MarkAdaptiveSplitting(group, "source_replaced");
         }
         return true;
     }
@@ -269,7 +303,8 @@ public partial class RingStandingGrassLayer
     private void InstallAdaptiveGroup(AdaptiveGroup group)
     {
         Resident resident = group.Resident;
-        MultiMeshInstance3D renderer = CreateRenderer(resident.Data.Key, IntermediateMeshFor(resident.Data), _intermediateMaterial!, $"Group{group.Key.Level}");
+        bool cards = _style.IsCards;
+        MultiMeshInstance3D renderer = CreateRenderer(resident.Data.Key, IntermediateMeshFor(resident.Data), cards ? _cardMaterial! : _intermediateMaterial!, $"Group{group.Key.Level}");
         resident.IntermediateRenderer = renderer;
         // Register directly as GPU-only: concatenated sources must never use INSTANCE_ID-based CPU LOD.
         resident.GpuIntermediateBatch = _gpuCompute!.RegisterBatch(new RingGpuVegetationCompute.BatchRegistration(
@@ -277,7 +312,7 @@ public partial class RingStandingGrassLayer
             resident.Data.Buffer, resident.GroupMetadata, resident.Data.InstanceCount, LodAabb(resident.Data.LocalAabb), true));
         if (renderer is GrassPresentationRenderer tracked) tracked.RecordInstalledMultiMesh(renderer.Multimesh!, resident.Data.InstanceCount);
         SetGpuCulled(renderer, true, resident.Presentation.Intermediate);
-        ConfigureLodPass(renderer, resident.Data.InstanceCount, true, resident.Data.Key);
+        if (!cards) ConfigureLodPass(renderer, resident.Data.InstanceCount, true, resident.Data.Key);
         SetRendererVisible(renderer, false);
     }
     private void QueueAdaptiveOutput(AdaptiveGroup group)
@@ -309,6 +344,7 @@ public partial class RingStandingGrassLayer
                 && _gpuReadyBatches.Contains(group.Resident.GpuIntermediateBatch))
             {
                 group.Active = true;
+                AdaptiveGroupEvent(group, "activate");
                 foreach (var leaf in group.Sources) if (_tiles.TryGetValue(leaf.Key, out var resident))
                 {
                     RetireGrassOutput(resident, true);
@@ -323,12 +359,13 @@ public partial class RingStandingGrassLayer
                 bool ready = true;
                 foreach (var source in group.Sources)
                 {
-                    if (!_tiles.TryGetValue(source.Key, out var leaf)) { ready = false; break; }
+                    // Cards splits (rather than retires) when a leaf was evicted; a departed leaf has nothing to warm.
+                    if (!_tiles.TryGetValue(source.Key, out var leaf)) { if (_style.IsCards) continue; ready = false; break; }
                     if (leaf.IntermediateWanted && (leaf.IntermediateRenderer == null
                         || (UseGpuCulling && (leaf.GpuIntermediateBatch < 0 || !_gpuReadyBatches.Contains(leaf.GpuIntermediateBatch))))) { ready = false; break; }
                     if (leaf.NearWanted && (leaf.Renderer == null || (UseGpuCulling && (leaf.GpuNearBatch < 0 || !_gpuReadyBatches.Contains(leaf.GpuNearBatch))))) { ready = false; break; }
                 }
-                if (ready) _adaptiveRetire.Add(group.Key);
+                if (ready) { AdaptiveGroupEvent(group, "retire:split_done"); _adaptiveRetire.Add(group.Key); }
             }
         }
         foreach (var key in _adaptiveRetire) RetireAdaptiveGroup(key);
@@ -349,7 +386,7 @@ public partial class RingStandingGrassLayer
     }
     private void ClearAdaptiveGroups()
     {
-        foreach (var group in _adaptiveGroups.Values) RetireGrassOutput(group.Resident, true);
+        foreach (var group in _adaptiveGroups.Values) { AdaptiveGroupEvent(group, "retire:clear"); RetireGrassOutput(group.Resident, true); }
         _adaptiveGroups.Clear(); _adaptiveLeafOwners.Clear(); _adaptiveCandidates.Clear(); _activeGrassPresentations.Clear();
         _adaptiveOutputRequests.Clear(); _adaptiveOutputQueued.Clear();
         _adaptiveSourcesDirty = _adaptivePresentationsDirty = true;
@@ -359,13 +396,26 @@ public partial class RingStandingGrassLayer
     }
     private void SplitAllAdaptiveGroups()
     {
-        foreach (var group in _adaptiveGroups.Values) group.Splitting = true;
+        foreach (var group in _adaptiveGroups.Values) MarkAdaptiveSplitting(group, "split_all");
         _adaptivePresentationsDirty = _adaptiveSourcesDirty = true;
     }
 
     // GPU failure/explicit CPU mode must restore leaf-local INSTANCE_ID before the grouped allocation is retired.
     private void RestoreAdaptiveFineOutputs()
     {
+        if (_style.IsCards)
+        {
+            // Cards: the leaves keep the near slot. Re-upload them as ordinary CPU outputs; the group retires with the clear below.
+            foreach (var group in _adaptiveGroups.Values) foreach (var source in group.Sources)
+                if (_tiles.TryGetValue(source.Key, out var leaf))
+                {
+                    leaf.NearWanted = group.Resident.IntermediateWanted;
+                    if (_uploadQueued.Add(source.Key)) _uploads.Enqueue(source.Key);
+                }
+            ClearAdaptiveGroups();
+            RefreshAdaptivePresentations();
+            return;
+        }
         foreach (var group in _adaptiveGroups.Values) foreach (var source in group.Sources)
         {
             if (!_tiles.TryGetValue(source.Key, out var leaf) || _material == null || _intermediateMaterial == null) continue;
@@ -392,7 +442,7 @@ public partial class RingStandingGrassLayer
             foreach (var source in group.Sources)
             {
                 if (!leaves.Add(source.Key)) duplicate++;
-                if (!_tiles.TryGetValue(source.Key, out var leaf)) missing++;
+                if (!_tiles.TryGetValue(source.Key, out var leaf)) { if (!(_style.IsCards && group.Splitting)) missing++; }
                 else if (!ReferenceEquals(leaf.Data, source) && !group.Splitting) mismatch++;
                 if (!_adaptiveLeafOwners.TryGetValue(source.Key, out var owner) || !ReferenceEquals(owner, group)) mismatch++;
             }
@@ -411,6 +461,31 @@ public partial class RingStandingGrassLayer
                 && (leaf.Renderer != null || leaf.IntermediateRenderer != null))
                 throw new InvalidOperationException("Active grouped leaf retained a fine output allocation");
         }
+    }
+
+    /// <summary>Tests: who draws a wanted leaf this frame. LeafDrawn = its own near renderer is visible; GroupDrawn = the
+    /// owner group's renderer is visible. *Unready = visible while the GPU batch has not completed a dispatch yet.</summary>
+    internal readonly record struct LeafCoverageAudit(RingGrassTileKey Key, int InstanceCount, byte Tier, bool LeafDrawn, bool LeafUnready,
+        bool HasOwner, RingGrassGroupKey Owner, bool OwnerActive, bool OwnerSplitting, bool GroupDrawn, bool GroupUnready,
+        bool NearWanted, bool OwnerWanted, bool BoundsValid, Aabb RawBounds, bool HasRenderer, int NearBatch, bool NearBatchReady, ulong PlacementHash);
+    internal List<LeafCoverageAudit> CaptureLeafCoverageForTests()
+    {
+        var result = new List<LeafCoverageAudit>(_wanted.Count);
+        bool Drawn(MultiMeshInstance3D? renderer) => renderer != null && GodotObject.IsInstanceValid(renderer) && renderer.IsInsideTree() && renderer.Visible;
+        bool Unready(MultiMeshInstance3D? renderer, int batch) => Drawn(renderer) && batch >= 0 && !(_gpuCompute?.IsBatchReady(batch) ?? false);
+        foreach (var key in _wanted)
+        {
+            if (!_tiles.TryGetValue(key, out var leaf)) continue;
+            _adaptiveLeafOwners.TryGetValue(key, out var owner);
+            Resident? group = owner?.Resident;
+            result.Add(new LeafCoverageAudit(key, leaf.Data.InstanceCount, leaf.Data.SourceTier,
+                Drawn(leaf.Renderer), Unready(leaf.Renderer, leaf.GpuNearBatch),
+                owner != null, owner?.Key ?? default, owner?.Active ?? false, owner?.Splitting ?? false,
+                Drawn(group?.IntermediateRenderer), group != null && Unready(group.IntermediateRenderer, group.GpuIntermediateBatch),
+                leaf.NearWanted, group?.IntermediateWanted ?? false, leaf.Presentation.Bounds != null, leaf.Presentation.RawWorldBounds,
+                leaf.Renderer != null, leaf.GpuNearBatch, leaf.GpuNearBatch >= 0 && (_gpuCompute?.IsBatchReady(leaf.GpuNearBatch) ?? false), leaf.Data.PlacementHash));
+        }
+        return result;
     }
 
     public static void RunGrassAdaptiveGroupingTests()

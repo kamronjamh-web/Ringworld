@@ -171,7 +171,7 @@ public partial class GrassAdaptiveGroupingTest : RefCounted
     private static void RunWorkCacheContracts()
     {
         var tree = (SceneTree)Engine.GetMainLoop();
-        var layer = new RingStandingGrassLayer { ProcessMode = Node.ProcessModeEnum.Disabled };
+        var layer = new RingStandingGrassLayer { ProcessMode = Node.ProcessModeEnum.Disabled, EnableDistanceLod = true };
         var camera = new Camera3D();
         tree.Root.AddChild(layer); tree.Root.AddChild(camera);
         try

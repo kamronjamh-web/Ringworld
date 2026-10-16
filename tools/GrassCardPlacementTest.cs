@@ -14,7 +14,7 @@ using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tests;
 
-/// <summary>S3 placement test: card/low/hero placement, Bayer rank nesting, tier filtering, masks, curve and the
+/// <summary>S3 placement test: card/low placement, Bayer rank nesting, tier filtering, masks, curve and the
 /// blade-golden guard. Run via tools/grass_card_placement_test.gd.</summary>
 public partial class GrassCardPlacementTest : RefCounted
 {
@@ -42,6 +42,17 @@ public partial class GrassCardPlacementTest : RefCounted
         ["dense/f0.09/mods"] = "0x6864FD3258FDF946 n=135 cap300=0x572636C9D865593D/177",
     };
 
+    // Card placement golden (recorded on the S5 tree): PlacementHash and InstanceCount per case.
+    private static readonly Dictionary<string, string> CardGolden = new()
+    {
+        ["meadow/t0"] = "0xE22087CF5A8C6BC8 n=16660 low=9381",
+        ["meadow/t4"] = "0x72604404683CDB19 n=1774 low=0",
+        ["meadow/t8"] = "0x7010F6E1E6F03AF1 n=464 low=0",
+        ["meadow/t13"] = "0xF94FD8E2252DBA2B n=88 low=0",
+        ["seam-last/t0"] = "0xFD3C2F22272CF8DA n=6939 low=4009",
+        ["seam-first/t0"] = "0xBDCFE46AD30BD412 n=7009 low=3965",
+    };
+
     public bool Run()
     {
         _clean = new RingLodSurfaceEditSnapshot(1, Circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
@@ -51,6 +62,7 @@ public partial class GrassCardPlacementTest : RefCounted
             TestBayer();
             using RingTerrainSampler sampler = EmitterSiteTestWorlds.CreateGen17(1337);
             TestBladeGolden(sampler);
+            TestCardGolden(sampler);
             (long a, long b) meadow = FindMeadowTile(sampler);
             TestPayloadAndDeterminism(sampler, meadow);
             TestFilterEquivalence(sampler, meadow);
@@ -60,7 +72,6 @@ public partial class GrassCardPlacementTest : RefCounted
             TestSlope(sampler, meadow);
             TestWater(sampler);
             TestHeightByBiome(sampler);
-            TestHero(sampler, meadow);
             TestSiteMask();
             ReportCostAndCounts(sampler, meadow);
         }
@@ -179,9 +190,7 @@ public partial class GrassCardPlacementTest : RefCounted
                 double expected = rank < keep && grow >= .08
                     ? Math.Min(1 / Math.Sqrt(Math.Min(1, Dens(d) / 2.5)), 2.5) * grow * (.7 + .3 * S(8, 45, d)) * (1 - S(340, 400, d))
                     : 0;
-                double keepHero = .4 + .6 * S(3, 7.5, d);
-                double thin = keepHero >= .999 ? 1 : S(0, .15, keepHero - rank * .999);
-                Near($"scale({d},{rank})", RingGrassCardCurve.Scale(p, rank, d), (float)(expected * thin), 3e-4f);
+                Near($"scale({d},{rank})", RingGrassCardCurve.Scale(p, rank, d), (float)expected, 3e-4f);
                 Check(RingGrassCardCurve.Accepts(p, rank, d) == (rank < keep && grow >= .08), $"curve accepts({d},{rank})");
             }
         }
@@ -191,9 +200,6 @@ public partial class GrassCardPlacementTest : RefCounted
         Near("scale(rank0,100)=cap", RingGrassCardCurve.Scale(p, 0, 100), 2.5f);
         Near("scale(rank.5,100)=0", RingGrassCardCurve.Scale(p, .5f, 100), 0f);
         Near("fade(370)", RingGrassCardCurve.Fade(p, 370), .5f);
-        Near("heroThin(0,0)", RingGrassCardCurve.HeroThin(p, 0, 0), 1f);
-        Near("heroThin(.5,0)", RingGrassCardCurve.HeroThin(p, .5f, 0), 0f);
-        Near("heroThin(.2,5.25)", RingGrassCardCurve.HeroThin(p, .2f, 5.25f), 1f);
         Near("lowKeep(8)", RingGrassCardCurve.LowKeep(p, 8), 1f);
         Near("lowKeep(15)", RingGrassCardCurve.LowKeep(p, 15), .5f);
         Near("lowKeep(22)", RingGrassCardCurve.LowKeep(p, 22), 0f);
@@ -217,6 +223,32 @@ public partial class GrassCardPlacementTest : RefCounted
         }
         Check(matched == BladeGolden.Count, $"blade golden matched {matched}/{BladeGolden.Count}");
         GD.Print($"GRASS_CARD[blade_golden] matched={matched}/{BladeGolden.Count}");
+    }
+
+    private void TestCardGolden(RingTerrainSampler sampler)
+    {
+        (long a, long b) m = FindMeadowTile(sampler);
+        long lastTile = RingGrassCoordinates.AroundTileCount(Circumference, Tile) - 1;
+        long across = 141_000 / 32;
+        for (long candidate = 2500; candidate < 9500; candidate += 37)
+        {
+            if (BuildCards(sampler, Fixture(lastTile, candidate), low: false).InstanceCount > 600 && BuildCards(sampler, Fixture(0, candidate), low: false).InstanceCount > 600) { across = candidate; break; }
+        }
+        var cases = new List<(string, TileFixture, int)>();
+        foreach (int tier in new[] { 0, 4, 8, 13 }) cases.Add(($"meadow/t{tier}", Fixture(m.a, m.b), tier));
+        cases.Add(("seam-last/t0", Fixture(lastTile, across), 0));
+        cases.Add(("seam-first/t0", Fixture(0, across), 0));
+        int matched = 0;
+        foreach ((string name, TileFixture t, int tier) in cases)
+        {
+            RingGrassTileData d = BuildCards(sampler, t, RingGrassCardCurve.LadderFraction(tier), (byte)tier, tier == 0);
+            string value = $"0x{d.PlacementHash:X16} n={d.InstanceCount} low={d.LowLayerInstanceCount}";
+            GD.Print($"GRASS_CARD[card_golden_value] [\"{name}\"] = \"{value}\"");
+            if (!CardGolden.TryGetValue(name, out string? expected)) { _failures.Add("card golden: unknown case " + name); continue; }
+            if (expected == value) matched++; else _failures.Add($"card golden {name}: {value} != {expected} (card placement changed)");
+        }
+        Check(matched == CardGolden.Count && matched == cases.Count, $"card golden matched {matched}/{CardGolden.Count}");
+        GD.Print($"GRASS_CARD[card_golden] matched={matched}/{CardGolden.Count}");
     }
 
     // ------------------------------------------------------------------ builder tests
@@ -520,37 +552,6 @@ public partial class GrassCardPlacementTest : RefCounted
         Check(plain == 0 || scaled > plain * 1.2, $"appearance height multiplier ignored ({plain:0.000} -> {scaled:0.000})");
     }
 
-    private void TestHero(RingTerrainSampler sampler, (long a, long b) m)
-    {
-        var cell = new RingGrassTileKey(m.a * 8 + 3, m.b * 8 + 2); // 4 m cells inside the meadow tile
-        RingGrassTileData Hero(RingLodGeometrySnapshot geometry, float height = .9f, int cap = 10_000, RingGrassExclusionSnapshot? exclusions = null, RingGrassTileKey? key = null)
-            => RingGrassHeroCellBuilder.Build(key ?? cell, 4, 50, height, cap, 25, sampler, _clean, geometry, CancellationToken.None, exclusions: exclusions);
-        RingLodGeometrySnapshot origin = Geometry(new RingCanonicalPosition(0, 0, 0));
-        RingGrassTileData a = Hero(origin);
-        RingGrassTileData b = Hero(Geometry(new RingCanonicalPosition(cell.Around * 4 + 1000, 0, cell.Across * 4 - 3000), new Vector3(123, -7, 9)));
-        RingGrassTileData[] threads = Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Task.Run(() => Hero(Geometry(new RingCanonicalPosition(5, 0, 5)))))).GetAwaiter().GetResult();
-        Check(a.InstanceCount > 80, $"hero cell too sparse: {a.InstanceCount} tufts (800 candidates x eligibility)");
-        Check(SameBuffer(a, b), "hero cell depends on the camera / focus / floating origin");
-        Check(threads.All(x => SameBuffer(a, x)), "hero cell differs across threads");
-        Check(!a.IsCardPlacement && a.TierKeys == null && a.SourceFraction == 1 && a.LowLayerInstanceCount == 0, "hero data must carry no tier key");
-        Check(RingGrassTileBuilder.FilterCardTier(a, .5f, 1, false) == null && RingGrassTileBuilder.FilterToTier(a, .5f, 1) == null, "hero data must not be tier-filterable");
-        RingGrassTileData neighbour = Hero(origin, key: new RingGrassTileKey(cell.Around + 1, cell.Across));
-        Check(neighbour.PlacementHash != a.PlacementHash && neighbour.InstanceCount > 0, "neighbouring hero cells are identical");
-        List<Inst> insts = Decode(a);
-        Check(insts.All(i => i.Kind == 2 && i.Variant is >= 0 and < 4 && i.RankFromCustom < 1e-5f), "hero CUSTOM.x kind/variant");
-        Check(insts.All(i => i.Around >= a.Bounds.AroundMin - 1e-3 && i.Around < a.Bounds.AroundMax + 1e-3 && i.Across >= a.Bounds.AcrossMin - 1e-3 && i.Across < a.Bounds.AcrossMax + 1e-3), "hero tuft outside its 4 m cell");
-        RingGrassTileData full = Hero(origin, 1f);
-        double h09 = insts.Average(i => i.Height), h10 = Decode(full).Average(i => i.Height);
-        Check(Math.Abs(h09 / h10 - .9) < .02, $"hero height scale: {h09:0.000}/{h10:0.000} != .9");
-        // Same TryPlace core: exclusions respected.
-        double ca = a.Bounds.AroundCenter, cz = a.Bounds.AcrossCenter;
-        var ex = new RingGrassExclusionSnapshot(1, Circumference, new[] { new RingGrassExclusionBox(ca - 1, ca + 1, -1000, 1000, cz - 1, cz + 1) });
-        RingGrassTileData excluded = Hero(origin, exclusions: ex);
-        Check(excluded.InstanceCount < a.InstanceCount && Decode(excluded).All(i => !Inside(i, ca - 1, ca + 1, cz - 1, cz + 1)), "hero cell ignores exclusions");
-        Check(Hero(origin, cap: 100).InstanceCount == 100, "hero cap not applied");
-        GD.Print($"GRASS_CARD[hero] tufts/cell={a.InstanceCount} meanHeight={h09:0.000}");
-    }
-
     private void TestSiteMask()
     {
         using RingTerrainSampler v5 = EmitterSiteTestWorlds.CreateGen17Sites(1337);
@@ -582,9 +583,6 @@ public partial class GrassCardPlacementTest : RefCounted
         }
         GD.Print($"GRASS_CARD[site_mask] tile blocked cells(2 m)={bestBlocked} cards={d.InstanceCount} on-site cards={onSite}");
         Check(d.InstanceCount > 0 && onSite == 0, $"{onSite} cards placed on BlocksVegetation terrain");
-        RingGrassTileData hero = RingGrassHeroCellBuilder.Build(new RingGrassTileKey((long)(pick.Bounds.AroundCenter / 4), (long)(pick.Bounds.AcrossCenter / 4)), 4, 50, .9f, 10_000, 25, v5, _clean, pick.Geometry, CancellationToken.None);
-        int heroOnSite = Decode(hero).Count(i => !NearCellEdge(i) && _clean.GetPresentationTerrainSample(v5, (long)Math.Round(i.Around), (int)Math.Round(i.Across)).SiteMask.BlocksVegetation);
-        Check(heroOnSite == 0, $"{heroOnSite} hero tufts placed on BlocksVegetation terrain");
     }
 
     private void ReportCostAndCounts(RingTerrainSampler sampler, (long a, long b) m)
@@ -608,8 +606,7 @@ public partial class GrassCardPlacementTest : RefCounted
         double cards8 = Time(() => BuildCards(sampler, t, RingGrassCardCurve.LadderFraction(8), 8, false), out int n8);
         double blades = Time(() => RingGrassTileBuilder.Build(t.Key, t.Bounds, 8, 9, 96, 1700, 25, sampler, _clean, t.Geometry, CancellationToken.None, useGrassClumps: true), out int nb);
         double bladesFar = Time(() => RingGrassTileBuilder.Build(t.Key, t.Bounds, 8, 9, 96, 1700, 25, sampler, _clean, t.Geometry, CancellationToken.None, sourceFraction: .09f, sourceTier: 2, useGrassClumps: true), out int nbf);
-        double hero = Time(() => RingGrassHeroCellBuilder.Build(new RingGrassTileKey(m.a * 8, m.b * 8), 4, 50, .9f, 10_000, 25, sampler, _clean, t.Geometry, CancellationToken.None), out int nh);
-        GD.Print($"GRASS_CARD[cost] 32 m tile build ms: cards tier0+low={cards0:0.0} ({n0}), cards tier4={cards4:0.0} ({n4}), cards tier8={cards8:0.0} ({n8}) | blades 96/m2 clump near={blades:0.0} ({nb}), blades far tier={bladesFar:0.0} ({nbf}) | hero 4 m cell={hero:0.00} ({nh})");
+        GD.Print($"GRASS_CARD[cost] 32 m tile build ms: cards tier0+low={cards0:0.0} ({n0}), cards tier4={cards4:0.0} ({n4}), cards tier8={cards8:0.0} ({n8}) | blades 96/m2 clump near={blades:0.0} ({nb}), blades far tier={bladesFar:0.0} ({nbf})");
     }
 
     // ------------------------------------------------------------------ blade golden

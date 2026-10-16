@@ -217,7 +217,7 @@ public partial class GrassStreamingHysteresisTest : Node
     }
 
     private static RingLodGeometrySnapshot Geometry(Vector3 origin, RingCanonicalPosition anchor)
-        => new(Transform3D.Identity, Vector3.Zero, origin, Circumference / Math.Tau, 0, 0, Circumference, -1000, 1000, anchor);
+        => new(Transform3D.Identity, origin, Vector3.Zero, Circumference / Math.Tau, 0, 0, Circumference, -1000, 1000, anchor); // origin = FloatingOriginWorldOffset
 
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }
