@@ -786,7 +786,10 @@ void main() {
 	// length cannot classify it because valid edge pixels may exceed z_far.
 	bool has_opaque_depth = depth > 0.0;
 	//4.4 doesn't work with this
-	if (linear_depth >= scene_data_block.data.z_far){ 
+	// z_far comes from this callback (GenericData); the bound SceneData UBO can
+	// belong to another render pass once the frame's pass order changes.
+	float sceneZFar = genericData.data.cloud_mask_controls.w > 0.0 ? genericData.data.cloud_mask_controls.w : scene_data_block.data.z_far;
+	if (linear_depth >= sceneZFar){ 
 		linear_depth *= 100.0;
 	}
 	float far_depth = texture(far_opaque_depth_image, depthUV).r;
@@ -1591,13 +1594,14 @@ void main() {
 				genericData.data.temporal_controls.x, reprojectedPixelMotion,
 				currentDataAccumilation.g, traveledDistance, currentDataAccumilation.b, finalDensityDistance,
 				currentDataAccumilation.a, opaqueDepthMetadata, cameraTranslation, maxstep, opaqueDepthTolerance);
-			bool skyJitterAgrees = ring_cloud_history_sky_jitter(
+			bool validatedJitterAgrees = ring_cloud_history_validated_jitter(
 				genericData.data.history_controls.x > 0.5 && opaquePointAgrees
-					&& opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0,
+					&& ((opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0)
+						|| (opaqueDepthMetadata > 0.0 && currentDataAccumilation.a > 0.0)),
 				genericData.data.menu_temporal_controls.z > 0.5,
-				genericData.data.temporal_controls.x,reprojectedPixelMotion,cameraTranslation,maxstep);
-			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || skyJitterAgrees) ? accumdecay
-				: ring_cloud_history_compatible_weight(currentColorAccumilation, lightColor, currentDataAccumilation.b, finalDensityDistance, maxstep, accumdecay, genericData.data.history_controls.z > 0.5)) : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
+				genericData.data.temporal_controls.x, cameraTranslation, maxstep);
+			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || validatedJitterAgrees) ? accumdecay
+				: ring_cloud_history_compatible_weight(currentColorAccumilation, lightColor, currentDataAccumilation.b, finalDensityDistance, maxstep, accumdecay, genericData.data.history_controls.z > 0.5, vec2(genericData.data.cloud_mask_controls.y, genericData.data.cloud_mask_controls.z))) : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
 				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
 				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay)));
 			diagnosticHistoryWeight = agreementDecay;
@@ -1670,13 +1674,14 @@ void main() {
 				genericData.data.temporal_controls.x, reprojectedPixelMotion,
 				currentDataAccumilation.g, traveledDistance, currentDataAccumilation.b, finalDensityDistance,
 				currentDataAccumilation.a, opaqueDepthMetadata, cameraTranslation, maxstep, opaqueDepthTolerance);
-			bool skyJitterAgrees = ring_cloud_history_sky_jitter(
+			bool validatedJitterAgrees = ring_cloud_history_validated_jitter(
 				genericData.data.history_controls.x > 0.5 && opaquePointAgrees
-					&& opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0,
+					&& ((opaqueDepthMetadata < 0.0 && currentDataAccumilation.a == -1.0)
+						|| (opaqueDepthMetadata > 0.0 && currentDataAccumilation.a > 0.0)),
 				genericData.data.menu_temporal_controls.z > 0.5,
-				genericData.data.temporal_controls.x,reprojectedPixelMotion,cameraTranslation,maxstep);
-			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || skyJitterAgrees) ? accumdecay
-				: ring_cloud_history_compatible_weight(currentColorAccumilation, lightColor, currentDataAccumilation.b, finalDensityDistance, maxstep, accumdecay, genericData.data.history_controls.z > 0.5)) : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
+				genericData.data.temporal_controls.x, cameraTranslation, maxstep);
+			float agreementDecay = gameplayTemporalHistory ? ((terminalJitterAgrees || validatedJitterAgrees) ? accumdecay
+				: ring_cloud_history_compatible_weight(currentColorAccumilation, lightColor, currentDataAccumilation.b, finalDensityDistance, maxstep, accumdecay, genericData.data.history_controls.z > 0.5, vec2(genericData.data.cloud_mask_controls.y, genericData.data.cloud_mask_controls.z))) : (menuStaticHistory ? accumdecay : (coherentBilinearHistory
 				? coherent_history_decay(currentColorAccumilation, lightColor, accumdecay, depthBreakAgrees, cloudDistanceAgrees, reprojectedPixelMotion)
 				: temporal_alpha_agreement_decay(currentColorAccumilation, lightColor, accumdecay)));
 			diagnosticHistoryWeight = agreementDecay;
@@ -1733,9 +1738,10 @@ void main() {
 		imageStore(output_color_image, uv, currentColorAccumilation);
 	}
 	// The private accumulation alpha holds opaque depth for gameplay history.
-	// output_data is consumed by post compute as a depth-break flag, so preserve
-	// that public contract after the history write.
-	currentDataAccumilation.a = float(depthBreak);
+	// output_data alpha is stable opaque metadata for the post blur: log2(1 +
+	// opaque depth), or -8 for sky. Unlike the per-frame depthBreak flag it does
+	// not flicker with ray-start jitter over terrain.
+	currentDataAccumilation.a = has_opaque_depth ? log2(1.0 + max(linear_depth, 0.0)) : -8.0;
 	imageStore(output_data_image, uv, currentDataAccumilation);
 	//}
 }

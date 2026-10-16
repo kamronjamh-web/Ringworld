@@ -115,7 +115,7 @@ public partial class RingSunshineCloudBridge : Node
     [ExportGroup("Temporal quality")]
     [Export(PropertyHint.Range, "0,2,1")] public int CloudResolutionScale { get; set; } = 0;
     [Export(PropertyHint.Range, "0,0.95,0.01")] public float StationaryHistoryWeight { get; set; } = 0.95f;
-    [Export(PropertyHint.Range, "0,0.95,0.01")] public float MovingHistoryWeight { get; set; } = 0.13f;
+    [Export(PropertyHint.Range, "0,0.95,0.01")] public float MovingHistoryWeight { get; set; } = 0.85f;
     [Export(PropertyHint.Range, "1,250,1")] public float MinimumHistorySpeedMetersPerSecond { get; set; } = 32.0f;
     [Export(PropertyHint.Range, "1,360,1")] public float MinimumHistoryRotationDegreesPerSecond { get; set; } = 42.0f;
     [Export(PropertyHint.Range, "0.1,90,0.1")] public float MinimumHistorySunRotationDegreesPerSecond { get; set; } = 3.0f;

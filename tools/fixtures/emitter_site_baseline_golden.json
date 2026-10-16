@@ -234,6 +234,375 @@
           "WaterKind": 0
         }
       ]
+    },
+    {
+      "Name": "gen17_v5_seed_1337",
+      "Description": "ringworld_surface_sites_v5 default recipe with emitter sites, runtime surface generation (recorded in phase G0 of the grid/climate spec)",
+      "RecipeHash": "AF8A90EC5D50E160",
+      "GeneratorVersion": 17,
+      "TerrainHash": "CD0273AF4AF630D9",
+      "Points": [
+        {
+          "Name": "lattice_mid",
+          "Around": 1570796,
+          "Across": 159000,
+          "HeightBits": 1157818513,
+          "SurfaceHeight": 2094,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_ridge",
+          "Around": 9000000,
+          "Across": 120000,
+          "HeightBits": 1123488208,
+          "SurfaceHeight": 123,
+          "Biome": 5,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_coast",
+          "Around": 15700000,
+          "Across": 26500,
+          "HeightBits": 1154111408,
+          "SurfaceHeight": 1618,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_far",
+          "Around": 23561940,
+          "Across": 291500,
+          "HeightBits": -1008182643,
+          "SurfaceHeight": -465,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "odd",
+          "Around": 1570797,
+          "Across": 159001,
+          "HeightBits": 1157818170,
+          "SurfaceHeight": 2094,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "seam_left",
+          "Around": 31415934,
+          "Across": 159000,
+          "HeightBits": -1014841753,
+          "SurfaceHeight": -262,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "seam_right",
+          "Around": 2,
+          "Across": 159000,
+          "HeightBits": -1014843454,
+          "SurfaceHeight": -262,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "wall_low",
+          "Around": 5000000,
+          "Across": 0,
+          "HeightBits": -1022202560,
+          "SurfaceHeight": -147,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "wall_high",
+          "Around": 5000000,
+          "Across": 317998,
+          "HeightBits": -1025393568,
+          "SurfaceHeight": -113,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "site_row0",
+          "Around": 314158,
+          "Across": 26500,
+          "HeightBits": 1160710309,
+          "SurfaceHeight": 2800,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row50",
+          "Around": 15707968,
+          "Across": 132500,
+          "HeightBits": 1150951003,
+          "SurfaceHeight": 1232,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row99",
+          "Around": 31101776,
+          "Across": 291500,
+          "HeightBits": -1001514448,
+          "SurfaceHeight": -825,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "land_pad_center",
+          "Around": 116090,
+          "Across": 240444,
+          "HeightBits": 1127546880,
+          "SurfaceHeight": 181,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "land_pad_offset_1km",
+          "Around": 117090,
+          "Across": 241444,
+          "HeightBits": 1128166552,
+          "SurfaceHeight": 190,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "island_center",
+          "Around": 116562,
+          "Across": 26500,
+          "HeightBits": 1103101952,
+          "SurfaceHeight": 24,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "island_offset_1km",
+          "Around": 117562,
+          "Across": 27500,
+          "HeightBits": 1096558452,
+          "SurfaceHeight": 13,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "main_center",
+          "Around": 25563470,
+          "Across": 159000,
+          "HeightBits": 1093664768,
+          "SurfaceHeight": 11,
+          "Biome": 5,
+          "WaterKind": 0
+        },
+        {
+          "Name": "main_offset_1km",
+          "Around": 25564470,
+          "Across": 160000,
+          "HeightBits": 1095027570,
+          "SurfaceHeight": 12,
+          "Biome": 7,
+          "WaterKind": 0
+        }
+      ]
+    },
+    {
+      "Name": "gen17_v6_seed_1337",
+      "Description": "ringworld_surface_climate_v6 default recipe with emitter sites and Wall Engine forecourts, runtime surface generation (phase C2 of the grid/climate spec)",
+      "RecipeHash": "B665CF84301C4CDC",
+      "GeneratorVersion": 17,
+      "TerrainHash": "269F4EF278498465",
+      "Points": [
+        {
+          "Name": "lattice_mid",
+          "Around": 1570796,
+          "Across": 159000,
+          "HeightBits": 1157818513,
+          "SurfaceHeight": 2094,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_ridge",
+          "Around": 9000000,
+          "Across": 120000,
+          "HeightBits": 1123488208,
+          "SurfaceHeight": 123,
+          "Biome": 5,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_coast",
+          "Around": 15700000,
+          "Across": 26500,
+          "HeightBits": 1154111408,
+          "SurfaceHeight": 1618,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "lattice_far",
+          "Around": 23561940,
+          "Across": 291500,
+          "HeightBits": -1008182643,
+          "SurfaceHeight": -465,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "odd",
+          "Around": 1570797,
+          "Across": 159001,
+          "HeightBits": 1157818170,
+          "SurfaceHeight": 2094,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "seam_left",
+          "Around": 31415934,
+          "Across": 159000,
+          "HeightBits": -1014841753,
+          "SurfaceHeight": -262,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "seam_right",
+          "Around": 2,
+          "Across": 159000,
+          "HeightBits": -1014843454,
+          "SurfaceHeight": -262,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "wall_low",
+          "Around": 5000000,
+          "Across": 0,
+          "HeightBits": 1082824016,
+          "SurfaceHeight": 4,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "wall_high",
+          "Around": 5000000,
+          "Across": 317998,
+          "HeightBits": 1082824005,
+          "SurfaceHeight": 4,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row0",
+          "Around": 314158,
+          "Across": 26500,
+          "HeightBits": 1160710309,
+          "SurfaceHeight": 2800,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row50",
+          "Around": 15707968,
+          "Across": 132500,
+          "HeightBits": 1150951003,
+          "SurfaceHeight": 1232,
+          "Biome": 6,
+          "WaterKind": 0
+        },
+        {
+          "Name": "site_row99",
+          "Around": 31101776,
+          "Across": 291500,
+          "HeightBits": -1001514448,
+          "SurfaceHeight": -825,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "machine_dry_pad_center",
+          "Around": 587802,
+          "Across": 1000,
+          "HeightBits": 1141424128,
+          "SurfaceHeight": 547,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_dry_pad_2km",
+          "Around": 591802,
+          "Across": 2000,
+          "HeightBits": 1141424128,
+          "SurfaceHeight": 547,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_dry_skirt_5km",
+          "Around": 581802,
+          "Across": 5000,
+          "HeightBits": 1140270220,
+          "SurfaceHeight": 494,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_quay_pad_center",
+          "Around": 273642,
+          "Across": 1000,
+          "HeightBits": 1090519040,
+          "SurfaceHeight": 8,
+          "Biome": 7,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_quay_pad_2km",
+          "Around": 277642,
+          "Across": 2000,
+          "HeightBits": 1090519040,
+          "SurfaceHeight": 8,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_quay_skirt_5km",
+          "Around": 267642,
+          "Across": 5000,
+          "HeightBits": -1029433761,
+          "SurfaceHeight": -83,
+          "Biome": 0,
+          "WaterKind": 1
+        },
+        {
+          "Name": "machine_offline_pad_center",
+          "Around": 3101076,
+          "Across": 1000,
+          "HeightBits": 1127677952,
+          "SurfaceHeight": 183,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_offline_pad_2km",
+          "Around": 3105076,
+          "Across": 2000,
+          "HeightBits": 1127677952,
+          "SurfaceHeight": 183,
+          "Biome": 3,
+          "WaterKind": 0
+        },
+        {
+          "Name": "machine_offline_skirt_5km",
+          "Around": 3095076,
+          "Across": 5000,
+          "HeightBits": 1133342867,
+          "SurfaceHeight": 282,
+          "Biome": 3,
+          "WaterKind": 0
+        }
+      ]
     }
   ]
 }

@@ -26,6 +26,10 @@ public partial class RingLiveTuningDrawer
         AddPersistentToggle(section, "DepthHistoryRejectionEnabled", "Reject history at depth changes", _cloudBridge?.DepthHistoryRejectionEnabled ?? true);
         AddPersistentSlider(section, "HistoryDepthToleranceMultiplier", "Depth history tolerance", .25, 4, .05, _cloudBridge?.HistoryDepthToleranceMultiplier ?? 1);
         AddPersistentToggle(section, "CloudHistoryCompatibilityEnabled", "Reject incompatible cloud history", _cloudBridge?.CloudHistoryCompatibilityEnabled ?? true);
+        AddPersistentSlider(section, "CloudHistoryGateAlphaLow", "History gate alpha start", 0, .95, .01, _cloudBridge?.CloudHistoryGateAlphaLow ?? .20);
+        AddPersistentSlider(section, "CloudHistoryGateAlphaHigh", "History gate alpha end", .05, 1, .01, _cloudBridge?.CloudHistoryGateAlphaHigh ?? .65);
+        AddPersistentSlider(section, "CloudHistoryContinuityAllowanceScale", "Continuity allowance", .25, 8, .05, _cloudBridge?.CloudHistoryContinuityAllowanceScale ?? 1);
+        AddPersistentSlider(section, "CloudHistoryContinuityHardResetRatio", "Continuity reset ratio", 1.5, 32, .5, _cloudBridge?.CloudHistoryContinuityHardResetRatio ?? 8);
         AddPersistentToggle(section, "LightningHistoryIsolationEnabled", "Isolate lightning from cloud history", _cloudBridge?.LightningHistoryIsolationEnabled ?? true);
     }
 }

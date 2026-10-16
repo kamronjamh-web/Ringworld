@@ -15,6 +15,7 @@ public partial class RingLiveTuningDrawer
     private Label? _generationPreviewRecipeIdentity;
     private Label? _generationPreviewLegacyCoastalNote;
     private Button? _generationPreviewUpgradeErosion;
+    private CheckBox? _generationPreviewClimateToggle;
     private double _generationPreviewRefreshDelay;
 
     private void BuildGenerationPreviewTab(TabContainer tabs)
@@ -38,6 +39,15 @@ public partial class RingLiveTuningDrawer
         _generationPreviewRecipeIdentity = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId);
         tab.AddChild(_generationPreviewRecipeIdentity);
+        _generationPreviewClimateToggle = new CheckBox
+        {
+            Text = "Climate machines (v6, experimental)",
+            TooltipText = "Previews the v6 recipe: 200 Wall Engine forecourts on the rim walls (flat quays and terraced cuts). Off by default. The launcher has its own toggle for new worlds; existing worlds keep their frozen recipe.",
+            ButtonPressed = generatorId == "ringworld_surface_climate_v6",
+            Disabled = !IsErosionFamilyRecipe(generatorId),
+        };
+        _generationPreviewClimateToggle.Toggled += pressed => { _generationPreview?.Call("set_climate_machines", pressed); RefreshGenerationPreviewControls(); };
+        tab.AddChild(_generationPreviewClimateToggle);
         VBoxContainer settings = TuningMenuUi.CreateSection(tab, "Recipe shape settings");
         AddRecipeSpin(settings, recipe, "seed", "Seed", 0, 2147483647, 1);
         AddRecipeSlider(settings, recipe, "land_balance", "Land / ocean balance", -.35, .35, .01);
@@ -160,6 +170,11 @@ public partial class RingLiveTuningDrawer
         if (_generationPreviewLegacyCoastalNote != null) _generationPreviewLegacyCoastalNote.Visible = !coastalRecipe;
         if (_generationPreviewUpgradeErosion != null) _generationPreviewUpgradeErosion.Visible = generatorId == "ringworld_surface_detail_v3";
         if (_generationPreviewRecipeIdentity != null) _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId);
+        if (_generationPreviewClimateToggle != null)
+        {
+            _generationPreviewClimateToggle.Disabled = !IsErosionFamilyRecipe(generatorId);
+            _generationPreviewClimateToggle.SetPressedNoSignal(generatorId == "ringworld_surface_climate_v6");
+        }
         foreach (var control in _generationPreviewControls)
         {
             bool unavailable = control.DetailOnly && !detailRecipe || control.CoastalOnly && !coastalRecipe || control.EnhancedOnly && !enhancedErosion;
@@ -183,9 +198,11 @@ public partial class RingLiveTuningDrawer
         }
     }
 
-    private static bool IsErosionFamilyRecipe(string generatorId) => generatorId == "ringworld_surface_erosion_v4" || generatorId == "ringworld_surface_sites_v5";
+    private static bool IsErosionFamilyRecipe(string generatorId) => generatorId == "ringworld_surface_erosion_v4" || generatorId == "ringworld_surface_sites_v5" || generatorId == "ringworld_surface_climate_v6";
 
-    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_sites_v5"
+    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_climate_v6"
+        ? "Recipe: ringworld_surface_climate_v6 (v5 emitter sites + 200 Wall Engine forecourts on the rim walls: flat quays and terraced cuts; machine layout is derived from the seed and frozen with the recipe)."
+        : generatorId == "ringworld_surface_sites_v5"
         ? "Recipe: ringworld_surface_sites_v5 (enhanced erosion + emitter sites: 594 spires and 1 main spire with pads, islands and a terraced bowl; site layout is derived from the seed and frozen with the recipe)."
         : generatorId == "ringworld_surface_erosion_v4"
         ? "Recipe: ringworld_surface_erosion_v4 (enhanced erosion enabled)."

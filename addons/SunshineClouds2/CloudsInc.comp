@@ -352,7 +352,9 @@ struct GenericData{
 	vec4 cloud_handoff;
 	vec4 cloud_weather_params;
 	vec4 cloud_weather_frame;
-	// Append-only: x skips unused weather-mask fetches outside the cloud band.
+	// Append-only: x skips unused weather-mask fetches outside the cloud band;
+	// y/z are the gameplay history gate alpha band (low, high); w is the
+	// callback camera z_far (0 = fall back to the SceneData UBO).
 	vec4 cloud_mask_controls;
 	vec4 history_controls;
 	vec4 terrain_cloud_sun_profile[5];

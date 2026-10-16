@@ -37,10 +37,12 @@ public partial class RingLiveTuningDrawer
         _emitterSiteDefaults.Apply(_emitterStandIns);
         _emitterSiteDefaults.Apply(_emitterPoiStreamer);
         _emitterSiteDefaults.Apply(_emitterBores);
+        InitializeEmitterGridTuning();
     }
 
     private void ProcessEmitterSiteTuning(double delta)
     {
+        ProcessEmitterGridTuning(delta);
         // The gameplay node is installed after the drawer; apply the saved aperture switch once it exists.
         if (!_emitterGameplayApplied)
         {
@@ -101,7 +103,7 @@ public partial class RingLiveTuningDrawer
     {
         bool saved = _emitterSiteDefaults?.Save() ?? true;
         RefreshEmitterSiteStatus();
-        return saved;
+        return FlushEmitterGridDefaults() && saved;
     }
 
     public void InstallEmitterSiteDefaults(string isolatedPath)

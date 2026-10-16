@@ -1,0 +1,1468 @@
+{
+  "Format": "natural_weather_fingerprint_v1",
+  "Seed": 1337,
+  "TerrainHash": "409E9075336D7F71",
+  "RegistryIdentity": "A8CBE0F656E6B986",
+  "Circumference": 31415936,
+  "Width": 318000,
+  "Settings": {
+    "FormationCellMeters": 3200,
+    "MacroWeatherCellMeters": 32000,
+    "MacroSystemSpawnChance": 0.34,
+    "MaximumMacroSystemRadiusMeters": 110000,
+    "WindX": 2.2,
+    "WindY": 0.7,
+    "NaturalWeatherLifecyclesEnabled": true
+  },
+  "Times": [
+    {
+      "TimeSeconds": 0,
+      "Hash": "8BF94C9B936C16449BA403265D806D55AEAB22857E0924E5990020F97FEEEF94",
+      "PointsWithSystem": 40,
+      "PointsRaining": 12,
+      "CoverageSum": 94.5734945833683,
+      "PrecipitationSum": 2.170763060964447,
+      "Samples": [
+        {
+          "I": 0,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1056856825,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 5,
+          "SystemId": 756463984,
+          "SystemKind": 1,
+          "InfluenceBits": 1049320090,
+          "CoverageBits": 1054538605,
+          "PrecipitationBits": 967209969
+        },
+        {
+          "I": 0,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053692255,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1046701044,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051729924,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050143983,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1041457622,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052022773,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053126103,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1049517698,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051986913,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1044451542,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1045968636,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052284013,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1058671560,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057328012,
+          "PrecipitationBits": 0
+        }
+      ]
+    },
+    {
+      "TimeSeconds": 137.5,
+      "Hash": "36C85149E57974C3B363E716BB491D52302CEB4596E33B69CA407C3E5CACECB9",
+      "PointsWithSystem": 44,
+      "PointsRaining": 18,
+      "CoverageSum": 95.83790163695812,
+      "PrecipitationSum": 2.816711015841065,
+      "Samples": [
+        {
+          "I": 0,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057180334,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 5,
+          "SystemId": 756463984,
+          "SystemKind": 1,
+          "InfluenceBits": 1049880200,
+          "CoverageBits": 1052562776,
+          "PrecipitationBits": 934465111
+        },
+        {
+          "I": 0,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1054271993,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1042320374,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051729924,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050143983,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1041457622,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052022773,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053126103,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1049517698,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051986913,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1044451542,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1045968636,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052284013,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1058671560,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057328012,
+          "PrecipitationBits": 0
+        }
+      ]
+    },
+    {
+      "TimeSeconds": 900,
+      "Hash": "6F92943CC4DCF541FB775D4B8602ADE5F5047CA2D15F6030744C33072793527C",
+      "PointsWithSystem": 47,
+      "PointsRaining": 13,
+      "CoverageSum": 95.5351262614131,
+      "PrecipitationSum": 4.67043624117332,
+      "Samples": [
+        {
+          "I": 0,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057541554,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 5,
+          "SystemId": 756463984,
+          "SystemKind": 1,
+          "InfluenceBits": 1043882888,
+          "CoverageBits": 1051901804,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 10,
+          "SystemId": 1079211994,
+          "SystemKind": 1,
+          "InfluenceBits": 1053046608,
+          "CoverageBits": 1058796198,
+          "PrecipitationBits": 1024427345
+        },
+        {
+          "I": 0,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1042320374,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050134197,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 5,
+          "SystemId": 950455902,
+          "SystemKind": 1,
+          "InfluenceBits": 1021762080,
+          "CoverageBits": 1050771105,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1041457622,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 15,
+          "SystemId": 118533853,
+          "SystemKind": 3,
+          "InfluenceBits": 1047489544,
+          "CoverageBits": 1056182577,
+          "PrecipitationBits": 1015980441
+        },
+        {
+          "I": 10,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051569517,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 5,
+          "SystemId": 713653332,
+          "SystemKind": 3,
+          "InfluenceBits": 1042085632,
+          "CoverageBits": 1051875428,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051986913,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1044451542,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1046653582,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053257489,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1058671560,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057328012,
+          "PrecipitationBits": 0
+        }
+      ]
+    },
+    {
+      "TimeSeconds": 2200,
+      "Hash": "0C8521AECBBEF400C6D1D20F29B6DB4DFF0E91192A7B3B15946F71E127D6C85D",
+      "PointsWithSystem": 57,
+      "PointsRaining": 21,
+      "CoverageSum": 97.0976788662374,
+      "PrecipitationSum": 5.887519497541973,
+      "Samples": [
+        {
+          "I": 0,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057812360,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1048659954,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1054088177,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 15,
+          "SystemId": 494555880,
+          "SystemKind": 1,
+          "InfluenceBits": 1043086536,
+          "CoverageBits": 1044130328,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050445151,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050891267,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1043235358,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051909282,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051052709,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1049687922,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050611237,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1041402246,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1047867606,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 5,
+          "SystemId": 710630868,
+          "SystemKind": 3,
+          "InfluenceBits": 1046002440,
+          "CoverageBits": 1056897578,
+          "PrecipitationBits": 1022031486
+        },
+        {
+          "I": 15,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057665076,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 15,
+          "SystemId": 1652476081,
+          "SystemKind": 3,
+          "InfluenceBits": 1061507943,
+          "CoverageBits": 1064688706,
+          "PrecipitationBits": 1056440103
+        }
+      ]
+    },
+    {
+      "TimeSeconds": 7200,
+      "Hash": "01215DE571D2525F0ED93950081520F4EF7705BEF00ED4A84BCBAEC744396D69",
+      "PointsWithSystem": 45,
+      "PointsRaining": 19,
+      "CoverageSum": 96.17682495713234,
+      "PrecipitationSum": 4.48788790890876,
+      "Samples": [
+        {
+          "I": 0,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1055715785,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052536579,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1055583961,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1047802730,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1049798733,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051369296,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1046110262,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052763395,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053095307,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051396619,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1055301779,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1041900658,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 0,
+          "SystemId": 241421998,
+          "SystemKind": 1,
+          "InfluenceBits": 1058067492,
+          "CoverageBits": 1059898696,
+          "PrecipitationBits": 1025418782
+        },
+        {
+          "I": 15,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053666445,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1046959142,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1055000861,
+          "PrecipitationBits": 0
+        }
+      ]
+    },
+    {
+      "TimeSeconds": 86400,
+      "Hash": "4EA348E0FDF3006E1F4E11F7293D18F19E2967165E99F7E9583EAB86E92999ED",
+      "PointsWithSystem": 45,
+      "PointsRaining": 12,
+      "CoverageSum": 94.18326818943024,
+      "PrecipitationSum": 2.204872199504848,
+      "Samples": [
+        {
+          "I": 0,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053818283,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1054729101,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 0,
+          "J": 10,
+          "SystemId": 1269721815,
+          "SystemKind": 2,
+          "InfluenceBits": 1051851572,
+          "CoverageBits": 1055549000,
+          "PrecipitationBits": 1013702648
+        },
+        {
+          "I": 0,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1053792253,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1050477420,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1033146868,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 10,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1057373226,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 5,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1051581547,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1055528031,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 10,
+          "J": 5,
+          "SystemId": 652394804,
+          "SystemKind": 4,
+          "InfluenceBits": 1045946732,
+          "CoverageBits": 1051957403,
+          "PrecipitationBits": 898444231
+        },
+        {
+          "I": 10,
+          "J": 10,
+          "SystemId": 16610916,
+          "SystemKind": 2,
+          "InfluenceBits": 1028783424,
+          "CoverageBits": 1057771412,
+          "PrecipitationBits": 999500627
+        },
+        {
+          "I": 10,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052564091,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 0,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1054026861,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 5,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1055745445,
+          "PrecipitationBits": 0
+        },
+        {
+          "I": 15,
+          "J": 10,
+          "SystemId": 1964448247,
+          "SystemKind": 1,
+          "InfluenceBits": 1032687840,
+          "CoverageBits": 1055682144,
+          "PrecipitationBits": 981926771
+        },
+        {
+          "I": 15,
+          "J": 15,
+          "SystemId": 0,
+          "SystemKind": 0,
+          "InfluenceBits": 0,
+          "CoverageBits": 1052179619,
+          "PrecipitationBits": 0
+        }
+      ]
+    }
+  ],
+  "StormCells": 519,
+  "LightningEventCount": 2916,
+  "LightningHash": "C58E04530B16D33C41CED13EE89665BACE6863CACFD3E31CFDCEAF58F5EA10B7",
+  "LightningEvents": [
+    {
+      "EventId": 3103028335388568238,
+      "SystemId": 5564643,
+      "StartTimeBits": 4590617488440514369,
+      "GroundAroundBits": 4717495155546914816,
+      "GroundVerticalBits": 4651934848447938560,
+      "GroundAcrossBits": 4688858476670091264,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 722480084,
+      "PlaneAngleBits": 1053804250,
+      "EnergyBits": 1064791588,
+      "FlashRadiusBits": 1161906960
+    },
+    {
+      "EventId": 3007237468513235350,
+      "SystemId": 1818418141,
+      "StartTimeBits": 4592738617072961378,
+      "GroundAroundBits": 4710467541615509504,
+      "GroundVerticalBits": 4653164775683915776,
+      "GroundAcrossBits": 4679433830216499200,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1447306613,
+      "PlaneAngleBits": 1083391506,
+      "EnergyBits": 1063651604,
+      "FlashRadiusBits": 1175314492
+    },
+    {
+      "EventId": 4146493265518229758,
+      "SystemId": 2078943845,
+      "StartTimeBits": 4594032823802763924,
+      "GroundAroundBits": 4718532116344733696,
+      "GroundVerticalBits": 4632543110834946048,
+      "GroundAcrossBits": 4666033995572576256,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1182052953,
+      "PlaneAngleBits": 1079758388,
+      "EnergyBits": 1061955110,
+      "FlashRadiusBits": 1172809248
+    },
+    {
+      "EventId": 2399667872471614724,
+      "SystemId": 177203667,
+      "StartTimeBits": 4596300548041178858,
+      "GroundAroundBits": 4714320256665911296,
+      "GroundVerticalBits": 4646251755238064128,
+      "GroundAcrossBits": 4683683511377330176,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 558716215,
+      "PlaneAngleBits": 1073015912,
+      "EnergyBits": 1063157152,
+      "FlashRadiusBits": 1168338374
+    },
+    {
+      "EventId": 2265319171693058653,
+      "SystemId": 27315832,
+      "StartTimeBits": 4603113027669494281,
+      "GroundAroundBits": 4717831196472508416,
+      "GroundVerticalBits": -4602037314267381760,
+      "GroundAcrossBits": 4667604156695969792,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 527435720,
+      "PlaneAngleBits": 1076949198,
+      "EnergyBits": 1062160846,
+      "FlashRadiusBits": 1170881590
+    },
+    {
+      "EventId": 1088664587363370622,
+      "SystemId": 322149293,
+      "StartTimeBits": 4603953243797026973,
+      "GroundAroundBits": 4706715372823248896,
+      "GroundVerticalBits": 4655945749828206592,
+      "GroundAcrossBits": 4685037421971111936,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 253474476,
+      "PlaneAngleBits": 1059728825,
+      "EnergyBits": 1063774933,
+      "FlashRadiusBits": 1163407025
+    },
+    {
+      "EventId": 5009773465607242653,
+      "SystemId": 437234773,
+      "StartTimeBits": 4604127766614655124,
+      "GroundAroundBits": 4718830257405165568,
+      "GroundVerticalBits": -4590045493920268288,
+      "GroundAcrossBits": 4688966532141678592,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -981054868,
+      "PlaneAngleBits": 1079241550,
+      "EnergyBits": 1064260320,
+      "FlashRadiusBits": 1172448324
+    },
+    {
+      "EventId": 4342576470685686291,
+      "SystemId": 246937092,
+      "StartTimeBits": 4606471220401339882,
+      "GroundAroundBits": 4712287025053564928,
+      "GroundVerticalBits": 4648557789751279616,
+      "GroundAcrossBits": 4676054806035431424,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 1011084874,
+      "PlaneAngleBits": 1070821261,
+      "EnergyBits": 1063523746,
+      "FlashRadiusBits": 1167580420
+    },
+    {
+      "EventId": 6770384753982606526,
+      "SystemId": 258113730,
+      "StartTimeBits": 4607271640942538606,
+      "GroundAroundBits": 4715252212492664832,
+      "GroundVerticalBits": 4653855685597986816,
+      "GroundAcrossBits": 4685938903394287616,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -571130608,
+      "PlaneAngleBits": 1086384209,
+      "EnergyBits": 1064198034,
+      "FlashRadiusBits": 1177425357
+    },
+    {
+      "EventId": 8867227534571622456,
+      "SystemId": 1206809252,
+      "StartTimeBits": 4611546396766022038,
+      "GroundAroundBits": 4704592933666422784,
+      "GroundVerticalBits": -4561702219828690944,
+      "GroundAcrossBits": 4686681508608475136,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -82921354,
+      "PlaneAngleBits": 1051805267,
+      "EnergyBits": 1063229038,
+      "FlashRadiusBits": 1161536066
+    },
+    {
+      "EventId": 2128101599136449217,
+      "SystemId": 949089754,
+      "StartTimeBits": 4611869214661157558,
+      "GroundAroundBits": 4714194604176441344,
+      "GroundVerticalBits": 4653225899510988800,
+      "GroundAcrossBits": 4688082186027401216,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1651996383,
+      "PlaneAngleBits": 1079370549,
+      "EnergyBits": 1062940795,
+      "FlashRadiusBits": 1172573985
+    },
+    {
+      "EventId": 2792025750369971586,
+      "SystemId": 544346258,
+      "StartTimeBits": 4612858060753875822,
+      "GroundAroundBits": 4713374792093270016,
+      "GroundVerticalBits": 4657919167041634304,
+      "GroundAcrossBits": 4687013280336576512,
+      "CloudVerticalBits": 4658468922855522304,
+      "ShapeSeed": -1497414496,
+      "PlaneAngleBits": 1083619544,
+      "EnergyBits": 1063786638,
+      "FlashRadiusBits": 1175477920
+    },
+    {
+      "EventId": 9014487377672167869,
+      "SystemId": 1033063023,
+      "StartTimeBits": 4613424617235231425,
+      "GroundAroundBits": 4712086212247027712,
+      "GroundVerticalBits": 4655029047577804800,
+      "GroundAcrossBits": 4689118776921161728,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -48634750,
+      "PlaneAngleBits": 1058985562,
+      "EnergyBits": 1062054024,
+      "FlashRadiusBits": 1163090860
+    },
+    {
+      "EventId": 2557436396348729117,
+      "SystemId": 138385964,
+      "StartTimeBits": 4613622670214142302,
+      "GroundAroundBits": 4718866036630224896,
+      "GroundVerticalBits": 4660459898968997888,
+      "GroundAcrossBits": 4678693485228851200,
+      "CloudVerticalBits": 4661009654782885888,
+      "ShapeSeed": 595449562,
+      "PlaneAngleBits": 1078268539,
+      "EnergyBits": 1062955742,
+      "FlashRadiusBits": 1171758828
+    },
+    {
+      "EventId": 3517343413293057681,
+      "SystemId": 1699917790,
+      "StartTimeBits": 4614139130313509075,
+      "GroundAroundBits": 4716880190318313472,
+      "GroundVerticalBits": 4651221879581835264,
+      "GroundAcrossBits": 4681600752886480896,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1328538318,
+      "PlaneAngleBits": 1084486208,
+      "EnergyBits": 1063068000,
+      "FlashRadiusBits": 1176097876
+    },
+    {
+      "EventId": 1464921753529007661,
+      "SystemId": 602027716,
+      "StartTimeBits": 4614691642895688024,
+      "GroundAroundBits": 4713249296906977280,
+      "GroundVerticalBits": -4561702219828690944,
+      "GroundAcrossBits": 4688336025573916672,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 341078674,
+      "PlaneAngleBits": 1074084754,
+      "EnergyBits": 1062890151,
+      "FlashRadiusBits": 1168832642
+    },
+    {
+      "EventId": 4396066344164425149,
+      "SystemId": 1729611655,
+      "StartTimeBits": 4615669438242927444,
+      "GroundAroundBits": 4717351061541617664,
+      "GroundVerticalBits": -4567027987865665536,
+      "GroundAcrossBits": 4688407765486403584,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1123944692,
+      "PlaneAngleBits": 1023773694,
+      "EnergyBits": 1064010914,
+      "FlashRadiusBits": 1159627236
+    },
+    {
+      "EventId": 6366651973307462848,
+      "SystemId": 811117762,
+      "StartTimeBits": 4616209002960216829,
+      "GroundAroundBits": 4712693338623442944,
+      "GroundVerticalBits": 4630592427957157888,
+      "GroundAcrossBits": 4683874751775506432,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -665131972,
+      "PlaneAngleBits": 1074646757,
+      "EnergyBits": 1063815530,
+      "FlashRadiusBits": 1169233584
+    },
+    {
+      "EventId": 1223033759327815733,
+      "SystemId": 851554799,
+      "StartTimeBits": 4616235435639260740,
+      "GroundAroundBits": 4718705386062872576,
+      "GroundVerticalBits": -4578076777812852736,
+      "GroundAcrossBits": 4676941805902626816,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 284759737,
+      "PlaneAngleBits": 1086594839,
+      "EnergyBits": 1062197966,
+      "FlashRadiusBits": 1177572955
+    },
+    {
+      "EventId": 7676429789980714739,
+      "SystemId": 1295830552,
+      "StartTimeBits": 4616302252186135260,
+      "GroundAroundBits": 4706087368610807808,
+      "GroundVerticalBits": -4572908863245778944,
+      "GroundAcrossBits": 4685037847709745152,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -360175560,
+      "PlaneAngleBits": 1079409519,
+      "EnergyBits": 1061993040,
+      "FlashRadiusBits": 1172600713
+    },
+    {
+      "EventId": 8176992218981772397,
+      "SystemId": 821512892,
+      "StartTimeBits": 4616665602282687272,
+      "GroundAroundBits": 4718336201411526656,
+      "GroundVerticalBits": 4620766268096512000,
+      "GroundAcrossBits": 4678895532838486016,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 1903854361,
+      "PlaneAngleBits": 1077925227,
+      "EnergyBits": 1062431504,
+      "FlashRadiusBits": 1171564270
+    },
+    {
+      "EventId": 66526642895511444,
+      "SystemId": 1189846686,
+      "StartTimeBits": 4616717839274290200,
+      "GroundAroundBits": 4717023881670426624,
+      "GroundVerticalBits": -4561703792860463104,
+      "GroundAcrossBits": 4681343827942834176,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -2131994207,
+      "PlaneAngleBits": 1085939597,
+      "EnergyBits": 1064815207,
+      "FlashRadiusBits": 1177096373
+    },
+    {
+      "EventId": 6593647065014304396,
+      "SystemId": 52805260,
+      "StartTimeBits": 4617113619472155564,
+      "GroundAroundBits": 4710947728086007808,
+      "GroundVerticalBits": -4561773414280331264,
+      "GroundAcrossBits": 4683771596861603840,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -612280558,
+      "PlaneAngleBits": 1078731095,
+      "EnergyBits": 1064009269,
+      "FlashRadiusBits": 1172082908
+    },
+    {
+      "EventId": 1795162845880364517,
+      "SystemId": 1841056130,
+      "StartTimeBits": 4617424908526535434,
+      "GroundAroundBits": 4705667930157744128,
+      "GroundVerticalBits": -4580054285982629888,
+      "GroundAcrossBits": 4688289751059398656,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1729514728,
+      "PlaneAngleBits": 1085737990,
+      "EnergyBits": 1063162194,
+      "FlashRadiusBits": 1176973946
+    },
+    {
+      "EventId": 3396925224616946463,
+      "SystemId": 18699047,
+      "StartTimeBits": 4617429251684701150,
+      "GroundAroundBits": 4716288422744948736,
+      "GroundVerticalBits": -4565365080681611264,
+      "GroundAcrossBits": 4685429212109078528,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1356575362,
+      "PlaneAngleBits": 1063783327,
+      "EnergyBits": 1063701667,
+      "FlashRadiusBits": 1164769862
+    },
+    {
+      "EventId": 2704512269702469594,
+      "SystemId": 847308271,
+      "StartTimeBits": 4617434901853743073,
+      "GroundAroundBits": 4718719430069059584,
+      "GroundVerticalBits": -4561702219828690944,
+      "GroundAcrossBits": 4682631503698460672,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1517790316,
+      "PlaneAngleBits": 1079453507,
+      "EnergyBits": 1063206158,
+      "FlashRadiusBits": 1172588167
+    },
+    {
+      "EventId": 8819017975323515195,
+      "SystemId": 1359987541,
+      "StartTimeBits": 4617544494176075844,
+      "GroundAroundBits": 4718267102367055872,
+      "GroundVerticalBits": 4648962308024827904,
+      "GroundAcrossBits": 4684743297778843648,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -94146017,
+      "PlaneAngleBits": 1075628688,
+      "EnergyBits": 1065033855,
+      "FlashRadiusBits": 1169912487
+    },
+    {
+      "EventId": 5911881687825426639,
+      "SystemId": 1752890714,
+      "StartTimeBits": 4618293810729338549,
+      "GroundAroundBits": 4715240565078228992,
+      "GroundVerticalBits": 4650072902815711232,
+      "GroundAcrossBits": 4689034322831736832,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -771016430,
+      "PlaneAngleBits": 1049742019,
+      "EnergyBits": 1063058138,
+      "FlashRadiusBits": 1161176427
+    },
+    {
+      "EventId": 3414251010431322110,
+      "SystemId": 827580379,
+      "StartTimeBits": 4618326490779052818,
+      "GroundAroundBits": 4716427107775807488,
+      "GroundVerticalBits": 4607012620489195520,
+      "GroundAcrossBits": 4681807126601924608,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -1352541388,
+      "PlaneAngleBits": 1075387079,
+      "EnergyBits": 1062135118,
+      "FlashRadiusBits": 1169744061
+    },
+    {
+      "EventId": 1840752638844206823,
+      "SystemId": 2078943845,
+      "StartTimeBits": 4619789056852491477,
+      "GroundAroundBits": 4718530542239219712,
+      "GroundVerticalBits": -4583890854103482368,
+      "GroundAcrossBits": 4671284800324108288,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 428583621,
+      "PlaneAngleBits": 1079666355,
+      "EnergyBits": 1061955110,
+      "FlashRadiusBits": 1172781437
+    },
+    {
+      "EventId": 5414533094852409024,
+      "SystemId": 1818418141,
+      "StartTimeBits": 4619867015332718878,
+      "GroundAroundBits": 4710480974662598656,
+      "GroundVerticalBits": -4590376841520349184,
+      "GroundAcrossBits": 4676540378931789824,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -886814423,
+      "PlaneAngleBits": 1063776623,
+      "EnergyBits": 1063655152,
+      "FlashRadiusBits": 1164767438
+    },
+    {
+      "EventId": 4827491866187988140,
+      "SystemId": 881474334,
+      "StartTimeBits": 4619986904500109100,
+      "GroundAroundBits": 4718672742163939328,
+      "GroundVerticalBits": -4590435922553602048,
+      "GroundAcrossBits": 4688582690914435072,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 1123988038,
+      "PlaneAngleBits": 1086819164,
+      "EnergyBits": 1063506670,
+      "FlashRadiusBits": 1177729835
+    },
+    {
+      "EventId": 5428595078979935602,
+      "SystemId": 258113730,
+      "StartTimeBits": 4620773201969384942,
+      "GroundAroundBits": 4715238377329262592,
+      "GroundVerticalBits": 4653250700799639552,
+      "GroundAcrossBits": 4685876306393432064,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -883540362,
+      "PlaneAngleBits": 1074269674,
+      "EnergyBits": 1064198034,
+      "FlashRadiusBits": 1168997977
+    },
+    {
+      "EventId": 7209011209212358381,
+      "SystemId": 405714755,
+      "StartTimeBits": 4621129258662967973,
+      "GroundAroundBits": 4716248210039898112,
+      "GroundVerticalBits": 4607650564866572288,
+      "GroundAcrossBits": 4682875279062859776,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 1678478719,
+      "PlaneAngleBits": 1049395627,
+      "EnergyBits": 1065137864,
+      "FlashRadiusBits": 1161133859
+    },
+    {
+      "EventId": 5325175805996511623,
+      "SystemId": 1469437685,
+      "StartTimeBits": 4621257264797099436,
+      "GroundAroundBits": 4714433197662797824,
+      "GroundVerticalBits": 4652333079963107328,
+      "GroundAcrossBits": 4684488094580211712,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -907619538,
+      "PlaneAngleBits": 1085602909,
+      "EnergyBits": 1062009200,
+      "FlashRadiusBits": 1176861454
+    },
+    {
+      "EventId": 9193553548653507612,
+      "SystemId": 437234773,
+      "StartTimeBits": 4621290841445057545,
+      "GroundAroundBits": 4718835265873903616,
+      "GroundVerticalBits": -4564409131556929536,
+      "GroundAcrossBits": 4689194251844583424,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": -6942658,
+      "PlaneAngleBits": 1080866806,
+      "EnergyBits": 1064260320,
+      "FlashRadiusBits": 1173610961
+    },
+    {
+      "EventId": 4453221153578839659,
+      "SystemId": 519891226,
+      "StartTimeBits": 4621672465240846412,
+      "GroundAroundBits": 4717234888581840896,
+      "GroundVerticalBits": 4650626693751373824,
+      "GroundAcrossBits": 4689181459284492288,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 1036846347,
+      "PlaneAngleBits": 1084326947,
+      "EnergyBits": 1063496742,
+      "FlashRadiusBits": 1175990969
+    },
+    {
+      "EventId": 8620941755908494283,
+      "SystemId": 5564643,
+      "StartTimeBits": 4621708936405607087,
+      "GroundAroundBits": 4717496871386349568,
+      "GroundVerticalBits": 4648735787154669568,
+      "GroundAcrossBits": 4688981293407404032,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 2007219417,
+      "PlaneAngleBits": 1082138126,
+      "EnergyBits": 1064791588,
+      "FlashRadiusBits": 1174455316
+    },
+    {
+      "EventId": 8767963096009515796,
+      "SystemId": 1753572875,
+      "StartTimeBits": 4621861596825683100,
+      "GroundAroundBits": 4705077433894699008,
+      "GroundVerticalBits": 4610213595190394880,
+      "GroundAcrossBits": 4685696137884073984,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 2041450491,
+      "PlaneAngleBits": 1082732689,
+      "EnergyBits": 1061876276,
+      "FlashRadiusBits": 1174876507
+    },
+    {
+      "EventId": 3212668044029052141,
+      "SystemId": 577027283,
+      "StartTimeBits": 4621887462496902698,
+      "GroundAroundBits": 4717438061472907264,
+      "GroundVerticalBits": -4561702219828690944,
+      "GroundAcrossBits": 4684611099759214592,
+      "CloudVerticalBits": 4657012285770825728,
+      "ShapeSeed": 748007568,
+      "PlaneAngleBits": 1080699695,
+      "EnergyBits": 1063950098,
+      "FlashRadiusBits": 1173494078
+    }
+  ]
+}

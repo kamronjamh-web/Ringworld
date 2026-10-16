@@ -36,10 +36,11 @@ func _init() -> void:
 		for x: int in range(SIZE):
 			var dark_side := x >= SIZE / 2 and y >= SIZE / 2
 			color.append_array([0.08 if dark_side else 1.0, 0.08 if dark_side else 1.0, 0.08 if dark_side else 1.0, 1.0])
-			breaks.append_array([0.0, 0.0, 0.0, 1.0 if dark_side else 0.0])
+			# Output-data alpha is log2(1 + opaque depth): 3 m foreground vs 5000 m background.
+			breaks.append_array([0.0, 0.0, 0.0, 2.0 if dark_side else 12.29])
 			var smooth := float(x + y) / float((SIZE - 1) * 2)
 			homogeneous.append_array([smooth, smooth, smooth, 1.0])
-			checker.append_array([0.0, 0.0, 0.0, 1.0 if x == 8 and y == 8 else 0.0])
+			checker.append_array([0.0, 0.0, 0.0, 2.0 if x == 8 and y == 8 else 12.29])
 	var shader := rd.shader_create_from_spirv(spirv)
 	var output := rd.storage_buffer_create(SIZE * SIZE * 4 * 16)
 	var sampler := _sampler(rd)

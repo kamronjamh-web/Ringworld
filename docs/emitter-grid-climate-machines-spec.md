@@ -218,6 +218,7 @@ In practice, at night a pulse is always somewhere in view and makes one full cir
 - The main camera stops at 1,200 km, and global LOD terrain fades by 850 km.
 - The far viewport holds the opposite-arch terrain and far clouds, so far beams get correct occlusion by the far arch and correct blending under far clouds.
 - Beams in the far viewport sit behind every main-camera pixel. That is correct: anything the main camera draws within 850 km is nearer.
+- As built, the handoff is per pixel (main opaque depth) and follows the cloud handoff band on backdrop pixels. See the G4 and T2 implementation notes under G4.4.
 
 ### G4.2 Geometry, precision, rebase
 
@@ -275,6 +276,87 @@ Because Sunshine composites after the transparent pass:
 - Only the travelling lit segment writes depth, so the hole moves with the pulse and never persists.
 - This needs two passes (`next_pass` halo material) and one extra draw call.
 - It is verified as T2. The fallback is `depth_draw_never` everywhere, accepting dimming behind clouds. Setting: `DepthWriteCore`.
+
+**G4 and T2 implementation notes (2026-10-16; headless done, windowed checks pending).** The trigger was the cloud diagnosis (`docs/cloud-diagnostics-2026-10-16.md` §1): beams kept only 0.28 (ground) / 0.51 (9 km) of their luminance under clouds, and a 1-2 px core depth write recovered only 0.35 / 0.60.
+- **Shaders.** The ribbon code moved to `ring_emitter_grid_beam_common.gdshaderinc` and the head sprite code to `ring_emitter_grid_head_common.gdshaderinc`. Both include `ring_emitter_grid_layers.gdshaderinc` (per-layer uniforms and weights) and are compiled three ways from thin entry shaders:
+  - `ring_emitter_grid_beam.gdshader`: the near additive halo;
+  - `ring_emitter_grid_beam_core.gdshader` (`EG_CORE_PASS`): the near depth-only core;
+  - `ring_emitter_grid_beam_far.gdshader` / `ring_emitter_grid_head_far.gdshader` (`EG_FAR_LAYER`): the far layer.
+  
+  A `world_scale` uniform (world units per metre: 1 near, `CoordinateScale` far) keeps every width, distance and atmosphere term in real metres, so both layers compute the same intensity at the same point. That is what makes the crossfade seamless. The far shaders take the eye from `CAMERA_POSITION_WORLD`.
+- **Core pass (T2).** `next_pass` of the halo material, `blend_add` with zero colour and `depth_draw_always`. Render priorities: halo 0, heads 0, core 1. The core must draw after the halo and the head sprites; otherwise they depth-fight the depth it writes.
+  - It writes depth only where `level · core_gain > CoreDepthThreshold` (0.35). `level` already includes the atmosphere, the layer weight and day/night. By day the peak is 0.2, so nothing is written, and the 0.03 night residual never writes either. Only the travelling pulse cuts a hole, and the hole moves with it.
+  - **Footprint.** Sunshine's prepass keeps the furthest depth of each 2×2 block (`PreCompute.glsl:36-47`). The written half-width is therefore `max(natural, 0.5 · CoreDepthMinPixels · px)`, where the natural half-width is `σ_eff·sqrt(2·ln(peak/threshold))`. `CoreDepthMinPixels` defaults to 4. A full block lies inside the strip for every offset at ≥ 3 px axis-aligned, but a 45° line needs ≥ 2√2 + 2 ≈ 4.9 px for every offset. At 4 px some diagonal offsets still miss. Measured: 5 px gains only about 12-14% more light than 4 px but cuts a 25-30% deeper hole, so 4 px stays the default (see the windowed results below).
+  - The core strip is rasterised 1 px wider than the footprint, then clipped per fragment. Vertex collapse in the core pass also drops sub-segments lit only by a residual below the threshold.
+- **Far layer (G4.1).** `EmitterGridFarLayer` is built once from `RingScaledFarViewport.ScaledPoint(RelayNode)`: absolute, never rebased. It is parented with the new public `RingScaledFarViewport.AddScaledWorldChild(Node3D)`. Its `RenderPriority` is 5, below the far clouds (shell 10, canopy 11, clipmap 12-14), so far clouds blend over far beams. It never writes depth, because the far depth capture feeds Sunshine. Its head sprites follow the near layer's head evaluation (same link and fraction) in scaled space.
+- **Near/far handoff: per pixel, not a plain distance cap.** The far viewport is a canvas backdrop behind every main-camera pixel. Main global terrain is drawn out to its discard edge at (fade start + fade end)/2 = 675 km, and the far terrain cutout is 625 km.
+  - From the ground, a beam at distance d and height h is seen against the ring floor about `d + 2Rh/d` away (R ≈ 5,000 km). That is 346-675 km for d = 171-620 km, so nearly every beam between Sunshine's reach and about 620 km has main-camera terrain **behind** it.
+  - Capping the near layer at Sunshine's reach would therefore hide those beams behind that terrain. A far beam can never draw over a main-camera pixel.
+  - Clouds beyond Sunshine's reach are not drawn over main-camera terrain either; only the terrain's analytic cloud shadows are. A near beam there is therefore consistent with the rest of the image.
+  - The only place a near beam can wrongly draw over clouds is a backdrop pixel, where the main camera drew nothing and far-viewport clouds show.
+  - The near shaders therefore read the main opaque depth (`hint_depth_texture`, reverse Z, 0 = backdrop):
+
+  | Pixel | Near weight | Far weight |
+  |---|---|---|
+  | Opaque behind the beam | `near_fade(d)` | far layer hidden |
+  | Backdrop | `min(near_fade, band)` | `1 − min(near_fade, band)` |
+
+  On backdrop pixels the two weights sum to exactly 1. With the default `NearLayerMaxKm` of 700, `near_fade` is the old range fade.
+- **Band choice.** `band(d) = 1 − smoothstep(start, end, d)`. By default (`FarHandoffFollowsClouds`) the band follows the live cloud ownership the far viewport receives: `FarCloudClipmapHandoffStartMeters` → `LocalCloudRadiusMeters`. With the Sunshine defaults that is the effective handoff, about 120 → 171.5 km.
+  - The near share of a backdrop-pixel beam then equals Sunshine's density share at that distance, and the far share equals the far-cloud share. Each part of the beam is covered by the cloud representation that owns that distance.
+  - Ending the near fade at the handoff start instead would lose the depth core across the band.
+  - Ending it later would leave near beams over far clouds, which is the reported reverse case.
+  - The residual error is bounded by `w(1−w)` of the band's partial cloud, worst at mid-band.
+  - When near cloud ownership is off (the far clouds own the whole disk), the band is `(0, 1 m)`: every backdrop-pixel beam is drawn by the far layer, under the far clouds.
+  - Manual override: `FarHandoffStartKm` / `FarHandoffEndKm` (120 / 172 km). When the far layer is off or unavailable, the band is out of reach, and the behaviour is the G2 near-only layer.
+- **Settings** (persisted in `GameplayEmitterGridSettings`/`Defaults`; drawer section "Emitter relay grid: clouds and far layer"): `DepthWriteCore`, `CoreDepthThreshold`, `CoreDepthMinPixels`, `FarLayerEnabled`, `NearLayerMaxKm`, `FarHandoffFollowsClouds`, `FarHandoffStartKm`, `FarHandoffEndKm`.
+- **Known limits:**
+  - Far beams on backdrop pixels are still dimmed by the fading Sunshine clouds *behind* them inside the band, because they write no depth.
+  - Inside the far viewport, far clouds behind a far beam also blend over it. Both effects are minor at those distances.
+  - Near beams over main-camera terrain between 600 and 675 km sit in the existing `NearLayerMaxKm` fade (pre-existing from G2).
+  - The opt-in regional far viewport (`RegionalFarLodsEnabled`, off by default) is layered over the far texture without depth, so it would cover far beams.
+- **Proposed Sunshine change (not made; Sunshine files are owned elsewhere).** The beam-side widening is a workaround. The general fix is **two-depth compositing**:
+  - The prepass keeps the nearest as well as the furthest depth per 2×2 block.
+  - The march snapshots the accumulated colour and α when it passes the nearest depth.
+  - The full-res composite picks the snapshot for pixels whose own depth matches the block's nearest depth, and the full integration otherwise.
+  
+  This costs one extra RGBA sample per low-res pixel. It fixes every thin foreground occluder (beams, poles, branches), and then `CoreDepthMinPixels` could return to 1-2 px.
+
+**G4 and T2 windowed results (2026-10-16).** Setup: RTX A1000, 1600×900, `--cloudy`, frozen weather and sun, night, ShowAllLinks. The explorer is frozen after each move, because the flying camera drifted tens of metres between captures in the first run. Harness: `eg_t2_capture.gd` in the session scratchpad (`scratchpad/eg_t2/`), a copy of the cloud-diagnosis harness.
+- **Shader parity** (`tools/emitter_grid_shader_parity_test.gd`, first run): PASS. Worst absolute error 1.1e-4 against a tolerance of 4e-3. The per-case print used `%e`, which GDScript does not support; it now uses `%.7f`.
+- **Blocking finding: Sunshine ignores the core until its compute is rebuilt.**
+  - With the factory flow, the core changes nothing in Sunshine's output, at any time after it is enabled (probes 4 and 5: ±0.03 %).
+  - `request_history_reset` shows the hole for about 2 frames only.
+  - After `RefreshCloudCompute` (any path that rebuilds Sunshine's uniform sets; here the diagnostic matte toggle), the hole appears within 0.5 s, persists, and follows the core live: off clears it in 0.5 s, on restores it in 0.5 s.
+  - So Sunshine's startup uniform set samples a depth that carries the opaque depth but not later transparent depth writes. Its rebuild check compares colour attachment, size, view count and MSAA, but not `buffers.get_depth_layer(view, false)`.
+  - Rain haze and water already read `hint_depth_texture`, so the grid shaders do not introduce the depth copy.
+  - **Follow-up (verified windowed):** the core only takes effect after a `refresh_compute` that happens **while it is lit**. Refreshes earlier in the session, with the core attached but unlit, do not help. After such a refresh it works live: core off clears the hole within 0.5 s, and core on restores it within 0.5 s.
+  - The bound depth RID is stable: one RID per session, unchanged across every rebuild. A stale depth binding is therefore ruled out, and a depth-RID rebuild trigger did not help (tried, then reverted).
+  - Turning the history compatibility gate off at runtime changes nothing.
+  - The cause is under investigation in Sunshine by its owner.
+  - Until it is fixed, the T2 core costs a draw call and gains nothing in a fresh session. The results below emulate a working core with one `RefreshCloudCompute` after each move, made while the core is lit (ShowAllLinks).
+- **Beam light kept under clouds** (Σ(beam lit − beam dark) / Σ(beam without cloud density); the dark capture keeps the core's depth):
+
+  | View | base | core4 | core5 | full (core4 + far) |
+  |---|---|---|---|---|
+  | ground, pitch 25° | 0.264 | 0.351 | 0.361 | 0.366 |
+  | ground, 12° | 0.711 | 0.776 | 0.784 | 0.773 |
+  | ground, 4° | 0.704 | 0.779 | 0.789 | 0.778 |
+  | 9 km looking back | 0.487 | 0.574 | 0.586 | 0.589 |
+  | 9 km level | 0.861 | 0.861 | 0.861 | 0.859 |
+
+  - With the night ambient now (0.18, 0.23, 0.35), the clouds removed behind a lit core darken those beam pixels by 2.8-4.8 % at 4 px and 3.4-6.0 % at 5 px.
+  - Where the dimming clouds are in front of the beam (9 km level, most of ground 25°), the core correctly changes nothing.
+  - **Decision: 4 px.** 5 px adds about 12-14 % more recovered light for about 25-30 % more hole.
+- **History and the moving core** (`hist3`): readback of Sunshine's history-filtered colour, frame-to-frame relative change, on the pulse path vs 6-16 px beside it, outgoing pulse.
+  - While the head crosses the view, the path changes 2.3-2.5× as much as beside it. That is the intended hole moving with the head.
+  - From the next second on, path/beside is back to base: 0.91 vs 0.89 at ground 12°, 1.03 vs 1.05 at ground 25°.
+  - There is no grain or smear trail behind the head. No Sunshine change is needed for history.
+- **Reverse case.** Beam light with far clouds on vs off: base 1.000 (far clouds never touch the beams); full 0.977-0.995. The far layer's beams sit under the far clouds. The views tested have few backdrop beam pixels.
+- **Item 6, clouds over main terrain beyond Sunshine's reach.** Far clouds on vs off changes only the arch backdrop (beyond the main terrain edge). The main-terrain band between Sunshine's reach and the terrain edge does not change. This confirms the per-pixel handoff rationale above.
+- **T7 far capture diff** (far layer hidden vs removed): mean |Δ| 1.9e-6 and 1.4e-5, with 32 / 211 isolated single-pixel speckles on the far terrain. That is temporal noise, not beam-shaped. PASS.
+- **Day/night look.** In live-pulse sequences by night, the knot links stay bright in front of the cloud bank with the core (base dims them into it). By day the beams are faint. The far layer draws the six chains up the arch beyond 700 km.
+- **Perf: not measured.** The GPU was throttled (P5, 19.9 W, 810 MHz memory) during the run. An A-B-A sequence with all links lit and the pulse ran in one run: main GPU mean 22.7 / 24.0 / 23.7 / 24.0 / 21.6 ms (off / base / core4 / full / off). The two "off" samples differ by 1.1 ms, so the grid's cost is below the noise; far viewport 3.1-3.35 ms. Repeat unthrottled before checking the G7 budgets.
 
 ## G5. Cloud interaction (start cheap; only the pulse touches clouds)
 
@@ -453,6 +535,12 @@ The registry is cached like `EmitterSiteRegistry.GetOrBuild`: a static `Concurre
 - **Caches.** The tree disk-cache key gains `|cm1` on v6, next to `|es1`.
 - **No apertures, holes or underground.**
 - **Launcher and preview (U4).** New runtime-surface worlds can be created as v6 only behind a launcher toggle until phase C3 ships. From then on, **v6 is the default for new worlds**. The switch is a separate one-line change, gated on C3's tests. v5 slots keep v5, untouched. `world_size_launcher.gd` and `terrain_generation_recipe.gd` follow the v5 precedent (M1-2).
+
+**C2 implementation notes (done 2026-10-16).**
+- `ClimateForecourtOperator` (`scripts/Terrain/Sites/`, `OperatorVersion` 1, mixed into the v6 hash) is the forecourt operator. The distance s is measured to the 20 km footprint segment (a half-stadium on the floor). Exactly P inside s <= 3,400 m (pad 3,000 + apron 400); then the emitter bowl stages with the emitter recipe's constants: (1) quay raise, only for `Quay` machines (flat deck, 600 m gentle apron, 250 m beach, 300 m shelf, 30 degree flank), max-only, with its weight faded out between the shelf and the 8.4 km influence radius so it stays C0 even in deep ocean; (2) 60 degree terrace staircase cut / 33 degree embankment fill cone; (3) a 4 km skirt fade back to the (raised) natural height; (4) the exact pad. No recipe fields were added (C1 goldens unchanged).
+- Seed 1337 consequences (110 quay, 170 conflict): quay machines sit in 2-4.8 km deep ocean, so their plinth is a seamount (underwater flank about 50 degrees, invisible above the sea); about half of all pad area is raised out of water. 43 of 200 machines have a cut > 1 km and 14 > 2 km somewhere in their region (a mountain beside the 20 km forecourt). Those are listed by `climate_terrain_v6_test` (`CLIMATE_V6_WORST_CUT`) for a user decision on whether to keep them as dramatic pits.
+- Composition: `EmitterSiteTerrainShaper` tries the emitter lookup first, then the climate lookup; the C1 invariant makes them disjoint (min clearance 122 km). `Diagnostics.ClimateMachineIndex` is new; `SiteIndex` still means "emitter site" only.
+- Launcher: climate toggle (default OFF) for new runtime-generation worlds; the preview drawer has the same experimental toggle. `world_size_launcher.gd` treats the launcher toggle as authoritative.
 
 ## C4. Weather coupling
 

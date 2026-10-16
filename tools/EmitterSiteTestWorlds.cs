@@ -26,6 +26,13 @@ public static class EmitterSiteTestWorlds
 
     public static RingTerrainSampler CreateGen17Sites(int seed) => CreateGen17(Gen17SitesRecipe(seed), seed);
 
+    /// <summary>Gen-17 v6 (ringworld_surface_climate_v6) default recipe with the given seed.</summary>
+    public static TerrainGenerationParameters Gen17ClimateRecipe(int seed)
+        => TerrainGenerationParameters.FromJson(
+            TerrainGenerationParameters.ClimateDefault().CanonicalJson.Replace("\"seed\":1337", "\"seed\":" + seed));
+
+    public static RingTerrainSampler CreateGen17Climate(int seed) => CreateGen17(Gen17ClimateRecipe(seed), seed);
+
     static RingTerrainSampler CreateGen17(TerrainGenerationParameters recipe, int seed)
     {
         using var settings = new VoxelTerrainSettings

@@ -101,11 +101,15 @@ vec4 texture2D_bicubic(sampler2D tex, vec2 uv, vec2 res)
                         g1x * texture(tex, p3));
 }
 
-// The colour reconstruction must not borrow a bilinear tap whose opaque-depth
-// break belongs to the opposite side of a foreground silhouette. The data tap
-// is intentionally bilinear: a fractional break flag already proves that its
-// colour footprint crosses the boundary, so it is rejected and cannot create
-// a bright halo around a depth-writing leaf/card edge.
+// Stable opaque metadata: log2(1 + opaque depth), or -8 for sky.
+const float RING_CLOUD_BLUR_METADATA_TOLERANCE = 0.585; // log2(1.5)
+
+// The colour reconstruction must not borrow a bilinear tap whose opaque depth
+// belongs to the opposite side of a foreground silhouette. The data tap is
+// intentionally bilinear: bilinear metadata across a silhouette yields an
+// intermediate log depth, so that tap is still rejected and cannot create a
+// bright halo around a depth-writing leaf/card edge. Same-surface taps are no
+// longer rejected by per-frame jitter of the march endpoint.
 float depth_break_at_center(sampler2D dataTex, vec2 uv, vec2 res)
 {
 	ivec2 centerTexel = clamp(ivec2(floor(uv * res)), ivec2(0), ivec2(res) - ivec2(1));
@@ -151,7 +155,7 @@ vec4 texture2D_bicubic_depth_aware(
 	float weightSum = 0.0;
 	for (int tap = 0; tap < 4; ++tap) {
 		float tapBreak = texture(dataTex, points[tap]).a;
-		if (abs(tapBreak - centerBreak) <= 0.0001) {
+		if (abs(tapBreak - centerBreak) <= RING_CLOUD_BLUR_METADATA_TOLERANCE) {
 			sum += samples[tap] * weights[tap];
 			weightSum += weights[tap];
 		}
@@ -394,7 +398,9 @@ void main() {
 		vec4 view = genericData.data.current_camera_inv_projection * vec4(depthUV*2.0-1.0,depth,1.0);
 		view.xyz /= view.w;
 		float linear_depth = length(view); //used to calculate depth based on the view angle, idk just works.
-		if (linear_depth >= scene_data_block.data.z_far){ 
+		// Callback z_far (GenericData); the bound SceneData UBO may be another pass's.
+		float sceneZFar = genericData.data.cloud_mask_controls.w > 0.0 ? genericData.data.cloud_mask_controls.w : scene_data_block.data.z_far;
+		if (linear_depth >= sceneZFar){ 
 			linear_depth *= 100.0;
 		}
 		float far_depth = texture(far_opaque_depth_image, depthUV).r;

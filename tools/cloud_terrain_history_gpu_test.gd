@@ -218,12 +218,15 @@ func _stable_terrain_case(path: String, moving: bool, scale: int = 1) -> Diction
 		"retained_weight_min": _minimum(weights),
 		"raw_alpha_variance": _variance(raw_alphas),
 		"temporal_alpha_variance": _variance(temporal_alphas),
-		"depth_break_variance": _variance(depth_breaks),
+		"depth_metadata_variance": _variance(depth_breaks),
 		"weights": weights
 	}
 	if not record_baseline:
 		_require(float(result.retained_weight_min) >= 0.94, "stable terrain rejected valid .95 history " + JSON.stringify(result))
-		_require(float(result.depth_break_variance) > 0.001, "jitter sequence did not exercise terminal depth-break changes " + JSON.stringify(result))
+		# output_data alpha is stable log2 opaque-depth metadata for the post blur;
+		# ray-start jitter must not make it flicker. The raw alpha check below
+		# still proves the jitter sequence exercises the terminal interval.
+		_require(float(result.depth_metadata_variance) < 0.0001, "opaque depth metadata flickered with ray-start jitter " + JSON.stringify(result))
 		_require(float(result.raw_alpha_variance) > 0.001, "jitter sequence did not vary the raw terminal cloud sample " + JSON.stringify(result))
 		_require(float(result.temporal_alpha_variance) < float(result.raw_alpha_variance), "history did not suppress stable terrain grain " + JSON.stringify(result))
 	return result

@@ -261,6 +261,10 @@ var general_data : PackedByteArray
 @export var depth_history_rejection_enabled : bool = true
 @export_range(0.25, 4.0) var history_depth_tolerance_multiplier : float = 1.0
 @export var cloud_history_compatibility_enabled : bool = true
+@export_range(0.0, 0.95) var cloud_history_gate_alpha_low : float = 0.20
+@export_range(0.05, 1.0) var cloud_history_gate_alpha_high : float = 0.65
+@export_range(0.25, 8.0) var history_continuity_allowance_scale : float = 1.0
+@export_range(1.5, 32.0) var history_continuity_hard_reset_ratio : float = 8.0
 @export var lightning_history_isolation_enabled : bool = true
 var _history_reset_requested : bool = false
 
@@ -358,6 +362,12 @@ var previous_callback_menu_around_precise : float = 0.0
 var previous_callback_bulk_wind := Vector2.ZERO
 var previous_callback_detail_wind := Vector3.ZERO
 var previous_callback_density_state : Array = []
+# Monotonic seconds of wind advection, advanced by SunshineCloudsDriver; paired
+# with per-quantity velocities to separate steady drift from discontinuities.
+var advection_clock : float = 0.0
+var _continuity_velocities : Array = [null, null, null, null, null, null]
+var _continuity_last_clock : float = 0.0
+var _continuity_last_usec : int = 0
 var filter_index = 0
 
 var last_render_target : RID
@@ -374,6 +384,12 @@ var temporal_history_accumulation_rebuild_count := 0
 var temporal_history_last_rebuild_reason := "none"
 var temporal_history_render_target_change_count := 0
 var temporal_history_zero_packed_decay_callback_count := 0
+var diagnostic_last_callback_z_far := 0.0
+var temporal_history_last_continuity_excess := 0.0
+var temporal_history_last_continuity_term := ""
+var temporal_history_last_continuity_multiplier := 1.0
+var temporal_history_continuity_decay_callback_count := 0
+var temporal_history_continuity_hard_reset_count := 0
 var temporal_history_last_requested_decay := 0.0
 var temporal_history_last_packed_decay := 0.0
 var temporal_history_last_render_target_id := 0
@@ -416,6 +432,13 @@ func get_temporal_history_diagnostics() -> Dictionary:
 	return {
 		"terrain_sun_descriptor_set_present": _terrain_sun_bindings_present,
 		"history_policy": Vector4(float(depth_history_rejection_enabled), history_depth_tolerance_multiplier, float(cloud_history_compatibility_enabled), float(lightning_history_isolation_enabled)),
+		"history_gate_band": Vector2(cloud_history_gate_alpha_low, cloud_history_gate_alpha_high),
+		"callback_z_far": diagnostic_last_callback_z_far,
+		"last_continuity_excess": temporal_history_last_continuity_excess,
+		"last_continuity_term": temporal_history_last_continuity_term,
+		"last_continuity_multiplier": temporal_history_last_continuity_multiplier,
+		"continuity_decay_callback_count": temporal_history_continuity_decay_callback_count,
+		"continuity_hard_reset_count": temporal_history_continuity_hard_reset_count,
 		"callback_serial": render_callback_serial,
 		"explicit_refresh_request_count": temporal_history_explicit_refresh_request_count,
 		"accumulation_resource_rebuild_count": temporal_history_accumulation_rebuild_count,
@@ -1432,6 +1455,8 @@ func _render_callback(effect_callback_type, render_data):
 					depthformat.height = new_size.y
 					depthformat.format = RenderingDevice.DATA_FORMAT_R32_SFLOAT
 					depthformat.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+					if diagnostic_temporal_readback:
+						depthformat.usage_bits |= RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 					resized_depth = rd.texture_create(depthformat, RDTextureView.new(), [])
 
 					#region Prepass Compute Shader
@@ -1896,9 +1921,13 @@ func retrieve_position_queries(data : PackedByteArray):
 			#self.effect_callback_type = CompositorEffect.EFFECT_CALLBACK_TYPE_PRE_TRANSPARENT
 
 # Density continuity is an approximation at the configured integration scale,
-# not a claim that a moving field is identical. Shape/power changes exceeding
-# 0.1% and advection exceeding min(0.1 ray step, 0.1% noise scale) retire history.
-# Ordinary tiny drift remains eligible for stochastic sky-edge accumulation.
+# not a claim that a moving field is identical. Shape/power changes beyond
+# 0.1% are excess. Advected quantities (noise positions, storm centre, weather
+# offset) are judged against a per-quantity learned velocity * dt, so steady wind
+# drift and long frames are not excess. Excess <= 1 keeps history; between 1 and
+# history_continuity_hard_reset_ratio history decays in proportion; beyond it
+# (or on structural/texture/seed/effector change) history is hard reset.
+# Index 7 (advection_clock) is bookkeeping and never compared.
 func _capture_density_state() -> Array:
 	var shape: Array = [clouds_coverage, clouds_density, clouds_sharpness, clouds_detail_power,
 		wind_swept_range, wind_swept_strength, curl_noise_strength, extra_large_noise_scale,
@@ -1912,37 +1941,111 @@ func _capture_density_state() -> Array:
 	return [shape, [extra_large_noise_patterns,height_gradient,large_scale_noise,medium_scale_noise,
 		small_scale_noise,curl_noise], [extra_large_scale_clouds_position,large_scale_clouds_position,
 		medium_scale_clouds_position,detail_clouds_position], storm_system,cloud_weather_frame,
-		cloud_weather_params.w, point_effector_data.duplicate()]
+		cloud_weather_params.w, point_effector_data.duplicate(), advection_clock]
 
-static func _small_density_delta(a: float,b: float) -> bool:
-	return is_finite(a) and is_finite(b) and absf(a-b) <= 0.0001 + 0.001*maxf(absf(a),absf(b))
+const ADVECTION_PREDICTION_SLACK := 0.5
+const UNPREDICTED_ADVECTION_SPEED := 1000.0
 
-func _density_state_continuous(current: Array, previous: Array) -> bool:
-	if previous.size() != current.size() or current[0].size() != previous[0].size(): return false
-	if current[1] != previous[1] or current[5] != previous[5] or current[6] != previous[6]: return false
+func _continuity_hard(term: String) -> Dictionary:
+	_continuity_velocities = [null, null, null, null, null, null]
+	return {"excess": INF, "term": term, "hard": true, "multiplier": 0.0}
+
+# Seconds between callbacks: the driver's advection clock when it advanced
+# (frame-rate independent), otherwise wall clock.
+func _consume_continuity_dt() -> float:
+	var now_usec := Time.get_ticks_usec()
+	var clock_dt := advection_clock - _continuity_last_clock
+	var dt: float = clock_dt if clock_dt > 0.000001 else float(now_usec - _continuity_last_usec) / 1000000.0
+	_continuity_last_clock = advection_clock
+	_continuity_last_usec = now_usec
+	return clampf(dt, 0.0001, 2.0)
+
+func _evaluate_density_continuity(current: Array, previous: Array, dt: float) -> Dictionary:
+	if previous.size() != current.size() or current.size() < 7: return _continuity_hard("structure")
+	if current[0].size() != previous[0].size(): return _continuity_hard("structure")
+	if current[1] != previous[1]: return _continuity_hard("textures")
+	if current[5] != previous[5]: return _continuity_hard("seed")
+	if current[6] != previous[6]: return _continuity_hard("effectors")
+	dt = maxf(dt, 0.0001)
+	var allowance_scale := clampf(history_continuity_allowance_scale, 0.25, 8.0) if is_finite(history_continuity_allowance_scale) else 1.0
+	var hard_ratio := clampf(history_continuity_hard_reset_ratio, 1.5, 32.0) if is_finite(history_continuity_hard_reset_ratio) else 8.0
+	var excess := 0.0
+	var term := ""
 	for index in current[0].size():
-		if not _small_density_delta(float(current[0][index]),float(previous[0][index])): return false
+		var a := float(current[0][index]); var b := float(previous[0][index])
+		if not is_finite(a) or not is_finite(b): return _continuity_hard("nonfinite_shape%d" % index)
+		var ratio := absf(a-b) / ((0.0001 + 0.001*maxf(absf(a),absf(b))) * allowance_scale)
+		if ratio > excess:
+			excess = ratio; term = "shape%d" % index
+	var deltas: Array[Vector3] = []
+	var bases: Array[float] = []
+	var names: Array[String] = []
 	var scales := [extra_large_noise_scale,large_noise_scale,medium_noise_scale,small_noise_scale]
+	var step_base := maxf(min_step_distance,1.0)*0.1
 	for index in 4:
-		var movement: Vector3 = current[2][index]-previous[2][index]
-		var noise_allowance := minf(maxf(min_step_distance,1.0)*0.1,maxf(float(scales[index]),1.0)*0.001)
-		if not _gameplay_vector_is_finite(movement) or movement.length() > noise_allowance: return false
-	var allowance := minf(maxf(min_step_distance,1.0)*0.1,maxf(cloud_weather_params.y,1.0)*0.001)
-	var storm_delta := Vector2(current[3].x-previous[3].x,current[3].y-previous[3].y)
-	if not is_finite(storm_delta.x) or not is_finite(storm_delta.y) or storm_delta.length() > allowance: return false
+		var delta: Vector3 = current[2][index]-previous[2][index]
+		if not _gameplay_vector_is_finite(delta): return _continuity_hard("nonfinite_noise%d" % index)
+		var period := float(scales[index])
+		if period > 1.0:
+			delta = Vector3(delta.x - period*roundf(delta.x/period), delta.y - period*roundf(delta.y/period), delta.z - period*roundf(delta.z/period))
+		deltas.append(delta)
+		bases.append(minf(step_base, maxf(period,1.0)*0.001) * allowance_scale)
+		names.append("noise%d" % index)
+	var weather_base := minf(step_base, maxf(cloud_weather_params.y,1.0)*0.001) * allowance_scale
+	var storm_now: Vector4 = current[3]; var storm_before: Vector4 = previous[3]
+	var storm_delta := Vector3(storm_now.x-storm_before.x, storm_now.y-storm_before.y, 0.0)
+	if not _gameplay_vector_is_finite(storm_delta): return _continuity_hard("nonfinite_storm")
+	deltas.append(storm_delta); bases.append(weather_base); names.append("storm")
 	var weather: Vector4 = current[4]; var old_weather: Vector4 = previous[4]
-	if weather.x != old_weather.x: return false
+	if weather.x != old_weather.x: return _continuity_hard("weather_circumference")
 	var around_delta := weather.y-old_weather.y
 	if weather.x > 0.0: around_delta = fposmod(around_delta+weather.x*0.5,weather.x)-weather.x*0.5
-	var weather_delta := Vector2(around_delta,weather.z-old_weather.z)
-	return is_finite(weather_delta.x) and is_finite(weather_delta.y) and weather_delta.length() <= allowance
+	var weather_delta := Vector3(around_delta, weather.z-old_weather.z, 0.0)
+	if not _gameplay_vector_is_finite(weather_delta): return _continuity_hard("nonfinite_weather")
+	deltas.append(weather_delta); bases.append(weather_base); names.append("weather")
+	if _continuity_velocities.size() != 6:
+		_continuity_velocities = [null, null, null, null, null, null]
+	for index in 6:
+		var delta := deltas[index]
+		var known = _continuity_velocities[index]
+		var residual: float
+		var allowance: float
+		if known == null:
+			residual = delta.length()
+			allowance = bases[index] + UNPREDICTED_ADVECTION_SPEED*dt
+		else:
+			var predicted: Vector3 = (known as Vector3)*dt
+			residual = (delta-predicted).length()
+			allowance = bases[index] + ADVECTION_PREDICTION_SLACK*predicted.length()
+		var ratio := residual / allowance
+		if ratio > excess:
+			excess = ratio; term = names[index]
+		if ratio < hard_ratio:
+			var observed := delta/dt
+			_continuity_velocities[index] = observed if known == null else (known as Vector3).lerp(observed, 0.5)
+		else:
+			_continuity_velocities[index] = null
+	var hard := excess >= hard_ratio
+	var multiplier := 1.0
+	if hard: multiplier = 0.0
+	elif excess > 1.0: multiplier = 1.0 - (excess-1.0)/(hard_ratio-1.0)
+	return {"excess": excess, "term": term, "hard": hard, "multiplier": multiplier}
 
 static func _gameplay_vector_is_finite(value: Vector3) -> bool:
 	return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
 
 func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	var current_density_state: Array = [] if menu_temporal_sampling else _capture_density_state()
-	var density_continuous := not menu_temporal_sampling and not first_run and not ignore_accumilation and _density_state_continuous(current_density_state,previous_callback_density_state)
+	var continuity_result := {"excess": 0.0, "term": "", "hard": false, "multiplier": 1.0}
+	var continuity_dt := _consume_continuity_dt()
+	if menu_temporal_sampling or first_run or ignore_accumilation:
+		_continuity_velocities = [null, null, null, null, null, null]
+	else:
+		continuity_result = _evaluate_density_continuity(current_density_state, previous_callback_density_state, continuity_dt)
+	temporal_history_last_continuity_excess = continuity_result.excess
+	temporal_history_last_continuity_term = continuity_result.term
+	temporal_history_last_continuity_multiplier = continuity_result.multiplier
+	var density_continuous: bool = not menu_temporal_sampling and not first_run and not ignore_accumilation and float(continuity_result.excess) <= 1.0
 	var current_gameplay_frame: Dictionary = gameplay_cloud_frame_snapshot
 	if general_data.size() != GENERAL_DATA_BUFFER_BYTES:
 		general_data.resize(GENERAL_DATA_BUFFER_BYTES)
@@ -2164,9 +2267,17 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		gameplay_remap_valid = bool(remap_result.valid)
 		mapped_previous_camera = remap_result.mapped_camera as Transform3D
 	var packed_accumulation_decay := accumulation_decay if !ignore_accumilation and !menu_frame_discontinuity and (menu_temporal_sampling or first_run or not gameplay_frame_contract_supplied or gameplay_remap_valid) else 0.0
-	if _history_reset_requested or (cloud_history_compatibility_enabled and not menu_temporal_sampling and not first_run and not density_continuous):
+	if _history_reset_requested:
 		packed_accumulation_decay = 0.0
 		_history_reset_requested = false
+	elif cloud_history_compatibility_enabled and not menu_temporal_sampling and not first_run:
+		var continuity_multiplier: float = continuity_result.multiplier
+		packed_accumulation_decay *= continuity_multiplier
+		if bool(continuity_result.hard):
+			packed_accumulation_decay = 0.0
+			temporal_history_continuity_hard_reset_count += 1
+		elif continuity_multiplier > 0.0 and continuity_multiplier < 1.0:
+			temporal_history_continuity_decay_callback_count += 1
 	temporal_history_last_requested_decay = accumulation_decay
 	temporal_history_last_packed_decay = packed_accumulation_decay
 	if packed_accumulation_decay == 0.0:
@@ -2282,10 +2393,29 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		general_data.encode_float(idx, value.y); idx += 4
 		general_data.encode_float(idx, value.z); idx += 4
 		general_data.encode_float(idx, value.w); idx += 4
-	# Append-only cloud mask controls; reserved components remain zero.
+	# Append-only cloud mask controls: x skip flag, y/z gameplay history gate alpha band,
+	# w this callback's camera z_far. The engine SceneData UBO bound at the last
+	# accumulation rebuild is a per-render-pass pool slot: once the frame's pass
+	# order shifts it holds another pass (e.g. a 4096^2 shadow pass with z_far 5),
+	# so its z_far must not classify this view's opaque depth.
+	var gate_low := 0.20 if not is_finite(cloud_history_gate_alpha_low) else clampf(cloud_history_gate_alpha_low, 0.0, 0.95)
+	var gate_high := 0.65 if not is_finite(cloud_history_gate_alpha_high) else clampf(cloud_history_gate_alpha_high, 0.05, 1.0)
+	if gate_high < gate_low + 0.05:
+		gate_high = minf(gate_low + 0.05, 1.0)
+	# Unproject both depth extremes through the same inverse projection the shaders
+	# use; the larger view distance is the far plane whichever depth convention
+	# (reversed-Z or not) this projection follows. Projection.get_z_far() assumes
+	# the GL convention and returns the near plane for these callback projections.
+	var callback_z_far := 0.0
+	for plane_depth in [0.0, 1.0]:
+		var plane_point: Vector4 = inv_projection * Vector4(0.0, 0.0, plane_depth, 1.0)
+		var plane_distance := absf(plane_point.z / plane_point.w) if absf(plane_point.w) > 1e-30 else 3.0e38
+		if is_finite(plane_distance): callback_z_far = maxf(callback_z_far, minf(plane_distance, 3.0e38))
+	diagnostic_last_callback_z_far = callback_z_far
 	general_data.encode_float(idx, 1.0 if skip_empty_cloud_mask_samples else 0.0); idx += 4
-	for unused in 3:
-		general_data.encode_float(idx, 0.0); idx += 4
+	general_data.encode_float(idx, gate_low); idx += 4
+	general_data.encode_float(idx, gate_high); idx += 4
+	general_data.encode_float(idx, callback_z_far if is_finite(callback_z_far) and callback_z_far > 0.0 else 0.0); idx += 4
 	for value in [1.0 if depth_history_rejection_enabled else 0.0, clampf(history_depth_tolerance_multiplier, 0.25, 4.0) if is_finite(history_depth_tolerance_multiplier) else 1.0, 1.0 if cloud_history_compatibility_enabled else 0.0, 1.0 if lightning_history_isolation_enabled else 0.0]:
 		general_data.encode_float(idx, value); idx += 4
 	for profile_index in 5:

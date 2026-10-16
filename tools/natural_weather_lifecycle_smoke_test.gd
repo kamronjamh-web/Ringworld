@@ -2,6 +2,12 @@ extends SceneTree
 
 const TEST_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const LAUNCHER_SCENE := preload("res://scenes/WorldSizeLauncher.tscn")
+# G0 fingerprint modes (docs/emitter-grid-climate-machines-spec.md): build a v5 Certified-dimension world, then capture or compare
+# tools/fixtures/natural_weather_v5_fingerprint_golden.json instead of running the lifecycle checks.
+const FINGERPRINT := preload("res://tools/NaturalWeatherFingerprintTest.cs")
+const CERTIFIED_RADIUS_M := 5000000.0
+const CERTIFIED_WIDTH_M := 318000.0
+const CERTIFIED_CHUNKS_AROUND := 981748
 var _scene: Node
 var _weather: Node
 var _frames := 0
@@ -22,14 +28,18 @@ func _setup() -> void:
 			_fail("Certified launcher did not enable far weather")
 			return
 	_weather = _scene.get_node("RingVolumetricClouds")
-	_weather.set("NaturalWeatherLifecyclesEnabled", true)
-	_weather.set("WeatherWindMetersPerSecond", Vector2.ZERO)
-	_weather.set("MacroSystemSpawnChance", 0.8)
+	if _fingerprint_mode() != "":
+		_configure_v5_world()
+	else:
+		_weather.set("NaturalWeatherLifecyclesEnabled", true)
+		_weather.set("WeatherWindMetersPerSecond", Vector2.ZERO)
+		_weather.set("MacroSystemSpawnChance", 0.8)
 	root.add_child(_scene)
 
 func _process(_delta: float) -> bool:
 	_frames += 1
 	if _frames < 3: return false
+	if _fingerprint_mode() != "": return _run_fingerprint()
 	# Verify the active preset reaches Sunshine, not just a C# default property.
 	var bridge := _scene.get_node("SunshineCloudBridge")
 	var clouds := _scene.get_node("SunshineCloudsDriver").get("clouds_resource") as Resource
@@ -121,3 +131,44 @@ func _same_weather(a: Dictionary, b: Dictionary) -> bool:
 		and is_equal_approx(float(a["cloud_coverage"]), float(b["cloud_coverage"])) \
 		and is_equal_approx(float(a["precipitation"]), float(b["precipitation"])) \
 		and is_equal_approx(float(a["influence"]), float(b["influence"]))
+
+func _fingerprint_mode() -> String:
+	var args := OS.get_cmdline_user_args()
+	if "--weather-fingerprint-capture" in args: return "capture"
+	if "--weather-fingerprint-compare" in args: return "compare"
+	return ""
+
+func _configure_v5_world() -> void:
+	var tool = FINGERPRINT.new()
+	var grid := _scene.get_node("ChunkGridManager")
+	grid.set("AroundRingChunkLength", CERTIFIED_CHUNKS_AROUND)
+	grid.set("DeriveRingRadiusFromChunkLength", true)
+	grid.set("RingRadiusMeters", CERTIFIED_RADIUS_M)
+	grid.set("RingAcrossWidthMeters", CERTIFIED_WIDTH_M)
+	grid.set("RingAcrossBaseOffsetMeters", -CERTIFIED_WIDTH_M * 0.5)
+	grid.set("MaxBuildGlobalY", 8400)
+	grid.set("MinExcavationGlobalY", -8192)
+	grid.set("TerrainBottomGlobalY", -8192)
+	var settings := (grid.get("TerrainSettings") as Resource).duplicate(true)
+	settings.set("Seed", 1337)
+	settings.set("BedrockY", -8000)
+	settings.set("SeaLevelY", 0)
+	settings.set("SurfaceGenerationRecipeJson", tool.call("RecipeJson"))
+	settings.set("SurfaceGenerationContractId", tool.call("ContractId"))
+	settings.set("EnableProceduralCaves", false)
+	settings.set("EnableDesignedCaveDensityComposition", false)
+	settings.set("EnableUnified3dDensityTerrain", false)
+	settings.set("EnableNaturalOverhangs", false)
+	grid.set("TerrainSettings", settings)
+	grid.call("RefreshRuntimeTerrainDefinition")
+
+func _run_fingerprint() -> bool:
+	var tool = FINGERPRINT.new()
+	var code: int = tool.call("Run", _weather, _fingerprint_mode() == "capture")
+	tool = null
+	if code != 0:
+		push_error("NATURAL_WEATHER_FINGERPRINT_WRAPPER=FAIL exit=%d" % code)
+	else:
+		print("NATURAL_WEATHER_FINGERPRINT_WRAPPER=PASS mode=%s" % _fingerprint_mode())
+	quit(code)
+	return false

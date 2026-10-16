@@ -283,3 +283,20 @@ func upgrade_to_enhanced_erosion() -> void:
 	regenerate()
 func reset_recipe() -> void:
 	_recipe = TerrainGenerationRecipe.create_erosion_default(); _error = ""; _save_blocked = false; regenerate(); save_recipe()
+
+## Preview toggle for the v6 climate-machine forecourts (off by default). Only v5/v6 recipes carry the emitter sites; other recipes are left untouched.
+func set_climate_machines(enabled: bool) -> void:
+	_initialize_recipe()
+	if _recipe == null:
+		return
+	var target := TerrainGenerationRecipe.CLIMATE_GENERATOR_ID if enabled else TerrainGenerationRecipe.SITES_GENERATOR_ID
+	if _recipe.generator_id == target or (not enabled and _recipe.generator_id == TerrainGenerationRecipe.EROSION_GENERATOR_ID):
+		return
+	if _recipe.generator_id != TerrainGenerationRecipe.EROSION_GENERATOR_ID and _recipe.generator_id != TerrainGenerationRecipe.SITES_GENERATOR_ID and _recipe.generator_id != TerrainGenerationRecipe.CLIMATE_GENERATOR_ID:
+		return
+	var changed := _recipe.snapshot()
+	changed.generator_id = target
+	_recipe = changed.snapshot()
+	_error = ""
+	_save_blocked = false
+	regenerate()

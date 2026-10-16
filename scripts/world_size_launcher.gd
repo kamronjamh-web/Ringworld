@@ -74,6 +74,7 @@ var regional_detail_spin: SpinBox
 var rare_peak_spin: SpinBox
 var unified_density_toggle: CheckBox
 var designed_caves_toggle: CheckBox
+var climate_machines_toggle: CheckBox
 var terrain_backend_selector: OptionButton
 var advanced_popup: PopupPanel
 var advanced_summary_label: Label
@@ -489,6 +490,12 @@ func _build_advanced_menu() -> void:
 		bool(launch_defaults.get("designed_cave_density_composition", false)),
 		"Generates deterministic chambers and corridors in streamed smooth terrain. Existing worlds remain unchanged unless enabled."
 	)
+	climate_machines_toggle = _add_checkbox_row(
+		knobs_grid,
+		"Climate machines (v6)",
+		false,
+		"Experimental. New Terrain3D runtime generation worlds use the ringworld_surface_climate_v6 recipe: 200 Wall Engine forecourts at the rim walls (flat quays and terraced cuts). Off by default. Existing worlds keep their frozen recipe."
+	)
 	var backend_label := Label.new()
 	backend_label.text = "Surface terrain backend\nSurface edits and player state save separately. Caves later."
 	backend_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -503,6 +510,7 @@ func _build_advanced_menu() -> void:
 	knobs_grid.add_child(terrain_backend_selector)
 	unified_density_toggle.toggled.connect(_on_knob_changed)
 	designed_caves_toggle.toggled.connect(_on_knob_changed)
+	climate_machines_toggle.toggled.connect(_on_knob_changed)
 	terrain_backend_selector.item_selected.connect(_on_terrain_backend_selected)
 
 	for spin in [
@@ -903,6 +911,14 @@ func _refresh_backend_selector(certified: bool) -> void:
 		unified_density_toggle.disabled = surface or runtime_existing
 		if surface:
 			unified_density_toggle.button_pressed = false
+	if climate_machines_toggle != null:
+		# Only a NEW Terrain3D runtime-generation world can pick the v6 recipe; existing slots keep (and display) their frozen stored recipe.
+		var climate_available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing
+		climate_machines_toggle.disabled = not climate_available
+		if runtime_existing:
+			climate_machines_toggle.set_pressed_no_signal(str(_get_selected_slot_settings().get("surface_generation_recipe_json", "")).contains(SURFACE_RECIPE.CLIMATE_GENERATOR_ID))
+		elif not climate_available:
+			climate_machines_toggle.set_pressed_no_signal(false)
 
 
 func _matches_certified_dimensions(radius_km: float, width_km: float, floor_y: int, ceiling_y: int, depth_km: float, allow_runtime_surface_ceiling: bool = false) -> bool:
@@ -1370,6 +1386,12 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 	elif str(recipe.get("generator_id")) == SURFACE_RECIPE.EROSION_GENERATOR_ID:
 		# New worlds adopt the v5 emitter-site recipe; the previewed v4 shape settings carry over unchanged.
 		# Existing slots keep their frozen stored recipe (handled above), so their terrain never changes.
+		recipe.set("generator_id", SURFACE_RECIPE.SITES_GENERATOR_ID)
+	# v6 (climate machines) is opt-in for new worlds: the launcher toggle (default OFF) is authoritative, so a previewed v6 recipe is created as v5 while it is off. Same field set as v5.
+	var want_climate := climate_machines_toggle != null and climate_machines_toggle.button_pressed
+	if want_climate and str(recipe.get("generator_id")) == SURFACE_RECIPE.SITES_GENERATOR_ID:
+		recipe.set("generator_id", SURFACE_RECIPE.CLIMATE_GENERATOR_ID)
+	elif not want_climate and str(recipe.get("generator_id")) == SURFACE_RECIPE.CLIMATE_GENERATOR_ID:
 		recipe.set("generator_id", SURFACE_RECIPE.SITES_GENERATOR_ID)
 	recipe.set("seed", int(round(terrain_seed_spin.value)) if terrain_seed_spin != null else 1337)
 	if not bool(bridge.call("Configure", recipe.call("to_normalized_dictionary"))):

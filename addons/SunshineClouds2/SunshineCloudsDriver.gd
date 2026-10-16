@@ -95,6 +95,7 @@ func _process(delta : float):
 		
 		if update_continuously:
 			_updating_settings = false
+			clouds_resource.advection_clock += delta
 			extra_large_clouds_pos += wind_direction * extra_large_structures_wind_speed * delta
 			extra_large_clouds_pos = wrap_vector(extra_large_clouds_pos, _extralarge_clouds_domain)
 			large_clouds_pos += wind_direction * large_structures_wind_speed * delta

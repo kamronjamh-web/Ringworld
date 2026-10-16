@@ -260,3 +260,5 @@ per-instance rank.
 - **Hero blades are scrapped.** Variant D becomes cards-only: S7 is dropped, and hero-specific code, shaders, assets and tests are removed. Card hero-thinning is permanently off (cards keep full density at the camera). The S11 hero ≤ 0.6 ms gate is dropped.
 - **Card placement moves to the GPU compute path (S6).**
 - **Adaptive tile grouping is re-enabled for Cards** (S5 had disabled it).
+
+- 2026-10-16: user confirmed the per-preset card reach values stay as implemented (Low 300, Laptop/Medium/High 400, VeryHigh 450, UltraVideo 500, Cinematic5090 600 m); 400 m remains the default.

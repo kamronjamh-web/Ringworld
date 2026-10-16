@@ -234,6 +234,15 @@ public sealed partial class RingTerrainSampler
             hash = MixHash(hash, sites.Registry.Recipe.Hash);
             hash = MixHash(hash, (ulong)sites.Registry.Recipe.AlgorithmVersion);
             hash = MixHash(hash, sites.Registry.Identity);
+            if (sites.Climate is { } climate)
+            {
+                // v6 only, appended AFTER the emitter terms so the v5 hash is byte-identical: climate recipe, its algorithm version,
+                // the forecourt operator version and the registry identity (pad heights, flags, offline set, anomalies).
+                hash = MixHash(hash, climate.Recipe.Hash);
+                hash = MixHash(hash, (ulong)climate.Recipe.AlgorithmVersion);
+                hash = MixHash(hash, (ulong)Terrain.Sites.ClimateForecourtOperator.OperatorVersion);
+                hash = MixHash(hash, climate.Identity);
+            }
         }
         foreach (char character in RuntimeSurfaceGenerationContractId)
             hash = MixHash(hash, character);

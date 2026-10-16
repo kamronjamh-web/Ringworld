@@ -1,5 +1,5 @@
 #[compute]
-// GenericData ABI: 276 floats. Shared post source also binds physical far depth
+// GenericData ABI: 276 floats. Output-data alpha is log2 opaque depth metadata; z_far from cloud_mask_controls.w. Shared post source also binds physical far depth
 // at sampler binding 9 so upsampled cloud edges obey far opaque terrain.
 #version 450
 

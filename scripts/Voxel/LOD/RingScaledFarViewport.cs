@@ -3383,7 +3383,26 @@ public partial class RingScaledFarViewport : Node
 		_localCloudCanopy.Mesh = surface.Commit();
 	}
 
-	private Vector3 ScaledPoint(double around, double vertical, double across)
+	/// <summary>True while the isolated scaled far world exists.</summary>
+	public bool HasScaledWorld => _farViewport != null && GodotObject.IsInstanceValid(_farViewport);
+	/// <summary>True while the near (Sunshine/local) cloud renderer owns the sky out to the clipmap handoff.</summary>
+	public bool NearCloudOwnershipEnabled => _nearCloudOwnershipEnabled;
+
+	/// <summary>
+	/// G4 hook (POI spec B.7, F10): parents <paramref name="child"/> in the scaled far world. Children use absolute scaled
+	/// coordinates; nothing changes when no child is added (T7).
+	/// </summary>
+	public bool AddScaledWorldChild(Node3D child)
+	{
+		if (child == null || !GodotObject.IsInstanceValid(child) || !HasScaledWorld) return false;
+		if (ReferenceEquals(child.GetParent(), _farViewport)) return true;
+		child.GetParent()?.RemoveChild(child);
+		_farViewport!.AddChild(child);
+		return true;
+	}
+
+	/// <summary>Absolute canonical -> scaled far-world position (ring axis = Y, ring centre at the origin).</summary>
+	public Vector3 ScaledPoint(double around, double vertical, double across)
 	{
 		double wrapped = around % _circumferenceMeters;
 		if (wrapped < 0.0) wrapped += _circumferenceMeters;

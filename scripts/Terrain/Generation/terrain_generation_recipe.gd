@@ -8,6 +8,8 @@ const DETAIL_GENERATOR_ID: String = "ringworld_surface_detail_v3"
 const EROSION_GENERATOR_ID: String = "ringworld_surface_erosion_v4"
 ## v5: v4 terrain plus deterministic emitter-site shaping (docs/emitter-site-terrain-spec.md section 5). Same fields as v4.
 const SITES_GENERATOR_ID: String = "ringworld_surface_sites_v5"
+## v6: v5 terrain plus the 200 Wall Engine climate-machine forecourts (docs/emitter-grid-climate-machines-spec.md section C3). Same fields as v4/v5.
+const CLIMATE_GENERATOR_ID: String = "ringworld_surface_climate_v6"
 const DOMAIN_ID: String = "canonical_ring_noise_v1"
 const MIN_GEOMETRIC_WAVELENGTH_M: float = 16.0
 const CERTIFIED_CIRCUMFERENCE_M: float = 31415936.0
@@ -78,7 +80,7 @@ var flatten_denominator: float = exp(3.0) - 1.0
 
 func validation_errors() -> PackedStringArray:
 	var errors := PackedStringArray()
-	if generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
+	if generator_id != CLIMATE_GENERATOR_ID and generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
 		errors.append("Unsupported generator_id: %s" % generator_id)
 	if domain_id != DOMAIN_ID:
 		errors.append("Unsupported domain_id: %s" % domain_id)
@@ -237,11 +239,16 @@ static func _safe_octaves(requested: int, scale_m: float, lacunarity: float, con
 		maximum += 1
 	return clampi(requested, 1, maximum)
 
-## True for recipes that carry the full v4 field set (v4 itself and v5 with emitter sites).
+## True for recipes that carry the full v4 field set (v4 itself, v5 with emitter sites and v6 with climate machines).
 static func _is_erosion_family(id: String) -> bool:
-	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID
+	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID
 
 static func create_sites_default() -> TerrainGenerationRecipe:
 	var recipe := create_erosion_default()
 	recipe.generator_id = SITES_GENERATOR_ID
+	return recipe
+
+static func create_climate_default() -> TerrainGenerationRecipe:
+	var recipe := create_sites_default()
+	recipe.generator_id = CLIMATE_GENERATOR_ID
 	return recipe

@@ -1,0 +1,198 @@
+{
+  "Format": "eclipse_event_timeline_golden_v1",
+  "Boundaries": [
+    {
+      "Phase": "PreRoll",
+      "StartTau": -300
+    },
+    {
+      "Phase": "Darkness",
+      "StartTau": 0
+    },
+    {
+      "Phase": "MainFire",
+      "StartTau": 20
+    },
+    {
+      "Phase": "Kindle",
+      "StartTau": 24
+    },
+    {
+      "Phase": "Ignition",
+      "StartTau": 29.5
+    },
+    {
+      "Phase": "Crescendo",
+      "StartTau": 181
+    },
+    {
+      "Phase": "Handoff",
+      "StartTau": 189
+    },
+    {
+      "Phase": "Sustain",
+      "StartTau": 191.5
+    },
+    {
+      "Phase": "Instability",
+      "StartTau": 4015.1382562937233
+    },
+    {
+      "Phase": "Overload",
+      "StartTau": 4060.1382562937233
+    },
+    {
+      "Phase": "Implosion",
+      "StartTau": 4064.1382562937233
+    },
+    {
+      "Phase": "Shockwave",
+      "StartTau": 4066.6382562937233
+    },
+    {
+      "Phase": "Aftermath",
+      "StartTau": 4074.6382562937233
+    },
+    {
+      "Phase": "Return",
+      "StartTau": 4090.1382562937233
+    },
+    {
+      "Phase": "Idle",
+      "StartTau": 4540.138256293723
+    }
+  ],
+  "Sites": [
+    {
+      "Entry": 0,
+      "Fire": 32.500006111547975,
+      "Arrival": 34.000006111547975
+    },
+    {
+      "Entry": 1,
+      "Fire": 35.5018074903132,
+      "Arrival": 37.0018074903132
+    },
+    {
+      "Entry": 137,
+      "Fire": 146.50000916732196,
+      "Arrival": 148.00000916732196
+    },
+    {
+      "Entry": 300,
+      "Fire": 41.50000534760448,
+      "Arrival": 43.00000534760448
+    },
+    {
+      "Entry": 593,
+      "Fire": 32.500006111547975,
+      "Arrival": 34.000006111547975
+    }
+  ],
+  "Samples": [
+    {
+      "Tau": 21,
+      "Phase": "MainFire",
+      "Level": 0,
+      "HubDirect": 0,
+      "HubDay": 0,
+      "Fired": 0
+    },
+    {
+      "Tau": 25,
+      "Phase": "Kindle",
+      "Level": 0.03520000000000001,
+      "HubDirect": 0.11264000000000003,
+      "HubDay": 0.028160000000000008,
+      "Fired": 0
+    },
+    {
+      "Tau": 40,
+      "Phase": "Ignition",
+      "Level": 0.13636447877681684,
+      "HubDirect": 0.43636633208581393,
+      "HubDay": 0.10909158302145348,
+      "Fired": 36
+    },
+    {
+      "Tau": 100,
+      "Phase": "Ignition",
+      "Level": 0.5000308371044331,
+      "HubDirect": 1.600098678734186,
+      "HubDay": 0.4000246696835465,
+      "Fired": 276
+    },
+    {
+      "Tau": 150,
+      "Phase": "Ignition",
+      "Level": 0.8090909090909091,
+      "HubDirect": 2.5890909090909093,
+      "HubDay": 0.6472727272727273,
+      "Fired": 480
+    },
+    {
+      "Tau": 185,
+      "Phase": "Crescendo",
+      "Level": 1.011336243615314,
+      "HubDirect": 3.2362759795690046,
+      "HubDay": 0.8090689948922511,
+      "Fired": 594
+    },
+    {
+      "Tau": 500,
+      "Phase": "Sustain",
+      "Level": 1.0086797547284132,
+      "HubDirect": 3.2277752151309222,
+      "HubDay": 0.8069438037827306,
+      "Fired": 594
+    },
+    {
+      "Tau": 2000,
+      "Phase": "Sustain",
+      "Level": 1.0200159983437285,
+      "HubDirect": 3.264051194699931,
+      "HubDay": 0.8160127986749828,
+      "Fired": 594
+    },
+    {
+      "Tau": 4000,
+      "Phase": "Sustain",
+      "Level": 1.0336444799303157,
+      "HubDirect": 3.3076623357770103,
+      "HubDay": 0.8269155839442526,
+      "Fired": 594
+    },
+    {
+      "Tau": 4050,
+      "Phase": "Instability",
+      "Level": 0.7995879284551982,
+      "HubDirect": 2.5586813710566343,
+      "HubDay": 0.6396703427641586,
+      "Fired": 594
+    },
+    {
+      "Tau": 4066,
+      "Phase": "Implosion",
+      "Level": 0.041601146593229436,
+      "HubDirect": 0.1331236690983342,
+      "HubDay": 0.03328091727458355,
+      "Fired": 594
+    },
+    {
+      "Tau": 4075,
+      "Phase": "Aftermath",
+      "Level": 0,
+      "HubDirect": 0,
+      "HubDay": 0,
+      "Fired": 594
+    },
+    {
+      "Tau": 4080,
+      "Phase": "Aftermath",
+      "Level": 0,
+      "HubDirect": 0,
+      "HubDay": 0,
+      "Fired": 594
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "Format": "eclipse_window_golden_v1",
+  "Windows": [
+    {
+      "Index": 0,
+      "CentredStart": 11843.683248252672,
+      "CentredEnd": 16343.68324469735,
+      "RawRingStart": 12038.448867814912,
+      "RawRingEnd": 16148.587124108635,
+      "RingStart": 12048.448867814912,
+      "RingEnd": 16138.587124108635,
+      "AnyStart": 11643.464891095244,
+      "AnyEnd": 16543.637524077385
+    },
+    {
+      "Index": 1,
+      "CentredStart": 40031.04974120269,
+      "CentredEnd": 44531.049737647365,
+      "RawRingStart": 40226.14420992958,
+      "RawRingEnd": 44336.28853559955,
+      "RingStart": 40236.14420992958,
+      "RingEnd": 44326.28853559955,
+      "AnyStart": 39831.09980616656,
+      "AnyEnd": 44731.26592814743
+    },
+    {
+      "Index": 2,
+      "CentredStart": 68218.41623415271,
+      "CentredEnd": 72718.41623059739,
+      "RawRingStart": 68413.18625409712,
+      "RawRingEnd": 72523.31846761316,
+      "RingStart": 68423.18625409712,
+      "RingEnd": 72513.31846761316,
+      "AnyStart": 68018.19574876197,
+      "AnyEnd": 72918.37483026003
+    }
+  ]
+}

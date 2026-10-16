@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using Godot;
+using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tools;
@@ -15,8 +16,10 @@ public partial class EmitterSiteBaselineGoldenTest : RefCounted
 {
     const string Format = "emitter_site_baseline_v1";
 
-    public int Run(bool capture)
-        => RunGolden(ProjectSettings.GlobalizePath("res://tools/fixtures/emitter_site_baseline_golden.json"), capture);
+    /// <param name="fixtureOverride">Optional absolute fixture path (used to capture a new case beside the committed golden).</param>
+    public int Run(bool capture, string fixtureOverride = "")
+        => RunGolden(string.IsNullOrEmpty(fixtureOverride)
+            ? ProjectSettings.GlobalizePath("res://tools/fixtures/emitter_site_baseline_golden.json") : fixtureOverride, capture);
 
     public static int RunGolden(string fixture, bool capture)
     {
@@ -56,6 +59,63 @@ public partial class EmitterSiteBaselineGoldenTest : RefCounted
                 TerrainHash = sampler.TerrainDefinitionHash.ToString("X16")
             };
             foreach ((string name, long a, int x) in Points()) item.Points.Add(Sample(name, sampler, a, x));
+            golden.Cases.Add(item);
+        }
+        using (var sampler = EmitterSiteTestWorlds.CreateGen17Sites(1337))
+        {
+            EmitterSiteRegistry registry = sampler.EmitterSites ?? throw new InvalidOperationException("v5 sampler has no emitter registry");
+            var item = new Case
+            {
+                Name = "gen17_v5_seed_1337", Description = "ringworld_surface_sites_v5 default recipe with emitter sites, runtime surface generation (recorded in phase G0 of the grid/climate spec)",
+                RecipeHash = EmitterSiteTestWorlds.Gen17SitesRecipe(1337).DefinitionHash.ToString("X16"),
+                GeneratorVersion = sampler.TerrainGeneratorVersion,
+                TerrainHash = sampler.TerrainDefinitionHash.ToString("X16")
+            };
+            foreach ((string name, long a, int x) in Points()) item.Points.Add(Sample(name, sampler, a, x));
+            // Registry-derived points: centre and a 1 km offset on a land pad, an island and the main site (all frozen with the v5 registry).
+            int landPad = -1, island = -1;
+            for (int i = 0; i < registry.Count - 1 && (landPad < 0 || island < 0); i++)
+            {
+                if (landPad < 0 && !registry[i].IsIsland && !registry[i].IsMountain) landPad = i;
+                if (island < 0 && registry[i].IsIsland) island = i;
+            }
+            foreach ((string label, int index) in new[] { ("land_pad", landPad), ("island", island), ("main", registry.MainIndex) })
+            {
+                if (index < 0) throw new InvalidOperationException("v5 registry has no " + label + " site");
+                EmitterSite site = registry[index];
+                item.Points.Add(Sample(label + "_center", sampler, site.Around, site.Across));
+                item.Points.Add(Sample(label + "_offset_1km", sampler, site.Around + 1000L, site.Across + 1000));
+            }
+            golden.Cases.Add(item);
+        }
+        using (var sampler = EmitterSiteTestWorlds.CreateGen17Climate(1337))
+        {
+            ClimateMachineRegistry climate = sampler.ClimateMachines ?? throw new InvalidOperationException("v6 sampler has no climate registry");
+            var item = new Case
+            {
+                Name = "gen17_v6_seed_1337", Description = "ringworld_surface_climate_v6 default recipe with emitter sites and Wall Engine forecourts, runtime surface generation (phase C2 of the grid/climate spec)",
+                RecipeHash = EmitterSiteTestWorlds.Gen17ClimateRecipe(1337).DefinitionHash.ToString("X16"),
+                GeneratorVersion = sampler.TerrainGeneratorVersion,
+                TerrainHash = sampler.TerrainDefinitionHash.ToString("X16")
+            };
+            foreach ((string name, long a, int x) in Points()) item.Points.Add(Sample(name, sampler, a, x));
+            // Registry-derived points: a dry machine, a quay machine and the first offline machine, each at the pad centre, 2 km on the pad and 5 km out (skirt).
+            int dry = -1, quay = -1;
+            for (int i = 0; i < climate.Count && (dry < 0 || quay < 0); i++)
+            {
+                bool isQuay = (climate[i].Flags & ClimateMachineFlags.Quay) != 0;
+                if (dry < 0 && !isQuay && !climate[i].IsOffline) dry = i;
+                if (quay < 0 && isQuay && !climate[i].IsOffline) quay = i;
+            }
+            foreach ((string label, int index) in new[] { ("machine_dry", dry), ("machine_quay", quay), ("machine_offline", climate.OfflineIndices[0]) })
+            {
+                if (index < 0) throw new InvalidOperationException("v6 registry has no " + label);
+                ClimateMachine m = climate[index];
+                int inward = m.Side == 0 ? 1 : -1;
+                item.Points.Add(Sample(label + "_pad_center", sampler, m.Around, m.Across + inward * 1000));
+                item.Points.Add(Sample(label + "_pad_2km", sampler, m.Around + 4000L, m.Across + inward * 2000));
+                item.Points.Add(Sample(label + "_skirt_5km", sampler, m.Around - 6000L, m.Across + inward * 5000));
+            }
             golden.Cases.Add(item);
         }
         using (var sampler = EmitterSiteTestWorlds.CreateGen16(1337))

@@ -75,7 +75,11 @@ public sealed class GameplayCloudDefaults
         ["TerrainCloudShadowTraceVisitBudget"] = (8, 128, true),
         ["TerrainCloudShadowTexelsPerFrame"] = (4096, 131072, true),
         ["TerrainCloudShadowSunValidityDegrees"] = (.01f, 2, false),
-        ["HistoryDepthToleranceMultiplier"] = (.25f, 4, false)
+        ["HistoryDepthToleranceMultiplier"] = (.25f, 4, false),
+        ["CloudHistoryGateAlphaLow"] = (0, .95f, false),
+        ["CloudHistoryGateAlphaHigh"] = (.05f, 1, false),
+        ["CloudHistoryContinuityAllowanceScale"] = (.25f, 8, false),
+        ["CloudHistoryContinuityHardResetRatio"] = (1.5f, 32, false)
     };
     private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };
@@ -231,6 +235,7 @@ public sealed class GameplayCloudDefaults
             "HandoffStartMeters" or "HandoffEndMeters" => new[] { "HandoffStartMeters", "HandoffEndMeters" },
             "NaturalCloudBaseAltitudeMeters" or "NaturalCloudTopAltitudeMeters" => new[] { "NaturalCloudBaseAltitudeMeters", "NaturalCloudTopAltitudeMeters" },
             "StationaryHistoryWeight" or "MovingHistoryWeight" => new[] { "StationaryHistoryWeight", "MovingHistoryWeight" },
+            "CloudHistoryGateAlphaLow" or "CloudHistoryGateAlphaHigh" => new[] { "CloudHistoryGateAlphaLow", "CloudHistoryGateAlphaHigh" },
             _ => Array.Empty<string>()
         };
         var before = new Dictionary<string, Variant>();
@@ -282,6 +287,7 @@ public sealed class GameplayCloudDefaults
         bridge.NaturalCloudTopAltitudeMeters = Mathf.Max(bridge.NaturalCloudTopAltitudeMeters, bridge.NaturalCloudBaseAltitudeMeters + 50);
         bridge.MaxStepDistanceMeters = Mathf.Max(bridge.MaxStepDistanceMeters, bridge.MinStepDistanceMeters + 10);
         bridge.MovingHistoryWeight = Mathf.Min(bridge.MovingHistoryWeight, bridge.StationaryHistoryWeight);
+        bridge.CloudHistoryGateAlphaHigh = Mathf.Max(bridge.CloudHistoryGateAlphaHigh, Mathf.Min(bridge.CloudHistoryGateAlphaLow + .05f, 1));
     }
 
     private void LoadInto(string path)

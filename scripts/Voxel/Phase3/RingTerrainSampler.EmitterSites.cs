@@ -23,6 +23,32 @@ public sealed partial class RingTerrainSampler
     public EmitterSiteSurfaceOperator? EmitterSiteOperator => _runtimeSurfaceModel?.EmitterSites?.Operator;
 
     /// <summary>
+    /// Wall Engine climate machine registry of a gen-17 v6 world (null for every other recipe, including v5). Built once per definition from the
+    /// UNSHAPED natural height and shared by reference with every independent copy and worker model.
+    /// </summary>
+    public ClimateMachineRegistry? ClimateMachines => _runtimeSurfaceModel?.EmitterSites?.Climate;
+
+    /// <summary>Forecourt operator matching <see cref="ClimateMachines"/> (null unless v6).</summary>
+    public ClimateForecourtOperator? ClimateForecourtOperator => _runtimeSurfaceModel?.EmitterSites?.ClimateOperator;
+
+    /// <summary>
+    /// Per-sample forecourt data of the shaped v6 terrain: influencing machine (-1 outside), influence weight and the surface mask.
+    /// Returns false (and a default mask) for non-v6 worlds or points outside every machine's influence region.
+    /// </summary>
+    public bool TryGetClimateMachineSurfaceMask(long globalAroundVoxel, int globalAcrossVoxel, out SiteSurfaceMask mask, out int machineIndex, out double weight)
+    {
+        mask = default; machineIndex = -1; weight = 0d;
+        if (_runtimeSurfaceModel?.EmitterSites?.Climate == null) return false;
+        long around = RingCoordMath.WrapAround(globalAroundVoxel, _aroundRingVoxelLength);
+        lock (_noiseLock)
+        {
+            TerrainGenerationHeightModel.Diagnostics d = _runtimeSurfaceModel.SampleDiagnostics(around, globalAcrossVoxel);
+            mask = d.SiteMask; machineIndex = d.ClimateMachineIndex; weight = d.SiteWeight;
+        }
+        return machineIndex >= 0;
+    }
+
+    /// <summary>
     /// Per-sample site data of the shaped runtime terrain: influencing site (-1 outside), influence weight and the surface mask.
     /// Returns false (and a default mask) for non-v5 worlds or points outside every site's influence disc.
     /// </summary>

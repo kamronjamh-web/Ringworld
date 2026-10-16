@@ -9,17 +9,20 @@ bool ring_cloud_history_opaque_matches(float expected_depth, float previous_dept
 
 float ring_cloud_history_compatible_weight(vec4 history_color, vec4 current_color,
 		float previous_cloud_distance, float current_cloud_distance,
-		float maximum_step, float requested_weight, bool enabled) {
+		float maximum_step, float requested_weight, bool enabled, vec2 alpha_band) {
 	float retained = clamp(requested_weight, 0.0, 1.0);
 	if (!enabled) return retained;
 	if (any(isnan(history_color)) || any(isinf(history_color))
 			|| any(isnan(current_color)) || any(isinf(current_color))
 			|| isnan(current_cloud_distance) || isinf(current_cloud_distance)
 			|| isnan(previous_cloud_distance) || isinf(previous_cloud_distance)) return 0.0;
-	// A two-percent opacity difference is treated as stochastic sampling noise.
-	// Larger visibility changes retire incompatible color without changing the
-	// user's coherent stationary/moving history setting.
-	float opacity_agreement = 1.0 - smoothstep(0.02, 0.20, abs(history_color.a - current_color.a));
+	// Ray-start jitter over opaque geometry legitimately moves the sampled alpha,
+	// so opacity differences inside a tolerant band (default 0.20) keep full
+	// history and fade out by the band end (default 0.65). Larger visibility
+	// changes retire incompatible color without changing the user's coherent
+	// stationary/moving history setting.
+	if (any(isnan(alpha_band)) || any(isinf(alpha_band)) || alpha_band.y <= alpha_band.x) alpha_band = vec2(0.20, 0.65);
+	float opacity_agreement = 1.0 - smoothstep(alpha_band.x, alpha_band.y, abs(history_color.a - current_color.a));
 	float distance_allowance = max(maximum_step, 1.0)
 		+ 0.10 * max(max(previous_cloud_distance, current_cloud_distance), 0.0);
 	float distance_agreement = 1.0 - smoothstep(distance_allowance, distance_allowance * 2.0,
@@ -57,12 +60,14 @@ bool ring_cloud_history_terminal_jitter(bool opaque_point_agrees, float jitter_s
 		&& abs(previous_body - current_body) <= interval + endpoint_tolerance;
 }
 
-// Only unresolved, continuously sampled sky rays receive this allowance.
-// Opaque history validation remains authoritative in the caller.
-bool ring_cloud_history_sky_jitter(bool sky_pair, bool continuous_field,
-		float jitter_strength,float pixel_motion,float camera_translation,float maximum_step) {
-	vec4 controls = vec4(jitter_strength,pixel_motion,camera_translation,maximum_step);
-	return sky_pair && continuous_field && !any(isnan(controls)) && !any(isinf(controls))
-		&& jitter_strength > 0.0 && pixel_motion <= 2.0
+// Applies to sky pairs and to opaque pairs whose opaque endpoint the caller has
+// already validated (stable depth metadata on both frames). Ray-start jitter
+// moves alpha on such pairs independent of screen motion, so motion does not
+// gate it; the continuous-field and camera-translation limits still do.
+bool ring_cloud_history_validated_jitter(bool validated_pair, bool continuous_field,
+		float jitter_strength,float camera_translation,float maximum_step) {
+	vec3 controls = vec3(jitter_strength,camera_translation,maximum_step);
+	return validated_pair && continuous_field && !any(isnan(controls)) && !any(isinf(controls))
+		&& jitter_strength > 0.0
 		&& camera_translation <= max(maximum_step,1.0)*0.1;
 }

@@ -1,0 +1,673 @@
+using System;
+using System.Diagnostics;
+using System.Globalization;
+using Godot;
+using RingworldTechDemo.Terrain.Sites;
+using RingworldTechDemo.UI;
+using RingworldTechDemo.Voxel.Core;
+using RingworldTechDemo.Voxel.LOD;
+using RingworldTechDemo.Voxel.Phase2;
+
+namespace RingworldTechDemo.Poi;
+
+/// <summary>
+/// Emitter relay grid, main-camera layer (docs/emitter-grid-climate-machines-spec.md G2-G4): 600 link ribbons in one
+/// MultiMesh (origin = endpoint A, basis X = B - A, custom data = pulse coordinates) plus a small MultiMesh of head glow
+/// sprites. Links are near-invisible at rest and revealed by the one-way pulse, which is a pure function of the saved
+/// weather clock (<see cref="RingVolumetricCloudLayer.CloudSimulationTimeSeconds"/>). All endpoint transforms are rebuilt
+/// from the floating-origin snapshot on every anchor change, never applied as deltas. Only active on worlds with emitter sites.
+/// </summary>
+public partial class EmitterGridBeamLayer : Node3D
+{
+    public const string BeamShaderPath = "res://materials/ring_emitter_grid_beam.gdshader";
+    public const string HeadShaderPath = "res://materials/ring_emitter_grid_head.gdshader";
+    public const string CoreShaderPath = "res://materials/ring_emitter_grid_beam_core.gdshader";
+    public const int MaxShaderFronts = 24, MaxHeadSprites = 12, RibbonSubSegments = 16;
+    public const float DefaultFadeMeters = 100_000f;
+    /// <summary>The depth-writing core must draw after the halo and the head sprites, or they depth-fight the depth it writes.</summary>
+    public const int HaloRenderPriority = 0, CoreRenderPriority = 1;
+    private const float NoHandoff = 1e12f;
+
+    [Export] public bool Enabled { get => _enabled; set { _enabled = value; UpdateVisibility(); } }
+    [Export] public bool AutoBind { get; set; } = true;
+    /// <summary>Loads user://gameplay_emitter_grid_defaults.tres on ready when it exists (the G3 drawer applies the same file later).</summary>
+    [Export] public bool LoadSavedDefaults { get; set; } = true;
+    [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
+    [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
+    [Export] public NodePath GlobalTerrainPath { get; set; } = new("../GlobalTerrainLod3");
+    [Export] public NodePath WeatherPath { get; set; } = new("../RingVolumetricClouds");
+    [Export] public NodePath FarViewportPath { get; set; } = new("../ScaledFarViewport");
+
+    private bool _enabled = true;
+    private bool _undergroundHidden;
+    private VoxelChunkGridManager? _grid;
+    private DirectionalLight3D? _sun;
+    private RingTerrainGlobalLod? _globalTerrain;
+    private RingVolumetricCloudLayer? _weather;
+    private object? _lastSamplerSeen;
+    private EmitterGridTopology? _topology;
+    private EmitterGridPulseClock? _clock;
+    private GameplayEmitterGridSettings _settings = new();
+    private EmitterGridPulseSettings _pulseSettings = new();
+    private MultiMeshInstance3D? _linkInstances, _headInstances;
+    private ShaderMaterial? _beamMaterial, _headMaterial, _coreMaterial;
+    private RingScaledFarViewport? _farViewport;
+    private EmitterGridFarLayer? _farLayer;
+    private double _farBindRetry;
+    private Vector2 _handoffBand = new(NoHandoff, 2f * NoHandoff);
+    private readonly int[] _headLink = new int[MaxHeadSprites];
+    private readonly double[] _headFraction = new double[MaxHeadSprites];
+    private Vector3D[] _endA = Array.Empty<Vector3D>(), _endB = Array.Empty<Vector3D>();
+    private Transform3D[] _mirror = Array.Empty<Transform3D>();
+    private Transform3D _worldToLayer = Transform3D.Identity;
+    private Transform3D _lastGridGlobal, _lastLayerGlobal;
+    private readonly Vector4[] _fronts = new Vector4[MaxShaderFronts];
+    private readonly Vector3[] _headLocal = new Vector3[MaxHeadSprites];
+    private int _frontCount, _headCount;
+    private double _sessionTime, _time, _frameDt = 1d / 60d, _appliedStreakDt;
+    private float _effectiveMax = 700_000f;
+    private bool _showAllLinks;
+
+    public bool IsBound => _topology != null && _linkInstances != null && _clock != null;
+    public bool Unavailable { get; private set; }
+    public bool UndergroundHold { get; set; }
+    public bool UndergroundHidden => _undergroundHidden;
+    public int RebuildCount { get; private set; }
+    public double LastRebuildMs { get; private set; }
+    public int GeometryRevision { get; private set; }
+    public int LinkCount => _topology?.LinkCount ?? 0;
+    public int RibbonVertexCount { get; private set; }
+    public int LiveFrontCount => _frontCount;
+    public int HeadSpriteCount => _headCount;
+    public EmitterGridTopology? Topology => _topology;
+    public EmitterGridPulseClock? Clock => _clock;
+    public MultiMeshInstance3D? LinkInstances => _linkInstances;
+    public MultiMeshInstance3D? HeadInstances => _headInstances;
+    public ShaderMaterial? BeamMaterial => _beamMaterial;
+    public ShaderMaterial? HeadMaterial => _headMaterial;
+    public ShaderMaterial? CoreMaterial => _coreMaterial;
+    public EmitterGridFarLayer? FarLayer => FarLayerValid ? _farLayer : null;
+    /// <summary>True when the far layer exists, is enabled and is visible (its materials are then driven every frame).</summary>
+    public bool FarLayerActive => FarLayerValid && _settings.FarLayerEnabled && _farLayer!.Visible;
+    /// <summary>Last resolved near-to-far handoff band in metres (the 1e12 sentinel means near only).</summary>
+    public Vector2 HandoffBandMeters => _handoffBand;
+    private bool FarLayerValid => _farLayer != null && GodotObject.IsInstanceValid(_farLayer);
+    public float EffectiveMaxDistanceMeters => _effectiveMax;
+    /// <summary>Time of the last pulse evaluation (seconds on the weather clock, or the session clock when unsynchronised).</summary>
+    public double PulseTimeSeconds => _time;
+    public bool ClockSynchronised => _weather != null && GodotObject.IsInstanceValid(_weather);
+    public GameplayEmitterGridSettings Settings => _settings;
+
+    // Debug, not saved (drawer lands in G3).
+    public bool FreezePulse { get; set; }
+    /// <summary>Visual-only time offset applied on top of the clock; never written back to it.</summary>
+    public double PulseScrubSeconds { get; set; }
+    public bool ShowAllLinks { get => _showAllLinks; set { _showAllLinks = value; SetBeamUniform("show_all", value ? 1f : 0f); } }
+
+    public override void _Ready()
+    {
+        _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
+        _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
+        _globalTerrain = GetNodeOrNull<RingTerrainGlobalLod>(GlobalTerrainPath);
+        _weather = GetNodeOrNull<RingVolumetricCloudLayer>(WeatherPath);
+        _farViewport = GetNodeOrNull<RingScaledFarViewport>(FarViewportPath);
+        if (LoadSavedDefaults)
+        {
+            var defaults = new GameplayEmitterGridDefaults();
+            defaults.Load();
+            if (defaults.HasSavedFile) Configure(defaults.Settings);
+        }
+        UpdateVisibility();
+        if (!AutoBind) SetProcess(false);
+    }
+
+    public override void _ExitTree()
+    {
+        if (_grid != null) _grid.CanonicalFloatingOriginAnchorChanged -= HandleAnchorChanged;
+        if (FarLayerValid) _farLayer!.QueueFree();
+        _farLayer = null;
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_grid == null) return;
+        if (!IsBound)
+        {
+            if (!AutoBind) return;
+            object? sampler = _grid.TerrainSampler;
+            if (sampler == null || ReferenceEquals(sampler, _lastSamplerSeen)) return;
+            _lastSamplerSeen = sampler;
+            if (_grid.TerrainSampler?.EmitterSites is { } registry) Bind(_grid, EmitterGridTopology.Build(registry));
+            else { Unavailable = true; UpdateVisibility(); }
+            return;
+        }
+        if (!_grid.GlobalTransform.IsEqualApprox(_lastGridGlobal) || !GlobalTransform.IsEqualApprox(_lastLayerGlobal))
+            Rebuild(_grid.CaptureLodGeometrySnapshot());
+        Update(delta);
+    }
+
+    /// <summary>Creates the link and head MultiMeshes for the topology and rebuilds the endpoint transforms. False when the assets are missing.</summary>
+    public bool Bind(VoxelChunkGridManager grid, EmitterGridTopology topology)
+    {
+        if (IsBound) return true;
+        Shader? beamShader = GD.Load<Shader>(BeamShaderPath), headShader = GD.Load<Shader>(HeadShaderPath), coreShader = GD.Load<Shader>(CoreShaderPath);
+        if (beamShader == null || headShader == null || coreShader == null) { Unavailable = true; UpdateVisibility(); return false; }
+        _grid = grid;
+        _topology = topology;
+        int count = topology.LinkCount;
+        _endA = new Vector3D[count]; _endB = new Vector3D[count];
+        _mirror = new Transform3D[count];
+        double ringRadius = grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau;
+        _beamMaterial = CreateMaterial(beamShader, ringRadius);
+        _headMaterial = CreateMaterial(headShader, ringRadius);
+        _coreMaterial = CreateMaterial(coreShader, ringRadius);
+        _beamMaterial.RenderPriority = HaloRenderPriority;
+        _headMaterial.RenderPriority = HaloRenderPriority;
+        _coreMaterial.RenderPriority = CoreRenderPriority;
+        _linkInstances = CreateLinkInstances(topology, _beamMaterial);
+        _headInstances = CreateHeadInstances(_headMaterial);
+        ApplySettings();
+        Unavailable = false;
+        grid.CanonicalFloatingOriginAnchorChanged += HandleAnchorChanged;
+        UpdateVisibility();
+        Rebuild(grid.CaptureLodGeometrySnapshot());
+        return true;
+    }
+
+    private static ShaderMaterial CreateMaterial(Shader shader, double ringRadius)
+    {
+        var material = new ShaderMaterial { Shader = shader };
+        RingAtmosphereModel.ConfigureMaterial(material, ringRadius);
+        return material;
+    }
+
+    private MultiMeshInstance3D CreateLinkInstances(EmitterGridTopology topology, Material material)
+    {
+        ArrayMesh mesh = BuildRibbonMesh(out int vertexCount);
+        RibbonVertexCount = vertexCount;
+        var multiMesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = true };
+        multiMesh.Mesh = mesh;
+        multiMesh.InstanceCount = topology.LinkCount;
+        multiMesh.VisibleInstanceCount = topology.LinkCount;
+        for (int i = 0; i < topology.LinkCount; i++)
+        {
+            EmitterLink link = topology[i];
+            multiMesh.SetInstanceCustomData(i, new Color((float)link.P0, (float)link.P1, link.Column, (float)(byte)link.Kind));
+        }
+        return AddInstance("GridLinks", multiMesh, material);
+    }
+
+    private MultiMeshInstance3D CreateHeadInstances(Material material)
+    {
+        var multiMesh = new MultiMesh { TransformFormat = MultiMesh.TransformFormatEnum.Transform3D, UseCustomData = true };
+        multiMesh.Mesh = new QuadMesh { Size = Vector2.One, CustomAabb = BigAabb() };
+        multiMesh.InstanceCount = MaxHeadSprites;
+        multiMesh.VisibleInstanceCount = 0;
+        for (int i = 0; i < MaxHeadSprites; i++) multiMesh.SetInstanceCustomData(i, new Color(1f, 0f, 0f, 0f));
+        return AddInstance("GridHeads", multiMesh, material);
+    }
+
+    private MultiMeshInstance3D AddInstance(string name, MultiMesh multiMesh, Material material)
+    {
+        var instance = new MultiMeshInstance3D
+        {
+            Name = name,
+            Multimesh = multiMesh,
+            MaterialOverride = material,
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+            IgnoreOcclusionCulling = true,
+            GIMode = GeometryInstance3D.GIModeEnum.Disabled
+        };
+        AddChild(instance);
+        RenderingServer.InstanceSetIgnoreCulling(instance.GetInstance(), true);
+        return instance;
+    }
+
+    private static Aabb BigAabb() => new(new Vector3(-1e7f, -1e7f, -1e7f), new Vector3(2e7f, 2e7f, 2e7f));
+
+    /// <summary>
+    /// 16 independent sub-segments of 4 vertices each: UV = (f, side), UV2 = (f_a, f_b) of the enclosing sub-segment, so the
+    /// vertex stage can collapse or near-clip a whole sub-segment without producing partial triangles.
+    /// </summary>
+    public static ArrayMesh BuildRibbonMesh(out int vertexCount)
+    {
+        const int segments = RibbonSubSegments;
+        vertexCount = segments * 4;
+        var vertices = new Vector3[vertexCount];
+        var uv = new Vector2[vertexCount];
+        var uv2 = new Vector2[vertexCount];
+        var indices = new int[segments * 6];
+        for (int s = 0; s < segments; s++)
+        {
+            float fa = s / (float)segments, fb = (s + 1) / (float)segments;
+            for (int corner = 0; corner < 4; corner++)
+            {
+                int v = s * 4 + corner;
+                float f = corner < 2 ? fa : fb, side = (corner & 1) == 0 ? -1f : 1f;
+                vertices[v] = new Vector3(f, side * 0.01f, 0f);
+                uv[v] = new Vector2(f, side);
+                uv2[v] = new Vector2(fa, fb);
+            }
+            int b = s * 4, i = s * 6;
+            indices[i] = b; indices[i + 1] = b + 1; indices[i + 2] = b + 2;
+            indices[i + 3] = b + 1; indices[i + 4] = b + 3; indices[i + 5] = b + 2;
+        }
+        var arrays = new Godot.Collections.Array();
+        arrays.Resize((int)Mesh.ArrayType.Max);
+        arrays[(int)Mesh.ArrayType.Vertex] = vertices;
+        arrays[(int)Mesh.ArrayType.TexUV] = uv;
+        arrays[(int)Mesh.ArrayType.TexUV2] = uv2;
+        arrays[(int)Mesh.ArrayType.Index] = indices;
+        var mesh = new ArrayMesh();
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        mesh.CustomAabb = BigAabb();
+        return mesh;
+    }
+
+    private void HandleAnchorChanged(RingLodGeometrySnapshot previous, RingLodGeometrySnapshot current, RingCanonicalPosition anchor)
+    {
+        _ = previous; _ = anchor;
+        Rebuild(current);
+    }
+
+    /// <summary>Recomputes every link endpoint transform from <paramref name="snapshot"/> (layer-local, absolute, never a delta). Allocation free.</summary>
+    public void Rebuild(in RingLodGeometrySnapshot snapshot)
+    {
+        if (_topology == null || _linkInstances?.Multimesh is not { } links) return;
+        long started = Stopwatch.GetTimestamp();
+        _worldToLayer = IsInsideTree() ? GlobalTransform.AffineInverse() : Transform3D.Identity;
+        _topology.FillWorldEndpoints(snapshot, _endA, _endB);
+        Basis basis = _worldToLayer.Basis;
+        for (int i = 0; i < _mirror.Length; i++)
+        {
+            Vector3D a = _endA[i], b = _endB[i];
+            var local = new Transform3D(new Basis(basis * (b - a).ToVector3(), Vector3.Up, Vector3.Back), _worldToLayer * a.ToVector3());
+            _mirror[i] = local;
+            links.SetInstanceTransform(i, local);
+        }
+        if (_grid != null && _grid.IsInsideTree()) _lastGridGlobal = _grid.GlobalTransform;
+        if (IsInsideTree()) _lastLayerGlobal = GlobalTransform;
+        RebuildCount++;
+        GeometryRevision++;
+        LastRebuildMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+    }
+
+    /// <summary>Layer-local transform last written for the link (CPU mirror).</summary>
+    public Transform3D GetLinkTransform(int link) => link >= 0 && link < _mirror.Length ? _mirror[link] : Transform3D.Identity;
+
+    public Vector3D GetWorldEndpointA(int link) => _endA[link];
+    public Vector3D GetWorldEndpointB(int link) => _endB[link];
+
+    /// <summary>Applies the tuning values (pulse clock, visibility and width uniforms, range, enable).</summary>
+    public void Configure(GameplayEmitterGridSettings settings)
+    {
+        _settings = GameplayEmitterGridDefaults.Sanitize(settings);
+        ApplySettings();
+        Enabled = _settings.GridEnabled;
+    }
+
+    private void ApplySettings()
+    {
+        GameplayEmitterGridSettings s = _settings;
+        double wake = Math.Max(s.PulseWakeSeconds, 0.01), trail = Math.Max(s.PulseTrailSeconds, 0.5);
+        _pulseSettings = new EmitterGridPulseSettings
+        {
+            PeriodSeconds = s.PulsePeriodSeconds,
+            AutoSpeed = s.PulseSpeedMode == 0,
+            ManualSpeedMetersPerSecond = s.PulseSpeedKmPerSecond * 1000d,
+            Direction = s.PulseDirection == 0 ? EmitterPulseDirection.Prograde : EmitterPulseDirection.Retrograde,
+            ColumnStaggerSeconds = s.ColumnStaggerSeconds,
+            TrailSeconds = trail,
+            WakeSeconds = wake,
+            WakeWeight = s.PulseWakeLevel,
+            LeadingEdgeMeters = s.PulseLeadingEdgeKm * 1000d,
+            RelaunchFlareGain = s.RelaunchFlareStrength,
+            // Keep the cut-off beyond the trail even when the wake is short.
+            CutoffWakeMultiples = Math.Max(4d, 6d * trail / wake)
+        };
+        if (_topology == null) return;
+        _clock = new EmitterGridPulseClock(_topology.Registry.Recipe.Seed, _topology.CircumferenceMeters, _pulseSettings);
+        _appliedStreakDt = 0d;
+        if (_beamMaterial != null)
+        {
+            SetBeamUniform("beam_widths", new Vector4(s.CoreWidthMeters, s.HaloWidthMeters, s.MinPixelWidth, s.FarCompensation));
+            SetBeamUniform("halo_amplitude", s.HaloAmplitude);
+            SetBeamUniform("base_emission", s.BaseEmission);
+            SetBeamUniform("show_all", _showAllLinks ? 1f : 0f);
+            SetBeamUniform("core_depth", new Vector2(s.CoreDepthThreshold, s.CoreDepthMinPixels));
+            _beamMaterial.NextPass = s.DepthWriteCore ? _coreMaterial : null;
+            _beamMaterial.SetShaderParameter("world_scale", 1f);
+            _coreMaterial?.SetShaderParameter("world_scale", 1f);
+            ApplyPulseUniforms();
+        }
+        if (_headMaterial != null)
+        {
+            float near = s.HeadSpriteNearKm * 1000f, full = Mathf.Max(s.HeadSpriteFullKm * 1000f, near + 1000f);
+            SetHeadUniform("sprite_min_pixels", s.FrontSpriteMinPixels);
+            SetHeadUniform("head_near_m", near);
+            SetHeadUniform("head_full_m", full);
+            SetHeadUniform("base_emission", s.BaseEmission);
+            _headMaterial.SetShaderParameter("world_scale", 1f);
+        }
+        UpdateFarVisibility();
+    }
+
+    /// <summary>Writes a uniform to the near halo, the near core pass and (when present) the far beam material.</summary>
+    private void SetBeamUniform(StringName name, Variant value)
+    {
+        _beamMaterial?.SetShaderParameter(name, value);
+        _coreMaterial?.SetShaderParameter(name, value);
+        if (FarLayerValid) _farLayer!.BeamMaterial?.SetShaderParameter(name, value);
+    }
+
+    /// <summary>Writes a uniform to the near head material and (when present) the far head material.</summary>
+    private void SetHeadUniform(StringName name, Variant value)
+    {
+        _headMaterial?.SetShaderParameter(name, value);
+        if (FarLayerValid) _farLayer!.HeadMaterial?.SetShaderParameter(name, value);
+    }
+
+    private void ApplyVisibilityUniforms()
+    {
+        var visibility = new Vector4(_settings.NightPeakIntensity, _settings.DayPeakIntensity, _settings.NightResidual, _settings.DayResidual);
+        var day = new Vector2(50_000f, 500_000f);
+        SetBeamUniform("eg_visibility", visibility);
+        SetBeamUniform("eg_day_distance", day);
+        SetHeadUniform("eg_visibility", visibility);
+        SetHeadUniform("eg_day_distance", day);
+    }
+
+    private void ApplyPulseUniforms()
+    {
+        EmitterGridPulseClock clock = _clock!;
+        double v = clock.SpeedMetersPerSecond;
+        SetBeamUniform("eg_circumference", (float)clock.CircumferenceMeters);
+        SetBeamUniform("eg_direction", clock.Settings.Direction == EmitterPulseDirection.Prograde ? 1f : -1f);
+        SetBeamUniform("eg_wake", new Vector2((float)(v * clock.Settings.WakeSeconds), (float)clock.Settings.WakeWeight));
+        ApplyVisibilityUniforms();
+        WriteStreak(_frameDt);
+    }
+
+    private void WriteStreak(double frameDt)
+    {
+        EmitterGridPulseClock clock = _clock!;
+        double v = clock.SpeedMetersPerSecond;
+        SetBeamUniform("eg_pulse_shape", new Vector4((float)clock.Settings.LeadingEdgeMeters, (float)clock.CutoffMeters,
+            (float)(v * frameDt), (float)(v * clock.Settings.TrailSeconds)));
+        _appliedStreakDt = frameDt;
+    }
+
+    /// <summary>Smallest of the requested distance, the global terrain fade end (when fading) and 98% of the camera far plane.</summary>
+    private double CurrentEffectiveMax(Camera3D? camera)
+    {
+        double? fadeEnd = _globalTerrain != null && GodotObject.IsInstanceValid(_globalTerrain) && _globalTerrain.EnableFarDistanceFade
+            ? _globalTerrain.FarFadeEndMeters : null;
+        double? far = camera != null ? camera.Far : null;
+        return EmitterStandInLayer.ComputeEffectiveMaxDistance(_settings.NearLayerMaxKm * 1000d, fadeEnd, far);
+    }
+
+    private double CurrentTime(double delta)
+    {
+        if (_weather != null && GodotObject.IsInstanceValid(_weather)) return _weather.CloudSimulationTimeSeconds;
+        _sessionTime += delta;
+        return _sessionTime;
+    }
+
+    private void Update(double delta)
+    {
+        if (UndergroundHold || !Visible || _clock == null || _beamMaterial == null || _headMaterial == null) return;
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        if (camera == null || _grid == null) return;
+        if (!FreezePulse) _time = CurrentTime(delta) + PulseScrubSeconds;
+        if (delta > 0d) _frameDt = Math.Clamp(_frameDt + (delta - _frameDt) * 0.1, 1d / 240d, 1d / 20d);
+
+        _effectiveMax = (float)CurrentEffectiveMax(camera);
+        float fade = Mathf.Min(DefaultFadeMeters, 0.5f * _effectiveMax);
+        Vector3 cameraPosition = camera.GlobalPosition;
+        Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
+        Vector3 sun = _sun?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+        UpdateFronts(_time);
+        float flare = (float)_clock.FlareEnvelope(_time);
+
+        WriteCommonUniforms(_beamMaterial, camera.Near, fade, cameraPosition, ringCenter, sun);
+        WriteCommonUniforms(_headMaterial, camera.Near, fade, cameraPosition, ringCenter, sun);
+        if (_coreMaterial != null) WriteCommonUniforms(_coreMaterial, camera.Near, fade, cameraPosition, ringCenter, sun);
+
+        if (_farLayer == null && _settings.FarLayerEnabled && _farViewport != null && GodotObject.IsInstanceValid(_farViewport) && _farViewport.HasScaledWorld
+            && (_farBindRetry -= delta) <= 0d)
+        {
+            _farBindRetry = 0.5d;
+            BindFarLayer(_farViewport.ScaledPoint, _farViewport.CoordinateScale, _farViewport.AddScaledWorldChild);
+        }
+
+        Vector2 band = ResolveCurrentHandoffBand();
+        _handoffBand = band;
+        _beamMaterial.SetShaderParameter("eg_handoff", band);
+        _coreMaterial?.SetShaderParameter("eg_handoff", band);
+        _headMaterial.SetShaderParameter("eg_handoff", band);
+
+        SetBeamUniform("eg_front_count", _frontCount);
+        SetBeamUniform("eg_fronts", _fronts);
+        SetBeamUniform("eg_flare", flare);
+        if (Math.Abs(_frameDt - _appliedStreakDt) > 0.05 * _appliedStreakDt) WriteStreak(_frameDt);
+        WriteHeads();
+        if (FarLayerActive) WriteFarUniforms(fade, band, flare);
+    }
+
+    private Vector2 ResolveCurrentHandoffBand()
+    {
+        bool known = _farViewport != null && GodotObject.IsInstanceValid(_farViewport);
+        return ResolveHandoffBand(FarLayerActive, _settings.FarHandoffFollowsClouds, known, known && _farViewport!.NearCloudOwnershipEnabled,
+            known ? _farViewport!.FarCloudClipmapHandoffStartMeters : 0d, known ? _farViewport!.LocalCloudRadiusMeters : 0d,
+            _settings.FarHandoffStartKm, _settings.FarHandoffEndKm);
+    }
+
+    /// <summary>
+    /// Metres band over which a beam seen against the far backdrop hands off from the near to the far layer. The far layer
+    /// inactive keeps the sentinel (near only); following the clouds uses the cloud handoff, or (0, 1) when the near clouds
+    /// are suspended; otherwise the manual km values.
+    /// </summary>
+    public static Vector2 ResolveHandoffBand(bool farLayerActive, bool followClouds, bool cloudOwnershipKnown, bool nearCloudOwnership,
+        double cloudStartMeters, double cloudEndMeters, double manualStartKm, double manualEndKm)
+    {
+        if (!farLayerActive) return new Vector2(NoHandoff, 2f * NoHandoff);
+        if (followClouds && cloudOwnershipKnown)
+            return nearCloudOwnership ? new Vector2((float)cloudStartMeters, (float)Math.Max(cloudEndMeters, cloudStartMeters + 1d)) : new Vector2(0f, 1f);
+        return new Vector2((float)(manualStartKm * 1000d), (float)Math.Max(manualEndKm * 1000d, manualStartKm * 1000d + 1000d));
+    }
+
+    private static float Smoothstep(float edge0, float edge1, float x)
+    {
+        if (edge1 == edge0) return x < edge0 ? 0f : 1f; // GLSL leaves this undefined; the shaders never hit it
+        float t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    private static float NearFade(float d, float maxDistance, float fade) => 1f - Smoothstep(Math.Max(maxDistance - fade, 0f), maxDistance, d);
+    private static float BandWeight(float d, Vector2 band) => 1f - Smoothstep(band.X, Math.Max(band.Y, band.X + 1f), d);
+
+    /// <summary>CPU mirror of the near layer weight in ring_emitter_grid_layers.gdshaderinc (<paramref name="backdrop"/>: no opaque main-camera surface behind the fragment).</summary>
+    public static float NearLayerWeight(float d, bool backdrop, float maxDistance, float fade, Vector2 band)
+    {
+        float nearFade = NearFade(d, maxDistance, fade);
+        return backdrop ? Math.Min(nearFade, BandWeight(d, band)) : nearFade;
+    }
+
+    /// <summary>CPU mirror of the far layer weight in ring_emitter_grid_layers.gdshaderinc.</summary>
+    public static float FarLayerWeight(float d, float maxDistance, float fade, Vector2 band) =>
+        1f - Math.Min(NearFade(d, maxDistance, fade), BandWeight(d, band));
+
+    /// <summary>
+    /// Creates the far layer for the bound topology and attaches it through <paramref name="attach"/> (normally
+    /// <see cref="RingScaledFarViewport.AddScaledWorldChild"/>). False when unbound, the assets are missing or the attach fails.
+    /// </summary>
+    public bool BindFarLayer(Func<double, double, double, Vector3> scaledPoint, float coordinateScale, Func<Node3D, bool> attach)
+    {
+        if (FarLayerValid) return true;
+        if (_topology == null || _grid == null) return false;
+        var layer = new EmitterGridFarLayer { Name = "EmitterGridFar" };
+        if (!layer.Build(_topology, scaledPoint, coordinateScale, _topology.CircumferenceMeters / Math.Tau) || !attach(layer))
+        {
+            layer.Free();
+            return false;
+        }
+        _farLayer = layer;
+        if (_clock != null) ApplySettings();
+        else UpdateFarVisibility();
+        return true;
+    }
+
+    private void UpdateFarVisibility()
+    {
+        if (FarLayerValid) _farLayer!.Visible = Visible && _settings.FarLayerEnabled;
+    }
+
+    private void WriteFarUniforms(float nearFade, Vector2 band, float flare)
+    {
+        EmitterGridFarLayer far = _farLayer!;
+        Camera3D? camera = far.GetViewport()?.GetCamera3D();
+        float nearClip = camera?.Near ?? 0.1f;
+        Vector3 cameraPosition = camera?.GlobalPosition ?? Vector3.Zero;
+        Vector3 sunWorld = _sun?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+        Vector3 sun = _grid != null ? (_grid.GlobalBasis.Orthonormalized().Inverse() * sunWorld).Normalized() : sunWorld;
+        WriteFarCommon(far.BeamMaterial, nearFade, nearClip, cameraPosition, sun, band);
+        WriteFarCommon(far.HeadMaterial, nearFade, nearClip, cameraPosition, sun, band);
+        // The far beam material already received the fronts and flare through SetBeamUniform; the head sprites need them too.
+        if (far.HeadMaterial is { } head)
+        {
+            head.SetShaderParameter("eg_front_count", _frontCount);
+            head.SetShaderParameter("eg_fronts", _fronts);
+            head.SetShaderParameter("eg_flare", flare);
+        }
+    }
+
+    private void WriteFarCommon(ShaderMaterial? material, float nearFade, float nearClip, Vector3 cameraPosition, Vector3 sun, Vector2 band)
+    {
+        if (material == null) return;
+        material.SetShaderParameter("max_distance", _effectiveMax);
+        material.SetShaderParameter("fade_meters", nearFade);
+        material.SetShaderParameter("near_clip", nearClip);
+        material.SetShaderParameter("camera_world_position", cameraPosition);
+        material.SetShaderParameter("ring_center", Vector3.Zero);
+        material.SetShaderParameter("sun_direction", sun);
+        material.SetShaderParameter("eg_handoff", band);
+    }
+
+    private void WriteCommonUniforms(ShaderMaterial material, float near, float fade, Vector3 cameraPosition, Vector3 ringCenter, Vector3 sun)
+    {
+        material.SetShaderParameter("max_distance", _effectiveMax);
+        material.SetShaderParameter("fade_meters", fade);
+        material.SetShaderParameter("near_clip", near);
+        material.SetShaderParameter("camera_world_position", cameraPosition);
+        material.SetShaderParameter("ring_center", ringCenter);
+        material.SetShaderParameter("sun_direction", sun);
+    }
+
+    /// <summary>Evaluates the live fronts of every chain at time <paramref name="t"/> into the shader array and the head sprite positions.</summary>
+    public void UpdateFronts(double t)
+    {
+        if (_clock == null || _topology == null) return;
+        Span<EmitterPulseFront> buffer = stackalloc EmitterPulseFront[32];
+        int total = 0, heads = 0;
+        double c = _clock.CircumferenceMeters;
+        for (int column = 0; column < _topology.Columns && total < MaxShaderFronts; column++)
+        {
+            int n = _clock.GetFronts(t, column, buffer);
+            for (int i = 0; i < n && total < MaxShaderFronts; i++)
+            {
+                double head = buffer[i].HeadQ;
+                _fronts[total++] = new Vector4((float)head, column, 0f, 0f);
+                if (head >= 0d && head <= c && heads < MaxHeadSprites && TryHeadLocation(column, head, out int link, out double fraction))
+                {
+                    Vector3D world = _endA[link] + (_endB[link] - _endA[link]) * fraction;
+                    _headLocal[heads] = _worldToLayer * world.ToVector3();
+                    _headLink[heads] = link;
+                    _headFraction[heads] = fraction;
+                    heads++;
+                }
+            }
+        }
+        for (int i = total; i < MaxShaderFronts; i++) _fronts[i] = Vector4.Zero;
+        _frontCount = total;
+        _headCount = heads;
+    }
+
+    private void WriteHeads()
+    {
+        if (_headInstances?.Multimesh is not { } heads) return;
+        for (int i = 0; i < _headCount; i++) heads.SetInstanceTransform(i, new Transform3D(Basis.Identity, _headLocal[i]));
+        if (heads.VisibleInstanceCount != _headCount) heads.VisibleInstanceCount = _headCount;
+        SyncFarHeads();
+    }
+
+    /// <summary>Writes the heads found by the last <see cref="UpdateFronts"/> to the far layer sprites (no-op without an active far layer).</summary>
+    public void SyncFarHeads()
+    {
+        if (FarLayerActive) _farLayer!.WriteHeads(_headLink, _headFraction, _headCount);
+    }
+
+    /// <summary>Layer-local position of a head at direction-adjusted coordinate <paramref name="q"/> on <paramref name="column"/>.</summary>
+    public bool TryHeadLocal(int column, double q, out Vector3 local)
+    {
+        local = default;
+        if (!TryHeadLocation(column, q, out int index, out double f)) return false;
+        Vector3D world = _endA[index] + (_endB[index] - _endA[index]) * f;
+        local = _worldToLayer * world.ToVector3();
+        return true;
+    }
+
+    /// <summary>Link index and chord fraction of the head at direction-adjusted coordinate <paramref name="q"/> on <paramref name="column"/>.</summary>
+    public bool TryHeadLocation(int column, double q, out int link, out double fraction)
+    {
+        link = 0; fraction = 0d;
+        if (_topology == null || _clock == null) return false;
+        double c = _topology.CircumferenceMeters;
+        double p = _clock.Settings.Direction == EmitterPulseDirection.Prograde ? q : c - q;
+        int first = _topology.ChainFirstLink(column), lo = 0, hi = _topology.LinksPerChain - 1;
+        while (lo < hi)
+        {
+            int mid = (lo + hi + 1) >> 1;
+            if (_topology[first + mid].P0 <= p) lo = mid; else hi = mid - 1;
+        }
+        EmitterLink found = _topology[first + lo];
+        double span = found.P1 - found.P0;
+        fraction = span > 0d ? Math.Clamp((p - found.P0) / span, 0d, 1d) : 0d;
+        link = first + lo;
+        return true;
+    }
+
+    public void SetUndergroundHidden(bool hidden)
+    {
+        if (_undergroundHidden == hidden) return;
+        _undergroundHidden = hidden;
+        UpdateVisibility();
+    }
+
+    private void UpdateVisibility()
+    {
+        Visible = _enabled && IsBound && !_undergroundHidden;
+        UpdateFarVisibility();
+    }
+
+    /// <summary>Debug "Fire pulse now": a visual-only offset so the next launch happens now.</summary>
+    public void FirePulseNow()
+    {
+        if (_clock == null) return;
+        double t = CurrentTime(0d);
+        PulseScrubSeconds = _clock.LaunchTime(_clock.LatestLaunch(t) + 1) - t;
+    }
+
+    public string DescribeStatus()
+    {
+        if (!IsBound) return Unavailable ? "Emitter grid unavailable (needs the v5 sites world)." : "Emitter grid waiting for the terrain sampler.";
+        EmitterGridPulseClock clock = _clock!;
+        string farState = FarLayerActive ? "active" : FarLayerValid || !_settings.FarLayerEnabled ? "off" : "waiting";
+        string handoff = _handoffBand.X >= NoHandoff ? "near only"
+            : string.Format(CultureInfo.InvariantCulture, "{0:0}-{1:0} km", _handoffBand.X / 1000f, _handoffBand.Y / 1000f);
+        return string.Format(CultureInfo.InvariantCulture,
+            "Grid {0} links id {1:X8}, clock {2}, {3:0.0} km/s {4}, launch {5}, fronts {6}, lit links {7}, rebuilds {8} ({9:0.00} ms), core depth {10}, far layer {11}, handoff {12}",
+            LinkCount, _topology!.Identity & 0xFFFFFFFFUL, ClockSynchronised ? "weather" : "unsynchronised", clock.SpeedMetersPerSecond / 1000d,
+            clock.Settings.Direction, clock.LatestLaunch(_time), _frontCount, clock.CountLitLinks(_topology, _time), RebuildCount, LastRebuildMs,
+            _settings.DepthWriteCore ? "on" : "off", farState, handoff);
+    }
+}
