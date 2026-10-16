@@ -171,3 +171,11 @@ Run these before and after every step.
 - Run headless tests with `<engine>_console.exe --headless --path . --script res://tools/<name>.gd`.
 - A Godot run can delete `addons/terrain_3d/bin/~libterrain.ringworld.windows.debug.x86_64.dll`. Restore it with `git show HEAD:<path> > <path>`.
 - Agents must never run `git stash`, `reset`, `checkout` or `apply -R` on the working tree. The user commits.
+
+## USER DECISIONS (2026-10-15) — binding
+
+- Direction: **B (gen-17 generation on the smooth voxel backend), gated by the spike benchmark**. If the spike fails its gate, revisit A; the spike is shared work.
+- Near-surface look (Q1): judge after the spike, from side-by-side captures of gen-17 on the voxel mesh vs Terrain3D.
+- Existing gen-17 slots (Q2): stay cave-less; only new worlds get caves.
+- Ocean basins (Q3): designed caves may exist under deep seabeds behind a sealed rock roof.
+- Milestone 2 (Q4): stays paused until the spike result; M2-4 onwards will be re-planned for B.

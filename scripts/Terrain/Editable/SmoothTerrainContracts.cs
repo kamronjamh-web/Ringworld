@@ -114,12 +114,13 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
     private readonly int _lowerHullTopVertical;
     private readonly int _structuralWallTopVertical;
     private readonly bool _enableDesignedCaves;
+    private readonly bool _useRuntimeLatticeCache;
     private readonly ulong _revision;
     private readonly ulong _preDesignedCaveRevision;
     private readonly ulong _legacyRevision;
     private readonly ulong _preCavityLegacyRevision;
     private const int StructuralSidewallThickness = SmoothTerrainChunkSnapshot.Cells;
-    public RingTerrainSmoothBaseline(RingTerrainSampler sampler,int structuralBottomVertical=int.MinValue,int terrainBottomVertical=int.MinValue,int protectedRoofThickness=0,int lowerHullTopVertical=int.MinValue,int structuralWallTopVertical=int.MinValue,bool enableDesignedCaves=false)
+    public RingTerrainSmoothBaseline(RingTerrainSampler sampler,int structuralBottomVertical=int.MinValue,int terrainBottomVertical=int.MinValue,int protectedRoofThickness=0,int lowerHullTopVertical=int.MinValue,int structuralWallTopVertical=int.MinValue,bool enableDesignedCaves=false,bool useRuntimeLatticeCache=true)
     {
         _sampler=sampler??throw new ArgumentNullException(nameof(sampler));
         _structuralBottomVertical=structuralBottomVertical;
@@ -127,6 +128,7 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
         _protectedRoofThickness=protectedRoofThickness;
         _lowerHullTopVertical=lowerHullTopVertical;
         _enableDesignedCaves=enableDesignedCaves;
+        _useRuntimeLatticeCache=useRuntimeLatticeCache&&sampler.UsesRuntimeSurfaceGeneration;
         _structuralWallTopVertical=structuralWallTopVertical!=int.MinValue ? structuralWallTopVertical : terrainBottomVertical!=int.MinValue ? checked(terrainBottomVertical+protectedRoofThickness) : lowerHullTopVertical;
         // The structural boundary changes the signed field topology, so it
         // must be part of the snapshot identity rather than an incidental
@@ -168,7 +170,8 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
         _protectedRoofThickness,
         _lowerHullTopVertical,
         _structuralWallTopVertical,
-        _enableDesignedCaves);
+        _enableDesignedCaves,
+        _useRuntimeLatticeCache);
     internal RingTerrainSampler Sampler => _sampler;
     internal void DisposeIndependentWorkerCopy() => _sampler.Dispose();
     public SmoothTerrainSample Sample(long around, int vertical, int across)
@@ -176,11 +179,14 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
         long canonicalAround = RingCoordMath.WrapAround(around, AroundLength);
         if (across < -StructuralSidewallThickness || across > AcrossWidth + StructuralSidewallThickness - 1)
             return new SmoothTerrainSample(1.0f, (int)SmoothTerrainMaterial.Rock, Revision);
-        float surface = _sampler.GetSmoothSurfaceHeight(canonicalAround, across);
+        float surface = GetCanonicalSmoothSurfaceHeight(canonicalAround, across);
         return SampleWithKnownSurface(canonicalAround, vertical, across, surface);
     }
+    private float GetCanonicalSmoothSurfaceHeight(long canonicalAround, int across) =>
+        _useRuntimeLatticeCache ? _sampler.GetPresentationSurfaceHeightLatticeCached(canonicalAround, across) : _sampler.GetSmoothSurfaceHeight(canonicalAround, across);
+    public bool UsesRuntimeLatticeCache => _useRuntimeLatticeCache;
     public float GetSmoothSurfaceHeight(long around, int across) =>
-        _sampler.GetSmoothSurfaceHeight(RingCoordMath.WrapAround(around, AroundLength), across);
+        GetCanonicalSmoothSurfaceHeight(RingCoordMath.WrapAround(around, AroundLength), across);
     public CaveTopologyDensityRegion? CaptureDesignedCaveRegion(
         long around,
         long vertical,
@@ -356,7 +362,7 @@ public sealed class RingTerrainSmoothBaseline : ISmoothTerrainBaseline
                 for (int y = 0; y < centralSamples; y++)
                 {
                     int vertical = checked(minimumVertical + y * spacing);
-                    float density = vertical - (surface + 0.5f);
+                    float density = vertical - (surface + _sampler.SurfaceHeightOffset);
                     if (_terrainBottomVertical != int.MinValue)
                         density = Math.Max(density, _terrainBottomVertical - vertical - 0.5f);
                     if (_structuralBottomVertical != int.MinValue && _lowerHullTopVertical != int.MinValue)

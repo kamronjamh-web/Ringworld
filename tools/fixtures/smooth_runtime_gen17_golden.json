@@ -1,0 +1,451 @@
+{
+  "Format": "smooth_runtime_gen17_v1",
+  "Hash": "CD0273AF4AF630D9",
+  "Revision": "43C9BD9C130B2502",
+  "Cases": [
+    {
+      "Name": "main_pad_center",
+      "Around": 798858,
+      "Vertical": 0,
+      "Across": 4968,
+      "MeshHash": "FE86415A02319151",
+      "DensityHash": "9828929B1BBCD5EF",
+      "MaterialHash": "805F7A13CA85804F",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1051721728
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 40000,
+          "Bits": -1063256064
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "main_pad_edge",
+      "Around": 798889,
+      "Vertical": 0,
+      "Across": 4968,
+      "MeshHash": "FE86415A02319151",
+      "DensityHash": "9828929B1BBCD5EF",
+      "MaterialHash": "805F7A13CA85804F",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1051721728
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 40000,
+          "Bits": -1063256064
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "main_skirt",
+      "Around": 798858,
+      "Vertical": 0,
+      "Across": 5006,
+      "MeshHash": "C728212E73E7F30A",
+      "DensityHash": "D7E59F8310B3ABA9",
+      "MaterialHash": "11665DD43F1D27FF",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1049766901
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 40000,
+          "Bits": -1059231762
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "land_pad",
+      "Around": 3627,
+      "Vertical": 5,
+      "Across": 7513,
+      "MeshHash": "F077B1116F199151",
+      "DensityHash": "5D8F4E2536DCD5EF",
+      "MaterialHash": "CFE27C5629690D4F",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1044905984
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": -1082130432
+        },
+        {
+          "Index": 25326,
+          "Bits": -1063256064
+        },
+        {
+          "Index": 40000,
+          "Bits": -1049624576
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "land_pad_edge",
+      "Around": 3638,
+      "Vertical": 5,
+      "Across": 7513,
+      "MeshHash": "F077B1116F199151",
+      "DensityHash": "5D8F4E2536DCD5EF",
+      "MaterialHash": "CFE27C5629690D4F",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1044905984
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": -1082130432
+        },
+        {
+          "Index": 25326,
+          "Bits": -1063256064
+        },
+        {
+          "Index": 40000,
+          "Bits": -1049624576
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "island_pad",
+      "Around": 3642,
+      "Vertical": 0,
+      "Across": 828,
+      "MeshHash": "4D80FC069E819151",
+      "DensityHash": "AF81A1EAF964D5EF",
+      "MaterialHash": "B3B611FBA81C67C5",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1043333120
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": -1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": -1056964608
+        },
+        {
+          "Index": 40000,
+          "Bits": -1047527424
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "island_coast",
+      "Around": 3642,
+      "Vertical": 0,
+      "Across": 897,
+      "MeshHash": "4A4BD10D4F565E0B",
+      "DensityHash": "1787A70FB3220342",
+      "MaterialHash": "BD8759DD57E31384",
+      "Vertices": 957,
+      "Triangles": 1792,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1070867403
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 40000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "mountain_cut_face",
+      "Around": 3671,
+      "Vertical": 29,
+      "Across": 9179,
+      "MeshHash": "5F9839016CAF39C4",
+      "DensityHash": "0AF587490DDFCF0F",
+      "MaterialHash": "5C24257DDF44B600",
+      "Vertices": 1886,
+      "Triangles": 3595,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1054867456
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": -1066388224
+        },
+        {
+          "Index": 40000,
+          "Bits": -1047328768
+        },
+        {
+          "Index": 50652,
+          "Bits": -1051791104
+        }
+      ]
+    },
+    {
+      "Name": "ring_seam_left",
+      "Around": 981747,
+      "Vertical": -9,
+      "Across": 4968,
+      "MeshHash": "F6318795B3C69EB0",
+      "DensityHash": "A722988EAF046C4F",
+      "MaterialHash": "B2FB9B662E81AE61",
+      "Vertices": 1126,
+      "Triangles": 2120,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1042680496
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": -1061340032
+        },
+        {
+          "Index": 25326,
+          "Bits": -1054738688
+        },
+        {
+          "Index": 40000,
+          "Bits": -1046139840
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "ring_seam_right",
+      "Around": 0,
+      "Vertical": -9,
+      "Across": 4968,
+      "MeshHash": "0F517BCBA3955A88",
+      "DensityHash": "4E3C07053DA5B8DF",
+      "MaterialHash": "DD141D3F05082D0B",
+      "Vertices": 1129,
+      "Triangles": 2126,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1042670208
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": -1061172096
+        },
+        {
+          "Index": 25326,
+          "Bits": -1054677312
+        },
+        {
+          "Index": 40000,
+          "Bits": -1046134480
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "across_chunk_seam",
+      "Around": 3629,
+      "Vertical": 5,
+      "Across": 7514,
+      "MeshHash": "F077B1116F199151",
+      "DensityHash": "5D8F4E2536DCD5EF",
+      "MaterialHash": "CFE27C5629690D4F",
+      "Vertices": 1089,
+      "Triangles": 2048,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1044905984
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": -1082130432
+        },
+        {
+          "Index": 25326,
+          "Bits": -1063256064
+        },
+        {
+          "Index": 40000,
+          "Bits": -1049624576
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    },
+    {
+      "Name": "generic_land",
+      "Around": 156250,
+      "Vertical": 6,
+      "Across": 4937,
+      "MeshHash": "CC33ED8373F7D432",
+      "DensityHash": "6C21627CAE58BC1F",
+      "MaterialHash": "ECC88ABA1462B47F",
+      "Vertices": 1167,
+      "Triangles": 2200,
+      "Samples": [
+        {
+          "Index": 0,
+          "Bits": -1057566112
+        },
+        {
+          "Index": 1234,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 20000,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 25326,
+          "Bits": 1065353216
+        },
+        {
+          "Index": 40000,
+          "Bits": -1080273536
+        },
+        {
+          "Index": 50652,
+          "Bits": 1065353216
+        }
+      ]
+    }
+  ]
+}

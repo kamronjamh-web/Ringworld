@@ -2452,7 +2452,7 @@ public partial class SmoothTerrainGrid : Node3D, ICaveLodProfileTarget
 		RingLodSurfaceEditSnapshot edits=CaptureLodSurfaceEditSnapshot();
 		double surface=edits.TryGetEditedSurfaceHeight(canonicalAround,canonicalAcross,out int edited)
 			? edited+.5
-			: _baseline.GetSmoothSurfaceHeight(canonicalAround,canonicalAcross)+.5;
+			: _baseline.GetSmoothSurfaceHeight(canonicalAround,canonicalAcross)+_sourceSampler.SurfaceHeightOffset;
 		return (int)Math.Floor(surface/SmoothTerrainChunkSnapshot.Cells);
 	}
 	private void GetColumnSurfaceChunkRange(long aroundChunk,int acrossChunk,out int minimum,out int maximum)

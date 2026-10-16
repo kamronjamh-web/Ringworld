@@ -116,7 +116,15 @@ func _selected_terrain_backend() -> String:
 	return "smooth_terrain_v1"
 
 
+func _smooth_runtime_generation_spike() -> bool:
+	# Development-only (voxel/cave direction spike B1): a runtime-recipe world on the smooth voxel backend, caves off.
+	# Not in the UI and never persisted; the saved backend id stays surface_runtime_generation_v1.
+	return "--smooth-runtime-generation-spike" in OS.get_cmdline_user_args()
+
+
 func _surface_backend_selected_for_certified(is_certified: bool) -> bool:
+	if _smooth_runtime_generation_spike() and _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND:
+		return false
 	return is_certified and not _legacy_backend_forced() and _selected_terrain_backend() in ["terrain3d_surface_v1", RUNTIME_SURFACE_BACKEND]
 
 
@@ -1486,7 +1494,7 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 		grid.set("SeamGapDebugUpdateIntervalSeconds", 0.1)
 	_configure_terrain_lod_widths(game, width_m)
 
-	var runtime_terrain_settings := _build_runtime_terrain_settings(grid, min_terrain_y, max_build_y, bedrock_material_y, use_surface_terrain)
+	var runtime_terrain_settings := _build_runtime_terrain_settings(grid, min_terrain_y, max_build_y, bedrock_material_y, use_surface_terrain or (use_runtime_surface_generation and _smooth_runtime_generation_spike()))
 	if runtime_terrain_settings != null:
 		if use_runtime_surface_generation:
 			runtime_terrain_settings.set("BedrockY", -8000)
