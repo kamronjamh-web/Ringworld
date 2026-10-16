@@ -215,15 +215,24 @@ var blit_screen_images : Array[RID] = []
 # deliberately separate from the callback/readback sampling fallback below.
 const GPU_CLOUD_SHADOW_CASCADES := 2
 const GPU_CLOUD_SHADOW_PARAM_BYTES := 96
+const GPU_CLOUD_SHADOW_MAX_SLICES := 16
 var cloud_shadow_shader : RID = RID()
 var cloud_shadow_pipeline : RID = RID()
 var cloud_shadow_param_buffers : Array[RID] = [RID(), RID()]
-var cloud_shadow_textures : Array[RID] = [RID(), RID()]
+# Indices 0/1 are the published (front) cascade textures. Indices 2/3
+# (cascade + GPU_CLOUD_SHADOW_CASCADES) are staging back buffers that exist only
+# for sliced near-map refreshes; see dispatch_gpu_cloud_shadows.
+var cloud_shadow_textures : Array[RID] = [RID(), RID(), RID(), RID()]
 var cloud_shadow_texture_wrappers : Array[Texture2DRD] = [null, null]
 # A wrapper becomes visible to main-thread receivers only after the callback
 # that wrote its first compute result has ended.
 var cloud_shadow_published_texture_wrappers : Array[Texture2DRD] = [null, null]
-var cloud_shadow_uniform_sets : Array[RID] = [RID(), RID()]
+var cloud_shadow_uniform_sets : Array[RID] = [RID(), RID(), RID(), RID()]
+# Slices of the in-flight refresh already written to the staging buffer, and the
+# configuration snapshot every slice of that refresh uses, so one refresh always
+# maps one consistent world window even if the bridge reconfigures meanwhile.
+var cloud_shadow_slice_progress : Array[int] = [0, 0]
+var cloud_shadow_slice_configs : Array[Dictionary] = [{}, {}]
 var cloud_shadow_resolutions : Array[Vector2i] = [Vector2i.ZERO, Vector2i.ZERO]
 var cloud_shadow_published_resolutions : Array[Vector2i] = [Vector2i.ZERO, Vector2i.ZERO]
 var cloud_shadow_configs : Array[Dictionary] = [{}, {}]
@@ -507,7 +516,7 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 		canonical_center: Vector2, ring_radius: float, radius: float,
 				sun_direction: Vector3, floor: float, ceiling: float,
 				vertical_samples: int, extinction: float,
-				reset_history: bool = false) -> bool:
+				reset_history: bool = false, slice_count: int = 1) -> bool:
 	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
 		cloud_shadow_last_error = "Invalid cloud shadow cascade index."
 		return false
@@ -532,6 +541,8 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 				"vertical_samples": vertical_samples,
 				"extinction": maxf(extinction, 0.0),
 		"reset_history": reset_history,
+		# 0/1 = legacy single dispatch; N > 1 spreads one refresh over N frames.
+		"slice_count": clampi(slice_count, 1, GPU_CLOUD_SHADOW_MAX_SLICES),
 	}
 	if reset_history:
 		cloud_shadow_reset_history[cascade] = true
@@ -589,6 +600,8 @@ func get_gpu_cloud_shadow_status() -> Dictionary:
 		"near_reset_history": cloud_shadow_reset_history[0],
 		"far_reset_history": cloud_shadow_reset_history[1],
 		"generation_enabled": cloud_shadow_generation_enabled,
+		"near_slice_progress": cloud_shadow_slice_progress[0],
+		"far_slice_progress": cloud_shadow_slice_progress[1],
 		"near_pending": cloud_shadow_pending[0],
 		"far_pending": cloud_shadow_pending[1],
 		"retired_cascade_generations": retired_cloud_shadow_cascades.size(),
@@ -596,18 +609,26 @@ func get_gpu_cloud_shadow_status() -> Dictionary:
 	}
 
 func retire_gpu_cloud_shadow_cascade(cascade: int):
+	var stage := cascade + GPU_CLOUD_SHADOW_CASCADES
+	cloud_shadow_slice_progress[cascade] = 0
+	cloud_shadow_slice_configs[cascade] = {}
 	if not cloud_shadow_uniform_sets[cascade].is_valid() \
 			and not cloud_shadow_param_buffers[cascade].is_valid() \
-			and not cloud_shadow_textures[cascade].is_valid():
+			and not cloud_shadow_textures[cascade].is_valid() \
+			and not cloud_shadow_textures[stage].is_valid():
 		return
 	retired_cloud_shadow_cascades.append({
 		"release_after": render_callback_serial + max(2, rd.get_frame_delay() + 2),
 		"uniform_set": cloud_shadow_uniform_sets[cascade],
+		"stage_uniform_set": cloud_shadow_uniform_sets[stage],
 		"param_buffer": cloud_shadow_param_buffers[cascade],
 		"texture": cloud_shadow_textures[cascade],
+		"stage_texture": cloud_shadow_textures[stage],
 		# Keep the Godot wrapper alive with the RID until the old GPU work is done.
 		"wrapper": cloud_shadow_texture_wrappers[cascade],
 	})
+	cloud_shadow_uniform_sets[stage] = RID()
+	cloud_shadow_textures[stage] = RID()
 
 func retire_completed_gpu_cloud_shadow_cascades(force: bool = false):
 	var remaining : Array[Dictionary] = []
@@ -615,7 +636,7 @@ func retire_completed_gpu_cloud_shadow_cascades(force: bool = false):
 		if not force and render_callback_serial < retired.release_after:
 			remaining.append(retired)
 			continue
-		for key in ["uniform_set", "param_buffer", "texture"]:
+		for key in ["uniform_set", "stage_uniform_set", "param_buffer", "texture", "stage_texture"]:
 			var rid = retired[key]
 			if rid is RID and rid.is_valid(): rd.free_rid(rid)
 	retired_cloud_shadow_cascades = remaining
@@ -629,7 +650,10 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 	texture_format.format = RenderingDevice.DATA_FORMAT_R16G16_SFLOAT
 	texture_format.width = resolution.x
 	texture_format.height = resolution.y
-	texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+	# CAN_COPY_TO receives the completed staging buffer of a sliced refresh;
+	# CAN_COPY_FROM allows GPU readback (used by the slicing equivalence test).
+	texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 	var replacement_texture := rd.texture_create(texture_format, RDTextureView.new())
 	var replacement_param_buffer := rd.uniform_buffer_create(GPU_CLOUD_SHADOW_PARAM_BYTES)
 	if not replacement_texture.is_valid() or not replacement_param_buffer.is_valid():
@@ -637,37 +661,7 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 		if replacement_param_buffer.is_valid(): rd.free_rid(replacement_param_buffer)
 		cloud_shadow_last_error = "Unable to create cloud shadow texture or parameter buffer."
 		return false
-	var uniforms: Array[RDUniform] = []
-	var output_uniform := RDUniform.new()
-	output_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
-	output_uniform.binding = 0
-	output_uniform.add_id(replacement_texture)
-	uniforms.append(output_uniform)
-	for binding in range(1, 5):
-		var noise_uniform := RDUniform.new()
-		noise_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-		noise_uniform.binding = binding
-		noise_uniform.add_id(linear_sampler)
-		var texture: RID = RenderingServer.texture_get_rd_texture([extra_large_noise_patterns, large_scale_noise, medium_scale_noise, small_scale_noise][binding - 1].get_rid())
-		noise_uniform.add_id(texture)
-		uniforms.append(noise_uniform)
-	var gradient_uniform := RDUniform.new()
-	gradient_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
-	gradient_uniform.binding = 5
-	gradient_uniform.add_id(linear_sampler_no_repeat)
-	gradient_uniform.add_id(RenderingServer.texture_get_rd_texture(height_gradient.get_rid()))
-	uniforms.append(gradient_uniform)
-	var general_uniform := RDUniform.new()
-	general_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
-	general_uniform.binding = 6
-	general_uniform.add_id(general_data_buffer)
-	uniforms.append(general_uniform)
-	var parameters_uniform := RDUniform.new()
-	parameters_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
-	parameters_uniform.binding = 7
-	parameters_uniform.add_id(replacement_param_buffer)
-	uniforms.append(parameters_uniform)
-	var replacement_uniform_set := rd.uniform_set_create(uniforms, cloud_shadow_shader, 0)
+	var replacement_uniform_set := _build_cloud_shadow_uniform_set(replacement_texture, replacement_param_buffer)
 	if not replacement_uniform_set.is_valid():
 		rd.free_rid(replacement_param_buffer)
 		rd.free_rid(replacement_texture)
@@ -689,6 +683,33 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 	cloud_shadow_last_error = ""
 	return true
 
+# Creates the staging back buffer a sliced refresh renders into. It is never
+# sampled by receivers; only a completed refresh is copied into the front texture.
+func ensure_gpu_cloud_shadow_stage(cascade: int) -> bool:
+	var stage := cascade + GPU_CLOUD_SHADOW_CASCADES
+	if cloud_shadow_textures[stage].is_valid() and cloud_shadow_uniform_sets[stage].is_valid():
+		return true
+	if not cloud_shadow_textures[cascade].is_valid() or not cloud_shadow_param_buffers[cascade].is_valid():
+		return false
+	var resolution := cloud_shadow_resolutions[cascade]
+	var texture_format := RDTextureFormat.new()
+	texture_format.texture_type = RenderingDevice.TEXTURE_TYPE_2D
+	texture_format.format = RenderingDevice.DATA_FORMAT_R16G16_SFLOAT
+	texture_format.width = resolution.x
+	texture_format.height = resolution.y
+	texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
+	var stage_texture := rd.texture_create(texture_format, RDTextureView.new())
+	if not stage_texture.is_valid():
+		return false
+	var stage_set := _build_cloud_shadow_uniform_set(stage_texture, cloud_shadow_param_buffers[cascade])
+	if not stage_set.is_valid():
+		rd.free_rid(stage_texture)
+		return false
+	cloud_shadow_textures[stage] = stage_texture
+	cloud_shadow_uniform_sets[stage] = stage_set
+	cloud_shadow_slice_progress[cascade] = 0
+	return true
+
 func dispatch_gpu_cloud_shadows():
 	if not cloud_shadow_generation_enabled or not cloud_shadow_pipeline.is_valid() or not general_data_buffer.is_valid():
 		return
@@ -699,18 +720,44 @@ func dispatch_gpu_cloud_shadows():
 		if not cloud_shadow_pending[cascade] or cloud_shadow_configs[cascade].is_empty():
 			continue
 		var configuration = cloud_shadow_configs[cascade]
+		# A sliced refresh keeps using the configuration snapshot taken at slice 0,
+		# so every slice maps the same world window. If the bridge reconfigures to
+		# a different resolution mid-refresh, discard the partial staging result
+		# and restart from the new configuration.
+		if cloud_shadow_slice_progress[cascade] > 0:
+			var snapshot : Dictionary = cloud_shadow_slice_configs[cascade]
+			if snapshot.is_empty() or snapshot["resolution"] != configuration["resolution"]:
+				cloud_shadow_slice_progress[cascade] = 0
+				cloud_shadow_slice_configs[cascade] = {}
+			else:
+				configuration = snapshot
 		if not ensure_gpu_cloud_shadow_cascade(cascade, configuration):
 			continue
+		var stage := cascade + GPU_CLOUD_SHADOW_CASCADES
+		var size = cloud_shadow_resolutions[cascade]
+		var groups_y := int((size.y + 7) / 8)
+		var slices := mini(int(configuration.get("slice_count", 1)), groups_y)
+		if slices > 1 and not ensure_gpu_cloud_shadow_stage(cascade):
+			slices = 1  # Staging buffer unavailable: fall back to the legacy single dispatch.
+		var slice_index := cloud_shadow_slice_progress[cascade] if slices > 1 else 0
+		if slice_index == 0:
+			# A new refresh: snapshot the configuration used by all its slices.
+			cloud_shadow_slice_configs[cascade] = configuration.duplicate()
+		var first_group := slice_index * groups_y / slices
+		var last_group := (slice_index + 1) * groups_y / slices
+		var is_final_slice := slice_index >= slices - 1
 		var bytes := PackedByteArray()
 		bytes.resize(GPU_CLOUD_SHADOW_PARAM_BYTES)
+		# The last component carries the first output row of this slice (0 for the
+		# legacy full-map dispatch). It formerly held a phase/reset encoding that
+		# the shader no longer reads.
 		var vectors = [
 			Vector4(configuration["center"].x, configuration["center"].y, configuration["center"].z, configuration["radius"]),
 			Vector4(configuration["around"].x, configuration["around"].y, configuration["around"].z, configuration["canonical_center"].x),
 			Vector4(configuration["across"].x, configuration["across"].y, configuration["across"].z, configuration["canonical_center"].y),
 			Vector4(configuration["up"].x, configuration["up"].y, configuration["up"].z, configuration["ring_radius"]),
 			Vector4(configuration["sun_direction"].x, configuration["sun_direction"].y, configuration["sun_direction"].z, configuration["floor"]),
-			Vector4(configuration["ceiling"], configuration["vertical_samples"], configuration["extinction"],
-				float(cloud_shadow_phase[cascade]) + (2.0 if cloud_shadow_reset_history[cascade] or configuration.get("reset_history", false) else 0.0)),
+			Vector4(configuration["ceiling"], configuration["vertical_samples"], configuration["extinction"], float(first_group * 8)),
 		]
 		var offset := 0
 		for value in vectors:
@@ -725,14 +772,24 @@ func dispatch_gpu_cloud_shadows():
 			rd.capture_timestamp(timestamp_begin)
 		var compute_list := rd.compute_list_begin()
 		rd.compute_list_bind_compute_pipeline(compute_list, cloud_shadow_pipeline)
-		rd.compute_list_bind_uniform_set(compute_list, cloud_shadow_uniform_sets[cascade], 0)
-		var size = cloud_shadow_resolutions[cascade]
-		rd.compute_list_dispatch(compute_list, int((size.x + 7) / 8), int((size.y + 7) / 8), 1)
+		rd.compute_list_bind_uniform_set(compute_list, cloud_shadow_uniform_sets[stage if slices > 1 else cascade], 0)
+		rd.compute_list_dispatch(compute_list, int((size.x + 7) / 8), last_group - first_group, 1)
 		rd.compute_list_end()
 		if gpu_timestamp_diagnostics_enabled and timestamp_begin != "" and timestamp_end != "":
 			rd.capture_timestamp(timestamp_end)
-		cloud_shadow_pending[cascade] = false
 		cloud_shadow_next_cascade = (cascade + 1) % GPU_CLOUD_SHADOW_CASCADES
+		if not is_final_slice:
+			# Receivers keep sampling the previous, fully consistent front map.
+			cloud_shadow_slice_progress[cascade] = slice_index + 1
+			# One slice per frame, same one-dispatch-per-frame guarantee as below.
+			break
+		if slices > 1:
+			# Publish atomically: the staging buffer now holds the complete map.
+			rd.texture_copy(cloud_shadow_textures[stage], cloud_shadow_textures[cascade],
+				Vector3.ZERO, Vector3.ZERO, Vector3(size.x, size.y, 1), 0, 0, 0, 0)
+		cloud_shadow_slice_progress[cascade] = 0
+		cloud_shadow_slice_configs[cascade] = {}
+		cloud_shadow_pending[cascade] = false
 		cloud_shadow_dispatch_count[cascade] += 1
 		# The main thread can now bind this immutable wrapper on its next frame.
 		cloud_shadow_published_texture_wrappers[cascade] = cloud_shadow_texture_wrappers[cascade]
@@ -741,7 +798,7 @@ func dispatch_gpu_cloud_shadows():
 		cloud_shadow_reset_history[cascade] = false
 		cloud_shadow_configs[cascade]["reset_history"] = false
 		# Resource refreshes can make both cascades pending together. Keep the
-		# producer-level guarantee of at most one full-map dispatch per frame.
+		# producer-level guarantee of at most one compute dispatch per frame.
 		break
 
 func add_sample(callable : Callable, position : Vector3):
@@ -800,8 +857,10 @@ func _notification(what):
 		keep_alive.append(generation.duplicate())
 	for cascade in retired_cloud_shadow_cascades:
 		sets.append(cascade.uniform_set)
+		sets.append(cascade.stage_uniform_set)
 		rids.append(cascade.param_buffer)
 		rids.append(cascade.texture)
+		rids.append(cascade.stage_texture)
 		keep_alive.append(cascade.duplicate())
 	for entry in _terrain_sun_retired:
 		sets.append(entry.uniform_set)
@@ -856,9 +915,9 @@ func _retire_current_generation():
 			+ cloud_shadow_param_buffers.duplicate() + cloud_shadow_textures.duplicate()
 	})
 	uniform_sets.clear()
-	cloud_shadow_uniform_sets = [RID(), RID()]
+	cloud_shadow_uniform_sets = [RID(), RID(), RID(), RID()]
 	cloud_shadow_param_buffers = [RID(), RID()]
-	cloud_shadow_textures = [RID(), RID()]
+	cloud_shadow_textures = [RID(), RID(), RID(), RID()]
 	cloud_shadow_texture_wrappers = [null, null]
 	cloud_shadow_published_texture_wrappers = [null, null]
 	cloud_backdrop_texture_wrappers.clear()
@@ -869,6 +928,8 @@ func _retire_current_generation():
 		cloud_shadow_pending[cascade] = not cloud_shadow_configs[cascade].is_empty()
 		cloud_shadow_phase[cascade] = 0
 		cloud_shadow_reset_history[cascade] = true
+		cloud_shadow_slice_progress[cascade] = 0
+		cloud_shadow_slice_configs[cascade] = {}
 	pipeline = RID(); shader = RID(); prepass_pipeline = RID(); prepass_shader = RID()
 	postpass_pipeline = RID(); postpass_shader = RID(); display_pipeline = RID(); display_shader = RID()
 	display_vertex_array = RID(); display_vertex_buffer = RID()
@@ -1030,6 +1091,15 @@ func clear_gpu_cloud_shadow_resources():
 		if cloud_shadow_textures[cascade].is_valid():
 			rd.free_rid(cloud_shadow_textures[cascade])
 		cloud_shadow_textures[cascade] = RID()
+		var stage := cascade + GPU_CLOUD_SHADOW_CASCADES
+		if cloud_shadow_uniform_sets[stage].is_valid():
+			rd.free_rid(cloud_shadow_uniform_sets[stage])
+		cloud_shadow_uniform_sets[stage] = RID()
+		if cloud_shadow_textures[stage].is_valid():
+			rd.free_rid(cloud_shadow_textures[stage])
+		cloud_shadow_textures[stage] = RID()
+		cloud_shadow_slice_progress[cascade] = 0
+		cloud_shadow_slice_configs[cascade] = {}
 		cloud_shadow_texture_wrappers[cascade] = null
 		cloud_shadow_published_texture_wrappers[cascade] = null
 		cloud_shadow_resolutions[cascade] = Vector2i.ZERO
@@ -2319,3 +2389,38 @@ func encode_sample_points():
 	
 	
 	rd.buffer_update(point_sample_data_buffer, 0, sample_points_data_floats.size(), sample_points_data_floats)
+
+# Builds the producer descriptor set for one output texture. The front (published)
+# and staging textures share every other binding, including the parameter buffer.
+func _build_cloud_shadow_uniform_set(output_texture: RID, param_buffer: RID) -> RID:
+	var uniforms: Array[RDUniform] = []
+	var output_uniform := RDUniform.new()
+	output_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	output_uniform.binding = 0
+	output_uniform.add_id(output_texture)
+	uniforms.append(output_uniform)
+	for binding in range(1, 5):
+		var noise_uniform := RDUniform.new()
+		noise_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+		noise_uniform.binding = binding
+		noise_uniform.add_id(linear_sampler)
+		var texture: RID = RenderingServer.texture_get_rd_texture([extra_large_noise_patterns, large_scale_noise, medium_scale_noise, small_scale_noise][binding - 1].get_rid())
+		noise_uniform.add_id(texture)
+		uniforms.append(noise_uniform)
+	var gradient_uniform := RDUniform.new()
+	gradient_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	gradient_uniform.binding = 5
+	gradient_uniform.add_id(linear_sampler_no_repeat)
+	gradient_uniform.add_id(RenderingServer.texture_get_rd_texture(height_gradient.get_rid()))
+	uniforms.append(gradient_uniform)
+	var general_uniform := RDUniform.new()
+	general_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	general_uniform.binding = 6
+	general_uniform.add_id(general_data_buffer)
+	uniforms.append(general_uniform)
+	var parameters_uniform := RDUniform.new()
+	parameters_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	parameters_uniform.binding = 7
+	parameters_uniform.add_id(param_buffer)
+	uniforms.append(parameters_uniform)
+	return rd.uniform_set_create(uniforms, cloud_shadow_shader, 0)

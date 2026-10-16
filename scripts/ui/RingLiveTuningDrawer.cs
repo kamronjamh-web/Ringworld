@@ -478,7 +478,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentSlider(cloudShadows, "GpuShadowVerticalSamples", "GPU vertical samples", 1, 64, 1, _cloudBridge?.GpuShadowVerticalSamples ?? 4);
         AddToggle(cloudShadows, "LOD1 terrain shadows", _lod1?.CastTerrainShadows ?? true, value => { if (_lod1 != null) _lod1.CastTerrainShadows = value; });
         VBoxContainer gpuNear = TuningMenuUi.CreateSection(tab, "GPU near map");
-        AddPersistentSlider(gpuNear, "GpuNearShadowMapResolution", "GPU near map", 64, 2048, 64, _cloudBridge?.GpuNearShadowMapResolution ?? 1024); AddPersistentSlider(gpuNear, "GpuNearShadowRadiusMeters", "GPU near radius", 8000, 80000, 1000, _cloudBridge?.GpuNearShadowRadiusMeters ?? 24000); AddPersistentSlider(gpuNear, "GpuNearShadowUpdatesPerSecond", "GPU near updates/sec", 1, 20, .5, _cloudBridge?.GpuNearShadowUpdatesPerSecond ?? 10);
+        AddPersistentSlider(gpuNear, "GpuNearShadowMapResolution", "GPU near map", 64, 2048, 64, _cloudBridge?.GpuNearShadowMapResolution ?? 1024); AddPersistentSlider(gpuNear, "GpuNearShadowRadiusMeters", "GPU near radius", 8000, 80000, 1000, _cloudBridge?.GpuNearShadowRadiusMeters ?? 24000); AddPersistentSlider(gpuNear, "GpuNearShadowUpdatesPerSecond", "GPU near updates/sec", 1, 20, .5, _cloudBridge?.GpuNearShadowUpdatesPerSecond ?? 10); AddPersistentSlider(gpuNear, "GpuNearShadowSliceCount", "GPU near slices (0/1 = single dispatch)", 0, 16, 1, _cloudBridge?.GpuNearShadowSliceCount ?? 4);
         VBoxContainer gpuFar = TuningMenuUi.CreateSection(tab, "GPU far map");
         AddPersistentSlider(gpuFar, "GpuFarShadowMapResolution", "GPU far map", 64, 1024, 32, _cloudBridge?.GpuFarShadowMapResolution ?? 256); AddPersistentSlider(gpuFar, "GpuFarShadowRadiusMeters", "GPU far radius", 16000, 200000, 1000, _cloudBridge?.GpuFarShadowRadiusMeters ?? 96000); AddPersistentSlider(gpuFar, "GpuFarShadowUpdatesPerSecond", "GPU far updates/sec", .25, 5, .25, _cloudBridge?.GpuFarShadowUpdatesPerSecond ?? .5);
         VBoxContainer cpuFallback = TuningMenuUi.CreateSection(tab, "CPU fallback");
@@ -619,7 +619,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     }
     private static string CloudTooltip(string key) => key switch
     {
-        "SkipEmptyCloudMaskSamples" => "Skips weather-texture reads outside the cloud layer while preserving ray positions, fog, and cloud history.",
+        "GpuNearShadowSliceCount" => "Spreads each near cloud-shadow refresh over this many consecutive frames and publishes the map only when complete, removing the single-frame GPU spike. 0 or 1 restores the single-dispatch refresh. Identical result once complete.",
+        "SkipEmptyCloudMaskSamples" =>"Skips weather-texture reads outside the cloud layer while preserving ray positions, fog, and cloud history.",
         "TerrainCloudShadowEnabled" => "Uses terrain sunlight visibility to shade clouds behind ring terrain. Does not control cloud shadows cast onto terrain.",
         "TerrainCloudShadowStrength" => "Strength of terrain sunlight occlusion in clouds. Zero preserves unoccluded cloud lighting.",
         "TerrainCloudShadowGlobalAroundResolution" or "TerrainCloudShadowGlobalAcrossResolution" or "TerrainCloudShadowRegionalResolution" => "Sunlight visibility map resolution. Rounded up to a power of two; larger maps improve detail and increase work and memory.",

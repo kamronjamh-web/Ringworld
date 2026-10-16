@@ -60,6 +60,7 @@ public sealed class GameplayCloudDefaults
         ["GpuNearShadowMapResolution"] = (64, 2048, true),
         ["GpuNearShadowRadiusMeters"] = (8000, 80000, false),
         ["GpuNearShadowUpdatesPerSecond"] = (1, 20, false),
+        ["GpuNearShadowSliceCount"] = (0, 16, true),
         ["GpuFarShadowMapResolution"] = (64, 1024, true),
         ["GpuFarShadowRadiusMeters"] = (16000, 200000, false),
         ["GpuFarShadowUpdatesPerSecond"] = (.25f, 5, false),

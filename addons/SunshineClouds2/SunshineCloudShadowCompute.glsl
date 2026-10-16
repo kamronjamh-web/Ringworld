@@ -28,8 +28,8 @@ layout(binding = 6) uniform uniformBuffer { GenericData data; } genericData;
 // canonical centre-around, centre-across, and ring radius respectively.
 // sun_floor.w is cloud floor, and ceiling_steps_extinction stores ceiling,
 // vertical samples and Beer-Lambert extinction respectively. The final
-// component retains the legacy phase/reset encoding for ABI compatibility;
-// the producer now refreshes both interleaved phases together.
+// component is the first output row of this dispatch (0 for a full-map refresh;
+// non-zero when the refresh is sliced across frames into a staging texture).
 layout(binding = 7) uniform ShadowParams {
     vec4 center_radius;
     vec4 around_axis;
@@ -278,6 +278,7 @@ float sample_sunshine_density(vec3 world_position) {
 
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    pixel.y += int(shadow.ceiling_steps_extinction.w + 0.5);
     ivec2 size = imageSize(shadow_output);
     if (any(greaterThanEqual(pixel, size))) return;
 

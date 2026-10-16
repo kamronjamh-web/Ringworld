@@ -71,6 +71,9 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "8000,80000,500")] public float GpuNearShadowRadiusMeters { get; set; } = 24000.0f;
     [Export(PropertyHint.Range, "16000,200000,1000")] public float GpuFarShadowRadiusMeters { get; set; } = 96000.0f;
     [Export(PropertyHint.Range, "1,20,0.25")] public float GpuNearShadowUpdatesPerSecond { get; set; } = 10.0f;
+    // Slices per near-map refresh (one slice per frame, published atomically when
+    // complete). 0 or 1 = legacy single dispatch.
+    [Export(PropertyHint.Range, "0,16,1")] public int GpuNearShadowSliceCount { get; set; } = 4;
     [Export(PropertyHint.Range, "0.1,5,0.1")] public float GpuFarShadowUpdatesPerSecond { get; set; } = 0.5f;
     [Export(PropertyHint.Range, "1,64,1")] public int GpuShadowVerticalSamples { get; set; } = 4;
     [ExportGroup("Cloud shadow profiling")]
@@ -1799,7 +1802,13 @@ public partial class RingSunshineCloudBridge : Node
                 || !Mathf.IsEqualApprox(_gpuShadowBakedRadius[cascade], radius);
             requiresReceiverDetach |= configurationChanged;
             due[cascade] = !_gpuShadowPublishPending[cascade]
-                && (force || relocate || configurationChanged || _gpuShadowElapsed[cascade] >= 1.0 / Mathf.Max(0.1f, frequency));
+                && (force || relocate || configurationChanged
+                    // A sliced refresh spans several frames, so a slow frame rate can make
+                    // the next timed refresh due the moment the last one is promoted. While
+                    // receivers wait for replacement maps, hold back timed refreshes only;
+                    // otherwise the rebuild gate below never sees both cascades idle.
+                    || (!_gpuShadowReceiverRebuildPending
+                        && _gpuShadowElapsed[cascade] >= 1.0 / Mathf.Max(0.1f, frequency)));
         }
         // This must happen on the main thread before configure_gpu_* asks the
         // compositor to replace an RD texture.  A normal Disable only hides a
@@ -1956,7 +1965,8 @@ public partial class RingSunshineCloudBridge : Node
             Math.Clamp(resolution, 8, 2048), center, around, across, up,
             new Vector2((float)centerCanonical.AroundMeters, (float)centerCanonical.AcrossMeters),
             ResolveShadowRingRadiusMeters(), Mathf.Max(1000.0f, radius),
-            sun, floor, ceiling, Math.Clamp(GpuShadowVerticalSamples, 1, 64), Mathf.Max(0.0f, ShadowExtinctionPerKilometer), resetHistory).AsBool();
+            sun, floor, ceiling, Math.Clamp(GpuShadowVerticalSamples, 1, 64), Mathf.Max(0.0f, ShadowExtinctionPerKilometer), resetHistory,
+            cascade == 0 ? Math.Clamp(GpuNearShadowSliceCount, 1, 16) : 1).AsBool();
         if (!accepted)
             return;
         _clouds.Call("request_gpu_cloud_shadow_update", cascade);
