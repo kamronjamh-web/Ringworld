@@ -19,6 +19,9 @@ uniform float near_begin = 11500.0;
 uniform float near_margin = 1000.0;
 uniform float object_height_m = 1800.0;
 uniform vec3 distance_pivot = vec3(0.0);
+// Eclipse crown glow (phase E4e, spec E.7): INSTANCE_CUSTOM.b = beam activity 0..1 lights the mesh between crown_glow_band.x and .y (mesh-local Y).
+uniform vec2 crown_glow_band = vec2(0.0, 1.0);
+uniform float crown_glow_emission = 3.0;
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 
@@ -26,6 +29,7 @@ varying vec3 world_position;
 varying float ring_day_factor;
 varying float standin_fade;
 varying float standin_coverage;
+varying float crown_glow_amount;
 
 void vertex() {
 	vec3 pivot_world = (MODEL_MATRIX * vec4(distance_pivot, 1.0)).xyz;
@@ -40,6 +44,10 @@ void vertex() {
 	standin_coverage = d > 1.0
 		? clamp(object_height_m / d * abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y * 0.5 / max(min_pixels, 0.01), 0.0, 1.0)
 		: 1.0;
+	// 0 unless the eclipse event lights this crown; the multiplication by the band mask keeps everything else exact.
+	crown_glow_amount = use_instance_custom && INSTANCE_CUSTOM.b > 0.0
+		? INSTANCE_CUSTOM.b * smoothstep(crown_glow_band.x, crown_glow_band.y, VERTEX.y)
+		: 0.0;
 	if (hidden || d > max_distance || (presented && d < near_start)) {
 		VERTEX = vec3(0.0);
 	}
@@ -68,6 +76,10 @@ void fragment() {
 		ring_day_factor);
 	ALBEDO = lit_color * (1.0 - atmosphere.a);
 	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	if (crown_glow_amount > 0.0) {
+		// Beam teal; the glow is not attenuated by the day (the beams are the event) but by the same atmosphere opacity.
+		EMISSION += vec3(0.70, 0.92, 1.0) * crown_glow_amount * crown_glow_emission * (1.0 - atmosphere.a);
+	}
 	METALLIC = metallic_value;
 	ROUGHNESS = roughness_value;
 	SPECULAR = 0.68;

@@ -7,6 +7,7 @@ const FIXTURE := preload("res://tools/EmitterGridShaderFixture.cs")
 
 const SAMPLE_COUNT := 2048
 const TOLERANCE := 4e-3
+const FIELDS := 5
 # name, retrograde, manual speed, clock time (seconds on the weather clock)
 const CASES := [
 	{"name": "prograde_auto", "retro": false, "manual": false, "t": 12345.6},
@@ -15,6 +16,11 @@ const CASES := [
 	{"name": "prograde_hub_day", "retro": false, "manual": false, "t": 12345.6, "hub": 0.55},
 	{"name": "prograde_manual_slow", "retro": false, "manual": true, "t": 777.25},
 	{"name": "relaunch_flare", "retro": false, "manual": false, "t": -1.0},
+	# Eclipse ignition fronts (spec E.3, phase E4d): z/w lanes, bidirectional with plateau, absorbed plateau spans, forced night.
+	{"name": "ignition_bidirectional", "retro": false, "manual": false, "t": 12345.6, "events": "bidirectional"},
+	{"name": "ignition_bidirectional_retro", "retro": true, "manual": false, "t": 12345.6, "events": "bidirectional"},
+	{"name": "ignition_plateau_absorbed", "retro": false, "manual": false, "t": 12345.6, "events": "plateau"},
+	{"name": "ignition_plateau_absorbed_retro", "retro": true, "manual": false, "t": 12345.6, "events": "plateau"},
 ]
 
 var failed := false
@@ -59,12 +65,12 @@ func _flare_time(case: Dictionary) -> float:
 
 
 func _run_case(case: Dictionary, t: float) -> bool:
-	var uniforms: Dictionary = fixture.Setup(case["retro"], case["manual"], t)
+	var uniforms: Dictionary = fixture.SetupEvents(case["retro"], case["manual"], t, case.get("events", ""))
 	var samples: PackedFloat32Array = fixture.Samples(SAMPLE_COUNT, 424242)
 	var solar_visibility := 0.8
 	var hub_day: float = case.get("hub", 0.0)
 	var expected: PackedFloat32Array = fixture.Reference(samples, solar_visibility, hub_day)
-	var image := Image.create_from_data(SAMPLE_COUNT, 2, false, Image.FORMAT_RGBAF, _rows(samples))
+	var image := Image.create_from_data(SAMPLE_COUNT, 3, false, Image.FORMAT_RGBAF, _rows(samples))
 	var texture := ImageTexture.create_from_image(image)
 	var material := ShaderMaterial.new()
 	material.shader = load("res://tools/shaders/emitter_grid_intensity_parity.gdshader")
@@ -74,11 +80,11 @@ func _run_case(case: Dictionary, t: float) -> bool:
 	for key in uniforms:
 		material.set_shader_parameter(key, uniforms[key])
 	var vp := SubViewport.new()
-	vp.size = Vector2i(SAMPLE_COUNT * 4, 1)
+	vp.size = Vector2i(SAMPLE_COUNT * FIELDS, 1)
 	vp.transparent_bg = true
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	var rect := ColorRect.new()
-	rect.size = Vector2(SAMPLE_COUNT * 4, 1)
+	rect.size = Vector2(SAMPLE_COUNT * FIELDS, 1)
 	rect.material = material
 	vp.add_child(rect)
 	root.add_child(vp)
@@ -86,15 +92,15 @@ func _run_case(case: Dictionary, t: float) -> bool:
 	var out := vp.get_texture().get_image()
 	out.convert(Image.FORMAT_RGBA8)
 	var bytes := out.get_data()
-	var names := ["pulse", "intensity", "background", "day"]
-	var worst := [0.0, 0.0, 0.0, 0.0]
+	var names := ["pulse", "intensity", "background", "day", "lit"]
+	var worst := [0.0, 0.0, 0.0, 0.0, 0.0]
 	var bad := 0
 	var lit := 0
 	for i in SAMPLE_COUNT:
-		for field in 4:
-			var o := (i * 4 + field) * 4
+		for field in FIELDS:
+			var o := (i * FIELDS + field) * 4
 			var gpu := PackedByteArray([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]).decode_float(0)
-			var want: float = expected[i * 4 + field]
+			var want: float = expected[i * FIELDS + field]
 			if field == 0 and want > 0.01:
 				lit += 1
 			if is_nan(gpu) or is_inf(gpu):
@@ -106,8 +112,8 @@ func _run_case(case: Dictionary, t: float) -> bool:
 				bad += 1
 				if bad < 12:
 					print("  mismatch %s %s sample=%d gpu=%.7f cpu=%.7f" % [case["name"], names[field], i, gpu, want])
-	print("EMITTER_GRID_SHADER_PARITY case=%s t=%.2f fronts=%d lit_samples=%d worst_abs_err(pulse=%.7f intensity=%.7f background=%.7f day=%.7f) bad=%d" % [
-		case["name"], t, int(uniforms["eg_front_count"]), lit, worst[0], worst[1], worst[2], worst[3], bad])
+	print("EMITTER_GRID_SHADER_PARITY case=%s t=%.2f fronts=%d lit_samples=%d worst_abs_err(pulse=%.7f intensity=%.7f background=%.7f day=%.7f lit_rule=%.1f) events=%d bad=%d" % [
+		case["name"], t, int(uniforms["eg_front_count"]), lit, worst[0], worst[1], worst[2], worst[3], worst[4], fixture.EventFrontCount(), bad])
 	vp.queue_free()
 	if lit < 50:
 		_fail("case %s has too few lit samples to be meaningful" % case["name"])
@@ -118,12 +124,13 @@ func _run_case(case: Dictionary, t: float) -> bool:
 	return true
 
 
-# Two rows of RGBAF texels from the flat 8-floats-per-sample array.
+# Three rows of RGBAF texels from the flat 12-floats-per-sample array (fixture.SampleStride()).
 func _rows(samples: PackedFloat32Array) -> PackedByteArray:
+	var stride: int = fixture.SampleStride()
 	var rows := PackedFloat32Array()
-	rows.resize(SAMPLE_COUNT * 8)
+	rows.resize(SAMPLE_COUNT * 12)
 	for i in SAMPLE_COUNT:
-		for k in 4:
-			rows[i * 4 + k] = samples[i * 8 + k]
-			rows[SAMPLE_COUNT * 4 + i * 4 + k] = samples[i * 8 + 4 + k]
+		for row in 3:
+			for k in 4:
+				rows[SAMPLE_COUNT * 4 * row + i * 4 + k] = samples[i * stride + row * 4 + k]
 	return rows.to_byte_array()

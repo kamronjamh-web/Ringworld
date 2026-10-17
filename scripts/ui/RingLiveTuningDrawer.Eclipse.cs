@@ -81,6 +81,43 @@ public partial class RingLiveTuningDrawer
         new("HubZenithHaloIntensity", "Zenith halo", "Brightness of the sky glow around the zenith at full hub level."),
     };
 
+    private static readonly EclipseSliderSpec[] EclipseBeamSliders =
+    {
+        new("BeamCoreWidthMeters", "Core width (m)", "Bore diameter of the regular spire beams (Gaussian core)."),
+        new("BeamHaloWidthMeters", "Halo width (m)", "Exponential halo width of the regular spire beams."),
+        new("BeamMainCoreWidthMeters", "Main core width (m)", "Bore diameter of the main spire beam."),
+        new("BeamMainHaloWidthMeters", "Main halo width (m)", "Exponential halo width of the main spire beam."),
+        new("BeamMinPixelWidth", "Minimum pixel width", "A distant beam is never drawn thinner than this; the lost energy is partly given back by the far compensation."),
+        new("BeamFarCompensation", "Far compensation", "How much of the energy lost by widening a distant beam to the minimum pixel width is given back. Lower than the relay grid's 0.6 so the far starburst reads."),
+        new("BeamBaseEmission", "Base emission", "HDR brightness of a regular beam. The beams ignore the day factor by design."),
+        new("BeamMainEmissionScale", "Main emission scale", "Brightness of the main beam relative to a regular beam."),
+        new("BeamHaloAmplitude", "Halo amplitude", "Strength of the halo around the core."),
+        new("BeamBaseFadeMeters", "Halo base fade (m)", "The halo fades in over this many metres above the crown so it does not start with a hard horizontal edge."),
+        new("BeamDayVisibility", "Day visibility", "Brightness factor applied only while the hub day factor is above 0.5, so the beams do not flatten the hub-lit sky."),
+        new("BeamCoreDepthThreshold", "Depth core threshold", "Core coverage times intensity above which the depth core writes depth (clouds behind the beam stop dimming it)."),
+        new("BeamCoreDepthMinPixels", "Depth core width (px)", "Minimum full width of the depth core footprint, so it survives the cloud pass's 2x2 depth reduction."),
+        new("BeamSoftTipFraction", "Soft tip", "Length of the soft end of a climbing beam, as a fraction of the beam."),
+        new("BeamGridEventPeak", "Ignition front peak", "Brightness multiplier of the relay grid pulse while the ignition fronts climb the arch both ways. The grid also ignores the hub day then, so the fronts stay bright."),
+        new("BeamCloudWidening", "Cloud widening", "A near beam crossing the cloud deck widens its halo by 1 + this x the cloud coverage at the spire, over the deck span."),
+        new("BeamCloudHaloBoost", "Cloud halo boost", "Extra halo brightness inside the cloud deck: 1 + this x the cloud coverage."),
+        new("BeamCloudCoreCut", "Cloud core cut", "Where coverage times the deck mask exceeds this the depth-writing core is switched off, so the cloud pass blends that segment of the beam. The default 1.5 never cuts: a cut under a storm leaves only the halo, which Sunshine dims."),
+        new("BeamCrownGlowEmission", "Crown glow emission", "HDR emission of the far stand-in's crown while its beam fires (written on fire, hand-off and cut only)."),
+        new("BeamBoreLightBoost", "Bore light boost", "Factor on the near spire bore plug light while its beam fires (1 = no boost)."),
+    };
+
+    private static readonly EclipseSliderSpec[] EclipseHubBodySliders =
+    {
+        new("HubBodyCoreEmission", "Hub core emission", "HDR emission of the hub disc at hub level 1 (scaled by the level). 40 saturates to white at every level from the kindle up."),
+        new("HubBodyRadiusKm", "Hub core radius (km)", "Core radius of the hub sun at full level, real km (30 km is 0.34 degrees from the floor). It grows from about 0.66 of this at the kindle."),
+        new("HubBodyMinRadiusPixels", "Hub minimum radius (px)", "The hub disc is never drawn smaller than this, so the kindle still reads as a white point."),
+        new("HubBodyHaloAmplitude", "Hub halo amplitude", "Peak emission of the teal glow around the hub disc at level 1; it rides the overload swell."),
+        new("HubBodyHaloRadiusKm", "Hub halo radius (km)", "E-fold radius of the hub glow, real km (400 km is about 4.6 degrees from the floor)."),
+        new("HubSkyInScatter", "Sky in-scatter", "Strength of the sky's blue forward scatter toward the hub, so the hub-lit sky reads blue and not grey. 0 leaves the sky shader exactly as before."),
+    };
+
+    private EclipseHubBeamLayer? _eclipseBeams;
+    private EclipseHubBody? _eclipseBody;
+    private Label? _eclipseBeamLive, _eclipseBodyLive;
     private EclipseEventDirector? _eclipseDirector;
     private GameplayEclipseEventDefaults? _eclipseDefaults;
     private string? _eclipseDefaultsPathOverride;
@@ -117,6 +154,16 @@ public partial class RingLiveTuningDrawer
                 EclipseDarknessOutput d = _eclipseDirector?.DarknessOutput ?? EclipseDarknessOutput.Neutral;
                 _eclipseDarkLive.Text = _eclipseDirector == null ? "Eclipse director is unavailable in this scene."
                     : $"Darkness weight {d.Weight:0.00}: ambient x{d.AmbientMultiplier:0.000}, atmosphere night x{d.AtmosphereNightMultiplier:0.000}, sky night x{d.SkyNightMultiplier:0.000}, cloud ambient x{d.CloudAmbientMultiplier:0.000}, star floor {d.StarFloor:0.00}";
+            }
+            if (_eclipseBeamLive != null)
+            {
+                _eclipseBeams ??= GetNodeOrNull<EclipseHubBeamLayer>("../EclipseBeams");
+                _eclipseBeamLive.Text = _eclipseBeams?.DescribeStatus() ?? "Eclipse hub beams are unavailable in this scene.";
+            }
+            if (_eclipseBodyLive != null)
+            {
+                _eclipseBody ??= GetNodeOrNull<EclipseHubBody>("../EclipseHubBody");
+                _eclipseBodyLive.Text = _eclipseBody?.DescribeStatus() ?? "The eclipse hub body is unavailable in this scene.";
             }
             if (_eclipseHubLive != null)
             {
@@ -189,6 +236,23 @@ public partial class RingLiveTuningDrawer
         _eclipseHubLive = new Label { Name = "EclipseHubLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         levels.AddChild(_eclipseHubLive);
         foreach (EclipseSliderSpec spec in EclipseLevelSliders) AddEclipseSlider(levels, spec, s);
+
+        VBoxContainer beams = TuningMenuUi.CreateSection(tab, "Eclipse event: beams and hub",
+            "The 595 spire-to-hub beams: the nearest pillars in the main view and a starburst of hair-lines converging on the zenith hub in the far view. They exist only from just before the main fire until the collapse cuts them. The beams ignore the day factor and the background brightness by design.");
+        _eclipseBeamLive = new Label { Name = "EclipseBeamLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        beams.AddChild(_eclipseBeamLive);
+        AddEclipseToggle(beams, "BeamsEnabled", "Hub beams", s.BeamsEnabled, "Off removes both beam layers; the hub light and the timeline are unaffected.");
+        AddEclipseToggle(beams, "BeamFarLayerEnabled", "Far beam layer", s.BeamFarLayerEnabled, "The starburst of distant beams in the far viewport. Off leaves only the near pillars.");
+        AddEclipseToggle(beams, "BeamDepthWriteCore", "Depth-writing core", s.BeamDepthWriteCore, "Clouds behind a beam no longer dim it. Off shows the cost-free halo only (clouds dim the beam).");
+        AddEclipseToggle(beams, "BeamCloudDiffusionEnabled", "In-cloud diffusion", s.BeamCloudDiffusionEnabled,
+            "A near beam widens and brightens its halo where it crosses the cloud deck (one weather query per near spire, 30 at most per eclipse), and its depth core is cut inside dense cloud.");
+        AddEclipseToggle(beams, "BeamCrownGlowEnabled", "Stand-in crown glow", s.BeamCrownGlowEnabled, "The far stand-in's crown glows while its beam fires.");
+        foreach (EclipseSliderSpec spec in EclipseBeamSliders) AddEclipseSlider(beams, spec, s);
+        _eclipseBodyLive = new Label { Name = "EclipseHubBodyLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        beams.AddChild(_eclipseBodyLive);
+        AddEclipseToggle(beams, "HubBodyEnabled", "Hub sun body", s.HubBodyEnabled,
+            "The white disc and glow where the beams meet. A main-view proxy along the hub direction: clouds and overhead geometry still hide it, and it is not drawn in the far view.");
+        foreach (EclipseSliderSpec spec in EclipseHubBodySliders) AddEclipseSlider(beams, spec, s);
 
         VBoxContainer debug = TuningMenuUi.CreateSection(tab, "Eclipse event: debug",
             "Not saved. Force, jump and scrub move the celestial clock (a real time jump, like the F9 time buttons) and emit one Resync.");

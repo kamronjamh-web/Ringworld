@@ -117,6 +117,13 @@ public readonly struct EmitterSiteFrameContext
         return GridBasis(rel.X, rel.Y, rel.Z) + new Vector3D(_ox, _oy, _oz);
     }
 
+    /// <summary>World position (double) of the ring hub: radial distance 0 on the ring axis at the across coordinate <paramref name="hubAcrossMeters"/> (as <see cref="Beam"/>).</summary>
+    public Vector3D HubWorldPosition(double hubAcrossMeters)
+    {
+        Vector3D rel = new(_cx - _ax, _cy + _acrossBase + hubAcrossMeters - _ay, _cz - _az);
+        return GridBasis(rel.X, rel.Y, rel.Z) + new Vector3D(_ox, _oy, _oz);
+    }
+
     /// <summary>
     /// Terrain3D world-frame basis columns at ring angle phi (RingTerrain3DGameplay.BuildWorldFrame): tangent (+around),
     /// inward (local up toward the hub) and grid Down (= -across, right-handed because AcrossDirection = -1).

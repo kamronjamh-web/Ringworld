@@ -115,8 +115,8 @@ public sealed class EclipseEventEngine
     {
         EclipseEventSettings clean = (settings ?? throw new ArgumentNullException(nameof(settings))).Sanitized();
         if (clean == _settings) return;
-        // The darkness model does not feed the timeline, so a darkness-only change must not rebuild it (the drawer sliders send many).
-        if (clean with { Darkness = _settings.Darkness } == _settings) { _settings = clean; return; }
+        // The darkness model, the beam look and the hub body look do not feed the timeline, so a change confined to them must not rebuild it (the drawer sliders send many).
+        if (clean with { Darkness = _settings.Darkness, Beams = _settings.Beams, HubBody = _settings.HubBody } == _settings) { _settings = clean; return; }
         bool marginChanged = clean.ParallaxSafetySeconds != _settings.ParallaxSafetySeconds;
         _settings = clean;
         _timelineDirty = true;

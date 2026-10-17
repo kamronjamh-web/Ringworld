@@ -2325,6 +2325,7 @@ public partial class RingScaledFarViewport : Node
 		if (!Mathf.IsZeroApprox(_farCamera.VOffset)) _farCamera.VOffset = 0.0f;
 
 		UpdateFarEclipseAmbient();
+		UpdateFarHubSunColor();
 		Vector3 sunDirection = _sourceSun is not null
 			? (worldToCanonical * _sourceSun.GlobalTransform.Basis.Z).Normalized()
 			: Vector3.Right;

@@ -74,6 +74,18 @@ public static class EclipseHubLighting
 
     public static float Weight { get => _weight; set => _weight = float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f; }
 
+    private static volatile float _red = 1f, _green = 1f, _blue = 1f;
+
+    /// <summary>Hub light colour last published by the director (white until it publishes). The far viewport mirrors it onto its suns (phase E4c).</summary>
+    public static (float R, float G, float B) Color => (_red, _green, _blue);
+
+    public static void SetColor(float r, float g, float b)
+    {
+        _red = float.IsFinite(r) ? Math.Clamp(r, 0f, 1f) : 1f;
+        _green = float.IsFinite(g) ? Math.Clamp(g, 0f, 1f) : 1f;
+        _blue = float.IsFinite(b) ? Math.Clamp(b, 0f, 1f) : 1f;
+    }
+
     /// <summary>
     /// True while the primary light is (or was a moment ago) aimed away from the real sun. The macro-shadow mask is built from the light
     /// direction at the moment a rebuild starts, so the rebuild after the event must wait until the light is exactly back on the sun.
@@ -83,5 +95,5 @@ public static class EclipseHubLighting
     /// <summary>Called once per frame by the director after it publishes the weight.</summary>
     public static void Tick() => _quietFrames = _weight > 0f ? 0 : Math.Min(_quietFrames + 1, int.MaxValue / 2);
 
-    public static void Reset() { _weight = 0f; _quietFrames = int.MaxValue / 2; }
+    public static void Reset() { _weight = 0f; _quietFrames = int.MaxValue / 2; _red = _green = _blue = 1f; }
 }

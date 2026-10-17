@@ -81,6 +81,12 @@ public partial class EclipseEventDirector : Node, IPrimaryLightOverride
         Engine.EventRaised -= OnEngineEvent;
         if (_cycle != null && GodotObject.IsInstanceValid(_cycle) && ReferenceEquals(_cycle.PrimaryLightOverride, this)) _cycle.PrimaryLightOverride = null;
         EclipseHubLighting.Reset();
+        if (_gridLayer != null && GodotObject.IsInstanceValid(_gridLayer))
+        {
+            _gridLayer.SetGridClockOverride(null);
+            _gridLayer.NormalPulseWeight = 1f;
+            _gridLayer.SetEventFronts(ReadOnlySpan<Vector4>.Empty);
+        }
         // A re-added director (same instance) must re-register and start from the unprimed state.
         _hubWeight = 0d;
         _hubPrimed = false;
@@ -104,9 +110,30 @@ public partial class EclipseEventDirector : Node, IPrimaryLightOverride
         EnsureBound();
         double weather = _weather != null && GodotObject.IsInstanceValid(_weather) ? _weather.CloudSimulationTimeSeconds : _sessionWeather;
         Engine.Update(_clock, weather, ResolvePose());
+        if (_gridLayer != null && GodotObject.IsInstanceValid(_gridLayer)) ApplyGridState(Engine, _gridLayer);
         RefreshHubLight(delta);
         EclipseHubLighting.Tick();
         UpdateZenithGizmo();
+    }
+
+    /// <summary>
+    /// Phase E4d: pushes the event's grid state into <paramref name="layer"/> (it reads these in its own update, which runs after the director).
+    /// The pulse clock follows <see cref="EclipseEventEngine.GridTimeSeconds"/> only while <see cref="EclipseEventEngine.GridClockOverrideActive"/>
+    /// (MainFire to E with the Celestial refuel clock) and returns to the weather clock after; the normal fronts follow
+    /// <c>State.GridPulseWeight</c> (0 from MainFire to the end of Handoff, Q3); and the 12 ignition fronts plus the meeting-flare spans are
+    /// appended. Outside the event every value is the layer's default, so the grid is unchanged.
+    /// </summary>
+    public static void ApplyGridState(EclipseEventEngine engine, EmitterGridBeamLayer layer)
+    {
+        EclipseEventState state = engine.State;
+        layer.SetGridClockOverride(engine.GridClockOverrideActive ? engine.GridTimeSeconds : null);
+        layer.NormalPulseWeight = state.Active ? (float)state.GridPulseWeight : 1f;
+        layer.EventPeak = (float)engine.Settings.Beams.GridEventPeak;
+        Span<Vector4> lanes = stackalloc Vector4[EclipseGridEventFronts.MaxPerColumn * EmitterGridPulseClock.ColumnCount];
+        EmitterGridPulseClock? clock = layer.Clock;
+        float weight = 0f;
+        int n = clock == null ? 0 : EclipseGridEventFronts.Build(engine.Timeline, state, clock, lanes, out weight);
+        layer.SetEventFronts(lanes[..n], n == 0 ? 0f : weight);
     }
 
     private void ResolveNodes()
@@ -173,6 +200,50 @@ public partial class EclipseEventDirector : Node, IPrimaryLightOverride
     public void SetFrozen(bool frozen) { if (_clock != null) EclipseEventEngine.SetFrozen(_clock, frozen); }
     public bool Frozen => _clock?.Paused == true;
 
+    /// <summary>Capture/test hook: event time (seconds from the window start) of a named timeline mark (MainFire, Kindle, Kindled, Ignition, FrontsMet, Crescendo, Handoff, Sustain, Instability, Overload, Implosion, Shockwave, Aftermath, End, MainClimb); NaN when there is no timeline or the name is unknown.</summary>
+    public double TimelineMarkTau(string mark)
+    {
+        EclipseEventTimeline? t = Engine.Timeline;
+        if (t == null || !t.Active) return double.NaN;
+        return mark switch
+        {
+            "MainFire" => t.TauMainFire, "Kindle" => t.TauKindle, "Kindled" => t.TauKindled, "Ignition" => t.TauIgnition, "FrontsMet" => t.TauFrontsMet,
+            "Crescendo" => t.TauCrescendo, "Handoff" => t.TauHandoff, "Sustain" => t.TauSustain, "Instability" => t.TauInstability, "Overload" => t.TauOverload,
+            "Implosion" => t.TauImplosion, "Shockwave" => t.TauShockwave, "Aftermath" => t.TauAftermath, "End" => t.TauEnd, "MainClimb" => t.MainClimb,
+            _ => double.NaN
+        };
+    }
+
+    /// <summary>Capture/test hook: event time at which the beam of a registry site fires (the main spire: its main fire); NaN when the site is not in the timeline.</summary>
+    public double SiteFireTauSeconds(int registrySite)
+    {
+        EclipseEventTimeline? t = Engine.Timeline;
+        if (t == null || !t.Active) return double.NaN;
+        if (registrySite == t.Sites.MainSiteIndex) return t.TauMainFire;
+        int[] sites = t.Sites.SiteIndex;
+        for (int i = 0; i < sites.Length; i++) if (sites[i] == registrySite) return t.SiteFireTau(i);
+        return double.NaN;
+    }
+
+    /// <summary>
+    /// Capture/test hook (phase E4d): event time at which the first refuel flash of a registry site arrives at or after <paramref name="notBeforeTau"/>
+    /// (the pulse clock's <c>ArrivalTime</c> on the celestial clock, which is the grid time while the Celestial refuel clock is active); NaN when the
+    /// site is not in the timeline.
+    /// </summary>
+    public double SiteRefuelTauSeconds(int registrySite, double notBeforeTau)
+    {
+        EclipseEventTimeline? t = Engine.Timeline;
+        if (t == null || !t.Active) return double.NaN;
+        int[] sites = t.Sites.SiteIndex;
+        for (int i = 0; i < sites.Length; i++)
+        {
+            if (sites[i] != registrySite) continue;
+            long launch = t.RefuelLaunchAtOrAfter(i, t.Window.Start + notBeforeTau);
+            return t.RefuelArrivalTime(i, launch) - t.Window.Start;
+        }
+        return double.NaN;
+    }
+
     // ---------------------------------------------------------------- pitch-black eclipse (spec D, phase E2)
 
     private readonly EclipseDarknessModel _darkness = new();
@@ -221,6 +292,8 @@ public partial class EclipseEventDirector : Node, IPrimaryLightOverride
     public float HubSkyTintStrength => (float)_hubLight.SkyTintStrength;
     public float HubZenithHaloIntensity => (float)_hubLight.ZenithHaloIntensity;
     public Color HubLightColor => new((float)_hubLight.ColorR, (float)_hubLight.ColorG, (float)_hubLight.ColorB);
+    /// <summary>Strength of the sky shader's hub in-scatter phase (phase E4c; saved hub body setting). Read by day_side_atmosphere.gd.</summary>
+    public float HubSkyInScatter => (float)Engine.Settings.HubBody.SkyInScatter;
     /// <summary>Debug hub level override, -1 when off (not saved).</summary>
     public float HubLevelOverride => (float)_hubLevelOverride;
     public bool HubLevelOverrideActive => _hubLevelOverride >= 0d;
@@ -256,6 +329,7 @@ public partial class EclipseEventDirector : Node, IPrimaryLightOverride
         }
         _hubOverrideChanged = false;
         EclipseHubLighting.Weight = (float)_hubWeight;
+        EclipseHubLighting.SetColor((float)_hubLight.ColorR, (float)_hubLight.ColorG, (float)_hubLight.ColorB);
     }
 
     // ---------------------------------------------------------------- local zenith gizmo (debug, spec G.3)

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.Celestial.Eclipse;
 using RingworldTechDemo.Poi;
 using RingworldTechDemo.Voxel.LOD;
 
@@ -15,7 +16,7 @@ public static class UndergroundParticipantFactory
         new CloudSunVisibilityParticipant(), new SunshineCloudsParticipant(), new LocalVolumetricCloudsParticipant(),
         new WeatherEffectsParticipant(), new WeatherAudioParticipant(), new AmbienceFadeParticipant(),
         new WaterFftParticipant(),
-        new TerrainProxyParticipant(), new GlobalTerrainParticipant(), new EmitterStandInParticipant(), new FarViewportParticipant(),
+        new TerrainProxyParticipant(), new GlobalTerrainParticipant(), new EmitterStandInParticipant(), new EmitterGridParticipant(), new EclipseHubBeamsParticipant(), new EclipseHubBodyParticipant(), new FarViewportParticipant(),
         new ShadowParticipant()
     };
 }
@@ -221,6 +222,60 @@ internal sealed class EmitterStandInParticipant : UndergroundParticipant
     public override string Describe() => _layer == null ? "absent"
         : $"hidden={_layer.UndergroundHidden} hold={_layer.UndergroundHold} visible={_layer.Visible} bound={_layer.IsBound} instances={_layer.RegularInstanceCount + _layer.MainInstanceCount}";
     public override ulong[] RetainedInstanceIds() => new[] { IdOf(_layer), IdOf(_layer?.RegularInstances), IdOf(_layer?.MainInstances), IdOf(_layer?.RegularInstances?.Multimesh), IdOf(_layer?.MainInstances?.Multimesh) };
+}
+
+/// <summary>Emitter relay grid (links, heads and the far layer): held while enclosed, hidden deep underground. Registered with the hub beams in phase E4b (user decision 2026-10-17: the grid was never registered before and drew underground).</summary>
+internal sealed class EmitterGridParticipant : UndergroundParticipant
+{
+    private EmitterGridBeamLayer? _layer;
+    public override string Name => "EmitterGrid";
+    public override UndergroundGroups Group => UndergroundGroups.FarTerrain;
+    public override void Bind(Node root) { _layer = Find<EmitterGridBeamLayer>(root, "EmitterGrid"); Present = _layer != null; }
+    public override void Apply(in UndergroundParticipantState state)
+    {
+        if (_layer == null || !GodotObject.IsInstanceValid(_layer)) return;
+        _layer.UndergroundHold = state.Suspend;
+        _layer.SetUndergroundHidden(state.Hide);
+    }
+    public override string Describe() => _layer == null ? "absent"
+        : $"hidden={_layer.UndergroundHidden} hold={_layer.UndergroundHold} visible={_layer.Visible} bound={_layer.IsBound} links={_layer.LinkCount} farVisible={_layer.FarLayer?.Visible}";
+    public override ulong[] RetainedInstanceIds() => new[] { IdOf(_layer), IdOf(_layer?.LinkInstances), IdOf(_layer?.HeadInstances), IdOf(_layer?.LinkInstances?.Multimesh), IdOf(_layer?.FarLayer) };
+}
+
+/// <summary>Eclipse spire to hub beams (near and far layers): held while enclosed, hidden deep underground (phase E4b). The layer exists only during the event; the flags persist across its builds.</summary>
+internal sealed class EclipseHubBeamsParticipant : UndergroundParticipant
+{
+    private EclipseHubBeamLayer? _layer;
+    public override string Name => "EclipseHubBeams";
+    public override UndergroundGroups Group => UndergroundGroups.FarTerrain;
+    public override void Bind(Node root) { _layer = Find<EclipseHubBeamLayer>(root, "EclipseBeams"); Present = _layer != null; }
+    public override void Apply(in UndergroundParticipantState state)
+    {
+        if (_layer == null || !GodotObject.IsInstanceValid(_layer)) return;
+        _layer.UndergroundHold = state.Suspend;
+        _layer.SetUndergroundHidden(state.Hide);
+    }
+    public override string Describe() => _layer == null ? "absent"
+        : $"hidden={_layer.UndergroundHidden} hold={_layer.UndergroundHold} visible={_layer.Visible} bound={_layer.IsBound} farVisible={_layer.FarLayer?.Visible}";
+    public override ulong[] RetainedInstanceIds() => new[] { IdOf(_layer) };
+}
+
+/// <summary>Eclipse hub sun body (the main-viewport disc proxy, phase E4c): held while enclosed, hidden deep underground.</summary>
+internal sealed class EclipseHubBodyParticipant : UndergroundParticipant
+{
+    private EclipseHubBody? _body;
+    public override string Name => "EclipseHubBody";
+    public override UndergroundGroups Group => UndergroundGroups.FarTerrain;
+    public override void Bind(Node root) { _body = Find<EclipseHubBody>(root, "EclipseHubBody"); Present = _body != null; }
+    public override void Apply(in UndergroundParticipantState state)
+    {
+        if (_body == null || !GodotObject.IsInstanceValid(_body)) return;
+        _body.UndergroundHold = state.Suspend;
+        _body.SetUndergroundHidden(state.Hide);
+    }
+    public override string Describe() => _body == null ? "absent"
+        : $"hidden={_body.UndergroundHidden} hold={_body.UndergroundHold} quadVisible={_body.Quad?.Visible}";
+    public override ulong[] RetainedInstanceIds() => new[] { IdOf(_body) };
 }
 
 internal sealed class FarViewportParticipant : UndergroundParticipant

@@ -78,7 +78,7 @@ public partial class EclipseHubLightTest : RefCounted
         clock.Seconds = engine.Window.Start + 3000d; engine.Update(clock, 3d, Pose());
         EclipseHubLightOutput sustain = EclipseHubLightModel.Evaluate(s, engine.State, -1d);
         Expect(failures, Near(sustain.DirectEnergy, 3.2, 0.2) && Near(sustain.Day, 0.8, 0.03) && sustain.Weight == 1d && !sustain.Overridden, $"sustain ~ 3.2 / 0.8 ({sustain})");
-        Expect(failures, Near(sustain.ColorR, 0.92) && Near(sustain.ColorG, 0.97) && Near(sustain.ColorB, 1d) && Near(sustain.SkyTintStrength, 0.25), "default colour and tint");
+        Expect(failures, Near(sustain.ColorR, 0.92) && Near(sustain.ColorG, 0.97) && Near(sustain.ColorB, 1d) && Near(sustain.SkyTintStrength, 0.10), "default colour and tint");
 
         // Override: weight 1 and the level directly, outside the event too.
         clock.Seconds = engine.Window.Start - 1000d; engine.Update(clock, 0d, Pose());

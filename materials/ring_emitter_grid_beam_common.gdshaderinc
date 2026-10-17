@@ -7,6 +7,7 @@
 #include "res://materials/ring_emitter_grid_pulse.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_emitter_grid_layers.gdshaderinc"
+#include "res://materials/ring_beam_ribbon.gdshaderinc"
 
 // x core width (m), y halo width (m), z minimum pixel width, w far compensation exponent.
 uniform vec4 beam_widths = vec4(40.0, 600.0, 1.5, 0.6);
@@ -75,14 +76,8 @@ void vertex() {
 	float f_other = is_end ? f_a : f_b;
 	bool draw_it = in_range && lit;
 	// Clip against the near plane by sliding this vertex toward the other end of its sub-segment.
-	if (view_here.z > -near_clip) {
-		if (view_other.z > -near_clip) {
-			draw_it = false;
-		} else {
-			float k = (-near_clip * 1.01 - view_here.z) / (view_other.z - view_here.z);
-			view_here = mix(view_here, view_other, k);
-			f_here = mix(f_here, f_other, k);
-		}
+	if (!ribbon_clip_near(view_here, f_here, view_other, f_other, near_clip)) {
+		draw_it = false;
 	}
 	if (!draw_it) {
 		v_world = w_mid;
@@ -98,28 +93,20 @@ void vertex() {
 	} else {
 		vec3 world_here = (INV_VIEW_MATRIX * vec4(view_here, 1.0)).xyz;
 		float distance_here = length(view_here);
-		vec3 dir_view = normalize((VIEW_MATRIX * vec4(span, 0.0)).xyz);
-		vec3 side_view = cross(dir_view, view_here / max(distance_here, 1.0e-9));
-		float side_length = length(side_view);
-		side_view = side_length > 0.0001 ? side_view / side_length : vec3(1.0, 0.0, 0.0);
+		vec3 side_view = ribbon_side_vector((VIEW_MATRIX * vec4(span, 0.0)).xyz, view_here, distance_here);
 
-		// World units per pixel. abs(): the RenderingDevice projection carries a Y flip.
-		float meters_per_pixel = distance_here / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y * 0.5);
+		float meters_per_pixel = ribbon_meters_per_pixel(distance_here, PROJECTION_MATRIX[1][1], VIEWPORT_SIZE.y);
 		float core_sigma = max(0.5 * beam_widths.x, 0.001) * world_scale;
 		float halo_length = max(0.25 * beam_widths.y, 0.001) * world_scale;
-		float footprint = 0.35 * beam_widths.z * meters_per_pixel;
-		float core_eff = max(core_sigma, footprint);
-		float halo_eff = max(halo_length, footprint);
-		// Energy conservation: widening a profile to the pixel footprint scales its amplitude by (true / drawn)^FarCompensation.
-		float core_gain = pow(core_sigma / core_eff, beam_widths.w);
-		float halo_gain = pow(halo_length / halo_eff, beam_widths.w);
+		vec4 profile = ribbon_profile(core_sigma, halo_length, beam_widths.z, meters_per_pixel, beam_widths.w);
+		float core_eff = profile.x;
+		float halo_eff = profile.y;
 #ifdef EG_CORE_PASS
-		// Half of the minimum depth footprint; the strip is one pixel wider so the footprint is never clipped by rasterisation.
-		float depth_half = 0.5 * max(core_depth.y, 0.0) * meters_per_pixel;
-		float half_width = max(3.5 * core_eff, depth_half + meters_per_pixel);
+		float depth_half = ribbon_depth_half(core_depth.y, meters_per_pixel);
+		float half_width = ribbon_half_width_core(core_eff, depth_half, meters_per_pixel);
 #else
 		float depth_half = 0.0;
-		float half_width = max(3.5 * core_eff, 4.0 * halo_eff);
+		float half_width = ribbon_half_width_halo(core_eff, halo_eff);
 #endif
 
 		vec3 view_expanded = view_here + side_view * (UV.y * half_width);
@@ -132,14 +119,14 @@ void vertex() {
 		float day_here = eg_day_at_hub(dot(up_here, sun), ringworld_solar_visibility, ringworld_hub_day);
 		float b_here = eg_background(day_camera, day_here, real_distance);
 		// The atmosphere model works in real metres (identity in the main world).
-		vec4 atmosphere = sample_ring_atmosphere(camera * inv_scale, world_here * inv_scale, ring_center * inv_scale, b_here);
+		float atmosphere_visibility = ribbon_atmosphere_visibility(camera * inv_scale, world_here * inv_scale, ring_center * inv_scale, b_here);
 
 		v_world = world_here;
 		v_f = f_here;
 		v_x = UV.y * half_width;
 		v_side = UV.y;
-		v_profile = vec4(core_eff, halo_eff, core_gain, halo_gain);
-		v_visibility = vec2(b_here, 1.0 - atmosphere.a);
+		v_profile = profile;
+		v_visibility = vec2(b_here, atmosphere_visibility);
 		v_weights = vec2(eg_near_fade(real_distance), eg_band_weight(real_distance));
 		v_depth_half = depth_half;
 		v_link = link;
@@ -163,19 +150,14 @@ void fragment() {
 	// Sunshine's 2x2 furthest-depth prepass.
 	float peak = level * v_profile.z;
 	float threshold = max(core_depth.x, 1.0e-4);
-	if (peak <= threshold) {
-		discard;
-	}
-	float natural_half = v_profile.x * sqrt(2.0 * log(peak / threshold));
-	if (abs(v_x) > max(natural_half, v_depth_half)) {
+	if (!ribbon_depth_core_covers(peak, threshold, v_profile.x, v_x, v_depth_half)) {
 		discard;
 	}
 	ALBEDO = vec3(0.0);
 	ALPHA = 1.0;
 #else
-	float cross_profile = v_profile.z * exp(-0.5 * v_x * v_x / (v_profile.x * v_profile.x))
-		+ halo_amplitude * v_profile.w * exp(-abs(v_x) / v_profile.y);
-	float edge = 1.0 - smoothstep(0.8, 1.0, abs(v_side));
+	float cross_profile = ribbon_cross_profile(v_x, v_profile, halo_amplitude);
+	float edge = ribbon_edge(v_side);
 	float value = level * cross_profile * edge * base_emission;
 	if (value < 0.0001) {
 		discard;

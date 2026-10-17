@@ -35,6 +35,8 @@ public partial class EmitterBoreLayer : Node3D
         public SiteKind Kind;
         public bool HasKind;
         public Vector4 PublishedCenter = new(float.NaN, 0, 0, 0), PublishedAxis;
+        /// <summary>Phase E4e: factor on the plug light energy while the site's eclipse beam fires (1 = none).</summary>
+        public float EventScale = 1f;
     }
 
     [Export] public bool AutoBind { get; set; } = true;
@@ -146,10 +148,26 @@ public partial class EmitterBoreLayer : Node3D
         foreach (BoreSlot slot in _slots)
         {
             if (slot == null) continue;
-            slot.Light.LightEnergy = _lightEnergy;
+            slot.Light.LightEnergy = _lightEnergy * slot.EventScale;
             slot.Light.Visible = slot.Site >= 0 && _lightEnergy > 0f;
         }
     }
+
+    /// <summary>
+    /// Phase E4e (spec E.7): scales the plug light of slot <paramref name="index"/> while its spire's eclipse beam fires (<paramref name="scale"/> 1 restores it).
+    /// One light per slot; the value is written only when it changes. A slot assignment or release resets it to 1.
+    /// </summary>
+    public void SetSlotEventScale(int index, float scale)
+    {
+        if (index < 0 || index >= SlotCount || _slots[index] == null) return;
+        scale = float.IsFinite(scale) ? Mathf.Clamp(scale, 1f, 16f) : 1f;
+        BoreSlot slot = _slots[index];
+        if (slot.EventScale == scale) return;
+        slot.EventScale = scale;
+        if (slot.Site >= 0) slot.Light.LightEnergy = _lightEnergy * scale;
+    }
+
+    public float GetSlotEventScale(int index) => index >= 0 && index < SlotCount && _slots[index] != null ? _slots[index].EventScale : 1f;
 
     /// <summary>Selects, assigns and releases slots for the current observers. <paramref name="consumersActive"/> false releases everything.</summary>
     public void Step(in RingCanonicalPosition explorer, RingCanonicalPosition? camera, bool consumersActive)
@@ -202,6 +220,7 @@ public partial class EmitterBoreLayer : Node3D
         }
         slot.Site = site;
         slot.Root.Transform = SlotTransform(snapshot, site);
+        slot.EventScale = 1f;
         slot.Light.LightEnergy = _lightEnergy;
         slot.Light.Visible = _lightEnergy > 0f;
         slot.Root.Visible = true;
@@ -211,6 +230,7 @@ public partial class EmitterBoreLayer : Node3D
     private void Release(BoreSlot slot)
     {
         slot.Site = -1;
+        slot.EventScale = 1f;
         slot.Root.Visible = false;
         slot.Light.Visible = false;
         slot.Body.ProcessMode = ProcessModeEnum.Disabled;

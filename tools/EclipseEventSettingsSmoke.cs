@@ -25,15 +25,153 @@ public partial class EclipseEventSettingsSmoke : Node
         "OverloadSeconds", "OverloadGain", "ImplosionSeconds", "BeamRetractSeconds", "ShockwaveSeconds", "ShockwaveArrivalFraction", "ShockFlashLevel",
         "ShockFlashSeconds", "ReturnTailSeconds", "RealSunEnergy", "HubDirectFraction", "HubDayAtFull",
         "HubLightRed", "HubLightGreen", "HubLightBlue", "HubSkyTintStrength", "HubZenithHaloIntensity",
-        "EclipseAmbientScale", "EclipseAtmosphereNightScale", "EclipseSkyNightScale", "EclipseCloudAmbientScale", "EclipseStarVisibility"
+        "EclipseAmbientScale", "EclipseAtmosphereNightScale", "EclipseSkyNightScale", "EclipseCloudAmbientScale", "EclipseStarVisibility",
+        "BeamCoreWidthMeters", "BeamHaloWidthMeters", "BeamMainCoreWidthMeters", "BeamMainHaloWidthMeters", "BeamMinPixelWidth", "BeamFarCompensation",
+        "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
+        "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEmission", "BeamBoreLightBoost",
+        "HubBodyCoreEmission", "HubBodyRadiusKm", "HubBodyMinRadiusPixels", "HubBodyHaloAmplitude", "HubBodyHaloRadiusKm", "HubSkyInScatter"
+    };
+
+    private static readonly string[] HubBodyFieldNames =
+    {
+        "HubBodyEnabled", "HubBodyCoreEmission", "HubBodyRadiusKm", "HubBodyMinRadiusPixels", "HubBodyHaloAmplitude", "HubBodyHaloRadiusKm", "HubSkyInScatter"
+    };
+
+    private static readonly string[] BeamFieldNames =
+    {
+        "BeamsEnabled", "BeamFarLayerEnabled", "BeamDepthWriteCore",
+        "BeamCoreWidthMeters", "BeamHaloWidthMeters", "BeamMainCoreWidthMeters", "BeamMainHaloWidthMeters", "BeamMinPixelWidth", "BeamFarCompensation",
+        "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
+        "BeamCloudDiffusionEnabled", "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEnabled", "BeamCrownGlowEmission", "BeamBoreLightBoost"
     };
 
     private static bool IsDefault(GameplayEclipseEventSettings s)
     {
-        if (!s.EventEnabled || !s.EclipseDarknessEnabled || s.IgnitionSpeedMode != 0 || s.RampMode != 0 || !s.SuppressGridPulseDuringIgnition || s.RefuelClock != 0) return false;
+        if (!s.EventEnabled || !s.EclipseDarknessEnabled || !s.BeamsEnabled || !s.BeamFarLayerEnabled || !s.BeamDepthWriteCore || !s.HubBodyEnabled || !s.BeamCloudDiffusionEnabled || !s.BeamCrownGlowEnabled || s.IgnitionSpeedMode != 0 || s.RampMode != 0 || !s.SuppressGridPulseDuringIgnition || s.RefuelClock != 0) return false;
         foreach (string name in FloatNames)
             if (!Mathf.IsEqualApprox((float)s.Get(name).AsDouble(), GameplayEclipseEventDefaults.DefaultOf(name))) return false;
         return true;
+    }
+
+    /// <summary>Spire to hub beam preferences (phase E4b): round trip, clamps, NaN fallback, core mapping, and the defaults an older save without the fields loads with.</summary>
+    private static void BeamChecks(string path)
+    {
+        var beams = new GameplayEclipseEventDefaults(path); beams.Load();
+        Require(beams.SetBool("BeamsEnabled", false) && beams.SetBool("BeamFarLayerEnabled", false) && beams.SetBool("BeamDepthWriteCore", false)
+            && beams.SetFloat("BeamCoreWidthMeters", 200f) && beams.SetFloat("BeamFarCompensation", .3f) && beams.SetFloat("BeamBaseEmission", 20f)
+            && beams.SetFloat("BeamDayVisibility", .25f) && beams.SetFloat("BeamCoreDepthMinPixels", 6f), "beam setters did not report a change");
+        Require(beams.Save(), "beam preferences did not save");
+        var loaded = new GameplayEclipseEventDefaults(path); loaded.Load();
+        EclipseBeamSettings core = GameplayEclipseEventDefaults.ToCore(loaded.Settings).Beams;
+        Require(!loaded.Settings.BeamsEnabled && !loaded.Settings.BeamFarLayerEnabled && !loaded.Settings.BeamDepthWriteCore
+            && Mathf.IsEqualApprox(loaded.Settings.BeamCoreWidthMeters, 200f) && Mathf.IsEqualApprox(loaded.Settings.BeamBaseEmission, 20f), "beam preferences did not round-trip");
+        Require(!core.BeamsEnabled && !core.FarLayerEnabled && !core.DepthWriteCore && Math.Abs(core.CoreWidthMeters - 200d) < 1e-4 && Math.Abs(core.FarCompensation - .3d) < 1e-6
+            && Math.Abs(core.BaseEmission - 20d) < 1e-6 && Math.Abs(core.DayVisibility - .25d) < 1e-6 && Math.Abs(core.CoreDepthMinPixels - 6d) < 1e-6, "beam preferences did not map into the core settings");
+
+        // Clamps: setters and a hostile file.
+        beams.SetFloat("BeamCoreWidthMeters", 0f); beams.SetFloat("BeamHaloWidthMeters", 1e9f); beams.SetFloat("BeamFarCompensation", 7f);
+        beams.SetFloat("BeamBaseEmission", float.NaN); beams.SetFloat("BeamSoftTipFraction", -1f); beams.SetFloat("BeamCoreDepthThreshold", float.PositiveInfinity);
+        var s = beams.Settings;
+        Require(Mathf.IsEqualApprox(s.BeamCoreWidthMeters, 10f) && Mathf.IsEqualApprox(s.BeamHaloWidthMeters, 20000f) && Mathf.IsEqualApprox(s.BeamFarCompensation, 1f)
+            && Mathf.IsEqualApprox(s.BeamBaseEmission, 12f) && Mathf.IsEqualApprox(s.BeamSoftTipFraction, .0005f) && Mathf.IsEqualApprox(s.BeamCoreDepthThreshold, .35f), "beam setter bounds were not enforced");
+        using var hostile = new GameplayEclipseEventSettings { BeamMainEmissionScale = float.NaN, BeamMinPixelWidth = -3f, BeamMainHaloWidthMeters = 1e12f, BeamHaloAmplitude = 5f };
+        using var clean = GameplayEclipseEventDefaults.Sanitize(hostile);
+        Require(Mathf.IsEqualApprox(clean.BeamMainEmissionScale, 1.5f) && Mathf.IsEqualApprox(clean.BeamMinPixelWidth, .5f)
+            && Mathf.IsEqualApprox(clean.BeamMainHaloWidthMeters, 40000f) && Mathf.IsEqualApprox(clean.BeamHaloAmplitude, 1f), "beam Sanitize bounds were not enforced");
+        // The pure record clamps too (a value that bypassed the resource).
+        EclipseBeamSettings wild = new EclipseBeamSettings { CoreWidthMeters = double.NaN, MinPixelWidth = 1e6, DayVisibility = -2d, FarCompensation = double.PositiveInfinity }.Sanitized();
+        Require(wild.CoreWidthMeters == 150d && wild.MinPixelWidth == 8d && wild.DayVisibility == 0d && wild.FarCompensation == .45d, "EclipseBeamSettings.Sanitized bounds");
+
+        // Phase E4e: in-cloud diffusion, crown glow and bore light boost.
+        var cloud = new GameplayEclipseEventDefaults(path); cloud.Load();
+        Require(cloud.SetBool("BeamCloudDiffusionEnabled", false) && cloud.SetBool("BeamCrownGlowEnabled", false) && cloud.SetFloat("BeamCloudWidening", 5f)
+            && cloud.SetFloat("BeamCloudHaloBoost", 2f) && cloud.SetFloat("BeamCloudCoreCut", .8f) && cloud.SetFloat("BeamCrownGlowEmission", 6f) && cloud.SetFloat("BeamBoreLightBoost", 2.5f), "cloud setters did not report a change");
+        Require(cloud.Save(), "cloud preferences did not save");
+        var cloudLoaded = new GameplayEclipseEventDefaults(path); cloudLoaded.Load();
+        EclipseBeamSettings cloudCore = GameplayEclipseEventDefaults.ToCore(cloudLoaded.Settings).Beams;
+        Require(!cloudLoaded.Settings.BeamCloudDiffusionEnabled && !cloudLoaded.Settings.BeamCrownGlowEnabled && Mathf.IsEqualApprox(cloudLoaded.Settings.BeamCloudWidening, 5f)
+            && !cloudCore.CloudDiffusionEnabled && !cloudCore.CrownGlowEnabled && Math.Abs(cloudCore.CloudWidening - 5d) < 1e-6 && Math.Abs(cloudCore.CloudHaloBoost - 2d) < 1e-6
+            && Math.Abs(cloudCore.CloudCoreCut - .8d) < 1e-6 && Math.Abs(cloudCore.CrownGlowEmission - 6d) < 1e-6 && Math.Abs(cloudCore.BoreLightBoost - 2.5d) < 1e-6, "cloud preferences did not round-trip or map");
+        cloud.SetFloat("BeamCloudWidening", 99f); cloud.SetFloat("BeamBoreLightBoost", 0f); cloud.SetFloat("BeamCloudCoreCut", float.NaN);
+        Require(Mathf.IsEqualApprox(cloud.Settings.BeamCloudWidening, 8f) && Mathf.IsEqualApprox(cloud.Settings.BeamBoreLightBoost, 1f) && Mathf.IsEqualApprox(cloud.Settings.BeamCloudCoreCut, 1.5f), "cloud setter bounds were not enforced");
+        EclipseBeamSettings cloudWild = new EclipseBeamSettings { CloudWidening = double.NaN, BoreLightBoost = 100d, CloudCoreCut = -1d, CrownGlowEmission = 1e9 }.Sanitized();
+        Require(cloudWild.CloudWidening == 3d && cloudWild.BoreLightBoost == 8d && cloudWild.CloudCoreCut == .05d && cloudWild.CrownGlowEmission == 20d, "EclipseBeamSettings.Sanitized cloud bounds");
+        cloud.Reset(); cloud.Save();
+
+        // An older save has none of the beam fields: delete their lines from a saved file and the load must give the defaults.
+        var old = new GameplayEclipseEventDefaults(path); old.Load();
+        old.SetFloat("PreRollSeconds", 111f); old.SetFloat("BeamBaseEmission", 33f); old.SetBool("BeamsEnabled", false);
+        Require(old.Save(), "old-save fixture did not save");
+        string full = ProjectSettings.GlobalizePath(path);
+        string[] lines = System.IO.File.ReadAllLines(full);
+        var kept = new System.Collections.Generic.List<string>();
+        foreach (string line in lines)
+        {
+            bool beamLine = false;
+            foreach (string name in BeamFieldNames) if (line.StartsWith(name + " =", StringComparison.Ordinal)) beamLine = true;
+            if (!beamLine) kept.Add(line);
+        }
+        Require(kept.Count < lines.Length, "old-save fixture had no beam lines to remove");
+        System.IO.File.WriteAllLines(full, kept);
+        var legacy = new GameplayEclipseEventDefaults(path); legacy.Load();
+        Require(Mathf.IsEqualApprox(legacy.Settings.PreRollSeconds, 111f) && legacy.Settings.BeamsEnabled && legacy.Settings.BeamFarLayerEnabled && legacy.Settings.BeamDepthWriteCore
+            && Mathf.IsEqualApprox(legacy.Settings.BeamBaseEmission, 12f) && Mathf.IsEqualApprox(legacy.Settings.BeamCoreWidthMeters, 150f) && Mathf.IsEqualApprox(legacy.Settings.BeamDayVisibility, .6f), "an older save did not load the beam defaults");
+        old.Reset(); old.Save();
+    }
+
+    /// <summary>Hub sun body and sky in-scatter preferences (phase E4c): round trip, clamps, NaN fallback, core mapping and the defaults an older save without the fields loads with.</summary>
+    private static void HubBodyChecks(string path)
+    {
+        var hub = new GameplayEclipseEventDefaults(path); hub.Load();
+        Require(hub.SetBool("HubBodyEnabled", false) && hub.SetFloat("HubBodyCoreEmission", 25f) && hub.SetFloat("HubBodyRadiusKm", 45f) && hub.SetFloat("HubBodyMinRadiusPixels", 3f)
+            && hub.SetFloat("HubBodyHaloAmplitude", 1.25f) && hub.SetFloat("HubBodyHaloRadiusKm", 650f) && hub.SetFloat("HubSkyInScatter", 2.5f), "hub body setters did not report a change");
+        Require(hub.Save(), "hub body preferences did not save");
+        var loaded = new GameplayEclipseEventDefaults(path); loaded.Load();
+        EclipseHubBodySettings core = GameplayEclipseEventDefaults.ToCore(loaded.Settings).HubBody;
+        Require(!loaded.Settings.HubBodyEnabled && Mathf.IsEqualApprox(loaded.Settings.HubBodyRadiusKm, 45f) && Mathf.IsEqualApprox(loaded.Settings.HubSkyInScatter, 2.5f), "hub body preferences did not round-trip");
+        Require(!core.BodyEnabled && Math.Abs(core.CoreEmission - 25d) < 1e-5 && Math.Abs(core.RadiusKm - 45d) < 1e-5 && Math.Abs(core.MinRadiusPixels - 3d) < 1e-6
+            && Math.Abs(core.HaloAmplitude - 1.25d) < 1e-6 && Math.Abs(core.HaloRadiusKm - 650d) < 1e-4 && Math.Abs(core.SkyInScatter - 2.5d) < 1e-6, "hub body preferences did not map into the core settings");
+
+        hub.SetFloat("HubBodyCoreEmission", 0f); hub.SetFloat("HubBodyRadiusKm", 1e9f); hub.SetFloat("HubBodyHaloAmplitude", float.NaN); hub.SetFloat("HubSkyInScatter", -3f);
+        var s = hub.Settings;
+        Require(Mathf.IsEqualApprox(s.HubBodyCoreEmission, 1f) && Mathf.IsEqualApprox(s.HubBodyRadiusKm, 200f) && Mathf.IsEqualApprox(s.HubBodyHaloAmplitude, .6f) && Mathf.IsEqualApprox(s.HubSkyInScatter, 0f), "hub body setter bounds were not enforced");
+        using var hostile = new GameplayEclipseEventSettings { HubBodyHaloRadiusKm = float.PositiveInfinity, HubBodyMinRadiusPixels = -4f, HubBodyCoreEmission = 1e12f };
+        using var clean = GameplayEclipseEventDefaults.Sanitize(hostile);
+        Require(Mathf.IsEqualApprox(clean.HubBodyHaloRadiusKm, 400f) && Mathf.IsEqualApprox(clean.HubBodyMinRadiusPixels, .5f) && Mathf.IsEqualApprox(clean.HubBodyCoreEmission, 200f), "hub body Sanitize bounds were not enforced");
+        EclipseHubBodySettings wild = new EclipseHubBodySettings { CoreEmission = double.NaN, RadiusKm = 1e6, SkyInScatter = double.NegativeInfinity, MinRadiusPixels = 0d }.Sanitized();
+        Require(wild.CoreEmission == 40d && wild.RadiusKm == 200d && wild.SkyInScatter == 1d && wild.MinRadiusPixels == .5d, "EclipseHubBodySettings.Sanitized bounds");
+
+        // The pure profile: radius factor 0.5 + 0.5 sqrt(min(L, 1)), emission proportional to the level.
+        Require(Math.Abs(EclipseHubBodyMath.RadiusFactor(0d) - .5d) < 1e-12 && Math.Abs(EclipseHubBodyMath.RadiusFactor(1d) - 1d) < 1e-12 && Math.Abs(EclipseHubBodyMath.RadiusFactor(2.5d) - 1d) < 1e-12
+            && Math.Abs(EclipseHubBodyMath.RadiusFactor(.1d) - (.5d + .5d * Math.Sqrt(.1d))) < 1e-12, "hub body radius factor");
+        var def = new EclipseHubBodySettings();
+        Require(Math.Abs(EclipseHubBodyMath.CoreEmission(def, .1d) - 4d) < 1e-9 && Math.Abs(EclipseHubBodyMath.HaloEmission(def, 2d) - 1.2d) < 1e-9 && Math.Abs(EclipseHubBodyMath.CoreRadiusKm(def, 1d) - 30d) < 1e-9, "hub body emission / radius");
+
+        // The engine takes a hub body change (it is excluded from the timeline rebuild, like the beam look).
+        var engine = new EclipseEventEngine();
+        engine.SetSettings(new EclipseEventSettings());
+        engine.SetSettings(new EclipseEventSettings { HubBody = def with { CoreEmission = 60d } });
+        Require(Math.Abs(engine.Settings.HubBody.CoreEmission - 60d) < 1e-9, "engine did not take the hub body settings");
+
+        // An older save has none of the hub body fields: delete their lines and the load must give the defaults.
+        var old = new GameplayEclipseEventDefaults(path); old.Load();
+        old.SetFloat("PreRollSeconds", 123f); old.SetFloat("HubBodyRadiusKm", 77f); old.SetBool("HubBodyEnabled", false);
+        Require(old.Save(), "hub body old-save fixture did not save");
+        string full = ProjectSettings.GlobalizePath(path);
+        string[] lines = System.IO.File.ReadAllLines(full);
+        var kept = new System.Collections.Generic.List<string>();
+        foreach (string line in lines)
+        {
+            bool hubLine = false;
+            foreach (string name in HubBodyFieldNames) if (line.StartsWith(name + " =", StringComparison.Ordinal)) hubLine = true;
+            if (!hubLine) kept.Add(line);
+        }
+        Require(kept.Count < lines.Length, "hub body old-save fixture had no lines to remove");
+        System.IO.File.WriteAllLines(full, kept);
+        var legacy = new GameplayEclipseEventDefaults(path); legacy.Load();
+        Require(Mathf.IsEqualApprox(legacy.Settings.PreRollSeconds, 123f) && legacy.Settings.HubBodyEnabled && Mathf.IsEqualApprox(legacy.Settings.HubBodyRadiusKm, 30f)
+            && Mathf.IsEqualApprox(legacy.Settings.HubBodyCoreEmission, 40f) && Mathf.IsEqualApprox(legacy.Settings.HubSkyInScatter, 1f), "an older save did not load the hub body defaults");
+        old.Reset(); old.Save();
     }
 
     private static void Run(string path)
@@ -49,6 +187,24 @@ public partial class EclipseEventSettingsSmoke : Node
                 if (mapped is EclipseDarknessSettings md && expected is EclipseDarknessSettings ed)
                     Require(md.Enabled == ed.Enabled && Math.Abs(md.AmbientScale - ed.AmbientScale) < 1e-5 && Math.Abs(md.AtmosphereNightScale - ed.AtmosphereNightScale) < 1e-5 && Math.Abs(md.SkyNightScale - ed.SkyNightScale) < 1e-5
                         && Math.Abs(md.CloudAmbientScale - ed.CloudAmbientScale) < 1e-5 && Math.Abs(md.StarVisibility - ed.StarVisibility) < 1e-5, "core default drift in Darkness");
+                else if (mapped is EclipseBeamSettings mb && expected is EclipseBeamSettings eb)
+                {
+                    foreach (var beamProperty in typeof(EclipseBeamSettings).GetProperties())
+                    {
+                        object? bm = beamProperty.GetValue(mb), be = beamProperty.GetValue(eb);
+                        if (bm is double x && be is double y) Require(Math.Abs(x - y) <= 1e-5 * Math.Max(1d, Math.Abs(y)), "core default drift in Beams." + beamProperty.Name);
+                        else Require(Equals(bm, be), "core default drift in Beams." + beamProperty.Name);
+                    }
+                }
+                else if (mapped is EclipseHubBodySettings mh && expected is EclipseHubBodySettings eh)
+                {
+                    foreach (var hubProperty in typeof(EclipseHubBodySettings).GetProperties())
+                    {
+                        object? hm = hubProperty.GetValue(mh), he = hubProperty.GetValue(eh);
+                        if (hm is double x && he is double y) Require(Math.Abs(x - y) <= 1e-5 * Math.Max(1d, Math.Abs(y)), "core default drift in HubBody." + hubProperty.Name);
+                        else Require(Equals(hm, he), "core default drift in HubBody." + hubProperty.Name);
+                    }
+                }
                 else if (mapped is double a && expected is double b) Require(Math.Abs(a - b) <= 1e-5 * Math.Max(1d, Math.Abs(b)), "core default drift in " + property.Name);
                 else Require(Equals(mapped, expected), "core default drift in " + property.Name);
             }
@@ -89,7 +245,7 @@ public partial class EclipseEventSettingsSmoke : Node
         Require(Mathf.IsEqualApprox(s.KindleLevel, .10f), "infinity did not fall back to the default");
         Require(Mathf.IsEqualApprox(s.MainClimbSeconds, .5f) && Mathf.IsEqualApprox(s.OverloadGain, 5) && Mathf.IsEqualApprox(s.FlickerHzEnd, 6)
             && Mathf.IsEqualApprox(s.HubDayAtFull, 1), "setter bounds were not enforced");
-        Require(Mathf.IsEqualApprox(s.HubLightGreen, 1) && Mathf.IsEqualApprox(s.HubZenithHaloIntensity, .35f) && Mathf.IsEqualApprox(s.HubSkyTintStrength, 0), "hub lighting setter bounds were not enforced");
+        Require(Mathf.IsEqualApprox(s.HubLightGreen, 1) && Mathf.IsEqualApprox(s.HubZenithHaloIntensity, .15f) && Mathf.IsEqualApprox(s.HubSkyTintStrength, 0), "hub lighting setter bounds were not enforced");
         Require(s.IgnitionSpeedMode == 1 && s.RampMode == 0 && s.RefuelClock == 1, "enum bounds were not enforced");
 
         using var dirty = new GameplayEclipseEventSettings { PreRollSeconds = 99999, KindleLevel = float.NaN, ShockFlashLevel = -3, HubDirectFraction = float.PositiveInfinity,
@@ -125,6 +281,9 @@ public partial class EclipseEventSettingsSmoke : Node
         Require(second.Save(), "eclipse reset did not save");
         var reset = new GameplayEclipseEventDefaults(path); reset.Load();
         Require(IsDefault(reset.Settings), "eclipse reset did not restore defaults");
+
+        BeamChecks(path);
+        HubBodyChecks(path);
 
         string invalidParent = path + ".invalid-parent.tres";
         Require(ResourceSaver.Save(new GameplayEclipseEventSettings(), invalidParent) == Error.Ok, "invalid-path fixture write failed");

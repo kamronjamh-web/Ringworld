@@ -82,11 +82,15 @@ public sealed record EclipseEventSettings
     public double HubLightGreen { get; init; } = 0.97d;
     public double HubLightBlue { get; init; } = 1.0d;
     /// <summary>How far the sky palette leans toward the cool hub tint while the hub (not the real sun) lights the sky (spec C.5: 0.25).</summary>
-    public double HubSkyTintStrength { get; init; } = 0.25d;
+    public double HubSkyTintStrength { get; init; } = 0.10d;
     /// <summary>Peak brightness of the sky shader's zenith halo at hub level 1 (spec E.1).</summary>
-    public double HubZenithHaloIntensity { get; init; } = 0.35d;
+    public double HubZenithHaloIntensity { get; init; } = 0.15d;
     /// <summary>Pitch-black eclipse darkness (spec D.1, phase E2). Applies to every eclipse, with or without the false-sun event.</summary>
     public EclipseDarknessSettings Darkness { get; init; } = new();
+    /// <summary>Spire to hub beam look (spec E.2, phase E4b). Visual only, like <see cref="Darkness"/>: a change does not rebuild the timeline.</summary>
+    public EclipseBeamSettings Beams { get; init; } = new();
+    /// <summary>Hub sun body (main-viewport disc and halo) and sky in-scatter look (spec E.1, phase E4c). Visual only, like <see cref="Beams"/>.</summary>
+    public EclipseHubBodySettings HubBody { get; init; } = new();
 
     public EclipseEventSettings Sanitized()
     {
@@ -136,9 +140,11 @@ public sealed record EclipseEventSettings
             HubLightRed = C(HubLightRed, 0d, 1d, 0.92d),
             HubLightGreen = C(HubLightGreen, 0d, 1d, 0.97d),
             HubLightBlue = C(HubLightBlue, 0d, 1d, 1.0d),
-            HubSkyTintStrength = C(HubSkyTintStrength, 0d, 1d, 0.25d),
-            HubZenithHaloIntensity = C(HubZenithHaloIntensity, 0d, 2d, 0.35d),
-            Darkness = (Darkness ?? new EclipseDarknessSettings()).Sanitized()
+            HubSkyTintStrength = C(HubSkyTintStrength, 0d, 1d, 0.10d),
+            HubZenithHaloIntensity = C(HubZenithHaloIntensity, 0d, 2d, 0.15d),
+            Darkness = (Darkness ?? new EclipseDarknessSettings()).Sanitized(),
+            Beams = (Beams ?? new EclipseBeamSettings()).Sanitized(),
+            HubBody = (HubBody ?? new EclipseHubBodySettings()).Sanitized()
         };
         // The four collapse stages must fit in the lead so the collapse ends before E (Aftermath >= 0 s): scale them proportionally.
         double sum = s.InstabilitySeconds + s.OverloadSeconds + s.ImplosionSeconds + s.ShockwaveSeconds;

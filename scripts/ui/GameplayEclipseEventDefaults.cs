@@ -59,13 +59,39 @@ public sealed class GameplayEclipseEventDefaults
         new(nameof(GameplayEclipseEventSettings.HubLightRed), 0.92f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.HubLightGreen), 0.97f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.HubLightBlue), 1f, 0f, 1f),
-        new(nameof(GameplayEclipseEventSettings.HubSkyTintStrength), 0.25f, 0f, 1f),
-        new(nameof(GameplayEclipseEventSettings.HubZenithHaloIntensity), 0.35f, 0f, 2f),
+        new(nameof(GameplayEclipseEventSettings.HubSkyTintStrength), 0.10f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.HubZenithHaloIntensity), 0.15f, 0f, 2f),
         new(nameof(GameplayEclipseEventSettings.EclipseAmbientScale), 0.15f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.EclipseAtmosphereNightScale), 0.35f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.EclipseSkyNightScale), 0.5f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.EclipseCloudAmbientScale), 0.4f, 0.3f, 1f),
-        new(nameof(GameplayEclipseEventSettings.EclipseStarVisibility), 1f, 0f, 1f)
+        new(nameof(GameplayEclipseEventSettings.EclipseStarVisibility), 1f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.BeamCoreWidthMeters), 150f, 10f, 2000f),
+        new(nameof(GameplayEclipseEventSettings.BeamHaloWidthMeters), 1200f, 50f, 20000f),
+        new(nameof(GameplayEclipseEventSettings.BeamMainCoreWidthMeters), 300f, 10f, 4000f),
+        new(nameof(GameplayEclipseEventSettings.BeamMainHaloWidthMeters), 2400f, 50f, 40000f),
+        new(nameof(GameplayEclipseEventSettings.BeamMinPixelWidth), 1.5f, 0.5f, 8f),
+        new(nameof(GameplayEclipseEventSettings.BeamFarCompensation), 0.45f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.BeamBaseEmission), 12f, 0f, 60f),
+        new(nameof(GameplayEclipseEventSettings.BeamMainEmissionScale), 1.5f, 0.1f, 6f),
+        new(nameof(GameplayEclipseEventSettings.BeamHaloAmplitude), 0.12f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.BeamBaseFadeMeters), 400f, 0f, 5000f),
+        new(nameof(GameplayEclipseEventSettings.BeamDayVisibility), 0.6f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.BeamCoreDepthThreshold), 0.35f, 0.01f, 2f),
+        new(nameof(GameplayEclipseEventSettings.BeamCoreDepthMinPixels), 4f, 1f, 16f),
+        new(nameof(GameplayEclipseEventSettings.BeamSoftTipFraction), 0.005f, 0.0005f, 0.05f),
+        new(nameof(GameplayEclipseEventSettings.BeamGridEventPeak), 1.5f, 0.25f, 4f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloudWidening), 3f, 0f, 8f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloudHaloBoost), 1f, 0f, 4f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloudCoreCut), 1.5f, 0.05f, 1.5f),
+        new(nameof(GameplayEclipseEventSettings.BeamCrownGlowEmission), 3f, 0f, 20f),
+        new(nameof(GameplayEclipseEventSettings.BeamBoreLightBoost), 4f, 1f, 8f),
+        new(nameof(GameplayEclipseEventSettings.HubBodyCoreEmission), 40f, 1f, 200f),
+        new(nameof(GameplayEclipseEventSettings.HubBodyRadiusKm), 30f, 2f, 200f),
+        new(nameof(GameplayEclipseEventSettings.HubBodyMinRadiusPixels), 2f, 0.5f, 8f),
+        new(nameof(GameplayEclipseEventSettings.HubBodyHaloAmplitude), 0.6f, 0f, 4f),
+        new(nameof(GameplayEclipseEventSettings.HubBodyHaloRadiusKm), 400f, 20f, 3000f),
+        new(nameof(GameplayEclipseEventSettings.HubSkyInScatter), 1f, 0f, 4f)
     };
 
     private static readonly IntField[] IntFields =
@@ -78,7 +104,10 @@ public sealed class GameplayEclipseEventDefaults
     private static readonly string[] BoolFields =
     {
         nameof(GameplayEclipseEventSettings.EventEnabled), nameof(GameplayEclipseEventSettings.SuppressGridPulseDuringIgnition),
-        nameof(GameplayEclipseEventSettings.EclipseDarknessEnabled)
+        nameof(GameplayEclipseEventSettings.EclipseDarknessEnabled), nameof(GameplayEclipseEventSettings.BeamsEnabled),
+        nameof(GameplayEclipseEventSettings.BeamFarLayerEnabled), nameof(GameplayEclipseEventSettings.BeamDepthWriteCore),
+        nameof(GameplayEclipseEventSettings.HubBodyEnabled), nameof(GameplayEclipseEventSettings.BeamCloudDiffusionEnabled),
+        nameof(GameplayEclipseEventSettings.BeamCrownGlowEnabled)
     };
 
     private readonly string _path;
@@ -252,6 +281,44 @@ public sealed class GameplayEclipseEventDefaults
             SkyNightScale = s.EclipseSkyNightScale,
             CloudAmbientScale = s.EclipseCloudAmbientScale,
             StarVisibility = s.EclipseStarVisibility
+        },
+        Beams = new EclipseBeamSettings
+        {
+            BeamsEnabled = s.BeamsEnabled,
+            FarLayerEnabled = s.BeamFarLayerEnabled,
+            DepthWriteCore = s.BeamDepthWriteCore,
+            CoreWidthMeters = s.BeamCoreWidthMeters,
+            HaloWidthMeters = s.BeamHaloWidthMeters,
+            MainCoreWidthMeters = s.BeamMainCoreWidthMeters,
+            MainHaloWidthMeters = s.BeamMainHaloWidthMeters,
+            MinPixelWidth = s.BeamMinPixelWidth,
+            FarCompensation = s.BeamFarCompensation,
+            BaseEmission = s.BeamBaseEmission,
+            MainEmissionScale = s.BeamMainEmissionScale,
+            HaloAmplitude = s.BeamHaloAmplitude,
+            BaseFadeMeters = s.BeamBaseFadeMeters,
+            DayVisibility = s.BeamDayVisibility,
+            CoreDepthThreshold = s.BeamCoreDepthThreshold,
+            CoreDepthMinPixels = s.BeamCoreDepthMinPixels,
+            SoftTipFraction = s.BeamSoftTipFraction,
+            GridEventPeak = s.BeamGridEventPeak,
+            CloudDiffusionEnabled = s.BeamCloudDiffusionEnabled,
+            CloudWidening = s.BeamCloudWidening,
+            CloudHaloBoost = s.BeamCloudHaloBoost,
+            CloudCoreCut = s.BeamCloudCoreCut,
+            CrownGlowEnabled = s.BeamCrownGlowEnabled,
+            CrownGlowEmission = s.BeamCrownGlowEmission,
+            BoreLightBoost = s.BeamBoreLightBoost
+        },
+        HubBody = new EclipseHubBodySettings
+        {
+            BodyEnabled = s.HubBodyEnabled,
+            CoreEmission = s.HubBodyCoreEmission,
+            RadiusKm = s.HubBodyRadiusKm,
+            MinRadiusPixels = s.HubBodyMinRadiusPixels,
+            HaloAmplitude = s.HubBodyHaloAmplitude,
+            HaloRadiusKm = s.HubBodyHaloRadiusKm,
+            SkyInScatter = s.HubSkyInScatter
         }
     };
 

@@ -249,6 +249,7 @@ var current_hub_level: float = 0.0
 var current_hub_color: Color = Color(0.92, 0.97, 1.0, 1.0)
 var current_hub_sky_tint_strength: float = 0.0
 var current_hub_halo_intensity: float = 0.0
+var current_hub_in_scatter: float = 0.0
 var _published_hub_day: float = 0.0
 var _published_hub_weight: float = 0.0
 @export var hub_sky_tint_color: Color = Color(0.85, 0.95, 1.0, 1.0)
@@ -790,6 +791,7 @@ func _update_hub_light() -> void:
 		current_hub_color = eclipse_event.get("HubLightColor") as Color
 		current_hub_sky_tint_strength = clampf(float(eclipse_event.get("HubSkyTintStrength")), 0.0, 1.0)
 		current_hub_halo_intensity = maxf(float(eclipse_event.get("HubZenithHaloIntensity")), 0.0)
+		current_hub_in_scatter = maxf(float(eclipse_event.get("HubSkyInScatter")), 0.0)
 	else:
 		current_hub_day = 0.0
 		current_hub_weight = 0.0
@@ -797,6 +799,7 @@ func _update_hub_light() -> void:
 		current_hub_level = 0.0
 		current_hub_sky_tint_strength = 0.0
 		current_hub_halo_intensity = 0.0
+		current_hub_in_scatter = 0.0
 	_publish_hub_light(current_hub_day, current_hub_weight)
 
 
@@ -808,6 +811,7 @@ func _publish_hub_light(day: float, weight: float) -> void:
 		current_hub_level = 0.0
 		current_hub_sky_tint_strength = 0.0
 		current_hub_halo_intensity = 0.0
+		current_hub_in_scatter = 0.0
 	if day != _published_hub_day:
 		_published_hub_day = day
 		RenderingServer.global_shader_parameter_set("ringworld_hub_day", day)
@@ -892,6 +896,7 @@ func _update_sky(
 	ring_sky_material.set_shader_parameter("hub_level", current_hub_level)
 	ring_sky_material.set_shader_parameter("hub_color", Vector3(current_hub_color.r, current_hub_color.g, current_hub_color.b))
 	ring_sky_material.set_shader_parameter("hub_halo_intensity", current_hub_halo_intensity)
+	ring_sky_material.set_shader_parameter("hub_in_scatter", current_hub_in_scatter)
 	ring_sky_material.set_shader_parameter("sun_color", Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b))
 	ring_sky_material.set_shader_parameter("sun_disk_angular_radius_degrees", maxf(0.01, float(_get_celestial_value(
 			"StarAngularRadiusDegrees", "star_angular_radius_degrees", 0.265))))

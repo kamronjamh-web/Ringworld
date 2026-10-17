@@ -24,6 +24,8 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     public const float RegularObjectHeightMeters = 1800f, MainObjectHeightMeters = 4000f;
     public const float DefaultMaxDistanceMeters = 700_000f, DefaultFadeMeters = 100_000f, DefaultMinPixels = 1.5f;
     public const float DefaultRegularHandoffMeters = 11_500f, DefaultMainHandoffMeters = 26_000f;
+    /// <summary>Phase E4e (spec E.7): HDR emission of the crown glow at INSTANCE_CUSTOM.b = 1, and the share of the mesh height (from the top) that glows.</summary>
+    public const float DefaultCrownGlowEmission = 3f, CrownGlowBandFraction = 0.12f;
 
     [Export] public bool Enabled { get => _enabled; set { _enabled = value; UpdateVisibility(); } }
     [Export] public bool AutoBind { get; set; } = true;
@@ -43,6 +45,8 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     private int[] _instanceOfSite = Array.Empty<int>();
     private bool[] _siteIsMain = Array.Empty<bool>();
     private bool[] _hidden = Array.Empty<bool>(), _presented = Array.Empty<bool>(), _beamActive = Array.Empty<bool>();
+    private float[] _crownGlow = Array.Empty<float>();
+    private float _crownGlowEmission = DefaultCrownGlowEmission;
     private Transform3D[] _mirror = Array.Empty<Transform3D>();
     private int _hiddenCount, _presentedCount;
     private Transform3D _lastGridGlobal, _lastLayerGlobal;
@@ -59,6 +63,8 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     public int RebuildCount { get; private set; }
     public double LastRebuildMs { get; private set; }
     public int GeometryRevision { get; private set; }
+    /// <summary>Incremented by every successful <see cref="Bind"/>, which reallocates the per-site state (crown glow lane included); mirrors of that state resync on a change.</summary>
+    public int BindRevision { get; private set; }
     public int RegularInstanceCount => _regularInstances?.Multimesh?.InstanceCount ?? 0;
     public int MainInstanceCount => _mainInstances?.Multimesh?.InstanceCount ?? 0;
     public MultiMeshInstance3D? RegularInstances => _regularInstances;
@@ -71,6 +77,9 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     public int PresentedCount => _presentedCount;
     public float RegularHandoffMeters => _regularHandoff;
     public float MainHandoffMeters => _mainHandoff;
+    /// <summary>Number of per-site crown glow lane (INSTANCE_CUSTOM.b) writes since construction; the event writes each spire 3 times per eclipse and nothing per frame.</summary>
+    public long CrownGlowWriteCount { get; private set; }
+    public float CrownGlowEmission => _crownGlowEmission;
 
     // IEmitterBeamSource
     public int Count => _placements?.Count ?? 0;
@@ -123,6 +132,8 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         _siteIsMain = new bool[count];
         _instanceOfSite = new int[count];
         _hidden = new bool[count]; _presented = new bool[count]; _beamActive = new bool[count];
+        _crownGlow = new float[count];
+        BindRevision++;
         _mirror = new Transform3D[count];
         int regular = 0, main = 0;
         for (int site = 0; site < count; site++)
@@ -151,6 +162,9 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         material.SetShaderParameter("object_height_m", objectHeight);
         material.SetShaderParameter("distance_pivot", bounds.Position + bounds.Size * 0.5f);
         material.SetShaderParameter("use_instance_custom", true);
+        // Crown glow band (phase E4e): the top CrownGlowBandFraction of the mesh height, in mesh-local Y (the spire's up axis).
+        material.SetShaderParameter("crown_glow_band", new Vector2(bounds.End.Y - bounds.Size.Y * CrownGlowBandFraction, bounds.End.Y - bounds.Size.Y * 0.01f));
+        material.SetShaderParameter("crown_glow_emission", _crownGlowEmission);
         var surface = mesh.GetSurfaceCount() > 0 ? mesh.SurfaceGetMaterial(0) as BaseMaterial3D : null;
         Color albedo = surface?.AlbedoColor ?? new Color(0.18f, 0.23f, 0.28f);
         material.SetShaderParameter("albedo_color", new Vector3(albedo.R, albedo.G, albedo.B));
@@ -283,7 +297,7 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     private void WriteCustomData(int site)
     {
         MultiMesh? target = (_siteIsMain[site] ? _mainInstances : _regularInstances)?.Multimesh;
-        target?.SetInstanceCustomData(_instanceOfSite[site], new Color(_presented[site] ? 1f : 0f, _hidden[site] ? 1f : 0f, 0f, 0f));
+        target?.SetInstanceCustomData(_instanceOfSite[site], new Color(_presented[site] ? 1f : 0f, _hidden[site] ? 1f : 0f, _crownGlow[site], 0f));
     }
 
     public void SetSitePresented(int site, bool presented)
@@ -305,6 +319,32 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     }
 
     public bool IsSiteHidden(int site) => ValidSite(site) && _hidden[site];
+
+    /// <summary>
+    /// Phase E4e (spec E.7): the beam activity of the site's crown, INSTANCE_CUSTOM.b (0 = dark, 1 = full glow). One custom-data write when the value changes;
+    /// the eclipse writes each spire on fire, hand-off and cut only, never per frame. 0 leaves the stand-in exactly as without the event.
+    /// </summary>
+    public void SetSiteCrownGlow(int site, float glow)
+    {
+        if (!ValidSite(site)) return;
+        glow = float.IsFinite(glow) ? Mathf.Clamp(glow, 0f, 1f) : 0f;
+        if (_crownGlow[site] == glow) return;
+        _crownGlow[site] = glow;
+        CrownGlowWriteCount++;
+        WriteCustomData(site);
+    }
+
+    public float GetSiteCrownGlow(int site) => ValidSite(site) ? _crownGlow[site] : 0f;
+
+    /// <summary>HDR emission of the crown glow at glow 1 (a uniform; both materials).</summary>
+    public void SetCrownGlowEmission(float emission)
+    {
+        emission = float.IsFinite(emission) ? Mathf.Clamp(emission, 0f, 20f) : DefaultCrownGlowEmission;
+        if (emission == _crownGlowEmission) return;
+        _crownGlowEmission = emission;
+        _regularMaterial?.SetShaderParameter("crown_glow_emission", emission);
+        _mainMaterial?.SetShaderParameter("crown_glow_emission", emission);
+    }
 
     public void ClearHidden()
     {

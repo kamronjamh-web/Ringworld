@@ -27,7 +27,11 @@ uniform float exterior_night_scattering_boost : hint_range(0.0, 8.0) = 1.8;
 uniform vec3 hub_direction = vec3(-1.0, 0.0, 0.0);
 uniform float hub_level : hint_range(0.0, 2.5) = 0.0;
 uniform vec3 hub_color : source_color = vec3(0.92, 0.97, 1.0);
-uniform float hub_halo_intensity : hint_range(0.0, 2.0) = 0.35;
+uniform float hub_halo_intensity : hint_range(0.0, 2.0) = 0.15;
+// Strength of the hub in-scatter phase in the sky (EclipseHubBodySettings.SkyInScatter); weighted below by the hub level and hub day.
+uniform float hub_in_scatter : hint_range(0.0, 4.0) = 1.0;
+// Saturated Rayleigh blue of the hub-lit air (the palette lean toward the cool hub tint desaturates the sky; this puts the blue back).
+uniform vec3 hub_scatter_color : source_color = vec3(0.04, 0.20, 0.55);
 
 uniform bool stars_enabled = true;
 uniform float star_visibility : hint_range(0.0, 1.0) = 0.0;
@@ -228,6 +232,14 @@ void sky() {
 	float zenith_blend = smoothstep(0.0, max(horizon_width, 0.01), max(local_elevation, 0.0));
 	zenith_blend = pow(zenith_blend, 0.72);
 	vec3 atmospheric_sky = mix(sky_horizon_color, sky_top_color, zenith_blend);
+	if (hub_level > 0.0001 && hub_in_scatter > 0.0) {
+		// Hub in-scatter (docs/eclipse-false-sun-spec.md E.1, phase E4c): the hub lights the air from the zenith, so the sky gets the same
+		// Rayleigh-like phase the real sun's forward scatter uses, taken toward the hub direction, in a saturated blue. This is what
+		// keeps the hub-lit sky blue instead of grey. Weighted by the hub level and the hub day; nothing is added at hub level 0.
+		float hub_cos = dot(view_direction, normalize(hub_direction));
+		float hub_phase = 0.35 + 0.65 * hub_cos * hub_cos;
+		atmospheric_sky += hub_scatter_color * hub_phase * hub_in_scatter * min(hub_level, 1.5) * clamp(ringworld_hub_day, 0.0, 1.0);
+	}
 
 	vec3 to_sun = normalize(sun_direction);
 	float local_solar_day = ringworld_effective_solar_day(smoothstep(

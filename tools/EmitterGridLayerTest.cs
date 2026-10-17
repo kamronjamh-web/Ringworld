@@ -59,6 +59,7 @@ public partial class EmitterGridLayerTest : RefCounted
             CheckMirror(layer, topology, grid, failures);
             CheckAnchorRebuilds(layer, grid, failures);
             CheckFronts(layer, topology, failures);
+            CheckEventFronts(layer, topology, fixture, failures);
             CheckSettings(layer, failures);
             CheckVisibility(layer, failures);
             CheckHandoff(failures);

@@ -62,8 +62,8 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public float HubLightRed { get; set; } = 0.92f;
     [Export] public float HubLightGreen { get; set; } = 0.97f;
     [Export] public float HubLightBlue { get; set; } = 1f;
-    [Export] public float HubSkyTintStrength { get; set; } = 0.25f;
-    [Export] public float HubZenithHaloIntensity { get; set; } = 0.35f;
+    [Export] public float HubSkyTintStrength { get; set; } = 0.10f;
+    [Export] public float HubZenithHaloIntensity { get; set; } = 0.15f;
     /// <summary>Pitch-black eclipse darkness (spec D.1): master switch and the totality multipliers. Applies with or without the false-sun event.</summary>
     [Export] public bool EclipseDarknessEnabled { get; set; } = true;
     [Export] public float EclipseAmbientScale { get; set; } = 0.15f;
@@ -71,4 +71,40 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public float EclipseSkyNightScale { get; set; } = 0.5f;
     [Export] public float EclipseCloudAmbientScale { get; set; } = 0.4f;
     [Export] public float EclipseStarVisibility { get; set; } = 1f;
+    /// <summary>Spire to hub beams (spec E.2, phase E4b): layers, widths in real metres, emissions and the depth core. Visual only.</summary>
+    [Export] public bool BeamsEnabled { get; set; } = true;
+    [Export] public bool BeamFarLayerEnabled { get; set; } = true;
+    [Export] public bool BeamDepthWriteCore { get; set; } = true;
+    [Export] public float BeamCoreWidthMeters { get; set; } = 150f;
+    [Export] public float BeamHaloWidthMeters { get; set; } = 1200f;
+    [Export] public float BeamMainCoreWidthMeters { get; set; } = 300f;
+    [Export] public float BeamMainHaloWidthMeters { get; set; } = 2400f;
+    [Export] public float BeamMinPixelWidth { get; set; } = 1.5f;
+    [Export] public float BeamFarCompensation { get; set; } = 0.45f;
+    [Export] public float BeamBaseEmission { get; set; } = 12f;
+    [Export] public float BeamMainEmissionScale { get; set; } = 1.5f;
+    [Export] public float BeamHaloAmplitude { get; set; } = 0.12f;
+    [Export] public float BeamBaseFadeMeters { get; set; } = 400f;
+    [Export] public float BeamDayVisibility { get; set; } = 0.6f;
+    [Export] public float BeamCoreDepthThreshold { get; set; } = 0.35f;
+    [Export] public float BeamCoreDepthMinPixels { get; set; } = 4f;
+    [Export] public float BeamSoftTipFraction { get; set; } = 0.005f;
+    /// <summary>Grid ignition fronts (spec E.3, phase E4d): multiplier of the grid night peak while the fronts are live.</summary>
+    [Export] public float BeamGridEventPeak { get; set; } = 1.5f;
+    /// <summary>In-cloud diffusion of the near beams (spec E.6, phase E4e), the stand-in crown glow and the bore light boost (spec E.7).</summary>
+    [Export] public bool BeamCloudDiffusionEnabled { get; set; } = true;
+    [Export] public float BeamCloudWidening { get; set; } = 3f;
+    [Export] public float BeamCloudHaloBoost { get; set; } = 1f;
+    [Export] public float BeamCloudCoreCut { get; set; } = 1.5f;
+    [Export] public bool BeamCrownGlowEnabled { get; set; } = true;
+    [Export] public float BeamCrownGlowEmission { get; set; } = 3f;
+    [Export] public float BeamBoreLightBoost { get; set; } = 4f;
+    /// <summary>Hub sun body and sky in-scatter (spec E.1, phase E4c): the main-viewport disc and halo, radii in real km at the hub. Visual only.</summary>
+    [Export] public bool HubBodyEnabled { get; set; } = true;
+    [Export] public float HubBodyCoreEmission { get; set; } = 40f;
+    [Export] public float HubBodyRadiusKm { get; set; } = 30f;
+    [Export] public float HubBodyMinRadiusPixels { get; set; } = 2f;
+    [Export] public float HubBodyHaloAmplitude { get; set; } = 0.6f;
+    [Export] public float HubBodyHaloRadiusKm { get; set; } = 400f;
+    [Export] public float HubSkyInScatter { get; set; } = 1f;
 }

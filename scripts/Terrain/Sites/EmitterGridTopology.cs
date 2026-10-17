@@ -31,6 +31,8 @@ public sealed class EmitterGridTopology
     private readonly int[] _linkOut; // [site * Columns + column] -> link leaving the site toward +around, or -1
     private readonly int[] _linkIn;  // link arriving at the site from -around, or -1
     private readonly double[] _around, _across, _vertical; // per-site relay node, canonical (vertical includes pad + clearance + relay height)
+    private readonly int[] _hubBeamSite;       // spire to hub beam b -> site: the main spire first, then every chain link origin in link order
+    private readonly double[] _hubBeamVertical; // crown height of that site: pad + clearance + 1,743 m (3,989 m for the main spire)
 
     public EmitterSiteRegistry Registry { get; }
     public int Columns { get; }
@@ -62,6 +64,8 @@ public sealed class EmitterGridTopology
             _vertical[i] = s.PadHeight + EmitterSiteFrameMath.DefaultPadClearanceMeters + (s.IsMain ? mainRelayM : regularRelayM);
         }
 
+        _hubBeamSite = new int[registry.RegularCount + 1];
+        _hubBeamVertical = new double[_hubBeamSite.Length];
         _links = new EmitterLink[Columns * rows];
         _linkOut = new int[sites * Columns];
         _linkIn = new int[sites * Columns];
@@ -88,6 +92,19 @@ public sealed class EmitterGridTopology
                 _linkIn[next * Columns + col] = index;
                 previous = next;
             }
+        }
+
+        // Hub beams: the main spire is beam 0; the regular spires follow in the order of their outgoing chain links (the order of EclipseSiteTable).
+        int beam = 0;
+        _hubBeamSite[beam++] = main;
+        foreach (EmitterLink l in _links)
+            if (l.FromSite != main) _hubBeamSite[beam++] = l.FromSite;
+        if (beam != _hubBeamSite.Length) throw new InvalidOperationException($"topology has {beam - 1} regular link origins, expected {registry.RegularCount}");
+        for (int b = 0; b < _hubBeamSite.Length; b++)
+        {
+            EmitterSite s = registry[_hubBeamSite[b]];
+            _hubBeamVertical[b] = s.PadHeight + EmitterSiteFrameMath.DefaultPadClearanceMeters
+                + (s.IsMain ? EmitterSiteFrameMath.DefaultMainCrownHeightMeters : EmitterSiteFrameMath.DefaultCrownHeightMeters);
         }
 
         ulong h = EmitterSiteHash.Offset;
@@ -154,5 +171,33 @@ public sealed class EmitterGridTopology
             a[i] = context.WorldPosition(_around[l.FromSite], _vertical[l.FromSite], _across[l.FromSite]);
             b[i] = context.WorldPosition(_around[l.ToSite], _vertical[l.ToSite], _across[l.ToSite]);
         }
+    }
+
+    // ---------------------------------------------------------------- eclipse spire to hub beams (docs/eclipse-false-sun-spec.md E.2)
+
+    /// <summary>Spire to hub beams: the main spire plus every regular spire (595 on the default world).</summary>
+    public int HubBeamCount => _hubBeamSite.Length;
+    /// <summary>Registry site of hub beam <paramref name="beam"/> (0 is the main spire, then the order of the regular chain link origins).</summary>
+    public int HubBeamSite(int beam) => _hubBeamSite[beam];
+    /// <summary>Canonical crown (around, vertical, across) of hub beam <paramref name="beam"/>: the vertical includes the pad, the clearance and the crown height (1,743 m, or 3,989 m for the main spire).</summary>
+    public (double Around, double Vertical, double Across) HubBeamCrown(int beam) => (_around[_hubBeamSite[beam]], _hubBeamVertical[beam], _across[_hubBeamSite[beam]]);
+    /// <summary>Across coordinate of the ring hub: half the ring width.</summary>
+    public double HubAcrossMeters => Registry.Recipe.WidthM * 0.5d;
+
+    /// <summary>
+    /// Writes the world-space crown of every hub beam into <paramref name="crown"/> and the hub point into <paramref name="hub"/>
+    /// (crown length >= <see cref="HubBeamCount"/>). Each endpoint is an absolute evaluation against the current snapshot, never a delta from
+    /// a previous rebase. No allocation.
+    /// </summary>
+    public void FillHubBeamEndpoints(in RingLodGeometrySnapshot g, Span<Vector3D> crown, out Vector3D hub)
+    {
+        if (crown.Length < _hubBeamSite.Length) throw new ArgumentException("crown span too small");
+        var context = new EmitterSiteFrameContext(g);
+        for (int b = 0; b < _hubBeamSite.Length; b++)
+        {
+            int site = _hubBeamSite[b];
+            crown[b] = context.WorldPosition(_around[site], _hubBeamVertical[b], _across[site]);
+        }
+        hub = context.HubWorldPosition(HubAcrossMeters);
     }
 }

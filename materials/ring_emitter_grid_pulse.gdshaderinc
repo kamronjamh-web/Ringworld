@@ -10,8 +10,13 @@ uniform vec4 eg_pulse_shape = vec4(3000.0, 4190000.0, 1745.0, 261800.0);
 // x wake e-fold length (v * wake s, metres), y wake weight.
 uniform vec2 eg_wake = vec2(1047200.0, 0.05);
 uniform int eg_front_count = 0;
-// x head position q (metres, direction-adjusted), y column (0..5).
+// x head position q (metres, direction-adjusted), y column (0..5), z signed travelled distance, w plateau.
+// z = 0 is a normal pulse front (the legacy path, exact). z != 0 is an eclipse ignition front (docs/eclipse-false-sun-spec.md E.3): it runs
+// toward +q for z > 0 and toward -q for z < 0 and has covered |z| metres behind its head, which stay lit at the plateau level w. A negative w
+// is a headless front (absorbed at the antipode, or the meeting flare): only the plateau span |w| is drawn, with no head profile.
 uniform vec4 eg_fronts[24];
+// 1 forces the background B to night (the eclipse ignition fronts stay bright while the hub day rises). 0 is exact (b * 1.0).
+uniform float eg_force_night = 0.0;
 // Relaunch flare envelope 0..1 (applies to knot links).
 uniform float eg_flare = 0.0;
 // x night peak, y day peak, z night residual, w day residual.
@@ -37,12 +42,21 @@ float eg_profile(float b) {
 	return min(1.0, trail + wake);
 }
 
+// One eclipse ignition front's contribution at q: b is the signed distance behind the head along the travel direction, and the plateau
+// keeps the travelled span [0, |z|] lit. A headless front (w < 0) has no head profile. Only called for z != 0.
+float eg_event_front_at_q(vec4 front, float q) {
+	float b = (front.z > 0.0 ? 1.0 : -1.0) * (front.x - q);
+	float head = front.w < 0.0 ? 0.0 : eg_profile(b);
+	float plateau = abs(front.w) * step(0.0, b) * step(b, abs(front.z));
+	return max(head, plateau);
+}
+
 float eg_pulse_at_q(float q, float column) {
 	if (q < 0.0 || q > eg_circumference) return 0.0;
 	float sum = 0.0;
 	for (int i = 0; i < eg_front_count; i++) {
 		vec4 front = eg_fronts[i];
-		if (abs(front.y - column) < 0.5) sum += eg_profile(front.x - q);
+		if (abs(front.y - column) < 0.5) sum += front.z == 0.0 ? eg_profile(front.x - q) : eg_event_front_at_q(front, q);
 	}
 	return min(1.0, sum);
 }
@@ -64,8 +78,24 @@ bool eg_interval_lit(float p_a, float p_b, float column, float kind) {
 	for (int i = 0; i < eg_front_count; i++) {
 		vec4 front = eg_fronts[i];
 		if (abs(front.y - column) >= 0.5) continue;
-		float w_lo = max(0.0, front.x - eg_pulse_shape.y);
-		float w_hi = min(eg_circumference, front.x + eg_pulse_shape.x);
+		float w_lo;
+		float w_hi;
+		if (front.z == 0.0) {
+			w_lo = max(0.0, front.x - eg_pulse_shape.y);
+			w_hi = min(eg_circumference, front.x + eg_pulse_shape.x);
+		} else {
+			// Event front: the travelled span behind the head, plus (when it has a head) the head's own profile window.
+			float span = abs(front.z);
+			bool up = front.z > 0.0;
+			w_lo = up ? front.x - span : front.x;
+			w_hi = up ? front.x : front.x + span;
+			if (front.w >= 0.0) {
+				w_lo = min(w_lo, up ? front.x - eg_pulse_shape.y : front.x - eg_pulse_shape.x);
+				w_hi = max(w_hi, up ? front.x + eg_pulse_shape.x : front.x + eg_pulse_shape.y);
+			}
+			w_lo = max(0.0, w_lo);
+			w_hi = min(eg_circumference, w_hi);
+		}
 		if (w_hi > w_lo && hi > w_lo && lo < w_hi) return true;
 	}
 	return false;
@@ -83,7 +113,7 @@ float eg_day_at_hub(float dot_up_sun, float solar_visibility, float hub_day) {
 
 // B = max(day(camera), day(fragment) * smoothstep(near, far, view distance)).
 float eg_background(float day_camera, float day_fragment, float view_distance) {
-	return max(day_camera, day_fragment * smoothstep(eg_day_distance.x, eg_day_distance.y, view_distance));
+	return max(day_camera, day_fragment * smoothstep(eg_day_distance.x, eg_day_distance.y, view_distance)) * (1.0 - eg_force_night);
 }
 
 float eg_peak(float b) {

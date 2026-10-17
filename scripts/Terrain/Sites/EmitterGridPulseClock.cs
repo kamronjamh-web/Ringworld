@@ -31,6 +31,20 @@ public sealed record EmitterGridPulseSettings
 public readonly record struct EmitterPulseFront(long Launch, double HeadQ, double AgeSeconds);
 
 /// <summary>
+/// One eclipse ignition front (docs/eclipse-false-sun-spec.md E.3), the CPU twin of a shader <c>eg_fronts</c> entry with a non-zero z lane:
+/// head at direction-adjusted coordinate <see cref="HeadQ"/>, running toward +q when <see cref="SignedTravelled"/> is positive and toward -q
+/// when negative, having covered |SignedTravelled| metres behind the head, which stay lit at <see cref="Plateau"/>. A negative plateau is a
+/// headless front (absorbed at the antipode, or the meeting flare): only the plateau span |Plateau| is drawn. SignedTravelled must not be 0
+/// (that is a normal front).
+/// </summary>
+public readonly record struct EmitterEventFront(double HeadQ, int Column, double SignedTravelled, double Plateau)
+{
+    /// <summary>Smallest travelled distance written (a zero would be a normal front in the shader).</summary>
+    public const double MinTravelledMeters = 1d;
+    public bool Headless => Plateau < 0d;
+}
+
+/// <summary>
 /// Deterministic pulse clock: a pure function of (seed, time, settings), double precision. The caller supplies the saved weather
 /// clock as <c>t</c>. Each period the main spire launches one front per chain; the front runs the closed loop in the
 /// direction-adjusted coordinate q (prograde q = p, retrograde q = C - p), trails never wrap through q = 0 = C.
@@ -141,12 +155,130 @@ public sealed class EmitterGridPulseClock
         return Math.Min(1d, sum);
     }
 
+    /// <summary>
+    /// An ignition front in the direction-adjusted coordinate from loop-coordinate quantities: <paramref name="headP"/> is the head's p, the
+    /// front covers <paramref name="travelledMeters"/> behind it and moves toward +p when <paramref name="towardIncreasingP"/>. The prograde
+    /// grid has q = p; the retrograde grid mirrors both the position and the travel direction.
+    /// </summary>
+    public EmitterEventFront MakeEventFront(int column, double headP, double travelledMeters, bool towardIncreasingP, double plateau, bool headless)
+    {
+        bool prograde = Settings.Direction == EmitterPulseDirection.Prograde;
+        double travelled = Math.Max(Math.Abs(travelledMeters), EmitterEventFront.MinTravelledMeters);
+        double z = (towardIncreasingP == prograde ? 1d : -1d) * travelled;
+        double w = Math.Abs(plateau);
+        return new EmitterEventFront(ToQ(headP), column, z, headless ? -w : w);
+    }
+
+    /// <summary>One ignition front's contribution at q: <c>max(profile(b), plateau * step(0, b) * step(b, |z|))</c>, b = sign(z) * (head - q).</summary>
+    public double EventFrontAtQ(in EmitterEventFront front, double q)
+    {
+        double b = (front.SignedTravelled > 0d ? 1d : -1d) * (front.HeadQ - q);
+        double head = front.Headless ? 0d : Profile(b);
+        double plateau = Math.Abs(front.Plateau) * (b >= 0d ? 1d : 0d) * (b <= Math.Abs(front.SignedTravelled) ? 1d : 0d);
+        return Math.Max(head, plateau);
+    }
+
+    /// <summary><see cref="PulseAtQ(double, int, double)"/> plus the eclipse ignition fronts of the same column, summed and clamped (the shader's loop).</summary>
+    public double PulseAtQ(double t, int column, double q, ReadOnlySpan<EmitterEventFront> events)
+    {
+        if (q < 0d || q > CircumferenceMeters) return 0d;
+        Span<EmitterPulseFront> fronts = stackalloc EmitterPulseFront[Math.Min(Settings.MaxFrontsPerChain, 64)];
+        int n = GetFronts(t, column, fronts);
+        double sum = 0d;
+        for (int i = 0; i < n; i++) sum += Profile(fronts[i].HeadQ - q);
+        for (int i = 0; i < events.Length; i++) if (events[i].Column == column) sum += EventFrontAtQ(events[i], q);
+        return Math.Min(1d, sum);
+    }
+
     /// <summary>Pulse brightness at fraction <paramref name="f"/> (0..1) along a link, including the knot relaunch flare on knot links.</summary>
     public double PulseAtLink(double t, in EmitterLink link, double f)
     {
         double p = link.P0 + f * (link.P1 - link.P0);
         double pulse = PulseAtQ(t, link.Column, ToQ(p));
         if (link.Kind != EmitterLinkKind.Chain) pulse = Math.Max(pulse, FlareEnvelope(t));
+        return pulse;
+    }
+
+    /// <summary>The window of q an ignition front can light: the travelled span, plus the head's own profile window when it has a head.</summary>
+    public (double Lo, double Hi) EventFrontWindow(in EmitterEventFront front)
+    {
+        double span = Math.Abs(front.SignedTravelled), head = front.HeadQ, edge = Settings.LeadingEdgeMeters;
+        bool up = front.SignedTravelled > 0d;
+        double lo = up ? head - span : head, hi = up ? head : head + span;
+        if (!front.Headless)
+        {
+            lo = Math.Min(lo, up ? head - CutoffMeters : head - edge);
+            hi = Math.Max(hi, up ? head + edge : head + CutoffMeters);
+        }
+        return (Math.Max(0d, lo), Math.Min(CircumferenceMeters, hi));
+    }
+
+    /// <summary>
+    /// True when the vertex stage would not collapse the whole link (the shader's <c>eg_interval_lit</c> over the link's [P0, P1]), with the ignition fronts added.
+    /// <paramref name="knotFlare"/> false drops the knot relaunch flare (the layer zeroes it while the normal pulse is suppressed).
+    /// </summary>
+    public bool IsLinkLit(in EmitterLink link, double t, ReadOnlySpan<EmitterEventFront> events, bool knotFlare = true)
+    {
+        if (knotFlare && link.Kind != EmitterLinkKind.Chain && FlareEnvelope(t) > 0d) return true;
+        Span<EmitterPulseFront> fronts = stackalloc EmitterPulseFront[Math.Min(Settings.MaxFrontsPerChain, 64)];
+        int n = GetFronts(t, link.Column, fronts);
+        double qa = ToQ(link.P0), qb = ToQ(link.P1);
+        double lo = Math.Min(qa, qb), hi = Math.Max(qa, qb);
+        for (int i = 0; i < n; i++)
+        {
+            double head = fronts[i].HeadQ;
+            double wLo = Math.Max(0d, head - CutoffMeters), wHi = Math.Min(CircumferenceMeters, head + Settings.LeadingEdgeMeters);
+            if (wHi > wLo && hi > wLo && lo < wHi) return true;
+        }
+        for (int i = 0; i < events.Length; i++)
+        {
+            if (events[i].Column != link.Column) continue;
+            (double wLo, double wHi) = EventFrontWindow(events[i]);
+            if (wHi > wLo && hi > wLo && lo < wHi) return true;
+        }
+        return false;
+    }
+
+    /// <summary><see cref="CountLitLinks(EmitterGridTopology, double)"/> with the eclipse ignition fronts added (the shader's vertex collapse rule).</summary>
+    public int CountLitLinks(EmitterGridTopology topology, double t, ReadOnlySpan<EmitterEventFront> events, bool knotFlare = true)
+    {
+        int lit = 0;
+        Span<EmitterPulseFront> fronts = stackalloc EmitterPulseFront[Math.Min(Settings.MaxFrontsPerChain, 64)];
+        double c = CircumferenceMeters, edge = Settings.LeadingEdgeMeters;
+        bool flare = knotFlare && FlareEnvelope(t) > 0d;
+        for (int col = 0; col < topology.Columns; col++)
+        {
+            int n = GetFronts(t, col, fronts);
+            for (int k = 0; k < topology.LinksPerChain; k++)
+            {
+                ref readonly EmitterLink l = ref topology.Links[col * topology.LinksPerChain + k];
+                double qa = ToQ(l.P0), qb = ToQ(l.P1);
+                double lo = Math.Min(qa, qb), hi = Math.Max(qa, qb);
+                bool on = flare && l.Kind != EmitterLinkKind.Chain;
+                for (int i = 0; i < n && !on; i++)
+                {
+                    double head = fronts[i].HeadQ;
+                    double wLo = Math.Max(0d, head - CutoffMeters), wHi = Math.Min(c, head + edge);
+                    if (wHi > wLo && hi > wLo && lo < wHi) on = true;
+                }
+                for (int i = 0; i < events.Length && !on; i++)
+                {
+                    if (events[i].Column != col) continue;
+                    (double wLo, double wHi) = EventFrontWindow(events[i]);
+                    if (wHi > wLo && hi > wLo && lo < wHi) on = true;
+                }
+                if (on) lit++;
+            }
+        }
+        return lit;
+    }
+
+    /// <summary><see cref="PulseAtLink(double, in EmitterLink, double)"/> with the eclipse ignition fronts added.</summary>
+    public double PulseAtLink(double t, in EmitterLink link, double f, ReadOnlySpan<EmitterEventFront> events, bool knotFlare = true)
+    {
+        double p = link.P0 + f * (link.P1 - link.P0);
+        double pulse = PulseAtQ(t, link.Column, ToQ(p), events);
+        if (knotFlare && link.Kind != EmitterLinkKind.Chain) pulse = Math.Max(pulse, FlareEnvelope(t));
         return pulse;
     }
 

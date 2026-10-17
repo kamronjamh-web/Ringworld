@@ -22,7 +22,13 @@ public partial class EmitterGridBeamLayer : Node3D
     public const string BeamShaderPath = "res://materials/ring_emitter_grid_beam.gdshader";
     public const string HeadShaderPath = "res://materials/ring_emitter_grid_head.gdshader";
     public const string CoreShaderPath = "res://materials/ring_emitter_grid_beam_core.gdshader";
-    public const int MaxShaderFronts = 24, MaxHeadSprites = 12, RibbonSubSegments = 16;
+    /// <summary>
+    /// Shader front slots and head sprites. The eclipse ignition (12 fronts climbing the arch both ways, plus 6 meeting-flare spans) needs more than
+    /// the 12 sprites the normal pulse ever used (6 in flight at the default speed); the far layer shares the constant.
+    /// </summary>
+    public const int MaxShaderFronts = 24, MaxHeadSprites = 24, RibbonSubSegments = 16;
+    /// <summary>Default <see cref="EventPeak"/>: the night peak is multiplied by this while eclipse ignition fronts are live (spec E.3).</summary>
+    public const float DefaultEventPeak = 1.5f;
     public const float DefaultFadeMeters = 100_000f;
     /// <summary>The depth-writing core must draw after the halo and the head sprites, or they depth-fight the depth it writes.</summary>
     public const int HaloRenderPriority = 0, CoreRenderPriority = 1;
@@ -64,6 +70,12 @@ public partial class EmitterGridBeamLayer : Node3D
     private readonly Vector4[] _fronts = new Vector4[MaxShaderFronts];
     private readonly Vector3[] _headLocal = new Vector3[MaxHeadSprites];
     private int _frontCount, _headCount;
+    // Eclipse ignition fronts (docs/eclipse-false-sun-spec.md E.3), pushed by the director each frame and appended after the normal fronts.
+    private readonly Vector4[] _eventFronts = new Vector4[MaxShaderFronts];
+    private int _eventCount;
+    private float _eventWeight, _appliedEventWeight, _appliedEventPeak = DefaultEventPeak;
+    private double? _gridTimeOverride;
+    private readonly EmitterGridClockSlew _clockSlew = new();
     private double _sessionTime, _time, _frameDt = 1d / 60d, _appliedStreakDt;
     private float _effectiveMax = 700_000f;
     private bool _showAllLinks;
@@ -73,11 +85,15 @@ public partial class EmitterGridBeamLayer : Node3D
     public bool UndergroundHold { get; set; }
     public bool UndergroundHidden => _undergroundHidden;
     public int RebuildCount { get; private set; }
+    /// <summary>Number of times the visibility look uniforms (night peak, forced night) were written: bind, settings and event changes, never a steady frame.</summary>
+    public int LookWriteCount { get; private set; }
     public double LastRebuildMs { get; private set; }
     public int GeometryRevision { get; private set; }
     public int LinkCount => _topology?.LinkCount ?? 0;
     public int RibbonVertexCount { get; private set; }
     public int LiveFrontCount => _frontCount;
+    /// <summary>The shader front array as last built by <see cref="UpdateFronts"/>: the normal fronts, then the eclipse ignition fronts.</summary>
+    public ReadOnlySpan<Vector4> ShaderFronts => _fronts.AsSpan(0, _frontCount);
     public int HeadSpriteCount => _headCount;
     public EmitterGridTopology? Topology => _topology;
     public EmitterGridPulseClock? Clock => _clock;
@@ -103,6 +119,40 @@ public partial class EmitterGridBeamLayer : Node3D
     /// <summary>Visual-only time offset applied on top of the clock; never written back to it.</summary>
     public double PulseScrubSeconds { get; set; }
     public bool ShowAllLinks { get => _showAllLinks; set { _showAllLinks = value; SetBeamUniform("show_all", value ? 1f : 0f); } }
+
+    // Eclipse event hooks (the EclipseEventDirector pushes these each frame; all of them are inert at their defaults).
+    /// <summary>Multiplier of the night peak while ignition fronts are live (spec E.3; saved as the eclipse beam setting GridEventPeak).</summary>
+    public float EventPeak { get; set; } = DefaultEventPeak;
+    /// <summary>1 draws the normal pulse fronts; 0 suppresses them (the head sprites too). The director sets 0 from the main fire to the end of the hand-off (Q3).</summary>
+    public float NormalPulseWeight { get; set; } = 1f;
+    /// <summary>Number of eclipse ignition fronts appended after the normal ones.</summary>
+    public int EventFrontCount => _eventCount;
+    /// <summary>0..1 share of the event look (night forced, peak raised) currently applied; 0 outside the ignition.</summary>
+    public float EventWeight => _eventWeight;
+    /// <summary>True while the pulse clock is driven by the eclipse director's grid time instead of the weather clock.</summary>
+    public bool GridClockOverridden => _gridTimeOverride.HasValue;
+    public double? GridTimeOverrideSeconds => _gridTimeOverride;
+
+    /// <summary>
+    /// Replaces the clock the pulse maths read (the director's <c>GridTimeSeconds</c> while <c>GridClockOverrideActive</c>); null returns to the
+    /// weather clock. Never written back to either clock.
+    /// </summary>
+    public void SetGridClockOverride(double? seconds) => _gridTimeOverride = seconds.HasValue && double.IsFinite(seconds.Value) ? seconds : null;
+
+    /// <summary>
+    /// Sets the eclipse ignition fronts as shader vectors (headQ, column, signed travelled, plateau; docs/eclipse-false-sun-spec.md E.3). They are
+    /// appended after the normal fronts at the next <see cref="UpdateFronts"/> (at most <see cref="MaxShaderFronts"/> in all; the normal fronts
+    /// give way). <paramref name="eventWeight"/> (0..1) scales the event look: the night peak by <see cref="EventPeak"/> and the background to night.
+    /// An empty span clears the event.
+    /// </summary>
+    public void SetEventFronts(ReadOnlySpan<Vector4> fronts, float eventWeight = 1f)
+    {
+        int n = Math.Min(fronts.Length, MaxShaderFronts);
+        for (int i = 0; i < n; i++) _eventFronts[i] = fronts[i];
+        for (int i = n; i < _eventCount; i++) _eventFronts[i] = Vector4.Zero;
+        _eventCount = n;
+        _eventWeight = n == 0 || !float.IsFinite(eventWeight) ? 0f : Math.Clamp(eventWeight, 0f, 1f);
+    }
 
     public override void _Ready()
     {
@@ -369,12 +419,19 @@ public partial class EmitterGridBeamLayer : Node3D
 
     private void ApplyVisibilityUniforms()
     {
-        var visibility = new Vector4(_settings.NightPeakIntensity, _settings.DayPeakIntensity, _settings.NightResidual, _settings.DayResidual);
+        // During the ignition the night peak is raised by EventPeak and B is forced to night (the hub day would otherwise dim the fronts).
+        float nightPeak = _settings.NightPeakIntensity * (1f + (EventPeak - 1f) * _eventWeight);
+        var visibility = new Vector4(nightPeak, _settings.DayPeakIntensity, _settings.NightResidual, _settings.DayResidual);
         var day = new Vector2(50_000f, 500_000f);
         SetBeamUniform("eg_visibility", visibility);
         SetBeamUniform("eg_day_distance", day);
+        SetBeamUniform("eg_force_night", _eventWeight);
         SetHeadUniform("eg_visibility", visibility);
         SetHeadUniform("eg_day_distance", day);
+        SetHeadUniform("eg_force_night", _eventWeight);
+        _appliedEventWeight = _eventWeight;
+        _appliedEventPeak = EventPeak;
+        LookWriteCount++;
     }
 
     private void ApplyPulseUniforms()
@@ -408,9 +465,14 @@ public partial class EmitterGridBeamLayer : Node3D
 
     private double CurrentTime(double delta)
     {
-        if (_weather != null && GodotObject.IsInstanceValid(_weather)) return _weather.CloudSimulationTimeSeconds;
-        _sessionTime += delta;
-        return _sessionTime;
+        double baseTime;
+        if (_weather != null && GodotObject.IsInstanceValid(_weather)) baseTime = _weather.CloudSimulationTimeSeconds;
+        else
+        {
+            _sessionTime += delta;
+            baseTime = _sessionTime;
+        }
+        return _clockSlew.Resolve(_gridTimeOverride, baseTime, _clock?.PeriodSeconds ?? 300d);
     }
 
     private void Update(double delta)
@@ -427,7 +489,10 @@ public partial class EmitterGridBeamLayer : Node3D
         Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
         Vector3 sun = _sun?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
         UpdateFronts(_time);
-        float flare = (float)_clock.FlareEnvelope(_time);
+        // Only an event (or a change of EventPeak) touches the look uniforms; a normal frame writes nothing extra.
+        if (_eventWeight != _appliedEventWeight || EventPeak != _appliedEventPeak) ApplyVisibilityUniforms();
+        // The knot relaunch flare belongs to the normal pulse: it is suppressed with it (Q3), bit-identical at weight 1.
+        float flare = NormalPulseWeight > 0f ? (float)_clock.FlareEnvelope(_time) : 0f;
 
         WriteCommonUniforms(_beamMaterial, camera.Near, fade, cameraPosition, ringCenter, sun);
         WriteCommonUniforms(_headMaterial, camera.Near, fade, cameraPosition, ringCenter, sun);
@@ -570,26 +635,38 @@ public partial class EmitterGridBeamLayer : Node3D
         Span<EmitterPulseFront> buffer = stackalloc EmitterPulseFront[32];
         int total = 0, heads = 0;
         double c = _clock.CircumferenceMeters;
-        for (int column = 0; column < _topology.Columns && total < MaxShaderFronts; column++)
+        // The ignition fronts keep their slots; a suppressed normal pulse (weight 0) contributes neither fronts nor head sprites.
+        int normalCap = NormalPulseWeight > 0f ? MaxShaderFronts - _eventCount : 0;
+        for (int column = 0; column < _topology.Columns && total < normalCap; column++)
         {
             int n = _clock.GetFronts(t, column, buffer);
-            for (int i = 0; i < n && total < MaxShaderFronts; i++)
+            for (int i = 0; i < n && total < normalCap; i++)
             {
                 double head = buffer[i].HeadQ;
                 _fronts[total++] = new Vector4((float)head, column, 0f, 0f);
-                if (head >= 0d && head <= c && heads < MaxHeadSprites && TryHeadLocation(column, head, out int link, out double fraction))
-                {
-                    Vector3D world = _endA[link] + (_endB[link] - _endA[link]) * fraction;
-                    _headLocal[heads] = _worldToLayer * world.ToVector3();
-                    _headLink[heads] = link;
-                    _headFraction[heads] = fraction;
-                    heads++;
-                }
+                if (head >= 0d && head <= c) AddHeadSprite(column, head, ref heads);
             }
+        }
+        for (int i = 0; i < _eventCount; i++)
+        {
+            Vector4 front = _eventFronts[i];
+            _fronts[total++] = front;
+            // Only a front that still has a head (w >= 0) climbs the arch; absorbed fronts and the meeting flare are plateau spans.
+            if (front.W >= 0f && front.X >= 0f && front.X <= c) AddHeadSprite((int)front.Y, front.X, ref heads);
         }
         for (int i = total; i < MaxShaderFronts; i++) _fronts[i] = Vector4.Zero;
         _frontCount = total;
         _headCount = heads;
+    }
+
+    private void AddHeadSprite(int column, double headQ, ref int heads)
+    {
+        if (heads >= MaxHeadSprites || !TryHeadLocation(column, headQ, out int link, out double fraction)) return;
+        Vector3D world = _endA[link] + (_endB[link] - _endA[link]) * fraction;
+        _headLocal[heads] = _worldToLayer * world.ToVector3();
+        _headLink[heads] = link;
+        _headFraction[heads] = fraction;
+        heads++;
     }
 
     private void WriteHeads()
@@ -669,5 +746,90 @@ public partial class EmitterGridBeamLayer : Node3D
             LinkCount, _topology!.Identity & 0xFFFFFFFFUL, ClockSynchronised ? "weather" : "unsynchronised", clock.SpeedMetersPerSecond / 1000d,
             clock.Settings.Direction, clock.LatestLaunch(_time), _frontCount, clock.CountLitLinks(_topology, _time), RebuildCount, LastRebuildMs,
             _settings.DepthWriteCore ? "on" : "off", farState, handoff);
+    }
+}
+
+/// <summary>
+/// Continuous hand-over between the weather clock and the eclipse director's grid clock (docs/eclipse-false-sun-spec.md, E4 review fixes).
+/// A raw switch teleports the pulse phase by the offset between the two clocks; instead the offset d (wrapped into (-P/2, P/2]) is slewed out over
+/// one period P, so the pulse runs at 0.5-1.5x, never reverses and stays phase-continuous mod P. A time jump (scrub, load) snaps.
+/// </summary>
+public sealed class EmitterGridClockSlew
+{
+    /// <summary>A step of either clock larger than this (seconds between two evaluations) is a jump, not a frame.</summary>
+    public const double JumpSeconds = 5d;
+
+    private enum Mode { None, ToWeather, ToOverride }
+    private Mode _mode;
+    private double _d, _start;
+    private double? _prevOverride;
+    private double _prevBase = double.NaN, _prevOverrideStep, _prevResult;
+
+    /// <summary>True while an override/weather hand-over is being slewed.</summary>
+    public bool Slewing => _mode != Mode.None;
+
+    public void Reset()
+    {
+        _mode = Mode.None;
+        _prevOverride = null;
+        _prevBase = double.NaN;
+    }
+
+    private static double Wrap(double x, double period)
+    {
+        double r = x - Math.Floor(x / period) * period; // [0, P)
+        return r > 0.5d * period ? r - period : r;
+    }
+
+    /// <summary>The pulse time for this evaluation. <paramref name="overrideTime"/> null is the weather (or session) clock.</summary>
+    public double Resolve(double? overrideTime, double baseTime, double period)
+    {
+        period = Math.Max(1d, period);
+        bool baseJump = !double.IsNaN(_prevBase) && Math.Abs(baseTime - _prevBase) > JumpSeconds;
+        double overrideStep = overrideTime.HasValue && _prevOverride.HasValue ? overrideTime.Value - _prevOverride.Value : 0d;
+        bool overrideJump = Math.Abs(overrideStep) > JumpSeconds;
+        bool hadPrev = !double.IsNaN(_prevBase);
+
+        if (overrideTime.HasValue != _prevOverride.HasValue && hadPrev)
+        {
+            if (overrideTime.HasValue)
+            {
+                // none -> override: start from where the pulse time was.
+                if (baseJump) _mode = Mode.None;
+                else { _mode = Mode.ToOverride; _d = Wrap(overrideTime.Value - (_prevResult + (baseTime - _prevBase)), period); _start = overrideTime.Value; }
+            }
+            else
+            {
+                // override -> none: start from where the pulse time was.
+                if (baseJump || Math.Abs(_prevOverrideStep) > JumpSeconds) _mode = Mode.None;
+                else { _mode = Mode.ToWeather; _d = Wrap(_prevResult + (baseTime - _prevBase) - baseTime, period); _start = baseTime; }
+            }
+        }
+        else if (baseJump || overrideJump) _mode = Mode.None;
+
+        double result;
+        if (_mode == Mode.ToWeather && !overrideTime.HasValue)
+        {
+            double u = Math.Clamp((baseTime - _start) / period, 0d, 1d);
+            result = baseTime + _d * (1d - u);
+            if (u >= 1d) _mode = Mode.None;
+        }
+        else if (_mode == Mode.ToOverride && overrideTime.HasValue)
+        {
+            double u = Math.Clamp((overrideTime.Value - _start) / period, 0d, 1d);
+            result = overrideTime.Value - _d * (1d - u);
+            if (u >= 1d) _mode = Mode.None;
+        }
+        else
+        {
+            _mode = Mode.None;
+            result = overrideTime ?? baseTime;
+        }
+
+        _prevOverrideStep = overrideStep;
+        _prevOverride = overrideTime;
+        _prevBase = baseTime;
+        _prevResult = result;
+        return result;
     }
 }

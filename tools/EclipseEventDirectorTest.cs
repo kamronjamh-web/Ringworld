@@ -58,6 +58,7 @@ public partial class EclipseEventDirectorTest : RefCounted
             CheckResyncOnExternalJump(failures);
             CheckTimeScaleFollowing(failures);
             CheckGridHook(failures);
+            CheckGridOverrideWindow(failures);
             CheckLocalContacts(failures);
             CheckDeterminism(failures);
             CheckPauseAndDisabled(failures);
