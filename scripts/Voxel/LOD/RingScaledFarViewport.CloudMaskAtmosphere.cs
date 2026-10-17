@@ -23,7 +23,7 @@ public partial class RingScaledFarViewport
                 profile[4] = new(RingAtmosphereModel.DistanceAltitudeStartMeters, RingAtmosphereModel.DistanceAltitudeEndMeters, RingAtmosphereModel.Aerosol, RingAtmosphereModel.ForwardScattering);
                 Color day = RingAtmosphereModel.DayColor, night = RingAtmosphereModel.NightColor;
                 profile[5] = new(day.R, day.G, day.B, RingAtmosphereModel.SunWarmth);
-                profile[6] = new(night.R, night.G, night.B, 1);
+                profile[6] = new(night.R * RingAtmosphereModel.EclipseNightScale, night.G * RingAtmosphereModel.EclipseNightScale, night.B * RingAtmosphereModel.EclipseNightScale, 1);
                 Vector3 outward = WorldDirectionToCanonical(frame.OutwardWorld, around, up, across);
                 Vector3 axis = WorldDirectionToCanonical(frame.AxisWorld, around, up, across);
                 profile[7] = new(outward.X, outward.Y, outward.Z, frame.CameraHeightMeters);

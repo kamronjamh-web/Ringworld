@@ -123,6 +123,9 @@ public partial class RingDayNightCycle : Node
 
     public CelestialFrame CurrentFrame { get; private set; }
 
+    /// <summary>Read-only: the authored epoch sun direction the celestial frames are evaluated against (eclipse window solver input).</summary>
+    public Vector3 AuthoredEpochSun => SafeNormalized(_authoredSunBasis.Z, Vector3.Forward);
+
     private DirectionalLight3D? _sunLight;
     private Node3D? _ringAxisSource;
     private RingVoxelExplorerController? _explorer;

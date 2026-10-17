@@ -402,6 +402,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddSlider(fog, "Fog density", 0, 0.005, 0.00002, env?.FogDensity ?? 0.00014, value => { if (env != null) env.FogDensity = (float)value; });
         AddSlider(fog, "Fog light energy", 0, 2, 0.02, env?.FogLightEnergy ?? 0.9, value => { if (env != null) env.FogLightEnergy = (float)value; });
         AddSlider(fog, "Fog sky influence", 0, 1, 0.01, env?.FogSkyAffect ?? 0.6, value => { if (env != null) env.FogSkyAffect = (float)value; });
+        BuildEclipseSections(tab);
     }
 
     private void AddDayNightSpeedControl(VBoxContainer parent)

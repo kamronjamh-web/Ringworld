@@ -263,6 +263,11 @@ public partial class RingScaledFarViewport : Node
 	private ShaderMaterial? _scaledCloudVolumeMaterial;
 	private FogVolume? _scaledCloudVolume;
 	private Godot.Environment? _farEnvironment;
+	private Godot.Environment? _regionalFarEnvironment;
+	// The far/regional environments copy the main ambient once at creation. UpdateFarEclipseAmbient blends them toward the live main value only while an eclipse darkens it.
+	private Color _farAmbientSnapshotColor, _regionalAmbientSnapshotColor;
+	private float _farAmbientSnapshotEnergy, _regionalAmbientSnapshotEnergy;
+	private bool _farEclipseAmbientApplied;
 	// GPU-only physical-distance export of the opaque whole-ring depth.  Sunshine
 	// consumes this before its raymarch; never read this texture on the CPU.
 	private CompositorEffect? _farDepthCapture;
@@ -964,6 +969,8 @@ public partial class RingScaledFarViewport : Node
 		environment.VolumetricFogAnisotropy = 0.55f;
 		environment.VolumetricFogTemporalReprojectionEnabled = false;
 		_farEnvironment = environment;
+		_farAmbientSnapshotColor = environment.AmbientLightColor;
+		_farAmbientSnapshotEnergy = environment.AmbientLightEnergy;
 		var farWorldEnvironment = new WorldEnvironment { Name = "FarWorldEnvironment", Environment = environment };
 		_farViewport.AddChild(farWorldEnvironment);
 		InstallFarDepthCapture(farWorldEnvironment);
@@ -1062,6 +1069,9 @@ public partial class RingScaledFarViewport : Node
 			environment.Set("tonemap_agx_contrast", sourceEnvironment.Get("tonemap_agx_contrast"));
 			environment.Set("tonemap_exposure", sourceEnvironment.Get("tonemap_exposure"));
 		}
+		_regionalFarEnvironment = environment;
+		_regionalAmbientSnapshotColor = environment.AmbientLightColor;
+		_regionalAmbientSnapshotEnergy = environment.AmbientLightEnergy;
 		_regionalFarViewport.AddChild(new WorldEnvironment
 		{
 			Name = "FarRingRegionalWorldEnvironment",
@@ -2314,6 +2324,7 @@ public partial class RingScaledFarViewport : Node
 		if (!Mathf.IsZeroApprox(_farCamera.HOffset)) _farCamera.HOffset = 0.0f;
 		if (!Mathf.IsZeroApprox(_farCamera.VOffset)) _farCamera.VOffset = 0.0f;
 
+		UpdateFarEclipseAmbient();
 		Vector3 sunDirection = _sourceSun is not null
 			? (worldToCanonical * _sourceSun.GlobalTransform.Basis.Z).Normalized()
 			: Vector3.Right;

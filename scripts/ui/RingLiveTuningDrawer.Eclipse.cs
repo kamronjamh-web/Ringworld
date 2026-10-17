@@ -1,0 +1,331 @@
+using System;
+using System.Collections.Generic;
+using Godot;
+using RingworldTechDemo.Celestial.Eclipse;
+
+namespace RingworldTechDemo.UI;
+
+/// <summary>Grave-key "Eclipse event" sections (docs/eclipse-false-sun-spec.md G.2, E1: timeline and debug; E2: eclipse darkness; E3+ add lighting/beams/audio here).</summary>
+public partial class RingLiveTuningDrawer
+{
+    private sealed record EclipseSliderSpec(string Field, string Label, string Tooltip);
+
+    private static readonly EclipseSliderSpec[] EclipseDarknessSliders =
+    {
+        new("EclipseAmbientScale", "Ambient scale", "Environment ambient (and fog light) energy at totality, as a fraction of the night value. 0.15 turns 0.30 into 0.045."),
+        new("EclipseAtmosphereNightScale", "Atmosphere night scale", "Multiplier on the atmosphere night colour at totality (haze emission, far-arch glow)."),
+        new("EclipseSkyNightScale", "Sky night scale", "Multiplier on the night sky palette at totality."),
+        new("EclipseCloudAmbientScale", "Cloud ambient scale", "Multiplier on the cloud night ambient at totality. Never below 0.3: darker clouds turn see-through."),
+        new("EclipseStarVisibility", "Star visibility", "Star visibility reached at totality (never dims stars the night sky already shows)."),
+    };
+
+    private static readonly EclipseSliderSpec[] EclipseTimelineSliders =
+    {
+        new("ParallaxSafetySeconds", "Window margin (s)", "Shrinks the whole-ring totality window at both ends so the event never overlaps the real sun at any longitude."),
+        new("PreRollSeconds", "Pre-roll (s)", "Warning period before the event window opens. Used by Force eclipse now and the scrub range."),
+        new("DarknessBeatSeconds", "Darkness beat (s)", "Seconds of near pitch black after the window opens, before the main spire fires."),
+        new("MainClimbSeconds", "Main beam climb (s)", "Time the main spire beam takes to reach the hub."),
+        new("MainClimbExponent", "Main climb exponent", "Beam tip fraction is u^exponent: higher values accelerate the climb."),
+        new("KindleSeconds", "Kindle (s)", "Seconds for the hub to ramp to the kindle level after the main beam arrives."),
+        new("KindleLevel", "Kindle level", "Hub brightness fraction reached at the end of the kindle."),
+        new("IgnitionDelaySeconds", "Ignition delay (s)", "Pause between the kindle and the bidirectional ignition pulse."),
+        new("IgnitionSeconds", "Ignition half-ring (s)", "Seconds for a front to reach the antipode. Used only when the ignition speed mode is Manual."),
+        new("RegularClimbSeconds", "Regular beam climb (s)", "Time each regular spire beam takes to reach the hub."),
+        new("RampGamma", "Ramp gamma", "Exponent of the perceptual brightness ramp. Used only in Perceptual ramp mode."),
+        new("RampStepSmoothSeconds", "Ramp step smoothing (s)", "Smooths each beam's brightness step as it lands at the hub."),
+        new("IgnitionPlateauLevel", "Chain plateau level", "How brightly the already-ignited chain links stay lit behind a front."),
+        new("MeetingFlareSeconds", "Meeting flare (s)", "Length of the flare where the two fronts meet at the antipode."),
+        new("CrescendoSeconds", "Crescendo (s)", "Time all beams stay lit at full brightness before the hand-off."),
+        new("HandoffFadeSeconds", "Hand-off fade (s)", "Time the regular beams take to fade when the main spire takes over."),
+    };
+
+    private static readonly EclipseSliderSpec[] EclipseSustainSliders =
+    {
+        new("FlashClimbSeconds", "Refuel flash climb (s)", "Time a refuel flash beam takes to reach the hub."),
+        new("FlashHoldSeconds", "Refuel flash hold (s)", "Time a refuel flash stays at full strength."),
+        new("FlashFadeSeconds", "Refuel flash fade (s)", "Time a refuel flash takes to fade."),
+        new("HeartbeatKick", "Heartbeat kick", "Hub brightness kick each time a grid row lands."),
+        new("HeartbeatTauSeconds", "Heartbeat decay (s)", "Decay time of the heartbeat kick."),
+        new("RelaunchKick", "Relaunch kick", "Hub brightness kick at the main spire relaunch flare."),
+        new("BreathAmplitude", "Breath amplitude", "Slow brightness breathing during Sustain."),
+        new("BreathPeriodSeconds", "Breath period (s)", "Period of the breathing."),
+        new("ReturnTailSeconds", "Return tail (s)", "Return-phase length when the player's own third contact is unknown."),
+    };
+
+    private static readonly EclipseSliderSpec[] EclipseCollapseSliders =
+    {
+        new("CollapseLeadSeconds", "Collapse lead (s)", "How long before the window closes the instability begins. The four stages are scaled to fit this lead."),
+        new("InstabilitySeconds", "Instability (s)", "Length of the growing flicker."),
+        new("FlickerMax", "Flicker depth", "Maximum brightness dip while unstable."),
+        new("FlickerHzStart", "Flicker Hz start", "Flicker frequency at the start of the instability."),
+        new("FlickerHzEnd", "Flicker Hz end", "Flicker frequency at the end of the instability."),
+        new("OverloadSeconds", "Overload (s)", "Length of the overload flare."),
+        new("OverloadGain", "Overload gain", "Peak brightness multiple of the overload flare."),
+        new("ImplosionSeconds", "Implosion (s)", "Length of the implosion."),
+        new("BeamRetractSeconds", "Beam retract (s)", "Time the beams take to retract when cut."),
+        new("ShockwaveSeconds", "Shockwave (s)", "Length of the expanding light shell."),
+        new("ShockwaveArrivalFraction", "Shock arrival fraction", "Fraction of the shockwave at which it reaches the ground."),
+        new("ShockFlashLevel", "Ground flash level", "Extra brightness of the ground flash on shockwave arrival."),
+        new("ShockFlashSeconds", "Ground flash (s)", "Length of the ground flash."),
+    };
+
+    private static readonly EclipseSliderSpec[] EclipseLevelSliders =
+    {
+        new("RealSunEnergy", "Real sun energy", "StarLight energy at real noon, the reference for the hub energy fraction."),
+        new("HubDirectFraction", "Hub energy fraction", "Direct light energy at full hub level, as a fraction of the real sun."),
+        new("HubDayAtFull", "Hub day factor", "Day factor at full hub level."),
+    };
+
+    private EclipseEventDirector? _eclipseDirector;
+    private GameplayEclipseEventDefaults? _eclipseDefaults;
+    private string? _eclipseDefaultsPathOverride;
+    private readonly Dictionary<string, HSlider> _eclipseSliders = new();
+    private readonly Dictionary<string, CheckButton> _eclipseToggles = new();
+    private readonly Dictionary<string, OptionButton> _eclipseOptions = new();
+    private Label? _eclipseLive, _eclipseStatus, _eclipseRing, _eclipseDarkLive;
+    private OptionButton? _eclipsePhasePick;
+    private HSlider? _eclipseScrub;
+    private CheckButton? _eclipseFreeze, _eclipseLog;
+    private Button? _eclipseForce, _eclipseJump;
+    private double _eclipseSaveDelay, _eclipseSaveRetry, _eclipseLiveDelay;
+
+    private void InitializeEclipseTuning()
+    {
+        _eclipseDirector = GetNodeOrNull<EclipseEventDirector>("../EclipseEvent");
+        _eclipseDefaults = new GameplayEclipseEventDefaults(_eclipseDefaultsPathOverride);
+        _eclipseDefaults.Load();
+        _eclipseDefaults.Apply(_eclipseDirector);
+    }
+
+    private void ProcessEclipseTuning(double delta)
+    {
+        if (_open && _eclipseLive != null && (_eclipseLiveDelay -= delta) <= 0)
+        {
+            _eclipseLiveDelay = .25;
+            _eclipseDirector ??= GetNodeOrNull<EclipseEventDirector>("../EclipseEvent");
+            _eclipseLive.Text = _eclipseDirector?.DescribeStatus() ?? "Eclipse event director is unavailable in this scene.";
+            if (_eclipseRing != null) _eclipseRing.Text = _eclipseDirector?.Engine.BuildRingStrip() ?? "";
+            if (_eclipseDarkLive != null)
+            {
+                EclipseDarknessOutput d = _eclipseDirector?.DarknessOutput ?? EclipseDarknessOutput.Neutral;
+                _eclipseDarkLive.Text = _eclipseDirector == null ? "Eclipse director is unavailable in this scene."
+                    : $"Darkness weight {d.Weight:0.00}: ambient x{d.AmbientMultiplier:0.000}, atmosphere night x{d.AtmosphereNightMultiplier:0.000}, sky night x{d.SkyNightMultiplier:0.000}, cloud ambient x{d.CloudAmbientMultiplier:0.000}, star floor {d.StarFloor:0.00}";
+            }
+            RefreshEclipseEditable();
+        }
+        if (_eclipseDefaults?.Dirty != true) return;
+        _eclipseSaveDelay -= delta;
+        _eclipseSaveRetry -= delta;
+        if (_eclipseSaveDelay <= 0 && _eclipseSaveRetry <= 0 && !FlushEclipseDefaults()) _eclipseSaveRetry = 5;
+    }
+
+    public bool FlushEclipseDefaults()
+    {
+        bool saved = _eclipseDefaults?.Save() ?? true;
+        RefreshEclipseStatus();
+        return saved;
+    }
+
+    public void InstallEclipseDefaults(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal) && !isolatedPath.StartsWith("user://generated/", StringComparison.Ordinal)) return;
+        _eclipseDefaultsPathOverride = isolatedPath;
+        if (_eclipseDefaults is null) return;
+        _eclipseDefaults = new GameplayEclipseEventDefaults(isolatedPath);
+        _eclipseDefaults.Load();
+        _eclipseDefaults.Apply(_eclipseDirector);
+        RefreshEclipseControls();
+    }
+
+    private void BuildEclipseSections(VBoxContainer tab)
+    {
+        var s = _eclipseDefaults?.Settings ?? new GameplayEclipseEventSettings();
+        VBoxContainer darkness = TuningMenuUi.CreateSection(tab, "Eclipse darkness",
+            "How black a gas-giant total eclipse gets. Applies to every eclipse on every world, with or without the false-sun event. Normal nights and days are not affected. The scales are the totality values and blend in with the eclipse coverage.");
+        _eclipseDarkLive = new Label { Name = "EclipseDarknessLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        darkness.AddChild(_eclipseDarkLive);
+        AddEclipseToggle(darkness, "EclipseDarknessEnabled", "Pitch-black eclipse", s.EclipseDarknessEnabled,
+            "Off restores the old eclipse lighting: totality keeps the full night ambient.");
+        foreach (EclipseSliderSpec spec in EclipseDarknessSliders) AddEclipseSlider(darkness, spec, s);
+
+        VBoxContainer timeline =TuningMenuUi.CreateSection(tab, "Eclipse event: timeline",
+            "The false-sun event runs inside the whole-ring totality window of each gas-giant eclipse. It follows the celestial time scale: at 10x the whole show is ten times faster. Needs a world with emitter sites.");
+        _eclipseLive = new Label { Name = "EclipseLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        timeline.AddChild(_eclipseLive);
+        AddEclipseToggle(timeline, "EventEnabled", "Event enabled", s.EventEnabled, "Off leaves the natural eclipse only.");
+        AddEclipseOption(timeline, "IgnitionSpeedMode", "Ignition speed", new[] { "Match grid pulse", "Manual" }, s.IgnitionSpeedMode,
+            "Match grid uses the relay pulse speed (150 s per half ring at the defaults). Manual uses the half-ring seconds below.");
+        AddEclipseOption(timeline, "RampMode", "Brightness ramp", new[] { "Per beam (linear)", "Perceptual" }, s.RampMode,
+            "Per beam adds an equal share of hub brightness for each beam that lands.");
+        foreach (EclipseSliderSpec spec in EclipseTimelineSliders) AddEclipseSlider(timeline, spec, s);
+
+        VBoxContainer sustain = TuningMenuUi.CreateSection(tab, "Eclipse event: sustain and refuel",
+            "Hand-off to the main spire, then the normal grid pulse refuels the hub. By default the refuel flashes run on the celestial clock so they compress with the time scale.");
+        AddEclipseToggle(sustain, "SuppressGridPulseDuringIgnition", "Suppress grid pulse during ignition", s.SuppressGridPulseDuringIgnition,
+            "Hides the normal one-way grid pulse from the main fire until the hand-off so the bidirectional ignition reads cleanly.");
+        AddEclipseOption(sustain, "RefuelClock", "Refuel clock", new[] { "Celestial (follows time scale)", "Weather (real time)" }, s.RefuelClock,
+            "Which clock drives the sustain refuel flashes. Celestial keeps them in sync with the compressed timeline.");
+        foreach (EclipseSliderSpec spec in EclipseSustainSliders) AddEclipseSlider(sustain, spec, s);
+
+        VBoxContainer collapse = TuningMenuUi.CreateSection(tab, "Eclipse event: collapse",
+            "Instability, overload flare, implosion and shockwave before totality ends. Cosmetic only.");
+        foreach (EclipseSliderSpec spec in EclipseCollapseSliders) AddEclipseSlider(collapse, spec, s);
+
+        VBoxContainer levels = TuningMenuUi.CreateSection(tab, "Eclipse event: hub levels",
+            "Brightness mapping of the hub sun. Used by the lighting phases; no visible effect yet.");
+        foreach (EclipseSliderSpec spec in EclipseLevelSliders) AddEclipseSlider(levels, spec, s);
+
+        VBoxContainer debug = TuningMenuUi.CreateSection(tab, "Eclipse event: debug",
+            "Not saved. Force, jump and scrub move the celestial clock (a real time jump, like the F9 time buttons) and emit one Resync.");
+        _eclipseForce = new Button { Name = "EclipseForce", Text = "Force eclipse now", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            TooltipText = "Jumps the celestial clock to the start of the pre-roll of the current or next eclipse. This changes world time." };
+        _eclipseForce.Pressed += () => { _eclipseDirector?.ForceEclipseNow(); };
+        debug.AddChild(_eclipseForce);
+        var jumpRow = new HBoxContainer();
+        _eclipsePhasePick = new OptionButton { Name = "EclipsePhasePick", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Phase to jump to." };
+        foreach (EclipseEventPhase phase in Enum.GetValues<EclipseEventPhase>()) _eclipsePhasePick.AddItem(phase.ToString(), (int)phase);
+        _eclipsePhasePick.Select(_eclipsePhasePick.GetItemIndex((int)EclipseEventPhase.MainFire));
+        jumpRow.AddChild(_eclipsePhasePick);
+        _eclipseJump = new Button { Name = "EclipseJump", Text = "Jump to phase", TooltipText = "Jumps the celestial clock to the start of the chosen phase. This changes world time." };
+        _eclipseJump.Pressed += () => { if (_eclipsePhasePick != null) _eclipseDirector?.JumpToPhase((EclipseEventPhase)_eclipsePhasePick.GetSelectedId()); };
+        jumpRow.AddChild(_eclipseJump);
+        debug.AddChild(jumpRow);
+        var scrubRow = new HBoxContainer { TooltipText = "Scrub the event timeline. Applies when released." };
+        scrubRow.AddChild(new Label { Text = "Scrub (tau s)", CustomMinimumSize = new Vector2(160, 0) });
+        _eclipseScrub = new HSlider { Name = "EclipseScrub", MinValue = -300, MaxValue = 4200, Step = 1, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Event time in seconds from the window start. Applies when released." };
+        var scrubNumber = new Label { Text = "0", CustomMinimumSize = new Vector2(55, 0) };
+        _eclipseScrub.ValueChanged += value => scrubNumber.Text = value.ToString("0");
+        _eclipseScrub.DragEnded += changed => { if (changed && _eclipseScrub != null) _eclipseDirector?.ScrubToTau(_eclipseScrub.Value); };
+        scrubRow.AddChild(_eclipseScrub);
+        scrubRow.AddChild(scrubNumber);
+        debug.AddChild(scrubRow);
+        _eclipseFreeze = new CheckButton { Name = "EclipseFreeze", Text = "Freeze event", TooltipText = "Pauses the celestial clock. The weather clock and grid pulse keep running." };
+        _eclipseFreeze.Toggled += on => _eclipseDirector?.SetFrozen(on);
+        debug.AddChild(_eclipseFreeze);
+        _eclipseLog = new CheckButton { Name = "EclipseLogEvents", Text = "Log events", TooltipText = "Prints every event to the console." };
+        _eclipseLog.Toggled += on => { if (_eclipseDirector != null) _eclipseDirector.LogEvents = on; };
+        debug.AddChild(_eclipseLog);
+        _eclipseRing = new Label { Name = "EclipseRingStrip", TooltipText = "Fired sites along the loop; the main spire is at the left." };
+        _eclipseRing.AddThemeFontSizeOverride("font_size", 11);
+        debug.AddChild(_eclipseRing);
+
+        var reset = new Button { Name = "EclipseReset", Text = "Reset eclipse event", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            TooltipText = "Restores the eclipse event settings to their defaults." };
+        reset.Pressed += ResetEclipse;
+        tab.AddChild(reset);
+        _eclipseStatus = new Label { Name = "EclipseStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        tab.AddChild(_eclipseStatus);
+        RefreshEclipseEditable();
+        RefreshEclipseStatus();
+    }
+
+    private static double EclipseStep(float min, float max)
+    {
+        float range = max - min;
+        return range <= 1.05f ? .005 : range <= 10.5f ? .05 : range <= 120f ? .5 : 1;
+    }
+
+    private CheckButton AddEclipseToggle(VBoxContainer parent, string field, string text, bool pressed, string tooltip)
+    {
+        var toggle = new CheckButton { Name = "Eclipse" + field, Text = text, ButtonPressed = pressed, TooltipText = tooltip, Disabled = _eclipseDirector == null };
+        toggle.Toggled += on => { if (_eclipseDefaults != null && _eclipseDefaults.SetBool(field, on)) QueueEclipseSettings(); };
+        parent.AddChild(toggle);
+        _eclipseToggles[field] = toggle;
+        return toggle;
+    }
+
+    private OptionButton AddEclipseOption(VBoxContainer parent, string field, string label, string[] items, int selected, string tooltip)
+    {
+        var row = new HBoxContainer { TooltipText = tooltip };
+        row.AddChild(new Label { Text = label, CustomMinimumSize = new Vector2(160, 0), TooltipText = tooltip });
+        var option = new OptionButton { Name = "Eclipse" + field, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = tooltip, Disabled = _eclipseDirector == null };
+        foreach (string item in items) option.AddItem(item);
+        option.Select(Mathf.Clamp(selected, 0, items.Length - 1));
+        option.ItemSelected += index => { if (_eclipseDefaults != null && _eclipseDefaults.SetInt(field, (int)index)) QueueEclipseSettings(); };
+        row.AddChild(option);
+        parent.AddChild(row);
+        _eclipseOptions[field] = option;
+        return option;
+    }
+
+    private HSlider AddEclipseSlider(VBoxContainer parent, EclipseSliderSpec spec, GameplayEclipseEventSettings s)
+    {
+        var (min, max) = GameplayEclipseEventDefaults.RangeOf(spec.Field);
+        var row = new HBoxContainer { TooltipText = spec.Tooltip };
+        row.AddChild(new Label { Text = spec.Label, CustomMinimumSize = new Vector2(160, 0), TooltipText = spec.Tooltip });
+        var slider = new HSlider
+        {
+            Name = "Eclipse" + spec.Field, MinValue = min, MaxValue = max, Step = EclipseStep(min, max),
+            Value = (float)s.Get(spec.Field).AsDouble(), Editable = _eclipseDirector != null, TooltipText = spec.Tooltip,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+        };
+        var number = new Label { Text = slider.Value.ToString("0.###"), CustomMinimumSize = new Vector2(55, 0) };
+        slider.ValueChanged += value =>
+        {
+            number.Text = value.ToString("0.###");
+            if (_eclipseDefaults != null && _eclipseDefaults.SetFloat(spec.Field, (float)value)) QueueEclipseSettings();
+        };
+        row.AddChild(slider);
+        row.AddChild(number);
+        parent.AddChild(row);
+        _eclipseSliders[spec.Field] = slider;
+        return slider;
+    }
+
+    private void QueueEclipseSettings()
+    {
+        if (_eclipseDefaults == null) return;
+        _eclipseDefaults.Apply(_eclipseDirector);
+        _eclipseSaveDelay = .75;
+        RefreshEclipseStatus();
+    }
+
+    private void ResetEclipse()
+    {
+        _eclipseDefaults?.Reset();
+        _eclipseDefaults?.Apply(_eclipseDirector);
+        RefreshEclipseControls();
+        FlushEclipseDefaults();
+    }
+
+    private void RefreshEclipseControls()
+    {
+        if (_eclipseDefaults == null) return;
+        var s = _eclipseDefaults.Settings;
+        foreach (var (field, slider) in _eclipseSliders) SetEmitterSliderNoSignal(slider, (float)s.Get(field).AsDouble());
+        foreach (var (field, toggle) in _eclipseToggles) toggle.SetPressedNoSignal(s.Get(field).AsBool());
+        foreach (var (field, option) in _eclipseOptions) option.Select(s.Get(field).AsInt32());
+        RefreshEclipseEditable();
+        RefreshEclipseStatus();
+    }
+
+    private void RefreshEclipseEditable()
+    {
+        bool present = _eclipseDirector != null && GodotObject.IsInstanceValid(_eclipseDirector);
+        bool bound = present && _eclipseDirector!.Bound;
+        // Settings stay editable whenever the director exists; the debug actions need a bound event (a world with emitter sites).
+        foreach (HSlider slider in _eclipseSliders.Values) if (slider.Editable != present) slider.Editable = present;
+        foreach (CheckButton toggle in _eclipseToggles.Values) if (toggle.Disabled == present) toggle.Disabled = !present;
+        foreach (OptionButton option in _eclipseOptions.Values) if (option.Disabled == present) option.Disabled = !present;
+        foreach (BaseButton? button in new BaseButton?[] { _eclipseForce, _eclipseJump, _eclipseFreeze, _eclipseLog })
+            if (button != null && button.Disabled == bound) button.Disabled = !bound;
+        if (_eclipsePhasePick != null && _eclipsePhasePick.Disabled == bound) _eclipsePhasePick.Disabled = !bound;
+        if (_eclipseScrub != null)
+        {
+            if (_eclipseScrub.Editable != bound) _eclipseScrub.Editable = bound;
+            if (bound && _eclipseDirector!.Engine.TryGetScrubRange(out double lo, out double hi))
+            {
+                if (_eclipseScrub.MinValue != lo) _eclipseScrub.MinValue = lo;
+                if (_eclipseScrub.MaxValue != hi) _eclipseScrub.MaxValue = hi;
+                if (!_eclipseScrub.HasFocus()) _eclipseScrub.SetValueNoSignal(Math.Clamp(_eclipseDirector.State.Tau, lo, hi));
+            }
+        }
+    }
+
+    private void RefreshEclipseStatus()
+    {
+        if (_eclipseStatus == null || _eclipseDefaults == null) return;
+        _eclipseStatus.Text = _eclipseDefaults.LastError.Length > 0 ? "Save error: " + _eclipseDefaults.LastError
+            : _eclipseDefaults.Dirty ? "Eclipse event settings pending save." : "Eclipse event settings saved.";
+    }
+}

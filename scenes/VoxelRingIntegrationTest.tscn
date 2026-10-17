@@ -73,6 +73,7 @@
 [ext_resource type="Script" path="res://scripts/Underground/RingUndergroundModeController.cs" id="70_underground_mode"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterStandInLayer.cs" id="71_emitter_standins"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterGridBeamLayer.cs" id="emitter_grid_beam_layer"]
+[ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseEventDirector.cs" id="eclipse_event_director"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterPoiStreamer.cs" id="72_emitter_poi_streamer"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterBoreLayer.cs" id="73_emitter_bores"]
 
@@ -649,6 +650,9 @@ script = ExtResource("71_emitter_standins")
 
 [node name="EmitterGrid" type="Node3D" parent="."]
 script = ExtResource("emitter_grid_beam_layer")
+
+[node name="EclipseEvent" type="Node" parent="."]
+script = ExtResource("eclipse_event_director")
 
 [node name="EmitterSites" type="Node3D" parent="."]
 script = ExtResource("72_emitter_poi_streamer")

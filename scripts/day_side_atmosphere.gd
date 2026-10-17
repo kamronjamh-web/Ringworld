@@ -8,6 +8,7 @@ extends Node
 @export var celestial_clock_path: NodePath = NodePath("../RingDayNightCycle")
 @export var world_environment_path: NodePath = NodePath("../SpaceEnvironment")
 @export var cloud_lighting_bridge_path: NodePath = NodePath("../SunshineCloudBridge")
+@export var eclipse_event_path: NodePath = NodePath("../EclipseEvent")
 @export var underground_environment_path: NodePath = NodePath("../UndergroundEnvironment")
 @export var underground_mode_path: NodePath = NodePath("../UndergroundMode")
 @export var ring_sky_shader_path: String = "res://materials/ring_local_sky.gdshader"
@@ -202,6 +203,7 @@ var planet_light: DirectionalLight3D = null
 var celestial_clock: Node = null
 var world_environment: WorldEnvironment = null
 var cloud_lighting_bridge: Node = null
+var eclipse_event: Node = null
 var underground_environment: Node = null
 var underground_mode: Node = null
 # Final darkening (1 - sky access) applied to sun, planet light and sky this frame. The underground mode
@@ -227,6 +229,14 @@ var current_eclipse_coverage: float = 0.0
 var current_gameplay_eclipse_darkness: float = 0.0
 var current_giant_direction: Vector3 = Vector3.ZERO
 var current_giant_angular_radius_degrees: float = 0.0
+# Pitch-black eclipse (spec D.1). Neutral values leave every lighting term exactly as before; the EclipseEvent
+# director owns the darkness model and these are its per-frame outputs.
+var eclipse_darkness_weight: float = 0.0
+var eclipse_ambient_multiplier: float = 1.0
+var eclipse_atmosphere_night_multiplier: float = 1.0
+var eclipse_sky_night_multiplier: float = 1.0
+var eclipse_cloud_ambient_multiplier: float = 1.0
+var eclipse_star_floor: float = 0.0
 
 
 func _ready() -> void:
@@ -260,14 +270,17 @@ func _process(delta: float) -> void:
 
 	if player == null or sun_light == null or world_environment == null:
 		_publish_solar_visibility(1.0)
+		_publish_night_light_scale(1.0)
 		return
 	if not _has_canonical_atmosphere_provider() and gravity_controller == null:
 		_publish_solar_visibility(1.0)
+		_publish_night_light_scale(1.0)
 		return
 
 	var environment: Environment = world_environment.environment
 	if environment == null:
 		_publish_solar_visibility(1.0)
+		_publish_night_light_scale(1.0)
 		return
 	_configure_hdr_output(environment)
 	_configure_eye_adaptation()
@@ -298,6 +311,7 @@ func _process(delta: float) -> void:
 	current_eclipse_coverage = clampf(float(_get_celestial_value(
 			"GiantEclipseCoverage", "giant_eclipse_coverage", 0.0)), 0.0, 1.0) if eclipse_lighting_enabled else 0.0
 	_publish_solar_visibility(1.0 - current_eclipse_coverage)
+	_update_eclipse_darkness(delta)
 	current_day_factor = current_geometric_day_factor * current_solar_visibility
 	current_gameplay_eclipse_darkness = float(_get_celestial_value(
 			"GameplayEclipseDarkness", "gameplay_eclipse_darkness", current_eclipse_coverage)) if eclipse_lighting_enabled else 0.0
@@ -310,6 +324,8 @@ func _process(delta: float) -> void:
 	var target_atmosphere_factor := _atmosphere_factor_for_height(player_height) * ring_interior_factor
 	var star_visibility := _star_visibility_for_height_and_day(player_height, current_day_factor)
 	star_visibility = maxf(star_visibility, 1.0 - ring_interior_factor)
+	# Totality: the sky is black and the stars come out fully (floor is 0 outside an eclipse).
+	star_visibility = maxf(star_visibility, eclipse_star_floor)
 	# Exterior space must take effect this frame. Blending here would retain the
 	# interior atmosphere beyond a wall for several frames.
 	if ring_interior_factor <= 0.0:
@@ -372,7 +388,8 @@ func _process(delta: float) -> void:
 		cloud_storm_factor * 0.72).lerp(eclipse_fog_color, eclipse_fog_factor)
 	environment.fog_light_energy = lerpf(night_fog_energy, day_fog_energy, current_day_factor) \
 		* lerpf(1.0, storm_fog_light_scale, cloud_storm_factor) \
-		* lerpf(1.0, 0.78, eclipse_day_coverage)
+		* lerpf(1.0, 0.78, eclipse_day_coverage) \
+		* eclipse_ambient_multiplier
 	environment.fog_aerial_perspective = lerpf(night_fog_aerial_perspective, day_fog_aerial_perspective, current_day_factor)
 	environment.fog_sky_affect = lerpf(night_fog_sky_affect, day_fog_sky_affect, current_day_factor) * current_atmosphere_factor
 	environment.fog_sun_scatter = lerpf(night_fog_sun_scatter, day_fog_sun_scatter, current_day_factor) \
@@ -382,7 +399,8 @@ func _process(delta: float) -> void:
 		storm_ambient_color,
 		cloud_storm_factor * 0.88)
 	var surface_ambient_energy := lerpf(night_ambient_energy, day_ambient_energy, current_day_factor) \
-		* current_cloud_ambient_transmittance
+		* current_cloud_ambient_transmittance \
+		* eclipse_ambient_multiplier
 	environment.ambient_light_color = space_ambient_color.lerp(surface_ambient_color, current_atmosphere_factor)
 	environment.ambient_light_energy = lerpf(space_ambient_energy, surface_ambient_energy, current_atmosphere_factor)
 	# A contribution of 1.0 makes Godot ignore the explicit ambient color and
@@ -669,6 +687,49 @@ func _get_cloud_ambient_transmittance() -> float:
 	return 1.0
 
 
+func _scale_rgb(color: Color, multiplier: float) -> Color:
+	if multiplier == 1.0:
+		return color
+	return Color(color.r * multiplier, color.g * multiplier, color.b * multiplier, color.a)
+
+
+# Pure-model darkness (spec D.1, scripts/Celestial/Eclipse/EclipseDarknessModel.cs): the director owns the weight, smoothing
+# and per-term multipliers; this script applies them. Without a director (other scenes) everything stays neutral.
+func _update_eclipse_darkness(delta: float) -> void:
+	if eclipse_event != null and is_instance_valid(eclipse_event) and eclipse_event.has_method("UpdateDarkness"):
+		eclipse_event.call("UpdateDarkness", current_eclipse_coverage, delta)
+		eclipse_darkness_weight = float(eclipse_event.get("DarknessWeight"))
+		eclipse_ambient_multiplier = float(eclipse_event.get("DarknessAmbientMultiplier"))
+		eclipse_atmosphere_night_multiplier = float(eclipse_event.get("DarknessAtmosphereNightMultiplier"))
+		eclipse_sky_night_multiplier = float(eclipse_event.get("DarknessSkyNightMultiplier"))
+		eclipse_cloud_ambient_multiplier = float(eclipse_event.get("DarknessCloudAmbientMultiplier"))
+		eclipse_star_floor = float(eclipse_event.get("DarknessStarFloor"))
+	else:
+		_reset_eclipse_darkness()
+	_publish_night_light_scale(eclipse_atmosphere_night_multiplier)
+	# The scaled far viewport blends its frozen ambient snapshot toward the live (darkened) main ambient by this weight.
+	if world_environment != null:
+		if eclipse_darkness_weight > 0.0 or world_environment.has_meta("ringworld_eclipse_darkness"):
+			world_environment.set_meta("ringworld_eclipse_darkness", eclipse_darkness_weight)
+	_update_cloud_eclipse_ambient()
+
+
+func _reset_eclipse_darkness() -> void:
+	eclipse_darkness_weight = 0.0
+	eclipse_ambient_multiplier = 1.0
+	eclipse_atmosphere_night_multiplier = 1.0
+	eclipse_sky_night_multiplier = 1.0
+	eclipse_cloud_ambient_multiplier = 1.0
+	eclipse_star_floor = 0.0
+
+
+func _update_cloud_eclipse_ambient() -> void:
+	if cloud_lighting_bridge == null:
+		return
+	if cloud_lighting_bridge.has_method("SetEclipseDarkness"):
+		cloud_lighting_bridge.call("SetEclipseDarkness", eclipse_cloud_ambient_multiplier, eclipse_atmosphere_night_multiplier)
+
+
 func _update_cloud_day_factor(day_factor: float) -> void:
 	if cloud_lighting_bridge == null:
 		return
@@ -687,10 +748,15 @@ func _publish_solar_visibility(visibility: float) -> void:
 		current_solar_visibility)
 
 
+func _publish_night_light_scale(scale: float) -> void:
+	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", clampf(scale, 0.0, 1.0))
+
+
 func _exit_tree() -> void:
 	# Global shader parameters survive scene changes; reset before returning to
 	# menus or scenes with no celestial clock.
 	_publish_solar_visibility(1.0)
+	_publish_night_light_scale(1.0)
 
 
 func _update_sky(
@@ -704,8 +770,8 @@ func _update_sky(
 	_ensure_ring_sky(environment)
 	if ring_sky_material == null:
 		return
-	var top_color := night_sky_top_color.lerp(day_sky_top_color, day_factor)
-	var horizon_color := night_sky_horizon_color.lerp(day_sky_horizon_color, day_factor)
+	var top_color := _scale_rgb(night_sky_top_color, eclipse_sky_night_multiplier).lerp(day_sky_top_color, day_factor)
+	var horizon_color := _scale_rgb(night_sky_horizon_color, eclipse_sky_night_multiplier).lerp(day_sky_horizon_color, day_factor)
 	var eclipse_sky_factor := current_eclipse_coverage * day_factor * clampf(eclipse_sky_tint_strength, 0.0, 1.0)
 	top_color = top_color.lerp(eclipse_sky_color, eclipse_sky_factor)
 	horizon_color = horizon_color.lerp(eclipse_fog_color, eclipse_sky_factor)
@@ -929,6 +995,9 @@ func _resolve_references() -> void:
 
 	if world_environment == null:
 		world_environment = get_node_or_null(world_environment_path) as WorldEnvironment
+
+	if eclipse_event == null:
+		eclipse_event = get_node_or_null(eclipse_event_path)
 
 	if cloud_lighting_bridge == null:
 		cloud_lighting_bridge = get_node_or_null(cloud_lighting_bridge_path)

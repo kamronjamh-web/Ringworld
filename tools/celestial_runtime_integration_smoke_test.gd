@@ -145,18 +145,37 @@ func _verify_preview_controls(clock: Node, hud: CanvasLayer) -> String:
 			or absf(float(atmosphere.get("current_day_factor"))) > 0.000001 \
 			or absf(float(atmosphere.get("current_solar_visibility"))) > 0.000001:
 		return "totality did not separate astronomical daylight from exact received-light night"
-	var expected_star_floor := float(atmosphere.get("night_surface_star_visibility"))
+	# Phase E2 (pitch-black eclipse) deliberately changes totality: the stars come out fully and the night sky palette, ambient and
+	# atmosphere night colour are scaled by the darkness model (docs/eclipse-false-sun-spec.md D.1). The weight is smoothed over 0.5 s,
+	# so wait for it to settle, then check the published multipliers end to end.
+	await create_timer(0.9).timeout
+	var darkness_weight := float(atmosphere.get("eclipse_darkness_weight"))
+	var sky_multiplier := float(atmosphere.get("eclipse_sky_night_multiplier"))
+	var ambient_multiplier := float(atmosphere.get("eclipse_ambient_multiplier"))
+	if darkness_weight < 0.99 or sky_multiplier > 0.51 or ambient_multiplier > 0.16:
+		return "totality did not reach full eclipse darkness: weight=%.3f sky=%.3f ambient=%.3f" % [darkness_weight, sky_multiplier, ambient_multiplier]
+	var night_star_floor := float(atmosphere.get("night_surface_star_visibility"))
+	var expected_star_floor := maxf(night_star_floor, float(atmosphere.get("eclipse_star_floor")))
 	var actual_star_visibility := float(sky_material.get_shader_parameter("star_visibility"))
-	var expected_top := atmosphere.get("night_sky_top_color") as Color
-	var expected_horizon := atmosphere.get("night_sky_horizon_color") as Color
+	var expected_top := (atmosphere.get("night_sky_top_color") as Color) * sky_multiplier
+	var expected_horizon := (atmosphere.get("night_sky_horizon_color") as Color) * sky_multiplier
 	var actual_top := sky_material.get_shader_parameter("sky_top_color") as Vector3
 	var actual_horizon := sky_material.get_shader_parameter("sky_horizon_color") as Vector3
-	if absf(actual_star_visibility - expected_star_floor) > 0.0001 \
+	if expected_star_floor < night_star_floor or absf(actual_star_visibility - expected_star_floor) > 0.0001 \
 			or actual_top.distance_to(Vector3(expected_top.r, expected_top.g, expected_top.b)) > 0.0001 \
 			or actual_horizon.distance_to(Vector3(expected_horizon.r, expected_horizon.g, expected_horizon.b)) > 0.0001:
-		return "totality did not apply the night star floor and night sky palette"
-	if total_sun.light_energy > 0.000001 or environment_node.environment.ambient_light_energy <= 0.0:
-		return "totality did not leave direct sun at zero with navigable night ambient"
+		return "totality did not apply the eclipse star floor and darkened night sky palette"
+	var night_light_scale := _global_float("ringworld_night_light_scale", float(atmosphere.get("eclipse_atmosphere_night_multiplier")))
+	if absf(night_light_scale - float(atmosphere.get("eclipse_atmosphere_night_multiplier"))) > 0.0001 or night_light_scale > 0.36:
+		return "totality did not publish the darkened atmosphere night scale: %.3f" % night_light_scale
+	var hub_day_global := _global_float("ringworld_hub_day", 0.0)
+	var hub_weight_global := _global_float("ringworld_hub_light_weight", 0.0)
+	if hub_day_global != 0.0 or hub_weight_global != 0.0:
+		return "E2 must leave the hub-light globals neutral"
+	var night_ambient := float(atmosphere.get("night_ambient_energy"))
+	if total_sun.light_energy > 0.000001 or environment_node.environment.ambient_light_energy <= 0.0 \
+			or environment_node.environment.ambient_light_energy > night_ambient * 0.16:
+		return "totality did not leave direct sun at zero with a faint navigable ambient"
 	restore_button.pressed.emit()
 	explorer.set_physics_process(explorer_physics_was_enabled)
 	var time_delta := absf(float(clock.call("get_simulation_seconds")) - initial_time)
@@ -168,6 +187,11 @@ func _verify_preview_controls(clock: Node, hud: CanvasLayer) -> String:
 			or pitch_delta > 0.0001 or position_delta > 0.0001:
 		return "preview restore changed state: time=%.6f pause_changed=%s yaw=%.6f pitch=%.6f position=%.6f" % [
 			time_delta, pause_changed, yaw_delta, pitch_delta, position_delta]
+	await create_timer(2.5).timeout
+	if float(clock.get("RawEclipseCoverage")) <= 0.0:
+		if float(atmosphere.get("eclipse_darkness_weight")) != 0.0 \
+				or _global_float("ringworld_night_light_scale", 1.0) != 1.0:
+			return "darkness did not return exactly to neutral after the eclipse: w=%.5f cov=%.5f giantcov=%.5f" % [float(atmosphere.get("eclipse_darkness_weight")), float(clock.get("RawEclipseCoverage")), float(clock.get("GiantEclipseCoverage"))]
 	return ""
 
 
@@ -175,3 +199,9 @@ func _fail(message: String) -> bool:
 	push_error("CELESTIAL_RUNTIME_INTEGRATION_TEST=FAIL %s" % message)
 	quit(1)
 	return true
+
+
+# The headless dummy renderer does not store global shader parameters (get returns null); fall back to the value the script published.
+func _global_float(name: String, fallback: float) -> float:
+	var value: Variant = RenderingServer.global_shader_parameter_get(name)
+	return fallback if value == null else float(value)

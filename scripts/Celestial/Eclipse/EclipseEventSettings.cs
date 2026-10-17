@@ -77,6 +77,8 @@ public sealed record EclipseEventSettings
     public double RealSunEnergy { get; init; } = 4d;
     public double HubDirectFraction { get; init; } = 0.8d;
     public double HubDayAtFull { get; init; } = 0.8d;
+    /// <summary>Pitch-black eclipse darkness (spec D.1, phase E2). Applies to every eclipse, with or without the false-sun event.</summary>
+    public EclipseDarknessSettings Darkness { get; init; } = new();
 
     public EclipseEventSettings Sanitized()
     {
@@ -122,7 +124,8 @@ public sealed record EclipseEventSettings
             ReturnTailSeconds = C(ReturnTailSeconds, 0d, 1800d, 450d),
             RealSunEnergy = C(RealSunEnergy, 0d, 16d, 4d),
             HubDirectFraction = C(HubDirectFraction, 0d, 1.5d, 0.8d),
-            HubDayAtFull = C(HubDayAtFull, 0d, 1d, 0.8d)
+            HubDayAtFull = C(HubDayAtFull, 0d, 1d, 0.8d),
+            Darkness = (Darkness ?? new EclipseDarknessSettings()).Sanitized()
         };
         // The four collapse stages must fit in the lead so the collapse ends before E (Aftermath >= 0 s): scale them proportionally.
         double sum = s.InstabilitySeconds + s.OverloadSeconds + s.ImplosionSeconds + s.ShockwaveSeconds;

@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Celestial.Eclipse;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -11,6 +12,7 @@ public partial class CelestialDebugHud : CanvasLayer
     [Export] public NodePath ClockPath { get; set; } = new("../RingDayNightCycle");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath GridPath { get; set; } = new("../ChunkGridManager");
+    [Export] public NodePath EclipsePath { get; set; } = new("../EclipseEvent");
     private RingDayNightCycle? _clock;
     private RingVoxelExplorerController? _explorer;
     private VoxelChunkGridManager? _grid;
@@ -18,6 +20,8 @@ public partial class CelestialDebugHud : CanvasLayer
     private CheckButton? _pause;
     private SpinBox? _longitude;
     private Label? _previewStatus;
+    private EclipseEventDirector? _eclipse;
+    private Label? _eclipseReadout, _eclipseStrip;
     private double _refresh;
     private bool _previewActive;
     private double _previewSimulationSeconds;
@@ -34,6 +38,7 @@ public partial class CelestialDebugHud : CanvasLayer
         _clock = GetNodeOrNull<RingDayNightCycle>(ClockPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridPath);
+        _eclipse = GetNodeOrNull<EclipseEventDirector>(EclipsePath);
         Build();
         Visible = false;
     }
@@ -97,7 +102,51 @@ public partial class CelestialDebugHud : CanvasLayer
         _previewStatus.AddThemeFontSizeOverride("font_size", 12);
         _previewStatus.AddThemeColorOverride("font_color", RingUiStyle.AccentBright);
         column.AddChild(_previewStatus);
+        BuildEclipseBlock(column);
         Refresh();
+    }
+
+
+    private void BuildEclipseBlock(VBoxContainer column)
+    {
+        column.AddChild(new HSeparator());
+        var title = new Label { Text = "ECLIPSE EVENT" }; title.AddThemeColorOverride("font_color", RingUiStyle.AccentBright); column.AddChild(title);
+        _eclipseReadout = new Label { Name = "EclipseReadout", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        _eclipseReadout.AddThemeFontSizeOverride("font_size", 12);
+        column.AddChild(_eclipseReadout);
+        _eclipseStrip = new Label { Name = "EclipseRingStrip", TooltipText = "Fired sites along the loop; the main spire is at the left." };
+        _eclipseStrip.AddThemeFontSizeOverride("font_size", 11);
+        column.AddChild(_eclipseStrip);
+        var row = new HBoxContainer();
+        var previous = new Button { Text = "< Phase", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Jump the celestial clock to the previous phase start." };
+        previous.Pressed += () => StepEclipsePhase(-1);
+        row.AddChild(previous);
+        var force = new Button { Text = "Force eclipse", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Jump the celestial clock to the pre-roll of the current or next eclipse. This changes world time." };
+        force.Pressed += () => _eclipse?.ForceEclipseNow();
+        row.AddChild(force);
+        var next = new Button { Text = "Phase >", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Jump the celestial clock to the next phase start." };
+        next.Pressed += () => StepEclipsePhase(1);
+        row.AddChild(next);
+        column.AddChild(row);
+    }
+
+    private void StepEclipsePhase(int direction)
+    {
+        if (_eclipse == null) return;
+        int phase = (int)_eclipse.Phase;
+        int last = (int)EclipseEventPhase.Return;
+        int target = phase == (int)EclipseEventPhase.Idle ? (direction > 0 ? (int)EclipseEventPhase.PreRoll : last) : phase + direction;
+        if (target < (int)EclipseEventPhase.PreRoll) target = (int)EclipseEventPhase.PreRoll;
+        if (target > last) target = (int)EclipseEventPhase.Idle;
+        _eclipse.JumpToPhase((EclipseEventPhase)target);
+    }
+
+    private void RefreshEclipse()
+    {
+        if (_eclipseReadout == null) return;
+        _eclipse ??= GetNodeOrNull<EclipseEventDirector>(EclipsePath);
+        _eclipseReadout.Text = _eclipse?.DescribeStatus() ?? "Eclipse event director unavailable in this scene.";
+        if (_eclipseStrip != null) _eclipseStrip.Text = _eclipse?.Engine.BuildRingStrip() ?? "";
     }
 
     private void Jump(double seconds) { if (_clock != null && seconds > 0) _clock.SetSimulationSeconds(_clock.GetSimulationSeconds() + seconds); }
@@ -320,6 +369,7 @@ public partial class CelestialDebugHud : CanvasLayer
     private void Refresh()
     {
         if (_readout == null) return;
+        RefreshEclipse();
         if (_clock == null) { _readout.Text = "Celestial clock unavailable."; return; }
         if (_pause != null && _pause.ButtonPressed != _clock.Paused) _pause.ButtonPressed = _clock.Paused;
         CelestialFrame f = _clock.CurrentFrame;

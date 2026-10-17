@@ -72,6 +72,8 @@ public static class RingAtmosphereModel
     public static float SunWarmth { get; private set; } = 0.25f;
     public static Color DayColor { get; private set; } = new(0.34f, 0.46f, 0.60f, 1.0f);
     public static Color NightColor { get; private set; } = new(0.026f, 0.035f, 0.055f, 1.0f);
+    /// <summary>Eclipse darkness multiplier on the night colour for the CPU-built cloud profiles (Sunshine, far mask). Godot shaders use the ringworld_night_light_scale global instead. Exactly 1 outside an eclipse.</summary>
+    public static float EclipseNightScale { get; set; } = 1.0f;
 
     public static void ApplyScaleReadabilityTuning(
         bool enabled,

@@ -18,6 +18,10 @@ public partial class RingGraphicsQualityController
     private float _effectiveSunShadowOffElevationDegrees = DefaultSunShadowOffElevationDegrees;
     private float _effectiveSunShadowOnElevationDegrees = DefaultSunShadowOnElevationDegrees;
     private float _maxLocalSunElevationDegrees = float.NaN;
+    /// <summary>Sun energy below which the shadow pass is skipped (docs/eclipse-false-sun-spec.md finding 4 / F17). The planet light uses the same threshold.</summary>
+    public const float SunShadowMinimumEnergy = 0.001f;
+    private bool _sunShadowZeroEnergySuspended;
+    public bool SunShadowZeroEnergySuspended => _sunShadowZeroEnergySuspended;
 
     public bool LocalShadowHandoffEnabled => !_shadowTuningOverrides.TryGetValue("LocalShadowHandoffEnabled", out Variant enabled) || enabled.AsBool();
     public float EffectiveSunShadowOffElevationDegrees => _effectiveSunShadowOffElevationDegrees;
@@ -59,10 +63,25 @@ public partial class RingGraphicsQualityController
                 suspend = elevation <= _effectiveSunShadowOffElevationDegrees;
             _localShadowHandoffReason = suspend ? "sun safely below local shadow horizon" : "sun at or above local shadow horizon";
         }
+        // Eclipse totality (and any other zero-energy sun) lights nothing: skip the shadow pass until the energy returns.
+        if (UpdateSunZeroEnergyGate() && RequestedSunShadowsEnabled) { suspend = true; _localShadowHandoffReason = "sun energy below " + SunShadowMinimumEnergy.ToString("0.###"); }
         if (UndergroundShadowSuspended && RequestedSunShadowsEnabled) { suspend = true; _localShadowHandoffReason = "underground enclosed"; }
         _localSunShadowSuspended = suspend;
         bool effectiveShadowEnabled = RequestedSunShadowsEnabled && !suspend;
         if (_sun.ShadowEnabled != effectiveShadowEnabled) _sun.ShadowEnabled = effectiveShadowEnabled;
+    }
+
+    /// <summary>
+    /// True while the sun is too dim to light anything (totality at zero energy): the shadow map would be rendered for nothing. A small
+    /// hysteresis band (2x the threshold) stops flapping while the energy ramps; the pass resumes on the first frame the energy is back.
+    /// </summary>
+    private bool UpdateSunZeroEnergyGate()
+    {
+        float energy = _sun != null && GodotObject.IsInstanceValid(_sun) ? _sun.LightEnergy : float.PositiveInfinity;
+        _sunShadowZeroEnergySuspended = _sunShadowZeroEnergySuspended
+            ? energy < SunShadowMinimumEnergy * 2.0f
+            : energy < SunShadowMinimumEnergy;
+        return _sunShadowZeroEnergySuspended;
     }
 
     /// <summary>

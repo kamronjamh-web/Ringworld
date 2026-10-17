@@ -623,6 +623,80 @@ Files: `scripts/Celestial/Eclipse/` (`EclipseWindowSolver`, `EclipseEventSetting
 - The timeline test uses the gen-17 v4 registry (`EmitterSiteTestWorlds.CreateGen17(1337)`, 595 sites), like `emitter_grid_g1_test`; there is no separate `emitter_grid_topology_test`. The stream test uses `EclipseSiteTable.Uniform` (synthetic evenly spaced chains).
 - Nearest-site and refuel logic in the stream keep a little state (one-shot flag, last refuel time); after a Resync the flags are restored to what has already happened at the new time.
 
+### E1 implementation notes (2026-10-16, landed)
+
+E1 publishes state, events and status only. **No lighting or visual state is read or written.**
+
+Files:
+- `scripts/Celestial/Eclipse/EclipseEventEngine.cs`: plain-C# core (`IEclipseClock`, `EclipseObserverPose`, `EclipseEventEngine`). It owns the window cache, the timeline and the stream, and it holds the force/jump/scrub logic and the status text. It is testable with a stub clock.
+- `scripts/Celestial/Eclipse/EclipseEventDirector.cs`: scene node "EclipseEvent" (priority -99, after `RingDayNightCycle` at -100) plus `DayNightEclipseClock`, an adapter over `RingDayNightCycle`. It resolves the clock, `EmitterGrid` (topology and pulse clock), the chunk grid, the explorer and the cloud layer; builds the `EclipseWindowSolver` from `RingDayNightCycle.Configuration`; and rebinds when the grid layer rebuilds its pulse clock.
+- `scripts/ui/GameplayEclipseEventSettings.cs` and `GameplayEclipseEventDefaults.cs` (`user://gameplay_eclipse_event_defaults.tres`): same pattern as the grid pair. All 41 float fields, 3 enum ints and 2 bools of `EclipseEventSettings` are persisted. `ToCore()` maps them onto the pure record, and the smoke asserts that there is no default drift.
+- `scripts/ui/RingLiveTuningDrawer.Eclipse.cs`: Lighting tab sections "Eclipse event: timeline", "sustain and refuel", "collapse", "hub levels" and "debug" (force, jump to phase, scrub, freeze, log events, fired-site strip). The sections are built from a table; the debug controls are disabled on worlds without a bound event.
+- Hooks: `RingLiveTuningDrawer.cs` (one line, `BuildEclipseSections(tab)` at the end of `BuildLightingTab`), and `RingLiveTuningDrawer.EmitterSites.cs` (init, process and flush, chained exactly as the grid does).
+- `scripts/ui/CelestialDebugHud.cs`: "ECLIPSE EVENT" block with the status, the ring strip and the `< Phase`, `Force eclipse` and `Phase >` buttons.
+- `scenes/VoxelRingIntegrationTest.tscn`: `EclipseEvent` node.
+- `scripts/RingDayNightCycle.cs`: **one read-only property**, `AuthoredEpochSun` (the captured authored `StarLight` basis Z). The window solver needs it as the epoch sun. Nothing else in the clock changed, and there is no hold and no debug offset.
+
+**Force / jump / scrub mechanism.** These move the *celestial clock itself* via `RingDayNightCycle.SetSimulationSeconds`, the same call as `CelestialDebugHud.Jump`. A debug override offset was rejected: the clock is the saved absolute value, so a seek is just a save/load-equivalent edit. The event is a pure function of it, so everything stays deterministic with no new save field, and every other consumer (sun direction, eclipse darkness) stays consistent with the jump. The cost is that it changes world time, which the tooltips say. Each action also calls `MarkDiscontinuity()`, so the next update emits exactly one `Resync`, even for a scrub below the 5 s threshold. Target selection: the current eclipse until `RingEnd + ReturnTailSeconds` has passed, then the next one. Landing times are nudged up by ulps so that `(S + tau) - S` never rounds below a phase boundary. Force goes to `S - PreRoll`. Scrub is clamped to `[-PreRoll, E - S + 120]` and applies on slider release. Freeze toggles the clock's existing `Paused`.
+
+**Item 6 (TimeScale).** There is no hold. `EclipseEventStream.Advance` receives `max(5, 0.5 x TimeScale)` (`EclipseEventEngine.MaxContinuousStepSeconds`). The director test steps `k/60` s per frame at k = 1, 2, 10, 100: Ignition and Crescendo land at the 1x time divided by k, within one frame, with no Resync. A 6 s step is a Resync at 1x and 10x but not at 20x and 100x.
+
+**Hooks for E2-E4:**
+- `EclipseEventDirector.State` (the `EclipseEventState` snapshot, updated every frame at priority -99), `Phase`, `Bound`, `Engine.Timeline` (`Settings`, `Window`, the per-site `SiteFireTau`/`SiteArrivalTau`, `FireOrder`) and `Engine.LocalSecondContact`/`LocalThirdContact` (refreshed every 10 celestial s).
+- `EclipseEventDirector.EventRaised` (and `Engine.EventRaised`): the `EclipseEvent` stream. `Engine.EventLog` holds the last 32.
+- **Grid-clock hook (E4):** `GridClockOverrideActive` is true from `TauMainFire` until the end of the window (`E`), and only while `RefuelClock == Celestial`. `GridTimeSeconds` is the celestial time while active, and the weather clock otherwise. E4 should have `EmitterGridBeamLayer` use it in place of `CurrentTime` (`CloudSimulationTimeSeconds`) while active. The layer was **not** edited in E1, so the on-screen pulse is unchanged. `State.GridPulseWeight` is the factor for suppressing the normal fronts. The Return phase (after E) is back on the weather clock.
+- `Engine.SolverState` (`None`/`Pending`/`Cached`) and `Engine.DescribeStatus()`/`BuildRingStrip()` are the HUD feeds.
+- `director.ForceEclipseNow()`/`JumpToPhase()`/`ScrubToTau()`/`SetFrozen()` are the debug entry points. E3's hub-level override and the zenith gizmo are not built.
+
+**Deviations from the spec:**
+- No hold and no `HoldRealTimeDuringEvent` (decision 6), as the E0 notes said.
+- No centred-window fallback while the solve is pending: the event stays Idle for the 1-3 frames (about 30 ms of work) the worker needs, and the first update after the result is a Resync. Debug actions solve synchronously.
+- The window is solved for the nearest eclipse index, and the observer pose uses `RingAcrossBaseOffsetMeters`/`RingVerticalBaseOffsetMeters` exactly as `RingDayNightCycle.ResolveObserverOffsetKm` does. The solver radius comes from the grid circumference; the solver is not created until the grid reports one.
+- The Hub-level override, "Show beam ids" and "Show local zenith gizmo" (G.3) belong to E3/E4. The drawer sections for the lighting, beams and audio settings arrive with those phases (E1 persists the timeline and hub-level fields only).
+- The save/load mid-event scene test is state-only: the director test shows that restoring a clock value reproduces a bit-identical `EclipseEventState`. A full `RingWorldSaveManager` round trip was not run (it needs a world and a window).
+
+Tests (all headless, all PASS): `tools/EclipseEventSettingsSmoke.cs` (`eclipse_event_settings_smoke.gd`: defaults, round trip, setter and sanitiser clamps, NaN/infinity fallbacks, hostile file, reset, invalid path, ToCore no-drift) and `tools/EclipseEventDirectorTest.cs` (`eclipse_event_director_test.gd`: unbound/disabled, force, jump to every phase, scrub and clamps, Resync on jump/rewind/external seek, TimeScale following, grid hook, local contacts bracketing the window, determinism, pause, async solve equals sync, status text, scene node, director node settings relay). No headless drawer-smoke pattern fits the Lighting tab (the existing smokes need the full scene), so the drawer is covered by the compile and the scene-parse check only.
+
+### E2 implementation notes (2026-10-16, landed)
+
+E2 only darkens. The hub light, `ringworld_hub_day` and `ringworld_hub_light_weight` are not used yet (E3).
+
+Files:
+- `scripts/Celestial/Eclipse/EclipseDarknessModel.cs` (new, pure): `EclipseDarknessSettings`, `EclipseDarknessOutput`, `EclipseDarknessModel` (target weight, 0.5 s smoothing, per-term multipliers). `EclipseEventSettings.Darkness` carries it; a darkness-only change does not rebuild the timeline (`EclipseEventEngine.SetSettings`).
+- `EclipseEventDirector.UpdateDarkness(coverage, delta)` plus float properties `DarknessWeight`, `DarknessAmbientMultiplier`, `DarknessAtmosphereNightMultiplier`, `DarknessSkyNightMultiplier`, `DarknessCloudAmbientMultiplier`, `DarknessStarFloor`. `day_side_atmosphere.gd` calls it every frame with the same raw coverage it publishes as solar visibility, so the two always agree. Darkness works on every world that has the director node, and with `EventEnabled` off; with no director node everything stays neutral.
+- `scripts/day_side_atmosphere.gd`: applies the multipliers (surface ambient energy, fog light energy, night sky top and horizon, star floor), publishes the global `ringworld_night_light_scale`, tells the cloud bridge, and sets the meta `ringworld_eclipse_darkness` on the main WorldEnvironment for the far viewport. Early returns and `_exit_tree` reset the global to 1.
+- `project.godot`: `ringworld_hub_day` (0), `ringworld_hub_light_weight` (0), `ringworld_night_light_scale` (1). Only the last is used in E2.
+- `materials/ring_atmosphere.gdshaderinc`: declares `global uniform float ringworld_night_light_scale` and multiplies `atmosphere_night_color` by it in `ring_atmosphere_scattering_color` and in the two sky boundary/upper colours. **E3: do not declare this global again in `celestial_lighting.gdshaderinc`** (a duplicate declaration fails to compile in shaders that include both). `ring_atmosphere_shared.gdshaderinc` is untouched: it is also compiled into the Sunshine GLSL compute, which cannot declare a global.
+- `RingAtmosphereModel.EclipseNightScale` (static, default 1) scales the night colour in the two CPU-built profiles: Sunshine `ring_atmosphere_profile[6]` (`RingSunshineCloudBridge.UpdateAtmosphereProfile`) and the far cloud mask (`RingScaledFarViewport.CloudMaskAtmosphere.cs`).
+- `RingSunshineCloudBridge.SetEclipseDarkness(cloudScale, atmosphereScale)`: runtime multiplier on `NightCloudAmbientColor` (the persisted colour is never rewritten), clamped to a floor of 0.3 (D.2); sets `EclipseNightScale`.
+- `RingScaledFarViewport.EclipseAmbient.cs` (new partial) plus fields in `RingScaledFarViewport.cs`: the far and the regional environments keep their creation snapshot; while the meta weight is above 0 they blend toward the live (darkened) main ambient by that weight, and at weight 0 the snapshot is restored exactly. This is narrower than "always follow the live value": following it all the time would change every non-eclipse frame (the snapshot is currently frozen at load time). It matches D.1 ("written only while w_d > 0, and restored afterwards").
+- `RingGraphicsQualityController.LocalShadows.cs`: zero-energy shadow gate (finding 4). The sun shadow pass is suspended when `StarLight` energy is below 0.001, with hysteresis (resumes at 0.002) so it cannot flap on a ramp. Reason text "sun energy below 0.001"; `SunShadowZeroEnergySuspended` exposes it. Outside totality the sun energy is 4 x visibility (above 0), so nothing changes.
+- Persistence and drawer: `GameplayEclipseEventSettings` and `GameplayEclipseEventDefaults` gain `EclipseDarknessEnabled` (bool) and five floats `EclipseAmbientScale`, `EclipseAtmosphereNightScale`, `EclipseSkyNightScale`, `EclipseCloudAmbientScale` (min 0.3), `EclipseStarVisibility`, mapped in `ToCore`. `RingLiveTuningDrawer.Eclipse.cs` has a new first section "Eclipse darkness" in the Lighting tab (toggle, five sliders, live weight and multiplier readout).
+- `CelestialConfiguration.cs`: comment on `GameplayEclipseDarknessCap` (D.3).
+
+**Darkness values (w = 1, defaults):**
+
+| Term | Before | Totality |
+|---|---|---|
+| Env ambient energy | 0.30 | 0.045 (x 0.15) |
+| Fog light energy | 0.38 | 0.057 (x 0.15) |
+| Atmosphere night colour | (0.026, 0.035, 0.055) | x 0.35 = (0.0091, 0.0123, 0.0193) |
+| Sky night top / horizon | (0.002, 0.004, 0.012) / (0.008, 0.015, 0.035) | x 0.5 |
+| Cloud night ambient | (0.18, 0.23, 0.35) | x 0.4 = (0.072, 0.092, 0.14); setting floor 0.3 |
+| Stars | 0.62 | 1.0 (a floor: `max(current, w x 1.0)`) |
+
+Not done: the optional `EclipseExposureMaxSensitivity` (T7 decides whether it is needed); the far-cloud shaders' own `night_color` albedo terms (D.1 does not list them; check them in the captures); the shadow gate does not re-enable one frame ahead (it resumes on the first frame the energy reaches 0.002).
+
+**`GameplayEclipseDarknessCap` (D.3):** kept at 0.95, and its test (`CelestialCoreSmokeRunner`: totality = 0.95, plus the partial scan) is unchanged. The new model reads raw coverage only; `EclipseDarknessTest` shows the totality weight is identical for caps 0.95 and 0.5.
+
+**Deliberately changed pin:** `tools/celestial_runtime_integration_smoke_test.gd` asserted that totality uses the plain night star floor (0.62) and night sky palette. E2 changes exactly that, so it now waits for the 0.5 s smoothing and asserts the end-to-end darkened values (weight at least 0.99, star floor 1.0, sky = night x 0.5, atmosphere night scale at most 0.36, ambient at most 0.16 x night ambient, hub globals still 0, darkness exactly neutral again after Restore preview).
+
+**Bit-identical outside an eclipse.** By construction every multiplier is exactly 1 (and the star floor exactly 0) when the weight is 0: the GDScript `_scale_rgb` returns the colour untouched at 1, the shader terms multiply by 1.0, the far-viewport ambient is restored from the snapshot, and the cloud bridge reuses the unscaled `NightCloudAmbientColor`. Headless evidence: `tools/eclipse_darkness_parity_test.gd` runs the real scene at four non-eclipse clock times with this `day_side_atmosphere.gd`, then with the committed HEAD copy swapped in, and compares ambient, fog, sun and planet light and the sky material. Max difference 9.5e-9 (convergence residue of the blend lerps).
+
+Tests: `eclipse_darkness_test` (new: pure model and director relay), `eclipse_darkness_parity_test` (new), `eclipse_event_settings_smoke` (extended), `celestial_runtime_integration_smoke_test` (updated as above). Windowed harness: `tools/eclipse_darkness_capture.gd` (day, night, partial, totality; darkness off and on; three poses; luminance, and an off-vs-on pixel diff of the day and night frames). It was parse-checked only: no windowed run was possible because the user's Godot editor (PID 26264) was open.
+
+**Deviations:** (1) the hub-relief term of D.1 (`w_d` falling at the kindle) exists in the model but is disabled (`HubReliefAvailable = false`) until E3 provides the hub light; otherwise the kindle would brighten the world with no light source. (2) Far-viewport ambient: blend by weight, not always live (above). (3) The darkness settings live on `EclipseEventSettings.Darkness` (a nested record) rather than flat fields, so slider drags do not rebuild the event timeline. (4) The `EclipseDarknessEnabled` master toggle is an addition (it also gives an exact "old lighting" for A/B captures).
+
 ---
 
 ## R. Risks

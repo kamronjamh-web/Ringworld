@@ -2,6 +2,8 @@
 // Air occupies two thin cylindrical shells next to the surface; the central
 // volume is vacuum and therefore contributes no extinction.
 #include "res://materials/celestial_lighting.gdshaderinc"
+// Eclipse darkness scale for emission-like night terms (1 outside an eclipse; published by day_side_atmosphere.gd).
+global uniform float ringworld_night_light_scale;
 uniform bool ring_atmosphere_enabled = true;
 // Legacy fallback for scaled-space materials without a dynamic ray frame.
 // Bound far-ring materials use the camera-relative air path below.
@@ -60,7 +62,7 @@ vec2 ring_atmosphere_visibility_distances(float camera_altitude) {
 }
 
 vec3 ring_atmosphere_scattering_color(vec3 ray_direction, float day_factor) {
-	return ring_atmosphere_scattering_color_shared(ray_direction, day_factor, ring_atmosphere_to_sun, atmosphere_day_color, atmosphere_night_color, atmosphere_aerosol, atmosphere_forward_scattering, atmosphere_sun_warmth);
+	return ring_atmosphere_scattering_color_shared(ray_direction, day_factor, ring_atmosphere_to_sun, atmosphere_day_color, atmosphere_night_color * ringworld_night_light_scale, atmosphere_aerosol, atmosphere_forward_scattering, atmosphere_sun_warmth);
 }
 
 float ring_segment_length_inside_cylinder(vec3 start_world, vec3 end_world, vec3 center_world, float radius) {
@@ -333,11 +335,11 @@ vec4 sample_ring_sky_atmosphere(
 	float boundary_solar_transmittance = 1.0;
 	float upper_solar_transmittance = 1.0;
 	vec3 boundary_color = mix(
-		atmosphere_night_color * sky_night_scattering_boost,
+		atmosphere_night_color * sky_night_scattering_boost * ringworld_night_light_scale,
 		atmosphere_day_color * sky_day_scattering_boost * boundary_solar_transmittance,
 		boundary_day);
 	vec3 upper_color = mix(
-		atmosphere_night_color * sky_night_scattering_boost,
+		atmosphere_night_color * sky_night_scattering_boost * ringworld_night_light_scale,
 		atmosphere_day_color * sky_day_scattering_boost * upper_solar_transmittance,
 		upper_day);
 	boundary_color += atmosphere_day_color

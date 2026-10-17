@@ -651,6 +651,23 @@ public partial class RingSunshineCloudBridge : Node
         _clouds.Call("refresh_compute");
     }
 
+    /// <summary>
+    /// Eclipse darkness (docs/eclipse-false-sun-spec.md D.1, published by day_side_atmosphere.gd). Scales the cloud night ambient at runtime
+    /// (the persisted <see cref="NightCloudAmbientColor"/> is never rewritten) with a floor of 0.3 so black clouds do not go see-through (D.2),
+    /// and sets the night-colour multiplier the CPU-built cloud atmosphere profiles use. Both are exactly 1 outside an eclipse.
+    /// </summary>
+    public void SetEclipseDarkness(float cloudAmbientScale, float atmosphereNightScale)
+    {
+        float cloud = float.IsFinite(cloudAmbientScale) ? Mathf.Clamp(cloudAmbientScale, MinimumEclipseCloudAmbientScale, 1.0f) : 1.0f;
+        RingAtmosphereModel.EclipseNightScale = float.IsFinite(atmosphereNightScale) ? Mathf.Clamp(atmosphereNightScale, 0.0f, 1.0f) : 1.0f;
+        if (_eclipseCloudAmbientScale == cloud) return;
+        _eclipseCloudAmbientScale = cloud;
+        ApplyLocalCloudAmbientLighting();
+    }
+
+    public const float MinimumEclipseCloudAmbientScale = 0.3f;
+    private float _eclipseCloudAmbientScale = 1.0f;
+
     public void SetLocalDayFactor(float dayFactor)
     {
         float clampedDayFactor = Mathf.Clamp(dayFactor, 0.0f, 1.0f);
@@ -939,8 +956,15 @@ public partial class RingSunshineCloudBridge : Node
             Mathf.Lerp(0.38f, 0.18f, _localStormFactor),
             Mathf.Lerp(0.50f, 0.27f, _localStormFactor),
             1.0f);
-        Color normalAmbient = NightCloudAmbientColor.Lerp(DayCloudAmbientColor, _localDayFactor);
-        Color stormAmbient = NightCloudAmbientColor.Lerp(StormCloudAmbientColor, _localDayFactor);
+        Color nightAmbient = _eclipseCloudAmbientScale == 1.0f
+            ? NightCloudAmbientColor
+            : new Color(
+                NightCloudAmbientColor.R * _eclipseCloudAmbientScale,
+                NightCloudAmbientColor.G * _eclipseCloudAmbientScale,
+                NightCloudAmbientColor.B * _eclipseCloudAmbientScale,
+                NightCloudAmbientColor.A);
+        Color normalAmbient = nightAmbient.Lerp(DayCloudAmbientColor, _localDayFactor);
+        Color stormAmbient = nightAmbient.Lerp(StormCloudAmbientColor, _localDayFactor);
         Color ambient = normalAmbient.Lerp(stormAmbient, _localStormFactor);
         _clouds.Set("cloud_ambient_color", new Color(
             ambient.R * CloudAmbientMultiplier,
@@ -1020,7 +1044,7 @@ public partial class RingSunshineCloudBridge : Node
             profile[3] = new(RingAtmosphereModel.ClearDistanceMeters, RingAtmosphereModel.FullDistanceMeters, RingAtmosphereModel.HighAltitudeClearDistanceMeters, RingAtmosphereModel.HighAltitudeFullDistanceMeters);
             profile[4] = new(RingAtmosphereModel.DistanceAltitudeStartMeters, RingAtmosphereModel.DistanceAltitudeEndMeters, RingAtmosphereModel.Aerosol, RingAtmosphereModel.ForwardScattering);
             profile[5] = new(RingAtmosphereModel.DayColor.R, RingAtmosphereModel.DayColor.G, RingAtmosphereModel.DayColor.B, RingAtmosphereModel.SunWarmth);
-            profile[6] = new(RingAtmosphereModel.NightColor.R, RingAtmosphereModel.NightColor.G, RingAtmosphereModel.NightColor.B, solarVisibility);
+            profile[6] = new(RingAtmosphereModel.NightColor.R * RingAtmosphereModel.EclipseNightScale, RingAtmosphereModel.NightColor.G * RingAtmosphereModel.EclipseNightScale, RingAtmosphereModel.NightColor.B * RingAtmosphereModel.EclipseNightScale, solarVisibility);
             profile[7] = new(frame.OutwardWorld.X, frame.OutwardWorld.Y, frame.OutwardWorld.Z, frame.CameraHeightMeters);
             profile[8] = new(frame.AxisWorld.X, frame.AxisWorld.Y, frame.AxisWorld.Z, frame.SidewallNegativeMeters);
             profile[9] = new(frame.ToSun.X, frame.ToSun.Y, frame.ToSun.Z, frame.SidewallPositiveMeters);

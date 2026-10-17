@@ -14,6 +14,9 @@ public partial class CelestialConfiguration : Resource
     [Export] public float RingTiltDegrees { get; set; } = 15f;
     [Export] public float NominalRingRadiusKm { get; set; } = 5000f;
     [Export] public float StarAngularRadiusDegrees { get; set; } = .265f;
+    // Partial-phase tint control only (docs/eclipse-false-sun-spec.md D.3): it caps the gameplay darkness that tints fog and sky by
+    // darkness x day factor. Totality is already exactly dark (direct sun and solar visibility use raw coverage), and the pitch-black
+    // eclipse (EclipseDarknessModel, phase E2) is driven by raw coverage, never by this cap.
     [Export(PropertyHint.Range, "0,1,0.01")] public float GameplayEclipseDarknessCap { get; set; } = .95f;
     [Export(PropertyHint.Range, "-1,1,0.001")] public float DaylightStartDot { get; set; } = -.2f;
     [Export(PropertyHint.Range, "-1,1,0.001")] public float DaylightFullDot { get; set; } = .35f;
