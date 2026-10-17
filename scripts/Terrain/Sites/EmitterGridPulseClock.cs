@@ -219,9 +219,12 @@ public static class EmitterGridIntensity
         return t * t * (3d - 2d * t);
     }
 
-    /// <summary>Per-point effective day: smoothstep(-0.2, 0.35, dot(surfaceUp, sun)) times the published solar visibility (0 in eclipse).</summary>
-    public static double DayAt(double dotSurfaceUpSun, double solarVisibility)
-        => Smoothstep(-0.2d, 0.35d, dotSurfaceUpSun) * Math.Clamp(solarVisibility, 0d, 1d);
+    /// <summary>
+    /// Per-point effective day: smoothstep(-0.2, 0.35, dot(surfaceUp, sun)) times the published solar visibility (0 in eclipse), or the eclipse
+    /// hub sun's day (<c>ringworld_hub_day</c>, the same everywhere) when that is higher. With hubDay 0 this is the original value exactly.
+    /// </summary>
+    public static double DayAt(double dotSurfaceUpSun, double solarVisibility, double hubDay = 0d)
+        => Math.Max(Smoothstep(-0.2d, 0.35d, dotSurfaceUpSun) * Math.Clamp(solarVisibility, 0d, 1d), Math.Clamp(hubDay, 0d, 1d));
 
     /// <summary>B = max(dayAt(camera), dayAt(fragment) * smoothstep(50 km, 500 km, viewDistance)).</summary>
     public static double Background(double dayAtCamera, double dayAtFragment, double viewDistanceMeters, EmitterGridVisibilitySettings? s = null)

@@ -50,8 +50,8 @@ void vertex() {
 	vec3 up_camera = camera - ring_center;
 	up_camera.y = 0.0;
 	up_camera = length(up_camera) > 0.0 ? -normalize(up_camera) : vec3(-1.0, 0.0, 0.0);
-	float day_camera = eg_day_at(dot(up_camera, sun), ringworld_solar_visibility);
-	float day_mid = eg_day_at(dot(up_mid, sun), ringworld_solar_visibility);
+	float day_camera = eg_day_at_hub(dot(up_camera, sun), ringworld_solar_visibility, ringworld_hub_day);
+	float day_mid = eg_day_at_hub(dot(up_mid, sun), ringworld_solar_visibility, ringworld_hub_day);
 	float b_mid = eg_background(day_camera, day_mid, mid_distance);
 
 #ifdef EG_FAR_LAYER
@@ -129,7 +129,7 @@ void vertex() {
 		vec3 up_here = world_here - ring_center;
 		up_here.y = 0.0;
 		up_here = length(up_here) > 0.0 ? -normalize(up_here) : vec3(-1.0, 0.0, 0.0);
-		float day_here = eg_day_at(dot(up_here, sun), ringworld_solar_visibility);
+		float day_here = eg_day_at_hub(dot(up_here, sun), ringworld_solar_visibility, ringworld_hub_day);
 		float b_here = eg_background(day_camera, day_here, real_distance);
 		// The atmosphere model works in real metres (identity in the main world).
 		vec4 atmosphere = sample_ring_atmosphere(camera * inv_scale, world_here * inv_scale, ring_center * inv_scale, b_here);

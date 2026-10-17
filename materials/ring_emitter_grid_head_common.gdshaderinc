@@ -47,8 +47,8 @@ void vertex() {
 		vec3 up_camera = camera - ring_center;
 		up_camera.y = 0.0;
 		up_camera = length(up_camera) > 0.0 ? -normalize(up_camera) : vec3(-1.0, 0.0, 0.0);
-		float day_camera = eg_day_at(dot(up_camera, sun), ringworld_solar_visibility);
-		float day_here = eg_day_at(dot(up_here, sun), ringworld_solar_visibility);
+		float day_camera = eg_day_at_hub(dot(up_camera, sun), ringworld_solar_visibility, ringworld_hub_day);
+		float day_here = eg_day_at_hub(dot(up_here, sun), ringworld_solar_visibility, ringworld_hub_day);
 		float b = eg_background(day_camera, day_here, real_distance);
 		vec4 atmosphere = sample_ring_atmosphere(camera * inv_scale, center_world * inv_scale, ring_center * inv_scale, b);
 		v_uv = VERTEX.xy * 2.0;

@@ -24,8 +24,10 @@ public sealed class DayNightEclipseClock : IEclipseClock
 /// <see cref="RingDayNightCycle"/> (-100) and before the lighting and layer consumers. It reads the celestial clock, the emitter grid layer's
 /// topology and pulse clock, and the player pose, drives an <see cref="EclipseEventEngine"/>, and publishes <see cref="State"/>,
 /// <see cref="EventRaised"/> and <see cref="DescribeStatus"/>. E1 changed no lighting or visuals. Phase E2 adds only the pitch-black eclipse darkness outputs (<see cref="DarknessOutput"/>, pulled each frame by day_side_atmosphere.gd through <see cref="UpdateDarkness"/>).
+/// Phase E3 adds the "noon everywhere" hub lighting outputs (<see cref="HubLight"/>, read by day_side_atmosphere.gd and the cloud bridge) and
+/// implements <see cref="IPrimaryLightOverride"/> so <see cref="RingDayNightCycle"/> aims StarLight at the local zenith while the hub sun is up.
 /// </summary>
-public partial class EclipseEventDirector : Node
+public partial class EclipseEventDirector : Node, IPrimaryLightOverride
 {
     [Export] public NodePath ClockPath { get; set; } = new("../RingDayNightCycle");
     [Export] public NodePath GridLayerPath { get; set; } = new("../EmitterGrid");
@@ -74,7 +76,15 @@ public partial class EclipseEventDirector : Node
         if (!AutoBind) SetProcess(false);
     }
 
-    public override void _ExitTree() => Engine.EventRaised -= OnEngineEvent;
+    public override void _ExitTree()
+    {
+        Engine.EventRaised -= OnEngineEvent;
+        if (_cycle != null && GodotObject.IsInstanceValid(_cycle) && ReferenceEquals(_cycle.PrimaryLightOverride, this)) _cycle.PrimaryLightOverride = null;
+        EclipseHubLighting.Reset();
+        // A re-added director (same instance) must re-register and start from the unprimed state.
+        _hubWeight = 0d;
+        _hubPrimed = false;
+    }
 
     /// <summary>Applies saved choices (grave drawer, ready).</summary>
     public void Configure(GameplayEclipseEventSettings settings) => Engine.SetSettings(GameplayEclipseEventDefaults.ToCore(settings));
@@ -94,6 +104,9 @@ public partial class EclipseEventDirector : Node
         EnsureBound();
         double weather = _weather != null && GodotObject.IsInstanceValid(_weather) ? _weather.CloudSimulationTimeSeconds : _sessionWeather;
         Engine.Update(_clock, weather, ResolvePose());
+        RefreshHubLight(delta);
+        EclipseHubLighting.Tick();
+        UpdateZenithGizmo();
     }
 
     private void ResolveNodes()
@@ -103,6 +116,7 @@ public partial class EclipseEventDirector : Node
             _cycle = GetNodeOrNull<RingDayNightCycle>(ClockPath);
             _clock = _cycle != null ? new DayNightEclipseClock(_cycle) : null;
         }
+        if (_cycle != null && !ReferenceEquals(_cycle.PrimaryLightOverride, this)) _cycle.PrimaryLightOverride = this;
         if (_gridLayer == null || !GodotObject.IsInstanceValid(_gridLayer)) _gridLayer = GetNodeOrNull<EmitterGridBeamLayer>(GridLayerPath);
         if (_grid == null || !GodotObject.IsInstanceValid(_grid)) _grid = GetNodeOrNull<VoxelChunkGridManager>(ChunkGridPath);
         if (_explorer == null || !GodotObject.IsInstanceValid(_explorer)) _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
@@ -179,11 +193,118 @@ public partial class EclipseEventDirector : Node
     /// </summary>
     public void UpdateDarkness(double localCoverage, double deltaSeconds)
     {
-        _darknessOutput = _darkness.Update(Engine.Settings.Darkness, localCoverage, Engine.State.Level, Engine.Settings.KindleLevel, deltaSeconds);
+        // The hub light relieves the darkness from the kindle (D.1); the level includes the debug override.
+        _darknessOutput = _darkness.Update(Engine.Settings.Darkness, localCoverage, _hubLight.Level, Engine.Settings.KindleLevel, deltaSeconds, EclipseDarknessModel.HubReliefAvailable);
     }
 
     /// <summary>Test/tool hook: runs the model without a lighting owner.</summary>
     public void ResetDarkness() { _darkness.Reset(); _darknessOutput = EclipseDarknessOutput.Neutral; }
+
+    // ---------------------------------------------------------------- hub "noon everywhere" lighting (spec C, phase E3)
+
+    /// <summary>The hub weight reaches about 95 % of a step in this many seconds (scrubs and loads into the event).</summary>
+    public const double HubWeightSmoothSeconds = 1d;
+
+    private EclipseHubLightOutput _hubLight = EclipseHubLightOutput.Neutral;
+    private double _hubLevelOverride = -1d;
+    private double _hubWeight;
+    private bool _hubPrimed;
+    private bool _hubOverrideChanged;
+
+    /// <summary>Latest hub lighting outputs (pure model). Exactly neutral (all 0) outside the event.</summary>
+    public EclipseHubLightOutput HubLight => _hubLight;
+    /// <summary>Smoothed share of the primary light's direction that follows the local zenith (shader global <c>ringworld_hub_light_weight</c>).</summary>
+    public float HubLightWeight => (float)_hubWeight;
+    public float HubLightDay => (float)_hubLight.Day;
+    public float HubLightDirect => (float)_hubLight.DirectEnergy;
+    public float HubLightLevel => (float)_hubLight.Level;
+    public float HubSkyTintStrength => (float)_hubLight.SkyTintStrength;
+    public float HubZenithHaloIntensity => (float)_hubLight.ZenithHaloIntensity;
+    public Color HubLightColor => new((float)_hubLight.ColorR, (float)_hubLight.ColorG, (float)_hubLight.ColorB);
+    /// <summary>Debug hub level override, -1 when off (not saved).</summary>
+    public float HubLevelOverride => (float)_hubLevelOverride;
+    public bool HubLevelOverrideActive => _hubLevelOverride >= 0d;
+    float IPrimaryLightOverride.PrimaryLightWeight => HubLightWeight;
+
+    /// <summary>
+    /// Debug (spec G.3, not saved): forces hub weight 1 and the given level (0..2.5) for lighting captures, outside an eclipse too. A negative
+    /// value clears it. Visual only: the event timeline and the clock are untouched. Outside an eclipse the hub then shows alongside the real sun.
+    /// </summary>
+    public void SetHubLevelOverride(float level)
+    {
+        double next = float.IsFinite(level) && level >= 0f ? Math.Min(level, EclipseHubLightModel.MaxOverrideLevel) : -1d;
+        if (next == _hubLevelOverride) return;
+        _hubLevelOverride = next;
+        _hubOverrideChanged = true;
+        RefreshHubLight(0d);
+    }
+
+    /// <summary>Test/tool hook: re-evaluates the hub lighting from the current state without advancing time.</summary>
+    public void RefreshHubLight(double deltaSeconds)
+    {
+        _hubLight = EclipseHubLightModel.Evaluate(Engine.Settings, Engine.State, _hubLevelOverride);
+        double target = _hubLight.Weight;
+        // The weight eases over about 1 s so a scrub or a load into the event does not snap the light direction. It snaps on the first
+        // frame and for the debug override (captures want the final state at once).
+        if (!_hubPrimed || _hubOverrideChanged || !double.IsFinite(deltaSeconds) || deltaSeconds <= 0d) { _hubWeight = target; _hubPrimed = true; }
+        else
+        {
+            // Ease in celestial time: at a high TimeScale the natural S/E steps must not lag the compressed timeline.
+            double timeScale = _cycle != null && GodotObject.IsInstanceValid(_cycle) ? Math.Max(1d, _cycle.TimeScale) : 1d;
+            _hubWeight += (target - _hubWeight) * (1d - Math.Exp(-deltaSeconds * timeScale / (HubWeightSmoothSeconds / 3d)));
+            if (Math.Abs(_hubWeight - target) < 1e-4) _hubWeight = target;
+        }
+        _hubOverrideChanged = false;
+        EclipseHubLighting.Weight = (float)_hubWeight;
+    }
+
+    // ---------------------------------------------------------------- local zenith gizmo (debug, spec G.3)
+
+    private MeshInstance3D? _gizmo;
+    private ImmediateMesh? _gizmoMesh;
+    /// <summary>Debug, not saved: draws the player's local zenith (green) and the StarLight direction (yellow) in front of the camera.</summary>
+    public bool ShowZenithGizmo { get; set; }
+
+    private void UpdateZenithGizmo()
+    {
+        if (!ShowZenithGizmo)
+        {
+            if (_gizmo != null && GodotObject.IsInstanceValid(_gizmo)) _gizmo.Visible = false;
+            return;
+        }
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        if (camera == null || _explorer == null || _grid == null) return;
+        if (_gizmo == null || !GodotObject.IsInstanceValid(_gizmo))
+        {
+            _gizmoMesh = new ImmediateMesh();
+            _gizmo = new MeshInstance3D
+            {
+                Name = "EclipseZenithGizmo", Mesh = _gizmoMesh, TopLevel = true, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                MaterialOverride = new StandardMaterial3D
+                {
+                    ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded, VertexColorUseAsAlbedo = true, NoDepthTest = true, DisableFog = true
+                }
+            };
+            AddChild(_gizmo);
+        }
+        _gizmo.Visible = true;
+        Vector3 zenith = (_grid.GlobalBasis.Orthonormalized() * _explorer.GetCanonicalSurfaceUp()).Normalized();
+        Vector3 origin = camera.GlobalPosition + camera.GlobalBasis * new Vector3(0f, -0.4f, -2f);
+        var green = new Color(0.2f, 1f, 0.3f);
+        var yellow = new Color(1f, 0.9f, 0.2f);
+        _gizmoMesh!.ClearSurfaces();
+        _gizmoMesh.SurfaceBegin(Mesh.PrimitiveType.Lines);
+        _gizmoMesh.SurfaceSetColor(green); _gizmoMesh.SurfaceAddVertex(origin);
+        _gizmoMesh.SurfaceSetColor(green); _gizmoMesh.SurfaceAddVertex(origin + zenith * 3f);
+        DirectionalLight3D? star = GetNodeOrNull<DirectionalLight3D>("../StarLight");
+        if (star != null)
+        {
+            Vector3 toLight = star.GlobalBasis.Z.Normalized();
+            _gizmoMesh.SurfaceSetColor(yellow); _gizmoMesh.SurfaceAddVertex(origin);
+            _gizmoMesh.SurfaceSetColor(yellow); _gizmoMesh.SurfaceAddVertex(origin + toLight * 2.5f);
+        }
+        _gizmoMesh.SurfaceEnd();
+    }
 
     public string DescribeStatus() => Engine.DescribeStatus();
 }

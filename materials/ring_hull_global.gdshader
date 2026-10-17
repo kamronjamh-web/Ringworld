@@ -35,6 +35,8 @@ uniform float structural_cue_night_energy : hint_range(0.0, 4.0) = 0.85;
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 varying vec3 world_position;
+// Inward radial at this vertex (the local zenith); the light() helper uses it while the eclipse hub sun is up.
+varying vec3 surface_up_world;
 varying float ring_day_factor;
 
 float periodic_structure_line(float coordinate, float spacing, float half_width) {
@@ -99,6 +101,7 @@ void vertex() {
 	radial.y = 0.0;
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	ring_day_factor = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
+	surface_up_world = surface_up;
 }
 
 void fragment() {
@@ -131,11 +134,12 @@ void fragment() {
 }
 
 void light() {
-	float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
 	vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = LIGHT_IS_DIRECTIONAL
 		? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
 		: 0.0;
+	// Eclipse hub sun: light every point from its own zenith (identical to LIGHT while the hub weight is 0).
+	float n_dot_l = max(dot(NORMAL, ringworld_primary_light(LIGHT, surface_up_world, VIEW_MATRIX, primary_sun_weight)), 0.0);
 	float directional_visibility = mix(1.0, ring_day_factor, primary_sun_weight);
 	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * n_dot_l * ATTENUATION * directional_visibility;
 }

@@ -56,8 +56,8 @@ public sealed class EclipseDarknessModel
     public const double CloudAmbientFloor = 0.3d;
     /// <summary>The weight reaches about 95 % of a step in this many seconds (exponential, time constant SmoothSeconds / 3).</summary>
     public const double SmoothSeconds = 0.5d;
-    /// <summary>Set to true by phase E3 when the hub light exists; E2 keeps the world dark for the whole window.</summary>
-    public const bool HubReliefAvailable = false;
+    /// <summary>True since phase E3: the hub light exists, so the darkness is relieved as the hub level rises (D.1). E2 kept the world dark for the whole window.</summary>
+    public const bool HubReliefAvailable = true;
 
     private double _weight;
     private bool _primed;

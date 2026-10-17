@@ -237,6 +237,21 @@ var eclipse_atmosphere_night_multiplier: float = 1.0
 var eclipse_sky_night_multiplier: float = 1.0
 var eclipse_cloud_ambient_multiplier: float = 1.0
 var eclipse_star_floor: float = 0.0
+# Eclipse hub sun ("noon everywhere", spec C). Published by the EclipseEvent director each frame; exactly 0 outside the event, where every
+# term below leaves the lighting untouched. The two shader globals are ringworld_hub_day and ringworld_hub_light_weight.
+var current_hub_day: float = 0.0
+# The part of current_day_factor that comes from the real sun. The eclipse (partial-phase) sky and fog tints belong to the real sun's
+# dimming, so they use this and not the hub-lit day.
+var current_real_sun_day_factor: float = 0.0
+var current_hub_weight: float = 0.0
+var current_hub_direct_energy: float = 0.0
+var current_hub_level: float = 0.0
+var current_hub_color: Color = Color(0.92, 0.97, 1.0, 1.0)
+var current_hub_sky_tint_strength: float = 0.0
+var current_hub_halo_intensity: float = 0.0
+var _published_hub_day: float = 0.0
+var _published_hub_weight: float = 0.0
+@export var hub_sky_tint_color: Color = Color(0.85, 0.95, 1.0, 1.0)
 
 
 func _ready() -> void:
@@ -271,16 +286,19 @@ func _process(delta: float) -> void:
 	if player == null or sun_light == null or world_environment == null:
 		_publish_solar_visibility(1.0)
 		_publish_night_light_scale(1.0)
+		_publish_hub_light(0.0, 0.0)
 		return
 	if not _has_canonical_atmosphere_provider() and gravity_controller == null:
 		_publish_solar_visibility(1.0)
 		_publish_night_light_scale(1.0)
+		_publish_hub_light(0.0, 0.0)
 		return
 
 	var environment: Environment = world_environment.environment
 	if environment == null:
 		_publish_solar_visibility(1.0)
 		_publish_night_light_scale(1.0)
+		_publish_hub_light(0.0, 0.0)
 		return
 	_configure_hdr_output(environment)
 	_configure_eye_adaptation()
@@ -312,7 +330,12 @@ func _process(delta: float) -> void:
 			"GiantEclipseCoverage", "giant_eclipse_coverage", 0.0)), 0.0, 1.0) if eclipse_lighting_enabled else 0.0
 	_publish_solar_visibility(1.0 - current_eclipse_coverage)
 	_update_eclipse_darkness(delta)
-	current_day_factor = current_geometric_day_factor * current_solar_visibility
+	_update_hub_light()
+	# The hub sun lights every point from its zenith: its day is the same everywhere and never routes through the blend lerp above
+	# (the timeline is already smooth). max(x, 0) is x, so the day factor is unchanged while the hub is off.
+	var real_sun_day_factor := current_geometric_day_factor * current_solar_visibility
+	current_day_factor = maxf(real_sun_day_factor, current_hub_day)
+	current_real_sun_day_factor = real_sun_day_factor
 	current_gameplay_eclipse_darkness = float(_get_celestial_value(
 			"GameplayEclipseDarkness", "gameplay_eclipse_darkness", current_eclipse_coverage)) if eclipse_lighting_enabled else 0.0
 	current_giant_direction = _get_celestial_value("GiantDirection", "giant_direction", -to_sun) as Vector3
@@ -348,6 +371,8 @@ func _process(delta: float) -> void:
 	# choices are not rewritten every frame.
 	_capture_surface_sun_color()
 	sun_light.light_color = surface_sun_color
+	if current_hub_weight > 0.0:
+		sun_light.light_color = surface_sun_color.lerp(current_hub_color, clampf(current_hub_weight, 0.0, 1.0))
 	var quality_owns_sun_shadows := sun_light.has_meta("ringworld_shadow_quality_owned") \
 		and bool(sun_light.get_meta("ringworld_shadow_quality_owned"))
 	if not quality_owns_sun_shadows:
@@ -356,13 +381,16 @@ func _process(delta: float) -> void:
 	var shadow_distance: float = day_shadow_distance
 	# Eclipse geometry is global: direct sunlight must vanish at totality even
 	# while the globally lit ring hemisphere is being rendered.
-	var eclipse_day_coverage := current_gameplay_eclipse_darkness * current_day_factor
+	var eclipse_day_coverage := current_gameplay_eclipse_darkness * current_real_sun_day_factor
 	var eclipse_direct_factor := current_solar_visibility
 	if keep_half_ring_lit_globally:
 		sun_light.light_energy = maxf(day_sun_energy, 0.0) * eclipse_direct_factor
 	else:
 		sun_light.light_energy = lerpf(night_sun_energy, day_sun_energy, current_day_factor) * eclipse_direct_factor
 		shadow_distance = lerpf(night_shadow_distance, day_shadow_distance, current_day_factor)
+	# Hub sun: the primary light carries the larger of the real sun's energy and the hub's (the real sun is eclipsed while the hub is lit).
+	if current_hub_direct_energy > sun_light.light_energy:
+		sun_light.light_energy = current_hub_direct_energy
 
 	if not quality_owns_sun_shadows:
 		shadow_distance = maxf(shadow_distance, 100.0)
@@ -752,11 +780,48 @@ func _publish_night_light_scale(scale: float) -> void:
 	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", clampf(scale, 0.0, 1.0))
 
 
+# Pulls the hub lighting outputs from the director (spec C.1). Without a director everything stays 0.
+func _update_hub_light() -> void:
+	if eclipse_event != null and is_instance_valid(eclipse_event) and eclipse_event.has_method("SetHubLevelOverride"):
+		current_hub_day = clampf(float(eclipse_event.get("HubLightDay")), 0.0, 1.0)
+		current_hub_weight = clampf(float(eclipse_event.get("HubLightWeight")), 0.0, 1.0)
+		current_hub_direct_energy = maxf(float(eclipse_event.get("HubLightDirect")), 0.0)
+		current_hub_level = maxf(float(eclipse_event.get("HubLightLevel")), 0.0)
+		current_hub_color = eclipse_event.get("HubLightColor") as Color
+		current_hub_sky_tint_strength = clampf(float(eclipse_event.get("HubSkyTintStrength")), 0.0, 1.0)
+		current_hub_halo_intensity = maxf(float(eclipse_event.get("HubZenithHaloIntensity")), 0.0)
+	else:
+		current_hub_day = 0.0
+		current_hub_weight = 0.0
+		current_hub_direct_energy = 0.0
+		current_hub_level = 0.0
+		current_hub_sky_tint_strength = 0.0
+		current_hub_halo_intensity = 0.0
+	_publish_hub_light(current_hub_day, current_hub_weight)
+
+
+func _publish_hub_light(day: float, weight: float) -> void:
+	if day == 0.0 and weight == 0.0:
+		current_hub_day = 0.0
+		current_hub_weight = 0.0
+		current_hub_direct_energy = 0.0
+		current_hub_level = 0.0
+		current_hub_sky_tint_strength = 0.0
+		current_hub_halo_intensity = 0.0
+	if day != _published_hub_day:
+		_published_hub_day = day
+		RenderingServer.global_shader_parameter_set("ringworld_hub_day", day)
+	if weight != _published_hub_weight:
+		_published_hub_weight = weight
+		RenderingServer.global_shader_parameter_set("ringworld_hub_light_weight", weight)
+
+
 func _exit_tree() -> void:
 	# Global shader parameters survive scene changes; reset before returning to
 	# menus or scenes with no celestial clock.
 	_publish_solar_visibility(1.0)
 	_publish_night_light_scale(1.0)
+	_publish_hub_light(0.0, 0.0)
 
 
 func _update_sky(
@@ -772,9 +837,14 @@ func _update_sky(
 		return
 	var top_color := _scale_rgb(night_sky_top_color, eclipse_sky_night_multiplier).lerp(day_sky_top_color, day_factor)
 	var horizon_color := _scale_rgb(night_sky_horizon_color, eclipse_sky_night_multiplier).lerp(day_sky_horizon_color, day_factor)
-	var eclipse_sky_factor := current_eclipse_coverage * day_factor * clampf(eclipse_sky_tint_strength, 0.0, 1.0)
+	var eclipse_sky_factor := current_eclipse_coverage * current_real_sun_day_factor * clampf(eclipse_sky_tint_strength, 0.0, 1.0)
 	top_color = top_color.lerp(eclipse_sky_color, eclipse_sky_factor)
 	horizon_color = horizon_color.lerp(eclipse_fog_color, eclipse_sky_factor)
+	# Hub sun (spec C.5): while the hub, not the real sun, lights the sky, lean the palette toward the cool hub tint. 0 with the hub off.
+	if current_hub_day > 0.0:
+		var hub_tint := current_hub_sky_tint_strength * current_hub_day * (1.0 - current_solar_visibility)
+		top_color = top_color.lerp(hub_sky_tint_color, hub_tint)
+		horizon_color = horizon_color.lerp(hub_sky_tint_color, hub_tint)
 	ring_sky_material.set_shader_parameter("local_surface_up", surface_up.normalized())
 	var ring_radius := _get_ring_radius_meters()
 	var ring_axis := (canonical_grid as Node3D).global_basis.y.normalized() \
@@ -817,6 +887,11 @@ func _update_sky(
 	ring_sky_material.set_shader_parameter("space_color", Vector3(space_sky_color.r, space_sky_color.g, space_sky_color.b))
 	ring_sky_material.set_shader_parameter("atmosphere_factor", atmosphere_factor)
 	ring_sky_material.set_shader_parameter("sun_direction", to_sun.normalized())
+	# Hub zenith halo (spec E.1): the hub hangs over the local zenith. hub_level 0 draws nothing.
+	ring_sky_material.set_shader_parameter("hub_direction", -viewer_outward)
+	ring_sky_material.set_shader_parameter("hub_level", current_hub_level)
+	ring_sky_material.set_shader_parameter("hub_color", Vector3(current_hub_color.r, current_hub_color.g, current_hub_color.b))
+	ring_sky_material.set_shader_parameter("hub_halo_intensity", current_hub_halo_intensity)
 	ring_sky_material.set_shader_parameter("sun_color", Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b))
 	ring_sky_material.set_shader_parameter("sun_disk_angular_radius_degrees", maxf(0.01, float(_get_celestial_value(
 			"StarAngularRadiusDegrees", "star_angular_radius_degrees", 0.265))))

@@ -1794,6 +1794,17 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private void RequestMacroShadowRebuildForSunChange()
     {
         if (!EnableMacroTerrainShadows || _heightPyramid == null || _sunLight == null) return;
+        // Eclipse hub sun (spec C.2, F17): the primary light follows the camera zenith, so it turns 0.51 degrees every 44 km of travel.
+        // Keep the last mask; the shaders scale it by (1 - hub weight). The rebuild after the event waits until the light is exactly back on
+        // the real sun (a few frames of weight 0), because the mask is built from the light direction at the moment the rebuild starts.
+        // A build started during the hold (edits, settings, a queued restart) snapshots the zenith-aimed light, and the real sun may not have
+        // moved 0.51 degrees since the last request (paused clock, debug override). Forget the last request so the first frame after the
+        // release always rebuilds from the real sun.
+        if (RingworldTechDemo.Celestial.Eclipse.EclipseHubLighting.HoldMacroShadows)
+        {
+            _lastMacroShadowRequestedSunDirection = new Vector3(float.PositiveInfinity, 0.0f, 0.0f);
+            return;
+        }
         Vector3 sunDirection = _sunLight.GlobalTransform.Basis.Z.Normalized();
         // A half-degree threshold avoids continuously discarding work while a
         // smooth day/night controller advances the directional light.

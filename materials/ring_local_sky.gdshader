@@ -23,6 +23,11 @@ uniform float sun_halo_intensity : hint_range(0.0, 2.0) = 0.20;
 uniform float atmosphere_sun_forward_scattering : hint_range(0.0, 2.0) = 0.30;
 uniform float exterior_day_scattering_boost : hint_range(0.0, 8.0) = 1.0;
 uniform float exterior_night_scattering_boost : hint_range(0.0, 8.0) = 1.8;
+// Eclipse hub sun (spec C.2, E.1): a wide glow around the local zenith, scaled by the hub level. hub_level 0 draws nothing.
+uniform vec3 hub_direction = vec3(-1.0, 0.0, 0.0);
+uniform float hub_level : hint_range(0.0, 2.5) = 0.0;
+uniform vec3 hub_color : source_color = vec3(0.92, 0.97, 1.0);
+uniform float hub_halo_intensity : hint_range(0.0, 2.0) = 0.35;
 
 uniform bool stars_enabled = true;
 uniform float star_visibility : hint_range(0.0, 1.0) = 0.0;
@@ -245,6 +250,13 @@ void sky() {
 	color += sun_color * (
 		sun_disk * sun_disk_intensity
 		+ sun_halo * sun_halo_intensity * local_solar_day);
+
+	if (hub_level > 0.0001) {
+		float hub_alignment = max(dot(view_direction, normalize(hub_direction)), 0.0);
+		// Forward-scatter lobe around the hub plus a faint wide skirt, in front of the vacuum and behind the far arch.
+		float hub_halo = pow(hub_alignment, 24.0) + 0.25 * pow(hub_alignment, 4.0);
+		color += hub_color * hub_halo * hub_halo_intensity * min(hub_level, 1.5) * atmosphere_factor;
+	}
 
 	if (stars_enabled && star_visibility > 0.0001 && !AT_CUBEMAP_PASS) {
 		// The clock advances visible celestial directions by +phase around the

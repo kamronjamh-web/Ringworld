@@ -35,6 +35,8 @@ uniform float analytic_cloud_shadow_fade_start_meters = 38000.0;
 uniform float analytic_cloud_shadow_fade_end_meters = 50000.0;
 
 varying vec3 world_position;
+// Inward radial at this vertex (the local zenith); the light() helper uses it while the eclipse hub sun is up.
+varying vec3 surface_up_world;
 varying float ring_day_factor;
 varying float water_kind_profile;
 
@@ -64,6 +66,7 @@ void vertex() {
 	radial.y = 0.0;
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	ring_day_factor = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
+	surface_up_world = surface_up;
 }
 
 void fragment() {
@@ -129,12 +132,13 @@ void fragment() {
 }
 
 void light() {
-	float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
 	float readable_shadow = max(ATTENUATION, shadow_floor);
 	vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = LIGHT_IS_DIRECTIONAL
 		? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
 		: 0.0;
+	// Eclipse hub sun: light every point from its own zenith (identical to LIGHT while the hub weight is 0).
+	float n_dot_l = max(dot(NORMAL, ringworld_primary_light(LIGHT, surface_up_world, VIEW_MATRIX, primary_sun_weight)), 0.0);
 	float sun_hemisphere_direct = mix(
 		night_direct_light_factor,
 		day_direct_light_factor,
@@ -145,7 +149,7 @@ void light() {
 			world_position,
 			ring_center,
 			camera_world_position,
-			ring_width_meters) * primary_sun_weight * ring_day_factor
+			ring_width_meters) * primary_sun_weight * ring_day_factor * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))
 		: 0.0;
 	float cloud_shadow = LIGHT_IS_DIRECTIONAL
 		? sample_combined_cloud_shadow(world_position, ring_day_factor)

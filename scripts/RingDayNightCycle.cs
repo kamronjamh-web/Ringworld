@@ -123,6 +123,13 @@ public partial class RingDayNightCycle : Node
 
     public CelestialFrame CurrentFrame { get; private set; }
 
+    /// <summary>
+    /// Optional owner of part of the primary light's direction (the eclipse hub sun). This node stays the single writer of the StarLight
+    /// basis: it blends the real sun direction toward the player's local zenith by <see cref="IPrimaryLightOverride.PrimaryLightWeight"/>.
+    /// Null or weight 0 leaves the direction exactly as before.
+    /// </summary>
+    public IPrimaryLightOverride? PrimaryLightOverride { get; set; }
+
     /// <summary>Read-only: the authored epoch sun direction the celestial frames are evaluated against (eclipse window solver input).</summary>
     public Vector3 AuthoredEpochSun => SafeNormalized(_authoredSunBasis.Z, Vector3.Forward);
 
@@ -136,6 +143,8 @@ public partial class RingDayNightCycle : Node
     private bool _sunShadowStabilizationEnabled = true;
     private float _sunShadowStepDegrees = .01f;
     private bool _forceSunBasisUpdate = true;
+    // Last PrimaryLightOverride weight written into the StarLight basis (0 = the real sun).
+    private float _appliedPrimaryLightWeight;
     private float _cycleFraction;
     private double _simulationSeconds;
     private bool _capturedAuthoredSun;
@@ -447,7 +456,7 @@ public partial class RingDayNightCycle : Node
             RemainingEventDuration(_cachedNextGiantRiseSeconds, _simulationSeconds),
             RemainingEventDuration(_cachedNextGiantSetSeconds, _simulationSeconds));
         CopyFrameOutputs();
-        ApplySunDirection(axis, forceSunBasis);
+        ApplySunDirection(axis, surfaceUp, forceSunBasis);
     }
 
     private Vector3 ResolveObserverOffsetKm()
@@ -503,11 +512,22 @@ public partial class RingDayNightCycle : Node
         SecondsUntilGiantSet = CurrentFrame.SecondsUntilGiantSet;
     }
 
-    private void ApplySunDirection(Vector3 ringAxis, bool force = false)
+    private void ApplySunDirection(Vector3 ringAxis, Vector3 surfaceUp, bool force = false)
     {
         if (_sunLight == null)
             return;
         Vector3 z = SafeNormalized(CurrentFrame.ToSun, _authoredSunBasis.Z);
+        // Hub "noon everywhere" (spec C.1): the primary light follows the player's local zenith by the override weight.
+        float hubWeight = PrimaryLightOverride?.PrimaryLightWeight ?? 0f;
+        if (hubWeight > 0f)
+            z = SafeNormalized(z.Lerp(surfaceUp, Mathf.Clamp(hubWeight, 0f, 1f)), z);
+        // A change of the override weight is not sun motion: write it past the shadow stabilisation step, so the light lands exactly on the
+        // real sun once the weight is back at 0 (the macro-shadow hold relies on that). The weight stays 0 outside the event: no new writes.
+        if (hubWeight != _appliedPrimaryLightWeight)
+        {
+            _appliedPrimaryLightWeight = hubWeight;
+            force = true;
+        }
         Vector3 x = ringAxis.Cross(z);
         if (x.LengthSquared() <= .000001f)
         {

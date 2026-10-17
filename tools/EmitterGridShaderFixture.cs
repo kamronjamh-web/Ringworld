@@ -107,7 +107,7 @@ public partial class EmitterGridShaderFixture : RefCounted
     }
 
     /// <summary>Reference (pulse, intensity, background, day) per sample, from the float-rounded inputs the shader receives.</summary>
-    public float[] Reference(float[] samples, float solarVisibility)
+    public float[] Reference(float[] samples, float solarVisibility, float hubDay = 0f)
     {
         int count = samples.Length / 8;
         var result = new float[count * 4];
@@ -120,7 +120,7 @@ public partial class EmitterGridShaderFixture : RefCounted
             result[i * 4 + 0] = (float)pulse;
             result[i * 4 + 1] = (float)EmitterGridIntensity.Compute(pulse, b, 0d, atmosphere, _visibility);
             result[i * 4 + 2] = (float)b;
-            result[i * 4 + 3] = (float)EmitterGridIntensity.DayAt(samples[i * 8 + 7], solarVisibility);
+            result[i * 4 + 3] = (float)EmitterGridIntensity.DayAt(samples[i * 8 + 7], solarVisibility, hubDay);
         }
         return result;
     }

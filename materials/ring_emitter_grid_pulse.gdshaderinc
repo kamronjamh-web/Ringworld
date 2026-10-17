@@ -76,6 +76,11 @@ float eg_day_at(float dot_up_sun, float solar_visibility) {
 	return smoothstep(-0.2, 0.35, dot_up_sun) * clamp(solar_visibility, 0.0, 1.0);
 }
 
+// eg_day_at with the eclipse hub sun's day (ringworld_hub_day): max(eg_day_at, hub_day). Identical to eg_day_at when hub_day is 0.
+float eg_day_at_hub(float dot_up_sun, float solar_visibility, float hub_day) {
+	return max(eg_day_at(dot_up_sun, solar_visibility), clamp(hub_day, 0.0, 1.0));
+}
+
 // B = max(day(camera), day(fragment) * smoothstep(near, far, view distance)).
 float eg_background(float day_camera, float day_fragment, float view_distance) {
 	return max(day_camera, day_fragment * smoothstep(eg_day_distance.x, eg_day_distance.y, view_distance));

@@ -48,6 +48,8 @@ uniform vec3 debug_color = vec3(1.0, 1.0, 0.0);
 #include "res://materials/ring_far_surface_tile.gdshaderinc"
 
 varying vec3 world_position;
+// Inward radial at this vertex (the local zenith); the light() helper uses it while the eclipse hub sun is up.
+varying vec3 surface_up_world;
 varying float ring_day_factor;
 varying vec2 terrain_macro_shadow_uv;
 // Both ambient occlusion and the directional-light path consume the same
@@ -103,6 +105,7 @@ void vertex() {
 		? normalize(regional_surface_up)
 		: (length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0));
 	ring_day_factor = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
+	surface_up_world = surface_up;
 }
 
 void fragment() {
@@ -146,15 +149,19 @@ void fragment() {
 }
 
 void light() {
-	float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
 	float readable_shadow = max(ATTENUATION, shadow_floor);
 	vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = LIGHT_IS_DIRECTIONAL
 		? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
 		: 0.0;
+	// Eclipse hub sun: light every point from its own zenith (identical to LIGHT while the hub weight is 0).
+	float n_dot_l = max(dot(NORMAL, ringworld_primary_light(LIGHT, surface_up_world, VIEW_MATRIX, primary_sun_weight)), 0.0);
 	float primary_planet_weight = LIGHT_IS_DIRECTIONAL
 		? terrain_planet_directional_light_weight(LIGHT, VIEW_MATRIX)
 		: 0.0;
+	// Hub mode aims the StarLight at the zenith, which can fall inside the planet-light cone near real noon: never treat
+	// the hub light as planet light (exactly 1 at hub weight 0).
+	primary_planet_weight *= 1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun_weight;
 	float sun_hemisphere_direct = mix(
 		night_direct_light_factor,
 		day_direct_light_factor,
@@ -170,7 +177,7 @@ void light() {
 				world_position,
 				ring_center,
 				camera_world_position,
-				ring_width_meters)) * ring_day_factor * primary_sun_weight
+				ring_width_meters)) * ring_day_factor * primary_sun_weight * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))
 		: 0.0;
 	float planet_terrain_shadow = LIGHT_IS_DIRECTIONAL
 		? (terrain_macro_shadow_use_uv

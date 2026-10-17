@@ -59,6 +59,11 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public float RealSunEnergy { get; set; } = 4f;
     [Export] public float HubDirectFraction { get; set; } = 0.8f;
     [Export] public float HubDayAtFull { get; set; } = 0.8f;
+    [Export] public float HubLightRed { get; set; } = 0.92f;
+    [Export] public float HubLightGreen { get; set; } = 0.97f;
+    [Export] public float HubLightBlue { get; set; } = 1f;
+    [Export] public float HubSkyTintStrength { get; set; } = 0.25f;
+    [Export] public float HubZenithHaloIntensity { get; set; } = 0.35f;
     /// <summary>Pitch-black eclipse darkness (spec D.1): master switch and the totality multipliers. Applies with or without the false-sun event.</summary>
     [Export] public bool EclipseDarknessEnabled { get; set; } = true;
     [Export] public float EclipseAmbientScale { get; set; } = 0.15f;

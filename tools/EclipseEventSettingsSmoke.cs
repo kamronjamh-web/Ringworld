@@ -24,6 +24,7 @@ public partial class EclipseEventSettingsSmoke : Node
         "RelaunchKick", "BreathAmplitude", "BreathPeriodSeconds", "CollapseLeadSeconds", "InstabilitySeconds", "FlickerMax", "FlickerHzStart", "FlickerHzEnd",
         "OverloadSeconds", "OverloadGain", "ImplosionSeconds", "BeamRetractSeconds", "ShockwaveSeconds", "ShockwaveArrivalFraction", "ShockFlashLevel",
         "ShockFlashSeconds", "ReturnTailSeconds", "RealSunEnergy", "HubDirectFraction", "HubDayAtFull",
+        "HubLightRed", "HubLightGreen", "HubLightBlue", "HubSkyTintStrength", "HubZenithHaloIntensity",
         "EclipseAmbientScale", "EclipseAtmosphereNightScale", "EclipseSkyNightScale", "EclipseCloudAmbientScale", "EclipseStarVisibility"
     };
 
@@ -60,6 +61,7 @@ public partial class EclipseEventSettingsSmoke : Node
         first.SetSuppressGridPulseDuringIgnition(false); first.SetIgnitionSpeedMode(1); first.SetRampMode(1); first.SetRefuelClock(1);
         first.SetPreRollSeconds(120); first.SetParallaxSafetySeconds(30); first.SetDarknessBeatSeconds(45); first.SetKindleLevel(.25f); first.SetCollapseLeadSeconds(200);
         first.SetFloat("HubDirectFraction", 1.1f); first.SetFloat("ShockFlashLevel", 1.5f); first.SetFloat("IgnitionSeconds", 300);
+        first.SetFloat("HubLightRed", .5f); first.SetFloat("HubLightBlue", .75f); first.SetFloat("HubSkyTintStrength", .6f); first.SetFloat("HubZenithHaloIntensity", 1.25f);
         Require(first.Dirty && first.Save() && !first.Dirty, "eclipse preferences did not save");
         var second = new GameplayEclipseEventDefaults(path); second.Load();
         var s = second.Settings;
@@ -67,13 +69,17 @@ public partial class EclipseEventSettingsSmoke : Node
         Require(Mathf.IsEqualApprox(s.PreRollSeconds, 120) && Mathf.IsEqualApprox(s.ParallaxSafetySeconds, 30) && Mathf.IsEqualApprox(s.DarknessBeatSeconds, 45)
             && Mathf.IsEqualApprox(s.KindleLevel, .25f) && Mathf.IsEqualApprox(s.CollapseLeadSeconds, 200) && Mathf.IsEqualApprox(s.HubDirectFraction, 1.1f)
             && Mathf.IsEqualApprox(s.ShockFlashLevel, 1.5f) && Mathf.IsEqualApprox(s.IgnitionSeconds, 300), "numeric preferences did not round-trip");
+        Require(Mathf.IsEqualApprox(s.HubLightRed, .5f) && Mathf.IsEqualApprox(s.HubLightGreen, .97f) && Mathf.IsEqualApprox(s.HubLightBlue, .75f)
+            && Mathf.IsEqualApprox(s.HubSkyTintStrength, .6f) && Mathf.IsEqualApprox(s.HubZenithHaloIntensity, 1.25f), "hub lighting preferences did not round-trip");
         EclipseEventSettings mapped2 = GameplayEclipseEventDefaults.ToCore(s);
+        Require(Math.Abs(mapped2.HubLightRed - .5d) < 1e-6 && Math.Abs(mapped2.HubLightBlue - .75d) < 1e-6 && Math.Abs(mapped2.HubSkyTintStrength - .6d) < 1e-6
+            && Math.Abs(mapped2.HubZenithHaloIntensity - 1.25d) < 1e-6, "hub lighting ToCore mapping");
         Require(!mapped2.EventEnabled && mapped2.IgnitionSpeedMode == EclipseIgnitionSpeedMode.Manual && mapped2.RampMode == EclipseRampMode.Perceptual
             && mapped2.RefuelClock == EclipseRefuelClock.Weather && Math.Abs(mapped2.PreRollSeconds - 120d) < 1e-6, "ToCore mapping");
 
         // Setter clamps and NaN fallback.
         second.SetPreRollSeconds(1e9f); second.SetParallaxSafetySeconds(-5); second.SetDarknessBeatSeconds(float.NaN); second.SetKindleLevel(float.PositiveInfinity);
-        second.SetFloat("MainClimbSeconds", 0); second.SetFloat("OverloadGain", 99); second.SetFloat("FlickerHzEnd", float.NegativeInfinity); second.SetFloat("HubDayAtFull", 2);
+        second.SetFloat("MainClimbSeconds", 0); second.SetFloat("OverloadGain", 99); second.SetFloat("FlickerHzEnd", float.NegativeInfinity); second.SetFloat("HubDayAtFull", 2); second.SetFloat("HubLightGreen", 3); second.SetFloat("HubZenithHaloIntensity", float.NaN); second.SetFloat("HubSkyTintStrength", -1);
         second.SetIgnitionSpeedMode(9); second.SetRampMode(-4); second.SetRefuelClock(5);
         s = second.Settings;
         var (pMin, pMax) = GameplayEclipseEventDefaults.RangeOf("PreRollSeconds");
@@ -83,6 +89,7 @@ public partial class EclipseEventSettingsSmoke : Node
         Require(Mathf.IsEqualApprox(s.KindleLevel, .10f), "infinity did not fall back to the default");
         Require(Mathf.IsEqualApprox(s.MainClimbSeconds, .5f) && Mathf.IsEqualApprox(s.OverloadGain, 5) && Mathf.IsEqualApprox(s.FlickerHzEnd, 6)
             && Mathf.IsEqualApprox(s.HubDayAtFull, 1), "setter bounds were not enforced");
+        Require(Mathf.IsEqualApprox(s.HubLightGreen, 1) && Mathf.IsEqualApprox(s.HubZenithHaloIntensity, .35f) && Mathf.IsEqualApprox(s.HubSkyTintStrength, 0), "hub lighting setter bounds were not enforced");
         Require(s.IgnitionSpeedMode == 1 && s.RampMode == 0 && s.RefuelClock == 1, "enum bounds were not enforced");
 
         using var dirty = new GameplayEclipseEventSettings { PreRollSeconds = 99999, KindleLevel = float.NaN, ShockFlashLevel = -3, HubDirectFraction = float.PositiveInfinity,

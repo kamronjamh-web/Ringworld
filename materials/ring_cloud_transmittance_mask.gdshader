@@ -211,7 +211,7 @@ void fragment() {
 					ray_direction * distance_meters, vec3(0.0),
 					ring_cloud_atmosphere_profile[7].xyz,
 					ring_cloud_atmosphere_profile[9].xyz,
-					ringworld_solar_visibility, ring_cloud_atmosphere_profile);
+					ringworld_effective_solar_visibility(), ring_cloud_atmosphere_profile);
 				sample_color = mix(sample_color, haze.rgb, haze.a);
 			}
 			accumulated_color += sample_color * contribution;

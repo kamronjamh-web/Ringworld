@@ -8,6 +8,7 @@ render_mode blend_disabled;
 // Row 0: (p, column, kind, atmosphere alpha). Row 1: (day at camera, day at fragment, view distance, dot(surface up, sun)).
 uniform sampler2D samples : filter_nearest;
 uniform float solar_visibility = 1.0;
+uniform float hub_day = 0.0;
 
 void fragment() {
 	ivec2 px = ivec2(FRAGCOORD.xy);
@@ -21,7 +22,7 @@ void fragment() {
 	if (field == 0) v = pulse;
 	else if (field == 1) v = eg_intensity(pulse, background, 0.0, a.w);
 	else if (field == 2) v = background;
-	else v = eg_day_at(b.w, solar_visibility);
+	else v = eg_day_at_hub(b.w, solar_visibility, hub_day);
 	uint bits = floatBitsToUint(v);
 	COLOR = vec4(float(bits & 255u), float((bits >> 8u) & 255u), float((bits >> 16u) & 255u), float(bits >> 24u)) / 255.0;
 }

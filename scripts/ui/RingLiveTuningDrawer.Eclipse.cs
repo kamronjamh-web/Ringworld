@@ -73,7 +73,12 @@ public partial class RingLiveTuningDrawer
     {
         new("RealSunEnergy", "Real sun energy", "StarLight energy at real noon, the reference for the hub energy fraction."),
         new("HubDirectFraction", "Hub energy fraction", "Direct light energy at full hub level, as a fraction of the real sun."),
-        new("HubDayAtFull", "Hub day factor", "Day factor at full hub level."),
+        new("HubDayAtFull", "Hub day factor", "Day factor at full hub level (ambient, sky, haze, cloud ambient)."),
+        new("HubLightRed", "Hub light red", "StarLight colour at full hub weight. The default is cool white (0.92, 0.97, 1.0)."),
+        new("HubLightGreen", "Hub light green", "StarLight colour at full hub weight."),
+        new("HubLightBlue", "Hub light blue", "StarLight colour at full hub weight."),
+        new("HubSkyTintStrength", "Hub sky tint", "How far the sky palette leans toward the cool hub tint while the hub, not the real sun, lights it."),
+        new("HubZenithHaloIntensity", "Zenith halo", "Brightness of the sky glow around the zenith at full hub level."),
     };
 
     private EclipseEventDirector? _eclipseDirector;
@@ -82,7 +87,9 @@ public partial class RingLiveTuningDrawer
     private readonly Dictionary<string, HSlider> _eclipseSliders = new();
     private readonly Dictionary<string, CheckButton> _eclipseToggles = new();
     private readonly Dictionary<string, OptionButton> _eclipseOptions = new();
-    private Label? _eclipseLive, _eclipseStatus, _eclipseRing, _eclipseDarkLive;
+    private Label? _eclipseLive, _eclipseStatus, _eclipseRing, _eclipseDarkLive, _eclipseHubLive;
+    private HSlider? _eclipseHubOverride;
+    private CheckButton? _eclipseHubOverrideToggle, _eclipseGizmo;
     private OptionButton? _eclipsePhasePick;
     private HSlider? _eclipseScrub;
     private CheckButton? _eclipseFreeze, _eclipseLog;
@@ -110,6 +117,12 @@ public partial class RingLiveTuningDrawer
                 EclipseDarknessOutput d = _eclipseDirector?.DarknessOutput ?? EclipseDarknessOutput.Neutral;
                 _eclipseDarkLive.Text = _eclipseDirector == null ? "Eclipse director is unavailable in this scene."
                     : $"Darkness weight {d.Weight:0.00}: ambient x{d.AmbientMultiplier:0.000}, atmosphere night x{d.AtmosphereNightMultiplier:0.000}, sky night x{d.SkyNightMultiplier:0.000}, cloud ambient x{d.CloudAmbientMultiplier:0.000}, star floor {d.StarFloor:0.00}";
+            }
+            if (_eclipseHubLive != null)
+            {
+                EclipseHubLightOutput h = _eclipseDirector?.HubLight ?? EclipseHubLightOutput.Neutral;
+                _eclipseHubLive.Text = _eclipseDirector == null ? "Eclipse director is unavailable in this scene."
+                    : $"Hub level {h.Level:0.00}{(h.Overridden ? " (OVERRIDE)" : "")}: light weight {_eclipseDirector.HubLightWeight:0.00}, energy {h.DirectEnergy:0.00}, day {h.Day:0.00}, colour ({h.ColorR:0.00}, {h.ColorG:0.00}, {h.ColorB:0.00})";
             }
             RefreshEclipseEditable();
         }
@@ -171,8 +184,10 @@ public partial class RingLiveTuningDrawer
             "Instability, overload flare, implosion and shockwave before totality ends. Cosmetic only.");
         foreach (EclipseSliderSpec spec in EclipseCollapseSliders) AddEclipseSlider(collapse, spec, s);
 
-        VBoxContainer levels = TuningMenuUi.CreateSection(tab, "Eclipse event: hub levels",
-            "Brightness mapping of the hub sun. Used by the lighting phases; no visible effect yet.");
+        VBoxContainer levels = TuningMenuUi.CreateSection(tab, "Eclipse event: lighting",
+            "The hub sun lights every point from its own zenith (\"noon everywhere\"). Full hub level is 80 % of the real sun by default. The hub light is exactly off outside the event.");
+        _eclipseHubLive = new Label { Name = "EclipseHubLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        levels.AddChild(_eclipseHubLive);
         foreach (EclipseSliderSpec spec in EclipseLevelSliders) AddEclipseSlider(levels, spec, s);
 
         VBoxContainer debug = TuningMenuUi.CreateSection(tab, "Eclipse event: debug",
@@ -205,6 +220,24 @@ public partial class RingLiveTuningDrawer
         _eclipseLog = new CheckButton { Name = "EclipseLogEvents", Text = "Log events", TooltipText = "Prints every event to the console." };
         _eclipseLog.Toggled += on => { if (_eclipseDirector != null) _eclipseDirector.LogEvents = on; };
         debug.AddChild(_eclipseLog);
+        _eclipseHubOverrideToggle = new CheckButton { Name = "EclipseHubOverride", Text = "Hub level override", TooltipText = "Forces the hub light on at the level below, even outside an eclipse (it then shows alongside the real sun). Visual only; not saved." };
+        _eclipseHubOverrideToggle.Toggled += on => _eclipseDirector?.SetHubLevelOverride(on && _eclipseHubOverride != null ? (float)_eclipseHubOverride.Value : -1f);
+        debug.AddChild(_eclipseHubOverrideToggle);
+        var overrideRow = new HBoxContainer { TooltipText = "Hub level used while the override is on (0 to 2.5; 1 is the full sun at 80 %)." };
+        overrideRow.AddChild(new Label { Text = "Override level", CustomMinimumSize = new Vector2(160, 0) });
+        _eclipseHubOverride = new HSlider { Name = "EclipseHubOverrideLevel", MinValue = 0, MaxValue = 2.5, Step = .01, Value = 1, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Hub level used while the override is on." };
+        var overrideNumber = new Label { Text = "1", CustomMinimumSize = new Vector2(55, 0) };
+        _eclipseHubOverride.ValueChanged += value =>
+        {
+            overrideNumber.Text = value.ToString("0.##");
+            if (_eclipseHubOverrideToggle?.ButtonPressed == true) _eclipseDirector?.SetHubLevelOverride((float)value);
+        };
+        overrideRow.AddChild(_eclipseHubOverride);
+        overrideRow.AddChild(overrideNumber);
+        debug.AddChild(overrideRow);
+        _eclipseGizmo = new CheckButton { Name = "EclipseZenithGizmo", Text = "Show local zenith gizmo", TooltipText = "Draws your local zenith (green) and the StarLight direction (yellow) in front of the camera. Not saved." };
+        _eclipseGizmo.Toggled += on => { if (_eclipseDirector != null) _eclipseDirector.ShowZenithGizmo = on; };
+        debug.AddChild(_eclipseGizmo);
         _eclipseRing = new Label { Name = "EclipseRingStrip", TooltipText = "Fired sites along the loop; the main spire is at the left." };
         _eclipseRing.AddThemeFontSizeOverride("font_size", 11);
         debug.AddChild(_eclipseRing);
@@ -309,6 +342,10 @@ public partial class RingLiveTuningDrawer
         foreach (OptionButton option in _eclipseOptions.Values) if (option.Disabled == present) option.Disabled = !present;
         foreach (BaseButton? button in new BaseButton?[] { _eclipseForce, _eclipseJump, _eclipseFreeze, _eclipseLog })
             if (button != null && button.Disabled == bound) button.Disabled = !bound;
+        // The hub override and the zenith gizmo only need the director, not a bound event: they work on any world for lighting checks.
+        foreach (BaseButton? button in new BaseButton?[] { _eclipseHubOverrideToggle, _eclipseGizmo })
+            if (button != null && button.Disabled == present) button.Disabled = !present;
+        if (_eclipseHubOverride != null && _eclipseHubOverride.Editable != present) _eclipseHubOverride.Editable = present;
         if (_eclipsePhasePick != null && _eclipsePhasePick.Disabled == bound) _eclipsePhasePick.Disabled = !bound;
         if (_eclipseScrub != null)
         {

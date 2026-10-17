@@ -11,6 +11,8 @@ const TOLERANCE := 4e-3
 const CASES := [
 	{"name": "prograde_auto", "retro": false, "manual": false, "t": 12345.6},
 	{"name": "retrograde_auto", "retro": true, "manual": false, "t": 12345.6},
+	# Eclipse hub sun (spec C.2): ringworld_hub_day lifts the per-point day to max(day, hub_day).
+	{"name": "prograde_hub_day", "retro": false, "manual": false, "t": 12345.6, "hub": 0.55},
 	{"name": "prograde_manual_slow", "retro": false, "manual": true, "t": 777.25},
 	{"name": "relaunch_flare", "retro": false, "manual": false, "t": -1.0},
 ]
@@ -60,13 +62,15 @@ func _run_case(case: Dictionary, t: float) -> bool:
 	var uniforms: Dictionary = fixture.Setup(case["retro"], case["manual"], t)
 	var samples: PackedFloat32Array = fixture.Samples(SAMPLE_COUNT, 424242)
 	var solar_visibility := 0.8
-	var expected: PackedFloat32Array = fixture.Reference(samples, solar_visibility)
+	var hub_day: float = case.get("hub", 0.0)
+	var expected: PackedFloat32Array = fixture.Reference(samples, solar_visibility, hub_day)
 	var image := Image.create_from_data(SAMPLE_COUNT, 2, false, Image.FORMAT_RGBAF, _rows(samples))
 	var texture := ImageTexture.create_from_image(image)
 	var material := ShaderMaterial.new()
 	material.shader = load("res://tools/shaders/emitter_grid_intensity_parity.gdshader")
 	material.set_shader_parameter("samples", texture)
 	material.set_shader_parameter("solar_visibility", solar_visibility)
+	material.set_shader_parameter("hub_day", hub_day)
 	for key in uniforms:
 		material.set_shader_parameter(key, uniforms[key])
 	var vp := SubViewport.new()

@@ -77,6 +77,14 @@ public sealed record EclipseEventSettings
     public double RealSunEnergy { get; init; } = 4d;
     public double HubDirectFraction { get; init; } = 0.8d;
     public double HubDayAtFull { get; init; } = 0.8d;
+    /// <summary>StarLight colour at full hub weight (spec C.5 cool white); the real sun's colour blends toward it by the hub weight.</summary>
+    public double HubLightRed { get; init; } = 0.92d;
+    public double HubLightGreen { get; init; } = 0.97d;
+    public double HubLightBlue { get; init; } = 1.0d;
+    /// <summary>How far the sky palette leans toward the cool hub tint while the hub (not the real sun) lights the sky (spec C.5: 0.25).</summary>
+    public double HubSkyTintStrength { get; init; } = 0.25d;
+    /// <summary>Peak brightness of the sky shader's zenith halo at hub level 1 (spec E.1).</summary>
+    public double HubZenithHaloIntensity { get; init; } = 0.35d;
     /// <summary>Pitch-black eclipse darkness (spec D.1, phase E2). Applies to every eclipse, with or without the false-sun event.</summary>
     public EclipseDarknessSettings Darkness { get; init; } = new();
 
@@ -125,6 +133,11 @@ public sealed record EclipseEventSettings
             RealSunEnergy = C(RealSunEnergy, 0d, 16d, 4d),
             HubDirectFraction = C(HubDirectFraction, 0d, 1.5d, 0.8d),
             HubDayAtFull = C(HubDayAtFull, 0d, 1d, 0.8d),
+            HubLightRed = C(HubLightRed, 0d, 1d, 0.92d),
+            HubLightGreen = C(HubLightGreen, 0d, 1d, 0.97d),
+            HubLightBlue = C(HubLightBlue, 0d, 1d, 1.0d),
+            HubSkyTintStrength = C(HubSkyTintStrength, 0d, 1d, 0.25d),
+            HubZenithHaloIntensity = C(HubZenithHaloIntensity, 0d, 2d, 0.35d),
             Darkness = (Darkness ?? new EclipseDarknessSettings()).Sanitized()
         };
         // The four collapse stages must fit in the lead so the collapse ends before E (Aftermath >= 0 s): scale them proportionally.

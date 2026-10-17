@@ -1055,6 +1055,9 @@ public partial class RingSunshineCloudBridge : Node
         Vector3 toSun = _sunLight is null ? Vector3.Up : _sunLight.GlobalBasis.Z.Normalized();
         RingAtmosphereRayFrame frame = _camera is null ? RingAtmosphereRayFrame.Invalid : RingAtmosphereRayFrame.FromMainCamera(_grid, _camera, toSun);
         float solarVisibility = _daySideAtmosphere is null ? 1.0f : Mathf.Clamp(_daySideAtmosphere.Get("current_solar_visibility").AsSingle(), 0.0f, 1.0f);
+        // Eclipse hub sun (spec C.2): the profile's day weight is max(solar visibility, hub day). The hub day is exactly 0 outside the event.
+        if (_daySideAtmosphere is not null)
+            solarVisibility = Mathf.Max(solarVisibility, Mathf.Clamp(_daySideAtmosphere.Get("current_hub_day").AsSingle(), 0.0f, 1.0f));
         // Sunshine declares this as Array[Vector4]. A managed Vector4[] is
         // marshalled as a packed array instead, which the typed GDScript
         // property rejects. Preserve all ten slots even while haze is off so

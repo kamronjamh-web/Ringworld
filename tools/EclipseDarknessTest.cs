@@ -98,13 +98,16 @@ public partial class EclipseDarknessTest : RefCounted
         Expect(failures, EclipseDarknessModel.TargetWeight(.37d, 0d, .1d, false) == .37d, "weight follows raw coverage");
         Expect(failures, EclipseDarknessModel.TargetWeight(double.NaN, 0d, .1d, false) == 0d && EclipseDarknessModel.TargetWeight(-3d, 0d, .1d, false) == 0d, "bad coverage = 0");
         Expect(failures, EclipseDarknessModel.TargetWeight(2d, 0d, .1d, false) == 1d, "coverage above 1 clamps");
-        // Phase E2 keeps the world dark through the whole window: the hub level does not relieve the darkness until E3 enables it.
-        Expect(failures, !EclipseDarknessModel.HubReliefAvailable, "E2: hub relief must not be available yet");
+        // Phase E3 provides the hub light, so the darkness is relieved by the hub level (switchable per call for the old E2 behaviour).
+        Expect(failures, EclipseDarknessModel.HubReliefAvailable, "E3: hub relief is available");
         Expect(failures, EclipseDarknessModel.TargetWeight(1d, 1d, .1d, false) == 1d, "hub level ignored while relief is off");
         Expect(failures, Near(EclipseDarknessModel.TargetWeight(1d, .1d, .1d, true), .5d), "relief on: L = kindle level halves the weight");
         Expect(failures, EclipseDarknessModel.TargetWeight(1d, .2d, .1d, true) == 0d && EclipseDarknessModel.TargetWeight(1d, 1d, .1d, true) == 0d, "relief on: L >= 2 x kindle = 0");
         var model = new EclipseDarknessModel();
-        Expect(failures, model.Update(new EclipseDarknessSettings(), 1d, 5d, .1d, .016d).Weight == 1d, "Update ignores the hub level by default (E2)");
+        Expect(failures, model.Update(new EclipseDarknessSettings(), 1d, 5d, .1d, .016d, false).Weight == 1d, "Update ignores the hub level when relief is off");
+        var relieved = new EclipseDarknessModel();
+        Expect(failures, relieved.Update(new EclipseDarknessSettings(), 1d, 0d, .1d, .016d).Weight == 1d && relieved.Update(new EclipseDarknessSettings(), 1d, 5d, .1d, 10d).Weight == 0d,
+            "Update relieves the darkness by the hub level by default (E3)");
     }
 
     static void CheckSmoothing(List<string> failures)

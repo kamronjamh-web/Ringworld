@@ -56,6 +56,11 @@ public sealed class GameplayEclipseEventDefaults
         new(nameof(GameplayEclipseEventSettings.RealSunEnergy), 4f, 0f, 16f),
         new(nameof(GameplayEclipseEventSettings.HubDirectFraction), 0.8f, 0f, 1.5f),
         new(nameof(GameplayEclipseEventSettings.HubDayAtFull), 0.8f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.HubLightRed), 0.92f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.HubLightGreen), 0.97f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.HubLightBlue), 1f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.HubSkyTintStrength), 0.25f, 0f, 1f),
+        new(nameof(GameplayEclipseEventSettings.HubZenithHaloIntensity), 0.35f, 0f, 2f),
         new(nameof(GameplayEclipseEventSettings.EclipseAmbientScale), 0.15f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.EclipseAtmosphereNightScale), 0.35f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.EclipseSkyNightScale), 0.5f, 0f, 1f),
@@ -234,6 +239,11 @@ public sealed class GameplayEclipseEventDefaults
         RealSunEnergy = s.RealSunEnergy,
         HubDirectFraction = s.HubDirectFraction,
         HubDayAtFull = s.HubDayAtFull,
+        HubLightRed = s.HubLightRed,
+        HubLightGreen = s.HubLightGreen,
+        HubLightBlue = s.HubLightBlue,
+        HubSkyTintStrength = s.HubSkyTintStrength,
+        HubZenithHaloIntensity = s.HubZenithHaloIntensity,
         Darkness = new EclipseDarknessSettings
         {
             Enabled = s.EclipseDarknessEnabled,

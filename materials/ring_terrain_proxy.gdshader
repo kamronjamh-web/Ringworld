@@ -200,15 +200,19 @@ void fragment() {
 }
 
 void light() {
-	float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
 	float readable_shadow = max(ATTENUATION, shadow_floor);
 	vec3 sun_direction_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = LIGHT_IS_DIRECTIONAL
 		? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_direction_view))
 		: 0.0;
+	// Eclipse hub sun: light every point from its own zenith (identical to LIGHT while the hub weight is 0).
+	float n_dot_l = max(dot(NORMAL, ringworld_primary_light(LIGHT, surface_up_world, VIEW_MATRIX, primary_sun_weight)), 0.0);
 	float primary_planet_weight = LIGHT_IS_DIRECTIONAL
 		? terrain_planet_directional_light_weight(LIGHT, VIEW_MATRIX)
 		: 0.0;
+	// Hub mode aims the StarLight at the zenith, which can fall inside the planet-light cone near real noon: never treat
+	// the hub light as planet light (exactly 1 at hub weight 0).
+	primary_planet_weight *= 1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun_weight;
 	float sun_hemisphere_direct = mix(
 		night_direct_light_factor,
 		day_direct_light_factor,
@@ -219,7 +223,7 @@ void light() {
 			world_position,
 			ring_center,
 			camera_world_position,
-			ring_width_meters) * primary_sun_weight * ring_day_factor
+			ring_width_meters) * primary_sun_weight * ring_day_factor * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))
 		: 0.0;
 	float planet_terrain_shadow = LIGHT_IS_DIRECTIONAL
 		? sample_terrain_planet_shadow(
