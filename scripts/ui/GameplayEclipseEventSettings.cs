@@ -111,6 +111,12 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public float BeamOrbHaloMeters { get; set; } = 1500f;
     [Export] public float BeamOrbMinPixelRadius { get; set; } = 2.5f;
     [Export] public float BeamOrbEmission { get; set; } = 16f;
+    /// <summary>Beam cloud light (tweaks T4/T5): beams, orbs and optionally grid links light the Sunshine clouds as segment lights. Max segments is stored as a float (1-8, rounded).</summary>
+    [Export] public bool BeamCloudLightEnabled { get; set; } = true;
+    [Export] public float BeamCloudLightIntensity { get; set; } = 5f;
+    [Export] public float BeamCloudLightRadiusMeters { get; set; } = 4000f;
+    [Export] public float BeamCloudLightMaxSegments { get; set; } = 4f;
+    [Export] public bool GridCloudLightEnabled { get; set; } = true;
     /// <summary>Hub sun body and sky in-scatter (spec E.1, phase E4c): the main-viewport disc and halo, radii in real km at the hub. Visual only.</summary>
     [Export] public bool HubBodyEnabled { get; set; } = true;
     [Export] public float HubBodyCoreEmission { get; set; } = 40f;

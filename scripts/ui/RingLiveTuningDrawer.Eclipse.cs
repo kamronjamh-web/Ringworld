@@ -8,7 +8,7 @@ namespace RingworldTechDemo.UI;
 /// <summary>Grave-key "Eclipse event" sections (docs/eclipse-false-sun-spec.md G.2, E1: timeline and debug; E2: eclipse darkness; E3+ add lighting/beams/audio here).</summary>
 public partial class RingLiveTuningDrawer
 {
-    private sealed record EclipseSliderSpec(string Field, string Label, string Tooltip);
+    private sealed record EclipseSliderSpec(string Field, string Label, string Tooltip, double? Step = null);
 
     private static readonly EclipseSliderSpec[] EclipseDarknessSliders =
     {
@@ -110,6 +110,9 @@ public partial class RingLiveTuningDrawer
         new("BeamOrbHaloMeters", "Orb halo radius (m)", "E-fold radius of the teal glow around an orb."),
         new("BeamOrbMinPixelRadius", "Orb minimum radius (px)", "A distant orb is never drawn smaller than this; the lost energy is partly given back."),
         new("BeamOrbEmission", "Orb emission", "HDR brightness of a refuel orb."),
+        new("BeamCloudLightIntensity", "Cloud light intensity", "How strongly the beams, orbs and grid pulses light the clouds they pass through (colour times this). 0 lights nothing."),
+        new("BeamCloudLightRadiusMeters", "Cloud light radius (m)", "How far from its line a beam lights the cloud. Also the length scale that sets how soft the glow is."),
+        new("BeamCloudLightMaxSegments", "Cloud light segments", "At most this many lights nearest the camera are fed to the cloud pass (1-8). Each costs a little per cloud sample near it.", 1d),
     };
 
     private static readonly EclipseSliderSpec[] EclipseHubBodySliders =
@@ -256,6 +259,10 @@ public partial class RingLiveTuningDrawer
         AddEclipseToggle(beams, "BeamCloudDiffusionEnabled", "In-cloud diffusion", s.BeamCloudDiffusionEnabled,
             "A near beam widens and brightens its halo where it crosses the cloud deck (one weather query per near spire, 30 at most per eclipse), and its depth core is cut inside dense cloud.");
         AddEclipseToggle(beams, "BeamCrownGlowEnabled", "Stand-in crown glow", s.BeamCrownGlowEnabled, "The far stand-in's crown glows while its beam fires.");
+        AddEclipseToggle(beams, "BeamCloudLightEnabled", "Beams light clouds", s.BeamCloudLightEnabled,
+            "The beams and the refuel orbs light the Sunshine clouds they pass through from inside (segment lights in the cloud pass). Off, or outside the event, the clouds are exactly as before.");
+        AddEclipseToggle(beams, "GridCloudLightEnabled", "Grid links light clouds", s.GridCloudLightEnabled,
+            "The relay grid pulses also light the clouds they pass through (after the beams and orbs, in the remaining segments). Needs 'Beams light clouds'.");
         foreach (EclipseSliderSpec spec in EclipseBeamSliders) AddEclipseSlider(beams, spec, s);
         _eclipseBodyLive = new Label { Name = "EclipseHubBodyLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         beams.AddChild(_eclipseBodyLive);
@@ -361,7 +368,7 @@ public partial class RingLiveTuningDrawer
         row.AddChild(new Label { Text = spec.Label, CustomMinimumSize = new Vector2(160, 0), TooltipText = spec.Tooltip });
         var slider = new HSlider
         {
-            Name = "Eclipse" + spec.Field, MinValue = min, MaxValue = max, Step = EclipseStep(min, max),
+            Name = "Eclipse" + spec.Field, MinValue = min, MaxValue = max, Step = spec.Step ?? EclipseStep(min, max),
             Value = (float)s.Get(spec.Field).AsDouble(), Editable = _eclipseDirector != null, TooltipText = spec.Tooltip,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };

@@ -31,6 +31,7 @@ public partial class EclipseEventSettingsSmoke : Node
         "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamCloseSoftenMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
         "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEmission", "BeamBoreLightBoost",
         "BeamOrbEaseExponent", "BeamOrbRadiusMeters", "BeamOrbHaloMeters", "BeamOrbMinPixelRadius", "BeamOrbEmission",
+        "BeamCloudLightIntensity", "BeamCloudLightRadiusMeters", "BeamCloudLightMaxSegments",
         "HubBodyCoreEmission", "HubBodyRadiusKm", "HubBodyMinRadiusPixels", "HubBodyHaloAmplitude", "HubBodyHaloRadiusKm", "HubSkyInScatter"
     };
 
@@ -45,12 +46,13 @@ public partial class EclipseEventSettingsSmoke : Node
         "BeamCoreWidthMeters", "BeamHaloWidthMeters", "BeamMainCoreWidthMeters", "BeamMainHaloWidthMeters", "BeamMinPixelWidth", "BeamFarCompensation",
         "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamOrigin", "BeamCloseSoftenMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
         "BeamCloudDiffusionEnabled", "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEnabled", "BeamCrownGlowEmission", "BeamBoreLightBoost",
-        "BeamOrbEaseExponent", "BeamOrbRadiusMeters", "BeamOrbHaloMeters", "BeamOrbMinPixelRadius", "BeamOrbEmission"
+        "BeamOrbEaseExponent", "BeamOrbRadiusMeters", "BeamOrbHaloMeters", "BeamOrbMinPixelRadius", "BeamOrbEmission",
+        "BeamCloudLightEnabled", "BeamCloudLightIntensity", "BeamCloudLightRadiusMeters", "BeamCloudLightMaxSegments", "GridCloudLightEnabled"
     };
 
     private static bool IsDefault(GameplayEclipseEventSettings s)
     {
-        if (!s.EventEnabled || !s.EclipseDarknessEnabled || !s.BeamsEnabled || !s.BeamFarLayerEnabled || !s.BeamDepthWriteCore || !s.HubBodyEnabled || !s.BeamCloudDiffusionEnabled || !s.BeamCrownGlowEnabled || s.IgnitionSpeedMode != 0 || s.RampMode != 0 || !s.SuppressGridPulseDuringIgnition || s.RefuelClock != 0 || s.BeamOrigin != 1) return false;
+        if (!s.EventEnabled || !s.EclipseDarknessEnabled || !s.BeamsEnabled || !s.BeamFarLayerEnabled || !s.BeamDepthWriteCore || !s.HubBodyEnabled || !s.BeamCloudDiffusionEnabled || !s.BeamCrownGlowEnabled || !s.BeamCloudLightEnabled || !s.GridCloudLightEnabled || s.IgnitionSpeedMode != 0 || s.RampMode != 0 || !s.SuppressGridPulseDuringIgnition || s.RefuelClock != 0 || s.BeamOrigin != 1) return false;
         foreach (string name in FloatNames)
             if (!Mathf.IsEqualApprox((float)s.Get(name).AsDouble(), GameplayEclipseEventDefaults.DefaultOf(name))) return false;
         return true;
@@ -125,6 +127,30 @@ public partial class EclipseEventSettingsSmoke : Node
             && orbWild.Beams.OrbMinPixelRadius == 12d && orbWild.Beams.OrbEmission == 100d, "EclipseEventSettings.Sanitized orb bounds");
         orb.Reset(); orb.Save();
 
+        // Tweaks T4/T5: the beam cloud light (segment lights in the Sunshine raymarch): enable, intensity, radius, max segments, grid links.
+        var light = new GameplayEclipseEventDefaults(path); light.Load();
+        EclipseBeamSettings lightDefault = GameplayEclipseEventDefaults.ToCore(light.Settings).Beams;
+        Require(light.Settings.BeamCloudLightEnabled && light.Settings.GridCloudLightEnabled && Mathf.IsEqualApprox(light.Settings.BeamCloudLightIntensity, 5f) && Mathf.IsEqualApprox(light.Settings.BeamCloudLightRadiusMeters, 4000f)
+            && Mathf.IsEqualApprox(light.Settings.BeamCloudLightMaxSegments, 4f) && lightDefault.CloudLightEnabled && lightDefault.CloudLightGridLinks && lightDefault.CloudLightIntensity == 5d && lightDefault.CloudLightRadiusMeters == 4000d
+            && lightDefault.CloudLightMaxSegments == 4, "cloud light defaults");
+        Require(light.SetBool("BeamCloudLightEnabled", false) && light.SetBool("GridCloudLightEnabled", false) && light.SetFloat("BeamCloudLightIntensity", 9.5f) && light.SetFloat("BeamCloudLightRadiusMeters", 2500f)
+            && light.SetFloat("BeamCloudLightMaxSegments", 3f) && !light.SetBool("GridCloudLightEnabled", false), "cloud light setters did not report a change");
+        Require(light.Save(), "cloud light preferences did not save");
+        var lightLoaded = new GameplayEclipseEventDefaults(path); lightLoaded.Load();
+        EclipseBeamSettings lightCore = GameplayEclipseEventDefaults.ToCore(lightLoaded.Settings).Beams;
+        Require(!lightLoaded.Settings.BeamCloudLightEnabled && !lightLoaded.Settings.GridCloudLightEnabled && Mathf.IsEqualApprox(lightLoaded.Settings.BeamCloudLightIntensity, 9.5f) && Mathf.IsEqualApprox(lightLoaded.Settings.BeamCloudLightMaxSegments, 3f)
+            && !lightCore.CloudLightEnabled && !lightCore.CloudLightGridLinks && lightCore.CloudLightIntensity == 9.5d && lightCore.CloudLightRadiusMeters == 2500d && lightCore.CloudLightMaxSegments == 3, "cloud light preferences did not round-trip or map");
+        light.SetFloat("BeamCloudLightIntensity", 1e9f); light.SetFloat("BeamCloudLightRadiusMeters", 1f); light.SetFloat("BeamCloudLightMaxSegments", 99f);
+        Require(Mathf.IsEqualApprox(light.Settings.BeamCloudLightIntensity, 20f) && Mathf.IsEqualApprox(light.Settings.BeamCloudLightRadiusMeters, 500f) && Mathf.IsEqualApprox(light.Settings.BeamCloudLightMaxSegments, 8f), "cloud light setter bounds were not enforced");
+        light.SetFloat("BeamCloudLightMaxSegments", 0.2f); light.SetFloat("BeamCloudLightIntensity", float.NaN);
+        Require(Mathf.IsEqualApprox(light.Settings.BeamCloudLightMaxSegments, 1f) && Mathf.IsEqualApprox(light.Settings.BeamCloudLightIntensity, 5f), "cloud light lower bound / NaN fallback");
+        using var hostileLight = new GameplayEclipseEventSettings { BeamCloudLightRadiusMeters = float.PositiveInfinity, BeamCloudLightMaxSegments = -4f, BeamCloudLightIntensity = -2f };
+        using var cleanLight = GameplayEclipseEventDefaults.Sanitize(hostileLight);
+        Require(Mathf.IsEqualApprox(cleanLight.BeamCloudLightRadiusMeters, 4000f) && Mathf.IsEqualApprox(cleanLight.BeamCloudLightMaxSegments, 1f) && Mathf.IsEqualApprox(cleanLight.BeamCloudLightIntensity, 0f), "cloud light Sanitize bounds were not enforced");
+        EclipseBeamSettings lightWild = new EclipseBeamSettings { CloudLightIntensity = double.NaN, CloudLightRadiusMeters = 1e9, CloudLightMaxSegments = 77 }.Sanitized();
+        Require(lightWild.CloudLightIntensity == 5d && lightWild.CloudLightRadiusMeters == 20000d && lightWild.CloudLightMaxSegments == 8 && new EclipseBeamSettings { CloudLightMaxSegments = -3 }.Sanitized().CloudLightMaxSegments == 1, "EclipseBeamSettings.Sanitized cloud light bounds");
+        light.Reset(); light.Save();
+
         // Phase E4e: in-cloud diffusion, crown glow and bore light boost.
         var cloud = new GameplayEclipseEventDefaults(path); cloud.Load();
         Require(cloud.SetBool("BeamCloudDiffusionEnabled", false) && cloud.SetBool("BeamCrownGlowEnabled", false) && cloud.SetFloat("BeamCloudWidening", 5f)
@@ -158,7 +184,7 @@ public partial class EclipseEventSettingsSmoke : Node
         System.IO.File.WriteAllLines(full, kept);
         var legacy = new GameplayEclipseEventDefaults(path); legacy.Load();
         Require(Mathf.IsEqualApprox(legacy.Settings.PreRollSeconds, 111f) && legacy.Settings.BeamsEnabled && legacy.Settings.BeamFarLayerEnabled && legacy.Settings.BeamDepthWriteCore
-            && legacy.Settings.BeamOrigin == 1 && Mathf.IsEqualApprox(legacy.Settings.BeamOrbEmission, 16f) && Mathf.IsEqualApprox(legacy.Settings.BeamOrbEaseExponent, 3f) && Mathf.IsEqualApprox(legacy.Settings.BeamCloseSoftenMeters, 1000f) && Mathf.IsEqualApprox(legacy.Settings.BeamBaseEmission, 12f) && Mathf.IsEqualApprox(legacy.Settings.BeamCoreWidthMeters, 150f) && Mathf.IsEqualApprox(legacy.Settings.BeamDayVisibility, .6f), "an older save did not load the beam defaults");
+            && legacy.Settings.BeamOrigin == 1 && Mathf.IsEqualApprox(legacy.Settings.BeamOrbEmission, 16f) && Mathf.IsEqualApprox(legacy.Settings.BeamOrbEaseExponent, 3f) && Mathf.IsEqualApprox(legacy.Settings.BeamCloseSoftenMeters, 1000f) && Mathf.IsEqualApprox(legacy.Settings.BeamBaseEmission, 12f) && legacy.Settings.BeamCloudLightEnabled && legacy.Settings.GridCloudLightEnabled && Mathf.IsEqualApprox(legacy.Settings.BeamCloudLightIntensity, 5f) && Mathf.IsEqualApprox(legacy.Settings.BeamCloudLightMaxSegments, 4f) && Mathf.IsEqualApprox(legacy.Settings.BeamCoreWidthMeters, 150f) && Mathf.IsEqualApprox(legacy.Settings.BeamDayVisibility, .6f), "an older save did not load the beam defaults");
         old.Reset(); old.Save();
     }
 

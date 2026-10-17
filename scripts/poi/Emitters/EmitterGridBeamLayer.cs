@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using Godot;
+using RingworldTechDemo.Celestial.Eclipse;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Core;
@@ -720,6 +721,85 @@ public partial class EmitterGridBeamLayer : Node3D
         fraction = span > 0d ? Math.Clamp((p - found.P0) / span, 0d, 1d) : 0d;
         link = first + lo;
         return true;
+    }
+
+    // ---------------------------------------------------------------- cloud light (tweaks T5)
+
+    /// <summary>Times <see cref="GatherCloudLight"/> was called (a test counter: grid links off must not gather).</summary>
+    public long CloudLightGatherCount { get; private set; }
+    /// <summary>Links the last gather offered (a diagnostic for the captures and the status line).</summary>
+    public int CloudLightOfferedCount { get; private set; }
+    private double[] _linkAltitudeA = Array.Empty<double>(), _linkAltitudeB = Array.Empty<double>(), _linkSagitta = Array.Empty<double>();
+    private readonly EmitterEventFront[] _eventScratch = new EmitterEventFront[MaxShaderFronts];
+
+    /// <summary>
+    /// Offers the grid links near the camera that are lit by a pulse right now and cross the cloud deck, as transient segment lights (tier 1: after the beams and
+    /// the orbs). For each link within <paramref name="reach"/> + <paramref name="radius"/> of <paramref name="camera"/> whose altitude at the camera's closest point
+    /// lies in [<paramref name="floor"/>, <paramref name="ceiling"/>] (widened by the radius) the pulse brightness there (the normal fronts, the ignition fronts and the
+    /// knot flare, the shader's maths) gives the colour, and the segment is the chord within <paramref name="radius"/> of that point. Allocation free; nothing when the
+    /// layer is hidden or the grid is dark.
+    /// </summary>
+    public void GatherCloudLight(EclipseCloudLightFeeder feeder, Vector3D camera, double floor, double ceiling, double reach, float radius, float intensity, Vector3 color, double pulseTime)
+    {
+        CloudLightGatherCount++;
+        CloudLightOfferedCount = 0;
+        if (!IsBound || !Visible || UndergroundHold || _topology == null || _clock == null || intensity <= 0f) return;
+        EmitterGridTopology topology = _topology;
+        EmitterGridPulseClock clock = _clock;
+        if (_linkSagitta.Length != topology.LinkCount) BuildLinkAltitudes(topology);
+        for (int i = 0; i < _eventCount; i++)
+        {
+            Vector4 f = _eventFronts[i];
+            _eventScratch[i] = new EmitterEventFront(f.X, (int)MathF.Round(f.Y), f.Z, f.W);
+        }
+        ReadOnlySpan<EmitterEventFront> events = _eventScratch.AsSpan(0, _eventCount);
+        double t = pulseTime, cull = reach + radius, low = floor - radius, high = ceiling + radius;
+        for (int l = 0; l < topology.LinkCount; l++)
+        {
+            Vector3D a = _endA[l], b = _endB[l];
+            double abx = b.X - a.X, aby = b.Y - a.Y, abz = b.Z - a.Z, len2 = abx * abx + aby * aby + abz * abz;
+            if (len2 < 1d) continue;
+            double s = Math.Clamp(((camera.X - a.X) * abx + (camera.Y - a.Y) * aby + (camera.Z - a.Z) * abz) / len2, 0d, 1d);
+            double dx = a.X + abx * s - camera.X, dy = a.Y + aby * s - camera.Y, dz = a.Z + abz * s - camera.Z;
+            double distance = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance > cull || !feeder.Wants(EclipseCloudLightFeeder.TierGrid, distance)) continue;
+            double altitude = _linkAltitudeA[l] + (_linkAltitudeB[l] - _linkAltitudeA[l]) * s + 4d * s * (1d - s) * _linkSagitta[l];
+            if (altitude < low || altitude > high) continue;
+            ref readonly EmitterLink link = ref topology.Links[l];
+            double pulse = CloudLightPulse(clock, link, s, t, events);
+            if (pulse < 0.03d) continue;
+            double chord = Math.Sqrt(len2), half = radius / chord, s0 = Math.Max(0d, s - half), s1 = Math.Min(1d, s + half);
+            var from = new Vector3((float)(a.X + abx * s0), (float)(a.Y + aby * s0), (float)(a.Z + abz * s0));
+            var to = new Vector3((float)(a.X + abx * s1), (float)(a.Y + aby * s1), (float)(a.Z + abz * s1));
+            feeder.Offer(new SunshineSegmentLight(from, to, radius, color * (intensity * (float)pulse), false), EclipseCloudLightFeeder.TierGrid, distance);
+            CloudLightOfferedCount++;
+        }
+    }
+
+    /// <summary>Pulse brightness 0..1 at fraction <paramref name="f"/> of a link: the shader's sum of the normal fronts (times the suppression weight), the ignition fronts and the knot flare.</summary>
+    private double CloudLightPulse(EmitterGridPulseClock clock, in EmitterLink link, double f, double t, ReadOnlySpan<EmitterEventFront> events)
+    {
+        double q = clock.ToQ(link.P0 + f * (link.P1 - link.P0));
+        double sum = NormalPulseWeight > 0f ? clock.PulseAtQ(t, link.Column, q) * NormalPulseWeight : 0d;
+        for (int i = 0; i < events.Length; i++)
+            if (events[i].Column == link.Column) sum += clock.EventFrontAtQ(events[i], q);
+        sum = Math.Min(1d, sum);
+        if (NormalPulseWeight > 0f && link.Kind != EmitterLinkKind.Chain) sum = Math.Max(sum, clock.FlareEnvelope(t));
+        return sum;
+    }
+
+    /// <summary>Altitudes of both ends and the sagitta of every link, so a point at chord fraction s sits at altitude A + (B - A) s + 4 s (1 - s) sagitta.</summary>
+    private void BuildLinkAltitudes(EmitterGridTopology topology)
+    {
+        int count = topology.LinkCount;
+        _linkAltitudeA = new double[count]; _linkAltitudeB = new double[count]; _linkSagitta = new double[count];
+        for (int i = 0; i < count; i++)
+        {
+            EmitterLink link = topology[i];
+            _linkAltitudeA[i] = topology.RelayNode(link.FromSite).Vertical;
+            _linkAltitudeB[i] = topology.RelayNode(link.ToSite).Vertical;
+            _linkSagitta[i] = topology.GetGeometry(i).SagittaM;
+        }
     }
 
     public void SetUndergroundHidden(bool hidden)

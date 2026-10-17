@@ -70,6 +70,19 @@ public sealed record EclipseBeamSettings
     public double OrbMinPixelRadius { get; init; } = 2.5d;
     public double OrbEmission { get; init; } = 16d;
 
+    /// <summary>
+    /// Beam cloud light (tweaks T4/T5): the beams, the refuel orbs and (optionally) the relay grid links light the Sunshine clouds they pass through, as
+    /// segment lights inside the cloud raymarch. At most <see cref="CloudLightMaxSegments"/> (1-8) nearest to the camera, each reaching
+    /// <see cref="CloudLightRadiusMeters"/> from its line; <see cref="CloudLightIntensity"/> scales the colour. With the feature off, or outside the event,
+    /// nothing is pushed and the clouds are exactly as before. Visual only.
+    /// </summary>
+    public bool CloudLightEnabled { get; init; } = true;
+    public double CloudLightIntensity { get; init; } = 5d;
+    public double CloudLightRadiusMeters { get; init; } = 4000d;
+    public int CloudLightMaxSegments { get; init; } = 4;
+    /// <summary>Hub beams and orbs light the clouds first; this adds the relay grid links (pulses) after them.</summary>
+    public bool CloudLightGridLinks { get; init; } = true;
+
     public EclipseBeamSettings Sanitized() => this with
     {
         CoreWidthMeters = C(CoreWidthMeters, 10d, 2000d, 150d),
@@ -98,7 +111,10 @@ public sealed record EclipseBeamSettings
         OrbRadiusMeters = C(OrbRadiusMeters, 20d, 5000d, 350d),
         OrbHaloMeters = C(OrbHaloMeters, 50d, 20000d, 1500d),
         OrbMinPixelRadius = C(OrbMinPixelRadius, 0.5d, 12d, 2.5d),
-        OrbEmission = C(OrbEmission, 0d, 100d, 16d)
+        OrbEmission = C(OrbEmission, 0d, 100d, 16d),
+        CloudLightIntensity = C(CloudLightIntensity, 0d, 20d, 5d),
+        CloudLightRadiusMeters = C(CloudLightRadiusMeters, 500d, 20000d, 4000d),
+        CloudLightMaxSegments = Math.Clamp(CloudLightMaxSegments, 1, 8)
     };
 
     private static double C(double v, double lo, double hi, double fallback) => double.IsFinite(v) ? Math.Clamp(v, lo, hi) : fallback;

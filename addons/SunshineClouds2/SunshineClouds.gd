@@ -149,6 +149,18 @@ var current_time : float = 0.0
 @export var point_lights_data : Array[Vector4] = []
 @export var point_effector_data : Array[Vector4] = []
 
+# RingworldTechDemo extension (eclipse beam cloud light): up to SEGMENT_LIGHT_MAX line lights in their own block after the point effectors of
+# the lights uniform buffer (SegmentLightsBlock in SunshineCloudsCompute.glsl). Count 0 (the default) skips the shader loop entirely.
+const SEGMENT_LIGHT_MAX := 8
+const SEGMENT_LIGHT_OFFSET := 6272 # bytes: the directional lights, point lights and point effectors come first
+const SEGMENT_LIGHT_BYTES := 16 + SEGMENT_LIGHT_MAX * 48 # header vec4 + 3 vec4 per segment
+const LIGHT_BUFFER_BYTES := SEGMENT_LIGHT_OFFSET + SEGMENT_LIGHT_BYTES
+var segment_light_count : int = 0
+var segment_light_bytes : PackedByteArray = PackedByteArray()
+var segment_lights_dirty : bool = true
+var segment_light_phase_weight : float = 0.5
+var segment_light_extinction : float = 0.0015
+
 var positionQueries : Array[Vector3] = []
 var positionQueryCallables : Array[Callable] = []
 var positionQuerying : bool = false
@@ -1586,7 +1598,7 @@ func _render_callback(effect_callback_type, render_data):
 					camera_uniform.add_id(general_data_buffer)
 					uniforms_array.append(camera_uniform)
 					
-					light_data_buffer = rd.uniform_buffer_create(6272)
+					light_data_buffer = rd.uniform_buffer_create(LIGHT_BUFFER_BYTES)
 					var light_data_uniform = RDUniform.new()
 					light_data_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
 					light_data_uniform.binding = 15
@@ -1736,6 +1748,7 @@ func _render_callback(effect_callback_type, render_data):
 					#endregion
 
 				lights_updated = true
+				segment_lights_dirty = true
 
 			var framebuffer := FramebufferCacheRD.get_cache_multipass([buffers.get_color_layer(0, is_msaa_on), buffers.get_depth_layer(0, is_msaa_on)], [], view_count)
 			var deferred_msaa_end_markers: Array[String] = []
@@ -1781,6 +1794,8 @@ func _render_callback(effect_callback_type, render_data):
 			dispatch_gpu_cloud_shadows()
 			if lights_updated or directional_lights_data.size() == 0:
 				update_lights()
+			if segment_lights_dirty:
+				update_segment_lights()
 			
 			var prepass_x_groups = ((size.x - 1) / 8) + 1
 			var prepass_y_groups = ((size.y - 1) / 8) + 1
@@ -2447,6 +2462,45 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	if not menu_temporal_sampling:
 		previous_callback_gameplay_cloud_frame = current_gameplay_frame
 
+
+# data = Vector4 triples per segment: (A.xyz, radius), (B.xyz, steady flag 1 or 0), (rgb = colour x intensity, 0). Packed for the shader as
+# (A.xyz, radius), (unit direction, length), (rgb, steady flag) so the per-sample reject needs no sqrt. Called by the bridge only when the set
+# changes (steady segments) or at a bounded rate (moving orbs and pulses). The packed bytes are swapped in whole, then uploaded once from the
+# render callback; nothing is touched while the dirty flag is clear.
+func set_segment_lights(data : Array, count : int) -> void:
+	var n := clampi(count, 0, SEGMENT_LIGHT_MAX)
+	if n * 3 > data.size():
+		n = floori(data.size() / 3.0)
+	var bytes := PackedByteArray()
+	bytes.resize(SEGMENT_LIGHT_BYTES)
+	bytes.encode_float(0, float(n))
+	bytes.encode_float(4, segment_light_phase_weight)
+	bytes.encode_float(8, segment_light_extinction)
+	var idx := 16
+	for i in range(n):
+		var a : Vector4 = data[i * 3]
+		var b : Vector4 = data[i * 3 + 1]
+		var c : Vector4 = data[i * 3 + 2]
+		var ab := Vector3(b.x - a.x, b.y - a.y, b.z - a.z)
+		var length := maxf(ab.length(), 0.01)
+		var dir := ab / length
+		var packed := [a.x, a.y, a.z, a.w, dir.x, dir.y, dir.z, length, c.x, c.y, c.z, b.w]
+		for value in packed:
+			bytes.encode_float(idx, value)
+			idx += 4
+	segment_light_count = n
+	segment_light_bytes = bytes
+	segment_lights_dirty = true
+
+func update_segment_lights():
+	segment_lights_dirty = false
+	if not light_data_buffer.is_valid():
+		return
+	if segment_light_bytes.size() != SEGMENT_LIGHT_BYTES:
+		# Never set (or cleared): the count is zero, so the shader loop is skipped.
+		segment_light_bytes.resize(SEGMENT_LIGHT_BYTES)
+		segment_light_bytes.fill(0)
+	rd.buffer_update(light_data_buffer, SEGMENT_LIGHT_OFFSET, SEGMENT_LIGHT_BYTES, segment_light_bytes)
 
 func update_lights():
 	lights_updated = false

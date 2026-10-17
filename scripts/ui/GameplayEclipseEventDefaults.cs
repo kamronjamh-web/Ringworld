@@ -94,6 +94,9 @@ public sealed class GameplayEclipseEventDefaults
         new(nameof(GameplayEclipseEventSettings.BeamOrbHaloMeters), 1500f, 50f, 20000f),
         new(nameof(GameplayEclipseEventSettings.BeamOrbMinPixelRadius), 2.5f, 0.5f, 12f),
         new(nameof(GameplayEclipseEventSettings.BeamOrbEmission), 16f, 0f, 100f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloudLightIntensity), 5f, 0f, 20f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloudLightRadiusMeters), 4000f, 500f, 20000f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloudLightMaxSegments), 4f, 1f, 8f),
         new(nameof(GameplayEclipseEventSettings.HubBodyCoreEmission), 40f, 1f, 200f),
         new(nameof(GameplayEclipseEventSettings.HubBodyRadiusKm), 30f, 2f, 200f),
         new(nameof(GameplayEclipseEventSettings.HubBodyMinRadiusPixels), 2f, 0.5f, 8f),
@@ -116,7 +119,8 @@ public sealed class GameplayEclipseEventDefaults
         nameof(GameplayEclipseEventSettings.EclipseDarknessEnabled), nameof(GameplayEclipseEventSettings.BeamsEnabled),
         nameof(GameplayEclipseEventSettings.BeamFarLayerEnabled), nameof(GameplayEclipseEventSettings.BeamDepthWriteCore),
         nameof(GameplayEclipseEventSettings.HubBodyEnabled), nameof(GameplayEclipseEventSettings.BeamCloudDiffusionEnabled),
-        nameof(GameplayEclipseEventSettings.BeamCrownGlowEnabled)
+        nameof(GameplayEclipseEventSettings.BeamCrownGlowEnabled), nameof(GameplayEclipseEventSettings.BeamCloudLightEnabled),
+        nameof(GameplayEclipseEventSettings.GridCloudLightEnabled)
     };
 
     private readonly string _path;
@@ -325,7 +329,12 @@ public sealed class GameplayEclipseEventDefaults
             OrbRadiusMeters = s.BeamOrbRadiusMeters,
             OrbHaloMeters = s.BeamOrbHaloMeters,
             OrbMinPixelRadius = s.BeamOrbMinPixelRadius,
-            OrbEmission = s.BeamOrbEmission
+            OrbEmission = s.BeamOrbEmission,
+            CloudLightEnabled = s.BeamCloudLightEnabled,
+            CloudLightIntensity = s.BeamCloudLightIntensity,
+            CloudLightRadiusMeters = s.BeamCloudLightRadiusMeters,
+            CloudLightMaxSegments = Mathf.Clamp(Mathf.RoundToInt(s.BeamCloudLightMaxSegments), 1, 8),
+            CloudLightGridLinks = s.GridCloudLightEnabled
         },
         HubBody = new EclipseHubBodySettings
         {

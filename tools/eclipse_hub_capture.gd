@@ -977,7 +977,8 @@ func _deck_base_row(site: int, cloud: Color, image_height: int) -> int:
 
 
 ## The T2 check on the real hub beams (E4 plan): a beam in front of cloud recovers at least STORM_CORE_GAIN_MIN x the halo-only light with the depth core on,
-## without any cloud refresh while lit.
+## without any cloud refresh while lit. The beam cloud light (tweaks T4/T5) is switched off in these configurations: it adds the same light to the halo-only and the
+## core frame, so it would dilute the ratio of the depth-core mechanism this check isolates (as the diffusion switch above does); the cloud light has its own captures.
 func _shot_storm() -> void:
 	if bridge == null:
 		_abort("no SunshineCloudBridge"); return
@@ -1028,26 +1029,26 @@ func _shot_storm() -> void:
 		# Phase E4e: the T2 check runs with the in-cloud diffusion OFF (the original mechanism: a depth core recovers the light the clouds behind a beam
 		# take). The default configuration (diffusion ON, the core cut inside dense cloud) replaces the core in the deck with the widened halo, so it is
 		# judged by how much of that core light it keeps.
-		_configure({"BeamsEnabled": true, "BeamDepthWriteCore": false, "BeamCloudDiffusionEnabled": false})
+		_configure({"BeamCloudLightEnabled": false, "BeamsEnabled": true, "BeamDepthWriteCore": false, "BeamCloudDiffusionEnabled": false})
 		await _settle(2.5)
 		var nocore := await _shot_image()
 		nocore.save_png(out_dir.path_join("storm_%s_halo_only.png" % tag))
-		_configure({"BeamsEnabled": true, "BeamDepthWriteCore": true, "BeamCloudDiffusionEnabled": false})
+		_configure({"BeamCloudLightEnabled": false, "BeamsEnabled": true, "BeamDepthWriteCore": true, "BeamCloudDiffusionEnabled": false})
 		await _settle(2.5)
 		var core := await _shot_image()
 		core.save_png(out_dir.path_join("storm_%s_core.png" % tag))
 		await _settle(2.0)
 		var core2 := await _shot_image()
 		core2.save_png(out_dir.path_join("storm_%s_core2.png" % tag))
-		_configure({"BeamsEnabled": true, "BeamDepthWriteCore": true})
+		_configure({"BeamCloudLightEnabled": false, "BeamsEnabled": true, "BeamDepthWriteCore": true})
 		await _settle(2.5)
 		var diffuse := await _shot_image()
 		diffuse.save_png(out_dir.path_join("storm_%s_diffusion_default.png" % tag))
-		_configure({"BeamsEnabled": true, "BeamDepthWriteCore": false})
+		_configure({"BeamCloudLightEnabled": false, "BeamsEnabled": true, "BeamDepthWriteCore": false})
 		await _settle(2.5)
 		var diffuse_halo := await _shot_image()
 		diffuse_halo.save_png(out_dir.path_join("storm_%s_diffusion_halo_only.png" % tag))
-		_configure({"BeamsEnabled": true, "BeamDepthWriteCore": true, "BeamCloudCoreCut": 0.5})
+		_configure({"BeamCloudLightEnabled": false, "BeamsEnabled": true, "BeamDepthWriteCore": true, "BeamCloudCoreCut": 0.5})
 		await _settle(2.5)
 		var diffuse_nocut := await _shot_image()
 		diffuse_nocut.save_png(out_dir.path_join("storm_%s_diffusion_cut05.png" % tag))

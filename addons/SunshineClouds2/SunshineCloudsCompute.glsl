@@ -39,6 +39,10 @@ layout(binding = 15) uniform LightsBuffer {
 	DirectionalLight directionalLights[4];
 	PointLight pointLights[128];
 	PointEffector pointEffectors[64];
+	// Append-only (RingworldTechDemo eclipse beam cloud light): x = segment count (0..8), y = phase weight,
+	// z = extinction per metre per unit density, w reserved.
+	vec4 segmentHeader;
+	SegmentLight segmentLights[8];
 };
 
 layout(binding = 16, std430) restrict buffer SamplePointsBuffer {
@@ -859,6 +863,7 @@ void main() {
 	int lightingStepCount = int(genericData.data.max_lighting_step_count);
 	int directionalLightCount = int(genericData.data.directionalLightsCount);
 	int pointLightCount = int(genericData.data.pointLightsCount);
+	int segmentLightCount = clamp(int(segmentHeader.x), 0, 8);
 
 	vec3 extralargeNoisePos = genericData.data.extralargenoiseposition;
 	vec3 largeNoisePos = genericData.data.largenoiseposition;
@@ -1247,6 +1252,36 @@ void main() {
 						vec3 pointContribution = pow(pointLights[lightI].color.rgb * lightDistanceWeight, vec3(2.2));
 						if (genericData.data.history_controls.w > 0.5) transientLightColor += pointContribution;
 						else lightColor.rgb += pointContribution;
+					}
+				}
+
+				// Segment (line) lights: in-scattered emission of a finite line source. The reject is one dot-product closest-point
+				// distance squared (no sqrt) against the radius squared. Irradiance is the analytic line integral
+				// (atan((L - t) / d) + atan(t / d)) / d, softened inside a core radius and windowed to the light radius; scattering is
+				// weighted by the local density, with a cheap density-based Beer term and a blended Henyey-Greenstein phase. No density taps.
+				for (int segI = 0; segI < segmentLightCount; segI++){
+					vec3 segW = curPos - segmentLights[segI].a.xyz;
+					vec3 segDir = segmentLights[segI].b.xyz;
+					float segLength = segmentLights[segI].b.w;
+					float segRadius = segmentLights[segI].a.w;
+					float segT = dot(segW, segDir);
+					float segTc = clamp(segT, 0.0, segLength);
+					float segW2 = dot(segW, segW);
+					float segClosest2 = segW2 - segTc * (2.0 * segT - segTc);
+					if (segClosest2 < segRadius * segRadius){
+						float segClosest = sqrt(max(segClosest2, 0.0));
+						float segPerp = sqrt(max(segW2 - segT * segT, 0.0));
+						float segCore = max(segRadius * 0.04, 1.0);
+						float segD = max(segPerp, segCore);
+						float segIrradiance = (atan((segLength - segT) / segD) + atan(segT / segD)) * (1.0 / PI) * (segCore / segD);
+						float segWindow = 1.0 - segClosest / segRadius;
+						segWindow *= segWindow;
+						vec3 segToClosest = segDir * segTc - segW;
+						float segPhase = mix(1.0, clamp(HenyeyGreenstein(genericData.data.anisotropy, dot(segToClosest, raydirection) / max(segClosest, 0.01)) * 4.0 * PI, 0.2, 4.0), segmentHeader.y);
+						float segTransmit = exp(-newdensity * segClosest * segmentHeader.z);
+						vec3 segContribution = segmentLights[segI].color.rgb * (segIrradiance * segWindow * segPhase * segTransmit * mix(newdensity, 1.0, 0.35));
+						if (segmentLights[segI].color.a < 0.5 && genericData.data.history_controls.w > 0.5) transientLightColor += segContribution;
+						else lightColor.rgb += segContribution;
 					}
 				}
 				

@@ -57,6 +57,7 @@ public partial class EclipseHubBeamLayer : Node3D
     [Export] public NodePath WeatherPath { get; set; } = new("../RingVolumetricClouds");
     [Export] public NodePath StandInsPath { get; set; } = new("../EmitterStandIns");
     [Export] public NodePath BoresPath { get; set; } = new("../EmitterBores");
+    [Export] public NodePath SunshineBridgePath { get; set; } = new("../SunshineCloudBridge");
 
     private bool _enabled = true;
     private bool _undergroundHidden;
@@ -95,6 +96,11 @@ public partial class EclipseHubBeamLayer : Node3D
     private bool _standInSettingsApplied;
     private readonly record struct GlowEvent(double Tau, int Beam, float Value);
     private Vector3D[] _origins = Array.Empty<Vector3D>();
+    // Cloud light geometry (tweaks T5), refreshed by every Rebuild: the unit axis, its slope against the local up, the beam length and the origin altitude.
+    private Vector3D[] _axes = Array.Empty<Vector3D>();
+    private double[] _axisSlope = Array.Empty<double>(), _beamLength = Array.Empty<double>(), _originAltitude = Array.Empty<double>();
+    private readonly EclipseCloudLightFeeder _cloudLight = new();
+    private RingSunshineCloudBridge? _sunshine;
     private Transform3D[] _mirror = Array.Empty<Transform3D>();
     private Color[] _custom = Array.Empty<Color>();
     private Transform3D _worldToLayer = Transform3D.Identity;
@@ -194,6 +200,7 @@ public partial class EclipseHubBeamLayer : Node3D
         if (_weather == null || !GodotObject.IsInstanceValid(_weather)) _weather = GetNodeOrNull<RingVolumetricCloudLayer>(WeatherPath);
         if (_standIns == null || !GodotObject.IsInstanceValid(_standIns)) { _standIns = GetNodeOrNull<EmitterStandInLayer>(StandInsPath); _standInSettingsApplied = false; _standInsBindRevision = -1; }
         if (_bores == null || !GodotObject.IsInstanceValid(_bores)) _bores = GetNodeOrNull<EmitterBoreLayer>(BoresPath);
+        if (_sunshine == null || !GodotObject.IsInstanceValid(_sunshine)) _sunshine = GetNodeOrNull<RingSunshineCloudBridge>(SunshineBridgePath);
     }
 
     /// <summary>True from <see cref="PrebuildSeconds"/> before the main fire until the collapse has cut the beams, while the beams are enabled.</summary>
@@ -213,6 +220,8 @@ public partial class EclipseHubBeamLayer : Node3D
         _topology = topology;
         int count = topology.HubBeamCount;
         _origins = new Vector3D[count];
+        _axes = new Vector3D[count];
+        _axisSlope = new double[count]; _beamLength = new double[count]; _originAltitude = new double[count];
         _mirror = new Transform3D[count];
         _custom = new Color[count];
         for (int i = 0; i < count; i++) _custom[i] = EclipseHubBeamMath.EncodeCustom(0d, 0, EclipseHubBeamMath.NeverFireTau, i == 0);
@@ -276,6 +285,7 @@ public partial class EclipseHubBeamLayer : Node3D
     {
         ClearCrownGlow();
         ResetBoreBoost();
+        ClearCloudLight();
         if (_grid != null && GodotObject.IsInstanceValid(_grid)) _grid.CanonicalFloatingOriginAnchorChanged -= HandleAnchorChanged;
         if (FarLayerValid)
         {
@@ -378,10 +388,18 @@ public partial class EclipseHubBeamLayer : Node3D
         _topology.FillHubBeamEndpoints(snapshot, _beams.BeamOrigin, _origins, out _hubWorld);
         _originApplied = _beams.BeamOrigin;
         Basis basis = _worldToLayer.Basis;
+        var frame = new EmitterSiteFrameContext(snapshot);
         for (int i = 0; i < _mirror.Length; i++)
         {
             Vector3D a = _origins[i];
             Vector3D span = new(_hubWorld.X - a.X, _hubWorld.Y - a.Y, _hubWorld.Z - a.Z);
+            // Cloud light: the axis, the altitude gained per metre along it (against the local up at the origin) and the origin altitude.
+            double length = span.Length;
+            Vector3D axis = length > 1d ? span * (1d / length) : new Vector3D(0d, 1d, 0d);
+            (double around, double altitude, double across) = _topology.HubBeamOrigin(i, _beams.BeamOrigin);
+            Vector3D above = frame.WorldPosition(around, altitude + 1000d, across);
+            Vector3D up = new((above.X - a.X) * 1e-3, (above.Y - a.Y) * 1e-3, (above.Z - a.Z) * 1e-3);
+            _axes[i] = axis; _beamLength[i] = length; _axisSlope[i] = axis.Dot(up); _originAltitude[i] = altitude;
             var local = new Transform3D(new Basis(basis * span.ToVector3(), Vector3.Up, Vector3.Back), _worldToLayer * a.ToVector3());
             _mirror[i] = local;
             beams.SetInstanceTransform(i, local);
@@ -826,11 +844,11 @@ public partial class EclipseHubBeamLayer : Node3D
             UpdateCrownGlow(tau);
             UpdateBoreBoost();
         }
-        if (!Visible || UndergroundHold || _beamMaterial == null) return;
+        if (!Visible || UndergroundHold || _beamMaterial == null) { ClearCloudLight(); return; }
         SetBeamUniform("ev_time", (float)tau);
         UpdateRefuelFronts(tau, gridTime);
         Camera3D? camera = GetViewport()?.GetCamera3D();
-        if (camera == null || _grid == null) return;
+        if (camera == null || _grid == null) { ClearCloudLight(); return; }
         EmitterGridBeamLayer? gridLayer = _gridLayer != null && GodotObject.IsInstanceValid(_gridLayer) ? _gridLayer : null;
         GridView view = ReadGridView(gridLayer);
 
@@ -854,6 +872,7 @@ public partial class EclipseHubBeamLayer : Node3D
             BindFarLayer(_farViewport.ScaledPoint, _farViewport.CoordinateScale, _farViewport.AddScaledWorldChild);
         }
         ScanClouds(tau, delta, camera, CloudNearRangeOverrideMeters ?? view.NearLayerMaxKm * 1000d);
+        UpdateCloudLight(delta, camera.GlobalPosition, gridLayer);
         Vector2 band = ResolveHandoffBand(view);
         _handoffBand = band;
         if (band != _appliedBand) { _beamMaterial.SetShaderParameter("eg_handoff", band); _coreMaterial?.SetShaderParameter("eg_handoff", band); }
@@ -890,6 +909,107 @@ public partial class EclipseHubBeamLayer : Node3D
         if (fade != _appliedFade) material.SetShaderParameter("fade_meters", fade);
         if (nearClip != _farAppliedNear) { material.SetShaderParameter("near_clip", nearClip); _farAppliedNear = nearClip; }
         if (band != _appliedBand) material.SetShaderParameter("eg_handoff", band);
+    }
+
+    // ---------------------------------------------------------------- cloud light (tweaks T4/T5)
+
+    /// <summary>Test/tool hook: replaces the Sunshine bridge as the place the cloud light segments are pushed. Null (default) uses the bridge at <see cref="SunshineBridgePath"/>.</summary>
+    public ISunshineSegmentLightSink? CloudLightSinkOverride { get; set; }
+    /// <summary>Test/tool hook: replaces Sunshine's cloud floor, ceiling (metres) and near reach (x, y, z).</summary>
+    public Vector3? CloudLightBandOverride { get; set; }
+    /// <summary>The feeder that chooses and pushes the segment lights (counters for the tests and the status line).</summary>
+    public EclipseCloudLightFeeder CloudLight => _cloudLight;
+    /// <summary>Colour x intensity factors of the cloud light: an orb is a short, point-like source and needs more than a long beam; a grid pulse is dimmer than a beam.</summary>
+    public const float OrbCloudLightGain = 6f, GridCloudLightGain = 0.1f;
+    private const double CloudLightMarginMeters = 500d, CloudLightPrefilterMeters = 14_000d;
+
+    private ISunshineSegmentLightSink? CloudLightSink => CloudLightSinkOverride ?? _sunshine;
+
+    /// <summary>The segment lights last pushed, one per line (for the captures and the tests): endpoints, radius, colour, path.</summary>
+    public string DescribeCloudLight()
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (SunshineSegmentLight s in _cloudLight.Pushed)
+            text.Append(string.Format(CultureInfo.InvariantCulture, "[{0:0},{1:0},{2:0}]->[{3:0},{4:0},{5:0}] r={6:0} rgb=({7:0.00},{8:0.00},{9:0.00}) {10}; ",
+                s.A.X, s.A.Y, s.A.Z, s.B.X, s.B.Y, s.B.Z, s.Radius, s.Color.X, s.Color.Y, s.Color.Z, s.Steady ? "steady" : "moving"));
+        return text.ToString();
+    }
+
+    /// <summary>Pushes an empty set when segments were pushed (the event ended, the layer hid, the player went underground, the feature was turned off).</summary>
+    private void ClearCloudLight() => _cloudLight.Clear(CloudLightSink);
+
+    /// <summary>
+    /// Every <see cref="EclipseCloudLightFeeder.EvaluateIntervalSeconds"/>: offers the in-deck column of each lit beam near the camera, the orbs inside the deck and
+    /// (after those) the grid pulses, then pushes the nearest few when the set changed. A frame between evaluations, and a steady set, write nothing.
+    /// </summary>
+    private void UpdateCloudLight(double delta, Vector3 camera, EmitterGridBeamLayer? gridLayer)
+    {
+        ISunshineSegmentLightSink? sink = CloudLightSink;
+        if (!_beams.CloudLightEnabled || sink == null || _topology == null || _beamLength.Length != _custom.Length) { ClearCloudLight(); return; }
+        float floor, ceiling, reach;
+        if (CloudLightBandOverride is { } band) { floor = band.X; ceiling = band.Y; reach = band.Z; }
+        else if (!sink.TryGetCloudLightBand(out floor, out ceiling, out reach)) { ClearCloudLight(); return; }
+        if (!_cloudLight.BeginIfDue(delta, _beams.CloudLightMaxSegments)) return;
+        var cam = new Vector3D(camera.X, camera.Y, camera.Z);
+        GatherBeamCloudLight(cam, floor, ceiling, reach);
+        if (_beams.CloudLightGridLinks && gridLayer != null && GodotObject.IsInstanceValid(gridLayer))
+            gridLayer.GatherCloudLight(_cloudLight, cam, floor, ceiling, reach, (float)_beams.CloudLightRadiusMeters,
+                (float)_beams.CloudLightIntensity * GridCloudLightGain, EclipseCloudLightFeeder.BeamColor, gridLayer.PulseTimeSeconds);
+        _cloudLight.Commit(sink);
+    }
+
+    /// <summary>
+    /// Offers the beams' in-deck columns (steady, the history path) and the refuel orbs inside the deck (transient). A beam's column runs from the cloud floor to
+    /// the ceiling (500 m of margin each side) along its axis, up to the climbing tip; its colour is the beam's own level (hand-off, day visibility, global level).
+    /// </summary>
+    private void GatherBeamCloudLight(Vector3D camera, float floor, float ceiling, float reach)
+    {
+        EclipseHubBeamUniforms u = _uniforms;
+        EclipseBeamSettings b = _beams;
+        float hubDay = _director != null && GodotObject.IsInstanceValid(_director) ? (float)_director.State.HubDay : 0f;
+        float dayVisibility = EclipseHubBeamMath.DayVisibility(u, hubDay);
+        double low = floor - CloudLightMarginMeters, high = ceiling + CloudLightMarginMeters;
+        float radius = (float)b.CloudLightRadiusMeters;
+        double prefilter = reach + radius + CloudLightPrefilterMeters, prefilter2 = prefilter * prefilter;
+        bool orbs = _flashFrontCount > 0 && _flashClock != null;
+        float direction = orbs && _flashClock!.Settings.Direction == EmitterPulseDirection.Prograde ? 1f : -1f;
+        float circumference = orbs ? (float)_flashClock!.CircumferenceMeters : 0f;
+        for (int i = 0; i < _custom.Length; i++)
+        {
+            Vector3D o = _origins[i];
+            double dx = o.X - camera.X, dy = o.Y - camera.Y, dz = o.Z - camera.Z;
+            if (dx * dx + dy * dy + dz * dz > prefilter2) continue;
+            float fire = _custom[i].B, kind = _custom[i].A;
+            if (fire >= 1e8f || u.Time <= fire || _axisSlope[i] < 0.5) continue;
+            Vector3D axis = _axes[i];
+            double slope = _axisSlope[i], length = _beamLength[i], altitude = _originAltitude[i];
+            bool main = kind > 0.5f;
+            float level = EclipseHubBeamMath.Handoff(u, kind) * u.Level * dayVisibility;
+            float tip = EclipseHubBeamMath.Tip(u, fire, kind);
+            double s0 = Math.Max(0d, (low - altitude) / slope), s1 = Math.Min(tip * length, (high - altitude) / slope);
+            if (level > 0.004f && tip > 0f && s1 - s0 > 1d)
+            {
+                float intensity = (float)b.CloudLightIntensity * level * (main ? (float)b.MainEmissionScale : 1f);
+                Vector3D a = o + axis * s0, e = o + axis * s1;
+                double distance = EclipseCloudLightFeeder.DistanceToSegment(camera, a, e);
+                float beamRadius = radius * (main ? 1.5f : 1f);
+                if (distance <= reach + beamRadius && _cloudLight.Wants(EclipseCloudLightFeeder.TierBeam, distance))
+                    _cloudLight.Offer(new SunshineSegmentLight(a.ToVector3(), e.ToVector3(), beamRadius, EclipseCloudLightFeeder.BeamColor * intensity, true), EclipseCloudLightFeeder.TierBeam, distance);
+            }
+            if (!orbs || main) continue;
+            (float envelope, float fraction) = EclipseHubBeamMath.Orb(u, RefuelFronts, direction, circumference, fire, kind, _custom[i].R, _custom[i].G);
+            if (envelope <= 0.004f) continue;
+            double sOrb = fraction * length, orbAltitude = altitude + sOrb * slope;
+            if (orbAltitude < low || orbAltitude > high) continue;
+            // A short capsule along the axis: the orb is point-like, so it gets a gain a long beam does not need.
+            double half = Math.Max(b.OrbRadiusMeters, 100d);
+            Vector3D oa = o + axis * (sOrb - half), ob = o + axis * (sOrb + half), centre = o + axis * sOrb;
+            double orbDistance = Math.Sqrt((centre.X - camera.X) * (centre.X - camera.X) + (centre.Y - camera.Y) * (centre.Y - camera.Y) + (centre.Z - camera.Z) * (centre.Z - camera.Z));
+            float orbRadius = radius * 0.75f;
+            if (orbDistance > reach + orbRadius || !_cloudLight.Wants(EclipseCloudLightFeeder.TierBeam, orbDistance)) continue;
+            float orbIntensity = (float)b.CloudLightIntensity * envelope * u.Level * dayVisibility * OrbCloudLightGain;
+            _cloudLight.Offer(new SunshineSegmentLight(oa.ToVector3(), ob.ToVector3(), orbRadius, EclipseCloudLightFeeder.BeamColor * orbIntensity, false), EclipseCloudLightFeeder.TierBeam, orbDistance);
+        }
     }
 
     // ---------------------------------------------------------------- far layer
@@ -980,8 +1100,8 @@ public partial class EclipseHubBeamLayer : Node3D
         string farState = FarLayerActive ? "active" : FarLayerValid || !_beams.FarLayerEnabled ? "off" : "waiting";
         string handoff = _handoffBand.X >= NoHandoff ? "near only"
             : string.Format(CultureInfo.InvariantCulture, "{0:0}-{1:0} km", _handoffBand.X / 1000f, _handoffBand.Y / 1000f);
-        return string.Format(CultureInfo.InvariantCulture, "Hub beams {0}, lit {1}, tau {2:0.0}, visible {3}, core depth {4}, far layer {5}, handoff {6}, rebuilds {7} ({8:0.00} ms), timeline binds {9}, cloud queries {10}/{11}, crown glow writes {12}, orbs in flight {13}",
+        return string.Format(CultureInfo.InvariantCulture, "Hub beams {0}, lit {1}, tau {2:0.0}, visible {3}, core depth {4}, far layer {5}, handoff {6}, rebuilds {7} ({8:0.00} ms), timeline binds {9}, cloud queries {10}/{11}, crown glow writes {12}, orbs in flight {13}, cloud light {14} segments ({15} pushes)",
             BeamCount, LitBeamCount(), _tau, Visible, _beams.DepthWriteCore ? "on" : "off", farState, handoff, RebuildCount, LastRebuildMs, TimelineBindCount,
-            WeatherQueryCount, MaxWeatherQueries, CrownGlowWriteCount, OrbsInFlight());
+            WeatherQueryCount, MaxWeatherQueries, CrownGlowWriteCount, OrbsInFlight(), _cloudLight.PushedCount, _cloudLight.PushCount);
     }
 }

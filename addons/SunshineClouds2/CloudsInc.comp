@@ -371,6 +371,17 @@ struct PointLight {
 	vec4 color; //a = intensity
 };
 
+// RingworldTechDemo extension (eclipse beam cloud light): a line (segment) light.
+// a = (endpoint A world xyz, radius m), b = (unit direction A->B, length m), color = (colour x intensity,
+// steady flag: > 0.5 lights the temporal history path, otherwise transient). The direction and length are
+// precomputed (set_segment_lights in SunshineClouds.gd) so the per-sample reject needs no sqrt. Lives in its
+// own block after the point effectors; a count of 0 skips the loop entirely.
+struct SegmentLight {
+	vec4 a;
+	vec4 b;
+	vec4 color;
+};
+
 struct PointEffector {
 	vec3 position; //w = radius
 	float radius;
