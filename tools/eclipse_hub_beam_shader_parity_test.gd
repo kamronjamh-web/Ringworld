@@ -7,7 +7,7 @@ const FIXTURE := preload("res://tools/EclipseHubBeamShaderFixture.cs")
 
 const SAMPLE_COUNT := 2048
 const TOLERANCE := 4e-3
-const FIELDS := 9
+const FIELDS := 12
 # name, global gain ev_level
 const CASES := [
 	{"name": "pre_fire", "level": 1.0},
@@ -83,8 +83,9 @@ func _run_case(case: Dictionary) -> int:
 	var out := vp.get_texture().get_image()
 	out.convert(Image.FORMAT_RGBA8)
 	var bytes := out.get_data()
-	var names := ["tip", "handoff", "mask", "level", "flash", "flash_tip", "cloud_mask", "cloud_factor", "core_keep"]
-	var worst := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var names := ["tip", "handoff", "mask", "level", "flash", "flash_tip", "cloud_mask", "cloud_factor", "core_keep", "orb_env", "orb_fraction", "orb_level"]
+	var worst := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+	var orbing := 0
 	var bad := 0
 	var lit := 0
 	var partial_tip := 0
@@ -100,6 +101,8 @@ func _run_case(case: Dictionary) -> int:
 				partial_tip += 1
 			if field == 4 and want > 0.0:
 				flashing += 1
+			if field == 9 and want > 0.0:
+				orbing += 1
 			if is_nan(gpu) or is_inf(gpu):
 				bad += 1
 				continue
@@ -109,14 +112,17 @@ func _run_case(case: Dictionary) -> int:
 				bad += 1
 				if bad < 12:
 					print("  mismatch %s %s sample=%d gpu=%.7f cpu=%.7f" % [case["name"], names[field], i, gpu, want])
-	print("ECLIPSE_HUB_BEAM_SHADER_PARITY case=%s tau=%.2f lit_samples=%d partial_tips=%d worst_abs_err(tip=%.7f handoff=%.7f mask=%.7f level=%.7f flash=%.7f flash_tip=%.7f cloud_mask=%.7f cloud_factor=%.7f core_keep=%.7f) flashing=%d fronts=%d bad=%d" % [
-		case["name"], float(uniforms["ev_time"]), lit, partial_tip, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], worst[8], flashing, int(uniforms["eg_front_count"]), bad])
+	print("ECLIPSE_HUB_BEAM_SHADER_PARITY case=%s tau=%.2f lit_samples=%d partial_tips=%d worst_abs_err(tip=%.7f handoff=%.7f mask=%.7f level=%.7f flash=%.7f flash_tip=%.7f cloud_mask=%.7f cloud_factor=%.7f core_keep=%.7f orb_env=%.7f orb_fraction=%.7f orb_level=%.7f) flashing=%d orbs=%d fronts=%d bad=%d" % [
+		case["name"], float(uniforms["ev_time"]), lit, partial_tip, worst[0], worst[1], worst[2], worst[3], worst[4], worst[5], worst[6], worst[7], worst[8], worst[9], worst[10], worst[11], flashing, orbing, int(uniforms["eg_front_count"]), bad])
 	vp.queue_free()
 	if bad > 0:
 		_fail("case %s parity" % case["name"])
 		return -1
 	if case["name"] == "sustain_flash" and flashing < 100:
 		_fail("case sustain_flash has too few flashing samples (%d) to be meaningful" % flashing)
+		return -1
+	if case["name"] == "sustain_flash" and orbing < 100:
+		_fail("case sustain_flash has too few orb samples (%d) to be meaningful" % orbing)
 		return -1
 	return lit
 

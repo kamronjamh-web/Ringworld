@@ -14,7 +14,7 @@ using RingworldTechDemo.Voxel.Phase3;
 namespace RingworldTechDemo.Tools;
 
 /// <summary>
-/// Eclipse phase E4b (docs/eclipse-false-sun-spec.md E.2, G.5): the 595 spire-to-hub beams. Geometry (crown to hub endpoints, count,
+/// Eclipse phase E4b (docs/eclipse-false-sun-spec.md E.2, G.5): the 595 spire-to-hub beams. Geometry (beam origin to hub endpoints, count,
 /// tilt), the per-beam custom data, the floating-origin rebase (transforms only, no custom-data rewrite), zero per-frame MultiMesh writes in
 /// steady state, the CPU twin against the timeline, the far layer, the build window (nothing exists outside an eclipse) and the underground
 /// round trip of the new participants. Expectations come from the live registry, topology and timeline; no golden values.
@@ -73,8 +73,10 @@ public partial class EclipseHubBeamLayerTest : RefCounted
             CheckRebase(layer, topology, grid, failures);
             CheckSteadyState(layer, timeline, failures);
             CheckRefuel(layer, timeline, clock, failures);
+            CheckOrbs(layer, timeline, clock, topology, failures);
             CheckSettings(layer, failures);
             CheckFarLayer(layer, timeline, topology, fixture, failures);
+            CheckBeamOrigin(layer, topology, grid, failures);
             CheckUnderground(fixture, grid, topology, timeline, failures);
             CheckClouds(layer, timeline, topology, new EmitterSitePlacementSource(registry), grid, camera, fixture, failures);
             CheckUnbind(layer, failures);
@@ -152,6 +154,9 @@ public partial class EclipseHubBeamLayerTest : RefCounted
             if (table.SiteIndex[e] != topology.HubBeamSite(e + 1)) { failures.Add($"table entry {e} order differs from the beams"); break; }
         var (_, mainVertical, _) = topology.HubBeamCrown(0);
         var (_, regularVertical, _) = topology.HubBeamCrown(1);
+        // Tweaks T1: the main spire's relay node is its crown focus, like the regular spires.
+        Expect(failures, topology.MainRelayHeightM == EmitterSiteFrameMath.DefaultMainCrownHeightMeters && topology.RegularRelayHeightM == EmitterSiteFrameMath.DefaultCrownHeightMeters, "relay heights are not the crown foci");
+        Expect(failures, Math.Abs(topology.RelayNode(topology.Registry.MainIndex).Vertical - (topology.Registry.MainSite.PadHeight + EmitterSiteFrameMath.DefaultPadClearanceMeters + 3989d)) < 1e-6, "main relay node height");
         Expect(failures, mainVertical - topology.Registry.MainSite.PadHeight - EmitterSiteFrameMath.DefaultPadClearanceMeters - EmitterSiteFrameMath.DefaultMainCrownHeightMeters is > -1e-6 and < 1e-6, "main crown height");
         Expect(failures, regularVertical - topology.Registry[topology.HubBeamSite(1)].PadHeight - EmitterSiteFrameMath.DefaultPadClearanceMeters - EmitterSiteFrameMath.DefaultCrownHeightMeters is > -1e-6 and < 1e-6, "regular crown height");
     }
@@ -161,16 +166,20 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         Expect(failures, layer.IsBound && layer.BeamCount == 595 && !layer.Visible, $"bound {layer.IsBound} count {layer.BeamCount} visible {layer.Visible} (hidden until lit)");
         if (layer.Instances?.Multimesh is not { } beams) { failures.Add("missing multimesh"); return; }
         Expect(failures, beams.InstanceCount == 595 && beams.UseCustomData && beams.TransformFormat == MultiMesh.TransformFormatEnum.Transform3D, "multimesh shape");
-        Expect(failures, layer.RibbonVertexCount == EclipseHubBeamLayer.RibbonSubSegments * 4 && beams.Mesh is ArrayMesh { } mesh && mesh.GetSurfaceCount() == 1, "ribbon mesh shape");
+        Expect(failures, layer.RibbonVertexCount == EclipseHubBeamLayer.RibbonSubSegments * 4 + EclipseHubBeamLayer.OrbQuadVertices && beams.Mesh is ArrayMesh { } mesh && mesh.GetSurfaceCount() == 1, "ribbon mesh shape");
         if (beams.Mesh is ArrayMesh ribbon)
         {
             var arrays = ribbon.SurfaceGetArrays(0);
             var uv = (Vector2[])arrays[(int)Mesh.ArrayType.TexUV];
             var uv2 = (Vector2[])arrays[(int)Mesh.ArrayType.TexUV2];
             var index = (int[])arrays[(int)Mesh.ArrayType.Index];
-            Expect(failures, uv.Length == 64 && uv2.Length == 64 && index.Length == 96, "ribbon attribute lengths");
+            Expect(failures, uv.Length == 68 && uv2.Length == 68 && index.Length == 102, "ribbon attribute lengths (16 sub-segments and the orb quad)");
+            // The orb quad: UV2 = (-1, -1) marks it, UV holds the four corners, and its indices stay inside it.
+            for (int c = 0; c < 4 && uv2.Length == 68; c++)
+                if (uv2[64 + c] != new Vector2(-1f, -1f) || Math.Abs(uv[64 + c].X) != 1f || Math.Abs(uv[64 + c].Y) != 1f) failures.Add($"orb quad corner {c}");
+            Expect(failures, uv.Length == 68 && uv.Skip(64).Distinct().Count() == 4 && index.Skip(96).All(i => i >= 64 && i < 68), "orb quad corners / indices");
             float previous = 0f;
-            for (int s = 0; s < 16 && uv.Length == 64; s++)
+            for (int s = 0; s < 16 && uv.Length == 68; s++)
                 for (int c = 0; c < 4; c++)
                 {
                     Vector2 a = uv[s * 4 + c], b = uv2[s * 4 + c];
@@ -186,7 +195,8 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         Expect(failures, layer.BeamMaterial?.Shader?.ResourcePath == EclipseHubBeamLayer.BeamShaderPath && layer.CoreMaterial?.Shader?.ResourcePath == EclipseHubBeamLayer.CoreShaderPath, "shaders");
         Expect(failures, layer.BeamMaterial!.NextPass == layer.CoreMaterial, "beam NextPass is not the core by default");
         Expect(failures, layer.BeamMaterial.RenderPriority == EclipseHubBeamLayer.HaloRenderPriority && layer.CoreMaterial!.RenderPriority == EclipseHubBeamLayer.CoreRenderPriority
-            && layer.CoreMaterial.RenderPriority > layer.BeamMaterial.RenderPriority, "render priorities");
+            && layer.CoreMaterial.RenderPriority > layer.BeamMaterial.RenderPriority
+            && layer.BeamMaterial.RenderPriority > EmitterGridBeamLayer.NearWaterRenderPriority, "render priorities (halo above the near water, core above the halo)");
         Expect(failures, layer.Instances.Name == "HubBeams" && layer.Instances.MaterialOverride == layer.BeamMaterial && layer.Instances.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off, "instance setup");
         Expect(failures, layer.BeamMaterial.Shader!.GetMode() == Shader.Mode.Spatial, "shader mode");
     }
@@ -195,8 +205,9 @@ public partial class EclipseHubBeamLayerTest : RefCounted
     {
         RingLodGeometrySnapshot snapshot = grid.CaptureLodGeometrySnapshot();
         var crown = new Vector3D[topology.HubBeamCount];
-        topology.FillHubBeamEndpoints(snapshot, crown, out Vector3D hub);
+        topology.FillHubBeamEndpoints(snapshot, layer.Beams.BeamOrigin, crown, out Vector3D hub);
         var context = new EmitterSiteFrameContext(snapshot);
+        Expect(failures, layer.Beams.BeamOrigin == EmitterBeamOrigin.Base && layer.AppliedBeamOrigin == EmitterBeamOrigin.Base, "the default beam origin is not Base");
         double worstTip = 0, worstOrigin = 0, maxTilt = 0, minLength = double.MaxValue, maxLength = 0, mainTilt = 0;
         for (int i = 0; i < crown.Length; i++)
         {
@@ -206,7 +217,7 @@ public partial class EclipseHubBeamLayerTest : RefCounted
             var tip = new Vector3D(t.Origin.X + (double)t.Basis.X.X, t.Origin.Y + (double)t.Basis.X.Y, t.Origin.Z + (double)t.Basis.X.Z);
             worstTip = Math.Max(worstTip, (tip - hub).Length);
             // Tilt against the local up (the inward radial) from the independent Beam() implementation.
-            var (around, vertical, across) = topology.HubBeamCrown(i);
+            var (around, vertical, across) = topology.HubBeamOrigin(i, layer.Beams.BeamOrigin);
             EmitterBeamGeometry beam = context.Beam(around, across, vertical, 0d, topology.HubAcrossMeters);
             Vector3D span = hub - crown[i];
             Vector3D direction = span.Normalized();
@@ -228,9 +239,10 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         Console.WriteLine($"ECLIPSE_HUB_BEAM_LAYER tilt widest_site_offset_km={widest / 1000d:F3} bound_deg={boundTilt:F4}");
         Expect(failures, maxTilt <= boundTilt + 0.02d && maxTilt >= 1.4d, $"tilt {maxTilt:F4} deg outside the registry bound {boundTilt:F4}");
         Expect(failures, mainTilt < 0.01d, $"main spire tilt {mainTilt:E2} (it stands on the hub line)");
-        Expect(failures, minLength > 4_990_000d && maxLength < 5_000_500d, $"beam lengths {minLength / 1000d:F1}..{maxLength / 1000d:F1} km (about 4,998 km)");
+        // From the bore iris (200 m under the pad) the beam is about 5,000 km; from the crown it is 1.9 km (4.2 km for the main spire) shorter.
+        Expect(failures, minLength > 4_990_000d && maxLength < 5_003_000d, $"beam lengths {minLength / 1000d:F1}..{maxLength / 1000d:F1} km (about 5,000 km)");
         Expect(failures, (layer.HubWorld - hub).Length < 1e-6, "hub cache");
-        Expect(failures, Enumerable.Range(0, crown.Length).All(i => layer.GetWorldCrown(i) == crown[i]), "crown cache");
+        Expect(failures, Enumerable.Range(0, crown.Length).All(i => layer.GetWorldOrigin(i) == crown[i]), "origin cache");
         // The hub is the same point for every beam: the mean of (crown + span) over all beams.
         Expect(failures, layer.RebuildCount >= 1 && layer.TransformWriteCount == 595L * layer.RebuildCount, "transform write count");
     }
@@ -326,7 +338,7 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         layer.Rebuild(grid.CaptureLodGeometrySnapshot()); // warm-up
         Instance(layer, out ulong instanceId, out ulong multimeshId);
         Vector3 before = layer.GetBeamTransform(5).Origin;
-        Vector3D hubBefore = layer.HubWorld, crown5Before = layer.GetWorldCrown(5);
+        Vector3D hubBefore = layer.HubWorld, crown5Before = layer.GetWorldOrigin(5);
         int rebuilds = layer.RebuildCount, revision = layer.GeometryRevision, binds = layer.TimelineBindCount;
         long transforms = layer.TransformWriteCount, data = layer.CustomDataWriteCount;
         grid.SetFloatingOriginCanonicalAnchor(new RingCanonicalPosition(5_000_000d, 100d, 150_000d));
@@ -337,7 +349,7 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         Expect(failures, instanceId == instanceAfter && multimeshId == multimeshAfter, "a rebase rebuilt the multimesh");
         Expect(failures, layer.GetBeamTransform(5).Origin.DistanceTo(before) > 1000f, "anchor A did not move the origins");
         // The whole world frame shifts by one vector, so the hub-minus-crown vector (the beam) is invariant, and every tip still lands on the hub.
-        Vector3D shiftHub = layer.HubWorld - hubBefore, shiftCrown = layer.GetWorldCrown(5) - crown5Before;
+        Vector3D shiftHub = layer.HubWorld - hubBefore, shiftCrown = layer.GetWorldOrigin(5) - crown5Before;
         Expect(failures, (shiftHub - shiftCrown).Length < 1e-3, $"beam vector changed across the rebase ({(shiftHub - shiftCrown).Length})");
         double worstTip = 0;
         for (int i = 0; i < layer.BeamCount; i++)
@@ -410,7 +422,8 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         var beams = new EclipseBeamSettings
         {
             CoreWidthMeters = 100, HaloWidthMeters = 900, MainCoreWidthMeters = 250, MainHaloWidthMeters = 1800, MinPixelWidth = 2.5, FarCompensation = 0.3,
-            BaseEmission = 9, MainEmissionScale = 2, HaloAmplitude = 0.2, BaseFadeMeters = 800, DayVisibility = 0.4, CoreDepthThreshold = 0.5, CoreDepthMinPixels = 6, SoftTipFraction = 0.01, DepthWriteCore = false
+            BaseEmission = 9, MainEmissionScale = 2, HaloAmplitude = 0.2, BaseFadeMeters = 800, DayVisibility = 0.4, CoreDepthThreshold = 0.5, CoreDepthMinPixels = 6, SoftTipFraction = 0.01, DepthWriteCore = false,
+            CloseSoftenMeters = 120
         };
         layer.ApplyBeamSettings(beams);
         ShaderMaterial m = layer.BeamMaterial!;
@@ -419,14 +432,16 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         Expect(failures, Math.Abs((float)m.GetShaderParameter("base_emission") - 9f) < 1e-6f && Math.Abs((float)m.GetShaderParameter("halo_amplitude") - 0.2f) < 1e-6f
             && Math.Abs((float)m.GetShaderParameter("base_fade_meters") - 800f) < 1e-3f, "emission/halo/base fade");
         Expect(failures, ((Vector2)m.GetShaderParameter("ev_shape")).IsEqualApprox(new Vector2(0.01f, 0.4f)) && ((Vector2)m.GetShaderParameter("core_depth")).IsEqualApprox(new Vector2(0.5f, 6f)), "ev_shape/core_depth");
+        Expect(failures, Math.Abs((float)m.GetShaderParameter("close_soften_m") - 120f) < 1e-3f && Math.Abs((float)layer.CoreMaterial!.GetShaderParameter("close_soften_m") - 120f) < 1e-3f, "close-range softening uniform");
         Expect(failures, m.NextPass == null && layer.Uniforms.DayVisibility == 0.4f && layer.Uniforms.SoftTip == 0.01f, "depth core off / twin uniforms");
         // The core material follows the same values (it is the same parameter set).
         Expect(failures, ((Vector4)layer.CoreMaterial!.GetShaderParameter("beam_widths")).IsEqualApprox(new Vector4(100f, 900f, 2.5f, 0.3f)), "core material widths");
         layer.ApplyBeamSettings(beams with { DepthWriteCore = true });
         Expect(failures, m.NextPass == layer.CoreMaterial, "depth core on");
         // Clamped.
-        layer.ApplyBeamSettings(new EclipseBeamSettings { CoreWidthMeters = -4, BaseEmission = double.NaN, DayVisibility = 7 });
-        Expect(failures, layer.Beams.CoreWidthMeters == 10d && layer.Beams.BaseEmission == 12d && layer.Beams.DayVisibility == 1d, "beam settings not clamped");
+        layer.ApplyBeamSettings(new EclipseBeamSettings { CoreWidthMeters = -4, BaseEmission = double.NaN, DayVisibility = 7, CloseSoftenMeters = double.NaN, BeamOrigin = (EmitterBeamOrigin)9 });
+        Expect(failures, layer.Beams.CoreWidthMeters == 10d && layer.Beams.BaseEmission == 12d && layer.Beams.DayVisibility == 1d
+            && layer.Beams.CloseSoftenMeters == 1000d && layer.Beams.BeamOrigin == EmitterBeamOrigin.Base, "beam settings not clamped");
         layer.ApplyBeamSettings(new EclipseBeamSettings());
         // The look settings never rebuild the timeline.
         var engine = new EclipseEventEngine();
@@ -469,7 +484,8 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         for (int i = 0; i < 595; i++)
         {
             Transform3D t = far.GetBeamTransform(i);
-            Vector3 crown = ScaledPoint(topology.HubBeamCrown(i).Around, topology.HubBeamCrown(i).Vertical, topology.HubBeamCrown(i).Across);
+            var origin = topology.HubBeamOrigin(i, layer.Beams.BeamOrigin);
+            Vector3 crown = ScaledPoint(origin.Around, origin.Vertical, origin.Across);
             worstTip = Math.Max(worstTip, ((t.Origin + t.Basis.X)).Length());
             worstHub = Math.Max(worstHub, t.Origin.DistanceTo(crown));
         }
@@ -493,6 +509,84 @@ public partial class EclipseHubBeamLayerTest : RefCounted
         long farData = far.CustomDataWriteCount;
         layer.BindTimeline(timeline);
         Expect(failures, far.CustomDataWriteCount == farData + 595, "far custom data not rewritten on bind");
+    }
+
+    // ---------------------------------------------------------------- beam origin (tweaks T2)
+
+    static void CheckBeamOrigin(EclipseHubBeamLayer layer, EmitterGridTopology topology, VoxelChunkGridManager grid, List<string> failures)
+    {
+        // The pure anchor heights above the pad: the old crown (with the pad clearance), the bore iris 200 m under the pad, the reactor exhaust top.
+        double clearance = EmitterSiteFrameMath.DefaultPadClearanceMeters;
+        Expect(failures, EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind.Regular, EmitterBeamOrigin.Crown) == clearance + 1743d
+            && EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind.Main, EmitterBeamOrigin.Crown) == clearance + 3989d, "crown origin heights");
+        Expect(failures, EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind.Regular, EmitterBeamOrigin.Base) == -200d
+            && EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind.Main, EmitterBeamOrigin.Base) == -200d, "base origin heights");
+        Expect(failures, EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind.Regular, EmitterBeamOrigin.Reactor) == -2961d
+            && EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind.Main, EmitterBeamOrigin.Reactor) == -1922d, "reactor origin heights");
+        for (int b = 0; b < 2; b++)
+        {
+            EmitterSite site = topology.Registry[topology.HubBeamSite(b)];
+            Expect(failures, topology.HubBeamOrigin(b, EmitterBeamOrigin.Crown) == topology.HubBeamCrown(b), $"beam {b} crown origin is not HubBeamCrown");
+            Expect(failures, Math.Abs(topology.HubBeamOrigin(b, EmitterBeamOrigin.Base).Vertical - (site.PadHeight - 200d)) < 1e-9
+                && Math.Abs(topology.HubBeamOrigin(b, EmitterBeamOrigin.Reactor).Vertical - (site.PadHeight + (site.IsMain ? -1922d : -2961d))) < 1e-9, $"beam {b} origin verticals");
+        }
+
+        // Switching: only the 595 transforms are rebuilt (near and far), no custom data, no timeline bind, same multimesh.
+        EclipseHubFarLayer? far = layer.FarLayer;
+        Expect(failures, far != null, "origin check needs the far layer");
+        Instance(layer, out ulong instanceId, out ulong multimeshId);
+        EmitterBeamOrigin start = layer.Beams.BeamOrigin;
+        var distanceFromBase = new Dictionary<EmitterBeamOrigin, double[]>();
+        EmitterBeamOrigin[] modes = { EmitterBeamOrigin.Crown, EmitterBeamOrigin.Reactor, EmitterBeamOrigin.Base };
+        Func<double, double, double, Vector3> scaledPoint = ScaledPointFor(topology);
+        foreach (EmitterBeamOrigin mode in modes)
+        {
+            int rebuilds = layer.RebuildCount, binds = layer.TimelineBindCount;
+            long transforms = layer.TransformWriteCount, data = layer.CustomDataWriteCount, colors = layer.ColorWriteCount;
+            long farTransforms = far!.TransformWriteCount, farData = far.CustomDataWriteCount;
+            layer.ApplyBeamSettings(layer.Beams with { BeamOrigin = mode });
+            Expect(failures, layer.AppliedBeamOrigin == mode && layer.RebuildCount == rebuilds + 1 && layer.TransformWriteCount == transforms + 595, $"{mode}: switch did not rebuild the 595 transforms once");
+            Expect(failures, layer.CustomDataWriteCount == data && layer.TimelineBindCount == binds && layer.ColorWriteCount == colors, $"{mode}: switch wrote custom data, a timeline bind or colours");
+            Expect(failures, far.TransformWriteCount == farTransforms + 595 && far.CustomDataWriteCount == farData, $"{mode}: far layer writes {far.TransformWriteCount - farTransforms}/{far.CustomDataWriteCount - farData}");
+            Instance(layer, out ulong instanceAfter, out ulong multimeshAfter);
+            Expect(failures, instanceId == instanceAfter && multimeshId == multimeshAfter, $"{mode}: the switch rebuilt the multimesh");
+            // Endpoints: the origin is the mode's anchor on the spire axis, the tip is the hub, near and far.
+            RingLodGeometrySnapshot snapshot = grid.CaptureLodGeometrySnapshot();
+            var points = new Vector3D[topology.HubBeamCount];
+            topology.FillHubBeamEndpoints(snapshot, mode, points, out Vector3D hub);
+            double worstOrigin = 0, worstTip = 0, worstFarOrigin = 0, worstFarTip = 0;
+            for (int i = 0; i < points.Length; i++)
+            {
+                Transform3D t = layer.GetBeamTransform(i);
+                worstOrigin = Math.Max(worstOrigin, t.Origin.DistanceTo(points[i].ToVector3()));
+                var tip = new Vector3D(t.Origin.X + (double)t.Basis.X.X, t.Origin.Y + (double)t.Basis.X.Y, t.Origin.Z + (double)t.Basis.X.Z);
+                worstTip = Math.Max(worstTip, (tip - hub).Length);
+                Transform3D f = far.GetBeamTransform(i);
+                var o = topology.HubBeamOrigin(i, mode);
+                worstFarOrigin = Math.Max(worstFarOrigin, f.Origin.DistanceTo(scaledPoint(o.Around, o.Vertical, o.Across)));
+                worstFarTip = Math.Max(worstFarTip, (f.Origin + f.Basis.X).Length());
+            }
+            Expect(failures, worstOrigin <= 0.001 && worstTip <= 1d && worstFarOrigin < 1e-4 && worstFarTip < 1e-3, $"{mode}: endpoints origin {worstOrigin:E2} tip {worstTip:F3} far {worstFarOrigin:E2}/{worstFarTip:E2}");
+            Expect(failures, Enumerable.Range(0, points.Length).All(i => layer.GetWorldOrigin(i) == points[i]) && (layer.HubWorld - hub).Length < 1e-6, $"{mode}: origin cache");
+            // The anchor is on the spire axis: its distance from the crown is the height difference (independent of the topology code path).
+            var crowns = new Vector3D[topology.HubBeamCount];
+            topology.FillHubBeamEndpoints(snapshot, EmitterBeamOrigin.Crown, crowns, out _);
+            var d = new double[2];
+            for (int b = 0; b < 2; b++) d[b] = (crowns[b] - points[b]).Length;
+            distanceFromBase[mode] = d;
+            double expectRegular = mode switch { EmitterBeamOrigin.Crown => 0d, EmitterBeamOrigin.Base => 1743.05 + 200d, _ => 1743.05 + 2961d };
+            double expectMain = mode switch { EmitterBeamOrigin.Crown => 0d, EmitterBeamOrigin.Base => 3989.05 + 200d, _ => 3989.05 + 1922d };
+            Expect(failures, Math.Abs(d[0] - expectMain) < 0.01 && Math.Abs(d[1] - expectRegular) < 0.01, $"{mode}: crown to origin {d[0]:F3} / {d[1]:F3}, expected {expectMain:F3} / {expectRegular:F3}");
+            Console.WriteLine($"ECLIPSE_HUB_BEAM_LAYER origin {mode} crown_to_origin_m main={d[0]:F2} regular={d[1]:F2} worst_origin_m={worstOrigin:E2} worst_tip_m={worstTip:F3} far_tip_scaled={worstFarTip:E2}");
+        }
+        // The same setting again, and a look change, rebuild nothing.
+        int again = layer.RebuildCount;
+        layer.ApplyBeamSettings(layer.Beams with { BeamOrigin = layer.Beams.BeamOrigin });
+        layer.ApplyBeamSettings(layer.Beams with { BaseEmission = 11d });
+        layer.ApplyBeamSettings(layer.Beams with { BaseEmission = 12d });
+        Expect(failures, layer.RebuildCount == again, "an unchanged origin or a look change rebuilt the transforms");
+        layer.ApplyBeamSettings(layer.Beams with { BeamOrigin = start });
+        Expect(failures, layer.AppliedBeamOrigin == start, "origin not restored");
     }
 
     // ---------------------------------------------------------------- underground round trip

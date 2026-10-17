@@ -74,9 +74,9 @@ Every link is a straight chord between the **relay nodes** of two sites in adjac
 - The row successor is `(r+1) mod 100`, and the link from row 99 to row 0 is an ordinary chain link (unless one of them is the main row).
 - The only parameter that must be wrap-aware is the pulse coordinate p (§G3), which is built with `signedWrap`.
 
-**Relay node height.** The default is `RegularRelayHeightM = 1743` (the `BeamCrownFocus` marker), so relay beams leave the crown. There is technical verification T1 for the main spire:
-- `MainRelayHeightM` is a constant, default **1,743 m**. This keeps the six chains level through the knot; 3,989 would tilt the knot links by 0.4°, which is visually indistinguishable but would put them through the main crown structure.
-- Confirm against the main spire's connector rings, which were added to its far proxy in M1.
+**Relay node height.** The default is `RegularRelayHeightM = 1743` (the `BeamCrownFocus` marker), so relay beams leave the crown. T1 for the main spire is resolved (tweaks T1, user decision 2026-10-17):
+- `MainRelayHeightM` is a constant, default **3,989 m** (`EmitterSiteFrameMath.DefaultMainCrownHeightMeters`, the main `BeamCrownFocus`, the centre of the open outer crown ring), the same rule as the regular spires. The earlier 1,743 m placeholder put the 12 knot links at 44 % of the 4 km spire, between its 1,550 and 2,050 m connector rings.
+- The knot links tilt by 0.38-0.41° (Δh = 2,246 m over 315-341 km), which is invisible at the knot. The 588 chain links are unchanged. `Identity` changes (it hashes the relay heights). Mid-span altitude of a knot link rises by Δh / 2 = 1,123 m, still inside the 2-6 km deck.
 - Later assets add `RelayNode` (regular) and `RelayNode_0..5` (main) Marker3Ds. `EmitterPoiMarkers.TryParse` gains optional relay markers and falls back to the constants when they are absent.
 
 **Data (pure, new file `scripts/Terrain/Sites/EmitterGridTopology.cs`, namespace `RingworldTechDemo.Terrain.Sites`):**
@@ -86,7 +86,7 @@ readonly record struct EmitterLink(int Index, int FromSite, int ToSite, int Colu
                                    double P0, double P1, double FromRelayHeightM, double ToRelayHeightM);
 enum EmitterLinkKind : byte { Chain, KnotOut, KnotIn }
 sealed class EmitterGridTopology {
-  static EmitterGridTopology Build(EmitterSiteRegistry r, double regularRelayM = 1743, double mainRelayM = 1743);
+  static EmitterGridTopology Build(EmitterSiteRegistry r, double regularRelayM = 1743, double mainRelayM = 3989);
   int LinkCount; ulong Identity;            // FNV(registry.Identity, TopologyVersion=1, relay heights)
   ReadOnlySpan<EmitterLink> Links;
   int LinkOut(int site, int column);       // O(1) arrays; -1 when absent
@@ -737,7 +737,7 @@ Two resource and defaults pairs follow the `GameplayEmitterSiteSettings`/`Defaul
 
 ## T. Technical verifications (not user decisions)
 
-1. **T1.** Main spire relay height and knot attachment against the main spire asset's connector rings. Default 1,743 m.
+1. **T1.** Main spire relay height and knot attachment against the main spire asset's connector rings. **Resolved (tweaks T1): 3,989 m, the crown focus.**
 2. **T2.** Depth-writing beam core in the transparent pass. Confirm that Sunshine's resolved depth includes it (precedent: ocean), and that a 1-3 px moving hole leaves no temporal-history trails. If it fails, set `DepthWriteCore` off.
 3. **T3.** Sunshine `tracked_point_lights` cost and moving-light history artefacts. Gate: ≤ 0.5 ms on A1000.
 4. **T4.** Near-field rim-wall presentation within 0-5 km of the wall (global LOD edge walls near the player, Terrain3D at across ≈ 0). The machine near mesh must hide any gap.
@@ -838,7 +838,7 @@ No user questions are open. The lead defaults below stand unless the user overri
 - Pulse direction prograde (a setting); the six chains in sync (stagger 0).
 - Trail 2.5 s, wake 10 s at 0.05, leading edge 3 km.
 - Head sprite only beyond 300-600 km.
-- Relay height 1,743 m on both kinds.
+- Relay height 1,743 m regular, 3,989 m main (the crown focus of each kind).
 - Weather clock for pulses.
 - Lightning crawl on; pulse-triggered strikes off.
 - Cloud interaction tiers 1+2 on, tier 3 off.

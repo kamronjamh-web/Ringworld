@@ -9,7 +9,7 @@ namespace RingworldTechDemo.Celestial.Eclipse;
 /// <summary>
 /// Eclipse spire to hub beams, far layer (docs/eclipse-false-sun-spec.md E.2, phase E4b): the same 595 ribbons as
 /// <see cref="EclipseHubBeamLayer"/> placed once in the absolute scaled far world (ring axis = Y, ring centre and hub at the origin), from
-/// <c>ScaledPoint(crown)</c> to the origin. The scaled space never rebases, so the transforms are built once; the layer lives in the far
+/// <c>ScaledPoint(beam origin)</c> to the origin. The scaled space never rebases, so the transforms are built once; the layer lives in the far
 /// viewport and is drawn under the far cloud layers. Its material is driven by the near layer, which owns the settings and the event time.
 /// </summary>
 public partial class EclipseHubFarLayer : Node3D
@@ -21,7 +21,8 @@ public partial class EclipseHubFarLayer : Node3D
     private EmitterGridTopology? _topology;
     private MultiMeshInstance3D? _instances;
     private ShaderMaterial? _beamMaterial;
-    private Vector3[] _crown = Array.Empty<Vector3>();
+    private Vector3[] _crown = Array.Empty<Vector3>(); // scaled beam origins (named for the crown they were before the beam origin setting)
+    private EmitterBeamOrigin _origin = EmitterBeamOrigin.Crown;
     private Transform3D[] _mirror = Array.Empty<Transform3D>();
     private float _coordinateScale = 0.001f;
 
@@ -35,7 +36,8 @@ public partial class EclipseHubFarLayer : Node3D
     public long CustomDataWriteCount { get; private set; }
 
     /// <summary>Builds the beam MultiMesh in scaled space. False when the shader is missing.</summary>
-    public bool Build(EmitterGridTopology topology, Func<double, double, double, Vector3> scaledPoint, float coordinateScale, double ringRadiusMeters)
+    public bool Build(EmitterGridTopology topology, Func<double, double, double, Vector3> scaledPoint, float coordinateScale, double ringRadiusMeters,
+        EmitterBeamOrigin origin = EmitterBeamOrigin.Crown)
     {
         if (IsBuilt) return true;
         Shader? shader = GD.Load<Shader>(BeamShaderPath);
@@ -43,6 +45,7 @@ public partial class EclipseHubFarLayer : Node3D
         // The far viewport sits outside the gameplay root that disables physics interpolation.
         PhysicsInterpolationMode = PhysicsInterpolationModeEnum.Off;
         _topology = topology;
+        _origin = origin;
         _coordinateScale = coordinateScale;
         int count = topology.HubBeamCount;
         _crown = new Vector3[count];
@@ -58,7 +61,7 @@ public partial class EclipseHubFarLayer : Node3D
         multiMesh.VisibleInstanceCount = count;
         for (int i = 0; i < count; i++)
         {
-            var (around, vertical, across) = topology.HubBeamCrown(i);
+            var (around, vertical, across) = topology.HubBeamOrigin(i, origin);
             Vector3 crown = scaledPoint(around, vertical, across);
             _crown[i] = crown;
             // The hub is the scaled-world origin (spec E.1), so the beam vector is simply -crown.
@@ -83,6 +86,23 @@ public partial class EclipseHubFarLayer : Node3D
         return true;
     }
 
+    /// <summary>Moves every beam origin to <paramref name="origin"/> (the scaled space never rebases, so only the beam origin setting calls this): 595 transform writes.</summary>
+    public void SetOrigin(EmitterBeamOrigin origin, Func<double, double, double, Vector3> scaledPoint)
+    {
+        if (_topology == null || _instances?.Multimesh is not { } beams || origin == _origin) return;
+        _origin = origin;
+        for (int i = 0; i < _crown.Length; i++)
+        {
+            var (around, vertical, across) = _topology.HubBeamOrigin(i, origin);
+            Vector3 point = scaledPoint(around, vertical, across);
+            _crown[i] = point;
+            var transform = new Transform3D(new Basis(-point, Vector3.Up, Vector3.Back), point);
+            _mirror[i] = transform;
+            beams.SetInstanceTransform(i, transform);
+        }
+        TransformWriteCount += _crown.Length;
+    }
+
     /// <summary>Writes the per-beam custom data (once per timeline; the near layer owns the array).</summary>
     public void WriteCustomData(Color[] custom)
     {
@@ -93,6 +113,6 @@ public partial class EclipseHubFarLayer : Node3D
     }
 
     public Vector3 GetScaledCrown(int beam) => _crown[beam];
-    /// <summary>Scaled-space transform written for the beam (CPU mirror): origin = crown, basis X = origin - crown.</summary>
+    /// <summary>Scaled-space transform written for the beam (CPU mirror): origin = the beam origin, basis X = scaled origin - beam origin.</summary>
     public Transform3D GetBeamTransform(int beam) => beam >= 0 && beam < _mirror.Length ? _mirror[beam] : Transform3D.Identity;
 }

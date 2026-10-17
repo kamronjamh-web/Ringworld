@@ -1118,3 +1118,239 @@ Not measured: GPU time (no timings were taken). CPU: 595 zero COLOR writes at th
 - **Fix 3, stand-in crown glow mirror after a rebind.** `EmitterStandInLayer` reallocates `_crownGlow` on `Bind`. It now exposes `BindRevision`. `EclipseHubBeamLayer` resyncs (`_glowLastTau = NaN`, `_glowWritten` cleared, emission re-applied) when the revision changes or when it resolves a different stand-in layer node. Steady frames still write nothing.
 - **Design note.** During ignition the plateau keeps the grid depth core on along the lit chains within 700 km. That is intended: the chains stay energised and drawn with their core until the hand-off fade.
 - **Tests.** `EmitterGridLayerEventTest.cs`: slew continuity at both edges, speed bounds, snap on a jump, the knot flare CPU twin and the layer's `eg_flare` uniform at weight 0 and 1 (the existing override check now expects the override time after one period instead of an instant switch). `EclipseHubBeamCloudTest.cs`: a stand-in rebind mid-event restores the glow on the next update and steady frames write 0.
+
+### USER DECISIONS (2026-10-17, tweaks) — binding
+1. **Sustain refuel pulses are orbs only.** Each refuel pulse is an orb travelling from the spire base to the hub in about 30 s. No lit beam follows it or stays behind it.
+
+### Tweaks plan (Lead, 2026-10-17)
+
+Base: 17e50ea (main). Five user requests: the main spire relay height, Sustain orbs, water drawn over the beams, beams from the spire base, and beams lighting clouds. Request 3 is fixed in the working tree (T0 below). The rest is planned here. Evidence frames are in the lead scratchpad under `tweaks\` (`water1`, `water2`, `cloud2`), shot at 1600x900 on the RTX 4070 alongside the idle editor (image tests only, no GPU timing). The scripts are `tweaks\water_diag.gd` and `tweaks\cloud_proto.gd`; both extend `tools/eclipse_hub_capture.gd`.
+
+#### R1. Main spire relay height (root cause)
+
+**What happens.** `EmitterGridTopology.DefaultMainRelayHeightM = 1743` (`scripts/Terrain/Sites/EmitterGridTopology.cs:28`) is the regular crown height, and it is also used for the main site (`:64`). It is a placeholder that grid spec §G1 T1 left open ("confirm against the main connector rings"), and it was never revisited.
+
+**Main spire geometry.**
+- Tips at 4,000 m.
+- Inner tower crown at 3,600 m (`prototypes/Ringworld_Main_Spire_4km_Outer_Ring/README.md:8`).
+- Six outer connector rings at 550, 1,050, 1,550, 2,050, 2,550 and 3,050 m (`README.md:10`).
+- `BeamCrownFocus` at 3,989 m, the centre of the open outer crown ring (`assets/poi/main_spire/MainSpirePOI.tscn:2305-2306`, `EmitterSiteFrameMath.DefaultMainCrownHeightMeters`, `EmitterSiteRecipe.MainCrownHeightM`).
+
+So the 12 knot links leave the main spire at 44 % of its height, between the 1,550 and 2,050 m rings. On a regular spire the same constant sits at 97 % of the height (its crown focus, 1,743 of 1,800 m).
+
+**Design.** Apply the same rule as the regular spires: the relay node is the crown focus, so `DefaultMainRelayHeightM = EmitterSiteFrameMath.DefaultMainCrownHeightMeters` (3,989). The alternative anchor is the top connector ring at 3,050 m (user question 1).
+
+**Consequences** (Δh = 2,246 m against the regular relay):
+- **Knot link slope:** 0.41° / 0.40° / 0.38° for the 315.3 / 324.1 / 341.0 km links. This is invisible at the knot. Only the 12 knot links change; the 588 chain links are untouched.
+- **Mid-span height:** rises by Δh/2 = 1,123 m. The sagitta itself stays at d²/8R (2,484 / 2,625 / 2,905 m). For sea-level pads the knot mid-span altitude goes from 4.2-4.7 km to 5.3-5.8 km: still inside the 2-6 km deck, near its top.
+- **Unchanged:** the pulse coordinate p, the link order and the CPU pulse golden (`legacy_golden` uses only p).
+- **Changed:** `Identity` changes, because the hash mixes the relay heights (`:113-114`).
+- **Far layer and head sprites:** they take the relay node from the topology, so they follow automatically.
+- **Visual:** the links leave the bore axis at the crown ring and cross the ring's annulus. The depth test hides the few metres inside solid geometry, as at the regular crowns.
+
+#### R2. Sustain refuel orbs (design)
+
+**Today.**
+- `ehb_refuel` (`materials/ring_eclipse_hub_beam_math.gdshaderinc:90-116`) takes the latest normal grid front on the column that has passed the spire's q: `age = (head - q)/v`.
+- It returns the `Timeline.RefuelFlash` envelope and a bolt tip `age / FlashClimb` (0.5 s for 5,000 km).
+- `ehb_level_refuel` relights the regular beam below the tip, and the vertex stage keeps those sub-segments (`ring_eclipse_hub_beam_common.gdshaderinc:67-69`).
+- The CPU twins are `EclipseHubBeamMath.RefuelFlash` and `EclipseEventTimeline.RefuelFlash` (`EclipseEventTimeline.cs:276-290`).
+- The hub heartbeat kicks when a row's front **passes** the spire: `exp(-max(0, age - FlashClimb)/HeartbeatTau)` (`EclipseEventTimeline.cs:418-443`).
+
+**Between orbs (coordinator question).** The regular beam has no post-handoff residual today. `ehb_handoff` falls to exactly 0 after `TauHandoff + HandoffFade` (`ring_eclipse_hub_beam_math.gdshaderinc:45-50`), and `ehb_lit` then collapses the whole ribbon (`:67-70`). The beam is therefore already fully dark between flashes. The only residual glow is off the beam:
+- the stand-in crown ember 0.3 (`EclipseHubBeamLayer.CrownGlowEmberRegular`, drawn only beyond the POI handoff);
+- the plug light, which returns to 1×.
+
+**Recommendation:**
+- Keep the beam fully dark between orbs, as the binding decision requires.
+- Keep the stand-in ember.
+- Turn the bore light boost into a short **launch kick**: the existing age envelope (rise `FlashClimb`, hold, fade) measured from the pass, no longer tied to a bolt.
+
+**Orb design** (GPU only; no per-frame per-beam CPU writes, as in E4b):
+- **Geometry.** Append one camera-facing quad (4 vertices) to the ribbon mesh in `EclipseHubBeamLayer.BuildRibbonMesh`, marked by `UV2 = (-1, -1)`. The same MultiMesh therefore carries it, with the same instance data and no extra draw call, in the near layer, the depth core and the far layer. The far layer shares the mesh, so the 594 orbs also climb the arch starburst.
+- **Vertex stage.**
+  - Orb vertices call `ehb_orb(fire_tau, kind, p_site, column) -> vec2(envelope, f_orb)` and place the quad at `origin + span * f_orb`.
+  - The radius is `max(OrbRadiusMeters, OrbMinPixelRadius * meters_per_pixel)`; the intensity is energy-conserving when the pixel minimum clamps, as in `ribbon_profile`.
+  - Layer weights (`eg_near_fade`, `eg_band_weight`) and the atmosphere are taken at the orb centre. The quad collapses when the envelope is 0, out of range, or behind the near plane.
+  - Ribbon vertices drop the bolt relight: `ehb_level_refuel` and `ehb_lit_refuel` revert to `ehb_level` and `ehb_lit` for the beam body. This is the binding decision: no lit beam.
+- **Fragment.** A radial profile: a white Gaussian core plus a teal exponential halo, the same colour rule as the beam. The core pass writes the orb's depth footprint (`ribbon_depth_core_covers` with the radial distance), so clouds behind an orb do not dim it (the T2 lesson).
+- **Motion.** `f_orb = clamp(age_launch / OrbTravelSeconds, 0, 1)^OrbEaseExponent`.
+  - With exponent 1 the orb moves at a constant 167 km/s, crosses a 6 km deck in 0.04 s, and is a streak near the spire.
+  - With the recommended exponent 3 (user question 2), it lifts off over about 3 s (6 km at t = 3.2 s), then rushes to the hub. At t = 10 / 20 / 30 s it is at 185 / 1,480 / 5,000 km.
+- **Envelope.** It rises over `FlashClimbSeconds` (0.5 s) at the launch, holds while travelling, holds `FlashHoldSeconds` at the hub, then fades over `FlashFadeSeconds`. About 64 orbs are in flight at once: six per 3 s row, about 32 s each.
+- **Fronts.**
+  - With T = 30 s an orb lives up to 31.8 s after its front passes. `GetFronts` drops a front once `head - C > CutoffMeters` (4,189 km at the defaults; `EmitterGridPulseClock.cs:77,128`), so orbs of the last rows would vanish once T exceeds about 38 s.
+  - `UpdateRefuelFronts` (`EclipseHubBeamLayer.cs:427-456`) must therefore enumerate the two latest launches per column without the cutoff (a new `EmitterGridPulseClock.GetFrontsWithin(t, column, maxBehindMeters, span)`). That is at most 12 lanes, within the 24.
+  - The publish window becomes `[TauSustain, TauInstability + T + hold + fade + 1)`; `FlashTailSeconds` gains T.
+- **Arrival and the heartbeat.**
+  - `HeartbeatAt` shifts to arrival: per column, take the latest site with `age >= T_arr`, where `T_arr = T` is the travel time to f = 1 (the ease does not change the arrival time), and kick `exp(-(age - T_arr)/HeartbeatTau)`. There is no kick before arrival.
+  - When `head - v T_arr < qs[0]`, the previous launch's front supplies the site.
+  - The relaunch kick and `EclipseEventStream.RefuelFlash` stay at the pass, so the spire launch stays the audio and PDA cue.
+  - The hub therefore pulses about 30 s after a row launches, still every 3 s, and still six in sync.
+- **Timeline and parity.**
+  - New pure functions `EclipseEventTimeline.RefuelOrb(entry, tau, grid) -> (envelope, f)` and the twin `EclipseHubBeamMath.Orb`. They replace `RefuelFlash` and its `Tip`. `RefuelFlash` stays as the launch-kick envelope for the bore light and `CrownLevel`.
+  - The uniforms grow by `ev_orb = (travel s, ease exponent, radius m, min px)` and an orb emission factor.
+  - `LitBeamCount` stops counting flash-relit beams; the status line gains "orbs in flight n".
+- **Settings** (persisted; grave-key section "Eclipse event: beams and hub"):
+  - Timeline group: `OrbTravelSeconds` 30 (5-60). A change rebuilds the timeline because it moves the heartbeat.
+  - Look group: `OrbEaseExponent` 3 (1-4), `OrbRadiusMeters` 350, `OrbHaloMeters` 1,500, `OrbMinPixelRadius` 2.5, `OrbEmission` 16.
+  - The labels of `FlashClimbSeconds`, `FlashHoldSeconds` and `FlashFadeSeconds` become "Orb launch fade-in", "Orb hold at hub" and "Orb fade at hub".
+  - An older save keeps its 0.5 / 0.6 / 1.2 s and gains T = 30.
+
+#### R3. Water drawn over the beams (root cause, fixed)
+
+**Root cause: transparent sorting.**
+- The near ocean (`materials/ring_ocean_proxy.gdshader:2`) is `blend_mix`, `depth_draw_always`, and `ALPHA = 0.995` (`:583`). It refracts the opaque screen copy.
+- Its material keeps render priority 0 (`RingTerrainProxySector.cs:5553-5590`).
+- The near hub beam halo and the grid halo and head sprites were also at priority 0, with the cores at 1 (`EclipseHubBeamLayer.cs:34`, `EmitterGridBeamLayer.cs:34`).
+- Godot sorts the transparent list by priority, then by instance depth. A 595-beam MultiMesh with a ±10,000 km custom AABB therefore lands before or after a water sector depending on the camera.
+- When the beam is drawn first, the 99.5 %-opaque water paints over the additive halo wherever water lies behind the beam, and over the core everywhere except the depth-written core strip.
+- The global ocean is opaque (`ring_ocean_global.gdshader:5`) and the far viewport is a separate backdrop, so neither is involved.
+
+**Reproduction** (`water1`, island site 488, Far viewpoint 5 km, beam complete at fire + 12 s, grid `ShowAllLinks`):
+- From 4.3 km up (`w_up4000_A_shipped.png`), the beam halo stops at every shoreline and shows only over land.
+- With the beams raised above the water (`w_up4000_B_raised.png`), the halo runs continuously over the sea.
+- Mean luma: 0.2652 shipped against 0.2736 raised. The other three poses had no water behind the beam and are unchanged.
+
+**Fix (T0, applied).**
+- `EmitterGridBeamLayer.NearWaterRenderPriority = 0` documents the water's priority.
+- In `EmitterGridBeamLayer` and `EclipseHubBeamLayer`: halo and heads = `NearWaterRenderPriority + 1` (1), core = halo + 1 (2). The hub layer now references the grid constants.
+- `EmitterGridLayerTest` and `EclipseHubBeamLayerTest` assert halo > water and core > halo.
+- The water writes depth, so a beam below the surface stays hidden. Blending order against other additive passes does not matter. Far layers (5) and the hub body (20) are unchanged.
+
+**After** (`water2`, same poses): shipped equals raised in every pose (`w_up4000`: 0.27359 / 0.27359). `emitter_grid_layer_test` and `eclipse_hub_beam_layer_test` PASS.
+
+#### R4. Hub beams from the spire base (design)
+
+**Today.** The origin is the crown: `_hubBeamVertical = pad + clearance + 1,743 / 3,989` (`EmitterGridTopology.cs:106-107`). It is read by:
+- `FillHubBeamEndpoints` (`:192-202`);
+- `EclipseHubFarLayer` (`:61`);
+- the cloud encoding (`EclipseHubBeamLayer.cs:541`, deck altitudes relative to the crown);
+- the tests.
+
+**Single swappable anchor.**
+- Add `enum EmitterBeamOrigin : byte { Crown = 0, Base = 1, Reactor = 2 }`.
+- Add one pure function, `EmitterSiteFrameMath.BeamOriginHeightMeters(SiteKind, EmitterBeamOrigin)`, measured from the pad:
+  - Crown = 1,743 / 3,989;
+  - **Base = -200 m**, the bore iris (`EmitterSiteApertures.PlugDepthM`; user question 3: the alternative is the pad surface, +0.05 m);
+  - Reactor = `EmitterSiteUnderground.Shape(kind).ExhaustTopYM` (-2,961 / -1,922, the reactor exhaust the shaft rises from).
+- The topology takes the origin as an argument: `HubBeamOrigin(beam, origin)` and `FillHubBeamEndpoints(snapshot, origin, Span<Vector3D>, out hub)`. The topology stays immutable and shared with the grid, and `HubBeamCrown` remains for the crown glow.
+- Setting: `BeamOrigin` (persisted int, default Base) in `EclipseBeamSettings`, with a drawer option. Reactor is listed as a preview until M2-4 places the reactors.
+- A change is a beam-only change. It calls `Rebuild` (595 transforms) and re-encodes the queried cloud data relative to the new origin, with no timeline rebuild. The future switch to the reactor is therefore a default change, not code.
+
+**Visual consequences:**
+- **Bore and spire.**
+  - The 150 / 300 m core (Gaussian sigma 75 / 150 m) runs up the clear R 75 / R 150 bore.
+  - The camera-facing ribbon is depth-tested, so the arms in front of the axis occlude it, and the halo glows through the lattice gaps (the spire reads energised).
+  - Below the ground the liner and the terrain hide the first 200 m from the side; from above, the beam rises out of the teal iris.
+- **Base fade.** `BeamBaseFadeMeters` (400 m) now starts 200 m under the pad, so the halo is about 0 at the rim and full about 200 m up. Retune it if the rim looks hard.
+- **Depth core.** It now writes depth from ground level up. That is harmless: it is zero colour and only where the core is bright.
+- **Near plane and close range.** A player at the bore rim is 75 m from a 12× emission core. The existing near clip handles the geometry, but expect a white-out. A close-camera softening (core gain fades in over the first ~300 m of view distance) is a tuning item in T2, judged at the spire's entry viewpoint.
+- **Length and tilt.** Length grows by 1.94 km (regular) and 4.19 km (main), to about 4,997-5,002 km. Tilt changes by under 0.001°.
+- **Hub-off parity.** Unaffected: no beam object exists outside the prebuild window.
+- **Underground.** Reactor mode puts the beam in the cavern, but `EclipseHubBeamsParticipant` hides the beams underground. M2-6 must revisit that before Reactor becomes the default.
+
+#### R5. Beams lighting clouds (options, prototype, recommendation)
+
+**How Sunshine takes light today.**
+- Directional lights: `StarLight`, with an 8-step shadow march per in-cloud step.
+- Up to 128 point lights (`PointLight {position.xyz, radius; color.rgb, intensity}`, `CloudsInc.comp:369`), uploaded through a 6 KB uniform buffer only when a tracked `OmniLight3D` changes (`SunshineCloudsDriver.gd:134-139, 237-242`; `SunshineClouds.gd:1782, 2474`). The scene tracks exactly one: `LocalWeatherEffects/LocalStormFlash` (the lightning glow slot, `VoxelRingIntegrationTest.tscn:613`).
+- Per in-cloud step and per light within its radius, the raymarch runs `sampleLighting(3, …)` (3 density evaluations), Henyey-Greenstein and Beer (`SunshineCloudsCompute.glsl:1232-1251`).
+- With `lightning_history_isolation_enabled` the light goes into `transientLightColor`, which bypasses the temporal history.
+
+**Prototype** (`cloud2`; nearest regular spire, 5 km Far viewpoint, spawned storm front, dark hub, fixed exposure). OmniLights with `light_cull_mask = 0` (Sunshine-only) were placed along the beam's in-deck span (-1.3 … +7.2 km above the crown, k = 0.94) and added to `tracked_point_lights`.
+- **Storm 12 km ahead (behind the spire)**, mean luma (top half in brackets):
+  - beams off: 0.0948 (0.0950);
+  - shipped beam: 0.0971 (0.0996);
+  - + 3 lights, r 3.5 km, energy 18: 0.1390 (0.1833);
+  - + 12 lights, r 2 km, energy 10: 0.1097 (0.1247);
+  - + 12 lights, r 3 km, energy 24: 0.1486 (0.2026).
+  - The cloud bank around the beam lights up from inside (`c_d12_beam_pt3.png`, `c_d12_beam_pt12_strong.png`).
+  - On the transient path it is grainy. With the history path (isolation off, `c_d12_beam_pt12_strong_history.png`) it is smooth: the strongest look of the set.
+- **Storm 6.5 km ahead (around the spire).** The shipped beam is hidden (0.0944 against 0.0938 off, `c_d6_beam.png`). The point lights light the fog around it (0.1037 / 0.1075, `c_d6_beam_pt12_strong.png`), so the beam reads as a glow through the storm.
+- **Shape.** The radius-bounded lights give an elliptical blob with a soft but visible outer bound; they do not give a line.
+
+| Option | Look | GPU cost (RTX A1000, estimate; measure in T5) | CPU | Work | Verdict |
+|---|---|---|---|---|---|
+| **A. Stock Sunshine point lights**, a chain of 3-12 per near beam | Proven above. Volumetric and occluded correctly by cloud in front. Lumpy blob, not a line. Grainy unless on the history path | Each light in range adds 3 density evaluations per in-cloud step. The step already pays about 10 (1 density + 8 sun shadow + ambient), so about +30 % per overlapping light inside its radius. Raymarch about 10.6 ms (`perf-ranking-2026-10-15.md:38`): 3 lights about +0.5-1.5 ms, 12 overlapping about +3-5 ms in a view filled by the glow | OmniLight nodes, 6 KB upload on change | Small | Too expensive for a line, and the wrong shape |
+| **B. Segment line lights in the Sunshine raymarch** (recommended) | The look of A-dense on the history path, but continuous along the beam with no radius blob. Analytic line irradiance `(atan((L - t)/d) + atan(t/d))/d` × HG × Beer on the local density. Occluded by cloud in front through Sunshine's own accumulation. Steady lights go to the history path; moving ones (grid heads, orbs in the deck) to the transient path | Per in-cloud step: up to 8 segments × about 10 ALU for the closest-point reject (about +1 % of the raymarch, about 0.1 ms), plus about 40 ALU per in-range segment (about 1/5 of one density evaluation), plus an optional 1-tap shadow. Beams are 50+ km apart, so 1-2 segments are in range at a sample. **About +0.1-0.3 ms** | ≤ 8 segments per frame, written only on change | Medium: addon shader, encoder and a feeder | **Recommended** |
+| **C. Post-cloud screen-space glow** (a compositor pass after Sunshine, masked by Sunshine's alpha and density distance) | Glow painted onto the cloud image near the projected beam. Clouds in front are over-lit (no in-cloud transmittance). Sharp beam-to-cloud edges at silhouettes | About 0.1-0.2 ms at full resolution (8 segments analytic per pixel) | Same feeder | High: a new RD raster/compute pass, and access to SunshineClouds' internal RIDs | Fallback only |
+| **D. G5 far-cloud glow slot** (`far_pulse_glow`, spec E.6) | Far clouds (beyond about 72 km) only | About 0 | Trivial | Small, but G5 has not landed | Complement to B, later |
+| **E. Wider depth core in cloud** (a bright cavity) | Reveals the halo through clouds behind; does not light the cloud | 0 | 0 | Small | Does not answer the request |
+
+**Recommendation: B, then D for far clouds.** Prototype A shows the target look and that Sunshine's integration (occlusion, phase, Beer) is right. B gets that look along a line at a fraction of A's cost.
+- **Encoding.** A segment takes two `PointLight` slots: `(A.xyz, -radius)(color, intensity)` then `(B.xyz, flags)(0)`. The negative radius is the marker; flags bit 0 is steady (history path). The buffer layout and the existing point-light path stay unchanged.
+- **Zero-segment parity.** With zero segments the loop is identical, so the parity gate is bit or noise parity against HEAD.
+- **Feeder.** Each frame picks ≤ 8 segments, nearest first, within the Sunshine near reach (about 72-80 km):
+  - lit hub beams: the CPU twin level at the origin, clipped to Sunshine's cloud floor and ceiling;
+  - orbs inside the deck (transient; with ease 3 an orb is about 3 s in the deck);
+  - lit grid spans near the camera (`PulseAtLink` windows, transient, clipped to the deck band).
+- **Upload.** Values are quantised and uploaded only on change.
+- **Not measured.** GPU time. Measure on the A1000 with no other Godot running (budget ≤ 0.3 ms at the storm pose; user question 4).
+
+#### Steps (implementer-sized, Sonnet medium)
+
+Every step keeps hub-off frames unchanged (`eclipse_hub_capture --mode=parity`, reference `base1`/`base2`, all 15 states).
+
+| Step | Deliverable | Files | Gates and tests | Serialisation |
+|---|---|---|---|---|
+| **T0** Water sorting (**applied, not committed**) | Beams draw after the near water (priorities 1/2) | `EmitterGridBeamLayer.cs:33-43`, `EclipseHubBeamLayer.cs:33-37`, `tools/EmitterGridLayerTest.cs`, `tools/EclipseHubBeamLayerTest.cs` | `emitter_grid_layer_test`, `eclipse_hub_beam_layer_test`, `emitter_grid_shader_parity_test` PASS. Before/after `water1` / `water2`. Still to run before commit: the hub-off parity (the grid now draws after the water in those poses too, so expect a small change where a lit link lies over the near sea) | None |
+| **T1** Main relay at the crown | `DefaultMainRelayHeightM = EmitterSiteFrameMath.DefaultMainCrownHeightMeters` (or 3,050 per question 1). Grid spec §G1 / U line 841 / appendix updated. G1 test identity alternative changed (it builds `(1743, 3989)` as the "different" topology, `EmitterGridG1Test.cs:119`) | `EmitterGridTopology.cs`, `tools/EmitterGridG1Test.cs`, `docs/emitter-grid-climate-machines-spec.md` | `emitter_grid_g1_test` (knot slope ≤ 0.45°, mid-span range ≤ 7 km still holds), `emitter_grid_layer_test` (legacy golden unchanged), `emitter_grid_shader_parity_test` (windowed), `eclipse_hub_beam_layer_test`, `eclipse_event_timeline_test`. Capture: `main_far` and `main_high` with `ShowAllLinks`: the 12-link fan leaves the crown ring | Before T2 (same file) |
+| **T2** Beam origin anchor, default Base | `EmitterBeamOrigin`, `BeamOriginHeightMeters`, topology origin-aware hub API; layer, far layer and cloud encoding from the origin; setting `BeamOrigin` plus drawer option; close-camera core softening if the entry-viewpoint capture whites out; hub beam test bounds re-derived (length, tilt, origin heights for all three modes) | `EmitterSiteFrameMath.cs`, `EmitterGridTopology.cs`, `EclipseHubBeamLayer.cs`, `EclipseHubFarLayer.cs`, `EclipseBeamSettings.cs`, `GameplayEclipseEventSettings`/`Defaults`, `RingLiveTuningDrawer.Eclipse.cs`, `tools/EclipseHubBeamLayerTest.cs`, `tools/EclipseHubBeamCloudTest.cs` | `eclipse_hub_beam_layer_test` (endpoints within 1 m of the hub, origins at pad − 200 / crown / exhaust, rebase invariance, origin switch = one rebuild and no custom-data writes), `eclipse_event_settings_smoke` (new field round trip and old save), `eclipse_hub_beam_shader_parity_test`, storm check (`--shots=storm` ≥ 5×), hub-off parity. Captures: s6 (5 km), regular entry viewpoint (vp 0) and `main_far`, beam rising out of the bore through the lattice | After T1. Before T3 (layer, include, settings and drawer) |
+| **T3** Sustain orbs | Orb quad in the ribbon mesh; `ehb_orb` plus the twin `EclipseHubBeamMath.Orb`; the beam body no longer relit; `RefuelOrb` and the arrival heartbeat in the timeline; `GetFrontsWithin`; publish window; bore launch kick; settings (`OrbTravelSeconds` timeline, look fields) plus drawer and relabels; status "orbs in flight" | `ring_eclipse_hub_beam_math.gdshaderinc`, `ring_eclipse_hub_beam_common.gdshaderinc`, `EclipseHubBeamMath.cs`, `EclipseHubBeamLayer.cs`, `EclipseEventTimeline.cs`, `EclipseEventSettings.cs`, `EmitterGridPulseClock.cs` (one new method, legacy untouched), settings/defaults/drawer, `tools/EclipseHubBeamRefuelTest.cs`, `tools/EclipseHubBeamShaderFixture.cs`, `tools/shaders/eclipse_hub_beam_parity.gdshader`, `tools/eclipse_hub_capture.gd` (s8) | Twin against `RefuelOrb` (envelope and f, 400 samples, ≤ 1e-4). **Arrival:** f reaches 1 exactly at `ArrivalTime + T`, and the heartbeat kick starts on the same frame (within one frame at TimeScale 1 and 10). No kick before arrival. GPU parity: orb envelope, f and the collapse rule (tolerance 4e-3). No ribbon sub-segment of a regular beam lit after the hand-off (the binding decision). T = 55 s keeps the last-row orbs (no cutoff loss). 0 per-beam writes in steady frames. `emitter_grid_layer_test` legacy golden unchanged. `eclipse_event_director_test`, `eclipse_event_timeline_test`, `eclipse_event_stream_test` (refuel event still at the pass), settings smoke, hub-off parity. Captures: s8 reworked (orb leaving the 5 km spire at +0.5 / 2 / 4 / 10 s, ground-up and 150 km arch views of a row converging on the hub, hub kick about 30 s later) | After T2 |
+| **T4** Sunshine segment lights | Segment encoding in the point-light array (negative-radius marker, steady flag), analytic line irradiance, history or transient routing; `segment_lights_data` export and encoder | `addons/SunshineClouds2/SunshineCloudsCompute.glsl` (point-light loop), `SunshineClouds.gd` (encode), `CloudsInc.comp` (comment only) | Zero-segment cloud frames bit or noise identical to HEAD (Sunshine parity at the M1 poses). A synthetic segment at the storm pose lights the cloud. Lightning flash unchanged (transient). Mind the user's uncommitted `SunshineClouds.gd` edit: merge, never overwrite | Independent of T1-T3. Not in parallel with any Sunshine work |
+| **T5** Cloud-light feeder and settings | ≤ 8 segments per frame (hub beams, orbs in the deck, lit grid spans) within the near reach, clipped to the cloud band, written on change; settings `BeamCloudLightEnabled`, `BeamCloudLightIntensity`, `BeamCloudLightRadiusMeters`, `GridCloudLightEnabled`, `MaxCloudLightSegments` plus drawer | new `scripts/Celestial/Eclipse/EclipseCloudLightFeeder.cs` (or in `EclipseHubBeamLayer`), `RingSunshineCloudBridge.cs` (setter), grid layer read-only access, settings/drawer | Headless: segment selection and order, clipping, ≤ 8, 0 uploads in steady frames, nothing outside an event and with the grid dark. Windowed: storm d12 / d6 frames against `cloud2` (look). **A1000 GPU time with no other Godot running: ≤ 0.3 ms** at the storm pose (on against off), hub-off parity | After T3 and T4 |
+| **T6** Far-cloud glow (optional) | The G5 `far_pulse_glow` slot fed by the main pillar and lit beams beyond the near reach | far cloud clipmap shader, `RingScaledFarViewport` | Far parity at zero | With G5 |
+
+#### User questions (tweaks), each with a recommended default
+1. **Main relay height.** Recommended: **3,989 m**, the crown focus, the same rule as the regular spires (the knot fan leaves the crown ring). Alternative: 3,050 m, the top connector ring.
+2. **Orb motion.** Recommended: **ease-in, exponent 3** (setting): the orb lifts off visibly over about 3 s, clears the clouds, then rushes to the hub, arriving at 30 s. Alternative: constant 167 km/s, a near-instant streak at the spire.
+3. **Where "base" is.** Recommended: **the bore iris, 200 m below the pad**: the beam rises out of the bore with no cut at the rim. Alternative: the pad surface.
+4. **Cloud lighting.** Recommended: **option B** (segment lights inside Sunshine, budget ≤ 0.3 ms on the A1000). It edits the vendored Sunshine addon, and lands hub beams and orbs first, then the grid links. Alternatives: A (no addon edit, about 1-5 ms) or C (post pass, cheaper, less convincing).
+
+### USER DECISIONS (2026-10-17, tweaks plan answers) — binding
+1. **Main relay height:** the main spire's grid links attach at its crown focus, 3,989 m.
+2. **Orb motion:** ease-in (exponent 3). The orb visibly lifts off over about 3 s, then rushes to the hub, for about 30 s total. Between orbs the beam is fully dark.
+3. **Beam origin "Base":** the bore iris, 200 m below the pad. The `EmitterBeamOrigin` anchor (Crown / Base / Reactor) stays swappable for the later reactor origin.
+4. **Cloud lighting:** option B is approved. Segment line lights go inside the Sunshine raymarch, which edits the vendored addon, under a ≤ 0.3 ms A1000 budget. Hub beams and orbs come first, then the grid links. With zero segments the clouds must stay unchanged.
+
+### Tweaks T0-T2 implementation notes (2026-10-17)
+
+**T0 verify (hub-off parity, water fix in).** `eclipse_hub_capture --mode=parity` against base1/base2: **13 of 15 states pass, `alt_down_night` and `alt_down_totality` fail** (diff_changed 0.0441 and 0.0459 against limits 0.00114 and 0.00100, dluma 0.0052 and 0.0063, about 19,700 differing pixels; frames `tweaks/t0/alt_down_night_a.png` against `base1/alt_down_night_a.png`). Cause, read from the frames: the lit relay links over the sea to the left of the coast, which the old transparent order hid behind the near water, are now drawn. That is the plan's warned effect, and no gate was loosened. All five day frames and the other night, totality frames pass (`main_high_night` and `main_high_totality` bit-identical). `tweaks/t0` is the post-T0 baseline for later steps.
+
+**T1, main relay at the crown.**
+- `EmitterGridTopology.DefaultMainRelayHeightM = EmitterSiteFrameMath.DefaultMainCrownHeightMeters` (3,989 m). `Identity` changes. Grid spec §G1, T1 (resolved) and the defaults appendix updated.
+- `EmitterGridG1Test`: the main relay assertion now expects 3,989 m on the first and last knot link, and the "different topology" for the identity check is `Build(registry, 1743, 1743)`. G1 result: mid-span altitude 4,187-6,602 m (seed 1337), sagitta 2,375-2,576 m, knot chords 312-344 km; the knot slope from the relay heights alone is atan(2,246 / 312,420) = 0.41 degrees at worst.
+- Hub-off parity after T1 + T2 against `tweaks/t0`: **day frames 5/5 pass, all 10 night and totality frames fail** (diff_changed 0.2-0.3, for example `ground_horizon_night`): the 12-link knot fan now meets at the crown focus instead of the 1,743 m node, and every pose in the parity set has the main spire's fan in view. The same build with only T1 reverted (`DefaultMainRelayHeightM` back to 1,743, temporary, restored): **15/15 pass against `tweaks/t0`** (`tweaks/par12_t1off`), so T2 is hub-off neutral and T1 is the only cause. Post-T1 frames: `tweaks/par12`.
+- Visual check: `tweaks/t1/t1_main_far.png`, `t1_main_far_up8.png`, `t1_main_high.png`, `t1_main_high_up8.png` (`ShowAllLinks`, beams off). The 12 links leave the spire at its crown (the top of the lattice), and from 150 km they meet in one point.
+
+**T2, beam origin anchor.**
+- `enum EmitterBeamOrigin { Crown, Base, Reactor }` and `EmitterSiteFrameMath.BeamOriginHeightMeters(kind, origin)`, metres above the pad datum: Crown = pad clearance + 1,743 / 3,989 (exactly the old origin, so Crown reproduces the E4 beams bit for bit), Base = -200 (`EmitterSiteApertures.PlugDepthM`, the bore iris, no clearance), Reactor = `EmitterSiteUnderground.Shape(kind).ExhaustTopYM` (-2,961 regular, -1,922 main).
+- `EmitterGridTopology.HubBeamOrigin(beam, origin)` and `FillHubBeamEndpoints(snapshot, origin, points, out hub)`; the old crown overload and `HubBeamCrown` stay (the crown glow and the tests use them). The topology stays immutable.
+- `EclipseBeamSettings.BeamOrigin` (default **Base**) and `CloseSoftenMeters` (default 1,000 m, 0 to 5,000, 0 = off). Persisted as `BeamOrigin` (int 0-2, default 1) and `BeamCloseSoftenMeters`; grave-key section "Eclipse event: beams and hub" gets a "Beam origin" option (Reactor labelled "preview") and a "Close-range softening (m)" slider. An older save loads Base and 1,000.
+- `EclipseHubBeamLayer`: the instance origin is now the beam origin (`_origins`, `GetWorldOrigin`, `AppliedBeamOrigin`; `GetWorldCrown` removed). A changed `BeamOrigin` rebuilds only the 595 near transforms, writes the 595 far-layer transforms (`EclipseHubFarLayer.SetOrigin`) and re-encodes the queried decks relative to the new origin from the stored absolute deck altitudes (one COLOR write per beam that has a deck, no weather query). No custom data write, no timeline bind, same MultiMesh. `_Process` applies the settings before the first bind, so the first build already uses the right origin. The in-cloud data is now "metres above the beam origin".
+- Shader (`ring_eclipse_hub_beam_common.gdshaderinc`): uniform `close_soften_m`; the light is multiplied by `smoothstep(0, 1, view_distance / close_soften_m)`, where the view distance is to the beam-axis point of the fragment (two new flat varyings). It leaves the depth core untouched. The base fade (400 m) now starts at the iris. Beam lengths are 4,996.8-5,002.0 km (1.94 km longer regular, 4.19 km main); tilt unchanged (max 1.563 degrees).
+- Tests: `EclipseHubBeamLayerTest` (anchor heights for all three modes, origin verticals, a switch through Crown, Reactor and Base: exactly one rebuild and 595 near plus 595 far transform writes, 0 custom data writes, 0 binds, same MultiMesh, endpoints within 1 mm of the independent topology evaluation, tips at the hub, crown-to-origin distances 1,943.05 / 4,189.05 m (Base) and 4,704.05 / 5,911.05 m (Reactor), no rebuild for an unchanged origin or a look change, `close_soften_m` on the near and core material, clamps), `EclipseHubBeamCloudTest` (decks encoded relative to the origin, 30 re-encoded beams after a switch with 30 colour writes and 0 queries, shift equals the origin height difference, round trip drift under 0.5 m), `EclipseEventSettingsSmoke` (round trip, setter and sanitiser bounds, ToCore mapping, older save), G1 (above).
+- Captures (`tweaks/t2`; poses by `tweaks/t2_cap.gd`): regular spire (site 488, island) and the main spire, each from the entry viewpoint (inside the hall), looking up 60 degrees, 120 m above the iris looking down, and from 5 km. The beam now rises out of the bore through the lattice from the ground up; at 5 km a flat glow sits at pad level where the base fade and the terrain cut it. From inside the hall the 12x core fills the bore opening. Softening: at 0 and 300 m the above-iris frame is a white-out; at 1,000 m the lattice and the iris read through a grey-white column (`tweaks/soften0`, `soften1500`, `soften1000`); the 5 km frames are unchanged at every value, so 1,000 m is the default. Looking straight up the bore from inside stays bright by design.
+- **Storm check with the new default fails its 5x gate and needs a decision.** With Base: noon 2.18x, dark 2.25x (`tweaks/storm12`). With `--set=BeamOrigin:0` (Crown) the same build gives **10.02x and 51.30x** (`tweaks/storm12c`), so the depth core itself is unchanged. The ratio is diluted: the beam now also shows in clear air below the cloud deck (the lit lattice interior), which both the halo-only and the core frames show equally, and the mask is every pixel the beam changes. Re-measured on the saved frames over the rows above the spire crown only (the in-deck column): **111x noon, 116x dark**; below the crown 1.3x. Not changed here (it is a gate decision); the capture mask should be restricted to the in-deck rows.
+- Hub-off and neutral runs: `eclipse_darkness_capture` 9/9 on its second run (the first failed `alt_down_totality_darkens` at 0.904: that frame had the live-tuning drawer open with a spawned storm in it, an outside interaction with the capture window, not a render change; the rerun gives 0.644).
+
+### Hub-off reference and storm gate (2026-10-17, after T0-T2 accepted)
+- **New hub-off reference: `scratchpad/base3` and `scratchpad/base4`** (current tree, T0 + T1 + T2). The old `base1`/`base2` are retired: they had the water draw-order bug (links over the sea cut at the shoreline) and the old 1,743 m main relay (the knot fan).
+- **Protocol.** `base3` is a plain run (no `--ref`). `base4` must be a run with `--ref=base3`, not a second plain run: a run that takes its clock times from a reference differs systematically from a plain run in the cloud-driven `main_high_day` frame (changed fraction about 0.0015, the plain run searches the clock times and leaves the cloud state different). Two plain runs agree to 0.0001 and then fail a ref-mode check (0.0019 against a limit of 0.0011). With `base4` made in ref mode the cross-process noise includes that offset and the gate passes. The check is `--mode=parity --ref=base3 --ref2=base4`.
+- **Result:** base5 and base6 (ref-mode runs while the protocol was being found) and the first base7 attempt are not valid evidence: base5/base6 failed `main_high_day` for the reason above, the first base7 started from a different base yaw (every ground and alt_down state 30-70 % changed; a startup variation, not a render change). The accepted check, `scratchpad/base7` against `--ref=base3 --ref2=base4`: **15/15 PASS** (worst: `alt_down_day` 0.00167 against 0.00209, `main_high_day` 0.00221 against 0.00297).
+- **Storm check fix (`tools/eclipse_hub_capture.gd`, `--shots=storm`).** With `BeamOrigin` Base the beam also shows below the crown (the lit lattice interior) and in the clear air under the deck, equally in the halo-only and core frames, which diluted the core-recovery ratio to 2.2x. The mask now keeps only the pixels in the rows above the higher of the spire crown and the cloud deck base on the beam (`_deck_base_row`, using the new `EclipseHubBeamLayer.CrownHeightAboveOrigin`; header documented). The 5x gate is unchanged. Result with the grid drawn: **Base 20.02x noon, 54.52x dark; Crown (`--set=BeamOrigin:0`) 19.58x and 53.74x**; diffusion keep 1.09 / 1.07, no cloud refresh (5 to 5). (Measured with the deck-base-only mask first: 3.33x and 4.05x, because the rows between the crown and the deck base still contain the lattice interior.)
+
+### Tweaks T3 implementation notes (2026-10-17)
+**Design as built** (the plan R2, orbs only, binding decisions 1 and 2):
+- **Orb quad.** `EclipseHubBeamLayer.BuildRibbonMesh` appends one 4-vertex billboard quad (`UV2 = (-1, -1)`, `UV` = the corners; 68 vertices, 102 indices). The same MultiMesh draws it in the near layer, the depth core pass and the far layer (the 594 orbs also climb the starburst); no extra draw call and no per-frame per-beam write.
+- **Shader** (`ring_eclipse_hub_beam_math.gdshaderinc`, `..._common.gdshaderinc`): `ehb_orb(fire_tau, kind, p_site, column) -> (envelope, fraction)` and `ehb_orb_level`. The vertex stage places the quad at `origin + span * fraction`; the radius is the ribbon rule (`ribbon_profile`, core sigma `OrbRadiusMeters`, minimum `OrbMinPixelRadius`, energy-conserving with the beam's far compensation); layer weights and atmosphere are taken at the orb centre; the quad collapses when the envelope is 0, out of range or behind the near plane. The fragment is a radial white Gaussian core plus a teal exponential halo (amplitude 0.25), and the core pass writes the orb's depth footprint (`ribbon_depth_core_covers` on the radial distance), so clouds behind an orb do not dim it. The beam body no longer uses `ehb_level_refuel` / `ehb_lit_refuel` (they stay in the include and the twin as the launch-kick envelope and for their parity cases): a regular beam is fully dark between orbs, and nothing relights it after the hand-off. Orbs vanish at the cut.
+- **Motion and envelope.** Launch (age 0) is the grid normal front passing the spire; `fraction = (age / OrbTravelSeconds)^OrbEaseExponent` (exponent 3: 6.07 km up at 3.2 s, exactly 1 at 30 s); envelope = smooth rise over `FlashClimbSeconds`, 1 while travelling and for `FlashHoldSeconds` at the hub, then fade over `FlashFadeSeconds`. Only passes inside [Sustain, Instability) launch an orb; the main spire and dead sites have none.
+- **Fronts.** `EmitterGridPulseClock.GetFrontsWithin(t, column, maxBehindMeters, span)` is `GetFronts` with the age cutoff replaced by the argument (`GetFronts` unchanged). The layer publishes fronts up to travel + hold + fade + 2 s behind the loop end during `[TauSustain, TauInstability + travel + hold + fade + 1)`, so a travel time above about 38 s keeps the last rows' orbs (T = 55 test: the last row of column 0 still has envelope 1.000 at age 50 s, while the legacy lookup drops that front and gives 0).
+- **Hub heartbeat on arrival.** `EclipseEventTimeline.HeartbeatAt` now takes, per column, the newest front that has a spire passed at least `OrbTravelSeconds` ago (the previous front supplies it just after a launch) and kicks `exp(-(age - travel) / HeartbeatTau)`: nothing before the first arrival (first Sustain arrival at tau 222.83 = Sustain 191.50 + 30 + the first pass offset; zero before, 0.0189 after), and a kick within one frame of the arrival at TimeScale 1 (16.7 ms) and 10 (166.7 ms). The relaunch kick and the stream's refuel event stay at the launch (audio / PDA cue). `EclipseEventTimeline.RefuelOrb(entry, tau, gridTime, ease)` is the pure timeline function; `EclipseHubBeamMath.Orb` / `OrbLevel` are the shader twins (`EclipseHubBeamUniforms.Orb` = ev_orb).
+- **Bore light.** Unchanged code path: `CrownLevel` already measures the launch envelope (`RefuelFlash`, `FlashClimb`/hold/fade from the pass), so the bore plug light boost is the short kick at launch and is no longer tied to a bolt. The crown ember (`CrownGlowEmber*`) is kept.
+- **Status line** counts "orbs in flight n"; `LitBeamCount` no longer counts flash-relit beams (lit stays 1 in Sustain, about 60 orbs in flight).
+- **Settings** (persisted, grave-key): timeline `OrbTravelSeconds` 30 (5-60, a change rebuilds the timeline); beams `OrbEaseExponent` 3 (1-4), `OrbRadiusMeters` 350, `OrbHaloMeters` 1,500, `OrbMinPixelRadius` 2.5, `OrbEmission` 16. The flash sliders are relabelled "Orb launch fade-in", "Orb hold at hub", "Orb fade at hub"; heartbeat kick tooltip says arrival. An older save loads 30 s and the new defaults.
+- **Golden.** `tools/fixtures/eclipse_event_timeline_golden.json` was regenerated: only the Sustain-time `Level`, `HubDirect`, `HubDay` samples moved (by 0.001-0.004, the heartbeat term landing on arrival instead of the pass).
+- **Tests.** `EclipseHubBeamRefuelTest.CheckOrbs` (in `eclipse_hub_beam_layer_test`): twin against `RefuelOrb` over 500 (site, time) pairs (470 alive, worst envelope 1.5e-5, fraction within 2e-4), lift-off 6.07 km at 3.2 s, arrival fraction 1 at the travel time, no orb before launch, in Ignition, for the main spire, dead sites, without fronts or after the cut, T = 55 last row, heartbeat on arrival at TimeScale 1 and 10, 0 per-beam writes in steady frames, mesh shape (68 / 102, orb quad), uniform plumbing. `EclipseHubBeamShaderFixture` / parity shader: 12 fields per sample (new: orb envelope, orb fraction, orb level), tolerance 4e-3, worst GPU error 2.7e-6 / 4e-7 / 1.1e-6 over 605 orb samples in `sustain_flash`. Settings smoke: round trip, bounds, `ToCore`, older save. `EclipseHubBeamCloudTest`: lit count stays 1 in Sustain, orbs in flight counted.
+- **Captures** (`scratchpad/tweaks/t3`, from `tools/eclipse_hub_capture.gd --shots=s8`, reworked for orbs): `s8_before`, `s8_launch` (+0.4 s), `s8_lift1s`, `s8_lift3s`, `s8_lift6s`, `s8_gone`, and the ground-up and 150 km poses at orb ages 12 s, 22 s, arrival and hold. Read: at launch a bright halo sits on the spire base while the beam is dark; at 3.2 s the orb is a bright glow at the top of the 5 km frame (about 6 km up) and about 60 other orbs show as small dots around the other spires; at 22 s the six orbs of a row show as a line of dots climbing the main pillar and at arrival they have reached the top edge. The 150 km pose looks along the main pillar, so the hub itself is not framed.

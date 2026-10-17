@@ -12,7 +12,8 @@ using RingworldTechDemo.Voxel.Phase2;
 namespace RingworldTechDemo.Celestial.Eclipse;
 
 /// <summary>
-/// Eclipse spire to hub beams, main-camera layer (docs/eclipse-false-sun-spec.md E.2, phase E4b): one MultiMesh of 595 ribbons (origin = crown,
+/// Eclipse spire to hub beams, main-camera layer (docs/eclipse-false-sun-spec.md E.2, phase E4b): one MultiMesh of 595 ribbons (origin = the beam origin of
+/// <see cref="EclipseBeamSettings.BeamOrigin"/>: the bore iris by default, 200 m under the pad, or the crown or the reactor exhaust top,
 /// basis X = hub - crown, custom data = (p_site, column, fire tau, kind)) plus the depth-writing core as the halo material's next_pass.
 /// All beam state lives on the GPU: the custom data is written once per timeline (an eclipse or a timeline-setting change) and every frame
 /// only a handful of uniforms change (event time and the camera), so a steady frame writes nothing per beam. The endpoint transforms are
@@ -25,13 +26,18 @@ public partial class EclipseHubBeamLayer : Node3D
     public const string BeamShaderPath = "res://materials/ring_eclipse_hub_beam.gdshader";
     public const string CoreShaderPath = "res://materials/ring_eclipse_hub_beam_core.gdshader";
     public const int RibbonSubSegments = 16;
+    /// <summary>Tweaks T3: the ribbon mesh ends with one orb billboard quad (4 vertices, 6 indices) marked by UV2 = (-1, -1).</summary>
+    public const int OrbQuadVertices = 4, OrbQuadIndices = 6;
     /// <summary>
     /// Sub-segment boundaries are f_k = (k / N)^exponent. A hub beam is 5,000 km long, so uniform sub-segments of 312 km would be far too coarse
     /// inside the 700 km near range; cubing packs them toward the crown (the first is 1.2 km, the 8th ends at 625 km).
     /// </summary>
     public const float RibbonSegmentExponent = 3f;
-    /// <summary>The depth-writing core must draw after the halo, or the halo would depth-fight the depth the core writes.</summary>
-    public const int HaloRenderPriority = 0, CoreRenderPriority = 1;
+    /// <summary>
+    /// The halo draws after the near water (see <see cref="EmitterGridBeamLayer.NearWaterRenderPriority"/>), and the depth-writing core after
+    /// the halo, or the halo would depth-fight the depth the core writes. Same values as the relay grid.
+    /// </summary>
+    public const int HaloRenderPriority = EmitterGridBeamLayer.HaloRenderPriority, CoreRenderPriority = EmitterGridBeamLayer.CoreRenderPriority;
     /// <summary>The layer is built this long before the main fire so the first lit frame does not pay for the build.</summary>
     public const double PrebuildSeconds = 10d;
     private const float NoHandoff = 1e12f;
@@ -71,6 +77,9 @@ public partial class EclipseHubBeamLayer : Node3D
     private EmitterStandInLayer? _standIns;
     private EmitterBoreLayer? _bores;
     private Color[] _cloud = Array.Empty<Color>();
+    private double[] _cloudDeckBase = Array.Empty<double>(), _cloudDeckTop = Array.Empty<double>(); // absolute altitudes behind _cloud (re-encoded when the beam origin moves)
+    private EmitterBeamOrigin _cloudOrigin = EmitterBeamOrigin.Base, _originApplied = EmitterBeamOrigin.Base;
+    private Func<double, double, double, Vector3>? _farScaledPoint;
     private bool[] _queried = Array.Empty<bool>();
     private int _cloudEclipse = int.MinValue;
     private double _cloudScanDelay;
@@ -85,7 +94,7 @@ public partial class EclipseHubBeamLayer : Node3D
     private float[] _glowTarget = Array.Empty<float>();
     private bool _standInSettingsApplied;
     private readonly record struct GlowEvent(double Tau, int Beam, float Value);
-    private Vector3D[] _crown = Array.Empty<Vector3D>();
+    private Vector3D[] _origins = Array.Empty<Vector3D>();
     private Transform3D[] _mirror = Array.Empty<Transform3D>();
     private Color[] _custom = Array.Empty<Color>();
     private Transform3D _worldToLayer = Transform3D.Identity;
@@ -162,12 +171,13 @@ public partial class EclipseHubBeamLayer : Node3D
             if (IsBound) Unbind();
             return;
         }
+        // The settings first: the build places the beams from the beam origin setting.
+        if (!ReferenceEquals(beams, _beams) && beams != _beams) ApplyBeamSettings(beams);
         if (!IsBound)
         {
             if (_grid == null || _gridLayer == null || !_gridLayer.IsBound || _gridLayer.Topology == null) return;
             if (!Bind(_grid, _gridLayer.Topology)) return;
         }
-        if (!ReferenceEquals(beams, _beams) && beams != _beams) ApplyBeamSettings(beams);
         if (!ReferenceEquals(timeline, _boundTimeline)) BindTimeline(timeline);
         if (_grid != null && (!_grid.GlobalTransform.IsEqualApprox(_lastGridGlobal) || !GlobalTransform.IsEqualApprox(_lastLayerGlobal)))
             Rebuild(_grid.CaptureLodGeometrySnapshot());
@@ -202,7 +212,7 @@ public partial class EclipseHubBeamLayer : Node3D
         _grid = grid;
         _topology = topology;
         int count = topology.HubBeamCount;
-        _crown = new Vector3D[count];
+        _origins = new Vector3D[count];
         _mirror = new Transform3D[count];
         _custom = new Color[count];
         for (int i = 0; i < count; i++) _custom[i] = EclipseHubBeamMath.EncodeCustom(0d, 0, EclipseHubBeamMath.NeverFireTau, i == 0);
@@ -220,7 +230,12 @@ public partial class EclipseHubBeamLayer : Node3D
         multiMesh.VisibleInstanceCount = count;
         for (int i = 0; i < count; i++) { multiMesh.SetInstanceCustomData(i, _custom[i]); CustomDataWriteCount++; }
         // The in-cloud data lives in COLOR (k, deck base, deck top, queried): explicit zeros first, then whatever this eclipse has already queried.
-        if (_cloud.Length != count) { _cloud = new Color[count]; _queried = new bool[count]; WeatherQueryCount = 0; _cloudEclipse = int.MinValue; }
+        if (_cloud.Length != count)
+        {
+            _cloud = new Color[count]; _queried = new bool[count]; _cloudDeckBase = new double[count]; _cloudDeckTop = new double[count];
+            WeatherQueryCount = 0; _cloudEclipse = int.MinValue; _cloudOrigin = _beams.BeamOrigin;
+        }
+        ReencodeClouds(write: false); // the origin setting may have changed while the layer was not built
         for (int i = 0; i < count; i++) { multiMesh.SetInstanceColor(i, _cloud[i]); ColorWriteCount++; }
         _beamOfSite = new int[topology.Registry.Count];
         Array.Fill(_beamOfSite, -1);
@@ -297,11 +312,11 @@ public partial class EclipseHubBeamLayer : Node3D
     public static ArrayMesh BuildRibbonMesh(out int vertexCount)
     {
         const int segments = RibbonSubSegments;
-        vertexCount = segments * 4;
+        vertexCount = segments * 4 + OrbQuadVertices;
         var vertices = new Vector3[vertexCount];
         var uv = new Vector2[vertexCount];
         var uv2 = new Vector2[vertexCount];
-        var indices = new int[segments * 6];
+        var indices = new int[segments * 6 + OrbQuadIndices];
         for (int s = 0; s < segments; s++)
         {
             float fa = SegmentBoundary(s), fb = SegmentBoundary(s + 1);
@@ -317,6 +332,17 @@ public partial class EclipseHubBeamLayer : Node3D
             indices[i] = b; indices[i + 1] = b + 1; indices[i + 2] = b + 2;
             indices[i + 3] = b + 1; indices[i + 4] = b + 3; indices[i + 5] = b + 2;
         }
+        // The orb quad: UV = the corner (-1 or 1 on both axes), UV2 = (-1, -1) (a ribbon sub-segment never has a negative chord fraction).
+        int ob = segments * 4;
+        for (int corner = 0; corner < 4; corner++)
+        {
+            vertices[ob + corner] = Vector3.Zero;
+            uv[ob + corner] = new Vector2((corner & 1) == 0 ? -1f : 1f, corner < 2 ? -1f : 1f);
+            uv2[ob + corner] = new Vector2(-1f, -1f);
+        }
+        int oi = segments * 6;
+        indices[oi] = ob; indices[oi + 1] = ob + 1; indices[oi + 2] = ob + 2;
+        indices[oi + 3] = ob + 1; indices[oi + 4] = ob + 3; indices[oi + 5] = ob + 2;
         var arrays = new Godot.Collections.Array();
         arrays.Resize((int)Mesh.ArrayType.Max);
         arrays[(int)Mesh.ArrayType.Vertex] = vertices;
@@ -340,17 +366,21 @@ public partial class EclipseHubBeamLayer : Node3D
         Rebuild(current);
     }
 
-    /// <summary>Recomputes every beam transform from <paramref name="snapshot"/> (layer-local, absolute, never a delta). Allocation free; custom data is untouched.</summary>
+    /// <summary>
+    /// Recomputes every beam transform from <paramref name="snapshot"/> (layer-local, absolute, never a delta) for the current
+    /// <see cref="EclipseBeamSettings.BeamOrigin"/>. Allocation free; custom data is untouched.
+    /// </summary>
     public void Rebuild(in RingLodGeometrySnapshot snapshot)
     {
         if (_topology == null || _instances?.Multimesh is not { } beams) return;
         long started = Stopwatch.GetTimestamp();
         _worldToLayer = IsInsideTree() ? GlobalTransform.AffineInverse() : Transform3D.Identity;
-        _topology.FillHubBeamEndpoints(snapshot, _crown, out _hubWorld);
+        _topology.FillHubBeamEndpoints(snapshot, _beams.BeamOrigin, _origins, out _hubWorld);
+        _originApplied = _beams.BeamOrigin;
         Basis basis = _worldToLayer.Basis;
         for (int i = 0; i < _mirror.Length; i++)
         {
-            Vector3D a = _crown[i];
+            Vector3D a = _origins[i];
             Vector3D span = new(_hubWorld.X - a.X, _hubWorld.Y - a.Y, _hubWorld.Z - a.Z);
             var local = new Transform3D(new Basis(basis * span.ToVector3(), Vector3.Up, Vector3.Back), _worldToLayer * a.ToVector3());
             _mirror[i] = local;
@@ -364,9 +394,46 @@ public partial class EclipseHubBeamLayer : Node3D
         LastRebuildMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
     }
 
-    /// <summary>Layer-local transform last written for the beam (CPU mirror): origin = crown, basis X = hub - crown.</summary>
+    /// <summary>Layer-local transform last written for the beam (CPU mirror): origin = the beam origin, basis X = hub - origin.</summary>
     public Transform3D GetBeamTransform(int beam) => beam >= 0 && beam < _mirror.Length ? _mirror[beam] : Transform3D.Identity;
-    public Vector3D GetWorldCrown(int beam) => _crown[beam];
+    /// <summary>World position of the point the beam rises from (<see cref="EclipseBeamSettings.BeamOrigin"/>).</summary>
+    public Vector3D GetWorldOrigin(int beam) => _origins[beam];
+    /// <summary>Metres from the beam's origin up to the spire's crown focus (0 for the Crown origin): the capture tools mask the rows above the crown.</summary>
+    public double CrownHeightAboveOrigin(int beam)
+        => _topology == null ? 0d : _topology.HubBeamCrown(beam).Vertical - _topology.HubBeamOrigin(beam, _originApplied).Vertical;
+    /// <summary>The beam origin the transforms and the in-cloud data currently reflect.</summary>
+    public EmitterBeamOrigin AppliedBeamOrigin => _originApplied;
+
+    /// <summary>
+    /// A changed beam origin setting rebuilds only the 595 transforms (and the far layer's) and re-encodes the in-cloud data relative to the new origin:
+    /// no timeline bind, no custom data write.
+    /// </summary>
+    private void ApplyBeamOrigin()
+    {
+        if (!IsBound || _grid == null || _beams.BeamOrigin == _originApplied) return;
+        Rebuild(_grid.CaptureLodGeometrySnapshot());
+        ReencodeClouds(write: true);
+        if (FarLayerValid && _farScaledPoint != null) _farLayer!.SetOrigin(_beams.BeamOrigin, _farScaledPoint);
+    }
+
+    /// <summary>
+    /// Re-encodes the queried beams' in-cloud data (deck altitudes relative to the beam origin) when the origin setting differs from the one the mirror was
+    /// encoded for. Only beams with a deck are touched; <paramref name="write"/> pushes them to the MultiMesh COLOR (one write each).
+    /// </summary>
+    private void ReencodeClouds(bool write)
+    {
+        if (_topology == null || _cloudOrigin == _beams.BeamOrigin) return;
+        _cloudOrigin = _beams.BeamOrigin;
+        MultiMesh? beams = write ? _instances?.Multimesh : null;
+        for (int i = 0; i < _cloud.Length; i++)
+        {
+            if (!_queried[i] || _cloud[i].R <= 0f) continue;
+            _cloud[i] = EclipseHubBeamMath.EncodeCloud(_cloud[i].R, _cloudDeckBase[i], _cloudDeckTop[i], _topology.HubBeamOrigin(i, _beams.BeamOrigin).Vertical);
+            if (beams == null) continue;
+            beams.SetInstanceColor(i, _cloud[i]);
+            ColorWriteCount++;
+        }
+    }
     public Color GetCustomMirror(int beam) => _custom[beam];
 
     // ---------------------------------------------------------------- per-eclipse state (written once per timeline)
@@ -406,6 +473,7 @@ public partial class EclipseHubBeamLayer : Node3D
             SetBeamUniform("ev_level", _uniforms.Level);
             SetBeamUniform("ev_flash", _uniforms.Flash);
             SetBeamUniform("ev_refuel", _uniforms.Refuel);
+            SetBeamUniform("ev_orb", _uniforms.Orb);
         }
         _flashClock = null; // the speed in ev_flash may have changed with the grid clock
         BindCloudAndGlow(timeline);
@@ -413,8 +481,9 @@ public partial class EclipseHubBeamLayer : Node3D
 
     // ---------------------------------------------------------------- refuel flashes (phase E4d)
 
-    /// <summary>Seconds after the last possible flash pass (Instability start) during which a flash can still be fading: climb + hold + fade + 1.</summary>
-    private double FlashTailSeconds() => _boundTimeline == null ? 0d : _boundTimeline.Settings.FlashClimbSeconds + _boundTimeline.Settings.FlashHoldSeconds + _boundTimeline.Settings.FlashFadeSeconds + 1d;
+    /// <summary>Seconds after the last possible launch (Instability start) during which an orb can still be alive: travel + hold + fade + 1 (tweaks T3).</summary>
+    private double FlashTailSeconds() => _boundTimeline == null ? 0d
+        : _boundTimeline.Settings.OrbTravelSeconds + _boundTimeline.Settings.FlashHoldSeconds + _boundTimeline.Settings.FlashFadeSeconds + 1d;
 
     /// <summary>
     /// Publishes the grid's normal pulse fronts at <paramref name="gridTime"/> to the beam shaders (the flash maths reads <c>eg_fronts</c>) while a refuel
@@ -443,7 +512,8 @@ public partial class EclipseHubBeamLayer : Node3D
         int total = 0;
         for (int column = 0; column < (_topology?.Columns ?? EmitterGridPulseClock.ColumnCount) && total < _flashFronts.Length; column++)
         {
-            int n = clock!.GetFronts(gridTime!.Value, column, buffer);
+            // The orbs live up to OrbTravelSeconds + hold + fade after their front passes a spire: no legacy age cutoff (a long travel keeps the last rows' orbs).
+            int n = clock!.GetFrontsWithin(gridTime!.Value, column, clock.SpeedMetersPerSecond * (FlashTailSeconds() + 1d), buffer);
             for (int i = 0; i < n && total < _flashFronts.Length; i++) _flashFronts[total++] = new Vector4((float)buffer[i].HeadQ, column, 0f, 0f);
         }
         for (int i = total; i < _flashFronts.Length; i++) _flashFronts[i] = Vector4.Zero;
@@ -520,15 +590,15 @@ public partial class EclipseHubBeamLayer : Node3D
         {
             int best = -1;
             double bestDistance = nearMeters * nearMeters;
-            for (int i = 0; i < _crown.Length; i++)
+            for (int i = 0; i < _origins.Length; i++)
             {
                 if (_queried[i] || _custom[i].B >= 1e8f || tau <= _custom[i].B) continue;
-                double dx = _crown[i].X - cameraPosition.X, dy = _crown[i].Y - cameraPosition.Y, dz = _crown[i].Z - cameraPosition.Z;
+                double dx = _origins[i].X - cameraPosition.X, dy = _origins[i].Y - cameraPosition.Y, dz = _origins[i].Z - cameraPosition.Z;
                 double d2 = dx * dx + dy * dy + dz * dz;
                 if (d2 < bestDistance) { bestDistance = d2; best = i; }
             }
             if (best < 0) break;
-            (double around, double vertical, double across) = _topology.HubBeamCrown(best);
+            (double around, double vertical, double across) = _topology.HubBeamOrigin(best, _beams.BeamOrigin);
             RingVolumetricCloudLayer.LocalWeatherState weather = QueryWeather(new RingCanonicalPosition(around, 0d, across));
             WeatherQueryCount++;
             _queried[best] = true;
@@ -536,6 +606,7 @@ public partial class EclipseHubBeamLayer : Node3D
             double coverage = deck && float.IsFinite(weather.CloudCoverage) ? weather.CloudCoverage : 0d;
             // Below 2 % coverage the deck does nothing visible: keep the beam unchanged (flag 1 so it is not queried again).
             _cloud[best] = coverage < 0.02d ? new Color(0f, 0f, 0f, 1f) : EclipseHubBeamMath.EncodeCloud(coverage, weather.CloudBaseAltitudeMeters, weather.CloudTopAltitudeMeters, vertical);
+            _cloudDeckBase[best] = weather.CloudBaseAltitudeMeters; _cloudDeckTop[best] = weather.CloudTopAltitudeMeters;
             beams.SetInstanceColor(best, _cloud[best]);
             ColorWriteCount++;
         }
@@ -571,7 +642,7 @@ public partial class EclipseHubBeamLayer : Node3D
         _cloudScanDelay = 0d;
     }
 
-    /// <summary>The in-cloud data last written for the beam (CPU mirror): (k, deck base above the crown, deck top above the crown, 1 = queried).</summary>
+    /// <summary>The in-cloud data last written for the beam (CPU mirror): (k, deck base above the beam origin, deck top above the beam origin, 1 = queried).</summary>
     public Color GetCloudMirror(int beam) => beam >= 0 && beam < _cloud.Length ? _cloud[beam] : default;
 
     /// <summary>
@@ -710,12 +781,20 @@ public partial class EclipseHubBeamLayer : Node3D
             SetBeamUniform("halo_amplitude", (float)b.HaloAmplitude);
             SetBeamUniform("base_fade_meters", (float)b.BaseFadeMeters);
             SetBeamUniform("base_emission", (float)b.BaseEmission);
+            SetBeamUniform("close_soften_m", (float)b.CloseSoftenMeters);
+            SetBeamUniform("orb_look", new Vector2((float)b.OrbHaloMeters, (float)b.OrbEmission));
+            if (_boundTimeline != null)
+            {
+                _uniforms = _uniforms with { Orb = EclipseHubBeamMath.OrbUniform(_boundTimeline, b) };
+                SetBeamUniform("ev_orb", _uniforms.Orb);
+            }
             SetBeamUniform("core_depth", new Vector2((float)b.CoreDepthThreshold, (float)b.CoreDepthMinPixels));
             SetBeamUniform("ev_shape", new Vector2((float)b.SoftTipFraction, (float)b.DayVisibility));
             SetBeamUniform("cloud_params", new Vector4((float)b.CloudWidening, (float)b.CloudCoreCut, (float)b.CloudHaloBoost, b.CloudDiffusionEnabled ? 1f : 0f));
             _beamMaterial.NextPass = b.DepthWriteCore ? _coreMaterial : null;
         }
         _standIns?.SetCrownGlowEmission((float)b.CrownGlowEmission);
+        ApplyBeamOrigin();
         _uniforms = _uniforms with { SoftTip = (float)b.SoftTipFraction, DayVisibility = (float)b.DayVisibility };
         // Force the next frame to rewrite the layer uniforms (a far layer that was off may have missed some).
         _appliedMax = _appliedFade = -1f;
@@ -824,12 +903,13 @@ public partial class EclipseHubBeamLayer : Node3D
         if (FarLayerValid) return true;
         if (_topology == null || _grid == null) return false;
         var layer = new EclipseHubFarLayer { Name = "EclipseHubFar" };
-        if (!layer.Build(_topology, scaledPoint, coordinateScale, _topology.CircumferenceMeters / Math.Tau) || !attach(layer))
+        if (!layer.Build(_topology, scaledPoint, coordinateScale, _topology.CircumferenceMeters / Math.Tau, _beams.BeamOrigin) || !attach(layer))
         {
             layer.Free();
             return false;
         }
         _farLayer = layer;
+        _farScaledPoint = scaledPoint;
         layer.WriteCustomData(_custom);
         // Mirror the whole uniform state onto the new far material.
         ApplyBeamSettings(_beams);
@@ -840,6 +920,7 @@ public partial class EclipseHubBeamLayer : Node3D
             layer.BeamMaterial?.SetShaderParameter("ev_level", _uniforms.Level);
             layer.BeamMaterial?.SetShaderParameter("ev_flash", _uniforms.Flash);
             layer.BeamMaterial?.SetShaderParameter("ev_refuel", _uniforms.Refuel);
+            layer.BeamMaterial?.SetShaderParameter("ev_orb", _uniforms.Orb);
         }
         layer.BeamMaterial?.SetShaderParameter("ev_time", _uniforms.Time);
         _appliedMax = _appliedFade = -1f;
@@ -865,20 +946,32 @@ public partial class EclipseHubBeamLayer : Node3D
         if (FarLayerValid) _farLayer!.Visible = Visible && _beams.FarLayerEnabled;
     }
 
-    /// <summary>Beams whose tip has left the crown at the current event time (CPU count over the custom data; the status line only).</summary>
+    /// <summary>Beams whose tip has left the crown at the current event time (CPU count over the custom data; the status line only). A refuel orb does not relight its beam.</summary>
     public int LitBeamCount()
     {
         int lit = 0;
-        bool flashes = _flashFrontCount > 0 && _flashClock != null;
-        float direction = flashes && _flashClock!.Settings.Direction == EmitterPulseDirection.Prograde ? 1f : -1f;
-        float circumference = flashes ? (float)_flashClock!.CircumferenceMeters : 0f;
         for (int i = 0; i < _custom.Length; i++)
-        {
-            if (EclipseHubBeamMath.IsLit(_uniforms, _custom[i].B, _custom[i].A, 0f)) { lit++; continue; }
-            // Phase E4e: a beam relit by a Sustain refuel flash counts too.
-            if (flashes && EclipseHubBeamMath.RefuelFlash(_uniforms, RefuelFronts, direction, circumference, _custom[i].B, _custom[i].A, _custom[i].R, _custom[i].G).Envelope > 0f) lit++;
-        }
+            if (EclipseHubBeamMath.IsLit(_uniforms, _custom[i].B, _custom[i].A, 0f)) lit++;
         return lit;
+    }
+
+    /// <summary>Sustain refuel orbs alive at the current event time (CPU twin over the published fronts; the status line and the tests).</summary>
+    public int OrbsInFlight()
+    {
+        if (_flashFrontCount == 0 || _flashClock == null) return 0;
+        float direction = _flashClock.Settings.Direction == EmitterPulseDirection.Prograde ? 1f : -1f, circumference = (float)_flashClock.CircumferenceMeters;
+        int orbs = 0;
+        for (int i = 0; i < _custom.Length; i++)
+            if (EclipseHubBeamMath.Orb(_uniforms, RefuelFronts, direction, circumference, _custom[i].B, _custom[i].A, _custom[i].R, _custom[i].G).Envelope > 0f) orbs++;
+        return orbs;
+    }
+
+    /// <summary>The orb (envelope, fraction along the beam) of a beam at the current event time, from the published fronts (CPU twin).</summary>
+    public (float Envelope, float Fraction) GetOrb(int beam)
+    {
+        if (beam < 0 || beam >= _custom.Length || _flashFrontCount == 0 || _flashClock == null) return (0f, 0f);
+        return EclipseHubBeamMath.Orb(_uniforms, RefuelFronts, _flashClock.Settings.Direction == EmitterPulseDirection.Prograde ? 1f : -1f,
+            (float)_flashClock.CircumferenceMeters, _custom[beam].B, _custom[beam].A, _custom[beam].R, _custom[beam].G);
     }
 
     public string DescribeStatus()
@@ -887,8 +980,8 @@ public partial class EclipseHubBeamLayer : Node3D
         string farState = FarLayerActive ? "active" : FarLayerValid || !_beams.FarLayerEnabled ? "off" : "waiting";
         string handoff = _handoffBand.X >= NoHandoff ? "near only"
             : string.Format(CultureInfo.InvariantCulture, "{0:0}-{1:0} km", _handoffBand.X / 1000f, _handoffBand.Y / 1000f);
-        return string.Format(CultureInfo.InvariantCulture, "Hub beams {0}, lit {1}, tau {2:0.0}, visible {3}, core depth {4}, far layer {5}, handoff {6}, rebuilds {7} ({8:0.00} ms), timeline binds {9}, cloud queries {10}/{11}, crown glow writes {12}",
+        return string.Format(CultureInfo.InvariantCulture, "Hub beams {0}, lit {1}, tau {2:0.0}, visible {3}, core depth {4}, far layer {5}, handoff {6}, rebuilds {7} ({8:0.00} ms), timeline binds {9}, cloud queries {10}/{11}, crown glow writes {12}, orbs in flight {13}",
             BeamCount, LitBeamCount(), _tau, Visible, _beams.DepthWriteCore ? "on" : "off", farState, handoff, RebuildCount, LastRebuildMs, TimelineBindCount,
-            WeatherQueryCount, MaxWeatherQueries, CrownGlowWriteCount);
+            WeatherQueryCount, MaxWeatherQueries, CrownGlowWriteCount, OrbsInFlight());
     }
 }

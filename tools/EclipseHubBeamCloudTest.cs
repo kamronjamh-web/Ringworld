@@ -48,7 +48,7 @@ public partial class EclipseHubBeamLayerTest
         EclipseEventTimeline eclipse = layer.BoundTimeline!;
         double tau = eclipse.TauHandoff - 2d;
         int focus = 60;
-        Vector3D focusCrown = layer.GetWorldCrown(focus);
+        Vector3D focusCrown = layer.GetWorldOrigin(focus);
         camera.GlobalPosition = new Vector3((float)focusCrown.X, (float)focusCrown.Y + 50f, (float)focusCrown.Z);
         long colorBefore = layer.ColorWriteCount;
         int[] expected = NearestFired(layer, eclipse, tau, camera.GlobalPosition, 700_000d, EclipseHubBeamLayer.MaxWeatherQueries);
@@ -63,8 +63,8 @@ public partial class EclipseHubBeamLayerTest
         {
             int b = expected[0];
             Color mirror = layer.GetCloudMirror(b);
-            double crownAltitude = topology.HubBeamCrown(b).Vertical;
-            Expect(failures, Math.Abs(mirror.R - 0.8f) < 1e-6f && Math.Abs(mirror.G - (2000d - crownAltitude)) < 0.5d && Math.Abs(mirror.B - (6000d - crownAltitude)) < 0.5d && mirror.A == 1f, $"cloud colour {mirror}");
+            double originAltitude = topology.HubBeamOrigin(b, layer.Beams.BeamOrigin).Vertical;
+            Expect(failures, Math.Abs(mirror.R - 0.8f) < 1e-6f && Math.Abs(mirror.G - (2000d - originAltitude)) < 0.5d && Math.Abs(mirror.B - (6000d - originAltitude)) < 0.5d && mirror.A == 1f, $"cloud colour {mirror}");
         }
         Console.WriteLine($"ECLIPSE_HUB_BEAM_LAYER cloud near_range queries={queries} (expected {expected.Length}, cap {EclipseHubBeamLayer.MaxWeatherQueries}) colour_writes={layer.ColorWriteCount - colorBefore} steady_frames_queries=0");
         // The spire's query uses the crown's around and across, at vertical 0.
@@ -72,6 +72,34 @@ public partial class EclipseHubBeamLayerTest
         int steadyQueries = queries;
         for (int frame = 0; frame < 240; frame++) layer.ApplyEventTime(tau + frame * 0.05d, true, 0.3d);
         Expect(failures, queries == steadyQueries && layer.ColorWriteCount == steadyColor, $"per-frame cloud work: queries +{queries - steadyQueries}, colour writes +{layer.ColorWriteCount - steadyColor}");
+
+        // ---- a beam origin change re-encodes the queried decks relative to the new origin (one colour write each, no query, no custom data)
+        {
+            EmitterBeamOrigin startOrigin = layer.Beams.BeamOrigin;
+            long data = layer.CustomDataWriteCount, colors = layer.ColorWriteCount;
+            int binds = layer.TimelineBindCount;
+            var mirrorsBefore = expected.ToDictionary(i => i, i => layer.GetCloudMirror(i));
+            EmitterBeamOrigin other = startOrigin == EmitterBeamOrigin.Crown ? EmitterBeamOrigin.Base : EmitterBeamOrigin.Crown;
+            layer.ApplyBeamSettings(layer.Beams with { BeamOrigin = other });
+            Expect(failures, layer.ColorWriteCount == colors + expected.Length && queries == steadyQueries && layer.CustomDataWriteCount == data && layer.TimelineBindCount == binds,
+                $"origin switch: colour writes +{layer.ColorWriteCount - colors} (expected {expected.Length}), queries +{queries - steadyQueries}, custom data +{layer.CustomDataWriteCount - data}");
+            double worstShift = 0d, worstAbs = 0d;
+            foreach (int b in expected)
+            {
+                Color now = layer.GetCloudMirror(b);
+                double newAltitude = topology.HubBeamOrigin(b, other).Vertical, oldAltitude = topology.HubBeamOrigin(b, startOrigin).Vertical;
+                worstAbs = Math.Max(worstAbs, Math.Max(Math.Abs(now.G - (2000d - newAltitude)), Math.Abs(now.B - (6000d - newAltitude))));
+                worstShift = Math.Max(worstShift, Math.Abs((now.G - mirrorsBefore[b].G) - (oldAltitude - newAltitude)));
+                if (now.R != 0.8f || now.A != 1f) failures.Add($"origin switch changed the coverage or flag of beam {b}: {now}");
+            }
+            Expect(failures, worstAbs < 0.5d && worstShift < 0.5d, $"origin switch re-encode: abs {worstAbs:F3} m, shift {worstShift:F3} m");
+            Console.WriteLine($"ECLIPSE_HUB_BEAM_LAYER cloud origin_switch {startOrigin}->{other} re_encoded={expected.Length} worst_abs_m={worstAbs:F3} worst_shift_m={worstShift:F3}");
+            layer.ApplyBeamSettings(layer.Beams with { BeamOrigin = startOrigin });
+            double worstBack = 0d;
+            foreach (int b in expected) worstBack = Math.Max(worstBack, Math.Abs(layer.GetCloudMirror(b).G - mirrorsBefore[b].G));
+            Expect(failures, worstBack < 0.5d, $"origin round trip drift {worstBack:F3} m");
+            steadyColor = layer.ColorWriteCount;
+        }
 
         // ---- the cap: a huge near range never exceeds 30 queries per eclipse, nearest first
         EclipseEventTimeline second = NewEclipse(timeline, 12);
@@ -125,7 +153,7 @@ public partial class EclipseHubBeamLayerTest
         {
             float fire = layer.GetCustomMirror(i).B;
             if (fire >= 1e8f || tau <= fire) continue;
-            Vector3D c = layer.GetWorldCrown(i);
+            Vector3D c = layer.GetWorldOrigin(i);
             double dx = c.X - from.X, dy = c.Y - from.Y, dz = c.Z - from.Z, d = Math.Sqrt(dx * dx + dy * dy + dz * dz);
             if (d < range) list.Add((i, d));
         }
@@ -233,19 +261,20 @@ public partial class EclipseHubBeamLayerTest
             Expect(failures, Math.Abs(standIns.CrownGlowEmission - 7f) < 1e-6f && Math.Abs((float)standIns.RegularMaterial!.GetShaderParameter("crown_glow_emission") - 7f) < 1e-6f, "crown glow emission uniform");
             layer.ApplyBeamSettings(new EclipseBeamSettings());
 
-            // ---- the status line counts the beams a Sustain refuel flash relights (E4d open item)
+            // ---- tweaks T3: a Sustain refuel orb does not relight its beam: the lit count stays at the main beam, and the status counts the orbs in flight
             layer.RefuelFrontClock = template.GridClock;
-            int quiet = int.MaxValue, flashing = 0;
+            int quiet = int.MaxValue, flashing = 0, orbsSeen = 0;
             for (double t = timeline.TauSustain + 60d; t < timeline.TauSustain + 400d; t += 0.25d)
             {
                 layer.ApplyEventTime(t, true, 0.25d, timeline.Window.Start + t);
                 int count = layer.LitBeamCount();
                 quiet = Math.Min(quiet, count);
                 flashing = Math.Max(flashing, count);
+                orbsSeen = Math.Max(orbsSeen, layer.OrbsInFlight());
             }
             layer.RefuelFrontClock = null;
             layer.ApplyEventTime(timeline.TauSustain + 5d, true, 0.016d);
-            Expect(failures, quiet == 1 && flashing > 1, $"lit beam count in Sustain: min {quiet} (the main beam only), max {flashing} (flash-relit beams counted)");
+            Expect(failures, quiet == 1 && flashing == 1 && orbsSeen > 1, $"lit beam count in Sustain: min {quiet}, max {flashing} (the main beam only; an orb relights nothing), orbs in flight max {orbsSeen}");
 
             // ---- bore light: the plug light of the spire's slot follows the crown level of its beam
             EmitterSitePlacement site60 = placements.GetPlacement(probeSite);

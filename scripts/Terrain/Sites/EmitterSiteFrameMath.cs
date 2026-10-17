@@ -166,12 +166,27 @@ public readonly struct EmitterSiteFrameContext
     }
 }
 
+/// <summary>Where a spire to hub beam rises from (docs/eclipse-false-sun-spec.md, tweaks plan R4): the crown focus, the bore iris at the spire base, or the reactor exhaust top.</summary>
+public enum EmitterBeamOrigin : byte { Crown = 0, Base = 1, Reactor = 2 }
+
 /// <summary>Stateless site frame helpers (docs/emitter-poi-streaming-spec.md section A.2 and B.7).</summary>
 public static class EmitterSiteFrameMath
 {
     public const double DefaultPadClearanceMeters = 0.05;
     public const double DefaultCrownHeightMeters = 1743d; // BeamCrownFocus marker in BeamEmitterPOI.tscn
     public const double DefaultMainCrownHeightMeters = 3989d; // BeamCrownFocus marker in MainSpirePOI.tscn (spire is 4,000 m tall); no tilt, it stands on the hub line
+
+    /// <summary>
+    /// Height of a hub beam's origin above the pad datum (metres, negative below ground). Crown = the pad clearance plus the crown focus
+    /// (1,743 / 3,989 m), exactly the old beam origin; Base = the bore iris, <see cref="EmitterSiteApertures.PlugDepthM"/> (200 m) under the pad, no clearance;
+    /// Reactor = the reactor exhaust top (-2,961 m regular, -1,922 m main), where the shaft rises from.
+    /// </summary>
+    public static double BeamOriginHeightMeters(SiteKind kind, EmitterBeamOrigin origin) => origin switch
+    {
+        EmitterBeamOrigin.Base => -(double)EmitterSiteApertures.PlugDepthM,
+        EmitterBeamOrigin.Reactor => EmitterSiteUnderground.Shape(kind).ExhaustTopYM,
+        _ => DefaultPadClearanceMeters + (kind == SiteKind.Main ? DefaultMainCrownHeightMeters : DefaultCrownHeightMeters)
+    };
 
     /// <summary>
     /// Site Transform3D in the current world frame: basis = Terrain3D world frame at the site's ring angle (tangent, inward,

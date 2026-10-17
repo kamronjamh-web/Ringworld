@@ -15,8 +15,9 @@ namespace RingworldTechDemo.Celestial.Eclipse;
 /// <param name="DayVisibility">Factor applied while the hub day is above 0.5 (ev_shape.y).</param>
 /// <param name="Flash">ev_flash (phase E4d): refuel flash climb, hold and fade seconds, and the grid front speed in m/s.</param>
 /// <param name="Refuel">ev_refuel: the Sustain start tau and the Instability start tau; only a pass inside that range flashes.</param>
+/// <param name="Orb">ev_orb (tweaks T3): orb travel seconds, position ease exponent, core radius (m) and minimum core radius (pixels).</param>
 public readonly record struct EclipseHubBeamUniforms(float Time, Vector4 Marks, Vector4 Climb, float Level, float SoftTip, float DayVisibility,
-    Vector4 Flash = default, Vector2 Refuel = default);
+    Vector4 Flash = default, Vector2 Refuel = default, Vector4 Orb = default);
 
 /// <summary>
 /// CPU twin of materials/ring_eclipse_hub_beam_math.gdshaderinc (docs/eclipse-false-sun-spec.md E.2): the per-beam tip, handoff, soft-tip
@@ -53,7 +54,39 @@ public static class EclipseHubBeamMath
             level, (float)beams.SoftTipFraction, (float)beams.DayVisibility,
             new Vector4((float)timeline.Settings.FlashClimbSeconds, (float)timeline.Settings.FlashHoldSeconds, (float)timeline.Settings.FlashFadeSeconds,
                 (float)timeline.GridClock.SpeedMetersPerSecond),
-            new Vector2((float)timeline.TauSustain, (float)timeline.TauInstability));
+            new Vector2((float)timeline.TauSustain, (float)timeline.TauInstability),
+            OrbUniform(timeline, beams));
+
+    /// <summary>ev_orb: (travel seconds, ease exponent, core radius m, minimum core radius px).</summary>
+    public static Vector4 OrbUniform(EclipseEventTimeline timeline, EclipseBeamSettings beams)
+        => new((float)timeline.Settings.OrbTravelSeconds, (float)beams.OrbEaseExponent, (float)beams.OrbRadiusMeters, (float)beams.OrbMinPixelRadius);
+
+    /// <summary>
+    /// Sustain refuel orb of a regular beam (ehb_orb): (envelope, position fraction along the beam from the spire base to the hub). The orb launches when a normal
+    /// grid front passes the spire (age 0): envelope rises over the flash climb, holds while it travels and for the flash hold at the hub, then fades; the fraction
+    /// is (age / travel)^ease. (0, 0) when there is no orb: the main spire, dead sites, no fronts, a pass outside [Sustain, Instability), or after the cut.
+    /// </summary>
+    public static (float Envelope, float Fraction) Orb(in EclipseHubBeamUniforms u, ReadOnlySpan<Vector4> fronts, float direction, float circumference,
+        float fireTau, float kind, float pSite, float column)
+    {
+        if (kind > 0.5f || fireTau >= 1e8f || fronts.Length == 0 || u.Time >= u.Marks.Z) return (0f, 0f);
+        float q = direction > 0f ? pSite : circumference - pSite;
+        float age = 1e9f;
+        for (int i = 0; i < fronts.Length; i++)
+            if (MathF.Abs(fronts[i].Y - column) < 0.5f && fronts[i].X >= q) age = MathF.Min(age, (fronts[i].X - q) / MathF.Max(u.Flash.W, 1f));
+        float passTau = u.Time - age;
+        if (age >= 1e8f || passTau < u.Refuel.X || passTau >= u.Refuel.Y) return (0f, 0f);
+        float travel = MathF.Max(u.Orb.X, 1e-3f), climb = MathF.Max(u.Flash.X, 1e-4f);
+        float envelope;
+        if (age < climb) envelope = Smooth01(age / climb);
+        else if (age < travel + u.Flash.Y) envelope = 1f;
+        else envelope = 1f - Smooth01((age - travel - u.Flash.Y) / MathF.Max(u.Flash.Z, 1e-4f));
+        return (envelope, MathF.Pow(Math.Clamp(age / travel, 0f, 1f), u.Orb.Y));
+    }
+
+    /// <summary>Orb light level before the emission and the radial profile (ehb_orb_level): envelope x day visibility x level x atmosphere x layer weight. The beam body is not relit.</summary>
+    public static float OrbLevel(in EclipseHubBeamUniforms u, float envelope, float hubDay, float atmosphereVisibility, float layerWeight)
+        => envelope * DayVisibility(u, hubDay) * u.Level * atmosphereVisibility * layerWeight;
 
     /// <summary>
     /// Refuel flash of a regular beam (ehb_refuel): the flash envelope 0..1 (the same shape as <see cref="EclipseEventTimeline.RefuelFlash"/>) and the

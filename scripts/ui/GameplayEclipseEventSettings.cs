@@ -37,6 +37,8 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public float FlashClimbSeconds { get; set; } = 0.5f;
     [Export] public float FlashHoldSeconds { get; set; } = 0.6f;
     [Export] public float FlashFadeSeconds { get; set; } = 1.2f;
+    /// <summary>Tweaks T3: seconds a Sustain refuel orb takes from the spire base to the hub (the hub heartbeat lands on its arrival).</summary>
+    [Export] public float OrbTravelSeconds { get; set; } = 30f;
     [Export] public float HeartbeatKick { get; set; } = 0.02f;
     [Export] public float HeartbeatTauSeconds { get; set; } = 0.8f;
     [Export] public float RelaunchKick { get; set; } = 0.05f;
@@ -85,6 +87,10 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public float BeamMainEmissionScale { get; set; } = 1.5f;
     [Export] public float BeamHaloAmplitude { get; set; } = 0.12f;
     [Export] public float BeamBaseFadeMeters { get; set; } = 400f;
+    /// <summary>Beam origin (tweaks T2): 0 = Crown, 1 = Base (the bore iris, 200 m under the pad; default), 2 = Reactor (exhaust top, a preview).</summary>
+    [Export] public int BeamOrigin { get; set; } = 1;
+    /// <summary>Close-range softening of the beam light: it fades in over this many metres of view distance (0 = off).</summary>
+    [Export] public float BeamCloseSoftenMeters { get; set; } = 1000f;
     [Export] public float BeamDayVisibility { get; set; } = 0.6f;
     [Export] public float BeamCoreDepthThreshold { get; set; } = 0.35f;
     [Export] public float BeamCoreDepthMinPixels { get; set; } = 4f;
@@ -99,6 +105,12 @@ public partial class GameplayEclipseEventSettings : Resource
     [Export] public bool BeamCrownGlowEnabled { get; set; } = true;
     [Export] public float BeamCrownGlowEmission { get; set; } = 3f;
     [Export] public float BeamBoreLightBoost { get; set; } = 4f;
+    /// <summary>Sustain refuel orb look (tweaks T3): position ease exponent, core radius and halo e-fold (m), minimum core radius (px), HDR emission.</summary>
+    [Export] public float BeamOrbEaseExponent { get; set; } = 3f;
+    [Export] public float BeamOrbRadiusMeters { get; set; } = 350f;
+    [Export] public float BeamOrbHaloMeters { get; set; } = 1500f;
+    [Export] public float BeamOrbMinPixelRadius { get; set; } = 2.5f;
+    [Export] public float BeamOrbEmission { get; set; } = 16f;
     /// <summary>Hub sun body and sky in-scatter (spec E.1, phase E4c): the main-viewport disc and halo, radii in real km at the hub. Visual only.</summary>
     [Export] public bool HubBodyEnabled { get; set; } = true;
     [Export] public float HubBodyCoreEmission { get; set; } = 40f;

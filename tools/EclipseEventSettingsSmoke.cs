@@ -1,6 +1,7 @@
 using System;
 using Godot;
 using RingworldTechDemo.Celestial.Eclipse;
+using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.UI;
 
 /// <summary>Isolated persistence evidence for the eclipse false-sun event preferences (defaults, round-trip, clamps, NaN sanitize, reset, invalid path, core mapping).</summary>
@@ -20,15 +21,16 @@ public partial class EclipseEventSettingsSmoke : Node
     {
         "ParallaxSafetySeconds", "PreRollSeconds", "DarknessBeatSeconds", "MainClimbSeconds", "MainClimbExponent", "KindleSeconds", "KindleLevel",
         "IgnitionDelaySeconds", "IgnitionSeconds", "RegularClimbSeconds", "RampGamma", "RampStepSmoothSeconds", "IgnitionPlateauLevel", "MeetingFlareSeconds",
-        "CrescendoSeconds", "HandoffFadeSeconds", "FlashClimbSeconds", "FlashHoldSeconds", "FlashFadeSeconds", "HeartbeatKick", "HeartbeatTauSeconds",
+        "CrescendoSeconds", "HandoffFadeSeconds", "FlashClimbSeconds", "FlashHoldSeconds", "FlashFadeSeconds", "OrbTravelSeconds", "HeartbeatKick", "HeartbeatTauSeconds",
         "RelaunchKick", "BreathAmplitude", "BreathPeriodSeconds", "CollapseLeadSeconds", "InstabilitySeconds", "FlickerMax", "FlickerHzStart", "FlickerHzEnd",
         "OverloadSeconds", "OverloadGain", "ImplosionSeconds", "BeamRetractSeconds", "ShockwaveSeconds", "ShockwaveArrivalFraction", "ShockFlashLevel",
         "ShockFlashSeconds", "ReturnTailSeconds", "RealSunEnergy", "HubDirectFraction", "HubDayAtFull",
         "HubLightRed", "HubLightGreen", "HubLightBlue", "HubSkyTintStrength", "HubZenithHaloIntensity",
         "EclipseAmbientScale", "EclipseAtmosphereNightScale", "EclipseSkyNightScale", "EclipseCloudAmbientScale", "EclipseStarVisibility",
         "BeamCoreWidthMeters", "BeamHaloWidthMeters", "BeamMainCoreWidthMeters", "BeamMainHaloWidthMeters", "BeamMinPixelWidth", "BeamFarCompensation",
-        "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
+        "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamCloseSoftenMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
         "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEmission", "BeamBoreLightBoost",
+        "BeamOrbEaseExponent", "BeamOrbRadiusMeters", "BeamOrbHaloMeters", "BeamOrbMinPixelRadius", "BeamOrbEmission",
         "HubBodyCoreEmission", "HubBodyRadiusKm", "HubBodyMinRadiusPixels", "HubBodyHaloAmplitude", "HubBodyHaloRadiusKm", "HubSkyInScatter"
     };
 
@@ -41,13 +43,14 @@ public partial class EclipseEventSettingsSmoke : Node
     {
         "BeamsEnabled", "BeamFarLayerEnabled", "BeamDepthWriteCore",
         "BeamCoreWidthMeters", "BeamHaloWidthMeters", "BeamMainCoreWidthMeters", "BeamMainHaloWidthMeters", "BeamMinPixelWidth", "BeamFarCompensation",
-        "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
-        "BeamCloudDiffusionEnabled", "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEnabled", "BeamCrownGlowEmission", "BeamBoreLightBoost"
+        "BeamBaseEmission", "BeamMainEmissionScale", "BeamHaloAmplitude", "BeamBaseFadeMeters", "BeamOrigin", "BeamCloseSoftenMeters", "BeamDayVisibility", "BeamCoreDepthThreshold", "BeamCoreDepthMinPixels", "BeamSoftTipFraction", "BeamGridEventPeak",
+        "BeamCloudDiffusionEnabled", "BeamCloudWidening", "BeamCloudHaloBoost", "BeamCloudCoreCut", "BeamCrownGlowEnabled", "BeamCrownGlowEmission", "BeamBoreLightBoost",
+        "BeamOrbEaseExponent", "BeamOrbRadiusMeters", "BeamOrbHaloMeters", "BeamOrbMinPixelRadius", "BeamOrbEmission"
     };
 
     private static bool IsDefault(GameplayEclipseEventSettings s)
     {
-        if (!s.EventEnabled || !s.EclipseDarknessEnabled || !s.BeamsEnabled || !s.BeamFarLayerEnabled || !s.BeamDepthWriteCore || !s.HubBodyEnabled || !s.BeamCloudDiffusionEnabled || !s.BeamCrownGlowEnabled || s.IgnitionSpeedMode != 0 || s.RampMode != 0 || !s.SuppressGridPulseDuringIgnition || s.RefuelClock != 0) return false;
+        if (!s.EventEnabled || !s.EclipseDarknessEnabled || !s.BeamsEnabled || !s.BeamFarLayerEnabled || !s.BeamDepthWriteCore || !s.HubBodyEnabled || !s.BeamCloudDiffusionEnabled || !s.BeamCrownGlowEnabled || s.IgnitionSpeedMode != 0 || s.RampMode != 0 || !s.SuppressGridPulseDuringIgnition || s.RefuelClock != 0 || s.BeamOrigin != 1) return false;
         foreach (string name in FloatNames)
             if (!Mathf.IsEqualApprox((float)s.Get(name).AsDouble(), GameplayEclipseEventDefaults.DefaultOf(name))) return false;
         return true;
@@ -82,6 +85,46 @@ public partial class EclipseEventSettingsSmoke : Node
         EclipseBeamSettings wild = new EclipseBeamSettings { CoreWidthMeters = double.NaN, MinPixelWidth = 1e6, DayVisibility = -2d, FarCompensation = double.PositiveInfinity }.Sanitized();
         Require(wild.CoreWidthMeters == 150d && wild.MinPixelWidth == 8d && wild.DayVisibility == 0d && wild.FarCompensation == .45d, "EclipseBeamSettings.Sanitized bounds");
 
+        // Tweaks T2: the beam origin (an int enum, default Base) and the close-range softening.
+        Require(new GameplayEclipseEventSettings().BeamOrigin == 1 && GameplayEclipseEventDefaults.ToCore(new GameplayEclipseEventSettings()).Beams.BeamOrigin == EmitterBeamOrigin.Base
+            && Math.Abs(GameplayEclipseEventDefaults.ToCore(new GameplayEclipseEventSettings()).Beams.CloseSoftenMeters - 1000d) < 1e-6, "the default beam origin is not Base / softening not 1,000 m");
+        var origin = new GameplayEclipseEventDefaults(path); origin.Load();
+        Require(origin.SetInt("BeamOrigin", 2) && origin.SetFloat("BeamCloseSoftenMeters", 120f) && !origin.SetInt("BeamOrigin", 2), "beam origin setters did not report a change");
+        Require(origin.Save(), "beam origin preferences did not save");
+        var originLoaded = new GameplayEclipseEventDefaults(path); originLoaded.Load();
+        EclipseBeamSettings originCore = GameplayEclipseEventDefaults.ToCore(originLoaded.Settings).Beams;
+        Require(originLoaded.Settings.BeamOrigin == 2 && Mathf.IsEqualApprox(originLoaded.Settings.BeamCloseSoftenMeters, 120f)
+            && originCore.BeamOrigin == EmitterBeamOrigin.Reactor && Math.Abs(originCore.CloseSoftenMeters - 120d) < 1e-6, "beam origin did not round-trip or map");
+        origin.SetInt("BeamOrigin", 9); origin.SetFloat("BeamCloseSoftenMeters", 1e9f);
+        Require(origin.Settings.BeamOrigin == 2 && Mathf.IsEqualApprox(origin.Settings.BeamCloseSoftenMeters, 5000f), "beam origin setter bounds were not enforced");
+        origin.SetInt("BeamOrigin", -4);
+        Require(origin.Settings.BeamOrigin == 0, "beam origin lower bound");
+        using var hostileOrigin = new GameplayEclipseEventSettings { BeamOrigin = 77, BeamCloseSoftenMeters = float.NaN };
+        using var cleanOrigin = GameplayEclipseEventDefaults.Sanitize(hostileOrigin);
+        Require(cleanOrigin.BeamOrigin == 2 && Mathf.IsEqualApprox(cleanOrigin.BeamCloseSoftenMeters, 1000f), "beam origin Sanitize bounds were not enforced");
+        EclipseBeamSettings originWild = new EclipseBeamSettings { BeamOrigin = (EmitterBeamOrigin)200, CloseSoftenMeters = -5d }.Sanitized();
+        Require(originWild.BeamOrigin == EmitterBeamOrigin.Base && originWild.CloseSoftenMeters == 0d, "EclipseBeamSettings.Sanitized origin bounds");
+        origin.Reset(); origin.Save();
+
+        // Tweaks T3: the Sustain refuel orbs (travel time in the timeline group, look in the beam group).
+        var orb = new GameplayEclipseEventDefaults(path); orb.Load();
+        Require(Mathf.IsEqualApprox(orb.Settings.OrbTravelSeconds, 30f) && Mathf.IsEqualApprox(orb.Settings.BeamOrbEaseExponent, 3f) && Mathf.IsEqualApprox(orb.Settings.BeamOrbRadiusMeters, 350f)
+            && Mathf.IsEqualApprox(orb.Settings.BeamOrbHaloMeters, 1500f) && Mathf.IsEqualApprox(orb.Settings.BeamOrbMinPixelRadius, 2.5f) && Mathf.IsEqualApprox(orb.Settings.BeamOrbEmission, 16f), "orb defaults");
+        Require(orb.SetFloat("OrbTravelSeconds", 45f) && orb.SetFloat("BeamOrbEaseExponent", 2f) && orb.SetFloat("BeamOrbRadiusMeters", 500f) && orb.SetFloat("BeamOrbHaloMeters", 2000f)
+            && orb.SetFloat("BeamOrbMinPixelRadius", 4f) && orb.SetFloat("BeamOrbEmission", 30f), "orb setters did not report a change");
+        Require(orb.Save(), "orb preferences did not save");
+        var orbLoaded = new GameplayEclipseEventDefaults(path); orbLoaded.Load();
+        EclipseEventSettings orbCore = GameplayEclipseEventDefaults.ToCore(orbLoaded.Settings);
+        Require(Mathf.IsEqualApprox(orbLoaded.Settings.OrbTravelSeconds, 45f) && Math.Abs(orbCore.OrbTravelSeconds - 45d) < 1e-6 && Math.Abs(orbCore.Beams.OrbEaseExponent - 2d) < 1e-6
+            && Math.Abs(orbCore.Beams.OrbRadiusMeters - 500d) < 1e-6 && Math.Abs(orbCore.Beams.OrbHaloMeters - 2000d) < 1e-6 && Math.Abs(orbCore.Beams.OrbMinPixelRadius - 4d) < 1e-6
+            && Math.Abs(orbCore.Beams.OrbEmission - 30d) < 1e-6, "orb preferences did not round-trip or map");
+        orb.SetFloat("OrbTravelSeconds", 999f); orb.SetFloat("BeamOrbEaseExponent", 0f); orb.SetFloat("BeamOrbEmission", float.NaN);
+        Require(Mathf.IsEqualApprox(orb.Settings.OrbTravelSeconds, 60f) && Mathf.IsEqualApprox(orb.Settings.BeamOrbEaseExponent, 1f) && Mathf.IsEqualApprox(orb.Settings.BeamOrbEmission, 16f), "orb setter bounds were not enforced");
+        EclipseEventSettings orbWild = new EclipseEventSettings { OrbTravelSeconds = 1d, Beams = new EclipseBeamSettings { OrbEaseExponent = 9d, OrbRadiusMeters = -1d, OrbHaloMeters = double.NaN, OrbMinPixelRadius = 99d, OrbEmission = 1e6 } }.Sanitized();
+        Require(orbWild.OrbTravelSeconds == 5d && orbWild.Beams.OrbEaseExponent == 4d && orbWild.Beams.OrbRadiusMeters == 20d && orbWild.Beams.OrbHaloMeters == 1500d
+            && orbWild.Beams.OrbMinPixelRadius == 12d && orbWild.Beams.OrbEmission == 100d, "EclipseEventSettings.Sanitized orb bounds");
+        orb.Reset(); orb.Save();
+
         // Phase E4e: in-cloud diffusion, crown glow and bore light boost.
         var cloud = new GameplayEclipseEventDefaults(path); cloud.Load();
         Require(cloud.SetBool("BeamCloudDiffusionEnabled", false) && cloud.SetBool("BeamCrownGlowEnabled", false) && cloud.SetFloat("BeamCloudWidening", 5f)
@@ -115,7 +158,7 @@ public partial class EclipseEventSettingsSmoke : Node
         System.IO.File.WriteAllLines(full, kept);
         var legacy = new GameplayEclipseEventDefaults(path); legacy.Load();
         Require(Mathf.IsEqualApprox(legacy.Settings.PreRollSeconds, 111f) && legacy.Settings.BeamsEnabled && legacy.Settings.BeamFarLayerEnabled && legacy.Settings.BeamDepthWriteCore
-            && Mathf.IsEqualApprox(legacy.Settings.BeamBaseEmission, 12f) && Mathf.IsEqualApprox(legacy.Settings.BeamCoreWidthMeters, 150f) && Mathf.IsEqualApprox(legacy.Settings.BeamDayVisibility, .6f), "an older save did not load the beam defaults");
+            && legacy.Settings.BeamOrigin == 1 && Mathf.IsEqualApprox(legacy.Settings.BeamOrbEmission, 16f) && Mathf.IsEqualApprox(legacy.Settings.BeamOrbEaseExponent, 3f) && Mathf.IsEqualApprox(legacy.Settings.BeamCloseSoftenMeters, 1000f) && Mathf.IsEqualApprox(legacy.Settings.BeamBaseEmission, 12f) && Mathf.IsEqualApprox(legacy.Settings.BeamCoreWidthMeters, 150f) && Mathf.IsEqualApprox(legacy.Settings.BeamDayVisibility, .6f), "an older save did not load the beam defaults");
         old.Reset(); old.Save();
     }
 

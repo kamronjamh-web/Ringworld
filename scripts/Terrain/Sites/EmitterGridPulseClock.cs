@@ -131,6 +131,30 @@ public sealed class EmitterGridPulseClock
         return count;
     }
 
+    /// <summary>
+    /// <see cref="GetFronts"/> with the "head not past C + cutoff" rule taken from <paramref name="maxBehindMeters"/> instead of <see cref="CutoffMeters"/>: the
+    /// fronts that have not yet moved more than that distance beyond the loop end. The refuel orbs use it so a long travel time keeps the last rows' orbs
+    /// (the legacy cutoff drops a front about 38 s after it passes the loop end). <see cref="GetFronts"/> is unchanged.
+    /// </summary>
+    public int GetFrontsWithin(double t, int column, double maxBehindMeters, Span<EmitterPulseFront> fronts)
+    {
+        double v = SpeedMetersPerSecond, c = CircumferenceMeters;
+        double stagger = StaggerSeconds(column);
+        long n = LatestLaunch(t, column);
+        long maxJ = (long)Math.Ceiling((c + maxBehindMeters) / (v * PeriodSeconds)) + 1;
+        int limit = Math.Min(fronts.Length, Settings.MaxFrontsPerChain);
+        int count = 0;
+        for (long j = 0; j < maxJ && count < limit; j++)
+        {
+            double age = t - (PhaseSeconds + (n - j) * PeriodSeconds + stagger);
+            if (age < 0d) continue;
+            double head = v * age;
+            if (head - c > maxBehindMeters) break;
+            fronts[count++] = new EmitterPulseFront(n - j, head, age);
+        }
+        return count;
+    }
+
     /// <summary>Profile of one front at distance b behind its head (b &lt; 0 is ahead). 0..1, no wrap.</summary>
     public double Profile(double b)
     {

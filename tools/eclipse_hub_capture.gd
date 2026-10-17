@@ -25,7 +25,10 @@ extends SceneTree
 ##     s7    = shot 7: full noon with all 595 beams lit (Crescendo), looking up at the arch from the ground and from 150 km, with a no-beam
 ##             reference of the same pose for the difference.
 ##     storm = the T2 check on the real beams: a spawned storm front behind the main pillar, beams off / halo only / halo + depth core, no cloud
-##             refresh while lit. Gate: the depth core recovers at least STORM_CORE_GAIN_MIN x the halo-only light (measured over the pixels the beam changes).
+##             refresh while lit. Gate: the depth core recovers at least STORM_CORE_GAIN_MIN x the halo-only light, measured over the pixels the beam changes
+##             above the spire crown and above the cloud deck base: the rows above the higher of the two screen points on the beam (a beam that starts at the
+##             bore, BeamOrigin Base, is also visible below the crown, in and under the spire lattice, where the halo-only frame shows it too, which would
+##             dilute the ratio; the Crown origin has no beam there).
 ##             The pose is the spire's 3 km Far viewpoint stepped --storm-side (default 1,500 m) across and re-aimed at the crown: on the plain Far
 ##             viewpoint the spire's plateau-lit relay link (E4d) runs right over the camera and projects onto the beam's screen column. The relay
 ##             grid is drawn (--hide-grid hides it, for diagnosis).
@@ -470,30 +473,33 @@ func _shot6_fronts() -> void:
 
 ## Shot 8 (phase E4d): the Sustain row flash. The nearest regular spire from 5 km at its refuel flash, and the row of six from the ground and 150 km.
 func _shot8() -> void:
+	# Tweaks T3: the Sustain refuel orb. The beam stays dark between orbs, so the orb is the only light on the beam. Launch, lift-off, mid-flight, arrival.
 	await _go_named("main_far")
 	var site := int(drawer.call("FindEmitterSite", "nearest"))
 	if site < 0:
 		_abort("no nearest regular emitter site"); return
 	var sustain := _mark("Sustain")
-	var arrival := float(director.call("SiteRefuelTauSeconds", site, sustain + 120.0))
-	results["info"]["s8_site"] = {"site": site, "arrival_tau": arrival, "sustain_tau": sustain}
-	_log("s8 nearest regular site %d refuel flash at tau %.3f (Sustain %.2f)" % [site, arrival, sustain])
-	if is_nan(arrival):
+	var launch := float(director.call("SiteRefuelTauSeconds", site, sustain + 120.0))
+	var travel := 30.0
+	results["info"]["s8_site"] = {"site": site, "launch_tau": launch, "sustain_tau": sustain, "travel_s": travel}
+	_log("s8 nearest regular site %d orb launches at tau %.3f (Sustain %.2f), arrives at the hub %.1f s later" % [site, launch, sustain, travel])
+	if is_nan(launch):
 		_abort("site %d has no refuel time" % site); return
 	_set_far_viewpoint_km(5.0)
 	await _teleport_site(site, 2)
-	var steps := [["s8_before", arrival - 1.0], ["s8_climb", arrival + 0.25], ["s8_hold", arrival + 0.8], ["s8_fade", arrival + 1.9], ["s8_gone", arrival + 4.0]]
+	var steps := [["s8_before", launch - 1.0], ["s8_launch", launch + 0.4], ["s8_lift1s", launch + 1.0], ["s8_lift3s", launch + 3.2], ["s8_lift6s", launch + 6.0], ["s8_gone", launch + 40.0]]
 	for step in steps:
 		await _scrub(float(step[1]), 2.5)
 		_save_shot(str(step[0]), await _shot_image())
 		results["info"][str(step[0])] = {"tau": float(step[1]), "beams": _beam_status()}
+	# Mid-flight and arrival: from the ground looking up the beam, and from 150 km looking up at the arch (the orbs of a whole row converge on the hub).
 	for pose_name in ["ground_up", "alt_arch"]:
 		await _go(_pose(pose_name), 5.0)
-		for step in [["hold", arrival + 0.8], ["gone", arrival + 4.0]]:
+		for step in [["age12", launch + 12.0], ["age22", launch + 22.0], ["arrive", launch + travel + 0.2], ["hold", launch + travel + 0.8]]:
 			var label := "s8_%s_%s" % [pose_name, str(step[0])]
 			await _scrub(float(step[1]), 2.5)
 			_save_shot(label, await _shot_image())
-			results["info"][label] = {"tau": float(step[1]), "beams": _beam_status()}
+			results["info"][label] = {"tau": float(step[1]), "beams": _beam_status(), "hub_weight": float(director.get("HubLightWeight"))}
 	_write()
 
 
@@ -958,6 +964,18 @@ func _masked_mean(img: Image, mask: PackedByteArray) -> float:
 	return sum / maxf(n, 1)
 
 
+## Screen row of the higher of the spire crown and the cloud deck base on a spire's beam (the in-cloud data green channel is the base in metres above the
+## beam origin; the beam is within 1.6 degrees of the vertical, so the point is taken along the beam). Rows above it (smaller y) are the beam inside the deck and above the crown.
+func _deck_base_row(site: int, cloud: Color, image_height: int) -> int:
+	var beam := int(beams.call("BeamOfSite", site))
+	var t: Transform3D = beams.global_transform * (beams.call("GetBeamTransform", beam) as Transform3D)
+	var above := maxf(maxf(cloud.g, 0.0), float(beams.call("CrownHeightAboveOrigin", beam)))
+	var point := t.origin + t.basis.x.normalized() * above
+	var cam := root.get_viewport().get_camera_3d()
+	if cam.is_position_behind(point): return 0
+	return clampi(int(cam.unproject_position(point).y), 0, image_height)
+
+
 ## The T2 check on the real hub beams (E4 plan): a beam in front of cloud recovers at least STORM_CORE_GAIN_MIN x the halo-only light with the depth core on,
 ## without any cloud refresh while lit.
 func _shot_storm() -> void:
@@ -1041,7 +1059,9 @@ func _shot_storm() -> void:
 		mask.fill(0)
 		var count := 0
 		var others := [core, nocore, diffuse, diffuse_halo, diffuse_nocut]
-		for y in h:
+		var deck_row := _deck_base_row(site, storm_cloud, h)
+		_log("STORM %s in-deck rows: y < %d of %d (deck base %.0f m above the beam origin, crown %.0f m)" % [tag, deck_row, h, storm_cloud.g, float(beams.call("CrownHeightAboveOrigin", int(beams.call("BeamOfSite", site))))])
+		for y in mini(deck_row, h):
 			for x in w:
 				var b := base.get_pixel(x, y)
 				var d := 0.0

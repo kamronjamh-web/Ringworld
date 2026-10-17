@@ -25,7 +25,7 @@ public sealed class EmitterGridTopology
 {
     public const int TopologyVersion = 1;
     public const double DefaultRegularRelayHeightM = 1743d;
-    public const double DefaultMainRelayHeightM = 1743d; // T1: keep the chains level through the knot; confirm against the main connector rings
+    public const double DefaultMainRelayHeightM = EmitterSiteFrameMath.DefaultMainCrownHeightMeters; // tweaks T1: the knot links attach at the main crown focus (3,989 m), the same rule as the regular crowns
 
     private readonly EmitterLink[] _links;
     private readonly int[] _linkOut; // [site * Columns + column] -> link leaving the site toward +around, or -1
@@ -33,6 +33,8 @@ public sealed class EmitterGridTopology
     private readonly double[] _around, _across, _vertical; // per-site relay node, canonical (vertical includes pad + clearance + relay height)
     private readonly int[] _hubBeamSite;       // spire to hub beam b -> site: the main spire first, then every chain link origin in link order
     private readonly double[] _hubBeamVertical; // crown height of that site: pad + clearance + 1,743 m (3,989 m for the main spire)
+    private readonly double[] _hubBeamPad;      // pad height of that site (the base and reactor beam origins are measured from it)
+    private readonly SiteKind[] _hubBeamKind;
 
     public EmitterSiteRegistry Registry { get; }
     public int Columns { get; }
@@ -66,6 +68,8 @@ public sealed class EmitterGridTopology
 
         _hubBeamSite = new int[registry.RegularCount + 1];
         _hubBeamVertical = new double[_hubBeamSite.Length];
+        _hubBeamPad = new double[_hubBeamSite.Length];
+        _hubBeamKind = new SiteKind[_hubBeamSite.Length];
         _links = new EmitterLink[Columns * rows];
         _linkOut = new int[sites * Columns];
         _linkIn = new int[sites * Columns];
@@ -103,6 +107,8 @@ public sealed class EmitterGridTopology
         for (int b = 0; b < _hubBeamSite.Length; b++)
         {
             EmitterSite s = registry[_hubBeamSite[b]];
+            _hubBeamPad[b] = s.PadHeight;
+            _hubBeamKind[b] = s.Kind;
             _hubBeamVertical[b] = s.PadHeight + EmitterSiteFrameMath.DefaultPadClearanceMeters
                 + (s.IsMain ? EmitterSiteFrameMath.DefaultMainCrownHeightMeters : EmitterSiteFrameMath.DefaultCrownHeightMeters);
         }
@@ -181,6 +187,16 @@ public sealed class EmitterGridTopology
     public int HubBeamSite(int beam) => _hubBeamSite[beam];
     /// <summary>Canonical crown (around, vertical, across) of hub beam <paramref name="beam"/>: the vertical includes the pad, the clearance and the crown height (1,743 m, or 3,989 m for the main spire).</summary>
     public (double Around, double Vertical, double Across) HubBeamCrown(int beam) => (_around[_hubBeamSite[beam]], _hubBeamVertical[beam], _across[_hubBeamSite[beam]]);
+    /// <summary>
+    /// Canonical (around, vertical, across) of the point hub beam <paramref name="beam"/> rises from for <paramref name="origin"/>
+    /// (<see cref="EmitterSiteFrameMath.BeamOriginHeightMeters"/>). <see cref="EmitterBeamOrigin.Crown"/> is exactly <see cref="HubBeamCrown"/>.
+    /// </summary>
+    public (double Around, double Vertical, double Across) HubBeamOrigin(int beam, EmitterBeamOrigin origin)
+        => (_around[_hubBeamSite[beam]], HubBeamOriginVertical(beam, origin), _across[_hubBeamSite[beam]]);
+
+    private double HubBeamOriginVertical(int beam, EmitterBeamOrigin origin)
+        => origin == EmitterBeamOrigin.Crown ? _hubBeamVertical[beam] : _hubBeamPad[beam] + EmitterSiteFrameMath.BeamOriginHeightMeters(_hubBeamKind[beam], origin);
+
     /// <summary>Across coordinate of the ring hub: half the ring width.</summary>
     public double HubAcrossMeters => Registry.Recipe.WidthM * 0.5d;
 
@@ -190,13 +206,17 @@ public sealed class EmitterGridTopology
     /// a previous rebase. No allocation.
     /// </summary>
     public void FillHubBeamEndpoints(in RingLodGeometrySnapshot g, Span<Vector3D> crown, out Vector3D hub)
+        => FillHubBeamEndpoints(g, EmitterBeamOrigin.Crown, crown, out hub);
+
+    /// <summary>Like the crown overload, but writes the world-space origin of every hub beam for <paramref name="origin"/> (the point the beam rises from).</summary>
+    public void FillHubBeamEndpoints(in RingLodGeometrySnapshot g, EmitterBeamOrigin origin, Span<Vector3D> points, out Vector3D hub)
     {
-        if (crown.Length < _hubBeamSite.Length) throw new ArgumentException("crown span too small");
+        if (points.Length < _hubBeamSite.Length) throw new ArgumentException("endpoint span too small");
         var context = new EmitterSiteFrameContext(g);
         for (int b = 0; b < _hubBeamSite.Length; b++)
         {
             int site = _hubBeamSite[b];
-            crown[b] = context.WorldPosition(_around[site], _hubBeamVertical[b], _across[site]);
+            points[b] = context.WorldPosition(_around[site], HubBeamOriginVertical(b, origin), _across[site]);
         }
         hub = context.HubWorldPosition(HubAcrossMeters);
     }

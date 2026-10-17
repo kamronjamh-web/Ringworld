@@ -76,7 +76,7 @@ public partial class EmitterGridG1Test : RefCounted
             Expect(failures, first.Kind == EmitterLinkKind.KnotOut && first.FromSite == registry.MainIndex && RowOf(registry, first.ToSite) == (registry.MainRow + 1) % 100, $"{name}: chain {col} knot-out wrong");
             Expect(failures, last.Kind == EmitterLinkKind.KnotIn && last.ToSite == registry.MainIndex && RowOf(registry, last.FromSite) == (registry.MainRow + 99) % 100, $"{name}: chain {col} knot-in wrong");
             Expect(failures, first.P0 == 0d && last.P1 == c, $"{name}: chain {col} P range {first.P0}..{last.P1}");
-            Expect(failures, first.FromRelayHeightM == 1743d && last.ToRelayHeightM == 1743d, $"{name}: main relay height");
+            Expect(failures, first.FromRelayHeightM == EmitterSiteFrameMath.DefaultMainCrownHeightMeters && last.ToRelayHeightM == EmitterSiteFrameMath.DefaultMainCrownHeightMeters, $"{name}: main relay height");
             Expect(failures, t.LinkOut(registry.MainIndex, col) == first.Index && t.LinkIn(registry.MainIndex, col) == last.Index, $"{name}: main LinkOut/LinkIn column {col}");
             for (int k = 0; k < 100; k++)
             {
@@ -116,7 +116,7 @@ public partial class EmitterGridG1Test : RefCounted
         // Spec F3: sagitta ~ d^2/8R = 2,466 m; mid-span altitude = mean end altitude + sagitta (4.2 km for sea-level pads, 6.2 km for a 2 km pad).
         Expect(failures, minSag > 2_300d && maxSag < 2_700d, $"{name}: sagitta range {minSag}..{maxSag}");
         Expect(failures, minMid > 4_000d && maxMid < 7_000d, $"{name}: mid-span altitude range {minMid}..{maxMid}");
-        Expect(failures, EmitterGridTopology.Build(registry).Identity == t.Identity && EmitterGridTopology.Build(registry, 1743d, 3989d).Identity != t.Identity, $"{name}: identity");
+        Expect(failures, EmitterGridTopology.Build(registry).Identity == t.Identity && EmitterGridTopology.Build(registry, 1743d, 1743d).Identity != t.Identity, $"{name}: identity");
         Console.WriteLine($"EMITTER_GRID_G1 {name} topology main_row={registry.MainRow} links={t.LinkCount} chain/knot_out/knot_in={chain}/{knotOut}/{knotIn} seam_links={seamLinks} " +
             $"chain_chord_km={minChord / 1000:F2}..{maxChord / 1000:F2} knot_chord_km={minKnot / 1000:F2}..{maxKnot / 1000:F2} mean_chord_km={sumChord / t.LinkCount / 1000:F2} " +
             $"sagitta_m={minSag:F0}..{maxSag:F0} mid_span_alt_m={minMid:F0}..{maxMid:F0} loop_p_km={t[0].P0 / 1000:F1}..{t[99].P1 / 1000:F1} identity={t.Identity:X16}");

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Godot;
 using RingworldTechDemo.Celestial.Eclipse;
+using RingworldTechDemo.Terrain.Sites;
 
 namespace RingworldTechDemo.UI;
 
@@ -34,6 +35,7 @@ public sealed class GameplayEclipseEventDefaults
         new(nameof(GameplayEclipseEventSettings.FlashClimbSeconds), 0.5f, 0.1f, 3f),
         new(nameof(GameplayEclipseEventSettings.FlashHoldSeconds), 0.6f, 0f, 3f),
         new(nameof(GameplayEclipseEventSettings.FlashFadeSeconds), 1.2f, 0.1f, 5f),
+        new(nameof(GameplayEclipseEventSettings.OrbTravelSeconds), 30f, 5f, 60f),
         new(nameof(GameplayEclipseEventSettings.HeartbeatKick), 0.02f, 0f, 0.2f),
         new(nameof(GameplayEclipseEventSettings.HeartbeatTauSeconds), 0.8f, 0.1f, 5f),
         new(nameof(GameplayEclipseEventSettings.RelaunchKick), 0.05f, 0f, 0.3f),
@@ -76,6 +78,7 @@ public sealed class GameplayEclipseEventDefaults
         new(nameof(GameplayEclipseEventSettings.BeamMainEmissionScale), 1.5f, 0.1f, 6f),
         new(nameof(GameplayEclipseEventSettings.BeamHaloAmplitude), 0.12f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.BeamBaseFadeMeters), 400f, 0f, 5000f),
+        new(nameof(GameplayEclipseEventSettings.BeamCloseSoftenMeters), 1000f, 0f, 5000f),
         new(nameof(GameplayEclipseEventSettings.BeamDayVisibility), 0.6f, 0f, 1f),
         new(nameof(GameplayEclipseEventSettings.BeamCoreDepthThreshold), 0.35f, 0.01f, 2f),
         new(nameof(GameplayEclipseEventSettings.BeamCoreDepthMinPixels), 4f, 1f, 16f),
@@ -86,6 +89,11 @@ public sealed class GameplayEclipseEventDefaults
         new(nameof(GameplayEclipseEventSettings.BeamCloudCoreCut), 1.5f, 0.05f, 1.5f),
         new(nameof(GameplayEclipseEventSettings.BeamCrownGlowEmission), 3f, 0f, 20f),
         new(nameof(GameplayEclipseEventSettings.BeamBoreLightBoost), 4f, 1f, 8f),
+        new(nameof(GameplayEclipseEventSettings.BeamOrbEaseExponent), 3f, 1f, 4f),
+        new(nameof(GameplayEclipseEventSettings.BeamOrbRadiusMeters), 350f, 20f, 5000f),
+        new(nameof(GameplayEclipseEventSettings.BeamOrbHaloMeters), 1500f, 50f, 20000f),
+        new(nameof(GameplayEclipseEventSettings.BeamOrbMinPixelRadius), 2.5f, 0.5f, 12f),
+        new(nameof(GameplayEclipseEventSettings.BeamOrbEmission), 16f, 0f, 100f),
         new(nameof(GameplayEclipseEventSettings.HubBodyCoreEmission), 40f, 1f, 200f),
         new(nameof(GameplayEclipseEventSettings.HubBodyRadiusKm), 30f, 2f, 200f),
         new(nameof(GameplayEclipseEventSettings.HubBodyMinRadiusPixels), 2f, 0.5f, 8f),
@@ -98,7 +106,8 @@ public sealed class GameplayEclipseEventDefaults
     {
         new(nameof(GameplayEclipseEventSettings.IgnitionSpeedMode), 0, 0, 1),
         new(nameof(GameplayEclipseEventSettings.RampMode), 0, 0, 1),
-        new(nameof(GameplayEclipseEventSettings.RefuelClock), 0, 0, 1)
+        new(nameof(GameplayEclipseEventSettings.RefuelClock), 0, 0, 1),
+        new(nameof(GameplayEclipseEventSettings.BeamOrigin), 1, 0, 2)
     };
 
     private static readonly string[] BoolFields =
@@ -246,6 +255,7 @@ public sealed class GameplayEclipseEventDefaults
         FlashClimbSeconds = s.FlashClimbSeconds,
         FlashHoldSeconds = s.FlashHoldSeconds,
         FlashFadeSeconds = s.FlashFadeSeconds,
+        OrbTravelSeconds = s.OrbTravelSeconds,
         HeartbeatKick = s.HeartbeatKick,
         HeartbeatTauSeconds = s.HeartbeatTauSeconds,
         RelaunchKick = s.RelaunchKick,
@@ -297,6 +307,8 @@ public sealed class GameplayEclipseEventDefaults
             MainEmissionScale = s.BeamMainEmissionScale,
             HaloAmplitude = s.BeamHaloAmplitude,
             BaseFadeMeters = s.BeamBaseFadeMeters,
+            BeamOrigin = (EmitterBeamOrigin)Mathf.Clamp(s.BeamOrigin, 0, 2),
+            CloseSoftenMeters = s.BeamCloseSoftenMeters,
             DayVisibility = s.BeamDayVisibility,
             CoreDepthThreshold = s.BeamCoreDepthThreshold,
             CoreDepthMinPixels = s.BeamCoreDepthMinPixels,
@@ -308,7 +320,12 @@ public sealed class GameplayEclipseEventDefaults
             CloudCoreCut = s.BeamCloudCoreCut,
             CrownGlowEnabled = s.BeamCrownGlowEnabled,
             CrownGlowEmission = s.BeamCrownGlowEmission,
-            BoreLightBoost = s.BeamBoreLightBoost
+            BoreLightBoost = s.BeamBoreLightBoost,
+            OrbEaseExponent = s.BeamOrbEaseExponent,
+            OrbRadiusMeters = s.BeamOrbRadiusMeters,
+            OrbHaloMeters = s.BeamOrbHaloMeters,
+            OrbMinPixelRadius = s.BeamOrbMinPixelRadius,
+            OrbEmission = s.BeamOrbEmission
         },
         HubBody = new EclipseHubBodySettings
         {

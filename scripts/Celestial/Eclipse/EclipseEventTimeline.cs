@@ -289,6 +289,27 @@ public sealed class EclipseEventTimeline
         return 1d - Smooth01((age - climb - hold) / fade);
     }
 
+    /// <summary>
+    /// Tweaks T3: the Sustain refuel orb of an entry at <paramref name="gridTime"/>. It leaves the spire base when a normal grid front passes the spire (age 0),
+    /// rises over <c>FlashClimbSeconds</c>, travels <c>OrbTravelSeconds</c> with position fraction (age / travel)^<paramref name="easeExponent"/>, holds
+    /// <c>FlashHoldSeconds</c> at the hub, then fades over <c>FlashFadeSeconds</c>. Only passes inside Sustain launch an orb, and none lives past the cut.
+    /// Envelope 0 means no orb; the fraction is then 0.
+    /// </summary>
+    public (double Envelope, double Fraction) RefuelOrb(int entry, double tau, double gridTime, double easeExponent)
+    {
+        SyncOutputs();
+        if (!Active || !_alive[entry] || tau >= TauImplosion) return (0d, 0d);
+        double q = _clock.ToQ(Sites.P[entry]); int col = Sites.Column[entry];
+        long n = RefuelLaunchAtOrAfter(entry, gridTime);
+        if (_clock.ArrivalTime(q, col, n) > gridTime) n--;
+        double age = gridTime - _clock.ArrivalTime(q, col, n);
+        double passTau = tau - age;
+        if (passTau < TauSustain || passTau >= TauInstability) return (0d, 0d);
+        double travel = _s.OrbTravelSeconds, climb = _s.FlashClimbSeconds, hold = _s.FlashHoldSeconds, fade = _s.FlashFadeSeconds;
+        double envelope = age < climb ? Smooth01(age / climb) : age < travel + hold ? 1d : 1d - Smooth01((age - travel - hold) / fade);
+        return (envelope, Math.Pow(Math.Clamp(age / travel, 0d, 1d), easeExponent));
+    }
+
     // ---------------------------------------------------------------- phases
 
     public EclipseEventPhase PhaseAt(double tau, double localThirdContactCelestial = double.NaN)
@@ -426,14 +447,18 @@ public sealed class EclipseEventTimeline
             double[] qs = _colQ[col];
             if (qs.Length == 0) continue;
             counted++;
-            int n = _clock.GetFronts(gridTime, col, fronts);
+            // Tweaks T3: the hub kicks when an orb ARRIVES, OrbTravelSeconds after its front passed the spire. Per column the newest front that has a spire
+            // passed at least that long ago supplies the latest arrival (an older front supplies it right after a launch, when the new front has not yet
+            // passed any spire by that long); no kick before an arrival.
+            double travel = _s.OrbTravelSeconds;
+            int n = _clock.GetFrontsWithin(gridTime, col, v * (travel + 8d), fronts);
             for (int j = 0; j < n; j++)
             {
-                double head = fronts[j].HeadQ;
-                if (head < qs[0]) continue;
-                int k = UpperBound(qs, head) - 1;
-                double age = (head - qs[k]) / v;
-                if (tau - age >= TauSustain) sum += Math.Exp(-Math.Max(0d, age - _s.FlashClimbSeconds) / _s.HeartbeatTauSeconds);
+                double reach = fronts[j].HeadQ - v * travel;
+                if (reach < qs[0]) continue;
+                int k = UpperBound(qs, reach) - 1;
+                double age = (fronts[j].HeadQ - qs[k]) / v;
+                if (tau - age >= TauSustain) sum += Math.Exp(-Math.Max(0d, age - travel) / _s.HeartbeatTauSeconds);
                 break;
             }
         }

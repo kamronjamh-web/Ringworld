@@ -67,9 +67,10 @@ public partial class EclipseHubBeamShaderFixture : RefCounted
         int count = 0;
         Span<EmitterPulseFront> buffer = stackalloc EmitterPulseFront[32];
         double grid = t.Window.Start + _tau;
+        double behind = clock.SpeedMetersPerSecond * (t.Settings.OrbTravelSeconds + t.Settings.FlashHoldSeconds + t.Settings.FlashFadeSeconds + 2d);
         for (int column = 0; column < 6 && count < 24; column++)
         {
-            int n = clock.GetFronts(grid, column, buffer);
+            int n = clock.GetFrontsWithin(grid, column, behind, buffer); // the orbs need fronts up to travel + hold + fade behind the loop end
             for (int i = 0; i < n && count < 24; i++) _fronts[count++] = new Vector4((float)buffer[i].HeadQ, column, 0f, 0f);
         }
         _frontCount = count;
@@ -79,6 +80,7 @@ public partial class EclipseHubBeamShaderFixture : RefCounted
         {
             ["ev_flash"] = _uniforms.Flash,
             ["ev_refuel"] = _uniforms.Refuel,
+            ["ev_orb"] = _uniforms.Orb,
             ["eg_front_count"] = count,
             ["eg_fronts"] = _fronts,
             ["eg_direction"] = _direction,
@@ -131,6 +133,7 @@ public partial class EclipseHubBeamShaderFixture : RefCounted
             {
                 Vector4 front = _fronts[flashRng.Next(liveFronts)];
                 double age = flashRng.NextDouble() * 3.6d - 0.4d;
+                if (i % 8 == 5) age = flashRng.NextDouble() * (_timeline!.Settings.OrbTravelSeconds + 5d) - 0.4d; // orbs in flight, up to the arrival and the fade
                 double q = Math.Clamp(front.X - age * v, 0d, c);
                 p = _direction > 0f ? q : c - q;
                 column = (int)front.Y;
@@ -151,29 +154,33 @@ public partial class EclipseHubBeamShaderFixture : RefCounted
         return data;
     }
 
-    /// <summary>Reference (tip, handoff, tip mask, refuel-aware level, flash envelope, flash tip, deck mask, in-cloud factor, core keep) per sample, from the float-rounded inputs the shader receives.</summary>
+    /// <summary>Reference (tip, handoff, tip mask, refuel-aware level, flash envelope, flash tip, deck mask, in-cloud factor, core keep, orb envelope, orb fraction, orb level) per sample, from the float-rounded inputs the shader receives.</summary>
     public float[] Reference(float[] samples)
     {
         int count = samples.Length / Stride;
-        var result = new float[count * 9];
+        var result = new float[count * 12];
         for (int i = 0; i < count; i++)
         {
             float fire = samples[i * Stride], kind = samples[i * Stride + 1], f = samples[i * Stride + 2], hubDay = samples[i * Stride + 3];
             float atmosphere = samples[i * Stride + 4], layer = samples[i * Stride + 5], p = samples[i * Stride + 8], column = samples[i * Stride + 9];
             float tip = EclipseHubBeamMath.Tip(_uniforms, fire, kind);
             var flash = EclipseHubBeamMath.RefuelFlash(_uniforms, _fronts.AsSpan(0, _frontCount), _direction, _circumference, fire, kind, p, column);
-            result[i * 9 + 0] = tip;
-            result[i * 9 + 1] = EclipseHubBeamMath.Handoff(_uniforms, kind);
-            result[i * 9 + 2] = EclipseHubBeamMath.TipMask(_uniforms, f, tip);
-            result[i * 9 + 3] = EclipseHubBeamMath.LevelRefuel(_uniforms, fire, kind, f, hubDay, atmosphere, layer, flash);
-            result[i * 9 + 4] = flash.Envelope;
-            result[i * 9 + 5] = flash.Tip;
+            result[i * 12 + 0] = tip;
+            result[i * 12 + 1] = EclipseHubBeamMath.Handoff(_uniforms, kind);
+            result[i * 12 + 2] = EclipseHubBeamMath.TipMask(_uniforms, f, tip);
+            result[i * 12 + 3] = EclipseHubBeamMath.LevelRefuel(_uniforms, fire, kind, f, hubDay, atmosphere, layer, flash);
+            result[i * 12 + 4] = flash.Envelope;
+            result[i * 12 + 5] = flash.Tip;
+            var orb = EclipseHubBeamMath.Orb(_uniforms, _fronts.AsSpan(0, _frontCount), _direction, _circumference, fire, kind, p, column);
+            result[i * 12 + 9] = orb.Envelope;
+            result[i * 12 + 10] = orb.Fraction;
+            result[i * 12 + 11] = EclipseHubBeamMath.OrbLevel(_uniforms, orb.Envelope, hubDay, atmosphere, layer);
             float k = samples[i * Stride + 6], low = samples[i * Stride + 7], highSigned = samples[i * Stride + 10], height = samples[i * Stride + 11];
             var cloud = new Color(k, low, Math.Abs(highSigned), highSigned >= 0f ? 1f : 0f);
             float factor = EclipseHubBeamMath.CloudFactor(cloud, height);
-            result[i * 9 + 6] = EclipseHubBeamMath.CloudMask(height, low, Math.Abs(highSigned));
-            result[i * 9 + 7] = factor;
-            result[i * 9 + 8] = EclipseHubBeamMath.CloudCoreKeep(factor, 0.5f);
+            result[i * 12 + 6] = EclipseHubBeamMath.CloudMask(height, low, Math.Abs(highSigned));
+            result[i * 12 + 7] = factor;
+            result[i * 12 + 8] = EclipseHubBeamMath.CloudCoreKeep(factor, 0.5f);
         }
         return result;
     }

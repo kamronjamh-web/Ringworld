@@ -30,8 +30,17 @@ public partial class EmitterGridBeamLayer : Node3D
     /// <summary>Default <see cref="EventPeak"/>: the night peak is multiplied by this while eclipse ignition fronts are live (spec E.3).</summary>
     public const float DefaultEventPeak = 1.5f;
     public const float DefaultFadeMeters = 100_000f;
-    /// <summary>The depth-writing core must draw after the halo and the head sprites, or they depth-fight the depth it writes.</summary>
-    public const int HaloRenderPriority = 0, CoreRenderPriority = 1;
+    /// <summary>
+    /// Render priority of the near ocean (ring_ocean_proxy.gdshader: blend_mix, ALPHA 0.995, depth_draw_always; the material keeps the default 0).
+    /// Transparent passes are sorted by priority first and by instance depth second, so a beam at the same priority as the water was drawn
+    /// before or after it depending on the camera, and the near-opaque water then painted over the additive halo behind it.
+    /// </summary>
+    public const int NearWaterRenderPriority = 0;
+    /// <summary>
+    /// The halo and head sprites draw after the near water (which writes depth, so beams below the surface stay hidden), and the depth-writing
+    /// core draws after the halo and the head sprites, or they depth-fight the depth it writes.
+    /// </summary>
+    public const int HaloRenderPriority = NearWaterRenderPriority + 1, CoreRenderPriority = HaloRenderPriority + 1;
     private const float NoHandoff = 1e12f;
 
     [Export] public bool Enabled { get => _enabled; set { _enabled = value; UpdateVisibility(); } }

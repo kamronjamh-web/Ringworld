@@ -51,6 +51,8 @@ public sealed record EclipseEventSettings
     public double FlashClimbSeconds { get; init; } = 0.5d;
     public double FlashHoldSeconds { get; init; } = 0.6d;
     public double FlashFadeSeconds { get; init; } = 1.2d;
+    /// <summary>Tweaks T3: seconds a Sustain refuel orb takes from the spire base to the hub. The hub heartbeat lands on the arrival, so a change rebuilds the timeline.</summary>
+    public double OrbTravelSeconds { get; init; } = 30d;
     public double HeartbeatKick { get; init; } = 0.02d;
     public double HeartbeatTauSeconds { get; init; } = 0.8d;
     public double RelaunchKick { get; init; } = 0.05d;
@@ -115,6 +117,7 @@ public sealed record EclipseEventSettings
             FlashClimbSeconds = C(FlashClimbSeconds, 0.1d, 3d, 0.5d),
             FlashHoldSeconds = C(FlashHoldSeconds, 0d, 3d, 0.6d),
             FlashFadeSeconds = C(FlashFadeSeconds, 0.1d, 5d, 1.2d),
+            OrbTravelSeconds = C(OrbTravelSeconds, 5d, 60d, 30d),
             HeartbeatKick = C(HeartbeatKick, 0d, 0.2d, 0.02d),
             HeartbeatTauSeconds = C(HeartbeatTauSeconds, 0.1d, 5d, 0.8d),
             RelaunchKick = C(RelaunchKick, 0d, 0.3d, 0.05d),

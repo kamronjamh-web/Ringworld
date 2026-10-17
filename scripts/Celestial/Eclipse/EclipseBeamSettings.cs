@@ -1,4 +1,5 @@
 using System;
+using RingworldTechDemo.Terrain.Sites;
 
 namespace RingworldTechDemo.Celestial.Eclipse;
 
@@ -25,8 +26,18 @@ public sealed record EclipseBeamSettings
     public double BaseEmission { get; init; } = 12d;
     public double MainEmissionScale { get; init; } = 1.5d;
     public double HaloAmplitude { get; init; } = 0.12d;
-    /// <summary>The halo fades in over this many metres above the crown so it does not start with a hard horizontal edge.</summary>
+    /// <summary>The halo fades in over this many metres above the beam origin so it does not start with a hard horizontal edge.</summary>
     public double BaseFadeMeters { get; init; } = 400d;
+    /// <summary>
+    /// Where the beams rise from (tweaks T2): the bore iris at the spire base (default, 200 m under the pad), the crown focus or the reactor exhaust top
+    /// (a preview until the reactors are placed). A change rebuilds the 595 beam transforms and re-encodes the in-cloud data, nothing else.
+    /// </summary>
+    public EmitterBeamOrigin BeamOrigin { get; init; } = EmitterBeamOrigin.Base;
+    /// <summary>
+    /// Close-range softening (tweaks T2): the beam's light fades in over this many metres of view distance (smoothstep from 0), so a camera at the bore rim
+    /// is not whited out by the 12x emission core. 0 turns it off.
+    /// </summary>
+    public double CloseSoftenMeters { get; init; } = 1000d;
     /// <summary>Brightness factor applied while the hub day factor is above 0.5 so the beams do not flatten the hub-lit sky (spec E.2).</summary>
     public double DayVisibility { get; init; } = 0.6d;
     /// <summary>Depth core: coverage x intensity above which the core writes depth, and the minimum full width (pixels) of that footprint.</summary>
@@ -52,6 +63,13 @@ public sealed record EclipseBeamSettings
     /// <summary>Phase E4e (spec E.7): factor on the near POI bore plug light energy while its spire fires (1 = no boost).</summary>
     public double BoreLightBoost { get; init; } = 4d;
 
+    /// <summary>Tweaks T3 (Sustain refuel orbs): position ease exponent (1 = constant speed, 3 = a visible lift-off over about 3 s), orb core radius and halo e-fold (metres), minimum core radius in pixels and HDR emission.</summary>
+    public double OrbEaseExponent { get; init; } = 3d;
+    public double OrbRadiusMeters { get; init; } = 350d;
+    public double OrbHaloMeters { get; init; } = 1500d;
+    public double OrbMinPixelRadius { get; init; } = 2.5d;
+    public double OrbEmission { get; init; } = 16d;
+
     public EclipseBeamSettings Sanitized() => this with
     {
         CoreWidthMeters = C(CoreWidthMeters, 10d, 2000d, 150d),
@@ -64,6 +82,8 @@ public sealed record EclipseBeamSettings
         MainEmissionScale = C(MainEmissionScale, 0.1d, 6d, 1.5d),
         HaloAmplitude = C(HaloAmplitude, 0d, 1d, 0.12d),
         BaseFadeMeters = C(BaseFadeMeters, 0d, 5000d, 400d),
+        BeamOrigin = Enum.IsDefined(BeamOrigin) ? BeamOrigin : EmitterBeamOrigin.Base,
+        CloseSoftenMeters = C(CloseSoftenMeters, 0d, 5000d, 1000d),
         DayVisibility = C(DayVisibility, 0d, 1d, 0.6d),
         CoreDepthThreshold = C(CoreDepthThreshold, 0.01d, 2d, 0.35d),
         CoreDepthMinPixels = C(CoreDepthMinPixels, 1d, 16d, 4d),
@@ -73,7 +93,12 @@ public sealed record EclipseBeamSettings
         CloudHaloBoost = C(CloudHaloBoost, 0d, 4d, 1d),
         CloudCoreCut = C(CloudCoreCut, 0.05d, 1.5d, 1.5d),
         CrownGlowEmission = C(CrownGlowEmission, 0d, 20d, 3d),
-        BoreLightBoost = C(BoreLightBoost, 1d, 8d, 4d)
+        BoreLightBoost = C(BoreLightBoost, 1d, 8d, 4d),
+        OrbEaseExponent = C(OrbEaseExponent, 1d, 4d, 3d),
+        OrbRadiusMeters = C(OrbRadiusMeters, 20d, 5000d, 350d),
+        OrbHaloMeters = C(OrbHaloMeters, 50d, 20000d, 1500d),
+        OrbMinPixelRadius = C(OrbMinPixelRadius, 0.5d, 12d, 2.5d),
+        OrbEmission = C(OrbEmission, 0d, 100d, 16d)
     };
 
     private static double C(double v, double lo, double hi, double fallback) => double.IsFinite(v) ? Math.Clamp(v, lo, hi) : fallback;

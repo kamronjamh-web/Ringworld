@@ -41,10 +41,11 @@ public partial class RingLiveTuningDrawer
 
     private static readonly EclipseSliderSpec[] EclipseSustainSliders =
     {
-        new("FlashClimbSeconds", "Refuel flash climb (s)", "Time a refuel flash beam takes to reach the hub."),
-        new("FlashHoldSeconds", "Refuel flash hold (s)", "Time a refuel flash stays at full strength."),
-        new("FlashFadeSeconds", "Refuel flash fade (s)", "Time a refuel flash takes to fade."),
-        new("HeartbeatKick", "Heartbeat kick", "Hub brightness kick each time a grid row lands."),
+        new("OrbTravelSeconds", "Orb travel (s)", "Time a refuel orb takes from the spire base to the hub. The hub heartbeat lands on its arrival, so the hub pulses this long after a row launches. Changing it rebuilds the timeline."),
+        new("FlashClimbSeconds", "Orb launch fade-in (s)", "Time a refuel orb takes to fade in at the spire base (also the bore light kick at launch)."),
+        new("FlashHoldSeconds", "Orb hold at hub (s)", "Time a refuel orb stays at full strength at the hub."),
+        new("FlashFadeSeconds", "Orb fade at hub (s)", "Time a refuel orb takes to fade out at the hub."),
+        new("HeartbeatKick", "Heartbeat kick", "Hub brightness kick each time a refuel orb arrives."),
         new("HeartbeatTauSeconds", "Heartbeat decay (s)", "Decay time of the heartbeat kick."),
         new("RelaunchKick", "Relaunch kick", "Hub brightness kick at the main spire relaunch flare."),
         new("BreathAmplitude", "Breath amplitude", "Slow brightness breathing during Sustain."),
@@ -92,7 +93,8 @@ public partial class RingLiveTuningDrawer
         new("BeamBaseEmission", "Base emission", "HDR brightness of a regular beam. The beams ignore the day factor by design."),
         new("BeamMainEmissionScale", "Main emission scale", "Brightness of the main beam relative to a regular beam."),
         new("BeamHaloAmplitude", "Halo amplitude", "Strength of the halo around the core."),
-        new("BeamBaseFadeMeters", "Halo base fade (m)", "The halo fades in over this many metres above the crown so it does not start with a hard horizontal edge."),
+        new("BeamBaseFadeMeters", "Halo base fade (m)", "The halo fades in over this many metres above the beam origin so it does not start with a hard horizontal edge."),
+        new("BeamCloseSoftenMeters", "Close-range softening (m)", "The beam light fades in over this many metres of view distance, so standing at the bore rim does not white out the screen. 0 turns it off."),
         new("BeamDayVisibility", "Day visibility", "Brightness factor applied only while the hub day factor is above 0.5, so the beams do not flatten the hub-lit sky."),
         new("BeamCoreDepthThreshold", "Depth core threshold", "Core coverage times intensity above which the depth core writes depth (clouds behind the beam stop dimming it)."),
         new("BeamCoreDepthMinPixels", "Depth core width (px)", "Minimum full width of the depth core footprint, so it survives the cloud pass's 2x2 depth reduction."),
@@ -102,7 +104,12 @@ public partial class RingLiveTuningDrawer
         new("BeamCloudHaloBoost", "Cloud halo boost", "Extra halo brightness inside the cloud deck: 1 + this x the cloud coverage."),
         new("BeamCloudCoreCut", "Cloud core cut", "Where coverage times the deck mask exceeds this the depth-writing core is switched off, so the cloud pass blends that segment of the beam. The default 1.5 never cuts: a cut under a storm leaves only the halo, which Sunshine dims."),
         new("BeamCrownGlowEmission", "Crown glow emission", "HDR emission of the far stand-in's crown while its beam fires (written on fire, hand-off and cut only)."),
-        new("BeamBoreLightBoost", "Bore light boost", "Factor on the near spire bore plug light while its beam fires (1 = no boost)."),
+        new("BeamBoreLightBoost", "Bore light boost", "Factor on the near spire bore plug light while its beam fires, and the short kick when a refuel orb launches (1 = no boost)."),
+        new("BeamOrbEaseExponent", "Orb ease exponent", "Orb position = (time / travel) to this power. 1 is constant speed; 3 lifts off over about 3 s, then rushes to the hub."),
+        new("BeamOrbRadiusMeters", "Orb core radius (m)", "Gaussian radius of the white orb core."),
+        new("BeamOrbHaloMeters", "Orb halo radius (m)", "E-fold radius of the teal glow around an orb."),
+        new("BeamOrbMinPixelRadius", "Orb minimum radius (px)", "A distant orb is never drawn smaller than this; the lost energy is partly given back."),
+        new("BeamOrbEmission", "Orb emission", "HDR brightness of a refuel orb."),
     };
 
     private static readonly EclipseSliderSpec[] EclipseHubBodySliders =
@@ -242,6 +249,8 @@ public partial class RingLiveTuningDrawer
         _eclipseBeamLive = new Label { Name = "EclipseBeamLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         beams.AddChild(_eclipseBeamLive);
         AddEclipseToggle(beams, "BeamsEnabled", "Hub beams", s.BeamsEnabled, "Off removes both beam layers; the hub light and the timeline are unaffected.");
+        AddEclipseOption(beams, "BeamOrigin", "Beam origin", new[] { "Crown (spire top)", "Base (bore iris)", "Reactor (preview)" }, s.BeamOrigin,
+            "Where the beams rise from. Base is the bore iris, 200 m under the pad; Crown is the spire's crown focus; Reactor is the reactor exhaust top (2,961 m down, 1,922 m for the main spire), a preview until the reactors are placed. Changing it rebuilds only the beam transforms.");
         AddEclipseToggle(beams, "BeamFarLayerEnabled", "Far beam layer", s.BeamFarLayerEnabled, "The starburst of distant beams in the far viewport. Off leaves only the near pillars.");
         AddEclipseToggle(beams, "BeamDepthWriteCore", "Depth-writing core", s.BeamDepthWriteCore, "Clouds behind a beam no longer dim it. Off shows the cost-free halo only (clouds dim the beam).");
         AddEclipseToggle(beams, "BeamCloudDiffusionEnabled", "In-cloud diffusion", s.BeamCloudDiffusionEnabled,

@@ -120,7 +120,8 @@ public partial class EmitterGridLayerTest : RefCounted
         Expect(failures, layer.CoreMaterial?.Shader?.ResourcePath == EmitterGridBeamLayer.CoreShaderPath, "core material/shader");
         Expect(failures, layer.CoreMaterial != null && layer.BeamMaterial!.NextPass == layer.CoreMaterial, "beam NextPass is not the core by default");
         Expect(failures, layer.BeamMaterial!.RenderPriority == EmitterGridBeamLayer.HaloRenderPriority && layer.HeadMaterial!.RenderPriority == EmitterGridBeamLayer.HaloRenderPriority
-            && layer.CoreMaterial!.RenderPriority == EmitterGridBeamLayer.CoreRenderPriority && layer.CoreMaterial.RenderPriority > layer.BeamMaterial.RenderPriority, "render priorities");
+            && layer.CoreMaterial!.RenderPriority == EmitterGridBeamLayer.CoreRenderPriority && layer.CoreMaterial.RenderPriority > layer.BeamMaterial.RenderPriority
+            && layer.BeamMaterial.RenderPriority > EmitterGridBeamLayer.NearWaterRenderPriority, "render priorities (halo above the near water, core above the halo)");
         Expect(failures, layer.LinkInstances.Name == "GridLinks" && layer.HeadInstances.Name == "GridHeads", "child names");
         Expect(failures, layer.LinkInstances.MaterialOverride == layer.BeamMaterial && layer.LinkInstances.CastShadow == GeometryInstance3D.ShadowCastingSetting.Off, "link instance setup");
         // Custom data = (P0, P1, column, kind); readback is unavailable under the headless dummy renderer.

@@ -128,6 +128,47 @@ float ehb_level_refuel(float fire_tau, float kind, float f, float hub_day, float
 	return max(own, bolt) * ehb_day_visibility(hub_day) * ev_level * atmosphere_visibility * layer_weight;
 }
 
+// ---------------------------------------------------------------- Sustain refuel orbs (tweaks T3)
+// x orb travel seconds (spire base to hub), y position ease exponent, z core radius (m), w minimum core radius (pixels).
+uniform vec4 ev_orb = vec4(30.0, 3.0, 350.0, 2.5);
+
+// vec2(envelope, fraction): the orb launched when a normal grid front passed the spire (age 0). The envelope rises over the flash climb, holds while the orb
+// travels and for the flash hold at the hub, then fades; the fraction along the beam (spire base 0, hub 1) is (age / travel)^ease. (0, 0) when there is no orb: the
+// main spire, dead sites, no fronts, a pass outside [Sustain, Instability) or after the cut. The CPU twin is EclipseHubBeamMath.Orb. The beam body is never relit.
+vec2 ehb_orb(float fire_tau, float kind, float p_site, float column) {
+	if (kind > 0.5 || fire_tau >= 1.0e8 || eg_front_count <= 0 || ev_time >= ev_marks.z) {
+		return vec2(0.0);
+	}
+	float q = eg_q_of_p(p_site);
+	float age = 1.0e9;
+	for (int i = 0; i < eg_front_count; i++) {
+		vec4 front = eg_fronts[i];
+		if (abs(front.y - column) < 0.5 && front.x >= q) {
+			age = min(age, (front.x - q) / max(ev_flash.w, 1.0));
+		}
+	}
+	float pass_tau = ev_time - age;
+	if (age >= 1.0e8 || pass_tau < ev_refuel.x || pass_tau >= ev_refuel.y) {
+		return vec2(0.0);
+	}
+	float travel = max(ev_orb.x, 1.0e-3);
+	float climb = max(ev_flash.x, 1.0e-4);
+	float envelope;
+	if (age < climb) {
+		envelope = ehb_smooth01(age / climb);
+	} else if (age < travel + ev_flash.y) {
+		envelope = 1.0;
+	} else {
+		envelope = 1.0 - ehb_smooth01((age - travel - ev_flash.y) / max(ev_flash.z, 1.0e-4));
+	}
+	return vec2(envelope, pow(clamp(age / travel, 0.0, 1.0), ev_orb.y));
+}
+
+// Orb light level before the emission and the radial profile: envelope x day visibility x level x atmosphere x layer weight.
+float ehb_orb_level(float envelope, float hub_day, float atmosphere_visibility, float layer_weight) {
+	return envelope * ehb_day_visibility(hub_day) * ev_level * atmosphere_visibility * layer_weight;
+}
+
 // ---------------------------------------------------------------- in-cloud diffusion (phase E4e, spec E.6)
 // A near beam carries (k, deck low, deck high, flag) in its MultiMesh COLOR: k = the cloud coverage at the spire (one weather query), deck
 // low/high = the cloud base and top as metres above the crown. The CPU twin is EclipseHubBeamMath.CloudMask / CloudCoreKeep.
