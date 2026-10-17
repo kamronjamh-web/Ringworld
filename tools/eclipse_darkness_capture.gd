@@ -1,7 +1,12 @@
 extends SceneTree
 
 ## Phase E2 windowed capture: normal day, normal night, partial eclipse and totality, each with the pitch-black darkness OFF (the old lighting)
-## and ON, at three poses, plus a pixel-diff proof that day and night frames are unchanged by the darkness (neutral outside an eclipse).
+## and ON, at three poses, plus a gated pixel-diff proof that day and night frames are unchanged by the darkness (neutral outside an eclipse).
+## Parity gate: day and night are shot OFF, ON, OFF again (ABA). The OFF/OFF pair is the same-state noise baseline (blue-noise dither,
+## grid pulses, residual exposure drift); the adjacent ON/OFF pair must stay within PARITY_NOISE_FACTOR x that baseline (with small absolute
+## floors). Each clock jump is followed by EXPOSURE_SETTLE_S so auto-exposure (speed 0.65, ~1.5 s time constant) has converged; the first
+## windowed run shot 3 s after the day->night jump, and its night "diff" (90 % of pixels) was that exposure transient, not the darkness.
+## Totality gate: full darkness weight and the ON frame at most TOTALITY_MAX_LUMA_RATIO x the OFF frame. Any failed gate exits with FAIL.
 ## Usage (windowed, NO other Godot process running, one run at a time; check `nvidia-smi` is not P5):
 ##   Godot_console.exe --path <repo> --resolution 1600x900 --script res://tools/eclipse_darkness_capture.gd -- --out=<abs dir>
 ## Uses an isolated world under res://.godot/eclipse-capture/ and stub WorldSession; nothing is written to user:// settings (the eclipse
@@ -9,6 +14,13 @@ extends SceneTree
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const PHASE_DARKNESS := 2
+const EXPOSURE_SETTLE_S := 8.0
+const TOGGLE_SETTLE_S := 3.0
+const CHANGED_CHANNEL_THRESHOLD := 2.5 / 255.0
+const PARITY_NOISE_FACTOR := 2.0
+const PARITY_CHANGED_FRACTION_FLOOR := 0.005
+const PARITY_MEAN_LUMA_FLOOR := 0.001
+const TOTALITY_MAX_LUMA_RATIO := 0.9
 
 var out_dir := ""
 var fixture := ""
@@ -20,7 +32,8 @@ var weather: Node
 var atmosphere: Node
 var director: Node
 var base_pose := {}
-var results := {"events": [], "info": {}, "luminance": {}, "diff": {}}
+var results := {"events": [], "info": {}, "luminance": {}, "diff": {}, "gates": {}}
+var gate_failures: Array = []
 var shot_count := 0
 var finished := false
 
@@ -108,22 +121,62 @@ func _run() -> void:
 		var images := {}
 		for moment in moments:
 			celestial.call("SetSimulationSeconds", float(moments[moment]))
-			for enabled in [false, true]:
+			_set_darkness(false)
+			await _settle(EXPOSURE_SETTLE_S)
+			# Day and night: OFF, ON, OFF (ABA) for the parity gate; partial and totality: OFF, ON.
+			var sequence: Array = [false, true, false] if moment in ["day", "night"] else [false, true]
+			for index in sequence.size():
+				var enabled: bool = sequence[index]
 				_set_darkness(enabled)
-				await _settle(3.0)
-				var key := "%s_%s_%s" % [pose_name, moment, "on" if enabled else "off"]
+				await _settle(TOGGLE_SETTLE_S)
+				var key := "%s_%s_%s" % [pose_name, moment, ("on" if enabled else ("off_repeat" if index == 2 else "off"))]
 				var img := await _shot_image()
 				images[key] = img
 				img.save_png(out_dir.path_join("%02d_%s.png" % [_next(), key]))
 				results["luminance"][key] = _mean_luma(img)
 				_log("%s luma=%.5f weight=%s" % [key, results["luminance"][key], str(atmosphere.get("eclipse_darkness_weight"))])
+				if moment == "totality" and enabled:
+					results["info"]["%s_totality_weight" % pose_name] = float(atmosphere.get("eclipse_darkness_weight"))
 		for moment in ["day", "night"]:
-			var a: Image = images["%s_%s_off" % [pose_name, moment]]
-			var b: Image = images["%s_%s_on" % [pose_name, moment]]
-			results["diff"]["%s_%s" % [pose_name, moment]] = _diff_pixels(a, b)
+			var prefix := "%s_%s" % [pose_name, moment]
+			_gate_parity(prefix, images[prefix + "_off"], images[prefix + "_on"], images[prefix + "_off_repeat"])
+		_gate_totality(pose_name)
 		_write()
 	_set_darkness(true)
-	_finish()
+	if gate_failures.is_empty(): _finish()
+	else: _abort("gates failed: " + ", ".join(gate_failures))
+
+
+## Same-state noise (OFF vs OFF repeat) against the darkness effect (ON vs the adjacent OFF repeat). The weight is 0 outside an eclipse,
+## so the effect must be indistinguishable from the noise.
+func _gate_parity(prefix: String, off_a: Image, on: Image, off_b: Image) -> void:
+	var noise := _diff_pixels(off_a, off_b)
+	var effect := _diff_pixels(off_b, on)
+	var changed_limit := maxf(PARITY_NOISE_FACTOR * float(noise["changed_fraction"]), PARITY_CHANGED_FRACTION_FLOOR)
+	var luma_limit := maxf(PARITY_NOISE_FACTOR * absf(float(noise["mean_luma_delta"])), PARITY_MEAN_LUMA_FLOOR)
+	var abs_limit := maxf(PARITY_NOISE_FACTOR * float(noise["mean_abs_luma"]), PARITY_MEAN_LUMA_FLOOR)
+	var passed: bool = float(effect["changed_fraction"]) <= changed_limit \
+		and absf(float(effect["mean_luma_delta"])) <= luma_limit \
+		and float(effect["mean_abs_luma"]) <= abs_limit
+	results["diff"][prefix] = {"noise_off_vs_off": noise, "effect_on_vs_off": effect,
+		"limits": {"changed_fraction": changed_limit, "mean_luma_delta": luma_limit, "mean_abs_luma": abs_limit}, "pass": passed}
+	results["gates"][prefix + "_parity"] = passed
+	_log("PARITY %s %s effect_changed=%.5f (limit %.5f) noise_changed=%.5f effect_dluma=%.6f (limit %.6f) effect_abs=%.6f (limit %.6f)" % [
+		prefix, "PASS" if passed else "FAIL", float(effect["changed_fraction"]), changed_limit, float(noise["changed_fraction"]),
+		float(effect["mean_luma_delta"]), luma_limit, float(effect["mean_abs_luma"]), abs_limit])
+	if not passed: gate_failures.append(prefix + "_parity")
+
+
+## Totality must actually darken: full weight, and the ON frame clearly below the OFF frame.
+func _gate_totality(pose_name: String) -> void:
+	var off := float(results["luminance"]["%s_totality_off" % pose_name])
+	var on := float(results["luminance"]["%s_totality_on" % pose_name])
+	var weight := float(results["info"].get("%s_totality_weight" % pose_name, 0.0))
+	var passed := weight >= 0.99 and on <= off * TOTALITY_MAX_LUMA_RATIO
+	results["gates"][pose_name + "_totality_darkens"] = passed
+	_log("TOTALITY %s %s weight=%.3f luma off=%.5f on=%.5f ratio=%.3f (max %.2f)" % [pose_name, "PASS" if passed else "FAIL", weight, off, on,
+		on / maxf(off, 0.000001), TOTALITY_MAX_LUMA_RATIO])
+	if not passed: gate_failures.append(pose_name + "_totality_darkens")
 
 
 func _set_darkness(enabled: bool) -> void:
@@ -158,19 +211,32 @@ func _mean_luma(img: Image) -> float:
 	return sum / float(small.get_width() * small.get_height())
 
 
+## Every second pixel: count of any difference, count above CHANGED_CHANNEL_THRESHOLD (quantisation-tolerant), mean signed and absolute
+## luma difference (b - a), and the largest channel difference.
 func _diff_pixels(a: Image, b: Image) -> Dictionary:
 	var width := mini(a.get_width(), b.get_width())
 	var height := mini(a.get_height(), b.get_height())
 	var differing := 0
+	var changed := 0
 	var max_channel := 0.0
+	var luma_delta := 0.0
+	var luma_abs := 0.0
+	var sampled := 0
 	for y in range(0, height, 2):
 		for x in range(0, width, 2):
 			var ca := a.get_pixel(x, y)
 			var cb := b.get_pixel(x, y)
 			var d := maxf(maxf(absf(ca.r - cb.r), absf(ca.g - cb.g)), absf(ca.b - cb.b))
 			if d > 0.0: differing += 1
+			if d > CHANGED_CHANNEL_THRESHOLD: changed += 1
 			max_channel = maxf(max_channel, d)
-	return {"sampled": (width / 2) * (height / 2), "differing": differing, "max_channel_diff": max_channel}
+			var dl := 0.2126 * (cb.r - ca.r) + 0.7152 * (cb.g - ca.g) + 0.0722 * (cb.b - ca.b)
+			luma_delta += dl
+			luma_abs += absf(dl)
+			sampled += 1
+	var n := float(maxi(sampled, 1))
+	return {"sampled": sampled, "differing": differing, "changed": changed, "changed_fraction": float(changed) / n,
+		"mean_luma_delta": luma_delta / n, "mean_abs_luma": luma_abs / n, "max_channel_diff": max_channel}
 
 
 func _next() -> int:

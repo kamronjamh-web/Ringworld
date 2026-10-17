@@ -563,6 +563,9 @@ public partial class RingSunshineCloudBridge : Node
         _weather?.SetExternalLocalVolumetricCloudsState(false, false, EffectiveHandoffStartMeters, EffectiveHandoffEndMeters);
         _weather?.UnregisterManualWeather(SunshinePreviewWeatherOwnerKey);
         if (_clouds != null) _clouds.Set("enabled", false);
+        // The Sunshine resource is a shared cached .tres: never leave an eclipse-scaled colour in it.
+        _eclipseCloudAmbientScale = 1.0f;
+        ApplyEclipseFogDistanceColor();
     }
 
     private void OnExternalTextureRetirementRequested(long generationId)
@@ -663,10 +666,32 @@ public partial class RingSunshineCloudBridge : Node
         if (_eclipseCloudAmbientScale == cloud) return;
         _eclipseCloudAmbientScale = cloud;
         ApplyLocalCloudAmbientLighting();
+        ApplyEclipseFogDistanceColor();
     }
 
     public const float MinimumEclipseCloudAmbientScale = 0.3f;
     private float _eclipseCloudAmbientScale = 1.0f;
+    private Color? _eclipseAtmosphereColorBase;
+
+    /// <summary>
+    /// Sunshine adds <c>ambientfogdistancecolor x 0.08</c> to the cloud ambient (SunshineCloudsCompute.glsl:1352), where that colour is
+    /// lerp(<c>atmosphere_color</c>, environment fog colour, use_environment_fog). <c>atmosphere_color</c> is a constant day-blue resource value,
+    /// so in totality it was over half the remaining cloud ambient and the distant clouds stayed lit. Scale it by the same eclipse multiplier
+    /// while the multiplier is below 1; at exactly 1 the captured authored value is written back, so non-eclipse frames are unchanged.
+    /// </summary>
+    private void ApplyEclipseFogDistanceColor()
+    {
+        if (_clouds == null) return;
+        if (_eclipseCloudAmbientScale == 1.0f)
+        {
+            if (_eclipseAtmosphereColorBase is Color authored) _clouds.Set("atmosphere_color", authored);
+            _eclipseAtmosphereColorBase = null;
+            return;
+        }
+        Color baseColor = _eclipseAtmosphereColorBase ??= _clouds.Get("atmosphere_color").AsColor();
+        float scale = _eclipseCloudAmbientScale;
+        _clouds.Set("atmosphere_color", new Color(baseColor.R * scale, baseColor.G * scale, baseColor.B * scale, baseColor.A));
+    }
 
     public void SetLocalDayFactor(float dayFactor)
     {

@@ -46,7 +46,7 @@ float periodic_structure_line(float coordinate, float spacing, float half_width)
 		cell_distance);
 }
 
-float sample_structural_scale_cues(vec3 sample_world_position) {
+float sample_structural_scale_cues(vec3 sample_world_position, float wall_face) {
 	if (!structural_scale_cues_enabled) return 0.0;
 	vec3 relative = sample_world_position - ring_center;
 	float angle = atan(relative.z, relative.x);
@@ -65,7 +65,9 @@ float sample_structural_scale_cues(vec3 sample_world_position) {
 		max(structural_top_rail_half_width_meters, 1.0),
 		max(structural_top_rail_half_width_meters * 2.0, structural_top_rail_half_width_meters + 1.0),
 		abs(altitude - structural_wall_top_meters));
-	return clamp(max(top_rail, max(longitudinal, cross_grid * 0.48)), 0.0, 1.0);
+	// The cross grid is placed by the across coordinate, which is constant on a rim wall face: keep it off the walls so the
+	// wall at across = 0 is not painted solid (the top rail and longitudinal bars still read there).
+	return clamp(max(top_rail, max(longitudinal, cross_grid * 0.48 * (1.0 - wall_face))), 0.0, 1.0);
 }
 
 void vertex() {
@@ -111,14 +113,17 @@ void fragment() {
 	vec3 lit_color = ring_vertex_color_to_linear(COLOR.rgb)
 		* mix(night_tint, vec3(1.0), ring_day_factor)
 		* hemisphere_brightness;
-	float structural_cue = sample_structural_scale_cues(world_position);
+	// World Y is the ring axis: a rim wall face has a normal along it.
+	float wall_face = smoothstep(0.7, 0.9, abs(normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y));
+	float structural_cue = sample_structural_scale_cues(world_position, wall_face);
 	lit_color = mix(lit_color, structural_cue_color, structural_cue * 0.34);
 	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * (1.0 - atmosphere.a);
 	EMISSION = ALBEDO * terrain_light_floor
 		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy
 		+ structural_cue_color * structural_cue
-			* mix(structural_cue_night_energy, structural_cue_day_energy, ring_day_factor)
+			// Eclipse darkness (spec D.1): the self-lit night cue scales with the night light; exactly 1 outside an eclipse.
+			* mix(structural_cue_night_energy * ringworld_night_light_scale, structural_cue_day_energy, ring_day_factor)
 			* (1.0 - atmosphere.a * 0.65);
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.25;

@@ -1,12 +1,14 @@
 extends SceneTree
 
 ## Phase E2 parity gate: outside an eclipse the pitch-black darkness changes nothing. Runs the integration scene at fixed non-eclipse clock
-## times (noon, dusk, midnight) once with the current day_side_atmosphere.gd and once with the committed (HEAD) copy swapped in, and compares the
+## times (noon, dusk, midnight) once with the current day_side_atmosphere.gd and once with the pre-E2 copy (BASELINE_REVISION) swapped in, and compares the
 ## published lighting state (environment ambient/fog, sky palette, star visibility, sun and planet light) plus the neutral darkness outputs.
 ## Headless-safe (the dummy renderer stores no global shader parameters, so only the script-published values are compared).
 
 const WORLD_SCENE: PackedScene = preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const BASELINE_PATH := "res://.godot/eclipse_parity/baseline_day_side_atmosphere.gd"
+## The last commit before E2 (ce2b360 added the darkness). HEAD stopped being a valid baseline once E2 was committed.
+const BASELINE_REVISION := "ce2b360^"
 const TOLERANCE := 2.0e-5
 
 var _world: Node = null
@@ -29,7 +31,7 @@ func _run() -> void:
 		return
 	var baseline := _load_baseline()
 	if baseline == null:
-		_finish("could not read the committed day_side_atmosphere.gd (git show HEAD)")
+		_finish("could not read the pre-E2 day_side_atmosphere.gd (git show " + BASELINE_REVISION + ")")
 		return
 	# Pick three non-eclipse times: keep the day phase of the authored clock, away from any eclipse window.
 	var times := [1000.0, 1000.0 + 1125.0, 1000.0 + 2250.0, 1000.0 + 3375.0]
@@ -124,7 +126,7 @@ func _restore(node: Node, values: Dictionary) -> void:
 
 func _load_baseline() -> Script:
 	var output: Array = []
-	var code := OS.execute("git", ["-C", ProjectSettings.globalize_path("res://"), "show", "HEAD:scripts/day_side_atmosphere.gd"], output, true)
+	var code := OS.execute("git", ["-C", ProjectSettings.globalize_path("res://"), "show", BASELINE_REVISION + ":scripts/day_side_atmosphere.gd"], output, true)
 	if code != 0 or output.is_empty() or String(output[0]).is_empty():
 		return null
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://.godot/eclipse_parity"))

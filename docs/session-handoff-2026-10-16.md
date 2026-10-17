@@ -102,3 +102,24 @@ Commits on `main`: `e7ba111` (grid G0–G2 + G4/T2, climate C1–C2, cloud histo
 - **Next phases:** E3 hub-light "noon everywhere" mode, E4 visuals (hub body, hub beams, ignition fronts; the director's `GridTimeSeconds` should feed `EmitterGridBeamLayer`), E5 collapse, E6a/b PDA and audio, E7 capture route and perf.
 - **Known blocker for E4 hub beams:** Sunshine only honours a depth-writing transparent after `refresh_compute`. This was fixed by the `z_far` change; re-verify it with `--no-refresh` in `scratchpad eg_t2` style captures.
 - The 4070 numbers don't compare with the A1000 baselines; the terrain regression goldens are A1000-exact.
+
+## Update (2026-10-16, RTX 4070): verification runs
+
+- **Grass S8:** all 7 windowed GPU tests PASS on the 4070: card culling, layer smoke, colour match 9/9, integration, adaptive grouping, grouped phases, and live tuning. Live tuning also passes its pointer section this time.
+- **Eclipse E2 first windowed run:** `tools/eclipse_darkness_capture.gd` runs unmodified, all shaders compile, and it prints `ECLIPSE_CAPTURE=PASS`.
+  - Totality darkens the landscape to near black, and the stars, hub beams and grid stay visible.
+  - **Gaps against spec §D:**
+    - (1) The cyan horizon band (rim walls / far arch) stays as bright in totality as at normal night. It looks unlit.
+    - (2) Distant horizon clouds do not darken (the spec wants cloud ambient × 0.4, dark-grey silhouettes).
+    - (3) The day/night "unchanged" diff is reported but not gated. A night pose differs in 90% of pixels (max 0.11) with sign-varying luma (+3% / −0.6%), which is probably noise. The test needs a same-state noise baseline and a gate.
+  - The frames are in the session scratchpad (`eclipse_e2`); regenerate them with the capture script.
+- **Eclipse E2 gaps fixed (uncommitted at time of writing):**
+  - Rim-wall structural cue emission × `ringworld_night_light_scale`.
+  - The cross-grid kept off rim-wall faces. This is a user-approved fix of a pre-existing bug: the wall at across = 0 was painted solid cyan, which changes normal nights and days.
+  - Sunshine `atmosphere_color` scaled by the eclipse cloud ambient scale (restored exactly at 1).
+  - Ocean foam emission × night light scale.
+  - The capture has an 8 s settle plus a noise-baseline parity gate and a totality gate, giving 9/9 gates PASS.
+  - `eclipse_darkness_parity_test` baseline is now `ce2b360^`.
+  - The cue dimming shares the `EclipseAtmosphereNightScale` slider (user decision).
+  - Windowed goldens that include the rim wall need rebaselining.
+  - Not done: the far cloud shaders' hard-coded night colours could also take × `ringworld_night_light_scale` (bit-identical, only beyond Sunshine reach).

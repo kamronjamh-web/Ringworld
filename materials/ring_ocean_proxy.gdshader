@@ -571,7 +571,8 @@ void fragment() {
 	}
 	grazing_color = mix(grazing_color, foam_color, foam);
 	ALBEDO = grazing_color * (1.0 - atmosphere.a);
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy + foam_color * foam * 0.16;
+	// The foam self-light floor scales with the eclipse night light (spec D.1); exactly 1 outside an eclipse.
+	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy + foam_color * foam * (0.16 * ringworld_night_light_scale);
 	ROUGHNESS = max(base_roughness, specular_aa_roughness);
 	SPECULAR = ring_water_dielectric_specular() * ocean_specular;
 	METALLIC = 0.0;
