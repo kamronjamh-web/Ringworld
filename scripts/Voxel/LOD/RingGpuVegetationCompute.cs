@@ -100,7 +100,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private long _completedUpdates, _skippedUnchangedUpdates, _dispatchCount, _barrierCount, _parameterUploads, _estimatedBytes;
     private long _sharedSourceBytes, _outputBytes;
     private int _sharedSourceCount;
-    private uint _membershipRevision, _lastRequestMembershipRevision;
+    private uint _membershipRevision, _lastRequestMembershipRevision, _batchArrayRevision;
+    private Batch[]? _batchArray;
     private readonly List<(Batch Batch, BatchFrameParameters Frame)> _work = new();
     private readonly List<(Batch Batch, BatchFrameParameters Frame)> _selectedWork = new();
     private readonly HashSet<int> _seen = new();
@@ -171,10 +172,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
         lock (_gate)
         {
             if (!_ready || _failed) return;
-            foreach (BatchFrameParameters frame in frames)
+            for (int i = 0; i < frames.Count; i++)
+            {
+                BatchFrameParameters frame = frames[i];
                 if (_batches.TryGetValue(frame.BatchId, out Batch? batch) && batch.Dispatched && !batch.Retired
                     && Volatile.Read(ref batch.CompletedVisibilityRevision) == frame.VisibilityRevision)
                     ready.Add(frame.BatchId);
+            }
         }
     }
 
@@ -303,10 +307,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
             { Interlocked.Increment(ref _skippedUnchangedUpdates); return true; }
         }
         // Snapshot small frame inputs; callers may reuse their lists next frame.
-        BatchFrameParameters[] frames = SnapshotBatchFrames(request.Batches, out _);
+        FrameSnapshot snapshot;
+        lock (_gate) snapshot = RentSnapshot();
+        FillSnapshot(snapshot, request.Batches, out _);
         lock (_gate)
         {
-            if (_disposed || _failed) return false;
+            if (_disposed || _failed) { snapshot.Release(this); return false; }
             bool budgetedGrass = request.MaximumBatchesPerDispatch > 0 && request.Batches.Count > 0
                 && AllGrass(request.Batches);
             bool unchanged = _lastRequest is not null
@@ -316,7 +322,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
             // camera/frame/membership inputs begin a fresh catch-up pass.
             if (!unchanged) _grassFrameRevision++;
             _pendingGrassFrameRevision = budgetedGrass ? _grassFrameRevision : 0;
-            _pending = new FrameRequest(request.CameraWorld, (uint[])request.LodBudgets.Clone(), frames,
+            ReleaseSnapshotOf(_pending);
+            ReleaseSnapshotOf(_lastRequest);
+            // One reference for the pending slot (handed to Work) and one for the unchanged comparison.
+            snapshot.References = 2;
+            _pending = new FrameRequest(request.CameraWorld,
+                request.LodBudgets.Length == 0 ? request.LodBudgets : (uint[])request.LodBudgets.Clone(), snapshot,
                 request.SkipUnchanged, request.MaximumBatchesPerDispatch, request.MaximumCandidatesPerDispatch);
             _lastRequest = _pending;
             _lastRequestMembershipRevision = _membershipRevision;
@@ -330,27 +341,91 @@ public sealed class RingGpuVegetationCompute : IDisposable
     internal static BatchFrameParameters[] SnapshotBatchFrames(
         IReadOnlyList<BatchFrameParameters> batches, out int frustumCloneCount)
     {
-        var frames = new BatchFrameParameters[batches.Count];
-        Dictionary<Vector4[], Vector4[]>? copies = null;
+        var snapshot = new FrameSnapshot();
+        FillSnapshot(snapshot, batches, out frustumCloneCount);
+        var frames = new BatchFrameParameters[snapshot.Count];
+        Array.Copy(snapshot.Frames, frames, frames.Length);
+        return frames;
+    }
+
+    /// <summary>Request-owned frame copy, recycled once neither the pending slot, the render thread, nor the
+    /// unchanged-request comparison references it. It is never shared with the caller.</summary>
+    private sealed class FrameSnapshot : IReadOnlyList<BatchFrameParameters>
+    {
+        public BatchFrameParameters[] Frames = Array.Empty<BatchFrameParameters>();
+        public int Count { get; set; }
+        public int References;
+        // PlaneCopies[k] is this snapshot's private copy of the caller array PlaneSources[k].
+        public readonly List<Vector4[]> PlaneSources = new();
+        public readonly List<Vector4[]> PlaneCopies = new();
+        public BatchFrameParameters this[int index] => Frames[index];
+        public IEnumerator<BatchFrameParameters> GetEnumerator()
+        {
+            for (int i = 0; i < Count; i++) yield return Frames[i];
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        public void Release(RingGpuVegetationCompute owner)
+        {
+            lock (owner._gate)
+            {
+                if (--References > 0) return;
+                References = 0;
+                if (owner._snapshotPool.Count < 4) owner._snapshotPool.Push(this);
+            }
+        }
+    }
+
+    private readonly Stack<FrameSnapshot> _snapshotPool = new();
+
+    private FrameSnapshot RentSnapshot() => _snapshotPool.Count > 0 ? _snapshotPool.Pop() : new FrameSnapshot();
+
+    private void ReleaseSnapshotOf(FrameRequest? request)
+    {
+        if (request?.Batches is FrameSnapshot snapshot) snapshot.Release(this);
+    }
+
+    private static void FillSnapshot(FrameSnapshot snapshot, IReadOnlyList<BatchFrameParameters> batches, out int frustumCloneCount)
+    {
+        int count = batches.Count;
+        if (snapshot.Frames.Length < count) snapshot.Frames = new BatchFrameParameters[Math.Max(count, snapshot.Frames.Length * 2)];
+        snapshot.Count = count;
+        snapshot.PlaneSources.Clear();
         frustumCloneCount = 0;
-        for (int i = 0; i < frames.Length; i++)
+        BatchFrameParameters[] frames = snapshot.Frames;
+        Vector4[]? lastSource = null, lastCopy = null;
+        for (int i = 0; i < count; i++)
         {
             BatchFrameParameters frame = batches[i];
             Vector4[]? planes = frame.GrassFrustumPlanes;
             if (planes is not null)
             {
-                copies ??= new Dictionary<Vector4[], Vector4[]>(ReferenceEqualityComparer.Instance);
-                if (!copies.TryGetValue(planes, out Vector4[]? copy))
+                if (!ReferenceEquals(planes, lastSource))
                 {
-                    copy = (Vector4[])planes.Clone();
-                    copies.Add(planes, copy);
-                    frustumCloneCount++;
+                    Vector4[]? copy = null;
+                    for (int c = 0; c < snapshot.PlaneSources.Count; c++)
+                        if (ReferenceEquals(snapshot.PlaneSources[c], planes)) { copy = snapshot.PlaneCopies[c]; break; }
+                    if (copy is null)
+                    {
+                        int slot = snapshot.PlaneSources.Count;
+                        // Reuse an earlier private copy of the same length; the frames that used it are dead by now.
+                        if (slot < snapshot.PlaneCopies.Count && snapshot.PlaneCopies[slot].Length == planes.Length)
+                            copy = snapshot.PlaneCopies[slot];
+                        else
+                        {
+                            copy = new Vector4[planes.Length];
+                            if (slot < snapshot.PlaneCopies.Count) snapshot.PlaneCopies[slot] = copy;
+                            else snapshot.PlaneCopies.Add(copy);
+                        }
+                        Array.Copy(planes, copy, planes.Length);
+                        snapshot.PlaneSources.Add(planes);
+                        frustumCloneCount++;
+                    }
+                    lastSource = planes; lastCopy = copy;
                 }
-                planes = copy;
+                planes = lastCopy;
             }
             frames[i] = frame with { GrassFrustumPlanes = planes };
         }
-        return frames;
     }
 
     private void QueueWork()
@@ -373,7 +448,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
             int grassFrameRevision;
             lock (_gate)
             {
-                batches = new List<Batch>(_batches.Values).ToArray();
+                // Membership (registration, replacement, removal) bumps the revision, so the array is rebuilt only then.
+                if (_batchArray is null || _batchArrayRevision != _membershipRevision)
+                {
+                    _batchArray = new List<Batch>(_batches.Values).ToArray();
+                    _batchArrayRevision = _membershipRevision;
+                }
+                batches = _batchArray;
                 frame = _pending;
                 grassFrameRevision = _pendingGrassFrameRevision;
                 _pending = null;
@@ -391,7 +472,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 }
                 EnsureMirror(batch);
             }
-            if (frame is not null) Dispatch(frame, grassFrameRevision);
+            if (frame is not null)
+            {
+                Dispatch(frame, grassFrameRevision);
+                // Dispatch is the last reader of the pending snapshot; an exception skips this and merely drops it to the GC.
+                ReleaseSnapshotOf(frame);
+            }
             else CopyOutputMirrors(_rd!);
         }
         catch (Exception error)
@@ -548,10 +634,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
         // Preserve caller order: tree tiles are ordered by priority by the layer,
         // then GPU scans enforce deterministic hard caps.
         lock (_gate)
-            foreach (BatchFrameParameters parameters in frame.Batches)
+            for (int i = 0; i < frame.Batches.Count; i++)
+            {
+                BatchFrameParameters parameters = frame.Batches[i];
                 if (_seen.Add(parameters.BatchId) && _batches.TryGetValue(parameters.BatchId, out Batch? batch)
                     && !batch.Retired && batch.Allocated && batch.Registration.Grass == parameters.Grass)
                     _work.Add((batch, parameters));
+            }
         Volatile.Write(ref _lastFrameRequestedBatchCount, _work.Count);
         _selectedWork.Clear();
         bool grassOnly = _work.Count > 0 && AllGrass(_work);
@@ -693,8 +782,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private bool GrassFrameComplete(FrameRequest request, int revision)
     {
         if (revision <= 0) return false;
-        foreach (BatchFrameParameters parameters in request.Batches)
-            if (!_batches.TryGetValue(parameters.BatchId, out Batch? batch) || batch.Retired
+        for (int i = 0; i < request.Batches.Count; i++)
+            if (!_batches.TryGetValue(request.Batches[i].BatchId, out Batch? batch) || batch.Retired
                 || !batch.Allocated || batch.LastGrassFrameRevision != revision)
                 return false;
         return true;
@@ -710,16 +799,9 @@ public sealed class RingGpuVegetationCompute : IDisposable
         if (count == 0 || maximum <= 0) return;
         maximum = Math.Min(maximum, count);
         int start = PositiveModulo(_grassDispatchCursor, count);
-        var selected = new HashSet<int>();
+        _selectedIds.Clear();
         long candidates = 0;
-        bool TrySelect((Batch Batch, BatchFrameParameters Frame) item)
-        {
-            if (selected.Contains(item.Batch.Id)) return false;
-            // Permit one bounded oversized group so a user-raised group cap cannot starve it forever.
-            if (maximumCandidates > 0 && _selectedWork.Count > 0 && candidates + item.Batch.Count > maximumCandidates) return false;
-            selected.Add(item.Batch.Id); candidates += item.Batch.Count; _selectedWork.Add(item);
-            return true;
-        }
+        int lastSelectedIndex = -1;
         // New, replaced, or visibility-stale outputs are refreshed before an
         // already-current batch receives another pass. The cursor determines order.
         for (int offset = 0; offset < count && _selectedWork.Count < maximum; offset++)
@@ -727,15 +809,15 @@ public sealed class RingGpuVegetationCompute : IDisposable
             int index = (start + offset) % count;
             var item = _work[index];
             if ((!item.Batch.Dispatched || Volatile.Read(ref item.Batch.CompletedVisibilityRevision) != item.Frame.VisibilityRevision)
-                ) TrySelect(item);
+                && TrySelectGrassWork(item, maximumCandidates, ref candidates)) lastSelectedIndex = index;
         }
         int cursor = start;
         for (int offset = 0; offset < count && _selectedWork.Count < maximum; offset++)
         {
             int index = (start + offset) % count;
-            var item = _work[index];
-            if (TrySelect(item))
+            if (TrySelectGrassWork(_work[index], maximumCandidates, ref candidates))
             {
+                lastSelectedIndex = index;
                 cursor = (index + 1) % count;
             }
         }
@@ -743,12 +825,19 @@ public sealed class RingGpuVegetationCompute : IDisposable
         // last selected item. This keeps a changing membership list safe while
         // avoiding a permanent preference for its first element.
         if (_selectedWork.Count > 0 && cursor == start)
-        {
-            int last = _work.IndexOf(_selectedWork[^1]);
-            cursor = last >= 0 ? (last + 1) % count : start;
-        }
+            cursor = lastSelectedIndex >= 0 ? (lastSelectedIndex + 1) % count : start;
         _grassDispatchCursor = cursor;
     }
+
+    private bool TrySelectGrassWork((Batch Batch, BatchFrameParameters Frame) item, int maximumCandidates, ref long candidates)
+    {
+        if (_selectedIds.Contains(item.Batch.Id)) return false;
+        // Permit one bounded oversized group so a user-raised group cap cannot starve it forever.
+        if (maximumCandidates > 0 && _selectedWork.Count > 0 && candidates + item.Batch.Count > maximumCandidates) return false;
+        _selectedIds.Add(item.Batch.Id); candidates += item.Batch.Count; _selectedWork.Add(item);
+        return true;
+    }
+    private readonly HashSet<int> _selectedIds = new();
 
     private static int PositiveModulo(int value, int modulus)
     {

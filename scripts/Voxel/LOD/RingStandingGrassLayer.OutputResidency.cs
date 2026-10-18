@@ -34,7 +34,7 @@ public partial class RingStandingGrassLayer
         bool cards = _style.IsCards;
         bool distanceLod = EnableDistanceLod && !cards;
         float halfTransition = distanceLod ? LodTransitionWidthMeters * .5f : 0f;
-        Vector3? cameraWorld = camera?.GlobalPosition;
+        Vector3? cameraWorld = camera == null ? null : LatchedGrassCameraPosition(camera);
         Plane[]? frustum = CullGrassTiles && camera != null && GpuFrustumCulling
             ? CachedCameraFrustumPlanes(camera!) : null;
         GrassFrustumRejectedTileCount = GrassDistanceRejectedTileCount = 0;

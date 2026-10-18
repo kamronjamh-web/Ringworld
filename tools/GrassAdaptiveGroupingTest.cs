@@ -171,7 +171,9 @@ public partial class GrassAdaptiveGroupingTest : RefCounted
     private static void RunWorkCacheContracts()
     {
         var tree = (SceneTree)Engine.GetMainLoop();
-        var layer = new RingStandingGrassLayer { ProcessMode = Node.ProcessModeEnum.Disabled, EnableDistanceLod = true };
+        // Exact per-frame culling: this contract expects every camera change to invalidate work, which the latched
+        // (throttled) culling camera deliberately skips for sub-threshold moves.
+        var layer = new RingStandingGrassLayer { ProcessMode = Node.ProcessModeEnum.Disabled, EnableDistanceLod = true, ThrottleGrassCulling = false };
         var camera = new Camera3D();
         tree.Root.AddChild(layer); tree.Root.AddChild(camera);
         try

@@ -62,10 +62,9 @@ public partial class RingStandingGrassLayer
         int Roots, bool Gpu, bool DistanceLod, bool Suspended, bool LegacyGust,
         float NearLod, float FarLod, float Transition, float Padding, bool CullTiles, bool FrustumCull);
 
-    private IEnumerable<Resident> ActiveGrassResidents()
-    {
-        foreach (var pair in _activeGrassPresentations) yield return pair.Value;
-    }
+    // Maintained beside _activeGrassPresentations (rebuilt whenever it is) so per-frame loops allocate no iterator.
+    private readonly List<Resident> _activeGrassResidentList = new();
+    private List<Resident> ActiveGrassResidents() => _activeGrassResidentList;
     private bool IsAdaptiveGroup(Resident resident) => resident.Group != null;
     // Cards: never group a tile whose tier can still change. The split threshold (start - hysteresis) stays beyond the last
     // ladder boundary + downgrade hysteresis + 4 m camera/focus slack, so a group only ever holds floor-tier tiles.
@@ -98,14 +97,14 @@ public partial class RingStandingGrassLayer
     private void RefreshAdaptivePresentations()
     {
         if (!_adaptivePresentationsDirty) return;
-        _activeGrassPresentations.Clear();
+        _activeGrassPresentations.Clear(); _activeGrassResidentList.Clear();
         foreach (var pair in _tiles)
         {
             if (_adaptiveLeafOwners.TryGetValue(pair.Key, out var owner) && owner.Active && !owner.Splitting) continue;
-            _activeGrassPresentations.Add(pair);
+            _activeGrassPresentations.Add(pair); _activeGrassResidentList.Add(pair.Value);
         }
         foreach (var group in _adaptiveGroups.Values)
-            _activeGrassPresentations.Add(new(group.Resident.Data.Key, group.Resident));
+            { _activeGrassPresentations.Add(new(group.Resident.Data.Key, group.Resident)); _activeGrassResidentList.Add(group.Resident); }
         _adaptivePresentationsDirty = false;
         AdaptiveGrassGroupCount = AdaptiveGrassLevel1GroupCount = AdaptiveGrassLevel2GroupCount = AdaptiveGrassGroupedSourceCount = 0;
         foreach (var group in _adaptiveGroups.Values)
@@ -137,13 +136,15 @@ public partial class RingStandingGrassLayer
         AdaptiveGrassGroupingStatus = !settings.Enabled ? "Disabled" : !settings.Gpu ? "Fine outputs: GPU unavailable"
             : legacyGust ? "Fine outputs: standalone gust mapping" : !settings.DistanceLod ? "Fine outputs: distance LOD disabled"
             : settings.Suspended ? "Suspended" : "Adaptive distant intermediate outputs";
-        var plannerState = new AdaptivePlannerState(settings, geometry, camera?.GlobalTransform,
+        // Distances and frustum tests use the latched culling camera, so a small camera move leaves the planner state unchanged.
+        Vector3? cameraPosition = camera == null ? null : LatchedGrassCameraPosition(camera);
+        var plannerState = new AdaptivePlannerState(settings, geometry, camera == null ? null : _cullState.Transform,
             camera == null ? null : CaptureGrassCameraState(camera), focus);
         if (_adaptivePlannerState == plannerState && !_adaptiveSourcesDirty && !_adaptivePresentationsDirty
             && !_adaptiveHasTransitions && !_adaptiveCandidateRetryNeeded && _adaptiveCandidateCursor >= _adaptiveCandidates.Count) return;
         bool validateSources = _adaptiveSourcesDirty;
         bool validateDistances = _adaptivePlannerState?.Settings != settings || _adaptivePlannerState?.Geometry != geometry
-            || _adaptivePlannerState?.Camera?.Origin != camera?.GlobalPosition || _adaptivePlannerState?.Focus != focus;
+            || _adaptivePlannerState?.Camera?.Origin != cameraPosition || _adaptivePlannerState?.Focus != focus;
         bool cameraViewChanged = _adaptivePlannerState?.CameraView != plannerState.CameraView;
         _adaptivePlannerState = plannerState;
         bool settingsChanged = _adaptiveSettings != settings;
@@ -151,9 +152,9 @@ public partial class RingStandingGrassLayer
         {
             _adaptiveSettings = settings; _adaptiveSourcesDirty = true;
         }
-        if (camera != null && (_adaptiveCandidateCamera == null || _adaptiveCandidateCamera.Value.DistanceTo(camera.GlobalPosition) > 4))
+        if (camera != null && (_adaptiveCandidateCamera == null || _adaptiveCandidateCamera.Value.DistanceTo(cameraPosition!.Value) > 4))
         {
-            _adaptiveCandidateCamera = camera.GlobalPosition;
+            _adaptiveCandidateCamera = cameraPosition;
             if (_adaptiveCandidateCursor >= _adaptiveCandidates.Count) _adaptiveCandidateCursor = 0;
         }
         if (cameraViewChanged && _adaptiveCandidateCursor >= _adaptiveCandidates.Count) _adaptiveCandidateCursor = 0;
@@ -173,7 +174,7 @@ public partial class RingStandingGrassLayer
             }
             bool configSplit = group.Key.Level > settings.Level || group.Resident.Data.InstanceCount > settings.Roots;
             if (!validateDistances && !group.Splitting && group.Active && !configSplit) continue;
-            float minimum = AdaptiveGroupMinimumDistance(group.Resident, geometry, camera?.GlobalPosition, focus, circumference);
+            float minimum = AdaptiveGroupMinimumDistance(group.Resident, geometry, cameraPosition, focus, circumference);
             if (minimum > settings.FarLod + settings.Transition * .5f)
             {
                 AdaptiveGroupEvent(group, "retire:beyond");
@@ -236,14 +237,14 @@ public partial class RingStandingGrassLayer
                 float maximumHeight = 0;
                 foreach (var source in sources) maximumHeight = Math.Max(maximumHeight, _tiles[source.Key].MaximumSourceHeight);
                 var preflight = new Resident { Data = description, MaximumSourceHeight = maximumHeight };
-                float expandedMinimum = AdaptiveGroupMinimumDistance(preflight, geometry, camera!.GlobalPosition, focus, circumference);
+                float expandedMinimum = AdaptiveGroupMinimumDistance(preflight, geometry, cameraPosition!.Value, focus, circumference);
                 if (expandedMinimum < threshold || expandedMinimum > EffectiveGrassDrawDistance() + settings.Transition * .5f) continue;
                 // Admission uses the same conservative pass distance even when whole-tile culling is disabled.
                 // A batch with no intermediate request cannot become ready and must never reserve the pending-group slot.
                 float passDistance = ConservativePresentationDistance(description, preflight.Presentation.RawWorldBounds,
-                    camera.GlobalPosition, focus, circumference);
+                    cameraPosition!.Value, focus, circumference);
                 if (passDistance > EffectiveGrassDrawDistance() + settings.Transition * .5f + Math.Max(0, GrassFrustumPaddingMeters)) continue;
-                if (CullGrassTiles && GpuFrustumCulling && !AabbIntersectsFrustum(preflight.Presentation.ExpandedWorldBounds, CachedCameraFrustumPlanes(camera))) continue;
+                if (CullGrassTiles && GpuFrustumCulling && !AabbIntersectsFrustum(preflight.Presentation.ExpandedWorldBounds, CachedCameraFrustumPlanes(camera!))) continue;
                 // Upgrade an eligible complete ancestor through its fine children. The same gate used for creation chooses the bridge.
                 bool upgrading = false;
                 foreach (var source in sources) if (_adaptiveLeafOwners.TryGetValue(source.Key, out var owner))
@@ -387,7 +388,7 @@ public partial class RingStandingGrassLayer
     private void ClearAdaptiveGroups()
     {
         foreach (var group in _adaptiveGroups.Values) { AdaptiveGroupEvent(group, "retire:clear"); RetireGrassOutput(group.Resident, true); }
-        _adaptiveGroups.Clear(); _adaptiveLeafOwners.Clear(); _adaptiveCandidates.Clear(); _activeGrassPresentations.Clear();
+        _adaptiveGroups.Clear(); _adaptiveLeafOwners.Clear(); _adaptiveCandidates.Clear(); _activeGrassPresentations.Clear(); _activeGrassResidentList.Clear();
         _adaptiveOutputRequests.Clear(); _adaptiveOutputQueued.Clear();
         _adaptiveSourcesDirty = _adaptivePresentationsDirty = true;
         _adaptiveCandidateRetryNeeded = true;

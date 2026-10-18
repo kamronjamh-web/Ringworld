@@ -473,6 +473,11 @@ public partial class RingGraphicsQualityController : Node
         _grass.UseGpuCulling = true;
         _grass.GpuFrustumCulling = true;
         _grass.SkipUnchangedGpuCulling = true;
+        _grass.ThrottleGrassCulling = true;
+        _grass.GrassCullingMovementThresholdMeters = 1f;
+        _grass.GrassCullingRotationThresholdDegrees = 3f;
+        _grass.GrassCullingAngularPaddingDegrees = 5f;
+        _grass.GrassCullingMaximumIntervalSeconds = .25f;
         _grass.GroupGrassComputePhases = true;
         _grass.CullGrassTiles = true;
         _grass.EnableAdaptiveGrassGrouping = true;

@@ -187,9 +187,6 @@ public partial class RingStandingGrassLayer : Node3D
     private readonly HashSet<int> _gpuReadyBatches = new();
     private (bool Near, bool Intermediate)? _lastGpuGeometrySelection;
     private readonly RingGrassSurfaceCache _surfaceCache = new(4L * 1024 * 1024);
-    private Vector4[]? _gpuFrustum;
-    private Plane[]? _cameraFrustumPlanes;
-    private GpuCameraState? _gpuFrustumState;
     private readonly record struct GpuCameraState(ulong Id, Transform3D Transform, Camera3D.ProjectionType Projection,
         Camera3D.KeepAspectEnum KeepAspect, float Fov, float Size, Vector2 FrustumOffset, float Near, float Far,
         float HOffset, float VOffset, Vector2 ViewportSize);
@@ -1473,7 +1470,7 @@ public partial class RingStandingGrassLayer : Node3D
         // Submit the empty transition too, so backend requested/deferred counts
         // describe this camera frame after whole-tile culling hides every pass.
         int batchBudget = EffectiveGpuCullingBatchesPerFrame;
-        _gpuCompute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(camera.GlobalPosition,
+        _gpuCompute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(LatchedGrassCameraPosition(camera),
             Array.Empty<uint>(), _gpuFrames, SkipUnchanged: SkipUnchangedGpuCulling && !firstVisibilityHandoff,
             MaximumBatchesPerDispatch: batchBudget,
             MaximumCandidatesPerDispatch: batchBudget * MaximumGrassSourcesPerTile));
@@ -1481,7 +1478,8 @@ public partial class RingStandingGrassLayer : Node3D
         // so a batch (re-)registered this frame is already dispatched for its current visibility revision. Re-capturing lets a card tile whose
         // tier just changed (RemoveBatch -> CPU MultiMesh -> re-register) stay visible instead of dropping out for one frame; the
         // card ladder changes tiers ~13 times per approach. A deferred (budgeted) or render-thread dispatch is simply not ready yet.
-        if (refreshGpuVisibility && _style.IsCards) _gpuCompute.CaptureReadyBatches(_gpuFrames, _gpuReadyBatches);
+        // No completed dispatch since the first capture means readiness cannot have changed, so the repeat is skipped.
+        if (refreshGpuVisibility && _style.IsCards && _gpuCompute.CompletedUpdates != completedUpdates) _gpuCompute.CaptureReadyBatches(_gpuFrames, _gpuReadyBatches);
         if (refreshGpuVisibility) foreach (Resident resident in ActiveGrassResidents())
         {
             // A compacted INSTANCE_ID is no longer the canonical root rank.
@@ -1512,28 +1510,6 @@ public partial class RingStandingGrassLayer : Node3D
                 Mathf.Min(LodNearDistanceMeters, EffectiveGrassDrawDistance() - .01f), EffectiveGrassDrawDistance(), LodTransitionWidthMeters, LodNearDensity, LodFarDensity,
                 EnableDistanceLod, 1, false, frustum, GrassFrustumPaddingMeters, VisibilityRevision: visibilityRevision));
         }
-    }
-    private Vector4[] CachedCameraFrustum(Camera3D camera)
-    {
-        Vector2 viewportSize = GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero;
-        var state = new GpuCameraState(camera.GetInstanceId(), camera.GlobalTransform, camera.Projection, camera.KeepAspect,
-            camera.Fov, camera.Size, camera.FrustumOffset, camera.Near, camera.Far, camera.HOffset, camera.VOffset, viewportSize);
-        if (_gpuFrustum is not null && _gpuFrustumState == state) return _gpuFrustum;
-        Godot.Collections.Array<Plane> planes = camera.GetFrustum();
-        if (_gpuFrustum is null || _gpuFrustum.Length != planes.Count) _gpuFrustum = new Vector4[planes.Count];
-        if (_cameraFrustumPlanes is null || _cameraFrustumPlanes.Length != planes.Count) _cameraFrustumPlanes = new Plane[planes.Count];
-        for (int i = 0; i < planes.Count; i++)
-        {
-            _cameraFrustumPlanes[i] = planes[i];
-            _gpuFrustum[i] = new Vector4(planes[i].Normal.X, planes[i].Normal.Y, planes[i].Normal.Z, planes[i].D);
-        }
-        _gpuFrustumState = state;
-        return _gpuFrustum;
-    }
-    private Plane[] CachedCameraFrustumPlanes(Camera3D camera)
-    {
-        _ = CachedCameraFrustum(camera);
-        return _cameraFrustumPlanes!;
     }
     private static bool AabbIntersectsFrustum(Aabb aabb, IReadOnlyList<Plane> planes)
     {

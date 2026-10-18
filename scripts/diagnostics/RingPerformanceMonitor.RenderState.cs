@@ -93,7 +93,10 @@ public partial class RingPerformanceMonitor
                     reportedOutputBytes = _contextGrass.GpuCullingOutputBytes,
                     sharedSources = _contextGrass.GpuCullingSharedSourceCount,
                     completedUpdates = _contextGrass.GpuCullingCompletedUpdates,
-                    skippedUnchangedUpdates = _contextGrass.GpuCullingSkippedUnchangedUpdates
+                    skippedUnchangedUpdates = _contextGrass.GpuCullingSkippedUnchangedUpdates,
+                    cullingRelatches = _contextGrass.GrassCullingRelatches,
+                    lastCullingRelatchReason = _contextGrass.GrassCullingLastRelatchReason,
+                    throttleCulling = _contextGrass.ThrottleGrassCulling
                 },
                 nativeGeometry = CaptureGrassNativeGeometry(_contextGrass),
                 clumps = _contextGrass.UseGrassClumps,

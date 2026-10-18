@@ -54,10 +54,8 @@ public partial class RingStandingGrassLayer
         UseReducedNearGrassGeometry, IsSingleRibbonIntermediateGrassActive, _style.IsCards,
         _style.IsCards ? CardComputeFrame() : null);
 
-    private GpuCameraState CaptureGrassCameraState(Camera3D camera) => new(camera.GetInstanceId(),
-        camera.GlobalTransform, camera.Projection, camera.KeepAspect, camera.Fov, camera.Size,
-        camera.FrustumOffset, camera.Near, camera.Far, camera.HOffset, camera.VOffset,
-        GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero);
+    // Every grass culling consumer reads the latched camera (see CullingCamera.cs), not the live one, so caches keyed on it hold between re-latches.
+    private GpuCameraState CaptureGrassCameraState(Camera3D camera) => LatchedGrassCameraState(camera);
 
     private readonly record struct GrassVisibilityWorkKey(long Revision, RingLodGeometrySnapshot Geometry,
         Transform3D Layer, GpuCameraState? Camera, RingCanonicalPosition? Focus, long Circumference,
