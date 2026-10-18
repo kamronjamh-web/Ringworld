@@ -630,6 +630,8 @@ public partial class RingSunshineCloudBridge : Node
         _clouds.Set("gpu_timestamp_cloud_shadow_near_end_marker", RingPerformanceGpu.CloudShadowNearEndMarker);
         _clouds.Set("gpu_timestamp_cloud_shadow_far_begin_marker", RingPerformanceGpu.CloudShadowFarBeginMarker);
         _clouds.Set("gpu_timestamp_cloud_shadow_far_end_marker", RingPerformanceGpu.CloudShadowFarEndMarker);
+        _clouds.Set("gpu_timestamp_macro_map_begin_marker", RingPerformanceGpu.CloudMacroMapBeginMarker);
+        _clouds.Set("gpu_timestamp_macro_map_end_marker", RingPerformanceGpu.CloudMacroMapEndMarker);
         _clouds.Set("gpu_timestamp_diagnostics_enabled", enabled);
         _appliedGpuTimestampDiagnosticsEnabled = enabled;
         _appliedGpuTimestampBeginMarker = beginMarker; _appliedGpuTimestampEndMarker = endMarker;

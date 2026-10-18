@@ -66,6 +66,14 @@ layout(binding = 21, std140) uniform RingWeatherSystemsBlock {
 	vec4 header3;
 	RingWeatherSystem systems[64];
 } ringWeatherSystems;
+// Macro weather map (RingMacroWeatherMap.glsl): world-anchored RGBA16F array (layer = front/back buffer) holding the per-position
+// macro terms, so a cloud sample does one bilinear fetch instead of looping over the ray's systems. Params: see RingWeatherSystems.glslinc.
+layout(binding = 22, std140) uniform RingMacroMapBlock {
+	vec4 a;
+	vec4 b;
+} ringMacroMap;
+layout(binding = 23) uniform sampler2DArray ring_macro_map;
+#define RING_WS_MACRO_MAP
 #include "./RingWeatherSystems.glslinc"
 
 float terrain_cloud_direct_sun_visibility(vec3 worldPosition) {
@@ -560,7 +568,8 @@ float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgr
 	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
 	float result = 0.0;
 	for (int word = 0; word < 2; word++) {
-		uint bits = word == 0 ? g_ws_sculpt_mask.x : g_ws_sculpt_mask.y;
+		// The per-primary sub-mask: only the masked sculpt systems whose ellipse (plus light reach) covers the primary sample.
+		uint bits = word == 0 ? g_ws_sub_mask.x : g_ws_sub_mask.y;
 		while (bits != 0u) {
 			int index = word * 32 + findLSB(bits);
 			bits &= bits - 1u;
@@ -591,7 +600,7 @@ float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgr
 // then mask the systems whose support reaches the canonical origin -> mid -> end polyline. The ring's curvature moves the
 // true canonical path at most L^2 / (32 R) off this polyline (about 120 m for a 50 km ray at the certified radius), far
 // inside the margin. Unresolvable geometry keeps the whole ray (conservative).
-uvec2 ring_ws_ray_mask(vec3 rayOrigin, vec3 rayDirection, float rayEnd, float margin, float envelopeFloor, float clipSlack) {
+uvec2 ring_ws_ray_mask(vec3 rayOrigin, vec3 rayDirection, float rayEnd, float margin, float envelopeFloor, float clipSlack, bool sculptOnly) {
 	float t0 = 0.0;
 	float t1 = max(rayEnd, 0.0);
 	float ringRadius = genericData.data.cloud_frame_up.w;
@@ -620,7 +629,94 @@ uvec2 ring_ws_ray_mask(vec3 rayOrigin, vec3 rayDirection, float rayEnd, float ma
 	vec3 p0 = to_cloud_space(rayOrigin + rayDirection * t0);
 	vec3 p1 = to_cloud_space(rayOrigin + rayDirection * (0.5 * (t0 + t1)));
 	vec3 p2 = to_cloud_space(rayOrigin + rayDirection * t1);
-	return ring_ws_mask(p0, p1, p2, margin);
+	return ring_ws_mask(p0, p1, p2, margin, sculptOnly);
+}
+
+// Camera-independent clouds: refine the ray's sculpt systems with their ELLIPSES (the sculpt density is exactly zero outside the unit
+// ellipse; ring_ws_ray_mask above only knows support circles). Walks an 8-segment cloud-space polyline of the ray [0, rayEnd] (each
+// segment is at most a few tens of km, so the ring's curvature sag stays within ~150 m of the true curve at the certified radius) and
+//  - drops from g_ws_sculpt_mask every system whose ellipse stays farther than `reachMargin` (light/ambient reach of any primary
+//    sample, converted to the ellipse frame as reachMargin / min(major, minor)) from the polyline;
+//  - for the kept systems with an own storm band, records the ray-distance interval [t0, t1] where the polyline is within
+//    `intervalSlack` metres of the ellipse (a superset of where a primary sample can be inside it) together with that band, in
+//    g_ws_ray_band (at most RING_WS_RAY_BANDS slots; extra systems merge into the last slot, i.e. widen it conservatively).
+// A primary sample outside the background band and outside every active interval band is exactly empty.
+void ring_ws_build_ray_sculpt(vec3 rayOrigin, vec3 rayDirection, float rayEnd, float reachMargin, float intervalSlack,
+	vec2 backgroundBand, bool buildIntervals) {
+	g_ws_ray_band_count = 0;
+	if (g_ws_sculpt_mask == uvec2(0u)) return;
+	const int SEGMENTS = 8;
+	float dt = max(rayEnd, 1.0) / float(SEGMENTS);
+	vec2 points[SEGMENTS + 1];
+	for (int k = 0; k <= SEGMENTS; k++) {
+		vec3 c = to_cloud_space(rayOrigin + rayDirection * (dt * float(k)));
+		points[k] = vec2(c.x, c.z);
+	}
+	float circumference = ring_ws_circumference();
+	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
+	uvec2 kept = uvec2(0u);
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? g_ws_sculpt_mask.x : g_ws_sculpt_mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			vec4 a = ringWeatherSystems.systems[index].a;
+			vec4 c = ringWeatherSystems.systems[index].c;
+			vec2 offset = (ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
+			float minRadius = max(1.0, min(a.z, a.w));
+			float reachLimit = 1.0 + reachMargin / minRadius;
+			float sliceLimit = 1.0 + intervalSlack / minRadius;
+			bool hasBand = buildIntervals && c.y > c.x + 1.0;
+			// Unwrapped centre-relative offsets: wrap the first point once, then accumulate wrapped differences.
+			float deltaAround = ring_ws_wrap(points[0].x + offset.x - a.x, circumference);
+			vec2 previous = ring_ws_ellipse_normalize(index, vec2(deltaAround, points[0].y + offset.y - a.y));
+			float nearest2 = 1e30;
+			float tLow = 1e30;
+			float tHigh = -1e30;
+			for (int k = 1; k <= SEGMENTS; k++) {
+				deltaAround += ring_ws_wrap(points[k].x - points[k - 1].x, circumference);
+				vec2 current = ring_ws_ellipse_normalize(index, vec2(deltaAround, points[k].y + offset.y - a.y));
+				nearest2 = min(nearest2, ring_ws_segment_distance2(previous, current));
+				if (hasBand) {
+					// |previous + (current - previous) u|^2 <= sliceLimit^2 for u in [0, 1].
+					vec2 direction = current - previous;
+					float qa = dot(direction, direction);
+					float qb = dot(previous, direction);
+					float qc = dot(previous, previous) - sliceLimit * sliceLimit;
+					float uLow = 2.0;
+					float uHigh = -1.0;
+					if (qa < 1e-12) {
+						if (qc <= 0.0) { uLow = 0.0; uHigh = 1.0; }
+					} else {
+						float disc = qb * qb - qa * qc;
+						if (disc >= 0.0) {
+							float root = sqrt(disc);
+							uLow = max((-qb - root) / qa, 0.0);
+							uHigh = min((-qb + root) / qa, 1.0);
+						}
+					}
+					if (uLow <= uHigh) {
+						tLow = min(tLow, dt * (float(k - 1) + uLow));
+						tHigh = max(tHigh, dt * (float(k - 1) + uHigh));
+					}
+				}
+				previous = current;
+			}
+			if (nearest2 > reachLimit * reachLimit) continue;
+			kept |= ring_ws_bit(index);
+			if (hasBand && tLow <= tHigh) {
+				vec4 slot = vec4(tLow, tHigh, c.x, c.y);
+				if (g_ws_ray_band_count < RING_WS_RAY_BANDS) {
+					g_ws_ray_band[g_ws_ray_band_count] = slot;
+					g_ws_ray_band_count++;
+				} else {
+					vec4 last = g_ws_ray_band[RING_WS_RAY_BANDS - 1];
+					g_ws_ray_band[RING_WS_RAY_BANDS - 1] = vec4(min(last.x, slot.x), max(last.y, slot.y), min(last.z, slot.z), max(last.w, slot.w));
+				}
+			}
+		}
+	}
+	g_ws_sculpt_mask = kept;
 }
 
 float sampleLighting(
@@ -662,26 +758,44 @@ float sampleLighting(
 	// Camera-independent clouds march the per-ray band but shade with the background band's height gradient.
 	float gradientFloor = cloudfloor;
 	float gradientCeiling = cloudceiling;
-	if (ring_ws_enabled()) {
+	float breakFloor = cloudfloor;
+	float breakCeiling = cloudceiling;
+	bool ciLight = ring_ws_enabled();
+	if (ciLight) {
 		gradientFloor = genericData.data.background_altitude.x;
 		gradientCeiling = genericData.data.background_altitude.y;
 		if (gradientCeiling <= gradientFloor + 1.0) {
 			gradientFloor = cloudfloor;
 			gradientCeiling = cloudceiling;
 		}
+		// The march breaks on the background band widened only by the sculpt systems that can reach this primary sample's light
+		// samples (g_ws_sub_band), not by the ray-wide band.
+		breakFloor = g_ws_sub_band.x;
+		breakCeiling = g_ws_sub_band.y;
+		if ((ring_ws_debug() & 16) != 0) { // debug: break on the background band, not the widened band
+			breakFloor = gradientFloor;
+			breakCeiling = gradientCeiling;
+		}
 	}
+	// With sculpt systems in reach, samples inside the break band can still lie outside every band that holds density.
+	bool ciLightSkipEmpty = ciLight && g_ws_sub_mask != uvec2(0u);
 	for (float i = 0.0; i < stepCountFloat; i++) {
 		traveledDistance = mix(eachShortStep, actualDistance, clamp(quadraticOut(i / stepCountFloat), 0.0, 1.0));
 		curPos = worldPosition + sunDirection * traveledDistance;
 		vec3 cloudPos = to_cloud_space(curPos);
 
-		if (density < 1.0 && clamp(cloudPos.y, cloudfloor, cloudceiling) == cloudPos.y){
+		if (density < 1.0 && clamp(cloudPos.y, breakFloor, breakCeiling) == cloudPos.y){
 			heightGradient = remap(cloudPos.y, gradientFloor, gradientCeiling, 0.0, 1.0);
 			
 			heightGradient = clamp(smoothstep(sunUpValue - 0.1, sunUpValue, heightGradient), 0.0, 1.0);
+			if (ciLightSkipEmpty && !ring_ws_density_possible(cloudPos.y, vec2(gradientFloor, gradientCeiling))) {
+				// Exactly empty (see ring_ws_density_possible): sampleScene would return 0.
+				thisDensity = 0.0;
+			} else {
 			float extraLargeShape = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoisescale).a;
 
 			thisDensity = sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, extraLargeShape, largenoisescale, mediumnoisescale, smallnoisescale, coverage, smallscalePower, curlPower, lod, true, coarseSunLighting) * densityMultiplier * eachStepWeight;
+			}
 			// if (thisDensity <= 0.0){
 			// 	break;
 			// }
@@ -1142,6 +1256,13 @@ void main() {
 	// background band unioned with the storm bands of the masked sculpt systems, instead of the sky-wide envelope.
 	// The margin covers the longest light march (4 x the lighting step distance) plus the light-sample offsets.
 	bool ciClouds = ring_ws_enabled();
+	// With a valid macro map the per-sample macro terms are one fetch, so the per-ray list only needs the sculpt systems.
+	bool ciMap = ciClouds && ring_ws_map_valid();
+	// Background band (flag on) and the light reach used for the per-primary sculpt sub-mask: the longest light march
+	// (4 x the lighting step distance, point lights 4 x min(maxstep, distance)) plus slack for the ambient offset and curvature.
+	vec2 ciBackground = vec2(cloudfloor, cloudceiling);
+	float ciLightReach = 0.0;
+	bool ciWidenBand = false;
 	if (ciClouds) {
 		float ciRayEnd = maxTheoreticalStep;
 		if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
@@ -1149,13 +1270,28 @@ void main() {
 			ciRayEnd = min(ciRayEnd, genericData.data.cloud_handoff.y);
 		}
 		ciRayEnd = min(ciRayEnd, linear_depth) + maxstep;
-		float ciMargin = 4.0 * max(lightingStepDistance, maxstep) + 2000.0;
-		ring_ws_set_mask(ring_ws_ray_mask(rayOrigin, raydirection, ciRayEnd, ciMargin, cloudfloor, 2.0 * maxstep + 500.0));
-		vec2 ciBackground = vec2(genericData.data.background_altitude.x, genericData.data.background_altitude.y);
+		// Longest light sample offset from a primary: 4 x max(lighting step, maxstep), scaled by 1.05 (cloud-space arc length per
+		// metre at altitude <= 20 km on a >= 400 km ring), plus 1 km for the ambient offset; the ray margin adds 600 m for the
+		// polyline's curvature sag.
+		ciLightReach = 4.2 * max(lightingStepDistance, maxstep) + 1000.0;
+		float ciMargin = ciLightReach + 600.0;
+		int ciDebug = ring_ws_debug();
+		if ((ciDebug & 4) != 0) ring_ws_set_mask(uvec2(0u)); // debug: skip the ray mask build
+		else ring_ws_set_mask(ring_ws_ray_mask(rayOrigin, raydirection, ciRayEnd, ciMargin, cloudfloor, 2.0 * maxstep + 500.0, ciMap));
+		if ((ciDebug & 2) != 0 || ringWeatherSystems.header1.y <= 0.001) g_ws_sculpt_mask = uvec2(0u); // debug: no sculpt systems; zero sculpt strength has no sculpt density
+		ciBackground = vec2(genericData.data.background_altitude.x, genericData.data.background_altitude.y);
 		if (ciBackground.y <= ciBackground.x + 1.0) ciBackground = vec2(cloudfloor, cloudceiling);
-		vec2 ciBand = ring_ws_band(ciBackground, g_ws_sculpt_mask);
-		cloudfloor = ciBand.x;
-		cloudceiling = ciBand.y;
+		ciWidenBand = (ciDebug & 1) == 0; // debug bit 1: no band widening
+		// Tight per-ray band: the background band, widened by a sculpt system's own band only over the ray interval where the ray
+		// is inside that system's ellipse; the sub-mask / sculpt mask are refined by the ellipses as well.
+		ring_ws_build_ray_sculpt(rayOrigin, raydirection, ciRayEnd, ciMargin, 1500.0, ciBackground, ciWidenBand);
+		g_ws_sub_mask = g_ws_sculpt_mask;
+		g_ws_sub_band = ciBackground;
+		// cloudfloor/cloudceiling now hold the hull of every band this ray can touch (camera-inside and exit-side tests); the
+		// per-step in-band test, the empty-step skip and the entry skip use the per-distance band below.
+		vec2 ciHull = ring_ws_ray_band_hull(ciBackground);
+		cloudfloor = ciHull.x;
+		cloudceiling = ciHull.y;
 	}
 
 	vec3 directionalLightSunUpPower[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
@@ -1197,7 +1333,7 @@ void main() {
 	float samplePosCount = clamp(genericData.data.samplePointsCount, 0.0, 256.0);
 
 	if (samplePosCount > 0 && uv == ivec2(0)){
-		// Point probes are not tied to this pixel's ray, so evaluate them against every uploaded system.
+		// Point probes are not tied to this pixel's ray, so evaluate them directly against every uploaded system.
 		uvec2 ciRayMask = g_ws_mask;
 		if (ciClouds) ring_ws_set_mask(ring_ws_all_mask());
 		for (int i = 0; i < samplePosCount; i++){
@@ -1217,11 +1353,33 @@ void main() {
 	// shell entry. The jittered first point and all exit-state bookkeeping stay
 	// on their original path.
 	vec3 entryOrigin = rayOrigin - genericData.data.cloud_frame_origin.xyz;
-	int entrySkip = cloud_entry_skip_steps(
-		entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
-		genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
-		cloudfloor, cloudceiling, newStep, maxstep,
-		stepCount, linear_depth);
+	int entrySkip = 0;
+	if (ciClouds) {
+		// Per-ray band entry: a leading step may be skipped only if it is outside the background band AND, for each sculpt
+		// interval, either outside that system's band or before the interval starts (t_k = jitter + k * maxstep).
+		entrySkip = cloud_entry_skip_steps(
+			entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
+			genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
+			ciBackground.x, ciBackground.y, newStep, maxstep,
+			stepCount, linear_depth);
+		for (int k = 0; k < RING_WS_RAY_BANDS; k++) {
+			if (k >= g_ws_ray_band_count || entrySkip <= 0) break;
+			vec4 ciSlot = g_ws_ray_band[k];
+			int bandSkip = cloud_entry_skip_steps(
+				entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
+				genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
+				ciSlot.z, ciSlot.w, newStep, maxstep,
+				stepCount, linear_depth);
+			int beforeSkip = int(clamp(floor((ciSlot.x - newStep) / maxstep), 0.0, float(stepCount - 1)));
+			entrySkip = min(entrySkip, max(bandSkip, beforeSkip));
+		}
+	} else {
+		entrySkip = cloud_entry_skip_steps(
+			entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
+			genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
+			cloudfloor, cloudceiling, newStep, maxstep,
+			stepCount, linear_depth);
+	}
 	if (entrySkip > 0) {
 		traveledDistance = newStep + float(entrySkip) * maxstep;
 		newStep = maxstep;
@@ -1255,7 +1413,17 @@ void main() {
 		
 		curPos = rayOrigin + raydirection * traveledDistance;
 		vec3 cloudPos = to_cloud_space(curPos);
-		bool inCloudAltitudeBand = clamp(cloudPos.y, cloudfloor, cloudceiling) == cloudPos.y;
+		bool inCloudAltitudeBand;
+		// Flag on: the band at this ray distance (background band widened only inside active sculpt intervals); the exact
+		// emptiness test then skips the macro-map fetch and sampleScene for steps that cannot hold density.
+		bool ciEmptyStep = false;
+		if (ciClouds) {
+			vec2 ciStepBand = ring_ws_ray_band_at(traveledDistance, ciBackground);
+			inCloudAltitudeBand = clamp(cloudPos.y, ciStepBand.x, ciStepBand.y) == cloudPos.y;
+			ciEmptyStep = inCloudAltitudeBand && !ring_ws_primary_possible(cloudPos.y, traveledDistance, ciBackground);
+		} else {
+			inCloudAltitudeBand = clamp(cloudPos.y, cloudfloor, cloudceiling) == cloudPos.y;
+		}
 		// A near-tangent ray can reach its altitude apex while it is still
 		// inside the cloud band. Track the first altitude-band traversal rather
 		// than density: noise holes must not permit a remote shell re-entry.
@@ -1287,7 +1455,7 @@ void main() {
 		// This mask cannot affect density or lighting outside the altitude band.
 		// The disabled path retains the original fetch for parity comparisons.
 		vec4 maskSample = vec4(0.0);
-		if (genericData.data.cloud_mask_controls.x <= 0.5 || inCloudAltitudeBand) {
+		if ((genericData.data.cloud_mask_controls.x <= 0.5 || inCloudAltitudeBand) && !ciEmptyStep) {
 			maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 		}
 		//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
@@ -1298,15 +1466,26 @@ void main() {
 		if (inCloudAltitudeBand){
 
 			curLod = 1.0 - clamp(traveledDistance / lodMaxDistance, 0.0, 1.0);
+			if (ciEmptyStep) {
+				// Exactly empty: outside the background band and every active sculpt band, edgeFade and the storm altitude
+				// masks are 0, so sampleScene would return 0. No map fetch, no sub-mask, no sampleScene; same flow as a zero
+				// density sample (newStep = maxstep below).
+				newdensity = 0.0;
+			} else {
+			// Sculpt sub-mask for this primary sample (light and ambient samples reuse it).
+			if (ciClouds) ring_ws_update_sub_mask(cloudPos, ciLightReach, ciBackground, ciWidenBand);
 			// One macro-weather evaluation per primary sample; its coverage, density and light multipliers (and the
 			// g_ws_* storm/base-coverage globals) are reused by every light and ambient sample taken from this point.
-			if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
+			if (ciClouds && (ring_ws_debug() & 8) != 0) ring_ws_apply_macro(vec4(ringWeatherSystems.header0.z, 0.0, 0.0, 0.0), coverage, densityMultiplier, lightingdensityMultiplier); // debug: constant macro
+			else if (ciMap) ring_ws_update_macro_map(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
+			else if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
 			// newdensity = sampleSceneCoarse(largeNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, coverage, curLod);
 			newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false, false) * densityMultiplier, sharpness) * depthFade;
 			if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
 				&& genericData.data.cloud_handoff.x > 0.0) {
 				newdensity *= ring_cloud_handoff_near_weight(traveledDistance,
 					genericData.data.cloud_handoff);
+			}
 			}
 			// if (newdensity > 0.0) {
 			// 	newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false) * densityMultiplier, sharpness) * depthFade;
@@ -1466,11 +1645,13 @@ void main() {
 			// terminal exit. Do not use the local altitude derivative for that
 			// case: after the ray has curved around, it can point back toward the
 			// remote shell and incorrectly admit the inverted night-side layer.
-			float nextAltitude = cloud_altitude(curPos + raydirection * maxstep);
+			// Flag on: a sculpt interval that has not started yet can still hold density, so this is not the terminal exit.
+			bool ciExitDeferred = ciClouds && ring_ws_band_ahead(traveledDistance);
+			float nextAltitude = ciExitDeferred ? cloudPos.y : cloud_altitude(curPos + raydirection * maxstep);
 			float exitAltitudeDirection = nextAltitude - cloudPos.y;
 			bool leavingAbove = cloudPos.y > cloudceiling && exitAltitudeDirection > 0.0;
 			bool leavingBelow = cloudPos.y < cloudfloor && exitAltitudeDirection < 0.0;
-			if (enteredCloudAltitudeBand || leavingAbove || leavingBelow){
+			if (!ciExitDeferred && (enteredCloudAltitudeBand || leavingAbove || leavingBelow)){
 				// Preserve density collected while traversing the layer. The stock
 				// path jumped to max distance on exit, and the range fade below then
 				// erased the completed cloud ray.

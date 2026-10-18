@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://csxcmkk3a24o1"
+path="res://.godot/imported/RingMacroWeatherMap.glsl-a9e5f891eb459255a6f14b3a4c9da510.res"
+
+[deps]
+
+source_file="res://addons/SunshineClouds2/RingMacroWeatherMap.glsl"
+dest_files=["res://.godot/imported/RingMacroWeatherMap.glsl-a9e5f891eb459255a6f14b3a4c9da510.res"]
+
+[params]
+

@@ -144,7 +144,8 @@ func _counter_shader() -> RDShaderFile:
 	if source.count(fetch) != 1: _fail("production mask fetch instrumentation anchor changed"); return null
 	source = source.replace("void main() {", "void main() { float fixtureFetches = 0.0; float fixtureEmptyIntervals = 0.0;")
 	source = source.replace(fetch, "\t\t\tfixtureFetches += 1.0; " + fetch.strip_edges())
-	var band := "bool inCloudAltitudeBand = clamp(cloudPos.y, cloudfloor, cloudceiling) == cloudPos.y;"
+	# Flag-off (legacy) assignment; the camera-independent branch above it uses the per-step band.
+	var band := "inCloudAltitudeBand = clamp(cloudPos.y, cloudfloor, cloudceiling) == cloudPos.y;"
 	if source.count(band) != 1: _fail("production band instrumentation anchor changed"); return null
 	source = source.replace(band, band + " if (!inCloudAltitudeBand) fixtureEmptyIntervals += 1.0;")
 	var output := "imageStore(output_data_image, uv, currentDataAccumilation);"

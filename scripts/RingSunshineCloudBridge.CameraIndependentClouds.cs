@@ -19,6 +19,7 @@ public partial class RingSunshineCloudBridge
 	/// <summary>Header (4 x vec4) plus 64 systems (4 x vec4 each); must equal WEATHER_SYSTEMS_BYTES in SunshineClouds.gd.</summary>
 	public const int WeatherSystemsBlockBytes = 64 + MaximumWeatherSystemUploadCount * 64;
 	private static readonly StringName SetWeatherSystemsMethod = new("set_weather_systems");
+	private static readonly StringName SetMacroWeatherMapMethod = new("set_macro_weather_map");
 	// Smoothing time of the camera-local ambient factors (variant (a) of the plan's ambient A/B).
 	private const float CameraIndependentAmbientSmoothingSeconds = 1.0f;
 
@@ -35,6 +36,26 @@ public partial class RingSunshineCloudBridge
 	[Export(PropertyHint.Range, "-0.5,0.5,0.01")] public float SunshineBaseCoverageOffset { get; set; } = 0.0f;
 	/// <summary>Top of the constant ray envelope (the floor is the lowest storm base, 500 m by default).</summary>
 	[Export(PropertyHint.Range, "5000,40000,500")] public float StormEnvelopeCeilingMeters { get; set; } = 20000.0f;
+
+	/// <summary>Perf ablation bits (0 = normal): 1 background band only (no per-ray sculpt intervals, no sub-mask band widening), 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on the background band instead of the sub-mask band, 32 legacy shader path. Re-uploaded every weather refresh.</summary>
+	[Export(PropertyHint.Range, "0,63,1")] public int CameraIndependentDebugMask { get; set; } = 0;
+
+	[ExportSubgroup("Macro weather map")]
+	/// <summary>Build the world-anchored macro weather map (frame-sliced compute) and read it with one fetch per cloud sample. Off = every sample loops over its ray's systems.</summary>
+	[Export] public bool MacroWeatherMap { get; set; } = true;
+	/// <summary>Map texel size in metres (smaller = finer, more build work). Raised automatically if the region would exceed the 1024 x 512 texture.</summary>
+	[Export(PropertyHint.Range, "250,4000,50")] public float MacroMapResolution { get; set; } = 1000.0f;
+	/// <summary>Render callbacks one map build is spread over (one slice per callback); all slices read one snapshot.</summary>
+	[Export(PropertyHint.Range, "1,32,1")] public int MacroMapSlices { get; set; } = 8;
+	/// <summary>Minimum time between map build starts; a build always finishes before the next starts, so slow frames run builds back to back.</summary>
+	[Export(PropertyHint.Range, "0.05,2,0.05")] public float MacroMapRefreshSeconds { get; set; } = 0.25f;
+
+	/// <summary>Completed map builds (front/back swaps) since the renderer started.</summary>
+	public long MacroMapBuildsCompleted => _clouds != null && GodotObject.IsInstanceValid(_clouds) ? (long)_clouds.Get("macro_map_builds_completed").AsInt64() : 0;
+	/// <summary>Map slices dispatched since the renderer started (build GPU time is the GPU.CloudMacroMap timestamp scope).</summary>
+	public long MacroMapSlicesDispatched => _clouds != null && GodotObject.IsInstanceValid(_clouds) ? (long)_clouds.Get("macro_map_slices_dispatched").AsInt64() : 0;
+	/// <summary>True while the shaders read the front map (false: direct per-system evaluation).</summary>
+	public bool MacroMapActive => _clouds != null && GodotObject.IsInstanceValid(_clouds) && _clouds.Get("macro_map_valid").AsBool();
 
 	/// <summary>Systems currently uploaded (0 while the flag is off).</summary>
 	public int UploadedWeatherSystemCount { get; private set; }
@@ -274,6 +295,7 @@ public partial class RingSunshineCloudBridge
 			_ciHasAmbientState = false;
 			Array.Clear(_ciBlock);
 			_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
+			PublishMacroWeatherMap(false);
 			return;
 		}
 
@@ -292,7 +314,8 @@ public partial class RingSunshineCloudBridge
 		// header1: heavy-overcast start, sculpt strength, envelope floor/ceiling
 		WriteFloat(16, HeavyOvercastStartCoverage);
 		WriteFloat(20, sculptStrength);
-		WriteFloat(24, _ciEnvelopeFloorMeters);
+		// z carries CameraIndependentDebugMask (small int, exact as a float); the envelope floor is CPU-side only (no shader reads it).
+		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 63));
 		WriteFloat(28, _ciEnvelopeCeilingMeters);
 		// header2: background floor/ceiling, selection radius, revision
 		WriteFloat(32, _backgroundCloudFloorMeters);
@@ -331,6 +354,26 @@ public partial class RingSunshineCloudBridge
 		}
 		_ciUploadedEnabled = true;
 		_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
+		PublishMacroWeatherMap(MacroWeatherMap);
+	}
+
+	/// <summary>
+	/// Tells Sunshine which world region the macro weather map must cover and how to spread its build. The region is the selection radius
+	/// (handoff end + light reach + margin, the same disc the uploaded systems cover) around the camera by the whole ring width; Sunshine
+	/// snaps the origin to whole texels when a build starts. Map off (or flag off) returns every shader to the direct per-system path.
+	/// </summary>
+	private void PublishMacroWeatherMap(bool enabled)
+	{
+		if (_clouds == null || !GodotObject.IsInstanceValid(_clouds) || !_clouds.HasMethod(SetMacroWeatherMapMethod)) return;
+		if (!enabled || _explorer == null || _grid == null)
+		{
+			_clouds.Call(SetMacroWeatherMapMethod, false, 0.0, 0.0, 0.0, 0.0, 1000.0, 1, 0.25);
+			return;
+		}
+		double width = Math.Max(1.0, _grid.RingAcrossWidthMeters);
+		_clouds.Call(SetMacroWeatherMapMethod, true, _explorer.CanonicalPosition.AroundMeters, (double)_ciSelectionRadiusMeters,
+			-1000.0, width + 1000.0, (double)Mathf.Clamp(MacroMapResolution, 250.0f, 4000.0f),
+			Math.Clamp(MacroMapSlices, 1, 32), (double)Mathf.Clamp(MacroMapRefreshSeconds, 0.05f, 2.0f));
 	}
 
 	private void WriteFloat(int offset, float value)

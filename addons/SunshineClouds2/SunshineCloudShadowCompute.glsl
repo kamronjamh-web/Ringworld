@@ -31,6 +31,14 @@ layout(binding = 8, std140) uniform RingWeatherSystemsBlock {
     vec4 header3;
     RingWeatherSystem systems[64];
 } ringWeatherSystems;
+// Macro weather map (RingMacroWeatherMap.glsl): the same world-anchored front map the main compute samples; bindings 9/10 are free
+// (0-8 are used). Params: see RingWeatherSystems.glslinc. Invalid (b.w = 0) keeps the direct per-system evaluation.
+layout(binding = 9, std140) uniform RingMacroMapBlock {
+    vec4 a;
+    vec4 b;
+} ringMacroMap;
+layout(binding = 10) uniform sampler2DArray ring_macro_map;
+#define RING_WS_MACRO_MAP
 #include "./RingWeatherSystems.glslinc"
 
 // center_radius.xyz is the ground datum at the cascade centre; w is its
@@ -278,7 +286,12 @@ float sample_sunshine_density(vec3 world_position) {
     if (camera_independent) {
         float unused_coverage;
         float unused_lighting;
-        ring_ws_update_macro(cloud_position, unused_coverage, density_scale, unused_lighting);
+        // One bilinear map fetch (the map is the same function sampled per texel); the direct per-system loop is the fallback.
+        if (ring_ws_map_valid()) {
+            ring_ws_update_macro_map(cloud_position, unused_coverage, density_scale, unused_lighting);
+        } else {
+            ring_ws_update_macro(cloud_position, unused_coverage, density_scale, unused_lighting);
+        }
     }
     // This is intentionally evaluated once per cloud sample: the sun ray can
     // cross a ring edge, so using the ground texel's mask would alter edge
@@ -399,7 +412,13 @@ bool sunshine_cloud_possible(vec3 world_position, float slack) {
         // Camera-independent clouds: possible anywhere a masked system's support circle (plus slack) reaches. Away from
         // every system the macro weather has no system terms, so bound its coverage by the largest cluster term:
         // cov <= clamp(base + 0.5 * strength + (0 - 0.28) * 0.46, ...). Coverage and storm level are monotonic in cov.
-        if (ring_ws_support_covers(cloud_position, slack, g_ws_mask)) return true;
+        // The density path reads the macro map: a bilinear value blends the four texel centres within sqrt(2) texels of the
+        // sample, and the map was built from a snapshot at most one build period older than the uniforms. Widening the
+        // support test by 1.5 texels plus 250 m of wind drift keeps "no system reaches this probe" true for every blended
+        // texel, so the pure base + cluster bound below still dominates the map value (it never exceeds the function's
+        // supremum there). Outside the map the density path evaluates exactly that no-system function.
+        float map_slack = ring_ws_map_valid() ? 1.5 * ringMacroMap.a.z + 250.0 : 0.0;
+        if (ring_ws_support_covers(cloud_position, slack + map_slack, g_ws_mask)) return true;
         float bound = clamp(ringWeatherSystems.header0.z
             + 0.5 * abs(ringWeatherSystems.header3.y) - 0.28 * 0.46, 0.015, 0.985);
         float heavy_start = ringWeatherSystems.header1.x;
@@ -478,12 +497,15 @@ void main() {
         float envelope_ceiling_distance = band_ceiling / sun_up;
         float weather_scale = genericData.data.cloud_weather_params.y;
         float margin = 2000.0 + min(0.5 * max(envelope_ceiling_distance - envelope_floor_distance, 0.0),
-            weather_scale > 0.0 ? 0.125 * weather_scale : 0.0);
-        ring_ws_set_mask(ring_ws_mask(
-            to_cloud_space(ground + sun_direction * envelope_floor_distance),
-            to_cloud_space(ground + sun_direction * (0.5 * (envelope_floor_distance + envelope_ceiling_distance))),
-            to_cloud_space(ground + sun_direction * envelope_ceiling_distance),
-            margin));
+            weather_scale > 0.0 ? 0.125 * weather_scale : 0.0)
+            + (ring_ws_map_valid() ? 1.5 * ringMacroMap.a.z + 250.0 : 0.0); // the map slack of sunshine_cloud_possible
+        vec3 mask_p0 = to_cloud_space(ground + sun_direction * envelope_floor_distance);
+        vec3 mask_p1 = to_cloud_space(ground + sun_direction * (0.5 * (envelope_floor_distance + envelope_ceiling_distance)));
+        vec3 mask_p2 = to_cloud_space(ground + sun_direction * envelope_ceiling_distance);
+        ring_ws_set_mask(ring_ws_mask(mask_p0, mask_p1, mask_p2, margin, false));
+        // Sculpt density is exactly zero outside a system's ellipse, so only sculpt systems whose ellipse reaches this sun ray
+        // may widen the band or add density (the support circle above is larger than the ellipse).
+        g_ws_sculpt_mask = ring_ws_sculpt_ellipse_subset(g_ws_sculpt_mask, mask_p0, mask_p1, mask_p2, margin);
         vec2 background_band = vec2(genericData.data.background_altitude.x, genericData.data.background_altitude.y);
         if (background_band.y <= background_band.x + 1.0) background_band = vec2(band_floor, band_ceiling);
         vec2 band = ring_ws_band(background_band, g_ws_sculpt_mask);

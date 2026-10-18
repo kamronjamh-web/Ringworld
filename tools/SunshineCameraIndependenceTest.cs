@@ -92,6 +92,9 @@ public partial class SunshineCameraIndependenceTest : RefCounted
         CheckManual(radius, buffer);
         CheckProfilesConstantOverLifetime(radius, buffer);
         CheckClusterTerm();
+        CheckCoverageCalibration(handoffEndMeters, buffer);
+        CheckMacroMapInterpolation(buffer);
+        PrintPoseCheck(radius, buffer);
 
         if (_failures.Count > 0)
         {
@@ -239,6 +242,198 @@ public partial class SunshineCameraIndependenceTest : RefCounted
         }
         GD.Print($"[camera-independence] lifetime check: unique={first.Count} re-observations={persisted} sculpting_systems={sculpting}");
         if (persisted == 0) Fail("lifetime check observed no persistent system (vacuous)");
+    }
+
+    // C# mirror of ring_ws_macro_point (RingWeatherSystems.glslinc) for natural systems at the frozen time with overflow fade 1:
+    // natural systems by product + strongest, coverage = clamp(base + continuous cluster + macroBias + densityBias, 0.015, 0.985),
+    // storm = clamp(0.65 influence + 0.55 precipitation). Returns the UNCLAMPED coverage sum so a base offset can be solved for.
+    (float RawCoverage, float Coverage, float Storm, float Precipitation) EvaluateMacro(
+        double around, double across, List<RingVolumetricCloudLayer.RenderWeatherSystem> systems, float baseCoverage)
+    {
+        double sourceAround = Wrap(around - _wind.X * FrozenTime);
+        double sourceAcross = across - _wind.Y * FrozenTime;
+        float combined = 0.0f, strongest = 0.0f, strongestDensity = 0.0f, strongestPrecipitation = 0.0f;
+        foreach (RingVolumetricCloudLayer.RenderWeatherSystem system in systems)
+        {
+            if (system.IsStatic) continue;
+            double da = ShortestDelta(sourceAround, system.CenterAroundMeters), dz = system.CenterAcrossMeters - sourceAcross;
+            double major = system.MajorRadiusMeters;
+            if (da * da + dz * dz >= major * major) continue;
+            double along = system.OrientationCosine * da + system.OrientationSine * dz;
+            double cross = -system.OrientationSine * da + system.OrientationCosine * dz;
+            double minor = system.MinorRadiusMeters;
+            double normalizedSquared = along * along / Math.Max(1.0, major * major) + cross * cross / Math.Max(1.0, minor * minor);
+            if (normalizedSquared >= 1.0) continue;
+            float t = Mathf.Clamp(((float)Math.Sqrt(normalizedSquared) - 0.32f) / 0.68f, 0.0f, 1.0f);
+            float weighted = (1.0f - t * t * (3.0f - 2.0f * t)) * system.Influence;
+            combined = 1.0f - (1.0f - combined) * (1.0f - weighted);
+            if (weighted <= strongest) continue;
+            strongest = weighted; strongestDensity = system.Influence; strongestPrecipitation = system.Precipitation;
+        }
+        combined = Mathf.Clamp(combined, 0.0f, 1.0f);
+        strongest = Mathf.Clamp(strongest, 0.0f, 1.0f);
+        float raw = baseCoverage + _layer.SampleContinuousClusterTerm(around, across, FrozenTime)
+            + (combined - 0.28f) * 0.46f + strongest * (strongestDensity - 0.5f) * 0.24f;
+        float coverage = Mathf.Clamp(raw, 0.015f, 0.985f);
+        float x = Mathf.Clamp((coverage - 0.35f) / 0.55f, 0.0f, 1.0f);
+        float precipitation = Mathf.Clamp(strongestPrecipitation * combined * (x * x * (3.0f - 2.0f * x)), 0.0f, 1.0f);
+        float storm = Mathf.Clamp(combined * 0.65f + precipitation * 0.55f, 0.0f, 1.0f);
+        return (raw, coverage, storm, precipitation);
+    }
+
+    /// <summary>
+    /// Calibration of SunshineBaseCoverageOffset. Legacy: the bridge published ONE camera-local coverage
+    /// (QueryLocalWeather(camera).CloudCoverage -> cloud_weather_frame.w) for the whole sky. New: the shader evaluates coverage(x) per
+    /// position. Over the sweep this compares the mean legacy value with the mean new value over the visible disc (uniform area weight,
+    /// and a 1/r weight that approximates screen coverage), then solves the offset that makes the clamped new mean equal the legacy
+    /// mean. Prints the numbers; the default of SunshineBaseCoverageOffset is set from the area-weighted result.
+    /// </summary>
+    void CheckCoverageCalibration(double discRadiusMeters, List<RingVolumetricCloudLayer.RenderWeatherSystem> buffer)
+    {
+        const double GridStep = 4000.0;
+        double ringWidth = _layer.GetNode<VoxelChunkGridManager>(_layer.GridManagerPath).RingAcrossWidthMeters;
+        float baseCoverage = _layer.Coverage;
+        var rawArea = new List<float>(); var rawInverse = new List<float>(); var weightInverse = new List<double>();
+        double legacyCoverage = 0.0, legacyVisible = 0.0, newVisibleArea = 0.0;
+        int cameras = 0;
+        var cameraCenters = new List<RingCanonicalPosition>();
+        for (int k = -AroundHalfSteps; k <= AroundHalfSteps; k += 25)
+            cameraCenters.Add(new RingCanonicalPosition(PoseAround + k * StepMeters, 0.0, PoseAcross));
+        for (int j = -AcrossHalfSteps; j <= AcrossHalfSteps; j += 25)
+            cameraCenters.Add(new RingCanonicalPosition(PoseAround, 0.0, PoseAcross + j * StepMeters));
+        foreach (RingCanonicalPosition camera in cameraCenters)
+        {
+            RingVolumetricCloudLayer.LocalWeatherState legacy = _layer.QueryLocalWeather(camera);
+            float legacyStorm = Mathf.Clamp(legacy.SystemInfluence * 0.65f + legacy.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
+            legacyCoverage += legacy.CloudCoverage;
+            legacyVisible += Math.Max(legacy.CloudCoverage, legacyStorm);
+            buffer.Clear();
+            _layer.CollectRenderWeatherSystems(camera, discRadiusMeters + 2.0 * GridStep, FrozenTime, buffer);
+            int steps = (int)Math.Ceiling(discRadiusMeters / GridStep);
+            for (int ia = -steps; ia <= steps; ia++)
+            for (int iz = -steps; iz <= steps; iz++)
+            {
+                double da = ia * GridStep, dz = iz * GridStep, r = Math.Sqrt(da * da + dz * dz);
+                double across = camera.AcrossMeters + dz;
+                if (r > discRadiusMeters || across < 0.0 || across > ringWidth) continue;
+                var macro = EvaluateMacro(camera.AroundMeters + da, across, buffer, baseCoverage);
+                rawArea.Add(macro.RawCoverage);
+                newVisibleArea += Math.Max(macro.Coverage, macro.Storm);
+                rawInverse.Add(macro.RawCoverage);
+                weightInverse.Add(1.0 / Math.Max(r, 2000.0));
+            }
+            cameras++;
+        }
+        legacyCoverage /= cameras; legacyVisible /= cameras; newVisibleArea /= Math.Max(1, rawArea.Count);
+        double newAreaMean = rawArea.Average(v => Math.Clamp((double)v, 0.015, 0.985));
+        double weightSum = weightInverse.Sum();
+        double newInverseMean = 0.0;
+        for (int i = 0; i < rawInverse.Count; i++) newInverseMean += Math.Clamp((double)rawInverse[i], 0.015, 0.985) * weightInverse[i];
+        newInverseMean /= weightSum;
+
+        // Offset o with mean(clamp(raw + o)) == legacy mean, by bisection (the mean is monotonic in o).
+        double Solve(Func<double, double> mean)
+        {
+            double lo = -0.5, hi = 0.5;
+            for (int i = 0; i < 40; i++)
+            {
+                double mid = 0.5 * (lo + hi);
+                if (mean(mid) < legacyCoverage) lo = mid; else hi = mid;
+            }
+            return 0.5 * (lo + hi);
+        }
+        double areaOffset = Solve(o => rawArea.Average(v => Math.Clamp((double)v + o, 0.015, 0.985)));
+        double inverseOffset = Solve(o =>
+        {
+            double sum = 0.0;
+            for (int i = 0; i < rawInverse.Count; i++) sum += Math.Clamp((double)rawInverse[i] + o, 0.015, 0.985) * weightInverse[i];
+            return sum / weightSum;
+        });
+        GD.Print($"[camera-independence] coverage calibration: cameras={cameras} disc_points={rawArea.Count} base={baseCoverage:0.###} "
+            + $"legacy mean cloud_weather_frame.w={legacyCoverage:0.####} legacy mean visible={legacyVisible:0.####} | new mean coverage (offset 0): "
+            + $"area={newAreaMean:0.####} inverse-distance={newInverseMean:0.####} new mean visible(area)={newVisibleArea:0.####} | "
+            + $"proposed SunshineBaseCoverageOffset: area={areaOffset:0.###} inverse-distance={inverseOffset:0.###}");
+    }
+
+    /// <summary>
+    /// Bilinear error of the macro weather map. The map stores ring_ws_macro_point at texel centres of a MapTexelMeters grid and the GPU
+    /// filters bilinearly, so this builds the exact values on such a grid around the camera and around the smallest in-range system
+    /// (highest curvature), interpolates at random points, and compares with the exact function. The analytic bound per axis is
+    /// h^2/8 * max|f''|; the printed numbers are the measured maxima for coverage, storm level and precipitation.
+    /// </summary>
+    void CheckMacroMapInterpolation(List<RingVolumetricCloudLayer.RenderWeatherSystem> buffer)
+    {
+        const double MapTexelMeters = 1000.0; // MacroMapResolution default
+        const int Cells = 64;
+        float baseCoverage = _layer.Coverage;
+        var pose = new RingCanonicalPosition(PoseAround, 0.0, PoseAcross);
+        buffer.Clear();
+        _layer.CollectRenderWeatherSystems(pose, 200000.0, FrozenTime, buffer);
+        if (buffer.Count == 0) { Fail("map interpolation check found no systems"); return; }
+        var windows = new List<(double Around, double Across, string Label)> { (PoseAround, PoseAcross, "camera") };
+        RingVolumetricCloudLayer.RenderWeatherSystem smallest = buffer.Where(s => !s.IsStatic).OrderBy(s => s.MinorRadiusMeters).First();
+        windows.Add((Wrap(smallest.CenterAroundMeters + _wind.X * FrozenTime), smallest.CenterAcrossMeters + _wind.Y * FrozenTime, $"smallest system (minor={smallest.MinorRadiusMeters:0} m)"));
+        var random = new Random(1234);
+        foreach ((double centerAround, double centerAcross, string label) in windows)
+        {
+            double originAround = centerAround - Cells * 0.5 * MapTexelMeters, originAcross = centerAcross - Cells * 0.5 * MapTexelMeters;
+            var grid = new (float Cov, float Storm, float Precip)[Cells + 1, Cells + 1];
+            for (int i = 0; i <= Cells; i++)
+            for (int j = 0; j <= Cells; j++)
+            {
+                var m = EvaluateMacro(originAround + i * MapTexelMeters, originAcross + j * MapTexelMeters, buffer, baseCoverage);
+                grid[i, j] = (m.Coverage, m.Storm, m.Precipitation);
+            }
+            double worstCov = 0.0, worstStorm = 0.0, worstPrecip = 0.0;
+            for (int sample = 0; sample < 4000; sample++)
+            {
+                double u = 1.0 + random.NextDouble() * (Cells - 2), v = 1.0 + random.NextDouble() * (Cells - 2);
+                int i0 = (int)u, j0 = (int)v;
+                float fu = (float)(u - i0), fv = (float)(v - j0);
+                (float Cov, float Storm, float Precip) Lerp(int di, int dj) => grid[i0 + di, j0 + dj];
+                float Bi(Func<(float Cov, float Storm, float Precip), float> pick)
+                {
+                    float a = Mathf.Lerp(pick(Lerp(0, 0)), pick(Lerp(1, 0)), fu);
+                    float b = Mathf.Lerp(pick(Lerp(0, 1)), pick(Lerp(1, 1)), fu);
+                    return Mathf.Lerp(a, b, fv);
+                }
+                var exact = EvaluateMacro(originAround + u * MapTexelMeters, originAcross + v * MapTexelMeters, buffer, baseCoverage);
+                worstCov = Math.Max(worstCov, Math.Abs(Bi(g => g.Cov) - exact.Coverage));
+                worstStorm = Math.Max(worstStorm, Math.Abs(Bi(g => g.Storm) - exact.Storm));
+                worstPrecip = Math.Max(worstPrecip, Math.Abs(Bi(g => g.Precip) - exact.Precipitation));
+            }
+            GD.Print($"[camera-independence] map interpolation ({label}, texel {MapTexelMeters:0} m): max |bilinear - exact| coverage={worstCov:0.#####} storm={worstStorm:0.#####} precipitation={worstPrecip:0.#####}");
+            if (worstCov > 0.05 || worstStorm > 0.08) Fail($"macro map bilinear error too large at {label}: coverage {worstCov:0.####} storm {worstStorm:0.####}");
+        }
+    }
+
+    /// <summary>
+    /// Diagnostic only (no assertions): the camera-local values the legacy bridge published sky-wide at the Certified pose, next to the
+    /// per-position macro at the same point and the sculpt systems the camera-independent upload would carry.
+    /// </summary>
+    void PrintPoseCheck(double selectionRadius, List<RingVolumetricCloudLayer.RenderWeatherSystem> buffer)
+    {
+        var camera = new RingCanonicalPosition(PoseAround, 0.0, PoseAcross);
+        RingVolumetricCloudLayer.LocalWeatherState legacy = _layer.QueryLocalWeather(camera);
+        float legacyStorm = Mathf.Clamp(legacy.SystemInfluence * 0.65f + legacy.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
+        buffer.Clear();
+        _layer.CollectRenderWeatherSystems(camera, selectionRadius, FrozenTime, buffer);
+        var macro = EvaluateMacro(PoseAround, PoseAcross, buffer, _layer.Coverage);
+        GD.Print($"[camera-independence] pose check: legacy camera-local: coverage={legacy.CloudCoverage:0.####} stormFactor={legacyStorm:0.####} "
+            + $"systemId={legacy.SystemId} kind={legacy.SystemKind} influence={legacy.SystemInfluence:0.####} precip={legacy.PrecipitationPotential:0.####} "
+            + $"dominantProfile={legacy.DominantFormationProfile} cloudBase={legacy.CloudBaseAltitudeMeters:0.#} cloudTop={legacy.CloudTopAltitudeMeters:0.#} "
+            + $"legacySculptNonZero={legacy.SystemInfluence > 0.0001f && legacy.SystemId != 0}");
+        GD.Print($"[camera-independence] pose check: per-position macro at camera: coverage={macro.Coverage:0.####} (raw {macro.RawCoverage:0.####}) "
+            + $"storm={macro.Storm:0.####} precip={macro.Precipitation:0.####} uploadable_systems={buffer.Count}");
+        double sourceAround = Wrap(PoseAround - _wind.X * FrozenTime), sourceAcross = PoseAcross - _wind.Y * FrozenTime;
+        foreach (RingVolumetricCloudLayer.RenderWeatherSystem s in buffer.Where(s => s.Sculpts).OrderBy(s => s.SystemId))
+        {
+            double da = ShortestDelta(s.IsStatic ? PoseAround : sourceAround, s.CenterAroundMeters);
+            double dz = s.CenterAcrossMeters - (s.IsStatic ? PoseAcross : sourceAcross);
+            GD.Print($"[camera-independence] pose check: sculpt system id={s.SystemId} kind={s.Kind} profile={s.PhysicalProfile} flags={s.Flags} "
+                + $"dist={Math.Sqrt(da * da + dz * dz):0} m radii=({s.MajorRadiusMeters:0},{s.MinorRadiusMeters:0}) "
+                + $"stormBand=({s.StormFloorMeters:0},{s.StormCeilingMeters:0}) influence={s.Influence:0.###} precip={s.Precipitation:0.###}");
+        }
     }
 
     void CheckClusterTerm()

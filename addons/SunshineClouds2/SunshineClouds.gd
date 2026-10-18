@@ -85,6 +85,8 @@ signal external_texture_retirement_requested(generation_id: int)
 @export var gpu_timestamp_cloud_shadow_near_end_marker : String = ""
 @export var gpu_timestamp_cloud_shadow_far_begin_marker : String = ""
 @export var gpu_timestamp_cloud_shadow_far_end_marker : String = ""
+@export var gpu_timestamp_macro_map_begin_marker : String = ""
+@export var gpu_timestamp_macro_map_end_marker : String = ""
 # MenuFlyoverSunshineLayer alone enables this opt-in reconstruction shortcut.
 # Keeping the default false preserves the normal Sunshine post-pass path.
 @export var menu_fast_reconstruction : bool = false
@@ -174,6 +176,47 @@ var weather_systems_dirty : bool = true
 # Bumped by the bridge only on structural changes (a manual system added/removed, or the upload cap changed). It is part of the
 # density-continuity shape terms, so a structural change retires temporal history while ordinary refreshes do not.
 @export var weather_systems_revision : int = 0
+
+# RingworldTechDemo extension (camera-independent clouds): the macro weather map. Coverage, storm level and precipitation depend only on
+# the world position, the system list and the snapshot time, so RingMacroWeatherMap.glsl evaluates them once per texel of a world-anchored
+# RGBA16F texture instead of the raymarch looping over the ray systems at every sample. The texture is a 2-layer array (front/back) of fixed
+# capacity (allocated once, so no uniform set is ever rebuilt for it); a build writes the BACK layer one slice (a band of 8-row groups) per
+# render callback, all slices reading one snapshot (the system block bytes and the wind frame offset captured when the build began), and
+# swaps layers only when the last slice is done. The raymarch and shadow shaders read the front layer through the params UBO
+# (macro_map_params_buffer, bound at 22 in the main compute and 9 in the shadow compute; the texture at 23 / 10). Valid = 0 keeps the
+# direct per-system path.
+const MACRO_MAP_CAPACITY := Vector2i(1024, 512)
+const MACRO_MAP_PARAM_BYTES := 32
+const MACRO_MAP_BUILD_PARAM_BYTES := 48
+const MACRO_MAP_SNAPSHOT_PAD_TEXELS := 2
+@export var macro_map_compute_shader : RDShaderFile
+var macro_map_texture : RID = RID()
+var macro_map_params_buffer : RID = RID()
+var macro_map_build_params_buffer : RID = RID()
+var macro_map_snapshot_buffer : RID = RID()
+var macro_map_shader : RID = RID()
+var macro_map_pipeline : RID = RID()
+var macro_map_build_set : RID = RID()
+var macro_map_unavailable : bool = false
+# Requested configuration (set_macro_weather_map); a build snapshots it when it begins.
+var macro_map_requested : bool = false
+var macro_map_config : Dictionary = {}
+# Front (published) state.
+var macro_map_valid : bool = false
+var macro_map_front_layer : int = 0
+var macro_map_front_origin : Vector2 = Vector2.ZERO
+var macro_map_front_texel : float = 1000.0
+var macro_map_front_size : Vector2i = Vector2i.ZERO
+var macro_map_front_circumference : float = 0.0
+var macro_map_params_dirty : bool = true
+# In-flight build.
+var macro_map_build : Dictionary = {}
+var macro_map_build_active : bool = false
+var macro_map_build_start_usec : int = 0
+var macro_map_snapshot_revision : int = -1
+# Diagnostics (read by the bridge).
+var macro_map_builds_completed : int = 0
+var macro_map_slices_dispatched : int = 0
 
 var positionQueries : Array[Vector3] = []
 var positionQueryCallables : Array[Callable] = []
@@ -891,12 +934,15 @@ func _notification(what):
 		sets.append_array(ring_sets)
 	sets.append_array(cloud_shadow_uniform_sets)
 	sets.append(_terrain_sun_set)
+	sets.append(macro_map_build_set)
 	var rids: Array[RID] = [pipeline, shader, prepass_pipeline, prepass_shader,
 		postpass_pipeline, postpass_shader, display_pipeline, display_shader,
 		display_vertex_array, display_vertex_buffer, nearest_sampler, linear_sampler,
 		linear_sampler_no_repeat, light_data_buffer, point_sample_data_buffer,
 		resized_depth, far_opaque_depth_fallback, cloud_shadow_pipeline,
-		cloud_shadow_shader, _terrain_sun_neutral, weather_systems_buffer]
+		cloud_shadow_shader, _terrain_sun_neutral, weather_systems_buffer,
+		macro_map_pipeline, macro_map_shader, macro_map_texture, macro_map_params_buffer,
+		macro_map_build_params_buffer, macro_map_snapshot_buffer]
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
 	rids.append_array(blit_screen_images)
@@ -1184,6 +1230,7 @@ func initialize_compute():
 	var retire_generation := pipeline.is_valid() or prepass_pipeline.is_valid() or postpass_pipeline.is_valid()
 	clear_compute(preserve_general_data_buffers, retire_generation)
 	_ensure_weather_systems_buffer()
+	_ensure_macro_map_buffers()
 	
 	var sampler_state = RDSamplerState.new()
 	sampler_state.min_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
@@ -1655,7 +1702,20 @@ func _render_callback(effect_callback_type, render_data):
 					weather_systems_uniform.binding = 21
 					weather_systems_uniform.add_id(weather_systems_buffer)
 					uniforms_array.append(weather_systems_uniform)
-					
+
+					var macro_map_params_uniform = RDUniform.new()
+					macro_map_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					macro_map_params_uniform.binding = 22
+					macro_map_params_uniform.add_id(macro_map_params_buffer)
+					uniforms_array.append(macro_map_params_uniform)
+
+					var macro_map_uniform = RDUniform.new()
+					macro_map_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					macro_map_uniform.binding = 23
+					macro_map_uniform.add_id(linear_sampler_no_repeat)
+					macro_map_uniform.add_id(macro_map_texture)
+					uniforms_array.append(macro_map_uniform)
+
 					var compute_uniform_set := rd.uniform_set_create(uniforms_array, shader, 0)
 					uniform_sets.append(compute_uniform_set)
 					general_data_uniform_sets[0].append(compute_uniform_set)
@@ -1822,6 +1882,7 @@ func _render_callback(effect_callback_type, render_data):
 			update_matrices(cameraTR, viewProj, new_size)
 			if weather_systems_dirty:
 				update_weather_systems()
+			update_macro_weather_map()
 			dispatch_gpu_cloud_shadows()
 			if lights_updated or directional_lights_data.size() == 0:
 				update_lights()
@@ -2563,6 +2624,198 @@ func update_weather_systems() -> void:
 		weather_systems_bytes.fill(0)
 	rd.buffer_update(weather_systems_buffer, 0, WEATHER_SYSTEMS_BYTES, weather_systems_bytes)
 
+# Called by the bridge at its weather refresh. center_around is the camera canonical around position; half_around the half extent the
+# map must cover around it (handoff end + light reach + margin); across_min/max the canonical across range (the whole ring width plus a
+# little padding). texel_meters is the requested texel size (raised if the region would not fit MACRO_MAP_CAPACITY), slices the number of
+# render callbacks one build is spread over and refresh_seconds the minimum time between build starts (a build always finishes before the
+# next one starts, so slow frames just run builds back to back). enabled = false switches the map off (shaders return to the direct path).
+func set_macro_weather_map(enabled : bool, center_around : float, half_around : float, across_min : float, across_max : float,
+		texel_meters : float, slices : int, refresh_seconds : float) -> void:
+	macro_map_requested = enabled
+	macro_map_config = {
+		"center_around": center_around, "half_around": maxf(half_around, 1000.0),
+		"across_min": across_min, "across_max": maxf(across_max, across_min + 1000.0),
+		"texel": maxf(texel_meters, 50.0), "slices": maxi(slices, 1), "refresh_usec": int(maxf(refresh_seconds, 0.02) * 1000000.0),
+	}
+
+func _ensure_macro_map_buffers() -> void:
+	if not rd or macro_map_unavailable:
+		return
+	if not macro_map_params_buffer.is_valid():
+		var zeros := PackedByteArray()
+		zeros.resize(MACRO_MAP_PARAM_BYTES)
+		macro_map_params_buffer = rd.uniform_buffer_create(MACRO_MAP_PARAM_BYTES, zeros)
+		macro_map_params_dirty = true
+	if not macro_map_texture.is_valid():
+		var texture_format := RDTextureFormat.new()
+		texture_format.texture_type = RenderingDevice.TEXTURE_TYPE_2D_ARRAY
+		texture_format.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
+		texture_format.width = MACRO_MAP_CAPACITY.x
+		texture_format.height = MACRO_MAP_CAPACITY.y
+		texture_format.array_layers = 2
+		texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+			| RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
+		macro_map_texture = rd.texture_create(texture_format, RDTextureView.new())
+		macro_map_valid = false
+		macro_map_params_dirty = true
+	if not macro_map_params_buffer.is_valid() or not macro_map_texture.is_valid():
+		printerr("Macro weather map resources could not be created; camera-independent clouds use the direct per-system path.")
+		macro_map_unavailable = true
+
+# The build shader, its parameter buffers and its descriptor set are created on the first build, so the flag-off path never pays for them.
+func _ensure_macro_map_pipeline() -> bool:
+	if macro_map_pipeline.is_valid() and macro_map_build_set.is_valid():
+		return true
+	if macro_map_unavailable or not rd or not macro_map_texture.is_valid():
+		return false
+	if not macro_map_compute_shader:
+		macro_map_compute_shader = ResourceLoader.load("res://addons/SunshineClouds2/RingMacroWeatherMap.glsl")
+	if not macro_map_compute_shader:
+		printerr("Macro weather map shader resource was not found; using the direct per-system path.")
+		macro_map_unavailable = true
+		return false
+	macro_map_shader = rd.shader_create_from_spirv(macro_map_compute_shader.get_spirv())
+	if macro_map_shader.is_valid():
+		macro_map_pipeline = rd.compute_pipeline_create(macro_map_shader)
+	if not macro_map_pipeline.is_valid():
+		printerr("Macro weather map shader failed to compile; using the direct per-system path.")
+		macro_map_unavailable = true
+		return false
+	var zeros := PackedByteArray()
+	zeros.resize(WEATHER_SYSTEMS_BYTES)
+	macro_map_snapshot_buffer = rd.uniform_buffer_create(WEATHER_SYSTEMS_BYTES, zeros)
+	macro_map_build_params_buffer = rd.uniform_buffer_create(MACRO_MAP_BUILD_PARAM_BYTES)
+	var uniforms : Array[RDUniform] = []
+	var image_uniform := RDUniform.new()
+	image_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	image_uniform.binding = 0
+	image_uniform.add_id(macro_map_texture)
+	uniforms.append(image_uniform)
+	var systems_uniform := RDUniform.new()
+	systems_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	systems_uniform.binding = 1
+	systems_uniform.add_id(macro_map_snapshot_buffer)
+	uniforms.append(systems_uniform)
+	var build_uniform := RDUniform.new()
+	build_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	build_uniform.binding = 2
+	build_uniform.add_id(macro_map_build_params_buffer)
+	uniforms.append(build_uniform)
+	macro_map_build_set = rd.uniform_set_create(uniforms, macro_map_shader, 0)
+	if not macro_map_build_set.is_valid() or not macro_map_snapshot_buffer.is_valid() or not macro_map_build_params_buffer.is_valid():
+		printerr("Macro weather map descriptor set could not be created; using the direct per-system path.")
+		macro_map_unavailable = true
+		return false
+	return true
+
+func _write_macro_map_params() -> void:
+	macro_map_params_dirty = false
+	if not macro_map_params_buffer.is_valid():
+		return
+	var bytes := PackedByteArray()
+	bytes.resize(MACRO_MAP_PARAM_BYTES)
+	var values := [macro_map_front_origin.x, macro_map_front_origin.y, macro_map_front_texel, float(macro_map_front_layer),
+		float(macro_map_front_size.x), float(macro_map_front_size.y), macro_map_front_circumference, 1.0 if macro_map_valid else 0.0]
+	for i in range(values.size()):
+		bytes.encode_float(i * 4, values[i])
+	rd.buffer_update(macro_map_params_buffer, 0, MACRO_MAP_PARAM_BYTES, bytes)
+
+# Runs once per render callback, before the shadow and cloud dispatches: starts a build when the refresh interval has elapsed (or the system
+# structure changed), dispatches exactly one slice of the in-flight build, and publishes the back layer atomically after its last slice.
+func update_macro_weather_map() -> void:
+	var snapshot_ready := weather_systems_bytes.size() == WEATHER_SYSTEMS_BYTES and weather_systems_bytes.decode_float(4) > 0.5
+	if not macro_map_requested or macro_map_unavailable or not snapshot_ready or macro_map_config.is_empty():
+		# Flag off (or nothing to build from): the shaders take the direct per-system path.
+		if macro_map_valid or macro_map_build_active:
+			macro_map_valid = false
+			macro_map_build_active = false
+			macro_map_params_dirty = true
+		if macro_map_params_dirty:
+			_write_macro_map_params()
+		return
+	if not macro_map_texture.is_valid() or not _ensure_macro_map_pipeline():
+		return
+	if not macro_map_build_active:
+		var now := Time.get_ticks_usec()
+		var due : bool = not macro_map_valid or now - macro_map_build_start_usec >= int(macro_map_config["refresh_usec"]) \
+			or macro_map_snapshot_revision != weather_systems_revision
+		if not due:
+			if macro_map_params_dirty:
+				_write_macro_map_params()
+			return
+		_begin_macro_map_build(now)
+	_dispatch_macro_map_slice()
+	if macro_map_params_dirty:
+		_write_macro_map_params()
+
+func _begin_macro_map_build(now_usec : int) -> void:
+	var config := macro_map_config
+	var circumference := cloud_weather_frame.x if cloud_weather_frame.x > 1.0 else cloud_frame_up.w * TAU
+	var span_around : float = 2.0 * config["half_around"]
+	var span_across : float = config["across_max"] - config["across_min"]
+	var usable := Vector2(MACRO_MAP_CAPACITY.x - MACRO_MAP_SNAPSHOT_PAD_TEXELS - 1, MACRO_MAP_CAPACITY.y - MACRO_MAP_SNAPSHOT_PAD_TEXELS - 1)
+	# A requested texel too fine for the capacity is raised so the whole region still fits.
+	var texel : float = maxf(config["texel"], maxf(span_around / usable.x, span_across / usable.y))
+	var size := Vector2i(ceili(span_around / texel) + MACRO_MAP_SNAPSHOT_PAD_TEXELS, ceili(span_across / texel) + MACRO_MAP_SNAPSHOT_PAD_TEXELS)
+	size = Vector2i(mini(size.x, MACRO_MAP_CAPACITY.x), mini(size.y, MACRO_MAP_CAPACITY.y))
+	# Origin snapped to whole texels (in unwrapped canonical metres, then wrapped to the ring) so the grid is world-anchored.
+	var origin_around : float = floorf((config["center_around"] - config["half_around"]) / texel) * texel
+	if circumference > 1.0:
+		origin_around = fposmod(origin_around, circumference)
+	var origin_across : float = floorf(config["across_min"] / texel) * texel
+	var groups_y := int((size.y + 7) / 8)
+	rd.buffer_update(macro_map_snapshot_buffer, 0, WEATHER_SYSTEMS_BYTES, weather_systems_bytes)
+	macro_map_build = {
+		"origin": Vector2(origin_around, origin_across), "texel": texel, "size": size, "circumference": circumference,
+		"shift": Vector2(cloud_weather_frame.y, cloud_weather_frame.z), "layer": 1 - macro_map_front_layer,
+		"slice": 0, "slices": mini(int(config["slices"]), groups_y), "groups_y": groups_y,
+	}
+	macro_map_build_active = true
+	macro_map_build_start_usec = now_usec
+	macro_map_snapshot_revision = weather_systems_revision
+
+func _dispatch_macro_map_slice() -> void:
+	var build := macro_map_build
+	var slices : int = build["slices"]
+	var slice_index : int = build["slice"]
+	var groups_y : int = build["groups_y"]
+	var first_group := slice_index * groups_y / slices
+	var last_group := (slice_index + 1) * groups_y / slices
+	var size : Vector2i = build["size"]
+	if last_group > first_group:
+		var bytes := PackedByteArray()
+		bytes.resize(MACRO_MAP_BUILD_PARAM_BYTES)
+		var values := [build["origin"].x, build["origin"].y, build["texel"], float(build["layer"]),
+			float(size.x), float(size.y), float(first_group * 8), build["circumference"],
+			build["shift"].x, build["shift"].y, 0.0, 0.0]
+		for i in range(values.size()):
+			bytes.encode_float(i * 4, values[i])
+		rd.buffer_update(macro_map_build_params_buffer, 0, MACRO_MAP_BUILD_PARAM_BYTES, bytes)
+		var stamped := gpu_timestamp_diagnostics_enabled and gpu_timestamp_macro_map_begin_marker != "" and gpu_timestamp_macro_map_end_marker != ""
+		if stamped:
+			rd.capture_timestamp(gpu_timestamp_macro_map_begin_marker)
+		var compute_list := rd.compute_list_begin()
+		rd.compute_list_bind_compute_pipeline(compute_list, macro_map_pipeline)
+		rd.compute_list_bind_uniform_set(compute_list, macro_map_build_set, 0)
+		rd.compute_list_dispatch(compute_list, int((size.x + 7) / 8), last_group - first_group, 1)
+		rd.compute_list_end()
+		if stamped:
+			rd.capture_timestamp(gpu_timestamp_macro_map_end_marker)
+		macro_map_slices_dispatched += 1
+	if slice_index < slices - 1:
+		build["slice"] = slice_index + 1
+		return
+	# Last slice: publish the completed back layer. Receivers (the cloud and shadow dispatches later in this callback) read it.
+	macro_map_front_layer = build["layer"]
+	macro_map_front_origin = build["origin"]
+	macro_map_front_texel = build["texel"]
+	macro_map_front_size = size
+	macro_map_front_circumference = build["circumference"]
+	macro_map_valid = true
+	macro_map_params_dirty = true
+	macro_map_build_active = false
+	macro_map_builds_completed += 1
+
 func update_lights():
 	lights_updated = false
 	
@@ -2673,4 +2926,15 @@ func _build_cloud_shadow_uniform_set(output_texture: RID, param_buffer: RID) -> 
 	weather_systems_uniform.binding = 8
 	weather_systems_uniform.add_id(weather_systems_buffer)
 	uniforms.append(weather_systems_uniform)
+	var macro_map_params_uniform := RDUniform.new()
+	macro_map_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	macro_map_params_uniform.binding = 9
+	macro_map_params_uniform.add_id(macro_map_params_buffer)
+	uniforms.append(macro_map_params_uniform)
+	var macro_map_uniform := RDUniform.new()
+	macro_map_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	macro_map_uniform.binding = 10
+	macro_map_uniform.add_id(linear_sampler_no_repeat)
+	macro_map_uniform.add_id(macro_map_texture)
+	uniforms.append(macro_map_uniform)
 	return rd.uniform_set_create(uniforms, cloud_shadow_shader, 0)

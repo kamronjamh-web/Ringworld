@@ -12,7 +12,7 @@ public readonly record struct RingPerformanceGpuDiagnostics(bool Enabled, string
 /// <summary>Non-blocking main-RD timestamp bridge. Samples are asynchronous partial GPU intervals, never frame totals.</summary>
 public static class RingPerformanceGpu
 {
-    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite", CloudShadowNear = "CloudShadowNear", CloudShadowFar = "CloudShadowFar", RainHaze = "RainHaze", TerrainCloudSunVisibility = "TerrainCloudSunVisibility";
+    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite", CloudShadowNear = "CloudShadowNear", CloudShadowFar = "CloudShadowFar", CloudMacroMap = "CloudMacroMap", RainHaze = "RainHaze", TerrainCloudSunVisibility = "TerrainCloudSunVisibility";
     private const string Prefix = "RingPerfGpu:";
     private const int MaximumCSharpMarkersPerFrame = 30, MaximumTimestampScan = 512;
     private static int _enabled, _generation, _pendingGeneration, _markersThisFrame;
@@ -27,6 +27,8 @@ public static class RingPerformanceGpu
     public static string CloudShadowNearEndMarker => Marker(Volatile.Read(ref _generation), CloudShadowNear, 'E');
     public static string CloudShadowFarBeginMarker => Marker(Volatile.Read(ref _generation), CloudShadowFar, 'B');
     public static string CloudShadowFarEndMarker => Marker(Volatile.Read(ref _generation), CloudShadowFar, 'E');
+    public static string CloudMacroMapBeginMarker => Marker(Volatile.Read(ref _generation), CloudMacroMap, 'B');
+    public static string CloudMacroMapEndMarker => Marker(Volatile.Read(ref _generation), CloudMacroMap, 'E');
     public static string RainHazeBeginMarker => Marker(Volatile.Read(ref _generation), RainHaze, 'B');
     public static string RainHazeEndMarker => Marker(Volatile.Read(ref _generation), RainHaze, 'E');
     public static string TerrainCloudSunVisibilityBeginMarker => Marker(Volatile.Read(ref _generation), TerrainCloudSunVisibility, 'B');
@@ -113,7 +115,7 @@ public static class RingPerformanceGpu
     }
 
     private static string Marker(int generation, string category, char boundary) => Prefix + generation + ":" + category + ":" + boundary;
-    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite or CloudShadowNear or CloudShadowFar or RainHaze or TerrainCloudSunVisibility;
+    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite or CloudShadowNear or CloudShadowFar or CloudMacroMap or RainHaze or TerrainCloudSunVisibility;
     private static bool TryParseMarker(string name, int expectedGeneration, out string category, out char boundary)
     {
         category = string.Empty; boundary = '\0'; if (!name.StartsWith(Prefix, StringComparison.Ordinal)) return false;
