@@ -87,9 +87,18 @@ public sealed class GameplayCloudDefaults
         ["CloudInterleave"] = (0, 2, true),
         ["CloudInterleaveHistoryCompensation"] = (0, 1, false),
         ["CloudInterleaveHistoryClamp"] = (.5f, 6, false),
-        ["CloudInterleaveMaxPixelMotion"] = (1, 200, false)
+        ["CloudInterleaveMaxPixelMotion"] = (1, 200, false),
+        ["WeatherSystemUploadCount"] = (16, RingSunshineCloudBridge.MaximumWeatherSystemUploadCount, true),
+        ["WeatherSystemSelectionMarginMeters"] = (0, 30000, false),
+        ["OverflowFadeMeters"] = (1000, 50000, false),
+        ["SunshineBaseCoverageOffset"] = (-.3f, .3f, false),
+        ["StormEnvelopeCeilingMeters"] = (6000, 25000, false),
+        ["MacroMapResolution"] = (250, 4000, false),
+        ["MacroMapSlices"] = (1, 32, true),
+        ["MacroMapRefreshSeconds"] = (.05f, 2, false),
+        ["CameraIndependentDebugMask"] = (0, 63, true)
     };
-    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "GpuShadowAdaptiveSteps", "GpuShadowClearAirSkip", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled", "CloudResolutionJitter" };
+    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "GpuShadowAdaptiveSteps", "GpuShadowClearAirSkip", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled", "CloudResolutionJitter", "CameraIndependentClouds", "MacroWeatherMap" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };
     private readonly Dictionary<string, Variant> _baseline = new();
     private readonly string? _pathOverride;

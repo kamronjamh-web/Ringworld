@@ -25,8 +25,8 @@ public partial class RingSunshineCloudBridge
 
 	[ExportGroup("Camera-independent clouds")]
 	/// <summary>Shape every cloud from world-anchored weather systems instead of the camera's quantized weather. Off = legacy path.</summary>
-	[Export] public bool CameraIndependentClouds { get; set; } = false;
-	/// <summary>Upload cap: Low 32, Medium/High 48, VeryHigh and above 64. Distant systems beyond it fade smoothly.</summary>
+	[Export] public bool CameraIndependentClouds { get; set; } = true;
+	/// <summary>Upload cap: Low 40, Medium/High 48, VeryHigh and above 64. Distant systems beyond it fade smoothly.</summary>
 	[Export(PropertyHint.Range, "16,64,1")] public int WeatherSystemUploadCount { get; set; } = 48;
 	/// <summary>Added to handoff end + light reach when selecting systems, so a system's entry is never visible.</summary>
 	[Export(PropertyHint.Range, "0,50000,500")] public float WeatherSystemSelectionMarginMeters { get; set; } = 8000.0f;
@@ -83,6 +83,7 @@ public partial class RingSunshineCloudBridge
 	private float _ciEnvelopeCeilingMeters = 20000.0f;
 	private float _ciSelectionRadiusMeters;
 	private bool _ciUploadedEnabled;
+	private bool? _ciLastAppliedFlag;
 	private int _ciRevisionSignature;
 	private bool _ciHasRevisionSignature;
 	private bool _ciHasAmbientState;
@@ -277,6 +278,19 @@ public partial class RingSunshineCloudBridge
 		}
 		coverage = cloudCoverage;
 		storm = Mathf.Clamp(systemInfluence * 0.65f + precipitation * 0.55f, 0.0f, 1.0f);
+	}
+
+	/// <summary>
+	/// Live toggle of <see cref="CameraIndependentClouds"/>: the next RefreshWeather already switches the uniform path, so this only asks
+	/// Sunshine to drop its temporal history once, so the old and new cloud shapes do not smear into each other.
+	/// </summary>
+	private void NotifyCameraIndependentFlagApplied()
+	{
+		bool flag = CameraIndependentClouds;
+		bool changed = _ciLastAppliedFlag.HasValue && _ciLastAppliedFlag.Value != flag;
+		_ciLastAppliedFlag = flag;
+		if (changed && _clouds != null && GodotObject.IsInstanceValid(_clouds) && _clouds.HasMethod("request_history_reset"))
+			_clouds.Call("request_history_reset");
 	}
 
 	/// <summary>

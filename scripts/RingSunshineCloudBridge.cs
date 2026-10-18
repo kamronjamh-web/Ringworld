@@ -724,6 +724,7 @@ public partial class RingSunshineCloudBridge : Node
         ApplyCloudCullingTuning();
         SanitizeCloudAppearanceTuning();
         RefreshWeather();
+        NotifyCameraIndependentFlagApplied();
         ApplyTerrainHistoryTuning();
         ApplyCloudAppearanceScalarsToResource();
         PublishFarCloudDetail();
