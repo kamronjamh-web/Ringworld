@@ -1,5 +1,5 @@
 #[compute]
-// GenericData ABI: 276 floats; includes cloud mask controls.
+// GenericData ABI: 280 floats; includes cloud mask controls.
 #version 450
 
 #include "./CloudsInc.comp"

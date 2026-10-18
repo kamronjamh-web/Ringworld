@@ -3,6 +3,7 @@ extends SceneTree
 # Compiles fresh source trees in memory; it does not rewrite imports or .res files.
 const SOURCES := [
 	"res://addons/SunshineClouds2/SunshineCloudsCompute.glsl",
+	"res://addons/SunshineClouds2/SunshineCloudsInterleaveFill.glsl",
 	"res://addons/SunshineClouds2/SunshineCloudsPreCompute.glsl",
 	"res://addons/SunshineClouds2/SunshineCloudsPostCompute.glsl",
 	"res://addons/SunshineClouds2/SunshineCloudsPostCompute.msaa.glsl",

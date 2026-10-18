@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://btikxjoasf4jj"
+path="res://.godot/imported/SunshineCloudsInterleaveFill.glsl-16e431c495f96ce42f33540e4d8ea49e.res"
+
+[deps]
+
+source_file="res://addons/SunshineClouds2/SunshineCloudsInterleaveFill.glsl"
+dest_files=["res://.godot/imported/SunshineCloudsInterleaveFill.glsl-16e431c495f96ce42f33540e4d8ea49e.res"]
+
+[params]
+

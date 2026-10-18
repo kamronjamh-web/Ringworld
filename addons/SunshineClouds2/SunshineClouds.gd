@@ -87,6 +87,8 @@ signal external_texture_retirement_requested(generation_id: int)
 @export var gpu_timestamp_cloud_shadow_far_end_marker : String = ""
 @export var gpu_timestamp_macro_map_begin_marker : String = ""
 @export var gpu_timestamp_macro_map_end_marker : String = ""
+@export var gpu_timestamp_interleave_begin_marker : String = ""
+@export var gpu_timestamp_interleave_end_marker : String = ""
 # MenuFlyoverSunshineLayer alone enables this opt-in reconstruction shortcut.
 # Keeping the default false preserves the normal Sunshine post-pass path.
 @export var menu_fast_reconstruction : bool = false
@@ -226,7 +228,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 276
+const GENERAL_DATA_FLOAT_COUNT := 280
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -336,6 +338,38 @@ var general_data : PackedByteArray
 @export_range(1.5, 32.0) var history_continuity_hard_reset_ratio : float = 8.0
 @export var lightning_history_isolation_enabled : bool = true
 var _history_reset_requested : bool = false
+
+# RingworldTechDemo cloud performance (all default OFF; off is bit-identical to the unmodified renderer).
+# resolution_jitter_enabled (CloudResolutionJitter): 4-phase +-0.25 low-resolution-pixel ray jitter; only affects Half / Quarter.
+# cloud_interleave (CloudInterleave): 0 off, 1 = 2x2, 2 = 4x4. Each frame the raymarch pass marches one pixel of every n x n block
+# (specialization constant RING_INTERLEAVE) and SunshineCloudsInterleaveFill.glsl reconstructs the rest from history and this
+# frame's samples. A frame falls back to the full march on accumulation rebuilds, history resets / hard continuity resets, capture
+# diagnostics, the menu path and camera motion above cloud_interleave_max_pixel_motion.
+@export var resolution_jitter_enabled : bool = false
+@export_range(0, 2) var cloud_interleave : int = 0
+# Marched pixels blend history with decay^(n*n*compensation); the fill pass holds history with the plain per-frame decay.
+@export_range(0.0, 1.0, 0.01) var cloud_interleave_history_compensation : float = 0.5
+# Variance-clip width (sigma multiples) of held history against the 3x3 block samples.
+@export_range(0.5, 6.0, 0.05) var cloud_interleave_history_clamp : float = 2.0
+# Reprojected camera motion (raster pixels, worst of five sampled directions) above which the frame is fully marched.
+@export_range(1.0, 200.0, 0.5) var cloud_interleave_max_pixel_motion : float = 24.0
+const INTERLEAVE_MOTION_REFERENCE_METERS := 4000.0
+const INTERLEAVE_MIN_COMPENSATION := 0.05
+var interleave_active_block : int = 0 # 0 (full march) or 2 / 4 for the callback being recorded
+var interleave_phase_counter : int = 0
+var resolution_jitter_counter : int = 0
+var interleave_last_fallback_reason := ""
+var interleave_last_motion_pixels := 0.0
+var interleave_interleaved_callbacks := 0
+var interleave_full_march_callbacks := 0
+var interleave_fill_shader_resource : RDShaderFile
+var interleave_fill_shader : RID = RID()
+var interleave_main_pipelines : Dictionary = {} # block size -> pipeline of the main shader with RING_INTERLEAVE = block
+var interleave_fill_pipelines : Dictionary = {} # block size -> pipeline of the fill shader
+var interleave_block_images : Array[RID] = [] # steady, transient, data per view; 1x1 placeholders until interleave is first requested
+var interleave_block_images_real := false
+var interleave_fill_sets : Array = [] # [ring slot][view]
+var interleave_fill_unavailable := false
 
 # Reset temporal color only; GPU shadow and descriptor generations stay intact.
 func request_history_reset() -> void:
@@ -522,6 +556,12 @@ func get_temporal_history_diagnostics() -> Dictionary:
 		"ping_pong_selector_is_a": accumulation_is_a,
 		"source_reset_since_last_callback": temporal_history_last_callback_source_reset,
 		"explicit_refresh_pending": temporal_history_explicit_refresh_pending,
+		"interleave_block": interleave_active_block,
+		"interleave_last_fallback_reason": interleave_last_fallback_reason,
+		"interleave_last_motion_pixels": interleave_last_motion_pixels,
+		"interleave_interleaved_callbacks": interleave_interleaved_callbacks,
+		"interleave_full_march_callbacks": interleave_full_march_callbacks,
+		"interleave_fill_unavailable": interleave_fill_unavailable,
 	}
 
 # Main-thread bridge publication. Replace the dictionary reference so one
@@ -935,14 +975,23 @@ func _notification(what):
 	sets.append_array(cloud_shadow_uniform_sets)
 	sets.append(_terrain_sun_set)
 	sets.append(macro_map_build_set)
-	var rids: Array[RID] = [pipeline, shader, prepass_pipeline, prepass_shader,
+	for ring_fill_sets in interleave_fill_sets:
+		sets.append_array(ring_fill_sets)
+	var rids: Array[RID] = []
+	# Interleave pipelines depend on the shaders listed after them, so they are released first.
+	# Inlined (no method calls on self during predelete).
+	rids.append_array(interleave_main_pipelines.values())
+	rids.append_array(interleave_fill_pipelines.values())
+	rids.append(interleave_fill_shader)
+	rids.append_array(interleave_block_images)
+	rids.append_array([pipeline, shader, prepass_pipeline, prepass_shader,
 		postpass_pipeline, postpass_shader, display_pipeline, display_shader,
 		display_vertex_array, display_vertex_buffer, nearest_sampler, linear_sampler,
 		linear_sampler_no_repeat, light_data_buffer, point_sample_data_buffer,
 		resized_depth, far_opaque_depth_fallback, cloud_shadow_pipeline,
 		cloud_shadow_shader, _terrain_sun_neutral, weather_systems_buffer,
 		macro_map_pipeline, macro_map_shader, macro_map_texture, macro_map_params_buffer,
-		macro_map_build_params_buffer, macro_map_snapshot_buffer]
+		macro_map_build_params_buffer, macro_map_snapshot_buffer])
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
 	rids.append_array(blit_screen_images)
@@ -1009,7 +1058,7 @@ func _retire_current_generation():
 			+ cloud_shadow_published_texture_wrappers.duplicate(),
 		"cloud_backdrop_texture_wrappers": cloud_backdrop_texture_wrappers.duplicate()
 			+ cloud_backdrop_published_texture_wrappers.duplicate(),
-		"rids": [pipeline, shader, prepass_pipeline, prepass_shader, postpass_pipeline, postpass_shader,
+		"rids": _interleave_release_rids() + [pipeline, shader, prepass_pipeline, prepass_shader, postpass_pipeline, postpass_shader,
 			display_pipeline, display_shader, display_vertex_array, display_vertex_buffer,
 			nearest_sampler, linear_sampler, linear_sampler_no_repeat, light_data_buffer,
 			point_sample_data_buffer, resized_depth, cloud_shadow_pipeline, cloud_shadow_shader]
@@ -1041,6 +1090,7 @@ func _retire_current_generation():
 	far_opaque_depth_fallback = RID()
 	cloud_shadow_pipeline = RID(); cloud_shadow_shader = RID()
 	accumulation_textures.clear(); blit_screen_images.clear()
+	_reset_interleave_state()
 	if requires_external_texture_ack:
 		call_deferred("_notify_external_texture_retirement", generation_id)
 
@@ -1092,6 +1142,7 @@ func clear_compute(preserve_general_data_buffers: bool = false, retire_generatio
 		if _terrain_sun_neutral.is_valid(): rd.free_rid(_terrain_sun_neutral)
 		_terrain_sun_neutral = RID()
 		clear_gpu_cloud_shadow_resources()
+		_free_interleave_resources()
 		if pipeline.is_valid():
 			rd.free_rid(pipeline)
 		pipeline = RID()
@@ -1315,6 +1366,9 @@ func initialize_compute():
 		return
 	
 	
+	if cloud_interleave > 0:
+		_create_interleave_fill_shader()
+
 	var postpass_shader_spirv = post_pass_compute_shader.get_spirv()
 	postpass_shader = rd.shader_create_from_spirv(postpass_shader_spirv)
 	if postpass_shader.is_valid():
@@ -1369,6 +1423,187 @@ func initialize_compute():
 	display_vertex_array = rd.vertex_array_create(6, display_vertex_format, [display_vertex_buffer])
 
 	last_msaa_mode = msaa_mode
+
+#region CloudInterleave (RingworldTechDemo cloud performance)
+# RIDs that must be released before the shaders they depend on: pipeline variants first, then the fill shader and block images.
+func _interleave_release_rids() -> Array:
+	var rids : Array = []
+	rids.append_array(interleave_main_pipelines.values())
+	rids.append_array(interleave_fill_pipelines.values())
+	rids.append(interleave_fill_shader)
+	rids.append_array(interleave_block_images)
+	return rids
+
+# Forgets every interleave RID after a generation retired them (descriptor sets depending on them are released with them).
+func _reset_interleave_state() -> void:
+	interleave_main_pipelines.clear()
+	interleave_fill_pipelines.clear()
+	interleave_fill_shader = RID()
+	interleave_block_images.clear()
+	interleave_block_images_real = false
+	interleave_fill_sets.clear()
+	interleave_active_block = 0
+
+func _free_interleave_resources() -> void:
+	if not rd:
+		return
+	for ring_fill_sets in interleave_fill_sets:
+		for fill_set in ring_fill_sets:
+			if fill_set is RID and fill_set.is_valid() and rd.uniform_set_is_valid(fill_set):
+				rd.free_rid(fill_set)
+	for rid in _interleave_release_rids():
+		if rid is RID and rid.is_valid():
+			rd.free_rid(rid)
+	_reset_interleave_state()
+
+func _create_interleave_fill_shader() -> void:
+	if not interleave_fill_shader_resource:
+		interleave_fill_shader_resource = ResourceLoader.load("res://addons/SunshineClouds2/SunshineCloudsInterleaveFill.glsl")
+	if interleave_fill_shader_resource:
+		interleave_fill_shader = rd.shader_create_from_spirv(interleave_fill_shader_resource.get_spirv())
+	if not interleave_fill_shader.is_valid():
+		interleave_fill_unavailable = true
+		printerr("Cloud interleave fill shader is unavailable; CloudInterleave stays off.")
+
+# The pipeline variants are created once per block size and live until the generation is retired.
+func _ensure_interleave_pipelines(block: int) -> bool:
+	if interleave_fill_unavailable or not interleave_block_images_real or not interleave_fill_shader.is_valid() or not shader.is_valid():
+		return false
+	if interleave_fill_sets.size() != GENERAL_DATA_RING_SIZE or interleave_fill_sets[1].is_empty():
+		return false
+	var constant := RDPipelineSpecializationConstant.new()
+	constant.constant_id = 0
+	constant.value = block
+	var constants : Array[RDPipelineSpecializationConstant] = [constant]
+	if not interleave_main_pipelines.has(block):
+		var main_variant := rd.compute_pipeline_create(shader, constants)
+		if not main_variant.is_valid():
+			interleave_fill_unavailable = true
+			printerr("Cloud interleave march pipeline variant failed to compile; CloudInterleave stays off.")
+			return false
+		interleave_main_pipelines[block] = main_variant
+	if not interleave_fill_pipelines.has(block):
+		var fill_variant := rd.compute_pipeline_create(interleave_fill_shader, constants)
+		if not fill_variant.is_valid():
+			interleave_fill_unavailable = true
+			printerr("Cloud interleave fill pipeline variant failed to compile; CloudInterleave stays off.")
+			return false
+		interleave_fill_pipelines[block] = fill_variant
+	return true
+
+# Steady light (rgba16f), transient light (rgba16f) and march data (rgba32f) for one view. Sized for the largest block (2x2);
+# a 4x4 block uses the top-left part. 1x1 placeholders while interleave has not been requested.
+func _create_interleave_block_images(raster_size: Vector2i, real: bool) -> Array[RID]:
+	var dims := Vector2i(maxi((raster_size.x + 1) / 2, 1), maxi((raster_size.y + 1) / 2, 1)) if real else Vector2i(1, 1)
+	var formats := [RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT]
+	var texel_bytes := [8, 8, 16]
+	var images : Array[RID] = []
+	for index in formats.size():
+		var texture_format := RDTextureFormat.new()
+		texture_format.format = formats[index]
+		texture_format.width = dims.x
+		texture_format.height = dims.y
+		texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT
+		var blank := PackedByteArray()
+		blank.resize(dims.x * dims.y * texel_bytes[index])
+		images.append(rd.texture_create(texture_format, RDTextureView.new(), [blank]))
+	return images
+
+func _interleave_image_uniform(binding: int, texture: RID) -> RDUniform:
+	var uniform := RDUniform.new()
+	uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	uniform.binding = binding
+	uniform.add_id(texture)
+	return uniform
+
+# Fill-pass descriptor set (SunshineCloudsInterleaveFill.glsl bindings): 0/1 outputs, 2-5 ping-pong history, 6 reduced depth,
+# 7 GenericData ring slot, 8 SceneData, 9 far opaque depth, 10-12 this frame's block images.
+func _create_interleave_fill_set(view: int, general_buffer: RID, camera_data: RID, far_depth: RID, depth: RID) -> RID:
+	var uniforms : Array[RDUniform] = []
+	for index in 6:
+		uniforms.append(_interleave_image_uniform(index, accumulation_textures[view * 7 + index]))
+	var depth_uniform := RDUniform.new()
+	depth_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	depth_uniform.binding = 6
+	depth_uniform.add_id(nearest_sampler)
+	depth_uniform.add_id(depth)
+	uniforms.append(depth_uniform)
+	var general_uniform := RDUniform.new()
+	general_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	general_uniform.binding = 7
+	general_uniform.add_id(general_buffer)
+	uniforms.append(general_uniform)
+	var camera_uniform := RDUniform.new()
+	camera_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	camera_uniform.binding = 8
+	camera_uniform.add_id(camera_data)
+	uniforms.append(camera_uniform)
+	var far_uniform := RDUniform.new()
+	far_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	far_uniform.binding = 9
+	far_uniform.add_id(nearest_sampler)
+	far_uniform.add_id(far_depth)
+	uniforms.append(far_uniform)
+	for index in 3:
+		uniforms.append(_interleave_image_uniform(10 + index, interleave_block_images[view * 3 + index]))
+	return rd.uniform_set_create(uniforms, interleave_fill_shader, 0)
+
+# Worst reprojected camera motion, in raster pixels, over the centre and four corner directions: the points a fixed distance along
+# each ray are re-projected through the previous camera (rotation and translation).
+func _interleave_camera_motion_pixels(camera_tr: Transform3D, view_proj: Projection, previous_tr: Transform3D, previous_proj: Projection, raster_size: Vector2i) -> float:
+	var inverse_projection : Projection = view_proj.inverse()
+	var previous_view : Transform3D = previous_tr.affine_inverse()
+	var worst := 0.0
+	for ndc: Vector2 in [Vector2(0.0, 0.0), Vector2(-0.9, -0.9), Vector2(0.9, -0.9), Vector2(-0.9, 0.9), Vector2(0.9, 0.9)]:
+		var unprojected : Vector4 = inverse_projection * Vector4(ndc.x, ndc.y, 0.5, 1.0)
+		if absf(unprojected.w) < 1e-12:
+			continue
+		var view_direction := Vector3(unprojected.x, unprojected.y, unprojected.z) / unprojected.w
+		if view_direction.length_squared() < 1e-12 or not is_finite(view_direction.x):
+			continue
+		var world_point := camera_tr.origin + (camera_tr.basis * view_direction).normalized() * INTERLEAVE_MOTION_REFERENCE_METERS
+		var previous_point : Vector3 = previous_view * world_point
+		var clip : Vector4 = previous_proj * Vector4(previous_point.x, previous_point.y, previous_point.z, 1.0)
+		if previous_point.z >= 0.0 or clip.w < 1e-6 or not is_finite(clip.x) or not is_finite(clip.y):
+			return 1.0e9 # behind the previous camera: no usable correspondence
+		var previous_ndc := Vector2(clip.x, clip.y) / clip.w
+		var delta_ndc := previous_ndc - ndc
+		worst = maxf(worst, Vector2(delta_ndc.x * 0.5 * float(raster_size.x), delta_ndc.y * 0.5 * float(raster_size.y)).length())
+	return worst
+
+# Decides, once per callback and before the UBO is packed, whether this frame marches one pixel per block (returns the block size
+# 2 / 4) or marches every pixel (returns 0, with interleave_last_fallback_reason saying why when interleave was requested).
+func _resolve_interleave_block(packed_decay: float, camera_tr: Transform3D, view_proj: Projection, previous_tr: Transform3D, raster_size: Vector2i) -> int:
+	interleave_last_fallback_reason = ""
+	var block := 2 if cloud_interleave == 1 else (4 if cloud_interleave >= 2 else 0)
+	if block == 0:
+		interleave_phase_counter = 0
+		return 0
+	var reason := ""
+	if menu_temporal_sampling:
+		reason = "menu"
+	elif first_run:
+		reason = "first_run"
+	elif ignore_accumilation:
+		reason = "accumulation_rebuild"
+	elif packed_decay <= 0.0:
+		reason = "no_history" # history reset, hard continuity reset, discontinuity, invalid rebase remap or zero history weight
+	elif diagnostic_raw_density_matte or diagnostic_depth_density_matte or diagnostic_disable_temporal_history:
+		reason = "capture"
+	else:
+		interleave_last_motion_pixels = _interleave_camera_motion_pixels(camera_tr, view_proj, previous_tr, previous_callback_camera_projection, raster_size)
+		if interleave_last_motion_pixels > cloud_interleave_max_pixel_motion:
+			reason = "camera_motion"
+	if reason == "" and not _ensure_interleave_pipelines(block):
+		reason = "unavailable"
+	if reason != "":
+		interleave_last_fallback_reason = reason
+		interleave_phase_counter = 0
+		interleave_full_march_callbacks += 1
+		return 0
+	interleave_interleaved_callbacks += 1
+	return block
+#endregion
 
 func initialize_raster_pipelines(color_texture : RID, depth_texture : RID):
 	var rd := RenderingServer.get_rendering_device()
@@ -1444,7 +1679,7 @@ func _render_callback(effect_callback_type, render_data):
 			# current raymarch, then restore the configured decay next callback.
 			var accumulation_resources_rebuilt := false
 			
-			if size != last_size or uniform_sets == null or uniform_sets.size() != view_count * 4 or color_images.size() == 0 or color_images[0] != buffers.get_color_layer(0) or blit_screen_images.size() == 0 or msaa_mode != last_msaa_mode:
+			if size != last_size or uniform_sets == null or uniform_sets.size() != view_count * 4 or color_images.size() == 0 or color_images[0] != buffers.get_color_layer(0) or blit_screen_images.size() == 0 or msaa_mode != last_msaa_mode 					or (cloud_interleave > 0 and not interleave_block_images_real and not interleave_fill_unavailable):
 				accumulation_resources_rebuilt = true
 				previous_callback_gameplay_cloud_frame = {}
 				temporal_history_accumulation_rebuild_count += 1
@@ -1460,6 +1695,8 @@ func _render_callback(effect_callback_type, render_data):
 					temporal_history_last_rebuild_reason = "color_attachment"
 				elif blit_screen_images.size() == 0:
 					temporal_history_last_rebuild_reason = "blit"
+				elif msaa_mode == last_msaa_mode:
+					temporal_history_last_rebuild_reason = "interleave"
 				else:
 					temporal_history_last_rebuild_reason = "msaa"
 				initialize_compute()
@@ -1485,6 +1722,14 @@ func _render_callback(effect_callback_type, render_data):
 				for ring_slot in range(GENERAL_DATA_RING_SIZE):
 					general_data_uniform_sets.append([])
 				general_data_buffer = general_data_buffers[0] # fixed slot used by cloud shadows
+				# Interleave: real block images and fill descriptors exist only when it was requested for this generation.
+				interleave_fill_sets.clear()
+				for ring_slot in range(GENERAL_DATA_RING_SIZE):
+					interleave_fill_sets.append([])
+				interleave_block_images.clear()
+				if cloud_interleave > 0 and not interleave_fill_shader.is_valid():
+					interleave_fill_unavailable = true
+				var interleave_wanted := cloud_interleave > 0 and interleave_fill_shader.is_valid()
 
 				# A valid zero-distance texture keeps the optional far-depth sampler
 				# bound before the far compositor has produced its first frame.
@@ -1716,6 +1961,16 @@ func _render_callback(effect_callback_type, render_data):
 					macro_map_uniform.add_id(macro_map_texture)
 					uniforms_array.append(macro_map_uniform)
 
+					# CloudInterleave block images (bindings 26-28). 1x1 placeholders keep the descriptor set valid while it is off.
+					var block_images := _create_interleave_block_images(new_size, interleave_wanted)
+					interleave_block_images.append_array(block_images)
+					for block_index in block_images.size():
+						var block_uniform = RDUniform.new()
+						block_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+						block_uniform.binding = 26 + block_index
+						block_uniform.add_id(block_images[block_index])
+						uniforms_array.append(block_uniform)
+
 					var compute_uniform_set := rd.uniform_set_create(uniforms_array, shader, 0)
 					uniform_sets.append(compute_uniform_set)
 					general_data_uniform_sets[0].append(compute_uniform_set)
@@ -1834,7 +2089,11 @@ func _render_callback(effect_callback_type, render_data):
 						ring_postpass_camera.add_id(ring_buffer)
 						postpass_uniforms_array[6] = ring_postpass_camera
 						general_data_uniform_sets[ring_slot].append(rd.uniform_set_create(postpass_uniforms_array, postpass_shader, 0))
+						if interleave_wanted:
+							interleave_fill_sets[ring_slot].append(_create_interleave_fill_set(view, ring_buffer, cameraData, far_depth_rid, resized_depth))
 					#endregion
+
+				interleave_block_images_real = interleave_wanted
 
 				lights_updated = true
 				segment_lights_dirty = true
@@ -1933,14 +2192,33 @@ func _render_callback(effect_callback_type, render_data):
 				if gpu_timestamp_scope_active:
 					rd.capture_timestamp(gpu_timestamp_raymarch_begin)
 				if _terrain_sun_bindings_present: _update_terrain_sun_set()
+				var march_pipeline := pipeline
+				var march_x_groups: int = x_groups
+				var march_y_groups: int = y_groups
+				if interleave_active_block > 0:
+					# CloudInterleave: one thread per block, so the dispatch covers ceil(W / n) x ceil(H / n) pixels.
+					march_pipeline = interleave_main_pipelines[interleave_active_block]
+					march_x_groups = (((new_size.x + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
+					march_y_groups = (((new_size.y + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
 				var compute_list = rd.compute_list_begin()
-				rd.compute_list_bind_compute_pipeline(compute_list, pipeline)
+				rd.compute_list_bind_compute_pipeline(compute_list, march_pipeline)
 				rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
 				if _terrain_sun_bindings_present: rd.compute_list_bind_uniform_set(compute_list, _terrain_sun_set, 1)
-				rd.compute_list_dispatch(compute_list, x_groups, y_groups, 1)
+				rd.compute_list_dispatch(compute_list, march_x_groups, march_y_groups, 1)
 				rd.compute_list_end()
 				if gpu_timestamp_scope_active:
 					rd.capture_timestamp(gpu_timestamp_raymarch_end)
+				if interleave_active_block > 0:
+					var interleave_stamped := gpu_timestamp_diagnostics_enabled and view == 0 and gpu_timestamp_interleave_begin_marker != "" and gpu_timestamp_interleave_end_marker != ""
+					if interleave_stamped:
+						rd.capture_timestamp(gpu_timestamp_interleave_begin_marker)
+					var fill_list = rd.compute_list_begin()
+					rd.compute_list_bind_compute_pipeline(fill_list, interleave_fill_pipelines[interleave_active_block])
+					rd.compute_list_bind_uniform_set(fill_list, interleave_fill_sets[general_data_ring_index][view], 0)
+					rd.compute_list_dispatch(fill_list, ((new_size.x - 1) / 8) + 1, ((new_size.y - 1) / 8) + 1, 1)
+					rd.compute_list_end()
+					if interleave_stamped:
+						rd.capture_timestamp(gpu_timestamp_interleave_end_marker)
 
 				if gpu_timestamp_scope_active:
 					rd.capture_timestamp(gpu_timestamp_reconstruct_begin)
@@ -2390,6 +2668,25 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	temporal_history_last_packed_decay = packed_accumulation_decay
 	if packed_accumulation_decay == 0.0:
 		temporal_history_zero_packed_decay_callback_count += 1
+	# CloudInterleave (default off): decide whether this callback marches one pixel per block. The march pass then blends its pixels with
+	# decay^(n*n*compensation) because each pixel is marched once per n*n frames; the fill pass uses the plain per-frame decay.
+	interleave_active_block = _resolve_interleave_block(packed_accumulation_decay, camera_tr, view_proj, mapped_previous_camera, new_size)
+	var perf_interleave_phase := 0.0
+	var perf_fill_decay := 0.0
+	var perf_clamp_gamma := 0.0
+	if interleave_active_block > 0:
+		var block_cells := interleave_active_block * interleave_active_block
+		perf_interleave_phase = float(interleave_phase_counter)
+		interleave_phase_counter = (interleave_phase_counter + 1) % block_cells
+		perf_fill_decay = packed_accumulation_decay
+		perf_clamp_gamma = clampf(cloud_interleave_history_clamp, 0.5, 6.0)
+		packed_accumulation_decay = pow(packed_accumulation_decay, float(block_cells) * clampf(cloud_interleave_history_compensation, INTERLEAVE_MIN_COMPENSATION, 1.0))
+	# CloudResolutionJitter (default off): only meaningful when the cloud raster is below native resolution.
+	var perf_jitter_code := 0.0
+	if resolution_jitter_enabled and resolution_scale > 0 and not menu_temporal_sampling \
+			and not diagnostic_raw_density_matte and not diagnostic_depth_density_matte and not diagnostic_disable_temporal_history:
+		perf_jitter_code = float(resolution_jitter_counter % 4 + 1)
+		resolution_jitter_counter += 1
 	general_data.encode_float(idx, packed_accumulation_decay); idx += 4
 	if (accumulation_is_a):
 		general_data.encode_float(idx, 1.0); idx += 4
@@ -2534,6 +2831,9 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		var value := terrain_cloud_sun_canonical_frame[frame_index] if terrain_cloud_sun_canonical_frame.size() == 4 else Vector4.ZERO
 		for component in [value.x, value.y, value.z, value.w]:
 			general_data.encode_float(idx, component); idx += 4
+	# Append-only cloud performance controls: x interleave phase, y jitter phase + 1 (0 = off), z history clamp gamma, w fill-pass history weight.
+	for component in [perf_interleave_phase, perf_jitter_code, perf_clamp_gamma, perf_fill_decay]:
+		general_data.encode_float(idx, component); idx += 4
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
 	previous_callback_bulk_wind = current_bulk_wind
 	previous_callback_detail_wind = detail_clouds_position

@@ -120,7 +120,7 @@ public partial class RingPerformanceMonitor
     private static object[] CaptureGpuCoverage(IReadOnlyList<RingPerformanceTelemetry.Completed> samples)
     {
         var result = new List<object>();
-        foreach (string name in new[] { "GPU.Clouds", "GPU.CloudPrepass", "GPU.CloudRaymarch", "GPU.CloudReconstruct", "GPU.CloudComposite", "GPU.CloudShadowNear", "GPU.CloudShadowFar", "GPU.CloudMacroMap", "GPU.RainHaze", "GPU.TerrainCloudSunVisibility", "GPU.GrassCulling", "GPU.TreeCulling", "GPU.WaterFft" })
+        foreach (string name in new[] { "GPU.Clouds", "GPU.CloudPrepass", "GPU.CloudRaymarch", "GPU.CloudReconstruct", "GPU.CloudComposite", "GPU.CloudShadowNear", "GPU.CloudShadowFar", "GPU.CloudMacroMap", "GPU.CloudInterleave", "GPU.RainHaze", "GPU.TerrainCloudSunVisibility", "GPU.GrassCulling", "GPU.TreeCulling", "GPU.WaterFft" })
         {
             var values = new List<RingPerformanceTelemetry.Completed>();
             var sourceFrames = new HashSet<long>();

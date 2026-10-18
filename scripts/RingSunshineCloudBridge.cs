@@ -632,6 +632,8 @@ public partial class RingSunshineCloudBridge : Node
         _clouds.Set("gpu_timestamp_cloud_shadow_far_end_marker", RingPerformanceGpu.CloudShadowFarEndMarker);
         _clouds.Set("gpu_timestamp_macro_map_begin_marker", RingPerformanceGpu.CloudMacroMapBeginMarker);
         _clouds.Set("gpu_timestamp_macro_map_end_marker", RingPerformanceGpu.CloudMacroMapEndMarker);
+        _clouds.Set("gpu_timestamp_interleave_begin_marker", RingPerformanceGpu.CloudInterleaveBeginMarker);
+        _clouds.Set("gpu_timestamp_interleave_end_marker", RingPerformanceGpu.CloudInterleaveEndMarker);
         _clouds.Set("gpu_timestamp_diagnostics_enabled", enabled);
         _appliedGpuTimestampDiagnosticsEnabled = enabled;
         _appliedGpuTimestampBeginMarker = beginMarker; _appliedGpuTimestampEndMarker = endMarker;
@@ -1407,6 +1409,7 @@ public partial class RingSunshineCloudBridge : Node
         ApplyLightingStepsToDriver();
         _clouds.Set("blur_quality", (float)BlurQuality);
         _clouds.Set("menu_fast_reconstruction", FastReconstruction);
+        ApplyCloudPerformanceTuning();
         SyncGpuTimestampDiagnostics();
         // A quality/preset change must not temporarily replace the moving
         // camera's selected history weight with the stationary slider value.

@@ -13,6 +13,11 @@
 // Invocations in the (x, y, z) dimension
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
+// CloudInterleave (RingworldTechDemo): 0 = every thread marches its own pixel (legacy; the interleave branches below compile away),
+// 2 / 4 = each thread marches one pixel of an n x n block per frame and SunshineCloudsInterleaveFill.glsl reconstructs the rest.
+// Set per pipeline variant by the compositor (specialization constant 0).
+layout(constant_id = 0) const int RING_INTERLEAVE = 0;
+
 layout(rgba16f, binding = 0) uniform image2D output_data_image;
 layout(rgba16f, binding = 1) uniform image2D output_color_image;
 
@@ -73,6 +78,11 @@ layout(binding = 22, std140) uniform RingMacroMapBlock {
 	vec4 b;
 } ringMacroMap;
 layout(binding = 23) uniform sampler2DArray ring_macro_map;
+// CloudInterleave block images (one texel per marched pixel; only written when RING_INTERLEAVE > 0): steady light rgba,
+// transient light rgb, and march data (initial distance, traveled distance, cloud body distance, opaque depth metadata).
+layout(rgba16f, binding = 26) uniform writeonly image2D interleave_steady_image;
+layout(rgba16f, binding = 27) uniform writeonly image2D interleave_transient_image;
+layout(rgba32f, binding = 28) uniform writeonly image2D interleave_data_image;
 #define RING_WS_MACRO_MAP
 #include "./RingWeatherSystems.glslinc"
 
@@ -963,94 +973,29 @@ float coherent_history_decay(vec4 history, vec4 current, float decay,
 	return max(legacyDecay, retainedFloor);
 }
 
-bool opaque_depth_history_agrees(float expectedDepth, float currentOpaqueDepth,
-		vec4 historyMetadata, float tolerance, float currentCloudEnd,
-		float cameraTranslation, float maxStep) {
-	float historyDepth = historyMetadata.a;
-	// A negative value is an explicit sky sentinel. Fresh accumulation textures
-	// contain zero, which must never be accepted as either sky or opaque scene.
-	if (expectedDepth < 0.0) {
-		return historyDepth == -1.0;
-	}
-	bool matchingOpaqueDepth = historyDepth > 0.0
-		&& !isnan(historyDepth)
-		&& !isinf(historyDepth)
-		&& abs(expectedDepth - historyDepth) <= tolerance;
-	if (matchingOpaqueDepth) {
-		return true;
-	}
-
-	// On a grazing but continuous terrain surface, adjacent reprojected pixels
-	// can have substantially different radial depths. They remain safe to blend
-	// when both cloud endpoint estimates lie in front of both opaque surfaces,
-	// including camera translation and a one-step margin for the filtered end.
-	float previousCloudEnd = historyMetadata.g;
-	bool finiteSegments = currentOpaqueDepth > 0.0
-		&& !isnan(currentOpaqueDepth)
-		&& !isinf(currentOpaqueDepth)
-		&& historyDepth > 0.0
-		&& !isnan(historyDepth)
-		&& !isinf(historyDepth)
-		&& currentCloudEnd > 0.0
-		&& !isnan(currentCloudEnd)
-		&& !isinf(currentCloudEnd)
-		&& previousCloudEnd > 0.0
-		&& !isnan(previousCloudEnd)
-		&& !isinf(previousCloudEnd);
-	if (!finiteSegments) {
-		return false;
-	}
-	return max(currentCloudEnd, previousCloudEnd + cameraTranslation) + maxStep < currentOpaqueDepth
-		&& max(previousCloudEnd, currentCloudEnd + cameraTranslation) + maxStep < historyDepth;
-}
+#include "./SunshineCloudsHistory.glslinc"
 
 void main() {
 	//SETTING UP UVS/RAY DATA
 	ivec2 uv = ivec2(gl_GlobalInvocationID.xy);
 	ivec2 size = ivec2(genericData.data.raster_size);
+	if (RING_INTERLEAVE > 0) {
+		// Each thread marches one pixel of its block; the phase picks which one this frame.
+		uv = uv * RING_INTERLEAVE + ring_interleave_offset(RING_INTERLEAVE, int(genericData.data.ring_perf_controls.x + 0.5));
+	}
 
 	// Prevent reading/writing out of bounds.
 	if (uv.x >= size.x || uv.y >= size.y) {
 		return;
 	}
 	
-	vec2 depthUV = (uv + 0.5) / vec2(size);
-	float depth = texture(depth_image, depthUV).r;
-
-	vec4 view = genericData.data.current_camera_inv_projection * vec4(depthUV*2.0-1.0,depth,1.0);
-	view.xyz /= view.w;
-	float linear_depth = length(view); //used to calculate depth based on the view angle, idk just works.
-	// Keep opaque-scene visibility separate from the ray march's stochastic
-	// terminal state. Godot's reversed-Z depth uses zero for sky; a radial view
-	// length cannot classify it because valid edge pixels may exceed z_far.
-	bool has_opaque_depth = depth > 0.0;
-	//4.4 doesn't work with this
-	// z_far comes from this callback (GenericData); the bound SceneData UBO can
-	// belong to another render pass once the frame's pass order changes.
-	float sceneZFar = genericData.data.cloud_mask_controls.w > 0.0 ? genericData.data.cloud_mask_controls.w : scene_data_block.data.z_far;
-	if (linear_depth >= sceneZFar){ 
-		linear_depth *= 100.0;
-	}
-	float far_depth = texture(far_opaque_depth_image, depthUV).r;
-	if (far_depth > 0.0 && far_depth < linear_depth && !isnan(far_depth) && !isinf(far_depth)) {
-		linear_depth = min(linear_depth, far_depth);
-		has_opaque_depth = true;
-	}
-	
-	// Convert screen coordinates to normalized device coordinates
-	vec2 clipUV = vec2(depthUV.x, depthUV.y);
-	vec2 ndc = clipUV * 2.0 - 1.0;	
-	// Convert NDC to view space coordinates
-	vec4 clipPos = vec4(ndc, 0.0, 1.0);
-	vec4 viewPos = genericData.data.current_camera_inv_projection * clipPos;
-	viewPos.xyz /= viewPos.w;
-	
-	vec3 rd_world = normalize(viewPos.xyz);
-	rd_world = mat3(genericData.data.current_camera_transform) * rd_world;
-	// Define the ray properties
-	
-	vec3 raydirection = normalize(rd_world);
-	vec3 rayOrigin = genericData.data.current_camera_transform[3].xyz; //center of camera for the ray origin, not worried about the screen width playing in, as it's for clouds.
+	// Primary ray, opaque depth and (CloudResolutionJitter) sub-pixel jitter; shared with the interleave fill pass.
+	CloudPixelRay pixelRay = ring_cloud_pixel_ray(uv, size);
+	vec2 depthUV = pixelRay.depthUV;
+	float linear_depth = pixelRay.linearDepth;
+	bool has_opaque_depth = pixelRay.hasOpaqueDepth;
+	vec3 raydirection = pixelRay.rayDirection;
+	vec3 rayOrigin = pixelRay.rayOrigin;
 
 
 	//DITHER
@@ -1111,11 +1056,7 @@ void main() {
 	float smallnoiseScale = genericData.data.small_noise_scale;
 
 	float minstep = genericData.data.min_step_distance;
-	float maxstep = genericData.data.max_step_distance;
-	if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
-		&& genericData.data.cloud_handoff.x > 0.0) {
-		maxstep = max(maxstep, genericData.data.cloud_handoff.y / float(stepCount));
-	}
+	float maxstep = ring_cloud_max_step();
 	
 
 	float curlPower = genericData.data.curlPower;
@@ -1332,7 +1273,7 @@ void main() {
 	float curLod = 1.0;
 	float samplePosCount = clamp(genericData.data.samplePointsCount, 0.0, 256.0);
 
-	if (samplePosCount > 0 && uv == ivec2(0)){
+	if (samplePosCount > 0 && gl_GlobalInvocationID.xy == uvec2(0)){
 		// Point probes are not tied to this pixel's ray, so evaluate them directly against every uploaded system.
 		uvec2 ciRayMask = g_ws_mask;
 		if (ciClouds) ring_ws_set_mask(ring_ws_all_mask());
@@ -1762,128 +1703,32 @@ void main() {
 
 	//accumulation preperation:
 	float finalDensityDistance = min(traveledDistance, highestDensityDistance);
-	// Reproject the body of the cloud, not the ray's exit point.  The exit can
-	// sit kilometres behind the visible density and makes history appear to
-	// trail the camera during rotation.
-	vec3 worldFinalPos = rayOrigin + raydirection * finalDensityDistance;
 	vec3 delta = rayOrigin - genericData.data.previous_camera_origin.xyz;
-	
-	vec4 reprojectedScreenPos = vec4(0.0);
 
-	// The menu camera stays near local origin while its cloud frame scrolls
-	// around the ring. Rebuild the cloud point in the paired previous curved
-	// frame from small arc/wind deltas instead of absolute canonical positions.
-	vec3 previousWorldFinalPos = worldFinalPos;
-	if (genericData.data.menu_optimization_controls.y > 0.5
-		&& (abs(genericData.data.menu_optimization_controls.z) > 0.00001
-			|| abs(genericData.data.menu_optimization_controls.w) > 0.00001)) {
-		vec3 frameDelta = worldFinalPos - genericData.data.cloud_frame_origin.xyz;
-		float ringRadius = max(genericData.data.cloud_frame_up.w, 1.0);
-		float tangent = dot(frameDelta, genericData.data.cloud_frame_around.xyz);
-		float inward = dot(frameDelta, genericData.data.cloud_frame_up.xyz);
-		float outward = ringRadius - inward;
-		float angleDelta = genericData.data.menu_optimization_controls.z / ringRadius;
-		float sinHalf = sin(angleDelta * 0.5);
-		float oneMinusCos = 2.0 * sinHalf * sinHalf;
-		float sine = sin(angleDelta);
-		float tangentDelta = tangent * (-oneMinusCos) + outward * sine;
-		float inwardDelta = outward * oneMinusCos + tangent * sine;
-		previousWorldFinalPos = worldFinalPos
-			+ genericData.data.cloud_frame_around.xyz * tangentDelta
-			+ genericData.data.cloud_frame_up.xyz * inwardDelta
-			+ genericData.data.cloud_frame_across.xyz * genericData.data.menu_optimization_controls.w;
-	}
-	vec4 reprojectedClipPos = genericData.data.previous_camera_view * vec4(previousWorldFinalPos, 1.0);
-	reprojectedClipPos.z -= 0.01;
-	if (reprojectedClipPos.z > 0.0){
-		override = true;
-	}
-	reprojectedScreenPos = genericData.data.previous_camera_projection * reprojectedClipPos;
-
-	// Convert clip space to normalized device coordinates. A camera/origin jump
-	// can leave the previous-frame projection behind or at w=0. Do not let that
-	// produce an unbounded history address.
-	bool invalidReprojection = abs(reprojectedScreenPos.w) < 0.00001
-		|| any(isnan(reprojectedScreenPos))
-		|| any(isinf(reprojectedScreenPos));
-	if (invalidReprojection) {
-		override = true;
-		ndc = depthUV * 2.0 - 1.0;
-	} else {
-		ndc = reprojectedScreenPos.xy / reprojectedScreenPos.w;
-	}
-
-	// Convert normalized device coordinates to screen space
-	vec2 screen_position = ndc * 0.5 + 0.5;
-	//screen_position = clamp(screen_position, vec2(0.0), vec2(1.0));
-	screen_position = screen_position - depthUV;
-
-	ivec2 adjustedUV = ivec2(int(screen_position.x * size.x), int(screen_position.y * size.y));
-	//float change = length(vec2(adjustedUV));
-	adjustedUV += uv; //Size is the screen resolution.
-	
-	ivec2 clampedUV = clamp(adjustedUV, ivec2(0), size - ivec2(1)); //having two lets me check if clamping it changed the reprojected uv, if it did that means it was offscreen, so rebuild data.
-	bool historyOutsideImage = any(notEqual(clampedUV, adjustedUV));
-	// Menu history is reprojected at fractional-pixel locations. Blend only its
-	// color; retain nearest metadata for silhouette/disocclusion decisions.
-	vec2 historyPixel = vec2(uv) + screen_position * vec2(size);
-	float reprojectedPixelMotion = length(screen_position * vec2(size));
-	if (genericData.data.menu_optimization_controls.y <= 0.5) {
-		// Gameplay uses fractional reprojection, so reject before integer truncation
-		// can admit a narrow offscreen strip at the texture edge.
-		historyOutsideImage = any(lessThan(historyPixel, vec2(0.0)))
-			|| any(greaterThan(historyPixel, vec2(size - ivec2(1))));
-	}
-	ivec2 historyBase = ivec2(floor(historyPixel));
-	vec2 historyFraction = fract(historyPixel);
-	ivec2 history00 = clamp(historyBase, ivec2(0), size - ivec2(1));
-	ivec2 history10 = clamp(historyBase + ivec2(1, 0), ivec2(0), size - ivec2(1));
-	ivec2 history01 = clamp(historyBase + ivec2(0, 1), ivec2(0), size - ivec2(1));
-	ivec2 history11 = clamp(historyBase + ivec2(1), ivec2(0), size - ivec2(1));
-	bool menuStaticHistory = genericData.data.menu_optimization_controls.y > 0.5
-		&& genericData.data.menu_temporal_controls.z > 0.5;
-	// Reprojection normally lands between low-resolution cloud pixels.  The
-	// menu implementation already proved that bilinear *colour* with nearest
-	// metadata converges without leaking silhouettes.  Gameplay previously kept
-	// the integer fetch, so camera motion repeatedly compared unrelated noisy
-	// samples and defeated a user-selected high history weight.
-	bool coherentBilinearHistory = !menuStaticHistory
-		&& genericData.data.accumilation_decay > 0.0
-		&& abs(genericData.data.temporal_controls.z) <= 0.5
-		&& genericData.data.temporal_controls.w <= 0.5
-		&& (genericData.data.menu_optimization_controls.y <= 0.5 || reprojectedPixelMotion <= 2.0);
-	if (genericData.data.menu_optimization_controls.y > 0.5 || coherentBilinearHistory) {
-		// Menu metadata remains nearest. Gameplay separately validates every
-		// fractional tap against its stored opaque-depth history.
-		clampedUV = clamp(ivec2(floor(historyPixel + vec2(0.5))), ivec2(0), size - ivec2(1));
-	}
+	// Reprojection of the cloud body and the opaque-surface metadata the history is validated against live in
+	// SunshineCloudsHistory.glslinc, shared with the interleave fill pass.
+	CloudHistoryReproject hist = ring_cloud_history_reproject(uv, size, depthUV, rayOrigin, raydirection,
+		finalDensityDistance, linear_depth, has_opaque_depth);
+	override = override || hist.historyOverride;
+	bool historyOutsideImage = hist.historyOutsideImage;
+	ivec2 clampedUV = hist.clampedUV;
+	vec2 historyFraction = hist.historyFraction;
+	ivec2 history00 = hist.history00;
+	ivec2 history10 = hist.history10;
+	ivec2 history01 = hist.history01;
+	ivec2 history11 = hist.history11;
+	float reprojectedPixelMotion = hist.reprojectedPixelMotion;
+	bool menuStaticHistory = hist.menuStaticHistory;
+	bool coherentBilinearHistory = hist.coherentBilinearHistory;
+	bool gameplayTemporalHistory = hist.gameplayTemporalHistory;
+	float opaqueDepthMetadata = hist.opaqueDepthMetadata;
+	float expectedHistoryOpaqueDepth = hist.expectedHistoryOpaqueDepth;
+	float opaqueDepthTolerance = hist.opaqueDepthTolerance;
+	ivec2 opaqueHistoryPixel = hist.opaqueHistoryPixel;
+	bool opaqueHistoryOutside = hist.opaqueHistoryOutside;
 	float diagnosticHistoryWeight = 0.0;
 	float diagnosticHistoryReason = 0.75; // .75 = invalid/offscreen rejection
 	float diagnosticAlphaMismatch = 0.0;
-	bool gameplayTemporalHistory = genericData.data.menu_optimization_controls.y <= 0.5;
-	float opaqueDepthMetadata = has_opaque_depth ? linear_depth : -1.0;
-	float expectedHistoryOpaqueDepth = opaqueDepthMetadata;
-	if (has_opaque_depth) {
-		vec3 opaqueWorldPosition = rayOrigin + raydirection * linear_depth;
-		expectedHistoryOpaqueDepth = length(opaqueWorldPosition - genericData.data.previous_camera_origin.xyz);
-	}
-	float opaqueDepthTolerance = max(2.0, max(expectedHistoryOpaqueDepth, 0.0) * 3.0 / max(float(size.y), 1.0)) * genericData.data.history_controls.y;
-	// Opaque geometry follows its own previous-frame projection, not the cloud
-	// body's projection. Validate that pixel before admitting cloud history.
-	ivec2 opaqueHistoryPixel = clampedUV;
-	bool opaqueHistoryOutside = false;
-	if (has_opaque_depth) {
-		vec3 opaquePoint = rayOrigin + raydirection * linear_depth;
-		vec4 opaquePreviousView = genericData.data.previous_camera_view * vec4(opaquePoint, 1.0);
-		vec4 opaqueClip = genericData.data.previous_camera_projection * opaquePreviousView;
-		opaqueHistoryOutside = opaquePreviousView.z >= 0.0 || abs(opaqueClip.w) < 0.00001
-			|| any(isnan(opaqueClip)) || any(isinf(opaqueClip));
-		vec2 opaquePixel = opaqueHistoryOutside ? vec2(-1.0)
-			: (opaqueClip.xy / opaqueClip.w * 0.5 + 0.5) * vec2(size) - vec2(0.5);
-		opaqueHistoryOutside = opaqueHistoryOutside || any(lessThan(opaquePixel, vec2(0.0)))
-			|| any(greaterThan(opaquePixel, vec2(size - ivec2(1))));
-		opaqueHistoryPixel = clamp(ivec2(floor(opaquePixel + vec2(0.5))), ivec2(0), size - ivec2(1));
-	}
 
 
         //execute accumilation.
@@ -2080,6 +1925,15 @@ void main() {
 	// currentDataAccumilation.g += maxTheoreticalStep * float(depthBreak);
 
 	currentDataAccumilation.r = min(currentDataAccumilation.r, initialdistanceSample);
+
+	if (RING_INTERLEAVE > 0) {
+		// CloudInterleave: publish this frame's raw march result for the fill pass (before the history blend and the haze).
+		ivec2 blockUV = ivec2(gl_GlobalInvocationID.xy);
+		vec3 blockTransient = (any(isnan(transientLightColor)) || any(isinf(transientLightColor))) ? vec3(0.0) : transientLightColor;
+		imageStore(interleave_steady_image, blockUV, lightColor);
+		imageStore(interleave_transient_image, blockUV, vec4(blockTransient, 0.0));
+		imageStore(interleave_data_image, blockUV, vec4(initialdistanceSample, traveledDistance, finalDensityDistance, opaqueDepthMetadata));
+	}
 	
 	// Diagnostic output is intentionally after ping-pong stores: it cannot feed
 	// back into accumulation. R=used history weight; G=reason (0 accepted,

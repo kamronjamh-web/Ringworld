@@ -359,6 +359,10 @@ struct GenericData{
 	vec4 history_controls;
 	vec4 terrain_cloud_sun_profile[5];
 	vec4 terrain_cloud_sun_canonical_frame[4];
+	// Append-only cloud performance controls (RingworldTechDemo): x = interleave phase index this frame (0..n*n-1),
+	// y = resolution-jitter phase + 1 (0 = off), z = interleave history clamp gamma, w = per-frame history weight the
+	// interleave fill pass uses (the packed accumulation decay before the n*n compensation). All zero = legacy behaviour.
+	vec4 ring_perf_controls;
 };
 
 struct DirectionalLight {
