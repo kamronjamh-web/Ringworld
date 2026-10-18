@@ -47,8 +47,9 @@ public static partial class RingWaterModel
         public float ShorelineChopFadeDistance;
         public float ShorelineShallowDepth;
         public float DeepWaterWaveDepth;
-        // Last wind values written. Per-frame phases/advection/translation are always written.
+        // Last wind values written. Phases/advection/translation are shared globals unless the slot is -1.
         public bool WindApplied;
+        public int WindSlot = -1;
         public bool WindEnabled;
         public Vector2 WindDirection;
         public float WindSpeed;
@@ -101,6 +102,13 @@ public static partial class RingWaterModel
     private static readonly StringName SpatialGustEnabledName = "water_spatial_gust_enabled";
     private static readonly StringName WavePhasesName = "water_wave_phases";
     private static readonly StringName WindClockEnabledName = "water_wind_clock_enabled";
+    private static readonly StringName WindGlobalSlotName = "water_wind_global_slot";
+    // Frame-global wind clock values live in shader globals; arrays are unsupported, so the 12 phase
+    // vectors are packed into four mat3 (column c of matrix m holds phase 3m+c).
+    private static readonly StringName[] WavePhaseGlobalNames =
+        { "ring_water_wave_phases_0", "ring_water_wave_phases_1", "ring_water_wave_phases_2", "ring_water_wave_phases_3" };
+    private static readonly StringName[] RiverAdvectionGlobalNames = { "ring_water_river_advection_main", "ring_water_river_advection_far" };
+    private static readonly StringName[] GroupTranslationGlobalNames = { "ring_water_far_group_translation_main", "ring_water_far_group_translation_far" };
     public static long OceanMaterialParameterPushes { get; private set; }
     public static long OceanMaterialSkippedRefreshes { get; private set; }
     public static int LastOceanMaterialRefreshPushes { get; private set; }
@@ -120,6 +128,20 @@ public static partial class RingWaterModel
     private static float _windWaveSpeed = float.NaN, _windAnalyticStrength = float.NaN, _windGustStrength = float.NaN;
     private static readonly double[] WaterPhaseRates = { 1, -1.173, 1.619, -2.071, 2.513, .071, -.053, .041, -.063, .037, .23, -.13 };
     private static readonly Vector3[] WaterPhases = new Vector3[12];
+    private static readonly Basis[] WaterPhaseBases = new Basis[4];
+    private static bool _waterPhaseBasesPublished;
+    // Slot 0 = unscaled materials, slot 1 = scaled-far materials. Each slot's drift globals are valid for
+    // one (scale, ring radius) key per wind clock version; materials with a different key stay per-material.
+    private static readonly long[] WindSlotVersion = { -1, -1 };
+    private static readonly float[] WindSlotScale = new float[2], WindSlotRadius = new float[2];
+    private static readonly float[] WindSlotRiver = new float[2];
+    private static readonly Vector4[] WindSlotGroup = new Vector4[2];
+    private static readonly bool[] WindSlotPublished = new bool[2];
+    public static long WaterWindGlobalWriteCount { get; private set; }
+    /// <summary>Last published phase vector 0..11 (headless-safe stand-in for reading the global back).</summary>
+    public static Vector3 PublishedWavePhase(int index) => WaterPhaseBases[index / 3][index % 3];
+    public static float PublishedRiverAdvection(int slot) => WindSlotRiver[slot];
+    public static Vector4 PublishedFarGroupTranslation(int slot) => WindSlotGroup[slot];
     // Shared packed copy, rebuilt once per wind clock update instead of once per material write.
     private static Variant _waterPhasesVariant;
 
@@ -145,6 +167,33 @@ public static partial class RingWaterModel
                 RingWaterWindResponse.BoundedPhase(simulationTime, WaveSpeed, WaterPhaseRates[index] * .18));
         _waterPhasesVariant.Dispose();
         _waterPhasesVariant = Variant.From(WaterPhases);
+        for (int matrix = 0; matrix < WaterPhaseBases.Length; matrix++)
+        {
+            // Basis(c0, c1, c2) takes columns, and the global mat3 uploads as shader columns c0..c2.
+            Basis packed = new(WaterPhases[matrix * 3], WaterPhases[matrix * 3 + 1], WaterPhases[matrix * 3 + 2]);
+            if (_waterPhaseBasesPublished && WaterPhaseBases[matrix] == packed) continue;
+            WaterPhaseBases[matrix] = packed;
+            PublishWaterGlobal(WavePhaseGlobalNames[matrix], packed);
+        }
+        _waterPhaseBasesPublished = true;
+    }
+
+    private static void PublishWaterGlobal(StringName name, Variant value)
+    {
+        RenderingServer.GlobalShaderParameterSet(name, value);
+        WaterWindGlobalWriteCount++;
+        RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.WaterWindGlobal);
+    }
+
+    private static void ComputeWindDrift(float coordinateScale, float radius, out float river, out Vector4 group)
+    {
+        double circumference = Math.Tau * Math.Max(1, radius);
+        static float Wrap(double value, double period) => (float)(value - Math.Floor(value / period) * period);
+        river = Wrap(_windClock * WaveSpeed * 1.8 * coordinateScale, circumference * 2.15);
+        // Bounded broad group drift avoids narrowing an unbounded across offset.
+        group = new Vector4(
+            Wrap(_windClock * .47 * coordinateScale, circumference), Mathf.Sin(RingWaterWindResponse.BoundedPhase(_windClock, 1, -.00023)) * 1000f * coordinateScale,
+            Wrap(-_windClock * .29 * coordinateScale, circumference), Mathf.Sin(RingWaterWindResponse.BoundedPhase(_windClock, 1, .00041)) * 1000f * coordinateScale);
     }
 
     public static long CurrentWindClockVersion => _windClockVersion;
@@ -175,7 +224,6 @@ public static partial class RingWaterModel
         if (first || snapshot.WindDirection != direction) { SetWindParameter(material, MeanWindDirectionName, direction); snapshot.WindDirection = direction; }
         float speed = _waterMeanWind.Length();
         if (first || snapshot.WindSpeed != speed) { SetWindParameter(material, MeanWindSpeedName, speed); snapshot.WindSpeed = speed; }
-        SetWindParameter(material, WavePhasesName, _waterPhasesVariant);
         var settings = RingWindSettings.Current;
         float meanResponse = 1f + settings.AnalyticWaveResponseStrength * Mathf.Clamp(speed / 24f, 0, 1);
         if (first || snapshot.WindMeanResponse != meanResponse) { SetWindParameter(material, MeanResponseName, meanResponse); snapshot.WindMeanResponse = meanResponse; }
@@ -184,20 +232,36 @@ public static partial class RingWaterModel
         // Scaled-far positions cannot sample the main scene's tangent gust atlas.
         bool spatialGust = _waterFollowWeather && settings.Enabled && Mathf.IsEqualApprox(coordinateScale, 1f);
         if (first || snapshot.WindSpatialGust != spatialGust) { SetWindParameter(material, SpatialGustEnabledName, spatialGust); snapshot.WindSpatialGust = spatialGust; }
+        // The ring radius is per-material, so it still gates which materials may share a slot's drift globals.
         float radius = material.GetShaderParameter(RingRadiusMetersName).AsSingle();
-        double circumference = Math.Tau * Math.Max(1, radius);
-        static float Wrap(double value, double period) => (float)(value - Math.Floor(value / period) * period);
-        SetWindParameter(material, RiverAdvectionName, Wrap(_windClock * WaveSpeed * 1.8 * coordinateScale, circumference * 2.15));
-        // Bounded broad group drift avoids narrowing an unbounded across offset.
-        SetWindParameter(material, FarGroupTranslationName, new Vector4(
-            Wrap(_windClock * .47 * coordinateScale, circumference), Mathf.Sin(RingWaterWindResponse.BoundedPhase(_windClock, 1, -.00023)) * 1000f * coordinateScale,
-            Wrap(-_windClock * .29 * coordinateScale, circumference), Mathf.Sin(RingWaterWindResponse.BoundedPhase(_windClock, 1, .00041)) * 1000f * coordinateScale));
+        int slot = Mathf.IsEqualApprox(coordinateScale, 1f) ? 0 : 1;
+        if (WindSlotVersion[slot] != _windClockVersion)
+        {
+            ComputeWindDrift(coordinateScale, radius, out float slotRiver, out Vector4 slotGroup);
+            if (!WindSlotPublished[slot] || WindSlotRiver[slot] != slotRiver)
+                PublishWaterGlobal(RiverAdvectionGlobalNames[slot], slotRiver);
+            if (!WindSlotPublished[slot] || WindSlotGroup[slot] != slotGroup)
+                PublishWaterGlobal(GroupTranslationGlobalNames[slot], slotGroup);
+            WindSlotRiver[slot] = slotRiver;
+            WindSlotGroup[slot] = slotGroup;
+            WindSlotPublished[slot] = true;
+            WindSlotScale[slot] = coordinateScale;
+            WindSlotRadius[slot] = radius;
+            WindSlotVersion[slot] = _windClockVersion;
+        }
+        else if (WindSlotScale[slot] != coordinateScale || WindSlotRadius[slot] != radius) slot = -1;
+        if (snapshot.WindSlot != slot) { SetWindParameter(material, WindGlobalSlotName, slot); snapshot.WindSlot = slot; }
+        if (slot >= 0) return;
+        // Mismatched (scale, radius): exact per-material fallback, identical to the pre-global behavior.
+        SetWindParameter(material, WavePhasesName, _waterPhasesVariant);
+        ComputeWindDrift(coordinateScale, radius, out float river, out Vector4 group);
+        SetWindParameter(material, RiverAdvectionName, river);
+        SetWindParameter(material, FarGroupTranslationName, group);
     }
 
     private static void SetWindParameter(ShaderMaterial material, StringName name, Variant value)
     {
-        SetOceanParameter(material, name, value);
-        RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.WaterWind);
+        SetOceanParameter(material, name, value, RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.WaterWind);
     }
 
     /// <summary>Refresh only the nearby ocean bindings as the canonical frame moves.</summary>
@@ -324,11 +388,13 @@ public static partial class RingWaterModel
         snapshot.Initialized = true;
     }
 
-    private static void SetOceanParameter(ShaderMaterial material, StringName name, Variant value)
+    private static void SetOceanParameter(ShaderMaterial material, StringName name, Variant value,
+        RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site site = RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.OceanFft)
     {
         material.SetShaderParameter(name, value);
         OceanMaterialParameterPushes++;
         LastOceanMaterialRefreshPushes++;
+        RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(site, 1, value.VariantType == Variant.Type.Object ? 1 : 0);
     }
 
     private static void SetIfChanged<T>(ShaderMaterial material, StringName name, T value, ref T previous, bool force)

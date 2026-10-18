@@ -652,7 +652,11 @@ public partial class RingStandingGrassLayer : Node3D
                 fieldWorkerContext = field?.CreateWorkerContext();
                 // Production density contexts own a pooled sampler. Only allocate
                 // a fallback when the context cannot provide one.
-                if (fieldWorkerContext?.Sampler == null) ownedSampler = s.CreateIndependentCopy();
+                if (fieldWorkerContext?.Sampler == null)
+                {
+                    ownedSampler = s.CreateIndependentCopy();
+                    ownedSampler.EnablePresentationLatticeCache();
+                }
                 var bounds = RingGrassCoordinates.Bounds(k.Around, k.Across, TileSize, s.AroundRingVoxelLength, s.RingAcrossWidthMeters);
                 ulong epoch = _epoch;
                 float cell = CellSize, slope = Mathf.Clamp(MaximumSlopeDegrees, 0, 60);

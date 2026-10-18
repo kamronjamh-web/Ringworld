@@ -3774,6 +3774,349 @@ public partial class RingVolumetricCloudLayer : Node3D
         return systems;
     }
 
+    // ---- Camera-independent render weather systems (docs/cloud-camera-independence-plan.md, P0) ----
+    // Pure, additive helpers: nothing here feeds the CPU weather field, rain, lightning, audio or saves.
+
+    public const uint RenderWeatherFlagStatic = 1u;          // bit0: centre is world space (manual/preview); no wind advection
+    public const uint RenderWeatherFlagSculpt = 2u;          // bit1: sculpted storm (StormTower/Cumulonimbus profile, or manual/preview)
+    public const uint RenderWeatherFlagManualFalloff = 4u;   // bit2: manual falloff (n-0.55)/0.75 and merge-by-max
+    public const uint RenderWeatherFlagSuppressorReserved = 8u; // bit3: reserved (suppressor)
+
+    // New salts: the per-system rolls must never alias the per-camera-cell rolls (13/14/15) or the weather salts (100-114, 117+).
+    private const int SystemProfileSalt = 213;
+    private const int SystemBaseSalt = 214;
+    private const int SystemTopSalt = 215;
+
+    /// <summary>
+    /// One system record for the GPU weather-system array. Natural systems: <see cref="CenterAroundMeters"/> and
+    /// <see cref="CenterAcrossMeters"/> are in SOURCE space (the macro-cell frame, wrapped around), exactly as
+    /// <see cref="WeatherSystemDefinition"/> stores them; the shader must move the sample point into the same frame
+    /// (sourceAround = around - wind.X * t, sourceAcross = across - wind.Y * t, i.e. the cloud_weather_frame offsets) just
+    /// as <see cref="EvaluateMacroWeather"/> does on the CPU. Manual/preview systems (flag bit0) are in WORLD space:
+    /// no wind offset applies. Radii already include the lifecycle envelope; <see cref="Influence"/> is density x envelope.
+    /// </summary>
+    public readonly record struct RenderWeatherSystem(
+        int SystemId,
+        WeatherSystemKind Kind,
+        double CenterAroundMeters,
+        double CenterAcrossMeters,
+        float MajorRadiusMeters,
+        float MinorRadiusMeters,
+        float OrientationCosine,
+        float OrientationSine,
+        float Influence,
+        float Precipitation,
+        float StormFloorMeters,
+        float StormCeilingMeters,
+        CloudFormationProfile PhysicalProfile,
+        uint Flags,
+        float ManualCoverageTarget,
+        float SupportMultiplier)
+    {
+        public bool IsStatic => (Flags & RenderWeatherFlagStatic) != 0u;
+        public bool Sculpts => (Flags & RenderWeatherFlagSculpt) != 0u;
+        public bool ManualFalloff => (Flags & RenderWeatherFlagManualFalloff) != 0u;
+        /// <summary>Value for the shader's physicalProfile slot (storm_shape.w mapping).</summary>
+        public int ShaderProfile => CloudFormationProfiles.ToShaderProfile(PhysicalProfile);
+    }
+
+    /// <summary>
+    /// Appends every natural system whose support ellipse (conservatively its major-radius circle, wrapped around the
+    /// ring) comes within <paramref name="radiusMeters"/> of <paramref name="center"/> at <paramref name="time"/>, plus every
+    /// manual/preview system (support x1.3). Output is not cleared and is unsorted. Returns the number appended.
+    /// Cost: ~(2*ceil((R+maxRadius)/macroCell)+3)^2 cells (about 650 for R=200 km, 110 km, 32 km cells) at one lifecycle
+    /// evaluation plus one spawn hash each (roughly 10 integer hashes), then profile/vertical rolls for the ~10-20
+    /// survivors; well under 0.2 ms. The only allocation is growth of the caller's list.
+    /// </summary>
+    public int CollectRenderWeatherSystems(
+        RingCanonicalPosition center,
+        double radiusMeters,
+        double time,
+        List<RenderWeatherSystem> output,
+        float altitudeDatumMeters = 0.0f,
+        float stormFrontBaseMeters = 500.0f)
+    {
+        if (_grid == null || output == null) return 0;
+        time = double.IsFinite(time) ? Math.Max(0.0, time) : 0.0;
+        radiusMeters = double.IsFinite(radiusMeters) ? Math.Max(0.0, radiusMeters) : 0.0;
+        int appended = 0;
+        int seed = _grid.TerrainSampler?.Seed ?? 1337;
+        double macroCell = Mathf.Clamp(MacroWeatherCellMeters, 16000.0f, 64000.0f);
+        double maximumRadius = Mathf.Clamp(MaximumMacroSystemRadiusMeters, 40000.0f, 160000.0f);
+        double circumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
+        int aroundCellCount = Math.Max(1, Mathf.CeilToInt((float)(circumference / macroCell)));
+        double sourceAround = WrapAround(center.AroundMeters - WeatherWindMetersPerSecond.X * time, circumference);
+        double sourceAcross = center.AcrossMeters - WeatherWindMetersPerSecond.Y * time;
+        int centerCellAround = Mathf.FloorToInt((float)(sourceAround / macroCell));
+        int centerCellAcross = Mathf.FloorToInt((float)(sourceAcross / macroCell));
+        // A system centre is within 0.41 cell of its cell centre per axis (0.58 cell diagonal), so +1 cell is conservative.
+        int searchRadius = Mathf.CeilToInt((float)((radiusMeters + maximumRadius) / macroCell)) + 1;
+        bool wholeRing = searchRadius * 2 + 1 >= aroundCellCount;
+        int aroundSteps = wholeRing ? aroundCellCount : searchRadius * 2 + 1;
+        double prefilter = radiusMeters + maximumRadius + macroCell * 0.6;
+        double prefilterSquared = prefilter * prefilter;
+
+        for (int dz = -searchRadius; dz <= searchRadius; dz++)
+        {
+            int systemAcrossCell = centerCellAcross + dz;
+            double nominalAcross = (systemAcrossCell + 0.5) * macroCell;
+            double acrossDelta = nominalAcross - sourceAcross;
+            if (acrossDelta * acrossDelta > prefilterSquared) continue;
+            for (int step = 0; step < aroundSteps; step++)
+            {
+                int systemAroundCell = wholeRing
+                    ? step
+                    : PositiveModulo(centerCellAround - searchRadius + step, aroundCellCount);
+                double aroundDelta = ShortestAroundDelta(sourceAround, (systemAroundCell + 0.5) * macroCell, circumference);
+                if (aroundDelta * aroundDelta + acrossDelta * acrossDelta > prefilterSquared) continue;
+                if (!TryBuildWeatherSystem(systemAroundCell, systemAcrossCell, seed, time, out WeatherSystemDefinition system))
+                    continue;
+                double deltaAround = ShortestAroundDelta(sourceAround, system.SourceAroundMeters, circumference);
+                double deltaAcross = system.SourceAcrossMeters - sourceAcross;
+                if (Math.Sqrt(deltaAround * deltaAround + deltaAcross * deltaAcross) - system.MajorRadiusMeters >= radiusMeters)
+                    continue;
+                output.Add(BuildNaturalRenderSystem(system, systemAroundCell, systemAcrossCell, seed, time,
+                    altitudeDatumMeters, stormFrontBaseMeters));
+                appended++;
+            }
+        }
+
+        foreach (LocalWeatherState manual in _manualWeather.Values)
+        {
+            if (manual.SystemId == 0 || manual.SystemRadiiMeters.X <= 0.0f || manual.SystemRadiiMeters.Y <= 0.0f) continue;
+            const float manualSupport = 1.3f; // (n-0.55)/0.75 falloff reaches zero at n = 1.3
+            double deltaAround = ShortestAroundDelta(center.AroundMeters, manual.SystemCenterMeters.X, circumference);
+            double deltaAcross = manual.SystemCenterMeters.Y - center.AcrossMeters;
+            if (Math.Sqrt(deltaAround * deltaAround + deltaAcross * deltaAcross)
+                - manual.SystemRadiiMeters.X * manualSupport >= radiusMeters)
+                continue;
+            float baseAbove = manual.CloudBaseAltitudeMeters;
+            output.Add(new RenderWeatherSystem(
+                manual.SystemId,
+                manual.SystemKind,
+                manual.SystemCenterMeters.X,
+                manual.SystemCenterMeters.Y,
+                manual.SystemRadiiMeters.X,
+                manual.SystemRadiiMeters.Y,
+                Mathf.Cos(manual.SystemOrientationRadians),
+                Mathf.Sin(manual.SystemOrientationRadians),
+                manual.SystemInfluence,
+                manual.PrecipitationPotential,
+                altitudeDatumMeters + Math.Max(100.0f, baseAbove),
+                altitudeDatumMeters + Math.Max(baseAbove + 500.0f, manual.CloudTopAltitudeMeters),
+                manual.DominantFormationProfile,
+                RenderWeatherFlagStatic | RenderWeatherFlagSculpt | RenderWeatherFlagManualFalloff,
+                manual.CloudCoverage,
+                manualSupport));
+            appended++;
+        }
+
+        return appended;
+    }
+
+    private RenderWeatherSystem BuildNaturalRenderSystem(
+        in WeatherSystemDefinition system, int aroundCell, int acrossCell, int seed, double time,
+        float altitudeDatumMeters, float stormFrontBaseMeters)
+    {
+        // Density/precipitation arrive scaled by the lifecycle envelope. The profile must be a property of the whole
+        // system for its whole life, so roll it from the mature (unscaled) values.
+        float envelope = Math.Max(0.0001f, EvaluateWeatherLifecycle(aroundCell, acrossCell, seed, time).Envelope);
+        float matureDensity = Mathf.Min(1.0f, system.Density / envelope);
+        float maturePrecipitation = Mathf.Min(1.0f, system.PrecipitationPotential / envelope);
+        CloudFormationProfile profile = ResolveSystemFormationProfile(
+            seed, system.SystemId, system.Kind, matureDensity, maturePrecipitation);
+        bool front = system.Kind is WeatherSystemKind.MajorFront or WeatherSystemKind.ExceptionalFront;
+        float stormFloor = 0.0f;
+        float stormCeiling = 0.0f;
+        if (front)
+        {
+            // Mirrors RingSunshineCloudBridge.ResolveNaturalStormCloudAltitude, but per system.
+            FormationVerticalProfile vertical = ResolveSystemVerticalProfile(
+                seed, system.SystemId, system.Kind, profile);
+            stormFloor = altitudeDatumMeters + Math.Max(100.0f, stormFrontBaseMeters);
+            stormCeiling = altitudeDatumMeters + Math.Max(stormFrontBaseMeters + 500.0f, vertical.TopAltitudeMeters);
+        }
+        bool sculpt = profile is CloudFormationProfile.StormTower or CloudFormationProfile.Cumulonimbus;
+        return new RenderWeatherSystem(
+            system.SystemId,
+            system.Kind,
+            system.SourceAroundMeters,
+            system.SourceAcrossMeters,
+            system.MajorRadiusMeters,
+            system.MinorRadiusMeters,
+            system.OrientationCosine,
+            system.OrientationSine,
+            system.Density,
+            system.PrecipitationPotential,
+            stormFloor,
+            stormCeiling,
+            profile,
+            sculpt ? RenderWeatherFlagSculpt : 0u,
+            0.0f,
+            1.0f);
+    }
+
+    /// <summary>
+    /// Whole-system counterpart of <see cref="ResolveFormationProfile"/>: same table and probabilities, but the roll comes
+    /// from the SystemId (new salt) instead of the camera cell. Density stands in for StrongestInfluence and
+    /// precipitation x density for the precipitation term (pass mature, un-enveloped values).
+    /// </summary>
+    private static CloudFormationProfile ResolveSystemFormationProfile(
+        int seed, int systemId, WeatherSystemKind kind, float density, float precipitationPotential)
+    {
+        float roll = Hash01(systemId, 0, seed, SystemProfileSalt);
+        float precipitation = precipitationPotential * density;
+        return kind switch
+        {
+            WeatherSystemKind.ExceptionalFront when density >= 0.24f =>
+                roll < 0.28f
+                    ? CloudFormationProfile.Cumulonimbus
+                    : roll < 0.62f
+                        ? CloudFormationProfile.Nimbostratus
+                        : roll < 0.78f
+                            ? CloudFormationProfile.Altostratus
+                            : roll < 0.90f
+                                ? CloudFormationProfile.Cirrostratus
+                                : CloudFormationProfile.Stratocumulus,
+            WeatherSystemKind.MajorFront when density >= 0.22f =>
+                roll < 0.12f && precipitation >= 0.35f
+                    ? CloudFormationProfile.Cumulonimbus
+                    : roll < 0.42f
+                        ? CloudFormationProfile.Nimbostratus
+                        : roll < 0.67f
+                            ? CloudFormationProfile.Altostratus
+                            : roll < 0.88f
+                                ? CloudFormationProfile.Stratocumulus
+                                : CloudFormationProfile.Altocumulus,
+            WeatherSystemKind.CloudBank =>
+                precipitation >= 0.32f && roll < 0.20f
+                    ? CloudFormationProfile.Nimbostratus
+                    : roll < 0.42f
+                        ? CloudFormationProfile.Stratus
+                        : roll < 0.72f
+                            ? CloudFormationProfile.Stratocumulus
+                            : roll < 0.90f
+                                ? CloudFormationProfile.Altostratus
+                                : CloudFormationProfile.Cirrostratus,
+            WeatherSystemKind.CumulusCluster =>
+                precipitation >= 0.18f && roll < 0.10f
+                    ? CloudFormationProfile.Cumulonimbus
+                    : roll < 0.58f
+                        ? CloudFormationProfile.Cumulus
+                        : roll < 0.84f
+                            ? CloudFormationProfile.Altocumulus
+                            : CloudFormationProfile.Cirrocumulus,
+            _ => roll < 0.30f
+                ? CloudFormationProfile.Cumulus
+                : roll < 0.48f
+                    ? CloudFormationProfile.Stratocumulus
+                    : roll < 0.64f
+                        ? CloudFormationProfile.Altocumulus
+                        : roll < 0.74f
+                            ? CloudFormationProfile.Stratus
+                            : roll < 0.84f
+                                ? CloudFormationProfile.Cirrus
+                                : roll < 0.90f
+                                    ? CloudFormationProfile.Altostratus
+                                    : roll < 0.94f
+                                        ? CloudFormationProfile.Cirrostratus
+                                        : roll < 0.97f
+                                            ? CloudFormationProfile.Cirrocumulus
+                                            : roll < 0.99f
+                                                ? CloudFormationProfile.Nimbostratus
+                                                : CloudFormationProfile.Cumulonimbus
+        };
+    }
+
+    /// <summary>Whole-system counterpart of <see cref="ResolveFormationVerticalProfile"/> (rolls from the SystemId).</summary>
+    private static FormationVerticalProfile ResolveSystemVerticalProfile(
+        int seed, int systemId, WeatherSystemKind kind, CloudFormationProfile profile)
+    {
+        float baseRoll = Hash01(systemId, 0, seed, SystemBaseSalt);
+        float topRoll = Hash01(systemId, 0, seed, SystemTopSalt);
+        CloudPhysicalDefinition physical = CloudPhysicalCatalog.Get(profile);
+        float maximumAltitude = profile == CloudFormationProfile.Cumulonimbus
+            && kind != WeatherSystemKind.ExceptionalFront
+            ? Math.Min(18000.0f, physical.MaximumAltitudeMeters)
+            : physical.MaximumAltitudeMeters;
+        float availableDepth = Math.Max(100.0f, maximumAltitude - physical.MinimumAltitudeMeters);
+        float thickness = Mathf.Lerp(
+            physical.MinimumThicknessMeters,
+            physical.MaximumThicknessMeters,
+            topRoll);
+        thickness = Mathf.Clamp(thickness, 100.0f, availableDepth);
+        float cloudBase;
+        if (profile == CloudFormationProfile.Cumulonimbus)
+        {
+            cloudBase = physical.MinimumAltitudeMeters;
+        }
+        else
+        {
+            float maximumBase = Math.Max(physical.MinimumAltitudeMeters, maximumAltitude - thickness);
+            cloudBase = Mathf.Lerp(physical.MinimumAltitudeMeters, maximumBase, baseRoll);
+        }
+        float cloudTop = Math.Min(maximumAltitude, cloudBase + thickness);
+        return new FormationVerticalProfile(cloudBase, cloudTop, 1.0f, 1.0f);
+    }
+
+    /// <summary>
+    /// The CPU cluster term of <see cref="QueryRawWeatherAtTime"/>, (weather - 0.5) * WeatherClusteringStrength with
+    /// weather = 0.62 * small + 0.38 * large, quantized to the 3.2 km formation cell exactly like the CPU. Reference for tests.
+    /// </summary>
+    public float SampleQuantizedClusterTerm(double aroundMeters, double acrossMeters, double timeSeconds)
+    {
+        timeSeconds = double.IsFinite(timeSeconds) ? Math.Max(0.0, timeSeconds) : 0.0;
+        int seed = _grid?.TerrainSampler?.Seed ?? 1337;
+        float cellSize = Mathf.Max(1000.0f, FormationCellMeters);
+        int sourceAroundCell = Mathf.FloorToInt((float)(
+            WrapAround(aroundMeters - WeatherWindMetersPerSecond.X * timeSeconds) / cellSize));
+        int sourceAcrossCell = Mathf.FloorToInt((float)(
+            (acrossMeters - WeatherWindMetersPerSecond.Y * timeSeconds) / cellSize));
+        float small = SampleWeatherNoise(sourceAroundCell, sourceAcrossCell, seed, Mathf.Max(2, SmallWeatherClusterCells), 30);
+        float large = SampleWeatherNoise(sourceAroundCell, sourceAcrossCell, seed, Mathf.Max(4, LargeWeatherClusterCells), 40);
+        return (small * 0.62f + large * 0.38f - 0.5f) * WeatherClusteringStrength;
+    }
+
+    /// <summary>
+    /// Continuous (P5) form of the CPU cluster term: identical formula, but SampleWeatherNoise is evaluated at the
+    /// FRACTIONAL formation-cell coordinate, so it equals <see cref="SampleQuantizedClusterTerm"/> exactly at lattice
+    /// corners (integer cell coordinates) and varies smoothly between them. GLSL port notes: cell coordinate
+    /// c = wrap(around - wind.x*t) / cellSize (and (across - wind.y*t) / cellSize), as float; per layer x = c / scale,
+    /// x0 = floor(x), f = smoothstep(x - x0); noise = bilinear mix of Hash01(x0 + {0,1}, z0 + {0,1}, seed, salt) with
+    /// salts 30 (scale SmallWeatherClusterCells, weight 0.62) and 40 (LargeWeatherClusterCells, weight 0.38).
+    /// Hash01 (uint math wraps in GLSL; negative cells are cast int -> uint): h = seed ^ 0x9E3779B9; h ^= x * 0x85EBCA6B;
+    /// h = rotl(h, 13); h ^= z * 0xC2B2AE35; h ^= salt * 0x27D4EB2F; h ^= h >> 16; h *= 0x7FEB352D; h ^= h >> 15;
+    /// h *= 0x846CA68B; h ^= h >> 16; result = (h &amp; 0xFFFFFF) / 16777215. The around coordinate wraps at the ring
+    /// circumference, so (like the CPU) the term is not continuous across the seam unless it is a multiple of the cell.
+    /// </summary>
+    public float SampleContinuousClusterTerm(double aroundMeters, double acrossMeters, double timeSeconds)
+    {
+        timeSeconds = double.IsFinite(timeSeconds) ? Math.Max(0.0, timeSeconds) : 0.0;
+        int seed = _grid?.TerrainSampler?.Seed ?? 1337;
+        double cellSize = Mathf.Max(1000.0f, FormationCellMeters);
+        float cellAround = (float)(WrapAround(aroundMeters - WeatherWindMetersPerSecond.X * timeSeconds) / cellSize);
+        float cellAcross = (float)((acrossMeters - WeatherWindMetersPerSecond.Y * timeSeconds) / cellSize);
+        float small = SampleWeatherNoiseContinuous(cellAround, cellAcross, seed, Mathf.Max(2, SmallWeatherClusterCells), 30);
+        float large = SampleWeatherNoiseContinuous(cellAround, cellAcross, seed, Mathf.Max(4, LargeWeatherClusterCells), 40);
+        return (small * 0.62f + large * 0.38f - 0.5f) * WeatherClusteringStrength;
+    }
+
+    // SampleWeatherNoise with a fractional cell coordinate; for integer coordinates the arithmetic is identical.
+    private static float SampleWeatherNoiseContinuous(float cellX, float cellZ, int seed, int scaleCells, int salt)
+    {
+        float x = cellX / (float)Math.Max(1, scaleCells);
+        float z = cellZ / (float)Math.Max(1, scaleCells);
+        int x0 = Mathf.FloorToInt(x);
+        int z0 = Mathf.FloorToInt(z);
+        float fx = x - x0;
+        float fz = z - z0;
+        fx = fx * fx * (3.0f - 2.0f * fx);
+        fz = fz * fz * (3.0f - 2.0f * fz);
+        float a = Mathf.Lerp(Hash01(x0, z0, seed, salt), Hash01(x0 + 1, z0, seed, salt), fx);
+        float b = Mathf.Lerp(Hash01(x0, z0 + 1, seed, salt), Hash01(x0 + 1, z0 + 1, seed, salt), fx);
+        return Mathf.Lerp(a, b, fz);
+    }
+
     /// <summary>Single authoritative seeded macro-cell constructor shared by weather queries and lightning.</summary>
     private bool TryBuildWeatherSystem(int systemAroundCell, int systemAcrossCell, int seed, double timeSeconds,
         out WeatherSystemDefinition system)

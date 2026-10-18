@@ -477,6 +477,12 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddToggle(cloudShadows, "Cloud shadow generation (profile)", _cloudBridge?.GpuShadowGenerationEnabled ?? true, value => { if (_cloudBridge != null) _cloudBridge.GpuShadowGenerationEnabled = value; });
         AddToggle(cloudShadows, "Cloud shadow receivers (profile)", _cloudBridge?.CloudShadowReceiversEnabled ?? true, value => { if (_cloudBridge != null) _cloudBridge.CloudShadowReceiversEnabled = value; });
         AddPersistentSlider(cloudShadows, "GpuShadowVerticalSamples", "GPU vertical samples", 1, 64, 1, _cloudBridge?.GpuShadowVerticalSamples ?? 4);
+        AddPersistentToggle(cloudShadows, "GpuShadowAdaptiveSteps", "GPU adaptive step spacing", _cloudBridge?.GpuShadowAdaptiveSteps ?? true);
+        AddPersistentSlider(cloudShadows, "GpuShadowStepMeters", "GPU step spacing (m)", 50, 2000, 10, _cloudBridge?.GpuShadowStepMeters ?? 200);
+        AddPersistentSlider(cloudShadows, "GpuShadowMinSamples", "GPU adaptive min samples", 1, 64, 1, _cloudBridge?.GpuShadowMinSamples ?? 8);
+        AddPersistentSlider(cloudShadows, "GpuShadowMaxSamples", "GPU adaptive max samples", 8, 256, 1, _cloudBridge?.GpuShadowMaxSamples ?? 96);
+        AddPersistentToggle(cloudShadows, "GpuShadowClearAirSkip", "GPU skip clear air", _cloudBridge?.GpuShadowClearAirSkip ?? true);
+        AddPersistentSlider(cloudShadows, "GpuShadowSkipProbeCount", "GPU clear-air probes", 0, 64, 1, _cloudBridge?.GpuShadowSkipProbeCount ?? 16);
         AddToggle(cloudShadows, "LOD1 terrain shadows", _lod1?.CastTerrainShadows ?? true, value => { if (_lod1 != null) _lod1.CastTerrainShadows = value; });
         VBoxContainer gpuNear = TuningMenuUi.CreateSection(tab, "GPU near map");
         AddPersistentSlider(gpuNear, "GpuNearShadowMapResolution", "GPU near map", 64, 2048, 64, _cloudBridge?.GpuNearShadowMapResolution ?? 1024); AddPersistentSlider(gpuNear, "GpuNearShadowRadiusMeters", "GPU near radius", 8000, 80000, 1000, _cloudBridge?.GpuNearShadowRadiusMeters ?? 24000); AddPersistentSlider(gpuNear, "GpuNearShadowUpdatesPerSecond", "GPU near updates/sec", 1, 20, .5, _cloudBridge?.GpuNearShadowUpdatesPerSecond ?? 10); AddPersistentSlider(gpuNear, "GpuNearShadowSliceCount", "GPU near slices (0/1 = single dispatch)", 0, 16, 1, _cloudBridge?.GpuNearShadowSliceCount ?? 4);
@@ -620,6 +626,12 @@ public partial class RingLiveTuningDrawer : CanvasLayer
     }
     private static string CloudTooltip(string key) => key switch
     {
+        "GpuShadowAdaptiveSteps" => "Marches the GPU cloud shadow at a constant step length along the sun ray instead of a fixed sample count, so low sun no longer shows stacked slices and high sun stops oversampling. Off restores the fixed vertical sample count.",
+        "GpuShadowStepMeters" => "Target distance between cloud shadow samples along the sun ray when adaptive steps are on. Smaller is smoother and costlier.",
+        "GpuShadowMinSamples" => "Lowest per-texel sample count for the adaptive cloud shadow march.",
+        "GpuShadowMaxSamples" => "Highest per-texel sample count for the adaptive cloud shadow march. Caps the cost of long low-sun rays.",
+        "GpuShadowClearAirSkip" => "Probes the sun ray coarsely and marches only the stretch that may contain cloud. Conservative: it only skips air the weather, storm and ring-edge masks prove empty. Requires adaptive steps.",
+        "GpuShadowSkipProbeCount" => "Coarse probes per sun ray for clear-air skipping; raised automatically so probes stay within a quarter of the weather patch scale. 0 disables skipping.",
         "GpuNearShadowSliceCount" => "Spreads each near cloud-shadow refresh over this many consecutive frames and publishes the map only when complete, removing the single-frame GPU spike. 0 or 1 restores the single-dispatch refresh. Identical result once complete.",
         "SkipEmptyCloudMaskSamples" =>"Skips weather-texture reads outside the cloud layer while preserving ray positions, fog, and cloud history.",
         "TerrainCloudShadowEnabled" => "Uses terrain sunlight visibility to shade clouds behind ring terrain. Does not control cloud shadows cast onto terrain.",

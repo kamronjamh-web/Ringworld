@@ -615,15 +615,16 @@ public partial class RingGraphicsQualityController : Node
 		if (_sunshineClouds == null) return;
 		(int resolutionScale, int raymarchSteps, int nearShadowResolution,
 			int farShadowResolution, float nearShadowUpdatesPerSecond,
-			float farShadowUpdatesPerSecond, int shadowVerticalSamples) = preset switch
+			float farShadowUpdatesPerSecond, int shadowVerticalSamples,
+				float shadowStepMeters, int shadowMaxSamples) = preset switch
 		{
-			RingTerrainLodCoordinator.QualityPreset.Low => (0, 128, 256, 128, 2.0f, 0.25f, 2),
-			RingTerrainLodCoordinator.QualityPreset.Medium => (0, 128, 1024, 256, 10.0f, 0.5f, 4),
-			RingTerrainLodCoordinator.QualityPreset.High => (0, 128, 1024, 256, 10.0f, 0.75f, 4),
-			RingTerrainLodCoordinator.QualityPreset.VeryHigh => (0, 160, 1024, 384, 10.0f, 1.0f, 5),
-			RingTerrainLodCoordinator.QualityPreset.UltraVideo => (0, 256, 1024, 512, 10.0f, 1.25f, 6),
-			RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (0, 256, 1536, 768, 10.0f, 1.5f, 8),
-			_ => (0, 128, 1024, 256, 10.0f, 0.5f, 4)
+			RingTerrainLodCoordinator.QualityPreset.Low => (0, 128, 256, 128, 2.0f, 0.25f, 2, 400.0f, 32),
+			RingTerrainLodCoordinator.QualityPreset.Medium => (0, 128, 1024, 256, 10.0f, 0.5f, 4, 250.0f, 64),
+			RingTerrainLodCoordinator.QualityPreset.High => (0, 128, 1024, 256, 10.0f, 0.75f, 4, 250.0f, 64),
+			RingTerrainLodCoordinator.QualityPreset.VeryHigh => (0, 160, 1024, 384, 10.0f, 1.0f, 5, 200.0f, 96),
+			RingTerrainLodCoordinator.QualityPreset.UltraVideo => (0, 256, 1024, 512, 10.0f, 1.25f, 6, 150.0f, 128),
+			RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (0, 256, 1536, 768, 10.0f, 1.5f, 8, 150.0f, 128),
+			_ => (0, 128, 1024, 256, 10.0f, 0.5f, 4, 250.0f, 64)
 		};
 		_sunshineClouds.CloudResolutionScale = resolutionScale;
 		_sunshineClouds.RaymarchSteps = raymarchSteps;
@@ -632,6 +633,8 @@ public partial class RingGraphicsQualityController : Node
 		_sunshineClouds.GpuNearShadowUpdatesPerSecond = nearShadowUpdatesPerSecond;
 		_sunshineClouds.GpuFarShadowUpdatesPerSecond = farShadowUpdatesPerSecond;
 		_sunshineClouds.GpuShadowVerticalSamples = shadowVerticalSamples;
+		_sunshineClouds.GpuShadowStepMeters = shadowStepMeters;
+		_sunshineClouds.GpuShadowMaxSamples = shadowMaxSamples;
 		string[] profileKeys =
 		{
 			nameof(RingSunshineCloudBridge.CloudResolutionScale),
@@ -640,7 +643,9 @@ public partial class RingGraphicsQualityController : Node
 			nameof(RingSunshineCloudBridge.GpuFarShadowMapResolution),
 			nameof(RingSunshineCloudBridge.GpuNearShadowUpdatesPerSecond),
 			nameof(RingSunshineCloudBridge.GpuFarShadowUpdatesPerSecond),
-			nameof(RingSunshineCloudBridge.GpuShadowVerticalSamples)
+			nameof(RingSunshineCloudBridge.GpuShadowVerticalSamples),
+			nameof(RingSunshineCloudBridge.GpuShadowStepMeters),
+			nameof(RingSunshineCloudBridge.GpuShadowMaxSamples)
 		};
 		_sunshineClouds.GameplayCloudDefaults.OnGraphicsPresetApplied(_sunshineClouds, profileKeys);
 		// The bridge detects actual resolution changes and retires receivers once.

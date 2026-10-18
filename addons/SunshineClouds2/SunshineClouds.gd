@@ -161,6 +161,20 @@ var segment_lights_dirty : bool = true
 var segment_light_phase_weight : float = 0.5
 var segment_light_extinction : float = 0.0015
 
+# RingworldTechDemo extension (camera-independent clouds): up to WEATHER_SYSTEM_MAX render weather systems in one std140 uniform
+# buffer, bound at 21 in the main compute and 8 in the shadow compute (layout in RingWeatherSystems.glslinc). The bridge packs the
+# bytes (set_weather_systems) at its weather refresh; the render callback uploads them in place (buffer_update), so the buffer and
+# every uniform set that references it live across refreshes. Header enabled = 0 keeps the legacy single-system shader path.
+# Bytes: header 4 x vec4 (64) + 64 x 4 x vec4 (4096) = 4160.
+const WEATHER_SYSTEM_MAX := 64
+const WEATHER_SYSTEMS_BYTES := 64 + WEATHER_SYSTEM_MAX * 64
+var weather_systems_buffer : RID = RID()
+var weather_systems_bytes : PackedByteArray = PackedByteArray()
+var weather_systems_dirty : bool = true
+# Bumped by the bridge only on structural changes (a manual system added/removed, or the upload cap changed). It is part of the
+# density-continuity shape terms, so a structural change retires temporal history while ordinary refreshes do not.
+@export var weather_systems_revision : int = 0
+
 var positionQueries : Array[Vector3] = []
 var positionQueryCallables : Array[Callable] = []
 var positionQuerying : bool = false
@@ -226,7 +240,7 @@ var blit_screen_images : Array[RID] = []
 # Independent GPU cloud-shadow producer.  These remain GPU resident and are
 # deliberately separate from the callback/readback sampling fallback below.
 const GPU_CLOUD_SHADOW_CASCADES := 2
-const GPU_CLOUD_SHADOW_PARAM_BYTES := 96
+const GPU_CLOUD_SHADOW_PARAM_BYTES := 112
 const GPU_CLOUD_SHADOW_MAX_SLICES := 16
 var cloud_shadow_shader : RID = RID()
 var cloud_shadow_pipeline : RID = RID()
@@ -551,7 +565,9 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 		canonical_center: Vector2, ring_radius: float, radius: float,
 				sun_direction: Vector3, floor: float, ceiling: float,
 				vertical_samples: int, extinction: float,
-				reset_history: bool = false, slice_count: int = 1) -> bool:
+				reset_history: bool = false, slice_count: int = 1,
+				adaptive_step_meters: float = 0.0, adaptive_min_samples: int = 8,
+				adaptive_max_samples: int = 96, skip_probe_count: int = 0) -> bool:
 	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
 		cloud_shadow_last_error = "Invalid cloud shadow cascade index."
 		return false
@@ -577,7 +593,12 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 				"extinction": maxf(extinction, 0.0),
 		"reset_history": reset_history,
 		# 0/1 = legacy single dispatch; N > 1 spreads one refresh over N frames.
-		"slice_count": clampi(slice_count, 1, GPU_CLOUD_SHADOW_MAX_SLICES),
+			"slice_count": clampi(slice_count, 1, GPU_CLOUD_SHADOW_MAX_SLICES),
+		# adaptive_step_meters <= 0 keeps the legacy fixed vertical_samples march.
+		"adaptive_step_meters": maxf(adaptive_step_meters, 0.0),
+		"adaptive_min_samples": clampi(adaptive_min_samples, 1, 256),
+		"adaptive_max_samples": clampi(adaptive_max_samples, clampi(adaptive_min_samples, 1, 256), 256),
+		"skip_probe_count": clampi(skip_probe_count, 0, 64),
 	}
 	if reset_history:
 		cloud_shadow_reset_history[cascade] = true
@@ -793,6 +814,7 @@ func dispatch_gpu_cloud_shadows():
 			Vector4(configuration["up"].x, configuration["up"].y, configuration["up"].z, configuration["ring_radius"]),
 			Vector4(configuration["sun_direction"].x, configuration["sun_direction"].y, configuration["sun_direction"].z, configuration["floor"]),
 			Vector4(configuration["ceiling"], configuration["vertical_samples"], configuration["extinction"], float(first_group * 8)),
+			Vector4(configuration["adaptive_step_meters"], configuration["adaptive_min_samples"], configuration["adaptive_max_samples"], configuration["skip_probe_count"]),
 		]
 		var offset := 0
 		for value in vectors:
@@ -855,7 +877,7 @@ func _init():
 	effect_callback_type = CompositorEffect.EFFECT_CALLBACK_TYPE_POST_TRANSPARENT
 	access_resolved_depth = true
 	access_resolved_color = true
-	needs_motion_vectors = true
+	needs_motion_vectors = false
 	RenderingServer.call_on_render_thread(initialize_compute)
 
 func _notification(what):
@@ -874,7 +896,7 @@ func _notification(what):
 		display_vertex_array, display_vertex_buffer, nearest_sampler, linear_sampler,
 		linear_sampler_no_repeat, light_data_buffer, point_sample_data_buffer,
 		resized_depth, far_opaque_depth_fallback, cloud_shadow_pipeline,
-		cloud_shadow_shader, _terrain_sun_neutral]
+		cloud_shadow_shader, _terrain_sun_neutral, weather_systems_buffer]
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
 	rids.append_array(blit_screen_images)
@@ -1161,6 +1183,7 @@ func initialize_compute():
 	var preserve_general_data_buffers := general_data_buffers.size() == GENERAL_DATA_RING_SIZE
 	var retire_generation := pipeline.is_valid() or prepass_pipeline.is_valid() or postpass_pipeline.is_valid()
 	clear_compute(preserve_general_data_buffers, retire_generation)
+	_ensure_weather_systems_buffer()
 	
 	var sampler_state = RDSamplerState.new()
 	sampler_state.min_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
@@ -1627,6 +1650,12 @@ func _render_callback(effect_callback_type, render_data):
 					far_depth_uniform.add_id(far_depth_rid)
 					uniforms_array.append(far_depth_uniform)
 					
+					var weather_systems_uniform = RDUniform.new()
+					weather_systems_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					weather_systems_uniform.binding = 21
+					weather_systems_uniform.add_id(weather_systems_buffer)
+					uniforms_array.append(weather_systems_uniform)
+					
 					var compute_uniform_set := rd.uniform_set_create(uniforms_array, shader, 0)
 					uniform_sets.append(compute_uniform_set)
 					general_data_uniform_sets[0].append(compute_uniform_set)
@@ -1791,6 +1820,8 @@ func _render_callback(effect_callback_type, render_data):
 				encode_sample_points()
 			general_data_ring_index = 1 + (general_data_ring_index % GENERAL_DATA_MAIN_RING_SIZE)
 			update_matrices(cameraTR, viewProj, new_size)
+			if weather_systems_dirty:
+				update_weather_systems()
 			dispatch_gpu_cloud_shadows()
 			if lights_updated or directional_lights_data.size() == 0:
 				update_lights()
@@ -1952,7 +1983,8 @@ func _capture_density_state() -> Array:
 		cloud_weather_params.y, cloud_weather_params.z, cloud_weather_frame.w]
 	for value in [storm_shape,storm_detail,background_altitude,storm_altitude]:
 		shape.append_array([value.x,value.y,value.z,value.w])
-	shape.append_array([storm_system.z,storm_system.w])
+	# Constant 0 unless the bridge runs camera-independent clouds; then the camera-weather terms above are constant too.
+	shape.append_array([storm_system.z,storm_system.w,float(weather_systems_revision)])
 	return [shape, [extra_large_noise_patterns,height_gradient,large_scale_noise,medium_scale_noise,
 		small_scale_noise,curl_noise], [extra_large_scale_clouds_position,large_scale_clouds_position,
 		medium_scale_clouds_position,detail_clouds_position], storm_system,cloud_weather_frame,
@@ -2502,6 +2534,35 @@ func update_segment_lights():
 		segment_light_bytes.fill(0)
 	rd.buffer_update(light_data_buffer, SEGMENT_LIGHT_OFFSET, SEGMENT_LIGHT_BYTES, segment_light_bytes)
 
+# Called by the bridge at its weather refresh with the fully packed WEATHER_SYSTEMS_BYTES block. The bytes are swapped in whole and
+# uploaded once from the render callback (update_weather_systems); nothing is touched while the dirty flag is clear.
+func set_weather_systems(bytes : PackedByteArray) -> void:
+	if bytes.size() != WEATHER_SYSTEMS_BYTES:
+		printerr("set_weather_systems expects %d bytes, got %d." % [WEATHER_SYSTEMS_BYTES, bytes.size()])
+		return
+	weather_systems_bytes = bytes
+	weather_systems_dirty = true
+
+# The buffer is created once and survives compositor rebuilds, so the uniform sets (rebuilt with every generation) always reference
+# the same RID; only a brand-new buffer needs a re-upload.
+func _ensure_weather_systems_buffer() -> void:
+	if weather_systems_buffer.is_valid() or not rd:
+		return
+	var zeros := PackedByteArray()
+	zeros.resize(WEATHER_SYSTEMS_BYTES)
+	weather_systems_buffer = rd.uniform_buffer_create(WEATHER_SYSTEMS_BYTES, zeros)
+	weather_systems_dirty = true
+
+func update_weather_systems() -> void:
+	weather_systems_dirty = false
+	if not weather_systems_buffer.is_valid():
+		return
+	if weather_systems_bytes.size() != WEATHER_SYSTEMS_BYTES:
+		# Never set: header enabled = 0, so every shader keeps its legacy single-system path.
+		weather_systems_bytes.resize(WEATHER_SYSTEMS_BYTES)
+		weather_systems_bytes.fill(0)
+	rd.buffer_update(weather_systems_buffer, 0, WEATHER_SYSTEMS_BYTES, weather_systems_bytes)
+
 func update_lights():
 	lights_updated = false
 	
@@ -2607,4 +2668,9 @@ func _build_cloud_shadow_uniform_set(output_texture: RID, param_buffer: RID) -> 
 	parameters_uniform.binding = 7
 	parameters_uniform.add_id(param_buffer)
 	uniforms.append(parameters_uniform)
+	var weather_systems_uniform := RDUniform.new()
+	weather_systems_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	weather_systems_uniform.binding = 8
+	weather_systems_uniform.add_id(weather_systems_buffer)
+	uniforms.append(weather_systems_uniform)
 	return rd.uniform_set_create(uniforms, cloud_shadow_shader, 0)

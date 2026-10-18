@@ -187,7 +187,7 @@ func _uniform_matches(surface: Node, expected: bool) -> bool:
 		_native_projector_checked = true
 	# Terrain3D uses a native material object, so verify the near receiver has
 	# the same lighting and projected-cloud parameter contract as the LODs.
-	for parameter in ["sun_direction", "day_start_dot", "day_full_dot", "night_tint", "night_direct_light_factor", "day_direct_light_factor", "shadow_floor", "local_cloud_shadow_enabled", "local_cloud_shadow_center_world"]:
+	for parameter in ["sun_direction", "day_start_dot", "day_full_dot", "night_tint", "night_direct_light_factor", "day_direct_light_factor", "shadow_floor", "local_cloud_shadow_enabled", "local_cloud_shadow_use_globals"]:
 		if material.call("get_shader_param", parameter) == null:
 			_failures.append("Terrain3D material did not receive " + parameter)
 			return false

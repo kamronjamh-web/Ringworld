@@ -27,6 +27,9 @@ public partial class RingVolumetricCloudLayer
     }
     private int _windQuerySignature;
     private readonly System.Collections.Generic.Dictionary<(RingCanonicalPosition, double), LocalWeatherState> _windQueryCache = new();
+    /// <summary>Wind-free variant of <see cref="QueryLocalWeatherAtTime"/>: every field except WindMetersPerSecond is identical (the wind path only overrides that field), without the wind-history quadrature or cache.</summary>
+    public LocalWeatherState QueryLocalWeatherCoverageAtTime(RingCanonicalPosition position, double time)
+        => QueryRawWeatherAtTime(position, double.IsFinite(time) ? time : 0, true);
     public LocalWeatherState QueryLocalWeatherAtTime(RingCanonicalPosition position, double time)
     {
         if (!double.IsFinite(time)) time = 0;

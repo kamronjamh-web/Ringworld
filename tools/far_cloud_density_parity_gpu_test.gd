@@ -99,6 +99,12 @@ layout(binding=4) uniform sampler3D large_noise;
 layout(binding=5) uniform sampler3D noise_medium;
 layout(binding=6) uniform sampler3D noise_small;
 layout(binding=7) uniform sampler3D curl_noise;
+// Camera-independent clouds are disabled in this legacy-parity harness: the live sampleScene calls these four hooks,
+// which the production shader defines in RingWeatherSystems.glslinc / SunshineCloudsCompute.glsl.
+bool ring_ws_enabled() { return false; }
+float ring_ws_storm_level() { return 0.0; }
+float ring_ws_frame_coverage() { return 0.0; }
+float ring_ws_sculpt_density(vec3 canonical, float background_floor, float background_ceiling) { return 0.0; }
 layout(binding=8) uniform sampler2D extra_noise;
 """ + weather + helpers + """
 #define far_density_enabled true

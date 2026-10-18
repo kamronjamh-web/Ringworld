@@ -21,7 +21,7 @@ func _init() -> void:
 	for required in [
 		"private struct Snapshot", "private sealed class Receiver",
 		"!ReferenceEquals(previous.NearTexture, next.NearTexture)",
-		"previous.NearOffset != next.NearOffset", "previous.Center != next.Center",
+		"PublishedVec2[index] == value", "PublishedVec3[index] == value", "local_cloud_shadow_use_globals",
 		"receiver.HasApplied = true"
 	]:
 		if not projector.contains(required):

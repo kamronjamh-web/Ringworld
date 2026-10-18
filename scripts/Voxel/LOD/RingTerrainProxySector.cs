@@ -5652,6 +5652,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _oceanMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
             _structuralWallMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
             _opaqueShadowMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
+            global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.ProxySectorCamera,
+                (_material != null ? 1 : 0) + (_oceanMaterial != null ? 1 : 0)
+                + (_structuralWallMaterial != null ? 1 : 0) + (_opaqueShadowMaterial != null ? 1 : 0));
         }
         float fineHandoff = FinestOceanGeometryInstance == null ? 0.0f
             : (FinestOceanGeometryInstance.FadeOutStartMeters
@@ -5699,6 +5702,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 // The center follows the camera and RingWaterModel also writes this
                 // uniform, so it is deliberately not cached here.
                 _oceanMaterial.SetShaderParameter("fft_ocean_coverage_center_canonical", ResolveSharedFftCoverageShaderCenter());
+                global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.ProxyFftCoverage);
                 if (_uniformFftCoverageCellMeters != SharedFftOceanCoverageCellMeters)
                 {
                     _oceanMaterial.SetShaderParameter("fft_ocean_coverage_cell_meters", SharedFftOceanCoverageCellMeters);

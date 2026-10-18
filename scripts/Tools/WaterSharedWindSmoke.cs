@@ -72,14 +72,16 @@ public partial class WaterSharedWindSmoke : RefCounted
             newOwner._Ready();
             newOwner._Process(.5);
             long pushes = RingWaterModel.OceanMaterialParameterPushes;
+            long globalWrites = RingWaterModel.WaterWindGlobalWriteCount;
             oldOwner._Process(1);
-            Check(RingWaterModel.OceanMaterialParameterPushes == pushes, "obsolete water owner advanced shared clock");
+            Check(RingWaterModel.OceanMaterialParameterPushes == pushes && RingWaterModel.WaterWindGlobalWriteCount == globalWrites, "obsolete water owner advanced shared clock");
             Check(material.GetShaderParameter("water_mean_wind_direction").AsVector2().DistanceTo(Vector2.Down) < .0001, "obsolete owner overwrote replacement wind");
             oldOwner._ExitTree();
             Check(ReferenceEquals(RingWaterFftController.Instance, newOwner)
                 && material.GetShaderParameter("water_wind_clock_enabled").AsBool(), "obsolete exit cleared replacement clock");
             newOwner._Process(.25);
-            Check(RingWaterModel.OceanMaterialParameterPushes > pushes, "replacement owner stopped publishing clock");
+            // The wave clock now publishes through shared shader globals rather than material writes.
+            Check(RingWaterModel.OceanMaterialParameterPushes > pushes || RingWaterModel.WaterWindGlobalWriteCount > globalWrites, "replacement owner stopped publishing clock");
             newOwner._ExitTree();
             Check(RingWaterFftController.Instance is null && !material.GetShaderParameter("water_wind_clock_enabled").AsBool(), "active owner cleanup retained clock");
         }
@@ -124,9 +126,12 @@ public partial class WaterSharedWindSmoke : RefCounted
         Check(near.GetShaderParameter("water_mean_wind_direction").AsVector2() == Vector2.Down, "actual analytic bearing");
         Check(near.GetShaderParameter("water_wind_clock_enabled").AsBool() && far.GetShaderParameter("water_wind_clock_enabled").AsBool(), "fallback/far clocks");
         Check(!far.GetShaderParameter("water_spatial_gust_enabled").AsBool(), "scaled-far must not sample local atlas");
-        Vector3[] phases = near.GetShaderParameter("water_wave_phases").AsVector3Array();
-        Check(phases.Length == 12 && Math.Abs(phases[0].Y - RingWaterWindResponse.BoundedPhase(time, RingWaterModel.WaveSpeed, .42)) < .00001, "lake kind clock");
-        Check(Math.Abs(phases[0].Z - RingWaterWindResponse.BoundedPhase(time, RingWaterModel.WaveSpeed, .18)) < .00001, "river kind clock");
+        Check(near.GetShaderParameter("water_wind_global_slot").AsInt32() == 0 && far.GetShaderParameter("water_wind_global_slot").AsInt32() == 1, "wind global slots");
+        Vector3 phase0 = RingWaterModel.PublishedWavePhase(0);
+        Check(Math.Abs(phase0.Y - RingWaterWindResponse.BoundedPhase(time, RingWaterModel.WaveSpeed, .42)) < .00001, "lake kind clock");
+        Check(Math.Abs(phase0.Z - RingWaterWindResponse.BoundedPhase(time, RingWaterModel.WaveSpeed, .18)) < .00001, "river kind clock");
+        // Phase 3m+c is column c of mat3 m; spot-check a non-trivial matrix/column against the same rate table.
+        Check(Math.Abs(RingWaterModel.PublishedWavePhase(11).Y - RingWaterWindResponse.BoundedPhase(time, RingWaterModel.WaveSpeed, -.13 * .42)) < .00001, "packed phase 11 mapping");
         long pushes = RingWaterModel.OceanMaterialParameterPushes;
         RingWaterModel.UpdateWindClock(time, new Vector2(0, 24));
         RingWaterModel.RefreshOceanMaterials();
@@ -135,7 +140,7 @@ public partial class WaterSharedWindSmoke : RefCounted
         RingWaterModel.RefreshOceanMaterials();
         Check(!near.GetShaderParameter("water_spatial_gust_enabled").AsBool(), "manual FFT wind inherited weather gusts");
         Check(near.GetShaderParameter("water_mean_wind_direction").AsVector2() == Vector2.Down, "manual direction was replaced");
-        Vector4 translation = far.GetShaderParameter("water_far_group_translation").AsVector4();
+        Vector4 translation = RingWaterModel.PublishedFarGroupTranslation(1);
         Check(Math.Abs(translation.Y) <= 1.001f && Math.Abs(translation.W) <= 1.001f, "long clock group drift bounds");
         RingWaterModel.ClearWindClock();
         RingWaterModel.RefreshOceanMaterials();

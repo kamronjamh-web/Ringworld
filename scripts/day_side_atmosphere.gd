@@ -210,6 +210,18 @@ var underground_mode: Node = null
 # controller reads it next frame and only hides shadow-casting surface LODs once it is fully dark.
 var underground_lighting_darkness: float = 0.0
 var ring_sky_material: ShaderMaterial = null
+# Change-only write caches (last value written per name); cleared when the owning object changes.
+var _sky_param_cache: Dictionary = {}
+var _sky_param_cache_owner: ShaderMaterial = null
+var _underwater_param_cache: Dictionary = {}
+var _underwater_param_cache_owner: ShaderMaterial = null
+var _output_write_cache: Dictionary = {}
+var _output_write_owner: Object = null
+var _eye_write_cache: Dictionary = {}
+var _eye_write_owner: Object = null
+var _canonical_provider_player: Node3D = null
+var _canonical_provider_grid: Node = null
+var _canonical_provider_cached: bool = false
 # Public render-facing daylight: geometric daylight after raw solar occlusion.
 # Keep the astronomical value separately so eclipse presentation never changes
 # RingDayNightCycle's orbit/timing contract.
@@ -649,11 +661,25 @@ func _update_underwater_view_effect(strength: float, depth_factor: float) -> voi
 	if underwater_view_rect == null or underwater_view_material == null:
 		return
 	underwater_view_rect.visible = strength > 0.001
-	underwater_view_material.set_shader_parameter("effect_strength", clampf(strength, 0.0, 1.0))
-	underwater_view_material.set_shader_parameter("depth_factor", clampf(depth_factor, 0.0, 1.0))
-	underwater_view_material.set_shader_parameter("focus_blur_lod", maxf(0.0, underwater_focus_blur_lod))
-	underwater_view_material.set_shader_parameter("tint_strength", clampf(underwater_view_tint_strength, 0.0, 1.0))
-	underwater_view_material.set_shader_parameter("red_absorption", clampf(underwater_red_absorption, 0.0, 1.0))
+	if underwater_view_material != _underwater_param_cache_owner:
+		_underwater_param_cache_owner = underwater_view_material
+		_underwater_param_cache.clear()
+	_set_param_if_changed(underwater_view_material, _underwater_param_cache, "effect_strength", clampf(strength, 0.0, 1.0))
+	_set_param_if_changed(underwater_view_material, _underwater_param_cache, "depth_factor", clampf(depth_factor, 0.0, 1.0))
+	_set_param_if_changed(underwater_view_material, _underwater_param_cache, "focus_blur_lod", maxf(0.0, underwater_focus_blur_lod))
+	_set_param_if_changed(underwater_view_material, _underwater_param_cache, "tint_strength", clampf(underwater_view_tint_strength, 0.0, 1.0))
+	_set_param_if_changed(underwater_view_material, _underwater_param_cache, "red_absorption", clampf(underwater_red_absorption, 0.0, 1.0))
+
+
+func _set_param_if_changed(material: ShaderMaterial, cache: Dictionary, param: StringName, value: Variant) -> void:
+	if cache.has(param) and typeof(cache[param]) == typeof(value) and cache[param] == value:
+		return
+	cache[param] = value
+	material.set_shader_parameter(param, value)
+
+
+func _set_sky_param(param: StringName, value: Variant) -> void:
+	_set_param_if_changed(ring_sky_material, _sky_param_cache, param, value)
 
 
 func _ensure_ring_sky(environment: Environment) -> void:
@@ -678,10 +704,20 @@ func _configure_hdr_output(environment: Environment) -> void:
 	# AgX preserves hue and highlight detail from the deliberately strong ring
 	# sunlight. The scaled far viewport copies these properties so its canvas
 	# handoff uses the same output response.
-	environment.tonemap_mode = Environment.TONE_MAPPER_AGX if use_agx_tonemapping else Environment.TONE_MAPPER_LINEAR
-	environment.tonemap_agx_white = maxf(6.0, agx_white)
-	environment.tonemap_agx_contrast = clampf(agx_contrast, 0.8, 1.5)
-	environment.tonemap_exposure = maxf(0.01, tonemap_exposure)
+	if environment != _output_write_owner:
+		_output_write_owner = environment
+		_output_write_cache.clear()
+	var tonemap_values := {
+		"tonemap_mode": Environment.TONE_MAPPER_AGX if use_agx_tonemapping else Environment.TONE_MAPPER_LINEAR,
+		"tonemap_agx_white": maxf(6.0, agx_white),
+		"tonemap_agx_contrast": clampf(agx_contrast, 0.8, 1.5),
+		"tonemap_exposure": maxf(0.01, tonemap_exposure),
+	}
+	for key: String in tonemap_values:
+		if _output_write_cache.has(key) and _output_write_cache[key] == tonemap_values[key]:
+			continue
+		_output_write_cache[key] = tonemap_values[key]
+		environment.set(key, tonemap_values[key])
 
 
 func _configure_eye_adaptation() -> void:
@@ -691,13 +727,22 @@ func _configure_eye_adaptation() -> void:
 	if attributes == null:
 		attributes = CameraAttributesPractical.new()
 		world_environment.camera_attributes = attributes
-	attributes.auto_exposure_enabled = storm_auto_exposure_enabled
-	attributes.auto_exposure_min_sensitivity = maxf(1.0, auto_exposure_min_sensitivity)
-	attributes.auto_exposure_max_sensitivity = maxf(
-		attributes.auto_exposure_min_sensitivity,
-		auto_exposure_max_sensitivity)
-	attributes.auto_exposure_speed = maxf(0.01, auto_exposure_speed)
-	attributes.auto_exposure_scale = clampf(auto_exposure_scale, 0.05, 1.0)
+	if attributes != _eye_write_owner:
+		_eye_write_owner = attributes
+		_eye_write_cache.clear()
+	var min_sensitivity := maxf(1.0, auto_exposure_min_sensitivity)
+	var eye_values := {
+		"auto_exposure_enabled": storm_auto_exposure_enabled,
+		"auto_exposure_min_sensitivity": min_sensitivity,
+		"auto_exposure_max_sensitivity": maxf(min_sensitivity, auto_exposure_max_sensitivity),
+		"auto_exposure_speed": maxf(0.01, auto_exposure_speed),
+		"auto_exposure_scale": clampf(auto_exposure_scale, 0.05, 1.0),
+	}
+	for key: String in eye_values:
+		if _eye_write_cache.has(key) and _eye_write_cache[key] == eye_values[key]:
+			continue
+		_eye_write_cache[key] = eye_values[key]
+		attributes.set(key, eye_values[key])
 
 
 func _get_cloud_ambient_transmittance() -> float:
@@ -849,7 +894,9 @@ func _update_sky(
 		var hub_tint := current_hub_sky_tint_strength * current_hub_day * (1.0 - current_solar_visibility)
 		top_color = top_color.lerp(hub_sky_tint_color, hub_tint)
 		horizon_color = horizon_color.lerp(hub_sky_tint_color, hub_tint)
-	ring_sky_material.set_shader_parameter("local_surface_up", surface_up.normalized())
+	if ring_sky_material != _sky_param_cache_owner:
+		_sky_param_cache_owner = ring_sky_material
+		_sky_param_cache.clear()
 	var ring_radius := _get_ring_radius_meters()
 	var ring_axis := (canonical_grid as Node3D).global_basis.y.normalized() \
 			if canonical_grid is Node3D else Vector3.UP
@@ -866,95 +913,96 @@ func _update_sky(
 		viewer_across = relative_viewer.dot(ring_axis)
 		viewer_radial = relative_viewer - ring_axis * viewer_across
 		viewer_outward = viewer_radial.normalized() if viewer_radial.length_squared() > 0.000001 else -surface_up.normalized()
-	ring_sky_material.set_shader_parameter("local_surface_up", -viewer_outward)
-	ring_sky_material.set_shader_parameter("ring_axis_direction", ring_axis)
+	_set_sky_param("local_surface_up", -viewer_outward)
+	_set_sky_param("ring_axis_direction", ring_axis)
 	# The sky shader uses normalized ray geometry, but still needs the real radius
 	# to convert its normalized air path back into physical extinction metres.
 	# GraphicsQuality also registers the material with RingAtmosphereModel in the
 	# exploration build; setting the radius here keeps standalone demo scenes
 	# correct without changing the shared authored atmosphere controls.
+	# Also written by RingAtmosphereModel.ConfigureMaterial (after registration), so never cached.
 	ring_sky_material.set_shader_parameter("ring_radius_meters", ring_radius)
-	ring_sky_material.set_shader_parameter("camera_radial_ratio", viewer_radial.length() / ring_radius)
-	ring_sky_material.set_shader_parameter("camera_across_ratio", viewer_across / ring_radius)
-	ring_sky_material.set_shader_parameter(
+	_set_sky_param("camera_radial_ratio", viewer_radial.length() / ring_radius)
+	_set_sky_param("camera_across_ratio", viewer_across / ring_radius)
+	_set_sky_param(
 		"ring_half_width_ratio",
 		maxf(_get_ring_width_meters() * 0.5 / ring_radius, 0.000001))
-	ring_sky_material.set_shader_parameter("ring_interior_factor", _structural_shell_atmosphere_factor())
+	_set_sky_param("ring_interior_factor", _structural_shell_atmosphere_factor())
 	var active_day_start_dot := float(_get_celestial_value(
 			"DaylightStartDot", "daylight_start_dot", day_start_dot))
 	var active_day_full_dot := float(_get_celestial_value(
 			"DaylightFullDot", "daylight_full_dot", day_full_dot))
-	ring_sky_material.set_shader_parameter("day_start_dot", active_day_start_dot)
-	ring_sky_material.set_shader_parameter("day_full_dot", active_day_full_dot)
-	ring_sky_material.set_shader_parameter("sky_top_color", Vector3(top_color.r, top_color.g, top_color.b))
-	ring_sky_material.set_shader_parameter("sky_horizon_color", Vector3(horizon_color.r, horizon_color.g, horizon_color.b))
-	ring_sky_material.set_shader_parameter("space_color", Vector3(space_sky_color.r, space_sky_color.g, space_sky_color.b))
-	ring_sky_material.set_shader_parameter("atmosphere_factor", atmosphere_factor)
-	ring_sky_material.set_shader_parameter("sun_direction", to_sun.normalized())
+	_set_sky_param("day_start_dot", active_day_start_dot)
+	_set_sky_param("day_full_dot", active_day_full_dot)
+	_set_sky_param("sky_top_color", Vector3(top_color.r, top_color.g, top_color.b))
+	_set_sky_param("sky_horizon_color", Vector3(horizon_color.r, horizon_color.g, horizon_color.b))
+	_set_sky_param("space_color", Vector3(space_sky_color.r, space_sky_color.g, space_sky_color.b))
+	_set_sky_param("atmosphere_factor", atmosphere_factor)
+	_set_sky_param("sun_direction", to_sun.normalized())
 	# Hub zenith halo (spec E.1): the hub hangs over the local zenith. hub_level 0 draws nothing.
-	ring_sky_material.set_shader_parameter("hub_direction", -viewer_outward)
-	ring_sky_material.set_shader_parameter("hub_level", current_hub_level)
-	ring_sky_material.set_shader_parameter("hub_color", Vector3(current_hub_color.r, current_hub_color.g, current_hub_color.b))
-	ring_sky_material.set_shader_parameter("hub_halo_intensity", current_hub_halo_intensity)
-	ring_sky_material.set_shader_parameter("hub_in_scatter", current_hub_in_scatter)
-	ring_sky_material.set_shader_parameter("sun_color", Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b))
-	ring_sky_material.set_shader_parameter("sun_disk_angular_radius_degrees", maxf(0.01, float(_get_celestial_value(
+	_set_sky_param("hub_direction", -viewer_outward)
+	_set_sky_param("hub_level", current_hub_level)
+	_set_sky_param("hub_color", Vector3(current_hub_color.r, current_hub_color.g, current_hub_color.b))
+	_set_sky_param("hub_halo_intensity", current_hub_halo_intensity)
+	_set_sky_param("hub_in_scatter", current_hub_in_scatter)
+	_set_sky_param("sun_color", Vector3(sun_light.light_color.r, sun_light.light_color.g, sun_light.light_color.b))
+	_set_sky_param("sun_disk_angular_radius_degrees", maxf(0.01, float(_get_celestial_value(
 			"StarAngularRadiusDegrees", "star_angular_radius_degrees", 0.265))))
 	# Compatibility uniform mirrors the canonical shared raw solar visibility.
 	# Do not use GameplayEclipseDarkness: its legacy safety cap is not received
 	# stellar light and must not prevent totality.
-	ring_sky_material.set_shader_parameter("eclipse_coverage", current_eclipse_coverage)
-	ring_sky_material.set_shader_parameter("eclipse_solar_transmittance", current_solar_visibility)
-	ring_sky_material.set_shader_parameter("ring_atmosphere_planet_direction", giant_direction.normalized())
-	ring_sky_material.set_shader_parameter("atmosphere_sun_forward_scattering", atmosphere_sun_forward_scattering)
-	ring_sky_material.set_shader_parameter("exterior_day_scattering_boost", exterior_day_scattering_boost)
-	ring_sky_material.set_shader_parameter("exterior_night_scattering_boost", exterior_night_scattering_boost)
-	ring_sky_material.set_shader_parameter("stars_enabled", stars_enabled)
-	ring_sky_material.set_shader_parameter("star_visibility", star_visibility)
-	ring_sky_material.set_shader_parameter("star_cell_density", star_cell_density)
-	ring_sky_material.set_shader_parameter("star_density", star_density)
-	ring_sky_material.set_shader_parameter("star_brightness", star_brightness)
-	ring_sky_material.set_shader_parameter("star_color", Vector3(star_color.r, star_color.g, star_color.b))
+	_set_sky_param("eclipse_coverage", current_eclipse_coverage)
+	_set_sky_param("eclipse_solar_transmittance", current_solar_visibility)
+	_set_sky_param("ring_atmosphere_planet_direction", giant_direction.normalized())
+	_set_sky_param("atmosphere_sun_forward_scattering", atmosphere_sun_forward_scattering)
+	_set_sky_param("exterior_day_scattering_boost", exterior_day_scattering_boost)
+	_set_sky_param("exterior_night_scattering_boost", exterior_night_scattering_boost)
+	_set_sky_param("stars_enabled", stars_enabled)
+	_set_sky_param("star_visibility", star_visibility)
+	_set_sky_param("star_cell_density", star_cell_density)
+	_set_sky_param("star_density", star_density)
+	_set_sky_param("star_brightness", star_brightness)
+	_set_sky_param("star_color", Vector3(star_color.r, star_color.g, star_color.b))
 	# The procedural star domain is ring-local. Feed it the authoritative frame
 	# angle rather than elapsed render time, so pause, scrubbing, and restored
 	# simulation state all reproduce the same sky.
 	var starfield_rotation_radians := deg_to_rad(fposmod(float(_get_celestial_value(
 			"RingRotationAngleDegrees", "ring_rotation_angle_degrees", 0.0)), 360.0))
-	ring_sky_material.set_shader_parameter("starfield_rotation_radians", starfield_rotation_radians)
+	_set_sky_param("starfield_rotation_radians", starfield_rotation_radians)
 	var giant_enabled := bool(_get_gas_giant_configuration_value("Enabled", planet_enabled))
 	var physical_giant_radius := maxf(0.0, float(_get_gas_giant_configuration_value("RadiusKm", 1.0)))
 	var visual_giant_enabled := planet_enabled and giant_enabled and physical_giant_radius > 0.0 \
 		and current_giant_angular_radius_degrees > 0.0
-	ring_sky_material.set_shader_parameter("planet_enabled", visual_giant_enabled)
-	ring_sky_material.set_shader_parameter("giant_direction", giant_direction.normalized())
+	_set_sky_param("planet_enabled", visual_giant_enabled)
+	_set_sky_param("giant_direction", giant_direction.normalized())
 	var celestial_visual_seed := int(_get_celestial_value("DeterministicVisualSeed", "deterministic_visual_seed", 1))
-	ring_sky_material.set_shader_parameter("celestial_seed_offset", _celestial_seed_offset(celestial_visual_seed))
+	_set_sky_param("celestial_seed_offset", _celestial_seed_offset(celestial_visual_seed))
 	# Zero is a valid physical result: do not resurrect the old inspector disk.
-	ring_sky_material.set_shader_parameter("planet_angular_radius_degrees", current_giant_angular_radius_degrees)
-	ring_sky_material.set_shader_parameter("planet_brightness", planet_brightness)
-	ring_sky_material.set_shader_parameter("planet_detail_scale", planet_detail_scale)
-	ring_sky_material.set_shader_parameter("gas_giant_light_band_color", Vector3(gas_giant_light_band_color.r, gas_giant_light_band_color.g, gas_giant_light_band_color.b))
-	ring_sky_material.set_shader_parameter("gas_giant_dark_band_color", Vector3(gas_giant_dark_band_color.r, gas_giant_dark_band_color.g, gas_giant_dark_band_color.b))
-	ring_sky_material.set_shader_parameter("gas_giant_cream_color", Vector3(gas_giant_cream_color.r, gas_giant_cream_color.g, gas_giant_cream_color.b))
-	ring_sky_material.set_shader_parameter("gas_giant_storm_color", Vector3(gas_giant_storm_color.r, gas_giant_storm_color.g, gas_giant_storm_color.b))
-	ring_sky_material.set_shader_parameter("gas_giant_band_count", gas_giant_band_count)
-	ring_sky_material.set_shader_parameter("gas_giant_axial_tilt_radians", deg_to_rad(float(_get_gas_giant_configuration_value("AxialTiltDegrees", 3.13))))
+	_set_sky_param("planet_angular_radius_degrees", current_giant_angular_radius_degrees)
+	_set_sky_param("planet_brightness", planet_brightness)
+	_set_sky_param("planet_detail_scale", planet_detail_scale)
+	_set_sky_param("gas_giant_light_band_color", Vector3(gas_giant_light_band_color.r, gas_giant_light_band_color.g, gas_giant_light_band_color.b))
+	_set_sky_param("gas_giant_dark_band_color", Vector3(gas_giant_dark_band_color.r, gas_giant_dark_band_color.g, gas_giant_dark_band_color.b))
+	_set_sky_param("gas_giant_cream_color", Vector3(gas_giant_cream_color.r, gas_giant_cream_color.g, gas_giant_cream_color.b))
+	_set_sky_param("gas_giant_storm_color", Vector3(gas_giant_storm_color.r, gas_giant_storm_color.g, gas_giant_storm_color.b))
+	_set_sky_param("gas_giant_band_count", gas_giant_band_count)
+	_set_sky_param("gas_giant_axial_tilt_radians", deg_to_rad(float(_get_gas_giant_configuration_value("AxialTiltDegrees", 3.13))))
 	var giant_rotation_period := maxf(1.0, float(_get_gas_giant_configuration_value("RotationPeriodSeconds", 35730.0)))
 	var giant_simulation_seconds := float(celestial_clock.call("get_simulation_seconds")) if celestial_clock != null and celestial_clock.has_method("get_simulation_seconds") else 0.0
-	ring_sky_material.set_shader_parameter("gas_giant_spin_radians", fposmod(giant_simulation_seconds / giant_rotation_period * TAU, TAU))
-	ring_sky_material.set_shader_parameter("planet_ocean_color", Vector3(planet_ocean_color.r, planet_ocean_color.g, planet_ocean_color.b))
-	ring_sky_material.set_shader_parameter("planet_land_color", Vector3(planet_land_color.r, planet_land_color.g, planet_land_color.b))
-	ring_sky_material.set_shader_parameter("planet_highland_color", Vector3(planet_highland_color.r, planet_highland_color.g, planet_highland_color.b))
-	ring_sky_material.set_shader_parameter("planet_cloud_color", Vector3(planet_cloud_color.r, planet_cloud_color.g, planet_cloud_color.b))
-	ring_sky_material.set_shader_parameter("planet_atmosphere_color", Vector3(planet_atmosphere_color.r, planet_atmosphere_color.g, planet_atmosphere_color.b))
-	ring_sky_material.set_shader_parameter("planet_atmosphere_rim_brightness", planet_atmosphere_rim_brightness)
-	ring_sky_material.set_shader_parameter("planet_light_color", Vector3(planet_light_color.r, planet_light_color.g, planet_light_color.b))
-	ring_sky_material.set_shader_parameter("planet_haze_scattering_energy", planet_haze_scattering_energy)
+	_set_sky_param("gas_giant_spin_radians", fposmod(giant_simulation_seconds / giant_rotation_period * TAU, TAU))
+	_set_sky_param("planet_ocean_color", Vector3(planet_ocean_color.r, planet_ocean_color.g, planet_ocean_color.b))
+	_set_sky_param("planet_land_color", Vector3(planet_land_color.r, planet_land_color.g, planet_land_color.b))
+	_set_sky_param("planet_highland_color", Vector3(planet_highland_color.r, planet_highland_color.g, planet_highland_color.b))
+	_set_sky_param("planet_cloud_color", Vector3(planet_cloud_color.r, planet_cloud_color.g, planet_cloud_color.b))
+	_set_sky_param("planet_atmosphere_color", Vector3(planet_atmosphere_color.r, planet_atmosphere_color.g, planet_atmosphere_color.b))
+	_set_sky_param("planet_atmosphere_rim_brightness", planet_atmosphere_rim_brightness)
+	_set_sky_param("planet_light_color", Vector3(planet_light_color.r, planet_light_color.g, planet_light_color.b))
+	_set_sky_param("planet_haze_scattering_energy", planet_haze_scattering_energy)
 	var giant_visible_phase := clampf((1.0 - giant_direction.normalized().dot(to_sun.normalized())) * 0.5, 0.0, 1.0)
-	ring_sky_material.set_shader_parameter("planet_haze_enabled", visual_giant_enabled and planet_light_enabled and giant_visible_phase > 0.05)
-	ring_sky_material.set_shader_parameter("planet_haze_horizon_start_dot", planet_light_horizon_fade_start_dot)
-	ring_sky_material.set_shader_parameter("planet_haze_horizon_full_dot", planet_light_horizon_full_dot)
-	ring_sky_material.set_shader_parameter("planet_haze_twilight_end_day_factor", planet_light_twilight_end_day_factor)
+	_set_sky_param("planet_haze_enabled", visual_giant_enabled and planet_light_enabled and giant_visible_phase > 0.05)
+	_set_sky_param("planet_haze_horizon_start_dot", planet_light_horizon_fade_start_dot)
+	_set_sky_param("planet_haze_horizon_full_dot", planet_light_horizon_full_dot)
+	_set_sky_param("planet_haze_twilight_end_day_factor", planet_light_twilight_end_day_factor)
 
 
 func _get_viewer_position() -> Vector3:
@@ -1156,12 +1204,16 @@ func _get_underground_sky_access() -> float:
 
 
 func _has_canonical_atmosphere_provider() -> bool:
-	return player != null \
-		and canonical_grid != null \
-		and player.has_method("GetCanonicalSurfaceUp") \
-		and player.has_method("GetCanonicalAtmospherePositionMeters") \
-		and player.has_method("GetCanonicalAtmosphereHeightMeters") \
-		and canonical_grid.has_method("GetCanonicalRingRadiusMeters")
+	if player != _canonical_provider_player or canonical_grid != _canonical_provider_grid:
+		_canonical_provider_player = player
+		_canonical_provider_grid = canonical_grid
+		_canonical_provider_cached = player != null \
+			and canonical_grid != null \
+			and player.has_method("GetCanonicalSurfaceUp") \
+			and player.has_method("GetCanonicalAtmospherePositionMeters") \
+			and player.has_method("GetCanonicalAtmosphereHeightMeters") \
+			and canonical_grid.has_method("GetCanonicalRingRadiusMeters")
+	return _canonical_provider_cached
 
 
 func _get_surface_up() -> Vector3:

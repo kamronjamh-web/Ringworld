@@ -9,6 +9,18 @@ uniform float water_gust_response_strength = 0.0;
 uniform bool water_spatial_gust_enabled = false;
 uniform float water_river_advection = 0.0;
 uniform vec4 water_far_group_translation = vec4(0.0);
+// -1 keeps the per-material clock values above. 0 (unscaled) and 1 (scaled-far) read the shared
+// globals below, which RingWaterModel publishes once per wind clock update. Phase vector 3m+c is
+// column c of mat3 m (arrays cannot be global).
+uniform int water_wind_global_slot = -1;
+global uniform mat3 ring_water_wave_phases_0;
+global uniform mat3 ring_water_wave_phases_1;
+global uniform mat3 ring_water_wave_phases_2;
+global uniform mat3 ring_water_wave_phases_3;
+global uniform float ring_water_river_advection_main;
+global uniform float ring_water_river_advection_far;
+global uniform vec4 ring_water_far_group_translation_main;
+global uniform vec4 ring_water_far_group_translation_far;
 
 uniform sampler2D water_screen_texture : hint_screen_texture, repeat_disable, filter_linear_mipmap;
 uniform sampler2D water_depth_texture : hint_depth_texture, repeat_disable, filter_nearest;
@@ -38,9 +50,25 @@ uniform float detail_filtering_strength : hint_range(0.0, 2.0) = 1.0;
 uniform float water_coordinate_scale = 1.0;
 #include "res://materials/ring_water_appearance.gdshaderinc"
 
+vec3 ring_water_global_phases(int index) {
+    int matrix_index = index / 3;
+    int column = index - matrix_index * 3;
+    mat3 packed_phases = matrix_index == 0 ? ring_water_wave_phases_0
+        : (matrix_index == 1 ? ring_water_wave_phases_1
+        : (matrix_index == 2 ? ring_water_wave_phases_2 : ring_water_wave_phases_3));
+    return packed_phases[column];
+}
+float ring_water_river_advection_value() {
+    return water_wind_global_slot == 0 ? ring_water_river_advection_main
+        : (water_wind_global_slot == 1 ? ring_water_river_advection_far : water_river_advection);
+}
+vec4 ring_water_far_group_translation_value() {
+    return water_wind_global_slot == 0 ? ring_water_far_group_translation_main
+        : (water_wind_global_slot == 1 ? ring_water_far_group_translation_far : water_far_group_translation);
+}
 float ring_water_phase(int index, float coefficient, float time_seconds) {
     if (!water_wind_clock_enabled) return time_seconds * wave_speed * coefficient;
-    vec3 phases = water_wave_phases[index];
+    vec3 phases = water_wind_global_slot >= 0 ? ring_water_global_phases(index) : water_wave_phases[index];
     return time_seconds > 0.8 ? phases.x : (time_seconds > 0.3 ? phases.y : phases.z);
 }
 vec2 ring_water_wind_direction(vec2 direction) {
@@ -373,7 +401,7 @@ float ring_water_profile_height_filtered(
 			coordinate_dy * lake_scale) * 0.24;
 	}
 	const float river_scale = 2.15;
-	vec2 advected = p * river_scale + vec2(water_wind_clock_enabled ? water_river_advection : time_seconds * wave_speed * 1.8, 0.0);
+	vec2 advected = p * river_scale + vec2(water_wind_clock_enabled ? ring_water_river_advection_value() : time_seconds * wave_speed * 1.8, 0.0);
 	return ring_water_wave_height_filtered(
 		advected,
 		water_wind_clock_enabled ? 0.18 : time_seconds * 0.18,
@@ -408,7 +436,7 @@ vec2 ring_water_profile_gradient_filtered(
 			coordinate_dy * lake_scale) * (0.24 * lake_scale);
 	}
 	const float river_scale = 2.15;
-	vec2 advected = p * river_scale + vec2(water_wind_clock_enabled ? water_river_advection : time_seconds * wave_speed * 1.8, 0.0);
+	vec2 advected = p * river_scale + vec2(water_wind_clock_enabled ? ring_water_river_advection_value() : time_seconds * wave_speed * 1.8, 0.0);
 	return ring_water_wave_gradient_filtered(
 		advected,
 		water_wind_clock_enabled ? 0.18 : time_seconds * 0.18,
@@ -452,12 +480,12 @@ vec3 ring_water_far_wave_gradient_filtered(
 	// physical sizes survive scaled-far rendering.
 	vec2 first_group_gradient;
 	float first_group = ring_water_patch_value_gradient(
-		p + (water_wind_clock_enabled ? water_far_group_translation.xy : vec2(time_seconds * 0.47, -time_seconds * 0.23) * coordinate_scale),
+		p + (water_wind_clock_enabled ? ring_water_far_group_translation_value().xy : vec2(time_seconds * 0.47, -time_seconds * 0.23) * coordinate_scale),
 		ring_radius_meters, 610.0, first_group_gradient);
 	vec2 second_group_gradient;
 	float second_group = ring_water_patch_value_gradient(
 		p + vec2(193.0, -317.0) * coordinate_scale
-			+ (water_wind_clock_enabled ? water_far_group_translation.zw : vec2(-time_seconds * 0.29, time_seconds * 0.41) * coordinate_scale),
+			+ (water_wind_clock_enabled ? ring_water_far_group_translation_value().zw : vec2(-time_seconds * 0.29, time_seconds * 0.41) * coordinate_scale),
 		ring_radius_meters, 430.0, second_group_gradient);
 	first_phase += (first_group - 0.5) * swell_variation * 5.2;
 	second_phase += (second_group - 0.5) * swell_variation * 5.8;

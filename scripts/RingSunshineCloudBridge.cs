@@ -76,6 +76,14 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "0,16,1")] public int GpuNearShadowSliceCount { get; set; } = 4;
     [Export(PropertyHint.Range, "0.1,5,0.1")] public float GpuFarShadowUpdatesPerSecond { get; set; } = 0.5f;
     [Export(PropertyHint.Range, "1,64,1")] public int GpuShadowVerticalSamples { get; set; } = 4;
+    // Constant step spacing along the sun ray (replaces the fixed vertical sample
+    // count when on) plus coarse clear-air probes that trim the fine march.
+    [Export] public bool GpuShadowAdaptiveSteps { get; set; } = true;
+    [Export(PropertyHint.Range, "50,2000,10")] public float GpuShadowStepMeters { get; set; } = 200.0f;
+    [Export(PropertyHint.Range, "1,64,1")] public int GpuShadowMinSamples { get; set; } = 8;
+    [Export(PropertyHint.Range, "8,256,1")] public int GpuShadowMaxSamples { get; set; } = 96;
+    [Export] public bool GpuShadowClearAirSkip { get; set; } = true;
+    [Export(PropertyHint.Range, "0,64,1")] public int GpuShadowSkipProbeCount { get; set; } = 16;
     [ExportGroup("Cloud shadow profiling")]
     [Export] public bool GpuShadowGenerationEnabled { get; set; } = true;
     [Export] public bool CloudShadowReceiversEnabled { get; set; } = true;
@@ -814,15 +822,19 @@ public partial class RingSunshineCloudBridge : Node
             (_currentWeather.CloudCoverage - HeavyOvercastStartCoverage)
             / Mathf.Max(0.01f, 1.0f - HeavyOvercastStartCoverage));
         _localStormFactor = Mathf.Max(storm, _heavyOvercastFactor);
+        // Camera-independent clouds: gather the uploaded systems, the constant envelope and the continuous (smoothed) ambient factors.
+        // CloudTraversalAltitudeMeters and the CPU weather above stay camera-local legacy values for their other consumers.
+        bool cameraIndependent = CameraIndependentClouds;
+        if (cameraIndependent) PrepareCameraIndependentWeather(backgroundAltitude);
 
-        _clouds.Set("cloud_floor", cloudBase);
-        _clouds.Set("cloud_ceiling", cloudTop);
+        _clouds.Set("cloud_floor", cameraIndependent ? _ciEnvelopeFloorMeters : cloudBase);
+        _clouds.Set("cloud_ceiling", cameraIndependent ? _ciEnvelopeCeilingMeters : cloudTop);
         _clouds.Set("background_altitude", new Vector4(
             _backgroundCloudFloorMeters,
             _backgroundCloudCeilingMeters,
             0.0f,
             0.0f));
-        _clouds.Set("storm_altitude", new Vector4(
+        _clouds.Set("storm_altitude", cameraIndependent ? Vector4.Zero : new Vector4(
             stormAltitude.FloorMeters,
             stormAltitude.CeilingMeters,
             0.0f,
@@ -835,14 +847,16 @@ public partial class RingSunshineCloudBridge : Node
             Mathf.Max(_currentWeather.CloudCoverage, storm) + CloudCoverageBias,
             0.0f,
             1.0f);
-        _clouds.Set("clouds_coverage", Mathf.Lerp(0.70f, 0.90f, visibleCoverage));
-        _clouds.Set("clouds_density", Mathf.Lerp(1.20f, 1.90f, visibleCoverage) * CloudDensityMultiplier);
+        // Camera-independent clouds: the shader derives coverage, density and lighting power per sample (ring_ws_update_macro);
+        // these become constants (density keeps the user multiplier, lighting power is a unit scale).
+        _clouds.Set("clouds_coverage", cameraIndependent ? Mathf.Lerp(0.70f, 0.90f, 0.5f) : Mathf.Lerp(0.70f, 0.90f, visibleCoverage));
+        _clouds.Set("clouds_density", cameraIndependent ? CloudDensityMultiplier : Mathf.Lerp(1.20f, 1.90f, visibleCoverage) * CloudDensityMultiplier);
         // Sunshine uses this value as the density sampled along the light ray:
         // higher values absorb more directional light. Storms therefore need
         // to raise it, rather than lower it, or their cloud tops brighten.
         _clouds.Set(
             "lighting_density",
-            Mathf.Lerp(0.72f, 1.55f, Mathf.Max(storm, _heavyOvercastFactor)));
+            cameraIndependent ? 1.0f : Mathf.Lerp(0.72f, 1.55f, Mathf.Max(storm, _heavyOvercastFactor)));
         ApplyLocalCloudAmbientLighting();
         ApplyCloudAppearanceScalarsToResource();
 
@@ -858,12 +872,14 @@ public partial class RingSunshineCloudBridge : Node
             && hasLocalizedSystem
             ? Mathf.Clamp(StormSculptStrength, 0.0f, 1.0f)
             : 0.0f;
-        _clouds.Set("storm_system", new Vector4(
+        // Camera-independent clouds: the legacy single-system fields are constant zero (per-system data is in the uploaded block);
+        // storm_detail keeps the constant pillar/anvil controls the per-system density reads.
+        _clouds.Set("storm_system", cameraIndependent ? Vector4.Zero : new Vector4(
             _currentWeather.SystemCenterMeters.X,
             _currentWeather.SystemCenterMeters.Y,
             _currentWeather.SystemRadiiMeters.X,
             _currentWeather.SystemRadiiMeters.Y));
-        _clouds.Set("storm_shape", new Vector4(
+        _clouds.Set("storm_shape", cameraIndependent ? Vector4.Zero : new Vector4(
             Mathf.Cos(_currentWeather.SystemOrientationRadians),
             Mathf.Sin(_currentWeather.SystemOrientationRadians),
             sculptInfluence,
@@ -872,7 +888,7 @@ public partial class RingSunshineCloudBridge : Node
             Mathf.Clamp(StormPillarRadiusMeters, 1000.0f, 8000.0f),
             Mathf.Clamp(AnvilRadiusMultiplier, 1.2f, 4.0f),
             Mathf.Clamp(AnvilStartFraction, 0.5f, 0.9f),
-            (float)_currentWeather.DominantFormationProfile));
+            cameraIndependent ? 0.0f : (float)_currentWeather.DominantFormationProfile));
 
         // Publish one canonical weather frame for both Sunshine and the far
         // clipmap.  Time is owned by the weather simulation, never wall time.
@@ -889,13 +905,13 @@ public partial class RingSunshineCloudBridge : Node
         if (circumferenceMeters > 0.0) windAroundOffset %= circumferenceMeters;
         double windAcrossOffset = -authoritativeWind.Y * simulationTime;
         ResolveEffectiveCloudHandoff();
-        _clouds.Set("cloud_handoff", new Vector4(EffectiveHandoffStartMeters, EffectiveHandoffEndMeters, _localStormFactor, 0.0f));
+        _clouds.Set("cloud_handoff", new Vector4(EffectiveHandoffStartMeters, EffectiveHandoffEndMeters, cameraIndependent ? 0.0f : _localStormFactor, 0.0f));
         _clouds.Set("cloud_weather_params", new Vector4(CloudPatchiness, CloudPatchScaleMeters, ClearSkyThreshold,
             _grid?.TerrainSampler?.Seed ?? 1337));
         _clouds.Set("cloud_weather_frame", new Vector4((float)circumferenceMeters, (float)windAroundOffset, (float)windAcrossOffset,
-            Mathf.Clamp(_currentWeather.CloudCoverage + CloudCoverageBias, 0.0f, 1.0f)));
+            Mathf.Clamp((cameraIndependent ? _weather!.Coverage + SunshineBaseCoverageOffset : _currentWeather.CloudCoverage) + CloudCoverageBias, 0.0f, 1.0f)));
 
-        Vector2 wind = _currentWeather.WindMetersPerSecond;
+        Vector2 wind = cameraIndependent ? _weather!.WeatherWindMetersPerSecond : _currentWeather.WindMetersPerSecond;
         Vector3 windDirection = new(wind.X, 0.0f, wind.Y);
         float unscaledSpeed = windDirection.Length();
         float speed = unscaledSpeed * CloudWindMultiplier;
@@ -904,6 +920,7 @@ public partial class RingSunshineCloudBridge : Node
         _driver.Set("large_structures_wind_speed", speed * 0.55f);
         _driver.Set("medium_structures_wind_speed", speed);
         _driver.Set("small_structures_wind_speed", speed * 1.8f);
+        PublishWeatherSystems(cameraIndependent);
         PublishFarCloudDetail();
     }
 
@@ -1574,6 +1591,8 @@ public partial class RingSunshineCloudBridge : Node
     private RingVolumetricCloudLayer.LocalWeatherState ResolveCurrentWeather(
         in RingVolumetricCloudLayer.LocalWeatherState natural)
     {
+        // Camera-independent clouds render the registered preview as a manual weather system, so the camera substitution is dropped.
+        if (CameraIndependentClouds) return natural;
         // The cloud layer owns the registered preview's smooth ellipse query.
         // Applying this bridge's old local blend again would square the falloff.
         if (_spawnedWeather is not { } spawned || _grid == null || _explorer == null) return natural;
@@ -2018,7 +2037,10 @@ public partial class RingSunshineCloudBridge : Node
             new Vector2((float)centerCanonical.AroundMeters, (float)centerCanonical.AcrossMeters),
             ResolveShadowRingRadiusMeters(), Mathf.Max(1000.0f, radius),
             sun, floor, ceiling, Math.Clamp(GpuShadowVerticalSamples, 1, 64), Mathf.Max(0.0f, ShadowExtinctionPerKilometer), resetHistory,
-            cascade == 0 ? Math.Clamp(GpuNearShadowSliceCount, 1, 16) : 1).AsBool();
+            cascade == 0 ? Math.Clamp(GpuNearShadowSliceCount, 1, 16) : 1,
+            GpuShadowAdaptiveSteps ? Mathf.Clamp(SanitizeFinite(GpuShadowStepMeters, 200.0f, 50.0f, 2000.0f), 50.0f, 2000.0f) : 0.0f,
+            Math.Clamp(GpuShadowMinSamples, 1, 64), Math.Clamp(GpuShadowMaxSamples, 8, 256),
+            GpuShadowAdaptiveSteps && GpuShadowClearAirSkip ? Math.Clamp(GpuShadowSkipProbeCount, 0, 64) : 0).AsBool();
         if (!accepted)
             return;
         _clouds.Call("request_gpu_cloud_shadow_update", cascade);
@@ -2026,7 +2048,8 @@ public partial class RingSunshineCloudBridge : Node
         _gpuShadowRequestedCenters[cascade] = centerCanonical;
         _gpuShadowRequestedWindOffsetMeters[cascade] = Vector2.Zero;
         _gpuShadowRequestedBakedSun[cascade] = sun;
-        _gpuShadowRequestedBakedProjection[cascade] = ResolveSunProjectionMeters(sun, around, across, up, (floor + ceiling) * 0.5f);
+        ResolveShadowBand(out float projectionFloor, out float projectionCeiling);
+        _gpuShadowRequestedBakedProjection[cascade] = ResolveSunProjectionMeters(sun, around, across, up, (projectionFloor + projectionCeiling) * 0.5f);
         _gpuShadowRequestedBakedResolution[cascade] = resolution;
         _gpuShadowRequestedBakedRadius[cascade] = radius;
         _gpuShadowRequestedDispatchCount[cascade] = dispatchCount + 1;
@@ -2053,7 +2076,12 @@ public partial class RingSunshineCloudBridge : Node
             : Mathf.Max(1.0f, configuredRadius);
         _gpuShadowWindOffsetMeters[cascade] += _gpuShadowFrameWindDisplacement;
         Vector3 sun = _sunLight!.GlobalBasis.Z.Normalized();
-        float representativeHeight = _clouds == null ? 0.0f : (_clouds.Get("cloud_floor").AsSingle() + _clouds.Get("cloud_ceiling").AsSingle()) * 0.5f;
+        float representativeHeight = 0.0f;
+        if (_clouds != null)
+        {
+            ResolveShadowBand(out float representativeFloor, out float representativeCeiling);
+            representativeHeight = (representativeFloor + representativeCeiling) * 0.5f;
+        }
         Vector2 sunOffset = ResolveSunProjectionMeters(sun, around, across, up, representativeHeight) - _gpuShadowBakedProjection[cascade];
         // Receiver-side wind and solar-projection translation compensates between
         // lower-frequency rebakes. A cloud moving +wind is sampled at -wind.
@@ -2090,7 +2118,13 @@ public partial class RingSunshineCloudBridge : Node
     {
         float maximum = Mathf.Max(ShadowRadiusMeters, MaximumShadowRadiusMeters);
         float radius = Mathf.Max(ShadowRadiusMeters, HandoffStartMeters);
-        if (_currentWeather.SystemKind != RingVolumetricCloudLayer.WeatherSystemKind.None
+        if (CameraIndependentClouds)
+        {
+            // Uploaded sculpt systems that contain the viewer replace the single camera-cell system.
+            ResolveCameraIndependentShadowSystems(viewer, out float systemReach, out _);
+            radius = Mathf.Max(radius, systemReach);
+        }
+        else if (_currentWeather.SystemKind != RingVolumetricCloudLayer.WeatherSystemKind.None
             && _currentWeather.SystemRadiiMeters.X > 0.0f
             && _currentWeather.SystemRadiiMeters.Y > 0.0f
             && _grid != null)
@@ -2115,8 +2149,7 @@ public partial class RingSunshineCloudBridge : Node
         int resolution = Math.Clamp(Mathf.RoundToInt(ShadowMapResolution / 8.0f) * 8, 16, 128);
         int verticalSamples = Math.Clamp(ShadowVerticalSamples, 1, 8);
         float radius = ResolveEffectiveShadowRadius(viewer);
-        float floor = _clouds.Get("cloud_floor").AsSingle();
-        float ceiling = Mathf.Max(floor + 1.0f, _clouds.Get("cloud_ceiling").AsSingle());
+        ResolveShadowBand(out float floor, out float ceiling);
         RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
         Vector3 toSun = _sunLight.GlobalBasis.Z.Normalized();
         Vector3 centerGround = geometry.CanonicalToWorld(viewer.AroundMeters, 0.0, viewer.AcrossMeters);
@@ -2147,8 +2180,9 @@ public partial class RingSunshineCloudBridge : Node
         float diameter = radius * 2.0f;
         _shadowBuildRadiusMeters = radius;
         float maximumSunShift = radius * 0.95f;
-        float singleSampleHeightFraction = _currentWeather.DominantFormationProfile
-                == CloudFormationProfile.AnvilStorm
+        bool anvilShadow = _currentWeather.DominantFormationProfile == CloudFormationProfile.AnvilStorm;
+        if (CameraIndependentClouds) ResolveCameraIndependentShadowSystems(viewer, out _, out anvilShadow);
+        float singleSampleHeightFraction = anvilShadow
             ? Mathf.Clamp(AnvilStartFraction + 0.10f, 0.55f, 0.90f)
             : 0.50f;
 

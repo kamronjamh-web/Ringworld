@@ -57,6 +57,16 @@ layout(binding = 17, std140) uniform SceneDataBlock {
 layout(binding = 18) uniform sampler2D far_opaque_depth_image;
 layout(set = 1, binding = 19) uniform sampler2D terrain_cloud_sun_global_image;
 layout(set = 1, binding = 20) uniform sampler2D terrain_cloud_sun_regional_image;
+// Camera-independent clouds (RingworldTechDemo): up to 64 render weather systems. Set 0 uses bindings 0-18 (19 and 20 live in
+// set 1), so 21 is free. Layout and semantics are documented in RingWeatherSystems.glslinc; header0.y = 0 keeps every legacy path.
+layout(binding = 21, std140) uniform RingWeatherSystemsBlock {
+	vec4 header0;
+	vec4 header1;
+	vec4 header2;
+	vec4 header3;
+	RingWeatherSystem systems[64];
+} ringWeatherSystems;
+#include "./RingWeatherSystems.glslinc"
 
 float terrain_cloud_direct_sun_visibility(vec3 worldPosition) {
 	if (genericData.data.terrain_cloud_sun_profile[3].y <= 0.5
@@ -187,25 +197,34 @@ float ring_side_wall_mask(float canonicalAcross) {
 		* (1.0 - smoothstep(ringWidth - feather, ringWidth, canonicalAcross));
 }
 
-float localized_storm_density(vec3 cloudPosition, float normalizedHeight) {
-	float influence = clamp(genericData.data.storm_shape.z, 0.0, 1.0);
-	float profile = genericData.data.storm_shape.w;
-	int physicalProfile = int(round(genericData.data.storm_detail.w));
-	float majorRadius = genericData.data.storm_system.z;
-	float minorRadius = genericData.data.storm_system.w;
+// One localized storm system, laid out like the legacy single-system uniforms:
+// system = (centre around, centre across, major radius, minor radius), shape = (orientation cos, sin, influence,
+// shader profile), detail = (pillar radius, anvil radius multiplier, anvil start, physical CloudFormationProfile).
+struct StormSystemParams {
+	vec4 system;
+	vec4 shape;
+	vec4 detail;
+};
+
+float storm_system_density(StormSystemParams stormParams, vec3 cloudPosition, float normalizedHeight) {
+	float influence = clamp(stormParams.shape.z, 0.0, 1.0);
+	float profile = stormParams.shape.w;
+	int physicalProfile = int(round(stormParams.detail.w));
+	float majorRadius = stormParams.system.z;
+	float minorRadius = stormParams.system.w;
 	if (influence <= 0.001 || majorRadius <= 1.0 || minorRadius <= 1.0) {
 		return 0.0;
 	}
 
-	float aroundDelta = cloudPosition.x - genericData.data.storm_system.x;
+	float aroundDelta = cloudPosition.x - stormParams.system.x;
 	float circumference = genericData.data.cloud_frame_up.w * 6.28318530718;
 	if (circumference > 1.0) {
 		aroundDelta = mod(aroundDelta + circumference * 0.5, circumference)
 			- circumference * 0.5;
 	}
-	float acrossDelta = cloudPosition.z - genericData.data.storm_system.y;
-	float orientationCosine = genericData.data.storm_shape.x;
-	float orientationSine = genericData.data.storm_shape.y;
+	float acrossDelta = cloudPosition.z - stormParams.system.y;
+	float orientationCosine = stormParams.shape.x;
+	float orientationSine = stormParams.shape.y;
 	vec2 systemPosition = vec2(
 		orientationCosine * aroundDelta + orientationSine * acrossDelta,
 		-orientationSine * aroundDelta + orientationCosine * acrossDelta);
@@ -310,8 +329,8 @@ float localized_storm_density(vec3 cloudPosition, float normalizedHeight) {
 	if (physicalProfile != 2 && physicalProfile != 3 && profile < 1.5) {
 		return 0.0;
 	}
-	float pillarRadius = max(1000.0, genericData.data.storm_detail.x);
-	float anvilRadiusMultiplier = max(1.2, genericData.data.storm_detail.y);
+	float pillarRadius = max(1000.0, stormParams.detail.x);
+	float anvilRadiusMultiplier = max(1.2, stormParams.detail.y);
 	float anvilRadius = pillarRadius * anvilRadiusMultiplier;
 	float cellWidth = max(pillarRadius * 3.5, anvilRadius * 2.35);
 	vec2 warpedPosition = systemPosition;
@@ -331,13 +350,20 @@ float localized_storm_density(vec3 cloudPosition, float normalizedHeight) {
 
 	if (physicalProfile == 3 || profile >= 2.5) {
 		float anvil = 1.0 - smoothstep(anvilRadius * 0.60, anvilRadius, distanceFromCore);
-		float anvilStart = clamp(genericData.data.storm_detail.z, 0.5, 0.9);
+		float anvilStart = clamp(stormParams.detail.z, 0.5, 0.9);
 		float anvilVertical = smoothstep(anvilStart, min(0.96, anvilStart + 0.075), normalizedHeight)
 			* (1.0 - smoothstep(0.955, 1.0, normalizedHeight));
 		sculptedDensity = max(sculptedDensity, anvil * anvilVertical * 0.94);
 	}
 
 	return sculptedDensity * systemMask * influence;
+}
+
+// Legacy single-system entry point: the uniforms describe the camera's system.
+float localized_storm_density(vec3 cloudPosition, float normalizedHeight) {
+	StormSystemParams stormParams = StormSystemParams(
+		genericData.data.storm_system, genericData.data.storm_shape, genericData.data.storm_detail);
+	return storm_system_density(stormParams, cloudPosition, normalizedHeight);
 }
 
 float sampleEffectorAdditive(vec3 worldPosition) {
@@ -403,8 +429,13 @@ float sampleScene(
 	float stormAltitudeMask = min(
 		smoothstep(0.0, 0.06, stormHeight),
 		smoothstep(1.0, 0.94, stormHeight));
+	// Camera-independent clouds sum every masked sculpt system (each with its own storm band); the legacy
+	// single-system uniforms above are then unused.
+	bool cameraIndependent = ring_ws_enabled();
 	float stormDensity = 0.0;
-	if (stormAltitudeMask != 0.0) {
+	if (cameraIndependent) {
+		stormDensity = ring_ws_sculpt_density(canonicalCloudPosition, backgroundFloor, backgroundCeiling);
+	} else if (stormAltitudeMask != 0.0) {
 		stormDensity = localized_storm_density(canonicalCloudPosition, stormHeight)
 			* stormAltitudeMask;
 	}
@@ -445,9 +476,15 @@ float sampleScene(
 	// Background uses shared physical weather. Localized storm volume remains
 	// independently dense, so a strong front cannot be erased by a clear gate.
 	float weatherStorm = max(stormDensity, genericData.data.cloud_handoff.z);
+	vec4 weatherFrame = genericData.data.cloud_weather_frame;
+	if (cameraIndependent) {
+		// Storm level and base coverage come from the primary sample's macro weather (ring_ws_update_macro).
+		weatherStorm = max(stormDensity, ring_ws_storm_level());
+		weatherFrame.w = ring_ws_frame_coverage();
+	}
 	float weatherCoverage = ring_cloud_weather_resolved_coverage(
-		genericData.data.cloud_weather_frame.w, weatherStorm, canonicalCloudPosition,
-		genericData.data.cloud_weather_params, genericData.data.cloud_weather_frame);
+		weatherFrame.w, weatherStorm, canonicalCloudPosition,
+		genericData.data.cloud_weather_params, weatherFrame);
 	float weatherGate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
 		genericData.data.cloud_weather_params);
 	float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
@@ -513,6 +550,79 @@ float sampleSceneCoarse(
 	return clamp((shape * edgeFade), 0.0, 1.0);
 }
 
+// Camera-independent clouds: per-system sculpt density. Natural systems are evaluated in source space (the sample is shifted
+// by the wind frame offsets, like the weather noise), manual systems in world canonical space. Each system keeps its own
+// storm band; a system without one (storm ceiling <= floor + 1) sculpts inside the background band.
+float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgroundCeiling) {
+	float influence = clamp(ringWeatherSystems.header1.y, 0.0, 1.0);
+	if (influence <= 0.001) return 0.0;
+	vec3 detail = genericData.data.storm_detail.xyz;
+	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
+	float result = 0.0;
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? g_ws_sculpt_mask.x : g_ws_sculpt_mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			vec4 c = ringWeatherSystems.systems[index].c;
+			float stormFloor = c.x;
+			float stormCeiling = c.y;
+			if (stormCeiling <= stormFloor + 1.0) {
+				stormFloor = backgroundFloor;
+				stormCeiling = backgroundCeiling;
+			}
+			float stormHeight = remap(canonical.y, stormFloor, stormCeiling, 0.0, 1.0);
+			float altitudeMask = min(smoothstep(0.0, 0.06, stormHeight), smoothstep(1.0, 0.94, stormHeight));
+			if (altitudeMask == 0.0) continue;
+			vec4 b = ringWeatherSystems.systems[index].b;
+			StormSystemParams systemParams = StormSystemParams(
+				ringWeatherSystems.systems[index].a,
+				vec4(b.x, b.y, influence, ring_ws_shader_profile(int(round(c.z)))),
+				vec4(detail.x, detail.y, detail.z, c.z));
+			vec3 position = canonical;
+			if ((ring_ws_flags(index) & RING_WS_FLAG_STATIC) == 0u) position.xz += shift;
+			result = max(result, storm_system_density(systemParams, position, stormHeight) * altitudeMask * ringWeatherSystems.systems[index].d.z);
+		}
+	}
+	return result;
+}
+
+// Camera-independent clouds: clip the ray to the envelope (reusing the entry-skip quadratic: altitude >= envelope floor),
+// then mask the systems whose support reaches the canonical origin -> mid -> end polyline. The ring's curvature moves the
+// true canonical path at most L^2 / (32 R) off this polyline (about 120 m for a 50 km ray at the certified radius), far
+// inside the margin. Unresolvable geometry keeps the whole ray (conservative).
+uvec2 ring_ws_ray_mask(vec3 rayOrigin, vec3 rayDirection, float rayEnd, float margin, float envelopeFloor, float clipSlack) {
+	float t0 = 0.0;
+	float t1 = max(rayEnd, 0.0);
+	float ringRadius = genericData.data.cloud_frame_up.w;
+	if (ringRadius > 1.0) {
+		vec3 origin = rayOrigin - genericData.data.cloud_frame_origin.xyz;
+		float tangent = dot(origin, genericData.data.cloud_frame_around.xyz);
+		float height = dot(origin, genericData.data.cloud_frame_up.xyz);
+		float da = dot(rayDirection, genericData.data.cloud_frame_around.xyz);
+		float du = dot(rayDirection, genericData.data.cloud_frame_up.xyz);
+		float a = da * da + du * du;
+		if (a > 1e-10) {
+			float b = tangent * da - (ringRadius - height) * du;
+			float c = tangent * tangent + (envelopeFloor - height) * (2.0 * ringRadius - height - envelopeFloor);
+			float disc = b * b - a * c;
+			if (disc > 1e-8) {
+				float rootDisc = sqrt(disc);
+				float enter = (-b - rootDisc) / a;
+				float leave = (-b + rootDisc) / a;
+				// Samples exist only where altitude >= envelope floor, i.e. between the two roots.
+				if (leave + clipSlack < 0.0 || enter - clipSlack > t1) return uvec2(0u);
+				t0 = max(0.0, enter - clipSlack);
+				t1 = min(t1, leave + clipSlack);
+			}
+		}
+	}
+	vec3 p0 = to_cloud_space(rayOrigin + rayDirection * t0);
+	vec3 p1 = to_cloud_space(rayOrigin + rayDirection * (0.5 * (t0 + t1)));
+	vec3 p2 = to_cloud_space(rayOrigin + rayDirection * t1);
+	return ring_ws_mask(p0, p1, p2, margin);
+}
+
 float sampleLighting(
 	int stepCount, 
 	vec3 worldPosition,
@@ -549,13 +659,24 @@ float sampleLighting(
 	float thisDensity = 0.0;
 	float count = 0.0;
 	vec3 curPos = worldPosition;
+	// Camera-independent clouds march the per-ray band but shade with the background band's height gradient.
+	float gradientFloor = cloudfloor;
+	float gradientCeiling = cloudceiling;
+	if (ring_ws_enabled()) {
+		gradientFloor = genericData.data.background_altitude.x;
+		gradientCeiling = genericData.data.background_altitude.y;
+		if (gradientCeiling <= gradientFloor + 1.0) {
+			gradientFloor = cloudfloor;
+			gradientCeiling = cloudceiling;
+		}
+	}
 	for (float i = 0.0; i < stepCountFloat; i++) {
 		traveledDistance = mix(eachShortStep, actualDistance, clamp(quadraticOut(i / stepCountFloat), 0.0, 1.0));
 		curPos = worldPosition + sunDirection * traveledDistance;
 		vec3 cloudPos = to_cloud_space(curPos);
 
 		if (density < 1.0 && clamp(cloudPos.y, cloudfloor, cloudceiling) == cloudPos.y){
-			heightGradient = remap(cloudPos.y, cloudfloor, cloudceiling, 0.0, 1.0);
+			heightGradient = remap(cloudPos.y, gradientFloor, gradientCeiling, 0.0, 1.0);
 			
 			heightGradient = clamp(smoothstep(sunUpValue - 0.1, sunUpValue, heightGradient), 0.0, 1.0);
 			float extraLargeShape = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoisescale).a;
@@ -1017,6 +1138,26 @@ void main() {
 	//If it is our render, build the data for this pixel
 	
 	
+	// Camera-independent clouds: this ray's system mask and altitude band. The march and its exit tests then use the
+	// background band unioned with the storm bands of the masked sculpt systems, instead of the sky-wide envelope.
+	// The margin covers the longest light march (4 x the lighting step distance) plus the light-sample offsets.
+	bool ciClouds = ring_ws_enabled();
+	if (ciClouds) {
+		float ciRayEnd = maxTheoreticalStep;
+		if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
+			&& genericData.data.cloud_handoff.x > 0.0) {
+			ciRayEnd = min(ciRayEnd, genericData.data.cloud_handoff.y);
+		}
+		ciRayEnd = min(ciRayEnd, linear_depth) + maxstep;
+		float ciMargin = 4.0 * max(lightingStepDistance, maxstep) + 2000.0;
+		ring_ws_set_mask(ring_ws_ray_mask(rayOrigin, raydirection, ciRayEnd, ciMargin, cloudfloor, 2.0 * maxstep + 500.0));
+		vec2 ciBackground = vec2(genericData.data.background_altitude.x, genericData.data.background_altitude.y);
+		if (ciBackground.y <= ciBackground.x + 1.0) ciBackground = vec2(cloudfloor, cloudceiling);
+		vec2 ciBand = ring_ws_band(ciBackground, g_ws_sculpt_mask);
+		cloudfloor = ciBand.x;
+		cloudceiling = ciBand.y;
+	}
+
 	vec3 directionalLightSunUpPower[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
 	float totalLightPower = 0.0;
 
@@ -1056,15 +1197,20 @@ void main() {
 	float samplePosCount = clamp(genericData.data.samplePointsCount, 0.0, 256.0);
 
 	if (samplePosCount > 0 && uv == ivec2(0)){
+		// Point probes are not tied to this pixel's ray, so evaluate them against every uploaded system.
+		uvec2 ciRayMask = g_ws_mask;
+		if (ciClouds) ring_ws_set_mask(ring_ws_all_mask());
 		for (int i = 0; i < samplePosCount; i++){
 			curPos = SamplePoints[i].xyz;
 			vec3 cloudPos = to_cloud_space(curPos);
+			if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
 			vec4 maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 			//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
 			//ceilingSample = cloudceiling;
 			
 			SamplePoints[i].w = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, 1.0, false, false) * densityMultiplier, sharpness);
 		}
+		if (ciClouds) ring_ws_set_mask(ciRayMask);
 	}
 
 	// Skip only empty, whole maxstep lattice intervals before the first local
@@ -1152,6 +1298,9 @@ void main() {
 		if (inCloudAltitudeBand){
 
 			curLod = 1.0 - clamp(traveledDistance / lodMaxDistance, 0.0, 1.0);
+			// One macro-weather evaluation per primary sample; its coverage, density and light multipliers (and the
+			// g_ws_* storm/base-coverage globals) are reused by every light and ambient sample taken from this point.
+			if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
 			// newdensity = sampleSceneCoarse(largeNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, coverage, curLod);
 			newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false, false) * densityMultiplier, sharpness) * depthFade;
 			if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x

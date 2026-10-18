@@ -1111,6 +1111,8 @@ public partial class RingBiomeDecorationLayer
 			}
 		}
 		using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Trees build", worker: true);
+		// This copy is private to the build, so memoising its 2 m lattice vertices is race-free and bit-identical.
+		sampler.EnablePresentationLatticeCache();
 		var trees = new List<CachedTree>(request.TileCells * request.TileCells * 2);
 		CanonicalVegetationCellRange(request.Key.Around, request.TileCells, request.AroundCellCount, out long startX, out long endX);
 		long startZ = request.Key.Across * request.TileCells;
@@ -1136,14 +1138,27 @@ public partial class RingBiomeDecorationLayer
 					: PresentationSurfaceHeight(request.Edits, sampler, canonicalAround, candidateAcross);
 				if (IsSurfaceWater(request.Edits, sampler, sample, surface) || (sample.Biome != TerrainBiomeId.Forest && sample.Biome != TerrainBiomeId.Grassland) || sample.SiteMask.BlocksVegetation) continue;
 				if (request.UseRegionalForest && !HasStableForestRootSupport(request.Edits, sampler, canonicalAround, candidateAcross)) continue;
-				if (!IsSlopeSuitable(default, sampler, request.Edits, canonicalAround, candidateAcross, surface, request.MaximumSlope)) continue;
+				// One probe set serves both the slope gate and the regional sample (IsSlopeSuitable and EstimateSlopeDegrees share these +/-2 m probes).
+				ProbeSlopeRise(request.Edits, sampler, canonicalAround, candidateAcross, out float riseX, out float riseZ);
+				if (!IsSlopeAngleSuitable(riseX, riseZ, 2, request.MaximumSlope)) continue;
+				float slopeDegrees = SlopeDegreesFromRise(riseX, riseZ);
 				ForestRegionSample regional = request.UseRegionalForest
-					? forestRegions!.Sample(canonicalAround, candidateAcross, sample, EstimateSlopeDegrees(sampler, request.Edits, canonicalAround, candidateAcross))
+					? forestRegions!.Sample(canonicalAround, candidateAcross, sample, slopeDegrees)
 					: default;
 				float chance = request.UseRegionalForest
 					? regional.Density
 					: sample.Biome == TerrainBiomeId.Forest ? request.ForestChance : request.GrasslandChance;
 				if (Hash01(x, z, request.Seed, salt + 2) >= ApplyGroveDensity(chance, request.GroveDensity, x, z, request.Seed)) continue;
+				ulong spacingId = StableTreeId(x, z, request.Seed, candidate);
+				if (request.UseRegionalForest && request.MaximumSlope >= 0f && !spacingEvaluations.ContainsKey(spacingId))
+				{
+					// Seed this candidate's spacing evaluation from the checks above so peers do not redo them. The spacing path
+					// samples the integer-coordinate surface (not the double one used for the placement above), so only that is recomputed.
+					float spacingSurface = PresentationSurfaceHeight(request.Edits, sampler, canonicalAround, candidateAcross);
+					spacingEvaluations[spacingId] = IsSurfaceWater(request.Edits, sampler, sample, spacingSurface)
+						? default
+						: new ForestCandidateEvaluation(true, spacingId, x, z, candidate, canonicalAround, candidateAcross, sample, spacingSurface, regional, ApplyGroveDensity(regional.Density, request.GroveDensity, x, z, request.Seed));
+				}
 				if (request.UseRegionalForest && !WinsForestSpacingCompetition(request, forestRegions!, x, z, candidate, canonicalAround, candidateAcross, sample, regional, maximumCanonicalAround, spacingEvaluations)) continue;
 				TreeSpecies species = request.UseRegionalForest ? SelectForestSpecies(regional, Hash01(x, z, request.Seed, salt + 3)) : TreeSpecies.Maple;
 				int variant = SelectForestVariant(species, Hash01(x, z, request.Seed, salt + 4));
@@ -1247,11 +1262,19 @@ public partial class RingBiomeDecorationLayer
 
 	private static float EstimateSlopeDegrees(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, long around, int across)
 	{
-		const int probe = 2;
-		float riseX = PresentationSurfaceHeight(edits, sampler, around + probe, across) - PresentationSurfaceHeight(edits, sampler, around - probe, across);
-		float riseZ = PresentationSurfaceHeight(edits, sampler, around, across + probe) - PresentationSurfaceHeight(edits, sampler, around, across - probe);
-		return Mathf.RadToDeg(Mathf.Atan(Mathf.Sqrt(riseX * riseX + riseZ * riseZ) / (probe * 2.0f)));
+		ProbeSlopeRise(edits, sampler, around, across, out float riseX, out float riseZ);
+		return SlopeDegreesFromRise(riseX, riseZ);
 	}
+
+	private static void ProbeSlopeRise(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, long around, int across, out float riseX, out float riseZ)
+	{
+		const int probe = 2;
+		riseX = PresentationSurfaceHeight(edits, sampler, around + probe, across) - PresentationSurfaceHeight(edits, sampler, around - probe, across);
+		riseZ = PresentationSurfaceHeight(edits, sampler, around, across + probe) - PresentationSurfaceHeight(edits, sampler, around, across - probe);
+	}
+
+	private static float SlopeDegreesFromRise(float riseX, float riseZ)
+		=> Mathf.RadToDeg(Mathf.Atan(Mathf.Sqrt(riseX * riseX + riseZ * riseZ) / (2 * 2.0f)));
 
 	private static TreeSpecies SelectForestSpecies(in ForestRegionSample sample, float random)
 	{

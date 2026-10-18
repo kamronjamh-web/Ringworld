@@ -70,6 +70,7 @@ public partial class RingBiomeDecorationLayer
         {
             material.SetShaderParameter(name, value);
             _treeAtmosphereParameterWrites++;
+            global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.TreeAtmosphere);
         }
         if (!cached.Initialized || cached.Valid != valid) Set(AtmosphereRayFrameValidParameter, valid);
         if (valid)

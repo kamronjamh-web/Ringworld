@@ -163,6 +163,16 @@ public sealed partial class RingTerrainSampler
         long around1 = RingCoordMath.WrapAround((aroundIndex + 1L) * spacing, _aroundRingVoxelLength);
         int across0 = acrossIndex * spacing;
         int across1 = Math.Min(across0 + spacing, _ringAcrossWidthMeters - spacing);
+        if (_presentationLatticeCacheEnabled)
+        {
+            // Opt-in worker copies: same vertices, same (float) cast, memoised per 2 m lattice vertex.
+            float c00 = GetLatticeVertexLocked(around0, across0);
+            if (tx == 0.0 && tz == 0.0) return c00;
+            float c10 = GetLatticeVertexLocked(around1, across0);
+            float c01 = GetLatticeVertexLocked(around0, across1);
+            float c11 = GetLatticeVertexLocked(around1, across1);
+            return RingSurfaceLattice.TriangleInterpolate(c00, c10, c01, c11, tx, tz);
+        }
         TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
         float h00 = (float)model.CalculateHeight(around0, across0);
         // Region generation and heightfield baselines query exact vertices.

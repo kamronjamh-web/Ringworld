@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
@@ -270,16 +271,27 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         Vector3 cameraPosition = camera.GlobalPosition;
         Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
         Vector3 sun = _sun?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
-        foreach (ShaderMaterial? material in new[] { _regularMaterial, _mainMaterial })
-        {
-            if (material == null) continue;
-            material.SetShaderParameter("max_distance", _effectiveMax);
-            material.SetShaderParameter("fade_meters", fade);
-            material.SetShaderParameter("min_pixels", _minPixels);
-            material.SetShaderParameter("camera_world_position", cameraPosition);
-            material.SetShaderParameter("ring_center", ringCenter);
-            material.SetShaderParameter("sun_direction", sun);
-        }
+        WriteUniforms(_regularMaterial, fade, cameraPosition, ringCenter, sun);
+        WriteUniforms(_mainMaterial, fade, cameraPosition, ringCenter, sun);
+    }
+
+    // Per-material change gates: an unchanged value must not dirty the material.
+    private static readonly StringName MaxDistanceName = "max_distance", FadeMetersName = "fade_meters", MinPixelsName = "min_pixels",
+        CameraWorldPositionName = "camera_world_position", RingCenterName = "ring_center", SunDirectionName = "sun_direction";
+    private readonly EmitterUniformGate<float> _maxDistanceGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
+        _fadeGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _minPixelsGate = new(RingMaterialWriteCounters.Site.EmitterStandIn);
+    private readonly EmitterUniformGate<Vector3> _cameraGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
+        _ringCenterGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _sunGate = new(RingMaterialWriteCounters.Site.EmitterStandIn);
+
+    private void WriteUniforms(ShaderMaterial? material, float fade, Vector3 cameraPosition, Vector3 ringCenter, Vector3 sun)
+    {
+        if (material == null) return;
+        _maxDistanceGate.Set(material, MaxDistanceName, _effectiveMax);
+        _fadeGate.Set(material, FadeMetersName, fade);
+        _minPixelsGate.Set(material, MinPixelsName, _minPixels);
+        _cameraGate.Set(material, CameraWorldPositionName, cameraPosition);
+        _ringCenterGate.Set(material, RingCenterName, ringCenter);
+        _sunGate.Set(material, SunDirectionName, sun);
     }
 
     public void SetUndergroundHidden(bool hidden)

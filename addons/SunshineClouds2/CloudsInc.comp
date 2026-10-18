@@ -382,6 +382,20 @@ struct SegmentLight {
 	vec4 color;
 };
 
+// RingworldTechDemo extension (camera-independent clouds): one render weather system. Four vec4s, 64 bytes under std140.
+// a = (centre around, centre across, major radius, minor radius) in metres; natural centres are SOURCE space (wind-subtracted),
+// static/manual centres are world canonical space.
+// b = (orientation cos, orientation sin, influence (density x lifecycle envelope), precipitation potential)
+// c = (storm floor, storm ceiling, physical CloudFormationProfile id, flag bits: 1 static, 2 sculpt, 4 manual falloff, 8 reserved)
+// d = (manual coverage target, support multiplier, overflow fade weight 0..1, reserved)
+// The uniform block that holds 64 of these is declared by each includer (RingWeatherSystems.glslinc documents the layout).
+struct RingWeatherSystem {
+	vec4 a;
+	vec4 b;
+	vec4 c;
+	vec4 d;
+};
+
 struct PointEffector {
 	vec3 position; //w = radius
 	float radius;

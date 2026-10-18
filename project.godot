@@ -209,3 +209,75 @@ ring_grass_coordinated_handoff_end_meters={
 "type": "float",
 "value": 1.0
 }
+ring_cloud_shadow_near_center_world={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+ring_cloud_shadow_near_axis_around={
+"type": "vec3",
+"value": Vector3(0, 0, 1)
+}
+ring_cloud_shadow_near_axis_across={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+ring_cloud_shadow_near_axis_up={
+"type": "vec3",
+"value": Vector3(-1, 0, 0)
+}
+ring_cloud_shadow_near_uv_offset={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_cloud_shadow_far_center_world={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+ring_cloud_shadow_far_axis_around={
+"type": "vec3",
+"value": Vector3(0, 0, 1)
+}
+ring_cloud_shadow_far_axis_across={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+ring_cloud_shadow_far_axis_up={
+"type": "vec3",
+"value": Vector3(-1, 0, 0)
+}
+ring_cloud_shadow_far_uv_offset={
+"type": "vec2",
+"value": Vector2(0, 0)
+}
+ring_water_wave_phases_0={
+"type": "mat3",
+"value": Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)
+}
+ring_water_wave_phases_1={
+"type": "mat3",
+"value": Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)
+}
+ring_water_wave_phases_2={
+"type": "mat3",
+"value": Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)
+}
+ring_water_wave_phases_3={
+"type": "mat3",
+"value": Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)
+}
+ring_water_river_advection_main={
+"type": "float",
+"value": 0.0
+}
+ring_water_river_advection_far={
+"type": "float",
+"value": 0.0
+}
+ring_water_far_group_translation_main={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_water_far_group_translation_far={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}

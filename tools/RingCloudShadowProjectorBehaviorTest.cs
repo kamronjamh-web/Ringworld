@@ -17,7 +17,7 @@ public partial class RingCloudShadowProjectorBehaviorTest : RefCounted
         RingCloudShadowProjector.ReleaseTextures();
         RingCloudShadowProjector.ResetParameterWriteCount();
         RingCloudShadowProjector.Register(first);
-        Require(RingCloudShadowProjector.ParameterWriteCount == 27, $"new receiver did not full-sync: {RingCloudShadowProjector.ParameterWriteCount} writes");
+        Require(RingCloudShadowProjector.ParameterWriteCount == 18, $"new receiver did not full-sync: {RingCloudShadowProjector.ParameterWriteCount} writes");
         RingCloudShadowProjector.ResetParameterWriteCount();
         RingCloudShadowProjector.UpdateCascades(near, Vector3.Zero, around, across, up, 100, Vector2.Zero,
             far, Vector3.Right, around, across, up, 200, Vector2.Zero, 1000, Vector3.Right, .5f);
@@ -25,11 +25,14 @@ public partial class RingCloudShadowProjectorBehaviorTest : RefCounted
         RingCloudShadowProjector.UpdateCascades(near, Vector3.Zero, around, across, up, 100, Vector2.Zero,
             far, Vector3.Right, around, across, up, 200, Vector2.Zero, 1000, Vector3.Right, .5f);
         Require(RingCloudShadowProjector.ParameterWriteCount == 0, "identical cascade update wrote parameters");
+        Require(RingCloudShadowProjector.GlobalWriteCount == 0, "identical cascade update republished globals");
+        Require((bool)first.GetShaderParameter("local_cloud_shadow_use_globals"), "receiver did not opt into shared transforms");
         RingCloudShadowProjector.UpdateCascadeTransforms(Vector3.Zero, around, across, up, new Vector2(.1f, 0),
             Vector3.Right, around, across, up, new Vector2(0, .1f));
-        Require(RingCloudShadowProjector.ParameterWriteCount == 2, "offset-only update was not two writes");
-        Require(first.GetShaderParameter("local_cloud_shadow_uv_offset").AsVector2() == new Vector2(.1f, 0), "near offset value is stale");
-        Require(first.GetShaderParameter("local_cloud_shadow_far_uv_offset").AsVector2() == new Vector2(0, .1f), "far offset value is stale");
+        Require(RingCloudShadowProjector.ParameterWriteCount == 0, "offset-only update wrote receiver materials");
+        Require(RingCloudShadowProjector.GlobalWriteCount == 2, "offset-only update was not two global writes");
+        Require(GlobalIs("ring_cloud_shadow_near_uv_offset", new Vector2(.1f, 0)), "near offset value is stale");
+        Require(GlobalIs("ring_cloud_shadow_far_uv_offset", new Vector2(0, .1f)), "far offset value is stale");
         RingCloudShadowProjector.ResetParameterWriteCount();
         RingCloudShadowProjector.UpdateCascades(replacement, Vector3.Zero, around, across, up, 100, Vector2.Zero,
             far, Vector3.Right, around, across, up, 200, Vector2.Zero, 1000, Vector3.Right, .5f);
@@ -48,17 +51,18 @@ public partial class RingCloudShadowProjectorBehaviorTest : RefCounted
         Require((float)first.GetShaderParameter("local_cloud_shadow_strength") != 0.0f, "reregister did not resync external edit");
         RingCloudShadowProjector.Update(near, Vector3.Zero, around, across, 100, .5f, .5f, 0, 1, 0, 1, up, 1000);
         RingCloudShadowProjector.UpdateTransform(Vector3.One, around, across);
-        Require((Vector3)first.GetShaderParameter("local_cloud_shadow_center_world") == Vector3.One, "CPU transform update not applied");
+        Require(GlobalIs("ring_cloud_shadow_near_center_world", Vector3.One), "CPU transform update not applied");
         RingCloudShadowProjector.ResetParameterWriteCount();
         RingCloudShadowProjector.UpdateTransform(Vector3.One, around, across);
         Require(RingCloudShadowProjector.ParameterWriteCount == 0, "identical CPU transform wrote parameters");
+        Require(RingCloudShadowProjector.GlobalWriteCount == 0, "identical CPU transform republished globals");
         ShaderMaterial retired = new() { Shader = shader };
         RingCloudShadowProjector.Register(retired);
         retired.Dispose();
         RingCloudShadowProjector.ReleaseTextures();
         Require(RingCloudShadowProjector.ActiveReceiverCount == 2, "freed receiver was not pruned");
         Require(!RingCloudShadowProjector.HasExternalTextures, "released GPU texture references remain installed");
-        GD.Print("SHADOW_RECEIVER_CACHE_BEHAVIOR=PASS full=27 unchanged=0 offsets=2 lifecycle=pass freed_receiver=pruned");
+        GD.Print("SHADOW_RECEIVER_CACHE_BEHAVIOR=PASS full=18 unchanged=0 offsets=0material+2global lifecycle=pass freed_receiver=pruned");
         return "PASS";
     }
 
@@ -81,9 +85,11 @@ public partial class RingCloudShadowProjectorBehaviorTest : RefCounted
             5_000_000.0f, new Vector3(.2f, .3f, .4f), .37f);
         Require(material.Call("get_shader_param", "local_cloud_shadow_texture").AsGodotObject() == near,
             "native Terrain3D receiver did not receive the near texture");
-        Require(material.Call("get_shader_param", "local_cloud_shadow_center_world").AsVector3() == nearCenter,
+        Require(material.Call("get_shader_param", "local_cloud_shadow_use_globals").AsBool(),
+            "native Terrain3D receiver did not opt into shared transforms");
+        Require(GlobalIs("ring_cloud_shadow_near_center_world", nearCenter),
             "native Terrain3D receiver did not receive the cascade center");
-        Require(material.Call("get_shader_param", "local_cloud_shadow_axis_around").AsVector3() == nearAround,
+        Require(GlobalIs("ring_cloud_shadow_near_axis_around", nearAround),
             "native Terrain3D receiver did not receive the cascade basis");
         Require(Mathf.IsEqualApprox(material.Call("get_shader_param", "local_cloud_shadow_strength").AsSingle(), .37f),
             "native Terrain3D receiver did not receive shadow strength");
@@ -102,6 +108,14 @@ public partial class RingCloudShadowProjectorBehaviorTest : RefCounted
             "native Terrain3D receiver did not receive fallback after release");
         GD.Print("NATIVE_TERRAIN3D_SHADOW_RECEIVER=PASS");
         return "PASS";
+    }
+
+    /// <summary>Checks the projector's published copy and, when the rendering server reports one, the live global.</summary>
+    private static bool GlobalIs(string name, Variant expected)
+    {
+        if (!RingCloudShadowProjector.GetPublishedGlobal(name).Equals(expected)) return false;
+        Variant live = RenderingServer.GlobalShaderParameterGet(name);
+        return live.VariantType == Variant.Type.Nil || live.Equals(expected);
     }
 
     private static ImageTexture MakeTexture(byte value)

@@ -26,8 +26,7 @@ public static class RingCloudShadowProjector
     {
         public bool Enabled, NearEnabled, FarEnabled, HeightProjectionEnabled;
         public Texture2D? NearTexture, FarTexture;
-        public Vector3 Center, Around, Across, Up, FarCenter, FarAround, FarAcross, FarUp, SunDirection;
-        public Vector2 NearOffset, FarOffset;
+        public Vector3 SunDirection;
         public float Radius, FarRadius, RingRadius, Strength, FarStrength;
         public float NearStart, NearEnd, FarStrengthStart, FarStrengthEnd, Overlap;
     }
@@ -64,12 +63,74 @@ public static class RingCloudShadowProjector
     public static int ActiveReceiverCount { get; private set; }
     /// <summary>Cheap test instrumentation: projector parameter writes since reset.</summary>
     public static long ParameterWriteCount { get; private set; }
+    /// <summary>Cheap test instrumentation: shared global transform/offset publications since reset.</summary>
+    public static long GlobalWriteCount { get; private set; }
     public static bool HasExternalTextures => _texture != null || _farTexture != null;
-    public static void ResetParameterWriteCount() => ParameterWriteCount = 0;
+    public static void ResetParameterWriteCount() { ParameterWriteCount = 0; GlobalWriteCount = 0; }
+
+    // Camera-following transforms and scroll offsets are identical for every receiver, so they are
+    // shader globals published once per change instead of material writes per receiver.
+    private static readonly StringName[] Vec3GlobalNames =
+    {
+        "ring_cloud_shadow_near_center_world", "ring_cloud_shadow_near_axis_around",
+        "ring_cloud_shadow_near_axis_across", "ring_cloud_shadow_near_axis_up",
+        "ring_cloud_shadow_far_center_world", "ring_cloud_shadow_far_axis_around",
+        "ring_cloud_shadow_far_axis_across", "ring_cloud_shadow_far_axis_up"
+    };
+    private static readonly StringName[] Vec2GlobalNames = { "ring_cloud_shadow_near_uv_offset", "ring_cloud_shadow_far_uv_offset" };
+    private static readonly StringName UseGlobalsName = "local_cloud_shadow_use_globals";
+    private static readonly Vector3[] PublishedVec3 = new Vector3[8];
+    private static readonly Vector2[] PublishedVec2 = new Vector2[2];
+    private static bool _globalsPublished;
+
+    /// <summary>Forces the next publication to rewrite every global (e.g. after the rendering server was reset).</summary>
+    public static void InvalidateGlobalPublication() => _globalsPublished = false;
+
+    /// <summary>Last published global value by shader name; headless-safe stand-in for GlobalShaderParameterGet.</summary>
+    public static Variant GetPublishedGlobal(string name)
+    {
+        for (int index = 0; index < Vec3GlobalNames.Length; index++)
+            if (Vec3GlobalNames[index] == name) return PublishedVec3[index];
+        for (int index = 0; index < Vec2GlobalNames.Length; index++)
+            if (Vec2GlobalNames[index] == name) return PublishedVec2[index];
+        return default;
+    }
+
+    private static void PublishGlobals()
+    {
+        PublishVec3(0, _centerWorld); PublishVec3(1, _axisAround); PublishVec3(2, _axisAcross); PublishVec3(3, _axisUp);
+        PublishVec3(4, _farCenterWorld); PublishVec3(5, _farAxisAround); PublishVec3(6, _farAxisAcross); PublishVec3(7, _farAxisUp);
+        PublishVec2(0, _nearUvOffset); PublishVec2(1, _farUvOffset);
+        _globalsPublished = true;
+    }
+
+    private static void PublishVec3(int index, Vector3 value)
+    {
+        if (_globalsPublished && PublishedVec3[index] == value) return;
+        PublishedVec3[index] = value;
+        RenderingServer.GlobalShaderParameterSet(Vec3GlobalNames[index], value);
+        CountGlobalWrite();
+    }
+
+    private static void PublishVec2(int index, Vector2 value)
+    {
+        if (_globalsPublished && PublishedVec2[index] == value) return;
+        PublishedVec2[index] = value;
+        RenderingServer.GlobalShaderParameterSet(Vec2GlobalNames[index], value);
+        CountGlobalWrite();
+    }
+
+    private static void CountGlobalWrite()
+    {
+        GlobalWriteCount++;
+        global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(
+            global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.CloudShadowGlobal);
+    }
 
     public static void Register(GodotObject? material)
     {
         if (material == null || !GodotObject.IsInstanceValid(material) || !SupportsShaderParameters(material)) return;
+        PublishGlobals();
         for (int index = Materials.Count - 1; index >= 0; index--)
         {
             if (!Materials[index].Material.TryGetTarget(out GodotObject? existing)
@@ -288,6 +349,7 @@ public static class RingCloudShadowProjector
             active++;
         }
         ActiveReceiverCount = active;
+        PublishGlobals();
     }
 
     private static void Apply(GodotObject material, Receiver receiver)
@@ -298,9 +360,7 @@ public static class RingCloudShadowProjector
             Enabled = _enabled && (_nearTextureEnabled || _farTextureEnabled),
             NearEnabled = _enabled && _nearTextureEnabled, FarEnabled = _enabled && _farTextureEnabled,
             NearTexture = _texture ?? fallback, FarTexture = _farTexture ?? fallback,
-            Center = _centerWorld, Around = _axisAround, Across = _axisAcross, Up = _axisUp,
-            FarCenter = _farCenterWorld, FarAround = _farAxisAround, FarAcross = _farAxisAcross, FarUp = _farAxisUp,
-            NearOffset = _nearUvOffset, FarOffset = _farUvOffset, Radius = _radiusMeters, FarRadius = _farRadiusMeters,
+            Radius = _radiusMeters, FarRadius = _farRadiusMeters,
             RingRadius = _ringRadiusMeters, SunDirection = _sunDirection, HeightProjectionEnabled = _heightProjectionEnabled,
             Strength = _strength, FarStrength = _farStrength, NearStart = _nearStartMeters, NearEnd = _nearEndMeters,
             FarStrengthStart = _farStrengthStartMeters, FarStrengthEnd = _farStrengthEndMeters, Overlap = _shadowOverlapDarkening
@@ -328,18 +388,9 @@ public static class RingCloudShadowProjector
         if (first || previous.FarStrengthStart != next.FarStrengthStart) SetParameter(material, "local_cloud_shadow_far_strength_start_meters", next.FarStrengthStart);
         if (first || previous.FarStrengthEnd != next.FarStrengthEnd) SetParameter(material, "local_cloud_shadow_far_strength_end_meters", next.FarStrengthEnd);
         if (first || previous.Overlap != next.Overlap) SetParameter(material, "shadow_overlap_darkening", next.Overlap);
-        // Camera-following transforms and scroll offsets are the only values
-        // normally changing per frame; each receives an independent write.
-        if (first || previous.Center != next.Center) SetParameter(material, "local_cloud_shadow_center_world", next.Center);
-        if (first || previous.Around != next.Around) SetParameter(material, "local_cloud_shadow_axis_around", next.Around);
-        if (first || previous.Across != next.Across) SetParameter(material, "local_cloud_shadow_axis_across", next.Across);
-        if (first || previous.Up != next.Up) SetParameter(material, "local_cloud_shadow_axis_up", next.Up);
-        if (first || previous.NearOffset != next.NearOffset) SetParameter(material, "local_cloud_shadow_uv_offset", next.NearOffset);
-        if (first || previous.FarCenter != next.FarCenter) SetParameter(material, "local_cloud_shadow_far_center_world", next.FarCenter);
-        if (first || previous.FarAround != next.FarAround) SetParameter(material, "local_cloud_shadow_far_axis_around", next.FarAround);
-        if (first || previous.FarAcross != next.FarAcross) SetParameter(material, "local_cloud_shadow_far_axis_across", next.FarAcross);
-        if (first || previous.FarUp != next.FarUp) SetParameter(material, "local_cloud_shadow_far_axis_up", next.FarUp);
-        if (first || previous.FarOffset != next.FarOffset) SetParameter(material, "local_cloud_shadow_far_uv_offset", next.FarOffset);
+        // Camera-following transforms and scroll offsets come from shared globals (PublishGlobals);
+        // a receiver only needs to opt in once.
+        if (first) SetParameter(material, UseGlobalsName, true);
         receiver.Applied = next;
         receiver.HasApplied = true;
     }

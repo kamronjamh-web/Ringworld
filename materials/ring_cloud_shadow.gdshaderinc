@@ -24,6 +24,30 @@ uniform float local_cloud_shadow_near_start_meters = 1800.0;
 uniform float local_cloud_shadow_near_end_meters = 3500.0;
 uniform float local_cloud_shadow_far_strength_start_meters = 3500.0;
 uniform float local_cloud_shadow_far_strength_end_meters = 5000.0;
+// Registered receivers read the projector's camera-following transforms from
+// shared globals (published once per change) instead of per-material writes.
+// Unregistered fixtures keep the per-material uniforms above.
+uniform bool local_cloud_shadow_use_globals = false;
+global uniform vec3 ring_cloud_shadow_near_center_world;
+global uniform vec3 ring_cloud_shadow_near_axis_around;
+global uniform vec3 ring_cloud_shadow_near_axis_across;
+global uniform vec3 ring_cloud_shadow_near_axis_up;
+global uniform vec2 ring_cloud_shadow_near_uv_offset;
+global uniform vec3 ring_cloud_shadow_far_center_world;
+global uniform vec3 ring_cloud_shadow_far_axis_around;
+global uniform vec3 ring_cloud_shadow_far_axis_across;
+global uniform vec3 ring_cloud_shadow_far_axis_up;
+global uniform vec2 ring_cloud_shadow_far_uv_offset;
+vec3 ring_cloud_shadow_near_center() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_center_world : local_cloud_shadow_center_world; }
+vec3 ring_cloud_shadow_near_around() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_axis_around : local_cloud_shadow_axis_around; }
+vec3 ring_cloud_shadow_near_across() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_axis_across : local_cloud_shadow_axis_across; }
+vec3 ring_cloud_shadow_near_up() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_axis_up : local_cloud_shadow_axis_up; }
+vec2 ring_cloud_shadow_near_offset() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_uv_offset : local_cloud_shadow_uv_offset; }
+vec3 ring_cloud_shadow_far_center() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_center_world : local_cloud_shadow_far_center_world; }
+vec3 ring_cloud_shadow_far_around() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_axis_around : local_cloud_shadow_far_axis_around; }
+vec3 ring_cloud_shadow_far_across() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_axis_across : local_cloud_shadow_far_axis_across; }
+vec3 ring_cloud_shadow_far_up() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_axis_up : local_cloud_shadow_far_axis_up; }
+vec2 ring_cloud_shadow_far_offset() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_uv_offset : local_cloud_shadow_far_uv_offset; }
 // 0.0 keeps overlapping shadow systems energy-conserving by using the darkest
 // single estimate. 1.0 restores fully compounded shadow darkening.
 uniform float shadow_overlap_darkening : hint_range(0.0, 1.0, 0.01) = 0.0;
@@ -95,14 +119,14 @@ float sample_local_cloud_shadow(vec3 sample_world_position) {
 		return 0.0;
 	}
 
-	vec3 relative = sample_world_position - local_cloud_shadow_center_world;
+	vec3 relative = sample_world_position - ring_cloud_shadow_near_center();
 	vec2 planar_meters = ring_cloud_shadow_coordinates(
 		relative,
-		local_cloud_shadow_axis_around,
-		local_cloud_shadow_axis_across,
-		local_cloud_shadow_axis_up).xy;
+		ring_cloud_shadow_near_around(),
+		ring_cloud_shadow_near_across(),
+		ring_cloud_shadow_near_up()).xy;
 	float radius = max(local_cloud_shadow_radius_meters, 1.0);
-	vec2 uv = planar_meters / (radius * 2.0) + vec2(0.5) + local_cloud_shadow_uv_offset;
+	vec2 uv = planar_meters / (radius * 2.0) + vec2(0.5) + ring_cloud_shadow_near_offset();
 	float planar_distance = length(planar_meters);
 	float cascade_handoff = smoothstep(
 		local_cloud_shadow_near_start_meters,
@@ -140,14 +164,14 @@ float sample_local_cloud_shadow(vec3 sample_world_position) {
 	if (local_cloud_shadow_far_enabled && needs_far_cascade) {
 		// Do not pay for a second curved-ring projection/trig calculation while
 		// the detailed near cascade is fully authoritative.
-		vec3 far_relative = sample_world_position - local_cloud_shadow_far_center_world;
+		vec3 far_relative = sample_world_position - ring_cloud_shadow_far_center();
 		vec2 far_planar = ring_cloud_shadow_coordinates(
 			far_relative,
-			local_cloud_shadow_far_axis_around,
-			local_cloud_shadow_far_axis_across,
-			local_cloud_shadow_far_axis_up).xy;
+			ring_cloud_shadow_far_around(),
+			ring_cloud_shadow_far_across(),
+			ring_cloud_shadow_far_up()).xy;
 		float far_radius = max(local_cloud_shadow_far_radius_meters, 1.0);
-		vec2 far_uv = far_planar / (far_radius * 2.0) + vec2(0.5) + local_cloud_shadow_far_uv_offset;
+		vec2 far_uv = far_planar / (far_radius * 2.0) + vec2(0.5) + ring_cloud_shadow_far_offset();
 		if (all(greaterThanEqual(far_uv, vec2(0.0)))
 				&& all(lessThanEqual(far_uv, vec2(1.0)))) {
 			float far_edge = 1.0 - smoothstep(0.88, 0.99, length(far_planar / far_radius));

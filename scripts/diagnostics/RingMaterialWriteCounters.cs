@@ -19,6 +19,14 @@ public static class RingMaterialWriteCounters
         FarMisc,
         CloudShadowProjector,
         WaterWind,
+        CloudShadowGlobal,
+        WaterWindGlobal,
+        TreeAtmosphere,
+        ProxySectorCamera,
+        ProxyFftCoverage,
+        OceanFft,
+        EmitterGrid,
+        EmitterStandIn,
         Count
     }
 

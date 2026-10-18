@@ -366,6 +366,7 @@ public partial class RingScaledFarViewport : Node
 		public readonly int Height;
 		public readonly Vector2[] Samples;
 		public readonly Image Image;
+		public readonly byte[] Pixels;
 		public int SampleIndex;
 		public int TexelIndex;
 		public ulong ContentHash = 1469598103934665603UL;
@@ -377,6 +378,7 @@ public partial class RingScaledFarViewport : Node
 			Height = height;
 			Samples = new Vector2[128 * 32];
 			Image = Image.CreateEmpty(width, height, true, Image.Format.Rgba8);
+			Pixels = new byte[width * height * 4];
 		}
 	}
 
@@ -768,7 +770,7 @@ public partial class RingScaledFarViewport : Node
 			int sy = index / sampleWidth;
 			double around = sx / (double)sampleWidth * _circumferenceMeters;
 			double across = sy / (double)(sampleHeight - 1) * RingWidthMeters;
-			global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeatherAtTime(
+			global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeatherCoverageAtTime(
 				new RingCanonicalPosition(around, 0.0, across), build.SnapshotTime) ?? default;
 			float storm = Mathf.Clamp(weather.SystemInfluence * 0.65f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
 			build.Samples[index] = new Vector2(weather.CloudCoverage, storm);
@@ -786,8 +788,11 @@ public partial class RingScaledFarViewport : Node
 			Vector2 weather = SampleWeatherGrid(build.Samples, sampleWidth, sampleHeight, u, v);
 			float coverage = Mathf.Clamp(weather.X, 0.0f, 1.0f);
 			float storm = Mathf.Clamp(weather.Y, 0.0f, 1.0f);
-			build.Image.SetPixel(x, y, new Color(coverage, storm,
-				SeedUnit(seed ^ 0x27d4eb2du, x / 7, y / 5), SeedUnit(seed ^ 0x165667b1u, x / 3, y / 3)));
+			int pixel = index * 4;
+			build.Pixels[pixel] = Rgba8Channel(coverage);
+			build.Pixels[pixel + 1] = Rgba8Channel(storm);
+			build.Pixels[pixel + 2] = Rgba8Channel(SeedUnit(seed ^ 0x27d4eb2du, x / 7, y / 5));
+			build.Pixels[pixel + 3] = Rgba8Channel(SeedUnit(seed ^ 0x165667b1u, x / 3, y / 3));
 			build.ContentHash = (build.ContentHash ^ (uint)BitConverter.SingleToInt32Bits(coverage)) * 1099511628211UL;
 			build.ContentHash = (build.ContentHash ^ (uint)BitConverter.SingleToInt32Bits(storm)) * 1099511628211UL;
 			completedItems++;
@@ -796,6 +801,7 @@ public partial class RingScaledFarViewport : Node
 		FarWeatherAtlasLastWorkItems = completedItems;
 		if (build.TexelIndex < build.Width * build.Height) return;
 		Stopwatch uploadStopwatch = Stopwatch.StartNew();
+		build.Image.SetData(build.Width, build.Height, false, Image.Format.Rgba8, build.Pixels);
 		build.Image.GenerateMipmaps();
 		if (_farWeatherAtlas is ImageTexture reusable && reusable.GetSize() == new Vector2(build.Width, build.Height)) reusable.Update(build.Image);
 		else _farWeatherAtlas = ImageTexture.CreateFromImage(build.Image);
@@ -827,6 +833,9 @@ public partial class RingScaledFarViewport : Node
 		return values[y0 * width + x0].Lerp(values[y0 * width + x1], x - Mathf.Floor(x)).Lerp(
 			values[y1 * width + x0].Lerp(values[y1 * width + x1], x - Mathf.Floor(x)), y - y0);
 	}
+
+	// Matches Godot Image.SetPixel for FORMAT_RGBA8: float multiply, then round half away from zero (verified 4096/4096 against SetPixel).
+	private static byte Rgba8Channel(float c) => (byte)Math.Clamp(MathF.Round(c * 255.0f, MidpointRounding.AwayFromZero), 0.0f, 255.0f);
 
 	private static float SeedUnit(uint seed, int x, int y)
 	{
@@ -2058,7 +2067,7 @@ public partial class RingScaledFarViewport : Node
 		Vector3 radialOut = new((float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle));
 		Vector3 tangent = new(-radialOut.Z, 0.0f, radialOut.X);
 		Vector3 inward = -radialOut;
-		global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeather(canonical)
+		global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeatherCoverageAtTime(canonical, _weatherSource.CloudSimulationTimeSeconds)
 			?? default;
 		float storm = Mathf.Clamp(weather.SystemInfluence * 0.65f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
 		float coverage = Mathf.Clamp(weather.CloudCoverage, 0.0f, 0.98f);

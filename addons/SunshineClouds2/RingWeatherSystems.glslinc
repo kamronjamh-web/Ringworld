@@ -1,0 +1,308 @@
+// RingworldTechDemo extension (camera-independent clouds; docs/cloud-camera-independence-plan.md, P1 + P5).
+//
+// Shared by SunshineCloudsCompute.glsl (binding 21) and SunshineCloudShadowCompute.glsl (binding 8). The including
+// shader declares, after `genericData` and before this include:
+//
+//   layout(binding = N, std140) uniform RingWeatherSystemsBlock {
+//       vec4 header0;   // x = system count (<= 64), y = enabled (> 0.5), z = base coverage, w = coverage bias
+//       vec4 header1;   // x = heavy-overcast start coverage, y = sculpt strength, z/w = envelope floor / ceiling (m)
+//       vec4 header2;   // x/y = background floor / ceiling (m), z = selection radius (m), w = revision
+//       vec4 header3;   // x = cluster cell (m), y = cluster strength, z = small + 256 * large cluster cells, w = seed bits
+//       RingWeatherSystem systems[64];
+//   } ringWeatherSystems;
+//
+// Offsets (std140): header0 0, header1 16, header2 32, header3 48, systems[i] at 64 + 64 * i, total 4160 bytes.
+// RingWeatherSystem is declared in CloudsInc.comp (a = centre around/across + major/minor, b = cos/sin + density +
+// precipitation, c = storm floor/ceiling + physical profile + flags, d = manual coverage target + support multiplier +
+// overflow fade weight 0..1, which scales the system's macro influence and its sculpt silhouette).
+// Flag bits: 1 static/manual (centre is world space, no wind advection), 2 sculpt, 4 manual falloff, 8 reserved.
+//
+// With header0.y <= 0.5 none of this is used and the legacy single-system uniforms drive the shaders unchanged.
+#ifndef RING_WEATHER_SYSTEMS_GLSLINC
+#define RING_WEATHER_SYSTEMS_GLSLINC
+
+#define RING_WS_MAX 64
+#define RING_WS_FLAG_STATIC 1u
+#define RING_WS_FLAG_SCULPT 2u
+
+// Per-ray (main compute) or per-pixel (shadow compute) state. g_ws_mask holds every system whose support reaches the
+// ray; g_ws_sculpt_mask is the sculpt subset. The macro globals are refreshed at each primary cloud sample by
+// ring_ws_update_macro and reused verbatim by the light and ambient samples that follow it.
+uvec2 g_ws_mask = uvec2(0u);
+uvec2 g_ws_sculpt_mask = uvec2(0u);
+float g_ws_frame_coverage = 0.0;
+float g_ws_storm = 0.0;
+
+bool ring_ws_enabled() { return ringWeatherSystems.header0.y > 0.5; }
+int ring_ws_count() { return clamp(int(ringWeatherSystems.header0.x + 0.5), 0, RING_WS_MAX); }
+uint ring_ws_flags(int index) { return uint(ringWeatherSystems.systems[index].c.w + 0.5); }
+float ring_ws_storm_level() { return g_ws_storm; }
+float ring_ws_frame_coverage() { return g_ws_frame_coverage; }
+
+float ring_ws_circumference() {
+	float circumference = genericData.data.cloud_weather_frame.x;
+	return circumference > 1.0 ? circumference : genericData.data.cloud_frame_up.w * 6.28318530718;
+}
+
+float ring_ws_wrap(float delta, float circumference) {
+	return circumference > 1.0 ? delta - circumference * floor(delta / circumference + 0.5) : delta;
+}
+
+float ring_ws_smooth_unit(float value) {
+	float t = clamp(value, 0.0, 1.0);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+uvec2 ring_ws_bit(int index) {
+	return index < 32 ? uvec2(1u << uint(index), 0u) : uvec2(0u, 1u << uint(index - 32));
+}
+
+uvec2 ring_ws_all_mask() {
+	int count = ring_ws_count();
+	uint low = count >= 32 ? 0xFFFFFFFFu : ((1u << uint(count)) - 1u);
+	uint high = count >= 64 ? 0xFFFFFFFFu : (count > 32 ? ((1u << uint(count - 32)) - 1u) : 0u);
+	return uvec2(low, high);
+}
+
+// Sculpt subset of a mask.
+uvec2 ring_ws_sculpt_subset(uvec2 mask) {
+	uvec2 result = uvec2(0u);
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? mask.x : mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			if ((ring_ws_flags(index) & RING_WS_FLAG_SCULPT) != 0u) result |= ring_ws_bit(index);
+		}
+	}
+	return result;
+}
+
+void ring_ws_set_mask(uvec2 mask) {
+	g_ws_mask = mask;
+	g_ws_sculpt_mask = ring_ws_sculpt_subset(mask);
+}
+
+// Union of the background band and the storm bands of the masked sculpt systems. A sculpt system without a band of its
+// own (storm ceiling <= floor + 1: a CumulusCluster that rolled Cumulonimbus) sculpts inside the background band.
+vec2 ring_ws_band(vec2 backgroundBand, uvec2 sculptMask) {
+	vec2 band = backgroundBand;
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? sculptMask.x : sculptMask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			vec4 c = ringWeatherSystems.systems[index].c;
+			if (c.y > c.x + 1.0) band = vec2(min(band.x, c.x), max(band.y, c.y));
+		}
+	}
+	return band;
+}
+
+float ring_ws_segment_distance2(vec2 a, vec2 b) {
+	vec2 ab = b - a;
+	float t = clamp(-dot(a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+	vec2 closest = a + ab * t;
+	return dot(closest, closest);
+}
+
+// Support-circle mask over the canonical polyline p0 -> p1 -> p2 (x = around, z = across; world-space canonical
+// positions). A system is masked when its support circle (major radius x support multiplier) comes within `margin`
+// metres of the polyline. Natural systems live in source space, so the polyline is shifted by the wind frame offsets
+// (cloud_weather_frame.yz) exactly as ring_cloud_weather_noise and EvaluateMacroWeather do.
+uvec2 ring_ws_mask(vec3 p0, vec3 p1, vec3 p2, float margin) {
+	uvec2 mask = uvec2(0u);
+	int count = ring_ws_count();
+	float circumference = ring_ws_circumference();
+	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
+	for (int i = 0; i < count; i++) {
+		vec4 a = ringWeatherSystems.systems[i].a;
+		vec4 d = ringWeatherSystems.systems[i].d;
+		vec2 offset = (ring_ws_flags(i) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
+		float reach = a.z * max(d.y, 1.0) + margin;
+		vec2 q0 = vec2(ring_ws_wrap(p0.x + offset.x - a.x, circumference), p0.z + offset.y - a.y);
+		vec2 q1 = vec2(ring_ws_wrap(p1.x + offset.x - a.x, circumference), p1.z + offset.y - a.y);
+		vec2 q2 = vec2(ring_ws_wrap(p2.x + offset.x - a.x, circumference), p2.z + offset.y - a.y);
+		float reach2 = reach * reach;
+		if (ring_ws_segment_distance2(q0, q1) <= reach2 || ring_ws_segment_distance2(q1, q2) <= reach2) {
+			mask |= ring_ws_bit(i);
+		}
+	}
+	return mask;
+}
+
+// True when any masked system's support circle (plus slack) covers the canonical point.
+bool ring_ws_support_covers(vec3 canonical, float slack, uvec2 mask) {
+	float circumference = ring_ws_circumference();
+	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? mask.x : mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			vec4 a = ringWeatherSystems.systems[index].a;
+			vec4 d = ringWeatherSystems.systems[index].d;
+			vec2 offset = (ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
+			vec2 q = vec2(ring_ws_wrap(canonical.x + offset.x - a.x, circumference), canonical.z + offset.y - a.y);
+			float reach = a.z * max(d.y, 1.0) + slack;
+			if (dot(q, q) <= reach * reach) return true;
+		}
+	}
+	return false;
+}
+
+// P5: GLSL port of RingVolumetricCloudLayer.SampleContinuousClusterTerm. Hash01 reproduces the C# uint sequence exactly
+// (uint conversion of a negative int wraps like the C# cast).
+float ring_ws_hash01(int x, int z, uint seed, int salt) {
+	uint h = seed ^ 0x9E3779B9u;
+	h ^= uint(x) * 0x85EBCA6Bu;
+	h = (h << 13u) | (h >> 19u);
+	h ^= uint(z) * 0xC2B2AE35u;
+	h ^= uint(salt) * 0x27D4EB2Fu;
+	h ^= h >> 16u;
+	h *= 0x7FEB352Du;
+	h ^= h >> 15u;
+	h *= 0x846CA68Bu;
+	h ^= h >> 16u;
+	return float(h & 0x00FFFFFFu) / 16777215.0;
+}
+
+float ring_ws_weather_noise(float cellX, float cellZ, uint seed, int scaleCells, int salt) {
+	float x = cellX / float(max(1, scaleCells));
+	float z = cellZ / float(max(1, scaleCells));
+	int x0 = int(floor(x));
+	int z0 = int(floor(z));
+	float fx = x - float(x0);
+	float fz = z - float(z0);
+	fx = fx * fx * (3.0 - 2.0 * fx);
+	fz = fz * fz * (3.0 - 2.0 * fz);
+	float h00 = ring_ws_hash01(x0, z0, seed, salt);
+	float h10 = ring_ws_hash01(x0 + 1, z0, seed, salt);
+	float h01 = ring_ws_hash01(x0, z0 + 1, seed, salt);
+	float h11 = ring_ws_hash01(x0 + 1, z0 + 1, seed, salt);
+	float a = h00 + (h10 - h00) * fx;
+	float b = h01 + (h11 - h01) * fx;
+	return a + (b - a) * fz;
+}
+
+// sourceAround / sourceAcross: the source-space (wind-subtracted) canonical position, as the CPU queries it.
+float ring_ws_cluster_term(float sourceAround, float sourceAcross) {
+	vec4 h = ringWeatherSystems.header3;
+	if (h.x < 1.0 || h.y == 0.0) return 0.0;
+	float circumference = ring_ws_circumference();
+	float wrapped = circumference > 1.0 ? sourceAround - circumference * floor(sourceAround / circumference) : sourceAround;
+	float cellAround = wrapped / h.x;
+	float cellAcross = sourceAcross / h.x;
+	int packedScales = int(h.z + 0.5);
+	int smallCells = max(2, packedScales & 255);
+	int largeCells = max(4, packedScales >> 8);
+	uint seed = uint(floatBitsToInt(h.w));
+	float small = ring_ws_weather_noise(cellAround, cellAcross, seed, smallCells, 30);
+	float large = ring_ws_weather_noise(cellAround, cellAcross, seed, largeCells, 40);
+	return (small * 0.62 + large * 0.38 - 0.5) * h.y;
+}
+
+// Per-primary-sample macro weather. Mirrors QueryRawWeatherAtTime + ApplyManualWeather + the bridge's RefreshWeather
+// formulas, evaluated at the sample (canonical position) instead of at the camera:
+//   natural systems combine by product (combined) + strongest, exactly as EvaluateMacroWeather;
+//   manual systems fold in by max with the manual falloff (n - 0.55) / 0.75, exactly as ApplyManualWeather;
+//   cov = clamp(base + cluster + macroBias + densityBias, 0.015, 0.985); storm = clamp(0.65 * influence + 0.55 * precip).
+// Outputs replace the sky-wide uniforms: `coverage` = clouds_coverage * 1.01, `densityMultiplier` = clouds_density,
+// `lightingMultiplier` = cloud_lighting_power * (1 + 3 * coverage). The frame coverage and storm level (cloud_handoff.z)
+// are published through the g_ws_* globals read by sampleScene.
+void ring_ws_update_macro(vec3 canonical, out float coverage, out float densityMultiplier, out float lightingMultiplier) {
+	vec4 frame = genericData.data.cloud_weather_frame;
+	vec2 source = vec2(canonical.x + frame.y, canonical.z + frame.z);
+	float circumference = ring_ws_circumference();
+	float combined = 0.0;
+	float strongest = 0.0;
+	float strongestDensity = 0.0;
+	float strongestPrecip = 0.0;
+	bool anyManual = false;
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? g_ws_mask.x : g_ws_mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			if ((ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u) {
+				anyManual = true;
+				continue;
+			}
+			vec4 a = ringWeatherSystems.systems[index].a;
+			vec4 b = ringWeatherSystems.systems[index].b;
+			float fade = ringWeatherSystems.systems[index].d.z;
+			float deltaAround = ring_ws_wrap(a.x - source.x, circumference);
+			float deltaAcross = a.y - source.y;
+			if (deltaAround * deltaAround + deltaAcross * deltaAcross >= a.z * a.z) continue;
+			float along = b.x * deltaAround + b.y * deltaAcross;
+			float across = -b.y * deltaAround + b.x * deltaAcross;
+			float normalizedSquared = along * along / max(1.0, a.z * a.z) + across * across / max(1.0, a.w * a.w);
+			if (normalizedSquared >= 1.0) continue;
+			float influence = 1.0 - ring_ws_smooth_unit((sqrt(normalizedSquared) - 0.32) / 0.68);
+			float weighted = influence * b.z * fade;
+			combined = 1.0 - (1.0 - combined) * (1.0 - weighted);
+			if (weighted > strongest) {
+				strongest = weighted;
+				strongestDensity = b.z;
+				strongestPrecip = b.w;
+			}
+		}
+	}
+	combined = clamp(combined, 0.0, 1.0);
+	strongest = clamp(strongest, 0.0, 1.0);
+	float macroBias = (combined - 0.28) * 0.46;
+	float densityBias = strongest * (strongestDensity - 0.5) * 0.24;
+	float cluster = ring_ws_cluster_term(source.x, source.y);
+	float cov = clamp(ringWeatherSystems.header0.z + cluster + macroBias + densityBias, 0.015, 0.985);
+	float precip = clamp(strongestPrecip * combined * ring_ws_smooth_unit((cov - 0.35) / 0.55), 0.0, 1.0);
+	float systemInfluence = combined;
+
+	if (anyManual) {
+		for (int word = 0; word < 2; word++) {
+			uint bits = word == 0 ? g_ws_mask.x : g_ws_mask.y;
+			while (bits != 0u) {
+				int index = word * 32 + findLSB(bits);
+				bits &= bits - 1u;
+				if ((ring_ws_flags(index) & RING_WS_FLAG_STATIC) == 0u) continue;
+				vec4 a = ringWeatherSystems.systems[index].a;
+				vec4 b = ringWeatherSystems.systems[index].b;
+				vec4 d = ringWeatherSystems.systems[index].d;
+				float deltaAround = ring_ws_wrap(canonical.x - a.x, circumference);
+				float deltaAcross = canonical.z - a.y;
+				float x = deltaAround * b.x + deltaAcross * b.y;
+				float z = -deltaAround * b.y + deltaAcross * b.x;
+				float normalized = sqrt(x * x / (a.z * a.z) + z * z / (a.w * a.w));
+				float influence = (1.0 - ring_ws_smooth_unit((normalized - 0.55) / 0.75)) * b.z * d.z;
+				if (influence <= 0.0001) continue;
+				systemInfluence = max(systemInfluence, influence);
+				cov = max(cov, cov + (d.x - cov) * influence);
+				precip = max(precip, b.w * influence);
+			}
+		}
+	}
+
+	float bias = ringWeatherSystems.header0.w;
+	float storm = clamp(systemInfluence * 0.65 + precip * 0.55, 0.0, 1.0);
+	float heavyStart = ringWeatherSystems.header1.x;
+	float heavy = ring_ws_smooth_unit((cov - heavyStart) / max(0.01, 1.0 - heavyStart));
+	float visible = clamp(max(cov, storm) + bias, 0.0, 1.0);
+	g_ws_frame_coverage = clamp(cov + bias, 0.0, 1.0);
+	g_ws_storm = max(storm, heavy);
+	coverage = mix(0.70, 0.90, visible) * 1.01;
+	densityMultiplier = mix(1.20, 1.90, visible) * genericData.data.cloud_density;
+	float lightingPower = mix(0.72, 1.55, g_ws_storm) * genericData.data.cloud_lighting_power;
+	lightingMultiplier = lightingPower + lightingPower * 3.0 * coverage;
+}
+
+// CloudFormationProfiles.ToShaderProfile for a physical CloudFormationProfile id.
+float ring_ws_shader_profile(int physicalProfile) {
+	if (physicalProfile == 3) return 3.0;
+	if (physicalProfile == 2 || physicalProfile == 10) return 2.0;
+	if (physicalProfile == 1 || physicalProfile == 5 || physicalProfile == 7 || physicalProfile == 9) return 1.0;
+	return 0.0;
+}
+
+// Prototype; defined by each includer after its own per-system storm density function.
+float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgroundCeiling);
+
+#endif

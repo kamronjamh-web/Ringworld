@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using Godot;
 using RingworldTechDemo.Celestial.Eclipse;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Core;
@@ -78,6 +79,18 @@ public partial class EmitterGridBeamLayer : Node3D
     private Transform3D _worldToLayer = Transform3D.Identity;
     private Transform3D _lastGridGlobal, _lastLayerGlobal;
     private readonly Vector4[] _fronts = new Vector4[MaxShaderFronts];
+    // Per-material change gates for the per-frame uniforms: an unchanged value must not dirty the material.
+    private static readonly StringName MaxDistanceName = "max_distance", FadeMetersName = "fade_meters", NearClipName = "near_clip",
+        CameraWorldPositionName = "camera_world_position", RingCenterName = "ring_center", SunDirectionName = "sun_direction",
+        HandoffName = "eg_handoff", FrontCountName = "eg_front_count", FrontsName = "eg_fronts", FlareName = "eg_flare";
+    private readonly EmitterUniformGate<float> _maxDistanceGate = new(RingMaterialWriteCounters.Site.EmitterGrid),
+        _fadeGate = new(RingMaterialWriteCounters.Site.EmitterGrid), _nearClipGate = new(RingMaterialWriteCounters.Site.EmitterGrid),
+        _flareGate = new(RingMaterialWriteCounters.Site.EmitterGrid);
+    private readonly EmitterUniformGate<Vector3> _cameraGate = new(RingMaterialWriteCounters.Site.EmitterGrid),
+        _ringCenterGate = new(RingMaterialWriteCounters.Site.EmitterGrid), _sunGate = new(RingMaterialWriteCounters.Site.EmitterGrid);
+    private readonly EmitterUniformGate<Vector2> _handoffGate = new(RingMaterialWriteCounters.Site.EmitterGrid);
+    private readonly EmitterUniformGate<int> _frontCountGate = new(RingMaterialWriteCounters.Site.EmitterGrid);
+    private readonly EmitterVector4ArrayGate _frontsGate = new(RingMaterialWriteCounters.Site.EmitterGrid);
     private readonly Vector3[] _headLocal = new Vector3[MaxHeadSprites];
     private int _frontCount, _headCount;
     // Eclipse ignition fronts (docs/eclipse-false-sun-spec.md E.3), pushed by the director each frame and appended after the normal fronts.
@@ -517,13 +530,11 @@ public partial class EmitterGridBeamLayer : Node3D
 
         Vector2 band = ResolveCurrentHandoffBand();
         _handoffBand = band;
-        _beamMaterial.SetShaderParameter("eg_handoff", band);
-        _coreMaterial?.SetShaderParameter("eg_handoff", band);
-        _headMaterial.SetShaderParameter("eg_handoff", band);
+        _handoffGate.Set(_beamMaterial, HandoffName, band);
+        _handoffGate.Set(_coreMaterial, HandoffName, band);
+        _handoffGate.Set(_headMaterial, HandoffName, band);
 
-        SetBeamUniform("eg_front_count", _frontCount);
-        SetBeamUniform("eg_fronts", _fronts);
-        SetBeamUniform("eg_flare", flare);
+        WriteFrontUniforms(_beamMaterial, _coreMaterial, FarLayerValid ? _farLayer!.BeamMaterial : null, flare);
         if (Math.Abs(_frameDt - _appliedStreakDt) > 0.05 * _appliedStreakDt) WriteStreak(_frameDt);
         WriteHeads();
         if (FarLayerActive) WriteFarUniforms(fade, band, flare);
@@ -608,34 +619,44 @@ public partial class EmitterGridBeamLayer : Node3D
         WriteFarCommon(far.BeamMaterial, nearFade, nearClip, cameraPosition, sun, band);
         WriteFarCommon(far.HeadMaterial, nearFade, nearClip, cameraPosition, sun, band);
         // The far beam material already received the fronts and flare through SetBeamUniform; the head sprites need them too.
-        if (far.HeadMaterial is { } head)
-        {
-            head.SetShaderParameter("eg_front_count", _frontCount);
-            head.SetShaderParameter("eg_fronts", _fronts);
-            head.SetShaderParameter("eg_flare", flare);
-        }
+        if (far.HeadMaterial is { } head) WriteFrontUniforms(head, null, null, flare);
+    }
+
+    /// <summary>Writes the front count, front array and flare to each given material, skipping values it already holds.</summary>
+    private void WriteFrontUniforms(ShaderMaterial? first, ShaderMaterial? second, ShaderMaterial? third, float flare)
+    {
+        _frontCountGate.Set(first, FrontCountName, _frontCount);
+        _frontCountGate.Set(second, FrontCountName, _frontCount);
+        _frontCountGate.Set(third, FrontCountName, _frontCount);
+        _frontsGate.Set(first, FrontsName, _fronts);
+        _frontsGate.Set(second, FrontsName, _fronts);
+        _frontsGate.Set(third, FrontsName, _fronts);
+        _frontsGate.End();
+        _flareGate.Set(first, FlareName, flare);
+        _flareGate.Set(second, FlareName, flare);
+        _flareGate.Set(third, FlareName, flare);
     }
 
     private void WriteFarCommon(ShaderMaterial? material, float nearFade, float nearClip, Vector3 cameraPosition, Vector3 sun, Vector2 band)
     {
         if (material == null) return;
-        material.SetShaderParameter("max_distance", _effectiveMax);
-        material.SetShaderParameter("fade_meters", nearFade);
-        material.SetShaderParameter("near_clip", nearClip);
-        material.SetShaderParameter("camera_world_position", cameraPosition);
-        material.SetShaderParameter("ring_center", Vector3.Zero);
-        material.SetShaderParameter("sun_direction", sun);
-        material.SetShaderParameter("eg_handoff", band);
+        _maxDistanceGate.Set(material, MaxDistanceName, _effectiveMax);
+        _fadeGate.Set(material, FadeMetersName, nearFade);
+        _nearClipGate.Set(material, NearClipName, nearClip);
+        _cameraGate.Set(material, CameraWorldPositionName, cameraPosition);
+        _ringCenterGate.Set(material, RingCenterName, Vector3.Zero);
+        _sunGate.Set(material, SunDirectionName, sun);
+        _handoffGate.Set(material, HandoffName, band);
     }
 
     private void WriteCommonUniforms(ShaderMaterial material, float near, float fade, Vector3 cameraPosition, Vector3 ringCenter, Vector3 sun)
     {
-        material.SetShaderParameter("max_distance", _effectiveMax);
-        material.SetShaderParameter("fade_meters", fade);
-        material.SetShaderParameter("near_clip", near);
-        material.SetShaderParameter("camera_world_position", cameraPosition);
-        material.SetShaderParameter("ring_center", ringCenter);
-        material.SetShaderParameter("sun_direction", sun);
+        _maxDistanceGate.Set(material, MaxDistanceName, _effectiveMax);
+        _fadeGate.Set(material, FadeMetersName, fade);
+        _nearClipGate.Set(material, NearClipName, near);
+        _cameraGate.Set(material, CameraWorldPositionName, cameraPosition);
+        _ringCenterGate.Set(material, RingCenterName, ringCenter);
+        _sunGate.Set(material, SunDirectionName, sun);
     }
 
     /// <summary>Evaluates the live fronts of every chain at time <paramref name="t"/> into the shader array and the head sprite positions.</summary>

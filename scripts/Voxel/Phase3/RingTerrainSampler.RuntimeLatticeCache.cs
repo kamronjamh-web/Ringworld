@@ -19,13 +19,30 @@ public sealed partial class RingTerrainSampler
     private const int LatticeBlockShift = 4; // 16 x 16 vertices = 32 m blocks
     private const int LatticeBlockVertices = 1 << LatticeBlockShift;
     private const int LatticeBlockCapacity = 96;
+    // Opt-in worker capacity: 1024 blocks = 1024 x (256 floats = 1 KiB) ~= 1.1 MiB per sampler (32 m x 32 m blocks, ~1 km square).
+    internal const int WorkerLatticeBlockCapacity = 1024;
     private Dictionary<(long Around, int Across), float[]>? _latticeBlocks;
+    private bool _presentationLatticeCacheEnabled;
+    private int _latticeBlockCapacity = LatticeBlockCapacity;
     private long _latticeVertexEvaluations;
     private long _latticeVertexHits;
 
     /// <summary>Model evaluations performed by the lattice cache since the last reset (vertex misses).</summary>
     internal long LatticeVertexEvaluations { get { lock (_noiseLock) return _latticeVertexEvaluations; } }
     internal long LatticeVertexHits { get { lock (_noiseLock) return _latticeVertexHits; } }
+
+    /// <summary>
+    /// Routes the double-coordinate runtime presentation height through the lattice cache for this sampler
+    /// instance (grass/tree worker copies). Bit-identical to the uncached path; clears the cache whole on overflow.
+    /// </summary>
+    internal void EnablePresentationLatticeCache(int blockCapacity = WorkerLatticeBlockCapacity)
+    {
+        lock (_noiseLock)
+        {
+            _presentationLatticeCacheEnabled = UsesRuntimeSurfaceGeneration;
+            _latticeBlockCapacity = Math.Max(LatticeBlockCapacity, blockCapacity);
+        }
+    }
 
     internal void ResetLatticeCache()
     {
@@ -75,11 +92,11 @@ public sealed partial class RingTerrainSampler
         // around is canonical and even (the ring length is even); across is even.
         long a = around >> 1;
         int b = across >> 1;
-        var blocks = _latticeBlocks ??= new Dictionary<(long, int), float[]>(LatticeBlockCapacity + 1);
+        var blocks = _latticeBlocks ??= new Dictionary<(long, int), float[]>(_latticeBlockCapacity + 1);
         var key = (a >> LatticeBlockShift, b >> LatticeBlockShift);
         if (!blocks.TryGetValue(key, out float[]? block))
         {
-            if (blocks.Count >= LatticeBlockCapacity) blocks.Clear();
+            if (blocks.Count >= _latticeBlockCapacity) blocks.Clear();
             block = new float[LatticeBlockVertices * LatticeBlockVertices];
             Array.Fill(block, float.NaN);
             blocks[key] = block;

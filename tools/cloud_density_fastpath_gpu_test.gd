@@ -104,6 +104,12 @@ layout(binding=4) uniform sampler3D large_noise;
 layout(binding=5) uniform sampler3D noise_medium;
 layout(binding=6) uniform sampler3D noise_small;
 layout(binding=7) uniform sampler3D curl_noise;
+// Camera-independent clouds are disabled in this legacy-parity harness: the live sampleScene calls these four hooks,
+// which the production shader defines in RingWeatherSystems.glslinc / SunshineCloudsCompute.glsl.
+bool ring_ws_enabled() { return false; }
+float ring_ws_storm_level() { return 0.0; }
+float ring_ws_frame_coverage() { return 0.0; }
+float ring_ws_sculpt_density(vec3 canonical, float background_floor, float background_ceiling) { return 0.0; }
 """ + weather + helpers + reference + optimized + """
 void main() { uint i=gl_GlobalInvocationID.x; float f=float(i); bool control=i<128u; vec3 p=control?vec3(2000.0,1200.0,5000.0):vec3(mod(f*137.0, 16000.0)-8000.0, 250.0+mod(f*71.0, 2100.0), mod(f*97.0, 14000.0)-1000.0); vec3 a=vec3(f*3.1, 0.0, f*1.7); float lod=(i&1u)==0u?0.0:1.0; float curl=(i%5u)==0u?0.0:72.0; bool ambient=(i%3u)==0u; bool coarse=(i%7u)==0u; float coverage=control?(1.1+float(i%2u)*0.1):((i%6u)==0u?0.0:((i%6u)==1u?0.33:((i%6u)==2u?0.67:(0.74+float(i%3u)*0.05)))); float old=sampleSceneReference(a,a*1.3,a*1.7,p,2400.0,100.0,1.0,900.0,600.0,240.0,coverage,0.8,curl,lod,ambient,coarse); float now=sampleSceneOptimized(a,a*1.3,a*1.7,p,2400.0,100.0,1.0,900.0,600.0,240.0,coverage,0.8,curl,lod,ambient,coarse); float background=(testData[i].storm_shape.z<=0.001&&old>0.001)?1.0:0.0; float storm=(testData[i].storm_shape.z>0.001&&now>0.001)?2.0:0.0; outData[i]=vec4(old,now,background+storm,abs(old-now)); }
 """
