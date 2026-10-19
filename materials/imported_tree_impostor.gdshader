@@ -27,7 +27,8 @@ uniform bool simplified_tree_shading = false;
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
 varying vec3 tree_world_position;
-varying float tree_haze_transmittance;
+varying vec3 tree_haze_T;
+varying vec3 tree_haze_S;
 varying flat int tree_variant;
 varying vec4 tree_parameters;
 varying flat float tree_dither_coverage;
@@ -78,8 +79,10 @@ void vertex() {
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	tree_day_factor = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	tree_world_position = world_position;
-	tree_haze_transmittance = 1.0 - sample_ring_atmosphere(
-		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor).a;
+	RingHaze vertex_haze = ring_haze_sample(
+		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor);
+	tree_haze_T = vertex_haze.T;
+	tree_haze_S = ring_haze_inscatter(vertex_haze);
 }
 void fragment() {
 	apply_tree_dither(FRAGCOORD.xy);
@@ -87,10 +90,15 @@ void fragment() {
 	vec4 flags = texelFetch(variant_parameters, ivec2(tree_variant, 2), 0);
 	if (flags.r > .5 && albedo.a < tree_parameters.a) discard;
 	ALBEDO = albedo.rgb * mix(night_tint, vec3(1.0), tree_day_factor) * (1.0 - tree_cloud_occlusion * tree_day_factor * .34);
-	vec4 atmosphere = sample_ring_atmosphere(ring_atmosphere_camera_world_position,
-		tree_world_position, ring_center, tree_day_factor);
-	ALBEDO *= tree_haze_transmittance;
-	EMISSION += atmosphere.rgb * (1.0 - tree_haze_transmittance) * atmosphere_scattering_energy;
+	ALBEDO *= tree_haze_T;
+	vec3 haze_emission = tree_haze_S;
+	if (atmosphere_haze_model == 0) {
+		// Legacy: scattering colour from the fragment position, opacity from the vertex.
+		vec4 atmosphere = sample_ring_atmosphere(ring_atmosphere_camera_world_position,
+			tree_world_position, ring_center, tree_day_factor);
+		haze_emission = atmosphere.rgb * (1.0 - tree_haze_T.g) * atmosphere_scattering_energy;
+	}
+	EMISSION += haze_emission;
 	if (simplified_tree_shading) {
 		METALLIC = 0.0;
 		ROUGHNESS = 0.9;
@@ -117,6 +125,6 @@ void light() {
 		vec3 half_vector = normalize(LIGHT + VIEW);
 		float gloss = mix(8.0, 128.0, 1.0 - ROUGHNESS);
 		float specular = pow(max(dot(NORMAL, half_vector), 0.0), gloss) * mix(.04, 1.0, METALLIC);
-		SPECULAR_LIGHT += (LIGHT_COLOR / PI) * specular * n_dot_l * visibility * tree_haze_transmittance;
+		SPECULAR_LIGHT += (LIGHT_COLOR / PI) * specular * n_dot_l * visibility * tree_haze_T;
 	}
 }

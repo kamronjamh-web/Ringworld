@@ -2,6 +2,7 @@ extends SceneTree
 
 # Isolated production Sunshine test. No RingSunshineCloudBridge exists here, so
 # callback uploads cannot overwrite the atmosphere profile under test.
+# 16-slot profile (P2b): slots 0-9 Legacy, 10-15 physical haze. Pass `-- --model=physical` to exercise the physical slots.
 const SIZE := Vector2i(640, 360)
 const RADIUS := 5000000.0
 const WIDTH := 318000.0
@@ -10,6 +11,7 @@ var adapter: Node
 var settings: Resource
 var effect: Object
 var failed := false
+var physical := false
 
 func _initialize() -> void:
 	if RenderingServer.get_rendering_device() == null:
@@ -20,6 +22,7 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	physical = "--model=physical" in OS.get_cmdline_user_args()
 	_build(); _configure_frozen_field()
 	effect.set("diagnostic_temporal_readback", true)
 	effect.set("ring_atmosphere_profile", _disabled())
@@ -41,7 +44,7 @@ func _run() -> void:
 	effect.set("diagnostic_raw_density_matte", false)
 	_require(_rgb_delta(raw_before, raw_after) < .00001, "raw diagnostic was haze-composited")
 	if failed: return
-	print("CLOUD_ATMOSPHERE_GPU=PASS rgb=", _rgb_delta(disabled, enabled))
+	print("CLOUD_ATMOSPHERE_GPU=PASS model=", "physical" if physical else "legacy", " rgb=", _rgb_delta(disabled, enabled))
 	quit(0)
 
 func _build() -> void:
@@ -58,8 +61,24 @@ func _configure_frozen_field() -> void:
 	for key: String in v: settings.set(key,v[key])
 	adapter.call("ApplyTuning",settings,Vector3(-.4,.75,-.5).normalized())
 
-func _disabled() -> Array[Vector4]: return [Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO,Vector4.ZERO]
-func _profile(enabled:float,density:float)->Array[Vector4]: return [Vector4(enabled,RADIUS,2500,2500),Vector4(20000,60000,300000,.8),Vector4(.16*density,.06*density,.45*density,.26),Vector4(1,1000,1,1000),Vector4(0,12000,.35,.22),Vector4(.34,.46,.60,.25),Vector4(.026,.035,.055,1),Vector4(0,1,0,100),Vector4(0,0,1,WIDTH*.5),Vector4(0,1,0,WIDTH*.5)]
+func _disabled() -> Array[Vector4]:
+	var zeros: Array[Vector4] = []
+	zeros.resize(16)
+	for index in 16: zeros[index] = Vector4.ZERO
+	return zeros
+func _profile(enabled:float,density:float)->Array[Vector4]:
+	var p: Array[Vector4] = [Vector4(enabled,RADIUS,2500,2500),Vector4(20000,60000,300000,.8),Vector4(.16*density,.06*density,.45*density,.26),Vector4(1,1000,1,1000),Vector4(0,12000,.35,.22),Vector4(.34,.46,.60,.25),Vector4(.026,.035,.055,1),Vector4(0,1,0,100),Vector4(0,0,1,WIDTH*.5),Vector4(0,1,0,WIDTH*.5)]
+	p.append_array(_disabled().slice(10))
+	if physical:
+		# Physical slots; density scales every extinction so density 0 is the identity. Values mirror ring_haze_params_default.
+		var k := density / .45
+		p[10] = Vector4(1, 1, 5.802e-6 * k, 13.558e-6 * k)
+		p[11] = Vector4(33.1e-6 * k, 8000, 4.175e-6 * k, .9)
+		p[12] = Vector4(1500, 4.0e-6 * k, .95, 400)
+		p[13] = Vector4(.6, 8, 1, 12.566)
+		p[14] = Vector4(12.566, 12.566, .1855, .203)
+		p[15] = Vector4(.2275, .102, .12, .156)
+	return p
 func _capture(label:String)->Image:
 	for frame in 12: adapter.call("UpdateFrame",17219375.0,10.0,true); await process_frame
 	await RenderingServer.frame_post_draw

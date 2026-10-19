@@ -2673,7 +2673,14 @@ public partial class SmoothTerrainGrid : Node3D, ICaveLodProfileTarget
 		_lastTerrainMaterialDayDirectLightFactor = dayDirectLightFactor;
 		_lastTerrainMaterialShadowFloor = shadowFloor;
 		_terrainMaterialUniformsValid = true;
+		// Physical haze has no non-ray-frame path, so bind the camera-relative air frame like every other terrain material. Legacy
+		// keeps this material on its original frame-less cylinder fallback (a valid frame would change the Legacy look), so the frame
+		// is only published while the Physical model is selected (the cache skips unchanged frames).
+		_rayFrameCache.Apply(RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical
+			? RingAtmosphereRayFrame.FromWorldPosition(_sourceGrid, cameraPosition, sunDirection)
+			: RingAtmosphereRayFrame.Invalid, material);
 	}
+	private readonly RingAtmosphereRayFrame.AppliedCache _rayFrameCache = new();
 	private void RecountReady(){ReadyRenderCount=0;ReadyCollisionCount=0;foreach(var e in _entries.Values)if(e.Ready){ReadyRenderCount++;if(EntryHasCollision(e))ReadyCollisionCount++;}}
 	private sealed class Entry
 	{

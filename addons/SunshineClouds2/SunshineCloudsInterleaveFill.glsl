@@ -15,6 +15,7 @@
 
 #include "./CloudsInc.comp"
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
+#include "../../materials/ring_haze_shared.gdshaderinc"
 #include "./RingAtmosphereCompute.glslinc"
 #include "./RingCloudHistory.gdshaderinc"
 
@@ -245,8 +246,7 @@ void main() {
 		}
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(resultData.b, 0.0, max(0.0, linear_depth));
-			vec4 haze = ring_cloud_atmosphere_haze(rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
-			outputColor.rgb = mix(outputColor.rgb, haze.rgb, haze.a);
+			outputColor.rgb = ring_cloud_atmosphere_apply(outputColor.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
 		}
 		imageStore(output_color_image, uv, outputColor);
 	}

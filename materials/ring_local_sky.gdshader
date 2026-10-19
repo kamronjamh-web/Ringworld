@@ -6,6 +6,8 @@ uniform vec3 local_surface_up = vec3(-1.0, 0.0, 0.0);
 uniform vec3 ring_axis_direction = vec3(0.0, 1.0, 0.0);
 uniform float camera_radial_ratio = 1.0;
 uniform float camera_across_ratio = 0.0;
+// Camera altitude above the nominal floor in metres (Physical haze model; the Legacy path derives it from camera_radial_ratio).
+uniform float sky_camera_height_meters = 300.0;
 uniform float ring_half_width_ratio = 0.002;
 uniform float ring_interior_factor : hint_range(0.0, 1.0) = 1.0;
 uniform float day_start_dot = -0.2;
@@ -225,29 +227,13 @@ vec3 render_planet(vec3 view_direction, vec3 to_sun, out float mask) {
 void sky() {
 	vec3 up = normalize(local_surface_up);
 	vec3 view_direction = normalize(EYEDIR);
-	float local_elevation = dot(view_direction, up);
-	// Geometry should cover the lower hemisphere. Holding any remaining pixels
-	// at the horizon colour avoids the fixed global-Y ground/sky split that a
-	// conventional planetary procedural sky produces inside a ring.
-	float zenith_blend = smoothstep(0.0, max(horizon_width, 0.01), max(local_elevation, 0.0));
-	zenith_blend = pow(zenith_blend, 0.72);
-	vec3 atmospheric_sky = mix(sky_horizon_color, sky_top_color, zenith_blend);
-	if (hub_level > 0.0001 && hub_in_scatter > 0.0) {
-		// Hub in-scatter (docs/eclipse-false-sun-spec.md E.1, phase E4c): the hub lights the air from the zenith, so the sky gets the same
-		// Rayleigh-like phase the real sun's forward scatter uses, taken toward the hub direction, in a saturated blue. This is what
-		// keeps the hub-lit sky blue instead of grey. Weighted by the hub level and the hub day; nothing is added at hub level 0.
-		float hub_cos = dot(view_direction, normalize(hub_direction));
-		float hub_phase = 0.35 + 0.65 * hub_cos * hub_cos;
-		atmospheric_sky += hub_scatter_color * hub_phase * hub_in_scatter * min(hub_level, 1.5) * clamp(ringworld_hub_day, 0.0, 1.0);
-	}
-
 	vec3 to_sun = normalize(sun_direction);
 	float local_solar_day = ringworld_effective_solar_day(smoothstep(
 		day_start_dot,
 		max(day_start_dot + 0.0001, day_full_dot),
 		dot(up, to_sun)));
-	// Start celestial composition in vacuum. The CPU-authored local atmospheric
-	// palette is added after the planet mask, so it also veils the giant.
+	// Start celestial composition in vacuum. The local atmosphere (Legacy palette or the Physical haze model) is composited after the
+	// planet mask, so it also veils the giant.
 	vec3 color = space_color;
 	float sun_alignment = clamp(dot(view_direction, to_sun), -1.0, 1.0);
 	float inner_cos = cos(radians(max(sun_disk_angular_radius_degrees, 0.01)));
@@ -287,36 +273,72 @@ void sky() {
 		vec3 planet_color = render_planet(view_direction, to_sun, planet_mask);
 		color = mix(color, planet_color, planet_mask);
 	}
-	// Do not fold solar visibility in here: CPU supplies day/night palette data.
-	// Adding this after the planet mask keeps the integrated local sky radiance
-	// in front of every celestial source even before the physical shell pass.
-	color += (atmospheric_sky - space_color) * clamp(atmosphere_factor, 0.0, 1.0);
 
 	vec3 axis = normalize(ring_axis_direction);
 	vec3 outward = -normalize(local_surface_up);
-	vec3 normalized_camera_position = outward * max(camera_radial_ratio, 0.000001)
-		+ axis * camera_across_ratio;
-	vec4 curved_air = sample_ring_sky_atmosphere(
-		normalized_camera_position,
-		view_direction,
-		axis,
-		max(ring_half_width_ratio, 0.000001),
-		to_sun,
-		day_start_dot,
-		day_full_dot,
-		exterior_day_scattering_boost,
-		exterior_night_scattering_boost,
-		planet_haze_enabled,
-		planet_light_color,
-		planet_haze_scattering_energy,
-		planet_haze_horizon_start_dot,
-		planet_haze_horizon_full_dot,
-		planet_haze_twilight_end_day_factor,
-		atmosphere_sun_forward_scattering);
-	curved_air *= ring_interior_factor;
-	// Composite integrated in-scattering in front of every celestial source.
-	// This physically transmits the already-rendered giant/stars through local
-	// air rather than painting a separate giant rim or overwriting its silhouette.
-	color = color * (1.0 - curved_air.a) + curved_air.rgb;
+	vec4 curved_air = vec4(0.0);
+	if (atmosphere_haze_model == 1) {
+		// Physical haze (docs/atmosphere-haze-revamp-plan.md P3): sky radiance is the same ring_haze_eval the spatial consumers use, over
+		// the first local air interval, with the camera at the origin in metres (the sky only uses directions, and is configured at
+		// scale 1 even in the far viewport). Celestial sources are transmitted through that air. atmosphere_factor (altitude fade) does
+		// not scale the in-scatter because the model handles altitude; ring_atmosphere_enabled, the CPU palette, the boosts, the sun
+		// forward-scatter term and the planet haze are not used. The hub term below is a separate artistic in-scatter, zero outside an event.
+		float ring_radius_m = ring_radius_meters;
+		float half_width_m = ring_half_width_ratio * ring_radius_m;
+		float across_m = camera_across_ratio * ring_radius_m;
+		RingHazeParams hp = ring_haze_uniform_params(to_sun, outward);
+		hp.quality = AT_CUBEMAP_PASS ? 4 : ring_haze_quality;
+		RingHaze haze = ring_haze_eval_sky(hp, view_direction, vec3(0.0), sky_camera_height_meters, outward, axis,
+			half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);
+		vec3 in_scatter = haze.S_sun + haze.S_amb;
+		if (hub_level > 0.0001 && hub_in_scatter > 0.0) {
+			float hub_cos = dot(view_direction, normalize(hub_direction));
+			float hub_phase = 0.35 + 0.65 * hub_cos * hub_cos;
+			in_scatter += hub_scatter_color * hub_phase * hub_in_scatter * min(hub_level, 1.5) * clamp(ringworld_hub_day, 0.0, 1.0);
+		}
+		float interior = ring_interior_factor;
+		curved_air = vec4(in_scatter * interior, 1.0 - mix(1.0, haze.T.g, interior));
+		color = color * mix(vec3(1.0), haze.T, interior) + in_scatter * interior;
+	} else {
+		float zenith_blend = smoothstep(0.0, max(horizon_width, 0.01), max(dot(view_direction, up), 0.0));
+		zenith_blend = pow(zenith_blend, 0.72);
+		vec3 atmospheric_sky = mix(sky_horizon_color, sky_top_color, zenith_blend);
+		if (hub_level > 0.0001 && hub_in_scatter > 0.0) {
+			// Hub in-scatter (docs/eclipse-false-sun-spec.md E.1, phase E4c): the hub lights the air from the zenith, so the sky gets the same
+			// Rayleigh-like phase the real sun's forward scatter uses, taken toward the hub direction, in a saturated blue. This is what
+			// keeps the hub-lit sky blue instead of grey. Weighted by the hub level and the hub day; nothing is added at hub level 0.
+			float hub_cos = dot(view_direction, normalize(hub_direction));
+			float hub_phase = 0.35 + 0.65 * hub_cos * hub_cos;
+			atmospheric_sky += hub_scatter_color * hub_phase * hub_in_scatter * min(hub_level, 1.5) * clamp(ringworld_hub_day, 0.0, 1.0);
+		}
+		// Do not fold solar visibility in here: CPU supplies day/night palette data.
+		// Adding this after the planet mask keeps the integrated local sky radiance
+		// in front of every celestial source even before the physical shell pass.
+		color += (atmospheric_sky - space_color) * clamp(atmosphere_factor, 0.0, 1.0);
+		vec3 normalized_camera_position = outward * max(camera_radial_ratio, 0.000001)
+			+ axis * camera_across_ratio;
+		curved_air = sample_ring_sky_atmosphere(
+			normalized_camera_position,
+			view_direction,
+			axis,
+			max(ring_half_width_ratio, 0.000001),
+			to_sun,
+			day_start_dot,
+			day_full_dot,
+			exterior_day_scattering_boost,
+			exterior_night_scattering_boost,
+			planet_haze_enabled,
+			planet_light_color,
+			planet_haze_scattering_energy,
+			planet_haze_horizon_start_dot,
+			planet_haze_horizon_full_dot,
+			planet_haze_twilight_end_day_factor,
+			atmosphere_sun_forward_scattering);
+		curved_air *= ring_interior_factor;
+		// Composite integrated in-scattering in front of every celestial source.
+		// This physically transmits the already-rendered giant/stars through local
+		// air rather than painting a separate giant rim or overwriting its silhouette.
+		color = color * (1.0 - curved_air.a) + curved_air.rgb;
+	}
 	COLOR = color;
 }

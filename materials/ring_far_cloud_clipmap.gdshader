@@ -133,12 +133,12 @@ void fragment() {
 	vec3 ambient_color = mix(vec3(0.30, 0.36, 0.46), vec3(0.045, 0.065, 0.10), clamp(resolved_storm_factor * 0.88 + resolved_coverage * 0.18, 0.0, 1.0)) * mix(underside, ambient_underside, day);
 	float terrain_sun = ring_terrain_cloud_receiver_visibility(vec3(p.x * 1000.0, terrain_cloud_receiver_height_meters, p.y * 1000.0));
 	color -= max(color - ambient_color, vec3(0.0)) * (1.0 - terrain_sun);
-	vec4 atmosphere = sample_ring_atmosphere(
+	RingHaze haze = ring_haze_sample(
 		ring_atmosphere_camera_world_position,
 		world_position,
 		vec3(0.0),
 		day);
-	float atmosphere_transmittance = 1.0 - atmosphere.a;
+	vec3 atmosphere_transmittance = haze.T;
 	vec2 event_uv = vec2(
 		p.x / max(ring_circumference_km, 1.0),
 		p.y / max(ring_width_km, 1.0));
@@ -172,6 +172,6 @@ void fragment() {
 	// the bright ring it is meant to illuminate.
 	ALBEDO = (color * base_alpha + flash_premultiplied) * atmosphere_transmittance;
 	EMISSION = color * mix(0.025, 0.12, day) * base_alpha * atmosphere_transmittance
-		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy * base_alpha;
+		+ ring_haze_inscatter(haze) * base_alpha;
 	ALPHA = base_alpha;
 }

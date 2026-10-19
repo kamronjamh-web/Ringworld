@@ -3,9 +3,11 @@ render_mode unshaded;
 #include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 #include "res://materials/celestial_lighting.gdshaderinc"
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
+#include "res://materials/ring_haze_shared.gdshaderinc"
 // Physical-metre profile in the existing mask ray basis. Zero profile preserves
 // standalone fixtures and disabled atmosphere without changing cloud density.
-uniform vec4 ring_cloud_atmosphere_profile[10];
+// 16 slots: 0-9 Legacy, 10-15 physical haze (see ring_haze_from_profile in ring_haze_shared.gdshaderinc).
+uniform vec4 ring_cloud_atmosphere_profile[16];
 
 // Low-resolution background-only integration of the camera-local cloud field.
 // This intentionally mirrors ring_local_volumetric_cloud.gdshader, but only
@@ -207,12 +209,20 @@ void fragment() {
 			float contribution = (1.0 - accumulated_alpha) * sample_alpha;
 			vec3 sample_color = sample_value.rgb;
 			if (ring_cloud_atmosphere_profile[0].x > 0.5 && contribution > 0.0) {
-				vec4 haze = ring_atmosphere_local_haze_shared(
-					ray_direction * distance_meters, vec3(0.0),
-					ring_cloud_atmosphere_profile[7].xyz,
-					ring_cloud_atmosphere_profile[9].xyz,
-					ringworld_effective_solar_visibility(), ring_cloud_atmosphere_profile);
-				sample_color = mix(sample_color, haze.rgb, haze.a);
+				if (ring_haze_profile_physical(ring_cloud_atmosphere_profile)) {
+					// Same camera-local day as ring_haze_sample (the mask reads the live globals itself).
+					float haze_day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35,
+						dot(-normalize(ring_cloud_atmosphere_profile[7].xyz), normalize(ring_cloud_atmosphere_profile[9].xyz))));
+					RingHaze haze = ring_haze_from_profile(ray_direction * distance_meters, vec3(0.0), ring_cloud_atmosphere_profile, haze_day);
+					sample_color = sample_color * haze.T + haze.S_sun + haze.S_amb;
+				} else {
+					vec4 haze = ring_atmosphere_local_haze_shared(
+						ray_direction * distance_meters, vec3(0.0),
+						ring_cloud_atmosphere_profile[7].xyz,
+						ring_cloud_atmosphere_profile[9].xyz,
+						ringworld_effective_solar_visibility(), ring_cloud_atmosphere_profile);
+					sample_color = mix(sample_color, haze.rgb, haze.a);
+				}
 			}
 			accumulated_color += sample_color * contribution;
 			accumulated_alpha += contribution;

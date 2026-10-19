@@ -79,8 +79,7 @@ float ribbon_edge(float side) {
 	return 1.0 - smoothstep(0.8, 1.0, abs(side));
 }
 
-// Atmosphere attenuation along the camera -> point path (real metres): 1 - atmosphere.a.
+// Atmosphere attenuation along the camera -> point path (real metres): transmittance (green channel in the Physical model).
 float ribbon_atmosphere_visibility(vec3 camera_real, vec3 point_real, vec3 center_real, float background) {
-	vec4 atmosphere = sample_ring_atmosphere(camera_real, point_real, center_real, background);
-	return 1.0 - atmosphere.a;
+	return ring_haze_visibility(ring_haze_sample(camera_real, point_real, center_real, background));
 }

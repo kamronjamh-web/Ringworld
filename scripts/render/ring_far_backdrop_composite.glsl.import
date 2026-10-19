@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bgdjos0c8o0lx"
+path="res://.godot/imported/ring_far_backdrop_composite.glsl-b31b1f5d18c4f2df4706d6e6a6db0ced.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_far_backdrop_composite.glsl"
+dest_files=["res://.godot/imported/ring_far_backdrop_composite.glsl-b31b1f5d18c4f2df4706d6e6a6db0ced.res"]
+
+[params]
+

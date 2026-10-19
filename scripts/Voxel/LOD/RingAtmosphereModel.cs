@@ -12,6 +12,8 @@ namespace RingworldTechDemo.Voxel.LOD;
 public static class RingAtmosphereModel
 {
     public enum ArtDirectionPreset { Natural, Cinematic }
+    /// <summary>Temporary A/B switch (docs/atmosphere-haze-revamp-plan.md P2a, removed in P8). Legacy = smoothstep distance ramp, Physical = ring_haze_eval.</summary>
+    public enum HazeModelKind { Legacy = 0, Physical = 1 }
     private sealed class MaterialBinding
     {
         public MaterialBinding(
@@ -37,7 +39,124 @@ public static class RingAtmosphereModel
     private static ArtDirectionPreset _artPreset = ArtDirectionPreset.Natural;
     private static float _visibilityFullKm = 120.0f, _density = 1.0f, _altitudeFalloff = 0.5f;
     private static float _aerosol = 0.35f, _forwardScattering = 0.22f, _sunWarmth = 0.25f;
+    private static HazeModelKind _hazeModel = HazeModelKind.Legacy;
     public static ulong Revision { get; private set; }
+
+    public static HazeModelKind HazeModel
+    {
+        get => _hazeModel;
+        set
+        {
+            if (_hazeModel == value) return;
+            _hazeModel = value;
+            Revision++;
+            ApplyAll();
+        }
+    }
+
+    // ---- Physical haze (P2a). Units are physical (1/m, m) at every coordinate scale; the shader converts positions itself. ----
+    // Base values match ring_haze_params_default() in materials/ring_haze_shared.gdshaderinc.
+    public static readonly Vector3 BaseSigmaRayleigh = new(5.802e-6f, 13.558e-6f, 33.1e-6f);
+    public const float BaseRayleighHeightMeters = 8000.0f, BaseAerosolHeightMeters = 1500.0f, BaseMistHeightMeters = 400.0f;
+    public const float BaseSigmaMist = 4.0e-6f, BaseOmegaAerosol = 0.9f, BaseOmegaMist = 0.95f, BaseMieG = 0.6f;
+    /// <summary>The legacy "full opacity distance" control (Natural 120 km) maps to Koschmieder visibility with this factor (Natural 120 km -> 180 km).</summary>
+    public const float VisibilityScale = 1.5f;
+    public const float AerosolControlDefault = 0.35f, ForwardControlDefault = 0.22f, WarmthControlDefault = 0.25f;
+    public static Vector3 HazeSigmaRayleigh { get; private set; } = BaseSigmaRayleigh;
+    public static float HazeRayleighHeightMeters { get; private set; } = BaseRayleighHeightMeters;
+    public static float HazeSigmaAerosol { get; private set; } = 4.175e-6f;
+    public static float HazeOmegaAerosol { get; private set; } = BaseOmegaAerosol;
+    public static float HazeAerosolHeightMeters { get; private set; } = BaseAerosolHeightMeters;
+    public static float HazeSigmaMist { get; private set; } = BaseSigmaMist;
+    public static float HazeOmegaMist { get; private set; } = BaseOmegaMist;
+    public static float HazeMistHeightMeters { get; private set; } = BaseMistHeightMeters;
+    public static float HazeG { get; private set; } = BaseMieG;
+    public static Vector3 HazeSunTint { get; private set; } = Vector3.One;
+    public static int HazeQuality { get; set; } = 8;
+    /// <summary>Top of the integrated air: the controller's upper shell height (AtmosphereUpperHeightMeters export).</summary>
+    public static float HazeCapHeightMeters => UpperHeightMeters;
+    /// <summary>Physical meteorological visibility (km) implied by the current art controls at density 1.</summary>
+    public static float HazeVisibilityKm => Mathf.Clamp(_visibilityFullKm, 10.0f, 400.0f) * VisibilityScale;
+
+    private static readonly StringName[] HazeParameterNameList =
+    {
+        "atmosphere_haze_model", "ring_haze_sigma_R", "ring_haze_H_R", "ring_haze_sigma_A", "ring_haze_omega_A", "ring_haze_H_A",
+        "ring_haze_sigma_M0", "ring_haze_omega_M", "ring_haze_H_mist", "ring_haze_cap_height_meters", "ring_haze_g", "ring_haze_quality",
+        "ring_haze_sun_tint",
+    };
+    /// <summary>Shader uniforms written by <see cref="PushHazeParameters"/> (for follower materials that mirror a surface material).</summary>
+    public static System.Collections.Generic.IReadOnlyList<StringName> HazeParameterNames => HazeParameterNameList;
+
+    /// <summary>Publishes the haze-model uniforms through any parameter setter (ShaderMaterial or plugin material).</summary>
+    public static void PushHazeParameters(Action<StringName, Variant> setParameter)
+    {
+        setParameter(HazeParameterNameList[0], (int)_hazeModel);
+        setParameter(HazeParameterNameList[1], HazeSigmaRayleigh);
+        setParameter(HazeParameterNameList[2], HazeRayleighHeightMeters);
+        setParameter(HazeParameterNameList[3], HazeSigmaAerosol);
+        setParameter(HazeParameterNameList[4], HazeOmegaAerosol);
+        setParameter(HazeParameterNameList[5], HazeAerosolHeightMeters);
+        setParameter(HazeParameterNameList[6], HazeSigmaMist);
+        setParameter(HazeParameterNameList[7], HazeOmegaMist);
+        setParameter(HazeParameterNameList[8], HazeMistHeightMeters);
+        setParameter(HazeParameterNameList[9], HazeCapHeightMeters);
+        setParameter(HazeParameterNameList[10], HazeG);
+        setParameter(HazeParameterNameList[11], HazeQuality);
+        setParameter(HazeParameterNameList[12], HazeSunTint);
+    }
+
+    // ---- Physical haze lighting for CPU-built compute/mask profiles (P2b). Compute shaders cannot read Godot globals, so
+    // day_side_atmosphere.gd hands the exact values it publishes as ringworld_haze_* globals to RingSunshineCloudBridge.SetHazeLighting,
+    // which stores them here (same pattern as EclipseNightScale). Defaults match the project.godot global defaults, which are RingHazeSkyIrradiance outputs at the reference pose
+    // (Natural preset, sun 60 deg, 300 m, giant light off, haze_brightness 1, albedo 0.1, gain 1): day = A(sun), night = haze_night_floor. ----
+    public static Vector3 HazeSunIrradiance { get; set; } = new(12.566f, 12.566f, 12.566f);
+    public static Vector3 HazeAmbientDay { get; set; } = new(0.2631f, 0.3464f, 0.4922f);
+    public static Vector3 HazeAmbientNight { get; set; } = new(0.004f, 0.005f, 0.008f);
+
+    public const int CloudProfileSlots = 16;
+
+    /// <summary>Camera-local day weight, exactly ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(-outward, to_sun))) of ring_haze_sample:
+    /// max(geometric * solar_visibility, hub_day). outward and toSun must be in the same space.</summary>
+    public static float LocalHazeDay(Vector3 outward, Vector3 toSun, float solarVisibility, float hubDay)
+    {
+        float x = Mathf.Clamp((-outward.Normalized().Dot(toSun.Normalized()) + 0.2f) / 0.55f, 0.0f, 1.0f);
+        float geometric = x * x * (3.0f - 2.0f * x);
+        return Mathf.Max(geometric * Mathf.Clamp(solarVisibility, 0.0f, 1.0f), Mathf.Clamp(hubDay, 0.0f, 1.0f));
+    }
+
+    /// <summary>
+    /// Packs the complete 16-vec4 Sunshine / far-cloud-mask atmosphere profile (the single packer for the Sunshine bridge, the far cloud mask
+    /// and the test helpers, so they cannot drift). Slots 0-9 keep their Legacy meaning; 10-15 carry the physical haze (layout documented at
+    /// ring_haze_from_profile in materials/ring_haze_shared.gdshaderinc). Directions are in whatever space the consumer ray uses
+    /// (world for Sunshine, the canonical mask basis for the far mask); outward and toSun must share it.
+    /// Legacy day = geo * max(vis, hub) (slot 6.w, unchanged); physical day = max(geo * vis, hub) (slot 13.z, same as ring_haze_sample).
+    /// </summary>
+    public static void PackCloudProfile(
+        Godot.Collections.Array<Vector4> profile, double preciseRadius, Vector3 outward, Vector3 axis, float cameraHeightMeters,
+        float sidewallNegativeMeters, float sidewallPositiveMeters, Vector3 toSun, float solarVisibility, float hubDay,
+        float opacityMultiplier = 1.0f)
+    {
+        if (profile.Count < CloudProfileSlots) profile.Resize(CloudProfileSlots);
+        float legacySolarVisibility = Mathf.Max(solarVisibility, hubDay);
+        profile[0] = new(1, (float)preciseRadius, FloorDepthMeters, BoundaryHeightMeters);
+        profile[1] = new(UpperHeightMeters, BoundaryExtinctionMeters, UpperExtinctionMeters, TotalMaxOpacity);
+        profile[2] = new(BoundaryMaxOpacity, UpperMaxOpacity, DistanceHazeMaxOpacity, ScatteringEnergy);
+        profile[3] = new(ClearDistanceMeters, FullDistanceMeters, HighAltitudeClearDistanceMeters, HighAltitudeFullDistanceMeters);
+        profile[4] = new(DistanceAltitudeStartMeters, DistanceAltitudeEndMeters, Aerosol, ForwardScattering);
+        profile[5] = new(DayColor.R, DayColor.G, DayColor.B, SunWarmth);
+        profile[6] = new(NightColor.R * EclipseNightScale, NightColor.G * EclipseNightScale, NightColor.B * EclipseNightScale, legacySolarVisibility);
+        profile[7] = new(outward.X, outward.Y, outward.Z, cameraHeightMeters);
+        profile[8] = new(axis.X, axis.Y, axis.Z, sidewallNegativeMeters);
+        profile[9] = new(toSun.X, toSun.Y, toSun.Z, sidewallPositiveMeters);
+        Vector3 sun = HazeSunIrradiance * HazeSunTint;
+        Vector3 sigmaR = HazeSigmaRayleigh;
+        profile[10] = new(_hazeModel == HazeModelKind.Physical ? 1.0f : 0.0f, opacityMultiplier, sigmaR.X, sigmaR.Y);
+        profile[11] = new(sigmaR.Z, HazeRayleighHeightMeters, HazeSigmaAerosol, HazeOmegaAerosol);
+        profile[12] = new(HazeAerosolHeightMeters, HazeSigmaMist, HazeOmegaMist, HazeMistHeightMeters);
+        profile[13] = new(HazeG, HazeQuality, LocalHazeDay(outward, toSun, solarVisibility, hubDay), sun.X);
+        profile[14] = new(sun.Y, sun.Z, HazeAmbientDay.X, HazeAmbientDay.Y);
+        profile[15] = new(HazeAmbientDay.Z, HazeAmbientNight.X, HazeAmbientNight.Y, HazeAmbientNight.Z);
+    }
 
     public static bool Enabled
     {
@@ -163,6 +282,39 @@ public static class RingAtmosphereModel
         Aerosol = Mathf.Clamp(_aerosol, 0.0f, 1.0f);
         ForwardScattering = Mathf.Clamp(_forwardScattering, 0.0f, 0.85f);
         SunWarmth = Mathf.Clamp(_sunWarmth, 0.0f, 1.0f);
+        ApplyPhysicalProfile();
+    }
+
+    /// <summary>
+    /// Maps the persisted art controls onto the physical haze parameters. The legacy shell/opacity values above are untouched and
+    /// still drive the Legacy model; shell geometry and the cap height stay with the controller exports.
+    ///   visibility (km)  -> Koschmieder visibility V = 1.5 * km (Natural 120 -> 180 km); sigma_A = max(3.912 / V - sigma_R.g - sigma_M0, 0).
+    ///   density          -> multiplies every extinction (Rayleigh, aerosol, mist); 0 is the identity, 1 the nominal air.
+    ///   aerosol (0..1)   -> ground-mist load, sigma_M0 = 4e-6 * aerosol / 0.35; sigma_A re-balances so V is unchanged.
+    ///   altitude falloff -> scale heights of aerosol and mist, H = H0 * 2^(2 * (0.5 - falloff)) (0 -> x2 taller, 1 -> x0.5),
+    ///                       matching the legacy sense (higher falloff = haze thins faster with altitude).
+    ///   forward scatter  -> Mie g = 0.6 + (fs - 0.22) * 0.4545 (Natural 0.22 -> 0.60, Cinematic 0.55 -> 0.75).
+    ///   sun warmth       -> tint on the haze sun colour: neutral at 0.25, towards (1, 0.78, 0.55) at 1, towards a cool (0.9, 0.97, 1.08) at 0.
+    /// </summary>
+    private static void ApplyPhysicalProfile()
+    {
+        float density = Mathf.Clamp(_density, 0.0f, 2.0f);
+        float sigmaMist = BaseSigmaMist * Mathf.Clamp(_aerosol, 0.0f, 1.0f) / AerosolControlDefault;
+        float sigmaAerosol = Mathf.Max(3.912f / (HazeVisibilityKm * 1000.0f) - BaseSigmaRayleigh.Y - sigmaMist, 0.0f);
+        float heightScale = Mathf.Pow(2.0f, 2.0f * (0.5f - Mathf.Clamp(_altitudeFalloff, 0.0f, 1.0f)));
+        HazeSigmaRayleigh = BaseSigmaRayleigh * density;
+        HazeSigmaAerosol = sigmaAerosol * density;
+        HazeSigmaMist = sigmaMist * density;
+        HazeRayleighHeightMeters = BaseRayleighHeightMeters;
+        HazeAerosolHeightMeters = BaseAerosolHeightMeters * heightScale;
+        HazeMistHeightMeters = BaseMistHeightMeters * heightScale;
+        HazeOmegaAerosol = BaseOmegaAerosol;
+        HazeOmegaMist = BaseOmegaMist;
+        HazeG = Mathf.Clamp(BaseMieG + (_forwardScattering - ForwardControlDefault) * 0.4545f, 0.0f, 0.95f);
+        float warmth = Mathf.Clamp(_sunWarmth, 0.0f, 1.0f);
+        HazeSunTint = warmth >= WarmthControlDefault
+            ? Vector3.One.Lerp(new Vector3(1.0f, 0.78f, 0.55f), (warmth - WarmthControlDefault) / (1.0f - WarmthControlDefault))
+            : Vector3.One.Lerp(new Vector3(0.9f, 0.97f, 1.08f), (WarmthControlDefault - warmth) / WarmthControlDefault);
     }
 
     private static float FiniteOrDefault(float value, float fallback) => float.IsFinite(value) ? value : fallback;
@@ -260,6 +412,9 @@ public static class RingAtmosphereModel
         material.SetShaderParameter("atmosphere_sun_warmth", SunWarmth);
         material.SetShaderParameter("atmosphere_day_color", new Vector3(DayColor.R, DayColor.G, DayColor.B));
         material.SetShaderParameter("atmosphere_night_color", new Vector3(NightColor.R, NightColor.G, NightColor.B));
+        // Physical-model uniforms are in physical units at every coordinate scale (the shader scales positions by the ray frame's
+        // coordinate scale), so the far viewport (1/1000) pushes the same values as the main viewport.
+        PushHazeParameters(material.SetShaderParameter);
     }
 
     public static bool RunContractSelfTest(double ringRadiusMeters, out string summary)
@@ -296,9 +451,31 @@ public static class RingAtmosphereModel
         bool passed = Enabled ? profileShape && densityShape : opacityNearDistance <= 0.000001
             && opacityClearDistance <= 0.000001 && opacityMidDistance <= 0.000001
             && opacityFullDistance <= 0.000001 && mountainFullDistance <= 0.000001;
+        // Physical parameter mapping: Koschmieder closure (when the aerosol term is not clamped away), zero density is the identity,
+        // everything finite and positive, and the model switch round-trips.
+        float density = Mathf.Clamp(_density, 0.0f, 2.0f);
+        float greenExtinction = HazeSigmaRayleigh.Y + HazeSigmaAerosol + HazeSigmaMist;
+        float koschmieder = density > 0.0f ? 3.912f / (HazeVisibilityKm * 1000.0f) * density : 0.0f;
+        bool aerosolClamped = HazeSigmaAerosol <= 0.0f;
+        bool physicalVisibility = aerosolClamped
+            ? greenExtinction >= koschmieder - 1e-9f
+            : Mathf.Abs(greenExtinction - koschmieder) <= koschmieder * 0.001f + 1e-12f;
+        bool physicalZeroDensity = density > 0.0f || (HazeSigmaRayleigh.LengthSquared() <= 0.0f && HazeSigmaAerosol <= 0.0f && HazeSigmaMist <= 0.0f);
+        bool physicalFinite = float.IsFinite(HazeSigmaAerosol) && HazeSigmaAerosol >= 0.0f && HazeSigmaMist >= 0.0f
+            && HazeAerosolHeightMeters > 0.0f && HazeMistHeightMeters > 0.0f && HazeG >= 0.0f && HazeG <= 0.95f
+            && HazeSunTint.X > 0.0f && HazeSunTint.Y > 0.0f && HazeSunTint.Z > 0.0f;
+        HazeModelKind originalModel = _hazeModel;
+        ulong originalRevision = Revision;
+        HazeModel = originalModel == HazeModelKind.Legacy ? HazeModelKind.Physical : HazeModelKind.Legacy;
+        bool modelSwitch = _hazeModel != originalModel && Revision == originalRevision + 1;
+        HazeModel = originalModel;
+        bool physicalPassed = physicalVisibility && physicalZeroDensity && physicalFinite && modelSwitch && _hazeModel == originalModel;
+        passed = passed && physicalPassed;
         summary = $"profileTransfer enabled={Enabled}, zeroDensity={zeroDensity}, surface(near={opacityNearDistance:0.000}, clear={opacityClearDistance:0.000}, mid={opacityMidDistance:0.000}, full={opacityFullDistance:0.000}), "
             + $"mountain(clear={mountainClearDistance:0.000}, full={mountainFullDistance:0.000}), "
-            + "explicit_connected_lengths";
+            + "explicit_connected_lengths, "
+            + $"physical(model={_hazeModel}, V={HazeVisibilityKm:0.#}km, sigmaGreen={greenExtinction * 1e6f:0.000}e-6, koschmieder={koschmieder * 1e6f:0.000}e-6, "
+            + $"sigmaA={HazeSigmaAerosol * 1e6f:0.000}e-6, sigmaM={HazeSigmaMist * 1e6f:0.000}e-6, g={HazeG:0.000}, ok={physicalPassed})";
         return passed;
     }
 

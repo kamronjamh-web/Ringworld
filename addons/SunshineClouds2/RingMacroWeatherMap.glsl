@@ -16,6 +16,7 @@
 // copy bound at 1 and the build parameters at 2 (origin, size, layer and the wind frame offset of that snapshot).
 
 #include "./CloudsInc.comp"
+// GenericData: 304 floats (16-slot ring atmosphere profile, P2b); touched so Godot reimports against the new CloudsInc.comp layout.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 

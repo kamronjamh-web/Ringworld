@@ -548,7 +548,7 @@ void fragment() {
 		+ water_tint * (1.0 - volume_transmission_rgb) + shallow_scatter;
 	vec3 reflection_color = vec3(0.34, 0.52, 0.68);
 	vec3 grazing_color = mix(optical_water, reflection_color, reflection_weight);
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	float wave_slope = clamp(1.0 - dot(normalize(water_normal_world), normalize(smooth_water_normal_world)), 0.0, 1.0);
 	// FFT water deliberately suppresses the analytic normal path above, but that
 	// must not also force the distant-water roughness.  Keep its independently
@@ -570,11 +570,13 @@ void fragment() {
 		grazing_color = mix(optical_water, reflection_color, reflection_weight);
 	}
 	grazing_color = mix(grazing_color, foam_color, foam);
-	ALBEDO = grazing_color * (1.0 - atmosphere.a);
+	ALBEDO = grazing_color * haze.T;
 	// The foam self-light floor scales with the eclipse night light (spec D.1); exactly 1 outside an eclipse.
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy + foam_color * foam * (0.16 * ringworld_night_light_scale);
+	EMISSION = ring_haze_inscatter(haze) + foam_color * foam * (0.16 * ringworld_night_light_scale);
 	ROUGHNESS = max(base_roughness, specular_aa_roughness);
-	SPECULAR = ring_water_dielectric_specular() * ocean_specular;
+	// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
+	// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.
+	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze);
 	METALLIC = 0.0;
 	AO = 1.0 - sample_combined_cloud_shadow(world_position, ring_day_factor) * 0.60;
 	AO_LIGHT_AFFECT = 0.0;

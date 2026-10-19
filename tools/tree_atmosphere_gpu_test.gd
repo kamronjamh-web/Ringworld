@@ -2,9 +2,12 @@ extends SceneTree
 
 ## Production tree haze contract: procedural, imported mesh, and the shared
 ## impostor atlas must all use the same camera-relative atmosphere response.
+## Run:  godot --path . --script res://tools/tree_atmosphere_gpu_test.gd [-- --model=physical]
+## --model=physical selects the P2a physical haze (atmosphere_haze_model = 1); the default is Legacy.
 const SIZE := 192
 const OUT := "res://.godot/tree_atmosphere_gpu"
 const BACKGROUND := Color(0.015, 0.02, 0.03, 1.0)
+var physical := false
 var failed := false
 var done := false
 var viewport: SubViewport
@@ -13,6 +16,7 @@ var nodes := {}
 var materials: Array[ShaderMaterial] = []
 
 func _initialize() -> void:
+	physical = "--model=physical" in OS.get_cmdline_user_args()
 	if RenderingServer.get_rendering_device() == null:
 		_fail("RenderingDevice required; Dummy renderer is invalid")
 		return
@@ -44,7 +48,31 @@ func _run() -> void:
 			_fail("%s atmosphere filled alpha-cutout texels" % label); return
 	if results.mesh * results.impostor <= 0.0 or absf(results.mesh / results.impostor) > 3.0:
 		_fail("mesh/impostor haze profile response diverged: %s" % results); return
-	print("TREE_ATMOSPHERE_GPU=PASS procedural=%.6f mesh=%.6f impostor=%.6f" % [results.procedural, results.mesh, results.impostor])
+	# In-scatter must grow (never shrink) with distance: a black tree shows only haze radiance, re-captured at increasing range.
+	_show("procedural")
+	var original_tint: Variant = (nodes["procedural"].material_override as ShaderMaterial).get_shader_parameter("tree_tint")
+	(nodes["procedural"].material_override as ShaderMaterial).set_shader_parameter("tree_tint", Vector3.ZERO)
+	var previous_effect := -1.0
+	var effects := []
+	# Ranges stay above the floor (a 300 m camera sees ground at ~55 km); beyond that a physical ray dips into the dense floor shell
+	# where side-scatter Mie weighs more than Rayleigh, so the in-scatter radiance legitimately stops being monotone.
+	for distance in [2000.0, 10000.0, 30000.0, 50000.0]:
+		nodes["procedural"].position = Vector3(0, 0, -distance)
+		_set_atmosphere(false, false)
+		var clear_image := await _capture("monotone_clear_%d" % int(distance))
+		_set_atmosphere(true, false)
+		var hazed_image := await _capture("monotone_hazed_%d" % int(distance))
+		var effect := _footprint_effect(clear_image, hazed_image, background)
+		effects.append(effect)
+		if effect < previous_effect - .002:
+			_fail("haze in-scatter shrank with distance: %s" % [effects]); return
+		previous_effect = effect
+	# The Legacy fixture saturates its ramp at 2 km, so only the physical model has a 2-50 km gradient to assert.
+	if physical and effects[effects.size() - 1] < effects[0] + .01:
+		_fail("haze in-scatter did not grow over 2-50 km: %s" % [effects]); return
+	(nodes["procedural"].material_override as ShaderMaterial).set_shader_parameter("tree_tint", original_tint)
+	nodes["procedural"].position = Vector3(0, 0, -100000)
+	print("TREE_ATMOSPHERE_GPU=PASS model=%s procedural=%.6f mesh=%.6f impostor=%.6f monotone=%s" % ["physical" if physical else "legacy", results.procedural, results.mesh, results.impostor, effects])
 	done = true
 	quit(0)
 
@@ -72,8 +100,9 @@ func _copy(source: ShaderMaterial) -> ShaderMaterial:
 
 func _configure(material: ShaderMaterial) -> void:
 	material.set_shader_parameter("ring_center", Vector3.ZERO); material.set_shader_parameter("sun_direction", Vector3.LEFT); material.set_shader_parameter("night_tint", Vector3.ONE); material.set_shader_parameter("vegetation_wind_enabled", false)
-	material.set_shader_parameter("ring_atmosphere_ray_frame_valid", true); material.set_shader_parameter("ring_atmosphere_camera_world_position", Vector3.ZERO); material.set_shader_parameter("ring_atmosphere_camera_height_meters", 0.0); material.set_shader_parameter("ring_atmosphere_outward_world", Vector3.RIGHT); material.set_shader_parameter("ring_atmosphere_axis_world", Vector3.UP); material.set_shader_parameter("ring_atmosphere_sidewall_negative_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_sidewall_positive_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_coordinate_scale", 1.0); material.set_shader_parameter("ring_atmosphere_to_sun", Vector3.LEFT)
+	material.set_shader_parameter("ring_atmosphere_ray_frame_valid", true); material.set_shader_parameter("ring_atmosphere_camera_world_position", Vector3.ZERO); material.set_shader_parameter("ring_atmosphere_camera_height_meters", 300.0 if physical else 0.0); material.set_shader_parameter("ring_atmosphere_outward_world", Vector3.RIGHT); material.set_shader_parameter("ring_atmosphere_axis_world", Vector3.UP); material.set_shader_parameter("ring_atmosphere_sidewall_negative_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_sidewall_positive_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_coordinate_scale", 1.0); material.set_shader_parameter("ring_atmosphere_to_sun", Vector3.LEFT)
 	material.set_shader_parameter("ring_radius_meters", 5000000.0); material.set_shader_parameter("atmosphere_clear_distance_meters", 1000.0); material.set_shader_parameter("atmosphere_full_distance_meters", 2000.0); material.set_shader_parameter("atmosphere_boundary_max_opacity", .35); material.set_shader_parameter("atmosphere_upper_max_opacity", .1); material.set_shader_parameter("atmosphere_distance_haze_max_opacity", .65); material.set_shader_parameter("atmosphere_total_max_opacity", .8); material.set_shader_parameter("atmosphere_scattering_energy", .26)
+	material.set_shader_parameter("atmosphere_haze_model", 1 if physical else 0)
 
 func _set_atmosphere(enabled: bool, zero_density: bool) -> void:
 	for material in materials:
@@ -81,6 +110,10 @@ func _set_atmosphere(enabled: bool, zero_density: bool) -> void:
 		material.set_shader_parameter("atmosphere_boundary_max_opacity", 0.0 if zero_density else .35)
 		material.set_shader_parameter("atmosphere_upper_max_opacity", 0.0 if zero_density else .1)
 		material.set_shader_parameter("atmosphere_distance_haze_max_opacity", 0.0 if zero_density else .65)
+		# Physical model: zero density = zero extinction in every layer.
+		material.set_shader_parameter("ring_haze_sigma_R", Vector3.ZERO if zero_density else Vector3(5.802e-6, 13.558e-6, 33.1e-6))
+		material.set_shader_parameter("ring_haze_sigma_A", 0.0 if zero_density else 4.175e-6)
+		material.set_shader_parameter("ring_haze_sigma_M0", 0.0 if zero_density else 4.0e-6)
 
 func _show(label: String) -> void:
 	for key in nodes: nodes[key].visible = key == label
@@ -98,6 +131,16 @@ func _foreground_luma(image: Image, background: Image) -> float:
 		for x in range(SIZE):
 			var color := image.get_pixel(x, y)
 			if _color_delta(color, background.get_pixel(x, y)) > .02: total += color.srgb_to_linear().get_luminance(); count += 1
+	return total / max(1, count)
+
+## Mean |hazed - clear| luminance over the tree's clear-air footprint (pixels that differ from the background without haze).
+func _footprint_effect(clear: Image, hazed: Image, background: Image) -> float:
+	var total := 0.0; var count := 0
+	for y in range(SIZE):
+		for x in range(SIZE):
+			var color := clear.get_pixel(x, y)
+			if _color_delta(color, background.get_pixel(x, y)) > .02:
+				total += absf(hazed.get_pixel(x, y).srgb_to_linear().get_luminance() - color.srgb_to_linear().get_luminance()); count += 1
 	return total / max(1, count)
 
 func _image_delta(a: Image, b: Image) -> float:

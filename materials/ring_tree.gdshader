@@ -24,7 +24,8 @@ uniform bool tree_foliage_attachments = false;
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
 varying vec3 tree_world_position;
-varying float tree_haze_transmittance;
+varying vec3 tree_haze_T;
+varying vec3 tree_haze_S;
 
 void vertex() {
 	vec3 tree_root_world = MODEL_MATRIX[3].xyz;
@@ -48,8 +49,10 @@ void vertex() {
 	tree_day_factor = ringworld_effective_solar_day(smoothstep(
 		day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	tree_world_position = world_position;
-	tree_haze_transmittance = 1.0 - sample_ring_atmosphere(
-		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor).a;
+	RingHaze vertex_haze = ring_haze_sample(
+		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor);
+	tree_haze_T = vertex_haze.T;
+	tree_haze_S = ring_haze_inscatter(vertex_haze);
 }
 
 void fragment() {
@@ -61,10 +64,15 @@ void fragment() {
 	float cloud_occlusion = tree_cloud_occlusion * tree_day_factor;
 	ALBEDO = sampled_color * tree_tint * mix(night_tint, vec3(1.0), tree_day_factor)
 		* (1.0 - cloud_occlusion * cloud_shadow_albedo_strength);
-	vec4 atmosphere = sample_ring_atmosphere(ring_atmosphere_camera_world_position,
-		tree_world_position, ring_center, tree_day_factor);
-	ALBEDO *= tree_haze_transmittance;
-	EMISSION += atmosphere.rgb * (1.0 - tree_haze_transmittance) * atmosphere_scattering_energy;
+	ALBEDO *= tree_haze_T;
+	vec3 haze_emission = tree_haze_S;
+	if (atmosphere_haze_model == 0) {
+		// Legacy: scattering colour from the fragment position, opacity from the vertex.
+		vec4 atmosphere = sample_ring_atmosphere(ring_atmosphere_camera_world_position,
+			tree_world_position, ring_center, tree_day_factor);
+		haze_emission = atmosphere.rgb * (1.0 - tree_haze_T.g) * atmosphere_scattering_energy;
+	}
+	EMISSION += haze_emission;
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.04;
 	METALLIC = 0.0;

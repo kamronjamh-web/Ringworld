@@ -17,6 +17,7 @@ public sealed class AtmosphereVisualDefaults
     public void Initialize() { Load(); Sanitize(); Apply(); }
     public void Apply()
     {
+        RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.ApplyArtDirection(
             (RingAtmosphereModel.ArtDirectionPreset)Mathf.Clamp(Settings.Preset, 0, 1),
             Settings.VisibilityFullKm, Settings.Density, Settings.AltitudeFalloff,
@@ -34,6 +35,11 @@ public sealed class AtmosphereVisualDefaults
             case "Warmth": Settings.SunWarmth = value; break;
             default: return;
         }
+        Sanitize(); Dirty = true; Apply();
+    }
+    public void SetHazeModel(int model)
+    {
+        Settings.HazeModel = Mathf.Clamp(model, 0, 1);
         Sanitize(); Dirty = true; Apply();
     }
     public void SetPreset(int preset)
@@ -60,6 +66,7 @@ public sealed class AtmosphereVisualDefaults
     private void Sanitize()
     {
         Settings.Preset = Mathf.Clamp(Settings.Preset, 0, 1);
+        Settings.HazeModel = Mathf.Clamp(Settings.HazeModel, 0, 1);
         Settings.VisibilityFullKm = Clean(Settings.VisibilityFullKm, 120, 10, 400);
         Settings.Density = Clean(Settings.Density, 1, 0, 2);
         Settings.AltitudeFalloff = Clean(Settings.AltitudeFalloff, .5f, 0, 1);

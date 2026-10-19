@@ -1,6 +1,9 @@
 extends SceneTree
 # Short, matched Vulkan visual capture. Every shot resets the exact canonical
 # ground/high-altitude pose and presentation view before temporal settling.
+# Run:  godot --path . --script res://tools/atmosphere_visual_test.gd [-- --model=physical] [--copy-to=<absolute dir>]
+# --model=physical switches the P2a haze A/B toggle (drawer SetAtmosphereHazeModel) before any capture; the default is Legacy.
+# --copy-to also writes every capture PNG into the given directory (prefixed by the model) so runs can be compared.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const FIXTURE_HELPER := preload("res://tools/AtmosphereVisualFixtureHelper.cs")
@@ -20,6 +23,8 @@ var trees: Node
 var global_terrain: Node
 var placement: RefCounted
 var report := {"status":"RUNNING", "captures":[]}
+var haze_model_physical := false
+var copy_dir := ""
 
 class SessionStub extends Node:
 	var settings := {}
@@ -31,10 +36,15 @@ func _init() -> void: call_deferred("run")
 
 func run() -> void:
 	if RenderingServer.get_rendering_device() == null: return fail("requires Vulkan/Forward+")
+	for argument in OS.get_cmdline_user_args():
+		if argument == "--model=physical": haze_model_physical = true
+		elif argument.begins_with("--copy-to="): copy_dir = argument.get_slice("=", 1)
+	if copy_dir != "": DirAccess.make_dir_recursive_absolute(copy_dir)
 	fixture = "res://.godot/atmosphere_visual/%s" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	var prior := root.get_node_or_null("WorldSession")
 	if prior != null: prior.name = "WorldSessionOriginalAtmosphere"
 	var session := SessionStub.new(); session.name = "WorldSession"; root.add_child(session)
@@ -44,7 +54,6 @@ func run() -> void:
 	surface = game.get_node_or_null("Terrain3DGameplay")
 	drawer = game.get_node_or_null("LiveTuningDrawer")
 	clock = game.get_node_or_null("RingDayNightCycle")
-	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	graphics = game.get_node_or_null("GraphicsQuality")
 	grass = game.get_node_or_null("StandingGrass")
 	trees = game.get_node_or_null("BiomeDecorations")
@@ -53,6 +62,7 @@ func run() -> void:
 	camera = game.get_node_or_null("Explorer/Head/Camera3D") as Camera3D
 	if explorer == null or surface == null or drawer == null or clock == null or graphics == null or camera == null or grass == null or trees == null: return fail("missing gameplay nodes")
 	drawer.call("SetAtmosphereEnabled", true)
+	drawer.call("SetAtmosphereHazeModel", 1 if haze_model_physical else 0)
 	var diagnostics: Dictionary = surface.call("GetSurfaceDiagnostics")
 	if not bool(diagnostics.get("runtime_surface_generation", false)) or str(diagnostics.get("surface_generation_contract_id", "")) != "surface_runtime_generation_v1": return fail("runtime Terrain3D generation is not active: " + JSON.stringify(diagnostics))
 	var ground_height := float(surface.call("SampleHeight", FIXTURE_AROUND, FIXTURE_ACROSS)) + 1.1
@@ -77,6 +87,11 @@ func run() -> void:
 		await matched_capture(str(profile[1]) + "_dusk", ground_height, phases["dusk"], false)
 		await matched_capture(str(profile[1]) + "_night", ground_height, phases["night"], false)
 		await matched_capture(str(profile[1]) + "_high_alt", ground_height, phases["noon"], true)
+		# Horizon rows (P2a): level view and a 2 degree upward view at noon, where distant terrain meets the haze band.
+		await matched_capture(str(profile[1]) + "_noon_horizon", ground_height, phases["noon"], false, 0.0)
+		await matched_capture(str(profile[1]) + "_noon_up2", ground_height, phases["noon"], false, 2.0)
+		await matched_capture(str(profile[1]) + "_dusk_horizon", ground_height, phases["dusk"], false, 0.0)
+		explorer.call("SetPresentationView", 0.0, -10.0)
 	drawer.call("SetAtmospherePreset", 0)
 	drawer.call("SetAtmosphereTuningValue", "Density", 0.0)
 	await matched_capture("density_zero", ground_height, phases["noon"], false)
@@ -158,8 +173,9 @@ func select_visual_phases() -> Dictionary:
 		if abs(elevation) < horizon_distance: horizon_distance = abs(elevation); dusk = fraction
 	return {"noon":noon, "dusk":dusk, "night":night}
 
-func matched_capture(label: String, ground_height: float, fraction: float, high_altitude: bool) -> void:
+func matched_capture(label: String, ground_height: float, fraction: float, high_altitude: bool, pitch_degrees := -10.0) -> void:
 	await reset_pose(ground_height, high_altitude)
+	if pitch_degrees != -10.0: explorer.call("SetPresentationView", 0.0, pitch_degrees)
 	clock.set("Paused", true)
 	clock.call("SetCycleFraction", fraction)
 	await frames(SETTLE_FRAMES)
@@ -181,6 +197,7 @@ func matched_capture(label: String, ground_height: float, fraction: float, high_
 	var image := root.get_viewport().get_texture().get_image()
 	var path := fixture.path_join(label + ".png")
 	if image.is_empty() or image.save_png(ProjectSettings.globalize_path(path)) != OK: return fail("capture failed " + label)
+	if copy_dir != "": image.save_png(copy_dir.path_join(("physical_" if haze_model_physical else "legacy_") + label + ".png"))
 	var cycle_seconds := float(clock.call("GetCycleTimeSeconds"))
 	var cycle_full := maxf(1.0, float(clock.get("FullCycleSeconds")))
 	var material_snapshot := atmosphere_material_snapshot()
@@ -192,7 +209,7 @@ func matched_capture(label: String, ground_height: float, fraction: float, high_
 	for kind in ["proxy", "global", "far"]:
 		var group: Dictionary = material_snapshot["groups"].get(kind, {})
 		if int(group.get("count", 0)) == 0 or not bool(group.get("all_valid", false)): return fail("visible %s terrain material lacks a valid atmosphere ray frame" % kind)
-	report.captures.append({"label":label, "path":path, "cycle_fraction":cycle_seconds / cycle_full, "sun_elevation_degrees":clock.get("SunElevationDegrees"), "daylight_factor":clock.get("DaylightFactor"), "pose":{"around":diagnostics.get("player_around"), "across":diagnostics.get("player_across"), "height":diagnostics.get("player_height"), "eye_height":eye_height, "high_altitude":high_altitude, "yaw":0.0, "pitch":-10.0, "camera_world":camera.global_position, "camera_basis":camera.global_transform.basis}, "atmosphere":atmosphere, "atmosphere_materials":material_snapshot, "gpu_ms":RenderingServer.viewport_get_measured_render_time_gpu(root.get_viewport_rid()), "cpu_ms":RenderingServer.viewport_get_measured_render_time_cpu(root.get_viewport_rid())})
+	report.captures.append({"label":label, "path":path, "cycle_fraction":cycle_seconds / cycle_full, "sun_elevation_degrees":clock.get("SunElevationDegrees"), "daylight_factor":clock.get("DaylightFactor"), "pose":{"around":diagnostics.get("player_around"), "across":diagnostics.get("player_across"), "height":diagnostics.get("player_height"), "eye_height":eye_height, "high_altitude":high_altitude, "yaw":0.0, "pitch":pitch_degrees, "camera_world":camera.global_position, "camera_basis":camera.global_transform.basis}, "atmosphere":atmosphere, "atmosphere_materials":material_snapshot, "gpu_ms":RenderingServer.viewport_get_measured_render_time_gpu(root.get_viewport_rid()), "cpu_ms":RenderingServer.viewport_get_measured_render_time_cpu(root.get_viewport_rid())})
 
 func atmosphere_material_snapshot() -> Dictionary:
 	var owned := surface.get_node_or_null("Terrain3DSurface")

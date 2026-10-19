@@ -112,11 +112,11 @@ void fragment() {
 	base_color = ring_apply_terrain_grass_coverage(base_color, grass_coverage);
 	vec3 lit_color = base_color
 		* mix(night_tint, vec3(1.0), ring_day_factor);
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	// Extinction belongs in the lit surface term. In-scattered atmosphere is
 	// radiance, so add it unlit instead of feeding it back through the sun.
-	ALBEDO = lit_color * (1.0 - atmosphere.a);
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	ALBEDO = lit_color * haze.T;
+	EMISSION = ring_haze_inscatter(haze);
 	ROUGHNESS = mix(1.0, .90, grass_coverage);
 	SPECULAR = 0.18;
 	METALLIC = 0.0;

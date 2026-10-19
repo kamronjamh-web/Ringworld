@@ -29,7 +29,8 @@ func run() -> void:
 	material.set_shader_parameter("camera_forward_canonical", Vector3(0,.15,1).normalized())
 	var off := await capture()
 	var profile: Array[Vector4] = []
-	profile.resize(10)
+	profile.resize(16)
+	for slot in 16: profile[slot] = Vector4.ZERO
 	profile[0] = Vector4(1,5000000,2500,2500)
 	profile[1] = Vector4(20000,60000,300000,.95)
 	profile[2] = Vector4(.2,.08,.9,1)
@@ -40,9 +41,22 @@ func run() -> void:
 	profile[7] = Vector4(0,-1,0,100)
 	profile[8] = Vector4(0,0,1,159000)
 	profile[9] = Vector4(0,1,0,159000)
+	# `-- --model=physical` exercises slots 10-15 (physical haze); the zero-density step then zeroes every extinction instead of the Legacy caps.
+	var physical := "--model=physical" in OS.get_cmdline_user_args()
+	if physical:
+		profile[10] = Vector4(1, 1, 5.802e-6, 13.558e-6)
+		profile[11] = Vector4(33.1e-6, 8000, 4.175e-6, .9)
+		profile[12] = Vector4(1500, 4.0e-6, .95, 400)
+		profile[13] = Vector4(.6, 8, 1, 12.566)
+		profile[14] = Vector4(12.566, 12.566, .1855, .203)
+		profile[15] = Vector4(.2275, .102, .12, .156)
 	material.set_shader_parameter("ring_cloud_atmosphere_profile", profile)
 	var on := await capture()
 	profile[2] = Vector4(0,0,0,1)
+	if physical:
+		profile[10] = Vector4(1, 1, 0, 0)
+		profile[11] = Vector4(0, 8000, 0, .9)
+		profile[12] = Vector4(1500, 0, .95, 400)
 	material.set_shader_parameter("ring_cloud_atmosphere_profile", profile)
 	var zero := await capture()
 	profile[0].x = 0.0
@@ -67,7 +81,7 @@ func run() -> void:
 	if body_pixels < 100 or rgb_delta / maxf(1,body_pixels) < .03: return fail("haze did not attenuate visible production cloud contributions")
 	if alpha_delta > .00001: return fail("haze changed mask density/alpha")
 	if zero_delta > .00001: return fail("zero-density profile changed baseline")
-	print("FALLBACK_CLOUD_MASK_ATMOSPHERE=PASS body_pixels=%s alpha_delta=%s zero_delta=%s" % [body_pixels,alpha_delta,zero_delta])
+	print("FALLBACK_CLOUD_MASK_ATMOSPHERE=PASS model=%s body_pixels=%s alpha_delta=%s zero_delta=%s rgb_delta=%s" % ["physical" if physical else "legacy",body_pixels,alpha_delta,zero_delta,rgb_delta / maxf(1,body_pixels)])
 	viewport.queue_free()
 	await process_frame
 	await process_frame

@@ -12,4 +12,6 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public float Aerosol { get; set; } = 0.35f;
     [Export] public float ForwardScattering { get; set; } = 0.22f;
     [Export] public float SunWarmth { get; set; } = 0.25f;
+    /// <summary>Temporary A/B toggle (P2a, removed in P8): 0 = Legacy, 1 = Physical. Absent in older files, which therefore load as Legacy.</summary>
+    [Export] public int HazeModel { get; set; } = 0;
 }

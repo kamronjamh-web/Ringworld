@@ -275,6 +275,7 @@ public partial class RingGraphicsQualityController : Node
         ["density"] = RingAtmosphereModel.Density,
         ["preset"] = (int)RingAtmosphereModel.ArtPreset,
         ["enabled"] = RingAtmosphereModel.Enabled,
+        ["haze_model"] = (int)RingAtmosphereModel.HazeModel,
         ["revision"] = (long)RingAtmosphereModel.Revision,
         ["settings_path"] = AtmosphereDefaults.Path,
         ["dirty"] = AtmosphereDefaults.Dirty,

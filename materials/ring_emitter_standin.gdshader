@@ -69,16 +69,16 @@ void fragment() {
 		discard;
 	}
 	vec3 lit_color = albedo_color * mix(vec3(0.30, 0.42, 0.62), vec3(1.0), ring_day_factor);
-	vec4 atmosphere = sample_ring_atmosphere(
+	RingHaze haze = ring_haze_sample(
 		camera_world_position,
 		world_position,
 		ring_center,
 		ring_day_factor);
-	ALBEDO = lit_color * (1.0 - atmosphere.a);
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	ALBEDO = lit_color * haze.T;
+	EMISSION = ring_haze_inscatter(haze);
 	if (crown_glow_amount > 0.0) {
 		// Beam teal; the glow is not attenuated by the day (the beams are the event) but by the same atmosphere opacity.
-		EMISSION += vec3(0.70, 0.92, 1.0) * crown_glow_amount * crown_glow_emission * (1.0 - atmosphere.a);
+		EMISSION += vec3(0.70, 0.92, 1.0) * crown_glow_amount * crown_glow_emission * ring_haze_visibility(haze);
 	}
 	METALLIC = metallic_value;
 	ROUGHNESS = roughness_value;

@@ -31,9 +31,9 @@ void ring_terrain_apply_atmosphere(
 		vec3 world,
 		vec3 center_world,
 		float day_factor) {
-	vec4 atmosphere = sample_ring_atmosphere(camera_world, world, center_world, day_factor);
-	albedo *= 1.0 - atmosphere.a;
-	emission = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	RingHaze haze = ring_haze_sample(camera_world, world, center_world, day_factor);
+	albedo *= haze.T;
+	emission = ring_haze_inscatter(haze);
 }
 
 // Shadow/cloud/macro/hemisphere visibility of one light for a terrain-lit

@@ -346,7 +346,8 @@ struct GenericData{
 	vec4 menu_temporal_controls;
 	// Ringworld shared atmosphere profile. Appended after the established
 	// 720-byte callback ABI; standalone fixtures leave this disabled.
-	vec4 ring_atmosphere_profile[10];
+	// 16 slots: 0-9 Legacy, 10-15 physical haze (P2b; see ring_haze_from_profile in ring_haze_shared.gdshaderinc).
+	vec4 ring_atmosphere_profile[16];
 	// Shared local/far weather ownership.  These remain append-only because
 	// retired compositor descriptors can outlive a callback.
 	vec4 cloud_handoff;

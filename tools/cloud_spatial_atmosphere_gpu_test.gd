@@ -4,6 +4,8 @@ extends SceneTree
 # isolated World3D and renders each shader with the same physical camera frame.
 # Run from a normal Forward+ display session. Headless execution is only useful
 # with --check-only to parse this fixture.
+# Run:  godot --path . --script res://tools/cloud_spatial_atmosphere_gpu_test.gd [-- --model=physical]
+# --model=physical selects the P2a physical haze (atmosphere_haze_model = 1); the default is Legacy.
 const WATCHDOG_SECONDS := 30.0
 const VIEW_SIZE := Vector2i(96, 96)
 const CAMERA_WORLD := Vector3(100.0, 0.0, 0.0)
@@ -16,9 +18,11 @@ const SHADERS := [
 
 var _watchdog: SceneTreeTimer
 var _failed := false
+var _physical := false
 var _white_weather: ImageTexture
 
 func _init() -> void:
+	_physical = "--model=physical" in OS.get_cmdline_user_args()
 	_watchdog = create_timer(WATCHDOG_SECONDS)
 	_watchdog.timeout.connect(_watchdog_expired)
 	call_deferred("_run")
@@ -36,7 +40,7 @@ func _run() -> void:
 		var result := await _verify_shader(shader_path)
 		if not result:
 			return
-	print("CLOUD_SPATIAL_ATMOSPHERE_GPU=PASS shaders=", SHADERS.size())
+	print("CLOUD_SPATIAL_ATMOSPHERE_GPU=PASS model=", "physical" if _physical else "legacy", " shaders=", SHADERS.size())
 	quit(0)
 
 func _verify_shader(shader_path: String) -> bool:
@@ -47,6 +51,9 @@ func _verify_shader(shader_path: String) -> bool:
 	var haze_off := await _capture(shader, "off", 0.0)
 	var strong_haze := await _capture(shader, "strong", 1.0)
 	var zero_density := await _capture(shader, "zero_density", 0.0)
+	# Farther cloud plane (same camera): the haze effect must not shrink with distance.
+	var far_off := await _capture(shader, "off", 0.0, 80.0)
+	var far_strong := await _capture(shader, "strong", 1.0, 80.0)
 	if haze_off.is_empty() or strong_haze.is_empty() or zero_density.is_empty():
 		_fail("empty GPU capture for " + shader_path)
 		return false
@@ -63,16 +70,25 @@ func _verify_shader(shader_path: String) -> bool:
 	if zero_delta >= 0.002:
 		_fail("zero-density haze changed center RGB for " + shader_path)
 		return false
+	# Haze never touches cloud coverage: the centre alpha is unchanged by haze, and a farther plane hazes at least as much.
+	var alpha_delta := absf(haze_off.get_pixel(VIEW_SIZE.x / 2, VIEW_SIZE.y / 2).a - strong_haze.get_pixel(VIEW_SIZE.x / 2, VIEW_SIZE.y / 2).a)
+	if alpha_delta > 0.01:
+		_fail("haze changed the cloud alpha by %.4f for %s" % [alpha_delta, shader_path])
+		return false
+	var far_delta := _rgb_delta(_center_rgb(far_off), _center_rgb(far_strong))
+	if far_delta < strong_delta - 0.01:
+		_fail("haze effect shrank with distance (near %.4f, far %.4f) for %s" % [strong_delta, far_delta, shader_path])
+		return false
 	if shader_path != "res://materials/ring_mesh_cloud.gdshader":
 		var clear_alpha := maxf(haze_off.get_pixel(0, 0).a, strong_haze.get_pixel(0, 0).a)
 		if clear_alpha > 0.02:
 			_fail("discard/clear corner gained alpha for " + shader_path)
 			return false
 	print("CLOUD_SPATIAL_ATMOSPHERE_GPU shader=", shader_path,
-		" strong_rgb_delta=", strong_delta, " zero_density_delta=", zero_delta)
+		" strong_rgb_delta=", strong_delta, " far_rgb_delta=", far_delta, " zero_density_delta=", zero_delta)
 	return true
 
-func _capture(shader: Shader, mode: String, density: float) -> Image:
+func _capture(shader: Shader, mode: String, density: float, target_x: float = TARGET_WORLD_X) -> Image:
 	var viewport := SubViewport.new()
 	viewport.size = VIEW_SIZE
 	viewport.transparent_bg = true
@@ -82,14 +98,14 @@ func _capture(shader: Shader, mode: String, density: float) -> Image:
 	var camera := Camera3D.new()
 	viewport.add_child(camera)
 	camera.global_position = CAMERA_WORLD
-	camera.look_at(Vector3(TARGET_WORLD_X, 0.0, 0.0), Vector3.UP)
+	camera.look_at(Vector3(target_x, 0.0, 0.0), Vector3.UP)
 	camera.current = true
 	var material := ShaderMaterial.new()
 	material.shader = shader
 	_configure_common(material, mode, density)
 	_configure_shader(material, shader.resource_path)
 	var cloud := MeshInstance3D.new()
-	cloud.mesh = _make_cloud_quad()
+	cloud.mesh = _make_cloud_quad(target_x)
 	cloud.material_override = material
 	cloud.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	viewport.add_child(cloud)
@@ -132,6 +148,16 @@ func _configure_common(material: ShaderMaterial, mode: String, density: float) -
 	material.set_shader_parameter("ring_atmosphere_sidewall_negative_meters", 1000.0)
 	material.set_shader_parameter("ring_atmosphere_sidewall_positive_meters", 1000.0)
 	material.set_shader_parameter("ring_atmosphere_coordinate_scale", 1.0)
+	# Physical model on the same toy ring (100 m radius): extinction scaled so a 10 m path is optically thick, cap inside the ring.
+	material.set_shader_parameter("atmosphere_haze_model", 1 if _physical else 0)
+	var sigma := 0.05 * haze_strength
+	material.set_shader_parameter("ring_haze_sigma_R", Vector3(sigma, sigma, sigma))
+	material.set_shader_parameter("ring_haze_sigma_A", sigma)
+	material.set_shader_parameter("ring_haze_sigma_M0", sigma)
+	material.set_shader_parameter("ring_haze_H_R", 60.0)
+	material.set_shader_parameter("ring_haze_H_A", 40.0)
+	material.set_shader_parameter("ring_haze_H_mist", 20.0)
+	material.set_shader_parameter("ring_haze_cap_height_meters", 40.0)
 	material.set_shader_parameter("camera_world_position", CAMERA_WORLD)
 	material.set_shader_parameter("ring_center", Vector3.ZERO)
 	material.set_shader_parameter("sun_direction", Vector3(1.0, 0.0, 0.0))
@@ -168,15 +194,15 @@ func _configure_shader(material: ShaderMaterial, shader_path: String) -> void:
 		material.set_shader_parameter("handoff_end_meters", 1001.0)
 		material.set_shader_parameter("edge_firmness", 0.7)
 
-func _make_cloud_quad() -> ArrayMesh:
+func _make_cloud_quad(target_x: float) -> ArrayMesh:
 	var surface := SurfaceTool.new()
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-	_add_vertex(surface, Vector3(TARGET_WORLD_X, -4.0, -4.0), Vector2(0.0, 0.0))
-	_add_vertex(surface, Vector3(TARGET_WORLD_X, 4.0, -4.0), Vector2(1.0, 0.0))
-	_add_vertex(surface, Vector3(TARGET_WORLD_X, 4.0, 4.0), Vector2(1.0, 1.0))
-	_add_vertex(surface, Vector3(TARGET_WORLD_X, -4.0, -4.0), Vector2(0.0, 0.0))
-	_add_vertex(surface, Vector3(TARGET_WORLD_X, 4.0, 4.0), Vector2(1.0, 1.0))
-	_add_vertex(surface, Vector3(TARGET_WORLD_X, -4.0, 4.0), Vector2(0.0, 1.0))
+	_add_vertex(surface, Vector3(target_x, -4.0, -4.0), Vector2(0.0, 0.0))
+	_add_vertex(surface, Vector3(target_x, 4.0, -4.0), Vector2(1.0, 0.0))
+	_add_vertex(surface, Vector3(target_x, 4.0, 4.0), Vector2(1.0, 1.0))
+	_add_vertex(surface, Vector3(target_x, -4.0, -4.0), Vector2(0.0, 0.0))
+	_add_vertex(surface, Vector3(target_x, 4.0, 4.0), Vector2(1.0, 1.0))
+	_add_vertex(surface, Vector3(target_x, -4.0, 4.0), Vector2(0.0, 1.0))
 	return surface.commit()
 
 func _add_vertex(surface: SurfaceTool, vertex: Vector3, uv: Vector2) -> void:

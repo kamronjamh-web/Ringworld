@@ -50,10 +50,10 @@ void vertex() {
 		float day_camera = eg_day_at_hub(dot(up_camera, sun), ringworld_solar_visibility, ringworld_hub_day);
 		float day_here = eg_day_at_hub(dot(up_here, sun), ringworld_solar_visibility, ringworld_hub_day);
 		float b = eg_background(day_camera, day_here, real_distance);
-		vec4 atmosphere = sample_ring_atmosphere(camera * inv_scale, center_world * inv_scale, ring_center * inv_scale, b);
+		RingHaze haze = ring_haze_sample(camera * inv_scale, center_world * inv_scale, ring_center * inv_scale, b);
 		v_uv = VERTEX.xy * 2.0;
 		// The head is the pulse peak (profile 1), so its level is Peak(B) attenuated by the atmosphere.
-		v_level = eg_intensity(1.0, b, 0.0, atmosphere.a) * fade_in * INSTANCE_CUSTOM.r;
+		v_level = eg_intensity(1.0, b, 0.0, 1.0 - ring_haze_visibility(haze)) * fade_in * INSTANCE_CUSTOM.r;
 		v_weights = weights;
 	}
 }

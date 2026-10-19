@@ -18,6 +18,7 @@ public partial class RingScaledFarViewport
         SubViewport.UpdateMode mode = suspended ? SubViewport.UpdateMode.Disabled : SubViewport.UpdateMode.Always;
         if (_farViewport != null && GodotObject.IsInstanceValid(_farViewport)) _farViewport.RenderTargetUpdateMode = mode;
         if (_regionalFarViewport != null && GodotObject.IsInstanceValid(_regionalFarViewport)) _regionalFarViewport.RenderTargetUpdateMode = mode;
-        if (_backdrop?.GetParent() is CanvasLayer layer && GodotObject.IsInstanceValid(layer)) layer.Visible = !suspended;
+        if (_backdropComposeViewport != null && GodotObject.IsInstanceValid(_backdropComposeViewport)) _backdropComposeViewport.RenderTargetUpdateMode = mode;
+        if (_backdropEffect != null) _colorPipeline.PublishBackdrop(_backdropEffect, _backdropTexture, _backdropRegionalTexture, !suspended);
     }
 }

@@ -61,7 +61,7 @@ vec3 ring_atmosphere_scattering_color_shared(vec3 ray_direction, float day_facto
 	return base + vec3(1.0, 0.55, 0.26) * sun_warmth * excess + base * aerosol * excess;
 }
 
-vec4 ring_atmosphere_local_haze_shared(vec3 target, vec3 camera, vec3 outward, vec3 to_sun, float solar_visibility, vec4 p[10]) {
+vec4 ring_atmosphere_local_haze_shared(vec3 target, vec3 camera, vec3 outward, vec3 to_sun, float solar_visibility, vec4 p[16]) {
 	vec3 paths = ring_atmosphere_first_air_paths_shared(target, camera, p[7].w, p[7].xyz, p[8].xyz, p[8].w, p[9].w, 1.0, p[0].y, p[0].z, p[0].w, p[1].x);
 	float boundary = (1.0 - exp(-paths.y / max(p[1].y, 1.0))) * p[2].x;
 	float upper = (1.0 - exp(-paths.z / max(p[1].z, 1.0))) * p[2].y;

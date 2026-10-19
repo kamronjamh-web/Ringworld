@@ -271,6 +271,11 @@ public partial class RingScaledFarViewport : Node
 	// GPU-only physical-distance export of the opaque whole-ring depth.  Sunshine
 	// consumes this before its raymarch; never read this texture on the CPU.
 	private CompositorEffect? _farDepthCapture;
+	private readonly RingFarViewportColorPipeline _colorPipeline = new();
+	private CompositorEffect? _backdropEffect;
+	private SubViewport? _backdropComposeViewport;
+	private Texture2D? _backdropTexture;
+	private Texture2D? _backdropRegionalTexture;
 	private TextureRect? _backdrop;
 	private TextureRect? _regionalBackdrop;
 	private ShaderMaterial? _backdropCloudCompositeMaterial;
@@ -536,6 +541,12 @@ public partial class RingScaledFarViewport : Node
 			_sunshineClouds.SetFarOpaqueDepthTexture(null);
 		_farWeatherAtlasBuild?.Image.Dispose();
 		_farWeatherAtlasBuild = null;
+		if (_backdropEffect != null)
+		{
+			_colorPipeline.PublishBackdrop(_backdropEffect, null, null, false);
+			_colorPipeline.RemoveBackdropEffect(_mainWorldEnvironment, _backdropEffect);
+			_backdropEffect = null;
+		}
 		base._ExitTree();
 	}
 
@@ -891,10 +902,26 @@ public partial class RingScaledFarViewport : Node
 		string rootPath = RingGeneratedOutputPaths.File("captures/scaled_far_viewport", rootFile);
 		string farPath = RingGeneratedOutputPaths.File("captures/scaled_far_viewport", farFile);
 		Error rootError = GetViewport().GetTexture().GetImage().SavePng(rootPath);
-		Error farError = _farViewport?.GetTexture().GetImage().SavePng(farPath) ?? Error.Unconfigured;
+		Error farError = _farViewport != null ? SaveDisplayPng(_farViewport.GetTexture().GetImage(), farPath) : Error.Unconfigured;
 		string mode = _captureUnderside ? "underside" : "opposite-ring";
 		GD.Print($"Scaled far direct-view capture: mode={mode}, root={rootError}:{rootPath}, far={farError}:{farPath}");
 		GetTree().Quit(rootError == Error.Ok && farError == Error.Ok ? 0 : 1);
+	}
+
+	// HDR 2D viewport images are linear floats; PNG needs clamped sRGB-encoded 8-bit.
+	private static Error SaveDisplayPng(Image image, string path)
+	{
+		if (image.GetFormat() is Image.Format.Rgba8 or Image.Format.Rgb8) return image.SavePng(path);
+		image.Convert(Image.Format.Rgbaf);
+		for (int y = 0; y < image.GetHeight(); y++)
+			for (int x = 0; x < image.GetWidth(); x++)
+			{
+				Color c = image.GetPixel(x, y);
+				image.SetPixel(x, y, new Color(
+					Mathf.Clamp(c.R, 0f, 1f), Mathf.Clamp(c.G, 0f, 1f), Mathf.Clamp(c.B, 0f, 1f), c.A).LinearToSrgb());
+			}
+		image.Convert(Image.Format.Rgba8);
+		return image.SavePng(path);
 	}
 
 	private void DisableLegacyWholeRingMeshes()
@@ -914,9 +941,9 @@ public partial class RingScaledFarViewport : Node
 			HandleInputLocally = false,
 			Msaa3D = Viewport.Msaa.Disabled,
 			ScreenSpaceAA = Viewport.ScreenSpaceAAEnum.Disabled,
-			UseTaa = false,
-			UseDebanding = true
+			UseTaa = false
 		};
+		_colorPipeline.ConfigureFarViewport(_farViewport);
 		AddChild(_farViewport);
 
 		_farCamera = new Camera3D
@@ -956,19 +983,16 @@ public partial class RingScaledFarViewport : Node
 			ReflectedLightSource = sourceEnvironment?.ReflectedLightSource ?? Godot.Environment.ReflectionSource.Sky,
 			FogEnabled = false
 		};
-		// The far ring is composited behind the main viewport, so both views
-		// must use the same HDR output curve and ambient split or the handoff
-		// appears as a brightness seam.
+		// The far ring is composited behind the main viewport, so both views must
+		// use the same ambient split. The tonemap is NOT copied: the far viewport
+		// hands linear HDR radiance to main, which tonemaps it exactly once.
 		if (sourceEnvironment != null)
 		{
 			environment.Set(
 				"ambient_light_sky_contribution",
 				sourceEnvironment.Get("ambient_light_sky_contribution"));
-			environment.Set("tonemap_mode", sourceEnvironment.Get("tonemap_mode"));
-			environment.Set("tonemap_agx_white", sourceEnvironment.Get("tonemap_agx_white"));
-			environment.Set("tonemap_agx_contrast", sourceEnvironment.Get("tonemap_agx_contrast"));
-			environment.Set("tonemap_exposure", sourceEnvironment.Get("tonemap_exposure"));
 		}
+		_colorPipeline.ConfigureFarEnvironment(environment);
 		environment.VolumetricFogEnabled = false;
 		environment.VolumetricFogDensity = 0.0f;
 		environment.VolumetricFogLength = 24.0f;
@@ -1037,9 +1061,9 @@ public partial class RingScaledFarViewport : Node
 			HandleInputLocally = false,
 			Msaa3D = Viewport.Msaa.Disabled,
 			ScreenSpaceAA = Viewport.ScreenSpaceAAEnum.Disabled,
-			UseTaa = false,
-			UseDebanding = true
+			UseTaa = false
 		};
+		_colorPipeline.ConfigureFarViewport(_regionalFarViewport);
 		AddChild(_regionalFarViewport);
 
 		_regionalFarCamera = new Camera3D
@@ -1071,13 +1095,8 @@ public partial class RingScaledFarViewport : Node
 			VolumetricFogEnabled = false
 		};
 		if (sourceEnvironment != null)
-		{
 			environment.Set("ambient_light_sky_contribution", sourceEnvironment.Get("ambient_light_sky_contribution"));
-			environment.Set("tonemap_mode", sourceEnvironment.Get("tonemap_mode"));
-			environment.Set("tonemap_agx_white", sourceEnvironment.Get("tonemap_agx_white"));
-			environment.Set("tonemap_agx_contrast", sourceEnvironment.Get("tonemap_agx_contrast"));
-			environment.Set("tonemap_exposure", sourceEnvironment.Get("tonemap_exposure"));
-		}
+		_colorPipeline.ConfigureFarEnvironment(environment);
 		_regionalFarEnvironment = environment;
 		_regionalAmbientSnapshotColor = environment.AmbientLightColor;
 		_regionalAmbientSnapshotEnergy = environment.AmbientLightEnergy;
@@ -2175,6 +2194,8 @@ public partial class RingScaledFarViewport : Node
 				Size = new Vector2I(2, 2),
 				Disable3D = true,
 				TransparentBg = true,
+				// Mask RGB is linear radiance composited over the linear HDR backdrop; keep it unclamped.
+				UseHdr2D = true,
 				HandleInputLocally = false,
 				RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled
 			};
@@ -2212,48 +2233,63 @@ public partial class RingScaledFarViewport : Node
 
 	private void CreateBackdrop()
 	{
-		if (_farViewport == null) return;
-		// Keep the far texture in the normal pre-HUD canvas range. Environment
-		// canvas backgrounds consume layers strictly below their maximum layer.
-		var layer = new CanvasLayer { Name = "FarRingBackdrop", Layer = -1 };
-		AddChild(layer);
-		_backdrop = new TextureRect
-		{
-			Name = "FarRingTexture",
-			Texture = _farViewport.GetTexture(),
-			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-			StretchMode = TextureRect.StretchModeEnum.Scale,
-			MouseFilter = Control.MouseFilterEnum.Ignore
-		};
-		layer.AddChild(_backdrop);
-		_backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-		// In Mega Ring, the local cloud-mask compositor is intentionally off.
-		// Use the SubViewport texture directly instead of routing it through a
-		// no-op canvas shader; on Arc that extra sampled pass produced tiled
-		// backdrop quadrants at the local/far handoff.
+		if (_farViewport == null || _mainWorldEnvironment == null) return;
+		// The far textures are composited into the main 3D colour buffer by a compositor effect (see
+		// RingFarViewportColorPipeline), not drawn as a canvas background, so the root viewport stays LDR 2D.
+		_backdropEffect = _colorPipeline.InstallBackdropEffect(_mainWorldEnvironment);
+		Texture2D far = _farViewport.GetTexture();
+		Texture2D? regional = _regionalFarViewport?.GetTexture();
 		if (_backdropCloudCompositeMaterial != null && CloudTransmittanceMaskEnabled)
-			_backdrop.Material = _backdropCloudCompositeMaterial;
-
-		if (_regionalFarViewport == null)
-			return;
-
-		_regionalBackdrop = new TextureRect
 		{
-			Name = "FarRingRegionalTexture",
-			Texture = _regionalFarViewport.GetTexture(),
-			ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-			StretchMode = TextureRect.StretchModeEnum.Scale,
-			MouseFilter = Control.MouseFilterEnum.Ignore
-		};
-		layer.AddChild(_regionalBackdrop);
-		_regionalBackdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+			// Cloud-mask compositing is a canvas shader, so it runs in a small HDR 2D viewport whose output
+			// (far + regional + mask) becomes the single texture handed to the effect.
+			_backdropComposeViewport = new SubViewport
+			{
+				Name = "FarRingBackdropComposite",
+				Disable3D = true,
+				TransparentBg = false,
+				UseHdr2D = true,
+				HandleInputLocally = false,
+				RenderTargetUpdateMode = SubViewport.UpdateMode.Always
+			};
+			AddChild(_backdropComposeViewport);
+			_backdrop = new TextureRect
+			{
+				Name = "FarRingTexture",
+				Texture = far,
+				ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+				StretchMode = TextureRect.StretchModeEnum.Scale,
+				MouseFilter = Control.MouseFilterEnum.Ignore,
+				Material = _backdropCloudCompositeMaterial
+			};
+			_backdropComposeViewport.AddChild(_backdrop);
+			_backdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+			if (regional != null)
+			{
+				_regionalBackdrop = new TextureRect
+				{
+					Name = "FarRingRegionalTexture",
+					Texture = regional,
+					ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+					StretchMode = TextureRect.StretchModeEnum.Scale,
+					MouseFilter = Control.MouseFilterEnum.Ignore
+				};
+				_backdropComposeViewport.AddChild(_regionalBackdrop);
+				_regionalBackdrop.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+			}
+			_backdropComposeViewport.Size = _farViewport.Size;
+			far = _backdropComposeViewport.GetTexture();
+			regional = null;
+		}
+		_backdropTexture = far;
+		_backdropRegionalTexture = regional;
+		_colorPipeline.PublishBackdrop(_backdropEffect, far, regional, !RenderSuspended);
 	}
 
 	private void ConfigureMainBackground()
 	{
 		if (_mainWorldEnvironment?.Environment is not { } environment) return;
-		environment.BackgroundMode = Godot.Environment.BGMode.Canvas;
-		environment.BackgroundCanvasMaxLayer = 0;
+		_colorPipeline.ConfigureMainEnvironment(environment);
 	}
 
 	private void SyncCameraAndLighting()
@@ -3116,6 +3152,7 @@ public partial class RingScaledFarViewport : Node
 		_lastRootSize = size;
 		if (_farViewport != null) _farViewport.Size = size;
 		if (_regionalFarViewport != null) _regionalFarViewport.Size = size;
+		if (_backdropComposeViewport != null) _backdropComposeViewport.Size = size;
 		float maskScale = Mathf.Clamp(CloudMaskResolutionScale, 0.25f, 1.0f);
 		CloudMaskSize = new Vector2I(
 			Mathf.Max(2, Mathf.RoundToInt(rootSize.X * maskScale)),

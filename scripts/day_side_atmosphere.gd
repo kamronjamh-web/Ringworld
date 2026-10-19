@@ -263,8 +263,40 @@ var current_hub_sky_tint_strength: float = 0.0
 var current_hub_halo_intensity: float = 0.0
 var current_hub_in_scatter: float = 0.0
 var _published_hub_day: float = 0.0
+var _published_haze_sun: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_haze_ambient_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_haze_ambient_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _haze_bridge_pending: bool = false
+# Model-derived haze ambient (RingHazeSkyIrradiance); recomputed only when its inputs move (see _publish_haze_lighting).
+var _haze_sky: RefCounted = null
+var _haze_sky_load_failed: bool = false
+var _haze_cache_valid: bool = false
+var _haze_cache_up_dot: float = 0.0
+var _haze_cache_giant_dot: float = 0.0
+var _haze_cache_height: float = 0.0
+var _haze_cache_revision: int = -1
+var _haze_cache_sun_e: Vector3 = Vector3.ZERO
+var _haze_cache_planet_e: Vector3 = Vector3.ZERO
+var _haze_cache_albedo: float = -1.0
+var _haze_cache_gain: float = -1.0
+var _haze_ambient_day_raw: Vector3 = Vector3.ZERO
+var _haze_ambient_planet: Vector3 = Vector3.ZERO
+var _haze_lup_day: Vector3 = Vector3.ZERO
+var _haze_lup_planet: Vector3 = Vector3.ZERO
+var _published_haze_lup_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_haze_lup_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_hub_weight: float = 0.0
 @export var hub_sky_tint_color: Color = Color(0.85, 0.95, 1.0, 1.0)
+
+@export_group("Physical Haze")
+# Inputs of the physical haze model (HazeModel = Physical). Brightness scales the published sun irradiance; the tint is a per-channel
+# multiplier on it (sky, objects and clouds share the published lighting, so they stay consistent). Ground albedo and multi-scatter gain
+# shape the model-derived haze ambient; the night floor is the isotropic ambient with no giant light (starlight, airglow).
+@export_range(0.0, 4.0, 0.01) var haze_brightness: float = 1.0
+@export var haze_sky_tint: Color = Color(1.0, 1.0, 1.0, 1.0)
+@export_range(0.0, 1.0, 0.01) var haze_ground_albedo: float = 0.1
+@export_range(0.0, 2.0, 0.01) var haze_multiscatter_gain: float = 1.0
+@export var haze_night_floor: Color = Color(0.004, 0.005, 0.008, 1.0)
 
 
 func _ready() -> void:
@@ -444,6 +476,7 @@ func _process(delta: float) -> void:
 		* eclipse_ambient_multiplier
 	environment.ambient_light_color = space_ambient_color.lerp(surface_ambient_color, current_atmosphere_factor)
 	environment.ambient_light_energy = lerpf(space_ambient_energy, surface_ambient_energy, current_atmosphere_factor)
+	_publish_haze_lighting(surface_up, to_sun)
 	# A contribution of 1.0 makes Godot ignore the explicit ambient color and
 	# energy above. Blend a restrained sky irradiance term with those controls
 	# so the visible sun disk and bright horizon do not flatten every shadow.
@@ -822,6 +855,153 @@ func _publish_solar_visibility(visibility: float) -> void:
 		current_solar_visibility)
 
 
+# Radiometric inputs of the physical haze model (materials/ring_haze_shared.gdshaderinc), in the units of lit surfaces in the main
+# viewport. Sun: Godot (non-physical light units) renders a matte surface at NdotL = 1 as albedo * colour * energy, whereas the haze
+# model's phase functions are 4PI-normalised and want the sun's irradiance E_irr with surface radiance (albedo / PI) * E_irr, so
+# E_irr = PI * colour * energy. It also carries haze_brightness, haze_sky_tint and the eclipse / hub sky tints (unit-luminance multipliers
+# derived like _update_sky's palette lerps), so objects, clouds and the sky all see the same tinted light and stay convergent during events.
+# Day/night, eclipse visibility and horizon are applied in the shader (ringworld_effective_solar_day).
+# Ambient: ambient_light_color * ambient_light_energy multiplies the albedo in Godot, i.e. it is the radiance of a white surface, which is
+# what the haze model's isotropic multi-scatter wants. It is derived from the model itself (RingHazeSkyIrradiance: the sky's own single
+# scatter plus ground bounce, summed as a multi-scatter series), not from the art-boosted environment fill ambient. Day ambient comes from
+# the sun, night ambient from the giant's light (live, already gated by horizon / phase / day) plus a tiny floor. Recomputed only when the
+# sun / giant direction, camera height, model parameters or light energies move; published on >0.5% relative change.
+func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
+	var sun_color := Vector3(surface_sun_color.r, surface_sun_color.g, surface_sun_color.b)
+	var eclipse_sky_factor := current_eclipse_coverage * current_real_sun_day_factor * clampf(eclipse_sky_tint_strength, 0.0, 1.0)
+	var eclipse_mult := Vector3.ONE.lerp(_unit_luminance_tint(eclipse_sky_color), eclipse_sky_factor)
+	var hub_tint := 0.0
+	if current_hub_day > 0.0:
+		hub_tint = current_hub_sky_tint_strength * current_hub_day * (1.0 - current_solar_visibility)
+	var hub_mult := Vector3.ONE.lerp(_unit_luminance_tint(hub_sky_tint_color), hub_tint)
+	var sun_tint := Vector3(haze_sky_tint.r, haze_sky_tint.g, haze_sky_tint.b)
+	var sun := sun_color * (PI * maxf(day_sun_energy, 0.0) * maxf(haze_brightness, 0.0)) * sun_tint * eclipse_mult * hub_mult
+	var planet_energy := Vector3.ZERO
+	if planet_light != null:
+		planet_energy = Vector3(planet_light.light_color.r, planet_light.light_color.g, planet_light.light_color.b) \
+				* (PI * maxf(planet_light.light_energy, 0.0))
+	if _haze_sky == null and not _haze_sky_load_failed:
+		var script := load("res://scripts/Atmosphere/RingHazeSkyIrradiance.cs") as Script
+		if script != null:
+			_haze_sky = script.new() as RefCounted
+		_haze_sky_load_failed = _haze_sky == null
+	if _haze_sky != null:
+		var frame := _viewer_atmosphere_frame(surface_up)
+		var up_dot := surface_up.normalized().dot(to_sun.normalized())
+		var giant_dot := surface_up.normalized().dot(current_giant_direction.normalized()) if current_giant_direction.length_squared() > 0.0 else 0.0
+		var height := float(frame["height"])
+		var revision := int(_haze_sky.call("GetRevision"))
+		if not _haze_cache_valid \
+				or absf(up_dot - _haze_cache_up_dot) > 0.002 \
+				or absf(giant_dot - _haze_cache_giant_dot) > 0.002 \
+				or absf(height - _haze_cache_height) > maxf(25.0, 0.02 * absf(_haze_cache_height)) \
+				or revision != _haze_cache_revision \
+				or _relative_change(sun, _haze_cache_sun_e) > 0.005 \
+				or _relative_change(planet_energy, _haze_cache_planet_e) > 0.005 \
+				or not is_equal_approx(haze_ground_albedo, _haze_cache_albedo) \
+				or not is_equal_approx(haze_multiscatter_gain, _haze_cache_gain):
+			_haze_cache_valid = true
+			_haze_cache_up_dot = up_dot
+			_haze_cache_giant_dot = giant_dot
+			_haze_cache_height = height
+			_haze_cache_revision = revision
+			_haze_cache_sun_e = sun
+			_haze_cache_planet_e = planet_energy
+			_haze_cache_albedo = haze_ground_albedo
+			_haze_cache_gain = haze_multiscatter_gain
+			var radius := _get_ring_radius_meters()
+			var half_width := _get_ring_width_meters() * 0.5
+			var across := float(frame["across"])
+			var outward: Vector3 = frame["outward"]
+			var axis: Vector3 = frame["axis"]
+			var sun_light_e: Vector3 = sun * (_haze_sky.call("GetSunTint") as Vector3)
+			var day_result: Array = _haze_sky.call("Compute", radius, outward, axis, height, half_width + across, half_width - across,
+					to_sun.normalized(), sun_light_e, haze_ground_albedo, haze_multiscatter_gain, 0)
+			_haze_ambient_day_raw = day_result[3]
+			_haze_lup_day = day_result[2]
+			if planet_energy.length_squared() > 0.000000000001 and current_giant_direction.length_squared() > 0.0:
+				var night_result: Array = _haze_sky.call("Compute", radius, outward, axis, height, half_width + across, half_width - across,
+						current_giant_direction.normalized(), planet_energy, haze_ground_albedo, haze_multiscatter_gain, 0)
+				_haze_ambient_planet = night_result[3]
+				_haze_lup_planet = night_result[2]
+			else:
+				_haze_ambient_planet = Vector3.ZERO
+				_haze_lup_planet = Vector3.ZERO
+	var night_floor := Vector3(haze_night_floor.r, haze_night_floor.g, haze_night_floor.b) * eclipse_atmosphere_night_multiplier
+	# current_cloud_ambient_transmittance stands in for the storm's sky occlusion until the cloud-feedback step (P9).
+	var day_ambient := _haze_ambient_day_raw * current_cloud_ambient_transmittance
+	var night_ambient := _haze_ambient_planet + night_floor
+	var changed := false
+	if _relative_change(sun, _published_haze_sun) > 0.005:
+		_published_haze_sun = sun
+		changed = true
+		RenderingServer.global_shader_parameter_set("ringworld_haze_sun_irradiance", sun)
+	if _relative_change(day_ambient, _published_haze_ambient_day) > 0.005:
+		_published_haze_ambient_day = day_ambient
+		changed = true
+		RenderingServer.global_shader_parameter_set("ringworld_haze_ambient_day", day_ambient)
+	if _relative_change(night_ambient, _published_haze_ambient_night) > 0.005:
+		_published_haze_ambient_night = night_ambient
+		changed = true
+		RenderingServer.global_shader_parameter_set("ringworld_haze_ambient_night", night_ambient)
+	# Sunshine and the far cloud mask pack the same values into their CPU-built profile (compute shaders cannot read globals).
+	if (changed or _haze_bridge_pending) and cloud_lighting_bridge != null and cloud_lighting_bridge.has_method("SetHazeLighting"):
+		cloud_lighting_bridge.call("SetHazeLighting", _published_haze_sun, _published_haze_ambient_day, _published_haze_ambient_night)
+		_haze_bridge_pending = false
+	elif changed:
+		_haze_bridge_pending = true
+	# Cloud ambient follows the mean sky radiance (day: sun, night: giant light + floor) when the bridge derives it from the sky.
+	var lup_night := _haze_lup_planet + night_floor
+	if cloud_lighting_bridge != null and cloud_lighting_bridge.has_method("SetHazeSkyRadiance") \
+			and (_relative_change(_haze_lup_day, _published_haze_lup_day) > 0.005 or _relative_change(lup_night, _published_haze_lup_night) > 0.005):
+		_published_haze_lup_day = _haze_lup_day
+		_published_haze_lup_night = lup_night
+		cloud_lighting_bridge.call("SetHazeSkyRadiance", _haze_lup_day, lup_night)
+
+
+# A palette colour as a unit-luminance per-channel multiplier (hue only), so a tint lerp changes colour without changing brightness.
+func _unit_luminance_tint(color: Color) -> Vector3:
+	var luminance := maxf(color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722, 0.0001)
+	return Vector3(color.r, color.g, color.b) / luminance
+
+
+# Largest per-channel difference of a and b relative to the larger of their peak components (0 when both are ~0).
+func _relative_change(a: Vector3, b: Vector3) -> float:
+	var peak := maxf(maxf(maxf(absf(a.x), absf(a.y)), absf(a.z)), maxf(maxf(absf(b.x), absf(b.y)), absf(b.z)))
+	if peak < 0.000001:
+		return 0.0
+	return maxf(maxf(absf(a.x - b.x), absf(a.y - b.y)), absf(a.z - b.z)) / peak
+
+
+# Viewer position in the ring's atmosphere frame: outward unit vector, ring axis, signed offset across the ring from its centre line,
+# radial vector from the axis and altitude above the nominal floor (ring_radius - |radial|). Canonical path when the player publishes
+# canonical atmosphere coordinates, otherwise derived from the camera world position.
+func _viewer_atmosphere_frame(surface_up: Vector3) -> Dictionary:
+	var ring_radius := _get_ring_radius_meters()
+	var ring_axis := (canonical_grid as Node3D).global_basis.y.normalized() \
+			if canonical_grid is Node3D else Vector3.UP
+	var viewer_across := 0.0
+	var viewer_radial := -surface_up.normalized() * ring_radius
+	var viewer_outward := -surface_up.normalized()
+	if _has_canonical_atmosphere_provider():
+		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
+		viewer_across = canonical_position.z - _get_ring_width_meters() * 0.5
+		viewer_radial = viewer_outward * maxf(0.0, ring_radius - canonical_position.y)
+	else:
+		var viewer_position: Vector3 = _get_viewer_position()
+		var relative_viewer: Vector3 = viewer_position - Vector3(gravity_controller.get_ring_center())
+		viewer_across = relative_viewer.dot(ring_axis)
+		viewer_radial = relative_viewer - ring_axis * viewer_across
+		viewer_outward = viewer_radial.normalized() if viewer_radial.length_squared() > 0.000001 else -surface_up.normalized()
+	return {
+		"outward": viewer_outward,
+		"axis": ring_axis,
+		"across": viewer_across,
+		"radial": viewer_radial,
+		"height": ring_radius - viewer_radial.length(),
+	}
+
+
 func _publish_night_light_scale(scale: float) -> void:
 	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", clampf(scale, 0.0, 1.0))
 
@@ -866,6 +1046,9 @@ func _publish_hub_light(day: float, weight: float) -> void:
 
 
 func _exit_tree() -> void:
+	# Drop the C# helper before the .NET host shuts down.
+	_haze_sky = null
+	_haze_cache_valid = false
 	# Global shader parameters survive scene changes; reset before returning to
 	# menus or scenes with no celestial clock.
 	_publish_solar_visibility(1.0)
@@ -898,21 +1081,11 @@ func _update_sky(
 		_sky_param_cache_owner = ring_sky_material
 		_sky_param_cache.clear()
 	var ring_radius := _get_ring_radius_meters()
-	var ring_axis := (canonical_grid as Node3D).global_basis.y.normalized() \
-			if canonical_grid is Node3D else Vector3.UP
-	var viewer_across := 0.0
-	var viewer_radial := -surface_up.normalized() * ring_radius
-	var viewer_outward := -surface_up.normalized()
-	if _has_canonical_atmosphere_provider():
-		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
-		viewer_across = canonical_position.z - _get_ring_width_meters() * 0.5
-		viewer_radial = viewer_outward * maxf(0.0, ring_radius - canonical_position.y)
-	else:
-		var viewer_position: Vector3 = _get_viewer_position()
-		var relative_viewer: Vector3 = viewer_position - Vector3(gravity_controller.get_ring_center())
-		viewer_across = relative_viewer.dot(ring_axis)
-		viewer_radial = relative_viewer - ring_axis * viewer_across
-		viewer_outward = viewer_radial.normalized() if viewer_radial.length_squared() > 0.000001 else -surface_up.normalized()
+	var viewer_frame := _viewer_atmosphere_frame(surface_up)
+	var ring_axis: Vector3 = viewer_frame["axis"]
+	var viewer_across: float = viewer_frame["across"]
+	var viewer_radial: Vector3 = viewer_frame["radial"]
+	var viewer_outward: Vector3 = viewer_frame["outward"]
 	_set_sky_param("local_surface_up", -viewer_outward)
 	_set_sky_param("ring_axis_direction", ring_axis)
 	# The sky shader uses normalized ray geometry, but still needs the real radius
@@ -924,6 +1097,7 @@ func _update_sky(
 	ring_sky_material.set_shader_parameter("ring_radius_meters", ring_radius)
 	_set_sky_param("camera_radial_ratio", viewer_radial.length() / ring_radius)
 	_set_sky_param("camera_across_ratio", viewer_across / ring_radius)
+	_set_sky_param("sky_camera_height_meters", float(viewer_frame["height"]))
 	_set_sky_param(
 		"ring_half_width_ratio",
 		maxf(_get_ring_width_meters() * 0.5 / ring_radius, 0.000001))

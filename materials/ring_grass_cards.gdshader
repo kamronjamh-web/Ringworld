@@ -49,7 +49,8 @@ varying vec3 v_up_view;
 varying vec3 v_u_view;
 varying vec3 v_face_view;
 varying vec2 v_terrain_uv;
-varying vec4 v_atmosphere;
+varying vec3 v_haze_T;
+varying vec3 v_haze_S;
 varying vec4 v_modifier;
 varying vec3 v_ground_world;
 varying flat vec4 v_biome;
@@ -152,7 +153,9 @@ void vertex() {
 
 	v_light.x = grass_card_day_factor(ground_up);
 	v_light.y = sample_local_cloud_shadow(gp) * v_light.x;
-	v_atmosphere = sample_ring_atmosphere(ring_atmosphere_camera_world, gp, ring_atmosphere_center_world, v_light.x);
+	RingHaze haze = ring_haze_sample(ring_atmosphere_camera_world, gp, ring_atmosphere_center_world, v_light.x);
+	v_haze_T = haze.T;
+	v_haze_S = ring_haze_inscatter(haze);
 	v_modifier = grass_modifier_tint(root);
 	}
 }
@@ -170,7 +173,7 @@ void fragment() {
 	}
 	col = mix(col, v_modifier.rgb, clamp(v_modifier.a, 0.0, 1.0));
 	vec3 emission;
-	ALBEDO = grass_card_finish_albedo(col, v_light.x, v_atmosphere, emission);
+	ALBEDO = grass_card_finish_albedo(col, v_light.x, v_haze_T, v_haze_S, emission);
 	EMISSION = emission;
 	ROUGHNESS = 1.0;
 	// Ground normal at the root, bending toward the card's outward / face normal at the tip.

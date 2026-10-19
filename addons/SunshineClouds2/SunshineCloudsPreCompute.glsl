@@ -1,5 +1,5 @@
 #[compute]
-// GenericData ABI: 280 floats; includes cloud mask controls.
+// GenericData ABI: 304 floats (16-slot ring atmosphere profile, P2b); includes cloud mask controls.
 #version 450
 
 #include "./CloudsInc.comp"

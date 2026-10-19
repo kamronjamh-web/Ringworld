@@ -120,12 +120,13 @@ void fragment() {
 		* mix(night_tint, vec3(1.0), ring_day_factor)
 		* hemisphere_brightness;
 	vec3 grazing_color = mix(water_tint, vec3(0.12, 0.28, 0.42), reflection_weight * 0.55);
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
-	ALBEDO = grazing_color * (1.0 - atmosphere.a);
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
+	ALBEDO = grazing_color * haze.T;
+	EMISSION = ring_haze_inscatter(haze);
 	ROUGHNESS = clamp(max(ocean_roughness, far_water_roughness)
 		+ sqrt(max(filtered_far_wave.z * wave_normal_strength * wave_normal_strength, 0.0)) * 0.10, 0.02, 1.0);
-	SPECULAR = ring_water_dielectric_specular() * ocean_specular;
+	// Physical haze also attenuates the environment reflection; exactly 1 in Legacy.
+	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze);
 	METALLIC = 0.0;
 	AO = 1.0 - sample_combined_cloud_shadow(world_position, ring_day_factor) * 0.60;
 	AO_LIGHT_AFFECT = 0.0;

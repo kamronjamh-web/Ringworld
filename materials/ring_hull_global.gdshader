@@ -120,14 +120,14 @@ void fragment() {
 	float wall_face = smoothstep(0.7, 0.9, abs(normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y));
 	float structural_cue = sample_structural_scale_cues(world_position, wall_face);
 	lit_color = mix(lit_color, structural_cue_color, structural_cue * 0.34);
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
-	ALBEDO = lit_color * (1.0 - atmosphere.a);
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
+	ALBEDO = lit_color * haze.T;
 	EMISSION = ALBEDO * terrain_light_floor
-		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy
+		+ ring_haze_inscatter(haze)
 		+ structural_cue_color * structural_cue
 			// Eclipse darkness (spec D.1): the self-lit night cue scales with the night light; exactly 1 outside an eclipse.
 			* mix(structural_cue_night_energy * ringworld_night_light_scale, structural_cue_day_energy, ring_day_factor)
-			* (1.0 - atmosphere.a * 0.65);
+			* (1.0 - (1.0 - ring_haze_visibility(haze)) * 0.65);
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.25;
 	METALLIC = 0.18;

@@ -1,0 +1,16 @@
+// Transmittance-weighted representative cloud distance (the .b data channel). Pure helpers shared by the march and
+// tools/cloud_depth_weighting_gpu_test.gd. Each non-empty sample weighs by the opacity it adds to the ray,
+// density_added * (1 - opacity already accumulated), so occluded far samples count little and a thin near veil in
+// front of a dense far cloud still pulls the mean toward itself in proportion to its contribution.
+void ring_cloud_depth_accumulate(inout float weight_sum, inout float weighted_distance_sum,
+		float density_before, float density_added, float sample_distance) {
+	float w = max(density_added, 0.0) * (1.0 - clamp(density_before, 0.0, 1.0));
+	weight_sum += w;
+	weighted_distance_sum += w * sample_distance;
+}
+
+float ring_cloud_depth_resolve(float weight_sum, float weighted_distance_sum, float traveled_distance, float fallback_distance) {
+	return weight_sum > 1e-5
+		? min(traveled_distance, weighted_distance_sum / weight_sum)
+		: min(traveled_distance, fallback_distance);
+}

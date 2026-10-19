@@ -53,7 +53,7 @@ public sealed class RingGrassCardMaterialConfig
     /// <summary>Terrain-surface shader parameters the grass materials mirror (feed to RingTerrain3DSurface.RegisterSurfaceFollower).
     /// Lighting, atmosphere (incl. the camera ray frame), anchors/frame values and the biome albedo samplers. Macro/cloud shadow
     /// textures come from their projectors' Register calls instead.</summary>
-    public static readonly IReadOnlySet<StringName> SurfaceFollowerNames = new HashSet<StringName>
+    public static readonly IReadOnlySet<StringName> SurfaceFollowerNames = new HashSet<StringName>(RingAtmosphereModel.HazeParameterNames)
     {
         "sun_direction", "day_start_dot", "day_full_dot", "night_tint", "night_direct_light_factor", "day_direct_light_factor", "shadow_floor",
         "ring_viewer_world_position", "ring_width_meters", "ring_radius_meters",

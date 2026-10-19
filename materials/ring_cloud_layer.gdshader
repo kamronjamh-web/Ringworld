@@ -158,8 +158,8 @@ void fragment() {
 	vec3 underside_color = mix(night_cloud_color, day_color * vec3(0.78, 0.83, 0.92), ring_day_factor);
 	vec3 exterior_color = mix(night_cloud_color * 0.72, day_color * vec3(1.04, 1.02, 0.98), ring_day_factor);
 	vec3 cloud_color = mix(underside_color, exterior_color, exterior_weight);
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, face_day_factor);
-	float atmosphere_transmittance = 1.0 - atmosphere.a;
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, face_day_factor);
+	vec3 atmosphere_transmittance = haze.T;
 	float base_alpha = clamp(cloud * opacity * far_density_opacity_multiplier, 0.0, 1.0);
 	// The CPU selects real seeded storm systems and publishes the same bounded
 	// events to this whole-ring shell and the camera-local clipmap. This keeps a
@@ -178,6 +178,6 @@ void fragment() {
 	// cloud opacity stays base-only; flash_carrier still bounds discard/radiance.
 	ALBEDO = (cloud_color * base_alpha + flash_premultiplied) * atmosphere_transmittance;
 	EMISSION = cloud_color * mix(0.22, 0.065, face_day_factor) * base_alpha * atmosphere_transmittance
-		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy * base_alpha;
+		+ ring_haze_inscatter(haze) * base_alpha;
 	ALPHA = base_alpha;
 }

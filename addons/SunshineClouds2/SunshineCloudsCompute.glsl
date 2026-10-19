@@ -5,9 +5,11 @@
 
 #include "./CloudsInc.comp"
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
+#include "../../materials/ring_haze_shared.gdshaderinc"
 #include "../../materials/ring_cloud_weather_shared.gdshaderinc"
 #include "./RingAtmosphereCompute.glslinc"
 #include "./RingCloudHistory.gdshaderinc"
+#include "./SunshineCloudsDepth.glslinc"
 #include "../../materials/ring_terrain_cloud_sun_shared.gdshaderinc"
 
 // Invocations in the (x, y, z) dimension
@@ -1086,6 +1088,9 @@ void main() {
 	float maxTheoreticalStep = float(stepCount) * maxstep;
 	float highestDensity = 0.0;
 	float highestDensityDistance = maxTheoreticalStep;
+	// Transmittance-weighted depth: each sample weighs by the opacity it adds, so a thin near veil and a dense far cloud average by contribution.
+	float depthWeightSum = 0.0;
+	float depthWeightedDistanceSum = 0.0;
 	//float ceilingSample = cloudceiling;
 	float lodMaxDistance = maxstep * float(stepCount) * genericData.data.lod_bias;
 	//float halfcloudThickness = (cloudceiling - cloudfloor) * 0.5;
@@ -1573,6 +1578,7 @@ void main() {
 				newdensity = mix(newdensity, 0.0, traveledDistance / maxstep);
 			}
 
+			ring_cloud_depth_accumulate(depthWeightSum, depthWeightedDistanceSum, density, newdensity * terminalDensityWeight, traveledDistance);
 			density += newdensity * terminalDensityWeight;
 			if (density >= 1.0){
 				densityBreak = true;
@@ -1702,7 +1708,7 @@ void main() {
 
 
 	//accumulation preperation:
-	float finalDensityDistance = min(traveledDistance, highestDensityDistance);
+	float finalDensityDistance = ring_cloud_depth_resolve(depthWeightSum, depthWeightedDistanceSum, traveledDistance, highestDensityDistance);
 	vec3 delta = rayOrigin - genericData.data.previous_camera_origin.xyz;
 
 	// Reprojection of the cloud body and the opaque-surface metadata the history is validated against live in
@@ -1951,8 +1957,7 @@ void main() {
 		// live-profile independent, while the published backdrop matches display.
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(currentDataAccumilation.b, 0.0, max(0.0, linear_depth));
-			vec4 haze = ring_cloud_atmosphere_haze(rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
-			currentColorAccumilation.rgb = mix(currentColorAccumilation.rgb, haze.rgb, haze.a);
+			currentColorAccumilation.rgb = ring_cloud_atmosphere_apply(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
 		}
 		imageStore(output_color_image, uv, currentColorAccumilation);
 	}

@@ -186,9 +186,9 @@ void fragment() {
 	// Keep a spatially varying night tint, but leave brightness to Godot's
 	// environment ambient light and directional-light pipeline.
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
-	ALBEDO = lit_color * (1.0 - atmosphere.a);
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
+	ALBEDO = lit_color * haze.T;
+	EMISSION = ring_haze_inscatter(haze);
 	// Every water kind now uses a separate transparent surface, leaving this
 	// material responsible only for dry and submerged solid terrain.
 	ROUGHNESS = mix(roughness_value, max(roughness_value, .90), grass_coverage);

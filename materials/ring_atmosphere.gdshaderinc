@@ -45,7 +45,33 @@ uniform float eclipse_solar_transmittance : hint_range(0.0, 1.0) = 1.0;
 // A large default preserves materials that are not ring-width-aware.
 uniform float ring_atmosphere_half_width_meters = 1000000000.0;
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
+#include "res://materials/ring_haze_shared.gdshaderinc"
 #include "res://materials/ring_atmosphere_paths.gdshaderinc"
+
+// Physical haze (P2a of docs/atmosphere-haze-revamp-plan.md). A/B toggle until the Legacy model is removed (P8):
+// 0 = Legacy (smoothstep distance ramp, sample_ring_atmosphere), 1 = Physical (ring_haze_eval). Default Legacy.
+// Every ring_haze_* uniform is in PHYSICAL units (1/m, m) regardless of ring_atmosphere_coordinate_scale; ring_haze_sample
+// converts positions/radius itself. Pushed by RingAtmosphereModel.PushHazeParameters.
+uniform int atmosphere_haze_model = 0;
+uniform vec3 ring_haze_sigma_R = vec3(5.802e-6, 13.558e-6, 33.1e-6);
+uniform float ring_haze_H_R = 8000.0;
+uniform float ring_haze_sigma_A = 4.175e-6;
+uniform float ring_haze_omega_A = 0.9;
+uniform float ring_haze_H_A = 1500.0;
+uniform float ring_haze_sigma_M0 = 4.0e-6;
+uniform float ring_haze_omega_M = 0.95;
+uniform float ring_haze_H_mist = 400.0;
+uniform float ring_haze_cap_height_meters = 20000.0;
+uniform float ring_haze_g = 0.6;
+uniform int ring_haze_quality = 8;
+// Art-direction tint (sun warmth) on the haze sun colour; neutral at the Natural default.
+uniform vec3 ring_haze_sun_tint = vec3(1.0);
+// Lighting colours come from the environment, not from per-material uniforms: day_side_atmosphere.gd publishes them as
+// globals whenever the sun colour/energy or ambient change (cheaper than rewriting every registered material).
+// Units: see the comment on ring_haze_sample.
+global uniform vec3 ringworld_haze_sun_irradiance;
+global uniform vec3 ringworld_haze_ambient_day;
+global uniform vec3 ringworld_haze_ambient_night;
 
 float ring_atmosphere_altitude_blend(float camera_altitude) {
 	return smoothstep(
@@ -443,4 +469,88 @@ vec4 sample_ring_atmosphere(vec3 camera_world, vec3 target_world, vec3 center_wo
 		atmosphere_total_max_opacity);
 	atmosphere_opacity *= atmosphere_opacity_multiplier * target_width_fade;
 	return vec4(legacy_color, clamp(atmosphere_opacity, 0.0, 1.0));
+}
+
+// ---- Unified haze entry point for spatial / forward consumers -------------------------------------------------
+// Consumer contract (both models):   L = L_surf * T + S_sun + S_amb
+// Legacy:   T = vec3(1 - a), S_sun = rgb * a * atmosphere_scattering_energy, S_amb = 0 (exactly what each consumer composited
+//           before P2a, including atmosphere_opacity_multiplier, which sample_ring_atmosphere already folds into a).
+// Physical: ring_haze_eval over the local air interval from the ray frame (ring_atmosphere_* uniforms). A material with no valid
+//           ray frame falls back to the Legacy result (there is no physical far-shroud); see docs for the audit.
+//
+// Radiometric units. Godot (non-physical light units) multiplies a directional light's colour*energy by PI internally and
+// the built-in Lambert divides by PI again, so a matte surface with albedo A under the sun at NdotL = 1 radiates
+// A * sun_colour * sun_energy. The haze model's phase functions are normalised over 4PI (1/sr), i.e. S = E_irr * phase * tau
+// with E_irr the sun's irradiance, and a surface radiates (A / PI) * E_irr. Matching the two gives
+// E_irr = PI * sun_colour * sun_energy = ringworld_haze_sun_irradiance. Ambient is already "radiance of a white surface" in
+// Godot (ambient_light_color * ambient_light_energy multiplies the albedo directly), which is exactly the isotropic
+// multi-scatter radiance the model wants, so ringworld_haze_ambient_* is passed through unscaled. Note that the project's custom
+// light() functions (terrain, ocean, hull) add ALBEDO * LIGHT_COLOR * NdotL with LIGHT_COLOR already holding the PI factor,
+// so terrain radiates PI-fold brighter than a built-in-lit surface of the same albedo; haze is anchored to the built-in convention.
+RingHaze ring_haze_from_legacy(vec4 atmosphere) {
+	RingHaze haze;
+	haze.T = vec3(1.0 - atmosphere.a);
+	haze.S_sun = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	haze.S_amb = vec3(0.0);
+	return haze;
+}
+
+// Physical-model parameters from the haze uniforms/globals. The day weight is the camera-local ringworld_effective_solar_day of the
+// geometric day at the viewer's local up (-outward). Shared by ring_haze_sample (spatial consumers) and the sky shader.
+RingHazeParams ring_haze_uniform_params(vec3 to_sun, vec3 outward) {
+	RingHazeParams p;
+	p.sigma_R = ring_haze_sigma_R;
+	p.H_R = ring_haze_H_R;
+	p.sigma_A = ring_haze_sigma_A;
+	p.omega_A = ring_haze_omega_A;
+	p.H_A = ring_haze_H_A;
+	p.sigma_M0 = ring_haze_sigma_M0;
+	p.omega_M = ring_haze_omega_M;
+	p.H_mist = ring_haze_H_mist;
+	p.cap_height = ring_haze_cap_height_meters;
+	p.g = ring_haze_g;
+	p.E_sun = ringworld_haze_sun_irradiance * ring_haze_sun_tint;
+	p.ambient = ringworld_haze_ambient_day;
+	p.night_ambient = ringworld_haze_ambient_night;
+	p.to_sun = normalize(to_sun);
+	p.quality = ring_haze_quality;
+	p.day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(-normalize(outward), p.to_sun)));
+	return p;
+}
+
+RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_world, float day_factor) {
+	if (atmosphere_haze_model == 0 || !ring_atmosphere_enabled || ring_radius_meters <= 1.0 || !ring_atmosphere_ray_frame_valid) {
+		return ring_haze_from_legacy(sample_ring_atmosphere(camera_world, target_world, center_world, day_factor));
+	}
+	float scale = max(ring_atmosphere_coordinate_scale, 0.000001);
+	RingHazeParams p = ring_haze_uniform_params(ring_atmosphere_to_sun, ring_atmosphere_outward_world);
+	RingHaze haze = ring_haze_eval(p, target_world, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
+		ring_atmosphere_outward_world, ring_atmosphere_axis_world, ring_atmosphere_sidewall_negative_meters,
+		ring_atmosphere_sidewall_positive_meters, scale, ring_radius_meters / scale, atmosphere_floor_depth_meters / scale);
+	// Per-material density multiplier (clouds and distant props bind < 1): scales optical depth, tau' = m * tau.
+	float m = atmosphere_opacity_multiplier;
+	if (abs(m - 1.0) > 0.0001) {
+		vec3 t_scaled = exp(m * log(max(haze.T, vec3(0.000001))));
+		vec3 gain = (vec3(1.0) - t_scaled) / max(vec3(1.0) - haze.T, vec3(0.000001));
+		haze.T = t_scaled;
+		haze.S_sun *= gain;
+		haze.S_amb *= gain;
+	}
+	return haze;
+}
+
+// Total in-scattered radiance to add to EMISSION.
+vec3 ring_haze_inscatter(RingHaze haze) {
+	return haze.S_sun + haze.S_amb;
+}
+
+// Scalar visibility for effects that carry no colour of their own (emitter beams, glows): green transmittance
+// (exactly 1 - a in Legacy, where T is grey).
+float ring_haze_visibility(RingHaze haze) {
+	return haze.T.g;
+}
+
+// Attenuation for specular / reflection terms a shader owns separately from ALBEDO. 1 in Legacy (look unchanged), mean T in Physical.
+float ring_haze_specular_scale(RingHaze haze) {
+	return atmosphere_haze_model == 0 ? 1.0 : dot(haze.T, vec3(0.3333333));
 }

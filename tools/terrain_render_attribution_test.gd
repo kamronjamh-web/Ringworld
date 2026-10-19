@@ -271,9 +271,12 @@ func _apply_case(label: String) -> bool:
 			sun.shadow_enabled = false
 			for light in original_state.far_lights: light.shadow_enabled = false
 		"natural_haze":
+			# P2a A/B: pass `-- --haze-only --model=physical` to measure the physical haze model instead of Legacy.
+			tuning_drawer.call("SetAtmosphereHazeModel", 1 if "--model=physical" in OS.get_cmdline_user_args() else 0)
 			tuning_drawer.call("SetAtmospherePreset", 0)
 			tuning_drawer.call("SetAtmosphereEnabled", true)
 		"cinematic_haze":
+			tuning_drawer.call("SetAtmosphereHazeModel", 1 if "--model=physical" in OS.get_cmdline_user_args() else 0)
 			tuning_drawer.call("SetAtmospherePreset", 1)
 			tuning_drawer.call("SetAtmosphereEnabled", true)
 		_: _fail("unknown case " + label); return false

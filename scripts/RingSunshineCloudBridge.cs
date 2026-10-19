@@ -149,6 +149,8 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "0,3,0.01")] public float CloudWindMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float CloudDirectLightMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float CloudAmbientMultiplier { get; set; } = 1.0f;
+    /// <summary>With the Physical haze model, derive the cloud ambient from the haze sky radiance (see <see cref="SetHazeSkyRadiance"/>) instead of the authored colours. Legacy is unaffected.</summary>
+    [Export] public bool CloudAmbientFromSky { get; set; } = true;
     [Export(PropertyHint.Range, "0,1,0.01")] public float CloudSharpness { get; set; } = 0.62f;
 
     [ExportGroup("Distant clouds")]
@@ -681,6 +683,38 @@ public partial class RingSunshineCloudBridge : Node
         ApplyEclipseFogDistanceColor();
     }
 
+    /// <summary>
+    /// Lighting inputs of the physical haze (the values day_side_atmosphere.gd publishes as ringworld_haze_* globals). Sunshine and the far cloud
+    /// mask are compute/profile paths that cannot read Godot globals, so the day-side node hands them over here whenever they change.
+    /// </summary>
+    public void SetHazeLighting(Vector3 sunIrradiance, Vector3 ambientDay, Vector3 ambientNight)
+    {
+        RingAtmosphereModel.HazeSunIrradiance = sunIrradiance;
+        RingAtmosphereModel.HazeAmbientDay = ambientDay;
+        RingAtmosphereModel.HazeAmbientNight = ambientNight;
+    }
+
+    /// <summary>
+    /// Mean upper-hemisphere sky radiance (day and night) from RingHazeSkyIrradiance, published by day_side_atmosphere.gd. With the Physical haze
+    /// model and <see cref="CloudAmbientFromSky"/> the cloud ambient follows it (times <see cref="CloudSkyAmbientGain"/>).
+    /// </summary>
+    public void SetHazeSkyRadiance(Vector3 lupDay, Vector3 lupNight)
+    {
+        _hazeSkyRadianceDay = lupDay;
+        _hazeSkyRadianceNight = lupNight;
+        _hazeSkyRadianceValid = true;
+        if (CloudAmbientFromSky && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical) ApplyLocalCloudAmbientLighting();
+    }
+
+    /// <summary>
+    /// Normalises the sky radiance to the authored cloud ambient: luminance of the authored day ambient (DayCloudAmbientColor x day tint =
+    /// (0.273, 0.361, 0.50), luminance 0.3523) over the luminance of Lup at the reference pose (Lup = (0.1799, 0.3497, 0.6558), luminance 0.3357) (Natural preset, sun 60 deg, 300 m, giant light off,
+    /// haze_brightness 1, ground albedo 0.1, multiscatter gain 1), so a Natural noon at 300 m keeps today's cloud brightness.
+    /// </summary>
+    public const float CloudSkyAmbientGain = 1.05f;
+    private Vector3 _hazeSkyRadianceDay, _hazeSkyRadianceNight;
+    private bool _hazeSkyRadianceValid;
+
     public const float MinimumEclipseCloudAmbientScale = 0.3f;
     private float _eclipseCloudAmbientScale = 1.0f;
     private Color? _eclipseAtmosphereColorBase;
@@ -1010,15 +1044,31 @@ public partial class RingSunshineCloudBridge : Node
                 NightCloudAmbientColor.G * _eclipseCloudAmbientScale,
                 NightCloudAmbientColor.B * _eclipseCloudAmbientScale,
                 NightCloudAmbientColor.A);
-        Color normalAmbient = nightAmbient.Lerp(DayCloudAmbientColor, _localDayFactor);
-        Color stormAmbient = nightAmbient.Lerp(StormCloudAmbientColor, _localDayFactor);
+        Color dayAmbient = DayCloudAmbientColor;
+        Color stormDayAmbient = StormCloudAmbientColor;
+        Color nightTint = NightCloudAmbientTint;
+        bool fromSky = CloudAmbientFromSky && _hazeSkyRadianceValid && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical;
+        if (fromSky)
+        {
+            // Physical: the ambient colour carries the sky radiance itself, so the tint is neutral. The storm ambient keeps its authored
+            // colour and its (darker) storm tint so storms stay dark.
+            dayAmbient = new Color(_hazeSkyRadianceDay.X * CloudSkyAmbientGain, _hazeSkyRadianceDay.Y * CloudSkyAmbientGain, _hazeSkyRadianceDay.Z * CloudSkyAmbientGain, 1.0f);
+            stormDayAmbient = new Color(StormCloudAmbientColor.R * 0.13f, StormCloudAmbientColor.G * 0.18f, StormCloudAmbientColor.B * 0.27f, StormCloudAmbientColor.A);
+            nightAmbient = new Color(_hazeSkyRadianceNight.X * CloudSkyAmbientGain * _eclipseCloudAmbientScale,
+                _hazeSkyRadianceNight.Y * CloudSkyAmbientGain * _eclipseCloudAmbientScale,
+                _hazeSkyRadianceNight.Z * CloudSkyAmbientGain * _eclipseCloudAmbientScale, 1.0f);
+            dayTint = Colors.White;
+            nightTint = Colors.White;
+        }
+        Color normalAmbient = nightAmbient.Lerp(dayAmbient, _localDayFactor);
+        Color stormAmbient = nightAmbient.Lerp(stormDayAmbient, _localDayFactor);
         Color ambient = normalAmbient.Lerp(stormAmbient, _localStormFactor);
         _clouds.Set("cloud_ambient_color", new Color(
             ambient.R * CloudAmbientMultiplier,
             ambient.G * CloudAmbientMultiplier,
             ambient.B * CloudAmbientMultiplier,
             ambient.A));
-        _clouds.Set("cloud_ambient_tint", NightCloudAmbientTint.Lerp(dayTint, _localDayFactor));
+        _clouds.Set("cloud_ambient_tint", nightTint.Lerp(dayTint, _localDayFactor));
     }
 
     private void UpdateCloudFrame()
@@ -1077,27 +1127,19 @@ public partial class RingSunshineCloudBridge : Node
         Vector3 toSun = _sunLight is null ? Vector3.Up : _sunLight.GlobalBasis.Z.Normalized();
         RingAtmosphereRayFrame frame = _camera is null ? RingAtmosphereRayFrame.Invalid : RingAtmosphereRayFrame.FromMainCamera(_grid, _camera, toSun);
         float solarVisibility = _daySideAtmosphere is null ? 1.0f : Mathf.Clamp(_daySideAtmosphere.Get("current_solar_visibility").AsSingle(), 0.0f, 1.0f);
-        // Eclipse hub sun (spec C.2): the profile's day weight is max(solar visibility, hub day). The hub day is exactly 0 outside the event.
-        if (_daySideAtmosphere is not null)
-            solarVisibility = Mathf.Max(solarVisibility, Mathf.Clamp(_daySideAtmosphere.Get("current_hub_day").AsSingle(), 0.0f, 1.0f));
+        // Eclipse hub sun (spec C.2): the Legacy profile day weight is max(solar visibility, hub day), the physical one max(geo * vis, hub);
+        // PackCloudProfile applies both. The hub day is exactly 0 outside the event.
+        float hubDay = _daySideAtmosphere is null ? 0.0f : Mathf.Clamp(_daySideAtmosphere.Get("current_hub_day").AsSingle(), 0.0f, 1.0f);
         // Sunshine declares this as Array[Vector4]. A managed Vector4[] is
         // marshalled as a packed array instead, which the typed GDScript
-        // property rejects. Preserve all ten slots even while haze is off so
+        // property rejects. Preserve all sixteen slots even while haze is off so
         // the compositor's fixed UBO ABI always receives a complete profile.
         var profile = new Godot.Collections.Array<Vector4>();
-        profile.Resize(10);
+        profile.Resize(RingAtmosphereModel.CloudProfileSlots);
         if (frame.Valid && RingAtmosphereModel.Enabled)
         {
-            profile[0] = new(1, (float)preciseRadius, RingAtmosphereModel.FloorDepthMeters, RingAtmosphereModel.BoundaryHeightMeters);
-            profile[1] = new(RingAtmosphereModel.UpperHeightMeters, RingAtmosphereModel.BoundaryExtinctionMeters, RingAtmosphereModel.UpperExtinctionMeters, RingAtmosphereModel.TotalMaxOpacity);
-            profile[2] = new(RingAtmosphereModel.BoundaryMaxOpacity, RingAtmosphereModel.UpperMaxOpacity, RingAtmosphereModel.DistanceHazeMaxOpacity, RingAtmosphereModel.ScatteringEnergy);
-            profile[3] = new(RingAtmosphereModel.ClearDistanceMeters, RingAtmosphereModel.FullDistanceMeters, RingAtmosphereModel.HighAltitudeClearDistanceMeters, RingAtmosphereModel.HighAltitudeFullDistanceMeters);
-            profile[4] = new(RingAtmosphereModel.DistanceAltitudeStartMeters, RingAtmosphereModel.DistanceAltitudeEndMeters, RingAtmosphereModel.Aerosol, RingAtmosphereModel.ForwardScattering);
-            profile[5] = new(RingAtmosphereModel.DayColor.R, RingAtmosphereModel.DayColor.G, RingAtmosphereModel.DayColor.B, RingAtmosphereModel.SunWarmth);
-            profile[6] = new(RingAtmosphereModel.NightColor.R * RingAtmosphereModel.EclipseNightScale, RingAtmosphereModel.NightColor.G * RingAtmosphereModel.EclipseNightScale, RingAtmosphereModel.NightColor.B * RingAtmosphereModel.EclipseNightScale, solarVisibility);
-            profile[7] = new(frame.OutwardWorld.X, frame.OutwardWorld.Y, frame.OutwardWorld.Z, frame.CameraHeightMeters);
-            profile[8] = new(frame.AxisWorld.X, frame.AxisWorld.Y, frame.AxisWorld.Z, frame.SidewallNegativeMeters);
-            profile[9] = new(frame.ToSun.X, frame.ToSun.Y, frame.ToSun.Z, frame.SidewallPositiveMeters);
+            RingAtmosphereModel.PackCloudProfile(profile, preciseRadius, frame.OutwardWorld, frame.AxisWorld, frame.CameraHeightMeters,
+                frame.SidewallNegativeMeters, frame.SidewallPositiveMeters, frame.ToSun, solarVisibility, hubDay);
         }
         _clouds.Set("ring_atmosphere_profile", profile);
     }

@@ -83,6 +83,11 @@ func _run() -> void:
 	var drawer: Node = game.get_node_or_null("LiveTuningDrawer")
 	if explorer == null or celestial == null or atmosphere == null or director == null or drawer == null:
 		_abort("missing game nodes"); return
+	if "--model=physical" in OS.get_cmdline_user_args() or "--model=legacy" in OS.get_cmdline_user_args():
+		# Haze model A/B (P3). Isolated atmosphere settings (Natural preset defaults) so the switch is never persisted to the player's
+		# user:// preferences and both models start from the same art controls.
+		drawer.call("InstallAtmosphereDefaults", fixture.path_join("atmosphere_tuning.tres"))
+		drawer.call("SetAtmosphereHazeModel", 1 if "--model=physical" in OS.get_cmdline_user_args() else 0)
 	for m in ["set_process_input", "set_process_unhandled_input", "set_process_unhandled_key_input", "set_process_shortcut_input"]: explorer.call(m, false)
 	var waited := 0
 	while waited < 900:

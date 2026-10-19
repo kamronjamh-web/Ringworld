@@ -85,6 +85,18 @@ ringworld_night_light_scale={
 "type": "float",
 "value": 1.0
 }
+ringworld_haze_sun_irradiance={
+"type": "vec3",
+"value": Vector3(12.566, 12.566, 12.566)
+}
+ringworld_haze_ambient_day={
+"type": "vec3",
+"value": Vector3(0.2631, 0.3464, 0.4922)
+}
+ringworld_haze_ambient_night={
+"type": "vec3",
+"value": Vector3(0.004, 0.005, 0.008)
+}
 ring_surface_aperture_0={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)

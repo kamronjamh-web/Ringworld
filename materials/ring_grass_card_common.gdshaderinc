@@ -72,8 +72,8 @@ vec2 grass_card_shadow_uv(vec2 canonical_offset, vec4 origin_uv) {
 }
 
 // Terrain night tint and per-vertex atmosphere: returns the final albedo and the in-scattered emission.
-vec3 grass_card_finish_albedo(vec3 colour, float day_factor, vec4 atmosphere, out vec3 emission) {
+vec3 grass_card_finish_albedo(vec3 colour, float day_factor, vec3 haze_transmittance, vec3 haze_inscatter, out vec3 emission) {
 	vec3 lit = ring_terrain_night_tint(colour, day_factor);
-	emission = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
-	return lit * (1.0 - atmosphere.a);
+	emission = haze_inscatter;
+	return lit * haze_transmittance;
 }

@@ -228,7 +228,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 280
+const GENERAL_DATA_FLOAT_COUNT := 304
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -325,7 +325,7 @@ var buffers : RenderSceneBuffersRD
 var uniform_sets : Array[RID] = []
 var general_data : PackedByteArray
 
-# Ten vec4s, populated by RingSunshineCloudBridge. Keeping this as an
+# Sixteen vec4s (0-9 Legacy, 10-15 physical haze), populated by RingSunshineCloudBridge. Keeping this as an
 # immutable value array makes every compositor callback snapshot self-contained.
 @export var ring_atmosphere_profile : Array[Vector4] = []
 @export var skip_empty_cloud_mask_samples : bool = true
@@ -2787,7 +2787,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	general_data.encode_float(idx, 1.0 if diagnostic_menu_history_weights else 0.0); idx += 4
 	# Append-only shared atmosphere ABI. Missing/default values deliberately
 	# disable the path for standalone addon scenes and menu fixtures.
-	for profile_index in 10:
+	for profile_index in 16:
 		var profile_value := ring_atmosphere_profile[profile_index] if profile_index < ring_atmosphere_profile.size() else Vector4.ZERO
 		general_data.encode_float(idx, profile_value.x); idx += 4
 		general_data.encode_float(idx, profile_value.y); idx += 4

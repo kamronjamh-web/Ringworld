@@ -372,6 +372,7 @@ public partial class RingTerrain3DSurface : Node3D
         SetMaterialParameter("atmosphere_sun_warmth", RingAtmosphereModel.SunWarmth);
         SetMaterialParameter("atmosphere_day_color", new Vector3(RingAtmosphereModel.DayColor.R, RingAtmosphereModel.DayColor.G, RingAtmosphereModel.DayColor.B));
         SetMaterialParameter("atmosphere_night_color", new Vector3(RingAtmosphereModel.NightColor.R, RingAtmosphereModel.NightColor.G, RingAtmosphereModel.NightColor.B));
+        RingAtmosphereModel.PushHazeParameters(SetMaterialParameter);
     }
 
     private void ApplyAtmosphereRayFrame()

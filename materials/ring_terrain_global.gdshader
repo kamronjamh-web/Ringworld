@@ -137,9 +137,9 @@ void fragment() {
 	}
 	float hemisphere_brightness = mix(night_brightness, 1.0, ring_day_factor);
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor) * hemisphere_brightness;
-	vec4 atmosphere = sample_ring_atmosphere(camera_world_position, world_position, ring_center, ring_day_factor);
-	ALBEDO = lit_color * (1.0 - atmosphere.a);
-	EMISSION = atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
+	ALBEDO = lit_color * haze.T;
+	EMISSION = ring_haze_inscatter(haze);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.18;
 	METALLIC = 0.0;

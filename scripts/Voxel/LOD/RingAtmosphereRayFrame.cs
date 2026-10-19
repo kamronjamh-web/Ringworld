@@ -26,8 +26,13 @@ public readonly record struct RingAtmosphereRayFrame(
 
     public static RingAtmosphereRayFrame FromMainCamera(
         VoxelChunkGridManager grid, Camera3D camera, Vector3 toSun)
+        => FromWorldPosition(grid, camera.GlobalPosition, toSun);
+
+    /// <summary>Same frame for an arbitrary world-space eye position (materials owned by systems without a Camera3D reference).</summary>
+    public static RingAtmosphereRayFrame FromWorldPosition(
+        VoxelChunkGridManager grid, Vector3 eyeWorld, Vector3 toSun)
     {
-        RingCanonicalPosition canonical = grid.WorldToCanonicalRingPosition64(camera.GlobalPosition);
+        RingCanonicalPosition canonical = grid.WorldToCanonicalRingPosition64(eyeWorld);
         RingLodGeometrySnapshot geometry = grid.CaptureLodGeometrySnapshot();
         if (geometry.RingRadiusMeters <= 0.0) return Invalid;
         double angle = canonical.AroundMeters / geometry.RingRadiusMeters;
@@ -35,7 +40,7 @@ public readonly record struct RingAtmosphereRayFrame(
             (float)Math.Cos(angle), 0.0f, (float)Math.Sin(angle))).Normalized();
         Vector3 axis = (geometry.GridGlobalTransform.Basis * Vector3.Up).Normalized();
         double width = grid.RingAcrossWidthMeters;
-        return new RingAtmosphereRayFrame(true, camera.GlobalPosition,
+        return new RingAtmosphereRayFrame(true, eyeWorld,
             (float)canonical.VerticalMeters, outward, axis,
             (float)canonical.AcrossMeters, (float)(width - canonical.AcrossMeters), 1.0f, toSun);
     }

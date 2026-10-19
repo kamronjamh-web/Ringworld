@@ -95,6 +95,21 @@ func _run() -> void:
 	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("preset", -1)) != 1 or not is_equal_approx(float((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("density", -1.0)), 0.63):
 		return _fail("preset or density UI signal did not update the atmosphere model")
 
+	# A/B haze model toggle (P2a): a real control that drives the model and survives a status refresh.
+	var haze_model := _drawer.find_child("AtmosphereHazeModel", true, false) as OptionButton
+	if haze_model == null:
+		return _fail("haze model toggle was not built")
+	haze_model.select(1)
+	haze_model.item_selected.emit(1)
+	await process_frame
+	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("haze_model", -1)) != 1 or not status.text.contains("Physical"):
+		return _fail("haze model toggle did not switch the model to Physical")
+	haze_model.select(0)
+	haze_model.item_selected.emit(0)
+	await process_frame
+	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("haze_model", -1)) != 0:
+		return _fail("haze model toggle did not return to Legacy")
+
 	# The live drawer processes while gameplay is paused. A slider still must
 	# update the shared model immediately, without depending on an unpaused frame.
 	paused = true

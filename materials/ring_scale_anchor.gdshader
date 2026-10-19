@@ -40,14 +40,14 @@ void fragment() {
 		fade_start,
 		fade_end,
 		distance(camera_world_position, world_position));
-	vec4 atmosphere = sample_ring_atmosphere(
+	RingHaze haze = ring_haze_sample(
 		camera_world_position,
 		world_position,
 		ring_center,
 		ring_day_factor);
-	ALBEDO = lit_color * (1.0 - atmosphere.a);
-	EMISSION = anchor_emission_color * anchor_emission_energy * emission_visibility * (1.0 - atmosphere.a * 0.72)
-		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+	ALBEDO = lit_color * haze.T;
+	EMISSION = anchor_emission_color * anchor_emission_energy * emission_visibility * (1.0 - (1.0 - ring_haze_visibility(haze)) * 0.72)
+		+ ring_haze_inscatter(haze);
 	METALLIC = metallic_value;
 	ROUGHNESS = roughness_value;
 	SPECULAR = 0.68;

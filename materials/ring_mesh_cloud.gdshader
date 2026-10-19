@@ -177,13 +177,13 @@ void fragment() {
 	float terrain_sun = ring_terrain_cloud_receiver_visibility(receiver_metres);
 	daylight -= max(daylight - solar_ambient, vec3(0.0)) * (1.0 - terrain_sun);
 	vec3 cloud_color = mix(night_color, daylight, day);
-	vec4 atmosphere = sample_ring_atmosphere(
+	RingHaze haze = ring_haze_sample(
 		camera_world_position,
 		world_position,
 		ring_center,
 		day);
-	float atmosphere_transmittance = 1.0 - atmosphere.a;
+	vec3 atmosphere_transmittance = haze.T;
 	ALBEDO = cloud_color * atmosphere_transmittance;
 	EMISSION = cloud_color * mix(0.16, 0.045, day) * atmosphere_transmittance
-		+ atmosphere.rgb * atmosphere.a * atmosphere_scattering_energy;
+		+ ring_haze_inscatter(haze);
 }

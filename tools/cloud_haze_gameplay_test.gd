@@ -210,7 +210,7 @@ func backdrop_profile() -> Dictionary:
 	var driver := game.get_node_or_null("SunshineCloudsDriver")
 	var clouds = driver.get("clouds_resource") if driver != null else null
 	var values: Array = clouds.get("ring_atmosphere_profile") if clouds != null else []
-	if values.size() != 10: return {"enabled":false, "count":values.size()}
+	if values.size() != 16: return {"enabled":false, "count":values.size()}
 	var packed: Array = []
 	for value in values:
 		packed.append([value.x, value.y, value.z, value.w])

@@ -1,7 +1,32 @@
 // Sunshine adapter for the portable terrain/compute atmosphere math.
-vec4 ring_cloud_atmosphere_haze(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[10]) {
+// Includer contract: ring_atmosphere_shared.gdshaderinc and ring_haze_shared.gdshaderinc come first (the latter is plain GLSL 450).
+// Profile layout: 16 vec4, slots 0-9 Legacy, 10-15 physical haze (see ring_haze_from_profile in ring_haze_shared.gdshaderinc).
+vec4 ring_cloud_atmosphere_haze(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16]) {
 	if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return vec4(0.0);
 	vec3 target = ray_origin + normalize(ray_direction) * distance_m;
 	return ring_atmosphere_local_haze_shared(target, ray_origin, p[7].xyz, p[9].xyz, p[6].w, p);
 }
 
+// Physical haze toward the cloud at distance_m: transmittance T and total in-scatter S = S_sun + S_amb, for L = L_cloud * T + S.
+// Returns T = 1, S = 0 for a disabled profile or a degenerate distance.
+void ring_cloud_atmosphere_haze_physical(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16], out vec3 T, out vec3 S) {
+	T = vec3(1.0);
+	S = vec3(0.0);
+	if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return;
+	vec3 target = ray_origin + normalize(ray_direction) * distance_m;
+	RingHaze haze = ring_haze_from_profile(target, ray_origin, p, ring_haze_profile_day(p));
+	T = haze.T;
+	S = haze.S_sun + haze.S_amb;
+}
+
+// Applies the active haze model to a cloud colour. Legacy is the pre-P2b mix(color, haze.rgb, haze.a), bit for bit.
+vec3 ring_cloud_atmosphere_apply(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16]) {
+	if (ring_haze_profile_physical(p)) {
+		vec3 T;
+		vec3 S;
+		ring_cloud_atmosphere_haze_physical(ray_origin, ray_direction, distance_m, p, T, S);
+		return color * T + S;
+	}
+	vec4 haze = ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p);
+	return mix(color, haze.rgb, haze.a);
+}
