@@ -10,6 +10,8 @@ const EROSION_GENERATOR_ID: String = "ringworld_surface_erosion_v4"
 const SITES_GENERATOR_ID: String = "ringworld_surface_sites_v5"
 ## v6: v5 terrain plus the 200 Wall Engine climate-machine forecourts (docs/emitter-grid-climate-machines-spec.md section C3). Same fields as v4/v5.
 const CLIMATE_GENERATOR_ID: String = "ringworld_surface_climate_v6"
+## v7: v6 field set plus lowland landforms (docs/lowland-landform-overhaul-plan.md). Climate machines are the opt-in `climate_machines` field.
+const LANDFORM_GENERATOR_ID: String = "ringworld_surface_landform_v7"
 const DOMAIN_ID: String = "canonical_ring_noise_v1"
 const MIN_GEOMETRIC_WAVELENGTH_M: float = 16.0
 const CERTIFIED_CIRCUMFERENCE_M: float = 31415936.0
@@ -75,12 +77,40 @@ const MIN_BASIN_DEPTH_M: float = 1250.0
 @export_range(0.0, 1.0, 0.01) var swiss_warp: float = 0.0
 @export_range(0.0, 1.0, 0.01) var erosion_ridge_preservation: float = 0.75
 @export_range(0.0, 1.0, 0.01) var gully_normalization: float = 0.6
+# v7 lowland-landform fields. Script defaults are the v7 defaults so an upgraded v4-v6 recipe gets sensible values.
+@export_range(0, 1, 1) var climate_machines: int = 0
+@export_range(8000.0, 200000.0, 1.0) var landform_scale_m: float = 32000.0
+@export_range(0.05, 0.95, 0.001) var plains_threshold: float = 0.445
+@export_range(0.06, 0.99, 0.001) var hills_threshold: float = 0.575
+@export_range(16000.0, 400000.0, 1.0) var plateau_scale_m: float = 64000.0
+@export_range(0.05, 0.95, 0.001) var plateau_threshold: float = 0.58
+@export_range(0.06, 0.99, 0.001) var plateau_full_threshold: float = 0.68
+@export_range(0.0, 900.0, 1.0) var hill_amplitude_m: float = 480.0
+@export_range(1000.0, 16000.0, 1.0) var hill_scale_m: float = 5000.0
+@export_range(0.0, 1.0, 0.01) var hill_detail_weight: float = 0.35
+@export_range(0.5, 3.0, 0.01) var hill_valley_exponent: float = 1.35
+@export_range(0.0, 0.5, 0.01) var plains_hill_fraction: float = 0.08
+@export_range(0.0, 1.0, 0.01) var hill_valley_floor: float = 0.6
+@export_range(0.0, 900.0, 1.0) var plateau_lift_m: float = 320.0
+@export_range(20.0, 600.0, 1.0) var plateau_step_m: float = 160.0
+@export_range(0.04, 0.5, 0.01) var terrace_riser_width: float = 0.14
+@export_range(0.0, 1.0, 0.01) var terrace_strength: float = 0.85
+@export_range(0.0, 300.0, 1.0) var escarpment_jitter_m: float = 70.0
+@export_range(2000.0, 50000.0, 1.0) var escarpment_scale_m: float = 12000.0
+@export_range(0.0, 1.0, 0.01) var breaks_strength: float = 0.6
+@export_range(8.0, 200.0, 1.0) var breaks_step_m: float = 40.0
+@export_range(0.0, 500.0, 1.0) var landform_shore_start_m: float = 20.0
+@export_range(1.0, 1500.0, 1.0) var landform_shore_full_m: float = 140.0
+@export_range(0.0, 1.0, 0.01) var lowland_detail_floor: float = 0.45
+@export_range(0.0, 1.0, 0.01) var plains_detail_fraction: float = 0.2
+@export_range(0.0, 120.0, 0.1) var lowland_erosion_strength_m: float = 24.0
+@export_range(1, 4, 1) var lowland_erosion_octaves: int = 2
 
 var flatten_denominator: float = exp(3.0) - 1.0
 
 func validation_errors() -> PackedStringArray:
 	var errors := PackedStringArray()
-	if generator_id != CLIMATE_GENERATOR_ID and generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
+	if generator_id != LANDFORM_GENERATOR_ID and generator_id != CLIMATE_GENERATOR_ID and generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
 		errors.append("Unsupported generator_id: %s" % generator_id)
 	if domain_id != DOMAIN_ID:
 		errors.append("Unsupported domain_id: %s" % domain_id)
@@ -156,6 +186,35 @@ func snapshot() -> TerrainGenerationRecipe:
 	copy.warp_octaves = _safe_octaves(warp_octaves, copy.warp_scale_m, copy.noise_lacunarity, 5)
 	if copy.generator_id == DETAIL_GENERATOR_ID or _is_erosion_family(copy.generator_id):
 		copy.erosion_octaves = _safe_octaves(erosion_octaves, copy.erosion_scale_m, copy.noise_lacunarity, 4)
+	if _is_landform_family(copy.generator_id):
+		# Ranges and cross-field constraints mirror TerrainGenerationParameters (C#), which stays authoritative.
+		copy.climate_machines = clampi(climate_machines, 0, 1)
+		copy.landform_scale_m = _finite_or(landform_scale_m, 32000.0, 8000.0, 200000.0)
+		copy.plains_threshold = _finite_or(plains_threshold, 0.445, 0.05, 0.95)
+		copy.hills_threshold = _finite_or(hills_threshold, 0.575, copy.plains_threshold + 0.01, 0.99)
+		copy.plateau_scale_m = _finite_or(plateau_scale_m, 64000.0, 16000.0, 400000.0)
+		copy.plateau_threshold = _finite_or(plateau_threshold, 0.58, 0.05, 0.95)
+		copy.plateau_full_threshold = _finite_or(plateau_full_threshold, 0.68, copy.plateau_threshold + 0.01, 0.99)
+		copy.hill_amplitude_m = _finite_or(hill_amplitude_m, 480.0, 0.0, 900.0)
+		copy.hill_scale_m = _finite_or(hill_scale_m, 5000.0, 1000.0, 16000.0)
+		copy.hill_detail_weight = _finite_or(hill_detail_weight, 0.35, 0.0, 1.0)
+		copy.hill_valley_exponent = _finite_or(hill_valley_exponent, 1.35, 0.5, 3.0)
+		copy.plains_hill_fraction = _finite_or(plains_hill_fraction, 0.08, 0.0, 0.5)
+		copy.hill_valley_floor = _finite_or(hill_valley_floor, 0.6, 0.0, 1.0)
+		copy.plateau_lift_m = _finite_or(plateau_lift_m, 320.0, 0.0, 900.0)
+		copy.plateau_step_m = _finite_or(plateau_step_m, 160.0, 20.0, 600.0)
+		copy.terrace_riser_width = _finite_or(terrace_riser_width, 0.14, 0.04, 0.5)
+		copy.terrace_strength = _finite_or(terrace_strength, 0.85, 0.0, 1.0)
+		copy.escarpment_jitter_m = _finite_or(escarpment_jitter_m, 70.0, 0.0, 300.0)
+		copy.escarpment_scale_m = _finite_or(escarpment_scale_m, 12000.0, 2000.0, 50000.0)
+		copy.breaks_strength = _finite_or(breaks_strength, 0.6, 0.0, 1.0)
+		copy.breaks_step_m = _finite_or(breaks_step_m, 40.0, 8.0, 200.0)
+		copy.landform_shore_start_m = _finite_or(landform_shore_start_m, 20.0, 0.0, 500.0)
+		copy.landform_shore_full_m = _finite_or(landform_shore_full_m, 140.0, copy.landform_shore_start_m + 1.0, 1500.0)
+		copy.lowland_detail_floor = _finite_or(lowland_detail_floor, 0.45, 0.0, 1.0)
+		copy.plains_detail_fraction = _finite_or(plains_detail_fraction, 0.2, 0.0, 1.0)
+		copy.lowland_erosion_strength_m = _finite_or(lowland_erosion_strength_m, 24.0, 0.0, 120.0)
+		copy.lowland_erosion_octaves = clampi(lowland_erosion_octaves, 1, copy.erosion_octaves)
 	copy.flatten_denominator = exp(copy.flattening) - 1.0
 	return copy
 
@@ -203,6 +262,34 @@ func _normalized_dictionary_fields() -> Dictionary:
 		if _is_erosion_family(generator_id):
 			result["erosion_ridge_preservation"] = erosion_ridge_preservation
 			result["gully_normalization"] = gully_normalization
+	if _is_landform_family(generator_id):
+		result["climate_machines"] = climate_machines
+		result["landform_scale_m"] = landform_scale_m
+		result["plains_threshold"] = plains_threshold
+		result["hills_threshold"] = hills_threshold
+		result["plateau_scale_m"] = plateau_scale_m
+		result["plateau_threshold"] = plateau_threshold
+		result["plateau_full_threshold"] = plateau_full_threshold
+		result["hill_amplitude_m"] = hill_amplitude_m
+		result["hill_scale_m"] = hill_scale_m
+		result["hill_detail_weight"] = hill_detail_weight
+		result["hill_valley_exponent"] = hill_valley_exponent
+		result["plains_hill_fraction"] = plains_hill_fraction
+		result["hill_valley_floor"] = hill_valley_floor
+		result["plateau_lift_m"] = plateau_lift_m
+		result["plateau_step_m"] = plateau_step_m
+		result["terrace_riser_width"] = terrace_riser_width
+		result["terrace_strength"] = terrace_strength
+		result["escarpment_jitter_m"] = escarpment_jitter_m
+		result["escarpment_scale_m"] = escarpment_scale_m
+		result["breaks_strength"] = breaks_strength
+		result["breaks_step_m"] = breaks_step_m
+		result["landform_shore_start_m"] = landform_shore_start_m
+		result["landform_shore_full_m"] = landform_shore_full_m
+		result["lowland_detail_floor"] = lowland_detail_floor
+		result["plains_detail_fraction"] = plains_detail_fraction
+		result["lowland_erosion_strength_m"] = lowland_erosion_strength_m
+		result["lowland_erosion_octaves"] = lowland_erosion_octaves
 	return result
 
 static func create_detail_default() -> TerrainGenerationRecipe:
@@ -239,9 +326,13 @@ static func _safe_octaves(requested: int, scale_m: float, lacunarity: float, con
 		maximum += 1
 	return clampi(requested, 1, maximum)
 
-## True for recipes that carry the full v4 field set (v4 itself, v5 with emitter sites and v6 with climate machines).
+## True for recipes that carry the full v4 field set (v4 itself, v5 with emitter sites, v6 with climate machines and v7 with lowland landforms).
 static func _is_erosion_family(id: String) -> bool:
-	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID
+	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID or id == LANDFORM_GENERATOR_ID
+
+## True for recipes that also carry the v7 lowland-landform fields.
+static func _is_landform_family(id: String) -> bool:
+	return id == LANDFORM_GENERATOR_ID
 
 static func create_sites_default() -> TerrainGenerationRecipe:
 	var recipe := create_erosion_default()
@@ -251,4 +342,10 @@ static func create_sites_default() -> TerrainGenerationRecipe:
 static func create_climate_default() -> TerrainGenerationRecipe:
 	var recipe := create_sites_default()
 	recipe.generator_id = CLIMATE_GENERATOR_ID
+	return recipe
+
+## v7 default: the v5 field set with the landform id; the v7 fields keep their script defaults and climate machines stay off.
+static func create_landform_default() -> TerrainGenerationRecipe:
+	var recipe := create_sites_default()
+	recipe.generator_id = LANDFORM_GENERATOR_ID
 	return recipe

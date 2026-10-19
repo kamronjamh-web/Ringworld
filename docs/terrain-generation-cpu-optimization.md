@@ -84,6 +84,23 @@ godot --headless --path . --script res://tools/runtime_surface_cache_benchmark.g
 
 The related [surface smoothing investigation](terrain-surface-smoothing.md) addresses visible grid-cell lighting separately. It adds shader work over existing samples and does not increase terrain-generation resolution.
 
+## Recipe v7 (lowland landforms) rows
+
+Measured 2026-10-18 with `tools/terrain_generation_cpu_benchmark.gd` (128x128 tile at 2 m, 12 measured rounds, seed 1337; the harness reported the C# build metadata as unverified, so compare rows only within this table). Plan gates: [docs/lowland-landform-overhaul-plan.md](lowland-landform-overhaul-plan.md) section 6.
+
+| Model / tile | Median ms |
+| --- | ---: |
+| v4/v6 default / v7 plains tile | 13.12 |
+| v4/v6 default / v7 hill-country tile | 13.43 |
+| v4/v6 default / mountain tile | 29.82 |
+| **v7 default / plains tile** | **23.79** (1.81x v6 plains, gate 1.9x) |
+| **v7 default / hill-country tile** | **28.73** (0.96x v6 mountain, gate 1.15x) |
+| v7 default / plateau-edge tile | 30.74 |
+| v7 without lowland gullies / plains | 21.25 |
+| v7 without lowland gullies / hill country | 21.68 |
+
+Travel benchmark on a v7 world (`-- --isolate --speed=60 --distance=512 --landforms`, optionally `--around=8011003 --across=159000`): zero coverage waits and zero support misses over the spawn and two hill-country tiles; p99 frame time about 7.7-8.0 ms against 7.8 ms for v6 on the same tile.
+
 ## Original assessment: establish the right baseline
 
 The earlier 17.521 ms v2 / 47.972 ms v3 comparison measured one 128-by-128 height grid in the checkout's development build. MSBuild evaluates `Configuration=Debug`, `Optimize=false`; `Configuration=ExportRelease` evaluates `Optimize=true`. Measure the optimized export before treating development timings as a shipping limit. The comparison above holds optimization enabled for both models; it does not measure a Debug-to-release speedup.

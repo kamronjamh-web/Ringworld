@@ -18,6 +18,12 @@ const WARMUP_ROUNDS := 3
 const MEASURED_ROUNDS := 12
 const MOUNTAIN_AROUND := 1570796.925
 const MOUNTAIN_ACROSS := 159000.125
+const V7_PLAINS_AROUND := 2513256.125
+const V7_PLAINS_ACROSS := 159000.125
+const V7_HILLS_AROUND := 8011003.125
+const V7_HILLS_ACROSS := 159000.125
+const V7_EDGE_AROUND := 15158075.125
+const V7_EDGE_ACROSS := 190800.125
 
 var _failures := PackedStringArray()
 var _models: Array = []
@@ -124,6 +130,16 @@ func _setup_models() -> void:
 	v4_no_preservation.erosion_ridge_preservation = 0.0
 	variants.append({"name": "v4_ridge_preservation_0", "description": "v4 with stacked ridge preservation disabled", "recipe": v4_no_preservation})
 
+	# v7 lowland landforms (plan section 6 gates): with and without lowland gullies.
+	var v7_default: TerrainGenerationRecipe = RECIPE.create_landform_default()
+	v7_default.seed = SEED
+	variants.append({"name": "v7_default", "description": "v7 lowland landforms with the default lowland gullies", "recipe": v7_default})
+
+	var v7_no_gullies: TerrainGenerationRecipe = RECIPE.create_landform_default()
+	v7_no_gullies.seed = SEED
+	v7_no_gullies.lowland_erosion_strength_m = 0.0
+	variants.append({"name": "v7_gullies_0", "description": "v7 lowland landforms with lowland gullies disabled", "recipe": v7_no_gullies})
+
 	for variant in variants:
 		var recipe: TerrainGenerationRecipe = variant.recipe
 		var bridge = BRIDGE.new()
@@ -170,7 +186,15 @@ func _setup_locations() -> void:
 	if not foothill.is_empty(): _locations.append(_location("foothill", foothill.around, foothill.across, "coarse deterministic foothill candidate"))
 	else: _failures.append("No foothill location found by deterministic coarse scan")
 	locator.Release()
+	_setup_v7_locations()
 	for location in _locations: _report.locations.append(location)
+
+func _setup_v7_locations() -> void:
+	# Hard-coded v7 (seed 1337) 256 m tile origins whose corners and centre are in the named class; found by
+	# `tools/landform_terrain_v7_test.gd -- --section=locate`.
+	_locations.append(_location("v7_plains", V7_PLAINS_AROUND, V7_PLAINS_ACROSS, "v7 plains tile (ruggedness 0, gate 1)"))
+	_locations.append(_location("v7_hill_country", V7_HILLS_AROUND, V7_HILLS_ACROSS, "v7 hill-country tile (ruggedness 1, no plateau)"))
+	_locations.append(_location("v7_plateau_edge", V7_EDGE_AROUND, V7_EDGE_ACROSS, "v7 plateau-edge tile (plateau weight between 0.3 and 0.7)"))
 
 func _location(name: String, around: float, across: float, source: String) -> Dictionary:
 	return {"name": name, "origin_around": around, "origin_across": across, "source": source}

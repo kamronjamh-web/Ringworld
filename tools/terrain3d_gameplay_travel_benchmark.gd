@@ -145,6 +145,8 @@ func run() -> void:
 	fixture = "res://.godot/terrain-generation-tests/m6-%s" % Time.get_ticks_usec()
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1" if "--legacy" not in OS.get_cmdline_user_args() else "terrain3d_surface_v1")
+	# Landforms (v7) are opt-in here so existing benchmark numbers stay on v6: pass --landforms.
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", "--landforms" in OS.get_cmdline_user_args())
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
 	var actual := root.get_node_or_null("WorldSession"); if actual != null: actual.name="WorldSessionOriginalM6"
 	session=SessionStub.new(); session.name="WorldSession"; root.add_child(session)

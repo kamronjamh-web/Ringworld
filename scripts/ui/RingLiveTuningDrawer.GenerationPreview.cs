@@ -7,14 +7,16 @@ namespace RingworldTechDemo.UI;
 public partial class RingLiveTuningDrawer
 {
     private Label? _generationPreviewStatus;
-    private readonly System.Collections.Generic.List<(HSlider Slider, Label Value, string Property, bool DetailOnly, bool CoastalOnly, bool EnhancedOnly)> _generationPreviewControls = new();
-    private readonly System.Collections.Generic.List<(SpinBox Spin, string Property, bool DetailOnly, bool CoastalOnly)> _generationPreviewSpins = new();
+    private readonly System.Collections.Generic.List<(HSlider Slider, Label Value, string Property, bool DetailOnly, bool CoastalOnly, bool EnhancedOnly, bool LandformOnly)> _generationPreviewControls = new();
+    private readonly System.Collections.Generic.List<(SpinBox Spin, string Property, bool DetailOnly, bool CoastalOnly, bool LandformOnly)> _generationPreviewSpins = new();
     private readonly System.Collections.Generic.List<(OptionButton Option, string Property, bool DetailOnly, bool CoastalOnly)> _generationPreviewOptions = new();
     private Control? _generationPreviewCoastalSection;
     private Control? _generationPreviewDetailSection;
+    private Control? _generationPreviewLandformSection;
     private Label? _generationPreviewRecipeIdentity;
     private Label? _generationPreviewLegacyCoastalNote;
     private Button? _generationPreviewUpgradeErosion;
+    private Button? _generationPreviewUpgradeLandforms;
     private CheckBox? _generationPreviewClimateToggle;
     private double _generationPreviewRefreshDelay;
 
@@ -41,9 +43,9 @@ public partial class RingLiveTuningDrawer
         tab.AddChild(_generationPreviewRecipeIdentity);
         _generationPreviewClimateToggle = new CheckBox
         {
-            Text = "Climate machines (v6, experimental)",
-            TooltipText = "Previews the v6 recipe: 200 Wall Engine forecourts on the rim walls (flat quays and terraced cuts). Off by default. The launcher has its own toggle for new worlds; existing worlds keep their frozen recipe.",
-            ButtonPressed = generatorId == "ringworld_surface_climate_v6",
+            Text = "Climate machines (v6/v7, experimental)",
+            TooltipText = "Previews 200 Wall Engine forecourts on the rim walls (flat quays and terraced cuts): the v6 recipe, or the climate_machines field on v7. Off by default. The launcher has its own toggle for new worlds; existing worlds keep their frozen recipe.",
+            ButtonPressed = HasClimateMachinesRecipe(recipe),
             Disabled = !IsErosionFamilyRecipe(generatorId),
         };
         _generationPreviewClimateToggle.Toggled += pressed => { _generationPreview?.Call("set_climate_machines", pressed); RefreshGenerationPreviewControls(); };
@@ -103,6 +105,41 @@ public partial class RingLiveTuningDrawer
             _generationPreviewUpgradeErosion = upgrade;
         }
 
+        VBoxContainer landformSettings = TuningMenuUi.CreateSection(tab, "Lowland landforms (v7)");
+        _generationPreviewLandformSection = landformSettings.GetParent()?.GetParent() as Control ?? landformSettings;
+        _generationPreviewLandformSection.Visible = detailRecipe;
+        AddRecipeSlider(landformSettings, recipe, "landform_scale_m", "Landform region scale (m)", 8000, 200000, 1000, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plains_threshold", "Plains to rolling threshold", .05, .95, .005, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "hills_threshold", "Rolling to hill-country threshold", .06, .99, .005, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plateau_scale_m", "Plateau region scale (m)", 16000, 400000, 1000, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plateau_threshold", "Plateau start", .05, .95, .005, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plateau_full_threshold", "Plateau full", .06, .99, .005, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "hill_amplitude_m", "Hill amplitude (m)", 0, 900, 5, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "hill_scale_m", "Hill wavelength (m)", 1000, 16000, 100, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "hill_detail_weight", "Hill detail weight", 0, 1, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "hill_valley_exponent", "Hill valley broadening", .5, 3, .05, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plains_hill_fraction", "Plains swell fraction", 0, .5, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "hill_valley_floor", "Vale corridor flattening", 0, 1, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plateau_lift_m", "Plateau lift (m)", 0, 900, 5, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plateau_step_m", "Terrace step (m)", 20, 600, 5, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "terrace_riser_width", "Escarpment riser width", .04, .5, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "terrace_strength", "Terrace strength", 0, 1, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "escarpment_jitter_m", "Escarpment meander (m)", 0, 300, 5, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "escarpment_scale_m", "Escarpment meander scale (m)", 2000, 50000, 500, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "breaks_strength", "Breaks (dissected plateau) strength", 0, 1, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "breaks_step_m", "Breaks strata step (m)", 8, 200, 1, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "landform_shore_start_m", "Shore buffer start (macro m)", 0, 500, 5, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "landform_shore_full_m", "Shore buffer full (macro m)", 1, 1500, 5, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "lowland_detail_floor", "Lowland detail floor", 0, 1, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "plains_detail_fraction", "Plains detail fraction", 0, 1, .01, landformOnly: true);
+        AddRecipeSlider(landformSettings, recipe, "lowland_erosion_strength_m", "Lowland gully depth (m)", 0, 120, 1, landformOnly: true);
+        AddRecipeSpin(landformSettings, recipe, "lowland_erosion_octaves", "Lowland gully octaves", 1, 4, 1, landformOnly: true);
+        var upgradeLandforms = new Button { Text = "Use hill-country landforms (v7)", TooltipText = "Moves this v4/v5/v6 preview recipe to the v7 landform recipe and keeps every other setting. Save recipe to keep it." };
+        upgradeLandforms.Pressed += () => { _generationPreview?.Call("upgrade_to_landforms"); RefreshGenerationPreviewControls(); };
+        upgradeLandforms.Visible = enhancedErosion && !IsLandformRecipe(generatorId);
+        landformSettings.AddChild(upgradeLandforms);
+        _generationPreviewUpgradeLandforms = upgradeLandforms;
+
         var actions = new HBoxContainer();
         var regenerate = new Button { Text = "Regenerate", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         regenerate.Pressed += () => _generationPreview?.Call("regenerate");
@@ -118,10 +155,10 @@ public partial class RingLiveTuningDrawer
         tab.AddChild(_generationPreviewStatus);
     }
 
-    private void AddRecipeSlider(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step, bool detailOnly = false, bool coastalOnly = false, bool enhancedOnly = false)
+    private void AddRecipeSlider(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step, bool detailOnly = false, bool coastalOnly = false, bool enhancedOnly = false, bool landformOnly = false)
     {
         string generatorId = recipe.Get("generator_id").AsString();
-        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || enhancedOnly && !IsErosionFamilyRecipe(generatorId);
+        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || enhancedOnly && !IsErosionFamilyRecipe(generatorId) || landformOnly && !IsLandformRecipe(generatorId);
         double initial = unavailable ? min : recipe.Get(property).AsDouble();
         parent.AddChild(new Label { Text = label });
         var row = new HBoxContainer();
@@ -129,19 +166,19 @@ public partial class RingLiveTuningDrawer
         var value = new Label { Text = initial.ToString("0.###"), CustomMinimumSize = new Vector2(58, 0) };
         slider.ValueChanged += current => { value.Text = current.ToString("0.###"); _generationPreview?.Call("apply_recipe_setting", property, current); _generationPreviewRefreshDelay = 0; };
         row.AddChild(slider); row.AddChild(value); parent.AddChild(row);
-        _generationPreviewControls.Add((slider, value, property, detailOnly, coastalOnly, enhancedOnly));
+        _generationPreviewControls.Add((slider, value, property, detailOnly, coastalOnly, enhancedOnly, landformOnly));
     }
 
-    private void AddRecipeSpin(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step, bool detailOnly = false, bool coastalOnly = false)
+    private void AddRecipeSpin(VBoxContainer parent, Resource recipe, string property, string label, double min, double max, double step, bool detailOnly = false, bool coastalOnly = false, bool landformOnly = false)
     {
         parent.AddChild(new Label { Text = label });
         string generatorId = recipe.Get("generator_id").AsString();
-        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId);
+        bool unavailable = detailOnly && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || coastalOnly && generatorId != "ringworld_surface_coastal_v2" && generatorId != "ringworld_surface_detail_v3" && !IsErosionFamilyRecipe(generatorId) || landformOnly && !IsLandformRecipe(generatorId);
         double initial = unavailable ? min : recipe.Get(property).AsDouble();
         var spin = new SpinBox { Name = property, MinValue = min, MaxValue = max, Step = step, Value = initial, Editable = !unavailable, AllowGreater = false, AllowLesser = false };
         spin.ValueChanged += value => _generationPreview?.Call("apply_recipe_setting", property, (long)Math.Round(value));
         parent.AddChild(spin);
-        _generationPreviewSpins.Add((spin, property, detailOnly, coastalOnly));
+        _generationPreviewSpins.Add((spin, property, detailOnly, coastalOnly, landformOnly));
     }
 
     private void AddRecipeOption(VBoxContainer parent, Resource recipe, string property, string label, string[] choices, bool detailOnly = false, bool coastalOnly = false)
@@ -165,19 +202,22 @@ public partial class RingLiveTuningDrawer
         bool detailRecipe = generatorId == "ringworld_surface_detail_v3" || IsErosionFamilyRecipe(generatorId);
         bool coastalRecipe = generatorId == "ringworld_surface_coastal_v2" || detailRecipe;
         bool enhancedErosion = IsErosionFamilyRecipe(generatorId);
+        bool landformRecipe = IsLandformRecipe(generatorId);
         if (_generationPreviewCoastalSection != null) _generationPreviewCoastalSection.Visible = coastalRecipe;
         if (_generationPreviewDetailSection != null) _generationPreviewDetailSection.Visible = detailRecipe;
         if (_generationPreviewLegacyCoastalNote != null) _generationPreviewLegacyCoastalNote.Visible = !coastalRecipe;
+        if (_generationPreviewLandformSection != null) _generationPreviewLandformSection.Visible = detailRecipe;
+        if (_generationPreviewUpgradeLandforms != null) _generationPreviewUpgradeLandforms.Visible = enhancedErosion && !landformRecipe;
         if (_generationPreviewUpgradeErosion != null) _generationPreviewUpgradeErosion.Visible = generatorId == "ringworld_surface_detail_v3";
         if (_generationPreviewRecipeIdentity != null) _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId);
         if (_generationPreviewClimateToggle != null)
         {
             _generationPreviewClimateToggle.Disabled = !IsErosionFamilyRecipe(generatorId);
-            _generationPreviewClimateToggle.SetPressedNoSignal(generatorId == "ringworld_surface_climate_v6");
+            _generationPreviewClimateToggle.SetPressedNoSignal(HasClimateMachinesRecipe(recipe));
         }
         foreach (var control in _generationPreviewControls)
         {
-            bool unavailable = control.DetailOnly && !detailRecipe || control.CoastalOnly && !coastalRecipe || control.EnhancedOnly && !enhancedErosion;
+            bool unavailable = control.DetailOnly && !detailRecipe || control.CoastalOnly && !coastalRecipe || control.EnhancedOnly && !enhancedErosion || control.LandformOnly && !landformRecipe;
             control.Slider.Editable = !unavailable;
             if (unavailable) continue;
             double current = recipe.Get(control.Property).AsDouble();
@@ -186,7 +226,7 @@ public partial class RingLiveTuningDrawer
         }
         foreach (var control in _generationPreviewSpins)
         {
-            bool unavailable = control.DetailOnly && !detailRecipe || control.CoastalOnly && !coastalRecipe;
+            bool unavailable = control.DetailOnly && !detailRecipe || control.CoastalOnly && !coastalRecipe || control.LandformOnly && !landformRecipe;
             control.Spin.Editable = !unavailable;
             if (!unavailable) control.Spin.SetValueNoSignal(recipe.Get(control.Property).AsDouble());
         }
@@ -198,9 +238,20 @@ public partial class RingLiveTuningDrawer
         }
     }
 
-    private static bool IsErosionFamilyRecipe(string generatorId) => generatorId == "ringworld_surface_erosion_v4" || generatorId == "ringworld_surface_sites_v5" || generatorId == "ringworld_surface_climate_v6";
+    private static bool IsErosionFamilyRecipe(string generatorId) => generatorId == "ringworld_surface_erosion_v4" || generatorId == "ringworld_surface_sites_v5" || generatorId == "ringworld_surface_climate_v6" || IsLandformRecipe(generatorId);
 
-    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_climate_v6"
+    private static bool IsLandformRecipe(string generatorId) => generatorId == "ringworld_surface_landform_v7";
+
+    /// <summary>v6 carries climate machines in its id; v7 carries them in the climate_machines field.</summary>
+    private static bool HasClimateMachinesRecipe(Resource recipe)
+    {
+        string generatorId = recipe.Get("generator_id").AsString();
+        return generatorId == "ringworld_surface_climate_v6" || IsLandformRecipe(generatorId) && recipe.Get("climate_machines").AsInt32() == 1;
+    }
+
+    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_landform_v7"
+        ? "Recipe: ringworld_surface_landform_v7 (climate v6 plus lowland landforms: plains, rolling and hill country, plateaus and escarpments, breaks and lowland gullies; the coast and ocean are unchanged). Reset recipe creates this recipe; new worlds adopt it once the launcher offers v7, and existing worlds keep their frozen recipe."
+        : generatorId == "ringworld_surface_climate_v6"
         ? "Recipe: ringworld_surface_climate_v6 (v5 emitter sites + 200 Wall Engine forecourts on the rim walls: flat quays and terraced cuts; machine layout is derived from the seed and frozen with the recipe)."
         : generatorId == "ringworld_surface_sites_v5"
         ? "Recipe: ringworld_surface_sites_v5 (enhanced erosion + emitter sites: 594 spires and 1 main spire with pads, islands and a terraced bowl; site layout is derived from the seed and frozen with the recipe)."
@@ -209,8 +260,8 @@ public partial class RingLiveTuningDrawer
         : generatorId == "ringworld_surface_detail_v3"
         ? "Recipe: ringworld_surface_detail_v3 (detail mountain shaping enabled)."
         : generatorId == "ringworld_surface_coastal_v2"
-            ? "Recipe: ringworld_surface_coastal_v2. Reset recipe creates the enhanced erosion recipe; this saved recipe remains unchanged."
-            : "Legacy v1 recipe preserved. Reset recipe creates the enhanced erosion recipe.";
+            ? "Recipe: ringworld_surface_coastal_v2. Reset recipe creates the landform v7 recipe; this saved recipe remains unchanged."
+            : "Legacy v1 recipe preserved. Reset recipe creates the landform v7 recipe.";
 
     private void ProcessGenerationPreviewTuning(double delta)
     {

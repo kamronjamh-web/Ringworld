@@ -38,6 +38,8 @@ var _detail_sea := PackedFloat32Array()
 var _detail_alpine := PackedFloat32Array()
 var _detail_mask := PackedFloat32Array()
 var _detail_slope := PackedFloat32Array()
+var _landform_view := PackedColorArray()
+var _detail_landform_view := PackedColorArray()
 var _diagnostics: Dictionary = {}
 var _started_usec := 0
 var _error := ""
@@ -99,7 +101,7 @@ func _build_ui() -> void:
 	var help := Label.new(); help.text = "Regional 512 m diagnostic overview. Click the map to select a 129 x 129 sample, 2 m detail patch. Open the grave-key Terrain3D tab to tune the isolated recipe."; help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; root.add_child(help)
 	var modes := HBoxContainer.new(); root.add_child(modes)
 	var mode_group := ButtonGroup.new()
-	for label in ["Height (-8km..8km)", "Zone weights", "Detail mask (0..1)", "Slope (0..60 deg)"]:
+	for label in ["Height (-8km..8km)", "Zone weights", "Detail mask (0..1)", "Slope (0..60 deg)", "Landforms (R, Q, gate)"]:
 		var button := Button.new(); button.text = label; button.toggle_mode = true; button.button_group = mode_group; button.button_pressed = label.begins_with("Height"); button.pressed.connect(func(): set_view_mode(modes.get_children().find(button))); modes.add_child(button)
 	var pan := HBoxContainer.new(); root.add_child(pan)
 	pan.add_child(Label.new()); pan.get_child(0).text = "Around origin (m)"
@@ -130,7 +132,7 @@ func get_recipe_snapshot() -> Resource:
 func regenerate() -> void:
 	_revision += 1; _preview_ready = false; _pending_seconds = DEBOUNCE_SECONDS; _phase = "debouncing"; _error = "" if _error.is_empty() else _error; _set_status()
 func set_view_mode(index: int) -> void:
-	_view_mode = clampi(index, 0, 3)
+	_view_mode = clampi(index, 0, 4)
 	if _preview_ready: _rebuild_textures()
 func select_location(around: float, across: float) -> void:
 	if not _preview_ready: return
@@ -145,11 +147,11 @@ func _process(delta: float) -> void:
 func _begin_overview() -> void:
 	var errors := _recipe.validation_errors()
 	if not errors.is_empty(): _error = ", ".join(errors); _phase = "idle"; _set_status(); return
-	_recipe = _recipe.snapshot(); _model = TerrainHeightModel.new(_recipe); _cols = int(floor(_around_span_m / _spacing_m)) + 1; _rows = int(floor(_across_span_m / _spacing_m)) + 1; _overview.resize(_cols * _rows); _sea.resize(_overview.size()); _alpine.resize(_overview.size()); _mask.resize(_overview.size()); _slope.resize(_overview.size()); _row = 0; _locations.clear(); _phase = "overview"; _started_usec = Time.get_ticks_usec(); _diagnostics = {"min": INF, "max": -INF, "clamp": 0, "ocean": 0, "lowland": 0, "alpine": 0, "histogram": PackedInt32Array(), "slopes": PackedFloat32Array()}; _diagnostics.histogram.resize(16); _set_status()
+	_recipe = _recipe.snapshot(); _model = TerrainHeightModel.new(_recipe); _cols = int(floor(_around_span_m / _spacing_m)) + 1; _rows = int(floor(_across_span_m / _spacing_m)) + 1; _overview.resize(_cols * _rows); _sea.resize(_overview.size()); _alpine.resize(_overview.size()); _mask.resize(_overview.size()); _slope.resize(_overview.size()); _landform_view.resize(_overview.size()); _row = 0; _locations.clear(); _phase = "overview"; _started_usec = Time.get_ticks_usec(); _diagnostics = {"min": INF, "max": -INF, "clamp": 0, "ocean": 0, "lowland": 0, "alpine": 0, "histogram": PackedInt32Array(), "slopes": PackedFloat32Array()}; _diagnostics.histogram.resize(16); _set_status()
 
 func _begin_detail() -> void:
 	if _model == null: return
-	_preview_ready = false; _detail.resize(DETAIL_SIDE * DETAIL_SIDE); _detail_sea.resize(_detail.size()); _detail_alpine.resize(_detail.size()); _detail_mask.resize(_detail.size()); _detail_slope.resize(_detail.size()); _row = 0; _phase = "detail"; _set_status()
+	_preview_ready = false; _detail.resize(DETAIL_SIDE * DETAIL_SIDE); _detail_sea.resize(_detail.size()); _detail_alpine.resize(_detail.size()); _detail_mask.resize(_detail.size()); _detail_slope.resize(_detail.size()); _detail_landform_view.resize(_detail.size()); _row = 0; _phase = "detail"; _set_status()
 
 func _sample_rows() -> void:
 	var target_rows := _rows if _phase == "overview" else DETAIL_SIDE
@@ -162,8 +164,8 @@ func _sample_rows() -> void:
 			var d := _model.sample_diagnostics(around, across)
 			var height: float = d.height
 			var index := _row * columns + x
-			if _phase == "overview": _overview[index] = height; _sea[index] = d.sea_weight; _alpine[index] = d.alpine_weight; _mask[index] = d.detail_mask; _accumulate(d, height)
-			else: _detail[index] = height; _detail_sea[index] = d.sea_weight; _detail_alpine[index] = d.alpine_weight; _detail_mask[index] = d.detail_mask
+			if _phase == "overview": _overview[index] = height; _sea[index] = d.sea_weight; _alpine[index] = d.alpine_weight; _mask[index] = d.detail_mask; _landform_view[index] = Color(d.ruggedness, d.plateau_weight, d.landform_gate); _accumulate(d, height)
+			else: _detail[index] = height; _detail_sea[index] = d.sea_weight; _detail_alpine[index] = d.alpine_weight; _detail_mask[index] = d.detail_mask; _detail_landform_view[index] = Color(d.ruggedness, d.plateau_weight, d.landform_gate)
 		_row += 1
 	_set_status()
 
@@ -236,6 +238,7 @@ func _color_image(values: PackedFloat32Array, width: int, height: int, is_detail
 			elif _view_mode == 1:
 				var sea := (_detail_sea if is_detail else _sea)[i]; var alpine := (_detail_alpine if is_detail else _alpine)[i]; color = Color(alpine, 1.0 - sea - alpine, sea)
 			elif _view_mode == 2: var mask := (_detail_mask if is_detail else _mask)[i]; color = Color(mask, mask, mask)
+			elif _view_mode == 4: color = (_detail_landform_view if is_detail else _landform_view)[i]
 			elif _view_mode == 3: var slope := (_detail_slope if is_detail else _slope)[i]; color = Color(clampf(slope / 60.0, 0, 1), clampf(slope / 60.0, 0, 1), clampf(slope / 60.0, 0, 1))
 			image.set_pixel(x, y, color)
 	return image
@@ -281,13 +284,38 @@ func upgrade_to_enhanced_erosion() -> void:
 	_error = ""
 	_save_blocked = false
 	regenerate()
+## Moves a v4/v5/v6 preview recipe to the v7 hill-country landforms, keeping every other setting. A v6 recipe keeps its climate machines.
+func upgrade_to_landforms() -> void:
+	_initialize_recipe()
+	if _recipe == null:
+		return
+	var from_id := _recipe.generator_id
+	if from_id != TerrainGenerationRecipe.EROSION_GENERATOR_ID and from_id != TerrainGenerationRecipe.SITES_GENERATOR_ID and from_id != TerrainGenerationRecipe.CLIMATE_GENERATOR_ID:
+		return
+	var upgraded := _recipe.snapshot()
+	upgraded.generator_id = TerrainGenerationRecipe.LANDFORM_GENERATOR_ID
+	upgraded.climate_machines = int(from_id == TerrainGenerationRecipe.CLIMATE_GENERATOR_ID)
+	_recipe = upgraded.snapshot()
+	_error = ""
+	_save_blocked = false
+	regenerate()
 func reset_recipe() -> void:
-	_recipe = TerrainGenerationRecipe.create_erosion_default(); _error = ""; _save_blocked = false; regenerate(); save_recipe()
+	_recipe = TerrainGenerationRecipe.create_landform_default(); _error = ""; _save_blocked = false; regenerate(); save_recipe()
 
-## Preview toggle for the v6 climate-machine forecourts (off by default). Only v5/v6 recipes carry the emitter sites; other recipes are left untouched.
+## Preview toggle for the climate-machine forecourts (off by default). v5/v6 switch recipe id; v7 sets its climate_machines field. Other recipes are left untouched.
 func set_climate_machines(enabled: bool) -> void:
 	_initialize_recipe()
 	if _recipe == null:
+		return
+	if _recipe.generator_id == TerrainGenerationRecipe.LANDFORM_GENERATOR_ID:
+		if _recipe.climate_machines == int(enabled):
+			return
+		var landform := _recipe.snapshot()
+		landform.climate_machines = int(enabled)
+		_recipe = landform.snapshot()
+		_error = ""
+		_save_blocked = false
+		regenerate()
 		return
 	var target := TerrainGenerationRecipe.CLIMATE_GENERATOR_ID if enabled else TerrainGenerationRecipe.SITES_GENERATOR_ID
 	if _recipe.generator_id == target or (not enabled and _recipe.generator_id == TerrainGenerationRecipe.EROSION_GENERATOR_ID):

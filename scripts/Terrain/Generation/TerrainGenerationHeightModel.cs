@@ -8,7 +8,7 @@ namespace RingworldTechDemo.Terrain.Generation;
 /// <remarks>Each worker must own its model, or callers must serialize access to its mutable gully cache.</remarks>
 public sealed class TerrainGenerationHeightModel : IDisposable
 {
-    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1);
+    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d);
     private static readonly double[] ContinentalKnots = { -1d, -.55d, -.20d, -.06d, 0d, .45d, 1d };
     private readonly TerrainGenerationParameters _p;
     private readonly double[] _continentalHeights;
@@ -16,8 +16,11 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     // These resources exist only for mountain-detail recipes. Earlier recipes retain their
     // original resource set as well as their original sampling and arithmetic order.
     private readonly FastNoiseLite? _foothill, _spur;
+    // v7 lowland-landform resources: allocated only for v7 models, exactly like the mountain-detail set above.
+    private readonly FastNoiseLite? _landform, _plateau, _hillBase, _hillDetail, _escarpment;
+    private readonly bool _landforms;
     private readonly FastNoiseLite[]? _swissSpurs;
-    private readonly double _radius, _continentalDerivativeEpsilon, _gullyDerivativeEpsilon;
+    private readonly double _radius, _continentalDerivativeEpsilon, _gullyDerivativeEpsilon, _lowlandGuideEpsilon;
     private readonly double[] _swissScales, _swissWeights, _swissSteps,
         _swissDisplacementWeights;
     private readonly double[] _gullyScales, _gullyWeights, _gullyCellWidths;
@@ -40,11 +43,13 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         _p=parameters ?? throw new ArgumentNullException(nameof(parameters));
         _sites=applyEmitterSites && _p.HasEmitterSites ? EmitterSiteTerrainShaper.GetOrCreate(_p) : null;
         _radius=_p.CircumferenceM/Math.Tau;
+        _landforms=_p.HasLowlandLandforms;
         _continentalDerivativeEpsilon=Math.Clamp(_p.ContinentalScaleM*.02,128,16384);
         bool swissEnabled=_p.HasMountainDetail
             && (_p.MountainDetailMode&1)!=0;
-        bool gullyEnabled=_p.HasMountainDetail
-            && (_p.MountainDetailMode&2)!=0 && _p.ErosionStrengthM>0d;
+        bool gullyEnabled=(_p.HasMountainDetail
+            && (_p.MountainDetailMode&2)!=0 && _p.ErosionStrengthM>0d)
+            || (_p.HasLowlandLandforms && _p.LowlandErosionStrengthM>0d);
         _swissScales=swissEnabled ? new double[4] : Array.Empty<double>();
         _swissWeights=swissEnabled ? new double[4] : Array.Empty<double>();
         _swissSteps=swissEnabled ? new double[4] : Array.Empty<double>();
@@ -56,6 +61,7 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         _gullyStencils=gullyEnabled ? new GullyStencil[_p.ErosionOctaves] : Array.Empty<GullyStencil>();
         _gullyCells=gullyEnabled ? new GullyCell[_p.ErosionOctaves*9] : Array.Empty<GullyCell>();
         _gullyDerivativeEpsilon=gullyEnabled ? Math.Clamp(_p.ErosionScaleM*.125d,8d,64d) : 0d;
+        _lowlandGuideEpsilon=_p.HasLowlandLandforms ? Math.Clamp(_p.HillScaleM*.02d,16d,128d) : 0d;
         if(swissEnabled) for(int i=0;i<4;i++)
         {
             _swissScales[i]=_p.SpurScaleM/Math.Pow(_p.NoiseLacunarity,i);
@@ -90,6 +96,14 @@ public sealed class TerrainGenerationHeightModel : IDisposable
                 _swissSpurs=new FastNoiseLite[4];
                 for(int i=0;i<_swissSpurs.Length;i++) _swissSpurs[i]=Noise(1103+i,_swissScales[i],1,FastNoiseLite.FractalTypeEnum.None);
             }
+        }
+        if (_landforms)
+        {
+            _landform=Noise(1201,_p.LandformScaleM,3,FastNoiseLite.FractalTypeEnum.Fbm);
+            _plateau=Noise(1301,_p.PlateauScaleM,2,FastNoiseLite.FractalTypeEnum.Fbm);
+            _hillBase=Noise(1409,_p.HillScaleM,2,FastNoiseLite.FractalTypeEnum.Fbm);
+            _hillDetail=Noise(1423,_p.HillScaleM/4d,2,FastNoiseLite.FractalTypeEnum.Fbm);
+            _escarpment=Noise(1511,_p.EscarpmentScaleM,3,FastNoiseLite.FractalTypeEnum.Fbm);
         }
     }
     public double CalculateHeight(double around, double across)
@@ -126,6 +140,7 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     /// <summary>Unshaped diagnostics: identical for every recipe, with no emitter-site operator applied.</summary>
     public Diagnostics SampleNaturalDiagnostics(double around,double across)
     {
+        if(_landforms) return SampleLandformNaturalDiagnostics(around,across);
         ThrowIfDisposed(); if(!double.IsFinite(around)||!double.IsFinite(across)) throw new ArgumentException("Coordinates must be finite.");
         CylindricalProjection unwarped=new(around,_p.CircumferenceM,_radius);
         double warpedAround, warpedAcross;
@@ -194,6 +209,127 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         double totalDetail=detail+foothill+spur+erosion, raw=macro+totalDetail, height=Clamp(raw,_p.MinHeightM,_p.MaxHeightM);
         return new(height,macro,continental,sea,lowland,alpine,detailMask,valley,ridge,uplift,trench,totalDetail,raw!=height,foothill,spur,erosion);
     }
+    /// <summary>
+    /// v7 natural diagnostics (docs/lowland-landform-overhaul-plan.md section 3). The first half is a verbatim copy of the v4+ path of
+    /// <see cref="SampleNaturalDiagnostics"/> up to <c>erosion</c>, so everything outside the landform gate is bit-identical to v6; the
+    /// landform terms are then added on top. v1-v6 never reach this method.
+    /// </summary>
+    private Diagnostics SampleLandformNaturalDiagnostics(double around,double across)
+    {
+        ThrowIfDisposed(); if(!double.IsFinite(around)||!double.IsFinite(across)) throw new ArgumentException("Coordinates must be finite.");
+        CylindricalProjection unwarped=new(around,_p.CircumferenceM,_radius);
+        double warpedAround, warpedAcross;
+        if(_p.WarpAmplitudeM==0d)
+        {
+            warpedAround=around;
+            warpedAcross=across;
+        }
+        else
+        {
+            warpedAround=Wrap(around+Sample(_warpX,unwarped,across)*_p.WarpAmplitudeM);
+            warpedAcross=across+Sample(_warpZ,unwarped,across)*_p.WarpAmplitudeM;
+        }
+        CylindricalProjection warped=new(warpedAround,_p.CircumferenceM,_radius);
+        double continentalRaw=Sample(_continental,warped,warpedAcross);
+        double continental=Clamp(continentalRaw+_p.LandBalance,-1,1), macro=ContinentalHeight(continental);
+        if (continental < 0)
+        {
+            double epsilon=_continentalDerivativeEpsilon;
+            double da=(Sample(_continental,new CylindricalProjection(warpedAround+epsilon,_p.CircumferenceM,_radius),warpedAcross)
+                -Sample(_continental,new CylindricalProjection(warpedAround-epsilon,_p.CircumferenceM,_radius),warpedAcross))/(2*epsilon);
+            double dz=(Sample(_continental,warped,warpedAcross+epsilon)
+                -Sample(_continental,warped,warpedAcross-epsilon))/(2*epsilon);
+            double gradient=Math.Max(Math.Sqrt(da*da+dz*dz),1d/(32d*_p.ContinentalScaleM));
+            macro=-OceanDepthForDistance(-continental/gradient);
+        }
+        double land=SmoothStep(0,.12,continental), belt=SmoothStep(.4,.8,Unit(Sample(_mountainBelt,warped,warpedAcross))), alpine=land*belt, sea=1-land, lowland=land*(1-belt), valley=Valley(Sample(_valley,warped,warpedAcross)), ridge=Math.Pow(Unit(Sample(_ridge,warped,warpedAcross)),_p.RidgeSharpness);
+        double uplift=_p.MountainAmplitudeM*land*belt*(.30+.70*ridge)*(1-.70*valley);
+        double deepOcean=1-SmoothStep(-3000,-1000,macro);
+        double trenchWeight=(_p.TrenchDepthM>0d && deepOcean>0d)
+            ? SmoothStep(_p.TrenchThreshold,1,Unit(Sample(_trench,warped,warpedAcross)))
+            : 0d;
+        double trench=_p.TrenchDepthM*trenchWeight*deepOcean;
+        macro+=uplift-trench;
+        double detailMask=DetailMaskFor(macro,alpine,ridge,valley,_p.DetailStartM,_p.DetailFullM);
+        double coast=land*SmoothStep(50d,250d,macro), basin=1d-valley;
+        double foothill=(_p.FoothillAmplitudeM>0d && coast>0d) ? _p.FoothillAmplitudeM*coast*basin*(1d-.65d*belt)*Unit(Sample(_foothill!,warped,warpedAcross)) : 0d;
+        double spurMask=coast*basin*belt;
+        double spur=(_p.SpurAmplitudeM>0d && spurMask>0d) ? _p.SpurAmplitudeM*spurMask*SpurField(warpedAround,warped,warpedAcross) : 0d;
+        double erosion=(_p.ErosionStrengthM>0d && spurMask>0d && (_p.MountainDetailMode&2)!=0)
+            ? EnhancedDirectionalGullies(warpedAround,warped,warpedAcross,alpine,valley,spurMask,macro)
+            : 0d;
+
+        // Landform terms. Every term is gated by `gate` (0 in ocean, the shore buffer and full mountain belts), so v7 equals v6 exactly there.
+        double gate=lowland*SmoothStep(_p.LandformShoreStartM,_p.LandformShoreFullM,macro);
+        double landform=0d, lowlandCarve=0d, ruggedness=0d, plateauWeight=0d;
+        if(gate>0d)
+        {
+            ruggedness=SmoothStep(_p.PlainsThreshold,_p.HillsThreshold,Unit(Sample(_landform!,warped,warpedAcross)));
+            plateauWeight=SmoothStep(_p.PlateauThreshold,_p.PlateauFullThreshold,Unit(Sample(_plateau!,warped,warpedAcross)));
+            double hillBase=Sample(_hillBase!,warped,warpedAcross);
+            double hillDetail=_p.HillDetailWeight>0d ? Sample(_hillDetail!,warped,warpedAcross) : 0d;
+            double hn=Clamp((hillBase+_p.HillDetailWeight*hillDetail)/((1d+_p.HillDetailWeight)*HillNormalization),-1d,1d);
+            double profile=Math.Pow(.5d+.5d*hn,_p.HillValleyExponent);
+            double hillAmp=_p.HillAmplitudeM*Lerp(_p.PlainsHillFraction,1d,ruggedness);
+            double hill=hillAmp*profile*(1d-_p.HillValleyFloor*valley);
+            double breaksWeight=_p.BreaksStrength*plateauWeight*ruggedness;
+            if(breaksWeight>0d)
+            {
+                double y=macro+hill;
+                hill+=breaksWeight*(Terrace(y,_p.BreaksStepM,_p.TerraceRiserWidth)-y);
+            }
+            double plateau=0d;
+            if(plateauWeight>0d)
+            {
+                double lift=_p.PlateauLiftM*plateauWeight;
+                double x=macro+lift+(_p.EscarpmentJitterM>0d ? _p.EscarpmentJitterM*plateauWeight*Sample(_escarpment!,warped,warpedAcross) : 0d);
+                plateau=lift+_p.TerraceStrength*SmoothStep(0d,.5d,plateauWeight)*(Terrace(x,_p.PlateauStepM,_p.TerraceRiserWidth)-x);
+            }
+            landform=gate*(hill+plateau);
+            double floorMask=_p.LowlandDetailFloor*gate*Lerp(_p.PlainsDetailFraction,1d,ruggedness);
+            if(floorMask>detailMask) detailMask=floorMask;
+            if(_p.LowlandErosionStrengthM>0d && landform>0d)
+                lowlandCarve=LowlandGullies(warpedAround,warped,warpedAcross,hillBase,hillAmp,gate,ruggedness,landform);
+        }
+        double detail=detailMask>0d ? detailMask*(_p.SecondaryAmplitudeM*Sample(_secondary,warped,warpedAcross)+_p.MicroAmplitudeM*Sample(_micro,warped,warpedAcross)) : 0d;
+        double total=detail+foothill+spur+erosion+landform+lowlandCarve, raw=macro+total, height=Clamp(raw,_p.MinHeightM,_p.MaxHeightM);
+        return new(height,macro,continental,sea,lowland,alpine,detailMask,valley,ridge,uplift,trench,total,raw!=height,foothill,spur,erosion,
+            LandformHeight:landform,LowlandErosionHeight:lowlandCarve,Ruggedness:ruggedness,PlateauWeight:plateauWeight,LandformGate:gate);
+    }
+    /// <summary>Raw hill noise is divided by this so |hn| reaches about 1 at the tails of the two-octave field (docs plan section 3, calibrated in Step 3).</summary>
+    private const double HillNormalization=0.48d;
+    /// <summary>
+    /// Lowland gully carve (plan section 3). Guided by the forward-difference gradient of the hill base field so gullies run down the hills,
+    /// reusing the unchanged enhanced octave cells (same octave index and scale, so the stencil cache is shared with the mountain pass).
+    /// </summary>
+    private double LowlandGullies(double around,CylindricalProjection projection,double across,double hillBase,double hillAmp,double gate,double ruggedness,double landform)
+    {
+        double epsilon=_lowlandGuideEpsilon;
+        double gradientA=(Sample(_hillBase!,new CylindricalProjection(around+epsilon,_p.CircumferenceM,_radius),across)-hillBase)/epsilon;
+        double gradientZ=(Sample(_hillBase!,projection,across+epsilon)-hillBase)/epsilon;
+        double slope=Math.Sqrt(gradientA*gradientA+gradientZ*gradientZ)*hillAmp*.5d/((1d+_p.HillDetailWeight)*HillNormalization);
+        double slopeMask=SmoothStep(.03d,.25d,slope);
+        if(slopeMask<=0d) return 0d;
+        double guideA=-gradientA, guideZ=-gradientZ, appliedCarve=0d, weights=0d;
+        for(int octave=0;octave<_p.LowlandErosionOctaves;octave++)
+        {
+            double weight=_gullyWeights[octave];
+            if (!EnhancedCellGullyField(around,across,_gullyScales[octave],octave,ref guideA,ref guideZ,out double field)) continue;
+            double carve=.5d*(1d-field);
+            double visibility=1d;
+            if(weights>0d)
+            {
+                double coarse=appliedCarve/weights;
+                visibility=Lerp(1d,SmoothStep(.15d,.65d,coarse),_p.ErosionRidgePreservation);
+            }
+            appliedCarve+=weight*carve*visibility;
+            weights+=weight;
+        }
+        double amplitude=Math.Min(_p.LowlandErosionStrengthM,.5d*landform);
+        return weights>0d ? -amplitude*gate*Lerp(.3d,1d,ruggedness)*slopeMask*Clamp(appliedCarve/weights,0d,1d) : 0d;
+    }
+    /// <summary>C1 terrace: flat treads of height `step`, risers occupy the first `riser` fraction of each step.</summary>
+    private static double Terrace(double x,double step,double riser) { double q=x/step, b=Math.Floor(q); return step*(b+SmoothStep(0d,riser,q-b)); }
     private double SpurField(double around,CylindricalProjection projection,double across)
     {
         if ((_p.MountainDetailMode&1)==0) return Unit(Sample(_spur!,projection,across));
@@ -406,7 +542,7 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         }
     }
     private double CellJitter(int a,int z,int octave,int axis) { unchecked { uint h=((uint)a*0x1f123bb5u)^((uint)z*0x6d2b79f5u)^((uint)octave*0x9e3779b9u)^((uint)axis*0x85ebca6bu)^((uint)_p.Seed)^((uint)(_p.Seed>>32)); h^=h>>16; h*=0x7feb352du; h^=h>>15; h*=0x846ca68bu; h^=h>>16; return .3d+.4d*(h/(double)uint.MaxValue); } }
-    public void Dispose() { if(_disposed)return; _disposed=true; _continental.Dispose();_mountainBelt.Dispose();_valley.Dispose();_trench.Dispose();_ridge.Dispose();_secondary.Dispose();_micro.Dispose();_warpX.Dispose();_warpZ.Dispose(); _foothill?.Dispose(); _spur?.Dispose(); if(_swissSpurs is not null) foreach(FastNoiseLite noise in _swissSpurs) noise.Dispose(); GC.SuppressFinalize(this); }
+    public void Dispose() { if(_disposed)return; _disposed=true; _continental.Dispose();_mountainBelt.Dispose();_valley.Dispose();_trench.Dispose();_ridge.Dispose();_secondary.Dispose();_micro.Dispose();_warpX.Dispose();_warpZ.Dispose(); _foothill?.Dispose(); _spur?.Dispose(); _landform?.Dispose(); _plateau?.Dispose(); _hillBase?.Dispose(); _hillDetail?.Dispose(); _escarpment?.Dispose(); if(_swissSpurs is not null) foreach(FastNoiseLite noise in _swissSpurs) noise.Dispose(); GC.SuppressFinalize(this); }
     private FastNoiseLite Noise(int offset,double scale,int octaves,FastNoiseLite.FractalTypeEnum fractal) => new() { Seed=unchecked((int)unchecked(_p.Seed+(long)offset)), NoiseType=FastNoiseLite.NoiseTypeEnum.SimplexSmooth, Frequency=(float)(1d/scale), FractalType=fractal, FractalOctaves=octaves, FractalGain=(float)_p.NoiseGain, FractalLacunarity=(float)_p.NoiseLacunarity };
     private double Sample(FastNoiseLite noise,CylindricalProjection projection,double across) => noise.GetNoise3D(projection.X,projection.Y,(float)across);
     private double Wrap(double v) { double r=v%_p.CircumferenceM; return r<0?r+_p.CircumferenceM:r; }

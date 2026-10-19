@@ -551,8 +551,46 @@ func upgrade_to_enhanced_erosion() -> void:
 	_save_blocked = false
 	regenerate()
 
+## Moves a v4/v5/v6 recipe to the v7 hill-country landforms, keeping every other setting. A v6 recipe keeps its climate machines.
+func upgrade_to_landforms() -> void:
+	_initialize_recipe()
+	if _recipe == null:
+		return
+	var from_id := _recipe.generator_id
+	if from_id != TerrainGenerationRecipe.EROSION_GENERATOR_ID and from_id != TerrainGenerationRecipe.SITES_GENERATOR_ID and from_id != TerrainGenerationRecipe.CLIMATE_GENERATOR_ID:
+		return
+	var upgraded := _recipe.snapshot()
+	upgraded.generator_id = TerrainGenerationRecipe.LANDFORM_GENERATOR_ID
+	upgraded.climate_machines = int(from_id == TerrainGenerationRecipe.CLIMATE_GENERATOR_ID)
+	_recipe = upgraded.snapshot()
+	_error = ""
+	_save_blocked = false
+	regenerate()
+
+## Climate-machine toggle: v7 sets its climate_machines field, v5/v6 switch the recipe id, other recipes are left untouched.
+func set_climate_machines(enabled: bool) -> void:
+	_initialize_recipe()
+	if _recipe == null:
+		return
+	var changed := _recipe.snapshot()
+	if _recipe.generator_id == TerrainGenerationRecipe.LANDFORM_GENERATOR_ID:
+		if _recipe.climate_machines == int(enabled):
+			return
+		changed.climate_machines = int(enabled)
+	else:
+		var target := TerrainGenerationRecipe.CLIMATE_GENERATOR_ID if enabled else TerrainGenerationRecipe.SITES_GENERATOR_ID
+		if _recipe.generator_id == target or (not enabled and _recipe.generator_id == TerrainGenerationRecipe.EROSION_GENERATOR_ID):
+			return
+		if _recipe.generator_id != TerrainGenerationRecipe.EROSION_GENERATOR_ID and _recipe.generator_id != TerrainGenerationRecipe.SITES_GENERATOR_ID and _recipe.generator_id != TerrainGenerationRecipe.CLIMATE_GENERATOR_ID:
+			return
+		changed.generator_id = target
+	_recipe = changed.snapshot()
+	_error = ""
+	_save_blocked = false
+	regenerate()
+
 func reset_recipe() -> void:
-	_recipe = TerrainGenerationRecipe.create_erosion_default()
+	_recipe = TerrainGenerationRecipe.create_landform_default()
 	_error = ""
 	_save_blocked = false
 	regenerate()

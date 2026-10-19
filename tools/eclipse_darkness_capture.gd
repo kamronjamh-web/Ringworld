@@ -67,6 +67,7 @@ func _run() -> void:
 	fixture = "res://.godot/eclipse-capture/world-%d" % Time.get_ticks_usec()
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
 	var existing := root.get_node_or_null("WorldSession")
 	if existing != null: existing.name = "WorldSessionOriginalEclipseCapture"

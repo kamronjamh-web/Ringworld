@@ -44,6 +44,7 @@ func run() -> void:
 	surface = game.get_node_or_null("Terrain3DGameplay")
 	drawer = game.get_node_or_null("LiveTuningDrawer")
 	clock = game.get_node_or_null("RingDayNightCycle")
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	graphics = game.get_node_or_null("GraphicsQuality")
 	grass = game.get_node_or_null("StandingGrass")
 	trees = game.get_node_or_null("BiomeDecorations")

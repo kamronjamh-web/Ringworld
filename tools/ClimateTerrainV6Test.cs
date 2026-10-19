@@ -145,7 +145,7 @@ public partial class ClimateTerrainV6Test : RefCounted
         public int Wet, Steep60, NaturalSteep60;
     }
 
-    static void CheckForecourts(RingTerrainSampler v6, ClimateMachineRegistry climate, EmitterSiteRegistry emitters, TerrainGenerationHeightModel natural, List<string> failures)
+    internal static void CheckForecourts(RingTerrainSampler v6, ClimateMachineRegistry climate, EmitterSiteRegistry emitters, TerrainGenerationHeightModel natural, List<string> failures)
     {
         ClimateForecourtOperator op = v6.ClimateForecourtOperator ?? throw new InvalidOperationException("v6 sampler has no forecourt operator");
         var groups = new Dictionary<string, Stats>

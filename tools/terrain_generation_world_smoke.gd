@@ -29,6 +29,7 @@ func _run() -> void:
 	_fixture = "res://.godot/terrain-generation-tests/m5-world-%s" % Time.get_ticks_usec()
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", _fixture)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", BACKEND)
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_fixture))
 	var actual_session := root.get_node_or_null("WorldSession")
 	if actual_session != null: actual_session.name = "WorldSessionOriginalM5"

@@ -229,7 +229,7 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
     }
 
     // (c) sampler heights equal operator(natural) at pad / apron / cone / skirt / island rings, and natural beyond R_inf.
-    static void CheckOperatorAgreement(RingTerrainSampler v5, EmitterSiteRegistry r, TerrainGenerationHeightModel natural, List<string> failures)
+    internal static void CheckOperatorAgreement(RingTerrainSampler v5, EmitterSiteRegistry r, TerrainGenerationHeightModel natural, List<string> failures)
     {
         var op = v5.EmitterSiteOperator ?? throw new InvalidOperationException("operator missing");
         int checkedPoints = 0, bad = 0, changed = 0, beyond = 0, beyondBad = 0;
@@ -271,7 +271,7 @@ public partial class EmitterSiteTerrainV5Test : RefCounted
     }
 
     // (d) every site: the pad is exactly P at lattice points through the sampler.
-    static void CheckPadFlat(RingTerrainSampler v5, EmitterSiteRegistry r, List<string> failures)
+    internal static void CheckPadFlat(RingTerrainSampler v5, EmitterSiteRegistry r, List<string> failures)
     {
         int points = 0, bad = 0;
         for (int i = 0; i < r.Count; i++)

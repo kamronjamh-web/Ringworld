@@ -53,6 +53,7 @@ func _run() -> void:
 	var unique_root := FIXTURE_ROOT.path_join(str(Time.get_ticks_usec()))
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", unique_root)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(unique_root))
 	game = await _create_game()
 	if failed or game == null:

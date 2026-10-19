@@ -8,19 +8,24 @@ extends SceneTree
 #   Godot_v4.8-dev7_mono_win64_console.exe --path <repo> --script res://tools/grass_motion_capture.gd -- \
 #     --detailed-gpu --warmup-seconds 30 --collection-seconds 8 --settle-seconds 2 \
 #     --grass-cases=baseline,grass-off,cull-tiles-off,skip-unchanged-off,interleave-off \
-#     --grass-motions=still,yaw45,walk5 [--noon] [--fill-timeout=300]
+#     --grass-motions=still,yaw45,walk5,circle [--noon] [--fill-timeout=300] \
+#     [--pose=<around>,<across>] [--pose-yaw=<deg>] [--circle-yaw-rate=30] [--survey]
+#
+# --pose relocates from the far-ring pose to a canonical (around, across) point (2 m above the surface, then landed).
+# --survey ranks dense-forest candidates near the Certified grove, visits each, prints GRASS_MOTION_SURVEY lines, quits.
+# circle walks forward at the explorer's real MoveSpeed while yawing at --circle-yaw-rate deg/s (radius = v / rate).
 #
 # Output: res://.godot/grass-motion/<label>-<pid>-<time>/report.json, plus one GRASS_MOTION_PHASE line per phase.
 
-const SUPPORTED_CASES := ["baseline", "throttle-off", "grass-off", "cull-tiles-off", "skip-unchanged-off", "interleave-off", "interleave-motion-200"]
-const SUPPORTED_MOTIONS := ["still", "yaw45", "yaw15", "walk5"]
+const SUPPORTED_CASES := ["baseline", "throttle-off", "grass-off", "trees-off", "water-off", "cull-tiles-off", "skip-unchanged-off", "interleave-off", "interleave-motion-200"]
+const SUPPORTED_MOTIONS := ["still", "yaw45", "yaw15", "walk5", "circle"]
 const GRASS_COUNTERS := ["GpuCullingCompletedUpdates", "GpuCullingSkippedUnchangedUpdates", "GrassVisibilityScans", "GrassVisibilityCacheHits",
 	"GrassGpuRequestScans", "GrassGpuRequestCacheHits", "GrassPresentationScans", "GrassPresentationCacheHits", "GrassBuildNewTileCount",
 	"GrassBuildTierUpgradeCount", "GrassBuildTierOtherCount", "GrassTierFilterCount", "GrassTilesEvictedCount", "GrassResetCount", "GrassCullingRelatches"]
 const GRASS_GAUGES := ["ResidentGrassTileCount", "PendingGrassTileBuildCount", "PendingGrassUploadCount", "GpuCullingBatchCount",
 	"GpuCullingRequestedBatchCount", "GpuCullingDispatchedBatchCount", "GpuCullingDeferredBatchCount", "EffectiveGpuCullingBatchesPerFrame",
 	"GrassFrustumRejectedTileCount", "GrassDistanceRejectedTileCount", "AdaptiveGrassActivePresentationCount", "AdaptiveGrassGroupCount",
-	"ActiveGrassInteractionSampleCount", "IsCardStyle", "GpuCullingBytes"]
+	"ActiveGrassInteractionSampleCount", "IsCardStyle", "GpuCullingBytes", "ResidentGrassInstanceCount", "MaximumGrassSourceInstances"]
 
 var world: Node
 var driver: RefCounted
@@ -41,6 +46,15 @@ const POSE_DROP_METERS := -340.0
 var pose_offset := POSE_DROP_METERS
 var vsync_restore: Callable
 var capture_vsync := -1
+# Custom pose (--pose): canonical around/across, landed vertical, and the explorer's real (preference) walk speeds.
+var custom_pose := {}
+var circle_yaw_rate := 30.0
+var real_move_speed := 8.0
+var real_sprint_speed := 14.0
+var pose_report := {}
+var survey_results: Array = []
+var path_trace: Array = []
+var path_accumulator := 0.0
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -54,6 +68,14 @@ func _run() -> void:
 	if DisplayServer.get_name().to_lower().contains("headless") or RenderingServer.get_rendering_device() == null:
 		_fail("Forward+ display/RenderingDevice required")
 		return
+	# --window=maximized|<W>x<H> pins the window so runs are comparable (the OS may otherwise restore a maximized window).
+	var window_arg := _arg("--window", "")
+	if window_arg == "maximized":
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+	elif not window_arg.is_empty():
+		var dims := window_arg.split("x", false)
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_size(Vector2i(int(dims[0]), int(dims[1])))
 	driver = load("res://tools/FarRingGameplayCapture.cs").new()
 	probe = load("res://tools/GrassMotionCaptureProbe.cs").new()
 	if not driver.ConfigureArguments():
@@ -71,7 +93,17 @@ func _run() -> void:
 			return
 	var fill_timeout := _arg("--fill-timeout", "300").to_float()
 	var phase_count := cases.size() * motions.size() + 1
+	circle_yaw_rate = _arg("--circle-yaw-rate", "30").to_float()
+	var survey := "--survey" in OS.get_cmdline_user_args()
+	var pose_text := _arg("--pose", "")
+	if not pose_text.is_empty():
+		var parts := pose_text.split(",", false)
+		if parts.size() != 2:
+			_fail("--pose needs <around>,<across>")
+			return
+		custom_pose = {"around":parts[0].to_float(), "across":parts[1].to_float()}
 	var watchdog: float = driver.WarmupSeconds + fill_timeout + phase_count * (driver.CollectionSeconds + driver.SettleSeconds + 45.0) + 120.0
+	if survey: watchdog = driver.WarmupSeconds + 12 * 150.0 + 120.0
 	create_timer(watchdog, true, false, true).timeout.connect(func(): _fail("watchdog expired"))
 	output_directory = "res://.godot/grass-motion/%s-%d-%d" % [driver.ArtifactLabel, OS.get_process_id(), Time.get_unix_time_from_system()]
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_directory))
@@ -108,7 +140,18 @@ func _run() -> void:
 	var explorer = world.get_node("Explorer")
 	base_yaw_degrees = rad_to_deg(float(explorer.SavedYaw))
 	base_pitch_degrees = float(explorer.SavedPitch)
+	real_move_speed = float(explorer.get("MoveSpeed"))
+	real_sprint_speed = float(explorer.get("SprintSpeed"))
+	if survey or not custom_pose.is_empty():
+		base_yaw_degrees = _arg("--pose-yaw", str(base_yaw_degrees)).to_float()
+	if not custom_pose.is_empty():
+		pose_report = probe.PlaceExplorer(explorer, world.get_node("ChunkGridManager"), custom_pose.around, custom_pose.across, 2.0, base_yaw_degrees, base_pitch_degrees)
+		pose_report["forest"] = probe.ForestAt(world.get_node("ChunkGridManager"), custom_pose.around, custom_pose.across)
+		print("GRASS_MOTION=POSE ", JSON.stringify(pose_report), " moveSpeed=", real_move_speed)
 	if "--noon" in OS.get_cmdline_user_args(): _select_noon()
+	if survey:
+		await _survey(explorer)
+		return
 	var grass = world.get_node("StandingGrass")
 	print("GRASS_MOTION=WARMUP seconds=", driver.WarmupSeconds, " cards=", grass.get("IsCardStyle"), " altitude=", explorer.CurrentAltitudeAboveTerrainMeters)
 	await create_timer(maxf(.001, driver.WarmupSeconds), true, false, true).timeout
@@ -154,9 +197,15 @@ func _run() -> void:
 
 func _process(delta: float) -> bool:
 	if finished or not is_instance_valid(world) or not world.is_inside_tree(): return false
-	if motion.begins_with("yaw"):
+	if motion == "walk5" or motion == "circle":
+		path_accumulator += delta
+		if path_accumulator >= .5:
+			path_accumulator = 0.0
+			var at: Dictionary = probe.ExplorerState(world.get_node("Explorer"))
+			path_trace.append([snappedf(float(at.around), .01), snappedf(float(at.across), .01), snappedf(float(at.speed), .01)])
+	if motion.begins_with("yaw") or motion == "circle":
 		motion_elapsed += delta
-		var rate := 45.0 if motion == "yaw45" else 15.0
+		var rate := circle_yaw_rate if motion == "circle" else (45.0 if motion == "yaw45" else 15.0)
 		world.get_node("Explorer").SetPresentationView(base_yaw_degrees + rate * motion_elapsed, base_pitch_degrees)
 	return false
 
@@ -192,6 +241,12 @@ func _land_explorer(explorer) -> bool:
 			return false
 	explorer.set_physics_process(false)
 	var state: Dictionary = probe.ExplorerState(explorer)
+	if not custom_pose.is_empty():
+		custom_pose["vertical"] = float(state.vertical)
+		probe.RestoreExplorer(explorer, custom_pose.around, custom_pose.vertical, custom_pose.across, base_yaw_degrees, base_pitch_degrees)
+		pose_report["landedVertical"] = custom_pose.vertical
+		print("GRASS_MOTION=LANDED custom vertical=", custom_pose.vertical, " altitude=", explorer.CurrentAltitudeAboveTerrainMeters)
+		return true
 	pose_offset = float(state.vertical) - 397.3149763485417
 	if not driver.SetPoseAltitudeOffset(world, pose_offset):
 		_fail(driver.ErrorText)
@@ -223,7 +278,9 @@ func _reset_pose() -> bool:
 		pose_origin = state
 	# Only a walk moves the explorer; restoring an unchanged pose would be a needless teleport.
 	var moved := Vector2(float(state.around) - float(pose_origin.around), float(state.across) - float(pose_origin.across)).length()
-	if moved > .01 or absf(float(state.vertical) - float(pose_origin.vertical)) > .01:
+	if not custom_pose.is_empty():
+		probe.RestoreExplorer(explorer, custom_pose.around, custom_pose.vertical, custom_pose.across, base_yaw_degrees, base_pitch_degrees)
+	elif moved > .01 or absf(float(state.vertical) - float(pose_origin.vertical)) > .01:
 		if not driver.SetPoseAltitudeOffset(world, pose_offset):
 			_fail(driver.ErrorText)
 			return false
@@ -249,16 +306,25 @@ func _capture(case_name: String, motion_name: String) -> bool:
 	var grass = world.get_node("StandingGrass")
 	var monitor = world.get_node("RingPerformanceMonitor")
 	var clouds = world.get_node("SunshineCloudsDriver").get("clouds_resource")
+	var trees = world.get_node("BiomeDecorations")
 	var start_position: Dictionary = probe.ExplorerState(explorer)
-	if motion_name == "walk5":
-		explorer.set("MoveSpeed", walk_speed)
-		explorer.set("SprintSpeed", walk_speed)
+	motion_elapsed = 0.0
+	if motion_name == "walk5" or motion_name == "circle":
+		var speed := walk_speed if motion_name == "walk5" else real_move_speed
+		explorer.set("MoveSpeed", speed)
+		explorer.set("SprintSpeed", speed)
 		explorer.set_physics_process(true)
 		_press_w(true)
+		# The circle yaws through the pre-roll so the window opens in steady circular motion.
+		if motion_name == "circle": motion = "circle"
 		# Accelerate to speed before the window opens.
 		await create_timer(1.0, true, false, true).timeout
-	motion_elapsed = 0.0
+		start_position = probe.ExplorerState(explorer)
+	if motion_name != "circle": motion_elapsed = 0.0
 	motion = motion_name
+	var trees_before: Dictionary = probe.TreeState(trees)
+	path_trace = []
+	path_accumulator = 0.0
 	var counters_before := _grass_values(grass, GRASS_COUNTERS)
 	var gpu_before: Dictionary = probe.GrassGpuCounters(grass)
 	var interleave_before := _interleave_counts(clouds)
@@ -271,20 +337,28 @@ func _capture(case_name: String, motion_name: String) -> bool:
 	var gpu_after: Dictionary = probe.GrassGpuCounters(grass)
 	var interleave_after := _interleave_counts(clouds)
 	var end_position: Dictionary = probe.ExplorerState(explorer)
+	var trees_after: Dictionary = probe.TreeState(trees)
 	motion = "still"
 	_press_w(false)
 	explorer.set_physics_process(false)
+	explorer.set("MoveSpeed", real_move_speed)
+	explorer.set("SprintSpeed", real_sprint_speed)
 	var deltas := {}
 	for key in GRASS_COUNTERS:
 		deltas[key] = float(counters_after[key]) - float(counters_before[key])
 	for key in gpu_after:
 		deltas[key] = float(gpu_after[key]) - float(gpu_before[key])
-	var phase := {"case":case_name, "motion":motion_name, "summary":summary, "grassCounterDeltas":deltas,
+	var phase := {"case":case_name, "motion":motion_name, "window":root.size, "summary":summary, "grassCounterDeltas":deltas,
 		"grassGauges":_grass_values(grass, GRASS_GAUGES), "lastRelatchReason":str(grass.get("GrassCullingLastRelatchReason")),
 		"throttle":grass.get("ThrottleGrassCulling"),
 		"interleave":{"interleaved":interleave_after.interleaved - interleave_before.interleaved,
 			"fullMarch":interleave_after.full - interleave_before.full, "lastReason":interleave_after.reason,
 			"lastMotionPixels":interleave_after.motion, "setting":clouds.get("cloud_interleave") if clouds != null else null},
+		"water":_water_state(), "trees":trees_after, "treeDispatches":int(trees_after.gpu_tree_dispatches) - int(trees_before.gpu_tree_dispatches),
+		"treePlans":int(trees_after.vegetation_plans) - int(trees_before.vegetation_plans),
+		"walkSpeed":(walk_speed if motion_name == "walk5" else (real_move_speed if motion_name == "circle" else 0.0)),
+		"circleYawRate":(circle_yaw_rate if motion_name == "circle" else 0.0),
+		"endSpeed":float(end_position.speed), "startPosition":start_position, "endPosition":end_position, "path":path_trace.duplicate(),
 		"movedMeters":Vector2(float(end_position.around) - float(start_position.around), float(end_position.across) - float(start_position.across)).length(),
 		"altitudeAboveTerrain":explorer.CurrentAltitudeAboveTerrainMeters}
 	phases.append(phase)
@@ -299,7 +373,14 @@ func _brief(phase: Dictionary) -> Dictionary:
 		var name := str(row.name)
 		if name.begins_with("Grass") or name.begins_with("GPU.Grass") or name.begins_with("GPU.Vegetation") or name.begins_with("GPU.Cloud"):
 			grass_rows[name] = snappedf(float(row.perFrameMs if not row.gpu else row.meanMs), .001)
+	var frames := maxf(1.0, float(s.get("frames", 1)))
+	var window := maxf(.001, float(s.get("windowSeconds", 1)))
 	return {"case":phase.case, "motion":phase.motion, "fps":snappedf(float(s.get("fps", 0)), .1),
+		"frameMean":s.get("frameMs", {}).get("mean"), "frameP99":s.get("frameMs", {}).get("p99"),
+		"farGpuMean":s.get("outerFarViewportGpuMs", {}).get("mean"), "regionalFarGpuMean":s.get("regionalFarViewportGpuMs", {}).get("mean"),
+		"gcKBPerFrame":snappedf(float(s.get("gc", {}).get("allocatedBytes", 0)) / 1024.0 / frames, .01),
+		"relatchPerSecond":snappedf(float(phase.grassCounterDeltas.get("GrassCullingRelatches", 0)) / window, .01),
+		"treeDispatchesPerSecond":snappedf(float(phase.treeDispatches) / window, .01), "endSpeed":phase.endSpeed,
 		"frameP50":s.get("frameMs", {}).get("p50"), "frameP95":s.get("frameMs", {}).get("p95"), "processMean":s.get("processMs", {}).get("mean"),
 		"setupMean":s.get("renderSetupMs", {}).get("mean"), "viewportCpuMean":s.get("mainViewportCpuMs", {}).get("mean"),
 		"viewportGpuMean":s.get("mainViewportGpuMs", {}).get("mean"), "gcAllocMB":float(s.get("gc", {}).get("allocatedBytes", 0)) / 1048576.0,
@@ -323,6 +404,23 @@ func _apply_case(name: String) -> bool:
 	match name:
 		"baseline":
 			pass
+		"water-off":
+			var water = world.get_node("WaterFftController")
+			var water_enabled = water.get("Enabled")
+			case_restore = func():
+				if is_instance_valid(water): water.set("Enabled", water_enabled)
+			water.set("Enabled", false)
+		"trees-off":
+			# Visible alone is re-asserted every _Process, so stop processing (streaming + GPU culling) and hide.
+			var trees = world.get_node("BiomeDecorations")
+			var trees_processing: bool = trees.is_processing()
+			var trees_visible: bool = trees.visible
+			case_restore = func():
+				if is_instance_valid(trees):
+					trees.set_process(trees_processing)
+					trees.visible = trees_visible
+			trees.set_process(false)
+			trees.visible = false
 		"grass-off":
 			var processing: bool = grass.is_processing()
 			var visible: bool = grass.visible
@@ -376,7 +474,8 @@ func _write_report(status: String, reason: String) -> void:
 	file.store_string(JSON.stringify({"schemaVersion":1, "status":status, "reason":reason,
 		"hardware":{"gpu":RenderingServer.get_video_adapter_name(), "cpu":OS.get_processor_name()},
 		"window":root.size, "vsync":capture_vsync, "maxFps":Engine.max_fps,
-		"poseOffsetMeters":pose_offset, "note":"Matched pose (far-ring pose dropped and landed); clocks paused after warmup; motion yaw via SetPresentationView, walk via held W at 5 m/s. Per-frame CPU rows = calls x mean / frames (main-thread only when worker=false). GPU rows are delayed timestamp means.",
+		"poseOffsetMeters":pose_offset, "customPose":custom_pose, "pose":pose_report, "survey":survey_results,
+		"explorerMoveSpeed":real_move_speed, "explorerSprintSpeed":real_sprint_speed, "note":"Matched pose (far-ring pose dropped and landed); clocks paused after warmup; motion yaw via SetPresentationView, walk via held W at 5 m/s. Per-frame CPU rows = calls x mean / frames (main-thread only when worker=false). GPU rows are delayed timestamp means.",
 		"phases":phases}, "  "))
 	file.close()
 
@@ -391,3 +490,51 @@ func _fail(reason) -> void:
 		else: world.free()
 	await process_frame
 	quit(1)
+
+func _survey(explorer) -> void:
+	var grid = world.get_node("ChunkGridManager")
+	var grass = world.get_node("StandingGrass")
+	var trees = world.get_node("BiomeDecorations")
+	var candidates: Array = [{"label":"certified-grove", "around":186000.0, "across":141000.0},
+		{"label":"certified-woodland", "around":186336.0, "across":140760.0}]
+	var started := Time.get_ticks_msec()
+	var ranked: Array = probe.RankForestCandidates(grid, 186000.0, 141000.0, int(_arg("--survey-extent", "3000")), 64, int(_arg("--survey-count", "4")), 400)
+	print("GRASS_MOTION=SURVEY_RANKED ms=", Time.get_ticks_msec() - started, " ", JSON.stringify(ranked))
+	for i in ranked.size():
+		candidates.append({"label":"ranked-%d" % i, "around":float(ranked[i].around), "across":float(ranked[i].across), "score":ranked[i].score})
+	var dwell := _arg("--survey-dwell", "25").to_float()
+	var first := true
+	for candidate in candidates:
+		var placed: Dictionary = probe.PlaceExplorer(explorer, grid, candidate.around, candidate.across, 2.0, base_yaw_degrees, base_pitch_degrees)
+		await create_timer(driver.WarmupSeconds if first else dwell, true, false, true).timeout
+		first = false
+		if finished: return
+		var quiet := await _await_grass_quiescent(60.0)
+		probe.RefreshAltitude(explorer)
+		await create_timer(2.0, true, false, true).timeout
+		var tree_state: Dictionary = probe.TreeState(trees)
+		var row := {"label":candidate.label, "around":candidate.around, "across":candidate.across, "rankScore":candidate.get("score", null),
+			"forest":probe.ForestAt(grid, candidate.around, candidate.across), "placed":placed, "grassQuiescent":quiet,
+			"grassTiles":grass.get("ResidentGrassTileCount"), "grassInstances":grass.get("ResidentGrassInstanceCount"),
+			"grassInstanceBudget":grass.get("MaximumGrassSourceInstances"), "nearTrees":tree_state.get("collision_count"),
+			"treeRoots":tree_state.get("gpu_resident_root_count"), "treeBatches":tree_state.get("gpu_batch_count"),
+			"treeRecords":tree_state.get("canonical_record_count"), "fps":Engine.get_frames_per_second(), "altitude":explorer.CurrentAltitudeAboveTerrainMeters}
+		survey_results.append(row)
+		print("GRASS_MOTION_SURVEY ", JSON.stringify(row))
+		_write_report("RUNNING", "survey")
+	_restore_all()
+	_write_report("PASS", "survey")
+	print("GRASS_MOTION=PASS survey directory=", ProjectSettings.globalize_path(output_directory))
+	finished = true
+	world.queue_free()
+	await process_frame
+	await process_frame
+	quit(0)
+
+func _water_state() -> Dictionary:
+	var water = world.get_node_or_null("WaterFftController")
+	if water == null: return {}
+	return {"enabled":water.get("Enabled"), "status":str(water.get("WaterDemandStatus")),
+		"nearestMeters":water.get("NearestRelevantWaterDistanceMeters"), "areaKm2":water.get("RelevantWaterAreaSquareKilometers"),
+		"geometryUps":water.get("TargetGeometryUpdatesPerSecond"), "detailUps":water.get("TargetDetailUpdatesPerSecond"),
+		"detailDistance":water.get("DetailDistanceMeters"), "cascades":water.get("ActiveCascadeCount"), "resolution":water.get("ActiveResolution")}

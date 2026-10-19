@@ -42,7 +42,7 @@ public partial class TerrainGenerationSampler : RefCounted
     public GodotDictionary SampleDiagnostics(double around,double across)
     {
         TerrainGenerationHeightModel.Diagnostics d=Require().SampleDiagnostics(around,across);
-        return new GodotDictionary { ["height"]=d.Height,["macro_height"]=d.MacroHeight,["continentalness"]=d.Continentalness,["sea_weight"]=d.SeaWeight,["lowland_weight"]=d.LowlandWeight,["alpine_weight"]=d.AlpineWeight,["detail_mask"]=d.DetailMask,["valley_weight"]=d.ValleyWeight,["ridge_weight"]=d.RidgeWeight,["mountain_uplift"]=d.MountainUplift,["trench_depth"]=d.TrenchDepth,["detail_height"]=d.DetailHeight,["foothill_height"]=d.FoothillHeight,["spur_height"]=d.SpurHeight,["erosion_height"]=d.ErosionHeight,["clamped"]=d.Clamped };
+        return new GodotDictionary { ["height"]=d.Height,["macro_height"]=d.MacroHeight,["continentalness"]=d.Continentalness,["sea_weight"]=d.SeaWeight,["lowland_weight"]=d.LowlandWeight,["alpine_weight"]=d.AlpineWeight,["detail_mask"]=d.DetailMask,["valley_weight"]=d.ValleyWeight,["ridge_weight"]=d.RidgeWeight,["mountain_uplift"]=d.MountainUplift,["trench_depth"]=d.TrenchDepth,["detail_height"]=d.DetailHeight,["foothill_height"]=d.FoothillHeight,["spur_height"]=d.SpurHeight,["erosion_height"]=d.ErosionHeight,["landform_height"]=d.LandformHeight,["lowland_erosion_height"]=d.LowlandErosionHeight,["ruggedness"]=d.Ruggedness,["plateau_weight"]=d.PlateauWeight,["landform_gate"]=d.LandformGate,["clamped"]=d.Clamped };
     }
     /// <summary>GDScript-callable lifecycle release for bridges held outside a Node tree.</summary>
     public void Release() => Dispose();

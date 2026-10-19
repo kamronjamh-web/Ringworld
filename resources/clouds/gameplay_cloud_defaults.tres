@@ -1,23 +1,25 @@
 [gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_w70fm"]
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_cxv5o"]
 
 [resource]
-script = ExtResource("1_w70fm")
+script = ExtResource("1_cxv5o")
 Overrides = {
 "AnvilRadiusMultiplier": 2.7,
 "AutomaticCloudHandoff": true,
 "BlurPower": 1.2,
 "BlurQuality": 1,
 "CastCloudShadows": true,
-"CloudAmbientMultiplier": 1.0,
+"CloudAmbientMultiplier": 0.99,
 "CloudCoverageBias": 0.01,
 "CloudDensityMultiplier": 0.9,
 "CloudDirectLightMultiplier": 1.0,
 "CloudHandoffOverlapMeters": 51000.0,
 "CloudHistoryCompatibilityEnabled": true,
+"CloudInterleave": 1,
 "CloudLodBias": 1.65,
 "CloudRenderingEnabled": true,
+"CloudResolutionJitter": true,
 "CloudResolutionScale": 0,
 "CloudSharpness": 0.0,
 "CloudWindMultiplier": 3.0,
@@ -35,7 +37,7 @@ Overrides = {
 "GpuNearShadowMapResolution": 1024,
 "GpuNearShadowRadiusMeters": 40000.0,
 "GpuNearShadowUpdatesPerSecond": 10.0,
-"GpuShadowVerticalSamples": 64,
+"GpuShadowVerticalSamples": 24,
 "HandoffEndMeters": 320500.0,
 "HandoffStartMeters": 320000.0,
 "LightingSteps": 30,
@@ -60,5 +62,6 @@ Overrides = {
 "StormAmbientOcclusionStrength": 0.62,
 "StormFrontCloudBaseAltitudeMeters": 500.0,
 "StormPillarRadiusMeters": 4500.0,
-"StormSculptStrength": 1.0
+"StormSculptStrength": 1.0,
+"WeatherSystemUploadCount": 64
 }
