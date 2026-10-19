@@ -1763,8 +1763,9 @@ void main() {
 		bool depthBreakAgrees = currentDepthBreak == currentDataAccumilation.a;
 		bool cloudDistanceAgrees = abs(finalDensityDistance - currentDataAccumilation.b)
 			<= maxstep + 0.1 * max(finalDensityDistance, currentDataAccumilation.b);
-		bool opaquePointAgrees = !opaqueHistoryOutside && ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
-			imageLoad(accum_2A_image, opaqueHistoryPixel).a, opaqueDepthTolerance);
+		bool opaquePointAgrees = !opaqueHistoryOutside && (ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
+			imageLoad(accum_2A_image, opaqueHistoryPixel).a, opaqueDepthTolerance)
+			|| ring_jitter_opaque_neighborhood_matches(true, opaqueHistoryPixel, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance));
 		bool gameplayVisibilityRejected = gameplayTemporalHistory && genericData.data.history_controls.x > 0.5 && !opaquePointAgrees;
 		if (gameplayTemporalHistory && !historyOutsideImage && genericData.data.history_controls.x > 0.5) {
 			if (coherentBilinearHistory) {
@@ -1783,10 +1784,15 @@ void main() {
 						+ imageLoad(accum_1A_image, history01).rgba * weight01
 						+ imageLoad(accum_1A_image, history11).rgba * weight11) / validWeight;
 					currentDataAccumilation = (data00 * weight00 + data10 * weight10 + data01 * weight01 + data11 * weight11) / validWeight;
+				} else if (ring_jitter_opaque_neighborhood_matches(true, clampedUV, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance)) {
+					// Engine jitter: every bilinear tap failed the exact test but the 3x3 neighbourhood agrees, so keep the nearest history texel.
+					currentColorAccumilation = imageLoad(accum_1A_image, clampedUV).rgba;
+					currentDataAccumilation = imageLoad(accum_2A_image, clampedUV).rgba;
 				} else {
 					gameplayVisibilityRejected = true;
 				}
-			} else if (!opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, currentDataAccumilation, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)) {
+			} else if (!opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, currentDataAccumilation, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)
+					&& !ring_jitter_opaque_neighborhood_matches(true, clampedUV, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance)) {
 				gameplayVisibilityRejected = true;
 			}
 		}
@@ -1843,8 +1849,9 @@ void main() {
 		bool depthBreakAgrees = currentDepthBreak == currentDataAccumilation.a;
 		bool cloudDistanceAgrees = abs(finalDensityDistance - currentDataAccumilation.b)
 			<= maxstep + 0.1 * max(finalDensityDistance, currentDataAccumilation.b);
-		bool opaquePointAgrees = !opaqueHistoryOutside && ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
-			imageLoad(accum_2B_image, opaqueHistoryPixel).a, opaqueDepthTolerance);
+		bool opaquePointAgrees = !opaqueHistoryOutside && (ring_cloud_history_opaque_matches(expectedHistoryOpaqueDepth,
+			imageLoad(accum_2B_image, opaqueHistoryPixel).a, opaqueDepthTolerance)
+			|| ring_jitter_opaque_neighborhood_matches(false, opaqueHistoryPixel, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance));
 		bool gameplayVisibilityRejected = gameplayTemporalHistory && genericData.data.history_controls.x > 0.5 && !opaquePointAgrees;
 		if (gameplayTemporalHistory && !historyOutsideImage && genericData.data.history_controls.x > 0.5) {
 			if (coherentBilinearHistory) {
@@ -1863,10 +1870,15 @@ void main() {
 						+ imageLoad(accum_1B_image, history01).rgba * weight01
 						+ imageLoad(accum_1B_image, history11).rgba * weight11) / validWeight;
 					currentDataAccumilation = (data00 * weight00 + data10 * weight10 + data01 * weight01 + data11 * weight11) / validWeight;
+				} else if (ring_jitter_opaque_neighborhood_matches(false, clampedUV, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance)) {
+					// Engine jitter: every bilinear tap failed the exact test but the 3x3 neighbourhood agrees, so keep the nearest history texel.
+					currentColorAccumilation = imageLoad(accum_1B_image, clampedUV).rgba;
+					currentDataAccumilation = imageLoad(accum_2B_image, clampedUV).rgba;
 				} else {
 					gameplayVisibilityRejected = true;
 				}
-			} else if (!opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, currentDataAccumilation, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)) {
+			} else if (!opaque_depth_history_agrees(expectedHistoryOpaqueDepth, opaqueDepthMetadata, currentDataAccumilation, opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)
+					&& !ring_jitter_opaque_neighborhood_matches(false, clampedUV, size, expectedHistoryOpaqueDepth, opaqueDepthTolerance)) {
 				gameplayVisibilityRejected = true;
 			}
 		}

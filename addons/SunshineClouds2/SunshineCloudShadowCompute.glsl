@@ -1,5 +1,5 @@
 #[compute]
-// GenericData uses the append-only shared menu/gameplay layout in CloudsInc.comp (304 floats since the 16-slot ring atmosphere profile, P2b).
+// GenericData uses the append-only shared menu/gameplay layout in CloudsInc.comp (312 floats since the engine jitter controls append; 308 with the enclosed fog append, P6; 304 with the 16-slot ring atmosphere profile, P2b).
 #version 450
 
 // GPU-resident cloud-occlusion producer.  This intentionally

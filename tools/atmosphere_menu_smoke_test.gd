@@ -110,7 +110,7 @@ func _run() -> void:
 	var haze_quality := _drawer.find_child("AtmosphereHazeQuality", true, false) as OptionButton
 	if physical_group == null or rayleigh == null or haze_quality == null or not physical_group.visible:
 		return _fail("physical haze controls missing or hidden under the Physical model")
-	for slider_name in ["MistDensity", "MistHeight", "AerosolHeight", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "CloudShadowing"]:
+	for slider_name in ["MistDensity", "MistHeight", "AerosolHeight", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "CloudShadowing", "StormHaze"]:
 		if _drawer.find_child("Atmosphere" + slider_name, true, false) as HSlider == null:
 			return _fail("physical haze slider missing: " + slider_name)
 	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("haze_quality", -1)) != 8 or not is_equal_approx(rayleigh.value, 1.0):
@@ -118,14 +118,19 @@ func _run() -> void:
 	var cloud_shadowing := _drawer.find_child("AtmosphereCloudShadowing", true, false) as HSlider
 	if not is_equal_approx(cloud_shadowing.value, 1.0):
 		return _fail("cloud shadowing slider does not default to 1")
+	var storm_haze := _drawer.find_child("AtmosphereStormHaze", true, false) as HSlider
+	if not is_equal_approx(storm_haze.value, 1.0):
+		return _fail("storm haze slider does not default to 1")
 	cloud_shadowing.value = 0.4
+	storm_haze.value = 0.6
 	rayleigh.value = 1.5
 	haze_quality.select(2)
 	haze_quality.item_selected.emit(2)
 	await process_frame
 	var p4_diag := _graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary
 	if not is_equal_approx(float(p4_diag.get("haze_rayleigh_strength", -1.0)), 1.5) or int(p4_diag.get("haze_quality", -1)) != 16 \
-			or not is_equal_approx(float(p4_diag.get("haze_cloud_shadowing", -1.0)), 0.4):
+			or not is_equal_approx(float(p4_diag.get("haze_cloud_shadowing", -1.0)), 0.4) \
+			or not is_equal_approx(float(p4_diag.get("haze_storm_strength", -1.0)), 0.6):
 		return _fail("physical haze slider/quality signals did not update the model")
 	haze_model.select(0)
 	haze_model.item_selected.emit(0)

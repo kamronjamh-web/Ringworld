@@ -336,7 +336,9 @@ void main() {
 	vec2 depthUV = (vec2(uv) + 0.5) / vec2(size);
 	depthUV = clamp(depthUV, vec2(0.0), vec2(1.0));
 
-	vec2 accumUV = depthUV;
+	// The cloud textures are stored centred (unjittered) while the scene samples are jittered, so look them up at the jitter-shifted uv
+	// (offset is 0 without engine jitter). depthUV stays on the jittered pixel for rays, depth fetches and atmospherics.
+	vec2 accumUV = clamp(depthUV + genericData.data.ring_jitter_controls.xy, vec2(0.0), vec2(1.0));
 
 	vec2 lowres_sizefloat = vec2(lowres_size);
 	vec4 currentAccumilation = vec4(0.0);
@@ -403,7 +405,7 @@ void main() {
 		if (linear_depth >= sceneZFar){ 
 			linear_depth *= 100.0;
 		}
-		float far_depth = texture(far_opaque_depth_image, depthUV).r;
+		float far_depth = texture(far_opaque_depth_image, depthUV + genericData.data.ring_jitter_controls.xy).r;
 		if (far_depth > 0.0 && !isnan(far_depth) && !isinf(far_depth)) linear_depth = min(linear_depth, far_depth);
 		float density = clamp(currentAccumilation.a, 0.0, 1.0);
 		// Raw capture intentionally precedes scene-depth occlusion. It isolates
@@ -435,6 +437,12 @@ void main() {
 		}
 		density *= smoothstep(minstep, minstep * 2.0, linear_depth);
 		density = mix(density, 0.0, lerp);
+		// Caves/underwater: Godot exp fog (fog_density, fog_sky_affect) also fades clouds, at the transmittance-weighted cloud depth
+		// (.b, metres) or the opaque depth when that is nearer. Zero weight (outside enclosed spaces) is an exact no-op.
+		float enclosedFogAffect = clamp(genericData.data.ring_enclosed_fog.y * genericData.data.ring_enclosed_fog.z, 0.0, 1.0);
+		if (enclosedFogAffect > 0.0) {
+			density *= 1.0 - enclosedFogAffect * (1.0 - exp(-max(genericData.data.ring_enclosed_fog.x, 0.0) * min(finalDensityDistance, linear_depth)));
+		}
 		float groundLinearFade = mix(smoothstep(maxTheoreticalStep, maxTheoreticalStep, linear_depth), 1.0, genericData.data.fogEffectGround);
 
 		vec4 color = texelFetchMSAA(input_screen_image, uv, sampleIdx);
@@ -494,7 +502,7 @@ void main() {
 	averageColor /= textureSamplesMSAA(depth_image);
 
 	if (resolutionScale != 1){
-		imageStore(reflections_sample, ivec2(accumUV * vec2(lowres_size)), vec4(averageColor.rgb, traveledDistance));
+		imageStore(reflections_sample, ivec2(depthUV * vec2(lowres_size)), vec4(averageColor.rgb, traveledDistance));
 	}
 	else{
 		imageStore(reflections_sample, uv, vec4(averageColor.rgb, traveledDistance));

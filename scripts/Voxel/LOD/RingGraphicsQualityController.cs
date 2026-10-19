@@ -280,13 +280,14 @@ public partial class RingGraphicsQualityController : Node
         ["haze_rayleigh_strength"] = RingAtmosphereModel.HazeRayleighStrength,
         ["haze_quality"] = RingAtmosphereModel.HazeQuality,
         ["haze_cloud_shadowing"] = RingAtmosphereModel.HazeCloudShadowing,
+        ["haze_storm_strength"] = RingAtmosphereModel.HazeStormStrength,
         ["settings_path"] = AtmosphereDefaults.Path,
         ["dirty"] = AtmosphereDefaults.Dirty,
         ["error"] = AtmosphereDefaults.LastError
     };
 
     private float _pushedHazeBrightness = -1.0f, _pushedHazeAlbedo = -1.0f, _pushedHazeGain = -1.0f;
-    private float _pushedHazeCloudShadowing = -1.0f;
+    private float _pushedHazeCloudShadowing = -1.0f, _pushedHazeStormStrength = -1.0f;
     private Vector3 _pushedHazeSkyTint = new(-1.0f, -1.0f, -1.0f);
     private void PushHazeBrightness()
     {
@@ -295,13 +296,15 @@ public partial class RingGraphicsQualityController : Node
         bool gain = !Mathf.IsEqualApprox(_pushedHazeGain, RingAtmosphereModel.HazeMultiscatterGain);
         bool tint = !_pushedHazeSkyTint.IsEqualApprox(RingAtmosphereModel.HazeSkyTint);
         bool shadowing = !Mathf.IsEqualApprox(_pushedHazeCloudShadowing, RingAtmosphereModel.HazeCloudShadowing);
-        if (!brightness && !albedo && !gain && !tint && !shadowing) return;
+        bool storm = !Mathf.IsEqualApprox(_pushedHazeStormStrength, RingAtmosphereModel.HazeStormStrength);
+        if (!brightness && !albedo && !gain && !tint && !shadowing && !storm) return;
         Node? daySide = GetParent()?.GetNodeOrNull("DaySideAtmosphere");
         if (daySide == null) return;
         if (brightness) { _pushedHazeBrightness = RingAtmosphereModel.HazeBrightness; daySide.Set("haze_brightness", _pushedHazeBrightness); }
         if (albedo) { _pushedHazeAlbedo = RingAtmosphereModel.HazeGroundAlbedo; daySide.Set("haze_ground_albedo", _pushedHazeAlbedo); }
         if (gain) { _pushedHazeGain = RingAtmosphereModel.HazeMultiscatterGain; daySide.Set("haze_multiscatter_gain", _pushedHazeGain); }
         if (shadowing) { _pushedHazeCloudShadowing = RingAtmosphereModel.HazeCloudShadowing; daySide.Set("haze_cloud_shadowing", _pushedHazeCloudShadowing); }
+        if (storm) { _pushedHazeStormStrength = RingAtmosphereModel.HazeStormStrength; daySide.Set("haze_storm_strength", _pushedHazeStormStrength); }
         if (tint)
         {
             _pushedHazeSkyTint = RingAtmosphereModel.HazeSkyTint;

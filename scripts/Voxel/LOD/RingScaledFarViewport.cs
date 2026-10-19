@@ -99,6 +99,15 @@ public partial class RingScaledFarViewport : Node
 	[ExportGroup("Scaled space")]
 	[Export(PropertyHint.Range, "0.0001,0.01,0.0001")] public float CoordinateScale { get; set; } = 0.001f;
 	[Export(PropertyHint.Range, "0.25,1.0,0.05")] public float ResolutionScale { get; set; } = 1.0f;
+	/// <summary>Runtime flag owned by the render-resolution settings: also multiply the far viewport size by Scaling3DScale under FSR2.</summary>
+	public bool FarViewportFollowsFsrScale { get; set; } = true;
+	/// <summary>Runtime flag owned by the render-resolution settings: sample the unjittered far layers at the FSR2 / TAA jitter offset.</summary>
+	public bool CompositorJitterCompensation
+	{
+		get => _compositorJitterCompensation;
+		set { _compositorJitterCompensation = value; _backdropEffect?.Set("jitter_compensation", value); }
+	}
+	private bool _compositorJitterCompensation = true;
 	[Export(PropertyHint.Range, "1000,1000000,1000,or_greater")]
 	public float MinimumWholeRingFarClip { get; set; } = 100000.0f;
 	[Export(PropertyHint.Range, "0.001,10,0.001")]
@@ -2237,6 +2246,7 @@ public partial class RingScaledFarViewport : Node
 		// The far textures are composited into the main 3D colour buffer by a compositor effect (see
 		// RingFarViewportColorPipeline), not drawn as a canvas background, so the root viewport stays LDR 2D.
 		_backdropEffect = _colorPipeline.InstallBackdropEffect(_mainWorldEnvironment);
+		_backdropEffect?.Set("jitter_compensation", _compositorJitterCompensation);
 		Texture2D far = _farViewport.GetTexture();
 		Texture2D? regional = _regionalFarViewport?.GetTexture();
 		if (_backdropCloudCompositeMaterial != null && CloudTransmittanceMaskEnabled)
@@ -3145,9 +3155,16 @@ public partial class RingScaledFarViewport : Node
 	{
 		if (_farViewport == null && _regionalFarViewport == null) return;
 		Vector2 rootSize = GetViewport().GetVisibleRect().Size;
+		// The root visible rect is the window; Scaling3DScale only shrinks the main 3D buffer. While FSR2 is active the far images are
+		// composited into that smaller buffer (RingFarBackdropComposite samples them by normalized UV with linear filtering), so
+		// rendering them at window x ResolutionScale wastes fill rate. Size changes from scale/mode changes are caught by the
+		// per-frame size comparison below.
+		float fsrScale = FarViewportFollowsFsrScale && GetViewport().Scaling3DMode == Viewport.Scaling3DModeEnum.Fsr2
+			? Mathf.Clamp(GetViewport().Scaling3DScale, 0.25f, 1.0f)
+			: 1.0f;
 		var size = new Vector2I(
-			Mathf.Max(2, Mathf.RoundToInt(rootSize.X * ResolutionScale)),
-			Mathf.Max(2, Mathf.RoundToInt(rootSize.Y * ResolutionScale)));
+			Mathf.Max(2, Mathf.RoundToInt(rootSize.X * ResolutionScale * fsrScale)),
+			Mathf.Max(2, Mathf.RoundToInt(rootSize.Y * ResolutionScale * fsrScale)));
 		if (!force && size == _lastRootSize) return;
 		_lastRootSize = size;
 		if (_farViewport != null) _farViewport.Size = size;

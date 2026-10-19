@@ -80,6 +80,9 @@ func run() -> void:
 	var far_image := far_view.get_texture().get_image()
 	if not check(far_image != null and not far_image.is_empty(),"production far backdrop readback empty"): return
 	far_image.save_png(output + "/far_backdrop.png")
+	if OS.get_cmdline_user_args().has("--enclosed-fog"):
+		await enclosed_fog_test(bridge)
+		return
 	if OS.get_cmdline_user_args().has("--diagnose-msaa"):
 		await diagnose_msaa()
 		return
@@ -256,6 +259,61 @@ func diagnose_msaa() -> void:
 	for frame in range(12): await process_frame
 	print("RAIN_CLOUD_MSAA_DIAGNOSTICS=PASS strict_suite_not_run=true output=" + output)
 	quit(0)
+
+# P6: cave/underwater Godot fog fades Sunshine clouds at cloud depth (bridge SetEnclosedFog -> GenericData.ring_enclosed_fog ->
+# SunshineCloudsPostCompute). Fade fraction f = |scene - scene_with_fog| / |scene - scene_without_clouds| over cloud pixels.
+func enclosed_fog_test(bridge: Node) -> void:
+	root.msaa_3d = Viewport.MSAA_DISABLED
+	driver.call("SetHazeControl","Enabled",false)
+	var default_image := await capture("enclosed_fog_default")
+	var backdrop: Texture2D = cloud.call("get_cloud_backdrop_texture",0)
+	if not check(backdrop != null,"Sunshine cloud texture unavailable"): return
+	var cloud_image := backdrop.get_image()
+	cloud.set("enabled",false)
+	var background := await capture("enclosed_fog_no_clouds")
+	cloud.set("enabled",true)
+	var density := 0.003
+	bridge.call("SetEnclosedFog",density,1.0,0.0)
+	var zero_weight := await capture("enclosed_fog_weight0")
+	bridge.call("SetEnclosedFog",density,0.0,1.0)
+	var zero_affect := await capture("enclosed_fog_sky_affect0")
+	bridge.call("SetEnclosedFog",density,1.0,0.5)
+	var half := await capture("enclosed_fog_weight_half")
+	bridge.call("SetEnclosedFog",density,1.0,1.0)
+	var full := await capture("enclosed_fog_weight1")
+	bridge.call("SetEnclosedFog",0.0,0.0,0.0)
+	var restored := await capture("enclosed_fog_restored")
+	var reference := cloud_fade_fraction(default_image,background,default_image,cloud_image)
+	var f_zero_weight := cloud_fade_fraction(default_image,background,zero_weight,cloud_image)
+	var f_zero_affect := cloud_fade_fraction(default_image,background,zero_affect,cloud_image)
+	var f_half := cloud_fade_fraction(default_image,background,half,cloud_image)
+	var f_full := cloud_fade_fraction(default_image,background,full,cloud_image)
+	var f_restored := cloud_fade_fraction(default_image,background,restored,cloud_image)
+	print("RAIN_CLOUD_ENCLOSED_FOG pixels=%d clouds_vs_background=%.6f weight0=%.6f sky_affect0=%.6f half=%.6f full=%.6f restored=%.6f" % [reference.count,reference.contrast,f_zero_weight.fade,f_zero_affect.fade,f_half.fade,f_full.fade,f_restored.fade])
+	var errors: Array[String] = []
+	if reference.count < 8 or reference.contrast < .0005: errors.append("too few/low-contrast cloud pixels (%d, %.6f)" % [reference.count,reference.contrast])
+	if f_zero_weight.fade >= .01: errors.append("weight 0 changed clouds: %.6f" % f_zero_weight.fade)
+	if f_zero_affect.fade >= .01: errors.append("sky affect 0 changed clouds: %.6f" % f_zero_affect.fade)
+	if f_restored.fade >= .01: errors.append("clearing the fog did not restore clouds: %.6f" % f_restored.fade)
+	if f_full.fade < .5: errors.append("full-weight fog faded clouds only %.6f (< .5)" % f_full.fade)
+	if f_half.fade < .1 or f_half.fade >= f_full.fade: errors.append("half-weight fade %.6f not between 0.1 and full %.6f" % [f_half.fade,f_full.fade])
+	world.queue_free()
+	for frame in range(12): await process_frame
+	if not errors.is_empty(): fail("; ".join(errors)); return
+	print("RAIN_CLOUD_ENCLOSED_FOG=PASS output=" + output)
+	quit(0)
+
+func cloud_fade_fraction(base: Image, background: Image, test: Image, cloud_image: Image) -> Dictionary:
+	var fade := 0.0; var contrast := 0.0; var count := 0
+	for y in range(8,base.get_height()/2,8):
+		for x in range(8,base.get_width()-8,8):
+			var c := cloud_image.get_pixel(clampi(int(float(x)/base.get_width()*cloud_image.get_width()),0,cloud_image.get_width()-1),clampi(int(float(y)/base.get_height()*cloud_image.get_height()),0,cloud_image.get_height()-1))
+			if c.a < .2: continue
+			var p := base.get_pixel(x,y).srgb_to_linear(); var q := background.get_pixel(x,y).srgb_to_linear(); var r := test.get_pixel(x,y).srgb_to_linear()
+			var span := Vector3(p.r,p.g,p.b).distance_to(Vector3(q.r,q.g,q.b))
+			if span < .0005: continue
+			fade += clampf(Vector3(p.r,p.g,p.b).distance_to(Vector3(r.r,r.g,r.b)) / span,0.0,2.0); contrast += span; count += 1
+	return {"count":count,"fade":fade/maxi(count,1),"contrast":contrast/maxi(count,1)}
 
 func cloud_scene_delta(a: Image, b: Image, cloud_a: Image, cloud_b: Image) -> float:
 	var error := 0.0; var count := 0

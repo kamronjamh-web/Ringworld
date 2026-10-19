@@ -305,11 +305,11 @@ func assert_fixed_radiance(a: Dictionary, b: Dictionary) -> bool:
 	var unexpected_ubo: Array = []
 	# The advancing dither phase is inert with jitter0. History weight and
 	# ping-pong selector intentionally differ between retained/fresh captures.
-	# ring_perf_controls is the last vec4 of GenericData (append-only); x = interleave phase, z = history clamp
+	# ring_perf_controls is the third-to-last vec4 of GenericData (ring_enclosed_fog and ring_jitter_controls follow it; append-only); x = interleave phase, z = history clamp
 	# gamma, w = fill-pass history weight. All three are derived from the requested decay / interleave state, so
 	# they legitimately differ between the retained (0.95, interleaved) and fresh (0.0, full march) captures.
 	# y (resolution-jitter phase) stays strict. Located from the buffer end so layout growth cannot stale it.
-	var perf_base: int = int((clouds.get("general_data") as PackedByteArray).size()) - 16
+	var perf_base: int = int((clouds.get("general_data") as PackedByteArray).size()) - 48
 	var allowed_bytes: Array = [224,244,248, perf_base, perf_base + 8, perf_base + 12]
 	for item in delta.ubo:
 		if int(item.byte) not in allowed_bytes: unexpected_ubo.append(item)

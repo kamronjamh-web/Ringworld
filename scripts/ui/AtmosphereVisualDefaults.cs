@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.UI;
@@ -19,6 +20,8 @@ public sealed class AtmosphereVisualDefaults
     {
         RingAtmosphereModel.HazeBrightness = Settings.HazeBrightness;
         RingAtmosphereModel.HazeCloudShadowing = Settings.CloudShadowing;
+        RingAtmosphereModel.HazeStormStrength = Settings.StormHaze;
+        RingAtmosphereModel.EnclosedCloudFog = Settings.EnclosedCloudFog;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.SetPhysicalControls(Settings.MistDensity, Settings.MistHeight, Settings.AerosolHeight, Settings.RayleighStrength,
             Settings.GroundAlbedo, Settings.MultiScatter, new Vector3(Settings.SkyTintR, Settings.SkyTintG, Settings.SkyTintB), Settings.HazeQuality);
@@ -39,6 +42,8 @@ public sealed class AtmosphereVisualDefaults
             case "Warmth": Settings.SunWarmth = value; break;
             case "HazeBrightness": Settings.HazeBrightness = value; break;
             case "CloudShadowing": Settings.CloudShadowing = value; break;
+            case "StormHaze": Settings.StormHaze = value; break;
+            case "EnclosedCloudFog": Settings.EnclosedCloudFog = value; break;
             case "MistDensity": Settings.MistDensity = value; break;
             case "MistHeight": Settings.MistHeight = value; break;
             case "AerosolHeight": Settings.AerosolHeight = value; break;
@@ -96,6 +101,8 @@ public sealed class AtmosphereVisualDefaults
         Settings.SunWarmth = Clean(Settings.SunWarmth, .25f, 0, 1);
         Settings.HazeBrightness = Clean(Settings.HazeBrightness, 1, 0, 2);
         Settings.CloudShadowing = Clean(Settings.CloudShadowing, 1, 0, 1);
+        Settings.StormHaze = Clean(Settings.StormHaze, 1, 0, 1);
+        Settings.EnclosedCloudFog = Clean(Settings.EnclosedCloudFog, 1, 0, 1);
         Settings.MistDensity = Clean(Settings.MistDensity, 1, 0, 5);
         Settings.MistHeight = Clean(Settings.MistHeight, 400, 50, 2000);
         Settings.AerosolHeight = Clean(Settings.AerosolHeight, 1500, 200, 5000);

@@ -61,6 +61,11 @@ public partial class HazeConsistencyProbeHelper : RefCounted
     public Vector3 GetHazeSunIrradiance() => RingAtmosphereModel.HazeSunIrradiance;
     public void SetHazeSunIrradiance(Vector3 sun) => RingAtmosphereModel.HazeSunIrradiance = sun;
 
+    /// <summary>P9: sets the storm strength through the production setter (also publishes the ringworld_haze_storm global).</summary>
+    public void SetHazeStorm(float strength) => RingAtmosphereModel.SetHazeStorm(strength);
+    /// <summary>The ringworld_haze_storm vector the production code publishes.</summary>
+    public Vector4 GetHazeStormVector() => RingAtmosphereModel.HazeStormVector;
+
     public float EnergyScale() => RingAtmosphereModel.ScatteringEnergy;
 
     public void SetEclipseNightScale(float scale) => RingAtmosphereModel.EclipseNightScale = scale;

@@ -228,7 +228,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 304
+const GENERAL_DATA_FLOAT_COUNT := 312
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -328,6 +328,9 @@ var general_data : PackedByteArray
 # Sixteen vec4s (0-9 Legacy, 10-15 physical haze), populated by RingSunshineCloudBridge. Keeping this as an
 # immutable value array makes every compositor callback snapshot self-contained.
 @export var ring_atmosphere_profile : Array[Vector4] = []
+# Cave/underwater Godot exp fog applied to clouds at cloud depth (P6): x fog density, y fog sky affect, z weight (x gain), w reserved.
+# Zero weight = no effect.
+@export var ring_enclosed_fog : Vector4 = Vector4.ZERO
 @export var skip_empty_cloud_mask_samples : bool = true
 @export var depth_history_rejection_enabled : bool = true
 @export_range(0.25, 4.0) var history_depth_tolerance_multiplier : float = 1.0
@@ -346,6 +349,16 @@ var _history_reset_requested : bool = false
 # frame's samples. A frame falls back to the full march on accumulation rebuilds, history resets / hard continuity resets, capture
 # diagnostics, the menu path and camera motion above cloud_interleave_max_pixel_motion.
 @export var resolution_jitter_enabled : bool = false
+# FSR2/TAA jitter compensation: the engine adds a sub-pixel offset to the callback projection (only z.x / z.y change). Rays stay jittered,
+# but history is reprojected with the previous projection's offset replaced by the current one and the display / post passes resample the
+# centred cloud and far-depth textures at uv + 0.5 * view_proj.z.xy. Off or no jitter (native) leaves every packed value unchanged.
+@export var engine_jitter_compensation : bool = true
+# Debug: multiplies the applied uv offset (+1 expected, 0 disables the resample, -1 flips it) to lock the sign empirically.
+@export var engine_jitter_uv_sign : float = 1.0
+# Accept an opaque-depth history match anywhere in the 3x3 neighbourhood while jittered, so silhouettes do not reject every frame.
+@export var history_jitter_depth_neighborhood : bool = true
+var last_engine_jitter_ndc := Vector2.ZERO # view_proj.z.xy of the last callback
+var last_engine_jitter_active := false
 @export_range(0, 2) var cloud_interleave : int = 0
 # Marched pixels blend history with decay^(n*n*compensation); the fill pass holds history with the plain per-frame decay.
 @export_range(0.0, 1.0, 0.01) var cloud_interleave_history_compensation : float = 0.5
@@ -1573,7 +1586,7 @@ func _interleave_camera_motion_pixels(camera_tr: Transform3D, view_proj: Project
 
 # Decides, once per callback and before the UBO is packed, whether this frame marches one pixel per block (returns the block size
 # 2 / 4) or marches every pixel (returns 0, with interleave_last_fallback_reason saying why when interleave was requested).
-func _resolve_interleave_block(packed_decay: float, camera_tr: Transform3D, view_proj: Projection, previous_tr: Transform3D, raster_size: Vector2i) -> int:
+func _resolve_interleave_block(packed_decay: float, camera_tr: Transform3D, view_proj: Projection, previous_tr: Transform3D, previous_proj: Projection, raster_size: Vector2i) -> int:
 	interleave_last_fallback_reason = ""
 	var block := 2 if cloud_interleave == 1 else (4 if cloud_interleave >= 2 else 0)
 	if block == 0:
@@ -1591,7 +1604,7 @@ func _resolve_interleave_block(packed_decay: float, camera_tr: Transform3D, view
 	elif diagnostic_raw_density_matte or diagnostic_depth_density_matte or diagnostic_disable_temporal_history:
 		reason = "capture"
 	else:
-		interleave_last_motion_pixels = _interleave_camera_motion_pixels(camera_tr, view_proj, previous_tr, previous_callback_camera_projection, raster_size)
+		interleave_last_motion_pixels = _interleave_camera_motion_pixels(camera_tr, view_proj, previous_tr, previous_proj, raster_size)
 		if interleave_last_motion_pixels > cloud_interleave_max_pixel_motion:
 			reason = "camera_motion"
 	if reason == "" and not _ensure_interleave_pipelines(block):
@@ -1635,6 +1648,10 @@ func initialize_raster_pipelines(color_texture : RID, depth_texture : RID):
 
 	var pipeline_colorblend_state := RDPipelineColorBlendState.new()
 	var pipeline_colorblend_state_attachment := RDPipelineColorBlendStateAttachment.new()
+	# Leave the scene colour alpha untouched (the display shader emits alpha 1.0). Under FSR2 Godot reads the internal colour alpha as
+	# the per-pixel reactive mask, so writing 1.0 over every pixel made FSR2 discard its history frame-wide (static-camera shimmer
+	# ~10x TAA). Native / TAA output only uses rgb, so this is a no-op there.
+	pipeline_colorblend_state_attachment.write_a = false
 	pipeline_colorblend_state.attachments.append(pipeline_colorblend_state_attachment)
 
 	display_pipeline = rd.render_pipeline_create(display_shader, framebuffer_format, display_vertex_format, RenderingDevice.RenderPrimitive.RENDER_PRIMITIVE_TRIANGLES, pipeline_rasterization_state, pipeline_multisample_state, pipeline_depthstencil_state, pipeline_colorblend_state)
@@ -2421,6 +2438,18 @@ static func _gameplay_vector_is_finite(value: Vector3) -> bool:
 	return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
 
 func update_matrices(camera_tr, view_proj, new_size: Vector2i):
+	# Engine jitter lives only in projection z.x / z.y. Reprojection uses the previous projection with the current offset so the constant
+	# jitter cancels (history textures are stored centred); the raw jittered projection is still what gets stored for the next frame.
+	var prev_proj_dejit: Projection = previous_callback_camera_projection
+	var jitter_active := false
+	if engine_jitter_compensation:
+		var cur_z: Vector4 = view_proj.z
+		var prev_z: Vector4 = previous_callback_camera_projection.z
+		var jitter_guard := absf(cur_z.x - prev_z.x) < 0.01 and absf(cur_z.y - prev_z.y) < 0.01 \
+			and absf(cur_z.w + 1.0) < 0.01 and absf(prev_z.w + 1.0) < 0.01
+		if jitter_guard:
+			prev_proj_dejit.z = Vector4(cur_z.x, cur_z.y, prev_z.z, prev_z.w)
+		jitter_active = absf(cur_z.x) > 0.0 or absf(cur_z.y) > 0.0 or absf(prev_z.x) > 0.0 or absf(prev_z.y) > 0.0
 	var current_density_state: Array = [] if menu_temporal_sampling else _capture_density_state()
 	var continuity_result := {"excess": 0.0, "term": "", "hard": false, "multiplier": 1.0}
 	var continuity_dt := _consume_continuity_dt()
@@ -2670,7 +2699,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		temporal_history_zero_packed_decay_callback_count += 1
 	# CloudInterleave (default off): decide whether this callback marches one pixel per block. The march pass then blends its pixels with
 	# decay^(n*n*compensation) because each pixel is marched once per n*n frames; the fill pass uses the plain per-frame decay.
-	interleave_active_block = _resolve_interleave_block(packed_accumulation_decay, camera_tr, view_proj, mapped_previous_camera, new_size)
+	interleave_active_block = _resolve_interleave_block(packed_accumulation_decay, camera_tr, view_proj, mapped_previous_camera, prev_proj_dejit, new_size)
 	var perf_interleave_phase := 0.0
 	var perf_fill_decay := 0.0
 	var perf_clamp_gamma := 0.0
@@ -2683,7 +2712,8 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		packed_accumulation_decay = pow(packed_accumulation_decay, float(block_cells) * clampf(cloud_interleave_history_compensation, INTERLEAVE_MIN_COMPENSATION, 1.0))
 	# CloudResolutionJitter (default off): only meaningful when the cloud raster is below native resolution.
 	var perf_jitter_code := 0.0
-	if resolution_jitter_enabled and resolution_scale > 0 and not menu_temporal_sampling \
+	# Engine (FSR2/TAA) jitter already varies the sample position every frame, so the cloud raster jitter stays off while it is active.
+	if resolution_jitter_enabled and not jitter_active and resolution_scale > 0 and not menu_temporal_sampling \
 			and not diagnostic_raw_density_matte and not diagnostic_depth_density_matte and not diagnostic_disable_temporal_history:
 		perf_jitter_code = float(resolution_jitter_counter % 4 + 1)
 		resolution_jitter_counter += 1
@@ -2740,7 +2770,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	# the callback values saved after the preceding upload, not SceneData's
 	# private previous-frame UBO payload.
 	var previous_transform: Transform3D = camera_tr if first_run else mapped_previous_camera
-	var previous_projection: Projection = view_proj if first_run else previous_callback_camera_projection
+	var previous_projection: Projection = view_proj if first_run else prev_proj_dejit
 	var previous_view: Transform3D = previous_transform.affine_inverse()
 	var previous_view_columns = [previous_view.basis.x, previous_view.basis.y, previous_view.basis.z, previous_view.origin]
 	for column_index in previous_view_columns.size():
@@ -2771,7 +2801,7 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	# Exact callback camera/projection equality is intentional: only a truly
 	# static menu field may ignore jitter-only alpha/depth disagreement.
 	var menu_history_static: bool = menu_temporal_sampling and not first_run and not ignore_accumilation \
-		and camera_tr == previous_callback_camera_transform and view_proj == previous_callback_camera_projection \
+		and camera_tr == previous_callback_camera_transform and view_proj == prev_proj_dejit \
 		and menu_cloud_frame_around_precise == previous_menu_around and bulk_delta == Vector2.ZERO \
 		and detail_clouds_position == previous_detail_wind
 	last_menu_arc_delta = menu_cloud_frame_around_precise - previous_menu_around
@@ -2834,6 +2864,18 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	# Append-only cloud performance controls: x interleave phase, y jitter phase + 1 (0 = off), z history clamp gamma, w fill-pass history weight.
 	for component in [perf_interleave_phase, perf_jitter_code, perf_clamp_gamma, perf_fill_decay]:
 		general_data.encode_float(idx, component); idx += 4
+	# Append-only enclosed (cave/underwater) fog: x density, y sky affect, z weight, w reserved.
+	for component in [ring_enclosed_fog.x, ring_enclosed_fog.y, ring_enclosed_fog.z, ring_enclosed_fog.w]:
+		general_data.encode_float(idx, component); idx += 4
+	# Append-only engine jitter controls: xy uv offset of the unjittered textures (0.5 * projection z.xy, 0 when compensation is off),
+	# z 1 when jitter is active and the 3x3 depth-history neighbourhood is enabled, w reserved.
+	var jitter_uv := Vector2.ZERO
+	if engine_jitter_compensation:
+		jitter_uv = Vector2(view_proj.z.x, view_proj.z.y) * (0.5 * engine_jitter_uv_sign)
+	for component in [jitter_uv.x, jitter_uv.y, 1.0 if (jitter_active and history_jitter_depth_neighborhood) else 0.0, 0.0]:
+		general_data.encode_float(idx, component); idx += 4
+	last_engine_jitter_ndc = Vector2(view_proj.z.x, view_proj.z.y)
+	last_engine_jitter_active = jitter_active
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
 	previous_callback_bulk_wind = current_bulk_wind
 	previous_callback_detail_wind = detail_clouds_position

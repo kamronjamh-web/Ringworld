@@ -157,12 +157,65 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         csOld.Reset();
         bool csReset = csOld.Settings.CloudShadowing == 1.0f && RingAtmosphereModel.HazeCloudShadowing == 1.0f;
         bool cloudShadowing = csDefault && csApplied && csPersisted && csClamped && csOldFile && csReset;
-        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing;
+        // P9 storm haze strength: default 1, applied to the model, persisted, clamped to 0-1, old files load 1, Reset restores.
+        var sh = new AtmosphereVisualDefaults(isolatedPath);
+        sh.Reset();
+        bool shDefault = sh.Settings.StormHaze == 1.0f && RingAtmosphereModel.HazeStormStrength == 1.0f;
+        sh.Set("StormHaze", 0.25f);
+        bool shApplied = Mathf.IsEqualApprox(RingAtmosphereModel.HazeStormStrength, 0.25f);
+        bool shSaved = sh.Save();
+        var shReload = new AtmosphereVisualDefaults(isolatedPath);
+        shReload.Initialize();
+        bool shPersisted = shSaved && Mathf.IsEqualApprox(shReload.Settings.StormHaze, 0.25f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeStormStrength, 0.25f);
+        shReload.Set("StormHaze", 9.0f);
+        bool shClamped = shReload.Settings.StormHaze == 1.0f;
+        shReload.Set("StormHaze", float.NaN);
+        shClamped = shClamped && shReload.Settings.StormHaze == 1.0f;
+        shReload.Set("StormHaze", 0.5f);
+        shReload.Save();
+        string shPath = ProjectSettings.GlobalizePath(isolatedPath);
+        string shText = System.IO.File.ReadAllText(shPath);
+        string shStripped = string.Join('\n', System.Array.FindAll(shText.Split('\n'), line => !line.StartsWith("StormHaze")));
+        bool shLine = shStripped.Length < shText.Length;
+        System.IO.File.WriteAllText(shPath, shStripped);
+        var shOld = new AtmosphereVisualDefaults(isolatedPath);
+        shOld.Initialize();
+        bool shOldFile = shLine && shOld.Settings.StormHaze == 1.0f && RingAtmosphereModel.HazeStormStrength == 1.0f;
+        shOld.Set("StormHaze", 0.0f);
+        shOld.Reset();
+        bool shReset = shOld.Settings.StormHaze == 1.0f && RingAtmosphereModel.HazeStormStrength == 1.0f;
+        bool stormHaze = shDefault && shApplied && shPersisted && shClamped && shOldFile && shReset;
+        // P6 enclosed cloud fog gain: default 1, applied to the model, persisted, clamped, old files load 1.
+        var ef = new AtmosphereVisualDefaults(isolatedPath);
+        ef.Reset();
+        bool efDefault = ef.Settings.EnclosedCloudFog == 1.0f && RingAtmosphereModel.EnclosedCloudFog == 1.0f;
+        ef.Set("EnclosedCloudFog", 0.3f);
+        bool efApplied = Mathf.IsEqualApprox(RingAtmosphereModel.EnclosedCloudFog, 0.3f);
+        bool efSaved = ef.Save();
+        var efReload = new AtmosphereVisualDefaults(isolatedPath);
+        efReload.Initialize();
+        bool efPersisted = efSaved && Mathf.IsEqualApprox(efReload.Settings.EnclosedCloudFog, 0.3f) && Mathf.IsEqualApprox(RingAtmosphereModel.EnclosedCloudFog, 0.3f);
+        efReload.Set("EnclosedCloudFog", 9.0f);
+        bool efClamped = efReload.Settings.EnclosedCloudFog == 1.0f;
+        efReload.Set("EnclosedCloudFog", 0.5f);
+        efReload.Save();
+        string efPath = ProjectSettings.GlobalizePath(isolatedPath);
+        string efText = System.IO.File.ReadAllText(efPath);
+        string efStripped = string.Join('\n', System.Array.FindAll(efText.Split('\n'), line => !line.StartsWith("EnclosedCloudFog")));
+        bool efLine = efStripped.Length < efText.Length;
+        System.IO.File.WriteAllText(efPath, efStripped);
+        var efOld = new AtmosphereVisualDefaults(isolatedPath);
+        efOld.Initialize();
+        bool efOldFile = efLine && efOld.Settings.EnclosedCloudFog == 1.0f && RingAtmosphereModel.EnclosedCloudFog == 1.0f;
+        efOld.Set("EnclosedCloudFog", 0.0f);
+        efOld.Reset();
+        bool enclosedCloudFog = efDefault && efApplied && efPersisted && efClamped && efOldFile && efOld.Settings.EnclosedCloudFog == 1.0f && RingAtmosphereModel.EnclosedCloudFog == 1.0f;
+        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing && stormHaze && enclosedCloudFog;
         // Restore the persisted/default profile for callers that run this smoke
         // in-process before constructing a second world.
         RingAtmosphereModel.Enabled = true;
         reload.Reset();
         bool contracts = naturalContract && cinematicContract && zeroDensityContract && disabledContract && hazeToggle && hazeBrightness && physicalControls;
-        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
+        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing} stormHaze={stormHaze} enclosedCloudFog={enclosedCloudFog}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
     }
 }

@@ -280,6 +280,7 @@ var _haze_cache_sun_e: Vector3 = Vector3.ZERO
 var _haze_cache_planet_e: Vector3 = Vector3.ZERO
 var _haze_cache_albedo: float = -1.0
 var _haze_cache_gain: float = -1.0
+var _haze_cache_storm_revision: int = -1
 var _haze_ambient_day_raw: Vector3 = Vector3.ZERO
 var _haze_ambient_planet: Vector3 = Vector3.ZERO
 var _haze_lup_day: Vector3 = Vector3.ZERO
@@ -303,6 +304,12 @@ var _published_hub_weight: float = 0.0
 # cloud_lighting_blend_speed. current_air_sun_visibility scales the published haze sun irradiance only (never ambient or transmittance).
 @export_range(0.0, 1.0, 0.01) var haze_cloud_shadowing: float = 1.0
 var current_air_sun_visibility: float = 1.0
+# P9 storm grey-Mie haze. haze_storm_strength is the Atmosphere-tab gain on the bridge's storm factor; current_haze_storm (smoothed like the
+# air sun visibility) is pushed to RingAtmosphereModel through the sky helper. A storm also removes up to STORM_SUN_OCCLUSION of the direct
+# sun in the air (same value as RingAtmosphereModel.StormSunOcclusion). Physical model only; 0 is bit-identical to clear weather.
+const STORM_SUN_OCCLUSION := 0.85
+@export_range(0.0, 1.0, 0.01) var haze_storm_strength: float = 1.0
+var current_haze_storm: float = 0.0
 
 
 func _ready() -> void:
@@ -419,6 +426,13 @@ func _process(delta: float) -> void:
 		current_air_sun_visibility,
 		_get_air_sun_visibility_target(),
 		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
+	var haze_storm_target := _get_haze_storm_target()
+	current_haze_storm = lerpf(
+		current_haze_storm,
+		haze_storm_target,
+		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
+	if haze_storm_target <= 0.0 and current_haze_storm < 0.001:
+		current_haze_storm = 0.0
 
 	# Keep global hemisphere lighting stable: day/night on the ring should not depend on player position.
 	# Atmosphere owns dynamic daylight presentation. A graphics-quality controller,
@@ -519,6 +533,7 @@ func _process(delta: float) -> void:
 	underground_lighting_darkness = 1.0 - clampf(underground_sky_access, 0.0, 1.0)
 	var cave_fog_weight := _get_enclosure_blend() * _get_structural_sky_access() * (1.0 - current_underwater_factor) * _underground_cave_fog_weight()
 	_apply_underground_fog_coupling(environment, cave_fog_weight, _underground_cave_fog_density())
+	_publish_enclosed_cloud_fog(environment, cave_fog_weight)
 	star_visibility *= 1.0 - current_underwater_factor
 	star_visibility *= underground_sky_access
 	_update_sky(
@@ -595,6 +610,15 @@ func _apply_underground_fog_coupling(environment: Environment, weight: float, ca
 	environment.fog_light_color = environment.fog_light_color.lerp(_underground_cave_fog_color(), w)
 	environment.fog_light_energy = lerpf(environment.fog_light_energy, 1.0, w)
 	environment.fog_sun_scatter = lerpf(environment.fog_sun_scatter, 0.0, w)
+
+
+# Sunshine clouds are composited after Godot fog, so in caves and underwater the bridge fades them by the same exp fog at cloud depth.
+# Reads the final Environment values (cave coupling and water already applied); off whenever the Environment fog is off.
+func _publish_enclosed_cloud_fog(environment: Environment, cave_fog_weight: float) -> void:
+	if cloud_lighting_bridge == null or not cloud_lighting_bridge.has_method("SetEnclosedFog"):
+		return
+	var weight := maxf(cave_fog_weight, current_underwater_factor) if environment.fog_enabled else 0.0
+	cloud_lighting_bridge.call("SetEnclosedFog", environment.fog_density, environment.fog_sky_affect, weight)
 
 
 func _apply_underwater_environment(
@@ -812,7 +836,22 @@ func _get_air_sun_visibility_target() -> float:
 			transmittance = clampf(float(cloud_lighting_bridge.call("GetCameraDirectSunTransmittance")), 0.0, 1.0)
 		elif cloud_lighting_bridge.has_method("get_camera_direct_sun_transmittance"):
 			transmittance = clampf(float(cloud_lighting_bridge.call("get_camera_direct_sun_transmittance")), 0.0, 1.0)
-	return lerpf(1.0, transmittance, clampf(haze_cloud_shadowing, 0.0, 1.0))
+	return air_sun_visibility_for(transmittance, current_haze_storm)
+
+
+# Air sun visibility for a camera-column cloud transmittance and a storm strength: the cloud shadow blended by haze_cloud_shadowing, capped by
+# the storm's own sun occlusion. storm = 0 gives exactly the cloud-only value.
+func air_sun_visibility_for(cloud_t: float, storm: float) -> float:
+	return minf(lerpf(1.0, cloud_t, clampf(haze_cloud_shadowing, 0.0, 1.0)), 1.0 - clampf(storm, 0.0, 1.0) * STORM_SUN_OCCLUSION)
+
+
+# Storm strength target: the bridge's local storm factor times haze_storm_strength; 0 without cloud lighting, a bridge or the Physical model.
+func _get_haze_storm_target() -> float:
+	if not cloud_filtered_lighting_enabled or cloud_lighting_bridge == null or _haze_sky == null:
+		return 0.0
+	if not cloud_lighting_bridge.has_method("GetHazeStormFactor") or not bool(_haze_sky.call("IsPhysical")):
+		return 0.0
+	return clampf(haze_storm_strength * float(cloud_lighting_bridge.call("GetHazeStormFactor")), 0.0, 1.0)
 
 
 func _scale_rgb(color: Color, multiplier: float) -> Color:
@@ -927,12 +966,15 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 		var up_dot := surface_up.normalized().dot(to_sun.normalized())
 		var giant_dot := surface_up.normalized().dot(current_giant_direction.normalized()) if current_giant_direction.length_squared() > 0.0 else 0.0
 		var height := float(frame["height"])
+		_haze_sky.call("SetStorm", current_haze_storm)
 		var revision := int(_haze_sky.call("GetRevision"))
+		var storm_revision := int(_haze_sky.call("GetStormRevision"))
 		if not _haze_cache_valid \
 				or absf(up_dot - _haze_cache_up_dot) > 0.002 \
 				or absf(giant_dot - _haze_cache_giant_dot) > 0.002 \
 				or absf(height - _haze_cache_height) > maxf(25.0, 0.02 * absf(_haze_cache_height)) \
 				or revision != _haze_cache_revision \
+				or storm_revision != _haze_cache_storm_revision \
 				or _relative_change(sun, _haze_cache_sun_e) > 0.005 \
 				or _relative_change(planet_energy, _haze_cache_planet_e) > 0.005 \
 				or not is_equal_approx(haze_ground_albedo, _haze_cache_albedo) \
@@ -942,6 +984,7 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 			_haze_cache_giant_dot = giant_dot
 			_haze_cache_height = height
 			_haze_cache_revision = revision
+			_haze_cache_storm_revision = storm_revision
 			_haze_cache_sun_e = sun
 			_haze_cache_planet_e = planet_energy
 			_haze_cache_albedo = haze_ground_albedo
@@ -1084,6 +1127,8 @@ func _publish_hub_light(day: float, weight: float) -> void:
 
 func _exit_tree() -> void:
 	# Drop the C# helper before the .NET host shuts down.
+	if _haze_sky != null:
+		_haze_sky.call("SetStorm", 0.0)
 	_haze_sky = null
 	_haze_cache_valid = false
 	# Global shader parameters survive scene changes; reset before returning to

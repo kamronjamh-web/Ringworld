@@ -45,6 +45,56 @@ public static class RingAtmosphereModel
     public static float HazeBrightness { get; set; } = 1.0f;
     /// <summary>P9 cloud shadowing of the haze sun term (0-1) set from the Atmosphere tab; forwarded to DaySideAtmosphere.haze_cloud_shadowing.</summary>
     public static float HazeCloudShadowing { get; set; } = 1.0f;
+    /// <summary>P6 gain (0-1) on the cave/underwater Godot-fog fade of Sunshine clouds, set from the Atmosphere tab; RingSunshineCloudBridge multiplies it into the fog weight.</summary>
+    public static float EnclosedCloudFog { get; set; } = 1.0f;
+
+    // ---- P9 storm grey-Mie haze. RingAtmosphereModel is the single owner of the storm vector: the ringworld_haze_storm global, the
+    // Sunshine/mask profile and the CPU sky irradiance all derive from HazeStormVector + ApplyStorm (mirrors ring_haze_apply_storm). ----
+    /// <summary>Aerosol extinction (1/m) a full storm adds at density 1: 3.912 / 15 km visibility.</summary>
+    public const float StormAerosolExtinctionPerMeter = 2.608e-4f;
+    public const float StormOmega = 0.85f, StormMieG = 0.5f;
+    /// <summary>Fraction of the direct sun removed from the air at full storm (DaySideAtmosphere.air_sun_visibility_for uses the same 0.85).</summary>
+    public const float StormSunOcclusion = 0.85f;
+    /// <summary>Storm haze slider (0-1) set from the Atmosphere tab; forwarded to DaySideAtmosphere.haze_storm_strength.</summary>
+    public static float HazeStormStrength { get; set; } = 1.0f;
+    /// <summary>Current storm strength (0-1) driving the haze, set by <see cref="SetHazeStorm"/>.</summary>
+    public static float HazeStorm { get; private set; }
+    /// <summary>Bumps whenever the published storm vector changes (consumers with cached CPU results key on it).</summary>
+    public static ulong StormRevision { get; private set; }
+    /// <summary>(strength, sigma_storm 1/m at strength 1 including density, omega, g): the ringworld_haze_storm global.</summary>
+    public static Vector4 HazeStormVector => new(HazeStorm, StormAerosolExtinctionPerMeter * Mathf.Clamp(_density, 0.0f, 2.0f), StormOmega, StormMieG);
+
+    /// <summary>Sets the storm strength. Republishes only on a change of at least 0.01 or a crossing of 0 or 1; never touches Revision or ApplyAll.</summary>
+    public static void SetHazeStorm(float strength)
+    {
+        float s = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 1.0f) : 0.0f;
+        if (s < 0.001f) s = 0.0f;
+        bool crossing = (s == 0.0f) != (HazeStorm == 0.0f) || (s == 1.0f) != (HazeStorm == 1.0f);
+        if (!crossing && Mathf.Abs(s - HazeStorm) < 0.01f) return;
+        HazeStorm = s;
+        PublishHazeStorm();
+    }
+
+    private static void PublishHazeStorm()
+    {
+        StormRevision++;
+        RenderingServer.GlobalShaderParameterSet("ringworld_haze_storm", HazeStormVector);
+    }
+
+    /// <summary>Exact CPU mirror of ring_haze_apply_storm (same operations in the same order); storm.X &lt;= 0 leaves the values untouched.</summary>
+    public static void ApplyStorm(Vector4 storm, ref float sigmaA, ref float omegaA, ref float g, float sigmaMist, float omegaMist)
+    {
+        float s = Mathf.Clamp(storm.X, 0.0f, 1.0f);
+        if (s <= 0.0f) return;
+        float add = s * Mathf.Max(storm.Y, 0.0f);
+        float scatterClear = omegaA * sigmaA + omegaMist * sigmaMist;
+        float scatterStorm = Mathf.Clamp(storm.Z, 0.0f, 1.0f) * add;
+        float sigma = sigmaA + add;
+        omegaA = sigma > 0.0f ? (omegaA * sigmaA + scatterStorm) / sigma : omegaA;
+        float st = scatterClear + scatterStorm;
+        g = st > 0.0f ? (g * scatterClear + Mathf.Clamp(storm.W, -0.95f, 0.95f) * scatterStorm) / st : g;
+        sigmaA = sigma;
+    }
 
     public static HazeModelKind HazeModel
     {
@@ -186,10 +236,12 @@ public static class RingAtmosphereModel
         profile[9] = new(toSun.X, toSun.Y, toSun.Z, sidewallPositiveMeters);
         Vector3 sun = HazeSunIrradiance * HazeSunTint;
         Vector3 sigmaR = HazeSigmaRayleigh;
+        float stormSigmaA = HazeSigmaAerosol, stormOmegaA = HazeOmegaAerosol, stormG = HazeG;
+        ApplyStorm(HazeStormVector, ref stormSigmaA, ref stormOmegaA, ref stormG, HazeSigmaMist, HazeOmegaMist);
         profile[10] = new(_hazeModel == HazeModelKind.Physical ? 1.0f : 0.0f, opacityMultiplier, sigmaR.X, sigmaR.Y);
-        profile[11] = new(sigmaR.Z, HazeRayleighHeightMeters, HazeSigmaAerosol, HazeOmegaAerosol);
+        profile[11] = new(sigmaR.Z, HazeRayleighHeightMeters, stormSigmaA, stormOmegaA);
         profile[12] = new(HazeAerosolHeightMeters, HazeSigmaMist, HazeOmegaMist, HazeMistHeightMeters);
-        profile[13] = new(HazeG, HazeQuality, LocalHazeDay(outward, toSun, solarVisibility, hubDay), sun.X);
+        profile[13] = new(stormG, HazeQuality, LocalHazeDay(outward, toSun, solarVisibility, hubDay), sun.X);
         profile[14] = new(sun.Y, sun.Z, HazeAmbientDay.X, HazeAmbientDay.Y);
         profile[15] = new(HazeAmbientDay.Z, HazeAmbientNight.X, HazeAmbientNight.Y, HazeAmbientNight.Z);
     }
@@ -354,6 +406,7 @@ public static class RingAtmosphereModel
         HazeSunTint = warmth >= WarmthControlDefault
             ? Vector3.One.Lerp(new Vector3(1.0f, 0.78f, 0.55f), (warmth - WarmthControlDefault) / (1.0f - WarmthControlDefault))
             : Vector3.One.Lerp(new Vector3(0.9f, 0.97f, 1.08f), (WarmthControlDefault - warmth) / WarmthControlDefault);
+        PublishHazeStorm();
     }
 
     private static float FiniteOrDefault(float value, float fallback) => float.IsFinite(value) ? value : fallback;

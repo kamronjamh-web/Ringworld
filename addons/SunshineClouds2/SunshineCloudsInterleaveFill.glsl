@@ -164,21 +164,27 @@ void main() {
 					+ history_color(fromA, hist.history01) * weight01
 					+ history_color(fromA, hist.history11) * weight11) / validWeight;
 				historyMetadata = (data00 * weight00 + data10 * weight10 + data01 * weight01 + data11 * weight11) / validWeight;
+			} else if (ring_jitter_opaque_neighborhood_matches(fromA, hist.clampedUV, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance)) {
+				// Engine jitter: every bilinear tap failed the exact test but the 3x3 neighbourhood agrees, so keep the nearest history texel.
+				historyColor = history_color(fromA, hist.clampedUV);
+				historyMetadata = history_data(fromA, hist.clampedUV);
 			} else {
 				historyValid = false;
 			}
 		} else {
 			historyColor = history_color(fromA, hist.clampedUV);
 			historyMetadata = history_data(fromA, hist.clampedUV);
-			if (visibilityGate && !opaque_depth_history_agrees(hist.expectedHistoryOpaqueDepth, opaqueDepthMetadata, historyMetadata, hist.opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)) {
+			if (visibilityGate && !opaque_depth_history_agrees(hist.expectedHistoryOpaqueDepth, opaqueDepthMetadata, historyMetadata, hist.opaqueDepthTolerance, traveledDistance, cameraTranslation, maxstep)
+					&& !ring_jitter_opaque_neighborhood_matches(fromA, hist.clampedUV, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance)) {
 				historyValid = false;
 			}
 		}
 	}
 	if (historyValid && visibilityGate) {
 		// Opaque geometry follows its own previous-frame projection, not the cloud body's.
-		historyValid = !hist.opaqueHistoryOutside && ring_cloud_history_opaque_matches(hist.expectedHistoryOpaqueDepth,
-			history_data(fromA, hist.opaqueHistoryPixel).a, hist.opaqueDepthTolerance);
+		historyValid = !hist.opaqueHistoryOutside && (ring_cloud_history_opaque_matches(hist.expectedHistoryOpaqueDepth,
+			history_data(fromA, hist.opaqueHistoryPixel).a, hist.opaqueDepthTolerance)
+				|| ring_jitter_opaque_neighborhood_matches(fromA, hist.opaqueHistoryPixel, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance));
 	}
 	if (historyValid) {
 		historyValid = !any(isnan(historyColor)) && !any(isinf(historyColor))
@@ -186,8 +192,9 @@ void main() {
 	}
 	// Same gameplay acceptance as the march pass (SunshineCloudsCompute.glsl): a validated opaque/sky pair under ray-start jitter
 	// keeps the full history weight; otherwise the weight fades with cloud-distance and alpha disagreement instead of a hard reject.
-	bool opaquePointAgrees = !hist.opaqueHistoryOutside && ring_cloud_history_opaque_matches(hist.expectedHistoryOpaqueDepth,
-		history_data(fromA, hist.opaqueHistoryPixel).a, hist.opaqueDepthTolerance);
+	bool opaquePointAgrees = !hist.opaqueHistoryOutside && (ring_cloud_history_opaque_matches(hist.expectedHistoryOpaqueDepth,
+		history_data(fromA, hist.opaqueHistoryPixel).a, hist.opaqueDepthTolerance)
+			|| ring_jitter_opaque_neighborhood_matches(fromA, hist.opaqueHistoryPixel, size, hist.expectedHistoryOpaqueDepth, hist.opaqueDepthTolerance));
 	bool validatedJitter = historyValid && ring_cloud_history_validated_jitter(
 		visibilityGate && opaquePointAgrees
 			&& ((opaqueDepthMetadata < 0.0 && historyMetadata.a == -1.0)

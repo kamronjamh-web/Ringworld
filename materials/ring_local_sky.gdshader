@@ -286,7 +286,7 @@ void sky() {
 		float ring_radius_m = ring_radius_meters;
 		float half_width_m = ring_half_width_ratio * ring_radius_m;
 		float across_m = camera_across_ratio * ring_radius_m;
-		RingHazeParams hp = ring_haze_uniform_params(to_sun, outward);
+		RingHazeParams hp = ring_haze_apply_storm(ring_haze_uniform_params(to_sun, outward), ringworld_haze_storm);
 		hp.quality = AT_CUBEMAP_PASS ? 4 : ring_haze_quality;
 		RingHaze haze = ring_haze_eval_sky(hp, view_direction, vec3(0.0), sky_camera_height_meters, outward, axis,
 			half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);

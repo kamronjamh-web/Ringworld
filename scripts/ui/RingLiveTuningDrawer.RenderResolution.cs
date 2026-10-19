@@ -8,6 +8,11 @@ public partial class RingLiveTuningDrawer
     private const string RenderResolutionPauseMenuPath = "../LodPauseMenu";
     private OptionButton? _renderResolutionOptions;
     private CheckButton? _adaptiveRenderResolution;
+    private HSlider? _fsrSharpness;
+    private HSlider? _mipBiasOffset;
+    private CheckButton? _disableCloudInterleaveUnderFsr;
+    private CheckButton? _farViewportFollowsFsrScale;
+    private CheckButton? _compositorJitterCompensation;
     private Label? _renderResolutionStatus;
     private Label? _renderResolutionSaveStatus;
 
@@ -38,6 +43,23 @@ public partial class RingLiveTuningDrawer
             RefreshRenderResolutionControls();
         };
         section.AddChild(_adaptiveRenderResolution);
+
+        _fsrSharpness = AddRenderResolutionSlider(section, "FsrSharpness", "FSR sharpness (0 = sharpest)", 0, 2, 0.05, GameplayRenderResolutionDefaults.DefaultFsrSharpness,
+            "Godot FSR sharpness: 0 is sharpest, each whole step halves it. Default 0.8; the old fixed value 0.2 over-sharpened the temporal image.",
+            value => GetRenderResolutionPauseMenu()?.SetFsrSharpness((float)value));
+        _mipBiasOffset = AddRenderResolutionSlider(section, "MipBiasOffset", "Mip bias offset (FSR only)", 0, 1, 0.05, 0,
+            "Added on top of Godot's automatic log2(render scale) mipmap bias while FSR 2.2 is active. Positive values blur textures slightly and reduce shimmer.",
+            value => GetRenderResolutionPauseMenu()?.SetMipBiasOffset((float)value));
+        _disableCloudInterleaveUnderFsr = AddRenderResolutionToggle(section, "DisableCloudInterleaveUnderFsr", "Disable cloud interleave under FSR",
+            "On by default. While FSR 2.2 is active Sunshine CloudInterleave is forced to 0; your cloud setting is restored when FSR is off.",
+            enabled => GetRenderResolutionPauseMenu()?.SetDisableCloudInterleaveUnderFsr(enabled));
+        _farViewportFollowsFsrScale = AddRenderResolutionToggle(section, "FarViewportFollowsFsrScale", "Far viewport follows FSR scale",
+            "On by default. While FSR 2.2 is active the far-ring viewports are also scaled by the FSR render scale, saving fill rate.",
+            enabled => GetRenderResolutionPauseMenu()?.SetFarViewportFollowsFsrScale(enabled));
+        _compositorJitterCompensation = AddRenderResolutionToggle(section, "CompositorJitterCompensation", "Compositor jitter compensation",
+            "On by default. While FSR 2.2 or TAA jitters the camera, Sunshine clouds and the far backdrop are resampled at the jitter offset so they stop shaking at horizon and cloud edges.",
+            enabled => GetRenderResolutionPauseMenu()?.SetCompositorJitterCompensation(enabled));
+
         _renderResolutionStatus = new Label { Name = "RenderResolutionRuntimeStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         section.AddChild(_renderResolutionStatus);
 
@@ -62,6 +84,46 @@ public partial class RingLiveTuningDrawer
         RefreshRenderResolutionControls();
     }
 
+    private HSlider AddRenderResolutionSlider(VBoxContainer parent, string name, string label, double min, double max, double step, double fallback, string tooltip, System.Action<double> apply)
+    {
+        var row = new HBoxContainer { TooltipText = tooltip };
+        row.AddChild(new Label { Text = label, CustomMinimumSize = new Vector2(180, 0) });
+        var slider = new HSlider { Name = name, MinValue = min, MaxValue = max, Step = step, Value = fallback, TooltipText = tooltip, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        var valueLabel = new Label { Text = slider.Value.ToString("0.##"), CustomMinimumSize = new Vector2(55, 0) };
+        slider.ValueChanged += value =>
+        {
+            valueLabel.Text = value.ToString("0.##");
+            apply(value);
+            RefreshRenderResolutionControls();
+        };
+        row.AddChild(slider);
+        row.AddChild(valueLabel);
+        parent.AddChild(row);
+        return slider;
+    }
+
+    private CheckButton AddRenderResolutionToggle(VBoxContainer parent, string name, string label, string tooltip, System.Action<bool> apply)
+    {
+        var toggle = new CheckButton { Name = name, Text = label, TooltipText = tooltip };
+        toggle.SetPressedNoSignal(true); // both FSR toggles default on; Refresh syncs the real value once the pause menu is ready
+        toggle.Toggled += enabled =>
+        {
+            apply(enabled);
+            RefreshRenderResolutionControls();
+        };
+        parent.AddChild(toggle);
+        return toggle;
+    }
+
+    private static void SetRenderResolutionSliderNoSignal(HSlider? slider, double value, bool ready)
+    {
+        if (slider == null) return;
+        slider.Editable = ready;
+        if (!ready || Mathf.IsEqualApprox((float)slider.Value, (float)value)) return;
+        slider.SetValueNoSignal(value);
+        if (slider.GetParent()?.GetChildCount() > 2 && slider.GetParent().GetChild(2) is Label valueLabel) valueLabel.Text = value.ToString("0.##");
+    }
+
     private RingLodPauseMenu? GetRenderResolutionPauseMenu() => GetNodeOrNull<RingLodPauseMenu>(RenderResolutionPauseMenuPath);
 
     private void RefreshRenderResolutionControls()
@@ -84,6 +146,27 @@ public partial class RingLiveTuningDrawer
         {
             _adaptiveRenderResolution.Disabled = !ready;
             if (ready && _adaptiveRenderResolution.ButtonPressed != adaptive) _adaptiveRenderResolution.SetPressedNoSignal(adaptive);
+        }
+
+        SetRenderResolutionSliderNoSignal(_fsrSharpness, diagnostics.TryGetValue("fsr_sharpness", out Variant sharpness) ? sharpness.AsDouble() : GameplayRenderResolutionDefaults.DefaultFsrSharpness, ready);
+        SetRenderResolutionSliderNoSignal(_mipBiasOffset, diagnostics.TryGetValue("mip_bias_offset", out Variant mipBias) ? mipBias.AsDouble() : 0.0, ready);
+        if (_disableCloudInterleaveUnderFsr != null)
+        {
+            _disableCloudInterleaveUnderFsr.Disabled = !ready;
+            bool value = !diagnostics.ContainsKey("disable_cloud_interleave_under_fsr") || GetDiagnosticBool(diagnostics, "disable_cloud_interleave_under_fsr");
+            if (ready && _disableCloudInterleaveUnderFsr.ButtonPressed != value) _disableCloudInterleaveUnderFsr.SetPressedNoSignal(value);
+        }
+        if (_farViewportFollowsFsrScale != null)
+        {
+            _farViewportFollowsFsrScale.Disabled = !ready;
+            bool value = !diagnostics.ContainsKey("far_viewport_follows_fsr_scale") || GetDiagnosticBool(diagnostics, "far_viewport_follows_fsr_scale");
+            if (ready && _farViewportFollowsFsrScale.ButtonPressed != value) _farViewportFollowsFsrScale.SetPressedNoSignal(value);
+        }
+        if (_compositorJitterCompensation != null)
+        {
+            _compositorJitterCompensation.Disabled = !ready;
+            bool value = !diagnostics.ContainsKey("compositor_jitter_compensation") || GetDiagnosticBool(diagnostics, "compositor_jitter_compensation");
+            if (ready && _compositorJitterCompensation.ButtonPressed != value) _compositorJitterCompensation.SetPressedNoSignal(value);
         }
 
         string requestedScale = GetDiagnosticPercentage(diagnostics, "requested_scale");

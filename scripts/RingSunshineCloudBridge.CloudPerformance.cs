@@ -21,6 +21,15 @@ public partial class RingSunshineCloudBridge
     /// <summary>Camera reprojection motion (cloud raster pixels) above which a frame marches every pixel.</summary>
     [Export(PropertyHint.Range, "1,200,0.5")] public float CloudInterleaveMaxPixelMotion { get; set; } = 24;
 
+    /// <summary>
+    /// Runtime override (not persisted with the cloud defaults; the render-resolution settings own it): while the viewport upscales
+    /// with FSR2, Sunshine gets CloudInterleave 0 and CloudInterleave itself keeps the user's value for when FSR2 is off again.
+    /// </summary>
+    public bool DisableCloudInterleaveUnderFsr { get; set; } = true;
+
+    /// <summary>Runtime flag owned by the render-resolution settings: resample the centred cloud / far-depth textures at the FSR2 / TAA jitter offset.</summary>
+    public bool CompositorJitterCompensation { get; set; } = true;
+
     private void ApplyCloudPerformanceTuning()
     {
         CloudInterleave = Mathf.Clamp(CloudInterleave, 0, 2);
@@ -29,7 +38,9 @@ public partial class RingSunshineCloudBridge
         CloudInterleaveMaxPixelMotion = SanitizeFinite(CloudInterleaveMaxPixelMotion, 24, 1, 200);
         if (_clouds == null) return;
         _clouds.Set("resolution_jitter_enabled", CloudResolutionJitter);
-        _clouds.Set("cloud_interleave", CloudInterleave);
+        _clouds.Set("engine_jitter_compensation", CompositorJitterCompensation);
+        bool fsrActive = DisableCloudInterleaveUnderFsr && GetViewport().Scaling3DMode == Viewport.Scaling3DModeEnum.Fsr2;
+        _clouds.Set("cloud_interleave", fsrActive ? 0 : CloudInterleave);
         _clouds.Set("cloud_interleave_history_compensation", CloudInterleaveHistoryCompensation);
         _clouds.Set("cloud_interleave_history_clamp", CloudInterleaveHistoryClamp);
         _clouds.Set("cloud_interleave_max_pixel_motion", CloudInterleaveMaxPixelMotion);

@@ -295,15 +295,38 @@ RingHaze ring_haze_eval_remote(RingHazeParams p, vec3 raw_to_sun, float hub_weig
 	return result;
 }
 
+// Storm grey-Mie haze (P9). storm = (s, sigma_storm, omega_storm, g_storm): s in [0, 1] storm strength, sigma_storm the aerosol
+// extinction (1/m) added at s = 1 (already scaled by density), then the single-scatter albedo and Mie anisotropy of the storm particles.
+// The particles join the aerosol layer (same H_A): extinction adds, omega_A is extinction-weighted, g is scattering-weighted.
+// s <= 0 returns p unchanged (bit-identical clear weather). RingAtmosphereModel.ApplyStorm mirrors this with the same op order.
+RingHazeParams ring_haze_apply_storm(RingHazeParams p, vec4 storm) {
+	float s = clamp(storm.x, 0.0, 1.0);
+	if (s <= 0.0) return p;
+	float add = s * max(storm.y, 0.0);
+	float scatter_clear = p.omega_A * p.sigma_A + p.omega_M * p.sigma_M0;
+	float scatter_storm = clamp(storm.z, 0.0, 1.0) * add;
+	float sigma = p.sigma_A + add;
+	p.omega_A = sigma > 0.0 ? (p.omega_A * p.sigma_A + scatter_storm) / sigma : p.omega_A;
+	float st = scatter_clear + scatter_storm;
+	p.g = st > 0.0 ? (p.g * scatter_clear + clamp(storm.w, -0.95, 0.95) * scatter_storm) / st : p.g;
+	p.sigma_A = sigma;
+	return p;
+}
+
 // Target evaluation including the far-arch air: L = S_near + T_near * (S_remote + T_remote * L_surf), returned as one RingHaze
 // (T = T_near T_remote, S = S_near + T_near S_remote). Identical to ring_haze_eval for targets whose ray never re-enters air.
-RingHaze ring_haze_eval_target(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
-	RingHaze near_air = ring_haze_eval(p, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
-	RingHaze remote = ring_haze_eval_remote(p, raw_to_sun, hub_weight, hub_day, solar_visibility, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+// p_near drives the local air and p_remote the far-arch shell; they differ only under storm haze (the remote shell stays clear).
+RingHaze ring_haze_eval_target_split(RingHazeParams p_near, RingHazeParams p_remote, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+	RingHaze near_air = ring_haze_eval(p_near, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+	RingHaze remote = ring_haze_eval_remote(p_remote, raw_to_sun, hub_weight, hub_day, solar_visibility, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
 	near_air.S_sun += near_air.T * remote.S_sun;
 	near_air.S_amb += near_air.T * remote.S_amb;
 	near_air.T *= remote.T;
 	return near_air;
+}
+
+RingHaze ring_haze_eval_target(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+	return ring_haze_eval_target_split(p, p, raw_to_sun, hub_weight, hub_day, solar_visibility, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
 }
 
 // Sky variant: infinite ray in direction `dir`, integrated to the shell exit (the cap, or the shell floor for rays that

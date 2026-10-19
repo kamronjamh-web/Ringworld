@@ -643,6 +643,8 @@ public partial class RingSunshineCloudBridge : Node
 
     public float GetCameraDirectSunTransmittance() => CameraDirectSunTransmittance;
     public float GetCameraAmbientTransmittance() => CameraAmbientTransmittance;
+    /// <summary>P9 storm haze factor (0-1): the local storm factor of whichever weather path is live (Legacy RefreshWeather or the smoothed camera-independent one); 0 while the bridge is disabled.</summary>
+    public float GetHazeStormFactor() => Enabled ? Mathf.Clamp(_localStormFactor, 0.0f, 1.0f) : 0.0f;
 
     /// <summary>
     /// Returns Sunshine's published screen-space cloud color/density texture.
@@ -692,6 +694,30 @@ public partial class RingSunshineCloudBridge : Node
         RingAtmosphereModel.HazeSunIrradiance = sunIrradiance;
         RingAtmosphereModel.HazeAmbientDay = ambientDay;
         RingAtmosphereModel.HazeAmbientNight = ambientNight;
+    }
+
+    /// <summary>
+    /// Cave/underwater Godot fog (P6), handed over by day_side_atmosphere.gd each frame. Sunshine's post pass fades clouds by
+    /// <c>skyAffect x weight x EnclosedCloudFog</c> of <c>1 - exp(-density x cloudDepth)</c>; weight 0 leaves the clouds untouched.
+    /// </summary>
+    public void SetEnclosedFog(float density, float skyAffect, float weight)
+    {
+        _enclosedFogDensity = float.IsFinite(density) ? Mathf.Max(density, 0.0f) : 0.0f;
+        _enclosedFogSkyAffect = float.IsFinite(skyAffect) ? Mathf.Clamp(skyAffect, 0.0f, 1.0f) : 0.0f;
+        _enclosedFogWeight = float.IsFinite(weight) ? Mathf.Clamp(weight, 0.0f, 1.0f) : 0.0f;
+        PushEnclosedFog();
+    }
+
+    private float _enclosedFogDensity, _enclosedFogSkyAffect, _enclosedFogWeight;
+    private Vector4 _lastEnclosedFog = new(float.NaN, 0.0f, 0.0f, 0.0f);
+
+    private void PushEnclosedFog()
+    {
+        if (_clouds == null) return;
+        var value = new Vector4(_enclosedFogDensity, _enclosedFogSkyAffect, _enclosedFogWeight * Mathf.Clamp(RingAtmosphereModel.EnclosedCloudFog, 0.0f, 1.0f), 0.0f);
+        if (value == _lastEnclosedFog) return;
+        _lastEnclosedFog = value;
+        _clouds.Set("ring_enclosed_fog", value);
     }
 
     /// <summary>
@@ -1142,6 +1168,7 @@ public partial class RingSunshineCloudBridge : Node
                 frame.SidewallNegativeMeters, frame.SidewallPositiveMeters, frame.ToSun, solarVisibility, hubDay);
         }
         _clouds.Set("ring_atmosphere_profile", profile);
+        PushEnclosedFog();
     }
 
     public void ApplyLiveTuning(

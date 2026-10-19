@@ -19,6 +19,8 @@ extends SceneTree
 ##   godot --path . --script res://tools/haze_consistency_gpu_test.gd            (assert contracts)
 ## Flags: --report (print table, write baseline JSON, always exit 0), --strict (ignore KNOWN_FAILING),
 ##        --model=physical (P2a: the object path uses ring_haze_sample with atmosphere_haze_model = 1; default is Legacy),
+##        --luts (needs --model=physical: renders the production sky from the P7 sky-view LUT vs the analytic function; contracts
+##        sky_lut_render_matches_analytic and sky_lut_fallback; builds the LUT through scripts/Atmosphere/RingAtmosphereLuts.cs),
 ##        --toward-sun (view azimuth toward the sun instead of away), --cinematic, --altitude=<m>,
 ##        --out=<path> (baseline JSON path; default user://haze_consistency_baseline.json).
 
@@ -54,6 +56,10 @@ const TOL_INSCATTER_REL := 0.05
 const TOL_CONVERGENCE_REL := 0.15
 const TOL_MONOTONIC := 0.00001
 const TOL_CPU_SKY_PARITY := 0.02
+# P8-1 sky-view LUT (--luts, needs --model=physical): LUT render vs analytic render (LDR centre pixel, relative with a 0.01 floor), and the
+# analytic fallback must reproduce the analytic render for a key that does not match the camera.
+const TOL_SKY_LUT_RENDER := 0.02
+const TOL_SKY_LUT_FALLBACK := 0.001
 const SKY_NIGHT_MAX_RATIO := 0.1
 const SKY_ECLIPSE_MAX_RATIO := 1.2
 # P10 far-arch visibility (Physical): rays that leave the local air and land on the far arch. Camera at local night / noon.
@@ -69,6 +75,7 @@ var _toward_sun := false
 var _cinematic := false
 var _physical := false
 var _p4_controls := false
+var _luts_mode := false
 var _altitude := DEFAULT_ALTITUDE_M
 var _helper: RefCounted
 var _cpu_sky: RefCounted
@@ -81,6 +88,9 @@ var _arch_results: Array = []
 # P9: the sun irradiance the consumers see, overridden with the production DaySideAtmosphere value (haze_sun_irradiance_published).
 var _sun_override_active := false
 var _sun_override := Vector3.ZERO
+# P9 storm haze: the ringworld_haze_storm vector the compute probe's globals use (RingAtmosphereModel.HazeStormVector while a storm is set).
+var _storm_override_active := false
+var _storm_override := Vector4.ZERO
 
 func _initialize() -> void:
 	_args = OS.get_cmdline_user_args()
@@ -90,6 +100,7 @@ func _initialize() -> void:
 	_cinematic = "--cinematic" in _args
 	_physical = "--model=physical" in _args
 	_p4_controls = "--p4-controls" in _args
+	_luts_mode = "--luts" in _args
 	for arg in _args:
 		if arg.begins_with("--altitude="):
 			_altitude = float(arg.get_slice("=", 1))
@@ -115,8 +126,18 @@ func _run() -> void:
 	_helper.ApplyPreset(1 if _cinematic else 0, 1.0)
 
 	var p9_contract := {}
+	var storm_contracts: Array = []
 	if _physical:
 		p9_contract = _run_p9_air_visibility()
+		if _failed: return
+		storm_contracts = _run_p9_storm(results)
+		if _failed: return
+	var lut_contracts: Array = []
+	if _luts_mode:
+		if not _physical:
+			_fail("--luts needs --model=physical")
+			return
+		lut_contracts = await _run_sky_lut_contracts()
 		if _failed: return
 	var cross := await _render_crosschecks(results)
 	if _failed: return
@@ -128,6 +149,8 @@ func _run() -> void:
 	var contracts := _evaluate_contracts(metrics, zero_results, cross, color_space)
 	if not p9_contract.is_empty():
 		contracts.append(p9_contract)
+	contracts.append_array(storm_contracts)
+	contracts.append_array(lut_contracts)
 	if _report_mode:
 		_print_report(metrics, cross, color_space)
 	_write_baseline(metrics, contracts, cross, color_space)
@@ -277,11 +300,17 @@ func _uniforms_to_globals(source: String, material: ShaderMaterial) -> String:
 			out += line + "\n"
 			continue
 		var glsl_type := found.get_string(1)
+		if glsl_type.begins_with("sampler"):
+			# Texture globals (sky-view LUT) are compiled out by RING_HAZE_NO_LUTS in the header; keep the line inert.
+			out += "// " + line + "\n"
+			continue
 		var name := found.get_string(2)
 		var default_text := found.get_string(3)
 		var value: Variant = material.get_shader_parameter(name)
 		if name == "ringworld_haze_sun_irradiance" and _sun_override_active:
 			value = _sun_override
+		elif name == "ringworld_haze_storm" and _storm_override_active:
+			value = _storm_override
 		elif value == null and line.strip_edges().begins_with("global"):
 			# global_shader_parameter_get is editor-only; the project defaults are what an unpublished global holds.
 			var declared: Variant = ProjectSettings.get_setting("shader_globals/" + name, null)
@@ -308,7 +337,7 @@ func _build_compute_source() -> String:
 		_fail("cannot read RingAtmosphereCompute.glslinc")
 		return ""
 	var globals_source := _uniforms_to_globals(sky_source, _sky_material)
-	var header := "#version 450\nvec3 EYEDIR; vec3 COLOR; vec4 DBG_AIR; bool AT_CUBEMAP_PASS = false;\n"
+	var header := "#version 450\n#define RING_HAZE_NO_LUTS\nvec3 EYEDIR; vec3 COLOR; vec4 DBG_AIR; bool AT_CUBEMAP_PASS = false;\n"
 	var object_call := """	RingHaze oh = ring_haze_sample(vec3(0.0), dir * dist, vec3(0.0), 0.0);
 	results.v[i * 4u] = vec4(oh.S_sun + oh.S_amb, 1.0 - oh.T.g);""" if _physical else """	vec4 o = sample_ring_atmosphere(vec3(0.0), dir * dist, vec3(0.0), 0.0);
 	results.v[i * 4u] = vec4(o.rgb * atmosphere_scattering_energy, o.a);"""
@@ -542,6 +571,112 @@ func _run_p9_air_visibility() -> Dictionary:
 			worst_conv = maxf(worst_conv, absf(float(_lum(os)) / maxf(_lum(r_dim[i]["sky"]), 0.0001) - 1.0))
 	var passed := worst_linear <= P9_TOL_LINEAR and worst_agree <= TOL_INSCATTER_REL and worst_conv <= TOL_CONVERGENCE_REL and dimmed_checked > 20
 	return _contract("air_sun_visibility_scales_s_sun", passed, "v=%.1f: max linear/share error %.4f (%s), tol %.2f; object-vs-cloud max rel %.4f; 800 km convergence gap %.4f; %d sun-share checks" % [P9_VISIBILITY, worst_linear, worst_case, P9_TOL_LINEAR, worst_agree, worst_conv, dimmed_checked])
+
+# --- P9: storm grey-Mie haze -----------------------------------------------------------------------------------
+
+const STORM_STRENGTH := 0.8
+const STORM_MIN_ALPHA_GAIN := 0.3
+
+func _find_result(results: Array, light: String, elev: float, dist_km: float) -> Dictionary:
+	for r in results:
+		var c: Dictionary = r["case"]
+		if c["light"] == light and float(c["elev"]) == elev and float(c["dist_km"]) == dist_km:
+			return r
+	return {}
+
+## Storm haze: object, cloud profile and sky all apply the same stormed params (one producer, RingAtmosphereModel.HazeStormVector), the
+## effect is real (denser, greyer), and strength 0 restores the clear results bit for bit. The storm is always reset to 0 afterwards.
+func _run_p9_storm(clear_results: Array) -> Array:
+	var clear_profile: Array = _helper.BuildCloudProfile(RING_RADIUS, OUTWARD, AXIS, _altitude, RING_HALF_WIDTH, RING_HALF_WIDTH, _to_sun("noon"), 1.0)
+	var saved_arch := _arch_results
+	_helper.SetHazeStorm(STORM_STRENGTH)
+	_storm_override = _helper.GetHazeStormVector()
+	_storm_override_active = true
+	var storm_results := _evaluate(1.0)
+	var storm_profile: Array = _helper.BuildCloudProfile(RING_RADIUS, OUTWARD, AXIS, _altitude, RING_HALF_WIDTH, RING_HALF_WIDTH, _to_sun("noon"), 1.0)
+	var storm_vector: Vector4 = _storm_override
+	_arch_results = saved_arch
+	if _failed: return []
+
+	# object == cloud, convergence, CPU sky parity under storm.
+	var metrics := _compute_metrics(storm_results)
+	var worst_alpha := _worst(metrics, "d_alpha")
+	var worst_s := _worst(metrics, "d_s_rel")
+	var worst_gap := 0.0
+	var worst_gap_case := ""
+	for m in metrics:
+		if float(m["case"]["dist_km"]) != 800.0 or not (float(m["case"]["elev"]) in [0.0, 2.0, 10.0, 45.0, 90.0]):
+			continue
+		var gap := absf(float(m["conv_ratio"]) - 1.0)
+		if gap > worst_gap:
+			worst_gap = gap
+			worst_gap_case = "%s obj/sky lum=%.3f" % [m["label"], m["conv_ratio"]]
+	var worst_parity := 0.0
+	var worst_parity_case := ""
+	for m in metrics:
+		if float(m["case"]["dist_km"]) != 800.0 or not (m["case"]["light"] in ["noon", "dusk"]):
+			continue
+		var cpu := _cpu_sky_s(m["case"])
+		var gpu: Vector3 = m["sky"]
+		var err := _max_component(Vector3(absf(gpu.x - cpu.x) / maxf(cpu.x, 0.002), absf(gpu.y - cpu.y) / maxf(cpu.y, 0.002), absf(gpu.z - cpu.z) / maxf(cpu.z, 0.002)))
+		if err > worst_parity:
+			worst_parity = err
+			worst_parity_case = "%s gpu=%s cpu=%s" % [m["label"], gpu, cpu]
+
+	# The effect is real: noon, level view.
+	var clear_10 := _find_result(clear_results, "noon", 0.0, 10.0)
+	var storm_10 := _find_result(storm_results, "noon", 0.0, 10.0)
+	var clear_50 := _find_result(clear_results, "noon", 0.0, 50.0)
+	var storm_50 := _find_result(storm_results, "noon", 0.0, 50.0)
+	var alpha_gain := float(storm_10["obj_alpha"]) - float(clear_10["obj_alpha"])
+	var s_clear: Vector3 = clear_50["obj_s"]
+	var s_storm: Vector3 = storm_50["obj_s"]
+	var blue_red_clear := s_clear.z / maxf(s_clear.x, 0.00001)
+	var blue_red_storm := s_storm.z / maxf(s_storm.x, 0.00001)
+	var g_clear: float = clear_profile[13].x
+	var g_storm: float = storm_profile[13].x
+	var omega_clear: float = clear_profile[11].w
+	var omega_storm: float = storm_profile[11].w
+	var profile_moves: bool = absf(g_storm - 0.5) < absf(g_clear - 0.5) and absf(omega_storm - 0.85) < absf(omega_clear - 0.85) and storm_vector.x > 0.0
+	var effect_real: bool = alpha_gain >= STORM_MIN_ALPHA_GAIN and blue_red_storm < blue_red_clear and profile_moves
+
+	var contracts: Array = []
+	contracts.append(_contract("storm_haze_consistent",
+		float(worst_alpha[0]) <= TOL_ALPHA and float(worst_s[0]) <= TOL_INSCATTER_REL and worst_gap <= TOL_CONVERGENCE_REL and worst_parity <= TOL_CPU_SKY_PARITY and effect_real,
+		"s=%.1f: object-vs-cloud alpha %.4f (%s), S rel %.4f (%s); 800 km convergence gap %.3f (%s); cpu sky parity %.4f (%s); noon e=0 10 km alpha %.3f -> %.3f (need +%.1f); 50 km S.b/S.r %.3f -> %.3f; profile g %.3f -> %.3f, omega_A %.3f -> %.3f" % [
+			STORM_STRENGTH, worst_alpha[0], worst_alpha[1], worst_s[0], worst_s[1], worst_gap, worst_gap_case, worst_parity, worst_parity_case,
+			float(clear_10["obj_alpha"]), float(storm_10["obj_alpha"]), STORM_MIN_ALPHA_GAIN, blue_red_clear, blue_red_storm, g_clear, g_storm, omega_clear, omega_storm]))
+
+	# Back to clear: strength 0 must restore everything exactly.
+	_helper.SetHazeStorm(0.0)
+	_storm_override_active = false
+	var zero_vector: Vector4 = _helper.GetHazeStormVector()
+	var zero_profile: Array = _helper.BuildCloudProfile(RING_RADIUS, OUTWARD, AXIS, _altitude, RING_HALF_WIDTH, RING_HALF_WIDTH, _to_sun("noon"), 1.0)
+	var profile_identical: bool = zero_profile[11].z == clear_profile[11].z and zero_profile[11].w == clear_profile[11].w and zero_profile[13].x == clear_profile[13].x
+	var again := _evaluate(1.0)
+	_arch_results = saved_arch
+	if _failed: return contracts
+	var identical := again.size() == clear_results.size()
+	var first_diff := ""
+	for i in (again.size() if identical else 0):
+		for key in ["obj_alpha", "cld_alpha", "obj_s", "cld_s", "sky", "sky_air_alpha"]:
+			if again[i][key] != clear_results[i][key]:
+				identical = false
+				first_diff = "%s %s" % [key, _case_label(again[i]["case"])]
+				break
+		if not identical:
+			break
+	var t_values := [0.1, 0.5, 0.9, 1.0]
+	var visibility_zero := true
+	for t in t_values:
+		if _day_side.air_sun_visibility_for(t, 0.0) != lerpf(1.0, t, clampf(_day_side.haze_cloud_shadowing, 0.0, 1.0)):
+			visibility_zero = false
+	var visibility_storm: bool = is_equal_approx(_day_side.air_sun_visibility_for(1.0, 1.0), 0.15) and is_equal_approx(_day_side.air_sun_visibility_for(0.1, 1.0), 0.1)
+	contracts.append(_contract("storm_zero_identity",
+		zero_vector.x == 0.0 and profile_identical and identical and visibility_zero and visibility_storm,
+		"vector.x=%.1f; profile 11.z/11.w/13.x bitwise clear=%s; full clear re-evaluation identical=%s %s; air_sun_visibility_for(t,0) exact=%s; (1,1)=%.4f (0.15) (0.1,1)=%.4f (0.1) ok=%s" % [
+			zero_vector.x, profile_identical, identical, first_diff, visibility_zero, _day_side.air_sun_visibility_for(1.0, 1.0), _day_side.air_sun_visibility_for(0.1, 1.0), visibility_storm]))
+	return contracts
 
 # --- metrics ----------------------------------------------------------------------------------------------
 
@@ -908,6 +1043,102 @@ func _render_crosschecks(results: Array) -> Dictionary:
 			sky_rows.append({"light": light, "elev": elev, "render": render, "compute": sky_compute, "rel_error": error})
 	return {"spatial_max_error": spatial_max, "spatial_count": spatial_count, "spatial_rows": spatial_rows,
 		"sky_max_rel_error": sky_max, "sky_count": sky_count, "sky_rows": sky_rows}
+
+# --- P8-1: sky-view LUT consumed by the production sky shader (--luts) -------------------------------------
+
+## Renders the production sky shader's centre pixel looking along elevation `elev` (same setup as the sky probe above).
+func _render_sky_pixel(elev: float) -> Color:
+	var viewport := _make_viewport(16)
+	var env := Environment.new()
+	env.background_mode = Environment.BG_SKY
+	var sky := Sky.new()
+	sky.sky_material = _sky_material
+	env.sky = sky
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_energy = 0.0
+	var world := WorldEnvironment.new()
+	world.environment = env
+	viewport.add_child(world)
+	var camera := Camera3D.new()
+	camera.fov = 2.0
+	viewport.add_child(camera)
+	camera.position = Vector3.ZERO
+	camera.look_at(_dir(elev), Vector3(0.0, 1.0, 0.0))
+	for frame in 6:
+		await RenderingServer.frame_post_draw
+	var pixel := _center_linear(viewport)
+	viewport.queue_free()
+	return pixel
+
+func _request_sky_lut(luts: RefCounted, to_sun: Vector3) -> bool:
+	return bool(luts.call("RequestSkyView", RING_RADIUS, OUTWARD, AXIS, _altitude, RING_HALF_WIDTH, RING_HALF_WIDTH, to_sun))
+
+func _pixel_rel_error(render: Color, reference: Color) -> float:
+	return _max_component(Vector3(
+		absf(render.r - reference.r) / maxf(reference.r, 0.01),
+		absf(render.g - reference.g) / maxf(reference.g, 0.01),
+		absf(render.b - reference.b) / maxf(reference.b, 0.01)))
+
+## sky_lut_render_matches_analytic: the sky rendered from the LUT (key valid and matching) vs the analytic function (LUT disabled).
+## sky_lut_fallback: a key that does not match the camera (height off by 1 m) or is invalid renders exactly the analytic path.
+func _run_sky_lut_contracts() -> Array:
+	var luts: RefCounted = (load("res://scripts/Atmosphere/RingAtmosphereLuts.cs") as Script).new()
+	luts.call("SetSkyViewEnabled", true)
+	var render_max := 0.0
+	var render_label := ""
+	var fallback_max := 0.0
+	var key_ok := true
+	var built_ok := true
+	for light in ["noon", "dusk"]:
+		_set_globals(light)
+		var palette := _sky_palette(light)
+		var to_sun := _to_sun(light)
+		_sky_material.set_shader_parameter("sun_direction", to_sun)
+		_sky_material.set_shader_parameter("ring_atmosphere_to_sun", to_sun)
+		_sky_material.set_shader_parameter("sky_top_color", palette[0])
+		_sky_material.set_shader_parameter("sky_horizon_color", palette[1])
+		_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude)
+		_request_sky_lut(luts, to_sun)
+		var waited := 0
+		while not bool(luts.call("IsReady")) or int(luts.call("GetBuildsCompleted")) == 0:
+			await RenderingServer.frame_post_draw
+			waited += 1
+			if waited > 300:
+				_fail("sky-view LUT never became ready: " + String(luts.call("GetStatus")))
+				return []
+		await RenderingServer.frame_post_draw
+		_request_sky_lut(luts, to_sun)
+		var key: Vector4 = luts.call("GetPublishedKey")
+		key_ok = key_ok and key.w > 0.5 and absf(key.x - _altitude) < 0.01
+		for elev in [0.0, 10.0, 45.0]:
+			_request_sky_lut(luts, to_sun)
+			var lut_pixel: Color = await _render_sky_pixel(elev)
+			# Analytic reference: same material, LUT disabled -> key invalid.
+			luts.call("SetSkyViewEnabled", false)
+			_request_sky_lut(luts, to_sun)
+			var analytic_pixel: Color = await _render_sky_pixel(elev)
+			var error := _pixel_rel_error(lut_pixel, analytic_pixel)
+			if error > render_max:
+				render_max = error
+				render_label = "%s elev %.0f" % [light, elev]
+			# Fallback: valid key for _altitude, but the material is 1 m higher (outside the 0.5 m match) -> analytic at that height.
+			_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude + 1.0)
+			var analytic_high: Color = await _render_sky_pixel(elev)
+			luts.call("SetSkyViewEnabled", true)
+			_request_sky_lut(luts, to_sun)
+			var mismatched: Color = await _render_sky_pixel(elev)
+			_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude)
+			fallback_max = maxf(fallback_max, maxf(maxf(absf(mismatched.r - analytic_high.r), absf(mismatched.g - analytic_high.g)), absf(mismatched.b - analytic_high.b)))
+			if _failed: return []
+	luts.call("Release")
+	_restore_globals()
+	return [
+		_contract("sky_lut_render_matches_analytic", key_ok and built_ok and render_max <= TOL_SKY_LUT_RENDER,
+			"max rel error %.4f (%s), tolerance %.3f, key valid=%s" % [render_max, render_label, TOL_SKY_LUT_RENDER, key_ok]),
+		_contract("sky_lut_fallback", fallback_max <= TOL_SKY_LUT_FALLBACK,
+			"max abs pixel difference %.5f between a mismatched-key render and the analytic render (tolerance %.4f)" % [fallback_max, TOL_SKY_LUT_FALLBACK]),
+	]
 
 func _find(results: Array, light: String, elev: float, dist_km: float) -> Dictionary:
 	for r in results:

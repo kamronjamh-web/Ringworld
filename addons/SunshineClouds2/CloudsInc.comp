@@ -364,6 +364,10 @@ struct GenericData{
 	// y = resolution-jitter phase + 1 (0 = off), z = interleave history clamp gamma, w = per-frame history weight the
 	// interleave fill pass uses (the packed accumulation decay before the n*n compensation). All zero = legacy behaviour.
 	vec4 ring_perf_controls;
+	// Append-only enclosed (cave/underwater) fog applied to clouds by the post pass: x = Godot fog density (1/m),
+	// y = fog sky affect, z = weight (already scaled by the menu gain), w reserved. z = 0 disables it.
+	vec4 ring_enclosed_fog;
+	vec4 ring_jitter_controls;
 };
 
 struct DirectionalLight {

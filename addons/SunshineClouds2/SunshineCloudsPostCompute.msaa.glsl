@@ -1,5 +1,5 @@
 #[compute]
-// GenericData ABI: 304 floats (16-slot ring atmosphere profile, P2b). Output-data alpha is log2 opaque depth metadata; z_far from cloud_mask_controls.w. Shared post source also binds physical far depth
+// GenericData ABI: 312 floats (16-slot ring atmosphere profile P2b + enclosed fog P6 + engine jitter controls). Output-data alpha is log2 opaque depth metadata; z_far from cloud_mask_controls.w. Shared post source also binds physical far depth
 // at sampler binding 9 so MSAA upsampled cloud edges obey far opaque terrain.
 #version 450
 

@@ -63,6 +63,7 @@ public partial class RingLiveTuningDrawer
         RefreshAtmosphereControls();
     }
 
+
     public void SetAtmosphereEnabled(bool enabled)
     {
         GetAtmosphereController()?.SetAtmosphereEnabled(enabled);
@@ -145,10 +146,12 @@ public partial class RingLiveTuningDrawer
         AddAtmosphereSlider(tab, "Forward", "Forward scattering", 0, .85, .01, settings.ForwardScattering);
         AddAtmosphereSlider(tab, "Warmth", "Sun warmth", 0, 1, .01, settings.SunWarmth);
         AddAtmosphereSlider(tab, "HazeBrightness", "Haze brightness", 0, 2, .01, settings.HazeBrightness);
+        AddAtmosphereSlider(tab, "EnclosedCloudFog", "Cloud fog (caves/water)", 0, 1, .01, settings.EnclosedCloudFog);
         // Physical-only controls (hidden while the Legacy model is selected; see RefreshAtmosphereControls).
         _atmospherePhysicalGroup = new VBoxContainer { Name = "AtmospherePhysicalGroup" };
         _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
         AddAtmosphereSlider(_atmospherePhysicalGroup, "CloudShadowing", "Cloud shadowing of haze", 0, 1, .01, settings.CloudShadowing);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "StormHaze", "Storm haze", 0, 1, .01, settings.StormHaze);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "MistDensity", "Ground mist density", 0, 5, .01, settings.MistDensity);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "MistHeight", "Mist height (m)", 50, 2000, 10, settings.MistHeight);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "AerosolHeight", "Aerosol height (m)", 200, 5000, 50, settings.AerosolHeight);
@@ -219,6 +222,8 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("Warmth", s.SunWarmth);
         SetAtmosphereRange("HazeBrightness", s.HazeBrightness);
         SetAtmosphereRange("CloudShadowing", s.CloudShadowing);
+        SetAtmosphereRange("StormHaze", s.StormHaze);
+        SetAtmosphereRange("EnclosedCloudFog", s.EnclosedCloudFog);
         SetAtmosphereRange("MistDensity", s.MistDensity);
         SetAtmosphereRange("MistHeight", s.MistHeight);
         SetAtmosphereRange("AerosolHeight", s.AerosolHeight);

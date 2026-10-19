@@ -7,6 +7,10 @@ var _regional: Texture2D
 var _active := false
 var ready := false
 var dispatches := 0
+## FSR2/TAA jitter compensation: the far layer is rendered unjittered, so it is sampled at uv + 0.5 * projection z.xy (0 without jitter).
+var jitter_compensation := true
+var jitter_uv_sign := 1.0 # debug: multiplies the applied offset
+var last_uv_offset := Vector2.ZERO
 var rd: RenderingDevice
 var shader: RID
 var pipeline: RID
@@ -76,7 +80,12 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		var candidate := RenderingServer.texture_get_rd_texture(regional.get_rid())
 		if candidate.is_valid(): regional_rid = candidate; has_regional = 1.0
 	while views.size() < buffers.get_view_count(): views.append({"set": RID(), "color": RID(), "depth": RID(), "far": RID(), "regional": RID()})
-	var push := PackedFloat32Array([has_regional, 0.0, 0.0, 0.0]).to_byte_array()
+	var jitter_uv := Vector2.ZERO
+	if jitter_compensation:
+		var cam_projection := render_data.get_render_scene_data().get_cam_projection()
+		jitter_uv = Vector2(cam_projection.z.x, cam_projection.z.y) * (0.5 * jitter_uv_sign)
+	last_uv_offset = jitter_uv
+	var push := PackedFloat32Array([has_regional, jitter_uv.x, jitter_uv.y, 0.0]).to_byte_array()
 	var size := buffers.get_internal_size()
 	for index in buffers.get_view_count():
 		var view := views[index]

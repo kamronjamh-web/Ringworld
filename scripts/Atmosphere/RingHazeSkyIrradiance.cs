@@ -54,14 +54,17 @@ public partial class RingHazeSkyIrradiance : RefCounted
         Params p = default;
         p.SigmaR = new D3(RingAtmosphereModel.HazeSigmaRayleigh);
         p.HR = RingAtmosphereModel.HazeRayleighHeightMeters;
-        p.SigmaA = RingAtmosphereModel.HazeSigmaAerosol;
-        p.OmegaA = RingAtmosphereModel.HazeOmegaAerosol;
+        // Storm haze (P9) goes through the float ApplyStorm mirror before promotion to double, so the CPU ambient follows the shaders.
+        float sigmaA = RingAtmosphereModel.HazeSigmaAerosol, omegaA = RingAtmosphereModel.HazeOmegaAerosol, mieG = RingAtmosphereModel.HazeG;
+        RingAtmosphereModel.ApplyStorm(RingAtmosphereModel.HazeStormVector, ref sigmaA, ref omegaA, ref mieG, RingAtmosphereModel.HazeSigmaMist, RingAtmosphereModel.HazeOmegaMist);
+        p.SigmaA = sigmaA;
+        p.OmegaA = omegaA;
         p.HA = RingAtmosphereModel.HazeAerosolHeightMeters;
         p.SigmaM0 = RingAtmosphereModel.HazeSigmaMist;
         p.OmegaM = RingAtmosphereModel.HazeOmegaMist;
         p.HMist = RingAtmosphereModel.HazeMistHeightMeters;
         p.CapHeight = RingAtmosphereModel.HazeCapHeightMeters;
-        p.G = RingAtmosphereModel.HazeG;
+        p.G = mieG;
         p.Quality = qualityOverride > 0 ? qualityOverride : RingAtmosphereModel.HazeQuality;
         p.Radius = radius;
         p.FloorDepth = RingAtmosphereModel.FloorDepthMeters;
@@ -252,6 +255,12 @@ public partial class RingHazeSkyIrradiance : RefCounted
 
     /// <summary>Revision of the RingAtmosphereModel parameters (changes whenever the art controls or model switch).</summary>
     public long GetRevision() => (long)RingAtmosphereModel.Revision;
+
+    /// <summary>Sets the P9 storm strength (RingAtmosphereModel owns the vector and the shader global).</summary>
+    public void SetStorm(float strength) => RingAtmosphereModel.SetHazeStorm(strength);
+
+    /// <summary>Bumps when the published storm vector changes; cached CPU ambient results key on it besides <see cref="GetRevision"/>.</summary>
+    public long GetStormRevision() => (long)RingAtmosphereModel.StormRevision;
 
     /// <summary>The art sun-warmth tint the shaders multiply into the published sun irradiance (ring_haze_sun_tint).</summary>
     public Vector3 GetSunTint() => RingAtmosphereModel.HazeSunTint;

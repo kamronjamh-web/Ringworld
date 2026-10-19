@@ -72,7 +72,8 @@ CloudPixelRay ring_cloud_pixel_ray(ivec2 uv, ivec2 size) {
 	if (linear_depth >= sceneZFar){
 		linear_depth *= 100.0;
 	}
-	float far_depth = texture(far_opaque_depth_image, depthUV).r;
+	// The far depth is rendered unjittered: resample it at the centred position (offset is 0 without engine jitter).
+	float far_depth = texture(far_opaque_depth_image, depthUV + genericData.data.ring_jitter_controls.xy).r;
 	if (far_depth > 0.0 && far_depth < linear_depth && !isnan(far_depth) && !isinf(far_depth)) {
 		linear_depth = min(linear_depth, far_depth);
 		has_opaque_depth = true;
@@ -312,6 +313,25 @@ CloudHistoryReproject ring_cloud_history_reproject(ivec2 uv, ivec2 size, vec2 de
 	h.opaqueHistoryPixel = opaqueHistoryPixel;
 	h.opaqueHistoryOutside = opaqueHistoryOutside;
 	return h;
+}
+
+// Engine (FSR2/TAA) jitter moves silhouettes by up to a pixel between frames, so the single-pixel opaque-depth history test rejects
+// along every edge. While ring_jitter_controls.z is set, a match anywhere in the 3x3 neighbourhood of the history pixel also counts.
+// Returns false (and reads nothing) when the tolerant path is off, so callers OR it with the exact single-pixel test.
+bool ring_jitter_opaque_neighborhood_matches(bool fromA, ivec2 center, ivec2 size, float expected, float tolerance) {
+	if (genericData.data.ring_jitter_controls.z <= 0.5) {
+		return false;
+	}
+	for (int dy = -1; dy <= 1; ++dy) {
+		for (int dx = -1; dx <= 1; ++dx) {
+			ivec2 q = clamp(center + ivec2(dx, dy), ivec2(0), size - ivec2(1));
+			float d = fromA ? imageLoad(accum_2A_image, q).a : imageLoad(accum_2B_image, q).a;
+			if (ring_cloud_history_opaque_matches(expected, d, tolerance)) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 #endif // SUNSHINE_CLOUDS_HISTORY_GLSLINC

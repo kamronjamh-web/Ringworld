@@ -109,6 +109,10 @@ ringworld_haze_ambient_night={
 "type": "vec3",
 "value": Vector3(0.004, 0.005, 0.008)
 }
+ringworld_haze_storm={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_surface_aperture_0={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)

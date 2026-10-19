@@ -27,6 +27,7 @@ public partial class RingLodPauseMenu : CanvasLayer
     [Export] public NodePath AnalyticGlobalLodPath { get; set; } = new("../AnalyticGlobalRing");
     [Export] public NodePath LegacyFarRingPath { get; set; } = new("../RingWorld/FarRing");
     [Export] public NodePath ScaledFarViewportPath { get; set; } = new("../ScaledFarViewport");
+    [Export] public NodePath SunshineCloudBridgePath { get; set; } = new("../SunshineCloudBridge");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
     [Export] public bool HazeEnabledByDefault { get; set; } = false;
     [Export(PropertyHint.Range, "2,32,1")] public int DefaultChunkRadius { get; set; } = 7;
@@ -793,6 +794,59 @@ public partial class RingLodPauseMenu : CanvasLayer
         _renderResolutionRetryElapsed = 0.0;
     }
 
+    public void SetFsrSharpness(float sharpness) => SetFsrOptions(sharpness, _renderResolutionDefaults.Settings.MipBiasOffset,
+        _renderResolutionDefaults.Settings.DisableCloudInterleaveUnderFsr, _renderResolutionDefaults.Settings.FarViewportFollowsFsrScale,
+        _renderResolutionDefaults.Settings.CompositorJitterCompensation);
+
+    public void SetMipBiasOffset(float offset) => SetFsrOptions(_renderResolutionDefaults.Settings.FsrSharpness, offset,
+        _renderResolutionDefaults.Settings.DisableCloudInterleaveUnderFsr, _renderResolutionDefaults.Settings.FarViewportFollowsFsrScale,
+        _renderResolutionDefaults.Settings.CompositorJitterCompensation);
+
+    public void SetDisableCloudInterleaveUnderFsr(bool disable) => SetFsrOptions(_renderResolutionDefaults.Settings.FsrSharpness,
+        _renderResolutionDefaults.Settings.MipBiasOffset, disable, _renderResolutionDefaults.Settings.FarViewportFollowsFsrScale,
+        _renderResolutionDefaults.Settings.CompositorJitterCompensation);
+
+    public void SetFarViewportFollowsFsrScale(bool follows) => SetFsrOptions(_renderResolutionDefaults.Settings.FsrSharpness,
+        _renderResolutionDefaults.Settings.MipBiasOffset, _renderResolutionDefaults.Settings.DisableCloudInterleaveUnderFsr, follows,
+        _renderResolutionDefaults.Settings.CompositorJitterCompensation);
+
+    public void SetCompositorJitterCompensation(bool enabled) => SetFsrOptions(_renderResolutionDefaults.Settings.FsrSharpness,
+        _renderResolutionDefaults.Settings.MipBiasOffset, _renderResolutionDefaults.Settings.DisableCloudInterleaveUnderFsr,
+        _renderResolutionDefaults.Settings.FarViewportFollowsFsrScale, enabled);
+
+    private void SetFsrOptions(float sharpness, float mipBiasOffset, bool disableCloudInterleave, bool farViewportFollows, bool jitterCompensation)
+    {
+        if (!_renderResolutionReady) return;
+        bool changed = _renderResolutionDefaults.SetFsrOptions(sharpness, mipBiasOffset, disableCloudInterleave, farViewportFollows, jitterCompensation);
+        ApplyFsrRuntimeOptions();
+        if (changed) { _renderResolutionSaveElapsed = 0.0; _renderResolutionRetryElapsed = 0.0; }
+    }
+
+    /// <summary>
+    /// Pushes the FSR-related render-resolution options to the live viewport, cloud bridge and far viewport. Safe to call whenever the
+    /// scaling mode or the options change.
+    /// </summary>
+    private void ApplyFsrRuntimeOptions()
+    {
+        Viewport viewport = GetViewport();
+        GameplayRenderResolutionSettings settings = _renderResolutionDefaults.Settings;
+        bool fsrActive = viewport.Scaling3DMode == Viewport.Scaling3DModeEnum.Fsr2;
+        viewport.FsrSharpness = GameplayRenderResolutionDefaults.SanitizeFsrSharpness(settings.FsrSharpness);
+        // Godot already adds an automatic bias of log2(Scaling3DScale) to TextureMipmapBias when the scale is below 1.0 (and -0.5
+        // more when TAA is on); TextureMipmapBias is composed additively as log2(scaling_3d_scale) + texture_mipmap_bias. So this
+        // value is an offset on top of the automatic negative bias, not an absolute bias, and is 0 whenever FSR2 is not active.
+        viewport.TextureMipmapBias = fsrActive ? GameplayRenderResolutionDefaults.SanitizeMipBiasOffset(settings.MipBiasOffset) : 0f;
+        if (_scaledFarViewport != null) _scaledFarViewport.FarViewportFollowsFsrScale = settings.FarViewportFollowsFsrScale;
+        if (_scaledFarViewport != null) _scaledFarViewport.CompositorJitterCompensation = settings.CompositorJitterCompensation;
+        RingSunshineCloudBridge? clouds = GetNodeOrNull<RingSunshineCloudBridge>(SunshineCloudBridgePath);
+        if (clouds != null)
+        {
+            clouds.DisableCloudInterleaveUnderFsr = settings.DisableCloudInterleaveUnderFsr;
+            clouds.CompositorJitterCompensation = settings.CompositorJitterCompensation;
+            if (clouds.IsNodeReady()) clouds.ApplyTemporalQualityTuning();
+        }
+    }
+
     public bool FlushRenderResolutionSettings()
     {
         _renderResolutionSaveElapsed = 0.0;
@@ -823,6 +877,11 @@ public partial class RingLodPauseMenu : CanvasLayer
             ["requested_scale"] = GetRenderResolutionScale(requested),
             ["current_scale"] = viewport?.Scaling3DScale ?? 1.0f,
             ["adaptive_enabled"] = _renderResolutionDefaults.Settings.AdaptiveResolutionEnabled,
+            ["fsr_sharpness"] = _renderResolutionDefaults.Settings.FsrSharpness,
+            ["mip_bias_offset"] = _renderResolutionDefaults.Settings.MipBiasOffset,
+            ["disable_cloud_interleave_under_fsr"] = _renderResolutionDefaults.Settings.DisableCloudInterleaveUnderFsr,
+            ["far_viewport_follows_fsr_scale"] = _renderResolutionDefaults.Settings.FarViewportFollowsFsrScale,
+            ["compositor_jitter_compensation"] = _renderResolutionDefaults.Settings.CompositorJitterCompensation,
             ["memory_protection_enabled"] = _certificationMonitor?.EnableAdaptiveProtection ?? false,
             ["fsr_available"] = _fsr2Available,
             ["path"] = _renderResolutionDefaults.GetPath(),
@@ -866,7 +925,7 @@ public partial class RingLodPauseMenu : CanvasLayer
             ? Viewport.Scaling3DModeEnum.Bilinear
             : Viewport.Scaling3DModeEnum.Fsr2;
         viewport.Scaling3DScale = scale;
-        viewport.FsrSharpness = 0.2f;
+        ApplyFsrRuntimeOptions();
         GameplayAntiAliasingDefaults.ReapplyRuntimePreference(GetTree().Root);
 
         if (updateStatus && _applyStatus != null)

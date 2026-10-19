@@ -12,6 +12,17 @@ const WARMUP_FRAMES := 60
 const MIN_SAMPLE_FRAMES := 100
 const TARGET_SAMPLE_SECONDS := 5.0
 const MAX_SAMPLE_SECONDS := 10.0
+const FIXTURE_HELPER := preload("res://tools/AtmosphereVisualFixtureHelper.cs")
+# P7-0 measurement gate (`-- --haze-only`): each matrix label is sampled at each pose. `-- --no-matrix` skips it.
+const MATRIX_LABELS := ["haze_off", "physical_q4", "physical_q8", "physical_q16", "cloud_mask_off", "cloud_mask_on"]
+const MATRIX_POSES := [
+	{"name": "ground_horizon", "pitch": 0.0, "lift": 0.0},
+	{"name": "sky_up", "pitch": 70.0, "lift": 0.0},
+	{"name": "alt_12km", "pitch": -10.0, "lift": 12000.0},
+]
+const GATE_SKY_MS := 0.2
+const GATE_MASK_MS := 0.2
+const GATE_NON_SKY_MS := 0.5
 const FIXTURE_AROUND := 16443476.0
 const FIXTURE_ACROSS := 38692.0
 
@@ -30,6 +41,7 @@ var failed := false
 var original_haze_enabled := true
 var partial_report := {"status":"RUNNING", "cases":[]}
 var tuning_drawer: Node
+var ground_height := 0.0
 
 class SessionStub extends Node:
 	var settings := {}
@@ -69,6 +81,7 @@ func _run() -> void:
 		return
 
 	var spawn_height := float(surface.call("SampleHeight", FIXTURE_AROUND, FIXTURE_ACROSS)) + 1.1
+	ground_height = spawn_height
 	explorer.call("SetCanonicalSpawnMeters", FIXTURE_AROUND, spawn_height, FIXTURE_ACROSS)
 	explorer.call("SetPresentationView", 0.0, -10.0)
 	var day_cycle: Node = game.get_node_or_null("RingDayNightCycle")
@@ -80,7 +93,9 @@ func _run() -> void:
 	_enable_viewport_timing()
 	runtime_counters = RUNTIME_COUNTERS.new()
 	original_state = _capture_original_state()
-	if original_state.near_proxy_paths.is_empty() or original_state.far_terrain_paths.is_empty():
+	# Haze-only runs never hide far terrain, so they do not need the far-terrain discovery.
+	var needs_far_terrain := not ("--haze-only" in OS.get_cmdline_user_args())
+	if original_state.near_proxy_paths.is_empty() or (needs_far_terrain and original_state.far_terrain_paths.is_empty()):
 		var meshes: Array[String] = []
 		for node in _all_nodes(scaled_far):
 			if node is MeshInstance3D:
@@ -117,6 +132,11 @@ func _run() -> void:
 	_restore_original_state()
 	if not _verify_case("baseline_repeat"):
 		return
+	if "--haze-only" in OS.get_cmdline_user_args() and not "--no-matrix" in OS.get_cmdline_user_args():
+		report["matrix_cases"] = []
+		var matrix_ok: bool = await _run_haze_matrix(report)
+		if not matrix_ok or failed:
+			return
 	report.status = "PASS"
 	if not _write_report(report, HAZE_OUTPUT if "--haze-only" in OS.get_cmdline_user_args() else OUTPUT):
 		return
@@ -128,6 +148,82 @@ func _run() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/haze_enabled", original_haze_enabled)
 	print("TERRAIN_RENDER_ATTRIBUTION=PASS")
 	quit(0)
+
+
+## P7-0: haze quality / mask cost matrix over three poses. Writes report.matrix_cases and prints a compact table.
+func _run_haze_matrix(report: Dictionary) -> bool:
+	var helper: RefCounted = FIXTURE_HELPER.new()
+	# Hold the canonical pose: presentation setters write the transform directly, so gravity must not move it.
+	explorer.process_mode = Node.PROCESS_MODE_DISABLED
+	for pose in MATRIX_POSES:
+		if not bool(helper.call("Place", explorer, FIXTURE_AROUND, ground_height + float(pose.lift), FIXTURE_ACROSS)):
+			_fail("matrix pose placement failed for " + str(pose.name))
+			return false
+		explorer.call("SetPresentationView", 0.0, float(pose.pitch))
+		for label in MATRIX_LABELS:
+			_restore_original_state()
+			if not _apply_case(label) or not _verify_case(label):
+				return false
+			var case_data := await _sample_case(label)
+			if failed:
+				return false
+			case_data["pose"] = pose.duplicate()
+			report.matrix_cases.append(case_data)
+			partial_report.cases.append(case_data)
+	_restore_original_state()
+	explorer.process_mode = Node.PROCESS_MODE_INHERIT
+	explorer.call("SetCanonicalSpawnMeters", FIXTURE_AROUND, ground_height, FIXTURE_ACROSS)
+	explorer.call("SetPresentationView", 0.0, -10.0)
+	_print_matrix_table(report.matrix_cases)
+	return true
+
+
+func _matrix_main_far(case_data: Dictionary) -> Vector2:
+	return Vector2(float(case_data.root_gpu_ms.p50), float(case_data.far_gpu_ms.p50))
+
+
+func _mask_viewport_ms(case_data: Dictionary) -> float:
+	var total := 0.0
+	for key in case_data.viewport_gpu_ms:
+		if str(key).begins_with("CloudTransmittanceMask"):
+			total += float(case_data.viewport_gpu_ms[key].mean)
+	return total
+
+
+func _print_matrix_table(cases: Array) -> void:
+	print("P7_0_TABLE (GPU ms, p50 over frames; mask_vp = mean of CloudTransmittanceMask* viewports; d_* = vs haze_off)")
+	print("%-15s %-15s %8s %8s %8s %8s %8s %6s" % ["pose", "label", "main", "far", "d_main", "d_far", "mask_vp", "maskOn"])
+	var by_pose := {}
+	for case_data in cases:
+		var pose_name := str(case_data.pose.name)
+		if not by_pose.has(pose_name):
+			by_pose[pose_name] = {}
+		by_pose[pose_name][case_data.label] = case_data
+	for pose in MATRIX_POSES:
+		var rows: Dictionary = by_pose.get(pose.name, {})
+		var off: Vector2 = _matrix_main_far(rows["haze_off"]) if rows.has("haze_off") else Vector2.ZERO
+		for label in MATRIX_LABELS:
+			if not rows.has(label):
+				continue
+			var mf := _matrix_main_far(rows[label])
+			print("%-15s %-15s %8.3f %8.3f %8.3f %8.3f %8.3f %6s" % [pose.name, label, mf.x, mf.y, mf.x - off.x, mf.y - off.y, _mask_viewport_ms(rows[label]), str(rows[label].cloud_mask_active)])
+	# Gate readout. Far-viewport deltas vs haze_off at q8 are the haze cost; the sky-up pose is mostly sky pixels,
+	# the ground-horizon pose is mostly terrain/backdrop (non-sky) pixels.
+	var sky_up: Dictionary = by_pose.get("sky_up", {})
+	var ground: Dictionary = by_pose.get("ground_horizon", {})
+	if sky_up.has("haze_off") and sky_up.has("physical_q8"):
+		var sky_ms := _matrix_main_far(sky_up["physical_q8"]).y - _matrix_main_far(sky_up["haze_off"]).y
+		print("P7_0_GATE sky_view_lut: far sky haze (sky_up q8 - off) = %.3f ms -> %s (threshold %.1f)" % [sky_ms, "GO" if sky_ms >= GATE_SKY_MS else "NO-GO", GATE_SKY_MS])
+	if ground.has("haze_off") and ground.has("physical_q8"):
+		var non_sky := _matrix_main_far(ground["physical_q8"]).y - _matrix_main_far(ground["haze_off"]).y
+		print("P7_0_GATE transmittance_lut: far non-sky haze (ground_horizon q8 - off, before any sky LUT) = %.3f ms -> %s (threshold %.1f)" % [non_sky, "GO" if non_sky >= GATE_NON_SKY_MS else "NO-GO", GATE_NON_SKY_MS])
+	for pose in MATRIX_POSES:
+		var rows: Dictionary = by_pose.get(pose.name, {})
+		if rows.has("cloud_mask_on") and rows.has("cloud_mask_off"):
+			var on: Vector2 = _matrix_main_far(rows["cloud_mask_on"])
+			var off_mask: Vector2 = _matrix_main_far(rows["cloud_mask_off"])
+			var mask_ms: float = (on.y - off_mask.y) + (_mask_viewport_ms(rows["cloud_mask_on"]) - _mask_viewport_ms(rows["cloud_mask_off"]))
+			print("P7_0_GATE mask_hoist: %s mask cost (on - off, far + mask viewports) = %.3f ms -> %s (threshold %.1f)" % [pose.name, mask_ms, "GO" if mask_ms >= GATE_MASK_MS else "NO-GO", GATE_MASK_MS])
 
 
 func _create_game() -> Node:
@@ -233,10 +329,12 @@ func _capture_original_state() -> Dictionary:
 			far_lights.append(node)
 	var grass_geometry := _geometry_nodes(grass)
 	var tree_geometry := _geometry_nodes(trees)
-	return {"near_proxy_nodes": near_proxy_nodes, "near_proxy_paths": _node_paths(near_proxy_nodes), "near_proxy_visible": _node_visibilities(near_proxy_nodes), "far_terrain_nodes": far_terrain_nodes, "far_terrain_paths": _node_paths(far_terrain_nodes), "far_terrain_visible": _node_visibilities(far_terrain_nodes), "grass_visible": grass.visible, "trees_visible": trees.visible, "grass_geometry":grass_geometry,"grass_layers":_geometry_layers(grass_geometry),"tree_geometry":tree_geometry,"tree_layers":_geometry_layers(tree_geometry), "sun_shadow_enabled": sun.shadow_enabled, "far_lights": far_lights, "far_light_shadows": _light_shadows(far_lights)}
+	return {"near_proxy_nodes": near_proxy_nodes, "near_proxy_paths": _node_paths(near_proxy_nodes), "near_proxy_visible": _node_visibilities(near_proxy_nodes), "far_terrain_nodes": far_terrain_nodes, "far_terrain_paths": _node_paths(far_terrain_nodes), "far_terrain_visible": _node_visibilities(far_terrain_nodes), "cloud_mask_enabled": bool(scaled_far.get("CloudTransmittanceMaskEnabled")), "grass_visible": grass.visible, "trees_visible": trees.visible, "grass_geometry":grass_geometry,"grass_layers":_geometry_layers(grass_geometry),"tree_geometry":tree_geometry,"tree_layers":_geometry_layers(tree_geometry), "sun_shadow_enabled": sun.shadow_enabled, "far_lights": far_lights, "far_light_shadows": _light_shadows(far_lights)}
 
 
 func _restore_original_state() -> void:
+	if original_state.has("cloud_mask_enabled"):
+		scaled_far.set("CloudTransmittanceMaskEnabled", original_state.cloud_mask_enabled)
 	if tuning_drawer != null:
 		tuning_drawer.call("SetAtmosphereEnabled", false)
 	for index in original_state.near_proxy_nodes.size():
@@ -279,11 +377,40 @@ func _apply_case(label: String) -> bool:
 			tuning_drawer.call("SetAtmosphereHazeModel", 1 if "--model=physical" in OS.get_cmdline_user_args() else 0)
 			tuning_drawer.call("SetAtmospherePreset", 1)
 			tuning_drawer.call("SetAtmosphereEnabled", true)
+		"haze_off": tuning_drawer.call("SetAtmosphereEnabled", false)
+		"physical_q4", "physical_q8", "physical_q16":
+			_enable_physical_haze(int(label.trim_prefix("physical_q")))
+		"cloud_mask_off", "cloud_mask_on":
+			_enable_physical_haze(8)
+			scaled_far.set("CloudTransmittanceMaskEnabled", label == "cloud_mask_on")
 		_: _fail("unknown case " + label); return false
 	return true
 
 
+func _enable_physical_haze(quality: int) -> void:
+	tuning_drawer.call("SetAtmosphereHazeModel", 1)
+	tuning_drawer.call("SetAtmospherePreset", 0)
+	tuning_drawer.call("SetAtmosphereHazeQuality", quality)
+	tuning_drawer.call("SetAtmosphereEnabled", true)
+
+
+func _is_matrix_label(label: String) -> bool:
+	return label in MATRIX_LABELS
+
+
 func _verify_case(label: String) -> bool:
+	if _is_matrix_label(label):
+		var controller: Node = game.get_node_or_null("GraphicsQuality")
+		var haze: Dictionary = controller.call("GetAtmosphereTuningDiagnostics") if controller != null else {}
+		if bool(haze.get("enabled", false)) != (label != "haze_off"):
+			_fail("atmosphere enabled state was wrong for " + label)
+			return false
+		if label.begins_with("physical_q") and int(haze.get("haze_quality", -1)) != int(label.trim_prefix("physical_q")):
+			_fail("haze quality was not applied for " + label + ": " + str(haze.get("haze_quality", -1)))
+			return false
+		if label.begins_with("cloud_mask_") and bool(scaled_far.get("CloudTransmittanceMaskEnabled")) != (label == "cloud_mask_on"):
+			_fail("cloud transmittance mask state was not applied for " + label)
+			return false
 	if label.ends_with("haze"):
 		var controller: Node = game.get_node_or_null("GraphicsQuality")
 		var haze: Dictionary = controller.call("GetAtmosphereTuningDiagnostics") if controller != null else {}
@@ -303,7 +430,8 @@ func _verify_case(label: String) -> bool:
 		return false
 	for index in original_state.grass_geometry.size():
 		var grass_layer: int = 0 if label == "grass_hidden" else original_state.grass_layers[index]
-		if original_state.grass_geometry[index].layers != grass_layer:
+		# Pose moves in the haze matrix can stream geometry out; freed nodes are skipped.
+		if is_instance_valid(original_state.grass_geometry[index]) and original_state.grass_geometry[index].layers != grass_layer:
 			_fail("grass render layer was not applied for " + label)
 			return false
 	if trees.visible != bool(original_state.trees_visible):
@@ -311,7 +439,7 @@ func _verify_case(label: String) -> bool:
 		return false
 	for index in original_state.tree_geometry.size():
 		var tree_layer: int = 0 if label == "trees_hidden" else original_state.tree_layers[index]
-		if original_state.tree_geometry[index].layers != tree_layer:
+		if is_instance_valid(original_state.tree_geometry[index]) and original_state.tree_geometry[index].layers != tree_layer:
 			_fail("tree render layer was not applied for " + label)
 			return false
 	if sun.shadow_enabled != (false if label == "directional_shadows_off" else bool(original_state.sun_shadow_enabled)):
@@ -342,6 +470,7 @@ func _sample_case(label: String) -> Dictionary:
 	var primitives: Array[float] = []
 	var video_bytes: Array[float] = []
 	var frames: Array[Dictionary] = []
+	var per_viewport := {}
 	var sample_start := Time.get_ticks_usec()
 	while draw_calls.size() < MIN_SAMPLE_FRAMES or (Time.get_ticks_usec() - sample_start) * .000001 < TARGET_SAMPLE_SECONDS:
 		if (Time.get_ticks_usec() - sample_start) * .000001 >= MAX_SAMPLE_SECONDS:
@@ -354,6 +483,11 @@ func _sample_case(label: String) -> Dictionary:
 		var root_timing: Dictionary = viewport_timings[0]
 		root_gpu.append(root_timing.gpu_ms)
 		root_cpu.append(root_timing.cpu_ms)
+		for timing in viewport_timings:
+			var key := str(timing.path).get_file()
+			if not per_viewport.has(key):
+				per_viewport[key] = [] as Array[float]
+			per_viewport[key].append(timing.gpu_ms)
 		var far_timing := _far_viewport_timing(viewport_timings)
 		far_gpu.append(far_timing.gpu_ms)
 		far_cpu.append(far_timing.cpu_ms)
@@ -361,7 +495,7 @@ func _sample_case(label: String) -> Dictionary:
 		primitives.append(Performance.get_monitor(Performance.Monitor.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 		video_bytes.append(Performance.get_monitor(Performance.Monitor.RENDER_VIDEO_MEM_USED))
 		frames.append({"wall_ms": (Time.get_ticks_usec() - start) * .001, "runtime_counters": runtime_counters.call("CaptureCounters")})
-	var submissions_changed := label.begins_with("baseline") or label.ends_with("haze") or absf(_mean(draw_calls) - _baseline_submission_mean("draw_calls")) > 0.01 or absf(_mean(primitives) - _baseline_submission_mean("primitives")) > 0.01
+	var submissions_changed := label.begins_with("baseline") or label.ends_with("haze") or _is_matrix_label(label) or absf(_mean(draw_calls) - _baseline_submission_mean("draw_calls")) > 0.01 or absf(_mean(primitives) - _baseline_submission_mean("primitives")) > 0.01
 	if not submissions_changed:
 		_fail("%s did not change draw-call or primitive submissions" % label)
 		return {}
@@ -374,7 +508,7 @@ func _sample_case(label: String) -> Dictionary:
 			"baseline restoration changed submissions (draw %.3f, primitives %.3f)" % [draw_delta, primitive_delta])
 		if failed:
 			return {}
-	return {"label": label, "warmup_frames": WARMUP_FRAMES, "samples": draw_calls.size(), "sample_seconds": (Time.get_ticks_usec() - sample_start) * .000001, "hidden": _hidden_state(), "root_gpu_ms": _stats(root_gpu), "root_cpu_ms": _stats(root_cpu), "far_gpu_ms": _stats(far_gpu), "far_cpu_ms": _stats(far_cpu), "draw_calls": _stats(draw_calls), "primitives": _stats(primitives), "video_memory_bytes": _stats(video_bytes), "runtime_counters": frames, "workload_identity": _workload_identity()}
+	return {"label": label, "warmup_frames": WARMUP_FRAMES, "samples": draw_calls.size(), "sample_seconds": (Time.get_ticks_usec() - sample_start) * .000001, "hidden": _hidden_state(), "root_gpu_ms": _stats(root_gpu), "root_cpu_ms": _stats(root_cpu), "far_gpu_ms": _stats(far_gpu), "far_cpu_ms": _stats(far_cpu), "viewport_gpu_ms": _viewport_stats(per_viewport), "cloud_mask_active": bool(scaled_far.get("CloudMaskActive")), "draw_calls": _stats(draw_calls), "primitives": _stats(primitives), "video_memory_bytes": _stats(video_bytes), "runtime_counters": frames, "workload_identity": _workload_identity()}
 
 
 func _baseline_submission_mean(metric: String) -> float:
@@ -391,7 +525,20 @@ func _viewport_timings() -> Array[Dictionary]:
 	return result
 
 
+func _viewport_stats(per_viewport: Dictionary) -> Dictionary:
+	var result := {}
+	for key in per_viewport:
+		var values: Array[float] = []
+		values.assign(per_viewport[key])
+		result[key] = _stats(values)
+	return result
+
+
 func _far_viewport_timing(timings: Array[Dictionary]) -> Dictionary:
+	# Prefer the far ring SubViewport itself; the generic match below also hits mask/compose children.
+	for timing in timings:
+		if str(timing.path).ends_with("/FarRingViewport"):
+			return timing
 	for timing in timings:
 		if "ScaledFarViewport" in str(timing.path):
 			return timing
@@ -413,7 +560,7 @@ func _hidden_state() -> Dictionary:
 func _hidden_geometry_count(nodes: Array) -> int:
 	var count := 0
 	for node in nodes:
-		if node.layers == 0: count += 1
+		if is_instance_valid(node) and node.layers == 0: count += 1
 	return count
 
 
@@ -441,7 +588,8 @@ func _geometry_layers(nodes: Array) -> Array[int]:
 	for node in nodes: result.append(node.layers)
 	return result
 func _set_geometry_layers(nodes: Array, layers: int) -> void:
-	for node in nodes: node.layers = layers
+	for node in nodes:
+		if is_instance_valid(node): node.layers = layers
 func _restore_geometry_layers(nodes: Array, layers: Array) -> void:
 	for index in nodes.size():
 		if is_instance_valid(nodes[index]): nodes[index].layers = layers[index]
