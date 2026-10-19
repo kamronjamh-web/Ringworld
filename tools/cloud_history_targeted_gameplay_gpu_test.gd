@@ -91,6 +91,10 @@ func run() -> void:
 	# the assertions measure persistent/transient RGB rather than atmosphere.
 	clouds.set("ring_atmosphere_profile", [])
 	clouds.set("ray_start_jitter_strength", 0.0)
+	# Gameplay defaults to CloudInterleave 2x2, whose fill pass only approximates a full march (spatial/clamped
+	# reconstruction), so retained-vs-fresh comparisons never converge to the full-march reference no matter the
+	# warmup. These contracts are about history/flash semantics, so march every pixel; interleave has its own gates.
+	clouds.set("cloud_interleave", 0)
 	var dither_image := Image.create(1,1,false,Image.FORMAT_RGBA8); dither_image.fill(Color(0.5,0.5,0.5,1))
 	var dither_texture := ImageTexture3D.new()
 	if dither_texture.create(Image.FORMAT_RGBA8,1,1,1,false,[dither_image]) != OK: return fail_capture("constant dither creation failed")
@@ -301,8 +305,14 @@ func assert_fixed_radiance(a: Dictionary, b: Dictionary) -> bool:
 	var unexpected_ubo: Array = []
 	# The advancing dither phase is inert with jitter0. History weight and
 	# ping-pong selector intentionally differ between retained/fresh captures.
+	# ring_perf_controls is the last vec4 of GenericData (append-only); x = interleave phase, z = history clamp
+	# gamma, w = fill-pass history weight. All three are derived from the requested decay / interleave state, so
+	# they legitimately differ between the retained (0.95, interleaved) and fresh (0.0, full march) captures.
+	# y (resolution-jitter phase) stays strict. Located from the buffer end so layout growth cannot stale it.
+	var perf_base: int = int((clouds.get("general_data") as PackedByteArray).size()) - 16
+	var allowed_bytes: Array = [224,244,248, perf_base, perf_base + 8, perf_base + 12]
 	for item in delta.ubo:
-		if int(item.byte) not in [224,244,248]: unexpected_ubo.append(item)
+		if int(item.byte) not in allowed_bytes: unexpected_ubo.append(item)
 	if not properties.is_empty() or not unexpected_ubo.is_empty() or not delta.light_ubo.is_empty():
 		fail_capture("fixed radiance inputs drifted: "+JSON.stringify({"properties":properties,
 			"ubo":unexpected_ubo,"light_ubo":delta.light_ubo}))
