@@ -113,6 +113,22 @@ ringworld_haze_storm={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_haze_sky_lut0={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_haze_sky_lut1={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_haze_sky_lut2={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_haze_sky_lut_key={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_surface_aperture_0={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)

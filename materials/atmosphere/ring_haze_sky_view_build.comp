@@ -1,0 +1,53 @@
+#version 450
+// Sky-view LUT build (P7-1). Compiled at runtime by scripts/Atmosphere/RingAtmosphereLuts.cs, which expands the #include lines itself
+// (RDShaderSource has no include support), so this file is deliberately not a Godot-imported .glsl resource.
+// One thread per texel of the 192 x 108 LUT; see materials/atmosphere/ring_haze_sky_view.gdshaderinc for the layout and mapping.
+#define RING_HAZE_NO_LUTS
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(rgba16f, set = 0, binding = 0) uniform restrict writeonly image2D lut0_image;
+layout(rgba16f, set = 0, binding = 1) uniform restrict writeonly image2D lut1_image;
+layout(rgba16f, set = 0, binding = 2) uniform restrict writeonly image2D lut2_image;
+
+// Packed by RingAtmosphereLuts.PackBuildParams (9 vec4). Unstormed model values + the storm vector (ring_haze_apply_storm is the producer).
+layout(set = 0, binding = 3, std140) uniform BuildParams {
+	vec4 sigma_R_H_R;     // sigma_R.xyz, H_R
+	vec4 aerosol;         // sigma_A, omega_A, H_A, sigma_M0
+	vec4 mist;            // omega_M, H_mist, cap_height, g
+	vec4 geometry;        // radius_m, floor_depth_m, camera_height_m, quality
+	vec4 sides;           // side_negative_m, side_positive_m, graze constant k, unused
+	vec4 outward;         // xyz
+	vec4 axis;            // xyz
+	vec4 to_sun;          // xyz (hub-blended primary light direction)
+	vec4 storm;           // ringworld_haze_storm
+} build;
+
+#include "res://materials/ring_atmosphere_shared.gdshaderinc"
+#include "res://materials/ring_haze_shared.gdshaderinc"
+#include "res://materials/atmosphere/ring_haze_sky_view.gdshaderinc"
+
+void main() {
+	ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+	if (texel.x >= int(RING_HAZE_SKY_LUT_WIDTH) || texel.y >= int(RING_HAZE_SKY_LUT_HEIGHT)) return;
+	RingHazeParams p = ring_haze_params_default();
+	p.sigma_R = build.sigma_R_H_R.xyz;
+	p.H_R = build.sigma_R_H_R.w;
+	p.sigma_A = build.aerosol.x;
+	p.omega_A = build.aerosol.y;
+	p.H_A = build.aerosol.z;
+	p.sigma_M0 = build.aerosol.w;
+	p.omega_M = build.mist.x;
+	p.H_mist = build.mist.y;
+	p.cap_height = build.mist.z;
+	p.g = build.mist.w;
+	p.quality = int(build.geometry.w + 0.5);
+	p.to_sun = normalize(build.to_sun.xyz);
+	p = ring_haze_apply_storm(p, build.storm);
+	RingHazeSkyFrame frame = ring_haze_sky_frame(build.outward.xyz, build.axis.xyz, build.sides.z);
+	vec3 dir = ring_haze_sky_texel_direction(frame, texel);
+	RingHazeSkyTerms t = ring_haze_eval_sky_terms(p, dir, vec3(0.0), build.geometry.z, build.outward.xyz, build.axis.xyz, build.sides.x, build.sides.y, 1.0, build.geometry.x, build.geometry.y);
+	imageStore(lut0_image, texel, vec4(t.T, t.B.r));
+	imageStore(lut1_image, texel, vec4(t.A_R, t.B.g));
+	imageStore(lut2_image, texel, vec4(t.A_M, t.B.b));
+}

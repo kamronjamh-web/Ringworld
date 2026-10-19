@@ -20,7 +20,7 @@ extends SceneTree
 ## Flags: --report (print table, write baseline JSON, always exit 0), --strict (ignore KNOWN_FAILING),
 ##        --model=physical (P2a: the object path uses ring_haze_sample with atmosphere_haze_model = 1; default is Legacy),
 ##        --luts (needs --model=physical: renders the production sky from the P7 sky-view LUT vs the analytic function; contracts
-##        sky_lut_render_matches_analytic and sky_lut_fallback; builds the LUT through scripts/Atmosphere/RingAtmosphereLuts.cs),
+##        sky_lut_render_matches_analytic, sky_lut_path_taken (a stale-sun LUT changes the render by >= 5%, proving the LUT is read) and sky_lut_fallback; builds the LUT through scripts/Atmosphere/RingAtmosphereLuts.cs),
 ##        --toward-sun (view azimuth toward the sun instead of away), --cinematic, --altitude=<m>,
 ##        --out=<path> (baseline JSON path; default user://haze_consistency_baseline.json).
 
@@ -59,6 +59,7 @@ const TOL_CPU_SKY_PARITY := 0.02
 # P8-1 sky-view LUT (--luts, needs --model=physical): LUT render vs analytic render (LDR centre pixel, relative with a 0.01 floor), and the
 # analytic fallback must reproduce the analytic render for a key that does not match the camera.
 const TOL_SKY_LUT_RENDER := 0.02
+const TOL_SKY_LUT_PATH_TAKEN := 0.05
 const TOL_SKY_LUT_FALLBACK := 0.001
 const SKY_NIGHT_MAX_RATIO := 0.1
 const SKY_ECLIPSE_MAX_RATIO := 1.2
@@ -1087,6 +1088,9 @@ func _run_sky_lut_contracts() -> Array:
 	luts.call("SetSkyViewEnabled", true)
 	var render_max := 0.0
 	var render_label := ""
+	var render_worst_detail := ""
+	var path_min := INF
+	var path_details: Array = []
 	var fallback_max := 0.0
 	var key_ok := true
 	var built_ok := true
@@ -1111,6 +1115,7 @@ func _run_sky_lut_contracts() -> Array:
 		_request_sky_lut(luts, to_sun)
 		var key: Vector4 = luts.call("GetPublishedKey")
 		key_ok = key_ok and key.w > 0.5 and absf(key.x - _altitude) < 0.01
+		var analytic_by_elev := {}
 		for elev in [0.0, 10.0, 45.0]:
 			_request_sky_lut(luts, to_sun)
 			var lut_pixel: Color = await _render_sky_pixel(elev)
@@ -1118,10 +1123,12 @@ func _run_sky_lut_contracts() -> Array:
 			luts.call("SetSkyViewEnabled", false)
 			_request_sky_lut(luts, to_sun)
 			var analytic_pixel: Color = await _render_sky_pixel(elev)
+			analytic_by_elev[elev] = analytic_pixel
 			var error := _pixel_rel_error(lut_pixel, analytic_pixel)
-			if error > render_max:
+			if error > render_max or render_label == "":
 				render_max = error
 				render_label = "%s elev %.0f" % [light, elev]
+				render_worst_detail = "lut=%s analytic=%s" % [lut_pixel, analytic_pixel]
 			# Fallback: valid key for _altitude, but the material is 1 m higher (outside the 0.5 m match) -> analytic at that height.
 			_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude + 1.0)
 			var analytic_high: Color = await _render_sky_pixel(elev)
@@ -1131,11 +1138,42 @@ func _run_sky_lut_contracts() -> Array:
 			_sky_material.set_shader_parameter("sky_camera_height_meters", _altitude)
 			fallback_max = maxf(fallback_max, maxf(maxf(absf(mismatched.r - analytic_high.r), absf(mismatched.g - analytic_high.g)), absf(mismatched.b - analytic_high.b)))
 			if _failed: return []
+		# sky_lut_path_taken: build the LUT for the OTHER light's sun and render with this light's material sun; a LUT read must differ.
+		var other_sun := _to_sun("dusk" if light == "noon" else "noon")
+		var before_builds := int(luts.call("GetBuildsCompleted"))
+		_request_sky_lut(luts, other_sun)
+		var stale_waited := 0
+		while int(luts.call("GetBuildsCompleted")) <= before_builds:
+			await RenderingServer.frame_post_draw
+			_request_sky_lut(luts, other_sun)
+			stale_waited += 1
+			if stale_waited > 300:
+				_fail("sky-view LUT stale-sun build never completed: " + String(luts.call("GetStatus")))
+				return []
+		var diffs: Array = []
+		for elev in [10.0, 45.0]:
+			var stale_pixel: Color = await _render_sky_pixel(elev)
+			var diff := _pixel_rel_error(stale_pixel, analytic_by_elev[elev])
+			path_min = minf(path_min, diff)
+			diffs.append("elev %.0f %.4f" % [elev, diff])
+		path_details.append("%s: %s" % [light, ", ".join(diffs)])
+		before_builds = int(luts.call("GetBuildsCompleted"))
+		_request_sky_lut(luts, to_sun)
+		stale_waited = 0
+		while int(luts.call("GetBuildsCompleted")) <= before_builds:
+			await RenderingServer.frame_post_draw
+			_request_sky_lut(luts, to_sun)
+			stale_waited += 1
+			if stale_waited > 300:
+				_fail("sky-view LUT restore build never completed: " + String(luts.call("GetStatus")))
+				return []
 	luts.call("Release")
 	_restore_globals()
 	return [
 		_contract("sky_lut_render_matches_analytic", key_ok and built_ok and render_max <= TOL_SKY_LUT_RENDER,
-			"max rel error %.4f (%s), tolerance %.3f, key valid=%s" % [render_max, render_label, TOL_SKY_LUT_RENDER, key_ok]),
+			"max rel error %.4f (%s), tolerance %.3f, key valid=%s, worst %s" % [render_max, render_label, TOL_SKY_LUT_RENDER, key_ok, render_worst_detail]),
+		_contract("sky_lut_path_taken", path_min >= TOL_SKY_LUT_PATH_TAKEN,
+			"stale-sun LUT render vs analytic, rel difference (%s); min %.4f, required >= %.2f" % ["; ".join(path_details), path_min, TOL_SKY_LUT_PATH_TAKEN]),
 		_contract("sky_lut_fallback", fallback_max <= TOL_SKY_LUT_FALLBACK,
 			"max abs pixel difference %.5f between a mismatched-key render and the analytic render (tolerance %.4f)" % [fallback_max, TOL_SKY_LUT_FALLBACK]),
 	]

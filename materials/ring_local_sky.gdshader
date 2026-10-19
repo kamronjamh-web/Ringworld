@@ -1,6 +1,7 @@
 shader_type sky;
 
 #include "res://materials/ring_atmosphere.gdshaderinc"
+#include "res://materials/atmosphere/ring_haze_sky_view.gdshaderinc"
 
 uniform vec3 local_surface_up = vec3(-1.0, 0.0, 0.0);
 uniform vec3 ring_axis_direction = vec3(0.0, 1.0, 0.0);
@@ -288,8 +289,22 @@ void sky() {
 		float across_m = camera_across_ratio * ring_radius_m;
 		RingHazeParams hp = ring_haze_apply_storm(ring_haze_uniform_params(to_sun, outward), ringworld_haze_storm);
 		hp.quality = AT_CUBEMAP_PASS ? 4 : ring_haze_quality;
-		RingHaze haze = ring_haze_eval_sky(hp, view_direction, vec3(0.0), sky_camera_height_meters, outward, axis,
-			half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);
+		RingHaze haze;
+		bool use_analytic_haze = true;
+#ifndef RING_HAZE_NO_LUTS
+		// Sky-view LUT (P8-1): a phase-factored cache of ring_haze_eval_sky, used when RingAtmosphereLuts published a key that matches
+		// this camera (height and across within 0.5 m) and the Physical params it was built with; otherwise the analytic call below.
+		// The visible pass reads it only at/above the graze elevation (the lower half has a sidewall/far-floor step the LUT cannot
+		// resolve and is covered by geometry); the radiance cubemap pass reads it everywhere.
+		if (ring_haze_sky_view_usable(sky_camera_height_meters, across_m) && ring_haze_sky_view_covers(view_direction, outward, axis, AT_CUBEMAP_PASS)) {
+			haze = ring_haze_sky_terms_assemble(hp, ring_haze_sky_view_sample(view_direction, outward, axis), view_direction);
+			use_analytic_haze = false;
+		}
+#endif
+		if (use_analytic_haze) {
+			haze = ring_haze_eval_sky(hp, view_direction, vec3(0.0), sky_camera_height_meters, outward, axis,
+				half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);
+		}
 		vec3 in_scatter = haze.S_sun + haze.S_amb;
 		// No additive hub in-scatter here: the model already carries the hub through day = max(geo * vis, hub_day) and the cool hub
 		// multiplier on E_sun, and terrain/clouds never got the extra term, so adding it double-counted the hub and broke convergence.

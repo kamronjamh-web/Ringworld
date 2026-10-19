@@ -32,6 +32,8 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public float StormHaze { get; set; } = 1.0f;
     /// <summary>P6: gain (0-1) on the Godot-fog fade of Sunshine clouds in caves and underwater (RingAtmosphereModel.EnclosedCloudFog). Absent in older files, which load as 1.</summary>
     [Export] public float EnclosedCloudFog { get; set; } = 1.0f;
+    /// <summary>P7/P8: render the Physical sky from the cached sky-view LUT (RingAtmosphereLuts) instead of the analytic function. Absent in older files, which load as on.</summary>
+    [Export] public bool SkyHazeLut { get; set; } = true;
     /// <summary>Optical-depth quadrature points: 4, 8 or 16.</summary>
     [Export] public int HazeQuality { get; set; } = 8;
 }

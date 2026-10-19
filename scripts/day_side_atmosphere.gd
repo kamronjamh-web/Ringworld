@@ -271,6 +271,9 @@ var _haze_bridge_pending: bool = false
 # Model-derived haze ambient (RingHazeSkyIrradiance); recomputed only when its inputs move (see _publish_haze_lighting).
 var _haze_sky: RefCounted = null
 var _haze_sky_load_failed: bool = false
+# Sky-view LUT host (RingAtmosphereLuts, P7-1): caches ring_haze_eval_sky for ring_local_sky; see _update_sky_haze_lut.
+var _atmosphere_luts: RefCounted = null
+var _atmosphere_luts_load_failed: bool = false
 var _haze_cache_valid: bool = false
 var _haze_cache_up_dot: float = 0.0
 var _haze_cache_giant_dot: float = 0.0
@@ -1130,6 +1133,9 @@ func _exit_tree() -> void:
 	if _haze_sky != null:
 		_haze_sky.call("SetStorm", 0.0)
 	_haze_sky = null
+	if _atmosphere_luts != null:
+		_atmosphere_luts.call("Release")
+	_atmosphere_luts = null
 	_haze_cache_valid = false
 	# Global shader parameters survive scene changes; reset before returning to
 	# menus or scenes with no celestial clock.
@@ -1259,6 +1265,28 @@ func _update_sky(
 	_set_sky_param("planet_haze_horizon_start_dot", planet_light_horizon_fade_start_dot)
 	_set_sky_param("planet_haze_horizon_full_dot", planet_light_horizon_full_dot)
 	_set_sky_param("planet_haze_twilight_end_day_factor", planet_light_twilight_end_day_factor)
+	_update_sky_haze_lut(viewer_frame, ring_radius, to_sun)
+
+
+# Keeps the sky-view LUT (a phase-factored cache of ring_haze_eval_sky, used only by ring_local_sky) in step with the sky's camera and sun.
+# Passes the hub-blended light direction exactly as ring_haze_uniform_params builds it. The host publishes ringworld_haze_sky_lut_key; the
+# sky falls back to the analytic function whenever that key is invalid (Legacy model, toggle off, no build yet, camera mismatch).
+func _update_sky_haze_lut(viewer_frame: Dictionary, ring_radius: float, to_sun: Vector3) -> void:
+	if _atmosphere_luts == null and not _atmosphere_luts_load_failed:
+		var script := load("res://scripts/Atmosphere/RingAtmosphereLuts.cs") as Script
+		if script != null:
+			_atmosphere_luts = script.new() as RefCounted
+		_atmosphere_luts_load_failed = _atmosphere_luts == null
+	if _atmosphere_luts == null:
+		return
+	var outward: Vector3 = viewer_frame["outward"]
+	var up := -outward.normalized()
+	var blended := to_sun.normalized().lerp(up, clampf(_published_hub_weight, 0.0, 1.0))
+	blended = blended.normalized() if blended.length() > 0.0001 else up
+	var half_width := _get_ring_width_meters() * 0.5
+	var across := float(viewer_frame["across"])
+	_atmosphere_luts.call("RequestSkyView", ring_radius, outward, viewer_frame["axis"], float(viewer_frame["height"]),
+			half_width + across, half_width - across, blended)
 
 
 func _get_viewer_position() -> Vector3:

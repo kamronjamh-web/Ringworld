@@ -14,7 +14,7 @@ const TARGET_SAMPLE_SECONDS := 5.0
 const MAX_SAMPLE_SECONDS := 10.0
 const FIXTURE_HELPER := preload("res://tools/AtmosphereVisualFixtureHelper.cs")
 # P7-0 measurement gate (`-- --haze-only`): each matrix label is sampled at each pose. `-- --no-matrix` skips it.
-const MATRIX_LABELS := ["haze_off", "physical_q4", "physical_q8", "physical_q16", "cloud_mask_off", "cloud_mask_on"]
+const MATRIX_LABELS := ["haze_off", "physical_q4", "physical_q8", "physical_q8_lut_off", "physical_q16", "cloud_mask_off", "cloud_mask_on"]
 const MATRIX_POSES := [
 	{"name": "ground_horizon", "pitch": 0.0, "lift": 0.0},
 	{"name": "sky_up", "pitch": 70.0, "lift": 0.0},
@@ -167,6 +167,15 @@ func _run_haze_matrix(report: Dictionary) -> bool:
 			var case_data := await _sample_case(label)
 			if failed:
 				return false
+			if label == "physical_q8" or label == "physical_q8_lut_off":
+				var key: Vector4 = _sky_lut_host().call("GetPublishedKey")
+				print("P7_0_LUT_KEY pose=%s label=%s key=%s" % [pose.name, label, key])
+				if label == "physical_q8" and key.w < 0.5:
+					_fail("sky-view LUT key was not valid for physical_q8 at pose " + str(pose.name))
+					return false
+				if label == "physical_q8_lut_off" and key.w > 0.5:
+					_fail("sky-view LUT key was still valid for physical_q8_lut_off at pose " + str(pose.name))
+					return false
 			case_data["pose"] = pose.duplicate()
 			report.matrix_cases.append(case_data)
 			partial_report.cases.append(case_data)
@@ -217,6 +226,12 @@ func _print_matrix_table(cases: Array) -> void:
 	if ground.has("haze_off") and ground.has("physical_q8"):
 		var non_sky := _matrix_main_far(ground["physical_q8"]).y - _matrix_main_far(ground["haze_off"]).y
 		print("P7_0_GATE transmittance_lut: far non-sky haze (ground_horizon q8 - off, before any sky LUT) = %.3f ms -> %s (threshold %.1f)" % [non_sky, "GO" if non_sky >= GATE_NON_SKY_MS else "NO-GO", GATE_NON_SKY_MS])
+	for pose in MATRIX_POSES:
+		var lut_rows: Dictionary = by_pose.get(pose.name, {})
+		if lut_rows.has("physical_q8") and lut_rows.has("physical_q8_lut_off"):
+			var lut_on := _matrix_main_far(lut_rows["physical_q8"])
+			var lut_off := _matrix_main_far(lut_rows["physical_q8_lut_off"])
+			print("P7_0_LUT %s: far lut_on=%.3f lut_off=%.3f saving=%.3f ms; main saving=%.3f ms" % [pose.name, lut_on.y, lut_off.y, lut_off.y - lut_on.y, lut_off.x - lut_on.x])
 	for pose in MATRIX_POSES:
 		var rows: Dictionary = by_pose.get(pose.name, {})
 		if rows.has("cloud_mask_on") and rows.has("cloud_mask_off"):
@@ -333,6 +348,7 @@ func _capture_original_state() -> Dictionary:
 
 
 func _restore_original_state() -> void:
+	_sky_lut_host().call("SetSkyViewEnabled", true)
 	if original_state.has("cloud_mask_enabled"):
 		scaled_far.set("CloudTransmittanceMaskEnabled", original_state.cloud_mask_enabled)
 	if tuning_drawer != null:
@@ -380,11 +396,19 @@ func _apply_case(label: String) -> bool:
 		"haze_off": tuning_drawer.call("SetAtmosphereEnabled", false)
 		"physical_q4", "physical_q8", "physical_q16":
 			_enable_physical_haze(int(label.trim_prefix("physical_q")))
+		"physical_q8_lut_off":
+			# P7-0 LUT A/B: physical_q8 with the sky-view LUT disabled directly (not persisted; re-enabled in _restore_original_state).
+			_enable_physical_haze(8)
+			_sky_lut_host().call("SetSkyViewEnabled", false)
 		"cloud_mask_off", "cloud_mask_on":
 			_enable_physical_haze(8)
 			scaled_far.set("CloudTransmittanceMaskEnabled", label == "cloud_mask_on")
 		_: _fail("unknown case " + label); return false
 	return true
+
+
+func _sky_lut_host() -> RefCounted:
+	return (load("res://scripts/Atmosphere/RingAtmosphereLuts.cs") as Script).new()
 
 
 func _enable_physical_haze(quality: int) -> void:
@@ -405,7 +429,7 @@ func _verify_case(label: String) -> bool:
 		if bool(haze.get("enabled", false)) != (label != "haze_off"):
 			_fail("atmosphere enabled state was wrong for " + label)
 			return false
-		if label.begins_with("physical_q") and int(haze.get("haze_quality", -1)) != int(label.trim_prefix("physical_q")):
+		if label.begins_with("physical_q") and int(haze.get("haze_quality", -1)) != int(label.get_slice("_lut_", 0).trim_prefix("physical_q")):
 			_fail("haze quality was not applied for " + label + ": " + str(haze.get("haze_quality", -1)))
 			return false
 		if label.begins_with("cloud_mask_") and bool(scaled_far.get("CloudTransmittanceMaskEnabled")) != (label == "cloud_mask_on"):
