@@ -9,6 +9,7 @@ public partial class RingBiomeDecorationLayer
     // Weak keys keep replacement materials from extending the cache lifetime.
     private readonly ConditionalWeakTable<ShaderMaterial, TreeAtmosphereMaterialFrame> _treeAtmosphereFrames = new();
     private long _treeAtmosphereParameterWrites;
+    private RingAtmosphereRayFrame _treeHazeRayFrame = RingAtmosphereRayFrame.Invalid;
 
     private static readonly StringName AtmosphereRayFrameValidParameter = "ring_atmosphere_ray_frame_valid";
     private static readonly StringName AtmosphereCameraWorldPositionParameter = "ring_atmosphere_camera_world_position";
@@ -43,11 +44,13 @@ public partial class RingBiomeDecorationLayer
 
     private void UpdateTreeAtmosphereRayFrame(Vector3 sunDirection)
     {
-        if (_grid == null || _treeMaterials.Count == 0) return;
+        if (_grid == null) return;
         Camera3D? camera = GetViewport().GetCamera3D();
         RingAtmosphereRayFrame frame = camera == null
             ? RingAtmosphereRayFrame.Invalid
             : RingAtmosphereRayFrame.FromMainCamera(_grid, camera, sunDirection);
+        _treeHazeRayFrame = frame;
+        if (_treeMaterials.Count == 0) return;
         foreach (ShaderMaterial material in _treeMaterials)
             ApplyTreeAtmosphereRayFrame(material, frame);
     }

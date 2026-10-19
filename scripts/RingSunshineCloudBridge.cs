@@ -1146,6 +1146,12 @@ public partial class RingSunshineCloudBridge : Node
         _clouds.Call("set_gameplay_cloud_frame", new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
     }
 
+    // Cost-attribution debug knob (tools/terrain_render_attribution_test.gd --haze-main): packs the all-zero profile (the haze-off
+    // path) for Sunshine only while every other haze consumer stays on. Never set by production code; false is the normal path.
+    private bool _debugCloudHazeDisabled;
+    public void SetDebugCloudHazeDisabled(bool disabled) => _debugCloudHazeDisabled = disabled;
+    public bool IsDebugCloudHazeDisabled() => _debugCloudHazeDisabled;
+
     private void UpdateAtmosphereProfile(double preciseRadius)
     {
         if (_clouds == null || _grid == null) return;
@@ -1162,7 +1168,7 @@ public partial class RingSunshineCloudBridge : Node
         // the compositor's fixed UBO ABI always receives a complete profile.
         var profile = new Godot.Collections.Array<Vector4>();
         profile.Resize(RingAtmosphereModel.CloudProfileSlots);
-        if (frame.Valid && RingAtmosphereModel.Enabled)
+        if (frame.Valid && RingAtmosphereModel.Enabled && !_debugCloudHazeDisabled)
         {
             RingAtmosphereModel.PackCloudProfile(profile, preciseRadius, frame.OutwardWorld, frame.AxisWorld, frame.CameraHeightMeters,
                 frame.SidewallNegativeMeters, frame.SidewallPositiveMeters, frame.ToSun, solarVisibility, hubDay);

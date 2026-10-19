@@ -129,6 +129,18 @@ ringworld_haze_sky_lut_key={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_vegetation_haze_grass={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_vegetation_haze_trees={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_vegetation_haze_state={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_surface_aperture_0={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)

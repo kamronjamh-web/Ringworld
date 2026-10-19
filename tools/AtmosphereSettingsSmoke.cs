@@ -230,12 +230,32 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         bool slOldFile = slLine && slOld.Settings.SkyHazeLut && RingworldTechDemo.Atmosphere.RingAtmosphereLuts.SkyViewEnabled;
         slOld.Reset();
         bool skyHazeLut = slDefault && slApplied && slPersisted && slOldFile;
-        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing && stormHaze && enclosedCloudFog && skyHazeLut;
+        // Per-instance vegetation haze toggle: default on, applied to RingVegetationHaze, persisted when off, old files load on.
+        var vh = new AtmosphereVisualDefaults(isolatedPath);
+        vh.Reset();
+        bool vhDefault = vh.Settings.VegetationInstanceHaze && RingworldTechDemo.Atmosphere.RingVegetationHaze.Enabled;
+        vh.SetVegetationInstanceHaze(false);
+        bool vhApplied = !RingworldTechDemo.Atmosphere.RingVegetationHaze.Enabled;
+        bool vhSaved = vh.Save();
+        var vhReload = new AtmosphereVisualDefaults(isolatedPath);
+        vhReload.Initialize();
+        bool vhPersisted = vhSaved && !vhReload.Settings.VegetationInstanceHaze && !RingworldTechDemo.Atmosphere.RingVegetationHaze.Enabled;
+        string vhPath = ProjectSettings.GlobalizePath(isolatedPath);
+        string vhText = System.IO.File.ReadAllText(vhPath);
+        string vhStripped = string.Join('\n', System.Array.FindAll(vhText.Split('\n'), line => !line.StartsWith("VegetationInstanceHaze")));
+        bool vhLine = vhStripped.Length < vhText.Length;
+        System.IO.File.WriteAllText(vhPath, vhStripped);
+        var vhOld = new AtmosphereVisualDefaults(isolatedPath);
+        vhOld.Initialize();
+        bool vhOldFile = vhLine && vhOld.Settings.VegetationInstanceHaze && RingworldTechDemo.Atmosphere.RingVegetationHaze.Enabled;
+        vhOld.Reset();
+        bool vegetationInstanceHaze = vhDefault && vhApplied && vhPersisted && vhOldFile;
+        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing && stormHaze && enclosedCloudFog && skyHazeLut && vegetationInstanceHaze;
         // Restore the persisted/default profile for callers that run this smoke
         // in-process before constructing a second world.
         RingAtmosphereModel.Enabled = true;
         reload.Reset();
         bool contracts = naturalContract && cinematicContract && zeroDensityContract && disabledContract && hazeToggle && hazeBrightness && physicalControls;
-        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing} stormHaze={stormHaze} enclosedCloudFog={enclosedCloudFog} skyHazeLut={skyHazeLut}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
+        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing} stormHaze={stormHaze} enclosedCloudFog={enclosedCloudFog} skyHazeLut={skyHazeLut} vegetationInstanceHaze={vegetationInstanceHaze}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
     }
 }

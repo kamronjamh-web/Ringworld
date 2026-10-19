@@ -75,6 +75,11 @@ global uniform vec3 ringworld_haze_ambient_night;
 // Storm grey-Mie haze (P9): (strength 0-1, aerosol extinction 1/m at strength 1, single-scatter albedo, Mie g). Single producer:
 // RingAtmosphereModel.HazeStormVector. Strength 0 leaves the clear params untouched.
 global uniform vec4 ringworld_haze_storm;
+// Cost-attribution debug knob for ring_haze_sample (tools/terrain_render_attribution_test.gd `--haze-only --haze-main`). Production code
+// never sets it. 0 = off (the normal path, unchanged); 1 = identity haze for this material (T = 1, S = 0, as with haze disabled);
+// 2 = cost probe, Physical only: the haze ray is clamped to 12 km so ring_haze_layer_integrals always takes its one-piece path (wrong
+// picture, only for timing the multi-piece quadrature).
+uniform int ring_haze_debug_mode = 0;
 
 float ring_atmosphere_altitude_blend(float camera_altitude) {
 	return smoothstep(
@@ -526,13 +531,27 @@ RingHazeParams ring_haze_uniform_params(vec3 to_sun, vec3 outward) {
 }
 
 RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_world, float day_factor) {
+	if (ring_haze_debug_mode == 1) {
+		RingHaze identity;
+		identity.T = vec3(1.0);
+		identity.S_sun = vec3(0.0);
+		identity.S_amb = vec3(0.0);
+		return identity;
+	}
 	if (atmosphere_haze_model == 0 || !ring_atmosphere_enabled || ring_radius_meters <= 1.0 || !ring_atmosphere_ray_frame_valid) {
 		return ring_haze_from_legacy(sample_ring_atmosphere(camera_world, target_world, center_world, day_factor));
 	}
 	float scale = max(ring_atmosphere_coordinate_scale, 0.000001);
+	vec3 haze_target = target_world;
+	if (ring_haze_debug_mode == 2) {
+		vec3 probe_delta = target_world - ring_atmosphere_camera_world_position;
+		float probe_length = length(probe_delta);
+		float probe_cap = 12000.0 * scale;
+		if (probe_length > probe_cap) haze_target = ring_atmosphere_camera_world_position + probe_delta * (probe_cap / probe_length);
+	}
 	RingHazeParams p = ring_haze_uniform_params(ring_atmosphere_to_sun, ring_atmosphere_outward_world);
 	// Storm haze thickens the local air only; the far-arch remote shell keeps the clear params.
-	RingHaze haze = ring_haze_eval_target_split(ring_haze_apply_storm(p, ringworld_haze_storm), p, ring_atmosphere_to_sun, ringworld_hub_light_weight, ringworld_hub_day, ringworld_solar_visibility, target_world, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
+	RingHaze haze = ring_haze_eval_target_split(ring_haze_apply_storm(p, ringworld_haze_storm), p, ring_atmosphere_to_sun, ringworld_hub_light_weight, ringworld_hub_day, ringworld_solar_visibility, haze_target, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
 		ring_atmosphere_outward_world, ring_atmosphere_axis_world, ring_atmosphere_sidewall_negative_meters,
 		ring_atmosphere_sidewall_positive_meters, scale, ring_radius_meters / scale, atmosphere_floor_depth_meters / scale);
 	// Per-material density multiplier (clouds and distant props bind < 1): scales optical depth, tau' = m * tau.

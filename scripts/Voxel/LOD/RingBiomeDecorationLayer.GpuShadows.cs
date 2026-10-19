@@ -121,6 +121,7 @@ public partial class RingBiomeDecorationLayer
             renderer.QueueFree();
             return null;
         }
+        renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(output.BatchId));
         var proxy = new GpuTreeShadowProxy { Renderer = renderer };
         _gpuTreeShadowProxies[output.BatchId] = proxy;
         return proxy;

@@ -81,6 +81,8 @@ public partial class RingStandingGrassLayer
         internal Vector2? GustUv;
         internal Vector4? TerrainOriginUv;
         internal bool? GpuCulled;
+        internal Vector2? HazeSlot;
+        internal MultiMeshInstance3D? HazeRenderer;
         internal long SnapshotRevision = -1;
         internal Transform3D WorldSnapshot;
         internal Transform3D LayerWorldSnapshot;
@@ -108,6 +110,7 @@ public partial class RingStandingGrassLayer
             state.GustUv = null;
             state.TerrainOriginUv = null;
             state.GpuCulled = null;
+            state.HazeSlot = null;
             state.SnapshotRevision = -1;
             state.LocalRevision = -1;
         }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Diagnostics;
 
 namespace RingworldTechDemo.Voxel.LOD;
@@ -56,6 +57,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
         // Read on the main thread during registration. RenderingDevice work must
         // never query a Godot Mesh.
         public float PrototypeHorizontalRadius;
+        // Per-instance haze atlas slots [HazeBase, HazeBase + Capacity); -1 = none (per-vertex fallback). Tag distinguishes reallocations.
+        public int HazeBase = -1;
+        public int HazeTag;
+        public Vector3 HazeAnchor;
     }
     private sealed class OutputMirror
     {
@@ -92,6 +97,20 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private readonly Queue<Batch> _retired = new();
     private RenderingDevice? _rd;
     private Rid _shader, _pipeline, _budgets;
+    // Per-instance haze (set 1 is bound for every instance because the shader declares it).
+    private Rid _hazePipeline, _hazeParams, _hazeAtlas, _hazeSet;
+    private int _hazeAtlasRows;
+    private volatile bool _hazeAtlasReady;
+    private RingVegetationHazeFrame? _hazeFrame;
+    private bool _hazeRefreshPending, _hazeRepoint, _hazeRefreshValid;
+    private ulong _hazeRefreshKey;
+    private Vector3 _hazeRefreshCamera, _hazeRefreshSun;
+    private readonly List<(int Start, int Length)> _hazeFree = new();
+    private int _hazeHighWater, _hazeTagCounter;
+    private readonly HashSet<int> _dispatchedIds = new();
+    private readonly List<Batch> _refreshBatches = new();
+    private long _hazeRefreshDispatchCount, _hazeRefreshCount;
+    private const int HazeInitialRows = 64;
     private FrameRequest? _pending, _lastRequest;
     private int _pendingGrassFrameRevision, _grassFrameRevision;
     private int _lastDispatchedCandidateCount;
@@ -106,7 +125,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private readonly List<(Batch Batch, BatchFrameParameters Frame)> _selectedWork = new();
     private readonly HashSet<int> _seen = new();
     private readonly byte[] _zeroBudgets = new byte[20];
-    private readonly byte[] _push = new byte[32];
+    private readonly byte[] _push = new byte[48];
     private string _status = "Uninitialized";
     private int _grassDispatchCursor;
     private int _lastFrameRequestedBatchCount, _lastFrameDispatchedBatchCount, _deferredBatchCount;
@@ -141,6 +160,14 @@ public sealed class RingGpuVegetationCompute : IDisposable
     public bool GroupGrassPhases { get => _groupGrassPhases; set => _groupGrassPhases = value; }
     /// <summary>Fuses eligible small tree compactions while retaining the legacy path for A/B comparison.</summary>
     public bool OptimizeTreeDispatches { get; set; } = true;
+    /// <summary>Per-instance haze atlas channel. Layers set it before <see cref="Initialize"/>; changing it afterwards is not supported.</summary>
+    public RingVegetationHaze.Channel HazeChannel { get; set; } = RingVegetationHaze.Channel.None;
+    /// <summary>Camera travel (m) after which already-compacted rows get their haze rewritten.</summary>
+    public float HazeRefreshMeters { get; set; } = 8f;
+    /// <summary>Sun direction change (degrees) after which already-compacted rows get their haze rewritten.</summary>
+    public float HazeRefreshSunDegrees { get; set; } = 0.25f;
+    public long HazeRefreshDispatchCount => Interlocked.Read(ref _hazeRefreshDispatchCount);
+    public long HazeRefreshCount => Interlocked.Read(ref _hazeRefreshCount);
 
     /// <summary>Creates the vegetation compute backend with grouped grass phases
     /// disabled unless explicitly requested.</summary>
@@ -184,6 +211,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
 
     public void Initialize()
     {
+        if (HazeChannel != RingVegetationHaze.Channel.None) RingVegetationHaze.ChannelTexture(HazeChannel);
         lock (_gate) if (!_disposed && !_failed && !_ready) QueueWork();
     }
 
@@ -199,9 +227,11 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 if (existing.Registration.MultiMesh == registration.MultiMesh) return -1;
             PrepareResource(registration);
             int id = ++_nextId;
-            _batches.Add(id, new Batch { Id = id, Registration = registration,
+            var created = new Batch { Id = id, Registration = registration,
                 PrototypeHorizontalRadius = PrototypeHorizontalRadius(registration.Mesh),
-                UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) });
+                UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) };
+            AssignHaze(created);
+            _batches.Add(id, created);
             _membershipRevision++;
             QueueWork();
             return id;
@@ -220,9 +250,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
             PrepareResource(registration);
             previous.Retired = true;
             _retired.Enqueue(previous);
-            _batches[id] = new Batch { Id = id, Registration = registration,
+            FreeHaze(previous);
+            var replacement = new Batch { Id = id, Registration = registration,
                 PrototypeHorizontalRadius = PrototypeHorizontalRadius(registration.Mesh),
                 UploadedHasProtectedRoots = HasProtectedRoots(registration.Metadata) };
+            AssignHaze(replacement);
+            _batches[id] = replacement;
             _membershipRevision++;
             QueueWork();
             return true;
@@ -251,10 +284,96 @@ public sealed class RingGpuVegetationCompute : IDisposable
             RetireMirror(id);
             batch.Retired = true;
             _retired.Enqueue(batch);
+            FreeHaze(batch);
             _membershipRevision++;
             QueueWork();
             return true;
         }
+    }
+
+    /// <summary>(slot base, tag) of the batch's per-instance haze atlas range, or (-1, 0) when it has none (unknown id, no channel, failed allocation).</summary>
+    public Vector2 GetHazeSlot(int batchId)
+    {
+        lock (_gate)
+            return _batches.TryGetValue(batchId, out Batch? batch) && batch.HazeBase >= 0 ? new Vector2(batch.HazeBase, batch.HazeTag) : new Vector2(-1, 0);
+    }
+
+    /// <summary>Called while holding <see cref="_gate"/>.</summary>
+    private void AssignHaze(Batch batch)
+    {
+        if (HazeChannel == RingVegetationHaze.Channel.None) return;
+        BatchRegistration r = batch.Registration;
+        int length = r.Capacity, start = -1;
+        for (int i = 0; i < _hazeFree.Count && start < 0; i++)
+        {
+            (int freeStart, int freeLength) = _hazeFree[i];
+            if (freeLength < length) continue;
+            start = freeStart;
+            if (freeLength == length) _hazeFree.RemoveAt(i); else _hazeFree[i] = (freeStart + length, freeLength - length);
+        }
+        if (start < 0)
+        {
+            if ((long)_hazeHighWater + length > (long)RingVegetationHaze.MaximumAtlasRows * RingVegetationHaze.SlotsPerRow) return;
+            start = _hazeHighWater;
+            _hazeHighWater += length;
+        }
+        batch.HazeBase = start;
+        batch.HazeTag = 2 + _hazeTagCounter++ % 2046;
+        Vector3 anchor = Vector3.Zero;
+        if (!r.Grass && !r.TreeCustomData)
+        {
+            Aabb aabb = r.Mesh.GetAabb();
+            if (aabb.Position.IsFinite() && aabb.Size.IsFinite()) anchor = aabb.GetCenter();
+        }
+        batch.HazeAnchor = anchor;
+    }
+
+    /// <summary>Called while holding <see cref="_gate"/>. Returns the batch's range to the first-fit free list.</summary>
+    private void FreeHaze(Batch batch)
+    {
+        if (batch.HazeBase < 0) return;
+        int start = batch.HazeBase, length = batch.Registration.Capacity;
+        batch.HazeBase = -1;
+        int at = 0;
+        while (at < _hazeFree.Count && _hazeFree[at].Start < start) at++;
+        _hazeFree.Insert(at, (start, length));
+        if (at + 1 < _hazeFree.Count && _hazeFree[at].Start + _hazeFree[at].Length == _hazeFree[at + 1].Start)
+        { _hazeFree[at] = (_hazeFree[at].Start, _hazeFree[at].Length + _hazeFree[at + 1].Length); _hazeFree.RemoveAt(at + 1); }
+        if (at > 0 && _hazeFree[at - 1].Start + _hazeFree[at - 1].Length == _hazeFree[at].Start)
+        { _hazeFree[at - 1] = (_hazeFree[at - 1].Start, _hazeFree[at - 1].Length + _hazeFree[at].Length); _hazeFree.RemoveAt(at); at--; }
+        if (_hazeFree[at].Start + _hazeFree[at].Length == _hazeHighWater) { _hazeHighWater = _hazeFree[at].Start; _hazeFree.RemoveAt(at); }
+    }
+
+    /// <summary>Main thread, every frame before <see cref="RequestFrame"/>. Publishes the haze inputs; culling writes haze for the rows it compacts
+    /// and a refresh pass rewrites already-compacted rows when the inputs moved without a cull.</summary>
+    public void RequestHaze(RingVegetationHazeFrame frame)
+    {
+        RingVegetationHaze.Channel channel = HazeChannel;
+        if (channel == RingVegetationHaze.Channel.None) return;
+        bool wasEnabled, live, usable;
+        lock (_gate)
+        {
+            usable = !_disposed && !_failed;
+            if (!usable) { wasEnabled = false; live = false; }
+            else
+            {
+                wasEnabled = _hazeFrame is { Enabled: true };
+                _hazeFrame = frame;
+                live = frame.Enabled && _ready && _hazeAtlasReady;
+            }
+        }
+        if (!usable) { RingVegetationHaze.SetChannelLive(channel, this, false); return; }
+        bool owned = RingVegetationHaze.IsChannelOwner(channel, this);
+        RingVegetationHaze.SetChannelLive(channel, this, live);
+        if (live && !owned) lock (_gate) { _hazeRepoint = true; QueueWork(); }
+        if (!frame.Enabled) return;
+        Vector3 sun = frame.ToSun.Normalized();
+        bool refresh = !wasEnabled || !_hazeRefreshValid || frame.Key != _hazeRefreshKey
+            || frame.CameraWorld.DistanceTo(_hazeRefreshCamera) > HazeRefreshMeters
+            || sun.Dot(_hazeRefreshSun) < Mathf.Cos(Mathf.DegToRad(HazeRefreshSunDegrees));
+        if (!refresh) return;
+        _hazeRefreshValid = true; _hazeRefreshKey = frame.Key; _hazeRefreshCamera = frame.CameraWorld; _hazeRefreshSun = sun;
+        lock (_gate) { _hazeRefreshPending = true; QueueWork(); }
     }
 
     /// <summary>Copies a parent indirect output into a same-format render-only MultiMesh after each parent dispatch.</summary>
@@ -472,13 +591,29 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 }
                 EnsureMirror(batch);
             }
+            RingVegetationHazeFrame? hazeFrame;
+            bool refreshPending, repoint;
+            int highWater;
+            lock (_gate)
+            {
+                hazeFrame = _hazeFrame;
+                refreshPending = _hazeRefreshPending; _hazeRefreshPending = false;
+                repoint = _hazeRepoint; _hazeRepoint = false;
+                highWater = _hazeHighWater;
+            }
+            GrowHazeAtlas(_rd!, highWater, repoint);
+            bool hazeOn = HazeChannel != RingVegetationHaze.Channel.None && hazeFrame is { Enabled: true, Parameters.Length: RingVegetationHaze.ParameterFloats }
+                && _hazeSet.IsValid;
+            if (hazeOn) _rd!.BufferUpdate(_hazeParams, 0, RingVegetationHaze.ParameterFloats * 4, FloatBytes(hazeFrame!.Value.Parameters));
+            _dispatchedIds.Clear();
             if (frame is not null)
             {
-                Dispatch(frame, grassFrameRevision);
+                Dispatch(frame, grassFrameRevision, hazeOn);
                 // Dispatch is the last reader of the pending snapshot; an exception skips this and merely drops it to the GC.
                 ReleaseSnapshotOf(frame);
             }
             else CopyOutputMirrors(_rd!);
+            if (hazeOn && refreshPending) DispatchHazeRefresh(batches);
         }
         catch (Exception error)
         {
@@ -494,7 +629,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 bool pendingMirror = false;
                 foreach (KeyValuePair<int, OutputMirror> entry in _mirrors)
                     if (!entry.Value.Allocated || (entry.Value.PendingCopy && _batches.TryGetValue(entry.Key, out Batch? source) && source.Dispatched)) { pendingMirror = true; break; }
-                if (_retired.Count > 0 || _retiredMirrors.Count > 0 || (!_disposed && !_failed && (_pending is not null || pendingMirror))) QueueWork();
+                if (_retired.Count > 0 || _retiredMirrors.Count > 0 || (!_disposed && !_failed && (_pending is not null || pendingMirror || _hazeRefreshPending || _hazeRepoint))) QueueWork();
             }
         }
     }
@@ -516,10 +651,74 @@ public sealed class RingGpuVegetationCompute : IDisposable
         _shader = _rd.ShaderCreateFromSpirV(spirv);
         if (!_shader.IsValid) throw new InvalidOperationException("Shader creation failed");
         _pipeline = _rd.ComputePipelineCreate(_shader);
+        _hazePipeline = _rd.ComputePipelineCreate(_shader, new Godot.Collections.Array<RDPipelineSpecializationConstant>
+            { new RDPipelineSpecializationConstant { ConstantId = 0, Value = true } });
         _budgets = _rd.StorageBufferCreate(20, _zeroBudgets);
-        if (!_pipeline.IsValid || !_budgets.IsValid) throw new InvalidOperationException("Compute allocation failed");
+        _hazeParams = _rd.UniformBufferCreate(RingVegetationHaze.ParameterFloats * 4);
+        _hazeAtlasRows = HazeChannel == RingVegetationHaze.Channel.None ? 1 : HazeInitialRows;
+        _hazeAtlas = CreateHazeAtlas(_rd, _hazeAtlasRows);
+        if (!_pipeline.IsValid || !_hazePipeline.IsValid || !_budgets.IsValid || !_hazeParams.IsValid || !_hazeAtlas.IsValid)
+            throw new InvalidOperationException("Compute allocation failed");
+        _hazeSet = CreateHazeSet(_rd);
+        if (HazeChannel != RingVegetationHaze.Channel.None
+            && RingVegetationHaze.ChannelTexture(HazeChannel) is { } channelTexture && !channelTexture.TextureRdRid.IsValid)
+            channelTexture.TextureRdRid = _hazeAtlas;
+        _hazeAtlasReady = true;
         lock (_gate) { _ready = true; _status = "GPU compute + indirect draws"; }
         return true;
+    }
+
+    private static Rid CreateHazeAtlas(RenderingDevice rd, int rows)
+    {
+        var format = new RDTextureFormat
+        {
+            TextureType = RenderingDevice.TextureType.Type2D,
+            Format = RenderingDevice.DataFormat.R16G16B16A16Sfloat,
+            Width = RingVegetationHaze.AtlasWidth,
+            Height = (uint)rows,
+            ArrayLayers = 1,
+            Mipmaps = 1,
+            UsageBits = RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit
+                | RenderingDevice.TextureUsageBits.CanCopyFromBit | RenderingDevice.TextureUsageBits.CanCopyToBit,
+        };
+        Rid texture = rd.TextureCreate(format, new RDTextureView());
+        if (texture.IsValid) rd.TextureClear(texture, new Color(0, 0, 0, 0), 0, 1, 0, 1);
+        return texture;
+    }
+
+    private Rid CreateHazeSet(RenderingDevice rd)
+    {
+        var block = new RDUniform { UniformType = RenderingDevice.UniformType.UniformBuffer, Binding = 0 };
+        block.AddId(_hazeParams);
+        var image = new RDUniform { UniformType = RenderingDevice.UniformType.Image, Binding = 1 };
+        image.AddId(_hazeAtlas);
+        Rid set = rd.UniformSetCreate(new Godot.Collections.Array<RDUniform> { block, image }, _shader, 1);
+        if (!set.IsValid) throw new InvalidOperationException("Vegetation haze bindings invalid");
+        return set;
+    }
+
+    /// <summary>Render thread. Doubles the atlas (power of two rows) when the slot high-water mark needs it, preserving existing content.</summary>
+    private void GrowHazeAtlas(RenderingDevice rd, int highWater, bool repoint)
+    {
+        if (HazeChannel == RingVegetationHaze.Channel.None) return;
+        int needed = Math.Max(HazeInitialRows, (highWater + RingVegetationHaze.SlotsPerRow - 1) / RingVegetationHaze.SlotsPerRow);
+        needed = (int)Math.Min(RingVegetationHaze.MaximumAtlasRows, System.Numerics.BitOperations.RoundUpToPowerOf2((uint)needed));
+        Texture2Drd channelTexture = RingVegetationHaze.ChannelTexture(HazeChannel);
+        if (needed > _hazeAtlasRows)
+        {
+            Rid grown = CreateHazeAtlas(rd, needed);
+            if (!grown.IsValid) throw new InvalidOperationException("Vegetation haze atlas growth failed");
+            rd.TextureCopy(_hazeAtlas, grown, Vector3.Zero, Vector3.Zero, new Vector3(RingVegetationHaze.AtlasWidth, _hazeAtlasRows, 1), 0, 0, 0, 0);
+            Rid oldTexture = _hazeAtlas, oldSet = _hazeSet;
+            bool pointed = channelTexture.TextureRdRid == oldTexture;
+            _hazeAtlas = grown;
+            _hazeAtlasRows = needed;
+            _hazeSet = CreateHazeSet(rd);
+            if (pointed || RingVegetationHaze.IsChannelOwner(HazeChannel, this)) channelTexture.TextureRdRid = grown;
+            Free(ref oldSet, uniform: true);
+            Free(ref oldTexture);
+        }
+        if (repoint && channelTexture.TextureRdRid != _hazeAtlas) channelTexture.TextureRdRid = _hazeAtlas;
     }
 
     private static RDShaderSpirV LoadComputeShader(RenderingDevice rd, string path)
@@ -530,7 +729,8 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 ?? throw new InvalidOperationException("Vegetation compute shader missing");
             return file.GetSpirV();
         }
-        string code = FileAccess.GetFileAsString(path);
+        string code = RingAtmosphereLuts.ExpandIncludes(path);
+        if (code.Length == 0) throw new InvalidOperationException("Vegetation compute shader includes could not be expanded: " + path);
         using var source = new RDShaderSource { SourceCompute = code.Replace("#[compute]", "", StringComparison.Ordinal) };
         return rd.ShaderCompileSpirVFromSource(source);
     }
@@ -627,7 +827,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         return source;
     }
 
-    private void Dispatch(FrameRequest frame, int grassFrameRevision)
+    private void Dispatch(FrameRequest frame, int grassFrameRevision, bool hazeOn)
     {
         RenderingDevice rd = _rd!;
         _work.Clear(); _seen.Clear();
@@ -669,7 +869,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
             : RingPerformanceGpu.Vegetation;
         using RingPerformanceGpu.GpuScope diagnosticScope = RingPerformanceGpu.BeginScope(diagnosticCategory);
         long list = rd.ComputeListBegin();
-        rd.ComputeListBindComputePipeline(list, _pipeline);
+        _hazeDispatchOn = hazeOn; _boundHaze = false;
+        BindPipeline(rd, list, false);
+        _dispatchedIds.Clear();
+        foreach (var item in _selectedWork) _dispatchedIds.Add(item.Batch.Id);
         if (_groupGrassPhases && grassOnly)
         {
             // Grass does not read the shared LOD budget. Each selected output owns
@@ -677,14 +880,15 @@ public sealed class RingGpuVegetationCompute : IDisposable
             // one barrier needed to publish that phase to the following pass.
             for (uint phase = 0; phase < 3; phase++)
             {
+                UsePipeline(rd, list, hazeOn && phase == 2);
                 foreach (var item in _selectedWork)
                 {
                     Batch batch = item.Batch;
                     if (batch.Retired) continue;
                     rd.ComputeListBindUniformSet(list, batch.Set, 0);
                     WritePush(phase, (uint)batch.Count, (uint)batch.Registration.Capacity,
-                        (uint)batch.SurfaceCount, 1, 0);
-                    rd.ComputeListSetPushConstant(list, _push, 32);
+                        (uint)batch.SurfaceCount, 1, 0, batch);
+                    rd.ComputeListSetPushConstant(list, _push, 48);
                     rd.ComputeListDispatch(list, phase == 1 ? 1 : (uint)batch.Groups, 1, 1);
                     Interlocked.Increment(ref _dispatchCount);
                 }
@@ -711,9 +915,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
                     rd.ComputeListBindUniformSet(list, batch.Set, 0);
                     for (uint phase = 0; phase < 3; phase++)
                     {
+                        if (UsePipeline(rd, list, hazeOn && phase == 2)) rd.ComputeListBindUniformSet(list, batch.Set, 0);
                         WritePush(phase, (uint)batch.Count, (uint)batch.Registration.Capacity,
-                        (uint)batch.SurfaceCount, sweep, ProtectedBaseValid(item, sweep == 0));
-                        rd.ComputeListSetPushConstant(list, _push, 32);
+                        (uint)batch.SurfaceCount, sweep, ProtectedBaseValid(item, sweep == 0), batch);
+                        rd.ComputeListSetPushConstant(list, _push, 48);
                         rd.ComputeListDispatch(list, phase == 1 ? 1 : (uint)batch.Groups, 1, 1);
                         AddBarrier(rd, list);
                         Interlocked.Increment(ref _dispatchCount);
@@ -926,7 +1131,28 @@ public sealed class RingGpuVegetationCompute : IDisposable
         return float.IsFinite(radius) && radius >= 0 ? radius : 0;
     }
 
-    private void WritePush(uint phase, uint count, uint capacity, uint surfaces, uint sweep, uint protectedBaseValid)
+    private bool _hazeDispatchOn, _boundHaze;
+
+    /// <summary>Binds the culling pipeline (haze specialization or plain) plus the haze set (set 1, declared by the shader for every pipeline).</summary>
+    private void BindPipeline(RenderingDevice rd, long list, bool haze)
+    {
+        rd.ComputeListBindComputePipeline(list, haze ? _hazePipeline : _pipeline);
+        rd.ComputeListBindUniformSet(list, _hazeSet, 1);
+        _boundHaze = haze;
+    }
+
+    private bool UsePipeline(RenderingDevice rd, long list, bool haze)
+    {
+        if (haze == _boundHaze) return false;
+        BindPipeline(rd, list, haze);
+        return true;
+    }
+
+    /// <summary>Push block (48 bytes, std430): uint phase, count, capacity, surfaces, sweep, protected_base_valid, haze_base, haze_tag; vec4 haze_anchor (xyz anchor, w = write haze).</summary>
+    private void WritePush(uint phase, uint count, uint capacity, uint surfaces, uint sweep, uint protectedBaseValid, Batch batch)
+        => WritePush(phase, count, capacity, surfaces, sweep, protectedBaseValid, batch, _hazeDispatchOn);
+
+    private void WritePush(uint phase, uint count, uint capacity, uint surfaces, uint sweep, uint protectedBaseValid, Batch batch, bool hazeOn)
     {
         BitConverter.TryWriteBytes(_push.AsSpan(0, 4), phase);
         BitConverter.TryWriteBytes(_push.AsSpan(4, 4), count);
@@ -934,7 +1160,13 @@ public sealed class RingGpuVegetationCompute : IDisposable
         BitConverter.TryWriteBytes(_push.AsSpan(12, 4), surfaces);
         BitConverter.TryWriteBytes(_push.AsSpan(16, 4), sweep);
         BitConverter.TryWriteBytes(_push.AsSpan(20, 4), protectedBaseValid);
-        _push.AsSpan(24, 8).Clear();
+        bool write = hazeOn && batch.HazeBase >= 0;
+        BitConverter.TryWriteBytes(_push.AsSpan(24, 4), (uint)Math.Max(0, batch.HazeBase));
+        BitConverter.TryWriteBytes(_push.AsSpan(28, 4), (uint)batch.HazeTag);
+        BitConverter.TryWriteBytes(_push.AsSpan(32, 4), batch.HazeAnchor.X);
+        BitConverter.TryWriteBytes(_push.AsSpan(36, 4), batch.HazeAnchor.Y);
+        BitConverter.TryWriteBytes(_push.AsSpan(40, 4), batch.HazeAnchor.Z);
+        BitConverter.TryWriteBytes(_push.AsSpan(44, 4), write ? 1f : 0f);
     }
 
     private void DispatchOptimizedTreeSweep(RenderingDevice rd, long list, bool protectedSweep)
@@ -947,10 +1179,11 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 || HasProtectedSweep(item));
             if (!eligible || batch.Count <= 64) continue;
             any = true;
+            UsePipeline(rd, list, false);
             rd.ComputeListBindUniformSet(list, batch.Set, 0);
             WritePush(0, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount,
-                protectedSweep ? 0u : 1u, ProtectedBaseValid(item, protectedSweep));
-            rd.ComputeListSetPushConstant(list, _push, 32);
+                protectedSweep ? 0u : 1u, ProtectedBaseValid(item, protectedSweep), batch);
+            rd.ComputeListSetPushConstant(list, _push, 48);
             rd.ComputeListDispatch(list, (uint)batch.Groups, 1, 1);
             Interlocked.Increment(ref _dispatchCount);
         }
@@ -964,11 +1197,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
             bool eligible = !batch.Retired && (!protectedSweep
                 || HasProtectedSweep(item));
             if (!eligible) continue;
+            UsePipeline(rd, list, _hazeDispatchOn && batch.Count <= 64);
             rd.ComputeListBindUniformSet(list, batch.Set, 0);
             uint phase = batch.Count <= 64 ? 3u : 1u;
             WritePush(phase, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount,
-                protectedSweep ? 0u : 1u, ProtectedBaseValid(item, protectedSweep));
-            rd.ComputeListSetPushConstant(list, _push, 32);
+                protectedSweep ? 0u : 1u, ProtectedBaseValid(item, protectedSweep), batch);
+            rd.ComputeListSetPushConstant(list, _push, 48);
             rd.ComputeListDispatch(list, 1, 1, 1);
             Interlocked.Increment(ref _dispatchCount);
             AddBarrier(rd, list);
@@ -982,14 +1216,48 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 || HasProtectedSweep(item));
             if (!eligible || batch.Count <= 64) continue;
             any = true;
+            UsePipeline(rd, list, _hazeDispatchOn);
             rd.ComputeListBindUniformSet(list, batch.Set, 0);
             WritePush(2, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount,
-                protectedSweep ? 0u : 1u, ProtectedBaseValid(item, protectedSweep));
-            rd.ComputeListSetPushConstant(list, _push, 32);
+                protectedSweep ? 0u : 1u, ProtectedBaseValid(item, protectedSweep), batch);
+            rd.ComputeListSetPushConstant(list, _push, 48);
             rd.ComputeListDispatch(list, (uint)batch.Groups, 1, 1);
             Interlocked.Increment(ref _dispatchCount);
         }
         if (any) AddBarrier(rd, list);
+    }
+
+    /// <summary>Rewrites the haze atlas slots of already-compacted rows (phase 4) for batches this Work did not just cull.</summary>
+    private void DispatchHazeRefresh(Batch[] batches)
+    {
+        RenderingDevice rd = _rd!;
+        _refreshBatches.Clear();
+        bool grassOnly = true, treeOnly = true;
+        foreach (Batch batch in batches)
+        {
+            if (!batch.Allocated || batch.Retired || !batch.Dispatched || batch.HazeBase < 0 || _dispatchedIds.Contains(batch.Id)
+                || !rd.UniformSetIsValid(batch.Set)) continue;
+            _refreshBatches.Add(batch);
+            if (batch.Registration.Grass) treeOnly = false; else grassOnly = false;
+        }
+        if (_refreshBatches.Count == 0) return;
+        string category = grassOnly ? RingPerformanceGpu.GrassCulling : treeOnly ? RingPerformanceGpu.TreeCulling : RingPerformanceGpu.Vegetation;
+        using RingPerformanceGpu.GpuScope scope = RingPerformanceGpu.BeginScope(category);
+        long list = rd.ComputeListBegin();
+        _boundHaze = false;
+        BindPipeline(rd, list, true);
+        foreach (Batch batch in _refreshBatches)
+        {
+            rd.ComputeListBindUniformSet(list, batch.Set, 0);
+            WritePush(4, (uint)batch.Count, (uint)batch.Registration.Capacity, (uint)batch.SurfaceCount, 0, 0, batch, true);
+            rd.ComputeListSetPushConstant(list, _push, 48);
+            rd.ComputeListDispatch(list, (uint)((batch.Registration.Capacity + 63) / 64), 1, 1);
+            Interlocked.Increment(ref _dispatchCount);
+            Interlocked.Increment(ref _hazeRefreshDispatchCount);
+        }
+        AddBarrier(rd, list);
+        rd.ComputeListEnd();
+        Interlocked.Increment(ref _hazeRefreshCount);
     }
 
     private void AddBarrier(RenderingDevice rd, long list)
@@ -1141,22 +1409,46 @@ public sealed class RingGpuVegetationCompute : IDisposable
         }));
     }
 
+    /// <summary>Fixtures only: the haze atlas (RGBA16F, width 2048) bytes and its row count.</summary>
+    public void RequestHazeAtlasReadbackForTests(Action<byte[], int> callback)
+    {
+        RenderingServer.CallOnRenderThread(Callable.From(() =>
+        {
+            byte[] data = Array.Empty<byte>(); int rows = 0;
+            if (_rd is not null && _hazeAtlas.IsValid && !_disposed)
+            {
+                data = _rd.TextureGetData(_hazeAtlas, 0);
+                rows = _hazeAtlasRows;
+            }
+            Callable.From(() => callback(data, rows)).CallDeferred();
+        }));
+    }
+
     public void Dispose()
     {
         lock (_gate)
         {
             if (_disposed) return;
             _disposed = true; _ready = false; _pending = null;
-            foreach (Batch batch in _batches.Values) { batch.Retired = true; _retired.Enqueue(batch); }
+            _hazeFree.Clear(); _hazeHighWater = 0; _hazeFrame = null; _hazeRefreshPending = false; _hazeRepoint = false;
+            foreach (Batch batch in _batches.Values) { batch.Retired = true; batch.HazeBase = -1; _retired.Enqueue(batch); }
             _batches.Clear();
             foreach (OutputMirror mirror in _mirrors.Values) { mirror.Retired = true; _retiredMirrors.Enqueue(mirror); }
             _mirrors.Clear();
         }
+        if (HazeChannel != RingVegetationHaze.Channel.None) RingVegetationHaze.ReleaseChannel(HazeChannel, this);
         RenderingServer.CallOnRenderThread(Callable.From(() =>
         {
             DrainRetired();
             DrainRetiredMirrors();
-            if (_rd is not null) { Free(ref _budgets); Free(ref _pipeline); Free(ref _shader); }
+            if (_rd is not null)
+            {
+                if (HazeChannel != RingVegetationHaze.Channel.None && _hazeAtlas.IsValid
+                    && RingVegetationHaze.ChannelTexture(HazeChannel) is { } channelTexture && channelTexture.TextureRdRid == _hazeAtlas)
+                    channelTexture.TextureRdRid = default;
+                Free(ref _hazeSet, uniform: true); Free(ref _hazeParams); Free(ref _hazeAtlas); Free(ref _hazePipeline);
+                Free(ref _budgets); Free(ref _pipeline); Free(ref _shader);
+            }
         }));
         GC.SuppressFinalize(this);
     }

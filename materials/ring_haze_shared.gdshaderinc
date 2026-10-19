@@ -100,11 +100,16 @@ float ring_haze_phase_rayleigh(float mu) {
 	return 0.0596831037 * (1.0 + mu * mu);
 }
 
+// x^1.5 for x >= 0 (callers clamp x to >= 0.0001).
+float ring_haze_pow15(float x) {
+	return x * sqrt(x);
+}
+
 // Cornette-Shanks.
 float ring_haze_phase_mie(float mu, float g_in) {
 	float g = clamp(g_in, -0.95, 0.95);
 	float g2 = g * g;
-	return 0.1193662074 * (1.0 - g2) * (1.0 + mu * mu) / ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * g * mu, 0.0001), 1.5));
+	return 0.1193662074 * (1.0 - g2) * (1.0 + mu * mu) / ((2.0 + g2) * ring_haze_pow15(max(1.0 + g2 - 2.0 * g * mu, 0.0001)));
 }
 
 // 1 - exp(-x) without cancellation for small x.
@@ -117,6 +122,9 @@ float ring_haze_one_minus_exp(float x) {
 vec2 ring_haze_air_interval(vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m, float cap_height_m) {
 	float scale = max(coordinate_scale, 0.000001);
 	float length_m = length(target - camera) / scale;
+	// Fast path: a ray shorter than the distance to the floor shell, the cap shell and both side walls cannot reach any of them
+	// (radial and axial coordinates change by at most 1 m per metre of ray), so the interval is exactly [0, length].
+	if (length_m > 0.0001 && length_m < min(min(cap_height_m - camera_height, camera_height + floor_depth_m), min(side_negative, side_positive))) return vec2(0.0, length_m);
 	vec2 outer = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m * scale, -floor_depth_m, length_m);
 	vec2 upper_vacuum = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m * scale, cap_height_m, length_m);
 	if (outer.y <= outer.x) return vec2(1.0, 0.0);
@@ -152,7 +160,9 @@ vec3 ring_haze_layer_integrals(RingHazeParams p, float h0, float radial0, float 
 	if (dt <= 0.0) return vec3(0.0);
 	int n = p.quality >= 16 ? 16 : (p.quality >= 8 ? 8 : 4);
 	float sag = max(a, 0.0) * dt * dt / (8.0 * max(radial0, 1.0));
-	int pieces = sag <= clamp(RING_HAZE_SAG_FRACTION * p.H_mist, 4.0, 40.0) ? 1 : n;
+	float sag_tol = clamp(RING_HAZE_SAG_FRACTION * p.H_mist, 4.0, 40.0);
+	// Adaptive count: Chebyshev pieces are at most (pi/2)/k of the span, so the per-piece sag is sag (pi/2)^2 / k^2; k = ceil((pi/2) sqrt(sag / tol)) keeps it at the one-piece tolerance.
+	int pieces = sag <= sag_tol ? 1 : min(n, max(2, int(ceil(1.5707963 * sqrt(sag / sag_tol)))));
 	vec3 sum = vec3(0.0);
 	float t_start = t0;
 	float h_start = ring_haze_height(t0, h0, radial0, b, a);

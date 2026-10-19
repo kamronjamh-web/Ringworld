@@ -34,6 +34,8 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public float EnclosedCloudFog { get; set; } = 1.0f;
     /// <summary>P7/P8: render the Physical sky from the cached sky-view LUT (RingAtmosphereLuts) instead of the analytic function. Absent in older files, which load as on.</summary>
     [Export] public bool SkyHazeLut { get; set; } = true;
+    /// <summary>Per-instance Physical haze for GPU-culled grass cards and trees (RingVegetationHaze) instead of per-vertex haze. Absent in older files, which load as on.</summary>
+    [Export] public bool VegetationInstanceHaze { get; set; } = true;
     /// <summary>Optical-depth quadrature points: 4, 8 or 16.</summary>
     [Export] public int HazeQuality { get; set; } = 8;
 }

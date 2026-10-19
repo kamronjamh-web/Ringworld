@@ -23,6 +23,23 @@ const MATRIX_POSES := [
 const GATE_SKY_MS := 0.2
 const GATE_MASK_MS := 0.2
 const GATE_NON_SKY_MS := 0.5
+# Main-viewport haze attribution (`-- --haze-only --haze-main`, replaces the P7-0 matrix). Every physical_q8_* label is Physical q8 with
+# one consumer class forced to identity haze through the `ring_haze_debug_mode` material knob (ring_atmosphere.gdshaderinc), or Sunshine's
+# profile cleared (RingSunshineCloudBridge.SetDebugCloudHazeDisabled). haze_off keeps the Physical model and quality (only Enabled
+# changes, so the sky/LUT state matches the physical rows); haze_off_legacy is the old P7-0 first-pose state. physical_q8_short_rays
+# clamps every spatial haze ray to 12 km (one-piece quadrature; cost probe only). Each pose runs the labels forward, then reversed
+# (`--main-rounds=N`, default 2), so haze_off and physical_q8 bracket every block; `--main-seconds=S` (default 8) per case,
+# `--main-poses=a,b` filters MATRIX_POSES.
+const MAIN_LABELS := ["haze_off", "physical_q8", "physical_q8_no_terrain_haze", "physical_q8_no_grass_haze", "physical_q8_no_tree_haze", "physical_q8_no_ocean_haze", "physical_q8_no_other_spatial_haze", "physical_q8_no_spatial_haze", "physical_q8_no_cloud_haze", "physical_q8_short_rays", "physical_q4", "physical_q16", "haze_off_legacy"]
+const MAIN_CLASS_LABELS := {"physical_q8_no_terrain_haze": "terrain", "physical_q8_no_grass_haze": "grass", "physical_q8_no_tree_haze": "tree", "physical_q8_no_ocean_haze": "ocean", "physical_q8_no_other_spatial_haze": "other", "physical_q8_no_spatial_haze": "all", "physical_q8_short_rays": "all"}
+const HAZE_DEBUG_PARAM := "ring_haze_debug_mode"
+# Shader file basenames per consumer class; any other material whose shader declares HAZE_DEBUG_PARAM is "other". Terrain3D nodes are terrain.
+const HAZE_DEBUG_CLASSES := {
+	"terrain": ["terrain3d_ring_surface", "ring_terrain_proxy", "ring_terrain_global", "voxel_ring_terrain"],
+	"grass": ["ring_grass_cards"],
+	"tree": ["ring_tree", "imported_tree", "imported_tree_impostor"],
+	"ocean": ["ring_ocean_proxy", "ring_ocean_global"],
+}
 const FIXTURE_AROUND := 16443476.0
 const FIXTURE_ACROSS := 38692.0
 
@@ -42,6 +59,16 @@ var original_haze_enabled := true
 var partial_report := {"status":"RUNNING", "cases":[]}
 var tuning_drawer: Node
 var ground_height := 0.0
+var cloud_bridge: Node
+var sample_min_frames := MIN_SAMPLE_FRAMES
+var sample_target_seconds := TARGET_SAMPLE_SECONDS
+var sample_max_seconds := MAX_SAMPLE_SECONDS
+# Active ring_haze_debug_mode case: class ("terrain", "grass", "tree", "ocean", "other" or "all"), mode (0 = none), touched materials.
+var haze_debug_category := ""
+var haze_debug_mode := 0
+var haze_debug_touched := {}
+var haze_debug_counts := {}
+var haze_debug_shader_cache := {}
 
 class SessionStub extends Node:
 	var settings := {}
@@ -116,6 +143,7 @@ func _run() -> void:
 		"cases": []
 	}
 	tuning_drawer = game.get_node_or_null("LiveTuningDrawer")
+	cloud_bridge = game.get_node_or_null("SunshineCloudBridge")
 	var labels := ["baseline", "natural_haze", "cinematic_haze", "baseline_repeat"] if "--haze-only" in OS.get_cmdline_user_args() else ["baseline", "near_proxy_terrain_hidden", "far_terrain_hidden", "grass_hidden", "trees_hidden", "directional_shadows_off", "natural_haze", "cinematic_haze", "baseline_repeat"]
 	for label in labels:
 		_restore_original_state()
@@ -132,7 +160,12 @@ func _run() -> void:
 	_restore_original_state()
 	if not _verify_case("baseline_repeat"):
 		return
-	if "--haze-only" in OS.get_cmdline_user_args() and not "--no-matrix" in OS.get_cmdline_user_args():
+	if "--haze-only" in OS.get_cmdline_user_args() and "--haze-main" in OS.get_cmdline_user_args():
+		report["main_matrix_cases"] = []
+		var main_ok: bool = await _run_haze_main_matrix(report)
+		if not main_ok or failed:
+			return
+	elif "--haze-only" in OS.get_cmdline_user_args() and not "--no-matrix" in OS.get_cmdline_user_args():
 		report["matrix_cases"] = []
 		var matrix_ok: bool = await _run_haze_matrix(report)
 		if not matrix_ok or failed:
@@ -239,6 +272,336 @@ func _print_matrix_table(cases: Array) -> void:
 			var off_mask: Vector2 = _matrix_main_far(rows["cloud_mask_off"])
 			var mask_ms: float = (on.y - off_mask.y) + (_mask_viewport_ms(rows["cloud_mask_on"]) - _mask_viewport_ms(rows["cloud_mask_off"]))
 			print("P7_0_GATE mask_hoist: %s mask cost (on - off, far + mask viewports) = %.3f ms -> %s (threshold %.1f)" % [pose.name, mask_ms, "GO" if mask_ms >= GATE_MASK_MS else "NO-GO", GATE_MASK_MS])
+
+
+## Main-viewport haze attribution: MAIN_LABELS at each pose, forward then reversed per round. Writes report.main_matrix_cases.
+func _run_haze_main_matrix(report: Dictionary) -> bool:
+	if cloud_bridge == null or not cloud_bridge.has_method("SetDebugCloudHazeDisabled"):
+		_fail("SunshineCloudBridge with SetDebugCloudHazeDisabled is required for --haze-main")
+		return false
+	var rounds := maxi(1, int(_arg_value("--main-rounds=", "2")))
+	var seconds := maxf(2.0, float(_arg_value("--main-seconds=", "8")))
+	var pose_filter: PackedStringArray = _arg_value("--main-poses=", "").split(",", false)
+	sample_target_seconds = seconds
+	sample_max_seconds = seconds * 2.0
+	sample_min_frames = 150
+	# A/B for per-instance vegetation haze: `--veg-instance-haze=off` runs the whole matrix with the per-vertex path.
+	var veg_instance_haze := _arg_value("--veg-instance-haze=", "on") != "off"
+	if tuning_drawer != null and tuning_drawer.has_method("SetAtmosphereVegetationInstanceHaze"):
+		tuning_drawer.call("SetAtmosphereVegetationInstanceHaze", veg_instance_haze)
+	print("P7_0_MAIN_VEG_INSTANCE_HAZE=", "on" if veg_instance_haze else "off")
+	var helper: RefCounted = FIXTURE_HELPER.new()
+	explorer.process_mode = Node.PROCESS_MODE_DISABLED
+	var poses_run: Array = []
+	for pose in MATRIX_POSES:
+		if not pose_filter.is_empty() and not str(pose.name) in pose_filter:
+			continue
+		poses_run.append(pose)
+		if not bool(helper.call("Place", explorer, FIXTURE_AROUND, ground_height + float(pose.lift), FIXTURE_ACROSS)):
+			_fail("main matrix pose placement failed for " + str(pose.name))
+			return false
+		explorer.call("SetPresentationView", 0.0, float(pose.pitch))
+		for round_index in rounds:
+			# `--main-labels=a,b,...` limits the matrix to a subset (quick A/B runs); default is every MAIN_LABELS entry.
+			var label_filter: PackedStringArray = _arg_value("--main-labels=", "").split(",", false)
+			var order: Array = MAIN_LABELS.duplicate() if label_filter.is_empty() else MAIN_LABELS.filter(func(l): return l in label_filter)
+			if round_index % 2 == 1:
+				order.reverse()
+			for label in order:
+				_restore_original_state()
+				if not _apply_main_case(label) or not _verify_case(label):
+					return false
+				var case_data := await _sample_case(label)
+				if failed:
+					return false
+				case_data["pose"] = pose.duplicate()
+				case_data["round"] = round_index
+				case_data["haze_debug"] = {"category": haze_debug_category, "mode": haze_debug_mode, "targets": haze_debug_counts.duplicate(), "missed": _haze_debug_missed(), "cloud_haze_disabled": bool(cloud_bridge.call("IsDebugCloudHazeDisabled"))}
+				report.main_matrix_cases.append(case_data)
+				partial_report.cases.append(case_data)
+				print("P7_0_MAIN_CASE ", JSON.stringify({"pose": pose.name, "round": round_index, "label": label, "main_p50": case_data.root_gpu_ms.p50, "far_p50": case_data.far_gpu_ms.p50, "samples": case_data.samples, "debug": case_data.haze_debug}))
+	_restore_original_state()
+	sample_target_seconds = TARGET_SAMPLE_SECONDS
+	sample_max_seconds = MAX_SAMPLE_SECONDS
+	sample_min_frames = MIN_SAMPLE_FRAMES
+	explorer.process_mode = Node.PROCESS_MODE_INHERIT
+	explorer.call("SetCanonicalSpawnMeters", FIXTURE_AROUND, ground_height, FIXTURE_ACROSS)
+	explorer.call("SetPresentationView", 0.0, -10.0)
+	_print_main_table(report.main_matrix_cases, poses_run)
+	if not veg_instance_haze and tuning_drawer != null and tuning_drawer.has_method("SetAtmosphereVegetationInstanceHaze"):
+		tuning_drawer.call("SetAtmosphereVegetationInstanceHaze", true)
+	return true
+
+
+func _arg_value(prefix: String, fallback: String) -> String:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with(prefix):
+			return arg.trim_prefix(prefix)
+	return fallback
+
+
+func _main_label_quality(label: String) -> int:
+	if label == "haze_off_legacy":
+		return -1
+	if label == "physical_q4":
+		return 4
+	if label == "physical_q16":
+		return 16
+	return 8
+
+
+func _apply_main_case(label: String) -> bool:
+	if not label in MAIN_LABELS:
+		_fail("unknown main matrix case " + label)
+		return false
+	if label == "haze_off_legacy":
+		tuning_drawer.call("SetAtmosphereHazeModel", 0)
+		tuning_drawer.call("SetAtmospherePreset", 0)
+		tuning_drawer.call("SetAtmosphereHazeQuality", 8)
+		tuning_drawer.call("SetAtmosphereEnabled", false)
+		return true
+	_enable_physical_haze(_main_label_quality(label))
+	if label == "haze_off":
+		tuning_drawer.call("SetAtmosphereEnabled", false)
+	elif label == "physical_q8_no_cloud_haze":
+		cloud_bridge.call("SetDebugCloudHazeDisabled", true)
+	elif MAIN_CLASS_LABELS.has(label):
+		haze_debug_category = str(MAIN_CLASS_LABELS[label])
+		haze_debug_mode = 2 if label == "physical_q8_short_rays" else 1
+		_apply_haze_debug()
+	return true
+
+
+func _verify_main_case(label: String) -> bool:
+	var controller: Node = game.get_node_or_null("GraphicsQuality")
+	var haze: Dictionary = controller.call("GetAtmosphereTuningDiagnostics") if controller != null else {}
+	if bool(haze.get("enabled", false)) != (not label.begins_with("haze_off")):
+		_fail("atmosphere enabled state was wrong for " + label)
+		return false
+	if int(haze.get("haze_model", -1)) != (0 if label == "haze_off_legacy" else 1):
+		_fail("haze model was wrong for " + label + ": " + str(haze.get("haze_model", -1)))
+		return false
+	var quality := _main_label_quality(label)
+	if quality > 0 and int(haze.get("haze_quality", -1)) != quality:
+		_fail("haze quality was not applied for " + label + ": " + str(haze.get("haze_quality", -1)))
+		return false
+	if bool(cloud_bridge.call("IsDebugCloudHazeDisabled")) != (label == "physical_q8_no_cloud_haze"):
+		_fail("Sunshine debug haze state was wrong for " + label)
+		return false
+	var expected_category: String = str(MAIN_CLASS_LABELS.get(label, ""))
+	if haze_debug_category != expected_category:
+		_fail("haze debug class was wrong for " + label + ": " + haze_debug_category)
+		return false
+	if not expected_category.is_empty():
+		var touched := 0
+		for category in haze_debug_counts:
+			if expected_category == "all" or category == expected_category:
+				touched += int(haze_debug_counts[category])
+		if touched == 0:
+			# A class with no main-viewport materials at this pose (e.g. ocean) still samples; the table shows targets = 0.
+			push_warning("haze debug class %s has no main-viewport materials for %s" % [expected_category, label])
+	return true
+
+
+# ---- ring_haze_debug_mode plumbing ----
+
+func _in_main_viewport(node: Node) -> bool:
+	return node.is_inside_tree() and node.get_viewport() == root
+
+
+func _node_shader_materials(node) -> Array:
+	var candidates: Array = [node.material_override, node.material_overlay]
+	if node is MeshInstance3D and node.mesh != null:
+		for index in node.get_surface_override_material_count():
+			candidates.append(node.get_surface_override_material(index))
+		for index in node.mesh.get_surface_count():
+			candidates.append(node.mesh.surface_get_material(index))
+	elif node is MultiMeshInstance3D and node.multimesh != null and node.multimesh.mesh != null:
+		for index in node.multimesh.mesh.get_surface_count():
+			candidates.append(node.multimesh.mesh.surface_get_material(index))
+	var result: Array = []
+	for candidate in candidates:
+		var material: Variant = candidate
+		var guard := 0
+		while material is ShaderMaterial and guard < 4:
+			result.append(material)
+			material = (material as ShaderMaterial).next_pass
+			guard += 1
+	return result
+
+
+func _shader_has_haze_debug(shader: Shader) -> bool:
+	if shader == null:
+		return false
+	var id := shader.get_instance_id()
+	if not haze_debug_shader_cache.has(id):
+		var found := false
+		for uniform in shader.get_shader_uniform_list():
+			if str(uniform.get("name", "")) == HAZE_DEBUG_PARAM:
+				found = true
+				break
+		haze_debug_shader_cache[id] = found
+	return bool(haze_debug_shader_cache[id])
+
+
+func _haze_debug_class(shader: Shader) -> String:
+	var base := shader.resource_path.get_file().get_basename()
+	for category in HAZE_DEBUG_CLASSES:
+		if base in HAZE_DEBUG_CLASSES[category]:
+			return category
+	return "other"
+
+
+## Haze-capable materials in the main viewport by class: Terrain3D plugin materials plus every ShaderMaterial whose shader declares
+## ring_haze_debug_mode. Instances drawn straight through RenderingServer (no node) are not reachable and stay on.
+func _haze_debug_scan() -> Dictionary:
+	var result := {"terrain": [], "grass": [], "tree": [], "ocean": [], "other": []}
+	var seen := {}
+	for node in _all_nodes(game):
+		if node.is_class("Terrain3D"):
+			if not _in_main_viewport(node):
+				continue
+			var terrain_material: Object = node.call("get_material")
+			if terrain_material != null and not seen.has(terrain_material.get_instance_id()):
+				seen[terrain_material.get_instance_id()] = true
+				result.terrain.append(terrain_material)
+			continue
+		if not node is GeometryInstance3D or not _in_main_viewport(node):
+			continue
+		for material in _node_shader_materials(node):
+			var id: int = material.get_instance_id()
+			if seen.has(id):
+				continue
+			seen[id] = true
+			if not _shader_has_haze_debug(material.shader):
+				continue
+			result[_haze_debug_class(material.shader)].append(material)
+	return result
+
+
+func _set_haze_debug_value(material: Object, value: int) -> void:
+	if material is ShaderMaterial:
+		(material as ShaderMaterial).set_shader_parameter(HAZE_DEBUG_PARAM, value)
+	elif material.has_method("set_shader_param"):
+		material.call("set_shader_param", HAZE_DEBUG_PARAM, value)
+
+
+func _get_haze_debug_value(material: Object) -> int:
+	var value: Variant = null
+	if material is ShaderMaterial:
+		value = (material as ShaderMaterial).get_shader_parameter(HAZE_DEBUG_PARAM)
+	elif material.has_method("get_shader_param"):
+		value = material.call("get_shader_param", HAZE_DEBUG_PARAM)
+	else:
+		return haze_debug_mode # Cannot read back; assume the write landed.
+	return int(value) if value != null else 0
+
+
+func _apply_haze_debug() -> void:
+	if haze_debug_mode == 0:
+		return
+	var scan := _haze_debug_scan()
+	haze_debug_counts = {}
+	for category in scan:
+		haze_debug_counts[category] = scan[category].size()
+		if haze_debug_category != "all" and category != haze_debug_category:
+			continue
+		for material in scan[category]:
+			_set_haze_debug_value(material, haze_debug_mode)
+			haze_debug_touched[material.get_instance_id()] = material
+
+
+## Materials of the active class that do not carry the active mode after sampling (created mid-case or reset by their owner).
+func _haze_debug_missed() -> int:
+	if haze_debug_mode == 0:
+		return 0
+	var scan := _haze_debug_scan()
+	var missed := 0
+	for category in scan:
+		if haze_debug_category != "all" and category != haze_debug_category:
+			continue
+		for material in scan[category]:
+			if _get_haze_debug_value(material) != haze_debug_mode:
+				missed += 1
+	return missed
+
+
+func _clear_haze_debug() -> void:
+	for id in haze_debug_touched:
+		var material: Object = haze_debug_touched[id]
+		if is_instance_valid(material):
+			_set_haze_debug_value(material, 0)
+	haze_debug_touched = {}
+	haze_debug_counts = {}
+	haze_debug_category = ""
+	haze_debug_mode = 0
+	if cloud_bridge != null and is_instance_valid(cloud_bridge) and cloud_bridge.has_method("SetDebugCloudHazeDisabled"):
+		cloud_bridge.call("SetDebugCloudHazeDisabled", false)
+
+
+func _round_values(cases: Array, metric: String) -> Array[float]:
+	var values: Array[float] = []
+	for case_data in cases:
+		values.append(float(case_data[metric].p50))
+	return values
+
+
+func _spread(values: Array[float]) -> float:
+	if values.is_empty():
+		return 0.0
+	var low: float = values[0]
+	var high: float = values[0]
+	for value in values:
+		low = minf(low, value)
+		high = maxf(high, value)
+	return high - low
+
+
+func _print_main_table(cases: Array, poses: Array) -> void:
+	var by_pose := {}
+	for case_data in cases:
+		var pose_name := str(case_data.pose.name)
+		if not by_pose.has(pose_name):
+			by_pose[pose_name] = {}
+		if not by_pose[pose_name].has(case_data.label):
+			by_pose[pose_name][case_data.label] = []
+		by_pose[pose_name][case_data.label].append(case_data)
+	print("P7_0_MAIN (GPU ms; main/far = mean over rounds of each case's p50; spread = max - min of the round p50s; d_off = label - haze_off; saving = physical_q8 - label; targets = main-viewport materials switched)")
+	print("%-15s %-34s %8s %7s %8s %8s %8s %8s %8s" % ["pose", "label", "main", "spread", "far", "d_off", "saving", "d_off_far", "targets"])
+	for pose in poses:
+		var rows: Dictionary = by_pose.get(pose.name, {})
+		if not rows.has("haze_off") or not rows.has("physical_q8"):
+			continue
+		var means := {}
+		for label in MAIN_LABELS:
+			if rows.has(label):
+				means[label] = Vector2(_mean(_round_values(rows[label], "root_gpu_ms")), _mean(_round_values(rows[label], "far_gpu_ms")))
+		var off: Vector2 = means["haze_off"]
+		var q8: Vector2 = means["physical_q8"]
+		for label in MAIN_LABELS:
+			if not means.has(label):
+				continue
+			var mf: Vector2 = means[label]
+			var debug: Dictionary = rows[label][0].get("haze_debug", {})
+			var category: String = str(debug.get("category", ""))
+			var targets := 0
+			for key in debug.get("targets", {}):
+				if category == "all" or key == category:
+					targets += int(debug.targets[key])
+			var saving := "" if label in ["haze_off", "physical_q8", "haze_off_legacy", "physical_q4", "physical_q16"] else "%8.3f" % (q8.x - mf.x)
+			print("%-15s %-34s %8.3f %7.3f %8.3f %8.3f %8s %8.3f %8s" % [pose.name, label, mf.x, _spread(_round_values(rows[label], "root_gpu_ms")), mf.y, mf.x - off.x, saving, mf.y - off.y, str(targets) if not category.is_empty() else "-"])
+		var saving_of := func(which: String) -> float: return q8.x - means[which].x if means.has(which) else NAN
+		var classes: float = 0.0
+		for label in ["physical_q8_no_terrain_haze", "physical_q8_no_grass_haze", "physical_q8_no_tree_haze", "physical_q8_no_ocean_haze", "physical_q8_no_other_spatial_haze"]:
+			classes += saving_of.call(label)
+		var total := q8.x - off.x
+		var spatial: float = saving_of.call("physical_q8_no_spatial_haze")
+		var cloud: float = saving_of.call("physical_q8_no_cloud_haze")
+		print("P7_0_MAIN_SUM %s: total(q8 - off) %.3f = spatial %.3f [terrain %.3f, grass %.3f, tree %.3f, ocean %.3f, other %.3f; class sum %.3f] + sunshine %.3f + residual %.3f" % [pose.name, total, spatial, saving_of.call("physical_q8_no_terrain_haze"), saving_of.call("physical_q8_no_grass_haze"), saving_of.call("physical_q8_no_tree_haze"), saving_of.call("physical_q8_no_ocean_haze"), saving_of.call("physical_q8_no_other_spatial_haze"), classes, cloud, total - spatial - cloud])
+		var q4: float = means["physical_q4"].x if means.has("physical_q4") else NAN
+		var q16: float = means["physical_q16"].x if means.has("physical_q16") else NAN
+		print("P7_0_MAIN_QUAD %s: spatial multi-piece share at q8 (q8 - short_rays) %.3f; per-piece slope (q16 - q4) / 12 = %.4f ms; q4 %.3f q8 %.3f q16 %.3f; legacy_off - off %.3f (sky model/LUT confound of the old P7-0 first pose)" % [pose.name, saving_of.call("physical_q8_short_rays"), (q16 - q4) / 12.0, q4 - off.x, total, q16 - off.x, (means["haze_off_legacy"].x - off.x) if means.has("haze_off_legacy") else NAN])
+		print("P7_0_MAIN_NOISE %s: haze_off rounds %s (spread %.3f), physical_q8 rounds %s (spread %.3f)" % [pose.name, str(_round_values(rows["haze_off"], "root_gpu_ms")), _spread(_round_values(rows["haze_off"], "root_gpu_ms")), str(_round_values(rows["physical_q8"], "root_gpu_ms")), _spread(_round_values(rows["physical_q8"], "root_gpu_ms"))])
 
 
 func _create_game() -> Node:
@@ -348,6 +711,7 @@ func _capture_original_state() -> Dictionary:
 
 
 func _restore_original_state() -> void:
+	_clear_haze_debug()
 	_sky_lut_host().call("SetSkyViewEnabled", true)
 	if original_state.has("cloud_mask_enabled"):
 		scaled_far.set("CloudTransmittanceMaskEnabled", original_state.cloud_mask_enabled)
@@ -419,11 +783,14 @@ func _enable_physical_haze(quality: int) -> void:
 
 
 func _is_matrix_label(label: String) -> bool:
-	return label in MATRIX_LABELS
+	return label in MATRIX_LABELS or label in MAIN_LABELS
 
 
 func _verify_case(label: String) -> bool:
-	if _is_matrix_label(label):
+	if label in MAIN_LABELS:
+		if not _verify_main_case(label):
+			return false
+	elif _is_matrix_label(label):
 		var controller: Node = game.get_node_or_null("GraphicsQuality")
 		var haze: Dictionary = controller.call("GetAtmosphereTuningDiagnostics") if controller != null else {}
 		if bool(haze.get("enabled", false)) != (label != "haze_off"):
@@ -484,6 +851,11 @@ func _sample_case(label: String) -> Dictionary:
 			return {}
 		if (Time.get_ticks_usec() - warmup_start) * .000001 >= 2.0:
 			break
+	if haze_debug_mode != 0:
+		# Re-apply to materials created during the warmup (streaming), then let the parameter writes land.
+		_apply_haze_debug()
+		for frame in 3:
+			await RenderingServer.frame_post_draw
 	if not _verify_case(label):
 		return {}
 	var root_gpu: Array[float] = []
@@ -496,8 +868,8 @@ func _sample_case(label: String) -> Dictionary:
 	var frames: Array[Dictionary] = []
 	var per_viewport := {}
 	var sample_start := Time.get_ticks_usec()
-	while draw_calls.size() < MIN_SAMPLE_FRAMES or (Time.get_ticks_usec() - sample_start) * .000001 < TARGET_SAMPLE_SECONDS:
-		if (Time.get_ticks_usec() - sample_start) * .000001 >= MAX_SAMPLE_SECONDS:
+	while draw_calls.size() < sample_min_frames or (Time.get_ticks_usec() - sample_start) * .000001 < sample_target_seconds:
+		if (Time.get_ticks_usec() - sample_start) * .000001 >= sample_max_seconds:
 			break
 		var start := Time.get_ticks_usec()
 		await RenderingServer.frame_post_draw

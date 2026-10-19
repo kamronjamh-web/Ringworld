@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Terrain.Editable;
 using RingworldTechDemo.Voxel.Core;
@@ -799,6 +800,7 @@ public partial class RingStandingGrassLayer : Node3D
                 nearReplaced = ReplaceCpuMultiMesh(t.Renderer, NearMeshFor(t.Data), t.Data.LocalAabb, t.Data.Buffer);
                 t.GpuNearBatch = -1;
                 SetGpuCulled(t.Renderer, false, t.Presentation.Near);
+                ApplyGrassHazeSlot(t.Renderer, t.Presentation.Near, -1);
             }
             if (installIntermediate && t.GpuIntermediateBatch >= 0)
             {
@@ -806,6 +808,7 @@ public partial class RingStandingGrassLayer : Node3D
                 intermediateReplaced = ReplaceCpuMultiMesh(t.IntermediateRenderer, IntermediateMeshFor(t.Data), LodAabb(t.Data.LocalAabb), t.Data.Buffer);
                 t.GpuIntermediateBatch = -1;
                 SetGpuCulled(t.IntermediateRenderer, false, t.Presentation.Intermediate);
+                ApplyGrassHazeSlot(t.IntermediateRenderer, t.Presentation.Intermediate, -1);
             }
             var r = t.Renderer;
             if (installNear && r == null)
@@ -1364,7 +1367,7 @@ public partial class RingStandingGrassLayer : Node3D
         // MultiMeshes untouched instead of allocating dormant indirect draws.
         if (resident.Data.InstanceCount <= 0 || !UseGpuCulling || _gpuFailureLatched || GetViewport()?.GetCamera3D() == null
             || (resident.Renderer?.Multimesh == null && resident.IntermediateRenderer?.Multimesh == null) || (_style.IsCards ? _cardMesh == null : _mesh == null)) return;
-        _gpuCompute ??= new RingGpuVegetationCompute(GroupGrassComputePhases);
+        _gpuCompute ??= new RingGpuVegetationCompute(GroupGrassComputePhases) { HazeChannel = RingVegetationHaze.Channel.Grass };
         _gpuCompute.GroupGrassPhases = GroupGrassComputePhases;
         _gpuCompute.Initialize();
         // Do not replace the CPU MultiMesh allocation until the render device
@@ -1382,6 +1385,8 @@ public partial class RingStandingGrassLayer : Node3D
             resident.GpuIntermediateBatch = _gpuCompute.RegisterBatch(new RingGpuVegetationCompute.BatchRegistration(
                 $"grass-intermediate-{key.Around}-{key.Across}", resident.IntermediateRenderer.Multimesh, lodMesh,
                 resident.Data.Buffer, resident.GroupMetadata, IsAdaptiveGroup(resident) ? resident.Data.InstanceCount : IntermediateGpuCapacity(resident.Data.InstanceCount), LodAabb(resident.Data.LocalAabb), true));
+        ApplyGrassHazeSlot(resident.Renderer, resident.Presentation.Near, resident.GpuNearBatch);
+        ApplyGrassHazeSlot(resident.IntermediateRenderer, resident.Presentation.Intermediate, resident.GpuIntermediateBatch);
         DiagnosticGpuRegistered(key, resident, gpuRegistrationStart);
         if (previousNearBatch != resident.GpuNearBatch || previousIntermediateBatch != resident.GpuIntermediateBatch)
             InvalidateGrassWork();
@@ -1404,7 +1409,7 @@ public partial class RingStandingGrassLayer : Node3D
         if (_gpuFailureLatched) return;
         Camera3D? camera = GetViewport()?.GetCamera3D();
         if (camera == null) return;
-        _gpuCompute ??= new RingGpuVegetationCompute(GroupGrassComputePhases);
+        _gpuCompute ??= new RingGpuVegetationCompute(GroupGrassComputePhases) { HazeChannel = RingVegetationHaze.Channel.Grass };
         _gpuCompute.GroupGrassPhases = GroupGrassComputePhases;
         _gpuCompute.Initialize();
         if (_gpuCompute.Failed)
@@ -1470,6 +1475,7 @@ public partial class RingStandingGrassLayer : Node3D
         // Submit the empty transition too, so backend requested/deferred counts
         // describe this camera frame after whole-tile culling hides every pass.
         int batchBudget = EffectiveGpuCullingBatchesPerFrame;
+        _gpuCompute.RequestHaze(CaptureGrassHazeFrame());
         _gpuCompute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(LatchedGrassCameraPosition(camera),
             Array.Empty<uint>(), _gpuFrames, SkipUnchanged: SkipUnchangedGpuCulling && !firstVisibilityHandoff,
             MaximumBatchesPerDispatch: batchBudget,
@@ -1487,6 +1493,8 @@ public partial class RingStandingGrassLayer : Node3D
             // the output hidden until its first compute dispatch is ready.
             SetGpuCulled(resident.Renderer, resident.GpuNearBatch >= 0, resident.Presentation.Near);
             SetGpuCulled(resident.IntermediateRenderer, resident.GpuIntermediateBatch >= 0, resident.Presentation.Intermediate);
+            ApplyGrassHazeSlot(resident.Renderer, resident.Presentation.Near, resident.GpuNearBatch);
+            ApplyGrassHazeSlot(resident.IntermediateRenderer, resident.Presentation.Intermediate, resident.GpuIntermediateBatch);
             SetRendererVisible(resident.Renderer, resident.NearWanted && AdaptiveNearVisible(resident)
                 && (resident.GpuNearBatch < 0 || _gpuReadyBatches.Contains(resident.GpuNearBatch)));
             SetRendererVisible(resident.IntermediateRenderer, resident.IntermediateWanted && AdaptiveIntermediateVisible(resident)
@@ -1577,6 +1585,7 @@ public partial class RingStandingGrassLayer : Node3D
             if (resident.GpuIntermediateBatch >= 0) ReplaceCpuMultiMesh(resident.IntermediateRenderer, IntermediateMeshFor(resident.Data), LodAabb(resident.Data.LocalAabb), resident.Data.Buffer);
             resident.GpuNearBatch = resident.GpuIntermediateBatch = -1;
             SetGpuCulled(resident.Renderer, false, resident.Presentation.Near); SetGpuCulled(resident.IntermediateRenderer, false, resident.Presentation.Intermediate);
+            ApplyGrassHazeSlot(resident.Renderer, resident.Presentation.Near, -1); ApplyGrassHazeSlot(resident.IntermediateRenderer, resident.Presentation.Intermediate, -1);
             if (resident.Renderer != null) resident.Renderer.Visible = resident.NearWanted;
             if (resident.IntermediateRenderer != null) resident.IntermediateRenderer.Visible = resident.IntermediateWanted;
         }
@@ -1679,12 +1688,29 @@ public partial class RingStandingGrassLayer : Node3D
             state.GustUv = null;
             state.TerrainOriginUv = null;
             state.GpuCulled = null;
+            state.HazeSlot = null;
             state.SnapshotRevision = -1;
         }
         if (state.GpuCulled == enabled) return;
         if (renderer is GrassPresentationRenderer presentation) presentation.CpuVisiblePrefix = null;
         if (!_style.IsCards) renderer.SetInstanceShaderParameter("grass_gpu_culled", enabled); // the card shader declares no such uniform
         state.GpuCulled = enabled;
+    }
+    private RingVegetationHazeFrame CaptureGrassHazeFrame()
+    {
+        if (_style.IsCards && _cardMaterial != null && RingVegetationHaze.TryReadRayFrame(_cardMaterial, out RingAtmosphereRayFrame frame, out double radius))
+            return RingVegetationHaze.CreateFrame(frame, radius);
+        return RingVegetationHaze.CreateFrame(RingAtmosphereRayFrame.Invalid, 0);
+    }
+    // A batch id of -1 (CPU MultiMesh) writes (-1, 0) so the card shader never reads the atlas for that renderer.
+    private void ApplyGrassHazeSlot(MultiMeshInstance3D? renderer, RendererPresentationCache state, int batchId)
+    {
+        if (renderer == null || !_style.IsCards) return;
+        Vector2 slot = batchId >= 0 && _gpuCompute != null ? _gpuCompute.GetHazeSlot(batchId) : new Vector2(-1, 0);
+        if (ReferenceEquals(state.HazeRenderer, renderer) && state.HazeSlot == slot) return;
+        renderer.SetInstanceShaderParameter("vegetation_haze_slot", slot);
+        state.HazeRenderer = renderer;
+        state.HazeSlot = slot;
     }
     private MultiMeshInstance3D CreateRenderer(RingGrassTileKey key, Mesh mesh, ShaderMaterial material, string suffix)
     {

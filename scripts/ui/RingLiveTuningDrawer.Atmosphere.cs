@@ -15,6 +15,7 @@ public partial class RingLiveTuningDrawer
     private VBoxContainer? _atmospherePhysicalGroup;
     private CheckButton? _atmosphereEnabled;
     private CheckButton? _atmosphereSkyHazeLut;
+    private CheckButton? _atmosphereVegetationInstanceHaze;
     private Label? _atmosphereStatus;
     private double _atmosphereSaveDelay;
     private double _atmosphereRefreshDelay;
@@ -60,6 +61,14 @@ public partial class RingLiveTuningDrawer
     {
         if (!RebindAtmosphereDefaults()) return;
         _atmosphereDefaults!.SetHazeQuality(quality);
+        _atmosphereSaveDelay = .5;
+        RefreshAtmosphereControls();
+    }
+
+    public void SetAtmosphereVegetationInstanceHaze(bool enabled)
+    {
+        if (!RebindAtmosphereDefaults()) return;
+        _atmosphereDefaults!.SetVegetationInstanceHaze(enabled);
         _atmosphereSaveDelay = .5;
         RefreshAtmosphereControls();
     }
@@ -173,6 +182,10 @@ public partial class RingLiveTuningDrawer
         _atmosphereSkyHazeLut.Toggled += SetAtmosphereSkyHazeLut;
         _atmosphereControls.Add(_atmosphereSkyHazeLut);
         _atmospherePhysicalGroup.AddChild(_atmosphereSkyHazeLut);
+        _atmosphereVegetationInstanceHaze = new CheckButton { Name = "AtmosphereVegetationInstanceHaze", Text = "Per-instance vegetation haze", ButtonPressed = settings.VegetationInstanceHaze };
+        _atmosphereVegetationInstanceHaze.Toggled += SetAtmosphereVegetationInstanceHaze;
+        _atmosphereControls.Add(_atmosphereVegetationInstanceHaze);
+        _atmospherePhysicalGroup.AddChild(_atmosphereVegetationInstanceHaze);
         var qualityRow = new HBoxContainer();
         qualityRow.AddChild(new Label { Text = "Quality (points)", CustomMinimumSize = new Vector2(150, 0) });
         _atmosphereHazeQuality = new OptionButton { Name = "AtmosphereHazeQuality", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
@@ -247,6 +260,7 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("SkyTintB", s.SkyTintB);
         _atmosphereHazeQuality?.Select(_atmosphereHazeQuality.GetItemIndex(s.HazeQuality));
         _atmosphereSkyHazeLut?.SetPressedNoSignal(s.SkyHazeLut);
+        _atmosphereVegetationInstanceHaze?.SetPressedNoSignal(s.VegetationInstanceHaze);
         if (_atmospherePhysicalGroup != null) _atmospherePhysicalGroup.Visible = s.HazeModel == 1;
         UpdateAtmosphereStatus();
     }

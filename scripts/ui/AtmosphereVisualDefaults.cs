@@ -23,6 +23,7 @@ public sealed class AtmosphereVisualDefaults
         RingAtmosphereModel.HazeStormStrength = Settings.StormHaze;
         RingAtmosphereModel.EnclosedCloudFog = Settings.EnclosedCloudFog;
         RingAtmosphereLuts.SkyViewEnabled = Settings.SkyHazeLut;
+        RingVegetationHaze.Enabled = Settings.VegetationInstanceHaze;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.SetPhysicalControls(Settings.MistDensity, Settings.MistHeight, Settings.AerosolHeight, Settings.RayleighStrength,
             Settings.GroundAlbedo, Settings.MultiScatter, new Vector3(Settings.SkyTintR, Settings.SkyTintG, Settings.SkyTintB), Settings.HazeQuality);
@@ -67,6 +68,11 @@ public sealed class AtmosphereVisualDefaults
     public void SetSkyHazeLut(bool enabled)
     {
         Settings.SkyHazeLut = enabled;
+        Sanitize(); Dirty = true; Apply();
+    }
+    public void SetVegetationInstanceHaze(bool enabled)
+    {
+        Settings.VegetationInstanceHaze = enabled;
         Sanitize(); Dirty = true; Apply();
     }
     public void SetHazeQuality(int quality)

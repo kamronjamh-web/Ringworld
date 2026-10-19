@@ -117,6 +117,7 @@ public partial class RingHazeSkyIrradiance : RefCounted
     // ring_haze_air_interval
     private static (double, double) AirInterval(D3 ray, double length, Frame f, Params p)
     {
+        if (length > 0.0001 && length < Math.Min(Math.Min(p.CapHeight - f.CameraHeight, f.CameraHeight + p.FloorDepth), Math.Min(f.SideNegative, f.SidePositive))) return (0.0, length);
         var outer = PathInterval(ray, f, p.Radius, -p.FloorDepth, length);
         var vac = PathInterval(ray, f, p.Radius, p.CapHeight, length);
         if (outer.Item2 <= outer.Item1) return (1.0, 0.0);
@@ -150,7 +151,8 @@ public partial class RingHazeSkyIrradiance : RefCounted
         if (dt <= 0.0) return new D3(0, 0, 0);
         int n = p.Quality >= 16 ? 16 : (p.Quality >= 8 ? 8 : 4);
         double sag = Math.Max(a, 0.0) * dt * dt / (8.0 * Math.Max(radial0, 1.0));
-        int pieces = sag <= Clamp(SagFraction * p.HMist, 4.0, 40.0) ? 1 : n;
+        double sagTol = Clamp(SagFraction * p.HMist, 4.0, 40.0);
+        int pieces = sag <= sagTol ? 1 : Math.Min(n, Math.Max(2, (int)Math.Ceiling(1.5707963 * Math.Sqrt(sag / sagTol))));
         D3 sum = new(0, 0, 0);
         double tStart = t0;
         double hStart = Height(t0, h0, radial0, b, a);

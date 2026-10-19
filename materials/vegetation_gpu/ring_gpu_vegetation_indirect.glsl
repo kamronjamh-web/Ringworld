@@ -1,10 +1,11 @@
 #[compute]
 #version 450
+layout(constant_id = 0) const bool VEGETATION_HAZE = false;
 
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0, std430) readonly buffer Sources { float source[]; };
 layout(set = 0, binding = 1, std430) readonly buffer Metadata { vec4 metadata[]; };
-layout(set = 0, binding = 2, std430) writeonly buffer OutputRows { float output_row[]; };
+layout(set = 0, binding = 2, std430) buffer OutputRows { float output_row[]; };
 layout(set = 0, binding = 3, std430) buffer Commands { uint command[]; };
 layout(set = 0, binding = 4, std430) readonly buffer Parameters { float p[]; };
 layout(set = 0, binding = 5, std430) buffer Flags { uint local_offset[]; };
@@ -13,9 +14,35 @@ layout(set = 0, binding = 7, std430) buffer Offsets { uint group_offset[]; };
 layout(set = 0, binding = 8, std430) buffer Budgets { uint used[5]; };
 layout(push_constant, std430) uniform Push {
     uint phase, count, capacity, surfaces;
-    uint sweep, protected_base_valid, unused1, unused2;
+    uint sweep, protected_base_valid, haze_base, haze_tag;
+    vec4 haze_anchor; // xyz = anchor in mesh-local row space (trees: mesh AABB centre; grass / shared impostor: 0), w > .5 = write haze
 } q;
+layout(set = 1, binding = 0, std140) uniform HazeParams {
+    vec4 sigma_R_H_R; vec4 aerosol; vec4 mist; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
+} haze;
+layout(rgba16f, set = 1, binding = 1) uniform restrict writeonly image2D haze_atlas;
+#include "res://materials/ring_atmosphere_shared.gdshaderinc"
+#include "res://materials/ring_haze_shared.gdshaderinc"
+#include "res://materials/atmosphere/ring_vegetation_haze_terms.gdshaderinc"
 shared uint scan[64];
+
+void write_vegetation_haze(uint slot_row, vec3 root, vec3 local_x, vec3 local_y, vec3 local_z) {
+    if (!VEGETATION_HAZE || q.haze_anchor.w < .5) return;
+    vec3 local_anchor = root + local_x * q.haze_anchor.x + local_y * q.haze_anchor.y + local_z * q.haze_anchor.z;
+    mat3 basis = mat3(vec3(p[16], p[17], p[18]), vec3(p[19], p[20], p[21]), vec3(p[22], p[23], p[24]));
+    vec3 world = basis * local_anchor + vec3(p[25], p[26], p[27]);
+    RingHazeParams hp = ring_haze_params_default();
+    hp.sigma_R = haze.sigma_R_H_R.xyz; hp.H_R = haze.sigma_R_H_R.w;
+    hp.sigma_A = haze.aerosol.x; hp.omega_A = haze.aerosol.y; hp.H_A = haze.aerosol.z; hp.sigma_M0 = haze.aerosol.w;
+    hp.omega_M = haze.mist.x; hp.H_mist = haze.mist.y; hp.cap_height = haze.mist.z; hp.g = haze.mist.w;
+    hp.quality = int(haze.geometry.w + .5); hp.to_sun = normalize(haze.to_sun.xyz);
+    hp = ring_haze_apply_storm(hp, haze.storm);
+    RingVegetationHazeTerms t = ring_vegetation_haze_terms(hp, world, haze.camera.xyz, haze.geometry.z, haze.outward.xyz, haze.axis.xyz,
+        haze.sides.x, haze.sides.y, haze.sides.z, haze.geometry.x, haze.geometry.y);
+    ivec2 texel = ring_vegetation_haze_texel(int(q.haze_base + slot_row));
+    imageStore(haze_atlas, texel, ring_vegetation_haze_pack0(t, float(q.haze_tag)));
+    imageStore(haze_atlas, texel + ivec2(1, 0), ring_vegetation_haze_pack1(t));
+}
 
 float root_hash(vec2 seed, uint id) {
     return fract(sin(dot(seed, vec2(12.9898, 78.233)) + float(id) * .12345) * 43758.5453);
@@ -126,6 +153,18 @@ void main() {
     uint lane = gl_LocalInvocationID.x;
     uint group = gl_WorkGroupID.x;
     uint groups = (q.count + 63u) / 64u;
+    if (q.phase == 4u) {
+        if (!VEGETATION_HAZE) return;
+        uint visible = min(command[1], q.capacity);
+        if (id >= visible) return;
+        uint input_stride = p[10] > .5 ? 20u : (p[14] > .5 ? 16u : 12u);
+        uint output_stride = p[10] > .5 ? 20u : (p[60] > .5 ? 16u : input_stride);
+        uint b = id * output_stride;
+        write_vegetation_haze(id, vec3(output_row[b + 3u], output_row[b + 7u], output_row[b + 11u]),
+            vec3(output_row[b], output_row[b + 4u], output_row[b + 8u]), vec3(output_row[b + 1u], output_row[b + 5u], output_row[b + 9u]),
+            vec3(output_row[b + 2u], output_row[b + 6u], output_row[b + 10u]));
+        return;
+    }
     if (q.phase == 3u) {
         // Small tree batches have one workgroup, so they can scan, claim the
         // shared budget, and compact without the inter-dispatch round trips.
@@ -166,6 +205,10 @@ void main() {
         uint output_stride = p[10] > .5 ? 20u : (p[60] > .5 ? 16u : input_stride);
         for (uint element = 0u; element < input_stride; ++element)
             output_row[destination * output_stride + element] = source[id * input_stride + element];
+        write_vegetation_haze(destination, vec3(source[id * input_stride + 3u], source[id * input_stride + 7u], source[id * input_stride + 11u]),
+            vec3(source[id * input_stride], source[id * input_stride + 4u], source[id * input_stride + 8u]),
+            vec3(source[id * input_stride + 1u], source[id * input_stride + 5u], source[id * input_stride + 9u]),
+            vec3(source[id * input_stride + 2u], source[id * input_stride + 6u], source[id * input_stride + 10u]));
         if (p[10] < .5 && p[60] > .5) {
             output_row[destination * output_stride + 12u] = p[14] > .5 ? source[id * input_stride + 12u] : 0.0;
             float distance_to_camera = tree_distance(id, input_stride);
@@ -227,6 +270,10 @@ void main() {
     uint output_stride = p[10] > .5 ? 20u : (p[60] > .5 ? 16u : input_stride);
     for (uint element = 0u; element < input_stride; ++element)
         output_row[destination * output_stride + element] = source[id * input_stride + element];
+    write_vegetation_haze(destination, vec3(source[id * input_stride + 3u], source[id * input_stride + 7u], source[id * input_stride + 11u]),
+        vec3(source[id * input_stride], source[id * input_stride + 4u], source[id * input_stride + 8u]),
+        vec3(source[id * input_stride + 1u], source[id * input_stride + 5u], source[id * input_stride + 9u]),
+        vec3(source[id * input_stride + 2u], source[id * input_stride + 6u], source[id * input_stride + 10u]));
     if (p[10] < .5 && p[60] > .5) {
         output_row[destination * output_stride + 12u] = p[14] > .5 ? source[id * input_stride + 12u] : 0.0;
         float distance_to_camera = tree_distance(id, input_stride);

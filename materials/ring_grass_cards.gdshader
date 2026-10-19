@@ -9,14 +9,16 @@ shader_type spatial;
 //   COLOR     : packed biome weights (desert, forest, tundra, alpine); grass is the remainder.
 //   CUSTOM    : x = kind * 4 + atlasVariant + rank * 0.999 (kind 0 card, 1 low upright layer), y = tuft random,
 //               z/w = canonical wind phases (windAround, windAcross).
-//   instance uniforms (9 of 16): grass_gust_origin_world, grass_gust_around_world, grass_gust_across_world,
+//   instance uniforms (10 of 16): vegetation_haze_slot, grass_gust_origin_world, grass_gust_around_world, grass_gust_across_world,
 //               grass_gust_origin_uv, grass_modifier_layer/_origin_world/_around_world/_across_world,
 //               grass_terrain_origin_uv.
+// Haze: per instance from the GPU haze atlas when available (ring_vegetation_haze.gdshaderinc), else per vertex.
 // Alpha-scissor: ALPHA comes from the atlas mask first; everything after it only feeds the colour pass, so the depth
 // prepass reads the mask alone. No shadow casting: set cast_shadow = OFF on the renderer.
 render_mode cull_disabled, diffuse_lambert, specular_disabled, skip_vertex_transform;
 #include "res://materials/ring_grass_card_common.gdshaderinc"
 #include "res://materials/ring_grass_card_color.gdshaderinc"
+#include "res://materials/ring_vegetation_haze.gdshaderinc"
 
 uniform sampler2D grass_card_atlas : filter_linear_mipmap, repeat_disable;
 uniform float grass_card_alpha_cutoff = 0.5;
@@ -153,7 +155,7 @@ void vertex() {
 
 	v_light.x = grass_card_day_factor(ground_up);
 	v_light.y = sample_local_cloud_shadow(gp) * v_light.x;
-	RingHaze haze = ring_haze_sample(ring_atmosphere_camera_world, gp, ring_atmosphere_center_world, v_light.x);
+	RingHaze haze = ring_vegetation_haze_sample(RING_VEGETATION_HAZE_GRASS, INSTANCE_ID, ring_atmosphere_camera_world, gp, ring_atmosphere_center_world, v_light.x);
 	v_haze_T = haze.T;
 	v_haze_S = ring_haze_inscatter(haze);
 	v_modifier = grass_modifier_tint(root);

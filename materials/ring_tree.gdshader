@@ -19,6 +19,7 @@ uniform bool tree_foliage_attachments = false;
 
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
+#include "res://materials/ring_vegetation_haze.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 
 varying float tree_cloud_occlusion;
@@ -49,7 +50,7 @@ void vertex() {
 	tree_day_factor = ringworld_effective_solar_day(smoothstep(
 		day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	tree_world_position = world_position;
-	RingHaze vertex_haze = ring_haze_sample(
+	RingHaze vertex_haze = ring_vegetation_haze_sample(RING_VEGETATION_HAZE_TREES, INSTANCE_ID,
 		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor);
 	tree_haze_T = vertex_haze.T;
 	tree_haze_S = ring_haze_inscatter(vertex_haze);

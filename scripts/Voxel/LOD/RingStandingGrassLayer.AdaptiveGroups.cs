@@ -313,6 +313,7 @@ public partial class RingStandingGrassLayer
             resident.Data.Buffer, resident.GroupMetadata, resident.Data.InstanceCount, LodAabb(resident.Data.LocalAabb), true));
         if (renderer is GrassPresentationRenderer tracked) tracked.RecordInstalledMultiMesh(renderer.Multimesh!, resident.Data.InstanceCount);
         SetGpuCulled(renderer, true, resident.Presentation.Intermediate);
+        ApplyGrassHazeSlot(renderer, resident.Presentation.Intermediate, resident.GpuIntermediateBatch);
         if (!cards) ConfigureLodPass(renderer, resident.Data.InstanceCount, true, resident.Data.Key);
         SetRendererVisible(renderer, false);
     }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.Core;
@@ -181,7 +182,7 @@ public partial class RingBiomeDecorationLayer
     private bool EnsureGpuTreeBackend()
     {
         if (_gpuTreeFailed) return false;
-        _gpuTreeCompute ??= new RingGpuVegetationCompute();
+        _gpuTreeCompute ??= new RingGpuVegetationCompute { HazeChannel = RingVegetationHaze.Channel.Trees };
         _gpuTreeCompute.Initialize();
         if (_gpuTreeCompute.Failed)
         {
@@ -434,6 +435,7 @@ public partial class RingBiomeDecorationLayer
     private bool ServiceGpuTreeOutputs(Vector3 camera, RingCanonicalPosition? focus, double circumference)
     {
         if (_gpuTreeCompute == null || !_gpuTreeCompute.Ready) return false;
+        _gpuTreeCompute.RequestHaze(RingVegetationHaze.CreateFrame(_treeHazeRayFrame, _grid != null ? _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau : 0));
         if (_gpuLastPolicySignature != GpuTreeRenderPolicySignature()) MarkTreeSunShadowPolicyDirty();
         // A parent/layer transform can change without a streaming invalidation
         // (including a floating-origin move in a fixture).
@@ -753,6 +755,7 @@ public partial class RingBiomeDecorationLayer
             group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod)));
         if (id < 0) { UnregisterTreeSunShadowRenderer(renderer); renderer.QueueFree(); return false; }
         _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod) };
+        if (material is ShaderMaterial) renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(id));
 		MarkTreeSunShadowPolicyDirty();
         return true;
     }
