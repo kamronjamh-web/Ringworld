@@ -234,6 +234,11 @@ CloudHistoryReproject ring_cloud_history_reproject(ivec2 uv, ivec2 size, vec2 de
 	// color; retain nearest metadata for silhouette/disocclusion decisions.
 	vec2 historyPixel = vec2(uv) + screen_position * vec2(size);
 	float reprojectedPixelMotion = length(screenPixels);
+	// A still camera reprojects to its own pixel up to float noise; a residual fraction would bilinear-blur the history every
+	// frame and converge it to a blurred copy of itself. Snap to the exact texel and keep bilinear for real motion.
+	if (reprojectedPixelMotion < 0.001) {
+		historyPixel = vec2(uv);
+	}
 	if (genericData.data.menu_optimization_controls.y <= 0.5) {
 		// Gameplay uses fractional reprojection, so reject before integer truncation
 		// can admit a narrow offscreen strip at the texture edge.
