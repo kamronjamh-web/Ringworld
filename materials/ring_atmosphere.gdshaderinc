@@ -528,7 +528,7 @@ RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_worl
 	}
 	float scale = max(ring_atmosphere_coordinate_scale, 0.000001);
 	RingHazeParams p = ring_haze_uniform_params(ring_atmosphere_to_sun, ring_atmosphere_outward_world);
-	RingHaze haze = ring_haze_eval(p, target_world, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
+	RingHaze haze = ring_haze_eval_target(p, ring_atmosphere_to_sun, ringworld_hub_light_weight, ringworld_hub_day, ringworld_solar_visibility, target_world, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
 		ring_atmosphere_outward_world, ring_atmosphere_axis_world, ring_atmosphere_sidewall_negative_meters,
 		ring_atmosphere_sidewall_positive_meters, scale, ring_radius_meters / scale, atmosphere_floor_depth_meters / scale);
 	// Per-material density multiplier (clouds and distant props bind < 1): scales optical depth, tau' = m * tau.

@@ -238,6 +238,74 @@ RingHaze ring_haze_eval(RingHazeParams p, vec3 target, vec3 camera, float camera
 	return result;
 }
 
+// ---- Far-arch remote shell (P10) --------------------------------------------------------------------------------------------
+// A ray that leaves the local air, crosses the central vacuum and re-enters air near its target passes through the air of the
+// OPPOSITE ring section. Remote interval = [upper_vacuum.y, outer.y]; it exists only when the vacuum starts after the camera's
+// outer chord does (camera in air). The same cylinder frame (ring_haze_height with the camera's h0/radial0/b/a) covers the whole ray.
+// Shortest ray that can leave and re-enter air: tangent to the vacuum core, sqrt(cap (2R - cap)) = 447 km for R = 5000 km, cap 20 km.
+vec2 ring_haze_remote_interval(vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m, float cap_height_m) {
+	float scale = max(coordinate_scale, 0.000001);
+	float length_m = length(target - camera) / scale;
+	if (length_m < 0.98 * sqrt(max(cap_height_m * (2.0 * radius_m - cap_height_m), 0.0))) return vec2(1.0, 0.0);
+	vec2 outer = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m * scale, -floor_depth_m, length_m);
+	vec2 upper_vacuum = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m * scale, cap_height_m, length_m);
+	if (outer.y <= outer.x || upper_vacuum.y <= upper_vacuum.x) return vec2(1.0, 0.0);
+	if (upper_vacuum.x <= outer.x) return vec2(1.0, 0.0);
+	return vec2(upper_vacuum.y, outer.y);
+}
+
+// T and S of the remote shell alone (T = 1, S = 0 when there is none). Lighting uses the REMOTE point (path midpoint): its own
+// local day, smoothstep(-0.2, 0.35, dot(up_remote, to_sun)) with the ringworld_effective_solar_day semantics (solar_visibility is
+// the global eclipse term, hub_day the eclipse hub), hub-blended sun direction, and the sun transmittance there. raw_to_sun is the
+// unblended direction toward the star; p supplies everything else (p.to_sun / p.day describe the camera's point and are ignored).
+RingHaze ring_haze_eval_remote(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+	RingHaze result;
+	result.T = vec3(1.0);
+	result.S_sun = vec3(0.0);
+	result.S_amb = vec3(0.0);
+	float scale = max(coordinate_scale, 0.000001);
+	vec3 delta = target - camera;
+	if (length(delta) <= 0.0001 * scale) return result;
+	vec3 ray = normalize(delta);
+	vec2 interval = ring_haze_remote_interval(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m, floor_depth_m, p.cap_height);
+	if (interval.y <= interval.x) return result;
+	RingHazeOptics o = ring_haze_optics(p, ray, interval, camera_height, outward, axis, radius_m);
+	// Remote up at the path midpoint, and the sun direction/day it sees.
+	vec3 axis_n = normalize(axis);
+	vec3 radial_ray = ray - axis_n * dot(ray, axis_n);
+	vec3 radial_mid = normalize(outward) * (radius_m - camera_height) + radial_ray * (0.5 * (interval.x + interval.y));
+	vec3 up_remote = -radial_mid / max(length(radial_mid), 0.001);
+	vec3 blended_sun = mix(normalize(raw_to_sun), up_remote, clamp(hub_weight, 0.0, 1.0));
+	RingHazeParams q = p;
+	q.to_sun = length(blended_sun) > 0.0001 ? normalize(blended_sun) : up_remote;
+	q.day = max(clamp(smoothstep(-0.2, 0.35, dot(up_remote, q.to_sun)), 0.0, 1.0) * clamp(solar_visibility, 0.0, 1.0), clamp(hub_day, 0.0, 1.0));
+	float mie_extinction = o.tau_A + o.tau_M;
+	vec3 tau_total = o.tau_R + vec3(mie_extinction);
+	result.T = exp(-tau_total);
+	vec3 one_minus_T = vec3(ring_haze_one_minus_exp(tau_total.x), ring_haze_one_minus_exp(tau_total.y), ring_haze_one_minus_exp(tau_total.z));
+	vec3 inv_total = vec3(1.0) / max(tau_total, vec3(0.00000001));
+	float mie_scatter = q.omega_A * o.tau_A + q.omega_M * o.tau_M;
+	float mu = dot(ray, q.to_sun);
+	vec3 weight_sun = o.tau_R * ring_haze_phase_rayleigh(mu) + vec3(mie_scatter * ring_haze_phase_mie(mu, q.g));
+	vec3 weight_amb = o.tau_R + vec3(mie_scatter);
+	vec3 t_sun = ring_haze_sun_transmittance(q, ray, interval, camera_height, outward, axis, radius_m);
+	float day = clamp(q.day, 0.0, 1.0);
+	result.S_sun = one_minus_T * q.E_sun * day * t_sun * weight_sun * inv_total;
+	result.S_amb = one_minus_T * mix(q.night_ambient, q.ambient, day) * weight_amb * inv_total;
+	return result;
+}
+
+// Target evaluation including the far-arch air: L = S_near + T_near * (S_remote + T_remote * L_surf), returned as one RingHaze
+// (T = T_near T_remote, S = S_near + T_near S_remote). Identical to ring_haze_eval for targets whose ray never re-enters air.
+RingHaze ring_haze_eval_target(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+	RingHaze near_air = ring_haze_eval(p, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+	RingHaze remote = ring_haze_eval_remote(p, raw_to_sun, hub_weight, hub_day, solar_visibility, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+	near_air.S_sun += near_air.T * remote.S_sun;
+	near_air.S_amb += near_air.T * remote.S_amb;
+	near_air.T *= remote.T;
+	return near_air;
+}
+
 // Sky variant: infinite ray in direction `dir`, integrated to the shell exit (the cap, or the shell floor for rays that
 // go down). Same arguments as ring_haze_eval, with a direction instead of a target.
 RingHaze ring_haze_eval_sky(RingHazeParams p, vec3 dir, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {

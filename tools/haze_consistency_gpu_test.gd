@@ -56,6 +56,11 @@ const TOL_MONOTONIC := 0.00001
 const TOL_CPU_SKY_PARITY := 0.02
 const SKY_NIGHT_MAX_RATIO := 0.1
 const SKY_ECLIPSE_MAX_RATIO := 1.2
+# P10 far-arch visibility (Physical): rays that leave the local air and land on the far arch. Camera at local night / noon.
+const ARCH_ELEVATIONS := [20.0, 30.0, 40.0, 50.0, 60.0]
+const ARCH_ALBEDO := 0.1
+const ARCH_MIN_CONTRAST := 3.0
+const ARCH_MIN_TRANSMITTANCE := 0.3
 
 var _args: PackedStringArray
 var _report_mode := false
@@ -71,6 +76,7 @@ var _sky_material: ShaderMaterial
 var _probe_material: ShaderMaterial
 var _failed := false
 var _all_cases: Array = []
+var _arch_results: Array = []
 
 func _initialize() -> void:
 	_args = OS.get_cmdline_user_args()
@@ -173,6 +179,22 @@ func _build_cases() -> void:
 		for elev in ELEVATIONS_DEG:
 			for dist_km in DISTANCES_KM:
 				_all_cases.append({"light": LIGHTING[light_index], "light_index": light_index, "elev": elev, "dist_km": dist_km})
+	if _physical:
+		for light in ["night", "noon"]:
+			for elev in ARCH_ELEVATIONS:
+				_all_cases.append({"light": light, "light_index": LIGHTING.find(light), "elev": elev, "dist_km": _arch_distance(elev) / 1000.0, "arch": true})
+
+## Distance along the elevation-`elev` chord from the camera to the far arch floor (circle of radius RING_RADIUS).
+func _arch_distance(elev_deg: float) -> float:
+	var r0 := RING_RADIUS - _altitude
+	var s := sin(deg_to_rad(elev_deg))
+	return r0 * s + sqrt(r0 * r0 * s * s - r0 * r0 + RING_RADIUS * RING_RADIUS)
+
+## Local up at the arch target of an arch case.
+func _arch_up(case: Dictionary) -> Vector3:
+	var target := _dir(float(case["elev"])) * (float(case["dist_km"]) * 1000.0)
+	var centre := OUTWARD * -(RING_RADIUS - _altitude)
+	return -(target - centre).normalized()
 
 func _dir(elev_deg: float) -> Vector3:
 	var e := deg_to_rad(elev_deg)
@@ -422,7 +444,16 @@ func _evaluate(density: float) -> Array:
 		# Physical already is the final S_sun + S_amb.
 		if not _physical:
 			results[index]["obj_s"] = results[index]["obj_s"] * out[base + 3]
-	return results
+	var standard: Array = []
+	var arch: Array = []
+	for r in results:
+		if r["case"].has("arch"):
+			arch.append(r)
+		else:
+			standard.append(r)
+	if density == 1.0:
+		_arch_results = arch
+	return standard
 
 # --- metrics ----------------------------------------------------------------------------------------------
 
@@ -521,6 +552,7 @@ func _evaluate_contracts(metrics: Array, zero_results: Array, cross: Dictionary,
 	# Physical sky (P3): CPU double-precision port agrees with the GPU sky, night/eclipse skies are dark.
 	if _physical:
 		contracts.append_array(_sky_contracts(metrics))
+		contracts.append_array(_arch_contracts())
 
 	# harness validity: the GLSL transform must match real SubViewport renders
 	contracts.append(_contract("spatial_probe_crosscheck", float(cross["spatial_max_error"]) <= 0.02, "max |alpha(spatial render) - alpha(compute)| = %.4f over %d renders" % [cross["spatial_max_error"], cross["spatial_count"]]))
@@ -551,6 +583,43 @@ func _cpu_sky_s(case: Dictionary) -> Vector3:
 	var s_sun: Vector3 = result[1]
 	var s_amb: Vector3 = result[2]
 	return s_sun * day + s_amb
+
+## P10: from the local night side the sunlit far arch (elevation >= 20 deg) must stay clearly visible against the dark local sky, under
+## its veil. Final arch radiance = S_obj + T_obj * L_surf with L_surf a representative lit surface (albedo ARCH_ALBEDO, remote sun).
+func _arch_contracts() -> Array:
+	var contracts: Array = []
+	var worst_contrast := 1.0e9
+	var worst_case := ""
+	var worst_t := 1.0e9
+	var detail := ""
+	var checked := 0
+	var noon_detail := ""
+	var sun_e: Vector3 = _global_default("ringworld_haze_sun_irradiance") * _cpu_sky.GetSunTint()
+	for r in _arch_results:
+		var c: Dictionary = r["case"]
+		var to_sun := _to_sun(c["light"])
+		var up := _arch_up(c)
+		var ndl := maxf(up.dot(to_sun), 0.0)
+		var remote_day := smoothstep(-0.2, 0.35, up.dot(to_sun)) * float(SOLAR_VISIBILITY[c["light"]])
+		var surface := sun_e * (ARCH_ALBEDO / PI) * ndl * 0.9 + _global_default("ringworld_haze_ambient_day") * ARCH_ALBEDO * remote_day
+		var transmittance := 1.0 - float(r["obj_alpha"])
+		var arch_radiance: Vector3 = (r["obj_s"] as Vector3) + surface * transmittance
+		var sky_lum := _lum(r["sky"])
+		var arch_lum := _lum(arch_radiance)
+		var contrast := arch_lum / maxf(sky_lum, 0.0005)
+		var veil := _lum(r["obj_s"]) / maxf(arch_lum, 0.000001)
+		var line := "%s e=%.0f: remote_day=%.2f T.g=%.3f L_surf=%.4f arch=%.5f sky=%.5f contrast=%.1f veil_share=%.2f" % [c["light"], c["elev"], remote_day, transmittance, _lum(surface), arch_lum, sky_lum, contrast, veil]
+		print("ARCH ", line)
+		# Only arch sections that are actually lit (remote day >= 0.5); the part still in the local night's shadow reads as dark land.
+		if c["light"] == "night" and remote_day >= 0.5:
+			checked += 1
+			if contrast < worst_contrast:
+				worst_contrast = contrast
+				worst_case = line
+			worst_t = minf(worst_t, transmittance)
+	contracts.append(_contract("arch_visible_from_night", checked >= 3 and worst_contrast >= ARCH_MIN_CONTRAST and worst_t >= ARCH_MIN_TRANSMITTANCE,
+		"min arch/sky luminance contrast %.1f (need >= %.1f), min arch T.g %.3f (need >= %.2f); worst: %s" % [worst_contrast, ARCH_MIN_CONTRAST, worst_t, ARCH_MIN_TRANSMITTANCE, worst_case]))
+	return contracts
 
 func _sky_contracts(metrics: Array) -> Array:
 	var contracts: Array = []

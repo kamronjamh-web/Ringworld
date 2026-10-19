@@ -3,6 +3,7 @@ extends SceneTree
 # ground/high-altitude pose and presentation view before temporal settling.
 # Run:  godot --path . --script res://tools/atmosphere_visual_test.gd [-- --model=physical] [--copy-to=<absolute dir>]
 # --model=physical switches the P2a haze A/B toggle (drawer SetAtmosphereHazeModel) before any capture; the default is Legacy.
+# --labels=a,b,c limits captures to labels ending with one of the suffixes (natural profile only).
 # --copy-to also writes every capture PNG into the given directory (prefixed by the model) so runs can be compared.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
@@ -29,6 +30,7 @@ var albedo_overrides := {}
 var haze_brightness_override := -1.0
 var quick := false
 var only_label := ""
+var only_labels: PackedStringArray = []
 
 class SessionStub extends Node:
 	var settings := {}
@@ -48,6 +50,7 @@ func run() -> void:
 		elif argument.begins_with("--haze-brightness="): haze_brightness_override = float(argument.get_slice("=", 1))
 		elif argument == "--quick": quick = true
 		elif argument.begins_with("--only="): only_label = argument.get_slice("=", 1)
+		elif argument.begins_with("--labels="): only_labels = argument.get_slice("=", 1).split(",")
 	if copy_dir != "": DirAccess.make_dir_recursive_absolute(copy_dir)
 	fixture = "res://.godot/atmosphere_visual/%s" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
@@ -92,7 +95,7 @@ func run() -> void:
 	explorer.process_mode = Node.PROCESS_MODE_DISABLED
 	RenderingServer.viewport_set_measure_render_time(root.get_viewport_rid(), true)
 	var phases := select_visual_phases()
-	for profile in ([[0, "natural"]] if quick or only_label != "" else [[0, "natural"], [1, "cinematic"]]):
+	for profile in ([[0, "natural"]] if quick or only_label != "" or not only_labels.is_empty() else [[0, "natural"], [1, "cinematic"]]):
 		drawer.call("SetAtmospherePreset", int(profile[0]))
 		await capture_visible_tuning(str(profile[1]))
 		await matched_capture(str(profile[1]) + "_noon", ground_height, phases["noon"], false)
@@ -103,6 +106,8 @@ func run() -> void:
 		await matched_capture(str(profile[1]) + "_noon_horizon", ground_height, phases["noon"], false, 0.0)
 		await matched_capture(str(profile[1]) + "_noon_up2", ground_height, phases["noon"], false, 2.0)
 		await matched_capture(str(profile[1]) + "_dusk_horizon", ground_height, phases["dusk"], false, 0.0)
+		# Far arch (P10): local night, looking up the arch at 50 degrees where the far side is sunlit.
+		await matched_capture(str(profile[1]) + "_night_arch", ground_height, phases["night"], false, 50.0)
 		explorer.call("SetPresentationView", 0.0, -10.0)
 	drawer.call("SetAtmospherePreset", 0)
 	drawer.call("SetAtmosphereTuningValue", "Density", 0.0)
@@ -187,7 +192,11 @@ func select_visual_phases() -> Dictionary:
 
 func matched_capture(label: String, ground_height: float, fraction: float, high_altitude: bool, pitch_degrees := -10.0) -> void:
 	if only_label != "" and not label.ends_with(only_label): return
-	if quick and not (label.ends_with("noon") or label.ends_with("noon_horizon") or label.ends_with("noon_up2")): return
+	if not only_labels.is_empty():
+		var wanted := false
+		for suffix in only_labels: wanted = wanted or label.ends_with(suffix)
+		if not wanted: return
+	elif quick and not (label.ends_with("noon") or label.ends_with("noon_horizon") or label.ends_with("noon_up2")): return
 	await reset_pose(ground_height, high_altitude)
 	if pitch_degrees != -10.0: explorer.call("SetPresentationView", 0.0, pitch_degrees)
 	clock.set("Paused", true)

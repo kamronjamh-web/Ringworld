@@ -272,7 +272,7 @@ void main() {
 	vec4 v0 = input_data.values[index * 3u];
 	vec4 v1 = input_data.values[index * 3u + 1u];
 	vec4 v2 = input_data.values[index * 3u + 2u];
-	float radius = v0.x; float height = v0.y; float scale = v0.z; bool sky = v0.w > 0.5;
+	int mode = int(v0.w + 0.5); float radius = v0.x; float height = v0.y; float scale = v0.z; bool sky = mode == 1; bool remote_mode = mode == 2;
 	vec3 outward = vec3(1.0, 0.0, 0.0); vec3 axis = vec3(0.0, 1.0, 0.0); vec3 camera = vec3(0.0);
 	RingHazeParams p = ring_haze_params_default();
 	int pset = int(v2.z + 0.5);
@@ -284,20 +284,27 @@ void main() {
 	p.to_sun = vec3(-sin(sun), 0.0, cos(sun));
 	vec3 target = sky ? camera + normalize(v1.xyz) * (2.0 * radius * scale) : v1.xyz;
 	vec3 ray = normalize(target - camera);
-	vec2 interval = ring_haze_air_interval(target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0, p.cap_height);
+	vec2 interval = remote_mode ? ring_haze_remote_interval(target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0, p.cap_height)
+		: ring_haze_air_interval(target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0, p.cap_height);
 	RingHazeOptics o = ring_haze_optics(p, ray, interval, height, outward, axis, radius);
-	RingHaze haze = sky ? ring_haze_eval_sky(p, v1.xyz, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0)
-		: ring_haze_eval(p, target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0);
-	output_data.values[index * 5u] = vec4(o.tau_R, 0.0);
-	output_data.values[index * 5u + 1u] = vec4(o.tau_A, o.tau_M, interval.x, interval.y);
-	output_data.values[index * 5u + 2u] = vec4(haze.T, 0.0);
-	output_data.values[index * 5u + 3u] = vec4(haze.S_sun, 0.0);
-	output_data.values[index * 5u + 4u] = vec4(haze.S_amb, 0.0);
+	RingHaze near_haze = ring_haze_eval(p, target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0);
+	RingHaze full = ring_haze_eval_target(p, p.to_sun, 0.0, 0.0, 1.0, target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0);
+	RingHaze rem = ring_haze_eval_remote(p, p.to_sun, 0.0, 0.0, 1.0, target, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0);
+	RingHaze haze = sky ? ring_haze_eval_sky(p, v1.xyz, camera, height, outward, axis, v2.x, v2.y, scale, radius, 2500.0) : (remote_mode ? full : near_haze);
+	float diff = max(max(length(full.T - near_haze.T), length(full.S_sun - near_haze.S_sun)), length(full.S_amb - near_haze.S_amb));
+	output_data.values[index * 8u] = vec4(o.tau_R, 0.0);
+	output_data.values[index * 8u + 1u] = vec4(o.tau_A, o.tau_M, interval.x, interval.y);
+	output_data.values[index * 8u + 2u] = vec4(haze.T, 0.0);
+	output_data.values[index * 8u + 3u] = vec4(haze.S_sun, 0.0);
+	output_data.values[index * 8u + 4u] = vec4(haze.S_amb, 0.0);
+	output_data.values[index * 8u + 5u] = vec4(near_haze.T, remote_mode ? 0.0 : diff);
+	output_data.values[index * 8u + 6u] = vec4(rem.S_sun, 0.0);
+	output_data.values[index * 8u + 7u] = vec4(rem.T, 0.0);
 }
 """
 	return "#version 450\n" + include + "\n" + main
 
-# Runs every entry of `entries` ({case, scale, quality}) through the production haze include; returns 20 floats per entry.
+# Runs every entry of `entries` ({case, scale, quality}) through the production haze include; returns 32 floats per entry.
 func haze_dispatch(rd: RenderingDevice, shader: RID, entries: Array) -> PackedFloat32Array:
 	var inputs := PackedFloat32Array()
 	for entry in entries:
@@ -310,7 +317,7 @@ func haze_dispatch(rd: RenderingDevice, shader: RID, entries: Array) -> PackedFl
 			float(target[0]) * target_scale, float(target[1]) * target_scale, float(target[2]) * target_scale, float(entry["quality"]),
 			float(test_case["negative"]), float(test_case["positive"]), float(test_case["pset"]), float(test_case["sun"])])
 	var input_buffer := rd.storage_buffer_create(inputs.size() * 4, inputs.to_byte_array())
-	var output_buffer := rd.storage_buffer_create(entries.size() * 80)
+	var output_buffer := rd.storage_buffer_create(entries.size() * 128)
 	var input_uniform := RDUniform.new()
 	input_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER
 	input_uniform.binding = 0
@@ -385,6 +392,70 @@ func haze_reference(test_case: Dictionary) -> Dictionary:
 	result["tau_m"] = sigma_m * sum_m * dt
 	return result
 
+const HAZE_REMOTE_TAU_REL_TOL := 0.03
+
+# Arch targets: camera at (0,0,0) with the ring centre at (-(R - h), 0, 0); a target `around_deg` along the ring at `target_h` above the floor
+# and `lateral` metres along the axis. sun < 0 puts the camera on the local night side.
+func haze_remote_case(case_name: String, around_deg: float, target_h: float, lateral: float, sun: float) -> Dictionary:
+	var radius := 5000000.0
+	var camera_h := 300.0
+	var around := deg_to_rad(around_deg)
+	var ring_radius := radius - target_h
+	var target := [ring_radius * cos(around) - (radius - camera_h), lateral, ring_radius * sin(around)]
+	return {"name":case_name, "r":radius, "h":camera_h, "mode":2, "pset":0, "sun":sun, "negative":159000.0, "positive":159000.0, "target":target}
+
+func haze_remote_cases() -> Array:
+	var cases := []
+	for around_deg in [10.0, 20.0, 60.0, 120.0, 170.0, 180.0]:
+		for target_h in [0.0, 300.0, 3000.0]:
+			for lateral in [0.0, 60000.0]:
+				var entry := haze_remote_case("arch_%sdeg_h%s_y%s" % [around_deg, target_h, lateral], around_deg, target_h, lateral, 60.0)
+				if around_deg == 180.0:
+					entry["expect_remote_day"] = false
+				cases.append(entry)
+	for around_deg in [120.0, 170.0, 180.0]:
+		var night := haze_remote_case("arch_night_%sdeg" % around_deg, around_deg, 0.0, 0.0, -120.0)
+		night["expect_remote_day"] = true
+		cases.append(night)
+	return cases
+
+func haze_reference_remote(test_case: Dictionary) -> Dictionary:
+	var radius := float(test_case["r"])
+	var height := float(test_case["h"])
+	var target: Array = test_case["target"]
+	var length_m := sqrt(float(target[0]) * float(target[0]) + float(target[1]) * float(target[1]) + float(target[2]) * float(target[2]))
+	var result := {"tau_r":Vector3.ZERO, "tau_a":0.0, "tau_m":0.0, "t0":1.0, "t1":0.0}
+	var ray := PackedFloat64Array([float(target[0]) / length_m, float(target[1]) / length_m, float(target[2]) / length_m])
+	var negative := float(test_case["negative"])
+	var positive := float(test_case["positive"])
+	var outer := layer_interval(radius, height, ray, -HAZE_FLOOR_DEPTH, length_m, negative, positive)
+	var upper := layer_interval(radius, height, ray, HAZE_CAP, length_m, negative, positive)
+	if outer[1] <= outer[0] or upper[1] <= upper[0] or upper[0] <= outer[0]:
+		return result
+	var t0: float = upper[1]
+	var t1: float = outer[1]
+	if t1 <= t0:
+		return result
+	result["t0"] = t0
+	result["t1"] = t1
+	var steps := 4000
+	var dt: float = (t1 - t0) / steps
+	var sum_r := 0.0
+	var sum_a := 0.0
+	var sum_m := 0.0
+	for k in steps:
+		var t: float = t0 + (k + 0.5) * dt
+		var px := (radius - height) + t * ray[0]
+		var pz := t * ray[2]
+		var h := radius - sqrt(px * px + pz * pz)
+		sum_r += exp(-h / HAZE_H_R)
+		sum_a += exp(-h / HAZE_H_A)
+		sum_m += exp(-h / HAZE_H_MIST)
+	result["tau_r"] = Vector3(HAZE_SIGMA_R[0], HAZE_SIGMA_R[1], HAZE_SIGMA_R[2]) * (sum_r * dt)
+	result["tau_a"] = haze_sigma_a() * sum_a * dt
+	result["tau_m"] = HAZE_SIGMA_M0 * sum_m * dt
+	return result
+
 func haze_tau_error(actual: float, expected: float) -> float:
 	return abs(actual - expected) / maxf(abs(expected), HAZE_TAU_ABS_FLOOR / 0.01)
 
@@ -432,7 +503,7 @@ func run_haze_tests() -> String:
 		var test_case: Dictionary = entry["case"]
 		var quality: int = entry["quality"]
 		var reference: Dictionary = references[test_case["name"]]
-		var base := index * 20
+		var base := index * 32
 		var actual_r := Vector3(output[base], output[base + 1], output[base + 2])
 		var expected_r: Vector3 = reference["tau_r"]
 		var errors := [haze_tau_error(actual_r.x, expected_r.x), haze_tau_error(actual_r.y, expected_r.y), haze_tau_error(actual_r.z, expected_r.z),
@@ -458,6 +529,8 @@ func run_haze_tests() -> String:
 			failure = "interval should be empty %s gpu=(%s,%s)" % [label, output[base + 6], output[base + 7]]
 		if failure == "" and quality == 8 and is_short and worst_error > HAZE_TAU_REL_TOL:
 			failure = "tau error %.4f > %.2f %s gpu_r=%s cpu_r=%s gpu_a=%s cpu_a=%s gpu_m=%s cpu_m=%s" % [worst_error, HAZE_TAU_REL_TOL, label, actual_r, expected_r, output[base + 4], reference["tau_a"], output[base + 5], reference["tau_m"]]
+		if int(test_case["mode"]) == 0 and is_short and output[base + 23] != 0.0:
+			failure = "near target changed by the remote shell %s diff=%s" % [label, output[base + 23]]
 		var transmittance := Vector3(output[base + 8], output[base + 9], output[base + 10])
 		var s_sun := Vector3(output[base + 12], output[base + 13], output[base + 14])
 		var s_amb := Vector3(output[base + 16], output[base + 17], output[base + 18])
@@ -476,6 +549,77 @@ func run_haze_tests() -> String:
 	print("HAZE_TAU max rel error (rays < 1000 km): N=4 %.5f (%s) | N=8 %.5f (%s) | N=16 %.5f (%s)" % [max_error[4], worst[4], max_error[8], worst[8], max_error[16], worst[16]])
 	print("HAZE_TAU max rel error (rays >= 1000 km, report only): N=4 %.5f (%s) | N=8 %.5f (%s) | N=16 %.5f (%s)" % [max_long_error[4], worst_long[4], max_long_error[8], worst_long[8], max_long_error[16], worst_long[16]])
 
+	# --- far-arch remote shell (P10) --------------------------------------------------------------------------------
+	var remote_cases := haze_remote_cases()
+	var remote_entries := []
+	for scale in SCALES:
+		for test_case in remote_cases:
+			remote_entries.append({"case":test_case, "scale":scale, "quality":8})
+	var remote_output := haze_dispatch(rd, shader, remote_entries)
+	var remote_max_error := 0.0
+	var remote_worst := ""
+	var remote_present := 0
+	var remote_day_cases := 0
+	for index in remote_entries.size():
+		var entry: Dictionary = remote_entries[index]
+		var test_case: Dictionary = entry["case"]
+		var reference := haze_reference_remote(test_case)
+		var base := index * 32
+		var label := "%s scale=%s" % [test_case["name"], entry["scale"]]
+		var actual_r := Vector3(remote_output[base], remote_output[base + 1], remote_output[base + 2])
+		var t_total := Vector3(remote_output[base + 8], remote_output[base + 9], remote_output[base + 10])
+		var t_near := Vector3(remote_output[base + 20], remote_output[base + 21], remote_output[base + 22])
+		var t_remote := Vector3(remote_output[base + 28], remote_output[base + 29], remote_output[base + 30])
+		var s_remote_sun := Vector3(remote_output[base + 24], remote_output[base + 25], remote_output[base + 26])
+		var has_reference: bool = reference["t1"] > reference["t0"]
+		if has_reference != (remote_output[base + 7] > remote_output[base + 6] + 1.0):
+			rd.free_rid(shader)
+			rd.free()
+			return "remote interval presence mismatch %s gpu=(%s,%s) cpu=(%s,%s)" % [label, remote_output[base + 6], remote_output[base + 7], reference["t0"], reference["t1"]]
+		if not has_reference:
+			if t_remote != Vector3.ONE or s_remote_sun != Vector3.ZERO or (t_total - t_near).length() > 1.0e-6:
+				rd.free_rid(shader)
+				rd.free()
+				return "no remote shell must be identity %s T_remote=%s T_total=%s T_near=%s" % [label, t_remote, t_total, t_near]
+			continue
+		remote_present += 1
+		var expected_r: Vector3 = reference["tau_r"]
+		var errors := [haze_tau_error(actual_r.x, expected_r.x), haze_tau_error(actual_r.y, expected_r.y), haze_tau_error(actual_r.z, expected_r.z),
+			haze_tau_error(remote_output[base + 4], reference["tau_a"]), haze_tau_error(remote_output[base + 5], reference["tau_m"])]
+		var worst_error := 0.0
+		for error in errors:
+			worst_error = maxf(worst_error, error)
+		if worst_error > remote_max_error:
+			remote_max_error = worst_error
+			remote_worst = label
+		var expected_green := exp(-(expected_r.y + float(reference["tau_a"]) + float(reference["tau_m"])))
+		if worst_error > HAZE_REMOTE_TAU_REL_TOL:
+			rd.free_rid(shader)
+			rd.free()
+			return "remote tau error %.4f > %.2f %s gpu_r=%s cpu_r=%s gpu_a=%s cpu_a=%s gpu_m=%s cpu_m=%s" % [worst_error, HAZE_REMOTE_TAU_REL_TOL, label, actual_r, expected_r, remote_output[base + 4], reference["tau_a"], remote_output[base + 5], reference["tau_m"]]
+		if abs(t_remote.y - expected_green) > 0.01:
+			rd.free_rid(shader)
+			rd.free()
+			return "T_remote.g %.5f vs reference %.5f %s" % [t_remote.y, expected_green, label]
+		var product := t_near * t_remote
+		if (t_total - product).length() > 1.0e-4:
+			rd.free_rid(shader)
+			rd.free()
+			return "T_total != T_near * T_remote %s total=%s near=%s remote=%s" % [label, t_total, t_near, t_remote]
+		# Lighting at the REMOTE point: camera noon (sun 60) puts the opposite arch (180 deg around) in night; camera night (sun -120) lights it.
+		if test_case.has("expect_remote_day"):
+			remote_day_cases += 1
+			var lit: bool = s_remote_sun.y > 1.0e-6
+			if bool(test_case["expect_remote_day"]) != lit:
+				rd.free_rid(shader)
+				rd.free()
+				return "remote day mismatch %s expected_lit=%s S_sun_remote=%s" % [label, test_case["expect_remote_day"], s_remote_sun]
+	if remote_present < 20 or remote_day_cases < 4:
+		rd.free_rid(shader)
+		rd.free()
+		return "too few remote cases present=%d day=%d" % [remote_present, remote_day_cases]
+	print("HAZE_REMOTE cases=%d with_shell=%d lighting_checks=%d max tau rel error %.5f (%s)" % [remote_entries.size(), remote_present, remote_day_cases, remote_max_error, remote_worst])
+
 	# --- monotone T in distance -------------------------------------------------------------------------------------
 	var sweep_entries := []
 	var sweep_distances_km := [1.0, 2.0, 5.0, 10.0, 15.0, 19.0, 21.0, 30.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0]
@@ -487,7 +631,7 @@ func run_haze_tests() -> String:
 	for elevation_index in sweep_elevations.size():
 		var previous := Vector3.ONE
 		for distance_index in sweep_distances_km.size():
-			var base := (elevation_index * sweep_distances_km.size() + distance_index) * 20
+			var base := (elevation_index * sweep_distances_km.size() + distance_index) * 32
 			var transmittance := Vector3(sweep_output[base + 8], sweep_output[base + 9], sweep_output[base + 10])
 			if transmittance.x > previous.x + 0.0002 or transmittance.y > previous.y + 0.0002 or transmittance.z > previous.z + 0.0002:
 				rd.free_rid(shader)
@@ -511,7 +655,7 @@ func run_haze_tests() -> String:
 	var zenith_t := Vector3.ZERO
 	var rayleigh_zenith_g := 0.0
 	for index in sky_entries.size():
-		var base := index * 20
+		var base := index * 32
 		var transmittance := Vector3(sky_output[base + 8], sky_output[base + 9], sky_output[base + 10])
 		var s_sun := Vector3(sky_output[base + 12], sky_output[base + 13], sky_output[base + 14])
 		var s_amb := Vector3(sky_output[base + 16], sky_output[base + 17], sky_output[base + 18])
