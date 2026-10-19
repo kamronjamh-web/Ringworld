@@ -26,6 +26,20 @@ public partial class SurfaceTerrainSettingsSmoke : Node
         second.Reset(); if (!second.Save()) throw new InvalidOperationException("surface preference reset did not save");
         var reset = new GameplaySurfaceTerrainDefaults(path); reset.Initialize();
         if (!Mathf.IsEqualApprox(reset.Settings.BrushRadiusMeters, 8) || !Mathf.IsEqualApprox(reset.Settings.BrushStepMeters, 2) || reset.Settings.MeshLods != 4 || reset.Settings.MeshSize != 48 || !Mathf.IsEqualApprox(reset.Settings.HandoffDistanceMeters, 112) || !Mathf.IsEqualApprox(reset.Settings.MoveSpeedMetersPerSecond, 12) || !Mathf.IsEqualApprox(reset.Settings.DryRoughness, .92f) || !Mathf.IsEqualApprox(reset.Settings.WetRoughness, .35f) || !Mathf.IsEqualApprox(reset.Settings.RainWetnessStrength, 1) || !reset.Settings.SmoothTerrainShading) throw new InvalidOperationException("surface preference reset did not restore defaults");
+        // Albedo scales: default, round-trip, bounds, and a file written before they existed loads the defaults.
+        if (!Mathf.IsEqualApprox(reset.Settings.TerrainAlbedoScale, GameplaySurfaceTerrainSettings.DefaultTerrainAlbedoScale) || !Mathf.IsEqualApprox(reset.Settings.GrassAlbedoScale, GameplaySurfaceTerrainSettings.DefaultGrassAlbedoScale)) throw new InvalidOperationException("albedo scales did not default");
+        reset.SetTerrainAlbedoScale(.9f); reset.SetGrassAlbedoScale(1.4f);
+        if (!reset.Save()) throw new InvalidOperationException("albedo scales did not save");
+        var albedo = new GameplaySurfaceTerrainDefaults(path); albedo.Initialize();
+        if (!Mathf.IsEqualApprox(albedo.Settings.TerrainAlbedoScale, .9f) || !Mathf.IsEqualApprox(albedo.Settings.GrassAlbedoScale, 1.4f)) throw new InvalidOperationException("albedo scales did not round-trip");
+        if (!Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampTerrainAlbedoScale(99), 2) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGrassAlbedoScale(0), .05f) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampTerrainAlbedoScale(float.NaN), GameplaySurfaceTerrainSettings.DefaultTerrainAlbedoScale)) throw new InvalidOperationException("albedo scale bounds were not enforced");
+        string albedoFile = ProjectSettings.GlobalizePath(path);
+        string albedoText = System.IO.File.ReadAllText(albedoFile);
+        string albedoStripped = string.Join('\n', Array.FindAll(albedoText.Split('\n'), line => !line.StartsWith("TerrainAlbedoScale") && !line.StartsWith("GrassAlbedoScale")));
+        if (albedoStripped.Length >= albedoText.Length) throw new InvalidOperationException("albedo scales were not written");
+        System.IO.File.WriteAllText(albedoFile, albedoStripped);
+        var albedoOld = new GameplaySurfaceTerrainDefaults(path); albedoOld.Initialize();
+        if (!Mathf.IsEqualApprox(albedoOld.Settings.TerrainAlbedoScale, GameplaySurfaceTerrainSettings.DefaultTerrainAlbedoScale) || !Mathf.IsEqualApprox(albedoOld.Settings.GrassAlbedoScale, GameplaySurfaceTerrainSettings.DefaultGrassAlbedoScale)) throw new InvalidOperationException("old surface file did not load albedo defaults");
         string invalidParent = path + ".invalid-parent.tres";
         if (ResourceSaver.Save(new GameplaySurfaceTerrainSettings(), invalidParent) != Error.Ok) throw new InvalidOperationException("invalid-path fixture write failed");
         var invalid = new GameplaySurfaceTerrainDefaults(invalidParent + "/child.tres"); invalid.Initialize(); invalid.SetBrushRadiusMeters(9);

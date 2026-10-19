@@ -6,6 +6,7 @@
 // with o = grass_gust_origin_world and the canonical ground covectors the gust field already uses. COLOR carries the
 // packed biome weights (r desert, g forest, b tundra, a alpine; grass is the remainder).
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
+#include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 
 // Per-tile canonical terrain uv. xy = texture uv of the tile's gust origin (canonical around/across metres mod 5, times
 // 0.2); zw = macro-shadow uv of the same origin (around / circumference, across / ring width). Written next to the gust
@@ -41,11 +42,11 @@ vec2 grass_card_terrain_uv(vec2 canonical_offset, vec4 origin_uv, vec3 world) {
 
 // Biome albedo at one uv/mip. Index: 0 grass (already carries the terrain grass tint), 1 desert, 2 forest, 3 tundra, 4 alpine.
 vec3 grass_card_biome_sample(int index, vec2 uv, float lod) {
-	if (index == 0) return ring_terrain_grass_tint(textureLod(biome_grass_albedo, uv, lod).rgb);
-	if (index == 1) return textureLod(biome_desert_albedo, uv, lod).rgb;
-	if (index == 2) return textureLod(biome_forest_albedo, uv, lod).rgb;
-	if (index == 3) return textureLod(biome_tundra_albedo, uv, lod).rgb;
-	return textureLod(biome_alpine_albedo, uv, lod).rgb;
+	if (index == 0) return ring_terrain_albedo_scaled(ring_terrain_grass_tint(textureLod(biome_grass_albedo, uv, lod).rgb));
+	if (index == 1) return ring_terrain_albedo_scaled(textureLod(biome_desert_albedo, uv, lod).rgb);
+	if (index == 2) return ring_terrain_albedo_scaled(textureLod(biome_forest_albedo, uv, lod).rgb);
+	if (index == 3) return ring_terrain_albedo_scaled(textureLod(biome_tundra_albedo, uv, lod).rgb);
+	return ring_terrain_albedo_scaled(textureLod(biome_alpine_albedo, uv, lod).rgb);
 }
 
 float grass_card_biome_weight(int index, vec4 weights) {
@@ -109,5 +110,5 @@ vec3 grass_card_blade_color(vec3 ground, float r, float g, float tuft) {
 	float ao = mix(grass_card_root_ao, 1.0, smoothstep(0.0, 0.6, g));
 	float tl = 1.0 + grass_card_tip_light * smoothstep(0.5, 1.0, g);
 	vec3 tipt = mix(vec3(1.0), grass_card_tip_tint, smoothstep(0.6, 1.0, g));
-	return c * ao * tl * tipt;
+	return ring_grass_albedo_scaled(c * ao * tl * tipt);
 }

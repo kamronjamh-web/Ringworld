@@ -90,7 +90,6 @@ vec3 ring_terrain_direct_diffuse(
 		float attenuation,
 		bool is_directional,
 		vec3 light_color,
-		vec3 albedo,
 		mat4 view_matrix,
 		float day_factor,
 		float cloud_occlusion,
@@ -109,5 +108,6 @@ vec3 ring_terrain_direct_diffuse(
 		shadow_uv,
 		world,
 		viewer);
-	return albedo * light_color * n_dot_l * direct_visibility;
+	// Built-in convention (see ring_tree): Godot applies ALBEDO to DIFFUSE_LIGHT afterwards and LIGHT_COLOR carries the PI factor.
+	return (light_color / PI) * n_dot_l * direct_visibility;
 }

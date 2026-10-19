@@ -103,5 +103,6 @@ void light() {
 	float sun_hemisphere_direct = mix(direct_light_night_factor, 1.0, ring_day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
 	float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
-	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * n_dot_l * ATTENUATION * hemisphere_direct;
+	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * ATTENUATION * hemisphere_direct;
 }

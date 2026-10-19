@@ -2,6 +2,22 @@
 
 Status: approved 2026-10-18. Light shafts / froxel volumetrics are out of scope (see P9 for the plug-in point).
 
+## Handoff (2026-10-18)
+
+**Done:** P0, P0b, P1, P2a, P2b, P5, P3, hub over-blue fix, P3b (built-in lighting convention), terrain/grass albedo retune, Haze brightness slider. `HazeModel` default is still **Legacy**; select Physical in the grave-key Atmosphere tab to A/B.
+
+**Verified (Physical):** object, cloud and sky haze agree exactly (`tools/haze_consistency_gpu_test.gd --model=physical`, 13 contracts). Horizon/zenith convergence to the sky is 0.000 at 800 km. Night/eclipse sky dark. Clouds hazed at transmittance-weighted depth. Far viewport tonemapped once.
+
+**Open decisions (need the user) before flipping the default to Physical:**
+1. *Physical calibration vs dark terrain.* At 12 km the Physical haze reads milky. Root cause (measured, not a bug): live terrain albedo is ~0.04-0.065 (bright patches 0.17), ~3x below Earth-like, while the haze is calibrated to the real sun (E = pi*energy, Earth Rayleigh). Options: (A) `Haze brightness` ~0.35-0.45 (sky darkens ~2.5x with it, convergence holds); (B) Density ~0.4 (thinner, paler sky); (C) physically right: raise terrain/biome albedo ~2.5x and cut `day_sun_energy` 4 -> ~1.6 (retune trees/grass/water/clouds/goldens). Note the albedo retune done for P3b makes this worse: to reproduce the old pi*A^2 look the terrain albedo scale default is **0.15** (`ringworld_terrain_albedo_scale`, Terrain3D tab "Terrain albedo"), so effective ground albedo is ~0.006-0.025. Physical haze will look very milky over it at altitude. Option C would supersede the retune (scale back toward 1, raise base albedo, lower sun energy).
+2. *Far arch at local noon.* Physically, the arch above ~37 deg is on the far night side and vanishes against daylit air. User accepted the physical result (no ringshine, no arch veil). From the local night side the sunlit opposite arch must stay clearly visible; add a night "look up the arch" capture/contract.
+
+**Known test state:** `terrain_surface_include_regression` golden differs (terrain lighting changed by P3b; not regenerated, goldens are machine-specific). Pre-existing failures unrelated to haze: `night_horizon_attribution_test` (grass_hidden), `cloud_history_targeted_gameplay_gpu_test` (stale UBO allowlist since interleave), `lightning_visibility_stress_test --lightning-cloud-occlusion` and `sunshine_inside_cloud_seam_test` (cloud-mask material null at HEAD). Some celestial smokes crash at exit after PASS (intermittent, pre-existing).
+
+**Gotchas:** Godot does not reimport `.glsl` files whose include changed; run `--headless --import` after editing shared includes. The root viewport must stay LDR 2D (83 tools read root screenshots); far content enters via `scripts/render/RingFarBackdropComposite.gd`. Auto-exposure is on in visual-test captures, so disable it for matched brightness comparisons.
+
+**Next:** resolve decision 1, flip default to Physical (spec in P3 notes: settings default, smoke tests, `--model=legacy` flags), then P4 (remaining controls/presets), P6, P7-P8 (LUTs), P9, P10. Perf on the A1000 laptop is unmeasured for everything since P2a (4070: ~+0.3 ms Physical; far backdrop composite possibly +0.6-1.0 ms on horizon shots).
+
 ## Goals
 
 - Physically grounded haze: `exp(-tau)` transmittance, in-scatter that converges to the sky radiance in the view direction.
@@ -82,6 +98,14 @@ Known issue found in P2a (outside haze scope, pending user decision): custom `li
 ### P3b - Fix double-albedo terrain lighting (approved 2026-10-18)
 - Custom `light()` functions that add `ALBEDO * LIGHT_COLOR * NdotL` to DIFFUSE_LIGHT (Godot multiplies by albedo again): `ring_terrain_lighting.gdshaderinc` (`ring_terrain_direct_diffuse`, Terrain3D + grass), `ring_terrain_proxy`, `ring_terrain_global`, `ring_hull_global`, `ring_ocean_proxy`, `ring_ocean_global`, `voxel_ring_terrain`, `ring_surface_daynight`. Target the built-in convention (`LIGHT_COLOR / PI * NdotL`), matching `ring_tree`.
 - Expect terrain/water/hull to brighten at typical albedos; retune exposure/albedo with before/after captures for user sign-off.
+
+- Albedo retune (user decision: keep P3b): the old `pi*A^2` lighting was a strong per-channel darkening/saturating curve on dark albedos, so a pure scalar cannot restore hue exactly. Shader globals `ringworld_terrain_albedo_scale` (terrain / proxy / global / voxel albedo and the terrain colour grass blends toward) and `ringworld_grass_albedo_scale` (blade / card colour) are persisted in `GameplaySurfaceTerrainSettings` (Terrain3D tab > appearance, sliders "Terrain albedo" / "Grass albedo"). Defaults chosen by measurement with `tools/atmosphere_visual_test.gd --quick --terrain-albedo=X`: terrain 0.15 matches the pre-P3b noon lower-frame luma within ~7% (grass 1.0). Hull, water and trees are untouched. `Haze brightness` (0-2) is in the Atmosphere tab (`AtmosphereVisualSettings.HazeBrightness` -> `DaySideAtmosphere.haze_brightness`).
+
+### Far-arch visibility findings (2026-10-18)
+- In Physical, the arch above ~37 deg elevation at local noon is on the ring's night side; under daylit local air it reads as sky. This is physically correct (Legacy only showed it because its sky and arch haze were unrelated).
+- Physical ringshine (light from the lit day arch onto the night side) is ~1.3e-3 E_sun (thin arch: width 318 km vs R 5000 km): ~0.2% contrast against a noon sky, i.e. invisible. A Halo-like read would need a ~120x art gain. User decision: no ringshine, no arch veil; keep the physical model.
+- From the local night side the opposite (sunlit) arch is bright against dark local air and must stay clearly visible. Add a night "looking up the arch" capture/contract (P4 or P10).
+- P3b also removes T applied twice to far-arch direct light (ALBEDO*T multiplied again inside light()), restoring day-arch detail to Legacy parity.
 
 ### P4 - Settings, presets, persistence
 - `AtmosphereVisualSettings` (defaults so old .tres load), `AtmosphereVisualDefaults.cs`, `RingLiveTuningDrawer.Atmosphere.cs`.

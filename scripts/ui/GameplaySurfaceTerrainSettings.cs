@@ -26,4 +26,9 @@ public partial class GameplaySurfaceTerrainSettings : Resource
     [Export] public float WetRoughness { get; set; } = .35f;
     [Export] public float RainWetnessStrength { get; set; } = 1.0f;
     [Export] public bool SmoothTerrainShading { get; set; } = true;
+    // Reflectance multipliers retuning the authored albedo after the P3b built-in lighting convention (shader globals).
+    public const float DefaultTerrainAlbedoScale = 0.15f;
+    public const float DefaultGrassAlbedoScale = 1.0f;
+    [Export] public float TerrainAlbedoScale { get; set; } = DefaultTerrainAlbedoScale;
+    [Export] public float GrassAlbedoScale { get; set; } = DefaultGrassAlbedoScale;
 }

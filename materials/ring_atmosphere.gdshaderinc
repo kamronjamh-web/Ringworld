@@ -484,9 +484,8 @@ vec4 sample_ring_atmosphere(vec3 camera_world, vec3 target_world, vec3 center_wo
 // with E_irr the sun's irradiance, and a surface radiates (A / PI) * E_irr. Matching the two gives
 // E_irr = PI * sun_colour * sun_energy = ringworld_haze_sun_irradiance. Ambient is already "radiance of a white surface" in
 // Godot (ambient_light_color * ambient_light_energy multiplies the albedo directly), which is exactly the isotropic
-// multi-scatter radiance the model wants, so ringworld_haze_ambient_* is passed through unscaled. Note that the project's custom
-// light() functions (terrain, ocean, hull) add ALBEDO * LIGHT_COLOR * NdotL with LIGHT_COLOR already holding the PI factor,
-// so terrain radiates PI-fold brighter than a built-in-lit surface of the same albedo; haze is anchored to the built-in convention.
+// multi-scatter radiance the model wants, so ringworld_haze_ambient_* is passed through unscaled. The project's custom light() functions
+// (terrain, ocean, hull, grass) follow the same built-in convention (LIGHT_COLOR / PI * NdotL, P3b), so every surface agrees.
 RingHaze ring_haze_from_legacy(vec4 atmosphere) {
 	RingHaze haze;
 	haze.T = vec3(1.0 - atmosphere.a);
@@ -512,9 +511,14 @@ RingHazeParams ring_haze_uniform_params(vec3 to_sun, vec3 outward) {
 	p.E_sun = ringworld_haze_sun_irradiance * ring_haze_sun_tint;
 	p.ambient = ringworld_haze_ambient_day;
 	p.night_ambient = ringworld_haze_ambient_night;
-	p.to_sun = normalize(to_sun);
+	// Eclipse hub event: the hub lights every point from its own zenith, so the phase / reddening / path direction follows the primary
+	// light's blend toward the local zenith (ringworld_hub_light_weight, same blend as ringworld_primary_light). Every shader consumer
+	// and the sky go through this function, so sky, objects and clouds stay on the same direction. Identity at weight 0.
+	vec3 zenith = -normalize(outward);
+	vec3 blended_sun = mix(normalize(to_sun), zenith, clamp(ringworld_hub_light_weight, 0.0, 1.0));
+	p.to_sun = length(blended_sun) > 0.0001 ? normalize(blended_sun) : zenith;
 	p.quality = ring_haze_quality;
-	p.day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(-normalize(outward), p.to_sun)));
+	p.day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(zenith, p.to_sun)));
 	return p;
 }
 

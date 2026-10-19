@@ -25,6 +25,10 @@ var placement: RefCounted
 var report := {"status":"RUNNING", "captures":[]}
 var haze_model_physical := false
 var copy_dir := ""
+var albedo_overrides := {}
+var haze_brightness_override := -1.0
+var quick := false
+var only_label := ""
 
 class SessionStub extends Node:
 	var settings := {}
@@ -39,6 +43,11 @@ func run() -> void:
 	for argument in OS.get_cmdline_user_args():
 		if argument == "--model=physical": haze_model_physical = true
 		elif argument.begins_with("--copy-to="): copy_dir = argument.get_slice("=", 1)
+		elif argument.begins_with("--terrain-albedo="): albedo_overrides["ringworld_terrain_albedo_scale"] = float(argument.get_slice("=", 1))
+		elif argument.begins_with("--grass-albedo="): albedo_overrides["ringworld_grass_albedo_scale"] = float(argument.get_slice("=", 1))
+		elif argument.begins_with("--haze-brightness="): haze_brightness_override = float(argument.get_slice("=", 1))
+		elif argument == "--quick": quick = true
+		elif argument.begins_with("--only="): only_label = argument.get_slice("=", 1)
 	if copy_dir != "": DirAccess.make_dir_recursive_absolute(copy_dir)
 	fixture = "res://.godot/atmosphere_visual/%s" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
@@ -63,6 +72,9 @@ func run() -> void:
 	if explorer == null or surface == null or drawer == null or clock == null or graphics == null or camera == null or grass == null or trees == null: return fail("missing gameplay nodes")
 	drawer.call("SetAtmosphereEnabled", true)
 	drawer.call("SetAtmosphereHazeModel", 1 if haze_model_physical else 0)
+	# Tuning overrides: scratch comparisons without touching saved preferences (shader globals / atmosphere value only).
+	for global_name in albedo_overrides: RenderingServer.global_shader_parameter_set(str(global_name), float(albedo_overrides[global_name]))
+	if haze_brightness_override >= 0.0: drawer.call("SetAtmosphereTuningValue", "HazeBrightness", haze_brightness_override)
 	var diagnostics: Dictionary = surface.call("GetSurfaceDiagnostics")
 	if not bool(diagnostics.get("runtime_surface_generation", false)) or str(diagnostics.get("surface_generation_contract_id", "")) != "surface_runtime_generation_v1": return fail("runtime Terrain3D generation is not active: " + JSON.stringify(diagnostics))
 	var ground_height := float(surface.call("SampleHeight", FIXTURE_AROUND, FIXTURE_ACROSS)) + 1.1
@@ -80,7 +92,7 @@ func run() -> void:
 	explorer.process_mode = Node.PROCESS_MODE_DISABLED
 	RenderingServer.viewport_set_measure_render_time(root.get_viewport_rid(), true)
 	var phases := select_visual_phases()
-	for profile in [[0, "natural"], [1, "cinematic"]]:
+	for profile in ([[0, "natural"]] if quick or only_label != "" else [[0, "natural"], [1, "cinematic"]]):
 		drawer.call("SetAtmospherePreset", int(profile[0]))
 		await capture_visible_tuning(str(profile[1]))
 		await matched_capture(str(profile[1]) + "_noon", ground_height, phases["noon"], false)
@@ -174,6 +186,8 @@ func select_visual_phases() -> Dictionary:
 	return {"noon":noon, "dusk":dusk, "night":night}
 
 func matched_capture(label: String, ground_height: float, fraction: float, high_altitude: bool, pitch_degrees := -10.0) -> void:
+	if only_label != "" and not label.ends_with(only_label): return
+	if quick and not (label.ends_with("noon") or label.ends_with("noon_horizon") or label.ends_with("noon_up2")): return
 	await reset_pose(ground_height, high_altitude)
 	if pitch_degrees != -10.0: explorer.call("SetPresentationView", 0.0, pitch_degrees)
 	clock.set("Paused", true)

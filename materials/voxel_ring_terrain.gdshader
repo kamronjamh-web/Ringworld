@@ -23,6 +23,7 @@ uniform float pilot_texture_scale : hint_range(0.01, 2.0) = 0.20;
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
+#include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 
 varying float ring_day_factor;
 varying vec3 world_position;
@@ -109,7 +110,7 @@ void fragment() {
 		distance(world_position, camera_world_position),
 		grass_coverage_upward,
 		grass_coverage_eligibility);
-	base_color = ring_apply_terrain_grass_coverage(base_color, grass_coverage);
+	base_color = ring_terrain_albedo_scaled(ring_apply_terrain_grass_coverage(base_color, grass_coverage));
 	vec3 lit_color = base_color
 		* mix(night_tint, vec3(1.0), ring_day_factor);
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
@@ -146,5 +147,6 @@ void light() {
 		readable_shadow,
 		cloud_shadow,
 		0.0);
-	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * n_dot_l * combined_visibility * hemisphere_direct;
+	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * combined_visibility * hemisphere_direct;
 }

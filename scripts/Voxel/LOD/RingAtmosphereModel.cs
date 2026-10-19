@@ -41,6 +41,8 @@ public static class RingAtmosphereModel
     private static float _aerosol = 0.35f, _forwardScattering = 0.22f, _sunWarmth = 0.25f;
     private static HazeModelKind _hazeModel = HazeModelKind.Legacy;
     public static ulong Revision { get; private set; }
+    /// <summary>Physical-haze sun irradiance multiplier set from the Atmosphere tab; the graphics controller forwards it to DaySideAtmosphere.haze_brightness.</summary>
+    public static float HazeBrightness { get; set; } = 1.0f;
 
     public static HazeModelKind HazeModel
     {

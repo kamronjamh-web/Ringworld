@@ -291,11 +291,8 @@ void sky() {
 		RingHaze haze = ring_haze_eval_sky(hp, view_direction, vec3(0.0), sky_camera_height_meters, outward, axis,
 			half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);
 		vec3 in_scatter = haze.S_sun + haze.S_amb;
-		if (hub_level > 0.0001 && hub_in_scatter > 0.0) {
-			float hub_cos = dot(view_direction, normalize(hub_direction));
-			float hub_phase = 0.35 + 0.65 * hub_cos * hub_cos;
-			in_scatter += hub_scatter_color * hub_phase * hub_in_scatter * min(hub_level, 1.5) * clamp(ringworld_hub_day, 0.0, 1.0);
-		}
+		// No additive hub in-scatter here: the model already carries the hub through day = max(geo * vis, hub_day) and the cool hub
+		// multiplier on E_sun, and terrain/clouds never got the extra term, so adding it double-counted the hub and broke convergence.
 		float interior = ring_interior_factor;
 		curved_air = vec4(in_scatter * interior, 1.0 - mix(1.0, haze.T.g, interior));
 		color = color * mix(vec3(1.0), haze.T, interior) + in_scatter * interior;

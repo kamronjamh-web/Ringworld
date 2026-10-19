@@ -282,9 +282,20 @@ public partial class RingGraphicsQualityController : Node
         ["error"] = AtmosphereDefaults.LastError
     };
 
+    private float _pushedHazeBrightness = -1.0f;
+    private void PushHazeBrightness()
+    {
+        if (Mathf.IsEqualApprox(_pushedHazeBrightness, RingAtmosphereModel.HazeBrightness)) return;
+        Node? daySide = GetParent()?.GetNodeOrNull("DaySideAtmosphere");
+        if (daySide == null) return;
+        _pushedHazeBrightness = RingAtmosphereModel.HazeBrightness;
+        daySide.Set("haze_brightness", _pushedHazeBrightness);
+    }
+
     public override void _Process(double delta)
     {
         _ = delta;
+        PushHazeBrightness();
         UpdateLocalShadowHandoff();
         UpdateTerrainShadowCasterCoverage();
         if (_skyAtmosphereRegistered || _grid == null) return;

@@ -332,14 +332,8 @@ void light() {
 	vec3 lighting_normal = grass_blade_shading_enabled ? NORMAL : normalize(grass_terrain_up_view);
 	float c_n_dot_l = max(min(dot(lighting_normal, LIGHT), 1.0), 0.0);
 	float diffuse_brdf_nl = c_n_dot_l * (1.0 / PI);
-	// The production terrain owns a custom ALBEDO-weighted direct-light
-	// expression. Approach that exact expression only in the distant band.
-	if (grass_terrain_light_blend > 0.0) {
-		vec3 diffuse_response = mix(vec3(diffuse_brdf_nl), ALBEDO * c_n_dot_l, grass_terrain_light_blend);
-		DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_response * attenuation;
-	} else {
-		DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
-	}
+	// The production terrain now uses the same built-in (LIGHT_COLOR / PI) * NdotL expression (P3b), so no terrain-matching blend is needed.
+	DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
 	DIFFUSE_LIGHT += LIGHT_COLOR * ((1.0 / PI) - diffuse_brdf_nl) * BACKLIGHT * attenuation;
 	if (grass_light_full_shading > .5) {
 		float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);

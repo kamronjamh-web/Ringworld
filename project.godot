@@ -73,6 +73,14 @@ ringworld_solar_visibility={
 "type": "float",
 "value": 1.0
 }
+ringworld_terrain_albedo_scale={
+"type": "float",
+"value": 0.15
+}
+ringworld_grass_albedo_scale={
+"type": "float",
+"value": 1.0
+}
 ringworld_hub_day={
 "type": "float",
 "value": 0.0

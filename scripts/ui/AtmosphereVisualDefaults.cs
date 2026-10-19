@@ -17,6 +17,7 @@ public sealed class AtmosphereVisualDefaults
     public void Initialize() { Load(); Sanitize(); Apply(); }
     public void Apply()
     {
+        RingAtmosphereModel.HazeBrightness = Settings.HazeBrightness;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.ApplyArtDirection(
             (RingAtmosphereModel.ArtDirectionPreset)Mathf.Clamp(Settings.Preset, 0, 1),
@@ -33,6 +34,7 @@ public sealed class AtmosphereVisualDefaults
             case "Aerosol": Settings.Aerosol = value; break;
             case "Forward": Settings.ForwardScattering = value; break;
             case "Warmth": Settings.SunWarmth = value; break;
+            case "HazeBrightness": Settings.HazeBrightness = value; break;
             default: return;
         }
         Sanitize(); Dirty = true; Apply();
@@ -73,6 +75,7 @@ public sealed class AtmosphereVisualDefaults
         Settings.Aerosol = Clean(Settings.Aerosol, .35f, 0, 1);
         Settings.ForwardScattering = Clean(Settings.ForwardScattering, .22f, 0, .85f);
         Settings.SunWarmth = Clean(Settings.SunWarmth, .25f, 0, 1);
+        Settings.HazeBrightness = Clean(Settings.HazeBrightness, 1, 0, 2);
     }
     private static float Clean(float value, float fallback, float minimum, float maximum) => float.IsFinite(value) ? Mathf.Clamp(value, minimum, maximum) : fallback;
 }

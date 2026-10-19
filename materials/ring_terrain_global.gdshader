@@ -38,6 +38,7 @@ uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
+#include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 uniform float analytic_cloud_shadow_strength : hint_range(0.0, 0.8) = 0.60;
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float analytic_cloud_shadow_fade_start_meters = 38000.0;
@@ -136,7 +137,7 @@ void fragment() {
 		NORMAL = normalize(mix(NORMAL, (VIEW_MATRIX * MODEL_MATRIX * vec4(curved_normal, 0.0)).xyz, surface_tile_blend));
 	}
 	float hemisphere_brightness = mix(night_brightness, 1.0, ring_day_factor);
-	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor) * hemisphere_brightness;
+	vec3 lit_color = ring_terrain_albedo_scaled(terrain_color) * mix(night_tint, vec3(1.0), ring_day_factor) * hemisphere_brightness;
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
@@ -199,8 +200,8 @@ void light() {
 		readable_shadow,
 		cloud_shadow,
 		terrain_shadow);
-	DIFFUSE_LIGHT += ALBEDO
-		* LIGHT_COLOR
+	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI)
 		* n_dot_l
 		* combined_visibility
 		* hemisphere_direct;

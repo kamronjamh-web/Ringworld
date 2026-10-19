@@ -141,5 +141,6 @@ void light() {
 	// Eclipse hub sun: light every point from its own zenith (identical to LIGHT while the hub weight is 0).
 	float n_dot_l = max(dot(NORMAL, ringworld_primary_light(LIGHT, surface_up_world, VIEW_MATRIX, primary_sun_weight)), 0.0);
 	float directional_visibility = mix(1.0, ring_day_factor, primary_sun_weight);
-	DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * n_dot_l * ATTENUATION * directional_visibility;
+	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * ATTENUATION * directional_visibility;
 }

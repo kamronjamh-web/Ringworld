@@ -21,9 +21,10 @@ uniform float grass_terrain_lighting_match = 1.0;
 // Standalone fixtures retain their established geometry unless opted in.
 uniform bool grass_coordinated_handoff_enabled = false;
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
+#include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 
 vec3 grass_appearance_albedo_with_coverage(vec3 blade_albedo, vec4 biome_weights, float handoff, float coverage) {
-	if (!grass_appearance_enabled) return blade_albedo;
+	if (!grass_appearance_enabled) return ring_grass_albedo_scaled(blade_albedo);
 	// Match the terrain's normalized biome mixture for planted soil. Keep the
 	// authored palette available at partial strength and with matching disabled.
 	vec4 terrain_weights = clamp(biome_weights, vec4(0.0), vec4(1.0));
@@ -39,11 +40,11 @@ vec3 grass_appearance_albedo_with_coverage(vec3 blade_albedo, vec4 biome_weights
 		+ grass_terrain_average_tundra * terrain_weights.z
 		+ grass_terrain_average_alpine * terrain_weights.w;
 	terrain /= total_weight;
-	terrain = ring_apply_terrain_grass_coverage(terrain, coverage);
+	terrain = ring_terrain_albedo_scaled(ring_apply_terrain_grass_coverage(terrain, coverage));
 	// source_color values arrive in linear space. Normalize against the fixed
 	// default grassland palette so an authored grassland tint remains visible.
 	vec3 default_grassland_linear = pow((vec3(.22, .36, .12) + vec3(.055)) / vec3(1.055), vec3(2.4));
-	vec3 graded_blade = blade_albedo * palette / default_grassland_linear;
+	vec3 graded_blade = ring_grass_albedo_scaled(blade_albedo * palette / default_grassland_linear);
 	float strength = isnan(grass_terrain_handoff_strength) || isinf(grass_terrain_handoff_strength)
 		? 0.0 : clamp(grass_terrain_handoff_strength, 0.0, 1.0);
 	// Match hue at every range while retaining restrained root/tip brightness

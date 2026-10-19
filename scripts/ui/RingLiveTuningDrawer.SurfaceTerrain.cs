@@ -187,6 +187,8 @@ public partial class RingLiveTuningDrawer
         AddSurfaceTerrainSlider(parent, "Dry roughness", GameplaySurfaceTerrainDefaults.MinimumDryRoughness, GameplaySurfaceTerrainDefaults.MaximumDryRoughness, .01, _surfaceTerrainDefaults.Settings.DryRoughness, value => _surfaceTerrainDefaults.SetDryRoughness((float)value));
         AddSurfaceTerrainSlider(parent, "Wet roughness", GameplaySurfaceTerrainDefaults.MinimumWetRoughness, GameplaySurfaceTerrainDefaults.MaximumWetRoughness, .01, _surfaceTerrainDefaults.Settings.WetRoughness, value => _surfaceTerrainDefaults.SetWetRoughness((float)value));
         AddSurfaceTerrainSlider(parent, "Rain wetness strength", GameplaySurfaceTerrainDefaults.MinimumRainWetnessStrength, GameplaySurfaceTerrainDefaults.MaximumRainWetnessStrength, .01, _surfaceTerrainDefaults.Settings.RainWetnessStrength, value => _surfaceTerrainDefaults.SetRainWetnessStrength((float)value));
+        AddSurfaceTerrainSlider(parent, "Terrain albedo", GameplaySurfaceTerrainDefaults.MinimumAlbedoScale, GameplaySurfaceTerrainDefaults.MaximumAlbedoScale, .01, _surfaceTerrainDefaults.Settings.TerrainAlbedoScale, value => _surfaceTerrainDefaults.SetTerrainAlbedoScale((float)value));
+        AddSurfaceTerrainSlider(parent, "Grass albedo", GameplaySurfaceTerrainDefaults.MinimumAlbedoScale, GameplaySurfaceTerrainDefaults.MaximumAlbedoScale, .01, _surfaceTerrainDefaults.Settings.GrassAlbedoScale, value => _surfaceTerrainDefaults.SetGrassAlbedoScale((float)value));
     }
 
     private void AddSurfaceTerrainSmoothShadingToggle(VBoxContainer parent)
@@ -199,6 +201,8 @@ public partial class RingLiveTuningDrawer
     private Node? SurfaceTerrainTarget => _surfaceTerrainPilot ?? _surfaceTerrainGameplay;
     private void ApplySurfaceTerrainSettings()
     {
+        RenderingServer.GlobalShaderParameterSet("ringworld_terrain_albedo_scale", _surfaceTerrainDefaults.Settings.TerrainAlbedoScale);
+        RenderingServer.GlobalShaderParameterSet("ringworld_grass_albedo_scale", _surfaceTerrainDefaults.Settings.GrassAlbedoScale);
         SurfaceTerrainTarget?.Call("ApplySurfaceSettings", _surfaceTerrainDefaults.Settings);
     }
 
@@ -414,7 +418,7 @@ public partial class RingLiveTuningDrawer
         double[] values = _generationPreview != null
             ? new[] { (double)_surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
             : _runtimeSurfaceDefinitionStatus != null
-                ? new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MeshLods, (double)_surfaceTerrainDefaults.Settings.MeshSize, _surfaceTerrainDefaults.Settings.HandoffDistanceMeters, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.DryRoughness, _surfaceTerrainDefaults.Settings.WetRoughness, _surfaceTerrainDefaults.Settings.RainWetnessStrength, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
+                ? new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MeshLods, (double)_surfaceTerrainDefaults.Settings.MeshSize, _surfaceTerrainDefaults.Settings.HandoffDistanceMeters, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond, _surfaceTerrainDefaults.Settings.DryRoughness, _surfaceTerrainDefaults.Settings.WetRoughness, _surfaceTerrainDefaults.Settings.RainWetnessStrength, _surfaceTerrainDefaults.Settings.TerrainAlbedoScale, _surfaceTerrainDefaults.Settings.GrassAlbedoScale, _surfaceTerrainDefaults.Settings.GenerationWorkerCount, _surfaceTerrainDefaults.Settings.GenerationPrefetchMeters, _surfaceTerrainDefaults.Settings.GenerationCacheMiB, _surfaceTerrainDefaults.Settings.GenerationUploadBudgetMs, _surfaceTerrainDefaults.Settings.GenerationCollisionBudgetMs, (double)_surfaceTerrainDefaults.Settings.GenerationColliderTileCells }
                 : new[] { (double)_surfaceTerrainDefaults.Settings.BrushRadiusMeters, _surfaceTerrainDefaults.Settings.BrushStepMeters, _surfaceTerrainDefaults.Settings.MeshLods, _surfaceTerrainDefaults.Settings.MoveSpeedMetersPerSecond };
         if (_surfaceTerrainControls.Count != values.Length) return;
         for (int index = 0; index < values.Length; index++)

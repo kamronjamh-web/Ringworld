@@ -14,4 +14,6 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public float SunWarmth { get; set; } = 0.25f;
     /// <summary>Temporary A/B toggle (P2a, removed in P8): 0 = Legacy, 1 = Physical. Absent in older files, which therefore load as Legacy.</summary>
     [Export] public int HazeModel { get; set; } = 0;
+    /// <summary>Physical-haze sun irradiance multiplier (DaySideAtmosphere.haze_brightness). Absent in older files, which load as 1.</summary>
+    [Export] public float HazeBrightness { get; set; } = 1.0f;
 }

@@ -36,6 +36,8 @@ public sealed class GameplaySurfaceTerrainDefaults
     public const float MaximumWetRoughness = .75f;
     public const float MinimumRainWetnessStrength = 0f;
     public const float MaximumRainWetnessStrength = 1f;
+    public const float MinimumAlbedoScale = .05f;
+    public const float MaximumAlbedoScale = 2f;
 
     private readonly string? _pathOverride;
     public GameplaySurfaceTerrainSettings Settings { get; private set; } = new();
@@ -103,6 +105,8 @@ public sealed class GameplaySurfaceTerrainDefaults
     public bool SetDryRoughness(float value) { value = ClampDryRoughness(value); if (Mathf.IsEqualApprox(Settings.DryRoughness, value)) return false; Settings.DryRoughness = value; Dirty = true; return true; }
     public bool SetWetRoughness(float value) { value = ClampWetRoughness(value); if (Mathf.IsEqualApprox(Settings.WetRoughness, value)) return false; Settings.WetRoughness = value; Dirty = true; return true; }
     public bool SetRainWetnessStrength(float value) { value = ClampRainWetnessStrength(value); if (Mathf.IsEqualApprox(Settings.RainWetnessStrength, value)) return false; Settings.RainWetnessStrength = value; Dirty = true; return true; }
+    public bool SetTerrainAlbedoScale(float value) { value = ClampTerrainAlbedoScale(value); if (Mathf.IsEqualApprox(Settings.TerrainAlbedoScale, value)) return false; Settings.TerrainAlbedoScale = value; Dirty = true; return true; }
+    public bool SetGrassAlbedoScale(float value) { value = ClampGrassAlbedoScale(value); if (Mathf.IsEqualApprox(Settings.GrassAlbedoScale, value)) return false; Settings.GrassAlbedoScale = value; Dirty = true; return true; }
     public bool SetSmoothTerrainShading(bool value) { if (Settings.SmoothTerrainShading == value) return false; Settings.SmoothTerrainShading = value; Dirty = true; return true; }
 
     public void Reset()
@@ -161,6 +165,8 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.WetRoughness = ClampWetRoughness(loaded.WetRoughness);
             Settings.RainWetnessStrength = ClampRainWetnessStrength(loaded.RainWetnessStrength);
             Settings.SmoothTerrainShading = loaded.SmoothTerrainShading;
+            Settings.TerrainAlbedoScale = ClampTerrainAlbedoScale(loaded.TerrainAlbedoScale);
+            Settings.GrassAlbedoScale = ClampGrassAlbedoScale(loaded.GrassAlbedoScale);
         }
         catch (Exception error) { LastError = error.Message; }
         Dirty = false;
@@ -183,6 +189,8 @@ public sealed class GameplaySurfaceTerrainDefaults
         Settings.DryRoughness = ClampDryRoughness(Settings.DryRoughness);
         Settings.WetRoughness = ClampWetRoughness(Settings.WetRoughness);
         Settings.RainWetnessStrength = ClampRainWetnessStrength(Settings.RainWetnessStrength);
+        Settings.TerrainAlbedoScale = ClampTerrainAlbedoScale(Settings.TerrainAlbedoScale);
+        Settings.GrassAlbedoScale = ClampGrassAlbedoScale(Settings.GrassAlbedoScale);
     }
 
     public static float ClampBrushRadiusMeters(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumBrushRadiusMeters, MaximumBrushRadiusMeters) : 8.0f;
@@ -199,5 +207,7 @@ public sealed class GameplaySurfaceTerrainDefaults
     public static int ClampGenerationColliderTileCells(int value) => value == 16 ? 16 : 32;
     public static float ClampDryRoughness(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumDryRoughness, MaximumDryRoughness) : .92f;
     public static float ClampWetRoughness(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumWetRoughness, MaximumWetRoughness) : .35f;
+    public static float ClampTerrainAlbedoScale(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumAlbedoScale, MaximumAlbedoScale) : GameplaySurfaceTerrainSettings.DefaultTerrainAlbedoScale;
+    public static float ClampGrassAlbedoScale(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumAlbedoScale, MaximumAlbedoScale) : GameplaySurfaceTerrainSettings.DefaultGrassAlbedoScale;
     public static float ClampRainWetnessStrength(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumRainWetnessStrength, MaximumRainWetnessStrength) : 1f;
 }

@@ -159,8 +159,8 @@ void light() {
 		readable_shadow,
 		cloud_shadow,
 		terrain_shadow);
-	DIFFUSE_LIGHT += ALBEDO
-		* LIGHT_COLOR
+	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI)
 		* n_dot_l
 		* combined_visibility
 		* hemisphere_direct;

@@ -134,6 +134,7 @@ public partial class RingLiveTuningDrawer
         AddAtmosphereSlider(tab, "Aerosol", "Aerosol", 0, 1, .01, settings.Aerosol);
         AddAtmosphereSlider(tab, "Forward", "Forward scattering", 0, .85, .01, settings.ForwardScattering);
         AddAtmosphereSlider(tab, "Warmth", "Sun warmth", 0, 1, .01, settings.SunWarmth);
+        AddAtmosphereSlider(tab, "HazeBrightness", "Haze brightness", 0, 2, .01, settings.HazeBrightness);
         var save = new Button { Text = "Save atmosphere", Name = "AtmosphereSaveNow" };
         save.Pressed += () => { if (RebindAtmosphereDefaults()) _atmosphereDefaults!.Save(); UpdateAtmosphereStatus(); };
         _atmosphereControls.Add(save);
@@ -182,6 +183,7 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("Aerosol", s.Aerosol);
         SetAtmosphereRange("Forward", s.ForwardScattering);
         SetAtmosphereRange("Warmth", s.SunWarmth);
+        SetAtmosphereRange("HazeBrightness", s.HazeBrightness);
         UpdateAtmosphereStatus();
     }
 

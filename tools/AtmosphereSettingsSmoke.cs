@@ -56,11 +56,30 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         bool oldFileLoads = hazeLineWritten && legacyFile.Settings.HazeModel == 0 && legacyFile.Settings.Preset == 1
             && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Legacy;
         bool hazeToggle = hazePhysical && hazeSaved && hazePersisted && oldFileLoads;
+        // Haze brightness: applied to the model, persisted, and a file written before the control existed loads as 1.
+        defaults.Set("HazeBrightness", 0.4f);
+        bool brightApplied = Mathf.IsEqualApprox(RingAtmosphereModel.HazeBrightness, 0.4f);
+        bool brightSaved = defaults.Save();
+        var brightReload = new AtmosphereVisualDefaults(isolatedPath);
+        brightReload.Initialize();
+        bool brightPersisted = Mathf.IsEqualApprox(brightReload.Settings.HazeBrightness, 0.4f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeBrightness, 0.4f);
+        string brightText = System.IO.File.ReadAllText(absolute);
+        string brightStripped = string.Join('\n', System.Array.FindAll(brightText.Split('\n'), line => !line.StartsWith("HazeBrightness")));
+        bool brightLineWritten = brightStripped.Length < brightText.Length;
+        System.IO.File.WriteAllText(absolute, brightStripped);
+        var brightOld = new AtmosphereVisualDefaults(isolatedPath);
+        brightOld.Initialize();
+        bool brightOldFile = brightLineWritten && Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 1.0f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeBrightness, 1.0f);
+        brightOld.Set("HazeBrightness", float.NaN);
+        bool brightSane = Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 1.0f);
+        brightOld.Set("HazeBrightness", 99.0f);
+        brightSane = brightSane && Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 2.0f);
+        bool hazeBrightness = brightApplied && brightSaved && brightPersisted && brightOldFile && brightSane;
         // Restore the persisted/default profile for callers that run this smoke
         // in-process before constructing a second world.
         RingAtmosphereModel.Enabled = true;
         reload.Reset();
-        bool contracts = naturalContract && cinematicContract && zeroDensityContract && disabledContract && hazeToggle;
-        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
+        bool contracts = naturalContract && cinematicContract && zeroDensityContract && disabledContract && hazeToggle && hazeBrightness;
+        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
     }
 }

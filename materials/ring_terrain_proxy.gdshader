@@ -41,6 +41,7 @@ uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_aniso
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
+#include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 uniform float analytic_cloud_shadow_strength : hint_range(0.0, 0.8) = 0.60;
 uniform bool analytic_cloud_shadow_enabled = true;
@@ -182,7 +183,7 @@ void fragment() {
 		distance_to_camera,
 		grass_coverage_upward,
 		grass_coverage_eligibility);
-	terrain_color = ring_apply_terrain_grass_coverage(terrain_color, grass_coverage);
+	terrain_color = ring_terrain_albedo_scaled(ring_apply_terrain_grass_coverage(terrain_color, grass_coverage));
 	// Keep a spatially varying night tint, but leave brightness to Godot's
 	// environment ambient light and directional-light pipeline.
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
@@ -240,8 +241,8 @@ void light() {
 		readable_shadow,
 		cloud_shadow,
 		terrain_shadow);
-	DIFFUSE_LIGHT += ALBEDO
-		* LIGHT_COLOR
+	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI)
 		* n_dot_l
 		* combined_visibility
 		* hemisphere_direct;

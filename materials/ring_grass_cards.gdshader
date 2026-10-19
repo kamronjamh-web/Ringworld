@@ -145,8 +145,8 @@ void vertex() {
 	float lod = max(log2(max(0.6 * wscale * scale * biome_texture_scale * texel_width, 1.0)) - grass_card_vertex_lod_bias, 0.0);
 	vec3 ground = grass_card_ground_two_biomes(v_terrain_uv, lod, v_biome);
 	float conv = smoothstep(grass_card_converge_start_percent * 0.01 * grass_card_reach, grass_card_converge_end_percent * 0.01 * grass_card_reach, dist);
-	v_base = ground * mix(grass_card_root_dark, 1.0, conv);
-	v_tip = ground * mix(grass_card_tip_gain, 1.0, conv) * mix(grass_card_tip_shift, vec3(1.0), conv);
+	v_base = ground * mix(ringworld_grass_albedo_scale * grass_card_root_dark, 1.0, conv);
+	v_tip = ground * mix(ringworld_grass_albedo_scale * grass_card_tip_gain, 1.0, conv) * mix(grass_card_tip_shift, vec3(1.0), conv);
 	v_shape.w = (INSTANCE_CUSTOM.y - 0.5) * 2.0 * grass_card_color_variation * (1.0 - conv);
 	v_shape.z = 1.0 - smoothstep(grass_card_fragment_color_meters * 0.55, grass_card_fragment_color_meters, dist);
 	v_atlas_uv = vec2((variant + UV.x) * 0.25, UV.y);
@@ -187,8 +187,8 @@ void fragment() {
 
 void light() {
 	float direct_visibility;
-	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR, ALBEDO,
+	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
 		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, direct_visibility);
 	// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
-	DIFFUSE_LIGHT += LIGHT_COLOR * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
+	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
 }

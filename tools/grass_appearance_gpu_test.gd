@@ -66,7 +66,9 @@ func run() -> void:
 	if not require(before_average.z > average(zero_far).z + .12 and before_error > .005 and during_error < before_error and completed_error < during_error and completed_error < .005, "brightness relief did not converge toward exact far terrain reference: before=%s during=%s completed=%s far=%s errors=%s/%s/%s" % [before_average, during_average, completed_average, far_average, before_error, during_error, completed_error]): return
 	material.set_shader_parameter("grass_terrain_lighting_match", 1.0)
 	var blue_far := await capture()
-	if not require(difference(blue_far, far_lighting_off) > .001, "ground lighting control did not affect distant blade shading"): return
+	# P3b: terrain and grass share the built-in (LIGHT_COLOR / PI) * NdotL diffuse expression, so the control no longer changes diffuse shading
+	# (the default blade-shading-off path uses ground normals everywhere and has no specular); it must be inert here.
+	if not require(difference(blue_far, far_lighting_off) < .0001, "ground lighting control changed distant blade diffuse shading after P3b"): return
 	if not require(colored(blue_far) > 50 and average(blue_far).z > average(zero_far).z + .12, "implicit grassland did not reach blue terrain average"): return
 	# Full matching still retains close blade brightness relief; final ground
 	# convergence removes that relief without changing geometry.
@@ -101,6 +103,10 @@ func run() -> void:
 	quit(0)
 
 func setup() -> void:
+	# The production terrain albedo scale (default 0.15) darkens the blue terrain target; this fixture judges colour matching on absolute
+	# brightness, so run it at the neutral scale.
+	RenderingServer.global_shader_parameter_set("ringworld_terrain_albedo_scale", 1.0)
+	RenderingServer.global_shader_parameter_set("ringworld_grass_albedo_scale", 1.0)
 	viewport = SubViewport.new(); viewport.size = Vector2i(SIZE, SIZE); viewport.own_world_3d = true; viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS; root.add_child(viewport)
 	# Keep combined illumination below display saturation: full-match blue
 	# includes up to 1.2 brightness relief, so ambient 1 plus sun clips it.

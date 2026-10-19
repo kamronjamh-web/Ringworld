@@ -8,6 +8,7 @@ render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlic
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
+#include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
 #include "res://materials/ring_terrain_lighting.gdshaderinc"
 
@@ -265,7 +266,7 @@ void fragment() {
         distance(v_vertex, ring_viewer_world_position),
         ground_facing,
         grass_coverage_eligibility);
-    vec3 terrain_color = ring_apply_terrain_grass_coverage(dry_albedo, grass_coverage);
+    vec3 terrain_color = ring_terrain_albedo_scaled(ring_apply_terrain_grass_coverage(dry_albedo, grass_coverage));
     ring_day_factor = ringworld_effective_solar_day(smoothstep(
         day_start_dot,
         day_full_dot,
@@ -332,7 +333,6 @@ void light() {
         ATTENUATION,
         LIGHT_IS_DIRECTIONAL,
         LIGHT_COLOR,
-        ALBEDO,
         VIEW_MATRIX,
         ring_day_factor,
         combined_cloud_shadow_occlusion,
