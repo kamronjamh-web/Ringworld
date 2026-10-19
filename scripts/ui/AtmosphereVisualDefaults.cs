@@ -19,6 +19,8 @@ public sealed class AtmosphereVisualDefaults
     {
         RingAtmosphereModel.HazeBrightness = Settings.HazeBrightness;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
+        RingAtmosphereModel.SetPhysicalControls(Settings.MistDensity, Settings.MistHeight, Settings.AerosolHeight, Settings.RayleighStrength,
+            Settings.GroundAlbedo, Settings.MultiScatter, new Vector3(Settings.SkyTintR, Settings.SkyTintG, Settings.SkyTintB), Settings.HazeQuality);
         RingAtmosphereModel.ApplyArtDirection(
             (RingAtmosphereModel.ArtDirectionPreset)Mathf.Clamp(Settings.Preset, 0, 1),
             Settings.VisibilityFullKm, Settings.Density, Settings.AltitudeFalloff,
@@ -35,6 +37,16 @@ public sealed class AtmosphereVisualDefaults
             case "Forward": Settings.ForwardScattering = value; break;
             case "Warmth": Settings.SunWarmth = value; break;
             case "HazeBrightness": Settings.HazeBrightness = value; break;
+            case "MistDensity": Settings.MistDensity = value; break;
+            case "MistHeight": Settings.MistHeight = value; break;
+            case "AerosolHeight": Settings.AerosolHeight = value; break;
+            case "RayleighStrength": Settings.RayleighStrength = value; break;
+            case "GroundAlbedo": Settings.GroundAlbedo = value; break;
+            case "MultiScatter": Settings.MultiScatter = value; break;
+            case "SkyTintR": Settings.SkyTintR = value; break;
+            case "SkyTintG": Settings.SkyTintG = value; break;
+            case "SkyTintB": Settings.SkyTintB = value; break;
+            case "HazeQuality": Settings.HazeQuality = float.IsFinite(value) ? (int)Mathf.Round(value) : 8; break;
             default: return;
         }
         Sanitize(); Dirty = true; Apply();
@@ -42,6 +54,11 @@ public sealed class AtmosphereVisualDefaults
     public void SetHazeModel(int model)
     {
         Settings.HazeModel = Mathf.Clamp(model, 0, 1);
+        Sanitize(); Dirty = true; Apply();
+    }
+    public void SetHazeQuality(int quality)
+    {
+        Settings.HazeQuality = quality;
         Sanitize(); Dirty = true; Apply();
     }
     public void SetPreset(int preset)
@@ -76,6 +93,16 @@ public sealed class AtmosphereVisualDefaults
         Settings.ForwardScattering = Clean(Settings.ForwardScattering, .22f, 0, .85f);
         Settings.SunWarmth = Clean(Settings.SunWarmth, .25f, 0, 1);
         Settings.HazeBrightness = Clean(Settings.HazeBrightness, 1, 0, 2);
+        Settings.MistDensity = Clean(Settings.MistDensity, 1, 0, 5);
+        Settings.MistHeight = Clean(Settings.MistHeight, 400, 50, 2000);
+        Settings.AerosolHeight = Clean(Settings.AerosolHeight, 1500, 200, 5000);
+        Settings.RayleighStrength = Clean(Settings.RayleighStrength, 1, 0, 3);
+        Settings.GroundAlbedo = Clean(Settings.GroundAlbedo, .1f, 0, .5f);
+        Settings.MultiScatter = Clean(Settings.MultiScatter, 1, 0, 3);
+        Settings.SkyTintR = Clean(Settings.SkyTintR, 1, 0, 2);
+        Settings.SkyTintG = Clean(Settings.SkyTintG, 1, 0, 2);
+        Settings.SkyTintB = Clean(Settings.SkyTintB, 1, 0, 2);
+        Settings.HazeQuality = Settings.HazeQuality <= 6 ? 4 : Settings.HazeQuality <= 11 ? 8 : 16;
     }
     private static float Clean(float value, float fallback, float minimum, float maximum) => float.IsFinite(value) ? Mathf.Clamp(value, minimum, maximum) : fallback;
 }

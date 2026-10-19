@@ -68,6 +68,7 @@ var _strict := false
 var _toward_sun := false
 var _cinematic := false
 var _physical := false
+var _p4_controls := false
 var _altitude := DEFAULT_ALTITUDE_M
 var _helper: RefCounted
 var _cpu_sky: RefCounted
@@ -85,6 +86,7 @@ func _initialize() -> void:
 	_toward_sun = "--toward-sun" in _args
 	_cinematic = "--cinematic" in _args
 	_physical = "--model=physical" in _args
+	_p4_controls = "--p4-controls" in _args
 	for arg in _args:
 		if arg.begins_with("--altitude="):
 			_altitude = float(arg.get_slice("=", 1))
@@ -128,6 +130,9 @@ func _run() -> void:
 func _build_materials() -> void:
 	_helper.SetHazeModel(1 if _physical else 0)
 	_helper.ApplyPreset(1 if _cinematic else 0, 1.0)
+	if _p4_controls:
+		# Non-default P4 controls through the Atmosphere tab's code path (AtmosphereVisualDefaults); every consumer below must receive them.
+		_helper.ApplyMenuControls(1 if _cinematic else 0, 1 if _physical else 0)
 	_sky_material = ShaderMaterial.new()
 	_sky_material.shader = load("res://materials/ring_local_sky.gdshader") as Shader
 	_helper.ConfigureMaterial(_sky_material, RING_RADIUS)
@@ -557,9 +562,32 @@ func _evaluate_contracts(metrics: Array, zero_results: Array, cross: Dictionary,
 	# harness validity: the GLSL transform must match real SubViewport renders
 	contracts.append(_contract("spatial_probe_crosscheck", float(cross["spatial_max_error"]) <= 0.02, "max |alpha(spatial render) - alpha(compute)| = %.4f over %d renders" % [cross["spatial_max_error"], cross["spatial_count"]]))
 	contracts.append(_contract("sky_render_crosscheck", float(cross["sky_max_rel_error"]) <= 0.08, "max rel |sky(render) - sky(compute)| = %.4f over %d renders" % [cross["sky_max_rel_error"], cross["sky_count"]]))
+	if _p4_controls:
+		contracts.append(_p4_contract())
+
 	# colour space: the far viewport must reach the main viewport without a second tonemap
 	contracts.append(_contract("far_viewport_single_tonemap", String(color_space["classification"]) == "single_tonemap", "far sky classification = %s" % color_space["classification"]))
 	return contracts
+
+## --p4-controls: the model statics (CPU sky port reads them), the spatial materials' uniforms and the packed cloud profile all carry the non-default controls.
+func _p4_contract() -> Dictionary:
+	var st: Dictionary = _helper.PhysicalControlState()
+	var sigma_r: Vector3 = st["sigma_r"]
+	var profile: Array = _helper.BuildCloudProfile(RING_RADIUS, OUTWARD, AXIS, _altitude, RING_HALF_WIDTH, RING_HALF_WIDTH, _to_sun("noon"), 1.0)
+	var errors: PackedStringArray = PackedStringArray()
+	if int(st["quality"]) != 16: errors.append("model quality")
+	if not is_equal_approx(float(st["h_mist"]) / 700.0, 1.0) or not is_equal_approx(float(st["h_a"]) / 2500.0, 1.0): errors.append("model heights")
+	if not is_equal_approx(float(st["albedo"]), 0.25) or not is_equal_approx(float(st["gain"]), 1.5): errors.append("model bounce/gain")
+	if int(_cpu_sky.call("GetQuality")) != 16: errors.append("cpu sky quality")
+	for material in [_sky_material, _probe_material]:
+		if int(material.get_shader_parameter("ring_haze_quality")) != 16: errors.append("material quality")
+		if not is_equal_approx(float((material.get_shader_parameter("ring_haze_sigma_R") as Vector3).x) / sigma_r.x, 1.0): errors.append("material sigma_R")
+		if not is_equal_approx(float(material.get_shader_parameter("ring_haze_H_mist")) / 700.0, 1.0): errors.append("material H_mist")
+		if not is_equal_approx(float(material.get_shader_parameter("ring_haze_H_A")) / 2500.0, 1.0): errors.append("material H_A")
+		if not is_equal_approx(float(material.get_shader_parameter("ring_haze_sigma_M0")) / float(st["sigma_m"]), 1.0): errors.append("material sigma_M0")
+	if int(profile[13].y) != 16: errors.append("cloud quality")
+	if not is_equal_approx(profile[10].z / sigma_r.x, 1.0) or not is_equal_approx(profile[12].x / 2500.0, 1.0) 			or not is_equal_approx(profile[12].w / 700.0, 1.0) or not is_equal_approx(profile[12].y / float(st["sigma_m"]), 1.0): errors.append("cloud profile values")
+	return _contract("p4_controls_reach_consumers", errors.is_empty(), "rayleigh 1.5x, mist 2x/700 m, H_A 2500 m, quality 16: " + (", ".join(errors) if not errors.is_empty() else "model, materials, CPU sky and cloud profile agree"))
 
 ## Global lighting values the compute probe uses (the project defaults of the shader globals) as Vector3s.
 func _global_default(name: String) -> Vector3:
@@ -783,6 +811,8 @@ func _render_crosschecks(results: Array) -> Dictionary:
 			if _failed: return {}
 			var expected := _find(results, light, elev, 800.0)
 			var sky_compute: Vector3 = expected["sky"]
+			# The 16 px render is LDR (clips at 1.0); bright non-default controls can exceed it.
+			sky_compute = Vector3(minf(sky_compute.x, 1.0), minf(sky_compute.y, 1.0), minf(sky_compute.z, 1.0))
 			var render := Vector3(pixel.r, pixel.g, pixel.b)
 			var error := _max_component(Vector3(
 				absf(render.x - sky_compute.x) / maxf(sky_compute.x, 0.01),

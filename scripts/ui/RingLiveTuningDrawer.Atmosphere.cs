@@ -11,6 +11,8 @@ public partial class RingLiveTuningDrawer
     private readonly System.Collections.Generic.List<Control> _atmosphereControls = new();
     private OptionButton? _atmospherePreset;
     private OptionButton? _atmosphereHazeModel;
+    private OptionButton? _atmosphereHazeQuality;
+    private VBoxContainer? _atmospherePhysicalGroup;
     private CheckButton? _atmosphereEnabled;
     private Label? _atmosphereStatus;
     private double _atmosphereSaveDelay;
@@ -49,6 +51,14 @@ public partial class RingLiveTuningDrawer
     {
         if (!RebindAtmosphereDefaults()) return;
         _atmosphereDefaults!.SetHazeModel(model);
+        _atmosphereSaveDelay = .5;
+        RefreshAtmosphereControls();
+    }
+
+    public void SetAtmosphereHazeQuality(int quality)
+    {
+        if (!RebindAtmosphereDefaults()) return;
+        _atmosphereDefaults!.SetHazeQuality(quality);
         _atmosphereSaveDelay = .5;
         RefreshAtmosphereControls();
     }
@@ -135,6 +145,29 @@ public partial class RingLiveTuningDrawer
         AddAtmosphereSlider(tab, "Forward", "Forward scattering", 0, .85, .01, settings.ForwardScattering);
         AddAtmosphereSlider(tab, "Warmth", "Sun warmth", 0, 1, .01, settings.SunWarmth);
         AddAtmosphereSlider(tab, "HazeBrightness", "Haze brightness", 0, 2, .01, settings.HazeBrightness);
+        // Physical-only controls (hidden while the Legacy model is selected; see RefreshAtmosphereControls).
+        _atmospherePhysicalGroup = new VBoxContainer { Name = "AtmospherePhysicalGroup" };
+        _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "MistDensity", "Ground mist density", 0, 5, .01, settings.MistDensity);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "MistHeight", "Mist height (m)", 50, 2000, 10, settings.MistHeight);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "AerosolHeight", "Aerosol height (m)", 200, 5000, 50, settings.AerosolHeight);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "RayleighStrength", "Rayleigh strength", 0, 3, .01, settings.RayleighStrength);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "GroundAlbedo", "Ground bounce albedo", 0, .5, .01, settings.GroundAlbedo);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "MultiScatter", "Multi-scatter gain", 0, 3, .01, settings.MultiScatter);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "SkyTintR", "Sky tint R", 0, 2, .01, settings.SkyTintR);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "SkyTintG", "Sky tint G", 0, 2, .01, settings.SkyTintG);
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "SkyTintB", "Sky tint B", 0, 2, .01, settings.SkyTintB);
+        var qualityRow = new HBoxContainer();
+        qualityRow.AddChild(new Label { Text = "Quality (points)", CustomMinimumSize = new Vector2(150, 0) });
+        _atmosphereHazeQuality = new OptionButton { Name = "AtmosphereHazeQuality", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        _atmosphereHazeQuality.AddItem("4", 4);
+        _atmosphereHazeQuality.AddItem("8", 8);
+        _atmosphereHazeQuality.AddItem("16", 16);
+        _atmosphereHazeQuality.ItemSelected += index => SetAtmosphereHazeQuality(_atmosphereHazeQuality.GetItemId((int)index));
+        _atmosphereControls.Add(_atmosphereHazeQuality);
+        qualityRow.AddChild(_atmosphereHazeQuality);
+        _atmospherePhysicalGroup.AddChild(qualityRow);
+        tab.AddChild(_atmospherePhysicalGroup);
         var save = new Button { Text = "Save atmosphere", Name = "AtmosphereSaveNow" };
         save.Pressed += () => { if (RebindAtmosphereDefaults()) _atmosphereDefaults!.Save(); UpdateAtmosphereStatus(); };
         _atmosphereControls.Add(save);
@@ -184,6 +217,17 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("Forward", s.ForwardScattering);
         SetAtmosphereRange("Warmth", s.SunWarmth);
         SetAtmosphereRange("HazeBrightness", s.HazeBrightness);
+        SetAtmosphereRange("MistDensity", s.MistDensity);
+        SetAtmosphereRange("MistHeight", s.MistHeight);
+        SetAtmosphereRange("AerosolHeight", s.AerosolHeight);
+        SetAtmosphereRange("RayleighStrength", s.RayleighStrength);
+        SetAtmosphereRange("GroundAlbedo", s.GroundAlbedo);
+        SetAtmosphereRange("MultiScatter", s.MultiScatter);
+        SetAtmosphereRange("SkyTintR", s.SkyTintR);
+        SetAtmosphereRange("SkyTintG", s.SkyTintG);
+        SetAtmosphereRange("SkyTintB", s.SkyTintB);
+        _atmosphereHazeQuality?.Select(_atmosphereHazeQuality.GetItemIndex(s.HazeQuality));
+        if (_atmospherePhysicalGroup != null) _atmospherePhysicalGroup.Visible = s.HazeModel == 1;
         UpdateAtmosphereStatus();
     }
 

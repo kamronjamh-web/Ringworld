@@ -16,4 +16,16 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public int HazeModel { get; set; } = 0;
     /// <summary>Physical-haze sun irradiance multiplier (DaySideAtmosphere.haze_brightness). Absent in older files, which load as 1.</summary>
     [Export] public float HazeBrightness { get; set; } = 1.0f;
+    // Physical-haze controls (P4). Absent in older files, which load with these defaults (= the pre-P4 effective values).
+    [Export] public float MistDensity { get; set; } = 1.0f;
+    [Export] public float MistHeight { get; set; } = 400.0f;
+    [Export] public float AerosolHeight { get; set; } = 1500.0f;
+    [Export] public float RayleighStrength { get; set; } = 1.0f;
+    [Export] public float GroundAlbedo { get; set; } = 0.1f;
+    [Export] public float MultiScatter { get; set; } = 1.0f;
+    [Export] public float SkyTintR { get; set; } = 1.0f;
+    [Export] public float SkyTintG { get; set; } = 1.0f;
+    [Export] public float SkyTintB { get; set; } = 1.0f;
+    /// <summary>Optical-depth quadrature points: 4, 8 or 16.</summary>
+    [Export] public int HazeQuality { get; set; } = 8;
 }

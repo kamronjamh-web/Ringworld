@@ -277,19 +277,32 @@ public partial class RingGraphicsQualityController : Node
         ["enabled"] = RingAtmosphereModel.Enabled,
         ["haze_model"] = (int)RingAtmosphereModel.HazeModel,
         ["revision"] = (long)RingAtmosphereModel.Revision,
+        ["haze_rayleigh_strength"] = RingAtmosphereModel.HazeRayleighStrength,
+        ["haze_quality"] = RingAtmosphereModel.HazeQuality,
         ["settings_path"] = AtmosphereDefaults.Path,
         ["dirty"] = AtmosphereDefaults.Dirty,
         ["error"] = AtmosphereDefaults.LastError
     };
 
-    private float _pushedHazeBrightness = -1.0f;
+    private float _pushedHazeBrightness = -1.0f, _pushedHazeAlbedo = -1.0f, _pushedHazeGain = -1.0f;
+    private Vector3 _pushedHazeSkyTint = new(-1.0f, -1.0f, -1.0f);
     private void PushHazeBrightness()
     {
-        if (Mathf.IsEqualApprox(_pushedHazeBrightness, RingAtmosphereModel.HazeBrightness)) return;
+        bool brightness = !Mathf.IsEqualApprox(_pushedHazeBrightness, RingAtmosphereModel.HazeBrightness);
+        bool albedo = !Mathf.IsEqualApprox(_pushedHazeAlbedo, RingAtmosphereModel.HazeGroundAlbedo);
+        bool gain = !Mathf.IsEqualApprox(_pushedHazeGain, RingAtmosphereModel.HazeMultiscatterGain);
+        bool tint = !_pushedHazeSkyTint.IsEqualApprox(RingAtmosphereModel.HazeSkyTint);
+        if (!brightness && !albedo && !gain && !tint) return;
         Node? daySide = GetParent()?.GetNodeOrNull("DaySideAtmosphere");
         if (daySide == null) return;
-        _pushedHazeBrightness = RingAtmosphereModel.HazeBrightness;
-        daySide.Set("haze_brightness", _pushedHazeBrightness);
+        if (brightness) { _pushedHazeBrightness = RingAtmosphereModel.HazeBrightness; daySide.Set("haze_brightness", _pushedHazeBrightness); }
+        if (albedo) { _pushedHazeAlbedo = RingAtmosphereModel.HazeGroundAlbedo; daySide.Set("haze_ground_albedo", _pushedHazeAlbedo); }
+        if (gain) { _pushedHazeGain = RingAtmosphereModel.HazeMultiscatterGain; daySide.Set("haze_multiscatter_gain", _pushedHazeGain); }
+        if (tint)
+        {
+            _pushedHazeSkyTint = RingAtmosphereModel.HazeSkyTint;
+            daySide.Set("haze_sky_tint", new Color(_pushedHazeSkyTint.X, _pushedHazeSkyTint.Y, _pushedHazeSkyTint.Z, 1.0f));
+        }
     }
 
     public override void _Process(double delta)
