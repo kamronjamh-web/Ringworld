@@ -78,6 +78,9 @@ var _probe_material: ShaderMaterial
 var _failed := false
 var _all_cases: Array = []
 var _arch_results: Array = []
+# P9: the sun irradiance the consumers see, overridden with the production DaySideAtmosphere value (haze_sun_irradiance_published).
+var _sun_override_active := false
+var _sun_override := Vector3.ZERO
 
 func _initialize() -> void:
 	_args = OS.get_cmdline_user_args()
@@ -111,6 +114,10 @@ func _run() -> void:
 	# Restore the model state used for renders (zero pass changed it).
 	_helper.ApplyPreset(1 if _cinematic else 0, 1.0)
 
+	var p9_contract := {}
+	if _physical:
+		p9_contract = _run_p9_air_visibility()
+		if _failed: return
 	var cross := await _render_crosschecks(results)
 	if _failed: return
 	var color_space := await _measure_far_viewport_color_space()
@@ -119,6 +126,8 @@ func _run() -> void:
 
 	var metrics := _compute_metrics(results)
 	var contracts := _evaluate_contracts(metrics, zero_results, cross, color_space)
+	if not p9_contract.is_empty():
+		contracts.append(p9_contract)
 	if _report_mode:
 		_print_report(metrics, cross, color_space)
 	_write_baseline(metrics, contracts, cross, color_space)
@@ -271,7 +280,9 @@ func _uniforms_to_globals(source: String, material: ShaderMaterial) -> String:
 		var name := found.get_string(2)
 		var default_text := found.get_string(3)
 		var value: Variant = material.get_shader_parameter(name)
-		if value == null and line.strip_edges().begins_with("global"):
+		if name == "ringworld_haze_sun_irradiance" and _sun_override_active:
+			value = _sun_override
+		elif value == null and line.strip_edges().begins_with("global"):
 			# global_shader_parameter_get is editor-only; the project defaults are what an unpublished global holds.
 			var declared: Variant = ProjectSettings.get_setting("shader_globals/" + name, null)
 			if declared is Dictionary and declared.has("value"):
@@ -460,6 +471,78 @@ func _evaluate(density: float) -> Array:
 		_arch_results = arch
 	return standard
 
+# --- P9: camera-column sun visibility ------------------------------------------------------------------------
+
+const P9_VISIBILITY := 0.3
+const P9_TOL_LINEAR := 0.01
+
+## Production sun irradiance for an air sun visibility: DaySideAtmosphere.haze_sun_irradiance_published() (the value
+## _publish_haze_lighting hands to the shader global and RingSunshineCloudBridge.SetHazeLighting), relative to visibility 1
+## and applied to the harness's baseline sun so the lighting matches the rest of the run.
+func _p9_sun(visibility: float, base: Vector3) -> Vector3:
+	_day_side.current_air_sun_visibility = 1.0
+	var full: Vector3 = _day_side.haze_sun_irradiance_published()
+	_day_side.current_air_sun_visibility = visibility
+	var scaled: Vector3 = _day_side.haze_sun_irradiance_published()
+	_day_side.current_air_sun_visibility = 1.0
+	return Vector3(base.x * scaled.x / full.x, base.y * scaled.y / full.y, base.z * scaled.z / full.z)
+
+func _p9_evaluate(sun: Vector3) -> Array:
+	_sun_override = sun
+	_sun_override_active = true
+	_helper.SetHazeSunIrradiance(sun)
+	var saved_arch := _arch_results
+	var results := _evaluate(1.0)
+	_arch_results = saved_arch
+	return results
+
+## With air sun visibility v, S_sun of the object, cloud and sky paths all scale by v (S = S_sun + S_amb is linear in E_sun with the
+## ambient unchanged: S(v) = S(0) + v (S(1) - S(0))) and the three paths still agree.
+func _run_p9_air_visibility() -> Dictionary:
+	var base: Vector3 = _helper.GetHazeSunIrradiance()
+	var base_global := _global_default("ringworld_haze_sun_irradiance")
+	var r_full := _p9_evaluate(_p9_sun(1.0, base_global))
+	if _failed: return {}
+	var r_dim := _p9_evaluate(_p9_sun(P9_VISIBILITY, base_global))
+	if _failed: return {}
+	var r_zero := _p9_evaluate(_p9_sun(0.0, base_global))
+	_sun_override_active = false
+	_helper.SetHazeSunIrradiance(base)
+	if _failed: return {}
+	var worst_linear := 0.0
+	var worst_agree := 0.0
+	var worst_conv := 0.0
+	var worst_case := ""
+	var dimmed_checked := 0
+	for i in r_full.size():
+		var c: Dictionary = r_full[i]["case"]
+		if c["light"] != "noon":
+			continue
+		for key in ["obj_s", "cld_s"] + (["sky"] if float(c["dist_km"]) == 800.0 else []):
+			var s1: Vector3 = r_full[i][key]
+			var s0: Vector3 = r_zero[i][key]
+			var sv: Vector3 = r_dim[i][key]
+			var expected := s0 + (s1 - s0) * P9_VISIBILITY
+			var err := _max_component((sv - expected).abs()) / maxf(_max_component(s1), 0.001)
+			if err > worst_linear:
+				worst_linear = err
+				worst_case = "%s %s" % [key, _case_label(c)]
+			if _lum(s1 - s0) > 0.0005 and float(c["elev"]) >= 0.0:
+				dimmed_checked += 1
+				# The sun share must really be v of the full sun share (guards against a path ignoring the dimmed value).
+				var share := _lum(sv - s0) / _lum(s1 - s0)
+				if absf(share - P9_VISIBILITY) > 0.01:
+					worst_linear = maxf(worst_linear, absf(share - P9_VISIBILITY))
+					worst_case = "share %s %s=%.3f" % [key, _case_label(c), share]
+		var os: Vector3 = r_dim[i]["obj_s"]
+		var cs: Vector3 = r_dim[i]["cld_s"]
+		var rel := _max_component((os - cs).abs()) / maxf(maxf(_max_component(os), _max_component(cs)), 0.001)
+		worst_agree = maxf(worst_agree, rel)
+		if float(c["dist_km"]) == 800.0:
+			worst_conv = maxf(worst_conv, absf(float(_lum(os)) / maxf(_lum(r_dim[i]["sky"]), 0.0001) - 1.0))
+	var passed := worst_linear <= P9_TOL_LINEAR and worst_agree <= TOL_INSCATTER_REL and worst_conv <= TOL_CONVERGENCE_REL and dimmed_checked > 20
+	return _contract("air_sun_visibility_scales_s_sun", passed, "v=%.1f: max linear/share error %.4f (%s), tol %.2f; object-vs-cloud max rel %.4f; 800 km convergence gap %.4f; %d sun-share checks" % [P9_VISIBILITY, worst_linear, worst_case, P9_TOL_LINEAR, worst_agree, worst_conv, dimmed_checked])
+
 # --- metrics ----------------------------------------------------------------------------------------------
 
 func _lum(v: Vector3) -> float:
@@ -591,6 +674,8 @@ func _p4_contract() -> Dictionary:
 
 ## Global lighting values the compute probe uses (the project defaults of the shader globals) as Vector3s.
 func _global_default(name: String) -> Vector3:
+	if name == "ringworld_haze_sun_irradiance" and _sun_override_active:
+		return _sun_override
 	var declared: Variant = ProjectSettings.get_setting("shader_globals/" + name, null)
 	if declared is Dictionary and declared.has("value"):
 		return declared["value"]

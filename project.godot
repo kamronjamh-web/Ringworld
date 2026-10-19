@@ -93,6 +93,10 @@ ringworld_night_light_scale={
 "type": "float",
 "value": 1.0
 }
+ringworld_air_sun_visibility={
+"type": "float",
+"value": 1.0
+}
 ringworld_haze_sun_irradiance={
 "type": "vec3",
 "value": Vector3(12.566, 12.566, 12.566)

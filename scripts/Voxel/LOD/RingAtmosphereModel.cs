@@ -43,6 +43,8 @@ public static class RingAtmosphereModel
     public static ulong Revision { get; private set; }
     /// <summary>Physical-haze sun irradiance multiplier set from the Atmosphere tab; the graphics controller forwards it to DaySideAtmosphere.haze_brightness.</summary>
     public static float HazeBrightness { get; set; } = 1.0f;
+    /// <summary>P9 cloud shadowing of the haze sun term (0-1) set from the Atmosphere tab; forwarded to DaySideAtmosphere.haze_cloud_shadowing.</summary>
+    public static float HazeCloudShadowing { get; set; } = 1.0f;
 
     public static HazeModelKind HazeModel
     {

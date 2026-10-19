@@ -129,12 +129,40 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         bool p4Reset = p4Old.Settings.RayleighStrength == 1.0f && p4Old.Settings.HazeQuality == 8 && RingAtmosphereModel.HazeQuality == 8
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSigmaRayleigh.X, nominalSigmaR);
         bool p4Contract = ContractAtBothRadii();
-        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract;
+        // P9 cloud shadowing: default 1, applied to the model, persisted, clamped to 0-1, old files load 1, Reset restores.
+        var cs = new AtmosphereVisualDefaults(isolatedPath);
+        cs.Reset();
+        bool csDefault = cs.Settings.CloudShadowing == 1.0f && RingAtmosphereModel.HazeCloudShadowing == 1.0f;
+        cs.Set("CloudShadowing", 0.25f);
+        bool csApplied = Mathf.IsEqualApprox(RingAtmosphereModel.HazeCloudShadowing, 0.25f);
+        bool csSaved = cs.Save();
+        var csReload = new AtmosphereVisualDefaults(isolatedPath);
+        csReload.Initialize();
+        bool csPersisted = csSaved && Mathf.IsEqualApprox(csReload.Settings.CloudShadowing, 0.25f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeCloudShadowing, 0.25f);
+        csReload.Set("CloudShadowing", 9.0f);
+        bool csClamped = csReload.Settings.CloudShadowing == 1.0f;
+        csReload.Set("CloudShadowing", float.NaN);
+        csClamped = csClamped && csReload.Settings.CloudShadowing == 1.0f;
+        csReload.Set("CloudShadowing", 0.5f);
+        csReload.Save();
+        string csPath = ProjectSettings.GlobalizePath(isolatedPath);
+        string csText = System.IO.File.ReadAllText(csPath);
+        string csStripped = string.Join('\n', System.Array.FindAll(csText.Split('\n'), line => !line.StartsWith("CloudShadowing")));
+        bool csLine = csStripped.Length < csText.Length;
+        System.IO.File.WriteAllText(csPath, csStripped);
+        var csOld = new AtmosphereVisualDefaults(isolatedPath);
+        csOld.Initialize();
+        bool csOldFile = csLine && csOld.Settings.CloudShadowing == 1.0f && RingAtmosphereModel.HazeCloudShadowing == 1.0f;
+        csOld.Set("CloudShadowing", 0.0f);
+        csOld.Reset();
+        bool csReset = csOld.Settings.CloudShadowing == 1.0f && RingAtmosphereModel.HazeCloudShadowing == 1.0f;
+        bool cloudShadowing = csDefault && csApplied && csPersisted && csClamped && csOldFile && csReset;
+        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing;
         // Restore the persisted/default profile for callers that run this smoke
         // in-process before constructing a second world.
         RingAtmosphereModel.Enabled = true;
         reload.Reset();
         bool contracts = naturalContract && cinematicContract && zeroDensityContract && disabledContract && hazeToggle && hazeBrightness && physicalControls;
-        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
+        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
     }
 }

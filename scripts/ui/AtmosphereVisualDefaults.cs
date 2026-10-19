@@ -18,6 +18,7 @@ public sealed class AtmosphereVisualDefaults
     public void Apply()
     {
         RingAtmosphereModel.HazeBrightness = Settings.HazeBrightness;
+        RingAtmosphereModel.HazeCloudShadowing = Settings.CloudShadowing;
         RingAtmosphereModel.HazeModel = (RingAtmosphereModel.HazeModelKind)Mathf.Clamp(Settings.HazeModel, 0, 1);
         RingAtmosphereModel.SetPhysicalControls(Settings.MistDensity, Settings.MistHeight, Settings.AerosolHeight, Settings.RayleighStrength,
             Settings.GroundAlbedo, Settings.MultiScatter, new Vector3(Settings.SkyTintR, Settings.SkyTintG, Settings.SkyTintB), Settings.HazeQuality);
@@ -37,6 +38,7 @@ public sealed class AtmosphereVisualDefaults
             case "Forward": Settings.ForwardScattering = value; break;
             case "Warmth": Settings.SunWarmth = value; break;
             case "HazeBrightness": Settings.HazeBrightness = value; break;
+            case "CloudShadowing": Settings.CloudShadowing = value; break;
             case "MistDensity": Settings.MistDensity = value; break;
             case "MistHeight": Settings.MistHeight = value; break;
             case "AerosolHeight": Settings.AerosolHeight = value; break;
@@ -93,6 +95,7 @@ public sealed class AtmosphereVisualDefaults
         Settings.ForwardScattering = Clean(Settings.ForwardScattering, .22f, 0, .85f);
         Settings.SunWarmth = Clean(Settings.SunWarmth, .25f, 0, 1);
         Settings.HazeBrightness = Clean(Settings.HazeBrightness, 1, 0, 2);
+        Settings.CloudShadowing = Clean(Settings.CloudShadowing, 1, 0, 1);
         Settings.MistDensity = Clean(Settings.MistDensity, 1, 0, 5);
         Settings.MistHeight = Clean(Settings.MistHeight, 400, 50, 2000);
         Settings.AerosolHeight = Clean(Settings.AerosolHeight, 1500, 200, 5000);

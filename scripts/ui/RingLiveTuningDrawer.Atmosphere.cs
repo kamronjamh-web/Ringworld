@@ -148,6 +148,7 @@ public partial class RingLiveTuningDrawer
         // Physical-only controls (hidden while the Legacy model is selected; see RefreshAtmosphereControls).
         _atmospherePhysicalGroup = new VBoxContainer { Name = "AtmospherePhysicalGroup" };
         _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
+        AddAtmosphereSlider(_atmospherePhysicalGroup, "CloudShadowing", "Cloud shadowing of haze", 0, 1, .01, settings.CloudShadowing);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "MistDensity", "Ground mist density", 0, 5, .01, settings.MistDensity);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "MistHeight", "Mist height (m)", 50, 2000, 10, settings.MistHeight);
         AddAtmosphereSlider(_atmospherePhysicalGroup, "AerosolHeight", "Aerosol height (m)", 200, 5000, 50, settings.AerosolHeight);
@@ -217,6 +218,7 @@ public partial class RingLiveTuningDrawer
         SetAtmosphereRange("Forward", s.ForwardScattering);
         SetAtmosphereRange("Warmth", s.SunWarmth);
         SetAtmosphereRange("HazeBrightness", s.HazeBrightness);
+        SetAtmosphereRange("CloudShadowing", s.CloudShadowing);
         SetAtmosphereRange("MistDensity", s.MistDensity);
         SetAtmosphereRange("MistHeight", s.MistHeight);
         SetAtmosphereRange("AerosolHeight", s.AerosolHeight);

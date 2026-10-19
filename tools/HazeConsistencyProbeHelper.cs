@@ -57,6 +57,10 @@ public partial class HazeConsistencyProbeHelper : RefCounted
         ["gain"] = RingAtmosphereModel.HazeMultiscatterGain, ["sky_tint"] = RingAtmosphereModel.HazeSkyTint,
     };
 
+    /// <summary>The sun irradiance the Sunshine profile packs (RingSunshineCloudBridge.SetHazeLighting sets the same static).</summary>
+    public Vector3 GetHazeSunIrradiance() => RingAtmosphereModel.HazeSunIrradiance;
+    public void SetHazeSunIrradiance(Vector3 sun) => RingAtmosphereModel.HazeSunIrradiance = sun;
+
     public float EnergyScale() => RingAtmosphereModel.ScatteringEnergy;
 
     public void SetEclipseNightScale(float scale) => RingAtmosphereModel.EclipseNightScale = scale;

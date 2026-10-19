@@ -26,6 +26,8 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public float SkyTintR { get; set; } = 1.0f;
     [Export] public float SkyTintG { get; set; } = 1.0f;
     [Export] public float SkyTintB { get; set; } = 1.0f;
+    /// <summary>P9: how strongly cloud shadow at the camera dims the haze sun term (DaySideAtmosphere.haze_cloud_shadowing). Absent in older files, which load as 1.</summary>
+    [Export] public float CloudShadowing { get; set; } = 1.0f;
     /// <summary>Optical-depth quadrature points: 4, 8 or 16.</summary>
     [Export] public int HazeQuality { get; set; } = 8;
 }

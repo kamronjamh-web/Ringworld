@@ -264,6 +264,7 @@ var current_hub_halo_intensity: float = 0.0
 var current_hub_in_scatter: float = 0.0
 var _published_hub_day: float = 0.0
 var _published_haze_sun: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_air_sun_visibility: float = -1.0
 var _published_haze_ambient_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_haze_ambient_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _haze_bridge_pending: bool = false
@@ -297,6 +298,11 @@ var _published_hub_weight: float = 0.0
 @export_range(0.0, 1.0, 0.01) var haze_ground_albedo: float = 0.1
 @export_range(0.0, 2.0, 0.01) var haze_multiscatter_gain: float = 1.0
 @export var haze_night_floor: Color = Color(0.004, 0.005, 0.008, 1.0)
+# P9 cloud feedback. Strength of the cloud shadow on the haze's sun term (0 = clear-sky haze always, 1 = full effect). The signal is the
+# Sunshine bridge's camera direct-sun transmittance (cloud shadow at the camera, already smoothed there), smoothed again here at
+# cloud_lighting_blend_speed. current_air_sun_visibility scales the published haze sun irradiance only (never ambient or transmittance).
+@export_range(0.0, 1.0, 0.01) var haze_cloud_shadowing: float = 1.0
+var current_air_sun_visibility: float = 1.0
 
 
 func _ready() -> void:
@@ -409,6 +415,10 @@ func _process(delta: float) -> void:
 		target_cloud_ambient,
 		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
 	var cloud_storm_factor := 1.0 - current_cloud_ambient_transmittance
+	current_air_sun_visibility = lerpf(
+		current_air_sun_visibility,
+		_get_air_sun_visibility_target(),
+		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
 
 	# Keep global hemisphere lighting stable: day/night on the ring should not depend on player position.
 	# Atmosphere owns dynamic daylight presentation. A graphics-quality controller,
@@ -794,6 +804,17 @@ func _get_cloud_ambient_transmittance() -> float:
 	return 1.0
 
 
+# Fraction of sunlight reaching the air around the camera: the bridge's camera direct-sun transmittance, blended by haze_cloud_shadowing.
+func _get_air_sun_visibility_target() -> float:
+	var transmittance := 1.0
+	if cloud_filtered_lighting_enabled and cloud_lighting_bridge != null:
+		if cloud_lighting_bridge.has_method("GetCameraDirectSunTransmittance"):
+			transmittance = clampf(float(cloud_lighting_bridge.call("GetCameraDirectSunTransmittance")), 0.0, 1.0)
+		elif cloud_lighting_bridge.has_method("get_camera_direct_sun_transmittance"):
+			transmittance = clampf(float(cloud_lighting_bridge.call("get_camera_direct_sun_transmittance")), 0.0, 1.0)
+	return lerpf(1.0, transmittance, clampf(haze_cloud_shadowing, 0.0, 1.0))
+
+
 func _scale_rgb(color: Color, multiplier: float) -> Color:
 	if multiplier == 1.0:
 		return color
@@ -866,7 +887,13 @@ func _publish_solar_visibility(visibility: float) -> void:
 # scatter plus ground bounce, summed as a multi-scatter series), not from the art-boosted environment fill ambient. Day ambient comes from
 # the sun, night ambient from the giant's light (live, already gated by horizon / phase / day) plus a tiny floor. Recomputed only when the
 # sun / giant direction, camera height, model parameters or light energies move; published on >0.5% relative change.
-func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
+# Haze sun irradiance as published to shaders (cloud term included). Public so tests build the production value.
+func haze_sun_irradiance_published() -> Vector3:
+	return _haze_sun_irradiance() * current_air_sun_visibility
+
+
+# Haze sun irradiance before the cloud term (see _publish_haze_lighting).
+func _haze_sun_irradiance() -> Vector3:
 	var sun_color := Vector3(surface_sun_color.r, surface_sun_color.g, surface_sun_color.b)
 	var eclipse_sky_factor := current_eclipse_coverage * current_real_sun_day_factor * clampf(eclipse_sky_tint_strength, 0.0, 1.0)
 	var eclipse_mult := Vector3.ONE.lerp(_unit_luminance_tint(eclipse_sky_color), eclipse_sky_factor)
@@ -875,7 +902,17 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 		hub_tint = current_hub_sky_tint_strength * current_hub_day * (1.0 - current_solar_visibility)
 	var hub_mult := Vector3.ONE.lerp(_unit_luminance_tint(hub_sky_tint_color), hub_tint)
 	var sun_tint := Vector3(haze_sky_tint.r, haze_sky_tint.g, haze_sky_tint.b)
-	var sun := sun_color * (PI * maxf(day_sun_energy, 0.0) * maxf(haze_brightness, 0.0)) * sun_tint * eclipse_mult * hub_mult
+	return sun_color * (PI * maxf(day_sun_energy, 0.0) * maxf(haze_brightness, 0.0)) * sun_tint * eclipse_mult * hub_mult
+
+
+func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
+	var sun := _haze_sun_irradiance()
+	# P9: the sun term the shaders / Sunshine profile see is dimmed by the camera-column cloud visibility. The CPU ambient below keeps
+	# the undimmed `sun` (the overcast sky is dimmed by current_cloud_ambient_transmittance instead, so it is not dimmed twice).
+	var published_sun := sun * current_air_sun_visibility
+	if absf(current_air_sun_visibility - _published_air_sun_visibility) > 0.002:
+		_published_air_sun_visibility = current_air_sun_visibility
+		RenderingServer.global_shader_parameter_set("ringworld_air_sun_visibility", current_air_sun_visibility)
 	var planet_energy := Vector3.ZERO
 	if planet_light != null:
 		planet_energy = Vector3(planet_light.light_color.r, planet_light.light_color.g, planet_light.light_color.b) \
@@ -932,10 +969,10 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 	var day_ambient := _haze_ambient_day_raw * current_cloud_ambient_transmittance
 	var night_ambient := _haze_ambient_planet + night_floor
 	var changed := false
-	if _relative_change(sun, _published_haze_sun) > 0.005:
-		_published_haze_sun = sun
+	if _relative_change(published_sun, _published_haze_sun) > 0.005:
+		_published_haze_sun = published_sun
 		changed = true
-		RenderingServer.global_shader_parameter_set("ringworld_haze_sun_irradiance", sun)
+		RenderingServer.global_shader_parameter_set("ringworld_haze_sun_irradiance", published_sun)
 	if _relative_change(day_ambient, _published_haze_ambient_day) > 0.005:
 		_published_haze_ambient_day = day_ambient
 		changed = true
