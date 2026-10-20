@@ -14,8 +14,12 @@ public static class RingPerformanceGpu
 {
     public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite", CloudShadowNear = "CloudShadowNear", CloudShadowFar = "CloudShadowFar", CloudMacroMap = "CloudMacroMap", CloudInterleave = "CloudInterleave", RainHaze = "RainHaze", TerrainCloudSunVisibility = "TerrainCloudSunVisibility";
     private const string Prefix = "RingPerfGpu:";
-    private const int MaximumCSharpMarkersPerFrame = 30, MaximumTimestampScan = 512;
-    private static int _enabled, _generation, _pendingGeneration, _markersThisFrame;
+    private const int MaximumCSharpMarkersPerFrame = 30, MaximumTimestampScan = 512, EngineTimestampScan = 4096;
+    private static int _enabled, _generation, _pendingGeneration, _markersThisFrame, _engineTimestamps;
+    // Engine timestamps (opt-in, shadow S0 harness): raw (name, GPU ns) pairs of the newest fresh readback, engine-owned names only.
+    private static readonly object EngineGate = new();
+    private static List<(string Name, ulong Time)> _engineRaw = new();
+    private static long _engineRawFrame = -1;
     private static long _lastCapturedFrame = -1;
     private static long _readbackRequests, _readbackSkippedPending, _freshReadbacks, _staleReadbacks, _truncatedReadbacks, _unmatchedReadbacks, _markerBudgetRejected;
     private static string _status = "Disabled";
@@ -39,6 +43,25 @@ public static class RingPerformanceGpu
         MaximumCSharpMarkersPerFrame, MaximumTimestampScan, Volatile.Read(ref _readbackRequests), Volatile.Read(ref _readbackSkippedPending),
         Volatile.Read(ref _freshReadbacks), Volatile.Read(ref _staleReadbacks), Volatile.Read(ref _truncatedReadbacks),
         Volatile.Read(ref _unmatchedReadbacks), Volatile.Read(ref _markerBudgetRejected));
+
+    /// <summary>Opt-in (default off, inert): also keep Godot's own captured timestamps from each fresh readback (4.8-dev7 exposes only per-viewport vp_begin_/vp_end_ pairs, no shadow/opaque/sky regions). Needs viewport_set_measure_render_time on the measured viewports.</summary>
+    public static bool EngineTimestampsEnabled => Volatile.Read(ref _engineTimestamps) != 0;
+    public static void ConfigureEngineTimestamps(bool enabled)
+    {
+        Volatile.Write(ref _engineTimestamps, enabled ? 1 : 0);
+        if (!enabled) lock (EngineGate) { _engineRaw = new(); _engineRawFrame = -1; }
+    }
+
+    /// <summary>Copies the newest engine timestamps (order preserved) when their source frame is newer than <paramref name="afterFrame"/>.</summary>
+    public static bool TryCopyEngineTimestamps(long afterFrame, List<(string Name, ulong Time)> destination, out long sourceFrame)
+    {
+        lock (EngineGate)
+        {
+            sourceFrame = _engineRawFrame;
+            if (_engineRawFrame <= afterFrame || _engineRaw.Count == 0) return false;
+            destination.Clear(); destination.AddRange(_engineRaw); return true;
+        }
+    }
 
     public static void Configure(bool enabled)
     {
@@ -89,11 +112,14 @@ public static class RingPerformanceGpu
             if (frame > long.MaxValue) { Volatile.Write(ref _status, "Unavailable: invalid captured timestamp frame"); return; }
             long sourceFrame = (long)frame;
             if (sourceFrame <= Volatile.Read(ref _lastCapturedFrame)) { Interlocked.Increment(ref _staleReadbacks); Volatile.Write(ref _status, "Waiting for fresh GPU timestamp results"); return; }
-            uint count = rd.GetCapturedTimestampsCount(), first = count > MaximumTimestampScan ? count - MaximumTimestampScan : 0;
+            bool engine = Volatile.Read(ref _engineTimestamps) != 0; int scanLimit = engine ? EngineTimestampScan : MaximumTimestampScan;
+            uint count = rd.GetCapturedTimestampsCount(), first = count > scanLimit ? count - (uint)scanLimit : 0;
             bool truncated = first != 0; var starts = new Dictionary<string, List<ulong>>(3, StringComparer.Ordinal); var totals = new Dictionary<string, double>(3, StringComparer.Ordinal); int scopes = 0;
+            List<(string Name, ulong Time)>? engineRaw = engine ? new List<(string, ulong)>((int)(count - first)) : null;
             for (uint i = first; i < count; i++)
             {
                 string name = rd.GetCapturedTimestampName(i);
+                if (engineRaw != null && !name.StartsWith(Prefix, StringComparison.Ordinal)) engineRaw.Add((name, rd.GetCapturedTimestampGpuTime(i)));
                 if (!TryParseMarker(name, callbackGeneration, out string category, out char boundary)) continue;
                 ulong timestamp = rd.GetCapturedTimestampGpuTime(i);
                 if (boundary == 'B') { if (!starts.TryGetValue(category, out List<ulong>? stack)) starts.Add(category, stack = new List<ulong>(4)); if (stack.Count < MaximumCSharpMarkersPerFrame / 2) stack.Add(timestamp); continue; }
@@ -107,6 +133,7 @@ public static class RingPerformanceGpu
             }
             if (!Enabled || callbackGeneration != Volatile.Read(ref _generation)) return;
             foreach ((string category, double milliseconds) in totals) RingPerformanceTelemetry.RecordGpuMilliseconds("GPU." + category, milliseconds, sourceFrame);
+            if (engineRaw != null) lock (EngineGate) { _engineRaw = engineRaw; _engineRawFrame = sourceFrame; }
             Interlocked.Increment(ref _freshReadbacks); if (truncated) Interlocked.Increment(ref _truncatedReadbacks); if (scopes == 0) Interlocked.Increment(ref _unmatchedReadbacks);
             Volatile.Write(ref _lastCapturedFrame, sourceFrame);
             string tail = truncated ? $"; inspected tail {MaximumTimestampScan}/{count}" : string.Empty;
