@@ -40,6 +40,7 @@ public partial class RingTerrainHeightShadow
         public long MeasuredSlices;
         public double TotalMeasuredMs, MaxSliceMs;
         public readonly float[] Unresolved = { float.NaN, float.NaN };
+        public readonly float[] UnresolvedShadowed = { float.NaN, float.NaN };
     }
 
     private GpuLink? _link;
@@ -61,6 +62,15 @@ public partial class RingTerrainHeightShadow
         float v = _link.Unresolved[level];
         return float.IsNaN(v) ? null : v * 100f;
     }
+    /// <summary>Unresolved texels (G &lt; 0) whose in-window lower bound already shadows the surface (R &gt; 0.5 m), percent of the level.</summary>
+    public float? UnresolvedShadowedPercent(int level)
+    {
+        if (_link == null) return null;
+        float v = _link.UnresolvedShadowed[level];
+        return float.IsNaN(v) ? null : v * 100f;
+    }
+    /// <summary>Unresolved texels that are only lit so far (R &lt;= 0.5 m), percent of the level.</summary>
+    public float? UnresolvedLitPercent(int level) => UnresolvedPercent(level) is { } total && UnresolvedShadowedPercent(level) is { } shadowed ? Mathf.Max(total - shadowed, 0f) : null;
     public double GpuMsPerRow(int level)
     {
         if (_link == null) return double.NaN;
@@ -110,7 +120,27 @@ public partial class RingTerrainHeightShadow
         catch (Exception error) { link.Error = error.Message; link.Failed = true; }
     }
 
-    private void ReleaseGpu()
+    private Rid _placeholderArray;
+
+    /// <summary>A valid 1x1x3 RG16F array texture the global samplers point at while no GPU session exists: a Texture2DArrayRD without an RID falls back to a plain 2D texture, which invalidates every material uniform set that bound the 2DArray global (type mismatch errors every frame).</summary>
+    private void PointArraysAtPlaceholder(bool free)
+    {
+        RenderingDevice? main = RenderingServer.GetRenderingDevice();
+        if (main != null && !_placeholderArray.IsValid && !free)
+        {
+            var format = new RDTextureFormat
+            {
+                Format = RenderingDevice.DataFormat.R16G16Sfloat, Width = 1, Height = 1, Depth = 1, ArrayLayers = HeightShadowLayerRoles.LayerCount, Mipmaps = 1,
+                TextureType = RenderingDevice.TextureType.Type2DArray, UsageBits = RenderingDevice.TextureUsageBits.SamplingBit,
+            };
+            _placeholderArray = main.TextureCreate(format, new RDTextureView(), new Godot.Collections.Array<byte[]> { new byte[4], new byte[4], new byte[4] });
+        }
+        for (int l = 0; l < 2; l++)
+            if (_arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = free ? default : _placeholderArray;
+        if (free && main != null && _placeholderArray.IsValid) { main.FreeRid(_placeholderArray); _placeholderArray = default; }
+    }
+
+    private void ReleaseGpu(bool exiting = false)
     {
         GpuLink? link = _link;
         _link = null;
@@ -118,8 +148,9 @@ public partial class RingTerrainHeightShadow
         link.Released = true;
         RenderingServer.CallOnRenderThread(Callable.From(() =>
         {
-            for (int l = 0; l < 2; l++) if (_arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = default;
+            if (!exiting) PointArraysAtPlaceholder(false);
             link.Gpu?.Dispose();
+            if (exiting) PointArraysAtPlaceholder(true);
             link.Gpu = null;
         }));
     }
@@ -250,6 +281,11 @@ public partial class RingTerrainHeightShadow
         double callbackMax; double callbackLast = GetRenderCallbackCpuMs(out callbackMax);
         result["render_callback_cpu_ms_last"] = callbackLast; result["render_callback_cpu_ms_max"] = callbackMax;
         result["unresolved_l0"] = UnresolvedPercent(0) is { } a ? a : -1f; result["unresolved_l1"] = UnresolvedPercent(1) is { } b ? b : -1f;
+        for (int l = 0; l < 2; l++)
+        {
+            result[$"unresolved_shadowed_l{l}"] = UnresolvedShadowedPercent(l) is { } s ? s : -1f;
+            result[$"unresolved_lit_l{l}"] = UnresolvedLitPercent(l) is { } u ? u : -1f;
+        }
         if (_link != null) { lock (_link.Gate) { result["gpu_slices_measured"] = _link.MeasuredSlices; result["gpu_ms_total"] = _link.TotalMeasuredMs; result["gpu_ms_max_slice"] = _link.MaxSliceMs; } }
         result["anchor_around"] = _anchor; result["anchor_across"] = _anchorAcross;
         result["array_rids"] = _link?.Gpu != null ? new Godot.Collections.Array<Rid> { _link.Gpu.OutputTexture(0), _link.Gpu.OutputTexture(1) } : new Godot.Collections.Array<Rid>();
@@ -270,16 +306,20 @@ public partial class RingTerrainHeightShadow
                     rd.TextureGetDataAsync(gpu.OutputTexture(l), (uint)layer, Callable.From<byte[]>(bytes =>
                     {
                         if (link.Released) return;
-                        int n = RingHeightShadowLattice.TextureSize, hit = 0, total = 0;
+                        int n = RingHeightShadowLattice.TextureSize, hit = 0, shadowed = 0, total = 0;
                         for (int y = 0; y < n; y += 4)
                             for (int x = 0; x < n; x += 4)
                             {
                                 int offset = (y * n + x) * 4 + 2;
                                 if (offset + 1 >= bytes.Length) continue;
                                 total++;
-                                if ((float)BitConverter.ToHalf(bytes, offset) < 0f) hit++;
+                                if ((float)BitConverter.ToHalf(bytes, offset) < 0f)
+                                {
+                                    hit++;
+                                    if ((float)BitConverter.ToHalf(bytes, offset - 2) > 0.5f) shadowed++;
+                                }
                             }
-                        if (total > 0) lock (link.Gate) link.Unresolved[level] = hit / (float)total;
+                        if (total > 0) lock (link.Gate) { link.Unresolved[level] = hit / (float)total; link.UnresolvedShadowed[level] = shadowed / (float)total; }
                     }));
                 }
             }
@@ -306,8 +346,16 @@ public partial class RingTerrainHeightShadow
         RenderingServer.GlobalShaderParameterSet(name, value);
     }
 
+    private bool _sunReady;
+    /// <summary>
+    /// True while the published front layer is a sun layer, the receivers read it and the camera sits inside the full-weight zone of its level-0 window (256 m from the
+    /// edge): the controller shrinks the sun shadow map to the near map only then (S5b). False at once when anything invalidates the globals.
+    /// </summary>
+    public bool IsSunHeightfieldReady => _sunReady && Settings.Enabled && _phase != HeightShadowPhase.Failed;
+
     private void InvalidateGlobals()
     {
+        _sunReady = false;
         _frameRows = null;
         var none = Variant.From(new Vector4(0, 0, 0, 0));
         SetGlobal(GlobalL0Params, none); SetGlobal(GlobalL1Params, none);
@@ -322,6 +370,7 @@ public partial class RingTerrainHeightShadow
     {
         if (_roles.Front < 0 || _frontRect[0] == null || _clipmap == null || _focus == null)
         {
+            _sunReady = false;
             if (_roles.Front < 0) InvalidateGlobals();
             return;
         }
@@ -355,6 +404,12 @@ public partial class RingTerrainHeightShadow
             SetGlobal(l == 0 ? GlobalL0PrevBounds : GlobalL1PrevBounds, Variant.From(prev));
         }
         HeightShadowPublished state = _roles.Current;
+        {
+            Vector4 b0 = ToBounds(w0, t0, anchor, anchorAcross);
+            double cameraAround = cameraIndex * (double)t0 - anchor, cameraAcross = camera.AcrossMeters - anchorAcross;
+            double edge = Math.Min(Math.Min(cameraAround - b0.X, b0.Y - cameraAround), Math.Min(cameraAcross - b0.Z, b0.W - cameraAcross));
+            _sunReady = ReceiversEnabled && state.Light == HeightShadowLight.Sun && edge >= 256.0;
+        }
         SetGlobal(GlobalState, Variant.From(new Vector4(state.Front, state.Prev, state.Crossfade, ReceiversEnabled ? (float)state.Light : 0f)));
         SetGlobal(GlobalShape, Variant.From(new Vector4((float)Math.Tan(Settings.PenumbraDegrees * Math.PI / 180.0), ReceiverBiasMeters, (float)radius, ResolveAuthorityMeters())));
         if (_globalsDirty)

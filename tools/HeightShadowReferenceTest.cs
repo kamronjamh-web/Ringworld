@@ -43,6 +43,7 @@ public partial class HeightShadowReferenceTest : RefCounted
         public bool Walls;
         public float WallTop;
         public (double Elev, double Az)[] Suns = Array.Empty<(double, double)>();
+        public Func<double, double, double>? Profile; // analytic height (around offset from the camera, across offset from CamAcross) for the unwindowed truth march
     }
 
     private sealed class Built
@@ -126,6 +127,41 @@ public partial class HeightShadowReferenceTest : RefCounted
                 Suns = new[] { (10.0, 250.0), (4.0, 280.0), (25.0, 300.0), (12.0, 60.0), (60.0, 270.0) },
             },
             RidgeFixture("ridge_seam", Circumference - 704),
+        };
+    }
+
+    // ---- beyond-L1 fixtures (low sun: casters outside both windows, G < 0 partial results) ----
+
+    private const double BeyondRidgeHeight = 250.0, BeyondRidgeAt = 1000.0, BeyondMassifHeight = 3000.0, BeyondMassifAt = 13_000.0;
+
+    /// <summary>Floor 0 m, a 250 m Gaussian ridge 1 km sunward (inside L0) and a 3000 m Gaussian massif 13 km sunward (beyond the 8 km L1 half-width); s runs along the sun axis, t across it.</summary>
+    private static double BeyondProfile(double s, double t)
+    {
+        double ridge = BeyondRidgeHeight * Math.Exp(-(s - BeyondRidgeAt) * (s - BeyondRidgeAt) / (2.0 * 60.0 * 60.0));
+        double massif = BeyondMassifHeight * Math.Exp(-((s - BeyondMassifAt) * (s - BeyondMassifAt) / (2.0 * 1500.0 * 1500.0) + t * t / (2.0 * 8000.0 * 8000.0)));
+        return ridge + massif;
+    }
+
+    private static Fixture[] BeyondFixtures()
+    {
+        const long cam = 3_000_000;
+        const int camAcross = 100_000;
+        return new[]
+        {
+            new Fixture
+            {
+                Name = "beyond_l1", CamAround = cam, CamAcross = camAcross,
+                Profile = (da, dc) => BeyondProfile(da, dc),
+                Height = (a, c) => (float)BeyondProfile(SignedAround(a, cam), c - camAcross),
+                Suns = new[] { (8.0, 0.0), (15.0, 0.0) },
+            },
+            new Fixture
+            {
+                Name = "beyond_l1_across", CamAround = cam, CamAcross = camAcross,
+                Profile = (da, dc) => BeyondProfile(dc, da),
+                Height = (a, c) => (float)BeyondProfile(c - camAcross, SignedAround(a, cam)),
+                Suns = new[] { (8.0, 90.0) },
+            },
         };
     }
 
@@ -370,6 +406,144 @@ public partial class HeightShadowReferenceTest : RefCounted
         if (!ok) { _failures.Add(message); GD.PushError("HEIGHT_SHADOW_REF gate failed: " + message); }
     }
 
+    // ---- unwindowed truth for the beyond-L1 fixtures ----
+
+    private struct TruthResult
+    {
+        public double RFull, DFull, RNear;
+        public bool SunDown;
+    }
+
+    /// <summary>Double march on the analytic profile with no window limit (60 km); RNear only counts samples inside the L1 window (what the build can see).</summary>
+    private static TruthResult TruthTrace(Built b, Fixture f, Vector3 sun, int lev, int ox, int oy)
+    {
+        HeightShadowWindow win = b.Win[lev];
+        int t = LevelTexel[lev];
+        long iIndex = win.I0 + ox, jIndex = win.J0 + oy;
+        double t0 = b.H[lev][RingHeightShadowLattice.SlotOf(jIndex) * N + RingHeightShadowLattice.SlotOf(iIndex)];
+        double a0 = iIndex * (double)t, c0 = jIndex * (double)t;
+        var res = new TruthResult();
+        HeightShadowSunFrame frame = RingHeightShadowLattice.ProjectToTangentFrame(sun.X, sun.Y, sun.Z, a0 / Radius);
+        if (frame.Up <= 0.0) { res.SunDown = true; return res; }
+        RingTerrainShadowGeometry.RingPoint receiver = RingTerrainShadowGeometry.ReceiverPosition(Radius, a0, c0, t0);
+        double a0Wrapped = a0 - Math.Floor(a0 / Circumference) * Circumference;
+        double bestFull = double.NegativeInfinity, bestNear = double.NegativeInfinity, dFull = 0.0;
+        double outsideMax = b.OutsideMax;
+        for (double d = 1.0; d < 60_000.0; d += d < 16_000.0 ? 3.0 : 20.0)
+        {
+            RingTerrainShadowGeometry.RingRaySample ray = RingTerrainShadowGeometry.SampleStraightRay(Radius, receiver, sun, d);
+            if (ray.AcrossMeters < 0.0 || ray.AcrossMeters > Width) break;
+            double rise = ray.HeightMeters - t0;
+            if (bestFull > double.MinValue / 2 && rise >= outsideMax - bestFull) break;
+            double da = ray.AroundMeters - a0Wrapped;
+            da -= Circumference * Math.Round(da / Circumference);
+            double a = a0 + da;
+            double v = f.Profile!(a - f.CamAround, ray.AcrossMeters - f.CamAcross) - rise;
+            if (v > bestFull) { bestFull = v; dFull = d; }
+            double wx = a / LevelTexel[1] - b.Win[1].I0, wy = ray.AcrossMeters / LevelTexel[1] - b.Win[1].J0;
+            if (InsideWindow(wx, wy) && v > bestNear) bestNear = v;
+        }
+        res.RFull = bestFull - t0; res.DFull = dFull; res.RNear = bestNear - t0;
+        return res;
+    }
+
+    private void RunBeyondFixture(RingTerrainHeightShadowGpu gpu, RenderingDevice rd, Fixture f)
+    {
+        var watch = Stopwatch.StartNew();
+        Built b = BuildLevels(gpu, f);
+        b.OutsideMax = 3200f; // tight bound for the massif, like the S4c pyramid bound at the fixture
+        GD.Print($"HEIGHT_SHADOW_REF fixture={f.Name} setup={watch.Elapsed.TotalSeconds:F1}s L0max={b.LevelMax[0]:F0} L1max={b.LevelMax[1]:F0} outsideMax={b.OutsideMax:F0}");
+        int seed = 500;
+        foreach ((double elev, double az) in f.Suns)
+        {
+            Vector3 sun = SunVector(f.CamAround, elev, az);
+            var gpuOut = RunBuild(gpu, rd, f, b, sun);
+            watch.Restart();
+            var picks = new List<(int Lev, int Ox, int Oy)>();
+            var rng = new Random(seed++);
+            for (int lev = 0; lev < 2; lev++)
+            {
+                for (int i = 0; i < 3072; i++) picks.Add((lev, rng.Next(N), rng.Next(N)));
+                foreach (int row in new[] { 512, 777 })
+                    for (int ox = 0; ox < N; ox += 2) picks.Add((lev, ox, row));
+            }
+            var windowed = new RefResult[picks.Count];
+            var truth = new TruthResult[picks.Count];
+            Parallel.For(0, picks.Count, i =>
+            {
+                windowed[i] = Trace(b, f, sun, picks[i].Lev, picks[i].Ox, picks[i].Oy);
+                truth[i] = TruthTrace(b, f, sun, picks[i].Lev, picks[i].Ox, picks[i].Oy);
+            });
+            int texels = 0, unres = 0, unresShadowed = 0, litSoFarTruthShadowed = 0;
+            int magTotal = 0, magOk = 0, lsTotal = 0, lsOk = 0, gTotal = 0, gOk = 0, massifTotal = 0, massifUnres = 0, ridgeTotal = 0, ridgeOk = 0, resolved = 0, wrongLit = 0;
+            for (int i = 0; i < picks.Count; i++)
+            {
+                (int lev, int ox, int oy) = picks[i];
+                HeightShadowWindow win = b.Win[lev];
+                int slot = RingHeightShadowLattice.SlotOf(win.J0 + oy) * N + RingHeightShadowLattice.SlotOf(win.I0 + ox);
+                double gpuR = gpuOut[lev].R[slot], gpuG = gpuOut[lev].G[slot];
+                RefResult w = windowed[i];
+                TruthResult tr = truth[i];
+                if (w.SunDown || tr.SunDown) continue;
+                texels++;
+                double slopeTol = w.SlopeTol;
+                double penWindowed = Math.Max(0.25, w.DBest * Math.Tan(0.25 * Math.PI / 180.0)) + slopeTol;
+                double penTruth = Math.Max(0.25, tr.DFull * Math.Tan(0.25 * Math.PI / 180.0)) + slopeTol;
+                bool truthShadowed = tr.RFull - 0.5 >= penTruth;
+                if (gpuG < 0.0)
+                {
+                    unres++;
+                    if (gpuR > 0.5) unresShadowed++;
+                    else if (truthShadowed) litSoFarTruthShadowed++;
+                    // R of an unresolved texel is the windowed reference's lower bound.
+                    if (w.R > 0.0)
+                    {
+                        magTotal++;
+                        if (Math.Abs(gpuR - w.R) <= Math.Max(0.5, 0.01 * w.DBest) + HalfUlp(w.R) + slopeTol) magOk++;
+                        if (w.R > 0.5 && gpuR > 0.5)
+                        {
+                            gTotal++;
+                            if (Math.Abs(-gpuG - w.DBest) <= Math.Max(0.5, 0.01 * w.DBest) + slopeTol + 0.5 * LevelTexel[lev]) gOk++;
+                        }
+                    }
+                    if (Math.Abs(w.R - 0.5) >= penWindowed)
+                    {
+                        lsTotal++;
+                        if ((gpuR > 0.5) == (w.R > 0.5)) lsOk++;
+                    }
+                    if (Math.Abs(tr.RNear - 0.5) >= penWindowed)
+                    {
+                        ridgeTotal++;
+                        if ((gpuR > 0.5) == (tr.RNear > 0.5)) ridgeOk++;
+                    }
+                }
+                else
+                {
+                    resolved++;
+                    if (truthShadowed && gpuR <= 0.5) wrongLit++;
+                }
+                if (truthShadowed && tr.DFull > 9000.0)
+                {
+                    massifTotal++;
+                    if (gpuG < 0.0) massifUnres++;
+                }
+            }
+            string label = $"fixture={f.Name} sun=({elev:0.#} deg elev, {az:0.#} deg az)";
+            GD.Print($"HEIGHT_SHADOW_REF {label} n={texels} unresolved={unres} (shadowed so far {unresShadowed}, lit so far {unres - unresShadowed}, of which truth-shadowed {litSoFarTruthShadowed}) resolved={resolved} wrongLitResolved={wrongLit} " +
+                     $"G<0 magnitude={Frac(magOk, magTotal):P2} (n={magTotal}) G<0 lit/shadow vs windowed={Frac(lsOk, lsTotal):P2} (n={lsTotal}) |G|={Frac(gOk, gTotal):P2} (n={gTotal}) " +
+                     $"massifZoneUnresolved={Frac(massifUnres, massifTotal):P3} (n={massifTotal}) ridgeInUnknown vs truth={Frac(ridgeOk, ridgeTotal):P2} (n={ridgeTotal}) ({watch.Elapsed.TotalSeconds:F1} s)");
+            Gate(magTotal < 100 || Frac(magOk, magTotal) >= 0.99, $"{label}: G<0 shadow-line magnitude vs the windowed reference {Frac(magOk, magTotal):P2}");
+            Gate(lsTotal < 100 || Frac(lsOk, lsTotal) >= 0.99, $"{label}: G<0 lit/shadow vs the windowed reference {Frac(lsOk, lsTotal):P2}");
+            Gate(gTotal < 100 || Frac(gOk, gTotal) >= 0.99, $"{label}: G<0 blocker distance (|G|) vs the windowed reference {Frac(gOk, gTotal):P2}");
+            Gate(massifTotal < 100 || Frac(massifUnres, massifTotal) >= 0.999, $"{label}: massif shadow zone resolved-lit ({Frac(massifUnres, massifTotal):P3} unresolved)");
+            Gate(ridgeTotal < 100 || Frac(ridgeOk, ridgeTotal) >= 0.99, $"{label}: ridge shadow inside the unknown zone vs truth {Frac(ridgeOk, ridgeTotal):P2}");
+            Gate(resolved < 100 || Frac(wrongLit, resolved) <= 0.001, $"{label}: resolved (G >= 0) texels lit where truth is shadowed {Frac(wrongLit, resolved):P3}");
+            Gate(texels == 0 || Frac(wrongLit, texels) <= 0.005, $"{label}: mis-lit {Frac(wrongLit, texels):P3} of all texels");
+        }
+    }
+
+    private static double Frac(int ok, int total) => total == 0 ? 1.0 : (double)ok / total;
+
     // ---- fixtures run ----
 
     private void RunFixture(RingTerrainHeightShadowGpu gpu, RenderingDevice rd, Fixture f)
@@ -608,6 +782,8 @@ public partial class HeightShadowReferenceTest : RefCounted
 
             foreach (Fixture f in SyntheticFixtures())
                 if (Wanted(f.Name)) RunFixture(gpu, rd, f);
+            foreach (Fixture f in BeyondFixtures())
+                if (Wanted(f.Name)) RunBeyondFixture(gpu, rd, f);
             if (Wanted("real_mountain"))
             {
                 Fixture? mountain = MountainFixture(out List<IHeightShadowSource> owned);

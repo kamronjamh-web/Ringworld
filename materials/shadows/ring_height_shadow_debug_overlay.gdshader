@@ -2,7 +2,7 @@ shader_type canvas_item;
 // Shadow revamp S4c: transient top-down view of the terrain height-shadow globals (docs/shadow-revamp-plan.md S4).
 // Each pixel is a world-space ground point (view_origin + axis_u * x + axis_v * y); the shader pushes it through ringworld_height_shadow_frame exactly like a
 // future receiver (S5) would, decodes anchor-local around/across metres and samples the front layer of the level whose bounds contain it.
-// Modes: 0 level-0 surface visibility, 1 level-1 surface visibility, 2 blocker distance, 3 unresolved texels, 4 window bounds (L0 cyan, L1 orange, previous yellow).
+// Modes: 0 level-0 surface visibility, 1 level-1 surface visibility, 2 blocker distance, 3 unresolved texels (red: lit so far, yellow: already shadowed by the in-window lower bound), 4 window bounds (L0 cyan, L1 orange, previous yellow).
 
 global uniform sampler2DArray ringworld_height_shadow_l0;
 global uniform sampler2DArray ringworld_height_shadow_l1;
@@ -42,7 +42,7 @@ vec4 fetch_l1(vec2 p, int layer) {
 }
 
 vec3 visibility_color(vec4 v, float bias) {
-	if (v.g < 0.0) {
+	if (v.g < 0.0 && v.r <= bias) {
 		return vec3(0.75, 0.2, 0.75);
 	}
 	return v.r > bias ? vec3(0.06, 0.08, 0.2) : vec3(0.95, 0.93, 0.85);
@@ -72,9 +72,9 @@ void fragment() {
 		if (use0 || use1) {
 			vec4 v = use0 ? fetch_l0(p, front) : fetch_l1(p, front);
 			if (mode == 2) {
-				color = v.g > 0.0 ? vec3(clamp(v.g / (extent_m * 0.5), 0.0, 1.0)) * vec3(1.0, 0.7, 0.3) : (v.g < 0.0 ? vec3(0.5, 0.0, 0.5) : vec3(0.0));
+				color = abs(v.g) > 0.0 && v.r > 0.0 ? vec3(clamp(abs(v.g) / (extent_m * 0.5), 0.0, 1.0)) * vec3(1.0, 0.7, 0.3) : (v.g < 0.0 ? vec3(0.5, 0.0, 0.5) : vec3(0.0));
 			} else if (mode == 3) {
-				color = v.g < 0.0 ? vec3(0.9, 0.1, 0.1) : vec3(0.05, 0.3, 0.1);
+				color = v.g < 0.0 ? (v.r > 0.5 ? vec3(1.0, 0.8, 0.1) : vec3(0.9, 0.1, 0.1)) : vec3(0.05, 0.3, 0.1);
 			} else {
 				color = visibility_color(v, bias);
 			}

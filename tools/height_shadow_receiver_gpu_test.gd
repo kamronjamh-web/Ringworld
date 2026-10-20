@@ -104,6 +104,7 @@ func _run() -> void:
 	await _test_step_edge(voxel)
 	await _test_penumbra(voxel)
 	await _test_unresolved_and_ports()
+	await _test_unresolved_partial()
 	await _test_l0_l1(voxel)
 	await _test_l1_macro(voxel)
 	await _test_hub(voxel)
@@ -158,8 +159,8 @@ func _test_unresolved_and_ports() -> void:
 		_show(entry, material)
 		var name: String = entry.name
 		var mode: int = entry.mode
-		# (a) unresolved everywhere (G < 0): receivers behave exactly as with the heightfield off, in the normal view and in the debug view.
-		var unresolved := _layer_fill(5.0, -1.0)
+		# (a) unresolved everywhere and lit so far (R below the receiver, G < 0): receivers behave exactly as with the heightfield off, in the normal view and in the debug view.
+		var unresolved := _layer_fill(-50.0, -1.0)
 		for debug_mode in [0, mode]:
 			RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", debug_mode)
 			_set_globals([unresolved, unresolved, unresolved], [unresolved, unresolved, unresolved], 0, -1, 1.0, 0.0, false)
@@ -184,6 +185,99 @@ func _test_unresolved_and_ports() -> void:
 		RenderingServer.global_shader_parameter_set("ringworld_hub_light_weight", hub_saved)
 	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 4)
 	_show(MATERIALS[0], _material(MATERIALS[0]))
+
+
+func _test_unresolved_partial() -> void:
+	# Unresolved texels (G < 0) keep their in-window lower bound R: R above the receiver is a real shadow (vis 0, weight 1, unknown 0 -> macro scale 0), R below it is
+	# only "lit so far" (vis 1, unknown 1 -> macro scale 1). |G| drives penumbra and authority; a bilinear quad and a crossfade carry the unknown share.
+	var voxel := _material(MATERIALS[0])
+	var proxy := _material(MATERIALS[1])
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 4)
+	_show(MATERIALS[0], voxel)
+	_frame_plane(80.0)
+	var shadowed_unresolved := _layer_fill(50.0, -200.0)
+	var lit_unresolved := _layer_fill(-50.0, -200.0)
+	_set_globals([shadowed_unresolved, shadowed_unresolved, shadowed_unresolved], _layers_uniform(0.0, 0.0))
+	var vis_shadowed := _linear((await _strip())[SIZE.x / 2])
+	_set_globals([lit_unresolved, lit_unresolved, lit_unresolved], _layers_uniform(0.0, 0.0))
+	var vis_lit := _linear((await _strip())[SIZE.x / 2])
+	print("HEIGHT_SHADOW_RECEIVER partial: G=-200 R=+50 -> vis %.3f (expected 0), R=-50 -> vis %.3f (expected 1)" % [vis_shadowed, vis_lit])
+	_check(vis_shadowed < 0.05, "unresolved texel with R=+50 reads %f (expected 0)" % vis_shadowed)
+	_check(vis_lit > 0.95, "unresolved texel with R=-50 reads %f (expected 1)" % vis_lit)
+
+	# Macro scale through the proxy with its macro term visible: R=+50 owns the receiver (identical to the resolved texel), R=-50 keeps the macro (identical to OFF).
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 0)
+	_show(MATERIALS[1], proxy)
+	var resolved_shadowed := _layer_fill(50.0, 200.0)
+	_set_globals([shadowed_unresolved, shadowed_unresolved, shadowed_unresolved], _layers_uniform(0.0, 0.0))
+	var image_unresolved_shadow := await _grab()
+	_set_globals([resolved_shadowed, resolved_shadowed, resolved_shadowed], _layers_uniform(0.0, 0.0))
+	var image_resolved_shadow := await _grab()
+	var diff_a := _diff(image_unresolved_shadow, image_resolved_shadow)
+	_check(diff_a.pixels == 0, "proxy: unresolved R=+50 differs from the resolved texel (%d px, max %d): macro scale not 0 or |G| not used" % [diff_a.pixels, diff_a.max])
+	_set_globals([lit_unresolved, lit_unresolved, lit_unresolved], _layers_uniform(0.0, 0.0), 0, -1, 1.0, 0.0, true)
+	var image_lit_on := await _grab()
+	_set_globals([lit_unresolved, lit_unresolved, lit_unresolved], _layers_uniform(0.0, 0.0), 0, -1, 1.0, 0.0, false)
+	var image_lit_off := await _grab()
+	var diff_b := _diff(image_lit_on, image_lit_off)
+	_check(diff_b.pixels == 0, "proxy: unresolved R=-50 differs from OFF (%d px, max %d): macro scale not 1" % [diff_b.pixels, diff_b.max])
+	var image_owned := image_resolved_shadow
+	_check(_diff(image_owned, image_lit_off).pixels > 0, "proxy: heightfield-owned shadow is indistinguishable from the macro-only image (test would be vacuous)")
+	print("HEIGHT_SHADOW_RECEIVER partial macro: unresolved+shadowed == resolved (%d px differ), unresolved+lit == OFF (%d px differ)" % [diff_a.pixels, diff_b.pixels])
+
+	# Penumbra and authority use |G|.
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 4)
+	_show(MATERIALS[0], voxel)
+	_frame_plane(100.0)
+	var ramp := _layer_ramp(0.1, -400.0)
+	_set_globals([ramp, ramp, ramp], _layers_uniform(0.0, 0.0))
+	var values := await _strip()
+	var expected := 0.9 * 400.0 * tan(deg_to_rad(0.5)) / 0.1
+	var width := absf(_crossing(values, 100.0, 0.0, 0.05) - _crossing(values, 100.0, 0.0, 0.95))
+	print("HEIGHT_SHADOW_RECEIVER partial penumbra (G=-400) 5-95%% width %.2f m, expected %.2f m" % [width, expected])
+	_check(absf(width - expected) <= 0.2 * expected, "unresolved penumbra width %f vs expected %f (|G| not used)" % [width, expected])
+	_frame_plane(80.0)
+	var near_blocker := _layer_step(100.0, -500.0, 0.0, 0.0)
+	var far_blocker := _layer_step(100.0, -2000.0, 0.0, 0.0)
+	var results := []
+	for case in [[near_blocker, 1000.0], [far_blocker, 1000.0]]:
+		_set_globals([case[0], case[0], case[0]], _layers_uniform(0.0, 0.0), 0, -1, 1.0, case[1])
+		results.append(_linear((await _strip())[SIZE.x / 8]))
+	print("HEIGHT_SHADOW_RECEIVER partial authority: |G| 500 / A 1000 -> %.3f (map owns it, lit), |G| 2000 / A 1000 -> %.3f" % [results[0], results[1]])
+	_check(results[0] > 0.95, "authority did not use |G| for the near unresolved blocker (%f)" % results[0])
+	_check(results[1] < 0.05, "authority dropped an unresolved blocker beyond the map (%f)" % results[1])
+
+	# Mixed bilinear quad: left unresolved + lit so far, right resolved + shadowed; the crossing sits at the texel boundary (x = -2) and is monotonic.
+	_frame_plane(80.0)
+	var quad := _layer_step(-50.0, -100.0, 50.0, 100.0)
+	_set_globals([quad, quad, quad], _layers_uniform(0.0, 0.0))
+	values = await _strip()
+	var edge := _crossing(values, 80.0, 0.0, 0.5)
+	print("HEIGHT_SHADOW_RECEIVER partial mixed quad: crossing at x=%.2f m (expected -2), left %.3f right %.3f" % [edge, _linear(values[10]), _linear(values[SIZE.x - 10])])
+	_check(absf(edge + 2.0) <= 4.0, "mixed quad crossing %f not within one texel of -2" % edge)
+	_check(_linear(values[10]) > 0.95 and _linear(values[SIZE.x - 10]) < 0.05, "mixed quad endpoints")
+
+	# Crossfade: front layer unresolved + lit (unknown 1), previous layer resolved + lit (unknown 0). t=1 keeps the macro (== OFF), t=0 removes it, t=0.5 is in between.
+	_show(MATERIALS[1], proxy)
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 0)
+	_frame_plane(80.0)
+	var resolved_lit := _layer_fill(-50.0, 0.0)
+	var means := []
+	var images := []
+	for t in [0.0, 0.5, 1.0]:
+		_set_globals([lit_unresolved, resolved_lit, resolved_lit], _layers_uniform(0.0, 0.0), 0, 1, t, 0.0, true, GLOBAL_BOUNDS_L0, GLOBAL_BOUNDS_L1, true, true, GLOBAL_BOUNDS_L0)
+		var image := await _grab()
+		images.append(image)
+		means.append(_sample(image, Rect2i(0, 0, SIZE.x, SIZE.y)))
+	var diff_end := _diff(images[2], image_lit_off)
+	var lo := minf(means[0], means[2])
+	var hi := maxf(means[0], means[2])
+	print("HEIGHT_SHADOW_RECEIVER partial crossfade: mean t=0 %.4f, t=0.5 %.4f, t=1 %.4f; t=1 vs OFF %d px differ" % [means[0], means[1], means[2], diff_end.pixels])
+	_check(diff_end.pixels == 0, "crossfade t=1 (unresolved lit front) differs from OFF (%d px)" % diff_end.pixels)
+	_check(hi - lo > 0.0005, "crossfade endpoints do not differ (macro scale 0 vs 1 invisible)")
+	_check(means[1] > lo + 0.1 * (hi - lo) and means[1] < hi - 0.1 * (hi - lo), "crossfade t=0.5 mean %f not between %f and %f" % [means[1], lo, hi])
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 4)
+	_show(MATERIALS[0], voxel)
 
 
 func _test_l0_l1(material: ShaderMaterial) -> void:

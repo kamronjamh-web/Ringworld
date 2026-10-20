@@ -77,7 +77,7 @@ float ring_terrain_direct_visibility(
 	}
 	float terrain_shadow = is_directional
 		? ring_macro_terrain_occlusion(
-			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer) * (1.0 - height_shadow.weight),
+			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer) * ring_height_shadow_macro_scale(height_shadow),
 			sample_terrain_planet_shadow_uv(shadow_uv, world, viewer),
 			primary_sun_weight,
 			primary_planet_weight,

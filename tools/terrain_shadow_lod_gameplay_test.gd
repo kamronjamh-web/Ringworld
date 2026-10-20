@@ -16,6 +16,7 @@ var global_lod: Node
 var planet: DirectionalLight3D
 var placement: RefCounted
 var report := {"status":"RUNNING", "captures":[]}
+var height_shadow_mode := false
 
 class SessionStub extends Node:
 	var settings := {}
@@ -26,6 +27,8 @@ class SessionStub extends Node:
 func _init() -> void: call_deferred("run")
 
 func run() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg == "--height-shadow=on": height_shadow_mode = true
 	if RenderingServer.get_rendering_device() == null: return fail("requires Vulkan/Forward+")
 	fixture = "res://.godot/terrain_shadow_lod/%s" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
@@ -55,8 +58,14 @@ func run() -> void:
 	if not bool(placement.call("Place", explorer, AROUND, height, ACROSS)): return fail("could not place fixture")
 	clock.set("Paused", true)
 	var phases := await select_phases()
-	clock.call("SetCycleFraction", phases.day); await wait_shadow_data("day")
+	clock.call("SetCycleFraction", phases.day)
+	if height_shadow_mode and not await enable_height_shadows(): return
+	await wait_shadow_data("day")
 	await capture("day")
+	if height_shadow_mode:
+		var day_coverage := float(report.captures[0].terrain_shadow_coverage_meters)
+		print("TERRAIN_SHADOW_LOD_HEIGHT_SHADOW near map active=%s terrain_shadow_coverage_meters=%.1f" % [str(game.get_node("GraphicsQuality").get("NearSunMapActive")), day_coverage])
+		if not bool(game.get_node("GraphicsQuality").get("NearSunMapActive")) or absf(day_coverage - 400.0) > 1.0: return fail("daytime terrain caster coverage is not the 400 m near map: %s" % day_coverage)
 	clock.call("SetCycleFraction", phases.night); await wait_shadow_data("night")
 	await capture("night")
 	clock.call("SetCycleFraction", phases.day); await wait_shadow_data("day_return")
@@ -68,6 +77,17 @@ func run() -> void:
 	game.queue_free(); await process_frame
 	print("TERRAIN_SHADOW_LOD_GAMEPLAY_TEST=PASS fixture=" + fixture)
 	quit(0)
+
+## --height-shadow=on: run the contract with the terrain height shadows enabled, so the sun map is the 400 m near map and the caster chain only has to cover it.
+func enable_height_shadows() -> bool:
+	var graphics := game.get_node_or_null("GraphicsQuality")
+	if graphics == null: fail("missing GraphicsQuality"); return false
+	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", true)
+	var deadline := Time.get_ticks_msec() + 180000
+	while Time.get_ticks_msec() < deadline and not bool(graphics.get("NearSunMapActive")): await process_frame
+	for ignored in 120: await process_frame
+	if not bool(graphics.get("NearSunMapActive")): fail("near sun map never engaged"); return false
+	return true
 
 func create_game() -> Node:
 	var launcher := LAUNCHER.instantiate(); root.add_child(launcher); await process_frame

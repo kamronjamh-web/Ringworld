@@ -314,8 +314,8 @@ public partial class RingGraphicsQualityController : Node
 
     public override void _Process(double delta)
     {
-        _ = delta;
         PushHazeBrightness();
+        UpdateNearSunMap(delta);
         UpdateLocalShadowHandoff();
         UpdateTerrainShadowCasterCoverage();
         if (_skyAtmosphereRegistered || _grid == null) return;

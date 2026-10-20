@@ -28,6 +28,7 @@ var sweep_up := Vector3.UP
 var sweep_forward := Vector3.FORWARD
 var flight_height := 0.0
 var telemetry: Node
+var height_shadow_mode := false
 
 class SessionStub extends Node:
 	var settings := {}
@@ -38,6 +39,8 @@ class SessionStub extends Node:
 func _init() -> void: call_deferred("run")
 
 func run() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg == "--height-shadow=on": height_shadow_mode = true
 	if RenderingServer.get_rendering_device() == null: return fail("requires Vulkan/Forward+")
 	fixture = "res://.godot/terrain_shadow_hitch/%s" % Time.get_ticks_usec()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture))
@@ -84,6 +87,8 @@ func run() -> void:
 		var window := await capture_flight(policy)
 		report.windows.append(window); write_report()
 		print("TERRAIN_SHADOW_HITCH_WINDOW ", JSON.stringify(window))
+	if height_shadow_mode:
+		if not await run_height_shadow_windows(phases): return
 	RenderingServer.viewport_set_measure_render_time(root.get_viewport_rid(), false)
 	if telemetry != null: report["telemetry_report"] = telemetry.call("CaptureSlowdown")
 	report.status = "PASS"; write_report()
@@ -218,11 +223,12 @@ func capture_sweep(phase: String, policy: String, macro_mode: String) -> Diction
 	for level in proxies(): if bool(level.get("StreamingActive")): casting.append({"lod":level.get("LodLabel"), "cast":level.get("CastTerrainShadows"), "active_sectors":level.get("ActiveSectorCount")})
 	return {"phase":phase, "motion":"fixed-player airborne 360-degree camera pan", "caster_policy":policy, "macro_mode":macro_mode, "samples":SAMPLE_FRAMES, "warmup_frames":WARMUP_FRAMES, "cold_sweep_frames":cold_wall.size(), "cold_sweep_wall_ms":stats(cold_wall), "cold_sweep_pipeline_draw_delta":stats(cold_pipeline_draw_delta), "cold_sweep_over_50ms":count_over(cold_wall, 50.0), "cold_sweep_over_100ms":count_over(cold_wall, 100.0), "wall_ms":stats(wall), "viewport_gpu_ms":stats(gpu), "viewport_cpu_ms":stats(cpu), "render_setup_cpu_ms":stats(setup), "draw_calls":stats(draws), "primitives":stats(primitives), "pipeline_draw_delta_per_frame":stats(pipeline_draw_delta), "pipeline_compilations_before":pipelines_before, "pipeline_compilations_after":pipeline_counts(), "frames_over_50ms":count_over(wall, 50.0), "frames_over_100ms":count_over(wall, 100.0), "caster_snapshot":casting, "macro_pending":global_lod.get("PlanetMacroShadowBuildPending") if phase == "night" else global_lod.get("MacroShadowBuildPending")}
 
-func capture_flight(policy: String) -> Dictionary:
+func capture_flight(policy: String, per_frame := Callable()) -> Dictionary:
 	var wall: Array[float] = []; var gpu: Array[float] = []; var cpu: Array[float] = []; var setup: Array[float] = []; var draws: Array[float] = []; var pipeline_delta: Array[float] = []; var proxy_frames: Array = []
 	var previous_pipeline_draw := float(pipeline_counts().get("draw", 0)); var pipeline_before := pipeline_counts()
 	for frame in ROUTE_FRAMES:
 		var started := Time.get_ticks_usec()
+		if per_frame.is_valid(): per_frame.call(frame)
 		var canonical_around := AROUND + ROUTE_SPEED_MPS * (float(frame) / 60.0)
 		if not bool(placement.call("Move", explorer, canonical_around, flight_height, ACROSS, ROUTE_SPEED_MPS)):
 			fail("could not advance flight fixture")
@@ -241,6 +247,42 @@ func capture_flight(policy: String) -> Dictionary:
 	var casting := []
 	for level in proxies(): if bool(level.get("StreamingActive")): casting.append({"lod":level.get("LodLabel"), "cast":level.get("CastTerrainShadows"), "active_sectors":level.get("ActiveSectorCount")})
 	return {"phase":"night", "motion":"benchmark noclip flight plus 360-degree camera pan", "route":{"altitude_above_start_surface_m":500.0, "speed_mps":ROUTE_SPEED_MPS, "simulated_seconds":ROUTE_FRAMES / 60.0, "distance_m":ROUTE_SPEED_MPS * ROUTE_FRAMES / 60.0}, "caster_policy":policy, "samples":ROUTE_FRAMES, "wall_ms":stats(wall), "viewport_gpu_ms":stats(gpu), "viewport_cpu_ms":stats(cpu), "render_setup_cpu_ms":stats(setup), "draw_calls":stats(draws), "pipeline_draw_delta_per_frame":stats(pipeline_delta), "pipeline_compilations_before":pipeline_before, "pipeline_compilations_after":pipeline_counts(), "frames_over_50ms":count_over(wall, 50.0), "frames_over_100ms":count_over(wall, 100.0), "proxy_frame_samples":proxy_frames, "caster_snapshot":casting}
+
+## --height-shadow=on: the terrain height-shadow producer starts mid-flight in daylight (first publish, then the near sun map switch from 6 km to 400 m), then publishes
+## follow sun steps. Reports per-window frame times plus the frame the near map engaged and how many frames each phase took; the hitch gates are the 50/100 ms counters.
+func run_height_shadow_windows(phases: Dictionary) -> bool:
+	var graphics := game.get_node_or_null("GraphicsQuality")
+	var node := game.get_node_or_null("TerrainHeightShadow")
+	if graphics == null or node == null: fail("missing GraphicsQuality / TerrainHeightShadow"); return false
+	clock.call("SetCycleFraction", phases.day)
+	for ignored in 30: await process_frame
+	var state := {"near_frame": -1, "far_frame": -1, "publishes_start": int(node.get("PublishCount")), "was_near": bool(graphics.get("NearSunMapActive"))}
+	var enable := func(frame: int) -> void:
+		if frame == 60: graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", true)
+		var near := bool(graphics.get("NearSunMapActive"))
+		if near and not state.was_near and state.near_frame < 0: state.near_frame = frame
+		if not near and state.was_near: state.far_frame = frame
+		state.was_near = near
+	var window := await capture_flight("height_shadow_enable", enable)
+	window["near_map_engaged_frame"] = state.near_frame; window["near_map_left_frame"] = state.far_frame
+	window["publishes"] = int(node.get("PublishCount")) - int(state.publishes_start); window["height_shadow_status"] = str(node.call("GetStatusText"))
+	report.windows.append(window); write_report()
+	print("TERRAIN_SHADOW_HITCH_WINDOW ", JSON.stringify(window))
+	# Wait (bounded) for the first publish and the near map in case the enable window ended before them.
+	var deadline := Time.get_ticks_msec() + 120000
+	while Time.get_ticks_msec() < deadline and not bool(graphics.get("NearSunMapActive")): await process_frame
+	if not bool(graphics.get("NearSunMapActive")): fail("near sun map never engaged: " + str(node.call("GetStatusText"))); return false
+	var base_fraction := float(clock.call("GetCycleTimeSeconds")) / maxf(1.0, float(clock.get("FullCycleSeconds")))
+	var step := func(frame: int) -> void:
+		if frame % 90 == 0: clock.call("SetCycleFraction", base_fraction + 0.0003 * float(frame / 90 + 1))
+	var publishes_before := int(node.get("PublishCount"))
+	var steady := await capture_flight("height_shadow_near_publish", step)
+	steady["publishes"] = int(node.get("PublishCount")) - publishes_before; steady["near_map_active_at_end"] = bool(graphics.get("NearSunMapActive"))
+	report.windows.append(steady); write_report()
+	print("TERRAIN_SHADOW_HITCH_WINDOW ", JSON.stringify(steady))
+	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", false)
+	for ignored in 30: await process_frame
+	return true
 
 func sweep_frame(frame: int, total: int) -> void:
 	var t := TAU * float(frame % total) / float(total)

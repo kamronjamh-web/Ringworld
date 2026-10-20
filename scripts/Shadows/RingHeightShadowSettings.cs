@@ -11,7 +11,9 @@ public sealed record RingHeightShadowSettings
 {
     public const float DefaultSunStepDegrees = 0.1f, DefaultPenumbraDegrees = 0.5f, DefaultCrossfadeSeconds = 1.0f, DefaultBudgetMs = 0.15f;
     public const int DefaultL0TexelMeters = 4, DefaultLevels = 2, DefaultRowsPerFrame = 64, DefaultFillWorkers = 2;
+    public const int DefaultNearMapDistanceMeters = 400;
     public static readonly int[] TexelChoices = { 2, 4, 8 };
+    public static readonly int[] NearMapDistanceChoices = { 300, 400, 500 };
 
     public bool Enabled { get; init; }
     public int L0TexelMeters { get; init; } = DefaultL0TexelMeters;
@@ -23,6 +25,10 @@ public sealed record RingHeightShadowSettings
     public int FillWorkers { get; init; } = DefaultFillWorkers;
     /// <summary>Per-frame GPU time the sliced build may use; the slicing rule shrinks rows per frame until the measured (or modelled) cost fits.</summary>
     public float BudgetMs { get; init; } = DefaultBudgetMs;
+
+    /// <summary>While the heightfield is the published sun light source, shrink the sun shadow map to a near map (it then only owns the first few hundred metres; the heightfield owns the rest). Effective only with Enabled.</summary>
+    public bool NearMapEnabled { get; init; } = true;
+    public int NearMapDistanceMeters { get; init; } = DefaultNearMapDistanceMeters;
 
     public int Level1TexelMeters => RingHeightShadowLattice.Level1Texel(L0TexelMeters);
     /// <summary>Half extent of the coarse window in metres (level 1: 512 texels each way).</summary>
@@ -46,7 +52,15 @@ public sealed record RingHeightShadowSettings
         CrossfadeSeconds = Clamp(CrossfadeSeconds, 0f, 3f, DefaultCrossfadeSeconds),
         FillWorkers = Math.Clamp(FillWorkers, 1, 4),
         BudgetMs = Clamp(BudgetMs, 0.05f, 2f, DefaultBudgetMs),
+        NearMapDistanceMeters = NearestNearMapDistance(NearMapDistanceMeters),
     };
+
+    public static int NearestNearMapDistance(float meters)
+    {
+        int best = NearMapDistanceChoices[0];
+        foreach (int choice in NearMapDistanceChoices) if (Math.Abs(choice - meters) < Math.Abs(best - meters)) best = choice;
+        return best;
+    }
 
     private static float Clamp(float value, float min, float max, float fallback) => float.IsFinite(value) ? Math.Clamp(value, min, max) : fallback;
 }

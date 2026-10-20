@@ -622,7 +622,7 @@ void light() {
 	}
 	float terrain_shadow = LIGHT_IS_DIRECTIONAL
 		? ring_macro_terrain_occlusion(
-			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters) * (1.0 - height_shadow.weight),
+			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters) * ring_height_shadow_macro_scale(height_shadow),
 			0.0,
 			primary_sun_weight,
 			0.0,

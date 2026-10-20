@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -21,6 +22,15 @@ public partial class RingGraphicsQualityController
     /// <summary>Sun energy below which the shadow pass is skipped (docs/eclipse-false-sun-spec.md finding 4 / F17). The planet light uses the same threshold.</summary>
     public const float SunShadowMinimumEnergy = 0.001f;
     private bool _sunShadowZeroEnergySuspended;
+    /// <summary>Near sun map (docs/shadow-revamp-plan.md S5b): fade start of the 2-cascade near map, so the heightfield authority distance is 0.8 x the near distance (320 m at 400 m).</summary>
+    public const float NearSunMapFadeStart = .8f;
+    public const float NearSunMapLeaveSeconds = 1.0f;
+    private bool _nearSunMapActive;
+    private float _nearSunMapNotReadySeconds;
+    public bool NearSunMapActive => _nearSunMapActive;
+    /// <summary>Tests: replaces the "sun heightfield ready" query.</summary>
+    internal System.Func<bool>? NearSunMapReadyProbe { get; set; }
+    internal void StepNearSunMapForTest(double delta) => UpdateNearSunMap(delta);
     public bool SunShadowZeroEnergySuspended => _sunShadowZeroEnergySuspended;
 
     public bool LocalShadowHandoffEnabled => !_shadowTuningOverrides.TryGetValue("LocalShadowHandoffEnabled", out Variant enabled) || enabled.AsBool();
@@ -43,6 +53,28 @@ public partial class RingGraphicsQualityController
             ? (Variant)_maxLocalSunElevationDegrees : default(Variant),
         ["reason"] = _localShadowHandoffReason
     };
+
+    /// <summary>
+    /// Enters the near sun map as soon as the sun heightfield is published and covers the camera; leaves it one second after the heightfield stops being ready (or at once
+    /// when the feature or the near-map option is switched off), so a hiccup in the producer cannot flip the map between 6 km and 400 m.
+    /// </summary>
+    private void UpdateNearSunMap(double delta)
+    {
+        RingHeightShadowSettings settings = ResolveHeightShadowSettings();
+        bool wanted = settings.Enabled && settings.NearMapEnabled;
+        bool ready = wanted && (NearSunMapReadyProbe != null ? NearSunMapReadyProbe() : RingTerrainHeightShadow.Instance is { } node && GodotObject.IsInstanceValid(node) && node.IsSunHeightfieldReady);
+        bool next = _nearSunMapActive;
+        if (!wanted) { next = false; _nearSunMapNotReadySeconds = 0.0f; }
+        else if (ready) { next = true; _nearSunMapNotReadySeconds = 0.0f; }
+        else if (_nearSunMapActive)
+        {
+            _nearSunMapNotReadySeconds += (float)Math.Max(delta, 0.0);
+            if (_nearSunMapNotReadySeconds >= NearSunMapLeaveSeconds) next = false;
+        }
+        if (next == _nearSunMapActive) return;
+        _nearSunMapActive = next;
+        ApplyShadowTuningOverrides();
+    }
 
     private void UpdateLocalShadowHandoff()
     {

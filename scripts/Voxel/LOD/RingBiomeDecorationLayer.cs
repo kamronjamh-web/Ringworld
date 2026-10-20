@@ -376,7 +376,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 
 	private bool AllowsTreeSunShadowLod(int lod)
 	{
-		float distance = Mathf.Clamp(TreeSunShadowDistanceMeters, 0.0f, Mathf.Max(0.0f, Lod3DistanceMeters));
+		float distance = Mathf.Clamp(EffectiveTreeSunShadowDistanceMeters, 0.0f, Mathf.Max(0.0f, Lod3DistanceMeters));
 		if (EffectiveCompactTreeLodProfile)
 		{
 			CompactTreeFadeBounds(out float nearStart, out _, out _, out _);
@@ -461,7 +461,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 		}
 		foreach ((GpuOutputKey key, GpuTreeOutput output) in _gpuTreeOutputs)
 			ApplyGpuTreeSunShadowChoice(key, output, selectedGpu.Contains(output.Renderer));
-		_appliedTreeSunShadowDistance = TreeSunShadowDistanceMeters;
+		_appliedTreeSunShadowDistance = EffectiveTreeSunShadowDistanceMeters;
 		_appliedTreeSunShadowBatchCap = MaximumTreeSunShadowBatches;
 		_treeSunShadowPolicyDirty = false;
 	}
@@ -504,7 +504,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 			TreeSunShadowTransitionCount++;
 			MarkTreeSunShadowPolicyDirty();
 		}
-		if (_appliedTreeSunShadowDistance != TreeSunShadowDistanceMeters || _appliedTreeSunShadowBatchCap != MaximumTreeSunShadowBatches
+		if (_appliedTreeSunShadowDistance != EffectiveTreeSunShadowDistanceMeters || _appliedTreeSunShadowBatchCap != MaximumTreeSunShadowBatches
 			|| _appliedLowDetailTreeShadows != UseLowDetailTreeShadows)
 			MarkTreeSunShadowPolicyDirty();
 		if (_treeSunShadowPolicyDirty)
@@ -600,6 +600,22 @@ public partial class RingBiomeDecorationLayer : Node3D
 		_lastTreeMaterialSunDirection = sunDirection;
 		_lastTreeLightingConfiguration = configuration;
 		_treeLightingConfigurationValid = true;
+	}
+
+	/// <summary>The configured tree sun-shadow distance, never beyond what the sun shadow map covers (the near sun map is 400 m while the height shadows are authoritative past it).</summary>
+	public float EffectiveTreeSunShadowDistanceMeters
+	{
+		get
+		{
+			ResolveTreeSunLight();
+			float distance = TreeSunShadowDistanceMeters;
+			if (_treeSunLight != null && GodotObject.IsInstanceValid(_treeSunLight))
+			{
+				float sunMax = _treeSunLight.DirectionalShadowMaxDistance;
+				if (float.IsFinite(sunMax) && sunMax > 0.0f) distance = Mathf.Min(distance, sunMax);
+			}
+			return distance;
+		}
 	}
 
 	private void ResolveTreeSunLight()

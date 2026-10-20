@@ -288,7 +288,7 @@ public partial class RingTerrainHeightShadow : Node
         _haveLastBuiltDirection = false; _lastBuiltLight = HeightShadowLight.None;
         _snapNext = true; _band = 0; _sourceIdentity = 0;
         _frontRect[0] = _frontRect[1] = null; _prevRect[0] = _prevRect[1] = null;
-        ReleaseGpu();
+        ReleaseGpu(exiting);
     }
 
     private void DisposeSources()
@@ -693,6 +693,8 @@ public partial class RingTerrainHeightShadow : Node
         if (!Settings.Enabled) return "Height shadows: off.";
         string window = _frontRect[0] is { } w ? $"L0 {w.Width * _frontTexel[0] / 1000.0:0.#} km @ {_frontTexel[0]} m" + (_frontRect[1] != null ? $", L1 {_frontRect[1]!.Value.Width * _frontTexel[1] / 1000.0:0.#} km @ {_frontTexel[1]} m" : "") : "no window";
         string unresolved = UnresolvedPercent(0) is { } u0 ? $"{u0:0.#}%" + (UnresolvedPercent(1) is { } u1 ? $" / {u1:0.#}%" : "") : "n/a";
+        if (UnresolvedPercent(0) is not null)
+            unresolved += $" (shadowed so far {(UnresolvedShadowedPercent(0) is { } s0 ? $"{s0:0.#}%" : "n/a")}" + (UnresolvedShadowedPercent(1) is { } s1 ? $" / {s1:0.#}%" : "") + ")";
         var gpuMs = GpuMsPerRow(0);
         return $"Height shadows: {_phase} ({_status}); generation {_roles.Generation}; light {_roles.Light}; {window}; band {_band}; unresolved {unresolved}"
             + (double.IsFinite(gpuMs) ? $"; build {LastBuildFrames} frames" : "") + ".";

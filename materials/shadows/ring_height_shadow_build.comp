@@ -6,6 +6,8 @@
 // h >= H); the output is R = H - T0 and G = blocker distance. Hierarchy: conservative max-mip descent, mip-0 bilinear samples every 0.5 texel,
 // L0 continues into L1, then unresolved beyond L1 unless outside_max rules a hidden caster out. All positions are window-relative texel
 // coordinates w (0 = window origin texel centre), so no large canonical value ever enters float math.
+// Output: G >= 0 resolved (G = blocker distance, 0 none). G < 0 unresolved (a caster beyond the windows may exist): R = best - T0 is a valid lower bound
+// of H (the in-window shadow found so far), |G| = blocker distance if R > 0, else the window-exit distance.
 #include "res://materials/shadows/ring_height_shadow_common.compinc"
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -258,7 +260,7 @@ void main() {
 	float r = best - t0;
 	float g = 0.0;
 	if (unresolved) {
-		g = -max(d, 1.0);
+		g = -max(r > 0.0 ? d_best : d, 1.0); // G < 0: R is still a lower bound of H; |G| = blocker distance if R > 0, else the window-exit distance
 	} else if (r > 0.0) {
 		g = d_best;
 	}

@@ -277,35 +277,29 @@ func _run() -> void:
 		float(stats["unresolved_l0"]), float(stats["unresolved_l1"]), stats["rows_per_frame"], stats["gpu_ms_last_build"], stats["gpu_ms_per_row_l0"], stats["gpu_ms_per_row_l1"], float(stats["render_callback_cpu_ms_max"]), float(stats["main_thread_ms_avg"])])
 	_check(float(stats["unresolved_l0"]) >= 0.0 and float(stats["unresolved_l0"]) < 50.0, "unresolved statistic is available and plausible at noon")
 
-	# ---- ON vs OFF at the low-sun poses (hills shadow far terrain), then the receivers' visible use with the sun map off.
-	# Elevations come after the named poses: a low sun leaves most texels unresolved (rays leave the window below the tallest terrain around),
-	# so the receivers' visible-use check runs at the first elevation where the overlay shows resolved terrain shadows around the camera.
-	var visible_elevation := -1.0
-	for pose_name in ["ground_horizon", "dawn_8deg", "dawn_15deg", 20.0, 25.0, 30.0, 35.0]:
+	# ---- ON vs OFF at the low-sun poses (hills shadow far terrain). Unresolved texels (G < 0) keep their in-window lower bound, so a low sun already shadows terrain
+	# the windows can see: dawn_8deg must report unresolved-but-shadowed texels on L1, and with the sun map off the heightfield alone must darken terrain near the camera.
+	for pose_name in ["ground_horizon", "dawn_8deg", "dawn_15deg"]:
 		node.call("RequestUnresolvedStats")
 		var generation_before := int(_diag()["generation"])
 		var label := str(pose_name)
-		if pose_name is String:
-			var gp: Dictionary = await COMMON.go_pose(self, game, base, pose_name, 3.0, 60.0)
-			_check(not gp.has("error"), pose_name + " pose reachable: " + str(gp.get("error", "")))
-		else:
-			label = "sun_%ddeg" % int(pose_name)
-			COMMON.apply_time(game, {"mode": "elevation", "value": pose_name, "rising": true})
-			await COMMON.settle(self, 3.0)
+		var gp: Dictionary = await COMMON.go_pose(self, game, base, pose_name, 3.0, 60.0)
+		_check(not gp.has("error"), pose_name + " pose reachable: " + str(gp.get("error", "")))
 		await _wait_until(func(): return int(_diag()["generation"]) > generation_before, 150.0)
 		await _wait_until(func(): return float(_diag()["crossfade"]) >= 0.999 and str(_diag()["phase"]) == "Idle", 30.0)
 		await COMMON.settle(self, 0.5)
 		var pd := _diag()
 		print("HEIGHT_SHADOW_SMOKE %s: status=%s authority=%s outside_max=%.0f m (pyramid=%s) unresolved L0=%.2f%% L1=%.2f%%" % [label, pd["status"], (_global("ringworld_height_shadow_shape") as Vector4).w, float(pd["outside_max"]), str(pd["outside_from_pyramid"]), float(pd["unresolved_l0"]), float(pd["unresolved_l1"])])
+		for level in 2:
+			var total := float(pd["unresolved_l%d" % level])
+			var shadowed := float(pd["unresolved_shadowed_l%d" % level])
+			var lit := float(pd["unresolved_lit_l%d" % level])
+			print("HEIGHT_SHADOW_SMOKE %s L%d: resolved=%.2f%% unresolved_shadowed=%.2f%% unresolved_lit=%.2f%%" % [label, level, 100.0 - total, shadowed, lit])
+		if pose_name == "dawn_8deg":
+			_check(float(pd["unresolved_shadowed_l1"]) > 0.0, "dawn_8deg: unresolved texels keep their in-window shadow on L1 (unresolved_shadowed_l1 = %.3f%%)" % float(pd["unresolved_shadowed_l1"]))
 		await _measure_on_off(label)
-		if visible_elevation < 0.0 and pose_name is float:
-			var resolved_shadow := await _overlay_shadow_fraction()
-			print("HEIGHT_SHADOW_SMOKE %s overlay: %.2f%% of resolved pixels are shadowed" % [label, resolved_shadow * 100.0])
-			if resolved_shadow > 0.005:
-				visible_elevation = pose_name
-				await _check_receivers_visible()
-	if visible_elevation < 0.0:
-		print("HEIGHT_SHADOW_SMOKE no tested elevation resolved terrain shadows around the fixture: the visible-use check was skipped (the synthetic receiver test covers it)")
+		if pose_name == "dawn_8deg":
+			await _check_receivers_visible(true)
 
 	# ---- disable
 	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", false)
@@ -368,23 +362,31 @@ func _luma_stats(image: Image) -> Dictionary:
 
 ## OFF (ReceiversEnabled false, producer still running) twice for the noise floor, then ON; prints the numbers and gates ON-vs-OFF at a few times the noise floor.
 func _measure_on_off(label: String) -> Dictionary:
+	# The gate compares the heightfield receivers against the full 6 km map (near map off); the near-map frame (400 m map + heightfield) is reported on top.
+	graphics.call("SetShadowTuningOverride", "HeightShadowNearMapEnabled", false)
 	node.set("ReceiversEnabled", false)
-	await COMMON.settle(self, 0.4)
+	await COMMON.settle(self, 1.6) # the near sun map (400 m) leaves one second after the heightfield stops being ready; OFF is the full 6 km map
 	var off_a: Image = await _frame_image()
 	await COMMON.settle(self, 0.6)
 	var off_b: Image = await _frame_image()
 	node.set("ReceiversEnabled", true)
-	await COMMON.settle(self, 0.4)
+	await COMMON.settle(self, 0.8)
 	var on: Image = await _frame_image()
 	var noise := _image_diff(off_a, off_b)
 	var on_off := _image_diff(off_a, on)
 	print("HEIGHT_SHADOW_SMOKE ON-vs-OFF %s: noise floor (OFF vs OFF) mean=%.4f max=%.1f | ON vs OFF mean=%.4f max=%.1f (of 255, %d samples)" % [label, noise["mean"], noise["max"], on_off["mean"], on_off["max"], on_off["samples"]])
 	_check(float(on_off["mean"]) <= maxf(1.0, float(noise["mean"]) * 3.0 + 0.5), "%s: ON stays close to OFF inside the sun map range (mean %.4f vs noise %.4f)" % [label, on_off["mean"], noise["mean"]])
+	graphics.call("SetShadowTuningOverride", "HeightShadowNearMapEnabled", true)
+	await COMMON.settle(self, 1.2)
+	var near_on: Image = await _frame_image()
+	var near_diff := _image_diff(off_a, near_on)
+	print("HEIGHT_SHADOW_SMOKE near-map ON vs OFF %s (informational: 400 m map + heightfield vs 6 km map): mean=%.4f max=%.1f near_active=%s authority=%s" % [label, near_diff["mean"], near_diff["max"], str(graphics.get("NearSunMapActive")), (_global("ringworld_height_shadow_shape") as Vector4).w])
+	_check(bool(graphics.get("NearSunMapActive")) and absf((_global("ringworld_height_shadow_shape") as Vector4).w - 320.0) < 1.0, "%s: near sun map engages with the published heightfield (authority 320 m)" % label)
 	return {"noise": noise, "on_off": on_off}
 
 
 ## Sun map off (authority 0): the heightfield is authoritative, so debug view 4 (min of height and macro term) must be non-uniform with receivers ON and differ from OFF.
-func _check_receivers_visible() -> void:
+func _check_receivers_visible(require_shadow := false) -> void:
 	var sun_requested = graphics.get("RequestedSunShadowsEnabled")
 	graphics.call("SetShadowTuningOverride", "Enabled", false)
 	graphics.call("SetShadowTuningOverride", "ShadowDebugMode", 4)
@@ -422,6 +424,8 @@ func _check_receivers_visible() -> void:
 		best_off.save_png(ProjectSettings.globalize_path("res://.godot/height-shadow-smoke/debug4_off.png"))
 	print("HEIGHT_SHADOW_SMOKE debug view 4 best yaw %d: ON-vs-OFF mean diff %.4f, dark ON %.4f vs OFF %.4f" % [int(best_yaw), best_diff, best_on_dark, best_off_dark])
 	_check(best_std > 0.02, "debug view 4 is non-uniform with the heightfield authoritative (std %.4f)" % best_std)
+	if require_shadow:
+		_check(shadowed > 0.005, "overlay shows terrain shadow around the camera at this sun (%.2f%%)" % (shadowed * 100.0))
 	if shadowed > 0.005:
 		_check(best_diff > 1.0 and best_on_dark > best_off_dark, "receivers visibly use the heightfield (ON darker than OFF, best mean diff %.4f)" % best_diff)
 	else:

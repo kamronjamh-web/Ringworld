@@ -59,6 +59,72 @@ public partial class TerrainLodShadowCoverageSmoke : RefCounted
             nativeDefault);
     }
 
+    /// <summary>S5b near sun map: the sun map shrinks to 400 m / 2 cascades / fade 0.8 (terrain shadow caster coverage follows) only while the heightfield is ready, leaves after one second not ready, and restores the preset range.</summary>
+    public Godot.Collections.Dictionary RunNearMap(SceneTree tree)
+    {
+        var controller = new RingGraphicsQualityController();
+        var sun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true, LightEnergy = 1.0f };
+        controller.AddChild(sun);
+        controller.SunLightPath = new NodePath("Sun");
+        tree.Root.AddChild(controller);
+        controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
+        var planet = new DirectionalLight3D { ShadowEnabled = false, LightEnergy = 0.0f };
+        float presetDistance = sun.DirectionalShadowMaxDistance;
+        var mode0 = sun.DirectionalShadowMode;
+        float fade0 = sun.DirectionalShadowFadeStart;
+        bool presetCoverage = Mathf.IsEqualApprox(RingGraphicsQualityController.ResolveTerrainShadowCasterCoverage(sun, planet), presetDistance) && presetDistance > 1000.0f;
+
+        bool ready = false;
+        controller.NearSunMapReadyProbe = () => ready;
+        var overrides = new Godot.Collections.Dictionary { ["HeightShadowEnabled"] = true, ["MaxDistanceMeters"] = 9000.0f, ["CascadeCount"] = 4, ["FadeStart"] = .5f, ["NearCascadeMeters"] = 30.0f };
+        controller.SetShadowTuningOverrides(overrides);
+        controller.StepNearSunMapForTest(0.1);
+        bool notReadyStaysFull = !controller.NearSunMapActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 9000.0f) && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits;
+
+        ready = true;
+        controller.StepNearSunMapForTest(0.1);
+        bool entered = controller.NearSunMapActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400.0f) && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel2Splits
+            && Mathf.IsEqualApprox(sun.DirectionalShadowFadeStart, .8f) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, 30.0f / 400.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.ResolveTerrainShadowCasterCoverage(sun, planet), 400.0f);
+        controller.SetShadowTuningOverride("HeightShadowNearMapDistanceMeters", 300);
+        bool distance300 = Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 300.0f) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, 30.0f / 300.0f);
+        controller.SetShadowTuningOverride("HeightShadowNearMapDistanceMeters", 400);
+
+        ready = false;
+        controller.StepNearSunMapForTest(0.5);
+        bool graceHolds = controller.NearSunMapActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400.0f);
+        ready = true;
+        controller.StepNearSunMapForTest(0.2);
+        ready = false;
+        controller.StepNearSunMapForTest(0.6);
+        bool graceResets = controller.NearSunMapActive;
+        controller.StepNearSunMapForTest(0.6);
+        bool left = !controller.NearSunMapActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 9000.0f) && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits
+            && Mathf.IsEqualApprox(sun.DirectionalShadowFadeStart, .5f) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, 30.0f / 9000.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.ResolveTerrainShadowCasterCoverage(sun, planet), 9000.0f);
+
+        ready = true;
+        controller.StepNearSunMapForTest(0.1);
+        bool reentered = controller.NearSunMapActive;
+        controller.SetShadowTuningOverride("HeightShadowNearMapEnabled", false);
+        controller.StepNearSunMapForTest(0.0);
+        bool optionOffLeavesAtOnce = !controller.NearSunMapActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 9000.0f);
+        controller.SetShadowTuningOverride("HeightShadowNearMapEnabled", true);
+        controller.StepNearSunMapForTest(0.1);
+        bool backOn = controller.NearSunMapActive;
+        controller.SetShadowTuningOverride("HeightShadowEnabled", false);
+        controller.StepNearSunMapForTest(0.0);
+        bool featureOffLeavesAtOnce = !controller.NearSunMapActive;
+        controller.SetShadowTuningOverrides(new Godot.Collections.Dictionary());
+        bool restoresPreset = Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, presetDistance) && sun.DirectionalShadowMode == mode0 && Mathf.IsEqualApprox(sun.DirectionalShadowFadeStart, fade0);
+
+        tree.Root.RemoveChild(controller);
+        controller.Free();
+        planet.Free();
+        bool passed = presetCoverage && notReadyStaysFull && entered && distance300 && graceHolds && graceResets && left && reentered && optionOffLeavesAtOnce && backOn && featureOffLeavesAtOnce && restoresPreset;
+        return Result(passed, $"nearMap[preset={presetCoverage} notReady={notReadyStaysFull} enter={entered} d300={distance300} grace={graceHolds}/{graceResets} leave={left} reenter={reentered} optionOff={optionOffLeavesAtOnce} backOn={backOn} featureOff={featureOffLeavesAtOnce} restore={restoresPreset}]", -1);
+    }
+
     private static Godot.Collections.Dictionary Result(bool passed, string detail, int nativeDefault) => new()
     {
         ["pass"] = passed,

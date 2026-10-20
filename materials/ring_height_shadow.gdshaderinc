@@ -6,6 +6,9 @@
 //
 // Texel contents (RG16F, slot space, 1024^2 toroidal, layer = state.x front / state.y previous): R = shadow-line height above the texel's own terrain
 // surface T0, G = blocker distance (0 none, negative unresolved). A receiver h_rel metres above T0 is lit when h_rel + bias >= R.
+// G < 0 (unresolved: a caster beyond the windows may exist) keeps a valid in-window partial result: R is a lower bound of the shadow line, so
+// R > receiver height is a real shadow, and |G| is the blocker distance if R > 0 else the window-exit distance. Such texels flag `unknown` so the
+// macro term keeps covering the part of the receiver the window cannot rule lit.
 // Authority rule: the real-time sun map owns every blocker it contains. A texel whose blocker lies inside the map (camera distance + G < shape.w)
 // contributes no weight, so the macro term (and the map itself) stay in charge there; shape.w is 0 while the sun map is suspended.
 #include "res://materials/celestial_lighting.gdshaderinc" // ringworld_hub_light_weight
@@ -25,10 +28,11 @@ global uniform vec4 ringworld_height_shadow_shape; // tan(penumbra), receiver bi
 struct RingHeightShadow {
 	float visibility; // 1 = lit, only meaningful where weight > 0
 	float weight; // 0 = the heightfield has no say (macro fallback), 1 = fully authoritative
+	float unknown; // 0..1: share of the visibility that is only "lit so far" (unresolved texels, beyond-window casters possible); macro keeps that share
 };
 
 RingHeightShadow ring_height_shadow_none() {
-	return RingHeightShadow(1.0, 0.0);
+	return RingHeightShadow(1.0, 0.0, 0.0);
 }
 
 bool ring_height_shadow_active() {
@@ -56,9 +60,10 @@ float ring_height_shadow_edge(vec4 bounds, vec2 p) {
 	return min(min(p.x - bounds.x, bounds.y - p.x), min(p.y - bounds.z, bounds.w - p.y));
 }
 
-// One level, one layer: bilinear over the four texels, unresolved texels and texels whose blocker the map owns carry no weight.
-// Returns (weighted visibility sum / weight sum, weight sum in 0..1).
-vec2 ring_height_shadow_level(int level, int layer, vec2 p, float texel_size, float h_rel, float slope_tan, float cam_dist) {
+// One level, one layer: bilinear over the four texels, texels whose blocker the map owns carry no weight. Unresolved texels (G < 0) count with
+// their in-window lower bound and add their visibility to the unknown share.
+// Returns (weighted visibility sum / weight sum, weight sum in 0..1, weighted unknown sum / weight sum).
+vec3 ring_height_shadow_level(int level, int layer, vec2 p, float texel_size, float h_rel, float slope_tan, float cam_dist) {
 	vec2 x = p / texel_size;
 	vec2 base = floor(x);
 	vec2 f = x - base;
@@ -67,41 +72,48 @@ vec2 ring_height_shadow_level(int level, int layer, vec2 p, float texel_size, fl
 	float a = ringworld_height_shadow_shape.w;
 	float visibility_sum = 0.0;
 	float weight_sum = 0.0;
+	float unknown_sum = 0.0;
 	for (int k = 0; k < 4; k++) {
 		ivec2 o = ivec2(k & 1, k >> 1);
 		float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
 		vec4 texel = ring_height_shadow_fetch(level, i0 + o, layer);
-		if (texel.g < 0.0 || cam_dist + texel.g < a) {
+		float gd = abs(texel.g);
+		if (cam_dist + gd < a) {
 			continue;
 		}
-		float penumbra = max(texel.g * ringworld_height_shadow_shape.x, 0.25);
-		visibility_sum += w * clamp(0.5 + (h_rel + bias - texel.r) / penumbra, 0.0, 1.0);
+		float penumbra = max(gd * ringworld_height_shadow_shape.x, 0.25);
+		float v = clamp(0.5 + (h_rel + bias - texel.r) / penumbra, 0.0, 1.0);
+		visibility_sum += w * v;
+		unknown_sum += w * (texel.g < 0.0 ? v : 0.0);
 		weight_sum += w;
 	}
-	return weight_sum > 0.0001 ? vec2(visibility_sum / weight_sum, weight_sum) : vec2(1.0, 0.0);
+	return weight_sum > 0.0001 ? vec3(visibility_sum / weight_sum, weight_sum, unknown_sum / weight_sum) : vec3(1.0, 0.0, 0.0);
 }
 
 // Both levels of one published layer. L0 hands over to L1 over the last 256 m of its bounds, L1 hands over to the macro term over the last 1000 m.
-vec2 ring_height_shadow_layer(int layer, vec2 p, vec4 b0, vec4 b1, float h_rel, float slope_tan, float cam_dist) {
+vec3 ring_height_shadow_layer(int layer, vec2 p, vec4 b0, vec4 b1, float h_rel, float slope_tan, float cam_dist) {
 	float visibility = 1.0;
 	float weight = 0.0;
+	float unknown = 0.0;
 	float w0 = ringworld_height_shadow_l0_params.z > 0.5 ? smoothstep(0.0, 256.0, ring_height_shadow_edge(b0, p)) : 0.0;
 	if (w0 > 0.0) {
-		vec2 s = ring_height_shadow_level(0, layer, p, ringworld_height_shadow_l0_params.x, h_rel, slope_tan, cam_dist);
+		vec3 s = ring_height_shadow_level(0, layer, p, ringworld_height_shadow_l0_params.x, h_rel, slope_tan, cam_dist);
 		weight = w0 * s.y;
 		visibility = s.x;
+		unknown = s.z;
 	}
 	float w1 = ringworld_height_shadow_l1_params.z > 0.5 ? smoothstep(0.0, 1000.0, ring_height_shadow_edge(b1, p)) : 0.0;
 	if (w1 > 0.0 && weight < 0.999) {
-		vec2 s = ring_height_shadow_level(1, layer, p, ringworld_height_shadow_l1_params.x, h_rel, slope_tan, cam_dist);
+		vec3 s = ring_height_shadow_level(1, layer, p, ringworld_height_shadow_l1_params.x, h_rel, slope_tan, cam_dist);
 		float w = (1.0 - weight) * w1 * s.y;
 		float total = weight + w;
 		if (total > 0.0001) {
 			visibility = (visibility * weight + s.x * w) / total;
+			unknown = (unknown * weight + s.z * w) / total;
 			weight = total;
 		}
 	}
-	return vec2(visibility, weight);
+	return vec3(visibility, weight, unknown);
 }
 
 // world: receiver position (world space, any floating-origin state the frame matrix was built for). h_rel: height above the terrain surface (0 for
@@ -118,21 +130,29 @@ RingHeightShadow ring_height_shadow_sample(vec3 world, float h_rel, float slope_
 	float angle = abs(q) <= 0.002 ? q - q * q * q * 0.333333333 : atan(f.x, radius - f.z);
 	vec2 p = vec2(radius * angle, f.y);
 	int front = int(round(ringworld_height_shadow_state.x));
-	vec2 now = ring_height_shadow_layer(front, p, ringworld_height_shadow_l0_bounds, ringworld_height_shadow_l1_bounds, h_rel, slope_tan, cam_dist);
+	vec3 now = ring_height_shadow_layer(front, p, ringworld_height_shadow_l0_bounds, ringworld_height_shadow_l1_bounds, h_rel, slope_tan, cam_dist);
 	float visibility = now.x;
 	float weight = now.y;
+	float unknown = now.z;
 	float t = ringworld_height_shadow_state.z;
 	if (ringworld_height_shadow_state.y > -0.5 && t < 1.0) {
-		vec2 before = ring_height_shadow_layer(int(round(ringworld_height_shadow_state.y)), p,
+		vec3 before = ring_height_shadow_layer(int(round(ringworld_height_shadow_state.y)), p,
 			ringworld_height_shadow_l0_prev_bounds, ringworld_height_shadow_l1_prev_bounds, h_rel, slope_tan, cam_dist);
 		// The previous layer only exists where the old and new windows overlap; elsewhere the new layer stands alone.
 		float share = (1.0 - t) * clamp(before.y / max(now.y, 0.0001), 0.0, 1.0);
 		visibility = mix(now.x, before.x, share);
 		weight = mix(now.y, before.y, share);
+		unknown = mix(now.z, before.z, share);
 	}
 	result.visibility = visibility;
 	result.weight = clamp(weight, 0.0, 1.0);
+	result.unknown = clamp(unknown, 0.0, 1.0);
 	return result;
+}
+
+// Scale of the macro (hill) shadow term under the heightfield: it only yields where the heightfield is authoritative and has resolved the receiver.
+float ring_height_shadow_macro_scale(RingHeightShadow hs) {
+	return 1.0 - hs.weight * (1.0 - hs.unknown);
 }
 
 // The terms.height value of a heightfield receiver: full strength where the heightfield is authoritative, faded by the sun's presence at the

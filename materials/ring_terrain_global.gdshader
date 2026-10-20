@@ -199,7 +199,7 @@ void light() {
 					world_position,
 					ring_center,
 					camera_world_position,
-					ring_width_meters)) * (1.0 - height_shadow.weight),
+					ring_width_meters)) * ring_height_shadow_macro_scale(height_shadow),
 			terrain_macro_shadow_use_uv
 				? sample_terrain_planet_shadow_uv(
 					terrain_macro_shadow_uv,

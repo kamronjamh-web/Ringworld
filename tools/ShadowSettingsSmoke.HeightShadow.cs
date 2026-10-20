@@ -23,14 +23,18 @@ public partial class ShadowSettingsSmoke
             && Ok("HeightShadowPenumbraDegrees", 1.5f, out Variant penumbra) && Mathf.IsEqualApprox(penumbra.AsSingle(), 1.5f) && Ok("HeightShadowPenumbraDegrees", 9f, out Variant penumbraHigh) && Mathf.IsEqualApprox(penumbraHigh.AsSingle(), 2f)
             && Ok("HeightShadowCrossfadeSeconds", 0f, out Variant fade) && fade.AsSingle() == 0f && Ok("HeightShadowCrossfadeSeconds", 7f, out Variant fadeHigh) && Mathf.IsEqualApprox(fadeHigh.AsSingle(), 3f)
             && Ok("HeightShadowFillWorkers", 3, out Variant workers) && workers.AsInt32() == 3 && Ok("HeightShadowFillWorkers", 9, out Variant workersHigh) && workersHigh.AsInt32() == 4
-            && Ok("HeightShadowBudgetMs", .3f, out Variant budget) && Mathf.IsEqualApprox(budget.AsSingle(), .3f) && Ok("HeightShadowBudgetMs", 0f, out Variant budgetLow) && Mathf.IsEqualApprox(budgetLow.AsSingle(), .05f);
+            && Ok("HeightShadowBudgetMs", .3f, out Variant budget) && Mathf.IsEqualApprox(budget.AsSingle(), .3f) && Ok("HeightShadowBudgetMs", 0f, out Variant budgetLow) && Mathf.IsEqualApprox(budgetLow.AsSingle(), .05f)
+            && Ok("HeightShadowNearMapEnabled", false, out Variant nearOff) && !nearOff.AsBool() && Ok("HeightShadowNearMapEnabled", true, out Variant nearOn) && nearOn.AsBool()
+            && Ok("HeightShadowNearMapDistanceMeters", 300, out Variant near300) && near300.AsInt32() == 300 && Ok("HeightShadowNearMapDistanceMeters", 500.0f, out Variant near500) && near500.AsInt32() == 500 && Ok("HeightShadowNearMapDistanceMeters", 400, out _);
         bool rejected = !Ok("HeightShadowEnabled", 1, out _) && !Ok("HeightShadowEnabled", "true", out _) && !Ok("HeightShadowEnabled", .5f, out _)
             && !Ok("HeightShadowL0TexelMeters", 3, out _) && !Ok("HeightShadowL0TexelMeters", 16, out _) && !Ok("HeightShadowL0TexelMeters", 4.5f, out _) && !Ok("HeightShadowL0TexelMeters", float.NaN, out _) && !Ok("HeightShadowL0TexelMeters", true, out _)
             && !Ok("HeightShadowRangeMeters", 5000, out _) && !Ok("HeightShadowRangeMeters", 8000.5f, out _) && !Ok("HeightShadowRangeMeters", "8000", out _)
             && !Ok("HeightShadowLevels", 3, out _) && !Ok("HeightShadowLevels", 0, out _) && !Ok("HeightShadowLevels", 1.5f, out _)
             && !Ok("HeightShadowSunStepDegrees", float.NaN, out _) && !Ok("HeightShadowSunStepDegrees", float.PositiveInfinity, out _) && !Ok("HeightShadowSunStepDegrees", true, out _)
             && !Ok("HeightShadowRowsPerFrame", float.NaN, out _) && !Ok("HeightShadowPenumbraDegrees", "1", out _) && !Ok("HeightShadowCrossfadeSeconds", float.NaN, out _)
-            && !Ok("HeightShadowFillWorkers", double.PositiveInfinity, out _) && !Ok("HeightShadowBudgetMs", float.NaN, out _) && !Ok("HeightShadowUnknown", 1, out _);
+            && !Ok("HeightShadowFillWorkers", double.PositiveInfinity, out _) && !Ok("HeightShadowBudgetMs", float.NaN, out _) && !Ok("HeightShadowUnknown", 1, out _)
+            && !Ok("HeightShadowNearMapEnabled", 1, out _) && !Ok("HeightShadowNearMapEnabled", "true", out _) && !Ok("HeightShadowNearMapDistanceMeters", 350, out _) && !Ok("HeightShadowNearMapDistanceMeters", 1000, out _)
+            && !Ok("HeightShadowNearMapDistanceMeters", float.NaN, out _) && !Ok("HeightShadowNearMapDistanceMeters", "400", out _) && !Ok("HeightShadowNearMapDistanceMeters", 400.5f, out _);
 
         string heightPath = path + ".s4c.tres";
         RingGraphicsQualityController NewController()
@@ -50,15 +54,17 @@ public partial class ShadowSettingsSmoke
         bool defaults = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings() && !controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowL0TexelMeters == 4
             && controller.EffectiveHeightShadowRangeMeters == 8000 && controller.EffectiveHeightShadowLevels == 2 && controller.EffectiveHeightShadowRowsPerFrame == 64 && controller.EffectiveHeightShadowFillWorkers == 2
             && Mathf.IsEqualApprox(controller.EffectiveHeightShadowSunStepDegrees, .1f) && Mathf.IsEqualApprox(controller.EffectiveHeightShadowPenumbraDegrees, .5f) && Mathf.IsEqualApprox(controller.EffectiveHeightShadowCrossfadeSeconds, 1f)
-            && Mathf.IsEqualApprox(controller.EffectiveHeightShadowBudgetMs, .15f) && controller.EffectiveHeightShadowStatus.Contains("off");
+            && Mathf.IsEqualApprox(controller.EffectiveHeightShadowBudgetMs, .15f) && controller.EffectiveHeightShadowStatus.Contains("off")
+            && controller.EffectiveHeightShadowNearMapEnabled && controller.EffectiveHeightShadowNearMapDistanceMeters == 400 && !controller.NearSunMapActive;
         bool set = settings.SetOverride(controller, "HeightShadowEnabled", true) && settings.SetOverride(controller, "HeightShadowL0TexelMeters", 2) && settings.SetOverride(controller, "HeightShadowLevels", 1)
             && settings.SetOverride(controller, "HeightShadowSunStepDegrees", .25f) && settings.SetOverride(controller, "HeightShadowRowsPerFrame", 128) && settings.SetOverride(controller, "HeightShadowPenumbraDegrees", 1f)
             && settings.SetOverride(controller, "HeightShadowCrossfadeSeconds", 2f) && settings.SetOverride(controller, "HeightShadowFillWorkers", 3) && settings.SetOverride(controller, "HeightShadowBudgetMs", .4f)
-            && !settings.SetOverride(controller, "HeightShadowL0TexelMeters", 5) && !settings.SetOverride(controller, "HeightShadowEnabled", 1);
+            && settings.SetOverride(controller, "HeightShadowNearMapEnabled", false) && settings.SetOverride(controller, "HeightShadowNearMapDistanceMeters", 500)
+            && !settings.SetOverride(controller, "HeightShadowNearMapDistanceMeters", 450) && !settings.SetOverride(controller, "HeightShadowL0TexelMeters", 5) && !settings.SetOverride(controller, "HeightShadowEnabled", 1);
         RingHeightShadowSettings applied = controller.ResolveHeightShadowSettings();
         bool appliedOk = set && controller.HeightShadowRevision > revision0 && applied.Enabled && applied.L0TexelMeters == 2 && applied.RangeMeters == 4000 && applied.Level1TexelMeters == 8 && applied.Levels == 1
             && Mathf.IsEqualApprox(applied.SunStepDegrees, .25f) && applied.RowsPerFrame == 128 && Mathf.IsEqualApprox(applied.PenumbraDegrees, 1f) && Mathf.IsEqualApprox(applied.CrossfadeSeconds, 2f) && applied.FillWorkers == 3
-            && Mathf.IsEqualApprox(applied.BudgetMs, .4f) && controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowStatus.Contains("starting");
+            && Mathf.IsEqualApprox(applied.BudgetMs, .4f) && !applied.NearMapEnabled && applied.NearMapDistanceMeters == 500 && !controller.EffectiveHeightShadowNearMapEnabled && controller.EffectiveHeightShadowNearMapDistanceMeters == 500 && controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowStatus.Contains("starting");
         bool exclusive = settings.SetOverride(controller, "HeightShadowRangeMeters", 16000)
             && !settings.Settings.Overrides.ContainsKey("HeightShadowL0TexelMeters") && controller.EffectiveHeightShadowL0TexelMeters == 8 && controller.EffectiveHeightShadowRangeMeters == 16000
             && settings.SetOverride(controller, "HeightShadowL0TexelMeters", 4) && !settings.Settings.Overrides.ContainsKey("HeightShadowRangeMeters") && controller.EffectiveHeightShadowRangeMeters == 8000
@@ -75,11 +81,12 @@ public partial class ShadowSettingsSmoke
         oldFile.Settings.Overrides["Split1"] = .18f;
         oldFile.Settings.Overrides["HeightShadowL0TexelMeters"] = 3;
         oldFile.Settings.Overrides["HeightShadowEnabled"] = 1;
+        oldFile.Settings.Overrides["HeightShadowNearMapDistanceMeters"] = 450;
         bool oldSaved = ResourceSaver.Save(oldFile.Settings, heightPath) == Error.Ok;
         RingGraphicsQualityController old = NewController();
         var oldLoaded = new GameplayShadowDefaults(heightPath);
         oldLoaded.Initialize(old);
-        bool oldFileOk = oldSaved && oldLoaded.Settings.Overrides.ContainsKey("Split1") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowL0TexelMeters") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowEnabled")
+        bool oldFileOk = oldSaved && oldLoaded.Settings.Overrides.ContainsKey("Split1") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowL0TexelMeters") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowEnabled") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowNearMapDistanceMeters")
             && old.ResolveHeightShadowSettings() == new RingHeightShadowSettings();
         settings.Reset(controller);
         bool reset = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings() && !controller.EffectiveHeightShadowEnabled;

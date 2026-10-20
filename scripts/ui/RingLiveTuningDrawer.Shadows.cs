@@ -16,7 +16,7 @@ public partial class RingLiveTuningDrawer
     private CheckButton? _planetShadowsEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
-    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle;
+    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap;
     private Label? _heightShadowStatus;
     private RingHeightShadowOverlay? _heightShadowOverlay;
     private OptionButton? _heightShadowOverlayMode;
@@ -37,9 +37,9 @@ public partial class RingLiveTuningDrawer
         AddShadowSlider(quality, "SunShadowOnElevationDegrees", "Resume above elevation (degrees)", -45, -1, .1, _shadowGraphics?.EffectiveSunShadowOnElevationDegrees ?? -16);
         AddShadowDepthOption(quality, _shadowGraphics?.EffectiveDirectionalShadowDepthBits ?? 16); AddShadowAtlasOption(quality, _shadowGraphics?.EffectiveDirectionalShadowAtlasSize ?? 8192); AddShadowOption(quality, "Filter", "Soft-shadow filter", new[] { "Hard", "Soft very low", "Soft low", "Soft medium", "Soft high", "Soft ultra" }, new[] { 0,1,2,3,4,5 }, _shadowGraphics?.EffectiveDirectionalShadowFilter ?? 3);
         VBoxContainer sunMap = TuningMenuUi.CreateSection(tab, "Sun map");
-        AddShadowSpinBox(sunMap, "MaxDistanceMeters", "Max distance (m)", RingGraphicsQualityController.MinimumShadowDistanceMeters, RingGraphicsQualityController.MaximumShadowDistanceMeters, 10, _shadowGraphics?.EffectiveShadowDistanceMeters ?? 6000,
+        AddShadowSpinBox(sunMap, "MaxDistanceMeters", "Max distance (m) (near map)", RingGraphicsQualityController.MinimumShadowDistanceMeters, RingGraphicsQualityController.MaximumShadowDistanceMeters, 10, _shadowGraphics?.EffectiveShadowDistanceMeters ?? 6000,
             "How far the sun shadow map reaches. Terrain shadow casters follow this range. The requested distance is kept across presets.");
-        AddShadowOption(sunMap, "CascadeCount", "Cascades", new[] { "2", "4" }, new[] { 2, 4 }, _shadowGraphics?.EffectiveSunCascadeCount ?? 4);
+        AddShadowOption(sunMap, "CascadeCount", "Cascades (near map)", new[] { "2", "4" }, new[] { 2, 4 }, _shadowGraphics?.EffectiveSunCascadeCount ?? 4);
         sunMap.AddChild(new Label { Text = "Two cascades are cheaper; only the near cascade distance below splits them.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
         VBoxContainer planetLight = TuningMenuUi.CreateSection(tab, "Planet light");
         _planetShadowsEnabled = new CheckButton { Name="PlanetShadows", Text="Planet light shadows", ButtonPressed=_shadowGraphics?.EffectivePlanetShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Shadow map for the gas giant's light on the planet-lit night side." };
@@ -63,7 +63,7 @@ public partial class RingLiveTuningDrawer
         VBoxContainer cascades = TuningMenuUi.CreateSection(tab, "Cascade coverage");
         AddShadowSpinBox(cascades, "NearCascadeMeters", "Near cascade distance (m)", RingGraphicsQualityController.MinimumNearCascadeMeters, RingGraphicsQualityController.MaximumNearCascadeMeters, 1, _shadowGraphics?.EffectiveNearCascadeMeters ?? RingGraphicsQualityController.DefaultNearCascadeMeters,
             "Focuses near shadow coverage, up to 40% of the shadow range. The requested distance is kept across presets.");
-        AddShadowSlider(cascades, "Split2", "Cascade split 2", .02,.70,.001, _sun?.DirectionalShadowSplit2 ?? .06); AddShadowSlider(cascades, "Split3", "Cascade split 3", .03,.95,.001, _sun?.DirectionalShadowSplit3 ?? .28); AddShadowSlider(cascades, "FadeStart", "Shadow fade start", .50,.98,.01, _sun?.DirectionalShadowFadeStart ?? .88);
+        AddShadowSlider(cascades, "Split2", "Cascade split 2", .02,.70,.001, _sun?.DirectionalShadowSplit2 ?? .06); AddShadowSlider(cascades, "Split3", "Cascade split 3", .03,.95,.001, _sun?.DirectionalShadowSplit3 ?? .28); AddShadowSlider(cascades, "FadeStart", "Shadow fade start (near map)", .50,.98,.01, _sun?.DirectionalShadowFadeStart ?? .88);
         VBoxContainer bias = TuningMenuUi.CreateSection(tab, "Bias / softness");
         AddShadowSlider(bias, "Bias", "Shadow bias", 0,1,.01, _sun?.ShadowBias ?? .08); AddShadowSlider(bias, "NormalBias", "Normal bias", 0,4,.05, _sun?.ShadowNormalBias ?? 1.5); AddShadowSlider(bias, "SunAngularDistance", "Sun softness (degrees)", 0, 3, .01, _sun?.LightAngularDistance ?? 0,
             "Zero disables contact-hardening shadows; the selected shadow filter still applies.");
@@ -107,9 +107,14 @@ public partial class RingLiveTuningDrawer
     {
         VBoxContainer height = TuningMenuUi.CreateSection(tab, "Terrain height shadows");
         _heightShadowEnabled = new CheckButton { Name = "HeightShadowEnabled", Text = "Enable terrain height shadows", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowEnabled ?? false, Disabled = _shadowGraphics == null,
-            TooltipText = "Builds a sliced GPU shadow-line height map around the camera (two levels, ring-curvature aware). It is only produced for now; surfaces do not read it yet." };
+            TooltipText = "Builds a sliced GPU shadow-line height map around the camera (two levels, ring-curvature aware). Terrain, water and trees use it for terrain shadows beyond the near sun map, which then shrinks to the near-map distance (see Near map)." };
         _heightShadowEnabled.Toggled += value => SetShadowValue("HeightShadowEnabled", value);
         height.AddChild(_heightShadowEnabled);
+        _heightShadowNearMap = new CheckButton { Name = "HeightShadowNearMapEnabled", Text = "Near sun map while height shadows are ready", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
+            TooltipText = "Shrinks the sun shadow map to a 2-cascade near map (fade start 0.8) once the sun height shadows cover the camera; the height shadows own everything past it. Max distance, cascade count and fade start under Sun map are ignored while it is active; the near cascade distance still applies. Only effective with height shadows enabled." };
+        _heightShadowNearMap.Toggled += value => SetShadowValue("HeightShadowNearMapEnabled", value);
+        height.AddChild(_heightShadowNearMap);
+        AddShadowOption(height, "HeightShadowNearMapDistanceMeters", "Near map distance", new[] { "300 m", "400 m", "500 m" }, new[] { 300, 400, 500 }, _shadowGraphics?.EffectiveHeightShadowNearMapDistanceMeters ?? 400);
         AddShadowOption(height, "HeightShadowL0TexelMeters", "Detail / range", new[] { "2 m texels, 4 km range", "4 m texels, 8 km range", "8 m texels, 16 km range" }, new[] { 2, 4, 8 }, _shadowGraphics?.EffectiveHeightShadowL0TexelMeters ?? 4);
         AddShadowOption(height, "HeightShadowLevels", "Levels", new[] { "1 (near only)", "2 (near + far)" }, new[] { 1, 2 }, _shadowGraphics?.EffectiveHeightShadowLevels ?? 2);
         AddShadowSlider(height, "HeightShadowSunStepDegrees", "Sun step (degrees)", .02, .5, .01, _shadowGraphics?.EffectiveHeightShadowSunStepDegrees ?? .1,
@@ -150,7 +155,8 @@ public partial class RingLiveTuningDrawer
     {
         if (_heightShadowStatus == null || _shadowGraphics == null) return;
         if (_shadowGraphics.EffectiveHeightShadowEnabled && _open) RingTerrainHeightShadow.Instance?.RequestUnresolvedStats();
-        _heightShadowStatus.Text = _shadowGraphics.EffectiveHeightShadowStatus;
+        _heightShadowStatus.Text = _shadowGraphics.EffectiveHeightShadowStatus
+            + (_shadowGraphics.NearSunMapActive ? $" Sun map: near mode ({_shadowGraphics.EffectiveShadowDistanceMeters:0} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Sun map: full range." : "");
     }
     private HSlider AddShadowSlider(VBoxContainer parent, string key, string label, double min, double max, double step, double initial, string tooltip = "")
     {
@@ -277,6 +283,8 @@ public partial class RingLiveTuningDrawer
         _heightShadowEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowEnabled);
         SetOption("HeightShadowL0TexelMeters", _shadowGraphics.EffectiveHeightShadowL0TexelMeters);
         SetOption("HeightShadowLevels", _shadowGraphics.EffectiveHeightShadowLevels);
+        _heightShadowNearMap?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowNearMapEnabled);
+        SetOption("HeightShadowNearMapDistanceMeters", _shadowGraphics.EffectiveHeightShadowNearMapDistanceMeters);
         SetRange("HeightShadowSunStepDegrees", _shadowGraphics.EffectiveHeightShadowSunStepDegrees);
         SetRange("HeightShadowRowsPerFrame", _shadowGraphics.EffectiveHeightShadowRowsPerFrame);
         SetRange("HeightShadowBudgetMs", _shadowGraphics.EffectiveHeightShadowBudgetMs);
