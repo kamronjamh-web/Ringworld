@@ -176,3 +176,9 @@ Remaining P6 (deferred, low visible value: `underground_fog_sky_affect` defaults
 ## Cost budget
 
 A1000 laptop is GPU-bound at ~40-44 ms (Sunshine 21-26 ms). Estimated: Tier 1 +0.3-0.6 ms (minus the rain overlay pass); Tier 2 roughly neutral at steady state. Measure each step on the same machine (`terrain_render_attribution_test --haze-only`).
+
+## POI architecture haze (2026-10-20)
+
+- P2a consumer list addendum: POI architecture (emitter / spire / reactor / Weather Lung, 56 materials) now evaluates the haze per fragment through `materials/ring_poi_architecture*.gdshader` (`ALBEDO*T`, `SPECULAR*sqrt(mean T)`, `EMISSION*energy*T + S`), fed by `RingPoiHaze` (registry + per-field ray-frame feed). Toggle "POI haze" (default on, both models); optional "POI cloud shadows" (default off). Known approximation: Godot clamps metal f90 to at least `metallic`, so grazing Fresnel on fully metallic surfaces (Mirror_Solar) is not attenuated.
+- Decision 9 audit addendum: the emitter stand-in (`ring_emitter_standin.gdshader`) never bound a ray frame, so Physical always took the legacy cylinder fallback. It now registers with `RingPoiHaze` and receives the frame. Still frame-less: emitter beam layers (`EmitterGridBeamLayer`, `EmitterGridFarLayer`), which are not POI architecture.
+- Tests: `poi_haze_gpu_test` (windowed), `poi_haze_registry_test`. Gotcha: the certified launcher preset can start a world with the master haze off; capture tools must enable it.

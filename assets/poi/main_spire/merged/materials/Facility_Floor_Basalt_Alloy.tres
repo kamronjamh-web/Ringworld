@@ -1,8 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_nyk41"]
 
 [resource]
 resource_name = "Facility_Floor_Basalt_Alloy"
-cull_mode = 2
-albedo_color = Color(0.27395758, 0.30353206, 0.30943933, 1)
-metallic = 0.32
-roughness = 0.62
+render_priority = 0
+shader = ExtResource("1_nyk41")
+shader_parameter/albedo_color = Color(0.27395758, 0.30353206, 0.30943933, 1)
+shader_parameter/metallic_value = 0.32
+shader_parameter/roughness_value = 0.62
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

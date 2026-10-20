@@ -307,7 +307,7 @@ func set_climate_machines(enabled: bool) -> void:
 	_initialize_recipe()
 	if _recipe == null:
 		return
-	if _recipe.generator_id == TerrainGenerationRecipe.LANDFORM_GENERATOR_ID:
+	if _recipe.generator_id == TerrainGenerationRecipe.LANDFORM_GENERATOR_ID or _recipe.generator_id == TerrainGenerationRecipe.WEATHER_LUNG_GENERATOR_ID:
 		if _recipe.climate_machines == int(enabled):
 			return
 		var landform := _recipe.snapshot()

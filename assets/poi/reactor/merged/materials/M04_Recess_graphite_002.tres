@@ -1,8 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_rdg6v"]
 
 [resource]
 resource_name = "M04 | Recess / graphite.002"
-cull_mode = 2
-albedo_color = Color(0.086104214, 0.12835404, 0.15170372, 1)
-metallic = 0.25
-roughness = 0.7
+render_priority = 0
+shader = ExtResource("1_rdg6v")
+shader_parameter/albedo_color = Color(0.086104214, 0.12835404, 0.15170372, 1)
+shader_parameter/metallic_value = 0.25
+shader_parameter/roughness_value = 0.7
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

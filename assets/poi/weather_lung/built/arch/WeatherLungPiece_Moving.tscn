@@ -1,0 +1,863 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_00.res" id="1_yh2qs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_01.res" id="2_pr818"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_02.res" id="3_6m5ho"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_03.res" id="4_l8k57"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_04.res" id="5_6mnw5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_05.res" id="6_24xst"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_06.res" id="7_7p2go"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_07.res" id="8_psvfp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_08.res" id="9_2igrc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_09.res" id="10_6df4u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_10.res" id="11_j1y2f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_11.res" id="12_j6hfn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_12.res" id="13_cjm2t"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_13.res" id="14_lvac0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_14.res" id="15_utr3g"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Gill_Pivot_15.res" id="16_r8abh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Guide_Ring_A.res" id="17_1oc2r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Guide_Ring_B.res" id="18_m5sgk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_0_0.res" id="19_r7sid"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_0_1.res" id="20_dea60"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_0_2.res" id="21_uypa8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_1_0.res" id="22_p3n68"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_1_1.res" id="23_3ujl2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_1_2.res" id="24_sknr0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_2_0.res" id="25_v2uh7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_2_1.res" id="26_2ar00"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_2_2.res" id="27_hq7sf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_3_0.res" id="28_d65hk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_3_1.res" id="29_2mn51"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_3_2.res" id="30_xgqh1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_4_0.res" id="31_ov51x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_4_1.res" id="32_s73s6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_4_2.res" id="33_rn2ck"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_5_0.res" id="34_m6naj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_5_1.res" id="35_n3sxd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_5_2.res" id="36_4sj50"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_6_0.res" id="37_3dq1w"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_6_1.res" id="38_wo518"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_6_2.res" id="39_dup86"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_7_0.res" id="40_cphp5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_7_1.res" id="41_6jnsu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Heliostat_Pivot_7_2.res" id="42_2efsp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Turbine_Rotor_A.res" id="43_a1n5g"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Turbine_Rotor_B.res" id="44_u65pc"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_VanePivot_00.res" id="45_vqg72"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_VanePivot_01.res" id="46_45fx1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_VanePivot_02.res" id="47_vtngm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_VanePivot_03.res" id="48_uwcm0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_VanePivot_04.res" id="49_ck04f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamCyl_00.res" id="50_4n18i"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamRod_00.res" id="51_3c6qr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamCyl_01.res" id="52_raptj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamRod_01.res" id="53_e8ott"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamCyl_02.res" id="54_ymtis"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamRod_02.res" id="55_kqwrn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamCyl_03.res" id="56_y25sf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamRod_03.res" id="57_qrq1p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamCyl_04.res" id="58_8avi5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Moving_Vane_RamRod_04.res" id="59_3ic3e"]
+
+[node name="Moving" type="Node3D" unique_id=1284551497]
+
+[node name="Gill_Pivot_00" type="Node3D" parent="." unique_id=114791105]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 748.8047, 2662.1294, -3423.1182)
+metadata/wl_kind = "gill"
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(-0.3809187, -0.74113643, -0.5528272)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_00" unique_id=1330162418]
+mesh = ExtResource("1_yh2qs")
+
+[node name="Gill_Pivot_01" type="Node3D" parent="." unique_id=208914702]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1648.8047, 2662.1294, -3423.1182)
+metadata/wl_kind = "gill"
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(-0.3809187, -0.74113643, -0.5528272)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_01" unique_id=10957411]
+mesh = ExtResource("2_pr818")
+
+[node name="Gill_Pivot_02" type="Node3D" parent="." unique_id=232161279]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1169.9248, 3481.4836, -2626.651)
+metadata/wl_kind = "gill"
+metadata/wl_index = 2
+metadata/wl_axis = Vector3(-0.30340335, -0.5904065, -0.74790823)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_02" unique_id=388564392]
+mesh = ExtResource("3_6m5ho")
+
+[node name="Gill_Pivot_03" type="Node3D" parent="." unique_id=557231944]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2069.9248, 3481.4836, -2626.651)
+metadata/wl_kind = "gill"
+metadata/wl_index = 3
+metadata/wl_axis = Vector3(-0.30340335, -0.5904065, -0.74790823)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_03" unique_id=1664186263]
+mesh = ExtResource("4_l8k57")
+
+[node name="Gill_Pivot_04" type="Node3D" parent="." unique_id=1118341751]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1467.7012, 4060.8545, -1651.1819)
+metadata/wl_kind = "gill"
+metadata/wl_index = 4
+metadata/wl_axis = Vector3(-0.19750634, -0.38431233, -0.9018289)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_04" unique_id=2130073755]
+mesh = ExtResource("5_6mnw5")
+
+[node name="Gill_Pivot_05" type="Node3D" parent="." unique_id=743009808]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2367.7017, 4060.8545, -1651.1819)
+metadata/wl_kind = "gill"
+metadata/wl_index = 5
+metadata/wl_axis = Vector3(-0.19750634, -0.38431233, -0.9018289)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_05" unique_id=194182851]
+mesh = ExtResource("6_24xst")
+
+[node name="Gill_Pivot_06" type="Node3D" parent="." unique_id=1497404192]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1621.8428, 4360.759, -563.1874)
+metadata/wl_kind = "gill"
+metadata/wl_index = 6
+metadata/wl_axis = Vector3(-0.068800256, -0.1339005, -0.98860365)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_06" unique_id=1317154366]
+mesh = ExtResource("7_7p2go")
+
+[node name="Gill_Pivot_07" type="Node3D" parent="." unique_id=1889747564]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2521.8428, 4360.759, -563.1874)
+metadata/wl_kind = "gill"
+metadata/wl_index = 7
+metadata/wl_axis = Vector3(-0.068800256, -0.1339005, -0.98860365)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_07" unique_id=61392430]
+mesh = ExtResource("8_psvfp")
+
+[node name="Gill_Pivot_08" type="Node3D" parent="." unique_id=1731240542]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1621.8428, 4360.759, 563.1874)
+metadata/wl_kind = "gill"
+metadata/wl_index = 8
+metadata/wl_axis = Vector3(0.068800256, 0.1339005, -0.98860365)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_08" unique_id=177610907]
+mesh = ExtResource("9_2igrc")
+
+[node name="Gill_Pivot_09" type="Node3D" parent="." unique_id=1600868424]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2521.8428, 4360.759, 563.1874)
+metadata/wl_kind = "gill"
+metadata/wl_index = 9
+metadata/wl_axis = Vector3(0.068800256, 0.1339005, -0.98860365)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_09" unique_id=1299791173]
+mesh = ExtResource("10_6df4u")
+
+[node name="Gill_Pivot_10" type="Node3D" parent="." unique_id=33150348]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1467.7012, 4060.8545, 1651.1819)
+metadata/wl_kind = "gill"
+metadata/wl_index = 10
+metadata/wl_axis = Vector3(0.19750634, 0.38431233, -0.9018289)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_10" unique_id=1341528783]
+mesh = ExtResource("11_j1y2f")
+
+[node name="Gill_Pivot_11" type="Node3D" parent="." unique_id=1234640723]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2367.7017, 4060.8545, 1651.1819)
+metadata/wl_kind = "gill"
+metadata/wl_index = 11
+metadata/wl_axis = Vector3(0.19750634, 0.38431233, -0.9018289)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_11" unique_id=1271950740]
+mesh = ExtResource("12_j6hfn")
+
+[node name="Gill_Pivot_12" type="Node3D" parent="." unique_id=660645071]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1169.9248, 3481.4836, 2626.651)
+metadata/wl_kind = "gill"
+metadata/wl_index = 12
+metadata/wl_axis = Vector3(0.30340335, 0.5904065, -0.74790823)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_12" unique_id=2100242255]
+mesh = ExtResource("13_cjm2t")
+
+[node name="Gill_Pivot_13" type="Node3D" parent="." unique_id=1154008923]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2069.9248, 3481.4836, 2626.651)
+metadata/wl_kind = "gill"
+metadata/wl_index = 13
+metadata/wl_axis = Vector3(0.30340335, 0.5904065, -0.74790823)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_13" unique_id=295215736]
+mesh = ExtResource("14_lvac0")
+
+[node name="Gill_Pivot_14" type="Node3D" parent="." unique_id=1108416202]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 748.8047, 2662.1294, 3423.1182)
+metadata/wl_kind = "gill"
+metadata/wl_index = 14
+metadata/wl_axis = Vector3(0.3809187, 0.74113643, -0.5528272)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_14" unique_id=1331586343]
+mesh = ExtResource("15_utr3g")
+
+[node name="Gill_Pivot_15" type="Node3D" parent="." unique_id=463155957]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1648.8047, 2662.1294, 3423.1182)
+metadata/wl_kind = "gill"
+metadata/wl_index = 15
+metadata/wl_axis = Vector3(0.3809187, 0.74113643, -0.5528272)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 76
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Gill_Pivot_15" unique_id=1037851679]
+mesh = ExtResource("16_r8abh")
+
+[node name="Guide_Ring_A" type="Node3D" parent="." unique_id=1103877812]
+transform = Transform3D(0.9999284, -0.00013932204, 0.011966168, -0.00013932204, 0.9997289, 0.023282003, -0.011966168, -0.023282003, 0.99965733, -460, -80, 0)
+metadata/wl_kind = "ring"
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(0.8894033, -0.45712346, 0)
+metadata/wl_rest_angle = -0.0261768
+metadata/wl_tris_moving = 864
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Guide_Ring_A" unique_id=494366289]
+mesh = ExtResource("17_1oc2r")
+
+[node name="Guide_Ring_B" type="Node3D" parent="." unique_id=1516254891]
+transform = Transform3D(0.9999284, -0.00013932204, -0.011966168, -0.00013932204, 0.9997289, -0.023282003, 0.011966168, 0.023282003, 0.99965733, -240, -80, 0)
+metadata/wl_kind = "ring"
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(0.8894033, -0.45712346, 0)
+metadata/wl_rest_angle = 0.0261768
+metadata/wl_tris_moving = 816
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Guide_Ring_B" unique_id=1125820091]
+mesh = ExtResource("18_m5sgk")
+
+[node name="Heliostat_Pivot_0_0" type="Node3D" parent="." unique_id=509613552]
+transform = Transform3D(0.4516101, -0.8855391, 0.10894405, 0.8855391, 0.4299671, -0.17592266, 0.10894405, 0.17592266, 0.978357, 21767.54, 111.75018, -1674.3704)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 0
+metadata/wl_col = 0
+metadata/wl_track_angle = 1.1263
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(0.19485375, -4.12617e-09, 0.9808323)
+metadata/wl_rest_angle = 1.1263398
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_0_0" unique_id=1958540082]
+mesh = ExtResource("19_r7sid")
+
+[node name="Heliostat_Pivot_0_1" type="Node3D" parent="." unique_id=654468846]
+transform = Transform3D(0.44196337, -0.8886219, 0.122553974, 0.8886219, 0.41504854, -0.19515592, 0.122553974, 0.19515592, 0.97308517, 21623.201, 605.4422, -2132.1545)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 0
+metadata/wl_col = 1
+metadata/wl_track_angle = 1.1428
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(0.21450436, 1.2283886e-08, 0.976723)
+metadata/wl_rest_angle = 1.1428002
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_0_1" unique_id=1122709709]
+mesh = ExtResource("20_dea60")
+
+[node name="Heliostat_Pivot_0_2" type="Node3D" parent="." unique_id=1388809353]
+transform = Transform3D(0.44788152, -0.88414735, 0.13298735, 0.88414735, 0.4158492, -0.21296228, 0.13298735, 0.21296228, 0.9679677, 21478.863, 585.3235, -2589.9387)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 0
+metadata/wl_col = 2
+metadata/wl_track_angle = 1.1419
+metadata/wl_index = 2
+metadata/wl_axis = Vector3(0.23417021, 0, 0.9721956)
+metadata/wl_rest_angle = 1.14192
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_0_2" unique_id=1932329934]
+mesh = ExtResource("21_uypa8")
+
+[node name="Heliostat_Pivot_1_0" type="Node3D" parent="." unique_id=1432748184]
+transform = Transform3D(0.55969155, -0.7907076, 0.2480463, 0.7907076, 0.4199555, -0.4454424, 0.2480463, 0.4454424, 0.86026394, 17980.793, 545.79065, -5333.0664)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 1
+metadata/wl_col = 0
+metadata/wl_track_angle = 1.1374
+metadata/wl_index = 3
+metadata/wl_axis = Vector3(0.49082145, -1.6419204e-08, 0.87126017)
+metadata/wl_rest_angle = 1.1374
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_1_0" unique_id=171626237]
+mesh = ExtResource("22_p3n68")
+
+[node name="Heliostat_Pivot_1_1" type="Node3D" parent="." unique_id=328953476]
+transform = Transform3D(0.57366097, -0.77839625, 0.25497523, 0.77839625, 0.42117113, -0.4655257, 0.25497523, 0.4655257, 0.84751016, 17599.984, 556.093, -5625.272)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 1
+metadata/wl_col = 1
+metadata/wl_track_angle = 1.1361
+metadata/wl_index = 4
+metadata/wl_axis = Vector3(0.5132694, 1.6429405e-08, 0.85822755)
+metadata/wl_rest_angle = 1.1360601
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_1_1" unique_id=619997047]
+mesh = ExtResource("23_3ujl2")
+
+[node name="Heliostat_Pivot_1_2" type="Node3D" parent="." unique_id=249558020]
+transform = Transform3D(0.5999544, -0.75863653, 0.2540184, 0.75863653, 0.43865943, -0.4817142, 0.2540184, 0.4817142, 0.838705, 17219.176, 170.09552, -5917.4775)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 1
+metadata/wl_col = 2
+metadata/wl_track_angle = 1.1167
+metadata/wl_index = 5
+metadata/wl_axis = Vector3(0.53604, 0, 0.84419256)
+metadata/wl_rest_angle = 1.1166899
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_1_2" unique_id=1941124174]
+mesh = ExtResource("24_sknr0")
+
+[node name="Heliostat_Pivot_2_0" type="Node3D" parent="." unique_id=315177280]
+transform = Transform3D(0.90026647, -0.3891654, 0.19511694, 0.3891654, 0.5185431, -0.76135623, 0.19511694, 0.76135623, 0.6182767, 11488.276, 5.965027, -7062.814)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 2
+metadata/wl_col = 0
+metadata/wl_track_angle = 1.0257
+metadata/wl_index = 6
+metadata/wl_axis = Vector3(0.8904215, 8.713605e-09, 0.45513684)
+metadata/wl_rest_angle = 1.02565
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_2_0" unique_id=495325253]
+mesh = ExtResource("25_v2uh7")
+
+[node name="Heliostat_Pivot_2_1" type="Node3D" parent="." unique_id=1961796809]
+transform = Transform3D(0.915048, -0.35982472, 0.18224542, 0.35982472, 0.52408147, -0.77192277, 0.18224542, 0.77192277, 0.6090335, 11008.732, 49.64978, -7083.7515)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 2
+metadata/wl_col = 1
+metadata/wl_track_angle = 1.0192
+metadata/wl_index = 7
+metadata/wl_axis = Vector3(0.90636575, 1.7496442e-08, 0.42249408)
+metadata/wl_rest_angle = 1.0191602
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_2_1" unique_id=1389895441]
+mesh = ExtResource("26_2ar00")
+
+[node name="Heliostat_Pivot_2_2" type="Node3D" parent="." unique_id=411469510]
+transform = Transform3D(0.9279905, -0.33143, 0.17025813, 0.33143, 0.525435, -0.7836276, 0.17025813, 0.7836276, 0.5974445, 10529.189, 180, -7104.689)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 2
+metadata/wl_col = 2
+metadata/wl_track_angle = 1.0176
+metadata/wl_index = 8
+metadata/wl_axis = Vector3(0.92101145, -8.7568e-09, 0.38953555)
+metadata/wl_rest_angle = 1.0175701
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_2_2" unique_id=1580255072]
+mesh = ExtResource("27_hq7sf")
+
+[node name="Heliostat_Pivot_3_0" type="Node3D" parent="." unique_id=702608026]
+transform = Transform3D(0.9938381, 0.10112601, -0.04538074, -0.10112601, 0.65962243, -0.7447629, -0.04538074, 0.7447629, 0.66578436, 5540.391, 474.96936, -6510.9893)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 3
+metadata/wl_col = 0
+metadata/wl_track_angle = 0.8505
+metadata/wl_index = 9
+metadata/wl_axis = Vector3(0.9909071, -2.4782496e-09, -0.13454816)
+metadata/wl_rest_angle = 0.85047996
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_3_0" unique_id=2091502784]
+mesh = ExtResource("28_d65hk")
+
+[node name="Heliostat_Pivot_3_1" type="Node3D" parent="." unique_id=1891288829]
+transform = Transform3D(0.9903854, 0.1272944, -0.054156464, -0.1272944, 0.68533695, -0.7170142, -0.054156464, 0.7170142, 0.6949516, 5114.626, 125.35785, -6289.35)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 3
+metadata/wl_col = 1
+metadata/wl_track_angle = 0.8157
+metadata/wl_index = 10
+metadata/wl_axis = Vector3(0.9846039, -7.6733535e-09, -0.17480066)
+metadata/wl_rest_angle = 0.81573
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_3_1" unique_id=1827631937]
+mesh = ExtResource("29_2mn51")
+
+[node name="Heliostat_Pivot_3_2" type="Node3D" parent="." unique_id=1914623826]
+transform = Transform3D(0.9856752, 0.1551297, -0.066174835, -0.1551297, 0.67997336, -0.7166387, -0.066174835, 0.7166387, 0.69429815, 4688.861, 537.2109, -6067.711)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 3
+metadata/wl_col = 2
+metadata/wl_track_angle = 0.8231
+metadata/wl_index = 11
+metadata/wl_axis = Vector3(0.97736317, 1.016122e-08, -0.21156837)
+metadata/wl_rest_angle = 0.8230699
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_3_2" unique_id=480775528]
+mesh = ExtResource("30_xgqh1")
+
+[node name="Heliostat_Pivot_4_0" type="Node3D" parent="." unique_id=173967164]
+transform = Transform3D(0.9946947, 0.096415445, 0.03586779, -0.096415445, 0.75220126, 0.6518415, 0.03586779, -0.6518415, 0.75750655, 3828.6465, 424.32813, 5722.163)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 4
+metadata/wl_col = 0
+metadata/wl_track_angle = 0.7194
+metadata/wl_index = 12
+metadata/wl_axis = Vector3(-0.9892373, 2.826758e-09, -0.14632048)
+metadata/wl_rest_angle = 0.7193998
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_4_0" unique_id=8406659]
+mesh = ExtResource("31_ov51x")
+
+[node name="Heliostat_Pivot_4_1" type="Node3D" parent="." unique_id=1853439949]
+transform = Transform3D(0.9978141, 0.06188622, 0.023173982, -0.06188622, 0.7521287, 0.6561041, 0.023173982, -0.6561041, 0.75431454, 4233.4746, 88.18994, 5980.067)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 4
+metadata/wl_col = 1
+metadata/wl_track_angle = 0.7195
+metadata/wl_index = 13
+metadata/wl_axis = Vector3(-0.995581, 1.4132011e-09, -0.09390697)
+metadata/wl_rest_angle = 0.7195099
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_4_1" unique_id=2065559803]
+mesh = ExtResource("32_s73s6")
+
+[node name="Heliostat_Pivot_4_2" type="Node3D" parent="." unique_id=291085130]
+transform = Transform3D(0.9995762, 0.027035074, 0.010791088, -0.027035074, 0.7247809, 0.6884488, 0.010791088, -0.6884488, 0.7252047, 4638.3027, 457.42322, 6237.9707)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 4
+metadata/wl_col = 2
+metadata/wl_track_angle = 0.7601
+metadata/wl_index = 14
+metadata/wl_axis = Vector3(-0.99922985, 6.7587114e-10, -0.03923931)
+metadata/wl_rest_angle = 0.7600801
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_4_2" unique_id=894529053]
+mesh = ExtResource("33_rn2ck")
+
+[node name="Heliostat_Pivot_5_0" type="Node3D" parent="." unique_id=847480367]
+transform = Transform3D(0.90284044, -0.38997003, -0.18111472, 0.38997003, 0.5652253, 0.72694135, -0.18111472, -0.72694135, 0.66238487, 8501.779, 588.71173, 6967.1875)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 5
+metadata/wl_col = 0
+metadata/wl_track_angle = 0.9701
+metadata/wl_index = 15
+metadata/wl_axis = Vector3(-0.8812088, -1.8063403e-08, 0.4727273)
+metadata/wl_rest_angle = 0.9700899
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_5_0" unique_id=1967128818]
+mesh = ExtResource("34_m6naj")
+
+[node name="Heliostat_Pivot_5_1" type="Node3D" parent="." unique_id=1878735002]
+transform = Transform3D(0.8848075, -0.4231746, -0.19503574, 0.4231746, 0.5545868, 0.71648914, -0.19503574, -0.71648914, 0.6697793, 8977.673, 585.5392, 7029.84)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 5
+metadata/wl_col = 1
+metadata/wl_track_angle = 0.9829
+metadata/wl_index = 16
+metadata/wl_axis = Vector3(-0.86103463, -8.953671e-09, 0.5085464)
+metadata/wl_rest_angle = 0.98292994
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_5_1" unique_id=561719985]
+mesh = ExtResource("35_n3sxd")
+
+[node name="Heliostat_Pivot_5_2" type="Node3D" parent="." unique_id=1772451400]
+transform = Transform3D(0.86610675, -0.45483872, -0.2073183, 0.45483872, 0.5450982, 0.70426536, -0.2073183, -0.70426536, 0.6789915, 9453.566, 574.1857, 7092.492)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 5
+metadata/wl_col = 2
+metadata/wl_track_angle = 0.9943
+metadata/wl_index = 17
+metadata/wl_axis = Vector3(-0.840039, -1.7773921e-08, 0.542526)
+metadata/wl_rest_angle = 0.99429005
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_5_2" unique_id=1401328059]
+mesh = ExtResource("36_4sj50")
+
+[node name="Heliostat_Pivot_6_0" type="Node3D" parent="." unique_id=70547021]
+transform = Transform3D(0.6254882, -0.74052125, -0.24574931, 0.74052125, 0.464231, 0.48591954, -0.24574931, -0.48591954, 0.8387428, 13549.348, 526.5756, 6906.669)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 6
+metadata/wl_col = 0
+metadata/wl_track_angle = 1.088
+metadata/wl_index = 18
+metadata/wl_axis = Vector3(-0.5486189, 8.411947e-09, 0.8360725)
+metadata/wl_rest_angle = 1.0880301
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_6_0" unique_id=1049976512]
+mesh = ExtResource("37_3dq1w")
+
+[node name="Heliostat_Pivot_6_1" type="Node3D" parent="." unique_id=111292221]
+transform = Transform3D(0.60757244, -0.7567515, -0.24121144, 0.7567515, 0.4593082, 0.46514857, -0.24121144, -0.46514857, 0.85173583, 14007.132, 542.9967, 6762.33)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 6
+metadata/wl_col = 1
+metadata/wl_track_angle = 1.0936
+metadata/wl_index = 19
+metadata/wl_axis = Vector3(-0.5236526, -8.387677e-09, 0.85193187)
+metadata/wl_rest_angle = 1.0935801
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_6_1" unique_id=1664794068]
+mesh = ExtResource("38_wo518")
+
+[node name="Heliostat_Pivot_6_2" type="Node3D" parent="." unique_id=1664394201]
+transform = Transform3D(0.59119284, -0.77139175, -0.23546942, 0.77139175, 0.4555645, 0.44431502, -0.23546942, -0.44431502, 0.86437166, 14464.916, 543.09937, 6617.991)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 6
+metadata/wl_col = 2
+metadata/wl_track_angle = 1.0978
+metadata/wl_index = 20
+metadata/wl_axis = Vector3(-0.49911663, -1.6739063e-08, 0.8665349)
+metadata/wl_rest_angle = 1.0977901
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_6_2" unique_id=1996594218]
+mesh = ExtResource("39_dup86")
+
+[node name="Heliostat_Pivot_7_0" type="Node3D" parent="." unique_id=1847731687]
+transform = Transform3D(0.42487663, -0.90510195, 0.01644518, 0.90510195, 0.4244064, -0.025880646, 0.01644518, 0.025880646, 0.9995298, 22000.57, 401.5775, 1401.3895)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 7
+metadata/wl_col = 0
+metadata/wl_track_angle = 1.1325
+metadata/wl_index = 21
+metadata/wl_axis = Vector3(0.028582497, 1.0285496e-09, 0.99959147)
+metadata/wl_rest_angle = 1.1324902
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_7_0" unique_id=1579858929]
+mesh = ExtResource("40_cphp5")
+
+[node name="Heliostat_Pivot_7_1" type="Node3D" parent="." unique_id=762755452]
+transform = Transform3D(0.42498708, -0.90478194, 0.02748843, 0.90478194, 0.42367297, -0.043253, 0.02748843, 0.043253, 0.9986859, 22063.223, 410.92188, 925.496)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 7
+metadata/wl_col = 1
+metadata/wl_track_angle = 1.1333
+metadata/wl_index = 22
+metadata/wl_axis = Vector3(0.047750358, 0, 0.9988593)
+metadata/wl_rest_angle = 1.1333
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_7_1" unique_id=267607976]
+mesh = ExtResource("41_6jnsu")
+
+[node name="Heliostat_Pivot_7_2" type="Node3D" parent="." unique_id=934378244]
+transform = Transform3D(0.43618673, -0.8990659, 0.03770491, 0.8990659, 0.43366522, -0.060124867, 0.03770491, 0.060124867, 0.9974785, 22125.875, 51.470764, 449.60242)
+metadata/wl_kind = "heliostat"
+metadata/wl_row = 7
+metadata/wl_col = 2
+metadata/wl_track_angle = 1.1222
+metadata/wl_index = 23
+metadata/wl_axis = Vector3(0.066725776, 0, 0.99777144)
+metadata/wl_rest_angle = 1.1222397
+metadata/wl_tris_moving = 24
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Heliostat_Pivot_7_2" unique_id=526455949]
+mesh = ExtResource("42_2efsp")
+
+[node name="Turbine_Rotor_A" type="Node3D" parent="." unique_id=1076110948]
+transform = Transform3D(0.99985313, -0.0006521098, 0.017124722, -0.0006521098, 0.9971042, 0.07604418, -0.017124722, -0.07604418, 0.99695736, -1779.0723, 1445.7598, 0)
+metadata/wl_kind = "rotor"
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(0.97556907, -0.21969302, 0)
+metadata/wl_rest_angle = -0.078026116
+metadata/wl_tris_moving = 1772
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Turbine_Rotor_A" unique_id=1042738628]
+mesh = ExtResource("43_a1n5g")
+
+[node name="Turbine_Rotor_B" type="Node3D" parent="." unique_id=1471574455]
+transform = Transform3D(0.99985313, -0.0006521098, -0.017124722, -0.0006521098, 0.9971042, -0.07604418, 0.017124722, 0.07604418, 0.99695736, -1515.669, 1386.4427, 0)
+metadata/wl_kind = "rotor"
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(0.97556907, -0.21969302, 0)
+metadata/wl_rest_angle = 0.078026116
+metadata/wl_tris_moving = 1924
+metadata/wl_tris_dressing = 0
+
+[node name="Mesh" type="MeshInstance3D" parent="Turbine_Rotor_B" unique_id=1674960169]
+mesh = ExtResource("44_u65pc")
+
+[node name="VanePivot_00" type="Node3D" parent="." unique_id=255173076]
+transform = Transform3D(1, 0.00010466693, 0, -0.00010466693, 1, 0, 0, 0, 1, -750, 0, 2850)
+metadata/wl_kind = "vane"
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = 0.0
+metadata/wl_tris_moving = 204
+metadata/wl_tris_dressing = 44
+
+[node name="Mesh" type="MeshInstance3D" parent="VanePivot_00" unique_id=2062487989]
+mesh = ExtResource("45_vqg72")
+
+[node name="VanePivot_01" type="Node3D" parent="." unique_id=180895613]
+transform = Transform3D(0.99999875, 0.001574401, 0, -0.001574401, 0.99999875, 0, 0, 0, 1, -750, 0, 1425)
+metadata/wl_kind = "vane"
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = 0.0015440809
+metadata/wl_tris_moving = 204
+metadata/wl_tris_dressing = 44
+
+[node name="Mesh" type="MeshInstance3D" parent="VanePivot_01" unique_id=134378095]
+mesh = ExtResource("46_45fx1")
+
+[node name="VanePivot_02" type="Node3D" parent="." unique_id=1158855796]
+transform = Transform3D(0.9999886, 0.004770702, 0, -0.004770702, 0.9999886, 0, 0, 0, 1, -750, 0, 0)
+metadata/wl_kind = "vane"
+metadata/wl_index = 2
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = 0.0047841608
+metadata/wl_tris_moving = 204
+metadata/wl_tris_dressing = 44
+
+[node name="Mesh" type="MeshInstance3D" parent="VanePivot_02" unique_id=1062815924]
+mesh = ExtResource("47_vtngm")
+
+[node name="VanePivot_03" type="Node3D" parent="." unique_id=101586207]
+transform = Transform3D(0.9999532, 0.009675308, 0, -0.009675308, 0.9999532, 0, 0, 0, 1, -750, 0, -1425)
+metadata/wl_kind = "vane"
+metadata/wl_index = 3
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = 0.009667485
+metadata/wl_tris_moving = 204
+metadata/wl_tris_dressing = 44
+
+[node name="Mesh" type="MeshInstance3D" parent="VanePivot_03" unique_id=1209374924]
+mesh = ExtResource("48_uwcm0")
+
+[node name="VanePivot_04" type="Node3D" parent="." unique_id=1550003763]
+transform = Transform3D(0.9998678, 0.016260033, 0, -0.016260033, 0.9998678, 0, 0, 0, 1, -750, 0, -2850)
+metadata/wl_kind = "vane"
+metadata/wl_index = 4
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = 0.016267946
+metadata/wl_tris_moving = 204
+metadata/wl_tris_dressing = 44
+
+[node name="Mesh" type="MeshInstance3D" parent="VanePivot_04" unique_id=236102807]
+mesh = ExtResource("49_ck04f")
+
+[node name="Vane_RamCyl_00" type="Node3D" parent="." unique_id=1605075754]
+transform = Transform3D(0.253649, -0.96729636, 0, 0.96729636, 0.253649, 0, 0, 0, 1, -250, 20, 2680)
+metadata/wl_kind = "ramcyl"
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = -1.3143456
+metadata/wl_pin = Vector3(777, 1076.8564, -140)
+metadata/wl_base = Vector3(-250, 20, 2680)
+metadata/wl_vane_pos = Vector3(-750, 0, 2850)
+metadata/wl_l0 = 1092.5541
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 132
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_00" unique_id=1488103776]
+mesh = ExtResource("50_4n18i")
+
+[node name="Vane_RamRod_00" type="Node3D" parent="Vane_RamCyl_00" unique_id=2053901421]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.05038643, 0, 0.00024414063)
+metadata/wl_kind = "ramrod"
+metadata/wl_index = 0
+metadata/wl_axis = Vector3(1, 0, 0)
+metadata/wl_rest_x = -0.05038643
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 88
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_00/Vane_RamRod_00" unique_id=1570918505]
+mesh = ExtResource("51_3c6qr")
+
+[node name="Vane_RamCyl_01" type="Node3D" parent="." unique_id=1338208369]
+transform = Transform3D(0.18168616, -0.9833566, 0, 0.9833566, 0.18168616, 0, 0, 0, 1, -250, -87.98291, 1255)
+metadata/wl_kind = "ramcyl"
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = -1.3880955
+metadata/wl_pin = Vector3(777, 1424.6079, -139.99988)
+metadata/wl_base = Vector3(-250, -87.98291, 1255)
+metadata/wl_vane_pos = Vector3(-750, 0, 1425)
+metadata/wl_l0 = 1537.7451
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 132
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_01" unique_id=1434851132]
+mesh = ExtResource("52_raptj")
+
+[node name="Vane_RamRod_01" type="Node3D" parent="Vane_RamCyl_01" unique_id=1839735262]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.798996, 0, 0)
+metadata/wl_kind = "ramrod"
+metadata/wl_index = 1
+metadata/wl_axis = Vector3(1, 0, 0)
+metadata/wl_rest_x = -0.798996
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 88
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_01/Vane_RamRod_01" unique_id=1676661386]
+mesh = ExtResource("53_e8ott")
+
+[node name="Vane_RamCyl_02" type="Node3D" parent="." unique_id=1494943507]
+transform = Transform3D(0.21025074, -0.9776475, 0, 0.9776475, 0.21025074, 0, 0, 0, 1, -250, 198.67883, -170)
+metadata/wl_kind = "ramcyl"
+metadata/wl_index = 2
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = -1.3589648
+metadata/wl_pin = Vector3(777, 1524.2, -140)
+metadata/wl_base = Vector3(-250, 198.67883, -170)
+metadata/wl_vane_pos = Vector3(-750, 0, 0)
+metadata/wl_l0 = 1354.1548
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 132
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_02" unique_id=601887269]
+mesh = ExtResource("54_ymtis")
+
+[node name="Vane_RamRod_02" type="Node3D" parent="Vane_RamCyl_02" unique_id=372825932]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.1372185, -7.6293945e-06, 0)
+metadata/wl_kind = "ramrod"
+metadata/wl_index = 2
+metadata/wl_axis = Vector3(1, 0, 0)
+metadata/wl_rest_x = -2.1372185
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 88
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_02/Vane_RamRod_02" unique_id=1062674649]
+mesh = ExtResource("55_kqwrn")
+
+[node name="Vane_RamCyl_03" type="Node3D" parent="." unique_id=1324151105]
+transform = Transform3D(0.25612354, -0.96664405, 0, 0.96664405, 0.25612354, 0, 0, 0, 1, -250, 319.70557, -1595)
+metadata/wl_kind = "ramcyl"
+metadata/wl_index = 3
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = -1.3117865
+metadata/wl_pin = Vector3(777, 1424.6079, -139.99988)
+metadata/wl_base = Vector3(-250, 319.70557, -1595)
+metadata/wl_vane_pos = Vector3(-750, 0, -1425)
+metadata/wl_l0 = 1139.0953
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 132
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_03" unique_id=891581040]
+mesh = ExtResource("56_y25sf")
+
+[node name="Vane_RamRod_03" type="Node3D" parent="Vane_RamCyl_03" unique_id=97692786]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.9122543, 0, 0)
+metadata/wl_kind = "ramrod"
+metadata/wl_index = 3
+metadata/wl_axis = Vector3(1, 0, 0)
+metadata/wl_rest_x = -3.9122543
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 88
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_03/Vane_RamRod_03" unique_id=2011097801]
+mesh = ExtResource("57_qrq1p")
+
+[node name="Vane_RamCyl_04" type="Node3D" parent="." unique_id=599109933]
+transform = Transform3D(0.2713943, -0.9624682, 0, 0.9624682, 0.2713943, 0, 0, 0, 1, -250, 20, -3020)
+metadata/wl_kind = "ramcyl"
+metadata/wl_index = 4
+metadata/wl_axis = Vector3(0, 0, -1)
+metadata/wl_rest_angle = -1.295955
+metadata/wl_pin = Vector3(777, 1076.8564, -140)
+metadata/wl_base = Vector3(-250, 20, -3020)
+metadata/wl_vane_pos = Vector3(-750, 0, -2850)
+metadata/wl_l0 = 1092.5541
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 132
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_04" unique_id=670882513]
+mesh = ExtResource("58_8avi5")
+
+[node name="Vane_RamRod_04" type="Node3D" parent="Vane_RamCyl_04" unique_id=869814438]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7.7601624, 4.053116e-06, 0)
+metadata/wl_kind = "ramrod"
+metadata/wl_index = 4
+metadata/wl_axis = Vector3(1, 0, 0)
+metadata/wl_rest_x = -7.7601624
+metadata/wl_tris_moving = 0
+metadata/wl_tris_dressing = 88
+
+[node name="Mesh" type="MeshInstance3D" parent="Vane_RamCyl_04/Vane_RamRod_04" unique_id=43064678]
+mesh = ExtResource("59_3ic3e")

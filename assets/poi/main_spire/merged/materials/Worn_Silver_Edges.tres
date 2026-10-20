@@ -1,8 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_it5r2"]
 
 [resource]
 resource_name = "Worn_Silver_Edges"
-cull_mode = 2
-albedo_color = Color(0.38857287, 0.46135613, 0.48452926, 1)
-metallic = 0.6
-roughness = 0.37
+render_priority = 0
+shader = ExtResource("1_it5r2")
+shader_parameter/albedo_color = Color(0.38857287, 0.46135613, 0.48452926, 1)
+shader_parameter/metallic_value = 0.6
+shader_parameter/roughness_value = 0.37
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

@@ -27,6 +27,7 @@ public static class RingMaterialWriteCounters
         OceanFft,
         EmitterGrid,
         EmitterStandIn,
+        PoiAtmosphere,
         Count
     }
 

@@ -12,6 +12,8 @@ const SITES_GENERATOR_ID: String = "ringworld_surface_sites_v5"
 const CLIMATE_GENERATOR_ID: String = "ringworld_surface_climate_v6"
 ## v7: v6 field set plus lowland landforms (docs/lowland-landform-overhaul-plan.md). Climate machines are the opt-in `climate_machines` field.
 const LANDFORM_GENERATOR_ID: String = "ringworld_surface_landform_v7"
+## v8: v7 field set plus the Weather Lung basin operator (docs/weather-lung-integration-plan.md D3). New worlds only; climate machines stay the opt-in `climate_machines` field.
+const WEATHER_LUNG_GENERATOR_ID: String = "ringworld_surface_weather_lung_v8"
 const DOMAIN_ID: String = "canonical_ring_noise_v1"
 const MIN_GEOMETRIC_WAVELENGTH_M: float = 16.0
 const CERTIFIED_CIRCUMFERENCE_M: float = 31415936.0
@@ -110,7 +112,7 @@ var flatten_denominator: float = exp(3.0) - 1.0
 
 func validation_errors() -> PackedStringArray:
 	var errors := PackedStringArray()
-	if generator_id != LANDFORM_GENERATOR_ID and generator_id != CLIMATE_GENERATOR_ID and generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
+	if generator_id != WEATHER_LUNG_GENERATOR_ID and generator_id != LANDFORM_GENERATOR_ID and generator_id != CLIMATE_GENERATOR_ID and generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
 		errors.append("Unsupported generator_id: %s" % generator_id)
 	if domain_id != DOMAIN_ID:
 		errors.append("Unsupported domain_id: %s" % domain_id)
@@ -328,11 +330,11 @@ static func _safe_octaves(requested: int, scale_m: float, lacunarity: float, con
 
 ## True for recipes that carry the full v4 field set (v4 itself, v5 with emitter sites, v6 with climate machines and v7 with lowland landforms).
 static func _is_erosion_family(id: String) -> bool:
-	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID or id == LANDFORM_GENERATOR_ID
+	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID or id == LANDFORM_GENERATOR_ID or id == WEATHER_LUNG_GENERATOR_ID
 
 ## True for recipes that also carry the v7 lowland-landform fields.
 static func _is_landform_family(id: String) -> bool:
-	return id == LANDFORM_GENERATOR_ID
+	return id == LANDFORM_GENERATOR_ID or id == WEATHER_LUNG_GENERATOR_ID
 
 static func create_sites_default() -> TerrainGenerationRecipe:
 	var recipe := create_erosion_default()
@@ -348,4 +350,10 @@ static func create_climate_default() -> TerrainGenerationRecipe:
 static func create_landform_default() -> TerrainGenerationRecipe:
 	var recipe := create_sites_default()
 	recipe.generator_id = LANDFORM_GENERATOR_ID
+	return recipe
+
+## v8 default: the v7 default (climate machines off) with the Weather Lung id.
+static func create_weather_lung_default() -> TerrainGenerationRecipe:
+	var recipe := create_landform_default()
+	recipe.generator_id = WEATHER_LUNG_GENERATOR_ID
 	return recipe

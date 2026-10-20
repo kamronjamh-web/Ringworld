@@ -16,6 +16,8 @@ public partial class RingLiveTuningDrawer
     private CheckButton? _atmosphereEnabled;
     private CheckButton? _atmosphereSkyHazeLut;
     private CheckButton? _atmosphereVegetationInstanceHaze;
+    private CheckButton? _atmospherePoiHaze;
+    private CheckButton? _atmospherePoiCloudShadow;
     private Label? _atmosphereStatus;
     private double _atmosphereSaveDelay;
     private double _atmosphereRefreshDelay;
@@ -61,6 +63,22 @@ public partial class RingLiveTuningDrawer
     {
         if (!RebindAtmosphereDefaults()) return;
         _atmosphereDefaults!.SetHazeQuality(quality);
+        _atmosphereSaveDelay = .5;
+        RefreshAtmosphereControls();
+    }
+
+    public void SetAtmospherePoiHaze(bool enabled)
+    {
+        if (!RebindAtmosphereDefaults()) return;
+        _atmosphereDefaults!.SetPoiHaze(enabled);
+        _atmosphereSaveDelay = .5;
+        RefreshAtmosphereControls();
+    }
+
+    public void SetAtmospherePoiCloudShadow(bool enabled)
+    {
+        if (!RebindAtmosphereDefaults()) return;
+        _atmosphereDefaults!.SetPoiCloudShadow(enabled);
         _atmosphereSaveDelay = .5;
         RefreshAtmosphereControls();
     }
@@ -164,6 +182,14 @@ public partial class RingLiveTuningDrawer
         AddAtmosphereSlider(tab, "Warmth", "Sun warmth", 0, 1, .01, settings.SunWarmth);
         AddAtmosphereSlider(tab, "HazeBrightness", "Haze brightness", 0, 2, .01, settings.HazeBrightness);
         AddAtmosphereSlider(tab, "EnclosedCloudFog", "Cloud fog (caves/water)", 0, 1, .01, settings.EnclosedCloudFog);
+        _atmospherePoiHaze = new CheckButton { Name = "AtmospherePoiHaze", Text = "POI haze", ButtonPressed = settings.PoiHaze };
+        _atmospherePoiHaze.Toggled += SetAtmospherePoiHaze;
+        _atmosphereControls.Add(_atmospherePoiHaze);
+        tab.AddChild(_atmospherePoiHaze);
+        _atmospherePoiCloudShadow = new CheckButton { Name = "AtmospherePoiCloudShadow", Text = "POI cloud shadows", ButtonPressed = settings.PoiCloudShadow };
+        _atmospherePoiCloudShadow.Toggled += SetAtmospherePoiCloudShadow;
+        _atmosphereControls.Add(_atmospherePoiCloudShadow);
+        tab.AddChild(_atmospherePoiCloudShadow);
         // Physical-only controls (hidden while the Legacy model is selected; see RefreshAtmosphereControls).
         _atmospherePhysicalGroup = new VBoxContainer { Name = "AtmospherePhysicalGroup" };
         _atmospherePhysicalGroup.AddChild(new Label { Text = "Physical haze", Modulate = RingUiStyle.Muted });
@@ -261,6 +287,8 @@ public partial class RingLiveTuningDrawer
         _atmosphereHazeQuality?.Select(_atmosphereHazeQuality.GetItemIndex(s.HazeQuality));
         _atmosphereSkyHazeLut?.SetPressedNoSignal(s.SkyHazeLut);
         _atmosphereVegetationInstanceHaze?.SetPressedNoSignal(s.VegetationInstanceHaze);
+        _atmospherePoiHaze?.SetPressedNoSignal(s.PoiHaze);
+        _atmospherePoiCloudShadow?.SetPressedNoSignal(s.PoiCloudShadow);
         if (_atmospherePhysicalGroup != null) _atmospherePhysicalGroup.Visible = s.HazeModel == 1;
         UpdateAtmosphereStatus();
     }

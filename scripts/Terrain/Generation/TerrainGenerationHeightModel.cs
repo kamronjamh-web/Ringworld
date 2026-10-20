@@ -8,7 +8,7 @@ namespace RingworldTechDemo.Terrain.Generation;
 /// <remarks>Each worker must own its model, or callers must serialize access to its mutable gully cache.</remarks>
 public sealed class TerrainGenerationHeightModel : IDisposable
 {
-    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d);
+    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d, double WeatherLungWeight=0d);
     private static readonly double[] ContinentalKnots = { -1d, -.55d, -.20d, -.06d, 0d, .45d, 1d };
     private readonly TerrainGenerationParameters _p;
     private readonly double[] _continentalHeights;
@@ -134,8 +134,8 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     {
         Diagnostics natural=SampleNaturalDiagnostics(around,across);
         if(_sites==null) return natural;
-        double shaped=_sites.ShapeHeight(around,across,natural.Height,out SiteSurfaceMask mask,out int siteIndex,out double siteWeight,out int climateMachineIndex);
-        return natural with { Height=shaped, SiteIndex=siteIndex, SiteWeight=siteWeight, SiteMask=mask, ClimateMachineIndex=climateMachineIndex };
+        double shaped=_sites.ShapeHeight(around,across,natural.Height,out SiteSurfaceMask mask,out int siteIndex,out double siteWeight,out int climateMachineIndex,out double weatherLungWeight);
+        return natural with { Height=shaped, SiteIndex=siteIndex, SiteWeight=siteWeight, SiteMask=mask, ClimateMachineIndex=climateMachineIndex, WeatherLungWeight=weatherLungWeight };
     }
     /// <summary>Unshaped diagnostics: identical for every recipe, with no emitter-site operator applied.</summary>
     public Diagnostics SampleNaturalDiagnostics(double around,double across)

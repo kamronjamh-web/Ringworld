@@ -1,0 +1,207 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Structure.res" id="1_3pmti"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_n1_5.res" id="2_bi0b5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_0.res" id="3_epf6t"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_1.res" id="4_53rx6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_2.res" id="5_lqjl4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_3.res" id="6_byj2r"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_4.res" id="7_86b3p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_5.res" id="8_uk4s0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_6.res" id="9_22111"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_0_7.res" id="10_qfryl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_1_3.res" id="11_q6h17"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_1_5.res" id="12_t6ffy"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_1_6.res" id="13_tn8yr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_1_7.res" id="14_ea35f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_2_4.res" id="15_ws307"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_2_5.res" id="16_cspa5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_2_6.res" id="17_8vrx8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_2_7.res" id="18_rsk10"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_3_5.res" id="19_jw80m"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_3_6.res" id="20_b4fud"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_3_7.res" id="21_tq6tk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_4_4.res" id="22_22bl1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_4_5.res" id="23_oeewt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_4_6.res" id="24_wkkc5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_4_7.res" id="25_656w1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_5_5.res" id="26_dm5x7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_5_6.res" id="27_fyfdu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_5_7.res" id="28_ojpsw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Sector_09_Dressing_6_7.res" id="29_dxlpo"]
+
+[node name="WeatherLungSector_09" type="Node3D" unique_id=390575726]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3346.3584, 571.5, 4126.382)
+
+[node name="Structure" type="MeshInstance3D" parent="." unique_id=674196361]
+mesh = ExtResource("1_3pmti")
+
+[node name="Dressing" type="Node3D" parent="." unique_id=624701366]
+
+[node name="Tile_n1_5" type="MeshInstance3D" parent="Dressing" unique_id=148669069]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("2_bi0b5")
+
+[node name="Tile_0_0" type="MeshInstance3D" parent="Dressing" unique_id=1922749994]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("3_epf6t")
+
+[node name="Tile_0_1" type="MeshInstance3D" parent="Dressing" unique_id=865685897]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("4_53rx6")
+
+[node name="Tile_0_2" type="MeshInstance3D" parent="Dressing" unique_id=674344476]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("5_lqjl4")
+
+[node name="Tile_0_3" type="MeshInstance3D" parent="Dressing" unique_id=1159396812]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("6_byj2r")
+
+[node name="Tile_0_4" type="MeshInstance3D" parent="Dressing" unique_id=19983710]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("7_86b3p")
+
+[node name="Tile_0_5" type="MeshInstance3D" parent="Dressing" unique_id=1337393325]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("8_uk4s0")
+
+[node name="Tile_0_6" type="MeshInstance3D" parent="Dressing" unique_id=1178516885]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("9_22111")
+
+[node name="Tile_0_7" type="MeshInstance3D" parent="Dressing" unique_id=1880766588]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("10_qfryl")
+
+[node name="Tile_1_3" type="MeshInstance3D" parent="Dressing" unique_id=1432184554]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("11_q6h17")
+
+[node name="Tile_1_5" type="MeshInstance3D" parent="Dressing" unique_id=125267931]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("12_t6ffy")
+
+[node name="Tile_1_6" type="MeshInstance3D" parent="Dressing" unique_id=788436685]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("13_tn8yr")
+
+[node name="Tile_1_7" type="MeshInstance3D" parent="Dressing" unique_id=1700176815]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("14_ea35f")
+
+[node name="Tile_2_4" type="MeshInstance3D" parent="Dressing" unique_id=1208890239]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("15_ws307")
+
+[node name="Tile_2_5" type="MeshInstance3D" parent="Dressing" unique_id=1898392766]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("16_cspa5")
+
+[node name="Tile_2_6" type="MeshInstance3D" parent="Dressing" unique_id=172029237]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("17_8vrx8")
+
+[node name="Tile_2_7" type="MeshInstance3D" parent="Dressing" unique_id=701653955]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("18_rsk10")
+
+[node name="Tile_3_5" type="MeshInstance3D" parent="Dressing" unique_id=144650071]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("19_jw80m")
+
+[node name="Tile_3_6" type="MeshInstance3D" parent="Dressing" unique_id=1990635716]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("20_b4fud")
+
+[node name="Tile_3_7" type="MeshInstance3D" parent="Dressing" unique_id=1327607467]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("21_tq6tk")
+
+[node name="Tile_4_4" type="MeshInstance3D" parent="Dressing" unique_id=679250559]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("22_22bl1")
+
+[node name="Tile_4_5" type="MeshInstance3D" parent="Dressing" unique_id=619117714]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("23_oeewt")
+
+[node name="Tile_4_6" type="MeshInstance3D" parent="Dressing" unique_id=1747078053]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("24_wkkc5")
+
+[node name="Tile_4_7" type="MeshInstance3D" parent="Dressing" unique_id=1457937017]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("25_656w1")
+
+[node name="Tile_5_5" type="MeshInstance3D" parent="Dressing" unique_id=2016132214]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("26_dm5x7")
+
+[node name="Tile_5_6" type="MeshInstance3D" parent="Dressing" unique_id=1499270500]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("27_fyfdu")
+
+[node name="Tile_5_7" type="MeshInstance3D" parent="Dressing" unique_id=1662077790]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("28_ojpsw")
+
+[node name="Tile_6_7" type="MeshInstance3D" parent="Dressing" unique_id=1168074936]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("29_dxlpo")

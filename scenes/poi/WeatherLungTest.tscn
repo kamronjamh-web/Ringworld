@@ -1,0 +1,95 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/poi/weather_lung_test.gd" id="1_dbcu0"]
+[ext_resource type="ArrayMesh" path="res://scenes/poi/WeatherLungTestGround.res" id="2_jgtf4"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/WeatherLungPOI.tscn" id="3_af7xa"]
+[ext_resource type="Script" path="res://scripts/poi/WeatherLung/WeatherLungController.cs" id="4_8tvn5"]
+[ext_resource type="Script" path="res://scripts/poi/poi_fly_camera.gd" id="5_hd7ic"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_7rl0k"]
+sky_top_color = Color(0.17, 0.34, 0.58, 1)
+sky_horizon_color = Color(0.67, 0.77, 0.86, 1)
+ground_bottom_color = Color(0.03, 0.04, 0.05, 1)
+ground_horizon_color = Color(0.5, 0.58, 0.52, 1)
+
+[sub_resource type="Sky" id="Sky_bj4lp"]
+sky_material = SubResource("ProceduralSkyMaterial_7rl0k")
+
+[sub_resource type="Environment" id="Environment_via74"]
+background_mode = 2
+sky = SubResource("Sky_bj4lp")
+ambient_light_source = 3
+tonemap_mode = 3
+glow_enabled = true
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5qc8e"]
+transparency = 1
+albedo_color = Color(0.05, 0.25, 0.35, 0.7)
+metallic = 0.3
+roughness = 0.1
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_gifwf"]
+material = SubResource("StandardMaterial3D_5qc8e")
+size = Vector2(28000, 18000)
+
+[node name="WeatherLungTest" type="Node3D" unique_id=1793538355]
+script = ExtResource("1_dbcu0")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=2110202170]
+environment = SubResource("Environment_via74")
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=750638484]
+transform = Transform3D(0.61394066, -0.62841696, 0.4776704, 0, 0.6051423, 0.79611737, -0.7893522, -0.48876882, 0.37152144, 0, 0, 0)
+shadow_enabled = true
+directional_shadow_max_distance = 6000.0
+
+[node name="Ground" type="MeshInstance3D" parent="." unique_id=309750284]
+cast_shadow = 0
+mesh = ExtResource("2_jgtf4")
+
+[node name="TestWaterPlaceholder" type="MeshInstance3D" parent="." unique_id=904106929]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -135, 0)
+cast_shadow = 0
+mesh = SubResource("PlaneMesh_gifwf")
+
+[node name="WeatherLungPOI" type="Node3D" parent="." unique_id=66847034 instance=ExtResource("3_af7xa")]
+script = ExtResource("4_8tvn5")
+
+[node name="Bookmarks" type="Node3D" parent="." unique_id=2043142220]
+
+[node name="DamCrest" type="Marker3D" parent="Bookmarks" unique_id=379827855]
+transform = Transform3D(0.19995272, 0.028735356, 0.97938406, 0, 0.99956983, -0.029327612, -0.9798055, 0.005864136, 0.19986671, 7854.198, 695.30176, 3439.502)
+
+[node name="BasinUnderHood" type="Marker3D" parent="Bookmarks" unique_id=825719616]
+transform = Transform3D(0, 0.41222692, 0.9110812, 0, 0.9110812, -0.41222692, -1, 0, 0, -8200, 120, 0)
+
+[node name="TurbineThroat" type="Marker3D" parent="Bookmarks" unique_id=687921445]
+transform = Transform3D(0, 0, 1, 0, 1, 0, -1, 0, 0, -11000, 1790, 0)
+
+[node name="GillCloseUp" type="Marker3D" parent="Bookmarks" unique_id=1418172687]
+transform = Transform3D(-0.9400876, -0.1881354, 0.2843245, 0, 0.83395994, 0.55182505, -0.34093305, 0.5187639, -0.78399533, -9582, 3330, -3889)
+
+[node name="Station12km" type="Marker3D" parent="Bookmarks" unique_id=1317157449]
+transform = Transform3D(0.66436386, -0.04337505, 0.74614966, 0, 0.9983147, 0.05803386, -0.74740934, -0.0385556, 0.6632441, 9000, 1500, 8000)
+
+[node name="Handoff40km" type="Marker3D" parent="Bookmarks" unique_id=1754587654]
+transform = Transform3D(0.8, -0.025477001, 0.5994589, 0, 0.9990981, 0.042461667, -0.6, -0.033969335, 0.79927844, 24000, 2500, 32000)
+
+[node name="FlyCamera" type="Camera3D" parent="." unique_id=481906264]
+transform = Transform3D(0.19995272, 0.028735356, 0.97938406, 0, 0.99956983, -0.029327612, -0.9798055, 0.005864136, 0.19986671, 7854.198, 695.30176, 3439.502)
+current = true
+near = 1.0
+far = 400000.0
+script = ExtResource("5_hd7ic")
+base_speed = 400.0
+
+[node name="Hud" type="CanvasLayer" parent="." unique_id=1559238057]
+
+[node name="Status" type="Label" parent="Hud" unique_id=719827762]
+offset_left = 12.0
+offset_top = 8.0
+offset_right = 12.0
+offset_bottom = 8.0
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4

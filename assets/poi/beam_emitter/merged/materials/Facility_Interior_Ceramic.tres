@@ -1,8 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_we3yr"]
 
 [resource]
 resource_name = "Facility_Interior_Ceramic"
-cull_mode = 2
-albedo_color = Color(0.42358288, 0.47312066, 0.4788676, 1)
-metallic = 0.32
-roughness = 0.48
+render_priority = 0
+shader = ExtResource("1_we3yr")
+shader_parameter/albedo_color = Color(0.42358288, 0.47312066, 0.4788676, 1)
+shader_parameter/metallic_value = 0.32
+shader_parameter/roughness_value = 0.48
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

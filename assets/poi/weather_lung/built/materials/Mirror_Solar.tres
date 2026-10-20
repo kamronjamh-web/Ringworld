@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture.gdshader" id="1_rcj1h"]
+
+[resource]
+resource_name = "Mirror_Solar"
+render_priority = 0
+shader = ExtResource("1_rcj1h")
+shader_parameter/albedo_color = Color(0.76737565, 0.86504203, 0.8962439, 1)
+shader_parameter/metallic_value = 1.0
+shader_parameter/roughness_value = 0.04
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

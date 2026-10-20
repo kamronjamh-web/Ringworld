@@ -1,0 +1,10 @@
+[gd_scene format=3]
+
+[ext_resource type="Shape3D" path="res://assets/poi/weather_lung/collision/WeatherLungCollision_Sector_08.res" id="1_wlaje"]
+
+[node name="Body_Sector_08" type="StaticBody3D" unique_id=961935881]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3214.5327, 22.355865, 4056)
+
+[node name="Shape" type="CollisionShape3D" parent="." unique_id=1974784814]
+shape = ExtResource("1_wlaje")

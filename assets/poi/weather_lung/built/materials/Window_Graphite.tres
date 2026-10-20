@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture.gdshader" id="1_ne2t2"]
+
+[resource]
+resource_name = "Window_Graphite"
+render_priority = 0
+shader = ExtResource("1_ne2t2")
+shader_parameter/albedo_color = Color(0.17184411, 0.38109186, 0.4030275, 1)
+shader_parameter/metallic_value = 0.7
+shader_parameter/roughness_value = 0.18
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

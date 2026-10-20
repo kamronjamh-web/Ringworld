@@ -1,11 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_snrrt"]
 
 [resource]
 resource_name = "Facility_Control_Surface"
-cull_mode = 2
-albedo_color = Color(0.13816993, 0.32272613, 0.33183005, 1)
-metallic = 0.22
-roughness = 0.31
-emission_enabled = true
-emission = Color(0.107642, 0.390048, 0.36952117, 1)
-emission_energy_multiplier = 3.0765445
+render_priority = 0
+shader = ExtResource("1_snrrt")
+shader_parameter/albedo_color = Color(0.13816993, 0.32272613, 0.33183005, 1)
+shader_parameter/metallic_value = 0.22
+shader_parameter/roughness_value = 0.31
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0.107642, 0.390048, 0.36952117, 1)
+shader_parameter/emission_energy = 3.0765445

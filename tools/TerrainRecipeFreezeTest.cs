@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Godot;
 using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tools;
@@ -24,6 +25,9 @@ public partial class TerrainRecipeFreezeTest : RefCounted
     const int GridSize = 64, DiagnosticPoints = 64;
     static readonly int[] Seeds = { 1337, 90210, 2147483000 };
     static readonly string[] RecipeNames = { "erosion_v4", "sites_v5", "climate_v6" };
+    // Added with v8 (docs/weather-lung-integration-plan.md S4b): a separate golden so the v4-v6 golden above stays untouched.
+    const string GoldenPathV8 = "res://tools/fixtures/terrain_v7_v8_freeze_golden.json";
+    static readonly string[] RecipeNamesV8 = { "landform_v7", "weather_lung_v8" };
 
     public int Run(bool capture)
     {
@@ -62,10 +66,50 @@ public partial class TerrainRecipeFreezeTest : RefCounted
         return failures.Count == 0 ? 0 : 1;
     }
 
+    /// <summary>
+    /// Freeze of v7 and v8 (the v4-v6 golden above is untouched). Capture mode writes tools/fixtures/terrain_v7_v8_freeze_golden.json once and never overwrites it;
+    /// normal mode compares. v8 entries additionally cover the Weather Lung site record and the shaped terrain around it.
+    /// </summary>
+    public int RunV8(bool capture)
+    {
+        var failures = new List<string>();
+        try
+        {
+            string path = ProjectSettings.GlobalizePath(GoldenPathV8);
+            if (capture && File.Exists(path)) { GD.PrintErr("FREEZE_V8_FAIL refusing to overwrite " + GoldenPathV8); return 1; }
+            SortedDictionary<string, string> actual = Capture(RecipeNamesV8);
+            if (capture)
+            {
+                File.WriteAllText(path, JsonSerializer.Serialize(new SortedDictionary<string, object> { ["format"] = "terrain_v7_v8_freeze_v1", ["entries"] = actual }, new JsonSerializerOptions { WriteIndented = true }) + "\n");
+                Console.WriteLine($"FREEZE_V8_CAPTURED entries={actual.Count} path={GoldenPathV8}");
+            }
+            else if (!File.Exists(path)) failures.Add("golden fixture missing: " + GoldenPathV8);
+            else
+            {
+                using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+                var expected = new SortedDictionary<string, string>(StringComparer.Ordinal);
+                foreach (JsonProperty p in doc.RootElement.GetProperty("entries").EnumerateObject()) expected[p.Name] = p.Value.GetString() ?? "";
+                foreach ((string key, string value) in expected)
+                {
+                    if (!actual.TryGetValue(key, out string? now)) failures.Add("missing entry " + key);
+                    else if (now != value) failures.Add($"mismatch {key}");
+                }
+                foreach (string key in actual.Keys) if (!expected.ContainsKey(key)) failures.Add("unexpected entry " + key);
+                Console.WriteLine($"FREEZE_V8_COMPARED entries={expected.Count} mismatches={failures.Count}");
+            }
+        }
+        catch (Exception exception) { failures.Add(exception.ToString()); }
+        foreach (string failure in failures) GD.PrintErr("FREEZE_V8_FAIL " + failure);
+        Console.WriteLine(failures.Count == 0 ? "TERRAIN_RECIPE_FREEZE_V8=PASS" : "TERRAIN_RECIPE_FREEZE_V8=FAIL failures=" + failures.Count);
+        return failures.Count == 0 ? 0 : 1;
+    }
+
     static TerrainGenerationParameters Recipe(string name, int seed) => name switch
     {
         "erosion_v4" => EmitterSiteTestWorlds.Gen17Recipe(seed),
         "sites_v5" => EmitterSiteTestWorlds.Gen17SitesRecipe(seed),
+        "landform_v7" => EmitterSiteTestWorlds.Gen17LandformRecipe(seed),
+        "weather_lung_v8" => EmitterSiteTestWorlds.Gen17WeatherLungRecipe(seed),
         _ => EmitterSiteTestWorlds.Gen17ClimateRecipe(seed),
     };
 
@@ -73,13 +117,17 @@ public partial class TerrainRecipeFreezeTest : RefCounted
     {
         "erosion_v4" => EmitterSiteTestWorlds.CreateGen17(seed),
         "sites_v5" => EmitterSiteTestWorlds.CreateGen17Sites(seed),
+        "landform_v7" => EmitterSiteTestWorlds.CreateGen17Landform(seed),
+        "weather_lung_v8" => EmitterSiteTestWorlds.CreateGen17WeatherLung(seed),
         _ => EmitterSiteTestWorlds.CreateGen17Climate(seed),
     };
 
-    static SortedDictionary<string, string> Capture()
+    static SortedDictionary<string, string> Capture() => Capture(RecipeNames);
+
+    static SortedDictionary<string, string> Capture(string[] recipeNames)
     {
         var entries = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        foreach (string name in RecipeNames)
+        foreach (string name in recipeNames)
             foreach (int seed in Seeds)
             {
                 string prefix = $"{name}/{seed}/";
@@ -103,6 +151,20 @@ public partial class TerrainRecipeFreezeTest : RefCounted
                     AppendDiagnostics(bytes, model.SampleDiagnostics(around, across));
                 }
                 entries[prefix + "diagnostics64"] = Sha(bytes.ToArray());
+                if (name == "weather_lung_v8")
+                {
+                    // Around the Weather Lung centre (basin, rim, skirt) the v8 output itself is frozen.
+                    using RingTerrainSampler lungSampler = Sampler(name, seed);
+                    WeatherLungSite lung = (lungSampler.WeatherLung ?? throw new InvalidOperationException("v8 sampler has no Weather Lung")).Site;
+                    entries[prefix + "wl_site"] = $"{lung.Around}/{lung.Across}/{lung.PadHeight}/{lung.YawDegrees}/{lung.SiteHash:X16}";
+                    entries[prefix + "wl_grid2m"] = Sha(FloatBytes(model.SampleGrid(lung.Around - 64d, lung.Across - 64d, GridSize, GridSize, 2d)));
+                    entries[prefix + "wl_grid512m"] = Sha(FloatBytes(model.SampleGrid(lung.Around - 16_384d, lung.Across - 16_384d, GridSize, GridSize, 512d)));
+                    var lungBytes = new List<byte>();
+                    var lungRng = new Random(seed ^ 0x1a2b);
+                    for (int i = 0; i < DiagnosticPoints; i++)
+                        AppendDiagnostics(lungBytes, model.SampleDiagnostics(lung.Around + (lungRng.NextDouble() - 0.5d) * 40_000d, lung.Across + (lungRng.NextDouble() - 0.5d) * 30_000d));
+                    entries[prefix + "wl_diagnostics64"] = Sha(lungBytes.ToArray());
+                }
             }
         return entries;
     }

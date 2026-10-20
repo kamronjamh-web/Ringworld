@@ -113,6 +113,13 @@ func _run() -> void:
 	for slider_name in ["MistDensity", "MistHeight", "AerosolHeight", "GroundAlbedo", "MultiScatter", "SkyTintR", "SkyTintG", "SkyTintB", "CloudShadowing", "StormHaze"]:
 		if _drawer.find_child("Atmosphere" + slider_name, true, false) as HSlider == null:
 			return _fail("physical haze slider missing: " + slider_name)
+	# POI haze / POI cloud shadows: general-section checkboxes (apply to both models), so they are outside the Physical group.
+	for check_name in ["AtmospherePoiHaze", "AtmospherePoiCloudShadow"]:
+		var poi_check := _drawer.find_child(check_name, true, false) as CheckButton
+		if poi_check == null or physical_group.is_ancestor_of(poi_check):
+			return _fail("%s missing or inside the Physical group" % check_name)
+	if not (_drawer.find_child("AtmospherePoiHaze", true, false) as CheckButton).button_pressed or (_drawer.find_child("AtmospherePoiCloudShadow", true, false) as CheckButton).button_pressed:
+		return _fail("POI haze must default on and POI cloud shadows off")
 	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("haze_quality", -1)) != 8 or not is_equal_approx(rayleigh.value, 1.0):
 		return _fail("physical haze controls do not default to the current effective values")
 	var cloud_shadowing := _drawer.find_child("AtmosphereCloudShadowing", true, false) as HSlider

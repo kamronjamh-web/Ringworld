@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture.gdshader" id="1_8p3e3"]
+
+[resource]
+resource_name = "Ceramic_Slate"
+render_priority = 0
+shader = ExtResource("1_8p3e3")
+shader_parameter/albedo_color = Color(0.5657284, 0.6342527, 0.6421665, 1)
+shader_parameter/metallic_value = 0.48
+shader_parameter/roughness_value = 0.44
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

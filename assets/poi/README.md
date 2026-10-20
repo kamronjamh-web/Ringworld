@@ -197,3 +197,114 @@ The main proxy build fails before saving if an expected source mesh is missing, 
 Notes: a merge run deletes all `merged/meshes/*.res` of that POI (including the far proxy), so re-run the build step afterwards. Godot writes new `.glb.import`
 files with default settings (root type empty, light baking on, animation import on); the POI ones were edited to the settings listed at the top before the first
 real import. A headless `--import` may delete the tracked `addons/terrain_3d/bin/~libterrain.ringworld.windows.debug.x86_64.dll`; restore it with `git show HEAD:<path> > <path>`.
+
+## Atmospheric haze (POI ShaderMaterial)
+
+All POI architecture materials (33 merged emitter / spire / reactor / main_reactor `.tres` and the 23 Weather Lung `built/materials`) are `ShaderMaterial`s on
+`materials/ring_poi_architecture.gdshader` (cull back, Weather Lung) or `ring_poi_architecture_double_sided.gdshader` (cull disabled, merged). The shader
+evaluates `ring_haze_sample` per fragment (POI triangles span km), `ALBEDO * T`, `SPECULAR * sqrt(mean T)`, `EMISSION * energy * T + inscatter`. Uniforms mirror
+StandardMaterial3D: `albedo_color`, `metallic_value`, `roughness_value`, `specular_value`, `emission_color`, `emission_energy`, plus `poi_haze_enabled` and
+`poi_cloud_shadow_enabled` (default off, stand-in AO style). With no ray frame (standalone test scenes) the haze is identity, so those scenes look exactly like the old StandardMaterial3D.
+
+- Runtime feed: `RingPoiHaze` (scripts/Atmosphere) registers POI-shader materials (`RegisterTree` from the streamers, `RegisterMaterial` for the stand-in and bore) and
+  publishes the camera ray frame from `_Process` (per-field gated, write counter `PoiAtmosphere`). Grave-key menu, Atmosphere tab: "POI haze" (default on) and
+  "POI cloud shadows" (default off); persisted as `AtmosphereVisualSettings.PoiHaze` / `PoiCloudShadow`.
+- Do not hand-edit the `.tres`: the build tools write them through `tools/poi/poi_material_util.gd` (`to_shader_material`, `strip_runtime_params`). Only the six surface
+  parameters are stored; atmosphere uniforms are runtime-owned. To (re)convert existing StandardMaterial3D files in place (idempotent, expects 56):
+  `godot --headless --path . --script res://tools/poi/convert_poi_materials.gd`.
+- Reading material values from C#: `PoiMaterialParams.TryGetSurface` / `SetEmissionEnergy` (works for both material kinds; shader defaults are used for unset parameters). The rig writes the
+  nozzle / heat glow through `emission_energy`.
+- Checks: `tools/poi_haze_gpu_test.gd` (windowed, `-- --model=physical` too), `tools/poi_haze_registry_test.gd` (headless). A/B captures: `emitter_capture_route.gd` and
+  `weather_lung_world_bind_test.gd` take `--poi-haze=on|off --haze-model=legacy|physical --poi-cloud-shadow=on|off --haze=on|off --settle=N`; the certified launcher preset can leave the master haze off, so the tools force it on.
+
+## Weather Lung
+
+The Weather Lung is the breathing weather station of the Central Station kit (`prototypes/Weather_Lung_Central_Station_Kit`, regenerated to round 3): a 28 x 18 km
+basin with an 8 km hood arch, five intake vanes with rams, a two-rotor turbine throat, two guide rings, sixteen gills, twenty-four heliostats and a basin-floor heat
+grid. It exists only in **new v8 worlds** (`ringworld_surface_weather_lung_v8`, launcher toggle "Weather Lung (v8)", default on, needs the hill-country landforms toggle).
+Terrain carving (basin, pad, forecourt) is a deterministic generator operator in `scripts/Terrain/Sites/WeatherLung*.cs`; the ring world's own water fills the basin
+because the datum (asset local Y 0) sits at sea level + 135 m, so the waterline (asset Y -135) is sea level. The kit's water GLB is not imported.
+
+### Layout
+
+```
+assets/poi/weather_lung/
+  source/                 31 GLBs + .import (sectors/, chunks/, modules/, Weather_Lung_Far_Proxy.glb) and weather_lung_manifest.json (copy of docs/asset_manifest.json)
+  built/materials/*.tres  one shared material per name (23); Heat_Exchanger_Glow x1 and Nozzle_Glow_00..11 are emissive, energy 0, driven by the controller
+  built/meshes/WL_*.res   structure, dressing tiles, moving pivots, far proxy
+  built/sectors/WeatherLungSector_XX.tscn   Structure + Dressing/Tile_<i>_<j>
+  built/arch/WeatherLungPiece_*.tscn        Arch pieces: Structure, Tiles_0..3 (dressing), Moving, and one collision body each (Arch_0..4, Sector_XX)
+  collision/*.res         ConcavePolygonShape3D of the Structure faces (12 sectors + 5 Arch parts of about 5,000 faces)
+  WeatherLungDetail.tscn  Sectors/ (12 sector scenes), Arch/ (Structure, Dressing/Tiles_k, Moving pieces), Collision/ (17 body pieces)
+  WeatherLungPOI.tscn     WeatherLungController root, FarProxy, Markers, empty DetailMount
+scenes/poi/WeatherLungTest.tscn   standalone look-dev / perf scene (scripts/poi/weather_lung_test.gd)
+```
+
+### Composition (no duplicate geometry)
+
+- **Static:** 12 x (`Sector_XX_Structure`, `Sector_XX_Dressing`) at the manifest `origin_godot_m`, plus the five chunk static batches (the `<Chunk>_Structure` / `_Dressing` nodes only) under `Arch` at (-10500, 340, 0).
+- **Moving:** the whole `modules/Weather_Lung_Intake_Vanes.glb` under `Arch/Moving`. The chunk GLBs duplicate the moving parts, so they are not used for them. Each pivot's direct meshes are merged into one mesh (one surface per material) in pivot space.
+- **Far proxy:** `Weather_Lung_Far_Proxy.glb` (19,212 tris).
+- **Not imported:** the combined sector GLBs, the Assembled GLB, the water GLB, the Animated GLB (the rig check reads it straight from `prototypes/`) and the `.blend` files.
+- Triangle totals reconcile with the manifest: structure 73,688 (53,588 sectors + 20,100 chunks), dressing 33,164 (22,320 sectors + 9,524 chunk statics + 1,320 ram parts that live inside the moving pivots), moving 8,188.
+
+### Ranges (HLOD) and streaming
+
+- `WeatherLungPOI.tscn` is small and resident once the world binds. `WeatherLungDetail.tscn` is threaded-loaded when the observer is within 36 km (never below detail range + 4 km), and released after the observer has stayed beyond 44 km for 2 s.
+- **Sliced attach.** Instantiating the whole Detail scene took 50-80 ms on the main thread (the 17 trimesh bodies alone about 40 ms: creating a `ConcavePolygonShape3D` body registers its mesh shape with the physics server). The Detail scene is therefore a shell that instances 35 piece scenes (12 sectors, Arch structure, 4 dressing groups, moving rig, 17 collision bodies), all loaded by the same threaded request. `WeatherLungStreamer` reads the loaded PackedScene state and assembles it hidden, one piece per step within a per-frame budget (`DetailAttachBudgetMs`, grave-key menu, default 4 ms, 1 to 16), then five controller stages (bind pivots, bind materials, cache tiles, apply ranges, pose) and the reveal. The FarProxy is held visible at every distance (range begin 0) until the last step, then gets its range back and Detail becomes visible; collision gating and the rig only start after that. A disable or unload mid-attach frees the partial scene and restores the proxy range. In a real v8 world the attach takes 10-11 frames with a worst frame of 5.7-6.8 ms (a step can overshoot the budget by its own cost, at most about 4 ms).
+- **HLOD:** the controller sets `Detail.visibility_parent` to `FarProxy` (begin 28 km, margin 2 km, fade self, no shadow, end 700 km), so Detail shows only while the proxy is hidden, measured from one point.
+- **Structure and Moving have no range end.** This deliberately deviates from the manifest's moving 0-8 km: each gill plate replaces a hood armor plate, so hiding "moving" geometry at 8 km would open 16 holes, and the 380 m heliostat mirrors and 3-8 km rotors would pop. Animation is throttled instead (every frame within 8 km, 10 Hz to 28 km, nothing beyond or while Detail is hidden).
+- **Dressing** is re-binned at build time into 1 km POI-local tiles (one mesh per sector and tile, 404 tiles) with range end 2 km, margin 250 m. Godot measures visibility range to the instance AABB centre, so a sector-sized mesh would never satisfy a 2 km range near its edges.
+- **Collision:** structure only (walls and floors), one body per sector plus Arch, `ProcessMode` disabled until the observer is within 3 km of the body bounds (off again 500 m farther). No collision on moving parts or dressing. The galleries are not traversal-certified.
+
+### Rig metadata (`wl_*`, written by `build_weather_lung.gd`)
+
+Every pivot under `Arch/Moving` carries `wl_kind` (vane, ramcyl, ramrod, rotor, ring, gill, heliostat), `wl_index`, `wl_axis` (Godot space), `wl_rest_angle` (signed, about the axis; the rod has `wl_rest_x`),
+`wl_tris_moving` and `wl_tris_dressing`. Heliostats add `wl_track_angle`, `wl_row`, `wl_col`; RamCyl adds `wl_pin`, `wl_base`, `wl_vane_pos`, `wl_l0`. Axes: vane and RamCyl (0,0,-1);
+rings normalize(4475,-2300,0); rotors and gills from the GLB extras `spin_axis_blender` / `hinge_axis_blender` converted (x, z, -y); heliostats from the rest quaternion. The extras are read from the GLB JSON chunk,
+not from importer metadata. `WeatherLungRig` writes ABSOLUTE poses (see the rest-pose finding below).
+
+### Findings that differ from the kit README
+
+- **Rest pose.** The static GLBs are NOT the closed phase-0 pose and the heliostats are exported tracking, not stowed. The rest pose is breath phase -1/240 (the frame before frame 1) with ripple lag 0.012: vane rest angles 0 to 0.016 rad, guide ring A -1.5 deg, rotor A about -4.5 deg about its stored axis, heliostats at their tracking angle. The controller therefore never treats the GLB pose as zero.
+- **Animated GLB.** The baked tracks run 301 keys at 30 keys/s over 10 s, stepped from the 24 fps timeline (frame 1 = t 0; the first two keys hold 0 instead of wrapping to phase -1/240). The fitted offset is exactly -1 frame with lag 0.012, and there are no heliostat tracks (they follow `sun_available`).
+- **Ram kinematics (corrects the integration plan, K8).** The pin A is the `Vane_ram_pin_XX` AABB centre in vane-pivot space and B the RamCyl translation. With the vane rotating about -Z by th, rel = P + R(-Z, th) A - B; the cylinder rotates about -Z by atan2(-rel.y, rel.x), and the rod extends by the **in-plane** length |rel_xy| - L0 (L0 = the in-plane length at th = 0, per ram). A 3D length is 0.11 m off the bake; the in-plane one is within 0.35 mm.
+- **INDEPENDENT_QA.md** in the kit predates rounds 2-3 (it reports 24,872 triangles, -95 m foundations and a 7,332-triangle proxy; the current kit has 115,040, -870 m and 19,212). `verify_weather_lung.gd` is the validation of the current exports.
+
+### Placement (revised: any across, ocean platforms allowed)
+
+A deterministic scored 2D search over the station gaps around the main row (several along-gap offsets x several across positions over the usable ring width) picks the site; candidates overlapping an emitter site, a Wall Engine band or the main spire knot links are rejected, and the lowest score wins.
+Seed 1337: station 81, **around 25,820,550 m, across 165,400 m, datum 135 m, yaw 180 deg**, a Coast site with a quay and a plinth of at most 285 m, 257 km from the main spire (fresh worlds spawn 40 km from the main spire, so 217 km from the station).
+Yaw 180 puts the hood (asset -X) prograde, away from the main spire, so visitors arrive over the dam end looking into the intake. Asset local +X maps to (around, across) = (cos yaw, sin yaw) and asset local +Z (Godot) to (sin yaw, -cos yaw); the root transform is
+`EmitterSiteFrameContext.SiteTransform(Around, Across, PadHeight + 0.05, CosYaw, SinYaw)`, recomputed absolutely on every floating-origin change. Terrain at the pad is PadHeight - du^2/2R so the flat POI tangent plane meets the curved ring.
+
+### Runtime
+
+`WeatherLungStreamer` (node `WeatherLung` in `VoxelRingIntegrationTest.tscn`) binds when `TerrainSampler.WeatherLung` is non-null (v8); otherwise it is Unavailable and does nothing. `WeatherLungController` (root of the POI scene) owns the breath phase
+(the saved weather clock, `RingVolumetricClouds.CloudSimulationTimeSeconds`, when bound), the sun state (`RingAtmosphereModel.LocalHazeDay`), the rig and the shared nozzle / heat materials. `WeatherLungBreathMath` holds the kit formulas exactly
+(vane `rad(amp)(0.5 - 0.5 cos 2pi(p - lag i))`, gill `sin^2` window of 0.38 cycle from 0.5 + lag x column, turbine `2pi revs (p + 0.5 (1 - cos 2pi p)/2pi)` with revs = max(1, round(rpm/1.5 x cycle/60)), ring `2pi p`, nozzle and heat grid glows, heliostat `pi + (th1 - pi) smoothstep(sun)`).
+`IWeatherLungWeatherSource` is the data-only hook for a future cloud plume (the SunshineClouds-side constraints are documented there). All settings are in the grave-key menu (Surface terrain tab, "Weather Lung") and persist in `user://gameplay_weather_lung_defaults.tres`; the section includes teleports (dam crest, intake overlook, far 40 km) to the actual site and a status line with the placement.
+
+### Test scene
+
+`scenes/poi/WeatherLungTest.tscn`: keys 1-6 bookmarks (dam crest, basin under the hood, turbine throat, gill close-up, 12 km, 40 km handoff), N sun mode (Auto/Day/Night), T time x1/x10/x60, F freeze, `[` `]` scrub phase, H dressing, C collision debug lines, W test-only water plane (`TestWaterPlaceholder`).
+Command line after `--`: `--bookmark=N --warmup=F --measure=F --capture=PATH --sun=day|night --phase=P`. The bookmark framings are provisional; tune them against captures.
+
+### Regenerating and verifying
+
+From the repo root with the pinned engine (never run Godot while the editor is open; a new GLB copied into an open editor is imported immediately with default settings):
+
+```
+godot --headless --path . --import
+godot --headless --path . --script res://tools/poi/build_weather_lung.gd [-- all|detail|proxy|collision|test]
+godot --headless --path . --script res://tools/poi/verify_weather_lung.gd           # triangle totals, 59 pivots, materials, ranges, collision; WEATHER_LUNG_VERIFY=PASS
+godot --headless --path . --script res://tools/poi/verify_weather_lung.gd -- rig    # C# rig vs the kit baked animation; WEATHER_LUNG_RIG=PASS
+godot --headless --path . --script res://tools/weather_lung_breath_math_test.gd
+godot --headless --path . --script res://tools/weather_lung_streamer_test.gd
+godot --headless --path . --script res://tools/weather_lung_settings_smoke.gd
+godot --headless --path . --script res://tools/weather_lung_world_bind_test.gd      # real v8 world: bind, placement, dam crest teleport, detail attach, animation
+```
+
+`build_weather_lung.gd -- all` also attaches `scripts/poi/WeatherLung/WeatherLungController.cs` to the POI root when it exists and the C# project is built (run `dotnet build RingworldTechDemo.csproj -p:NuGetAudit=false -v:minimal` first). Detail and the `WL_*` meshes are regenerated by every `detail` / `all` run; do not hand-edit them.
+`verify_weather_lung.gd` escalates (prints ESCALATE) above 450 dressing tiles, above 15 ms warm Detail instantiate and above 40 ms cold. Latest results: 12 sector origins within 1e-3 m; structure 73,688, dressing 33,164, moving 8,188; 59 pivots; 23 materials with one instance each; 17 collision bodies with 73,688 faces;
+Detail 607 nodes, 404 tiles, about 3 ms warm / 30 ms cold when instantiated in one go (verify only; the runtime attaches it in slices); rig check max error 0.0007 to 0.001 rad per channel and 0.013 m for the rods at a -1 frame fit (the bake's own 30 keys/s quantisation).

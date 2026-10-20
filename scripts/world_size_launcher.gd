@@ -77,6 +77,8 @@ var designed_caves_toggle: CheckBox
 var climate_machines_toggle: CheckBox
 var landforms_toggle: CheckBox
 var _landforms_was_available := false
+var weather_lung_toggle: CheckBox
+var _weather_lung_was_available := false
 var terrain_backend_selector: OptionButton
 var advanced_popup: PopupPanel
 var advanced_summary_label: Label
@@ -504,6 +506,12 @@ func _build_advanced_menu() -> void:
 		_landforms_default(),
 		"New Terrain3D runtime generation worlds use the ringworld_surface_landform_v7 recipe: rolling hill country, plateaus and gullies across the lowlands. On by default; turn off for the v5/v6 terrain. Combines with the climate machines toggle. Existing worlds keep their frozen recipe."
 	)
+	weather_lung_toggle = _add_checkbox_row(
+		knobs_grid,
+		"Weather Lung (v8)",
+		_weather_lung_default(),
+		"New Terrain3D runtime generation worlds use the ringworld_surface_weather_lung_v8 recipe: the v7 terrain plus the Weather Lung, a 28 x 18 km flat pad holding a sea-level basin, at a deterministic site near the main spire. On by default; needs the hill-country landforms toggle. Existing worlds keep their frozen recipe."
+	)
 	var backend_label := Label.new()
 	backend_label.text = "Surface terrain backend\nSurface edits and player state save separately. Caves later."
 	backend_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -520,6 +528,8 @@ func _build_advanced_menu() -> void:
 	designed_caves_toggle.toggled.connect(_on_knob_changed)
 	climate_machines_toggle.toggled.connect(_on_knob_changed)
 	landforms_toggle.toggled.connect(_on_knob_changed)
+	landforms_toggle.toggled.connect(_on_landforms_toggled)
+	weather_lung_toggle.toggled.connect(_on_knob_changed)
 	terrain_backend_selector.item_selected.connect(_on_terrain_backend_selected)
 
 	for spin in [
@@ -926,7 +936,7 @@ func _refresh_backend_selector(certified: bool) -> void:
 		climate_machines_toggle.disabled = not climate_available
 		if runtime_existing:
 			var stored_recipe_json := str(_get_selected_slot_settings().get("surface_generation_recipe_json", ""))
-			climate_machines_toggle.set_pressed_no_signal(stored_recipe_json.contains(SURFACE_RECIPE.CLIMATE_GENERATOR_ID) or (stored_recipe_json.contains(SURFACE_RECIPE.LANDFORM_GENERATOR_ID) and stored_recipe_json.contains("\"climate_machines\":1")))
+			climate_machines_toggle.set_pressed_no_signal(stored_recipe_json.contains(SURFACE_RECIPE.CLIMATE_GENERATOR_ID) or ((stored_recipe_json.contains(SURFACE_RECIPE.LANDFORM_GENERATOR_ID) or stored_recipe_json.contains(SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID)) and stored_recipe_json.contains("\"climate_machines\":1")))
 		elif not climate_available:
 			climate_machines_toggle.set_pressed_no_signal(false)
 	if landforms_toggle != null:
@@ -934,12 +944,35 @@ func _refresh_backend_selector(certified: bool) -> void:
 		var landforms_available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing
 		landforms_toggle.disabled = not landforms_available
 		if runtime_existing:
-			landforms_toggle.set_pressed_no_signal(str(_get_selected_slot_settings().get("surface_generation_recipe_json", "")).contains(SURFACE_RECIPE.LANDFORM_GENERATOR_ID))
+			var stored_landform_json := str(_get_selected_slot_settings().get("surface_generation_recipe_json", ""))
+			landforms_toggle.set_pressed_no_signal(stored_landform_json.contains(SURFACE_RECIPE.LANDFORM_GENERATOR_ID) or stored_landform_json.contains(SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID))
 		elif not landforms_available:
 			landforms_toggle.set_pressed_no_signal(false)
 		elif not _landforms_was_available:
 			landforms_toggle.set_pressed_no_signal(_landforms_default())
 		_landforms_was_available = landforms_available
+	_refresh_weather_lung_toggle()
+
+
+## Weather Lung (v8) toggle state. Like the landforms toggle, only a NEW runtime-generation world chooses it; it additionally needs the landforms toggle ON.
+## Existing slots display their frozen stored recipe. Becoming available again restores the project-setting default.
+func _refresh_weather_lung_toggle() -> void:
+	if weather_lung_toggle == null:
+		return
+	var runtime_existing := selected_slot_has_saved_settings and _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
+	var available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing and landforms_toggle != null and landforms_toggle.button_pressed
+	weather_lung_toggle.disabled = not available
+	if runtime_existing:
+		weather_lung_toggle.set_pressed_no_signal(str(_get_selected_slot_settings().get("surface_generation_recipe_json", "")).contains(SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID))
+	elif not available:
+		weather_lung_toggle.set_pressed_no_signal(false)
+	elif not _weather_lung_was_available:
+		weather_lung_toggle.set_pressed_no_signal(_weather_lung_default())
+	_weather_lung_was_available = available
+
+
+func _on_landforms_toggled(_pressed: bool) -> void:
+	_refresh_weather_lung_toggle()
 
 
 func _matches_certified_dimensions(radius_km: float, width_km: float, floor_y: int, ceiling_y: int, depth_km: float, allow_runtime_surface_ceiling: bool = false) -> bool:
@@ -1411,13 +1444,14 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 	# v6 (climate machines) is opt-in for new worlds: the launcher toggle (default OFF) is authoritative, so a previewed v6 recipe is created as v5 while it is off. Same field set as v5.
 	var want_climate := climate_machines_toggle != null and climate_machines_toggle.button_pressed
 	var want_landforms := landforms_toggle != null and landforms_toggle.button_pressed
-	if want_landforms and str(recipe.get("generator_id")) in [SURFACE_RECIPE.SITES_GENERATOR_ID, SURFACE_RECIPE.CLIMATE_GENERATOR_ID, SURFACE_RECIPE.LANDFORM_GENERATOR_ID]:
-		# v7 hill-country landforms: any v4-v7 preview recipe is created as v7; climate machines come from the climate toggle via the climate_machines field. The v7 fields keep the previewed (or default) values.
-		recipe.set("generator_id", SURFACE_RECIPE.LANDFORM_GENERATOR_ID)
+	var want_weather_lung := want_landforms and weather_lung_toggle != null and weather_lung_toggle.button_pressed
+	if want_landforms and str(recipe.get("generator_id")) in [SURFACE_RECIPE.SITES_GENERATOR_ID, SURFACE_RECIPE.CLIMATE_GENERATOR_ID, SURFACE_RECIPE.LANDFORM_GENERATOR_ID, SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID]:
+		# v7 hill-country landforms: any v4-v8 preview recipe is created as v7, or as v8 (v7 plus the Weather Lung basin) while the Weather Lung toggle is on; climate machines come from the climate toggle via the climate_machines field. The v7 fields keep the previewed (or default) values.
+		recipe.set("generator_id", SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID if want_weather_lung else SURFACE_RECIPE.LANDFORM_GENERATOR_ID)
 		recipe.set("climate_machines", int(want_climate))
 	elif not want_landforms:
-		# Opt-out: a v7 preview recipe is created as v5/v6 (the id-driven dictionary drops the v7 fields).
-		if str(recipe.get("generator_id")) == SURFACE_RECIPE.LANDFORM_GENERATOR_ID:
+		# Opt-out: a v7/v8 preview recipe is created as v5/v6 (the id-driven dictionary drops the v7 fields).
+		if str(recipe.get("generator_id")) == SURFACE_RECIPE.LANDFORM_GENERATOR_ID or str(recipe.get("generator_id")) == SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID:
 			recipe.set("generator_id", SURFACE_RECIPE.SITES_GENERATOR_ID)
 		if want_climate and str(recipe.get("generator_id")) == SURFACE_RECIPE.SITES_GENERATOR_ID:
 			recipe.set("generator_id", SURFACE_RECIPE.CLIMATE_GENERATOR_ID)
@@ -1437,6 +1471,11 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 ## New-world default for the v7 landforms toggle; harnesses pin v6 by setting this project setting to false.
 func _landforms_default() -> bool:
 	return bool(ProjectSettings.get_setting("ringworld/runtime/surface_landforms_v7", true))
+
+
+## New-world default for the Weather Lung (v8) toggle; harnesses that need exact v7 terrain pin it by setting this project setting to false (they usually disable landforms too, which disables it).
+func _weather_lung_default() -> bool:
+	return bool(ProjectSettings.get_setting("ringworld/runtime/surface_weather_lung_v8", true))
 
 
 func _reject_runtime_surface_launch(message: String) -> bool:

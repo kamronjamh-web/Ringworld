@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Globalization;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Core;
@@ -117,6 +118,7 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         }
         if (!_grid.GlobalTransform.IsEqualApprox(_lastGridGlobal) || !GlobalTransform.IsEqualApprox(_lastLayerGlobal))
             Rebuild(_grid.CaptureLodGeometrySnapshot());
+        RingPoiHaze.Tick(this, _grid, _sun);
         UpdateUniforms();
     }
 
@@ -166,12 +168,17 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         // Crown glow band (phase E4e): the top CrownGlowBandFraction of the mesh height, in mesh-local Y (the spire's up axis).
         material.SetShaderParameter("crown_glow_band", new Vector2(bounds.End.Y - bounds.Size.Y * CrownGlowBandFraction, bounds.End.Y - bounds.Size.Y * 0.01f));
         material.SetShaderParameter("crown_glow_emission", _crownGlowEmission);
-        var surface = mesh.GetSurfaceCount() > 0 ? mesh.SurfaceGetMaterial(0) as BaseMaterial3D : null;
-        Color albedo = surface?.AlbedoColor ?? new Color(0.18f, 0.23f, 0.28f);
+        // Far-proxy surface 0 is a StandardMaterial3D or (converted assets/poi) a POI ShaderMaterial; PoiMaterialParams reads either.
+        Color albedo = new Color(0.18f, 0.23f, 0.28f);
+        float metallic = 0.72f, roughness = 0.48f;
+        if (mesh.GetSurfaceCount() > 0 && PoiMaterialParams.TryGetSurface(mesh.SurfaceGetMaterial(0), out Color surfaceAlbedo, out float surfaceMetallic, out float surfaceRoughness, out _))
+        {
+            albedo = surfaceAlbedo; metallic = surfaceMetallic; roughness = surfaceRoughness;
+        }
         material.SetShaderParameter("albedo_color", new Vector3(albedo.R, albedo.G, albedo.B));
-        material.SetShaderParameter("metallic_value", surface?.Metallic ?? 0.72f);
-        material.SetShaderParameter("roughness_value", surface?.Roughness ?? 0.48f);
-        RingAtmosphereModel.ConfigureMaterial(material, ringRadius);
+        material.SetShaderParameter("metallic_value", metallic);
+        material.SetShaderParameter("roughness_value", roughness);
+        RingPoiHaze.RegisterMaterial(material, ringRadius);  // ConfigureMaterial + the camera ray frame (previously never bound, so Physical fell back to the legacy cylinder)
         global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
         return material;
     }
@@ -201,6 +208,7 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
     {
         _ = previous; _ = anchor;
         Rebuild(current);
+        RingPoiHaze.Tick(this, _grid, _sun, true);
     }
 
     /// <summary>Recomputes every instance transform from <paramref name="snapshot"/> (layer-local, absolute, never a delta).</summary>

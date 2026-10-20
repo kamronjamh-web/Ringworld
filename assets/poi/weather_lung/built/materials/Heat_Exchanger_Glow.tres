@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture.gdshader" id="1_6wurh"]
+
+[resource]
+resource_name = "Heat_Exchanger_Glow"
+render_priority = 0
+shader = ExtResource("1_6wurh")
+shader_parameter/albedo_color = Color(1, 0.6799757, 0.38109186, 1)
+shader_parameter/metallic_value = 0.2
+shader_parameter/roughness_value = 0.4
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(1, 0.42, 0.12, 1)
+shader_parameter/emission_energy = 0.0

@@ -1,0 +1,20 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Gills_Structure.res" id="1_odkbb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Hood_Shell_Structure.res" id="2_uvyb3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Nozzle_Guide_Structure.res" id="3_ksye2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Throat_Compressor_Structure.res" id="4_ljulk"]
+
+[node name="Structure" type="Node3D" unique_id=668190266]
+
+[node name="Gills" type="MeshInstance3D" parent="." unique_id=1766563171]
+mesh = ExtResource("1_odkbb")
+
+[node name="Hood_Shell" type="MeshInstance3D" parent="." unique_id=496166274]
+mesh = ExtResource("2_uvyb3")
+
+[node name="Nozzle_Guide" type="MeshInstance3D" parent="." unique_id=1888188280]
+mesh = ExtResource("3_ksye2")
+
+[node name="Throat_Compressor" type="MeshInstance3D" parent="." unique_id=952471632]
+mesh = ExtResource("4_ljulk")

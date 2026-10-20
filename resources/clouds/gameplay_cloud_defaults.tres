@@ -1,9 +1,9 @@
 [gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_cxv5o"]
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_d41de"]
 
 [resource]
-script = ExtResource("1_cxv5o")
+script = ExtResource("1_d41de")
 Overrides = {
 "AnvilRadiusMultiplier": 2.7,
 "AutomaticCloudHandoff": true,
@@ -19,7 +19,7 @@ Overrides = {
 "CloudInterleave": 1,
 "CloudLodBias": 1.65,
 "CloudRenderingEnabled": true,
-"CloudResolutionJitter": true,
+"CloudResolutionJitter": false,
 "CloudResolutionScale": 0,
 "CloudSharpness": 0.0,
 "CloudWindMultiplier": 3.0,
@@ -34,9 +34,10 @@ Overrides = {
 "GpuFarShadowMapResolution": 128,
 "GpuFarShadowRadiusMeters": 100000.0,
 "GpuFarShadowUpdatesPerSecond": 2.5,
-"GpuNearShadowMapResolution": 1024,
+"GpuNearShadowMapResolution": 512,
 "GpuNearShadowRadiusMeters": 40000.0,
-"GpuNearShadowUpdatesPerSecond": 10.0,
+"GpuNearShadowSliceCount": 4,
+"GpuNearShadowUpdatesPerSecond": 5.0,
 "GpuShadowVerticalSamples": 24,
 "HandoffEndMeters": 320500.0,
 "HandoffStartMeters": 320000.0,

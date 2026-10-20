@@ -135,6 +135,7 @@ public partial class RingLiveTuningDrawer
         BuildEmitterPoiStreamerSection(tab);
         BuildEmitterBoreSection(tab);
         BuildEmitterGridSection(tab);
+        BuildWeatherLungSection(tab);
         var save = new Button { Text = "Save surface edits" };
         save.Pressed += SaveSurfaceTerrainGameplay;
         tab.AddChild(save);
@@ -360,7 +361,8 @@ public partial class RingLiveTuningDrawer
 			if (parsed.VariantType == Variant.Type.Dictionary)
 				recipeId = parsed.AsGodotDictionary().TryGetValue("generator_id", out Variant idValue) ? idValue.AsString() : "";
 		}
-		string recipeStyle = recipeId == "ringworld_surface_landform_v7" ? "landform v7"
+		string recipeStyle = recipeId == "ringworld_surface_weather_lung_v8" ? "weather lung v8"
+			: recipeId == "ringworld_surface_landform_v7" ? "landform v7"
 			: recipeId == "ringworld_surface_climate_v6" ? "climate machines v6"
 			: recipeId == "ringworld_surface_sites_v5" ? "emitter sites v5"
 			: recipeId == "ringworld_surface_erosion_v4" ? "enhanced erosion v4"

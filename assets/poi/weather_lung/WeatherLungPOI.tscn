@@ -1,0 +1,39 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/poi/WeatherLung/WeatherLungController.cs" id="1_hglnf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_FarProxy.res" id="2_fpkts"]
+
+[node name="WeatherLungPOI" type="Node3D" unique_id=873453499]
+script = ExtResource("1_hglnf")
+
+[node name="FarProxy" type="MeshInstance3D" parent="." unique_id=36764821]
+cast_shadow = 0
+visibility_range_begin = 28000.0
+visibility_range_begin_margin = 2000.0
+visibility_range_end = 700000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("2_fpkts")
+
+[node name="Markers" type="Node3D" parent="." unique_id=163369819]
+
+[node name="Datum" type="Marker3D" parent="Markers" unique_id=1685948216]
+
+[node name="BasinCentre" type="Marker3D" parent="Markers" unique_id=218194440]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -800, 0)
+
+[node name="Waterline" type="Marker3D" parent="Markers" unique_id=368219105]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -135, 0)
+
+[node name="PlumeNozzle" type="Marker3D" parent="Markers" unique_id=579139809]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -9124.702, 2167.9705, 0)
+
+[node name="PlumeCrest" type="Marker3D" parent="Markers" unique_id=1125013561]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10009.092, 4834.9644, 0)
+
+[node name="DamCrest" type="Marker3D" parent="Markers" unique_id=453215832]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7854.198, 655.30176, 3439.502)
+
+[node name="IntakeOverlook" type="Marker3D" parent="Markers" unique_id=1743268661]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7000, 150, 0)
+
+[node name="DetailMount" type="Node3D" parent="." unique_id=1146197439]

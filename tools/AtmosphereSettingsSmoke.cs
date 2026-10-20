@@ -250,12 +250,35 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         bool vhOldFile = vhLine && vhOld.Settings.VegetationInstanceHaze && RingworldTechDemo.Atmosphere.RingVegetationHaze.Enabled;
         vhOld.Reset();
         bool vegetationInstanceHaze = vhDefault && vhApplied && vhPersisted && vhOldFile;
-        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing && stormHaze && enclosedCloudFog && skyHazeLut && vegetationInstanceHaze;
+        // POI haze toggle (default on) and POI cloud shadows (default off): applied to RingPoiHaze, persisted when changed, old files load the defaults.
+        var ph = new AtmosphereVisualDefaults(isolatedPath);
+        ph.Reset();
+        bool phDefault = ph.Settings.PoiHaze && RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled && !ph.Settings.PoiCloudShadow && !RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
+        ph.SetPoiHaze(false);
+        ph.SetPoiCloudShadow(true);
+        bool phApplied = !RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled && RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
+        bool phSaved = ph.Save();
+        var phReload = new AtmosphereVisualDefaults(isolatedPath);
+        phReload.Initialize();
+        bool phPersisted = phSaved && !phReload.Settings.PoiHaze && phReload.Settings.PoiCloudShadow
+            && !RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled && RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
+        string phPath = ProjectSettings.GlobalizePath(isolatedPath);
+        string phText = System.IO.File.ReadAllText(phPath);
+        string phStripped = string.Join('\n', System.Array.FindAll(phText.Split('\n'), line => !line.StartsWith("PoiHaze") && !line.StartsWith("PoiCloudShadow")));
+        bool phLine = phStripped.Length < phText.Length;
+        System.IO.File.WriteAllText(phPath, phStripped);
+        var phOld = new AtmosphereVisualDefaults(isolatedPath);
+        phOld.Initialize();
+        bool phOldFile = phLine && phOld.Settings.PoiHaze && RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled
+            && !phOld.Settings.PoiCloudShadow && !RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
+        phOld.Reset();
+        bool poiHaze = phDefault && phApplied && phPersisted && phOldFile;
+        bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing && stormHaze && enclosedCloudFog && skyHazeLut && vegetationInstanceHaze && poiHaze;
         // Restore the persisted/default profile for callers that run this smoke
         // in-process before constructing a second world.
         RingAtmosphereModel.Enabled = true;
         reload.Reset();
         bool contracts = naturalContract && cinematicContract && zeroDensityContract && disabledContract && hazeToggle && hazeBrightness && physicalControls;
-        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing} stormHaze={stormHaze} enclosedCloudFog={enclosedCloudFog} skyHazeLut={skyHazeLut} vegetationInstanceHaze={vegetationInstanceHaze}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
+        return new Godot.Collections.Dictionary { ["passed"] = finite && saved && persisted && reset && contracts, ["haze_toggle"] = hazeToggle, ["haze_brightness"] = hazeBrightness, ["physical_controls"] = physicalControls, ["p4_detail"] = $"defaults={p4Defaults} applied={p4Applied} composes={p4Composes} persisted={p4Persisted} clamped={p4Clamped} oldFile={p4OldFile} reset={p4Reset} contract={p4Contract} cloudShadowing={cloudShadowing} stormHaze={stormHaze} enclosedCloudFog={enclosedCloudFog} skyHazeLut={skyHazeLut} vegetationInstanceHaze={vegetationInstanceHaze} poiHaze={poiHaze}", ["haze_physical"] = hazePhysical, ["haze_persisted"] = hazePersisted, ["old_file_loads"] = oldFileLoads, ["finite"] = finite, ["saved"] = saved, ["persisted"] = persisted, ["reset"] = reset, ["natural_contract"] = naturalContract, ["cinematic_contract"] = cinematicContract, ["zero_density_contract"] = zeroDensityContract, ["disabled_contract"] = disabledContract };
     }
 }

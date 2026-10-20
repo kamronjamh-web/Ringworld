@@ -1,0 +1,172 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_0.res" id="1_y2txm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_1.res" id="2_v5lfd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_2.res" id="3_sm5eg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_3.res" id="4_w6k72"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_5.res" id="5_gkhoe"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_6.res" id="6_t7bhg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n9_7.res" id="7_av3nu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_n8.res" id="8_3x3wp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_n7.res" id="9_gy6gv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_n6.res" id="10_0j61d"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_n3.res" id="11_8nyel"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_n2.res" id="12_k7rsr"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_n1.res" id="13_cdbxv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_0.res" id="14_i0qkt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_1.res" id="15_nl5bi"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_2.res" id="16_1xuvg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_3.res" id="17_fnvun"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_5.res" id="18_xpgdm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_6.res" id="19_hr4a2"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n8_7.res" id="20_vaq28"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n7_n8.res" id="21_sy6kf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n7_n7.res" id="22_cp4a0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n7_6.res" id="23_1fufe"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/weather_lung/built/meshes/WL_Arch_Dressing_n7_7.res" id="24_w3qr5"]
+
+[node name="Tiles_3" type="Node3D" unique_id=1209495338]
+
+[node name="Tile_n9_0" type="MeshInstance3D" parent="." unique_id=1189933169]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("1_y2txm")
+
+[node name="Tile_n9_1" type="MeshInstance3D" parent="." unique_id=674708776]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("2_v5lfd")
+
+[node name="Tile_n9_2" type="MeshInstance3D" parent="." unique_id=1649605339]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("3_sm5eg")
+
+[node name="Tile_n9_3" type="MeshInstance3D" parent="." unique_id=1358544589]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("4_w6k72")
+
+[node name="Tile_n9_5" type="MeshInstance3D" parent="." unique_id=446366320]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("5_gkhoe")
+
+[node name="Tile_n9_6" type="MeshInstance3D" parent="." unique_id=1865901333]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("6_t7bhg")
+
+[node name="Tile_n9_7" type="MeshInstance3D" parent="." unique_id=1331437652]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("7_av3nu")
+
+[node name="Tile_n8_n8" type="MeshInstance3D" parent="." unique_id=1797027415]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("8_3x3wp")
+
+[node name="Tile_n8_n7" type="MeshInstance3D" parent="." unique_id=1873303934]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("9_gy6gv")
+
+[node name="Tile_n8_n6" type="MeshInstance3D" parent="." unique_id=1467505274]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("10_0j61d")
+
+[node name="Tile_n8_n3" type="MeshInstance3D" parent="." unique_id=613727750]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("11_8nyel")
+
+[node name="Tile_n8_n2" type="MeshInstance3D" parent="." unique_id=1197617424]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("12_k7rsr")
+
+[node name="Tile_n8_n1" type="MeshInstance3D" parent="." unique_id=1492857484]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("13_cdbxv")
+
+[node name="Tile_n8_0" type="MeshInstance3D" parent="." unique_id=1445477299]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("14_i0qkt")
+
+[node name="Tile_n8_1" type="MeshInstance3D" parent="." unique_id=1601634008]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("15_nl5bi")
+
+[node name="Tile_n8_2" type="MeshInstance3D" parent="." unique_id=257248581]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("16_1xuvg")
+
+[node name="Tile_n8_3" type="MeshInstance3D" parent="." unique_id=989312280]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("17_fnvun")
+
+[node name="Tile_n8_5" type="MeshInstance3D" parent="." unique_id=340474519]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("18_xpgdm")
+
+[node name="Tile_n8_6" type="MeshInstance3D" parent="." unique_id=321782873]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("19_hr4a2")
+
+[node name="Tile_n8_7" type="MeshInstance3D" parent="." unique_id=1852601400]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("20_vaq28")
+
+[node name="Tile_n7_n8" type="MeshInstance3D" parent="." unique_id=1398404588]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("21_sy6kf")
+
+[node name="Tile_n7_n7" type="MeshInstance3D" parent="." unique_id=1939635944]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("22_cp4a0")
+
+[node name="Tile_n7_6" type="MeshInstance3D" parent="." unique_id=775048042]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("23_1fufe")
+
+[node name="Tile_n7_7" type="MeshInstance3D" parent="." unique_id=560114247]
+visibility_range_end = 2000.0
+visibility_range_end_margin = 250.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("24_w3qr5")

@@ -629,7 +629,7 @@ public partial class RingBiomeDecorationLayer
 			MaximumSlopeDegrees,
 			UseRegionalImportedForest);
 		string definition = FormattableString.Invariant(
-			$"v{VegetationDiskCacheVersion}|g{sampler.TerrainGeneratorVersion}|seed{sampler.Seed}|h{sampler.TerrainDefinitionHash:X16}|s{settings:X16}{(sampler.EmitterSites != null ? "|es1" : "")}{(sampler.ClimateMachines != null ? "|cm1" : "")}");
+			$"v{VegetationDiskCacheVersion}|g{sampler.TerrainGeneratorVersion}|seed{sampler.Seed}|h{sampler.TerrainDefinitionHash:X16}|s{settings:X16}{(sampler.EmitterSites != null ? "|es1" : "")}{(sampler.ClimateMachines != null ? "|cm1" : "")}{(sampler.WeatherLung != null ? "|wl1" : "")}");
 		byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(definition));
 		string identity = Convert.ToHexString(digest.AsSpan(0, 12));
 		long shardAround = FloorDiv(key.Around, 64);

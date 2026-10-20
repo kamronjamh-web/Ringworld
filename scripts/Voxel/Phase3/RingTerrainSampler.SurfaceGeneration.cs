@@ -253,6 +253,14 @@ public sealed partial class RingTerrainSampler
                 hash = MixHash(hash, (ulong)Terrain.Sites.ClimateForecourtOperator.OperatorVersion);
                 hash = MixHash(hash, climate.Identity);
             }
+            if (sites.WeatherLung is { } weatherLung)
+            {
+                // v8 only, appended AFTER the climate terms so v5-v7 hashes are byte-identical: Weather Lung recipe, algorithm and operator versions and the placement identity.
+                hash = MixHash(hash, weatherLung.Recipe.Hash);
+                hash = MixHash(hash, (ulong)weatherLung.Recipe.AlgorithmVersion);
+                hash = MixHash(hash, (ulong)Terrain.Sites.WeatherLungBasinOperator.OperatorVersion);
+                hash = MixHash(hash, weatherLung.Identity);
+            }
         }
         foreach (char character in RuntimeSurfaceGenerationContractId)
             hash = MixHash(hash, character);

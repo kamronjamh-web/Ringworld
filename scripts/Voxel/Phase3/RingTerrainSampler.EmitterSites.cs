@@ -28,6 +28,16 @@ public sealed partial class RingTerrainSampler
     /// </summary>
     public ClimateMachineRegistry? ClimateMachines => _runtimeSurfaceModel?.EmitterSites?.Climate;
 
+    /// <summary>
+    /// Weather Lung placement of a gen-17 v8 world (null for every other recipe). Built once per definition from the UNSHAPED natural height and shared by
+    /// reference with every independent copy and worker model. The world streamer places the POI at <see cref="WeatherLungPlacement.Site"/> with
+    /// <c>EmitterSiteFrameContext.SiteTransform(Around, Across, PadHeight + clearance, CosYaw, SinYaw)</c>.
+    /// </summary>
+    public WeatherLungPlacement? WeatherLung => _runtimeSurfaceModel?.EmitterSites?.WeatherLung;
+
+    /// <summary>Basin operator matching <see cref="WeatherLung"/> (null unless v8).</summary>
+    public WeatherLungBasinOperator? WeatherLungOperator => _runtimeSurfaceModel?.EmitterSites?.WeatherLungOperator;
+
     /// <summary>Forecourt operator matching <see cref="ClimateMachines"/> (null unless v6).</summary>
     public ClimateForecourtOperator? ClimateForecourtOperator => _runtimeSurfaceModel?.EmitterSites?.ClimateOperator;
 

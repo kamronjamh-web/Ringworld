@@ -1,0 +1,164 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_00.tscn" id="1_ucywl"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_01.tscn" id="2_lbsiq"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_02.tscn" id="3_uqbos"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_03.tscn" id="4_k7bon"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_04.tscn" id="5_cih12"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_05.tscn" id="6_07hvc"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_06.tscn" id="7_a2c6d"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_07.tscn" id="8_30jpo"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_08.tscn" id="9_5gwoi"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_09.tscn" id="10_4lusw"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_10.tscn" id="11_lhaav"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/sectors/WeatherLungSector_11.tscn" id="12_ddid2"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Structure.tscn" id="13_qxamx"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Tiles_0.tscn" id="14_12ekq"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Tiles_1.tscn" id="15_bi35y"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Tiles_2.tscn" id="16_cp4j2"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Tiles_3.tscn" id="17_f2pdq"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Moving.tscn" id="18_7dx8b"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Arch_0.tscn" id="19_01aam"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Arch_1.tscn" id="20_yapop"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Arch_2.tscn" id="21_g43jj"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Arch_3.tscn" id="22_b4qb5"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Arch_4.tscn" id="23_nosao"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_00.tscn" id="24_ygxbq"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_01.tscn" id="25_qha8f"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_02.tscn" id="26_amso0"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_03.tscn" id="27_3q4sw"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_04.tscn" id="28_ajy5j"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_05.tscn" id="29_o4y0v"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_06.tscn" id="30_2irb5"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_07.tscn" id="31_o5wai"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_08.tscn" id="32_fvq6a"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_09.tscn" id="33_h7ie0"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_10.tscn" id="34_gf0s2"]
+[ext_resource type="PackedScene" path="res://assets/poi/weather_lung/built/arch/WeatherLungPiece_Body_Sector_11.tscn" id="35_fdu4l"]
+
+[node name="WeatherLungDetail" type="Node3D" unique_id=1867947670]
+
+[node name="Sectors" type="Node3D" parent="." unique_id=1672911366]
+
+[node name="WeatherLungSector_00" type="Node3D" parent="Sectors" unique_id=1973189396 instance=ExtResource("1_ucywl")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6708.709, 246.5, -1945.4792)
+
+[node name="WeatherLungSector_01" type="Node3D" parent="Sectors" unique_id=72970939 instance=ExtResource("2_lbsiq")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5479.07, 6.046509, -3459.6274)
+
+[node name="WeatherLungSector_02" type="Node3D" parent="Sectors" unique_id=368800136 instance=ExtResource("3_uqbos")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3204.177, -82.71161, -4309.2686)
+
+[node name="WeatherLungSector_03" type="Node3D" parent="Sectors" unique_id=26578623 instance=ExtResource("4_k7bon")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3051.0898, 55.25, -4118.891)
+
+[node name="WeatherLungSector_04" type="Node3D" parent="Sectors" unique_id=1876981031 instance=ExtResource("5_cih12")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5865.253, 372, -3362.3884)
+
+[node name="WeatherLungSector_05" type="Node3D" parent="Sectors" unique_id=1527724135 instance=ExtResource("6_07hvc")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6481.9907, 688.5, -1671.0583)
+
+[node name="WeatherLungSector_06" type="Node3D" parent="Sectors" unique_id=2070466379 instance=ExtResource("7_a2c6d")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6881.7344, 1982.4822, 0)
+
+[node name="WeatherLungSector_07" type="Node3D" parent="Sectors" unique_id=408502638 instance=ExtResource("8_30jpo")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5647.6123, 504.5, 3644.5432)
+
+[node name="WeatherLungSector_08" type="Node3D" parent="Sectors" unique_id=403667111 instance=ExtResource("9_5gwoi")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3214.5327, 22.355865, 4056)
+
+[node name="WeatherLungSector_09" type="Node3D" parent="Sectors" unique_id=390575726 instance=ExtResource("10_4lusw")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3346.3584, 571.5, 4126.382)
+
+[node name="WeatherLungSector_10" type="Node3D" parent="Sectors" unique_id=1222544328 instance=ExtResource("11_lhaav")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5408.6816, -96.143005, 3617.73)
+
+[node name="WeatherLungSector_11" type="Node3D" parent="Sectors" unique_id=560151922 instance=ExtResource("12_ddid2")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6681.578, 319.5, 1945.2335)
+
+[node name="Arch" type="Node3D" parent="." unique_id=1638969576]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10500, 340, 0)
+
+[node name="Structure" type="Node3D" parent="Arch" unique_id=668190266 instance=ExtResource("13_qxamx")]
+
+[node name="Dressing" type="Node3D" parent="Arch" unique_id=1425129552]
+
+[node name="Tiles_0" type="Node3D" parent="Arch/Dressing" unique_id=1316385309 instance=ExtResource("14_12ekq")]
+
+[node name="Tiles_1" type="Node3D" parent="Arch/Dressing" unique_id=1686165756 instance=ExtResource("15_bi35y")]
+
+[node name="Tiles_2" type="Node3D" parent="Arch/Dressing" unique_id=553700009 instance=ExtResource("16_cp4j2")]
+
+[node name="Tiles_3" type="Node3D" parent="Arch/Dressing" unique_id=1209495338 instance=ExtResource("17_f2pdq")]
+
+[node name="Moving" type="Node3D" parent="Arch" unique_id=1284551497 instance=ExtResource("18_7dx8b")]
+
+[node name="Collision" type="Node3D" parent="." unique_id=1105218636]
+
+[node name="Arch_0" type="StaticBody3D" parent="Collision" unique_id=2074216206 instance=ExtResource("19_01aam")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10500, 340, 0)
+
+[node name="Arch_1" type="StaticBody3D" parent="Collision" unique_id=1323837225 instance=ExtResource("20_yapop")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10500, 340, 0)
+
+[node name="Arch_2" type="StaticBody3D" parent="Collision" unique_id=1924685228 instance=ExtResource("21_g43jj")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10500, 340, 0)
+
+[node name="Arch_3" type="StaticBody3D" parent="Collision" unique_id=2016770845 instance=ExtResource("22_b4qb5")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10500, 340, 0)
+
+[node name="Arch_4" type="StaticBody3D" parent="Collision" unique_id=2102351415 instance=ExtResource("23_nosao")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10500, 340, 0)
+
+[node name="Sector_00" type="StaticBody3D" parent="Collision" unique_id=2116876525 instance=ExtResource("24_ygxbq")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6708.709, 246.5, -1945.4792)
+
+[node name="Sector_01" type="StaticBody3D" parent="Collision" unique_id=1704639840 instance=ExtResource("25_qha8f")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5479.07, 6.046509, -3459.6274)
+
+[node name="Sector_02" type="StaticBody3D" parent="Collision" unique_id=407209830 instance=ExtResource("26_amso0")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3204.177, -82.71161, -4309.2686)
+
+[node name="Sector_03" type="StaticBody3D" parent="Collision" unique_id=401293384 instance=ExtResource("27_3q4sw")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3051.0898, 55.25, -4118.891)
+
+[node name="Sector_04" type="StaticBody3D" parent="Collision" unique_id=840072540 instance=ExtResource("28_ajy5j")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5865.253, 372, -3362.3884)
+
+[node name="Sector_05" type="StaticBody3D" parent="Collision" unique_id=276886504 instance=ExtResource("29_o4y0v")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6481.9907, 688.5, -1671.0583)
+
+[node name="Sector_06" type="StaticBody3D" parent="Collision" unique_id=1988377939 instance=ExtResource("30_2irb5")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6881.7344, 1982.4822, 0)
+
+[node name="Sector_07" type="StaticBody3D" parent="Collision" unique_id=1695584539 instance=ExtResource("31_o5wai")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5647.6123, 504.5, 3644.5432)
+
+[node name="Sector_08" type="StaticBody3D" parent="Collision" unique_id=961935881 instance=ExtResource("32_fvq6a")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3214.5327, 22.355865, 4056)
+
+[node name="Sector_09" type="StaticBody3D" parent="Collision" unique_id=1199056012 instance=ExtResource("33_h7ie0")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3346.3584, 571.5, 4126.382)
+
+[node name="Sector_10" type="StaticBody3D" parent="Collision" unique_id=865985964 instance=ExtResource("34_gf0s2")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5408.6816, -96.143005, 3617.73)
+
+[node name="Sector_11" type="StaticBody3D" parent="Collision" unique_id=296226334 instance=ExtResource("35_fdu4l")]
+process_mode = 4
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6681.578, 319.5, 1945.2335)

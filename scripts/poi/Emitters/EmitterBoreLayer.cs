@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Text;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Core;
@@ -212,6 +213,7 @@ public partial class EmitterBoreLayer : Node3D
         {
             EmitterBoreKindResources resources = EmitterBoreGeometry.Get(placement.Kind);
             slot.Mesh.Mesh = resources.Mesh;
+            if (_grid != null) RingPoiHaze.RegisterTree(slot.Mesh, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
             slot.LinerShape.Shape = resources.LinerShape;
             slot.Light.OmniRange = resources.LightRange;
             slot.Light.LightColor = resources.InlayEmission;

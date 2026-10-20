@@ -41,6 +41,14 @@ public static class EmitterSiteTestWorlds
 
     public static RingTerrainSampler CreateGen17Landform(int seed, bool climate = false) => CreateGen17(Gen17LandformRecipe(seed, climate), seed);
 
+    /// <summary>Gen-17 v8 (ringworld_surface_weather_lung_v8) default recipe with the given seed; <paramref name="climate"/> sets climate_machines.</summary>
+    public static TerrainGenerationParameters Gen17WeatherLungRecipe(int seed, bool climate = false)
+        => TerrainGenerationParameters.FromJson(
+            TerrainGenerationParameters.WeatherLungDefault().CanonicalJson.Replace("\"seed\":1337", "\"seed\":" + seed)
+                .Replace("\"climate_machines\":0", "\"climate_machines\":" + (climate ? 1 : 0)));
+
+    public static RingTerrainSampler CreateGen17WeatherLung(int seed, bool climate = false) => CreateGen17(Gen17WeatherLungRecipe(seed, climate), seed);
+
     static RingTerrainSampler CreateGen17(TerrainGenerationParameters recipe, int seed)
     {
         using var settings = new VoxelTerrainSettings

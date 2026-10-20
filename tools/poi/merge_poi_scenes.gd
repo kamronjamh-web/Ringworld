@@ -1,4 +1,6 @@
 extends SceneTree
+
+const PoiMaterialUtil := preload("res://tools/poi/poi_material_util.gd")
 # Build-time merge of the imported Blender POI GLBs into draw-call friendly scenes.
 #
 #   godot --headless --path . --script res://tools/poi/merge_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|all [sectors=N]]
@@ -236,7 +238,13 @@ func _run_job(key: String, job: Dictionary) -> void:
 			if peak > 0.0:
 				m.emission_energy_multiplier = maxf(m.emission_energy_multiplier, EMISSION_GLOW_TARGET[mname] / peak)
 		var mpath: String = "%s/materials/%s.tres" % [out_dir, _sanitize(mname)]
-		ResourceSaver.save(m, mpath)
+		# POI ShaderMaterial (ring haze per fragment); see tools/poi/poi_material_util.gd.
+		var poi_mat := PoiMaterialUtil.to_shader_material(m)
+		if poi_mat == null:
+			push_error("merge_poi_scenes: cannot convert material " + String(mname))
+			continue
+		ResourceSaver.save(poi_mat, mpath)
+		PoiMaterialUtil.strip_runtime_params(mpath)
 		mat_res[mname] = load(mpath)
 
 	# Meshes

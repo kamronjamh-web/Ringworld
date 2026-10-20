@@ -154,7 +154,8 @@ public partial class EmitterBoreApertureTest : RefCounted
             Expect(failures, bodyVertices.Length == vertices.Length + cap.Length, label + " body mesh has no plug disk");
             Expect(failures, !bodyVertices.Any(v => Math.Abs(v.Y + 200f) < Eps && new Vector2(v.X, v.Z).Length() < liner - 1f), label + " nothing spans the bore at -200");
             Expect(failures, resources.Mesh.GetSurfaceCount() == 2, label + " mesh has body and inlay surfaces");
-            Expect(failures, resources.Dark is BaseMaterial3D { CullMode: BaseMaterial3D.CullModeEnum.Disabled }, label + " dark material is double sided");
+            Expect(failures, resources.Dark is BaseMaterial3D { CullMode: BaseMaterial3D.CullModeEnum.Disabled }
+                || resources.Dark is ShaderMaterial { Shader.ResourcePath: PoiMaterialParams.DoubleSidedShaderPath }, label + " dark material is double sided");
             Expect(failures, resources.LinerShape.GetFaces().Length == (indices.Length + capIndices.Length), label + " collision faces");
             Expect(failures, resources.LightRange == (kind == SiteKind.Main ? 420f : 260f), label + " light range");
         }

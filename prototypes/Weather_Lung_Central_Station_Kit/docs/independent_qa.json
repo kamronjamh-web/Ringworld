@@ -1,0 +1,722 @@
+{
+  "status": "PASS_WITH_DOCUMENTED_SCOPE_LIMITS",
+  "review_date": "2026-10-16",
+  "blender_version": "4.3.2",
+  "godot_version": "4.6.3-stable (official)",
+  "architecture": {
+    "editable_mesh_objects": 1098,
+    "triangles": 24872,
+    "bounds_blender_m": {
+      "min": [
+        -13949.8916015625,
+        -8931.6943359375,
+        -95.0
+      ],
+      "max": [
+        13958.9951171875,
+        8927.5361328125,
+        4799.97265625
+      ]
+    },
+    "nonmanifold_edges": 0,
+    "degenerate_triangles": 0,
+    "nonfinite_vertices": 0,
+    "closed_meshes_with_nonpositive_signed_volume": 0
+  },
+  "export_consistency": {
+    "exports_checked": 15,
+    "geometry_issues": 0,
+    "sector_assembly_max_delta_m": 0.0,
+    "assembled_triangles": 24872,
+    "sector_plus_module_triangles": 24872,
+    "issues": [],
+    "bit_identical_position_normal_index_arrays": true,
+    "compared_material_primitives": 89
+  },
+  "godot_import": {
+    "glbs_imported": 15,
+    "assembled_mesh_nodes": 22,
+    "assembled_material_surfaces": 89,
+    "backface_culling_enabled": true,
+    "errors": 0,
+    "standalone_test_project": true
+  },
+  "clearance": {
+    "clear_rays": 41,
+    "tested_rays": 41,
+    "method": "Architecture-only triangle BVH. Intake through-rays, vertical basin rays, southeast crescent-gap ray, and 3x3 entry grids for each gallery. Sampled geometry checks, not gameplay collision/navigation certification.",
+    "tests": [
+      {
+        "name": "intake_y-2200_z1600",
+        "start": [
+          -15500,
+          -2200,
+          1600
+        ],
+        "end": [
+          -7000,
+          -2200,
+          1600
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y-2200_z2400",
+        "start": [
+          -15500,
+          -2200,
+          2400
+        ],
+        "end": [
+          -7000,
+          -2200,
+          2400
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y-650_z1600",
+        "start": [
+          -15500,
+          -650,
+          1600
+        ],
+        "end": [
+          -7000,
+          -650,
+          1600
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y-650_z2400",
+        "start": [
+          -15500,
+          -650,
+          2400
+        ],
+        "end": [
+          -7000,
+          -650,
+          2400
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y650_z1600",
+        "start": [
+          -15500,
+          650,
+          1600
+        ],
+        "end": [
+          -7000,
+          650,
+          1600
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y650_z2400",
+        "start": [
+          -15500,
+          650,
+          2400
+        ],
+        "end": [
+          -7000,
+          650,
+          2400
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y2200_z1600",
+        "start": [
+          -15500,
+          2200,
+          1600
+        ],
+        "end": [
+          -7000,
+          2200,
+          1600
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "intake_y2200_z2400",
+        "start": [
+          -15500,
+          2200,
+          2400
+        ],
+        "end": [
+          -7000,
+          2200,
+          2400
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "open_basin_0_0",
+        "start": [
+          0,
+          0,
+          10000
+        ],
+        "end": [
+          0,
+          0,
+          -500
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "open_basin_2500_-1000",
+        "start": [
+          2500,
+          -1000,
+          10000
+        ],
+        "end": [
+          2500,
+          -1000,
+          -500
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "open_basin_-2500_-1000",
+        "start": [
+          -2500,
+          -1000,
+          10000
+        ],
+        "end": [
+          -2500,
+          -1000,
+          -500
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "open_basin_0_2200",
+        "start": [
+          0,
+          2200,
+          10000
+        ],
+        "end": [
+          0,
+          2200,
+          -500
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "open_basin_0_-2200",
+        "start": [
+          0,
+          -2200,
+          10000
+        ],
+        "end": [
+          0,
+          -2200,
+          -500
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "crescent_gap_access",
+        "start": [
+          7140.180062621114,
+          -3165.5594308453487,
+          200
+        ],
+        "end": [
+          12296.976774514142,
+          -6087.614290087209,
+          200
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_-40_68",
+        "start": [
+          -8660.61328125,
+          -4190.0,
+          1449.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4190.0,
+          1449.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_-40_83",
+        "start": [
+          -8660.61328125,
+          -4190.0,
+          1464.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4190.0,
+          1464.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_-40_97",
+        "start": [
+          -8660.61328125,
+          -4190.0,
+          1478.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4190.0,
+          1478.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_0_68",
+        "start": [
+          -8660.61328125,
+          -4150.0,
+          1449.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4150.0,
+          1449.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_0_83",
+        "start": [
+          -8660.61328125,
+          -4150.0,
+          1464.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4150.0,
+          1464.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_0_97",
+        "start": [
+          -8660.61328125,
+          -4150.0,
+          1478.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4150.0,
+          1478.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_40_68",
+        "start": [
+          -8660.61328125,
+          -4110.0,
+          1449.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4110.0,
+          1449.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_40_83",
+        "start": [
+          -8660.61328125,
+          -4110.0,
+          1464.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4110.0,
+          1464.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_0_40_97",
+        "start": [
+          -8660.61328125,
+          -4110.0,
+          1478.30712890625
+        ],
+        "end": [
+          -9250.61328125,
+          -4110.0,
+          1478.30712890625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_-40_68",
+        "start": [
+          -8140.53515625,
+          -3740.0,
+          2461.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3740.0,
+          2461.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_-40_83",
+        "start": [
+          -8140.53515625,
+          -3740.0,
+          2476.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3740.0,
+          2476.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_-40_97",
+        "start": [
+          -8140.53515625,
+          -3740.0,
+          2490.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3740.0,
+          2490.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_0_68",
+        "start": [
+          -8140.53515625,
+          -3700.0,
+          2461.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3700.0,
+          2461.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_0_83",
+        "start": [
+          -8140.53515625,
+          -3700.0,
+          2476.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3700.0,
+          2476.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_0_97",
+        "start": [
+          -8140.53515625,
+          -3700.0,
+          2490.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3700.0,
+          2490.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_40_68",
+        "start": [
+          -8140.53515625,
+          -3660.0,
+          2461.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3660.0,
+          2461.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_40_83",
+        "start": [
+          -8140.53515625,
+          -3660.0,
+          2476.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3660.0,
+          2476.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_1_40_97",
+        "start": [
+          -8140.53515625,
+          -3660.0,
+          2490.197509765625
+        ],
+        "end": [
+          -8730.53515625,
+          -3660.0,
+          2490.197509765625
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_-40_68",
+        "start": [
+          -7736.490234375,
+          3060.0,
+          3247.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3060.0,
+          3247.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_-40_83",
+        "start": [
+          -7736.490234375,
+          3060.0,
+          3262.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3060.0,
+          3262.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_-40_97",
+        "start": [
+          -7736.490234375,
+          3060.0,
+          3276.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3060.0,
+          3276.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_0_68",
+        "start": [
+          -7736.490234375,
+          3100.0,
+          3247.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3100.0,
+          3247.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_0_83",
+        "start": [
+          -7736.490234375,
+          3100.0,
+          3262.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3100.0,
+          3262.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_0_97",
+        "start": [
+          -7736.490234375,
+          3100.0,
+          3276.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3100.0,
+          3276.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_40_68",
+        "start": [
+          -7736.490234375,
+          3140.0,
+          3247.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3140.0,
+          3247.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_40_83",
+        "start": [
+          -7736.490234375,
+          3140.0,
+          3262.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3140.0,
+          3262.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      },
+      {
+        "name": "maintenance_gallery_entry_2_40_97",
+        "start": [
+          -7736.490234375,
+          3140.0,
+          3276.32958984375
+        ],
+        "end": [
+          -8326.490234375,
+          3140.0,
+          3276.32958984375
+        ],
+        "clear": true,
+        "hit": null
+      }
+    ]
+  },
+  "far_proxy": {
+    "triangles": 7332,
+    "mesh_nodes": 1,
+    "material_surfaces": 4,
+    "bounds_godot_m": {
+      "min": [
+        -13949.8916015625,
+        -90.0,
+        -8927.5361328125
+      ],
+      "max": [
+        13958.9951171875,
+        4799.97265625,
+        8931.6943359375
+      ]
+    },
+    "silhouette_mask_comparison": {
+      "wide": {
+        "intersection_over_union": 0.9009927555674806,
+        "missing_fraction": 0.09900724443251946,
+        "extra_fraction": 0.0
+      },
+      "top": {
+        "intersection_over_union": 0.8515401549688849,
+        "missing_fraction": 0.14845984503111512,
+        "extra_fraction": 0.0
+      }
+    }
+  },
+  "limits": [
+    "Macro-scale asset, not a finished game level.",
+    "No project integration, collision shapes, navigation, runtime LOD switching, weather simulation or frame-rate benchmark.",
+    "Arch and basin openings are actual geometry; detailed traversable interiors are not supplied.",
+    "Tangent-flat asset; conform/subdivide and apply project floating-origin or double-precision placement strategy for Ringworld.",
+    "Far proxy deliberately omits smaller secondary terrace/trim details. Choose visibility distances in the actual game."
+  ],
+  "sha256": {
+    "Weather_Lung_Central_Station.blend": "eb62cde538e65034045f624d17680b3375bc1d5e16e2a3fa8e31ef58685e901b",
+    "source/build_weather_lung.py": "c2bae8f3429a04e4aaafbad238fb3b3bf82e2011a5c8066afe1fd95737ce5027",
+    "docs/asset_manifest.json": "004994776cd5f4e1bf64b54d21e4bd9c9efe1c5b3d8a9b8eba399384710fcc23",
+    "exports/Weather_Lung_Assembled.glb": "96b30942e66b5216b6aff121b74de375ed0f8d6ea10d9cdcc63d569a485bbe2e",
+    "exports/Weather_Lung_Far_Proxy.glb": "ba19b3d17faa8214c39f72c54222a292967b9ee27f8a960c884a8aef3cfae218",
+    "exports/modules/Weather_Lung_Intake_Vanes.glb": "9993f2bd749c063daa33faebced75e6febe1c7234764a8a978e185e871c684c6",
+    "exports/sectors/Weather_Lung_Sector_00.glb": "2ca7022e534e0bcb4a8985e8b5e241b45ea0b8d5ba067c329c7c170c482bb732",
+    "exports/sectors/Weather_Lung_Sector_01.glb": "d69e7ca28594a21ab9bd2caeac652b5835526fb08ff9e446612e73c078b4482c",
+    "exports/sectors/Weather_Lung_Sector_02.glb": "d35399bc465401770d84701b66fdef938b1beb729b1d0578d471caf0551c6bdc",
+    "exports/sectors/Weather_Lung_Sector_03.glb": "bd3d05dc89a86bbc2c4e1c194879fc6351e38e9f1f4bcfb33278bcbdc4afd119",
+    "exports/sectors/Weather_Lung_Sector_04.glb": "87cbec1870b9c42519d4658064bd7794ce52ed71ad40ca11c55c8afe3cda3c59",
+    "exports/sectors/Weather_Lung_Sector_05.glb": "6c4514639a8f6388e22358e1d86a0cac333d0a009bd3d720b123ba808f25863b",
+    "exports/sectors/Weather_Lung_Sector_06.glb": "98c118b6950cea9cef6bf1413f5c2127b66b090705485139c224059784e1178f",
+    "exports/sectors/Weather_Lung_Sector_07.glb": "33d197644f76d56f46bc6a280a4e40023a2e5cd382d480205231cf3e28b0557b",
+    "exports/sectors/Weather_Lung_Sector_08.glb": "b813d77b0100d631742a68b41a7d40f2bb0234316390fa58070166acea584f6e",
+    "exports/sectors/Weather_Lung_Sector_09.glb": "57b5be61f9b3883be68b66d8d064527053c5b96ce1836c200cad5ad9cb78fcd8",
+    "exports/sectors/Weather_Lung_Sector_10.glb": "76e0d79d0a61de0436ae3aa394ba35cb7e8f8487e77b4df6c0e831248dacbb82",
+    "exports/sectors/Weather_Lung_Sector_11.glb": "08f74e3e901b8a7fe76974feadcb08545b67585f9c1501728bc6e4b2752f843c"
+  }
+}

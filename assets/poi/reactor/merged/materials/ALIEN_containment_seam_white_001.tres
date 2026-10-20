@@ -1,11 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_8ukjo"]
 
 [resource]
 resource_name = "ALIEN | containment seam white.001"
-cull_mode = 2
-albedo_color = Color(0.7977378, 0.8378605, 0.7917869, 1)
-metallic = 0.1
-roughness = 0.35
-emission_enabled = true
-emission = Color(0.886004, 1, 0.9309246, 1)
-emission_energy_multiplier = 2.4
+render_priority = 0
+shader = ExtResource("1_8ukjo")
+shader_parameter/albedo_color = Color(0.7977378, 0.8378605, 0.7917869, 1)
+shader_parameter/metallic_value = 0.1
+shader_parameter/roughness_value = 0.35
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0.886004, 1, 0.9309246, 1)
+shader_parameter/emission_energy = 2.4

@@ -12,7 +12,7 @@ static func load_recipe(path: String = RECIPE_PATH) -> Dictionary:
 	if resource == null or not resource is TerrainGenerationRecipe:
 		return {"recipe": null, "error": "Saved recipe is corrupt or incompatible. Reset explicitly to recover."}
 	var recipe: TerrainGenerationRecipe = resource
-	if (recipe.generator_id != TerrainGenerationRecipe.LANDFORM_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.CLIMATE_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.SITES_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.EROSION_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.DETAIL_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.LEGACY_GENERATOR_ID) or recipe.domain_id != TerrainGenerationRecipe.DOMAIN_ID:
+	if (recipe.generator_id != TerrainGenerationRecipe.WEATHER_LUNG_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.LANDFORM_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.CLIMATE_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.SITES_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.EROSION_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.DETAIL_GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.GENERATOR_ID and recipe.generator_id != TerrainGenerationRecipe.LEGACY_GENERATOR_ID) or recipe.domain_id != TerrainGenerationRecipe.DOMAIN_ID:
 		return {"recipe": null, "error": "Saved recipe is incompatible. Reset explicitly to recover."}
 	if not recipe.validation_errors().is_empty():
 		return {"recipe": null, "error": "Saved recipe is invalid. Reset explicitly to recover."}

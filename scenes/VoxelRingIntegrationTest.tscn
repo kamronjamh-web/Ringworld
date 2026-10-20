@@ -79,6 +79,7 @@
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBeamLayer.cs" id="eclipse_hub_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBody.cs" id="eclipse_hub_body"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterPoiStreamer.cs" id="72_emitter_poi_streamer"]
+[ext_resource type="Script" path="res://scripts/poi/WeatherLung/WeatherLungStreamer.cs" id="74_weather_lung_streamer"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterBoreLayer.cs" id="73_emitter_bores"]
 
 [sub_resource type="ProceduralSkyMaterial" id="1"]
@@ -680,6 +681,9 @@ script = ExtResource("eclipse_hub_body")
 
 [node name="EmitterSites" type="Node3D" parent="."]
 script = ExtResource("72_emitter_poi_streamer")
+
+[node name="WeatherLung" type="Node3D" parent="."]
+script = ExtResource("74_weather_lung_streamer")
 
 [node name="EmitterBores" type="Node3D" parent="."]
 script = ExtResource("73_emitter_bores")

@@ -25,12 +25,19 @@ public sealed class EmitterSiteTerrainShaper
     /// <summary>Forecourt operator matching <see cref="Climate"/> (null unless v6).</summary>
     public ClimateForecourtOperator? ClimateOperator { get; }
 
-    private EmitterSiteTerrainShaper(EmitterSiteRegistry registry, ClimateMachineRegistry? climate)
+    /// <summary>Weather Lung placement (null unless the recipe is v8).</summary>
+    public WeatherLungPlacement? WeatherLung { get; }
+    /// <summary>Basin operator matching <see cref="WeatherLung"/> (null unless v8).</summary>
+    public WeatherLungBasinOperator? WeatherLungOperator { get; }
+
+    private EmitterSiteTerrainShaper(EmitterSiteRegistry registry, ClimateMachineRegistry? climate, WeatherLungPlacement? weatherLung)
     {
         Registry = registry;
         Operator = new EmitterSiteSurfaceOperator(registry.Recipe, 0d);
         Climate = climate;
         ClimateOperator = climate == null ? null : new ClimateForecourtOperator(climate.Recipe, registry.Recipe, 0d);
+        WeatherLung = weatherLung;
+        WeatherLungOperator = weatherLung == null ? null : new WeatherLungBasinOperator(weatherLung.Recipe, registry.Recipe, 0d);
     }
 
     /// <summary>Recipe the v5 generator derives from the world seed (frozen by the algorithm version).</summary>
@@ -53,7 +60,10 @@ public sealed class EmitterSiteTerrainShaper
             ClimateMachineRegistry? climate = parameters.HasClimateMachines
                 ? ClimateMachineRegistry.GetOrBuild(ClimateRecipeFor(parameters), source, emitters)
                 : null;
-            return new EmitterSiteTerrainShaper(emitters, climate);
+            WeatherLungPlacement? weatherLung = parameters.HasWeatherLung
+                ? WeatherLungPlacement.GetOrBuild(WeatherLungRecipe.For(emitters.Recipe), emitters, ClimateMachineRecipe.For(emitters.Recipe), source)
+                : null;
+            return new EmitterSiteTerrainShaper(emitters, climate, weatherLung);
         }, LazyThreadSafetyMode.ExecutionAndPublication)).Value;
     }
 
@@ -74,6 +84,12 @@ public sealed class EmitterSiteTerrainShaper
             double shaped = ClimateOperator!.Shape(in machine, mu, mw, naturalHeight);
             return Math.Clamp(shaped, TerrainGenerationParameters.MinimumHeightMeters, TerrainGenerationParameters.MaximumHeightMeters);
         }
+        if (WeatherLung != null && WeatherLung.TryGetInfluence(around, across, out double wu, out double ww))
+        {
+            WeatherLungSite lung = WeatherLung.Site;
+            double shaped = WeatherLungOperator!.Shape(in lung, wu, ww, naturalHeight);
+            return Math.Clamp(shaped, TerrainGenerationParameters.MinimumHeightMeters, TerrainGenerationParameters.MaximumHeightMeters);
+        }
         return naturalHeight;
     }
 
@@ -91,8 +107,17 @@ public sealed class EmitterSiteTerrainShaper
     /// </summary>
     public double ShapeHeight(double around, double across, double naturalHeight,
         out SiteSurfaceMask mask, out int siteIndex, out double siteWeight, out int climateMachineIndex)
+        => ShapeHeight(around, across, naturalHeight, out mask, out siteIndex, out siteWeight, out climateMachineIndex, out _);
+
+    /// <summary>
+    /// As above, plus <paramref name="weatherLungWeight"/> (v8 only: 1 on the Weather Lung pad, apron and basin, 0 at its influence distance and on every other world).
+    /// Inside the Weather Lung region <paramref name="siteIndex"/> and <paramref name="climateMachineIndex"/> stay -1, the mask and <paramref name="siteWeight"/> describe the basin.
+    /// </summary>
+    public double ShapeHeight(double around, double across, double naturalHeight,
+        out SiteSurfaceMask mask, out int siteIndex, out double siteWeight, out int climateMachineIndex, out double weatherLungWeight)
     {
         climateMachineIndex = -1;
+        weatherLungWeight = 0d;
         if (!Registry.TryGetInfluencingSite(around, across, out siteIndex, out double du, out double dw))
         {
             siteIndex = -1;
@@ -103,6 +128,14 @@ public sealed class EmitterSiteTerrainShaper
                 climateMachineIndex = machineIndex;
                 siteWeight = ClimateOperator.Weight(mu, mw);
                 return Math.Clamp(climateShaped, TerrainGenerationParameters.MinimumHeightMeters, TerrainGenerationParameters.MaximumHeightMeters);
+            }
+            if (WeatherLung != null && WeatherLung.TryGetInfluence(around, across, out double wu, out double ww))
+            {
+                WeatherLungSite lung = WeatherLung.Site;
+                double lungShaped = WeatherLungOperator!.Shape(in lung, wu, ww, naturalHeight, out mask);
+                weatherLungWeight = WeatherLungOperator.Weight(in lung, wu, ww);
+                siteWeight = weatherLungWeight;
+                return Math.Clamp(lungShaped, TerrainGenerationParameters.MinimumHeightMeters, TerrainGenerationParameters.MaximumHeightMeters);
             }
             mask = default; siteWeight = 0d;
             return naturalHeight;

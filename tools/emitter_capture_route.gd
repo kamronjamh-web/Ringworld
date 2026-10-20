@@ -33,6 +33,11 @@ var problems: Array[String] = []
 var files: Array[String] = []
 var sites := {}
 var run_started := 0
+var poi_haze_arg := ""
+var haze_model_arg := ""
+var poi_cloud_shadow_arg := ""
+var lock_exposure := true
+var haze_master_arg := ""
 
 class SessionStub extends Node:
 	var settings := {}
@@ -52,6 +57,11 @@ func run() -> void:
 			wanted_classes.clear()
 			for part in argument.trim_prefix("--sites=").split(",", false): wanted_classes.append(part.strip_edges().to_lower())
 		elif argument == "--quick": quick = true
+		elif argument.begins_with("--poi-haze="): poi_haze_arg = argument.trim_prefix("--poi-haze=")
+		elif argument.begins_with("--haze-model="): haze_model_arg = argument.trim_prefix("--haze-model=")
+		elif argument.begins_with("--poi-cloud-shadow="): poi_cloud_shadow_arg = argument.trim_prefix("--poi-cloud-shadow=")
+		elif argument == "--auto-exposure": lock_exposure = false
+		elif argument.begins_with("--haze="): haze_master_arg = argument.trim_prefix("--haze=")
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	fixture = "res://.godot/terrain-generation-tests/capture-route-%s" % Time.get_ticks_usec()
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture)
@@ -72,6 +82,7 @@ func run() -> void:
 	drawer = game.get_node_or_null("LiveTuningDrawer")
 	if explorer == null or surface == null or layer == null or streamer == null or standins == null or drawer == null:
 		_abort("missing explorer, gameplay, bore layer, streamer, stand-ins or drawer"); return
+	_apply_poi_haze_options()
 	explorer.set("EnableSwimming", true)
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	var waited := 0
@@ -123,6 +134,22 @@ func _create_game() -> Node:
 		if candidate != null and bool(candidate.call("EnsureInitialized")): return next
 	_abort("startup readiness deadline")
 	return null
+
+## A/B switches for the POI architecture haze captures: --poi-haze=on|off, --poi-cloud-shadow=on|off, --haze-model=legacy|physical
+## (all through the grave-key drawer, before the route starts) and exposure locking (default on; --auto-exposure keeps it).
+func _apply_poi_haze_options() -> void:
+	if drawer == null: return
+	drawer.call("SetAtmosphereEnabled", haze_master_arg != "off")  # the certified launcher preset can leave the master haze off
+	if haze_model_arg != "": drawer.call("SetAtmosphereHazeModel", 1 if haze_model_arg == "physical" else 0)
+	if poi_haze_arg != "": drawer.call("SetAtmospherePoiHaze", poi_haze_arg != "off")
+	if poi_cloud_shadow_arg != "": drawer.call("SetAtmospherePoiCloudShadow", poi_cloud_shadow_arg == "on")
+	if lock_exposure:
+		for node in root.find_children("*", "WorldEnvironment", true, false):
+			var attributes = (node as WorldEnvironment).camera_attributes as CameraAttributesPractical
+			if attributes != null: attributes.auto_exposure_enabled = false
+		var day_side = game.find_child("DaySideAtmosphere", true, false) if game != null else null
+		if day_side != null: day_side.set("storm_auto_exposure_enabled", false)
+	print("POI_HAZE_OPTIONS poi_haze=%s cloud_shadow=%s model=%s lock_exposure=%s" % [poi_haze_arg, poi_cloud_shadow_arg, haze_model_arg, lock_exposure])
 
 func _diag() -> Dictionary: return surface.call("GetSurfaceDiagnostics")
 

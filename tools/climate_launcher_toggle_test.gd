@@ -68,8 +68,12 @@ func _run() -> void:
 	toggle.button_pressed = false
 	if bool(launcher.call("_prepare_runtime_surface_generation", true)) and str(launcher.get("pending_surface_generation_recipe_json")).contains("climate_v6"):
 		_fail("switching the toggle off did not return to v5")
-	# Landforms ON: the four combinations with the climate toggle.
+	# Landforms ON: the combinations with the climate toggle. The Weather Lung (v8) toggle defaults ON and would make these worlds v8, so it is turned off here
+	# (tools/weather_lung_launcher_toggle_test.gd covers v8).
+	var weather_lung: CheckBox = launcher.get("weather_lung_toggle")
 	landforms.button_pressed = true
+	if weather_lung != null:
+		weather_lung.button_pressed = false
 	var v7_ids := {}
 	for climate_on in [false, true]:
 		toggle.button_pressed = climate_on

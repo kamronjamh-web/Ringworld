@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture.gdshader" id="1_gheya"]
+
+[resource]
+resource_name = "Nozzle_Glow_06"
+render_priority = 0
+shader = ExtResource("1_gheya")
+shader_parameter/albedo_color = Color(0.24780053, 0.88082504, 0.83228356, 1)
+shader_parameter/metallic_value = 0.3
+shader_parameter/roughness_value = 0.4
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0.05, 0.75, 0.66, 1)
+shader_parameter/emission_energy = 0.0

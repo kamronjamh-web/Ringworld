@@ -198,11 +198,18 @@ public static class EmitterBoreGeometry
         string darkPath = kind == SiteKind.Main ? MainDarkPath : RegularDarkPath;
         string inlayPath = kind == SiteKind.Main ? MainInlayPath : RegularInlayPath;
         Material? dark = TryLoad(darkPath);
-        if (dark is StandardMaterial3D darkStandard) darkStandard.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
+        if (dark is ShaderMaterial darkPoi && PoiMaterialParams.IsPoiShader(darkPoi)) PoiMaterialParams.MakeDoubleSided(darkPoi);
+        else if (dark is StandardMaterial3D darkStandard) darkStandard.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
         else dark = new StandardMaterial3D { AlbedoColor = new Color(0.08f, 0.08f, 0.08f), Metallic = 0.5f, Roughness = 0.4f, CullMode = BaseMaterial3D.CullModeEnum.Disabled };
         Material? inlay = TryLoad(inlayPath);
         Color emission = FallbackTeal;
-        if (inlay is StandardMaterial3D inlayStandard)
+        if (inlay is ShaderMaterial inlayPoi && PoiMaterialParams.IsPoiShader(inlayPoi))
+        {
+            PoiMaterialParams.MakeDoubleSided(inlayPoi);
+            PoiMaterialParams.TryGetSurface(inlayPoi, out _, out _, out _, out Color inlayEmission);
+            if (inlayEmission.R + inlayEmission.G + inlayEmission.B > 0f) emission = inlayEmission;
+        }
+        else if (inlay is StandardMaterial3D inlayStandard)
         {
             inlayStandard.CullMode = BaseMaterial3D.CullModeEnum.Disabled;
             if (inlayStandard.EmissionEnabled) emission = inlayStandard.Emission;

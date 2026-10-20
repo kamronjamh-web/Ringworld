@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture.gdshader" id="1_rjrut"]
+
+[resource]
+resource_name = "Ceramic_Ivory"
+render_priority = 0
+shader = ExtResource("1_rjrut")
+shader_parameter/albedo_color = Color(0.8433892, 0.8350781, 0.7977378, 1)
+shader_parameter/metallic_value = 0.24
+shader_parameter/roughness_value = 0.42
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

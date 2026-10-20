@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Godot;
+using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Loading;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Core;
@@ -49,6 +50,7 @@ public partial class EmitterPoiStreamer : Node3D
     [Export] public bool SynchronousLoad { get; set; }
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath StandInsPath { get; set; } = new("../EmitterStandIns");
+    [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
 
     /// <summary>Scene paths; set before the pool starts loading (tests override these to force a load failure).</summary>
     public string RegularScenePath { get; set; } = RegularScenePathDefault;
@@ -58,6 +60,7 @@ public partial class EmitterPoiStreamer : Node3D
     private double _regularLoad = DefaultRegularLoadMeters, _mainLoad = DefaultMainLoadMeters, _unloadMargin = DefaultUnloadMarginMeters;
     private double _minDwell = DefaultMinDwellSeconds, _collisionOn = DefaultCollisionOnMeters, _collisionOffMargin = DefaultCollisionOffMarginMeters;
     private VoxelChunkGridManager? _grid;
+    private DirectionalLight3D? _sunLight;
     private EmitterStandInLayer? _standIns;
     private EmitterSitePlacementSource? _placements;
     private object? _lastSamplerSeen;
@@ -123,6 +126,18 @@ public partial class EmitterPoiStreamer : Node3D
                 if (slot.Active) _standIns.SetSitePresented(slot.Site, false);
         _claims?.Dispose();
         _claims = null;
+    }
+
+    public override void _Process(double delta)
+    {
+        if (_grid != null && _enabled && PoolReady) TickPoiHaze(false);
+    }
+
+    /// <summary>Publishes the camera ray frame to the POI architecture materials (RingPoiHaze); forced after a floating-origin rebase.</summary>
+    private void TickPoiHaze(bool force)
+    {
+        _sunLight ??= GetNodeOrNull<DirectionalLight3D>(SunLightPath);
+        RingPoiHaze.Tick(this, _grid, _sunLight, force);
     }
 
     public override void _PhysicsProcess(double delta)
@@ -264,6 +279,7 @@ public partial class EmitterPoiStreamer : Node3D
         if (root.GetNodeOrNull<Node3D>("PlaceholderBeam") is { } beam) beam.Visible = false;
         if (_detailEnd[(int)kind] <= 0d) _detailEnd[(int)kind] = ReadDetailVisibleEnd(root);
         AddChild(root);
+        if (_grid != null) RingPoiHaze.RegisterTree(root, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
         _slots.Add(new PoiSlot { Root = root, Collision = collision, FarProxy = farProxy, Kind = kind, Label = label });
     }
 
@@ -424,6 +440,7 @@ public partial class EmitterPoiStreamer : Node3D
     {
         _ = previous; _ = anchor;
         RefreshActiveTransforms(current);
+        if (_grid != null && PoolReady) TickPoiHaze(true);
     }
 
     /// <summary>Recomputes every active slot transform absolutely from <paramref name="snapshot"/>; never applies a delta.</summary>

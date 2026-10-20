@@ -36,6 +36,10 @@ public partial class AtmosphereVisualSettings : Resource
     [Export] public bool SkyHazeLut { get; set; } = true;
     /// <summary>Per-instance Physical haze for GPU-culled grass cards and trees (RingVegetationHaze) instead of per-vertex haze. Absent in older files, which load as on.</summary>
     [Export] public bool VegetationInstanceHaze { get; set; } = true;
+    /// <summary>POI architecture haze (RingPoiHaze): emitter / spire / reactor / Weather Lung surfaces carry the ring haze. Applies to both haze models. Absent in older files, which load as on.</summary>
+    [Export] public bool PoiHaze { get; set; } = true;
+    /// <summary>POI cloud shadows (RingPoiHaze), stand-in AO style: darkens ambient and every light. Default off. Absent in older files, which load as off.</summary>
+    [Export] public bool PoiCloudShadow { get; set; } = false;
     /// <summary>Optical-depth quadrature points: 4, 8 or 16.</summary>
     [Export] public int HazeQuality { get; set; } = 8;
 }

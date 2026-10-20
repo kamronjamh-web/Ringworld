@@ -1,11 +1,14 @@
-[gd_resource type="StandardMaterial3D" format=3]
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_n81ji"]
 
 [resource]
 resource_name = "Facility_Soft_Teal_Guide"
-cull_mode = 2
-albedo_color = Color(0.26006746, 0.58383155, 0.57487106, 1)
-metallic = 0.12
-roughness = 0.38
-emission_enabled = true
-emission = Color(0.34237343, 0.89624393, 0.8586215, 1)
-emission_energy_multiplier = 1.7852283
+render_priority = 0
+shader = ExtResource("1_n81ji")
+shader_parameter/albedo_color = Color(0.26006746, 0.58383155, 0.57487106, 1)
+shader_parameter/metallic_value = 0.12
+shader_parameter/roughness_value = 0.38
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0.34237343, 0.89624393, 0.8586215, 1)
+shader_parameter/emission_energy = 1.7852283

@@ -1,0 +1,1406 @@
+{
+  "units": "metres",
+  "blender_axes": {
+    "X": "circumferential tangent",
+    "Y": "across ring",
+    "Z": "radial up/inward"
+  },
+  "gltf_godot_axes": {
+    "X": "circumferential tangent",
+    "Y": "up",
+    "Z": "negative Blender Y"
+  },
+  "ring_radius_m": 5000001.506,
+  "sector_assembly_convention": "Each sector mesh local = original - origin_blender_m; place at origin_godot_m. Do not rescale.",
+  "architecture": {
+    "objects": 3334,
+    "vertices": 64604,
+    "triangles": 115040,
+    "bounds_min_m": [
+      -13763.46875,
+      -8252.763671875,
+      -3821.199951171875
+    ],
+    "bounds_max_m": [
+      13417.41796875,
+      8618.537109375,
+      4884.97265625
+    ]
+  },
+  "arch_height_parameter_m": 4800,
+  "sectors": [
+    {
+      "id": 0,
+      "file": "sectors/Weather_Lung_Sector_00.glb",
+      "origin_blender_m": [
+        6708.708984375,
+        1945.479248046875,
+        246.5
+      ],
+      "origin_godot_m": [
+        6708.708984375,
+        246.5,
+        -1945.479248046875
+      ],
+      "stats": {
+        "objects": 229,
+        "vertices": 3874,
+        "triangles": 6832,
+        "bounds_min_m": [
+          0.0,
+          -180.90228271484375,
+          -870.0
+        ],
+        "bounds_max_m": [
+          13417.41796875,
+          4071.86083984375,
+          1363.0
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_00_Structure.glb",
+      "structure_triangles": 4896,
+      "dressing_file": "sectors/Weather_Lung_Sector_00_Dressing.glb",
+      "dressing_triangles": 1936,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4896,
+        "dressing": 1936
+      }
+    },
+    {
+      "id": 1,
+      "file": "sectors/Weather_Lung_Sector_01.glb",
+      "origin_blender_m": [
+        5479.06982421875,
+        3459.62744140625,
+        6.0465087890625
+      ],
+      "origin_godot_m": [
+        5479.06982421875,
+        6.0465087890625,
+        -3459.62744140625
+      ],
+      "stats": {
+        "objects": 195,
+        "vertices": 3464,
+        "triangles": 6148,
+        "bounds_min_m": [
+          0.0,
+          0.0,
+          -870.0
+        ],
+        "bounds_max_m": [
+          10958.1396484375,
+          6919.2548828125,
+          882.093017578125
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_01_Structure.glb",
+      "structure_triangles": 4572,
+      "dressing_file": "sectors/Weather_Lung_Sector_01_Dressing.glb",
+      "dressing_triangles": 1576,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4572,
+        "dressing": 1576
+      }
+    },
+    {
+      "id": 2,
+      "file": "sectors/Weather_Lung_Sector_02.glb",
+      "origin_blender_m": [
+        3204.177001953125,
+        4309.2685546875,
+        -82.71160888671875
+      ],
+      "origin_godot_m": [
+        3204.177001953125,
+        -82.71160888671875,
+        -4309.2685546875
+      ],
+      "stats": {
+        "objects": 195,
+        "vertices": 3464,
+        "triangles": 6148,
+        "bounds_min_m": [
+          -8.81024169921875,
+          0.0,
+          -870.0
+        ],
+        "bounds_max_m": [
+          6417.1640625,
+          8618.537109375,
+          704.5767822265625
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_02_Structure.glb",
+      "structure_triangles": 4572,
+      "dressing_file": "sectors/Weather_Lung_Sector_02_Dressing.glb",
+      "dressing_triangles": 1576,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4572,
+        "dressing": 1576
+      }
+    },
+    {
+      "id": 3,
+      "file": "sectors/Weather_Lung_Sector_03.glb",
+      "origin_blender_m": [
+        -3051.08984375,
+        4118.89111328125,
+        55.25
+      ],
+      "origin_godot_m": [
+        -3051.08984375,
+        55.25,
+        -4118.89111328125
+      ],
+      "stats": {
+        "objects": 206,
+        "vertices": 3552,
+        "triangles": 6280,
+        "bounds_min_m": [
+          -6190.5224609375,
+          0.0,
+          -870.0
+        ],
+        "bounds_max_m": [
+          88.34284210205078,
+          8237.7822265625,
+          980.5
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_03_Structure.glb",
+      "structure_triangles": 4608,
+      "dressing_file": "sectors/Weather_Lung_Sector_03_Dressing.glb",
+      "dressing_triangles": 1672,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4608,
+        "dressing": 1672
+      }
+    },
+    {
+      "id": 4,
+      "file": "sectors/Weather_Lung_Sector_04.glb",
+      "origin_blender_m": [
+        -5865.2529296875,
+        3362.388427734375,
+        372.0
+      ],
+      "origin_godot_m": [
+        -5865.2529296875,
+        372.0,
+        -3362.388427734375
+      ],
+      "stats": {
+        "objects": 226,
+        "vertices": 3826,
+        "triangles": 6748,
+        "bounds_min_m": [
+          -11730.505859375,
+          0.0,
+          -870.0
+        ],
+        "bounds_max_m": [
+          0.0,
+          6724.77685546875,
+          1614.0
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_04_Structure.glb",
+      "structure_triangles": 4896,
+      "dressing_file": "sectors/Weather_Lung_Sector_04_Dressing.glb",
+      "dressing_triangles": 1852,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4896,
+        "dressing": 1852
+      }
+    },
+    {
+      "id": 5,
+      "file": "sectors/Weather_Lung_Sector_05.glb",
+      "origin_blender_m": [
+        -6481.99072265625,
+        1671.058349609375,
+        688.5
+      ],
+      "origin_godot_m": [
+        -6481.99072265625,
+        688.5,
+        -1671.058349609375
+      ],
+      "stats": {
+        "objects": 186,
+        "vertices": 2838,
+        "triangles": 4932,
+        "bounds_min_m": [
+          -12963.9814453125,
+          0.0,
+          -870.0
+        ],
+        "bounds_max_m": [
+          0.0,
+          3342.11669921875,
+          2247.0
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_05_Structure.glb",
+      "structure_triangles": 3576,
+      "dressing_file": "sectors/Weather_Lung_Sector_05_Dressing.glb",
+      "dressing_triangles": 1356,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 3576,
+        "dressing": 1356
+      }
+    },
+    {
+      "id": 6,
+      "file": "sectors/Weather_Lung_Sector_06.glb",
+      "origin_blender_m": [
+        -6881.734375,
+        0.0,
+        1982.482177734375
+      ],
+      "origin_godot_m": [
+        -6881.734375,
+        1982.482177734375,
+        -0.0
+      ],
+      "stats": {
+        "objects": 843,
+        "vertices": 20380,
+        "triangles": 36868,
+        "bounds_min_m": [
+          -13763.46875,
+          -7714.32470703125,
+          -870.0
+        ],
+        "bounds_max_m": [
+          0.0,
+          7714.32470703125,
+          4834.96435546875
+        ]
+      },
+      "batch_material_surfaces": 22,
+      "structure_file": "sectors/Weather_Lung_Sector_06_Structure.glb",
+      "structure_triangles": 3872,
+      "dressing_file": "sectors/Weather_Lung_Sector_06_Dressing.glb",
+      "dressing_triangles": 3372,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 23972,
+        "dressing": 12896
+      }
+    },
+    {
+      "id": 7,
+      "file": "sectors/Weather_Lung_Sector_07.glb",
+      "origin_blender_m": [
+        -5647.6123046875,
+        -3644.543212890625,
+        504.5
+      ],
+      "origin_godot_m": [
+        -5647.6123046875,
+        504.5,
+        3644.543212890625
+      ],
+      "stats": {
+        "objects": 240,
+        "vertices": 3962,
+        "triangles": 6964,
+        "bounds_min_m": [
+          -11295.224609375,
+          -7289.08642578125,
+          -870.0
+        ],
+        "bounds_max_m": [
+          0.0,
+          0.0,
+          1879.0
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_07_Structure.glb",
+      "structure_triangles": 4932,
+      "dressing_file": "sectors/Weather_Lung_Sector_07_Dressing.glb",
+      "dressing_triangles": 2032,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4932,
+        "dressing": 2032
+      }
+    },
+    {
+      "id": 8,
+      "file": "sectors/Weather_Lung_Sector_08.glb",
+      "origin_blender_m": [
+        -3214.53271484375,
+        -4056.0,
+        22.355865478515625
+      ],
+      "origin_godot_m": [
+        -3214.53271484375,
+        22.355865478515625,
+        4056.0
+      ],
+      "stats": {
+        "objects": 195,
+        "vertices": 3464,
+        "triangles": 6148,
+        "bounds_min_m": [
+          -6429.0654296875,
+          -8112.0,
+          -870.0
+        ],
+        "bounds_max_m": [
+          0.0,
+          0.0,
+          914.7117309570312
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_08_Structure.glb",
+      "structure_triangles": 4572,
+      "dressing_file": "sectors/Weather_Lung_Sector_08_Dressing.glb",
+      "dressing_triangles": 1576,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4572,
+        "dressing": 1576
+      }
+    },
+    {
+      "id": 9,
+      "file": "sectors/Weather_Lung_Sector_09.glb",
+      "origin_blender_m": [
+        3346.3583984375,
+        -4126.3818359375,
+        571.5
+      ],
+      "origin_godot_m": [
+        3346.3583984375,
+        571.5,
+        4126.3818359375
+      ],
+      "stats": {
+        "objects": 229,
+        "vertices": 3874,
+        "triangles": 6832,
+        "bounds_min_m": [
+          -88.34284210205078,
+          -8252.763671875,
+          -870.0
+        ],
+        "bounds_max_m": [
+          6781.0595703125,
+          0.0,
+          2013.0
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_09_Structure.glb",
+      "structure_triangles": 4896,
+      "dressing_file": "sectors/Weather_Lung_Sector_09_Dressing.glb",
+      "dressing_triangles": 1936,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4896,
+        "dressing": 1936
+      }
+    },
+    {
+      "id": 10,
+      "file": "sectors/Weather_Lung_Sector_10.glb",
+      "origin_blender_m": [
+        5408.681640625,
+        -3617.72998046875,
+        -96.14300537109375
+      ],
+      "origin_godot_m": [
+        5408.681640625,
+        -96.14300537109375,
+        3617.72998046875
+      ],
+      "stats": {
+        "objects": 202,
+        "vertices": 3204,
+        "triangles": 5600,
+        "bounds_min_m": [
+          0.0,
+          -7235.4599609375,
+          -870.0
+        ],
+        "bounds_max_m": [
+          10817.36328125,
+          0.0,
+          677.7139892578125
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_10_Structure.glb",
+      "structure_triangles": 4028,
+      "dressing_file": "sectors/Weather_Lung_Sector_10_Dressing.glb",
+      "dressing_triangles": 1572,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4028,
+        "dressing": 1572
+      }
+    },
+    {
+      "id": 11,
+      "file": "sectors/Weather_Lung_Sector_11.glb",
+      "origin_blender_m": [
+        6681.578125,
+        -1945.2335205078125,
+        319.5
+      ],
+      "origin_godot_m": [
+        6681.578125,
+        319.5,
+        1945.2335205078125
+      ],
+      "stats": {
+        "objects": 227,
+        "vertices": 3470,
+        "triangles": 6032,
+        "bounds_min_m": [
+          0.0,
+          -3890.467041015625,
+          -870.0
+        ],
+        "bounds_max_m": [
+          13363.15625,
+          0.0,
+          1509.0
+        ]
+      },
+      "batch_material_surfaces": 9,
+      "structure_file": "sectors/Weather_Lung_Sector_11_Structure.glb",
+      "structure_triangles": 4168,
+      "dressing_file": "sectors/Weather_Lung_Sector_11_Dressing.glb",
+      "dressing_triangles": 1864,
+      "triangles_by_detail_class_incl_arch_chunks": {
+        "structure": 4168,
+        "dressing": 1864
+      }
+    }
+  ],
+  "preview_vfx_exported": false,
+  "weather_simulation_integrated": false,
+  "assembled_static_mesh_nodes": 12,
+  "arch_chunks": {
+    "Hood_Shell": {
+      "file": "chunks/Weather_Lung_Chunk_Hood_Shell.glb",
+      "origin_blender_m": [
+        -10500.0,
+        0.0,
+        340.0
+      ],
+      "origin_godot_m": [
+        -10500.0,
+        340.0,
+        -0.0
+      ],
+      "objects": 361,
+      "pivots": [],
+      "triangles_by_detail_class": {
+        "structure": 15824,
+        "dressing": 6820,
+        "moving": 0
+      },
+      "visibility_km": {
+        "structure": "0-30",
+        "dressing": "0-2 (fade 250 m)",
+        "moving": "0-8"
+      }
+    },
+    "Nozzle_Guide": {
+      "file": "chunks/Weather_Lung_Chunk_Nozzle_Guide.glb",
+      "origin_blender_m": [
+        -10500.0,
+        0.0,
+        340.0
+      ],
+      "origin_godot_m": [
+        -10500.0,
+        340.0,
+        -0.0
+      ],
+      "objects": 58,
+      "pivots": [
+        "Guide_Ring_A",
+        "Guide_Ring_B"
+      ],
+      "triangles_by_detail_class": {
+        "structure": 624,
+        "dressing": 0,
+        "moving": 1680
+      },
+      "visibility_km": {
+        "structure": "0-30",
+        "dressing": "0-2 (fade 250 m)",
+        "moving": "0-8"
+      }
+    },
+    "Throat_Compressor": {
+      "file": "chunks/Weather_Lung_Chunk_Throat_Compressor.glb",
+      "origin_blender_m": [
+        -10500.0,
+        0.0,
+        340.0
+      ],
+      "origin_godot_m": [
+        -10500.0,
+        340.0,
+        -0.0
+      ],
+      "objects": 49,
+      "pivots": [
+        "Turbine_Rotor_A",
+        "Turbine_Rotor_B"
+      ],
+      "triangles_by_detail_class": {
+        "structure": 3204,
+        "dressing": 2016,
+        "moving": 3696
+      },
+      "visibility_km": {
+        "structure": "0-30",
+        "dressing": "0-2 (fade 250 m)",
+        "moving": "0-8"
+      }
+    },
+    "Vane_Bank": {
+      "file": "chunks/Weather_Lung_Chunk_Vane_Bank.glb",
+      "origin_blender_m": [
+        -10500.0,
+        0.0,
+        340.0
+      ],
+      "origin_godot_m": [
+        -10500.0,
+        340.0,
+        -0.0
+      ],
+      "objects": 65,
+      "pivots": [
+        "VanePivot_00",
+        "Vane_RamCyl_00",
+        "Vane_RamRod_00",
+        "VanePivot_01",
+        "Vane_RamCyl_01",
+        "Vane_RamRod_01",
+        "VanePivot_02",
+        "Vane_RamCyl_02",
+        "Vane_RamRod_02",
+        "VanePivot_03",
+        "Vane_RamCyl_03",
+        "Vane_RamRod_03",
+        "VanePivot_04",
+        "Vane_RamCyl_04",
+        "Vane_RamRod_04"
+      ],
+      "triangles_by_detail_class": {
+        "structure": 0,
+        "dressing": 1560,
+        "moving": 1020
+      },
+      "visibility_km": {
+        "structure": "0-30",
+        "dressing": "0-2 (fade 250 m)",
+        "moving": "0-8"
+      }
+    },
+    "Gills": {
+      "file": "chunks/Weather_Lung_Chunk_Gills.glb",
+      "origin_blender_m": [
+        -10500.0,
+        0.0,
+        340.0
+      ],
+      "origin_godot_m": [
+        -10500.0,
+        340.0,
+        -0.0
+      ],
+      "objects": 48,
+      "pivots": [
+        "Gill_Pivot_00",
+        "Gill_Pivot_01",
+        "Gill_Pivot_02",
+        "Gill_Pivot_03",
+        "Gill_Pivot_04",
+        "Gill_Pivot_05",
+        "Gill_Pivot_06",
+        "Gill_Pivot_07",
+        "Gill_Pivot_08",
+        "Gill_Pivot_09",
+        "Gill_Pivot_10",
+        "Gill_Pivot_11",
+        "Gill_Pivot_12",
+        "Gill_Pivot_13",
+        "Gill_Pivot_14",
+        "Gill_Pivot_15"
+      ],
+      "triangles_by_detail_class": {
+        "structure": 448,
+        "dressing": 448,
+        "moving": 1216
+      },
+      "visibility_km": {
+        "structure": "0-30",
+        "dressing": "0-2 (fade 250 m)",
+        "moving": "0-8"
+      }
+    }
+  },
+  "vane_module": {
+    "file": "modules/Weather_Lung_Intake_Vanes.glb",
+    "origin_blender_m": [
+      -10500.0,
+      0.0,
+      340.0
+    ],
+    "origin_godot_m": [
+      -10500.0,
+      340.0,
+      -0.0
+    ],
+    "local_hinge_axis_godot": "negative Z",
+    "suggested_angle_degrees": [
+      0,
+      35
+    ],
+    "animation_included": false,
+    "pivots": 59,
+    "pivot_list": [
+      {
+        "name": "Gill_Pivot_00",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -9751.2,
+          3423.12,
+          3002.13
+        ]
+      },
+      {
+        "name": "Gill_Pivot_01",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8851.2,
+          3423.12,
+          3002.13
+        ]
+      },
+      {
+        "name": "Gill_Pivot_02",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -9330.08,
+          2626.65,
+          3821.48
+        ]
+      },
+      {
+        "name": "Gill_Pivot_03",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8430.08,
+          2626.65,
+          3821.48
+        ]
+      },
+      {
+        "name": "Gill_Pivot_04",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -9032.3,
+          1651.18,
+          4400.85
+        ]
+      },
+      {
+        "name": "Gill_Pivot_05",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8132.3,
+          1651.18,
+          4400.85
+        ]
+      },
+      {
+        "name": "Gill_Pivot_06",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8878.16,
+          563.19,
+          4700.76
+        ]
+      },
+      {
+        "name": "Gill_Pivot_07",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -7978.16,
+          563.19,
+          4700.76
+        ]
+      },
+      {
+        "name": "Gill_Pivot_08",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8878.16,
+          -563.19,
+          4700.76
+        ]
+      },
+      {
+        "name": "Gill_Pivot_09",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -7978.16,
+          -563.19,
+          4700.76
+        ]
+      },
+      {
+        "name": "Gill_Pivot_10",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -9032.3,
+          -1651.18,
+          4400.85
+        ]
+      },
+      {
+        "name": "Gill_Pivot_11",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8132.3,
+          -1651.18,
+          4400.85
+        ]
+      },
+      {
+        "name": "Gill_Pivot_12",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -9330.08,
+          -2626.65,
+          3821.48
+        ]
+      },
+      {
+        "name": "Gill_Pivot_13",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8430.08,
+          -2626.65,
+          3821.48
+        ]
+      },
+      {
+        "name": "Gill_Pivot_14",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -9751.2,
+          -3423.12,
+          3002.13
+        ]
+      },
+      {
+        "name": "Gill_Pivot_15",
+        "parent": null,
+        "axis": "axis tangent to the arch at the plate front edge (see hinge_axis_blender extra)",
+        "channel": "rotation_axis_angle[0] radians, 0 closed .. +35 deg flared",
+        "location_blender_m": [
+          -8851.2,
+          -3423.12,
+          3002.13
+        ]
+      },
+      {
+        "name": "Guide_Ring_A",
+        "parent": null,
+        "axis": "arch-plane normal (sheared 27 deg; axis stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0] radians, 1 revolution per breath cycle; B counter-rotates",
+        "location_blender_m": [
+          -10960.0,
+          0.0,
+          260.0
+        ]
+      },
+      {
+        "name": "Guide_Ring_B",
+        "parent": null,
+        "axis": "arch-plane normal (sheared 27 deg; axis stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0] radians, 1 revolution per breath cycle; B counter-rotates",
+        "location_blender_m": [
+          -10740.0,
+          0.0,
+          260.0
+        ]
+      },
+      {
+        "name": "VanePivot_00",
+        "parent": null,
+        "axis": "local Y (Blender) = -Z in glTF/Godot",
+        "channel": "rotation_euler.y, 0 closed .. +35 deg open (positive = open)",
+        "location_blender_m": [
+          -11250.0,
+          -2850.0,
+          340.0
+        ]
+      },
+      {
+        "name": "Vane_RamCyl_00",
+        "parent": null,
+        "axis": "local Y; aims at the fin attach pin",
+        "channel": "rotation_euler.y driven (IK of the ram)",
+        "location_blender_m": [
+          -10750.0,
+          -2680.0,
+          360.0
+        ]
+      },
+      {
+        "name": "Vane_RamRod_00",
+        "parent": "Vane_RamCyl_00",
+        "axis": "child of RamCyl, slides along its local +X",
+        "channel": "location.x extension in metres",
+        "location_blender_m": [
+          -10750.0,
+          -2680.0,
+          360.0
+        ]
+      },
+      {
+        "name": "VanePivot_01",
+        "parent": null,
+        "axis": "local Y (Blender) = -Z in glTF/Godot",
+        "channel": "rotation_euler.y, 0 closed .. +35 deg open (positive = open)",
+        "location_blender_m": [
+          -11250.0,
+          -1425.0,
+          340.0
+        ]
+      },
+      {
+        "name": "Vane_RamCyl_01",
+        "parent": null,
+        "axis": "local Y; aims at the fin attach pin",
+        "channel": "rotation_euler.y driven (IK of the ram)",
+        "location_blender_m": [
+          -10750.0,
+          -1255.0,
+          252.02
+        ]
+      },
+      {
+        "name": "Vane_RamRod_01",
+        "parent": "Vane_RamCyl_01",
+        "axis": "child of RamCyl, slides along its local +X",
+        "channel": "location.x extension in metres",
+        "location_blender_m": [
+          -10750.08,
+          -1255.0,
+          251.58
+        ]
+      },
+      {
+        "name": "VanePivot_02",
+        "parent": null,
+        "axis": "local Y (Blender) = -Z in glTF/Godot",
+        "channel": "rotation_euler.y, 0 closed .. +35 deg open (positive = open)",
+        "location_blender_m": [
+          -11250.0,
+          0.0,
+          340.0
+        ]
+      },
+      {
+        "name": "Vane_RamCyl_02",
+        "parent": null,
+        "axis": "local Y; aims at the fin attach pin",
+        "channel": "rotation_euler.y driven (IK of the ram)",
+        "location_blender_m": [
+          -10750.0,
+          170.0,
+          538.68
+        ]
+      },
+      {
+        "name": "Vane_RamRod_02",
+        "parent": "Vane_RamCyl_02",
+        "axis": "child of RamCyl, slides along its local +X",
+        "channel": "location.x extension in metres",
+        "location_blender_m": [
+          -10750.32,
+          170.0,
+          537.16
+        ]
+      },
+      {
+        "name": "VanePivot_03",
+        "parent": null,
+        "axis": "local Y (Blender) = -Z in glTF/Godot",
+        "channel": "rotation_euler.y, 0 closed .. +35 deg open (positive = open)",
+        "location_blender_m": [
+          -11250.0,
+          1425.0,
+          340.0
+        ]
+      },
+      {
+        "name": "Vane_RamCyl_03",
+        "parent": null,
+        "axis": "local Y; aims at the fin attach pin",
+        "channel": "rotation_euler.y driven (IK of the ram)",
+        "location_blender_m": [
+          -10750.0,
+          1595.0,
+          659.71
+        ]
+      },
+      {
+        "name": "Vane_RamRod_03",
+        "parent": "Vane_RamCyl_03",
+        "axis": "child of RamCyl, slides along its local +X",
+        "channel": "location.x extension in metres",
+        "location_blender_m": [
+          -10750.8,
+          1595.0,
+          656.66
+        ]
+      },
+      {
+        "name": "VanePivot_04",
+        "parent": null,
+        "axis": "local Y (Blender) = -Z in glTF/Godot",
+        "channel": "rotation_euler.y, 0 closed .. +35 deg open (positive = open)",
+        "location_blender_m": [
+          -11250.0,
+          2850.0,
+          340.0
+        ]
+      },
+      {
+        "name": "Vane_RamCyl_04",
+        "parent": null,
+        "axis": "local Y; aims at the fin attach pin",
+        "channel": "rotation_euler.y driven (IK of the ram)",
+        "location_blender_m": [
+          -10750.0,
+          3020.0,
+          360.0
+        ]
+      },
+      {
+        "name": "Vane_RamRod_04",
+        "parent": "Vane_RamCyl_04",
+        "axis": "child of RamCyl, slides along its local +X",
+        "channel": "location.x extension in metres",
+        "location_blender_m": [
+          -10751.77,
+          3020.0,
+          353.66
+        ]
+      },
+      {
+        "name": "Turbine_Rotor_A",
+        "parent": null,
+        "axis": "bore axis tilted about Y (see spin_axis_blender extra), ~+X",
+        "channel": "rotation_axis_angle[0] radians, continuous; B counter-rotates",
+        "location_blender_m": [
+          -12279.07,
+          0.0,
+          1785.76
+        ]
+      },
+      {
+        "name": "Turbine_Rotor_B",
+        "parent": null,
+        "axis": "bore axis tilted about Y (see spin_axis_blender extra), ~+X",
+        "channel": "rotation_axis_angle[0] radians, continuous; B counter-rotates",
+        "location_blender_m": [
+          -12015.67,
+          0.0,
+          1726.44
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_0_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          11267.54,
+          1674.37,
+          451.75
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_0_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          11123.2,
+          2132.15,
+          945.44
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_0_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          10978.86,
+          2589.94,
+          925.32
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_1_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          7480.79,
+          5333.07,
+          885.79
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_1_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          7099.98,
+          5625.27,
+          896.09
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_1_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          6719.18,
+          5917.48,
+          510.1
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_2_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          988.28,
+          7062.81,
+          345.97
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_2_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          508.73,
+          7083.75,
+          389.65
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_2_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          29.19,
+          7104.69,
+          520.0
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_3_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -4959.61,
+          6510.99,
+          814.97
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_3_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -5385.37,
+          6289.35,
+          465.36
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_3_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -5811.14,
+          6067.71,
+          877.21
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_4_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -6671.35,
+          -5722.16,
+          764.33
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_4_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -6266.53,
+          -5980.07,
+          428.19
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_4_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -5861.7,
+          -6237.97,
+          797.42
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_5_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -1998.22,
+          -6967.19,
+          928.71
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_5_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -1522.33,
+          -7029.84,
+          925.54
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_5_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          -1046.43,
+          -7092.49,
+          914.19
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_6_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          3049.35,
+          -6906.67,
+          866.58
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_6_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          3507.13,
+          -6762.33,
+          883.0
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_6_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          3964.92,
+          -6617.99,
+          883.1
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_7_0",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          11500.57,
+          -1401.39,
+          741.58
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_7_1",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          11563.22,
+          -925.5,
+          750.92
+        ]
+      },
+      {
+        "name": "Heliostat_Pivot_7_2",
+        "parent": null,
+        "axis": "horizontal axis = Z x panel normal (stored in rotation_axis_angle)",
+        "channel": "rotation_axis_angle[0]: pi stowed face-down (sun_available 0) .. tracking angle (sun_available 1), smoothstep crossfade; driven by sun_available, not baked",
+        "location_blender_m": [
+          11625.88,
+          -449.6,
+          391.47
+        ]
+      }
+    ],
+    "animation_file": "modules/Weather_Lung_Intake_Vanes_Animated.glb",
+    "note": "Module now holds vanes + rams + two turbine rotors + gill plates; static GLB is the closed rest pose (breath_phase 0)."
+  },
+  "breath_cycle": {
+    "control": "Breath_Control (Blender only, not exported)",
+    "props": {
+      "breath_phase": 0.0,
+      "cycle_seconds": 180.0,
+      "timeline_frames": 240.0,
+      "vane_amplitude_deg": 35.0,
+      "gill_amplitude_deg": 35.0,
+      "turbine_max_rpm": 1.5,
+      "ripple_lag": 0.0
+    },
+    "timeline": "240 frames @24fps per cycle, frame 1 = phase 0",
+    "inhale": "phase 0..0.5",
+    "exhale": "phase 0.5..1",
+    "turbine_revolutions_per_cycle": 3,
+    "actions": "Breath_Cycle_<pivot> per moving pivot (sampled keys, cyclic)"
+  },
+  "triangles_before_detail_pass": 24872,
+  "triangles_by_detail_class": {
+    "structure": 73688,
+    "dressing": 33164,
+    "moving": 8188,
+    "water": 1440
+  },
+  "triangles_architecture_total": 115040,
+  "visibility_ranges_km": {
+    "far_proxy": ">30",
+    "structure": "0-30",
+    "dressing": "0-2 (fade 250 m)",
+    "moving": "0-8",
+    "water": "0-30"
+  },
+  "detail_class_note": "Every exported object carries custom prop detail_class (structure|dressing|moving|water) and arch pieces carry chunk (Hood_Shell|Nozzle_Guide|Throat_Compressor|Vane_Bank|Gills). Per-sector Structure/Dressing GLBs exclude arch-chunk pieces (delivered by exports/chunks/*); the combined sector GLBs and the assembled GLB contain everything. Rams are classed dressing even inside the moving module.",
+  "basin": {
+    "floor_top_z_m": -800,
+    "floor_underside_z_m": -870,
+    "water_level_z_m": -135,
+    "rim_datum_z_m": 0,
+    "dam_degrees": [
+      310,
+      340
+    ],
+    "foundations_extend_to_z_m": -800,
+    "note": "Foundations/inner wall/dam go down to the sealed floor at -800 m (previously -90 m), so architecture bounds_min z is now about -870."
+  },
+  "water_surface": {
+    "file": "Weather_Lung_Water_Surface.glb",
+    "object": "Basin_Water_Surface",
+    "collection": "05_WATER_Export",
+    "detail_class": "water",
+    "triangles": 1440,
+    "origin_blender_m": [
+      0,
+      0,
+      0
+    ],
+    "level_z_m": -135,
+    "visibility": "0-30 km",
+    "material": "Basin_Water (transmission 0.93, IOR 1.33)"
+  },
+  "far_proxy": {
+    "objects": 288,
+    "vertices": 10346,
+    "triangles": 19212,
+    "bounds_min_m": [
+      -13763.46875,
+      -8007.91748046875,
+      -800.0
+    ],
+    "bounds_max_m": [
+      13207.412109375,
+      8360.966796875,
+      4834.96435546875
+    ]
+  }
+}
