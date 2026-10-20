@@ -1,0 +1,266 @@
+#version 450
+// S4b: terrain height-shadow march. One thread per output texel of one level (docs/shadow-revamp-plan.md S4, s4_spec.md sections 2 and 5).
+// The receiver sits at its column surface T0 (rho0 = R - T0). The sun frame (s_up, s_a, s_c) is given at the anchor and rotated per texel by
+// delta = a_l / R. Along the ray (distance d): rise f(d) (float-stable form) and plan position a(d) = a_l + R atan(d s_a / (rho0 - d s_up)),
+// c(d) = c_l + d s_c. best = max over the march of T(p) - f(d) is the shadow-line height H (a receiver at height h on this column is lit iff
+// h >= H); the output is R = H - T0 and G = blocker distance. Hierarchy: conservative max-mip descent, mip-0 bilinear samples every 0.5 texel,
+// L0 continues into L1, then unresolved beyond L1 unless outside_max rules a hidden caster out. All positions are window-relative texel
+// coordinates w (0 = window origin texel centre), so no large canonical value ever enters float math.
+#include "res://materials/shadows/ring_height_shadow_common.compinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) restrict readonly buffer Heights0 { float h[]; } heights0;
+layout(set = 0, binding = 1, std430) restrict readonly buffer Mips0 { float m[]; } mips0;
+layout(set = 0, binding = 2, std430) restrict readonly buffer Heights1 { float h[]; } heights1;
+layout(set = 0, binding = 3, std430) restrict readonly buffer Mips1 { float m[]; } mips1;
+
+struct LevelParams {
+	float t;          // texel size in metres
+	int i0_local;     // window origin index I0 minus anchor index A / t (small)
+	int j0;           // window origin J0 (across index, absolute, non-negative)
+	int slot0_x;      // I0 mod N
+	int slot0_y;      // J0 mod N
+	float level_max;  // max height of the level master
+	uint valid;
+	uint pad0;
+};
+
+layout(set = 0, binding = 4, std430) restrict readonly buffer BuildParams {
+	float sun_up;      // sun frame at the anchor
+	float sun_around;
+	float sun_across;
+	float ring_radius;
+	float outside_max; // upper bound of terrain beyond the L1 window
+	float wall_top;
+	float ring_width;
+	uint walls;        // 1 = analytic structural walls at across 0 and W
+	LevelParams lv[2];
+} bp;
+
+layout(set = 0, binding = 5, rg16f) uniform restrict writeonly image2D out_tex;
+
+layout(push_constant, std430) uniform Params {
+	uint level;
+	uint row0;
+	uint row_count;
+	uint pad0;
+} p;
+
+const float HS_NEG_INF = -3.0e38;
+const float HS_NF = 1024.0;
+const int HS_MAX_ITER = 2048;
+
+float fetch_h(uint lev, uint x, uint y) {
+	uint i = (y & (HS_N - 1u)) * HS_N + (x & (HS_N - 1u));
+	return lev == 0u ? heights0.h[i] : heights1.h[i];
+}
+
+uint mip_offset(uint mip) {
+	// packed mips 1..5 of sizes 512, 256, 128, 64, 32 (RingHeightShadowLattice.MipOffset)
+	return mip == 1u ? 0u : (mip == 2u ? 262144u : (mip == 3u ? 327680u : (mip == 4u ? 344064u : 348160u)));
+}
+
+float fetch_m(uint lev, uint mip, uvec2 cell) {
+	uint i = mip_offset(mip) + cell.y * (HS_N >> mip) + cell.x;
+	return lev == 0u ? mips0.m[i] : mips1.m[i];
+}
+
+// Same reconstruction as the CPU reference: u = slot-space texel-centre coordinate in [0, N).
+float bilinear_height(uint lev, vec2 u) {
+	vec2 fl = floor(u);
+	vec2 f = u - fl;
+	uint x0 = uint(fl.x), y0 = uint(fl.y);
+	float a = fetch_h(lev, x0, y0), b = fetch_h(lev, x0 + 1u, y0);
+	float c = fetch_h(lev, x0, y0 + 1u), d = fetch_h(lev, x0 + 1u, y0 + 1u);
+	float top = a + (b - a) * f.x;
+	float bottom = c + (d - c) * f.x;
+	return top + (bottom - top) * f.y;
+}
+
+// Rise of the straight ray over the receiver's column surface after distance d on the curved ring (float-stable: no R - rho subtraction).
+float ray_rise(float d, float su, float k, float rho0) {
+	float x = -2.0 * d * su / rho0 + d * d * k / (rho0 * rho0);
+	return (2.0 * d * su - d * d * k / rho0) / (1.0 + sqrt(max(1.0 + x, 0.0)));
+}
+
+bool window_contains(vec2 w) {
+	return w.x >= 0.0 && w.x <= HS_NF - 1.0 && w.y >= 0.0 && w.y <= HS_NF - 1.0;
+}
+
+void write_result(ivec2 slot, float r, float g) {
+	imageStore(out_tex, slot, vec4(clamp(r, -2048.0, 8192.0), clamp(g, -65000.0, 65000.0), 0.0, 0.0));
+}
+
+void main() {
+	uvec2 id = gl_GlobalInvocationID.xy;
+	if (id.x >= HS_N || id.y >= p.row_count) {
+		return;
+	}
+	uint ox = id.x;
+	uint oy = p.row0 + id.y;
+	uint level = p.level;
+	LevelParams own = bp.lv[level];
+	ivec2 slot = ivec2(int((uint(own.slot0_x) + ox) & (HS_N - 1u)), int((uint(own.slot0_y) + oy) & (HS_N - 1u)));
+	float t0 = fetch_h(level, uint(slot.x), uint(slot.y));
+	float R = bp.ring_radius;
+
+	// Receiver position: anchor-local around (exact multiple of t), absolute across (< 2^24, exact).
+	float a_l = (float(own.i0_local) + float(ox)) * own.t;
+	float c_abs = (float(own.j0) + float(oy)) * own.t;
+
+	// Rotate the sun from the anchor frame to this texel's frame.
+	float delta = a_l / R;
+	float cd = cos(delta), sd = sin(delta);
+	float su = bp.sun_up * cd - bp.sun_around * sd;
+	float sa = bp.sun_around * cd + bp.sun_up * sd;
+	float sc = bp.sun_across;
+	if (su <= 0.0) {
+		write_result(slot, 8192.0, 0.0);
+		return;
+	}
+
+	float rho0 = R - t0;
+	float k = su * su + sa * sa;
+	float d_peak = rho0 * su / k; // rise is monotone increasing up to here
+
+	// Across: the ray leaves the ring at d_wall; analytic wall candidate there.
+	float d_wall = 3.0e38;
+	if (sc > 1.0e-6) {
+		d_wall = (bp.ring_width - c_abs) / sc;
+	} else if (sc < -1.0e-6) {
+		d_wall = -c_abs / sc;
+	}
+
+	// Window-relative base coordinates per level; w = base + (da, dc) / t.
+	vec2 base[2];
+	float inv_t[2];
+	float early_max = bp.outside_max;
+	for (uint l = 0u; l < 2u; l++) {
+		LevelParams lp = bp.lv[l];
+		inv_t[l] = 1.0 / lp.t;
+		base[l] = vec2(a_l * inv_t[l] - float(lp.i0_local), c_abs * inv_t[l] - float(lp.j0));
+		if (lp.valid != 0u) {
+			early_max = max(early_max, lp.level_max);
+		}
+	}
+
+	float best = HS_NEG_INF;
+	float d_best = 0.0;
+	float d = 0.0;
+	bool finished = false;
+	bool unresolved = false;
+	uint cur = level;
+	uint mip = 1u;
+	bool leaf = false;
+	float d_end = 0.0;
+
+	// Plan speed (texel units per metre of d) at the receiver; a vertical sun never leaves the column.
+	{
+		float hv0 = length(vec2(R * sa / rho0, sc) * inv_t[cur]);
+		if (hv0 < 1.0e-7) {
+			best = t0;
+			finished = true;
+		} else {
+			d = 0.5 / hv0;
+		}
+	}
+
+	for (int it = 0; it < HS_MAX_ITER && !finished; it++) {
+		if (d > d_wall) {
+			finished = true;
+			break;
+		}
+		float fd = ray_rise(d, su, k, rho0);
+		if (best > -1.0e30 && d < d_peak && fd >= early_max - best) {
+			finished = true;
+			break;
+		}
+		float da = R * atan(d * sa, rho0 - d * su);
+		float dc = d * sc;
+		vec2 w = base[cur] + vec2(da, dc) * inv_t[cur];
+		if (!window_contains(w)) {
+			if (cur == 0u && bp.lv[1].valid != 0u) {
+				cur = 1u;
+				mip = 3u;
+				leaf = false;
+				continue;
+			}
+			if (bp.outside_max - fd > best) {
+				unresolved = true;
+			}
+			finished = true;
+			break;
+		}
+		LevelParams lp = bp.lv[cur];
+		vec2 u = w + vec2(float(lp.slot0_x), float(lp.slot0_y));
+		if (u.x >= HS_NF) u.x -= HS_NF;
+		if (u.y >= HS_NF) u.y -= HS_NF;
+
+		float rho_d = rho0 - d * su;
+		float rho2 = rho_d * rho_d + d * d * sa * sa;
+		vec2 vel = vec2(R * sa * rho0 / rho2, sc) * inv_t[cur];
+		float hv = max(length(vel), 1.0e-7);
+
+		if (!leaf) {
+			float cell = float(1u << mip);
+			// The cell is the one just ahead of the ray (0.01 texel): a ray sitting exactly on a cell boundary (centre texels of the window can) and moving
+			// outward would otherwise measure a zero-length exit and crawl along the boundary forever.
+			vec2 dir = vec2(vel.x > 1.0e-9 ? 1.0 : (vel.x < -1.0e-9 ? -1.0 : 0.0), vel.y > 1.0e-9 ? 1.0 : (vel.y < -1.0e-9 ? -1.0 : 0.0));
+			vec2 uc = u + dir * 0.01;
+			uc -= HS_NF * floor(uc / HS_NF);
+			vec2 wc = w + dir * 0.01;
+			vec2 q = uc - cell * floor(uc / cell);
+			vec2 lo = max(wc - q, vec2(0.0));
+			vec2 hi = min(wc - q + cell, vec2(HS_NF - 1.0));
+			float tx = vel.x > 1.0e-9 ? (hi.x - w.x) / vel.x : (vel.x < -1.0e-9 ? (lo.x - w.x) / vel.x : 3.0e38);
+			float ty = vel.y > 1.0e-9 ? (hi.y - w.y) / vel.y : (vel.y < -1.0e-9 ? (lo.y - w.y) / vel.y : 3.0e38);
+			float d_out = d + min(max(min(tx, ty), 0.0), 1.0e7);
+			float d_next = d_out + 0.002 / hv;
+			float cell_max = fetch_m(cur, mip, uvec2(uc / cell));
+			if (cell_max - min(fd, ray_rise(d_out, su, k, rho0)) <= best) {
+				d = d_next;
+				mip = min(mip + 1u, 5u);
+				continue;
+			}
+			if (mip > 1u) {
+				mip--;
+				continue;
+			}
+			leaf = true;
+			d_end = d_out;
+		}
+
+		float v = bilinear_height(cur, u) - fd;
+		if (v > best) {
+			best = v;
+			d_best = d;
+		}
+		d += 0.5 / hv;
+		if (d >= d_end) {
+			leaf = false;
+			mip = 1u;
+		}
+	}
+	if (!finished) {
+		unresolved = true; // iteration cap
+	}
+
+	// Analytic structural walls at across 0 and W.
+	if (bp.walls != 0u && d_wall > 1.0 && d_wall < 1.0e30) {
+		float wall_h = bp.wall_top - ray_rise(d_wall, su, k, rho0);
+		if (wall_h > best) {
+			best = wall_h;
+			d_best = d_wall;
+		}
+	}
+
+	float r = best - t0;
+	float g = 0.0;
+	if (unresolved) {
+		g = -max(d, 1.0);
+	} else if (r > 0.0) {
+		g = d_best;
+	}
+	write_result(slot, r, g);
+}
