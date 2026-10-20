@@ -404,7 +404,8 @@ public partial class RingGraphicsQualityController : Node
 
         if (_sun != null)
         {
-            _sun.DirectionalShadowMaxDistance = Mathf.Max(1000.0f, shadowDistanceMeters);
+            _presetShadowDistanceMeters = Mathf.Max(1000.0f, shadowDistanceMeters);
+            _sun.DirectionalShadowMaxDistance = _presetShadowDistanceMeters;
             _sun.DirectionalShadowBlendSplits = true;
             _sun.LightAngularDistance = tuning.SunAngularDistanceDegrees;
             _sun.ShadowBlur = preset == RingTerrainLodCoordinator.QualityPreset.Cinematic5090 ? 1.2f : 1.0f;

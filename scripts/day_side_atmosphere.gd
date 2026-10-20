@@ -141,6 +141,7 @@ extends Node
 @export var planet_light_cast_shadows: bool = true
 @export_range(0.0, 5.0, 0.05) var planet_light_angular_distance_degrees: float = 0.50
 @export_range(100.0, 25000.0, 100.0) var planet_light_shadow_distance_meters: float = 6000.0
+@export_range(2, 4, 2) var planet_light_shadow_cascades: int = 4
 @export_range(0.5, 1.0, 0.01) var planet_light_shadow_fade_ratio: float = 0.85
 
 @export_group("Opposite Side Visibility")
@@ -1342,6 +1343,7 @@ func _update_planet_light(surface_up: Vector3, planet_direction: Vector3, to_sun
 	planet_light.directional_shadow_max_distance = maxf(100.0, planet_light_shadow_distance_meters)
 	planet_light.directional_shadow_fade_start = clampf(planet_light_shadow_fade_ratio, 0.5, 1.0)
 	planet_light.directional_shadow_blend_splits = true
+	planet_light.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if planet_light_shadow_cascades == 2 else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
 
 	var giant_enabled := bool(_get_gas_giant_configuration_value("Enabled", planet_enabled))
 	var physical_giant_radius := maxf(0.0, float(_get_gas_giant_configuration_value("RadiusKm", 1.0)))

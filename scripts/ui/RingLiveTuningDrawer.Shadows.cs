@@ -12,6 +12,7 @@ public partial class RingLiveTuningDrawer
     private readonly System.Collections.Generic.Dictionary<string, OptionButton> _shadowOptions = new();
     private CheckButton? _shadowEnabled;
     private CheckButton? _localShadowHandoffEnabled;
+    private CheckButton? _planetShadowsEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
     private CheckButton? _sunStabilizationEnabled;
@@ -30,6 +31,17 @@ public partial class RingLiveTuningDrawer
         AddShadowSlider(quality, "SunShadowOffElevationDegrees", "Suspend below elevation (degrees)", -45, -1, .1, _shadowGraphics?.EffectiveSunShadowOffElevationDegrees ?? -18);
         AddShadowSlider(quality, "SunShadowOnElevationDegrees", "Resume above elevation (degrees)", -45, -1, .1, _shadowGraphics?.EffectiveSunShadowOnElevationDegrees ?? -16);
         AddShadowDepthOption(quality, _shadowGraphics?.EffectiveDirectionalShadowDepthBits ?? 16); AddShadowAtlasOption(quality, _shadowGraphics?.EffectiveDirectionalShadowAtlasSize ?? 8192); AddShadowOption(quality, "Filter", "Soft-shadow filter", new[] { "Hard", "Soft very low", "Soft low", "Soft medium", "Soft high", "Soft ultra" }, new[] { 0,1,2,3,4,5 }, _shadowGraphics?.EffectiveDirectionalShadowFilter ?? 3);
+        VBoxContainer sunMap = TuningMenuUi.CreateSection(tab, "Sun map");
+        AddShadowSpinBox(sunMap, "MaxDistanceMeters", "Max distance (m)", RingGraphicsQualityController.MinimumShadowDistanceMeters, RingGraphicsQualityController.MaximumShadowDistanceMeters, 10, _shadowGraphics?.EffectiveShadowDistanceMeters ?? 6000,
+            "How far the sun shadow map reaches. Terrain shadow casters follow this range. The requested distance is kept across presets.");
+        AddShadowOption(sunMap, "CascadeCount", "Cascades", new[] { "2", "4" }, new[] { 2, 4 }, _shadowGraphics?.EffectiveSunCascadeCount ?? 4);
+        sunMap.AddChild(new Label { Text = "Two cascades are cheaper; only the near cascade distance below splits them.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
+        VBoxContainer planetLight = TuningMenuUi.CreateSection(tab, "Planet light");
+        _planetShadowsEnabled = new CheckButton { Name="PlanetShadows", Text="Planet light shadows", ButtonPressed=_shadowGraphics?.EffectivePlanetShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Shadow map for the gas giant's light on the planet-lit night side." };
+        _planetShadowsEnabled.Toggled += value => SetShadowValue("PlanetShadowsEnabled", value);
+        planetLight.AddChild(_planetShadowsEnabled);
+        AddShadowSpinBox(planetLight, "PlanetShadowDistanceMeters", "Max distance (m)", RingGraphicsQualityController.MinimumPlanetShadowDistanceMeters, RingGraphicsQualityController.MaximumPlanetShadowDistanceMeters, 100, _shadowGraphics?.EffectivePlanetShadowDistanceMeters ?? 6000);
+        AddShadowOption(planetLight, "PlanetCascadeCount", "Cascades", new[] { "2", "4" }, new[] { 2, 4 }, _shadowGraphics?.EffectivePlanetCascadeCount ?? 4);
         VBoxContainer terrainMacro = TuningMenuUi.CreateSection(tab, "Terrain macro shadows");
         _terrainMacroShadowEnabled = new CheckButton { Name="TerrainMacroShadows", Text="Enable terrain macro shadows", ButtonPressed=_shadowGraphics?.EffectiveTerrainMacroShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Uses the terrain height summary to cast distant mountain shadows from sunlight and nighttime planet light. Strength, trace, and handoff controls apply to both." };
         _terrainMacroShadowEnabled.Toggled += value => SetShadowValue("TerrainMacroEnabled", value);
@@ -201,6 +213,11 @@ public partial class RingLiveTuningDrawer
         SetOption("DepthBits", _shadowGraphics.EffectiveDirectionalShadowDepthBits);
         SetOption("Filter", _shadowGraphics.EffectiveDirectionalShadowFilter);
         SetOption("ShadowDebugMode", _shadowGraphics.ShadowDebugMode);
+        SetRange("MaxDistanceMeters", _shadowGraphics.EffectiveShadowDistanceMeters);
+        SetOption("CascadeCount", _shadowGraphics.EffectiveSunCascadeCount);
+        SetRange("PlanetShadowDistanceMeters", _shadowGraphics.EffectivePlanetShadowDistanceMeters);
+        SetOption("PlanetCascadeCount", _shadowGraphics.EffectivePlanetCascadeCount);
+        _planetShadowsEnabled?.SetPressedNoSignal(_shadowGraphics.EffectivePlanetShadowsEnabled);
         SetRange("NearCascadeMeters", _shadowGraphics.EffectiveNearCascadeMeters);
         SetRange("TerrainMacroStrength", _shadowGraphics.EffectiveTerrainMacroShadowStrength);
         SetRange("TerrainMacroTraceSteps", _shadowGraphics.EffectiveTerrainMacroShadowTraceSteps);

@@ -945,6 +945,8 @@ public partial class RingScaledFarViewport : Node
 		{
 			Name = "FarRingViewport",
 			OwnWorld3D = true,
+			// No shadowed positional light exists in the far world.
+			PositionalShadowAtlasSize = 0,
 			TransparentBg = false,
 			RenderTargetUpdateMode = SubViewport.UpdateMode.Always,
 			HandleInputLocally = false,
@@ -1063,6 +1065,7 @@ public partial class RingScaledFarViewport : Node
 		{
 			Name = "FarRingRegionalViewport",
 			OwnWorld3D = true,
+			PositionalShadowAtlasSize = 0,
 			// This texture is layered over the whole-ring viewport. Pixels
 			// without regional terrain must preserve the coarse backdrop.
 			TransparentBg = true,

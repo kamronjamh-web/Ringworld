@@ -245,10 +245,85 @@ public partial class ShadowSettingsSmoke : RefCounted
             && missingInputsKeepsRequestedSun
             && globalLod.EnableMacroTerrainShadows
             && !globalLod.EnableMacroTerrainWallShadows;
+        // S1: sun map range/cascade count and planet light overrides.
+        bool mapKeysValid = RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", 400f, out Variant mapDistance) && Mathf.IsEqualApprox(mapDistance.AsSingle(), 400f)
+            && RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", 50f, out Variant mapLow) && Mathf.IsEqualApprox(mapLow.AsSingle(), RingGraphicsQualityController.MinimumShadowDistanceMeters)
+            && RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", 99999f, out Variant mapHigh) && Mathf.IsEqualApprox(mapHigh.AsSingle(), RingGraphicsQualityController.MaximumShadowDistanceMeters)
+            && RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", 2, out Variant cascades2) && cascades2.AsInt32() == 2
+            && RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", 4.0f, out Variant cascades4) && cascades4.AsInt32() == 4
+            && RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowsEnabled", false, out Variant planetOff) && !planetOff.AsBool()
+            && RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowDistanceMeters", 250f, out Variant planetDistance) && Mathf.IsEqualApprox(planetDistance.AsSingle(), 250f)
+            && RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowDistanceMeters", 5f, out Variant planetLow) && Mathf.IsEqualApprox(planetLow.AsSingle(), RingGraphicsQualityController.MinimumPlanetShadowDistanceMeters)
+            && RingGraphicsQualityController.TryValidateShadowOverride("PlanetCascadeCount", 2, out Variant planetCascades) && planetCascades.AsInt32() == 2;
+        bool mapKeysRejected = !RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", float.NaN, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", float.PositiveInfinity, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", true, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("MaxDistanceMeters", "400", out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", 3, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", 2.5f, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", double.NaN, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", true, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("CascadeCount", 1, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("PlanetCascadeCount", 8, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("PlanetCascadeCount", 2.0001d, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowsEnabled", 1, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowsEnabled", "true", out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowDistanceMeters", float.NaN, out _)
+            && !RingGraphicsQualityController.TryValidateShadowOverride("PlanetShadowDistanceMeters", false, out _);
+        var planetScript = new GDScript { SourceCode = "extends Node\nvar planet_light_cast_shadows := true\nvar planet_light_shadow_distance_meters := 5000.0\nvar planet_light_shadow_cascades := 4\nfunc _update_planet_light() -> void:\n\tpass\n" };
+        bool planetScriptOk = planetScript.Reload() == Error.Ok;
+        var fakeAtmosphere = new Node { Name = "DaySideAtmosphere" };
+        fakeAtmosphere.SetScript(planetScript);
+        tree.Root.AddChild(fakeAtmosphere);
+        string mapPath = path + ".s1.tres";
+        var mapSettings = new GameplayShadowDefaults(mapPath);
+        mapSettings.Initialize(controller);
+        float presetDistance = sun.DirectionalShadowMaxDistance;
+        bool mapDefaultsUnchanged = presetDistance >= 1000f && presetDistance != 400f
+            && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits
+            && controller.EffectiveSunCascadeCount == 4
+            && (bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 5000f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 4;
+        bool mapApplied = mapSettings.SetOverride(controller, "MaxDistanceMeters", 400f) && mapSettings.SetOverride(controller, "CascadeCount", 2)
+            && mapSettings.SetOverride(controller, "NearCascadeMeters", 60f)
+            && mapSettings.SetOverride(controller, "PlanetShadowsEnabled", false) && mapSettings.SetOverride(controller, "PlanetShadowDistanceMeters", 250f) && mapSettings.SetOverride(controller, "PlanetCascadeCount", 2);
+        controller._Process(0);
+        bool mapLight = mapApplied
+            && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400f) && Mathf.IsEqualApprox(controller.EffectiveShadowDistanceMeters, 400f)
+            && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel2Splits && controller.EffectiveSunCascadeCount == 2
+            && Mathf.IsEqualApprox(controller.EffectiveNearCascadeMeters, 60f) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, .15f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.ResolveTerrainShadowCasterCoverage(sun, null), 400f)
+            && !(bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 250f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 2
+            && !controller.EffectivePlanetShadowsEnabled && controller.EffectivePlanetCascadeCount == 2;
+        controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, applyTerrainPreset: false);
+        bool mapSurvivesPreset = Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400f) && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel2Splits;
+        bool mapSaved = mapSettings.Save();
+        var mapReloaded = new RingGraphicsQualityController();
+        var mapReloadedSun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true };
+        mapReloaded.AddChild(mapReloadedSun);
+        mapReloaded.SunLightPath = new NodePath("Sun");
+        tree.Root.AddChild(mapReloaded);
+        mapReloaded.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
+        var mapLoaded = new GameplayShadowDefaults(mapPath);
+        mapLoaded.Initialize(mapReloaded);
+        bool mapRoundTrip = mapSaved && mapLoaded.Settings.Overrides.ContainsKey("MaxDistanceMeters") && mapLoaded.Settings.Overrides.ContainsKey("PlanetCascadeCount")
+            && Mathf.IsEqualApprox(mapReloadedSun.DirectionalShadowMaxDistance, 400f) && mapReloadedSun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel2Splits;
+        tree.Root.RemoveChild(mapReloaded);
+        mapReloaded.Free();
+        mapSettings.Reset(controller);
+        controller._Process(0);
+        bool mapReset = sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits && controller.EffectiveSunCascadeCount == 4
+            && (bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 5000f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 4;
+        // The High preset range (not the 14000 m VeryHigh one) returns after reset, and never below the 1000 m preset floor.
+        bool mapResetDistance = sun.DirectionalShadowMaxDistance >= 1000f && !Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400f);
+        bool legacyKeepsMode = legacySun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits && Mathf.IsEqualApprox(legacySun.DirectionalShadowMaxDistance, 14000f);
+        tree.Root.RemoveChild(fakeAtmosphere);
+        fakeAtmosphere.Free();
+        bool shadowMapKeys = planetScriptOk && mapKeysValid && mapKeysRejected && mapDefaultsUnchanged && mapLight && mapSurvivesPreset && mapRoundTrip && mapReset && mapResetDistance && legacyKeepsMode;
         var result = new Godot.Collections.Dictionary();
-        result["pass"] = supportedAtlas && expandedAtlases && rejectedAtlas && rejectedFractionalAtlas && rejectedPreciseFractionalAtlas && rejectedNanAtlas && rejectedOversizedAtlas && rejectedNegativeAtlas && resolver && memoryEstimates && depthValidation && nearValidation && supportedFilter && rejectedFilter && rejectedDistance && rejectedNaN && stabilizationEnabled && rejectedStabilizationType && stepRange && stepClamped && softnessRange && rejectedSoftness && handoffValidation && terrainMacroValidation && debugModeValidation && debugModeSet && defaultNearFocus && formatToggleSameAtlas && directSwitching && mixedPrecedence && upperNearClamped && directUnsupportedRejected && unsupportedPreferenceRejected && set && macroRuntimeApplied && effective && survivesPreset && reset && missingInputsKeepsRequestedSun && saved && roundTrip && legacyLoadCompatibility && highSaved && portableHighClamped;
+        result["pass"] = supportedAtlas && expandedAtlases && rejectedAtlas && rejectedFractionalAtlas && rejectedPreciseFractionalAtlas && rejectedNanAtlas && rejectedOversizedAtlas && rejectedNegativeAtlas && resolver && memoryEstimates && depthValidation && nearValidation && supportedFilter && rejectedFilter && rejectedDistance && rejectedNaN && stabilizationEnabled && rejectedStabilizationType && stepRange && stepClamped && softnessRange && rejectedSoftness && handoffValidation && terrainMacroValidation && debugModeValidation && debugModeSet && defaultNearFocus && formatToggleSameAtlas && directSwitching && mixedPrecedence && upperNearClamped && directUnsupportedRejected && unsupportedPreferenceRejected && set && macroRuntimeApplied && effective && survivesPreset && reset && missingInputsKeepsRequestedSun && saved && roundTrip && legacyLoadCompatibility && highSaved && portableHighClamped && shadowMapKeys;
         result["unsupportedPreferenceRejected"] = unsupportedPreferenceRejected;
-        result["detail"] = $"atlas={supportedAtlas}/{expandedAtlases}/{rejectedAtlas}/{rejectedFractionalAtlas}/{rejectedPreciseFractionalAtlas}/{rejectedNanAtlas}/{rejectedOversizedAtlas}/{rejectedNegativeAtlas} resolver={resolver} memory={memoryEstimates} depth={depthValidation}/{formatToggleSameAtlas} near={nearValidation}/{defaultNearFocus}/{directSwitching}/{mixedPrecedence}/{upperNearClamped} filter={supportedFilter}/{rejectedFilter} rangeRejected={rejectedDistance} nan={rejectedNaN} stabilization={stabilizationEnabled}/{rejectedStabilizationType} step={stepRange}/{stepClamped} softness={softnessRange}/{rejectedSoftness} handoff={handoffValidation} terrainMacro={terrainMacroValidation}/{macroRuntimeApplied} debugMode={debugModeValidation}/{debugModeSet} directUnsupportedRejected={directUnsupportedRejected} set={set} effective={effective} survivesPreset={survivesPreset} reset={reset}/{missingInputsKeepsRequestedSun} saved={saved} roundTrip={roundTrip} legacyLoad={legacyLoadCompatibility} highSaved={highSaved} portableHighClamped={portableHighClamped}; fixture path={path}";
+        result["shadowMapKeys"] = shadowMapKeys;
+        result["detail"] = $"atlas={supportedAtlas}/{expandedAtlases}/{rejectedAtlas}/{rejectedFractionalAtlas}/{rejectedPreciseFractionalAtlas}/{rejectedNanAtlas}/{rejectedOversizedAtlas}/{rejectedNegativeAtlas} resolver={resolver} memory={memoryEstimates} depth={depthValidation}/{formatToggleSameAtlas} near={nearValidation}/{defaultNearFocus}/{directSwitching}/{mixedPrecedence}/{upperNearClamped} filter={supportedFilter}/{rejectedFilter} rangeRejected={rejectedDistance} nan={rejectedNaN} stabilization={stabilizationEnabled}/{rejectedStabilizationType} step={stepRange}/{stepClamped} softness={softnessRange}/{rejectedSoftness} handoff={handoffValidation} terrainMacro={terrainMacroValidation}/{macroRuntimeApplied} debugMode={debugModeValidation}/{debugModeSet} directUnsupportedRejected={directUnsupportedRejected} set={set} effective={effective} survivesPreset={survivesPreset} reset={reset}/{missingInputsKeepsRequestedSun} saved={saved} roundTrip={roundTrip} legacyLoad={legacyLoadCompatibility} highSaved={highSaved} portableHighClamped={portableHighClamped} shadowMapKeys={shadowMapKeys}[{planetScriptOk}/{mapKeysValid}/{mapKeysRejected}/{mapDefaultsUnchanged}/{mapLight}/{mapSurvivesPreset}/{mapRoundTrip}/{mapReset}/{mapResetDistance}/{legacyKeepsMode}]; fixture path={path}";
         tree.Root.RemoveChild(controller);
         controller.Free();
         tree.Root.RemoveChild(reloaded);

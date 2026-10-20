@@ -12,6 +12,8 @@ func run_probe() -> void:
 	var result: Dictionary = fixture.Run(ISOLATED_PATH)
 	if FileAccess.file_exists(ISOLATED_PATH):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
+	if FileAccess.file_exists(ISOLATED_PATH + ".s1.tres"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH + ".s1.tres"))
 	if not result.get("pass", false):
 		push_error("SHADOW_SETTINGS_SMOKE=FAIL " + str(result.get("detail", "")))
 		quit(1)
