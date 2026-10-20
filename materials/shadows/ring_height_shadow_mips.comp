@@ -1,0 +1,45 @@
+#version 450
+// S4a: max-mips of a level's slot-space heights. Mode 0 (mip 1 from the height buffer): max over texels 2x..2x+2 by 2y..2y+2 with wrap, i.e. the
+// footprint of every bilinear sample whose texel-centre coordinate u = uv * N - 0.5 lies in [2x, 2x + 2). Mode 1 (mips 2..5): plain 2x2 max of the
+// mip below. All mips live packed in one buffer (offsets in floats, see RingHeightShadowLattice.MipOffset).
+#include "res://materials/shadows/ring_height_shadow_common.compinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) restrict readonly buffer LevelHeights { float h[]; } level;
+layout(set = 0, binding = 1, std430) buffer Mips { float m[]; } mips;
+
+layout(push_constant, std430) uniform Params {
+	uint src_offset;
+	uint src_n;
+	uint dst_offset;
+	uint dst_n;
+	uint mode;
+	uint pad0;
+	uint pad1;
+	uint pad2;
+} p;
+
+void main() {
+	uvec2 id = gl_GlobalInvocationID.xy;
+	if (id.x >= p.dst_n || id.y >= p.dst_n) {
+		return;
+	}
+	float best = -3.4e38;
+	if (p.mode == 0u) {
+		for (uint dy = 0u; dy < 3u; dy++) {
+			for (uint dx = 0u; dx < 3u; dx++) {
+				uint sx = (2u * id.x + dx) & (HS_N - 1u);
+				uint sy = (2u * id.y + dy) & (HS_N - 1u);
+				best = max(best, level.h[sy * HS_N + sx]);
+			}
+		}
+	} else {
+		for (uint dy = 0u; dy < 2u; dy++) {
+			for (uint dx = 0u; dx < 2u; dx++) {
+				best = max(best, mips.m[p.src_offset + (2u * id.y + dy) * p.src_n + 2u * id.x + dx]);
+			}
+		}
+	}
+	mips.m[p.dst_offset + id.y * p.dst_n + id.x] = best;
+}

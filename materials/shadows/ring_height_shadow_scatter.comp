@@ -1,0 +1,26 @@
+#version 450
+// S4a: writes one staged rect of heights (row-major w x h, <= 256 KB) into the level's toroidal slot-space storage buffer float[N^2].
+// Rects never wrap in slot space (the CPU splits them), so slot = (y + row) * N + x + col.
+#include "res://materials/shadows/ring_height_shadow_common.compinc"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, std430) restrict buffer LevelHeights { float h[]; } level;
+layout(set = 0, binding = 1, std430) restrict readonly buffer Staging { float v[]; } staging;
+
+layout(push_constant, std430) uniform Params {
+	uint x;
+	uint y;
+	uint w;
+	uint count;
+} p;
+
+void main() {
+	uint i = gl_GlobalInvocationID.x;
+	if (i >= p.count) {
+		return;
+	}
+	uint col = i % p.w;
+	uint row = i / p.w;
+	level.h[(p.y + row) * HS_N + p.x + col] = staging.v[i];
+}

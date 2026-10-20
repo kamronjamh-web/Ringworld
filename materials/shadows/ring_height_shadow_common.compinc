@@ -1,0 +1,4 @@
+// Shared constants of the S4 terrain height-shadow compute passes (compiled at runtime by RingTerrainHeightShadowGpu via
+// RingAtmosphereLuts.ExpandIncludes, so these are deliberately not Godot-imported .glsl resources). Keep in sync with RingHeightShadowLattice.
+#define HS_N 1024u
+#define HS_MIP_COUNT 5u

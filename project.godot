@@ -93,6 +93,50 @@ ringworld_shadow_debug_mode={
 "type": "int",
 "value": 0
 }
+ringworld_height_shadow_l0={
+"type": "sampler2DArray",
+"value": ""
+}
+ringworld_height_shadow_l1={
+"type": "sampler2DArray",
+"value": ""
+}
+ringworld_height_shadow_frame={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ringworld_height_shadow_l0_params={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_l1_params={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_l0_bounds={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_l0_prev_bounds={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_l1_bounds={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_l1_prev_bounds={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_state={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_height_shadow_shape={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ringworld_night_light_scale={
 "type": "float",
 "value": 1.0
