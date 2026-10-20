@@ -350,6 +350,10 @@ void light() {
         v_vertex,
         ring_viewer_world_position,
         SCREEN_UV,
+        FRAGCOORD.xy,
+        VIEWPORT_SIZE,
+        INV_PROJECTION_MATRIX,
+        RING_SHADOW_DEFAULT,
         direct_visibility);
     float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
 

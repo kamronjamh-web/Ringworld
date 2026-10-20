@@ -200,7 +200,8 @@ void fragment() {
 void light() {
 	float direct_visibility;
 	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
-		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV, direct_visibility);
+		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV,
+		FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_CONTACT_GRASS, direct_visibility);
 	// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
 	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
 }

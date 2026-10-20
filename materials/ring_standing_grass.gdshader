@@ -342,6 +342,8 @@ void light() {
 	vec3 sun_view = normalize((VIEW_MATRIX * vec4(grass_primary_sun_direction, 0.0)).xyz);
 	// Cloud shadow stays in the grass's AO/albedo only (never direct light), so the composition is geometry * 1 (COMBINE_PRODUCT).
 	RingShadowTerms terms = ring_shadow_terms(vec3(0.0), SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT); // world unused until S5 (no world varying here)
+	float contact_sun_weight = LIGHT_IS_DIRECTIONAL ? smoothstep(.90, .995, dot(normalize(LIGHT), sun_view)) : 0.0;
+	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, contact_sun_weight, RING_SHADOW_CONTACT_GRASS);
 	float attenuation = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT) * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && (!grass_primary_sun_gate_enabled || smoothstep(.90, .995, dot(normalize(LIGHT), sun_view)) > 0.5)) {

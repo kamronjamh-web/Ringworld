@@ -112,6 +112,31 @@ public partial class RingGraphicsQualityController
     public string EffectiveHeightShadowStatus => RingTerrainHeightShadow.Instance is { } node && GodotObject.IsInstanceValid(node) ? node.GetStatusText()
         : ResolveHeightShadowSettings().Enabled ? "Height shadows: starting." : "Height shadows: off.";
 
+    /// <summary>Contact-shadow settings (S6) from the validated overrides; defaults for absent keys.</summary>
+    public RingContactShadowSettings ResolveContactShadowSettings()
+    {
+        Dictionary<string, Variant> o = _shadowTuningOverrides;
+        return new RingContactShadowSettings
+        {
+            Enabled = o.TryGetValue("ContactShadowEnabled", out Variant enabled) && enabled.AsBool(),
+            LengthMeters = o.TryGetValue("ContactShadowLengthMeters", out Variant length) ? length.AsSingle() : RingContactShadowSettings.DefaultLengthMeters,
+            ThicknessMeters = o.TryGetValue("ContactShadowThicknessMeters", out Variant thickness) ? thickness.AsSingle() : RingContactShadowSettings.DefaultThicknessMeters,
+            Strength = o.TryGetValue("ContactShadowStrength", out Variant strength) ? strength.AsSingle() : RingContactShadowSettings.DefaultStrength,
+            FadeMeters = o.TryGetValue("ContactShadowFadeMeters", out Variant fade) ? fade.AsSingle() : RingContactShadowSettings.DefaultFadeMeters,
+            GrassStrength = o.TryGetValue("ContactShadowGrassStrength", out Variant grass) ? grass.AsSingle() : RingContactShadowSettings.DefaultGrassStrength,
+            Steps = o.TryGetValue("ContactShadowSteps", out Variant steps) ? steps.AsInt32() : RingContactShadowSettings.DefaultSteps,
+        }.Normalized();
+    }
+    public bool EffectiveContactShadowEnabled => ResolveContactShadowSettings().Enabled;
+    public float EffectiveContactShadowLengthMeters => ResolveContactShadowSettings().LengthMeters;
+    public float EffectiveContactShadowThicknessMeters => ResolveContactShadowSettings().ThicknessMeters;
+    public float EffectiveContactShadowStrength => ResolveContactShadowSettings().Strength;
+    public float EffectiveContactShadowFadeMeters => ResolveContactShadowSettings().FadeMeters;
+    public float EffectiveContactShadowGrassStrength => ResolveContactShadowSettings().GrassStrength;
+    public int EffectiveContactShadowSteps => ResolveContactShadowSettings().Steps;
+    public string EffectiveContactShadowStatus => RingContactShadows.Instance is { } node && GodotObject.IsInstanceValid(node) ? node.StatusText
+        : ResolveContactShadowSettings().Enabled ? "Contact shadows: starting." : "Contact shadows: off.";
+
     public void SetShadowTuningOverrides(Godot.Collections.Dictionary overrides)
     {
         _shadowTuningOverrides.Clear();
@@ -412,12 +437,18 @@ public partial class RingGraphicsQualityController
     {
         clean = default;
         if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled" || key == "LocalShadowHandoffEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
-        if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled" or "ContactShadowEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if ((key == "HeightShadowL0TexelMeters" || key == "HeightShadowRangeMeters" || key == "HeightShadowLevels" || key == "HeightShadowNearMapDistanceMeters") && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         {
             double raw = value.AsDouble();
             bool member = key switch { "HeightShadowL0TexelMeters" => raw is 2.0 or 4.0 or 8.0, "HeightShadowRangeMeters" => raw is 4000.0 or 8000.0 or 16000.0, "HeightShadowNearMapDistanceMeters" => raw is 300.0 or 400.0 or 500.0, _ => raw is 1.0 or 2.0 };
             if (!member) return false;
+            clean = (int)raw; return true;
+        }
+        if (key == "ContactShadowSteps" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
+        {
+            double raw = value.AsDouble();
+            if (raw is not (8.0 or 12.0 or 16.0 or 24.0 or 32.0)) return false;
             clean = (int)raw; return true;
         }
         if (key == "SunStabilizationEnabled" || key == "PlanetShadowsEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
@@ -433,7 +464,8 @@ public partial class RingGraphicsQualityController
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
         (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), "MaxDistanceMeters" => (MinimumShadowDistanceMeters, MaximumShadowDistanceMeters), "PlanetShadowDistanceMeters" => (MinimumPlanetShadowDistanceMeters, MaximumPlanetShadowDistanceMeters),
-            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2), _ => (1, 0) };
+            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2),
+            "ContactShadowLengthMeters" => (.25f, 4), "ContactShadowThicknessMeters" => (.05f, 1), "ContactShadowStrength" => (0, 1), "ContactShadowFadeMeters" => (25, 400), "ContactShadowGrassStrength" => (0, 1), _ => (1, 0) };
         if (min > max) return false;
         float clamped = Mathf.Clamp(value.AsSingle(), min, max);
         if (key is "TerrainMacroTraceSteps" or "HeightShadowRowsPerFrame" or "HeightShadowFillWorkers") clean = Mathf.RoundToInt(clamped); else clean = clamped;

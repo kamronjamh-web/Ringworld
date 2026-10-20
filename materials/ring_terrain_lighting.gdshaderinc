@@ -50,7 +50,11 @@ float ring_terrain_direct_visibility(
 		vec2 shadow_uv,
 		vec3 world,
 		vec3 viewer,
-		vec2 screen_uv) {
+		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags) {
 	float readable_shadow = max(attenuation, shadow_floor);
 	vec3 sun_direction_view = normalize((view_matrix * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = is_directional
@@ -91,6 +95,7 @@ float ring_terrain_direct_visibility(
 		is_directional ? cloud_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	terms.contact = ring_contact_visibility(frag_coord, viewport_size, inv_projection, primary_sun_weight, contact_flags);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, day_factor, ringworld_hub_light_weight, shadow_floor);
 	}
@@ -116,6 +121,10 @@ vec3 ring_terrain_direct_diffuse(
 		vec3 world,
 		vec3 viewer,
 		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags,
 		out float direct_visibility) {
 	float n_dot_l = max(dot(normal, light), 0.0);
 	direct_visibility = ring_terrain_direct_visibility(
@@ -129,7 +138,11 @@ vec3 ring_terrain_direct_diffuse(
 		shadow_uv,
 		world,
 		viewer,
-		screen_uv);
+		screen_uv,
+		frag_coord,
+		viewport_size,
+		inv_projection,
+		contact_flags);
 	// Shadow debug view: show the selected term directly (ALBEDO is forced to 1 by the caller's fragment()).
 	if (ring_shadow_debug_enabled()) {
 		return vec3(direct_visibility);

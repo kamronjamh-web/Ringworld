@@ -16,7 +16,8 @@ public partial class RingLiveTuningDrawer
     private CheckButton? _planetShadowsEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
-    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap;
+    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap, _contactShadowEnabled;
+    private Label? _contactShadowStatus;
     private Label? _heightShadowStatus;
     private RingHeightShadowOverlay? _heightShadowOverlay;
     private OptionButton? _heightShadowOverlayMode;
@@ -60,6 +61,7 @@ public partial class RingLiveTuningDrawer
         AddShadowSpinBox(terrainMacro, "TerrainMacroFadeStartMeters", "Macro handoff near (m)", 0, 50000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeStartMeters ?? 3200);
         AddShadowSpinBox(terrainMacro, "TerrainMacroFadeEndMeters", "Macro handoff far (m)", 100, 60000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeEndMeters ?? 6500);
         BuildHeightShadowControls(tab);
+        BuildContactShadowControls(tab);
         VBoxContainer cascades = TuningMenuUi.CreateSection(tab, "Cascade coverage");
         AddShadowSpinBox(cascades, "NearCascadeMeters", "Near cascade distance (m)", RingGraphicsQualityController.MinimumNearCascadeMeters, RingGraphicsQualityController.MaximumNearCascadeMeters, 1, _shadowGraphics?.EffectiveNearCascadeMeters ?? RingGraphicsQualityController.DefaultNearCascadeMeters,
             "Focuses near shadow coverage, up to 40% of the shadow range. The requested distance is kept across presets.");
@@ -136,6 +138,31 @@ public partial class RingLiveTuningDrawer
         _heightShadowOverlayMode.ItemSelected += index => { if (_heightShadowOverlay != null) _heightShadowOverlay.Mode = _heightShadowOverlayMode.GetItemId((int)index); };
         height.AddChild(_heightShadowOverlayMode);
         UpdateHeightShadowStatus();
+    }
+    private void BuildContactShadowControls(VBoxContainer tab)
+    {
+        VBoxContainer contact = TuningMenuUi.CreateSection(tab, "Contact shadows");
+        _contactShadowEnabled = new CheckButton { Name = "ContactShadowEnabled", Text = "Enable contact shadows", ButtonPressed = _shadowGraphics?.EffectiveContactShadowEnabled ?? false, Disabled = _shadowGraphics == null,
+            TooltipText = "Screen-space ray march on the depth prepass toward the sun: fine shadows under small props, rocks and grass that the sun shadow map is too coarse for. Main view only; off while sun shadows are suspended." };
+        _contactShadowEnabled.Toggled += value => SetShadowValue("ContactShadowEnabled", value);
+        contact.AddChild(_contactShadowEnabled);
+        AddShadowSlider(contact, "ContactShadowLengthMeters", "Length (m)", .25, 4, .05, _shadowGraphics?.EffectiveContactShadowLengthMeters ?? 1.5,
+            "World-space length of the sun ray (also limited to 10% of the screen height).");
+        AddShadowSlider(contact, "ContactShadowThicknessMeters", "Thickness (m)", .05, 1, .05, _shadowGraphics?.EffectiveContactShadowThicknessMeters ?? .25,
+            "Surfaces thicker than this are treated as thin: a ray passing behind them is not shadowed.");
+        AddShadowSlider(contact, "ContactShadowStrength", "Strength", 0, 1, .05, _shadowGraphics?.EffectiveContactShadowStrength ?? 1);
+        AddShadowSlider(contact, "ContactShadowFadeMeters", "Fade distance (m)", 25, 400, 5, _shadowGraphics?.EffectiveContactShadowFadeMeters ?? 150,
+            "Contact shadows fade out between 70% of this distance and the distance itself.");
+        AddShadowSlider(contact, "ContactShadowGrassStrength", "Grass strength", 0, 1, .05, _shadowGraphics?.EffectiveContactShadowGrassStrength ?? .35,
+            "Strength on grass blades and cards (they also receive shadows from neighbouring blades).");
+        AddShadowOption(contact, "ContactShadowSteps", "Steps", new[] { "8", "12", "16", "24", "32" }, new[] { 8, 12, 16, 24, 32 }, _shadowGraphics?.EffectiveContactShadowSteps ?? 16);
+        _contactShadowStatus = new Label { Name = "ContactShadowStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        contact.AddChild(_contactShadowStatus);
+        UpdateContactShadowStatus();
+    }
+    private void UpdateContactShadowStatus()
+    {
+        if (_contactShadowStatus != null && _shadowGraphics != null) _contactShadowStatus.Text = _shadowGraphics.EffectiveContactShadowStatus;
     }
     private void SetHeightShadowOverlay(bool on)
     {
@@ -291,6 +318,13 @@ public partial class RingLiveTuningDrawer
         SetRange("HeightShadowPenumbraDegrees", _shadowGraphics.EffectiveHeightShadowPenumbraDegrees);
         SetRange("HeightShadowCrossfadeSeconds", _shadowGraphics.EffectiveHeightShadowCrossfadeSeconds);
         SetRange("HeightShadowFillWorkers", _shadowGraphics.EffectiveHeightShadowFillWorkers);
+        _contactShadowEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveContactShadowEnabled);
+        SetRange("ContactShadowLengthMeters", _shadowGraphics.EffectiveContactShadowLengthMeters);
+        SetRange("ContactShadowThicknessMeters", _shadowGraphics.EffectiveContactShadowThicknessMeters);
+        SetRange("ContactShadowStrength", _shadowGraphics.EffectiveContactShadowStrength);
+        SetRange("ContactShadowFadeMeters", _shadowGraphics.EffectiveContactShadowFadeMeters);
+        SetRange("ContactShadowGrassStrength", _shadowGraphics.EffectiveContactShadowGrassStrength);
+        SetOption("ContactShadowSteps", _shadowGraphics.EffectiveContactShadowSteps);
         SetRange("TerrainMacroStrength", _shadowGraphics.EffectiveTerrainMacroShadowStrength);
         SetRange("TerrainMacroTraceSteps", _shadowGraphics.EffectiveTerrainMacroShadowTraceSteps);
         SetRange("TerrainMacroMaxTraceMeters", _shadowGraphics.EffectiveTerrainMacroShadowMaxTraceMeters);
@@ -304,6 +338,7 @@ public partial class RingLiveTuningDrawer
             UpdateShadowAtlasOptionPresentation(atlas, _shadowGraphics.EffectiveDirectionalShadowDepthBits, _shadowGraphics.DirectionalShadowAtlasHardwareLimit, _shadowGraphics.DirectionalShadowAtlasLimitIsUnverified);
         UpdateShadowStatus();
         UpdateHeightShadowStatus();
+        UpdateContactShadowStatus();
     }
     private void SetRange(string key,float value) { if (_shadowRanges.TryGetValue(key,out Range? range)) range.SetValueNoSignal(value); if (_shadowValueLabels.TryGetValue(key,out Label? label)) label.Text=value.ToString("0.###"); }
     private void SetOption(string key,int value) { if (_shadowOptions.TryGetValue(key,out OptionButton? option)) SetOptionSelection(option, value); }

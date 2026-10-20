@@ -48,7 +48,7 @@ void fragment() {
 void light() {
 	float direct_visibility;
 	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR, VIEW_MATRIX, 1.0, 0.0, vec2(0.5),
-		receiver_world, camera_world_position, SCREEN_UV, direct_visibility);
+		receiver_world, camera_world_position, SCREEN_UV, FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_DEFAULT, direct_visibility);
 }
 """
 

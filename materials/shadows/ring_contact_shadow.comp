@@ -1,0 +1,92 @@
+#version 450
+// Screen-space contact shadows (docs/shadow-revamp-plan.md S6). One thread per internal-resolution pixel of the main view: reconstruct the
+// view-space position from the prepass depth, march N steps along the view-space sun ray for at most `length` metres (shortened so the ray covers
+// at most max_px screen pixels) and test every sample against the depth buffer. Output R = visibility (1 = lit). Reverse-Z depth: 0 = sky / far plane
+// (never receives and never occludes), so sky and pixels with no geometry stay exactly 1.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(r8, binding = 0) uniform restrict writeonly image2D contact_out;
+layout(binding = 1) uniform sampler2D scene_depth;
+layout(std140, binding = 2) uniform Frame {
+	mat4 projection; // jittered, matches the prepass depth and the receivers' own pixel
+	mat4 inv_projection;
+	vec4 sun_view; // xyz = unit direction toward the sun in view space, w = ray length (m)
+	vec4 params; // x thickness (m), y steps, z fade distance (m), w dither frame (< 0 = no dither)
+	vec4 size; // xy internal size, z max ray length in pixels, w unused
+} frame;
+
+float view_depth(float depth) {
+	// Only the z/w rows of the inverse projection depend on NDC z (jitter changes x/y only), so NDC xy = 0 is exact here.
+	vec4 v = frame.inv_projection * vec4(0.0, 0.0, depth, 1.0);
+	return -v.z / v.w;
+}
+
+float interleaved_gradient(ivec2 p, float frame_index) {
+	vec2 q = vec2(p) + 5.588238 * frame_index;
+	return fract(52.9829189 * fract(dot(q, vec2(0.06711056, 0.00583715))));
+}
+
+float march(ivec2 p, vec3 view_position, float z) {
+	vec3 to_sun = frame.sun_view.xyz;
+	float ray_length = frame.sun_view.w;
+	// Keep the ray end in front of the camera.
+	if (to_sun.z > 0.0) {
+		ray_length = min(ray_length, max((-0.05 - view_position.z) / to_sun.z, 0.0));
+	}
+	vec4 c0 = frame.projection * vec4(view_position, 1.0);
+	vec4 c1 = frame.projection * vec4(view_position + to_sun * ray_length, 1.0);
+	vec2 s0 = c0.xy / c0.w;
+	vec2 s1 = c1.xy / c1.w;
+	float pixels = length((s1 - s0) * 0.5 * frame.size.xy);
+	if (pixels > frame.size.z) {
+		ray_length *= frame.size.z / pixels;
+	}
+	if (ray_length <= 0.0) {
+		return 1.0;
+	}
+	int steps = int(frame.params.y);
+	float dither = frame.params.w >= 0.0 ? interleaved_gradient(p, frame.params.w) - 0.5 : 0.0;
+	float bias = 0.02 + 0.001 * z;
+	for (int i = 0; i < steps; i++) {
+		float t = clamp((float(i) + 0.5 + dither) / float(steps), 0.0, 1.0);
+		vec3 sample_position = view_position + to_sun * (ray_length * t);
+		if (sample_position.z > -0.01) {
+			break;
+		}
+		vec4 clip = frame.projection * vec4(sample_position, 1.0);
+		vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+		if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) {
+			continue; // off-screen never occludes
+		}
+		float scene = texelFetch(scene_depth, ivec2(uv * frame.size.xy), 0).r;
+		if (scene <= 0.0) {
+			continue; // sky / far viewport depth never occludes
+		}
+		float difference = -sample_position.z - view_depth(scene);
+		if (difference > bias && difference < frame.params.x) {
+			return smoothstep(0.6, 1.0, t);
+		}
+	}
+	return 1.0;
+}
+
+void main() {
+	ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+	if (p.x >= int(frame.size.x) || p.y >= int(frame.size.y)) {
+		return;
+	}
+	float visibility = 1.0;
+	float depth = texelFetch(scene_depth, p, 0).r;
+	if (depth > 0.0) {
+		vec2 ndc = (vec2(p) + 0.5) / frame.size.xy * 2.0 - 1.0;
+		vec4 v = frame.inv_projection * vec4(ndc, depth, 1.0);
+		vec3 view_position = v.xyz / v.w;
+		float z = -view_position.z;
+		float fade_end = frame.params.z;
+		if (z > 0.0 && z < fade_end) {
+			visibility = march(p, view_position, z);
+			visibility = mix(visibility, 1.0, smoothstep(0.7 * fade_end, fade_end, z));
+		}
+	}
+	imageStore(contact_out, p, vec4(visibility));
+}

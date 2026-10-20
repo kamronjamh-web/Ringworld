@@ -13,7 +13,7 @@ extends SceneTree
 ##   --warmup=S              seconds between applying a label and opening the window (default 3)
 ##   --poses=a,b,c           subset of: ground_horizon, forest_noon, emitter_rim, coast(TODO), dawn_5deg, alt_1km, alt_12km, night_planet_lit, eclipse_hub (default: all but coast)
 ##   --labels=a,b            subset of: sun_map_off, planet_map_off, cloud_shadow_gen_off, cloud_receivers_off, macro_off, tree_shadows_off, casters_500m, pssm2_500m,
-##                           atlas_2048, hs_on (heightfield + 6 km map), hs_receivers_off (producer only), hs_near (heightfield + 400 m PSSM2 near map), baseline_repeat (baseline is always the A window)
+##                           atlas_2048, hs_on (heightfield + 6 km map), hs_receivers_off (producer only), hs_near (heightfield + 400 m PSSM2 near map), contact_on (S6 contact shadows, default settings), baseline_repeat (baseline is always the A window)
 ##   --out=<dir>             output root (default <project>/.godot/shadow_baseline/<machine>/); results go to <out>/attribution/<stamp>/ (report.json + power_log.csv)
 ##   --res=WxH               window size (default 1920x1080, the plan's reference resolution)
 ##   --idle-timeout=S        max wait per pose for zero builds in flight (default 120)
@@ -32,7 +32,7 @@ extends SceneTree
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
 const BRIDGE := preload("res://tools/ShadowTimingBridge.cs")
-const LABELS := ["sun_map_off", "planet_map_off", "cloud_shadow_gen_off", "cloud_receivers_off", "macro_off", "tree_shadows_off", "casters_500m", "pssm2_500m", "atlas_2048", "hs_on", "hs_receivers_off", "hs_near", "baseline_repeat"]
+const LABELS := ["sun_map_off", "planet_map_off", "cloud_shadow_gen_off", "cloud_receivers_off", "macro_off", "tree_shadows_off", "casters_500m", "pssm2_500m", "atlas_2048", "hs_on", "hs_receivers_off", "hs_near", "contact_on", "baseline_repeat"]
 const DELTA_METRICS := ["root_gpu_ms", "far_gpu_ms", "root_cpu_ms", "frame_setup_cpu_ms"]
 
 var game: Node
@@ -200,7 +200,7 @@ func _capture_original() -> void:
 		"cloud_gen": bool(cloud_bridge.get("GpuShadowGenerationEnabled")), "cloud_receivers": bool(cloud_bridge.get("CloudShadowReceiversEnabled")),
 		"tree_dist": float(trees.get("TreeSunShadowDistanceMeters")), "tree_batches": int(trees.get("MaximumTreeSunShadowBatches")),
 		"coverage": float(coordinator.get("TerrainShadowCoverageMeters")),
-		"hs_enabled": bool(graphics.get("EffectiveHeightShadowEnabled")), "hs_near_enabled": bool(graphics.get("EffectiveHeightShadowNearMapEnabled"))}
+		"hs_enabled": bool(graphics.get("EffectiveHeightShadowEnabled")), "hs_near_enabled": bool(graphics.get("EffectiveHeightShadowNearMapEnabled")), "contact_enabled": bool(graphics.get("EffectiveContactShadowEnabled"))}
 	report["original_state"] = orig.duplicate()
 
 
@@ -270,6 +270,10 @@ func _apply(label: String) -> bool:
 				height_shadow.set("ReceiversEnabled", true)
 				graphics.call("SetShadowTuningOverride", "HeightShadowNearMapEnabled", orig["hs_near_enabled"])
 				graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", orig["hs_enabled"]))
+		"contact_on":
+			# S6 screen-space contact shadows (RingContactShadows compositor effect + receiver term, default settings). GPU.ContactShadow marker = the compute pass.
+			graphics.call("SetShadowTuningOverride", "ContactShadowEnabled", true)
+			restore_stack.append(func(): graphics.call("SetShadowTuningOverride", "ContactShadowEnabled", orig["contact_enabled"]))
 		"atlas_2048":
 			graphics.call("SetShadowTuningOverride", "AtlasSize", 2048)
 			restore_stack.append(func(): graphics.call("SetShadowTuningOverride", "AtlasSize", orig["atlas"]))
@@ -284,7 +288,7 @@ func _state() -> Dictionary:
 		"planet_energy": planet.light_energy if planet != null else 0.0, "planet_shadow": planet.shadow_enabled if planet != null else false,
 		"cloud_generation": bool(cloud_bridge.get("GpuShadowGenerationEnabled")), "cloud_receivers": bool(cloud_bridge.call("IsCloudShadowProjectorEnabled")),
 		"tree_shadow_renderers": int(trees.get("ActiveGpuTreeSunShadowRendererCount")), "tree_shadows_suppressed": bool(trees.get("TreeSunShadowsSuppressed")), "tree_suppression_reason": str(trees.get("TreeSunShadowSuppressionReason")), "caster_coverage_m": float(coordinator.get("TerrainShadowCoverageMeters")),
-		"hs_enabled": bool(graphics.get("EffectiveHeightShadowEnabled")), "near_map_active": bool(graphics.get("NearSunMapActive")), "hs_receivers": bool(height_shadow.get("ReceiversEnabled")) if height_shadow != null else true,
+		"contact_enabled": bool(graphics.get("EffectiveContactShadowEnabled")), "contact_status": str(graphics.get("EffectiveContactShadowStatus")), "hs_enabled": bool(graphics.get("EffectiveHeightShadowEnabled")), "near_map_active": bool(graphics.get("NearSunMapActive")), "hs_receivers": bool(height_shadow.get("ReceiversEnabled")) if height_shadow != null else true,
 		"handoff_suspended": bool(graphics.get("LocalSunShadowSuspended")), "handoff_reason": str(graphics.get("LocalShadowHandoffReason"))}
 
 

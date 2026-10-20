@@ -16,6 +16,7 @@ extends "res://tools/atmosphere_visual_test.gd"
 ## Diagnostics: --configs=a,b (adds fsr2_100 = FSR2 at 100%) --only-effects=<script substrings> / --empty-camera-compositor (camera
 ## compositor overriding the WorldEnvironment one) --input-noise (pre-upscale vs output temporal noise) --velocity (motion-vector stats)
 ## --no-clouds/--no-backdrop/--no-effects/--no-exposure/--no-shadows/--env-off=ssao,... --sharpness= --mip-bias= --dump-frames --tag=
+## --contact turns the S6 contact shadows on (compare the fsr2_on / taa_on rows with and without it)
 const WARMUP_FRAMES := 96
 const CAPTURE_FRAMES := 32
 const STABILITY_HELPER := preload("res://tools/CompositorStabilityHelper.cs")
@@ -44,6 +45,8 @@ var mip_bias_override := NAN
 var tag := ""
 var env_off: PackedStringArray = []
 var no_shadows := false
+var contact_on := false
+var contact_no_dither := false
 var dump_frames := false
 var empty_camera_compositor := false
 var only_effects: PackedStringArray = []
@@ -74,6 +77,8 @@ func run() -> void:
 		elif argument.begins_with("--tag="): tag = "_" + argument.get_slice("=", 1)
 		elif argument.begins_with("--env-off="): env_off = argument.get_slice("=", 1).split(",")
 		elif argument == "--no-shadows": no_shadows = true
+		elif argument == "--contact": contact_on = true
+		elif argument == "--contact-nodither": contact_on = true; contact_no_dither = true
 		elif argument == "--dump-frames": dump_frames = true
 		elif argument == "--empty-camera-compositor": empty_camera_compositor = true
 		elif argument.begins_with("--only-effects="): only_effects = argument.get_slice("=", 1).split(",")
@@ -236,6 +241,10 @@ func freeze_wind() -> void:
 	RenderingServer.global_shader_parameter_set("ring_local_wind_enabled", 0.0)
 	RenderingServer.global_shader_parameter_set("ring_wind_field_enabled", 0.0)
 	if not env_off.is_empty() or no_shadows: apply_env_ablation()
+	if contact_on and graphics != null:
+		graphics.call("SetShadowTuningOverride", "ContactShadowEnabled", true)
+		var contact_node := game.get_node_or_null("ContactShadows")
+		if contact_node != null and contact_node.get("Effect") != null: (contact_node.get("Effect") as Object).set("dither_enabled", not contact_no_dither)
 	if not (ablate_exposure or ablate_clouds or ablate_backdrop or ablate_effects): return
 	for node in all_nodes(game):
 		if not node is WorldEnvironment: continue
