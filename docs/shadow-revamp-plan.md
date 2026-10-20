@@ -4,7 +4,7 @@ Status: S0-S7b implemented on main (2026-10-20). Every new system is OFF by defa
 
 ## Final handoff and user review list (2026-10-20)
 
-**Commits on main:** S0 9002cb8, S3 21a5e7e, S1 0bc618f, S2 147dc85 (cloud crossfade, ON by default), S4a 1f04462, S4b 5b13f75, S4c 01c86b9, S5a 92c147a, S5b + low-sun partial results 986d87e, S6 5523b39, S7a 46a53fd, S7b 7024888, sun shadow cutoff at the lighting limit (see below). All measurements so far are RTX 4070 desktop (non-authoritative).
+**Commits on main:** S0 9002cb8, S3 21a5e7e, S1 0bc618f, S2 147dc85 (cloud crossfade, ON by default), S4a 1f04462, S4b 5b13f75, S4c 01c86b9, S5a 92c147a, S5b + low-sun partial results 986d87e, S6 5523b39, S7a 46a53fd, S7b 7024888, sun shadow cutoff at the lighting limit f23d3db. All measurements so far are RTX 4070 desktop (non-authoritative).
 
 **Measured on the 4070 (shadow_attribution_test, 3 rounds, root GPU vs old shadows):** day with heightfield + 400 m near map: -0.9 ms (ground_horizon), -1.1 ms (forest_noon). Night planet high: -0.26 ms. Night planet low (~11 deg) with the 250 m planet near map: +1.4 ms (regression, see below). Contact shadows: +0.12-0.14 ms pass, ~+0.2 ms total.
 
