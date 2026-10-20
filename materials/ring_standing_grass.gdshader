@@ -26,6 +26,7 @@ instance uniform float grass_instance_count = 1.0;
 instance uniform bool grass_gpu_culled = false;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
+#include "res://materials/ring_vegetation_shadow.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_grass_gust.gdshaderinc"
 #include "res://materials/ring_grass_modifiers.gdshaderinc"
@@ -270,8 +271,9 @@ void vertex() {
 			* clamp(grass_terrain_handoff_strength, 0.0, 1.0);
 		if (!isnan(collapse) && !isinf(collapse)) VERTEX *= max(.001, 1.0 - collapse);
 	}
-	grass_cloud_occlusion = sample_local_cloud_shadow((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz);
-	grass_planet_height_term = ring_height_shadow_planet_point_term((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD);
+	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_GRASS, INSTANCE_ID);
+	grass_cloud_occlusion = ring_vegetation_shadow_cloud_vertex(shadow_instance, (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz);
+	grass_planet_height_term = ring_vegetation_shadow_planet_point(shadow_instance, (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD);
 }
 
 void fragment() {

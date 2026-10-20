@@ -1476,6 +1476,7 @@ public partial class RingStandingGrassLayer : Node3D
         // describe this camera frame after whole-tile culling hides every pass.
         int batchBudget = EffectiveGpuCullingBatchesPerFrame;
         _gpuCompute.RequestHaze(CaptureGrassHazeFrame());
+        _gpuCompute.RequestShadow(global::RingworldTechDemo.Shadows.RingVegetationShadow.CreateFrame(LatchedGrassCameraPosition(camera)));
         _gpuCompute.RequestFrame(new RingGpuVegetationCompute.FrameRequest(LatchedGrassCameraPosition(camera),
             Array.Empty<uint>(), _gpuFrames, SkipUnchanged: SkipUnchangedGpuCulling && !firstVisibilityHandoff,
             MaximumBatchesPerDispatch: batchBudget,
@@ -1705,7 +1706,7 @@ public partial class RingStandingGrassLayer : Node3D
     // A batch id of -1 (CPU MultiMesh) writes (-1, 0) so the card shader never reads the atlas for that renderer.
     private void ApplyGrassHazeSlot(MultiMeshInstance3D? renderer, RendererPresentationCache state, int batchId)
     {
-        if (renderer == null || !_style.IsCards) return;
+        if (renderer == null) return; // blades declare vegetation_haze_slot too (ring_vegetation_shadow.gdshaderinc), so both styles carry the slot
         Vector2 slot = batchId >= 0 && _gpuCompute != null ? _gpuCompute.GetHazeSlot(batchId) : new Vector2(-1, 0);
         if (ReferenceEquals(state.HazeRenderer, renderer) && state.HazeSlot == slot) return;
         renderer.SetInstanceShaderParameter("vegetation_haze_slot", slot);

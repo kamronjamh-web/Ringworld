@@ -19,6 +19,7 @@ render_mode cull_disabled, diffuse_lambert, specular_disabled, skip_vertex_trans
 #include "res://materials/ring_grass_card_common.gdshaderinc"
 #include "res://materials/ring_grass_card_color.gdshaderinc"
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
+#include "res://materials/ring_vegetation_shadow.gdshaderinc"
 
 uniform sampler2D grass_card_atlas : filter_linear_mipmap, repeat_disable;
 uniform float grass_card_alpha_cutoff = 0.5;
@@ -56,6 +57,7 @@ varying vec3 v_haze_S;
 varying vec4 v_modifier;
 varying vec3 v_ground_world;
 varying flat vec4 v_biome;
+varying flat vec4 v_ground_hs; // per-instance heightfield term of the card root: visibility, weight, unknown, valid (S7b)
 
 void vertex() {
 	float k = UV2.y;
@@ -154,7 +156,11 @@ void vertex() {
 	v_atlas_uv = vec2((variant + UV.x) * 0.25, UV.y);
 
 	v_light.x = grass_card_day_factor(ground_up);
-	v_light.y = sample_local_cloud_shadow(gp) * v_light.x;
+	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_GRASS, INSTANCE_ID);
+	v_light.y = ring_vegetation_shadow_cloud_vertex(shadow_instance, gp) * v_light.x;
+	RingHeightShadow ground_hs;
+	bool ground_hs_valid = ring_vegetation_shadow_ground(shadow_instance, ground_hs);
+	v_ground_hs = vec4(ground_hs.visibility, ground_hs.weight, ground_hs.unknown, ground_hs_valid ? 1.0 : 0.0);
 	RingHaze haze = ring_vegetation_haze_sample(RING_VEGETATION_HAZE_GRASS, INSTANCE_ID, ring_atmosphere_camera_world, gp, ring_atmosphere_center_world, v_light.x);
 	v_haze_T = haze.T;
 	v_haze_S = ring_haze_inscatter(haze);
@@ -201,7 +207,7 @@ void light() {
 	float direct_visibility;
 	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
 		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV,
-		FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_CONTACT_GRASS, direct_visibility);
+		FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, RING_SHADOW_CONTACT_GRASS, v_ground_hs, direct_visibility);
 	// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
 	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
 }

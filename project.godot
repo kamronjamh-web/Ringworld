@@ -205,6 +205,18 @@ ringworld_vegetation_haze_state={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_vegetation_shadow_grass={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_vegetation_shadow_trees={
+"type": "sampler2D",
+"value": ""
+}
+ringworld_vegetation_shadow_state={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_surface_aperture_0={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)

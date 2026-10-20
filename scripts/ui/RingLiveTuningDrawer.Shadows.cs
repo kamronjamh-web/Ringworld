@@ -16,7 +16,8 @@ public partial class RingLiveTuningDrawer
     private CheckButton? _planetShadowsEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
-    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap, _heightShadowPlanetNearMap, _contactShadowEnabled;
+    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap, _heightShadowPlanetNearMap, _contactShadowEnabled, _vegetationShadowInstance, _vegetationUnifiedCompose;
+    private Label? _vegetationShadowStatus;
     private Label? _contactShadowStatus;
     private Label? _heightShadowStatus;
     private RingHeightShadowOverlay? _heightShadowOverlay;
@@ -62,6 +63,7 @@ public partial class RingLiveTuningDrawer
         AddShadowSpinBox(terrainMacro, "TerrainMacroFadeEndMeters", "Macro handoff far (m)", 100, 60000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeEndMeters ?? 6500);
         BuildHeightShadowControls(tab);
         BuildContactShadowControls(tab);
+        BuildVegetationShadowControls(tab);
         VBoxContainer cascades = TuningMenuUi.CreateSection(tab, "Cascade coverage");
         AddShadowSpinBox(cascades, "NearCascadeMeters", "Near cascade distance (m)", RingGraphicsQualityController.MinimumNearCascadeMeters, RingGraphicsQualityController.MaximumNearCascadeMeters, 1, _shadowGraphics?.EffectiveNearCascadeMeters ?? RingGraphicsQualityController.DefaultNearCascadeMeters,
             "Focuses near shadow coverage, up to 40% of the shadow range. The requested distance is kept across presets.");
@@ -164,6 +166,27 @@ public partial class RingLiveTuningDrawer
         _contactShadowStatus = new Label { Name = "ContactShadowStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         contact.AddChild(_contactShadowStatus);
         UpdateContactShadowStatus();
+    }
+    private void BuildVegetationShadowControls(VBoxContainer tab)
+    {
+        VBoxContainer vegetation = TuningMenuUi.CreateSection(tab, "Vegetation shadows");
+        _vegetationShadowInstance = new CheckButton { Name = "VegetationShadowInstanceEnabled", Text = "Per-instance vegetation shadows", ButtonPressed = _shadowGraphics?.EffectiveVegetationShadowInstanceEnabled ?? false, Disabled = _shadowGraphics == null,
+            TooltipText = "GPU-culled grass cards, standing grass and trees take their terrain height-shadow and cloud-shadow terms from a per-instance atlas the vegetation culling pass writes (like per-instance haze) instead of sampling them per vertex. Falls back per vertex wherever the atlas has no data. Needs GPU vegetation culling; adds one RGBA16F atlas the size of the haze atlas." };
+        _vegetationShadowInstance.Toggled += value => SetShadowValue("VegetationShadowInstanceEnabled", value);
+        vegetation.AddChild(_vegetationShadowInstance);
+        AddShadowSpinBox(vegetation, "VegetationShadowRefreshHz", "Cloud refresh rate (Hz)", 2, 30, 1, _shadowGraphics?.EffectiveVegetationShadowRefreshHz ?? 10,
+            "How often already-culled vegetation gets its cloud-shadow terms rewritten while a cloud map is shown (heightfield changes, crossfades and camera moves refresh immediately).");
+        _vegetationUnifiedCompose = new CheckButton { Name = "VegetationUnifiedShadowCompose", Text = "Unified vegetation shadow composition (reserved, no effect yet)", ButtonPressed = _shadowGraphics?.EffectiveVegetationUnifiedShadowCompose ?? false, Disabled = _shadowGraphics == null,
+            TooltipText = "Trees combine map, terrain and cloud shadow with the shared min rule instead of the legacy product, and standing grass takes the cloud as a direct-light term instead of darkening albedo and ambient occlusion. Changes the look; off by default." };
+        _vegetationUnifiedCompose.Toggled += value => SetShadowValue("VegetationUnifiedShadowCompose", value);
+        vegetation.AddChild(_vegetationUnifiedCompose);
+        _vegetationShadowStatus = new Label { Name = "VegetationShadowStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        vegetation.AddChild(_vegetationShadowStatus);
+        UpdateVegetationShadowStatus();
+    }
+    private void UpdateVegetationShadowStatus()
+    {
+        if (_vegetationShadowStatus != null && _shadowGraphics != null) _vegetationShadowStatus.Text = _shadowGraphics.EffectiveVegetationShadowStatus;
     }
     private void UpdateContactShadowStatus()
     {
@@ -336,6 +359,9 @@ public partial class RingLiveTuningDrawer
         SetRange("ContactShadowFadeMeters", _shadowGraphics.EffectiveContactShadowFadeMeters);
         SetRange("ContactShadowGrassStrength", _shadowGraphics.EffectiveContactShadowGrassStrength);
         SetOption("ContactShadowSteps", _shadowGraphics.EffectiveContactShadowSteps);
+        _vegetationShadowInstance?.SetPressedNoSignal(_shadowGraphics.EffectiveVegetationShadowInstanceEnabled);
+        _vegetationUnifiedCompose?.SetPressedNoSignal(_shadowGraphics.EffectiveVegetationUnifiedShadowCompose);
+        SetRange("VegetationShadowRefreshHz", _shadowGraphics.EffectiveVegetationShadowRefreshHz);
         SetRange("TerrainMacroStrength", _shadowGraphics.EffectiveTerrainMacroShadowStrength);
         SetRange("TerrainMacroTraceSteps", _shadowGraphics.EffectiveTerrainMacroShadowTraceSteps);
         SetRange("TerrainMacroMaxTraceMeters", _shadowGraphics.EffectiveTerrainMacroShadowMaxTraceMeters);
@@ -350,6 +376,7 @@ public partial class RingLiveTuningDrawer
         UpdateShadowStatus();
         UpdateHeightShadowStatus();
         UpdateContactShadowStatus();
+        UpdateVegetationShadowStatus();
     }
     private void SetRange(string key,float value) { if (_shadowRanges.TryGetValue(key,out Range? range)) range.SetValueNoSignal(value); if (_shadowValueLabels.TryGetValue(key,out Label? label)) label.Text=value.ToString("0.###"); }
     private void SetOption(string key,int value) { if (_shadowOptions.TryGetValue(key,out OptionButton? option)) SetOptionSelection(option, value); }

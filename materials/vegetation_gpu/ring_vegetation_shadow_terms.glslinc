@@ -1,0 +1,247 @@
+// GLSL 450 twin of the receiver-side shadow terms the per-instance vegetation shadow atlas stores (docs/shadow-revamp-plan.md S7b).
+// Twin of: materials/ring_height_shadow.gdshaderinc (ring_height_shadow_level / _layer / _sample / _slope_tan) and the coordinate math of
+// materials/ring_cloud_shadow.gdshaderinc (ring_cloud_shadow_coordinates, sample_local_cloud_shadow up to the strength / hand-off stage).
+// Keep the operation order identical to those files: tools/VegetationShadowGpuTest.cs compares both on >= 64 points (err <= 1e-3).
+// Include AFTER the #version line of a compute shader. Declares set 1 bindings 2 (the frame snapshot) and 4..7 (heightfield levels and cloud
+// display textures); binding 3 (the atlas image) belongs to the including shader. Reads no other uniforms.
+//
+// Atlas layout (RGBA16F, shares the haze slot index and tag, see ring_vegetation_haze_terms.gdshaderinc):
+//   texel0 = (R_eff, penumbra_eff, heightfield weight, tag)       R_eff: shadow-line height above the instance root, receiver bias folded in
+//                                                                  (an instance vertex h_rel metres above the root has v = clamp(0.5 + (h_rel - R_eff) / penumbra_eff))
+//   texel1 = (near cloud raw, far cloud raw, light id, 1 + unknown) raw = combined phase occlusion before the hand-off / strength stage;
+//                                                                  near raw < 0 = the near map does not cover the instance; far raw already carries the far edge fade;
+//                                                                  light id = the state.w the heightfield terms were built for (0 none, 1 sun, 2 planet)
+
+layout(set = 1, binding = 2, std140) uniform ShadowFrame {
+    vec4 frame0; vec4 frame1; vec4 frame2; vec4 frame3; // ringworld_height_shadow_frame columns
+    vec4 l0_params; vec4 l1_params; vec4 l0_bounds; vec4 l0_prev_bounds; vec4 l1_bounds; vec4 l1_prev_bounds;
+    vec4 state; vec4 shape; vec4 light; vec4 camera;
+    vec4 cloud_flags; // x any cloud map, y near enabled, z far enabled, w height projection
+    vec4 near_center; vec4 near_around; vec4 near_across; vec4 near_up;
+    vec4 far_center; vec4 far_around; vec4 far_across; vec4 far_up;
+    vec4 far_link; // xy far = near + xy, z = 1 valid
+    vec4 offsets; // xy near uv offset, zw far uv offset
+    vec4 radii; // near radius, far radius, ring radius, 0
+    vec4 sun_dir;
+} shadow;
+layout(set = 1, binding = 4) uniform sampler2DArray ring_vs_l0;
+layout(set = 1, binding = 5) uniform sampler2DArray ring_vs_l1;
+layout(set = 1, binding = 6) uniform sampler2D ring_vs_near;
+layout(set = 1, binding = 7) uniform sampler2D ring_vs_far;
+
+const float RVS_HALF_MAX = 65000.0;
+
+struct RvsHeight {
+    float visibility; // as RingHeightShadow
+    float weight;
+    float unknown;
+    float r_eff; // weighted shadow-line height with the receiver bias folded in (0 where weight == 0)
+    float penumbra; // weighted penumbra width (m)
+};
+
+mat4 rvs_frame() {
+    return mat4(shadow.frame0, shadow.frame1, shadow.frame2, shadow.frame3);
+}
+
+bool rvs_height_published() {
+    return shadow.state.x > -0.5
+        && (abs(shadow.state.w - 1.0) < 0.5 || abs(shadow.state.w - 2.0) < 0.5)
+        && (shadow.l0_params.z > 0.5 || shadow.l1_params.z > 0.5);
+}
+
+float rvs_slope_tan(vec3 world_normal) {
+    vec3 up = normalize(vec3(shadow.frame0.z, shadow.frame1.z, shadow.frame2.z));
+    float cos_slope = clamp(dot(normalize(world_normal), up), 0.05, 1.0);
+    return sqrt(max(1.0 - cos_slope * cos_slope, 0.0)) / cos_slope;
+}
+
+vec4 rvs_fetch(int level, ivec2 texel, int layer) {
+    ivec3 coordinate = ivec3(texel.x & 1023, texel.y & 1023, layer);
+    return level == 0 ? texelFetch(ring_vs_l0, coordinate, 0) : texelFetch(ring_vs_l1, coordinate, 0);
+}
+
+float rvs_edge(vec4 bounds, vec2 p) {
+    return min(min(p.x - bounds.x, bounds.y - p.x), min(p.y - bounds.z, bounds.w - p.y));
+}
+
+RvsHeight rvs_level(int level, int layer, vec2 p, float texel_size, float h_rel, float slope_tan, float cam_dist) {
+    vec2 x = p / texel_size;
+    vec2 base = floor(x);
+    vec2 f = x - base;
+    ivec2 i0 = ivec2(base);
+    float bias = shadow.shape.y + 0.5 * texel_size * min(slope_tan, 4.0);
+    float a = shadow.shape.w;
+    float visibility_sum = 0.0;
+    float weight_sum = 0.0;
+    float unknown_sum = 0.0;
+    float r_sum = 0.0;
+    float penumbra_sum = 0.0;
+    for (int k = 0; k < 4; k++) {
+        ivec2 o = ivec2(k & 1, k >> 1);
+        float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        vec4 texel = rvs_fetch(level, i0 + o, layer);
+        float gd = abs(texel.g);
+        if (cam_dist + gd < a) {
+            continue;
+        }
+        float penumbra = max(gd * shadow.shape.x, 0.25);
+        float v = clamp(0.5 + (h_rel + bias - texel.r) / penumbra, 0.0, 1.0);
+        visibility_sum += w * v;
+        unknown_sum += w * (texel.g < 0.0 ? v : 0.0);
+        weight_sum += w;
+        r_sum += w * texel.r;
+        penumbra_sum += w * penumbra;
+    }
+    if (weight_sum > 0.0001) {
+        return RvsHeight(visibility_sum / weight_sum, weight_sum, unknown_sum / weight_sum, r_sum / weight_sum - bias, penumbra_sum / weight_sum);
+    }
+    return RvsHeight(1.0, 0.0, 0.0, 0.0, 1.0);
+}
+
+RvsHeight rvs_layer(int layer, vec2 p, vec4 b0, vec4 b1, float h_rel, float slope_tan, float cam_dist) {
+    RvsHeight result = RvsHeight(1.0, 0.0, 0.0, 0.0, 1.0);
+    float w0 = shadow.l0_params.z > 0.5 ? smoothstep(0.0, 256.0, rvs_edge(b0, p)) : 0.0;
+    if (w0 > 0.0) {
+        RvsHeight s = rvs_level(0, layer, p, shadow.l0_params.x, h_rel, slope_tan, cam_dist);
+        result = RvsHeight(s.visibility, w0 * s.weight, s.unknown, s.r_eff, s.penumbra);
+    }
+    float w1 = shadow.l1_params.z > 0.5 ? smoothstep(0.0, 1000.0, rvs_edge(b1, p)) : 0.0;
+    if (w1 > 0.0 && result.weight < 0.999) {
+        RvsHeight s = rvs_level(1, layer, p, shadow.l1_params.x, h_rel, slope_tan, cam_dist);
+        float w = (1.0 - result.weight) * w1 * s.weight;
+        float total = result.weight + w;
+        if (total > 0.0001) {
+            result.visibility = (result.visibility * result.weight + s.visibility * w) / total;
+            result.unknown = (result.unknown * result.weight + s.unknown * w) / total;
+            result.r_eff = (result.r_eff * result.weight + s.r_eff * w) / total;
+            result.penumbra = (result.penumbra * result.weight + s.penumbra * w) / total;
+            result.weight = total;
+        }
+    }
+    return result;
+}
+
+// Twin of ring_height_shadow_sample.
+RvsHeight rvs_height_sample(vec3 world, float h_rel, float slope_tan, float cam_dist) {
+    RvsHeight none = RvsHeight(1.0, 0.0, 0.0, 0.0, 1.0);
+    if (!rvs_height_published()) {
+        return none;
+    }
+    vec3 f = (rvs_frame() * vec4(world, 1.0)).xyz;
+    float radius = max(shadow.shape.z, 1.0);
+    float q = f.x / max(radius - f.z, 1.0);
+    float angle = abs(q) <= 0.002 ? q - q * q * q * 0.333333333 : atan(f.x, radius - f.z);
+    vec2 p = vec2(radius * angle, f.y);
+    int front = int(round(shadow.state.x));
+    RvsHeight now = rvs_layer(front, p, shadow.l0_bounds, shadow.l1_bounds, h_rel, slope_tan, cam_dist);
+    RvsHeight result = now;
+    float t = shadow.state.z;
+    if (shadow.state.y > -0.5 && t < 1.0) {
+        RvsHeight before = rvs_layer(int(round(shadow.state.y)), p, shadow.l0_prev_bounds, shadow.l1_prev_bounds, h_rel, slope_tan, cam_dist);
+        float share = (1.0 - t) * clamp(before.weight / max(now.weight, 0.0001), 0.0, 1.0);
+        result.visibility = mix(now.visibility, before.visibility, share);
+        result.weight = mix(now.weight, before.weight, share);
+        result.unknown = mix(now.unknown, before.unknown, share);
+        result.r_eff = mix(now.r_eff, before.r_eff, share);
+        result.penumbra = mix(now.penumbra, before.penumbra, share);
+    }
+    result.weight = clamp(result.weight, 0.0, 1.0);
+    result.unknown = clamp(result.unknown, 0.0, 1.0);
+    return result;
+}
+
+// ---- cloud ----
+
+float rvs_cloud_arc_angle(float tangent, float outward) {
+    float q = tangent / outward;
+    if (outward > 0.0 && abs(q) <= 0.05) {
+        float q2 = q * q;
+        return q * (1.0 - q2 * (1.0 / 3.0 - q2 * (1.0 / 5.0 - q2 * (1.0 / 7.0))));
+    }
+    return atan(tangent, outward);
+}
+
+vec2 rvs_cloud_sin_cos(float angle) {
+    if (abs(angle) <= 0.05) {
+        float a2 = angle * angle;
+        return vec2(
+            angle * (1.0 - a2 * (1.0 / 6.0) * (1.0 - a2 * (1.0 / 20.0) * (1.0 - a2 * (1.0 / 42.0)))),
+            1.0 - a2 * 0.5 * (1.0 - a2 * (1.0 / 12.0) * (1.0 - a2 * (1.0 / 30.0) * (1.0 - a2 * (1.0 / 56.0)))));
+    }
+    return vec2(sin(angle), cos(angle));
+}
+
+vec3 rvs_cloud_coordinates(vec3 relative, vec3 axis_around, vec3 axis_across, vec3 axis_up) {
+    float tangent = dot(relative, axis_around);
+    float across = dot(relative, axis_across);
+    float inward = dot(relative, axis_up);
+    float ring_radius = shadow.radii.z;
+    if (ring_radius <= 1.0) {
+        return vec3(tangent, across, inward);
+    }
+    float outward_radius = ring_radius - inward;
+    float arc = ring_radius * rvs_cloud_arc_angle(tangent, outward_radius);
+    float altitude = ring_radius - length(vec2(tangent, outward_radius));
+    vec2 planar = vec2(arc, across);
+    if (shadow.cloud_flags.w > 0.5) {
+        float angle = arc / ring_radius;
+        vec2 sine_cosine = rvs_cloud_sin_cos(angle);
+        float sine = sine_cosine.x;
+        float cosine = sine_cosine.y;
+        vec3 local_around = axis_around * cosine + axis_up * sine;
+        vec3 local_up = axis_up * cosine - axis_around * sine;
+        vec3 cloud_shadow_sun_ray = shadow.sun_dir.xyz;
+        float sun_up = dot(cloud_shadow_sun_ray, local_up);
+        if (sun_up > 0.04) {
+            planar -= vec2(
+                dot(cloud_shadow_sun_ray, local_around),
+                dot(cloud_shadow_sun_ray, axis_across)) * (altitude / sun_up);
+        }
+    }
+    return vec3(planar, altitude);
+}
+
+float rvs_combine_phases(vec2 phases) {
+    return 1.0 - (1.0 - phases.r) * (1.0 - phases.g);
+}
+
+// Raw near / far occlusion at a world position: x = near (-1 when the near map is off or does not cover the point), y = far x far edge (0 when off / outside).
+vec2 rvs_cloud_raw(vec3 world) {
+    vec2 result = vec2(-1.0, 0.0);
+    if (shadow.cloud_flags.x < 0.5) {
+        return result;
+    }
+    vec3 relative = world - shadow.near_center.xyz;
+    vec2 planar_meters = rvs_cloud_coordinates(relative, shadow.near_around.xyz, shadow.near_across.xyz, shadow.near_up.xyz).xy;
+    float radius = max(shadow.radii.x, 1.0);
+    vec2 uv = planar_meters / (radius * 2.0) + vec2(0.5) + shadow.offsets.xy;
+    bool near_in_bounds = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+    if (shadow.cloud_flags.y > 0.5 && near_in_bounds) {
+        result.x = rvs_combine_phases(textureLod(ring_vs_near, uv, 0.0).rg);
+    }
+    if (shadow.cloud_flags.z > 0.5) {
+        vec2 far_planar;
+        if (shadow.far_link.z > 0.5) {
+            far_planar = planar_meters + shadow.far_link.xy;
+        } else {
+            vec3 far_relative = world - shadow.far_center.xyz;
+            far_planar = rvs_cloud_coordinates(far_relative, shadow.far_around.xyz, shadow.far_across.xyz, shadow.far_up.xyz).xy;
+        }
+        float far_radius = max(shadow.radii.y, 1.0);
+        vec2 far_uv = far_planar / (far_radius * 2.0) + vec2(0.5) + shadow.offsets.zw;
+        if (all(greaterThanEqual(far_uv, vec2(0.0))) && all(lessThanEqual(far_uv, vec2(1.0)))) {
+            float far_edge = 1.0 - smoothstep(0.88, 0.99, length(far_planar / far_radius));
+            result.y = rvs_combine_phases(textureLod(ring_vs_far, far_uv, 0.0).rg) * far_edge;
+        }
+    }
+    return result;
+}
+
+// Packs the two atlas texels (callers add the tag as texel0.w and write both with imageStore).
+vec4 rvs_pack0(RvsHeight h, float tag) {
+    return vec4(clamp(h.r_eff, -RVS_HALF_MAX, RVS_HALF_MAX), clamp(h.penumbra, 0.25, RVS_HALF_MAX), h.weight, tag);
+}
+
+vec4 rvs_pack1(vec2 cloud, float light_id, RvsHeight h) {
+    return vec4(cloud, light_id, 1.0 + h.unknown);
+}

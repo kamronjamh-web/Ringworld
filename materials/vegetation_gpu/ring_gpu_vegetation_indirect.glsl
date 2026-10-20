@@ -1,6 +1,7 @@
 #[compute]
 #version 450
 layout(constant_id = 0) const bool VEGETATION_HAZE = false;
+layout(constant_id = 1) const bool VEGETATION_SHADOW = false;
 
 layout(local_size_x = 64) in;
 layout(set = 0, binding = 0, std430) readonly buffer Sources { float source[]; };
@@ -16,11 +17,14 @@ layout(push_constant, std430) uniform Push {
     uint phase, count, capacity, surfaces;
     uint sweep, protected_base_valid, haze_base, haze_tag;
     vec4 haze_anchor; // xyz = anchor in mesh-local row space (trees: mesh AABB centre; grass / shared impostor: 0), w > .5 = write haze
+    vec4 shadow_flags; // x > .5 = write the shadow slot (same slot index and tag as the haze slot, anchor = the row root)
 } q;
 layout(set = 1, binding = 0, std140) uniform HazeParams {
     vec4 sigma_R_H_R; vec4 aerosol; vec4 mist; vec4 geometry; vec4 sides; vec4 outward; vec4 axis; vec4 to_sun; vec4 camera; vec4 storm;
 } haze;
 layout(rgba16f, set = 1, binding = 1) uniform restrict writeonly image2D haze_atlas;
+layout(rgba16f, set = 1, binding = 3) uniform restrict writeonly image2D shadow_atlas;
+#include "res://materials/vegetation_gpu/ring_vegetation_shadow_terms.glslinc"
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
 #include "res://materials/ring_haze_shared.gdshaderinc"
 #include "res://materials/atmosphere/ring_vegetation_haze_terms.gdshaderinc"
@@ -42,6 +46,31 @@ void write_vegetation_haze(uint slot_row, vec3 root, vec3 local_x, vec3 local_y,
     ivec2 texel = ring_vegetation_haze_texel(int(q.haze_base + slot_row));
     imageStore(haze_atlas, texel, ring_vegetation_haze_pack0(t, float(q.haze_tag)));
     imageStore(haze_atlas, texel + ivec2(1, 0), ring_vegetation_haze_pack1(t));
+}
+
+// Per-instance terrain height-shadow and cloud terms at the row root (grass: the card root; trees: the trunk base). Layout: ring_vegetation_shadow_terms.glslinc.
+void write_vegetation_shadow(uint slot_row, vec3 root, vec3 local_x, vec3 local_y, vec3 local_z) {
+    if (!VEGETATION_SHADOW || q.shadow_flags.x < .5) return;
+    mat3 basis = mat3(vec3(p[16], p[17], p[18]), vec3(p[19], p[20], p[21]), vec3(p[22], p[23], p[24]));
+    vec3 world = basis * root + vec3(p[25], p[26], p[27]);
+    float slope_tan = 0.0;
+    if (p[10] > .5) {
+        // Cards / blades: slope of the ground under the root from the clump axes (the card shader's ground_up = cross(az, ax), oriented along its up axis).
+        vec3 wx = basis * local_x, wy = basis * local_y, wz = basis * local_z;
+        vec3 ground_normal = cross(wz, wx);
+        if (dot(ground_normal, wy) < 0.0) ground_normal = -ground_normal;
+        if (dot(ground_normal, ground_normal) > 1e-10) slope_tan = rvs_slope_tan(ground_normal);
+    }
+    RvsHeight height = rvs_height_sample(world, 0.0, slope_tan, distance(world, shadow.camera.xyz));
+    vec2 cloud = rvs_cloud_raw(world);
+    ivec2 texel = ring_vegetation_haze_texel(int(q.haze_base + slot_row));
+    imageStore(shadow_atlas, texel, rvs_pack0(height, float(q.haze_tag)));
+    imageStore(shadow_atlas, texel + ivec2(1, 0), rvs_pack1(cloud, round(shadow.state.w), height));
+}
+
+void write_vegetation_terms(uint slot_row, vec3 root, vec3 local_x, vec3 local_y, vec3 local_z) {
+    write_vegetation_haze(slot_row, root, local_x, local_y, local_z);
+    write_vegetation_shadow(slot_row, root, local_x, local_y, local_z);
 }
 
 float root_hash(vec2 seed, uint id) {
@@ -154,13 +183,13 @@ void main() {
     uint group = gl_WorkGroupID.x;
     uint groups = (q.count + 63u) / 64u;
     if (q.phase == 4u) {
-        if (!VEGETATION_HAZE) return;
+        if (!VEGETATION_HAZE && !VEGETATION_SHADOW) return;
         uint visible = min(command[1], q.capacity);
         if (id >= visible) return;
         uint input_stride = p[10] > .5 ? 20u : (p[14] > .5 ? 16u : 12u);
         uint output_stride = p[10] > .5 ? 20u : (p[60] > .5 ? 16u : input_stride);
         uint b = id * output_stride;
-        write_vegetation_haze(id, vec3(output_row[b + 3u], output_row[b + 7u], output_row[b + 11u]),
+        write_vegetation_terms(id, vec3(output_row[b + 3u], output_row[b + 7u], output_row[b + 11u]),
             vec3(output_row[b], output_row[b + 4u], output_row[b + 8u]), vec3(output_row[b + 1u], output_row[b + 5u], output_row[b + 9u]),
             vec3(output_row[b + 2u], output_row[b + 6u], output_row[b + 10u]));
         return;
@@ -205,7 +234,7 @@ void main() {
         uint output_stride = p[10] > .5 ? 20u : (p[60] > .5 ? 16u : input_stride);
         for (uint element = 0u; element < input_stride; ++element)
             output_row[destination * output_stride + element] = source[id * input_stride + element];
-        write_vegetation_haze(destination, vec3(source[id * input_stride + 3u], source[id * input_stride + 7u], source[id * input_stride + 11u]),
+        write_vegetation_terms(destination, vec3(source[id * input_stride + 3u], source[id * input_stride + 7u], source[id * input_stride + 11u]),
             vec3(source[id * input_stride], source[id * input_stride + 4u], source[id * input_stride + 8u]),
             vec3(source[id * input_stride + 1u], source[id * input_stride + 5u], source[id * input_stride + 9u]),
             vec3(source[id * input_stride + 2u], source[id * input_stride + 6u], source[id * input_stride + 10u]));
@@ -270,7 +299,7 @@ void main() {
     uint output_stride = p[10] > .5 ? 20u : (p[60] > .5 ? 16u : input_stride);
     for (uint element = 0u; element < input_stride; ++element)
         output_row[destination * output_stride + element] = source[id * input_stride + element];
-    write_vegetation_haze(destination, vec3(source[id * input_stride + 3u], source[id * input_stride + 7u], source[id * input_stride + 11u]),
+    write_vegetation_terms(destination, vec3(source[id * input_stride + 3u], source[id * input_stride + 7u], source[id * input_stride + 11u]),
         vec3(source[id * input_stride], source[id * input_stride + 4u], source[id * input_stride + 8u]),
         vec3(source[id * input_stride + 1u], source[id * input_stride + 5u], source[id * input_stride + 9u]),
         vec3(source[id * input_stride + 2u], source[id * input_stride + 6u], source[id * input_stride + 10u]));

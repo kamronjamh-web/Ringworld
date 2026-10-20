@@ -233,6 +233,28 @@ public partial class RingGraphicsQualityController
 
     private void ApplyShadowDebugMode() => RenderingServer.GlobalShaderParameterSet("ringworld_shadow_debug_mode", ShadowDebugMode);
 
+    /// <summary>Per-instance vegetation shadows (S7b, default off): grass and trees read terrain height-shadow and cloud terms from a per-instance atlas the vegetation compute writes.</summary>
+    public bool EffectiveVegetationShadowInstanceEnabled => _shadowTuningOverrides.TryGetValue("VegetationShadowInstanceEnabled", out Variant value) && value.AsBool();
+    /// <summary>Look-change key (default off): trees and standing grass compose their shadow terms like the other receivers.</summary>
+    public bool EffectiveVegetationUnifiedShadowCompose => _shadowTuningOverrides.TryGetValue("VegetationUnifiedShadowCompose", out Variant value) && value.AsBool();
+    public int EffectiveVegetationShadowRefreshHz => _shadowTuningOverrides.TryGetValue("VegetationShadowRefreshHz", out Variant value) ? System.Math.Clamp(value.AsInt32(), RingVegetationShadow.MinimumRefreshHz, RingVegetationShadow.MaximumRefreshHz) : RingVegetationShadow.DefaultRefreshHz;
+    public string EffectiveVegetationShadowStatus
+    {
+        get
+        {
+            if (!EffectiveVegetationShadowInstanceEnabled) return "Per-instance vegetation shadows: off.";
+            Vector4 state = RingVegetationShadow.State;
+            return state.X > 0.5f || state.Y > 0.5f ? $"Per-instance vegetation shadows: live (grass {(state.X > 0.5f ? "on" : "off")}, trees {(state.Y > 0.5f ? "on" : "off")})." : "Per-instance vegetation shadows: starting.";
+        }
+    }
+
+    private void ApplyVegetationShadowSettings()
+    {
+        RingVegetationShadow.Enabled = EffectiveVegetationShadowInstanceEnabled;
+        RingVegetationShadow.UnifiedCompose = EffectiveVegetationUnifiedShadowCompose;
+        RingVegetationShadow.RefreshHz = EffectiveVegetationShadowRefreshHz;
+    }
+
     private void ApplyShadowTuningOverrides()
     {
         HeightShadowRevision++;
@@ -259,6 +281,7 @@ public partial class RingGraphicsQualityController
         }
         ApplySunShadowStabilizationOverrides();
         ApplyShadowDebugMode();
+        ApplyVegetationShadowSettings();
         ApplyPlanetShadowOverrides();
         if (_sun == null) return;
         _sun.SetMeta("ringworld_shadow_quality_owned", true);
@@ -474,7 +497,7 @@ public partial class RingGraphicsQualityController
     {
         clean = default;
         if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled" || key == "LocalShadowHandoffEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
-        if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled" or "HeightShadowPlanetNearMapEnabled" or "ContactShadowEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled" or "HeightShadowPlanetNearMapEnabled" or "ContactShadowEnabled" or "VegetationShadowInstanceEnabled" or "VegetationUnifiedShadowCompose") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if ((key == "HeightShadowL0TexelMeters" || key == "HeightShadowRangeMeters" || key == "HeightShadowLevels" || key == "HeightShadowNearMapDistanceMeters") && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         {
             double raw = value.AsDouble();
@@ -502,10 +525,10 @@ public partial class RingGraphicsQualityController
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
         (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), "MaxDistanceMeters" => (MinimumShadowDistanceMeters, MaximumShadowDistanceMeters), "PlanetShadowDistanceMeters" => (MinimumPlanetShadowDistanceMeters, MaximumPlanetShadowDistanceMeters),
             "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2), "HeightShadowPlanetNearMapDistanceMeters" => (RingHeightShadowSettings.MinimumPlanetNearMapDistanceMeters, RingHeightShadowSettings.MaximumPlanetNearMapDistanceMeters),
-            "ContactShadowLengthMeters" => (.25f, 4), "ContactShadowThicknessMeters" => (.05f, 1), "ContactShadowStrength" => (0, 1), "ContactShadowFadeMeters" => (25, 400), "ContactShadowGrassStrength" => (0, 1), _ => (1, 0) };
+            "ContactShadowLengthMeters" => (.25f, 4), "ContactShadowThicknessMeters" => (.05f, 1), "ContactShadowStrength" => (0, 1), "ContactShadowFadeMeters" => (25, 400), "ContactShadowGrassStrength" => (0, 1), "VegetationShadowRefreshHz" => (RingVegetationShadow.MinimumRefreshHz, RingVegetationShadow.MaximumRefreshHz), _ => (1, 0) };
         if (min > max) return false;
         float clamped = Mathf.Clamp(value.AsSingle(), min, max);
-        if (key is "TerrainMacroTraceSteps" or "HeightShadowRowsPerFrame" or "HeightShadowFillWorkers" or "HeightShadowPlanetNearMapDistanceMeters") clean = Mathf.RoundToInt(clamped); else clean = clamped;
+        if (key is "TerrainMacroTraceSteps" or "HeightShadowRowsPerFrame" or "HeightShadowFillWorkers" or "HeightShadowPlanetNearMapDistanceMeters" or "VegetationShadowRefreshHz") clean = Mathf.RoundToInt(clamped); else clean = clamped;
         return true;
     }
 }

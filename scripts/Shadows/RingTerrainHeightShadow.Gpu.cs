@@ -339,6 +339,24 @@ public partial class RingTerrainHeightShadow
         return result;
     }
 
+    /// <summary>The heightfield globals as the shaders see them now plus the render-device texture arrays behind ringworld_height_shadow_l0 / _l1 (S7b: the vegetation compute snapshots these).</summary>
+    public readonly record struct GlobalsSnapshot(Projection Frame, Vector4 L0Params, Vector4 L1Params, Vector4 L0Bounds, Vector4 L0PrevBounds, Vector4 L1Bounds, Vector4 L1PrevBounds,
+        Vector4 State, Vector4 Shape, Vector4 Light, Rid L0, Rid L1)
+    {
+        public static readonly GlobalsSnapshot Empty = new(Projection.Identity, default, default, EmptyBounds, EmptyBounds, EmptyBounds, EmptyBounds, new Vector4(-1, -1, 1, 0), default, default, default, default);
+    }
+
+    /// <summary>Main thread. Current values of the published globals (the invalid defaults before the first push).</summary>
+    public GlobalsSnapshot GetGlobalsSnapshot()
+    {
+        Vector4 Read(string name, Vector4 fallback) => _globalCache.TryGetValue(name, out Variant value) && value.VariantType == Variant.Type.Vector4 ? value.AsVector4() : fallback;
+        Projection frame = _frameGlobal.VariantType == Variant.Type.Projection ? _frameGlobal.AsProjection() : Projection.Identity;
+        Rid l0 = _arrays[0] is { } a0 && GodotObject.IsInstanceValid(a0) ? a0.TextureRdRid : default;
+        Rid l1 = _arrays[1] is { } a1 && GodotObject.IsInstanceValid(a1) ? a1.TextureRdRid : default;
+        return new GlobalsSnapshot(frame, Read(GlobalL0Params, default), Read(GlobalL1Params, default), Read(GlobalL0Bounds, EmptyBounds), Read(GlobalL0PrevBounds, EmptyBounds),
+            Read(GlobalL1Bounds, EmptyBounds), Read(GlobalL1PrevBounds, EmptyBounds), Read(GlobalState, new Vector4(-1, -1, 1, 0)), Read(GlobalShape, default), Read(GlobalLight, default), l0, l1);
+    }
+
     private void SetGlobal(string name, Variant value)
     {
         if (_globalCache.TryGetValue(name, out Variant cached) && cached.VariantType == value.VariantType && cached.Equals(value)) return;

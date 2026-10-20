@@ -174,6 +174,25 @@ public static class RingCloudShadowProjector
     private static double Dot(Vector3 left, Vector3 right)
         => (double)left.X * right.X + (double)left.Y * right.Y + (double)left.Z * right.Z;
 
+    /// <summary>The projector's current receiver frame as the per-instance vegetation shadow compute needs it (S7b): enable flags, the camera-following cascade transforms and scroll offsets,
+    /// radii, the ring radius, the sun ray for the height projection and the render-device textures of the two cascades (invalid when a cascade has no texture).</summary>
+    public readonly record struct VegetationFrame(bool Enabled, bool NearEnabled, bool FarEnabled, bool HeightProjection,
+        Vector3 NearCenter, Vector3 NearAround, Vector3 NearAcross, Vector3 NearUp, Vector3 FarCenter, Vector3 FarAround, Vector3 FarAcross, Vector3 FarUp,
+        Vector3 FarLink, Vector2 NearUvOffset, Vector2 FarUvOffset, float NearRadius, float FarRadius, float RingRadius, Vector3 SunDirection, Rid NearRid, Rid FarRid);
+
+    /// <summary>Main thread. Snapshot of the current cascade configuration; the textures resolve to their render-device RIDs (a regular texture maps too).</summary>
+    public static VegetationFrame GetVegetationFrame()
+    {
+        bool near = _enabled && _nearTextureEnabled && _texture != null && GodotObject.IsInstanceValid(_texture);
+        bool far = _enabled && _farTextureEnabled && _farTexture != null && GodotObject.IsInstanceValid(_farTexture);
+        Rid nearRid = near ? RenderingServer.TextureGetRdTexture(_texture!.GetRid()) : default;
+        Rid farRid = far ? RenderingServer.TextureGetRdTexture(_farTexture!.GetRid()) : default;
+        near &= nearRid.IsValid; far &= farRid.IsValid;
+        return new VegetationFrame(near || far, near, far, _heightProjectionEnabled,
+            _centerWorld, _axisAround, _axisAcross, _axisUp, _farCenterWorld, _farAxisAround, _farAxisAcross, _farAxisUp,
+            ResolveFarFromNear(), _nearUvOffset, _farUvOffset, _radiusMeters, _farRadiusMeters, _ringRadiusMeters, _sunDirection, nearRid, farRid);
+    }
+
     public static void Register(GodotObject? material)
     {
         if (material == null || !GodotObject.IsInstanceValid(material) || !SupportsShaderParameters(material)) return;

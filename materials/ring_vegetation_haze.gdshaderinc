@@ -13,7 +13,10 @@ global uniform sampler2D ringworld_vegetation_haze_grass : filter_nearest, repea
 global uniform sampler2D ringworld_vegetation_haze_trees : filter_nearest, repeat_disable;
 global uniform vec4 ringworld_vegetation_haze_state;
 // (first slot, tag); x < 0 = no per-instance data for this renderer.
+#ifndef RING_VEGETATION_SLOT_DECLARED
+#define RING_VEGETATION_SLOT_DECLARED
 instance uniform vec2 vegetation_haze_slot = vec2(-1.0, 0.0);
+#endif
 
 const int RING_VEGETATION_HAZE_GRASS = 0;
 const int RING_VEGETATION_HAZE_TREES = 1;

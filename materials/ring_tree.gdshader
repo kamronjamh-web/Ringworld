@@ -21,6 +21,7 @@ uniform bool tree_foliage_attachments = false;
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
+#include "res://materials/ring_vegetation_shadow.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 
 varying float tree_cloud_occlusion;
@@ -45,7 +46,8 @@ void vertex() {
 	}
 	// A cloud-map texel covers tens of metres, so evaluating per tree vertex is
 	// visually equivalent to per fragment while avoiding foliage overdraw cost.
-	tree_cloud_occlusion = sample_local_cloud_shadow(world_position);
+	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_TREES, INSTANCE_ID);
+	tree_cloud_occlusion = ring_vegetation_shadow_cloud_vertex(shadow_instance, world_position);
 	vec3 radial = world_position - ring_center;
 	radial.y = 0.0;
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
@@ -53,7 +55,7 @@ void vertex() {
 		day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	tree_world_position = world_position;
 	// Terrain height-shadow clipmap (S5), per vertex like the cloud term: 1 when inactive. Applied to the primary sun in light().
-	tree_height_term = ring_height_shadow_vertex_term(world_position, tree_root_world, surface_up, ring_atmosphere_camera_world_position);
+	tree_height_term = ring_vegetation_shadow_height_vertex(shadow_instance, world_position, tree_root_world, surface_up, ring_atmosphere_camera_world_position);
 	RingHaze vertex_haze = ring_vegetation_haze_sample(RING_VEGETATION_HAZE_TREES, INSTANCE_ID,
 		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor);
 	tree_haze_T = vertex_haze.T;

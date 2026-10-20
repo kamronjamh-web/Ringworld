@@ -19,6 +19,8 @@
 // The per-mille / km scaling keeps the values inside the half-float normal range; tag (2..2047, exact in half) identifies the allocation that
 // wrote the slot, so a stale or reallocated slot never matches the reader's tag.
 
+#ifndef RING_VEGETATION_HAZE_TERMS
+#define RING_VEGETATION_HAZE_TERMS
 const int RING_VEGETATION_HAZE_ATLAS_WIDTH = 2048;
 const int RING_VEGETATION_HAZE_SLOTS_PER_ROW = 1024;
 const float RING_VEGETATION_HAZE_HALF_MAX = 65000.0;
@@ -106,3 +108,4 @@ RingHaze ring_vegetation_haze_assemble(RingHazeParams p, RingVegetationHazeTerms
 	haze.S_amb = one_minus_T * mix(p.night_ambient, p.ambient, day) * (tau_R + vec3(t.mie_scatter)) / max(tau_total, vec3(0.00000001));
 	return haze;
 }
+#endif

@@ -54,7 +54,8 @@ float ring_terrain_direct_visibility(
 		vec2 frag_coord,
 		vec2 viewport_size,
 		mat4 inv_projection,
-		uint contact_flags) {
+		uint contact_flags,
+		vec4 instance_height) {
 	float readable_shadow = max(attenuation, shadow_floor);
 	vec3 sun_direction_view = normalize((view_matrix * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = is_directional
@@ -77,11 +78,16 @@ float ring_terrain_direct_visibility(
 	bool height_planet = planet_height_weight > 0.0;
 	RingHeightShadow height_shadow = ring_height_shadow_none();
 	if (height_active || height_planet) {
-		height_shadow = ring_height_shadow_sample(
-			world,
-			0.0,
-			ring_height_shadow_slope_tan(transpose(mat3(view_matrix)) * normal),
-			distance(world, viewer));
+		// S7b: a grass card carries the heightfield term of its root (per-instance atlas); everything else samples per fragment.
+		if (instance_height.w > 0.5) {
+			height_shadow = RingHeightShadow(instance_height.x, instance_height.y, instance_height.z);
+		} else {
+			height_shadow = ring_height_shadow_sample(
+				world,
+				0.0,
+				ring_height_shadow_slope_tan(transpose(mat3(view_matrix)) * normal),
+				distance(world, viewer));
+		}
 	}
 	float terrain_shadow = is_directional
 		? ring_macro_terrain_occlusion(
@@ -131,6 +137,7 @@ vec3 ring_terrain_direct_diffuse(
 		vec2 viewport_size,
 		mat4 inv_projection,
 		uint contact_flags,
+		vec4 instance_height,
 		out float direct_visibility) {
 	float n_dot_l = max(dot(normal, light), 0.0);
 	direct_visibility = ring_terrain_direct_visibility(
@@ -148,11 +155,55 @@ vec3 ring_terrain_direct_diffuse(
 		frag_coord,
 		viewport_size,
 		inv_projection,
-		contact_flags);
+		contact_flags,
+		instance_height);
 	// Shadow debug view: show the selected term directly (ALBEDO is forced to 1 by the caller's fragment()).
 	if (ring_shadow_debug_enabled()) {
 		return vec3(direct_visibility);
 	}
 	// Built-in convention (see ring_tree): Godot applies ALBEDO to DIFFUSE_LIGHT afterwards and LIGHT_COLOR carries the PI factor.
 	return (light_color / PI) * n_dot_l * direct_visibility;
+}
+
+// Overloads without the per-instance heightfield term (everything except the GPU-culled grass cards): the previous signatures.
+float ring_terrain_direct_visibility(
+		vec3 normal,
+		vec3 light,
+		float attenuation,
+		bool is_directional,
+		mat4 view_matrix,
+		float day_factor,
+		float cloud_occlusion,
+		vec2 shadow_uv,
+		vec3 world,
+		vec3 viewer,
+		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags) {
+	return ring_terrain_direct_visibility(normal, light, attenuation, is_directional, view_matrix, day_factor, cloud_occlusion, shadow_uv, world, viewer,
+		screen_uv, frag_coord, viewport_size, inv_projection, contact_flags, vec4(0.0));
+}
+
+vec3 ring_terrain_direct_diffuse(
+		vec3 normal,
+		vec3 light,
+		float attenuation,
+		bool is_directional,
+		vec3 light_color,
+		mat4 view_matrix,
+		float day_factor,
+		float cloud_occlusion,
+		vec2 shadow_uv,
+		vec3 world,
+		vec3 viewer,
+		vec2 screen_uv,
+		vec2 frag_coord,
+		vec2 viewport_size,
+		mat4 inv_projection,
+		uint contact_flags,
+		out float direct_visibility) {
+	return ring_terrain_direct_diffuse(normal, light, attenuation, is_directional, light_color, view_matrix, day_factor, cloud_occlusion, shadow_uv, world, viewer,
+		screen_uv, frag_coord, viewport_size, inv_projection, contact_flags, vec4(0.0), direct_visibility);
 }

@@ -436,6 +436,7 @@ public partial class RingBiomeDecorationLayer
     {
         if (_gpuTreeCompute == null || !_gpuTreeCompute.Ready) return false;
         _gpuTreeCompute.RequestHaze(RingVegetationHaze.CreateFrame(_treeHazeRayFrame, _grid != null ? _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau : 0));
+        _gpuTreeCompute.RequestShadow(global::RingworldTechDemo.Shadows.RingVegetationShadow.CreateFrame(camera));
         if (_gpuLastPolicySignature != GpuTreeRenderPolicySignature()) MarkTreeSunShadowPolicyDirty();
         // A parent/layer transform can change without a streaming invalidation
         // (including a floating-origin move in a fixture).
