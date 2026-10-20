@@ -25,6 +25,7 @@ uniform bool tree_foliage_attachments = false;
 
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
+varying float tree_height_term;
 varying vec3 tree_world_position;
 varying vec3 tree_haze_T;
 varying vec3 tree_haze_S;
@@ -51,6 +52,8 @@ void vertex() {
 	tree_day_factor = ringworld_effective_solar_day(smoothstep(
 		day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	tree_world_position = world_position;
+	// Terrain height-shadow clipmap (S5), per vertex like the cloud term: 1 when inactive. Applied to the primary sun in light().
+	tree_height_term = ring_height_shadow_vertex_term(world_position, tree_root_world, surface_up, ring_atmosphere_camera_world_position);
 	RingHaze vertex_haze = ring_vegetation_haze_sample(RING_VEGETATION_HAZE_TREES, INSTANCE_ID,
 		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor);
 	tree_haze_T = vertex_haze.T;
@@ -109,6 +112,7 @@ void light() {
 	// Vegetation keeps its legacy product (geometry * cloud, no macro/terrain term): COMBINE_PRODUCT.
 	RingShadowTerms terms = ring_shadow_terms(tree_world_position, SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT);
 	terms.cloud = mix(1.0, cloud_visibility, primary_sun_weight);
+	terms.geometry = ring_height_shadow_vegetation_geometry(terms.geometry, tree_height_term, LIGHT_IS_DIRECTIONAL, primary_sun_weight, tree_day_factor);
 	float sun_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT);
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {

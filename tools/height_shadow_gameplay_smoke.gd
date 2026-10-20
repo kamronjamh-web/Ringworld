@@ -4,7 +4,9 @@ extends SceneTree
 ## first publish and checks the published globals, the world -> anchor frame (the camera must decode to its own canonical position inside the L0 bounds),
 ## publish atomicity while crossfading (front/previous never equal the layer being built), hold / release (underground and eclipse hub: nothing starts while held,
 ## the first frame after release rebuilds even without sun movement), the debug overlay pixels, disable (globals invalid, GPU released) and that nothing else
-## changed (receivers do not read the globals yet: a frame captured before enabling and one after publishing match).
+## S5a receivers: with the producer published, ON vs OFF frames (ReceiversEnabled) are compared against an OFF-vs-OFF noise floor at forest_noon, ground_horizon and
+## dawn (the 6 km sun map owns every blocker it contains, so ON must stay close to OFF); with the sun map off (authority 0) debug view 4 must be non-uniform and differ
+## between receivers ON and OFF (the receivers visibly read the heightfield).
 ## RUN (windowed Vulkan, no other Godot process, editor closed):  Godot_console.exe --path . --script res://tools/height_shadow_gameplay_smoke.gd
 ## Flags: --publish-timeout=S (default 240), --keep-fixture. Prints HEIGHT_SHADOW_SMOKE=PASS or FAIL lines. Machine-stamped; timings are Debug-build numbers.
 
@@ -187,11 +189,10 @@ func _run() -> void:
 	_check(absf(height - float(now["vertical"])) < 8.0, "camera height above the floor decodes to the player's vertical (eye height tolerance)")
 	_check(around_local >= b0.x and around_local <= b0.y and f.y >= b0.z and f.y <= b0.w, "camera lies inside the L0 bounds")
 
-	# ---- receivers/macro unaffected: capture again with the feature on and a published map
-	var after_image: Image = await _frame_image()
-	var diff := _image_diff(before_image, after_image)
-	print("HEIGHT_SHADOW_SMOKE receiver frame diff (enabled+published vs disabled): mean=%.4f max=%.1f over %d samples" % [diff["mean"], diff["max"], diff["samples"]])
-	_check(float(diff["mean"]) < 0.6, "enabling the producer leaves the rendered frame unchanged (mean diff %.4f / 255)" % diff["mean"])
+	# ---- receivers: ON vs OFF at forest_noon against the OFF-vs-OFF noise floor (the producer-only frame is the same as OFF)
+	var disabled_vs_published := _image_diff(before_image, await _frame_image())
+	print("HEIGHT_SHADOW_SMOKE frame diff (producer published + receivers on vs feature never enabled): mean=%.4f max=%.1f" % [disabled_vs_published["mean"], disabled_vs_published["max"]])
+	await _measure_on_off("forest_noon")
 
 	# ---- overlay pixels
 	await _check_overlay()
@@ -276,6 +277,36 @@ func _run() -> void:
 		float(stats["unresolved_l0"]), float(stats["unresolved_l1"]), stats["rows_per_frame"], stats["gpu_ms_last_build"], stats["gpu_ms_per_row_l0"], stats["gpu_ms_per_row_l1"], float(stats["render_callback_cpu_ms_max"]), float(stats["main_thread_ms_avg"])])
 	_check(float(stats["unresolved_l0"]) >= 0.0 and float(stats["unresolved_l0"]) < 50.0, "unresolved statistic is available and plausible at noon")
 
+	# ---- ON vs OFF at the low-sun poses (hills shadow far terrain), then the receivers' visible use with the sun map off.
+	# Elevations come after the named poses: a low sun leaves most texels unresolved (rays leave the window below the tallest terrain around),
+	# so the receivers' visible-use check runs at the first elevation where the overlay shows resolved terrain shadows around the camera.
+	var visible_elevation := -1.0
+	for pose_name in ["ground_horizon", "dawn_8deg", "dawn_15deg", 20.0, 25.0, 30.0, 35.0]:
+		node.call("RequestUnresolvedStats")
+		var generation_before := int(_diag()["generation"])
+		var label := str(pose_name)
+		if pose_name is String:
+			var gp: Dictionary = await COMMON.go_pose(self, game, base, pose_name, 3.0, 60.0)
+			_check(not gp.has("error"), pose_name + " pose reachable: " + str(gp.get("error", "")))
+		else:
+			label = "sun_%ddeg" % int(pose_name)
+			COMMON.apply_time(game, {"mode": "elevation", "value": pose_name, "rising": true})
+			await COMMON.settle(self, 3.0)
+		await _wait_until(func(): return int(_diag()["generation"]) > generation_before, 150.0)
+		await _wait_until(func(): return float(_diag()["crossfade"]) >= 0.999 and str(_diag()["phase"]) == "Idle", 30.0)
+		await COMMON.settle(self, 0.5)
+		var pd := _diag()
+		print("HEIGHT_SHADOW_SMOKE %s: status=%s authority=%s outside_max=%.0f m (pyramid=%s) unresolved L0=%.2f%% L1=%.2f%%" % [label, pd["status"], (_global("ringworld_height_shadow_shape") as Vector4).w, float(pd["outside_max"]), str(pd["outside_from_pyramid"]), float(pd["unresolved_l0"]), float(pd["unresolved_l1"])])
+		await _measure_on_off(label)
+		if visible_elevation < 0.0 and pose_name is float:
+			var resolved_shadow := await _overlay_shadow_fraction()
+			print("HEIGHT_SHADOW_SMOKE %s overlay: %.2f%% of resolved pixels are shadowed" % [label, resolved_shadow * 100.0])
+			if resolved_shadow > 0.005:
+				visible_elevation = pose_name
+				await _check_receivers_visible()
+	if visible_elevation < 0.0:
+		print("HEIGHT_SHADOW_SMOKE no tested elevation resolved terrain shadows around the fixture: the visible-use check was skipped (the synthetic receiver test covers it)")
+
 	# ---- disable
 	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", false)
 	await COMMON.settle(self, 0.5)
@@ -283,6 +314,122 @@ func _run() -> void:
 	var state_off = _global("ringworld_height_shadow_state")
 	_check(str(off["phase"]) == "Disabled" and not bool(off["gpu_ready"]) and state_off.w == 0.0 and state_off.x < 0.0, "disabling invalidates the globals and releases the GPU session: " + str(state_off))
 	_finish()
+
+
+func _overlay_shadow_fraction() -> float:
+	var overlay_script: Script = load("res://scripts/Shadows/RingHeightShadowOverlay.cs")
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(256, 256)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	root.add_child(viewport)
+	var overlay: Control = overlay_script.new()
+	viewport.add_child(overlay)
+	overlay.set("Mode", 0)
+	for i in 6:
+		await process_frame
+	var image := viewport.get_texture().get_image()
+	viewport.queue_free()
+	var shadowed := 0
+	var resolved := 0
+	for y in range(0, 256, 2):
+		for x in range(0, 256, 2):
+			var c := image.get_pixel(x, y)
+			if absf(c.r - 0.18) < 0.03 and absf(c.g - 0.18) < 0.03 and absf(c.b - 0.18) < 0.03:
+				continue
+			if c.r > 0.5 and c.g < 0.3:
+				continue
+			resolved += 1
+			if c.b > c.r + 0.05 and c.r < 0.3:
+				shadowed += 1
+	return float(shadowed) / maxf(1.0, float(resolved))
+
+
+func _luma_stats(image: Image) -> Dictionary:
+	var count := 0
+	var sum := 0.0
+	var sum_sq := 0.0
+	var dark := 0
+	var x := 0
+	while x < image.get_width():
+		var y := 0
+		while y < image.get_height():
+			var c := image.get_pixel(x, y)
+			var v := (c.r + c.g + c.b) / 3.0
+			sum += v
+			sum_sq += v * v
+			count += 1
+			if v < 0.5:
+				dark += 1
+			y += 7
+		x += 7
+	var mean := sum / maxf(1.0, float(count))
+	return {"mean": mean, "std": sqrt(maxf(0.0, sum_sq / maxf(1.0, float(count)) - mean * mean)), "dark": float(dark) / maxf(1.0, float(count))}
+
+
+## OFF (ReceiversEnabled false, producer still running) twice for the noise floor, then ON; prints the numbers and gates ON-vs-OFF at a few times the noise floor.
+func _measure_on_off(label: String) -> Dictionary:
+	node.set("ReceiversEnabled", false)
+	await COMMON.settle(self, 0.4)
+	var off_a: Image = await _frame_image()
+	await COMMON.settle(self, 0.6)
+	var off_b: Image = await _frame_image()
+	node.set("ReceiversEnabled", true)
+	await COMMON.settle(self, 0.4)
+	var on: Image = await _frame_image()
+	var noise := _image_diff(off_a, off_b)
+	var on_off := _image_diff(off_a, on)
+	print("HEIGHT_SHADOW_SMOKE ON-vs-OFF %s: noise floor (OFF vs OFF) mean=%.4f max=%.1f | ON vs OFF mean=%.4f max=%.1f (of 255, %d samples)" % [label, noise["mean"], noise["max"], on_off["mean"], on_off["max"], on_off["samples"]])
+	_check(float(on_off["mean"]) <= maxf(1.0, float(noise["mean"]) * 3.0 + 0.5), "%s: ON stays close to OFF inside the sun map range (mean %.4f vs noise %.4f)" % [label, on_off["mean"], noise["mean"]])
+	return {"noise": noise, "on_off": on_off}
+
+
+## Sun map off (authority 0): the heightfield is authoritative, so debug view 4 (min of height and macro term) must be non-uniform with receivers ON and differ from OFF.
+func _check_receivers_visible() -> void:
+	var sun_requested = graphics.get("RequestedSunShadowsEnabled")
+	graphics.call("SetShadowTuningOverride", "Enabled", false)
+	graphics.call("SetShadowTuningOverride", "ShadowDebugMode", 4)
+	await COMMON.settle(self, 1.0)
+	var shape = _global("ringworld_height_shadow_shape")
+	print("HEIGHT_SHADOW_SMOKE receivers-visible: shape=", shape, " (w = authority distance, 0 while the sun map is off)")
+	_check(shape != null and (shape as Vector4).w == 0.0, "authority distance is 0 with the sun map off: " + str(shape))
+	var shadowed := await _overlay_shadow_fraction()
+	print("HEIGHT_SHADOW_SMOKE overlay (L0 visibility, 4.3 km around the camera): %.2f%% of resolved pixels are shadowed at this sun" % (shadowed * 100.0))
+	var explorer := game.get_node_or_null("Explorer")
+	var best_diff := 0.0
+	var best_yaw := 0.0
+	var best_on_dark := 0.0
+	var best_off_dark := 0.0
+	var best_std := 0.0
+	var best_on: Image = null
+	var best_off: Image = null
+	for yaw in [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]:
+		explorer.call("SetPresentationView", yaw, 0.0)
+		node.set("ReceiversEnabled", false)
+		await COMMON.settle(self, 0.4)
+		var off: Image = await _frame_image()
+		node.set("ReceiversEnabled", true)
+		await COMMON.settle(self, 0.4)
+		var on: Image = await _frame_image()
+		var stats_off := _luma_stats(off)
+		var stats_on := _luma_stats(on)
+		var diff := _image_diff(off, on)
+		print("HEIGHT_SHADOW_SMOKE debug view 4 (sun map off) yaw %d: OFF std=%.4f dark=%.4f | ON std=%.4f dark=%.4f | ON vs OFF mean=%.4f max=%.1f" % [int(yaw), stats_off["std"], stats_off["dark"], stats_on["std"], stats_on["dark"], diff["mean"], diff["max"]])
+		if float(diff["mean"]) > best_diff:
+			best_diff = float(diff["mean"]); best_yaw = yaw; best_on_dark = float(stats_on["dark"]); best_off_dark = float(stats_off["dark"]); best_std = float(stats_on["std"])
+			best_on = on; best_off = off
+	if best_on != null:
+		best_on.save_png(ProjectSettings.globalize_path("res://.godot/height-shadow-smoke/debug4_on.png"))
+		best_off.save_png(ProjectSettings.globalize_path("res://.godot/height-shadow-smoke/debug4_off.png"))
+	print("HEIGHT_SHADOW_SMOKE debug view 4 best yaw %d: ON-vs-OFF mean diff %.4f, dark ON %.4f vs OFF %.4f" % [int(best_yaw), best_diff, best_on_dark, best_off_dark])
+	_check(best_std > 0.02, "debug view 4 is non-uniform with the heightfield authoritative (std %.4f)" % best_std)
+	if shadowed > 0.005:
+		_check(best_diff > 1.0 and best_on_dark > best_off_dark, "receivers visibly use the heightfield (ON darker than OFF, best mean diff %.4f)" % best_diff)
+	else:
+		print("HEIGHT_SHADOW_SMOKE no terrain shadow resolved around the camera at this sun: visible-use check skipped (the synthetic receiver test covers it)")
+	explorer.call("SetPresentationView", 0.0, -10.0)
+	graphics.call("SetShadowTuningOverride", "ShadowDebugMode", 0)
+	graphics.call("SetShadowTuningOverride", "Enabled", sun_requested if sun_requested != null else true)
+	await COMMON.settle(self, 0.5)
 
 
 func _check_overlay() -> void:

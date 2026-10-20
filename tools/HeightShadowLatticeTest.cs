@@ -34,6 +34,7 @@ public partial class HeightShadowLatticeTest : RefCounted
             VerifyReferenceMipsBound();
             VerifySeamCrossingFill();
             VerifyApertureCarve();
+            VerifySeaLevelClamp();
             ReportFillTiming();
             GD.Print($"HEIGHT_SHADOW_LATTICE=PASS checks={_checks}");
             return true;
@@ -356,6 +357,32 @@ public partial class HeightShadowLatticeTest : RefCounted
             }
         }
         finally { foreach (IHeightShadowSource s in sources) s.Dispose(); }
+        _checks++;
+    }
+
+    /// <summary>S5: the production source clamps the fill height to the sea level (water receivers then read the terrain rule, a seabed under water takes the surface value).</summary>
+    private void VerifySeaLevelClamp()
+    {
+        Require(RingTerrainHeightShadowSource.ClampToSeaLevel(-12f, 0f) == 0f && RingTerrainHeightShadowSource.ClampToSeaLevel(35.5f, 0f) == 35.5f
+            && RingTerrainHeightShadowSource.ClampToSeaLevel(-3f, -3f) == -3f, "sea level clamp helper");
+        using RingTerrainSampler root = EmitterSiteTestWorlds.CreateGen17Landform(20260419);
+        using RingTerrainSampler copy = root.CreateIndependentCopy();
+        IHeightShadowSource source = RingTerrainHeightShadowSource.Wrap(root.CreateIndependentCopy());
+        try
+        {
+            int below = 0, total = 0;
+            for (long around = 2_900_000; around < 3_300_000; around += 97)
+                for (int across = 20_000; across < 60_000; across += 1_013)
+                {
+                    float raw = copy.GetPresentationSurfaceHeight(around, across), clamped = source.GetHeight(around, across);
+                    total++;
+                    Require(clamped >= copy.SeaLevelY, $"clamped height {clamped} below sea {copy.SeaLevelY} at {around},{across}");
+                    if (raw < copy.SeaLevelY) { below++; Require(clamped == copy.SeaLevelY, $"sub-sea sample {raw} not clamped ({clamped})"); }
+                    else Require(clamped == raw, "above-sea sample altered");
+                }
+            GD.Print($"HEIGHT_SHADOW_SEA_CLAMP samples={total} below_sea={below} sea={copy.SeaLevelY}");
+        }
+        finally { source.Dispose(); }
         _checks++;
     }
 

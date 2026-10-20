@@ -153,6 +153,16 @@ void light() {
 	float cloud_shadow = LIGHT_IS_DIRECTIONAL
 		? local_cloud_shadow_occlusion * ring_day_factor
 		: 0.0;
+	// Terrain height-shadow clipmap (S5): voxel terrain has no macro term, so the heightfield only adds its own shadow (inactive = previous path).
+	bool height_active = LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.0 && ring_height_shadow_active();
+	RingHeightShadow height_shadow = ring_height_shadow_none();
+	if (height_active) {
+		height_shadow = ring_height_shadow_sample(
+			world_position,
+			0.0,
+			ring_height_shadow_slope_tan(transpose(mat3(VIEW_MATRIX)) * NORMAL),
+			distance(world_position, camera_world_position));
+	}
 	RingShadowTerms terms = ring_shadow_terms(
 		world_position,
 		SCREEN_UV,
@@ -160,6 +170,9 @@ void light() {
 		cloud_shadow,
 		0.0,
 		RING_SHADOW_DEFAULT);
+	if (height_active) {
+		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
+	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {

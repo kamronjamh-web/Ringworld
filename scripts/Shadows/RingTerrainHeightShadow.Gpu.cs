@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using Godot;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
 
 namespace RingworldTechDemo.Shadows;
@@ -354,13 +355,25 @@ public partial class RingTerrainHeightShadow
             SetGlobal(l == 0 ? GlobalL0PrevBounds : GlobalL1PrevBounds, Variant.From(prev));
         }
         HeightShadowPublished state = _roles.Current;
-        SetGlobal(GlobalState, Variant.From(new Vector4(state.Front, state.Prev, state.Crossfade, (float)state.Light)));
-        SetGlobal(GlobalShape, Variant.From(new Vector4((float)Math.Tan(Settings.PenumbraDegrees * Math.PI / 180.0), ReceiverBiasMeters, (float)radius, 0)));
+        SetGlobal(GlobalState, Variant.From(new Vector4(state.Front, state.Prev, state.Crossfade, ReceiversEnabled ? (float)state.Light : 0f)));
+        SetGlobal(GlobalShape, Variant.From(new Vector4((float)Math.Tan(Settings.PenumbraDegrees * Math.PI / 180.0), ReceiverBiasMeters, (float)radius, ResolveAuthorityMeters())));
         if (_globalsDirty)
         {
             _globalsDirty = false;
             if (_statsWanted) QueueStats(_roles.Front);
         }
+    }
+
+    /// <summary>
+    /// Authority distance A (shape.w): the sun map owns every blocker it contains, so a texel whose blocker lies within camera distance + G &lt; A gives the heightfield no
+    /// weight. A = sun shadow max distance x fade start while the sun map is rendering, 0 while it is suspended (below the horizon, zero energy, underground) or off.
+    /// </summary>
+    public float ResolveAuthorityMeters()
+    {
+        if (_sun == null || !GodotObject.IsInstanceValid(_sun) || !_sun.ShadowEnabled || _sun.LightEnergy <= RingGraphicsQualityController.SunShadowMinimumEnergy) return 0f;
+        if (_graphics != null && GodotObject.IsInstanceValid(_graphics) && (_graphics.LocalSunShadowSuspended || _graphics.UndergroundShadowSuspended)) return 0f;
+        float distance = _sun.DirectionalShadowMaxDistance * _sun.DirectionalShadowFadeStart;
+        return float.IsFinite(distance) && distance > 0f ? distance : 0f;
     }
 
     /// <summary>The 3x4 world -> anchor-tangent matrix for the current geometry snapshot (see <see cref="HeightShadowFrameMath.BuildFrame"/>).</summary>

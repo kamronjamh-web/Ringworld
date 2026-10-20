@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Celestial.Eclipse;
+using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
@@ -30,6 +31,8 @@ public partial class RingTerrainHeightShadow : Node
     public static RingTerrainHeightShadow? Instance { get; private set; }
     /// <summary>Underground-mode hold: start no new job, keep the published result.</summary>
     public bool UndergroundHold { get; set; }
+    /// <summary>Transient (never persisted) switch for the receiver side: false writes light = 0 into ringworld_height_shadow_state so every receiver falls back to its previous path while the producer keeps running (A/B harness, perf labels).</summary>
+    public bool ReceiversEnabled { get; set; } = true;
     [Export] public NodePath GridPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath GlobalLodPath { get; set; } = new("../GlobalTerrainLod3");
     [Export] public NodePath FocusPath { get; set; } = new("../Explorer");
@@ -151,10 +154,23 @@ public partial class RingTerrainHeightShadow : Node
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
         _planet = GetNodeOrNull<DirectionalLight3D>(PlanetLightPath);
         _graphics = GetNodeOrNull<RingGraphicsQualityController>(GraphicsPath);
+        if (_grid != null) { _grid.CanonicalFloatingOriginAnchorChanged += OnFloatingOriginAnchorChanged; _anchorSubscribed = true; }
+    }
+
+    private bool _anchorSubscribed;
+
+    /// <summary>The floating origin moved: the frame matrix must follow in the same frame (PushGlobals otherwise runs a frame late, in _Process, while the chunks already shifted).</summary>
+    private void OnFloatingOriginAnchorChanged(RingLodGeometrySnapshot previous, RingLodGeometrySnapshot current, RingCanonicalPosition anchor)
+    {
+        if (!ReferenceEquals(Instance, this) || !Settings.Enabled) return;
+        try { PushGlobals(current, 0f); }
+        catch (Exception error) { GD.PushError("height shadow frame refresh failed: " + error.Message); }
     }
 
     public override void _ExitTree()
     {
+        if (_anchorSubscribed && _grid != null && GodotObject.IsInstanceValid(_grid)) _grid.CanonicalFloatingOriginAnchorChanged -= OnFloatingOriginAnchorChanged;
+        _anchorSubscribed = false;
         if (!ReferenceEquals(Instance, this)) return;
         ReleaseOnExit();
         Instance = null;

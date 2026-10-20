@@ -40,6 +40,7 @@ void ring_terrain_apply_atmosphere(
 // Shadow/cloud/macro/hemisphere visibility of one light for a terrain-lit
 // surface. Shared by the diffuse term and the terrain's wet-specular term.
 float ring_terrain_direct_visibility(
+		vec3 normal,
 		vec3 light,
 		float attenuation,
 		bool is_directional,
@@ -63,15 +64,25 @@ float ring_terrain_direct_visibility(
 		day_direct_light_factor,
 		day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
-	// No eclipse-hub term here (hub = 0), as before.
+	// Terrain height-shadow clipmap (S5): while it is active it replaces the sun macro term where it has data and also brings the eclipse-hub term
+	// to this path; otherwise the previous behaviour (no hub term here) is unchanged.
+	bool height_active = is_directional && primary_sun_weight > 0.0 && ring_height_shadow_active();
+	RingHeightShadow height_shadow = ring_height_shadow_none();
+	if (height_active) {
+		height_shadow = ring_height_shadow_sample(
+			world,
+			0.0,
+			ring_height_shadow_slope_tan(transpose(mat3(view_matrix)) * normal),
+			distance(world, viewer));
+	}
 	float terrain_shadow = is_directional
 		? ring_macro_terrain_occlusion(
-			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer),
+			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer) * (1.0 - height_shadow.weight),
 			sample_terrain_planet_shadow_uv(shadow_uv, world, viewer),
 			primary_sun_weight,
 			primary_planet_weight,
 			day_factor,
-			0.0)
+			height_active ? ringworld_hub_light_weight : 0.0)
 		: 0.0;
 	RingShadowTerms terms = ring_shadow_terms(
 		world,
@@ -80,6 +91,9 @@ float ring_terrain_direct_visibility(
 		is_directional ? cloud_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	if (height_active) {
+		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, day_factor, ringworld_hub_light_weight, shadow_floor);
+	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
 	if (ring_shadow_debug_enabled()) {
 		return primary_sun_weight > 0.5 ? ring_shadow_debug_value(terms, combined_visibility) : 0.0;
@@ -105,6 +119,7 @@ vec3 ring_terrain_direct_diffuse(
 		out float direct_visibility) {
 	float n_dot_l = max(dot(normal, light), 0.0);
 	direct_visibility = ring_terrain_direct_visibility(
+		normal,
 		light,
 		attenuation,
 		is_directional,

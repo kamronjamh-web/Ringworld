@@ -158,9 +158,19 @@ void light() {
 		day_direct_light_factor,
 		ring_day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
+	// Terrain height-shadow clipmap (S5): replaces the sun macro term where it has data; inactive = the previous code path.
+	bool height_active = LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.0 && ring_height_shadow_active();
+	RingHeightShadow height_shadow = ring_height_shadow_none();
+	if (height_active) {
+		height_shadow = ring_height_shadow_sample(
+			world_position,
+			0.0,
+			0.0,
+			distance(world_position, camera_world_position));
+	}
 	float terrain_shadow = LIGHT_IS_DIRECTIONAL
 		? ring_macro_terrain_occlusion(
-			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters),
+			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters) * (1.0 - height_shadow.weight),
 			0.0,
 			primary_sun_weight,
 			0.0,
@@ -174,6 +184,9 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	if (height_active) {
+		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
+	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {

@@ -1,3 +1,5 @@
+#ifndef RING_CELESTIAL_LIGHTING
+#define RING_CELESTIAL_LIGHTING
 // Shared eclipse visibility published by the celestial clock.  Keep the
 // geometric day test separate so the ring's normal terminator still works.
 global uniform float ringworld_solar_visibility;
@@ -32,3 +34,4 @@ vec3 ringworld_primary_light(vec3 light_view, vec3 surface_up_world, mat4 view, 
 	// Opposite directions cancel at a half weight; the light has no energy then, but never produce a NaN.
 	return blended_length > 0.0001 ? blended / blended_length : up_view;
 }
+#endif

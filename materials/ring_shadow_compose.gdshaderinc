@@ -2,10 +2,12 @@
 #define RING_SHADOW_COMPOSE
 // Shared direct-sun shadow composition (docs/shadow-revamp-plan.md S3). Every terms field is a visibility: 1 = lit, 0 = fully shadowed.
 // geometry = the real-time shadow-map ATTENUATION (the caller applies shadow_floor), contact = reserved for S6 contact shadows,
-// terrain = macro/planet terrain mask (S5 merges the heightfield here), cloud = projected / analytic cloud shadow.
+// terrain = macro/planet terrain mask, height = terrain height-shadow clipmap (S5; 1 unless the receiver's ON branch fills it, see
+// ring_height_shadow.gdshaderinc), cloud = projected / analytic cloud shadow.
 #include "res://materials/ring_cloud_shadow.gdshaderinc" // shadow_overlap_darkening
+#include "res://materials/ring_height_shadow.gdshaderinc"
 
-// 0 off, 1 sun visibility, 2 geometry, 3 contact, 4 terrain, 5 cloud. Written by the Shadows > Debug menu (ShadowDebugMode).
+// 0 off, 1 sun visibility, 2 geometry, 3 contact, 4 terrain (min of height-shadow clipmap and macro), 5 cloud. Written by the Shadows > Debug menu (ShadowDebugMode).
 global uniform int ringworld_shadow_debug_mode;
 
 const uint RING_SHADOW_DEFAULT = 0u;
@@ -19,6 +21,7 @@ struct RingShadowTerms {
 	float contact;
 	float terrain;
 	float cloud;
+	float height; // S5: terrain height-shadow clipmap, joins the close term (full strength, floored by the caller)
 };
 
 // world and screen_uv are unused until S5/S6; the signature is fixed now so callers need not change then.
@@ -29,6 +32,7 @@ RingShadowTerms ring_shadow_terms(vec3 world, vec2 screen_uv, float attenuation,
 	t.contact = 1.0;
 	t.cloud = 1.0 - clamp(cloud_occlusion, 0.0, 1.0);
 	t.terrain = 1.0 - clamp(terrain_occlusion, 0.0, 1.0);
+	t.height = 1.0;
 	return t;
 }
 
@@ -38,7 +42,7 @@ float ring_shadow_sun_visibility(RingShadowTerms t, uint flags) {
 	if ((flags & RING_SHADOW_COMBINE_PRODUCT) != 0u) {
 		return t.geometry * t.cloud;
 	}
-	float close = clamp(min(t.geometry, t.contact), 0.0, 1.0);
+	float close = clamp(min(min(t.geometry, t.contact), t.height), 0.0, 1.0);
 	return mix(
 		min(close, min(t.cloud, t.terrain)),
 		close * t.cloud * t.terrain,
@@ -54,7 +58,7 @@ float ring_shadow_debug_value(RingShadowTerms t, float sun_visibility) {
 	if (mode == 1) return sun_visibility;
 	if (mode == 2) return clamp(t.geometry, 0.0, 1.0);
 	if (mode == 3) return t.contact;
-	if (mode == 4) return t.terrain;
+	if (mode == 4) return min(t.height, t.terrain);
 	return t.cloud;
 }
 #endif

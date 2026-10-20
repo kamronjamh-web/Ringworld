@@ -17,7 +17,9 @@ public sealed class RingTerrainHeightShadowSource : IHeightShadowSource
     public long CircumferenceMeters => _sampler.AroundRingVoxelLength;
     public int WidthMeters => _sampler.RingAcrossWidthMeters;
     public EmitterSiteRegistry? EmitterSites => _sampler.EmitterSites;
-    public float GetHeight(long aroundMeters, int acrossMeters) => _sampler.GetPresentationSurfaceHeight(aroundMeters, acrossMeters);
+    /// <summary>Water surfaces take the terrain's value (S5): a seabed under the sea reads as the sea surface, so ocean receivers (h_rel 0 at the water line) and terrain share one rule.</summary>
+    public float GetHeight(long aroundMeters, int acrossMeters) => ClampToSeaLevel(_sampler.GetPresentationSurfaceHeight(aroundMeters, acrossMeters), _sampler.SeaLevelY);
+    public static float ClampToSeaLevel(float surfaceHeight, float seaLevelY) => Math.Max(surfaceHeight, seaLevelY);
     public void Dispose() => _sampler.Dispose();
 
     /// <summary>One independent source per fill worker (main thread). Disposes the already created ones and throws when the grid has no sampler.</summary>
