@@ -38,6 +38,10 @@ global uniform vec3 ring_cloud_shadow_far_axis_around;
 global uniform vec3 ring_cloud_shadow_far_axis_across;
 global uniform vec3 ring_cloud_shadow_far_axis_up;
 global uniform vec2 ring_cloud_shadow_far_uv_offset;
+// xy: far planar coordinates minus near planar coordinates (the cascades share one
+// ring plane, so far = near + xy); z = 1 when valid, 0 keeps a separate far projection.
+uniform vec3 local_cloud_shadow_far_from_near = vec3(0.0);
+global uniform vec3 ring_cloud_shadow_far_from_near;
 vec3 ring_cloud_shadow_near_center() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_center_world : local_cloud_shadow_center_world; }
 vec3 ring_cloud_shadow_near_around() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_axis_around : local_cloud_shadow_axis_around; }
 vec3 ring_cloud_shadow_near_across() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_near_axis_across : local_cloud_shadow_axis_across; }
@@ -48,6 +52,7 @@ vec3 ring_cloud_shadow_far_around() { return local_cloud_shadow_use_globals ? ri
 vec3 ring_cloud_shadow_far_across() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_axis_across : local_cloud_shadow_far_axis_across; }
 vec3 ring_cloud_shadow_far_up() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_axis_up : local_cloud_shadow_far_axis_up; }
 vec2 ring_cloud_shadow_far_offset() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_uv_offset : local_cloud_shadow_far_uv_offset; }
+vec3 ring_cloud_shadow_far_link() { return local_cloud_shadow_use_globals ? ring_cloud_shadow_far_from_near : local_cloud_shadow_far_from_near; }
 // 0.0 keeps overlapping shadow systems energy-conserving by using the darkest
 // single estimate. 1.0 restores fully compounded shadow darkening.
 uniform float shadow_overlap_darkening : hint_range(0.0, 1.0, 0.01) = 0.0;
@@ -71,6 +76,28 @@ float combine_ring_shadow_visibility(
 		clamp(shadow_overlap_darkening, 0.0, 1.0));
 }
 
+// Small-angle series replace atan/sin/cos. Cloud-shadow angles stay below 0.02 rad
+// (100 km on the 5000 km ring); the series are accurate to well under a millimetre
+// out to 0.05 rad and the exact functions take over beyond that.
+float ring_cloud_shadow_arc_angle(float tangent, float outward) {
+	float q = tangent / outward;
+	if (outward > 0.0 && abs(q) <= 0.05) {
+		float q2 = q * q;
+		return q * (1.0 - q2 * (1.0 / 3.0 - q2 * (1.0 / 5.0 - q2 * (1.0 / 7.0))));
+	}
+	return atan(tangent, outward);
+}
+
+vec2 ring_cloud_shadow_sin_cos(float angle) {
+	if (abs(angle) <= 0.05) {
+		float a2 = angle * angle;
+		return vec2(
+			angle * (1.0 - a2 * (1.0 / 6.0) * (1.0 - a2 * (1.0 / 20.0) * (1.0 - a2 * (1.0 / 42.0)))),
+			1.0 - a2 * 0.5 * (1.0 - a2 * (1.0 / 12.0) * (1.0 - a2 * (1.0 / 30.0) * (1.0 - a2 * (1.0 / 56.0)))));
+	}
+	return vec2(sin(angle), cos(angle));
+}
+
 vec3 ring_cloud_shadow_coordinates(
 		vec3 relative,
 		vec3 axis_around,
@@ -85,13 +112,14 @@ vec3 ring_cloud_shadow_coordinates(
 	}
 
 	float outward_radius = ring_radius - inward;
-	float arc = ring_radius * atan(tangent, outward_radius);
+	float arc = ring_radius * ring_cloud_shadow_arc_angle(tangent, outward_radius);
 	float altitude = ring_radius - length(vec2(tangent, outward_radius));
 	vec2 planar = vec2(arc, across);
 	if (local_cloud_shadow_height_projection_enabled) {
 		float angle = arc / ring_radius;
-		float sine = sin(angle);
-		float cosine = cos(angle);
+		vec2 sine_cosine = ring_cloud_shadow_sin_cos(angle);
+		float sine = sine_cosine.x;
+		float cosine = sine_cosine.y;
 		vec3 local_around = axis_around * cosine + axis_up * sine;
 		vec3 local_up = axis_up * cosine - axis_around * sine;
 		// The bridge supplies a normalized world-space sun ray. Avoid doing this
@@ -164,12 +192,20 @@ float sample_local_cloud_shadow(vec3 sample_world_position) {
 	if (local_cloud_shadow_far_enabled && needs_far_cascade) {
 		// Do not pay for a second curved-ring projection/trig calculation while
 		// the detailed near cascade is fully authoritative.
-		vec3 far_relative = sample_world_position - ring_cloud_shadow_far_center();
-		vec2 far_planar = ring_cloud_shadow_coordinates(
-			far_relative,
-			ring_cloud_shadow_far_around(),
-			ring_cloud_shadow_far_across(),
-			ring_cloud_shadow_far_up()).xy;
+		vec3 far_link = ring_cloud_shadow_far_link();
+		vec2 far_planar;
+		if (far_link.z > 0.5) {
+			// Both cascades lie in one ring plane: far coordinates are the near
+			// ones plus a constant, so the blend band needs one projection.
+			far_planar = planar_meters + far_link.xy;
+		} else {
+			vec3 far_relative = sample_world_position - ring_cloud_shadow_far_center();
+			far_planar = ring_cloud_shadow_coordinates(
+				far_relative,
+				ring_cloud_shadow_far_around(),
+				ring_cloud_shadow_far_across(),
+				ring_cloud_shadow_far_up()).xy;
+		}
 		float far_radius = max(local_cloud_shadow_far_radius_meters, 1.0);
 		vec2 far_uv = far_planar / (far_radius * 2.0) + vec2(0.5) + ring_cloud_shadow_far_offset();
 		if (all(greaterThanEqual(far_uv, vec2(0.0)))

@@ -60,6 +60,8 @@ public static class RingCloudShadowProjector
     private static float _ringRadiusMeters;
     private static Vector3 _sunDirection;
     private static bool _heightProjectionEnabled;
+    // Only the GPU cascade path knows the far map is a separate ring-aligned cascade.
+    private static bool _farLinkEnabled;
     public static int ActiveReceiverCount { get; private set; }
     /// <summary>Cheap test instrumentation: projector parameter writes since reset.</summary>
     public static long ParameterWriteCount { get; private set; }
@@ -75,11 +77,12 @@ public static class RingCloudShadowProjector
         "ring_cloud_shadow_near_center_world", "ring_cloud_shadow_near_axis_around",
         "ring_cloud_shadow_near_axis_across", "ring_cloud_shadow_near_axis_up",
         "ring_cloud_shadow_far_center_world", "ring_cloud_shadow_far_axis_around",
-        "ring_cloud_shadow_far_axis_across", "ring_cloud_shadow_far_axis_up"
+        "ring_cloud_shadow_far_axis_across", "ring_cloud_shadow_far_axis_up",
+        "ring_cloud_shadow_far_from_near"
     };
     private static readonly StringName[] Vec2GlobalNames = { "ring_cloud_shadow_near_uv_offset", "ring_cloud_shadow_far_uv_offset" };
     private static readonly StringName UseGlobalsName = "local_cloud_shadow_use_globals";
-    private static readonly Vector3[] PublishedVec3 = new Vector3[8];
+    private static readonly Vector3[] PublishedVec3 = new Vector3[9];
     private static readonly Vector2[] PublishedVec2 = new Vector2[2];
     private static bool _globalsPublished;
 
@@ -100,6 +103,7 @@ public static class RingCloudShadowProjector
     {
         PublishVec3(0, _centerWorld); PublishVec3(1, _axisAround); PublishVec3(2, _axisAcross); PublishVec3(3, _axisUp);
         PublishVec3(4, _farCenterWorld); PublishVec3(5, _farAxisAround); PublishVec3(6, _farAxisAcross); PublishVec3(7, _farAxisUp);
+        PublishVec3(8, ResolveFarFromNear());
         PublishVec2(0, _nearUvOffset); PublishVec2(1, _farUvOffset);
         _globalsPublished = true;
     }
@@ -126,6 +130,49 @@ public static class RingCloudShadowProjector
         global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(
             global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.CloudShadowGlobal);
     }
+
+    private const double FarLinkAltitudeToleranceMeters = 2.0;
+    private const double FarLinkAxisDotTolerance = 1.25e-5;
+
+    /// <summary>
+    /// When the far cascade's centre and axes lie on the same ring as the near
+    /// cascade's (the normal case) far planar coordinates equal near planar
+    /// coordinates plus a constant. Returns that constant in xy and 1 in z, or
+    /// zero when the frames are not ring-aligned and the receiver must project twice.
+    /// </summary>
+    public static Vector3 ResolveFarFromNear(
+        Vector3 nearCenter, Vector3 nearAround, Vector3 nearAcross, Vector3 nearUp,
+        Vector3 farCenter, Vector3 farAround, Vector3 farAcross, Vector3 farUp, double ringRadius)
+    {
+        Vector3 relative = farCenter - nearCenter;
+        double tangent = Dot(relative, nearAround);
+        double across = Dot(relative, nearAcross);
+        double angle = 0.0;
+        if (ringRadius > 1.0)
+        {
+            double outward = ringRadius - Dot(relative, nearUp);
+            angle = Math.Atan2(tangent, outward);
+            double altitude = ringRadius - Math.Sqrt(tangent * tangent + outward * outward);
+            if (outward <= 0.0 || Math.Abs(altitude) > FarLinkAltitudeToleranceMeters) return Vector3.Zero;
+        }
+        else if (Math.Abs(Dot(relative, nearUp)) > FarLinkAltitudeToleranceMeters) return Vector3.Zero;
+        double sine = Math.Sin(angle), cosine = Math.Cos(angle);
+        Vector3 expectedAround = nearAround * (float)cosine + nearUp * (float)sine;
+        Vector3 expectedUp = nearUp * (float)cosine - nearAround * (float)sine;
+        if (Dot(farAround, expectedAround) < 1.0 - FarLinkAxisDotTolerance
+            || Dot(farAcross, nearAcross) < 1.0 - FarLinkAxisDotTolerance
+            || Dot(farUp, expectedUp) < 1.0 - FarLinkAxisDotTolerance) return Vector3.Zero;
+        double arc = ringRadius > 1.0 ? ringRadius * angle : tangent;
+        return new Vector3((float)-arc, (float)-across, 1.0f);
+    }
+
+    private static Vector3 ResolveFarFromNear() => _farLinkEnabled
+        ? ResolveFarFromNear(_centerWorld, _axisAround, _axisAcross, _axisUp,
+            _farCenterWorld, _farAxisAround, _farAxisAcross, _farAxisUp, _ringRadiusMeters)
+        : Vector3.Zero;
+
+    private static double Dot(Vector3 left, Vector3 right)
+        => (double)left.X * right.X + (double)left.Y * right.Y + (double)left.Z * right.Z;
 
     public static void Register(GodotObject? material)
     {
@@ -210,6 +257,7 @@ public static class RingCloudShadowProjector
         _radiusMeters = Mathf.Max(1.0f, radiusMeters);
         _nearUvOffset = Vector2.Zero;
         _farUvOffset = Vector2.Zero;
+        _farLinkEnabled = false;
         _farCenterWorld = centerWorld;
         _farAxisAround = _axisAround;
         _farAxisAcross = _axisAcross;
@@ -247,6 +295,7 @@ public static class RingCloudShadowProjector
         _nearUvOffset = nearUvOffset;
         _farTexture = farTexture;
         _farTextureEnabled = farTexture != null;
+        _farLinkEnabled = true;
         _farCenterWorld = farCenterWorld;
         _farAxisAround = farAround.Normalized();
         _farAxisAcross = farAcross.Normalized();

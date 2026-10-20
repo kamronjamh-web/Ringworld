@@ -319,6 +319,91 @@ var cloud_shadow_last_error := ""
 # the complete descriptor set until the render-device frame delay has passed.
 var retired_cloud_shadow_cascades : Array[Dictionary] = []
 
+# Cloud shadow crossfade (S2). When enabled per cascade the receivers bind a
+# display texture D instead of the front map F. A publish resamples the map D
+# currently shows into the new map's frame (P), then every frame writes
+# D = mix(P, F, t) until t reaches 1. With crossfade off none of this exists and
+# receivers bind F exactly as before.
+const CLOUD_SHADOW_XFADE_PARAM_BYTES := 160
+const CLOUD_SHADOW_XFADE_FRAME_MAX_AGE_USEC := 750000
+const CLOUD_SHADOW_XFADE_SOURCE := """#version 450
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+layout(binding = 0) uniform sampler2D src_a;
+layout(binding = 1) uniform sampler2D src_b;
+layout(rg16f, binding = 2) uniform restrict writeonly image2D dst;
+layout(binding = 3, std140) uniform XfadeParams {
+	vec4 n_center_radius;
+	vec4 n_around;
+	vec4 n_across;
+	vec4 n_up;
+	vec4 p_center_radius;
+	vec4 p_around;
+	vec4 p_across;
+	vec4 p_up;
+	vec4 misc; // x ring radius, y mode (0 resample, 1 blend), z blend factor
+	vec4 p_offset; // xy: receiver uv offset of the displayed map
+} params;
+void main() {
+	ivec2 size = imageSize(dst);
+	ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(id, size))) {
+		return;
+	}
+	vec2 value;
+	if (params.misc.y > 0.5) {
+		vec2 a = texelFetch(src_a, id, 0).rg;
+		vec2 b = texelFetch(src_b, id, 0).rg;
+		float t = params.misc.z;
+		value = t >= 1.0 ? b : mix(a, b, t);
+	} else {
+		// Ground-level inverse of the receiver projection (see
+		// ring_cloud_shadow_coordinates): new-map texel -> world -> displayed-map uv.
+		float ring_radius = params.misc.x;
+		vec2 planar = ((vec2(id) + 0.5) / vec2(size) - 0.5) * (2.0 * params.n_center_radius.w);
+		vec3 relative;
+		if (ring_radius <= 1.0) {
+			relative = params.n_around.xyz * planar.x + params.n_across.xyz * planar.y;
+		} else {
+			float angle = planar.x / ring_radius;
+			relative = params.n_around.xyz * (ring_radius * sin(angle))
+				+ params.n_across.xyz * planar.y
+				+ params.n_up.xyz * (ring_radius * (1.0 - cos(angle)));
+		}
+		vec3 p_relative = params.n_center_radius.xyz + relative - params.p_center_radius.xyz;
+		float tangent = dot(p_relative, params.p_around.xyz);
+		float across = dot(p_relative, params.p_across.xyz);
+		vec2 p_planar = vec2(tangent, across);
+		if (ring_radius > 1.0) {
+			float outward = ring_radius - dot(p_relative, params.p_up.xyz);
+			p_planar.x = ring_radius * atan(tangent, outward);
+		}
+		vec2 uv = p_planar / (2.0 * params.p_center_radius.w) + vec2(0.5) + params.p_offset.xy;
+		if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
+			value = textureLod(src_a, uv, 0.0).rg;
+		} else {
+			value = vec2(0.0);
+		}
+	}
+	imageStore(dst, id, vec4(value, 0.0, 0.0));
+}
+"""
+var cloud_shadow_xfade_shader : RID = RID()
+var cloud_shadow_xfade_pipeline : RID = RID()
+var cloud_shadow_xfade_compile_failed := false
+var cloud_shadow_display_textures : Array[RID] = [RID(), RID()]
+var cloud_shadow_prev_textures : Array[RID] = [RID(), RID()]
+# [resample cascade 0, resample cascade 1, blend cascade 0, blend cascade 1]
+var cloud_shadow_xfade_sets : Array[RID] = [RID(), RID(), RID(), RID()]
+var cloud_shadow_xfade_buffers : Array[RID] = [RID(), RID(), RID(), RID()]
+var cloud_shadow_xfade_active : Array[bool] = [false, false]
+var cloud_shadow_display_valid : Array[bool] = [false, false]
+var cloud_shadow_fade_running : Array[bool] = [false, false]
+var cloud_shadow_fade_start_usec : Array[int] = [0, 0]
+var cloud_shadow_fade_seconds : Array[float] = [0.0, 0.0]
+# Frame the receivers currently sample the display map in (pushed by the bridge
+# every frame while receivers are bound).
+var cloud_shadow_display_frames : Array[Dictionary] = [{}, {}]
+
 var buffers : RenderSceneBuffersRD
 
 
@@ -663,7 +748,8 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 				vertical_samples: int, extinction: float,
 				reset_history: bool = false, slice_count: int = 1,
 				adaptive_step_meters: float = 0.0, adaptive_min_samples: int = 8,
-				adaptive_max_samples: int = 96, skip_probe_count: int = 0) -> bool:
+				adaptive_max_samples: int = 96, skip_probe_count: int = 0,
+				crossfade_enabled: bool = false, crossfade_seconds: float = 0.0) -> bool:
 	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
 		cloud_shadow_last_error = "Invalid cloud shadow cascade index."
 		return false
@@ -695,6 +781,8 @@ func configure_gpu_cloud_shadow_cascade(cascade: int, resolution: int, center: V
 		"adaptive_min_samples": clampi(adaptive_min_samples, 1, 256),
 		"adaptive_max_samples": clampi(adaptive_max_samples, clampi(adaptive_min_samples, 1, 256), 256),
 		"skip_probe_count": clampi(skip_probe_count, 0, 64),
+		"crossfade_enabled": crossfade_enabled,
+		"crossfade_seconds": maxf(crossfade_seconds, 0.0),
 	}
 	if reset_history:
 		cloud_shadow_reset_history[cascade] = true
@@ -716,6 +804,18 @@ func get_gpu_cloud_shadow_texture(cascade: int) -> Texture2DRD:
 	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
 		return null
 	return cloud_shadow_published_texture_wrappers[cascade]
+
+# The bridge reports, every frame its receivers are bound, the frame (world
+# centre, axes, half-width and uv offset) they sample the display map in, so a
+# publish can resample the displayed map into the new map's frame.
+func set_gpu_cloud_shadow_display_frame(cascade: int, center: Vector3, around: Vector3,
+		across: Vector3, up: Vector3, radius: float, uv_offset: Vector2):
+	if cascade < 0 or cascade >= GPU_CLOUD_SHADOW_CASCADES:
+		return
+	cloud_shadow_display_frames[cascade] = {
+		"center": center, "around": around, "across": across, "up": up,
+		"radius": radius, "uv_offset": uv_offset, "stamp": Time.get_ticks_usec(),
+	}
 
 # Returns Sunshine's exact screen-space cloud color in rgb and cloud density
 # in alpha. Publication starts only after the first dispatch for this resource
@@ -756,6 +856,10 @@ func get_gpu_cloud_shadow_status() -> Dictionary:
 		"far_slice_progress": cloud_shadow_slice_progress[1],
 		"near_pending": cloud_shadow_pending[0],
 		"far_pending": cloud_shadow_pending[1],
+		"near_crossfade": cloud_shadow_xfade_active[0],
+		"far_crossfade": cloud_shadow_xfade_active[1],
+		"near_fade_running": cloud_shadow_fade_running[0],
+		"far_fade_running": cloud_shadow_fade_running[1],
 		"retired_cascade_generations": retired_cloud_shadow_cascades.size(),
 		"retired_compositor_generations": retired_generations.size(),
 	}
@@ -764,12 +868,17 @@ func retire_gpu_cloud_shadow_cascade(cascade: int):
 	var stage := cascade + GPU_CLOUD_SHADOW_CASCADES
 	cloud_shadow_slice_progress[cascade] = 0
 	cloud_shadow_slice_configs[cascade] = {}
+	var extra_sets : Array[RID] = []
+	var extra_rids : Array[RID] = []
+	_collect_cloud_shadow_xfade(cascade, extra_sets, extra_rids)
 	if not cloud_shadow_uniform_sets[cascade].is_valid() \
 			and not cloud_shadow_param_buffers[cascade].is_valid() \
 			and not cloud_shadow_textures[cascade].is_valid() \
 			and not cloud_shadow_textures[stage].is_valid():
 		return
 	retired_cloud_shadow_cascades.append({
+		"extra_sets": extra_sets,
+		"extra_rids": extra_rids,
 		"release_after": render_callback_serial + max(2, rd.get_frame_delay() + 2),
 		"uniform_set": cloud_shadow_uniform_sets[cascade],
 		"stage_uniform_set": cloud_shadow_uniform_sets[stage],
@@ -788,14 +897,20 @@ func retire_completed_gpu_cloud_shadow_cascades(force: bool = false):
 		if not force and render_callback_serial < retired.release_after:
 			remaining.append(retired)
 			continue
+		for extra_set : RID in retired.get("extra_sets", []):
+			if extra_set.is_valid() and rd.uniform_set_is_valid(extra_set): rd.free_rid(extra_set)
 		for key in ["uniform_set", "stage_uniform_set", "param_buffer", "texture", "stage_texture"]:
 			var rid = retired[key]
 			if rid is RID and rid.is_valid(): rd.free_rid(rid)
+		for extra_rid : RID in retired.get("extra_rids", []):
+			if extra_rid.is_valid(): rd.free_rid(extra_rid)
 	retired_cloud_shadow_cascades = remaining
 
 func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) -> bool:
 	var resolution := Vector2i(configuration["resolution"], configuration["resolution"])
-	if cloud_shadow_textures[cascade].is_valid() and cloud_shadow_resolutions[cascade] == resolution and cloud_shadow_uniform_sets[cascade].is_valid():
+	var want_xfade := bool(configuration.get("crossfade_enabled", false)) and _ensure_cloud_shadow_xfade_pipeline()
+	if cloud_shadow_textures[cascade].is_valid() and cloud_shadow_resolutions[cascade] == resolution and cloud_shadow_uniform_sets[cascade].is_valid() \
+			and cloud_shadow_xfade_active[cascade] == want_xfade:
 		return true
 	var texture_format := RDTextureFormat.new()
 	texture_format.texture_type = RenderingDevice.TEXTURE_TYPE_2D
@@ -819,8 +934,11 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 		rd.free_rid(replacement_texture)
 		cloud_shadow_last_error = "Unable to create cloud shadow uniform set."
 		return false
+	var xfade := {}
+	if want_xfade:
+		xfade = _create_cloud_shadow_xfade_resources(replacement_texture, resolution)
 	var wrapper := Texture2DRD.new()
-	wrapper.texture_rd_rid = replacement_texture
+	wrapper.texture_rd_rid = xfade["display"] if not xfade.is_empty() else replacement_texture
 	# Commit only after the entire replacement is valid. Do not free a published
 	# cascade from this callback: it may still be sampled by an already-submitted
 	# receiver draw, so ownership moves to the delayed retirement queue.
@@ -829,6 +947,14 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 	cloud_shadow_param_buffers[cascade] = replacement_param_buffer
 	cloud_shadow_textures[cascade] = replacement_texture
 	cloud_shadow_texture_wrappers[cascade] = wrapper
+	if not xfade.is_empty():
+		cloud_shadow_display_textures[cascade] = xfade["display"]
+		cloud_shadow_prev_textures[cascade] = xfade["prev"]
+		cloud_shadow_xfade_sets[cascade] = xfade["resample_set"]
+		cloud_shadow_xfade_sets[GPU_CLOUD_SHADOW_CASCADES + cascade] = xfade["blend_set"]
+		cloud_shadow_xfade_buffers[cascade] = xfade["resample_buffer"]
+		cloud_shadow_xfade_buffers[GPU_CLOUD_SHADOW_CASCADES + cascade] = xfade["blend_buffer"]
+		cloud_shadow_xfade_active[cascade] = true
 	cloud_shadow_resolutions[cascade] = resolution
 	cloud_shadow_reset_history[cascade] = true
 	cloud_shadow_phase[cascade] = 0
@@ -943,6 +1069,8 @@ func dispatch_gpu_cloud_shadows():
 		cloud_shadow_slice_progress[cascade] = 0
 		cloud_shadow_slice_configs[cascade] = {}
 		cloud_shadow_pending[cascade] = false
+		if cloud_shadow_xfade_active[cascade]:
+			_begin_cloud_shadow_crossfade(cascade, configuration)
 		cloud_shadow_dispatch_count[cascade] += 1
 		# The main thread can now bind this immutable wrapper on its next frame.
 		cloud_shadow_published_texture_wrappers[cascade] = cloud_shadow_texture_wrappers[cascade]
@@ -953,6 +1081,175 @@ func dispatch_gpu_cloud_shadows():
 		# Resource refreshes can make both cascades pending together. Keep the
 		# producer-level guarantee of at most one compute dispatch per frame.
 		break
+
+func _ensure_cloud_shadow_xfade_pipeline() -> bool:
+	if cloud_shadow_xfade_pipeline.is_valid():
+		return true
+	if cloud_shadow_xfade_compile_failed or not rd:
+		return false
+	var source := RDShaderSource.new()
+	source.language = RenderingDevice.SHADER_LANGUAGE_GLSL
+	source.source_compute = CLOUD_SHADOW_XFADE_SOURCE
+	var spirv := rd.shader_compile_spirv_from_source(source)
+	if spirv.compile_error_compute != "":
+		cloud_shadow_xfade_compile_failed = true
+		push_warning("Cloud shadow crossfade shader failed to compile: " + spirv.compile_error_compute)
+		return false
+	cloud_shadow_xfade_shader = rd.shader_create_from_spirv(spirv)
+	if not cloud_shadow_xfade_shader.is_valid():
+		cloud_shadow_xfade_compile_failed = true
+		return false
+	cloud_shadow_xfade_pipeline = rd.compute_pipeline_create(cloud_shadow_xfade_shader)
+	if not cloud_shadow_xfade_pipeline.is_valid():
+		rd.free_rid(cloud_shadow_xfade_shader)
+		cloud_shadow_xfade_shader = RID()
+		cloud_shadow_xfade_compile_failed = true
+		return false
+	return true
+
+func _build_cloud_shadow_xfade_set(src_a: RID, src_b: RID, dst: RID, params: RID) -> RID:
+	var uniforms: Array[RDUniform] = []
+	for binding in range(2):
+		var sampled := RDUniform.new()
+		sampled.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+		sampled.binding = binding
+		sampled.add_id(linear_sampler_no_repeat)
+		sampled.add_id(src_a if binding == 0 else src_b)
+		uniforms.append(sampled)
+	var output := RDUniform.new()
+	output.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
+	output.binding = 2
+	output.add_id(dst)
+	uniforms.append(output)
+	var parameters := RDUniform.new()
+	parameters.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	parameters.binding = 3
+	parameters.add_id(params)
+	uniforms.append(parameters)
+	return rd.uniform_set_create(uniforms, cloud_shadow_xfade_shader, 0)
+
+# Creates display/previous textures, parameter buffers and the two descriptor
+# sets for one cascade. Returns {} (and frees any partial result) on failure.
+func _create_cloud_shadow_xfade_resources(front_texture: RID, resolution: Vector2i) -> Dictionary:
+	var texture_format := RDTextureFormat.new()
+	texture_format.texture_type = RenderingDevice.TEXTURE_TYPE_2D
+	texture_format.format = RenderingDevice.DATA_FORMAT_R16G16_SFLOAT
+	texture_format.width = resolution.x
+	texture_format.height = resolution.y
+	texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
+		| RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
+	var display := rd.texture_create(texture_format, RDTextureView.new())
+	var prev := rd.texture_create(texture_format, RDTextureView.new())
+	var resample_buffer := rd.uniform_buffer_create(CLOUD_SHADOW_XFADE_PARAM_BYTES)
+	var blend_buffer := rd.uniform_buffer_create(CLOUD_SHADOW_XFADE_PARAM_BYTES)
+	var resample_set := RID()
+	var blend_set := RID()
+	if display.is_valid() and prev.is_valid() and resample_buffer.is_valid() and blend_buffer.is_valid():
+		resample_set = _build_cloud_shadow_xfade_set(display, display, prev, resample_buffer)
+		blend_set = _build_cloud_shadow_xfade_set(prev, front_texture, display, blend_buffer)
+	if resample_set.is_valid() and blend_set.is_valid():
+		return {"display": display, "prev": prev, "resample_set": resample_set, "blend_set": blend_set,
+			"resample_buffer": resample_buffer, "blend_buffer": blend_buffer}
+	for set_rid in [resample_set, blend_set]:
+		if set_rid.is_valid() and rd.uniform_set_is_valid(set_rid): rd.free_rid(set_rid)
+	for rid in [resample_buffer, blend_buffer, prev, display]:
+		if rid.is_valid(): rd.free_rid(rid)
+	return {}
+
+# Moves every crossfade resource of one cascade into the caller's release lists
+# and resets the cascade's crossfade state.
+func _collect_cloud_shadow_xfade(cascade: int, sets: Array[RID], rids: Array[RID]):
+	var blend_index := GPU_CLOUD_SHADOW_CASCADES + cascade
+	sets.append(cloud_shadow_xfade_sets[cascade])
+	sets.append(cloud_shadow_xfade_sets[blend_index])
+	rids.append(cloud_shadow_xfade_buffers[cascade])
+	rids.append(cloud_shadow_xfade_buffers[blend_index])
+	rids.append(cloud_shadow_prev_textures[cascade])
+	rids.append(cloud_shadow_display_textures[cascade])
+	cloud_shadow_xfade_sets[cascade] = RID()
+	cloud_shadow_xfade_sets[blend_index] = RID()
+	cloud_shadow_xfade_buffers[cascade] = RID()
+	cloud_shadow_xfade_buffers[blend_index] = RID()
+	cloud_shadow_prev_textures[cascade] = RID()
+	cloud_shadow_display_textures[cascade] = RID()
+	cloud_shadow_xfade_active[cascade] = false
+	cloud_shadow_display_valid[cascade] = false
+	cloud_shadow_fade_running[cascade] = false
+
+func _dispatch_cloud_shadow_xfade(cascade: int, blend: bool, factor: float, new_config: Dictionary, previous_frame: Dictionary):
+	var size : Vector2i = cloud_shadow_resolutions[cascade]
+	var vectors : Array[Vector4] = []
+	if blend:
+		for i in range(8):
+			vectors.append(Vector4.ZERO)
+		vectors.append(Vector4(0.0, 1.0, factor, 0.0))
+		vectors.append(Vector4.ZERO)
+	else:
+		var n_center : Vector3 = new_config["center"]
+		var n_around : Vector3 = new_config["around"]
+		var n_across : Vector3 = new_config["across"]
+		var n_up : Vector3 = new_config["up"]
+		var p_center : Vector3 = previous_frame["center"]
+		var p_around : Vector3 = previous_frame["around"]
+		var p_across : Vector3 = previous_frame["across"]
+		var p_up : Vector3 = previous_frame["up"]
+		var p_offset : Vector2 = previous_frame["uv_offset"]
+		vectors.append(Vector4(n_center.x, n_center.y, n_center.z, new_config["radius"]))
+		vectors.append(Vector4(n_around.x, n_around.y, n_around.z, 0.0))
+		vectors.append(Vector4(n_across.x, n_across.y, n_across.z, 0.0))
+		vectors.append(Vector4(n_up.x, n_up.y, n_up.z, 0.0))
+		vectors.append(Vector4(p_center.x, p_center.y, p_center.z, previous_frame["radius"]))
+		vectors.append(Vector4(p_around.x, p_around.y, p_around.z, 0.0))
+		vectors.append(Vector4(p_across.x, p_across.y, p_across.z, 0.0))
+		vectors.append(Vector4(p_up.x, p_up.y, p_up.z, 0.0))
+		vectors.append(Vector4(new_config["ring_radius"], 0.0, 0.0, 0.0))
+		vectors.append(Vector4(p_offset.x, p_offset.y, 0.0, 0.0))
+	var bytes := PackedByteArray()
+	bytes.resize(CLOUD_SHADOW_XFADE_PARAM_BYTES)
+	var offset := 0
+	for value in vectors:
+		bytes.encode_float(offset, value.x); offset += 4
+		bytes.encode_float(offset, value.y); offset += 4
+		bytes.encode_float(offset, value.z); offset += 4
+		bytes.encode_float(offset, value.w); offset += 4
+	var set_index := (GPU_CLOUD_SHADOW_CASCADES if blend else 0) + cascade
+	rd.buffer_update(cloud_shadow_xfade_buffers[set_index], 0, bytes.size(), bytes)
+	var compute_list := rd.compute_list_begin()
+	rd.compute_list_bind_compute_pipeline(compute_list, cloud_shadow_xfade_pipeline)
+	rd.compute_list_bind_uniform_set(compute_list, cloud_shadow_xfade_sets[set_index], 0)
+	rd.compute_list_dispatch(compute_list, int((size.x + 7) / 8), int((size.y + 7) / 8), 1)
+	rd.compute_list_end()
+
+# Called once per publish, after the new map is in the front texture.
+func _begin_cloud_shadow_crossfade(cascade: int, configuration: Dictionary):
+	if not cloud_shadow_xfade_pipeline.is_valid():
+		return
+	var seconds := float(configuration.get("crossfade_seconds", 0.0))
+	var previous_frame : Dictionary = cloud_shadow_display_frames[cascade]
+	var frame_fresh := not previous_frame.is_empty() \
+		and Time.get_ticks_usec() - int(previous_frame.get("stamp", 0)) < CLOUD_SHADOW_XFADE_FRAME_MAX_AGE_USEC
+	if cloud_shadow_display_valid[cascade] and frame_fresh and seconds > 0.001:
+		_dispatch_cloud_shadow_xfade(cascade, false, 0.0, configuration, previous_frame)
+		cloud_shadow_fade_running[cascade] = true
+		cloud_shadow_fade_start_usec[cascade] = Time.get_ticks_usec()
+		cloud_shadow_fade_seconds[cascade] = seconds
+	else:
+		# First map, stale receivers or zero length: show the new map directly.
+		cloud_shadow_fade_running[cascade] = false
+		_dispatch_cloud_shadow_xfade(cascade, true, 1.0, {}, {})
+	cloud_shadow_display_valid[cascade] = true
+
+func update_gpu_cloud_shadow_crossfades():
+	if not cloud_shadow_generation_enabled or not cloud_shadow_xfade_pipeline.is_valid():
+		return
+	for cascade in range(GPU_CLOUD_SHADOW_CASCADES):
+		if not cloud_shadow_fade_running[cascade] or not cloud_shadow_xfade_active[cascade]:
+			continue
+		var elapsed := float(Time.get_ticks_usec() - cloud_shadow_fade_start_usec[cascade]) * 0.000001
+		var factor := clampf(elapsed / maxf(cloud_shadow_fade_seconds[cascade], 0.001), 0.0, 1.0)
+		_dispatch_cloud_shadow_xfade(cascade, true, factor, {}, {})
+		if factor >= 1.0:
+			cloud_shadow_fade_running[cascade] = false
 
 func add_sample(callable : Callable, position : Vector3):
 	#if (positionQueries.size() == 32):
@@ -986,6 +1283,7 @@ func _notification(what):
 	for ring_sets in general_data_uniform_sets:
 		sets.append_array(ring_sets)
 	sets.append_array(cloud_shadow_uniform_sets)
+	sets.append_array(cloud_shadow_xfade_sets)
 	sets.append(_terrain_sun_set)
 	sets.append(macro_map_build_set)
 	for ring_fill_sets in interleave_fill_sets:
@@ -1010,6 +1308,10 @@ func _notification(what):
 	rids.append_array(blit_screen_images)
 	rids.append_array(cloud_shadow_param_buffers)
 	rids.append_array(cloud_shadow_textures)
+	rids.append_array(cloud_shadow_xfade_buffers)
+	rids.append_array(cloud_shadow_prev_textures)
+	rids.append_array(cloud_shadow_display_textures)
+	rids.append_array([cloud_shadow_xfade_pipeline, cloud_shadow_xfade_shader])
 	var keep_alive: Array = [cloud_shadow_texture_wrappers.duplicate(),
 		cloud_shadow_published_texture_wrappers.duplicate(),
 		cloud_backdrop_texture_wrappers.duplicate(),
@@ -1023,6 +1325,8 @@ func _notification(what):
 	for cascade in retired_cloud_shadow_cascades:
 		sets.append(cascade.uniform_set)
 		sets.append(cascade.stage_uniform_set)
+		sets.append_array(cascade.extra_sets)
+		rids.append_array(cascade.extra_rids)
 		rids.append(cascade.param_buffer)
 		rids.append(cascade.texture)
 		rids.append(cascade.stage_texture)
@@ -1063,7 +1367,7 @@ func _retire_current_generation():
 		"release_after": render_callback_serial + delay if not requires_external_texture_ack else -1,
 		"awaiting_external_texture_ack": requires_external_texture_ack,
 		"uniform_sets": uniform_sets.duplicate(),
-		"shadow_uniform_sets": cloud_shadow_uniform_sets.duplicate(),
+		"shadow_uniform_sets": cloud_shadow_uniform_sets.duplicate() + cloud_shadow_xfade_sets.duplicate(),
 		# Texture2DRD is RefCounted. Keep both active and published wrappers alive
 		# until the delayed RID release, because receiver materials can retain the
 		# prior published object across a compositor rebuild.
@@ -1078,11 +1382,21 @@ func _retire_current_generation():
 			+ [far_opaque_depth_fallback]
 			+ accumulation_textures.duplicate() + blit_screen_images.duplicate()
 			+ cloud_shadow_param_buffers.duplicate() + cloud_shadow_textures.duplicate()
+			+ cloud_shadow_xfade_buffers.duplicate() + cloud_shadow_prev_textures.duplicate()
+			+ cloud_shadow_display_textures.duplicate() + [cloud_shadow_xfade_pipeline, cloud_shadow_xfade_shader]
 	})
 	uniform_sets.clear()
 	cloud_shadow_uniform_sets = [RID(), RID(), RID(), RID()]
 	cloud_shadow_param_buffers = [RID(), RID()]
 	cloud_shadow_textures = [RID(), RID(), RID(), RID()]
+	cloud_shadow_xfade_sets = [RID(), RID(), RID(), RID()]
+	cloud_shadow_xfade_buffers = [RID(), RID(), RID(), RID()]
+	cloud_shadow_prev_textures = [RID(), RID()]
+	cloud_shadow_display_textures = [RID(), RID()]
+	cloud_shadow_xfade_pipeline = RID(); cloud_shadow_xfade_shader = RID()
+	cloud_shadow_xfade_active = [false, false]
+	cloud_shadow_display_valid = [false, false]
+	cloud_shadow_fade_running = [false, false]
 	cloud_shadow_texture_wrappers = [null, null]
 	cloud_shadow_published_texture_wrappers = [null, null]
 	cloud_backdrop_texture_wrappers.clear()
@@ -1249,6 +1563,13 @@ func clear_gpu_cloud_shadow_resources():
 	if not rd:
 		return
 	for cascade in range(GPU_CLOUD_SHADOW_CASCADES):
+		var xfade_sets : Array[RID] = []
+		var xfade_rids : Array[RID] = []
+		_collect_cloud_shadow_xfade(cascade, xfade_sets, xfade_rids)
+		for xfade_set in xfade_sets:
+			if xfade_set.is_valid() and rd.uniform_set_is_valid(xfade_set): rd.free_rid(xfade_set)
+		for xfade_rid in xfade_rids:
+			if xfade_rid.is_valid(): rd.free_rid(xfade_rid)
 		if cloud_shadow_uniform_sets[cascade].is_valid():
 			rd.free_rid(cloud_shadow_uniform_sets[cascade])
 		cloud_shadow_uniform_sets[cascade] = RID()
@@ -1278,6 +1599,12 @@ func clear_gpu_cloud_shadow_resources():
 	if cloud_shadow_shader.is_valid():
 		rd.free_rid(cloud_shadow_shader)
 	cloud_shadow_shader = RID()
+	if cloud_shadow_xfade_pipeline.is_valid():
+		rd.free_rid(cloud_shadow_xfade_pipeline)
+	cloud_shadow_xfade_pipeline = RID()
+	if cloud_shadow_xfade_shader.is_valid():
+		rd.free_rid(cloud_shadow_xfade_shader)
+	cloud_shadow_xfade_shader = RID()
 
 func initialize_compute():
 	first_run = true
@@ -2160,6 +2487,7 @@ func _render_callback(effect_callback_type, render_data):
 				update_weather_systems()
 			update_macro_weather_map()
 			dispatch_gpu_cloud_shadows()
+			update_gpu_cloud_shadow_crossfades()
 			if lights_updated or directional_lights_data.size() == 0:
 				update_lights()
 			if segment_lights_dirty:

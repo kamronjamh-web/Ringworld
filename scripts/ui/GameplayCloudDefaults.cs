@@ -64,6 +64,7 @@ public sealed class GameplayCloudDefaults
         ["GpuFarShadowMapResolution"] = (64, 1024, true),
         ["GpuFarShadowRadiusMeters"] = (16000, 200000, false),
         ["GpuFarShadowUpdatesPerSecond"] = (.25f, 5, false),
+        ["GpuShadowCrossfadeSeconds"] = (0, 5, false),
         ["GpuShadowVerticalSamples"] = (1, 64, true),
         ["GpuShadowStepMeters"] = (50, 2000, false),
         ["GpuShadowMinSamples"] = (1, 64, true),
@@ -98,7 +99,7 @@ public sealed class GameplayCloudDefaults
         ["MacroMapRefreshSeconds"] = (.05f, 2, false),
         ["CameraIndependentDebugMask"] = (0, 63, true)
     };
-    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "GpuShadowAdaptiveSteps", "GpuShadowClearAirSkip", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled", "CloudResolutionJitter", "CameraIndependentClouds", "MacroWeatherMap" };
+    private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "GpuShadowAdaptiveSteps", "GpuShadowClearAirSkip", "GpuShadowCrossfadeEnabled", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled", "CloudResolutionJitter", "CameraIndependentClouds", "MacroWeatherMap" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };
     private readonly Dictionary<string, Variant> _baseline = new();
     private readonly string? _pathOverride;

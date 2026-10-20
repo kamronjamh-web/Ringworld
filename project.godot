@@ -309,6 +309,10 @@ ring_cloud_shadow_far_uv_offset={
 "type": "vec2",
 "value": Vector2(0, 0)
 }
+ring_cloud_shadow_far_from_near={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
 ring_water_wave_phases_0={
 "type": "mat3",
 "value": Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)

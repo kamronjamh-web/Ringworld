@@ -75,6 +75,12 @@ public partial class RingSunshineCloudBridge : Node
     // complete). 0 or 1 = legacy single dispatch.
     [Export(PropertyHint.Range, "0,16,1")] public int GpuNearShadowSliceCount { get; set; } = 4;
     [Export(PropertyHint.Range, "0.1,5,0.1")] public float GpuFarShadowUpdatesPerSecond { get; set; } = 0.5f;
+    // Receivers bind a display map that cross-fades from the previous map
+    // (resampled into the new map's frame) to the new one after every publish.
+    // Off binds the published map directly (byte-identical to the legacy path).
+    [Export] public bool GpuShadowCrossfadeEnabled { get; set; } = true;
+    // Fade length in seconds; 0 = one publish interval (1 / updates per second).
+    [Export(PropertyHint.Range, "0,5,0.05")] public float GpuShadowCrossfadeSeconds { get; set; } = 0.0f;
     [Export(PropertyHint.Range, "1,64,1")] public int GpuShadowVerticalSamples { get; set; } = 4;
     // Constant step spacing along the sun ray (replaces the fixed vertical sample
     // count when on) plus coarse clear-air probes that trim the fine march.
@@ -345,6 +351,8 @@ public partial class RingSunshineCloudBridge : Node
     private double _gpuPipelineWaitSeconds;
     private readonly int[] _gpuShadowBakedResolution = new int[2];
     private readonly float[] _gpuShadowBakedRadius = new float[2];
+    private readonly bool[] _gpuShadowBakedCrossfade = new bool[2];
+    private readonly bool[] _gpuShadowRequestedBakedCrossfade = new bool[2];
     private int _nextTimedGpuCascade;
     // A Texture2DRD belongs to the compositor.  When a resolution change
     // replaces either cascade, keep every receiver on its clear fallback until
@@ -809,6 +817,19 @@ public partial class RingSunshineCloudBridge : Node
     public int GetInstalledShadowResolution() => InstalledShadowResolution;
     public float GetInstalledShadowRadiusMeters() => InstalledShadowRadiusMeters;
     public float GetInstalledShadowPeakOpacity() => InstalledShadowPeakOpacity;
+    /// <summary>Diagnostics: the frame (world centre, axes, uv offset, half-width) the receivers currently sample one GPU cascade in.</summary>
+    public Godot.Collections.Dictionary GetCloudShadowReceiverFrame(int cascade)
+    {
+        string prefix = cascade == 0 ? "near" : "far";
+        return new Godot.Collections.Dictionary
+        {
+            ["center"] = RingCloudShadowProjector.GetPublishedGlobal($"ring_cloud_shadow_{prefix}_center_world"),
+            ["around"] = RingCloudShadowProjector.GetPublishedGlobal($"ring_cloud_shadow_{prefix}_axis_around"),
+            ["across"] = RingCloudShadowProjector.GetPublishedGlobal($"ring_cloud_shadow_{prefix}_axis_across"),
+            ["offset"] = RingCloudShadowProjector.GetPublishedGlobal($"ring_cloud_shadow_{prefix}_uv_offset"),
+            ["radius"] = cascade == 0 ? InstalledShadowRadiusMeters : _gpuShadowBakedRadius[1]
+        };
+    }
     public Vector2 GetInstalledGpuShadowCenter(int cascade) => cascade is >= 0 and < 2 && _hasGpuShadowCenter[cascade]
         ? new Vector2((float)_gpuShadowCenters[cascade].AroundMeters, (float)_gpuShadowCenters[cascade].AcrossMeters)
         : new Vector2(float.NaN, float.NaN);
@@ -1951,7 +1972,8 @@ public partial class RingSunshineCloudBridge : Node
                 || GpuShadowCenterDistanceMeters(cascade, viewer) >= refreshDistance;
             relocateCascade[cascade] = relocate;
             bool configurationChanged = _gpuShadowBakedResolution[cascade] != resolution
-                || !Mathf.IsEqualApprox(_gpuShadowBakedRadius[cascade], radius);
+                || !Mathf.IsEqualApprox(_gpuShadowBakedRadius[cascade], radius)
+                || _gpuShadowBakedCrossfade[cascade] != GpuShadowCrossfadeEnabled;
             requiresReceiverDetach |= configurationChanged;
             due[cascade] = !_gpuShadowPublishPending[cascade]
                 && (force || relocate || configurationChanged
@@ -2050,6 +2072,12 @@ public partial class RingSunshineCloudBridge : Node
                 ResolveShadowRingRadiusMeters(), currentSun,
                 Mathf.Clamp(ShadowStrength, 0.0f, 1.0f));
             _shadowProjectorEnabled = true;
+            // The producer resamples the displayed map into each new map's frame,
+            // so it needs the exact frame the receivers sample the display map in.
+            if (_gpuShadowBakedCrossfade[0] && near != null)
+                _clouds.Call("set_gpu_cloud_shadow_display_frame", 0, nearCenter, nearAround, nearAcross, nearUp, nearInstalledRadius, nearOffset);
+            if (_gpuShadowBakedCrossfade[1] && far != null)
+                _clouds.Call("set_gpu_cloud_shadow_display_frame", 1, farCenter, farAround, farAcross, farUp, farInstalledRadius, farOffset);
         }
         else
         {
@@ -2098,6 +2126,7 @@ public partial class RingSunshineCloudBridge : Node
         _gpuShadowBakedProjection[cascade] = _gpuShadowRequestedBakedProjection[cascade];
         _gpuShadowBakedResolution[cascade] = _gpuShadowRequestedBakedResolution[cascade];
         _gpuShadowBakedRadius[cascade] = _gpuShadowRequestedBakedRadius[cascade];
+        _gpuShadowBakedCrossfade[cascade] = _gpuShadowRequestedBakedCrossfade[cascade];
         _gpuShadowPublishPending[cascade] = false;
     }
 
@@ -2121,7 +2150,8 @@ public partial class RingSunshineCloudBridge : Node
             cascade == 0 ? Math.Clamp(GpuNearShadowSliceCount, 1, 16) : 1,
             GpuShadowAdaptiveSteps ? Mathf.Clamp(SanitizeFinite(GpuShadowStepMeters, 200.0f, 50.0f, 2000.0f), 50.0f, 2000.0f) : 0.0f,
             Math.Clamp(GpuShadowMinSamples, 1, 64), Math.Clamp(GpuShadowMaxSamples, 8, 256),
-            GpuShadowAdaptiveSteps && GpuShadowClearAirSkip ? Math.Clamp(GpuShadowSkipProbeCount, 0, 64) : 0).AsBool();
+            GpuShadowAdaptiveSteps && GpuShadowClearAirSkip ? Math.Clamp(GpuShadowSkipProbeCount, 0, 64) : 0,
+            GpuShadowCrossfadeEnabled, ResolveGpuShadowCrossfadeSeconds(cascade)).AsBool();
         if (!accepted)
             return;
         _clouds.Call("request_gpu_cloud_shadow_update", cascade);
@@ -2133,8 +2163,17 @@ public partial class RingSunshineCloudBridge : Node
         _gpuShadowRequestedBakedProjection[cascade] = ResolveSunProjectionMeters(sun, around, across, up, (projectionFloor + projectionCeiling) * 0.5f);
         _gpuShadowRequestedBakedResolution[cascade] = resolution;
         _gpuShadowRequestedBakedRadius[cascade] = radius;
+        _gpuShadowRequestedBakedCrossfade[cascade] = GpuShadowCrossfadeEnabled;
         _gpuShadowRequestedDispatchCount[cascade] = dispatchCount + 1;
         _gpuShadowPublishPending[cascade] = true;
+    }
+
+    private float ResolveGpuShadowCrossfadeSeconds(int cascade)
+    {
+        if (GpuShadowCrossfadeSeconds > 0.0f)
+            return Mathf.Clamp(GpuShadowCrossfadeSeconds, 0.05f, 5.0f);
+        float rate = cascade == 0 ? GpuNearShadowUpdatesPerSecond : GpuFarShadowUpdatesPerSecond;
+        return Mathf.Clamp(1.0f / Mathf.Max(0.1f, rate), 0.05f, 5.0f);
     }
 
     private void ResolveGpuShadowFrame(int cascade, out Vector3 center, out Vector3 around, out Vector3 across, out Vector3 up)

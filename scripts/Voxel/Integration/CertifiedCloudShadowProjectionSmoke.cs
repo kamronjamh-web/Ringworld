@@ -18,6 +18,7 @@ public partial class CertifiedCloudShadowProjectionSmoke : Node
     private const double VerticalToleranceMeters = 0.25;
     private const double AcrossToleranceMeters = 0.05;
     private const float LocalUpTolerance = 0.005f;
+    private const double SeriesToleranceMeters = 0.5;
 
     private readonly record struct ProjectionResult(double Arc, double Across, double Altitude);
 
@@ -81,6 +82,10 @@ public partial class CertifiedCloudShadowProjectionSmoke : Node
         double maxGroundError = 0.0;
         float maxLocalUpError = 0.0f;
         int checkedPositions = 0;
+        double maxSeriesArcError = 0.0;
+        double maxSeriesTrigError = 0.0;
+        double maxFarLinkError = 0.0;
+        int farLinkValid = 0;
 
         foreach (double centerAround in centers)
         {
@@ -159,6 +164,13 @@ public partial class CertifiedCloudShadowProjectionSmoke : Node
                     }
                 }
 
+                if (arcOffset == 0.0)
+                {
+                    RunSeriesChecks(
+                        geometry, centerAround, centerAcross, aroundAxis, acrossAxis, upAxis, radius,
+                        ref maxSeriesArcError, ref maxSeriesTrigError, ref maxFarLinkError, ref farLinkValid);
+                }
+
                 double nearUv = arcOffset / (NearCascadeRadiusMeters * 2.0) + 0.5;
                 double farUv = arcOffset / (FarCascadeRadiusMeters * 2.0) + 0.5;
                 if (Math.Abs(arcOffset) <= NearCascadeRadiusMeters && (nearUv < 0.0 || nearUv > 1.0))
@@ -179,13 +191,24 @@ public partial class CertifiedCloudShadowProjectionSmoke : Node
                 + $"ground={maxGroundError:0.000}m");
         }
 
+        if (maxSeriesArcError > SeriesToleranceMeters
+            || maxSeriesTrigError > SeriesToleranceMeters
+            || maxFarLinkError > SeriesToleranceMeters
+            || farLinkValid == 0)
+        {
+            throw new InvalidOperationException(
+                $"series/far-link tolerance exceeded: seriesArc={maxSeriesArcError:0.0000}m, "
+                + $"seriesTrig={maxSeriesTrigError:0.0000}m, farLink={maxFarLinkError:0.0000}m, validLinks={farLinkValid}");
+        }
+
         double farEdgeSag = radius * (1.0 - Math.Cos(FarCascadeRadiusMeters / radius));
         GD.Print(
             "CERTIFIED_CLOUD_SHADOW_PROJECTION_SMOKE=PASS "
             + $"radius={radius:0.000}m circumference={circumference:0}m "
             + $"width={CertifiedRingScale.RingWidthMeters}m positions={checkedPositions} "
             + $"maxErrors={maxArcError:0.000}/{maxVerticalError:0.000}/{maxAcrossError:0.000}m "
-            + $"localUp={maxLocalUpError:0.000000} farEdgeSag={farEdgeSag:0.000}m seam=pass");
+            + $"localUp={maxLocalUpError:0.000000} farEdgeSag={farEdgeSag:0.000}m seam=pass "
+            + $"series(arc/trig)={maxSeriesArcError:0.0000}/{maxSeriesTrigError:0.0000}m farLink={maxFarLinkError:0.0000}m links={farLinkValid}");
     }
 
     /// <summary>
@@ -247,6 +270,84 @@ public partial class CertifiedCloudShadowProjectionSmoke : Node
         {
             throw new InvalidOperationException("far-backdrop cloud mask activation policy regression");
         }
+    }
+
+    /// <summary>
+    /// Mirrors ring_cloud_shadow_arc_angle / ring_cloud_shadow_sin_cos in single precision and checks
+    /// them against the exact double-precision projection at the 40 km and 100 km cascade edges, then
+    /// checks that far coordinates derived from near ones (RingCloudShadowProjector.ResolveFarFromNear)
+    /// match a direct far projection.
+    /// </summary>
+    private static void RunSeriesChecks(
+        RingLodGeometrySnapshot geometry, double centerAround, double centerAcross,
+        Vector3 aroundAxis, Vector3 acrossAxis, Vector3 upAxis, double radius,
+        ref double maxSeriesArcError, ref double maxSeriesTrigError, ref double maxFarLinkError, ref int farLinkValid)
+    {
+        double[] acrossOffsets = { -40_000.0, 0.0, 40_000.0, 100_000.0 };
+        double[] altitudes = { 0.0, 1_000.0, 20_000.0 };
+        // The far cascade re-centres up to ~4 km away from the near one.
+        double farCenterAround = centerAround + 3_000.0;
+        double farCenterAcross = centerAcross - 2_000.0;
+        double farAngle = (Wrap(farCenterAround, CertifiedRingScale.EffectiveCircumferenceMeters)) / radius;
+        Vector3 farAround = new((float)-Math.Sin(farAngle), 0.0f, (float)Math.Cos(farAngle));
+        Vector3 farUp = new((float)-Math.Cos(farAngle), 0.0f, (float)-Math.Sin(farAngle));
+        Vector3 nearCenter = geometry.CanonicalToWorld(centerAround, 0.0, centerAcross);
+        Vector3 farCenter = geometry.CanonicalToWorld(farCenterAround, 0.0, farCenterAcross);
+        Vector3 link = RingCloudShadowProjector.ResolveFarFromNear(
+            nearCenter, aroundAxis, acrossAxis, upAxis,
+            farCenter, farAround, acrossAxis, farUp, radius);
+        if (link.Z > 0.5f) farLinkValid++;
+        double[] seriesArcOffsets = { -100_000.0, -40_000.0, 40_000.0, 100_000.0 };
+        foreach (double arcOffset in seriesArcOffsets)
+        foreach (double acrossOffset in acrossOffsets)
+        {
+            foreach (double altitude in altitudes)
+            {
+                Vector3 world = geometry.CanonicalToWorld(centerAround + arcOffset, altitude, centerAcross + acrossOffset);
+                Vector3 relative = world - nearCenter;
+                ProjectionResult exact = RecoverShaderCoordinates(relative, aroundAxis, acrossAxis, upAxis, radius);
+                ProjectionResult series = RecoverShaderCoordinatesSeries(relative, aroundAxis, acrossAxis, upAxis, radius);
+                maxSeriesArcError = Math.Max(maxSeriesArcError, Math.Abs(series.Arc - exact.Arc));
+                if (link.Z > 0.5f)
+                {
+                    ProjectionResult farDirect = RecoverShaderCoordinates(world - farCenter, farAround, acrossAxis, farUp, radius);
+                    maxFarLinkError = Math.Max(maxFarLinkError, Math.Abs(exact.Arc + link.X - farDirect.Arc));
+                    maxFarLinkError = Math.Max(maxFarLinkError, Math.Abs(exact.Across + link.Y - farDirect.Across));
+                }
+            }
+        }
+        // sin/cos series feed the sun-ray shift (altitude up to the 20 km cloud deck / sun_up >= 0.04).
+        for (double angle = -0.05; angle <= 0.0500001; angle += 0.0025)
+        {
+            (float sine, float cosine) = SeriesSinCos((float)angle);
+            maxSeriesTrigError = Math.Max(
+                maxSeriesTrigError,
+                Math.Max(Math.Abs(sine - Math.Sin(angle)), Math.Abs(cosine - Math.Cos(angle))) * 100_000.0);
+        }
+    }
+
+    private static (float Sine, float Cosine) SeriesSinCos(float angle)
+    {
+        float a2 = angle * angle;
+        return (
+            angle * (1.0f - a2 * (1.0f / 6.0f) * (1.0f - a2 * (1.0f / 20.0f) * (1.0f - a2 * (1.0f / 42.0f)))),
+            1.0f - a2 * 0.5f * (1.0f - a2 * (1.0f / 12.0f) * (1.0f - a2 * (1.0f / 30.0f) * (1.0f - a2 * (1.0f / 56.0f)))));
+    }
+
+    private static ProjectionResult RecoverShaderCoordinatesSeries(
+        Vector3 relative, Vector3 aroundAxis, Vector3 acrossAxis, Vector3 upAxis, double ringRadiusMeters)
+    {
+        float ringRadius = (float)ringRadiusMeters;
+        float tangent = relative.Dot(aroundAxis);
+        float across = relative.Dot(acrossAxis);
+        float outward = ringRadius - relative.Dot(upAxis);
+        float q = tangent / outward;
+        float q2 = q * q;
+        float angle = Math.Abs(q) <= 0.05f
+            ? q * (1.0f - q2 * (1.0f / 3.0f - q2 * (1.0f / 5.0f - q2 * (1.0f / 7.0f))))
+            : MathF.Atan2(tangent, outward);
+        float altitude = ringRadius - MathF.Sqrt(tangent * tangent + outward * outward);
+        return new ProjectionResult(ringRadius * angle, across, altitude);
     }
 
     private static ProjectionResult RecoverShaderCoordinates(

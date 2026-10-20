@@ -38,6 +38,8 @@ func _initialize() -> void:
 	_bridge.set("GpuFarShadowUpdatesPerSecond", 1.0)
 	_bridge.set("GpuShadowVerticalSamples", 64)
 	_bridge.set("GpuNearShadowSliceCount", 1)
+	# The crossfade display map is a separate texture; this test pins the legacy (crossfade off) path byte for byte.
+	_bridge.set("GpuShadowCrossfadeEnabled", false)
 	root.add_child(_scene)
 	_day_night = _scene.get_node("RingDayNightCycle")
 	_day_night.set_process(false)
