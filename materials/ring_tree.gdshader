@@ -113,6 +113,7 @@ void light() {
 	RingShadowTerms terms = ring_shadow_terms(tree_world_position, SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT);
 	terms.cloud = mix(1.0, cloud_visibility, primary_sun_weight);
 	terms.geometry = ring_height_shadow_vegetation_geometry(terms.geometry, tree_height_term, LIGHT_IS_DIRECTIONAL, primary_sun_weight, tree_day_factor);
+	terms.geometry = ring_height_shadow_vegetation_planet_geometry(terms.geometry, tree_height_term, LIGHT_IS_DIRECTIONAL, LIGHT, VIEW_MATRIX, primary_sun_weight);
 	float sun_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT);
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {

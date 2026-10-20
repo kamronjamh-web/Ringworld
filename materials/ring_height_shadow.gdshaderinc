@@ -24,6 +24,7 @@ global uniform vec4 ringworld_height_shadow_l1_bounds;
 global uniform vec4 ringworld_height_shadow_l1_prev_bounds;
 global uniform vec4 ringworld_height_shadow_state; // front layer, previous layer (-1 none), crossfade t, light (1 sun)
 global uniform vec4 ringworld_height_shadow_shape; // tan(penumbra), receiver bias m, floor radius m, authority distance A
+global uniform vec4 ringworld_height_shadow_light; // xyz world direction toward the light the front layer was built for, w = 1 while the feature and its receivers are on (published or not), else 0
 
 struct RingHeightShadow {
 	float visibility; // 1 = lit, only meaningful where weight > 0
@@ -39,6 +40,24 @@ bool ring_height_shadow_active() {
 	return ringworld_height_shadow_state.x > -0.5
 		&& abs(ringworld_height_shadow_state.w - 1.0) < 0.5
 		&& (ringworld_height_shadow_l0_params.z > 0.5 || ringworld_height_shadow_l1_params.z > 0.5);
+}
+
+// True while the feature and its receivers are switched on, even before the first publish (ocean planet macro fix, S7a); 0 = every receiver keeps its old code.
+bool ring_height_shadow_enabled() {
+	return ringworld_height_shadow_light.w > 0.5;
+}
+
+// ring_height_shadow_active() for the planet light (state.w == 2): the published front layer was built for the planet direction.
+bool ring_height_shadow_planet_active() {
+	return ringworld_height_shadow_state.x > -0.5
+		&& abs(ringworld_height_shadow_state.w - 2.0) < 0.5
+		&& (ringworld_height_shadow_l0_params.z > 0.5 || ringworld_height_shadow_l1_params.z > 0.5);
+}
+
+// Weight of a view-space light vector against the direction of the published light (the planet at state.w == 2); same cone as the macro light weights.
+float ring_height_shadow_light_weight(vec3 light_view, mat4 view_matrix) {
+	vec3 published_view = normalize((view_matrix * vec4(ringworld_height_shadow_light.xyz, 0.0)).xyz);
+	return smoothstep(0.90, 0.995, dot(normalize(light_view), published_view));
 }
 
 // Slope of a surface (tangent of the angle between the normal and ring up) from its WORLD-space normal; up is the frame's third row.
@@ -120,7 +139,7 @@ vec3 ring_height_shadow_layer(int layer, vec2 p, vec4 b0, vec4 b1, float h_rel, 
 // terrain-type receivers). slope_tan: ring_height_shadow_slope_tan of the receiver. cam_dist: distance to the camera (authority rule).
 RingHeightShadow ring_height_shadow_sample(vec3 world, float h_rel, float slope_tan, float cam_dist) {
 	RingHeightShadow result = ring_height_shadow_none();
-	if (!ring_height_shadow_active()) {
+	if (!ring_height_shadow_active() && !ring_height_shadow_planet_active()) {
 		return result;
 	}
 	vec3 f = (ringworld_height_shadow_frame * vec4(world, 1.0)).xyz;
@@ -161,9 +180,16 @@ float ring_height_shadow_term(RingHeightShadow hs, float sun_w, float day, float
 	return max(mix(1.0, hs.visibility, hs.weight * sun_w * day * (1.0 - clamp(hub, 0.0, 1.0))), shadow_floor_value);
 }
 
+// The terms.height value of a heightfield receiver lit by the planet: pw is the planet weight at the receiver (ring_height_shadow_light_weight scaled by the hub
+// rule). No day or hub factor (the sun does not dim planet light), matches the planet macro term; floored like the map's ATTENUATION.
+float ring_height_shadow_planet_term(RingHeightShadow hs, float planet_w, float shadow_floor_value) {
+	return max(mix(1.0, hs.visibility, hs.weight * planet_w), shadow_floor_value);
+}
+
 // Per-vertex vegetation form: pre-day term (1 = lit) sampled at a tree vertex; h_rel is the vertex height above its root along ring up.
+// Also valid under the planet layer (state.w == 2); the applying function decides which light uses it.
 float ring_height_shadow_vertex_term(vec3 world, vec3 root_world, vec3 surface_up, vec3 camera_world) {
-	if (!ring_height_shadow_active()) {
+	if (!ring_height_shadow_active() && !ring_height_shadow_planet_active()) {
 		return 1.0;
 	}
 	RingHeightShadow hs = ring_height_shadow_sample(world, max(dot(world - root_world, surface_up), 0.0), 0.0, distance(world, camera_world));
@@ -172,9 +198,27 @@ float ring_height_shadow_vertex_term(vec3 world, vec3 root_world, vec3 surface_u
 
 // Applies a vertex_term to a vegetation light's geometry term (product path): min(map, heightfield) for the primary sun only.
 float ring_height_shadow_vegetation_geometry(float geometry, float vertex_term, bool directional, float sun_w, float day) {
-	if (!directional || vertex_term >= 1.0 || sun_w <= 0.0) {
+	if (!directional || vertex_term >= 1.0 || sun_w <= 0.0 || !ring_height_shadow_active()) {
 		return geometry;
 	}
 	return min(geometry, mix(1.0, vertex_term, sun_w * day * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))));
+}
+
+// Planet branch of the vegetation product path (state.w == 2): min(map, heightfield) for the planet light, weight from the published direction.
+float ring_height_shadow_vegetation_planet_geometry(float geometry, float vertex_term, bool directional, vec3 light_view, mat4 view_matrix, float sun_w) {
+	if (!directional || vertex_term >= 1.0 || !ring_height_shadow_planet_active()) {
+		return geometry;
+	}
+	float planet_w = ring_height_shadow_light_weight(light_view, view_matrix) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * sun_w);
+	return planet_w > 0.0 ? min(geometry, mix(1.0, vertex_term, planet_w)) : geometry;
+}
+
+// Per-vertex ground term for receivers with no height of their own (standing grass): planet layer only, 1 otherwise.
+float ring_height_shadow_planet_point_term(vec3 world, vec3 camera_world) {
+	if (!ring_height_shadow_planet_active()) {
+		return 1.0;
+	}
+	RingHeightShadow hs = ring_height_shadow_sample(world, 0.0, 0.0, distance(world, camera_world));
+	return mix(1.0, hs.visibility, hs.weight);
 }
 #endif

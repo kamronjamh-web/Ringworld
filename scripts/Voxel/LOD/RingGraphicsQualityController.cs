@@ -316,6 +316,7 @@ public partial class RingGraphicsQualityController : Node
     {
         PushHazeBrightness();
         UpdateNearSunMap(delta);
+        UpdateNearPlanetMap(delta);
         UpdateLocalShadowHandoff();
         UpdateTerrainShadowCasterCoverage();
         if (_skyAtmosphereRegistered || _grid == null) return;

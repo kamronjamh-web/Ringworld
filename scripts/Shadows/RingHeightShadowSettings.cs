@@ -12,6 +12,7 @@ public sealed record RingHeightShadowSettings
     public const float DefaultSunStepDegrees = 0.1f, DefaultPenumbraDegrees = 0.5f, DefaultCrossfadeSeconds = 1.0f, DefaultBudgetMs = 0.15f;
     public const int DefaultL0TexelMeters = 4, DefaultLevels = 2, DefaultRowsPerFrame = 64, DefaultFillWorkers = 2;
     public const int DefaultNearMapDistanceMeters = 400;
+    public const int DefaultPlanetNearMapDistanceMeters = 250, MinimumPlanetNearMapDistanceMeters = 100, MaximumPlanetNearMapDistanceMeters = 250;
     public static readonly int[] TexelChoices = { 2, 4, 8 };
     public static readonly int[] NearMapDistanceChoices = { 300, 400, 500 };
 
@@ -29,6 +30,10 @@ public sealed record RingHeightShadowSettings
     /// <summary>While the heightfield is the published sun light source, shrink the sun shadow map to a near map (it then only owns the first few hundred metres; the heightfield owns the rest). Effective only with Enabled.</summary>
     public bool NearMapEnabled { get; init; } = true;
     public int NearMapDistanceMeters { get; init; } = DefaultNearMapDistanceMeters;
+
+    /// <summary>S7a: the same for the planet light at night (2 cascades, fade 0.8) while the published front layer is a planet layer.</summary>
+    public bool PlanetNearMapEnabled { get; init; } = true;
+    public int PlanetNearMapDistanceMeters { get; init; } = DefaultPlanetNearMapDistanceMeters;
 
     public int Level1TexelMeters => RingHeightShadowLattice.Level1Texel(L0TexelMeters);
     /// <summary>Half extent of the coarse window in metres (level 1: 512 texels each way).</summary>
@@ -53,6 +58,7 @@ public sealed record RingHeightShadowSettings
         FillWorkers = Math.Clamp(FillWorkers, 1, 4),
         BudgetMs = Clamp(BudgetMs, 0.05f, 2f, DefaultBudgetMs),
         NearMapDistanceMeters = NearestNearMapDistance(NearMapDistanceMeters),
+        PlanetNearMapDistanceMeters = Math.Clamp(PlanetNearMapDistanceMeters, MinimumPlanetNearMapDistanceMeters, MaximumPlanetNearMapDistanceMeters),
     };
 
     public static int NearestNearMapDistance(float meters)

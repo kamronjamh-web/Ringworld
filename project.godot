@@ -137,6 +137,10 @@ ringworld_height_shadow_shape={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_height_shadow_light={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ringworld_contact_shadow={
 "type": "sampler2D",
 "value": ""

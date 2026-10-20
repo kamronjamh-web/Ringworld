@@ -125,6 +125,67 @@ public partial class TerrainLodShadowCoverageSmoke : RefCounted
         return Result(passed, $"nearMap[preset={presetCoverage} notReady={notReadyStaysFull} enter={entered} d300={distance300} grace={graceHolds}/{graceResets} leave={left} reenter={reentered} optionOff={optionOffLeavesAtOnce} backOn={backOn} featureOff={featureOffLeavesAtOnce} restore={restoresPreset}]", -1);
     }
 
+    /// <summary>S7a near planet map: enters with a ready planet layer, leaves at once for receivers off / a sun layer / the option off, after 1 s for a missing or uncovering front; the planet split is restored on exit.</summary>
+    public Godot.Collections.Dictionary RunNearPlanetMap(SceneTree tree)
+    {
+        var controller = new RingGraphicsQualityController();
+        var sun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true, LightEnergy = 1.0f };
+        var planet = new DirectionalLight3D { Name = "Planet", ShadowEnabled = true, LightEnergy = 0.3f, DirectionalShadowMaxDistance = 6000.0f, DirectionalShadowSplit1 = 0.04f };
+        controller.AddChild(sun);
+        controller.AddChild(planet);
+        controller.SunLightPath = new NodePath("Sun");
+        controller.PlanetLightPath = new NodePath("Planet");
+        tree.Root.AddChild(controller);
+        controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
+        bool ready = false, leaveNow = false;
+        controller.NearPlanetMapProbe = () => (ready, leaveNow);
+        controller.SetShadowTuningOverrides(new Godot.Collections.Dictionary { ["HeightShadowEnabled"] = true, ["NearCascadeMeters"] = 30.0f, ["PlanetShadowDistanceMeters"] = 9000.0f });
+        controller.StepNearPlanetMapForTest(0.1);
+        bool notReady = !controller.NearPlanetMapActive && Mathf.IsEqualApprox(planet.DirectionalShadowSplit1, 0.04f);
+        ready = true;
+        controller.StepNearPlanetMapForTest(0.1);
+        bool entered = controller.NearPlanetMapActive && Mathf.IsEqualApprox(planet.DirectionalShadowSplit1, 30.0f / 250.0f);
+        controller.SetShadowTuningOverride("HeightShadowPlanetNearMapDistanceMeters", 150);
+        bool distance150 = Mathf.IsEqualApprox(planet.DirectionalShadowSplit1, 30.0f / 150.0f);
+        controller.SetShadowTuningOverride("HeightShadowPlanetNearMapDistanceMeters", 250);
+        ready = false;
+        controller.StepNearPlanetMapForTest(0.5);
+        bool graceHolds = controller.NearPlanetMapActive;
+        ready = true;
+        controller.StepNearPlanetMapForTest(0.2);
+        ready = false;
+        controller.StepNearPlanetMapForTest(0.6);
+        bool graceResets = controller.NearPlanetMapActive;
+        controller.StepNearPlanetMapForTest(0.6);
+        bool left = !controller.NearPlanetMapActive && Mathf.IsEqualApprox(planet.DirectionalShadowSplit1, 0.04f);
+        ready = true;
+        controller.StepNearPlanetMapForTest(0.1);
+        bool reentered = controller.NearPlanetMapActive;
+        leaveNow = true;
+        controller.StepNearPlanetMapForTest(0.0);
+        bool sunLayerLeavesAtOnce = !controller.NearPlanetMapActive && Mathf.IsEqualApprox(planet.DirectionalShadowSplit1, 0.04f);
+        leaveNow = false;
+        controller.StepNearPlanetMapForTest(0.1);
+        bool again = controller.NearPlanetMapActive;
+        controller.SetShadowTuningOverride("HeightShadowPlanetNearMapEnabled", false);
+        controller.StepNearPlanetMapForTest(0.0);
+        bool optionOffLeavesAtOnce = !controller.NearPlanetMapActive;
+        controller.SetShadowTuningOverride("HeightShadowPlanetNearMapEnabled", true);
+        controller.StepNearPlanetMapForTest(0.1);
+        bool backOn = controller.NearPlanetMapActive;
+        controller.SetShadowTuningOverride("HeightShadowEnabled", false);
+        controller.StepNearPlanetMapForTest(0.0);
+        bool featureOffLeavesAtOnce = !controller.NearPlanetMapActive && Mathf.IsEqualApprox(planet.DirectionalShadowSplit1, 0.04f);
+        // The planet macro handoff follows the near map (200 m -> 250 m at fade 0.8) instead of 5.1 km -> 6 km.
+        Vector2 nearHandoff = RingTerrainGlobalLod.ResolvePlanetMacroShadowHandoff(8000.0f, 13000.0f, true, 250.0f, .8f);
+        bool handoffFollows = Mathf.IsEqualApprox(nearHandoff.X, 200.0f) && Mathf.IsEqualApprox(nearHandoff.Y, 250.0f);
+
+        tree.Root.RemoveChild(controller);
+        controller.Free();
+        bool passed = notReady && entered && distance150 && graceHolds && graceResets && left && reentered && sunLayerLeavesAtOnce && again && optionOffLeavesAtOnce && backOn && featureOffLeavesAtOnce && handoffFollows;
+        return Result(passed, $"nearPlanetMap[notReady={notReady} enter={entered} d150={distance150} grace={graceHolds}/{graceResets} leave={left} reenter={reentered} sunLayer={sunLayerLeavesAtOnce}/{again} optionOff={optionOffLeavesAtOnce} backOn={backOn} featureOff={featureOffLeavesAtOnce} handoff={handoffFollows}]", -1);
+    }
+
     private static Godot.Collections.Dictionary Result(bool passed, string detail, int nativeDefault) => new()
     {
         ["pass"] = passed,

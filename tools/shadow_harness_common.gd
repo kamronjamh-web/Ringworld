@@ -335,6 +335,8 @@ const POSES := {
 	"alt_1km": {"kind": "altitude", "pitch": -25.0, "lift": 1000.0, "time": {"mode": "noon"}},
 	"alt_12km": {"kind": "altitude", "pitch": -25.0, "lift": 12000.0, "time": {"mode": "noon"}},
 	"night_planet_lit": {"kind": "ground", "pitch": -5.0, "lift": 2.0, "time": {"mode": "night_planet"}},
+	"night_planet_low": {"kind": "ground", "pitch": -5.0, "lift": 2.0, "time": {"mode": "night_planet", "giant_min": 7.0, "giant_max": 14.0}},
+	"twilight_overlap": {"kind": "ground", "pitch": 0.0, "lift": 2.0, "time": {"mode": "twilight_overlap"}},
 	"eclipse_totality": {"kind": "ground", "pitch": 0.0, "lift": 2.0, "time": {"mode": "eclipse", "hub": 0.0}},
 	"eclipse_hub": {"kind": "ground", "pitch": 0.0, "lift": 2.0, "time": {"mode": "eclipse", "hub": 1.0}},
 }
@@ -414,14 +416,31 @@ static func apply_time(game: Node, time: Dictionary) -> Dictionary:
 			# Walk simulation time in 450 s steps until the sun is well below the horizon and the gas giant is high and not eclipsed.
 			var t := float(cycle.call("GetSimulationSeconds"))
 			var matched := false
-			for i in 1200:
-				t += 450.0
+			var giant_min := float(time.get("giant_min", 20.0))
+			var giant_max := float(time.get("giant_max", 1000.0))
+			var step_s := 450.0 if giant_max > 100.0 else 60.0 # a low-planet window is narrow: walk it in finer steps
+			for i in (1200 if giant_max > 100.0 else 9000):
+				t += step_s
 				cycle.call("SetSimulationSeconds", t)
-				if float(cycle.get("SunElevationDegrees")) < -25.0 and float(cycle.get("GiantElevationDegrees")) > 20.0 and float(cycle.get("RawEclipseCoverage")) <= 0.0:
+				var giant := float(cycle.get("GiantElevationDegrees"))
+				if float(cycle.get("SunElevationDegrees")) < -25.0 and giant > giant_min and giant < giant_max and float(cycle.get("RawEclipseCoverage")) <= 0.0:
 					matched = true
 					break
 			if not matched:
-				return {"error": "no planet-lit night found within 1200 x 450 s"}
+				return {"error": "no planet-lit night (giant %.0f..%.0f deg) found within %d x %.0f s" % [giant_min, giant_max, 1200 if giant_max > 100.0 else 9000, step_s]}
+		"twilight_overlap":
+			# Sun just below the horizon (shadow handoff still on) while the gas giant is up and lit: both directional lights cast shadows.
+			var tw := float(cycle.call("GetSimulationSeconds"))
+			var overlap := false
+			for i in 9000:
+				tw += 30.0
+				cycle.call("SetSimulationSeconds", tw)
+				var sun_elevation := float(cycle.get("SunElevationDegrees"))
+				if sun_elevation < -5.0 and sun_elevation > -13.0 and float(cycle.get("GiantElevationDegrees")) > 20.0 and float(cycle.get("RawEclipseCoverage")) <= 0.0:
+					overlap = true
+					break
+			if not overlap:
+				return {"error": "no twilight overlap (sun -13..-5 deg, giant > 20 deg) found within 9000 x 30 s"}
 		"eclipse":
 			if director == null or not director.has_method("JumpToPhase"):
 				return {"error": "no EclipseEvent director"}

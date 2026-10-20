@@ -41,6 +41,9 @@ public partial class RingGraphicsQualityController
     private bool _planetShadowBaselineEnabled = true;
     private float _planetShadowBaselineDistanceMeters = 6000.0f;
     private int _planetShadowBaselineCascades = 4;
+    private float _planetShadowBaselineFadeRatio = 0.85f;
+    private bool _planetFadeRatioTouched, _planetSplitSaved;
+    private float _planetSplitBaseline;
     public const float MinimumShadowDistanceMeters = 150.0f;
     public const float MaximumShadowDistanceMeters = 20000.0f;
     public const float MinimumPlanetShadowDistanceMeters = 100.0f;
@@ -95,6 +98,8 @@ public partial class RingGraphicsQualityController
             BudgetMs = o.TryGetValue("HeightShadowBudgetMs", out Variant budget) ? budget.AsSingle() : RingHeightShadowSettings.DefaultBudgetMs,
             NearMapEnabled = !o.TryGetValue("HeightShadowNearMapEnabled", out Variant nearEnabled) || nearEnabled.AsBool(),
             NearMapDistanceMeters = o.TryGetValue("HeightShadowNearMapDistanceMeters", out Variant nearDistance) ? nearDistance.AsInt32() : RingHeightShadowSettings.DefaultNearMapDistanceMeters,
+            PlanetNearMapEnabled = !o.TryGetValue("HeightShadowPlanetNearMapEnabled", out Variant planetNearEnabled) || planetNearEnabled.AsBool(),
+            PlanetNearMapDistanceMeters = o.TryGetValue("HeightShadowPlanetNearMapDistanceMeters", out Variant planetNearDistance) ? planetNearDistance.AsInt32() : RingHeightShadowSettings.DefaultPlanetNearMapDistanceMeters,
         }.Normalized();
     }
     public bool EffectiveHeightShadowEnabled => ResolveHeightShadowSettings().Enabled;
@@ -109,6 +114,8 @@ public partial class RingGraphicsQualityController
     public float EffectiveHeightShadowBudgetMs => ResolveHeightShadowSettings().BudgetMs;
     public bool EffectiveHeightShadowNearMapEnabled => ResolveHeightShadowSettings().NearMapEnabled;
     public int EffectiveHeightShadowNearMapDistanceMeters => ResolveHeightShadowSettings().NearMapDistanceMeters;
+    public bool EffectiveHeightShadowPlanetNearMapEnabled => ResolveHeightShadowSettings().PlanetNearMapEnabled;
+    public int EffectiveHeightShadowPlanetNearMapDistanceMeters => ResolveHeightShadowSettings().PlanetNearMapDistanceMeters;
     public string EffectiveHeightShadowStatus => RingTerrainHeightShadow.Instance is { } node && GodotObject.IsInstanceValid(node) ? node.GetStatusText()
         : ResolveHeightShadowSettings().Enabled ? "Height shadows: starting." : "Height shadows: off.";
 
@@ -318,18 +325,48 @@ public partial class RingGraphicsQualityController
     private void ApplyPlanetShadowOverrides()
     {
         Node? atmosphere = GetDaySideAtmosphere();
-        if (atmosphere == null) return;
-        if (!_planetShadowBaselineCaptured || _planetShadowBaselineAtmosphereId != atmosphere.GetInstanceId())
+        bool near = _nearPlanetMapActive;
+        float nearDistance = ResolveHeightShadowSettings().PlanetNearMapDistanceMeters;
+        if (atmosphere != null)
         {
-            _planetShadowBaselineEnabled = (bool)atmosphere.Get("planet_light_cast_shadows");
-            _planetShadowBaselineDistanceMeters = (float)atmosphere.Get("planet_light_shadow_distance_meters");
-            _planetShadowBaselineCascades = (int)atmosphere.Get("planet_light_shadow_cascades");
-            _planetShadowBaselineAtmosphereId = atmosphere.GetInstanceId();
-            _planetShadowBaselineCaptured = true;
+            if (!_planetShadowBaselineCaptured || _planetShadowBaselineAtmosphereId != atmosphere.GetInstanceId())
+            {
+                _planetShadowBaselineEnabled = (bool)atmosphere.Get("planet_light_cast_shadows");
+                _planetShadowBaselineDistanceMeters = (float)atmosphere.Get("planet_light_shadow_distance_meters");
+                _planetShadowBaselineCascades = (int)atmosphere.Get("planet_light_shadow_cascades");
+                _planetShadowBaselineFadeRatio = (float)atmosphere.Get("planet_light_shadow_fade_ratio");
+                _planetShadowBaselineAtmosphereId = atmosphere.GetInstanceId();
+                _planetShadowBaselineCaptured = true;
+            }
+            atmosphere.Set("planet_light_cast_shadows", _shadowTuningOverrides.TryGetValue("PlanetShadowsEnabled", out Variant enabled) ? enabled.AsBool() : _planetShadowBaselineEnabled);
+            // Near planet map (S7a): the PlanetShadowDistanceMeters and PlanetCascadeCount overrides are ignored while it is active; the baseline fade ratio comes back on exit.
+            atmosphere.Set("planet_light_shadow_distance_meters", near ? nearDistance : _shadowTuningOverrides.TryGetValue("PlanetShadowDistanceMeters", out Variant distance) ? distance.AsSingle() : _planetShadowBaselineDistanceMeters);
+            atmosphere.Set("planet_light_shadow_cascades", near ? 2 : _shadowTuningOverrides.TryGetValue("PlanetCascadeCount", out Variant cascades) ? cascades.AsInt32() : _planetShadowBaselineCascades);
+            if (near || _planetFadeRatioTouched)
+            {
+                atmosphere.Set("planet_light_shadow_fade_ratio", near ? NearSunMapFadeStart : _planetShadowBaselineFadeRatio);
+                _planetFadeRatioTouched = near;
+            }
         }
-        atmosphere.Set("planet_light_cast_shadows", _shadowTuningOverrides.TryGetValue("PlanetShadowsEnabled", out Variant enabled) ? enabled.AsBool() : _planetShadowBaselineEnabled);
-        atmosphere.Set("planet_light_shadow_distance_meters", _shadowTuningOverrides.TryGetValue("PlanetShadowDistanceMeters", out Variant distance) ? distance.AsSingle() : _planetShadowBaselineDistanceMeters);
-        atmosphere.Set("planet_light_shadow_cascades", _shadowTuningOverrides.TryGetValue("PlanetCascadeCount", out Variant cascades) ? cascades.AsInt32() : _planetShadowBaselineCascades);
+        if (_planet == null || !GodotObject.IsInstanceValid(_planet)) return;
+        if (near)
+        {
+            if (!_planetSplitSaved) { _planetSplitBaseline = _planet.DirectionalShadowSplit1; _planetSplitSaved = true; }
+            _planet.DirectionalShadowSplit1 = Mathf.Clamp(ResolveNearCascadeMeters() / Mathf.Max(nearDistance, .0001f), .0001f, .40f);
+        }
+        else if (_planetSplitSaved)
+        {
+            _planet.DirectionalShadowSplit1 = _planetSplitBaseline;
+            _planetSplitSaved = false;
+        }
+    }
+
+    /// <summary>Near cascade distance in metres as the sun uses it: NearCascadeMeters, or Split1 x the requested sun distance, or the default.</summary>
+    private float ResolveNearCascadeMeters()
+    {
+        float requestedDistance = _shadowTuningOverrides.TryGetValue("MaxDistanceMeters", out Variant requestedDistanceOverride) ? requestedDistanceOverride.AsSingle() : _presetShadowDistanceMeters;
+        return _shadowTuningOverrides.TryGetValue("NearCascadeMeters", out Variant nearMetersOverride) ? nearMetersOverride.AsSingle()
+            : _shadowTuningOverrides.TryGetValue("Split1", out Variant nearSplit) ? nearSplit.AsSingle() * requestedDistance : DefaultNearCascadeMeters;
     }
 
     private void ResolveDirectionalShadowAtlasHardwareLimit()
@@ -437,7 +474,7 @@ public partial class RingGraphicsQualityController
     {
         clean = default;
         if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled" || key == "LocalShadowHandoffEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
-        if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled" or "ContactShadowEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled" or "HeightShadowPlanetNearMapEnabled" or "ContactShadowEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if ((key == "HeightShadowL0TexelMeters" || key == "HeightShadowRangeMeters" || key == "HeightShadowLevels" || key == "HeightShadowNearMapDistanceMeters") && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         {
             double raw = value.AsDouble();
@@ -464,11 +501,11 @@ public partial class RingGraphicsQualityController
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
         (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), "MaxDistanceMeters" => (MinimumShadowDistanceMeters, MaximumShadowDistanceMeters), "PlanetShadowDistanceMeters" => (MinimumPlanetShadowDistanceMeters, MaximumPlanetShadowDistanceMeters),
-            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2),
+            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2), "HeightShadowPlanetNearMapDistanceMeters" => (RingHeightShadowSettings.MinimumPlanetNearMapDistanceMeters, RingHeightShadowSettings.MaximumPlanetNearMapDistanceMeters),
             "ContactShadowLengthMeters" => (.25f, 4), "ContactShadowThicknessMeters" => (.05f, 1), "ContactShadowStrength" => (0, 1), "ContactShadowFadeMeters" => (25, 400), "ContactShadowGrassStrength" => (0, 1), _ => (1, 0) };
         if (min > max) return false;
         float clamped = Mathf.Clamp(value.AsSingle(), min, max);
-        if (key is "TerrainMacroTraceSteps" or "HeightShadowRowsPerFrame" or "HeightShadowFillWorkers") clean = Mathf.RoundToInt(clamped); else clean = clamped;
+        if (key is "TerrainMacroTraceSteps" or "HeightShadowRowsPerFrame" or "HeightShadowFillWorkers" or "HeightShadowPlanetNearMapDistanceMeters") clean = Mathf.RoundToInt(clamped); else clean = clamped;
         return true;
     }
 }

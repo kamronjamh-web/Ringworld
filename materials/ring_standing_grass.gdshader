@@ -33,6 +33,8 @@ instance uniform bool grass_gpu_culled = false;
 #include "res://materials/ring_grass_debug.gdshaderinc"
 #include "res://materials/ring_grass_lighting.gdshaderinc"
 varying float grass_cloud_occlusion;
+// Terrain height-shadow clipmap, planet layer only (S7a): per-vertex ground term (1 = lit, always 1 outside the night planet layer).
+varying float grass_planet_height_term;
 varying float grass_tint_variation;
 varying vec4 grass_local_modifier_tint;
 varying float grass_lod_root_hash;
@@ -269,6 +271,7 @@ void vertex() {
 		if (!isnan(collapse) && !isinf(collapse)) VERTEX *= max(.001, 1.0 - collapse);
 	}
 	grass_cloud_occlusion = sample_local_cloud_shadow((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz);
+	grass_planet_height_term = ring_height_shadow_planet_point_term((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD);
 }
 
 void fragment() {
@@ -343,6 +346,7 @@ void light() {
 	// Cloud shadow stays in the grass's AO/albedo only (never direct light), so the composition is geometry * 1 (COMBINE_PRODUCT).
 	RingShadowTerms terms = ring_shadow_terms(vec3(0.0), SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT); // world unused until S5 (no world varying here)
 	float contact_sun_weight = LIGHT_IS_DIRECTIONAL ? smoothstep(.90, .995, dot(normalize(LIGHT), sun_view)) : 0.0;
+	terms.geometry = ring_height_shadow_vegetation_planet_geometry(terms.geometry, grass_planet_height_term, LIGHT_IS_DIRECTIONAL, LIGHT, VIEW_MATRIX, contact_sun_weight);
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, contact_sun_weight, RING_SHADOW_CONTACT_GRASS);
 	float attenuation = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT) * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
 	if (ring_shadow_debug_enabled()) {

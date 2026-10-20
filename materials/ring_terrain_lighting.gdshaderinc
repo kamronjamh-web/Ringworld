@@ -69,10 +69,14 @@ float ring_terrain_direct_visibility(
 		day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
 	// Terrain height-shadow clipmap (S5): while it is active it replaces the sun macro term where it has data and also brings the eclipse-hub term
-	// to this path; otherwise the previous behaviour (no hub term here) is unchanged.
+	// to this path; otherwise the previous behaviour (no hub term here) is unchanged. S7a: the same for the planet light when the front layer is a planet layer.
 	bool height_active = is_directional && primary_sun_weight > 0.0 && ring_height_shadow_active();
+	float planet_height_weight = is_directional && ring_height_shadow_planet_active()
+		? ring_height_shadow_light_weight(light, view_matrix) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun_weight)
+		: 0.0;
+	bool height_planet = planet_height_weight > 0.0;
 	RingHeightShadow height_shadow = ring_height_shadow_none();
-	if (height_active) {
+	if (height_active || height_planet) {
 		height_shadow = ring_height_shadow_sample(
 			world,
 			0.0,
@@ -81,8 +85,8 @@ float ring_terrain_direct_visibility(
 	}
 	float terrain_shadow = is_directional
 		? ring_macro_terrain_occlusion(
-			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer) * ring_height_shadow_macro_scale(height_shadow),
-			sample_terrain_planet_shadow_uv(shadow_uv, world, viewer),
+			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer) * (height_active ? ring_height_shadow_macro_scale(height_shadow) : 1.0),
+			sample_terrain_planet_shadow_uv(shadow_uv, world, viewer) * (height_planet ? ring_height_shadow_macro_scale(height_shadow) : 1.0),
 			primary_sun_weight,
 			primary_planet_weight,
 			day_factor,
@@ -98,10 +102,12 @@ float ring_terrain_direct_visibility(
 	terms.contact = ring_contact_visibility(frag_coord, viewport_size, inv_projection, primary_sun_weight, contact_flags);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, day_factor, ringworld_hub_light_weight, shadow_floor);
+	} else if (height_planet) {
+		terms.height = ring_height_shadow_planet_term(height_shadow, planet_height_weight, shadow_floor);
 	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
 	if (ring_shadow_debug_enabled()) {
-		return primary_sun_weight > 0.5 ? ring_shadow_debug_value(terms, combined_visibility) : 0.0;
+		return (primary_sun_weight > 0.5 || (ring_height_shadow_enabled() && planet_height_weight > 0.5)) ? ring_shadow_debug_value(terms, combined_visibility) : 0.0;
 	}
 	return combined_visibility * hemisphere_direct;
 }

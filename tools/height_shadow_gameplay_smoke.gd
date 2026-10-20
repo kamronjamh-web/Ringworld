@@ -301,6 +301,10 @@ func _run() -> void:
 		if pose_name == "dawn_8deg":
 			await _check_receivers_visible(true)
 
+	# ---- S7a: night poses (planet layer, near planet map) and the twilight overlap
+	if not COMMON.has_flag("--no-night"):
+		await _night_checks(base)
+
 	# ---- disable
 	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", false)
 	await COMMON.settle(self, 0.5)
@@ -308,6 +312,145 @@ func _run() -> void:
 	var state_off = _global("ringworld_height_shadow_state")
 	_check(str(off["phase"]) == "Disabled" and not bool(off["gpu_ready"]) and state_off.w == 0.0 and state_off.x < 0.0, "disabling invalidates the globals and releases the GPU session: " + str(state_off))
 	_finish()
+
+
+func _wait_published_light(light_id: int, generation_before: int, timeout_s: float) -> bool:
+	var reached: bool = await _wait_until(func(): return int(_diag()["generation"]) > generation_before and int(_diag()["light"]) == light_id, timeout_s)
+	if reached:
+		await _wait_until(func(): return float(_diag()["crossfade"]) >= 0.999 and str(_diag()["phase"]) == "Idle", 30.0)
+	return reached
+
+
+func _save(image: Image, name: String) -> void:
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://.godot/s7a/night"))
+	image.save_png(ProjectSettings.globalize_path("res://.godot/s7a/night/%s.png" % name))
+
+
+func _night_checks(base: Dictionary) -> void:
+	var planet: DirectionalLight3D = game.get_node("PlanetLight")
+	var coordinator := game.get_node_or_null("TerrainLodCoordinator")
+	if coordinator == null:
+		for child in game.get_children():
+			if child.has_method("SetTerrainShadowCoverageMeters"):
+				coordinator = child
+				break
+	for pose_name in ["night_planet_lit", "night_planet_low"]:
+		var generation_before := int(_diag()["generation"])
+		var gp: Dictionary = await COMMON.go_pose(self, game, base, pose_name, 3.0, 60.0)
+		_check(not gp.has("error"), pose_name + " pose reachable: " + str(gp.get("error", "")))
+		if gp.has("error"):
+			continue
+		var info: Dictionary = gp.get("time", {})
+		print("HEIGHT_SHADOW_SMOKE %s: sun %.1f deg, giant %.1f deg, planet energy %.3f shadow=%s" % [pose_name, float(info.get("sun_elevation_deg", NAN)), float(info.get("giant_elevation_deg", NAN)), planet.light_energy, str(planet.shadow_enabled)])
+		var reached := await _wait_published_light(2, generation_before, 150.0)
+		_check(reached, "%s: a planet layer is published (light=%s, status %s)" % [pose_name, str(_diag()["light"]), str(_diag()["status"])])
+		if not reached:
+			continue
+		await _wait_until(func(): return bool(graphics.get("NearPlanetMapActive")), 20.0)
+		await COMMON.settle(self, 0.8)
+		var state: Vector4 = _global("ringworld_height_shadow_state")
+		var light: Vector4 = _global("ringworld_height_shadow_light")
+		var shape: Vector4 = _global("ringworld_height_shadow_shape")
+		var planet_dir := planet.global_basis.z.normalized()
+		var dot := Vector3(light.x, light.y, light.z).dot(planet_dir)
+		print("HEIGHT_SHADOW_SMOKE %s: state=%s light=%s (dot with PlanetLight %.5f) authority=%.1f planet map %.0f m mode=%d fade=%.2f split1=%.4f coverage=%s" % [pose_name, state, light, dot, shape.w, planet.directional_shadow_max_distance, planet.directional_shadow_mode, planet.directional_shadow_fade_start, planet.directional_shadow_split_1, str(coordinator.get("TerrainShadowCoverageMeters")) if coordinator != null else "n/a"])
+		_check(state.w == 2.0 and state.x >= 0.0, "%s: state.w = 2 for the planet layer: %s" % [pose_name, str(state)])
+		_check(light.w == 1.0 and dot > 0.999, "%s: light global carries the planet direction (w %.1f, dot %.5f)" % [pose_name, light.w, dot])
+		_check(bool(graphics.get("NearPlanetMapActive")), "%s: near planet map engaged" % pose_name)
+		_check(absf(planet.directional_shadow_max_distance - 250.0) < 1.0 and planet.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS and absf(planet.directional_shadow_fade_start - 0.8) < 0.01, "%s: planet map is 250 m / 2 cascades / fade 0.8" % pose_name)
+		_check(absf(shape.w - 200.0) < 1.0, "%s: authority follows the planet map (250 m x 0.8 = 200, got %.1f)" % [pose_name, shape.w])
+		if coordinator != null:
+			_check(absf(float(coordinator.get("TerrainShadowCoverageMeters")) - 250.0) < 1.0, "%s: terrain caster coverage is the planet map (250 m)" % pose_name)
+		# A/B images: near map + heightfield (shipped), heightfield with the full planet map, receivers off (full planet map, as without the feature)
+		var near_image: Image = await _frame_image()
+		_save(near_image, pose_name + "_hs_near")
+		graphics.call("SetShadowTuningOverride", "HeightShadowPlanetNearMapEnabled", false)
+		await COMMON.settle(self, 1.8)
+		var full_image: Image = await _frame_image()
+		_check(not bool(graphics.get("NearPlanetMapActive")) and absf(planet.directional_shadow_max_distance - 6000.0) < 1.0, "%s: near planet map off restores the 6 km planet map (%.0f m)" % [pose_name, planet.directional_shadow_max_distance])
+		_save(full_image, pose_name + "_hs_on")
+		node.set("ReceiversEnabled", false)
+		await COMMON.settle(self, 1.8)
+		var off_a: Image = await _frame_image()
+		await COMMON.settle(self, 0.6)
+		var off_b: Image = await _frame_image()
+		_save(off_a, pose_name + "_off")
+		node.set("ReceiversEnabled", true)
+		var noise := _image_diff(off_a, off_b)
+		var on_off := _image_diff(off_a, full_image)
+		var near_off := _image_diff(off_a, near_image)
+		print("HEIGHT_SHADOW_SMOKE ON-vs-OFF %s: noise floor mean=%.4f max=%.1f | hs_on (6 km planet map) vs OFF mean=%.4f max=%.1f | hs_near vs OFF mean=%.4f max=%.1f (informational)" % [pose_name, noise["mean"], noise["max"], on_off["mean"], on_off["max"], near_off["mean"], near_off["max"]])
+		_check(float(on_off["mean"]) <= maxf(1.0, float(noise["mean"]) * 3.0 + 0.5), "%s: heightfield receivers stay close to OFF inside the planet map range (mean %.4f vs noise %.4f)" % [pose_name, on_off["mean"], noise["mean"]])
+		graphics.call("SetShadowTuningOverride", "HeightShadowPlanetNearMapEnabled", true)
+		await COMMON.settle(self, 1.2)
+		if pose_name == "night_planet_low":
+			await _check_planet_receivers_visible(pose_name)
+		# receivers off must leave the near map at once (planet back to 6 km), receivers on re-enter
+		node.set("ReceiversEnabled", false)
+		await COMMON.settle(self, 0.3)
+		_check(not bool(graphics.get("NearPlanetMapActive")), "%s: receivers off leaves the near planet map at once" % pose_name)
+		node.set("ReceiversEnabled", true)
+		await _wait_until(func(): return bool(graphics.get("NearPlanetMapActive")), 10.0)
+		_check(bool(graphics.get("NearPlanetMapActive")), "%s: receivers on re-enters the near planet map" % pose_name)
+
+	# ---- twilight overlap: sun layer published, both lights cast; the planet stays on its full map
+	var generation_before := int(_diag()["generation"])
+	var tp: Dictionary = await COMMON.go_pose(self, game, base, "twilight_overlap", 3.0, 60.0)
+	_check(not tp.has("error"), "twilight_overlap pose reachable: " + str(tp.get("error", "")))
+	if not tp.has("error"):
+		var sun_light: DirectionalLight3D = game.get_node("StarLight")
+		await _wait_published_light(1, generation_before, 150.0)
+		await COMMON.settle(self, 1.5)
+		var tstate: Vector4 = _global("ringworld_height_shadow_state")
+		print("HEIGHT_SHADOW_SMOKE twilight_overlap: sun %.1f deg giant %.1f deg | sun energy %.4f shadow=%s | planet energy %.4f shadow=%s | state=%s planet map %.0f m mode=%d near_planet=%s near_sun=%s" % [
+			float(tp["time"].get("sun_elevation_deg", NAN)), float(tp["time"].get("giant_elevation_deg", NAN)), sun_light.light_energy, str(sun_light.shadow_enabled), planet.light_energy, str(planet.shadow_enabled), tstate,
+			planet.directional_shadow_max_distance, planet.directional_shadow_mode, str(graphics.get("NearPlanetMapActive")), str(graphics.get("NearSunMapActive"))])
+		_check(planet.light_energy > 0.001 and planet.shadow_enabled and sun_light.shadow_enabled, "twilight_overlap: both lights cast shadows")
+		_check(tstate.w == 1.0, "twilight_overlap: the sun layer is published (state.w = %.1f)" % tstate.w)
+		_check(not bool(graphics.get("NearPlanetMapActive")) and absf(planet.directional_shadow_max_distance - 6000.0) < 1.0 and planet.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS, "twilight_overlap: the planet stays on its 6 km / 4 cascade map")
+		_save(await _frame_image(), "twilight_overlap_hs")
+
+
+## Debug view 4 (min of height and macro term, no map) at the night pose: with the planet layer published the receivers must show the planet's heightfield term (the OFF
+## debug frame is all black: the debug view only prints the sun's term without the feature). Needs a lit/shadowed mix (std) wherever the overlay resolves planet shadow around
+## the camera. The pose looks at the planet, so the yaw sweep finds the lit side.
+func _check_planet_receivers_visible(pose_name: String) -> void:
+	graphics.call("SetShadowTuningOverride", "ShadowDebugMode", 4)
+	await COMMON.settle(self, 1.0)
+	var shadowed := await _overlay_shadow_fraction()
+	print("HEIGHT_SHADOW_SMOKE %s overlay (L0 visibility): %.2f%% of resolved pixels are shadowed" % [pose_name, shadowed * 100.0])
+	var explorer := game.get_node_or_null("Explorer")
+	var best_diff := 0.0
+	var best_std := 0.0
+	var best_on_dark := 0.0
+	var best_off_dark := 0.0
+	var best_on: Image = null
+	var best_off: Image = null
+	for yaw in [0.0, 60.0, 120.0, 180.0, 240.0, 300.0]:
+		explorer.call("SetPresentationView", yaw, 0.0)
+		node.set("ReceiversEnabled", false)
+		await COMMON.settle(self, 0.4)
+		var off: Image = await _frame_image()
+		node.set("ReceiversEnabled", true)
+		await COMMON.settle(self, 0.4)
+		var on: Image = await _frame_image()
+		var stats_off := _luma_stats(off)
+		var stats_on := _luma_stats(on)
+		var diff := _image_diff(off, on)
+		print("HEIGHT_SHADOW_SMOKE %s debug view 4 yaw %d: OFF std=%.4f dark=%.4f | ON std=%.4f dark=%.4f | ON vs OFF mean=%.4f max=%.1f" % [pose_name, int(yaw), stats_off["std"], stats_off["dark"], stats_on["std"], stats_on["dark"], diff["mean"], diff["max"]])
+		if float(stats_on["std"]) > best_std:
+			best_std = float(stats_on["std"]); best_diff = float(diff["mean"]); best_on_dark = float(stats_on["dark"]); best_off_dark = float(stats_off["dark"]); best_on = on; best_off = off
+	if best_on != null:
+		_save(best_on, pose_name + "_debug4_on")
+		_save(best_off, pose_name + "_debug4_off")
+	print("HEIGHT_SHADOW_SMOKE %s debug view 4 best (std %.4f): ON-vs-OFF mean diff %.4f, dark ON %.4f vs OFF %.4f" % [pose_name, best_std, best_diff, best_on_dark, best_off_dark])
+	if shadowed > 0.005:
+		_check(best_std > 0.02 and best_on_dark > 0.0 and best_on_dark < 0.95, "%s: planet receivers show the heightfield term (std %.4f, dark %.4f)" % [pose_name, best_std, best_on_dark])
+	else:
+		print("HEIGHT_SHADOW_SMOKE %s: no planet terrain shadow resolved around the camera: visible-use check skipped" % pose_name)
+	explorer.call("SetPresentationView", 0.0, -5.0)
+	graphics.call("SetShadowTuningOverride", "ShadowDebugMode", 0)
+	await COMMON.settle(self, 0.5)
 
 
 func _overlay_shadow_fraction() -> float:

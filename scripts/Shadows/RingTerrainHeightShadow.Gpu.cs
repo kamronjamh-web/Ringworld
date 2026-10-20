@@ -16,7 +16,7 @@ public partial class RingTerrainHeightShadow
         GlobalL0Params = "ringworld_height_shadow_l0_params", GlobalL1Params = "ringworld_height_shadow_l1_params",
         GlobalL0Bounds = "ringworld_height_shadow_l0_bounds", GlobalL0PrevBounds = "ringworld_height_shadow_l0_prev_bounds",
         GlobalL1Bounds = "ringworld_height_shadow_l1_bounds", GlobalL1PrevBounds = "ringworld_height_shadow_l1_prev_bounds",
-        GlobalState = "ringworld_height_shadow_state", GlobalShape = "ringworld_height_shadow_shape";
+        GlobalState = "ringworld_height_shadow_state", GlobalShape = "ringworld_height_shadow_shape", GlobalLight = "ringworld_height_shadow_light";
     private const string TimestampPrefix = "ringhs:";
     private static readonly Vector4 EmptyBounds = new(1e9f, -1e9f, 1e9f, -1e9f);
 
@@ -346,16 +346,22 @@ public partial class RingTerrainHeightShadow
         RenderingServer.GlobalShaderParameterSet(name, value);
     }
 
-    private bool _sunReady;
+    private HeightShadowLight _readyLight;
+    private Vector3 _frontLightWorld;
     /// <summary>
-    /// True while the published front layer is a sun layer, the receivers read it and the camera sits inside the full-weight zone of its level-0 window (256 m from the
-    /// edge): the controller shrinks the sun shadow map to the near map only then (S5b). False at once when anything invalidates the globals.
+    /// True while the published front layer was built for <paramref name="light"/>, the receivers read it and the camera sits inside the full-weight zone of its level-0
+    /// window (256 m from the edge): the controller shrinks that light's shadow map to its near map only then (S5b sun, S7a planet). False at once when anything
+    /// invalidates the globals.
     /// </summary>
-    public bool IsSunHeightfieldReady => _sunReady && Settings.Enabled && _phase != HeightShadowPhase.Failed;
+    public bool IsHeightfieldReadyFor(HeightShadowLight light) => light != HeightShadowLight.None && _readyLight == light && Settings.Enabled && _phase != HeightShadowPhase.Failed;
+    public bool IsSunHeightfieldReady => IsHeightfieldReadyFor(HeightShadowLight.Sun);
+    /// <summary>The light the published front layer was built for (None while nothing is published).</summary>
+    public HeightShadowLight PublishedLight => _roles.Front >= 0 ? _roles.Light : HeightShadowLight.None;
 
     private void InvalidateGlobals()
     {
-        _sunReady = false;
+        _readyLight = HeightShadowLight.None;
+        SetGlobal(GlobalLight, Variant.From(new Vector4(0, 0, 0, 0)));
         _frameRows = null;
         var none = Variant.From(new Vector4(0, 0, 0, 0));
         SetGlobal(GlobalL0Params, none); SetGlobal(GlobalL1Params, none);
@@ -370,8 +376,13 @@ public partial class RingTerrainHeightShadow
     {
         if (_roles.Front < 0 || _frontRect[0] == null || _clipmap == null || _focus == null)
         {
-            _sunReady = false;
-            if (_roles.Front < 0) InvalidateGlobals();
+            _readyLight = HeightShadowLight.None;
+            if (_roles.Front < 0)
+            {
+                InvalidateGlobals();
+                // Switched on but nothing published yet: receivers that need to know (ocean planet macro) see the feature as on.
+                if (Settings.Enabled && ReceiversEnabled) SetGlobal(GlobalLight, Variant.From(new Vector4(0, 0, 0, 1)));
+            }
             return;
         }
         double radius = geometry.RingRadiusMeters - geometry.RingVerticalBaseOffsetMeters;
@@ -408,8 +419,9 @@ public partial class RingTerrainHeightShadow
             Vector4 b0 = ToBounds(w0, t0, anchor, anchorAcross);
             double cameraAround = cameraIndex * (double)t0 - anchor, cameraAcross = camera.AcrossMeters - anchorAcross;
             double edge = Math.Min(Math.Min(cameraAround - b0.X, b0.Y - cameraAround), Math.Min(cameraAcross - b0.Z, b0.W - cameraAcross));
-            _sunReady = ReceiversEnabled && state.Light == HeightShadowLight.Sun && edge >= 256.0;
+            _readyLight = ReceiversEnabled && edge >= 256.0 ? state.Light : HeightShadowLight.None;
         }
+        SetGlobal(GlobalLight, Variant.From(new Vector4(_frontLightWorld.X, _frontLightWorld.Y, _frontLightWorld.Z, Settings.Enabled && ReceiversEnabled ? 1f : 0f)));
         SetGlobal(GlobalState, Variant.From(new Vector4(state.Front, state.Prev, state.Crossfade, ReceiversEnabled ? (float)state.Light : 0f)));
         SetGlobal(GlobalShape, Variant.From(new Vector4((float)Math.Tan(Settings.PenumbraDegrees * Math.PI / 180.0), ReceiverBiasMeters, (float)radius, ResolveAuthorityMeters())));
         if (_globalsDirty)
@@ -425,6 +437,13 @@ public partial class RingTerrainHeightShadow
     /// </summary>
     public float ResolveAuthorityMeters()
     {
+        if (_roles.Current.Light == HeightShadowLight.Planet)
+        {
+            // The layer was built for the planet: the planet map owns the blockers it contains (sun macro and sun maps are not involved).
+            if (_planet == null || !GodotObject.IsInstanceValid(_planet) || !_planet.ShadowEnabled || _planet.LightEnergy <= RingGraphicsQualityController.SunShadowMinimumEnergy) return 0f;
+            float planetDistance = _planet.DirectionalShadowMaxDistance * _planet.DirectionalShadowFadeStart;
+            return float.IsFinite(planetDistance) && planetDistance > 0f ? planetDistance : 0f;
+        }
         if (_sun == null || !GodotObject.IsInstanceValid(_sun) || !_sun.ShadowEnabled || _sun.LightEnergy <= RingGraphicsQualityController.SunShadowMinimumEnergy) return 0f;
         if (_graphics != null && GodotObject.IsInstanceValid(_graphics) && (_graphics.LocalSunShadowSuspended || _graphics.UndergroundShadowSuspended)) return 0f;
         float distance = _sun.DirectionalShadowMaxDistance * _sun.DirectionalShadowFadeStart;

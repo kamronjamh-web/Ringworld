@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Terrain.Editable;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
@@ -135,6 +136,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 	private MultiMeshInstance3D[]? _lod4AuthoredTemplates;
 	private readonly List<ShaderMaterial> _treeMaterials = new();
 	private DirectionalLight3D? _treeSunLight;
+	private DirectionalLight3D? _treePlanetLight;
 	private Vector3 _lastTreeMaterialRingCenter = new(float.PositiveInfinity, 0.0f, 0.0f);
 	private Vector3 _lastTreeMaterialSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
 	private TreeLightingConfiguration _lastTreeLightingConfiguration;
@@ -612,10 +614,22 @@ public partial class RingBiomeDecorationLayer : Node3D
 			if (_treeSunLight != null && GodotObject.IsInstanceValid(_treeSunLight))
 			{
 				float sunMax = _treeSunLight.DirectionalShadowMaxDistance;
+				// Height shadows on and only the planet light casting (night): the planet map is the active one (S7a, 250 m near map). Otherwise exactly the sun range as before.
+				if (RingTerrainHeightShadow.Instance is { } heightShadow && heightShadow.Settings.Enabled && !IsCasting(_treeSunLight) && ResolveTreePlanetLight() is { } planet && IsCasting(planet))
+					sunMax = planet.DirectionalShadowMaxDistance;
 				if (float.IsFinite(sunMax) && sunMax > 0.0f) distance = Mathf.Min(distance, sunMax);
 			}
 			return distance;
 		}
+	}
+
+	private static bool IsCasting(DirectionalLight3D light) => light.ShadowEnabled && light.LightEnergy > RingGraphicsQualityController.SunShadowMinimumEnergy;
+
+	private DirectionalLight3D? ResolveTreePlanetLight()
+	{
+		if (_grid != null && (_treePlanetLight == null || !GodotObject.IsInstanceValid(_treePlanetLight)))
+			_treePlanetLight = _grid.GetNodeOrNull<DirectionalLight3D>(new NodePath("../PlanetLight"));
+		return _treePlanetLight;
 	}
 
 	private void ResolveTreeSunLight()

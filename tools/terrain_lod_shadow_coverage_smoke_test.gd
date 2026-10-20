@@ -17,5 +17,11 @@ func run_probe() -> void:
 		quit(1)
 		return
 	print("TERRAIN_LOD_SHADOW_COVERAGE near map: " + str(near_map.get("detail", "")))
+	var near_planet: Dictionary = SMOKE.new().RunNearPlanetMap(self)
+	if not bool(near_planet.get("pass", false)):
+		push_error("TERRAIN_LOD_SHADOW_COVERAGE=FAIL near planet map: " + str(near_planet.get("detail", "unknown failure")))
+		quit(1)
+		return
+	print("TERRAIN_LOD_SHADOW_COVERAGE near planet map: " + str(near_planet.get("detail", "")))
 	print("TERRAIN_LOD_SHADOW_COVERAGE=PASS " + str(result.get("detail", "")) + " terrain3d_default_cast_shadows=" + str(result.get("terrain3d_default_cast_shadows", -1)))
 	quit(0)

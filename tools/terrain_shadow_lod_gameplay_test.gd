@@ -17,6 +17,9 @@ var planet: DirectionalLight3D
 var placement: RefCounted
 var report := {"status":"RUNNING", "captures":[]}
 var height_shadow_mode := false
+var planet_trace: Array = [] # [frame, planet directional_shadow_max_distance] on every change (S7a: no 6 km <-> 250 m flapping)
+var planet_baseline_distance := 0.0
+var traced_frames := 0
 
 class SessionStub extends Node:
 	var settings := {}
@@ -59,24 +62,87 @@ func run() -> void:
 	clock.set("Paused", true)
 	var phases := await select_phases()
 	clock.call("SetCycleFraction", phases.day)
+	planet_baseline_distance = planet.directional_shadow_max_distance
 	if height_shadow_mode and not await enable_height_shadows(): return
+	if height_shadow_mode: process_frame.connect(trace_planet_map)
 	await wait_shadow_data("day")
 	await capture("day")
+	var day_luma := mean_luma(await capture_image())
 	if height_shadow_mode:
 		var day_coverage := float(report.captures[0].terrain_shadow_coverage_meters)
 		print("TERRAIN_SHADOW_LOD_HEIGHT_SHADOW near map active=%s terrain_shadow_coverage_meters=%.1f" % [str(game.get_node("GraphicsQuality").get("NearSunMapActive")), day_coverage])
 		if not bool(game.get_node("GraphicsQuality").get("NearSunMapActive")) or absf(day_coverage - 400.0) > 1.0: return fail("daytime terrain caster coverage is not the 400 m near map: %s" % day_coverage)
 	clock.call("SetCycleFraction", phases.night); await wait_shadow_data("night")
+	if height_shadow_mode and not await wait_planet_near(true, "night"): return
 	await capture("night")
+	if height_shadow_mode and not check_planet_map("night", true): return
 	clock.call("SetCycleFraction", phases.day); await wait_shadow_data("day_return")
+	if height_shadow_mode and not await wait_planet_near(false, "day_return"): return
 	await capture("day_return")
+	if height_shadow_mode:
+		if not check_planet_map("day_return", false): return
+		if not bool(game.get_node("GraphicsQuality").get("NearSunMapActive")): return fail("day return: sun near map is not active")
+		var floor_luma := INF
+		for sample in 30:
+			for ignored in 4: await process_frame
+			floor_luma = minf(floor_luma, mean_luma(await capture_image()))
+		print("TERRAIN_SHADOW_LOD_HEIGHT_SHADOW day return: day luma %.4f, day_return luma floor over 120 frames %.4f" % [day_luma, floor_luma])
+		if floor_luma < day_luma * 0.5: return fail("black or dark frame after the day return (luma %.4f vs day %.4f)" % [floor_luma, day_luma])
 	clock.call("SetCycleFraction", phases.night); await wait_shadow_data("night_revisit")
+	if height_shadow_mode and not await wait_planet_near(true, "night_revisit"): return
 	await capture("night_revisit")
+	if height_shadow_mode:
+		if not check_planet_map("night_revisit", true): return
+		for ignored in 120: await process_frame
+		process_frame.disconnect(trace_planet_map)
+		print("TERRAIN_SHADOW_LOD_HEIGHT_SHADOW planet map distance changes (frame, metres): " + JSON.stringify(planet_trace))
+		# first entry = the initial 6 km; day -> night 250 -> day 6 km -> night 250 adds at most three changes, and none back-to-back within 30 frames (flapping)
+		if planet_trace.size() > 4: return fail("planet map flapped between ranges: " + JSON.stringify(planet_trace))
+		for i in range(1, planet_trace.size()):
+			if int(planet_trace[i][0]) - int(planet_trace[i - 1][0]) < 30: return fail("planet map flapped (two changes within 30 frames): " + JSON.stringify(planet_trace))
 	if not validate_transitions(): return
 	report.status = "PASS"; write_report()
 	game.queue_free(); await process_frame
 	print("TERRAIN_SHADOW_LOD_GAMEPLAY_TEST=PASS fixture=" + fixture)
 	quit(0)
+
+func trace_planet_map() -> void:
+	traced_frames += 1
+	var distance := planet.directional_shadow_max_distance
+	if planet_trace.is_empty() or absf(float((planet_trace[planet_trace.size() - 1] as Array)[1]) - distance) > 0.5:
+		planet_trace.append([traced_frames, distance])
+
+func capture_image() -> Image:
+	await RenderingServer.frame_post_draw
+	return root.get_viewport().get_texture().get_image()
+
+func mean_luma(image: Image) -> float:
+	var sum := 0.0; var count := 0
+	for y in range(0, image.get_height(), 9):
+		for x in range(0, image.get_width(), 9):
+			var c := image.get_pixel(x, y); sum += (c.r + c.g + c.b) / 3.0; count += 1
+	return sum / maxf(1.0, float(count))
+
+## Night: wait for the planet layer, then the near planet map (250 m, 2 cascades). Day return: wait for the sun layer to publish, which restores the planet's full map.
+func wait_planet_near(near: bool, label: String) -> bool:
+	var graphics := game.get_node("GraphicsQuality")
+	var deadline := Time.get_ticks_msec() + 180000
+	while Time.get_ticks_msec() < deadline and bool(graphics.get("NearPlanetMapActive")) != near: await process_frame
+	for ignored in 90: await process_frame
+	if bool(graphics.get("NearPlanetMapActive")) != near: fail("%s: near planet map active=%s, expected %s" % [label, str(graphics.get("NearPlanetMapActive")), str(near)]); return false
+	return true
+
+func check_planet_map(label: String, near: bool) -> bool:
+	var distance := planet.directional_shadow_max_distance
+	var mode := planet.directional_shadow_mode
+	var coverage := float(coordinator.get("TerrainShadowCoverageMeters"))
+	print("TERRAIN_SHADOW_LOD_HEIGHT_SHADOW %s: planet map %.0f m mode=%d fade=%.2f split1=%.4f, terrain caster coverage %.0f m (near planet map=%s)" % [label, distance, mode, planet.directional_shadow_fade_start, planet.directional_shadow_split_1, coverage, str(near)])
+	if near:
+		if absf(distance - 250.0) > 1.0 or mode != DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS: fail("%s: planet map is not the 250 m / 2 cascade near map (%.1f m, mode %d)" % [label, distance, mode]); return false
+		if absf(coverage - 250.0) > 1.0: fail("%s: terrain caster coverage is not the planet near map (%.1f m)" % [label, coverage]); return false
+	else:
+		if absf(distance - planet_baseline_distance) > 1.0 or mode != DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS: fail("%s: planet map not restored (%.1f m vs %.1f m, mode %d)" % [label, distance, planet_baseline_distance, mode]); return false
+	return true
 
 ## --height-shadow=on: run the contract with the terrain height shadows enabled, so the sun map is the 400 m near map and the caster chain only has to cover it.
 func enable_height_shadows() -> bool:

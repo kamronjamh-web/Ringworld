@@ -612,20 +612,33 @@ void light() {
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
 	// Terrain height-shadow clipmap (S5): replaces the sun macro term where it has data; inactive = the previous code path.
 	bool height_active = LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.0 && ring_height_shadow_active();
+	// S7a: the same for the planet light when the front layer is a planet layer (weight against the published direction).
+	float planet_height_weight = LIGHT_IS_DIRECTIONAL && ring_height_shadow_planet_active()
+		? ring_height_shadow_light_weight(LIGHT, VIEW_MATRIX) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun_weight)
+		: 0.0;
+	bool height_planet = planet_height_weight > 0.0;
 	RingHeightShadow height_shadow = ring_height_shadow_none();
-	if (height_active) {
+	if (height_active || height_planet) {
 		height_shadow = ring_height_shadow_sample(
 			world_position,
 			0.0,
 			0.0,
 			distance(world_position, camera_world_position));
 	}
+	bool ocean_planet_macro_on = ring_height_shadow_enabled();
+	float ocean_planet_macro = LIGHT_IS_DIRECTIONAL && ocean_planet_macro_on
+		? sample_terrain_planet_shadow(world_position, ring_center, camera_world_position, ring_width_meters)
+		: 0.0;
+	float ocean_planet_weight = LIGHT_IS_DIRECTIONAL && ocean_planet_macro_on
+		? terrain_planet_directional_light_weight(LIGHT, VIEW_MATRIX) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun_weight)
+		: 0.0;
 	float terrain_shadow = LIGHT_IS_DIRECTIONAL
 		? ring_macro_terrain_occlusion(
-			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters) * ring_height_shadow_macro_scale(height_shadow),
-			0.0,
+			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters) * (height_active ? ring_height_shadow_macro_scale(height_shadow) : 1.0),
+			// S7a: the water now takes the planet macro shadow too, only while the height-shadow feature is on (off passes the old literal 0).
+			ocean_planet_macro * (height_planet ? ring_height_shadow_macro_scale(height_shadow) : 1.0),
 			primary_sun_weight,
-			0.0,
+			ocean_planet_weight,
 			ring_day_factor,
 			height_active ? ringworld_hub_light_weight : 0.0)
 		: 0.0;
@@ -639,10 +652,12 @@ void light() {
 	// No contact term on water (RING_SHADOW_NO_CONTACT): the proxy is blend_mix, so the depth texel under it holds the seabed.
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
+	} else if (height_planet) {
+		terms.height = ring_height_shadow_planet_term(height_shadow, planet_height_weight, shadow_floor);
 	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
 	if (ring_shadow_debug_enabled()) {
-		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {
+		if (LIGHT_IS_DIRECTIONAL && (primary_sun_weight > 0.5 || (ring_height_shadow_enabled() && planet_height_weight > 0.5))) {
 			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, combined_visibility));
 		}
 	} else {

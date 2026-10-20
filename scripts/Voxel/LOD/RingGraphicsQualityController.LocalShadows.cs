@@ -33,6 +33,14 @@ public partial class RingGraphicsQualityController
     internal void StepNearSunMapForTest(double delta) => UpdateNearSunMap(delta);
     public bool SunShadowZeroEnergySuspended => _sunShadowZeroEnergySuspended;
 
+    /// <summary>Near planet map (S7a): while the published front layer is a planet layer covering the camera, the planet shadow map shrinks to a 2-cascade near map (fade 0.8).</summary>
+    private bool _nearPlanetMapActive;
+    private float _nearPlanetMapNotReadySeconds;
+    public bool NearPlanetMapActive => _nearPlanetMapActive;
+    /// <summary>Tests: replaces the height-shadow node query (Ready: planet layer published and covering the camera; LeaveNow: receivers off or another light published).</summary>
+    internal System.Func<(bool Ready, bool LeaveNow)>? NearPlanetMapProbe { get; set; }
+    internal void StepNearPlanetMapForTest(double delta) => UpdateNearPlanetMap(delta);
+
     public bool LocalShadowHandoffEnabled => !_shadowTuningOverrides.TryGetValue("LocalShadowHandoffEnabled", out Variant enabled) || enabled.AsBool();
     public float EffectiveSunShadowOffElevationDegrees => _effectiveSunShadowOffElevationDegrees;
     public float EffectiveSunShadowOnElevationDegrees => _effectiveSunShadowOnElevationDegrees;
@@ -73,6 +81,38 @@ public partial class RingGraphicsQualityController
         }
         if (next == _nearSunMapActive) return;
         _nearSunMapActive = next;
+        ApplyShadowTuningOverrides();
+    }
+
+    /// <summary>
+    /// Enters the near planet map once the planet heightfield is published and covers the camera. Leaves at once when the feature, the option or the receivers are switched off
+    /// or a sun layer has been published (at dawn the old planet front stays published until the sun layer is ready, so there is no gap); leaves one second after the
+    /// front disappears or stops covering the camera (teleport refill), so a hiccup cannot flip the planet map between 250 m and 6 km.
+    /// </summary>
+    private void UpdateNearPlanetMap(double delta)
+    {
+        RingHeightShadowSettings settings = ResolveHeightShadowSettings();
+        bool wanted = settings.Enabled && settings.PlanetNearMapEnabled;
+        bool ready = false, leaveNow = false;
+        if (wanted)
+        {
+            if (NearPlanetMapProbe != null) (ready, leaveNow) = NearPlanetMapProbe();
+            else if (RingTerrainHeightShadow.Instance is { } node && GodotObject.IsInstanceValid(node))
+            {
+                ready = node.IsHeightfieldReadyFor(HeightShadowLight.Planet);
+                leaveNow = !node.ReceiversEnabled || node.PublishedLight == HeightShadowLight.Sun;
+            }
+        }
+        bool next = _nearPlanetMapActive;
+        if (!wanted || leaveNow) { next = false; _nearPlanetMapNotReadySeconds = 0.0f; }
+        else if (ready) { next = true; _nearPlanetMapNotReadySeconds = 0.0f; }
+        else if (_nearPlanetMapActive)
+        {
+            _nearPlanetMapNotReadySeconds += (float)Math.Max(delta, 0.0);
+            if (_nearPlanetMapNotReadySeconds >= NearSunMapLeaveSeconds) next = false;
+        }
+        if (next == _nearPlanetMapActive) return;
+        _nearPlanetMapActive = next;
         ApplyShadowTuningOverrides();
     }
 

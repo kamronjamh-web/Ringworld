@@ -16,7 +16,7 @@ public partial class RingLiveTuningDrawer
     private CheckButton? _planetShadowsEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
-    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap, _contactShadowEnabled;
+    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle, _heightShadowNearMap, _heightShadowPlanetNearMap, _contactShadowEnabled;
     private Label? _contactShadowStatus;
     private Label? _heightShadowStatus;
     private RingHeightShadowOverlay? _heightShadowOverlay;
@@ -46,8 +46,8 @@ public partial class RingLiveTuningDrawer
         _planetShadowsEnabled = new CheckButton { Name="PlanetShadows", Text="Planet light shadows", ButtonPressed=_shadowGraphics?.EffectivePlanetShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Shadow map for the gas giant's light on the planet-lit night side." };
         _planetShadowsEnabled.Toggled += value => SetShadowValue("PlanetShadowsEnabled", value);
         planetLight.AddChild(_planetShadowsEnabled);
-        AddShadowSpinBox(planetLight, "PlanetShadowDistanceMeters", "Max distance (m)", RingGraphicsQualityController.MinimumPlanetShadowDistanceMeters, RingGraphicsQualityController.MaximumPlanetShadowDistanceMeters, 100, _shadowGraphics?.EffectivePlanetShadowDistanceMeters ?? 6000);
-        AddShadowOption(planetLight, "PlanetCascadeCount", "Cascades", new[] { "2", "4" }, new[] { 2, 4 }, _shadowGraphics?.EffectivePlanetCascadeCount ?? 4);
+        AddShadowSpinBox(planetLight, "PlanetShadowDistanceMeters", "Max distance (m) (near map)", RingGraphicsQualityController.MinimumPlanetShadowDistanceMeters, RingGraphicsQualityController.MaximumPlanetShadowDistanceMeters, 100, _shadowGraphics?.EffectivePlanetShadowDistanceMeters ?? 6000);
+        AddShadowOption(planetLight, "PlanetCascadeCount", "Cascades (near map)", new[] { "2", "4" }, new[] { 2, 4 }, _shadowGraphics?.EffectivePlanetCascadeCount ?? 4);
         VBoxContainer terrainMacro = TuningMenuUi.CreateSection(tab, "Terrain macro shadows");
         _terrainMacroShadowEnabled = new CheckButton { Name="TerrainMacroShadows", Text="Enable terrain macro shadows", ButtonPressed=_shadowGraphics?.EffectiveTerrainMacroShadowsEnabled ?? true, Disabled=_shadowGraphics == null, TooltipText="Uses the terrain height summary to cast distant mountain shadows from sunlight and nighttime planet light. Strength, trace, and handoff controls apply to both." };
         _terrainMacroShadowEnabled.Toggled += value => SetShadowValue("TerrainMacroEnabled", value);
@@ -117,6 +117,11 @@ public partial class RingLiveTuningDrawer
         _heightShadowNearMap.Toggled += value => SetShadowValue("HeightShadowNearMapEnabled", value);
         height.AddChild(_heightShadowNearMap);
         AddShadowOption(height, "HeightShadowNearMapDistanceMeters", "Near map distance", new[] { "300 m", "400 m", "500 m" }, new[] { 300, 400, 500 }, _shadowGraphics?.EffectiveHeightShadowNearMapDistanceMeters ?? 400);
+        _heightShadowPlanetNearMap = new CheckButton { Name = "HeightShadowPlanetNearMapEnabled", Text = "Near planet map at night while height shadows are ready", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowPlanetNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
+            TooltipText = "Shrinks the planet-light shadow map to a 2-cascade near map (fade start 0.8) once the planet height shadows cover the camera at night; the height shadows own everything past it. Planet distance and cascade count under Planet light are ignored while it is active (shown as near map); the twilight overlap keeps the planet map at its normal range. Only effective with height shadows enabled." };
+        _heightShadowPlanetNearMap.Toggled += value => SetShadowValue("HeightShadowPlanetNearMapEnabled", value);
+        height.AddChild(_heightShadowPlanetNearMap);
+        AddShadowSpinBox(height, "HeightShadowPlanetNearMapDistanceMeters", "Near planet map distance (m)", 100, 250, 10, _shadowGraphics?.EffectiveHeightShadowPlanetNearMapDistanceMeters ?? 250, "Range of the near planet map (also the terrain shadow caster range at night).");
         AddShadowOption(height, "HeightShadowL0TexelMeters", "Detail / range", new[] { "2 m texels, 4 km range", "4 m texels, 8 km range", "8 m texels, 16 km range" }, new[] { 2, 4, 8 }, _shadowGraphics?.EffectiveHeightShadowL0TexelMeters ?? 4);
         AddShadowOption(height, "HeightShadowLevels", "Levels", new[] { "1 (near only)", "2 (near + far)" }, new[] { 1, 2 }, _shadowGraphics?.EffectiveHeightShadowLevels ?? 2);
         AddShadowSlider(height, "HeightShadowSunStepDegrees", "Sun step (degrees)", .02, .5, .01, _shadowGraphics?.EffectiveHeightShadowSunStepDegrees ?? .1,
@@ -183,7 +188,8 @@ public partial class RingLiveTuningDrawer
         if (_heightShadowStatus == null || _shadowGraphics == null) return;
         if (_shadowGraphics.EffectiveHeightShadowEnabled && _open) RingTerrainHeightShadow.Instance?.RequestUnresolvedStats();
         _heightShadowStatus.Text = _shadowGraphics.EffectiveHeightShadowStatus
-            + (_shadowGraphics.NearSunMapActive ? $" Sun map: near mode ({_shadowGraphics.EffectiveShadowDistanceMeters:0} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Sun map: full range." : "");
+            + (_shadowGraphics.NearSunMapActive ? $" Sun map: near mode ({_shadowGraphics.EffectiveShadowDistanceMeters:0} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Sun map: full range." : "")
+            + (_shadowGraphics.NearPlanetMapActive ? $" Planet map: near mode ({_shadowGraphics.EffectiveHeightShadowPlanetNearMapDistanceMeters} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Planet map: full range." : "");
     }
     private HSlider AddShadowSlider(VBoxContainer parent, string key, string label, double min, double max, double step, double initial, string tooltip = "")
     {
@@ -303,8 +309,11 @@ public partial class RingLiveTuningDrawer
         SetOption("ShadowDebugMode", _shadowGraphics.ShadowDebugMode);
         SetRange("MaxDistanceMeters", _shadowGraphics.EffectiveShadowDistanceMeters);
         SetOption("CascadeCount", _shadowGraphics.EffectiveSunCascadeCount);
-        SetRange("PlanetShadowDistanceMeters", _shadowGraphics.EffectivePlanetShadowDistanceMeters);
-        SetOption("PlanetCascadeCount", _shadowGraphics.EffectivePlanetCascadeCount);
+        if (!_shadowGraphics.NearPlanetMapActive) // the near planet map forces its own distance and 2 cascades; the rows keep the user's values
+        {
+            SetRange("PlanetShadowDistanceMeters", _shadowGraphics.EffectivePlanetShadowDistanceMeters);
+            SetOption("PlanetCascadeCount", _shadowGraphics.EffectivePlanetCascadeCount);
+        }
         _planetShadowsEnabled?.SetPressedNoSignal(_shadowGraphics.EffectivePlanetShadowsEnabled);
         SetRange("NearCascadeMeters", _shadowGraphics.EffectiveNearCascadeMeters);
         _heightShadowEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowEnabled);
@@ -312,6 +321,8 @@ public partial class RingLiveTuningDrawer
         SetOption("HeightShadowLevels", _shadowGraphics.EffectiveHeightShadowLevels);
         _heightShadowNearMap?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowNearMapEnabled);
         SetOption("HeightShadowNearMapDistanceMeters", _shadowGraphics.EffectiveHeightShadowNearMapDistanceMeters);
+        _heightShadowPlanetNearMap?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowPlanetNearMapEnabled);
+        SetRange("HeightShadowPlanetNearMapDistanceMeters", _shadowGraphics.EffectiveHeightShadowPlanetNearMapDistanceMeters);
         SetRange("HeightShadowSunStepDegrees", _shadowGraphics.EffectiveHeightShadowSunStepDegrees);
         SetRange("HeightShadowRowsPerFrame", _shadowGraphics.EffectiveHeightShadowRowsPerFrame);
         SetRange("HeightShadowBudgetMs", _shadowGraphics.EffectiveHeightShadowBudgetMs);

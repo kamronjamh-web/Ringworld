@@ -125,6 +125,7 @@ public partial class RingTerrainHeightShadow : Node
         public readonly int[] Texel = new int[2];
         public HeightShadowLight Light;
         public Vector3 LightDirection;
+        public Vector3 LightWorld;
         public bool Snap;
         public int Layer;
         public HeightShadowBuildCursor Cursor = new(2);
@@ -564,7 +565,7 @@ public partial class RingTerrainHeightShadow : Node
         RingHeightShadowClipmap clipmap = _clipmap!;
         for (int l = 0; l < Settings.Levels; l++) if (clipmap.Levels[l].Window == null) return;
         double radius = geometry.RingRadiusMeters - geometry.RingVerticalBaseOffsetMeters;
-        var job = new BuildJob { Id = ++_nextJobId, Light = light, LightDirection = localDirection };
+        var job = new BuildJob { Id = ++_nextJobId, Light = light, LightDirection = localDirection, LightWorld = (geometry.GridGlobalTransform.Basis * localDirection).Normalized() };
         HeightShadowBuildInputs inputs = job.Inputs;
         int t1 = clipmap.Levels[1].TexelMeters;
         HeightShadowWindow w0 = clipmap.Levels[0].Window!.Value;
@@ -679,6 +680,7 @@ public partial class RingTerrainHeightShadow : Node
             _frontTexel[l] = job.Texel[l];
         }
         _frontRadius = job.Inputs.RingRadiusMeters;
+        _frontLightWorld = job.LightWorld;
         PublishCount++;
         _globalsDirty = true;
     }

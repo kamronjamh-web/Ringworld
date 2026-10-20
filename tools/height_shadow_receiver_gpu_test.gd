@@ -62,6 +62,7 @@ var _sphere: MeshInstance3D
 var _srgb := true
 var _out_dir := "res://.godot/s5_receiver"
 var _macro_texture: ImageTexture
+var _last_state := Vector4(0, -1, 1, 0) # last front / prev / t written by _set_globals (global_shader_parameter_get is unreliable for runtime-set values)
 
 
 func _init() -> void:
@@ -111,6 +112,7 @@ func _run() -> void:
 	await _test_authority(voxel)
 	await _test_crossfade(voxel)
 	await _test_overlay(voxel)
+	await _test_planet()
 
 	print("HEIGHT_SHADOW_RECEIVER checks=%d failures=%d" % [checks, failures.size()])
 	if failures.is_empty():
@@ -405,6 +407,137 @@ func _test_overlay(material: ShaderMaterial) -> void:
 	_check(agree == total, "overlay classification disagrees with the receiver at %d points" % (total - agree))
 
 
+# ------------------------------------------------------------------ S7a: planet layer (state.w = 2)
+
+## Planet-lit variants of a MATERIALS entry: `lit_by` "planet" = the scene light is the planet (sun_direction points away, terrain_planet_shadow_direction = the light), "sun" = the
+## scene light is the sun (planet direction points away). The published-light global always carries `published_dir`.
+func _planet_material(entry: Dictionary, lit_by: String) -> ShaderMaterial:
+	var material := _material(entry)
+	var names := {}
+	for uniform in material.shader.get_shader_uniform_list():
+		names[uniform.name] = true
+	var toward_light := SUN_DIR.normalized()
+	var sun_dir := -toward_light if lit_by == "planet" else toward_light
+	var planet_dir := toward_light if lit_by == "planet" else -toward_light
+	if names.has("sun_direction"):
+		material.set_shader_parameter("sun_direction", sun_dir)
+	if names.has("terrain_planet_shadow_enabled"):
+		material.set_shader_parameter("terrain_planet_shadow_enabled", true)
+		material.set_shader_parameter("terrain_planet_shadow_texture", _macro_texture)
+		material.set_shader_parameter("terrain_planet_shadow_direction", planet_dir)
+		material.set_shader_parameter("terrain_planet_shadow_strength", 0.45)
+		material.set_shader_parameter("terrain_planet_shadow_fade_start_meters", 0.0)
+		material.set_shader_parameter("terrain_planet_shadow_fade_end_meters", 1.0)
+	return material
+
+
+func _set_planet_state(state_w: float, published_dir: Vector3, light_w: float) -> void:
+	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_state", Vector4(_last_state.x, _last_state.y, _last_state.z, state_w))
+	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_light", Vector4(published_dir.x, published_dir.y, published_dir.z, light_w))
+
+
+func _test_planet() -> void:
+	var toward_light := SUN_DIR.normalized()
+	_frame_plane(80.0)
+	var step := _layer_step(100.0, 500.0, 0.0, 0.0)
+	# (a) planet layer: every port shows the heightfield shadow in the shadowed half only when the scene light is the planet. Trees see the planet through the product path
+	# (their debug view needs the sun weight, so the trees use sun_direction = the light and rely on state.w = 2 to select the planet branch).
+	for entry in MATERIALS:
+		var is_tree: bool = entry.receiver == "sphere"
+		var material := _planet_material(entry, "sun" if is_tree else "planet")
+		_show(entry, material)
+		var mode: int = entry.mode
+		RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", mode)
+		_set_globals([step, step, step], _layers_uniform(0.0, 0.0), 0, -1, 1.0, 0.0, true)
+		_set_planet_state(2.0, toward_light, 1.0)
+		var image := await _grab()
+		image.save_png(ProjectSettings.globalize_path(_out_dir.path_join("planet_step_%s.png" % entry.name)))
+		var left := _sample(image, Rect2i(int((-24.0 / 80.0 + 0.5) * SIZE.x), 20, int(12.0 / 80.0 * SIZE.x), 24))
+		var right := _sample(image, Rect2i(int((12.0 / 80.0 + 0.5) * SIZE.x), 20, int(12.0 / 80.0 * SIZE.x), 24))
+		print("HEIGHT_SHADOW_RECEIVER planet port %-16s debug %d left %.3f right %.3f" % [entry.name, mode, left, right])
+		_check(left < 0.25, "planet %s: shadowed half reads %f (expected < 0.25)" % [entry.name, left])
+		_check(right > 0.8, "planet %s: lit half reads %f (expected > 0.8)" % [entry.name, right])
+		# (b) the same layer with the sun as the scene light and the planet elsewhere: the sun is untouched (state.w = 2 serves the planet only).
+		if not is_tree:
+			# The layer serves the planet only: with the sun as the scene light the image is pixel identical to "layer off" (state.w = 0, same light global).
+			_show(entry, _planet_material(entry, "sun"))
+			_set_planet_state(0.0, -toward_light, 1.0)
+			var sun_off := await _grab()
+			_set_planet_state(2.0, -toward_light, 1.0)
+			var sun_image := await _grab()
+			var sun_diff := _diff(sun_off, sun_image)
+			print("HEIGHT_SHADOW_RECEIVER planet layer, sun light %-16s differs from layer-off in %d px" % [entry.name, sun_diff.pixels])
+			_check(sun_diff.pixels == 0, "planet layer changed the sun-lit %s (%d px, max %d)" % [entry.name, sun_diff.pixels, sun_diff.max])
+		# (c) reverse: a sun layer (state.w = 1) must leave a planet-lit receiver identical to "layer off"; trees keep the S5a behaviour for the sun (shadowed half).
+		if not is_tree:
+			_show(entry, _planet_material(entry, "planet"))
+			_set_planet_state(0.0, toward_light, 1.0)
+			var planet_off := await _grab()
+			_set_planet_state(1.0, toward_light, 1.0)
+			var reverse_image := await _grab()
+			var reverse_diff := _diff(planet_off, reverse_image)
+			_check(reverse_diff.pixels == 0, "sun layer changed the planet-lit %s (%d px, max %d)" % [entry.name, reverse_diff.pixels, reverse_diff.max])
+		else:
+			_show(entry, _planet_material(entry, "sun"))
+			_set_planet_state(1.0, toward_light, 1.0)
+			var reverse_image_tree := await _grab()
+			var reverse_left := _sample(reverse_image_tree, Rect2i(int((-24.0 / 80.0 + 0.5) * SIZE.x), 20, int(12.0 / 80.0 * SIZE.x), 24))
+			_check(reverse_left < 0.25, "sun layer must still shadow the sun-lit %s (left half reads %f)" % [entry.name, reverse_left])
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 4)
+
+	# (d) macro scale only on the served light (proxy, full macro stripes): a planet layer under a sun-lit receiver and a sun layer under a planet-lit receiver are pixel identical to OFF;
+	# a planet layer under a planet-lit receiver removes the planet macro where it owns the receiver (differs from OFF).
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 0)
+	var proxy_entry: Dictionary = MATERIALS[1]
+	var lit := _layer_fill(-50.0, 0.0)
+	var shadowed := _layer_fill(50.0, 200.0)
+	for layer in [lit, shadowed]:
+		var layers := [layer, layer, layer]
+		_show(proxy_entry, _planet_material(proxy_entry, "sun"))
+		_set_globals(layers, layers, 0, -1, 1.0, 0.0, false)
+		_set_planet_state(0.0, Vector3.ZERO, 0.0)
+		var off_sun := await _grab()
+		_set_globals(layers, layers, 0, -1, 1.0, 0.0, true)
+		_set_planet_state(2.0, -toward_light, 1.0)
+		var planet_layer_sun_light := await _grab()
+		_check(_diff(off_sun, planet_layer_sun_light).pixels == 0, "proxy: planet layer changed the sun-lit receiver (macro scale leaked to the sun)")
+		_show(proxy_entry, _planet_material(proxy_entry, "planet"))
+		_set_globals(layers, layers, 0, -1, 1.0, 0.0, false)
+		_set_planet_state(0.0, Vector3.ZERO, 0.0)
+		var off_planet := await _grab()
+		_set_globals(layers, layers, 0, -1, 1.0, 0.0, true)
+		_set_planet_state(1.0, toward_light, 1.0)
+		var sun_layer_planet_light := await _grab()
+		_check(_diff(off_planet, sun_layer_planet_light).pixels == 0, "proxy: sun layer changed the planet-lit receiver (macro scale leaked to the planet)")
+		_set_planet_state(2.0, toward_light, 1.0)
+		var planet_layer_planet_light := await _grab()
+		var served := _diff(off_planet, planet_layer_planet_light)
+		print("HEIGHT_SHADOW_RECEIVER planet macro scale (%s layer): served light differs from OFF in %d px" % ["lit" if layer == lit else "shadowed", served.pixels])
+		_check(served.pixels > 0, "proxy: planet layer left the planet-lit receiver unchanged (planet macro not scaled / term not applied)")
+
+	# (e) ocean planet macro only while light.w = 1 (feature on): w = 0 keeps the old literal 0 (no planet macro on water), w = 1 adds it; a sun-lit ocean never changes.
+	for ocean_name in ["ocean_proxy", "ocean_global"]:
+		var ocean_entry: Dictionary = MATERIALS[4] if ocean_name == "ocean_proxy" else MATERIALS[5]
+		_show(ocean_entry, _planet_material(ocean_entry, "planet"))
+		_set_globals(_layers_uniform(0.0, 0.0), _layers_uniform(0.0, 0.0), 0, -1, 1.0, 0.0, false)
+		_set_planet_state(0.0, Vector3.ZERO, 0.0)
+		var ocean_off := await _grab()
+		_set_planet_state(0.0, Vector3.ZERO, 1.0)
+		var ocean_on := await _grab()
+		var ocean_diff := _diff(ocean_off, ocean_on)
+		print("HEIGHT_SHADOW_RECEIVER %s planet macro: light.w 1 vs 0 differs in %d px (planet-lit)" % [ocean_name, ocean_diff.pixels])
+		_check(ocean_diff.pixels > 0, "%s: planet macro missing with light.w = 1" % ocean_name)
+		_show(ocean_entry, _planet_material(ocean_entry, "sun"))
+		_set_planet_state(0.0, Vector3.ZERO, 0.0)
+		var sun_off := await _grab()
+		_set_planet_state(0.0, Vector3.ZERO, 1.0)
+		var sun_on := await _grab()
+		_check(_diff(sun_off, sun_on).pixels == 0, "%s: light.w = 1 changed a sun-lit ocean" % ocean_name)
+	_set_planet_state(0.0, Vector3.ZERO, 0.0)
+	RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 4)
+	_show(MATERIALS[0], _material(MATERIALS[0]))
+
+
 # ------------------------------------------------------------------ globals and data
 
 func _layers_uniform(r: float, g: float) -> Array:
@@ -464,7 +597,9 @@ func _set_globals(l0_layers: Array, l1_layers: Array, front := 0, prev := -1, t 
 	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_l0_prev_bounds", prev_bounds0)
 	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_l1_bounds", bounds1 if l1_valid else EMPTY_BOUNDS)
 	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_l1_prev_bounds", EMPTY_BOUNDS)
-	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_state", Vector4(front, prev, t, 1.0 if receivers else 0.0))
+	_last_state = Vector4(front, prev, t, 1.0 if receivers else 0.0)
+	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_state", _last_state)
+	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_light", Vector4(0, 0, 0, 0))
 	RenderingServer.global_shader_parameter_set("ringworld_height_shadow_shape", Vector4(tan(deg_to_rad(0.5)), 0.5, 5000000.0, authority))
 
 
