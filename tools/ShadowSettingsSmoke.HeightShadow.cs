@@ -1,0 +1,95 @@
+using Godot;
+using RingworldTechDemo.Shadows;
+using RingworldTechDemo.UI;
+using RingworldTechDemo.Voxel.LOD;
+
+namespace RingworldTechDemo.Tools;
+
+public partial class ShadowSettingsSmoke
+{
+    /// <summary>S4c: terrain height shadow keys (validation, clamping, persistence, old-file load, texel/range exclusivity, effective getters).</summary>
+    private static (bool Pass, string Detail) RunHeightShadowKeys(string path, SceneTree tree)
+    {
+        static bool Ok(string key, Variant raw, out Variant clean) => RingGraphicsQualityController.TryValidateShadowOverride(key, raw, out clean);
+        bool valid = Ok("HeightShadowEnabled", true, out Variant on) && on.AsBool()
+            && Ok("HeightShadowL0TexelMeters", 2, out Variant t2) && t2.AsInt32() == 2 && Ok("HeightShadowL0TexelMeters", 8.0f, out Variant t8) && t8.AsInt32() == 8
+            && Ok("HeightShadowRangeMeters", 16000, out Variant range) && range.AsInt32() == 16000 && Ok("HeightShadowRangeMeters", 4000, out _)
+            && Ok("HeightShadowLevels", 1, out Variant levels) && levels.AsInt32() == 1 && Ok("HeightShadowLevels", 2, out _)
+            && Ok("HeightShadowSunStepDegrees", .05f, out Variant step) && Mathf.IsEqualApprox(step.AsSingle(), .05f)
+            && Ok("HeightShadowSunStepDegrees", .001f, out Variant stepLow) && Mathf.IsEqualApprox(stepLow.AsSingle(), .02f)
+            && Ok("HeightShadowSunStepDegrees", 5f, out Variant stepHigh) && Mathf.IsEqualApprox(stepHigh.AsSingle(), .5f)
+            && Ok("HeightShadowRowsPerFrame", 100.4f, out Variant rows) && rows.AsInt32() == 100 && rows.VariantType == Variant.Type.Int
+            && Ok("HeightShadowRowsPerFrame", 5, out Variant rowsLow) && rowsLow.AsInt32() == 16 && Ok("HeightShadowRowsPerFrame", 5000, out Variant rowsHigh) && rowsHigh.AsInt32() == 1024
+            && Ok("HeightShadowPenumbraDegrees", 1.5f, out Variant penumbra) && Mathf.IsEqualApprox(penumbra.AsSingle(), 1.5f) && Ok("HeightShadowPenumbraDegrees", 9f, out Variant penumbraHigh) && Mathf.IsEqualApprox(penumbraHigh.AsSingle(), 2f)
+            && Ok("HeightShadowCrossfadeSeconds", 0f, out Variant fade) && fade.AsSingle() == 0f && Ok("HeightShadowCrossfadeSeconds", 7f, out Variant fadeHigh) && Mathf.IsEqualApprox(fadeHigh.AsSingle(), 3f)
+            && Ok("HeightShadowFillWorkers", 3, out Variant workers) && workers.AsInt32() == 3 && Ok("HeightShadowFillWorkers", 9, out Variant workersHigh) && workersHigh.AsInt32() == 4
+            && Ok("HeightShadowBudgetMs", .3f, out Variant budget) && Mathf.IsEqualApprox(budget.AsSingle(), .3f) && Ok("HeightShadowBudgetMs", 0f, out Variant budgetLow) && Mathf.IsEqualApprox(budgetLow.AsSingle(), .05f);
+        bool rejected = !Ok("HeightShadowEnabled", 1, out _) && !Ok("HeightShadowEnabled", "true", out _) && !Ok("HeightShadowEnabled", .5f, out _)
+            && !Ok("HeightShadowL0TexelMeters", 3, out _) && !Ok("HeightShadowL0TexelMeters", 16, out _) && !Ok("HeightShadowL0TexelMeters", 4.5f, out _) && !Ok("HeightShadowL0TexelMeters", float.NaN, out _) && !Ok("HeightShadowL0TexelMeters", true, out _)
+            && !Ok("HeightShadowRangeMeters", 5000, out _) && !Ok("HeightShadowRangeMeters", 8000.5f, out _) && !Ok("HeightShadowRangeMeters", "8000", out _)
+            && !Ok("HeightShadowLevels", 3, out _) && !Ok("HeightShadowLevels", 0, out _) && !Ok("HeightShadowLevels", 1.5f, out _)
+            && !Ok("HeightShadowSunStepDegrees", float.NaN, out _) && !Ok("HeightShadowSunStepDegrees", float.PositiveInfinity, out _) && !Ok("HeightShadowSunStepDegrees", true, out _)
+            && !Ok("HeightShadowRowsPerFrame", float.NaN, out _) && !Ok("HeightShadowPenumbraDegrees", "1", out _) && !Ok("HeightShadowCrossfadeSeconds", float.NaN, out _)
+            && !Ok("HeightShadowFillWorkers", double.PositiveInfinity, out _) && !Ok("HeightShadowBudgetMs", float.NaN, out _) && !Ok("HeightShadowUnknown", 1, out _);
+
+        string heightPath = path + ".s4c.tres";
+        RingGraphicsQualityController NewController()
+        {
+            var controller = new RingGraphicsQualityController();
+            var sun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true };
+            controller.AddChild(sun);
+            controller.SunLightPath = new NodePath("Sun");
+            tree.Root.AddChild(controller);
+            controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
+            return controller;
+        }
+        RingGraphicsQualityController controller = NewController();
+        var settings = new GameplayShadowDefaults(heightPath);
+        settings.Initialize(controller);
+        int revision0 = controller.HeightShadowRevision;
+        bool defaults = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings() && !controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowL0TexelMeters == 4
+            && controller.EffectiveHeightShadowRangeMeters == 8000 && controller.EffectiveHeightShadowLevels == 2 && controller.EffectiveHeightShadowRowsPerFrame == 64 && controller.EffectiveHeightShadowFillWorkers == 2
+            && Mathf.IsEqualApprox(controller.EffectiveHeightShadowSunStepDegrees, .1f) && Mathf.IsEqualApprox(controller.EffectiveHeightShadowPenumbraDegrees, .5f) && Mathf.IsEqualApprox(controller.EffectiveHeightShadowCrossfadeSeconds, 1f)
+            && Mathf.IsEqualApprox(controller.EffectiveHeightShadowBudgetMs, .15f) && controller.EffectiveHeightShadowStatus.Contains("off");
+        bool set = settings.SetOverride(controller, "HeightShadowEnabled", true) && settings.SetOverride(controller, "HeightShadowL0TexelMeters", 2) && settings.SetOverride(controller, "HeightShadowLevels", 1)
+            && settings.SetOverride(controller, "HeightShadowSunStepDegrees", .25f) && settings.SetOverride(controller, "HeightShadowRowsPerFrame", 128) && settings.SetOverride(controller, "HeightShadowPenumbraDegrees", 1f)
+            && settings.SetOverride(controller, "HeightShadowCrossfadeSeconds", 2f) && settings.SetOverride(controller, "HeightShadowFillWorkers", 3) && settings.SetOverride(controller, "HeightShadowBudgetMs", .4f)
+            && !settings.SetOverride(controller, "HeightShadowL0TexelMeters", 5) && !settings.SetOverride(controller, "HeightShadowEnabled", 1);
+        RingHeightShadowSettings applied = controller.ResolveHeightShadowSettings();
+        bool appliedOk = set && controller.HeightShadowRevision > revision0 && applied.Enabled && applied.L0TexelMeters == 2 && applied.RangeMeters == 4000 && applied.Level1TexelMeters == 8 && applied.Levels == 1
+            && Mathf.IsEqualApprox(applied.SunStepDegrees, .25f) && applied.RowsPerFrame == 128 && Mathf.IsEqualApprox(applied.PenumbraDegrees, 1f) && Mathf.IsEqualApprox(applied.CrossfadeSeconds, 2f) && applied.FillWorkers == 3
+            && Mathf.IsEqualApprox(applied.BudgetMs, .4f) && controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowStatus.Contains("starting");
+        bool exclusive = settings.SetOverride(controller, "HeightShadowRangeMeters", 16000)
+            && !settings.Settings.Overrides.ContainsKey("HeightShadowL0TexelMeters") && controller.EffectiveHeightShadowL0TexelMeters == 8 && controller.EffectiveHeightShadowRangeMeters == 16000
+            && settings.SetOverride(controller, "HeightShadowL0TexelMeters", 4) && !settings.Settings.Overrides.ContainsKey("HeightShadowRangeMeters") && controller.EffectiveHeightShadowRangeMeters == 8000
+            && controller.SetShadowTuningOverride("HeightShadowRangeMeters", 4000) && controller.EffectiveHeightShadowL0TexelMeters == 2
+            && controller.SetShadowTuningOverride("HeightShadowL0TexelMeters", 8) && controller.EffectiveHeightShadowRangeMeters == 16000;
+        settings.SetOverride(controller, "HeightShadowL0TexelMeters", 2);
+        bool saved = settings.Save();
+        RingGraphicsQualityController reloaded = NewController();
+        new GameplayShadowDefaults(heightPath).Initialize(reloaded);
+        bool roundTrip = saved && reloaded.ResolveHeightShadowSettings() == controller.ResolveHeightShadowSettings() && reloaded.EffectiveHeightShadowEnabled && reloaded.EffectiveHeightShadowL0TexelMeters == 2;
+
+        // An old file (no height keys) loads with the feature off and every other override intact; invalid height values in a file are dropped.
+        var oldFile = new GameplayShadowDefaults(heightPath);
+        oldFile.Settings.Overrides["Split1"] = .18f;
+        oldFile.Settings.Overrides["HeightShadowL0TexelMeters"] = 3;
+        oldFile.Settings.Overrides["HeightShadowEnabled"] = 1;
+        bool oldSaved = ResourceSaver.Save(oldFile.Settings, heightPath) == Error.Ok;
+        RingGraphicsQualityController old = NewController();
+        var oldLoaded = new GameplayShadowDefaults(heightPath);
+        oldLoaded.Initialize(old);
+        bool oldFileOk = oldSaved && oldLoaded.Settings.Overrides.ContainsKey("Split1") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowL0TexelMeters") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowEnabled")
+            && old.ResolveHeightShadowSettings() == new RingHeightShadowSettings();
+        settings.Reset(controller);
+        bool reset = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings() && !controller.EffectiveHeightShadowEnabled;
+        foreach (RingGraphicsQualityController extra in new[] { controller, reloaded, old })
+        {
+            tree.Root.RemoveChild(extra);
+            extra.Free();
+        }
+        try { System.IO.File.Delete(ProjectSettings.GlobalizePath(heightPath)); } catch (System.Exception) { }
+        bool pass = valid && rejected && defaults && set && appliedOk && exclusive && roundTrip && oldFileOk && reset;
+        return (pass, $"heightShadow={pass}[{valid}/{rejected}/{defaults}/{set}/{appliedOk}/{exclusive}/{roundTrip}/{oldFileOk}/{reset}]");
+    }
+}

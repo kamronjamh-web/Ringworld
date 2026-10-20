@@ -32,6 +32,8 @@ public sealed class RingHeightShadowClipmap
     public int Width { get; }
     public int Level0TexelMeters { get; private set; }
     public RingHeightShadowLevel[] Levels { get; } = { new(), new() };
+    /// <summary>Priority the fill workers run at (S4c: below normal so a full fill never competes with the frame; tests may leave it).</summary>
+    public ThreadPriority WorkerPriority { get; set; } = ThreadPriority.Normal;
 
     public RingHeightShadowClipmap(long circumference, int width, int level0TexelMeters)
     {
@@ -109,13 +111,21 @@ public sealed class RingHeightShadowClipmap
         int next = -1;
         void Work(IHeightShadowSource source)
         {
-            while (true)
+            Thread thread = Thread.CurrentThread;
+            ThreadPriority original = thread.Priority;
+            bool lowered = WorkerPriority != original;
+            if (lowered) { try { thread.Priority = WorkerPriority; } catch (Exception) { lowered = false; } }
+            try
             {
-                int index = Interlocked.Increment(ref next);
-                if (index >= tiles.Count) return;
-                ct.ThrowIfCancellationRequested();
-                FillTile(state, tiles[index].Rect, source);
+                while (true)
+                {
+                    int index = Interlocked.Increment(ref next);
+                    if (index >= tiles.Count) return;
+                    ct.ThrowIfCancellationRequested();
+                    FillTile(state, tiles[index].Rect, source);
+                }
             }
+            finally { if (lowered) { try { thread.Priority = original; } catch (Exception) { } } }
         }
         if (sources.Length == 1 || tiles.Count < 2) Work(sources[0]);
         else

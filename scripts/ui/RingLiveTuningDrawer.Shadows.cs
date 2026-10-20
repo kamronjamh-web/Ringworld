@@ -1,4 +1,5 @@
 using Godot;
+using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Voxel.LOD;
 namespace RingworldTechDemo.UI;
 public partial class RingLiveTuningDrawer
@@ -15,6 +16,10 @@ public partial class RingLiveTuningDrawer
     private CheckButton? _planetShadowsEnabled;
     private CheckButton? _terrainMacroShadowEnabled;
     private CheckButton? _terrainMacroWallShadowsEnabled;
+    private CheckButton? _heightShadowEnabled, _heightShadowOverlayToggle;
+    private Label? _heightShadowStatus;
+    private RingHeightShadowOverlay? _heightShadowOverlay;
+    private OptionButton? _heightShadowOverlayMode;
     private CheckButton? _sunStabilizationEnabled;
     private CheckButton? _pauseDayNight;
     private string? _shadowDefaultsPathOverride;
@@ -54,6 +59,7 @@ public partial class RingLiveTuningDrawer
         AddShadowSpinBox(terrainMacro, "TerrainMacroMaxTraceMeters", "Maximum trace distance (m)", 4000, 320000, 1000, _shadowGraphics?.EffectiveTerrainMacroShadowMaxTraceMeters ?? 96000);
         AddShadowSpinBox(terrainMacro, "TerrainMacroFadeStartMeters", "Macro handoff near (m)", 0, 50000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeStartMeters ?? 3200);
         AddShadowSpinBox(terrainMacro, "TerrainMacroFadeEndMeters", "Macro handoff far (m)", 100, 60000, 100, _shadowGraphics?.EffectiveTerrainMacroShadowFadeEndMeters ?? 6500);
+        BuildHeightShadowControls(tab);
         VBoxContainer cascades = TuningMenuUi.CreateSection(tab, "Cascade coverage");
         AddShadowSpinBox(cascades, "NearCascadeMeters", "Near cascade distance (m)", RingGraphicsQualityController.MinimumNearCascadeMeters, RingGraphicsQualityController.MaximumNearCascadeMeters, 1, _shadowGraphics?.EffectiveNearCascadeMeters ?? RingGraphicsQualityController.DefaultNearCascadeMeters,
             "Focuses near shadow coverage, up to 40% of the shadow range. The requested distance is kept across presets.");
@@ -96,6 +102,55 @@ public partial class RingLiveTuningDrawer
         debug.AddChild(new Label { Text = "Shows one sun-shadow term as white (lit) to black (shadowed) on shadow-receiving surfaces. Saved with the other shadow settings.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
         var row = new HBoxContainer(); var save = new Button { Name="ShadowSaveNow", Text="Save shadows", SizeFlagsHorizontal=Control.SizeFlags.ExpandFill }; save.Pressed += () => FlushShadowDefaults(); row.AddChild(save); var reset = new Button { Name="ShadowResetDefaults", Text="Reset shadow overrides", SizeFlagsHorizontal=Control.SizeFlags.ExpandFill }; reset.Pressed += () => { _shadowDefaults.Reset(_shadowGraphics); _shadowSaveDelay=0; FlushShadowDefaults(); RefreshShadowControls(); }; row.AddChild(reset); tab.AddChild(row);
         _shadowStatus = new Label { Name="ShadowRuntimeStatus", AutowrapMode=TextServer.AutowrapMode.WordSmart, Modulate=RingUiStyle.Muted }; tab.AddChild(_shadowStatus); UpdateShadowStatus();
+    }
+    private void BuildHeightShadowControls(VBoxContainer tab)
+    {
+        VBoxContainer height = TuningMenuUi.CreateSection(tab, "Terrain height shadows");
+        _heightShadowEnabled = new CheckButton { Name = "HeightShadowEnabled", Text = "Enable terrain height shadows", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowEnabled ?? false, Disabled = _shadowGraphics == null,
+            TooltipText = "Builds a sliced GPU shadow-line height map around the camera (two levels, ring-curvature aware). It is only produced for now; surfaces do not read it yet." };
+        _heightShadowEnabled.Toggled += value => SetShadowValue("HeightShadowEnabled", value);
+        height.AddChild(_heightShadowEnabled);
+        AddShadowOption(height, "HeightShadowL0TexelMeters", "Detail / range", new[] { "2 m texels, 4 km range", "4 m texels, 8 km range", "8 m texels, 16 km range" }, new[] { 2, 4, 8 }, _shadowGraphics?.EffectiveHeightShadowL0TexelMeters ?? 4);
+        AddShadowOption(height, "HeightShadowLevels", "Levels", new[] { "1 (near only)", "2 (near + far)" }, new[] { 1, 2 }, _shadowGraphics?.EffectiveHeightShadowLevels ?? 2);
+        AddShadowSlider(height, "HeightShadowSunStepDegrees", "Sun step (degrees)", .02, .5, .01, _shadowGraphics?.EffectiveHeightShadowSunStepDegrees ?? .1,
+            "Rebuild after the light moved this far. Low sun moves shadow tips hundreds of metres per 0.1 degree; the crossfade hides the jump.");
+        AddShadowSpinBox(height, "HeightShadowRowsPerFrame", "Rows per frame (max)", 16, 1024, 16, _shadowGraphics?.EffectiveHeightShadowRowsPerFrame ?? 64,
+            "Upper bound of the sliced build; a full build is 2048 rows. The GPU budget below can lower it automatically at low sun.");
+        AddShadowSlider(height, "HeightShadowBudgetMs", "GPU budget per frame (ms)", .05, 2, .05, _shadowGraphics?.EffectiveHeightShadowBudgetMs ?? .15,
+            "The build shrinks its slices until their measured GPU time fits this budget (the build then spans more frames).");
+        AddShadowSlider(height, "HeightShadowPenumbraDegrees", "Penumbra softness (degrees)", 0, 2, .05, _shadowGraphics?.EffectiveHeightShadowPenumbraDegrees ?? .5);
+        AddShadowSlider(height, "HeightShadowCrossfadeSeconds", "Crossfade (seconds)", 0, 3, .1, _shadowGraphics?.EffectiveHeightShadowCrossfadeSeconds ?? 1);
+        AddShadowSpinBox(height, "HeightShadowFillWorkers", "Height fill workers", 1, 4, 1, _shadowGraphics?.EffectiveHeightShadowFillWorkers ?? 2, "Advanced: background threads that sample terrain heights after a move or teleport (low priority).");
+        _heightShadowStatus = new Label { Name = "HeightShadowStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
+        height.AddChild(_heightShadowStatus);
+        _heightShadowOverlayToggle = new CheckButton { Name = "HeightShadowOverlayToggle", Text = "Height shadow overlay (not saved)", ButtonPressed = _heightShadowOverlay != null, TooltipText = "Top-down 256 px debug view of the published height-shadow globals around the camera." };
+        _heightShadowOverlayToggle.Toggled += SetHeightShadowOverlay;
+        height.AddChild(_heightShadowOverlayToggle);
+        _heightShadowOverlayMode = new OptionButton { Name = "HeightShadowOverlayMode", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        for (int i = 0; i < RingHeightShadowOverlay.ModeNames.Length; i++) _heightShadowOverlayMode.AddItem(RingHeightShadowOverlay.ModeNames[i], i);
+        _heightShadowOverlayMode.ItemSelected += index => { if (_heightShadowOverlay != null) _heightShadowOverlay.Mode = _heightShadowOverlayMode.GetItemId((int)index); };
+        height.AddChild(_heightShadowOverlayMode);
+        UpdateHeightShadowStatus();
+    }
+    private void SetHeightShadowOverlay(bool on)
+    {
+        if (on && _heightShadowOverlay == null && _heightShadowOverlayToggle?.GetParent() is Node parent)
+        {
+            _heightShadowOverlay = new RingHeightShadowOverlay { Mode = _heightShadowOverlayMode?.GetSelectedId() ?? 0 };
+            parent.AddChild(_heightShadowOverlay);
+            RingTerrainHeightShadow.Instance?.RequestUnresolvedStats();
+        }
+        else if (!on && _heightShadowOverlay != null)
+        {
+            _heightShadowOverlay.QueueFree();
+            _heightShadowOverlay = null;
+        }
+    }
+    private void UpdateHeightShadowStatus()
+    {
+        if (_heightShadowStatus == null || _shadowGraphics == null) return;
+        if (_shadowGraphics.EffectiveHeightShadowEnabled && _open) RingTerrainHeightShadow.Instance?.RequestUnresolvedStats();
+        _heightShadowStatus.Text = _shadowGraphics.EffectiveHeightShadowStatus;
     }
     private HSlider AddShadowSlider(VBoxContainer parent, string key, string label, double min, double max, double step, double initial, string tooltip = "")
     {
@@ -219,6 +274,15 @@ public partial class RingLiveTuningDrawer
         SetOption("PlanetCascadeCount", _shadowGraphics.EffectivePlanetCascadeCount);
         _planetShadowsEnabled?.SetPressedNoSignal(_shadowGraphics.EffectivePlanetShadowsEnabled);
         SetRange("NearCascadeMeters", _shadowGraphics.EffectiveNearCascadeMeters);
+        _heightShadowEnabled?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowEnabled);
+        SetOption("HeightShadowL0TexelMeters", _shadowGraphics.EffectiveHeightShadowL0TexelMeters);
+        SetOption("HeightShadowLevels", _shadowGraphics.EffectiveHeightShadowLevels);
+        SetRange("HeightShadowSunStepDegrees", _shadowGraphics.EffectiveHeightShadowSunStepDegrees);
+        SetRange("HeightShadowRowsPerFrame", _shadowGraphics.EffectiveHeightShadowRowsPerFrame);
+        SetRange("HeightShadowBudgetMs", _shadowGraphics.EffectiveHeightShadowBudgetMs);
+        SetRange("HeightShadowPenumbraDegrees", _shadowGraphics.EffectiveHeightShadowPenumbraDegrees);
+        SetRange("HeightShadowCrossfadeSeconds", _shadowGraphics.EffectiveHeightShadowCrossfadeSeconds);
+        SetRange("HeightShadowFillWorkers", _shadowGraphics.EffectiveHeightShadowFillWorkers);
         SetRange("TerrainMacroStrength", _shadowGraphics.EffectiveTerrainMacroShadowStrength);
         SetRange("TerrainMacroTraceSteps", _shadowGraphics.EffectiveTerrainMacroShadowTraceSteps);
         SetRange("TerrainMacroMaxTraceMeters", _shadowGraphics.EffectiveTerrainMacroShadowMaxTraceMeters);
@@ -231,6 +295,7 @@ public partial class RingLiveTuningDrawer
         if (_shadowOptions.TryGetValue("AtlasSize", out OptionButton? atlas))
             UpdateShadowAtlasOptionPresentation(atlas, _shadowGraphics.EffectiveDirectionalShadowDepthBits, _shadowGraphics.DirectionalShadowAtlasHardwareLimit, _shadowGraphics.DirectionalShadowAtlasLimitIsUnverified);
         UpdateShadowStatus();
+        UpdateHeightShadowStatus();
     }
     private void SetRange(string key,float value) { if (_shadowRanges.TryGetValue(key,out Range? range)) range.SetValueNoSignal(value); if (_shadowValueLabels.TryGetValue(key,out Label? label)) label.Text=value.ToString("0.###"); }
     private void SetOption(string key,int value) { if (_shadowOptions.TryGetValue(key,out OptionButton? option)) SetOptionSelection(option, value); }

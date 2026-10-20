@@ -10,7 +10,9 @@ namespace RingworldTechDemo.Shadows;
 /// scatter passes fed by one &lt;= 256 KB staging buffer; the mip chain is rebuilt after any upload of a level. The compute shaders compile at runtime from
 /// RDShaderSource (RingAtmosphereLuts pattern, no .glsl import). All methods must run on the thread that owns <see cref="RenderingDevice"/>
 /// (the render thread in production; tests pass a local device and Submit/Sync themselves). S4b adds the march / build pass (ring_height_shadow_build.comp,
-/// whole-level or row-range dispatch) writing a plain RG16F texture per level; slicing, the 3-layer array publish and the globals are S4c.
+/// whole-level or row-range dispatch) writing a plain RG16F texture per level. S4c: <c>outputLayers</c> = 3 makes the output a Texture2DArray per level
+/// (front / previous / build roles owned by RingTerrainHeightShadow) with one shared slice view per layer for the storage-image binding; slicing, the
+/// layer rotation and the globals live in the scheduler node.
 /// </summary>
 public sealed class RingTerrainHeightShadowGpu : IDisposable
 {
@@ -20,25 +22,31 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
     private const int BuildParamBytes = 96;
     private readonly RenderingDevice _rd;
     private readonly int _levels;
+    private readonly int _layers;
     private Rid _scatterShader, _scatterPipeline, _mipsShader, _mipsPipeline, _staging, _buildShader, _buildPipeline, _buildParams;
-    private readonly Rid[] _heightBuffers, _mipBuffers, _scatterSets, _mipSets, _outputTextures, _buildSets;
+    private readonly Rid[] _heightBuffers, _mipBuffers, _scatterSets, _mipSets, _outputTextures, _buildSets, _layerViews;
     private byte[]? _chunkBytes;
     private bool _initialized;
 
     public string Error { get; private set; } = "";
     public bool Ready => _initialized && Error.Length == 0;
 
-    public RingTerrainHeightShadowGpu(RenderingDevice rd, int levels = RingHeightShadowClipmap.LevelCount)
+    public RingTerrainHeightShadowGpu(RenderingDevice rd, int levels = RingHeightShadowClipmap.LevelCount, int outputLayers = 1)
     {
-        _rd = rd; _levels = levels;
+        _rd = rd; _levels = levels; _layers = Math.Max(1, outputLayers);
+        _layerViews = new Rid[levels * _layers];
         _heightBuffers = new Rid[levels]; _mipBuffers = new Rid[levels]; _scatterSets = new Rid[levels]; _mipSets = new Rid[levels];
-        _outputTextures = new Rid[levels]; _buildSets = new Rid[levels];
+        _outputTextures = new Rid[levels]; _buildSets = new Rid[levels * _layers];
     }
+
+    public int OutputLayers => _layers;
 
     public Rid HeightBuffer(int level) => _heightBuffers[level];
     public Rid MipBuffer(int level) => _mipBuffers[level];
     /// <summary>RG16F slot-space output of the last build of a level: R = shadow-line height H - T0, G = blocker distance (0 none, negative unresolved).</summary>
     public Rid OutputTexture(int level) => _outputTextures[level];
+    /// <summary>Storage view of one layer of a level's output array (the texture itself when there is a single layer).</summary>
+    public Rid OutputLayerView(int level, int layer) => _layers == 1 ? _outputTextures[level] : _layerViews[level * _layers + layer];
 
     /// <summary>Compiles both shaders and allocates the buffers (about 4.0 + 1.3 MB per level plus 256 KB staging). Returns false and sets <see cref="Error"/> on failure.</summary>
     public bool Initialize()
@@ -71,26 +79,37 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
         {
             var format = new RDTextureFormat
             {
-                Width = (uint)n, Height = (uint)n, Depth = 1, ArrayLayers = 1, Mipmaps = 1, TextureType = RenderingDevice.TextureType.Type2D,
+                Width = (uint)n, Height = (uint)n, Depth = 1, ArrayLayers = (uint)_layers, Mipmaps = 1,
+                TextureType = _layers == 1 ? RenderingDevice.TextureType.Type2D : RenderingDevice.TextureType.Type2DArray,
                 Format = RenderingDevice.DataFormat.R16G16Sfloat,
                 UsageBits = RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit
                             | RenderingDevice.TextureUsageBits.CanUpdateBit,
             };
             _outputTextures[l] = _rd.TextureCreate(format, new RDTextureView());
             if (!_outputTextures[l].IsValid) return Fail("height shadow output texture allocation failed");
-            var uniforms = new Godot.Collections.Array<RDUniform>();
-            int binding = 0;
-            foreach (Rid rid in new[] { _heightBuffers[0], _mipBuffers[0], _heightBuffers[1], _mipBuffers[1], _buildParams })
+            for (int layer = 0; layer < _layers; layer++)
             {
-                var uniform = new RDUniform { UniformType = RenderingDevice.UniformType.StorageBuffer, Binding = binding++ };
-                uniform.AddId(rid);
-                uniforms.Add(uniform);
+                Rid target = _outputTextures[l];
+                if (_layers > 1)
+                {
+                    target = _rd.TextureCreateSharedFromSlice(new RDTextureView(), _outputTextures[l], (uint)layer, 0, 1, RenderingDevice.TextureSliceType.Slice2D);
+                    _layerViews[l * _layers + layer] = target;
+                    if (!target.IsValid) return Fail("height shadow output layer view creation failed");
+                }
+                var uniforms = new Godot.Collections.Array<RDUniform>();
+                int binding = 0;
+                foreach (Rid rid in new[] { _heightBuffers[0], _mipBuffers[0], _heightBuffers[1], _mipBuffers[1], _buildParams })
+                {
+                    var uniform = new RDUniform { UniformType = RenderingDevice.UniformType.StorageBuffer, Binding = binding++ };
+                    uniform.AddId(rid);
+                    uniforms.Add(uniform);
+                }
+                var image = new RDUniform { UniformType = RenderingDevice.UniformType.Image, Binding = binding };
+                image.AddId(target);
+                uniforms.Add(image);
+                _buildSets[l * _layers + layer] = _rd.UniformSetCreate(uniforms, _buildShader, 0);
+                if (!_buildSets[l * _layers + layer].IsValid) return Fail("height shadow build uniform set creation failed");
             }
-            var image = new RDUniform { UniformType = RenderingDevice.UniformType.Image, Binding = binding };
-            image.AddId(_outputTextures[l]);
-            uniforms.Add(image);
-            _buildSets[l] = _rd.UniformSetCreate(uniforms, _buildShader, 0);
-            if (!_buildSets[l].IsValid) return Fail("height shadow build uniform set creation failed");
         }
         return true;
     }
@@ -232,26 +251,26 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
         _rd.BufferUpdate(_buildParams, 0, BuildParamBytes, bytes);
     }
 
-    /// <summary>Dispatches the march for rows [rowStart, rowStart + rowCount) of a level's window (window-relative rows; the whole level is 0..N).</summary>
-    public void DispatchBuild(int level, int rowStart = 0, int rowCount = RingHeightShadowLattice.TextureSize)
+    /// <summary>Dispatches the march for rows [rowStart, rowStart + rowCount) of a level's window (window-relative rows; the whole level is 0..N) into one output layer.</summary>
+    public void DispatchBuild(int level, int rowStart = 0, int rowCount = RingHeightShadowLattice.TextureSize, int layer = 0)
     {
-        if (!Ready || rowCount <= 0) return;
+        if (!Ready || rowCount <= 0 || layer < 0 || layer >= _layers) return;
         var push = new byte[16];
         BitConverter.GetBytes((uint)level).CopyTo(push, 0);
         BitConverter.GetBytes((uint)rowStart).CopyTo(push, 4);
         BitConverter.GetBytes((uint)rowCount).CopyTo(push, 8);
         long list = _rd.ComputeListBegin();
         _rd.ComputeListBindComputePipeline(list, _buildPipeline);
-        _rd.ComputeListBindUniformSet(list, _buildSets[level], 0);
+        _rd.ComputeListBindUniformSet(list, _buildSets[level * _layers + layer], 0);
         _rd.ComputeListSetPushConstant(list, push, 16);
         _rd.ComputeListDispatch(list, (uint)(RingHeightShadowLattice.TextureSize / 8), (uint)((rowCount + 7) / 8), 1);
         _rd.ComputeListEnd();
     }
 
     /// <summary>Blocking readback of a level's build output as (R, G) per slot texel, row-major (tests; on a local device Submit and Sync first).</summary>
-    public (float[] R, float[] G) ReadBuildOutput(int level)
+    public (float[] R, float[] G) ReadBuildOutput(int level, int layer = 0)
     {
-        byte[] bytes = _rd.TextureGetData(_outputTextures[level], 0);
+        byte[] bytes = _rd.TextureGetData(_outputTextures[level], (uint)layer);
         int count = bytes.Length / 4;
         var r = new float[count];
         var g = new float[count];
@@ -276,7 +295,7 @@ public sealed class RingTerrainHeightShadowGpu : IDisposable
 
     public void Dispose()
     {
-        foreach (Rid[] group in new[] { _buildSets, _scatterSets, _mipSets, _outputTextures, _heightBuffers, _mipBuffers })
+        foreach (Rid[] group in new[] { _buildSets, _scatterSets, _mipSets, _layerViews, _outputTextures, _heightBuffers, _mipBuffers })
             for (int i = 0; i < group.Length; i++)
             {
                 if (group[i].IsValid) _rd.FreeRid(group[i]);

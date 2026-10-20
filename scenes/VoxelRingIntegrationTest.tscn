@@ -37,6 +37,7 @@
 [ext_resource type="CompositorEffect" uid="uid://di5bbolw4gmy" path="res://resources/clouds/sunshine_ring_local.tres" id="35"]
 [ext_resource type="Script" uid="uid://c3lgd3me5trln" path="res://scripts/RingSunshineCloudBridge.cs" id="36"]
 [ext_resource type="Script" path="res://scripts/RingTerrainCloudSunVisibility.cs" id="terrain_cloud_sun"]
+[ext_resource type="Script" path="res://scripts/Shadows/RingTerrainHeightShadow.cs" id="terrain_height_shadow"]
 [ext_resource type="Script" uid="uid://dldopq76731f8" path="res://scripts/Voxel/LOD/RingTerrainCoarseSdfPilot.cs" id="37"]
 [ext_resource type="Script" uid="uid://cqkmuatyta2xh" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="38"]
 [ext_resource type="Resource" path="res://resources/voxel/ring_lod_mega_regional.tres" id="39"]
@@ -623,6 +624,15 @@ GridPath = NodePath("../ChunkGridManager")
 GlobalLodPath = NodePath("../GlobalTerrainLod3")
 FocusPath = NodePath("../Explorer")
 SunLightPath = NodePath("../StarLight")
+
+[node name="TerrainHeightShadow" type="Node" parent="."]
+script = ExtResource("terrain_height_shadow")
+GridPath = NodePath("../ChunkGridManager")
+GlobalLodPath = NodePath("../GlobalTerrainLod3")
+FocusPath = NodePath("../Explorer")
+SunLightPath = NodePath("../StarLight")
+PlanetLightPath = NodePath("../PlanetLight")
+GraphicsPath = NodePath("../GraphicsQuality")
 
 [node name="CloudProviderController" type="Node" parent="."]
 script = ExtResource("52_cloud_provider")

@@ -3,6 +3,7 @@ using System.Linq;
 using Godot;
 using RingworldTechDemo.Celestial.Eclipse;
 using RingworldTechDemo.Poi;
+using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Underground;
@@ -299,4 +300,15 @@ internal sealed class ShadowParticipant : UndergroundParticipant
     public override void Apply(in UndergroundParticipantState state) { if (_graphics != null && GodotObject.IsInstanceValid(_graphics)) _graphics.UndergroundShadowSuspended = state.ShadowSuspend; }
     public override string Describe() => _graphics == null ? "absent" : $"shadowSuspendRequested={_graphics.UndergroundShadowSuspended}";
     public override ulong[] RetainedInstanceIds() => new[] { IdOf(_graphics) };
+}
+
+internal sealed class HeightShadowParticipant : UndergroundParticipant
+{
+    private RingTerrainHeightShadow? _heightShadow;
+    public override string Name => "TerrainHeightShadow";
+    public override UndergroundGroups Group => UndergroundGroups.Shadows;
+    public override void Bind(Node root) { _heightShadow = Find<RingTerrainHeightShadow>(root, "TerrainHeightShadow"); Present = _heightShadow != null; }
+    public override void Apply(in UndergroundParticipantState state) { if (_heightShadow != null && GodotObject.IsInstanceValid(_heightShadow)) _heightShadow.UndergroundHold = state.ShadowSuspend; }
+    public override string Describe() => _heightShadow == null ? "absent" : $"hold={_heightShadow.UndergroundHold}";
+    public override ulong[] RetainedInstanceIds() => new[] { IdOf(_heightShadow) };
 }

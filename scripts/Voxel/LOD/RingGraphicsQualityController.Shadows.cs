@@ -1,5 +1,6 @@
 using Godot;
 using System.Collections.Generic;
+using RingworldTechDemo.Shadows;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
@@ -67,6 +68,46 @@ public partial class RingGraphicsQualityController
     public int EffectiveTerrainMacroShadowTraceSteps => _globalLod?.MacroTerrainShadowTraceSteps ?? 1;
     public float EffectiveTerrainMacroShadowMaxTraceMeters => _globalLod?.MacroTerrainShadowMaxTraceMeters ?? 0.0f;
 
+    /// <summary>Incremented whenever the override set changes; the height shadow node re-reads its settings when this moves.</summary>
+    public int HeightShadowRevision { get; private set; }
+
+    /// <summary>Height-shadow settings from the validated overrides (defaults for absent keys). HeightShadowL0TexelMeters and HeightShadowRangeMeters are two views of one choice: the last one set wins.</summary>
+    public RingHeightShadowSettings ResolveHeightShadowSettings()
+    {
+        Dictionary<string, Variant> o = _shadowTuningOverrides;
+        int texel = RingHeightShadowSettings.DefaultL0TexelMeters;
+        if (o.TryGetValue("HeightShadowL0TexelMeters", out Variant texelValue)) texel = texelValue.AsInt32();
+        else if (o.TryGetValue("HeightShadowRangeMeters", out Variant rangeValue))
+        {
+            int fromRange = RingHeightShadowSettings.TexelForRange(rangeValue.AsInt32());
+            if (fromRange > 0) texel = fromRange;
+        }
+        return new RingHeightShadowSettings
+        {
+            Enabled = o.TryGetValue("HeightShadowEnabled", out Variant enabled) && enabled.AsBool(),
+            L0TexelMeters = texel,
+            Levels = o.TryGetValue("HeightShadowLevels", out Variant levels) ? levels.AsInt32() : RingHeightShadowSettings.DefaultLevels,
+            SunStepDegrees = o.TryGetValue("HeightShadowSunStepDegrees", out Variant step) ? step.AsSingle() : RingHeightShadowSettings.DefaultSunStepDegrees,
+            RowsPerFrame = o.TryGetValue("HeightShadowRowsPerFrame", out Variant rows) ? rows.AsInt32() : RingHeightShadowSettings.DefaultRowsPerFrame,
+            PenumbraDegrees = o.TryGetValue("HeightShadowPenumbraDegrees", out Variant penumbra) ? penumbra.AsSingle() : RingHeightShadowSettings.DefaultPenumbraDegrees,
+            CrossfadeSeconds = o.TryGetValue("HeightShadowCrossfadeSeconds", out Variant crossfade) ? crossfade.AsSingle() : RingHeightShadowSettings.DefaultCrossfadeSeconds,
+            FillWorkers = o.TryGetValue("HeightShadowFillWorkers", out Variant workers) ? workers.AsInt32() : RingHeightShadowSettings.DefaultFillWorkers,
+            BudgetMs = o.TryGetValue("HeightShadowBudgetMs", out Variant budget) ? budget.AsSingle() : RingHeightShadowSettings.DefaultBudgetMs,
+        }.Normalized();
+    }
+    public bool EffectiveHeightShadowEnabled => ResolveHeightShadowSettings().Enabled;
+    public int EffectiveHeightShadowL0TexelMeters => ResolveHeightShadowSettings().L0TexelMeters;
+    public int EffectiveHeightShadowRangeMeters => ResolveHeightShadowSettings().RangeMeters;
+    public int EffectiveHeightShadowLevels => ResolveHeightShadowSettings().Levels;
+    public float EffectiveHeightShadowSunStepDegrees => ResolveHeightShadowSettings().SunStepDegrees;
+    public int EffectiveHeightShadowRowsPerFrame => ResolveHeightShadowSettings().RowsPerFrame;
+    public float EffectiveHeightShadowPenumbraDegrees => ResolveHeightShadowSettings().PenumbraDegrees;
+    public float EffectiveHeightShadowCrossfadeSeconds => ResolveHeightShadowSettings().CrossfadeSeconds;
+    public int EffectiveHeightShadowFillWorkers => ResolveHeightShadowSettings().FillWorkers;
+    public float EffectiveHeightShadowBudgetMs => ResolveHeightShadowSettings().BudgetMs;
+    public string EffectiveHeightShadowStatus => RingTerrainHeightShadow.Instance is { } node && GodotObject.IsInstanceValid(node) ? node.GetStatusText()
+        : ResolveHeightShadowSettings().Enabled ? "Height shadows: starting." : "Height shadows: off.";
+
     public void SetShadowTuningOverrides(Godot.Collections.Dictionary overrides)
     {
         _shadowTuningOverrides.Clear();
@@ -82,6 +123,8 @@ public partial class RingGraphicsQualityController
         if (!TryValidateSupportedShadowOverride(key, value, out Variant clean)) return false;
         if (key == "NearCascadeMeters") _shadowTuningOverrides.Remove("Split1");
         else if (key == "Split1") _shadowTuningOverrides.Remove("NearCascadeMeters");
+        else if (key == "HeightShadowL0TexelMeters") _shadowTuningOverrides.Remove("HeightShadowRangeMeters");
+        else if (key == "HeightShadowRangeMeters") _shadowTuningOverrides.Remove("HeightShadowL0TexelMeters");
         _shadowTuningOverrides[key] = clean;
         ApplyShadowTuningOverrides();
         ApplyTerrainMacroShadowOverrides();
@@ -156,6 +199,7 @@ public partial class RingGraphicsQualityController
 
     private void ApplyShadowTuningOverrides()
     {
+        HeightShadowRevision++;
         Tuning profile = ResolveTuning(CurrentPreset);
         int atlas = _shadowTuningOverrides.TryGetValue("AtlasSize", out Variant atlasValue) ? atlasValue.AsInt32() : profile.ShadowAtlasSize;
         int depthBits = _shadowTuningOverrides.TryGetValue("DepthBits", out Variant depthValue) ? depthValue.AsInt32() : 16;
@@ -353,6 +397,14 @@ public partial class RingGraphicsQualityController
     {
         clean = default;
         if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled" || key == "LocalShadowHandoffEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key == "HeightShadowEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if ((key == "HeightShadowL0TexelMeters" || key == "HeightShadowRangeMeters" || key == "HeightShadowLevels") && value.VariantType is Variant.Type.Int or Variant.Type.Float)
+        {
+            double raw = value.AsDouble();
+            bool member = key switch { "HeightShadowL0TexelMeters" => raw is 2.0 or 4.0 or 8.0, "HeightShadowRangeMeters" => raw is 4000.0 or 8000.0 or 16000.0, _ => raw is 1.0 or 2.0 };
+            if (!member) return false;
+            clean = (int)raw; return true;
+        }
         if (key == "SunStabilizationEnabled" || key == "PlanetShadowsEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if (key == "AtlasSize" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { double raw = value.AsDouble(); if (!double.IsFinite(raw) || raw != System.Math.Truncate(raw) || raw < int.MinValue || raw > int.MaxValue) return false; int v = (int)raw; if (IsDirectionalShadowAtlasSize(v)) { clean = v; return true; } return false; }
@@ -365,10 +417,11 @@ public partial class RingGraphicsQualityController
         if (key == "Filter" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
-        (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), "MaxDistanceMeters" => (MinimumShadowDistanceMeters, MaximumShadowDistanceMeters), "PlanetShadowDistanceMeters" => (MinimumPlanetShadowDistanceMeters, MaximumPlanetShadowDistanceMeters), _ => (1, 0) };
+        (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), "MaxDistanceMeters" => (MinimumShadowDistanceMeters, MaximumShadowDistanceMeters), "PlanetShadowDistanceMeters" => (MinimumPlanetShadowDistanceMeters, MaximumPlanetShadowDistanceMeters),
+            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2), _ => (1, 0) };
         if (min > max) return false;
         float clamped = Mathf.Clamp(value.AsSingle(), min, max);
-        if (key == "TerrainMacroTraceSteps") clean = Mathf.RoundToInt(clamped); else clean = clamped;
+        if (key is "TerrainMacroTraceSteps" or "HeightShadowRowsPerFrame" or "HeightShadowFillWorkers") clean = Mathf.RoundToInt(clamped); else clean = clamped;
         return true;
     }
 }
