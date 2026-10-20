@@ -13,6 +13,7 @@ public partial class RingGraphicsQualityController
     private const float MinimumSunShadowElevationDegrees = -45.0f;
     private const float MaximumSunShadowElevationDegrees = -1.0f;
     private const float MinimumShadowHandoffHysteresisDegrees = .1f;
+    private const float SunShadowLightingCutoffHysteresisDegrees = 1.0f;
     private RingVoxelExplorerController? _localShadowExplorer;
     private bool _localSunShadowSuspended;
     private string _localShadowHandoffReason = "waiting for shadow tuning";
@@ -129,10 +130,9 @@ public partial class RingGraphicsQualityController
         else
         {
             _maxLocalSunElevationDegrees = elevation;
-            if (_localSunShadowSuspended)
-                suspend = elevation < _effectiveSunShadowOnElevationDegrees;
-            else
-                suspend = elevation <= _effectiveSunShadowOffElevationDegrees;
+            suspend = NextSunShadowSuspended(_localSunShadowSuspended, elevation, _effectiveSunShadowOffElevationDegrees, _effectiveSunShadowOnElevationDegrees);
+            // The hub event re-aims the StarLight toward the zenith (elevation above already reads the live light basis); never suspend while it is active.
+            if (suspend && RingworldTechDemo.Celestial.Eclipse.EclipseHubLighting.Weight > 0f) suspend = false;
             _localShadowHandoffReason = suspend ? "sun safely below local shadow horizon" : "sun at or above local shadow horizon";
         }
         // Eclipse totality (and any other zero-energy sun) lights nothing: skip the shadow pass until the energy returns.
@@ -188,10 +188,22 @@ public partial class RingGraphicsQualityController
         if (float.IsFinite(distance) && distance > 0.0f) coverage = Mathf.Max(coverage, distance);
     }
 
+    internal static bool NextSunShadowSuspended(bool suspended, float maxElevationDegrees, float offDegrees, float onDegrees)
+        => suspended ? maxElevationDegrees < onDegrees : maxElevationDegrees <= offDegrees;
+
+    /// <summary>Default thresholds: suspend where the sun's direct light is zero (asin of the ring day-start dot), wake one degree above.</summary>
+    internal static (float Off, float On) DeriveSunShadowThresholds(float dayStartDot)
+    {
+        float off = Mathf.Clamp(Mathf.RadToDeg(Mathf.Asin(dayStartDot)), MinimumSunShadowElevationDegrees, MaximumSunShadowElevationDegrees);
+        return (off, off + SunShadowLightingCutoffHysteresisDegrees);
+    }
+
     private bool ResolveLocalShadowThresholds()
     {
-        float off = _shadowTuningOverrides.TryGetValue("SunShadowOffElevationDegrees", out Variant offValue) ? offValue.AsSingle() : DefaultSunShadowOffElevationDegrees;
-        float on = _shadowTuningOverrides.TryGetValue("SunShadowOnElevationDegrees", out Variant onValue) ? onValue.AsSingle() : DefaultSunShadowOnElevationDegrees;
+        bool offOverridden = _shadowTuningOverrides.TryGetValue("SunShadowOffElevationDegrees", out Variant offValue);
+        bool onOverridden = _shadowTuningOverrides.TryGetValue("SunShadowOnElevationDegrees", out Variant onValue);
+        float off = offOverridden ? offValue.AsSingle() : DefaultSunShadowOffElevationDegrees;
+        float on = onOverridden ? onValue.AsSingle() : DefaultSunShadowOnElevationDegrees;
         // Resume before the ring's daytime direct lighting can resume, and preserve hysteresis.
         float dayStart = _grid != null && GodotObject.IsInstanceValid(_grid) && _grid.IsInsideTree()
             ? _grid.RingDayStartDot : float.NaN;
@@ -202,6 +214,13 @@ public partial class RingGraphicsQualityController
             return false;
         }
         float lightingWake = Mathf.RadToDeg(Mathf.Asin(dayStart));
+        if (!offOverridden && !onOverridden)
+        {
+            // No explicit thresholds: the sun lights nothing below asin(RingDayStartDot) (max local elevation already includes the receiver bound), so
+            // suspend there and wake one degree above. Setting either override restores the legacy fixed thresholds below (explicit values win).
+            (_effectiveSunShadowOffElevationDegrees, _effectiveSunShadowOnElevationDegrees) = DeriveSunShadowThresholds(dayStart);
+            return true;
+        }
         float latestSafeWake = Mathf.Min(MaximumSunShadowElevationDegrees, lightingWake - .01f);
         if (latestSafeWake < MinimumSunShadowElevationDegrees + MinimumShadowHandoffHysteresisDegrees)
         {

@@ -1,6 +1,26 @@
 # Shadow revamp plan (all shadow and occlusion types)
 
-Status: draft 2026-10-19, plan only. Nothing is implemented. Needs user sign-off on the decisions below before S4.
+Status: S0-S7b implemented on main (2026-10-20). Every new system is OFF by default; nothing changes until the user review below.
+
+## Final handoff and user review list (2026-10-20)
+
+**Commits on main:** S0 9002cb8, S3 21a5e7e, S1 0bc618f, S2 147dc85 (cloud crossfade, ON by default), S4a 1f04462, S4b 5b13f75, S4c 01c86b9, S5a 92c147a, S5b + low-sun partial results 986d87e, S6 5523b39, S7a 46a53fd, S7b 7024888, sun shadow cutoff at the lighting limit (see below). All measurements so far are RTX 4070 desktop (non-authoritative).
+
+**Measured on the 4070 (shadow_attribution_test, 3 rounds, root GPU vs old shadows):** day with heightfield + 400 m near map: -0.9 ms (ground_horizon), -1.1 ms (forest_noon). Night planet high: -0.26 ms. Night planet low (~11 deg) with the 250 m planet near map: +1.4 ms (regression, see below). Contact shadows: +0.12-0.14 ms pass, ~+0.2 ms total.
+
+**Night/twilight handoff findings (lead diagnostic):** (1) Twilight: the sun stops lighting the ring at about -11.5 deg (RingDayStartDot = -0.2) but its shadow map stayed on until -18 deg, rendering alongside the planet map (twilight_overlap: sun map 3.5 ms, planet map 3.0 ms). Fixed by suspending the sun map at the lighting cutoff (user chose this option). (2) Low planet: the 250 m PSSM2 planet near map on the 8192 atlas is fill-bound by grazing alpha-tested tree shadows (~2.1 ms vs ~0.55 ms with the 6 km map), plus ~0.5 ms not yet isolated. NOT fixed; options (user did not pick yet): exclusive shadow ownership state machine (~3-3.5 ms through twilight), planet near map 1000 m PSSM2 (-0.35 to -0.8 ms vs today's near map), cap tree moon-shadow distance and/or 4096 atlas on planet-only nights (-1.5 to -2 ms). Until resolved, consider HeightShadowPlanetNearMapEnabled = false.
+
+**Receiver cost optimization pass:** stopped at the 7 am checkpoint; no clear win on the 4070 (day within noise, low-planet night unchanged). Work in progress preserved as a patch outside the repo (scratchpad receiver_cost_wip: O0 receiver mask + labels, O1 ocean planet gate, O2 textureGather, O3 tile summary, O4/O5 partial). Its attribution: producer ~0.01-0.03 ms; receivers at night_planet_low ~1.3 ms, of which vegetation ~0.3 ms; the low-planet cost is mostly the near-map fill (above), not receiver sampling.
+
+**User testing / review (in this order):**
+1. A1000 authoritative runs (P0 / 35 W, undocked or dock verified): `tools/shadow_attribution_test.gd` (all labels incl. hs_on, hs_near, planet_near, contact_on, veg_shadow_instance/vertex; poses ground_horizon, forest_noon, dawn_5deg, night_planet_lit, night_planet_low, twilight_overlap), `tools/shadow_quality_capture.gd` baseline, `tools/height_shadow_budget_test.gd` (gate <= 0.3 ms avg at low sun). Goldens are machine-specific.
+2. In game, toggle Shadows > "Terrain height shadows" on vs off and review: ground_horizon and dawn/dusk 3/8/15 deg (2-8 km hills), forest_noon and low-sun forest (trees past 480 m now get terrain shadows — decision 6), the 320-400 m near-map edge, emitter rim and bores from afar, coast at dusk, a dug pit at low sun, 1 km and 12 km altitude, eclipse hub and totality, night planet lit/low (debug view 4), teleport fallback (no black frames), main/far handoff flight, a slow pan and a sun-step time-lapse, a large standard-material POI at 1-3 km (loses terrain shadows beyond ~320 m — known regression), and confirm 400 m (decision 1).
+3. Contact shadows (Shadows > Contact shadows): grass shadows read near-black in `.godot/shadow_baseline/rtx4070/contact/forest_noon_side_by_side.png`; decide grass strength / overall strength (decision 5) before enabling by default.
+4. Per-instance vegetation shadows (Shadows > Vegetation shadows): A1000 cost vs per-vertex; decide default. "Unified vegetation shadow composition" is reserved (no effect yet).
+5. Decide the planet near-map fix (options above).
+6. Remaining decisions: 4 (cloud defaults file on the A1000), 6 (distant trees getting terrain shadows), 7 (heightfield AO, S8). S8 items (GPU macro mask, terrain AO, retire analytic far cloud field) each need a go.
+
+**Known test state:** `shadow_settings_smoke_test` `portableHighClamped=False` is intermittent and pre-existing. `cloud_lighting_smoke_test` does not converge at HEAD (pre-existing). `terrain_surface_include_regression` committed goldens are stale since the haze P3b lighting fix; compare against `.godot/s5_before/t3d` locally (passes). Godot runs may delete the tracked `addons/terrain_3d/bin/~libterrain...dll` (restore with `git show HEAD:<path> > <path>`).
 
 ## Handoff (2026-10-19)
 

@@ -65,7 +65,8 @@ public partial class ShadowSettingsSmoke : RefCounted
             && RingGraphicsQualityController.TryValidateShadowOverride("SunShadowOnElevationDegrees", -20f, out Variant handoffOn) && Mathf.IsEqualApprox(handoffOn.AsSingle(), -20f)
             && !RingGraphicsQualityController.TryValidateShadowOverride("LocalShadowHandoffEnabled", 0, out _)
             && !RingGraphicsQualityController.TryValidateShadowOverride("SunShadowOffElevationDegrees", float.NaN, out _)
-            && !RingGraphicsQualityController.TryValidateShadowOverride("SunShadowOnElevationDegrees", float.PositiveInfinity, out _);
+            && !RingGraphicsQualityController.TryValidateShadowOverride("SunShadowOnElevationDegrees", float.PositiveInfinity, out _)
+            && SunShadowCutoffThresholdsHold();
         bool debugModeValidation = true;
         for (int mode = 0; mode <= 5; mode++)
             debugModeValidation &= RingGraphicsQualityController.TryValidateShadowOverride("ShadowDebugMode", mode, out Variant debugMode) && debugMode.AsInt32() == mode;
@@ -340,5 +341,30 @@ public partial class ShadowSettingsSmoke : RefCounted
         globalLod.Free();
         highReloadedController.Free();
         return result;
+    }
+
+    /// <summary>Default sun shadow thresholds follow the lighting cutoff asin(RingDayStartDot): suspend at it, wake 1 degree above, no flapping at +-0.3 degrees.</summary>
+    private static bool SunShadowCutoffThresholdsHold()
+    {
+        (float off, float on) = RingGraphicsQualityController.DeriveSunShadowThresholds(-0.2f);
+        float cutoff = Mathf.RadToDeg(Mathf.Asin(-0.2f));
+        bool ok = Mathf.IsEqualApprox(off, cutoff) && Mathf.IsEqualApprox(on, cutoff + 1f)
+            && RingGraphicsQualityController.NextSunShadowSuspended(false, cutoff, off, on)
+            && !RingGraphicsQualityController.NextSunShadowSuspended(false, cutoff + .3f, off, on)
+            && RingGraphicsQualityController.NextSunShadowSuspended(true, cutoff + 1f - .3f, off, on)
+            && !RingGraphicsQualityController.NextSunShadowSuspended(true, cutoff + 1f, off, on);
+        // Oscillate +-0.3 degrees around each threshold: the state may change at most once per crossing.
+        foreach (float center in new[] { off, on })
+        {
+            bool state = center == off ? false : true; int changes = 0;
+            for (int i = 0; i < 20; i++)
+            {
+                bool next = RingGraphicsQualityController.NextSunShadowSuspended(state, center + (i % 2 == 0 ? .3f : -.3f), off, on);
+                if (next != state) changes++;
+                state = next;
+            }
+            ok &= changes <= 1;
+        }
+        return ok;
     }
 }

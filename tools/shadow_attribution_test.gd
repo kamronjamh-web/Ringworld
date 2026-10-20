@@ -17,6 +17,7 @@ extends SceneTree
 ##   --out=<dir>             output root (default <project>/.godot/shadow_baseline/<machine>/); results go to <out>/attribution/<stamp>/ (report.json + power_log.csv)
 ##   --res=WxH               window size (default 1920x1080, the plan's reference resolution)
 ##   --idle-timeout=S        max wait per pose for zero builds in flight (default 120)
+##   --legacy-thresholds     pin the sun shadow suspend/wake overrides to the old fixed -18/-16 deg (default derives them from the lighting cutoff)
 ##   --no-engine             skip Godot engine timestamps (only RingPerformanceGpu markers + viewport timings)
 ##   --no-power-log          do not spawn nvidia-smi
 ##   --keep-vsync            keep the project's vsync/fps cap (default: vsync off, max_fps 0 for GPU timing)
@@ -166,6 +167,9 @@ func _bind_nodes() -> bool:
 	monitor = game.get_node_or_null("RingPerformanceMonitor")
 	var driver := game.get_node_or_null("SunshineCloudsDriver")
 	clouds_res = driver.get("clouds_resource") if driver != null else null
+	if COMMON.has_flag("--legacy-thresholds") and graphics != null: # before/after for the lighting-cutoff sun shadow handoff: explicit overrides select the old fixed -18/-16 deg
+		graphics.call("SetShadowTuningOverride", "SunShadowOffElevationDegrees", -18.0)
+		graphics.call("SetShadowTuningOverride", "SunShadowOnElevationDegrees", -16.0)
 	for pair in [["Explorer", explorer], ["Terrain3DGameplay", surface], ["StarLight", sun], ["GraphicsQuality", graphics], ["SunshineCloudBridge", cloud_bridge], ["DaySideAtmosphere", atmosphere], ["BiomeDecorations", trees], ["TerrainLodCoordinator", coordinator], ["RingPerformanceMonitor", monitor]]:
 		if pair[1] == null:
 			_fail("required node missing: " + str(pair[0])); return false
