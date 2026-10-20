@@ -27,6 +27,7 @@ uniform float ring_width_meters = 20000.0;
 #include "res://materials/ring_water_common.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
+#include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_far_cloud_field.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 uniform bool analytic_cloud_shadow_enabled = true;
@@ -39,6 +40,8 @@ varying vec3 world_position;
 varying vec3 surface_up_world;
 varying float ring_day_factor;
 varying float water_kind_profile;
+// Both ambient occlusion and the directional-light path consume the same day-gated cloud estimate.
+varying float combined_cloud_shadow_occlusion;
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
 	float distance_to_camera = distance(sample_world_position, camera_world_position);
@@ -128,8 +131,18 @@ void fragment() {
 	// Physical haze also attenuates the environment reflection; exactly 1 in Legacy.
 	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze);
 	METALLIC = 0.0;
-	AO = 1.0 - sample_combined_cloud_shadow(world_position, ring_day_factor) * 0.60;
+	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
+	AO = 1.0 - combined_cloud_shadow_occlusion * 0.60;
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_shadow_debug_enabled()) {
+		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
+		ALBEDO = vec3(1.0);
+		EMISSION = vec3(0.0);
+		AO = 0.0;
+		SPECULAR = 0.0;
+		METALLIC = 0.0;
+		ROUGHNESS = 1.0;
+	}
 }
 
 void light() {
@@ -146,22 +159,31 @@ void light() {
 		ring_day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
 	float terrain_shadow = LIGHT_IS_DIRECTIONAL
-		? sample_terrain_macro_shadow(
-			world_position,
-			ring_center,
-			camera_world_position,
-			ring_width_meters) * primary_sun_weight * ring_day_factor * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))
+		? ring_macro_terrain_occlusion(
+			sample_terrain_macro_shadow(world_position, ring_center, camera_world_position, ring_width_meters),
+			0.0,
+			primary_sun_weight,
+			0.0,
+			ring_day_factor,
+			ringworld_hub_light_weight)
 		: 0.0;
-	float cloud_shadow = LIGHT_IS_DIRECTIONAL
-		? sample_combined_cloud_shadow(world_position, ring_day_factor)
-		: 0.0;
-	float combined_visibility = combine_ring_shadow_visibility(
+	RingShadowTerms terms = ring_shadow_terms(
+		world_position,
+		SCREEN_UV,
 		readable_shadow,
-		cloud_shadow,
-		terrain_shadow);
-	// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
-	DIFFUSE_LIGHT += (LIGHT_COLOR / PI)
-		* n_dot_l
-		* combined_visibility
-		* hemisphere_direct;
+		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
+		terrain_shadow,
+		RING_SHADOW_DEFAULT);
+	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
+	if (ring_shadow_debug_enabled()) {
+		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {
+			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, combined_visibility));
+		}
+	} else {
+		// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI)
+			* n_dot_l
+			* combined_visibility
+			* hemisphere_direct;
+	}
 }

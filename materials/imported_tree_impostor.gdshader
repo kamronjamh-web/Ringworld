@@ -22,6 +22,7 @@ uniform int tree_foliage_mode = 0;
 uniform bool tree_foliage_attachments = false;
 uniform bool simplified_tree_shading = false;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
+#include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
@@ -112,6 +113,15 @@ void fragment() {
 	}
 	AO = 1.0 - tree_cloud_occlusion * tree_day_factor * .72;
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_shadow_debug_enabled()) {
+		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
+		ALBEDO = vec3(1.0);
+		EMISSION = vec3(0.0);
+		AO = 0.0;
+		SPECULAR = 0.0;
+		METALLIC = 0.0;
+		ROUGHNESS = 1.0;
+	}
 }
 
 void light() {
@@ -120,12 +130,22 @@ void light() {
 	float primary_sun = LIGHT_IS_DIRECTIONAL ? smoothstep(.90, .995, dot(normalize(LIGHT), sun_view)) : 0.0;
 	float direct = mix(night_direct_light_factor, day_direct_light_factor, tree_day_factor);
 	float cloud = LIGHT_IS_DIRECTIONAL ? 1.0 - tree_cloud_occlusion * tree_day_factor : 1.0;
-	float visibility = ATTENUATION * mix(1.0, direct, primary_sun) * mix(1.0, cloud, primary_sun);
-	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
-	if (!simplified_tree_shading) {
-		vec3 half_vector = normalize(LIGHT + VIEW);
-		float gloss = mix(8.0, 128.0, 1.0 - ROUGHNESS);
-		float specular = pow(max(dot(NORMAL, half_vector), 0.0), gloss) * mix(.04, 1.0, METALLIC);
-		SPECULAR_LIGHT += (LIGHT_COLOR / PI) * specular * n_dot_l * visibility * tree_haze_T;
+	// Vegetation keeps its legacy product (geometry * cloud, no macro/terrain term): COMBINE_PRODUCT.
+	RingShadowTerms terms = ring_shadow_terms(tree_world_position, SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT);
+	terms.cloud = mix(1.0, cloud, primary_sun);
+	float sun_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT);
+	if (ring_shadow_debug_enabled()) {
+		if (LIGHT_IS_DIRECTIONAL && primary_sun > 0.5) {
+			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, sun_visibility));
+		}
+	} else {
+		float visibility = sun_visibility * mix(1.0, direct, primary_sun);
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
+		if (!simplified_tree_shading) {
+			vec3 half_vector = normalize(LIGHT + VIEW);
+			float gloss = mix(8.0, 128.0, 1.0 - ROUGHNESS);
+			float specular = pow(max(dot(NORMAL, half_vector), 0.0), gloss) * mix(.04, 1.0, METALLIC);
+			SPECULAR_LIGHT += (LIGHT_COLOR / PI) * specular * n_dot_l * visibility * tree_haze_T;
+		}
 	}
 }

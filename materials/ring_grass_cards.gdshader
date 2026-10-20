@@ -185,12 +185,22 @@ void fragment() {
 	BACKLIGHT = col * grass_card_backlight;
 	AO = 1.0 - v_light.y * 0.72;
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_shadow_debug_enabled()) {
+		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
+		ALBEDO = vec3(1.0);
+		EMISSION = vec3(0.0);
+		AO = 0.0;
+		SPECULAR = 0.0;
+		METALLIC = 0.0;
+		ROUGHNESS = 1.0;
+		BACKLIGHT = vec3(0.0);
+	}
 }
 
 void light() {
 	float direct_visibility;
 	DIFFUSE_LIGHT += ring_terrain_direct_diffuse(NORMAL, LIGHT, ATTENUATION, LIGHT_IS_DIRECTIONAL, LIGHT_COLOR,
-		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, direct_visibility);
+		VIEW_MATRIX, v_light.x, v_light.y, v_light.zw, v_ground_world, ring_viewer_world_position, SCREEN_UV, direct_visibility);
 	// Diffuse translucency from the far side of the blade, scaled like the terrain's diffuse term.
 	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * BACKLIGHT * max(dot(-NORMAL, LIGHT), 0.0) * direct_visibility;
 }

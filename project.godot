@@ -89,6 +89,10 @@ ringworld_hub_light_weight={
 "type": "float",
 "value": 0.0
 }
+ringworld_shadow_debug_mode={
+"type": "int",
+"value": 0
+}
 ringworld_night_light_scale={
 "type": "float",
 "value": 1.0

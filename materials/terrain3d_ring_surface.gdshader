@@ -301,6 +301,16 @@ void fragment() {
             + UV.y / max(_vertex_density, 0.000001) * ring_across_direction / max(ring_width_meters, 1.0));
     AO = 1.0 - combined_cloud_shadow_occlusion * .72;
     AO_LIGHT_AFFECT = 0.0;
+    if (ring_shadow_debug_enabled()) {
+        // Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
+        ALBEDO = vec3(1.0);
+        EMISSION = vec3(0.0);
+        AO = 0.0;
+        SPECULAR = 0.0;
+        METALLIC = 0.0;
+        ROUGHNESS = 1.0;
+        terrain_direct_specular_weight = 0.0;
+    }
 }
 
 // This is the isotropic Schlick-GGX direct-specular branch from Godot's
@@ -339,6 +349,7 @@ void light() {
         terrain_shadow_uv,
         v_vertex,
         ring_viewer_world_position,
+        SCREEN_UV,
         direct_visibility);
     float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
 

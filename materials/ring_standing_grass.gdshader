@@ -25,6 +25,7 @@ instance uniform float grass_instance_count = 1.0;
 // indices. Keep the established CPU vertex-LOD path intact for every fallback.
 instance uniform bool grass_gpu_culled = false;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
+#include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
 #include "res://materials/ring_grass_gust.gdshaderinc"
 #include "res://materials/ring_grass_modifiers.gdshaderinc"
@@ -320,34 +321,55 @@ void fragment() {
 		AO = 1.0;
 		BACKLIGHT = vec3(0.0);
 	}
+	if (ring_shadow_debug_enabled()) {
+		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
+		ALBEDO = vec3(1.0);
+		EMISSION = vec3(0.0);
+		AO = 0.0;
+		AO_LIGHT_AFFECT = 0.0;
+		SPECULAR = 0.0;
+		METALLIC = 0.0;
+		ROUGHNESS = 1.0;
+		BACKLIGHT = vec3(0.0);
+		grass_light_specular = 0.0;
+		grass_light_full_shading = 0.0;
+	}
 }
 
 void light() {
 	// Keep this in the stage entry point: Godot's LIGHT, ATTENUATION and output
 	// accumulators are stage-local shader built-ins.
 	vec3 sun_view = normalize((VIEW_MATRIX * vec4(grass_primary_sun_direction, 0.0)).xyz);
-	float attenuation = ATTENUATION * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
-	// Read the planted up vector directly in default mode: neither the visible
-	// face nor a renderer backface-normal adjustment can darken one blade side.
-	vec3 lighting_normal = grass_blade_shading_enabled ? NORMAL : normalize(grass_terrain_up_view);
-	float c_n_dot_l = max(min(dot(lighting_normal, LIGHT), 1.0), 0.0);
-	float diffuse_brdf_nl = c_n_dot_l * (1.0 / PI);
-	// The production terrain now uses the same built-in (LIGHT_COLOR / PI) * NdotL expression (P3b), so no terrain-matching blend is needed.
-	DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
-	DIFFUSE_LIGHT += LIGHT_COLOR * ((1.0 / PI) - diffuse_brdf_nl) * BACKLIGHT * attenuation;
-	if (grass_light_full_shading > .5) {
-		float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);
-		vec3 half_vector = normalize(VIEW + LIGHT);
-		float c_l_dot_h = clamp(dot(LIGHT, half_vector), 0.0, 1.0);
-		float c_n_dot_h = clamp(dot(NORMAL, half_vector), 0.0, 1.0);
-		float d = grass_d_ggx(c_n_dot_h, 1.0);
-		float g = grass_v_ggx(c_n_dot_l, c_n_dot_v, 1.0);
-		float f0 = .16 * grass_light_specular * grass_light_specular;
-		// Godot evaluates dot(vec3(f0), vec3(50.0 * .33)), hence three terms.
-		float f90 = clamp(f0 * (3.0 * 50.0 * .33), 0.0, 1.0);
-		float fresnel = f0 + (f90 - f0) * grass_schlick_fresnel(c_l_dot_h);
-		vec3 direct_specular = vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
-		if (grass_terrain_light_blend > 0.0) direct_specular *= 1.0 - grass_terrain_light_blend;
-		SPECULAR_LIGHT += direct_specular;
+	// Cloud shadow stays in the grass's AO/albedo only (never direct light), so the composition is geometry * 1 (COMBINE_PRODUCT).
+	RingShadowTerms terms = ring_shadow_terms(vec3(0.0), SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT); // world unused until S5 (no world varying here)
+	float attenuation = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT) * grass_primary_sun_visibility(LIGHT_IS_DIRECTIONAL, LIGHT, sun_view);
+	if (ring_shadow_debug_enabled()) {
+		if (LIGHT_IS_DIRECTIONAL && (!grass_primary_sun_gate_enabled || smoothstep(.90, .995, dot(normalize(LIGHT), sun_view)) > 0.5)) {
+			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, attenuation));
+		}
+	} else {
+		// Read the planted up vector directly in default mode: neither the visible
+		// face nor a renderer backface-normal adjustment can darken one blade side.
+		vec3 lighting_normal = grass_blade_shading_enabled ? NORMAL : normalize(grass_terrain_up_view);
+		float c_n_dot_l = max(min(dot(lighting_normal, LIGHT), 1.0), 0.0);
+		float diffuse_brdf_nl = c_n_dot_l * (1.0 / PI);
+		// The production terrain now uses the same built-in (LIGHT_COLOR / PI) * NdotL expression (P3b), so no terrain-matching blend is needed.
+		DIFFUSE_LIGHT += LIGHT_COLOR * diffuse_brdf_nl * attenuation;
+		DIFFUSE_LIGHT += LIGHT_COLOR * ((1.0 / PI) - diffuse_brdf_nl) * BACKLIGHT * attenuation;
+		if (grass_light_full_shading > .5) {
+			float c_n_dot_v = max(dot(NORMAL, VIEW), 1e-4);
+			vec3 half_vector = normalize(VIEW + LIGHT);
+			float c_l_dot_h = clamp(dot(LIGHT, half_vector), 0.0, 1.0);
+			float c_n_dot_h = clamp(dot(NORMAL, half_vector), 0.0, 1.0);
+			float d = grass_d_ggx(c_n_dot_h, 1.0);
+			float g = grass_v_ggx(c_n_dot_l, c_n_dot_v, 1.0);
+			float f0 = .16 * grass_light_specular * grass_light_specular;
+			// Godot evaluates dot(vec3(f0), vec3(50.0 * .33)), hence three terms.
+			float f90 = clamp(f0 * (3.0 * 50.0 * .33), 0.0, 1.0);
+			float fresnel = f0 + (f90 - f0) * grass_schlick_fresnel(c_l_dot_h);
+			vec3 direct_specular = vec3(c_n_dot_l * d * fresnel * g) * LIGHT_COLOR * attenuation * SPECULAR_AMOUNT;
+			if (grass_terrain_light_blend > 0.0) direct_specular *= 1.0 - grass_terrain_light_blend;
+			SPECULAR_LIGHT += direct_specular;
+		}
 	}
 }

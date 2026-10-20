@@ -18,6 +18,7 @@ uniform int tree_foliage_mode = 0;
 uniform bool tree_foliage_attachments = false;
 
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
+#include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
@@ -81,6 +82,15 @@ void fragment() {
 	// AO handles the daytime ambient term. Direct solar cloud attenuation is
 	// handled in light(), avoiding an extra AO multiplier on all direct lights.
 	AO_LIGHT_AFFECT = 0.0;
+	if (ring_shadow_debug_enabled()) {
+		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
+		ALBEDO = vec3(1.0);
+		EMISSION = vec3(0.0);
+		AO = 0.0;
+		SPECULAR = 0.0;
+		METALLIC = 0.0;
+		ROUGHNESS = 1.0;
+	}
 }
 
 void light() {
@@ -96,8 +106,17 @@ void light() {
 	float cloud_visibility = LIGHT_IS_DIRECTIONAL
 		? 1.0 - tree_cloud_occlusion * tree_day_factor
 		: 1.0;
-	// LIGHT_COLOR includes Godot's PI scaling. Divide it back out for a matte,
-	// bounded Lambert response while retaining engine ambient and non-sun lights.
-	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * ATTENUATION
-		* direct_visibility * mix(1.0, cloud_visibility, primary_sun_weight);
+	// Vegetation keeps its legacy product (geometry * cloud, no macro/terrain term): COMBINE_PRODUCT.
+	RingShadowTerms terms = ring_shadow_terms(tree_world_position, SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT);
+	terms.cloud = mix(1.0, cloud_visibility, primary_sun_weight);
+	float sun_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_COMBINE_PRODUCT);
+	if (ring_shadow_debug_enabled()) {
+		if (LIGHT_IS_DIRECTIONAL && primary_sun_weight > 0.5) {
+			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, sun_visibility));
+		}
+	} else {
+		// LIGHT_COLOR includes Godot's PI scaling. Divide it back out for a matte,
+		// bounded Lambert response while retaining engine ambient and non-sun lights.
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * sun_visibility * direct_visibility;
+	}
 }

@@ -24,6 +24,7 @@ uniform vec2 crown_glow_band = vec2(0.0, 1.0);
 uniform float crown_glow_emission = 3.0;
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
+#include "res://materials/ring_shadow_compose.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -86,4 +87,12 @@ void fragment() {
 	float cloud_occlusion = sample_local_cloud_shadow(world_position) * ring_day_factor;
 	AO = 1.0 - cloud_occlusion;
 	AO_LIGHT_AFFECT = 1.0;
+	if (ring_shadow_debug_enabled()) {
+		// Shadow debug view (no light() here): the only shadow term this material owns is the cloud one, shown for modes 1 and 5.
+		ALBEDO = vec3(0.0);
+		SPECULAR = 0.0;
+		METALLIC = 0.0;
+		AO = 1.0;
+		EMISSION = vec3(ringworld_shadow_debug_mode == 1 || ringworld_shadow_debug_mode == 5 ? 1.0 - cloud_occlusion : 1.0);
+	}
 }

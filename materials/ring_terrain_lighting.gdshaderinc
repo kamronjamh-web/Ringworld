@@ -6,6 +6,7 @@
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
+#include "res://materials/ring_shadow_compose.gdshaderinc"
 
 // Keep the Terrain3D window's direct-light response aligned with the proxy
 // terrain at its handoff. These defaults match ring_terrain_proxy.gdshader.
@@ -47,7 +48,8 @@ float ring_terrain_direct_visibility(
 		float cloud_occlusion,
 		vec2 shadow_uv,
 		vec3 world,
-		vec3 viewer) {
+		vec3 viewer,
+		vec2 screen_uv) {
 	float readable_shadow = max(attenuation, shadow_floor);
 	vec3 sun_direction_view = normalize((view_matrix * vec4(sun_direction, 0.0)).xyz);
 	float primary_sun_weight = is_directional
@@ -61,24 +63,27 @@ float ring_terrain_direct_visibility(
 		day_direct_light_factor,
 		day_factor);
 	float hemisphere_direct = mix(1.0, sun_hemisphere_direct, primary_sun_weight);
-	float cloud_shadow = is_directional ? cloud_occlusion : 0.0;
-	float sun_terrain_shadow = is_directional
-		? sample_terrain_macro_shadow_uv(
-			shadow_uv,
-			world,
-			viewer) * primary_sun_weight * day_factor
+	// No eclipse-hub term here (hub = 0), as before.
+	float terrain_shadow = is_directional
+		? ring_macro_terrain_occlusion(
+			sample_terrain_macro_shadow_uv(shadow_uv, world, viewer),
+			sample_terrain_planet_shadow_uv(shadow_uv, world, viewer),
+			primary_sun_weight,
+			primary_planet_weight,
+			day_factor,
+			0.0)
 		: 0.0;
-	float planet_terrain_shadow = is_directional
-		? sample_terrain_planet_shadow_uv(
-			shadow_uv,
-			world,
-			viewer) * primary_planet_weight
-		: 0.0;
-	float terrain_shadow = max(sun_terrain_shadow, planet_terrain_shadow);
-	float combined_visibility = combine_ring_shadow_visibility(
+	RingShadowTerms terms = ring_shadow_terms(
+		world,
+		screen_uv,
 		readable_shadow,
-		cloud_shadow,
-		terrain_shadow);
+		is_directional ? cloud_occlusion : 0.0,
+		terrain_shadow,
+		RING_SHADOW_DEFAULT);
+	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
+	if (ring_shadow_debug_enabled()) {
+		return primary_sun_weight > 0.5 ? ring_shadow_debug_value(terms, combined_visibility) : 0.0;
+	}
 	return combined_visibility * hemisphere_direct;
 }
 
@@ -96,6 +101,7 @@ vec3 ring_terrain_direct_diffuse(
 		vec2 shadow_uv,
 		vec3 world,
 		vec3 viewer,
+		vec2 screen_uv,
 		out float direct_visibility) {
 	float n_dot_l = max(dot(normal, light), 0.0);
 	direct_visibility = ring_terrain_direct_visibility(
@@ -107,7 +113,12 @@ vec3 ring_terrain_direct_diffuse(
 		cloud_occlusion,
 		shadow_uv,
 		world,
-		viewer);
+		viewer,
+		screen_uv);
+	// Shadow debug view: show the selected term directly (ALBEDO is forced to 1 by the caller's fragment()).
+	if (ring_shadow_debug_enabled()) {
+		return vec3(direct_visibility);
+	}
 	// Built-in convention (see ring_tree): Godot applies ALBEDO to DIFFUSE_LIGHT afterwards and LIGHT_COLOR carries the PI factor.
 	return (light_color / PI) * n_dot_l * direct_visibility;
 }

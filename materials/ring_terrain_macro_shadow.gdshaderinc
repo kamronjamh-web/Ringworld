@@ -151,3 +151,18 @@ float terrain_planet_directional_light_weight(vec3 light_direction_view, mat4 vi
 	vec3 planet_direction_view = normalize((view_matrix * vec4(terrain_planet_shadow_direction, 0.0)).xyz);
 	return smoothstep(0.90, 0.995, dot(normalize(light_direction_view), planet_direction_view));
 }
+
+// Terrain-occlusion term shared by every receiver (feeds ring_shadow_terms). hub is the eclipse-hub light weight (0 where a receiver
+// has no hub term): the hub light must not be treated as sunlit terrain, exactly 1.0 at hub 0. A missing planet mask passes
+// planet_sample = 0, so the max keeps the (non-negative) sun term unchanged.
+float ring_macro_terrain_occlusion(
+		float sun_sample,
+		float planet_sample,
+		float sun_w,
+		float planet_w,
+		float day,
+		float hub) {
+	return max(
+		sun_sample * sun_w * day * (1.0 - clamp(hub, 0.0, 1.0)),
+		planet_sample * planet_w);
+}

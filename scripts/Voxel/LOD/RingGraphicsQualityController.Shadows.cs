@@ -134,6 +134,11 @@ public partial class RingGraphicsQualityController
         }
     }
 
+    /// <summary>Shadow debug view (0 off, 1 sun visibility, 2 geometry, 3 contact, 4 terrain, 5 cloud) read by materials/ring_shadow_compose.gdshaderinc.</summary>
+    public int ShadowDebugMode => _shadowTuningOverrides.TryGetValue("ShadowDebugMode", out Variant mode) ? mode.AsInt32() : 0;
+
+    private void ApplyShadowDebugMode() => RenderingServer.GlobalShaderParameterSet("ringworld_shadow_debug_mode", ShadowDebugMode);
+
     private void ApplyShadowTuningOverrides()
     {
         Tuning profile = ResolveTuning(CurrentPreset);
@@ -158,6 +163,7 @@ public partial class RingGraphicsQualityController
             _lastAppliedShadowFilter = filter;
         }
         ApplySunShadowStabilizationOverrides();
+        ApplyShadowDebugMode();
         if (_sun == null) return;
         _sun.SetMeta("ringworld_shadow_quality_owned", true);
         if (!_shadowBaselineCaptured)
@@ -299,6 +305,8 @@ public partial class RingGraphicsQualityController
         { double raw = value.AsDouble(); if (!double.IsFinite(raw) || raw != System.Math.Truncate(raw) || raw < int.MinValue || raw > int.MaxValue) return false; int v = (int)raw; if (IsDirectionalShadowAtlasSize(v)) { clean = v; return true; } return false; }
         if (key == "DepthBits" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { double raw = value.AsDouble(); if (raw == 16.0 || raw == 32.0) { clean = (int)raw; return true; } return false; }
+        if (key == "ShadowDebugMode" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
+        { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (key == "Filter" && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;

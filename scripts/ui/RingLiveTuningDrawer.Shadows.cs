@@ -79,6 +79,9 @@ public partial class RingLiveTuningDrawer
         };
         _pauseDayNight.Toggled += value => { if (_dayNightCycle != null) _dayNightCycle.Paused = value; };
         stabilization.AddChild(_pauseDayNight);
+        VBoxContainer debug = TuningMenuUi.CreateSection(tab, "Debug");
+        AddShadowOption(debug, "ShadowDebugMode", "Shadow debug view", new[] { "Off", "Sun visibility", "Geometry", "Contact", "Terrain", "Cloud" }, new[] { 0, 1, 2, 3, 4, 5 }, _shadowGraphics?.ShadowDebugMode ?? 0);
+        debug.AddChild(new Label { Text = "Shows one sun-shadow term as white (lit) to black (shadowed) on shadow-receiving surfaces. Saved with the other shadow settings.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
         var row = new HBoxContainer(); var save = new Button { Name="ShadowSaveNow", Text="Save shadows", SizeFlagsHorizontal=Control.SizeFlags.ExpandFill }; save.Pressed += () => FlushShadowDefaults(); row.AddChild(save); var reset = new Button { Name="ShadowResetDefaults", Text="Reset shadow overrides", SizeFlagsHorizontal=Control.SizeFlags.ExpandFill }; reset.Pressed += () => { _shadowDefaults.Reset(_shadowGraphics); _shadowSaveDelay=0; FlushShadowDefaults(); RefreshShadowControls(); }; row.AddChild(reset); tab.AddChild(row);
         _shadowStatus = new Label { Name="ShadowRuntimeStatus", AutowrapMode=TextServer.AutowrapMode.WordSmart, Modulate=RingUiStyle.Muted }; tab.AddChild(_shadowStatus); UpdateShadowStatus();
     }
@@ -197,6 +200,7 @@ public partial class RingLiveTuningDrawer
         SetOption("AtlasSize", _shadowGraphics.EffectiveDirectionalShadowAtlasSize);
         SetOption("DepthBits", _shadowGraphics.EffectiveDirectionalShadowDepthBits);
         SetOption("Filter", _shadowGraphics.EffectiveDirectionalShadowFilter);
+        SetOption("ShadowDebugMode", _shadowGraphics.ShadowDebugMode);
         SetRange("NearCascadeMeters", _shadowGraphics.EffectiveNearCascadeMeters);
         SetRange("TerrainMacroStrength", _shadowGraphics.EffectiveTerrainMacroShadowStrength);
         SetRange("TerrainMacroTraceSteps", _shadowGraphics.EffectiveTerrainMacroShadowTraceSteps);
