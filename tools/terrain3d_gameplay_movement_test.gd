@@ -49,6 +49,7 @@ func run() -> void:
 	for speed in speeds:
 		explorer.set("MoveSpeed", speed); explorer.set("SprintSpeed", speed)
 		if not await _handoff_boundary_pause(speed): return
+		if not await _reverse_after_stationary_handoff(speed): return
 		if not await _reset_route(): return
 		if not await _travel("around_plus_%s" % speed, Vector2(1, 0), speed, distance): return
 		if not await _pause("pause_%s" % speed): return
@@ -85,9 +86,8 @@ func _create_game() -> Node:
 	_fail("startup readiness deadline")
 	return null
 
-func _reset_route() -> bool:
+func _reset_route(around: float = 32.0) -> bool:
 	var diag: Dictionary = surface.call("GetSurfaceDiagnostics")
-	var around := 32.0
 	var across := 159032.0
 	var height := float(surface.call("SampleHeight", around, across)) + 1.1
 	explorer.call("SetCanonicalSpawnMeters", around, height, across)
@@ -118,7 +118,31 @@ func _handoff_boundary_pause(speed: float) -> bool:
 	events.append({"phase": "handoff_boundary_%s" % speed, "anchor_before": anchor_before, "anchor_after": anchor_after, "streaming": after.get("streaming", {})})
 	return true
 
-func _travel(name: String, direction: Vector2, speed: float, distance: float) -> bool:
+## Regression for the coverage-clamp livelock: after a handoff and a stationary pause, reversing under a GPU-bound frame rate must not
+## stall at the clamp or thrash stream requests (request and cancel in the same tick starved the stream).
+func _reverse_after_stationary_handoff(speed: float) -> bool:
+	# Start away from the around=0 seam so the -256 m reversal does not wrap the ring coordinate.
+	if not await _reset_route(1024.0): return false
+	if not await _travel("reverse_handoff_out_%s" % speed, Vector2(1, 0), speed, 140.0): return false
+	if not await _pause("reverse_handoff_pause_%s" % speed): return false
+	var before: Dictionary = surface.call("GetSurfaceDiagnostics")
+	var revision_before := int((before.get("streaming", {}) as Dictionary).get("request_revision", before.get("request_revision", 0)))
+	var previous_fps := Engine.max_fps
+	Engine.max_fps = 20
+	var started := Time.get_ticks_msec()
+	var completed := await _travel("reverse_after_handoff_%s" % speed, Vector2(-1, 0), speed, 256.0, 120)
+	var elapsed := Time.get_ticks_msec() - started
+	Engine.max_fps = previous_fps
+	if not completed: return false
+	var after: Dictionary = surface.call("GetSurfaceDiagnostics")
+	var revision_after := int((after.get("streaming", {}) as Dictionary).get("request_revision", after.get("request_revision", 0)))
+	var growth := revision_after - revision_before
+	events.append({"phase": "reverse_after_handoff_check_%s" % speed, "elapsed_ms": elapsed, "request_revision_growth": growth})
+	if elapsed > 10000: _fail("reverse after stationary handoff took %d ms (limit 10000)" % elapsed); return false
+	if growth > 3: _fail("reverse after stationary handoff issued %d stream requests (limit 3)" % growth); return false
+	return true
+
+func _travel(name: String, direction: Vector2, speed: float, distance: float, zero_limit: int = ZERO_MOTION_LIMIT) -> bool:
 	var start: Dictionary = surface.call("GetSurfaceDiagnostics")
 	var previous_around := float(start.get("player_around", 0.0))
 	var previous_across := float(start.get("player_across", 0.0))
@@ -151,7 +175,7 @@ func _travel(name: String, direction: Vector2, speed: float, distance: float) ->
 			zero_run += 1; max_zero_run = maxi(max_zero_run, zero_run)
 		else:
 			zero_run = 0
-		if zero_run > ZERO_MOTION_LIMIT:
+		if zero_run > zero_limit:
 			_stop_motion(); _fail("unintended zero-motion episode (%s frames) during %s; diag=%s" % [zero_run, name, diag]); return false
 		var dot_progress := (current_around - origin_around) * direction.x + (current_across - origin_across) * direction.y
 		var expected_step := horizontal_velocity.length() * (1.0 / 60.0)

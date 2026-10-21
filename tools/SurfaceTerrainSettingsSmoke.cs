@@ -40,6 +40,18 @@ public partial class SurfaceTerrainSettingsSmoke : Node
         System.IO.File.WriteAllText(albedoFile, albedoStripped);
         var albedoOld = new GameplaySurfaceTerrainDefaults(path); albedoOld.Initialize();
         if (!Mathf.IsEqualApprox(albedoOld.Settings.TerrainAlbedoScale, GameplaySurfaceTerrainSettings.DefaultTerrainAlbedoScale) || !Mathf.IsEqualApprox(albedoOld.Settings.GrassAlbedoScale, GameplaySurfaceTerrainSettings.DefaultGrassAlbedoScale)) throw new InvalidOperationException("old surface file did not load albedo defaults");
+        if (!Mathf.IsEqualApprox(albedoOld.Settings.GenerationUrgentBudgetMs, 6) || !Mathf.IsEqualApprox(new GameplaySurfaceTerrainSettings().GenerationUrgentBudgetMs, 6)) throw new InvalidOperationException("urgent publication budget did not default to 6");
+        albedoOld.SetGenerationUrgentBudgetMs(10);
+        if (!albedoOld.Save()) throw new InvalidOperationException("urgent publication budget did not save");
+        var urgent = new GameplaySurfaceTerrainDefaults(path); urgent.Initialize();
+        if (!Mathf.IsEqualApprox(urgent.Settings.GenerationUrgentBudgetMs, 10)) throw new InvalidOperationException("urgent publication budget did not round-trip");
+        if (!Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGenerationUrgentBudgetMs(float.NaN), 6) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGenerationUrgentBudgetMs(99), 16) || !Mathf.IsEqualApprox(GameplaySurfaceTerrainDefaults.ClampGenerationUrgentBudgetMs(-1), .1f)) throw new InvalidOperationException("urgent publication budget bounds were not enforced");
+        string urgentText = System.IO.File.ReadAllText(albedoFile);
+        string urgentStripped = string.Join('\n', Array.FindAll(urgentText.Split('\n'), line => !line.StartsWith("GenerationUrgentBudgetMs")));
+        if (urgentStripped.Length >= urgentText.Length) throw new InvalidOperationException("urgent publication budget was not written");
+        System.IO.File.WriteAllText(albedoFile, urgentStripped);
+        var urgentOld = new GameplaySurfaceTerrainDefaults(path); urgentOld.Initialize();
+        if (!Mathf.IsEqualApprox(urgentOld.Settings.GenerationUrgentBudgetMs, 6)) throw new InvalidOperationException("old surface file did not load the urgent budget default");
         string invalidParent = path + ".invalid-parent.tres";
         if (ResourceSaver.Save(new GameplaySurfaceTerrainSettings(), invalidParent) != Error.Ok) throw new InvalidOperationException("invalid-path fixture write failed");
         var invalid = new GameplaySurfaceTerrainDefaults(invalidParent + "/child.tres"); invalid.Initialize(); invalid.SetBrushRadiusMeters(9);

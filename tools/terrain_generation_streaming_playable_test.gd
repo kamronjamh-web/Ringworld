@@ -145,6 +145,8 @@ func _run() -> void:
 	var upload := drawer.find_child("Uploadbudget(ms)", true, false) as HSlider
 	var collision := drawer.find_child("Collisionbudget(ms)", true, false) as HSlider
 	var cells := drawer.find_child("Collidertilecells", true, false) as HSlider
+	var urgent := drawer.find_child("Urgentpublicationbudget(ms)", true, false) as HSlider
+	_expect(urgent != null and is_equal_approx(urgent.value, 6.0) and is_equal_approx(urgent.max_value, 16.0), "urgent publication budget slider exists with the default")
 	_expect(workers != null and prefetch != null and cache != null, "three streaming controls exist")
 	_expect(upload != null and collision != null and cells != null, "publication budgets and collider tile control exist")
 	if upload != null and collision != null and cells != null:
@@ -157,8 +159,11 @@ func _run() -> void:
 		_expect(is_equal_approx(d.upload_budget_ms, 2.0) and is_equal_approx(d.collision_budget_ms, 1.5), "live publication budgets take effect")
 	if workers != null and prefetch != null and cache != null:
 		workers.value = 4; prefetch.value = 160; cache.value = 64
+		if urgent != null: urgent.value = 10.0
 		await create_timer(.7).timeout
 		_expect(FileAccess.file_exists(PREFS), "isolated streaming preferences persist")
+		var saved = ResourceLoader.load(PREFS, "", ResourceLoader.CACHE_MODE_IGNORE)
+		_expect(saved != null and is_equal_approx(float(saved.get("GenerationUrgentBudgetMs")), 10.0), "urgent publication budget persists")
 	_key(KEY_QUOTELEFT)
 	var held_stream = playable.get("_stream")
 	playable.request_teleport(2048.0, 159000.0)
@@ -173,6 +178,8 @@ func _run() -> void:
 	reload.configure_test_fixture(FIXTURE, 0, 159000); root.add_child(reload)
 	await _wait_ready(reload)
 	_expect(reload.get("_worker_count") == 4 and is_equal_approx(reload.get("_prefetch_m"), 160.0) and reload.get("_cache_mib") == 64, "streaming preferences reload from fixture")
+	var reloaded = ResourceLoader.load(PREFS, "", ResourceLoader.CACHE_MODE_IGNORE)
+	_expect(reloaded != null and is_equal_approx(float(reloaded.get("GenerationUrgentBudgetMs")), 10.0), "urgent publication budget reloads from fixture")
 	d = reload.get_preview_diagnostics()
 	_expect(is_equal_approx(d.upload_budget_ms, 2.0) and is_equal_approx(d.collision_budget_ms, 1.5) and d.collider_tile_cells == 16, "publication preferences reload from fixture")
 	reload.queue_free(); await process_frame

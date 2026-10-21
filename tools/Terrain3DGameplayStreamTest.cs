@@ -183,6 +183,42 @@ public partial class Terrain3DGameplayStreamTest : Node
         var unsupported = new RingCanonicalPosition(900, 5, 159120);
         RingCanonicalPosition direct = RingTerrain3DGameplay.SelectCoverageTarget(frame, unsupported, Vector3.Zero, 64, 64, true);
         Check(direct.Equals(unsupported), "unsupported collision position remains the direct recovery target");
+        VerifyPendingRetentionAndBudget();
+    }
+
+    private void VerifyPendingRetentionAndBudget()
+    {
+        long circumference = CertifiedRingScale.AroundVoxelLength;
+        RingSurfaceFrame F(long around, int across) => new(around, across, 0, circumference, CertifiedRingScale.EffectiveRadiusMeters, 2, -1);
+        const float rev = RingTerrain3DGameplay.ReversalCancelSpeedMetersPerSecond;
+        RingSurfaceFrame active = F(1024, 159000), west = F(768, 159000), east = F(1280, 159000);
+        Check(RingTerrain3DGameplay.ShouldRetainPendingWindow(active, west, active, Vector3.Zero, false, rev), "stationary player retains a pending corridor window");
+        Check(RingTerrain3DGameplay.ShouldRetainPendingWindow(active, west, active, Vector3.Zero, true, rev), "clamp-waiting player retains a pending corridor window");
+        Check(!RingTerrain3DGameplay.ShouldRetainPendingWindow(active, west, active, Vector3.Right * 12, false, rev), "moving away from the pending window cancels it");
+        Check(RingTerrain3DGameplay.ShouldRetainPendingWindow(active, west, active, Vector3.Left * 12, false, rev), "moving toward the pending window retains it");
+        Check(!RingTerrain3DGameplay.ShouldRetainPendingWindow(active, west, east, Vector3.Right * 12, false, rev), "a different corridor direction replaces the pending window");
+        Check(!RingTerrain3DGameplay.ShouldRetainPendingWindow(active, east, F(1280, 159256), Vector3.Right * 12, false, rev), "a new across offset replaces the pending window");
+        RingSurfaceFrame diagonal = F(1280, 159256), diagonalNext = F(1280, 159000);
+        Check(RingTerrain3DGameplay.ShouldRetainPendingWindow(active, diagonal, diagonalNext, new Vector3(12, 0, 3), false, rev), "diagonal pending retains while the dropped axis still approaches it");
+        Check(!RingTerrain3DGameplay.ShouldRetainPendingWindow(active, diagonal, diagonalNext, new Vector3(12, 0, -3), false, rev), "diagonal pending cancels when the dropped axis reverses");
+        RingSurfaceFrame wrapped = F(circumference - 256, 159000), origin = F(0, 159000);
+        Check(RingTerrain3DGameplay.ShouldRetainPendingWindow(origin, wrapped, origin, Vector3.Left * 12, false, rev), "ring-wrap pending is treated as a negative offset (toward retains)");
+        Check(!RingTerrain3DGameplay.ShouldRetainPendingWindow(origin, wrapped, origin, Vector3.Right * 12, false, rev), "ring-wrap pending is treated as a negative offset (away cancels)");
+
+        Check(double.IsPositiveInfinity(RingTerrain3DGameplay.SecondsToClamp(0, 0, 176, -176, 176, Vector3.Zero)), "zero velocity never reaches the clamp");
+        Check(Math.Abs(RingTerrain3DGameplay.SecondsToClamp(-128, 0, 176, -176, 176, new Vector3(-108, 0, 0)) - 48.0 / 108.0) < 1e-9, "seconds to the negative around clamp");
+        Check(RingTerrain3DGameplay.SecondsToClamp(-176, 0, 176, -176, 176, new Vector3(-108, 0, 0)) == 0, "player at the clamp edge has no runway");
+        Check(Math.Abs(RingTerrain3DGameplay.SecondsToClamp(0, 0, 176, -192, 176, new Vector3(0, 0, 10)) - 17.6) < 1e-9, "positive across bound seconds");
+        Check(Math.Abs(RingTerrain3DGameplay.SecondsToClamp(0, 0, 176, -192, 176, new Vector3(0, 0, -10)) - 19.2) < 1e-9, "asymmetric negative across bound seconds");
+
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, .5, 1, 1.0 / 60, 40, 2, false) == .75, "urgent budget at or below base disables urgency");
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, 6, double.PositiveInfinity, 1.0 / 60, 40, 2, true) == 6, "clamp-waiting uses the urgent maximum");
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, 6, double.PositiveInfinity, 1.0 / 60, 40, 2, false) == .75, "infinite runway keeps the base budget");
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, 6, double.NaN, 1.0 / 60, 40, 2, false) == .75, "NaN runway keeps the base budget");
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, 6, .1, 1.0 / 60, 40, 2, false) == 6, "short runway clamps to the urgent maximum");
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, 6, 120, 1.0 / 60, 40, 2, false) == .75, "long runway stays at the base budget");
+        Check(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(.75, 6, .1, 1.0 / 60, 0, 2, true) == .75, "no remaining units keeps the base budget");
+        Check(double.IsNaN(RingTerrain3DGameplay.ComputeUrgentPublicationBudgetMs(double.NaN, 6, .1, 1.0 / 60, 40, 2, true)), "NaN base budget passes through");
     }
 
     private void VerifyPrepared(PreparedWindow prepared, RingTerrainSampler sampler, RingSurfaceFrame frame, ulong editRevision)

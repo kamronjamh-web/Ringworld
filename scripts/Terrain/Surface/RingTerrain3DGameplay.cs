@@ -57,6 +57,7 @@ public partial class RingTerrain3DGameplay : Node3D
     private float _generationPrefetchMeters = 64.0f;
     private float _generationUploadBudgetMs = 1.0f;
     private float _generationCollisionBudgetMs = .75f;
+    private float _generationUrgentBudgetMs = 6f;
     private int _generationTileCells = 32;
     private int _generationWorkers = 2;
     private int _generationCacheMiB = 8;
@@ -307,6 +308,7 @@ public partial class RingTerrain3DGameplay : Node3D
         _generationPrefetchMeters = GameplaySurfaceTerrainDefaults.ClampGenerationPrefetchMeters(settings.GenerationPrefetchMeters);
         _generationUploadBudgetMs = GameplaySurfaceTerrainDefaults.ClampGenerationUploadBudgetMs(settings.GenerationUploadBudgetMs);
         _generationCollisionBudgetMs = GameplaySurfaceTerrainDefaults.ClampGenerationCollisionBudgetMs(settings.GenerationCollisionBudgetMs);
+        _generationUrgentBudgetMs = GameplaySurfaceTerrainDefaults.ClampGenerationUrgentBudgetMs(settings.GenerationUrgentBudgetMs);
         _generationTileCells = GameplaySurfaceTerrainDefaults.ClampGenerationColliderTileCells(settings.GenerationColliderTileCells);
         _generationWorkers = GameplaySurfaceTerrainDefaults.ClampGenerationWorkerCount(settings.GenerationWorkerCount);
         _generationCacheMiB = GameplaySurfaceTerrainDefaults.ClampGenerationCacheMiB(settings.GenerationCacheMiB);

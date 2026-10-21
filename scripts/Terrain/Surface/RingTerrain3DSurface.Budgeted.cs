@@ -427,7 +427,7 @@ public partial class RingTerrain3DSurface
             _collisionBody = new StaticBody3D { Name = "RingTerrainSurfaceCollision", CollisionLayer = 0, CollisionMask = 0 };
             AddChild(_collisionBody);
         }
-        _collisionBody.Transform = _worldFrame;
+        if (_collisionBody.Transform != _worldFrame) _collisionBody.Transform = _worldFrame;
         if (index < _collisionBody.GetChildCount())
         {
             var node = (CollisionShape3D)_collisionBody.GetChild(index);

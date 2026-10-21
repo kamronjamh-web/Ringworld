@@ -19,6 +19,14 @@ public partial class RingTerrain3DGameplay
     private ulong _committedEditRevision;
     private ulong _editDebounceUntilUsec;
     private ulong _requestStartedUsec;
+    private Vector3 _constraintRequestedVelocity;
+    private ulong _constraintPhysicsFrame;
+    private int _budgetRemainingUnits;
+    private double _budgetUnitCostMs = DefaultPublicationUnitCostMs;
+    private double _effectiveUploadBudgetMs, _effectiveCollisionBudgetMs;
+    private long _urgentPublicationFrames, _retainedPendingRequests, _reversalCancels;
+    public const float ReversalCancelSpeedMetersPerSecond = .5f;
+    public const double DefaultPublicationUnitCostMs = 2.0, UrgentDeadlineFraction = .5;
 
     public override void _PhysicsProcess(double delta)
     {
@@ -73,6 +81,7 @@ public partial class RingTerrain3DGameplay
                 if (_hasPendingFrame && prepared.Revision == _requestRevision && prepared.EditRevision == _field.Revision)
                 {
                     RingTerrain3DCollisionGeometry geometry = prepared.TransferGeometryOwnership();
+                    int tileCount = geometry.TileCount;
                     if (!_surface.BeginGameplayPreparedWindowWithHoles(prepared.Heights, prepared.HeightImages, prepared.BiomeImages,
                             geometry, prepared.Frame.AnchorAroundMeters, prepared.Frame.AnchorAcrossMeters, prepared.Frame.AnchorHeight,
                             prepared.Frame.AcrossDirection, prepared.Revision, _field.MinimumHeight, _field.MaximumHeight, prepared.ControlImages, prepared.HoleMask))
@@ -86,6 +95,7 @@ public partial class RingTerrain3DGameplay
                         _pendingFrame = prepared.Frame;
                         _hasPendingFrame = true;
                         _budgetStarted = true;
+                        _budgetRemainingUnits = tileCount + 13;
                         _lastError = string.Empty;
                     }
                 }
@@ -94,13 +104,28 @@ public partial class RingTerrain3DGameplay
         }
         if (_budgetStarted)
         {
-            Dictionary status = _surface.AdvanceBudgetedPreparation(_generationUploadBudgetMs, _generationCollisionBudgetMs);
+            Vector3 steering = CoverageSteeringVelocity();
+            GetClampBounds(out double safeAround, out double minAcross, out double maxAcross);
+            double localAround = _frame.SignedAroundDeltaMeters(position.AroundMeters), localAcross = position.AcrossMeters - _frame.AnchorAcrossMeters;
+            double runway = SecondsToClamp(localAround, localAcross, safeAround, minAcross, maxAcross, steering);
+            double collision = ComputeUrgentPublicationBudgetMs(_generationCollisionBudgetMs, _generationUrgentBudgetMs, runway, GetProcessDeltaTime(), _budgetRemainingUnits, _budgetUnitCostMs, _coverageWaiting);
+            bool urgent = collision > _generationCollisionBudgetMs;
+            double upload = urgent ? Math.Max(_generationUploadBudgetMs, collision) : _generationUploadBudgetMs;
+            _effectiveUploadBudgetMs = upload;
+            _effectiveCollisionBudgetMs = collision;
+            if (urgent) _urgentPublicationFrames++;
+            Dictionary status = _surface.AdvanceBudgetedPreparation(upload, collision);
             if (!status["ok"].AsBool())
             {
                 _lastError = status["error"].AsString();
                 CancelPendingWindow();
                 return;
             }
+            int tilesDone = status["tiles_done"].AsInt32(), tilesTotal = status["tiles_total"].AsInt32();
+            string phase = status["phase"].AsString();
+            _budgetRemainingUnits = Math.Max(0, tilesTotal - tilesDone) + 2;
+            if (phase is "setup" or "regions" or "maps") _budgetRemainingUnits += (9 - status["regions_done"].AsInt32()) + (phase == "setup" ? 2 : 1);
+            if (tilesDone > 0) _budgetUnitCostMs = Math.Clamp((status["shape_ms"].AsDouble() + status["installation_ms"].AsDouble()) / tilesDone, .05, 50);
             if (status["ready"].AsBool())
             {
                 _budgetStarted = false;
@@ -131,7 +156,7 @@ public partial class RingTerrain3DGameplay
         bool editsPending = _field.Revision != _committedEditRevision;
         bool aperturesPending = _apertureRevision != _committedApertureRevision;
         if (editsPending && Time.GetTicksUsec() < _editDebounceUntilUsec) return;
-        Vector3 velocity = _explorer?.CanonicalVelocity ?? Vector3.Zero;
+        Vector3 velocity = CoverageSteeringVelocity();
         double speed = new Vector2(velocity.X, velocity.Z).Length();
         double seconds = Math.Max(1.5, _maxReadinessMilliseconds / 1000.0);
         double leadAround = Math.Max(_generationPrefetchMeters * Math.Abs(velocity.X) / Math.Max(1, speed), Math.Abs(velocity.X) * seconds + 16);
@@ -143,10 +168,13 @@ public partial class RingTerrain3DGameplay
         if (_hasPendingFrame && next.AnchorAroundMeters == _pendingFrame.AnchorAroundMeters &&
             next.AnchorAcrossMeters == _pendingFrame.AnchorAcrossMeters && _pendingEditRevision == _field.Revision &&
             _pendingApertureRevision == _apertureRevision) return;
+        bool corridorOnly = !force && !editsPending && !aperturesPending && !unsupported;
+        if (corridorOnly && _hasPendingFrame && _pendingEditRevision == _field.Revision && _pendingApertureRevision == _apertureRevision
+            && ShouldRetainPendingWindow(_frame, _pendingFrame, next, velocity, _coverageWaiting, ReversalCancelSpeedMetersPerSecond)) { _retainedPendingRequests++; return; }
         if (!force && !editsPending && !aperturesPending && next.AnchorAroundMeters == _frame.AnchorAroundMeters && next.AnchorAcrossMeters == _frame.AnchorAcrossMeters)
         {
             // A reversal can make a prepared corridor unnecessary.
-            if (_hasPendingFrame) CancelPendingWindow();
+            if (_hasPendingFrame) { CancelPendingWindow(); _reversalCancels++; }
             return;
         }
         CancelPendingWindow();
@@ -159,6 +187,57 @@ public partial class RingTerrain3DGameplay
         _pendingEditReplacement = editsPending || aperturesPending;
         _budgetStarted = false;
         _requestStartedUsec = Time.GetTicksUsec();
+    }
+
+    /// <summary>Velocity used to steer coverage: while the clamp is holding the player, the requested (pre-clamp) input velocity, otherwise the actual velocity.</summary>
+    private Vector3 CoverageSteeringVelocity()
+    {
+        Vector3 actual = _explorer?.CanonicalVelocity ?? Vector3.Zero;
+        return _coverageWaiting && Engine.GetPhysicsFrames() - _constraintPhysicsFrame <= 1 ? _constraintRequestedVelocity : actual;
+    }
+
+    /// <summary>
+    /// Keeps a pending corridor window when the player has not actually reversed away from it. Offsets are active-frame-relative (multiples of 256 m).
+    /// </summary>
+    public static bool ShouldRetainPendingWindow(in RingSurfaceFrame active, in RingSurfaceFrame pending, in RingSurfaceFrame next, Vector3 steering, bool coverageWaiting, float reversalSpeed)
+    {
+        long pa = active.SignedAroundDeltaMeters(pending.AnchorAroundMeters), na = active.SignedAroundDeltaMeters(next.AnchorAroundMeters);
+        long pz = pending.AnchorAcrossMeters - active.AnchorAcrossMeters, nz = next.AnchorAcrossMeters - active.AnchorAcrossMeters;
+        return RetainAxis(pa, na, steering.X, coverageWaiting, reversalSpeed) && RetainAxis(pz, nz, steering.Z, coverageWaiting, reversalSpeed);
+    }
+
+    private static bool RetainAxis(long pendingOffset, long nextOffset, float v, bool waiting, float reversal)
+    {
+        if (pendingOffset == nextOffset) return true;
+        if (nextOffset != 0) return false;
+        if (waiting) return true;
+        return v * Math.Sign(pendingOffset) > -reversal;
+    }
+
+    public static double SecondsToClamp(double localAround, double localAcross, double safeAround, double minAcross, double maxAcross, Vector3 v)
+    {
+        double t = double.PositiveInfinity;
+        if (v.X > .01f) t = Math.Min(t, (safeAround - localAround) / v.X); else if (v.X < -.01f) t = Math.Min(t, (-safeAround - localAround) / v.X);
+        if (v.Z > .01f) t = Math.Min(t, (maxAcross - localAcross) / v.Z); else if (v.Z < -.01f) t = Math.Min(t, (minAcross - localAcross) / v.Z);
+        return Math.Max(0, t);
+    }
+
+    /// <summary>Per-frame publication budget that finishes the remaining units within a fraction of the time to the clamp; clamped to [base, urgentMax].</summary>
+    public static double ComputeUrgentPublicationBudgetMs(double baseMs, double urgentMaxMs, double secondsToClamp, double frameSeconds, int remainingUnits, double unitCostMs, bool coverageWaiting)
+    {
+        if (!double.IsFinite(baseMs) || baseMs < 0) return baseMs;
+        if (!double.IsFinite(urgentMaxMs) || urgentMaxMs <= baseMs || remainingUnits <= 0) return baseMs;
+        if (coverageWaiting) return urgentMaxMs;
+        if (double.IsNaN(secondsToClamp) || double.IsPositiveInfinity(secondsToClamp)) return baseMs;
+        double frames = Math.Max(1.0, secondsToClamp * UrgentDeadlineFraction / Math.Clamp(frameSeconds, 1.0 / 240, .25));
+        return Math.Clamp(remainingUnits * Math.Max(.05, unitCostMs) / frames, baseMs, urgentMaxMs);
+    }
+
+    private void GetClampBounds(out double safeAround, out double minAcross, out double maxAcross)
+    {
+        safeAround = 176.0;
+        minAcross = _frame.AnchorAcrossMeters <= 192 ? -192.0 : -176.0;
+        maxAcross = _frame.AnchorAcrossMeters >= _field!.WidthMeters - 194 ? 192.0 : 176.0;
     }
 
     /// <summary>
@@ -233,12 +312,12 @@ public partial class RingTerrain3DGameplay
         if (_synchronousBenchmark) return velocity;
         // Inside the site underground (and the bore column above it) the surface window's coverage and recenter clamp do not apply.
         if (IsInsideSiteUndergroundZone(position.AroundMeters, position.VerticalMeters, position.AcrossMeters)) { _coverageWaiting = false; return velocity; }
+        _constraintRequestedVelocity = velocity;
+        _constraintPhysicsFrame = Engine.GetPhysicsFrames();
         if (_field == null || !HasCollisionCoverage(position)) { CountCoverageWait(); return Vector3.Zero; }
         double around = _frame.SignedAroundDeltaMeters(position.AroundMeters);
         double across = position.AcrossMeters - _frame.AnchorAcrossMeters;
-        double safeAround = 176.0;
-        double minAcross = _frame.AnchorAcrossMeters <= 192 ? -192.0 : -176.0;
-        double maxAcross = _frame.AnchorAcrossMeters >= _field.WidthMeters - 194 ? 192.0 : 176.0;
+        GetClampBounds(out double safeAround, out double minAcross, out double maxAcross);
         float x = velocity.X, z = velocity.Z;
         if (delta > 0)
         {
@@ -284,6 +363,11 @@ public partial class RingTerrain3DGameplay
         diagnostics["last_readiness_ms"] = _lastReadinessMilliseconds;
         diagnostics["max_readiness_ms"] = _maxReadinessMilliseconds;
         diagnostics["coverage_waits"] = _coverageWaits;
+        diagnostics["retained_pending_requests"] = _retainedPendingRequests;
+        diagnostics["reversal_cancels"] = _reversalCancels;
+        diagnostics["effective_upload_budget_ms"] = _effectiveUploadBudgetMs;
+        diagnostics["effective_collision_budget_ms"] = _effectiveCollisionBudgetMs;
+        diagnostics["urgent_publication_frames"] = _urgentPublicationFrames;
         return diagnostics;
     }
 

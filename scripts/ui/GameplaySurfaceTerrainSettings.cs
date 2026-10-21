@@ -21,6 +21,7 @@ public partial class GameplaySurfaceTerrainSettings : Resource
     [Export] public int GenerationCacheMiB { get; set; } = 8;
     [Export] public float GenerationUploadBudgetMs { get; set; } = 1.0f;
     [Export] public float GenerationCollisionBudgetMs { get; set; } = .75f;
+    [Export] public float GenerationUrgentBudgetMs { get; set; } = 6f;
     [Export] public int GenerationColliderTileCells { get; set; } = 32;
     [Export] public float DryRoughness { get; set; } = .92f;
     [Export] public float WetRoughness { get; set; } = .35f;

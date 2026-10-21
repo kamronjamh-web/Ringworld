@@ -30,6 +30,8 @@ public sealed class GameplaySurfaceTerrainDefaults
     public const float MaximumGenerationUploadBudgetMs = 8f;
     public const float MinimumGenerationCollisionBudgetMs = .1f;
     public const float MaximumGenerationCollisionBudgetMs = 8f;
+    public const float MinimumGenerationUrgentBudgetMs = .1f;
+    public const float MaximumGenerationUrgentBudgetMs = 16f;
     public const float MinimumDryRoughness = .65f;
     public const float MaximumDryRoughness = .98f;
     public const float MinimumWetRoughness = .10f;
@@ -101,6 +103,7 @@ public sealed class GameplaySurfaceTerrainDefaults
     public bool SetGenerationCacheMiB(int value) { value = ClampGenerationCacheMiB(value); if (Settings.GenerationCacheMiB == value) return false; Settings.GenerationCacheMiB = value; Dirty = true; return true; }
     public bool SetGenerationUploadBudgetMs(float value) { value = ClampGenerationUploadBudgetMs(value); if (Mathf.IsEqualApprox(Settings.GenerationUploadBudgetMs, value)) return false; Settings.GenerationUploadBudgetMs = value; Dirty = true; return true; }
     public bool SetGenerationCollisionBudgetMs(float value) { value = ClampGenerationCollisionBudgetMs(value); if (Mathf.IsEqualApprox(Settings.GenerationCollisionBudgetMs, value)) return false; Settings.GenerationCollisionBudgetMs = value; Dirty = true; return true; }
+    public bool SetGenerationUrgentBudgetMs(float value) { value = ClampGenerationUrgentBudgetMs(value); if (Mathf.IsEqualApprox(Settings.GenerationUrgentBudgetMs, value)) return false; Settings.GenerationUrgentBudgetMs = value; Dirty = true; return true; }
     public bool SetGenerationColliderTileCells(int value) { value = ClampGenerationColliderTileCells(value); if (Settings.GenerationColliderTileCells == value) return false; Settings.GenerationColliderTileCells = value; Dirty = true; return true; }
     public bool SetDryRoughness(float value) { value = ClampDryRoughness(value); if (Mathf.IsEqualApprox(Settings.DryRoughness, value)) return false; Settings.DryRoughness = value; Dirty = true; return true; }
     public bool SetWetRoughness(float value) { value = ClampWetRoughness(value); if (Mathf.IsEqualApprox(Settings.WetRoughness, value)) return false; Settings.WetRoughness = value; Dirty = true; return true; }
@@ -160,6 +163,7 @@ public sealed class GameplaySurfaceTerrainDefaults
             Settings.GenerationCacheMiB = ClampGenerationCacheMiB(loaded.GenerationCacheMiB);
             Settings.GenerationUploadBudgetMs = ClampGenerationUploadBudgetMs(loaded.GenerationUploadBudgetMs);
             Settings.GenerationCollisionBudgetMs = ClampGenerationCollisionBudgetMs(loaded.GenerationCollisionBudgetMs);
+            Settings.GenerationUrgentBudgetMs = ClampGenerationUrgentBudgetMs(loaded.GenerationUrgentBudgetMs);
             Settings.GenerationColliderTileCells = ClampGenerationColliderTileCells(loaded.GenerationColliderTileCells);
             Settings.DryRoughness = ClampDryRoughness(loaded.DryRoughness);
             Settings.WetRoughness = ClampWetRoughness(loaded.WetRoughness);
@@ -185,6 +189,7 @@ public sealed class GameplaySurfaceTerrainDefaults
         Settings.GenerationCacheMiB = ClampGenerationCacheMiB(Settings.GenerationCacheMiB);
         Settings.GenerationUploadBudgetMs = ClampGenerationUploadBudgetMs(Settings.GenerationUploadBudgetMs);
         Settings.GenerationCollisionBudgetMs = ClampGenerationCollisionBudgetMs(Settings.GenerationCollisionBudgetMs);
+        Settings.GenerationUrgentBudgetMs = ClampGenerationUrgentBudgetMs(Settings.GenerationUrgentBudgetMs);
         Settings.GenerationColliderTileCells = ClampGenerationColliderTileCells(Settings.GenerationColliderTileCells);
         Settings.DryRoughness = ClampDryRoughness(Settings.DryRoughness);
         Settings.WetRoughness = ClampWetRoughness(Settings.WetRoughness);
@@ -204,6 +209,7 @@ public sealed class GameplaySurfaceTerrainDefaults
     public static int ClampGenerationCacheMiB(int value) => Mathf.Clamp(value, MinimumGenerationCacheMiB, MaximumGenerationCacheMiB);
     public static float ClampGenerationUploadBudgetMs(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGenerationUploadBudgetMs, MaximumGenerationUploadBudgetMs) : 1f;
     public static float ClampGenerationCollisionBudgetMs(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGenerationCollisionBudgetMs, MaximumGenerationCollisionBudgetMs) : .75f;
+    public static float ClampGenerationUrgentBudgetMs(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumGenerationUrgentBudgetMs, MaximumGenerationUrgentBudgetMs) : 6f;
     public static int ClampGenerationColliderTileCells(int value) => value == 16 ? 16 : 32;
     public static float ClampDryRoughness(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumDryRoughness, MaximumDryRoughness) : .92f;
     public static float ClampWetRoughness(float value) => float.IsFinite(value) ? Mathf.Clamp(value, MinimumWetRoughness, MaximumWetRoughness) : .35f;
