@@ -30,6 +30,8 @@ var _saved_height := 0.0
 var _saved_edit_count := 0
 
 func _initialize() -> void:
+	# The menu must stay out of the way of the foreground loading screen under test (same effect as --no-warm-world).
+	ProjectSettings.set_setting("ringworld/runtime/no_warm_world", true)
 	node_added.connect(_on_node_added)
 	call_deferred("_run")
 

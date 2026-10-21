@@ -12,6 +12,8 @@ var _errors := PackedStringArray()
 var _checks := 0
 
 func _initialize() -> void:
+	# The menu shown after Save & Exit must not warm-load the world again (same effect as --no-warm-world).
+	ProjectSettings.set_setting("ringworld/runtime/no_warm_world", true)
 	node_added.connect(func(node: Node):
 		if node.scene_file_path == "res://scenes/StartMenu.tscn":
 			node.set("freeze_backdrop", true))

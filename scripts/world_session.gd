@@ -15,10 +15,17 @@ var _pending_new_world := {}
 var _play_world: WeakRef
 var _unflushed_play_seconds := 0.0
 var _since_flush := 0.0
+## True while the start menu holds a warm (background-loaded) world. The proxy mesh cache and the vegetation cache read the global
+## active_world_directory at runtime, so nothing may change the active slot until RingWarmWorld has torn the world down.
+var warm_world_active := false
 
 
 func select_slot(slot: int) -> bool:
 	if slot < 1 or slot > SLOT_COUNT:
+		return false
+	assert(not warm_world_active, "select_slot while a warm world exists; await RingWarmWorld.teardown() first")
+	if warm_world_active:
+		push_error("select_slot(%d) refused: a warm world is bound to slot %d." % [slot, active_slot])
 		return false
 	end_play_session()
 	active_slot = slot
@@ -27,6 +34,40 @@ func select_slot(slot: int) -> bool:
 		return _create_slot(slot)
 	_touch_slot(slot)
 	return true
+
+
+## Binds a slot as the active world directory for a background (warm) load. Unlike select_slot it does not touch last_played, does
+## not end the play session and never creates a slot.
+func select_slot_for_preview(slot: int) -> bool:
+	if slot < 1 or slot > SLOT_COUNT or not slot_exists(slot):
+		return false
+	active_slot = slot
+	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", _slot_directory(slot))
+	return true
+
+
+## Clears the binding made by select_slot_for_preview once the warm world has been freed.
+func clear_preview_slot() -> void:
+	active_slot = 0
+	_load_selected_world_requested = false
+	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
+
+
+## Slot the start menu may warm-load behind the flyover, or 0. Pure: reads metadata only. Only runtime-generation Standard worlds
+## qualify; `--no-warm-world` disables it for tests.
+func get_live_menu_slot() -> int:
+	if "--no-warm-world" in OS.get_cmdline_user_args() or bool(ProjectSettings.get_setting("ringworld/runtime/no_warm_world", false)):
+		return 0
+	var slot := get_most_recent_slot()
+	if slot <= 0:
+		return 0
+	var settings: Variant = get_slot_metadata(slot).get("generation_settings", {})
+	if not (settings is Dictionary) or str(settings.get("terrain_backend", "")) != "surface_runtime_generation_v1":
+		return 0
+	var standard := WorldPresets.describe("standard")
+	if absf(float(settings.get("radius_km", 0.0)) - float(standard.radius_km)) > 0.01 		or absf(float(settings.get("ring_width_km", 0.0)) - float(standard.width_km)) > 0.01:
+		return 0
+	return slot
 
 
 func request_load_selected_world() -> void:
@@ -183,6 +224,10 @@ func copy_slot(source_slot: int, destination_slot: int) -> bool:
 
 func delete_slot(slot: int) -> bool:
 	if slot < 1 or slot > SLOT_COUNT or not slot_exists(slot):
+		return false
+	assert(not (warm_world_active and slot == active_slot), "delete_slot on the warm world's slot; await RingWarmWorld.teardown() first")
+	if warm_world_active and slot == active_slot:
+		push_error("delete_slot(%d) refused: a warm world is bound to this slot." % slot)
 		return false
 	end_play_session()
 	var deleted := _delete_directory_recursive(ProjectSettings.globalize_path(_slot_directory(slot)))

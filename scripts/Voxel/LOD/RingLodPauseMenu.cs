@@ -1101,7 +1101,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         base._ExitTree();
     }
 
-    private void SuppressGameplayHud()
+    public void SuppressGameplayHud()
     {
         // Already suppressed (thumbnail capture precedes the menu): keep the originally saved visibility.
         if (_suppressedHudVisibility.Count > 0) return;
@@ -1127,7 +1127,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         }
     }
 
-    private void RestoreGameplayHud()
+    public void RestoreGameplayHud()
     {
         foreach ((CanvasLayer layer, bool wasVisible) in _suppressedHudVisibility)
         {

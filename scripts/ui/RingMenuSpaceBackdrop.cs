@@ -12,7 +12,12 @@ public partial class RingMenuSpaceBackdrop : Control
     [Export] public bool UseSavedMenuDefaults { get; set; } = true;
     [Export] public string MenuSettingsPath { get; set; } = "res://resources/menu/menu_flyover_defaults.tres";
 
+    /// <summary>Altitude the flyover uses instead of the tuned one while a live world is expected behind the menu (km above ground).</summary>
+    [Export] public float WarmWorldAltitudeKm { get; set; }
+
     private MenuFlyoverSettings _tuning = new();
+    private TextureRect? _output;
+    private bool _retired;
     private WorldEnvironment? _worldEnvironment;
     private DirectionalLight3D? _sunLight;
     private Vector3 _sunDirection;
@@ -70,6 +75,7 @@ public partial class RingMenuSpaceBackdrop : Control
 
     public override void _Process(double delta)
     {
+        if (_retired) return;
         _wallSeconds += delta;
         if (_terrainRebuildPending)
         {
@@ -164,6 +170,50 @@ public partial class RingMenuSpaceBackdrop : Control
         _sunshine?.UpdateSunDirection(_sunDirection);
     }
 
+    public bool IsRetired => _retired;
+
+    /// <summary>Opacity of the whole flyover picture (1 opaque, 0 fully showing what is drawn behind it).</summary>
+    public void SetFlyoverAlpha(float alpha)
+    {
+        if (_output is not null) _output.Modulate = new Color(1f, 1f, 1f, Mathf.Clamp(alpha, 0f, 1f));
+    }
+
+    /// <summary>
+    /// Permanently stops and frees the flyover (its SubViewport, terrain meshes, caches and Sunshine layer, about 6.5 M triangles).
+    /// The control stays so the menu and tuning drawer keep valid references; every accessor is null-safe afterwards.
+    /// </summary>
+    public void Retire()
+    {
+        if (_retired) return;
+        _retired = true;
+        SetProcess(false);
+        if (_viewport is not null) _viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+        _nearMaterial?.SetShaderParameter("cloud_shadow_texture", default(Variant));
+        if (_farTerrain?.Instance.MaterialOverride is ShaderMaterial farMaterial)
+            farMaterial.SetShaderParameter("cloud_shadow_texture", default(Variant));
+        _sunshine?.Detach();
+        _sunshine?.QueueFree();
+        _output?.QueueFree();
+        // Remove the instances from the flyover world before retiring the textures they sample.
+        if (_viewport is not null && _nearTerrain is not null)
+        {
+            _nearTerrain.MaterialOverride = null;
+            _viewport.RemoveChild(_nearTerrain);
+            Mesh? oldMesh = _nearTerrain.Mesh;
+            _nearTerrain.Mesh = null;
+            _nearTerrain.QueueFree();
+            oldMesh?.Dispose();
+        }
+        if (_viewport is not null && _farTerrain is not null) _viewport.RemoveChild(_farTerrain.Instance);
+        _farTerrain?.Dispose();
+        _cache?.Dispose();
+        _nearMaterial?.Dispose();
+        _viewport?.QueueFree();
+        _sunshine = null; _farTerrain = null; _cache = null; _output = null; _viewport = null; _camera = null;
+        _nearTerrain = null; _nearMaterial = null; _skyMaterial = null; _sunLight = null; _worldEnvironment = null;
+        _terrainRebuildPending = false;
+    }
+
     public bool IsBackdropReady() => _cache is { InitialReady: true } && _farTerrain is { Ready: true };
 
     public string GetMenuSettingsPath() => OS.HasFeature("template")
@@ -190,18 +240,21 @@ public partial class RingMenuSpaceBackdrop : Control
 
     public string GetCameraPose() => _cameraPose;
 
+    /// <summary>Base flyover altitude: the cruise altitude of the live world when one is expected (never above the tuned altitude).</summary>
+    private float EffectiveAltitudeKm() => WarmWorldAltitudeKm > 0f ? Mathf.Min(_tuning.AltitudeKm, WarmWorldAltitudeKm) : _tuning.AltitudeKm;
+
     private (float Altitude, float Pitch, float Fov) PoseTarget() => _cameraPose switch
     {
-        "worlds" => (_tuning.AltitudeKm * _tuning.WorldsAltitudeScale, _tuning.WorldsPitchDegrees, _tuning.FieldOfView),
-        "detail" => (_tuning.AltitudeKm * .85f, _tuning.PitchDegrees, Mathf.Max(20f, _tuning.FieldOfView + _tuning.DetailFovDeltaDegrees)),
-        _ => (_tuning.AltitudeKm, _tuning.PitchDegrees, _tuning.FieldOfView)
+        "worlds" => (EffectiveAltitudeKm() * _tuning.WorldsAltitudeScale, _tuning.WorldsPitchDegrees, _tuning.FieldOfView),
+        "detail" => (EffectiveAltitudeKm() * .85f, _tuning.PitchDegrees, Mathf.Max(20f, _tuning.FieldOfView + _tuning.DetailFovDeltaDegrees)),
+        _ => (EffectiveAltitudeKm(), _tuning.PitchDegrees, _tuning.FieldOfView)
     };
 
     /// <summary>Unitless distance of the spring state from the active pose target.</summary>
     private float PoseDistance()
     {
         var target = PoseTarget();
-        return Mathf.Abs(_poseAltitudeKm - target.Altitude) / Mathf.Max(1f, _tuning.AltitudeKm)
+        return Mathf.Abs(_poseAltitudeKm - target.Altitude) / Mathf.Max(1f, EffectiveAltitudeKm())
             + Mathf.Abs(_posePitch - target.Pitch) / 30f + Mathf.Abs(_poseFov - target.Fov) / 20f;
     }
 
@@ -249,7 +302,7 @@ public partial class RingMenuSpaceBackdrop : Control
         value = target + (offset + temp) * decay;
     }
 
-    public string GetFlyoverCaption() => $"SURFACE FLYOVER / {_tuning.AltitudeKm:0.#} KM / {_tuning.SpeedKmPerSecond:0.#} KM/S";
+    public string GetFlyoverCaption() => $"SURFACE FLYOVER / {EffectiveAltitudeKm():0.#} KM / {_tuning.SpeedKmPerSecond:0.#} KM/S";
 
     private void LoadMenuDefaults()
     {
@@ -322,7 +375,7 @@ public partial class RingMenuSpaceBackdrop : Control
         ["elapsed_seconds"] = _wallSeconds,
         ["render_update_count"] = _renderUpdates,
         ["cap_hz"] = 60,
-        ["altitude_m"] = (_camera?.Position.Y ?? _tuning.AltitudeKm * 1000f) - SampleCameraHeightKilometers(CurrentRow()) * 1000f,
+        ["altitude_m"] = (_camera?.Position.Y ?? EffectiveAltitudeKm() * 1000f) - SampleCameraHeightKilometers(CurrentRow()) * 1000f,
         ["travel_m"] = _travelMeters,
         ["speed_mps"] = _tuning.SpeedKmPerSecond * 1000f,
         ["motion_ease"] = MotionEaseFactor(),
@@ -333,7 +386,8 @@ public partial class RingMenuSpaceBackdrop : Control
         ["camera_pose"] = _cameraPose,
         // Residual distance to the pose target: 1 right after a pose change, 0 once settled.
         ["pose_blend"] = _poseBlending ? Mathf.Clamp(PoseDistance() / _poseStartDistance, 0f, 1f) : 0f,
-        ["pose_altitude_km"] = _poseInitialized ? _poseAltitudeKm : _tuning.AltitudeKm,
+        ["pose_altitude_km"] = _poseInitialized ? _poseAltitudeKm : EffectiveAltitudeKm(),
+        ["retired"] = _retired,
         ["paused"] = FreezeMotion || _tuning.Paused,
         ["menu_settings_path"] = GetMenuSettingsPath(),
         ["terrain_cache_rows"] = _cache?.RowCount ?? 0,
@@ -367,12 +421,12 @@ public partial class RingMenuSpaceBackdrop : Control
             UseDebanding = true, Size = BoundedViewportSize()
         };
         AddChild(_viewport);
-        var output = new TextureRect { Texture = _viewport.GetTexture(), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered, MouseFilter = MouseFilterEnum.Ignore };
-        output.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        AddChild(output);
+        _output = new TextureRect { Texture = _viewport.GetTexture(), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered, MouseFilter = MouseFilterEnum.Ignore };
+        _output.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(_output);
         Resized += () => { if (_viewport is not null) _viewport.Size = BoundedViewportSize(); };
 
-        _camera = new Camera3D { Current = true, Near = 50f, Far = 12_000_000f, Fov = _tuning.FieldOfView, Position = new Vector3(0f, _tuning.AltitudeKm * 1000f, 0f) };
+        _camera = new Camera3D { Current = true, Near = 50f, Far = 12_000_000f, Fov = _tuning.FieldOfView, Position = new Vector3(0f, EffectiveAltitudeKm() * 1000f, 0f) };
         _camera.RotationDegrees = new Vector3(-_tuning.PitchDegrees, 0f, 0f);
         _viewport.AddChild(_camera);
         Vector3 sunDirection = new(-.4f, .75f, -.5f);

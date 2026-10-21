@@ -11,6 +11,8 @@ var _failed := false
 
 
 func _initialize() -> void:
+	# This test only measures layout; it must never warm-load the player's saved world (same effect as --no-warm-world).
+	ProjectSettings.set_setting("ringworld/runtime/no_warm_world", true)
 	for screen in range(DisplayServer.get_screen_count()):
 		print(
 			"UI screen %d rect=%s usable=%s scale=%.3f dpi=%d"

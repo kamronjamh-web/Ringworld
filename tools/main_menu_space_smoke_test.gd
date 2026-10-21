@@ -8,6 +8,8 @@ class FakeWorldSession extends Node:
 	var mutation_calls: int = 0
 	func slot_exists(slot: int) -> bool: return slot == 1
 	func get_most_recent_slot() -> int: return 1
+	# The fixture slot is never eligible for a warm world.
+	func get_live_menu_slot() -> int: return 0
 	func get_slot_metadata(_slot: int) -> Dictionary:
 		return {"name": "Preview fixture", "generation_settings": {"terrain_seed": 1337, "radius_km": 5000, "ring_width_km": 318}}
 	func select_slot(_slot: int) -> bool: mutation_calls += 1; return false

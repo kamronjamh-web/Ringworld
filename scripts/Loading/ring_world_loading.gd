@@ -10,8 +10,16 @@ const LAUNCHER := "res://scenes/WorldSizeLauncher.tscn"
 
 signal world_ready(world: Node)
 signal loading_failed(message: String)
+## Background mode only: the world finished loading behind the start menu. The receiver owns the world and the bridge.
+signal world_warm(world: Node, bridge: Node)
+
+## Cruise placement for a warm world (metres above ground) and the camera pitch the menu looks along.
+const WARM_CRUISE_ALTITUDE_M := 16000.0
+const WARM_CRUISE_PITCH_DEGREES := -25.0
 
 var active := false
+## True while a background (warm world) load is in flight: no overlay, StartMenu stays current, the world is never released.
+var is_background := false
 var cancelled := false
 var failed := false
 var _screen: Control
@@ -110,14 +118,15 @@ func begin(info: Dictionary) -> bool:
 	_initializers.clear()
 	_resource_status.clear()
 	_overall_progress = 0
-	_layer = CanvasLayer.new()
-	_layer.name = "WorldLoadingOverlay"
-	_layer.layer = 100
-	add_child(_layer)
-	_screen = SCREEN.new()
-	_layer.add_child(_screen)
-	_screen.configure(_info)
-	_screen.cancel_requested.connect(_cancel_and_return)
+	if not is_background:
+		_layer = CanvasLayer.new()
+		_layer.name = "WorldLoadingOverlay"
+		_layer.layer = 100
+		add_child(_layer)
+		_screen = SCREEN.new()
+		_layer.add_child(_screen)
+		_screen.configure(_info)
+		_screen.cancel_requested.connect(_cancel_and_return)
 	set_stage("preparing", "Opening your world.", 0)
 	return true
 
@@ -135,7 +144,8 @@ func set_stage(key: String, detail: String, fraction: float) -> void:
 		_stage = key
 		_stage_started_usec = Time.get_ticks_usec()
 	_overall_progress = maxf(_overall_progress, clampf(fraction, 0, 1))
-	_screen.set_progress(key, detail, _overall_progress)
+	if _screen != null:
+		_screen.set_progress(key, detail, _overall_progress)
 
 func record_operation(key: String, started_usec: int) -> void:
 	_operations[key] = float(Time.get_ticks_usec() - started_usec) / 1000.0
@@ -212,11 +222,35 @@ func open_saved_world(info: Dictionary) -> void:
 		old_scene.queue_free()
 	record_operation("launcher", started)
 
+## Loads the saved world behind the current scene without any loading screen. The launcher runs hidden and non-current. On success
+## `world_warm(world, bridge)` fires and the caller owns both (see ring_warm_world.gd); on failure `loading_failed`.
+func open_saved_world_background(info: Dictionary) -> void:
+	if active:
+		return
+	is_background = true
+	if not begin(info):
+		is_background = false
+		return
+	await get_tree().process_frame
+	if cancelled or failed:
+		return
+	var packed := await load_scene(LAUNCHER, 0.01, 0.08)
+	if packed == null or cancelled or failed:
+		return
+	var started := Time.get_ticks_usec()
+	_launcher = packed.instantiate()
+	_launcher.set_meta("world_loading_transition", true)
+	_launcher.set_meta("world_loading_background", true)
+	get_tree().root.add_child(_launcher)
+	record_operation("launcher", started)
+
 func prepare_world(world: Node, launcher: Node) -> void:
 	_game = world
 	_launcher = launcher
 	_bridge = BRIDGE.new()
 	add_child(_bridge)
+	if is_background:
+		_bridge.call("EnableBackgroundMode", WARM_CRUISE_ALTITUDE_M, WARM_CRUISE_PITCH_DEGREES)
 	_bridge.call("PrepareWorld", world)
 
 func prepare_resources() -> bool:
@@ -244,6 +278,8 @@ func world_attached() -> void:
 		_resources = null
 
 func wait_for_world() -> bool:
+	if is_background:
+		return await _wait_for_world_background()
 	var generation := _generation
 	while active and not cancelled and not failed and generation == _generation:
 		var readiness: Dictionary = _bridge.call("CaptureReadiness")
@@ -290,6 +326,33 @@ func wait_for_world() -> bool:
 		await get_tree().process_frame
 	return false
 
+func _wait_for_world_background() -> bool:
+	var generation := _generation
+	while active and not cancelled and not failed and generation == _generation:
+		var readiness: Dictionary = _bridge.call("CaptureReadiness")
+		var error := str(readiness.get("error", ""))
+		if not error.is_empty():
+			fail(error)
+			return false
+		set_stage(str(readiness.get("stage", "terrain")), str(readiness.get("detail", "Preparing your world.")), float(readiness.get("progress", .35)))
+		if bool(readiness.get("ready", false)):
+			if is_instance_valid(_launcher):
+				_launcher.call("_save_selected_slot_settings")
+				_launcher.queue_free()
+			_launcher = null
+			_finish_report("warm")
+			var world := _game
+			var bridge := _bridge
+			_game = null
+			_bridge = null
+			active = false
+			is_background = false
+			# The world stays held (HoldSavesUntilWorldReady, no input); the receiver keeps the bridge as its holder.
+			world_warm.emit(world, bridge)
+			return true
+		await get_tree().process_frame
+	return false
+
 func fail(message: String) -> void:
 	if failed or cancelled:
 		return
@@ -301,7 +364,15 @@ func fail(message: String) -> void:
 	if is_instance_valid(_screen):
 		_screen.show_failure(message)
 	_finish_report("failed")
+	if is_background:
+		push_warning("Warm world load failed: " + message)
 	loading_failed.emit(message)
+
+## Cancels a background load (or clears a failed one) without changing scene. Awaitable.
+func cancel_background() -> void:
+	if not is_background:
+		return
+	await _cancel_and_return()
 
 func _cancel_and_return() -> void:
 	if cancelled:
@@ -343,6 +414,11 @@ func _cancel_and_return() -> void:
 		session.consume_load_selected_world_request()
 		if session.has_method("consume_new_world_request"):
 			session.call("consume_new_world_request")
+	if is_background:
+		# The menu stays where it is; its owner clears the slot binding.
+		is_background = false
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		return
 	get_tree().change_scene_to_file(START_MENU)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 

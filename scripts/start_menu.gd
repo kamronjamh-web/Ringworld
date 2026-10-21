@@ -8,11 +8,15 @@ const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 const MENU_MOTION := preload("res://scripts/ui/menu_motion.gd")
 const WORLD_PRESETS := preload("res://scripts/world_presets.gd")
 const CARD_THUMBNAIL := preload("res://scripts/ui/world_card_thumbnail.gd")
+const WARM_WORLD := preload("res://scripts/Loading/ring_warm_world.gd")
 
 const INTRO_FADE_SECONDS := 0.8
 const INTRO_PANEL_DELAY_SECONDS := 0.35
 const SURVEY_FADE_SECONDS := 0.6
 const TELEMETRY_INTERVAL_SECONDS := 0.25
+## Opacity ramp of the flyover picture once the live world is ready behind it (the world is already rendering underneath).
+const CROSSFADE_SECONDS := 2.5
+const LEAVE_FADE_SECONDS := 0.2
 const DELETE_HOLD_SECONDS := 1.5
 const SLOT_COUNT := 3
 const MAX_WORLD_NAME_LENGTH := 32
@@ -81,18 +85,25 @@ var _delete_body: Label
 var _delete_holding := false
 var _delete_hold_elapsed := 0.0
 var _delete_target_slot := 0
+var _live_slot := 0
+var _warm: Node
+var _crossfade_tween: Tween
+var _flyover_retired := false
+var _leaving := false
 
 
 func _ready() -> void:
 	if "--certification-benchmark" in OS.get_cmdline_user_args() or "--certified-smoke-test" in OS.get_cmdline_user_args() or "--certified-walk-precision-probe" in OS.get_cmdline_user_args() or "--capture-cavity-lighting" in OS.get_cmdline_user_args() or "--underground-mode-roundtrip-smoke-test" in OS.get_cmdline_user_args() or "--capture-cloud-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-diagnostics" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-continuous-deep-night-along" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-transition" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-raw-density" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-history-off" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-sunshine-only" in OS.get_cmdline_user_args() or "--capture-certified-cloud-focused-far-only" in OS.get_cmdline_user_args() or "--lod-voxel-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-hierarchy-handoff-smoke-test" in OS.get_cmdline_user_args() or "--lod-roof-coverage-smoke-test" in OS.get_cmdline_user_args() or "--smooth-physical-terrain-smoke-test" in OS.get_cmdline_user_args() or "--smooth-terrain-traversal-smoke-test" in OS.get_cmdline_user_args() or "--smooth-deep-shaft-smoke-test" in OS.get_cmdline_user_args() or "--capture-ground-horizon" in OS.get_cmdline_user_args() or "--capture-band-site" in OS.get_cmdline_user_args() or "--capture-band-site-smooth-only" in OS.get_cmdline_user_args() or "--capture-band-site-proxy-only" in OS.get_cmdline_user_args():
 		get_tree().call_deferred("change_scene_to_file", GENERATOR_SCENE)
 		return
+	_live_slot = _eligible_live_slot()
 	_build_ui()
 	resized.connect(_update_ui_scale)
 	_update_ui_scale()
 	MENU_MOTION.style_buttons_in(_ui_root)
 	_show_main_menu()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_begin_live_world()
 
 
 func _process(delta: float) -> void:
@@ -128,6 +139,16 @@ func _begin_telemetry() -> void:
 
 
 func _update_telemetry() -> void:
+	if _flyover_retired:
+		# The flyover is gone: read the held world's Explorer instead of the flyover camera.
+		var telemetry: Dictionary = _warm.get_telemetry() if is_instance_valid(_warm) else {}
+		if bool(telemetry.get("valid", false)):
+			_survey_label.text = "ALT %.1f KM · %.1f KM/S · SUN %+.1f°" % [
+				float(telemetry.get("altitude_m", 0.0)) / 1000.0,
+				float(telemetry.get("speed_mps", 0.0)) / 1000.0,
+				float(telemetry.get("sun_elevation_degrees", 0.0)),
+			]
+		return
 	var diagnostics: Dictionary = space_backdrop.call("GetBackdropDiagnostics")
 	_survey_label.text = "ALT %.1f KM · %.1f KM/S · SUN %+.1f°" % [
 		float(diagnostics.get("altitude_m", 0.0)) / 1000.0,
@@ -173,6 +194,9 @@ func _build_ui() -> void:
 	space_backdrop.FreezeMotion = freeze_backdrop
 	space_backdrop.UseSavedMenuDefaults = use_saved_menu_defaults
 	space_backdrop.MenuSettingsPath = menu_defaults_path
+	if _live_slot > 0:
+		# A live world will sit behind the menu at its cruise altitude, so the flyover matches that height.
+		space_backdrop.WarmWorldAltitudeKm = WORLD_LOADING.WARM_CRUISE_ALTITUDE_M / 1000.0
 	add_child(space_backdrop)
 	_ui_root = Control.new()
 	_ui_root.name = "MenuDesignCanvas"
@@ -279,7 +303,7 @@ func _build_main_panel() -> void:
 	_quit_button = Button.new()
 	_quit_button.text = "QUIT"
 	_quit_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_quit_button.pressed.connect(get_tree().quit)
+	_quit_button.pressed.connect(_quit)
 	main_column.add_child(_quit_button)
 
 
@@ -672,7 +696,7 @@ func _build_screen_chrome() -> void:
 
 func _update_flyover_footer() -> void:
 	if _flyover_footer != null:
-		_flyover_footer.text = str(space_backdrop.call("GetFlyoverCaption"))
+		_flyover_footer.text = "LIVE WORLD / HELD" if _flyover_retired else str(space_backdrop.call("GetFlyoverCaption"))
 
 
 func _set_camera_pose(pose: String) -> void:
@@ -706,6 +730,10 @@ func _refresh_continue() -> void:
 	var session := get_node_or_null("/root/WorldSession")
 	if session != null and session.has_method("get_most_recent_slot"):
 		_continue_slot = int(session.get_most_recent_slot())
+	# Continue stays bound to the warm world even when Duplicate stamps a newer last_played on a copy.
+	var warm := get_node_or_null("/root/RingWarmWorld")
+	if warm != null and warm.is_busy() and int(warm.slot) > 0 and session != null and session.slot_exists(int(warm.slot)):
+		_continue_slot = int(warm.slot)
 	continue_button.visible = _continue_slot > 0
 	continue_subline.visible = _continue_slot > 0
 	if _continue_slot <= 0:
@@ -739,7 +767,7 @@ func _format_playtime(seconds: int) -> String:
 
 
 func _continue_most_recent() -> void:
-	if not _load_slot(_continue_slot):
+	if not await _load_slot(_continue_slot):
 		continue_subline.text = "Could not open this world."
 
 
@@ -944,13 +972,19 @@ func _continue_setup() -> void:
 
 
 func _load_selected_world() -> void:
-	if not _load_slot(selected_slot):
+	if not await _load_slot(selected_slot):
 		action_details.text = "Could not open this world."
 
 
 func _load_slot(slot: int) -> bool:
 	var session := get_node_or_null("/root/WorldSession")
-	if session == null or slot == 0 or not session.select_slot(slot):
+	if session == null or slot == 0 or _leaving:
+		return false
+	_leaving = true
+	# The warm world binds the global active world directory; free it before selecting a slot.
+	await _release_warm_world()
+	if not session.select_slot(slot):
+		_leaving = false
 		return false
 	session.request_load_selected_world()
 	var metadata: Dictionary = session.get_slot_metadata(slot)
@@ -963,6 +997,7 @@ func _load_slot(slot: int) -> bool:
 		"width_m": float(settings.get("ring_width_km", 20.0)) * 1000.0,
 		"is_existing": true,
 	})
+	_leaving = false
 	return true
 
 
@@ -1087,6 +1122,11 @@ func _confirm_delete() -> void:
 	var slot := _delete_target_slot
 	_close_delete_modal(false)
 	var session := get_node_or_null("/root/WorldSession")
+	var warm := get_node_or_null("/root/RingWarmWorld")
+	if session != null and warm != null and warm.is_busy() and int(warm.slot) == slot:
+		_leaving = true
+		await _release_warm_world()
+		_leaving = false
 	if session == null or not session.delete_slot(slot):
 		action_details.text = "Could not delete this world."
 		return
@@ -1151,7 +1191,7 @@ func _select_preset(preset_id: String) -> void:
 
 func _create_new_world(advanced: bool) -> void:
 	var session := get_node_or_null("/root/WorldSession")
-	if session == null or not session.has_method("create_world") or not session.has_method("request_new_world"):
+	if session == null or not session.has_method("create_world") or not session.has_method("request_new_world") or _leaving:
 		status_label.text = "World save service is unavailable."
 		return
 	var world_name := new_world_name_edit.text.strip_edges()
@@ -1161,6 +1201,9 @@ func _create_new_world(advanced: bool) -> void:
 		_reroll_seed()
 	# Match the launcher's seed range so the loading screen shows the seed actually used.
 	var terrain_seed := clampi(new_world_seed_edit.text.to_int(), 0, 2147483647)
+	_leaving = true
+	await _release_warm_world()
+	_leaving = false
 	if not session.create_world(_new_world_slot, world_name):
 		status_label.text = "Could not create save slot %d." % _new_world_slot
 		return
@@ -1178,6 +1221,88 @@ func _create_new_world(advanced: bool) -> void:
 		"width_m": float(info.get("width_km", 20.0)) * 1000.0,
 		"is_existing": false,
 	})
+
+
+# ---------------------------------------------------------------- live world
+
+func _eligible_live_slot() -> int:
+	# Frozen fixtures (tests, captures) never warm-load a world.
+	if freeze_backdrop:
+		return 0
+	var warm := get_node_or_null("/root/RingWarmWorld")
+	if warm != null and warm.is_busy() and int(warm.slot) > 0:
+		return int(warm.slot)
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or not session.has_method("get_live_menu_slot"):
+		return 0
+	return int(session.get_live_menu_slot())
+
+
+func _begin_live_world() -> void:
+	if _live_slot <= 0:
+		return
+	_warm = WARM_WORLD.ensure(self)
+	_warm.warm_ready.connect(_on_warm_ready)
+	_warm.reveal_ready.connect(_begin_crossfade)
+	if _warm.state == WARM_WORLD.State.IDLE:
+		_warm.start(_live_slot)
+	elif _warm.state == WARM_WORLD.State.WARM:
+		_on_warm_ready(_warm.world)
+
+
+func _on_warm_ready(_world: Node) -> void:
+	if _warm.reveal_complete:
+		_begin_crossfade()
+	else:
+		_warm.reveal()
+
+
+func _begin_crossfade() -> void:
+	if _flyover_retired or space_backdrop == null or _leaving:
+		return
+	_warm.log_gpu_memory("before_crossfade")
+	_crossfade_tween = create_tween()
+	_crossfade_tween.tween_method(func(alpha: float) -> void: space_backdrop.call("SetFlyoverAlpha", alpha), 1.0, 0.0, CROSSFADE_SECONDS)
+	_crossfade_tween.tween_callback(_retire_flyover)
+
+
+func _retire_flyover() -> void:
+	if _flyover_retired:
+		return
+	space_backdrop.call("Retire")
+	_flyover_retired = true
+	_survey_done = true
+	_telemetry_active = true
+	_update_flyover_footer()
+	_update_telemetry()
+	# Let the freed flyover resources settle before sampling the process GPU memory again.
+	get_tree().create_timer(3.0).timeout.connect(func() -> void:
+		if is_instance_valid(_warm):
+			_warm.log_gpu_memory("after_crossfade"))
+
+
+## Fades to black and frees the warm world (or cancels its load). Awaiting it makes select_slot and the loading screen safe.
+func _release_warm_world() -> void:
+	if _crossfade_tween != null and _crossfade_tween.is_valid():
+		_crossfade_tween.kill()
+	var warm := get_node_or_null("/root/RingWarmWorld")
+	if warm == null or not warm.is_busy():
+		return
+	if _intro_overlay != null:
+		_intro_overlay.show()
+		var cover := create_tween()
+		cover.tween_property(_intro_overlay, "color:a", 1.0, LEAVE_FADE_SECONDS)
+		await cover.finished
+	await warm.teardown()
+
+
+func _quit() -> void:
+	if _leaving:
+		return
+	_leaving = true
+	# Quitting from the live menu writes nothing: tear the held world down (read-only) before the tree exits.
+	await _release_warm_world()
+	get_tree().quit()
 
 
 # ---------------------------------------------------------------- focus

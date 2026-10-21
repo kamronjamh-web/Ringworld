@@ -3,6 +3,7 @@ using Godot;
 using Godot.Collections;
 using RingworldTechDemo.Poi;
 using RingworldTechDemo.Terrain.Surface;
+using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Save;
@@ -25,6 +26,23 @@ public partial class RingWorldLoadingBridge : Node
     private bool _released;
     private readonly List<RingTerrainProxySector> _proxies = new();
     private readonly System.Collections.Generic.Dictionary<SubViewport, SubViewport.UpdateMode> _renderHolds = new();
+    // Background (warm world) mode: the world loads behind the start menu and is never released to the player.
+    private bool _background;
+    private bool _placed;
+    private float _cruiseAltitudeMeters = 16000f;
+    private float _cruisePitchDegrees = -25f;
+    private bool _clocksPaused;
+
+    /// <summary>True once the explorer was moved to the cruise viewpoint above the saved position (background mode).</summary>
+    public bool CruisePlaced => _placed;
+
+    /// <summary>Marks this bridge as the holder of a warm world. Call before <see cref="PrepareWorld"/>.</summary>
+    public void EnableBackgroundMode(float cruiseAltitudeMeters, float cruisePitchDegrees)
+    {
+        _background = true;
+        _cruiseAltitudeMeters = Mathf.Max(100f, cruiseAltitudeMeters);
+        _cruisePitchDegrees = cruisePitchDegrees;
+    }
 
     public void PrepareWorld(Node world)
     {
@@ -94,6 +112,8 @@ public partial class RingWorldLoadingBridge : Node
                     _renderHolds[viewport] = viewport.RenderTargetUpdateMode;
                     viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
                 }
+        // A warm world sits behind the start menu: its HUD layers must never draw over the menu, not even during the load.
+        if (_background) HideWorldHud();
     }
 
     /// <summary>Prepare one rendered world frame while player input remains held.</summary>
@@ -110,6 +130,15 @@ public partial class RingWorldLoadingBridge : Node
         // frame. Keep their viewports idle behind the opaque loading screen.
         foreach (SubViewport viewport in _renderHolds.Keys)
             if (GodotObject.IsInstanceValid(viewport)) viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+        // HUD owners may show their layer again from their own process; the menu owns the screen until the world is released.
+        if (_background && !_released && _world != null && CountVisibleHudLayers() > 0) ForceHudHidden();
+    }
+
+    private void ForceHudHidden()
+    {
+        if (_world == null) return;
+        foreach (string path in new[] { "PresentationHud", "TerrainMinimap", "LodDebugHud", "CelestialDebugHud", "LiveTuningDrawer" })
+            if (_world.GetNodeOrNull<CanvasLayer>(path) is { Visible: true } layer) layer.Visible = false;
     }
 
     public override void _PhysicsProcess(double delta)
@@ -117,6 +146,9 @@ public partial class RingWorldLoadingBridge : Node
         if (_released || _explorer == null || !GodotObject.IsInstanceValid(_explorer) || !_explorer.IsInsideTree()) return;
         if (_saves != null && !_saves.IsWorldLoadComplete) return;
         if (_surface != null && !_surface.IsReady) return;
+        // The terrain stage is complete here. Move to the cruise viewpoint once, before the surroundings stage finishes, so the far and
+        // proxy owners complete for the viewpoint the player sees instead of building the ground view first.
+        if (_background && !_placed) PlaceAtCruise();
         if (_spawn.TryGetValue("ready", out Variant ready) && ready.AsBool()) return;
         _spawn = _explorer.AdvanceWorldLoadingSpawn(delta);
     }
@@ -132,10 +164,14 @@ public partial class RingWorldLoadingBridge : Node
 
         bool structureReady = true;
         int structuresReady = 0;
+        int structuresCounted = 0;
         string surroundingsDetail = "Bringing the distant ring into view.";
         foreach (Node child in _structureOwners)
         {
             if (!GodotObject.IsInstanceValid(child)) continue;
+            // Trees are hidden above 12 km, so a warm world does not wait for them. Their startup still runs.
+            if (_background && child is RingBiomeDecorationLayer) continue;
+            structuresCounted++;
             bool ready = child switch
             {
                 RingScaledFarViewport far => far.StartupComplete,
@@ -175,7 +211,10 @@ public partial class RingWorldLoadingBridge : Node
         bool farReady = _far == null || !_far.Enabled || _far.ActiveGlobalTerrainSectorCount > 0;
         if (!farReady || !structureReady)
             return new() { ["ready"] = false, ["stage"] = "surroundings", ["detail"] = surroundingsDetail,
-                ["progress"] = .72f + .16f * structuresReady / System.Math.Max(1, _structureOwners.Count), ["spawn"] = _spawn };
+                ["progress"] = .72f + .16f * structuresReady / System.Math.Max(1, structuresCounted), ["spawn"] = _spawn };
+        if (_background)
+            return new() { ["ready"] = _placed, ["stage"] = _placed ? "ready" : "position", ["detail"] = "Your world is ready.",
+                ["progress"] = _placed ? 1f : .9f, ["save_ready"] = saveReady, ["surface_ready"] = surfaceReady, ["far_ready"] = farReady };
         bool spawnReady = _spawn.TryGetValue("ready", out Variant spawn) && spawn.AsBool();
         return new()
         {
@@ -184,6 +223,75 @@ public partial class RingWorldLoadingBridge : Node
             ["progress"] = spawnReady ? 1f : .9f, ["spawn"] = _spawn,
             ["save_ready"] = saveReady, ["surface_ready"] = surfaceReady, ["far_ready"] = farReady
         };
+    }
+
+    private void PlaceAtCruise()
+    {
+        if (_explorer == null || _surface == null) return;
+        RingCanonicalPosition saved = _explorer.CanonicalPosition;
+        float ground = _surface.SampleHeight(saved.AroundMeters, saved.AcrossMeters);
+        double groundVertical = float.IsFinite(ground) ? ground : saved.VerticalMeters;
+        var target = new RingCanonicalPosition(saved.AroundMeters, groundVertical + _cruiseAltitudeMeters, saved.AcrossMeters);
+        float yawDeg = Mathf.RadToDeg(_explorer.SavedYaw);
+        if (!_explorer.TryTeleportToCanonical(target, yawDeg, _cruisePitchDegrees, true, out string feedback))
+        {
+            GD.PushWarning("Warm world cruise placement failed: " + feedback);
+            return;
+        }
+        // The teleport pins the streaming focus on the destination; the normal chase takes over again from here.
+        _world?.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.ClearStreamingCanonicalFocusOverride();
+        PauseClocks(true);
+        _placed = true;
+    }
+
+    /// <summary>Freezes the celestial and cloud clocks (the menu shows the saved time of day). Nothing is saved while the world is held.</summary>
+    public void PauseClocks(bool paused)
+    {
+        if (_world == null || !GodotObject.IsInstanceValid(_world)) return;
+        _clocksPaused = paused;
+        if (_world.GetNodeOrNull<RingDayNightCycle>("RingDayNightCycle") is { } cycle) cycle.Paused = paused;
+        if (_world.GetNodeOrNull<RingVolumetricCloudLayer>("RingVolumetricClouds") is { } clouds) clouds.CloudSimulationPaused = paused;
+    }
+
+    /// <summary>Hides the world HUD layers so they do not draw over the start menu.</summary>
+    public void HideWorldHud() => _world?.GetNodeOrNull<RingLodPauseMenu>("LodPauseMenu")?.SuppressGameplayHud();
+
+    /// <summary>
+    /// Starts rendering the world behind an opaque cover: releases the viewport holds (the minimap stays off, its HUD is hidden) and
+    /// re-enables 3D on the root viewport. Player input stays held.
+    /// </summary>
+    public void RevealBehindMenu()
+    {
+        PrepareReveal();
+        if (_world != null)
+            foreach (Node viewport in _world.FindChildren("*", "SubViewport", true, false))
+                if (viewport is SubViewport sub && sub.GetParent() is RingTerrainMinimap)
+                    sub.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
+        GetTree().Root.Disable3D = false;
+    }
+
+    /// <summary>Altitude, speed and sun elevation for the menu's survey readout once the flyover is retired.</summary>
+    public Godot.Collections.Dictionary GetExplorerTelemetry()
+    {
+        var result = new Godot.Collections.Dictionary { ["valid"] = false };
+        if (_explorer == null || !GodotObject.IsInstanceValid(_explorer)) return result;
+        result["valid"] = true;
+        // The cached altitude is only refreshed by the (held) explorer physics step, so compute it.
+        result["altitude_m"] = _explorer.GetCanonicalAtmosphereHeightMeters();
+        result["speed_mps"] = _explorer.ActualTravelSpeedMetersPerSecond;
+        result["sun_elevation_degrees"] = _world?.GetNodeOrNull<RingDayNightCycle>("RingDayNightCycle")?.SunElevationDegrees ?? 0f;
+        result["clocks_paused"] = _clocksPaused;
+        return result;
+    }
+
+    /// <summary>Counts world HUD layers that are still visible (a warm world must show none).</summary>
+    public int CountVisibleHudLayers()
+    {
+        int visible = 0;
+        if (_world == null) return 0;
+        foreach (string path in new[] { "PresentationHud", "TerrainMinimap", "LodDebugHud", "CelestialDebugHud", "LiveTuningDrawer" })
+            if (_world.GetNodeOrNull<CanvasLayer>(path) is { Visible: true }) visible++;
+        return visible;
     }
 
     public void ReleaseWorld()
