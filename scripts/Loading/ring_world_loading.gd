@@ -267,6 +267,9 @@ func wait_for_world() -> bool:
 			get_tree().current_scene = _game
 			if is_instance_valid(_launcher):
 				_launcher.call("_save_selected_slot_settings")
+				var play_session := get_node_or_null("/root/WorldSession")
+				if play_session != null and play_session.has_method("begin_play_session"):
+					play_session.call("begin_play_session", _game)
 				_launcher.queue_free()
 			_launcher = null
 			_screen.finish()
@@ -338,6 +341,8 @@ func _cancel_and_return() -> void:
 	var session := get_node_or_null("/root/WorldSession")
 	if session != null:
 		session.consume_load_selected_world_request()
+		if session.has_method("consume_new_world_request"):
+			session.call("consume_new_world_request")
 	get_tree().change_scene_to_file(START_MENU)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 

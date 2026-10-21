@@ -2,6 +2,7 @@ using Godot;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Voxel.Save;
 using System;
 using System.Collections.Generic;
 
@@ -81,9 +82,14 @@ public partial class RingLodPauseMenu : CanvasLayer
     private CheckButton? _hazeToggle;
     private readonly Dictionary<GeometryInstance3D, Material?> _debugOriginalMaterials = new();
     private readonly Dictionary<CanvasLayer, bool> _suppressedHudVisibility = new();
+    private readonly Dictionary<CanvasItem, bool> _suppressedItemVisibility = new();
     private StandardMaterial3D? _voxelDebugMaterial;
     private StandardMaterial3D? _legacyDebugMaterial;
     private bool _menuOpen;
+    private bool _thumbnailCapturePending;
+    private bool _saveAndExitActive;
+    private Button? _saveExitButton;
+    private Label? _saveExitStatus;
 
     public override void _Ready()
     {
@@ -117,7 +123,13 @@ public partial class RingLodPauseMenu : CanvasLayer
     {
         if (@event is InputEventKey key && key.Pressed && !key.Echo && key.Keycode == Key.Escape)
         {
-            SetMenuOpen(_root == null || !_root.Visible);
+            if (_saveAndExitActive)
+            {
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+            if (_root == null || !_root.Visible) BeginPauseWithThumbnail();
+            else SetMenuOpen(false);
             GetViewport().SetInputAsHandled();
         }
     }
@@ -486,6 +498,88 @@ public partial class RingLodPauseMenu : CanvasLayer
         var resume = new Button { Text = "Resume" };
         resume.Pressed += () => SetMenuOpen(false);
         column.AddChild(resume);
+        _saveExitStatus = new Label { Text = "", AutowrapMode = TextServer.AutowrapMode.WordSmart };
+        column.AddChild(_saveExitStatus);
+        _saveExitButton = new Button { Text = "Save & Exit to Menu", CustomMinimumSize = new Vector2(0, 38) };
+        _saveExitButton.Pressed += SaveAndExitToMenu;
+        column.AddChild(_saveExitButton);
+    }
+
+    // Pausing with Escape first renders one clean frame (no HUD/menu) and stores it as the world card thumbnail.
+    private async void BeginPauseWithThumbnail()
+    {
+        if (_thumbnailCapturePending) return;
+        _thumbnailCapturePending = true;
+        try
+        {
+            SuppressGameplayHud();
+            GetTree().Paused = true;
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+            await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+            if (!IsInsideTree()) return;
+            try
+            {
+                Image? image = GetViewport().GetTexture()?.GetImage();
+                Node? session = GetNodeOrNull("/root/WorldSession");
+                if (image != null && session != null && session.HasMethod("save_active_thumbnail"))
+                    session.Call("save_active_thumbnail", image);
+            }
+            catch (Exception exception)
+            {
+                GD.PushWarning($"World thumbnail capture failed: {exception.Message}");
+            }
+        }
+        finally
+        {
+            _thumbnailCapturePending = false;
+            if (IsInsideTree() && !_saveAndExitActive) SetMenuOpen(true);
+        }
+    }
+
+    // Commits the world save (blocking until the background write finishes), flushes playtime, then returns to the start menu.
+    // The world is then freed by the scene change; its _ExitTree save is a no-op-sized second write that also waits for completion.
+    private async void SaveAndExitToMenu()
+    {
+        if (_saveAndExitActive) return;
+        _saveAndExitActive = true;
+        if (_saveExitButton != null) _saveExitButton.Disabled = true;
+        if (_saveExitStatus != null) _saveExitStatus.Text = "Saving world...";
+        ProcessModeEnum explorerMode = _explorer?.ProcessMode ?? ProcessModeEnum.Inherit;
+        if (_explorer != null) _explorer.ProcessMode = ProcessModeEnum.Disabled;
+        Node? liveTuning = GetNodeOrNull("../LiveTuningDrawer");
+        ProcessModeEnum tuningMode = liveTuning?.ProcessMode ?? ProcessModeEnum.Always;
+        if (liveTuning != null) liveTuning.ProcessMode = ProcessModeEnum.Disabled;
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (!IsInsideTree()) return;
+        RingWorldSaveManager? saves = GetNodeOrNull<RingWorldSaveManager>("../WorldSaveManager");
+        Error result = saves == null ? Error.Ok : saves.SaveForSceneTransition();
+        if (result != Error.Ok)
+        {
+            if (_saveExitStatus != null) _saveExitStatus.Text = $"Save failed ({result}); staying in the world.";
+            if (_saveExitButton != null) _saveExitButton.Disabled = false;
+            if (_explorer != null) _explorer.ProcessMode = explorerMode;
+            if (liveTuning != null) liveTuning.ProcessMode = tuningMode;
+            _saveAndExitActive = false;
+            return;
+        }
+        Node? session = GetNodeOrNull("/root/WorldSession");
+        if (session != null && session.HasMethod("end_play_session")) session.Call("end_play_session");
+        FlushRenderResolutionSettings();
+        FlushProxyCoverageCullingSettings();
+        FlushLodTransitionSettings();
+        GetTree().Paused = false;
+        Input.MouseMode = Input.MouseModeEnum.Visible;
+        Error changed = GetTree().ChangeSceneToFile("res://scenes/StartMenu.tscn");
+        if (changed != Error.Ok)
+        {
+            // The world was saved but the menu scene could not load; stay paused in the world rather than leave a half-torn-down session.
+            GetTree().Paused = true;
+            if (_saveExitStatus != null) _saveExitStatus.Text = $"Could not open the start menu ({changed}).";
+            if (_saveExitButton != null) _saveExitButton.Disabled = false;
+            if (_explorer != null) _explorer.ProcessMode = explorerMode;
+            if (liveTuning != null) liveTuning.ProcessMode = tuningMode;
+            _saveAndExitActive = false;
+        }
     }
 
     private static void AddLayerToggle(Container container, string text, Node3D? layer, bool initial)
@@ -1099,19 +1193,27 @@ public partial class RingLodPauseMenu : CanvasLayer
 
     private void SuppressGameplayHud()
     {
-        _suppressedHudVisibility.Clear();
+        // Already suppressed (thumbnail capture precedes the menu): keep the originally saved visibility.
+        if (_suppressedHudVisibility.Count > 0) return;
         foreach (string path in new[]
                  {
                      "../PresentationHud",
                      "../TerrainMinimap",
                      "../LodDebugHud",
-                     "../CelestialDebugHud"
+                     "../CelestialDebugHud",
+                     "../LiveTuningDrawer"
                  })
         {
             CanvasLayer? layer = GetNodeOrNull<CanvasLayer>(path);
             if (layer == null) continue;
             _suppressedHudVisibility[layer] = layer.Visible;
             layer.Visible = false;
+        }
+        CanvasItem? instructions = GetNodeOrNull<CanvasItem>("../Instructions");
+        if (instructions != null)
+        {
+            _suppressedItemVisibility[instructions] = instructions.Visible;
+            instructions.Visible = false;
         }
     }
 
@@ -1122,5 +1224,10 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (GodotObject.IsInstanceValid(layer)) layer.Visible = wasVisible;
         }
         _suppressedHudVisibility.Clear();
+        foreach ((CanvasItem item, bool wasVisible) in _suppressedItemVisibility)
+        {
+            if (GodotObject.IsInstanceValid(item)) item.Visible = wasVisible;
+        }
+        _suppressedItemVisibility.Clear();
     }
 }

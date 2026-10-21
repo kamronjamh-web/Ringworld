@@ -202,6 +202,12 @@ func _ready() -> void:
 		_diagnostic_launch = true
 		call_deferred("_start_game")
 		return
+	var new_world_request := _consume_new_world_request()
+	if not new_world_request.is_empty():
+		_apply_new_world_request(new_world_request)
+		if bool(new_world_request.get("auto_start", true)):
+			call_deferred("_start_game")
+		return
 	if _consume_load_world_request():
 		call_deferred("_start_game")
 		return
@@ -615,6 +621,26 @@ func _get_selected_slot_settings() -> Dictionary:
 		return {}
 	var settings: Variant = session.get_active_world_settings()
 	return settings if settings is Dictionary else {}
+
+
+func _consume_new_world_request() -> Dictionary:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or not session.has_method("consume_new_world_request"):
+		return {}
+	var request: Variant = session.call("consume_new_world_request")
+	return request if request is Dictionary else {}
+
+
+func _apply_new_world_request(request: Dictionary) -> void:
+	if str(request.get("preset", "standard")) == "compact":
+		_on_reset_defaults_pressed()
+	else:
+		_on_certified_preset_pressed()
+		if terrain_backend_selector != null:
+			terrain_backend_selector.select(2)
+			_on_terrain_backend_selected(2)
+	if terrain_seed_spin != null and request.has("terrain_seed"):
+		terrain_seed_spin.value = float(request["terrain_seed"])
 
 
 func _consume_load_world_request() -> bool:

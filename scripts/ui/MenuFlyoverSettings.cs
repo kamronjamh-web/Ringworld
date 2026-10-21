@@ -8,12 +8,19 @@ public partial class MenuFlyoverSettings : Resource
 {
     [Export] public float AltitudeKm { get; set; } = 20f;
     [Export] public float PitchDegrees { get; set; } = 25f;
+    [Export] public float WorldsAltitudeScale { get; set; } = 1.6f;
+    [Export] public float WorldsPitchDegrees { get; set; } = 12f;
+    [Export] public float DetailFovDeltaDegrees { get; set; } = -8f;
+    [Export] public float PoseBlendSeconds { get; set; } = 1.6f;
     [Export] public float SpeedKmPerSecond { get; set; } = 5f;
     [Export] public float FieldOfView { get; set; } = 58f;
     [Export] public bool Paused { get; set; }
     [Export] public float SunEnergy { get; set; } = 2.15f;
     [Export] public float SunElevationDegrees { get; set; } = 49.51f;
     [Export] public float SunAzimuthDegrees { get; set; } = -141.34f;
+    [Export] public float SunDriftAmplitudeDegrees { get; set; } = 12f;
+    [Export] public float SunDriftPeriodMinutes { get; set; } = 12f;
+    [Export] public float MotionEaseInSeconds { get; set; } = 2.5f;
     [Export] public float AmbientEnergy { get; set; } = .35f;
     [Export] public float HazeAmount { get; set; } = .12f;
     [Export] public float HazeStartKm { get; set; } = 250f;
@@ -61,11 +68,18 @@ public partial class MenuFlyoverSettings : Resource
     {
         AltitudeKm = Clamp(AltitudeKm, 8, 80);
         PitchDegrees = Clamp(PitchDegrees, 5, 65);
+        WorldsAltitudeScale = Clamp(WorldsAltitudeScale, 1, 3);
+        WorldsPitchDegrees = Clamp(WorldsPitchDegrees, 5, 65);
+        DetailFovDeltaDegrees = Clamp(DetailFovDeltaDegrees, -25, 0);
+        PoseBlendSeconds = Clamp(PoseBlendSeconds, 0, 6);
         SpeedKmPerSecond = Clamp(SpeedKmPerSecond, 0, 15);
         FieldOfView = Clamp(FieldOfView, 35, 95);
         SunEnergy = Clamp(SunEnergy, 0, 5);
         SunElevationDegrees = Clamp(SunElevationDegrees, -90, 90);
         SunAzimuthDegrees = Clamp(SunAzimuthDegrees, -180, 180);
+        SunDriftAmplitudeDegrees = Clamp(SunDriftAmplitudeDegrees, 0, 60);
+        SunDriftPeriodMinutes = Clamp(SunDriftPeriodMinutes, 1, 120);
+        MotionEaseInSeconds = Clamp(MotionEaseInSeconds, 0, 10);
         AmbientEnergy = Clamp(AmbientEnergy, 0, 2);
         HazeAmount = Clamp(HazeAmount, 0, .4f);
         HazeStartKm = Clamp(HazeStartKm, 20, 2000);

@@ -84,7 +84,7 @@ func _run_coordinate_probe() -> void:
 
 
 func _find_button(node: Node) -> Button:
-	if node is Button:
+	if node is Button and (node as Button).is_visible_in_tree():
 		return node as Button
 	for child in node.get_children():
 		var found := _find_button(child)

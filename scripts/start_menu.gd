@@ -5,6 +5,19 @@ const UI_THEME := preload("res://scripts/ui/ring_ui_theme.gd")
 const SPACE_BACKDROP := preload("res://scripts/ui/RingMenuSpaceBackdrop.cs")
 const MENU_TUNING_DRAWER := preload("res://scripts/ui/MenuFlyoverTuningDrawer.cs")
 const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
+const MENU_MOTION := preload("res://scripts/ui/menu_motion.gd")
+const WORLD_PRESETS := preload("res://scripts/world_presets.gd")
+const CARD_THUMBNAIL := preload("res://scripts/ui/world_card_thumbnail.gd")
+
+const INTRO_FADE_SECONDS := 0.8
+const INTRO_PANEL_DELAY_SECONDS := 0.35
+const SURVEY_FADE_SECONDS := 0.6
+const TELEMETRY_INTERVAL_SECONDS := 0.25
+const DELETE_HOLD_SECONDS := 1.5
+const SLOT_COUNT := 3
+const MAX_WORLD_NAME_LENGTH := 32
+const CARD_WIDTH := 720.0
+const THUMBNAIL_SIZE := Vector2(224, 126)
 
 @export var backdrop_seed: int = -1
 @export var freeze_backdrop: bool = false
@@ -13,18 +26,61 @@ const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 
 var main_panel: Control
 var worlds_panel: Control
+var new_world_panel: Control
 var world_actions_panel: Control
 var status_label: Label
-var action_title: Label
 var action_details: Label
-var copy_targets: VBoxContainer
+var copy_targets: HBoxContainer
+var rename_row: HBoxContainer
+var rename_edit: LineEdit
 var delete_button: Button
+var delete_modal: Control
+var delete_cancel_button: Button
+var delete_hold_button: Button
+var delete_hold_fill: ColorRect
+var new_world_name_edit: LineEdit
+var new_world_seed_edit: LineEdit
 var slot_buttons: Array[Button] = []
 var selected_slot := 0
-var delete_confirmation_armed := false
 var space_backdrop: Control
 var _ui_root: Control
 var _flyover_footer: Label
+var worlds_button: Button
+var continue_button: Button
+var continue_subline: Label
+var _quit_button: Button
+var _continue_slot := 0
+var _intro_overlay: ColorRect
+var _survey_label: Label
+var _survey_done := false
+var _telemetry_active := false
+var _telemetry_elapsed := 0.0
+var _last_survey_percent := -1
+var _intro_pending := true
+var _tuning_drawer: Control
+var _cards: Array[Dictionary] = []
+var _expanded_slot := 0
+var _load_button: Button
+var _copy_button: Button
+var _rename_button: Button
+var _details_button: Button
+var _setup_button: Button
+var _action_row: HFlowContainer
+var _new_world_slot := 0
+var _new_world_preset := "standard"
+var _preset_buttons: Dictionary = {}
+var _preset_line: Label
+var _preset_blurb: Label
+var _new_world_back: Button
+var _new_world_create: Button
+var _new_world_advanced: Button
+var _new_world_reroll: Button
+var _worlds_back: Button
+var _delete_title: Label
+var _delete_body: Label
+var _delete_holding := false
+var _delete_hold_elapsed := 0.0
+var _delete_target_slot := 0
 
 
 func _ready() -> void:
@@ -34,8 +90,76 @@ func _ready() -> void:
 	_build_ui()
 	resized.connect(_update_ui_scale)
 	_update_ui_scale()
+	MENU_MOTION.style_buttons_in(_ui_root)
 	_show_main_menu()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
+
+func _process(delta: float) -> void:
+	if _delete_holding and delete_modal != null and delete_modal.visible:
+		_delete_hold_elapsed += delta
+		delete_hold_fill.scale.x = clampf(_delete_hold_elapsed / DELETE_HOLD_SECONDS, 0.0, 1.0)
+		if _delete_hold_elapsed >= DELETE_HOLD_SECONDS:
+			_confirm_delete()
+	if _telemetry_active:
+		_telemetry_elapsed += delta
+		if _telemetry_elapsed >= TELEMETRY_INTERVAL_SECONDS:
+			_telemetry_elapsed = 0.0
+			_update_telemetry()
+	if _survey_done or _survey_label == null or space_backdrop == null:
+		return
+	if bool(space_backdrop.call("IsBackdropReady")):
+		_survey_done = true
+		_survey_label.text = "SURVEY CACHE 100%"
+		var tween := create_tween()
+		tween.tween_property(_survey_label, "modulate:a", 0.0, SURVEY_FADE_SECONDS).set_delay(0.4)
+		tween.tween_callback(_begin_telemetry)
+		tween.tween_property(_survey_label, "modulate:a", 1.0, SURVEY_FADE_SECONDS)
+		return
+	var percent := int(floor(float(space_backdrop.call("GetBackdropProgress")) * 100.0))
+	if percent != _last_survey_percent:
+		_last_survey_percent = percent
+		_survey_label.text = "SURVEY CACHE %d%%" % percent
+
+
+func _begin_telemetry() -> void:
+	_telemetry_active = true
+	_update_telemetry()
+
+
+func _update_telemetry() -> void:
+	var diagnostics: Dictionary = space_backdrop.call("GetBackdropDiagnostics")
+	_survey_label.text = "ALT %.1f KM · %.1f KM/S · SUN %+.1f°" % [
+		float(diagnostics.get("altitude_m", 0.0)) / 1000.0,
+		float(diagnostics.get("speed_mps", 0.0)) / 1000.0,
+		float(diagnostics.get("effective_sun_elevation_degrees", 0.0)),
+	]
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not event.is_action_pressed("ui_cancel"):
+		return
+	if _tuning_drawer != null and bool(_tuning_drawer.get("IsDrawerOpen")):
+		return
+	if delete_modal != null and delete_modal.visible:
+		_close_delete_modal()
+	elif rename_row.visible and world_actions_panel.visible:
+		_hide_rename()
+	elif copy_targets.visible and world_actions_panel.visible:
+		copy_targets.visible = false
+		_update_world_focus_chain()
+		_focus_expanded_default()
+	elif new_world_panel.visible:
+		_show_worlds()
+	elif worlds_panel.visible and _expanded_slot != 0:
+		var slot := _expanded_slot
+		_collapse_cards()
+		slot_buttons[slot - 1].grab_focus()
+	elif worlds_panel.visible:
+		_show_main_menu()
+	else:
+		return
+	get_viewport().set_input_as_handled()
 
 
 func _build_ui() -> void:
@@ -55,8 +179,8 @@ func _build_ui() -> void:
 	_ui_root.size = Vector2(1920, 1080)
 	add_child(_ui_root)
 	var gradient := Gradient.new()
-	gradient.offsets = PackedFloat32Array([0.0, 0.28, 0.65])
-	gradient.colors = PackedColorArray([Color(0, 0, 0, 0.7), Color(0, 0, 0, 0.45), Color(0, 0, 0, 0)])
+	gradient.offsets = PackedFloat32Array([0.0, 0.32, 0.7])
+	gradient.colors = PackedColorArray([Color(0, 0, 0, 0.72), Color(0, 0, 0, 0.5), Color(0, 0, 0, 0)])
 	var overlay := TextureRect.new()
 	overlay.texture = GradientTexture2D.new()
 	overlay.texture.gradient = gradient
@@ -64,115 +188,375 @@ func _build_ui() -> void:
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(overlay)
 	move_child(overlay, get_child_count() - 2)
+	# Bottom strip keeps the monospace footer readable over bright terrain.
+	var footer_gradient := Gradient.new()
+	footer_gradient.offsets = PackedFloat32Array([0.0, 1.0])
+	footer_gradient.colors = PackedColorArray([Color(0, 0, 0, 0), Color(0, 0, 0, 0.45)])
+	var footer_texture := GradientTexture2D.new()
+	footer_texture.gradient = footer_gradient
+	footer_texture.fill_from = Vector2(0, 0)
+	footer_texture.fill_to = Vector2(0, 1)
+	var footer_strip := TextureRect.new()
+	footer_strip.texture = footer_texture
+	footer_strip.stretch_mode = TextureRect.STRETCH_SCALE
+	footer_strip.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	footer_strip.anchor_top = 0.88
+	footer_strip.offset_top = 0.0
+	footer_strip.offset_bottom = 0.0
+	footer_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(footer_strip)
+	move_child(footer_strip, get_child_count() - 2)
+	# Black reveal sits above the backdrop and readability gradient, below the UI.
+	_intro_overlay = ColorRect.new()
+	_intro_overlay.name = "IntroReveal"
+	_intro_overlay.color = Color.BLACK
+	_intro_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_intro_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_intro_overlay)
+	move_child(_intro_overlay, _ui_root.get_index())
+	var reveal := create_tween()
+	reveal.tween_property(_intro_overlay, "color:a", 0.0, INTRO_FADE_SECONDS)
+	reveal.tween_callback(_intro_overlay.hide)
 	_build_screen_chrome()
+	_build_main_panel()
+	_build_worlds_panel()
+	_build_world_actions()
+	_build_new_world_panel()
 
+	_tuning_drawer = MENU_TUNING_DRAWER.new()
+	_tuning_drawer.name = "MenuTuningDrawer"
+	_tuning_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_tuning_drawer)
+	space_backdrop.connect("MenuTuningChanged", _update_flyover_footer)
+	var tuning_button := Button.new()
+	tuning_button.text = "`  LIVE TUNING"
+	tuning_button.position = Vector2(1672, 30)
+	tuning_button.custom_minimum_size = Vector2(210, 36)
+	tuning_button.focus_mode = Control.FOCUS_CLICK
+	tuning_button.pressed.connect(_tuning_drawer.call.bind("SetDrawerOpen", true))
+	_ui_root.add_child(tuning_button)
+	_build_delete_modal()
+
+
+func _build_main_panel() -> void:
 	main_panel = _make_panel(Vector2(500, 430))
 	main_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	main_panel.position = Vector2(100, 270)
-	main_panel.size = Vector2(550, 550)
+	main_panel.position = Vector2(100, 190)
+	main_panel.size = Vector2(550, 700)
 	main_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
 	var main_column := _make_column(main_panel)
 	var main_kicker := _add_kicker(main_column, "RING SURVEY")
 	main_kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	var main_title := _add_title(main_column, "RINGWORLD", 72)
+	var main_title := _add_title(main_column, "RINGWORLD", "DisplayLabel")
 	main_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	main_title.add_theme_color_override("font_color", Color.WHITE)
 	var main_subtitle := _add_subtitle(main_column, "A world beyond the horizon.")
 	main_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	var divider := HSeparator.new()
 	main_column.add_child(divider)
-	var worlds_button := Button.new()
+	continue_button = Button.new()
+	continue_button.text = "CONTINUE   →"
+	continue_button.custom_minimum_size = Vector2(390, 58)
+	continue_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	continue_button.pressed.connect(_continue_most_recent)
+	continue_button.visible = false
+	main_column.add_child(continue_button)
+	continue_subline = Label.new()
+	continue_subline.theme_type_variation = "MutedLabel"
+	continue_subline.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	continue_subline.visible = false
+	main_column.add_child(continue_subline)
+	worlds_button = Button.new()
 	worlds_button.text = "ENTER RINGWORLD   →"
 	worlds_button.custom_minimum_size = Vector2(390, 58)
 	worlds_button.pressed.connect(_show_worlds)
 	worlds_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	main_column.add_child(worlds_button)
 	var main_note := Label.new()
+	main_note.theme_type_variation = "MutedLabel"
 	main_note.text = "LOCAL WORLDS  •  CONTINUOUS TERRAIN  •  PHYSICAL CLOUDS"
 	main_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	main_note.add_theme_font_size_override("font_size", 12)
-	main_note.modulate = UI_THEME.MUTED
 	main_column.add_child(main_note)
-	var quit_button := Button.new()
-	quit_button.text = "QUIT"
-	quit_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	quit_button.pressed.connect(get_tree().quit)
-	main_column.add_child(quit_button)
+	_quit_button = Button.new()
+	_quit_button.text = "QUIT"
+	_quit_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_quit_button.pressed.connect(get_tree().quit)
+	main_column.add_child(_quit_button)
 
-	worlds_panel = _make_panel(Vector2(700, 570))
-	var worlds_column := _make_column(worlds_panel)
-	_add_kicker(worlds_column, "LOCAL ARCHIVE  /  THREE SLOTS")
-	_add_title(worlds_column, "SELECT A WORLD", 34)
+
+func _build_worlds_panel() -> void:
+	worlds_panel = _make_panel(Vector2(CARD_WIDTH, 100))
+	worlds_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	worlds_panel.position = Vector2(100, 150)
+	worlds_panel.size = Vector2(CARD_WIDTH, 100)
+	worlds_panel.custom_minimum_size.x = CARD_WIDTH
+	worlds_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	var worlds_column := _make_left_column(worlds_panel, 14)
+	_add_kicker(worlds_column, "LOCAL ARCHIVE  /  THREE SLOTS").horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_add_title(worlds_column, "SELECT A WORLD", "HeadingLabel").horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	var description := Label.new()
-	description.text = "Open an existing ring or configure a new one. Each slot keeps its terrain settings and voxel edits."
-	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	description.theme_type_variation = "MutedLabel"
+	description.text = "Open an existing ring or found a new one. Each slot keeps its terrain settings and voxel edits."
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	description.modulate = UI_THEME.MUTED
+	description.custom_minimum_size.x = CARD_WIDTH - 20.0
 	worlds_column.add_child(description)
-	for slot in range(1, 4):
-		var button := Button.new()
-		button.custom_minimum_size = Vector2(520, 64)
-		button.text = _slot_button_text(slot)
-		button.pressed.connect(_select_slot.bind(slot))
-		worlds_column.add_child(button)
-		slot_buttons.append(button)
+	for slot in range(1, SLOT_COUNT + 1):
+		worlds_column.add_child(_build_world_card(slot))
 	status_label = Label.new()
-	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	status_label.modulate = Color(1.0, 0.55, 0.45)
+	status_label.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 	worlds_column.add_child(status_label)
-	var back := Button.new()
-	back.text = "←  BACK"
-	back.pressed.connect(_show_main_menu)
-	worlds_column.add_child(back)
+	_worlds_back = Button.new()
+	_worlds_back.theme_type_variation = "GhostButton"
+	_worlds_back.text = "←  BACK"
+	_worlds_back.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_worlds_back.pressed.connect(_show_main_menu)
+	worlds_column.add_child(_worlds_back)
 
-	world_actions_panel = _make_panel(Vector2(700, 590))
-	var action_column := _make_column(world_actions_panel)
-	_add_kicker(action_column, "WORLD OPERATIONS")
-	action_title = Label.new()
-	action_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	action_title.add_theme_font_size_override("font_size", 30)
-	action_title.add_theme_color_override("font_color", UI_THEME.ACCENT_BRIGHT)
-	action_column.add_child(action_title)
-	action_details = Label.new()
-	action_details.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	action_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	action_details.modulate = UI_THEME.MUTED
-	action_column.add_child(action_details)
-	var load_button := Button.new()
-	load_button.text = "LOAD WORLD   →"
-	load_button.custom_minimum_size = Vector2(430, 48)
-	load_button.pressed.connect(_load_selected_world)
-	action_column.add_child(load_button)
-	var copy_button := Button.new()
-	copy_button.text = "DUPLICATE WORLD"
-	copy_button.custom_minimum_size = Vector2(430, 48)
-	copy_button.pressed.connect(_show_copy_targets)
-	action_column.add_child(copy_button)
-	copy_targets = VBoxContainer.new()
+
+func _build_world_card(slot: int) -> Control:
+	var card := PanelContainer.new()
+	card.name = "WorldCard%d" % slot
+	card.theme_type_variation = "WorldCard"
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	card.add_child(vbox)
+	var header := Button.new()
+	header.theme_type_variation = "CardHeaderButton"
+	header.custom_minimum_size = Vector2(CARD_WIDTH - 28.0, THUMBNAIL_SIZE.y)
+	header.set_meta("mm_styled", true)
+	header.pressed.connect(_select_slot.bind(slot))
+	vbox.add_child(header)
+	slot_buttons.append(header)
+	var row := HBoxContainer.new()
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.add_theme_constant_override("separation", 16)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	header.add_child(row)
+	var thumbnail: Control = CARD_THUMBNAIL.new()
+	thumbnail.custom_minimum_size = THUMBNAIL_SIZE
+	row.add_child(thumbnail)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.alignment = BoxContainer.ALIGNMENT_CENTER
+	info.add_theme_constant_override("separation", 4)
+	info.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(info)
+	var kicker := _add_kicker(info, "SLOT %d" % slot)
+	kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var title := Label.new()
+	title.theme_type_variation = "CardTitleLabel"
+	info.add_child(title)
+	var played := Label.new()
+	played.theme_type_variation = "MutedLabel"
+	info.add_child(played)
+	var size_line := Label.new()
+	size_line.theme_type_variation = "MutedLabel"
+	info.add_child(size_line)
+	for label: Label in [kicker, title, played, size_line]:
+		label.clip_text = true
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var details := Label.new()
+	details.theme_type_variation = "MonoLabel"
+	details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	details.custom_minimum_size.x = CARD_WIDTH - 48.0
+	details.visible = false
+	vbox.add_child(details)
+	_cards.append({
+		"card": card, "vbox": vbox, "thumbnail": thumbnail, "kicker": kicker, "title": title,
+		"played": played, "size": size_line, "details": details,
+	})
+	return card
+
+
+func _build_world_actions() -> void:
+	world_actions_panel = VBoxContainer.new()
+	world_actions_panel.name = "WorldActions"
+	world_actions_panel.add_theme_constant_override("separation", 8)
+	world_actions_panel.visible = false
+	_ui_root.add_child(world_actions_panel)
+	_action_row = HFlowContainer.new()
+	_action_row.add_theme_constant_override("h_separation", 8)
+	_action_row.add_theme_constant_override("v_separation", 8)
+	world_actions_panel.add_child(_action_row)
+	_load_button = _make_action_button("LOAD WORLD   →", _load_selected_world)
+	_setup_button = _make_action_button("CONTINUE SETUP   →", _continue_setup)
+	_copy_button = _make_action_button("DUPLICATE WORLD", _show_copy_targets)
+	_rename_button = _make_action_button("RENAME", _show_rename)
+	_details_button = _make_action_button("DETAILS", _toggle_details)
+	delete_button = _make_action_button("DELETE WORLD", _open_delete_modal)
+	delete_button.theme_type_variation = "DangerButton"
+	copy_targets = HBoxContainer.new()
 	copy_targets.add_theme_constant_override("separation", 8)
-	action_column.add_child(copy_targets)
-	delete_button = Button.new()
-	delete_button.text = "DELETE WORLD"
-	delete_button.custom_minimum_size = Vector2(430, 48)
-	delete_button.modulate = Color(1.0, 0.55, 0.55)
-	delete_button.pressed.connect(_delete_selected_world)
-	action_column.add_child(delete_button)
-	var action_back := Button.new()
-	action_back.text = "←  BACK TO WORLD SLOTS"
-	action_back.pressed.connect(_show_worlds)
-	action_column.add_child(action_back)
+	copy_targets.visible = false
+	world_actions_panel.add_child(copy_targets)
+	rename_row = HBoxContainer.new()
+	rename_row.add_theme_constant_override("separation", 8)
+	rename_row.visible = false
+	world_actions_panel.add_child(rename_row)
+	rename_edit = LineEdit.new()
+	rename_edit.max_length = MAX_WORLD_NAME_LENGTH
+	rename_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rename_edit.text_submitted.connect(_commit_rename)
+	rename_row.add_child(rename_edit)
+	var rename_save := Button.new()
+	rename_save.text = "SAVE"
+	rename_save.pressed.connect(func() -> void: _commit_rename(rename_edit.text))
+	rename_row.add_child(rename_save)
+	var rename_cancel := Button.new()
+	rename_cancel.text = "CANCEL"
+	rename_cancel.pressed.connect(_hide_rename)
+	rename_row.add_child(rename_cancel)
+	action_details = Label.new()
+	action_details.theme_type_variation = "MutedLabel"
+	action_details.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	action_details.custom_minimum_size.x = CARD_WIDTH - 48.0
+	world_actions_panel.add_child(action_details)
 
-	var tuning_drawer: Control = MENU_TUNING_DRAWER.new()
-	tuning_drawer.name = "MenuTuningDrawer"
-	tuning_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(tuning_drawer)
-	space_backdrop.connect("MenuTuningChanged", _update_flyover_footer)
-	var tuning_button := Button.new()
-	tuning_button.text = "`  LIVE TUNING"
-	tuning_button.position = Vector2(1672, 30)
-	tuning_button.custom_minimum_size = Vector2(210, 36)
-	tuning_button.pressed.connect(tuning_drawer.call.bind("SetDrawerOpen", true))
-	_ui_root.add_child(tuning_button)
+
+func _make_action_button(text: String, callback: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.add_theme_font_size_override("font_size", 14)
+	button.pressed.connect(callback)
+	_action_row.add_child(button)
+	return button
+
+
+func _build_new_world_panel() -> void:
+	new_world_panel = _make_panel(Vector2(550, 700))
+	new_world_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	new_world_panel.position = Vector2(100, 190)
+	new_world_panel.size = Vector2(550, 700)
+	new_world_panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	var column := _make_column(new_world_panel)
+	_add_kicker(column, "NEW WORLD").horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_add_title(column, "FOUND A NEW RING", "HeadingLabel").horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var lead := _add_subtitle(column, "Name it, choose a size, and set the seed.")
+	lead.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	column.add_child(HSeparator.new())
+	_add_field_label(column, "NAME")
+	new_world_name_edit = LineEdit.new()
+	new_world_name_edit.max_length = MAX_WORLD_NAME_LENGTH
+	new_world_name_edit.custom_minimum_size = Vector2(390, 48)
+	new_world_name_edit.select_all_on_focus = true
+	column.add_child(new_world_name_edit)
+	_add_field_label(column, "SEED")
+	var seed_row := HBoxContainer.new()
+	seed_row.add_theme_constant_override("separation", 8)
+	column.add_child(seed_row)
+	new_world_seed_edit = LineEdit.new()
+	new_world_seed_edit.custom_minimum_size = Vector2(250, 48)
+	new_world_seed_edit.max_length = 10
+	new_world_seed_edit.text_changed.connect(_on_seed_text_changed)
+	seed_row.add_child(new_world_seed_edit)
+	_new_world_reroll = Button.new()
+	_new_world_reroll.text = "REROLL"
+	_new_world_reroll.custom_minimum_size = Vector2(120, 48)
+	_new_world_reroll.pressed.connect(_reroll_seed)
+	seed_row.add_child(_new_world_reroll)
+	_add_field_label(column, "SIZE")
+	var preset_row := HBoxContainer.new()
+	preset_row.add_theme_constant_override("separation", 8)
+	column.add_child(preset_row)
+	var group := ButtonGroup.new()
+	for preset_id: String in WORLD_PRESETS.ORDER:
+		var preset_button := Button.new()
+		preset_button.text = str(WORLD_PRESETS.describe(preset_id).get("label", preset_id.to_upper()))
+		preset_button.toggle_mode = true
+		preset_button.button_group = group
+		preset_button.custom_minimum_size = Vector2(190, 48)
+		preset_button.pressed.connect(_select_preset.bind(preset_id))
+		preset_row.add_child(preset_button)
+		_preset_buttons[preset_id] = preset_button
+	_preset_line = Label.new()
+	_preset_line.theme_type_variation = "MonoLabel"
+	column.add_child(_preset_line)
+	_preset_blurb = Label.new()
+	_preset_blurb.theme_type_variation = "MutedLabel"
+	_preset_blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Wrapped labels need a width floor, or a container can measure them at 1 px and grow tall.
+	_preset_blurb.custom_minimum_size.x = 390
+	column.add_child(_preset_blurb)
+	var create_row := HBoxContainer.new()
+	create_row.add_theme_constant_override("separation", 8)
+	column.add_child(create_row)
+	_new_world_create = Button.new()
+	_new_world_create.text = "CREATE WORLD   →"
+	_new_world_create.custom_minimum_size = Vector2(250, 58)
+	_new_world_create.pressed.connect(_create_new_world.bind(false))
+	create_row.add_child(_new_world_create)
+	_new_world_advanced = Button.new()
+	_new_world_advanced.text = "ADVANCED…"
+	_new_world_advanced.custom_minimum_size = Vector2(130, 58)
+	_new_world_advanced.pressed.connect(_create_new_world.bind(true))
+	create_row.add_child(_new_world_advanced)
+	_new_world_back = Button.new()
+	_new_world_back.theme_type_variation = "GhostButton"
+	_new_world_back.text = "←  BACK"
+	_new_world_back.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_new_world_back.pressed.connect(_show_worlds)
+	column.add_child(_new_world_back)
+
+
+func _build_delete_modal() -> void:
+	delete_modal = Control.new()
+	delete_modal.name = "DeleteModal"
+	delete_modal.size = Vector2(1920, 1080)
+	delete_modal.visible = false
+	_ui_root.add_child(delete_modal)
+	var scrim := ColorRect.new()
+	scrim.color = Color(0, 0, 0, 0.55)
+	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scrim.mouse_filter = Control.MOUSE_FILTER_STOP
+	delete_modal.add_child(scrim)
+	var dialog := PanelContainer.new()
+	dialog.position = Vector2(660, 380)
+	dialog.size = Vector2(600, 320)
+	delete_modal.add_child(dialog)
+	var column := _make_column(dialog)
+	column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	var kicker := _add_kicker(column, "CONFIRM DELETION")
+	kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	kicker.add_theme_color_override("font_color", UI_THEME.DANGER)
+	_delete_title = Label.new()
+	_delete_title.theme_type_variation = "CardTitleLabel"
+	_delete_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_delete_title.custom_minimum_size.x = 520
+	column.add_child(_delete_title)
+	_delete_body = Label.new()
+	_delete_body.theme_type_variation = "MutedLabel"
+	_delete_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_delete_body.custom_minimum_size.x = 520
+	column.add_child(_delete_body)
+	var buttons := HBoxContainer.new()
+	buttons.add_theme_constant_override("separation", 12)
+	column.add_child(buttons)
+	delete_cancel_button = Button.new()
+	delete_cancel_button.text = "CANCEL"
+	delete_cancel_button.custom_minimum_size = Vector2(200, 52)
+	delete_cancel_button.pressed.connect(_close_delete_modal)
+	buttons.add_child(delete_cancel_button)
+	delete_hold_button = Button.new()
+	delete_hold_button.theme_type_variation = "DangerButton"
+	delete_hold_button.text = "HOLD TO DELETE"
+	delete_hold_button.custom_minimum_size = Vector2(260, 52)
+	delete_hold_button.clip_contents = true
+	delete_hold_button.button_down.connect(_on_delete_hold_down)
+	delete_hold_button.button_up.connect(_on_delete_hold_up)
+	delete_hold_button.mouse_exited.connect(_on_delete_hold_up)
+	delete_hold_button.focus_exited.connect(_on_delete_hold_up)
+	buttons.add_child(delete_hold_button)
+	delete_hold_fill = ColorRect.new()
+	delete_hold_fill.name = "DeleteHoldFill"
+	delete_hold_fill.color = Color(UI_THEME.DANGER, 0.45)
+	delete_hold_fill.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	delete_hold_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	delete_hold_fill.pivot_offset = Vector2.ZERO
+	delete_hold_fill.scale.x = 0.0
+	delete_hold_button.add_child(delete_hold_fill)
+	var hint := Label.new()
+	hint.theme_type_variation = "MonoLabel"
+	hint.text = "Hold %.1f s" % DELETE_HOLD_SECONDS
+	column.add_child(hint)
 
 
 func _update_ui_scale() -> void:
@@ -207,33 +591,49 @@ func _make_column(panel: Control) -> VBoxContainer:
 	return column
 
 
-func _add_title(parent: Container, text: String, font_size: int = 32) -> Label:
+# Top-aligned column with no inner margin, for the card list.
+func _make_left_column(panel: Control, separation: int) -> VBoxContainer:
+	var column := VBoxContainer.new()
+	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	column.add_theme_constant_override("separation", separation)
+	panel.add_child(column)
+	return column
+
+
+func _add_title(parent: Container, text: String, variation: String = "HeadingLabel") -> Label:
 	var title := Label.new()
+	title.theme_type_variation = variation
 	title.text = text
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", font_size)
-	title.add_theme_color_override("font_color", UI_THEME.ACCENT_BRIGHT)
 	parent.add_child(title)
 	return title
 
 
 func _add_kicker(parent: Container, text: String) -> Label:
 	var kicker := Label.new()
+	kicker.theme_type_variation = "KickerLabel"
 	kicker.text = text
+	kicker.uppercase = true
 	kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	kicker.add_theme_font_size_override("font_size", 12)
-	kicker.add_theme_color_override("font_color", UI_THEME.ACCENT)
 	parent.add_child(kicker)
 	return kicker
 
 
+func _add_field_label(parent: Container, text: String) -> Label:
+	var label := _add_kicker(parent, text)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	return label
+
+
 func _add_subtitle(parent: Container, text: String) -> Label:
 	var subtitle := Label.new()
+	subtitle.theme_type_variation = "LeadLabel"
 	subtitle.text = text
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	subtitle.add_theme_font_size_override("font_size", 18)
-	subtitle.modulate = UI_THEME.MUTED
+	# Wrapped labels need a width floor, or a container can measure them at 1 px and grow tall.
+	subtitle.custom_minimum_size.x = 390
 	parent.add_child(subtitle)
 	return subtitle
 
@@ -245,23 +645,28 @@ func _build_screen_chrome() -> void:
 	_ui_root.add_child(top_left)
 	var brand := Label.new()
 	brand.text = "◉  RINGWORLD / TECH DEMO"
-	brand.add_theme_font_size_override("font_size", 14)
+	brand.add_theme_font_size_override("font_size", UI_THEME.TYPE_BODY)
 	brand.add_theme_color_override("font_color", UI_THEME.ACCENT_BRIGHT)
 	top_left.add_child(brand)
 	var system := Label.new()
+	system.theme_type_variation = "MonoLabel"
 	system.text = "PROCEDURAL HABITAT SIMULATION"
-	system.add_theme_font_size_override("font_size", 10)
-	system.modulate = UI_THEME.MUTED
 	top_left.add_child(system)
 
 	_flyover_footer = Label.new()
+	_flyover_footer.theme_type_variation = "MonoLabel"
 	_flyover_footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_flyover_footer.position = Vector2(1472, 1036)
 	_flyover_footer.size = Vector2(410, 20)
-	_flyover_footer.add_theme_font_size_override("font_size", 10)
-	_flyover_footer.modulate = UI_THEME.MUTED
 	_flyover_footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_root.add_child(_flyover_footer)
+	_survey_label = Label.new()
+	_survey_label.theme_type_variation = "MonoLabel"
+	_survey_label.text = "SURVEY CACHE 0%"
+	_survey_label.position = Vector2(38, 1036)
+	_survey_label.size = Vector2(400, 20)
+	_survey_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui_root.add_child(_survey_label)
 	_update_flyover_footer()
 
 
@@ -270,38 +675,194 @@ func _update_flyover_footer() -> void:
 		_flyover_footer.text = str(space_backdrop.call("GetFlyoverCaption"))
 
 
-func _slot_button_text(slot: int) -> String:
-	var session := get_node_or_null("/root/WorldSession")
-	if session == null or not session.slot_exists(slot):
-		return "Save Slot %d — Create World" % slot
-	var metadata: Dictionary = session.get_slot_metadata(slot)
-	var world_name := str(metadata.get("name", "World %d" % slot))
-	var settings: Variant = metadata.get("generation_settings", {})
-	if settings is Dictionary and not settings.is_empty():
-		var designed_caves_state := "ON" if bool(settings.get("designed_cave_density_composition", false)) else "OFF"
-		return "Save Slot %d — %s\nSeed %d | Caves %s (v%d) | Radius %.0f km" % [
-			slot,
-			world_name,
-			int(round(float(settings.get("terrain_seed", 1337)))),
-			designed_caves_state,
-			int(round(float(settings.get("cave_generator_version", 1)))),
-			float(settings.get("radius_km", 80.0))
-		]
-	return "Save Slot %d — %s (Configure)" % [slot, world_name]
+func _set_camera_pose(pose: String) -> void:
+	if space_backdrop != null and space_backdrop.has_method("SetCameraPose"):
+		space_backdrop.call("SetCameraPose", pose)
 
+
+# ---------------------------------------------------------------- navigation
 
 func _show_main_menu() -> void:
 	main_panel.visible = true
 	worlds_panel.visible = false
-	world_actions_panel.visible = false
+	new_world_panel.visible = false
+	_collapse_cards()
+	_close_delete_modal(false)
+	_set_camera_pose("main")
+	_refresh_continue()
+	MENU_MOTION.show_panel(main_panel, INTRO_PANEL_DELAY_SECONDS if _intro_pending else 0.0)
+	_intro_pending = false
+	var rows: Array = []
+	if continue_button.visible:
+		rows.append([continue_button])
+	rows.append([worlds_button])
+	rows.append([_quit_button])
+	_link_rows(rows)
+	(continue_button if continue_button.visible else worlds_button).grab_focus()
+
+
+func _refresh_continue() -> void:
+	_continue_slot = 0
+	var session := get_node_or_null("/root/WorldSession")
+	if session != null and session.has_method("get_most_recent_slot"):
+		_continue_slot = int(session.get_most_recent_slot())
+	continue_button.visible = _continue_slot > 0
+	continue_subline.visible = _continue_slot > 0
+	if _continue_slot <= 0:
+		return
+	var metadata: Dictionary = session.get_slot_metadata(_continue_slot)
+	var subline := str(metadata.get("name", "World %d" % _continue_slot))
+	var played := int(metadata.get("last_played_unix", 0))
+	if played > 0:
+		subline += " · last played " + _relative_time(played)
+	continue_subline.text = subline
+
+
+func _relative_time(unix_time: int) -> String:
+	var seconds := int(Time.get_unix_time_from_system()) - unix_time
+	if seconds < 60:
+		return "just now"
+	if seconds < 3600:
+		return "%d min ago" % floori(seconds / 60.0)
+	if seconds < 86400:
+		return "%d h ago" % floori(seconds / 3600.0)
+	var days := floori(seconds / 86400.0)
+	return "%d day%s ago" % [days, "" if days == 1 else "s"]
+
+
+func _format_playtime(seconds: int) -> String:
+	if seconds < 60:
+		return "<1 min"
+	if seconds < 3600:
+		return "%d min" % floori(seconds / 60.0)
+	return "%d h %d min" % [floori(seconds / 3600.0), floori((seconds % 3600) / 60.0)]
+
+
+func _continue_most_recent() -> void:
+	if not _load_slot(_continue_slot):
+		continue_subline.text = "Could not open this world."
 
 
 func _show_worlds() -> void:
 	main_panel.visible = false
 	worlds_panel.visible = true
-	world_actions_panel.visible = false
+	new_world_panel.visible = false
+	_collapse_cards()
+	_close_delete_modal(false)
+	_set_camera_pose("worlds")
+	MENU_MOTION.show_panel(worlds_panel)
 	status_label.text = ""
-	_refresh_slot_buttons()
+	_refresh_world_cards()
+	_update_world_focus_chain()
+	var focus_slot := 1
+	var session := get_node_or_null("/root/WorldSession")
+	if session != null and session.has_method("get_most_recent_slot") and int(session.get_most_recent_slot()) > 0:
+		focus_slot = clampi(int(session.get_most_recent_slot()), 1, SLOT_COUNT)
+	slot_buttons[focus_slot - 1].grab_focus()
+
+
+func _session_has(method: String) -> Node:
+	var session := get_node_or_null("/root/WorldSession")
+	if session != null and session.has_method(method):
+		return session
+	return null
+
+
+# ---------------------------------------------------------------- world cards
+
+func _slot_is_unfinished(metadata: Dictionary) -> bool:
+	var settings: Variant = metadata.get("generation_settings", {})
+	return not (settings is Dictionary and not settings.is_empty())
+
+
+func _format_km(value: float) -> String:
+	var text := ""
+	if absf(value - roundf(value)) < 0.05:
+		text = str(int(roundf(value)))
+	else:
+		text = "%.1f" % value
+	var parts := text.split(".")
+	var integer := parts[0]
+	var out := ""
+	var count := 0
+	for i in range(integer.length() - 1, -1, -1):
+		if count > 0 and count % 3 == 0 and integer[i] != "-":
+			out = "," + out
+		out = integer[i] + out
+		count += 1
+	return out + ("." + parts[1] if parts.size() > 1 else "")
+
+
+func _preset_label_for_radius(radius_km: float) -> String:
+	for preset_id: String in WORLD_PRESETS.ORDER:
+		var info: Dictionary = WORLD_PRESETS.describe(preset_id)
+		if absf(float(info.get("radius_km", -1.0)) - radius_km) < 1.0:
+			return str(info.get("label", ""))
+	return "CUSTOM"
+
+
+func _refresh_world_cards() -> void:
+	var session := get_node_or_null("/root/WorldSession")
+	for index in range(SLOT_COUNT):
+		var slot := index + 1
+		var entry: Dictionary = _cards[index]
+		var card: Control = entry["card"]
+		var thumbnail: Control = entry["thumbnail"]
+		var kicker: Label = entry["kicker"]
+		var title: Label = entry["title"]
+		var played: Label = entry["played"]
+		var size_line: Label = entry["size"]
+		var details: Label = entry["details"]
+		details.visible = false
+		size_line.visible = true
+		if session == null or not session.slot_exists(slot):
+			card.theme_type_variation = "WorldCardEmpty"
+			thumbnail.set_empty()
+			kicker.text = "SLOT %d" % slot
+			title.text = "+ NEW WORLD"
+			played.text = "Found a new ring in this slot."
+			size_line.visible = false
+			continue
+		var metadata: Dictionary = session.get_slot_metadata(slot)
+		var world_name := str(metadata.get("name", "World %d" % slot))
+		card.theme_type_variation = "WorldCard"
+		if _slot_is_unfinished(metadata):
+			thumbnail.set_world(slot, "")
+			kicker.text = "SLOT %d · SETUP INCOMPLETE" % slot
+			title.text = world_name
+			played.text = "Choose a size and seed to finish this world."
+			size_line.visible = false
+			continue
+		var settings: Dictionary = metadata.get("generation_settings", {})
+		var thumbnail_path := ""
+		if session.has_method("get_slot_thumbnail_path"):
+			thumbnail_path = str(session.get_slot_thumbnail_path(slot))
+		thumbnail.set_world(int(round(float(settings.get("terrain_seed", slot)))), thumbnail_path)
+		var radius_km := float(settings.get("radius_km", 80.0))
+		kicker.text = "SLOT %d · %s" % [slot, _preset_label_for_radius(radius_km)]
+		title.text = world_name
+		var last_played := int(metadata.get("last_played_unix", 0))
+		var played_text := "Last played " + _relative_time(last_played) if last_played > 0 else "Never played"
+		var playtime := int(metadata.get("playtime_seconds", 0))
+		if playtime > 0:
+			played_text += " · %s played" % _format_playtime(playtime)
+		played.text = played_text
+		size_line.text = "R %s km · W %s km" % [_format_km(radius_km), _format_km(float(settings.get("ring_width_km", 20.0)))]
+		details.text = _details_text(settings)
+
+
+func _details_text(settings: Dictionary) -> String:
+	var backend := str(settings.get("terrain_backend", "smooth_terrain_v1"))
+	var text := "SEED %d · BACKEND %s" % [int(round(float(settings.get("terrain_seed", 1337)))), backend]
+	var recipe_json := str(settings.get("surface_generation_recipe_json", ""))
+	if not recipe_json.is_empty():
+		var recipe: Variant = JSON.parse_string(recipe_json)
+		if recipe is Dictionary and recipe.has("generator_id"):
+			text += " · GENERATOR %s" % str(recipe["generator_id"])
+	else:
+		var designed := "ON" if bool(settings.get("designed_cave_density_composition", false)) else "OFF"
+		text += " · CAVE V%d · DESIGNED CAVES %s" % [int(round(float(settings.get("cave_generator_version", 1)))), designed]
+	return text
 
 
 func _select_slot(slot: int) -> void:
@@ -309,84 +870,136 @@ func _select_slot(slot: int) -> void:
 	if session == null:
 		status_label.text = "World save service is unavailable."
 		return
-	if session.slot_exists(slot):
-		_show_world_actions(slot)
+	if not session.slot_exists(slot):
+		_show_new_world(slot)
 		return
-	if not session.select_slot(slot):
-		status_label.text = "Could not create or open save slot %d." % slot
+	if _expanded_slot == slot:
+		_collapse_cards()
+		slot_buttons[slot - 1].grab_focus()
 		return
-	get_tree().change_scene_to_file(GENERATOR_SCENE)
+	_expand_card(slot)
 
 
-func _show_world_actions(slot: int) -> void:
+func _expand_card(slot: int) -> void:
 	var session := get_node_or_null("/root/WorldSession")
 	if session == null:
 		return
+	_collapse_cards(false)
 	selected_slot = slot
-	delete_confirmation_armed = false
-	delete_button.text = "Delete World"
-	copy_targets.visible = false
+	_expanded_slot = slot
 	var metadata: Dictionary = session.get_slot_metadata(slot)
-	var settings: Variant = metadata.get("generation_settings", {})
-	action_title.text = "SAVE SLOT %d — %s" % [slot, str(metadata.get("name", "World %d" % slot))]
-	if settings is Dictionary and not settings.is_empty():
-		var designed_caves_state := "ON" if bool(settings.get("designed_cave_density_composition", false)) else "OFF"
-		action_details.text = "Shared world seed %d | Cave v%d | Designed caves %s | Radius %.0f km | Width %.1f km" % [
-			int(round(float(settings.get("terrain_seed", 1337)))),
-			int(round(float(settings.get("cave_generator_version", 1)))),
-			designed_caves_state,
-			float(settings.get("radius_km", 80.0)),
-			float(settings.get("ring_width_km", 20.0))
-		]
-	else:
-		action_details.text = "This world still needs ring-generation settings."
-	worlds_panel.visible = false
+	var unfinished := _slot_is_unfinished(metadata)
+	_load_button.visible = not unfinished
+	_copy_button.visible = not unfinished
+	_rename_button.visible = not unfinished
+	_details_button.visible = not unfinished
+	_setup_button.visible = unfinished
+	copy_targets.visible = false
+	rename_row.visible = false
+	action_details.text = "This world still needs its size and seed." if unfinished else ""
+	var entry: Dictionary = _cards[slot - 1]
+	(entry["card"] as Control).theme_type_variation = "WorldCardSelected"
+	world_actions_panel.reparent(entry["vbox"], false)
 	world_actions_panel.visible = true
+	_set_camera_pose("detail")
+	_update_world_focus_chain()
+	_focus_expanded_default()
+
+
+func _collapse_cards(refocus_pose := true) -> void:
+	if _expanded_slot != 0:
+		var entry: Dictionary = _cards[_expanded_slot - 1]
+		var card: Control = entry["card"]
+		if card.theme_type_variation == "WorldCardSelected":
+			card.theme_type_variation = "WorldCard"
+		(entry["details"] as Control).visible = false
+	_expanded_slot = 0
+	copy_targets.visible = false
+	rename_row.visible = false
+	if world_actions_panel.get_parent() != _ui_root:
+		world_actions_panel.reparent(_ui_root, false)
+	world_actions_panel.visible = false
+	if refocus_pose and worlds_panel.visible:
+		_set_camera_pose("worlds")
+	if worlds_panel.visible:
+		_update_world_focus_chain()
+
+
+func _focus_expanded_default() -> void:
+	if not world_actions_panel.visible:
+		return
+	(_setup_button if _setup_button.visible else _load_button).grab_focus()
+
+
+func _toggle_details() -> void:
+	if _expanded_slot == 0:
+		return
+	var details: Control = _cards[_expanded_slot - 1]["details"]
+	details.visible = not details.visible
+
+
+func _continue_setup() -> void:
+	if _expanded_slot != 0:
+		_show_new_world(_expanded_slot)
 
 
 func _load_selected_world() -> void:
-	var session := get_node_or_null("/root/WorldSession")
-	if session == null or selected_slot == 0 or not session.select_slot(selected_slot):
+	if not _load_slot(selected_slot):
 		action_details.text = "Could not open this world."
-		return
+
+
+func _load_slot(slot: int) -> bool:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or slot == 0 or not session.select_slot(slot):
+		return false
 	session.request_load_selected_world()
-	var metadata: Dictionary = session.get_slot_metadata(selected_slot)
+	var metadata: Dictionary = session.get_slot_metadata(slot)
 	var settings: Dictionary = metadata.get("generation_settings", {})
 	WORLD_LOADING.ensure(self).open_saved_world({
-		"world_title": str(metadata.get("name", "World %d" % selected_slot)),
+		"world_title": str(metadata.get("name", "World %d" % slot)),
 		"seed": int(settings.get("terrain_seed", 1337)),
 		"radius_m": float(settings.get("radius_km", 80.0)) * 1000.0,
 		"circumference_m": TAU * float(settings.get("radius_km", 80.0)) * 1000.0,
 		"width_m": float(settings.get("ring_width_km", 20.0)) * 1000.0,
 		"is_existing": true,
 	})
+	return true
 
 
 func _show_copy_targets() -> void:
+	rename_row.visible = false
 	for child in copy_targets.get_children():
+		copy_targets.remove_child(child)
 		child.queue_free()
 	var session := get_node_or_null("/root/WorldSession")
 	if session == null:
 		return
 	var has_empty_target := false
-	for slot in range(1, 4):
+	for slot in range(1, SLOT_COUNT + 1):
 		if slot == selected_slot:
 			continue
 		var target := Button.new()
+		target.add_theme_font_size_override("font_size", 14)
 		if session.slot_exists(slot):
-			target.text = "Save Slot %d — Occupied" % slot
+			target.text = "SLOT %d — OCCUPIED" % slot
 			target.disabled = true
 		else:
 			has_empty_target = true
-			target.text = "Copy to Save Slot %d" % slot
+			target.text = "COPY TO SLOT %d" % slot
 			target.pressed.connect(_copy_selected_world.bind(slot))
 		copy_targets.add_child(target)
+		MENU_MOTION.style_button(target)
 	if not has_empty_target:
 		var full := Label.new()
+		full.theme_type_variation = "MutedLabel"
 		full.text = "All other save slots are occupied."
-		full.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		copy_targets.add_child(full)
 	copy_targets.visible = true
+	_update_world_focus_chain()
+	for child in copy_targets.get_children():
+		if child is Button and not (child as Button).disabled:
+			(child as Button).grab_focus()
+			break
 
 
 func _copy_selected_world(destination_slot: int) -> void:
@@ -396,23 +1009,223 @@ func _copy_selected_world(destination_slot: int) -> void:
 		return
 	action_details.text = "World copied to save slot %d." % destination_slot
 	copy_targets.visible = false
-	_refresh_slot_buttons()
+	_refresh_world_cards()
+	_update_world_focus_chain()
+	_focus_expanded_default()
 
 
-func _delete_selected_world() -> void:
-	if not delete_confirmation_armed:
-		delete_confirmation_armed = true
-		delete_button.text = "Confirm Delete World"
-		action_details.text = "This permanently removes the world from save slot %d. Click again to confirm." % selected_slot
-		return
+func _show_rename() -> void:
 	var session := get_node_or_null("/root/WorldSession")
-	if session == null or not session.delete_slot(selected_slot):
+	if session == null or selected_slot == 0:
+		return
+	copy_targets.visible = false
+	rename_edit.text = str(session.get_slot_metadata(selected_slot).get("name", "World %d" % selected_slot))
+	rename_row.visible = true
+	_update_world_focus_chain()
+	rename_edit.grab_focus()
+	rename_edit.select_all()
+
+
+func _hide_rename() -> void:
+	rename_row.visible = false
+	_update_world_focus_chain()
+	_focus_expanded_default()
+
+
+func _commit_rename(new_name: String) -> void:
+	var session := _session_has("rename_slot")
+	if session == null or not session.rename_slot(selected_slot, new_name):
+		action_details.text = "Could not rename this world."
+		return
+	rename_row.visible = false
+	action_details.text = "World renamed."
+	_refresh_world_cards()
+	_update_world_focus_chain()
+	_focus_expanded_default()
+
+
+# ---------------------------------------------------------------- delete modal
+
+func _open_delete_modal() -> void:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or selected_slot == 0:
+		return
+	_delete_target_slot = selected_slot
+	var world_name := str(session.get_slot_metadata(selected_slot).get("name", "World %d" % selected_slot))
+	_delete_title.text = "Delete \"%s\"?" % world_name
+	_delete_body.text = "Permanently removes slot %d, its terrain edits and saved position." % selected_slot
+	_delete_holding = false
+	_delete_hold_elapsed = 0.0
+	delete_hold_fill.scale.x = 0.0
+	delete_modal.visible = true
+	_link_rows([[delete_cancel_button, delete_hold_button]])
+	delete_cancel_button.grab_focus()
+
+
+func _close_delete_modal(restore_focus := true) -> void:
+	if delete_modal == null or not delete_modal.visible:
+		return
+	_on_delete_hold_up()
+	delete_modal.visible = false
+	if restore_focus and delete_button.is_visible_in_tree():
+		delete_button.grab_focus()
+
+
+func _on_delete_hold_down() -> void:
+	_delete_holding = true
+	_delete_hold_elapsed = 0.0
+
+
+func _on_delete_hold_up() -> void:
+	_delete_holding = false
+	_delete_hold_elapsed = 0.0
+	if delete_hold_fill != null:
+		delete_hold_fill.scale.x = 0.0
+
+
+func _confirm_delete() -> void:
+	var slot := _delete_target_slot
+	_close_delete_modal(false)
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or not session.delete_slot(slot):
 		action_details.text = "Could not delete this world."
 		return
 	selected_slot = 0
 	_show_worlds()
 
 
-func _refresh_slot_buttons() -> void:
-	for index in range(slot_buttons.size()):
-		slot_buttons[index].text = _slot_button_text(index + 1)
+# ---------------------------------------------------------------- new world
+
+func _show_new_world(slot: int) -> void:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null:
+		return
+	_new_world_slot = slot
+	selected_slot = slot
+	var world_name := "World %d" % slot
+	if session.slot_exists(slot):
+		world_name = str(session.get_slot_metadata(slot).get("name", world_name))
+	_collapse_cards(false)
+	main_panel.visible = false
+	worlds_panel.visible = false
+	new_world_panel.visible = true
+	new_world_name_edit.text = world_name
+	_reroll_seed()
+	_select_preset("standard")
+	_set_camera_pose("detail")
+	MENU_MOTION.show_panel(new_world_panel)
+	_link_rows([
+		[new_world_name_edit],
+		[new_world_seed_edit, _new_world_reroll],
+		[_preset_buttons["standard"], _preset_buttons["compact"]],
+		[_new_world_create, _new_world_advanced],
+		[_new_world_back],
+	])
+	_new_world_create.grab_focus()
+
+
+func _reroll_seed() -> void:
+	new_world_seed_edit.text = str(randi_range(0, 2147483646))
+
+
+func _on_seed_text_changed(text: String) -> void:
+	var digits := ""
+	for i in text.length():
+		if text[i] >= "0" and text[i] <= "9":
+			digits += text[i]
+	if digits != text:
+		var caret := new_world_seed_edit.caret_column
+		new_world_seed_edit.text = digits
+		new_world_seed_edit.caret_column = mini(caret, digits.length())
+
+
+func _select_preset(preset_id: String) -> void:
+	_new_world_preset = preset_id
+	for key: String in _preset_buttons:
+		(_preset_buttons[key] as Button).set_pressed_no_signal(key == preset_id)
+	var info: Dictionary = WORLD_PRESETS.describe(preset_id)
+	var backend := str(info.get("backend", "")).replace("_", " ")
+	_preset_line.text = "R %s km · W %s km · %s" % [_format_km(float(info.get("radius_km", 0.0))), _format_km(float(info.get("width_km", 0.0))), backend]
+	_preset_blurb.text = str(info.get("blurb", ""))
+
+
+func _create_new_world(advanced: bool) -> void:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or not session.has_method("create_world") or not session.has_method("request_new_world"):
+		status_label.text = "World save service is unavailable."
+		return
+	var world_name := new_world_name_edit.text.strip_edges()
+	if world_name.is_empty():
+		world_name = "World %d" % _new_world_slot
+	if new_world_seed_edit.text.is_empty():
+		_reroll_seed()
+	# Match the launcher's seed range so the loading screen shows the seed actually used.
+	var terrain_seed := clampi(new_world_seed_edit.text.to_int(), 0, 2147483647)
+	if not session.create_world(_new_world_slot, world_name):
+		status_label.text = "Could not create save slot %d." % _new_world_slot
+		return
+	session.request_new_world({"preset": _new_world_preset, "terrain_seed": terrain_seed, "auto_start": not advanced})
+	if advanced:
+		get_tree().change_scene_to_file(GENERATOR_SCENE)
+		return
+	var info: Dictionary = WORLD_PRESETS.describe(_new_world_preset)
+	var radius_m := float(info.get("radius_km", 80.0)) * 1000.0
+	WORLD_LOADING.ensure(self).open_saved_world({
+		"world_title": world_name,
+		"seed": terrain_seed,
+		"radius_m": radius_m,
+		"circumference_m": TAU * radius_m,
+		"width_m": float(info.get("width_km", 20.0)) * 1000.0,
+		"is_existing": false,
+	})
+
+
+# ---------------------------------------------------------------- focus
+
+# Wires explicit focus neighbors for a list of rows of controls: up/down move
+# between rows (wrapping), left/right move within a row (wrapping), and Tab
+# follows reading order.
+func _link_rows(rows: Array) -> void:
+	var flat: Array[Control] = []
+	for row: Array in rows:
+		for control: Control in row:
+			flat.append(control)
+	for row_index in range(rows.size()):
+		var row: Array = rows[row_index]
+		var previous_row: Array = rows[(row_index - 1 + rows.size()) % rows.size()]
+		var next_row: Array = rows[(row_index + 1) % rows.size()]
+		for column in range(row.size()):
+			var control: Control = row[column]
+			control.focus_neighbor_top = control.get_path_to(previous_row[mini(column, previous_row.size() - 1)])
+			control.focus_neighbor_bottom = control.get_path_to(next_row[mini(column, next_row.size() - 1)])
+			control.focus_neighbor_left = control.get_path_to(row[(column - 1 + row.size()) % row.size()])
+			control.focus_neighbor_right = control.get_path_to(row[(column + 1) % row.size()])
+			var flat_index := flat.find(control)
+			control.focus_previous = control.get_path_to(flat[(flat_index - 1 + flat.size()) % flat.size()])
+			control.focus_next = control.get_path_to(flat[(flat_index + 1) % flat.size()])
+
+
+func _focusable_in(controls: Array) -> Array:
+	var result: Array = []
+	for control: Control in controls:
+		if control.is_visible_in_tree() and not (control is BaseButton and (control as BaseButton).disabled):
+			result.append(control)
+	return result
+
+
+func _update_world_focus_chain() -> void:
+	var rows: Array = []
+	for slot in range(1, SLOT_COUNT + 1):
+		rows.append([slot_buttons[slot - 1]])
+		if slot != _expanded_slot:
+			continue
+		var actions := _focusable_in(_action_row.get_children())
+		if not actions.is_empty():
+			rows.append(actions)
+		var copies := _focusable_in(copy_targets.get_children())
+		if not copies.is_empty():
+			rows.append(copies)
+		if rename_row.visible:
+			rows.append(_focusable_in(rename_row.get_children()))
+	rows.append([_worlds_back])
+	_link_rows(rows)

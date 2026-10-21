@@ -3,14 +3,24 @@ extends Node
 const SLOT_COUNT := 3
 const WORLDS_ROOT := "user://worlds"
 const METADATA_FILE := "world.json"
+const THUMBNAIL_FILE := "thumbnail.png"
+const THUMBNAIL_SIZE := Vector2i(480, 270)
+const PLAYTIME_FLUSH_SECONDS := 60.0
+const MAX_NAME_LENGTH := 32
 
 var active_slot := 0
+var worlds_root := WORLDS_ROOT
 var _load_selected_world_requested := false
+var _pending_new_world := {}
+var _play_world: WeakRef
+var _unflushed_play_seconds := 0.0
+var _since_flush := 0.0
 
 
 func select_slot(slot: int) -> bool:
 	if slot < 1 or slot > SLOT_COUNT:
 		return false
+	end_play_session()
 	active_slot = slot
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", _slot_directory(slot))
 	if not slot_exists(slot):
@@ -21,12 +31,133 @@ func select_slot(slot: int) -> bool:
 
 func request_load_selected_world() -> void:
 	_load_selected_world_requested = active_slot > 0
+	_pending_new_world = {}
 
 
 func consume_load_selected_world_request() -> bool:
 	var requested := _load_selected_world_requested
 	_load_selected_world_requested = false
 	return requested
+
+
+func request_new_world(request: Dictionary) -> void:
+	_pending_new_world = request.duplicate(true)
+	_load_selected_world_requested = false
+
+
+func consume_new_world_request() -> Dictionary:
+	var request := _pending_new_world
+	_pending_new_world = {}
+	return request
+
+
+func rename_slot(slot: int, new_name: String) -> bool:
+	if slot < 1 or slot > SLOT_COUNT or not slot_exists(slot):
+		return false
+	var cleaned := ""
+	for i in new_name.length():
+		var code := new_name.unicode_at(i)
+		if code >= 32 and code != 127:
+			cleaned += new_name[i]
+	cleaned = cleaned.strip_edges()
+	if cleaned.length() > MAX_NAME_LENGTH:
+		cleaned = cleaned.substr(0, MAX_NAME_LENGTH).strip_edges()
+	if cleaned.is_empty():
+		return false
+	var metadata := get_slot_metadata(slot)
+	metadata["slot"] = slot
+	metadata["name"] = cleaned
+	return _write_metadata(slot, metadata)
+
+
+func create_world(slot: int, world_name: String) -> bool:
+	if not select_slot(slot):
+		return false
+	return rename_slot(slot, world_name)
+
+
+func get_slot_thumbnail_path(slot: int) -> String:
+	if slot < 1 or slot > SLOT_COUNT:
+		return ""
+	var path := "%s/%s" % [_slot_directory(slot), THUMBNAIL_FILE]
+	return path if FileAccess.file_exists(path) else ""
+
+
+func save_active_thumbnail(image: Image) -> bool:
+	if image == null or image.is_empty() or active_slot == 0 or not slot_exists(active_slot):
+		return false
+	var thumb := image.duplicate() as Image
+	if thumb.is_compressed():
+		return false
+	thumb.convert(Image.FORMAT_RGB8)
+	var target_aspect := float(THUMBNAIL_SIZE.x) / float(THUMBNAIL_SIZE.y)
+	var width := thumb.get_width()
+	var height := thumb.get_height()
+	var crop_w := width
+	var crop_h := height
+	if float(width) / float(height) > target_aspect:
+		crop_w = int(round(float(height) * target_aspect))
+	else:
+		crop_h = int(round(float(width) / target_aspect))
+	var cropped := thumb.get_region(Rect2i((width - crop_w) / 2, (height - crop_h) / 2, crop_w, crop_h))
+	cropped.resize(THUMBNAIL_SIZE.x, THUMBNAIL_SIZE.y, Image.INTERPOLATE_LANCZOS)
+	var path := "%s/%s" % [_slot_directory(active_slot), THUMBNAIL_FILE]
+	var temporary := path + ".tmp"
+	if cropped.save_png(temporary) != OK:
+		return false
+	if FileAccess.file_exists(path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	return DirAccess.rename_absolute(ProjectSettings.globalize_path(temporary), ProjectSettings.globalize_path(path)) == OK
+
+
+func begin_play_session(world: Node) -> void:
+	end_play_session()
+	_play_world = weakref(world) if world != null else null
+	_since_flush = 0.0
+
+
+func end_play_session() -> void:
+	flush_playtime()
+	_play_world = null
+	_since_flush = 0.0
+
+
+func flush_playtime() -> void:
+	if active_slot == 0 or not slot_exists(active_slot) or _unflushed_play_seconds < 1.0:
+		return
+	var whole := int(_unflushed_play_seconds)
+	_unflushed_play_seconds -= float(whole)
+	_since_flush = 0.0
+	var metadata := get_slot_metadata(active_slot)
+	metadata["slot"] = active_slot
+	metadata["playtime_seconds"] = int(metadata.get("playtime_seconds", 0)) + whole
+	metadata["last_played_unix"] = int(Time.get_unix_time_from_system())
+	_write_metadata(active_slot, metadata)
+
+
+func _process(delta: float) -> void:
+	if _play_world == null:
+		return
+	var world := _play_world.get_ref() as Node
+	if world == null or not is_instance_valid(world):
+		end_play_session()
+		return
+	if not world.is_inside_tree():
+		return
+	_unflushed_play_seconds += delta
+	_since_flush += delta
+	if _since_flush >= PLAYTIME_FLUSH_SECONDS:
+		flush_playtime()
+		_since_flush = 0.0
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		flush_playtime()
+
+
+func _exit_tree() -> void:
+	flush_playtime()
 
 
 func copy_slot(source_slot: int, destination_slot: int) -> bool:
@@ -53,6 +184,7 @@ func copy_slot(source_slot: int, destination_slot: int) -> bool:
 func delete_slot(slot: int) -> bool:
 	if slot < 1 or slot > SLOT_COUNT or not slot_exists(slot):
 		return false
+	end_play_session()
 	var deleted := _delete_directory_recursive(ProjectSettings.globalize_path(_slot_directory(slot)))
 	if deleted and active_slot == slot:
 		active_slot = 0
@@ -62,10 +194,12 @@ func delete_slot(slot: int) -> bool:
 
 
 func slot_exists(slot: int) -> bool:
+	_recover_metadata(slot)
 	return FileAccess.file_exists(_metadata_path(slot))
 
 
 func get_slot_metadata(slot: int) -> Dictionary:
+	_recover_metadata(slot)
 	if not slot_exists(slot):
 		return {}
 	var file := FileAccess.open(_metadata_path(slot), FileAccess.READ)
@@ -73,6 +207,23 @@ func get_slot_metadata(slot: int) -> Dictionary:
 		return {}
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	return parsed if parsed is Dictionary else {}
+
+
+func get_most_recent_slot() -> int:
+	var best_slot := 0
+	var best_played := -1
+	for slot in range(1, SLOT_COUNT + 1):
+		if not slot_exists(slot):
+			continue
+		var metadata := get_slot_metadata(slot)
+		var settings: Variant = metadata.get("generation_settings", {})
+		if not (settings is Dictionary) or settings.is_empty():
+			continue
+		var played := int(metadata.get("last_played_unix", 0))
+		if played > best_played:
+			best_played = played
+			best_slot = slot
+	return best_slot
 
 
 func get_active_world_settings() -> Dictionary:
@@ -137,8 +288,15 @@ func _write_metadata(slot: int, metadata: Dictionary) -> bool:
 	return DirAccess.rename_absolute(absolute_temp, absolute_path) == OK
 
 
+func _recover_metadata(slot: int) -> void:
+	var path := _metadata_path(slot)
+	var temporary := path + ".tmp"
+	if not FileAccess.file_exists(path) and FileAccess.file_exists(temporary):
+		DirAccess.rename_absolute(ProjectSettings.globalize_path(temporary), ProjectSettings.globalize_path(path))
+
+
 func _slot_directory(slot: int) -> String:
-	return "%s/slot_%d" % [WORLDS_ROOT, slot]
+	return "%s/slot_%d" % [worlds_root, slot]
 
 
 func _metadata_path(slot: int) -> String:

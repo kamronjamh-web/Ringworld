@@ -16,11 +16,18 @@ public partial class MenuFlyoverTuningDrawer : Control
     {
         ["AltitudeKm"] = new(8, 80, .5, "km"),
         ["PitchDegrees"] = new(5, 65, .5, "deg"),
+        ["WorldsAltitudeScale"] = new(1, 3, .05, "x"),
+        ["WorldsPitchDegrees"] = new(5, 65, .5, "deg"),
+        ["DetailFovDeltaDegrees"] = new(-25, 0, .5, "deg"),
+        ["PoseBlendSeconds"] = new(0, 6, .1, "s"),
         ["SpeedKmPerSecond"] = new(0, 15, .1, "km/s"),
         ["FieldOfView"] = new(35, 95, 1, "deg"),
         ["SunEnergy"] = new(0, 5, .05),
         ["SunElevationDegrees"] = new(-90, 90, .01, "deg"),
         ["SunAzimuthDegrees"] = new(-180, 180, .01, "deg"),
+        ["SunDriftAmplitudeDegrees"] = new(0, 60, .5, "deg"),
+        ["SunDriftPeriodMinutes"] = new(1, 120, .5, "min"),
+        ["MotionEaseInSeconds"] = new(0, 10, .1, "s"),
         ["AmbientEnergy"] = new(0, 2, .05),
         ["HazeAmount"] = new(0, .4, .01),
         ["HazeStartKm"] = new(20, 2000, 10, "km"),
@@ -127,6 +134,8 @@ public partial class MenuFlyoverTuningDrawer : Control
         _settings?.Dispose();
         _settings = null;
     }
+
+    public bool IsDrawerOpen => _drawer?.Visible == true;
 
     public void SetDrawerOpen(bool open)
     {
@@ -262,8 +271,8 @@ public partial class MenuFlyoverTuningDrawer : Control
         _tabs.AddThemeFontSizeOverride("font_size", 13);
         _tabs.GetTabBar().AddThemeFontSizeOverride("font_size", 13);
         column.AddChild(_tabs);
-        AddTab("Camera", new[] { "AltitudeKm", "PitchDegrees", "SpeedKmPerSecond", "FieldOfView", "Paused" });
-        AddTab("Lighting", new[] { "SunEnergy", "SunElevationDegrees", "SunAzimuthDegrees", "AmbientEnergy", "HazeAmount", "HazeStartKm", "HazeEndKm", "GlowEnabled", "GlowIntensity" });
+        AddTab("Camera", new[] { "AltitudeKm", "PitchDegrees", "SpeedKmPerSecond", "FieldOfView", "Paused", "MotionEaseInSeconds", "WorldsAltitudeScale", "WorldsPitchDegrees", "DetailFovDeltaDegrees", "PoseBlendSeconds" });
+        AddTab("Lighting", new[] { "SunEnergy", "SunElevationDegrees", "SunAzimuthDegrees", "SunDriftAmplitudeDegrees", "SunDriftPeriodMinutes", "AmbientEnergy", "HazeAmount", "HazeStartKm", "HazeEndKm", "GlowEnabled", "GlowIntensity" });
         AddTab("Clouds", new[] { "CloudsEnabled", "CloudCoverage", "CloudDensity", "CloudFloorKm", "CloudCeilingKm", "CloudDriftMps", "CloudDitherSpeed", "CloudLightEnergy", "CloudAmbientStrength", "CloudAmbientDay", "CloudAmbientNight", "CloudSharpness" });
         AddTab("Shadows", new[] { "CloudShadowsEnabled", "ShadowGenerationEnabled", "ShadowReceiversEnabled", "ShadowStrength", "ShadowExtinctionPerKm", "ShadowRadiusKm", "ShadowResolution", "ShadowUpdatesPerSecond", "ShadowVerticalSamples" });
         AddTab("Quality", new[] { "CloudResolution", "CloudViewSteps", "CloudLightingSteps", "CloudMinStepMeters", "CloudMaxStepMeters", "CloudLightingTravelKm", "CloudLodBias", "CloudBlurPower", "CloudBlurQuality", "CloudFastReconstruction", "CloudRayStartJitterStrength", "CloudStationaryHistoryWeight", "CloudMovingHistoryWeight" });
@@ -334,11 +343,13 @@ public partial class MenuFlyoverTuningDrawer : Control
             "Camera" => new[]
             {
                 ("View", new[] { "AltitudeKm", "PitchDegrees", "FieldOfView" }),
-                ("Motion", new[] { "SpeedKmPerSecond", "Paused" })
+                ("Motion", new[] { "SpeedKmPerSecond", "MotionEaseInSeconds", "Paused" }),
+                ("Screen poses", new[] { "WorldsAltitudeScale", "WorldsPitchDegrees", "DetailFovDeltaDegrees", "PoseBlendSeconds" })
             },
             "Lighting" => new[]
             {
                 ("Sun", new[] { "SunEnergy", "SunElevationDegrees", "SunAzimuthDegrees" }),
+                ("Sun drift", new[] { "SunDriftAmplitudeDegrees", "SunDriftPeriodMinutes" }),
                 ("Ambient", new[] { "AmbientEnergy" }),
                 ("Fog", new[] { "HazeAmount", "HazeStartKm", "HazeEndKm" }),
                 ("Glow", new[] { "GlowEnabled", "GlowIntensity" })
@@ -383,6 +394,13 @@ public partial class MenuFlyoverTuningDrawer : Control
             "ShadowReceiversEnabled" => "Receive cloud shadows",
             "ShadowExtinctionPerKm" => "Shadow extinction / km",
             "ShadowRadiusKm" => "Shadow radius",
+            "SunDriftAmplitudeDegrees" => "Drift amplitude",
+            "SunDriftPeriodMinutes" => "Drift period",
+            "MotionEaseInSeconds" => "Ease-in time",
+            "WorldsAltitudeScale" => "Worlds altitude scale",
+            "WorldsPitchDegrees" => "Worlds pitch",
+            "DetailFovDeltaDegrees" => "Detail FOV change",
+            "PoseBlendSeconds" => "Pose blend time",
             _ => System.Text.RegularExpressions.Regex.Replace(property, "([a-z])([A-Z])", "$1 $2")
         };
         row.AddChild(new Label { Text = label, TooltipText = label, ClipText = true, SizeFlagsHorizontal = SizeFlags.ExpandFill });
@@ -454,6 +472,13 @@ public partial class MenuFlyoverTuningDrawer : Control
             "ShadowExtinctionPerKm" => "Shadow Extinction Per Km. Cloud density attenuation used while generating the shadow map.",
             "ShadowRadiusKm" => "Shadow Radius Km. Half-span covered by the shared cloud-shadow map.",
             "ShadowVerticalSamples" => "Density samples through the cloud layer per shadow texel. Fewer are cheaper but can miss thin layers.",
+            "SunDriftAmplitudeDegrees" => "Slow time-of-day drift: the sun elevation swings this many degrees either side of Sun Elevation. Zero disables drift. Only advances while the flyover is moving.",
+            "SunDriftPeriodMinutes" => "Minutes for one full drift cycle of the sun elevation.",
+            "MotionEaseInSeconds" => "Seconds to ramp travel speed from zero to full (smoothstep) once the terrain is ready or after a terrain rebuild. Zero starts at full speed.",
+            "WorldsAltitudeScale" => "World-select screen: camera altitude as a multiple of Altitude. Higher shows more of the ring arc.",
+            "WorldsPitchDegrees" => "World-select screen: camera pitch below the horizon. Lower values look toward the horizon so the ring arc rises.",
+            "DetailFovDeltaDegrees" => "Card-focus screen: change in field of view (negative narrows). The detail pose also sits at 0.85x the main altitude for a slow push-in.",
+            "PoseBlendSeconds" => "Time constant scale for blending between screen camera poses (critically damped, settles in about this long). Zero snaps.",
             "TerrainSpacingMeters" => "Spacing of the fine menu heightfield. Smaller numbers mean more samples and triangles.",
             "FarTerrainDetail" => "Distant full-ring mesh and atlas: Low 512x17, Medium 1024x33, High 2048x65.",
             _ => label

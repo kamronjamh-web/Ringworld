@@ -7,12 +7,19 @@ var watchdog: Timer
 class FakeWorldSession extends Node:
 	var mutation_calls: int = 0
 	func slot_exists(slot: int) -> bool: return slot == 1
+	func get_most_recent_slot() -> int: return 1
 	func get_slot_metadata(_slot: int) -> Dictionary:
 		return {"name": "Preview fixture", "generation_settings": {"terrain_seed": 1337, "radius_km": 5000, "ring_width_km": 318}}
 	func select_slot(_slot: int) -> bool: mutation_calls += 1; return false
 	func copy_slot(_source: int, _target: int) -> bool: mutation_calls += 1; return false
 	func delete_slot(_slot: int) -> bool: mutation_calls += 1; return false
 	func request_load_selected_world() -> bool: mutation_calls += 1; return false
+	func rename_slot(_slot: int, _name: String) -> bool: mutation_calls += 1; return false
+	func create_world(_slot: int, _name: String) -> bool: mutation_calls += 1; return false
+	func request_new_world(_request: Dictionary) -> void: mutation_calls += 1
+	func get_slot_thumbnail_path(_slot: int) -> String: return ""
+	func begin_play_session(_world: Node) -> void: pass
+	func end_play_session() -> void: pass
 
 func _initialize() -> void:
 	watchdog = Timer.new()
@@ -49,6 +56,8 @@ func _run() -> void:
 	menu.menu_defaults_path = "res://.godot/menu_tuning_fixture.tres"
 	root.add_child(menu)
 	_require(menu.main_panel.visible, "main panel is not visible")
+	_require(menu.continue_button != null and menu.continue_button.visible and menu.continue_subline.text.begins_with("Preview fixture"), "continue button missing for the most recent slot")
+	_require(menu.continue_button.has_focus(), "continue button did not take initial focus")
 	var enter_button: Button = _find_button(menu, "ENTER RINGWORLD")
 	_require(enter_button != null, "missing enter button")
 	if enter_button == null:
@@ -57,20 +66,57 @@ func _run() -> void:
 	_require(menu.slot_buttons.size() == 3, "expected three slot buttons")
 	if menu.slot_buttons.size() != 3:
 		return
+	_require(menu.worlds_panel.visible and not menu.main_panel.visible, "worlds panel not visible")
+	_require(menu.slot_buttons[0].has_focus(), "most recent card header did not take focus")
+	_require(menu.slot_buttons[0].get_node(menu.slot_buttons[0].focus_neighbor_bottom) == menu.slot_buttons[1], "card focus neighbor does not reach the next card")
+	menu.slot_buttons[1].pressed.emit()
+	_require(menu.new_world_panel.visible and not menu.worlds_panel.visible, "empty slot did not open the new world screen")
+	var first_seed: String = menu.new_world_seed_edit.text
+	_require(not first_seed.is_empty() and first_seed.is_valid_int(), "new world seed missing")
+	menu.call("_reroll_seed")
+	_require(menu.new_world_seed_edit.text != first_seed, "reroll did not change the seed")
+	_cancel(menu)
+	_require(menu.worlds_panel.visible and not menu.new_world_panel.visible, "cancel did not return from new world to worlds")
 	menu.slot_buttons[0].pressed.emit()
 	_require(menu.world_actions_panel.visible, "world actions not visible")
+	_require(menu.world_actions_panel.get_parent() == menu.slot_buttons[0].get_parent(), "actions are not inside the selected card")
 	var duplicate_button: Button = _find_button(menu, "DUPLICATE WORLD")
 	_require(duplicate_button != null, "missing duplicate button")
 	if duplicate_button == null:
 		return
 	duplicate_button.pressed.emit()
 	_require(menu.copy_targets.visible and menu.copy_targets.get_child_count() == 2, "copy targets missing")
+	_cancel(menu)
+	_require(not menu.copy_targets.visible and menu.world_actions_panel.visible, "cancel did not close copy targets only")
+	_find_button(menu, "RENAME").pressed.emit()
+	_require(menu.rename_row.visible, "rename row not shown")
+	_cancel(menu)
+	_require(not menu.rename_row.visible, "cancel did not hide the rename row")
+	_find_button(menu, "DELETE WORLD").pressed.emit()
+	_require(menu.delete_modal.visible and menu.delete_cancel_button.has_focus(), "delete modal not shown with cancel focused")
+	menu.call("_on_delete_hold_down")
+	menu.call("_process", 0.75)
+	_require(absf(menu.delete_hold_fill.scale.x - 0.5) < 0.01, "hold fill did not advance")
+	menu.call("_on_delete_hold_up")
+	_require(menu.delete_hold_fill.scale.x < 0.001, "releasing did not reset the hold")
+	_cancel(menu)
+	_require(not menu.delete_modal.visible, "cancel did not close the delete modal")
+	_cancel(menu)
+	_require(menu.worlds_panel.visible and not menu.world_actions_panel.visible, "cancel did not collapse the card")
+	_cancel(menu)
+	_require(menu.main_panel.visible and not menu.worlds_panel.visible, "cancel did not return to main")
 	menu.call("_show_main_menu")
 	_require(fake_session.mutation_calls == 0, "navigation mutated a world")
 	var backdrop: Node = menu.get_node_or_null("SpaceBackdrop")
 	if backdrop == null:
 		_fail("missing space backdrop")
 		return
+	# Fixture speed checks measure full-speed travel; the ease-in ramp has its own check below.
+	var fixture_settings: Resource = backdrop.call("GetMenuTuningSettings") as Resource
+	fixture_settings.set("MotionEaseInSeconds", 0.0)
+	backdrop.call("ApplyMenuTuningSettings", fixture_settings)
+	var early_progress: float = backdrop.call("GetBackdropProgress")
+	_require(early_progress >= 0.0 and early_progress <= 1.0, "backdrop progress out of range")
 	if "--render-1440" in OS.get_cmdline_user_args():
 		# Windows can shrink a requested window to its work area. Fix only the
 		# test's isolated 3D target, so the measured workload is truly 1440p.
@@ -87,6 +133,7 @@ func _run() -> void:
 	if not bool(backdrop.call("IsBackdropReady")):
 		_fail("backdrop not ready")
 		return
+	_require(is_equal_approx(float(backdrop.call("GetBackdropProgress")), 1.0), "ready backdrop progress is not 1")
 	var diagnostics: Dictionary = backdrop.call("GetBackdropDiagnostics")
 	print("MAIN_MENU_SPACE_DIAGNOSTICS ", diagnostics)
 	_require(int(diagnostics.get("seed", -1)) == 1337, "seed mismatch")
@@ -109,6 +156,7 @@ func _run() -> void:
 	await create_timer(0.2).timeout
 	var frozen_after: Dictionary = backdrop.call("GetBackdropDiagnostics")
 	_require((frozen_camera as Vector3).distance_to(frozen_after.get("camera_position", Vector3.ZERO) as Vector3) < 0.001 and float(frozen_after.get("travel_m", -1.0)) == float(diagnostics.get("travel_m", -2.0)), "frozen flyover moved")
+	_require(absf(float(frozen_after.get("effective_sun_elevation_degrees", 0.0)) - 49.51) < 0.001, "frozen flyover drifted the sun")
 	var cloud_layer: Node = backdrop.get_node_or_null("MenuFlyoverSunshineLayer")
 	_require(cloud_layer != null, "missing Sunshine menu adapter")
 	var cloud_stats: Dictionary = diagnostics.get("cloud", {})
@@ -140,6 +188,20 @@ func _run() -> void:
 	while int(backdrop.call("GetBackdropDiagnostics").get("queuecount", 1)) != 0 and Time.get_ticks_msec() < deadline:
 		await process_frame
 	_require(int(backdrop.call("GetBackdropDiagnostics").get("queuecount", 1)) == 0, "cache queue did not settle")
+	# Screen camera poses: FreezeMotion snaps, diagnostics reflect the pose, and "main" restores fixture values.
+	var pose_main: Dictionary = backdrop.call("GetBackdropDiagnostics")
+	_require(str(backdrop.call("GetCameraPose")) == "main" and str(pose_main.get("camera_pose", "")) == "main" and float(pose_main.get("pose_blend", 1.0)) == 0.0, "default camera pose is not main")
+	backdrop.call("SetCameraPose", "worlds")
+	var pose_worlds: Dictionary = backdrop.call("GetBackdropDiagnostics")
+	_require(str(pose_worlds.get("camera_pose", "")) == "worlds" and float(pose_worlds.get("pose_blend", 1.0)) == 0.0, "frozen worlds pose did not snap")
+	_require(float(pose_worlds.get("pose_altitude_km", 0.0)) > float(pose_main.get("pose_altitude_km", 0.0)) and float(pose_worlds.get("pitch_degrees", 0.0)) < float(pose_main.get("pitch_degrees", 0.0)), "worlds pose is not higher and flatter than main")
+	backdrop.call("SetCameraPose", "detail")
+	var pose_detail: Dictionary = backdrop.call("GetBackdropDiagnostics")
+	_require(float(pose_detail.get("fov_degrees", 99.0)) < float(pose_main.get("fov_degrees", 0.0)) and float(pose_detail.get("pose_altitude_km", 99.0)) < float(pose_main.get("pose_altitude_km", 0.0)), "detail pose is not lower and narrower")
+	backdrop.call("SetCameraPose", "bogus")
+	_require(str(backdrop.call("GetCameraPose")) == "main", "unknown pose did not fall back to main")
+	var pose_restored: Dictionary = backdrop.call("GetBackdropDiagnostics")
+	_require(is_equal_approx(float(pose_restored.get("pose_altitude_km", 0.0)), float(pose_main.get("pose_altitude_km", -1.0))) and is_equal_approx(float(pose_restored.get("pitch_degrees", 0.0)), float(pose_main.get("pitch_degrees", -1.0))) and is_equal_approx(float(pose_restored.get("fov_degrees", 0.0)), float(pose_main.get("fov_degrees", -1.0))), "main pose did not restore fixture values")
 	if "--resize-check" in OS.get_cmdline_user_args() and RenderingServer.get_rendering_device() != null:
 		var original_size: Vector2i = viewport.size
 		for target_size: Vector2i in [original_size - Vector2i(16, 8), original_size]:
@@ -219,9 +281,14 @@ func _run() -> void:
 			color_atlas.convert(Image.FORMAT_RGB8)
 			_require(color_atlas.save_png(prefix + "_terrain_color_atlas.png") == OK, "terrain color capture failed")
 		menu.call("_show_worlds")
+		# Let the panel motion settle so the capture shows the resting layout.
+		await create_timer(0.6).timeout
 		await RenderingServer.frame_post_draw
 		_require(root.get_texture().get_image().save_png("res://.godot/menu_space/world_slots.png") == OK, "world slots capture failed")
 	if "--tuning-check" in OS.get_cmdline_user_args():
+		# Restore the default ease-in so the drawer's initial values match the backdrop.
+		fixture_settings.set("MotionEaseInSeconds", 2.5)
+		backdrop.call("ApplyMenuTuningSettings", fixture_settings)
 		var tuning_checks: RefCounted = load("res://tools/menu_flyover_tuning_checks.gd").new()
 		_require(await tuning_checks.run(menu, "--capture" in OS.get_cmdline_user_args()), "menu tuning regression failed")
 	_require(fake_session.mutation_calls == 0, "menu modified the save fixture")
@@ -320,6 +387,12 @@ func _require_cloud_matte(matte: Image) -> void:
 			if color.r > 0.3: cloudy += 1
 			if color.r < 0.1: clear += 1
 	_require(gray > samples * 0.95 and cloudy > samples * 0.02 and clear > samples * 0.1, "Sunshine density matte did not reach final viewport")
+
+func _cancel(menu: Control) -> void:
+	var event := InputEventAction.new()
+	event.action = "ui_cancel"
+	event.pressed = true
+	menu.call("_unhandled_input", event)
 
 func _find_button(node: Node, prefix: String) -> Button:
 	for child: Node in node.find_children("*", "Button", true, false):

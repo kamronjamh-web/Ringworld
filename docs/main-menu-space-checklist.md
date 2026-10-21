@@ -131,10 +131,17 @@ share the tuned start-screen defaults. It is independent of saved worlds and
 the gameplay live-tuning drawer. Opening the panel does not itself save anything.
 The seed remains random; the preset stores presentation settings, not generated terrain.
 
-The six tabs expose 50 settings:
+The six tabs expose 57 settings:
 
-- Camera: terrain clearance, downward pitch, travel speed, FOV, and pause.
-- Lighting: sun energy/elevation/azimuth, ambient light, haze strength/range,
+- Camera: terrain clearance, downward pitch, travel speed, FOV, pause, and
+  motion ease-in (seconds to ramp travel speed 0 to full once ready or after a rebuild).
+  Screen poses: worlds altitude scale and pitch, detail FOV change, and pose blend
+  time (critically damped; 0 snaps). Driven by `SetCameraPose("main"|"worlds"|"detail")`;
+  FreezeMotion snaps and defaults to main. Diagnostics: `camera_pose`, `pose_blend`
+  (residual, 1 at a pose change down to 0 once settled). Cloud history is treated
+  as moving while a blend is in progress.
+- Lighting: sun energy/elevation/azimuth, slow sun drift (amplitude 0-60 deg,
+  period 1-120 min; 0 amplitude = off), ambient light, haze strength/range,
   and glow. Cloud direct lighting follows sun energy; ambient remains independent.
 - Clouds: visibility, coverage/density, base/top altitude, wind drift, direct
   and ambient cloud light, day/night ambient brightness, blue-noise motion,
@@ -215,7 +222,7 @@ gameplay keeps its existing compositor stage and settings.
   reach the final viewport, rather than merely existing in an internal buffer.
 - Add `--resize-check` for two live target resizes, and `--render-1440` to force
   the isolated 3D target to exactly 2560 x 1440 despite Windows work-area limits.
-- Add `--tuning-check` to exercise the drawer, 40 initialized controls,
+- Add `--tuning-check` to exercise the drawer, 57 initialized controls,
   focused-field hotkeys, live receiver/camera parameters, save/reload into a
   fresh menu instance, failure recovery, reset, GPU cloud/shadow switches,
   advanced Sunshine parameters, and debounced 250/500 m terrain rebuilds.
@@ -415,3 +422,20 @@ the menu startup optimization work listed above.
 
 Those optional features are not required for this first pass. No new artwork or
 audio pack was imported, and the playable forest milestone remains separate.
+
+## Phase B menu UI (world cards, New World, delete, navigation)
+
+- [x] World slots are expandable cards (thumbnail or seed-tinted ring, name,
+  last played, playtime, size). Load/Duplicate/Rename/Details/Delete live inside the
+  selected card; empty slots open the New World screen, unfinished slots offer
+  Continue Setup.
+- [x] New World screen: name, seed with reroll, Standard/Compact preset, Create
+  or Advanced. The menu only creates the slot and posts a request; the launcher
+  writes the generation settings.
+- [x] Delete is an in-canvas modal with a 1.5 s hold-to-delete button.
+- [x] Esc/B unwinds modal, rename, copy targets, New World, card, then screen;
+  explicit focus neighbors on every screen.
+- [x] Camera poses: main, world list ("worlds"), expanded card or New World ("detail").
+- [x] Type scale and variations in `ring_ui_theme.gd`; mono footer with live
+  ALT / speed / sun readout after the survey completes.
+- [ ] In-game visual check of card layout, focus ring, and footer readability.

@@ -28,7 +28,7 @@ func run(menu: Control, capture: bool) -> bool:
 	var initial_drawer: Dictionary = drawer.call("GetDrawerDiagnostics") as Dictionary
 	_require(not bool(initial_drawer.get("unsaved", true)), "drawer starts dirty")
 	_require(int(initial_drawer.get("save_attempts", -1)) == 0, "drawer saved on initialization")
-	_require(int(initial_drawer.get("control_count", -1)) == 50, "drawer must expose exactly 50 controls")
+	_require(int(initial_drawer.get("control_count", -1)) == 57, "drawer must expose exactly 57 controls")
 	var tabs: TabContainer = drawer.find_children("*", "TabContainer", true, false)[0] as TabContainer
 	_require(tabs != null and tabs.get_tab_count() == 6, "drawer must expose six tabs")
 	if tabs != null and tabs.get_tab_count() == 6:

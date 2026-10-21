@@ -27,9 +27,15 @@ public partial class RingMenuSpaceBackdrop : Control
     private int _seed, _meshCount, _triangleCount, _renderUpdates;
     private double _wallSeconds, _animationSeconds, _travelMeters, _renderAccumulator, _presentationAccumulator;
     private float _smoothedGroundKilometers;
+    // Screen camera pose: current spring state and the normalized distance at the last pose change.
+    private string _cameraPose = "main";
+    private float _poseAltitudeKm, _posePitch, _poseFov, _poseAltitudeVel, _posePitchVel, _poseFovVel, _poseStartDistance = 1f;
+    private bool _poseInitialized, _poseBlending;
     private bool _terrainRebuildPending;
     private double _terrainRebuildDelay;
     private int _activeFarTerrainDetail, _terrainGeneration;
+    private const double SunDriftUpdateSeconds = .25;
+    private double _sunDriftAccumulator, _motionEaseSeconds;
 
     public override void _Ready()
     {
@@ -80,10 +86,15 @@ public partial class RingMenuSpaceBackdrop : Control
         double renderDelta = _presentationAccumulator;
         _presentationAccumulator = 0.0;
         _renderUpdates++;
-        if (!FreezeMotion && !_tuning.Paused && IsBackdropReady())
+        bool ready = IsBackdropReady();
+        // Restart the ease-in whenever the terrain is not ready (initial build or rebuild).
+        if (!ready) _motionEaseSeconds = 0.0;
+        else if (!FreezeMotion && !_tuning.Paused)
         {
             _animationSeconds += renderDelta;
-            _travelMeters += _tuning.SpeedKmPerSecond * 1000.0 * renderDelta;
+            _motionEaseSeconds += renderDelta;
+            _travelMeters += _tuning.SpeedKmPerSecond * 1000.0 * renderDelta * MotionEaseFactor();
+            UpdateSunDrift(renderDelta);
         }
         UpdatePresentation(renderDelta);
         if (_viewport is not null) _viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
@@ -96,6 +107,63 @@ public partial class RingMenuSpaceBackdrop : Control
         _cache?.EnsureCoverage(CurrentRow());
     }
 
+    /// <summary>0..1 readiness across the near cache rows and far terrain samples; 1 once ready.</summary>
+    public float GetBackdropProgress()
+    {
+        if (IsBackdropReady()) return 1f;
+        if (_cache is null) return 0f;
+        double near = Math.Clamp((double)_cache.ResidentRows / Math.Max(1, _cache.RowCount), 0.0, 1.0);
+        double far = 1.0;
+        if (_farTerrain is not null)
+            far = Math.Clamp((double)_farTerrain.SampleCount / Math.Max(1, (long)_farTerrain.AroundSampleCount * _farTerrain.AcrossSampleCount), 0.0, 1.0);
+        return (float)Math.Min(.999, (near + far) * .5);
+    }
+
+    private double MotionEaseFactor()
+    {
+        if (_tuning.MotionEaseInSeconds <= 0f) return 1.0;
+        double t = Math.Clamp(_motionEaseSeconds / _tuning.MotionEaseInSeconds, 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    }
+
+    private float EffectiveSunElevationDegrees()
+    {
+        float elevation = _tuning.SunElevationDegrees;
+        if (_tuning.SunDriftAmplitudeDegrees > 0f)
+            elevation += _tuning.SunDriftAmplitudeDegrees * (float)Math.Sin(Math.Tau * _animationSeconds / (_tuning.SunDriftPeriodMinutes * 60.0));
+        return Mathf.Clamp(elevation, -90f, 90f);
+    }
+
+    private Vector3 ComputeSunDirection()
+    {
+        float elevation = Mathf.DegToRad(EffectiveSunElevationDegrees());
+        float azimuth = Mathf.DegToRad(_tuning.SunAzimuthDegrees);
+        return new Vector3(Mathf.Sin(azimuth) * Mathf.Cos(elevation),
+            Mathf.Sin(elevation), Mathf.Cos(azimuth) * Mathf.Cos(elevation));
+    }
+
+    private void ApplySunToLight()
+    {
+        if (_sunLight is null) return;
+        Vector3 referenceUp = Mathf.Abs(_sunDirection.Dot(Vector3.Up)) > .99f ? Vector3.Forward : Vector3.Up;
+        _sunLight.LookAt(_sunLight.GlobalPosition - _sunDirection, referenceUp);
+    }
+
+    /// <summary>Slow time-of-day drift at ~4 Hz; history-safe (no cloud history reset).</summary>
+    private void UpdateSunDrift(double delta)
+    {
+        if (_tuning.SunDriftAmplitudeDegrees <= 0f) return;
+        _sunDriftAccumulator += delta;
+        if (_sunDriftAccumulator < SunDriftUpdateSeconds) return;
+        _sunDriftAccumulator = 0.0;
+        Vector3 direction = ComputeSunDirection();
+        if (direction.IsEqualApprox(_sunDirection)) return;
+        _sunDirection = direction;
+        ApplySunToLight();
+        _skyMaterial?.SetShaderParameter("sun_direction", _sunDirection);
+        _sunshine?.UpdateSunDirection(_sunDirection);
+    }
+
     public bool IsBackdropReady() => _cache is { InitialReady: true } && _farTerrain is { Ready: true };
 
     public string GetMenuSettingsPath() => OS.HasFeature("template")
@@ -103,6 +171,83 @@ public partial class RingMenuSpaceBackdrop : Control
             ? "user://menu_flyover_defaults.tres" : MenuSettingsPath;
 
     public MenuFlyoverSettings GetMenuTuningSettings() => _tuning.CopyValidated();
+
+    /// <summary>Selects a screen camera pose: "main", "worlds" or "detail". Unknown names fall back to "main".</summary>
+    public void SetCameraPose(string pose)
+    {
+        string normalized = pose is "worlds" or "detail" ? pose : "main";
+        if (normalized == _cameraPose) return;
+        _cameraPose = normalized;
+        EnsurePoseInitialized();
+        _poseStartDistance = Mathf.Max(PoseDistance(), .001f);
+        if (FreezeMotion || _tuning.PoseBlendSeconds <= 0f)
+        {
+            SnapPoseToTarget();
+            UpdatePresentation(0.0);
+            if (_viewport is not null) _viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Once;
+        }
+    }
+
+    public string GetCameraPose() => _cameraPose;
+
+    private (float Altitude, float Pitch, float Fov) PoseTarget() => _cameraPose switch
+    {
+        "worlds" => (_tuning.AltitudeKm * _tuning.WorldsAltitudeScale, _tuning.WorldsPitchDegrees, _tuning.FieldOfView),
+        "detail" => (_tuning.AltitudeKm * .85f, _tuning.PitchDegrees, Mathf.Max(20f, _tuning.FieldOfView + _tuning.DetailFovDeltaDegrees)),
+        _ => (_tuning.AltitudeKm, _tuning.PitchDegrees, _tuning.FieldOfView)
+    };
+
+    /// <summary>Unitless distance of the spring state from the active pose target.</summary>
+    private float PoseDistance()
+    {
+        var target = PoseTarget();
+        return Mathf.Abs(_poseAltitudeKm - target.Altitude) / Mathf.Max(1f, _tuning.AltitudeKm)
+            + Mathf.Abs(_posePitch - target.Pitch) / 30f + Mathf.Abs(_poseFov - target.Fov) / 20f;
+    }
+
+    private void EnsurePoseInitialized()
+    {
+        if (_poseInitialized) return;
+        SnapPoseToTarget();
+        _poseInitialized = true;
+    }
+
+    private void SnapPoseToTarget()
+    {
+        var target = PoseTarget();
+        (_poseAltitudeKm, _posePitch, _poseFov) = target;
+        _poseAltitudeVel = _posePitchVel = _poseFovVel = 0f;
+        _poseBlending = false;
+        _poseInitialized = true;
+    }
+
+    private void UpdatePoseBlend(double delta)
+    {
+        EnsurePoseInitialized();
+        if (FreezeMotion || _tuning.PoseBlendSeconds <= 0f) { SnapPoseToTarget(); return; }
+        var target = PoseTarget();
+        // Critically damped spring; omega = 6 / T settles in roughly PoseBlendSeconds.
+        float omega = 6f / _tuning.PoseBlendSeconds;
+        float dt = (float)Math.Clamp(delta, 0.0, .1);
+        if (dt > 0f)
+        {
+            Spring(ref _poseAltitudeKm, ref _poseAltitudeVel, target.Altitude, omega, dt);
+            Spring(ref _posePitch, ref _posePitchVel, target.Pitch, omega, dt);
+            Spring(ref _poseFov, ref _poseFovVel, target.Fov, omega, dt);
+        }
+        float speed = Mathf.Abs(_poseAltitudeVel) + Mathf.Abs(_posePitchVel) + Mathf.Abs(_poseFovVel);
+        if (PoseDistance() < .0005f && speed < .01f) SnapPoseToTarget();
+        else _poseBlending = true;
+    }
+
+    private static void Spring(ref float value, ref float velocity, float target, float omega, float dt)
+    {
+        float offset = value - target;
+        float temp = (velocity + omega * offset) * dt;
+        float decay = Mathf.Exp(-omega * dt);
+        velocity = (velocity - omega * temp) * decay;
+        value = target + (offset + temp) * decay;
+    }
 
     public string GetFlyoverCaption() => $"SURFACE FLYOVER / {_tuning.AltitudeKm:0.#} KM / {_tuning.SpeedKmPerSecond:0.#} KM/S";
 
@@ -138,15 +283,13 @@ public partial class RingMenuSpaceBackdrop : Control
                 || _activeFarTerrainDetail != _tuning.FarTerrainDetail;
             _terrainRebuildDelay = .75;
         }
-        float elevation = Mathf.DegToRad(_tuning.SunElevationDegrees);
-        float azimuth = Mathf.DegToRad(_tuning.SunAzimuthDegrees);
-        _sunDirection = new Vector3(Mathf.Sin(azimuth) * Mathf.Cos(elevation),
-            Mathf.Sin(elevation), Mathf.Cos(azimuth) * Mathf.Cos(elevation));
+        // Use the drifted elevation so a drawer edit does not snap the sun back.
+        _sunDirection = ComputeSunDirection();
+        _sunDriftAccumulator = 0.0;
         if (_sunLight is not null)
         {
             _sunLight.LightEnergy = _tuning.SunEnergy;
-            Vector3 referenceUp = Mathf.Abs(_sunDirection.Dot(Vector3.Up)) > .99f ? Vector3.Forward : Vector3.Up;
-            _sunLight.LookAt(_sunLight.GlobalPosition - _sunDirection, referenceUp);
+            ApplySunToLight();
         }
         if (_worldEnvironment?.Environment is Godot.Environment environment)
         {
@@ -154,11 +297,8 @@ public partial class RingMenuSpaceBackdrop : Control
             environment.GlowEnabled = _tuning.GlowEnabled;
             environment.GlowIntensity = _tuning.GlowIntensity;
         }
-        if (_camera is not null)
-        {
-            _camera.Fov = _tuning.FieldOfView;
-            _camera.RotationDegrees = new Vector3(-_tuning.PitchDegrees, 0f, 0f);
-        }
+        // Drawer edits apply immediately; the pose spring only animates pose changes.
+        SnapPoseToTarget();
         _skyMaterial?.SetShaderParameter("sun_direction", _sunDirection);
         _sunshine?.ApplyTuning(_tuning, _sunDirection);
         UpdatePresentation(0.0);
@@ -185,8 +325,15 @@ public partial class RingMenuSpaceBackdrop : Control
         ["altitude_m"] = (_camera?.Position.Y ?? _tuning.AltitudeKm * 1000f) - SampleCameraHeightKilometers(CurrentRow()) * 1000f,
         ["travel_m"] = _travelMeters,
         ["speed_mps"] = _tuning.SpeedKmPerSecond * 1000f,
-        ["pitch_degrees"] = _tuning.PitchDegrees,
-        ["fov_degrees"] = _tuning.FieldOfView,
+        ["motion_ease"] = MotionEaseFactor(),
+        ["backdrop_progress"] = GetBackdropProgress(),
+        ["effective_sun_elevation_degrees"] = EffectiveSunElevationDegrees(),
+        ["pitch_degrees"] = _poseInitialized ? _posePitch : _tuning.PitchDegrees,
+        ["fov_degrees"] = _poseInitialized ? _poseFov : _tuning.FieldOfView,
+        ["camera_pose"] = _cameraPose,
+        // Residual distance to the pose target: 1 right after a pose change, 0 once settled.
+        ["pose_blend"] = _poseBlending ? Mathf.Clamp(PoseDistance() / _poseStartDistance, 0f, 1f) : 0f,
+        ["pose_altitude_km"] = _poseInitialized ? _poseAltitudeKm : _tuning.AltitudeKm,
         ["paused"] = FreezeMotion || _tuning.Paused,
         ["menu_settings_path"] = GetMenuSettingsPath(),
         ["terrain_cache_rows"] = _cache?.RowCount ?? 0,
@@ -341,8 +488,13 @@ public partial class RingMenuSpaceBackdrop : Control
         {
             float groundKm = SampleCameraHeightKilometers(row);
             _smoothedGroundKilometers = Mathf.Lerp(_smoothedGroundKilometers, groundKm, 1f - Mathf.Exp(-(float)delta * 4f));
-            _camera.Position = new Vector3(0f, (_tuning.AltitudeKm + _smoothedGroundKilometers) * 1000f, 0f);
+            UpdatePoseBlend(delta);
+            _camera.Position = new Vector3(0f, (_poseAltitudeKm + _smoothedGroundKilometers) * 1000f, 0f);
+            _camera.Fov = _poseFov;
+            _camera.RotationDegrees = new Vector3(-_posePitch, 0f, 0f);
         }
+        // Reprojection ignores rotation/FOV change, so cloud history is treated as moving while blending.
+        _sunshine?.SetCameraBlending(_poseBlending);
         // Leave Sunshine's noise anchor unwrapped, so weather does not jump at
         // the terrain circumference seam. Receiver map deltas wrap in shader.
         _sunshine?.UpdateFrame(_cache.StartAroundMeters + _travelMeters, _animationSeconds, FreezeMotion || _tuning.Paused || !nearReady);
