@@ -490,7 +490,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     // The disk cache stores authoritative terrain samples, not render-time
     // vertex colors, so biome material changes do not invalidate this format.
     private const int LodSectorCacheVersion = 11;
-    private const float ShorelineOverlapMeters = 0.35f;
+    private const float ShorelineOverlapMeters = RingShorelineClip.OverlapMeters;
     private const int MaximumCachedSampleCount = 1_000_000;
     private static readonly ConcurrentDictionary<string, byte> UnavailableCacheDirectories = new();
     private readonly record struct CachedTerrainPoint(
@@ -1730,6 +1730,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double radius = EnableFarFade
             ? Math.Max(size, FadeOutEndMeters)
             : Math.Max(SectorRadiusAround, SectorRadiusAcross) * (double)size;
+        // A high viewer only sees this level out to sqrt(far^2 - clearance^2) horizontally.
+        radius = Math.Min(radius, _outerClipReachMeters);
         double around0 = (double)coordinate.AroundSector * size;
         double across0 = Math.Clamp((double)coordinate.AcrossSector * size, 0.0, RingWidthMeters);
         double across1 = Math.Clamp((double)coordinate.AcrossSector * size + size, 0.0, RingWidthMeters);
@@ -3903,8 +3905,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     /// <summary>All partially wet triangles participate in the shoreline contour.</summary>
     public static bool ShouldClipWaterTriangle(bool aIsWater, bool bIsWater, bool cIsWater)
     {
-        int wetCount = (aIsWater ? 1 : 0) + (bIsWater ? 1 : 0) + (cIsWater ? 1 : 0);
-        return wetCount is 1 or 2;
+        return RingShorelineClip.IsPartiallyWet(aIsWater, bIsWater, cIsWater);
     }
 
     private static void AppendClippedWaterTriangle(
@@ -4019,19 +4020,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
         in ShorelineClipVertex to,
         bool fromInside)
     {
-        float denominator = from.SignedCoverage - to.SignedCoverage;
-        float interpolation = Mathf.Abs(denominator) <= 0.000001f
-            ? 0.5f
-            : Mathf.Clamp(from.SignedCoverage / denominator, 0.0f, 1.0f);
         double aroundDelta = to.Around - from.Around;
         float acrossDelta = to.Across - from.Across;
         double edgeLength = Math.Sqrt(aroundDelta * aroundDelta + acrossDelta * acrossDelta);
-        float overlapFraction = edgeLength <= 0.000001
-            ? 0.0f
-            : Mathf.Clamp(ShorelineOverlapMeters / (float)edgeLength, 0.0f, 0.25f);
-        interpolation = fromInside
-            ? Mathf.Min(1.0f, interpolation + overlapFraction)
-            : Mathf.Max(0.0f, interpolation - overlapFraction);
+        float interpolation = RingShorelineClip.EdgeInterpolation(
+            from.SignedCoverage, to.SignedCoverage, fromInside, (float)edgeLength, ShorelineOverlapMeters);
         return new ShorelineClipVertex(
             from.Around + aroundDelta * interpolation,
             Mathf.Lerp(from.Across, to.Across, interpolation),
@@ -6438,6 +6431,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
         material.SetShaderParameter("shadow_floor", configuration.ShadowFloor);
         material.SetShaderParameter("ring_width_meters", configuration.RingWidthMeters);
     }
+
+    private float _outerClipReachMeters = float.MaxValue;
+
+    /// <summary>Caps the horizontal reach of the streaming window (altitude trim); float.MaxValue disables the cap.</summary>
+    public void SetOuterClipReach(float reachMeters)
+        => _outerClipReachMeters = Mathf.Max(0.0f, reachMeters);
 
     public void ApplyRuntimeLodConfiguration(
         int radiusAround,

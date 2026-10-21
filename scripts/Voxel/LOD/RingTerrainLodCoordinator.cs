@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using Godot;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
@@ -113,6 +114,9 @@ public partial class RingTerrainLodCoordinator : Node
     [Export(PropertyHint.Range, "1,8,1")] public int FirstFastTravelContinuousLod { get; set; } = 1;
 
     [ExportGroup("High altitude proxy handoff")]
+    // Retained only so older scenes deserialize cleanly. The fixed altitude
+    // switch was replaced by per-level activation (a tier streams while its far
+    // handoff exceeds the viewer altitude); these values are deliberately ignored.
     [Export] public bool SuspendRegionalProxiesAtHighAltitude { get; set; } = true;
     [Export(PropertyHint.Range, "1000,60000,250")]
     public float SuspendRegionalProxiesAboveAltitudeMeters { get; set; } = 20000.0f;
@@ -153,7 +157,13 @@ public partial class RingTerrainLodCoordinator : Node
     private bool _manualPresetSelected;
     private bool _fastTravelStreamingActive;
     private double _fastTravelStoppedElapsedSeconds;
-    private bool _highAltitudeProxySuspended;
+    // Per-level altitude activation state (hysteresis); true means the level
+    // may stream. Levels whose far handoff lies well below the viewer altitude
+    // are never visible and release their windows.
+    private bool[] _altitudeActive = Array.Empty<bool>();
+    private int _altitudeSuppressedLevelCount;
+    private int _altitudePlanSignature;
+    private float _viewerHeightAboveSeaMeters;
     private long _lastAltitudeAroundCell = long.MinValue;
     private int _lastAltitudeAcrossCell = int.MinValue;
     private ulong _lastAltitudeEditVersion = ulong.MaxValue;
@@ -219,8 +229,10 @@ public partial class RingTerrainLodCoordinator : Node
         UndergroundTier = tier;
         ApplyFastTravelTierPolicy();
     }
-    public bool HighAltitudeProxySuspended => _highAltitudeProxySuspended;
+    /// <summary>True while at least one proxy level is released because the viewer is above its reach.</summary>
+    public bool HighAltitudeProxySuspended => _altitudeSuppressedLevelCount > 0;
     public float CurrentViewerAltitudeAboveTerrainMeters { get; private set; }
+    public float CurrentTargetPixelError => _currentProfile?.TargetPixelError ?? 0.0f;
 
     public void ConfigureMegaRegionalExtension()
     {
@@ -260,6 +272,23 @@ public partial class RingTerrainLodCoordinator : Node
 
     public override void _Ready()
     {
+        RegisterLevels();
+        ConfigureGeneratedLodDiskCaches();
+        _globalLod = GetNodeOrNull<RingTerrainGlobalLod>(GlobalLodPath);
+        _camera = GetNodeOrNull<Camera3D>(CameraPath);
+        _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
+        _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
+        if (_globalLod != null)
+        {
+            _mediumGlobalAroundSegments = _globalLod.AroundSegments;
+            _mediumGlobalAcrossSegments = _globalLod.AcrossSegments;
+        }
+        ApplyQualityPreset(DefaultPreset);
+        ValidatePhaseCConfiguration();
+    }
+
+    private void RegisterLevels()
+    {
         AddLevel(Lod1Path, legacyLevel: true);
         AddLevel(Lod2Path, legacyLevel: true);
         AddLevel(Lod3Path, legacyLevel: true);
@@ -280,18 +309,6 @@ public partial class RingTerrainLodCoordinator : Node
             AddLevel(Lod10Bridge16384mPath, legacyLevel: false, intermediateLevel: true);
             AddLevel(Lod11Path, legacyLevel: true);
         }
-        ConfigureGeneratedLodDiskCaches();
-        _globalLod = GetNodeOrNull<RingTerrainGlobalLod>(GlobalLodPath);
-        _camera = GetNodeOrNull<Camera3D>(CameraPath);
-        _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
-        _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
-        if (_globalLod != null)
-        {
-            _mediumGlobalAroundSegments = _globalLod.AroundSegments;
-            _mediumGlobalAcrossSegments = _globalLod.AcrossSegments;
-        }
-        ApplyQualityPreset(DefaultPreset);
-        ValidatePhaseCConfiguration();
     }
 
     private void ConfigureGeneratedLodDiskCaches()
@@ -319,7 +336,7 @@ public partial class RingTerrainLodCoordinator : Node
         using (RingPerformanceTelemetry.MeasureCpu("Terrain LOD coordinator prelude"))
         {
             UpdateFastTravelStreamingState(delta);
-            UpdateHighAltitudeProxySuspension();
+            UpdateAltitudeLevelActivation();
             UpdateTerminalGlobalMorphTarget();
             RefreshScreenSpaceSelectionIfNeeded(delta);
         }
@@ -395,39 +412,60 @@ public partial class RingTerrainLodCoordinator : Node
                 : "Fast-travel fine LOD rebuilds resumed because noclip fast travel ended.");
     }
 
-    private void UpdateHighAltitudeProxySuspension()
+    /// <summary>
+    /// Activates a level while the viewer is within its reach: a level whose far handoff
+    /// is below the camera altitude can never be seen, so it must not stream or hold
+    /// meshes. Hysteresis pre-warms on descent and delays release on ascent.
+    /// </summary>
+    private void UpdateAltitudeLevelActivation()
     {
-        if (_explorer == null) return;
+        if (_explorer == null || _levels.Count == 0) return;
         CurrentViewerAltitudeAboveTerrainMeters = ResolveViewerAltitudeAboveTerrain(
             _explorer.CanonicalPosition);
-        bool next = _highAltitudeProxySuspended;
-        if (!SuspendRegionalProxiesAtHighAltitude)
-        {
-            next = false;
-        }
-        else
-        {
-            float suspendAltitude = Mathf.Max(
-                1000.0f,
-                SuspendRegionalProxiesAboveAltitudeMeters);
-            float resumeAltitude = Mathf.Clamp(
-                ResumeRegionalProxiesBelowAltitudeMeters,
-                0.0f,
-                suspendAltitude - 1.0f);
-            if (_highAltitudeProxySuspended)
-                next = CurrentViewerAltitudeAboveTerrainMeters > resumeAltitude;
-            else
-                next = CurrentViewerAltitudeAboveTerrainMeters >= suspendAltitude;
-        }
+        _viewerHeightAboveSeaMeters = (float)_explorer.CanonicalPosition.VerticalMeters;
+        EnsureAltitudeStateCapacity();
 
-        if (next == _highAltitudeProxySuspended) return;
-        _highAltitudeProxySuspended = next;
+        int signature = 17;
+        int suppressed = 0;
+        float altitude = CurrentViewerAltitudeAboveTerrainMeters;
+        for (int i = 0; i < _levels.Count; i++)
+        {
+            float far = GetRuntimeBand(i).Y;
+            bool next = RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, altitude, _altitudeActive[i]);
+            _altitudeActive[i] = next;
+            if (!next) suppressed++;
+            signature = signature * 31 + (next ? 1 : 0);
+            if (next) signature = signature * 31 + QuantizedAltitudeReach(i, far);
+        }
+        _altitudeSuppressedLevelCount = suppressed;
+        if (signature == _altitudePlanSignature) return;
+        _altitudePlanSignature = signature;
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
-        GD.Print(next
-            ? KeepCoarseProxiesStreamingAtHighAltitude
-                ? $"High-altitude fine terrain/water proxies suspended at {CurrentViewerAltitudeAboveTerrainMeters:0}m; coarse regional guard tiers remain active."
-                : $"High-altitude regional terrain/water proxies suspended at {CurrentViewerAltitudeAboveTerrainMeters:0}m; global LOD owns the surface."
-            : $"Regional terrain/water proxies resumed at {CurrentViewerAltitudeAboveTerrainMeters:0}m for descent prewarming.");
+        GD.Print($"Altitude LOD plan at {altitude:0}m: {_levels.Count - suppressed}/{_levels.Count} proxy levels streaming.");
+    }
+
+    private void EnsureAltitudeStateCapacity()
+    {
+        if (_altitudeActive.Length == _levels.Count) return;
+        _altitudeActive = new bool[_levels.Count];
+        Array.Fill(_altitudeActive, true);
+        _altitudePlanSignature = 0;
+    }
+
+    private bool IsAltitudeActive(int levelIndex)
+        => levelIndex < 0 || levelIndex >= _altitudeActive.Length || _altitudeActive[levelIndex];
+
+    /// <summary>
+    /// Horizontal reach a level needs at the current altitude, rounded up to whole
+    /// sectors so the streaming window only changes when a sector boundary is crossed.
+    /// </summary>
+    private int QuantizedAltitudeReach(int levelIndex, float farHandoffMeters)
+    {
+        int size = Mathf.Max(1, _levels[levelIndex].SectorSizeMeters);
+        float reach = RingTerrainLodChainPlanner.TrimmedHorizontalReach(
+            farHandoffMeters, _viewerHeightAboveSeaMeters);
+        int sectors = Mathf.Max(1, Mathf.CeilToInt(reach / size));
+        return Mathf.Max(size, Mathf.Min(sectors * size, Mathf.CeilToInt(farHandoffMeters)));
     }
 
     private float ResolveViewerAltitudeAboveTerrain(in RingCanonicalPosition canonical)
@@ -499,9 +537,31 @@ public partial class RingTerrainLodCoordinator : Node
             DefaultPreset = preset;
             return;
         }
+        RefreshBackdropSpacing(profile, _mediumGlobalAroundSegments, _mediumGlobalAcrossSegments);
         RebuildRuntimeBands(profile);
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
 
+        GlobalBackdropPlan backdrop = PlanGlobalBackdrop(
+            profile, _mediumGlobalAroundSegments, _mediumGlobalAcrossSegments);
+        if (_globalLod != null)
+        {
+            _globalLod.ApplyRuntimeQuality(
+                backdrop.AroundSegments,
+                backdrop.AcrossSegments,
+                backdrop.Band.X,
+                backdrop.Band.Y);
+        }
+        ApplyFastTravelTierPolicy();
+        UpdateTerminalGlobalMorphTarget();
+    }
+
+    private readonly record struct GlobalBackdropPlan(
+        int ConfiguredCount, Vector2 Band, int AroundSegments, int AcrossSegments);
+
+    /// <summary>Resolves the terminal proxy level, global handoff band and global mesh resolution for a profile.</summary>
+    private GlobalBackdropPlan PlanGlobalBackdrop(
+        RingLodQualityProfile profile, int mediumAroundSegments, int mediumAcrossSegments)
+    {
         int configuredCount = ResolveConfiguredLevelCount();
         Vector2 globalBand = GetRuntimeBand(configuredCount - 1);
         if (EnforceMinimumGlobalHandoffDistance)
@@ -510,28 +570,132 @@ public partial class RingTerrainLodCoordinator : Node
             globalBand.X = Mathf.Max(globalBand.X, minimum);
             globalBand.Y = Mathf.Max(globalBand.X + 1.0f, globalBand.Y);
         }
-        if (_globalLod != null)
+        ResolveRingDimensions(out double circumference, out double width);
+        (int aroundSegments, int acrossSegments) = ResolveGlobalResolution(
+            profile, mediumAroundSegments, mediumAcrossSegments, circumference, width);
+        return new GlobalBackdropPlan(configuredCount, globalBand, aroundSegments, acrossSegments);
+    }
+
+    private (int Around, int Across) ResolveGlobalResolution(
+        RingLodQualityProfile profile,
+        int mediumAroundSegments,
+        int mediumAcrossSegments,
+        double circumferenceMeters,
+        double widthMeters)
+    {
+        // The global backdrop must not be coarser than ~7.7 km x 5 km cells: at
+        // lower resolutions its error is far over budget wherever it starts.
+        (int floorAround, int floorAcross) = RingTerrainLodChainPlanner.GlobalResolutionFloor(
+            circumferenceMeters, widthMeters);
+        int aroundSegments = ScaleGlobalResolution(
+            mediumAroundSegments,
+            profile.GlobalAroundSegments,
+            MediumProfile?.GlobalAroundSegments ?? 512,
+            floorAround,
+            4096);
+        int acrossSegments = ScaleGlobalResolution(
+            mediumAcrossSegments,
+            profile.GlobalAcrossSegments,
+            MediumProfile?.GlobalAcrossSegments ?? 32,
+            floorAcross,
+            256);
+        return (aroundSegments, acrossSegments);
+    }
+
+    private void ResolveRingDimensions(out double circumferenceMeters, out double widthMeters)
+    {
+        if (_contractRingCircumference > 0.0)
         {
-            int aroundSegments = ScaleGlobalResolution(
-                _mediumGlobalAroundSegments,
-                profile.GlobalAroundSegments,
-                MediumProfile?.GlobalAroundSegments ?? 512,
-                64,
-                4096);
-            int acrossSegments = ScaleGlobalResolution(
-                _mediumGlobalAcrossSegments,
-                profile.GlobalAcrossSegments,
-                MediumProfile?.GlobalAcrossSegments ?? 32,
-                4,
-                256);
-            _globalLod.ApplyRuntimeQuality(
-                aroundSegments,
-                acrossSegments,
-                globalBand.X,
-                globalBand.Y);
+            circumferenceMeters = _contractRingCircumference;
+            widthMeters = _contractRingWidth;
+            return;
         }
-        ApplyFastTravelTierPolicy();
-        UpdateTerminalGlobalMorphTarget();
+        circumferenceMeters = _grid?.GetCanonicalRingCircumferenceMeters64() ?? 0.0;
+        widthMeters = _grid?.RingAcrossWidthMeters ?? 0.0;
+    }
+
+    private double _contractRingCircumference;
+    private double _contractRingWidth;
+
+    private void RefreshBackdropSpacing(
+        RingLodQualityProfile profile, int mediumAroundSegments, int mediumAcrossSegments)
+    {
+        ResolveRingDimensions(out double circumference, out double width);
+        if (RouteMegaFarLodsToScaledViewport || circumference <= 0.0 || width <= 0.0)
+        {
+            _backdropEdgeSpacingMeters = 0.0f;
+            return;
+        }
+        (int aroundSegments, int acrossSegments) = ResolveGlobalResolution(
+            profile, mediumAroundSegments, mediumAcrossSegments, circumference, width);
+        _backdropEdgeSpacingMeters = RingTerrainLodChainPlanner.GlobalEdgeSpacing(
+            circumference, width, aroundSegments, acrossSegments);
+    }
+
+    /// <summary>
+    /// Headless projected-error contract for every desktop quality preset. Requires the
+    /// coordinator to be instanced inside the integration scene (levels resolve through
+    /// relative node paths); it does not need to be in the scene tree.
+    /// </summary>
+    public Godot.Collections.Dictionary RunProjectedErrorContract(
+        double circumferenceMeters,
+        double widthMeters,
+        float viewportHeight,
+        float fovDegrees,
+        int mediumAroundSegments,
+        int mediumAcrossSegments)
+    {
+        if (_levels.Count == 0) RegisterLevels();
+        _contractRingCircumference = circumferenceMeters;
+        _contractRingWidth = widthMeters;
+        var report = new StringBuilder();
+        var violationLines = new Godot.Collections.Array<string>();
+        var presets = new (QualityPreset Preset, RingLodQualityProfile? Profile)[]
+        {
+            (QualityPreset.Low, LowProfile),
+            (QualityPreset.Medium, MediumProfile),
+            (QualityPreset.High, HighProfile),
+            (QualityPreset.VeryHigh, VeryHighProfile)
+        };
+        float[] altitudes = { 500.0f, 2000.0f, 8000.0f, 16000.0f, 23000.0f, 60000.0f };
+        float projectionScale = RingTerrainLodChainPlanner.ProjectionScale(viewportHeight, fovDegrees);
+        RingLodQualityProfile? previousProfile = _currentProfile;
+        report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"levels={_levels.Count} projectionScale={projectionScale:0.0} ring={circumferenceMeters:0}x{widthMeters:0}"));
+        foreach ((QualityPreset preset, RingLodQualityProfile? profile) in presets)
+        {
+            if (profile == null) continue;
+            _currentProfile = profile;
+            RefreshBackdropSpacing(profile, mediumAroundSegments, mediumAcrossSegments);
+            RebuildRuntimeBands(profile, viewportHeight, fovDegrees);
+            GlobalBackdropPlan plan = PlanGlobalBackdrop(profile, mediumAroundSegments, mediumAcrossSegments);
+            var tiers = new List<RingTerrainLodChainPlanner.ChainTier>();
+            for (int i = 0; i < plan.ConfiguredCount && i < _levels.Count; i++)
+            {
+                if (!IsPhysicalLevelEnabled(i)) continue;
+                tiers.Add(new RingTerrainLodChainPlanner.ChainTier(
+                    _levels[i].LodLabel, _levels[i].SampleSpacingMeters, GetRuntimeBand(i).Y));
+            }
+            float backdropSpacing = RingTerrainLodChainPlanner.GlobalEdgeSpacing(
+                circumferenceMeters, widthMeters, plan.AroundSegments, plan.AcrossSegments);
+            List<string> violations = RingTerrainLodChainPlanner.EvaluateContract(
+                tiers, _voxelFadeEnd, backdropSpacing, projectionScale, profile.TargetPixelError,
+                altitudes, out string summary);
+            report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{profile.DisplayName}: e={profile.TargetPixelError:0.00} tiers={tiers.Count} terminal={(tiers.Count > 0 ? tiers[^1].Label : "-")} far={(tiers.Count > 0 ? tiers[^1].FarHandoffMeters : 0.0f):0}m global={plan.AroundSegments}x{plan.AcrossSegments} edge={backdropSpacing:0}m violations={violations.Count}{summary}"));
+            foreach (string violation in violations)
+                violationLines.Add($"{profile.DisplayName}: {violation}");
+        }
+        _currentProfile = previousProfile;
+        _contractRingCircumference = 0.0;
+        _contractRingWidth = 0.0;
+        _backdropEdgeSpacingMeters = 0.0f;
+        return new Godot.Collections.Dictionary
+        {
+            ["passed"] = violationLines.Count == 0,
+            ["report"] = report.ToString(),
+            ["violations"] = violationLines
+        };
     }
 
     private void UpdateTerminalGlobalMorphTarget()
@@ -632,37 +796,33 @@ public partial class RingTerrainLodCoordinator : Node
                 break;
         }
 
-        int firstHighAltitudeContinuous = ResolveFirstContinuousLevelIndex(
-            configuredCount,
-            FirstHighAltitudeContinuousLod);
+        EnsureAltitudeStateCapacity();
         RingTerrainProxySector? finerActiveLevel = null;
         int finerActiveLevelIndex = -1;
+        bool finerSkippedForAltitude = false;
         for (int i = 0; i < _levels.Count; i++)
         {
             RingTerrainProxySector level = _levels[i];
             RingTerrainProxySector? coarserLevel = FindNextActiveLevel(
                 i,
                 configuredCount,
-                firstUsefulLevel,
-                firstHighAltitudeContinuous);
+                firstUsefulLevel);
             level.SetMorphTargetSurfaceBase(
                 coarserLevel?.RadialUnderlayOffsetMeters ?? level.RadialUnderlayOffsetMeters,
                 coarserLevel != null && coarserLevel.SampleSpacingMeters is 2 or 4 or 8);
             level.SetMorphTargetSpacingMeters(coarserLevel?.SampleSpacingMeters ?? 0);
-            bool allowedAtAltitude = !_highAltitudeProxySuspended
-                || (KeepCoarseProxiesStreamingAtHighAltitude
-                    && i >= firstHighAltitudeContinuous);
-            bool active = allowedAtAltitude
-                && IsPhysicalLevelEnabled(i)
+            bool inChain = IsPhysicalLevelEnabled(i)
                 && i >= firstUsefulLevel
                 && i < configuredCount;
+            bool active = inChain && IsAltitudeActive(i);
+            if (inChain && !active) finerSkippedForAltitude = true;
             // A null finer level is a voxel provider only in the normal
-            // ground-level chain.  During high-altitude suspension the first
-            // retained coarse level must keep its own guard surface rather than
-            // trusting a small, stale voxel window beneath it.
+            // ground-level chain.  Once finer levels are released for altitude
+            // the first retained level must keep its own guard surface rather
+            // than trusting a small, stale voxel window beneath it.
             bool hasVoxelCoverageProvider = active
                 && finerActiveLevel == null
-                && !_highAltitudeProxySuspended;
+                && !finerSkippedForAltitude;
             level.SetCoverageSources(
                 active ? finerActiveLevel : null,
                 _globalLod,
@@ -676,11 +836,16 @@ public partial class RingTerrainLodCoordinator : Node
 
             Vector2 nearBand = ResolveNearBand(finerActiveLevelIndex);
             Vector2 farBand = GetRuntimeBand(i);
+            // Slant reach shrinks to a smaller horizontal reach for a high viewer.
+            float reach = _currentProfile.ExpandSectorWindowsToFadeEnd
+                ? QuantizedAltitudeReach(i, farBand.Y)
+                : float.MaxValue;
+            level.SetOuterClipReach(reach);
             int radiusAround = _currentProfile.ExpandSectorWindowsToFadeEnd
-                ? ResolveRequiredSectorRadius(level, farBand.Y)
+                ? ResolveRequiredSectorRadius(level, reach)
                 : _inspectorRadiusDefaults[i].X;
             int radiusAcross = _currentProfile.ExpandSectorWindowsToFadeEnd
-                ? ResolveRequiredSectorRadius(level, Mathf.Min(farBand.Y, level.RingWidthMeters))
+                ? ResolveRequiredSectorRadius(level, Mathf.Min(reach, level.RingWidthMeters))
                 : _inspectorRadiusDefaults[i].Y;
             level.ApplyRuntimeLodConfiguration(
                 radiusAround,
@@ -725,15 +890,18 @@ public partial class RingTerrainLodCoordinator : Node
 
     private void RebuildRuntimeBands(RingLodQualityProfile profile)
     {
-        _runtimeBands.Clear();
         float viewportHeight = Mathf.Max(1.0f, GetViewport().GetVisibleRect().Size.Y);
         float cameraFov = _camera?.Fov ?? 80.0f;
+        RebuildRuntimeBands(profile, viewportHeight, cameraFov);
+    }
+
+    private void RebuildRuntimeBands(RingLodQualityProfile profile, float viewportHeight, float cameraFov)
+    {
+        _runtimeBands.Clear();
         _lastViewportHeight = viewportHeight;
         _lastCameraFov = cameraFov;
-        float fovRadians = Mathf.DegToRad(cameraFov);
-        float projectionScale = viewportHeight / (2.0f * Mathf.Tan(fovRadians * 0.5f));
-        float pixelError = Mathf.Max(0.5f, profile.TargetPixelError);
-        float transitionFraction = Mathf.Clamp(profile.TransitionFraction, 0.05f, 0.4f);
+        float projectionScale = RingTerrainLodChainPlanner.ProjectionScale(viewportHeight, cameraFov);
+        _projectionScale = projectionScale;
 
         for (int i = 0; i < _levels.Count; i++)
         {
@@ -744,10 +912,11 @@ public partial class RingTerrainLodCoordinator : Node
                 continue;
             }
 
-            float geometricError = Mathf.Max(1.0f, _levels[i].SampleSpacingMeters);
-            float fadeEnd = Mathf.Max(geometricError * 4.0f, geometricError * projectionScale / pixelError);
-            float fadeStart = fadeEnd * (1.0f - transitionFraction);
-            _runtimeBands.Add(new Vector2(fadeStart, fadeEnd));
+            _runtimeBands.Add(RingTerrainLodChainPlanner.ScreenSpaceBand(
+                _levels[i].SampleSpacingMeters,
+                projectionScale,
+                profile.TargetPixelError,
+                profile.TransitionFraction));
         }
     }
 
@@ -772,15 +941,47 @@ public partial class RingTerrainLodCoordinator : Node
             1,
             Mathf.Max(1, _legacyLevelIndices.Count));
         int configuredCount = ResolvePhysicalIndexForLegacyCount(legacyCount);
-        if (!EnforceMinimumGlobalHandoffDistance) return configuredCount;
+        bool extendForBackdrop = _backdropEdgeSpacingMeters > 0.0f && _currentProfile.UseScreenSpaceError;
+        if (!EnforceMinimumGlobalHandoffDistance && !extendForBackdrop) return configuredCount;
 
-        float minimum = Mathf.Max(1000.0f, MinimumGlobalHandoffDistanceMeters);
-        while (configuredCount < _levels.Count
-            && GetRuntimeBand(FindLastEnabledLevelIndex(configuredCount)).Y < minimum)
+        FillChainScratch();
+        if (EnforceMinimumGlobalHandoffDistance)
         {
-            configuredCount++;
+            float minimum = Mathf.Max(1000.0f, MinimumGlobalHandoffDistanceMeters);
+            configuredCount = RingTerrainLodChainPlanner.ExtendCountForMinimumHandoff(
+                configuredCount, _farHandoffScratch, _enabledScratch, minimum);
+        }
+        // The terminal proxy tier is the first whose far handoff lets the global
+        // backdrop meet its (5x) pixel-error budget.
+        if (extendForBackdrop)
+        {
+            configuredCount = RingTerrainLodChainPlanner.ExtendCountForBackdropError(
+                configuredCount, _farHandoffScratch, _enabledScratch,
+                _backdropEdgeSpacingMeters, _projectionScale, _currentProfile.TargetPixelError);
         }
         return configuredCount;
+    }
+
+    // Edge spacing of the global backdrop at the current quality; 0 disables
+    // backdrop-driven chain extension (Mega, or ring size not known yet).
+    private float _backdropEdgeSpacingMeters;
+    private float _projectionScale = 1.0f;
+
+    private float[] _farHandoffScratch = Array.Empty<float>();
+    private bool[] _enabledScratch = Array.Empty<bool>();
+
+    private void FillChainScratch()
+    {
+        if (_farHandoffScratch.Length != _levels.Count)
+        {
+            _farHandoffScratch = new float[_levels.Count];
+            _enabledScratch = new bool[_levels.Count];
+        }
+        for (int i = 0; i < _levels.Count; i++)
+        {
+            _farHandoffScratch[i] = GetRuntimeBand(i).Y;
+            _enabledScratch[i] = IsPhysicalLevelEnabled(i);
+        }
     }
 
     private int ResolvePhysicalIndexForLegacyCount(int legacyCount)
@@ -793,26 +994,14 @@ public partial class RingTerrainLodCoordinator : Node
     private bool IsPhysicalLevelEnabled(int physicalIndex)
         => EnableIntermediateLodTiers || !_intermediateLevelIndices.Contains(physicalIndex);
 
-    private int FindLastEnabledLevelIndex(int exclusiveCount)
-    {
-        for (int i = Mathf.Min(exclusiveCount, _levels.Count) - 1; i >= 0; i--)
-        {
-            if (IsPhysicalLevelEnabled(i)) return i;
-        }
-        return 0;
-    }
-
     private RingTerrainProxySector? FindNextActiveLevel(
         int currentIndex,
         int configuredCount,
-        int firstUsefulLevel,
-        int firstHighAltitudeContinuous)
+        int firstUsefulLevel)
     {
         for (int i = currentIndex + 1; i < configuredCount; i++)
         {
-            bool allowedAtAltitude = !_highAltitudeProxySuspended
-                || (KeepCoarseProxiesStreamingAtHighAltitude && i >= firstHighAltitudeContinuous);
-            if (allowedAtAltitude && IsPhysicalLevelEnabled(i) && i >= firstUsefulLevel)
+            if (IsAltitudeActive(i) && IsPhysicalLevelEnabled(i) && i >= firstUsefulLevel)
                 return _levels[i];
         }
         return null;
@@ -838,13 +1027,6 @@ public partial class RingTerrainLodCoordinator : Node
         return new Vector2(
             Mathf.Lerp(lower.X, upper.X, t),
             Mathf.Lerp(lower.Y, upper.Y, t));
-    }
-
-    private int ResolveFirstContinuousLevelIndex(int configuredCount, int requestedLod)
-    {
-        int lastConfiguredIndex = Mathf.Max(0, configuredCount - 1);
-        int requestedPhysicalIndex = ResolvePhysicalIndexForLegacyCount(requestedLod) - 1;
-        return Mathf.Clamp(requestedPhysicalIndex, 0, lastConfiguredIndex);
     }
 
     private void ApplyFastTravelTierPolicy()
@@ -899,20 +1081,23 @@ public partial class RingTerrainLodCoordinator : Node
 
             int configuredCount = coordinator.ResolveConfiguredLevelCount();
             bool legacyCountMapsToLegacyTier = configuredCount == 11;
-            RingTerrainProxySector? enabledParent = coordinator.FindNextActiveLevel(7, configuredCount, 0, 0);
+            RingTerrainProxySector? enabledParent = coordinator.FindNextActiveLevel(7, configuredCount, 0);
             Vector2 firstBridgeBand = coordinator.GetAuthoredBandForPhysicalLevel(coordinator._currentProfile, 8);
             Vector2 secondBridgeBand = coordinator.GetAuthoredBandForPhysicalLevel(coordinator._currentProfile, 9);
             bool logarithmicBands = Mathf.IsEqualApprox(firstBridgeBand.X, 100.0f + 700.0f / 3.0f)
                 && Mathf.IsEqualApprox(secondBridgeBand.X, 100.0f + 1400.0f / 3.0f);
             coordinator.SetIntermediateLodTiersEnabled(false);
-            RingTerrainProxySector? disabledParent = coordinator.FindNextActiveLevel(7, configuredCount, 0, 0);
+            RingTerrainProxySector? disabledParent = coordinator.FindNextActiveLevel(7, configuredCount, 0);
             Vector2 previousActiveBand = coordinator.ResolveNearBand(7);
             bool nextParentIsImmediate = enabledParent?.SampleSpacingMeters == 512
                 && disabledParent?.SampleSpacingMeters == 2048;
             bool disabledBridgeKeepsPreviousActiveBand = previousActiveBand == coordinator._currentProfile.Lod8OutMeters;
             bool scaledViewportDoesNotAddProxyBridges = !ShouldBuildAbsoluteWorldMegaProxyTiers(
-                megaRegionalExtensionEnabled: true,
-                routeMegaFarLodsToScaledViewport: true);
+                    megaRegionalExtensionEnabled: true,
+                    routeMegaFarLodsToScaledViewport: true)
+                && ShouldBuildAbsoluteWorldMegaProxyTiers(
+                    megaRegionalExtensionEnabled: false,
+                    routeMegaFarLodsToScaledViewport: false);
             summary = $"spacings={spacings.Length}, legacyCount={configuredCount}, immediateParent={nextParentIsImmediate}, previousActiveBand={disabledBridgeKeepsPreviousActiveBand}, logarithmicBands={logarithmicBands}, scaledViewportExclusive={scaledViewportDoesNotAddProxyBridges}";
             return doubling && legacyCountMapsToLegacyTier && nextParentIsImmediate
                 && disabledBridgeKeepsPreviousActiveBand && logarithmicBands && scaledViewportDoesNotAddProxyBridges;
@@ -934,10 +1119,14 @@ public partial class RingTerrainLodCoordinator : Node
     private static bool ResolveTransitHidden(bool fastTravelActive, bool hideProxyMeshesDuringFastTravel)
         => false;
 
+    /// <summary>
+    /// The 512m-16km bridge tiers and LOD9-11 are absolute-world proxy sectors on
+    /// every world except Mega, where the scaled viewport owns those ranges.
+    /// </summary>
     internal static bool ShouldBuildAbsoluteWorldMegaProxyTiers(
         bool megaRegionalExtensionEnabled,
         bool routeMegaFarLodsToScaledViewport)
-        => megaRegionalExtensionEnabled && !routeMegaFarLodsToScaledViewport;
+        => !routeMegaFarLodsToScaledViewport;
 
     private void ValidatePhaseCConfiguration()
     {
@@ -1101,6 +1290,44 @@ public partial class RingTerrainLodCoordinator : Node
         }
         LastFrameBuildStarts = started;
         LastFrameBuildStartMilliseconds = (Time.GetTicksUsec() - startUsec) / 1000.0;
+    }
+
+    /// <summary>Verifies per-level altitude activation hysteresis and window trimming without a scene.</summary>
+    public static string RunAltitudeActivationContract()
+    {
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException($"Altitude activation contract failed: {message}");
+        }
+
+        const float far = 10000.0f;
+        // Descent: inactive until within 1.25x, then stays active up to 1.40x.
+        Require(!RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, 13000.0f, false), "must not activate at 1.3x");
+        Require(RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, 12000.0f, false), "must pre-warm below 1.25x");
+        Require(RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, 13500.0f, true), "must stay active below 1.40x");
+        Require(!RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, 14500.0f, true), "must release above 1.40x");
+        // The band between the thresholds keeps whatever state it had (no flicker).
+        bool state = false;
+        int flips = 0;
+        for (float altitude = 14000.0f; altitude >= 11000.0f; altitude -= 50.0f)
+        {
+            bool next = RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, altitude, state);
+            if (next != state) flips++;
+            state = next;
+        }
+        for (float altitude = 11000.0f; altitude <= 14500.0f; altitude += 50.0f)
+        {
+            bool next = RingTerrainLodChainPlanner.IsLevelActiveAtAltitude(far, altitude, state);
+            if (next != state) flips++;
+            state = next;
+        }
+        Require(flips == 2, $"expected exactly one activation and one release, saw {flips} flips");
+        // Window trim: untouched below the terrain ceiling, sqrt(f^2 - c^2) above it.
+        Require(Mathf.IsEqualApprox(RingTerrainLodChainPlanner.TrimmedHorizontalReach(far, 4000.0f), far), "no trim below ceiling");
+        float trimmed = RingTerrainLodChainPlanner.TrimmedHorizontalReach(far, RingTerrainLodChainPlanner.TerrainCeilingMeters + 6000.0f);
+        Require(Mathf.IsEqualApprox(trimmed, 8000.0f), $"expected 8000 reach, got {trimmed}");
+        Require(RingTerrainLodChainPlanner.TrimmedHorizontalReach(far, 40000.0f) == 0.0f, "fully clear level has no reach");
+        return $"hysteresis=ok flips={flips}, trim=ok";
     }
 
     /// <summary>Verifies fair build-start ordering and slot planning without a scene.</summary>

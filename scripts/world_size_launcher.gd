@@ -1615,6 +1615,8 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 		grid.set("LogSeamGapDebugStats", true)
 		grid.set("SeamGapDebugUpdateIntervalSeconds", 0.1)
 	_configure_terrain_lod_widths(game, width_m)
+	if is_certified:
+		_configure_terrain_lod_anchor_policy(game)
 
 	var runtime_terrain_settings := _build_runtime_terrain_settings(grid, min_terrain_y, max_build_y, bedrock_material_y, use_surface_terrain or (use_runtime_surface_generation and _smooth_runtime_generation_spike()))
 	if runtime_terrain_settings != null:
@@ -1887,7 +1889,15 @@ func _configure_terrain_lod_widths(game: Node, width_m: float) -> void:
 		"Lod5Terrain32m",
 		"Lod6Terrain64m",
 		"Lod7Terrain128m",
-		"Lod8Terrain256m"
+		"Lod8Terrain256m",
+		# Bridge tiers and LOD9-11 are absolute-world proxies on every non-Mega world.
+		"Lod8BridgeTerrain512m",
+		"Lod8BridgeTerrain1024m",
+		"Lod9Terrain2km",
+		"Lod9BridgeTerrain4096m",
+		"Lod10Terrain8km",
+		"Lod10BridgeTerrain16384m",
+		"Lod11Terrain32km"
 	]:
 		var proxy_lod := game.get_node_or_null(node_path)
 		if proxy_lod != null:
@@ -1908,6 +1918,32 @@ func _configure_terrain_lod_widths(game: Node, width_m: float) -> void:
 	)
 	global_lod.set("RingWidthMeters", width_meters)
 	global_lod.set("AcrossSegments", across_segments)
+
+
+# Certified proxy sectors are sector-local and the canonical anchor move is a pure
+# translation (Mega does the same), so a re-anchor repositions resident sectors
+# instead of rebuilding every level.
+func _configure_terrain_lod_anchor_policy(game: Node) -> void:
+	for node_path in [
+		"Lod1Terrain2m",
+		"Lod2Terrain4m",
+		"Lod3Terrain8m",
+		"Lod4Terrain16m",
+		"Lod5Terrain32m",
+		"Lod6Terrain64m",
+		"Lod7Terrain128m",
+		"Lod8Terrain256m",
+		"Lod8BridgeTerrain512m",
+		"Lod8BridgeTerrain1024m",
+		"Lod9Terrain2km",
+		"Lod9BridgeTerrain4096m",
+		"Lod10Terrain8km",
+		"Lod10BridgeTerrain16384m",
+		"Lod11Terrain32km"
+	]:
+		var proxy_lod := game.get_node_or_null(node_path)
+		if proxy_lod != null:
+			proxy_lod.set("RebuildExistingMeshesOnCanonicalAnchorChange", false)
 
 
 func _build_runtime_terrain_settings(grid: Node, min_terrain_y: int, max_build_y: int, bedrock_material_y: int, surface_only: bool = false) -> Resource:

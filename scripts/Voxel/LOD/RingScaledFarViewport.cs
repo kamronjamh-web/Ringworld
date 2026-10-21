@@ -51,7 +51,11 @@ public partial class RingScaledFarViewport : Node
 		double OuterRadius,
 		int AngularSteps,
 		double[] CanonicalAround,
-		double[] CanonicalAcross);
+		double[] CanonicalAcross,
+		// Vertices beyond the first LatticeVertexCount are clipped shoreline vertices appended after the
+		// rows x (AngularSteps + 1) lattice; ExtraColumns gives each one a lattice column for sector splitting.
+		int LatticeVertexCount = -1,
+		int[]? ExtraColumns = null);
 
 	/// <summary>
 	/// A radial regional tier. The sample-spacing target and adaptive curvature
@@ -3528,9 +3532,6 @@ public partial class RingScaledFarViewport : Node
 		surface.SetColor(cb); surface.AddVertex(b);
 		surface.SetColor(cc); surface.AddVertex(c);
 	}
-
-	private static bool IsWaterTriangle(bool[] waterVertices, int a, int b, int c) =>
-		(waterVertices[a] ? 1 : 0) + (waterVertices[b] ? 1 : 0) + (waterVertices[c] ? 1 : 0) >= 2;
 
 	private static void AddUvVertex(SurfaceTool surface, Vector3 position, Vector2 uv)
 	{

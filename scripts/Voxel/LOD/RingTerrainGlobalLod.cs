@@ -803,6 +803,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         public required RingTerrainMinMaxPyramid? HeightPyramid;
         public required Vector3[] TerrainVertices, WaterVertices;
         public required float[] TerrainCanonicalHeights;
+        // Raw terrain/displayed-water heights per vertex; shoreline clipping works on their difference.
+        public required float[] RawTerrainHeights, RawWaterHeights;
+        public required float WaterCanonicalOffset;
         public required Color[] TerrainColors, WaterColors;
         public required bool[] DisplayedWater;
         public required ulong Version;
@@ -926,7 +929,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             PreserveFeatures = UseMinMaxFeaturePreservation && _heightPyramid != null, Underlay = RadialUnderlayOffsetMeters,
             LowColor = LowTerrainColor, HighColor = HighTerrainColor, WorldToLocal = GlobalTransform.AffineInverse(),
             Geometry = _grid.CaptureLodGeometrySnapshot(), HeightPyramid = _heightPyramid,
-            TerrainVertices = terrainVertices, TerrainCanonicalHeights = new float[terrainVertices.Length], TerrainColors = new Color[terrainVertices.Length], WaterVertices = new Vector3[terrainVertices.Length],
+            TerrainVertices = terrainVertices, TerrainCanonicalHeights = new float[terrainVertices.Length],
+            RawTerrainHeights = new float[terrainVertices.Length], RawWaterHeights = new float[terrainVertices.Length],
+            WaterCanonicalOffset = (sampler.UsesRuntimeSurfaceGeneration ? 0.0f : 1.0f) - RadialUnderlayOffsetMeters,
+            TerrainColors = new Color[terrainVertices.Length], WaterVertices = new Vector3[terrainVertices.Length],
             WaterColors = new Color[terrainVertices.Length], DisplayedWater = new bool[terrainVertices.Length], Version = _pendingPreparationVersion };
     }
 
@@ -959,6 +965,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         state.DisplayedWater[index] = terrainSample.HasSurfaceWater && terrainHeight < terrainSample.WaterSurfaceHeight;
         float terrainCanonicalHeight = terrainHeight + (state.UsesPresentationSurface ? 0.0f : 1.0f) - state.Underlay;
         state.TerrainCanonicalHeights[index] = terrainCanonicalHeight;
+        state.RawTerrainHeights[index] = terrainHeight;
+        state.RawWaterHeights[index] = waterHeight;
         state.TerrainVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, terrainCanonicalHeight, across);
         state.WaterVertices[index] = state.WorldToLocal * state.Geometry.CanonicalToWorld(around, waterHeight + (state.Sampler.UsesRuntimeSurfaceGeneration ? 0.0 : 1.0) - state.Underlay, across);
     }
@@ -1069,16 +1077,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
                 AddVertex(terrainSurface, terrainVertices[i01], terrainColors[i01]); AddVertex(terrainSurface, terrainVertices[i10], terrainColors[i10]); AddVertex(terrainSurface, terrainVertices[i00], terrainColors[i00]);
                 AddVertex(terrainSurface, terrainVertices[i10], terrainColors[i10]); AddVertex(terrainSurface, terrainVertices[i01], terrainColors[i01]); AddVertex(terrainSurface, terrainVertices[i11], terrainColors[i11]);
                 terrainTriangleCount += 2;
-                if (IsWaterTriangle(displayedWater, i01, i10, i00))
-                {
-                    AddVertex(oceanSurface, waterVertices[i01], waterColors[i01]); AddVertex(oceanSurface, waterVertices[i10], waterColors[i10]); AddVertex(oceanSurface, waterVertices[i00], waterColors[i00]);
-                    oceanTriangleCount++;
-                }
-                if (IsWaterTriangle(displayedWater, i10, i01, i11))
-                {
-                    AddVertex(oceanSurface, waterVertices[i10], waterColors[i10]); AddVertex(oceanSurface, waterVertices[i01], waterColors[i01]); AddVertex(oceanSurface, waterVertices[i11], waterColors[i11]);
-                    oceanTriangleCount++;
-                }
+                oceanTriangleCount += AddClippedWaterTriangle(oceanSurface, state, i01, i10, i00);
+                oceanTriangleCount += AddClippedWaterTriangle(oceanSurface, state, i10, i01, i11);
             }
             mesh = new ArrayMesh();
             if (terrainTriangleCount > 0)
@@ -1334,8 +1334,83 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         surface.AddVertex(vertex);
     }
 
-    private static bool IsWaterTriangle(bool[] waterVertices, int a, int b, int c) =>
-        (waterVertices[a] ? 1 : 0) + (waterVertices[b] ? 1 : 0) + (waterVertices[c] ? 1 : 0) >= 2;
+    /// <summary>
+    /// Emits the water surface of one lattice triangle: whole when all vertices are wet, clipped exactly
+    /// against the shoreline when one or two are (the rule shared with proxy sectors and the far viewport).
+    /// Returns the number of triangles written.
+    /// </summary>
+    private static int AddClippedWaterTriangle(SurfaceTool surface, PendingSegmentPreparation state, int a, int b, int c)
+    {
+        bool[] wet = state.DisplayedWater;
+        Vector3[] water = state.WaterVertices;
+        Color[] colors = state.WaterColors;
+        if (RingShorelineClip.IsFullyWet(wet[a], wet[b], wet[c]))
+        {
+            AddVertex(surface, water[a], colors[a]);
+            AddVertex(surface, water[b], colors[b]);
+            AddVertex(surface, water[c], colors[c]);
+            return 1;
+        }
+        if (!RingShorelineClip.IsPartiallyWet(wet[a], wet[b], wet[c])) return 0;
+
+        Span<int> corner = stackalloc int[3] { a, b, c };
+        float representative = 0.0f;
+        int wetCount = 0, firstWet = -1;
+        Vector3 up = Vector3.Up;
+        for (int k = 0; k < 3; k++)
+        {
+            int i = corner[k];
+            if (!wet[i]) continue;
+            representative += state.RawWaterHeights[i];
+            wetCount++;
+            if (firstWet < 0)
+            {
+                firstWet = i;
+                Vector3 lift = water[i] - state.TerrainVertices[i];
+                if (lift.LengthSquared() > 0.000001f) up = lift.Normalized();
+            }
+        }
+        representative /= wetCount;
+
+        Span<float> coverage = stackalloc float[3];
+        Span<Vector3> position = stackalloc Vector3[3];
+        for (int k = 0; k < 3; k++)
+        {
+            int i = corner[k];
+            if (wet[i])
+            {
+                coverage[k] = RingShorelineClip.SignedCoverage(true, state.RawWaterHeights[i] - state.RawTerrainHeights[i]);
+                position[k] = water[i];
+            }
+            else
+            {
+                coverage[k] = RingShorelineClip.SignedCoverage(false, representative - state.RawTerrainHeights[i]);
+                // Water plane extended under the dry vertex at the shoreline's water level.
+                position[k] = water[i] + up * (representative - state.RawWaterHeights[i]);
+            }
+        }
+        Span<float> edgeLength = stackalloc float[3]
+        {
+            (state.TerrainVertices[b] - state.TerrainVertices[a]).Length(),
+            (state.TerrainVertices[c] - state.TerrainVertices[b]).Length(),
+            (state.TerrainVertices[a] - state.TerrainVertices[c]).Length()
+        };
+        Span<Vector3> weights = stackalloc Vector3[RingShorelineClip.MaxVertices];
+        int count = RingShorelineClip.ClipTriangle(coverage, edgeLength, RingShorelineClip.OverlapMeters, weights);
+        if (count < 3) return 0;
+
+        Color color = colors[firstWet];
+        Span<Vector3> clipped = stackalloc Vector3[RingShorelineClip.MaxVertices];
+        for (int v = 0; v < count; v++)
+            clipped[v] = position[0] * weights[v].X + position[1] * weights[v].Y + position[2] * weights[v].Z;
+        for (int v = 1; v < count - 1; v++)
+        {
+            AddVertex(surface, clipped[0], color);
+            AddVertex(surface, clipped[v], color);
+            AddVertex(surface, clipped[v + 1], color);
+        }
+        return count - 2;
+    }
 
     private void CreateMaterial()
     {

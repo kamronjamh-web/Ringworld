@@ -63,11 +63,6 @@ public partial class RingLodPauseMenu : CanvasLayer
     private GameplayProxyCoverageCullingDefaults _proxyCoverageCullingDefaults = new();
     private double _proxyCoverageCullingSaveElapsed;
     private double _proxyCoverageCullingRetryElapsed;
-    private CheckButton? _intermediateLodTiers;
-    private Label? _intermediateLodTiersStatus;
-    private GameplayLodTransitionDefaults _lodTransitionDefaults = new();
-    private double _lodTransitionSaveElapsed;
-    private double _lodTransitionRetryElapsed;
     private RingCertificationMonitor? _certificationMonitor;
     private double _renderResolutionSaveElapsed;
     private double _renderResolutionRetryElapsed;
@@ -108,8 +103,6 @@ public partial class RingLodPauseMenu : CanvasLayer
         _renderResolutionDefaults.Load((int)DefaultUpscalingPreset);
         _proxyCoverageCullingDefaults.Load();
         ApplySavedProxyCoverageCulling();
-        _lodTransitionDefaults.Load();
-        ApplySavedIntermediateLodTiers();
         BuildMenu();
         ApplySavedRenderResolution(updateStatus: false);
         _renderResolutionReady = true;
@@ -151,14 +144,6 @@ public partial class RingLodPauseMenu : CanvasLayer
                 && (_proxyCoverageCullingDefaults.LastError.Length == 0 || _proxyCoverageCullingRetryElapsed >= 5.0))
                 FlushProxyCoverageCullingSettings();
         }
-        if (_lodTransitionDefaults.Dirty)
-        {
-            _lodTransitionSaveElapsed += delta;
-            _lodTransitionRetryElapsed += delta;
-            if (_lodTransitionSaveElapsed >= 0.5
-                && (_lodTransitionDefaults.LastError.Length == 0 || _lodTransitionRetryElapsed >= 5.0))
-                FlushLodTransitionSettings();
-        }
         if (_menuOpen)
         {
             _renderResolutionStatusElapsed += delta;
@@ -168,7 +153,6 @@ public partial class RingLodPauseMenu : CanvasLayer
                 SyncAtmosphericHazeToggle();
                 UpdateRenderResolutionStatus();
                 UpdateProxyCoverageCullingStatus();
-                UpdateIntermediateLodTiersStatus();
             }
         }
         if (_debugColors?.ButtonPressed == true)
@@ -421,21 +405,6 @@ public partial class RingLodPauseMenu : CanvasLayer
         column.AddChild(_partialCoverageMeshCullingStatus);
 
         column.AddChild(new HSeparator());
-        column.AddChild(new Label { Text = "Terrain LOD transitions" });
-        _intermediateLodTiers = new CheckButton
-        {
-            Name = "IntermediateLodTiers",
-            Text = "Use intermediate terrain LOD tiers",
-            ButtonPressed = _lodTransitionDefaults.Settings.IntermediateLodTiersEnabled,
-            TooltipText = "Adds intermediate transition bands between the established proxy tiers and in the scaled far-terrain view. Existing tiers remain active."
-        };
-        _intermediateLodTiers.Toggled += SetIntermediateLodTiers;
-        column.AddChild(_intermediateLodTiers);
-        _intermediateLodTiersStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
-        _intermediateLodTiersStatus.Modulate = RingUiStyle.Muted;
-        column.AddChild(_intermediateLodTiersStatus);
-
-        column.AddChild(new HSeparator());
         column.AddChild(new Label { Text = "Atmosphere" });
         _hazeToggle = new CheckButton
         {
@@ -566,7 +535,6 @@ public partial class RingLodPauseMenu : CanvasLayer
         if (session != null && session.HasMethod("end_play_session")) session.Call("end_play_session");
         FlushRenderResolutionSettings();
         FlushProxyCoverageCullingSettings();
-        FlushLodTransitionSettings();
         GetTree().Paused = false;
         Input.MouseMode = Input.MouseModeEnum.Visible;
         Error changed = GetTree().ChangeSceneToFile("res://scenes/StartMenu.tscn");
@@ -748,61 +716,6 @@ public partial class RingLodPauseMenu : CanvasLayer
     }
 
     public string GetPartialCoverageMeshCullingStatus() => BuildProxyCoverageCullingStatus();
-
-    public void SetIntermediateLodTiers(bool enabled)
-    {
-        bool changed = _lodTransitionDefaults.SetIntermediateLodTiersEnabled(enabled);
-        if (_intermediateLodTiers != null && _intermediateLodTiers.ButtonPressed != enabled)
-            _intermediateLodTiers.SetPressedNoSignal(enabled);
-        ApplyIntermediateLodTiers(enabled);
-        UpdateIntermediateLodTiersStatus();
-        if (changed) { _lodTransitionSaveElapsed = 0.0; _lodTransitionRetryElapsed = 0.0; }
-    }
-
-    public bool IntermediateLodTiersEnabled => _lodTransitionDefaults.Settings.IntermediateLodTiersEnabled;
-    public string IntermediateLodTiersLastError => _lodTransitionDefaults.LastError;
-
-    public bool FlushLodTransitionSettings()
-    {
-        _lodTransitionSaveElapsed = 0.0;
-        _lodTransitionRetryElapsed = 0.0;
-        return _lodTransitionDefaults.Save();
-    }
-
-    /// <summary>Test fixture hook that keeps LOD-transition preferences outside the player's user defaults.</summary>
-    public void InstallLodTransitionDefaults(string isolatedPath)
-    {
-        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal)
-            && !isolatedPath.StartsWith("user://generated/", StringComparison.Ordinal)) return;
-        _lodTransitionDefaults = new GameplayLodTransitionDefaults(isolatedPath);
-        _lodTransitionDefaults.Load();
-        ApplySavedIntermediateLodTiers();
-        if (_intermediateLodTiers != null)
-            _intermediateLodTiers.SetPressedNoSignal(_lodTransitionDefaults.Settings.IntermediateLodTiersEnabled);
-        UpdateIntermediateLodTiersStatus();
-    }
-
-    private void ApplySavedIntermediateLodTiers()
-    {
-        ApplyIntermediateLodTiers(_lodTransitionDefaults.Settings.IntermediateLodTiersEnabled);
-    }
-
-    private void ApplyIntermediateLodTiers(bool enabled)
-    {
-        _coordinator?.SetIntermediateLodTiersEnabled(enabled);
-        _scaledFarViewport?.SetIntermediateLodTiers(enabled);
-    }
-
-    private void UpdateIntermediateLodTiersStatus()
-    {
-        if (_intermediateLodTiersStatus == null) return;
-        string saveState = _lodTransitionDefaults.LastError.Length > 0
-            ? "Save error: " + _lodTransitionDefaults.LastError
-            : _lodTransitionDefaults.Dirty ? "Saving setting..." : "Setting saved.";
-        string proxy = _coordinator == null ? "proxy unavailable" : "proxy configured";
-        string far = _scaledFarViewport == null ? "scaled far unavailable" : "scaled far configured";
-        _intermediateLodTiersStatus.Text = $"Intermediate tiers {(_lodTransitionDefaults.Settings.IntermediateLodTiersEnabled ? "on" : "off")} | {proxy}, {far} | {saveState}";
-    }
 
     private void ApplySavedProxyCoverageCulling()
     {
@@ -1163,14 +1076,12 @@ public partial class RingLodPauseMenu : CanvasLayer
                 _renderResolutionStatusElapsed = 0.0;
                 UpdateRenderResolutionStatus();
                 UpdateProxyCoverageCullingStatus();
-                UpdateIntermediateLodTiersStatus();
             }
             else
             {
                 RestoreGameplayHud();
                 FlushRenderResolutionSettings();
                 FlushProxyCoverageCullingSettings();
-                FlushLodTransitionSettings();
             }
             _menuOpen = open;
         }
@@ -1187,7 +1098,6 @@ public partial class RingLodPauseMenu : CanvasLayer
     {
         FlushRenderResolutionSettings();
         FlushProxyCoverageCullingSettings();
-        FlushLodTransitionSettings();
         base._ExitTree();
     }
 

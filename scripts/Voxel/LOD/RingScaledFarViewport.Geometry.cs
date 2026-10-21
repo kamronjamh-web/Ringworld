@@ -200,7 +200,8 @@ public partial class RingScaledFarViewport
     {
         var result = new List<FarRegionalBandData>();
         int sourceRow = source.AngularSteps + 1;
-        int rows = source.Vertices.Length / sourceRow;
+        int latticeCount = source.LatticeVertexCount >= 0 ? source.LatticeVertexCount : source.Vertices.Length;
+        int rows = latticeCount / sourceRow;
         for (int sector = 0; sector < sectors; sector++)
         {
             int first = sector * source.AngularSteps / sectors;
@@ -223,15 +224,53 @@ public partial class RingScaledFarViewport
                 Array.Copy(source.CanonicalAcross, src, across, dst, columns);
             }
             var indices = new List<int>();
+            List<int>? extraSource = null;
+            Dictionary<int, int>? extraLocal = null;
+            int latticeLocalCount = vertices.Length;
+            int Column(int vertex) => vertex < latticeCount ? vertex % sourceRow : source.ExtraColumns![vertex - latticeCount];
+            int Local(int vertex)
+            {
+                if (vertex < latticeCount) return vertex / sourceRow * columns + vertex % sourceRow - first;
+                extraSource ??= new List<int>();
+                extraLocal ??= new Dictionary<int, int>();
+                if (!extraLocal.TryGetValue(vertex, out int local))
+                {
+                    local = latticeLocalCount + extraSource.Count;
+                    extraLocal[vertex] = local;
+                    extraSource.Add(vertex);
+                }
+                return local;
+            }
             for (int index = 0; index < source.Indices.Length; index += 3)
             {
                 int a = source.Indices[index], b = source.Indices[index + 1], c = source.Indices[index + 2];
-                int min = Math.Min(a % sourceRow, Math.Min(b % sourceRow, c % sourceRow));
-                int max = Math.Max(a % sourceRow, Math.Max(b % sourceRow, c % sourceRow));
+                int ca = Column(a), cb = Column(b), cc = Column(c);
+                int min = Math.Min(ca, Math.Min(cb, cc));
+                int max = Math.Max(ca, Math.Max(cb, cc));
                 if (min < first || max > last) continue;
-                indices.Add(a / sourceRow * columns + a % sourceRow - first);
-                indices.Add(b / sourceRow * columns + b % sourceRow - first);
-                indices.Add(c / sourceRow * columns + c % sourceRow - first);
+                indices.Add(Local(a));
+                indices.Add(Local(b));
+                indices.Add(Local(c));
+            }
+            if (extraSource != null)
+            {
+                int total = latticeLocalCount + extraSource.Count;
+                Array.Resize(ref vertices, total);
+                Array.Resize(ref normals, total);
+                Array.Resize(ref colors, total);
+                Array.Resize(ref uv, total);
+                Array.Resize(ref around, total);
+                Array.Resize(ref across, total);
+                for (int e = 0; e < extraSource.Count; e++)
+                {
+                    int src = extraSource[e];
+                    vertices[latticeLocalCount + e] = source.Vertices[src];
+                    normals[latticeLocalCount + e] = source.Normals[src];
+                    colors[latticeLocalCount + e] = source.Colors[src];
+                    uv[latticeLocalCount + e] = source.MacroShadowUvs[src];
+                    around[latticeLocalCount + e] = source.CanonicalAround[src];
+                    across[latticeLocalCount + e] = source.CanonicalAcross[src];
+                }
             }
             if (indices.Count > 0)
                 result.Add(new FarRegionalBandData($"{source.Name}Sector{sector}", vertices, normals, colors, uv, indices.ToArray(), source.InnerRadius, source.OuterRadius, columns - 1, around, across));
@@ -377,6 +416,8 @@ public partial class RingScaledFarViewport
         var aroundValues = new double[count];
         var acrossValues = new double[count];
         var displayedWater = new bool[count];
+        var rawTerrainHeights = new float[count];
+        var rawWaterHeights = new float[count];
         bool presentation = edits.UsesFloatSurface || sampler.UsesRuntimeSurfaceGeneration;
         for (int z = 0; z <= acrossCount; z++)
         for (int x = 0; x <= aroundCount; x++)
@@ -391,6 +432,8 @@ public partial class RingScaledFarViewport
             int index = z * row + x;
             double angle = x == aroundCount ? 0.0 : Math.Tau * x / aroundCount;
             Vector3 Point(double h) => new((float)(Math.Cos(angle) * (radius - h) * scale), (float)((across - width * 0.5) * scale), (float)(Math.Sin(angle) * (radius - h) * scale));
+            rawTerrainHeights[index] = height;
+            rawWaterHeights[index] = waterHeight;
             terrain[index] = Point(height - 150.0);
             water[index] = Point(waterHeight - 150.0);
             colors[index] = RingTerrainVisuals.ResolveMacroTextureColor(sample, Mathf.RoundToInt(height), sampler, low, high);
@@ -402,6 +445,14 @@ public partial class RingScaledFarViewport
         }
         var indices = new int[aroundCount * acrossCount * 6];
         var waterIndices = new List<int>();
+        // Shoreline vertices clipped out of partially wet triangles are appended after the lattice.
+        var extraWater = new List<Vector3>();
+        var extraNormals = new List<Vector3>();
+        var extraColors = new List<Color>();
+        var extraUvs = new List<Vector2>();
+        var extraAround = new List<double>();
+        var extraAcross = new List<double>();
+        var extraColumns = new List<int>();
         int cursor = 0;
         for (int z = 0; z < acrossCount; z++)
         for (int x = 0; x < aroundCount; x++)
@@ -409,12 +460,82 @@ public partial class RingScaledFarViewport
             int a = z * row + x, b = a + 1, c = a + row, d = c + 1;
             AddRawTriangle(indices, ref cursor, terrain, normals, c, b, a);
             AddRawTriangle(indices, ref cursor, terrain, normals, b, c, d);
+            int column = x;
+            Vector3 WaterPlanePoint(int vertex, double h)
+            {
+                int vx = vertex % row;
+                double vAngle = vx == aroundCount ? 0.0 : Math.Tau * vx / aroundCount;
+                double vAcross = acrossValues[vertex];
+                return new((float)(Math.Cos(vAngle) * (radius - h) * scale), (float)((vAcross - width * 0.5) * scale), (float)(Math.Sin(vAngle) * (radius - h) * scale));
+            }
             void WaterTriangle(int i0, int i1, int i2)
             {
-                if (!IsWaterTriangle(displayedWater, i0, i1, i2)) return;
-                waterIndices.Add(i0); waterIndices.Add(i1); waterIndices.Add(i2);
-                Vector3 normal = (water[i1] - water[i0]).Cross(water[i2] - water[i0]);
-                waterNormals[i0] += normal; waterNormals[i1] += normal; waterNormals[i2] += normal;
+                if (RingShorelineClip.IsFullyWet(displayedWater[i0], displayedWater[i1], displayedWater[i2]))
+                {
+                    waterIndices.Add(i0); waterIndices.Add(i1); waterIndices.Add(i2);
+                    Vector3 fullNormal = (water[i1] - water[i0]).Cross(water[i2] - water[i0]);
+                    waterNormals[i0] += fullNormal; waterNormals[i1] += fullNormal; waterNormals[i2] += fullNormal;
+                    return;
+                }
+                if (!RingShorelineClip.IsPartiallyWet(displayedWater[i0], displayedWater[i1], displayedWater[i2])) return;
+
+                Span<int> corner = stackalloc int[3] { i0, i1, i2 };
+                float representative = 0.0f;
+                int wetCount = 0, firstWet = -1;
+                for (int k = 0; k < 3; k++)
+                {
+                    if (!displayedWater[corner[k]]) continue;
+                    representative += rawWaterHeights[corner[k]];
+                    wetCount++;
+                    if (firstWet < 0) firstWet = corner[k];
+                }
+                representative /= wetCount;
+                Span<float> coverage = stackalloc float[3];
+                Span<Vector3> position = stackalloc Vector3[3];
+                for (int k = 0; k < 3; k++)
+                {
+                    int vertex = corner[k];
+                    if (displayedWater[vertex])
+                    {
+                        coverage[k] = RingShorelineClip.SignedCoverage(true, rawWaterHeights[vertex] - rawTerrainHeights[vertex]);
+                        position[k] = water[vertex];
+                    }
+                    else
+                    {
+                        coverage[k] = RingShorelineClip.SignedCoverage(false, representative - rawTerrainHeights[vertex]);
+                        position[k] = WaterPlanePoint(vertex, representative - 150.0);
+                    }
+                }
+                Span<float> edgeLength = stackalloc float[3]
+                {
+                    (terrain[i1] - terrain[i0]).Length() / scale,
+                    (terrain[i2] - terrain[i1]).Length() / scale,
+                    (terrain[i0] - terrain[i2]).Length() / scale
+                };
+                Span<Vector3> weights = stackalloc Vector3[RingShorelineClip.MaxVertices];
+                int polygon = RingShorelineClip.ClipTriangle(coverage, edgeLength, RingShorelineClip.OverlapMeters, weights);
+                if (polygon < 3) return;
+                int first = count + extraWater.Count;
+                for (int v = 0; v < polygon; v++)
+                {
+                    Vector3 w = weights[v];
+                    extraWater.Add(position[0] * w.X + position[1] * w.Y + position[2] * w.Z);
+                    extraNormals.Add(Vector3.Zero);
+                    extraColors.Add(waterColors[firstWet]);
+                    extraUvs.Add(uv[i0] * w.X + uv[i1] * w.Y + uv[i2] * w.Z);
+                    extraAround.Add(aroundValues[i0] * w.X + aroundValues[i1] * w.Y + aroundValues[i2] * w.Z);
+                    extraAcross.Add(acrossValues[i0] * w.X + acrossValues[i1] * w.Y + acrossValues[i2] * w.Z);
+                    extraColumns.Add(column);
+                }
+                for (int v = 1; v < polygon - 1; v++)
+                {
+                    int e0 = first, e1 = first + v, e2 = first + v + 1;
+                    waterIndices.Add(e0); waterIndices.Add(e1); waterIndices.Add(e2);
+                    Vector3 clippedNormal = (extraWater[e1 - count] - extraWater[e0 - count]).Cross(extraWater[e2 - count] - extraWater[e0 - count]);
+                    extraNormals[e0 - count] += clippedNormal;
+                    extraNormals[e1 - count] += clippedNormal;
+                    extraNormals[e2 - count] += clippedNormal;
+                }
             }
             WaterTriangle(c, b, a); WaterTriangle(b, c, d);
         }
@@ -432,8 +553,25 @@ public partial class RingScaledFarViewport
             normals[index] = normals[index].LengthSquared() > 0.0000001f ? -normals[index].Normalized() : Vector3.Up;
             waterNormals[index] = waterNormals[index].LengthSquared() > 0.0000001f ? -waterNormals[index].Normalized() : normals[index];
         }
+        for (int e = 0; e < extraNormals.Count; e++)
+            extraNormals[e] = extraNormals[e].LengthSquared() > 0.0000001f ? -extraNormals[e].Normalized() : Vector3.Up;
+        Vector3[] allWater = Concat(water, extraWater);
+        Vector3[] allWaterNormals = Concat(waterNormals, extraNormals);
+        Color[] allWaterColors = Concat(waterColors, extraColors);
+        Vector2[] allWaterUvs = Concat(uv, extraUvs);
+        double[] allWaterAround = Concat(aroundValues, extraAround);
+        double[] allWaterAcross = Concat(acrossValues, extraAcross);
         return (new FarRegionalBandData("ScaledSeededRingSurface", terrain, normals, colors, uv, indices, 0, circumference, aroundCount, aroundValues, acrossValues),
-            new FarRegionalBandData("ScaledWaterSurface", water, waterNormals, waterColors, uv, waterIndices.ToArray(), 0, circumference, aroundCount, aroundValues, acrossValues));
+            new FarRegionalBandData("ScaledWaterSurface", allWater, allWaterNormals, allWaterColors, allWaterUvs, waterIndices.ToArray(), 0, circumference, aroundCount, allWaterAround, allWaterAcross, count, extraColumns.ToArray()));
+    }
+
+    private static T[] Concat<T>(T[] lattice, List<T> extra)
+    {
+        if (extra.Count == 0) return lattice;
+        var result = new T[lattice.Length + extra.Count];
+        Array.Copy(lattice, result, lattice.Length);
+        extra.CopyTo(result, lattice.Length);
+        return result;
     }
 
     private void UpdateGlobalSurfaceBuild()

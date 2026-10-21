@@ -52,7 +52,6 @@ public partial class MinimapWindContractTest : RefCounted
         world.GetNode<RingGraphicsQualityController>("GraphicsQuality").InstallAtmosphereDefaults(directory + "/atmosphere.tres");
         var pause = world.GetNode<RingLodPauseMenu>("LodPauseMenu");
         pause.InstallRenderResolutionDefaults(directory + "/resolution.tres");
-        pause.InstallLodTransitionDefaults(directory + "/lod.tres");
         // These older owners have no install hook. Change only their path before Ready.
         var coverage = PrivateField(pause, "_proxyCoverageCullingDefaults");
         SetPrivateField(coverage, "_pathOverride", directory + "/coverage.tres");

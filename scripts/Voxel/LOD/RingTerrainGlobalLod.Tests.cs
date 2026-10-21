@@ -182,4 +182,64 @@ public partial class RingTerrainGlobalLod
             && snapshot.TrySampleTerrainWorld(
                 _grid.CaptureLodGeometrySnapshot(), aroundMeters, acrossMeters, out worldPosition);
     }
+
+    /// <summary>Verifies the shared shoreline clip and the global-mesh water triangle that uses it.</summary>
+    public static string RunShorelineClipContract()
+    {
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException($"Shoreline clip contract failed: {message}");
+        }
+
+        // Pure clip: one wet corner -> triangle; two wet corners -> quad; dry -> nothing; wet -> unchanged.
+        Span<Vector3> weights = stackalloc Vector3[RingShorelineClip.MaxVertices];
+        Span<float> lengths = stackalloc float[3] { 100.0f, 100.0f, 100.0f };
+        Span<float> oneWet = stackalloc float[3] { 10.0f, -10.0f, -10.0f };
+        int count = RingShorelineClip.ClipTriangle(oneWet, lengths, 0.0f, weights);
+        Require(count == 3, $"one wet corner must clip to a triangle, got {count}");
+        Require(weights[1] == new Vector3(1.0f, 0.0f, 0.0f), "wet corner must be kept");
+        Require(weights[0].IsEqualApprox(new Vector3(0.5f, 0.0f, 0.5f)) && weights[2].IsEqualApprox(new Vector3(0.5f, 0.5f, 0.0f)),
+            "cut vertices must sit at the zero contour");
+        Span<float> twoWet = stackalloc float[3] { 10.0f, 10.0f, -10.0f };
+        count = RingShorelineClip.ClipTriangle(twoWet, lengths, 0.0f, weights);
+        Require(count == 4, $"two wet corners must clip to a quad, got {count}");
+        Span<float> dry = stackalloc float[3] { -1.0f, -2.0f, -3.0f };
+        Require(RingShorelineClip.ClipTriangle(dry, lengths, 0.0f, weights) == 0, "dry triangle must vanish");
+        Span<float> wet = stackalloc float[3] { 1.0f, 2.0f, 3.0f };
+        Require(RingShorelineClip.ClipTriangle(wet, lengths, 0.0f, weights) == 3, "wet triangle must be kept whole");
+        // The overlap bias pushes the cut onto the dry side by overlap / edge length.
+        float plain = RingShorelineClip.EdgeInterpolation(10.0f, -10.0f, true, 100.0f, 0.0f);
+        float biased = RingShorelineClip.EdgeInterpolation(10.0f, -10.0f, true, 100.0f, 1.0f);
+        Require(Mathf.IsEqualApprox(plain, 0.5f) && Mathf.IsEqualApprox(biased, 0.51f), "overlap must bias toward the dry side");
+
+        // Global mesh triangle: clipped area must follow the shoreline, not the 2-of-3 vertex rule.
+        var state = new PendingSegmentPreparation
+        {
+            SegmentIndex = 0, SegmentCount = 1, AroundStartIndex = 0, LocalAroundCount = 1, AcrossCount = 1,
+            Existing = null, Sampler = null!, Edits = null!, AroundSpacing = 100.0, AcrossSpacing = 100.0,
+            UsesPresentationSurface = true, PreserveFeatures = false, Underlay = 0.0f,
+            LowColor = Colors.White, HighColor = Colors.White, WorldToLocal = Transform3D.Identity,
+            Geometry = default!, HeightPyramid = null,
+            TerrainVertices = new[] { new Vector3(0, 0, 0), new Vector3(100, 0, 0), new Vector3(0, 0, 100) },
+            WaterVertices = new[] { new Vector3(0, 10, 0), new Vector3(100, 10, 0), new Vector3(0, 10, 100) },
+            TerrainCanonicalHeights = new float[3], RawTerrainHeights = new[] { 0.0f, 10.0f, 20.0f },
+            RawWaterHeights = new[] { 10.0f, 10.0f, 20.0f }, WaterCanonicalOffset = 0.0f,
+            TerrainColors = new Color[3], WaterColors = new[] { Colors.Blue, Colors.Blue, Colors.Blue },
+            DisplayedWater = new[] { true, false, false }, Version = 0
+        };
+        var surface = new SurfaceTool();
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+        int triangles = AddClippedWaterTriangle(surface, state, 0, 1, 2);
+        Require(triangles == 1, $"expected one clipped water triangle, got {triangles}");
+        ArrayMesh mesh = surface.Commit();
+        Vector3[] vertices = (Vector3[])mesh.SurfaceGetArrays(0)[(int)Mesh.ArrayType.Vertex];
+        float area = (vertices[1] - vertices[0]).Cross(vertices[2] - vertices[0]).Length() * 0.5f;
+        // The wet corner reaches ~1.0 along edge 0->1 and 0.5 along edge 0->2: half the 5000 m^2 triangle.
+        Require(Mathf.Abs(area - 2500.0f) < 100.0f,
+            $"clipped area {area} must follow the contour (about 2500 of the 5000 m^2 triangle)");
+        state.DisplayedWater = new[] { true, true, false };
+        surface.Begin(Mesh.PrimitiveType.Triangles);
+        Require(AddClippedWaterTriangle(surface, state, 0, 1, 2) == 2, "two wet corners must produce a quad (two triangles)");
+        return $"pure=ok oneWetArea={area:0.0}";
+    }
 }

@@ -64,7 +64,17 @@ public partial class RingLodDebugHud : CanvasLayer
     public override void _UnhandledInput(InputEvent @event)
     {
         if (@event is not InputEventKey key || !key.Pressed || key.Echo) return;
-        if (key.Keycode == Key.F6)
+        if (key.Keycode == Key.F6 && key.ShiftPressed)
+        {
+            // A/B switch for the bridge tiers between proxy levels and in the scaled far view. Debug only:
+            // not persisted, so every session starts with the tiers on.
+            bool enabled = !(_coordinator?.EnableIntermediateLodTiers ?? true);
+            _coordinator?.SetIntermediateLodTiersEnabled(enabled);
+            _scaledFarViewport?.SetIntermediateLodTiers(enabled);
+            Refresh();
+            GetViewport().SetInputAsHandled();
+        }
+        else if (key.Keycode == Key.F6)
         {
             Visible = !Visible;
             if (Visible) Refresh();
@@ -90,9 +100,11 @@ public partial class RingLodDebugHud : CanvasLayer
     private void Refresh()
     {
         if (_label == null) return;
-        string header = $"LOD STREAMING — F6 toggle | F7 details\nFPS: {Engine.GetFramesPerSecond()}";
+        string header = $"LOD STREAMING — F6 toggle | F7 details | Shift+F6 intermediate tiers\nFPS: {Engine.GetFramesPerSecond()}";
         string grid = FormatGrid(_grid, _verbose);
-        var text = new StringBuilder("PERFORMANCE DIAGNOSTICS - F6 toggle | F7 streaming details");
+        var text = new StringBuilder("PERFORMANCE DIAGNOSTICS - F6 toggle | F7 streaming details | Shift+F6 intermediate LOD tiers");
+        if (_coordinator is { EnableIntermediateLodTiers: false })
+            text.Append("\nINTERMEDIATE LOD TIERS OFF (debug A/B, Shift+F6)");
         AppendPerformanceSummary(text, _performanceMonitor, _performanceMonitor?.GetLiveSnapshot());
         if (!_verbose)
         {
