@@ -13,6 +13,7 @@ public sealed record RingHeightShadowSettings
     public const int DefaultL0TexelMeters = 4, DefaultLevels = 2, DefaultRowsPerFrame = 64, DefaultFillWorkers = 2;
     public const int DefaultNearMapDistanceMeters = 400;
     public const int DefaultPlanetNearMapDistanceMeters = 250, MinimumPlanetNearMapDistanceMeters = 100, MaximumPlanetNearMapDistanceMeters = 250;
+    public const float DefaultPoiMapDistanceMeters = 20000f, MinimumPoiMapDistanceMeters = 5000f, MaximumPoiMapDistanceMeters = 30000f;
     public static readonly int[] TexelChoices = { 2, 4, 8 };
     public static readonly int[] NearMapDistanceChoices = { 300, 400, 500 };
 
@@ -30,6 +31,8 @@ public sealed record RingHeightShadowSettings
     /// <summary>While the heightfield is the published sun light source, shrink the sun shadow map to a near map (it then only owns the first few hundred metres; the heightfield owns the rest). Effective only with Enabled.</summary>
     public bool NearMapEnabled { get; init; } = true;
     public int NearMapDistanceMeters { get; init; } = DefaultNearMapDistanceMeters;
+    /// <summary>Upper bound of the sun map extension while a large POI is mounted (the near map becomes a 4-cascade map out to the POI's far corner, capped here).</summary>
+    public float PoiMapDistanceMeters { get; init; } = DefaultPoiMapDistanceMeters;
 
     /// <summary>S7a: the same for the planet light at night (2 cascades, fade 0.8) while the published front layer is a planet layer.</summary>
     public bool PlanetNearMapEnabled { get; init; } = true;
@@ -58,6 +61,7 @@ public sealed record RingHeightShadowSettings
         FillWorkers = Math.Clamp(FillWorkers, 1, 4),
         BudgetMs = Clamp(BudgetMs, 0.05f, 2f, DefaultBudgetMs),
         NearMapDistanceMeters = NearestNearMapDistance(NearMapDistanceMeters),
+        PoiMapDistanceMeters = Clamp(PoiMapDistanceMeters, MinimumPoiMapDistanceMeters, MaximumPoiMapDistanceMeters, DefaultPoiMapDistanceMeters),
         PlanetNearMapDistanceMeters = Math.Clamp(PlanetNearMapDistanceMeters, MinimumPlanetNearMapDistanceMeters, MaximumPlanetNearMapDistanceMeters),
     };
 

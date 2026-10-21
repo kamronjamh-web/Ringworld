@@ -119,6 +119,8 @@ public partial class RingLiveTuningDrawer
         _heightShadowNearMap.Toggled += value => SetShadowValue("HeightShadowNearMapEnabled", value);
         height.AddChild(_heightShadowNearMap);
         AddShadowOption(height, "HeightShadowNearMapDistanceMeters", "Near map distance", new[] { "300 m", "400 m", "500 m" }, new[] { 300, 400, 500 }, _shadowGraphics?.EffectiveHeightShadowNearMapDistanceMeters ?? 400);
+        AddShadowSpinBox(height, "HeightShadowPoiMapDistanceMeters", "POI shadow distance (m)", 5000, 30000, 500, _shadowGraphics?.EffectiveHeightShadowPoiMapDistanceMeters ?? 20000,
+            "Upper limit of the sun shadow map while a large POI (Weather Lung) is mounted: the near map then becomes a 4-cascade map reaching the POI's far corner (500 m steps, never below the near map distance) so the POI shadows itself and the terrain around it. Terrain shadow casters and the heightfield authority stay at the near map distance. Only effective with the near sun map.");
         _heightShadowPlanetNearMap = new CheckButton { Name = "HeightShadowPlanetNearMapEnabled", Text = "Near planet map at night while height shadows are ready", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowPlanetNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
             TooltipText = "Shrinks the planet-light shadow map to a 2-cascade near map (fade start 0.8) once the planet height shadows cover the camera at night; the height shadows own everything past it. Planet distance and cascade count under Planet light are ignored while it is active (shown as near map); the twilight overlap keeps the planet map at its normal range. Only effective with height shadows enabled." };
         _heightShadowPlanetNearMap.Toggled += value => SetShadowValue("HeightShadowPlanetNearMapEnabled", value);
@@ -211,9 +213,11 @@ public partial class RingLiveTuningDrawer
         if (_heightShadowStatus == null || _shadowGraphics == null) return;
         if (_shadowGraphics.EffectiveHeightShadowEnabled && _open) RingTerrainHeightShadow.Instance?.RequestUnresolvedStats();
         _heightShadowStatus.Text = _shadowGraphics.EffectiveHeightShadowStatus
-            + (_shadowGraphics.NearSunMapActive ? $" Sun map: near mode ({_shadowGraphics.EffectiveShadowDistanceMeters:0} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Sun map: full range." : "")
+            + (_shadowGraphics.PoiSunMapExtensionActive ? $" Sun map: near mode + POI extension ({_shadowGraphics.EffectiveHeightShadowNearMapDistanceMeters} m / {FormatShadowMetres(Mathf.Sqrt(_shadowGraphics.EffectiveHeightShadowNearMapDistanceMeters * _shadowGraphics.PoiSunMapDistanceMeters))} / {FormatShadowMetres(_shadowGraphics.PoiSunMapDistanceMeters)}, 4 cascades)."
+                : _shadowGraphics.NearSunMapActive ? $" Sun map: near mode ({_shadowGraphics.EffectiveShadowDistanceMeters:0} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Sun map: full range." : "")
             + (_shadowGraphics.NearPlanetMapActive ? $" Planet map: near mode ({_shadowGraphics.EffectiveHeightShadowPlanetNearMapDistanceMeters} m, 2 cascades)." : _shadowGraphics.EffectiveHeightShadowEnabled ? " Planet map: full range." : "");
     }
+    private static string FormatShadowMetres(float meters) => meters >= 1000f ? (meters / 1000f).ToString("0.#") + " km" : meters.ToString("0") + " m";
     private HSlider AddShadowSlider(VBoxContainer parent, string key, string label, double min, double max, double step, double initial, string tooltip = "")
     {
         var row = new HBoxContainer();
@@ -344,6 +348,7 @@ public partial class RingLiveTuningDrawer
         SetOption("HeightShadowLevels", _shadowGraphics.EffectiveHeightShadowLevels);
         _heightShadowNearMap?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowNearMapEnabled);
         SetOption("HeightShadowNearMapDistanceMeters", _shadowGraphics.EffectiveHeightShadowNearMapDistanceMeters);
+        SetRange("HeightShadowPoiMapDistanceMeters", _shadowGraphics.EffectiveHeightShadowPoiMapDistanceMeters);
         _heightShadowPlanetNearMap?.SetPressedNoSignal(_shadowGraphics.EffectiveHeightShadowPlanetNearMapEnabled);
         SetRange("HeightShadowPlanetNearMapDistanceMeters", _shadowGraphics.EffectiveHeightShadowPlanetNearMapDistanceMeters);
         SetRange("HeightShadowSunStepDegrees", _shadowGraphics.EffectiveHeightShadowSunStepDegrees);

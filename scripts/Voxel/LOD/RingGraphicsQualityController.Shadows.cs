@@ -98,6 +98,7 @@ public partial class RingGraphicsQualityController
             BudgetMs = o.TryGetValue("HeightShadowBudgetMs", out Variant budget) ? budget.AsSingle() : RingHeightShadowSettings.DefaultBudgetMs,
             NearMapEnabled = !o.TryGetValue("HeightShadowNearMapEnabled", out Variant nearEnabled) || nearEnabled.AsBool(),
             NearMapDistanceMeters = o.TryGetValue("HeightShadowNearMapDistanceMeters", out Variant nearDistance) ? nearDistance.AsInt32() : RingHeightShadowSettings.DefaultNearMapDistanceMeters,
+            PoiMapDistanceMeters = o.TryGetValue("HeightShadowPoiMapDistanceMeters", out Variant poiDistance) ? poiDistance.AsSingle() : RingHeightShadowSettings.DefaultPoiMapDistanceMeters,
             PlanetNearMapEnabled = !o.TryGetValue("HeightShadowPlanetNearMapEnabled", out Variant planetNearEnabled) || planetNearEnabled.AsBool(),
             PlanetNearMapDistanceMeters = o.TryGetValue("HeightShadowPlanetNearMapDistanceMeters", out Variant planetNearDistance) ? planetNearDistance.AsInt32() : RingHeightShadowSettings.DefaultPlanetNearMapDistanceMeters,
         }.Normalized();
@@ -114,6 +115,7 @@ public partial class RingGraphicsQualityController
     public float EffectiveHeightShadowBudgetMs => ResolveHeightShadowSettings().BudgetMs;
     public bool EffectiveHeightShadowNearMapEnabled => ResolveHeightShadowSettings().NearMapEnabled;
     public int EffectiveHeightShadowNearMapDistanceMeters => ResolveHeightShadowSettings().NearMapDistanceMeters;
+    public float EffectiveHeightShadowPoiMapDistanceMeters => ResolveHeightShadowSettings().PoiMapDistanceMeters;
     public bool EffectiveHeightShadowPlanetNearMapEnabled => ResolveHeightShadowSettings().PlanetNearMapEnabled;
     public int EffectiveHeightShadowPlanetNearMapDistanceMeters => ResolveHeightShadowSettings().PlanetNearMapDistanceMeters;
     public string EffectiveHeightShadowStatus => RingTerrainHeightShadow.Instance is { } node && GodotObject.IsInstanceValid(node) ? node.GetStatusText()
@@ -297,20 +299,26 @@ public partial class RingGraphicsQualityController
         // Near sun map (S5b): while the heightfield owns everything past it, the map shrinks to a 2-cascade near map. MaxDistanceMeters, CascadeCount and FadeStart
         // overrides are ignored then (the menu says so); the near cascade distance still applies, in metres.
         bool near = _nearSunMapActive;
+        // POI extension: the near map widens to a 4-cascade map out to D while a large POI is mounted (split2/3 and the fade are fixed then, like near mode already ignores them).
+        bool extended = near && _poiSunMapActive;
+        float nearDistance = ResolveHeightShadowSettings().NearMapDistanceMeters;
         float requestedDistance = _shadowTuningOverrides.TryGetValue("MaxDistanceMeters", out Variant requestedDistanceOverride) ? requestedDistanceOverride.AsSingle() : _presetShadowDistanceMeters;
         if (_presetShadowDistanceMeters > 0.0f)
         {
-            float distance = near ? ResolveHeightShadowSettings().NearMapDistanceMeters : requestedDistance;
+            float distance = extended ? _poiSunMapDistanceMeters : near ? nearDistance : requestedDistance;
             if (!Mathf.IsEqualApprox(_sun.DirectionalShadowMaxDistance, distance)) _sun.DirectionalShadowMaxDistance = distance;
         }
-        DirectionalLight3D.ShadowMode mode = near ? DirectionalLight3D.ShadowMode.Parallel2Splits
+        if (extended) _sun.SetMeta(SunNearDistanceMetaKey, nearDistance);
+        else if (_sun.HasMeta(SunNearDistanceMetaKey)) _sun.RemoveMeta(SunNearDistanceMetaKey);
+        DirectionalLight3D.ShadowMode mode = extended ? DirectionalLight3D.ShadowMode.Parallel4Splits
+            : near ? DirectionalLight3D.ShadowMode.Parallel2Splits
             : _shadowTuningOverrides.TryGetValue("CascadeCount", out Variant cascades)
             ? (cascades.AsInt32() == 2 ? DirectionalLight3D.ShadowMode.Parallel2Splits : DirectionalLight3D.ShadowMode.Parallel4Splits)
             : _shadowBaselineMode;
         if (_sun.DirectionalShadowMode != mode) _sun.DirectionalShadowMode = mode;
         _sun.DirectionalShadowSplit2 = CurrentPreset == RingTerrainLodCoordinator.QualityPreset.Cinematic5090 ? .05f : .06f;
         _sun.DirectionalShadowSplit3 = CurrentPreset == RingTerrainLodCoordinator.QualityPreset.Cinematic5090 ? .24f : .28f;
-        _sun.DirectionalShadowFadeStart = near ? NearSunMapFadeStart : .88f;
+        _sun.DirectionalShadowFadeStart = extended ? PoiSunMapFadeStart : near ? NearSunMapFadeStart : .88f;
         _sun.ShadowBias = _shadowBaselineBias;
         _sun.ShadowNormalBias = _shadowBaselineNormalBias;
         RequestedSunShadowsEnabled = _shadowBaselineEnabled;
@@ -326,8 +334,17 @@ public partial class RingGraphicsQualityController
             _sun.DirectionalShadowSplit1 = Mathf.Clamp(nearCascade.AsSingle() / Mathf.Max(_sun.DirectionalShadowMaxDistance, .0001f), .0001f, .40f);
         else if (_shadowTuningOverrides.TryGetValue("Split1", out Variant split1)) _sun.DirectionalShadowSplit1 = split1.AsSingle();
         else _sun.DirectionalShadowSplit1 = Mathf.Clamp(DefaultNearCascadeMeters / Mathf.Max(_sun.DirectionalShadowMaxDistance, .0001f), .0001f, .40f);
-        if (_shadowTuningOverrides.TryGetValue("Split2", out Variant split2)) _sun.DirectionalShadowSplit2 = split2.AsSingle();
-        if (_shadowTuningOverrides.TryGetValue("Split3", out Variant split3)) _sun.DirectionalShadowSplit3 = split3.AsSingle();
+        if (extended)
+        {
+            float d = Mathf.Max(_sun.DirectionalShadowMaxDistance, .0001f);
+            _sun.DirectionalShadowSplit2 = nearDistance / d;
+            _sun.DirectionalShadowSplit3 = Mathf.Sqrt(nearDistance * d) / d;
+        }
+        else
+        {
+            if (_shadowTuningOverrides.TryGetValue("Split2", out Variant split2)) _sun.DirectionalShadowSplit2 = split2.AsSingle();
+            if (_shadowTuningOverrides.TryGetValue("Split3", out Variant split3)) _sun.DirectionalShadowSplit3 = split3.AsSingle();
+        }
         if (!near && _shadowTuningOverrides.TryGetValue("FadeStart", out Variant fade)) _sun.DirectionalShadowFadeStart = fade.AsSingle();
         if (_shadowTuningOverrides.TryGetValue("Bias", out Variant bias)) _sun.ShadowBias = bias.AsSingle();
         if (_shadowTuningOverrides.TryGetValue("NormalBias", out Variant normalBias)) _sun.ShadowNormalBias = normalBias.AsSingle();
@@ -524,7 +541,7 @@ public partial class RingGraphicsQualityController
         { float raw = value.AsSingle(); if (!float.IsFinite(raw) || raw != Mathf.Round(raw)) return false; int v = (int)raw; if (v is >= 0 and <= 5) { clean = v; return true; } return false; }
         if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || !float.IsFinite(value.AsSingle())) return false;
         (float min, float max) = key switch { "NearCascadeMeters" => (MinimumNearCascadeMeters, MaximumNearCascadeMeters), "Split1" => (.0001f, .40f), "Split2" => (.02f, .70f), "Split3" => (.03f, .95f), "FadeStart" => (.50f, .98f), "Bias" => (0, 1), "NormalBias" => (0, 4), "SunAngularDistance" => (0, 3), "SunStepDegrees" => (0, .05f), "SunShadowOffElevationDegrees" or "SunShadowOnElevationDegrees" => (-45, -1), "TerrainMacroStrength" => (0, .8f), "TerrainMacroFadeStartMeters" => (0, 50000), "TerrainMacroFadeEndMeters" => (100, 60000), "TerrainMacroTraceSteps" => (1, 32), "TerrainMacroMaxTraceMeters" => (4000, 320000), "MaxDistanceMeters" => (MinimumShadowDistanceMeters, MaximumShadowDistanceMeters), "PlanetShadowDistanceMeters" => (MinimumPlanetShadowDistanceMeters, MaximumPlanetShadowDistanceMeters),
-            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2), "HeightShadowPlanetNearMapDistanceMeters" => (RingHeightShadowSettings.MinimumPlanetNearMapDistanceMeters, RingHeightShadowSettings.MaximumPlanetNearMapDistanceMeters),
+            "HeightShadowSunStepDegrees" => (.02f, .5f), "HeightShadowRowsPerFrame" => (16, 1024), "HeightShadowPenumbraDegrees" => (0, 2), "HeightShadowCrossfadeSeconds" => (0, 3), "HeightShadowFillWorkers" => (1, 4), "HeightShadowBudgetMs" => (.05f, 2), "HeightShadowPoiMapDistanceMeters" => (RingHeightShadowSettings.MinimumPoiMapDistanceMeters, RingHeightShadowSettings.MaximumPoiMapDistanceMeters), "HeightShadowPlanetNearMapDistanceMeters" => (RingHeightShadowSettings.MinimumPlanetNearMapDistanceMeters, RingHeightShadowSettings.MaximumPlanetNearMapDistanceMeters),
             "ContactShadowLengthMeters" => (.25f, 4), "ContactShadowThicknessMeters" => (.05f, 1), "ContactShadowStrength" => (0, 1), "ContactShadowFadeMeters" => (25, 400), "ContactShadowGrassStrength" => (0, 1), "VegetationShadowRefreshHz" => (RingVegetationShadow.MinimumRefreshHz, RingVegetationShadow.MaximumRefreshHz), _ => (1, 0) };
         if (min > max) return false;
         float clamped = Mathf.Clamp(value.AsSingle(), min, max);

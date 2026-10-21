@@ -221,7 +221,13 @@ static func create_game(tree: SceneTree, fixture_root: String) -> Node:
 	root.add_child(session)
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture_root)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
-	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
+	# Weather Lung poses (wl_*) need the v8 world (hill-country landforms + the station); every other pose keeps the plain world.
+	var weather_lung := false
+	for requested in csv_arg("--poses="):
+		if requested.begins_with("wl_"):
+			weather_lung = true
+	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", weather_lung)
+	ProjectSettings.set_setting("ringworld/runtime/surface_weather_lung_v8", weather_lung)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture_root))
 	var launcher := LAUNCHER.instantiate()
 	root.add_child(launcher)
@@ -347,7 +353,16 @@ const POSES := {
 	"twilight_overlap": {"kind": "ground", "pitch": 0.0, "lift": 2.0, "time": {"mode": "twilight_overlap"}},
 	"eclipse_totality": {"kind": "ground", "pitch": 0.0, "lift": 2.0, "time": {"mode": "eclipse", "hub": 0.0}},
 	"eclipse_hub": {"kind": "ground", "pitch": 0.0, "lift": 2.0, "time": {"mode": "eclipse", "hub": 1.0}},
+	# Weather Lung (v8 world, see create_game): viewpoint 0 dam crest, 1 intake overlook, 2 far 40 km (the POI-sun-map-extension inactive control).
+	"wl_dam_noon": {"kind": "weather_lung", "viewpoint": 0, "time": {"mode": "noon"}},
+	"wl_dam_dusk_8deg": {"kind": "weather_lung", "viewpoint": 0, "time": {"mode": "elevation", "value": 8.0, "rising": false}},
+	"wl_overlook_noon": {"kind": "weather_lung", "viewpoint": 1, "time": {"mode": "noon"}},
+	"wl_overlook_dusk_15deg": {"kind": "weather_lung", "viewpoint": 1, "time": {"mode": "elevation", "value": 15.0, "rising": false}},
+	"wl_far40_dusk_8deg": {"kind": "weather_lung", "viewpoint": 2, "time": {"mode": "elevation", "value": 8.0, "rising": false}},
 }
+const WEATHER_LUNG_POSES := ["wl_dam_noon", "wl_dam_dusk_8deg", "wl_overlook_noon", "wl_overlook_dusk_15deg", "wl_far40_dusk_8deg"]
+## Breath phase the Weather Lung poses hold (the rig is frozen so before/after captures see the same geometry).
+const WEATHER_LUNG_FROZEN_PHASE := 0.3
 const ATTRIBUTION_POSES := ["ground_horizon", "forest_noon", "emitter_rim", "dawn_5deg", "alt_1km", "alt_12km", "night_planet_lit", "eclipse_hub"]
 const TODO_POSES := ["coast (no coast fixture/teleport yet)", "cave_mouth / overhang (no fixture yet)", "distant hill bands 2/5/10 km (measured as depth bands of the ground poses, no dedicated hill fixture)"]
 
@@ -508,6 +523,32 @@ static func go_pose(tree: SceneTree, game: Node, base: Dictionary, name: String,
 		while landing < 180 and not bool(explorer.get("NoclipEnabled")) and not bool(explorer.call("is_on_floor")):
 			landing += 1
 			await tree.physics_frame
+	elif str(pose["kind"]) == "weather_lung":
+		var streamer := game.get_node_or_null("WeatherLung")
+		if streamer == null or drawer == null or not bool(drawer.call("RequestWeatherLungTeleport", int(pose["viewpoint"]))):
+			info["error"] = "weather lung teleport refused (streamer %s)" % str(streamer != null)
+			return info
+		var wl_start := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - wl_start < 180000:
+			await tree.physics_frame
+			var wl_state := str(drawer.get("WeatherLungTeleportState"))
+			if wl_state == "Arrived":
+				break
+			if wl_state == "Failed" or wl_state == "TimedOut":
+				info["error"] = "weather lung teleport %s: %s" % [wl_state, str(drawer.get("WeatherLungTeleportMessage"))]
+				return info
+		if int(pose["viewpoint"]) != 2:
+			# Wait for the Detail scene (DetailState 2 = Attached), then hold the breath at a fixed phase.
+			var attach_start := Time.get_ticks_msec()
+			while int(streamer.get("DetailState")) != 2 and Time.get_ticks_msec() - attach_start < 120000:
+				await tree.physics_frame
+			if int(streamer.get("DetailState")) != 2:
+				info["error"] = "weather lung detail never attached: " + str(streamer.call("DescribeStatus"))
+				return info
+		var controller: Node = streamer.get("Controller")
+		if controller != null:
+			controller.call("ScrubTo", WEATHER_LUNG_FROZEN_PHASE)
+			controller.set("FreezePhase", true)
 	else:
 		explorer.call("TeleportToCanonicalMeters", float(base["around"]), float(base["vertical"]) + float(pose["lift"]), float(base["across"]), float(base["yaw"]), float(pose["pitch"]), true)
 		await settle(tree, 0.2)

@@ -133,6 +133,9 @@ func _run() -> void:
 			report["skipped_poses"][pose_name] = info
 			print("SHADOW_QUALITY pose %s SKIPPED: %s" % [pose_name, str(info["error"])])
 			continue
+		if str(COMMON.POSES[pose_name]["kind"]) == "weather_lung":
+			info["near_map_ready"] = await _enable_height_shadows(180.0)
+			print("SHADOW_QUALITY pose %s near sun map active=%s %s" % [pose_name, str(info["near_map_ready"]), JSON.stringify(_poi_state())])
 		await _lock_exposure()
 		var result: Dictionary = await _capture_pose(pose_name, info)
 		if failed:
@@ -144,6 +147,49 @@ func _run() -> void:
 				return
 		_write_report()
 	await _finish()
+
+
+## Weather Lung poses: the POI sun map extension only exists inside the near sun map, which needs the terrain height shadows. Enables them and waits for the near map.
+func _enable_height_shadows(timeout_s: float) -> bool:
+	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", true)
+	var deadline := Time.get_ticks_msec() + int(timeout_s * 1000.0)
+	while Time.get_ticks_msec() < deadline:
+		if bool(graphics.get("NearSunMapActive")):
+			await COMMON.settle(self, 1.5)
+			return true
+		await COMMON.settle(self, 0.25)
+	return false
+
+
+func _poi_state() -> Dictionary:
+	return {"near_map": bool(graphics.get("NearSunMapActive")), "extension": bool(graphics.get("PoiSunMapExtensionActive")), "extension_distance_m": float(graphics.get("PoiSunMapDistanceMeters")),
+		"registered_pois": int(graphics.get("PoiSunMapRegisteredCount")), "farthest_corner_m": float(graphics.get("PoiSunMapFarthestDistanceMeters")),
+		"sun_max_distance_m": sun.directional_shadow_max_distance, "sun_cascades": 4 if sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS else 2,
+		"sun_splits_m": [sun.directional_shadow_split_1 * sun.directional_shadow_max_distance, sun.directional_shadow_split_2 * sun.directional_shadow_max_distance, sun.directional_shadow_split_3 * sun.directional_shadow_max_distance],
+		"sun_fade_start": sun.directional_shadow_fade_start, "terrain_caster_m": float(graphics.get("SunTerrainCasterDistanceMeters")), "height_authority_m": float(graphics.get("SunHeightShadowAuthorityMeters"))}
+
+
+## Before/after for a Weather Lung pose: `full` (extension as the game runs it) against the same view with the extension forced off through the test hook.
+func _capture_poi_extension_pair(base_name: String, full: Image) -> Dictionary:
+	var on_state := _poi_state()
+	graphics.set("PoiSunMapExtensionForcedOff", true)
+	await COMMON.settle(self, 1.5)
+	var off_state := _poi_state()
+	var ext_off := await _screenshot()
+	graphics.set("PoiSunMapExtensionForcedOff", false)
+	ext_off.save_png(base_name + "_full_ext_off.png")
+	var lum_on := _luminance(full, stride)
+	var lum_off := _luminance(ext_off, stride)
+	var changed := 0
+	var total := 0.0
+	for i in lum_on.size():
+		var d := absf(lum_on[i] - lum_off[i])
+		total += d
+		if d > 0.01:
+			changed += 1
+	await COMMON.settle(self, 1.5)
+	return {"extension_on": on_state, "extension_off": off_state, "file_ext_off": base_name + "_full_ext_off.png",
+		"mean_abs_luma_diff": total / float(maxi(1, lum_on.size())), "changed_fraction_gt_0_01": float(changed) / float(maxi(1, lum_on.size()))}
 
 
 func _bind_nodes() -> bool:
@@ -242,6 +288,9 @@ func _capture_pose(pose_name: String, info: Dictionary) -> Dictionary:
 	result["depth_available"] = not depth_data.is_empty()
 	var analysis := _analyze(full, sun_off, all_off, depth_data, base_name)
 	result.merge(analysis)
+	if str(COMMON.POSES[pose_name]["kind"]) == "weather_lung":
+		result["poi_extension"] = await _capture_poi_extension_pair(base_name, full)
+		print("SHADOW_QUALITY pose %s poi extension: %s" % [pose_name, JSON.stringify(result["poi_extension"])])
 	var summary: Array = []
 	for band in analysis.get("bands", []):
 		summary.append("%s:%.3f" % [band["name"], float(band.get("shadowed_fraction", NAN))])

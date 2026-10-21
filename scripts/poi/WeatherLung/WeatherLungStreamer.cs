@@ -7,6 +7,7 @@ using Godot;
 using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Celestial.Eclipse;
 using RingworldTechDemo.Loading;
+using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
@@ -64,6 +65,10 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
     private float _baseAoHeight;
     private WeatherLungController? _controller;
     private readonly List<CollisionEntry> _collision = new();
+    /// <summary>Union of the collision-entry bounds in Detail-local space (the station's solid extent, used by the sun-map extension); valid while the Detail is attached.</summary>
+    private Aabb _detailLocalBounds;
+    private bool _hasDetailBounds;
+    private RingLargePoiShadowExtents.BoundsProvider? _shadowExtent;
     private Transform3D _lastGridGlobal, _lastSelfGlobal;
     private double _clock;
     private int _revision;
@@ -144,6 +149,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
     {
         if (_grid != null && _subscribed) { _grid.CanonicalFloatingOriginAnchorChanged -= HandleAnchorChanged; _subscribed = false; }
         if (_controller != null) _controller.Changed -= ForwardChanged;
+        UnregisterShadowExtent();
         _claims?.Dispose();
         _claims = null;
     }
@@ -463,6 +469,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
             return true;
         }
         BuildCollisionEntries(root);
+        MakeStructureShadowsDoubleSided(root);
         _drawEstimate = EstimateDraws(root);
         _detail = root;
         _assembly = null;
@@ -472,6 +479,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
         root.Visible = true;
         _controller.HoldProxyVisible = false;
         DetailState = WeatherLungDetailState.Attached;
+        RegisterShadowExtent();
         AttachPieceMs.Add(("finalize:collision entries and reveal", NowMs() - t0, 0d));
         AttachSlicesDone = AttachSliceCount;
         return true;
@@ -506,6 +514,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
     private void ReleaseDetail()
     {
         if (DetailState == WeatherLungDetailState.Failed) { DetailState = WeatherLungDetailState.None; return; }
+        UnregisterShadowExtent();
         CancelAssembly();
         _collision.Clear();
         if (_detail != null && GodotObject.IsInstanceValid(_detail))
@@ -529,6 +538,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
     private void BuildCollisionEntries(Node3D detail)
     {
         _collision.Clear();
+        _hasDetailBounds = false;
         Node? bodies = detail.GetNodeOrNull("Collision");
         if (bodies == null) return;
         foreach (Node child in bodies.GetChildren())
@@ -563,6 +573,47 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
             if (!any) continue;
             body.ProcessMode = ProcessModeEnum.Disabled;
             _collision.Add(new CollisionEntry { Body = body, Min = bounds.Position, Max = bounds.End });
+            _detailLocalBounds = _hasDetailBounds ? _detailLocalBounds.Merge(bounds) : bounds;
+            _hasDetailBounds = true;
+        }
+    }
+
+    // ---- Sun shadow map extension -----------------------------------------------------------------------------------------------
+
+    /// <summary>The mounted Detail's solid bounds in world space, from its current global transform (so floating-origin rebases need no refresh).</summary>
+    private bool TryGetShadowExtentBounds(out Aabb world)
+    {
+        world = default;
+        if (!_hasDetailBounds || _detail == null || !GodotObject.IsInstanceValid(_detail) || !_detail.IsInsideTree()) return false;
+        world = _detail.GlobalTransform * _detailLocalBounds;
+        return true;
+    }
+
+    private void RegisterShadowExtent()
+    {
+        if (!_hasDetailBounds) return;
+        _shadowExtent ??= TryGetShadowExtentBounds;
+        RingLargePoiShadowExtents.Register(_shadowExtent);
+    }
+
+    private void UnregisterShadowExtent()
+    {
+        if (_shadowExtent != null) RingLargePoiShadowExtents.Unregister(_shadowExtent);
+        _hasDetailBounds = false;
+    }
+
+    /// <summary>The materials are cull_back, so single-sided shells would cast only from their front faces: Structure and Moving meshes cast from both sides (the FarProxy stays unshadowed).</summary>
+    private static void MakeStructureShadowsDoubleSided(Node3D detail)
+    {
+        foreach (Node node in detail.FindChildren("*", "MeshInstance3D", true, false))
+        {
+            if (node is not MeshInstance3D mesh) continue;
+            for (Node? n = mesh; n != null && n != detail; n = n.GetParent())
+            {
+                if (n.Name != "Structure" && n.Name != "Moving") continue;
+                mesh.CastShadow = GeometryInstance3D.ShadowCastingSetting.DoubleSided;
+                break;
+            }
         }
     }
 

@@ -26,12 +26,82 @@ public partial class RingGraphicsQualityController
     /// <summary>Near sun map (docs/shadow-revamp-plan.md S5b): fade start of the 2-cascade near map, so the heightfield authority distance is 0.8 x the near distance (320 m at 400 m).</summary>
     public const float NearSunMapFadeStart = .8f;
     public const float NearSunMapLeaveSeconds = 1.0f;
+    /// <summary>Fade start of the POI-extended 4-cascade near map.</summary>
+    public const float PoiSunMapFadeStart = .9f;
     private bool _nearSunMapActive;
     private float _nearSunMapNotReadySeconds;
     public bool NearSunMapActive => _nearSunMapActive;
     /// <summary>Tests: replaces the "sun heightfield ready" query.</summary>
     internal System.Func<bool>? NearSunMapReadyProbe { get; set; }
     internal void StepNearSunMapForTest(double delta) => UpdateNearSunMap(delta);
+
+    /// <summary>
+    /// POI sun map extension: while the near sun map is active and a large POI (RingLargePoiShadowExtents) has its detail mounted, the near map becomes a 4-cascade map out to
+    /// D (the camera's distance to the POI's farthest corner, 500 m steps, between the near distance and HeightShadowPoiMapDistanceMeters) so the POI shadows itself and the terrain
+    /// around it. Terrain casters and the heightfield authority stay at the near distance.
+    /// </summary>
+    private bool _poiSunMapActive;
+    private float _poiSunMapDistanceMeters;
+    private float _poiSunMapNoPoiSeconds;
+    public const float PoiSunMapStepMeters = 500.0f;
+    /// <summary>Meta key on the sun light while the extension is active: the near distance terrain casters and trees keep using (the light's own max distance is D then).</summary>
+    public const string SunNearDistanceMetaKey = "ringworld_sun_near_distance_meters";
+    public bool PoiSunMapExtensionActive => _nearSunMapActive && _poiSunMapActive;
+    public float PoiSunMapDistanceMeters => PoiSunMapExtensionActive ? _poiSunMapDistanceMeters : 0.0f;
+    /// <summary>Diagnostics: POIs registered with RingLargePoiShadowExtents (detail mounted).</summary>
+    public int PoiSunMapRegisteredCount => RingLargePoiShadowExtents.Count;
+    /// <summary>Diagnostics: camera distance to the farthest corner of a registered POI within reach of the map, or -1 without one (or without a camera).</summary>
+    public float PoiSunMapFarthestDistanceMeters => ResolvePoiFarthestDistance() ?? -1.0f;
+    /// <summary>Tests and captures: switches the extension off without touching the POI registry (before/after comparisons).</summary>
+    public bool PoiSunMapExtensionForcedOff { get; set; }
+    /// <summary>Tests: replaces the registry query; returns the camera's distance to the farthest corner of a registered POI within reach of the map, or null when there is none.</summary>
+    internal System.Func<float?>? PoiFarthestDistanceProbe { get; set; }
+    internal void StepPoiSunMapForTest(double delta) => UpdatePoiSunMapExtension(delta);
+
+    /// <summary>Distance the sun terrain casters cover: the near distance in near mode (extended or not), otherwise the sun map's own range.</summary>
+    public float SunTerrainCasterDistanceMeters => _nearSunMapActive ? ResolveHeightShadowSettings().NearMapDistanceMeters
+        : _sun != null && GodotObject.IsInstanceValid(_sun) ? _sun.DirectionalShadowMaxDistance : 0.0f;
+    /// <summary>Distance A the heightfield treats as the sun map's authority: near x fade start in near or extended mode (the heightfield owns terrain past it), otherwise max distance x fade start.</summary>
+    public float SunHeightShadowAuthorityMeters => _nearSunMapActive ? ResolveHeightShadowSettings().NearMapDistanceMeters * NearSunMapFadeStart
+        : _sun != null && GodotObject.IsInstanceValid(_sun) ? _sun.DirectionalShadowMaxDistance * _sun.DirectionalShadowFadeStart : 0.0f;
+
+    internal static float QuantizePoiSunMapDistance(float farthestMeters, float nearMeters, float maximumMeters)
+    {
+        float clamped = Mathf.Clamp(farthestMeters, nearMeters, Mathf.Max(maximumMeters, nearMeters));
+        return Mathf.Min(Mathf.Ceil(clamped / PoiSunMapStepMeters) * PoiSunMapStepMeters, Mathf.Max(maximumMeters, nearMeters));
+    }
+
+    private float? ResolvePoiFarthestDistance()
+    {
+        if (PoiFarthestDistanceProbe != null) return PoiFarthestDistanceProbe();
+        if (RingLargePoiShadowExtents.Count == 0) return null;
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        return camera != null && RingLargePoiShadowExtents.TryGetFarthestCornerDistance(camera.GlobalPosition, ResolveHeightShadowSettings().PoiMapDistanceMeters, out float distance) ? distance : null;
+    }
+
+    private void UpdatePoiSunMapExtension(double delta)
+    {
+        RingHeightShadowSettings settings = ResolveHeightShadowSettings();
+        float? farthest = _nearSunMapActive && !PoiSunMapExtensionForcedOff ? ResolvePoiFarthestDistance() : null;
+        bool next = _poiSunMapActive;
+        float distance = _poiSunMapDistanceMeters;
+        if (!_nearSunMapActive || PoiSunMapExtensionForcedOff) { next = false; _poiSunMapNoPoiSeconds = 0.0f; }
+        else if (farthest is { } far && float.IsFinite(far))
+        {
+            next = true;
+            _poiSunMapNoPoiSeconds = 0.0f;
+            distance = QuantizePoiSunMapDistance(far, settings.NearMapDistanceMeters, settings.PoiMapDistanceMeters);
+        }
+        else if (_poiSunMapActive)
+        {
+            _poiSunMapNoPoiSeconds += (float)Math.Max(delta, 0.0);
+            if (_poiSunMapNoPoiSeconds >= NearSunMapLeaveSeconds) next = false;
+        }
+        if (next == _poiSunMapActive && (!next || Mathf.IsEqualApprox(distance, _poiSunMapDistanceMeters))) return;
+        _poiSunMapActive = next;
+        _poiSunMapDistanceMeters = next ? distance : 0.0f;
+        ApplyShadowTuningOverrides();
+    }
     public bool SunShadowZeroEnergySuspended => _sunShadowZeroEnergySuspended;
 
     /// <summary>Near planet map (S7a): while the published front layer is a planet layer covering the camera, the planet shadow map shrinks to a 2-cascade near map (fade 0.8).</summary>
@@ -164,27 +234,31 @@ public partial class RingGraphicsQualityController
     private void UpdateTerrainShadowCasterCoverage()
     {
         if (_coordinator == null || !GodotObject.IsInstanceValid(_coordinator)) return;
-        float coverage = ResolveTerrainShadowCasterCoverage(_sun, _planet);
+        float coverage = ResolveTerrainShadowCasterCoverage(_sun, _planet, _nearSunMapActive ? SunTerrainCasterDistanceMeters : 0.0f);
         if (coverage > 0.0f) _coordinator.SetTerrainShadowCoverageMeters(coverage);
     }
 
+    /// <summary>The sun's contribution is capped at <paramref name="sunCasterCapMeters"/> when positive (near mode: terrain casters stay at the near distance even when the POI extension widens the light's range).</summary>
     internal static float ResolveTerrainShadowCasterCoverage(
         DirectionalLight3D? sun,
-        DirectionalLight3D? planet)
+        DirectionalLight3D? planet,
+        float sunCasterCapMeters = 0.0f)
     {
         float coverage = 0.0f;
-        AccumulateActiveDirectionalShadowRange(sun, ref coverage);
+        AccumulateActiveDirectionalShadowRange(sun, ref coverage, sunCasterCapMeters);
         AccumulateActiveDirectionalShadowRange(planet, ref coverage);
         return coverage;
     }
 
     private static void AccumulateActiveDirectionalShadowRange(
         DirectionalLight3D? light,
-        ref float coverage)
+        ref float coverage,
+        float capMeters = 0.0f)
     {
         if (light == null || !GodotObject.IsInstanceValid(light)
             || !light.ShadowEnabled || light.LightEnergy <= 0.001f) return;
         float distance = light.DirectionalShadowMaxDistance;
+        if (capMeters > 0.0f && float.IsFinite(distance)) distance = Mathf.Min(distance, capMeters);
         if (float.IsFinite(distance) && distance > 0.0f) coverage = Mathf.Max(coverage, distance);
     }
 

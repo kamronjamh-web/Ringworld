@@ -5,10 +5,13 @@ extends SceneTree
 ##      (compared with a fresh transform from the grid snapshot), and reports the world position and the distance from the spawn;
 ##   2. the grave-key teleport to the dam crest brings the player inside the load radius: the Detail scene attaches, the rig animates
 ##      (the controller's update count and the breath phase advance), and the structure collision switches on near the player;
-##   3. the 40 km view keeps the station presented.
+##   3. the 40 km view keeps the station presented;
+##   4. the POI sun map extension (4 cascades out to the station's far corner, terrain casters and height shadow authority still at the near map distance)
+##      is active at the dam crest and inactive at 40 km (the Detail is released, so nothing is registered).
 ## Optional `--capture=DIR` (run windowed) saves the dam crest view.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
+const COMMON := preload("res://tools/shadow_harness_common.gd")
 var fixture := ""
 var deadline := 0
 var game: Node
@@ -101,6 +104,28 @@ func run() -> void:
 	print("WEATHER_LUNG_WORLD animation updates %d -> %d, phase %.4f -> %.4f, instantiate %.1f ms, collision bodies on %d/%d" % [
 		updates0, updates1, phase0, phase1, float(streamer.get("LastDetailInstantiateMs")), int(streamer.get("CollisionBodiesOn")), int(streamer.get("CollisionBodyCount"))])
 	if int(streamer.get("CollisionBodiesOn")) < 1: _fail("no structure collision body switched on at the dam crest"); return
+	# 2b. POI sun map extension: active at the dam crest (registered Detail inside the near sun map), inactive at 40 km.
+	var graphics: Node = game.get_node_or_null("GraphicsQuality")
+	if graphics == null: _fail("no GraphicsQuality node"); return
+	COMMON.apply_time(game, {"mode": "noon"})
+	graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", true)
+	start = Time.get_ticks_msec()
+	while Time.get_ticks_msec() - start < 240000 and not bool(graphics.get("NearSunMapActive")):
+		if not await _step(): return
+	if not bool(graphics.get("NearSunMapActive")): _fail("the near sun map never became active (height shadows not ready), cannot exercise the POI extension"); return
+	start = Time.get_ticks_msec()
+	while Time.get_ticks_msec() - start < 20000 and not bool(graphics.get("PoiSunMapExtensionActive")):
+		if not await _step(): return
+	var sun: DirectionalLight3D = game.get_node_or_null("StarLight")
+	var ext_distance := float(graphics.get("PoiSunMapDistanceMeters"))
+	print("WEATHER_LUNG_WORLD poi extension at the dam crest: active=%s registered=%d farthest_corner=%.0f D=%.0f sun_max=%.0f cascades=%d caster=%.0f authority=%.0f" % [
+		graphics.get("PoiSunMapExtensionActive"), int(graphics.get("PoiSunMapRegisteredCount")), float(graphics.get("PoiSunMapFarthestDistanceMeters")), ext_distance,
+		sun.directional_shadow_max_distance, 4 if sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS else 2,
+		float(graphics.get("SunTerrainCasterDistanceMeters")), float(graphics.get("SunHeightShadowAuthorityMeters"))])
+	if not bool(graphics.get("PoiSunMapExtensionActive")) or int(graphics.get("PoiSunMapRegisteredCount")) < 1: _fail("POI sun map extension is not active at the dam crest"); return
+	if ext_distance < 500.0 or ext_distance > 20000.0 or absf(sun.directional_shadow_max_distance - ext_distance) > 0.5 or sun.directional_shadow_mode != DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS: _fail("extension distance / cascade count is wrong at the dam crest"); return
+	if absf(float(graphics.get("SunTerrainCasterDistanceMeters")) - float(graphics.get("EffectiveHeightShadowNearMapDistanceMeters"))) > 0.5: _fail("terrain casters left the near distance while extended"); return
+	if absf(float(graphics.get("SunHeightShadowAuthorityMeters")) - 0.8 * float(graphics.get("EffectiveHeightShadowNearMapDistanceMeters"))) > 0.5: _fail("height shadow authority left near x 0.8 while extended"); return
 	if capture_dir != "":
 		DirAccess.make_dir_recursive_absolute(capture_dir)
 		await _frames(settle_frames)
@@ -114,6 +139,13 @@ func run() -> void:
 	if str(drawer.get("WeatherLungTeleportState")) != "Arrived": _fail("far teleport: %s" % drawer.get("WeatherLungTeleportMessage")); return
 	await _frames(30)
 	print("WEATHER_LUNG_WORLD far view: ", streamer.call("DescribeStatus"))
+	start = Time.get_ticks_msec()
+	while Time.get_ticks_msec() - start < 60000 and bool(graphics.get("PoiSunMapExtensionActive")):
+		if not await _step(): return
+	print("WEATHER_LUNG_WORLD poi extension at 40 km: active=%s near_map=%s registered=%d farthest_in_reach=%.0f sun_max=%.0f" % [graphics.get("PoiSunMapExtensionActive"), graphics.get("NearSunMapActive"), int(graphics.get("PoiSunMapRegisteredCount")), float(graphics.get("PoiSunMapFarthestDistanceMeters")), sun.directional_shadow_max_distance])
+	# The Detail stays mounted (registered) at 40 km, but its nearest point is out of the map's reach, so it must not drive the extension.
+	if float(graphics.get("PoiSunMapFarthestDistanceMeters")) >= 0.0: _fail("a POI beyond the shadow map's reach still counts at 40 km"); return
+	if bool(graphics.get("PoiSunMapExtensionActive")): _fail("POI sun map extension is still active at 40 km"); return
 	_print_poi_haze_state("far")
 	_print_proxy_debug()
 	if capture_dir != "":

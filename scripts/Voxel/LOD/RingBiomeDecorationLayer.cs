@@ -614,6 +614,8 @@ public partial class RingBiomeDecorationLayer : Node3D
 			if (_treeSunLight != null && GodotObject.IsInstanceValid(_treeSunLight))
 			{
 				float sunMax = _treeSunLight.DirectionalShadowMaxDistance;
+				// POI sun map extension: the light reaches D, but trees keep the near-map distance the controller records on the light.
+				if (_treeSunLight.HasMeta(RingGraphicsQualityController.SunNearDistanceMetaKey)) sunMax = Mathf.Min(sunMax, (float)_treeSunLight.GetMeta(RingGraphicsQualityController.SunNearDistanceMetaKey));
 				// Height shadows on and only the planet light casting (night): the planet map is the active one (S7a, 250 m near map). Otherwise exactly the sun range as before.
 				if (RingTerrainHeightShadow.Instance is { } heightShadow && heightShadow.Settings.Enabled && !IsCasting(_treeSunLight) && ResolveTreePlanetLight() is { } planet && IsCasting(planet))
 					sunMax = planet.DirectionalShadowMaxDistance;

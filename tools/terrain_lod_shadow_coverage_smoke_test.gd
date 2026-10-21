@@ -17,6 +17,12 @@ func run_probe() -> void:
 		quit(1)
 		return
 	print("TERRAIN_LOD_SHADOW_COVERAGE near map: " + str(near_map.get("detail", "")))
+	var poi_extension: Dictionary = SMOKE.new().RunPoiExtension(self)
+	if not bool(poi_extension.get("pass", false)):
+		push_error("TERRAIN_LOD_SHADOW_COVERAGE=FAIL poi extension: " + str(poi_extension.get("detail", "unknown failure")))
+		quit(1)
+		return
+	print("TERRAIN_LOD_SHADOW_COVERAGE poi extension: " + str(poi_extension.get("detail", "")))
 	var near_planet: Dictionary = SMOKE.new().RunNearPlanetMap(self)
 	if not bool(near_planet.get("pass", false)):
 		push_error("TERRAIN_LOD_SHADOW_COVERAGE=FAIL near planet map: " + str(near_planet.get("detail", "unknown failure")))

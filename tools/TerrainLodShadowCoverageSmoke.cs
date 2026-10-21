@@ -125,6 +125,97 @@ public partial class TerrainLodShadowCoverageSmoke : RefCounted
         return Result(passed, $"nearMap[preset={presetCoverage} notReady={notReadyStaysFull} enter={entered} d300={distance300} grace={graceHolds}/{graceResets} leave={left} reenter={reentered} optionOff={optionOffLeavesAtOnce} backOn={backOn} featureOff={featureOffLeavesAtOnce} restore={restoresPreset}]", -1);
     }
 
+    /// <summary>POI sun map extension: gated on the near map and a registered POI, D quantised/clamped, splits, terrain casters and heightfield authority stay at the near distance, nothing changes without a POI.</summary>
+    public Godot.Collections.Dictionary RunPoiExtension(SceneTree tree)
+    {
+        var controller = new RingGraphicsQualityController();
+        var sun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true, LightEnergy = 1.0f };
+        controller.AddChild(sun);
+        controller.SunLightPath = new NodePath("Sun");
+        tree.Root.AddChild(controller);
+        controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
+        var planet = new DirectionalLight3D { ShadowEnabled = false, LightEnergy = 0.0f };
+        float presetDistance = sun.DirectionalShadowMaxDistance;
+        bool ready = true;
+        float? poiDistance = null;
+        controller.NearSunMapReadyProbe = () => ready;
+        controller.PoiFarthestDistanceProbe = () => poiDistance;
+        // Split2 / Split3 / FadeStart overrides must be ignored while extended, exactly as near mode already ignores them.
+        controller.SetShadowTuningOverrides(new Godot.Collections.Dictionary { ["HeightShadowEnabled"] = true, ["NearCascadeMeters"] = 30.0f, ["Split2"] = .3f, ["Split3"] = .6f, ["FadeStart"] = .5f });
+        controller.StepNearSunMapForTest(0.1);
+        controller.StepPoiSunMapForTest(0.1);
+        bool Baseline() => controller.NearSunMapActive && !controller.PoiSunMapExtensionActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400.0f) && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel2Splits
+            && Mathf.IsEqualApprox(sun.DirectionalShadowFadeStart, .8f) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, 30.0f / 400.0f)
+            && Mathf.IsEqualApprox(controller.SunTerrainCasterDistanceMeters, 400.0f) && Mathf.IsEqualApprox(controller.SunHeightShadowAuthorityMeters, 320.0f) && !sun.HasMeta(RingGraphicsQualityController.SunNearDistanceMetaKey)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.ResolveTerrainShadowCasterCoverage(sun, planet, controller.SunTerrainCasterDistanceMeters), 400.0f);
+        bool noPoiIsNear = Baseline();
+        float split2Near = sun.DirectionalShadowSplit2, split3Near = sun.DirectionalShadowSplit3;
+
+        bool quantise = Mathf.IsEqualApprox(RingGraphicsQualityController.QuantizePoiSunMapDistance(3200.0f, 400.0f, 20000.0f), 3500.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.QuantizePoiSunMapDistance(3500.0f, 400.0f, 20000.0f), 3500.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.QuantizePoiSunMapDistance(3501.0f, 400.0f, 20000.0f), 4000.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.QuantizePoiSunMapDistance(100.0f, 400.0f, 20000.0f), 500.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.QuantizePoiSunMapDistance(50000.0f, 400.0f, 20000.0f), 20000.0f);
+
+        poiDistance = 3200.0f;
+        controller.StepPoiSunMapForTest(0.1);
+        const float D = 3500.0f;
+        bool entered = controller.PoiSunMapExtensionActive && Mathf.IsEqualApprox(controller.PoiSunMapDistanceMeters, D)
+            && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, D) && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits && Mathf.IsEqualApprox(sun.DirectionalShadowFadeStart, .9f);
+        bool splits = Mathf.IsEqualApprox(sun.DirectionalShadowSplit1, 30.0f / D) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit2, 400.0f / D) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit3, Mathf.Sqrt(400.0f * D) / D);
+        bool coverageStays = Mathf.IsEqualApprox(controller.SunTerrainCasterDistanceMeters, 400.0f)
+            && Mathf.IsEqualApprox(RingGraphicsQualityController.ResolveTerrainShadowCasterCoverage(sun, planet, controller.SunTerrainCasterDistanceMeters), 400.0f)
+            && sun.HasMeta(RingGraphicsQualityController.SunNearDistanceMetaKey) && Mathf.IsEqualApprox((float)sun.GetMeta(RingGraphicsQualityController.SunNearDistanceMetaKey), 400.0f);
+        bool authorityStays = Mathf.IsEqualApprox(controller.SunHeightShadowAuthorityMeters, 320.0f);
+
+        int revision = controller.HeightShadowRevision;
+        controller.StepPoiSunMapForTest(0.1);
+        bool quietWhenUnchanged = controller.HeightShadowRevision == revision;
+        poiDistance = 100.0f;
+        controller.StepPoiSunMapForTest(0.1);
+        bool floorsAtOneStep = Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 500.0f);
+        poiDistance = 50000.0f;
+        controller.StepPoiSunMapForTest(0.1);
+        bool capsAtSetting = Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 20000.0f);
+        controller.SetShadowTuningOverride("HeightShadowPoiMapDistanceMeters", 12000.0f);
+        controller.StepPoiSunMapForTest(0.1);
+        bool customCap = Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 12000.0f) && Mathf.IsEqualApprox(controller.SunTerrainCasterDistanceMeters, 400.0f);
+        controller.SetShadowTuningOverride("HeightShadowPoiMapDistanceMeters", 20000.0f);
+
+        poiDistance = null;
+        controller.StepPoiSunMapForTest(0.5);
+        bool graceHolds = controller.PoiSunMapExtensionActive;
+        poiDistance = 3200.0f;
+        controller.StepPoiSunMapForTest(0.2);
+        poiDistance = null;
+        controller.StepPoiSunMapForTest(0.6);
+        bool graceResets = controller.PoiSunMapExtensionActive;
+        controller.StepPoiSunMapForTest(0.6);
+        bool left = Baseline() && Mathf.IsEqualApprox(sun.DirectionalShadowSplit2, split2Near) && Mathf.IsEqualApprox(sun.DirectionalShadowSplit3, split3Near);
+
+        poiDistance = 3200.0f;
+        controller.StepPoiSunMapForTest(0.1);
+        bool reentered = controller.PoiSunMapExtensionActive;
+        controller.PoiSunMapExtensionForcedOff = true;
+        controller.StepPoiSunMapForTest(0.0);
+        bool forcedOff = Baseline();
+        controller.PoiSunMapExtensionForcedOff = false;
+        controller.StepPoiSunMapForTest(0.1);
+        bool backOn = controller.PoiSunMapExtensionActive;
+
+        ready = false;
+        controller.StepNearSunMapForTest(1.1);
+        controller.StepPoiSunMapForTest(0.1);
+        bool nearLeaveEndsIt = !controller.NearSunMapActive && !controller.PoiSunMapExtensionActive && Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, presetDistance)
+            && Mathf.IsEqualApprox(controller.SunTerrainCasterDistanceMeters, presetDistance) && !sun.HasMeta(RingGraphicsQualityController.SunNearDistanceMetaKey);
+
+        tree.Root.RemoveChild(controller);
+        controller.Free();
+        planet.Free();
+        bool passed = noPoiIsNear && quantise && entered && splits && coverageStays && authorityStays && quietWhenUnchanged && floorsAtOneStep && capsAtSetting && customCap && graceHolds && graceResets && left && reentered && forcedOff && backOn && nearLeaveEndsIt;
+        return Result(passed, $"poiExtension[noPoi={noPoiIsNear} quantise={quantise} enter={entered} splits={splits} coverage={coverageStays} authority={authorityStays} quiet={quietWhenUnchanged} floor={floorsAtOneStep} cap={capsAtSetting}/{customCap} grace={graceHolds}/{graceResets} leave={left} reenter={reentered} forcedOff={forcedOff}/{backOn} nearLeave={nearLeaveEndsIt}]", -1);
+    }
+
     /// <summary>S7a near planet map: enters with a ready planet layer, leaves at once for receivers off / a sun layer / the option off, after 1 s for a missing or uncovering front; the planet split is restored on exit.</summary>
     public Godot.Collections.Dictionary RunNearPlanetMap(SceneTree tree)
     {
