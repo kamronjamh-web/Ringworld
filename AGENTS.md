@@ -20,3 +20,8 @@ Until the user revokes this instruction, the primary agent acts as lead planner 
 ## Feature conventions
 
 For new gameplay or rendering features, expose relevant configurable settings in the grave-key live tuning menu. Extend the existing menu and persistence conventions as part of the feature.
+
+Only expose a value in the grave-key menu when it is a genuine tunable someone would need to adjust. Do not add per-subsystem toggles for behaviour that should simply follow an existing system.
+- Good: haze as a whole (density, falloff, color).
+- Bad: separate "POI haze" or "POI shadows" toggles. POIs must automatically receive regular haze, shadows and lighting like every other world surface.
+- Debug or A/B switches belong in debug tooling, not the menu.
