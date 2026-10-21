@@ -279,19 +279,25 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         Vector3 cameraPosition = camera.GlobalPosition;
         Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
         Vector3 sun = _sun?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
-        WriteUniforms(_regularMaterial, fade, cameraPosition, ringCenter, sun);
-        WriteUniforms(_mainMaterial, fade, cameraPosition, ringCenter, sun);
+        RingPoiHaze.PoiLighting lighting = RingPoiHaze.PoiLighting.FromGrid(_grid);
+        WriteUniforms(_regularMaterial, fade, cameraPosition, ringCenter, sun, lighting);
+        WriteUniforms(_mainMaterial, fade, cameraPosition, ringCenter, sun, lighting);
     }
 
     // Per-material change gates: an unchanged value must not dirty the material.
     private static readonly StringName MaxDistanceName = "max_distance", FadeMetersName = "fade_meters", MinPixelsName = "min_pixels",
         CameraWorldPositionName = "camera_world_position", RingCenterName = "ring_center", SunDirectionName = "sun_direction";
+    private static readonly StringName DayStartName = "day_start_dot", DayFullName = "day_full_dot", NightTintName = "night_tint",
+        NightDirectName = "night_direct_light_factor", DayDirectName = "day_direct_light_factor";
     private readonly EmitterUniformGate<float> _maxDistanceGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
-        _fadeGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _minPixelsGate = new(RingMaterialWriteCounters.Site.EmitterStandIn);
+        _fadeGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _minPixelsGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
+        _dayStartGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _dayFullGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
+        _nightDirectGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _dayDirectGate = new(RingMaterialWriteCounters.Site.EmitterStandIn);
     private readonly EmitterUniformGate<Vector3> _cameraGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
-        _ringCenterGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _sunGate = new(RingMaterialWriteCounters.Site.EmitterStandIn);
+        _ringCenterGate = new(RingMaterialWriteCounters.Site.EmitterStandIn), _sunGate = new(RingMaterialWriteCounters.Site.EmitterStandIn),
+        _nightTintGate = new(RingMaterialWriteCounters.Site.EmitterStandIn);
 
-    private void WriteUniforms(ShaderMaterial? material, float fade, Vector3 cameraPosition, Vector3 ringCenter, Vector3 sun)
+    private void WriteUniforms(ShaderMaterial? material, float fade, Vector3 cameraPosition, Vector3 ringCenter, Vector3 sun, in RingPoiHaze.PoiLighting lighting)
     {
         if (material == null) return;
         _maxDistanceGate.Set(material, MaxDistanceName, _effectiveMax);
@@ -300,6 +306,11 @@ public partial class EmitterStandInLayer : Node3D, IEmitterBeamSource
         _cameraGate.Set(material, CameraWorldPositionName, cameraPosition);
         _ringCenterGate.Set(material, RingCenterName, ringCenter);
         _sunGate.Set(material, SunDirectionName, sun);
+        _dayStartGate.Set(material, DayStartName, lighting.DayStart);
+        _dayFullGate.Set(material, DayFullName, lighting.DayFull);
+        _nightTintGate.Set(material, NightTintName, lighting.NightTint);
+        _nightDirectGate.Set(material, NightDirectName, lighting.NightDirect);
+        _dayDirectGate.Set(material, DayDirectName, lighting.DayDirect);
     }
 
     public void SetUndergroundHidden(bool hidden)

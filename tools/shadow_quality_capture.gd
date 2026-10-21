@@ -14,7 +14,7 @@ extends SceneTree
 ##   Godot_console.exe --path . --resolution 1920x1080 --script res://tools/shadow_quality_capture.gd -- [flags]
 ## Flags:
 ##   --quick                 validation run: poses ground_horizon + alt_1km, stride 4, 24-frame sequences on ground_horizon
-##   --poses=a,b             subset (default: all), see COMMON.POSES: ground_horizon forest_noon emitter_rim emitter_bore_noon dawn_{3,5,8,15}deg dusk_{3,8,15}deg
+##   --poses=a,b             subset (default: all), see COMMON.POSES: ground_horizon forest_noon emitter_rim emitter_bore_noon emitter_dusk_{m5,m10,m14,m30} emitter_night_planet dawn_{3,5,8,15}deg dusk_{3,8,15}deg
 ##                           alt_1km alt_12km night_planet_lit eclipse_totality eclipse_hub   (coast, cave mouth/overhang, dedicated 2/5/10 km hill poses: TODO)
 ##   --stride=N              pixel subsampling for the maths (default 2)
 ##   --aa=off|live           off (default): TAA/FSR/MSAA disabled on the root viewport for clean per-pixel maths; live: keep the configured AA

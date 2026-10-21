@@ -13,6 +13,7 @@ namespace RingworldTechDemo.Atmosphere;
 /// with <c>ring_poi_architecture*.gdshader</c>, which evaluates the ring haze per fragment from the camera ray frame
 /// (<see cref="RingAtmosphereRayFrame"/>). Static parameters come from <see cref="RingAtmosphereModel.ConfigureMaterial"/> (registered once
 /// per material); the nine frame uniforms are written here, per field, only when they change (a flying camera changes about two).
+/// The same tick pushes the ring local-daylight data (<see cref="PoiLighting"/>), which is not a setting: POI architecture always lights like terrain and trees.
 /// The POI systems register what they instantiate (<see cref="RegisterTree"/>, <see cref="RegisterMaterial"/>) and tick from <c>_Process</c>.
 /// </summary>
 public static class RingPoiHaze
@@ -26,6 +27,11 @@ public static class RingPoiHaze
     private static readonly StringName SidewallPositiveName = "ring_atmosphere_sidewall_positive_meters";
     private static readonly StringName CoordinateScaleName = "ring_atmosphere_coordinate_scale";
     private static readonly StringName ToSunName = "ring_atmosphere_to_sun";
+    private static readonly StringName LightingValidName = "poi_ring_lighting_valid";
+    private static readonly StringName RingCenterName = "poi_ring_center_world";
+    private static readonly StringName LightingParamsName = "poi_lighting_params";
+    private static readonly StringName NightTintName = "poi_night_tint";
+    private static readonly StringName ShadowFloorName = "poi_shadow_floor";
 
     private sealed class Entry
     {
@@ -35,38 +41,13 @@ public static class RingPoiHaze
         public bool Initialized;
         public bool Valid;
         public RingAtmosphereRayFrame Frame;
+        public bool LightingInitialized;
+        public PoiLighting Lighting;
     }
 
     private static readonly List<Entry> Entries = new();
     private static readonly HashSet<ulong> Known = new();
-    private static bool _enabled = true;
-    private static bool _cloudShadow;
     private static ulong _lastTickFrame = ulong.MaxValue;
-
-    /// <summary>"POI haze" setting. Drives <c>poi_haze_enabled</c> on POI-shader materials only (stand-ins and bore keep their own haze).</summary>
-    public static bool Enabled
-    {
-        get => _enabled;
-        set
-        {
-            if (_enabled == value) return;
-            _enabled = value;
-            PushToggle(PoiMaterialParams.EnabledName, value);
-        }
-    }
-
-    /// <summary>"POI cloud shadows" setting (default off). Drives <c>poi_cloud_shadow_enabled</c> and registers the materials with the cloud-shadow projector.</summary>
-    public static bool CloudShadowEnabled
-    {
-        get => _cloudShadow;
-        set
-        {
-            if (_cloudShadow == value) return;
-            _cloudShadow = value;
-            PushToggle(PoiMaterialParams.CloudShadowName, value);
-            if (value) ForEachPoiMaterial(material => RingCloudShadowProjector.Register(material));
-        }
-    }
 
     public static int RegisteredCount
     {
@@ -143,29 +124,9 @@ public static class RingPoiHaze
         bool poi = PoiMaterialParams.IsPoiShader(material);
         Entries.Add(new Entry(material, poi));
         RingAtmosphereModel.ConfigureMaterial(material, ringRadiusMeters);
-        if (poi)
-        {
-            // Defaults are poi_haze_enabled = true, cloud shadow off: a registration only writes when the setting differs.
-            if (!_enabled) material.SetShaderParameter(PoiMaterialParams.EnabledName, false);
-            if (_cloudShadow)
-            {
-                material.SetShaderParameter(PoiMaterialParams.CloudShadowName, true);
-                RingCloudShadowProjector.Register(material);
-            }
-        }
+        // POI architecture takes the terrain's cloud shadows: the projector owns the enable state, so this follows whatever terrain does.
+        if (poi) RingCloudShadowProjector.Register(material);
         return true;
-    }
-
-    private static void PushToggle(StringName name, bool value)
-    {
-        ForEachPoiMaterial(material => material.SetShaderParameter(name, value));
-    }
-
-    private static void ForEachPoiMaterial(Action<ShaderMaterial> action)
-    {
-        Prune();
-        foreach (Entry entry in Entries)
-            if (entry.IsPoiShader && entry.Material.TryGetTarget(out ShaderMaterial? material)) action(material);
     }
 
     private static void Prune()
@@ -205,6 +166,7 @@ public static class RingPoiHaze
             ? RingAtmosphereRayFrame.Invalid
             : RingAtmosphereRayFrame.FromMainCamera(grid, camera, toSun);
         ApplyFrame(frame);
+        ApplyLighting(IsPublishable(frame) && grid != null ? PoiLighting.FromGrid(grid) : PoiLighting.Invalid);
     }
 
     /// <summary>Publishes <paramref name="frame"/> to every registered material (per-field gated). For tests and standalone scenes.</summary>
@@ -214,9 +176,52 @@ public static class RingPoiHaze
         bool valid = IsPublishable(frame);
         foreach (Entry entry in Entries)
         {
-            if (entry.IsPoiShader && !_enabled) continue;
             if (!entry.Material.TryGetTarget(out ShaderMaterial? material)) continue;
             ApplyEntry(entry, material, frame, valid);
+        }
+    }
+
+    /// <summary>
+    /// Ring local-daylight data for POI architecture (ring_poi_lighting.gdshaderinc), sourced from the grid like the terrain and tree materials.
+    /// The sun direction is <c>ring_atmosphere_to_sun</c>, written with the ray frame.
+    /// </summary>
+    public readonly record struct PoiLighting(bool Valid, Vector3 RingCenter, float DayStart, float DayFull, float NightDirect, float DayDirect, Vector3 NightTint, float ShadowFloor)
+    {
+        public static readonly PoiLighting Invalid = default;
+        public Vector4 Params => new(DayStart, DayFull, NightDirect, DayDirect);
+
+        public static PoiLighting FromGrid(VoxelChunkGridManager grid) => new(true, grid.GetCanonicalRingCenterWorld(),
+            grid.RingDayStartDot, Mathf.Max(grid.RingDayStartDot + 0.001f, grid.RingDayFullDot),
+            grid.RingNightDirectLightFactor, grid.RingDayDirectLightFactor,
+            new Vector3(grid.RingNightTint.R, grid.RingNightTint.G, grid.RingNightTint.B), grid.RingShadowFloor);
+    }
+
+    /// <summary>
+    /// Publishes the local-daylight data to every registered POI-shader material (per-field gated). Independent of the haze settings:
+    /// POI lighting is not a toggle. An invalid value only clears <c>poi_ring_lighting_valid</c> (the shader then falls back to plain lighting).
+    /// </summary>
+    public static void ApplyLighting(in PoiLighting lighting)
+    {
+        Prune();
+        foreach (Entry entry in Entries)
+        {
+            if (!entry.IsPoiShader || !entry.Material.TryGetTarget(out ShaderMaterial? material)) continue;
+            if (entry.LightingInitialized && entry.Lighting == lighting) continue;
+            PoiLighting previous = entry.Lighting;
+            bool full = !entry.LightingInitialized || !previous.Valid;
+            int writes = 0;
+            void Set(StringName name, Variant value) { material.SetShaderParameter(name, value); writes++; }
+            if (!entry.LightingInitialized || previous.Valid != lighting.Valid) Set(LightingValidName, lighting.Valid);
+            if (lighting.Valid)
+            {
+                if (full || previous.RingCenter != lighting.RingCenter) Set(RingCenterName, lighting.RingCenter);
+                if (full || previous.Params != lighting.Params) Set(LightingParamsName, lighting.Params);
+                if (full || previous.NightTint != lighting.NightTint) Set(NightTintName, lighting.NightTint);
+                if (full || previous.ShadowFloor != lighting.ShadowFloor) Set(ShadowFloorName, lighting.ShadowFloor);
+            }
+            entry.Lighting = lighting;
+            entry.LightingInitialized = true;
+            if (writes > 0) RingMaterialWriteCounters.Record(RingMaterialWriteCounters.Site.PoiAtmosphere, writes);
         }
     }
 

@@ -61,6 +61,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
     private bool _subscribed, _poiRequested, _detailRequested;
     private PackedScene? _poiScene, _detailScene;
     private Node3D? _poi, _detail;
+    private float _baseAoHeight;
     private WeatherLungController? _controller;
     private readonly List<CollisionEntry> _collision = new();
     private Transform3D _lastGridGlobal, _lastSelfGlobal;
@@ -155,9 +156,12 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
     private DirectionalLight3D? _sunLight;
 
     /// <summary>Registers the POI architecture shader materials under <paramref name="node"/> with RingPoiHaze (deduplicated).</summary>
-    private void RegisterPoiHaze(Node node)
+    private void RegisterPoiHaze(Node node, Node3D anchor)
     {
         if (_grid != null) RingPoiHaze.RegisterTree(node, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
+        // Base ambient occlusion from the station's ground contact (root origin); the height is measured once, with the first (proxy) geometry.
+        if (_baseAoHeight <= 0f) _baseAoHeight = PoiBaseAmbientOcclusion.MeasureHeight(anchor);
+        PoiBaseAmbientOcclusion.Apply(anchor, node, _baseAoHeight);
     }
 
     /// <summary>Publishes the camera ray frame to the POI architecture materials; forced after a floating-origin rebase.</summary>
@@ -255,7 +259,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
         root.Name = "WeatherLungPOI";
         root.Visible = false;
         AddChild(root);
-        RegisterPoiHaze(root);
+        RegisterPoiHaze(root, root);
         _poi = root;
         _controller = root as WeatherLungController;
         if (_controller == null)
@@ -367,7 +371,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
                     double instantiated = NowMs();
                     piece.Name = name;
                     parent.AddChild(piece);
-                    RegisterPoiHaze(piece);
+                    RegisterPoiHaze(piece, _poi!);
                     AttachPieceMs.Add((name, instantiated - pieceStart, NowMs() - instantiated));
                     _assemblyStep++;
                     AttachSlicesDone = _assemblyStep;
@@ -433,7 +437,7 @@ public partial class WeatherLungStreamer : Node3D, IWeatherLungWeatherSource
         LastAttachFrameMs = 0d;
         _controller.HoldProxyVisible = true;
         _controller.DetailMountNode.AddChild(root);
-        RegisterPoiHaze(root);
+        RegisterPoiHaze(root, _poi!);
         DetailState = WeatherLungDetailState.Attaching;
         return true;
     }

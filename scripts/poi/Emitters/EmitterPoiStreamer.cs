@@ -280,6 +280,7 @@ public partial class EmitterPoiStreamer : Node3D
         if (_detailEnd[(int)kind] <= 0d) _detailEnd[(int)kind] = ReadDetailVisibleEnd(root);
         AddChild(root);
         if (_grid != null) RingPoiHaze.RegisterTree(root, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
+        PoiBaseAmbientOcclusion.Apply(root, root, PoiBaseAmbientOcclusion.MeasureHeight(root));
         _slots.Add(new PoiSlot { Root = root, Collision = collision, FarProxy = farProxy, Kind = kind, Label = label });
     }
 

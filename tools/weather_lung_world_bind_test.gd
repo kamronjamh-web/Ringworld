@@ -18,9 +18,7 @@ var drawer: Node
 var streamer: Node
 var failed := false
 var capture_dir := ""
-var poi_haze_arg := ""
 var haze_model_arg := ""
-var poi_cloud_shadow_arg := ""
 var lock_exposure := true
 var haze_master_arg := ""
 var settle_frames := 60
@@ -38,9 +36,7 @@ func _init() -> void:
 func run() -> void:
 	for argument in OS.get_cmdline_user_args():
 		if argument.begins_with("--capture="): capture_dir = argument.trim_prefix("--capture=")
-		elif argument.begins_with("--poi-haze="): poi_haze_arg = argument.trim_prefix("--poi-haze=")
 		elif argument.begins_with("--haze-model="): haze_model_arg = argument.trim_prefix("--haze-model=")
-		elif argument.begins_with("--poi-cloud-shadow="): poi_cloud_shadow_arg = argument.trim_prefix("--poi-cloud-shadow=")
 		elif argument == "--auto-exposure": lock_exposure = false
 		elif argument.begins_with("--haze="): haze_master_arg = argument.trim_prefix("--haze=")
 		elif argument.begins_with("--settle="): settle_frames = int(argument.trim_prefix("--settle="))
@@ -127,21 +123,19 @@ func run() -> void:
 	print("WEATHER_LUNG_WORLD=PASS")
 	game.queue_free(); await process_frame; quit(0)
 
-## A/B switches for the POI architecture haze captures: --poi-haze=on|off, --poi-cloud-shadow=on|off, --haze-model=legacy|physical
+## A/B switches for the POI architecture haze captures: --haze=off (master haze), --haze-model=legacy|physical
 ## (all through the grave-key drawer, before the route starts) and exposure locking (default on; --auto-exposure keeps it).
 func _apply_poi_haze_options() -> void:
 	if drawer == null: return
 	drawer.call("SetAtmosphereEnabled", haze_master_arg != "off")  # the certified launcher preset can leave the master haze off
 	if haze_model_arg != "": drawer.call("SetAtmosphereHazeModel", 1 if haze_model_arg == "physical" else 0)
-	if poi_haze_arg != "": drawer.call("SetAtmospherePoiHaze", poi_haze_arg != "off")
-	if poi_cloud_shadow_arg != "": drawer.call("SetAtmospherePoiCloudShadow", poi_cloud_shadow_arg == "on")
 	if lock_exposure:
 		for node in root.find_children("*", "WorldEnvironment", true, false):
 			var attributes = (node as WorldEnvironment).camera_attributes as CameraAttributesPractical
 			if attributes != null: attributes.auto_exposure_enabled = false
 		var day_side = game.find_child("DaySideAtmosphere", true, false) if game != null else null
 		if day_side != null: day_side.set("storm_auto_exposure_enabled", false)
-	print("POI_HAZE_OPTIONS poi_haze=%s cloud_shadow=%s model=%s lock_exposure=%s" % [poi_haze_arg, poi_cloud_shadow_arg, haze_model_arg, lock_exposure])
+	print("POI_HAZE_OPTIONS haze=%s model=%s lock_exposure=%s" % [haze_master_arg, haze_model_arg, lock_exposure])
 
 func _launch() -> bool:
 	game = await _create_game()
@@ -206,7 +200,7 @@ func _print_poi_haze_state(label: String) -> void:
 		if mesh == null or mesh.get_surface_count() == 0: continue
 		var material := mesh.surface_get_material(0) as ShaderMaterial
 		if material == null: continue
-		print("POI_HAZE_STATE %s %s: valid=%s enabled=%s model=%s camera=%s height=%s radius=%s" % [label, node.name, material.get_shader_parameter("ring_atmosphere_ray_frame_valid"), material.get_shader_parameter("poi_haze_enabled"), material.get_shader_parameter("atmosphere_haze_model"), material.get_shader_parameter("ring_atmosphere_camera_world_position"), material.get_shader_parameter("ring_atmosphere_camera_height_meters"), material.get_shader_parameter("ring_radius_meters")])
+		print("POI_HAZE_STATE %s %s: valid=%s enabled=%s model=%s camera=%s height=%s radius=%s" % [label, node.name, material.get_shader_parameter("ring_atmosphere_ray_frame_valid"), material.get_shader_parameter("ring_atmosphere_enabled"), material.get_shader_parameter("atmosphere_haze_model"), material.get_shader_parameter("ring_atmosphere_camera_world_position"), material.get_shader_parameter("ring_atmosphere_camera_height_meters"), material.get_shader_parameter("ring_radius_meters")])
 		return
 
 func _print_proxy_debug() -> void:
@@ -217,4 +211,4 @@ func _print_proxy_debug() -> void:
 	print("POI_HAZE_STATE proxy visible=%s override=%s surfaces=%d dist=%.0f camfar=%.0f layers=%d" % [proxy.is_visible_in_tree(), proxy.material_override, proxy.mesh.get_surface_count(), proxy.global_position.distance_to(cam.global_position), cam.far, proxy.layers])
 	for s in proxy.mesh.get_surface_count():
 		var m := proxy.mesh.surface_get_material(s) as ShaderMaterial
-		print("  surf %d %s enabled=%s atm=%s mult=%s" % [s, m.resource_name if m else "null", m.get_shader_parameter("poi_haze_enabled") if m else "-", m.get_shader_parameter("ring_atmosphere_enabled") if m else "-", m.get_shader_parameter("atmosphere_opacity_multiplier") if m else "-"])
+		print("  surf %d %s lit=%s atm=%s mult=%s" % [s, m.resource_name if m else "null", m.get_shader_parameter("poi_ring_lighting_valid") if m else "-", m.get_shader_parameter("ring_atmosphere_enabled") if m else "-", m.get_shader_parameter("atmosphere_opacity_multiplier") if m else "-"])

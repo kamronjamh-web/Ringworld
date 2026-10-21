@@ -203,12 +203,20 @@ real import. A headless `--import` may delete the tracked `addons/terrain_3d/bin
 All POI architecture materials (33 merged emitter / spire / reactor / main_reactor `.tres` and the 23 Weather Lung `built/materials`) are `ShaderMaterial`s on
 `materials/ring_poi_architecture.gdshader` (cull back, Weather Lung) or `ring_poi_architecture_double_sided.gdshader` (cull disabled, merged). The shader
 evaluates `ring_haze_sample` per fragment (POI triangles span km), `ALBEDO * T`, `SPECULAR * sqrt(mean T)`, `EMISSION * energy * T + inscatter`. Uniforms mirror
-StandardMaterial3D: `albedo_color`, `metallic_value`, `roughness_value`, `specular_value`, `emission_color`, `emission_energy`, plus `poi_haze_enabled` and
-`poi_cloud_shadow_enabled` (default off, stand-in AO style). With no ray frame (standalone test scenes) the haze is identity, so those scenes look exactly like the old StandardMaterial3D.
+StandardMaterial3D: `albedo_color`, `metallic_value`, `roughness_value`, `specular_value`, `emission_color`, `emission_energy`. With no ray frame (standalone test scenes) the haze is identity, and
+without `poi_ring_lighting_valid` the direct light is plain Lambert + GGX with no night tint, so those scenes look like the old StandardMaterial3D to within a few levels (Lambert versus Burley diffuse).
 
+- Haze and cloud shadows are not settings: POI haze is the regular ring haze (it follows `ring_atmosphere_enabled`, the haze model and every haze control), and POI cloud shadows follow
+  the terrain's cloud-shadow projector (every POI-shader material is registered with `RingCloudShadowProjector`).
+- Local daylight (`materials/ring_poi_lighting.gdshaderinc`, always on): the sun DirectionalLight runs at full day energy across the whole ring, so terrain and trees fade the primary sun with
+  a per-fragment local day factor in their own `light()`. POI architecture does the same: `light()` scales the primary sun by `mix(night_direct, day_direct, poi_day)`, composes the shadow-map
+  attenuation, the projected cloud shadow and the S6 contact shadow, and adds a ported GGX specular; the albedo gets the ring night tint and the ambient the cloud AO (`1 - 0.72 * cloud * day`).
+  `ring_emitter_standin.gdshader` has the same `light()` gate.
+- Base ambient occlusion: per-mesh instance uniforms `poi_base_local` (ground anchor in the mesh's own space) and `poi_base_ao_height` (about 12% of the POI height, 6-40 m; 0 = off) darken the
+  ambient to 45% and the sun to 75% at the ground contact, fading out over that height. Set at spawn by the streamers through `PoiBaseAmbientOcclusion`.
 - Runtime feed: `RingPoiHaze` (scripts/Atmosphere) registers POI-shader materials (`RegisterTree` from the streamers, `RegisterMaterial` for the stand-in and bore) and
-  publishes the camera ray frame from `_Process` (per-field gated, write counter `PoiAtmosphere`). Grave-key menu, Atmosphere tab: "POI haze" (default on) and
-  "POI cloud shadows" (default off); persisted as `AtmosphereVisualSettings.PoiHaze` / `PoiCloudShadow`.
+  publishes the camera ray frame and the lighting data (`poi_ring_center_world`, `poi_lighting_params`, `poi_night_tint`, `poi_ring_lighting_valid`, from `VoxelChunkGridManager`) from `_Process`
+  (per-field gated, write counter `PoiAtmosphere`). The stand-in gets the same values from `EmitterStandInLayer`. There are no grave-key menu entries for any of this.
 - Do not hand-edit the `.tres`: the build tools write them through `tools/poi/poi_material_util.gd` (`to_shader_material`, `strip_runtime_params`). Only the six surface
   parameters are stored; atmosphere uniforms are runtime-owned. To (re)convert existing StandardMaterial3D files in place (idempotent, expects 56):
   `godot --headless --path . --script res://tools/poi/convert_poi_materials.gd`.

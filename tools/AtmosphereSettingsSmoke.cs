@@ -250,29 +250,18 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         bool vhOldFile = vhLine && vhOld.Settings.VegetationInstanceHaze && RingworldTechDemo.Atmosphere.RingVegetationHaze.Enabled;
         vhOld.Reset();
         bool vegetationInstanceHaze = vhDefault && vhApplied && vhPersisted && vhOldFile;
-        // POI haze toggle (default on) and POI cloud shadows (default off): applied to RingPoiHaze, persisted when changed, old files load the defaults.
+        // The removed POI haze / POI cloud shadow settings: files saved while they existed still carry the keys and must load without error.
         var ph = new AtmosphereVisualDefaults(isolatedPath);
         ph.Reset();
-        bool phDefault = ph.Settings.PoiHaze && RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled && !ph.Settings.PoiCloudShadow && !RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
-        ph.SetPoiHaze(false);
-        ph.SetPoiCloudShadow(true);
-        bool phApplied = !RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled && RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
+        ph.SetHazeQuality(16);
         bool phSaved = ph.Save();
-        var phReload = new AtmosphereVisualDefaults(isolatedPath);
-        phReload.Initialize();
-        bool phPersisted = phSaved && !phReload.Settings.PoiHaze && phReload.Settings.PoiCloudShadow
-            && !RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled && RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
         string phPath = ProjectSettings.GlobalizePath(isolatedPath);
-        string phText = System.IO.File.ReadAllText(phPath);
-        string phStripped = string.Join('\n', System.Array.FindAll(phText.Split('\n'), line => !line.StartsWith("PoiHaze") && !line.StartsWith("PoiCloudShadow")));
-        bool phLine = phStripped.Length < phText.Length;
-        System.IO.File.WriteAllText(phPath, phStripped);
+        System.IO.File.AppendAllText(phPath, "PoiHaze = false\nPoiCloudShadow = true\n");
         var phOld = new AtmosphereVisualDefaults(isolatedPath);
         phOld.Initialize();
-        bool phOldFile = phLine && phOld.Settings.PoiHaze && RingworldTechDemo.Atmosphere.RingPoiHaze.Enabled
-            && !phOld.Settings.PoiCloudShadow && !RingworldTechDemo.Atmosphere.RingPoiHaze.CloudShadowEnabled;
+        bool phOldFile = phSaved && phOld.LastError.Length == 0 && phOld.Settings.HazeQuality == 16;
         phOld.Reset();
-        bool poiHaze = phDefault && phApplied && phPersisted && phOldFile;
+        bool poiHaze = phOldFile;
         bool physicalControls = p4Defaults && p4Applied && p4Composes && p4Persisted && p4Clamped && p4OldFile && p4Reset && p4Contract && cloudShadowing && stormHaze && enclosedCloudFog && skyHazeLut && vegetationInstanceHaze && poiHaze;
         // Restore the persisted/default profile for callers that run this smoke
         // in-process before constructing a second world.

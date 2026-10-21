@@ -9,6 +9,8 @@ const BACKGROUND := Color(0.015, 0.02, 0.03, 1.0)
 const SHADER := "res://materials/ring_poi_architecture.gdshader"
 const SHADER_DS := "res://materials/ring_poi_architecture_double_sided.gdshader"
 const IDENTITY_TOLERANCE := 2.0 / 255.0
+## The shader owns its light() (local-day gate), so the standalone fallback is Lambert + the ported GGX rather than Godot's Burley + GGX: a few levels of difference against StandardMaterial3D.
+const STANDARD_TOLERANCE := 8.0 / 255.0
 var physical := false
 var failed := false
 var done := false
@@ -63,12 +65,12 @@ func _run() -> void:
 		holder.material_override = poi
 		var noframe := await _capture(c.name + "_noframe")
 		var d1 := _max_diff(ref, noframe)
-		if d1 > IDENTITY_TOLERANCE: _fail("identity_matches_standard %s no frame max diff %.5f > %.5f" % [c.name, d1, IDENTITY_TOLERANCE]); return
+		if d1 > STANDARD_TOLERANCE: _fail("identity_matches_standard %s no frame max diff %.5f > %.5f" % [c.name, d1, IDENTITY_TOLERANCE]); return
 		_configure(poi)
-		poi.set_shader_parameter("poi_haze_enabled", false)
+		poi.set_shader_parameter("ring_atmosphere_enabled", false)
 		var disabled := await _capture(c.name + "_disabled")
 		var d2 := _max_diff(ref, disabled)
-		if d2 > IDENTITY_TOLERANCE: _fail("identity_matches_standard %s haze disabled max diff %.5f > %.5f" % [c.name, d2, IDENTITY_TOLERANCE]); return
+		if d2 > STANDARD_TOLERANCE: _fail("identity_matches_standard %s haze disabled max diff %.5f > %.5f" % [c.name, d2, IDENTITY_TOLERANCE]); return
 		print("identity %s: noframe=%.5f disabled=%.5f" % [c.name, d1, d2])
 
 	# 2. haze_changes_rgb and 3. zero_density_identity at 30 km.
@@ -76,9 +78,9 @@ func _run() -> void:
 	var poi2 := _poi_material(Color(0.4, 0.35, 0.3), 0.3, 0.5, Color(0, 0, 0), 1.0, true)
 	_configure(poi2)
 	holder.material_override = poi2
-	poi2.set_shader_parameter("poi_haze_enabled", false)
+	poi2.set_shader_parameter("ring_atmosphere_enabled", false)
 	var off30 := await _capture("haze30_off")
-	poi2.set_shader_parameter("poi_haze_enabled", true)
+	poi2.set_shader_parameter("ring_atmosphere_enabled", true)
 	var on30 := await _capture("haze30_on")
 	var change := _max_diff(off30, on30)
 	if change < 0.01: _fail("haze_changes_rgb: 30 km enabled vs disabled differ by only %.5f" % change); return
@@ -117,9 +119,9 @@ func _run() -> void:
 		var base := await _capture("emis_black_%d" % int(km))
 		holder.material_override = emitter
 		var lit := await _capture("emis_lit_%d" % int(km))
-		emitter.set_shader_parameter("poi_haze_enabled", false)
+		emitter.set_shader_parameter("ring_atmosphere_enabled", false)
 		var unhazed := await _capture("emis_unhazed_%d" % int(km))
-		emitter.set_shader_parameter("poi_haze_enabled", true)
+		emitter.set_shader_parameter("ring_atmosphere_enabled", true)
 		holder.material_override = tprobe
 		var tcap := await _capture("emis_T_%d" % int(km))
 		var c := SIZE / 2
@@ -146,21 +148,20 @@ func _run() -> void:
 	holder.material_override = one
 	var back_one := await _capture("back_cull_back")
 	holder.rotation = Vector3.ZERO
-	if bd > IDENTITY_TOLERANCE: _fail("back_face_lit: double-sided vs StandardMaterial CULL_DISABLED max diff %.5f" % bd); return
+	if bd > STANDARD_TOLERANCE: _fail("back_face_lit: double-sided vs StandardMaterial CULL_DISABLED max diff %.5f" % bd); return
 	if _max_diff(back_one, background) > IDENTITY_TOLERANCE: _fail("back_face_lit: cull_back variant drew a back face"); return
 	if _max_diff(back_poi, background) < 0.05: _fail("back_face_lit: back face drew nothing"); return
-	# 7. cloud shadow (Stage 5): the flag alone is identity; with a far cascade map it darkens like the stand-in AO.
+	# 7. cloud shadow: with a far cascade map the surface darkens (ambient AO and the primary sun).
 	holder.mesh = sphere
 	holder.position = Vector3(0, 0, -30000)
 	var shaded := _poi_material(Color(0.4, 0.35, 0.3), 0.3, 0.5, Color(0, 0, 0), 1.0, true)
 	_configure(shaded)
-	shaded.set_shader_parameter("poi_haze_enabled", false)
 	holder.material_override = shaded
+	shaded.set_shader_parameter("ring_atmosphere_enabled", false)
+	# Local daylight on and at full day (the ring centre lies on the sun side), so the primary sun is shadowed too.
+	shaded.set_shader_parameter("poi_ring_lighting_valid", true)
+	shaded.set_shader_parameter("poi_ring_center_world", Vector3(-5000000.0, 0.0, 0.0))
 	var cs_off := await _capture("cloudshadow_off")
-	shaded.set_shader_parameter("poi_cloud_shadow_enabled", true)
-	var cs_flag := await _capture("cloudshadow_flag_only")
-	var cs_identity := _max_diff(cs_off, cs_flag)
-	if cs_identity > IDENTITY_TOLERANCE: _fail("cloud_shadow_flag_identity: flag without a map differs by %.5f" % cs_identity); return
 	var map := Image.create(4, 4, false, Image.FORMAT_RG8)
 	map.fill(Color(1, 0, 0, 1))
 	shaded.set_shader_parameter("local_cloud_shadow_far_texture", ImageTexture.create_from_image(map))
@@ -170,8 +171,17 @@ func _run() -> void:
 	shaded.set_shader_parameter("local_cloud_shadow_far_strength", 0.6)
 	var cs_on := await _capture("cloudshadow_on")
 	var cs_delta := _luma_ratio(cs_on, cs_off)
-	print("cloud_shadow: flag-only diff %.5f, shadowed/unshadowed foreground luminance %.3f" % [cs_identity, cs_delta])
+	print("cloud_shadow: shadowed/unshadowed foreground luminance %.3f" % cs_delta)
 	if cs_delta > 0.9 or cs_delta < 0.1: _fail("cloud_shadow_darkens: luminance ratio %.3f (expected a clear but not total darkening)" % cs_delta); return
+	# 8. local daylight: the sun is full overhead at one ring centre and fully set at the opposite one; the night side keeps only ambient, so it is clearly darker.
+	shaded.set_shader_parameter("local_cloud_shadow_enabled", false)
+	shaded.set_shader_parameter("poi_ring_center_world", Vector3(-5000000.0, 0.0, 0.0))
+	var day_img := await _capture("daylight_day")
+	shaded.set_shader_parameter("poi_ring_center_world", Vector3(5000000.0, 0.0, 0.0))
+	var night_img := await _capture("daylight_night")
+	var night_ratio := _luma_ratio(night_img, day_img)
+	print("daylight: night/day foreground luminance %.3f" % night_ratio)
+	if night_ratio > 0.6: _fail("local_daylight_gate: night/day luminance ratio %.3f (the sun must drop out after local sunset)" % night_ratio); return
 	print("POI_HAZE_GPU=PASS model=%s haze30_change=%.4f back_diff=%.5f cloud_shadow_ratio=%.3f" % ["physical" if physical else "legacy", change, bd, cs_delta])
 	done = true
 	quit(0)

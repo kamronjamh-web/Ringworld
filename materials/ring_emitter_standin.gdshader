@@ -8,6 +8,9 @@ uniform vec3 ring_center = vec3(0.0);
 uniform vec3 sun_direction = vec3(1.0, 0.0, 0.0);
 uniform float day_start_dot = -0.2;
 uniform float day_full_dot = 0.35;
+uniform vec3 night_tint = vec3(0.30, 0.45, 0.70);
+uniform float night_direct_light_factor : hint_range(0.0, 1.0) = 0.0;
+uniform float day_direct_light_factor : hint_range(0.0, 2.0) = 1.0;
 uniform vec3 albedo_color : source_color = vec3(0.18, 0.23, 0.28);
 uniform float metallic_value : hint_range(0.0, 1.0) = 0.72;
 uniform float roughness_value : hint_range(0.0, 1.0) = 0.48;
@@ -25,6 +28,7 @@ uniform float crown_glow_emission = 3.0;
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
+#include "res://materials/ring_poi_lighting.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -69,7 +73,7 @@ void fragment() {
 	if (noise > standin_fade * standin_coverage) {
 		discard;
 	}
-	vec3 lit_color = albedo_color * mix(vec3(0.30, 0.42, 0.62), vec3(1.0), ring_day_factor);
+	vec3 lit_color = albedo_color * mix(night_tint, vec3(1.0), ring_day_factor);
 	RingHaze haze = ring_haze_sample(
 		camera_world_position,
 		world_position,
@@ -94,5 +98,20 @@ void fragment() {
 		METALLIC = 0.0;
 		AO = 1.0;
 		EMISSION = vec3(ringworld_shadow_debug_mode == 1 || ringworld_shadow_debug_mode == 5 ? 1.0 - cloud_occlusion : 1.0);
+	}
+}
+
+void light() {
+	// Same local-day gate as terrain, trees and POI architecture: the primary sun fades with this stand-in's own day factor, other lights stay ungated.
+	// The shadow debug view shows only the cloud term (fragment()), so no light is added then.
+	if (!ring_shadow_debug_enabled()) {
+		float n_dot_l = max(dot(NORMAL, LIGHT), 0.0);
+		vec3 sun_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
+		float primary_sun = LIGHT_IS_DIRECTIONAL ? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_view)) : 0.0;
+		float direct = mix(night_direct_light_factor, day_direct_light_factor, ring_day_factor);
+		float visibility = clamp(ATTENUATION, 0.0, 1.0) * mix(1.0, direct, primary_sun);
+		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
+		vec3 f0 = mix(vec3(0.16 * 0.68 * 0.68), ALBEDO, METALLIC);
+		SPECULAR_LIGHT += poi_ggx_specular(NORMAL, LIGHT, VIEW, ROUGHNESS, f0) * LIGHT_COLOR * visibility * SPECULAR_AMOUNT;
 	}
 }

@@ -14,7 +14,7 @@ namespace RingworldTechDemo.Tools;
 
 /// <summary>
 /// RingPoiHaze registry (docs: assets/poi/README.md, POI architecture haze). Instantiates every POI scene, registers it and checks the
-/// registered count against an independent material walk, the ray-frame publication, the POI haze toggle, de-duplication, pruning, the
+/// registered count against an independent material walk, the ray-frame publication, the always-on lighting feed and cloud-shadow registration, de-duplication, pruning, the
 /// per-field write gate, the stand-in frame binding, and that no POI mesh surface is still a StandardMaterial3D.
 /// Run through tools/poi_haze_registry_test.gd. Prints POI_HAZE_REGISTRY=PASS.
 /// </summary>
@@ -40,8 +40,6 @@ public partial class PoiHazeRegistryTest : RefCounted
         {
             SceneTree tree = (Engine.GetMainLoop() as SceneTree) ?? throw new InvalidOperationException("scene tree unavailable");
             RingPoiHaze.Reset();
-            RingPoiHaze.Enabled = true;
-            RingPoiHaze.CloudShadowEnabled = false;
             fixture = new Node3D { Name = "PoiHazeRegistryFixture" };
             tree.Root.AddChild(fixture);
 
@@ -91,15 +89,25 @@ public partial class PoiHazeRegistryTest : RefCounted
                 if (Math.Abs((double)material.GetShaderParameter("ring_radius_meters") - RingRadius) > 1.0) { failures.Add(material.ResourceName + ": ring_radius_meters"); break; }
             }
 
-            // Toggle.
-            RingPoiHaze.Enabled = false;
-            if (materials.Any(m => (bool)m.GetShaderParameter(PoiMaterialParams.EnabledName))) failures.Add("Enabled=false left poi_haze_enabled true");
-            RingPoiHaze.Enabled = true;
-            if (materials.Any(m => !(bool)m.GetShaderParameter(PoiMaterialParams.EnabledName))) failures.Add("Enabled=true left poi_haze_enabled false");
-            RingPoiHaze.CloudShadowEnabled = true;
-            if (materials.Any(m => !(bool)m.GetShaderParameter(PoiMaterialParams.CloudShadowName))) failures.Add("CloudShadowEnabled=true did not reach every material");
-            RingPoiHaze.CloudShadowEnabled = false;
-            if (materials.Any(m => (bool)m.GetShaderParameter(PoiMaterialParams.CloudShadowName))) failures.Add("CloudShadowEnabled=false did not reach every material");
+            // Lighting: always on (no toggle), pushed to every POI-shader material, per-field gated, and cleared when invalid.
+            var lighting = new RingPoiHaze.PoiLighting(true, new Vector3(1f, 2f, 3f), -0.2f, 0.35f, 0.1f, 1.2f, new Vector3(0.3f, 0.45f, 0.7f), 0.05f);
+            RingPoiHaze.ApplyLighting(lighting);
+            foreach (ShaderMaterial material in materials)
+            {
+                if (!(bool)material.GetShaderParameter("poi_ring_lighting_valid")) { failures.Add(material.ResourceName + ": lighting not valid"); break; }
+                if ((Vector3)material.GetShaderParameter("poi_ring_center_world") != lighting.RingCenter) { failures.Add(material.ResourceName + ": poi_ring_center_world"); break; }
+                if ((Vector4)material.GetShaderParameter("poi_lighting_params") != lighting.Params) { failures.Add(material.ResourceName + ": poi_lighting_params"); break; }
+                if ((Vector3)material.GetShaderParameter("poi_night_tint") != lighting.NightTint) { failures.Add(material.ResourceName + ": poi_night_tint"); break; }
+            }
+            Span<long> lightBefore = stackalloc long[RingMaterialWriteCounters.SiteCount], lightAfter = stackalloc long[RingMaterialWriteCounters.SiteCount], lightTextures = stackalloc long[RingMaterialWriteCounters.SiteCount];
+            RingMaterialWriteCounters.Snapshot(lightBefore, lightTextures);
+            RingPoiHaze.ApplyLighting(lighting);
+            RingMaterialWriteCounters.Snapshot(lightAfter, lightTextures);
+            if (lightAfter[(int)RingMaterialWriteCounters.Site.PoiAtmosphere] != lightBefore[(int)RingMaterialWriteCounters.Site.PoiAtmosphere]) failures.Add("unchanged lighting wrote parameters");
+            RingPoiHaze.ApplyLighting(RingPoiHaze.PoiLighting.Invalid);
+            if (materials.Any(m => (bool)m.GetShaderParameter("poi_ring_lighting_valid"))) failures.Add("invalid lighting left poi_ring_lighting_valid true");
+            // Cloud shadows follow the terrain projector: every POI material is registered with it (shared globals).
+            if (materials.Any(m => !(bool)m.GetShaderParameter("local_cloud_shadow_use_globals"))) failures.Add("POI material not registered with the cloud-shadow projector");
 
             // Write gate: only the camera moves, so two fields change (position and height).
             Span<long> before = stackalloc long[RingMaterialWriteCounters.SiteCount], after = stackalloc long[RingMaterialWriteCounters.SiteCount], textures = stackalloc long[RingMaterialWriteCounters.SiteCount];
@@ -134,8 +142,6 @@ public partial class PoiHazeRegistryTest : RefCounted
         catch (Exception exception) { Console.Error.WriteLine(exception.ToString()); return 1; }
         finally
         {
-            RingPoiHaze.Enabled = true;
-            RingPoiHaze.CloudShadowEnabled = false;
             foreach (Node root in instances) if (GodotObject.IsInstanceValid(root)) { root.GetParent()?.RemoveChild(root); root.Free(); }
             if (fixture != null && GodotObject.IsInstanceValid(fixture)) { fixture.GetParent()?.RemoveChild(fixture); fixture.Free(); }
             RingPoiHaze.Reset();

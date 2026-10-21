@@ -11,8 +11,6 @@ public static class PoiMaterialParams
 {
     public const string ShaderPath = "res://materials/ring_poi_architecture.gdshader";
     public const string DoubleSidedShaderPath = "res://materials/ring_poi_architecture_double_sided.gdshader";
-    public static readonly StringName EnabledName = "poi_haze_enabled";
-    public static readonly StringName CloudShadowName = "poi_cloud_shadow_enabled";
     private static readonly StringName AlbedoName = "albedo_color";
     private static readonly StringName MetallicName = "metallic_value";
     private static readonly StringName RoughnessName = "roughness_value";

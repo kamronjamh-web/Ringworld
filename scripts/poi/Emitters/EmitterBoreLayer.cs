@@ -214,6 +214,8 @@ public partial class EmitterBoreLayer : Node3D
             EmitterBoreKindResources resources = EmitterBoreGeometry.Get(placement.Kind);
             slot.Mesh.Mesh = resources.Mesh;
             if (_grid != null) RingPoiHaze.RegisterTree(slot.Mesh, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
+            // The liner hangs below the pad datum (the mesh origin), so it sits wholly inside the occlusion zone.
+            PoiBaseAmbientOcclusion.Apply(slot.Mesh, slot.Mesh, slot.Mesh.GetAabb().Size.Y);
             slot.LinerShape.Shape = resources.LinerShape;
             slot.Light.OmniRange = resources.LightRange;
             slot.Light.LightColor = resources.InlayEmission;
