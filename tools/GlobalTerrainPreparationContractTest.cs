@@ -252,6 +252,7 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
             grid.SetFloatingOriginCanonicalAnchor(new RingCanonicalPosition(4096.0, 0.0, 0.0));
             VerifyPublishedGlobalMorphSnapshot(lod, grid, sampler, verifyInstalledMeshEndpoints: false);
             VerifyLateRingDirtyMapping(fixture, grid, sampler, lod.RingWidthMeters);
+            VerifyMorphSurvivesRestartedGenerations(fixture, grid, sampler, lod.RingWidthMeters);
         }
         finally
         {
@@ -373,6 +374,88 @@ public partial class GlobalTerrainPreparationContractTest : RefCounted
         {
             grid.DetachSurfaceHeightField(mappingField);
             mappingLod.Free();
+        }
+    }
+
+    // A morph generation can restart before the previous one publishes: a saved edit applied while the initial
+    // build is part-way through, or a second edit while the first edit's segments rebuild. Either way the
+    // snapshot must still publish once every queue drains.
+    private static void VerifyMorphSurvivesRestartedGenerations(Node3D fixture, VoxelChunkGridManager grid, RingTerrainSampler sampler, int width)
+    {
+        var stagedLod = new RingTerrainGlobalLod { Name = "RestartedMorphGenerationLod" };
+        var stagedField = new RingSurfaceHeightField(sampler.TerrainDefinitionHash, sampler.AroundRingVoxelLength,
+            width, -8000, 8000, sampler.GetPresentationSurfaceHeight, useTriangleInterpolation: true);
+        try
+        {
+            grid.AttachSurfaceHeightField(stagedField);
+            _ = grid.CaptureLodSurfaceEditSnapshot();
+            fixture.AddChild(stagedLod);
+            stagedLod.ConfigureGlobalPreparationFixture(grid, segmentCount: 4);
+            stagedLod.InstallGlobalPreparationPyramidFixture(new RingTerrainMinMaxPyramid(sampler, width, 1_000_000), grid.LodSurfaceEditVersion);
+            stagedLod.BuildGlobalRingFixture();
+            for (int attempt = 0; stagedLod.ActiveSegmentCount < 1; attempt++)
+            {
+                Require(attempt < 64, "restarted-generation fixture never published its first initial segment");
+                stagedLod.ServiceInitialGlobalBuildFixture();
+                stagedLod.WaitForGlobalPreparationWorkerFixture();
+            }
+            Require(stagedLod.ActiveSegmentCount == 1 && stagedLod.PendingInitialSegmentCount == 3,
+                "restarted-generation fixture published more than one initial segment before the edit");
+
+            // Edit inside the one published segment while three initial segments remain queued. The brush sits
+            // mid-segment so only segment 0 and its two neighbours are dirty; segment 2 is never rebuilt.
+            long segmentZeroMiddle = sampler.AroundRingVoxelLength / 8;
+            Require(stagedField.ApplyBrush(segmentZeroMiddle, 0, 1, .25f), "mid-initial-build edit was rejected");
+            stagedLod.RefreshGlobalPreparationEditsFixture();
+            stagedLod.WaitForGlobalPreparationWorkerFixture();
+            stagedLod.RefreshGlobalPreparationEditsFixture();
+            Require(stagedLod.PendingSegmentRebuildCount == 1 && stagedLod.IsDirtyGlobalSegmentQueuedFixture(0),
+                "mid-initial-build edit did not queue only its published segment");
+            stagedLod.WaitForAllGlobalPreparationWorkersFixture();
+            Require(!stagedLod.TryCapturePublishedGlobalMorphFixture(out _),
+                "global morph published before the mid-initial-build dirty segment rebuilt");
+            DrainDirtyGlobalSegments(stagedLod);
+            CaptureMorphSnapshot(stagedLod);
+            VerifyPublishedGlobalMorphSnapshot(stagedLod, grid, sampler);
+
+            // First edit dirties segments around 0; publish one replacement, then edit again before the rest finish.
+            Require(stagedField.ApplyBrush(segmentZeroMiddle, 0, 1, .25f), "first steady-state edit was rejected");
+            stagedLod.RefreshGlobalPreparationEditsFixture();
+            Require(stagedLod.PendingSegmentRebuildCount >= 2 && !stagedLod.IsDirtyGlobalSegmentQueuedFixture(2),
+                "first steady-state edit queued an unexpected dirty set");
+            int rebuildAttempts = 0;
+            do
+            {
+                Require(rebuildAttempts++ < 64, "first steady-state edit never published a replacement segment");
+                stagedLod.ServiceDirtyGlobalSegmentsFixture();
+                stagedLod.WaitForGlobalPreparationWorkerFixture();
+            }
+            while (stagedLod.LastSegmentRebuildCount == 0);
+            Require(stagedLod.PendingSegmentRebuildCount >= 1, "first steady-state edit finished before the second edit");
+            Require(stagedField.ApplyBrush(segmentZeroMiddle, 0, 1, .25f), "second steady-state edit was rejected");
+            stagedLod.RefreshGlobalPreparationEditsFixture();
+            stagedLod.WaitForGlobalPreparationWorkerFixture();
+            stagedLod.RefreshGlobalPreparationEditsFixture();
+            Require(!stagedLod.IsDirtyGlobalSegmentQueuedFixture(2), "second steady-state edit dirtied the untouched segment");
+            DrainDirtyGlobalSegments(stagedLod);
+            CaptureMorphSnapshot(stagedLod);
+            VerifyPublishedGlobalMorphSnapshot(stagedLod, grid, sampler);
+        }
+        finally
+        {
+            stagedLod.InvalidateGlobalPreparationFixture();
+            grid.DetachSurfaceHeightField(stagedField);
+            stagedLod.Free();
+        }
+    }
+
+    private static void DrainDirtyGlobalSegments(RingTerrainGlobalLod lod)
+    {
+        for (int attempt = 0; lod.PendingSegmentRebuildCount > 0; attempt++)
+        {
+            Require(attempt < 256, "dirty global segments did not drain after 256 service attempts");
+            lod.ServiceDirtyGlobalSegmentsFixture();
+            lod.WaitForGlobalPreparationWorkerFixture();
         }
     }
 

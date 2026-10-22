@@ -32,12 +32,19 @@ uniform float structural_top_rail_half_width_meters = 350.0;
 uniform vec3 structural_cue_color : source_color = vec3(0.08, 0.72, 0.82);
 uniform float structural_cue_day_energy : hint_range(0.0, 2.0) = 0.16;
 uniform float structural_cue_night_energy : hint_range(0.0, 4.0) = 0.85;
+// Proxy rim walls carry UV2 = (terrain floor at the wall foot, vertex vertical) in canonical metres; while enabled, the inner (front-facing) side below that floor is discarded so a coarse shell never paints over terrain the far layer draws in front of it.
+uniform bool inner_face_floor_enabled = false;
+// Above the rim walls the main environment ambient fades to space while the far layer keeps its surface snapshot, so a sun-away
+// wall face would change brightness where the tiers meet. There every hull tier uses this surface ambient (linear colour x energy).
+uniform vec3 structural_ambient_day = vec3(0.1855, 0.203, 0.2275);
+uniform vec3 structural_ambient_night = vec3(0.102, 0.12, 0.156);
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 varying vec3 world_position;
 // Inward radial at this vertex (the local zenith); the light() helper uses it while the eclipse hub sun is up.
 varying vec3 surface_up_world;
 varying float ring_day_factor;
+varying vec2 wall_floor_vertical;
 
 float periodic_structure_line(float coordinate, float spacing, float half_width) {
 	float safe_spacing = max(spacing, 1.0);
@@ -75,6 +82,7 @@ float sample_structural_scale_cues(vec3 sample_world_position, float wall_face) 
 void vertex() {
 	POSITION = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	wall_floor_vertical = UV2;
 	if (near_space_enabled) {
 		vec3 view_position = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float real_distance = length(view_position);
@@ -105,6 +113,7 @@ void vertex() {
 }
 
 void fragment() {
+	if (inner_face_floor_enabled && FRONT_FACING && wall_floor_vertical.y < wall_floor_vertical.x) discard;
 	float distance_to_camera = distance(world_position, camera_world_position);
 	float near_handoff = (fade_start_meters + max(fade_end_meters, fade_start_meters + 0.01)) * 0.5;
 	if (near_fade_enabled && distance_to_camera < near_handoff) discard;
@@ -131,6 +140,15 @@ void fragment() {
 	ROUGHNESS = 0.92;
 	SPECULAR = 0.25;
 	METALLIC = 0.18;
+	// Camera altitude in this material's units (scaled in the far layer); below the wall top the environment ambient stays authoritative
+	// (cave ambient underground, weather on the surface).
+	vec3 camera_relative = camera_world_position - ring_center;
+	float camera_altitude = ring_radius_meters - length(camera_relative.xz);
+	float ambient_override = smoothstep(structural_wall_top_meters, structural_wall_top_meters * 1.25, camera_altitude);
+	AO = 1.0 - ambient_override;
+	AO_LIGHT_AFFECT = 0.0;
+	EMISSION += ALBEDO * (1.0 - METALLIC) * ambient_override
+		* mix(structural_ambient_night * ringworld_night_light_scale, structural_ambient_day, ring_day_factor);
 }
 
 void light() {

@@ -119,7 +119,11 @@ func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_ready_msec = Time.get_ticks_msec()
 	_last_slow_frame_msec = _ready_msec
-	_begin_live_world()
+	# Deferred: when StartMenu is the main scene, root is still adding its children during _ready, so the warm-world and loader
+	# autoload-style nodes cannot be added to root yet ("Parent node is busy setting up children").
+	if _live_slot > 0:
+		_set_menu_locked(true)
+	_begin_live_world.call_deferred()
 
 
 func _process(delta: float) -> void:

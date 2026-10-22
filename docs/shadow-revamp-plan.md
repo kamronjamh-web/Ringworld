@@ -235,3 +235,29 @@ Estimates for the A1000 at 1920x1080, Medium, ground pose by day unless stated. 
 Against HEAD's committed cloud defaults (1024 px / 10 Hz) add another ~2-2.7 ms of saving. Gate: a step that does not show its saving in per-pass timestamps on the A1000 (35 W, P0) is not worth its complexity and is reported back before continuing.
 
 **Update (2026-10-20, 4070 desktop, S7b per-instance vegetation shadows, uncommitted, default OFF):** The vegetation compute writes a second RGBA16F atlas per channel (`ringworld_vegetation_shadow_grass` / `_trees`, state `ringworld_vegetation_shadow_state` = grass live, trees live, unified compose) next to the haze atlas: same slot index and tag, two texels per slot, only allocated while the toggle is on (placeholders in set 1 otherwise). texel0 = (R_eff, penumbra_eff, heightfield weight, tag) with the receiver bias folded into R_eff (vertex v = clamp(0.5 + (h_rel - R_eff) / penumbra)), texel1 = (near cloud raw, far cloud raw x far edge, light id = state.w, 1 + unknown). Deviation from the spec layout: `unknown` rides in texel1.w (1 + unknown) because ring_terrain_direct_visibility needs it for the macro scale. Producer side is `materials/vegetation_gpu/ring_vegetation_shadow_terms.glslinc` (GLSL twin of ring_height_shadow_level / _layer / _sample and the cloud coordinates), compute spec constant VEGETATION_SHADOW (id 1), set 1 bindings 2..7 (frame UBO from `RingVegetationShadow.CreateFrame`, atlas image, L0 / L1 arrays, near / far cloud textures), push block 64 bytes, pipeline variants (haze / shadow / both) and one refresh pass (phase 4) for heightfield generation / light change, every frame during a crossfade, camera move > 8 m and `VegetationShadowRefreshHz` (10) for clouds. Readers: `ring_vegetation_shadow.gdshaderinc` (instance fetch + drop-ins) over `ring_vegetation_shadow_read.gdshaderinc` (pure math, canvas-probe testable) in ring_tree, imported_tree, imported_tree_impostor, ring_grass_cards (ground term as a flat varying into the new `ring_terrain_direct_visibility` overload) and ring_standing_grass (blades now also carry `vegetation_haze_slot`); any unusable slot (stale tag, light id != state.w for the height terms, channel not live) falls back to the unchanged per-vertex code. Menu: Shadows > "Vegetation shadows" (`VegetationShadowInstanceEnabled` off, `VegetationShadowRefreshHz` 10, `VegetationUnifiedShadowCompose` off). Tests: `vegetation_shadow_gpu_test` (sun, crossfade and planet layers, trees and grass: height / cloud vs per-vertex mean <= 0.02 and max <= 0.1 on a smooth synthetic field, fallbacks, GLSL twin parity err < 5e-4 on 160 points), toggle OFF identity (tree lighting PNGs byte identical, haze test unchanged, compose identity 44 cases 0 diff). Known approximations: terms are sampled at the instance root (a tree vertex 1.5 m away on a steep shadow edge differs), a crossfade mixes R instead of visibilities, blades use the card slope bias where the per-vertex path used slope 0.
+
+## Near-map default: assessment and decisions (2026-10-22)
+Assessment, 4070, saved pose, maximized:
+- **Performance:** HeightShadowEnabled saves 1.9–3.9 ms of GPU time. Shadow draws fall from 2,100–3,900 to about 355–443.
+- **Visual parity:** matches the current path at noon, the saved time and night. Low sun is the problem.
+
+Blockers before flipping the default:
+- **B1, low sun.** `ring_height_shadow_term()` and `ring_height_shadow_vegetation_geometry()`
+  (`materials/ring_height_shadow.gdshaderinc`) scale strength by the ring day factor. At 3° a fully
+  shadowed texel keeps 56% of its direct light.
+  - **Decision (user):** remove the day factor and accept darker sunsets. No grazing-angle softening.
+  - At 3° the heightfield is darker than PSSM, about 90% of the ground in shadow, which matches a CPU
+    ground-truth march on the same height source.
+- **B2, POIs.**
+  - **Receiving:** `ring_poi_architecture.gdshaderinc` and `ring_emitter_standin.gdshader` must sample the
+    heightfield (`terms.height`).
+  - **Casting decision (user):** register emitter POIs with `RingLargePoiShadowExtents`, as Weather Lung does,
+    so spires keep long shadows. Cost: about 1.2–1.5 ms near emitters on the A1000.
+- **B3, forest at night with the planet low.** The planet near map costs +1.7 ms in the forest fixture.
+  Isolation is still pending; the scratch labels are kept as a patch in the session scratchpad.
+- **B4.** Authoritative A1000 runs.
+
+Non-blocking:
+- **N1.** Decouple the `ring_ocean_global` planet macro from HeightShadowEnabled.
+- **N2.** Migrate the explicit `"HeightShadowEnabled": false` in saved user settings.
+- **N3.** Move the HS and near-map checkboxes to Debug once the near map is the default.

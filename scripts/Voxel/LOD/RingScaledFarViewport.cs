@@ -120,7 +120,7 @@ public partial class RingScaledFarViewport : Node
 	[Export(PropertyHint.Range, "4,128,1")] public int AcrossSegments { get; set; } = 64;
 	[Export(PropertyHint.Range, "100,1000000,100")] public int RingWidthMeters { get; set; } = 318000;
 	[Export(PropertyHint.Range, "1000,50000,100")] public float StructuralDepthMeters { get; set; } = 22300.0f;
-	[Export(PropertyHint.Range, "0,50000,100")] public float StructuralWallTopMeters { get; set; } = 10000.0f;
+	[Export(PropertyHint.Range, "0,50000,100")] public float StructuralWallTopMeters { get; set; } = CertifiedRingScale.StructuralWallTopMeters;
 	[Export] public bool BuildStructuralUnderside { get; set; } = true;
 	[Export] public bool BuildTerrainRoofUnderside { get; set; } = true;
 	[Export] public bool BuildLowerHullCavityFloor { get; set; } = true;
@@ -181,7 +181,7 @@ public partial class RingScaledFarViewport : Node
 	[Export(PropertyHint.Range, "0,100000,250")] public float FarWaterCutoutMeters { get; set; } = 1000.0f;
 	[Export] public Color LowTerrainColor { get; set; } = new(0.12f, 0.19f, 0.12f, 1.0f);
 	[Export] public Color HighTerrainColor { get; set; } = new(0.29f, 0.27f, 0.20f, 1.0f);
-	[Export] public Color HullColor { get; set; } = new(0.20f, 0.24f, 0.29f, 1.0f);
+	[Export] public Color HullColor { get; set; } = new(0.25f, 0.29f, 0.33f, 1.0f);
 	[ExportGroup("Night readability")]
 	[Export] public Color NightTint { get; set; } = new(0.30f, 0.45f, 0.70f, 1.0f);
 	[Export(PropertyHint.Range, "0,1,0.01")]
@@ -337,6 +337,7 @@ public partial class RingScaledFarViewport : Node
 	private float _farAtmosphereShroudVisibility = 1.0f;
 	private Vector3 _lastSharedMaterialCameraPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
 	private Vector3 _lastSharedMaterialSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
+	private readonly RingSunDirectionThrottle _materialSunThrottle = new();
 	private float _lastSharedMaterialHalfWidth = float.NaN;
 	private float _lastSharedMaterialShroudVisibility = float.NaN;
 	private bool _sharedMaterialRingCenterSet;
@@ -1783,6 +1784,8 @@ public partial class RingScaledFarViewport : Node
 		double lowerHullTop = _grid?.GetLowerHullTopGlobalY() ?? bottom;
 		using var surface = new SurfaceTool();
 		surface.Begin(Mesh.PrimitiveType.Triangles);
+		// Shared wall/plane corner positions must not average the wall normal with the cavity planes.
+		surface.SetSmoothGroup(uint.MaxValue);
 		for (int x = 0; x < aroundCount; x++)
 		{
 			double a0 = x * aroundStep, a1 = (x + 1) * aroundStep;
@@ -2388,9 +2391,10 @@ public partial class RingScaledFarViewport : Node
 
 		UpdateFarEclipseAmbient();
 		UpdateFarHubSunColor();
-		Vector3 sunDirection = _sourceSun is not null
+		// The far sun lights below follow the live key light; the derived material, atmosphere and cloud uniforms use a throttled copy.
+		Vector3 sunDirection = _materialSunThrottle.Resolve(_sourceSun is not null
 			? (worldToCanonical * _sourceSun.GlobalTransform.Basis.Z).Normalized()
-			: Vector3.Right;
+			: Vector3.Right);
 		if (_farSun != null)
 		{
 			Basis farSunBasis = _sourceSun is not null

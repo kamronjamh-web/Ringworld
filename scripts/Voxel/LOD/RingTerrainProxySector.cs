@@ -252,6 +252,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private ShaderMaterial? _material;
     private ShaderMaterial? _oceanMaterial;
     private ShaderMaterial? _structuralWallMaterial;
+    private ShaderMaterial? _structuralEdgeWallMaterial;
+    private ulong _lastWallHeightRangeRevision = ulong.MaxValue;
     private ShaderMaterial? _opaqueShadowMaterial;
     private MeshInstance3D? _structuralWallMesh;
     private Task<StructuralWallData>? _pendingStructuralWall;
@@ -364,6 +366,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private Vector3 _lastCameraWorldPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector3 _lastLightingRingCenter = new(float.PositiveInfinity, 0.0f, 0.0f);
     private Vector3 _lastLightingSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
+    private readonly RingSunDirectionThrottle _lightingSunThrottle = new();
     private LightingUniformConfiguration _lastLightingConfiguration;
     private bool _hasLightingUniformConfiguration;
     private FftOceanCullConfiguration _lastFftOceanCullConfiguration;
@@ -474,13 +477,16 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double TerrainBottomGlobalY,
         double LowerHullTopGlobalY,
         Color Color,
-        ulong Version);
+        ulong Version,
+        float[]? EdgeFloorMeters = null);
     private sealed record StructuralWallData(
         Vector3[] Vertices,
         Vector3[] Normals,
         Color[] Colors,
         Vector2[] Uv2,
         int[] Indices,
+        int WallVertexCount,
+        int WallIndexCount,
         ulong Version);
     private readonly record struct StructuralWallSectorRange(long StartSector, long EndSectorExclusive)
     {
@@ -677,6 +683,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 UpdateCameraUniform();
             ServiceCoverageSafetyInvalidation();
             UpdateLightingUniforms();
+            UpdateStructuralHullShadowGate();
+            UpdateStructuralCavityPlaneGate();
+            UpdateStructuralInnerFaceFloorGate();
             int uploaded = ApplyCompletedBatch(Mathf.Max(0, uploadBudget), uploadBudgetMilliseconds);
             ServicePartialCoverageMeshCulling();
             if (!StreamingActive || _fastTravelSuspended) return uploaded;
@@ -1883,6 +1892,39 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (ResolveStructuralShadowCasting(true, false) != ShadowCastingSetting.On
             || ResolveStructuralShadowCasting(false, false) != ShadowCastingSetting.Off)
             throw new InvalidOperationException("LOD roof coverage smoke: persistent cavity closure shadow policy regressed.");
+        if (ResolveStructuralCavityPlanesRelevance(0.0, -8192.0, true)
+            || !ResolveStructuralCavityPlanesRelevance(-9000.0, -8192.0, false)
+            || !ResolveStructuralCavityPlanesRelevance(-6500.0, -8192.0, false)
+            || !ResolveStructuralCavityPlanesRelevance(-5500.0, -8192.0, true)
+            || ResolveStructuralCavityPlanesRelevance(-5500.0, -8192.0, false))
+            throw new InvalidOperationException("LOD roof coverage smoke: coarse-shell cavity planes gate regressed.");
+        if (ResolveStructuralInnerFaceFloorEnabled(0.0, 10400.0, false)
+            || !ResolveStructuralInnerFaceFloorEnabled(12000.0, 10400.0, false)
+            || !ResolveStructuralInnerFaceFloorEnabled(10000.0, 10400.0, true)
+            || ResolveStructuralInnerFaceFloorEnabled(9000.0, 10400.0, true)
+            || ResolveStructuralInnerFaceFloorEnabled(10200.0, 10400.0, false))
+            throw new InvalidOperationException("LOD roof coverage smoke: rim inner-face floor gate regressed.");
+        var floorFixtureRequest = new StructuralWallRequest(
+            new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero,
+                10000.0, 0.0, 0.0, 100000.0, -22304.0, 4096.0, null),
+            Transform3D.Identity, 0.0, 64.0, 2, 1.0, 1, 128,
+            true, false, false, false, -8192.0, 0.0, Colors.White, 1,
+            new float[] { 10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f });
+        StructuralWallData floorWall = BuildStructuralWallData(floorFixtureRequest);
+        StructuralWallData noFloorWall = BuildStructuralWallData(floorFixtureRequest with { EdgeFloorMeters = null });
+        bool floorContract = floorWall.WallVertexCount == 16 && floorWall.Vertices.Length == 16
+            && floorWall.WallIndexCount == 24 && floorWall.Indices.Length == 24
+            && floorWall.Uv2[0] == new Vector2(10.0f, floorWall.Uv2[0].Y)
+            && floorWall.Uv2[1] == new Vector2(20.0f, floorWall.Uv2[0].Y)
+            && floorWall.Uv2[2] == new Vector2(20.0f, floorWall.Uv2[2].Y)
+            && floorWall.Uv2[3] == new Vector2(10.0f, floorWall.Uv2[2].Y)
+            && floorWall.Uv2[0].Y < floorWall.Uv2[2].Y
+            && floorWall.Uv2[8].X == 40.0f
+            && noFloorWall.Uv2.Length == 16;
+        for (int i = 0; floorContract && i < noFloorWall.Uv2.Length; i++)
+            floorContract = noFloorWall.Uv2[i].X <= -1.0e6f;
+        if (!floorContract)
+            throw new InvalidOperationException("LOD roof coverage smoke: rim wall floor UV2 contract regressed.");
         RunSmoothProxyNormalSeamContract();
         _hierarchyHandoffSmokePassed = true;
         GD.Print("LOD_HIERARCHY_HANDOFF_SMOKE_PASS: coverage atlas updates retain pending neighbours without mesh rebuilds.");
@@ -4480,6 +4522,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (!force
             && startSector == _lastWallAroundStart
             && endSector == _lastWallAroundEnd
+            && ResolveWallFloorHeightRevision() == _lastWallHeightRangeRevision
             && _structuralWallMesh?.Mesh != null)
         {
             _structuralWallMesh.Visible = StreamingActive && !_fastTravelHidden;
@@ -4488,6 +4531,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
         _lastWallAroundStart = startSector;
         _lastWallAroundEnd = endSector;
+        _lastWallHeightRangeRevision = ResolveWallFloorHeightRevision();
+        bool cavityPlanes = _structuralShellIsInnermost || _structuralCavityPlanesRelevant;
         RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
         Transform3D ownerInverse = GlobalTransform.AffineInverse();
         double aroundStart = (double)startSector * sectorSize;
@@ -4500,6 +4545,39 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double aroundStep = (aroundEnd - aroundStart) / aroundCells;
         double verticalStep = (geometry.StructuralWallTopGlobalY - geometry.StructuralBottomGlobalY)
             / verticalCells;
+        // The floor comes from the global min-max pyramid: those are the coarse heights the far/global layers draw, and the max over the
+        // 512 m edge strip keeps the floor at or above the terrain, so any gap is filled by the far shell instead of the wall painting over terrain.
+        float[]? edgeFloorMeters = null;
+        if (BuildStructuralEdgeWalls && _structuralInnerFaceFloorEnabled && _terrainHeightSource != null)
+        {
+            double seaLevel = _grid.TerrainSampler?.SeaLevelY ?? 0.0;
+            var cellMax0 = new float[aroundCells];
+            var cellMaxW = new float[aroundCells];
+            bool floorReady = true;
+            for (int x = 0; x < aroundCells && floorReady; x++)
+            {
+                double a0 = aroundStart + x * aroundStep;
+                double a1 = a0 + aroundStep;
+                if (_terrainHeightSource.TryGetTerrainHeightRange(a0, a1, 0.0, 1.0, out var range0)
+                    && _terrainHeightSource.TryGetTerrainHeightRange(a0, a1, RingWidthMeters - 1.0, RingWidthMeters, out var rangeW))
+                {
+                    cellMax0[x] = (float)range0.MaxHeight;
+                    cellMaxW[x] = (float)rangeW.MaxHeight;
+                }
+                else floorReady = false;
+            }
+            if (floorReady)
+            {
+                edgeFloorMeters = new float[2 * (aroundCells + 1)];
+                for (int i = 0; i <= aroundCells; i++)
+                {
+                    int lo = Math.Max(i - 1, 0);
+                    int hi = Math.Min(i, aroundCells - 1);
+                    edgeFloorMeters[i] = Math.Max(Math.Max(cellMax0[lo], cellMax0[hi]), (float)seaLevel);
+                    edgeFloorMeters[aroundCells + 1 + i] = Math.Max(Math.Max(cellMaxW[lo], cellMaxW[hi]), (float)seaLevel);
+                }
+            }
+        }
         var request = new StructuralWallRequest(
             geometry,
             ownerInverse,
@@ -4510,13 +4588,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
             verticalCells,
             RingWidthMeters,
             BuildStructuralEdgeWalls,
-            BuildStructuralUnderside,
-            BuildTerrainRoofUnderside,
-            BuildLowerHullCavityFloor,
+            BuildStructuralUnderside && cavityPlanes,
+            BuildTerrainRoofUnderside && cavityPlanes,
+            BuildLowerHullCavityFloor && cavityPlanes,
             _grid.TerrainBottomGlobalY,
             _grid.GetLowerHullTopGlobalY(),
             HullColor,
-            ++_structuralWallRequestVersion);
+            ++_structuralWallRequestVersion,
+            edgeFloorMeters);
         if (_pendingStructuralWall != null)
         {
             _queuedStructuralWall = request;
@@ -4567,6 +4646,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 indices,
                 request,
                 0.0,
+                0,
                 reverse: true);
             AppendStructuralWallData(
                 vertices,
@@ -4576,8 +4656,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 indices,
                 request,
                 request.RingWidth,
+                request.AroundCells + 1,
                 reverse: false);
         }
+        int wallVertexCount = vertices.Count;
+        int wallIndexCount = indices.Count;
         if (request.BuildUnderside)
         {
             AppendStructuralUndersideData(
@@ -4603,6 +4686,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             colors.ToArray(),
             uv2.ToArray(),
             indices.ToArray(),
+            wallVertexCount,
+            wallIndexCount,
             request.Version);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - allocationsBefore;
         if (allocated > 0) Interlocked.Add(ref _structuralWorkerAllocatedBytesSinceStartup, allocated);
@@ -4617,9 +4702,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         List<int> indices,
         StructuralWallRequest request,
         double across,
+        int edgeOffset,
         bool reverse)
     {
         double bottom = request.Geometry.StructuralBottomGlobalY;
+        float[]? edgeFloor = request.EdgeFloorMeters != null
+            && request.EdgeFloorMeters.Length == 2 * (request.AroundCells + 1)
+                ? request.EdgeFloorMeters
+                : null;
         for (int y = 0; y < request.VerticalCells; y++)
         for (int x = 0; x < request.AroundCells; x++)
         {
@@ -4644,7 +4734,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             {
                 normals.Add(Vector3.Zero);
                 colors.Add(request.Color);
-                uv2.Add(Vector2.Zero);
+                // Vertices 1 and 2 sit at a1; 0 and 3 at a0. 0 and 1 sit at y0; 2 and 3 at y1.
+                float floor = edgeFloor != null
+                    ? edgeFloor[edgeOffset + (vertex is 1 or 2 ? x + 1 : x)]
+                    : -1.0e7f;
+                uv2.Add(new Vector2(floor, (float)(vertex < 2 ? y0 : y1)));
             }
             if (reverse)
             {
@@ -4789,15 +4883,28 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void InstallStructuralWallData(StructuralWallData data)
     {
-        var arrays = new Godot.Collections.Array();
-        arrays.Resize((int)Mesh.ArrayType.Max);
-        arrays[(int)Mesh.ArrayType.Vertex] = data.Vertices;
-        arrays[(int)Mesh.ArrayType.Normal] = data.Normals;
-        arrays[(int)Mesh.ArrayType.Color] = data.Colors;
-        arrays[(int)Mesh.ArrayType.TexUV2] = data.Uv2;
-        arrays[(int)Mesh.ArrayType.Index] = data.Indices;
         var mesh = new ArrayMesh();
-        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        // Surface A: rim walls (hull shader, double-sided). Surface B: cavity planes (terrain proxy material).
+        int wallVertexCount = data.WallVertexCount;
+        int wallIndexCount = data.WallIndexCount;
+        Material? wallSurfaceMaterial = _structuralEdgeWallMaterial ?? _structuralWallMaterial ?? _material;
+        Material? planeSurfaceMaterial = _structuralWallMaterial ?? _material;
+        if (wallVertexCount > 0 && wallIndexCount > 0)
+        {
+            mesh.AddSurfaceFromArrays(
+                Mesh.PrimitiveType.Triangles,
+                BuildStructuralSurfaceArrays(data, 0, wallVertexCount, 0, wallIndexCount));
+            mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, wallSurfaceMaterial);
+        }
+        if (data.Vertices.Length > wallVertexCount && data.Indices.Length > wallIndexCount)
+        {
+            mesh.AddSurfaceFromArrays(
+                Mesh.PrimitiveType.Triangles,
+                BuildStructuralSurfaceArrays(
+                    data, wallVertexCount, data.Vertices.Length - wallVertexCount,
+                    wallIndexCount, data.Indices.Length - wallIndexCount));
+            mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, planeSurfaceMaterial);
+        }
         _structuralWallMesh ??= new MeshInstance3D
         {
             Name = "StructuralHullLod",
@@ -4810,17 +4917,40 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // temporary anchor-delta translation applied while the old mesh was
         // kept visible must not be applied a second time.
         _structuralWallMesh.Position = Vector3.Zero;
-        _structuralWallMesh.MaterialOverride =
-            _structuralWallMaterial ?? _material;
+        _structuralWallMesh.MaterialOverride = null;
         _structuralWallMesh.CastShadow = ResolveStructuralShadowCasting(
             BuildTerrainRoofUnderside || BuildLowerHullCavityFloor,
-            CastTerrainShadows);
+            CastTerrainShadows, _structuralHullShadowRelevant);
         _structuralWallMesh.Visible = StreamingActive && !_fastTravelHidden;
         if (_loggedStructuralWallReady) return;
         _loggedStructuralWallReady = true;
         GD.Print(
             $"{LodLabel} structural hull LOD ready: "
             + $"vertices={data.Vertices.Length}, worker-generated.");
+    }
+
+    private static Godot.Collections.Array BuildStructuralSurfaceArrays(
+        StructuralWallData data, int vertexStart, int vertexCount, int indexStart, int indexCount)
+    {
+        var vertices = new Vector3[vertexCount];
+        var normals = new Vector3[vertexCount];
+        var colors = new Color[vertexCount];
+        var uv2 = new Vector2[vertexCount];
+        var indices = new int[indexCount];
+        Array.Copy(data.Vertices, vertexStart, vertices, 0, vertexCount);
+        Array.Copy(data.Normals, vertexStart, normals, 0, vertexCount);
+        Array.Copy(data.Colors, vertexStart, colors, 0, vertexCount);
+        Array.Copy(data.Uv2, vertexStart, uv2, 0, vertexCount);
+        for (int i = 0; i < indexCount; i++)
+            indices[i] = data.Indices[indexStart + i] - vertexStart;
+        var arrays = new Godot.Collections.Array();
+        arrays.Resize((int)Mesh.ArrayType.Max);
+        arrays[(int)Mesh.ArrayType.Vertex] = vertices;
+        arrays[(int)Mesh.ArrayType.Normal] = normals;
+        arrays[(int)Mesh.ArrayType.Color] = colors;
+        arrays[(int)Mesh.ArrayType.TexUV2] = uv2;
+        arrays[(int)Mesh.ArrayType.Index] = indices;
+        return arrays;
     }
 
     private static void AddTriangle(List<int> indices, List<Vector3> vertices, List<Vector3> normals, int a, int b, int c)
@@ -4830,10 +4960,79 @@ public partial class RingTerrainProxySector : MeshInstance3D
         normals[a] += normal; normals[b] += normal; normals[c] += normal;
     }
 
-    private static ShadowCastingSetting ResolveStructuralShadowCasting(bool hasPersistentRoof, bool castTerrainShadows)
-        => hasPersistentRoof || castTerrainShadows
+    private static ShadowCastingSetting ResolveStructuralShadowCasting(bool hasPersistentRoof, bool castTerrainShadows, bool observerNeedsHull = true)
+        => (hasPersistentRoof || castTerrainShadows) && observerNeedsHull
             ? ShadowCastingSetting.On
             : ShadowCastingSetting.Off;
+
+    // The hull (edge walls, terrain-bottom roof, lower-hull floor, underside) is one mesh whose bounds span the whole strip, so every sun cascade
+    // draws it. From the top surface it cannot shade anything: the planes lie 8 km or more below the terrain, and the edge walls only reach the
+    // sun shadow range (at most 20 km) within a few kilometres of an edge. Keep casting for observers in or near the cavity and near an edge.
+    private const double HullShadowEdgeReachMeters = 25000.0;
+    private const double HullShadowCavityReachMeters = 2000.0;
+    private const double HullShadowHysteresisMeters = 1000.0;
+    private bool _structuralHullShadowRelevant = true;
+
+    internal static bool ResolveStructuralHullShadowRelevance(double observerVerticalMeters, double observerEdgeDistanceMeters, double terrainBottomMeters, bool currentlyRelevant)
+    {
+        double slack = currentlyRelevant ? HullShadowHysteresisMeters : 0.0;
+        return observerVerticalMeters < terrainBottomMeters + HullShadowCavityReachMeters + slack
+            || observerEdgeDistanceMeters < HullShadowEdgeReachMeters + slack;
+    }
+
+    private bool _structuralShellIsInnermost = true;
+    private bool _structuralCavityPlanesRelevant = true;
+
+    // From above the terrain bottom the horizontal hull planes are only visible through terrain holes; emitter bores are covered by the
+    // innermost shell, and the far viewport keeps its own cavity closure.
+    internal static bool ResolveStructuralCavityPlanesRelevance(double observerVerticalMeters, double terrainBottomMeters, bool currentlyRelevant)
+        => observerVerticalMeters < terrainBottomMeters + HullShadowCavityReachMeters + (currentlyRelevant ? HullShadowHysteresisMeters : 0.0);
+
+    private void UpdateStructuralCavityPlaneGate()
+    {
+        if (_grid == null || _velocityProvider == null) return;
+        bool relevant = ResolveStructuralCavityPlanesRelevance(
+            _velocityProvider.CanonicalPosition.VerticalMeters, _grid.TerrainBottomGlobalY, _structuralCavityPlanesRelevant);
+        if (relevant == _structuralCavityPlanesRelevant) return;
+        _structuralCavityPlanesRelevant = relevant;
+        _lastWallAroundStart = int.MinValue;
+        _lastWallAroundEnd = int.MinValue;
+    }
+
+    private const double StructuralInnerFaceFloorHysteresisMeters = 1000.0;
+    private bool _structuralInnerFaceFloorEnabled;
+
+    // Below the wall top, near-camera proxy terrain always covers the wall foot and player edits can lower it, so the floor is only for
+    // flight above the walls, where coarse shells meet far-layer terrain.
+    internal static bool ResolveStructuralInnerFaceFloorEnabled(double observerVerticalMeters, double wallTopMeters, bool currentlyEnabled)
+        => observerVerticalMeters > wallTopMeters - (currentlyEnabled ? StructuralInnerFaceFloorHysteresisMeters : 0.0);
+
+    // Floors are only built while the gate is on, so edits made below the wall top never rebuild every level's walls; turning the
+    // gate on changes this value and rebuilds the walls once with fresh floors.
+    private ulong ResolveWallFloorHeightRevision()
+        => _structuralInnerFaceFloorEnabled ? _terrainHeightSource?.HeightRangeRevision ?? 0UL : 0UL;
+
+    private void UpdateStructuralInnerFaceFloorGate()
+    {
+        if (_grid == null || _velocityProvider == null) return;
+        bool enabled = ResolveStructuralInnerFaceFloorEnabled(
+            _velocityProvider.CanonicalPosition.VerticalMeters, _grid.GetStructuralWallTopGlobalY(), _structuralInnerFaceFloorEnabled);
+        if (enabled == _structuralInnerFaceFloorEnabled) return;
+        _structuralInnerFaceFloorEnabled = enabled;
+        _structuralEdgeWallMaterial?.SetShaderParameter("inner_face_floor_enabled", enabled);
+    }
+
+    private void UpdateStructuralHullShadowGate()
+    {
+        if (_structuralWallMesh == null || _grid == null || _velocityProvider == null) return;
+        RingCanonicalPosition observer = _velocityProvider.CanonicalPosition;
+        double edgeDistance = Math.Min(observer.AcrossMeters, RingWidthMeters - observer.AcrossMeters);
+        bool relevant = ResolveStructuralHullShadowRelevance(observer.VerticalMeters, edgeDistance, _grid.TerrainBottomGlobalY, _structuralHullShadowRelevant);
+        if (relevant == _structuralHullShadowRelevant) return;
+        _structuralHullShadowRelevant = relevant;
+        _structuralWallMesh.CastShadow = ResolveStructuralShadowCasting(
+            BuildTerrainRoofUnderside || BuildLowerHullCavityFloor, CastTerrainShadows, relevant);
+    }
 
     private static void AccumulateNormal(Vector3[] vertices, Vector3[] normals, int a, int b, int c)
     {
@@ -5586,13 +5785,35 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _structuralWallMaterial = (ShaderMaterial)_material.Duplicate();
         _structuralWallMaterial.SetShaderParameter("surface_apertures_enabled", false);
         // Structural closures still use their authored HullColor, not the
-        // sector COLOR weight payload.
+        // sector COLOR weight payload, and skip the terrain-only albedo retune scale.
         _structuralWallMaterial.SetShaderParameter("biome_texture_weights_enabled", false);
-        _structuralWallMaterial.SetShaderParameter("atmosphere_opacity_multiplier", 1.35f);
+        _structuralWallMaterial.SetShaderParameter("structural_surface", true);
+        if (_grid != null)
+            RingAtmosphereModel.ConfigureMaterial(_structuralWallMaterial, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau, 1.0f, 1.35f);
+        else
+            _structuralWallMaterial.SetShaderParameter("atmosphere_opacity_multiplier", 1.35f);
         // Structural closure cannot inherit the terrain's centered exclusion:
         // the editable terrain bubble is not a full cavity renderer.
         _structuralWallMaterial.SetShaderParameter("near_fade_enabled", false);
         global::RingworldTechDemo.RingCloudShadowProjector.Register(_structuralWallMaterial);
+        // Rim walls use the same shader as the global hull and the far shell (double-sided, no analytic cloud-shadow field).
+        Shader? edgeWallShader = GD.Load<Shader>("res://materials/ring_hull_global.gdshader");
+        if (edgeWallShader != null)
+        {
+            _structuralEdgeWallMaterial = new ShaderMaterial { Shader = edgeWallShader };
+            _structuralEdgeWallMaterial.SetShaderParameter("ring_width_meters", RingWidthMeters);
+            _structuralEdgeWallMaterial.SetShaderParameter("night_tint", new Vector3(NightTint.R, NightTint.G, NightTint.B));
+            _structuralEdgeWallMaterial.SetShaderParameter("far_space_enabled", false);
+            _structuralEdgeWallMaterial.SetShaderParameter("inner_face_floor_enabled", _structuralInnerFaceFloorEnabled);
+            if (_grid != null)
+            {
+                _structuralEdgeWallMaterial.SetShaderParameter("structural_wall_top_meters", _grid.GetStructuralWallTopGlobalY());
+                RingAtmosphereModel.ConfigureMaterial(_structuralEdgeWallMaterial, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau, 1.0f, 1.35f);
+            }
+            if (_focus != null)
+                _structuralEdgeWallMaterial.SetShaderParameter("camera_world_position", _focus.GlobalPosition);
+            ApplyStructuralEdgeWallHandoff(_structuralShellIsInnermost);
+        }
         UpdateLightingUniforms();
     }
 
@@ -5644,10 +5865,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _material?.SetShaderParameter("camera_world_position", cameraWorldPosition);
             _oceanMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
             _structuralWallMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
+            _structuralEdgeWallMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
             _opaqueShadowMaterial?.SetShaderParameter("camera_world_position", cameraWorldPosition);
             global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Record(global::RingworldTechDemo.Diagnostics.RingMaterialWriteCounters.Site.ProxySectorCamera,
                 (_material != null ? 1 : 0) + (_oceanMaterial != null ? 1 : 0)
-                + (_structuralWallMaterial != null ? 1 : 0) + (_opaqueShadowMaterial != null ? 1 : 0));
+                + (_structuralWallMaterial != null ? 1 : 0) + (_structuralEdgeWallMaterial != null ? 1 : 0)
+                + (_opaqueShadowMaterial != null ? 1 : 0));
         }
         float fineHandoff = FinestOceanGeometryInstance == null ? 0.0f
             : (FinestOceanGeometryInstance.FadeOutStartMeters
@@ -6351,16 +6574,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
             SetRingCenter(_material, ringCenter);
             SetRingCenter(_oceanMaterial, ringCenter);
             SetRingCenter(_structuralWallMaterial, ringCenter);
+            SetRingCenter(_structuralEdgeWallMaterial, ringCenter);
             SetRingCenter(_opaqueShadowMaterial, ringCenter);
             _lastLightingRingCenter = ringCenter;
         }
 
-        Vector3 sunDirection = _sunLight.GlobalTransform.Basis.Z.Normalized();
+        Vector3 sunDirection = _lightingSunThrottle.Resolve(_sunLight.GlobalTransform.Basis.Z.Normalized());
         if (!_lastLightingSunDirection.IsEqualApprox(sunDirection))
         {
             SetSunDirection(_material, sunDirection);
             SetSunDirection(_oceanMaterial, sunDirection);
             SetSunDirection(_structuralWallMaterial, sunDirection);
+            SetSunDirection(_structuralEdgeWallMaterial, sunDirection);
             _lastLightingSunDirection = sunDirection;
         }
 
@@ -6378,6 +6603,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         SetLightingConfiguration(_material, configuration);
         SetLightingConfiguration(_oceanMaterial, configuration);
         SetLightingConfiguration(_structuralWallMaterial, configuration);
+        SetLightingConfiguration(_structuralEdgeWallMaterial, configuration);
         _lastLightingConfiguration = configuration;
         _hasLightingUniformConfiguration = true;
     }
@@ -6407,6 +6633,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         ApplyProxyAtmosphereMaterialFrame(_material, frame);
         ApplyProxyAtmosphereMaterialFrame(_oceanMaterial, frame);
         ApplyProxyAtmosphereMaterialFrame(_structuralWallMaterial, frame);
+        ApplyProxyAtmosphereMaterialFrame(_structuralEdgeWallMaterial, frame);
         ApplyProxyAtmosphereMaterialFrame(_opaqueShadowMaterial, frame);
     }
 
@@ -6493,6 +6720,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
     /// <summary>Uses one centered structural level and lets only coarser shells discard their overlap.</summary>
     public void ConfigureStructuralShellHandoff(bool retainCenter)
     {
+        if (_structuralShellIsInnermost != retainCenter)
+        {
+            _structuralShellIsInnermost = retainCenter;
+            _lastWallAroundStart = int.MinValue;
+            _lastWallAroundEnd = int.MinValue;
+        }
+        ApplyStructuralEdgeWallHandoff(retainCenter);
         if (_structuralWallMaterial == null) return;
         _structuralWallMaterial.SetShaderParameter("near_fade_enabled", ResolveStructuralShellNearFadeEnabled(retainCenter));
         _structuralWallMaterial.SetShaderParameter("fade_start_meters", FadeStartMeters);
@@ -6500,6 +6734,17 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _structuralWallMaterial.SetShaderParameter("far_fade_enabled", EnableFarFade);
         _structuralWallMaterial.SetShaderParameter("fade_out_start_meters", FadeOutStartMeters);
         _structuralWallMaterial.SetShaderParameter("fade_out_end_meters", FadeOutEndMeters);
+    }
+
+    private void ApplyStructuralEdgeWallHandoff(bool retainCenter)
+    {
+        if (_structuralEdgeWallMaterial == null) return;
+        _structuralEdgeWallMaterial.SetShaderParameter("near_fade_enabled", ResolveStructuralShellNearFadeEnabled(retainCenter));
+        _structuralEdgeWallMaterial.SetShaderParameter("fade_start_meters", FadeStartMeters);
+        _structuralEdgeWallMaterial.SetShaderParameter("fade_end_meters", FadeEndMeters);
+        _structuralEdgeWallMaterial.SetShaderParameter("far_fade_enabled", EnableFarFade);
+        _structuralEdgeWallMaterial.SetShaderParameter("far_fade_start_meters", FadeOutStartMeters);
+        _structuralEdgeWallMaterial.SetShaderParameter("far_fade_end_meters", FadeOutEndMeters);
     }
 
     private bool ResolveTerrain3DNearFadeEnabled() => _grid?.UseTerrain3DSurface == true
@@ -6515,7 +6760,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         {
             _structuralWallMesh.CastShadow = ResolveStructuralShadowCasting(
                 BuildTerrainRoofUnderside || BuildLowerHullCavityFloor,
-                enabled);
+                enabled, _structuralHullShadowRelevant);
         }
         foreach ((RingTerrainSectorCoordinate coordinate, MeshInstance3D node) in _active)
         {

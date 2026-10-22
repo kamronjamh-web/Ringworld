@@ -200,6 +200,8 @@ func _run() -> void:
 	_magenta_probe.size = Vector2(320, 220)
 	_magenta_probe.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_menu.add_child(_magenta_probe)
+	# The menu starts the live world deferred (it cannot add root nodes while root is still setting up the main scene).
+	await process_frame
 	_warm = root.get_node_or_null("RingWarmWorld")
 	if not _expect(_warm != null, "menu did not create RingWarmWorld"):
 		return _finish()

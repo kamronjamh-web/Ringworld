@@ -516,6 +516,18 @@ public partial class RingTerrainLodCoordinator : Node
         if (Mathf.Abs(viewportHeight - _lastViewportHeight) < 1.0f && Mathf.Abs(cameraFov - _lastCameraFov) < 0.05f) return;
         RebuildRuntimeBands(_currentProfile);
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
+        if (_levels.Count > 0)
+        {
+            // The global band is screen-space planned too; keep it following viewport/FOV changes.
+            GlobalBackdropPlan backdrop = PlanGlobalBackdrop(
+                _currentProfile, _mediumGlobalAroundSegments, _mediumGlobalAcrossSegments);
+            _globalLod?.ApplyRuntimeQuality(
+                backdrop.AroundSegments,
+                backdrop.AcrossSegments,
+                backdrop.Band.X,
+                backdrop.Band.Y);
+            UpdateTerminalGlobalMorphTarget();
+        }
     }
 
     public void ApplyQualityPreset(QualityPreset preset)

@@ -833,17 +833,30 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private void BeginGlobalMorphGeneration(int segmentCount, ulong editVersion)
     {
         _morphGeneration++;
-        _stagedMorphSegmentCount = Math.Max(0, segmentCount);
+        int count = Math.Max(0, segmentCount);
+        Dictionary<int, RingTerrainGlobalMorphSnapshot.Segment>? inProgress =
+            _stagedMorphSegmentCount == count ? _stagedMorphSegments : null;
+        _stagedMorphSegmentCount = count;
         _stagedMorphEditVersion = editVersion;
-        _stagedMorphSegments = new Dictionary<int, RingTerrainGlobalMorphSnapshot.Segment>(_stagedMorphSegmentCount);
+        _stagedMorphSegments = new Dictionary<int, RingTerrainGlobalMorphSnapshot.Segment>(count);
         // An unchanged segment remains exact. Reusing its immutable data avoids
         // resampling the entire ring after a local edit, while the public
         // snapshot remains unavailable until all dirty replacements publish.
-        if (_readyMorphSnapshot != null && _readyMorphSnapshot.SegmentCount == _stagedMorphSegmentCount)
+        if (_readyMorphSnapshot != null && _readyMorphSnapshot.SegmentCount == count)
         {
             RingTerrainGlobalMorphSnapshot.Segment[] previous = _readyMorphSnapshot.CopySegments();
             for (int index = 0; index < previous.Length; index++) _stagedMorphSegments[index] = previous[index];
         }
+        // A generation can restart before the previous one published (an edit
+        // during the initial build, or a second edit while the first edit's
+        // segments rebuild). Its staged segments are newer than the last ready
+        // snapshot; dropping them would leave indices that nothing re-stages,
+        // so the snapshot could never complete. Segments the new edit dirtied
+        // are overwritten when their rebuild publishes, and publication waits
+        // for every queue to drain.
+        if (inProgress != null)
+            foreach (KeyValuePair<int, RingTerrainGlobalMorphSnapshot.Segment> staged in inProgress)
+                _stagedMorphSegments[staged.Key] = staged.Value;
         _readyMorphSnapshot = null;
     }
 
@@ -1185,8 +1198,13 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             if (previous < publishedSegmentCount) QueueDirtySegment(previous, publishedSegmentCount);
             if (next < publishedSegmentCount) QueueDirtySegment(next, publishedSegmentCount);
         }
+        // The staged generation always spans the whole partition. During the
+        // initial build only some segments are published yet; sizing the
+        // generation by that partial count made it unpublishable.
         if (_dirtySegmentQueue.Count > 0)
-            BeginGlobalMorphGeneration(publishedSegmentCount, edits.Version);
+            BeginGlobalMorphGeneration(segmentCount, edits.Version);
+        else if (_stagedMorphSegments != null)
+            _stagedMorphEditVersion = edits.Version;
         if (_grid.TerrainSampler != null)
         {
             _pendingSegmentEdits = PrepareGlobalEditSnapshot(edits, _grid.TerrainSampler);

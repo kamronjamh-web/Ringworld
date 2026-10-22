@@ -31,6 +31,21 @@ public partial class RingWorldLoadingBridge : Node
     private bool _placed;
     private const double AltitudeRefreshIntervalSeconds = 0.5;
     private double _altitudeRefreshSeconds;
+    // Staged activation: world children are disabled at attach and enabled one by one on a per-frame budget.
+    private const double ActivationBudgetMilliseconds = 8.0;
+    private readonly List<Node> _activationList = new();
+    private readonly System.Collections.Generic.Dictionary<Node, ProcessModeEnum> _activationHolds = new();
+    private readonly List<(string Name, double Ms)> _activationTimings = new();
+    private int _activationIndex;
+    private ulong _activationAttachFrame;
+    private bool _activationStarted;
+    private bool _activationCancelled;
+    private double _activationCurrentMs;
+    private double _activationMaxStepMs;
+    private double _activationMaxFrameMs;
+    private const double ActivationCheapFrameMilliseconds = 2.0;
+    private const int ActivationCheapFrameChildren = 4;
+    private ulong _activationFrames;
     private float _cruiseAltitudeMeters = 16000f;
     private float _cruisePitchDegrees = -25f;
     private bool _clocksPaused;
@@ -39,6 +54,9 @@ public partial class RingWorldLoadingBridge : Node
     private const double SnapshotMaxHorizontalMeters = 30000.0;
     private const double SnapshotMinAltitudeMeters = 2000.0;
     private const double SnapshotMaxAltitudeMeters = 18000.0;
+
+    /// <summary>True once every attached world child has been re-enabled and finished its deferred ready steps.</summary>
+    public bool ActivationComplete { get; private set; }
 
     /// <summary>True when the last placement used the snapshot pose passed to <see cref="SetPlacementPose"/> instead of the default cruise.</summary>
     public bool PlacementUsedSnapshot { get; private set; }
@@ -131,6 +149,79 @@ public partial class RingWorldLoadingBridge : Node
                 }
         // A warm world sits behind the start menu: its HUD layers must never draw over the menu, not even during the load.
         if (_background) HideWorldHud();
+        BeginActivation();
+    }
+
+    private void BeginActivation()
+    {
+        _activationAttachFrame = Engine.GetProcessFrames();
+        _activationStarted = true;
+        _activationList.Clear();
+        _activationHolds.Clear();
+        if (_world == null) { ActivationComplete = true; return; }
+        foreach (Node child in _world.GetChildren())
+        {
+            if (_held.ContainsKey(child) || child.ProcessMode == ProcessModeEnum.Disabled) continue;
+            // Audio is out of scope: disabling a node pauses its streams.
+            if (child is AudioStreamPlayer or AudioStreamPlayer2D or AudioStreamPlayer3D || HasAudioPlayerChild(child)) continue;
+            _activationList.Add(child);
+            _activationHolds[child] = child.ProcessMode;
+            child.ProcessMode = ProcessModeEnum.Disabled;
+        }
+        ActivationComplete = _activationList.Count == 0;
+    }
+
+    private static bool HasAudioPlayerChild(Node node)
+    {
+        foreach (Node child in node.GetChildren())
+            if (child is AudioStreamPlayer or AudioStreamPlayer2D or AudioStreamPlayer3D) return true;
+        return false;
+    }
+
+    private void AdvanceActivation()
+    {
+        if (!_activationStarted || ActivationComplete || _activationCancelled) return;
+        ulong frame = Engine.GetProcessFrames();
+        if (frame <= _activationAttachFrame + 1) return;
+        _activationFrames++;
+        // A re-enabled child pays its first _Process in the next frame, which this node cannot time directly. Use the
+        // previous frame's measured process time: cheap frames let a few more children in, expensive ones admit one.
+        double previousProcessMs = Performance.GetMonitor(Performance.Monitor.TimeProcess) * 1000.0;
+        _activationMaxFrameMs = System.Math.Max(_activationMaxFrameMs, previousProcessMs);
+        int allowed = previousProcessMs < ActivationCheapFrameMilliseconds ? ActivationCheapFrameChildren : 1;
+        int enabled = 0;
+        var budget = System.Diagnostics.Stopwatch.StartNew();
+        while (_activationIndex < _activationList.Count)
+        {
+            Node child = _activationList[_activationIndex];
+            if (!GodotObject.IsInstanceValid(child))
+            {
+                _activationIndex++;
+                continue;
+            }
+            if (child is IRingDeferredReady deferred && deferred.DeferredReadyPending)
+            {
+                long stepStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                deferred.AdvanceDeferredReady();
+                double stepMs = System.Diagnostics.Stopwatch.GetElapsedTime(stepStart).TotalMilliseconds;
+                _activationCurrentMs += stepMs;
+                _activationMaxStepMs = System.Math.Max(_activationMaxStepMs, stepMs);
+                if (deferred.DeferredReadyPending)
+                {
+                    if (budget.Elapsed.TotalMilliseconds >= ActivationBudgetMilliseconds) return;
+                    continue;
+                }
+            }
+            long enableStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            child.ProcessMode = _activationHolds[child];
+            _activationCurrentMs += System.Diagnostics.Stopwatch.GetElapsedTime(enableStart).TotalMilliseconds;
+            _activationTimings.Add((child.Name.ToString(), _activationCurrentMs));
+            _activationCurrentMs = 0.0;
+            _activationIndex++;
+            enabled++;
+            if ((enabled >= allowed || budget.Elapsed.TotalMilliseconds >= ActivationBudgetMilliseconds) && _activationIndex < _activationList.Count) return;
+        }
+        ActivationComplete = true;
     }
 
     /// <summary>Prepare one rendered world frame while player input remains held.</summary>
@@ -143,6 +234,7 @@ public partial class RingWorldLoadingBridge : Node
 
     public override void _Process(double delta)
     {
+        AdvanceActivation();
         // Minimap and cloud-mask producers may request an update later in a
         // frame. Keep their viewports idle behind the opaque loading screen.
         foreach (SubViewport viewport in _renderHolds.Keys)
@@ -188,6 +280,9 @@ public partial class RingWorldLoadingBridge : Node
             return new() { ["ready"] = false, ["error"] = _saves.WorldLoadError };
         if (_surface?.InitializationFailed == true)
             return new() { ["ready"] = false, ["error"] = _surface.LastError };
+
+        if (!ActivationComplete)
+            return new() { ["ready"] = false, ["stage"] = "terrain", ["detail"] = "Assembling world systems.", ["progress"] = .33f };
 
         bool structureReady = true;
         int structuresReady = 0;
@@ -399,12 +494,23 @@ public partial class RingWorldLoadingBridge : Node
         foreach (Node child in _structureOwners)
             if (GodotObject.IsInstanceValid(child) && child.HasMethod("GetLoadingStatus"))
                 diagnostics[child.Name.ToString()] = child.Call("GetLoadingStatus");
+        var perChild = new Godot.Collections.Dictionary();
+        foreach ((string name, double ms) in _activationTimings) perChild[name] = ms;
+        diagnostics["activation"] = new Godot.Collections.Dictionary
+        {
+            ["per_child_ms"] = perChild, ["max_step_ms"] = _activationMaxStepMs, ["max_frame_process_ms"] = _activationMaxFrameMs,
+            ["frames"] = (long)_activationFrames, ["complete"] = ActivationComplete
+        };
         return diagnostics;
     }
 
     public void CancelWorld()
     {
         _released = true;
+        // Pending activation steps never run and held children stay disabled; the world is freed by the caller.
+        _activationCancelled = true;
+        _activationList.Clear();
+        _activationHolds.Clear();
         if (_saves != null && GodotObject.IsInstanceValid(_saves)) _saves.CancelWorldLoad();
         if (_surface != null && GodotObject.IsInstanceValid(_surface)) _surface.CancelStartup("World loading cancelled.");
         foreach (RingTerrainProxySector proxy in _proxies)

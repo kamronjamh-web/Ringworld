@@ -286,7 +286,10 @@ func prepare_resources() -> bool:
 	return false
 
 func world_attached() -> void:
+	# The resources node keeps the shader/prewarm references alive until the world is ready.
 	_bridge.call("ConfirmWorldAttached")
+
+func _free_resources() -> void:
 	if is_instance_valid(_resources):
 		_resources.queue_free()
 		_resources = null
@@ -306,6 +309,7 @@ func wait_for_world() -> bool:
 			return false
 		set_stage(str(readiness.get("stage", "terrain")), str(readiness.get("detail", "Preparing your world.")), float(readiness.get("progress", .35)))
 		if bool(readiness.get("ready", false)):
+			_free_resources()
 			# Let an actual world frame render behind the overlay before revealing it.
 			var reveal_started := Time.get_ticks_usec()
 			_bridge.call("PrepareReveal")
@@ -350,6 +354,7 @@ func _wait_for_world_background() -> bool:
 			return false
 		set_stage(str(readiness.get("stage", "terrain")), str(readiness.get("detail", "Preparing your world.")), float(readiness.get("progress", .35)))
 		if bool(readiness.get("ready", false)):
+			_free_resources()
 			if is_instance_valid(_launcher):
 				_launcher.call("_save_selected_slot_settings")
 				_launcher.queue_free()

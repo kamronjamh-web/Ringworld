@@ -28,6 +28,8 @@ uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 // desert, forest, tundra, alpine.  The implicit remainder is grassland.
 // These values are sampled on the CPU only while a sector mesh is built.
 uniform bool biome_texture_weights_enabled = false;
+// Structural closures (rim walls, hull planes) keep their authored reflectance like ring_hull_global; the terrain albedo retune is terrain-only.
+uniform bool structural_surface = false;
 uniform float biome_texture_scale : hint_range(0.01, 2.0) = 0.20;
 uniform sampler2D biome_grass_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D biome_dirt_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
@@ -184,7 +186,8 @@ void fragment() {
 		distance_to_camera,
 		grass_coverage_upward,
 		grass_coverage_eligibility);
-	terrain_color = ring_terrain_albedo_scaled(ring_apply_terrain_grass_coverage(terrain_color, grass_coverage));
+	terrain_color = ring_apply_terrain_grass_coverage(terrain_color, grass_coverage);
+	if (!structural_surface) terrain_color = ring_terrain_albedo_scaled(terrain_color);
 	// Keep a spatially varying night tint, but leave brightness to Godot's
 	// environment ambient light and directional-light pipeline.
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);

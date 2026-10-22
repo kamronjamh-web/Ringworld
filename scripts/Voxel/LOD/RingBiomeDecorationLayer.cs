@@ -139,6 +139,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 	private DirectionalLight3D? _treePlanetLight;
 	private Vector3 _lastTreeMaterialRingCenter = new(float.PositiveInfinity, 0.0f, 0.0f);
 	private Vector3 _lastTreeMaterialSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
+	private readonly RingSunDirectionThrottle _treeSunThrottle = new();
 	private TreeLightingConfiguration _lastTreeLightingConfiguration;
 	private bool _treeLightingConfigurationValid;
 	private readonly Dictionary<SpatialBatchKey, MultiMeshInstance3D> _lod1TrunkTiles = new();
@@ -585,7 +586,8 @@ public partial class RingBiomeDecorationLayer : Node3D
 		if (_grid == null || _treeMaterials.Count == 0) return;
 		ResolveTreeSunLight();
 		Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
-		Vector3 sunDirection = _treeSunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+		// Throttled: every tree material rewrites sun_direction on a change, and the key light moves every frame with stabilization off.
+		Vector3 sunDirection = _treeSunThrottle.Resolve(_treeSunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right);
 		TreeLightingConfiguration configuration = CaptureTreeLightingConfiguration();
 		// Exact comparisons retain small floating-origin shifts even when the
 		// canonical ring center has multi-million-metre components.
@@ -645,7 +647,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 		if (_grid == null) return;
 		ResolveTreeSunLight();
 		Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
-		Vector3 sunDirection = _treeSunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
+		Vector3 sunDirection = _treeSunThrottle.Resolve(_treeSunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right);
 		ApplyTreeLightingMaterialValues(material, ringCenter, sunDirection, CaptureTreeLightingConfiguration(),
 			centerChanged, sunChanged, configurationChanged);
 	}
