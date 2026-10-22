@@ -42,6 +42,8 @@ public partial class WarmStallProbe : Node
     private long _alloc;
     private readonly long[] _pipelines = new long[5];
     private long _textureMem, _bufferMem;
+    private TimeSpan _jitTime;
+    private long _jitMethods;
     private readonly StringBuilder _csv = new();
     private readonly StringBuilder _detail = new();
     private readonly List<StallProbeMarker> _markers = new();
@@ -75,7 +77,7 @@ public partial class WarmStallProbe : Node
         tree.Root.AddChild(last);
         _markers.Add(first);
         _markers.Add(last);
-        _csv.Append("frame,t_ms,total_ms,pre_physics_ms,physics_ms,physics_steps,signal_handlers_ms,nodes_ms,post_process_ms,draw_ms,gc0,gc1,gc2,gc_pause_ms,alloc_mb,pipe_surface,pipe_mesh,pipe_canvas,pipe_draw,pipe_spec,tex_mem_mb_delta,buf_mem_mb_delta,context,top_gap\n");
+        _csv.Append("frame,t_ms,total_ms,pre_physics_ms,physics_ms,physics_steps,signal_handlers_ms,nodes_ms,post_process_ms,draw_ms,gc0,gc1,gc2,gc_pause_ms,alloc_mb,pipe_surface,pipe_mesh,pipe_canvas,pipe_draw,pipe_spec,tex_mem_mb_delta,buf_mem_mb_delta,jit_ms,jit_methods,context,top_gap\n");
     }
 
     /// <summary>Burns about <paramref name="milliseconds"/> on the calling (main) thread so a sampled trace can be aligned to Time.get_ticks_usec.</summary>
@@ -196,7 +198,8 @@ public partial class WarmStallProbe : Node
         long alloc = GC.GetTotalAllocatedBytes(false);
         allocMb = (alloc - _alloc) / (1024.0 * 1024.0);
         _alloc = alloc;
-        long[] pipes =
+        // The monitors lock the scene-shader mutex, which background shader compiles hold; reuse the last counts while warming.
+        long[] pipes = RingworldTechDemo.Loading.RingStartupWarmup.IsWarming ? (long[])_pipelines.Clone() : new long[]
         {
             (long)Performance.GetMonitor(Performance.Monitor.PipelineCompilationsSurface),
             (long)Performance.GetMonitor(Performance.Monitor.PipelineCompilationsMesh),
@@ -243,6 +246,8 @@ public partial class WarmStallProbe : Node
         double draw = Ms(f.PreDraw, f.PostDraw);
         SnapshotCounters(out int[] gc, out double pauseMs, out double allocMb, out long[] pipes, out double texMb, out double bufMb);
         string context = ReadContext();
+        TimeSpan jitNow = System.Runtime.JitInfo.GetCompilationTime(true); long jitCount = System.Runtime.JitInfo.GetCompiledMethodCount(true);
+        double jitMs = (jitNow - _jitTime).TotalMilliseconds; long jitMethods = jitCount - _jitMethods; _jitTime = jitNow; _jitMethods = jitCount;
 
         // Largest gap between consecutive marks (what ran between them).
         f.Marks.Sort((a, b) => a.T.CompareTo(b.T));
@@ -261,16 +266,16 @@ public partial class WarmStallProbe : Node
 
         double tMs = (now - _startUsec) / 1000.0;
         _csv.Append(string.Format(CultureInfo.InvariantCulture,
-            "{0},{1:0.0},{2:0.00},{3:0.00},{4:0.00},{5},{6:0.00},{7:0.00},{8:0.00},{9:0.00},{10},{11},{12},{13:0.00},{14:0.00},{15},{16},{17},{18},{19},{20:0.0},{21:0.0},\"{22}\",\"{23}\"\n",
+            "{0},{1:0.0},{2:0.00},{3:0.00},{4:0.00},{5},{6:0.00},{7:0.00},{8:0.00},{9:0.00},{10},{11},{12},{13:0.00},{14:0.00},{15},{16},{17},{18},{19},{20:0.0},{21:0.0},{24:0.0},{25},\"{22}\",\"{23}\"\n",
             _frameIndex, tMs, total, prePhysics, physics, f.PhysicsSteps, handlers, nodes, post, draw, gc[0], gc[1], gc[2], pauseMs, allocMb,
-            pipes[0], pipes[1], pipes[2], pipes[3], pipes[4], texMb, bufMb, context, topGap.Replace("\"", "'")));
+            pipes[0], pipes[1], pipes[2], pipes[3], pipes[4], texMb, bufMb, context, topGap.Replace("\"", "'"), jitMs, jitMethods));
 
         if (total >= DetailThresholdMs)
         {
             _detail.Append(string.Format(CultureInfo.InvariantCulture,
-                "FRAME {0} end_usec={1} t_ms={2:0.0} total={3:0.0} | pre_physics(post_draw continuations+present)={4:0.0} physics={5:0.0} (steps {6}) signal_handlers={7:0.0} nodes={8:0.0} post_process(deferred/timers/tweens/RS sync)={9:0.0} draw={10:0.0} | gc={11}/{12}/{13} pause={14:0.0}ms alloc={15:0.0}MB | pipelines surface={16} mesh={17} canvas={18} draw={19} spec={20} | tex+{21:0.0}MB buf+{22:0.0}MB | ctx={23}\n",
+                "FRAME {0} end_usec={1} t_ms={2:0.0} total={3:0.0} | pre_physics(post_draw continuations+present)={4:0.0} physics={5:0.0} (steps {6}) signal_handlers={7:0.0} nodes={8:0.0} post_process(deferred/timers/tweens/RS sync)={9:0.0} draw={10:0.0} | gc={11}/{12}/{13} pause={14:0.0}ms alloc={15:0.0}MB | pipelines surface={16} mesh={17} canvas={18} draw={19} spec={20} | tex+{21:0.0}MB buf+{22:0.0}MB | jit={24:0.0}ms/{25} | ctx={23}\n",
                 _frameIndex, now, tMs, total, prePhysics, physics, f.PhysicsSteps, handlers, nodes, post, draw, gc[0], gc[1], gc[2], pauseMs, allocMb,
-                pipes[0], pipes[1], pipes[2], pipes[3], pipes[4], texMb, bufMb, context));
+                pipes[0], pipes[1], pipes[2], pipes[3], pipes[4], texMb, bufMb, context, jitMs, jitMethods));
             int shown = 0;
             foreach (var gap in gaps)
             {

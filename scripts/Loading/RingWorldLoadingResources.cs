@@ -54,26 +54,19 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/ring_grass_cards.gdshader",
         "res://materials/imported_tree.gdshader",
         "res://materials/imported_tree_impostor.gdshader",
+        "res://materials/terrain3d_ring_surface.gdshader",
+        "res://materials/ring_distant_rain_curtain.gdshader",
+        "res://materials/ring_rain_haze.gdshader",
+        "res://materials/ring_emitter_standin.gdshader",
+        "res://materials/ring_poi_architecture.gdshader",
+        "res://materials/ring_poi_architecture_double_sided.gdshader",
+        "res://materials/ring_eclipse_hub_beam.gdshader",
+        "res://materials/ring_eclipse_hub_beam_core.gdshader",
+        "res://materials/ring_eclipse_hub_beam_far.gdshader",
+        "res://materials/ring_eclipse_hub_body.gdshader",
         "res://materials/ring_wind_neutral.tres",
         "res://scripts/render/RingFarDepthCapture.gd"
     };
-    // World shaders whose first ShaderMaterial assignment is expensive; each is assigned to a throwaway material one per frame so the
-    // cost is paid during loading instead of the attach frame.
-    private static readonly string[] PrewarmShaderPaths =
-    {
-        "res://materials/ring_terrain_proxy.gdshader",
-        "res://materials/ring_terrain_global.gdshader",
-        "res://materials/ring_surface_far.gdshader",
-        "res://materials/ring_emitter_grid_head.gdshader",
-        "res://materials/ring_emitter_grid_head_far.gdshader",
-        "res://materials/ring_emitter_grid_beam.gdshader",
-        "res://materials/ring_emitter_grid_beam_core.gdshader",
-        "res://materials/ring_emitter_grid_beam_far.gdshader",
-        "res://materials/ring_grass_cards.gdshader",
-        "res://materials/imported_tree.gdshader",
-        "res://materials/imported_tree_impostor.gdshader"
-    };
-    private readonly List<ShaderMaterial> _prewarmMaterials = new();
     private readonly Dictionary<string, Resource> _retained = new(StringComparer.Ordinal);
     private readonly RingThreadedResourceClaims _claims = new();
     private IEnumerator<bool>? _preparation;
@@ -85,7 +78,7 @@ public partial class RingWorldLoadingResources : Node
     public double MaximumWorkMilliseconds { get; private set; }
     public bool HasCompleted { get; private set; }
     public bool IsComplete() => HasCompleted;
-    public bool IsShutdownReady() => _claims.DrainCompleted();
+    public bool IsShutdownReady() => _claims.DrainCompleted() && RingStartupWarmup.IsComplete;
     public Godot.Collections.Dictionary GetLoadingStatus() => new()
     {
         ["ready"] = HasCompleted && _error.Length == 0 && !_cancelled,
@@ -141,6 +134,7 @@ public partial class RingWorldLoadingResources : Node
     public void CancelPreparation()
     {
         _cancelled = true;
+        RingStartupWarmup.ReleaseShaders();
         _preparation?.Dispose(); _preparation = null;
         HasCompleted = true;
         _claims.DrainCompleted();
@@ -149,7 +143,6 @@ public partial class RingWorldLoadingResources : Node
     {
         _preparation?.Dispose(); _preparation = null;
         _claims.Dispose();
-        _prewarmMaterials.Clear();
         _retained.Clear();
     }
     private IEnumerable<bool> Prepare()
@@ -170,12 +163,13 @@ public partial class RingWorldLoadingResources : Node
             _completedResources++;
             yield return true;
         }
-        _phase = "shader prewarm";
-        foreach (string path in PrewarmShaderPaths)
-        {
-            if (_retained[path] is Shader shader) _prewarmMaterials.Add(new ShaderMaterial { Shader = shader });
-            yield return true;
-        }
+        // Compile every retained shader and pre-JIT the game assembly on worker threads; attach follows only after both finish.
+        _phase = "background warmup";
+        var shaders = new List<Shader>();
+        foreach (KeyValuePair<string, Resource> entry in _retained) if (entry.Value is Shader shader) shaders.Add(shader);
+        RingStartupWarmup.Start(shaders);
+        while (!RingStartupWarmup.IsComplete) { RingStartupWarmup.Flush(); yield return true; }
+        RingStartupWarmup.Flush();
         if (RingTerrainVisuals.TexturePaletteReady) yield break;
         _phase = "terrain palette";
         Color[] colors = RingTerrainVisuals.CaptureLoadingPaletteFallbacks();

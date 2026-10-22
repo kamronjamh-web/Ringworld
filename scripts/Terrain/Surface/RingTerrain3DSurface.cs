@@ -161,7 +161,9 @@ public partial class RingTerrain3DSurface : Node3D
 			EnableCanonicalStandardGridDiagonal(_terrain);
             // A 768m window bends less than 2cm at the certified radius; do not inflate by world radius.
             _terrain.Set("cull_margin", 1.0f);
+            PreconfigureNativeBeforeTreeEntry(false);
             AddChild(_terrain);
+            SilenceMousePickingViewport();
             _terrain.Set("collision_mode", 0);
             if (_terrain.Get("collision_mode").AsInt32() != 0) throw new InvalidOperationException("Terrain3D native collision could not be disabled.");
             _terrainData = _terrain.Call("get_data").AsGodotObject() ?? throw new InvalidOperationException("Terrain3D did not initialize its owned Terrain3DData.");
@@ -258,6 +260,30 @@ public partial class RingTerrain3DSurface : Node3D
         _terrain.Set("mesh_size", _preparedMeshSize);
     }
 
+    /// <summary>Configures a Terrain3DMaterial before tree entry so Terrain3D's initialize compiles the override shader once (no
+    /// default-shader rebuilds, no NoiseTexture2D for the default shader's noise uniform). set_material runs Terrain3D's initialize, so
+    /// collision_mode and mesh_lods set here also apply before the clipmap and collision are built.</summary>
+    private void PreconfigureNativeBeforeTreeEntry(bool setMeshLods)
+    {
+        GodotObject material = ClassDB.Instantiate("Terrain3DMaterial").AsGodotObject() ?? throw new InvalidOperationException("Terrain3DMaterial native class is unavailable.");
+        Shader shader = GD.Load<Shader>("res://materials/terrain3d_ring_surface.gdshader") ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
+        material.Set("world_background", 0);
+        material.Set("shader_override", shader);
+        material.Set("shader_override_enabled", true);
+        // Keeps Terrain3DAssets' empty-texture path from switching the checkerboard on (one more full rebuild); ConfigureMaterial clears it.
+        material.Set("show_checkered", true);
+        _terrain!.Set("material", material);
+        _terrain.Set("collision_mode", 0);
+        if (setMeshLods) _terrain.Set("mesh_lods", _preparedMeshLods);
+    }
+
+    /// <summary>Terrain3D's GPU-picking MouseViewport renders once at creation and would draw the whole terrain (waiting on every terrain
+    /// pipeline, about 3 s with a cold pipeline cache). The game never calls get_intersection, so the viewport gets its own empty World3D.</summary>
+    private void SilenceMousePickingViewport()
+    {
+        if (_terrain?.GetNodeOrNull<SubViewport>("MouseViewport") is { } viewport) viewport.OwnWorld3D = true;
+    }
+
     private void ConfigureMaterial()
     {
         // Each Terrain3D rebuild owns a new plugin material object. Static
@@ -266,9 +292,7 @@ public partial class RingTerrain3DSurface : Node3D
         _atmosphereRevision = ulong.MaxValue;
         GodotObject material = _terrain!.Call("get_material").AsGodotObject() ?? throw new InvalidOperationException("Terrain3D did not initialize its material.");
         Shader shader = GD.Load<Shader>("res://materials/terrain3d_ring_surface.gdshader") ?? throw new InvalidOperationException("Ring Terrain3D shader is missing.");
-        material.Set("world_background", 0);
-        material.Set("shader_override", shader);
-        material.Set("shader_override_enabled", true);
+        // The override shader is installed before tree entry (PreconfigureNativeBeforeTreeEntry).
         // Empty texture assets enable Terrain3D's diagnostic checkerboard by default.
         // The prototype shader supplies its own surface colours.
         material.Set("show_checkered", false);

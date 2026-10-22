@@ -7,6 +7,7 @@ const THUMBNAIL_FILE := "thumbnail.png"
 const THUMBNAIL_SIZE := Vector2i(480, 270)
 const PLAYTIME_FLUSH_SECONDS := 60.0
 const MAX_NAME_LENGTH := 32
+const EXIT_POOL_DRAIN_TIMEOUT_MS := 10000
 
 var active_slot := 0
 var worlds_root := WORLDS_ROOT
@@ -199,6 +200,22 @@ func _notification(what: int) -> void:
 
 func _exit_tree() -> void:
 	flush_playtime()
+	_drain_worker_pool_for_exit()
+
+
+# Godot 4.8-dev7 WorkerThreadPool::exit_languages_threads() can hang forever if
+# low-priority tasks are still queued when cleanup starts (idle workers are not
+# re-notified). A low-priority sentinel completes only after that queue drains.
+# Must run in the first autoload's _exit_tree, i.e. after the world's nodes exited.
+func _drain_worker_pool_for_exit() -> void:
+	var id := WorkerThreadPool.add_task(func() -> void: pass, false, "exit drain sentinel")
+	var start_ms := Time.get_ticks_msec()
+	while not WorkerThreadPool.is_task_completed(id):
+		if Time.get_ticks_msec() - start_ms >= EXIT_POOL_DRAIN_TIMEOUT_MS:
+			push_warning("WorldSession: worker pool did not drain within %d ms; quit may stall." % EXIT_POOL_DRAIN_TIMEOUT_MS)
+			return
+		OS.delay_usec(1000)
+	WorkerThreadPool.wait_for_task_completion(id)
 
 
 func copy_slot(source_slot: int, destination_slot: int) -> bool:

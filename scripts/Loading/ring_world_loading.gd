@@ -71,7 +71,8 @@ func _process(_delta: float) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		return
 	var now := Time.get_ticks_usec()
-	var pipelines := _pipeline_counts()
+	# The pipeline monitors lock the scene-shader mutex, which background shader compiles hold; do not poll them while warming.
+	var pipelines := _last_pipeline_counts if str(_resource_status.get("phase", "")) == "background warmup" else _pipeline_counts()
 	if _last_frame_usec > 0:
 		var milliseconds := float(now - _last_frame_usec) / 1000.0
 		_frame_times.append(milliseconds)

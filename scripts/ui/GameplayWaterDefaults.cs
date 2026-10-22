@@ -78,6 +78,13 @@ public sealed class GameplayWaterDefaults
             if (target != null) target.Set(Property(key), clean);
         }
         EnforceOrderedPairs(graphics, fft);
+        // The controller keeps SSR choices across quality presets, so register them with it rather than relying on one-shot property writes.
+        // Register the values as applied (validated and pair-ordered), not the raw stored ones.
+        var ssr = new Godot.Collections.Dictionary();
+        if (graphics != null)
+            foreach (Variant item in Settings.Overrides.Keys)
+                if (item.AsString().StartsWith("WaterSsr", StringComparison.Ordinal)) ssr[item] = graphics.Get(item.AsString());
+        graphics?.Call("SetWaterSsrOverrides", ssr);
         graphics?.Call("ApplyWaterTuning");
     }
     private void LoadInto(string path)

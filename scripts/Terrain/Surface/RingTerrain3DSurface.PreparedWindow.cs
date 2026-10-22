@@ -273,7 +273,8 @@ public partial class RingTerrain3DSurface
         _frame = frame;
         _terrain = ClassDB.Instantiate("Terrain3D").AsGodotObject() as Node ?? throw new InvalidOperationException("Terrain3D native addon is unavailable.");
         _terrain.Name = "RingTerrain3D"; _terrain.Set("free_editor_textures", false); _terrain.Set("vertex_spacing", 2.0f); _terrain.Set("mesh_size", _preparedMeshSize); EnableCanonicalStandardGridDiagonal(_terrain); _terrain.Set("cull_margin", 1.0f);
-        AddChild(_terrain); _terrain.Set("collision_mode", 0);
+        PreconfigureNativeBeforeTreeEntry(true);
+        AddChild(_terrain); SilenceMousePickingViewport(); _terrain.Set("collision_mode", 0);
         _terrain.Set("mesh_lods", _preparedMeshLods);
         if (_terrain.Get("collision_mode").AsInt32() != 0) throw new InvalidOperationException("Terrain3D native collision could not be disabled.");
         _terrainData = _terrain.Call("get_data").AsGodotObject() ?? throw new InvalidOperationException("Terrain3D data is unavailable.");

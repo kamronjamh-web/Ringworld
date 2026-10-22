@@ -9,6 +9,61 @@ namespace RingworldTechDemo.Tools;
 [GlobalClass]
 public partial class WaterSettingsSmoke : RefCounted
 {
+    private static bool Near(float a, float b) => Math.Abs(a - b) < .001f;
+
+    /// <summary>Saved WaterSsr* choices must survive ApplyPreset in either initialisation order and across runtime preset changes.</summary>
+    private static bool RunSsrPresetPersistence(string path, out string detail)
+    {
+        string globalPath = ProjectSettings.GlobalizePath(path);
+        if (System.IO.File.Exists(globalPath)) System.IO.File.Delete(globalPath);
+        using (var seedGraphics = new RingGraphicsQualityController())
+        {
+            var seed = new GameplayWaterDefaults(path);
+            seed.Initialize(seedGraphics, null);
+            seed.SetOverride(seedGraphics, null, "WaterSsrEnabled", false);
+            seed.SetOverride(seedGraphics, null, "WaterSsrStrength", .81f);
+            seed.SetOverride(seedGraphics, null, "WaterSsrCoarseSteps", 7);
+            seed.Save();
+        }
+
+        // World startup order: drawer applies saved tuning, then GraphicsQuality _Ready applies the preset.
+        using var drawerFirst = new RingGraphicsQualityController();
+        new GameplayWaterDefaults(path).Initialize(drawerFirst, null);
+        drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
+        bool startup = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrStrength, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
+            && Near(drawerFirst.WaterSsrCameraDistance, 250f) && drawerFirst.WaterSsrRefinementSteps == 3;
+
+        // Runtime preset changes keep the overrides and still move untouched fields.
+        drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, false);
+        bool low = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrStrength, .81f) && drawerFirst.WaterSsrCoarseSteps == 7;
+        drawerFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
+        bool high = !drawerFirst.WaterSsrEnabled && Near(drawerFirst.WaterSsrStrength, .81f) && drawerFirst.WaterSsrCoarseSteps == 7
+            && Near(drawerFirst.WaterSsrCameraDistance, 450f) && drawerFirst.WaterSsrRefinementSteps == 4;
+
+        // Reverse order: preset first, then saved tuning.
+        using var presetFirst = new RingGraphicsQualityController();
+        presetFirst.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
+        new GameplayWaterDefaults(path).Initialize(presetFirst, null);
+        bool reverse = !presetFirst.WaterSsrEnabled && Near(presetFirst.WaterSsrStrength, .81f) && presetFirst.WaterSsrCoarseSteps == 7
+            && Near(presetFirst.WaterSsrCameraDistance, 250f);
+
+        // Nothing saved: preset defaults are unchanged.
+        string emptyPath = path.Replace("_ssr.tres", "_ssr_empty.tres");
+        if (System.IO.File.Exists(ProjectSettings.GlobalizePath(emptyPath))) System.IO.File.Delete(ProjectSettings.GlobalizePath(emptyPath));
+        using var plain = new RingGraphicsQualityController();
+        new GameplayWaterDefaults(emptyPath).Initialize(plain, null);
+        plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
+        bool medium = plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .5f) && plain.WaterSsrCoarseSteps == 12;
+        plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, false);
+        bool lowDefault = !plain.WaterSsrEnabled;
+        plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
+        bool highDefault = plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .65f) && plain.WaterSsrCoarseSteps == 24;
+
+        System.IO.File.Delete(globalPath);
+        detail = $"startup={startup} low={low} high={high} reverse={reverse} medium={medium} lowDefault={lowDefault} highDefault={highDefault}";
+        return startup && low && high && reverse && medium && lowDefault && highDefault;
+    }
+
     public Godot.Collections.Dictionary Run(string path)
     {
         var result = new Godot.Collections.Dictionary();
@@ -217,14 +272,15 @@ public partial class WaterSettingsSmoke : RefCounted
             && Math.Abs(reloadedFft.FullRateDistanceMeters - 200f) < .001f
             && Math.Abs(reloadedFft.FullRateAreaSquareKilometers - .25f) < .001f
             && Math.Abs(reloadedFft.IdleGraceSeconds - 1f) < .001f;
+        bool ssrPresetPersistence = RunSsrPresetPersistence(path.Replace(".tres", "_ssr.tres"), out string ssrDetail);
         const double circumference = 1495000000.0;
         double tile = RingWaterFftController.PeriodicLength(12, circumference);
         double phaseA = RingWaterFftController.PositiveModulo(circumference - .125, tile) / tile;
         double phaseB = RingWaterFftController.PositiveModulo(-.125, tile) / tile;
         bool periodic = double.IsFinite(tile) && Math.Abs(phaseA - phaseB) < 1e-5
             && RingWaterFftController.PositiveModulo(-circumference * 3.0 - .5, tile) >= 0;
-        result["pass"] = setFalse && setFloat && setColor && setOptics && setVariation && setSsr && materialBinding && unchangedMaterialCache && newMaterialClearsDisabledProvider && setSavedLargePatch && setGeometry && deepWaterOrdering && setAdaptiveDemand && adaptiveClamps && setExpandedLimits && invalid && saved && roundTrip && setTrue && failedWriteStaysDirty && reset && periodic;
-        result["detail"] = $"false={setFalse} float={setFloat} color={setColor} optics={setOptics} variation={setVariation} ssr={setSsr} productionShaders={productionShaders} material={materialBinding} cache={unchangedMaterialCache} newMaterialClear={newMaterialClearsDisabledProvider} savedLargePatch={setSavedLargePatch} geometry={setGeometry} deepOrdering={deepWaterOrdering} adaptive={setAdaptiveDemand} adaptiveClamps={adaptiveClamps} expanded={setExpandedLimits} invalid={invalid} save={saved} roundTrip={roundTrip} true={setTrue} failedWrite={failedWriteStaysDirty} reset={reset} periodic={periodic}";
+        result["pass"] = setFalse && setFloat && setColor && setOptics && setVariation && setSsr && materialBinding && unchangedMaterialCache && newMaterialClearsDisabledProvider && setSavedLargePatch && setGeometry && deepWaterOrdering && setAdaptiveDemand && adaptiveClamps && setExpandedLimits && invalid && saved && roundTrip && setTrue && failedWriteStaysDirty && reset && periodic && ssrPresetPersistence;
+        result["detail"] = $"ssrPresets={ssrPresetPersistence}({ssrDetail})false={setFalse} float={setFloat} color={setColor} optics={setOptics} variation={setVariation} ssr={setSsr} productionShaders={productionShaders} material={materialBinding} cache={unchangedMaterialCache} newMaterialClear={newMaterialClearsDisabledProvider} savedLargePatch={setSavedLargePatch} geometry={setGeometry} deepOrdering={deepWaterOrdering} adaptive={setAdaptiveDemand} adaptiveClamps={adaptiveClamps} expanded={setExpandedLimits} invalid={invalid} save={saved} roundTrip={roundTrip} true={setTrue} failedWrite={failedWriteStaysDirty} reset={reset} periodic={periodic}";
         return result;
     }
 }

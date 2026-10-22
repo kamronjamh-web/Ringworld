@@ -61,15 +61,15 @@ foreach ($phaseNumber in $phases) {
   $arguments += @("--script", "res://tools/menu_warm_world_lifecycle_test.gd", "--", "--phase=$phaseNumber")
   $stdout = Join-Path $outDir "console_phase$phaseNumber.log"
   $watch = [Diagnostics.Stopwatch]::StartNew()
-  # A fresh profile (first-time cache generation) can leave the process hanging at exit AFTER the verdict line, independent of this
-  # test. Poll for the verdict and kill our own process when it has not exited within $ExitGraceSeconds of it.
+  # Safety net: Godot 4.8-dev7's WorkerThreadPool can hang at exit when low-priority tasks are still queued (WorldSession drains the
+  # pool on exit to avoid it). If the process still has not exited within $ExitGraceSeconds of the verdict, kill our own process.
   $process = Start-Process $GodotExe -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError "$stdout.err" -PassThru -NoNewWindow
   $verdictAt = $null
   while (-not $process.HasExited) {
     Start-Sleep -Seconds 2
     if (-not $verdictAt -and (Select-String -Path $stdout -Pattern "MENU_WARM_WORLD_LIFECYCLE=(PASS|FAIL|SKIP)" -Quiet)) { $verdictAt = Get-Date }
     if ($verdictAt -and ((Get-Date) - $verdictAt).TotalSeconds -gt $ExitGraceSeconds) {
-      "process did not exit within $ExitGraceSeconds s of the verdict; killing it (known fresh-profile exit hang)" | Add-Content $stdout
+      "process did not exit within $ExitGraceSeconds s of the verdict; killing it (exit hang safety net)" | Add-Content $stdout
       Stop-Process -Id $process.Id -Force
       break
     }

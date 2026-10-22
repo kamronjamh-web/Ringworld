@@ -642,9 +642,31 @@ public partial class RingGraphicsQualityController : Node
         WaterBreakingFoamSlopeEnd, WaterBreakingFoamStrength, WaterShallowTint, WaterDeepTint, WaterFoamColor,
         WaterSwellVariation, WaterFoamPatchiness, WaterDistantFoamVisibility, WaterDetailFilteringStrength);
 
+    private readonly Godot.Collections.Dictionary _waterSsrOverrides = new();
+
+    /// <summary>Stores explicit user WaterSsr* choices so quality presets only supply the fields the user has not set, whichever order they are applied in.</summary>
+    public void SetWaterSsrOverrides(Godot.Collections.Dictionary overrides)
+    {
+        _waterSsrOverrides.Clear();
+        foreach (Variant key in overrides.Keys)
+            if (key.VariantType == Variant.Type.String && key.AsString().StartsWith("WaterSsr", System.StringComparison.Ordinal))
+                _waterSsrOverrides[key] = overrides[key];
+        ApplyWaterSsrOverrides();
+    }
+
+    private void ApplyWaterSsrOverrides()
+    {
+        foreach (Variant key in _waterSsrOverrides.Keys) Set(key.AsString(), _waterSsrOverrides[key]);
+    }
+
     private void ApplyWaterSsrQuality(RingTerrainLodCoordinator.QualityPreset preset)
     {
-        // Defaults are selected before persisted user overrides are loaded.
+        ApplyWaterSsrPresetDefaults(preset);
+        ApplyWaterSsrOverrides();
+    }
+
+    private void ApplyWaterSsrPresetDefaults(RingTerrainLodCoordinator.QualityPreset preset)
+    {
         if (preset == RingTerrainLodCoordinator.QualityPreset.Low) { WaterSsrEnabled = false; return; }
         if (preset == RingTerrainLodCoordinator.QualityPreset.Medium) { WaterSsrEnabled = true; WaterSsrCoarseSteps = 12; WaterSsrRefinementSteps = 3; WaterSsrMaxRayDistance = 120; WaterSsrCameraDistance = 250; WaterSsrRoughnessCutoff = .25f; WaterSsrStrength = .50f; return; }
         WaterSsrEnabled = true; WaterSsrCoarseSteps = 24; WaterSsrRefinementSteps = 4; WaterSsrMaxRayDistance = 250; WaterSsrCameraDistance = 450; WaterSsrRoughnessCutoff = .32f; WaterSsrStrength = .65f;
