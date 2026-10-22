@@ -36,9 +36,9 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _on_node_added(node: Node) -> void:
-	# Cancellation uses change_scene_to_file; freeze its backdrop before _ready.
+	# Cancellation uses change_scene_to_file; freeze its cover before _ready.
 	if node.scene_file_path == "res://scenes/StartMenu.tscn":
-		node.set("freeze_backdrop", true)
+		node.set("freeze_cover", true)
 
 func _process(_delta: float) -> bool:
 	if _done or not _check_arrival or not is_instance_valid(_loader) or not bool(_loader.get("active")):
@@ -248,11 +248,11 @@ func _open_from_menu() -> void:
 	var menu: Node = current_scene
 	if menu == null or menu.scene_file_path != "res://scenes/StartMenu.tscn":
 		menu = MENU.instantiate()
-		menu.set("freeze_backdrop", true)
+		menu.set("freeze_cover", true)
 		root.add_child(menu)
 		current_scene = menu
 	else:
-		menu.set("freeze_backdrop", true)
+		menu.set("freeze_cover", true)
 	# Let the real menu's deferred backdrop initialization finish before a click.
 	await _frames(2)
 	menu.set("selected_slot", 1)

@@ -1,27 +1,36 @@
 extends SceneTree
-## Phase C (C1+C2) lifecycle test: the last-played Standard world warm-loads behind the start menu flyover.
+## Phase C (C1 + D1) lifecycle test: the last-played Standard world warm-loads behind the start menu's boot cover (snapshot or starfield).
 ##
 ## ALWAYS run through tools/menu_warm_world_lifecycle_test.ps1, which builds an ISOLATED APPDATA holding COPIES of two saved slots.
 ## The script refuses to run when user:// resolves into the real roaming profile or is not a phase_c_live profile.
 ##
-## Checks: warm at boot (StartMenu stays current, no loading overlay), crossfade then flyover retired, root 3D enabled, world HUD hidden,
-## grave opens only the menu drawer, W/A/S/D do not move the Explorer, mouse Visible, the state files are unchanged after > 35 s,
-## clean teardown (world freed, active_world_directory cleared) and a different slot then loading through the loading screen.
-## Writes <out>/results.json (time to warm, frame statistics while the menu was up) and, on a GPU run, live_menu.png.
+## One process per phase, all phases sharing one isolated profile (the .ps1 -Sequence switch runs 1, 2, 3):
+##   --phase=1  fresh profile: starfield cover, warm, capture at reveal (sidecar pose matches the bridge pose within 1 m / 0.1 deg, no UI
+##              in the PNG), plus the full C1/C2 checks (HUD hidden, mouse Visible, WASD ignored, grave does nothing, state files
+##              unchanged > 35 s, clean teardown, another slot through the loading screen)
+##   --phase=2  second boot: snapshot cover, PlacementUsedSnapshot, settled cover vs first live frame, no recapture
+##   --phase=3  stale snapshot (SavedUnix edited in the isolated copy): snapshot still shown, placement at the actual save spot,
+##              dissolve to live, recapture with the new state stamp
+## Windowed GPU runs check the snapshot (headless has no pixels and runs phase 1 without the snapshot checks).
+## Writes <out>/results_phase<N>.json (time to warm, frame statistics, luma diffs) and screenshots to res://.godot/phase_c_live/d1/.
 
 const MENU := preload("res://scenes/StartMenu.tscn")
 const PROBE := preload("res://tools/MenuAltitudePerfProbe.cs")
+const SNAPSHOT := preload("res://scripts/ui/menu_snapshot.gd")
 const WARM_TIMEOUT_MS := 300000
 const REVEAL_TIMEOUT_MS := 120000
 const LOAD_TIMEOUT_MS := 300000
 const AUTOSAVE_OBSERVATION_SECONDS := 36.0
-const OUT_DIR := "res://.godot/phase_c_live"
-const WATCHDOG_USEC := 1200 * 1000000
+const OUT_DIR := "res://.godot/phase_c_live/d1"
+const WATCHDOG_USEC := 1500 * 1000000
+const LUMA_DIFF_LIMIT := 0.06
+const TOP_BAND_LIMIT := 0.02
 
 var _errors := PackedStringArray()
 var _checks := 0
 var _results := {}
 var _menu: Control
+var _cover: Control
 var _warm: Node
 var _loader: Node
 var _session: Node
@@ -29,7 +38,6 @@ var _frame_max_ms := 0.0
 var _last_usec := 0
 var _track_frames := false
 var _slot_dir := ""
-var _watched := {}
 var _headless := false
 var _torn_world_id := 0
 var _teardown_checked := false
@@ -37,6 +45,9 @@ var _teardown_frame_max_ms := 0.0
 var _track_teardown := false
 var _loaded_world: Node
 var _live_slot := 0
+var _phase := 1
+var _magenta_probe: ColorRect
+var _slow_after_unlock: Array = []
 
 func _initialize() -> void:
 	# Never write the menu tuning preset or touch the real profile; the isolated APPDATA guard in _run backs this up.
@@ -54,6 +65,10 @@ func _process(_delta: float) -> bool:
 			_frame_max_ms = maxf(_frame_max_ms, milliseconds)
 		if _track_teardown:
 			_teardown_frame_max_ms = maxf(_teardown_frame_max_ms, milliseconds)
+	if _last_usec > 0 and _menu != null and is_instance_valid(_menu) and not _menu.get("menu_locked") and not (_menu.get("unlock_info") as Dictionary).is_empty():
+		var gap := float(now - _last_usec) / 1000.0
+		if gap > 100.0:
+			_slow_after_unlock.append(snappedf(gap, 0.1))
 	_last_usec = now
 	return false
 
@@ -98,19 +113,29 @@ func _key(code: int, down: bool) -> void:
 func _finish() -> void:
 	_results["checks"] = _checks
 	_results["errors"] = Array(_errors)
+	_results["phase"] = _phase
+	_results["slow_frames_over_100ms_after_unlock"] = _slow_after_unlock
+	print("MENU_SLOW_AFTER_UNLOCK=", _slow_after_unlock)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
-	var file := FileAccess.open(ProjectSettings.globalize_path(OUT_DIR).path_join("results.json"), FileAccess.WRITE)
+	var file := FileAccess.open(ProjectSettings.globalize_path(OUT_DIR).path_join("results_phase%d.json" % _phase), FileAccess.WRITE)
 	if file != null:
 		file.store_string(JSON.stringify(_results, "  "))
 		file.close()
+	SNAPSHOT.wait_pending()
 	if _errors.is_empty():
-		print("MENU_WARM_WORLD_LIFECYCLE=PASS checks=%d" % _checks)
+		print("MENU_WARM_WORLD_LIFECYCLE=PASS phase=%d checks=%d" % [_phase, _checks])
 		quit(0)
 	else:
 		for error in _errors:
 			push_error(error)
-		print("MENU_WARM_WORLD_LIFECYCLE=FAIL checks=%d" % _checks)
+		print("MENU_WARM_WORLD_LIFECYCLE=FAIL phase=%d checks=%d" % [_phase, _checks])
 		quit(1)
+
+func _arg(prefix: String, fallback: String) -> String:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with(prefix):
+			return arg.substr(prefix.length())
+	return fallback
 
 func _run() -> void:
 	var user_dir := ProjectSettings.globalize_path("user://").replace("\\", "/").to_lower()
@@ -119,53 +144,71 @@ func _run() -> void:
 		push_error("Refusing to run: user:// (%s) is not an isolated phase_c_live APPDATA. Use menu_warm_world_lifecycle_test.ps1." % user_dir)
 		quit(2)
 		return
+	_phase = int(_arg("--phase=", "1"))
 	_headless = DisplayServer.get_name() == "headless"
 	_results["adapter"] = RenderingServer.get_video_adapter_name()
 	_results["headless"] = _headless
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
+	if _headless and _phase != 1:
+		print("MENU_WARM_WORLD_LIFECYCLE=SKIP phase=%d (headless has no pixels, so no snapshot is captured)" % _phase)
+		quit(0)
+		return
 	_session = root.get_node_or_null("WorldSession")
 	if not _expect(_session != null, "WorldSession autoload missing"):
 		return _finish()
+	if _phase != 1:
+		# Phase 1 ends by loading the other slot, which stamps it as most recent; make the slot that holds the snapshot the live one again.
+		for slot in range(1, 4):
+			if FileAccess.file_exists(ProjectSettings.globalize_path(str(_session.get_menu_snapshot_paths(slot)["json"]))):
+				_session.call("_touch_slot", slot)
 	# A fresh profile has slot 1 as the most recently played world; a reused one may have slot 2 after an earlier run.
 	var live_slot := int(_session.get_live_menu_slot())
 	_expect(live_slot in [1, 2], "no eligible live menu slot (got %d)" % live_slot)
 	var other_slot := 2 if live_slot == 1 else 1
 	_live_slot = live_slot
 	_slot_dir = ProjectSettings.globalize_path(_session.call("_slot_directory", live_slot))
+	var paths: Dictionary = _session.get_menu_snapshot_paths(live_slot)
+	var png_path := ProjectSettings.globalize_path(str(paths["png"]))
+	var json_path := ProjectSettings.globalize_path(str(paths["json"]))
+	if _phase == 1 and not _headless:
+		# Phase 1 is the fresh boot: no snapshot may exist yet (the .ps1 builds a fresh profile for it).
+		_expect(not FileAccess.file_exists(json_path), "phase 1 profile already has a menu snapshot")
+	if _phase == 3:
+		_edit_saved_unix(5)
 	var before := _snapshot_state()
-	_expect(before["world_state_surface_runtime_v1.json"] != "missing", "isolated slot 1 has no saved world state")
+	_expect(before["world_state_surface_runtime_v1.json"] != "missing", "isolated live slot has no saved world state")
 	_results["state_before"] = before
+	var state_stamp_before: Dictionary = _session.read_world_state_stamp(_slot_dir)
+	var started_unix := int(Time.get_unix_time_from_system())
 
-	# --- cancel mid-load: tearing down while the background load is still in flight leaves nothing behind
-	var early: Node = load("res://scripts/Loading/ring_warm_world.gd").ensure(root)
-	_expect(early.start(live_slot), "warm owner refused to start")
-	_expect(int(early.state) == 1 and bool(_session.warm_world_active), "owner is not LOADING after start")
-	await _wait_seconds(7.0)
-	var cancel_started := Time.get_ticks_msec()
-	await early.teardown()
-	_results["cancel_mid_load_ms"] = Time.get_ticks_msec() - cancel_started
-	_expect(int(early.state) == 0 and not bool(_session.warm_world_active) and _session.active_slot == 0, "mid-load teardown left the owner or session bound")
-	_expect(str(ProjectSettings.get_setting("ringworld/runtime/active_world_directory", "")) == "", "mid-load teardown left active_world_directory set")
-	_expect(root.get_node_or_null("RingWorldLoading") == null or not bool(root.get_node("RingWorldLoading").get("active")), "loader still active after the mid-load teardown")
-	for child in root.get_children():
-		var early_name := str(child.name)
-		_expect(not (early_name.contains("VoxelRing") or early_name.contains("WorldSizeLauncher")), "world runtime node remains after the mid-load teardown: " + early_name)
-	_expect(_snapshot_state() == before, "mid-load teardown wrote world state")
+	if _phase == 1:
+		await _cancel_mid_load(live_slot, before)
+	if _phase == 2:
+		await _quit_while_locked(before)
 
 	# --- boot: the menu warms the world itself
 	var boot_msec := Time.get_ticks_msec()
 	_menu = MENU.instantiate()
-	_menu.set("use_saved_menu_defaults", false)
-	_menu.set("menu_defaults_path", "res://.godot/menu_warm_world_tuning_fixture.tres")
 	root.add_child(_menu)
 	current_scene = _menu
+	_cover = _menu.boot_cover
+	_check_locked_at_boot(_menu)
+	# A magenta panel that exists only in the menu: it proves the menu draws, and must never appear in the captured snapshot.
+	_magenta_probe = ColorRect.new()
+	_magenta_probe.color = Color(1.0, 0.0, 1.0)
+	_magenta_probe.position = Vector2(700, 300)
+	_magenta_probe.size = Vector2(320, 220)
+	_magenta_probe.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu.add_child(_magenta_probe)
 	_warm = root.get_node_or_null("RingWarmWorld")
 	if not _expect(_warm != null, "menu did not create RingWarmWorld"):
 		return _finish()
 	_loader = root.get_node_or_null("RingWorldLoading")
+	_check_boot_cover()
 	_track_frames = true
 	var overlay_seen := false
 	var load_shot_taken := false
+	var survey_during_load := ""
 	var mouse_captured_frames := 0
 	var mouse_captured_worst := 0
 	var deadline := Time.get_ticks_msec() + WARM_TIMEOUT_MS
@@ -180,19 +223,30 @@ func _run() -> void:
 		if current_scene != _menu:
 			_errors.append("current scene changed while warm-loading")
 			break
-		if not load_shot_taken and Time.get_ticks_msec() - boot_msec > 14000:
+		if not load_shot_taken and Time.get_ticks_msec() - boot_msec > 4000:
 			load_shot_taken = true
-			_results["luma_during_load"] = await _grab("0_flyover_during_load")
+			survey_during_load = _menu.get("_survey_label").text
+			_results["luma_boot_cover"] = await _grab("p%d_boot_cover" % _phase)
 		await process_frame
 	_expect(int(_warm.state) == 2, "warm world did not become ready (state %d)" % int(_warm.state))
 	if int(_warm.state) != 2:
 		return _finish()
+	_expect(survey_during_load.begins_with("PREPARING"), "survey readout did not show PREPARING during the load: '%s'" % survey_during_load)
 	var time_to_warm_ms := Time.get_ticks_msec() - boot_msec
 	_expect(not overlay_seen, "a loading overlay was created for the background load")
 	_expect(mouse_captured_worst <= 2, "mouse stayed captured for %d consecutive frames during the warm load" % mouse_captured_worst)
 	_expect(current_scene == _menu, "StartMenu is not the current scene")
 	_expect(_session.active_slot == _live_slot and bool(_session.warm_world_active), "warm world did not bind the live slot")
 	_expect(str(ProjectSettings.get_setting("ringworld/runtime/active_world_directory", "")).ends_with("slot_%d" % _live_slot), "active_world_directory is not the live slot while warm")
+	_expect(await _wait_until(func() -> bool: return not bool(_menu.get("menu_locked")), 40000), "menu stayed locked after the warm-load")
+	var unlock_info: Dictionary = _menu.get("unlock_info")
+	_results["unlock_info"] = unlock_info
+	_expect(not _menu.continue_button.disabled and not _menu.worlds_button.disabled, "Continue / Enter Ringworld are still disabled after the unlock")
+	for button in _menu.slot_buttons:
+		_expect(not button.disabled, "a world card stayed disabled after the unlock")
+	_expect(_menu.continue_button.has_focus(), "focus did not move to Continue on unlock")
+	_expect(float(unlock_info.get("ms", 99999.0)) <= 16500.0, "menu unlocked after the safety cap: %s" % str(unlock_info))
+	_expect(str(unlock_info.get("reason", "")) in ["quiet", "cap"], "unexpected unlock reason: %s" % str(unlock_info))
 	var world: Node = _warm.world
 	var bridge: Node = _warm.bridge
 	_expect(is_instance_valid(world) and is_instance_valid(bridge), "warm world or bridge missing")
@@ -200,22 +254,48 @@ func _run() -> void:
 	print("MENU_WARM time_to_warm_ms=", time_to_warm_ms)
 	_results["time_to_warm_ms"] = time_to_warm_ms
 	var warm_msec := Time.get_ticks_msec()
+	var placed_pose: Dictionary = bridge.call("GetCameraPose")
+	_results["placed_pose"] = placed_pose
+	var used_snapshot := bool(bridge.get("PlacementUsedSnapshot"))
+	_results["placement_used_snapshot"] = used_snapshot
+	if _phase == 2:
+		_expect(used_snapshot, "phase 2: placement did not use the snapshot pose")
+		var sidecar_before: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(json_path))
+		_expect(_pose_matches(placed_pose, sidecar_before.get("pose", {})), "phase 2: bridge pose differs from the sidecar pose")
+	else:
+		_expect(not used_snapshot, "phase %d: placement used a snapshot pose (none was valid and current)" % _phase)
+	if _phase == 3:
+		# The stale snapshot is placed at the actual save spot: cruise above it.
+		var saved_around := float(state_stamp_before.get("around_m", 0.0))
+		var saved_across := float(state_stamp_before.get("across_m", 0.0))
+		_expect(absf(float(placed_pose.get("around_m", 0.0)) - saved_around) < 50.0 and absf(float(placed_pose.get("across_m", 0.0)) - saved_across) < 50.0, "phase 3: placement is not above the actual save spot")
 
-	# --- C2: reveal behind the opaque flyover, crossfade, retire
-	var luma_flyover := await _grab("1_flyover_while_world_reveals")
-	_expect(await _wait_until(func() -> bool: return bool(_warm.reveal_complete), REVEAL_TIMEOUT_MS), "world did not become quiet behind the flyover")
-	await _wait_seconds(1.1)
-	var luma_mid := await _grab("2_mid_crossfade")
-	_expect(not root.disable_3d, "root disable_3d still true after the reveal")
-	var retired := await _wait_until(func() -> bool: return bool(_menu.get("_flyover_retired")), 30000)
-	_expect(retired, "flyover backdrop was not retired after the crossfade")
-	_expect(bool(_menu.space_backdrop.get("IsRetired")), "backdrop reports it is not retired")
+	# --- reveal behind the opaque cover (capture when needed), settle, crossfade, retire
+	_expect(await _wait_until(func() -> bool: return bool(_warm.reveal_complete), REVEAL_TIMEOUT_MS), "world did not become quiet behind the cover")
+	if _phase == 2 and not _headless:
+		await _check_settled_against_live(world)
+	else:
+		await _wait_seconds(0.3)
+		_results["luma_cover_after_reveal"] = await _grab("p%d_cover_after_reveal" % _phase)
+		await _wait_seconds(1.1)
+		_results["luma_mid_crossfade"] = await _grab("p%d_mid_crossfade" % _phase)
+		_expect(not root.disable_3d, "root disable_3d still true after the reveal")
+		_expect(await _wait_until(func() -> bool: return bool(_menu.get("_cover_retired")), 30000), "boot cover was not retired after the crossfade")
+	_expect(_cover.is_retired, "cover reports it is not retired")
 	_expect(not root.disable_3d, "root disable_3d true after retire")
+	_expect(_menu.get("_footer_label").text.begins_with("LIVE WORLD"), "footer is not LIVE WORLD after the reveal: " + _menu.get("_footer_label").text)
 	await _wait_seconds(0.5)
-	var luma_live := await _grab("3_live_world")
-	_results["luma"] = {"flyover": luma_flyover, "mid_crossfade": luma_mid, "live": luma_live}
+	var luma_live := await _grab("p%d_live_world" % _phase)
+	_results["luma_live"] = luma_live
 	if not _headless:
-		_expect(luma_flyover > 0.08 and luma_mid > 0.08 and luma_live > 0.08, "a presentation frame is black or empty: %s" % str(_results["luma"]))
+		_expect(luma_live > 0.05, "the live frame is black or empty: %f" % luma_live)
+		_expect(_count_magenta(await _live_image()) > 100, "the menu's magenta probe panel is not visible in the live screenshot")
+	if not _headless:
+		await _check_top_matches(png_path)
+	if _phase != 2:
+		await _check_snapshot_capture(json_path, png_path, bridge, started_unix, state_stamp_before)
+
+	# --- HUD, mouse, survey, clocks
 	_expect(int(_warm.get_visible_hud_layers()) == 0, "world HUD layers are still visible")
 	var visible_layers: Array = []
 	for layer in world.find_children("*", "CanvasLayer", false, false):
@@ -238,24 +318,19 @@ func _run() -> void:
 	_expect(absf(float(telemetry.get("altitude_m", 0.0)) - 16000.0) < 600.0, "explorer altitude is not about 16 km: %s" % str(telemetry.get("altitude_m")))
 	_expect(_menu.get("_continue_slot") == _live_slot, "Continue is not bound to the warm slot")
 
-	# --- grave opens only the menu drawer; W/A/S/D do not move the Explorer
+	# --- grave does nothing on the menu (no drawer until D4); W/A/S/D do not move the Explorer
 	var explorer: Node = world.get_node("Explorer")
 	_expect(explorer.process_mode == Node.PROCESS_MODE_DISABLED, "Explorer is not held")
 	_expect(world.get_node("LiveTuningDrawer").process_mode == Node.PROCESS_MODE_DISABLED, "world LiveTuningDrawer is not held")
-	var drawer: Control = _menu.get("_tuning_drawer")
 	_key(KEY_QUOTELEFT, true)
 	_key(KEY_QUOTELEFT, false)
 	await _wait_seconds(0.5)
-	_expect(bool(drawer.get("IsDrawerOpen")), "grave did not open the menu drawer")
+	_expect(_menu.get_node_or_null("MenuTuningDrawer") == null, "grave created a menu drawer")
 	var world_drawer_visible := false
 	for control in world.get_node("LiveTuningDrawer").find_children("*", "Control", true, false):
 		if (control as Control).is_visible_in_tree():
 			world_drawer_visible = true
 	_expect(not world_drawer_visible, "grave opened the world's live tuning drawer")
-	_key(KEY_QUOTELEFT, true)
-	_key(KEY_QUOTELEFT, false)
-	await _wait_seconds(0.5)
-	_expect(not bool(drawer.get("IsDrawerOpen")), "grave did not close the menu drawer")
 	var probe = PROBE.new()
 	_expect(probe.Bind(world), "pose probe could not bind")
 	var pose_before: Dictionary = probe.GetPose()
@@ -273,11 +348,20 @@ func _run() -> void:
 	_expect(moved < 0.5, "W/A/S/D/E/Q/Shift moved the Explorer by %.2f m" % moved)
 	_expect(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "mouse is not Visible after key input")
 
+	if _phase != 1:
+		# Phases 2 and 3: a clean teardown, then done (the long observation and the foreign-slot load run in phase 1).
+		_track_frames = false
+		_results["warm_metrics"] = _warm.get_metrics()
+		_results["frame_max_ms_menu_up"] = _frame_max_ms
+		_torn_world_id = world.get_instance_id()
+		_warm.torn_down.connect(_check_teardown, CONNECT_ONE_SHOT)
+		await _warm.teardown()
+		_expect(_teardown_checked, "teardown notification was never observed")
+		return _finish()
+
 	# --- GPU screenshot of the live menu
 	if not _headless:
-		await _wait_seconds(1.0)
-		await RenderingServer.frame_post_draw
-		var image := root.get_texture().get_image()
+		var image := await _live_image()
 		if image != null and not image.is_empty():
 			var path := ProjectSettings.globalize_path(OUT_DIR).path_join("live_menu.png")
 			_expect(image.save_png(path) == OK, "could not save the live menu screenshot")
@@ -323,22 +407,238 @@ func _run() -> void:
 	_expect(not bool(_session.warm_world_active), "warm flag still set after the foreground load")
 	_finish()
 
-## Saves a root-viewport screenshot and returns its mean luminance (0 when headless, where nothing is drawn).
-func _grab(label: String) -> float:
+## At boot with a warm world the main buttons are disabled (Quit stays enabled).
+func _check_locked_at_boot(menu: Control) -> void:
+	_expect(bool(menu.get("menu_locked")), "menu is not locked at boot while a world warms")
+	_expect(menu.continue_button.disabled and menu.worlds_button.disabled, "Continue / Enter Ringworld are enabled at boot")
+	for button in menu.slot_buttons:
+		_expect(button.disabled, "a world card is enabled at boot")
+	_expect(not menu.get("_quit_button").disabled, "Quit is disabled while the menu is locked")
+
+## Quit while the menu is still locked: the same teardown the Quit button runs must leave nothing behind.
+func _quit_while_locked(before: Dictionary) -> void:
+	var menu: Control = MENU.instantiate()
+	root.add_child(menu)
+	current_scene = menu
+	await _wait_seconds(5.0)
+	_expect(bool(menu.get("menu_locked")), "menu unlocked within 5 s of boot")
+	await menu._release_warm_world()
+	_expect(int(root.get_node("RingWarmWorld").state) == 0 and not bool(_session.warm_world_active), "Quit while locked did not tear the warm world down")
+	_expect(_snapshot_state() == before, "Quit while locked wrote world state")
+	menu.queue_free()
+	await process_frame
+	await process_frame
+
+## Tearing down while the background load is still in flight leaves nothing behind.
+func _cancel_mid_load(live_slot: int, before: Dictionary) -> void:
+	var early: Node = load("res://scripts/Loading/ring_warm_world.gd").ensure(root)
+	_expect(early.start(live_slot), "warm owner refused to start")
+	_expect(int(early.state) == 1 and bool(_session.warm_world_active), "owner is not LOADING after start")
+	await _wait_seconds(7.0)
+	var cancel_started := Time.get_ticks_msec()
+	await early.teardown()
+	_results["cancel_mid_load_ms"] = Time.get_ticks_msec() - cancel_started
+	_expect(int(early.state) == 0 and not bool(_session.warm_world_active) and _session.active_slot == 0, "mid-load teardown left the owner or session bound")
+	_expect(str(ProjectSettings.get_setting("ringworld/runtime/active_world_directory", "")) == "", "mid-load teardown left active_world_directory set")
+	_expect(root.get_node_or_null("RingWorldLoading") == null or not bool(root.get_node("RingWorldLoading").get("active")), "loader still active after the mid-load teardown")
+	for child in root.get_children():
+		var early_name := str(child.name)
+		_expect(not (early_name.contains("VoxelRing") or early_name.contains("WorldSizeLauncher")), "world runtime node remains after the mid-load teardown: " + early_name)
+	_expect(_snapshot_state() == before, "mid-load teardown wrote world state")
+
+## The cover mode at boot: starfield for phase 1, the snapshot (stale in phase 3) afterwards.
+func _check_boot_cover() -> void:
+	if _phase == 1:
+		_expect(_cover.mode == "starfield", "phase 1 boot cover is not the starfield: " + str(_cover.mode))
+		_expect(_menu.get("_footer_label").text == "", "starfield footer is not empty")
+		return
+	_expect(_cover.mode == "snapshot", "phase %d boot cover is not the snapshot: %s" % [_phase, str(_cover.mode)])
+	_expect(bool(_menu.get("_snapshot_stale")) == (_phase == 3), "phase %d: snapshot stale flag is %s" % [_phase, str(_menu.get("_snapshot_stale"))])
+	_expect(_menu.get("_footer_label").text.begins_with("LAST SESSION"), "snapshot footer is not LAST SESSION: " + _menu.get("_footer_label").text)
+
+## Phase 2: wait for the cover to finish settling (opaque, identity), compare it with the first frame after the cover is gone.
+func _check_settled_against_live(world: Node) -> void:
+	var settled := await _wait_until(func() -> bool: return bool(_cover.get("_settling")) and float(_cover.get("_settle_progress")) >= 0.999, 30000)
+	_expect(settled, "the cover never finished settling")
+	var picture: TextureRect = _cover.get_node_or_null("SnapshotPicture") as TextureRect
+	if picture != null:
+		_results["settled_scale"] = picture.scale.x
+		_expect(absf(picture.scale.x - 1.0) < 0.01 and picture.position.length() < 2.0, "settled cover is not at identity: scale %s offset %s" % [str(picture.scale), str(picture.position)])
+	var cover_image := await _live_image()
+	if cover_image != null:
+		cover_image.save_png(ProjectSettings.globalize_path(OUT_DIR).path_join("shot_p2_settled_cover.png"))
+	_results["luma_cover_after_reveal"] = await _grab("p2_cover_settled")
+	await _wait_seconds(1.2)
+	_results["luma_mid_crossfade"] = await _grab("p2_mid_crossfade")
+	_expect(await _wait_until(func() -> bool: return bool(_menu.get("_cover_retired")), 30000), "boot cover was not retired after the crossfade")
+	await _wait_seconds(0.5)
+	var live_image := await _live_image()
+	_expect(world != null and cover_image != null and live_image != null, "could not grab the comparison frames")
+	if cover_image != null and live_image != null:
+		var diff := _mean_abs_luma_diff(cover_image, live_image)
+		_results["settled_cover_vs_live_luma_diff"] = diff
+		print("MENU_COVER_LUMA_DIFF=", diff)
+		_expect(diff < LUMA_DIFF_LIMIT, "settled cover differs from the live frame: mean abs luma diff %.4f >= %.2f" % [diff, LUMA_DIFF_LIMIT])
+	# The current snapshot was used: it must not have been rewritten.
+	var sidecar_after: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(ProjectSettings.globalize_path(str(_session.get_menu_snapshot_paths(_live_slot)["json"]))))
+	_expect(not SNAPSHOT.has_pending(), "a snapshot write is pending although the current snapshot was used")
+	_results["sidecar_captured_unix_after"] = sidecar_after.get("captured_unix", 0)
+
+## The top 35% of the frame (horizon, rim wall, atmosphere) must match between the snapshot and the live world-only view after the
+## crossfade, or the dissolve pops there. The menu is hidden for three presented frames so the live image carries no UI.
+func _check_top_matches(png_path: String) -> void:
+	_expect(await _wait_until(func() -> bool: return not SNAPSHOT.has_pending(), 30000), "snapshot write did not finish before the top-band check")
+	var snapshot := Image.load_from_file(png_path)
+	if snapshot == null or snapshot.is_empty():
+		_expect(false, "no snapshot PNG for the top-band check")
+		return
+	_menu.visible = false
+	await process_frame
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var live := root.get_texture().get_image()
+	_menu.visible = true
+	live.save_png(ProjectSettings.globalize_path(OUT_DIR).path_join("shot_p%d_live_world_only.png" % _phase))
+	var diff := _top_band_diff(snapshot, live)
+	_results["top35_snapshot_vs_live_diff"] = diff
+	print("MENU_TOP35_DIFF=", diff)
+	_expect(diff < TOP_BAND_LIMIT, "top 35%% of the snapshot differs from the live view: mean abs luma diff %.4f >= %.3f" % [diff, TOP_BAND_LIMIT])
+	var dark := _near_black_fraction(snapshot, 0.5)
+	var dark_live := _near_black_fraction(live, 0.5)
+	_results["near_black_top50_snapshot_live"] = [dark, dark_live]
+	_expect(absf(dark - dark_live) < 0.01, "near-black horizon band differs: snapshot %.4f vs live %.4f" % [dark, dark_live])
+
+func _top_band_diff(a: Image, b: Image) -> float:
+	var x := a.duplicate() as Image
+	var y := b.duplicate() as Image
+	x.convert(Image.FORMAT_RGB8)
+	y.convert(Image.FORMAT_RGB8)
+	x.resize(128, 72, Image.INTERPOLATE_BILINEAR)
+	y.resize(128, 72, Image.INTERPOLATE_BILINEAR)
+	var rows := int(72 * 0.35)
+	var total := 0.0
+	for j in rows:
+		for i in 128:
+			total += absf(x.get_pixel(i, j).get_luminance() - y.get_pixel(i, j).get_luminance())
+	return total / float(rows * 128)
+
+## Fraction of pixels in the top `fraction` of the frame that are near black (a missing far layer or wall shows as a black band).
+func _near_black_fraction(image: Image, fraction: float) -> float:
+	var small := image.duplicate() as Image
+	small.convert(Image.FORMAT_RGB8)
+	small.resize(128, 72, Image.INTERPOLATE_BILINEAR)
+	var rows := int(72 * fraction)
+	var count := 0
+	for j in rows:
+		for i in 128:
+			if small.get_pixel(i, j).get_luminance() < 0.02:
+				count += 1
+	return float(count) / float(rows * 128)
+
+## Phase 1 and 3: the capture was written; its sidecar and PNG are consistent with the bridge and contain no menu UI.
+func _check_snapshot_capture(json_path: String, png_path: String, bridge: Node, started_unix: int, stamp_before: Dictionary) -> void:
 	if _headless:
-		return 0.0
+		_expect(not FileAccess.file_exists(json_path), "headless run wrote a snapshot")
+		return
+	_expect(await _wait_until(func() -> bool: return not SNAPSHOT.has_pending(), 30000), "snapshot write did not finish")
+	_expect(FileAccess.file_exists(png_path) and FileAccess.file_exists(json_path), "no snapshot PNG and sidecar after the reveal")
+	if not FileAccess.file_exists(json_path):
+		return
+	var sidecar: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(json_path))
+	_results["sidecar"] = sidecar
+	_expect(int(sidecar.get("format_version", 0)) == SNAPSHOT.FORMAT_VERSION and int(sidecar.get("render_epoch", 0)) == SNAPSHOT.RENDER_EPOCH, "sidecar format or epoch mismatch")
+	_expect(str(sidecar.get("kind", "")) == "last_session", "sidecar kind is not last_session")
+	_expect(int(sidecar.get("captured_unix", 0)) >= started_unix, "sidecar captured_unix predates this run")
+	var bridge_pose: Dictionary = bridge.call("GetCameraPose")
+	_expect(_pose_matches(bridge_pose, sidecar.get("pose", {})), "sidecar pose differs from the bridge pose (>1 m or >0.1 deg): %s vs %s" % [str(sidecar.get("pose", {})), str(bridge_pose)])
+	var stamp: Dictionary = sidecar.get("state_stamp", {})
+	_expect(int(stamp.get("saved_unix", -1)) == int(stamp_before.get("saved_unix", -2)), "sidecar state stamp does not match the save at capture time")
+	_expect(float(sidecar.get("last_warm_ms", 0.0)) > 1000.0, "sidecar last_warm_ms is missing")
+	_expect(absf(float(sidecar.get("sun_elevation_deg", 999.0))) <= 90.0, "sidecar sun elevation is invalid")
+	var image := Image.load_from_file(png_path)
+	_expect(image != null and not image.is_empty() and image.get_height() <= SNAPSHOT.MAX_HEIGHT, "snapshot PNG missing or taller than 1080 px")
+	if image != null and not image.is_empty():
+		var size: Array = sidecar.get("image_size", [0, 0])
+		_expect(int(size[0]) == image.get_width() and int(size[1]) == image.get_height(), "sidecar image_size does not match the PNG")
+		var magenta := _count_magenta(image)
+		_results["snapshot_magenta_pixels"] = magenta
+		_expect(magenta == 0, "the snapshot contains menu UI (%d magenta probe pixels)" % magenta)
+		_expect(_mean_luma(image) > 0.05, "the snapshot is black or empty")
+		_expect(not FileAccess.file_exists(png_path + ".tmp") and not FileAccess.file_exists(json_path + ".tmp"), "temporary snapshot files left behind")
+	if _phase == 3:
+		_expect(int(stamp.get("saved_unix", -1)) == int(_session.read_world_state_stamp(_slot_dir).get("saved_unix", -2)), "phase 3: recapture does not carry the new state stamp")
+
+## Phase 3: shifts SavedUnix in the isolated copy of the live slot's state file, as a window close after the capture would.
+func _edit_saved_unix(delta: int) -> void:
+	var path := _slot_dir.path_join("world_state_surface_runtime_v1.json")
+	var text := FileAccess.get_file_as_string(path)
+	var regex := RegEx.create_from_string("\"SavedUnix\"\\s*:\\s*(\\d+)")
+	var found := regex.search(text)
+	if not _expect(found != null, "state file has no SavedUnix"):
+		return
+	var edited := text.substr(0, found.get_start(1)) + str(int(found.get_string(1)) + delta) + text.substr(found.get_end(1))
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(edited)
+	file.close()
+
+func _pose_matches(a: Dictionary, b: Dictionary) -> bool:
+	for key in ["around_m", "vertical_m", "across_m"]:
+		if not a.has(key) or not b.has(key) or absf(float(a[key]) - float(b[key])) > 1.0:
+			return false
+	for key in ["yaw_deg", "pitch_deg"]:
+		if not a.has(key) or not b.has(key) or absf(wrapf(float(a[key]) - float(b[key]), -180.0, 180.0)) > 0.1:
+			return false
+	return true
+
+func _live_image() -> Image:
+	if _headless:
+		return null
 	await RenderingServer.frame_post_draw
 	var image := root.get_texture().get_image()
-	if image == null or image.is_empty():
+	return image if image != null and not image.is_empty() else null
+
+func _count_magenta(image: Image) -> int:
+	if image == null:
+		return 0
+	var count := 0
+	for y in range(0, image.get_height(), 2):
+		for x in range(0, image.get_width(), 2):
+			var color := image.get_pixel(x, y)
+			if color.r > 0.8 and color.b > 0.8 and color.g < 0.3:
+				count += 1
+	return count
+
+func _small_luma(image: Image) -> PackedFloat32Array:
+	var small := image.duplicate() as Image
+	small.resize(64, 36, Image.INTERPOLATE_BILINEAR)
+	var values := PackedFloat32Array()
+	for y in small.get_height():
+		for x in small.get_width():
+			values.append(small.get_pixel(x, y).get_luminance())
+	return values
+
+func _mean_luma(image: Image) -> float:
+	var values := _small_luma(image)
+	var total := 0.0
+	for value in values:
+		total += value
+	return total / maxf(1.0, float(values.size()))
+
+func _mean_abs_luma_diff(a: Image, b: Image) -> float:
+	var va := _small_luma(a)
+	var vb := _small_luma(b)
+	var total := 0.0
+	for index in mini(va.size(), vb.size()):
+		total += absf(va[index] - vb[index])
+	return total / maxf(1.0, float(mini(va.size(), vb.size())))
+
+## Saves a root-viewport screenshot and returns its mean luminance (0 when headless, where nothing is drawn).
+func _grab(label: String) -> float:
+	var image := await _live_image()
+	if image == null:
 		return 0.0
 	image.save_png(ProjectSettings.globalize_path(OUT_DIR).path_join("shot_%s.png" % label))
-	image.resize(64, 36)
-	var total := 0.0
-	for y in image.get_height():
-		for x in image.get_width():
-			var color := image.get_pixel(x, y)
-			total += color.get_luminance()
-	return total / float(image.get_width() * image.get_height())
+	return _mean_luma(image)
 
 func _check_teardown() -> void:
 	_teardown_checked = true

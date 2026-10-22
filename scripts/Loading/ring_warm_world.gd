@@ -1,11 +1,12 @@
 extends Node
-## Persistent owner of the warm world: the last-played Standard world that loads in the background behind the start menu flyover.
+## Persistent owner of the warm world: the last-played Standard world that loads in the background behind the start menu boot cover.
 ##
 ## States: IDLE -> LOADING (background load in flight) -> WARM (world held: no input, no saves, clocks paused, cruise viewpoint)
 ## -> TEARING_DOWN -> IDLE. The world and its bridge are siblings of the menu under /root, so they outlive a StartMenu scene change.
 ## While a world exists WorldSession.warm_world_active is true and select_slot/delete_slot refuse; teardown() must be awaited first.
 
 const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
+const MENU_SNAPSHOT := preload("res://scripts/ui/menu_snapshot.gd")
 const NODE_NAME := "RingWarmWorld"
 ## Seconds the revealed world renders behind the opaque flyover before the quiet-frame test starts (hides cold pipeline cost).
 const SETTLE_SECONDS := 2.0
@@ -20,7 +21,7 @@ enum State { IDLE, LOADING, WARM, TEARING_DOWN }
 
 signal warm_ready(world: Node)
 signal warm_failed(message: String)
-## The world renders behind the (still opaque) flyover and frames are quiet; the menu may crossfade now.
+## The world renders behind the (still opaque) boot cover and frames are quiet; the menu may capture, settle and crossfade now.
 signal reveal_ready
 signal torn_down
 
@@ -59,6 +60,8 @@ func _exit_tree() -> void:
 	for thread in _gpu_threads:
 		thread.wait_to_finish()
 	_gpu_threads.clear()
+	# A menu snapshot write may still be running on the worker pool; join it so the process never exits with a task in flight.
+	MENU_SNAPSHOT.wait_pending()
 
 func is_warm() -> bool:
 	return state == State.WARM and is_instance_valid(world)
@@ -66,8 +69,9 @@ func is_warm() -> bool:
 func is_busy() -> bool:
 	return state != State.IDLE
 
-## Begins the background load of `slot_id`. Returns false when a world exists or the slot cannot be bound.
-func start(slot_id: int) -> bool:
+## Begins the background load of `slot_id`. `placement_pose` is the pose of a valid menu snapshot (see RingWorldLoadingBridge.SetPlacementPose).
+## Returns false when a world exists or the slot cannot be bound.
+func start(slot_id: int, placement_pose: Dictionary = {}) -> bool:
 	if state != State.IDLE:
 		return false
 	var session := get_node_or_null("/root/WorldSession")
@@ -103,7 +107,7 @@ func start(slot_id: int) -> bool:
 		"circumference_m": TAU * float(settings.get("radius_km", 5000.0)) * 1000.0,
 		"width_m": float(settings.get("ring_width_km", 318.0)) * 1000.0,
 		"is_existing": true,
-	})
+	}, placement_pose)
 	return true
 
 func _on_world_warm(warm_world: Node, warm_bridge: Node) -> void:
@@ -124,7 +128,7 @@ func _on_loader_failed(message: String) -> void:
 	await teardown()
 	warm_failed.emit(message)
 
-## Presents the world behind the opaque flyover: hides the world HUD, releases the render holds, enables root 3D, then waits for
+## Presents the world behind the opaque cover: hides the world HUD, releases the render holds, enables root 3D, then waits for
 ## two presented frames, the settle time and a quiet second. Emits reveal_ready (or returns early if the world went away).
 func reveal() -> void:
 	if state != State.WARM or not is_instance_valid(bridge):
@@ -203,7 +207,32 @@ func _teardown_warm_world(loader: Node) -> void:
 	# queue_free from a post-draw continuation is flushed at the end of the next processed frame, so wait one presented frame.
 	await loader.present_frame()
 
-## Altitude, speed and sun elevation of the held world, for the survey readout after the flyover is retired.
+## Load progress 0..1 for the survey readout: the loader's overall progress while loading, 1 once the world is held.
+func get_progress() -> float:
+	if state == State.LOADING:
+		return WORLD_LOADING.ensure(self).get_progress()
+	return 1.0 if state == State.WARM else 0.0
+
+## True once the load has left the preparing and terrain stages (the worst early freezes are behind it).
+func is_past_terrain_stage() -> bool:
+	if state == State.WARM:
+		return true
+	return state == State.LOADING and WORLD_LOADING.ensure(self).get_stage() in ["surroundings", "ready"]
+
+## Milliseconds from start() to the world being quiet behind the cover; the boot snapshot's drift is paced to this on the next boot.
+func get_last_warm_ms() -> float:
+	return float(_report.get("time_to_warm_ms", 0.0)) + float(_report.get("reveal_to_quiet_ms", 0.0))
+
+## Explorer pose of the held world ({valid, around_m, vertical_m, across_m, yaw_deg, pitch_deg, fov_deg}) for the menu snapshot sidecar.
+func get_camera_pose() -> Dictionary:
+	if state != State.WARM or not is_instance_valid(bridge):
+		return {}
+	return bridge.call("GetCameraPose")
+
+func placement_used_snapshot() -> bool:
+	return is_instance_valid(bridge) and bool(bridge.get("PlacementUsedSnapshot"))
+
+## Altitude, speed and sun elevation of the held world, for the survey readout once the boot cover is retired.
 func get_telemetry() -> Dictionary:
 	if state != State.WARM or not is_instance_valid(bridge):
 		return {}

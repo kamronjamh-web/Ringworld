@@ -84,6 +84,8 @@ public partial class RingBiomeDecorationLayer
         _lod4AuthoredTemplates = templates[3];
         _lod4Trees = CreateInstances("BiomeTreesLod4", new QuadMesh { Size = Vector2.One }, CreateBillboardMaterial(new Color(.08f, .27f, .10f, 1)), false);
         yield return true;
+        _startupResourcePhase = "tree impostors";
+        foreach (bool unit in ImportedTreeImpostorCatalog.PrepareCooperatively()) yield return unit;
         _lod5Trees = CreateInstances("BiomeTreesLod5", new QuadMesh { Size = Vector2.One }, CreateBillboardMaterial(new Color(.08f, .27f, .10f, 1)), false);
         _startupResourcePhase = "tree streaming";
     }

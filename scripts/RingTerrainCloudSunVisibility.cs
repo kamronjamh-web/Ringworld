@@ -187,8 +187,8 @@ public partial class RingTerrainCloudSunVisibility : Node
             else{
                 if(_globalTask==null){var sampler=_grid.CreateIndependentTerrainSampler();var snapshot=_grid.CaptureLodSurfaceEditSnapshot();
                     if(sampler!=null){double circumference=geometry.CircumferenceMeters;int sourceWidth=(int)width;
-                        _globalTask=Task.Run(()=>{using(sampler)return CloudSunTerrainSnapshotBuilder.Build(circumference,sourceWidth,snapshot.Version,
-                            (a,z)=>snapshot.GetPresentationSurfaceHeight(sampler,a,z)) with {SourceIdentity=sourceIdentity};});}}
+                        _globalTask=Task.Run(()=>{using(sampler){var built=CloudSunTerrainSnapshotBuilder.Build(circumference,sourceWidth,snapshot.Version,
+                            (a,z)=>snapshot.GetPresentationSurfaceHeight(sampler,a,z)) with {SourceIdentity=sourceIdentity};CloudSunTerrainPacking.Prime(built);return built;}});}}
                 Invalidate("terrain snapshot pending");return;
             }
         }
@@ -247,9 +247,7 @@ public partial class RingTerrainCloudSunVisibility : Node
     {
         if(!ReferenceEquals(_packedTerrain,terrain)){
             _packedTerrain=terrain;
-            _packedHeights=terrain.Levels.SelectMany(level=>level.Ranges.ToArray().Where((_,index)=>index%2==1)).ToArray();
-            _packedLevels=new float[terrain.Levels.Count*4];int offset=0;
-            for(int n=0;n<terrain.Levels.Count;n++){var level=terrain.Levels[n];_packedLevels[n*4]=level.Width;_packedLevels[n*4+1]=level.Height;_packedLevels[n*4+2]=offset;_packedLevels[n*4+3]=level.CellSize;offset+=level.Width*level.Height;}
+            (_packedHeights,_packedLevels)=CloudSunTerrainPacking.GetOrPack(terrain);
         }
         return new(){["generation"]=(long)i.Generation,["terrain_key"]=$"{terrain.SourceIdentity}:{terrain.EditVersion}:{terrain.Circumference}:{terrain.Width}",["levels"]=_packedLevels,["height"] = _packedHeights,["height_size"]=new Vector2I(terrain.Levels[0].Width,terrain.Levels[0].Height),
             ["regional_height"]=i.Regional.Heights,["regional_height_size"]=i.Regional.Resolution,["regional_maximum"]=i.Regional.Heights.Max(),["regional_minimum"]=i.Regional.Heights.Min(),

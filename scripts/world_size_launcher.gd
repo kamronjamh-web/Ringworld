@@ -1440,7 +1440,7 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 			bridge.call("Release")
 			return _reject_runtime_surface_launch("This runtime surface world is missing required immutable generation metadata.")
 		var stored_json := str(saved.get("surface_generation_recipe_json", ""))
-		if stored_json.is_empty() or not bool(bridge.call("ConfigureJson", stored_json)):
+		if stored_json.is_empty() or not bool(bridge.call("ValidateJson", stored_json)):
 			var error := str(bridge.get("LastError"))
 			bridge.call("Release")
 			return _reject_runtime_surface_launch("Stored runtime surface recipe is invalid: %s" % error)

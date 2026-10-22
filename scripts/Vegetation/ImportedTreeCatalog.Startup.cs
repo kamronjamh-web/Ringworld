@@ -62,6 +62,7 @@ public static partial class ImportedTreeCatalog
                     float height = bounds.Max.Y - bounds.Min.Y;
                     float width = Mathf.Max(bounds.Max.X - bounds.Min.X, bounds.Max.Z - bounds.Min.Z);
                     if (height <= Mathf.Epsilon || width <= Mathf.Epsilon) throw new InvalidOperationException($"{name} LOD0 has invalid bounds.");
+                    yield return true;
                     var lods = new Mesh[4];
                     var materials = new List<ShaderMaterial>();
                     for (int lod = 0; lod < lods.Length; lod++)

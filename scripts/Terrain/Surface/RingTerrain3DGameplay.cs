@@ -107,6 +107,8 @@ public partial class RingTerrain3DGameplay : Node3D
     public override void _Process(double delta)
     {
         if (_startupCleanupRequested) { PollStartupCancellation(); return; }
+        // Only the node's own process advances staged startup; getters that poll EnsureInitialized must not run its work re-entrantly.
+        if (_startupPending) AdvanceStagedStartup();
         if (!EnsureInitialized() || _grid == null || _explorer == null || _surface == null || _field == null) return;
         if (_synchronousBenchmark)
         {
@@ -128,11 +130,7 @@ public partial class RingTerrain3DGameplay : Node3D
     {
         if (_initializationFailed) return false;
         if (UseStagedStartup && WaitForSavedState) return false;
-        if (_startupPending)
-        {
-            AdvanceStagedStartup();
-            return IsReady && !_saveBlocked;
-        }
+        if (_startupPending) return false;
         if (_field != null) return IsReady && !_saveBlocked;
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);

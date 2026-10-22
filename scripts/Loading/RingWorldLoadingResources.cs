@@ -45,9 +45,35 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/ring_cloud_transmittance_mask.gdshader",
         "res://materials/ring_far_backdrop_cloud_composite.gdshader",
         "res://materials/ring_lightning_bolt.gdshader",
+        "res://materials/ring_surface_far.gdshader",
+        "res://materials/ring_emitter_grid_head.gdshader",
+        "res://materials/ring_emitter_grid_head_far.gdshader",
+        "res://materials/ring_emitter_grid_beam.gdshader",
+        "res://materials/ring_emitter_grid_beam_core.gdshader",
+        "res://materials/ring_emitter_grid_beam_far.gdshader",
+        "res://materials/ring_grass_cards.gdshader",
+        "res://materials/imported_tree.gdshader",
+        "res://materials/imported_tree_impostor.gdshader",
         "res://materials/ring_wind_neutral.tres",
         "res://scripts/render/RingFarDepthCapture.gd"
     };
+    // World shaders whose first ShaderMaterial assignment is expensive; each is assigned to a throwaway material one per frame so the
+    // cost is paid during loading instead of the attach frame.
+    private static readonly string[] PrewarmShaderPaths =
+    {
+        "res://materials/ring_terrain_proxy.gdshader",
+        "res://materials/ring_terrain_global.gdshader",
+        "res://materials/ring_surface_far.gdshader",
+        "res://materials/ring_emitter_grid_head.gdshader",
+        "res://materials/ring_emitter_grid_head_far.gdshader",
+        "res://materials/ring_emitter_grid_beam.gdshader",
+        "res://materials/ring_emitter_grid_beam_core.gdshader",
+        "res://materials/ring_emitter_grid_beam_far.gdshader",
+        "res://materials/ring_grass_cards.gdshader",
+        "res://materials/imported_tree.gdshader",
+        "res://materials/imported_tree_impostor.gdshader"
+    };
+    private readonly List<ShaderMaterial> _prewarmMaterials = new();
     private readonly Dictionary<string, Resource> _retained = new(StringComparer.Ordinal);
     private readonly RingThreadedResourceClaims _claims = new();
     private IEnumerator<bool>? _preparation;
@@ -123,6 +149,7 @@ public partial class RingWorldLoadingResources : Node
     {
         _preparation?.Dispose(); _preparation = null;
         _claims.Dispose();
+        _prewarmMaterials.Clear();
         _retained.Clear();
     }
     private IEnumerable<bool> Prepare()
@@ -141,6 +168,12 @@ public partial class RingWorldLoadingResources : Node
             _retained[path] = _claims.Take(path)
                 ?? throw new InvalidOperationException($"Startup resource result is missing for {path}.");
             _completedResources++;
+            yield return true;
+        }
+        _phase = "shader prewarm";
+        foreach (string path in PrewarmShaderPaths)
+        {
+            if (_retained[path] is Shader shader) _prewarmMaterials.Add(new ShaderMaterial { Shader = shader });
             yield return true;
         }
         if (RingTerrainVisuals.TexturePaletteReady) yield break;

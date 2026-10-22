@@ -169,6 +169,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private readonly HashSet<int> _queuedDirtySegments = new();
     private RingTerrainMinMaxPyramid? _heightPyramid;
     private Task<SummaryBuildResult>? _heightPyramidTask;
+    private Task<RingTerrainSampler.HydrologyAudit>? _hydrologyAuditTask;
     private CancellationTokenSource? _heightPyramidCancellation;
     private Task<MacroShadowBuildResult>? _macroShadowTask;
     private CancellationTokenSource? _macroShadowCancellation;
@@ -369,6 +370,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         UpdateLightingUniforms();
         UpdateRegionalSegmentVisibility(delta);
         CompleteHeightPyramidBuildIfReady();
+        CompleteHydrologyAuditIfReady();
         if (StartupError.Length > 0) return;
         CompleteMacroShadowBuildIfReady();
         CompletePlanetMacroShadowBuildIfReady();
@@ -622,6 +624,17 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
     }
 
+    private void CompleteHydrologyAuditIfReady()
+    {
+        if (_hydrologyAuditTask == null || !_hydrologyAuditTask.IsCompleted) return;
+        Task<RingTerrainSampler.HydrologyAudit> completed = _hydrologyAuditTask;
+        _hydrologyAuditTask = null;
+        if (completed.IsFaulted) { GD.PushError($"Certified hydrology audit failed: {completed.Exception?.GetBaseException().Message}"); return; }
+        if (completed.IsCanceled) return;
+        RingTerrainSampler.HydrologyAudit water = completed.Result;
+        GD.Print($"Certified hydrology audit: dry={water.DrySamples}, ocean={water.OceanSamples} (maxDepth={water.MaximumOceanDepth}m), lake={water.LakeSamples} (maxDepth={water.MaximumLakeDepth}m), river={water.RiverSamples} (maxDepth={water.MaximumRiverDepth}m), samples={water.DrySamples + water.OceanSamples + water.LakeSamples + water.RiverSamples}");
+    }
+
     private void CompleteHeightPyramidBuildIfReady()
     {
         if (_heightPyramidTask == null || !_heightPyramidTask.IsCompleted) return;
@@ -682,8 +695,12 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             if (distributionValid) GD.Print(message);
             else GD.PushError($"{message} (distribution contract failed)");
 
-            RingTerrainSampler.HydrologyAudit water = _grid.TerrainSampler!.CaptureHydrologyAudit();
-            GD.Print($"Certified hydrology audit: dry={water.DrySamples}, ocean={water.OceanSamples} (maxDepth={water.MaximumOceanDepth}m), lake={water.LakeSamples} (maxDepth={water.MaximumLakeDepth}m), river={water.RiverSamples} (maxDepth={water.MaximumRiverDepth}m), samples={water.DrySamples + water.OceanSamples + water.LakeSamples + water.RiverSamples}");
+            // Log-only audit: run it on a worker with its own sampler so it neither stalls the frame nor contends for the shared sampler's noise lock.
+            _hydrologyAuditTask = Task.Run(() =>
+            {
+                using RingTerrainSampler independent = sampler.CreateIndependentCopy();
+                return independent.CaptureHydrologyAudit();
+            });
         }
         _observedEditVersion = initialEdits.Version;
         _knownEditedColumns.Clear();

@@ -2,18 +2,23 @@
 .SYNOPSIS
   Runs tools/menu_warm_world_lifecycle_test.gd against an ISOLATED APPDATA holding COPIES of two saved worlds (never touches real saves).
 .EXAMPLE
-  .\tools\menu_warm_world_lifecycle_test.ps1 -Label run1                 # windowed GPU run, writes .godot\phase_c_live\live_menu.png
-  .\tools\menu_warm_world_lifecycle_test.ps1 -Label run1 -Headless
+  .\tools\menu_warm_world_lifecycle_test.ps1 -Label d1 -Sequence          # windowed GPU: phases 1 (fresh), 2 (snapshot), 3 (stale) on one profile
+  .\tools\menu_warm_world_lifecycle_test.ps1 -Label d1 -Phase 2 -Cache reuse
+  .\tools\menu_warm_world_lifecycle_test.ps1 -Label run1 -Headless        # phase 1 only (no pixels, so no snapshot checks)
 .NOTES
   The isolated profile is .godot\phase_c_live\appdata_<Label>. It receives slot_<Primary> and slot_<Secondary> from the real profile
   plus the gameplay_*.tres preferences; the test refuses to run unless user:// resolves into such a profile. The primary slot must be the
-  most recently played one (it is the slot the menu warm-loads). Output: .godot\phase_c_live\<Label>\console.log and results.json copy.
+  most recently played one (it is the slot the menu warm-loads). Output: .godot\phase_c_live\<Label>\console_phase<N>.log and
+  results_phase<N>.json; screenshots land in .godot\phase_c_live\d1\. Phase 2 and 3 need the snapshot written by phase 1 (same profile).
 #>
 param(
   [string]$Label = "run",
   [int]$Primary = 1,
   [int]$Secondary = 2,
   [switch]$Headless,
+  [int]$Phase = 1,
+  [switch]$Sequence,
+  [int]$ExitGraceSeconds = 60,
   [ValidateSet("none","copy","reuse")][string]$Cache = "none",
   [string]$GodotExe = "$env:USERPROFILE\Downloads\Godot_v4.8-dev7_mono_win64\Godot_v4.8-dev7_mono_win64\Godot_v4.8-dev7_mono_win64_console.exe",
   [string]$ProjectName = "RingworldTechDemo"
@@ -47,14 +52,32 @@ if ($Cache -ne "reuse" -or -not (Test-Path $isoProfile)) {
   }
 }
 $env:APPDATA = $isoRoot
-$arguments = @("--path", $project)
-if ($Headless) { $arguments += "--headless" }
-$arguments += @("--script", "res://tools/menu_warm_world_lifecycle_test.gd")
-$stdout = Join-Path $outDir "console.log"
-$watch = [Diagnostics.Stopwatch]::StartNew()
-& $GodotExe @arguments *> $stdout
-$code = $LASTEXITCODE
-"process wall seconds: {0:N1}  exit code: {1}" -f $watch.Elapsed.TotalSeconds, $code | Add-Content $stdout
-Copy-Item (Join-Path $base "results.json") (Join-Path $outDir "results.json") -ErrorAction SilentlyContinue
-Select-String -Path $stdout -Pattern "Using Device|MENU_WARM|WARM_WORLD|WORLD_LOADING_REPORT|FAIL|ERROR|exit code" | ForEach-Object { $_.Line.Substring(0, [Math]::Min(600, $_.Line.Length)) }
-exit $code
+$phases = if ($Sequence) { @(1, 2, 3) } else { @($Phase) }
+if ($Headless -and $Sequence) { $phases = @(1) }
+$exitCode = 0
+foreach ($phaseNumber in $phases) {
+  $arguments = @("--path", $project)
+  if ($Headless) { $arguments += "--headless" }
+  $arguments += @("--script", "res://tools/menu_warm_world_lifecycle_test.gd", "--", "--phase=$phaseNumber")
+  $stdout = Join-Path $outDir "console_phase$phaseNumber.log"
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  # A fresh profile (first-time cache generation) can leave the process hanging at exit AFTER the verdict line, independent of this
+  # test. Poll for the verdict and kill our own process when it has not exited within $ExitGraceSeconds of it.
+  $process = Start-Process $GodotExe -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError "$stdout.err" -PassThru -NoNewWindow
+  $verdictAt = $null
+  while (-not $process.HasExited) {
+    Start-Sleep -Seconds 2
+    if (-not $verdictAt -and (Select-String -Path $stdout -Pattern "MENU_WARM_WORLD_LIFECYCLE=(PASS|FAIL|SKIP)" -Quiet)) { $verdictAt = Get-Date }
+    if ($verdictAt -and ((Get-Date) - $verdictAt).TotalSeconds -gt $ExitGraceSeconds) {
+      "process did not exit within $ExitGraceSeconds s of the verdict; killing it (known fresh-profile exit hang)" | Add-Content $stdout
+      Stop-Process -Id $process.Id -Force
+      break
+    }
+  }
+  $code = if ($process.HasExited -and $verdictAt -and (Select-String -Path $stdout -Pattern "LIFECYCLE=PASS" -Quiet)) { 0 } elseif (Select-String -Path $stdout -Pattern "LIFECYCLE=SKIP" -Quiet) { 0 } elseif ($verdictAt) { 1 } else { $process.ExitCode }
+  "process wall seconds: {0:N1}  exit code: {1}" -f $watch.Elapsed.TotalSeconds, $code | Add-Content $stdout
+  Copy-Item (Join-Path $base "d1\results_phase$phaseNumber.json") (Join-Path $outDir "results_phase$phaseNumber.json") -ErrorAction SilentlyContinue
+  Select-String -Path $stdout -Pattern "Using Device|MENU_|WARM_WORLD|WORLD_LOADING_REPORT|FAIL|ERROR|exit code" | ForEach-Object { $_.Line.Substring(0, [Math]::Min(600, $_.Line.Length)) }
+  if ($code -ne 0) { $exitCode = $code; break }
+}
+exit $exitCode

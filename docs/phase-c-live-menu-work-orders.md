@@ -28,6 +28,36 @@ executable work orders and the facts they depend on.
 - **Worlds entered through the loading screen:** a live-candidate world loaded via
   the loading screen (for example New World or another slot) is adopted by the warm
   owner, so its Save & Exit also climbs back to the live menu (user, 2026-10-21).
+- **Remove the decorative flyover entirely** (user, 2026-10-22). The menu shows the
+  real ring from the first frame. This supersedes the warm-load "behind the
+  decorative flyover" and the matched-pose decisions above.
+  - **Boot screen:** a full-screen snapshot from the last session, captured at
+    cruise altitude, shown with a slow drift and then crossfaded to the live view of
+    the same spot. If no snapshot exists, show a dark starfield.
+  - **No eligible world** (first launch, or a Compact/legacy world last played):
+    load a bundled Standard showcase world in the background. It is read-only, never
+    saved, and uses its own cache folder.
+- **Flyover-removal details** (user, 2026-10-22):
+  - **Stale snapshot** (the save changed after capture, e.g. a window close): still
+    show the old snapshot, then dissolve to the live view of the actual spot.
+    There is no starfield in this case.
+  - **Showcase world:** seed 1337, at cruise above the fresh-spawn main-spire
+    viewpoint.
+  - **A slot that fails to warm-load:** fade to the starfield, then warm-load the
+    showcase.
+  - **Bundled showcase snapshot** in `res://`, so even the first launch shows an
+    image. Regenerate it when the showcase id changes.
+  - **Grave key at the menu:** opens only the small "Live world" drawer.
+  - **B5 per-screen poses on the live world:** deferred to C10, limited to pitch and
+    FOV changes, never above 18 km.
+- **Menu interactivity during warm-load** (user, 2026-10-22; replaces "delay
+  interactivity until the last stall"):
+  - Lock the menu buttons only through the worst early freezes, about 10 s, showing
+    "PREPARING NN%".
+  - Unlock once the load is past the terrain stage and the last second had no frame
+    over 100 ms. Unlock anyway after a safety cap.
+  - Quit stays usable.
+  - Minor later hitches are accepted.
 - **Audio is out of scope for Phase C** (user, 2026-10-21). Leave world and weather
   audio as they are; C5 does not suspend AudioWeather.
 - **Quitting from the live menu writes nothing.** Saves are held; the last save is
@@ -269,3 +299,63 @@ Ineligible worlds keep the scene-change path. Rewrite
 - Flyover and world memory together on the A1000.
 - `GetTree().Paused` during the ascent.
 - GC in the Debug build.
+
+## Revision: flyover removal (supersedes C2's flyover parts and C8)
+Lead design, 2026-10-22. Execution order: C3 (in flight; tag and skip any
+flyover-owned stalls, then re-baseline after D1) → D0 → D1 → D2 (can overlap D1
+once the warm-world interfaces are fixed) → D3 → D4 → C4 → C5 → C6 → C7 → C9 → C10.
+
+- **D0, housekeeping:** drop the uncommitted sun-match patch (saved to the scratchpad).
+- **D1, boot cover and live reveal with no flyover (vertical slice).**
+  - New files:
+    - `scripts/ui/menu_boot_cover.gd`: snapshot with a Ken Burns drift that converges
+      to identity, or starfield; `settle`, `crossfade`, `retire`.
+    - `scripts/ui/menu_starfield.gdshader`.
+    - `scripts/ui/menu_snapshot.gd`:
+      - `load_valid`, `capture_world_only` (`force_draw(false)` with the menu hidden;
+        skipped headless), `write_async`;
+      - PNG ≤ 1080 px tall, plus a sidecar json holding format, render epoch, kind,
+        state stamp, pose, sun and `last_warm_ms`.
+  - **Bridge:** `SetPlacementPose`, `PlacementUsedSnapshot`, `GetCameraPose`.
+  - **Placement:** at the snapshot pose when it is valid (finite, ≤ loiter radius
+    from the save, 2–18 km above ground). Otherwise at cruise above the save spot.
+  - **Stale snapshot** (state stamp mismatch): show it anyway, place at the actual
+    spot, dissolve, then recapture.
+  - **Capture:** at reveal when there was no snapshot, or it was stale or placement
+    fell back. Later also at C7 Save & Exit once at cruise.
+  - **Remove the menu's use of the flyover:** backdrop, flyover drawer, the survey
+    readout's flyover source, and its caption. The survey readout shows
+    "PREPARING NN%" (from `RingWorldLoading.get_progress`), then the Explorer
+    telemetry.
+  - The flyover files stay on disk until D3.
+  - **New exports:** `live_world`, `freeze_cover`, `snapshot_override_path`.
+- **D2, showcase world.**
+  - `res://resources/menu/showcase_world.json` holds the frozen Standard runtime
+    `generation_settings` for seed 1337 and a `showcase_id`.
+  - Tools: a generator tool and a headless definition guard test.
+  - Directory: `user://showcase/<id>/`; `active_slot` stays 0.
+  - `WorldSession.get_live_menu_target` and `select_showcase_for_preview`;
+    `request_load_selected_world` accepts the showcase.
+  - `RingWorldSaveManager.PermanentlyReadOnly`, so the showcase never writes saves.
+  - `RingWarmWorld.start_target`.
+  - A failed slot warm-load falls back to the showcase.
+  - Continue binds to the most recent slot, Compact included, and loads it through
+    the loading screen.
+  - A bundled showcase snapshot ships in `res://`.
+- **D3, delete the flyover code.**
+  - `RingMenuSpaceBackdrop`, `MenuFlyover*` (except the move below), the
+    `menu_flyover_*` and unreferenced menu shaders, `menu_flyover_defaults.tres`
+    and `menu_flyover_tuning_checks.gd`.
+  - Move `MenuFlyoverSunshineLayer` to `tools/support/SunshineTestRig.cs` for the
+    four cloud GPU tests. Split out `menu_cloud_history_gpu_test --gameplay-history`.
+  - Retarget the menu smoke, grave-menu and docs/README references.
+- **D4, live-world drawer.**
+  - `MenuLiveWorldSettings` / `MenuLiveWorldTuningDrawer`, persisted to
+    `resources/menu/menu_live_world_defaults.tres`.
+  - Rows: cruise altitude 16 (8–18), cruise pitch −25, crossfade 2.5 s, snapshot
+    drift 8%. Later work orders add loiter radius (C4), and rush speed and descent
+    seconds (C6).
+- **C7 change:**
+  1. pause clocks right after `SaveForSceneTransition`;
+  2. ascend;
+  3. capture the snapshot at cruise before the menu UI exists.

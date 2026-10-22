@@ -1,0 +1,21 @@
+{
+	"format_version": 1,
+	"render_epoch": 1,
+	"kind": "fixture",
+	"state_stamp": {},
+	"pose": {
+		"around_m": 1000000.0,
+		"vertical_m": 16000.0,
+		"across_m": 0.0,
+		"yaw_deg": 90.0,
+		"pitch_deg": -25.0,
+		"fov_deg": 75.0
+	},
+	"sun_elevation_deg": 35.0,
+	"image_size": [
+		640,
+		360
+	],
+	"last_warm_ms": 25000,
+	"captured_unix": 0
+}

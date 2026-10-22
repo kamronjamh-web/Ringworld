@@ -16,7 +16,7 @@ func _initialize() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/no_warm_world", true)
 	node_added.connect(func(node: Node):
 		if node.scene_file_path == "res://scenes/StartMenu.tscn":
-			node.set("freeze_backdrop", true))
+			node.set("freeze_cover", true))
 	call_deferred("_run")
 
 func _run() -> void:

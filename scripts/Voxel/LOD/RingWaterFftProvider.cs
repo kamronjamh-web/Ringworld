@@ -254,6 +254,7 @@ public sealed class RingWaterFftProvider : IDisposable
     private void RenderTick()
     {
         RingWaterFftSettings settings; int generation; int configurationVersion, topologyEpoch; double time; float delta;
+        bool buildPending = false;
         lock (_gate)
         {
             if (_disposed) return;
@@ -283,8 +284,16 @@ public sealed class RingWaterFftProvider : IDisposable
                     }
                 }
                 lock (_gate) { _ready = false; _status = "Rebuilding FFT"; }
-                FreeRenderResources();
-                CreateResources(settings);
+                // A settings change mid-build invalidates the partial resources; start over.
+                if (_createStage > 0 && _createConfigurationVersion != configurationVersion) FreeRenderResources();
+                if (_createStage == 0) { FreeRenderResources(); _createConfigurationVersion = configurationVersion; }
+                if (!CreateResourcesStep(settings))
+                {
+                    // One GPU resource group per rendered frame keeps a topology rebuild from landing in a single frame.
+                    buildPending = true;
+                    lock (_gate) _status = $"Building FFT ({_createStage}/{CreateStageCount})";
+                    return;
+                }
                 lock (_gate)
                 {
                     if (_disposed || configurationVersion != _configurationVersion)
@@ -342,90 +351,126 @@ public sealed class RingWaterFftProvider : IDisposable
             // A main-thread request can arrive after this tick consumes its mask.
             // Preserve that bounded work in one follow-up callback rather than
             // leaving a merged mask stranded until another simulation tick.
-            bool reschedule;
+            bool reschedule, continueBuild;
             lock (_gate)
             {
                 _queued = false;
-                reschedule = !_disposed && !_fatalUnsupported && !_topologyDirty && _requestedCascadeMask != 0;
-                if (reschedule) _queued = true;
+                continueBuild = buildPending && !_disposed && !_fatalUnsupported;
+                reschedule = !continueBuild && !_disposed && !_fatalUnsupported && !_topologyDirty && _requestedCascadeMask != 0;
+                if (reschedule || continueBuild) _queued = true;
             }
             if (reschedule) RenderingServer.CallOnRenderThread(Callable.From(RenderTick));
+            // Hop through the main thread so the next stage runs on the next frame rather than in this render flush.
+            else if (continueBuild) Callable.From(() => RenderingServer.CallOnRenderThread(Callable.From(RenderTick))).CallDeferred();
         }
     }
 
-    private void CreateResources(RingWaterFftSettings s)
+    private const int CreateStageCount = 17;
+    private int _createStage, _createConfigurationVersion;
+
+    /// <summary>Runs the next resource-creation stage (at most one texture, buffer group or pipeline); true once every stage has run.</summary>
+    private bool CreateResourcesStep(RingWaterFftSettings s)
     {
         int n = s.Resolution, c = s.CascadeCount, stages = (int)Math.Log2(n);
-        // The selected Stockham kernel needs n lanes, while the fixed transpose
-        // kernel uses 32x32 lanes and 8 KiB shared memory. The unpack kernel is
-        // smaller (512 lanes) but also uses 8 KiB of shared vec2 staging.
-        if (_rd is null
-            || _rd.LimitGet(RenderingDevice.Limit.MaxComputeWorkgroupSizeX) < (uint)Math.Max(n, 32)
-            || _rd.LimitGet(RenderingDevice.Limit.MaxComputeWorkgroupSizeY) < 32u
-            || _rd.LimitGet(RenderingDevice.Limit.MaxComputeWorkgroupInvocations) < 1024u
-            || _rd.LimitGet(RenderingDevice.Limit.MaxComputeSharedMemorySize) < (uint)Math.Max(8448, n * 16)
-            || _rd.LimitGet(RenderingDevice.Limit.MaxTextureArrayLayers) < (uint)c)
-        {
-            throw new NotSupportedException($"Renderer lacks workgroup/shared-memory support for {n}x{n} water FFT ({n * 16 / 1024} KiB shared required).");
-        }
-        _spectrum = Texture(RenderingDevice.DataFormat.R32G32B32A32Sfloat, n, c, RenderingDevice.TextureUsageBits.StorageBit, 16);
-        // Both published arrays deliberately have two backing layers at minimum.
-        // The FFT only writes the active cascade count; unused layers remain zero.
         int publishedLayers = Math.Max(2, c);
         int mipCount = 1 + stages;
-        _displacement = Texture(RenderingDevice.DataFormat.R16G16B16A16Sfloat, n, publishedLayers, RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit, 8, mipCount);
-        // Texture2DArrayRD rejects a one-layer backing texture in Godot 4.7.2.
-        // The second output layer remains unused for a one-cascade simulation.
-        _normal = Texture(RenderingDevice.DataFormat.R16G16B16A16Sfloat, n, publishedLayers, RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit, 8, mipCount);
-        _butterfly = Own(_rd!.StorageBufferCreate((uint)(stages * n * 16)));
-        _fft = Own(_rd.StorageBufferCreate((uint)(c * n * n * 4 * 2 * 2 * 4)));
-        _renderTexture = new Texture2DArrayRD { TextureRdRid = _normal };
-        _normalFoam = _renderTexture;
-        _renderDisplacementTexture = new Texture2DArrayRD { TextureRdRid = _displacement };
-        _displacementTexture = _renderDisplacementTexture;
-        _spectrumPipeline = Pipeline("spectrum_compute.glsl"); _butterflyPipeline = Pipeline("fft_butterfly.glsl");
-        _modulatePipeline = Pipeline("spectrum_modulate.glsl"); _fftPipeline = Pipeline($"fft_compute_{n}.glsl");
-        _transposePipeline = Pipeline("transpose.glsl"); _unpackPipeline = Pipeline("fft_unpack.glsl"); _mipmapPipeline = Pipeline("fft_mipmap.glsl"); _surfaceQueryPipeline = Pipeline("fft_surface_query.glsl");
-        // Explicitly expose the generated chain. Some drivers default an RD
-        // sampler's maximum LOD to zero, which silently turns a requested
-        // trilinear gameplay query into base-mip sampling.
-        _surfaceSampler = Own(_rd.SamplerCreate(new RDSamplerState { MagFilter = RenderingDevice.SamplerFilter.Linear, MinFilter = RenderingDevice.SamplerFilter.Linear, MipFilter = RenderingDevice.SamplerFilter.Linear, MinLod = 0, MaxLod = stages, RepeatU = RenderingDevice.SamplerRepeatMode.Repeat, RepeatV = RenderingDevice.SamplerRepeatMode.Repeat }));
-        _surfaceQueryBuffer = Own(_rd.StorageBufferCreate(9 * 16));
-        _shorelineQueryBuffer = Own(_rd.StorageBufferCreate(8 * 4));
-        _shorelineSampler = Own(_rd.SamplerCreate(new RDSamplerState { MagFilter = RenderingDevice.SamplerFilter.Linear, MinFilter = RenderingDevice.SamplerFilter.Linear, MipFilter = RenderingDevice.SamplerFilter.Linear, RepeatU = RenderingDevice.SamplerRepeatMode.ClampToEdge, RepeatV = RenderingDevice.SamplerRepeatMode.ClampToEdge }));
-        var shorelineFormat = new RDTextureFormat { TextureType = RenderingDevice.TextureType.Type2D, Format = RenderingDevice.DataFormat.R16G16B16A16Sfloat, Width = 1, Height = 1, ArrayLayers = 1, Mipmaps = 1, UsageBits = RenderingDevice.TextureUsageBits.SamplingBit };
-        var shorelineData = new Godot.Collections.Array<byte[]>(); shorelineData.Add(new byte[8]);
-        _shorelineFallbackTexture = Own(_rd.TextureCreate(shorelineFormat, new RDTextureView(), shorelineData));
-        _spectrumSet = Set(_spectrumPipeline, 0, Image(_spectrum, 0));
-        _butterflySet = Set(_butterflyPipeline, 0, Buffer(_butterfly, 0));
-        _fftSet = Set(_fftPipeline, 0, Buffer(_butterfly, 0), Buffer(_fft, 1));
-        // Godot 4.7 validates storage-image read/write qualifiers per pipeline.
-        _modulateSpectrumSet = Set(_modulatePipeline, 0, Image(_spectrum, 0));
-        _modulateFftSet = Set(_modulatePipeline, 1, Buffer(_fft, 0));
-        _unpackImageSet = Set(_unpackPipeline, 0, Image(_displacement, 0), Image(_normal, 1));
-        _unpackFftSet = Set(_unpackPipeline, 1, Buffer(_fft, 0));
-        _shorelineQueryTexture = _shorelineFallbackTexture;
-        _surfaceQuerySet = _shorelineQuerySet = Set(_surfaceQueryPipeline, 0, SamplerWithTexture(_surfaceSampler, _displacement, 0), Buffer(_surfaceQueryBuffer, 1), Buffer(_shorelineQueryBuffer, 2), SamplerWithTexture(_shorelineSampler, _shorelineFallbackTexture, 3));
-        for (int layer = 0; layer < c; layer++)
-        for (int mip = 1, size = n / 2; mip < mipCount; mip++, size /= 2)
+        switch (_createStage)
         {
-            Rid source = Own(_rd.TextureCreateSharedFromSlice(new RDTextureView(), _normal, (uint)layer, (uint)(mip - 1), 1));
-            Rid destination = Own(_rd.TextureCreateSharedFromSlice(new RDTextureView(), _normal, (uint)layer, (uint)mip, 1));
-            _mipLevels.Add(new MipLevel(size, Set(_mipmapPipeline, 0, Image(source, 0), Image(destination, 1))));
+            case 0:
+                // The selected Stockham kernel needs n lanes, while the fixed transpose
+                // kernel uses 32x32 lanes and 8 KiB shared memory. The unpack kernel is
+                // smaller (512 lanes) but also uses 8 KiB of shared vec2 staging.
+                if (_rd is null
+                    || _rd.LimitGet(RenderingDevice.Limit.MaxComputeWorkgroupSizeX) < (uint)Math.Max(n, 32)
+                    || _rd.LimitGet(RenderingDevice.Limit.MaxComputeWorkgroupSizeY) < 32u
+                    || _rd.LimitGet(RenderingDevice.Limit.MaxComputeWorkgroupInvocations) < 1024u
+                    || _rd.LimitGet(RenderingDevice.Limit.MaxComputeSharedMemorySize) < (uint)Math.Max(8448, n * 16)
+                    || _rd.LimitGet(RenderingDevice.Limit.MaxTextureArrayLayers) < (uint)c)
+                {
+                    throw new NotSupportedException($"Renderer lacks workgroup/shared-memory support for {n}x{n} water FFT ({n * 16 / 1024} KiB shared required).");
+                }
+                _spectrum = Texture(RenderingDevice.DataFormat.R32G32B32A32Sfloat, n, c, RenderingDevice.TextureUsageBits.StorageBit, 16);
+                break;
+            case 1:
+                // Both published arrays deliberately have two backing layers at minimum.
+                // The FFT only writes the active cascade count; unused layers remain zero.
+                _displacement = Texture(RenderingDevice.DataFormat.R16G16B16A16Sfloat, n, publishedLayers, RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit, 8, mipCount);
+                break;
+            case 2:
+                // Texture2DArrayRD rejects a one-layer backing texture in Godot 4.7.2.
+                // The second output layer remains unused for a one-cascade simulation.
+                _normal = Texture(RenderingDevice.DataFormat.R16G16B16A16Sfloat, n, publishedLayers, RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit, 8, mipCount);
+                break;
+            case 3:
+                _butterfly = Own(_rd!.StorageBufferCreate((uint)(stages * n * 16)));
+                _fft = Own(_rd.StorageBufferCreate((uint)(c * n * n * 4 * 2 * 2 * 4)));
+                _renderTexture = new Texture2DArrayRD { TextureRdRid = _normal };
+                _normalFoam = _renderTexture;
+                _renderDisplacementTexture = new Texture2DArrayRD { TextureRdRid = _displacement };
+                _displacementTexture = _renderDisplacementTexture;
+                break;
+            case 4: _spectrumPipeline = Pipeline("spectrum_compute.glsl"); break;
+            case 5: _butterflyPipeline = Pipeline("fft_butterfly.glsl"); break;
+            case 6: _modulatePipeline = Pipeline("spectrum_modulate.glsl"); break;
+            case 7: _fftPipeline = Pipeline($"fft_compute_{n}.glsl"); break;
+            case 8: _transposePipeline = Pipeline("transpose.glsl"); break;
+            case 9: _unpackPipeline = Pipeline("fft_unpack.glsl"); break;
+            case 10: _mipmapPipeline = Pipeline("fft_mipmap.glsl"); break;
+            case 11: _surfaceQueryPipeline = Pipeline("fft_surface_query.glsl"); break;
+            case 12:
+                // Explicitly expose the generated chain. Some drivers default an RD
+                // sampler's maximum LOD to zero, which silently turns a requested
+                // trilinear gameplay query into base-mip sampling.
+                _surfaceSampler = Own(_rd!.SamplerCreate(new RDSamplerState { MagFilter = RenderingDevice.SamplerFilter.Linear, MinFilter = RenderingDevice.SamplerFilter.Linear, MipFilter = RenderingDevice.SamplerFilter.Linear, MinLod = 0, MaxLod = stages, RepeatU = RenderingDevice.SamplerRepeatMode.Repeat, RepeatV = RenderingDevice.SamplerRepeatMode.Repeat }));
+                _surfaceQueryBuffer = Own(_rd.StorageBufferCreate(9 * 16));
+                _shorelineQueryBuffer = Own(_rd.StorageBufferCreate(8 * 4));
+                _shorelineSampler = Own(_rd.SamplerCreate(new RDSamplerState { MagFilter = RenderingDevice.SamplerFilter.Linear, MinFilter = RenderingDevice.SamplerFilter.Linear, MipFilter = RenderingDevice.SamplerFilter.Linear, RepeatU = RenderingDevice.SamplerRepeatMode.ClampToEdge, RepeatV = RenderingDevice.SamplerRepeatMode.ClampToEdge }));
+                var shorelineFormat = new RDTextureFormat { TextureType = RenderingDevice.TextureType.Type2D, Format = RenderingDevice.DataFormat.R16G16B16A16Sfloat, Width = 1, Height = 1, ArrayLayers = 1, Mipmaps = 1, UsageBits = RenderingDevice.TextureUsageBits.SamplingBit };
+                var shorelineData = new Godot.Collections.Array<byte[]>(); shorelineData.Add(new byte[8]);
+                _shorelineFallbackTexture = Own(_rd.TextureCreate(shorelineFormat, new RDTextureView(), shorelineData));
+                break;
+            case 13:
+                _spectrumSet = Set(_spectrumPipeline, 0, Image(_spectrum, 0));
+                _butterflySet = Set(_butterflyPipeline, 0, Buffer(_butterfly, 0));
+                _fftSet = Set(_fftPipeline, 0, Buffer(_butterfly, 0), Buffer(_fft, 1));
+                // Godot 4.7 validates storage-image read/write qualifiers per pipeline.
+                _modulateSpectrumSet = Set(_modulatePipeline, 0, Image(_spectrum, 0));
+                _modulateFftSet = Set(_modulatePipeline, 1, Buffer(_fft, 0));
+                _unpackImageSet = Set(_unpackPipeline, 0, Image(_displacement, 0), Image(_normal, 1));
+                _unpackFftSet = Set(_unpackPipeline, 1, Buffer(_fft, 0));
+                _shorelineQueryTexture = _shorelineFallbackTexture;
+                _surfaceQuerySet = _shorelineQuerySet = Set(_surfaceQueryPipeline, 0, SamplerWithTexture(_surfaceSampler, _displacement, 0), Buffer(_surfaceQueryBuffer, 1), Buffer(_shorelineQueryBuffer, 2), SamplerWithTexture(_shorelineSampler, _shorelineFallbackTexture, 3));
+                break;
+            case 14:
+                for (int layer = 0; layer < c; layer++)
+                for (int mip = 1, size = n / 2; mip < mipCount; mip++, size /= 2)
+                {
+                    Rid source = Own(_rd!.TextureCreateSharedFromSlice(new RDTextureView(), _normal, (uint)layer, (uint)(mip - 1), 1));
+                    Rid destination = Own(_rd.TextureCreateSharedFromSlice(new RDTextureView(), _normal, (uint)layer, (uint)mip, 1));
+                    _mipLevels.Add(new MipLevel(size, Set(_mipmapPipeline, 0, Image(source, 0), Image(destination, 1))));
+                }
+                break;
+            case 15:
+                for (int layer = 0; layer < c; layer++)
+                for (int mip = 1, size = n / 2; mip < mipCount; mip++, size /= 2)
+                {
+                    Rid source = Own(_rd!.TextureCreateSharedFromSlice(new RDTextureView(), _displacement, (uint)layer, (uint)(mip - 1), 1));
+                    Rid destination = Own(_rd.TextureCreateSharedFromSlice(new RDTextureView(), _displacement, (uint)layer, (uint)mip, 1));
+                    _mipLevels.Add(new MipLevel(size, Set(_mipmapPipeline, 0, Image(source, 0), Image(destination, 1))));
+                }
+                break;
+            default:
+                long activePixels = (long)n * n * c;
+                long publishedPixels = (long)n * n * publishedLayers;
+                EstimatedBytes = activePixels * 16 + publishedPixels * 8 * 4 / 3
+                    + publishedPixels * 8 * 4 / 3 + (long)c * n * n * 4 * 2 * 2 * 4 + (long)stages * n * 16 + 9 * 16;
+                long list = _rd!.ComputeListBegin();
+                Bind(list, _butterflyPipeline, _butterflySet); _rd.ComputeListDispatch(list, (uint)(n / 128), (uint)stages, 1); _rd.ComputeListEnd();
+                _createStage = 0;
+                return true;
         }
-        for (int layer = 0; layer < c; layer++)
-        for (int mip = 1, size = n / 2; mip < mipCount; mip++, size /= 2)
-        {
-            Rid source = Own(_rd.TextureCreateSharedFromSlice(new RDTextureView(), _displacement, (uint)layer, (uint)(mip - 1), 1));
-            Rid destination = Own(_rd.TextureCreateSharedFromSlice(new RDTextureView(), _displacement, (uint)layer, (uint)mip, 1));
-            _mipLevels.Add(new MipLevel(size, Set(_mipmapPipeline, 0, Image(source, 0), Image(destination, 1))));
-        }
-        long activePixels = (long)n * n * c;
-        long publishedPixels = (long)n * n * publishedLayers;
-        EstimatedBytes = activePixels * 16 + publishedPixels * 8 * 4 / 3
-            + publishedPixels * 8 * 4 / 3 + (long)c * n * n * 4 * 2 * 2 * 4 + (long)stages * n * 16 + 9 * 16;
-        long list = _rd.ComputeListBegin();
-        Bind(list, _butterflyPipeline, _butterflySet); _rd.ComputeListDispatch(list, (uint)(n / 128), (uint)stages, 1); _rd.ComputeListEnd();
+        _createStage++;
+        return false;
     }
 
     private void DispatchCascade(RingWaterFftSettings s, int cascade, float time, float delta, bool spectrum)
@@ -507,6 +552,7 @@ public sealed class RingWaterFftProvider : IDisposable
         _surfaceQuerySet = _shorelineQuerySet = _shorelineQueryTexture = default;
         _shorelineQueryBuffer = _shorelineFallbackTexture = _shorelineSampler = default;
         _spectrum = _normal = _displacement = _butterfly = _fft = default;
+        _createStage = 0;
     }
     private static Vector2 CascadePeriod(in RingWaterFftSettings s, int cascade) => cascade switch { 0 => s.Period0, 1 => s.Period1, 2 => s.Period2.X > .01f ? s.Period2 : s.Period1 * 4.0f, _ => s.Period3.X > .01f ? s.Period3 : s.Period1 * 16.0f };
     private static RingWaterFftSettings Clamp(RingWaterFftSettings s) => s with { Resolution = s.Resolution is 128 or 256 or 512 or 1024 ? s.Resolution : 128, CascadeCount = Mathf.Clamp(s.CascadeCount, 1, 4), Period0 = Period(s.Period0, 12), Period1 = Period(s.Period1, 79), Period2 = Period(s.Period2, s.Period1.X * 4), Period3 = Period(s.Period3, s.Period1.X * 16), WindSpeedMetersPerSecond = float.IsFinite(s.WindSpeedMetersPerSecond) ? Mathf.Clamp(s.WindSpeedMetersPerSecond, .1f, 60) : 6, FoamAmount = float.IsFinite(s.FoamAmount) ? Mathf.Clamp(s.FoamAmount, 0, 10) : 3, Whitecap = float.IsFinite(s.Whitecap) ? Mathf.Clamp(s.Whitecap, 0, 2) : .5f, WindDirectionDegrees = float.IsFinite(s.WindDirectionDegrees) ? s.WindDirectionDegrees : 0 };

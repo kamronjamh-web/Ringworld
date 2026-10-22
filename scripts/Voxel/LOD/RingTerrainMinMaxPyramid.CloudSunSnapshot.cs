@@ -7,6 +7,45 @@ public sealed record CloudSunHeightLevel(int Width, int Height, float CellSize, 
 public sealed record CloudSunTerrainSnapshot(double Circumference, double Width, ulong EditVersion,
     IReadOnlyList<CloudSunHeightLevel> Levels, float MinimumHeight, float MaximumHeight, int SourceIdentity = 0);
 
+/// <summary>Flattened per-level maxima and level table handed to the sun-visibility compute; built off-thread where possible.</summary>
+public static class CloudSunTerrainPacking
+{
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<CloudSunTerrainSnapshot, float[][]> Cache = new();
+
+    public static (float[] Heights, float[] Levels) GetOrPack(CloudSunTerrainSnapshot terrain)
+    {
+        if (Cache.TryGetValue(terrain, out float[][]? cached)) return (cached[0], cached[1]);
+        (float[] Heights, float[] Levels) packed = Pack(terrain);
+        Cache.TryAdd(terrain, new[] { packed.Heights, packed.Levels });
+        return packed;
+    }
+
+    /// <summary>Safe to call from a worker; the main thread then finds the result cached.</summary>
+    public static void Prime(CloudSunTerrainSnapshot terrain) => GetOrPack(terrain);
+
+    private static (float[] Heights, float[] Levels) Pack(CloudSunTerrainSnapshot terrain)
+    {
+        int total = 0;
+        foreach (CloudSunHeightLevel level in terrain.Levels) total += level.Ranges.Length / 2;
+        var heights = new float[total];
+        int cursor = 0;
+        foreach (CloudSunHeightLevel level in terrain.Levels)
+        {
+            ReadOnlySpan<float> ranges = level.Ranges.Span;
+            for (int i = 1; i < ranges.Length; i += 2) heights[cursor++] = ranges[i];
+        }
+        var levels = new float[terrain.Levels.Count * 4];
+        int offset = 0;
+        for (int n = 0; n < terrain.Levels.Count; n++)
+        {
+            CloudSunHeightLevel level = terrain.Levels[n];
+            levels[n * 4] = level.Width; levels[n * 4 + 1] = level.Height; levels[n * 4 + 2] = offset; levels[n * 4 + 3] = level.CellSize;
+            offset += level.Width * level.Height;
+        }
+        return (heights, levels);
+    }
+}
+
 public sealed partial class RingTerrainMinMaxPyramid
 {
     public CloudSunTerrainSnapshot CaptureCloudSunTerrainSnapshot()

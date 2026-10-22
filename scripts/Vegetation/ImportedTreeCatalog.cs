@@ -156,12 +156,13 @@ public static partial class ImportedTreeCatalog
                 CopyChannel(source, arrays, Mesh.ArrayType.TexUV);
                 CopyChannel(source, arrays, Mesh.ArrayType.TexUV2);
                 CopyChannel(source, arrays, Mesh.ArrayType.Index);
+                Vector3[]? transformedNormals = null;
                 if (source[(int)Mesh.ArrayType.Normal].VariantType != Variant.Type.Nil)
                 {
                     Vector3[] normals = source[(int)Mesh.ArrayType.Normal].AsVector3Array();
-                    var transformed = new Vector3[normals.Length];
-                    for (int i = 0; i < normals.Length; i++) transformed[i] = (normalTransform * normals[i]).Normalized();
-                    arrays[(int)Mesh.ArrayType.Normal] = transformed;
+                    transformedNormals = new Vector3[normals.Length];
+                    for (int i = 0; i < normals.Length; i++) transformedNormals[i] = (normalTransform * normals[i]).Normalized();
+                    arrays[(int)Mesh.ArrayType.Normal] = transformedNormals;
                 }
                 if (source[(int)Mesh.ArrayType.Tangent].VariantType != Variant.Type.Nil)
                 {
@@ -171,9 +172,9 @@ public static partial class ImportedTreeCatalog
                     for (int i = 0; i < tangents.Length; i += 4)
                     {
                         Vector3 xyz = (transform.Basis * new Vector3(tangents[i], tangents[i + 1], tangents[i + 2])).Normalized();
-                        if (source[(int)Mesh.ArrayType.Normal].VariantType != Variant.Type.Nil)
+                        if (transformedNormals != null)
                         {
-                            Vector3 normal = ((Vector3[])arrays[(int)Mesh.ArrayType.Normal])[i / 4];
+                            Vector3 normal = transformedNormals[i / 4];
                             xyz = (xyz - normal * xyz.Dot(normal)).Normalized();
                         }
                         transformed[i] = xyz.X; transformed[i + 1] = xyz.Y; transformed[i + 2] = xyz.Z; transformed[i + 3] = tangents[i + 3] * handedness;

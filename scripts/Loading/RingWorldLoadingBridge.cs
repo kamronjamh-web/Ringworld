@@ -29,9 +29,19 @@ public partial class RingWorldLoadingBridge : Node
     // Background (warm world) mode: the world loads behind the start menu and is never released to the player.
     private bool _background;
     private bool _placed;
+    private const double AltitudeRefreshIntervalSeconds = 0.5;
+    private double _altitudeRefreshSeconds;
     private float _cruiseAltitudeMeters = 16000f;
     private float _cruisePitchDegrees = -25f;
     private bool _clocksPaused;
+    private Godot.Collections.Dictionary? _placementPose;
+    // A menu snapshot pose is only used when it is within the loiter radius of the save and in a sane altitude band.
+    private const double SnapshotMaxHorizontalMeters = 30000.0;
+    private const double SnapshotMinAltitudeMeters = 2000.0;
+    private const double SnapshotMaxAltitudeMeters = 18000.0;
+
+    /// <summary>True when the last placement used the snapshot pose passed to <see cref="SetPlacementPose"/> instead of the default cruise.</summary>
+    public bool PlacementUsedSnapshot { get; private set; }
 
     /// <summary>True once the explorer was moved to the cruise viewpoint above the saved position (background mode).</summary>
     public bool CruisePlaced => _placed;
@@ -43,6 +53,13 @@ public partial class RingWorldLoadingBridge : Node
         _cruiseAltitudeMeters = Mathf.Max(100f, cruiseAltitudeMeters);
         _cruisePitchDegrees = cruisePitchDegrees;
     }
+
+    /// <summary>
+    /// Pose of a valid, non-stale menu snapshot: {around_m, vertical_m, across_m, yaw_deg, pitch_deg}. Used by the cruise placement when it
+    /// is plausible; otherwise the default cruise above the save spot applies. Call before <see cref="PrepareWorld"/>.
+    /// </summary>
+    public void SetPlacementPose(Godot.Collections.Dictionary pose)
+        => _placementPose = pose != null && pose.Count > 0 ? pose.Duplicate() : null;
 
     public void PrepareWorld(Node world)
     {
@@ -132,6 +149,16 @@ public partial class RingWorldLoadingBridge : Node
             if (GodotObject.IsInstanceValid(viewport)) viewport.RenderTargetUpdateMode = SubViewport.UpdateMode.Disabled;
         // HUD owners may show their layer again from their own process; the menu owns the screen until the world is released.
         if (_background && !_released && _world != null && CountVisibleHudLayers() > 0) ForceHudHidden();
+        // The held explorer does not tick its own altitude; keep it fresh so altitude-gated streaming (trees, grass) sees the cruise height.
+        if (_background && _placed && !_released && _explorer != null && GodotObject.IsInstanceValid(_explorer))
+        {
+            _altitudeRefreshSeconds += delta;
+            if (_altitudeRefreshSeconds >= AltitudeRefreshIntervalSeconds)
+            {
+                _altitudeRefreshSeconds = 0.0;
+                _explorer.RefreshAltitudeAboveTerrain();
+            }
+        }
     }
 
     private void ForceHudHidden()
@@ -229,19 +256,81 @@ public partial class RingWorldLoadingBridge : Node
     {
         if (_explorer == null || _surface == null) return;
         RingCanonicalPosition saved = _explorer.CanonicalPosition;
-        float ground = _surface.SampleHeight(saved.AroundMeters, saved.AcrossMeters);
-        double groundVertical = float.IsFinite(ground) ? ground : saved.VerticalMeters;
-        var target = new RingCanonicalPosition(saved.AroundMeters, groundVertical + _cruiseAltitudeMeters, saved.AcrossMeters);
-        float yawDeg = Mathf.RadToDeg(_explorer.SavedYaw);
-        if (!_explorer.TryTeleportToCanonical(target, yawDeg, _cruisePitchDegrees, true, out string feedback))
+        string feedback;
+        if (TryGetSnapshotPlacement(saved, out RingCanonicalPosition snapshotTarget, out float snapshotYaw, out float snapshotPitch)
+            && _explorer.TryTeleportToCanonical(snapshotTarget, snapshotYaw, snapshotPitch, true, out feedback))
         {
-            GD.PushWarning("Warm world cruise placement failed: " + feedback);
-            return;
+            PlacementUsedSnapshot = true;
+        }
+        else
+        {
+            float ground = _surface.SampleHeight(saved.AroundMeters, saved.AcrossMeters);
+            double groundVertical = float.IsFinite(ground) ? ground : saved.VerticalMeters;
+            var target = new RingCanonicalPosition(saved.AroundMeters, groundVertical + _cruiseAltitudeMeters, saved.AcrossMeters);
+            float yawDeg = Mathf.RadToDeg(_explorer.SavedYaw);
+            if (!_explorer.TryTeleportToCanonical(target, yawDeg, _cruisePitchDegrees, true, out feedback))
+            {
+                GD.PushWarning("Warm world cruise placement failed: " + feedback);
+                return;
+            }
         }
         // The teleport pins the streaming focus on the destination; the normal chase takes over again from here.
         _world?.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.ClearStreamingCanonicalFocusOverride();
         PauseClocks(true);
         _placed = true;
+        _explorer.RefreshAltitudeAboveTerrain();
+        _altitudeRefreshSeconds = 0.0;
+    }
+
+    private bool TryGetSnapshotPlacement(in RingCanonicalPosition saved, out RingCanonicalPosition target, out float yawDeg, out float pitchDeg)
+    {
+        target = saved;
+        yawDeg = 0f;
+        pitchDeg = 0f;
+        if (_placementPose == null || _surface == null) return false;
+        if (!TryReadPoseNumber("around_m", out double around) || !TryReadPoseNumber("vertical_m", out double vertical)
+            || !TryReadPoseNumber("across_m", out double across) || !TryReadPoseNumber("yaw_deg", out double yaw)
+            || !TryReadPoseNumber("pitch_deg", out double pitch))
+            return false;
+        double circumference = _world?.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.GetCanonicalRingCircumferenceMeters64() ?? 0.0;
+        double deltaAround = around - saved.AroundMeters;
+        if (circumference > 0.0) deltaAround -= System.Math.Round(deltaAround / circumference) * circumference;
+        double horizontal = System.Math.Sqrt(deltaAround * deltaAround + (across - saved.AcrossMeters) * (across - saved.AcrossMeters));
+        if (horizontal > SnapshotMaxHorizontalMeters) return false;
+        float ground = _surface.SampleHeight(around, across);
+        if (!float.IsFinite(ground)) return false;
+        double altitude = vertical - ground;
+        if (altitude < SnapshotMinAltitudeMeters || altitude > SnapshotMaxAltitudeMeters) return false;
+        target = new RingCanonicalPosition(around, vertical, across);
+        yawDeg = (float)yaw;
+        pitchDeg = (float)pitch;
+        return true;
+    }
+
+    private bool TryReadPoseNumber(string key, out double value)
+    {
+        value = 0.0;
+        if (_placementPose == null || !_placementPose.TryGetValue(key, out Variant raw)) return false;
+        if (raw.VariantType != Variant.Type.Float && raw.VariantType != Variant.Type.Int) return false;
+        value = raw.AsDouble();
+        return double.IsFinite(value);
+    }
+
+    /// <summary>Explorer pose as the menu camera sees it: canonical position, yaw and pitch in degrees, and the live camera field of view.</summary>
+    public Godot.Collections.Dictionary GetCameraPose()
+    {
+        var result = new Godot.Collections.Dictionary { ["valid"] = false };
+        if (_explorer == null || !GodotObject.IsInstanceValid(_explorer)) return result;
+        RingCanonicalPosition position = _explorer.CanonicalPosition;
+        Camera3D? camera = _explorer.GetNodeOrNull<Camera3D>(_explorer.CameraPath);
+        result["valid"] = true;
+        result["around_m"] = position.AroundMeters;
+        result["vertical_m"] = position.VerticalMeters;
+        result["across_m"] = position.AcrossMeters;
+        result["yaw_deg"] = Mathf.RadToDeg(_explorer.SavedYaw);
+        result["pitch_deg"] = _explorer.SavedPitch;
+        result["fov_deg"] = camera != null ? camera.Fov : 75f;
+        return result;
     }
 
     /// <summary>Freezes the celestial and cloud clocks (the menu shows the saved time of day). Nothing is saved while the world is held.</summary>

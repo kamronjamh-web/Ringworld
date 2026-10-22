@@ -256,8 +256,11 @@ public partial class RingStandingGrassLayer : Node3D
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _smooth = GetNodeOrNull<SmoothTerrainGrid>(SmoothTerrainPath);
         _construction = GetNodeOrNull<SmoothConstructionOverlay>(ConstructionOverlayPath);
-        EnsureResources();
+        if (!IsAltitudeSuspended()) EnsureResources();
     }
+    /// <summary>True while the viewer is above grass range; resources are then built by StepStreaming on resume instead of up front.</summary>
+    private bool IsAltitudeSuspended() => StreamingSuspended
+        || (_explorer != null && _explorer.CurrentAltitudeAboveTerrainMeters > MaximumViewerAltitudeAboveTerrainMeters);
     public override void _Process(double d)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Grass update (inclusive)");
@@ -355,7 +358,7 @@ public partial class RingStandingGrassLayer : Node3D
         LodTransitionWidthMeters = Mathf.Max(1, transitionWidthMeters);
         LodNearDensity = Mathf.Clamp(nearDensity, .05f, 1);
         LodFarDensity = Mathf.Clamp(farDensity, .05f, LodNearDensity);
-        EnsureResources();
+        if (!IsAltitudeSuspended()) EnsureResources();
     }
     public int ResidentGrassNearRootCount { get; private set; }
     public int ResidentGrassMidRootCount { get; private set; }

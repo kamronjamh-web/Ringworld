@@ -290,6 +290,35 @@ func save_active_world_settings(settings: Dictionary) -> bool:
 	return _write_metadata(active_slot, metadata)
 
 
+## Menu boot snapshot files of a slot (image first, sidecar json last as the commit marker). Empty strings for an invalid target.
+func get_menu_snapshot_paths(target: int) -> Dictionary:
+	if target < 1 or target > SLOT_COUNT:
+		return {"png": "", "json": ""}
+	var directory := _slot_directory(target)
+	return {"png": directory + "/menu_snapshot.png", "json": directory + "/menu_snapshot.json"}
+
+
+## Identity of the saved player state in `directory` (a user:// or absolute slot directory): {saved_unix, around_m, across_m}.
+## Empty when the state file is missing or unreadable. Used to tell whether a menu snapshot still matches the save.
+func read_world_state_stamp(directory: String) -> Dictionary:
+	var path := directory.path_join("world_state_surface_runtime_v1.json")
+	if not FileAccess.file_exists(path):
+		return {}
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	if not (parsed is Dictionary) or not (parsed.get("Player") is Dictionary):
+		return {}
+	var player: Dictionary = parsed["Player"]
+	return {
+		"saved_unix": int(parsed.get("SavedUnix", 0)),
+		"around_m": float(player.get("AroundMeters", 0.0)),
+		"across_m": float(player.get("AcrossMeters", 0.0)),
+	}
+
+
 func get_active_world_directory() -> String:
 	return _slot_directory(active_slot) if active_slot > 0 else ""
 

@@ -10,7 +10,8 @@ public partial class TerrainGenerationSampler : RefCounted
     private TerrainGenerationHeightModel? _model;
     private bool _disposed;
     public string LastError { get; private set; } = string.Empty;
-    public string CanonicalJson => _model?.Parameters.CanonicalJson ?? string.Empty;
+    private TerrainGenerationParameters? _validated;
+    public string CanonicalJson => _model?.Parameters.CanonicalJson ?? _validated?.CanonicalJson ?? string.Empty;
     public string DefinitionHash => _model?.Parameters.DefinitionHash.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
 
     public bool Configure(GodotDictionary snapshot)
@@ -30,6 +31,24 @@ public partial class TerrainGenerationSampler : RefCounted
         {
             var next=new TerrainGenerationHeightModel(TerrainGenerationParameters.FromJson(json));
             TerrainGenerationHeightModel? previous=_model; _model=next; previous?.Dispose(); LastError=string.Empty; return true;
+        }
+        catch(Exception exception) { LastError=exception.Message; return false; }
+    }
+    /// <summary>
+    /// Parses and canonicalizes a recipe without building the height model (so no registry build runs on the caller). Same rejection
+    /// messages as <see cref="ConfigureJson"/> for malformed recipes. A worker warms the shared emitter-site shaper so the later
+    /// world load finds it cached; any consumer that arrives first simply waits on the same Lazy instead of building twice.
+    /// </summary>
+    public bool ValidateJson(string json)
+    {
+        if (_disposed) { LastError="Sampler is disposed."; return false; }
+        try
+        {
+            TerrainGenerationParameters parameters=TerrainGenerationParameters.FromJson(json);
+            _validated=parameters; LastError=string.Empty;
+            if (parameters.HasEmitterSites)
+                System.Threading.Tasks.Task.Run(() => { try { _=Sites.EmitterSiteTerrainShaper.GetOrCreate(parameters); } catch(Exception) { /* surfaced by the real consumer */ } });
+            return true;
         }
         catch(Exception exception) { LastError=exception.Message; return false; }
     }

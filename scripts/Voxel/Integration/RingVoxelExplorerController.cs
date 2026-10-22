@@ -1896,6 +1896,13 @@ public partial class RingVoxelExplorerController : CharacterBody3D
             Mathf.Max(0.1f, response));
     }
 
+    /// <summary>Recomputes <see cref="CurrentAltitudeAboveTerrainMeters"/> outside the physics tick (a held, non-simulating explorer would otherwise read stale altitude).</summary>
+    public void RefreshAltitudeAboveTerrain()
+    {
+        if (_grid == null) return;
+        CurrentAltitudeAboveTerrainMeters = ResolveAltitudeAboveTerrainMeters();
+    }
+
     private void UpdateCurvatureHorizonCorrection(float dt)
     {
         if (_grid == null || !_cameraBasisInitialized) return;

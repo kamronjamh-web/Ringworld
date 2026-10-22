@@ -2,8 +2,8 @@ extends Control
 
 const GENERATOR_SCENE := "res://scenes/WorldSizeLauncher.tscn"
 const UI_THEME := preload("res://scripts/ui/ring_ui_theme.gd")
-const SPACE_BACKDROP := preload("res://scripts/ui/RingMenuSpaceBackdrop.cs")
-const MENU_TUNING_DRAWER := preload("res://scripts/ui/MenuFlyoverTuningDrawer.cs")
+const BOOT_COVER := preload("res://scripts/ui/menu_boot_cover.gd")
+const MENU_SNAPSHOT := preload("res://scripts/ui/menu_snapshot.gd")
 const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 const MENU_MOTION := preload("res://scripts/ui/menu_motion.gd")
 const WORLD_PRESETS := preload("res://scripts/world_presets.gd")
@@ -12,21 +12,27 @@ const WARM_WORLD := preload("res://scripts/Loading/ring_warm_world.gd")
 
 const INTRO_FADE_SECONDS := 0.8
 const INTRO_PANEL_DELAY_SECONDS := 0.35
-const SURVEY_FADE_SECONDS := 0.6
 const TELEMETRY_INTERVAL_SECONDS := 0.25
-## Opacity ramp of the flyover picture once the live world is ready behind it (the world is already rendering underneath).
+## Opacity ramp of the boot cover once the live world is ready behind it (the world is already rendering underneath).
 const CROSSFADE_SECONDS := 2.5
 const LEAVE_FADE_SECONDS := 0.2
+## While the world warms, Continue / Enter Ringworld / the world cards stay disabled through the worst early freezes. They unlock once the
+## loader is past the terrain stage and the last UNLOCK_QUIET_SECONDS had no frame over UNLOCK_SLOW_FRAME_MS, or after the safety cap.
+const UNLOCK_QUIET_SECONDS := 1.0
+const UNLOCK_SLOW_FRAME_MS := 100.0
+const UNLOCK_CAP_SECONDS := 15.0
 const DELETE_HOLD_SECONDS := 1.5
 const SLOT_COUNT := 3
 const MAX_WORLD_NAME_LENGTH := 32
 const CARD_WIDTH := 720.0
 const THUMBNAIL_SIZE := Vector2(224, 126)
 
-@export var backdrop_seed: int = -1
-@export var freeze_backdrop: bool = false
-@export var use_saved_menu_defaults: bool = true
-@export var menu_defaults_path: String = "res://resources/menu/menu_flyover_defaults.tres"
+## False shows the cover only and never warm-loads a world.
+@export var live_world: bool = true
+## Pins the cover (no warm-load, no drift or twinkle, never crossfaded or retired) for deterministic tests and captures.
+@export var freeze_cover: bool = false
+## A snapshot PNG (sidecar json beside it) to show as the cover without any world; tests only.
+@export var snapshot_override_path: String = ""
 
 var main_panel: Control
 var worlds_panel: Control
@@ -46,9 +52,9 @@ var new_world_name_edit: LineEdit
 var new_world_seed_edit: LineEdit
 var slot_buttons: Array[Button] = []
 var selected_slot := 0
-var space_backdrop: Control
+var boot_cover: Control
 var _ui_root: Control
-var _flyover_footer: Label
+var _footer_label: Label
 var worlds_button: Button
 var continue_button: Button
 var continue_subline: Label
@@ -61,7 +67,6 @@ var _telemetry_active := false
 var _telemetry_elapsed := 0.0
 var _last_survey_percent := -1
 var _intro_pending := true
-var _tuning_drawer: Control
 var _cards: Array[Dictionary] = []
 var _expanded_slot := 0
 var _load_button: Button
@@ -87,9 +92,18 @@ var _delete_hold_elapsed := 0.0
 var _delete_target_slot := 0
 var _live_slot := 0
 var _warm: Node
-var _crossfade_tween: Tween
-var _flyover_retired := false
+var _cover_retired := false
+var _revealing := false
+var _snapshot_valid := false
+var _snapshot_stale := false
+var _placement_pose: Dictionary = {}
+var _world_name := ""
 var _leaving := false
+## True while the warm-load disables the main buttons. unlock_info holds {ms, reason} (ms since the menu was built) once released.
+var menu_locked := false
+var unlock_info: Dictionary = {}
+var _ready_msec := 0
+var _last_slow_frame_msec := 0
 
 
 func _ready() -> void:
@@ -103,10 +117,16 @@ func _ready() -> void:
 	MENU_MOTION.style_buttons_in(_ui_root)
 	_show_main_menu()
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	_ready_msec = Time.get_ticks_msec()
+	_last_slow_frame_msec = _ready_msec
 	_begin_live_world()
 
 
 func _process(delta: float) -> void:
+	if delta * 1000.0 > UNLOCK_SLOW_FRAME_MS:
+		_last_slow_frame_msec = Time.get_ticks_msec()
+	if menu_locked:
+		_update_menu_lock()
 	if _delete_holding and delete_modal != null and delete_modal.visible:
 		_delete_hold_elapsed += delta
 		delete_hold_fill.scale.x = clampf(_delete_hold_elapsed / DELETE_HOLD_SECONDS, 0.0, 1.0)
@@ -117,50 +137,27 @@ func _process(delta: float) -> void:
 		if _telemetry_elapsed >= TELEMETRY_INTERVAL_SECONDS:
 			_telemetry_elapsed = 0.0
 			_update_telemetry()
-	if _survey_done or _survey_label == null or space_backdrop == null:
+	if _survey_done or _survey_label == null or not is_instance_valid(_warm):
 		return
-	if bool(space_backdrop.call("IsBackdropReady")):
-		_survey_done = true
-		_survey_label.text = "SURVEY CACHE 100%"
-		var tween := create_tween()
-		tween.tween_property(_survey_label, "modulate:a", 0.0, SURVEY_FADE_SECONDS).set_delay(0.4)
-		tween.tween_callback(_begin_telemetry)
-		tween.tween_property(_survey_label, "modulate:a", 1.0, SURVEY_FADE_SECONDS)
-		return
-	var percent := int(floor(float(space_backdrop.call("GetBackdropProgress")) * 100.0))
+	var percent := int(floor(_warm.get_progress() * 100.0))
 	if percent != _last_survey_percent:
 		_last_survey_percent = percent
-		_survey_label.text = "SURVEY CACHE %d%%" % percent
-
-
-func _begin_telemetry() -> void:
-	_telemetry_active = true
-	_update_telemetry()
+		_survey_label.text = "PREPARING %d%%" % percent
 
 
 func _update_telemetry() -> void:
-	if _flyover_retired:
-		# The flyover is gone: read the held world's Explorer instead of the flyover camera.
-		var telemetry: Dictionary = _warm.get_telemetry() if is_instance_valid(_warm) else {}
-		if bool(telemetry.get("valid", false)):
-			_survey_label.text = "ALT %.1f KM · %.1f KM/S · SUN %+.1f°" % [
-				float(telemetry.get("altitude_m", 0.0)) / 1000.0,
-				float(telemetry.get("speed_mps", 0.0)) / 1000.0,
-				float(telemetry.get("sun_elevation_degrees", 0.0)),
-			]
-		return
-	var diagnostics: Dictionary = space_backdrop.call("GetBackdropDiagnostics")
-	_survey_label.text = "ALT %.1f KM · %.1f KM/S · SUN %+.1f°" % [
-		float(diagnostics.get("altitude_m", 0.0)) / 1000.0,
-		float(diagnostics.get("speed_mps", 0.0)) / 1000.0,
-		float(diagnostics.get("effective_sun_elevation_degrees", 0.0)),
-	]
+	# The held world's Explorer is the only source: there is no flyover camera any more.
+	var telemetry: Dictionary = _warm.get_telemetry() if is_instance_valid(_warm) else {}
+	if bool(telemetry.get("valid", false)):
+		_survey_label.text = "ALT %.1f KM · %.1f KM/S · SUN %+.1f°" % [
+			float(telemetry.get("altitude_m", 0.0)) / 1000.0,
+			float(telemetry.get("speed_mps", 0.0)) / 1000.0,
+			float(telemetry.get("sun_elevation_degrees", 0.0)),
+		]
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"):
-		return
-	if _tuning_drawer != null and bool(_tuning_drawer.get("IsDrawerOpen")):
 		return
 	if delete_modal != null and delete_modal.visible:
 		_close_delete_modal()
@@ -186,18 +183,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _build_ui() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	theme = UI_THEME.create_theme()
-	space_backdrop = SPACE_BACKDROP.new()
-	space_backdrop.name = "SpaceBackdrop"
-	space_backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	space_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	space_backdrop.Seed = backdrop_seed
-	space_backdrop.FreezeMotion = freeze_backdrop
-	space_backdrop.UseSavedMenuDefaults = use_saved_menu_defaults
-	space_backdrop.MenuSettingsPath = menu_defaults_path
-	if _live_slot > 0:
-		# A live world will sit behind the menu at its cruise altitude, so the flyover matches that height.
-		space_backdrop.WarmWorldAltitudeKm = WORLD_LOADING.WARM_CRUISE_ALTITUDE_M / 1000.0
-	add_child(space_backdrop)
+	_build_cover()
 	_ui_root = Control.new()
 	_ui_root.name = "MenuDesignCanvas"
 	_ui_root.size = Vector2(1920, 1080)
@@ -247,19 +233,29 @@ func _build_ui() -> void:
 	_build_world_actions()
 	_build_new_world_panel()
 
-	_tuning_drawer = MENU_TUNING_DRAWER.new()
-	_tuning_drawer.name = "MenuTuningDrawer"
-	_tuning_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(_tuning_drawer)
-	space_backdrop.connect("MenuTuningChanged", _update_flyover_footer)
-	var tuning_button := Button.new()
-	tuning_button.text = "`  LIVE TUNING"
-	tuning_button.position = Vector2(1672, 30)
-	tuning_button.custom_minimum_size = Vector2(210, 36)
-	tuning_button.focus_mode = Control.FOCUS_CLICK
-	tuning_button.pressed.connect(_tuning_drawer.call.bind("SetDrawerOpen", true))
-	_ui_root.add_child(tuning_button)
 	_build_delete_modal()
+
+
+## The boot cover sits where the flyover backdrop did: below the readability gradients and the UI, above the 3D world. It shows the last
+## session's snapshot (or `snapshot_override_path`), else a starfield. A stale snapshot (the save changed since) is still shown.
+func _build_cover() -> void:
+	boot_cover = BOOT_COVER.new()
+	boot_cover.frozen = freeze_cover
+	add_child(boot_cover)
+	var snapshot: Dictionary = {}
+	if not snapshot_override_path.is_empty():
+		snapshot = MENU_SNAPSHOT.load_files(snapshot_override_path, snapshot_override_path.get_basename() + ".json")
+	elif _live_slot > 0:
+		snapshot = MENU_SNAPSHOT.load_valid(_live_slot)
+	_snapshot_valid = not snapshot.is_empty()
+	_snapshot_stale = bool(snapshot.get("stale", false))
+	if _snapshot_valid:
+		boot_cover.show_snapshot(snapshot["texture"], snapshot["sidecar"])
+		# Only a snapshot of the current save may place the camera; a stale one is shown but the camera goes to the real spot.
+		if _live_slot > 0 and not _snapshot_stale and snapshot_override_path.is_empty():
+			_placement_pose = (snapshot["sidecar"].get("pose", {}) as Dictionary).duplicate()
+	else:
+		boot_cover.show_starfield()
 
 
 func _build_main_panel() -> void:
@@ -677,31 +673,39 @@ func _build_screen_chrome() -> void:
 	system.text = "PROCEDURAL HABITAT SIMULATION"
 	top_left.add_child(system)
 
-	_flyover_footer = Label.new()
-	_flyover_footer.theme_type_variation = "MonoLabel"
-	_flyover_footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_flyover_footer.position = Vector2(1472, 1036)
-	_flyover_footer.size = Vector2(410, 20)
-	_flyover_footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_ui_root.add_child(_flyover_footer)
+	_footer_label = Label.new()
+	_footer_label.theme_type_variation = "MonoLabel"
+	_footer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_footer_label.position = Vector2(1472, 1036)
+	_footer_label.size = Vector2(410, 20)
+	_footer_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ui_root.add_child(_footer_label)
 	_survey_label = Label.new()
 	_survey_label.theme_type_variation = "MonoLabel"
-	_survey_label.text = "SURVEY CACHE 0%"
+	_survey_label.text = "PREPARING 0%" if _live_slot > 0 else ""
 	_survey_label.position = Vector2(38, 1036)
 	_survey_label.size = Vector2(400, 20)
 	_survey_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_ui_root.add_child(_survey_label)
-	_update_flyover_footer()
+	_update_footer()
 
 
-func _update_flyover_footer() -> void:
-	if _flyover_footer != null:
-		_flyover_footer.text = "LIVE WORLD / HELD" if _flyover_retired else str(space_backdrop.call("GetFlyoverCaption"))
+## "LAST SESSION" over the snapshot, "LIVE WORLD" once the live view is showing, empty for the starfield.
+func _update_footer() -> void:
+	if _footer_label == null:
+		return
+	var suffix := "" if _world_name.is_empty() else " · " + _world_name.to_upper()
+	if _cover_retired:
+		_footer_label.text = "LIVE WORLD" + suffix
+	elif boot_cover != null and boot_cover.mode == "snapshot":
+		_footer_label.text = "LAST SESSION" + suffix
+	else:
+		_footer_label.text = ""
 
 
-func _set_camera_pose(pose: String) -> void:
-	if space_backdrop != null and space_backdrop.has_method("SetCameraPose"):
-		space_backdrop.call("SetCameraPose", pose)
+## Per-screen camera poses came with the flyover; the live world has none until C10.
+func _set_camera_pose(_pose: String) -> void:
+	pass
 
 
 # ---------------------------------------------------------------- navigation
@@ -1226,8 +1230,8 @@ func _create_new_world(advanced: bool) -> void:
 # ---------------------------------------------------------------- live world
 
 func _eligible_live_slot() -> int:
-	# Frozen fixtures (tests, captures) never warm-load a world.
-	if freeze_backdrop:
+	# Frozen covers (tests, captures) and live_world=false never warm-load a world.
+	if freeze_cover or not live_world:
 		return 0
 	var warm := get_node_or_null("/root/RingWarmWorld")
 	if warm != null and warm.is_busy() and int(warm.slot) > 0:
@@ -1241,41 +1245,129 @@ func _eligible_live_slot() -> int:
 func _begin_live_world() -> void:
 	if _live_slot <= 0:
 		return
+	var session := get_node_or_null("/root/WorldSession")
+	if session != null and session.has_method("get_slot_metadata"):
+		_world_name = str(session.get_slot_metadata(_live_slot).get("name", ""))
+	_update_footer()
 	_warm = WARM_WORLD.ensure(self)
+	if _warm.state != WARM_WORLD.State.WARM:
+		_set_menu_locked(true)
 	_warm.warm_ready.connect(_on_warm_ready)
-	_warm.reveal_ready.connect(_begin_crossfade)
+	_warm.reveal_ready.connect(_on_reveal_ready)
+	_warm.warm_failed.connect(_on_warm_failed)
 	if _warm.state == WARM_WORLD.State.IDLE:
-		_warm.start(_live_slot)
+		_warm.start(_live_slot, _placement_pose)
 	elif _warm.state == WARM_WORLD.State.WARM:
 		_on_warm_ready(_warm.world)
 
 
 func _on_warm_ready(_world: Node) -> void:
 	if _warm.reveal_complete:
-		_begin_crossfade()
+		_reveal_cover()
 	else:
 		_warm.reveal()
 
 
-func _begin_crossfade() -> void:
-	if _flyover_retired or space_backdrop == null or _leaving:
+func _on_reveal_ready() -> void:
+	_reveal_cover()
+
+
+func _on_warm_failed(_message: String) -> void:
+	_survey_done = true
+	_survey_label.text = ""
+	_set_menu_locked(false, "failed")
+
+
+## Disables (or restores) Continue, Enter Ringworld and the world cards. Quit stays enabled so a slow warm-load can always be left.
+func _set_menu_locked(locked: bool, reason := "") -> void:
+	if locked == menu_locked:
+		return
+	menu_locked = locked
+	var controls: Array[Button] = [continue_button, worlds_button]
+	controls.append_array(slot_buttons)
+	for button in controls:
+		button.disabled = locked
+	for card_info in _cards:
+		(card_info["card"] as Control).modulate = Color(1, 1, 1, 0.55) if locked else Color.WHITE
+	if locked:
+		var focused := get_viewport().gui_get_focus_owner()
+		if focused != null and focused in controls:
+			focused.release_focus()
+		return
+	unlock_info = {"ms": Time.get_ticks_msec() - _ready_msec, "reason": reason}
+	print("MENU_UNLOCK ms=%d reason=%s" % [unlock_info["ms"], reason])
+	if main_panel.visible:
+		(continue_button if continue_button.visible else worlds_button).grab_focus()
+	elif worlds_panel.visible:
+		slot_buttons[maxi(0, _continue_slot - 1) if _continue_slot > 0 else 0].grab_focus()
+
+
+func _update_menu_lock() -> void:
+	var now := Time.get_ticks_msec()
+	if not is_instance_valid(_warm) or _warm.state == WARM_WORLD.State.IDLE:
+		_set_menu_locked(false, "no_world")
+	elif _warm.state == WARM_WORLD.State.WARM or _warm.is_past_terrain_stage():
+		if float(now - _last_slow_frame_msec) / 1000.0 >= UNLOCK_QUIET_SECONDS:
+			_set_menu_locked(false, "quiet")
+	if menu_locked and float(now - _ready_msec) / 1000.0 >= UNLOCK_CAP_SECONDS:
+		_set_menu_locked(false, "cap")
+
+
+## The world is quiet behind the opaque cover. Capture the next boot snapshot when this boot did not use a current one, ease the
+## remaining drift to rest, dissolve the cover to the live view and free it.
+func _reveal_cover() -> void:
+	if _cover_retired or _revealing or _leaving or freeze_cover or boot_cover == null or not is_instance_valid(_warm):
+		return
+	_revealing = true
+	if _needs_capture():
+		_capture_snapshot()
+	await boot_cover.settle()
+	if not _cover_still_wanted():
 		return
 	_warm.log_gpu_memory("before_crossfade")
-	_crossfade_tween = create_tween()
-	_crossfade_tween.tween_method(func(alpha: float) -> void: space_backdrop.call("SetFlyoverAlpha", alpha), 1.0, 0.0, CROSSFADE_SECONDS)
-	_crossfade_tween.tween_callback(_retire_flyover)
-
-
-func _retire_flyover() -> void:
-	if _flyover_retired:
+	await boot_cover.crossfade(CROSSFADE_SECONDS)
+	if not _cover_still_wanted():
 		return
-	space_backdrop.call("Retire")
-	_flyover_retired = true
+	_retire_cover()
+
+
+func _cover_still_wanted() -> bool:
+	return not _leaving and not _cover_retired and is_instance_valid(_warm) and _warm.is_warm()
+
+
+## No current snapshot was used this boot: none, a stale one, or the placement fell back to the default cruise.
+func _needs_capture() -> bool:
+	return _live_slot > 0 and snapshot_override_path.is_empty() \
+		and not (_snapshot_valid and not _snapshot_stale and _warm.placement_used_snapshot())
+
+
+func _capture_snapshot() -> void:
+	var pose: Dictionary = _warm.get_camera_pose()
+	if not bool(pose.get("valid", false)):
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	var image: Image = MENU_SNAPSHOT.capture_world_only(get_tree(), [self])
+	# Hiding the menu released its keyboard focus.
+	if focus != null and is_instance_valid(focus) and focus.is_visible_in_tree():
+		focus.grab_focus()
+	if image == null:
+		return
+	pose.erase("valid")
+	var sun := float(_warm.get_telemetry().get("sun_elevation_degrees", 0.0))
+	var sidecar: Dictionary = MENU_SNAPSHOT.make_sidecar("last_session", MENU_SNAPSHOT.current_state_stamp(_live_slot), pose, sun, _warm.get_last_warm_ms())
+	MENU_SNAPSHOT.write_async(_live_slot, image, sidecar)
+
+
+func _retire_cover() -> void:
+	if _cover_retired:
+		return
+	boot_cover.retire()
+	_cover_retired = true
 	_survey_done = true
 	_telemetry_active = true
-	_update_flyover_footer()
+	_update_footer()
 	_update_telemetry()
-	# Let the freed flyover resources settle before sampling the process GPU memory again.
+	# Let the freed cover settle before sampling the process GPU memory again.
 	get_tree().create_timer(3.0).timeout.connect(func() -> void:
 		if is_instance_valid(_warm):
 			_warm.log_gpu_memory("after_crossfade"))
@@ -1283,8 +1375,8 @@ func _retire_flyover() -> void:
 
 ## Fades to black and frees the warm world (or cancels its load). Awaiting it makes select_slot and the loading screen safe.
 func _release_warm_world() -> void:
-	if _crossfade_tween != null and _crossfade_tween.is_valid():
-		_crossfade_tween.kill()
+	if boot_cover != null:
+		boot_cover.halt()
 	var warm := get_node_or_null("/root/RingWarmWorld")
 	if warm == null or not warm.is_busy():
 		return

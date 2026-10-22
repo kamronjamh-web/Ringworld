@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Godot;
 
 namespace RingworldTechDemo.Vegetation;
@@ -29,6 +30,20 @@ public sealed class ImportedTreeImpostorCatalog
     public static ImportedTreeImpostorCatalog Load()
     {
         if (_cached != null) return _cached;
+        foreach (bool _ in BuildSteps()) { }
+        return _cached!;
+    }
+
+    /// <summary>Poll and advance on the main thread, one image or lookup texture per step; Load() drains the same steps in one call.</summary>
+    public static IEnumerable<bool> PrepareCooperatively()
+    {
+        if (_cached != null) yield break;
+        foreach (bool unit in BuildSteps()) yield return unit;
+    }
+
+    private static IEnumerable<bool> BuildSteps()
+    {
+        if (_cached != null) yield break;
         var variants = ImportedTreeCatalog.Load();
         var geometries = new List<Geometry>(variants.Count);
         int maxVertices = 0;
@@ -46,21 +61,33 @@ public sealed class ImportedTreeImpostorCatalog
             hasBounds = true;
         }
         if (maxVertices == 0 || maxVertices % 3 != 0) throw new InvalidOperationException("Imported LOD3 billboard geometry is invalid.");
+        yield return true;
 
-        ImageTexture positions = CreateDataTexture(maxVertices, geometries, DataChannel.Position);
-        ImageTexture normals = CreateDataTexture(maxVertices, geometries, DataChannel.Normal);
-        ImageTexture uvs = CreateDataTexture(maxVertices, geometries, DataChannel.Uv);
-        ImageTexture tangents = CreateDataTexture(maxVertices, geometries, DataChannel.Tangent);
-        ImageTexture attachments = CreateDataTexture(maxVertices, geometries, DataChannel.Attachment);
+        ImageTexture positions = CreateDataTexture(maxVertices, geometries, DataChannel.Position); yield return true;
+        ImageTexture normals = CreateDataTexture(maxVertices, geometries, DataChannel.Normal); yield return true;
+        ImageTexture uvs = CreateDataTexture(maxVertices, geometries, DataChannel.Uv); yield return true;
+        ImageTexture tangents = CreateDataTexture(maxVertices, geometries, DataChannel.Tangent); yield return true;
+        ImageTexture attachments = CreateDataTexture(maxVertices, geometries, DataChannel.Attachment); yield return true;
         ArrayMesh mesh = CreateSharedMesh(maxVertices, bounds);
-        ShaderMaterial material = CreateMaterial(variants, positions, normals, uvs, tangents, attachments);
+        yield return true;
+
+        var images = new Godot.Collections.Array<Image>();
+        foreach (bool unit in PrepareTextureImages(variants, "albedo_texture", new Color(1, 1, 1, 1), images)) yield return unit;
+        Texture2DArray albedoLayers = CreateTextureArray(images, "albedo_texture"); yield return true;
+        images = new Godot.Collections.Array<Image>();
+        foreach (bool unit in PrepareTextureImages(variants, "normal_texture", new Color(.5f, .5f, 1, 1), images)) yield return unit;
+        Texture2DArray normalLayers = CreateTextureArray(images, "normal_texture"); yield return true;
+        images = new Godot.Collections.Array<Image>();
+        foreach (bool unit in PrepareMetallicRoughnessImages(variants, images)) yield return unit;
+        Texture2DArray metallicRoughnessLayers = CreateTextureArray(images, "metallic/roughness"); yield return true;
+
+        ShaderMaterial material = CreateMaterial(variants, positions, normals, uvs, tangents, attachments, albedoLayers, normalLayers, metallicRoughnessLayers);
         mesh.SurfaceSetMaterial(0, material);
 
         var counts = new List<int>(geometries.Count);
         var expandedPositions = new List<Vector3[]>(geometries.Count);
         foreach (Geometry geometry in geometries) { counts.Add(geometry.Positions.Length); expandedPositions.Add(geometry.Positions); }
-        _cached = new ImportedTreeImpostorCatalog(mesh, material, maxVertices, counts.AsReadOnly(), expandedPositions.AsReadOnly());
-        return _cached;
+        _cached ??= new ImportedTreeImpostorCatalog(mesh, material, maxVertices, counts.AsReadOnly(), expandedPositions.AsReadOnly());
     }
 
     private static ArrayMesh CreateSharedMesh(int vertexCount, Aabb bounds)
@@ -78,16 +105,17 @@ public sealed class ImportedTreeImpostorCatalog
         return mesh;
     }
 
-    private static ShaderMaterial CreateMaterial(IReadOnlyList<ImportedTreeVariant> variants, Texture2D positions, Texture2D normals, Texture2D uvs, Texture2D tangents, Texture2D attachments)
+    private static ShaderMaterial CreateMaterial(IReadOnlyList<ImportedTreeVariant> variants, Texture2D positions, Texture2D normals, Texture2D uvs, Texture2D tangents, Texture2D attachments,
+        Texture2DArray albedoLayers, Texture2DArray normalLayers, Texture2DArray metallicRoughnessLayers)
     {
         Shader shader = ResourceLoader.Load<Shader>("res://materials/imported_tree_impostor.gdshader") ?? throw new InvalidOperationException("Missing imported-tree impostor shader.");
         var material = new ShaderMaterial { Shader = shader };
         material.SetShaderParameter("vertex_data", positions); material.SetShaderParameter("normal_data", normals);
         material.SetShaderParameter("uv_data", uvs); material.SetShaderParameter("tangent_data", tangents);
         material.SetShaderParameter("attachment_data", attachments);
-        material.SetShaderParameter("albedo_layers", CreateTextureArray(variants, "albedo_texture", new Color(1, 1, 1, 1)));
-        material.SetShaderParameter("normal_layers", CreateTextureArray(variants, "normal_texture", new Color(.5f, .5f, 1, 1)));
-        material.SetShaderParameter("metallic_roughness_layers", CreateMetallicRoughnessArray(variants));
+        material.SetShaderParameter("albedo_layers", albedoLayers);
+        material.SetShaderParameter("normal_layers", normalLayers);
+        material.SetShaderParameter("metallic_roughness_layers", metallicRoughnessLayers);
         material.SetShaderParameter("variant_parameters", CreateParameterTexture(variants));
         CopySharedParameters(variants[0].Lods[3].SurfaceGetMaterial(0) as ShaderMaterial, material);
         return material;
@@ -100,39 +128,69 @@ public sealed class ImportedTreeImpostorCatalog
             destination.SetShaderParameter(parameter, source.GetShaderParameter(parameter));
     }
 
-    private static Texture2DArray CreateTextureArray(IReadOnlyList<ImportedTreeVariant> variants, string parameter, Color fallback)
+    // Decompress/convert/resize/mip work runs on workers (one task per layer); only the texture read-back stays on the main thread.
+    private static IEnumerable<bool> PrepareTextureImages(IReadOnlyList<ImportedTreeVariant> variants, string parameter, Color fallback, Godot.Collections.Array<Image> images)
     {
-        var images = new Godot.Collections.Array<Image>();
+        var tasks = new List<Task<Image>>(variants.Count);
         foreach (ImportedTreeVariant variant in variants)
         {
             ShaderMaterial? material = variant.Lods[3].SurfaceGetMaterial(0) as ShaderMaterial;
             Texture2D? texture = material == null ? null : material.GetShaderParameter(parameter).AsGodotObject() as Texture2D;
-            images.Add(PrepareImage(texture, fallback));
+            Image? source = texture?.GetImage();
+            tasks.Add(Task.Run(() => PrepareImage(source, fallback, true)));
+            yield return true;
         }
+        foreach (bool unit in AwaitImages(tasks, images)) yield return unit;
+    }
+
+    private static IEnumerable<bool> AwaitImages(List<Task<Image>> tasks, Godot.Collections.Array<Image> images)
+    {
+        foreach (Task<Image> task in tasks)
+        {
+            while (!task.IsCompleted) yield return true;
+            images.Add(task.GetAwaiter().GetResult());
+        }
+    }
+
+    private static Texture2DArray CreateTextureArray(Godot.Collections.Array<Image> images, string label)
+    {
         var array = new Texture2DArray();
-        if (array.CreateFromImages(images) != Error.Ok) throw new InvalidOperationException($"Could not create {parameter} texture array.");
+        if (array.CreateFromImages(images) != Error.Ok) throw new InvalidOperationException($"Could not create {label} texture array.");
         return array;
     }
 
-    private static Texture2DArray CreateMetallicRoughnessArray(IReadOnlyList<ImportedTreeVariant> variants)
+    private static IEnumerable<bool> PrepareMetallicRoughnessImages(IReadOnlyList<ImportedTreeVariant> variants, Godot.Collections.Array<Image> images)
     {
-        var images = new Godot.Collections.Array<Image>();
+        var tasks = new List<Task<Image>>(variants.Count);
         foreach (ImportedTreeVariant variant in variants)
         {
             ShaderMaterial? material = variant.Lods[3].SurfaceGetMaterial(0) as ShaderMaterial;
-            Image metallic = PrepareImage(material == null ? null : material.GetShaderParameter("metallic_texture").AsGodotObject() as Texture2D, new Color(0, 0, 1, 1));
-            Image roughness = PrepareImage(material == null ? null : material.GetShaderParameter("roughness_texture").AsGodotObject() as Texture2D, new Color(0, 1, 0, 1));
-            var packed = Image.CreateEmpty(TextureLayerSize, TextureLayerSize, false, Image.Format.Rgba8);
-            for (int y = 0; y < TextureLayerSize; y++) for (int x = 0; x < TextureLayerSize; x++) { Color a = metallic.GetPixel(x, y); Color r = roughness.GetPixel(x, y); packed.SetPixel(x, y, new Color(0, r.G, a.B, 1)); }
-            packed.GenerateMipmaps(); images.Add(packed);
+            Image? metallicSource = (material == null ? null : material.GetShaderParameter("metallic_texture").AsGodotObject() as Texture2D)?.GetImage();
+            Image? roughnessSource = (material == null ? null : material.GetShaderParameter("roughness_texture").AsGodotObject() as Texture2D)?.GetImage();
+            tasks.Add(Task.Run(() => PackMetallicRoughness(metallicSource, roughnessSource)));
+            yield return true;
         }
-        var array = new Texture2DArray(); if (array.CreateFromImages(images) != Error.Ok) throw new InvalidOperationException("Could not create metallic/roughness texture array."); return array;
+        foreach (bool unit in AwaitImages(tasks, images)) yield return unit;
     }
 
-    private static Image PrepareImage(Texture2D? texture, Color fallback)
+    private static Image PackMetallicRoughness(Image? metallicSource, Image? roughnessSource)
+    {
+        const int pixelBytes = TextureLayerSize * TextureLayerSize * 4;
+        // Only the base level of these is read, so skip their mip chains.
+        Image metallic = PrepareImage(metallicSource, new Color(0, 0, 1, 1), false);
+        Image roughness = PrepareImage(roughnessSource, new Color(0, 1, 0, 1), false);
+        byte[] metallicData = metallic.GetData(), roughnessData = roughness.GetData();
+        var packedData = new byte[pixelBytes];
+        for (int i = 0; i < pixelBytes; i += 4) { packedData[i + 1] = roughnessData[i + 1]; packedData[i + 2] = metallicData[i + 2]; packedData[i + 3] = 255; }
+        Image packed = Image.CreateFromData(TextureLayerSize, TextureLayerSize, false, Image.Format.Rgba8, packedData);
+        packed.GenerateMipmaps();
+        return packed;
+    }
+
+    private static Image PrepareImage(Image? textureImage, Color fallback, bool mipmaps)
     {
         Image image;
-        if (texture?.GetImage() is Image source && !source.IsEmpty())
+        if (textureImage is Image source && !source.IsEmpty())
         {
             image = (Image)source.Duplicate();
             if (image.IsCompressed() && image.Decompress() != Error.Ok)
@@ -141,17 +199,25 @@ public sealed class ImportedTreeImpostorCatalog
         else
         {
             image = Image.CreateEmpty(TextureLayerSize, TextureLayerSize, false, Image.Format.Rgba8);
-            image.Fill(fallback); image.GenerateMipmaps();
+            image.Fill(fallback); if (mipmaps) image.GenerateMipmaps();
             return image;
         }
-        image.Convert(Image.Format.Rgba8); image.Resize(TextureLayerSize, TextureLayerSize, Image.Interpolation.Lanczos); image.GenerateMipmaps(); return image;
+        image.Convert(Image.Format.Rgba8); image.Resize(TextureLayerSize, TextureLayerSize, Image.Interpolation.Lanczos); if (mipmaps) image.GenerateMipmaps(); return image;
     }
 
     private static ImageTexture CreateDataTexture(int width, IReadOnlyList<Geometry> geometries, DataChannel channel)
     {
-        var image = Image.CreateEmpty(width, geometries.Count, false, Image.Format.Rgbaf);
+        var texels = new float[width * geometries.Count * 4];
+        int offset = 0;
         for (int row = 0; row < geometries.Count; row++)
-            for (int column = 0; column < width; column++) image.SetPixel(column, row, geometries[row].Get(channel, column));
+            for (int column = 0; column < width; column++)
+            {
+                Color texel = geometries[row].Get(channel, column);
+                texels[offset++] = texel.R; texels[offset++] = texel.G; texels[offset++] = texel.B; texels[offset++] = texel.A;
+            }
+        var bytes = new byte[texels.Length * sizeof(float)];
+        Buffer.BlockCopy(texels, 0, bytes, 0, bytes.Length);
+        Image image = Image.CreateFromData(width, geometries.Count, false, Image.Format.Rgbaf, bytes);
         return ImageTexture.CreateFromImage(image);
     }
 
