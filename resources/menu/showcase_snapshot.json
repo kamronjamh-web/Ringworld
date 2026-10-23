@@ -1,0 +1,22 @@
+{
+	"captured_unix": 1792771556,
+	"format_version": 1,
+	"image_size": [
+		2560,
+		1440
+	],
+	"kind": "showcase",
+	"last_warm_ms": 29913.323,
+	"pose": {
+		"across_m": 159000.0,
+		"around_m": 25603470.0,
+		"fov_deg": 80.0,
+		"pitch_deg": -25.0,
+		"vertical_m": 16003.964035511,
+		"yaw_deg": 180.0
+	},
+	"render_epoch": 1,
+	"showcase_id": "standard_1337_v1",
+	"state_stamp": {},
+	"sun_elevation_deg": 71.3110046386719
+}

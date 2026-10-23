@@ -8,6 +8,11 @@ const THUMBNAIL_SIZE := Vector2i(480, 270)
 const PLAYTIME_FLUSH_SECONDS := 60.0
 const MAX_NAME_LENGTH := 32
 const EXIT_POOL_DRAIN_TIMEOUT_MS := 10000
+## The menu showcase: a frozen Standard world (seed 1337). Choosing it creates a normal save slot from these generation settings.
+## While no saved world is eligible for a warm-load the start menu shows the bundled picture of it instead of a live world.
+const SHOWCASE_DEFINITION_PATH := "res://resources/menu/showcase_world.json"
+const SHOWCASE_BUNDLED_SNAPSHOT_PNG := "res://resources/menu/showcase_snapshot.png"
+const SHOWCASE_BUNDLED_SNAPSHOT_JSON := "res://resources/menu/showcase_snapshot.json"
 
 var active_slot := 0
 var worlds_root := WORLDS_ROOT
@@ -19,6 +24,8 @@ var _since_flush := 0.0
 ## True while the start menu holds a warm (background-loaded) world. The proxy mesh cache and the vegetation cache read the global
 ## active_world_directory at runtime, so nothing may change the active slot until RingWarmWorld has torn the world down.
 var warm_world_active := false
+var _showcase_definition := {}
+var _showcase_loaded := false
 
 
 func select_slot(slot: int) -> bool:
@@ -63,12 +70,65 @@ func get_live_menu_slot() -> int:
 	if slot <= 0:
 		return 0
 	var settings: Variant = get_slot_metadata(slot).get("generation_settings", {})
-	if not (settings is Dictionary) or str(settings.get("terrain_backend", "")) != "surface_runtime_generation_v1":
-		return 0
-	var standard := WorldPresets.describe("standard")
-	if absf(float(settings.get("radius_km", 0.0)) - float(standard.radius_km)) > 0.01 		or absf(float(settings.get("ring_width_km", 0.0)) - float(standard.width_km)) > 0.01:
+	if not (settings is Dictionary) or not _is_standard_runtime_settings(settings):
 		return 0
 	return slot
+
+
+func _is_standard_runtime_settings(settings: Dictionary) -> bool:
+	if str(settings.get("terrain_backend", "")) != "surface_runtime_generation_v1":
+		return false
+	var standard := WorldPresets.describe("standard")
+	return absf(float(settings.get("radius_km", 0.0)) - float(standard.radius_km)) <= 0.01 \
+		and absf(float(settings.get("ring_width_km", 0.0)) - float(standard.width_km)) <= 0.01
+
+
+## The validated showcase definition ({showcase_id, name, generation_settings}) from res://resources/menu/showcase_world.json, or {}
+## when the file is missing or not a Standard runtime-generation definition.
+func get_showcase_definition() -> Dictionary:
+	if _showcase_loaded:
+		return _showcase_definition
+	_showcase_loaded = true
+	if not FileAccess.file_exists(SHOWCASE_DEFINITION_PATH):
+		return _showcase_definition
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(SHOWCASE_DEFINITION_PATH))
+	if not (parsed is Dictionary):
+		push_warning("Showcase definition is not valid JSON.")
+		return _showcase_definition
+	var id := str(parsed.get("showcase_id", ""))
+	var settings: Variant = parsed.get("generation_settings", {})
+	if id.is_empty() or not id.is_valid_filename() or not (settings is Dictionary) or not _is_standard_runtime_settings(settings):
+		push_warning("Showcase definition is incomplete or not a Standard runtime-generation world.")
+		return _showcase_definition
+	_showcase_definition = {
+		"showcase_id": id,
+		"name": str(parsed.get("name", "Showcase")),
+		"generation_settings": (settings as Dictionary).duplicate(true),
+	}
+	return _showcase_definition
+
+
+## The showcase picture that ships in res:// (hi-res). Regenerate it with tools/showcase_snapshot_capture.ps1 whenever showcase_id changes.
+func get_showcase_bundled_snapshot_paths() -> Dictionary:
+	return {"png": SHOWCASE_BUNDLED_SNAPSHOT_PNG, "json": SHOWCASE_BUNDLED_SNAPSHOT_JSON}
+
+
+func get_first_empty_slot() -> int:
+	for slot in range(1, SLOT_COUNT + 1):
+		if not slot_exists(slot):
+			return slot
+	return 0
+
+
+## Creates a normal save slot from the frozen showcase settings and binds it (like create_world). The slot saves like any world;
+## its first load spawns at the fresh-spawn viewpoint. Returns false when the definition is invalid or the slot is taken.
+func create_showcase_world(slot: int) -> bool:
+	var definition := get_showcase_definition()
+	if definition.is_empty() or slot < 1 or slot > SLOT_COUNT or slot_exists(slot):
+		return false
+	if not create_world(slot, str(definition["name"])):
+		return false
+	return save_active_world_settings(definition["generation_settings"])
 
 
 func request_load_selected_world() -> void:

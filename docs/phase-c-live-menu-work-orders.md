@@ -50,6 +50,17 @@ executable work orders and the facts they depend on.
   - **Grave key at the menu:** opens only the small "Live world" drawer.
   - **B5 per-screen poses on the live world:** deferred to C10, limited to pitch and
     FOV changes, never above 18 km.
+- **Showcase is a picture, not a warm world** (user, 2026-10-23; supersedes the
+  showcase background-load decisions above and in D2):
+  - Ship a high-resolution showcase picture in `res://`. With no eligible world
+    (first launch, Compact/legacy last played, or a slot that failed to warm-load)
+    the menu shows that picture and loads no world, to save resources.
+  - The player chooses the showcase with a main-menu button (shown with the picture
+    when there are no saved worlds) or a showcase world card. It loads through the
+    loading screen.
+  - Choosing it creates a normal, saved slot from the frozen seed 1337 settings,
+    spawning at the main-spire viewpoint. Choosing it again creates another fresh
+    slot. No read-only mode and no separate showcase directory.
 - **Menu interactivity during warm-load** (user, 2026-10-22; replaces "delay
   interactivity until the last stall"):
   - Lock the menu buttons only through the worst early freezes, about 10 s, showing

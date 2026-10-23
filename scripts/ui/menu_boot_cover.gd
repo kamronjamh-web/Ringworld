@@ -31,6 +31,7 @@ var _settle_progress := 0.0
 var _settling := false
 var _end_scale := 1.0
 var _tween: Tween
+var _outgoing: Array[Node] = []
 
 
 func _init() -> void:
@@ -42,6 +43,35 @@ func _init() -> void:
 
 func show_snapshot(texture: Texture2D, sidecar: Dictionary) -> void:
 	_clear_content()
+	_make_picture(texture, sidecar)
+
+
+## Dissolves from whatever the cover shows now (a snapshot or the starfield) to another picture; the drift restarts on the new one.
+## Used when the last session's world cannot warm-load and the showcase picture takes over. Awaitable.
+func fade_to_snapshot(texture: Texture2D, sidecar: Dictionary, seconds: float) -> void:
+	if is_retired:
+		return
+	var outgoing: Array[Node] = []
+	for node: Node in [_picture, _starfield]:
+		if node != null:
+			outgoing.append(node)
+	_picture = null
+	_starfield = null
+	_outgoing.append_array(outgoing)
+	_make_picture(texture, sidecar)
+	_picture.modulate.a = 0.0
+	_tween = create_tween()
+	_tween.tween_property(_picture, "modulate:a", 1.0, maxf(0.01, seconds))
+	await _tween.finished
+	if is_retired:
+		return
+	for node in outgoing:
+		if is_instance_valid(node):
+			node.queue_free()
+	_outgoing.clear()
+
+
+func _make_picture(texture: Texture2D, sidecar: Dictionary) -> void:
 	mode = "snapshot"
 	snapshot_sidecar = sidecar.duplicate(true)
 	var warm_ms := float(sidecar.get("last_warm_ms", 0.0))
@@ -128,6 +158,10 @@ func _clear_content() -> void:
 	if _starfield != null:
 		_starfield.queue_free()
 		_starfield = null
+	for node in _outgoing:
+		if is_instance_valid(node):
+			node.queue_free()
+	_outgoing.clear()
 
 
 func _decay() -> float:

@@ -29,6 +29,22 @@ static func load_valid(target: int) -> Dictionary:
 	return loaded
 
 
+## The bundled showcase picture ({texture, sidecar, stale: false}), or {} when missing, unreadable, from another format/epoch, or
+## captured for a different showcase_id than the current definition.
+static func load_showcase() -> Dictionary:
+	var session := _session()
+	if session == null or not session.has_method("get_showcase_definition"):
+		return {}
+	var id := str(session.get_showcase_definition().get("showcase_id", ""))
+	if id.is_empty():
+		return {}
+	var paths: Dictionary = session.get_showcase_bundled_snapshot_paths()
+	var loaded := load_files(str(paths["png"]), str(paths["json"]))
+	if loaded.is_empty() or str(loaded["sidecar"].get("showcase_id", "")) != id:
+		return {}
+	return loaded
+
+
 ## Identity of the target's saved state right now, in the same form as a sidecar's state_stamp ({} when there is no readable state file).
 static func current_state_stamp(target: int) -> Dictionary:
 	var session := _session()
@@ -55,6 +71,10 @@ static func load_files(png_path: String, json_path: String) -> Dictionary:
 		return {}
 	# Load from disk, not ResourceLoader, so a re-captured file is never served from cache.
 	var image := Image.load_from_file(ProjectSettings.globalize_path(png_path))
+	if (image == null or image.is_empty()) and png_path.begins_with("res://"):
+		# An exported project ships the imported texture, not the source PNG.
+		var imported := ResourceLoader.load(png_path) as Texture2D
+		return {"texture": imported, "sidecar": sidecar, "stale": false} if imported != null else {}
 	if image == null or image.is_empty():
 		return {}
 	return {"texture": ImageTexture.create_from_image(image), "sidecar": sidecar, "stale": false}
@@ -97,16 +117,21 @@ static func write_async(target: int, image: Image, sidecar: Dictionary) -> int:
 	if session == null or image == null or image.is_empty():
 		return -1
 	var paths: Dictionary = session.get_menu_snapshot_paths(target)
-	if str(paths.get("png", "")).is_empty():
+	return write_to_paths_async(str(paths.get("png", "")), str(paths.get("json", "")), image, sidecar)
+
+
+## write_async for explicit file paths. `max_height` 0 keeps the captured size (the bundled showcase picture is written this way).
+static func write_to_paths_async(png_path: String, json_path: String, image: Image, sidecar: Dictionary, max_height := MAX_HEIGHT) -> int:
+	if png_path.is_empty() or json_path.is_empty() or image == null or image.is_empty():
 		return -1
-	var png := ProjectSettings.globalize_path(str(paths["png"]))
-	var json := ProjectSettings.globalize_path(str(paths["json"]))
+	var png := ProjectSettings.globalize_path(png_path)
+	var json := ProjectSettings.globalize_path(json_path)
 	if FileAccess.file_exists(json):
 		DirAccess.remove_absolute(json)
 	var data := sidecar.duplicate(true)
 	data["format_version"] = FORMAT_VERSION
 	data["render_epoch"] = RENDER_EPOCH
-	var task := WorkerThreadPool.add_task(_write_files.bind(image.duplicate() as Image, png, json, data), false, "menu snapshot write")
+	var task := WorkerThreadPool.add_task(_write_files.bind(image.duplicate() as Image, png, json, data, max_height), false, "menu snapshot write")
 	_pending_tasks.append(task)
 	return task
 
@@ -126,11 +151,11 @@ static func has_pending() -> bool:
 	return not _pending_tasks.is_empty()
 
 
-static func _write_files(image: Image, png: String, json: String, data: Dictionary) -> void:
+static func _write_files(image: Image, png: String, json: String, data: Dictionary, max_height: int) -> void:
 	image.convert(Image.FORMAT_RGB8)
-	if image.get_height() > MAX_HEIGHT:
-		var width := maxi(1, roundi(float(image.get_width()) * float(MAX_HEIGHT) / float(image.get_height())))
-		image.resize(width, MAX_HEIGHT, Image.INTERPOLATE_LANCZOS)
+	if max_height > 0 and image.get_height() > max_height:
+		var width := maxi(1, roundi(float(image.get_width()) * float(max_height) / float(image.get_height())))
+		image.resize(width, max_height, Image.INTERPOLATE_LANCZOS)
 	data["image_size"] = [image.get_width(), image.get_height()]
 	if image.save_png(png + ".tmp") != OK or not _replace(png + ".tmp", png):
 		push_warning("Menu snapshot: could not write " + png)

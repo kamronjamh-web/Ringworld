@@ -58,6 +58,9 @@ var _footer_label: Label
 var worlds_button: Button
 var continue_button: Button
 var continue_subline: Label
+## "Explore showcase" on the main menu (only while no saved world exists) and on the worlds screen (always).
+var showcase_button: Button
+var worlds_showcase_button: Button
 var _quit_button: Button
 var _continue_slot := 0
 var _intro_overlay: ColorRect
@@ -96,6 +99,8 @@ var _cover_retired := false
 var _revealing := false
 var _snapshot_valid := false
 var _snapshot_stale := false
+## True while the cover shows the bundled showcase picture (no eligible world to warm-load); no live world is behind it.
+var _showcase_picture := false
 var _placement_pose: Dictionary = {}
 var _world_name := ""
 var _leaving := false
@@ -251,6 +256,10 @@ func _build_cover() -> void:
 		snapshot = MENU_SNAPSHOT.load_files(snapshot_override_path, snapshot_override_path.get_basename() + ".json")
 	elif _live_slot > 0:
 		snapshot = MENU_SNAPSHOT.load_valid(_live_slot)
+	elif live_world:
+		# Nothing to warm-load (first launch, a Compact/legacy world last played, or warm-loading disabled): the bundled showcase picture.
+		snapshot = MENU_SNAPSHOT.load_showcase()
+		_showcase_picture = not snapshot.is_empty()
 	_snapshot_valid = not snapshot.is_empty()
 	_snapshot_stale = bool(snapshot.get("stale", false))
 	if _snapshot_valid:
@@ -295,6 +304,13 @@ func _build_main_panel() -> void:
 	worlds_button.pressed.connect(_show_worlds)
 	worlds_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	main_column.add_child(worlds_button)
+	showcase_button = Button.new()
+	showcase_button.text = "EXPLORE SHOWCASE   →"
+	showcase_button.custom_minimum_size = Vector2(390, 58)
+	showcase_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	showcase_button.pressed.connect(_explore_showcase)
+	showcase_button.visible = false
+	main_column.add_child(showcase_button)
 	var main_note := Label.new()
 	main_note.theme_type_variation = "MutedLabel"
 	main_note.text = "LOCAL WORLDS  •  CONTINUOUS TERRAIN  •  PHYSICAL CLOUDS"
@@ -325,6 +341,13 @@ func _build_worlds_panel() -> void:
 	worlds_column.add_child(description)
 	for slot in range(1, SLOT_COUNT + 1):
 		worlds_column.add_child(_build_world_card(slot))
+	worlds_showcase_button = Button.new()
+	worlds_showcase_button.text = "SHOWCASE WORLD   →   a fresh Standard ring, seed 1337"
+	worlds_showcase_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	worlds_showcase_button.custom_minimum_size = Vector2(CARD_WIDTH - 28.0, 52)
+	worlds_showcase_button.pressed.connect(_explore_showcase)
+	worlds_showcase_button.visible = _showcase_available()
+	worlds_column.add_child(worlds_showcase_button)
 	status_label = Label.new()
 	status_label.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 	worlds_column.add_child(status_label)
@@ -701,6 +724,8 @@ func _update_footer() -> void:
 	var suffix := "" if _world_name.is_empty() else " · " + _world_name.to_upper()
 	if _cover_retired:
 		_footer_label.text = "LIVE WORLD" + suffix
+	elif _showcase_picture and boot_cover != null and boot_cover.mode == "snapshot":
+		_footer_label.text = "RINGWORLD SHOWCASE"
 	elif boot_cover != null and boot_cover.mode == "snapshot":
 		_footer_label.text = "LAST SESSION" + suffix
 	else:
@@ -728,6 +753,8 @@ func _show_main_menu() -> void:
 	if continue_button.visible:
 		rows.append([continue_button])
 	rows.append([worlds_button])
+	if showcase_button.visible:
+		rows.append([showcase_button])
 	rows.append([_quit_button])
 	_link_rows(rows)
 	(continue_button if continue_button.visible else worlds_button).grab_focus()
@@ -744,6 +771,8 @@ func _refresh_continue() -> void:
 		_continue_slot = int(warm.slot)
 	continue_button.visible = _continue_slot > 0
 	continue_subline.visible = _continue_slot > 0
+	# With no saved world the showcase is offered right on the main menu, next to its picture.
+	showcase_button.visible = _continue_slot <= 0 and _showcase_available()
 	if _continue_slot <= 0:
 		return
 	var metadata: Dictionary = session.get_slot_metadata(_continue_slot)
@@ -994,6 +1023,13 @@ func _load_slot(slot: int) -> bool:
 	if not session.select_slot(slot):
 		_leaving = false
 		return false
+	_open_selected_slot_loading(session, slot)
+	_leaving = false
+	return true
+
+
+## Starts the foreground loading screen for the slot just bound with select_slot / create_showcase_world.
+func _open_selected_slot_loading(session: Node, slot: int) -> void:
 	session.request_load_selected_world()
 	var metadata: Dictionary = session.get_slot_metadata(slot)
 	var settings: Dictionary = metadata.get("generation_settings", {})
@@ -1005,8 +1041,34 @@ func _load_slot(slot: int) -> bool:
 		"width_m": float(settings.get("ring_width_km", 20.0)) * 1000.0,
 		"is_existing": true,
 	})
+
+
+func _showcase_available() -> bool:
+	var session := get_node_or_null("/root/WorldSession")
+	return session != null and session.has_method("create_showcase_world") and not session.get_showcase_definition().is_empty()
+
+
+## Creates a fresh normal slot from the frozen showcase settings (seed 1337) and loads it through the loading screen, like New World.
+## A second pick makes another slot; an existing showcase slot is never overwritten.
+func _explore_showcase() -> void:
+	var session := get_node_or_null("/root/WorldSession")
+	if session == null or _leaving or not _showcase_available():
+		return
+	var slot := int(session.get_first_empty_slot())
+	if slot == 0:
+		status_label.text = "All save slots are occupied. Delete a world to make room."
+		continue_subline.text = status_label.text
+		continue_subline.visible = showcase_button.visible
+		return
+	_leaving = true
+	# The warm world binds the global active world directory; free it before the slot is created and selected.
+	await _release_warm_world()
+	if not session.create_showcase_world(slot):
+		_leaving = false
+		status_label.text = "Could not create the showcase world."
+		return
+	_open_selected_slot_loading(session, slot)
 	_leaving = false
-	return true
 
 
 func _show_copy_targets() -> void:
@@ -1280,6 +1342,16 @@ func _on_warm_failed(_message: String) -> void:
 	_survey_done = true
 	_survey_label.text = ""
 	_set_menu_locked(false, "failed")
+	# The slot could not warm-load: dissolve the cover to the showcase picture (no live world, no starfield unless the picture is missing).
+	if boot_cover == null or _cover_retired or freeze_cover or not snapshot_override_path.is_empty():
+		return
+	var showcase := MENU_SNAPSHOT.load_showcase()
+	if showcase.is_empty():
+		return
+	_showcase_picture = true
+	# The cover switches to snapshot mode synchronously; the footer follows it while the dissolve runs.
+	boot_cover.fade_to_snapshot(showcase["texture"], showcase["sidecar"], CROSSFADE_SECONDS)
+	_update_footer()
 
 
 ## Disables (or restores) Continue, Enter Ringworld and the world cards. Quit stays enabled so a slow warm-load can always be left.
@@ -1287,7 +1359,7 @@ func _set_menu_locked(locked: bool, reason := "") -> void:
 	if locked == menu_locked:
 		return
 	menu_locked = locked
-	var controls: Array[Button] = [continue_button, worlds_button]
+	var controls: Array[Button] = [continue_button, worlds_button, showcase_button, worlds_showcase_button]
 	controls.append_array(slot_buttons)
 	for button in controls:
 		button.disabled = locked
@@ -1448,5 +1520,7 @@ func _update_world_focus_chain() -> void:
 			rows.append(copies)
 		if rename_row.visible:
 			rows.append(_focusable_in(rename_row.get_children()))
+	if worlds_showcase_button.visible:
+		rows.append([worlds_showcase_button])
 	rows.append([_worlds_back])
 	_link_rows(rows)

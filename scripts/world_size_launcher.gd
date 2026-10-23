@@ -1387,6 +1387,11 @@ func _save_selected_slot_settings() -> void:
 	var session := get_node_or_null("/root/WorldSession")
 	if session == null:
 		return
+	session.save_active_world_settings(_build_selected_slot_settings())
+
+
+## The generation settings a slot stores for the current controls (also used by tools/showcase_world_definition.gd).
+func _build_selected_slot_settings() -> Dictionary:
 	var runtime_surface := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
 	var settings := {
 		"radius_km": _radius_km_from_slider(size_slider.value),
@@ -1413,7 +1418,7 @@ func _save_selected_slot_settings() -> void:
 		settings["surface_definition_version"] = 1
 		settings["surface_generation_contract_id"] = pending_surface_generation_contract_id
 		settings["surface_generation_recipe_json"] = pending_surface_generation_recipe_json
-	session.save_active_world_settings(settings)
+	return settings
 
 
 func _prepare_runtime_surface_generation(is_certified: bool) -> bool:

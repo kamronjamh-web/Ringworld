@@ -9,6 +9,8 @@ extends SceneTree
 ##              in the PNG), plus the full C1/C2 checks (HUD hidden, mouse Visible, WASD ignored, grave does nothing, state files
 ##              unchanged > 35 s, clean teardown, another slot through the loading screen)
 ##   --phase=2  second boot: snapshot cover, PlacementUsedSnapshot, settled cover vs first live frame, no recapture
+##   --phase=4  (empty profile, the .ps1 builds it) no-slot boot shows the bundled showcase picture and loads nothing; a slot that fails to warm-load
+##              dissolves to the picture; choosing the showcase creates a normal seed-1337 slot loaded through the loading screen
 ##   --phase=3  stale snapshot (SavedUnix edited in the isolated copy): snapshot still shown, placement at the actual save spot,
 ##              dissolve to live, recapture with the new state stamp
 ## Windowed GPU runs check the snapshot (headless has no pixels and runs phase 1 without the snapshot checks).
@@ -149,13 +151,16 @@ func _run() -> void:
 	_results["adapter"] = RenderingServer.get_video_adapter_name()
 	_results["headless"] = _headless
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
-	if _headless and _phase != 1:
+	if _headless and not _phase in [1, 4]:
 		print("MENU_WARM_WORLD_LIFECYCLE=SKIP phase=%d (headless has no pixels, so no snapshot is captured)" % _phase)
 		quit(0)
 		return
 	_session = root.get_node_or_null("WorldSession")
 	if not _expect(_session != null, "WorldSession autoload missing"):
 		return _finish()
+	if _phase == 4:
+		await _run_showcase_phase()
+		return
 	if _phase != 1:
 		# Phase 1 ends by loading the other slot, which stamps it as most recent; make the slot that holds the snapshot the live one again.
 		for slot in range(1, 4):
@@ -659,3 +664,108 @@ func _check_teardown() -> void:
 	_expect(owner_children.is_empty(), "warm owner still parents nodes after teardown: " + ", ".join(owner_children))
 	var after := _snapshot_state()
 	_expect(after == _results.get("state_before", {}), "teardown wrote world state: %s" % str(after))
+
+## Phase 4 (D2, empty profile): no saved world means no warm-load; the menu shows the bundled showcase picture. A slot that fails to
+## warm-load dissolves to the same picture. Choosing the showcase creates a normal slot (seed 1337) and loads it through the loading screen.
+func _run_showcase_phase() -> void:
+	var definition: Dictionary = _session.get_showcase_definition()
+	var settings: Dictionary = definition.get("generation_settings", {})
+	if not _expect(not definition.is_empty(), "WorldSession has no valid showcase definition"):
+		return _finish()
+	_expect(int(_session.get_most_recent_slot()) == 0 and int(_session.get_live_menu_slot()) == 0, "phase 4 profile is not empty")
+
+	# A) no-slot boot: the picture, no world load
+	var menu: Control = MENU.instantiate()
+	root.add_child(menu)
+	current_scene = menu
+	_menu = menu
+	await _wait_seconds(5.0)
+	_check_showcase_cover(menu)
+	_expect(not bool(menu.get("menu_locked")), "menu is locked although no world is loading")
+	_expect(menu.showcase_button.visible and not menu.continue_button.visible, "no-slot main menu does not offer the showcase instead of Continue")
+	_expect(menu.worlds_showcase_button.visible, "worlds screen has no showcase entry")
+	var warm: Node = root.get_node_or_null("RingWarmWorld")
+	_expect(warm == null or int(warm.state) == 0, "a warm world started for the no-slot boot")
+	var loader: Node = root.get_node_or_null("RingWorldLoading")
+	_expect(loader == null or not bool(loader.get("active")), "a world load started for the no-slot boot")
+	_expect(not bool(_session.warm_world_active) and _session.active_slot == 0, "session is bound although nothing loads")
+	for slot in range(1, 4):
+		_expect(not _session.slot_exists(slot), "no-slot boot created slot %d" % slot)
+	for child in root.get_children():
+		var child_name := str(child.name)
+		_expect(not (child_name.contains("VoxelRing") or child_name.contains("WorldSizeLauncher")), "world runtime node exists at the no-slot boot: " + child_name)
+	menu.queue_free()
+	await _wait_seconds(0.3)
+
+	# B) a slot that cannot warm-load falls back to the picture, never to a live showcase
+	_expect(_session.select_slot(1), "could not create the broken slot")
+	var broken := settings.duplicate(true)
+	broken["surface_generation_recipe_json"] = "{not a recipe"
+	_expect(_session.save_active_world_settings(broken), "could not store the broken settings")
+	_session.clear_preview_slot()
+	_expect(int(_session.get_live_menu_slot()) == 1, "the broken Standard slot is not eligible for a warm-load")
+	menu = MENU.instantiate()
+	root.add_child(menu)
+	current_scene = menu
+	_menu = menu
+	_expect(menu.boot_cover.mode == "starfield", "slot without a snapshot did not start on the starfield: " + str(menu.boot_cover.mode))
+	_expect(await _wait_until(func() -> bool: return str((menu.get("unlock_info") as Dictionary).get("reason", "")) == "failed", 180000), "the broken slot did not report a failed warm-load")
+	await _wait_seconds(3.5)
+	_check_showcase_cover(menu)
+	warm = root.get_node_or_null("RingWarmWorld")
+	_expect(warm != null and int(warm.state) == 0 and not bool(_session.warm_world_active) and _session.active_slot == 0, "failed warm-load left the owner or session bound")
+	_expect(str(ProjectSettings.get_setting("ringworld/runtime/active_world_directory", "")) == "", "failed warm-load left active_world_directory set")
+	for child in root.get_children():
+		var child_name := str(child.name)
+		_expect(not (child_name.contains("VoxelRing") or child_name.contains("WorldSizeLauncher")), "world runtime node remains after the failed warm-load: " + child_name)
+	menu.queue_free()
+	await _wait_seconds(0.3)
+	_expect(_session.delete_slot(1), "could not delete the broken slot")
+
+	# C) session level: every pick makes a fresh slot and never touches an earlier one
+	_expect(int(_session.get_first_empty_slot()) == 1, "first empty slot is not 1 after the cleanup")
+	_expect(_session.create_showcase_world(1), "first showcase slot was not created")
+	var first_meta: Dictionary = _session.get_slot_metadata(1)
+	_expect(_session.get_first_empty_slot() == 2 and _session.create_showcase_world(2), "second pick did not create another slot")
+	_expect(_session.get_slot_metadata(1) == first_meta, "second pick changed the first showcase slot")
+	_expect(not _session.create_showcase_world(2), "create_showcase_world overwrote an existing slot")
+	_expect(JSON.stringify(_session.get_slot_metadata(2).get("generation_settings", {}), "", true) == JSON.stringify(settings, "", true), "second slot's settings differ from the showcase definition")
+	_session.clear_preview_slot()
+	_expect(_session.delete_slot(2) and _session.delete_slot(1), "could not delete the session-level showcase slots")
+
+	# D) the menu entry: a normal slot with seed 1337 loads through the loading screen
+	menu = MENU.instantiate()
+	root.add_child(menu)
+	current_scene = menu
+	_menu = menu
+	await _wait_seconds(1.0)
+	_loader = load("res://scripts/Loading/ring_world_loading.gd").ensure(root)
+	_loader.world_ready.connect(func(ready_world: Node) -> void: _loaded_world = ready_world)
+	var failure := ""
+	_loader.loading_failed.connect(func(message: String) -> void: failure = message)
+	await menu._explore_showcase()
+	_expect(_session.slot_exists(1), "choosing the showcase did not create slot 1")
+	var created: Dictionary = _session.get_slot_metadata(1)
+	var created_settings: Dictionary = created.get("generation_settings", {})
+	_expect(int(created_settings.get("terrain_seed", -1)) == 1337, "showcase slot seed is not 1337")
+	_expect(JSON.stringify(created_settings, "", true) == JSON.stringify(settings, "", true), "showcase slot settings differ from the definition")
+	_expect(str(created.get("name", "")) == str(definition.get("name", "?")), "showcase slot name differs from the definition")
+	_expect(_session.active_slot == 1 and not bool(_session.warm_world_active), "showcase slot is not the bound active slot")
+	_expect(bool(_loader.get("active")) and not bool(_loader.get("is_background")), "the showcase did not start the foreground loading screen")
+	_expect(await _wait_until(func() -> bool: return _loader.get_node_or_null("WorldLoadingOverlay") != null, 20000), "no loading overlay for the showcase load")
+	await _wait_until(func() -> bool: return _loaded_world != null or not failure.is_empty(), LOAD_TIMEOUT_MS)
+	_expect(_loaded_world != null, "the showcase did not finish loading: " + failure)
+	_expect(current_scene == _loaded_world, "the loaded showcase is not the current scene")
+	_expect(_session.active_slot == 1, "active slot is not the showcase slot after the load")
+	_finish()
+
+## The menu shows the bundled showcase picture: cover in snapshot mode, hi-res texture, showcase footer, no live world behind it.
+func _check_showcase_cover(menu: Control) -> void:
+	var cover: Control = menu.boot_cover
+	_expect(cover.mode == "snapshot" and bool(menu.get("_showcase_picture")), "cover is not the showcase picture: mode %s" % str(cover.mode))
+	_expect(menu.get("_footer_label").text == "RINGWORLD SHOWCASE", "footer is not RINGWORLD SHOWCASE: " + menu.get("_footer_label").text)
+	var picture := cover.get_node_or_null("SnapshotPicture") as TextureRect
+	if _expect(picture != null and picture.texture != null, "showcase picture node is missing"):
+		_expect(picture.texture.get_width() >= 2000, "showcase picture is not hi-res (%d px wide)" % picture.texture.get_width())
+		_results["showcase_picture_size"] = [picture.texture.get_width(), picture.texture.get_height()]
+	_expect(str(cover.snapshot_sidecar.get("showcase_id", "")) == str(_session.get_showcase_definition().get("showcase_id", "?")), "cover picture is for another showcase_id")

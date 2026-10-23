@@ -4,7 +4,7 @@
 .EXAMPLE
   .\tools\menu_warm_world_lifecycle_test.ps1 -Label d1 -Sequence          # windowed GPU: phases 1 (fresh), 2 (snapshot), 3 (stale) on one profile
   .\tools\menu_warm_world_lifecycle_test.ps1 -Label d1 -Phase 2 -Cache reuse
-  .\tools\menu_warm_world_lifecycle_test.ps1 -Label run1 -Headless        # phase 1 only (no pixels, so no snapshot checks)
+  .\tools\menu_warm_world_lifecycle_test.ps1 -Label run1 -Headless        # phases 1 and 4 (no pixels, so no snapshot checks)
 .NOTES
   The isolated profile is .godot\phase_c_live\appdata_<Label>. It receives slot_<Primary> and slot_<Secondary> from the real profile
   plus the gameplay_*.tres preferences; the test refuses to run unless user:// resolves into such a profile. The primary slot must be the
@@ -44,6 +44,8 @@ if ($Cache -ne "reuse" -or -not (Test-Path $isoProfile)) {
     $text = $text -replace '"slot":\s*\d+', ('"slot": ' + $pair[0])
     Set-Content -NoNewline -Path $meta -Value $text
   }
+  # Phase 1 is the fresh boot: drop any menu snapshot the real slots carry so it starts on the starfield.
+  Get-ChildItem (Join-Path $isoProfile "worlds") -Recurse -Filter "menu_snapshot.*" | Remove-Item -Force
   Get-ChildItem $realProfile -Filter "*.tres" | Copy-Item -Destination $isoProfile
   if ($Cache -eq "copy") {
     foreach ($dir in "shader_cache","vulkan","ring_cache","generated") {
@@ -52,10 +54,19 @@ if ($Cache -ne "reuse" -or -not (Test-Path $isoProfile)) {
   }
 }
 $env:APPDATA = $isoRoot
-$phases = if ($Sequence) { @(1, 2, 3) } else { @($Phase) }
-if ($Headless -and $Sequence) { $phases = @(1) }
+$phases = if ($Sequence) { @(1, 2, 3, 4) } else { @($Phase) }
+if ($Headless -and $Sequence) { $phases = @(1, 4) }
 $exitCode = 0
 foreach ($phaseNumber in $phases) {
+  if ($phaseNumber -eq 4) {
+    # Phase 4 (showcase) needs a profile with no saved worlds: a fresh isolated APPDATA with only the preference resources.
+    $emptyRoot = Join-Path $base "appdata_${Label}_empty"
+    $emptyProfile = Join-Path $emptyRoot "Godot\app_userdata\$ProjectName"
+    if (Test-Path $emptyRoot) { Remove-Item -Recurse -Force $emptyRoot }
+    New-Item -ItemType Directory -Force $emptyProfile | Out-Null
+    Get-ChildItem $realProfile -Filter "*.tres" | Copy-Item -Destination $emptyProfile
+    $env:APPDATA = $emptyRoot
+  } else { $env:APPDATA = $isoRoot }
   $arguments = @("--path", $project)
   if ($Headless) { $arguments += "--headless" }
   $arguments += @("--script", "res://tools/menu_warm_world_lifecycle_test.gd", "--", "--phase=$phaseNumber")
