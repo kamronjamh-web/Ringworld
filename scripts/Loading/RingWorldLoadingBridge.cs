@@ -258,7 +258,7 @@ public partial class RingWorldLoadingBridge : Node
     {
         if (_world == null) return;
         foreach (string path in new[] { "PresentationHud", "TerrainMinimap", "LodDebugHud", "CelestialDebugHud", "LiveTuningDrawer" })
-            if (_world.GetNodeOrNull<CanvasLayer>(path) is { Visible: true } layer) layer.Visible = false;
+            if (_world.GetNodeOrNull<CanvasLayer>(path) is { Visible: true } layer) { layer.Visible = false; _forcedHidden.Add(layer); }
     }
 
     public override void _PhysicsProcess(double delta)
@@ -480,14 +480,81 @@ public partial class RingWorldLoadingBridge : Node
         }
     }
 
-    /// <summary>Freezes the celestial and cloud clocks (the menu shows the saved time of day). Nothing is saved while the world is held.</summary>
+    /// <summary>
+    /// Freezes the celestial and cloud clocks (the menu shows the saved time of day). Nothing is saved while the world is held. Resuming restores
+    /// the celestial pause the player had saved instead of forcing the clock to run.
+    /// </summary>
     public void PauseClocks(bool paused)
     {
-        if (_world == null || !GodotObject.IsInstanceValid(_world)) return;
+        if (_world == null || !GodotObject.IsInstanceValid(_world) || paused == _clocksPaused) return;
         _clocksPaused = paused;
-        if (_world.GetNodeOrNull<RingDayNightCycle>("RingDayNightCycle") is { } cycle) cycle.Paused = paused;
+        if (_world.GetNodeOrNull<RingDayNightCycle>("RingDayNightCycle") is { } cycle)
+        {
+            if (paused) _celestialPausedBefore = cycle.Paused;
+            cycle.Paused = paused || _celestialPausedBefore;
+        }
         if (_world.GetNodeOrNull<RingVolumetricCloudLayer>("RingVolumetricClouds") is { } clouds) clouds.CloudSimulationPaused = paused;
     }
+
+    private bool _celestialPausedBefore;
+
+    /// <summary>Test hook: makes <see cref="HasLandingCoverage"/> report not-ready, to exercise the Continue timeout fallback.</summary>
+    public bool TestForceCoverageNotReady { get; set; }
+
+    /// <summary>True when Terrain3D has both collision and visual coverage at the position (the Continue descent may land there).</summary>
+    public bool HasLandingCoverage(double aroundMeters, double verticalMeters, double acrossMeters)
+    {
+        if (TestForceCoverageNotReady) return false;
+        if (_surface == null || !GodotObject.IsInstanceValid(_surface)) return true;
+        var position = new RingCanonicalPosition(aroundMeters, verticalMeters, acrossMeters);
+        return _surface.HasCollisionCoverage(position) && _surface.HasVisualCoverage(position);
+    }
+
+
+
+    private const double UndergroundMarginMeters = 3.0;
+
+    /// <summary>
+    /// How Continue lands: {underground, surface_vertical_m}. A saved pose below the terrain surface at its spot (inside a cave, a dug
+    /// shaft or the rock) is underground; the fly-in then stops above the surface and cuts to the pose instead of descending into the ground.
+    /// </summary>
+    public Godot.Collections.Dictionary GetLandingPlan()
+    {
+        var plan = new Godot.Collections.Dictionary { ["underground"] = false, ["surface_vertical_m"] = 0.0 };
+        Godot.Collections.Dictionary home = GetHomePose();
+        if (_surface == null || !GodotObject.IsInstanceValid(_surface) || home.Count == 0 || !home["valid"].AsBool()) return plan;
+        float ground = _surface.SampleHeight(home["around_m"].AsDouble(), home["across_m"].AsDouble());
+        if (!float.IsFinite(ground)) return plan;
+        plan["surface_vertical_m"] = (double)ground;
+        plan["underground"] = home["vertical_m"].AsDouble() < ground - UndergroundMarginMeters;
+        return plan;
+    }
+    /// <summary>
+    /// Puts the (parked) explorer into the full saved player state and re-arms the loading spawn gate, so the bridge's physics step settles the
+    /// player on real collision exactly as the loading screen does. False when no saved state is staged.
+    /// </summary>
+    public bool RestoreSavedPlayerState()
+    {
+        if (_saves == null || !GodotObject.IsInstanceValid(_saves) || !_saves.RestoreStagedPlayerState()) return false;
+        _spawn = new Godot.Collections.Dictionary { ["ready"] = false };
+        return true;
+    }
+
+    /// <summary>True once the spawn gate reports solid ground under the restored player (or the player flies in noclip).</summary>
+    public bool IsPlayerSettled() => _spawn.TryGetValue("ready", out Variant ready) && ready.AsBool();
+
+    /// <summary>Shows the gameplay HUD again after the menu hid it.</summary>
+    public void ShowWorldHud()
+    {
+        _world?.GetNodeOrNull<RingLodPauseMenu>("LodPauseMenu")?.RestoreGameplayHud();
+        // Layers that became visible on their own while the menu forced them hidden are visible again too, except the diagnostics HUDs, which
+        // are hidden by design in gameplay (F6 toggles the LOD diagnostics, the celestial one starts hidden).
+        foreach (CanvasLayer layer in _forcedHidden)
+            if (GodotObject.IsInstanceValid(layer) && layer.Name != "LodDebugHud" && layer.Name != "CelestialDebugHud") layer.Visible = true;
+        _forcedHidden.Clear();
+    }
+
+    private readonly HashSet<CanvasLayer> _forcedHidden = new();
 
     /// <summary>True while <see cref="ApplyMenuSuspension"/> is in effect.</summary>
     public bool MenuSuspensionActive { get; private set; }

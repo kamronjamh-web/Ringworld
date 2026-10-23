@@ -42,5 +42,6 @@ void fragment() {
 	stars += star_layer(pixel + vec2(time * drift_speed * 0.6, 0.0), 34.0, 0.18, 0.8, 0.05, time + 3.0) * 0.8;
 	stars += star_layer(pixel + vec2(time * drift_speed, 0.0), 64.0, 0.16, 1.1, 0.22, time + 7.0);
 	color += vec3(0.78, 0.86, 1.0) * stars;
-	COLOR = vec4(color, 1.0);
+	// Keep the incoming alpha (node modulate), or the cover could never dissolve into the live world.
+	COLOR = vec4(color, COLOR.a);
 }

@@ -40,6 +40,10 @@ public partial class RingMenuFlightDirector : Node
     public float OrbitRadiusMeters => Mathf.Max(1500f, LoiterRadiusMeters * .5f);
     public Vector3 CommandedVelocity => _command;
 
+    /// <summary>The Continue descent holds at this height above the landing until terrain coverage exists there.</summary>
+    public const float CoverageGateAltitudeMeters = 2000f;
+    private const float GateRampSeconds = .6f;
+    private const float DescentClearanceMeters = 400f;
     private const float GuardMeters = 150f;
     private const float AltitudeGain = 1f;
     private const float MaxClimbMetersPerSecond = 400f;
@@ -66,6 +70,10 @@ public partial class RingMenuFlightDirector : Node
     private float _fromAltitude;
     private float _targetYaw;
     private bool _hasTargetYaw;
+    private bool _continueActive;
+    private float _continueYaw;
+    private float _continuePitch;
+    private float _gateRate = 1f;
 
     /// <summary>The spot the loiter circles (the saved player position unless a caller overrides it).</summary>
     public RingCanonicalPosition Home { get => _home; set => _home = value; }
@@ -102,8 +110,27 @@ public partial class RingMenuFlightDirector : Node
         if (_bridge != null && GodotObject.IsInstanceValid(_bridge)) _bridge.EndScriptedFlight();
         _bridge = null;
         _explorer = null;
+        _continueActive = false;
         CurrentMode = Mode.Idle;
     }
+
+    /// <summary>
+    /// The Continue fly-in: <see cref="Rush"/> to the saved spot, then an eased <see cref="Descend"/> onto the saved pose. The descent waits
+    /// (its clock eases to a stop) while Terrain3D has no collision and visual coverage at the landing and the camera is within
+    /// <see cref="CoverageGateAltitudeMeters"/> of it. Arrived fires when the camera lands.
+    /// </summary>
+    public void FlyInTo(double aroundMeters, double verticalMeters, double acrossMeters, float yawDegrees, float pitchDegrees)
+    {
+        if (_explorer == null) return;
+        _continueActive = true;
+        _continueYaw = yawDegrees;
+        _continuePitch = pitchDegrees;
+        _gateRate = 1f;
+        Rush(new RingCanonicalPosition(aroundMeters, verticalMeters, acrossMeters));
+    }
+
+    /// <summary>True while the Continue descent is holding for terrain coverage.</summary>
+    public bool CoverageGateHolding { get; private set; }
 
     /// <summary>One-off placement of the camera (forces a single re-anchor); not part of any per-frame path.</summary>
     public bool Place(double aroundMeters, double verticalMeters, double acrossMeters, float yawDegrees, float pitchDegrees)
@@ -204,19 +231,32 @@ public partial class RingMenuFlightDirector : Node
                 // Brake over the last stretch so the run ends gently; never faster than the rush speed.
                 float speed = Mathf.Min(RushSpeedMetersPerSecond, (float)distance * .4f);
                 if (distance > 1.0) horizontal = new Vector2((float)(dAround / distance), (float)(dAcross / distance)) * speed;
-                if (distance < 250.0) arrived = true;
+                // The Continue fly-in starts its diagonal descent early enough that the descent covers the rest at about the rush speed.
+                double arriveAt = _continueActive ? Math.Max(250.0, RushSpeedMetersPerSecond * Math.Max(.5f, DescentSeconds) * .7) : 250.0;
+                if (distance < arriveAt) arrived = true;
                 else if (_elapsed > _timeout) { Fail("Rush did not arrive in time."); return; }
                 break;
             }
             case Mode.Descend:
             {
-                _elapsed += dt;
+                bool gateOpen = !_continueActive || _bridge == null || position.VerticalMeters - _to.VerticalMeters > CoverageGateAltitudeMeters
+                    || _bridge.HasLandingCoverage(_to.AroundMeters, _to.VerticalMeters, _to.AcrossMeters);
+                CoverageGateHolding = !gateOpen;
+                _gateRate = Mathf.MoveToward(_gateRate, gateOpen ? 1f : 0f, dt / GateRampSeconds);
+                _elapsed += dt * _gateRate;
                 float eased = Ease(_elapsed);
                 double wantAround = _from.AroundMeters + WrapDelta(_to.AroundMeters - _from.AroundMeters, circumference) * eased;
                 double wantAcross = _from.AcrossMeters + (_to.AcrossMeters - _from.AcrossMeters) * eased;
                 double wantVertical = _from.VerticalMeters + (_to.VerticalMeters - _from.VerticalMeters) * eased;
                 horizontal = new Vector2((float)(WrapDelta(wantAround - position.AroundMeters, circumference) / dt), (float)((wantAcross - position.AcrossMeters) / dt));
                 vertical = (float)((wantVertical - position.VerticalMeters) / dt);
+                if (_continueActive)
+                {
+                    // Never sink to the ground before the camera is close to the landing: keep a clearance above the terrain below it.
+                    double toGoAround = WrapDelta(_to.AroundMeters - position.AroundMeters, circumference), toGoAcross = _to.AcrossMeters - position.AcrossMeters;
+                    if (Math.Sqrt(toGoAround * toGoAround + toGoAcross * toGoAcross) > 1500.0)
+                        vertical = Mathf.Max(vertical, (DescentClearanceMeters - altitude) / dt);
+                }
                 servo = true;
                 arrived = _elapsed >= Math.Max(.5f, DescentSeconds);
                 break;
@@ -242,6 +282,14 @@ public partial class RingMenuFlightDirector : Node
         UpdateView(dt);
         _explorer.SetScriptedFlightCommand(_command, _yawDegrees, _pitchDegrees);
         if (!arrived) return;
+        if (_continueActive && CurrentMode == Mode.Rush)
+        {
+            // The fly-in reached the saved spot: dive onto the saved pose (the rush's own view targets are replaced by the saved view).
+            _command = Vector3.Zero;
+            Descend(_to, _continueYaw, _continuePitch);
+            return;
+        }
+        CoverageGateHolding = false;
         CurrentMode = Mode.Hold;
         _command = Vector3.Zero;
         _explorer.SetScriptedFlightCommand(Vector3.Zero, _yawDegrees, _pitchDegrees);

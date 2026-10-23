@@ -26,7 +26,9 @@ public partial class MenuLiveWorldTuningDrawer : Control
         new("CruisePitchDegrees", "Cruise pitch", -60, 0, 1, " deg", "Camera pitch for that default placement (negative looks down). Applies the next time the world loads."),
         new("CrossfadeSeconds", "Crossfade", .5, 6, .1, " s", "Seconds the last-session picture dissolves into the live world."),
         new("SnapshotDriftPercent", "Snapshot drift", 0, 20, .5, " %", "How far the last-session picture starts zoomed and shifted before it settles. Zero holds it still."),
-        new("LoiterRadiusKm", "Loiter radius", 5, 60, 1, " km", "How far the menu camera roams from your save spot while it circles above the world. Applies on the next loiter.")
+        new("LoiterRadiusKm", "Loiter radius", 5, 60, 1, " km", "How far the menu camera roams from your save spot while it circles above the world. Applies on the next loiter."),
+        new("RushSpeedKmPerSecond", "Continue fly-in speed", .3, 3, .1, " km/s", "How fast the camera flies to your save spot when you press Continue."),
+        new("DescentSeconds", "Continue descent", 4, 30, 1, " s", "Seconds the camera takes to descend from the fly-in to first person when you press Continue.")
     };
 
     private readonly Dictionary<string, SpinBox> _controls = new();

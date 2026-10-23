@@ -20,6 +20,16 @@ const FALLBACK_CROSSFADE_SECONDS := 2.5
 const FALLBACK_DRIFT_PERCENT := 8.0
 const FALLBACK_LOITER_RADIUS_KM := 30.0
 const LEAVE_FADE_SECONDS := 0.2
+## Continue: the menu UI fades out over this long, the fly-in and descent get CONTINUE_TIMEOUT_SECONDS in total, and past that the menu
+## fades to black over CONTINUE_FALLBACK_FADE_SECONDS and the player is placed directly at the saved pose.
+const CONTINUE_UI_FADE_SECONDS := 0.4
+const CONTINUE_TIMEOUT_SECONDS := 60.0
+const CONTINUE_FALLBACK_FADE_SECONDS := 0.3
+## Underground saves: the fly-in stops this far above the surface over the save, looking this far down, before the fade cut.
+const UNDERGROUND_STOP_ALTITUDE_M := 400.0
+const UNDERGROUND_STOP_PITCH_DEGREES := -20.0
+const FALLBACK_RUSH_SPEED_KM_PER_SECOND := 1.2
+const FALLBACK_DESCENT_SECONDS := 12.0
 ## While the world warms, Continue / Enter Ringworld / the world cards stay disabled through the worst early freezes. They unlock once the
 ## loader is past the terrain stage and the last UNLOCK_QUIET_SECONDS had no frame over UNLOCK_SLOW_FRAME_MS, or after the safety cap.
 const UNLOCK_QUIET_SECONDS := 1.0
@@ -114,6 +124,16 @@ var _showcase_picture := false
 var _placement_pose: Dictionary = {}
 var _world_name := ""
 var _leaving := false
+## Continue was pressed before the world was ready: it shows "Preparing NN%" and flies in once the cover is retired and the camera loiters.
+var _continue_pending := false
+var _continuing := false
+var _continue_press_msec := 0
+## Tests only: shortens the Continue timeout to exercise the fallback.
+var continue_timeout_seconds := CONTINUE_TIMEOUT_SECONDS
+## Emitted with "arrived", "failed" or "timeout" when the Continue flight ends.
+signal _continue_flight_done(outcome: String)
+## Seconds from pressing Continue to the player having control (the hand-off finished); 0 until then. Tests read it.
+var continue_report: Dictionary = {}
 ## True while the warm-load disables the main buttons. unlock_info holds {ms, reason} (ms since the menu was built) once released.
 var menu_locked := false
 var unlock_info: Dictionary = {}
@@ -156,6 +176,8 @@ func _process(delta: float) -> void:
 		if _telemetry_elapsed >= TELEMETRY_INTERVAL_SECONDS:
 			_telemetry_elapsed = 0.0
 			_update_telemetry()
+	if _continue_pending and is_instance_valid(_warm):
+		continue_subline.text = "Preparing %d%%" % int(floor(_warm.get_progress() * 100.0))
 	if _survey_done or _survey_label == null or not is_instance_valid(_warm):
 		return
 	var percent := int(floor(_warm.get_progress() * 100.0))
@@ -1064,6 +1086,12 @@ func _load_slot(slot: int) -> bool:
 	var session := get_node_or_null("/root/WorldSession")
 	if session == null or slot == 0 or _leaving:
 		return false
+	if _continue_pending:
+		return true
+	# The warm world is this very slot: fly into it instead of going through the loading screen.
+	if _is_warm_target(slot):
+		_continue_live()
+		return true
 	_leaving = true
 	# The warm world binds the global active world directory; free it before selecting a slot.
 	await _release_warm_world()
@@ -1386,6 +1414,12 @@ func _on_reveal_ready() -> void:
 
 
 func _on_warm_failed(_message: String) -> void:
+	if _continue_pending:
+		# Continue was waiting for this world: take the loading screen instead.
+		_continue_pending = false
+		_leaving = false
+		continue_button.disabled = false
+		_load_selected_after_failure.call_deferred(_continue_slot)
 	_survey_done = true
 	_survey_label.text = ""
 	_set_menu_locked(false, "failed")
@@ -1491,6 +1525,9 @@ func _retire_cover() -> void:
 	_start_loiter()
 	_update_footer()
 	_update_telemetry()
+	if _continue_pending:
+		_continue_pending = false
+		_run_continue()
 	# Let the freed cover settle before sampling the process GPU memory again.
 	get_tree().create_timer(3.0).timeout.connect(func() -> void:
 		if is_instance_valid(_warm):
@@ -1529,8 +1566,95 @@ func _stop_flight() -> void:
 		flight_director.queue_free()
 	flight_director = null
 
+
+## True when `slot` is the world the menu is warming or holding, so Continue flies into it instead of using the loading screen. False for
+## the showcase picture, an ineligible or failed slot, a different slot, or when the camera director could not take the explorer.
+func _is_warm_target(slot: int) -> bool:
+	if freeze_cover or _showcase_picture or _live_slot <= 0 or not is_instance_valid(_warm):
+		return false
+	if _cover_retired and flight_director == null:
+		return false
+	return (_warm.state == WARM_WORLD.State.LOADING or _warm.state == WARM_WORLD.State.WARM) and int(_warm.slot) == slot
+
+
+## Continue on the warm world. Once the cover is gone and the camera loiters it flies in straight away; before that the button shows
+## "Preparing NN%" and the fly-in starts when the world is ready.
+func _continue_live() -> void:
+	if _continuing or _continue_pending:
+		return
+	_continue_press_msec = Time.get_ticks_msec()
+	if _warm.state == WARM_WORLD.State.WARM and _cover_retired and flight_director != null:
+		_run_continue()
+		return
+	_continue_pending = true
+	continue_button.disabled = true
+	continue_subline.visible = true
+
+
+func _load_selected_after_failure(slot: int) -> void:
+	if not await _load_slot(slot):
+		continue_subline.text = "Could not open this world."
+
+
+## The Continue transition: fade the UI, rush to the saved spot, descend onto the saved pose (the director holds the descent at about 2 km
+## while Terrain3D coverage is missing), then RingWarmWorld hands the world to the player. After CONTINUE_TIMEOUT_SECONDS (or a director
+## failure) the menu fades to black over CONTINUE_FALLBACK_FADE_SECONDS and the player is placed directly at the saved pose.
+func _run_continue() -> void:
+	if _continuing or not is_instance_valid(_warm) or not _warm.is_warm() or flight_director == null:
+		return
+	_continuing = true
+	_leaving = true
+	_telemetry_active = false
+	continue_button.disabled = true
+	var bridge: Node = _warm.bridge
+	var director: Node = flight_director
+	var flight_start := Time.get_ticks_msec()
+	if _continue_press_msec == 0:
+		_continue_press_msec = flight_start
+	# Fade every menu layer except the black reveal overlay (the timeout fallback fades that one in).
+	var fade := create_tween().set_parallel(true)
+	for child in get_children():
+		if child is Control and child != _intro_overlay and child != boot_cover:
+			fade.tween_property(child, "modulate:a", 0.0, CONTINUE_UI_FADE_SECONDS)
+	var home: Dictionary = bridge.GetHomePose()
+	var outcome := "failed"
+	var underground := false
+	if bool(home.get("valid", false)):
+		director.RushSpeedMetersPerSecond = _live_value("RushSpeedKmPerSecond", FALLBACK_RUSH_SPEED_KM_PER_SECOND) * 1000.0
+		director.DescentSeconds = _live_value("DescentSeconds", FALLBACK_DESCENT_SECONDS)
+		director.connect("Arrived", func() -> void: _continue_flight_done.emit("arrived"), CONNECT_ONE_SHOT)
+		director.connect("Failed", func(_message: String) -> void: _continue_flight_done.emit("failed"), CONNECT_ONE_SHOT)
+		get_tree().create_timer(continue_timeout_seconds).timeout.connect(func() -> void: _continue_flight_done.emit("timeout"))
+		var plan: Dictionary = bridge.GetLandingPlan()
+		underground = bool(plan.get("underground", false))
+		# An underground (cave, shaft, rock) save is never descended into: the fly-in ends above the surface and the 0.3 s fade cuts to the pose.
+		var landing_vertical := float(plan["surface_vertical_m"]) + UNDERGROUND_STOP_ALTITUDE_M if underground else float(home["vertical_m"])
+		var landing_pitch := UNDERGROUND_STOP_PITCH_DEGREES if underground else float(home["pitch_deg"])
+		director.FlyInTo(float(home["around_m"]), landing_vertical, float(home["across_m"]), float(home["yaw_deg"]), landing_pitch)
+		outcome = await _continue_flight_done
+	var use_veil := outcome != "arrived"
+	if underground and outcome == "arrived":
+		outcome = "underground"
+		use_veil = true
+	if use_veil:
+		director.Hold()
+		_intro_overlay.show()
+		_intro_overlay.color = Color(0, 0, 0, 0)
+		var cover := create_tween()
+		cover.tween_property(_intro_overlay, "color:a", 1.0, CONTINUE_FALLBACK_FADE_SECONDS)
+		await cover.finished
+	var info := {"use_veil": use_veil, "press_msec": _continue_press_msec, "flight_msec": Time.get_ticks_msec() - flight_start, "outcome": outcome}
+	continue_report = info
+	# The menu is freed inside the hand-off; everything after this await only runs if the hand-off was refused.
+	var handed_over: bool = await _warm.hand_off_to_play(self, director, info)
+	if not handed_over:
+		_continuing = false
+		_leaving = false
+
+
 ## Fades to black and frees the warm world (or cancels its load). Awaiting it makes select_slot and the loading screen safe.
 func _release_warm_world() -> void:
+	_continue_pending = false
 	_stop_flight()
 	if is_instance_valid(_warm) and _warm.bridge != null and is_instance_valid(_warm.bridge):
 		_warm.bridge.ReleaseMenuSuspension()

@@ -1,7 +1,7 @@
 extends Node
 ## Persistent owner of the warm world: the last-played Standard world that loads in the background behind the start menu boot cover.
 ##
-## States: IDLE -> LOADING (background load in flight) -> WARM (world held: no input, no saves, clocks paused, cruise viewpoint)
+## States: IDLE -> LOADING (background load in flight) -> WARM (world held: no input, no saves, clocks paused, cruise viewpoint) -> CONTINUING (hand-off to the player, then IDLE)
 ## -> TEARING_DOWN -> IDLE. The world and its bridge are siblings of the menu under /root, so they outlive a StartMenu scene change.
 ## While a world exists WorldSession.warm_world_active is true and select_slot/delete_slot refuse; teardown() must be awaited first.
 
@@ -16,14 +16,21 @@ const SLOW_FRAME_MS := 100.0
 const QUIET_TIMEOUT_SECONDS := 45.0
 const SHUTDOWN_DRAIN_CAP_MS := 10000
 const MAX_LOGGED_FRAMES := 24000
+## Continue hand-off: consecutive physics frames the restored player must stand settled, the cap on that wait, and the HUD fade-in.
+const HANDOFF_SETTLE_FRAMES := 6
+const HANDOFF_SETTLE_TIMEOUT_SECONDS := 10.0
+const HUD_FADE_SECONDS := 0.4
+const HUD_LAYER_PATHS: Array[String] = ["PresentationHud", "TerrainMinimap", "LodDebugHud", "CelestialDebugHud", "LiveTuningDrawer"]
 
-enum State { IDLE, LOADING, WARM, TEARING_DOWN }
+enum State { IDLE, LOADING, WARM, TEARING_DOWN, CONTINUING }
 
 signal warm_ready(world: Node)
 signal warm_failed(message: String)
 ## The world renders behind the (still opaque) boot cover and frames are quiet; the menu may capture, settle and crossfade now.
 signal reveal_ready
 signal torn_down
+## Continue finished: the world now belongs to the player (current scene, saves released, mouse captured). The owner is IDLE again.
+signal handed_off(world: Node)
 
 var state := State.IDLE
 var world: Node
@@ -158,6 +165,95 @@ func reveal() -> void:
 	_report["reveal_to_quiet_ms"] = float(Time.get_ticks_usec() - _reveal_usec) / 1000.0
 	reveal_complete = true
 	reveal_ready.emit()
+
+## Hands the held world to the player (Continue after the fly-in and descent). `menu` is the StartMenu to free, `director` the menu's flight
+## director. Order: end the scripted flight (the explorer is parked again), restore the saved player state, let the loading spawn gate settle it on real collision, undo the menu suspension and clock
+## pause, bind the slot for real (select_slot), make the world the current scene and free the menu, start the play session, release the
+## world (saves, input owners), fade the HUD in, then capture the mouse. `info.use_veil` covers the cut with black (the timeout fallback, where the
+## menu already faded to black). Returns false when the world is not held.
+func hand_off_to_play(menu: Node, director: Node, info: Dictionary = {}) -> bool:
+	if state != State.WARM or not is_instance_valid(bridge) or not is_instance_valid(world):
+		return false
+	state = State.CONTINUING
+	_generation += 1
+	var started := Time.get_ticks_usec()
+	var play_world := world
+	var play_bridge := bridge
+	var play_slot := slot
+	var session := get_node_or_null("/root/WorldSession")
+	if is_instance_valid(director):
+		director.call("Release")
+	else:
+		play_bridge.call("EndScriptedFlight")
+	var restored := bool(play_bridge.call("RestoreSavedPlayerState"))
+	if not restored:
+		push_warning("Continue: no staged player state to restore; the explorer keeps its flight pose.")
+	var settle_started := Time.get_ticks_msec()
+	var settled_frames := 0
+	while settled_frames < HANDOFF_SETTLE_FRAMES and float(Time.get_ticks_msec() - settle_started) / 1000.0 < HANDOFF_SETTLE_TIMEOUT_SECONDS:
+		await get_tree().physics_frame
+		if not is_instance_valid(play_bridge):
+			return false
+		settled_frames = settled_frames + 1 if bool(play_bridge.call("IsPlayerSettled")) else 0
+	_report["handoff_settle_ms"] = float(Time.get_ticks_msec() - settle_started)
+	_report["handoff_settled"] = settled_frames >= HANDOFF_SETTLE_FRAMES
+	play_bridge.call("ReleaseMenuSuspension")
+	play_bridge.call("PauseClocks", false)
+	var veil_layer: CanvasLayer = null
+	var veil: ColorRect = null
+	if bool(info.get("use_veil", false)):
+		veil_layer = CanvasLayer.new()
+		veil_layer.layer = 128
+		veil = ColorRect.new()
+		veil.color = Color.BLACK
+		veil.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		veil_layer.add_child(veil)
+		add_child(veil_layer)
+	if session != null:
+		# The warm binding ends here; the plain select_slot stamps last_played and rebinds the same directory.
+		session.warm_world_active = false
+		if not session.select_slot(play_slot):
+			push_error("Continue: select_slot(%d) failed after the hand-off." % play_slot)
+	get_tree().current_scene = play_world
+	if is_instance_valid(menu):
+		menu.queue_free()
+	if session != null and session.has_method("begin_play_session"):
+		session.begin_play_session(play_world)
+	play_bridge.call("ReleaseWorld")
+	play_bridge.call("ShowWorldHud")
+	var tween := create_tween().set_parallel(true)
+	for path: String in HUD_LAYER_PATHS:
+		var layer := play_world.get_node_or_null(path) as CanvasLayer
+		if layer == null or not layer.visible:
+			continue
+		for child in layer.get_children():
+			if child is CanvasItem:
+				var item := child as CanvasItem
+				var alpha := item.modulate.a
+				item.modulate.a = 0.0
+				tween.tween_property(item, "modulate:a", alpha, HUD_FADE_SECONDS)
+	if veil != null:
+		tween.tween_property(veil, "color:a", 0.0, HUD_FADE_SECONDS)
+	tween.tween_interval(HUD_FADE_SECONDS)
+	await tween.finished
+	if is_instance_valid(veil_layer):
+		veil_layer.queue_free()
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	if is_instance_valid(play_bridge):
+		play_bridge.queue_free()
+	world = null
+	bridge = null
+	slot = 0
+	reveal_complete = false
+	_report["handoff_ms"] = float(Time.get_ticks_usec() - started) / 1000.0
+	if int(info.get("press_msec", 0)) > 0:
+		_report["continue_press_to_play_ms"] = float(Time.get_ticks_msec() - int(info["press_msec"]))
+		_report["continue_outcome"] = str(info.get("outcome", ""))
+		print("CONTINUE_TRANSITION press_to_play_ms=%.0f flight_ms=%.0f handoff_ms=%.0f outcome=%s settle_ms=%.0f" % [_report["continue_press_to_play_ms"], float(info.get("flight_msec", 0)), _report["handoff_ms"], str(info.get("outcome", "")), float(_report.get("handoff_settle_ms", 0.0))])
+	state = State.IDLE
+	handed_off.emit(play_world)
+	return true
 
 ## Frees the warm world (or cancels a load in flight) and unbinds the slot. Awaitable and idempotent.
 func teardown() -> void:

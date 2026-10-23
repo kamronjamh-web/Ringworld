@@ -49,8 +49,33 @@ public partial class RingWorldSaveManager : Node
         return _hasStagedPlayerPose;
     }
 
+    private PlayerDocument? _stagedPlayer;
+
+    /// <summary>
+    /// Puts the explorer back into the full player state of the loaded (or last saved) document: position, velocity, view, noclip and the
+    /// underground checkpoint. The start menu calls this when its flight hands the held world to the player. False when no document is staged.
+    /// </summary>
+    public bool RestoreStagedPlayerState()
+    {
+        if (_stagedPlayer == null || _explorer == null) return false;
+        PlayerDocument player = _stagedPlayer;
+        _explorer.RestoreSavedState(
+            new RingCanonicalPosition(player.AroundMeters, player.VerticalMeters, player.AcrossMeters),
+            new Vector3(player.VelocityAround, player.VelocityVertical, player.VelocityAcross),
+            player.Yaw,
+            player.Pitch,
+            player.Noclip,
+            player.NoclipSpeedTier,
+            player.NoclipSpeed,
+            player.HasUndergroundCheckpoint
+                ? new RingCanonicalPosition(player.CheckpointAroundMeters, player.CheckpointVerticalMeters, player.CheckpointAcrossMeters)
+                : null);
+        return true;
+    }
+
     private void StagePlayerPose(PlayerDocument player)
     {
+        _stagedPlayer = player;
         _stagedPlayerPosition = new RingCanonicalPosition(player.AroundMeters, player.VerticalMeters, player.AcrossMeters);
         _stagedPlayerYaw = player.Yaw;
         _stagedPlayerPitch = player.Pitch;

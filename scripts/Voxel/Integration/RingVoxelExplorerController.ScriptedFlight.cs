@@ -18,6 +18,19 @@ public partial class RingVoxelExplorerController
     /// <summary>True while a director owns the body: keyboard, mouse look, wheel and the speed presets are ignored.</summary>
     public bool ScriptedFlightActive => _scriptedFlight;
 
+    /// <summary>True while the body stands on the floor (false in noclip and in the air); the start menu's hand-off waits for it to settle.</summary>
+    public bool BodyGrounded => _grounded;
+
+    /// <summary>Canonical position (metres) and view (degrees) for scripts and tests: {around_m, vertical_m, across_m, yaw_deg, pitch_deg}.</summary>
+    public Godot.Collections.Dictionary GetCanonicalPoseMeters() => new()
+    {
+        ["around_m"] = _canonicalPosition.AroundMeters,
+        ["vertical_m"] = _canonicalPosition.VerticalMeters,
+        ["across_m"] = _canonicalPosition.AcrossMeters,
+        ["yaw_deg"] = Mathf.RadToDeg(_yaw),
+        ["pitch_deg"] = _pitch,
+    };
+
     /// <summary>Number of times a scripted physics step moved the floating-origin anchor (a sector boundary was crossed).</summary>
     public int ScriptedFlightAnchorCount { get; private set; }
 
