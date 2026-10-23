@@ -85,7 +85,8 @@ public sealed class AtmosphereVisualDefaults
     {
         Settings.Preset = Mathf.Clamp(preset, 0, 1);
         if (Settings.Preset == 0) { Settings.VisibilityFullKm=120; Settings.Density=1; Settings.AltitudeFalloff=.5f; Settings.Aerosol=.35f; Settings.ForwardScattering=.22f; Settings.SunWarmth=.25f; }
-        else { Settings.VisibilityFullKm=60; Settings.Density=1.5f; Settings.AltitudeFalloff=.5f; Settings.Aerosol=.65f; Settings.ForwardScattering=.55f; Settings.SunWarmth=.6f; }
+        // Cinematic = the default look (decision 1, 2026-10-23), so choosing it from the dropdown matches a fresh profile.
+        else { Settings.VisibilityFullKm=400; Settings.Density=.5f; Settings.AltitudeFalloff=1; Settings.Aerosol=0; Settings.ForwardScattering=0; Settings.SunWarmth=0; }
         Sanitize(); Dirty = true; Apply();
     }
     public void Reset() { Settings = new() { SettingsVersion = AtmosphereVisualSettings.CurrentSettingsVersion }; Sanitize(); Dirty = true; Apply(); }

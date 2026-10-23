@@ -17,7 +17,7 @@ public partial class HazeConsistencyProbeHelper : RefCounted
         if (preset == 0)
             RingAtmosphereModel.ApplyArtDirection(RingAtmosphereModel.ArtDirectionPreset.Natural, 120.0f, density, 0.5f, 0.35f, 0.22f, 0.25f);
         else
-            RingAtmosphereModel.ApplyArtDirection(RingAtmosphereModel.ArtDirectionPreset.Cinematic, 60.0f, density * 1.5f, 0.5f, 0.65f, 0.55f, 0.6f);
+            RingAtmosphereModel.ApplyArtDirection(RingAtmosphereModel.ArtDirectionPreset.Cinematic, 400.0f, density * 0.5f, 1.0f, 0.0f, 0.0f, 0.0f);
     }
 
     /// <summary>0 = Legacy, 1 = Physical (P2a temporary A/B toggle).</summary>
