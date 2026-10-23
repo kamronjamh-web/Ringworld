@@ -183,7 +183,6 @@ void fragment() {
 		ring_center,
 		day);
 	vec3 atmosphere_transmittance = haze.T;
-	ALBEDO = cloud_color * atmosphere_transmittance;
-	EMISSION = cloud_color * mix(0.16, 0.045, day) * atmosphere_transmittance
-		+ ring_haze_inscatter(haze);
+	// Unshaded: Godot composites ALBEDO only and drops EMISSION, so the haze in-scatter goes into ALBEDO.
+	ALBEDO = cloud_color * atmosphere_transmittance + ring_haze_inscatter(haze);
 }

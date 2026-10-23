@@ -219,35 +219,18 @@ public static class RingCloudShadowProjector
         Apply(material, receiver);
     }
 
-    public static void ConfigureAnalyticField(
-        ShaderMaterial? material,
-        double circumferenceMeters,
-        float ringWidthMeters,
-        int seed,
-        float worldUnitsToKilometres = 0.001f,
-        float fadeStartWorldUnits = 38000.0f,
-        float fadeEndWorldUnits = 50000.0f,
-        float analyticShadowStrength = 0.60f)
+    /// <summary>
+    /// Enables the whole-ring far weather cloud shadow on a far receiver
+    /// (materials/ring_far_weather_shadow.gdshaderinc). Weather, strength and
+    /// extinction come from shader globals (RingFarWeatherShadowGlobals); the
+    /// material only states its world scale: 1 in the main view, 1000 metres per
+    /// unit in the 1:1000 scaled far viewport.
+    /// </summary>
+    public static void ConfigureFarWeatherShadow(ShaderMaterial? material, float metersPerWorldUnit = 1.0f)
     {
         if (material == null) return;
         material.SetShaderParameter("analytic_cloud_shadow_enabled", true);
-        material.SetShaderParameter(
-            "analytic_cloud_shadow_fade_start_meters",
-            Mathf.Max(0.0f, fadeStartWorldUnits));
-        material.SetShaderParameter(
-            "analytic_cloud_shadow_fade_end_meters",
-            Mathf.Max(fadeStartWorldUnits + 1.0f, fadeEndWorldUnits));
-        material.SetShaderParameter(
-            "ring_circumference_km",
-            (float)(Math.Max(1.0, circumferenceMeters) * 0.001));
-        material.SetShaderParameter("ring_width_km", Mathf.Max(0.001f, ringWidthMeters * 0.001f));
-        material.SetShaderParameter("cloud_seed", seed);
-        material.SetShaderParameter(
-            "cloud_world_units_to_km",
-            Mathf.Max(0.000001f, worldUnitsToKilometres));
-        material.SetShaderParameter(
-            "analytic_cloud_shadow_strength",
-            Mathf.Clamp(analyticShadowStrength, 0.0f, 0.8f));
+        material.SetShaderParameter("far_weather_shadow_meters_per_unit", Mathf.Max(0.000001f, metersPerWorldUnit));
     }
 
     public static void Update(

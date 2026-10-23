@@ -39,6 +39,8 @@ public sealed class GameplayCloudDefaults
         ["RayStartJitterStrength"] = (0, 1, false),
         ["HandoffStartMeters"] = (5000, RingSunshineCloudBridge.MaximumHandoffStartMeters, false),
         ["HandoffEndMeters"] = (6000, RingSunshineCloudBridge.MaximumHandoffEndMeters, false),
+        ["AltitudeFadeStartMeters"] = (5000, 200000, false),
+        ["AltitudeFadeEndMeters"] = (6000, 200000, false),
         ["CloudHandoffOverlapMeters"] = (2000, RingSunshineCloudBridge.MaximumCloudHandoffOverlapMeters, false),
         ["NearCloudRangeExtensionMeters"] = (0, RingSunshineCloudBridge.MaximumNearCloudRangeExtensionMeters, false),
         ["NaturalCloudBaseAltitudeMeters"] = (0, 19000, false),
@@ -251,6 +253,7 @@ public sealed class GameplayCloudDefaults
         {
             "MinStepDistanceMeters" or "MaxStepDistanceMeters" => new[] { "MinStepDistanceMeters", "MaxStepDistanceMeters" },
             "HandoffStartMeters" or "HandoffEndMeters" => new[] { "HandoffStartMeters", "HandoffEndMeters" },
+            "AltitudeFadeStartMeters" or "AltitudeFadeEndMeters" => new[] { "AltitudeFadeStartMeters", "AltitudeFadeEndMeters" },
             "NaturalCloudBaseAltitudeMeters" or "NaturalCloudTopAltitudeMeters" => new[] { "NaturalCloudBaseAltitudeMeters", "NaturalCloudTopAltitudeMeters" },
             "StationaryHistoryWeight" or "MovingHistoryWeight" => new[] { "StationaryHistoryWeight", "MovingHistoryWeight" },
             "CloudHistoryGateAlphaLow" or "CloudHistoryGateAlphaHigh" => new[] { "CloudHistoryGateAlphaLow", "CloudHistoryGateAlphaHigh" },
@@ -302,6 +305,7 @@ public sealed class GameplayCloudDefaults
     private static void EnforcePairs(global::RingworldTechDemo.RingSunshineCloudBridge bridge)
     {
         bridge.HandoffEndMeters = Mathf.Max(bridge.HandoffEndMeters, bridge.HandoffStartMeters + 500);
+        bridge.AltitudeFadeEndMeters = Mathf.Max(bridge.AltitudeFadeEndMeters, bridge.AltitudeFadeStartMeters + 1000);
         bridge.NaturalCloudTopAltitudeMeters = Mathf.Max(bridge.NaturalCloudTopAltitudeMeters, bridge.NaturalCloudBaseAltitudeMeters + 50);
         bridge.MaxStepDistanceMeters = Mathf.Max(bridge.MaxStepDistanceMeters, bridge.MinStepDistanceMeters + 10);
         bridge.MovingHistoryWeight = Mathf.Min(bridge.MovingHistoryWeight, bridge.StationaryHistoryWeight);

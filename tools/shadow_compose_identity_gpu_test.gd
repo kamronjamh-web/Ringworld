@@ -3,7 +3,7 @@ extends SceneTree
 ## Shadow revamp S3 - behaviour-identity pixel test for the shared shadow composition (docs/shadow-revamp-plan.md S3).
 ## A synthetic scene (shadowed StarLight + a box casting onto a wall, a planet directional light, an omni) is rendered once per
 ## material x variant with per-material uniforms only (use_globals = false), synthetic near/far cloud textures, synthetic macro
-## and planet stripe textures and the analytic cloud field forced on. Variants: shadow_overlap_darkening 0 / 0.5 and
+## and planet stripe textures; the far weather cloud shadow is enabled but has no baked map. Variants: shadow_overlap_darkening 0 / 0.5 and
 ## ringworld_hub_light_weight 0 / 0.6.
 ##
 ##   capture : godot --path . --script res://tools/shadow_compose_identity_gpu_test.gd -- --capture --out=<dir>
@@ -341,14 +341,9 @@ func _make_material(entry: Dictionary) -> ShaderMaterial:
 		"local_cloud_shadow_near_end_meters": 1.0,
 		"local_cloud_shadow_strength": 0.4,
 		"local_cloud_shadow_far_strength": 0.5,
-		# analytic far cloud field forced on and made static / spatially varying at this scale
+		# far weather cloud shadow enabled per material; its globals (ring_far_weather_*) stay at their
+		# project defaults (no baked map), so it contributes nothing and the cascade composition is isolated
 		"analytic_cloud_shadow_enabled": true,
-		"analytic_cloud_shadow_strength": 0.35,
-		"analytic_cloud_shadow_fade_start_meters": 0.0,
-		"analytic_cloud_shadow_fade_end_meters": 1.0,
-		"ring_circumference_km": 8.0,
-		"cloud_world_units_to_km": 0.02,
-		"cloud_wind_km_per_second": Vector2.ZERO,
 		# terrain macro + planet stripe masks
 		"terrain_macro_shadow_enabled": true,
 		"terrain_macro_shadow_texture": _textures.macro,

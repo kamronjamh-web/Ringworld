@@ -9,8 +9,13 @@ using RingworldTechDemo.Voxel.Phase2;
 namespace RingworldTechDemo;
 
 /// <summary>
-/// A lightweight, seamless cloud shell that follows the ring's curvature.
-/// The shader supplies motion and breakup; the mesh only establishes altitude.
+/// Main-view far cloud layer: a camera-centred curved patch (the whole ring width, PatchAroundRadiusMeters
+/// around) at the middle of the far cloud band. RingScaledFarViewport binds it the whole-ring weather atlas and
+/// the Sunshine density resources, so it draws the same clouds as the scaled far shell. It covers main-viewport
+/// ground at altitude, where the scaled far viewport (a backdrop behind that ground) cannot show its clouds; the
+/// main-view shader discards pixels without main geometry, where the far viewport's own clouds are composited.
+/// RingVolumetricCloudLayer shows it while Sunshine does not own the clouds and fades it in through the
+/// Sunshine altitude crossfade (SetHandoffCrossfade closes the Sunshine handoff hole).
 /// </summary>
 public partial class RingCloudLayer : MeshInstance3D
 {
@@ -53,9 +58,6 @@ public partial class RingCloudLayer : MeshInstance3D
 	[Export] public NodePath FocusPath { get; set; } = new("../Explorer");
 	[Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
 	[Export(PropertyHint.Range, "100,10000,100")] public float AltitudeMeters { get; set; } = 2200.0f;
-	[Export(PropertyHint.Range, "100,1000000,100")] public int RingWidthMeters { get; set; } = 20000;
-	[Export(PropertyHint.Range, "64,1024,32")] public int AroundSegments { get; set; } = 256;
-	[Export(PropertyHint.Range, "4,128,1")] public int AcrossSegments { get; set; } = 16;
 	[ExportGroup("Far cloud appearance")]
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarCoverage { get; set; } = 0.46f;
 	[Export(PropertyHint.Range, "0,1,0.01")] public float FarOpacity { get; set; } = 0.68f;
@@ -64,6 +66,13 @@ public partial class RingCloudLayer : MeshInstance3D
 	[Export] public bool EnableFarSpace { get; set; } = true;
 	[Export(PropertyHint.Range, "100000,2000000,10000")] public float FarSpaceStartMeters { get; set; } = 850000.0f;
 	[Export(PropertyHint.Range, "200000,2000000,10000")] public float FarSpaceRenderEndMeters { get; set; } = 1050000.0f;
+	[ExportGroup("Camera-centred patch")]
+	[Export(PropertyHint.Range, "100000,5000000,10000")] public float PatchAroundRadiusMeters { get; set; } = 1500000.0f;
+	[Export(PropertyHint.Range, "16,512,2")] public int PatchAroundSegments { get; set; } = 160;
+	[Export(PropertyHint.Range, "4,128,1")] public int PatchAcrossSegments { get; set; } = 32;
+	// The patch is recentred when the camera has moved this far from its centre (vertices are spaced
+	// a few km apart near the centre, so a small shift is invisible).
+	[Export(PropertyHint.Range, "1000,200000,1000")] public float PatchRecenterMeters { get; set; } = 25000.0f;
 	[ExportGroup("Local cloud handoff")]
 	[Export] public bool LocalVolumetricHandoffEnabled { get; set; }
 	[Export(PropertyHint.Range, "100,30000,100")] public float LocalHandoffStartMeters { get; set; } = 7000.0f;
@@ -73,6 +82,11 @@ public partial class RingCloudLayer : MeshInstance3D
 	private DirectionalLight3D? _sunLight;
 	private Node3D? _focus;
 	private ShaderMaterial? _material;
+	/// <summary>The shell material. RingScaledFarViewport binds the whole-ring weather atlas and the Sunshine far
+	/// density resources to it, so this main-view shell draws the same clouds as the scaled far shell; without
+	/// them the shader keeps the shell clear.</summary>
+	public ShaderMaterial? ShellMaterial => _material;
+
 	private bool _benchmarkCloudLoad;
 	private Vector3 _lastCameraWorldPosition = new(float.PositiveInfinity, 0.0f, 0.0f);
 	private Vector3 _lastSunDirection = new(float.PositiveInfinity, 0.0f, 0.0f);
@@ -110,12 +124,13 @@ public partial class RingCloudLayer : MeshInstance3D
 		// resubmitting them every render frame while standing still; the shader's
 		// built-in time still drives cloud motion independently.
 		_staticUniformRefreshElapsed += System.Math.Max(0.0, delta);
+		UpdatePatch();
 		UpdateShaderUniforms(_staticUniformRefreshElapsed >= 0.25);
 	}
 
 	private void CreateMaterial()
 	{
-		Shader? shader = GD.Load<Shader>("res://materials/ring_cloud_layer.gdshader");
+		Shader? shader = GD.Load<Shader>("res://materials/ring_cloud_layer_main.gdshader");
 		if (shader == null) return;
 		_material = new ShaderMaterial
 		{
@@ -125,6 +140,9 @@ public partial class RingCloudLayer : MeshInstance3D
 		_material.SetShaderParameter("coverage", FarCoverage);
 		_material.SetShaderParameter("opacity", FarOpacity);
 		_material.SetShaderParameter("softness", FarSoftness);
+		// No camera-local far clipmap in the main view: only the Sunshine handoff applies.
+		_material.SetShaderParameter("far_clipmap_handoff_start_meters", 0.0f);
+		_material.SetShaderParameter("far_clipmap_handoff_end_meters", 1.0f);
 		if (_grid != null)
 			RingAtmosphereModel.ConfigureMaterial(_material, _grid.GetCanonicalRingCircumferenceMeters64() / System.Math.Tau, 1.0f);
 		MaterialOverride = _material;
@@ -136,54 +154,92 @@ public partial class RingCloudLayer : MeshInstance3D
     private IEnumerable<bool> EnumerateBuildCloudShell()
 	{
 		if (_grid == null) yield break;
+		RebuildPatch();
+		yield return true;
+	}
 
-		int aroundCount = Mathf.Max(64, AroundSegments);
-		int acrossCount = Mathf.Max(4, AcrossSegments);
+	private double _patchCenterAround = double.NaN, _patchCenterAcross;
+	private float _patchAltitude = float.NaN;
+	private Vector3 _patchCenterWorld;
+
+	/// <summary>Altitude of the patch: the middle of the far cloud band the shadows and the far shell use.</summary>
+	private float ResolvePatchAltitude()
+	{
+		Vector4 shadow = RingFarWeatherShadowGlobals.Shadow;
+		return shadow.W > shadow.Z + 1.0f ? (shadow.Z + shadow.W) * 0.5f : AltitudeMeters;
+	}
+
+	private void UpdatePatch()
+	{
+		if (_grid == null || _focus == null || !Visible || Mesh == null) return;
+		RingCanonicalPosition camera = _grid.WorldToCanonicalRingPosition64(_focus.GlobalPosition);
 		double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
-		double aroundSpacing = circumference / aroundCount;
-		double acrossSpacing = RingWidthMeters / (double)acrossCount;
-		using var surface = new SurfaceTool();
-		surface.Begin(Mesh.PrimitiveType.Triangles);
+		double around = camera.AroundMeters - _patchCenterAround;
+		around -= Math.Round(around / circumference) * circumference;
+		bool moved = double.IsNaN(_patchCenterAround)
+			|| Math.Abs(around) > PatchRecenterMeters
+			|| Math.Abs(camera.AcrossMeters - _patchCenterAcross) > PatchRecenterMeters;
+		// A floating-origin rebase moves the world under the patch.
+		bool rebased = !moved && _grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(
+			_patchCenterAround, _patchAltitude, _patchCenterAcross)).DistanceSquaredTo(_patchCenterWorld) > 1.0f;
+		bool altitudeChanged = !Mathf.IsEqualApprox(ResolvePatchAltitude(), _patchAltitude, 1.0f);
+		if (moved || rebased || altitudeChanged) RebuildPatch();
+	}
 
-		for (int acrossIndex = 0; acrossIndex < acrossCount; acrossIndex++)
-		for (int aroundIndex = 0; aroundIndex < aroundCount; aroundIndex++)
+	private void RebuildPatch()
+	{
+		if (_grid == null) return;
+		RingCanonicalPosition camera = _focus != null
+			? _grid.WorldToCanonicalRingPosition64(_focus.GlobalPosition)
+			: new RingCanonicalPosition(0.0, 0.0, 0.0);
+		double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
+		double width = Math.Max(1.0, _grid.RingAcrossWidthMeters);
+		double radius = Math.Min(PatchAroundRadiusMeters, circumference * 0.45);
+		int aroundCount = Math.Max(16, PatchAroundSegments);
+		int acrossCount = Math.Max(4, PatchAcrossSegments);
+		_patchCenterAround = camera.AroundMeters;
+		_patchCenterAcross = camera.AcrossMeters;
+		_patchAltitude = ResolvePatchAltitude();
+		RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
+		var vertices = new Vector3[(aroundCount + 1) * (acrossCount + 1)];
+		var uvs = new Vector2[vertices.Length];
+		for (int i = 0; i <= aroundCount; i++)
 		{
-			AddVertex(surface, aroundIndex, acrossIndex + 1, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
-			AddVertex(surface, aroundIndex + 1, acrossIndex, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
-			AddVertex(surface, aroundIndex, acrossIndex, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
-			AddVertex(surface, aroundIndex + 1, acrossIndex, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
-			AddVertex(surface, aroundIndex, acrossIndex + 1, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
-			AddVertex(surface, aroundIndex + 1, acrossIndex + 1, aroundCount, acrossCount, aroundSpacing, acrossSpacing);
-            if (((acrossIndex * aroundCount + aroundIndex) & 127) == 127) yield return true;
+			// Dense near the camera (about 2.8 km at the default size), coarse at the edge (about 35 km,
+			// still within 30 m of the curved ring).
+			double t = i / (double)aroundCount * 2.0 - 1.0;
+			double offset = radius * Math.Sign(t) * (0.15 * Math.Abs(t) + 0.85 * t * t);
+			double aroundMeters = _patchCenterAround + offset;
+			for (int j = 0; j <= acrossCount; j++)
+			{
+				double across = j / (double)acrossCount * width;
+				int index = i * (acrossCount + 1) + j;
+				vertices[index] = ToLocal(geometry.CanonicalToWorld(aroundMeters, _patchAltitude, across));
+				// Unwrapped around UV: the shader takes fract per fragment, so a patch over the ring seam stays continuous.
+				uvs[index] = new Vector2((float)(aroundMeters / circumference), (float)(across / width));
+			}
 		}
-
-        yield return true;
-		surface.Index();
-		Mesh = surface.Commit();
+		var indices = new int[aroundCount * acrossCount * 6];
+		int cursor = 0;
+		for (int i = 0; i < aroundCount; i++)
+		for (int j = 0; j < acrossCount; j++)
+		{
+			int a = i * (acrossCount + 1) + j, b = a + acrossCount + 1;
+			indices[cursor++] = a; indices[cursor++] = b; indices[cursor++] = a + 1;
+			indices[cursor++] = b; indices[cursor++] = b + 1; indices[cursor++] = a + 1;
+		}
+		var arrays = new Godot.Collections.Array();
+		arrays.Resize((int)Mesh.ArrayType.Max);
+		arrays[(int)Mesh.ArrayType.Vertex] = vertices;
+		arrays[(int)Mesh.ArrayType.TexUV] = uvs;
+		arrays[(int)Mesh.ArrayType.Index] = indices;
+		var mesh = new ArrayMesh();
+		mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+		Mesh = mesh;
+		_patchCenterWorld = geometry.CanonicalToWorld(_patchCenterAround, _patchAltitude, _patchCenterAcross);
 		CastShadow = ShadowCastingSetting.Off;
 		IgnoreOcclusionCulling = true;
 		RenderingServer.InstanceSetIgnoreCulling(GetInstance(), true);
-		GD.Print($"Ring cloud shell: altitude={AltitudeMeters:0}m, around={aroundCount}, across={acrossCount}");
-	}
-
-	private void AddVertex(
-		SurfaceTool surface,
-		int aroundIndex,
-		int acrossIndex,
-		int aroundCount,
-		int acrossCount,
-		double aroundSpacing,
-		double acrossSpacing)
-	{
-		if (_grid == null) return;
-		float u = aroundIndex / (float)aroundCount;
-		float v = acrossIndex / (float)acrossCount;
-		Vector3 world = _grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(
-			aroundIndex * aroundSpacing,
-			AltitudeMeters,
-			acrossIndex * acrossSpacing));
-		surface.SetUV(new Vector2(u, v));
-		surface.AddVertex(ToLocal(world));
 	}
 
 	private void UpdateShaderUniforms(bool forceStaticRefresh = true)
@@ -209,7 +265,7 @@ public partial class RingCloudLayer : MeshInstance3D
 			double diameter = _grid.GetCanonicalRingCircumferenceMeters64() / System.Math.PI;
 			float realEnd = (float)System.Math.Max(
 				FarSpaceStartMeters + 1.0,
-				diameter + RingWidthMeters + AltitudeMeters + 10000.0);
+				diameter + _grid.RingAcrossWidthMeters + AltitudeMeters + 10000.0);
 			_material.SetShaderParameter("far_space_enabled", EnableFarSpace);
 			_material.SetShaderParameter("far_space_start_meters", FarSpaceStartMeters);
 			_material.SetShaderParameter("far_space_real_end_meters", realEnd);
@@ -222,8 +278,7 @@ public partial class RingCloudLayer : MeshInstance3D
 			_material.SetShaderParameter(
 				"ring_circumference_km",
 				(float)(_grid.GetCanonicalRingCircumferenceMeters64() * 0.001));
-			_material.SetShaderParameter("ring_width_km", RingWidthMeters * 0.001f);
-			_material.SetShaderParameter("cloud_seed", _grid.TerrainSampler?.Seed ?? 1337);
+			_material.SetShaderParameter("ring_width_km", _grid.RingAcrossWidthMeters * 0.001f);
 		}
 
 		if (_sunLight == null) return;
@@ -231,6 +286,17 @@ public partial class RingCloudLayer : MeshInstance3D
 		if (_lastSunDirection.IsEqualApprox(sunDirection)) return;
 		_material.SetShaderParameter("sun_direction", sunDirection);
 		_lastSunDirection = sunDirection;
+	}
+
+	private float _handoffCrossfade;
+
+	/// <summary>Closes the Sunshine handoff hole (0 = hole as configured, 1 = full disk) while Sunshine fades out.</summary>
+	public void SetHandoffCrossfade(float crossfade)
+	{
+		crossfade = Mathf.Clamp(crossfade, 0.0f, 1.0f);
+		if (Mathf.IsEqualApprox(crossfade, _handoffCrossfade)) return;
+		_handoffCrossfade = crossfade;
+		_material?.SetShaderParameter("main_view_handoff_crossfade", _handoffCrossfade);
 	}
 
 	public void SetBenchmarkCloudLoad(bool enabled)

@@ -517,6 +517,10 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentSlider(handoff, "NearCloudRangeExtensionMeters", "Near range extension (m)", 0, RingSunshineCloudBridge.MaximumNearCloudRangeExtensionMeters, 500, _cloudBridge?.NearCloudRangeExtensionMeters ?? 8000);
         AddPersistentSlider(handoff, "HandoffStartMeters", "Near-to-far blend start", 5000, RingSunshineCloudBridge.MaximumHandoffStartMeters, 500, _cloudBridge?.HandoffStartMeters ?? 36000);
         AddPersistentSlider(handoff, "HandoffEndMeters", "Near-to-far blend end", 6000, RingSunshineCloudBridge.MaximumHandoffEndMeters, 500, _cloudBridge?.HandoffEndMeters ?? 48000);
+        // Sunshine fades into the far cloud layer between these heights above the terrain and is off above the
+        // end height (GPU cost vs. volumetric clouds at altitude).
+        AddPersistentSlider(handoff, "AltitudeFadeStartMeters", "Volumetric fade start altitude", 5000, 200000, 1000, _cloudBridge?.AltitudeFadeStartMeters ?? 35000);
+        AddPersistentSlider(handoff, "AltitudeFadeEndMeters", "Volumetric off altitude", 6000, 200000, 1000, _cloudBridge?.AltitudeFadeEndMeters ?? 60000);
         _effectiveCloudHandoffStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         handoff.AddChild(_effectiveCloudHandoffStatus);
         AddPersistentSlider(handoff, "NaturalCloudBaseAltitudeMeters", "Cloud base altitude", 0, 19000, 50, _cloudBridge?.NaturalCloudBaseAltitudeMeters ?? 2000); AddPersistentSlider(handoff, "NaturalCloudTopAltitudeMeters", "Cloud top altitude", 500, 20000, 50, _cloudBridge?.NaturalCloudTopAltitudeMeters ?? 6000); AddPersistentSlider(handoff, "StormFrontCloudBaseAltitudeMeters", "Storm-front base altitude", 0, 5000, 50, _cloudBridge?.StormFrontCloudBaseAltitudeMeters ?? 500);

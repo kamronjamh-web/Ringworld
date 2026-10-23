@@ -55,9 +55,23 @@ public partial class RingSunshineCloudBridge : Node
     public float EffectiveHandoffStartMeters { get; private set; }
     public float EffectiveHandoffEndMeters { get; private set; }
     public float NearCloudReachMeters { get; private set; }
-    [Export(PropertyHint.Range, "5000,1000000,1000")] public float SuspendSpeedMetersPerSecond { get; set; } = 10000.0f;
-    [Export(PropertyHint.Range, "5000,50000,500")] public float AltitudeFadeStartMeters { get; set; } = 12000.0f;
-    [Export(PropertyHint.Range, "6000,60000,500")] public float AltitudeFadeEndMeters { get; set; } = 22000.0f;
+    // Sunshine fades out with travel speed between SpeedFadeStartMetersPerSecond and SuspendSpeedMetersPerSecond, through the
+    // same crossfade as the altitude handoff, and is off above it (back on below SpeedResumeFraction of it). Up to about
+    // 100 km/s the camera-following parts keep up: the weather-system selection and macro map lead the camera by its speed
+    // (SpeedLeadSeconds), shadow cascades stay inside their maps, and history reprojects within the 4 km per-frame jump limit.
+    // Faster, history resets every frame and the near shadow map falls behind, so the far layers take over.
+    [Export(PropertyHint.Range, "5000,1000000,1000")] public float SuspendSpeedMetersPerSecond { get; set; } = 120000.0f;
+    [Export(PropertyHint.Range, "1000,1000000,1000")] public float SpeedFadeStartMetersPerSecond { get; set; } = 60000.0f;
+    [Export(PropertyHint.Range, "0.5,0.99,0.01")] public float SpeedResumeFraction { get; set; } = 0.85f;
+    // Sunshine fades out between AltitudeFadeStartMeters and AltitudeFadeEndMeters above the local terrain while the
+    // main-view far cloud layer (RingCloudLayer) and the far weather cloud shadow fade in with the same weight.
+    [Export(PropertyHint.Range, "5000,200000,500")] public float AltitudeFadeStartMeters { get; set; } = 35000.0f;
+    // Sunshine renders up to this height above the local terrain. Its GPU cost is flat with altitude
+    // (about 4.3-4.6 ms on an RTX 4070 at 1080p from 21 to 60 km), while above it only the far tiers draw.
+    [Export(PropertyHint.Range, "6000,200000,500")] public float AltitudeFadeEndMeters { get; set; } = 60000.0f;
+    // Sunshine switches off above AltitudeFadeEndMeters and back on only below it minus this band, so
+    // hovering at the cutoff over uneven terrain cannot toggle it (each re-enable rebuilds history).
+    [Export(PropertyHint.Range, "0,20000,500")] public float AltitudeCutoffHysteresisMeters { get; set; } = 5000.0f;
     [Export(PropertyHint.Range, "0.05,2,0.05")] public float WeatherRefreshSeconds { get; set; } = 0.25f;
     [ExportGroup("Cloud shadows")]
     [Export] public bool CastCloudShadows { get; set; } = true;
@@ -620,8 +634,10 @@ public partial class RingSunshineCloudBridge : Node
         _weatherElapsed += Math.Max(0.0, delta);
         if (_weatherElapsed >= Math.Max(0.05, WeatherRefreshSeconds)) RefreshWeather();
         UpdateCloudFrame();
+        PublishFarCloudLighting();
         PublishTerrainCloudSunVisibility();
         PublishFarCloudDetail();
+        UpdateSmoothedTravelSpeed(delta);
         UpdateVisibility(force: false);
         UpdateCloudShadows(delta, force: false);
         UpdateCameraLightingState(delta);
@@ -723,6 +739,11 @@ public partial class RingSunshineCloudBridge : Node
     {
         if (_clouds == null) return;
         var value = new Vector4(_enclosedFogDensity, _enclosedFogSkyAffect, _enclosedFogWeight * Mathf.Clamp(RingAtmosphereModel.EnclosedCloudFog, 0.0f, 1.0f), 0.0f);
+        // The altitude crossfade reuses the post pass's enclosed-fog fade, density *= 1 - y * z * (1 - exp(-x * depth)):
+        // x = 1 per metre saturates the exp term, so the cloud composite is scaled by exactly 1 - fade. Enclosed
+        // spaces (caves, under water) and 12+ km altitudes never coincide, so the stronger fade wins.
+        float altitudeFade = Mathf.Clamp(_altitudeFade, 0.0f, 1.0f);
+        if (altitudeFade > value.Y * value.Z) value = new Vector4(1.0f, 1.0f, altitudeFade, 0.0f);
         if (value == _lastEnclosedFog) return;
         _lastEnclosedFog = value;
         _clouds.Set("ring_enclosed_fog", value);
@@ -1116,6 +1137,54 @@ public partial class RingSunshineCloudBridge : Node
             ambient.B * CloudAmbientMultiplier,
             ambient.A));
         _clouds.Set("cloud_ambient_tint", nightTint.Lerp(dayTint, _localDayFactor));
+    }
+
+    // Mirrors the inputs of Sunshine's own lighting (directional light data from the driver, ambient colour x tint,
+    // anisotropy, powder) for the far cloud layers, so the flat layers are lit like the volumetric clouds they replace.
+    private void PublishFarCloudLighting()
+    {
+        if (_clouds == null) return;
+        Godot.Collections.Array lights = _clouds.Get("directional_lights_data").AsGodotArray();
+        float anisotropy = _clouds.Get("clouds_anisotropy").AsSingle();
+        float powder = _clouds.Get("clouds_powder").AsSingle();
+        Vector4 Light(int index, bool direction)
+        {
+            int slot = index * 2 + (direction ? 0 : 1);
+            if (slot >= lights.Count) return Vector4.Zero;
+            Vector4 value = lights[slot].AsVector4();
+            if (direction) return new Vector4(value.X, value.Y, value.Z, 1.0f);
+            float r = Mathf.Pow(Mathf.Max(0.0f, value.X * value.W), 2.2f);
+            float g = Mathf.Pow(Mathf.Max(0.0f, value.Y * value.W), 2.2f);
+            float b = Mathf.Pow(Mathf.Max(0.0f, value.Z * value.W), 2.2f);
+            return new Vector4(r, g, b, index == 0 ? anisotropy : 0.0f);
+        }
+        var packed = new Projection(Light(0, true), Light(0, false), Light(1, true), Light(1, false));
+        Color ambientColor = _clouds.Get("cloud_ambient_color").AsColor();
+        Color ambientTint = _clouds.Get("cloud_ambient_tint").AsColor();
+        Vector3 ambient = new(ambientColor.R * ambientTint.R, ambientColor.G * ambientTint.G, ambientColor.B * ambientTint.B);
+        // Sunshine's ambient (SunshineCloudsCompute.glsl): ambient colour x max(total light power, 0.62) + 0.08 x the distance
+        // fog colour, floored at 0.35 x ambient colour. The total light power is the sum of light energies weighted by
+        // how far each is above the cloud frame horizon, so the ambient follows the sun and the night/eclipse dimming.
+        Vector4 frameUp4 = _clouds.Get("cloud_frame_up").AsVector4();
+        Vector3 frameUp = new Vector3(frameUp4.X, frameUp4.Y, frameUp4.Z);
+        frameUp = frameUp.LengthSquared() > 1e-8f ? frameUp.Normalized() : Vector3.Up;
+        float totalLightPower = 0.0f;
+        for (int i = 0; i + 1 < lights.Count && i < 8; i += 2)
+        {
+            Vector4 direction = lights[i].AsVector4();
+            float energy = lights[i + 1].AsVector4().W;
+            if (energy <= 0.0f) continue;
+            float t = Mathf.Clamp((new Vector3(direction.X, direction.Y, direction.Z).Dot(frameUp) + 0.03f) / 0.1f, 0.0f, 1.0f);
+            totalLightPower += energy * t * t * (3.0f - 2.0f * t);
+        }
+        Color atmosphere = _clouds.Get("atmosphere_color").AsColor();
+        Color sampledFog = _clouds.Get("sampled_environment_fog_color").AsColor();
+        float useEnvironmentFog = _clouds.Get("use_environment_fog").AsSingle();
+        Vector3 fog = new(Mathf.Lerp(atmosphere.R, sampledFog.R, useEnvironmentFog), Mathf.Lerp(atmosphere.G, sampledFog.G, useEnvironmentFog),
+            Mathf.Lerp(atmosphere.B, sampledFog.B, useEnvironmentFog));
+        Vector3 cloudAmbient = (ambient * Mathf.Max(totalLightPower, 0.62f) + fog * 0.08f).Max(ambient * 0.35f);
+        // Powder rides in the ambient w: it must not depend on a second light being present.
+        RingFarWeatherShadowGlobals.PublishCloudLighting(packed, new Vector4(cloudAmbient.X, cloudAmbient.Y, cloudAmbient.Z, powder));
     }
 
     private void UpdateCloudFrame()
@@ -1820,6 +1889,14 @@ public partial class RingSunshineCloudBridge : Node
 
     private void UpdateCloudShadows(double delta, bool force)
     {
+        // The whole-ring far weather shadow continues the projected maps beyond their footprint
+        // and above the Sunshine altitude cutoff, so it follows CastCloudShadows, not RuntimeVisible,
+        // and uses the maps' strength and extinction for a seamless handoff. With the projected
+        // receivers detached (CloudShadowReceiversEnabled, a profiling switch) it covers everything.
+        bool cloudsOff = _weather?.Quality == RingVolumetricCloudLayer.CloudQuality.Off;
+        RingFarWeatherShadowGlobals.PublishShadow(
+            Enabled && CastCloudShadows && !cloudsOff ? ShadowStrength : 0.0f,
+            ShadowExtinctionPerKilometer);
         bool shouldProject = CastCloudShadows
             && RuntimeVisible
             && _clouds != null
@@ -2608,10 +2685,11 @@ public partial class RingSunshineCloudBridge : Node
         bool visible = Enabled
             && CloudRenderingEnabled
             && _weather.Quality != RingVolumetricCloudLayer.CloudQuality.Off
-            && _explorer.ActualTravelSpeedMetersPerSecond < SuspendSpeedMetersPerSecond
-            && altitude < AltitudeFadeEndMeters
+            && !UpdateSpeedCutoff(_smoothedTravelSpeed)
+            && !UpdateAltitudeCutoff(altitude)
             && verticalGap < EffectiveHandoffEndMeters;
         RuntimeVisible = visible;
+        UpdateAltitudeFade(visible ? Mathf.Max(ResolveAltitudeFade(altitude), ResolveSpeedFade(_smoothedTravelSpeed)) : 1.0f);
         // Sunshine keeps temporal color/data textures while its compositor is
         // disabled. Rebuild them before the first post-fast-travel frame so a
         // suspended or previously corrupted accumulation cannot be presented
@@ -2641,6 +2719,78 @@ public partial class RingSunshineCloudBridge : Node
             GD.Print($"Sunshine local clouds: {(visible ? "visible" : "far-shell fallback")}, altitude={altitude:0}m.");
         }
         _lastVisible = visible;
+    }
+
+    private bool _aboveAltitudeCutoff;
+    private bool _aboveSpeedCutoff;
+    private float _smoothedTravelSpeed;
+
+    /// <summary>Travel speed smoothed over about a quarter second, so velocity noise cannot flicker the crossfade.</summary>
+    private void UpdateSmoothedTravelSpeed(double delta)
+    {
+        if (_explorer == null) return;
+        float speed = (float)_explorer.ActualTravelSpeedMetersPerSecond;
+        if (!float.IsFinite(speed)) speed = 0.0f;
+        float blend = 1.0f - Mathf.Exp(-(float)Math.Max(0.0, delta) / 0.25f);
+        _smoothedTravelSpeed = speed > _smoothedTravelSpeed * 4.0f || speed < _smoothedTravelSpeed * 0.25f
+            ? speed // teleports, stops and launches act at once
+            : Mathf.Lerp(_smoothedTravelSpeed, speed, blend);
+    }
+
+    private float ResolveSpeedFade(float speed)
+    {
+        float end = Mathf.Max(1.0f, SuspendSpeedMetersPerSecond);
+        float start = Mathf.Min(Mathf.Max(0.0f, SpeedFadeStartMetersPerSecond), end - 1.0f);
+        float t = Mathf.Clamp((speed - start) / Mathf.Max(1.0f, end - start), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    /// <summary>True while the explorer travels faster than the Sunshine speed cutoff (with hysteresis).</summary>
+    private bool UpdateSpeedCutoff(float speed)
+    {
+        float end = Mathf.Max(1.0f, SuspendSpeedMetersPerSecond);
+        if (_aboveSpeedCutoff) { if (speed < end * Mathf.Clamp(SpeedResumeFraction, 0.5f, 0.99f)) _aboveSpeedCutoff = false; }
+        else if (speed >= end) _aboveSpeedCutoff = true;
+        return _aboveSpeedCutoff;
+    }
+    private float _altitudeFade = -1.0f;
+
+    /// <summary>Sunshine's altitude crossfade weight: 0 below AltitudeFadeStartMeters, 1 at AltitudeFadeEndMeters.</summary>
+    public float AltitudeFade => Mathf.Max(0.0f, _altitudeFade);
+
+    private float ResolveAltitudeFade(float altitudeAboveTerrain)
+    {
+        float end = Mathf.Max(0.0f, AltitudeFadeEndMeters);
+        float start = Mathf.Min(Mathf.Max(0.0f, AltitudeFadeStartMeters), end - 1.0f);
+        float t = Mathf.Clamp((altitudeAboveTerrain - start) / Mathf.Max(1.0f, end - start), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    // One weight drives the three halves of the crossfade: Sunshine's composite opacity (through the post
+    // pass's enclosed-fog fade), the main-view far cloud layer filling the Sunshine handoff hole, and the
+    // cloud-shadow receivers handing the projected maps' weight to the far weather term.
+    private void UpdateAltitudeFade(float fade)
+    {
+        if (Mathf.IsEqualApprox(fade, _altitudeFade)) return;
+        _altitudeFade = fade;
+        _weather?.SetSunshineAltitudeFade(fade);
+        RingFarWeatherShadowGlobals.PublishSunshineFade(fade);
+        PushEnclosedFog();
+    }
+
+    /// <summary>True while the explorer is above the Sunshine altitude cutoff (with hysteresis).</summary>
+    private bool UpdateAltitudeCutoff(float altitudeAboveTerrain)
+    {
+        float end = Mathf.Max(0.0f, AltitudeFadeEndMeters);
+        if (_aboveAltitudeCutoff)
+        {
+            if (altitudeAboveTerrain < end - Mathf.Max(0.0f, AltitudeCutoffHysteresisMeters)) _aboveAltitudeCutoff = false;
+        }
+        else if (altitudeAboveTerrain >= end)
+        {
+            _aboveAltitudeCutoff = true;
+        }
+        return _aboveAltitudeCutoff;
     }
 
 	private float ResolveSurfaceHeight(in RingCanonicalPosition position)

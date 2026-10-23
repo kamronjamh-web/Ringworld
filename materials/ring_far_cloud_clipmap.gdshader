@@ -170,8 +170,9 @@ void fragment() {
 	// Keep physical cloud alpha separate from the bounded validated flash.
 	// Premultiplied alpha makes a clear-carrier flash additive, never absorbing
 	// the bright ring it is meant to illuminate.
-	ALBEDO = (color * base_alpha + flash_premultiplied) * atmosphere_transmittance;
-	EMISSION = color * mix(0.025, 0.12, day) * base_alpha * atmosphere_transmittance
+	// Unshaded: Godot composites ALBEDO only and drops EMISSION, so the haze in-scatter goes into ALBEDO (it was lost
+	// in EMISSION, leaving far clouds unhazed against hazed terrain).
+	ALBEDO = (color * base_alpha + flash_premultiplied) * atmosphere_transmittance
 		+ ring_haze_inscatter(haze) * base_alpha;
 	ALPHA = base_alpha;
 }

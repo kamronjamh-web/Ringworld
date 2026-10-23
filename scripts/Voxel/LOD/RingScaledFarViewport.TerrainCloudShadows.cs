@@ -11,7 +11,7 @@ public partial class RingScaledFarViewport
     /// </summary>
     private static readonly StringName TerrainCloudReceiverHeightName = "terrain_cloud_receiver_height_meters";
     private readonly LastUniformValue<float> _cloudReceiverHeightApplied = new(), _clipmapReceiverHeightApplied = new(),
-        _canopyReceiverHeightApplied = new(), _volumeReceiverHeightApplied = new();
+        _canopyReceiverHeightApplied = new(), _volumeReceiverHeightApplied = new(), _mainShellReceiverHeightApplied = new();
 
     private void BindTerrainCloudShadowReceiverMaterials()
     {
@@ -35,11 +35,18 @@ public partial class RingScaledFarViewport
             || (_localCloudCanopy?.Visible ?? false) || (_scaledCloudVolume?.Visible ?? false)
             || CloudMaskActive);
         foreach (MeshInstance3D? layer in _farCloudClipmapLayers) visible |= Enabled && (layer?.Visible ?? false);
+        // The main-view cloud layer (RingCloudLayer) is lit like Sunshine, which takes the same terrain/arch sun visibility.
+        visible |= GetNodeOrNull<Node3D>(LegacyCloudPath)?.IsVisibleInTree() ?? false;
         field.SetReceiverDemand("far_clouds", visible);
         if (_cloudMaterial != null)
         {
             _cloudReceiverHeightApplied.Set(_cloudMaterial, TerrainCloudReceiverHeightName, CloudAltitudeMeters);
             field.BindToMaterial(_cloudMaterial);
+        }
+        if (_mainShellMaterial != null)
+        {
+            _mainShellReceiverHeightApplied.Set(_mainShellMaterial, TerrainCloudReceiverHeightName, CloudAltitudeMeters);
+            field.BindToMaterial(_mainShellMaterial);
         }
 
         for (int layer = 0; layer < _farCloudClipmapMaterials.Length; layer++)

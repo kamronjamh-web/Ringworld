@@ -5735,11 +5735,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         {
             RingAtmosphereModel.ConfigureMaterial(_material, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
             global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(_material);
-            global::RingworldTechDemo.RingCloudShadowProjector.ConfigureAnalyticField(
-                _material,
-                _grid.GetCanonicalRingCircumferenceMeters64(),
-                RingWidthMeters,
-                _grid.TerrainSampler?.Seed ?? 1337);
+            global::RingworldTechDemo.RingCloudShadowProjector.ConfigureFarWeatherShadow(_material);
         }
         global::RingworldTechDemo.RingCloudShadowProjector.Register(_material);
         Shader? oceanShader = GD.Load<Shader>("res://materials/ring_ocean_proxy.gdshader");
@@ -5774,11 +5770,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             {
                 RingAtmosphereModel.ConfigureMaterial(_oceanMaterial, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
                 global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(_oceanMaterial);
-                global::RingworldTechDemo.RingCloudShadowProjector.ConfigureAnalyticField(
-                    _oceanMaterial,
-                    _grid.GetCanonicalRingCircumferenceMeters64(),
-                    RingWidthMeters,
-                    _grid.TerrainSampler?.Seed ?? 1337);
+                global::RingworldTechDemo.RingCloudShadowProjector.ConfigureFarWeatherShadow(_oceanMaterial);
             }
             global::RingworldTechDemo.RingCloudShadowProjector.Register(_oceanMaterial);
         }

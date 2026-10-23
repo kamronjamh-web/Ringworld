@@ -1449,6 +1449,20 @@ public partial class RingVolumetricCloudLayer : Node3D
         SyncFarCloudOwnership();
     }
 
+    private float _sunshineAltitudeFade;
+
+    /// <summary>
+    /// Sunshine's altitude crossfade weight (0 fully Sunshine, 1 Sunshine faded out), published by
+    /// RingSunshineCloudBridge. The main-view far cloud layer fills the Sunshine handoff hole with it.
+    /// </summary>
+    public void SetSunshineAltitudeFade(float fade)
+    {
+        fade = Mathf.Clamp(fade, 0.0f, 1.0f);
+        if (Mathf.IsEqualApprox(fade, _sunshineAltitudeFade)) return;
+        _sunshineAltitudeFade = fade;
+        _distantShell?.SetHandoffCrossfade(_externalVolumetricRendererOwnsLocalClouds ? fade : 0.0f);
+    }
+
     private void SyncFarCloudOwnership()
     {
         bool meshOwnershipEnabled = _runtimeEnabled
@@ -1473,14 +1487,15 @@ public partial class RingVolumetricCloudLayer : Node3D
 
         if (_distantShell != null)
         {
-            _distantShell.Visible = !sunshineOwnsCloudRendering;
-            if (!sunshineOwnsCloudRendering)
-            {
-                _distantShell.SetLocalVolumetricHandoff(
-                    localOwnershipEnabled,
-                    effectiveFarHandoffStart,
-                    effectiveTransitionRadius);
-            }
+            // The main-view far cloud layer covers main-viewport ground beyond the local owner's
+            // handoff (the scaled far viewport is only a backdrop behind that ground). While
+            // Sunshine fades out with altitude its handoff hole closes with the same weight.
+            _distantShell.Visible = true;
+            _distantShell.SetLocalVolumetricHandoff(
+                localOwnershipEnabled,
+                effectiveFarHandoffStart,
+                effectiveTransitionRadius);
+            _distantShell.SetHandoffCrossfade(sunshineOwnsCloudRendering ? _sunshineAltitudeFade : 0.0f);
         }
         if (_scaledFarViewport == null || !_scaledFarViewport.IsNodeReady()) return;
         // Sunshine owns the near volume only. The scaled shell remains the

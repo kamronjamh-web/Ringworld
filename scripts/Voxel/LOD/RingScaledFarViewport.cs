@@ -253,6 +253,7 @@ public partial class RingScaledFarViewport : Node
 	private ShaderMaterial? _cavityShellMaterial;
 	private ShaderMaterial? _cloudMaterial;
 	private Texture2D? _farWeatherAtlas;
+	private ShaderMaterial? _mainShellMaterial;
 	private double _farWeatherAtlasSnapshotTime;
 	private double _farWeatherAtlasNextRefreshTime;
 	private double _lastFarWeatherRawTime = double.NaN;
@@ -523,7 +524,11 @@ public partial class RingScaledFarViewport : Node
 		if (_captureUnderside) AimSourceCameraAtRingUnderside();
 		else if (_captureDirectView) AimSourceCameraAtOppositeRing();
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring regional terrain")) BuildFarRegionalTerrain(force: false, delta);
-		using (RingPerformanceTelemetry.MeasureCpu("Far ring weather atlas")) UpdateFarWeatherAtlas();
+		using (RingPerformanceTelemetry.MeasureCpu("Far ring weather atlas"))
+		{
+			UpdateFarWeatherAtlas();
+			UpdateFarWeatherCloudBake(delta);
+		}
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring camera and lighting")) SyncCameraAndLighting();
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring cloud masks and materials"))
 		{
@@ -555,6 +560,7 @@ public partial class RingScaledFarViewport : Node
 			_sunshineClouds.SetFarOpaqueDepthTexture(null);
 		_farWeatherAtlasBuild?.Image.Dispose();
 		_farWeatherAtlasBuild = null;
+		global::RingworldTechDemo.RingFarWeatherShadowGlobals.Clear();
 		if (_backdropEffect != null)
 		{
 			_colorPipeline.PublishBackdrop(_backdropEffect, null, null, false);
@@ -583,7 +589,10 @@ public partial class RingScaledFarViewport : Node
 		material.SetShaderParameter("weather_wind_uv_per_second", new Vector2(
 			wind.X / (float)Math.Max(1.0, _circumferenceMeters),
 			wind.Y / Math.Max(1.0f, RingWidthMeters)));
-		ConfigureFarStormLightningMaterial(material);
+		// Lightning ownership is split between the scaled shell and the clipmap; the main-view
+		// shell and the shadow bake only mirror the cloud body.
+		if (!ReferenceEquals(material, _mainShellMaterial) && !ReferenceEquals(material, _farWeatherCloudBakeMaterial))
+			ConfigureFarStormLightningMaterial(material);
 	}
 
 	// RingVolumetricCloudLayer owns this saveable clock; the far tier consumes
@@ -838,11 +847,29 @@ public partial class RingScaledFarViewport : Node
 		FarWeatherAtlasPublicationCount++;
 		FarWeatherAtlasContentHash = build.ContentHash;
 		PublishFarWeatherMaterials();
+		RequestFarWeatherCloudBake();
+	}
+
+	// The legacy main-view RingCloudLayer shell (RingVolumetricCloudLayer shows it whenever Sunshine does
+	// not own the clouds, e.g. above the Sunshine altitude cutoff) used the procedural far cloud field. It
+	// now gets the same atlas and Sunshine density bindings as the scaled shell, so it draws the real
+	// weather (and matches the far cloud shadow) or nothing.
+	private void ResolveMainShellMaterial()
+	{
+		ShaderMaterial? shell = GetNodeOrNull<global::RingworldTechDemo.RingCloudLayer>(LegacyCloudPath)?.ShellMaterial;
+		if (ReferenceEquals(shell, _mainShellMaterial)) return;
+		_mainShellMaterial = shell;
+		// Force full density/texture/position writes for the new material on the next detail publish.
+		_hasFarCloudDetailStatic = false;
+		_hasFarCloudDetailPositions = false;
+		if (shell != null && _farWeatherAtlas != null) ConfigureFarWeatherMaterial(shell);
 	}
 
 	private void PublishFarWeatherMaterials()
 	{
 		if (_cloudMaterial != null) ConfigureFarWeatherMaterial(_cloudMaterial);
+		if (_mainShellMaterial != null) ConfigureFarWeatherMaterial(_mainShellMaterial);
+		if (_farWeatherCloudBakeMaterial != null) ConfigureFarWeatherMaterial(_farWeatherCloudBakeMaterial);
 		foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
 			if (material != null) ConfigureFarWeatherMaterial(material);
 	}
@@ -941,7 +968,8 @@ public partial class RingScaledFarViewport : Node
 	private void DisableLegacyWholeRingMeshes()
 	{
 		if (GetNodeOrNull<Node3D>(LegacyAnalyticPath) is { } analytic) analytic.Visible = false;
-		if (GetNodeOrNull<Node3D>(LegacyCloudPath) is { } cloud) cloud.Visible = false;
+		// The main-view RingCloudLayer is no longer a legacy whole-ring mesh: RingVolumetricCloudLayer shows
+		// it as the main-view far cloud layer (it only draws over main-viewport ground).
 	}
 
 	private void CreateFarViewport()
@@ -1166,14 +1194,7 @@ public partial class RingScaledFarViewport : Node
 			global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(
 				_terrainMaterial,
 				CoordinateScale);
-			global::RingworldTechDemo.RingCloudShadowProjector.ConfigureAnalyticField(
-				_terrainMaterial,
-				_circumferenceMeters,
-				RingWidthMeters,
-				_grid?.TerrainSampler?.Seed ?? 1337,
-				worldUnitsToKilometres: 1.0f,
-				fadeStartWorldUnits: 0.0f,
-				fadeEndWorldUnits: 1.0f);
+			global::RingworldTechDemo.RingCloudShadowProjector.ConfigureFarWeatherShadow(_terrainMaterial, metersPerWorldUnit: 1.0f / CoordinateScale);
 		}
 
 		Shader? waterShader = GD.Load<Shader>("res://materials/ring_ocean_global.gdshader");
@@ -1191,14 +1212,7 @@ public partial class RingScaledFarViewport : Node
 			RingAtmosphereModel.ConfigureMaterial(_waterMaterial, _radiusMeters, CoordinateScale);
 			_waterMaterial.SetShaderParameter("ring_atmosphere_far_shroud_enabled", true);
 			global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(_waterMaterial, CoordinateScale);
-			global::RingworldTechDemo.RingCloudShadowProjector.ConfigureAnalyticField(
-				_waterMaterial,
-				_circumferenceMeters,
-				RingWidthMeters,
-				_grid?.TerrainSampler?.Seed ?? 1337,
-				worldUnitsToKilometres: 1.0f,
-				fadeStartWorldUnits: 0.0f,
-				fadeEndWorldUnits: 1.0f);
+			global::RingworldTechDemo.RingCloudShadowProjector.ConfigureFarWeatherShadow(_waterMaterial, metersPerWorldUnit: 1.0f / CoordinateScale);
 		}
 
 		Shader? hullShader = GD.Load<Shader>("res://materials/ring_hull_global.gdshader");
@@ -1260,8 +1274,8 @@ public partial class RingScaledFarViewport : Node
 			_cloudMaterial.SetShaderParameter("local_handoff_end_meters", LocalCloudRadiusMeters * CoordinateScale);
 			_cloudMaterial.SetShaderParameter("ring_circumference_km", (float)(_circumferenceMeters * 0.001));
 			_cloudMaterial.SetShaderParameter("ring_width_km", RingWidthMeters * 0.001f);
-			_cloudMaterial.SetShaderParameter("cloud_seed", _grid?.TerrainSampler?.Seed ?? 1337);
 			ConfigureFarWeatherMaterial(_cloudMaterial);
+			CreateFarWeatherCloudBake();
 			RingAtmosphereModel.ConfigureMaterial(_cloudMaterial, _radiusMeters, CoordinateScale);
 			_cloudMaterial.SetShaderParameter("ring_atmosphere_far_shroud_enabled", true);
 		}
@@ -2612,6 +2626,7 @@ public partial class RingScaledFarViewport : Node
 			_lastSharedMaterialShroudVisibility = _farAtmosphereShroudVisibility;
 		}
 		_cloudMaterial?.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
+		_mainShellMaterial?.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
 	}
 
 	private void SyncRegionalMaterialUniforms(Vector3 cameraPosition, Vector3 sunDirection)
@@ -3298,6 +3313,7 @@ public partial class RingScaledFarViewport : Node
 	public void ConfigureSunshineFarCloudDetail(
 		Resource? clouds, bool enabled, float strength, float opacityMultiplier, float radiusMeters, float coverageBias = 0.0f)
 	{
+		ResolveMainShellMaterial();
 		Texture2D? extra = clouds == null ? null : clouds.Get("extra_large_noise_patterns").AsGodotObject() as Texture2D;
 		Texture2D? gradient = clouds == null ? null : clouds.Get("height_gradient").AsGodotObject() as Texture2D;
 		Texture3D? large = clouds == null ? null : clouds.Get("large_scale_noise").AsGodotObject() as Texture3D;
@@ -3338,9 +3354,10 @@ public partial class RingScaledFarViewport : Node
 		var positionSnapshot = active ? new FarCloudDetailPositionSnapshot(clouds!.Get("extra_large_scale_clouds_position").AsVector3(), clouds.Get("large_scale_clouds_position").AsVector3(), clouds.Get("medium_scale_clouds_position").AsVector3(), clouds.Get("detail_clouds_position").AsVector3(), clouds.Get("wind_direction").AsVector3(), clouds.Get("wind_swept_range").AsSingle(), clouds.Get("wind_swept_strength").AsSingle()) : default;
 		bool staticChanged = !_hasFarCloudDetailStatic || staticSnapshot != _lastFarCloudDetailStatic;
 		bool positionsChanged = active && (!_hasFarCloudDetailPositions || positionSnapshot != _lastFarCloudDetailPositions);
-		for (int materialIndex = 0; materialIndex < 4; materialIndex++)
+		for (int materialIndex = 0; materialIndex < 6; materialIndex++)
 		{
-			ShaderMaterial? material = materialIndex < 3 ? _farCloudClipmapMaterials[materialIndex] : _cloudMaterial;
+			ShaderMaterial? material = materialIndex < 3 ? _farCloudClipmapMaterials[materialIndex]
+				: materialIndex == 3 ? _cloudMaterial : materialIndex == 4 ? _mainShellMaterial : _farWeatherCloudBakeMaterial;
 			if (material == null) continue;
 			if (staticChanged)
 			{
@@ -3391,6 +3408,7 @@ public partial class RingScaledFarViewport : Node
 				material.SetShaderParameter("far_density_wind_swept_strength", positionSnapshot.WindStrength);
 			}
 		}
+		global::RingworldTechDemo.RingFarWeatherShadowGlobals.PublishBand(altitude);
 		_lastFarCloudDetailStatic = staticSnapshot; _hasFarCloudDetailStatic = true;
 		_lastFarCloudDetailPositions = positionSnapshot; _hasFarCloudDetailPositions = active;
 		if (geometryChanged) RebuildFarCloudClipmapMeshes();
@@ -3549,5 +3567,8 @@ public partial class RingScaledFarViewport : Node
 		_cloudMaterial.SetShaderParameter("coverage", enabled ? 0.22f : FarCloudCoverage);
 		_cloudMaterial.SetShaderParameter("opacity", enabled ? 0.88f : FarCloudOpacity);
 		_cloudMaterial.SetShaderParameter("softness", enabled ? 0.24f : FarCloudSoftness);
+		_farWeatherCloudBakeMaterial?.SetShaderParameter("coverage", enabled ? 0.22f : FarCloudCoverage);
+		_farWeatherCloudBakeMaterial?.SetShaderParameter("softness", enabled ? 0.24f : FarCloudSoftness);
+		RequestFarWeatherCloudBake();
 	}
 }

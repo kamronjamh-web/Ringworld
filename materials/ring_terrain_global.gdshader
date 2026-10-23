@@ -37,13 +37,11 @@ uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_terrain_macro_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
-#include "res://materials/ring_far_cloud_field.gdshaderinc"
+#include "res://materials/ring_far_weather_shadow.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
-uniform float analytic_cloud_shadow_strength : hint_range(0.0, 0.8) = 0.60;
+// Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
-uniform float analytic_cloud_shadow_fade_start_meters = 38000.0;
-uniform float analytic_cloud_shadow_fade_end_meters = 50000.0;
 uniform float ring_width_meters = 20000.0;
 uniform bool debug_color_enabled = false;
 uniform vec3 debug_color = vec3(1.0, 1.0, 0.0);
@@ -59,23 +57,10 @@ varying vec2 terrain_macro_shadow_uv;
 varying float combined_cloud_shadow_occlusion;
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
-	float distance_to_camera = distance(sample_world_position, camera_world_position);
-	float analytic_fade = smoothstep(
-		analytic_cloud_shadow_fade_start_meters,
-		max(analytic_cloud_shadow_fade_start_meters + 1.0, analytic_cloud_shadow_fade_end_meters),
-		distance_to_camera);
-	float analytic_shadow = analytic_cloud_shadow_enabled
-		? ring_far_cloud_field_world(sample_world_position, ring_center)
-			* analytic_cloud_shadow_strength
-			* analytic_fade
-		: 0.0;
-	// The analytic field remains capped at its authored maximum, but the local
-	// projected map is authoritative near the camera and can legitimately reach
-	// full occlusion under a dense storm. Choose the strongest estimate rather
-	// than compounding the two shadow systems.
-	return max(
-		min(0.80, analytic_shadow),
-		sample_local_cloud_shadow(sample_world_position)) * day_factor;
+	// The Sunshine projected maps own their footprint; the far weather shell
+	// shadow fills the rest through their coverage weight.
+	return ring_cloud_shadow_occlusion_with_far_weather(
+		sample_world_position, ring_center, sun_direction, analytic_cloud_shadow_enabled) * day_factor;
 }
 
 void vertex() {

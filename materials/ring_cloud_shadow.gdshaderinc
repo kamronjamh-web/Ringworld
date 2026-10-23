@@ -142,9 +142,13 @@ float combine_ring_cloud_shadow_phases(vec2 phases) {
 	return 1.0 - (1.0 - phases.r) * (1.0 - phases.g);
 }
 
-float sample_local_cloud_shadow(vec3 sample_world_position) {
+// x: occlusion already weighted by the maps' own coverage (exactly what
+// sample_local_cloud_shadow returns); y: that coverage weight (1 where the
+// projected maps are authoritative, 0 beyond them or while they are off).
+// Far-weather receivers fill the remaining 1 - y with the whole-ring term.
+vec2 sample_local_cloud_shadow_coverage(vec3 sample_world_position) {
 	if (!local_cloud_shadow_enabled) {
-		return 0.0;
+		return vec2(0.0);
 	}
 
 	vec3 relative = sample_world_position - ring_cloud_shadow_near_center();
@@ -187,6 +191,7 @@ float sample_local_cloud_shadow(vec3 sample_world_position) {
 		}
 	}
 	float far_occlusion = 0.0;
+	float far_weight = 0.0;
 	bool needs_far_cascade = !local_cloud_shadow_near_enabled
 		|| !near_in_bounds || near_weight < 0.999;
 	if (local_cloud_shadow_far_enabled && needs_far_cascade) {
@@ -210,17 +215,21 @@ float sample_local_cloud_shadow(vec3 sample_world_position) {
 		vec2 far_uv = far_planar / (far_radius * 2.0) + vec2(0.5) + ring_cloud_shadow_far_offset();
 		if (all(greaterThanEqual(far_uv, vec2(0.0)))
 				&& all(lessThanEqual(far_uv, vec2(1.0)))) {
-			float far_edge = 1.0 - smoothstep(0.88, 0.99, length(far_planar / far_radius));
+			far_weight = 1.0 - smoothstep(0.88, 0.99, length(far_planar / far_radius));
 			far_occlusion = combine_ring_cloud_shadow_phases(
 				textureLod(local_cloud_shadow_far_texture, far_uv, 0.0).rg)
-				* far_edge * local_cloud_shadow_far_strength;
+				* far_weight * local_cloud_shadow_far_strength;
 		}
 	}
 	if (!local_cloud_shadow_near_enabled || !near_in_bounds) {
-		return far_occlusion;
+		return vec2(far_occlusion, far_weight);
 	}
 	if (!local_cloud_shadow_far_enabled) {
-		return near_occlusion * near_weight;
+		return vec2(near_occlusion * near_weight, near_weight);
 	}
-	return mix(far_occlusion, near_occlusion, near_weight);
+	return vec2(mix(far_occlusion, near_occlusion, near_weight), mix(far_weight, 1.0, near_weight));
+}
+
+float sample_local_cloud_shadow(vec3 sample_world_position) {
+	return sample_local_cloud_shadow_coverage(sample_world_position).x;
 }

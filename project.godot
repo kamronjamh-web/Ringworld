@@ -385,6 +385,26 @@ ring_cloud_shadow_far_from_near={
 "type": "vec3",
 "value": Vector3(0, 0, 0)
 }
+ring_far_weather_cloud_map={
+"type": "sampler2D",
+"value": ""
+}
+ring_far_weather_frame={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_far_weather_shadow={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_far_cloud_lights={
+"type": "mat4",
+"value": Projection(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+}
+ring_far_cloud_ambient={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ring_water_wave_phases_0={
 "type": "mat3",
 "value": Basis(1, 0, 0, 0, 1, 0, 0, 0, 1)

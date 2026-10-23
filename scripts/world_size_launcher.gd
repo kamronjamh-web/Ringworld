@@ -1725,7 +1725,8 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	scaled_far_viewport.set("CloudMaskRaymarchSteps", 18 if capture_max_quality else (14 if desktop_mid_high else 10))
 	scaled_far_viewport.set("CloudMaskMaximumQualityLevel", 3 if capture_max_quality else (2 if desktop_mid_high else 1))
 	analytic_global_lod.set("BuildEnabled", not is_certified)
-	cloud_layer.set("BuildEnabled", not is_certified)
+	# RingCloudLayer is the main-view far cloud layer (a camera-centred patch), needed at every ring size.
+	cloud_layer.set("BuildEnabled", true)
 	var scaled_segments := int(round(512.0 * sqrt(radius_m / 80000.0)))
 	global_lod.set("AroundSegments", clampi(scaled_segments, 512, 2048))
 	var scaled_occluder_segments := int(round(128.0 * sqrt(radius_m / 80000.0)))
@@ -1851,7 +1852,7 @@ func _validate_certified_runtime_configuration(
 		and int(scaled_far_viewport.get("RingWidthMeters")) == int(CERTIFIED_RING_WIDTH_KM * 1000.0) \
 		and is_equal_approx(float(scaled_far_viewport.get("StructuralWallTopMeters")), expected_wall_top) \
 		and not bool(analytic_global_lod.get("BuildEnabled")) \
-		and not bool(cloud_layer.get("BuildEnabled"))
+		and bool(cloud_layer.get("BuildEnabled"))
 	if not valid:
 		push_error("Certified ring runtime configuration self-test failed.")
 		return

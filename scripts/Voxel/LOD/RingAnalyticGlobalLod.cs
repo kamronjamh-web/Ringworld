@@ -124,11 +124,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             RingAtmosphereModel.ConfigureMaterial(_surfaceMaterial, _grid!.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
             _surfaceMaterial.SetShaderParameter("ring_width_meters", RingWidthMeters);
             global::RingworldTechDemo.RingTerrainMacroShadowProjector.Register(_surfaceMaterial);
-            global::RingworldTechDemo.RingCloudShadowProjector.ConfigureAnalyticField(
-                _surfaceMaterial,
-                _grid.GetCanonicalRingCircumferenceMeters64(),
-                RingWidthMeters,
-                _grid.TerrainSampler?.Seed ?? 1337);
+            global::RingworldTechDemo.RingCloudShadowProjector.ConfigureFarWeatherShadow(_surfaceMaterial);
             global::RingworldTechDemo.RingCloudShadowProjector.Register(_surfaceMaterial);
             MaterialOverride = _surfaceMaterial;
         }

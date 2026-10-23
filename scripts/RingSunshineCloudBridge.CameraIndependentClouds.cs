@@ -109,8 +109,14 @@ public partial class RingSunshineCloudBridge
 		double sourceAcross = camera.AcrossMeters - wind.Y * time;
 
 		ResolveEffectiveCloudHandoff();
+		// Lead the camera by its travel speed: the selection and the macro map are refreshed every WeatherRefreshSeconds
+		// and the map is built over MacroMapRefreshSeconds + MacroMapSlices callbacks, so a fast camera would otherwise
+		// reach the map edge (storms vanish at the leading handoff band from about 12 km/s).
+		float leadSeconds = Mathf.Max(0.05f, WeatherRefreshSeconds) + Mathf.Clamp(MacroMapRefreshSeconds, 0.05f, 2.0f)
+			+ Math.Clamp(MacroMapSlices, 1, 32) / 30.0f;
 		_ciSelectionRadiusMeters = EffectiveHandoffEndMeters + CameraIndependentLightReachMeters
-			+ Mathf.Max(0.0f, WeatherSystemSelectionMarginMeters);
+			+ Mathf.Max(0.0f, WeatherSystemSelectionMarginMeters)
+			+ Mathf.Clamp(_smoothedTravelSpeed, 0.0f, SuspendSpeedMetersPerSecond) * leadSeconds;
 		_ciCollected.Clear();
 		_weather.CollectRenderWeatherSystems(camera, _ciSelectionRadiusMeters, time, _ciCollected,
 			FixedCloudAltitudeDatumMeters, StormFrontCloudBaseAltitudeMeters);
