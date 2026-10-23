@@ -1,3 +1,9 @@
+> **Historical (D3, 2026-10-23).** The flyover, `RingMenuSpaceBackdrop`, `MenuFlyover*`, the `menu_flyover_*` shaders and
+> `resources/menu/menu_flyover_defaults.tres` were deleted. The start menu now uses a boot cover over a warm world (see
+> `docs/main-menu-revamp-plan.md` and `docs/phase-c-live-menu-work-orders.md`). The cloud adapter survives only as the test-only
+> `tools/support/SunshineTestRig.cs`; `tools/menu_cloud_history_gpu_test.gd` still exercises its menu temporal-sampling mode and
+> `tools/cloud_gameplay_history_gpu_test.gd` covers the gameplay-driver history path. Everything below is kept for history.
+
 # Main menu: angled ring flyover
 
 The cinematic backdrop lives in `scenes/StartMenu.tscn`, now the project's

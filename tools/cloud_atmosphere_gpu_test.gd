@@ -52,9 +52,9 @@ func _build() -> void:
 	var world := WorldEnvironment.new(); world.environment = Environment.new(); world.environment.background_mode = Environment.BG_COLOR; viewport_3d.add_child(world)
 	var camera := Camera3D.new(); camera.current = true; camera.position = Vector3(0,20112,0); camera.rotation_degrees = Vector3(-8,0,0); viewport_3d.add_child(camera)
 	var light := DirectionalLight3D.new(); viewport_3d.add_child(light); light.look_at(Vector3(.4,-.75,.5),Vector3.UP)
-	adapter = (load("res://scripts/ui/MenuFlyoverSunshineLayer.cs") as Script).new(); root.add_child(adapter)
+	adapter = (load("res://tools/support/SunshineTestRig.cs") as Script).new(); root.add_child(adapter)
 	adapter.call("Configure",world,1337,RADIUS,WIDTH,Vector3(-.4,.75,-.5).normalized())
-	effect = adapter.get("Effect") as Object; settings = (load("res://scripts/ui/MenuFlyoverSettings.cs") as Script).new()
+	effect = adapter.get("Effect") as Object; settings = (load("res://tools/support/SunshineTestRigSettings.cs") as Script).new()
 
 func _configure_frozen_field() -> void:
 	var v := {"CloudsEnabled":true,"CloudShadowsEnabled":false,"ShadowGenerationEnabled":false,"AltitudeKm":20.0,"PitchDegrees":8.0,"FieldOfView":65.0,"CloudFloorKm":2.0,"CloudCeilingKm":8.0,"CloudCoverage":.71,"CloudDensity":3.0,"CloudAmbientStrength":2.0,"CloudSharpness":1.0,"CloudResolution":1,"CloudViewSteps":256,"CloudMinStepMeters":10.0,"CloudMaxStepMeters":1600.0,"CloudLodBias":.1,"CloudLightingSteps":5,"CloudRayStartJitterStrength":0.0,"CloudBlurPower":0.0,"CloudDriftMps":0.0,"CloudDitherSpeed":0.0,"CloudStationaryHistoryWeight":0.0,"CloudMovingHistoryWeight":0.0}

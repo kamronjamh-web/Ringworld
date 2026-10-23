@@ -191,7 +191,7 @@ References: [Biome workshop](docs/biome-workshop.md), [forest-region checklist](
 
 ## Menus and live tuning
 
-The Start Menu has its own cinematic moving seeded terrain/cloud flyover and separate persistent menu controls. It manages the three local slots.
+The Start Menu shows the last-session snapshot (or a starfield) over a warm live world; it has no moving flyover. It manages the three local slots. Live-world menu tuning arrives with the D4 Live world drawer (`docs/phase-c-live-menu-work-orders.md`).
 
 The World Foundry stores the selected scale, seed, terrain profile, and eligible backend marker with the slot metadata before it creates the gameplay scene. The normal world is configured dynamically; scene inspector defaults alone are not the final runtime world configuration.
 
@@ -222,14 +222,13 @@ Persistent settings are grouped by system; some live controls remain session-onl
 
 | Setting group | Factory/load behavior | Persistent path |
 | --- | --- | --- |
-| Menu flyover | Project resource in the editor; user resource in exported builds | `res://resources/menu/menu_flyover_defaults.tres` or `user://menu_flyover_defaults.tres` |
 | Clouds | Factory resource in the editor; user override in exported builds | `res://resources/clouds/gameplay_cloud_defaults.tres` or `user://gameplay_cloud_defaults.tres` |
 | Water | Loads the factory resource then the user override | `user://gameplay_water_defaults.tres` |
 | Atmosphere | Per-user haze profile and tuning | `user://atmosphere_visual_defaults.tres` |
 | Gameplay groups | Per-system overrides | `user://gameplay_{shadow,grass,vegetation,motion,anti_aliasing,render_resolution,surface_terrain}_defaults.tres` |
 | Diagnostics | Per-user telemetry settings | `user://ring_performance_telemetry.tres` |
 
-The menu flyover preferences are separate from gameplay cloud/water settings. Slot generation metadata is separate from runtime state; the backend marker selects a launch path and never converts old journals. Retained world validation includes terrain definition hashes, scale/circumference compatibility, and cave contract data. A mismatch can preserve data read-only rather than fabricate a conversion.
+Slot generation metadata is separate from runtime state; the backend marker selects a launch path and never converts old journals. Retained world validation includes terrain definition hashes, scale/circumference compatibility, and cave contract data. A mismatch can preserve data read-only rather than fabricate a conversion.
 
 On Windows, `user://` normally resolves to `%APPDATA%\Godot\app_userdata\RingworldTechDemo\`. Generated captures and logs are mostly under `user://generated`, while some Terrain3D test fixtures use `.godot`; see [Generated data](docs/GENERATED_DATA.md).
 

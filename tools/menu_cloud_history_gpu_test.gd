@@ -19,10 +19,6 @@ var adapter: Node
 var settings: Resource
 var watchdog: SceneTreeTimer
 var sunshine_source: CompositorEffect
-var gameplay_driver: Node
-var gameplay_previous_phase := 0.0
-var gameplay_phase := 0.0
-var gameplay_previous_uploaded_time := -1.0
 var failed := false
 var cleanup_started := false
 var user_quality := false
@@ -36,45 +32,6 @@ func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUTPUT))
 	user_quality = "--user-quality" in OS.get_cmdline_user_args()
 	_build_world()
-	if "--gameplay-history" in OS.get_cmdline_user_args():
-		gameplay_driver = (load("res://addons/SunshineClouds2/SunshineCloudsDriver.gd") as Script).new()
-		gameplay_driver.set("update_continuously", false)
-		gameplay_driver.set("clouds_resource", adapter.get("Effect"))
-		(adapter.get("Effect") as Object).set("dither_speed", _gameplay_dither_speed())
-		if _gameplay_dither_speed() > 0.0:
-			var bins := {}
-			for serial in 128:
-				var phase := fposmod(float(serial) * 0.6180339887498949 + fposmod(float(serial) / 64.0, 1.0), 1.0)
-				bins[int(floor(phase * 64.0))] = true
-			_require(bins.size() >= 55, "gameplay golden-ratio dither phase did not cover 55/64 slices")
-		if failed: return
-		if _interior_mode():
-			var gameplay_interior := await _run_interior_diagnostics()
-			if failed: return
-			if _interior_regression(): _require_interior_regression(gameplay_interior)
-			if failed: return
-			print("GAMEPLAY_CLOUD_INTERIOR_GPU_DIAGNOSTICS ", JSON.stringify(gameplay_interior))
-			await _cleanup(0)
-			return
-		if "--history-diagnostics" in OS.get_cmdline_user_args():
-			var gameplay_diagnostics := await _run_gameplay_history_diagnostics()
-			if failed: return
-			print("GAMEPLAY_CLOUD_HISTORY_GPU_DIAGNOSTICS ", JSON.stringify(gameplay_diagnostics))
-			await _cleanup(0)
-			return
-		var gameplay_static := await _compare_history("gameplay_static", false)
-		if failed: return
-		var gameplay_moving := await _compare_history("gameplay_moving", true)
-		if failed: return
-		var far_depth := await _test_synthetic_far_depth_consumer()
-		if failed: return
-		_require(gameplay_static.high.color < gameplay_static.raw.color * .80 and gameplay_static.high.alpha < gameplay_static.raw.alpha * .80, "gameplay static high history did not converge")
-		if failed: return
-		_require(gameplay_moving.high.color < gameplay_moving.raw.color * .90 and gameplay_moving.high.alpha < gameplay_moving.raw.alpha * .90, "gameplay moving high history did not converge")
-		if failed: return
-		print("GAMEPLAY_CLOUD_HISTORY_GPU_TEST=PASS ", JSON.stringify({"static":gameplay_static,"moving":gameplay_moving,"far_depth":far_depth}))
-		await _cleanup(0)
-		return
 	if _interior_mode():
 		var interior := await _run_interior_diagnostics()
 		if failed: return
@@ -114,9 +71,6 @@ func _interior_mode() -> bool:
 func _interior_regression() -> bool:
 	return "--interior-regression" in OS.get_cmdline_user_args()
 
-func _gameplay_dither_speed() -> float:
-	return 0.0 if "--dither-speed-zero" in OS.get_cmdline_user_args() else 60.0
-
 func _build_world() -> void:
 	viewport_3d = SubViewport.new()
 	viewport_3d.own_world_3d = true
@@ -154,7 +108,7 @@ func _build_world() -> void:
 	material.albedo_color = Color(.35, .35, .35)
 	ground.material_override = material
 	viewport_3d.add_child(ground)
-	settings = (load("res://scripts/ui/MenuFlyoverSettings.cs") as Script).new()
+	settings = (load("res://tools/support/SunshineTestRigSettings.cs") as Script).new()
 	sunshine_source = load("res://resources/clouds/sunshine_ring_local.tres") as CompositorEffect
 	_reset_adapter()
 	copy_viewport = SubViewport.new()
@@ -177,15 +131,13 @@ func _build_world() -> void:
 
 func _reset_adapter() -> void:
 	if adapter == null:
-		adapter = (load("res://scripts/ui/MenuFlyoverSunshineLayer.cs") as Script).new()
+		adapter = (load("res://tools/support/SunshineTestRig.cs") as Script).new()
 		root.add_child(adapter)
 	else:
 		if copy_rect != null:
 			copy_rect.texture = null
 		adapter.call("Detach")
 	adapter.call("Configure", world, 1337, RADIUS, RING_WIDTH, Vector3(-.4, .75, -.5).normalized())
-	if "--gameplay-history" in OS.get_cmdline_user_args():
-		gameplay_phase = 0.0; gameplay_previous_phase = -1.0; gameplay_previous_uploaded_time = -1.0
 
 func _apply(history: float, dither_speed: float) -> void:
 	var values := {
@@ -355,27 +307,6 @@ func _run_history_diagnostics() -> Dictionary:
 	effect.set("diagnostic_menu_history_weights", false)
 	return {"frames": 6, "pixels": pixels, "raw_alpha_gt_005_pixels": opaque_pixels, "reason_counts": counts, "reason_counts_raw_alpha_gt_005": opaque_counts, "mean_used_history": used_sum / max(1, pixels), "mean_alpha_mismatch": mismatch_sum / max(1, pixels), "last_time": time, "last_around": around}
 
-func _run_gameplay_history_diagnostics() -> Dictionary:
-	var result := {}
-	for moving in [false, true]:
-		_reset_adapter(); _apply(.95, 60.0)
-		var effect: Object = adapter.get("Effect") as Object
-		var counts := PackedInt32Array([0,0,0,0]); var opaque := PackedInt32Array([0,0,0,0])
-		var used := 0.0; var mismatch := 0.0; var pixels := 0; var opaque_pixels := 0; var around := START_AROUND; var time := 110.0
-		for warmup in HIGH_WARMUP:
-			await _frame(around,time,not moving,false); if failed: return {}
-			time += DT; if moving: around += 60.0 * DT
-		effect.set("diagnostic_menu_history_weights",true)
-		var last := Image.new()
-		for frame in 8:
-			last=await _frame(around,time,not moving,true); if failed: return {}
-			var sample:=_aggregate_history_diagnostics(last,counts,opaque); used+=float(sample.used); mismatch+=float(sample.mismatch); pixels+=int(sample.pixels); opaque_pixels+=int(sample.opaque_pixels)
-			time+=DT; if moving: around+=60.0*DT
-		last.save_png("%s/gameplay_history_diagnostics_%s.png" % [OUTPUT,"moving" if moving else "static"])
-		effect.set("diagnostic_menu_history_weights",false)
-		result["moving" if moving else "static"]={"frames":8,"pixels":pixels,"opaque_pixels":opaque_pixels,"reason_counts":counts,"opaque_reason_counts":opaque,"mean_used_history":used/max(1,pixels),"mean_alpha_mismatch":mismatch/max(1,pixels)}
-	return result
-
 func _aggregate_history_diagnostics(image: Image, counts: PackedInt32Array, opaque_counts: PackedInt32Array) -> Dictionary:
 	var used := 0.0
 	var mismatch := 0.0
@@ -398,7 +329,7 @@ func _aggregate_history_diagnostics(image: Image, counts: PackedInt32Array, opaq
 	return {"used": used, "mismatch": mismatch, "pixels": pixels, "opaque_pixels": opaque_pixels}
 
 func _compare_history(label: String, moving: bool) -> Dictionary:
-	var travel_speed := 60.0 if "--gameplay-history" in OS.get_cmdline_user_args() else SPEED
+	var travel_speed := SPEED
 	var final_time := 50.0 + DT * (HIGH_WARMUP - 1)
 	var final_around := START_AROUND + (travel_speed * DT * (HIGH_WARMUP - 1) if moving else 0.0)
 	# Raw reference at the exact pose/time at which the high-history run ends.
@@ -469,7 +400,7 @@ func _require_interior_regression(result: Dictionary) -> void:
 		if failed: return
 
 func _interior_diagnostic_case(label: String, moving: bool) -> Dictionary:
-	var travel_speed := 60.0 if "--gameplay-history" in OS.get_cmdline_user_args() else SPEED
+	var travel_speed := SPEED
 	var final_time := 50.0 + DT * (HIGH_WARMUP - 1)
 	var final_around := START_AROUND + (travel_speed * DT * (HIGH_WARMUP - 1) if moving else 0.0)
 	_reset_adapter(); _apply(0.0, 0.0)
@@ -585,30 +516,9 @@ func _raw_hdr_range(images: Array[Image]) -> Dictionary:
 func _frame(around: float, time: float, frozen: bool, capture: bool = true) -> Image:
 	if failed: return Image.new()
 	adapter.call("UpdateFrame", around, time, frozen)
-	if "--gameplay-history" in OS.get_cmdline_user_args():
-		var gameplay_effect: Object = adapter.get("Effect") as Object
-		gameplay_effect.set("menu_temporal_sampling", false)
-		gameplay_effect.set("menu_fast_reconstruction", false)
-		gameplay_effect.set("dither_speed", _gameplay_dither_speed())
-		gameplay_effect.set("current_time", gameplay_phase)
-		gameplay_driver.set("clouds_resource", gameplay_effect)
-		gameplay_driver.call("_process", DT)
-		var phase := float(gameplay_effect.get("current_time"))
-		if _gameplay_dither_speed() > 0.0:
-			_require(!is_equal_approx(phase, gameplay_previous_phase), "production driver dither phase did not advance")
-		if failed: return Image.new()
-		gameplay_previous_phase = phase
-		gameplay_phase = phase
 	viewport_3d.render_target_update_mode = SubViewport.UPDATE_ONCE
 	await RenderingServer.frame_post_draw
 	if failed: return Image.new()
-	if "--gameplay-history" in OS.get_cmdline_user_args():
-		_require(is_zero_approx(float(_controls(adapter.get("Effect") as Object).get("enabled", 1.0))), "gameplay UBO still enabled menu temporal sampling")
-		if failed: return Image.new()
-		var uploaded_time := _ubo_time(adapter.get("Effect") as Object)
-		_require(!is_equal_approx(uploaded_time, gameplay_previous_uploaded_time), "gameplay dither phase did not reach uploaded UBO time")
-		if failed: return Image.new()
-		gameplay_previous_uploaded_time = uploaded_time
 	if not capture:
 		return Image.new()
 	var cloud := adapter.call("GetCloudTexture") as Texture2D
@@ -620,49 +530,6 @@ func _frame(around: float, time: float, frozen: bool, capture: bool = true) -> I
 	await RenderingServer.frame_post_draw
 	if failed: return Image.new()
 	return copy_viewport.get_texture().get_image()
-
-func _test_synthetic_far_depth_consumer() -> Dictionary:
-	_reset_adapter(); _apply(0.0, 60.0)
-	var baseline := await _frame(START_AROUND, 91.0, true)
-	if failed: return {}
-	var effect: Object = adapter.get("Effect") as Object
-	var field := Image.create(SIZE.x, SIZE.y, false, Image.FORMAT_RF)
-	field.fill(Color(0,0,0,1)); field.fill_rect(Rect2i(0,0,SIZE.x/2,SIZE.y), Color(80,0,0,1))
-	var texture := ImageTexture.create_from_image(field)
-	effect.set("far_opaque_depth_texture", texture); effect.call("refresh_compute")
-	var clipped := Image.new()
-	for frame in 10:
-		clipped = await _frame(START_AROUND, 91.0 + frame * DT, true)
-		if failed: return {}
-	baseline.save_png("%s/gameplay_far_depth_baseline.png" % OUTPUT); clipped.save_png("%s/gameplay_far_depth_clipped.png" % OUTPUT)
-	var baseline_left := _half_alpha(baseline, true); var clipped_left := _half_alpha(clipped, true); var clipped_right := _half_alpha(clipped, false)
-	_require(baseline_left > .05, "synthetic far-depth baseline had no left cloud")
-	_require(clipped_left < .03, "synthetic far depth did not clip left cloud")
-	_require(clipped_right > .05, "synthetic far depth erased right cloud")
-	if failed: return {}
-	var post_clipped := viewport_3d.get_texture().get_image()
-	effect.set("enabled", false); viewport_3d.render_target_update_mode=SubViewport.UPDATE_ONCE; await RenderingServer.frame_post_draw
-	if failed: return {}
-	var post_without_clouds := viewport_3d.get_texture().get_image(); effect.set("enabled", true)
-	var post_left_error := _half_luma_error(post_clipped, post_without_clouds, true)
-	_require(post_left_error < .03, "final post pixels retained clouds behind synthetic far depth")
-	if failed: return {}
-	# Keep the ImageTexture alive through all submitted captures, then detach it.
-	effect.set("far_opaque_depth_texture", null); effect.call("refresh_compute")
-	return {"baseline_left_alpha":baseline_left,"clipped_left_alpha":clipped_left,"clipped_right_alpha":clipped_right,"post_left_error":post_left_error}
-
-
-func _half_alpha(image: Image, left: bool) -> float:
-	var total := 0.0; var count := 0; var begin := 0 if left else image.get_width()/2; var end := image.get_width()/2 if left else image.get_width()
-	for y in range(4,image.get_height(),8):
-		for x in range(begin+4,end,8): total += image.get_pixel(x,y).a; count += 1
-	return total/max(1,count)
-
-func _half_luma_error(a:Image,b:Image,left:bool)->float:
-	var total:=0.; var count:=0; var begin:=0 if left else a.get_width()/2; var end:=a.get_width()/2 if left else a.get_width()
-	for y in range(4,a.get_height(),8):
-		for x in range(begin+4,end,8): total+=absf(a.get_pixel(x,y).get_luminance()-b.get_pixel(x,y).get_luminance()); count+=1
-	return total/max(1,count)
 
 func _controls(effect: Object) -> Dictionary:
 	var bytes: PackedByteArray = effect.get("general_data") as PackedByteArray
@@ -732,9 +599,6 @@ func _fail(reason: String) -> void:
 	call_deferred("_cleanup", 1)
 
 func _cleanup(code: int) -> void:
-	if gameplay_driver != null:
-		gameplay_driver.free()
-		gameplay_driver = null
 	if cleanup_started:
 		return
 	cleanup_started = true

@@ -89,7 +89,7 @@ signal external_texture_retirement_requested(generation_id: int)
 @export var gpu_timestamp_macro_map_end_marker : String = ""
 @export var gpu_timestamp_interleave_begin_marker : String = ""
 @export var gpu_timestamp_interleave_end_marker : String = ""
-# MenuFlyoverSunshineLayer alone enables this opt-in reconstruction shortcut.
+# SunshineTestRig alone enables this opt-in reconstruction shortcut.
 # Keeping the default false preserves the normal Sunshine post-pass path.
 @export var menu_fast_reconstruction : bool = false
 # Menu-only: callbacks advance a deterministic sample even when menu animation

@@ -31,9 +31,9 @@ func run() -> void:
 	var camera := Camera3D.new(); camera.current = true; camera.near = 10; camera.far = 10000000; camera.position = Vector3(0, 20000, 0); camera.rotation_degrees = Vector3(-8, 20, 0); viewport_3d.add_child(camera)
 	var sun := DirectionalLight3D.new(); sun.light_energy = 2; viewport_3d.add_child(sun); sun.look_at(Vector3(.4, -.75, .5), Vector3.UP)
 	var ground := MeshInstance3D.new(); var plane := PlaneMesh.new(); plane.size = Vector2(600000, 600000); ground.mesh = plane; viewport_3d.add_child(ground)
-	adapter = preload("res://scripts/ui/MenuFlyoverSunshineLayer.cs").new(); root.add_child(adapter)
+	adapter = preload("res://tools/support/SunshineTestRig.cs").new(); root.add_child(adapter)
 	adapter.call("Configure", world, 1337, 5000000.0, 318000, Vector3(-.4,.75,-.5).normalized())
-	var settings := preload("res://scripts/ui/MenuFlyoverSettings.cs").new()
+	var settings := preload("res://tools/support/SunshineTestRigSettings.cs").new()
 	settings.set("CloudsEnabled", true); settings.set("CloudShadowsEnabled", true); settings.set("ShadowGenerationEnabled", true)
 	adapter.call("ApplyTuning", settings, Vector3(-.4,.75,-.5).normalized())
 	var effect: Object = adapter.get("Effect") as Object

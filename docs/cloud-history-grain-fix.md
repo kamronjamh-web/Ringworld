@@ -86,8 +86,8 @@ Useful commands, with `godot` pointing to the Mono console executable:
 
 ```powershell
 dotnet build RingworldTechDemo.csproj --no-restore --nologo
-godot --path . --script tools/menu_cloud_history_gpu_test.gd -- --gameplay-history --interior-regression
-godot --path . --script tools/menu_cloud_history_gpu_test.gd -- --gameplay-history --interior-regression --dither-speed-zero
+godot --path . --script tools/cloud_gameplay_history_gpu_test.gd -- --interior-regression
+godot --path . --script tools/cloud_gameplay_history_gpu_test.gd -- --interior-regression --dither-speed-zero
 godot --path . --script tools/cloud_history_gameplay_diagnostic.gd
 godot --path . --script tools/cloud_history_gameplay_diagnostic.gd -- --sampling-diagnostics
 godot --path . --script tools/cloud_foliage_edge_test.gd

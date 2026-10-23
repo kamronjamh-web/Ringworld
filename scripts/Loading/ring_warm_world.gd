@@ -8,7 +8,7 @@ extends Node
 const WORLD_LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 const MENU_SNAPSHOT := preload("res://scripts/ui/menu_snapshot.gd")
 const NODE_NAME := "RingWarmWorld"
-## Seconds the revealed world renders behind the opaque flyover before the quiet-frame test starts (hides cold pipeline cost).
+## Seconds the revealed world renders behind the opaque boot cover before the quiet-frame test starts (hides cold pipeline cost).
 const SETTLE_SECONDS := 2.0
 ## The crossfade waits for this long without a frame slower than SLOW_FRAME_MS.
 const QUIET_SECONDS := 1.0

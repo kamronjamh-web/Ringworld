@@ -80,8 +80,8 @@ Build the .NET project first. Run the following scripts with Godot's `--path . -
 | `tools/terrain3d_gameplay_stream_test.gd` | Window requests, cancellation, caching, and stationary stability |
 | `tools/terrain3d_gameplay_movement_test.gd -- --speed=60 --distance=256` | Controller steps, handoffs, reversal, support, and stationary stability |
 | `tools/sunshine_far_depth_gpu_test.gd` | Physical far depth, sky, resize, and resource cleanup |
-| `tools/menu_cloud_history_gpu_test.gd -- --gameplay-history` | Gameplay history, phase sampling, and far-depth consumption |
-| `tools/menu_cloud_history_gpu_test.gd` | Existing menu history regression |
+| `tools/cloud_gameplay_history_gpu_test.gd` | Gameplay history, phase sampling, and far-depth consumption (rig-hosted) |
+| `tools/menu_cloud_history_gpu_test.gd` | Menu temporal-sampling regression (rig-hosted) |
 | `tools/terrain3d_gameplay_travel_benchmark.gd -- --speed=12 --distance=512` | Full scene, normal controller, configured spawn, frame times and ground support |
 
 The travel fixture creates an isolated world and preferences under `.godot`. It uses the configured spawn unless explicit `--around` and `--across` coordinates are supplied. `--reference-v1` retains the runtime backend while selecting the older recipe for comparison. `--cloud-resolution=1` applies a test-only half-resolution override, and `--capture` writes start/end screenshots outside the measured interval. `--telemetry` exports CPU events and adds per-frame allocation/GC counters on the same monotonic clock; see [runtime diagnostics](performance_diagnostics.md#correlating-a-walking-hitch). Run performance comparisons sequentially without another game or GPU fixture competing for resources. A passing short route does not establish the 60 FPS target or complete the longer M6 acceptance route.

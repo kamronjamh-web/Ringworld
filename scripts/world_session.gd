@@ -61,7 +61,7 @@ func clear_preview_slot() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", "")
 
 
-## Slot the start menu may warm-load behind the flyover, or 0. Pure: reads metadata only. Only runtime-generation Standard worlds
+## Slot the start menu may warm-load behind the boot cover, or 0. Pure: reads metadata only. Only runtime-generation Standard worlds
 ## qualify; `--no-warm-world` disables it for tests.
 func get_live_menu_slot() -> int:
 	if "--no-warm-world" in OS.get_cmdline_user_args() or bool(ProjectSettings.get_setting("ringworld/runtime/no_warm_world", false)):

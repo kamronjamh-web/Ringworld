@@ -1,10 +1,10 @@
 using System;
 using Godot;
 
-namespace RingworldTechDemo.UI;
+namespace RingworldTechDemo.Tools;
 
 [GlobalClass]
-public partial class MenuFlyoverSettings : Resource
+public partial class SunshineTestRigSettings : Resource
 {
     [Export] public float AltitudeKm { get; set; } = 20f;
     [Export] public float PitchDegrees { get; set; } = 25f;
@@ -119,9 +119,9 @@ public partial class MenuFlyoverSettings : Resource
         FarTerrainDetail = Math.Clamp(FarTerrainDetail, 0, 2);
     }
 
-    public MenuFlyoverSettings CopyValidated()
+    public SunshineTestRigSettings CopyValidated()
     {
-        var copy = (MenuFlyoverSettings)Duplicate(true);
+        var copy = (SunshineTestRigSettings)Duplicate(true);
         copy.Sanitize();
         return copy;
     }

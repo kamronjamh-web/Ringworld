@@ -2,10 +2,10 @@ using Godot;
 using System;
 using System.Collections.Generic;
 
-namespace RingworldTechDemo.UI;
+namespace RingworldTechDemo.Tools;
 
-/// <summary>Menu-owned SunshineClouds2 compositor adapter; never uses the plugin driver.</summary>
-public sealed partial class MenuFlyoverSunshineLayer : Node
+/// <summary>Test-only SunshineClouds2 compositor adapter (former menu flyover cloud layer). Production never uses it; the cloud GPU tests drive it directly.</summary>
+public sealed partial class SunshineTestRig : Node
 {
     // Godot may keep compositor/capture descriptors in flight for several
     // draws. This static queue deliberately owns no adapter/scene references.
@@ -120,7 +120,7 @@ public sealed partial class MenuFlyoverSunshineLayer : Node
     }
 
     /// <summary>Copies validated scalar menu options into this private effect.</summary>
-    public void ApplyTuning(MenuFlyoverSettings settings, Vector3 sunDirection)
+    public void ApplyTuning(SunshineTestRigSettings settings, Vector3 sunDirection)
     {
         ArgumentNullException.ThrowIfNull(settings);
 

@@ -1,11 +1,10 @@
 extends SceneTree
 
-# Real-input regression coverage for the grave-key tuning drawers.  This is a
+# Real-input regression coverage for the gameplay grave-key tuning drawer (the start menu has none until D4).  This is a
 # SceneTree script deliberately: the controls must receive viewport input so
 # the drawer's _Input wheel guard is exercised rather than bypassed.
 const LAUNCHER_SCENE := preload("res://scenes/WorldSizeLauncher.tscn")
 const GAME_SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
-const MENU_DRAWER := preload("res://scripts/ui/MenuFlyoverTuningDrawer.cs")
 const PREFERENCE_ISOLATION := preload("res://scripts/Tools/MinimapWindContractTest.cs")
 const GAMEPLAY_PREFS_DIRECTORY := "res://.godot/grave-menu-interaction-preferences"
 const FIXTURE := "res://.godot/grave_menu_interaction_fixture.tres"
@@ -38,57 +37,12 @@ func _run() -> void:
 	await _frames(2)
 	print("GRAVE_MENU_FIXTURE_VIEWPORT=" + str(_fixture_viewport.get_visible_rect()))
 	_cleanup_fixture()
-	await _test_menu_drawer()
 	await _test_gameplay_drawer()
 	_cleanup_fixture()
 	_watchdog.stop()
 	_fixture_viewport.queue_free()
 	print("GRAVE_MENU_INTERACTION=%s" % ("FAIL" if _failed else "PASS"))
 	quit(1 if _failed else 0)
-
-func _test_menu_drawer() -> void:
-	var host := Control.new()
-	host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_fixture_viewport.add_child(host)
-	var drawer: Control = MENU_DRAWER.new()
-	drawer.name = "MenuFlyoverTuningDrawerInteractionFixture"
-	drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	drawer.set("SavePathOverride", FIXTURE)
-	host.add_child(drawer)
-	await _frames(3)
-	drawer.call("SetDrawerOpen", true)
-	await _frames(2)
-	await _exercise_drawer(drawer, "menu")
-	var quality := _tab_named(drawer, "Quality")
-	_require(quality != null, "menu Quality tab missing")
-	if quality != null:
-		_select_tab(drawer, quality)
-		await _wheel_guard(drawer, quality, "menu quality")
-	# Menu numeric edits intentionally target a disposable preset, never the
-	# production menu defaults.  A real SpinBox arrow click verifies normal edit.
-	var camera := _tab_named(drawer, "Camera")
-	if camera != null:
-		_select_tab(drawer, camera)
-		await _frames(1)
-	var spin := drawer.find_child("AltitudeKm", true, false) as SpinBox
-	if spin != null:
-		_ensure_visible(camera, spin)
-		await _frames(2)
-		var before := spin.value
-		await _click(spin.get_global_rect().position + Vector2(spin.size.x - 5.0, spin.size.y * .25))
-		_require(not is_equal_approx(spin.value, before), "menu SpinBox arrow click did not edit")
-		spin.get_line_edit().grab_focus()
-		spin.get_line_edit().select_all()
-		_type_text("22")
-		_send_key(KEY_ENTER)
-		await _frames(2)
-		_require(is_equal_approx(spin.value, 22.0), "menu SpinBox typed edit did not apply")
-	else: _fail("menu has no visible SpinBox")
-	_require(int((drawer.call("GetDrawerDiagnostics") as Dictionary).get("control_count", -1)) == 50, "menu control count changed")
-	print("GRAVE_MENU_INTERACTION_MENU=PASS")
-	drawer.queue_free()
-	host.queue_free()
-	await _frames(2)
 
 func _test_gameplay_drawer() -> void:
 	# Use the certified configuration path, matching the supported large-ring

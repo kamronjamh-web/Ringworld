@@ -454,7 +454,7 @@ public partial class RingWorldLoadingBridge : Node
         GetTree().Root.Disable3D = false;
     }
 
-    /// <summary>Altitude, speed and sun elevation for the menu's survey readout once the flyover is retired.</summary>
+    /// <summary>Altitude, speed and sun elevation for the menu's survey readout.</summary>
     public Godot.Collections.Dictionary GetExplorerTelemetry()
     {
         var result = new Godot.Collections.Dictionary { ["valid"] = false };

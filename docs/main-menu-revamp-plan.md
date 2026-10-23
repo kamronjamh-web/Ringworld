@@ -1,7 +1,10 @@
 # Main menu revamp plan
 
-Builds on the existing flyover menu (`scenes/StartMenu.tscn`,
-`scripts/start_menu.gd`, `scripts/ui/RingMenuSpaceBackdrop.cs`; see
+> **Historical (D3).** The flyover this plan built on, `scripts/ui/RingMenuSpaceBackdrop.cs`, was deleted; the menu now uses a boot
+> cover (snapshot or starfield) over a warm world. See `docs/phase-c-live-menu-work-orders.md` (flyover removal). Items below that
+> mention the backdrop, survey cache, travel speed ease-in or per-screen flyover cameras no longer apply.
+
+Original text: builds on the flyover menu (`scenes/StartMenu.tscn`, `scripts/start_menu.gd`; see
 `docs/main-menu-space-checklist.md`). Visual direction: evolve the current
 left-column layout, not a new style. A Settings screen is out of scope.
 

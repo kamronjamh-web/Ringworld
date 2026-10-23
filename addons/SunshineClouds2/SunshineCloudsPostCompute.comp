@@ -359,7 +359,7 @@ void main() {
 
 	blurPower = mix(blurPower, 0.0, currentColorData.b / maxTheoreticalStep);
 
-	// The fast shortcut is opt-in from MenuFlyoverSunshineLayer. Other Sunshine
+	// The fast shortcut is opt-in from SunshineTestRig. Other Sunshine
 	// users retain their existing reconstruction selection exactly.
 	if (blurPower > 0.0 && genericData.data.temporal_controls.z <= 0.5) {
 		if (genericData.data.menu_optimization_controls.x > 0.5 && blurPower <= 0.1) {
