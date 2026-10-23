@@ -68,7 +68,8 @@ public partial class RingWorldLoadingBridge : Node
     public void EnableBackgroundMode(float cruiseAltitudeMeters, float cruisePitchDegrees)
     {
         _background = true;
-        _cruiseAltitudeMeters = Mathf.Max(100f, cruiseAltitudeMeters);
+        // The menu camera never rises above the snapshot band ceiling, whatever the tuning says.
+        _cruiseAltitudeMeters = Mathf.Clamp(cruiseAltitudeMeters, 100f, (float)SnapshotMaxAltitudeMeters);
         _cruisePitchDegrees = cruisePitchDegrees;
     }
 

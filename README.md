@@ -191,7 +191,7 @@ References: [Biome workshop](docs/biome-workshop.md), [forest-region checklist](
 
 ## Menus and live tuning
 
-The Start Menu shows the last-session snapshot (or a starfield) over a warm live world; it has no moving flyover. It manages the three local slots. Live-world menu tuning arrives with the D4 Live world drawer (`docs/phase-c-live-menu-work-orders.md`).
+The Start Menu shows the last-session snapshot (or a starfield) over a warm live world; it has no moving flyover. It manages the three local slots. The grave key at the menu opens only a small **Live world** drawer (cruise altitude 8-18 km, cruise pitch, crossfade seconds, snapshot drift percent). Cruise values apply the next time the world loads; crossfade and drift apply live. The gameplay drawer is never opened from the menu (see `docs/phase-c-live-menu-work-orders.md`).
 
 The World Foundry stores the selected scale, seed, terrain profile, and eligible backend marker with the slot metadata before it creates the gameplay scene. The normal world is configured dynamically; scene inspector defaults alone are not the final runtime world configuration.
 
@@ -227,6 +227,7 @@ Persistent settings are grouped by system; some live controls remain session-onl
 | Atmosphere | Per-user haze profile and tuning | `user://atmosphere_visual_defaults.tres` |
 | Gameplay groups | Per-system overrides | `user://gameplay_{shadow,grass,vegetation,motion,anti_aliasing,render_resolution,surface_terrain}_defaults.tres` |
 | Diagnostics | Per-user telemetry settings | `user://ring_performance_telemetry.tres` |
+| Start-menu Live world | Project defaults in the editor; local override in exported builds (falls back to the project defaults) | `res://resources/menu/menu_live_world_defaults.tres` or `user://menu_live_world_defaults.tres` |
 
 Slot generation metadata is separate from runtime state; the backend marker selects a launch path and never converts old journals. Retained world validation includes terrain definition hashes, scale/circumference compatibility, and cave contract data. A mismatch can preserve data read-only rather than fabricate a conversion.
 

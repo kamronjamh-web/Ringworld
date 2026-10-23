@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="MenuLiveWorldSettings" format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/MenuLiveWorldSettings.cs" id="1_mlw"]
+
+[resource]
+script = ExtResource("1_mlw")

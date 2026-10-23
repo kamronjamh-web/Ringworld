@@ -5,6 +5,8 @@ const SNAPSHOT := preload("res://scripts/ui/menu_snapshot.gd")
 const FIXTURE_PNG := "res://tools/fixtures/menu_snapshot/menu_snapshot.png"
 const FIXTURE_JSON := "res://tools/fixtures/menu_snapshot/menu_snapshot.json"
 const SNAPSHOT_DIR := "res://.godot/menu_snapshot_smoke"
+## The Live world drawer saves here (isolated user://), never to the project defaults.
+const LIVE_SETTINGS := "user://generated/menu_live_world_smoke.tres"
 var failed: bool = false
 var watchdog: Timer
 
@@ -52,7 +54,10 @@ func _run() -> void:
 	var fake_session := FakeWorldSession.new()
 	fake_session.name = "WorldSession"
 	root.add_child(fake_session)
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(LIVE_SETTINGS).get_base_dir())
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(LIVE_SETTINGS))
 	var menu: Control = MENU.instantiate()
+	menu.live_world_settings_path = LIVE_SETTINGS
 	# The pinned cover never warm-loads a world and never drifts: deterministic, headless-safe.
 	menu.freeze_cover = true
 	root.add_child(menu)
@@ -117,16 +122,46 @@ func _run() -> void:
 	_require(starfield != null and starfield.material is ShaderMaterial and bool((starfield.material as ShaderMaterial).get_shader_parameter("frozen")), "starfield is not pinned by freeze_cover")
 	_require(menu.boot_cover.get_index() < menu.get("_ui_root").get_index(), "cover is not below the menu UI")
 	_require(not _contains_runtime(menu), "menu created world runtime")
-	var drawer_key := InputEventKey.new()
-	drawer_key.keycode = KEY_QUOTELEFT
-	drawer_key.pressed = true
-	menu.call("_unhandled_input", drawer_key)
-	_require(menu.get_node_or_null("MenuTuningDrawer") == null, "grave key created a drawer on the menu")
+
+	# --- Live world drawer: grave opens only it, with four controls; values persist across a reload; settings reach their consumers
+	var live_drawer: Control = menu.live_drawer
+	_require(live_drawer != null and menu.get_node_or_null("MenuTuningDrawer") == null and menu.get_node_or_null("LiveTuningDrawer") == null, "menu lacks the Live world drawer, or built another drawer")
+	_require(not bool(live_drawer.get("IsDrawerOpen")), "Live world drawer starts open")
+	_require(is_equal_approx(live_drawer.call("GetValue", "CruiseAltitudeKm"), 16.0) and is_equal_approx(live_drawer.call("GetValue", "CruisePitchDegrees"), -25.0) \
+		and is_equal_approx(live_drawer.call("GetValue", "CrossfadeSeconds"), 2.5) and is_equal_approx(live_drawer.call("GetValue", "SnapshotDriftPercent"), 8.0), "Live world defaults are not 16 km / -25 deg / 2.5 s / 8%")
+	_push_key(KEY_QUOTELEFT)
+	_require(bool(live_drawer.get("IsDrawerOpen")), "grave did not open the Live world drawer")
+	_require(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "the drawer hid the mouse")
+	var controls: Array = live_drawer.find_children("*", "SpinBox", true, false)
+	var control_names: Array = []
+	for control: Node in controls:
+		control_names.append(String(control.name))
+	control_names.sort()
+	_require(control_names == ["CrossfadeSeconds", "CruiseAltitudeKm", "CruisePitchDegrees", "SnapshotDriftPercent"] and (live_drawer.call("GetDrawerDiagnostics") as Dictionary)["control_count"] == 4, "Live world drawer does not have exactly the four expected controls: " + str(control_names))
+	_require(menu.main_panel.visible and menu.continue_button.focus_mode != Control.FOCUS_NONE, "opening the drawer disturbed the menu buttons")
+	_push_key(KEY_ESCAPE)
+	_require(not bool(live_drawer.get("IsDrawerOpen")), "Escape did not close the Live world drawer")
+	_push_key(KEY_QUOTELEFT)
+	_require(bool(live_drawer.get("IsDrawerOpen")), "grave did not reopen the drawer")
+	live_drawer.call("SetTuningValue", "CrossfadeSeconds", 4.0)
+	live_drawer.call("SetTuningValue", "SnapshotDriftPercent", 12.0)
+	live_drawer.call("SetTuningValue", "CruiseAltitudeKm", 99.0)
+	live_drawer.call("SetTuningValue", "CruisePitchDegrees", -40.0)
+	_require(is_equal_approx(live_drawer.call("GetValue", "CruiseAltitudeKm"), 18.0), "cruise altitude exceeded the 18 km ceiling")
+	_require(is_equal_approx(menu.call("_crossfade_seconds"), 4.0), "crossfade change did not reach the menu's crossfade")
+	var cruise: Dictionary = menu.call("_live_cruise")
+	_require(is_equal_approx(cruise["altitude_m"], 18000.0) and is_equal_approx(cruise["pitch_deg"], -40.0), "cruise change did not reach the warm-world start arguments: " + str(cruise))
+	_push_key(KEY_QUOTELEFT)
+	_require(not bool(live_drawer.get("IsDrawerOpen")), "second grave did not close the drawer")
+	var saved: Dictionary = live_drawer.call("GetDrawerDiagnostics")
+	_require(not bool(saved["unsaved"]) and int(saved["save_successes"]) >= 1 and FileAccess.file_exists(LIVE_SETTINGS), "closing the drawer did not persist the settings")
 
 	# --- fixture snapshot cover (no world)
 	var snapshot_menu: Control = MENU.instantiate()
 	snapshot_menu.freeze_cover = true
 	snapshot_menu.snapshot_override_path = FIXTURE_PNG
+	# Reloads the settings the first menu saved.
+	snapshot_menu.live_world_settings_path = LIVE_SETTINGS
 	root.add_child(snapshot_menu)
 	var cover: Control = snapshot_menu.boot_cover
 	_require(cover.mode == "snapshot", "fixture snapshot was not shown")
@@ -134,9 +169,15 @@ func _run() -> void:
 	var picture: TextureRect = cover.get_node_or_null("SnapshotPicture") as TextureRect
 	_require(picture != null and picture.expand_mode == TextureRect.EXPAND_IGNORE_SIZE and picture.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_COVERED, "snapshot picture is not drawn aspect-covered")
 	_require(picture != null and picture.texture.get_width() == 640 and picture.texture.get_height() == 360, "fixture snapshot texture size mismatch")
+	_require(is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CrossfadeSeconds"), 4.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CruiseAltitudeKm"), 18.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CruisePitchDegrees"), -40.0), "Live world settings did not persist across a reload")
 	await process_frame
-	_require(picture != null and absf(picture.scale.x - 1.08) < 0.001, "pinned drift does not start at 1.08x: %s" % str(picture.scale if picture != null else 0))
+	_require(picture != null and absf(picture.scale.x - 1.12) < 0.001, "persisted 12%% drift does not start at 1.12x: %s" % str(picture.scale if picture != null else 0))
 	_require(picture != null and picture.position.x < 0.0 and picture.position.y > 0.0, "drift start offset is not left/down")
+	snapshot_menu.live_drawer.call("SetTuningValue", "SnapshotDriftPercent", 0.0)
+	await process_frame
+	_require(picture != null and absf(picture.scale.x - 1.0) < 0.001 and picture.position.length() < 0.5, "drift change did not reach the cover")
+	snapshot_menu.live_drawer.call("SetTuningValue", "SnapshotDriftPercent", 12.0)
+	await process_frame
 	await cover.settle()
 	_require(picture != null and absf(picture.scale.x - 1.0) < 0.002 and picture.position.length() < 1.0, "settle did not converge to identity")
 	await cover.crossfade(0.1)
@@ -183,6 +224,7 @@ func _run() -> void:
 
 	_require(fake_session.mutation_calls == 0, "menu modified the save fixture")
 	menu.queue_free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(LIVE_SETTINGS))
 	await process_frame
 	root.remove_child(fake_session)
 	fake_session.queue_free()
@@ -204,6 +246,14 @@ func _contains_runtime(node: Node) -> bool:
 		if _contains_runtime(child):
 			return true
 	return false
+
+## Sends a key press through the viewport input path (what the drawer listens to), then lets it settle.
+func _push_key(code: int) -> void:
+	var event := InputEventKey.new()
+	event.keycode = code
+	event.physical_keycode = code
+	event.pressed = true
+	root.push_input(event)
 
 func _cancel(menu: Control) -> void:
 	var event := InputEventAction.new()

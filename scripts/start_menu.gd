@@ -9,12 +9,14 @@ const MENU_MOTION := preload("res://scripts/ui/menu_motion.gd")
 const WORLD_PRESETS := preload("res://scripts/world_presets.gd")
 const CARD_THUMBNAIL := preload("res://scripts/ui/world_card_thumbnail.gd")
 const WARM_WORLD := preload("res://scripts/Loading/ring_warm_world.gd")
+const LIVE_WORLD_DRAWER := preload("res://scripts/ui/MenuLiveWorldTuningDrawer.cs")
 
 const INTRO_FADE_SECONDS := 0.8
 const INTRO_PANEL_DELAY_SECONDS := 0.35
 const TELEMETRY_INTERVAL_SECONDS := 0.25
-## Opacity ramp of the boot cover once the live world is ready behind it (the world is already rendering underneath).
-const CROSSFADE_SECONDS := 2.5
+## Used only if the Live world drawer is unavailable; the real crossfade, drift and cruise values come from that drawer.
+const FALLBACK_CROSSFADE_SECONDS := 2.5
+const FALLBACK_DRIFT_PERCENT := 8.0
 const LEAVE_FADE_SECONDS := 0.2
 ## While the world warms, Continue / Enter Ringworld / the world cards stay disabled through the worst early freezes. They unlock once the
 ## loader is past the terrain stage and the last UNLOCK_QUIET_SECONDS had no frame over UNLOCK_SLOW_FRAME_MS, or after the safety cap.
@@ -33,6 +35,8 @@ const THUMBNAIL_SIZE := Vector2(224, 126)
 @export var freeze_cover: bool = false
 ## A snapshot PNG (sidecar json beside it) to show as the cover without any world; tests only.
 @export var snapshot_override_path: String = ""
+## Tests only: redirects the Live world drawer's load and save (a user:// path).
+@export var live_world_settings_path: String = ""
 
 var main_panel: Control
 var worlds_panel: Control
@@ -53,6 +57,8 @@ var new_world_seed_edit: LineEdit
 var slot_buttons: Array[Button] = []
 var selected_slot := 0
 var boot_cover: Control
+## The grave-key "Live world" drawer: owns the crossfade, snapshot drift and warm-world cruise settings.
+var live_drawer: Control
 var _ui_root: Control
 var _footer_label: Label
 var worlds_button: Button
@@ -192,6 +198,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _build_ui() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	theme = UI_THEME.create_theme()
+	_build_live_world_drawer()
 	_build_cover()
 	_ui_root = Control.new()
 	_ui_root.name = "MenuDesignCanvas"
@@ -243,6 +250,41 @@ func _build_ui() -> void:
 	_build_new_world_panel()
 
 	_build_delete_modal()
+	# Last child: above the cover and the menu UI.
+	move_child(live_drawer, -1)
+
+
+## The small grave-key drawer for the live world. Its settings are read live by the cover (drift), the crossfade calls and the warm start (cruise).
+func _build_live_world_drawer() -> void:
+	live_drawer = LIVE_WORLD_DRAWER.new()
+	live_drawer.name = "LiveWorldDrawer"
+	live_drawer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if not live_world_settings_path.is_empty():
+		live_drawer.set("SavePathOverride", live_world_settings_path)
+	add_child(live_drawer)
+	live_drawer.connect("SettingsChanged", _apply_live_world_settings)
+
+
+func _live_value(property: String, fallback: float) -> float:
+	if live_drawer == null or not is_instance_valid(live_drawer):
+		return fallback
+	return float(live_drawer.call("GetValue", property))
+
+
+func _crossfade_seconds() -> float:
+	return _live_value("CrossfadeSeconds", FALLBACK_CROSSFADE_SECONDS)
+
+
+## Cruise placement for the warm-world loader ({altitude_m, pitch_deg}); empty falls back to the loader defaults.
+func _live_cruise() -> Dictionary:
+	if live_drawer == null or not is_instance_valid(live_drawer):
+		return {}
+	return live_drawer.call("GetCruise")
+
+
+func _apply_live_world_settings() -> void:
+	if boot_cover != null:
+		boot_cover.drift_amount = _live_value("SnapshotDriftPercent", FALLBACK_DRIFT_PERCENT) / 100.0
 
 
 ## The boot cover sits where the flyover backdrop did: below the readability gradients and the UI, above the 3D world. It shows the last
@@ -250,6 +292,7 @@ func _build_ui() -> void:
 func _build_cover() -> void:
 	boot_cover = BOOT_COVER.new()
 	boot_cover.frozen = freeze_cover
+	_apply_live_world_settings()
 	add_child(boot_cover)
 	var snapshot: Dictionary = {}
 	if not snapshot_override_path.is_empty():
@@ -1322,7 +1365,7 @@ func _begin_live_world() -> void:
 	_warm.reveal_ready.connect(_on_reveal_ready)
 	_warm.warm_failed.connect(_on_warm_failed)
 	if _warm.state == WARM_WORLD.State.IDLE:
-		_warm.start(_live_slot, _placement_pose)
+		_warm.start(_live_slot, _placement_pose, _live_cruise())
 	elif _warm.state == WARM_WORLD.State.WARM:
 		_on_warm_ready(_warm.world)
 
@@ -1350,7 +1393,7 @@ func _on_warm_failed(_message: String) -> void:
 		return
 	_showcase_picture = true
 	# The cover switches to snapshot mode synchronously; the footer follows it while the dissolve runs.
-	boot_cover.fade_to_snapshot(showcase["texture"], showcase["sidecar"], CROSSFADE_SECONDS)
+	boot_cover.fade_to_snapshot(showcase["texture"], showcase["sidecar"], _crossfade_seconds())
 	_update_footer()
 
 
@@ -1401,7 +1444,7 @@ func _reveal_cover() -> void:
 	if not _cover_still_wanted():
 		return
 	_warm.log_gpu_memory("before_crossfade")
-	await boot_cover.crossfade(CROSSFADE_SECONDS)
+	await boot_cover.crossfade(_crossfade_seconds())
 	if not _cover_still_wanted():
 		return
 	_retire_cover()

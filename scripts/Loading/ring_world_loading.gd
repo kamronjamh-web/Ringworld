@@ -48,6 +48,8 @@ var _previous_disable_3d := false
 var _pending_scene_requests: Dictionary = {}
 ## Menu snapshot pose handed to the bridge of the next background load (see RingWorldLoadingBridge.SetPlacementPose).
 var _placement_pose: Dictionary = {}
+## Cruise placement {altitude_m, pitch_deg} of the next background load (the menu Live world drawer); empty uses the WARM_CRUISE_* defaults.
+var _cruise: Dictionary = {}
 
 static func ensure(context: Node) -> Node:
 	var existing := context.get_tree().root.get_node_or_null(NODE_NAME)
@@ -235,10 +237,11 @@ func open_saved_world(info: Dictionary) -> void:
 
 ## Loads the saved world behind the current scene without any loading screen. The launcher runs hidden and non-current. On success
 ## `world_warm(world, bridge)` fires and the caller owns both (see ring_warm_world.gd); on failure `loading_failed`.
-func open_saved_world_background(info: Dictionary, placement_pose: Dictionary = {}) -> void:
+func open_saved_world_background(info: Dictionary, placement_pose: Dictionary = {}, cruise: Dictionary = {}) -> void:
 	if active:
 		return
 	_placement_pose = placement_pose.duplicate(true)
+	_cruise = cruise.duplicate(true)
 	is_background = true
 	if not begin(info):
 		is_background = false
@@ -262,9 +265,10 @@ func prepare_world(world: Node, launcher: Node) -> void:
 	_bridge = BRIDGE.new()
 	add_child(_bridge)
 	if is_background:
-		_bridge.call("EnableBackgroundMode", WARM_CRUISE_ALTITUDE_M, WARM_CRUISE_PITCH_DEGREES)
+		_bridge.call("EnableBackgroundMode", float(_cruise.get("altitude_m", WARM_CRUISE_ALTITUDE_M)), float(_cruise.get("pitch_deg", WARM_CRUISE_PITCH_DEGREES)))
 		_bridge.call("SetPlacementPose", _placement_pose)
 		_placement_pose = {}
+		_cruise = {}
 	_bridge.call("PrepareWorld", world)
 
 func prepare_resources() -> bool:

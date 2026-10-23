@@ -325,19 +325,25 @@ func _run() -> void:
 	_expect(absf(float(telemetry.get("altitude_m", 0.0)) - 16000.0) < 600.0, "explorer altitude is not about 16 km: %s" % str(telemetry.get("altitude_m")))
 	_expect(_menu.get("_continue_slot") == _live_slot, "Continue is not bound to the warm slot")
 
-	# --- grave does nothing on the menu (no drawer until D4); W/A/S/D do not move the Explorer
+	# --- grave opens only the menu's Live world drawer (never the world's own); W/A/S/D do not move the Explorer
 	var explorer: Node = world.get_node("Explorer")
 	_expect(explorer.process_mode == Node.PROCESS_MODE_DISABLED, "Explorer is not held")
 	_expect(world.get_node("LiveTuningDrawer").process_mode == Node.PROCESS_MODE_DISABLED, "world LiveTuningDrawer is not held")
 	_key(KEY_QUOTELEFT, true)
 	_key(KEY_QUOTELEFT, false)
 	await _wait_seconds(0.5)
-	_expect(_menu.get_node_or_null("MenuTuningDrawer") == null, "grave created a menu drawer")
+	var live_drawer: Control = _menu.live_drawer
+	_expect(live_drawer != null and bool(live_drawer.get("IsDrawerOpen")), "grave did not open the Live world drawer")
+	_expect(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "opening the Live world drawer hid the mouse")
 	var world_drawer_visible := false
 	for control in world.get_node("LiveTuningDrawer").find_children("*", "Control", true, false):
 		if (control as Control).is_visible_in_tree():
 			world_drawer_visible = true
 	_expect(not world_drawer_visible, "grave opened the world's live tuning drawer")
+	_key(KEY_QUOTELEFT, true)
+	_key(KEY_QUOTELEFT, false)
+	await _wait_seconds(0.3)
+	_expect(not bool(live_drawer.get("IsDrawerOpen")), "second grave did not close the Live world drawer")
 	var probe = PROBE.new()
 	_expect(probe.Bind(world), "pose probe could not bind")
 	var pose_before: Dictionary = probe.GetPose()

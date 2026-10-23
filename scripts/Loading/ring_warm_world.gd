@@ -71,7 +71,7 @@ func is_busy() -> bool:
 
 ## Begins the background load of `slot_id`. `placement_pose` is the pose of a valid menu snapshot (see RingWorldLoadingBridge.SetPlacementPose).
 ## Returns false when a world exists or the slot cannot be bound.
-func start(slot_id: int, placement_pose: Dictionary = {}) -> bool:
+func start(slot_id: int, placement_pose: Dictionary = {}, cruise: Dictionary = {}) -> bool:
 	if state != State.IDLE:
 		return false
 	var session := get_node_or_null("/root/WorldSession")
@@ -107,7 +107,7 @@ func start(slot_id: int, placement_pose: Dictionary = {}) -> bool:
 		"circumference_m": TAU * float(settings.get("radius_km", 5000.0)) * 1000.0,
 		"width_m": float(settings.get("ring_width_km", 318.0)) * 1000.0,
 		"is_existing": true,
-	}, placement_pose)
+	}, placement_pose, cruise)
 	return true
 
 func _on_world_warm(warm_world: Node, warm_bridge: Node) -> void:

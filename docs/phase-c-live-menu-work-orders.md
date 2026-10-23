@@ -361,6 +361,7 @@ once the warm-world interfaces are fixed) → D3 → D4 → C4 → C5 → C6 →
     four cloud GPU tests. Split out `menu_cloud_history_gpu_test --gameplay-history`.
   - Retarget the menu smoke, grave-menu and docs/README references.
 - **D4, live-world drawer.**
+  - Done: `scripts/ui/MenuLiveWorldSettings.cs` and `MenuLiveWorldTuningDrawer.cs`; the menu owns the drawer (`live_drawer`). Cruise altitude/pitch go to the loader via `RingWarmWorld.start(slot, pose, cruise)`; crossfade and drift are read live by `start_menu.gd` and `menu_boot_cover.drift_amount`. New rows: add a property, a clamp and a drawer row spec.
   - `MenuLiveWorldSettings` / `MenuLiveWorldTuningDrawer`, persisted to
     `resources/menu/menu_live_world_defaults.tres`.
   - Rows: cruise altitude 16 (8–18), cruise pitch −25, crossfade 2.5 s, snapshot

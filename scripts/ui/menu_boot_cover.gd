@@ -4,14 +4,15 @@ extends Control
 ## exists. The menu then calls settle() and crossfade() once the live world is quiet behind it, and retire() to free the cover.
 
 const STARFIELD_SHADER := preload("res://scripts/ui/menu_starfield.gdshader")
-## Start zoom is 1 + DRIFT_AMOUNT; the start offset is (-0.6, +0.25) * DRIFT_AMOUNT of the screen.
-const DRIFT_AMOUNT := 0.08
+## The start offset is (-0.6, +0.25) * drift_amount of the screen.
 const DRIFT_OFFSET := Vector2(-0.6, 0.25)
 const DEFAULT_WARM_SECONDS := 25.0
 ## The drift decays exponentially with tau = warm time / TAU_DIVISOR, so it is nearly at rest when the world is ready.
 const TAU_DIVISOR := 3.0
 const SETTLE_SECONDS := 0.8
 
+## Start zoom is 1 + drift_amount (a fraction of the screen); set from the menu's Live world drawer before the snapshot is shown.
+var drift_amount := 0.08
 ## "snapshot", "starfield", or "" before one of the show_* calls.
 var mode := ""
 var is_retired := false
@@ -192,10 +193,10 @@ func _apply_transform() -> void:
 	if _picture == null:
 		return
 	var factor := _drift_factor()
-	var zoom := 1.0 + DRIFT_AMOUNT * factor
+	var zoom := 1.0 + drift_amount * factor
 	if _settling:
 		zoom *= lerpf(1.0, _end_scale, _settle_progress)
-	var offset := DRIFT_OFFSET * DRIFT_AMOUNT * factor * size
+	var offset := DRIFT_OFFSET * drift_amount * factor * size
 	# Never slide the picture far enough to expose the cover's edge.
 	var limit := maxf(0.0, zoom - 1.0) * 0.5 * size
 	offset = Vector2(clampf(offset.x, -limit.x, limit.x), clampf(offset.y, -limit.y, limit.y))
