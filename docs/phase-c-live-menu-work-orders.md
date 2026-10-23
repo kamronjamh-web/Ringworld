@@ -3,6 +3,14 @@
 Parent plan: `docs/main-menu-revamp-plan.md` (Phase C). This document holds the
 executable work orders and the facts they depend on.
 
+## Status (2026-10-23)
+- **Done and pushed:** C1–C6 and D1–D4. Physical haze became the default along the way.
+- **C7 (Save & Exit to the live menu):** in progress, unfinished and untested. The partial work is in
+  `git stash` as "C7 Save & Exit WIP". Review it before reusing; restarting from the C7 section is also fine.
+- **Remaining:** C7, C9 (tests and docs, including `tools/run_menu_lifecycle_gates.ps1`), C10 (per-screen
+  pitch/FOV poses, never above 18 km).
+- **Untested:** Continue from a real cave save. The test worlds run with caves disabled.
+
 ## Decisions (user, 2026-10-21)
 - **Cruise altitude:** about 16 km, with a hard ceiling of 18 km above ground
   during menu flight.
