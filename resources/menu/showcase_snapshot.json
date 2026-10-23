@@ -1,12 +1,12 @@
 {
-	"captured_unix": 1792771556,
+	"captured_unix": 1792773186,
 	"format_version": 1,
 	"image_size": [
 		2560,
 		1440
 	],
 	"kind": "showcase",
-	"last_warm_ms": 29913.323,
+	"last_warm_ms": 29841.311,
 	"pose": {
 		"across_m": 159000.0,
 		"around_m": 25603470.0,
@@ -18,5 +18,5 @@
 	"render_epoch": 1,
 	"showcase_id": "standard_1337_v1",
 	"state_stamp": {},
-	"sun_elevation_deg": 71.3110046386719
+	"sun_elevation_deg": 71.3262939453125
 }
