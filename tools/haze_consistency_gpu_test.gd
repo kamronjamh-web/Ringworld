@@ -18,8 +18,8 @@ extends SceneTree
 ##   godot --path . --script res://tools/haze_consistency_gpu_test.gd -- --report
 ##   godot --path . --script res://tools/haze_consistency_gpu_test.gd            (assert contracts)
 ## Flags: --report (print table, write baseline JSON, always exit 0), --strict (ignore KNOWN_FAILING),
-##        --model=physical (P2a: the object path uses ring_haze_sample with atmosphere_haze_model = 1; default is Legacy),
-##        --luts (needs --model=physical: renders the production sky from the P7 sky-view LUT vs the analytic function; contracts
+##        --model=physical (default; the object path uses ring_haze_sample with atmosphere_haze_model = 1; --model=legacy selects the Legacy path),
+##        --luts (needs the Physical model, the default: renders the production sky from the P7 sky-view LUT vs the analytic function; contracts
 ##        sky_lut_render_matches_analytic, sky_lut_path_taken (a stale-sun LUT changes the render by >= 5%, proving the LUT is read) and sky_lut_fallback; builds the LUT through scripts/Atmosphere/RingAtmosphereLuts.cs),
 ##        --toward-sun (view azimuth toward the sun instead of away), --cinematic, --altitude=<m>,
 ##        --out=<path> (baseline JSON path; default user://haze_consistency_baseline.json).
@@ -56,7 +56,7 @@ const TOL_INSCATTER_REL := 0.05
 const TOL_CONVERGENCE_REL := 0.15
 const TOL_MONOTONIC := 0.00001
 const TOL_CPU_SKY_PARITY := 0.02
-# P8-1 sky-view LUT (--luts, needs --model=physical): LUT render vs analytic render (LDR centre pixel, relative with a 0.01 floor), and the
+# P8-1 sky-view LUT (--luts, needs the Physical model): LUT render vs analytic render (LDR centre pixel, relative with a 0.01 floor), and the
 # analytic fallback must reproduce the analytic render for a key that does not match the camera.
 const TOL_SKY_LUT_RENDER := 0.02
 const TOL_SKY_LUT_PATH_TAKEN := 0.05
@@ -99,7 +99,7 @@ func _initialize() -> void:
 	_strict = "--strict" in _args
 	_toward_sun = "--toward-sun" in _args
 	_cinematic = "--cinematic" in _args
-	_physical = "--model=physical" in _args
+	_physical = not ("--model=legacy" in _args)
 	_p4_controls = "--p4-controls" in _args
 	_luts_mode = "--luts" in _args
 	for arg in _args:
@@ -136,7 +136,7 @@ func _run() -> void:
 	var lut_contracts: Array = []
 	if _luts_mode:
 		if not _physical:
-			_fail("--luts needs --model=physical")
+			_fail("--luts needs the Physical model (do not pass --model=legacy)")
 			return
 		lut_contracts = await _run_sky_lut_contracts()
 		if _failed: return

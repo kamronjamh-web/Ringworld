@@ -298,10 +298,10 @@ var _published_hub_weight: float = 0.0
 # Inputs of the physical haze model (HazeModel = Physical). Brightness scales the published sun irradiance; the tint is a per-channel
 # multiplier on it (sky, objects and clouds share the published lighting, so they stay consistent). Ground albedo and multi-scatter gain
 # shape the model-derived haze ambient; the night floor is the isotropic ambient with no giant light (starlight, airglow).
-@export_range(0.0, 4.0, 0.01) var haze_brightness: float = 1.0
-@export var haze_sky_tint: Color = Color(1.0, 1.0, 1.0, 1.0)
-@export_range(0.0, 1.0, 0.01) var haze_ground_albedo: float = 0.1
-@export_range(0.0, 2.0, 0.01) var haze_multiscatter_gain: float = 1.0
+@export_range(0.0, 4.0, 0.01) var haze_brightness: float = 0.52
+@export var haze_sky_tint: Color = Color(1.0, 1.0, 1.01, 1.0)
+@export_range(0.0, 1.0, 0.01) var haze_ground_albedo: float = 0.11
+@export_range(0.0, 2.0, 0.01) var haze_multiscatter_gain: float = 0.99
 @export var haze_night_floor: Color = Color(0.004, 0.005, 0.008, 1.0)
 # P9 cloud feedback. Strength of the cloud shadow on the haze's sun term (0 = clear-sky haze always, 1 = full effect). The signal is the
 # Sunshine bridge's camera direct-sun transmittance (cloud shadow at the camera, already smoothed there), smoothed again here at

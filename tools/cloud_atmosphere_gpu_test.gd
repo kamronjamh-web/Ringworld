@@ -2,7 +2,7 @@ extends SceneTree
 
 # Isolated production Sunshine test. No RingSunshineCloudBridge exists here, so
 # callback uploads cannot overwrite the atmosphere profile under test.
-# 16-slot profile (P2b): slots 0-9 Legacy, 10-15 physical haze. Pass `-- --model=physical` to exercise the physical slots.
+# 16-slot profile (P2b): slots 0-9 Legacy, 10-15 physical haze. Physical is the default; pass `-- --model=legacy` for the Legacy slots.
 const SIZE := Vector2i(640, 360)
 const RADIUS := 5000000.0
 const WIDTH := 318000.0
@@ -22,7 +22,7 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	physical = "--model=physical" in OS.get_cmdline_user_args()
+	physical = not ("--model=legacy" in OS.get_cmdline_user_args())
 	_build(); _configure_frozen_field()
 	effect.set("diagnostic_temporal_readback", true)
 	effect.set("ring_atmosphere_profile", _disabled())

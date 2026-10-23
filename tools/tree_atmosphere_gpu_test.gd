@@ -2,8 +2,8 @@ extends SceneTree
 
 ## Production tree haze contract: procedural, imported mesh, and the shared
 ## impostor atlas must all use the same camera-relative atmosphere response.
-## Run:  godot --path . --script res://tools/tree_atmosphere_gpu_test.gd [-- --model=physical]
-## --model=physical selects the P2a physical haze (atmosphere_haze_model = 1); the default is Legacy.
+## Run:  godot --path . --script res://tools/tree_atmosphere_gpu_test.gd [-- --model=legacy]
+## --model=legacy selects the Legacy haze (atmosphere_haze_model = 0); the default is Physical.
 const SIZE := 192
 const OUT := "res://.godot/tree_atmosphere_gpu"
 const BACKGROUND := Color(0.015, 0.02, 0.03, 1.0)
@@ -16,7 +16,7 @@ var nodes := {}
 var materials: Array[ShaderMaterial] = []
 
 func _initialize() -> void:
-	physical = "--model=physical" in OS.get_cmdline_user_args()
+	physical = not ("--model=legacy" in OS.get_cmdline_user_args())
 	if RenderingServer.get_rendering_device() == null:
 		_fail("RenderingDevice required; Dummy renderer is invalid")
 		return

@@ -87,6 +87,14 @@ func _run() -> void:
 	if not bool(replacement_binding.get("passed", false)) or replacement_diagnostics.get("settings_path", "") != _prefs:
 		return _fail("drawer did not rebind to the controller replacement: " + str(replacement_binding))
 
+	# Physical is the default haze model (and the user's current look): a fresh profile starts Physical with the Physical controls shown.
+	var default_diag := _graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary
+	var default_model := _drawer.find_child("AtmosphereHazeModel", true, false) as OptionButton
+	if int(default_diag.get("haze_model", -1)) != 1 or int(default_diag.get("preset", -1)) != 1 or int(default_diag.get("haze_quality", -1)) != 4 \
+			or not is_equal_approx(float(default_diag.get("visibility_km", -1.0)), 400.0) or not is_equal_approx(float(default_diag.get("density", -1.0)), 0.5) \
+			or default_model == null or default_model.selected != 1:
+		return _fail("fresh atmosphere profile did not default to the Physical model and the current in-game values: " + str(default_diag))
+
 	# Use controls and their connected signals, not the drawer's direct helpers.
 	preset.select(1)
 	preset.item_selected.emit(1)
@@ -117,7 +125,7 @@ func _run() -> void:
 	for check_name in ["AtmospherePoiHaze", "AtmospherePoiCloudShadow"]:
 		if _drawer.find_child(check_name, true, false) != null:
 			return _fail("%s must not be exposed in the menu" % check_name)
-	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("haze_quality", -1)) != 8 or not is_equal_approx(rayleigh.value, 1.0):
+	if int((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("haze_quality", -1)) != 4 or not is_equal_approx(rayleigh.value, 1.0):
 		return _fail("physical haze controls do not default to the current effective values")
 	var cloud_shadowing := _drawer.find_child("AtmosphereCloudShadowing", true, false) as HSlider
 	if not is_equal_approx(cloud_shadowing.value, 1.0):
@@ -182,9 +190,11 @@ func _run() -> void:
 	reset.pressed.emit()
 	await process_frame
 	p4_diag = _graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary
-	if not is_equal_approx(float(p4_diag.get("haze_rayleigh_strength", -1.0)), 1.0) or int(p4_diag.get("haze_quality", -1)) != 8 or not is_equal_approx(rayleigh.value, 1.0):
+	if not is_equal_approx(float(p4_diag.get("haze_rayleigh_strength", -1.0)), 1.0) or int(p4_diag.get("haze_quality", -1)) != 4 or not is_equal_approx(rayleigh.value, 1.0):
 		return _fail("atmosphere reset did not restore the physical haze controls")
-	if not is_equal_approx(float((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("density", -1.0)), 1.0) or not is_equal_approx(density.value, 1.0):
+	if int(p4_diag.get("haze_model", -1)) != 1 or int(p4_diag.get("preset", -1)) != 1 or not is_equal_approx(float(p4_diag.get("visibility_km", -1.0)), 400.0) or haze_model.selected != 1:
+		return _fail("atmosphere reset did not restore the Physical model default")
+	if not is_equal_approx(float((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("density", -1.0)), 0.5) or not is_equal_approx(density.value, 0.5):
 		return _fail("atmosphere reset did not update both model and slider")
 
 	# Replacing the controller profile after the drawer is ready must rebind the

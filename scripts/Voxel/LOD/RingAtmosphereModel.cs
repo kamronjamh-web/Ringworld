@@ -36,13 +36,13 @@ public static class RingAtmosphereModel
 
     private static readonly List<MaterialBinding> Materials = new();
     private static bool _enabled = true;
-    private static ArtDirectionPreset _artPreset = ArtDirectionPreset.Natural;
+    private static ArtDirectionPreset _artPreset = ArtDirectionPreset.Cinematic;
     private static float _visibilityFullKm = 120.0f, _density = 1.0f, _altitudeFalloff = 0.5f;
     private static float _aerosol = 0.35f, _forwardScattering = 0.22f, _sunWarmth = 0.25f;
-    private static HazeModelKind _hazeModel = HazeModelKind.Legacy;
+    private static HazeModelKind _hazeModel = HazeModelKind.Physical;
     public static ulong Revision { get; private set; }
     /// <summary>Physical-haze sun irradiance multiplier set from the Atmosphere tab; the graphics controller forwards it to DaySideAtmosphere.haze_brightness.</summary>
-    public static float HazeBrightness { get; set; } = 1.0f;
+    public static float HazeBrightness { get; set; } = 0.52f;
     /// <summary>P9 cloud shadowing of the haze sun term (0-1) set from the Atmosphere tab; forwarded to DaySideAtmosphere.haze_cloud_shadowing.</summary>
     public static float HazeCloudShadowing { get; set; } = 1.0f;
     /// <summary>P6 gain (0-1) on the cave/underwater Godot-fog fade of Sunshine clouds, set from the Atmosphere tab; RingSunshineCloudBridge multiplies it into the fog weight.</summary>
@@ -127,10 +127,10 @@ public static class RingAtmosphereModel
     public static float HazeG { get; private set; } = BaseMieG;
     public static Vector3 HazeSunTint { get; private set; } = Vector3.One;
     /// <summary>Gauss-Legendre points of the optical-depth quadrature (4/8/16). Set through <see cref="SetPhysicalControls"/>.</summary>
-    public static int HazeQuality { get; private set; } = 8;
+    public static int HazeQuality { get; private set; } = 4;
     // ---- Physical-only live controls (P4). Defaults reproduce the pre-P4 mapping exactly. Set via SetPhysicalControls, which
     // ApplyArtDirection must follow (AtmosphereVisualDefaults.Apply does both) so the profile, Revision and every material update. ----
-    public const float GroundAlbedoControlDefault = 0.1f, MultiscatterGainControlDefault = 1.0f;
+    public const float GroundAlbedoControlDefault = 0.11f, MultiscatterGainControlDefault = 0.99f;
     /// <summary>Multiplier on sigma_M0 (after the aerosol-control and density mapping).</summary>
     public static float HazeMistDensityScale { get; private set; } = 1.0f;
     /// <summary>Base mist scale height H_mist (m); the altitude-falloff control still scales it (x2 .. x0.5).</summary>
@@ -144,7 +144,7 @@ public static class RingAtmosphereModel
     /// <summary>Multi-scatter gain (DaySideAtmosphere.haze_multiscatter_gain).</summary>
     public static float HazeMultiscatterGain { get; private set; } = MultiscatterGainControlDefault;
     /// <summary>Per-channel tint on the haze sun/sky irradiance (DaySideAtmosphere.haze_sky_tint).</summary>
-    public static Vector3 HazeSkyTint { get; private set; } = Vector3.One;
+    public static Vector3 HazeSkyTint { get; private set; } = new(1.0f, 1.0f, 1.01f);
 
     public static void SetPhysicalControls(float mistDensityScale, float mistHeightMeters, float aerosolHeightMeters, float rayleighStrength,
         float groundAlbedo, float multiscatterGain, Vector3 skyTint, int quality)

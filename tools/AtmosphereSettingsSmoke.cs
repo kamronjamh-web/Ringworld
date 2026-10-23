@@ -24,7 +24,7 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         reload.Initialize();
         bool persisted = reload.Settings.Preset == 1 && float.IsFinite(reload.Settings.Density);
         reload.Reset();
-        bool reset = reload.Settings.Preset == 0 && Mathf.IsEqualApprox(reload.Settings.VisibilityFullKm, 120.0f);
+        bool reset = reload.Settings.Preset == 1 && Mathf.IsEqualApprox(reload.Settings.VisibilityFullKm, 400.0f) && reload.Settings.HazeModel == 1;
         bool ContractAtBothRadii() => RingAtmosphereModel.RunContractSelfTest(1_000.0, out _)
             && RingAtmosphereModel.RunContractSelfTest(CertifiedRingScale.EffectiveRadiusMeters, out _)
             && RingAtmosphereModel.RunContractSelfTest(MegaRingScale.EffectiveRadiusMeters, out _);
@@ -35,10 +35,12 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         bool zeroDensityContract = ContractAtBothRadii();
         RingAtmosphereModel.Enabled = false;
         bool disabledContract = ContractAtBothRadii();
-        // Physical haze A/B toggle: applied to the model, contract holds, persisted, and a file written before the toggle existed
-        // (no HazeModel line) loads as Legacy with every other value intact.
+        // Physical is the default haze model: a fresh profile loads Physical, a saved file persists it, a file without a HazeModel line loads Physical,
+        // and a pre-marker file (no SettingsVersion line) that saved Legacy is migrated once. A Legacy choice made after the migration persists.
         RingAtmosphereModel.Enabled = true;
         defaults.Reset();
+        bool freshPhysical = defaults.Settings.HazeModel == 1 && defaults.Settings.SettingsVersion == AtmosphereVisualSettings.CurrentSettingsVersion
+            && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical;
         defaults.SetPreset(1);
         defaults.SetHazeModel(1);
         bool hazePhysical = RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical && ContractAtBothRadii();
@@ -49,14 +51,42 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         string absolute = ProjectSettings.GlobalizePath(isolatedPath);
         string text = System.IO.File.ReadAllText(absolute);
         string stripped = string.Join('\n', System.Array.FindAll(text.Split('\n'), line => !line.StartsWith("HazeModel")));
-        bool hazeLineWritten = stripped.Length < text.Length;
         System.IO.File.WriteAllText(absolute, stripped);
-        var legacyFile = new AtmosphereVisualDefaults(isolatedPath);
-        legacyFile.Initialize();
-        bool oldFileLoads = hazeLineWritten && legacyFile.Settings.HazeModel == 0 && legacyFile.Settings.Preset == 1
-            && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Legacy;
-        bool hazeToggle = hazePhysical && hazeSaved && hazePersisted && oldFileLoads;
-        // Haze brightness: applied to the model, persisted, and a file written before the control existed loads as 1.
+        var noLineFile = new AtmosphereVisualDefaults(isolatedPath);
+        noLineFile.Initialize();
+        bool oldFileLoads = noLineFile.Settings.HazeModel == 1 && noLineFile.Settings.Preset == 1
+            && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical;
+        // Explicit Legacy in a pre-marker file: migrated once, other saved values untouched.
+        var legacySave = new AtmosphereVisualDefaults(isolatedPath);
+        legacySave.Reset();
+        legacySave.Set("Density", 0.8f);
+        legacySave.SetHazeModel(0);
+        bool legacySaved = legacySave.Save();
+        string legacyText = System.IO.File.ReadAllText(absolute);
+        bool legacyLine = legacyText.Contains("HazeModel = 0") && legacyText.Contains("SettingsVersion = 1");
+        string preMarker = string.Join('\n', System.Array.FindAll(legacyText.Split('\n'), line => !line.StartsWith("SettingsVersion")));
+        System.IO.File.WriteAllText(absolute, preMarker);
+        var migrated = new AtmosphereVisualDefaults(isolatedPath);
+        migrated.Initialize();
+        bool migratedOnce = legacySaved && legacyLine && migrated.Settings.HazeModel == 1 && migrated.Settings.SettingsVersion == AtmosphereVisualSettings.CurrentSettingsVersion
+            && Mathf.IsEqualApprox(migrated.Settings.Density, 0.8f) && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical;
+        // A deliberate Legacy choice after the migration persists across reloads.
+        migrated.SetHazeModel(0);
+        bool postLegacySaved = migrated.Save();
+        var postLegacy = new AtmosphereVisualDefaults(isolatedPath);
+        postLegacy.Initialize();
+        bool legacyPersists = postLegacySaved && postLegacy.Settings.HazeModel == 0 && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Legacy;
+        postLegacy.SetHazeModel(1);
+        // A pre-marker file keeps the OLD default for keys it omitted (Godot omits values equal to the old class default), so only HazeModel changes.
+        System.IO.File.WriteAllText(absolute, "[gd_resource type=\"Resource\" format=3]\n\n[ext_resource type=\"Script\" path=\"res://scripts/ui/AtmosphereVisualSettings.cs\" id=\"1_x\"]\n\n[resource]\nscript = ExtResource(\"1_x\")\nHazeModel = 0\nDensity = 0.7\n");
+        var sparse = new AtmosphereVisualDefaults(isolatedPath);
+        sparse.Initialize();
+        bool omittedKeepOld = sparse.Settings.HazeModel == 1 && Mathf.IsEqualApprox(sparse.Settings.Density, 0.7f) && sparse.Settings.Preset == 0
+            && Mathf.IsEqualApprox(sparse.Settings.VisibilityFullKm, 120.0f) && Mathf.IsEqualApprox(sparse.Settings.HazeBrightness, 1.0f) && sparse.Settings.HazeQuality == 8;
+        bool hazeToggle = freshPhysical && hazePhysical && hazeSaved && hazePersisted && oldFileLoads && migratedOnce && legacyPersists && omittedKeepOld;
+        defaults.Reset();
+        defaults.Save();
+        // Haze brightness: applied to the model, persisted, and a file written without the key loads the default (0.52).
         defaults.Set("HazeBrightness", 0.4f);
         bool brightApplied = Mathf.IsEqualApprox(RingAtmosphereModel.HazeBrightness, 0.4f);
         bool brightSaved = defaults.Save();
@@ -69,22 +99,23 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         System.IO.File.WriteAllText(absolute, brightStripped);
         var brightOld = new AtmosphereVisualDefaults(isolatedPath);
         brightOld.Initialize();
-        bool brightOldFile = brightLineWritten && Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 1.0f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeBrightness, 1.0f);
+        bool brightOldFile = brightLineWritten && Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 0.52f) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeBrightness, 0.52f);
         brightOld.Set("HazeBrightness", float.NaN);
-        bool brightSane = Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 1.0f);
+        bool brightSane = Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 0.52f);
         brightOld.Set("HazeBrightness", 99.0f);
         brightSane = brightSane && Mathf.IsEqualApprox(brightOld.Settings.HazeBrightness, 2.0f);
         bool hazeBrightness = brightApplied && brightSaved && brightPersisted && brightOldFile && brightSane;
         // P4 physical controls: defaults are the identity, applied to the model, persisted, clamped, old files load defaults, Reset restores.
         var p4 = new AtmosphereVisualDefaults(isolatedPath);
         p4.Reset();
+        p4.Set("Aerosol", 0.35f); p4.Set("Altitude", 0.5f); // nominal mist/heights (the new defaults have no mist and falloff 1)
         float nominalSigmaMist = RingAtmosphereModel.HazeSigmaMist, nominalSigmaR = RingAtmosphereModel.HazeSigmaRayleigh.X;
         float nominalHMist = RingAtmosphereModel.HazeMistHeightMeters, nominalHA = RingAtmosphereModel.HazeAerosolHeightMeters;
         bool p4Defaults = p4.Settings.MistDensity == 1.0f && p4.Settings.MistHeight == 400.0f && p4.Settings.AerosolHeight == 1500.0f
-            && p4.Settings.RayleighStrength == 1.0f && Mathf.IsEqualApprox(p4.Settings.GroundAlbedo, 0.1f) && p4.Settings.MultiScatter == 1.0f
-            && p4.Settings.SkyTintR == 1.0f && p4.Settings.SkyTintG == 1.0f && p4.Settings.SkyTintB == 1.0f && p4.Settings.HazeQuality == 8
-            && RingAtmosphereModel.HazeQuality == 8 && Mathf.IsEqualApprox(nominalHMist, 400.0f) && Mathf.IsEqualApprox(nominalHA, 1500.0f)
-            && RingAtmosphereModel.HazeSkyTint == Vector3.One && Mathf.IsEqualApprox(RingAtmosphereModel.HazeGroundAlbedo, 0.1f);
+            && p4.Settings.RayleighStrength == 1.0f && Mathf.IsEqualApprox(p4.Settings.GroundAlbedo, 0.11f) && Mathf.IsEqualApprox(p4.Settings.MultiScatter, 0.99f)
+            && p4.Settings.SkyTintR == 1.0f && p4.Settings.SkyTintG == 1.0f && Mathf.IsEqualApprox(p4.Settings.SkyTintB, 1.01f) && p4.Settings.HazeQuality == 4
+            && RingAtmosphereModel.HazeQuality == 4 && Mathf.IsEqualApprox(nominalHMist, 400.0f) && Mathf.IsEqualApprox(nominalHA, 1500.0f)
+            && RingAtmosphereModel.HazeSkyTint.IsEqualApprox(new Vector3(1.0f, 1.0f, 1.01f)) && Mathf.IsEqualApprox(RingAtmosphereModel.HazeGroundAlbedo, 0.11f);
         ulong revisionBefore = RingAtmosphereModel.Revision;
         p4.Set("RayleighStrength", 1.5f); p4.Set("MistDensity", 2.0f); p4.Set("MistHeight", 800.0f); p4.Set("AerosolHeight", 3000.0f);
         p4.Set("GroundAlbedo", 0.3f); p4.Set("MultiScatter", 2.0f); p4.Set("SkyTintB", 0.5f); p4.SetHazeQuality(16);
@@ -107,7 +138,7 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         p4Reload.Set("RayleighStrength", float.NaN); p4Reload.Set("MistDensity", 99.0f); p4Reload.Set("MistHeight", -5.0f); p4Reload.Set("AerosolHeight", 1.0e9f);
         p4Reload.Set("GroundAlbedo", 7.0f); p4Reload.Set("MultiScatter", float.PositiveInfinity); p4Reload.Set("SkyTintR", -2.0f); p4Reload.SetHazeQuality(11);
         bool p4Clamped = p4Reload.Settings.RayleighStrength == 1.0f && p4Reload.Settings.MistDensity == 5.0f && p4Reload.Settings.MistHeight == 50.0f
-            && p4Reload.Settings.AerosolHeight == 5000.0f && p4Reload.Settings.GroundAlbedo == 0.5f && p4Reload.Settings.MultiScatter == 1.0f
+            && p4Reload.Settings.AerosolHeight == 5000.0f && p4Reload.Settings.GroundAlbedo == 0.5f && Mathf.IsEqualApprox(p4Reload.Settings.MultiScatter, 0.99f)
             && p4Reload.Settings.SkyTintR == 0.0f && p4Reload.Settings.HazeQuality == 8 && RingAtmosphereModel.HazeQuality == 8;
         p4Reload.SetHazeQuality(100);
         p4Clamped = p4Clamped && p4Reload.Settings.HazeQuality == 16;
@@ -121,12 +152,12 @@ public partial class AtmosphereSettingsSmoke : RefCounted
         var p4Old = new AtmosphereVisualDefaults(isolatedPath);
         p4Old.Initialize();
         bool p4OldFile = p4LinesWritten && p4Old.Settings.MistDensity == 1.0f && p4Old.Settings.MistHeight == 400.0f && p4Old.Settings.AerosolHeight == 1500.0f
-            && p4Old.Settings.RayleighStrength == 1.0f && Mathf.IsEqualApprox(p4Old.Settings.GroundAlbedo, 0.1f) && p4Old.Settings.HazeQuality == 8
-            && RingAtmosphereModel.HazeQuality == 8 && Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 400.0f)
+            && p4Old.Settings.RayleighStrength == 1.0f && Mathf.IsEqualApprox(p4Old.Settings.GroundAlbedo, 0.11f) && p4Old.Settings.HazeQuality == 4
+            && RingAtmosphereModel.HazeQuality == 4 && Mathf.IsEqualApprox(RingAtmosphereModel.HazeMistHeightMeters, 400.0f)
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSigmaRayleigh.X, nominalSigmaR);
-        p4Old.Set("RayleighStrength", 2.0f); p4Old.SetHazeQuality(4);
+        p4Old.Set("RayleighStrength", 2.0f); p4Old.SetHazeQuality(16);
         p4Old.Reset();
-        bool p4Reset = p4Old.Settings.RayleighStrength == 1.0f && p4Old.Settings.HazeQuality == 8 && RingAtmosphereModel.HazeQuality == 8
+        bool p4Reset = p4Old.Settings.RayleighStrength == 1.0f && p4Old.Settings.HazeQuality == 4 && RingAtmosphereModel.HazeQuality == 4
             && Mathf.IsEqualApprox(RingAtmosphereModel.HazeSigmaRayleigh.X, nominalSigmaR);
         bool p4Contract = ContractAtBothRadii();
         // P9 cloud shadowing: default 1, applied to the model, persisted, clamped to 0-1, old files load 1, Reset restores.

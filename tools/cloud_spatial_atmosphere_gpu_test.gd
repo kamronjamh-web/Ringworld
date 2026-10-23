@@ -4,8 +4,8 @@ extends SceneTree
 # isolated World3D and renders each shader with the same physical camera frame.
 # Run from a normal Forward+ display session. Headless execution is only useful
 # with --check-only to parse this fixture.
-# Run:  godot --path . --script res://tools/cloud_spatial_atmosphere_gpu_test.gd [-- --model=physical]
-# --model=physical selects the P2a physical haze (atmosphere_haze_model = 1); the default is Legacy.
+# Run:  godot --path . --script res://tools/cloud_spatial_atmosphere_gpu_test.gd [-- --model=legacy]
+# --model=legacy selects the Legacy haze (atmosphere_haze_model = 0); the default is Physical.
 const WATCHDOG_SECONDS := 30.0
 const VIEW_SIZE := Vector2i(96, 96)
 const CAMERA_WORLD := Vector3(100.0, 0.0, 0.0)
@@ -22,7 +22,7 @@ var _physical := false
 var _white_weather: ImageTexture
 
 func _init() -> void:
-	_physical = "--model=physical" in OS.get_cmdline_user_args()
+	_physical = not ("--model=legacy" in OS.get_cmdline_user_args())
 	_watchdog = create_timer(WATCHDOG_SECONDS)
 	_watchdog.timeout.connect(_watchdog_expired)
 	call_deferred("_run")

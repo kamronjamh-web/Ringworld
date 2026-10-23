@@ -1,8 +1,8 @@
 extends SceneTree
 # Short, matched Vulkan visual capture. Every shot resets the exact canonical
 # ground/high-altitude pose and presentation view before temporal settling.
-# Run:  godot --path . --script res://tools/atmosphere_visual_test.gd [-- --model=physical] [--copy-to=<absolute dir>]
-# --model=physical switches the P2a haze A/B toggle (drawer SetAtmosphereHazeModel) before any capture; the default is Legacy.
+# Run:  godot --path . --script res://tools/atmosphere_visual_test.gd [-- --model=legacy] [--copy-to=<absolute dir>]
+# --model=legacy switches the haze A/B toggle (drawer SetAtmosphereHazeModel) before any capture; the default is Physical.
 # --labels=a,b,c limits captures to labels ending with one of the suffixes (natural profile only).
 # --copy-to also writes every capture PNG into the given directory (prefixed by the model) so runs can be compared.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
@@ -24,7 +24,7 @@ var trees: Node
 var global_terrain: Node
 var placement: RefCounted
 var report := {"status":"RUNNING", "captures":[]}
-var haze_model_physical := false
+var haze_model_physical := true
 var copy_dir := ""
 var albedo_overrides := {}
 var haze_brightness_override := -1.0
@@ -43,7 +43,7 @@ func _init() -> void: call_deferred("run")
 func run() -> void:
 	if RenderingServer.get_rendering_device() == null: return fail("requires Vulkan/Forward+")
 	for argument in OS.get_cmdline_user_args():
-		if argument == "--model=physical": haze_model_physical = true
+		if argument == "--model=legacy": haze_model_physical = false
 		elif argument.begins_with("--copy-to="): copy_dir = argument.get_slice("=", 1)
 		elif argument.begins_with("--terrain-albedo="): albedo_overrides["ringworld_terrain_albedo_scale"] = float(argument.get_slice("=", 1))
 		elif argument.begins_with("--grass-albedo="): albedo_overrides["ringworld_grass_albedo_scale"] = float(argument.get_slice("=", 1))

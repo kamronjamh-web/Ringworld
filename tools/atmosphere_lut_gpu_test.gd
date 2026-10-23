@@ -599,7 +599,7 @@ func _cleanup() -> void:
 		_luts.call("Release")
 		_luts = null
 	if _helper != null:
-		_helper.SetHazeModel(0)
+		_helper.SetHazeModel(1)
 
 func _fail(message: String) -> void:
 	if _failed:

@@ -41,8 +41,8 @@ func run() -> void:
 	profile[7] = Vector4(0,-1,0,100)
 	profile[8] = Vector4(0,0,1,159000)
 	profile[9] = Vector4(0,1,0,159000)
-	# `-- --model=physical` exercises slots 10-15 (physical haze); the zero-density step then zeroes every extinction instead of the Legacy caps.
-	var physical := "--model=physical" in OS.get_cmdline_user_args()
+	# Physical is the default (slots 10-15); `-- --model=legacy` exercises the Legacy caps; the zero-density step then zeroes every extinction instead of the Legacy caps.
+	var physical := not ("--model=legacy" in OS.get_cmdline_user_args())
 	if physical:
 		profile[10] = Vector4(1, 1, 5.802e-6, 13.558e-6)
 		profile[11] = Vector4(33.1e-6, 8000, 4.175e-6, .9)

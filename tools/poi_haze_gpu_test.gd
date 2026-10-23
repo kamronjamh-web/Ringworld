@@ -1,8 +1,8 @@
 extends SceneTree
 
 ## POI architecture shader contract (ring_poi_architecture*.gdshader). Needs a GPU renderer: run WINDOWED.
-## Run:  Godot_v4.8-dev7_mono_win64.exe --path . --script res://tools/poi_haze_gpu_test.gd [-- --model=physical]
-## --model=physical selects the P2a physical haze (atmosphere_haze_model = 1); the default is Legacy.
+## Run:  Godot_v4.8-dev7_mono_win64.exe --path . --script res://tools/poi_haze_gpu_test.gd [-- --model=legacy]
+## --model=legacy selects the Legacy haze (atmosphere_haze_model = 0); the default is Physical.
 const SIZE := 160
 const OUT := "res://.godot/poi_haze_gpu"
 const BACKGROUND := Color(0.015, 0.02, 0.03, 1.0)
@@ -32,7 +32,7 @@ void fragment() {
 """
 
 func _initialize() -> void:
-	physical = "--model=physical" in OS.get_cmdline_user_args()
+	physical = not ("--model=legacy" in OS.get_cmdline_user_args())
 	if RenderingServer.get_rendering_device() == null:
 		_fail("RenderingDevice required; Dummy renderer is invalid")
 		return

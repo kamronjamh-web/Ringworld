@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using Godot;
 using RingworldTechDemo.Atmosphere;
@@ -9,7 +10,7 @@ namespace RingworldTechDemo.UI;
 public sealed class AtmosphereVisualDefaults
 {
     public const string UserPath = "user://atmosphere_visual_defaults.tres";
-    public AtmosphereVisualSettings Settings { get; private set; } = new();
+    public AtmosphereVisualSettings Settings { get; private set; } = new() { SettingsVersion = AtmosphereVisualSettings.CurrentSettingsVersion };
     public string Path => _path ?? UserPath;
     public bool Dirty { get; private set; }
     public string LastError { get; private set; } = "";
@@ -55,7 +56,7 @@ public sealed class AtmosphereVisualDefaults
             case "SkyTintR": Settings.SkyTintR = value; break;
             case "SkyTintG": Settings.SkyTintG = value; break;
             case "SkyTintB": Settings.SkyTintB = value; break;
-            case "HazeQuality": Settings.HazeQuality = float.IsFinite(value) ? (int)Mathf.Round(value) : 8; break;
+            case "HazeQuality": Settings.HazeQuality = float.IsFinite(value) ? (int)Mathf.Round(value) : 4; break;
             default: return;
         }
         Sanitize(); Dirty = true; Apply();
@@ -87,7 +88,7 @@ public sealed class AtmosphereVisualDefaults
         else { Settings.VisibilityFullKm=60; Settings.Density=1.5f; Settings.AltitudeFalloff=.5f; Settings.Aerosol=.65f; Settings.ForwardScattering=.55f; Settings.SunWarmth=.6f; }
         Sanitize(); Dirty = true; Apply();
     }
-    public void Reset() { Settings = new(); Sanitize(); Dirty = true; Apply(); }
+    public void Reset() { Settings = new() { SettingsVersion = AtmosphereVisualSettings.CurrentSettingsVersion }; Sanitize(); Dirty = true; Apply(); }
     public bool Save()
     {
         if (!Dirty) return true;
@@ -98,20 +99,47 @@ public sealed class AtmosphereVisualDefaults
     }
     private void Load()
     {
-        try { string path=_path ?? UserPath; if (ResourceLoader.Exists(path) && ResourceLoader.Load<AtmosphereVisualSettings>(path, cacheMode: ResourceLoader.CacheMode.Ignore) is { } loaded) Settings=loaded; }
+        try { string path=_path ?? UserPath; if (ResourceLoader.Exists(path) && ResourceLoader.Load<AtmosphereVisualSettings>(path, cacheMode: ResourceLoader.CacheMode.Ignore) is { } loaded) { Settings=loaded; Migrate(path); } }
         catch(Exception error) { LastError=error.Message; }
+    }
+    /// <summary>One-time migration: files written before Physical became the default (SettingsVersion 0) move to Physical, whether they saved Legacy
+    /// explicitly or carried no HazeModel line. The stamp keeps a later deliberate Legacy choice. Only HazeModel changes: Godot omits properties that equal the
+    /// class default when saving, so a key missing from a pre-marker file meant the OLD default, and is restored to it rather than silently picking up the new one.</summary>
+    private void Migrate(string path)
+    {
+        if (Settings.SettingsVersion >= AtmosphereVisualSettings.CurrentSettingsVersion) return;
+        HashSet<string> present = new();
+        try { foreach (string line in File.ReadAllLines(ProjectSettings.GlobalizePath(path))) { int eq = line.IndexOf('='); if (eq > 0) present.Add(line.Substring(0, eq).Trim()); } }
+        catch { present = null!; }
+        if (present != null)
+        {
+            if (!present.Contains("Preset")) Settings.Preset = 0;
+            if (!present.Contains("VisibilityFullKm")) Settings.VisibilityFullKm = 120.0f;
+            if (!present.Contains("Density")) Settings.Density = 1.0f;
+            if (!present.Contains("AltitudeFalloff")) Settings.AltitudeFalloff = 0.5f;
+            if (!present.Contains("Aerosol")) Settings.Aerosol = 0.35f;
+            if (!present.Contains("ForwardScattering")) Settings.ForwardScattering = 0.22f;
+            if (!present.Contains("SunWarmth")) Settings.SunWarmth = 0.25f;
+            if (!present.Contains("HazeBrightness")) Settings.HazeBrightness = 1.0f;
+            if (!present.Contains("GroundAlbedo")) Settings.GroundAlbedo = 0.1f;
+            if (!present.Contains("MultiScatter")) Settings.MultiScatter = 1.0f;
+            if (!present.Contains("SkyTintB")) Settings.SkyTintB = 1.0f;
+            if (!present.Contains("HazeQuality")) Settings.HazeQuality = 8;
+        }
+        Settings.HazeModel = 1;
+        Settings.SettingsVersion = AtmosphereVisualSettings.CurrentSettingsVersion;
     }
     private void Sanitize()
     {
         Settings.Preset = Mathf.Clamp(Settings.Preset, 0, 1);
         Settings.HazeModel = Mathf.Clamp(Settings.HazeModel, 0, 1);
-        Settings.VisibilityFullKm = Clean(Settings.VisibilityFullKm, 120, 10, 400);
-        Settings.Density = Clean(Settings.Density, 1, 0, 2);
-        Settings.AltitudeFalloff = Clean(Settings.AltitudeFalloff, .5f, 0, 1);
-        Settings.Aerosol = Clean(Settings.Aerosol, .35f, 0, 1);
-        Settings.ForwardScattering = Clean(Settings.ForwardScattering, .22f, 0, .85f);
-        Settings.SunWarmth = Clean(Settings.SunWarmth, .25f, 0, 1);
-        Settings.HazeBrightness = Clean(Settings.HazeBrightness, 1, 0, 2);
+        Settings.VisibilityFullKm = Clean(Settings.VisibilityFullKm, 400, 10, 400);
+        Settings.Density = Clean(Settings.Density, .5f, 0, 2);
+        Settings.AltitudeFalloff = Clean(Settings.AltitudeFalloff, 1, 0, 1);
+        Settings.Aerosol = Clean(Settings.Aerosol, 0, 0, 1);
+        Settings.ForwardScattering = Clean(Settings.ForwardScattering, 0, 0, .85f);
+        Settings.SunWarmth = Clean(Settings.SunWarmth, 0, 0, 1);
+        Settings.HazeBrightness = Clean(Settings.HazeBrightness, .52f, 0, 2);
         Settings.CloudShadowing = Clean(Settings.CloudShadowing, 1, 0, 1);
         Settings.StormHaze = Clean(Settings.StormHaze, 1, 0, 1);
         Settings.EnclosedCloudFog = Clean(Settings.EnclosedCloudFog, 1, 0, 1);
@@ -119,11 +147,11 @@ public sealed class AtmosphereVisualDefaults
         Settings.MistHeight = Clean(Settings.MistHeight, 400, 50, 2000);
         Settings.AerosolHeight = Clean(Settings.AerosolHeight, 1500, 200, 5000);
         Settings.RayleighStrength = Clean(Settings.RayleighStrength, 1, 0, 3);
-        Settings.GroundAlbedo = Clean(Settings.GroundAlbedo, .1f, 0, .5f);
-        Settings.MultiScatter = Clean(Settings.MultiScatter, 1, 0, 3);
+        Settings.GroundAlbedo = Clean(Settings.GroundAlbedo, .11f, 0, .5f);
+        Settings.MultiScatter = Clean(Settings.MultiScatter, .99f, 0, 3);
         Settings.SkyTintR = Clean(Settings.SkyTintR, 1, 0, 2);
         Settings.SkyTintG = Clean(Settings.SkyTintG, 1, 0, 2);
-        Settings.SkyTintB = Clean(Settings.SkyTintB, 1, 0, 2);
+        Settings.SkyTintB = Clean(Settings.SkyTintB, 1.01f, 0, 2);
         Settings.HazeQuality = Settings.HazeQuality <= 6 ? 4 : Settings.HazeQuality <= 11 ? 8 : 16;
     }
     private static float Clean(float value, float fallback, float minimum, float maximum) => float.IsFinite(value) ? Mathf.Clamp(value, minimum, maximum) : fallback;
