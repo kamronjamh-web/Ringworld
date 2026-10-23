@@ -429,6 +429,57 @@ public partial class RingWorldLoadingBridge : Node
         return result;
     }
 
+    /// <summary>
+    /// Saved player pose of the held world ({valid, around_m, vertical_m, across_m, yaw_deg, pitch_deg}): the staged save document when there
+    /// is one, otherwise the explorer's current pose. The menu loiters around it.
+    /// </summary>
+    public Godot.Collections.Dictionary GetHomePose()
+    {
+        var result = new Godot.Collections.Dictionary { ["valid"] = false };
+        if (_saves != null && GodotObject.IsInstanceValid(_saves)
+            && _saves.TryGetStagedPlayerPose(out RingCanonicalPosition staged, out float yaw, out float pitch))
+        {
+            result["valid"] = true;
+            result["around_m"] = staged.AroundMeters;
+            result["vertical_m"] = staged.VerticalMeters;
+            result["across_m"] = staged.AcrossMeters;
+            result["yaw_deg"] = Mathf.RadToDeg(yaw);
+            result["pitch_deg"] = pitch;
+            return result;
+        }
+        return GetCameraPose();
+    }
+
+    /// <summary>Holds or resumes every save of the held world (a menu flight must never write).</summary>
+    public void HoldSaves(bool hold)
+    {
+        if (_saves != null && GodotObject.IsInstanceValid(_saves)) _saves.HoldSaves(hold);
+    }
+
+    /// <summary>
+    /// Lets the held explorer run its physics step under a flight director: the node is un-held but the body ignores all input. Returns it
+    /// (null when unavailable). Saves stay held.
+    /// </summary>
+    public RingVoxelExplorerController? BeginScriptedFlight()
+    {
+        if (_explorer == null || !GodotObject.IsInstanceValid(_explorer)) return null;
+        HoldSaves(true);
+        if (_held.Remove(_explorer, out ProcessModeEnum mode)) _explorer.ProcessMode = mode;
+        return _explorer.BeginScriptedFlight() ? _explorer : null;
+    }
+
+    /// <summary>Returns the explorer to the held state used while a world is parked behind the menu.</summary>
+    public void EndScriptedFlight()
+    {
+        if (_explorer == null || !GodotObject.IsInstanceValid(_explorer)) return;
+        _explorer.EndScriptedFlight();
+        if (!_held.ContainsKey(_explorer))
+        {
+            _held[_explorer] = _explorer.ProcessMode;
+            _explorer.ProcessMode = ProcessModeEnum.Disabled;
+        }
+    }
+
     /// <summary>Freezes the celestial and cloud clocks (the menu shows the saved time of day). Nothing is saved while the world is held.</summary>
     public void PauseClocks(bool paused)
     {

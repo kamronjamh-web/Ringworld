@@ -20,6 +20,8 @@ public partial class MenuLiveWorldSettings : Resource
     [Export] public float CrossfadeSeconds { get; set; } = 2.5f;
     /// <summary>Starting zoom of the boot snapshot's Ken Burns drift, as a percentage of the screen.</summary>
     [Export] public float SnapshotDriftPercent { get; set; } = 8f;
+    /// <summary>The live menu camera loiters within this distance of your save spot.</summary>
+    [Export] public float LoiterRadiusKm { get; set; } = 30f;
 
     public void Sanitize()
     {
@@ -27,6 +29,7 @@ public partial class MenuLiveWorldSettings : Resource
         CruisePitchDegrees = Clean(CruisePitchDegrees, -25f, -60f, 0f);
         CrossfadeSeconds = Clean(CrossfadeSeconds, 2.5f, .5f, 6f);
         SnapshotDriftPercent = Clean(SnapshotDriftPercent, 8f, 0f, 20f);
+        LoiterRadiusKm = Clean(LoiterRadiusKm, 30f, 5f, 60f);
     }
 
     public void CopyFrom(MenuLiveWorldSettings other)
@@ -35,6 +38,7 @@ public partial class MenuLiveWorldSettings : Resource
         CruisePitchDegrees = other.CruisePitchDegrees;
         CrossfadeSeconds = other.CrossfadeSeconds;
         SnapshotDriftPercent = other.SnapshotDriftPercent;
+        LoiterRadiusKm = other.LoiterRadiusKm;
         Sanitize();
     }
 

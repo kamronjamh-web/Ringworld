@@ -32,6 +32,31 @@ public partial class RingWorldSaveManager : Node
     [Export] public bool UseStagedStartup { get; set; }
     public bool HoldSavesUntilWorldReady { get; set; }
 
+    // Pose of the player as last loaded or saved. A menu flight moves the explorer away from it, so this is the spot Continue returns to.
+    private bool _hasStagedPlayerPose;
+    private RingCanonicalPosition _stagedPlayerPosition;
+    private float _stagedPlayerYaw, _stagedPlayerPitch;
+
+    /// <summary>Holds (or resumes) every save: autosave, scene-transition and exit saves all report Busy while held.</summary>
+    public void HoldSaves(bool hold) => HoldSavesUntilWorldReady = hold;
+
+    /// <summary>The player pose of the loaded document, refreshed by every save; false until a document was applied or saved.</summary>
+    public bool TryGetStagedPlayerPose(out RingCanonicalPosition position, out float yawRadians, out float pitchDegrees)
+    {
+        position = _stagedPlayerPosition;
+        yawRadians = _stagedPlayerYaw;
+        pitchDegrees = _stagedPlayerPitch;
+        return _hasStagedPlayerPose;
+    }
+
+    private void StagePlayerPose(PlayerDocument player)
+    {
+        _stagedPlayerPosition = new RingCanonicalPosition(player.AroundMeters, player.VerticalMeters, player.AcrossMeters);
+        _stagedPlayerYaw = player.Yaw;
+        _stagedPlayerPitch = player.Pitch;
+        _hasStagedPlayerPose = true;
+    }
+
     // v3 records that caves derive from the terrain/world seed. v2 and v1 remain
     // readable only through the fail-closed policy below.
     private const int SaveFormatVersion = 3;
@@ -295,6 +320,7 @@ public partial class RingWorldSaveManager : Node
             document.SurfaceGenerationContractId = runtimeSurfaceContractId;
         }
 
+        StagePlayerPose(document.Player);
         _inFlightDelta = _smoothBackendActive || _surfaceBackendActive ? null : delta;
         SmoothTerrainJournalEnvelope? smooth = _smoothBackendActive ? _smoothTerrain!.CaptureJournalEnvelope() : null;
         IReadOnlyList<SmoothConstructionCommand>? construction = _smoothBackendActive ? _constructionOverlay!.CaptureCommands() : null;
@@ -966,6 +992,7 @@ public partial class RingWorldSaveManager : Node
     private void ApplyDocument(SaveDocument document)
     {
         PlayerDocument player = document.Player;
+        StagePlayerPose(player);
         _explorer!.RestoreSavedState(
             new RingCanonicalPosition(player.AroundMeters, player.VerticalMeters, player.AcrossMeters),
             new Vector3(player.VelocityAround, player.VelocityVertical, player.VelocityAcross),

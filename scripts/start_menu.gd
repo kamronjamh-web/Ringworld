@@ -10,6 +10,7 @@ const WORLD_PRESETS := preload("res://scripts/world_presets.gd")
 const CARD_THUMBNAIL := preload("res://scripts/ui/world_card_thumbnail.gd")
 const WARM_WORLD := preload("res://scripts/Loading/ring_warm_world.gd")
 const LIVE_WORLD_DRAWER := preload("res://scripts/ui/MenuLiveWorldTuningDrawer.cs")
+const FLIGHT_DIRECTOR := preload("res://scripts/ui/RingMenuFlightDirector.cs")
 
 const INTRO_FADE_SECONDS := 0.8
 const INTRO_PANEL_DELAY_SECONDS := 0.35
@@ -17,6 +18,7 @@ const TELEMETRY_INTERVAL_SECONDS := 0.25
 ## Used only if the Live world drawer is unavailable; the real crossfade, drift and cruise values come from that drawer.
 const FALLBACK_CROSSFADE_SECONDS := 2.5
 const FALLBACK_DRIFT_PERCENT := 8.0
+const FALLBACK_LOITER_RADIUS_KM := 30.0
 const LEAVE_FADE_SECONDS := 0.2
 ## While the world warms, Continue / Enter Ringworld / the world cards stay disabled through the worst early freezes. They unlock once the
 ## loader is past the terrain stage and the last UNLOCK_QUIET_SECONDS had no frame over UNLOCK_SLOW_FRAME_MS, or after the safety cap.
@@ -59,6 +61,8 @@ var selected_slot := 0
 var boot_cover: Control
 ## The grave-key "Live world" drawer: owns the crossfade, snapshot drift and warm-world cruise settings.
 var live_drawer: Control
+## Flies the warm world's camera (slow loiter around the save spot) once the cover is retired; null before that and without a live world.
+var flight_director: Node
 var _ui_root: Control
 var _footer_label: Label
 var worlds_button: Button
@@ -1484,6 +1488,7 @@ func _retire_cover() -> void:
 	_cover_retired = true
 	_survey_done = true
 	_telemetry_active = true
+	_start_loiter()
 	_update_footer()
 	_update_telemetry()
 	# Let the freed cover settle before sampling the process GPU memory again.
@@ -1492,8 +1497,39 @@ func _retire_cover() -> void:
 			_warm.log_gpu_memory("after_crossfade"))
 
 
+
+## The cover is gone and the world is live: the menu camera loiters around the save spot. Saves stay held while it flies.
+func _start_loiter() -> void:
+	if flight_director != null or _leaving or not is_instance_valid(_warm) or not _warm.is_warm():
+		return
+	var director: Node = FLIGHT_DIRECTOR.new()
+	director.name = "FlightDirector"
+	add_child(director)
+	if not director.Bind(_warm.bridge):
+		director.queue_free()
+		return
+	var cruise := _live_cruise()
+	if not cruise.is_empty():
+		director.CruiseAltitudeMeters = float(cruise["altitude_m"])
+		director.CruisePitchDegrees = float(cruise["pitch_deg"])
+	director.LoiterRadiusMeters = _live_value("LoiterRadiusKm", FALLBACK_LOITER_RADIUS_KM) * 1000.0
+	director.connect("Failed", func(message: String) -> void: push_warning("Menu flight director: " + message))
+	flight_director = director
+	director.StartLoiter()
+
+
+## Returns the explorer to its held state before the world is torn down.
+func _stop_flight() -> void:
+	if flight_director == null:
+		return
+	if is_instance_valid(flight_director):
+		flight_director.Release()
+		flight_director.queue_free()
+	flight_director = null
+
 ## Fades to black and frees the warm world (or cancels its load). Awaiting it makes select_slot and the loading screen safe.
 func _release_warm_world() -> void:
+	_stop_flight()
 	if boot_cover != null:
 		boot_cover.halt()
 	var warm := get_node_or_null("/root/RingWarmWorld")

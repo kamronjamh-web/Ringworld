@@ -327,7 +327,10 @@ func _run() -> void:
 
 	# --- grave opens only the menu's Live world drawer (never the world's own); W/A/S/D do not move the Explorer
 	var explorer: Node = world.get_node("Explorer")
-	_expect(explorer.process_mode == Node.PROCESS_MODE_DISABLED, "Explorer is not held")
+	# C4: once the cover is retired the menu flight director flies the Explorer through scripted flight (it ignores every key).
+	_expect(bool(explorer.get("ScriptedFlightActive")) and _menu.flight_director != null, "Explorer is not under the menu flight director")
+	var tier_before := int(explorer.get("NoclipSpeedTier"))
+	var target_speed_before := float(explorer.get("NoclipTargetSpeedMetersPerSecond"))
 	_expect(world.get_node("LiveTuningDrawer").process_mode == Node.PROCESS_MODE_DISABLED, "world LiveTuningDrawer is not held")
 	_key(KEY_QUOTELEFT, true)
 	_key(KEY_QUOTELEFT, false)
@@ -358,7 +361,9 @@ func _run() -> void:
 	var moved := absf(float(pose_after.around) - float(pose_before.around)) + absf(float(pose_after.across) - float(pose_before.across)) + absf(float(pose_after.vertical) - float(pose_before.vertical))
 	_results["pose_before"] = pose_before
 	_results["pose_after_keys"] = pose_after
-	_expect(moved < 0.5, "W/A/S/D/E/Q/Shift moved the Explorer by %.2f m" % moved)
+	# The director keeps loitering (about 120 m/s), so position is not the signal: the key handlers would have changed these.
+	_expect(bool(explorer.get("NoclipEnabled")) and bool(explorer.get("ScriptedFlightActive")) and int(explorer.get("NoclipSpeedTier")) == tier_before and is_equal_approx(float(explorer.get("NoclipTargetSpeedMetersPerSecond")), target_speed_before), "W/A/S/D/E/Q/Shift changed the Explorer controls")
+	_expect(moved < 2.0 * float(_menu.flight_director.LoiterSpeedMetersPerSecond) * 3.0, "Explorer moved %.0f m in the key window, faster than the loiter allows" % moved)
 	_expect(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "mouse is not Visible after key input")
 
 	if _phase != 1:

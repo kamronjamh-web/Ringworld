@@ -25,7 +25,8 @@ public partial class MenuLiveWorldTuningDrawer : Control
         new("CruiseAltitudeKm", "Cruise altitude", 8, MenuLiveWorldSettings.MaxCruiseAltitudeKm, .5, " km", "Camera height above the ground when the menu world places itself above your save spot. Applies the next time the world loads. Never above 18 km."),
         new("CruisePitchDegrees", "Cruise pitch", -60, 0, 1, " deg", "Camera pitch for that default placement (negative looks down). Applies the next time the world loads."),
         new("CrossfadeSeconds", "Crossfade", .5, 6, .1, " s", "Seconds the last-session picture dissolves into the live world."),
-        new("SnapshotDriftPercent", "Snapshot drift", 0, 20, .5, " %", "How far the last-session picture starts zoomed and shifted before it settles. Zero holds it still.")
+        new("SnapshotDriftPercent", "Snapshot drift", 0, 20, .5, " %", "How far the last-session picture starts zoomed and shifted before it settles. Zero holds it still."),
+        new("LoiterRadiusKm", "Loiter radius", 5, 60, 1, " km", "How far the menu camera roams from your save spot while it circles above the world. Applies on the next loiter.")
     };
 
     private readonly Dictionary<string, SpinBox> _controls = new();

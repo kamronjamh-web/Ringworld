@@ -802,6 +802,8 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        // A flight director owns the body: no key, wheel, mouse look, capture or Esc handling.
+        if (_scriptedFlight) return;
         if (@event is InputEventMouseMotion motion && Input.MouseMode == Input.MouseModeEnum.Captured)
         {
             _yaw = Mathf.PosMod(_yaw - Mathf.DegToRad(motion.Relative.X * MouseSensitivity), Mathf.Tau);
@@ -928,6 +930,11 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 if (!_waterAliasingSmokeInitialized) return;
             }
             ProcessWaterAliasingSmokeTest(Mathf.Min((float)delta, 0.05f));
+            return;
+        }
+        if (_scriptedFlight)
+        {
+            ProcessScriptedFlight(Mathf.Min((float)delta, 0.05f));
             return;
         }
         if (_benchmarkOverrideActive)

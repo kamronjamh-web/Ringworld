@@ -123,12 +123,12 @@ func _run() -> void:
 	_require(menu.boot_cover.get_index() < menu.get("_ui_root").get_index(), "cover is not below the menu UI")
 	_require(not _contains_runtime(menu), "menu created world runtime")
 
-	# --- Live world drawer: grave opens only it, with four controls; values persist across a reload; settings reach their consumers
+	# --- Live world drawer: grave opens only it, with five controls; values persist across a reload; settings reach their consumers
 	var live_drawer: Control = menu.live_drawer
 	_require(live_drawer != null and menu.get_node_or_null("MenuTuningDrawer") == null and menu.get_node_or_null("LiveTuningDrawer") == null, "menu lacks the Live world drawer, or built another drawer")
 	_require(not bool(live_drawer.get("IsDrawerOpen")), "Live world drawer starts open")
 	_require(is_equal_approx(live_drawer.call("GetValue", "CruiseAltitudeKm"), 16.0) and is_equal_approx(live_drawer.call("GetValue", "CruisePitchDegrees"), -25.0) \
-		and is_equal_approx(live_drawer.call("GetValue", "CrossfadeSeconds"), 2.5) and is_equal_approx(live_drawer.call("GetValue", "SnapshotDriftPercent"), 8.0), "Live world defaults are not 16 km / -25 deg / 2.5 s / 8%")
+		and is_equal_approx(live_drawer.call("GetValue", "CrossfadeSeconds"), 2.5) and is_equal_approx(live_drawer.call("GetValue", "SnapshotDriftPercent"), 8.0) and is_equal_approx(live_drawer.call("GetValue", "LoiterRadiusKm"), 30.0), "Live world defaults are not 16 km / -25 deg / 2.5 s / 8% / 30 km")
 	_push_key(KEY_QUOTELEFT)
 	_require(bool(live_drawer.get("IsDrawerOpen")), "grave did not open the Live world drawer")
 	_require(Input.mouse_mode == Input.MOUSE_MODE_VISIBLE, "the drawer hid the mouse")
@@ -137,7 +137,7 @@ func _run() -> void:
 	for control: Node in controls:
 		control_names.append(String(control.name))
 	control_names.sort()
-	_require(control_names == ["CrossfadeSeconds", "CruiseAltitudeKm", "CruisePitchDegrees", "SnapshotDriftPercent"] and (live_drawer.call("GetDrawerDiagnostics") as Dictionary)["control_count"] == 4, "Live world drawer does not have exactly the four expected controls: " + str(control_names))
+	_require(control_names == ["CrossfadeSeconds", "CruiseAltitudeKm", "CruisePitchDegrees", "LoiterRadiusKm", "SnapshotDriftPercent"] and (live_drawer.call("GetDrawerDiagnostics") as Dictionary)["control_count"] == 5, "Live world drawer does not have exactly the five expected controls: " + str(control_names))
 	_require(menu.main_panel.visible and menu.continue_button.focus_mode != Control.FOCUS_NONE, "opening the drawer disturbed the menu buttons")
 	_push_key(KEY_ESCAPE)
 	_require(not bool(live_drawer.get("IsDrawerOpen")), "Escape did not close the Live world drawer")
@@ -147,6 +147,9 @@ func _run() -> void:
 	live_drawer.call("SetTuningValue", "SnapshotDriftPercent", 12.0)
 	live_drawer.call("SetTuningValue", "CruiseAltitudeKm", 99.0)
 	live_drawer.call("SetTuningValue", "CruisePitchDegrees", -40.0)
+	live_drawer.call("SetTuningValue", "LoiterRadiusKm", 99.0)
+	_require(is_equal_approx(live_drawer.call("GetValue", "LoiterRadiusKm"), 60.0), "loiter radius exceeded its 60 km range")
+	live_drawer.call("SetTuningValue", "LoiterRadiusKm", 20.0)
 	_require(is_equal_approx(live_drawer.call("GetValue", "CruiseAltitudeKm"), 18.0), "cruise altitude exceeded the 18 km ceiling")
 	_require(is_equal_approx(menu.call("_crossfade_seconds"), 4.0), "crossfade change did not reach the menu's crossfade")
 	var cruise: Dictionary = menu.call("_live_cruise")
@@ -169,7 +172,7 @@ func _run() -> void:
 	var picture: TextureRect = cover.get_node_or_null("SnapshotPicture") as TextureRect
 	_require(picture != null and picture.expand_mode == TextureRect.EXPAND_IGNORE_SIZE and picture.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_COVERED, "snapshot picture is not drawn aspect-covered")
 	_require(picture != null and picture.texture.get_width() == 640 and picture.texture.get_height() == 360, "fixture snapshot texture size mismatch")
-	_require(is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CrossfadeSeconds"), 4.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CruiseAltitudeKm"), 18.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CruisePitchDegrees"), -40.0), "Live world settings did not persist across a reload")
+	_require(is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CrossfadeSeconds"), 4.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CruiseAltitudeKm"), 18.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "CruisePitchDegrees"), -40.0) and is_equal_approx(snapshot_menu.live_drawer.call("GetValue", "LoiterRadiusKm"), 20.0), "Live world settings did not persist across a reload")
 	await process_frame
 	_require(picture != null and absf(picture.scale.x - 1.12) < 0.001, "persisted 12%% drift does not start at 1.12x: %s" % str(picture.scale if picture != null else 0))
 	_require(picture != null and picture.position.x < 0.0 and picture.position.y > 0.0, "drift start offset is not left/down")
