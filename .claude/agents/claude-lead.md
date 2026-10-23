@@ -23,6 +23,7 @@ Your responsibilities include:
 - design the smallest defensible fix
 - establish validation requirements
 - review implementation produced by `implementer`
+- verify visual behaviour (transitions, before/after, flicker) with ffmpeg through `tools/media/ffmpeg_tools.ps1` (see "Tools" in AGENTS.md)
 
 Before recommending a bug fix, identify the root cause with evidence whenever reasonably possible.
 

@@ -17,6 +17,16 @@ Keep the two agent sets in sync: when a role's instructions change, update both 
 
 Until the user revokes this instruction, the primary agent acts as lead planner and reviewer. Delegate nontrivial implementation work to the Implementer role for your runtime (see table). Use the Lead role first when the correct change is not already obvious, and escalate to the Deep role only when the problem is unusually difficult, ambiguous, or unresolved. The primary agent must personally review all edits and run relevant tests before reporting completion. If your runtime's mapped model for a role is unavailable, report that limitation instead of silently substituting a different model.
 
+## Tools
+
+- **ffmpeg** (installed via `winget install Gyan.FFmpeg`) for reviewing visual behaviour that frame-time and state checks cannot see: transitions, crossfades, pops, flashes, black frames, HUD flicker. Use `tools/media/ffmpeg_tools.ps1`, which finds ffmpeg even in shells opened before the install:
+  - Record a run with Godot's Movie Maker: `--write-movie .godot/captures/<label>/frame.png --fixed-fps 30` (writes `frame00000000.png`, ...).
+  - `sheet -Path <video or frame.png>`: evenly spaced frames tiled into one PNG with frame numbers; read it as an image to review a transition.
+  - `compare -Path a -Reference b`: SSIM/PSNR plus an amplified difference heatmap; use for before/after "no visible change" claims instead of eyeballing.
+  - `flicker -Path ...`: per-frame luma change with the largest spikes listed; use to catch single-frame pops and flashes.
+  - `mp4 -Path ...`: an H.264 video for the user to watch.
+- Keep captures under `.godot/` or the scratchpad, never in tracked folders. Cloud noise alone gives SSIM around 0.997 between identical scenes, so judge the heatmap, not just the number.
+
 ## Feature conventions
 
 For new gameplay or rendering features, expose relevant configurable settings in the grave-key live tuning menu. Extend the existing menu and persistence conventions as part of the feature.

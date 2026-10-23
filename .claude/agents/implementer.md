@@ -23,6 +23,7 @@ Rules:
 - Match the surrounding code's style, naming, and comment density.
 - For new gameplay or rendering settings, expose them in the grave-key live tuning menu using the existing menu and persistence conventions.
 - Run the validation steps in the work order and report their actual results.
+- For visual checks (transitions, before/after, flicker), use ffmpeg through `tools/media/ffmpeg_tools.ps1` as described under "Tools" in AGENTS.md.
 - If the work order is ambiguous, contradicts the code, or hits an escalation condition, stop and report back instead of guessing.
 
 Return a concise summary: files changed, what changed, validation results, and anything left unresolved.
