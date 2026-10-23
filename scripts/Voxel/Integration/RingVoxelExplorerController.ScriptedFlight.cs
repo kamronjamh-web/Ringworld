@@ -13,6 +13,7 @@ public partial class RingVoxelExplorerController
     private Vector3 _scriptedVelocity;
     private float _scriptedYawRadians;
     private float _scriptedPitchDegrees;
+    private RingCanonicalPosition? _scriptedStreamingHold;
 
     /// <summary>True while a director owns the body: keyboard, mouse look, wheel and the speed presets are ignored.</summary>
     public bool ScriptedFlightActive => _scriptedFlight;
@@ -70,12 +71,24 @@ public partial class RingVoxelExplorerController
     public bool PlaceScriptedFlight(in RingCanonicalPosition target, float yawDegrees, float pitchDegrees)
     {
         if (!_scriptedFlight || !TryTeleportToCanonical(target, yawDegrees, pitchDegrees, true, out _)) return false;
-        _grid?.ClearStreamingCanonicalFocusOverride();
+        if (_scriptedStreamingHold is { } hold) _grid?.SetStreamingCanonicalFocusOverride(hold);
+        else _grid?.ClearStreamingCanonicalFocusOverride();
         _scriptedVelocity = Vector3.Zero;
         _scriptedYawRadians = _yaw;
         _scriptedPitchDegrees = _pitch;
         RefreshAltitudeAboveTerrain();
         return true;
+    }
+
+    /// <summary>
+    /// Pins (or, with null, releases) the grid's streaming focus on a spot other than the body while it flies (the start menu pre-streams the saved spot).
+    /// <see cref="PlaceScriptedFlight"/> restores the pin after its teleport instead of clearing it.
+    /// </summary>
+    public void SetScriptedStreamingHold(RingCanonicalPosition? position)
+    {
+        _scriptedStreamingHold = position;
+        if (position is { } hold) _grid?.SetStreamingCanonicalFocusOverride(hold);
+        else _grid?.ClearStreamingCanonicalFocusOverride();
     }
 
     /// <summary>Returns input to the player. The horizon eases back to the surface through the normal curvature correction.</summary>

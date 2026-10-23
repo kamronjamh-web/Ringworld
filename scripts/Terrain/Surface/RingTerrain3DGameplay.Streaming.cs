@@ -10,6 +10,11 @@ namespace RingworldTechDemo.Terrain.Surface;
 /// <summary>Asynchronous gameplay-window request, publication, and collision coverage policy.</summary>
 public partial class RingTerrain3DGameplay
 {
+    public const float ChaseSuspendAltitudeMeters = 2000f, ChaseResumeAltitudeMeters = 1500f;
+    public const ulong EnsureCoverageGraceMilliseconds = 250;
+    private RingCanonicalPosition? _coverageFocusOverride;
+    private bool _chaseSuspended;
+    private ulong _ensureCoverageMsec;
     private double _lastReadinessMilliseconds;
     private double _maxReadinessMilliseconds;
     private long _coverageWaits;
@@ -38,12 +43,12 @@ public partial class RingTerrain3DGameplay
         if (_synchronousBenchmark) return;
         ServiceUndergroundRecovery(delta);
         if (_saveBlocked || _surface == null || _explorer == null || !_hasPendingFrame || !_stageReady) return;
-        RingCanonicalPosition current = _explorer.CanonicalPosition;
+        RingCanonicalPosition current = _coverageFocusOverride ?? _explorer.CanonicalPosition;
         double activeAround = _frame.SignedAroundDeltaMeters(current.AroundMeters);
         double activeAcross = current.AcrossMeters - _frame.AnchorAcrossMeters;
         if (!_pendingEditReplacement && Math.Abs(activeAround) < 128.0 && Math.Abs(activeAcross) < 128.0) return;
         if (_field == null || _pendingEditRevision != _field.Revision || _pendingApertureRevision != _apertureRevision || !FrameContainsCollider(_pendingFrame, current)) return;
-        Vector3 velocity = _explorer.CanonicalVelocity;
+        Vector3 velocity = _coverageFocusOverride.HasValue ? Vector3.Zero : _explorer.CanonicalVelocity;
         var predicted = new RingCanonicalPosition(current.AroundMeters + velocity.X * delta,
             current.VerticalMeters, current.AcrossMeters + velocity.Z * delta);
         if (!FrameContainsCollider(_pendingFrame, predicted)) return;
@@ -63,11 +68,36 @@ public partial class RingTerrain3DGameplay
         _coverageWaiting = false;
     }
 
-    private void ServiceStreaming(RingCanonicalPosition position)
+    /// <summary>
+    /// Where the surface window streams. A coverage focus override (the start menu parks the camera kilometres above the saved spot) wins; otherwise the
+    /// explorer, except that above <see cref="ChaseSuspendAltitudeMeters"/> above ground the window stops chasing (nothing walks or collides up there)
+    /// unless a caller asked for coverage within the last <see cref="EnsureCoverageGraceMilliseconds"/> (teleports and spawn settles do).
+    /// </summary>
+    private RingCanonicalPosition ResolveStreamingFocus(out bool chase)
+    {
+        if (_coverageFocusOverride is { } focus) { _chaseSuspended = false; chase = true; return focus; }
+        float altitude = _explorer!.CurrentAltitudeAboveTerrainMeters;
+        bool suspended = _chaseSuspended ? altitude > ChaseResumeAltitudeMeters : altitude > ChaseSuspendAltitudeMeters;
+        if (suspended && !_chaseSuspended && _hasPendingFrame) CancelPendingWindow();
+        _chaseSuspended = suspended;
+        chase = !suspended || Time.GetTicksMsec() - _ensureCoverageMsec <= EnsureCoverageGraceMilliseconds;
+        return _explorer.CanonicalPosition;
+    }
+
+    /// <summary>Pins the streaming window on <paramref name="position"/> instead of the explorer (stops the chase and pre-streams a destination).</summary>
+    public void SetCoverageFocusOverride(in RingCanonicalPosition position) => _coverageFocusOverride = position;
+
+    public void ClearCoverageFocusOverride() => _coverageFocusOverride = null;
+
+    public bool CoverageFocusOverrideActive => _coverageFocusOverride.HasValue;
+    /// <summary>True while the window is not following the explorer because it is too high above ground.</summary>
+    public bool StreamingChaseSuspended => _chaseSuspended;
+
+    private void ServiceStreaming(RingCanonicalPosition position, bool chase = true)
     {
         if (_synchronousBenchmark) return;
         if (_stream == null || _surface == null || _field == null) return;
-        DetectFieldRevision(position);
+        if (chase) DetectFieldRevision(position);
         _stream.Poll();
         if (_stream.Error.Length > 0)
         {
@@ -134,7 +164,7 @@ public partial class RingTerrain3DGameplay
                 _maxReadinessMilliseconds = Math.Max(_maxReadinessMilliseconds, _lastReadinessMilliseconds);
             }
         }
-        RequestCoverage(position, false);
+        if (chase) RequestCoverage(position, false);
     }
 
     private void DetectFieldRevision(RingCanonicalPosition position)
@@ -192,6 +222,7 @@ public partial class RingTerrain3DGameplay
     /// <summary>Velocity used to steer coverage: while the clamp is holding the player, the requested (pre-clamp) input velocity, otherwise the actual velocity.</summary>
     private Vector3 CoverageSteeringVelocity()
     {
+        if (_coverageFocusOverride.HasValue) return Vector3.Zero;
         Vector3 actual = _explorer?.CanonicalVelocity ?? Vector3.Zero;
         return _coverageWaiting && Engine.GetPhysicsFrames() - _constraintPhysicsFrame <= 1 ? _constraintRequestedVelocity : actual;
     }

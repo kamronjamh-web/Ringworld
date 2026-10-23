@@ -1516,6 +1516,8 @@ func _start_loiter() -> void:
 	director.connect("Failed", func(message: String) -> void: push_warning("Menu flight director: " + message))
 	flight_director = director
 	director.StartLoiter()
+	# Water sleeps and both terrain streamers hold the saved spot while the camera loiters kilometres up.
+	_warm.bridge.ApplyMenuSuspension()
 
 
 ## Returns the explorer to its held state before the world is torn down.
@@ -1530,6 +1532,8 @@ func _stop_flight() -> void:
 ## Fades to black and frees the warm world (or cancels its load). Awaiting it makes select_slot and the loading screen safe.
 func _release_warm_world() -> void:
 	_stop_flight()
+	if is_instance_valid(_warm) and _warm.bridge != null and is_instance_valid(_warm.bridge):
+		_warm.bridge.ReleaseMenuSuspension()
 	if boot_cover != null:
 		boot_cover.halt()
 	var warm := get_node_or_null("/root/RingWarmWorld")

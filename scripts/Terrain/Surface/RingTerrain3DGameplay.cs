@@ -116,7 +116,7 @@ public partial class RingTerrain3DGameplay : Node3D
         }
         else
         {
-            ServiceStreaming(_explorer.CanonicalPosition);
+            ServiceStreaming(ResolveStreamingFocus(out bool chase), chase);
             _surface.SetGameplayWorldFrames(_lastWorldFrame, _hasPendingFrame ? BuildWorldFrame(_pendingFrame) : _lastWorldFrame);
         }
         Vector3 cameraPosition = _camera?.GlobalPosition ?? _explorer.GlobalPosition;
@@ -245,6 +245,7 @@ public partial class RingTerrain3DGameplay : Node3D
             EnsureSynchronousBenchmarkCoverage(position);
             return;
         }
+        _ensureCoverageMsec = Time.GetTicksMsec();
         RequestCoverage(position, false);
     }
 

@@ -209,9 +209,42 @@ public partial class RingGraphicsQualityController
         if (UpdateSunZeroEnergyGate() && RequestedSunShadowsEnabled) { suspend = true; _localShadowHandoffReason = "sun energy below " + SunShadowMinimumEnergy.ToString("0.###"); }
         if (UndergroundShadowSuspended && RequestedSunShadowsEnabled) { suspend = true; _localShadowHandoffReason = "underground enclosed"; }
         _localSunShadowSuspended = suspend;
+        UpdateNoReceiverGates();
+        // Nothing the shadow map reaches is in range (the camera is higher above the ground than the map's fade start): skip the pass. The heightfield
+        // and its receivers have their own, longer reach and follow AltitudeHeightShadowSuspended.
+        if (!suspend && AltitudeShadowSuspended && RequestedSunShadowsEnabled) { suspend = true; _localShadowHandoffReason = "no shadow receiver in range"; }
         bool effectiveShadowEnabled = RequestedSunShadowsEnabled && !suspend;
         if (_sun.ShadowEnabled != effectiveShadowEnabled) _sun.ShadowEnabled = effectiveShadowEnabled;
     }
+
+    /// <summary>
+    /// General "no receiver in range" rule (also in gameplay noclip at altitude): with the camera higher above the ground than the sun map reaches
+    /// (<c>DirectionalShadowMaxDistance x DirectionalShadowFadeStart</c>, never below <see cref="NoReceiverMinimumAltitudeMeters"/>) there is no terrain in the
+    /// sun shadow map and nothing for contact shadows to darken, so both are suspended. The height shadow (long-range terrain shadows, reach
+    /// <see cref="RingHeightShadowSettings.RangeMeters"/>) stops later. Stays off while a large POI extends the sun map (its tall detail can be a
+    /// receiver at any altitude). Leaves 10 percent below the entry altitude so a hovering camera cannot flap.
+    /// </summary>
+    private void UpdateNoReceiverGates()
+    {
+        float altitude = float.NaN;
+        if (_localShadowExplorer == null || !GodotObject.IsInstanceValid(_localShadowExplorer) || !_localShadowExplorer.IsInsideTree())
+            _localShadowExplorer = _dayNightCycle != null && GodotObject.IsInstanceValid(_dayNightCycle) && _dayNightCycle.IsInsideTree()
+                ? _dayNightCycle.GetNodeOrNull<RingVoxelExplorerController>(_dayNightCycle.ExplorerPath) : null;
+        if (_localShadowExplorer != null && _localShadowExplorer.IsInsideTree()) altitude = _localShadowExplorer.CurrentAltitudeAboveTerrainMeters;
+        bool known = float.IsFinite(altitude) && _sun != null && GodotObject.IsInstanceValid(_sun);
+        float reach = known ? Mathf.Max(NoReceiverMinimumAltitudeMeters, _sun!.DirectionalShadowMaxDistance * _sun.DirectionalShadowFadeStart) : 0.0f;
+        bool extended = _poiSunMapActive || RingLargePoiShadowExtents.Count > 0;
+        AltitudeShadowSuspended = known && !extended && altitude > reach * (AltitudeShadowSuspended ? NoReceiverLeaveFraction : 1.0f);
+        float heightReach = Mathf.Max(reach, ResolveHeightShadowSettings().RangeMeters);
+        AltitudeHeightShadowSuspended = known && !extended && altitude > heightReach * (AltitudeHeightShadowSuspended ? NoReceiverLeaveFraction : 1.0f);
+    }
+
+    public const float NoReceiverMinimumAltitudeMeters = 1000.0f;
+    public const float NoReceiverLeaveFraction = .9f;
+    /// <summary>The camera is above the sun shadow map's reach: sun shadow map and contact shadows are skipped.</summary>
+    public bool AltitudeShadowSuspended { get; private set; }
+    /// <summary>The camera is above the height shadow window's reach: its sun layer is not built or sampled.</summary>
+    public bool AltitudeHeightShadowSuspended { get; private set; }
 
     /// <summary>
     /// True while the sun is too dim to light anything (totality at zero energy): the shadow map would be rendered for nothing. A small

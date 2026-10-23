@@ -463,7 +463,7 @@ public partial class RingTerrainHeightShadow
             return float.IsFinite(planetDistance) && planetDistance > 0f ? planetDistance : 0f;
         }
         if (_sun == null || !GodotObject.IsInstanceValid(_sun) || !_sun.ShadowEnabled || _sun.LightEnergy <= RingGraphicsQualityController.SunShadowMinimumEnergy) return 0f;
-        if (_graphics != null && GodotObject.IsInstanceValid(_graphics) && (_graphics.LocalSunShadowSuspended || _graphics.UndergroundShadowSuspended)) return 0f;
+        if (_graphics != null && GodotObject.IsInstanceValid(_graphics) && (_graphics.LocalSunShadowSuspended || _graphics.UndergroundShadowSuspended || _graphics.AltitudeHeightShadowSuspended)) return 0f;
         // Near mode (extended by a POI or not): the heightfield owns terrain past near x 0.8, not past the widened light range.
         float distance = _graphics != null && GodotObject.IsInstanceValid(_graphics) ? _graphics.SunHeightShadowAuthorityMeters : _sun.DirectionalShadowMaxDistance * _sun.DirectionalShadowFadeStart;
         return float.IsFinite(distance) && distance > 0f ? distance : 0f;

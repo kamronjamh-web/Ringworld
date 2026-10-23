@@ -342,7 +342,7 @@ public partial class RingTerrainHeightShadow : Node
         localDirection = default;
         Vector3 world;
         HeightShadowLight light;
-        bool sunSuspended = _graphics != null && GodotObject.IsInstanceValid(_graphics) && (_graphics.LocalSunShadowSuspended || _graphics.UndergroundShadowSuspended);
+        bool sunSuspended = _graphics != null && GodotObject.IsInstanceValid(_graphics) && (_graphics.LocalSunShadowSuspended || _graphics.UndergroundShadowSuspended || _graphics.AltitudeHeightShadowSuspended);
         if (_sun != null && _sun.LightEnergy > RingGraphicsQualityController.SunShadowMinimumEnergy && !sunSuspended)
         {
             world = _sun.GlobalBasis.Z.Normalized(); light = HeightShadowLight.Sun;

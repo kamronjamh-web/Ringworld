@@ -489,6 +489,42 @@ public partial class RingWorldLoadingBridge : Node
         if (_world.GetNodeOrNull<RingVolumetricCloudLayer>("RingVolumetricClouds") is { } clouds) clouds.CloudSimulationPaused = paused;
     }
 
+    /// <summary>True while <see cref="ApplyMenuSuspension"/> is in effect.</summary>
+    public bool MenuSuspensionActive { get; private set; }
+
+    /// <summary>
+    /// What the held world stops doing while the camera loiters kilometres up behind the menu: the water simulation (presentation suspend group),
+    /// and both terrain streamers stop chasing the camera and stream the saved spot instead (so Continue lands on resident ground). Shadows, grass
+    /// and trees follow their own altitude rules; audio is deliberately left alone. Undone by <see cref="ReleaseMenuSuspension"/>.
+    /// </summary>
+    public void ApplyMenuSuspension()
+    {
+        if (_world == null || !GodotObject.IsInstanceValid(_world) || _explorer == null || !GodotObject.IsInstanceValid(_explorer)) return;
+        Godot.Collections.Dictionary home = GetHomePose();
+        bool haveHome = home.Count > 0 && home.TryGetValue("valid", out Variant valid) && valid.AsBool();
+        if (haveHome)
+        {
+            var spot = new RingCanonicalPosition(home["around_m"].AsDouble(), home["vertical_m"].AsDouble(), home["across_m"].AsDouble());
+            _explorer.SetScriptedStreamingHold(spot);
+            _surface?.SetCoverageFocusOverride(spot);
+        }
+        if (_world.GetNodeOrNull<RingworldTechDemo.Underground.RingUndergroundModeController>("UndergroundMode") is { } underground)
+            underground.PresentationSuspendGroups |= RingworldTechDemo.Underground.UndergroundGroups.Water;
+        MenuSuspensionActive = true;
+    }
+
+    /// <summary>Clears everything <see cref="ApplyMenuSuspension"/> set; safe to call when nothing was applied or the world is already gone.</summary>
+    public void ReleaseMenuSuspension()
+    {
+        if (!MenuSuspensionActive) return;
+        MenuSuspensionActive = false;
+        if (_world == null || !GodotObject.IsInstanceValid(_world)) return;
+        if (_explorer != null && GodotObject.IsInstanceValid(_explorer)) _explorer.SetScriptedStreamingHold(null);
+        if (_surface != null && GodotObject.IsInstanceValid(_surface)) _surface.ClearCoverageFocusOverride();
+        if (_world.GetNodeOrNull<RingworldTechDemo.Underground.RingUndergroundModeController>("UndergroundMode") is { } underground)
+            underground.PresentationSuspendGroups &= ~RingworldTechDemo.Underground.UndergroundGroups.Water;
+    }
+
     /// <summary>Hides the world HUD layers so they do not draw over the start menu.</summary>
     public void HideWorldHud() => _world?.GetNodeOrNull<RingLodPauseMenu>("LodPauseMenu")?.SuppressGameplayHud();
 

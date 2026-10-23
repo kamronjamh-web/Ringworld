@@ -71,6 +71,12 @@ public partial class RingUndergroundModeController : Node
     public UndergroundEnclosureProbe Probe => _probe;
     /// <summary>Groups whose participants may suspend. A disabled group always receives the all-clear state.</summary>
     public UndergroundGroups EnabledGroups { get; set; } = UndergroundGroups.All;
+    /// <summary>
+    /// Groups whose participants the presentation suspends (the start menu parks the camera kilometres up) whatever the enclosure state. The switchboard
+    /// rewrites every participant's state each frame, so this lives here: it is OR-ed with the underground suspend and is not filtered by
+    /// <see cref="EnabledGroups"/> (that toggle is about underground mode only). Hide and shadow tiers are never presentation-driven.
+    /// </summary>
+    public UndergroundGroups PresentationSuspendGroups { get; set; } = UndergroundGroups.None;
     /// <summary>0..1 weight of the enclosure blend on direct sun and sky ambient in designed caves (decision D1).</summary>
     public float EnclosureLightingWeight { get; set; } = 1f;
     /// <summary>Faint cave ambient (decision D2), blended by EnclosureBlend and read by the atmosphere.</summary>
@@ -260,7 +266,7 @@ public partial class RingUndergroundModeController : Node
         {
             if (!participant.Present) continue;
             bool enabled = (EnabledGroups & participant.Group) != 0;
-            bool suspend = enabled && suspension;
+            bool suspend = (enabled && suspension) || (PresentationSuspendGroups & participant.Group) != 0;
             bool hide = enabled && hideEligible;
             anyHide |= hide && participant.Group == UndergroundGroups.FarTerrain;
             participant.Apply(new UndergroundParticipantState(suspend, hide, suspend && _lightingDarkened, enabled ? EnclosureBlend : 0f));
