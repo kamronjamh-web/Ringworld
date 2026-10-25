@@ -27,7 +27,28 @@ public partial class RingBiomeDecorationLayer
     public bool GpuTreeCullingActive => _gpuTreePresentation && _gpuTreeCompute is { Ready: true, CompletedUpdates: > 0 };
     public string GpuTreeCullingStatus { get; private set; } = "CPU fallback";
     public long GpuTreeResidentBytes => _gpuTreeCompute?.EstimatedBytes ?? 0;
-    public int GpuTreeResidentRootCount => _gpuTreeGroups.Values.Sum(group => group.RootCount);
+    // Cached sum of resident group roots, read every frame. Valid while the group
+    // dictionary instance, its count and GpuTreeSourceEpoch are unchanged (every
+    // same-count group replacement bumps the epoch; group Metadata length is fixed at construction).
+    public int GpuTreeResidentRootCount
+    {
+        get
+        {
+            if (!ReferenceEquals(_gpuTreeResidentRootCountSource, _gpuTreeGroups)
+                || _gpuTreeResidentRootCountGroups != _gpuTreeGroups.Count
+                || _gpuTreeResidentRootCountEpoch != GpuTreeSourceEpoch)
+            {
+                _gpuTreeResidentRootCount = _gpuTreeGroups.Values.Sum(group => group.RootCount);
+                _gpuTreeResidentRootCountSource = _gpuTreeGroups;
+                _gpuTreeResidentRootCountGroups = _gpuTreeGroups.Count;
+                _gpuTreeResidentRootCountEpoch = GpuTreeSourceEpoch;
+            }
+            return _gpuTreeResidentRootCount;
+        }
+    }
+    private Dictionary<GpuGroupKey, GpuTreeGroup>? _gpuTreeResidentRootCountSource;
+    private int _gpuTreeResidentRootCount, _gpuTreeResidentRootCountGroups;
+    private long _gpuTreeResidentRootCountEpoch = long.MinValue;
     public int GpuTreeBatchCount => _gpuTreeOutputs.Count;
     public int GpuTreeFallbackBatchCount => _gpuTreeFallbackOutputs.Count;
     public long GpuTreeSourceEpoch { get; private set; }
@@ -79,6 +100,11 @@ public partial class RingBiomeDecorationLayer
     private long _gpuTreeFallbackSequence;
     private Dictionary<ulong, (GpuTreeGroup Group, int Index)> _gpuTreeRootLookup = new();
     private HashSet<ulong> _gpuTreeProtectedIds = new();
+    private readonly List<ulong> _gpuTreeProtectedIdScratch = new();
+    private readonly HashSet<GpuTreeGroup> _gpuTreeProtectedChangedScratch = new();
+    private readonly Dictionary<GpuTreeGroup, List<GpuTreeOutput>> _gpuTreeProtectedOutputsByGroupScratch = new();
+    // Per selection rebuild: a group's (near, far) depends only on the group and the camera.
+    private readonly Dictionary<GpuTreeGroup, (float Near, float Far)> _gpuTreeGroupDistanceScratch = new();
     private RingGpuVegetationCompute? _gpuTreeCompute;
     private RingLodGeometrySnapshot? _gpuTreeGeometry;
     private Transform3D _gpuTreeLayerTransform;
@@ -310,13 +336,17 @@ public partial class RingBiomeDecorationLayer
         if (_gpuTreePreparation != null) { _gpuTreeProtectedRefreshDeferred = true; return; }
         _gpuTreeProtectedRefreshDeferred = false;
         _gpuTreeNewlyProtectedScratch.Clear(); _gpuTreeProtectedOwnerScratch.Clear(); _gpuTreeProtectionRemovedScratch = false;
-        var changed = new HashSet<GpuTreeGroup>();
-        foreach (ulong id in _gpuTreeProtectedIds.ToArray())
+        HashSet<GpuTreeGroup> changed = _gpuTreeProtectedChangedScratch; changed.Clear();
+        _gpuTreeProtectedIdScratch.Clear(); _gpuTreeProtectedIdScratch.AddRange(_gpuTreeProtectedIds);
+        for (int idIndex = 0; idIndex < _gpuTreeProtectedIdScratch.Count; idIndex++)
+        {
+            ulong id = _gpuTreeProtectedIdScratch[idIndex];
             if (!_importedForestBodies.ContainsKey(id))
             {
                 if (_gpuTreeRootLookup.TryGetValue(id, out var entry)) { entry.Group.Metadata[entry.Index].Y = 0; changed.Add(entry.Group); _gpuTreeProtectionRemovedScratch = true; }
                 _gpuTreeProtectedIds.Remove(id);
             }
+        }
         foreach (ulong id in _importedForestBodies.Keys)
         {
             if (_gpuTreeProtectedIds.Contains(id)) continue;
@@ -324,11 +354,23 @@ public partial class RingBiomeDecorationLayer
             { entry.Group.Metadata[entry.Index].Y = 1; changed.Add(entry.Group); _gpuTreeProtectedIds.Add(id); _gpuTreeNewlyProtectedScratch.Add((entry.Group, entry.Index)); }
             else _gpuTreeSourcesDirty = true;
         }
+        if (changed.Count > 0)
+        {
+            // One pass over the outputs; each group's list keeps _gpuTreeOutputs order.
+            _gpuTreeProtectedOutputsByGroupScratch.Clear();
+            foreach (GpuTreeOutput output in _gpuTreeOutputs.Values)
+            {
+                if (output.SourceGroup is not GpuTreeGroup source || !changed.Contains(source)) continue;
+                if (!_gpuTreeProtectedOutputsByGroupScratch.TryGetValue(source, out List<GpuTreeOutput>? list))
+                    _gpuTreeProtectedOutputsByGroupScratch[source] = list = new List<GpuTreeOutput>();
+                list.Add(output);
+            }
+        }
         foreach (GpuTreeGroup group in changed)
         {
             group.HasProtected = Array.Exists(group.Metadata, item => item.Y > .5f);
-            foreach (var output in _gpuTreeOutputs)
-                if (ReferenceEquals(output.Value.SourceGroup, group)) _gpuTreeCompute?.UpdateMetadata(output.Value.BatchId, group.Metadata);
+            if (_gpuTreeProtectedOutputsByGroupScratch.TryGetValue(group, out List<GpuTreeOutput>? groupOutputs))
+                foreach (GpuTreeOutput output in groupOutputs) _gpuTreeCompute?.UpdateMetadata(output.BatchId, group.Metadata);
         }
         if (changed.Count > 0)
         {
@@ -337,6 +379,7 @@ public partial class RingBiomeDecorationLayer
             if (GpuTreeProtectionAffectsSelection()) _gpuTreeProtectionLayoutRevision++;
             InvalidateGpuTreeFrameCache();
         }
+        _gpuTreeProtectedOutputsByGroupScratch.Clear();
     }
 
     // True when the protection change just applied could change which outputs the
@@ -473,12 +516,18 @@ public partial class RingBiomeDecorationLayer
         var pruneCounts = new Dictionary<GpuOutputKey, (int PotentialProtected, int PotentialOrdinary, int GuaranteedProtected, int GuaranteedOrdinary)>();
         bool compactProfile = EffectiveCompactTreeLodProfile;
         float reuseRadius = guard * .25f + .001f;
+        _gpuTreeGroupDistanceScratch.Clear();
         for (int lod = 0; lod < 5; lod++)
         {
         if (!IsGpuTreeLodEnabled(lod)) continue;
+        // Per-LOD invariants: the interval depends only on (lod, edges).
+        GpuTreeLodInterval(lod, edges, out float lodNear, out float lodFar, out _, out _, out _, out _);
         foreach (GpuTreeGroup group in GroupsForGpuLod(lod))
         {
             float near, far;
+            if (_gpuTreeGroupDistanceScratch.TryGetValue(group, out (float Near, float Far) cached)) { near = cached.Near; far = cached.Far; }
+            else
+            {
             if (focus is RingCanonicalPosition canonical)
             {
                 Vector2 local = CanonicalCamera(group, canonical, circumference);
@@ -492,7 +541,8 @@ public partial class RingBiomeDecorationLayer
                 near = camera.DistanceTo(camera.Clamp(bounds.Position, bounds.End));
                 far = camera.DistanceTo(bounds.GetCenter()) + bounds.Size.Length() * .5f;
             }
-            GpuTreeLodInterval(lod, edges, out float lodNear, out float lodFar, out _, out _, out _, out _);
+            _gpuTreeGroupDistanceScratch[group] = (near, far);
+            }
             var key = new GpuOutputKey(group.Key, lod);
             bool overlaps = (lod == 0 && group.HasProtected && !compactProfile) || (far + guard >= lodNear && near - guard < lodFar);
             if (!overlaps) continue;

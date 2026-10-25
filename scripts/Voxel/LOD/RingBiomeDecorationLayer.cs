@@ -606,6 +606,10 @@ public partial class RingBiomeDecorationLayer : Node3D
 		_treeLightingConfigurationValid = true;
 	}
 
+	// Read every frame: HasMeta/GetMeta take a StringName, and a NodePath is rebuilt on every failed planet-light lookup.
+	private static readonly StringName SunNearDistanceMetaName = RingGraphicsQualityController.SunNearDistanceMetaKey;
+	private static readonly NodePath PlanetLightPath = new("../PlanetLight");
+
 	/// <summary>The configured tree sun-shadow distance, never beyond what the sun shadow map covers (the near sun map is 400 m while the height shadows are authoritative past it).</summary>
 	public float EffectiveTreeSunShadowDistanceMeters
 	{
@@ -617,7 +621,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 			{
 				float sunMax = _treeSunLight.DirectionalShadowMaxDistance;
 				// POI sun map extension: the light reaches D, but trees keep the near-map distance the controller records on the light.
-				if (_treeSunLight.HasMeta(RingGraphicsQualityController.SunNearDistanceMetaKey)) sunMax = Mathf.Min(sunMax, (float)_treeSunLight.GetMeta(RingGraphicsQualityController.SunNearDistanceMetaKey));
+				if (_treeSunLight.HasMeta(SunNearDistanceMetaName)) sunMax = Mathf.Min(sunMax, (float)_treeSunLight.GetMeta(SunNearDistanceMetaName));
 				// Height shadows on and only the planet light casting (night): the planet map is the active one (S7a, 250 m near map). Otherwise exactly the sun range as before.
 				if (RingTerrainHeightShadow.Instance is { } heightShadow && heightShadow.Settings.Enabled && !IsCasting(_treeSunLight) && ResolveTreePlanetLight() is { } planet && IsCasting(planet))
 					sunMax = planet.DirectionalShadowMaxDistance;
@@ -632,7 +636,7 @@ public partial class RingBiomeDecorationLayer : Node3D
 	private DirectionalLight3D? ResolveTreePlanetLight()
 	{
 		if (_grid != null && (_treePlanetLight == null || !GodotObject.IsInstanceValid(_treePlanetLight)))
-			_treePlanetLight = _grid.GetNodeOrNull<DirectionalLight3D>(new NodePath("../PlanetLight"));
+			_treePlanetLight = _grid.GetNodeOrNull<DirectionalLight3D>(PlanetLightPath);
 		return _treePlanetLight;
 	}
 

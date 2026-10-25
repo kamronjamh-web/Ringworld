@@ -242,13 +242,26 @@ public partial class RingCloudLayer : MeshInstance3D
 		RenderingServer.InstanceSetIgnoreCulling(GetInstance(), true);
 	}
 
+	private static readonly StringName CameraWorldPositionName = "camera_world_position";
+	private static readonly StringName RingCenterName = "ring_center";
+	private static readonly StringName FarSpaceEnabledName = "far_space_enabled";
+	private static readonly StringName FarSpaceStartMetersName = "far_space_start_meters";
+	private static readonly StringName FarSpaceRealEndMetersName = "far_space_real_end_meters";
+	private static readonly StringName FarSpaceRenderEndMetersName = "far_space_render_end_meters";
+	private static readonly StringName LocalVolumetricHandoffEnabledName = "local_volumetric_handoff_enabled";
+	private static readonly StringName LocalHandoffStartMetersName = "local_handoff_start_meters";
+	private static readonly StringName LocalHandoffEndMetersName = "local_handoff_end_meters";
+	private static readonly StringName RingCircumferenceKmName = "ring_circumference_km";
+	private static readonly StringName RingWidthKmName = "ring_width_km";
+	private static readonly StringName SunDirectionName = "sun_direction";
+
 	private void UpdateShaderUniforms(bool forceStaticRefresh = true)
 	{
 		if (_material == null || _grid == null) return;
 		Vector3 cameraWorldPosition = _focus?.GlobalPosition ?? Vector3.Zero;
 		if (!_lastCameraWorldPosition.IsEqualApprox(cameraWorldPosition))
 		{
-			_material.SetShaderParameter("camera_world_position", cameraWorldPosition);
+			_material.SetShaderParameter(CameraWorldPositionName, cameraWorldPosition);
 			_lastCameraWorldPosition = cameraWorldPosition;
 		}
 		Vector3 atmosphereSun = _sunLight?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
@@ -261,30 +274,30 @@ public partial class RingCloudLayer : MeshInstance3D
 		if (forceStaticRefresh)
 		{
 			_staticUniformRefreshElapsed = 0.0;
-			_material.SetShaderParameter("ring_center", _grid.GetCanonicalRingCenterWorld());
+			_material.SetShaderParameter(RingCenterName, _grid.GetCanonicalRingCenterWorld());
 			double diameter = _grid.GetCanonicalRingCircumferenceMeters64() / System.Math.PI;
 			float realEnd = (float)System.Math.Max(
 				FarSpaceStartMeters + 1.0,
 				diameter + _grid.RingAcrossWidthMeters + AltitudeMeters + 10000.0);
-			_material.SetShaderParameter("far_space_enabled", EnableFarSpace);
-			_material.SetShaderParameter("far_space_start_meters", FarSpaceStartMeters);
-			_material.SetShaderParameter("far_space_real_end_meters", realEnd);
+			_material.SetShaderParameter(FarSpaceEnabledName, EnableFarSpace);
+			_material.SetShaderParameter(FarSpaceStartMetersName, FarSpaceStartMeters);
+			_material.SetShaderParameter(FarSpaceRealEndMetersName, realEnd);
 			_material.SetShaderParameter(
-				"far_space_render_end_meters",
+				FarSpaceRenderEndMetersName,
 				Mathf.Max(FarSpaceStartMeters + 1.0f, FarSpaceRenderEndMeters));
-			_material.SetShaderParameter("local_volumetric_handoff_enabled", LocalVolumetricHandoffEnabled);
-			_material.SetShaderParameter("local_handoff_start_meters", LocalHandoffStartMeters);
-			_material.SetShaderParameter("local_handoff_end_meters", Mathf.Max(LocalHandoffStartMeters + 1.0f, LocalHandoffEndMeters));
+			_material.SetShaderParameter(LocalVolumetricHandoffEnabledName, LocalVolumetricHandoffEnabled);
+			_material.SetShaderParameter(LocalHandoffStartMetersName, LocalHandoffStartMeters);
+			_material.SetShaderParameter(LocalHandoffEndMetersName, Mathf.Max(LocalHandoffStartMeters + 1.0f, LocalHandoffEndMeters));
 			_material.SetShaderParameter(
-				"ring_circumference_km",
+				RingCircumferenceKmName,
 				(float)(_grid.GetCanonicalRingCircumferenceMeters64() * 0.001));
-			_material.SetShaderParameter("ring_width_km", _grid.RingAcrossWidthMeters * 0.001f);
+			_material.SetShaderParameter(RingWidthKmName, _grid.RingAcrossWidthMeters * 0.001f);
 		}
 
 		if (_sunLight == null) return;
 		Vector3 sunDirection = _sunLight.GlobalTransform.Basis.Z.Normalized();
 		if (_lastSunDirection.IsEqualApprox(sunDirection)) return;
-		_material.SetShaderParameter("sun_direction", sunDirection);
+		_material.SetShaderParameter(SunDirectionName, sunDirection);
 		_lastSunDirection = sunDirection;
 	}
 

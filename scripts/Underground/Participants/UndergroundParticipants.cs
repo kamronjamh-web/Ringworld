@@ -141,6 +141,8 @@ internal sealed class WeatherAudioParticipant : UndergroundParticipant
 internal sealed class AmbienceFadeParticipant : UndergroundParticipant
 {
     public const string MetaName = "ring_underground_ambience_blend";
+    // Apply runs every frame; HasMeta/GetMeta/SetMeta take a StringName, so convert the name once.
+    private static readonly StringName MetaStringName = MetaName;
     private Node? _explorer;
     private Node? _outside, _water;
     public override string Name => "AmbienceFade";
@@ -156,8 +158,8 @@ internal sealed class AmbienceFadeParticipant : UndergroundParticipant
     {
         if (_explorer == null || !GodotObject.IsInstanceValid(_explorer)) return;
         float blend = state.Blend;
-        float current = _explorer.HasMeta(MetaName) ? (float)_explorer.GetMeta(MetaName) : 0f;
-        if (!Mathf.IsEqualApprox(current, blend) || (blend == 0f && current != 0f)) _explorer.SetMeta(MetaName, blend);
+        float current = _explorer.HasMeta(MetaStringName) ? (float)_explorer.GetMeta(MetaStringName) : 0f;
+        if (!Mathf.IsEqualApprox(current, blend) || (blend == 0f && current != 0f)) _explorer.SetMeta(MetaStringName, blend);
     }
     public override string Describe() => _explorer == null ? "absent"
         : $"blend={(_explorer.HasMeta(MetaName) ? (float)_explorer.GetMeta(MetaName) : 0f):0.###}";

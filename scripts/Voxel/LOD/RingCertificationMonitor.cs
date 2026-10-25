@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
@@ -114,7 +115,8 @@ public partial class RingCertificationMonitor : Node
     [Export] public bool EnableAdaptiveRenderResolution { get; set; } = false;
     [Export(PropertyHint.Range, "0.5,1.0,0.01")] public float MaximumRenderScale { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0.5,1.0,0.01")] public float WorkingSetFallbackFraction { get; set; } = 0.90f;
-    [Export(PropertyHint.Range, "256,4096,64")] public int TerrainMemoryFallbackMb { get; set; } = 1536;
+    [Export(PropertyHint.Range, "256,8192,64")] public int TerrainMemoryFallbackMb { get; set; } = 1536;
+    [Export] public bool AutoScaleMemoryLimits { get; set; } = true;
     [Export(PropertyHint.Range, "0.5,1.0,0.05")] public float MinimumRenderScale { get; set; } = 0.70f;
     [Export(PropertyHint.Range, "0.01,0.2,0.01")] public float RenderScaleStep { get; set; } = 0.05f;
     [Export(PropertyHint.Range, "30,240,1")] public float TargetFps { get; set; } = 60.0f;
@@ -179,6 +181,20 @@ public partial class RingCertificationMonitor : Node
     public bool WorkingSetWithinLimit => CurrentWorkingSetBytes <= (long)WorkingSetLimitMb * 1024L * 1024L;
     public float CurrentRenderScale { get; private set; } = 1.0f;
 
+    private void ApplyMachineMemoryLimits()
+    {
+        if (!AutoScaleMemoryLimits)
+        {
+            GD.Print($"Memory guard: auto-scale off -> working set fallback at {WorkingSetFallbackFraction * WorkingSetLimitMb:0} MiB (limit {WorkingSetLimitMb}), terrain estimate limit {TerrainMemoryFallbackMb} MiB");
+            return;
+        }
+        long physicalBytes = RingMachineMemory.PhysicalMemoryBytes;
+        long vramBytes = RingMachineMemory.DedicatedVideoMemoryBytes;
+        (WorkingSetLimitMb, TerrainMemoryFallbackMb) = RingMachineMemory.ResolveLimits(physicalBytes, vramBytes, WorkingSetLimitMb, TerrainMemoryFallbackMb);
+        string adapter = string.IsNullOrEmpty(RingMachineMemory.VideoAdapterDescription) ? "unknown" : RingMachineMemory.VideoAdapterDescription;
+        GD.Print($"Memory guard: RAM {physicalBytes / 1073741824.0:0.0} GiB, VRAM {vramBytes / 1073741824.0:0.0} GiB ({adapter}) -> working set fallback at {WorkingSetFallbackFraction * WorkingSetLimitMb:0} MiB (limit {WorkingSetLimitMb}), terrain estimate limit {TerrainMemoryFallbackMb} MiB");
+    }
+
     public override void _Ready()
     {
         _coordinator = GetNodeOrNull<RingTerrainLodCoordinator>(CoordinatorPath);
@@ -201,6 +217,7 @@ public partial class RingCertificationMonitor : Node
 		_benchmarkDisableGlobalRendering = userArguments.Contains("--benchmark-disable-global-rendering");
         _simulateMemoryPressure = userArguments.Contains("--simulate-memory-pressure");
         ApplyBenchmarkArgumentOverrides(userArguments);
+        ApplyMachineMemoryLimits();
         PollMemory();
         if (_benchmarkEnabled)
         {
@@ -280,12 +297,18 @@ public partial class RingCertificationMonitor : Node
         _adaptiveElapsed += Math.Max(0.1, MemoryPollSeconds);
         long workingLimit = (long)WorkingSetLimitMb * 1024L * 1024L;
         long terrainLimit = (long)TerrainMemoryFallbackMb * 1024L * 1024L;
-        bool memoryPressure = _simulateMemoryPressure
-            || CurrentWorkingSetBytes >= workingLimit * WorkingSetFallbackFraction
-            || EstimatedTerrainBytes >= terrainLimit;
+        bool workingSetPressure = CurrentWorkingSetBytes >= workingLimit * WorkingSetFallbackFraction;
+        bool terrainPressure = EstimatedTerrainBytes >= terrainLimit;
+        bool memoryPressure = _simulateMemoryPressure || workingSetPressure || terrainPressure;
         if (memoryPressure && _adaptiveElapsed - _lastMemoryFallbackSeconds >= 30.0)
         {
-            if (_coordinator.ApplyMemoryPressureFallback())
+            string reason = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0}working set {1} MiB (fallback at {2:0} MiB = {3:0.00} x {4} MiB){5}; terrain estimate {6} MiB (limit {7} MiB){8}",
+                _simulateMemoryPressure ? "simulated; " : "",
+                CurrentWorkingSetBytes / (1024L * 1024L), workingLimit * WorkingSetFallbackFraction / (1024.0 * 1024.0), WorkingSetFallbackFraction, WorkingSetLimitMb,
+                workingSetPressure ? " EXCEEDED" : "",
+                EstimatedTerrainBytes / (1024L * 1024L), TerrainMemoryFallbackMb, terrainPressure ? " EXCEEDED" : "");
+            if (_coordinator.ApplyMemoryPressureFallback(reason))
                 _lastMemoryFallbackSeconds = _adaptiveElapsed;
             _simulateMemoryPressure = false;
         }
@@ -691,18 +714,21 @@ public partial class RingCertificationMonitor : Node
 
     private void PollMemory()
     {
-        using Process process = Process.GetCurrentProcess();
-        process.Refresh();
-        CurrentWorkingSetBytes = process.WorkingSet64;
-		_privateMemoryBytes = process.PrivateMemorySize64;
+        CurrentWorkingSetBytes = RingProcessMemory.WorkingSetBytes;
+		_privateMemoryBytes = RingProcessMemory.PrivateBytes;
         PeakWorkingSetBytes = Math.Max(PeakWorkingSetBytes, CurrentWorkingSetBytes);
         ManagedHeapBytes = GC.GetTotalMemory(forceFullCollection: false);
 		_totalAllocatedBytes = GC.GetTotalAllocatedBytes(precise: false);
 		_gen0CollectionCount = GC.CollectionCount(0);
 		_gen1CollectionCount = GC.CollectionCount(1);
 		_gen2CollectionCount = GC.CollectionCount(2);
-		_processCpuMilliseconds = process.TotalProcessorTime.TotalMilliseconds;
-		_processThreadCount = process.Threads.Count;
+		_processCpuMilliseconds = RingProcessMemory.ProcessCpuMilliseconds;
+		if (_benchmarkEnabled)
+		{
+			// Threads enumerates every process on the machine (~24 ms); benchmark diagnostics only.
+			using Process process = Process.GetCurrentProcess();
+			_processThreadCount = process.Threads.Count;
+		}
 		CurrentRenderScale = GetViewport().Scaling3DScale;
         EstimatedTerrainBytes = (_coordinator?.EstimatedActiveMeshBytes ?? 0L)
             + (_coordinator?.EstimatedPendingMeshBytes ?? 0L)

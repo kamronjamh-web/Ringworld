@@ -33,7 +33,8 @@ public partial class RingLiveTuningDrawer
 
     private void ProcessSurfaceTerrainTuning(double delta)
     {
-        if (_runtimeSurfaceDefinitionStatus != null)
+        // The gameplay diagnostics (several Godot Dictionaries per call) only feed visible labels, and opening the drawer refreshes the status itself.
+        if (_runtimeSurfaceDefinitionStatus != null && (_open || _surfaceTerrainPilot != null))
         {
             _surfaceTerrainDiagnosticsRefreshDelay -= delta;
             if (_surfaceTerrainDiagnosticsRefreshDelay <= 0)

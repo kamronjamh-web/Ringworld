@@ -29,6 +29,7 @@ varying float poi_day;
 varying float poi_cloud_occlusion;
 varying float poi_base_direct;
 varying float poi_specular;
+varying float poi_height_rel; // height above the POI's ground anchor along local up (heightfield receiver h_rel); -1 = no anchor, no heightfield term
 
 void vertex() {
 	poi_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -56,8 +57,11 @@ void fragment() {
 	EMISSION = emission_color.rgb * emission_energy * haze.T + ring_haze_inscatter(haze);
 	poi_cloud_occlusion = sample_local_cloud_shadow(poi_world_position) * poi_day;
 	float base_visibility = 1.0;
+	poi_height_rel = -1.0;
 	if (poi_base_ao_height > 0.0) {
-		base_visibility = smoothstep(0.0, poi_base_ao_height, dot(poi_world_position - (MODEL_MATRIX * vec4(poi_base_local, 1.0)).xyz, poi_local_up(poi_world_position)));
+		float above_anchor = dot(poi_world_position - (MODEL_MATRIX * vec4(poi_base_local, 1.0)).xyz, poi_local_up(poi_world_position));
+		base_visibility = smoothstep(0.0, poi_base_ao_height, above_anchor);
+		poi_height_rel = max(above_anchor, 0.0);
 	}
 	poi_base_direct = mix(BASE_DIRECT_MIN, 1.0, base_visibility);
 	// Cloud shadow darkens the ambient here and the sun in light(); the base occlusion rides on the ambient too.
@@ -87,6 +91,26 @@ void light() {
 	RingShadowTerms terms = ring_shadow_terms(poi_world_position, SCREEN_UV, max(ATTENUATION, poi_shadow_floor), 0.0, 0.0, RING_SHADOW_DEFAULT);
 	terms.cloud = mix(1.0, 1.0 - poi_cloud_occlusion, primary_sun);
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, primary_sun, RING_SHADOW_DEFAULT);
+	// Terrain height-shadow clipmap (S5/S7a), same gating as ring_terrain_lighting.gdshaderinc: only with a POI ground anchor (poi_height_rel >= 0), the heightfield
+	// in place of the macro term (POIs have none). Dormant (terms.height stays 1.0) while the feature is off.
+	if (poi_height_rel >= 0.0 && LIGHT_IS_DIRECTIONAL) {
+		bool height_active = primary_sun > 0.0 && ring_height_shadow_active();
+		float planet_height_weight = ring_height_shadow_planet_active()
+			? ring_height_shadow_light_weight(LIGHT, VIEW_MATRIX) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun)
+			: 0.0;
+		if (height_active || planet_height_weight > 0.0) {
+			RingHeightShadow height_shadow = ring_height_shadow_sample(
+				poi_world_position,
+				poi_height_rel,
+				ring_height_shadow_slope_tan(transpose(mat3(VIEW_MATRIX)) * NORMAL),
+				distance(poi_world_position, INV_VIEW_MATRIX[3].xyz));
+			if (height_active) {
+				terms.height = ring_height_shadow_term(height_shadow, primary_sun, 1.0, ringworld_hub_light_weight, poi_shadow_floor);
+			} else {
+				terms.height = ring_height_shadow_planet_term(height_shadow, planet_height_weight, poi_shadow_floor);
+			}
+		}
+	}
 	float sun_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && primary_sun > 0.5) {

@@ -54,6 +54,7 @@ public partial class RingGraphicsQualityController : Node
     [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
     [Export] public NodePath PlanetLightPath { get; set; } = new("../PlanetLight");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
+    [Export] public NodePath WeatherEffectsPath { get; set; } = new("../LocalWeatherEffects");
 
     [ExportGroup("Shadow Transition Overrides")]
     [Export] public bool UseInspectorShadowTransitionOverrides { get; set; }
@@ -181,7 +182,9 @@ public partial class RingGraphicsQualityController : Node
     private DirectionalLight3D? _sun;
     private DirectionalLight3D? _planet;
     private WorldEnvironment? _worldEnvironment;
+    private global::RingworldTechDemo.RingLocalWeatherEffects? _weatherEffects;
     private bool _skyAtmosphereRegistered;
+    private bool _ssaoDisabledByPreset;
     private AtmosphereVisualDefaults? _atmosphereDefaults;
     private readonly Dictionary<string, Variant> _grassTuningOverrides = new();
     /// <summary>Live drawer target; null when a scene intentionally has no standing grass.</summary>
@@ -208,6 +211,7 @@ public partial class RingGraphicsQualityController : Node
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
         _planet = GetNodeOrNull<DirectionalLight3D>(PlanetLightPath);
         _worldEnvironment = GetNodeOrNull<WorldEnvironment>(WorldEnvironmentPath);
+        _weatherEffects = GetNodeOrNull<global::RingworldTechDemo.RingLocalWeatherEffects>(WeatherEffectsPath);
 
         RingTerrainLodCoordinator.QualityPreset startupPreset = ResolveCommandLinePreset(DefaultPreset);
         bool terrainAlreadyConfigured = _coordinator?.CurrentPreset == startupPreset;
@@ -248,6 +252,31 @@ public partial class RingGraphicsQualityController : Node
         Tuning tuning = ResolveTuning(preset);
         return (tuning.FarViewportResolutionScale, tuning.FarAroundSegments, tuning.FarAcrossSegments);
     }
+
+    /// <summary>The preset's height-shadow defaults (N1): enabled everywhere, L0 texel (2/4/8 m; range = 2000 x texel), near sun map distance (300/400/500 m) and levels. An explicit user override in the shadow settings wins.</summary>
+    public static (bool enabled, int texelMeters, int nearMapDistanceMeters, int levels) PresetHeightShadow(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low => (true, 8, 300, 2),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (true, 8, 300, 2),
+        RingTerrainLodCoordinator.QualityPreset.High => (true, 4, 400, 2),
+        RingTerrainLodCoordinator.QualityPreset.VeryHigh => (true, 4, 400, 2),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (true, 4, 500, 2),
+        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (true, 2, 500, 2),
+        _ => (true, 8, 300, 2),
+    };
+
+    /// <summary>The preset's tree distances (metres): near-detail fade start/end, billboard fade start/end and tree sun-shadow distance. Sparse vegetation overrides win.</summary>
+    public static (float NearStart, float NearEnd, float BillboardStart, float BillboardEnd, float SunShadow) PresetTrees(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low => (15.0f, 25.0f, 200.0f, 240.0f, 160.0f),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (20.0f, 30.0f, 250.0f, 300.0f, 240.0f),
+        RingTerrainLodCoordinator.QualityPreset.High => (25.0f, 40.0f, 300.0f, 350.0f, 360.0f),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (40.0f, 60.0f, 550.0f, 650.0f, 700.0f),
+        _ => (25.0f, 40.0f, 300.0f, 350.0f, 480.0f),
+    };
+
+    /// <summary>Raised at the end of every preset application so drawer-owned sparse defaults can re-resolve their preset fallbacks.</summary>
+    public event System.Action<RingTerrainLodCoordinator.QualityPreset>? PresetApplied;
 
     public void InstallFarRenderingDefaults(string isolatedPath)
     {
@@ -477,10 +506,15 @@ public partial class RingGraphicsQualityController : Node
         {
             environment.SsrMaxSteps = tuning.SsrMaxSteps;
             environment.SsaoDetail = tuning.SsaoDetail;
+            // SSAO detail 0 means off (allowed OFF on Low); re-enable only what a preset switched off.
+            if (tuning.SsaoDetail <= 0.0f) { if (environment.SsaoEnabled) _ssaoDisabledByPreset = true; environment.SsaoEnabled = false; }
+            else if (_ssaoDisabledByPreset) { environment.SsaoEnabled = true; _ssaoDisabledByPreset = false; }
             environment.SsaoSharpness = preset == RingTerrainLodCoordinator.QualityPreset.Cinematic5090
                 ? 1.0f
                 : 0.98f;
         }
+
+        ApplyWeatherQuality(preset);
 
         if (_grid != null)
         {
@@ -506,6 +540,7 @@ public partial class RingGraphicsQualityController : Node
             + $"overlapDarkening={ShadowOverlapDarkening:0.00}, "
             + $"farViewport={farViewportResolutionScale:0.00}x, "
             + $"farMesh={farAroundSegments}x{farAcrossSegments}.");
+        PresetApplied?.Invoke(preset);
     }
 
     /// <summary>Reapplies this preset before the sparse player keys, used after loading or resetting grass tuning.</summary>
@@ -669,6 +704,25 @@ public partial class RingGraphicsQualityController : Node
         foreach (Variant key in _waterSsrOverrides.Keys) Set(key.AsString(), _waterSsrOverrides[key]);
     }
 
+    /// <summary>Rain particle pool and lightning bolt complexity per preset (rain and lightning stay enabled everywhere: contract C7/C8).</summary>
+    public static (int particles, int branches, int secondaryDepth) PresetWeather(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low => (1024, 1, 0),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (2048, 2, 1),
+        RingTerrainLodCoordinator.QualityPreset.High => (3072, 3, 1),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (6144, 4, 2),
+        _ => (4096, 3, 1),
+    };
+
+    private void ApplyWeatherQuality(RingTerrainLodCoordinator.QualityPreset preset)
+    {
+        if (_weatherEffects == null || !GodotObject.IsInstanceValid(_weatherEffects)) return;
+        (int particles, int branches, int secondaryDepth) = PresetWeather(preset);
+        _weatherEffects.MaximumParticleCount = particles;
+        _weatherEffects.BoltMaximumBranches = branches;
+        _weatherEffects.BoltSecondaryBranchDepth = secondaryDepth;
+    }
+
     private void ApplyWaterSsrQuality(RingTerrainLodCoordinator.QualityPreset preset)
     {
         ApplyWaterSsrPresetDefaults(preset);
@@ -677,25 +731,34 @@ public partial class RingGraphicsQualityController : Node
 
     private void ApplyWaterSsrPresetDefaults(RingTerrainLodCoordinator.QualityPreset preset)
     {
-        if (preset == RingTerrainLodCoordinator.QualityPreset.Low) { WaterSsrEnabled = false; return; }
-        if (preset == RingTerrainLodCoordinator.QualityPreset.Medium) { WaterSsrEnabled = true; WaterSsrCoarseSteps = 12; WaterSsrRefinementSteps = 3; WaterSsrMaxRayDistance = 120; WaterSsrCameraDistance = 250; WaterSsrRoughnessCutoff = .25f; WaterSsrStrength = .50f; return; }
-        WaterSsrEnabled = true; WaterSsrCoarseSteps = 24; WaterSsrRefinementSteps = 4; WaterSsrMaxRayDistance = 250; WaterSsrCameraDistance = 450; WaterSsrRoughnessCutoff = .32f; WaterSsrStrength = .65f;
+        // SSR is an allowed OFF on Low and Medium; the other fields still follow the preset so enabling it by hand gives a sane reduced setting.
+        (bool enabled, int coarse, int refinement, float rayMeters, float cameraMeters, float cutoff, float strength) = preset switch
+        {
+            RingTerrainLodCoordinator.QualityPreset.Low => (false, 12, 3, 120.0f, 250.0f, .25f, .50f),
+            RingTerrainLodCoordinator.QualityPreset.Medium => (false, 12, 3, 120.0f, 250.0f, .25f, .50f),
+            RingTerrainLodCoordinator.QualityPreset.High => (true, 12, 4, 120.0f, 250.0f, .32f, .65f),
+            RingTerrainLodCoordinator.QualityPreset.UltraVideo => (true, 32, 4, 400.0f, 600.0f, .32f, .65f),
+            _ => (true, 24, 4, 250.0f, 450.0f, .32f, .65f),
+        };
+        WaterSsrEnabled = enabled; WaterSsrCoarseSteps = coarse; WaterSsrRefinementSteps = refinement; WaterSsrMaxRayDistance = rayMeters;
+        WaterSsrCameraDistance = cameraMeters; WaterSsrRoughnessCutoff = cutoff; WaterSsrStrength = strength;
     }
 
 	private void ApplySunshineCloudQuality(RingTerrainLodCoordinator.QualityPreset preset)
 	{
 		if (_sunshineClouds == null) return;
-		// WO-2: today's effective values on every preset (previously forced by the factory cloud file); WO-3 retunes per preset.
+		// WO-3: per-preset tuple; Very High keeps today's effective values (previously forced by the factory cloud file on every preset).
+		// WO-8: Low/Medium render clouds at half resolution (jittered) with 4x4 interleave (CloudInterleave 2: 0 off, 1 = 2x2, 2 = 4x4).
 		(int resolutionScale, int raymarchSteps, int nearShadowResolution,
 			int farShadowResolution, float nearShadowUpdatesPerSecond,
 			float farShadowUpdatesPerSecond, int shadowVerticalSamples,
 				float shadowStepMeters, int shadowMaxSamples, bool resolutionJitter, int interleave, int weatherSystemUploadCount, int lightingSteps) = preset switch
 		{
-			RingTerrainLodCoordinator.QualityPreset.Low => (0, 328, 512, 128, 5.0f, 2.5f, 24, 400.0f, 32, false, 1, 64, 30),
-			RingTerrainLodCoordinator.QualityPreset.Medium => (0, 328, 512, 128, 5.0f, 2.5f, 24, 250.0f, 64, false, 1, 64, 30),
-			RingTerrainLodCoordinator.QualityPreset.High => (0, 328, 512, 128, 5.0f, 2.5f, 24, 250.0f, 64, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.Low => (1, 96, 256, 128, 2.0f, 0.25f, 8, 400.0f, 32, true, 2, 40, 8),
+			RingTerrainLodCoordinator.QualityPreset.Medium => (1, 128, 512, 128, 5.0f, 0.5f, 12, 250.0f, 64, true, 2, 48, 12),
+			RingTerrainLodCoordinator.QualityPreset.High => (0, 192, 512, 128, 5.0f, 1.0f, 16, 250.0f, 64, false, 1, 48, 16),
 			RingTerrainLodCoordinator.QualityPreset.VeryHigh => (0, 328, 512, 128, 5.0f, 2.5f, 24, 200.0f, 96, false, 1, 64, 30),
-			RingTerrainLodCoordinator.QualityPreset.UltraVideo => (0, 328, 512, 128, 5.0f, 2.5f, 24, 150.0f, 128, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.UltraVideo => (0, 328, 1024, 256, 10.0f, 2.5f, 24, 150.0f, 128, false, 1, 64, 30),
 			RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (0, 328, 512, 128, 5.0f, 2.5f, 24, 150.0f, 128, false, 1, 64, 30),
 			_ => (0, 328, 512, 128, 5.0f, 2.5f, 24, 250.0f, 64, false, 1, 64, 30)
 		};
@@ -737,21 +800,21 @@ public partial class RingGraphicsQualityController : Node
     private static Tuning ResolveTuning(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
     {
         RingTerrainLodCoordinator.QualityPreset.Low => new(
-            4096, RenderingServer.ShadowQuality.Hard, 4000.0f, 0.0f,
+            2048, RenderingServer.ShadowQuality.Hard, 4000.0f, 0.0f,
             0.30f, 2800.0f, 5500.0f, 8, 64000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.High,
             8000.0f, 40000.0f, 256, 3500.0f, 0.38f, 0.48f,
             2200.0f, 4500.0f, 4500.0f, 12000.0f, 1,
-            1.0f, 4096, 64, 64, 0.60f, 2, 1, 1.5f),
+            0.5f, 4096, 64, 64, 0.0f, 2, 1, 1.5f),
         RingTerrainLodCoordinator.QualityPreset.Medium => new(
             4096, RenderingServer.ShadowQuality.SoftVeryLow, 6000.0f, 0.06f,
             0.36f, 3500.0f, 6500.0f, 10, 96000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.High,
             10000.0f, 50000.0f, 512, 6500.0f, 0.45f, 0.58f,
             3500.0f, 7000.0f, 7000.0f, 18000.0f, 2,
-            1.0f, 4096, 64, 96, 0.75f, 2, 1, 2.0f),
+            0.75f, 4096, 64, 96, 0.75f, 2, 1, 2.0f),
         RingTerrainLodCoordinator.QualityPreset.High => new(
-            8192, RenderingServer.ShadowQuality.SoftLow, 12000.0f, 0.08f,
+            4096, RenderingServer.ShadowQuality.SoftLow, 10000.0f, 0.08f,
             0.46f, 6500.0f, 11000.0f, 14, 128000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.High,
             12000.0f, 70000.0f, 768, 10000.0f, 0.56f, 0.68f,

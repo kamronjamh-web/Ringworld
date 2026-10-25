@@ -117,7 +117,8 @@ func _run() -> void:
 
 	# ---- disabled: nothing runs, globals stay at their project defaults
 	var settings: Dictionary = {}
-	_check(not bool(graphics.get("EffectiveHeightShadowEnabled")), "feature defaults to off")
+	_check(bool(graphics.get("EffectiveHeightShadowEnabled")) and bool(graphics.get("HeightShadowPresetDefaultsActive")), "feature defaults to on (preset default)")
+	_check(bool(graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", false)) and not bool(graphics.get("EffectiveHeightShadowEnabled")), "explicit override off wins")
 	await process_frame
 	await process_frame
 	var state0 = _global("ringworld_height_shadow_state")
@@ -126,6 +127,9 @@ func _run() -> void:
 	var before_image: Image = await _frame_image()
 
 	# ---- enable and wait for the first publish
+	# The feature is on by default (preset), so the producer may already have published before the explicit off above:
+	# wait for a publish of the NEW session, not the boot one.
+	var publishes_before := int(_diag()["publishes"])
 	_check(bool(graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", true)), "HeightShadowEnabled accepted")
 	var timeout := float(COMMON.arg_value("--publish-timeout=", "240"))
 	var started := Time.get_ticks_msec()
@@ -133,7 +137,10 @@ func _run() -> void:
 	var last_print := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - started < int(timeout * 1000.0):
 		await process_frame
-		if int(_diag()["publishes"]) >= 1:
+		var publishes_now := int(_diag()["publishes"])
+		if publishes_now < publishes_before:
+			publishes_before = 0  # the counter restarts with a new session
+		if publishes_now > publishes_before:
 			published = true
 			break
 		if Time.get_ticks_msec() - last_print > 10000:

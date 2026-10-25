@@ -1,7 +1,10 @@
 """Summarise (tools/quality_preset_capture.gd output) WarmStallProbe stall_frames.csv + stall_detail.txt by context group.
-Usage: python -I tools/quality_preset_probe_report.py <run_dir> [context_prefix ...]
+Usage: python -I tools/quality_preset_probe_report.py <run_dir> [context_prefix ...] [--owners]
 Per context: frame count, median/p95/p99 of total and buckets, hitch (>25 ms) count, hitch cause classes
-(gc, pipeline compile, jit, top owner gap), and the owners that dominate the nodes bucket in hitch frames."""
+(gc, pipeline compile, jit, top owner gap), and the owners that dominate the nodes bucket in hitch frames.
+Also: managed allocation MB/s (all threads, and main thread when the probe recorded it), GCs and hitches per minute.
+--owners: main-thread allocation per owner gap (alloc_owners.csv) per context group, MB/s ranked."""
+import os
 import csv
 import re
 import sys
@@ -30,7 +33,7 @@ def group_of(ctx):
 
 def main():
     run = sys.argv[1]
-    want = sys.argv[2:]
+    want = [a for a in sys.argv[2:] if not a.startswith("--")]
     rows = list(csv.DictReader(open(run + "/stall_frames.csv", newline="")))
     detail = open(run + "/stall_detail.txt").read()
     # owner gaps per hitch frame
@@ -45,8 +48,19 @@ def main():
                 gaps.append((float(m.group(1)), m.group(2)))
         frame_gaps[idx] = gaps
     groups = defaultdict(list)
+    # The first frames of every context segment carry the harness's own window transition (label restore/apply, state dump,
+    # QP_WINDOW print, report append), so they are excluded from the stats (counted separately as transition frames).
+    transition = 3
+    previous_context, run_length, skipped = None, 0, 0
     for r in rows:
+        if r["context"] != previous_context:
+            previous_context, run_length = r["context"], 0
+        run_length += 1
+        if run_length <= transition:
+            skipped += 1
+            continue
         groups[group_of(r["context"])].append(r)
+    print("(excluded %d harness transition frames: the first %d frames of each context segment)" % (skipped, transition))
     order = list(dict.fromkeys(group_of(r["context"]) for r in rows))
     for g in order:
         if want and not any(g.startswith(w) for w in want):
@@ -72,8 +86,16 @@ def main():
                 key = "after:" + what.split(" -> ")[0] + "->" + key if key in ("__last", "post_draw", "pre_draw") else key
                 owners[key] += 1
                 owner_ms[key] += ms
-        print("== %s frames=%d total med=%.1f p95=%.1f p99=%.1f max=%.1f | hitches>25=%d (%.0f%%)" % (
-            g, len(fr), pct(tot, .5), pct(tot, .95), pct(tot, .99), max(tot) if tot else 0, len(hit), 100.0 * len(hit) / max(1, len(fr))))
+        secs = max(1e-3, sum(tot) / 1000.0)
+        alloc = sum(float(r["alloc_mb"]) for r in fr)
+        main_alloc = sum(float(r.get("main_alloc_mb") or 0) for r in fr)
+        gcs = [sum(int(r[k]) for k in ("gc0", "gc1", "gc2")) for r in fr]
+        gc1 = sum(1 for r in fr if int(r["gc1"]) + int(r["gc2"]) > 0)
+        pauses = [float(r["gc_pause_ms"]) for r in fr if float(r["gc_pause_ms"]) > 0]
+        print("== %s frames=%d secs=%.1f total med=%.1f p95=%.1f p99=%.1f max=%.1f | hitches>25=%d (%.0f%%, %.1f/min)" % (
+            g, len(fr), secs, pct(tot, .5), pct(tot, .95), pct(tot, .99), max(tot) if tot else 0, len(hit), 100.0 * len(hit) / max(1, len(fr)), 60.0 * len(hit) / secs))
+        print("   alloc %.2f MB/s (main thread %.2f MB/s) | gc frames %.1f/min (gen1+ %.1f/min) pause med=%.1f p99=%.1f max=%.1f ms" % (
+            alloc / secs, main_alloc / secs, 60.0 * sum(1 for x in gcs if x) / secs, 60.0 * gc1 / secs, pct(pauses, .5), pct(pauses, .99), max(pauses) if pauses else 0))
         print("   buckets median: " + " ".join("%s=%.1f" % (k.replace("_ms", ""), pct(v, .5)) for k, v in b.items()))
         print("   buckets p95:    " + " ".join("%s=%.1f" % (k.replace("_ms", ""), pct(v, .95)) for k, v in b.items()))
         if hit:
@@ -83,4 +105,30 @@ def main():
             print("   top owners in hitch frames (count, total ms): " + ", ".join("%s=%d/%.0f" % (k, owners[k], owner_ms[k]) for k, _ in owners.most_common(8)))
 
 
+def owners(run, want):
+    path = os.path.join(run, "alloc_owners.csv")
+    if not os.path.exists(path):
+        print("no alloc_owners.csv")
+        return
+    rows = list(csv.DictReader(open(run + "/stall_frames.csv", newline="")))
+    secs = defaultdict(float)
+    for r in rows:
+        secs[group_of(r["context"])] += float(r["total_ms"]) / 1000.0
+    acc = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
+    for r in csv.DictReader(open(path, newline="")):
+        a = acc[group_of(r["context"])][r["owner"]]
+        a[0] += float(r["main_alloc_mb"])
+        a[1] += float(r["ms"])
+    for g, by_owner in acc.items():
+        if want and not any(g.startswith(w) for w in want):
+            continue
+        s = max(1e-3, secs.get(g, 0.0))
+        total = sum(v[0] for v in by_owner.values())
+        print("== owners %s secs=%.1f main-thread alloc %.2f MB/s" % (g, s, total / s))
+        for owner, (mb, ms) in sorted(by_owner.items(), key=lambda kv: -kv[1][0])[:14]:
+            print("   %8.3f MB/s %7.1f ms/s  %s" % (mb / s, ms / s, owner))
+
+
 main()
+if "--owners" in sys.argv[2:]:
+    owners(sys.argv[1], [a for a in sys.argv[2:] if not a.startswith("--")])

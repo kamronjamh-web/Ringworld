@@ -17,8 +17,22 @@ public partial class RingLodPauseMenu : CanvasLayer
         Fsr2Quality = 2,
         Fsr2Balanced = 3,
         Fsr2Performance = 4,
-        Fsr2UltraPerformance = 5
+        Fsr2UltraPerformance = 5,
+        /// <summary>Resolved from the current graphics preset and output height (see <see cref="ResolveAutoUpscalingPreset"/>).</summary>
+        Auto = 6
     }
+
+    /// <summary>
+    /// Auto render resolution: Low / Medium -> FSR2 Performance (0.67 scale); High / Very High -> FSR2 Balanced (0.75 scale) from
+    /// 1300 px output height, Native (1.0) below; Ultra / Cinematic -> Native.
+    /// </summary>
+    public static UpscalingPreset ResolveAutoUpscalingPreset(RingTerrainLodCoordinator.QualityPreset preset, int outputHeight) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low or RingTerrainLodCoordinator.QualityPreset.Medium => UpscalingPreset.Fsr2Performance,
+        RingTerrainLodCoordinator.QualityPreset.High or RingTerrainLodCoordinator.QualityPreset.VeryHigh =>
+            outputHeight >= 1300 ? UpscalingPreset.Fsr2Balanced : UpscalingPreset.Native,
+        _ => UpscalingPreset.Native
+    };
 
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
@@ -32,7 +46,7 @@ public partial class RingLodPauseMenu : CanvasLayer
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
     [Export(PropertyHint.Range, "2,32,1")] public int DefaultChunkRadius { get; set; } = 7;
     [Export(PropertyHint.Range, "2,32,1")] public int DefaultVerticalChunkRadius { get; set; } = 7;
-    [Export] public UpscalingPreset DefaultUpscalingPreset { get; set; } = UpscalingPreset.Native;
+    [Export] public UpscalingPreset DefaultUpscalingPreset { get; set; } = UpscalingPreset.Auto;
 
     private VoxelChunkGridManager? _grid;
     private RingVoxelExplorerController? _explorer;
@@ -68,6 +82,7 @@ public partial class RingLodPauseMenu : CanvasLayer
     private double _renderResolutionStatusElapsed;
     private bool _renderResolutionReady;
     private bool _fsr2Available;
+    private UpscalingPreset _lastAutoResolved = UpscalingPreset.Auto;
     private readonly List<Vector2I> _availableResolutions = new();
     private Label? _applyStatus;
     private bool _displayApplyPending;
@@ -140,6 +155,9 @@ public partial class RingLodPauseMenu : CanvasLayer
                 && (_proxyCoverageCullingDefaults.LastError.Length == 0 || _proxyCoverageCullingRetryElapsed >= 5.0))
                 FlushProxyCoverageCullingSettings();
         }
+        if (_renderResolutionReady && _renderResolutionDefaults.Settings.Preset == (int)UpscalingPreset.Auto
+            && ResolveAutoForCurrentState() != _lastAutoResolved)
+            ApplyUpscalingPreset(UpscalingPreset.Auto, updateStatus: false);
         if (_menuOpen)
         {
             _renderResolutionStatusElapsed += delta;
@@ -310,10 +328,10 @@ public partial class RingLodPauseMenu : CanvasLayer
                 ? "FSR 2.2 renders only 3D at a lower resolution; the UI remains native-resolution."
                 : "FSR 2.2 requires Godot's Forward+ renderer."
         };
-        for (int preset = 0; preset <= 5; preset++)
+        for (int preset = 0; preset <= 6; preset++)
         {
             _upscalingOptions.AddItem(GetRenderResolutionPresetLabel(preset));
-            if (!_fsr2Available && preset != 0) _upscalingOptions.SetItemDisabled(preset, true);
+            if (!_fsr2Available && preset != 0 && preset != 6) _upscalingOptions.SetItemDisabled(preset, true);
         }
         _upscalingOptions.Select(_renderResolutionDefaults.Settings.Preset);
         _upscalingOptions.ItemSelected += OnUpscalingSelected;
@@ -322,7 +340,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         var upscalingNote = new Label
         {
             Text = _fsr2Available
-                ? "Native resolution is the default. Enable FSR 2.2 here when you need lower 3D render resolution."
+                ? "Auto picks the 3D render resolution from the graphics preset and screen height. Choose a fixed option to override it."
                 : "FSR 2.2 is unavailable because this session is not using the Forward+ renderer.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -825,12 +843,14 @@ public partial class RingLodPauseMenu : CanvasLayer
     {
         Viewport? viewport = _renderResolutionReady ? GetViewport() : null;
         int requested = _renderResolutionDefaults.Settings.Preset;
-        int effective = !_fsr2Available && requested != 0 ? 0 : requested;
+        int resolved = ResolveEffectivePresetId();
+        int effective = !_fsr2Available && requested != 0 && requested != (int)UpscalingPreset.Auto ? 0 : requested;
         return new Godot.Collections.Dictionary
         {
             ["ready"] = _renderResolutionReady,
             ["preset"] = effective,
-            ["requested_scale"] = GetRenderResolutionScale(requested),
+            ["effective_preset"] = !_fsr2Available ? 0 : resolved,
+            ["requested_scale"] = GetRenderResolutionScale(resolved),
             ["current_scale"] = viewport?.Scaling3DScale ?? 1.0f,
             ["adaptive_enabled"] = _renderResolutionDefaults.Settings.AdaptiveResolutionEnabled,
             ["fsr_sharpness"] = _renderResolutionDefaults.Settings.FsrSharpness,
@@ -859,22 +879,23 @@ public partial class RingLodPauseMenu : CanvasLayer
     {
         if (_certificationMonitor == null) return;
         _certificationMonitor.EnableAdaptiveRenderResolution = _renderResolutionDefaults.Settings.AdaptiveResolutionEnabled;
-        int effectivePreset = !_fsr2Available && _renderResolutionDefaults.Settings.Preset != 0
-            ? 0
-            : _renderResolutionDefaults.Settings.Preset;
+        int effectivePreset = !_fsr2Available ? 0 : ResolveEffectivePresetId();
         _certificationMonitor.MaximumRenderScale = GetRenderResolutionScale(effectivePreset);
     }
 
     private void ApplyUpscalingPreset(UpscalingPreset requested, bool updateStatus = true)
     {
         Viewport viewport = GetViewport();
+        bool auto = requested == UpscalingPreset.Auto;
+        if (auto) requested = _lastAutoResolved = ResolveAutoForCurrentState();
         UpscalingPreset applied = requested;
         if (!_fsr2Available && requested != UpscalingPreset.Native)
         {
             applied = UpscalingPreset.Native;
         }
-        if (_upscalingOptions != null && _upscalingOptions.Selected != (int)applied)
-            _upscalingOptions.Select((int)applied);
+        int selectedId = auto ? (int)UpscalingPreset.Auto : (int)applied;
+        if (_upscalingOptions != null && _upscalingOptions.Selected != selectedId)
+            _upscalingOptions.Select(selectedId);
 
         float scale = GetRenderResolutionScale((int)applied);
         viewport.Scaling3DMode = applied == UpscalingPreset.Native
@@ -888,7 +909,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         {
             _applyStatus.Text = !_fsr2Available && requested != UpscalingPreset.Native
                 ? "FSR 2.2 requires Forward+; requested resolution is unavailable and 100% native remains active."
-                : $"3D render resolution: requested {GetRenderResolutionScale((int)requested) * 100f:0}%, active {scale * 100f:0}% ({GetRenderResolutionPresetLabel((int)applied)})";
+                : $"{(auto ? "Auto: " : "")}3D render resolution: requested {GetRenderResolutionScale((int)requested) * 100f:0}%, active {scale * 100f:0}% ({GetRenderResolutionPresetLabel((int)applied)})";
         }
         UpdateRenderResolutionStatus();
     }
@@ -896,13 +917,32 @@ public partial class RingLodPauseMenu : CanvasLayer
     private void UpdateRenderResolutionStatus()
     {
         if (_renderResolutionStatus == null || !_renderResolutionReady) return;
-        int requested = _renderResolutionDefaults.Settings.Preset;
+        int requested = ResolveEffectivePresetId();
         float requestedScale = GetRenderResolutionScale(requested);
         float currentScale = GetViewport().Scaling3DScale;
+        string autoPrefix = _renderResolutionDefaults.Settings.Preset == (int)UpscalingPreset.Auto
+            ? $"Auto: {GetRenderResolutionPresetLabel(requested)} | "
+            : "";
         string saveState = _renderResolutionDefaults.LastError.Length > 0
             ? $"Save error: {_renderResolutionDefaults.LastError}"
             : _renderResolutionDefaults.Dirty ? "Saving settings..." : "Settings saved.";
-        _renderResolutionStatus.Text = $"Requested {requestedScale * 100f:0}% / current {currentScale * 100f:0}% | Automatic {(_renderResolutionDefaults.Settings.AdaptiveResolutionEnabled ? "on" : "off")} | {saveState}";
+        _renderResolutionStatus.Text = $"{autoPrefix}Requested {requestedScale * 100f:0}% / current {currentScale * 100f:0}% | Automatic {(_renderResolutionDefaults.Settings.AdaptiveResolutionEnabled ? "on" : "off")} | {saveState}";
+    }
+
+    private UpscalingPreset ResolveAutoForCurrentState()
+    {
+        // No graphics controller in the scene: nothing to derive from, so Auto stays Native.
+        if (_graphicsQuality == null) return UpscalingPreset.Native;
+        // Outside the tree (tests that query diagnostics before/after attaching) there is no window: resolve for a 1080p output.
+        int height = IsInsideTree() ? (GetWindow()?.Size.Y ?? (int)GetViewport().GetVisibleRect().Size.Y) : 1080;
+        return ResolveAutoUpscalingPreset(_graphicsQuality.CurrentPreset, height);
+    }
+
+    /// <summary>The stored preset id, with Auto resolved to the mode it currently maps to.</summary>
+    private int ResolveEffectivePresetId()
+    {
+        int stored = _renderResolutionDefaults.Settings.Preset;
+        return stored == (int)UpscalingPreset.Auto ? (int)ResolveAutoForCurrentState() : stored;
     }
 
     public static float GetRenderResolutionScale(int preset) => GameplayRenderResolutionDefaults.ValidatePreset(preset) switch
@@ -918,6 +958,7 @@ public partial class RingLodPauseMenu : CanvasLayer
         3 => "75% - FSR 2.2 Balanced",
         4 => "67% - FSR 2.2 Performance",
         5 => "50% - FSR 2.2 Ultra Performance",
+        6 => "Auto (graphics preset)",
         _ => "100% - Native (default)"
     };
 

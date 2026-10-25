@@ -3303,12 +3303,14 @@ public partial class RingVolumetricCloudLayer : Node3D
             Mathf.Max(4, LargeWeatherClusterCells),
             40);
         float weather = smallWeather * 0.62f + largeWeather * 0.38f;
+        // Per-thread scratch list: this query runs every frame and may run off the main thread.
         List<WeatherSystemDefinition> nearbyWeatherSystems = BuildNearbyWeatherSystems(
             position.AroundMeters,
             position.AcrossMeters,
             timeSeconds,
             seed,
-            0.0f);
+            0.0f,
+            _queryWeatherSystemsScratch ??= new List<WeatherSystemDefinition>());
         MacroWeatherSample macro = EvaluateMacroWeather(
             position.AroundMeters,
             position.AcrossMeters,
@@ -3749,14 +3751,18 @@ public partial class RingVolumetricCloudLayer : Node3D
             ? LifecycleHash01(aroundCell, acrossCell, seed, generation, salt)
             : Hash01(aroundCell, acrossCell, seed, salt);
 
+    [ThreadStatic] private static List<WeatherSystemDefinition>? _queryWeatherSystemsScratch;
+
     private List<WeatherSystemDefinition> BuildNearbyWeatherSystems(
         double centerAroundMeters,
         double centerAcrossMeters,
         double timeSeconds,
         int seed,
-        float queryRadiusMeters)
+        float queryRadiusMeters,
+        List<WeatherSystemDefinition>? reuse = null)
     {
-        var systems = new List<WeatherSystemDefinition>();
+        var systems = reuse ?? new List<WeatherSystemDefinition>();
+        systems.Clear();
         if (_grid == null) return systems;
         float macroCell = Mathf.Clamp(MacroWeatherCellMeters, 16000.0f, 64000.0f);
         float maximumRadius = Mathf.Clamp(
@@ -4280,8 +4286,9 @@ public partial class RingVolumetricCloudLayer : Node3D
         float strongest = 0.0f;
         WeatherSystemDefinition strongestSystem = default;
 
-        foreach (WeatherSystemDefinition system in systems)
+        for (int systemIndex = 0; systemIndex < systems.Count; systemIndex++)
         {
+            WeatherSystemDefinition system = systems[systemIndex];
             double deltaAround = ShortestAroundDelta(
                 sourceAround,
                 system.SourceAroundMeters,

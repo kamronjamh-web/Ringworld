@@ -71,8 +71,8 @@ public partial class RingSunshineCloudBridge
             return;
         }
         _terrainCloudSunVisibility.RegisterRequiredAltitudeRange("sunshine",
-            Mathf.Min(Mathf.Min(NaturalCloudBaseAltitudeMeters, StormFrontCloudBaseAltitudeMeters), _clouds.Get("cloud_floor").AsSingle()),
-            Mathf.Max(NaturalCloudTopAltitudeMeters, _clouds.Get("cloud_ceiling").AsSingle()));
+            Mathf.Min(Mathf.Min(NaturalCloudBaseAltitudeMeters, StormFrontCloudBaseAltitudeMeters), _clouds.Get(CloudFloorName).AsSingle()),
+            Mathf.Max(NaturalCloudTopAltitudeMeters, _clouds.Get(CloudCeilingName).AsSingle()));
         _terrainCloudSunVisibility.BindToResource(_clouds);
     }
 

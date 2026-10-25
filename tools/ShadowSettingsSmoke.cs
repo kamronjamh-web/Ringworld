@@ -231,7 +231,7 @@ public partial class ShadowSettingsSmoke : RefCounted
         settings.Reset(controller);
         controller._Process(0);
         bool missingInputsKeepsRequestedSun = controller.RequestedSunShadowsEnabled && sun.ShadowEnabled && !controller.LocalSunShadowSuspended;
-        bool reset = controller.EffectiveDirectionalShadowAtlasSize == 8192
+        bool reset = controller.EffectiveDirectionalShadowAtlasSize == 4096
             && controller.EffectiveDirectionalShadowDepthBits == 16
             && Mathf.IsEqualApprox(controller.EffectiveNearCascadeMeters, RingGraphicsQualityController.DefaultNearCascadeMeters)
             && Mathf.IsEqualApprox(sun.DirectionalShadowSplit2, .06f)
@@ -283,7 +283,7 @@ public partial class ShadowSettingsSmoke : RefCounted
         bool mapDefaultsUnchanged = presetDistance >= 1000f && presetDistance != 400f
             && sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits
             && controller.EffectiveSunCascadeCount == 4
-            && (bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 5000f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 4;
+            && (bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 4000f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 3;
         bool mapApplied = mapSettings.SetOverride(controller, "MaxDistanceMeters", 400f) && mapSettings.SetOverride(controller, "CascadeCount", 2)
             && mapSettings.SetOverride(controller, "NearCascadeMeters", 60f)
             && mapSettings.SetOverride(controller, "PlanetShadowsEnabled", false) && mapSettings.SetOverride(controller, "PlanetShadowDistanceMeters", 250f) && mapSettings.SetOverride(controller, "PlanetCascadeCount", 2);
@@ -313,7 +313,7 @@ public partial class ShadowSettingsSmoke : RefCounted
         mapSettings.Reset(controller);
         controller._Process(0);
         bool mapReset = sun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits && controller.EffectiveSunCascadeCount == 4
-            && (bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 5000f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 4;
+            && (bool)fakeAtmosphere.Get("planet_light_cast_shadows") && Mathf.IsEqualApprox((float)fakeAtmosphere.Get("planet_light_shadow_distance_meters"), 4000f) && (int)fakeAtmosphere.Get("planet_light_shadow_cascades") == 3;
         // The High preset range (not the 14000 m VeryHigh one) returns after reset, and never below the 1000 m preset floor.
         bool mapResetDistance = sun.DirectionalShadowMaxDistance >= 1000f && !Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, 400f);
         bool legacyKeepsMode = legacySun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits && Mathf.IsEqualApprox(legacySun.DirectionalShadowMaxDistance, 14000f);
@@ -335,15 +335,18 @@ public partial class ShadowSettingsSmoke : RefCounted
         foreach (RingTerrainLodCoordinator.QualityPreset capPreset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
         {
             capController.ApplyPreset(capPreset, applyTerrainPreset: false);
-            float expectedPlanet = Mathf.Min(6000f, capController.EffectiveShadowDistanceMeters);
-            planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, expectedPlanet) && capController.EffectivePlanetCascadeCount == 4;
+            (float presetPlanetDistance, int presetPlanetCascades) = RingGraphicsQualityController.PresetPlanetLight(capPreset);
+            float expectedPlanet = Mathf.Min(Mathf.Min(6000f, presetPlanetDistance), capController.EffectiveShadowDistanceMeters);
+            planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, expectedPlanet) && capController.EffectivePlanetCascadeCount == Math.Min(4, presetPlanetCascades);
             planetCapDetail += $"{capPreset}={capController.EffectivePlanetShadowDistanceMeters:0}/{capController.EffectivePlanetCascadeCount} ";
         }
         capController.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, applyTerrainPreset: false);
-        planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 4000f)
+        planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 2000f)
             && capController.SetShadowTuningOverride("PlanetShadowDistanceMeters", 8000f)
             && Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 8000f);
         // An explicit shorter sun range caps the planet range too (no planet override stored).
+        capController.SetShadowTuningOverrides(new Godot.Collections.Dictionary());
+        capController.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.VeryHigh, applyTerrainPreset: false);
         capController.SetShadowTuningOverrides(new Godot.Collections.Dictionary { ["MaxDistanceMeters"] = 2500f });
         planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 2500f);
         capController.SetShadowTuningOverrides(new Godot.Collections.Dictionary());

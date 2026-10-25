@@ -10,6 +10,8 @@ extends SceneTree
 ##                  --snap (PNG per window)  --user-prefs
 ##                  --a1000 (require the RTX A1000; windows whose power verdict is invalid get "invalid")
 ##                  --release-note=<text> (stored verbatim as report["build_note"], e.g. the C# build configuration)
+##                  --hold-seconds=<s> (idle after QP_BASELINE=PASS before quitting, for an attached dotnet-trace rundown)
+##                  --gc-pace=<gen>:<mb>[:<frames>] (or / separators) / --gc-latency=<GCLatencyMode> (GC A-B experiments in tools/WarmStallProbe.cs)
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
 const BRIDGE := preload("res://tools/ShadowTimingBridge.cs")
@@ -56,6 +58,7 @@ var machine := {}
 var power_pid := -1
 var power_path := ""
 var require_a1000 := false
+var run_started := false
 
 
 func _init() -> void:
@@ -63,6 +66,12 @@ func _init() -> void:
 
 
 func _run() -> void:
+	# Run once. The exported entry (tools/quality_preset_capture_entry.gd) attaches this script with SceneTree.set_script(), which runs
+	# _init (one deferred _run) besides the entry's own deferred call; a second pass booted a second game world into the same root
+	# viewport (2-3x draw calls, two Sunshine bridges, memory-pressure terrain fallback, both worlds saving into one fixture).
+	if run_started:
+		return
+	run_started = true
 	if RenderingServer.get_rendering_device() == null:
 		_fail("RenderingDevice is required"); return
 	window_seconds = float(COMMON.arg_value("--seconds=", "8"))
@@ -94,6 +103,14 @@ func _run() -> void:
 	probe = PROBE.new()
 	probe.name = "QpStallProbe"
 	probe.set("DetailThresholdMs", HITCH_MS)
+	# GC A-B experiments (debug tooling only): --gc-pace=<gen>:<mb>[:<frames>]  --gc-latency=<GCLatencyMode name>
+	var gc_pace := COMMON.arg_value("--gc-pace=", "")
+	if not gc_pace.is_empty():
+		var pace := gc_pace.replace("/", ":").split(":")
+		probe.set("GcPaceGeneration", int(pace[0]))
+		probe.set("GcPaceMegabytes", float(pace[1]) if pace.size() > 1 else 0.0)
+		probe.set("GcPaceFrames", int(pace[2]) if pace.size() > 2 else 0)
+	probe.set("GcLatencyMode", COMMON.arg_value("--gc-latency=", ""))
 	root.add_child(probe)
 	await process_frame
 	probe.call("Begin")
@@ -204,6 +221,7 @@ func _run() -> void:
 		var parts := spec.split("@")
 		probe.call("SetContext", "flight:" + spec)
 		var flight := await _flight(float(parts[0]), float(parts[1]) if parts.size() > 1 else 150.0, base)
+		flight["state"] = _state_dump()
 		report["flights"].append(flight)
 		print("QP_FLIGHT ", JSON.stringify(_brief(flight)))
 		_write()
@@ -215,6 +233,10 @@ func _run() -> void:
 	COMMON.stop_power_log(power_pid)
 	_write()
 	print("QP_BASELINE=PASS out=", out_dir)
+	# --hold-seconds=N keeps the process alive after the report so an attached dotnet-trace session can stop and write its rundown.
+	var hold := float(COMMON.arg_value("--hold-seconds=", "0"))
+	if hold > 0.0:
+		await create_timer(hold).timeout
 	quit(0)
 
 
@@ -603,6 +625,13 @@ func _state_dump() -> Dictionary:
 	var weather := game.get_node_or_null("RingVolumetricClouds")
 	if weather != null:
 		d["weather_sim_paused"] = weather.get("CloudSimulationPaused")
+	# Effective terrain quality: the certification monitor's memory guard can drop Very High to High mid-run (working set > 90% of its limit).
+	d["lod_preset"] = coordinator.get("CurrentPresetName")
+	d["adaptive_fallbacks"] = coordinator.get("AdaptiveFallbackCount")
+	var cert := game.get_node_or_null("CertificationMonitor")
+	if cert != null:
+		d["working_set_mb"] = int(cert.get("CurrentWorkingSetBytes")) / 1048576
+		d["terrain_est_mb"] = int(cert.get("EstimatedTerrainBytes")) / 1048576
 	return d
 
 

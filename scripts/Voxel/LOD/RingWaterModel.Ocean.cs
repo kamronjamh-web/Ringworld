@@ -301,7 +301,7 @@ public static partial class RingWaterModel
             }
 
             if (!Mathf.IsEqualApprox(binding.CoordinateScale, 1f)
-                || material.Shader?.ResourcePath != "res://materials/ring_ocean_proxy.gdshader") continue;
+                || GetShaderPath(material.Shader) != "res://materials/ring_ocean_proxy.gdshader") continue;
 
             OceanMaterialSnapshot snapshot = OceanMaterialSnapshots.GetOrCreateValue(material);
             SetOceanParameter(material, FftReadyName, false);
@@ -314,9 +314,15 @@ public static partial class RingWaterModel
         }
     }
 
+    // Shader.ResourcePath marshals a new managed string on every read, and this runs per material per frame.
+    private static readonly ConditionalWeakTable<Shader, string> ShaderPaths = new();
+
+    private static string? GetShaderPath(Shader? shader)
+        => shader == null ? null : ShaderPaths.GetValue(shader, static s => s.ResourcePath);
+
     private static void ApplyOceanMaterial(ShaderMaterial material, float coordinateScale)
     {
-        string? shaderPath = material.Shader?.ResourcePath;
+        string? shaderPath = GetShaderPath(material.Shader);
         ApplyWaterWind(material, coordinateScale, shaderPath);
         // Global and scaled-far water deliberately retain their opaque, inexpensive path.
         if (!Mathf.IsEqualApprox(coordinateScale, 1f)

@@ -102,6 +102,9 @@ public partial class RingLiveTuningDrawer
         _pauseDayNight.Toggled += value => { if (_dayNightCycle != null) _dayNightCycle.Paused = value; };
         stabilization.AddChild(_pauseDayNight);
         VBoxContainer debug = TuningMenuUi.CreateSection(tab, "Debug");
+        // Preset-owned (N1): the height-shadow and near-map switches are debug A/B switches now; the preset turns them on.
+        foreach (CheckButton? heightSwitch in new[] { _heightShadowEnabled, _heightShadowNearMap, _heightShadowPlanetNearMap })
+            if (heightSwitch != null) debug.AddChild(heightSwitch);
         AddShadowOption(debug, "ShadowDebugMode", "Shadow debug view", new[] { "Off", "Sun visibility", "Geometry", "Contact", "Terrain", "Cloud" }, new[] { 0, 1, 2, 3, 4, 5 }, _shadowGraphics?.ShadowDebugMode ?? 0);
         debug.AddChild(new Label { Text = "Shows one sun-shadow term as white (lit) to black (shadowed) on shadow-receiving surfaces. Saved with the other shadow settings.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted });
         var row = new HBoxContainer(); var save = new Button { Name="ShadowSaveNow", Text="Save shadows", SizeFlagsHorizontal=Control.SizeFlags.ExpandFill }; save.Pressed += () => FlushShadowDefaults(); row.AddChild(save); var reset = new Button { Name="ShadowResetDefaults", Text="Reset shadow overrides", SizeFlagsHorizontal=Control.SizeFlags.ExpandFill }; reset.Pressed += () => { _shadowDefaults.Reset(_shadowGraphics); _shadowSaveDelay=0; FlushShadowDefaults(); RefreshShadowControls(); }; row.AddChild(reset); tab.AddChild(row);
@@ -110,21 +113,18 @@ public partial class RingLiveTuningDrawer
     private void BuildHeightShadowControls(VBoxContainer tab)
     {
         VBoxContainer height = TuningMenuUi.CreateSection(tab, "Terrain height shadows");
-        _heightShadowEnabled = new CheckButton { Name = "HeightShadowEnabled", Text = "Enable terrain height shadows", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowEnabled ?? false, Disabled = _shadowGraphics == null,
+        _heightShadowEnabled = new CheckButton { Name = "HeightShadowEnabled", Text = "Enable terrain height shadows (preset default: on)", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowEnabled ?? true, Disabled = _shadowGraphics == null,
             TooltipText = "Builds a sliced GPU shadow-line height map around the camera (two levels, ring-curvature aware). Terrain, water and trees use it for terrain shadows beyond the near sun map, which then shrinks to the near-map distance (see Near map)." };
         _heightShadowEnabled.Toggled += value => SetShadowValue("HeightShadowEnabled", value);
-        height.AddChild(_heightShadowEnabled);
-        _heightShadowNearMap = new CheckButton { Name = "HeightShadowNearMapEnabled", Text = "Near sun map while height shadows are ready", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
+        _heightShadowNearMap = new CheckButton { Name = "HeightShadowNearMapEnabled", Text = "Near sun map while height shadows are ready (preset default: on)", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
             TooltipText = "Shrinks the sun shadow map to a 2-cascade near map (fade start 0.8) once the sun height shadows cover the camera; the height shadows own everything past it. Max distance, cascade count and fade start under Sun map are ignored while it is active; the near cascade distance still applies. Only effective with height shadows enabled." };
         _heightShadowNearMap.Toggled += value => SetShadowValue("HeightShadowNearMapEnabled", value);
-        height.AddChild(_heightShadowNearMap);
         AddShadowOption(height, "HeightShadowNearMapDistanceMeters", "Near map distance", new[] { "300 m", "400 m", "500 m" }, new[] { 300, 400, 500 }, _shadowGraphics?.EffectiveHeightShadowNearMapDistanceMeters ?? 400);
         AddShadowSpinBox(height, "HeightShadowPoiMapDistanceMeters", "POI shadow distance (m)", 5000, 30000, 500, _shadowGraphics?.EffectiveHeightShadowPoiMapDistanceMeters ?? 20000,
             "Upper limit of the sun shadow map while a large POI (Weather Lung) is mounted: the near map then becomes a 4-cascade map reaching the POI's far corner (500 m steps, never below the near map distance) so the POI shadows itself and the terrain around it. Terrain shadow casters and the heightfield authority stay at the near map distance. Only effective with the near sun map.");
-        _heightShadowPlanetNearMap = new CheckButton { Name = "HeightShadowPlanetNearMapEnabled", Text = "Near planet map at night while height shadows are ready", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowPlanetNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
+        _heightShadowPlanetNearMap = new CheckButton { Name = "HeightShadowPlanetNearMapEnabled", Text = "Near planet map at night while height shadows are ready (preset default: on)", ButtonPressed = _shadowGraphics?.EffectiveHeightShadowPlanetNearMapEnabled ?? true, Disabled = _shadowGraphics == null,
             TooltipText = "Shrinks the planet-light shadow map to a 2-cascade near map (fade start 0.8) once the planet height shadows cover the camera at night; the height shadows own everything past it. Planet distance and cascade count under Planet light are ignored while it is active (shown as near map); the twilight overlap keeps the planet map at its normal range. Only effective with height shadows enabled." };
         _heightShadowPlanetNearMap.Toggled += value => SetShadowValue("HeightShadowPlanetNearMapEnabled", value);
-        height.AddChild(_heightShadowPlanetNearMap);
         AddShadowSpinBox(height, "HeightShadowPlanetNearMapDistanceMeters", "Near planet map distance (m)", 100, 250, 10, _shadowGraphics?.EffectiveHeightShadowPlanetNearMapDistanceMeters ?? 250, "Range of the near planet map (also the terrain shadow caster range at night).");
         AddShadowOption(height, "HeightShadowL0TexelMeters", "Detail / range", new[] { "2 m texels, 4 km range", "4 m texels, 8 km range", "8 m texels, 16 km range" }, new[] { 2, 4, 8 }, _shadowGraphics?.EffectiveHeightShadowL0TexelMeters ?? 4);
         AddShadowOption(height, "HeightShadowLevels", "Levels", new[] { "1 (near only)", "2 (near + far)" }, new[] { 1, 2 }, _shadowGraphics?.EffectiveHeightShadowLevels ?? 2);

@@ -29,6 +29,8 @@ public sealed class RingWindField : IDisposable
     Vector2 previousTransport;
     readonly byte[] pixels = new byte[Size * Size];
     ImageTexture? texture;
+    Variant textureVariant;
+    ImageTexture? textureVariantSource;
     public bool Ready => texture != null;
     public string AtlasFingerprint { get; private set; } = "";
     public void InvalidatePublication() => lastGlobals.Clear();
@@ -181,7 +183,13 @@ public sealed class RingWindField : IDisposable
         Vector3 across = dual * Vector3.Up;
         void Set(string name, Variant value) => SetCached(name, value);
         Set("ring_wind_field_enabled", enabled ? 1f : 0f);
-        Set("ring_wind_gust_texture", texture);
+        // Variant(object) allocates a finalizable Disposer; Publish runs every frame, so convert the texture once per instance.
+        if (!ReferenceEquals(textureVariantSource, texture) || textureVariantSource == null)
+        {
+            textureVariant = texture;
+            textureVariantSource = texture;
+        }
+        Set("ring_wind_gust_texture", textureVariant);
         Set("ring_wind_mean_vector", mean);
         Set("ring_wind_gust_strength", settings.GustStrength);
         Set("ring_wind_gust_base", settings.GustBaseBreeze);

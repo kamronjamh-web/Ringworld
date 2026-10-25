@@ -10,5 +10,7 @@ const CAPTURE := preload("res://tools/quality_preset_capture.gd")
 
 func _ready() -> void:
 	var tree := get_tree()
+	# set_script() runs the capture script's _init, which already defers _run; the explicit call below is only a fallback in case an
+	# engine version stops doing that. _run ignores every call after the first, so the world is booted exactly once.
 	tree.set_script(CAPTURE)
 	tree.call_deferred("_run")

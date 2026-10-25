@@ -676,8 +676,9 @@ public partial class RingSunshineCloudBridge : Node
     /// </summary>
     public Texture2D? GetCloudBackdropTexture()
     {
-        if (_clouds == null || !_clouds.HasMethod("get_cloud_backdrop_texture")) return null;
-        return _clouds.Call("get_cloud_backdrop_texture", 0).AsGodotObject() as Texture2D;
+        if (_clouds == null || !_clouds.HasMethod(GetCloudBackdropTextureName)) return null;
+        using Variant texture = _clouds.Call(GetCloudBackdropTextureName, 0);
+        return texture.AsGodotObject() as Texture2D;
     }
 
     /// <summary>Publishes the scaled far viewport's GPU-only physical-depth texture.
@@ -686,9 +687,12 @@ public partial class RingSunshineCloudBridge : Node
     public void SetFarOpaqueDepthTexture(Texture2D? texture)
     {
         if (_clouds == null) return;
-        Texture2D? previous = _clouds.Get("far_opaque_depth_texture").AsGodotObject() as Texture2D;
+        // The property is read back every call because tools and the addon can also write it; the Variant is disposed so the
+        // object conversion leaves no finalizable Disposer behind.
+        Texture2D? previous;
+        using (Variant previousValue = _clouds.Get(FarOpaqueDepthTextureName)) previous = previousValue.AsGodotObject() as Texture2D;
         if (ReferenceEquals(previous, texture)) return;
-        _clouds.Set("far_opaque_depth_texture", texture is null ? default(Variant) : (Variant)texture);
+        _clouds.Set(FarOpaqueDepthTextureName, texture is null ? default(Variant) : (Variant)texture);
         // Descriptor sets capture Texture2DRD RIDs.  Rebuild only when the
         // far producer publishes a replacement generation, never per frame.
         _clouds.Call("refresh_compute");
@@ -904,6 +908,51 @@ public partial class RingSunshineCloudBridge : Node
             blend);
     }
 
+    private static readonly StringName CloudFloorName = "cloud_floor";
+    private static readonly StringName CloudCeilingName = "cloud_ceiling";
+    private static readonly StringName BackgroundAltitudeName = "background_altitude";
+    private static readonly StringName StormAltitudeName = "storm_altitude";
+    private static readonly StringName CloudsCoverageName = "clouds_coverage";
+    private static readonly StringName CloudsDensityName = "clouds_density";
+    private static readonly StringName LightingDensityName = "lighting_density";
+    private static readonly StringName StormSystemName = "storm_system";
+    private static readonly StringName StormShapeName = "storm_shape";
+    private static readonly StringName StormDetailName = "storm_detail";
+    private static readonly StringName CloudHandoffName = "cloud_handoff";
+    private static readonly StringName CloudWeatherParamsName = "cloud_weather_params";
+    private static readonly StringName CloudWeatherFrameName = "cloud_weather_frame";
+    private static readonly StringName WindDirectionName = "wind_direction";
+    private static readonly StringName ExtraLargeStructuresWindSpeedName = "extra_large_structures_wind_speed";
+    private static readonly StringName LargeStructuresWindSpeedName = "large_structures_wind_speed";
+    private static readonly StringName MediumStructuresWindSpeedName = "medium_structures_wind_speed";
+    private static readonly StringName SmallStructuresWindSpeedName = "small_structures_wind_speed";
+    private static readonly StringName MaxStepDistanceName = "max_step_distance";
+    private static readonly StringName MaxStepCountName = "max_step_count";
+    private static readonly StringName CloudAmbientColorName = "cloud_ambient_color";
+    private static readonly StringName CloudAmbientTintName = "cloud_ambient_tint";
+    private static readonly StringName DirectionalLightsDataName = "directional_lights_data";
+    private static readonly StringName CloudsAnisotropyName = "clouds_anisotropy";
+    private static readonly StringName CloudsPowderName = "clouds_powder";
+    private static readonly StringName CloudFrameUpName = "cloud_frame_up";
+    private static readonly StringName AtmosphereColorName = "atmosphere_color";
+    private static readonly StringName SampledEnvironmentFogColorName = "sampled_environment_fog_color";
+    private static readonly StringName UseEnvironmentFogName = "use_environment_fog";
+    private static readonly StringName CloudFrameOriginName = "cloud_frame_origin";
+    private static readonly StringName CloudFrameAroundName = "cloud_frame_around";
+    private static readonly StringName CloudFrameAcrossName = "cloud_frame_across";
+    private static readonly StringName RingWidthMetersName = "ring_width_meters";
+    private static readonly StringName SetGameplayCloudFrameName = "set_gameplay_cloud_frame";
+    private static readonly StringName CurrentSolarVisibilityName = "current_solar_visibility";
+    private static readonly StringName CurrentHubDayName = "current_hub_day";
+    private static readonly StringName RingAtmosphereProfileName = "ring_atmosphere_profile";
+    private static readonly StringName EnabledName = "enabled";
+    private static readonly StringName FarOpaqueDepthTextureName = "far_opaque_depth_texture";
+    private static readonly StringName GetCloudBackdropTextureName = "get_cloud_backdrop_texture";
+    // Variant(string) allocates a finalizable Disposer on every conversion, so the status-dictionary keys are converted once.
+    private static readonly Variant GpuStatusAvailableKey = "available";
+    private static readonly Variant GpuStatusErrorKey = "error";
+    private static readonly Variant GpuStatusNearDispatchesKey = "near_dispatches";
+    private static readonly Variant GpuStatusFarDispatchesKey = "far_dispatches";
     private void RefreshWeather()
     {
         if (_weather == null || _explorer == null || _grid?.TerrainSampler == null || _clouds == null || _driver == null) return;
@@ -934,14 +983,14 @@ public partial class RingSunshineCloudBridge : Node
         bool cameraIndependent = CameraIndependentClouds;
         if (cameraIndependent) PrepareCameraIndependentWeather(backgroundAltitude);
 
-        _clouds.Set("cloud_floor", cameraIndependent ? _ciEnvelopeFloorMeters : cloudBase);
-        _clouds.Set("cloud_ceiling", cameraIndependent ? _ciEnvelopeCeilingMeters : cloudTop);
-        _clouds.Set("background_altitude", new Vector4(
+        _clouds.Set(CloudFloorName, cameraIndependent ? _ciEnvelopeFloorMeters : cloudBase);
+        _clouds.Set(CloudCeilingName, cameraIndependent ? _ciEnvelopeCeilingMeters : cloudTop);
+        _clouds.Set(BackgroundAltitudeName, new Vector4(
             _backgroundCloudFloorMeters,
             _backgroundCloudCeilingMeters,
             0.0f,
             0.0f));
-        _clouds.Set("storm_altitude", cameraIndependent ? Vector4.Zero : new Vector4(
+        _clouds.Set(StormAltitudeName, cameraIndependent ? Vector4.Zero : new Vector4(
             stormAltitude.FloorMeters,
             stormAltitude.CeilingMeters,
             0.0f,
@@ -956,13 +1005,13 @@ public partial class RingSunshineCloudBridge : Node
             1.0f);
         // Camera-independent clouds: the shader derives coverage, density and lighting power per sample (ring_ws_update_macro);
         // these become constants (density keeps the user multiplier, lighting power is a unit scale).
-        _clouds.Set("clouds_coverage", cameraIndependent ? Mathf.Lerp(0.70f, 0.90f, 0.5f) : Mathf.Lerp(0.70f, 0.90f, visibleCoverage));
-        _clouds.Set("clouds_density", cameraIndependent ? CloudDensityMultiplier : Mathf.Lerp(1.20f, 1.90f, visibleCoverage) * CloudDensityMultiplier);
+        _clouds.Set(CloudsCoverageName, cameraIndependent ? Mathf.Lerp(0.70f, 0.90f, 0.5f) : Mathf.Lerp(0.70f, 0.90f, visibleCoverage));
+        _clouds.Set(CloudsDensityName, cameraIndependent ? CloudDensityMultiplier : Mathf.Lerp(1.20f, 1.90f, visibleCoverage) * CloudDensityMultiplier);
         // Sunshine uses this value as the density sampled along the light ray:
         // higher values absorb more directional light. Storms therefore need
         // to raise it, rather than lower it, or their cloud tops brighten.
         _clouds.Set(
-            "lighting_density",
+            LightingDensityName,
             cameraIndependent ? 1.0f : Mathf.Lerp(0.72f, 1.55f, Mathf.Max(storm, _heavyOvercastFactor)));
         ApplyLocalCloudAmbientLighting();
         ApplyCloudAppearanceScalarsToResource();
@@ -981,17 +1030,17 @@ public partial class RingSunshineCloudBridge : Node
             : 0.0f;
         // Camera-independent clouds: the legacy single-system fields are constant zero (per-system data is in the uploaded block);
         // storm_detail keeps the constant pillar/anvil controls the per-system density reads.
-        _clouds.Set("storm_system", cameraIndependent ? Vector4.Zero : new Vector4(
+        _clouds.Set(StormSystemName, cameraIndependent ? Vector4.Zero : new Vector4(
             _currentWeather.SystemCenterMeters.X,
             _currentWeather.SystemCenterMeters.Y,
             _currentWeather.SystemRadiiMeters.X,
             _currentWeather.SystemRadiiMeters.Y));
-        _clouds.Set("storm_shape", cameraIndependent ? Vector4.Zero : new Vector4(
+        _clouds.Set(StormShapeName, cameraIndependent ? Vector4.Zero : new Vector4(
             Mathf.Cos(_currentWeather.SystemOrientationRadians),
             Mathf.Sin(_currentWeather.SystemOrientationRadians),
             sculptInfluence,
             CloudFormationProfiles.ToShaderProfile(_currentWeather.DominantFormationProfile)));
-        _clouds.Set("storm_detail", new Vector4(
+        _clouds.Set(StormDetailName, new Vector4(
             Mathf.Clamp(StormPillarRadiusMeters, 1000.0f, 8000.0f),
             Mathf.Clamp(AnvilRadiusMultiplier, 1.2f, 4.0f),
             Mathf.Clamp(AnvilStartFraction, 0.5f, 0.9f),
@@ -1012,21 +1061,21 @@ public partial class RingSunshineCloudBridge : Node
         if (circumferenceMeters > 0.0) windAroundOffset %= circumferenceMeters;
         double windAcrossOffset = -authoritativeWind.Y * simulationTime;
         ResolveEffectiveCloudHandoff();
-        _clouds.Set("cloud_handoff", new Vector4(EffectiveHandoffStartMeters, EffectiveHandoffEndMeters, cameraIndependent ? 0.0f : _localStormFactor, 0.0f));
-        _clouds.Set("cloud_weather_params", new Vector4(CloudPatchiness, CloudPatchScaleMeters, ClearSkyThreshold,
+        _clouds.Set(CloudHandoffName, new Vector4(EffectiveHandoffStartMeters, EffectiveHandoffEndMeters, cameraIndependent ? 0.0f : _localStormFactor, 0.0f));
+        _clouds.Set(CloudWeatherParamsName, new Vector4(CloudPatchiness, CloudPatchScaleMeters, ClearSkyThreshold,
             _grid?.TerrainSampler?.Seed ?? 1337));
-        _clouds.Set("cloud_weather_frame", new Vector4((float)circumferenceMeters, (float)windAroundOffset, (float)windAcrossOffset,
+        _clouds.Set(CloudWeatherFrameName, new Vector4((float)circumferenceMeters, (float)windAroundOffset, (float)windAcrossOffset,
             Mathf.Clamp((cameraIndependent ? _weather!.Coverage + SunshineBaseCoverageOffset : _currentWeather.CloudCoverage) + CloudCoverageBias, 0.0f, 1.0f)));
 
         Vector2 wind = cameraIndependent ? _weather!.WeatherWindMetersPerSecond : _currentWeather.WindMetersPerSecond;
         Vector3 windDirection = new(wind.X, 0.0f, wind.Y);
         float unscaledSpeed = windDirection.Length();
         float speed = unscaledSpeed * CloudWindMultiplier;
-        _driver.Set("wind_direction", unscaledSpeed > 0.001f ? windDirection / unscaledSpeed : Vector3.Zero);
-        _driver.Set("extra_large_structures_wind_speed", speed * 0.22f);
-        _driver.Set("large_structures_wind_speed", speed * 0.55f);
-        _driver.Set("medium_structures_wind_speed", speed);
-        _driver.Set("small_structures_wind_speed", speed * 1.8f);
+        _driver.Set(WindDirectionName, unscaledSpeed > 0.001f ? windDirection / unscaledSpeed : Vector3.Zero);
+        _driver.Set(ExtraLargeStructuresWindSpeedName, speed * 0.22f);
+        _driver.Set(LargeStructuresWindSpeedName, speed * 0.55f);
+        _driver.Set(MediumStructuresWindSpeedName, speed);
+        _driver.Set(SmallStructuresWindSpeedName, speed * 1.8f);
         PublishWeatherSystems(cameraIndependent);
         PublishFarCloudDetail();
     }
@@ -1048,8 +1097,8 @@ public partial class RingSunshineCloudBridge : Node
         // refresh before the near compute UBO receives the matching range.
         if (_clouds != null)
         {
-            Vector4 currentHandoff = _clouds.Get("cloud_handoff").AsVector4();
-            _clouds.Set("cloud_handoff", new Vector4(
+            Vector4 currentHandoff = _clouds.Get(CloudHandoffName).AsVector4();
+            _clouds.Set(CloudHandoffName, new Vector4(
                 EffectiveHandoffStartMeters,
                 EffectiveHandoffEndMeters,
                 currentHandoff.Z,
@@ -1071,10 +1120,10 @@ public partial class RingSunshineCloudBridge : Node
         float requestedEnd = SanitizeFinite(HandoffEndMeters, 48000.0f, requestedStart + 1.0f, 1_000_000.0f);
         float maxStep = _clouds == null
             ? SanitizeFinite(MaxStepDistanceMeters, 560.0f, 100.0f, MaximumStepDistanceMeters)
-            : SanitizeFinite(_clouds.Get("max_step_distance").AsSingle(), MaxStepDistanceMeters, 100.0f, MaximumStepDistanceMeters);
+            : SanitizeFinite(_clouds.Get(MaxStepDistanceName).AsSingle(), MaxStepDistanceMeters, 100.0f, MaximumStepDistanceMeters);
         int steps = _clouds == null
             ? Mathf.Clamp(RaymarchSteps, 64, MaximumRaymarchSteps)
-            : Mathf.Clamp(Mathf.RoundToInt(SanitizeFinite(_clouds.Get("max_step_count").AsSingle(), RaymarchSteps, 64.0f, MaximumRaymarchSteps)), 64, MaximumRaymarchSteps);
+            : Mathf.Clamp(Mathf.RoundToInt(SanitizeFinite(_clouds.Get(MaxStepCountName).AsSingle(), RaymarchSteps, 64.0f, MaximumRaymarchSteps)), 64, MaximumRaymarchSteps);
         NearCloudReachMeters = Mathf.Max(1.0f, steps * maxStep);
         if (!AutomaticCloudHandoff)
         {
@@ -1131,12 +1180,12 @@ public partial class RingSunshineCloudBridge : Node
         Color normalAmbient = nightAmbient.Lerp(dayAmbient, _localDayFactor);
         Color stormAmbient = nightAmbient.Lerp(stormDayAmbient, _localDayFactor);
         Color ambient = normalAmbient.Lerp(stormAmbient, _localStormFactor);
-        _clouds.Set("cloud_ambient_color", new Color(
+        _clouds.Set(CloudAmbientColorName, new Color(
             ambient.R * CloudAmbientMultiplier,
             ambient.G * CloudAmbientMultiplier,
             ambient.B * CloudAmbientMultiplier,
             ambient.A));
-        _clouds.Set("cloud_ambient_tint", nightTint.Lerp(dayTint, _localDayFactor));
+        _clouds.Set(CloudAmbientTintName, nightTint.Lerp(dayTint, _localDayFactor));
     }
 
     // Mirrors the inputs of Sunshine's own lighting (directional light data from the driver, ambient colour x tint,
@@ -1144,9 +1193,12 @@ public partial class RingSunshineCloudBridge : Node
     private void PublishFarCloudLighting()
     {
         if (_clouds == null) return;
-        Godot.Collections.Array lights = _clouds.Get("directional_lights_data").AsGodotArray();
-        float anisotropy = _clouds.Get("clouds_anisotropy").AsSingle();
-        float powder = _clouds.Get("clouds_powder").AsSingle();
+        // The driver mutates this array in place and tests may replace it, so it is read back every frame; both wrappers are
+        // disposed so the per-frame Variant and Array do not queue for finalization.
+        using Variant lightsValue = _clouds.Get(DirectionalLightsDataName);
+        using Godot.Collections.Array lights = lightsValue.AsGodotArray();
+        float anisotropy = _clouds.Get(CloudsAnisotropyName).AsSingle();
+        float powder = _clouds.Get(CloudsPowderName).AsSingle();
         Vector4 Light(int index, bool direction)
         {
             int slot = index * 2 + (direction ? 0 : 1);
@@ -1159,13 +1211,13 @@ public partial class RingSunshineCloudBridge : Node
             return new Vector4(r, g, b, index == 0 ? anisotropy : 0.0f);
         }
         var packed = new Projection(Light(0, true), Light(0, false), Light(1, true), Light(1, false));
-        Color ambientColor = _clouds.Get("cloud_ambient_color").AsColor();
-        Color ambientTint = _clouds.Get("cloud_ambient_tint").AsColor();
+        Color ambientColor = _clouds.Get(CloudAmbientColorName).AsColor();
+        Color ambientTint = _clouds.Get(CloudAmbientTintName).AsColor();
         Vector3 ambient = new(ambientColor.R * ambientTint.R, ambientColor.G * ambientTint.G, ambientColor.B * ambientTint.B);
         // Sunshine's ambient (SunshineCloudsCompute.glsl): ambient colour x max(total light power, 0.62) + 0.08 x the distance
         // fog colour, floored at 0.35 x ambient colour. The total light power is the sum of light energies weighted by
         // how far each is above the cloud frame horizon, so the ambient follows the sun and the night/eclipse dimming.
-        Vector4 frameUp4 = _clouds.Get("cloud_frame_up").AsVector4();
+        Vector4 frameUp4 = _clouds.Get(CloudFrameUpName).AsVector4();
         Vector3 frameUp = new Vector3(frameUp4.X, frameUp4.Y, frameUp4.Z);
         frameUp = frameUp.LengthSquared() > 1e-8f ? frameUp.Normalized() : Vector3.Up;
         float totalLightPower = 0.0f;
@@ -1177,9 +1229,9 @@ public partial class RingSunshineCloudBridge : Node
             float t = Mathf.Clamp((new Vector3(direction.X, direction.Y, direction.Z).Dot(frameUp) + 0.03f) / 0.1f, 0.0f, 1.0f);
             totalLightPower += energy * t * t * (3.0f - 2.0f * t);
         }
-        Color atmosphere = _clouds.Get("atmosphere_color").AsColor();
-        Color sampledFog = _clouds.Get("sampled_environment_fog_color").AsColor();
-        float useEnvironmentFog = _clouds.Get("use_environment_fog").AsSingle();
+        Color atmosphere = _clouds.Get(AtmosphereColorName).AsColor();
+        Color sampledFog = _clouds.Get(SampledEnvironmentFogColorName).AsColor();
+        float useEnvironmentFog = _clouds.Get(UseEnvironmentFogName).AsSingle();
         Vector3 fog = new(Mathf.Lerp(atmosphere.R, sampledFog.R, useEnvironmentFog), Mathf.Lerp(atmosphere.G, sampledFog.G, useEnvironmentFog),
             Mathf.Lerp(atmosphere.B, sampledFog.B, useEnvironmentFog));
         Vector3 cloudAmbient = (ambient * Mathf.Max(totalLightPower, 0.62f) + fog * 0.08f).Max(ambient * 0.35f);
@@ -1207,33 +1259,33 @@ public partial class RingSunshineCloudBridge : Node
         // comparing approximately equal. These are callback-frame inputs.
         if (_lastCloudFrameOrigin != origin)
         {
-            _clouds.Set("cloud_frame_origin", origin);
+            _clouds.Set(CloudFrameOriginName, origin);
             _lastCloudFrameOrigin = origin;
         }
         if (_lastCloudFrameAround != frameAround)
         {
-            _clouds.Set("cloud_frame_around", frameAround);
+            _clouds.Set(CloudFrameAroundName, frameAround);
             _lastCloudFrameAround = frameAround;
         }
         if (_lastCloudFrameUp != frameUp)
         {
-            _clouds.Set("cloud_frame_up", frameUp);
+            _clouds.Set(CloudFrameUpName, frameUp);
             _lastCloudFrameUp = frameUp;
         }
         if (_lastCloudFrameAcross != frameAcross)
         {
-            _clouds.Set("cloud_frame_across", frameAcross);
+            _clouds.Set(CloudFrameAcrossName, frameAcross);
             _lastCloudFrameAcross = frameAcross;
         }
         if (!Mathf.IsEqualApprox(_lastCloudFrameRingWidth, ringWidth))
         {
-            _clouds.Set("ring_width_meters", ringWidth);
+            _clouds.Set(RingWidthMetersName, ringWidth);
             _lastCloudFrameRingWidth = ringWidth;
         }
         UpdateAtmosphereProfile(preciseRadius);
         // This is deliberately a CPU-only, callback-paired contract. The
         // compositor snapshots it once when it uploads its existing UBO.
-        _clouds.Call("set_gameplay_cloud_frame", new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
+        _clouds.Call(SetGameplayCloudFrameName, new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
     }
 
     // Cost-attribution debug knob (tools/terrain_render_attribution_test.gd --haze-main): packs the all-zero profile (the haze-off
@@ -1248,23 +1300,55 @@ public partial class RingSunshineCloudBridge : Node
         _camera ??= GetViewport().GetCamera3D();
         Vector3 toSun = _sunLight is null ? Vector3.Up : _sunLight.GlobalBasis.Z.Normalized();
         RingAtmosphereRayFrame frame = _camera is null ? RingAtmosphereRayFrame.Invalid : RingAtmosphereRayFrame.FromMainCamera(_grid, _camera, toSun);
-        float solarVisibility = _daySideAtmosphere is null ? 1.0f : Mathf.Clamp(_daySideAtmosphere.Get("current_solar_visibility").AsSingle(), 0.0f, 1.0f);
+        float solarVisibility = _daySideAtmosphere is null ? 1.0f : Mathf.Clamp(_daySideAtmosphere.Get(CurrentSolarVisibilityName).AsSingle(), 0.0f, 1.0f);
         // Eclipse hub sun (spec C.2): the Legacy profile day weight is max(solar visibility, hub day), the physical one max(geo * vis, hub);
         // PackCloudProfile applies both. The hub day is exactly 0 outside the event.
-        float hubDay = _daySideAtmosphere is null ? 0.0f : Mathf.Clamp(_daySideAtmosphere.Get("current_hub_day").AsSingle(), 0.0f, 1.0f);
+        float hubDay = _daySideAtmosphere is null ? 0.0f : Mathf.Clamp(_daySideAtmosphere.Get(CurrentHubDayName).AsSingle(), 0.0f, 1.0f);
         // Sunshine declares this as Array[Vector4]. A managed Vector4[] is
         // marshalled as a packed array instead, which the typed GDScript
         // property rejects. Preserve all sixteen slots even while haze is off so
         // the compositor's fixed UBO ABI always receives a complete profile.
-        var profile = new Godot.Collections.Array<Vector4>();
-        profile.Resize(RingAtmosphereModel.CloudProfileSlots);
+        // Packed into a reused scratch array and only published as a new array when a slot changed: the Set converts the array to
+        // a Variant (a finalizable Disposer) and the resource must keep receiving a fresh array rather than one mutated in place.
+        Godot.Collections.Array<Vector4> scratch = _profileScratch ??= NewProfileArray();
         if (frame.Valid && RingAtmosphereModel.Enabled && !_debugCloudHazeDisabled)
         {
-            RingAtmosphereModel.PackCloudProfile(profile, preciseRadius, frame.OutwardWorld, frame.AxisWorld, frame.CameraHeightMeters,
+            RingAtmosphereModel.PackCloudProfile(scratch, preciseRadius, frame.OutwardWorld, frame.AxisWorld, frame.CameraHeightMeters,
                 frame.SidewallNegativeMeters, frame.SidewallPositiveMeters, frame.ToSun, solarVisibility, hubDay);
         }
-        _clouds.Set("ring_atmosphere_profile", profile);
+        else
+        {
+            for (int slot = 0; slot < RingAtmosphereModel.CloudProfileSlots; slot++) scratch[slot] = default;
+        }
+        bool changed = !_hasPublishedProfile || !ReferenceEquals(_publishedProfileOwner, _clouds);
+        for (int slot = 0; !changed && slot < RingAtmosphereModel.CloudProfileSlots; slot++)
+            changed = scratch[slot] != _publishedProfile[slot];
+        if (changed)
+        {
+            Godot.Collections.Array<Vector4> profile = NewProfileArray();
+            for (int slot = 0; slot < RingAtmosphereModel.CloudProfileSlots; slot++)
+            {
+                Vector4 value = scratch[slot];
+                profile[slot] = value;
+                _publishedProfile[slot] = value;
+            }
+            _clouds.Set(RingAtmosphereProfileName, profile);
+            _hasPublishedProfile = true;
+            _publishedProfileOwner = _clouds;
+        }
         PushEnclosedFog();
+    }
+
+    private Godot.Collections.Array<Vector4>? _profileScratch;
+    private readonly Vector4[] _publishedProfile = new Vector4[RingAtmosphereModel.CloudProfileSlots];
+    private bool _hasPublishedProfile;
+    private GodotObject? _publishedProfileOwner;
+
+    private static Godot.Collections.Array<Vector4> NewProfileArray()
+    {
+        var profile = new Godot.Collections.Array<Vector4>();
+        profile.Resize(RingAtmosphereModel.CloudProfileSlots);
+        return profile;
     }
 
     public void ApplyLiveTuning(
@@ -1964,22 +2048,34 @@ public partial class RingSunshineCloudBridge : Node
         return (float)Math.Sqrt(around * around + across * across);
     }
 
+    private readonly bool[] _gpuShadowDueScratch = new bool[2], _gpuShadowRelocateScratch = new bool[2];
+    private static readonly StringName ConfigureGpuCloudShadowCascadeName = "configure_gpu_cloud_shadow_cascade";
+    private static readonly StringName SetGpuCloudShadowGenerationEnabledName = "set_gpu_cloud_shadow_generation_enabled";
+    private static readonly StringName GetGpuCloudShadowStatusName = "get_gpu_cloud_shadow_status";
+    private static readonly StringName GetGpuCloudShadowTextureName = "get_gpu_cloud_shadow_texture";
+    private static readonly StringName SetGpuCloudShadowDisplayFrameName = "set_gpu_cloud_shadow_display_frame";
     private bool TryUpdateGpuCloudShadows(double delta, bool force)
     {
         if (_clouds == null || _grid == null || _explorer == null || _sunLight == null
-            || !_clouds.HasMethod("configure_gpu_cloud_shadow_cascade"))
+            || !_clouds.HasMethod(ConfigureGpuCloudShadowCascadeName))
         {
             GpuCloudShadowStatus = "addon GPU shadow API unavailable";
             return false;
         }
 
-        if (_clouds.HasMethod("set_gpu_cloud_shadow_generation_enabled"))
-            _clouds.Call("set_gpu_cloud_shadow_generation_enabled", GpuShadowGenerationEnabled);
+        if (_clouds.HasMethod(SetGpuCloudShadowGenerationEnabledName))
+            _clouds.Call(SetGpuCloudShadowGenerationEnabledName, GpuShadowGenerationEnabled);
 
-        Godot.Collections.Dictionary status = _clouds.Call("get_gpu_cloud_shadow_status").AsGodotDictionary();
-        bool available = status.TryGetValue("available", out Variant availableValue) && availableValue.AsBool();
-        GpuCloudShadowStatus = status.TryGetValue("error", out Variant errorValue)
-            ? errorValue.AsString() : "";
+        // The addon builds a fresh status Dictionary per call; dispose the wrappers so they do not queue for finalization.
+        using Variant statusValue = _clouds.Call(GetGpuCloudShadowStatusName);
+        using Godot.Collections.Dictionary status = statusValue.AsGodotDictionary();
+        bool available = status.TryGetValue(GpuStatusAvailableKey, out Variant availableValue) && availableValue.AsBool();
+        GpuCloudShadowStatus = "";
+        if (status.TryGetValue(GpuStatusErrorKey, out Variant errorValue))
+        {
+            GpuCloudShadowStatus = errorValue.AsString();
+            errorValue.Dispose();
+        }
         if (!available)
         {
             _gpuPipelineWaitSeconds += Math.Max(0.0, delta);
@@ -2004,8 +2100,8 @@ public partial class RingSunshineCloudBridge : Node
             return true;
         }
         _gpuPipelineWaitSeconds = 0.0;
-        PromoteCompletedGpuShadowCascade(0, GetGpuShadowDispatchCount(status, "near_dispatches"));
-        PromoteCompletedGpuShadowCascade(1, GetGpuShadowDispatchCount(status, "far_dispatches"));
+        PromoteCompletedGpuShadowCascade(0, GetGpuShadowDispatchCount(status, GpuStatusNearDispatchesKey));
+        PromoteCompletedGpuShadowCascade(1, GetGpuShadowDispatchCount(status, GpuStatusFarDispatchesKey));
         if (_shadowBuildPending || _shadowMapReady) CancelCloudShadowBuild();
 
         RingCanonicalPosition viewer = _explorer.CanonicalPosition;
@@ -2035,8 +2131,9 @@ public partial class RingSunshineCloudBridge : Node
         _gpuShadowFrameWindDisplacement = ResolveGpuShadowBulkWindDisplacement(
             _currentWeather.WindMetersPerSecond * CloudWindMultiplier,
             (float)Math.Max(0.0, delta));
-        bool[] due = new bool[2];
-        bool[] relocateCascade = new bool[2];
+        // Fully reassigned for both cascades below; reused so the per-frame update allocates nothing.
+        bool[] due = _gpuShadowDueScratch;
+        bool[] relocateCascade = _gpuShadowRelocateScratch;
         bool requiresReceiverDetach = false;
         for (int cascade = 0; cascade < 2; cascade++)
         {
@@ -2088,7 +2185,7 @@ public partial class RingSunshineCloudBridge : Node
                     relocateCascade[cascade] ? viewer : _gpuShadowCenters[cascade],
                     cascade == 0 ? GpuNearShadowRadiusMeters : GpuFarShadowRadiusMeters,
                     force || relocateCascade[cascade],
-                    GetGpuShadowDispatchCount(status, cascade == 0 ? "near_dispatches" : "far_dispatches"));
+                    GetGpuShadowDispatchCount(status, cascade == 0 ? GpuStatusNearDispatchesKey : GpuStatusFarDispatchesKey));
             }
         }
 
@@ -2109,12 +2206,8 @@ public partial class RingSunshineCloudBridge : Node
             _gpuShadowReceiverRebuildPending = false;
         }
 
-        Texture2D? near = _hasGpuShadowCenter[0]
-            ? _clouds.Call("get_gpu_cloud_shadow_texture", 0).AsGodotObject() as Texture2D
-            : null;
-        Texture2D? far = _hasGpuShadowCenter[1]
-            ? _clouds.Call("get_gpu_cloud_shadow_texture", 1).AsGodotObject() as Texture2D
-            : null;
+        Texture2D? near = _hasGpuShadowCenter[0] ? GetGpuCloudShadowTexture(0) : null;
+        Texture2D? far = _hasGpuShadowCenter[1] ? GetGpuCloudShadowTexture(1) : null;
         // A configured render-device pipeline is authoritative even during its
         // first compositor frame; do not start the costly CPU readback fallback.
         if (near == null && far == null)
@@ -2152,9 +2245,9 @@ public partial class RingSunshineCloudBridge : Node
             // The producer resamples the displayed map into each new map's frame,
             // so it needs the exact frame the receivers sample the display map in.
             if (_gpuShadowBakedCrossfade[0] && near != null)
-                _clouds.Call("set_gpu_cloud_shadow_display_frame", 0, nearCenter, nearAround, nearAcross, nearUp, nearInstalledRadius, nearOffset);
+                _clouds.Call(SetGpuCloudShadowDisplayFrameName, 0, nearCenter, nearAround, nearAcross, nearUp, nearInstalledRadius, nearOffset);
             if (_gpuShadowBakedCrossfade[1] && far != null)
-                _clouds.Call("set_gpu_cloud_shadow_display_frame", 1, farCenter, farAround, farAcross, farUp, farInstalledRadius, farOffset);
+                _clouds.Call(SetGpuCloudShadowDisplayFrameName, 1, farCenter, farAround, farAcross, farUp, farInstalledRadius, farOffset);
         }
         else
         {
@@ -2176,6 +2269,12 @@ public partial class RingSunshineCloudBridge : Node
         return true;
     }
 
+    private Texture2D? GetGpuCloudShadowTexture(int cascade)
+    {
+        using Variant texture = _clouds!.Call(GetGpuCloudShadowTextureName, cascade);
+        return texture.AsGodotObject() as Texture2D;
+    }
+
     private float GpuShadowCenterDistanceMeters(int cascade, in RingCanonicalPosition viewer)
     {
         if (_grid == null || !_hasGpuShadowCenter[cascade]) return float.PositiveInfinity;
@@ -2186,7 +2285,7 @@ public partial class RingSunshineCloudBridge : Node
         return (float)Math.Sqrt(around * around + across * across);
     }
 
-    private static int GetGpuShadowDispatchCount(Godot.Collections.Dictionary status, string key)
+    private static int GetGpuShadowDispatchCount(Godot.Collections.Dictionary status, Variant key)
         => status.TryGetValue(key, out Variant value)
             ? (int)Math.Clamp(value.AsInt64(), 0L, int.MaxValue)
             : 0;
@@ -2701,7 +2800,7 @@ public partial class RingSunshineCloudBridge : Node
         bool renderOn = visible && !RenderSuspended;
         if (renderOn && !_lastRenderOn && _lastVisible && visible)
             _clouds.Call("request_history_reset");
-        _clouds.Set("enabled", renderOn);
+        _clouds.Set(EnabledName, renderOn);
         _lastRenderOn = renderOn;
         if (force || visible != _lastVisible
             || EffectiveHandoffStartMeters != _publishedHandoffStartMeters

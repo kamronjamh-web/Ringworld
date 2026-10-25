@@ -190,6 +190,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     public override void _ExitTree()
     {
+        if (_vegetationGraphics != null && GodotObject.IsInstanceValid(_vegetationGraphics)) _vegetationGraphics.PresetApplied -= OnVegetationPresetApplied;
+        _vegetationGraphics = null;
         _popupIsolation?.Dispose();
         _popupIsolation = null;
         if (_sunblockerDemo != null || _biomeAuthoringPreview != null || _generationPreview != null || _surfaceTerrainPilot != null)
@@ -1067,7 +1069,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             _drawer.Visible = open;
             return;
         }
-        if (open) { _cloudRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); }
+        if (open) { _cloudRefreshDelay = 0; _surfaceTerrainDiagnosticsRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); }
         else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushLodSchedulingDefaults(); FlushUndergroundModeDefaults(); FlushEmitterSiteDefaults(); FlushWeatherLungDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);

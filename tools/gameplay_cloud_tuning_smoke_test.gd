@@ -251,7 +251,7 @@ func _finish() -> bool:
 	var failing: RefCounted = PROBE_SCRIPT.new()
 	if not failing.Open(_bridge, "res://.godot/missing_cloud_tuning_fixture/defaults.tres") or not failing.Set(_bridge, "CloudSharpness", .4) or failing.Save(): return _fail("isolated save-failure fixture did not fail")
 	if FileAccess.get_file_as_bytes(ISOLATED_PATH) != saved_before: return _fail("failed save disturbed prior isolated defaults")
-	if not _probe.Reset(_bridge) or int(_bridge.get("CloudResolutionScale")) != 0: return _fail("reset did not restore baseline")
+	if not _probe.Reset(_bridge) or int(_bridge.get("CloudResolutionScale")) != _preset_cloud_resolution_scale(): return _fail("reset did not restore baseline")
 	_probe.Reload(_bridge)
 	if int(_probe.ReadOverride("CloudResolutionScale")) != 2: return _fail("sparse reload failed")
 	_scene.get_node("GraphicsQuality").call("ApplyPreset", 0, false, false)
@@ -317,3 +317,8 @@ func _teardown() -> void:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(EXTRA_PREFS + "/" + str(name) + ".tres"))
 	if not _failed: print("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_PASS widths=%s" % str(_widths))
 	quit(1 if _failed else 0)
+
+# Reset restores the active graphics preset baseline: Low (0) and Medium (1) render clouds at half resolution (1), the rest native (0).
+func _preset_cloud_resolution_scale() -> int:
+	var quality := _scene.get_node_or_null("GraphicsQuality")
+	return 1 if quality != null and int(quality.get("CurrentPreset")) <= 1 else 0

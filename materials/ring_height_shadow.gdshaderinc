@@ -175,9 +175,10 @@ float ring_height_shadow_macro_scale(RingHeightShadow hs) {
 }
 
 // The terms.height value of a heightfield receiver: full strength where the heightfield is authoritative, faded by the sun's presence at the
-// receiver (sun_w primary sun weight, day the effective day factor, hub the eclipse-hub light share), floored like the map's ATTENUATION.
+// receiver (sun_w primary sun weight, hub the eclipse-hub light share), floored like the map's ATTENUATION. `day` is unused (kept so callers compile
+// unchanged): the heightfield shadow keeps full strength at low sun instead of fading with the local day factor, so sunsets darken as the shadows grow.
 float ring_height_shadow_term(RingHeightShadow hs, float sun_w, float day, float hub, float shadow_floor_value) {
-	return max(mix(1.0, hs.visibility, hs.weight * sun_w * day * (1.0 - clamp(hub, 0.0, 1.0))), shadow_floor_value);
+	return max(mix(1.0, hs.visibility, hs.weight * sun_w * (1.0 - clamp(hub, 0.0, 1.0))), shadow_floor_value);
 }
 
 // The terms.height value of a heightfield receiver lit by the planet: pw is the planet weight at the receiver (ring_height_shadow_light_weight scaled by the hub
@@ -196,12 +197,12 @@ float ring_height_shadow_vertex_term(vec3 world, vec3 root_world, vec3 surface_u
 	return mix(1.0, hs.visibility, hs.weight);
 }
 
-// Applies a vertex_term to a vegetation light's geometry term (product path): min(map, heightfield) for the primary sun only.
+// Applies a vertex_term to a vegetation light's geometry term (product path): min(map, heightfield) for the primary sun only. `day` is unused (see ring_height_shadow_term).
 float ring_height_shadow_vegetation_geometry(float geometry, float vertex_term, bool directional, float sun_w, float day) {
 	if (!directional || vertex_term >= 1.0 || sun_w <= 0.0 || !ring_height_shadow_active()) {
 		return geometry;
 	}
-	return min(geometry, mix(1.0, vertex_term, sun_w * day * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))));
+	return min(geometry, mix(1.0, vertex_term, sun_w * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0))));
 }
 
 // Planet branch of the vegetation product path (state.w == 2): min(map, heightfield) for the planet light, weight from the published direction.

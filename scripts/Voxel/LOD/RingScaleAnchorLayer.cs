@@ -332,13 +332,21 @@ public partial class RingScaleAnchorLayer : Node3D
         Vector3 cameraPosition = _explorer.GlobalPosition;
         Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
         Vector3 sunDirection = _sun?.GlobalTransform.Basis.Z.Normalized() ?? Vector3.Right;
-        foreach (ShaderMaterial? material in new[] { _foundationMaterial, _towerMaterial, _beaconMaterial })
-        {
-            if (material == null) continue;
-            material.SetShaderParameter("camera_world_position", cameraPosition);
-            material.SetShaderParameter("ring_center", ringCenter);
-            material.SetShaderParameter("sun_direction", sunDirection);
-        }
+        ApplyLightingUniforms(_foundationMaterial, cameraPosition, ringCenter, sunDirection);
+        ApplyLightingUniforms(_towerMaterial, cameraPosition, ringCenter, sunDirection);
+        ApplyLightingUniforms(_beaconMaterial, cameraPosition, ringCenter, sunDirection);
+    }
+
+    private static readonly StringName CameraWorldPositionName = "camera_world_position";
+    private static readonly StringName RingCenterName = "ring_center";
+    private static readonly StringName SunDirectionName = "sun_direction";
+
+    private static void ApplyLightingUniforms(ShaderMaterial? material, Vector3 cameraPosition, Vector3 ringCenter, Vector3 sunDirection)
+    {
+        if (material == null) return;
+        material.SetShaderParameter(CameraWorldPositionName, cameraPosition);
+        material.SetShaderParameter(RingCenterName, ringCenter);
+        material.SetShaderParameter(SunDirectionName, sunDirection);
     }
 
     private static float Hash01(long x, long y, int seed, int salt)

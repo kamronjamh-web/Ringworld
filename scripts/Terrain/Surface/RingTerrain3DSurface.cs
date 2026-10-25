@@ -92,7 +92,7 @@ public partial class RingTerrain3DSurface : Node3D
         _worldFrame = worldFrame;
         ApplyWorldFrameMaterial();
         if (_hasLocalPhysicalCameraPosition)
-            SetMaterialParameter("ring_viewer_world_position", _worldFrame * _lastLocalPhysicalCameraPosition);
+            SetMaterialParameter(RingViewerWorldPositionName, _worldFrame * _lastLocalPhysicalCameraPosition);
         ApplyAtmosphereRayFrame();
         if (_collisionBody != null) _collisionBody.Transform = _worldFrame;
     }
@@ -110,7 +110,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_activePreparedSurface != null) { _activePreparedSurface.SetHandoffDistance(meters); _stagedPreparedSurface?.SetHandoffDistance(meters); _idlePreparedSurface?.SetHandoffDistance(meters); _handoffDistanceMeters = Mathf.Max(0, meters); return; }
         if (_stagedPreparedSurface != null) _stagedPreparedSurface.SetHandoffDistance(meters);
         _handoffDistanceMeters = Mathf.Max(0.0f, meters);
-        SetMaterialParameter("ring_handoff_distance_meters", _handoffDistanceMeters);
+        SetMaterialParameter(RingHandoffDistanceMetersName, _handoffDistanceMeters);
     }
 
     /// <summary>
@@ -122,7 +122,7 @@ public partial class RingTerrain3DSurface : Node3D
     {
         _activePreparedSurface?.SetHandoffOriginWorld(position);
         _stagedPreparedSurface?.SetHandoffOriginWorld(position);
-        SetMaterialParameter("ring_viewer_world_position", position);
+        SetMaterialParameter(RingViewerWorldPositionName, position);
     }
 
     public void Initialize(RingSurfaceHeightField field, RingSurfaceFrame frame)
@@ -233,7 +233,7 @@ public partial class RingTerrain3DSurface : Node3D
             _activePreparedSurface.UpdateCamera(localPhysicalCameraPosition);
             return;
         }
-        SetMaterialParameter("ring_viewer_world_position", _worldFrame * localPhysicalCameraPosition);
+        SetMaterialParameter(RingViewerWorldPositionName, _worldFrame * localPhysicalCameraPosition);
         ApplyAtmosphereMaterialParameters();
         ApplyAtmosphereRayFrame();
         if (!IsReady || _mesherCamera == null) return;
@@ -273,6 +273,7 @@ public partial class RingTerrain3DSurface : Node3D
         // Keeps Terrain3DAssets' empty-texture path from switching the checkerboard on (one more full rebuild); ConfigureMaterial clears it.
         material.Set("show_checkered", true);
         _terrain!.Set("material", material);
+        _terrainMaterial = null;
         _terrain.Set("collision_mode", 0);
         if (setMeshLods) _terrain.Set("mesh_lods", _preparedMeshLods);
     }
@@ -321,10 +322,52 @@ public partial class RingTerrain3DSurface : Node3D
         RingTerrainMacroShadowProjector.Register(_cloudShadowMaterial);
     }
 
+    private static readonly StringName RingHandoffDistanceMetersName = "ring_handoff_distance_meters";
+    private static readonly StringName RingViewerWorldPositionName = "ring_viewer_world_position";
+    private static readonly StringName RingFrameBasisName = "ring_frame_basis";
+    private static readonly StringName RingFrameOriginName = "ring_frame_origin";
+    private static readonly StringName CullMarginName = "cull_margin";
+    private static readonly StringName RingRadiusMetersName = "ring_radius_meters";
+    private static readonly StringName RingAnchorHeightName = "ring_anchor_height";
+    private static readonly StringName RingTerrainShadowAnchorUvName = "ring_terrain_shadow_anchor_uv";
+    private static readonly StringName RingTextureAnchorAroundMetersName = "ring_texture_anchor_around_meters";
+    private static readonly StringName RingTextureAnchorAcrossMetersName = "ring_texture_anchor_across_meters";
+    private static readonly StringName RingAcrossDirectionName = "ring_across_direction";
+    private static readonly StringName RingAtmosphereCameraWorldName = "ring_atmosphere_camera_world";
+    private static readonly StringName RingAtmosphereEnabledName = "ring_atmosphere_enabled";
+    private static readonly StringName RingAtmosphereCenterWorldName = "ring_atmosphere_center_world";
+    private static readonly StringName RingAtmosphereHalfWidthMetersName = "ring_atmosphere_half_width_meters";
+    private static readonly StringName RingCenterName = "ring_center";
+    private static readonly StringName RingWidthMetersName = "ring_width_meters";
+    private static readonly StringName AtmosphereFloorDepthMetersName = "atmosphere_floor_depth_meters";
+    private static readonly StringName AtmosphereBoundaryHeightMetersName = "atmosphere_boundary_height_meters";
+    private static readonly StringName AtmosphereUpperHeightMetersName = "atmosphere_upper_height_meters";
+    private static readonly StringName AtmosphereBoundaryExtinctionMetersName = "atmosphere_boundary_extinction_meters";
+    private static readonly StringName AtmosphereUpperExtinctionMetersName = "atmosphere_upper_extinction_meters";
+    private static readonly StringName AtmosphereBoundaryMaxOpacityName = "atmosphere_boundary_max_opacity";
+    private static readonly StringName AtmosphereUpperMaxOpacityName = "atmosphere_upper_max_opacity";
+    private static readonly StringName AtmosphereTotalMaxOpacityName = "atmosphere_total_max_opacity";
+    private static readonly StringName AtmosphereClearDistanceMetersName = "atmosphere_clear_distance_meters";
+    private static readonly StringName AtmosphereFullDistanceMetersName = "atmosphere_full_distance_meters";
+    private static readonly StringName AtmosphereHighAltitudeClearDistanceMetersName = "atmosphere_high_altitude_clear_distance_meters";
+    private static readonly StringName AtmosphereHighAltitudeFullDistanceMetersName = "atmosphere_high_altitude_full_distance_meters";
+    private static readonly StringName AtmosphereDistanceAltitudeStartMetersName = "atmosphere_distance_altitude_start_meters";
+    private static readonly StringName AtmosphereDistanceAltitudeEndMetersName = "atmosphere_distance_altitude_end_meters";
+    private static readonly StringName AtmosphereDistanceHazeMaxOpacityName = "atmosphere_distance_haze_max_opacity";
+    private static readonly StringName AtmosphereNightDensityFactorName = "atmosphere_night_density_factor";
+    private static readonly StringName AtmosphereScatteringEnergyName = "atmosphere_scattering_energy";
+    private static readonly StringName AtmosphereAerosolName = "atmosphere_aerosol";
+    private static readonly StringName AtmosphereForwardScatteringName = "atmosphere_forward_scattering";
+    private static readonly StringName AtmosphereSunWarmthName = "atmosphere_sun_warmth";
+    private static readonly StringName AtmosphereDayColorName = "atmosphere_day_color";
+    private static readonly StringName AtmosphereNightColorName = "atmosphere_night_color";
+    private static readonly StringName RingAtmosphereDayFactorName = "ring_atmosphere_day_factor";
+    private static readonly StringName GetMaterialName = "get_material";
+    private static readonly StringName SetShaderParamName = "set_shader_param";
     private void ApplyWorldFrameMaterial()
     {
-        SetMaterialParameter("ring_frame_basis", _worldFrame.Basis);
-        SetMaterialParameter("ring_frame_origin", _worldFrame.Origin);
+        SetMaterialParameter(RingFrameBasisName, _worldFrame.Basis);
+        SetMaterialParameter(RingFrameOriginName, _worldFrame.Origin);
         if (_terrain != null)
         {
             float spacing = WindowSpacingMeters;
@@ -334,7 +377,7 @@ public partial class RingTerrain3DSurface : Node3D
                 heightExtent = Mathf.Max(heightExtent, Mathf.Abs(height - _frame.AnchorHeight));
             // Cover every rotated local window axis and absolute height offset, but never inflate by ring radius.
             float localExtent = Mathf.Sqrt(halfWindow * halfWindow * 2.0f) + heightExtent;
-            _terrain.Set("cull_margin", Mathf.Max(1.0f, localExtent + _worldFrame.Origin.Length()));
+            _terrain.Set(CullMarginName, Mathf.Max(1.0f, localExtent + _worldFrame.Origin.Length()));
         }
     }
 
@@ -342,16 +385,16 @@ public partial class RingTerrain3DSurface : Node3D
     {
         if (_terrain == null) return;
         // Routed through SetMaterialParameter so follower materials see the same radius/anchor values.
-        SetMaterialParameter("ring_radius_meters", (float)_frame.RadiusMeters);
-        SetMaterialParameter("ring_anchor_height", _frame.AnchorHeight);
+        SetMaterialParameter(RingRadiusMetersName, (float)_frame.RadiusMeters);
+        SetMaterialParameter(RingAnchorHeightName, _frame.AnchorHeight);
         double circumferenceMeters = _field?.CircumferenceMeters ?? CertifiedRingScale.EffectiveCircumferenceMeters;
         float ringWidthMeters = _field?.WidthMeters ?? CertifiedRingScale.RingWidthMeters;
-        SetMaterialParameter("ring_terrain_shadow_anchor_uv", new Vector2(
+        SetMaterialParameter(RingTerrainShadowAnchorUvName, new Vector2(
             (float)(_frame.AnchorAroundMeters / circumferenceMeters),
             _frame.AnchorAcrossMeters / Mathf.Max(ringWidthMeters, 1.0f)));
-        SetMaterialParameter("ring_texture_anchor_around_meters", PositiveModulo(_frame.AnchorAroundMeters, 1000));
-        SetMaterialParameter("ring_texture_anchor_across_meters", PositiveModulo(_frame.AnchorAcrossMeters, 1000));
-        SetMaterialParameter("ring_across_direction", _frame.AcrossDirection);
+        SetMaterialParameter(RingTextureAnchorAroundMetersName, PositiveModulo(_frame.AnchorAroundMeters, 1000));
+        SetMaterialParameter(RingTextureAnchorAcrossMetersName, PositiveModulo(_frame.AnchorAcrossMeters, 1000));
+        SetMaterialParameter(RingAcrossDirectionName, _frame.AcrossDirection);
         ApplyAtmosphereMaterialParameters();
     }
 
@@ -360,43 +403,43 @@ public partial class RingTerrain3DSurface : Node3D
         // Terrain3D owns a plugin material object rather than a ShaderMaterial,
         // so it receives the same public model values through its parameter API.
         float radius = (float)_frame.RadiusMeters;
-        SetMaterialParameter("ring_atmosphere_camera_world", _hasLocalPhysicalCameraPosition ? _worldFrame * _lastLocalPhysicalCameraPosition : Vector3.Zero);
+        SetMaterialParameter(RingAtmosphereCameraWorldName, _hasLocalPhysicalCameraPosition ? _worldFrame * _lastLocalPhysicalCameraPosition : Vector3.Zero);
         if (!force && _atmosphereRevision == RingAtmosphereModel.Revision) return;
         _atmosphereRevision = RingAtmosphereModel.Revision;
-        SetMaterialParameter("ring_atmosphere_enabled", RingAtmosphereModel.Enabled);
-        SetMaterialParameter("ring_radius_meters", radius);
+        SetMaterialParameter(RingAtmosphereEnabledName, RingAtmosphereModel.Enabled);
+        SetMaterialParameter(RingRadiusMetersName, radius);
         Vector3 ringCenterWorld = _worldFrame * new Vector3(0.0f, radius, 0.0f);
         float ringWidthMeters = _field?.WidthMeters ?? CertifiedRingScale.RingWidthMeters;
-        SetMaterialParameter("ring_atmosphere_center_world", ringCenterWorld);
-        SetMaterialParameter("ring_atmosphere_half_width_meters", ringWidthMeters * 0.5f);
+        SetMaterialParameter(RingAtmosphereCenterWorldName, ringCenterWorld);
+        SetMaterialParameter(RingAtmosphereHalfWidthMetersName, ringWidthMeters * 0.5f);
         // The curved Terrain3D vertex is already in this same authoritative
         // world frame, so macro-shadow sampling uses the identical receiver
         // coordinate contract as the proxy terrain.
-        SetMaterialParameter("ring_center", ringCenterWorld);
-        SetMaterialParameter("ring_width_meters", ringWidthMeters);
-        SetMaterialParameter("atmosphere_floor_depth_meters", RingAtmosphereModel.FloorDepthMeters);
-        SetMaterialParameter("atmosphere_boundary_height_meters", RingAtmosphereModel.BoundaryHeightMeters);
-        SetMaterialParameter("atmosphere_upper_height_meters", RingAtmosphereModel.UpperHeightMeters);
-        SetMaterialParameter("atmosphere_boundary_extinction_meters", RingAtmosphereModel.BoundaryExtinctionMeters);
-        SetMaterialParameter("atmosphere_upper_extinction_meters", RingAtmosphereModel.UpperExtinctionMeters);
-        SetMaterialParameter("atmosphere_boundary_max_opacity", RingAtmosphereModel.BoundaryMaxOpacity);
-        SetMaterialParameter("atmosphere_upper_max_opacity", RingAtmosphereModel.UpperMaxOpacity);
-        SetMaterialParameter("atmosphere_total_max_opacity", RingAtmosphereModel.TotalMaxOpacity);
-        SetMaterialParameter("atmosphere_clear_distance_meters", RingAtmosphereModel.ClearDistanceMeters);
-        SetMaterialParameter("atmosphere_full_distance_meters", RingAtmosphereModel.FullDistanceMeters);
-        SetMaterialParameter("atmosphere_high_altitude_clear_distance_meters", RingAtmosphereModel.HighAltitudeClearDistanceMeters);
-        SetMaterialParameter("atmosphere_high_altitude_full_distance_meters", RingAtmosphereModel.HighAltitudeFullDistanceMeters);
-        SetMaterialParameter("atmosphere_distance_altitude_start_meters", RingAtmosphereModel.DistanceAltitudeStartMeters);
-        SetMaterialParameter("atmosphere_distance_altitude_end_meters", RingAtmosphereModel.DistanceAltitudeEndMeters);
-        SetMaterialParameter("atmosphere_distance_haze_max_opacity", RingAtmosphereModel.DistanceHazeMaxOpacity);
-        SetMaterialParameter("atmosphere_night_density_factor", RingAtmosphereModel.NightDensityFactor);
-        SetMaterialParameter("atmosphere_scattering_energy", RingAtmosphereModel.ScatteringEnergy);
-        SetMaterialParameter("atmosphere_aerosol", RingAtmosphereModel.Aerosol);
-        SetMaterialParameter("atmosphere_forward_scattering", RingAtmosphereModel.ForwardScattering);
-        SetMaterialParameter("atmosphere_sun_warmth", RingAtmosphereModel.SunWarmth);
-        SetMaterialParameter("atmosphere_day_color", new Vector3(RingAtmosphereModel.DayColor.R, RingAtmosphereModel.DayColor.G, RingAtmosphereModel.DayColor.B));
-        SetMaterialParameter("atmosphere_night_color", new Vector3(RingAtmosphereModel.NightColor.R, RingAtmosphereModel.NightColor.G, RingAtmosphereModel.NightColor.B));
-        RingAtmosphereModel.PushHazeParameters(SetMaterialParameter);
+        SetMaterialParameter(RingCenterName, ringCenterWorld);
+        SetMaterialParameter(RingWidthMetersName, ringWidthMeters);
+        SetMaterialParameter(AtmosphereFloorDepthMetersName, RingAtmosphereModel.FloorDepthMeters);
+        SetMaterialParameter(AtmosphereBoundaryHeightMetersName, RingAtmosphereModel.BoundaryHeightMeters);
+        SetMaterialParameter(AtmosphereUpperHeightMetersName, RingAtmosphereModel.UpperHeightMeters);
+        SetMaterialParameter(AtmosphereBoundaryExtinctionMetersName, RingAtmosphereModel.BoundaryExtinctionMeters);
+        SetMaterialParameter(AtmosphereUpperExtinctionMetersName, RingAtmosphereModel.UpperExtinctionMeters);
+        SetMaterialParameter(AtmosphereBoundaryMaxOpacityName, RingAtmosphereModel.BoundaryMaxOpacity);
+        SetMaterialParameter(AtmosphereUpperMaxOpacityName, RingAtmosphereModel.UpperMaxOpacity);
+        SetMaterialParameter(AtmosphereTotalMaxOpacityName, RingAtmosphereModel.TotalMaxOpacity);
+        SetMaterialParameter(AtmosphereClearDistanceMetersName, RingAtmosphereModel.ClearDistanceMeters);
+        SetMaterialParameter(AtmosphereFullDistanceMetersName, RingAtmosphereModel.FullDistanceMeters);
+        SetMaterialParameter(AtmosphereHighAltitudeClearDistanceMetersName, RingAtmosphereModel.HighAltitudeClearDistanceMeters);
+        SetMaterialParameter(AtmosphereHighAltitudeFullDistanceMetersName, RingAtmosphereModel.HighAltitudeFullDistanceMeters);
+        SetMaterialParameter(AtmosphereDistanceAltitudeStartMetersName, RingAtmosphereModel.DistanceAltitudeStartMeters);
+        SetMaterialParameter(AtmosphereDistanceAltitudeEndMetersName, RingAtmosphereModel.DistanceAltitudeEndMeters);
+        SetMaterialParameter(AtmosphereDistanceHazeMaxOpacityName, RingAtmosphereModel.DistanceHazeMaxOpacity);
+        SetMaterialParameter(AtmosphereNightDensityFactorName, RingAtmosphereModel.NightDensityFactor);
+        SetMaterialParameter(AtmosphereScatteringEnergyName, RingAtmosphereModel.ScatteringEnergy);
+        SetMaterialParameter(AtmosphereAerosolName, RingAtmosphereModel.Aerosol);
+        SetMaterialParameter(AtmosphereForwardScatteringName, RingAtmosphereModel.ForwardScattering);
+        SetMaterialParameter(AtmosphereSunWarmthName, RingAtmosphereModel.SunWarmth);
+        SetMaterialParameter(AtmosphereDayColorName, new Vector3(RingAtmosphereModel.DayColor.R, RingAtmosphereModel.DayColor.G, RingAtmosphereModel.DayColor.B));
+        SetMaterialParameter(AtmosphereNightColorName, new Vector3(RingAtmosphereModel.NightColor.R, RingAtmosphereModel.NightColor.G, RingAtmosphereModel.NightColor.B));
+        RingAtmosphereModel.PushHazeParameters(SetMaterialParameterAction);
     }
 
     private void ApplyAtmosphereRayFrame()
@@ -425,9 +468,9 @@ public partial class RingTerrain3DSurface : Node3D
             (float)(width - canonical.AcrossMeters),
             1.0f,
             toSun);
-        frame.Apply(SetMaterialParameter);
+        frame.Apply(SetMaterialParameterAction);
         float inwardDotSun = (-outwardWorld).Dot(toSun);
-        SetMaterialParameter("ring_atmosphere_day_factor", Mathf.SmoothStep(-0.2f, 0.35f, inwardDotSun));
+        SetMaterialParameter(RingAtmosphereDayFactorName, Mathf.SmoothStep(-0.2f, 0.35f, inwardDotSun));
         ForwardSurfaceLighting(toSun);
     }
 
@@ -449,11 +492,34 @@ public partial class RingTerrain3DSurface : Node3D
         return null;
     }
 
+    // Cached delegate: a fresh method-group conversion allocates on every call.
+    private Action<StringName, Variant>? _setMaterialParameterAction;
+    private Action<StringName, Variant> SetMaterialParameterAction => _setMaterialParameterAction ??= SetMaterialParameter;
+
+    // Variant(StringName) allocates a finalizable Disposer each time; the parameter-name set is small and fixed, so convert once.
+    private static readonly System.Collections.Generic.Dictionary<StringName, Variant> ShaderParamNameVariants = new();
+    private readonly Variant[] _setShaderParamArgs = new Variant[2];
+    // Terrain3D's material object only changes when _terrain is replaced (PreconfigureNativeBeforeTreeEntry), so resolve it once per terrain.
+    private GodotObject? _terrainMaterial;
+    private Node? _terrainMaterialOwner;
+
     private void SetMaterialParameter(StringName name, Variant value)
     {
         if (_terrain == null) return;
-        GodotObject? material = _terrain.Call("get_material").AsGodotObject();
-        material?.Call("set_shader_param", name, value);
+        if (!ReferenceEquals(_terrainMaterialOwner, _terrain) || _terrainMaterial == null)
+        {
+            _terrainMaterial = _terrain.Call(GetMaterialName).AsGodotObject();
+            _terrainMaterialOwner = _terrain;
+        }
+        if (_terrainMaterial != null)
+        {
+            if (!ShaderParamNameVariants.TryGetValue(name, out Variant nameVariant))
+                ShaderParamNameVariants[name] = nameVariant = Variant.CreateFrom(name);
+            _setShaderParamArgs[0] = nameVariant;
+            _setShaderParamArgs[1] = value;
+            _terrainMaterial.Call(SetShaderParamName, _setShaderParamArgs);
+            _setShaderParamArgs[1] = default;
+        }
         ForwardToFollowers(name, value);
     }
 
@@ -703,6 +769,7 @@ public partial class RingTerrain3DSurface : Node3D
         if (_mesherCamera != null) { _mesherCamera.GetParent()?.RemoveChild(_mesherCamera); _mesherCamera.Free(); _mesherCamera = null; }
         if (_terrain != null) { _terrain.GetParent()?.RemoveChild(_terrain); _terrain.Free(); _terrain = null; }
         _cloudShadowMaterial = null;
+        _terrainMaterial = null; _terrainMaterialOwner = null;
         _terrainData = null;
         _windowHeights = null;
         _baselineWindowHeights = null;

@@ -104,5 +104,5 @@ public sealed class GameplayRenderResolutionDefaults
     public static float SanitizeFsrSharpness(float value) => float.IsFinite(value) ? Mathf.Clamp(value, 0f, 2f) : DefaultFsrSharpness;
     public static float SanitizeMipBiasOffset(float value) => float.IsFinite(value) ? Mathf.Clamp(value, 0f, 1f) : 0f;
 
-    public static int ValidatePreset(int preset) => preset is >= 0 and <= 5 ? preset : 0;
+    public static int ValidatePreset(int preset) => preset is >= 0 and <= 6 ? preset : 0;
 }

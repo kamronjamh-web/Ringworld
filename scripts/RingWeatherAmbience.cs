@@ -18,6 +18,8 @@ namespace RingworldTechDemo;
 public partial class RingWeatherAmbience : Node
 {
     public const string DuckMetadata = "ring_weather_ambience_duck";
+    // _Process sets this every frame; SetMeta takes a StringName, so convert the name once.
+    private static readonly StringName DuckMetadataName = DuckMetadata;
     private const int ProbeCount = 16;
     private const ulong ProbeIntervalUsec = 125_000;
     private const double ProbeLifetimeSeconds = 3.0;
@@ -194,7 +196,7 @@ public partial class RingWeatherAmbience : Node
         // Only audible layers duck the old exterior bed. This ownership is
         // scene-local and leaves the existing water mix completely independent.
         float strongest = Math.Max(Math.Max(_current[0], _current[1]), Math.Max(Math.Max(_current[2], _current[3]), StrongestDetailGain()));
-        _explorer.SetMeta(DuckMetadata, 1.0f - strongest * 0.32f);
+        _explorer.SetMeta(DuckMetadataName, 1.0f - strongest * 0.32f);
     }
 
     public override void _ExitTree()

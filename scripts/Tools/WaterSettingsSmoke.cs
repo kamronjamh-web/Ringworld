@@ -53,15 +53,21 @@ public partial class WaterSettingsSmoke : RefCounted
         using var plain = new RingGraphicsQualityController();
         new GameplayWaterDefaults(emptyPath).Initialize(plain, null);
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Medium, false);
-        bool medium = plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .5f) && plain.WaterSsrCoarseSteps == 12;
+        bool medium = !plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .5f) && plain.WaterSsrCoarseSteps == 12;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, false);
         bool lowDefault = !plain.WaterSsrEnabled;
         plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, false);
         bool highDefault = plain.WaterSsrEnabled && Near(plain.WaterSsrStrength, .65f) && plain.WaterSsrCoarseSteps == 24;
 
+        // WO-3: High 12 steps / 120 m / 250 m, Ultra 32 steps / 400 m / 600 m.
+        plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.High, false);
+        bool highPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 12 && Near(plain.WaterSsrMaxRayDistance, 120f) && Near(plain.WaterSsrCameraDistance, 250f);
+        plain.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.UltraVideo, false);
+        bool ultraPreset = plain.WaterSsrEnabled && plain.WaterSsrCoarseSteps == 32 && Near(plain.WaterSsrMaxRayDistance, 400f) && Near(plain.WaterSsrCameraDistance, 600f);
+
         System.IO.File.Delete(globalPath);
-        detail = $"startup={startup} low={low} high={high} reverse={reverse} medium={medium} lowDefault={lowDefault} highDefault={highDefault}";
-        return startup && low && high && reverse && medium && lowDefault && highDefault;
+        detail = $"startup={startup} low={low} high={high} reverse={reverse} medium={medium} lowDefault={lowDefault} highDefault={highDefault} highPreset={highPreset} ultraPreset={ultraPreset}";
+        return startup && low && high && reverse && medium && lowDefault && highDefault && highPreset && ultraPreset;
     }
 
     public Godot.Collections.Dictionary Run(string path)

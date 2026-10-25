@@ -74,6 +74,15 @@ public partial class RingLocalWeatherEffects
         RefreshRainHazeCompositorOwner();
     }
 
+    private static readonly StringName ReadyName = "ready";
+    private static readonly StringName RainIntensityName = "rain_intensity";
+    private static readonly StringName HazeDensityName = "haze_density";
+    private static readonly StringName NearClearDistanceName = "near_clear_distance";
+    private static readonly StringName MaximumOpacityName = "maximum_opacity";
+    private static readonly StringName VariationStrengthName = "variation_strength";
+    private static readonly StringName HazeTintName = "haze_tint";
+    private static readonly StringName DaylightName = "daylight";
+    private static readonly StringName SkyDistanceName = "sky_distance";
     private void UpdateRainHaze()
     {
         if (_rainHaze == null || !GodotObject.IsInstanceValid(_rainHaze) || _rainHazeMaterial == null) return;
@@ -86,21 +95,21 @@ public partial class RingLocalWeatherEffects
         float density = FiniteHaze(settings.Density, 0, .03f, .004f);
         float maximumOpacity = FiniteHaze(settings.MaximumOpacity, 0, .9f, .6f);
         RefreshRainHazeCompositorOwner();
-        bool compositorReady = _rainHazeWorldEnvironment != null && _rainHazeCompositor?.Get("ready").AsBool() == true;
+        bool compositorReady = _rainHazeWorldEnvironment != null && _rainHazeCompositor?.Get(ReadyName).AsBool() == true;
         bool active = eligible && intensity > .001f && density > 0 && maximumOpacity > 0;
         _rainHaze.Visible = active && !compositorReady;
         _rainHazeCompositeActive = compositorReady && active;
         PublishRainHazeFrame(_rainHazeCompositeActive, intensity, density, maximumOpacity, settings);
         if (!_rainHaze.Visible) return;
         Color tint = LinearRainHazeTint(settings.Tint);
-        SetRainHazeParameter("rain_intensity", intensity);
-        SetRainHazeParameter("haze_density", density);
-        SetRainHazeParameter("near_clear_distance", FiniteHaze(settings.NearClearDistanceMeters, 0, 100, 8));
-        SetRainHazeParameter("maximum_opacity", maximumOpacity);
-        SetRainHazeParameter("variation_strength", FiniteHaze(settings.VariationStrength, 0, 1, .25f));
-        SetRainHazeParameter("haze_tint", new Vector3(Mathf.Clamp(tint.R, 0, 1), Mathf.Clamp(tint.G, 0, 1), Mathf.Clamp(tint.B, 0, 1)));
-        SetRainHazeParameter("daylight", FiniteHaze(_rainHazeDayNight?.DaylightFactor ?? 1, 0, 1, 1));
-        SetRainHazeParameter("sky_distance", Mathf.Min(750, _rainHazeCamera!.Far));
+        SetRainHazeParameter(RainIntensityName, intensity);
+        SetRainHazeParameter(HazeDensityName, density);
+        SetRainHazeParameter(NearClearDistanceName, FiniteHaze(settings.NearClearDistanceMeters, 0, 100, 8));
+        SetRainHazeParameter(MaximumOpacityName, maximumOpacity);
+        SetRainHazeParameter(VariationStrengthName, FiniteHaze(settings.VariationStrength, 0, 1, .25f));
+        SetRainHazeParameter(HazeTintName, new Vector3(Mathf.Clamp(tint.R, 0, 1), Mathf.Clamp(tint.G, 0, 1), Mathf.Clamp(tint.B, 0, 1)));
+        SetRainHazeParameter(DaylightName, FiniteHaze(_rainHazeDayNight?.DaylightFactor ?? 1, 0, 1, 1));
+        SetRainHazeParameter(SkyDistanceName, Mathf.Min(750, _rainHazeCamera!.Far));
     }
 
     private void SetRainHazeParameter(StringName name, Variant value)
@@ -134,6 +143,7 @@ public partial class RingLocalWeatherEffects
     private void ReleaseRainHaze()
     {
         _rainHazeCompositeActive = false;
+        _rainHazeFramePublished = false;
         if (_rainHazeCompositor != null)
         {
             Variant neutralTexture = _rainHazeNeutral == null ? default : Variant.From(_rainHazeNeutral);
@@ -183,6 +193,8 @@ public partial class RingLocalWeatherEffects
         }
         _rainHazeWorldEnvironment = null;
     }
+    private static readonly StringName PublishGpuMarkersName = "publish_gpu_markers";
+    private static readonly StringName PublishFrameName = "publish_frame";
     private void PublishRainHazeFrame(bool active, float intensity, float density, float maximumOpacity, RingRainHazeSettings settings)
     {
         if (_rainHazeCompositor == null || _rainHazeCamera == null) return;
@@ -190,13 +202,14 @@ public partial class RingLocalWeatherEffects
         string beginMarker = RingPerformanceGpu.RainHazeBeginMarker, endMarker = RingPerformanceGpu.RainHazeEndMarker;
         if (_rainHazeGpuMarkersEnabled != diagnosticsEnabled || _rainHazeGpuBeginMarker != beginMarker || _rainHazeGpuEndMarker != endMarker)
         {
-            _rainHazeCompositor.Call("publish_gpu_markers", diagnosticsEnabled, beginMarker, endMarker);
+            _rainHazeCompositor.Call(PublishGpuMarkersName, diagnosticsEnabled, beginMarker, endMarker);
             _rainHazeGpuMarkersEnabled = diagnosticsEnabled;
             _rainHazeGpuBeginMarker = beginMarker; _rainHazeGpuEndMarker = endMarker;
         }
         var wind = _weatherSource?.SharedWindField.CapturePublishedFrame() ?? default;
-        // A fresh immutable payload is published atomically; callbacks never read live nodes or globals.
-        byte[] data = new byte[240]; int offset = 64;
+        // The payload is built in a reused scratch buffer; the Variant conversion below copies it into a fresh PackedByteArray,
+        // so the compositor still receives an immutable payload that callbacks never read from live nodes or globals.
+        byte[] data = _rainHazeFrameScratch; int offset = 64;
         void Vector(Vector4 value)
         {
             BitConverter.TryWriteBytes(data.AsSpan(offset,4),value.X); offset += 4;
@@ -216,9 +229,36 @@ public partial class RingLocalWeatherEffects
         Vector(new(wind.Anchor.X,wind.Anchor.Y,wind.Anchor.Z,0)); Vector(wind.Around); Vector(wind.Across);
         Vector(new(wind.Uv.X,wind.Uv.Y,wind.Base,wind.Strength));
         Texture2D? texture = wind.Texture ?? _rainHazeNeutral;
-        Variant frameTexture = texture == null ? default : Variant.From(texture);
-        _rainHazeCompositor.Call("publish_frame", data, frameTexture, active);
+        // The compositor keeps the last published frame until it is replaced, so an identical payload (static camera, same gust
+        // texture, same active flag) is not re-sent. Nothing else publishes to this compositor instance.
+        if (_rainHazeFramePublished && ReferenceEquals(_rainHazeFrameCompositor, _rainHazeCompositor) && _rainHazeFrameActive == active
+            && ReferenceEquals(_rainHazeFrameTexture, texture) && data.AsSpan().SequenceEqual(_rainHazeFrameLast)) return;
+        // Variant.From(object) allocates a finalizable Disposer, so the texture Variant is rebuilt only when the reference changes.
+        if (!_rainHazeFrameTextureVariantValid || !ReferenceEquals(_rainHazeFrameTextureVariantSource, texture))
+        {
+            _rainHazeFrameTextureVariant = texture == null ? default : Variant.From(texture);
+            _rainHazeFrameTextureVariantSource = texture;
+            _rainHazeFrameTextureVariantValid = true;
+        }
+        _rainHazeFrameArgs[0] = data;
+        _rainHazeFrameArgs[1] = _rainHazeFrameTextureVariant;
+        _rainHazeFrameArgs[2] = active;
+        _rainHazeCompositor.Call(PublishFrameName, _rainHazeFrameArgs);
+        _rainHazeFrameArgs[0].Dispose();
+        data.CopyTo(_rainHazeFrameLast, 0);
+        _rainHazeFrameCompositor = _rainHazeCompositor;
+        _rainHazeFrameActive = active;
+        _rainHazeFrameTexture = texture;
+        _rainHazeFramePublished = true;
     }
+
+    private readonly byte[] _rainHazeFrameScratch = new byte[240];
+    private readonly byte[] _rainHazeFrameLast = new byte[240];
+    private readonly Variant[] _rainHazeFrameArgs = new Variant[3];
+    private CompositorEffect? _rainHazeFrameCompositor;
+    private Texture2D? _rainHazeFrameTexture, _rainHazeFrameTextureVariantSource;
+    private Variant _rainHazeFrameTextureVariant;
+    private bool _rainHazeFramePublished, _rainHazeFrameActive, _rainHazeFrameTextureVariantValid;
 
     public Godot.Collections.Dictionary GetRainHazeDiagnostics() => new()
     {

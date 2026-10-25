@@ -132,7 +132,7 @@ func rain_has_no_particles() -> bool:
     return check(not particles.emitting and not particles.visible and particles.amount_ratio == 0.0 and float(diag().effective_count) == 0.0, "liquid rain retained visible particles")
 func invariant() -> bool:
     var d := diag()
-    return check(identities() == ids and particles.amount == 4096 and is_finite(float(d.shared_intensity)) and Vector2(d.streak_size).is_finite() and Vector3(d.gravity).is_finite(), "snow resource/finite contract")
+    return check(identities() == ids and particles.amount == int(local.get("MaximumParticleCount")) and is_finite(float(d.shared_intensity)) and Vector2(d.streak_size).is_finite() and Vector3(d.gravity).is_finite(), "snow resource/finite contract")
 func check(ok: bool, message: String) -> bool:
     if not ok and not failed:
         failed = true

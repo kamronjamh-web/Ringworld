@@ -44,8 +44,48 @@ public partial class RenderResolutionSettingsSmoke : RefCounted
 
             invalid.Reset();
             bool reset = invalid.Settings.Preset == 0 && !invalid.Settings.AdaptiveResolutionEnabled && invalid.Dirty && invalid.Save();
-            result["pass"] = initialDefault && noOp && changed && saved && saveNoOp && persisted && invalidFallsBack && reset && jitterPersisted;
-            result["detail"] = $"default={initialDefault} noop={noOp} changed={changed} saved={saved} atomicNoop={saveNoOp} persisted={persisted} invalid={invalidFallsBack} reset={reset} jitterCompensation={jitterPersisted}";
+            // Auto (6): persists, validates, is the menu's missing-file fallback; 7 and negatives fall back to Native.
+            if (File.Exists(absolute)) File.Delete(absolute); // Load(6) only falls back when no file exists.
+            var autoFile = new GameplayRenderResolutionDefaults(isolatedPath);
+            autoFile.Load(6);
+            bool autoFallback = autoFile.Settings.Preset == 6 && !autoFile.Dirty;
+            bool autoSet = autoFile.Set(6, false) == false && autoFile.Set(2, false) && autoFile.Set(6, true) && autoFile.Save();
+            var autoReloaded = new GameplayRenderResolutionDefaults(isolatedPath);
+            autoReloaded.Load();
+            bool autoPersisted = autoSet && autoReloaded.Settings.Preset == 6 && autoReloaded.Settings.AdaptiveResolutionEnabled;
+            bool autoValidate = GameplayRenderResolutionDefaults.ValidatePreset(6) == 6 && GameplayRenderResolutionDefaults.ValidatePreset(7) == 0
+                && GameplayRenderResolutionDefaults.ValidatePreset(-1) == 0 && GameplayRenderResolutionDefaults.ValidatePreset(5) == 5;
+            // A saved explicit Native keeps meaning Native (no migration to Auto).
+            bool nativeKept = autoReloaded.Set(0, true) && autoReloaded.Save();
+            var nativeReloaded = new GameplayRenderResolutionDefaults(isolatedPath);
+            nativeReloaded.Load(6);
+            nativeKept = nativeKept && nativeReloaded.Settings.Preset == 0;
+
+            // Pure Auto resolver: every graphics preset at 1080 and 1440 (plus the 1300 threshold).
+            var Q = Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.Low;
+            bool resolver = true;
+            (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset preset, int height, Voxel.LOD.RingLodPauseMenu.UpscalingPreset expected)[] table =
+            {
+                (Q, 1080, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Performance), (Q, 1440, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Performance),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.Medium, 1080, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Performance),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.Medium, 1440, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Performance),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.High, 1080, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.High, 1299, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.High, 1300, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Balanced),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.High, 1440, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Balanced),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.VeryHigh, 1080, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.VeryHigh, 1440, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Fsr2Balanced),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.UltraVideo, 1080, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.UltraVideo, 1440, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.Cinematic5090, 1080, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+                (Voxel.LOD.RingTerrainLodCoordinator.QualityPreset.Cinematic5090, 1440, Voxel.LOD.RingLodPauseMenu.UpscalingPreset.Native),
+            };
+            foreach (var row in table)
+                resolver &= Voxel.LOD.RingLodPauseMenu.ResolveAutoUpscalingPreset(row.preset, row.height) == row.expected;
+            bool autoLabel = Voxel.LOD.RingLodPauseMenu.GetRenderResolutionPresetLabel(6) == "Auto (graphics preset)";
+
+            result["pass"] = autoFallback && autoPersisted && autoValidate && nativeKept && resolver && autoLabel && initialDefault && noOp && changed && saved && saveNoOp && persisted && invalidFallsBack && reset && jitterPersisted;
+            result["detail"] = $"default={initialDefault} noop={noOp} changed={changed} saved={saved} atomicNoop={saveNoOp} persisted={persisted} invalid={invalidFallsBack} reset={reset} jitterCompensation={jitterPersisted} autoFallback={autoFallback} autoPersisted={autoPersisted} autoValidate={autoValidate} nativeKept={nativeKept} resolver={resolver} autoLabel={autoLabel}";
         }
         catch (Exception error) { result["pass"] = false; result["detail"] = error.Message; }
         finally

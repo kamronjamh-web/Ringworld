@@ -7,6 +7,8 @@ public partial class RingScaledFarViewport
 {
     /// <summary>Main WorldEnvironment meta published by day_side_atmosphere.gd: the smoothed eclipse darkness weight (0 outside an eclipse).</summary>
     public const string EclipseDarknessMetaName = "ringworld_eclipse_darkness";
+    // Runs every frame: HasMeta/GetMeta take a StringName, so convert the name once.
+    private static readonly StringName EclipseDarknessMetaStringName = EclipseDarknessMetaName;
 
     /// <summary>
     /// The far and regional environments copy the main ambient once at creation and were never updated (docs/eclipse-false-sun-spec.md F12),
@@ -18,9 +20,9 @@ public partial class RingScaledFarViewport
     {
         float weight = 0.0f;
         Godot.Environment? live = null;
-        if (_mainWorldEnvironment != null && GodotObject.IsInstanceValid(_mainWorldEnvironment) && _mainWorldEnvironment.HasMeta(EclipseDarknessMetaName))
+        if (_mainWorldEnvironment != null && GodotObject.IsInstanceValid(_mainWorldEnvironment) && _mainWorldEnvironment.HasMeta(EclipseDarknessMetaStringName))
         {
-            weight = Mathf.Clamp(_mainWorldEnvironment.GetMeta(EclipseDarknessMetaName).AsSingle(), 0.0f, 1.0f);
+            weight = Mathf.Clamp(_mainWorldEnvironment.GetMeta(EclipseDarknessMetaStringName).AsSingle(), 0.0f, 1.0f);
             live = _mainWorldEnvironment.Environment;
         }
         if (!float.IsFinite(weight) || weight <= 0.0f || live == null)

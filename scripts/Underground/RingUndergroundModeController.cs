@@ -275,10 +275,12 @@ public partial class RingUndergroundModeController : Node
         _hideActive = anyHide;
     }
 
+    private static readonly StringName UndergroundLightingDarknessName = "underground_lighting_darkness";
+
     private bool ReadLightingDarkened()
     {
         if (EnclosureLightingWeight < .999f || _atmosphere == null || !GodotObject.IsInstanceValid(_atmosphere)) return false;
-        Variant darkness = _atmosphere.Get("underground_lighting_darkness");
+        Variant darkness = _atmosphere.Get(UndergroundLightingDarknessName);
         if (darkness.VariantType != Variant.Type.Float || darkness.AsSingle() < .999f) return false;
         return _sun == null || !GodotObject.IsInstanceValid(_sun) || _sun.LightEnergy <= .01f;
     }

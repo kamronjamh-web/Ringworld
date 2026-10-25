@@ -134,7 +134,7 @@ func _run() -> void:
 	if prefs_before_refresh != prefs_after_refresh or refresh_events["depth"] != 0 or refresh_events["near"] != 0: return _fail("shadow menu refresh wrote preferences or emitted control events")
 	var status := drawer.find_child("ShadowRuntimeStatus", true, false) as Label
 	var filter := drawer.find_child("ShadowFilter", true, false) as OptionButton
-	if status == null or not status.text.contains("Shadow settings saved.") or not status.text.contains("total range 12000 m") or not status.text.contains("estimated raw depth") or not status.text.contains("near cascade 60 m") or filter == null or filter.get_selected_id() != 2: return _fail("quality refresh did not update shadow status/filter")
+	if status == null or not status.text.contains("Shadow settings saved.") or not status.text.contains("total range 10000 m") or not status.text.contains("estimated raw depth") or not status.text.contains("near cascade 60 m") or filter == null or filter.get_selected_id() != 2: return _fail("quality refresh did not update shadow status/filter")
 	print("VISUAL_SETTINGS_UI_SMOKE_TEST_PASS")
 	_finish(0)
 

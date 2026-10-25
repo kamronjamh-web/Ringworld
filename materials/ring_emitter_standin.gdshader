@@ -35,6 +35,7 @@ varying float ring_day_factor;
 varying float standin_fade;
 varying float standin_coverage;
 varying float crown_glow_amount;
+varying float standin_height_rel; // height above the instance origin (the POI's ground anchor, MultiMesh instance transform = site transform) along local up
 
 void vertex() {
 	vec3 pivot_world = (MODEL_MATRIX * vec4(distance_pivot, 1.0)).xyz;
@@ -66,6 +67,7 @@ void vertex() {
 		day_start_dot,
 		day_full_dot,
 		dot(surface_up, normalize(sun_direction))));
+	standin_height_rel = max(dot(world_position - MODEL_MATRIX[3].xyz, surface_up), 0.0);
 }
 
 void fragment() {
@@ -109,7 +111,25 @@ void light() {
 		vec3 sun_view = normalize((VIEW_MATRIX * vec4(sun_direction, 0.0)).xyz);
 		float primary_sun = LIGHT_IS_DIRECTIONAL ? smoothstep(0.90, 0.995, dot(normalize(LIGHT), sun_view)) : 0.0;
 		float direct = mix(night_direct_light_factor, day_direct_light_factor, ring_day_factor);
-		float visibility = clamp(ATTENUATION, 0.0, 1.0) * mix(1.0, direct, primary_sun);
+		// Terrain height-shadow clipmap (S5/S7a), same gating as ring_terrain_lighting.gdshaderinc: min with the map, 1.0 (identity) while the feature is off.
+		float height_term = 1.0;
+		if (LIGHT_IS_DIRECTIONAL) {
+			bool height_active = primary_sun > 0.0 && ring_height_shadow_active();
+			float planet_height_weight = ring_height_shadow_planet_active()
+				? ring_height_shadow_light_weight(LIGHT, VIEW_MATRIX) * (1.0 - clamp(ringworld_hub_light_weight, 0.0, 1.0) * primary_sun)
+				: 0.0;
+			if (height_active || planet_height_weight > 0.0) {
+				RingHeightShadow height_shadow = ring_height_shadow_sample(
+					world_position,
+					standin_height_rel,
+					ring_height_shadow_slope_tan(transpose(mat3(VIEW_MATRIX)) * NORMAL),
+					distance(world_position, camera_world_position));
+				height_term = height_active
+					? ring_height_shadow_term(height_shadow, primary_sun, 1.0, ringworld_hub_light_weight, poi_shadow_floor)
+					: ring_height_shadow_planet_term(height_shadow, planet_height_weight, poi_shadow_floor);
+			}
+		}
+		float visibility = min(clamp(ATTENUATION, 0.0, 1.0), height_term) * mix(1.0, direct, primary_sun);
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
 		vec3 f0 = mix(vec3(0.16 * 0.68 * 0.68), ALBEDO, METALLIC);
 		SPECULAR_LIGHT += poi_ggx_specular(NORMAL, LIGHT, VIEW, ROUGHNESS, f0) * LIGHT_COLOR * visibility * SPECULAR_AMOUNT;

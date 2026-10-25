@@ -27,7 +27,27 @@ public partial class RingLiveTuningDrawer
         _vegetation = FindVegetation(GetTree().CurrentScene) ?? FindVegetation(GetParent()) ?? FindVegetation(GetTree().Root);
         _vegetationDefaults = new GameplayVegetationDefaults(_vegetationDefaultsPathOverride);
         _vegetationDefaults.Load();
+        BindVegetationPreset();
         ApplyVegetationGpu();
+    }
+
+    private RingGraphicsQualityController? _vegetationGraphics;
+    private void BindVegetationPreset()
+    {
+        if (_vegetationGraphics == null)
+        {
+            _vegetationGraphics = GetNodeOrNull<RingGraphicsQualityController>(GraphicsQualityPath);
+            if (_vegetationGraphics != null) _vegetationGraphics.PresetApplied += OnVegetationPresetApplied;
+        }
+        if (_vegetationGraphics != null) _vegetationDefaults.Preset = _vegetationGraphics.CurrentPreset;
+    }
+
+    private void OnVegetationPresetApplied(RingTerrainLodCoordinator.QualityPreset preset)
+    {
+        if (_vegetationDefaults == null) return;
+        _vegetationDefaults.Preset = preset;
+        ApplyVegetationGpu();
+        if (_open) RefreshVegetationControls();
     }
 
     private static RingBiomeDecorationLayer? FindVegetation(Node? node)
@@ -161,6 +181,7 @@ public partial class RingLiveTuningDrawer
         if (_vegetationDefaults == null) return;
         _vegetationDefaults = new GameplayVegetationDefaults(path);
         _vegetationDefaults.Load();
+        BindVegetationPreset();
         ApplyVegetationGpu();
         RefreshVegetationControls();
     }

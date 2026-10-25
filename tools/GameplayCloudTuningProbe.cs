@@ -96,10 +96,12 @@ public partial class GameplayCloudTuningProbe : RefCounted
                     RingTerrainLodCoordinator.QualityPreset.UltraVideo or RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (150f, 128),
                     _ => (250f, 64)
                 };
-                bool tuple = bridge.CloudResolutionScale == 0 && bridge.RaymarchSteps == 328 && bridge.GpuNearShadowMapResolution == 512
-                    && bridge.GpuFarShadowMapResolution == 128 && bridge.GpuNearShadowUpdatesPerSecond == 5f && bridge.GpuFarShadowUpdatesPerSecond == 2.5f
-                    && bridge.GpuShadowVerticalSamples == 24 && bridge.GpuShadowStepMeters == stepMeters && bridge.GpuShadowMaxSamples == maxSamples
-                    && !bridge.CloudResolutionJitter && bridge.CloudInterleave == 1 && bridge.WeatherSystemUploadCount == 64 && bridge.LightingSteps == 30;
+                bool lowTier = preset is RingTerrainLodCoordinator.QualityPreset.Low or RingTerrainLodCoordinator.QualityPreset.Medium;
+                (int raymarch, int nearRes, int farRes, float nearHz, float farHz, int vertical, int uploads, int lighting) = ExpectedPresetCloudTuple(preset);
+                bool tuple = bridge.CloudResolutionScale == (lowTier ? 1 : 0) && bridge.RaymarchSteps == raymarch && bridge.GpuNearShadowMapResolution == nearRes
+                    && bridge.GpuFarShadowMapResolution == farRes && bridge.GpuNearShadowUpdatesPerSecond == nearHz && bridge.GpuFarShadowUpdatesPerSecond == farHz
+                    && bridge.GpuShadowVerticalSamples == vertical && bridge.GpuShadowStepMeters == stepMeters && bridge.GpuShadowMaxSamples == maxSamples
+                    && bridge.CloudResolutionJitter == lowTier && bridge.CloudInterleave == (lowTier ? 2 : 1) && bridge.WeatherSystemUploadCount == uploads && bridge.LightingSteps == lighting;
                 if (!tuple) return $"preset {preset} tuple mismatch raymarch={bridge.RaymarchSteps} lighting={bridge.LightingSteps} near={bridge.GpuNearShadowMapResolution} far={bridge.GpuFarShadowMapResolution} vertical={bridge.GpuShadowVerticalSamples} upload={bridge.WeatherSystemUploadCount}";
             }
             // A sparse override (saved in an isolated file, as the drawer does) wins over the preset.
@@ -110,12 +112,22 @@ public partial class GameplayCloudTuningProbe : RefCounted
             foreach (RingTerrainLodCoordinator.QualityPreset preset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
             {
                 graphics.ApplyUserPreset(preset);
-                if (bridge.RaymarchSteps != 200 || bridge.LightingSteps != 30) return $"sparse override lost on {preset}: raymarch={bridge.RaymarchSteps} lighting={bridge.LightingSteps}";
+                if (bridge.RaymarchSteps != 200 || bridge.LightingSteps != ExpectedPresetCloudTuple(preset).lighting) return $"sparse override lost on {preset}: raymarch={bridge.RaymarchSteps} lighting={bridge.LightingSteps}";
             }
             return "";
         }
         finally { System.IO.File.Delete(absolute); }
     }
+
+    /// <summary>WO-3 preset tuple (raymarch steps, near/far shadow map px, near/far Hz, vertical samples, weather uploads, lighting steps); Cinematic keeps the Very High base.</summary>
+    private static (int raymarch, int nearRes, int farRes, float nearHz, float farHz, int vertical, int uploads, int lighting) ExpectedPresetCloudTuple(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low => (96, 256, 128, 2f, .25f, 8, 40, 8),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (128, 512, 128, 5f, .5f, 12, 48, 12),
+        RingTerrainLodCoordinator.QualityPreset.High => (192, 512, 128, 5f, 1f, 16, 48, 16),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (328, 1024, 256, 10f, 2.5f, 24, 64, 30),
+        _ => (328, 512, 128, 5f, 2.5f, 24, 64, 30)
+    };
 
     public bool VerifyCullingPreferenceContract(string isolatedPath)
     {

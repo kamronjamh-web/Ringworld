@@ -28,7 +28,17 @@ public partial class RingLocalWeatherEffects : Node3D
 
     [ExportGroup("Precipitation")]
     [Export(PropertyHint.Range, "0,1,0.01")] public float PrecipitationStart { get; set; } = 0.18f;
-    [Export(PropertyHint.Range, "256,12000,128")] public int MaximumParticleCount { get; set; } = 4096;
+    private int _maximumParticleCount = 4096;
+    /// <summary>Precipitation particle pool; a graphics preset resizes the live pool.</summary>
+    [Export(PropertyHint.Range, "256,12000,128")] public int MaximumParticleCount
+    {
+        get => _maximumParticleCount;
+        set
+        {
+            _maximumParticleCount = value;
+            if (_particles != null && GodotObject.IsInstanceValid(_particles)) _particles.Amount = Math.Clamp(value, 256, 12000);
+        }
+    }
     [Export(PropertyHint.Range, "10,150,5")] public float PrecipitationRadiusMeters { get; set; } = 55.0f;
     [Export(PropertyHint.Range, "10,100,5")] public float PrecipitationHeightMeters { get; set; } = 45.0f;
     [Export(PropertyHint.Range, "5,80,1")] public float RainFallSpeedMetersPerSecond { get; set; } = 34.0f;

@@ -570,23 +570,28 @@ public partial class RingScaledFarViewport : Node
 		base._ExitTree();
 	}
 
+	private static readonly StringName FarClipmapHandoffStartMetersName = "far_clipmap_handoff_start_meters";
+	private static readonly StringName FarClipmapHandoffEndMetersName = "far_clipmap_handoff_end_meters";
+	private static readonly StringName WeatherAtlasName = "weather_atlas";
+	private static readonly StringName WeatherAtlasEnabledName = "weather_atlas_enabled";
+	private static readonly StringName WeatherWindUvPerSecondName = "weather_wind_uv_per_second";
 	private void ConfigureFarWeatherMaterial(ShaderMaterial material)
 	{
 		if (ReferenceEquals(material, _cloudMaterial))
 		{
 			float outer = GetEffectiveFarCloudClipmapRadiusMeters() * CoordinateScale;
-			material.SetShaderParameter("far_clipmap_handoff_start_meters", outer * 0.78f);
-			material.SetShaderParameter("far_clipmap_handoff_end_meters", outer);
+			material.SetShaderParameter(FarClipmapHandoffStartMetersName, outer * 0.78f);
+			material.SetShaderParameter(FarClipmapHandoffEndMetersName, outer);
 		}
 		if (_farWeatherAtlas == null) return;
-		material.SetShaderParameter("weather_atlas", _farWeatherAtlas);
-		material.SetShaderParameter("weather_atlas_enabled", true);
+		material.SetShaderParameter(WeatherAtlasName, _farWeatherAtlas);
+		material.SetShaderParameter(WeatherAtlasEnabledName, true);
 		// The texture is an authoritative snapshot. Advect only its age so a
 		// lifecycle rebuild cannot make weather jump, while lightning remains
 		// on the absolute authoritative clock below.
-		material.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
+		material.SetShaderParameter(WeatherTimeSecondsName, ResolveFarWeatherAtlasAgeSeconds());
 		Vector2 wind = _weatherSource?.WeatherWindMetersPerSecond ?? new Vector2(2.2f, 0.7f);
-		material.SetShaderParameter("weather_wind_uv_per_second", new Vector2(
+		material.SetShaderParameter(WeatherWindUvPerSecondName, new Vector2(
 			wind.X / (float)Math.Max(1.0, _circumferenceMeters),
 			wind.Y / Math.Max(1.0f, RingWidthMeters)));
 		// Lightning ownership is split between the scaled shell and the clipmap; the main-view
@@ -620,7 +625,8 @@ public partial class RingScaledFarViewport : Node
 		double time = ResolveFarWeatherRawTimeSeconds();
 		int limit = FarStormLightningEnabled ? Mathf.Clamp(FarStormLightningMaximumEvents, 1, 2) : 0;
 		int written = 0;
-		foreach (RingLightningEvent lightning in SelectVisibleFarLightningEvents(time, limit))
+		SelectVisibleFarLightningEvents(time, limit, _visibleFarLightningEvents);
+		foreach (RingLightningEvent lightning in _visibleFarLightningEvents)
 		{
 			float pulse = RingLightningEvent.PulseAtAge(time - lightning.StartTimeSeconds);
 			if (pulse <= 0.0001f) continue;
@@ -699,10 +705,16 @@ public partial class RingScaledFarViewport : Node
 		return ReferenceEquals(material, _cloudMaterial) ? weights.Shell : weights.Regional;
 	}
 
-	private IEnumerable<RingLightningEvent> SelectVisibleFarLightningEvents(double time, int limit)
+	// Reused per call (main thread only) so the per-frame lightning selection allocates nothing.
+	private readonly List<RingLightningEvent> _visibleFarLightningEvents = new();
+	private readonly List<(RingLightningEvent Event, float Score)> _farLightningCandidates = new();
+
+	private void SelectVisibleFarLightningEvents(double time, int limit, List<RingLightningEvent> selected)
 	{
-		if (limit <= 0 || _weatherSource == null || _grid == null || _sourceCamera == null) yield break;
-		var candidates = new List<(RingLightningEvent Event, float Score)>();
+		selected.Clear();
+		if (limit <= 0 || _weatherSource == null || _grid == null || _sourceCamera == null) return;
+		var candidates = _farLightningCandidates;
+		candidates.Clear();
 		Vector3 cameraPosition = _sourceCamera.GlobalPosition;
 		Vector2 viewportSize = _sourceCamera.GetViewport().GetVisibleRect().Size;
 		float aspect = viewportSize.Y > 0.0f ? viewportSize.X / viewportSize.Y : 1.0f;
@@ -719,8 +731,10 @@ public partial class RingScaledFarViewport : Node
 		Basis inverseCameraBasis = _sourceCamera.GlobalBasis.Orthonormalized().Inverse();
 		float horizontalPlaneLength = Mathf.Sqrt(1.0f + horizontalTan * horizontalTan);
 		float verticalPlaneLength = Mathf.Sqrt(1.0f + verticalTan * verticalTan);
-		foreach (RingLightningEvent lightning in _weatherSource.ActiveLightningEvents)
+		IReadOnlyList<RingLightningEvent> activeEvents = _weatherSource.ActiveLightningEvents;
+		for (int eventIndex = 0; eventIndex < activeEvents.Count; eventIndex++)
 		{
+			RingLightningEvent lightning = activeEvents[eventIndex];
 			float pulse = RingLightningEvent.PulseAtAge(time - lightning.StartTimeSeconds);
 			if (pulse <= 0.0001f) continue;
 			Vector3 world = _grid.CanonicalRingPositionToWorld(lightning.CloudPosition);
@@ -750,7 +764,7 @@ public partial class RingScaledFarViewport : Node
 		for (int index = 0; index < Math.Min(limit, candidates.Count); index++)
 		{
 			SelectedFarLightningEventIds.Add(candidates[index].Event.EventId);
-			yield return candidates[index].Event;
+			selected.Add(candidates[index].Event);
 		}
 	}
 
@@ -1087,8 +1101,15 @@ public partial class RingScaledFarViewport : Node
 		worldEnvironment.Compositor.CompositorEffects = compositorEffects;
 	}
 
+	private static readonly StringName GetDepthTextureName = "get_depth_texture";
+
 	public Texture2D? GetOpaquePhysicalDepthTexture()
-		=> _farDepthCapture?.Call("get_depth_texture").AsGodotObject() as Texture2D;
+	{
+		if (_farDepthCapture == null) return null;
+		// Runs every frame; the object Variant is disposed so it leaves no finalizable Disposer behind.
+		using Variant texture = _farDepthCapture.Call(GetDepthTextureName);
+		return texture.AsGodotObject() as Texture2D;
+	}
 
 	private void CreateRegionalFarViewport()
 	{
@@ -1577,28 +1598,27 @@ public partial class RingScaledFarViewport : Node
 		}
 	}
 
+	// Immutable specs shared across calls; the getter runs per frame so it must not allocate.
+	private static readonly FarRegionalBandSpec[] FarRegionalBandSpecsLegacy =
+	{
+		new FarRegionalBandSpec("ScaledFarLod9", 125000.0, 625000.0, 2048.0),
+		new FarRegionalBandSpec("ScaledFarLod10", 625000.0, 2250000.0, 8192.0),
+		new FarRegionalBandSpec("ScaledFarLod11", 2250000.0, 7960000.0, 32768.0)
+	};
+	private static readonly FarRegionalBandSpec[] FarRegionalBandSpecsIntermediate =
+	{
+		new FarRegionalBandSpec("ScaledFarLod9Bridge512", 125000.0, 187500.0, 512.0),
+		new FarRegionalBandSpec("ScaledFarLod9Bridge1024", 187500.0, 250000.0, 1024.0),
+		new FarRegionalBandSpec("ScaledFarLod9", 250000.0, 625000.0, 2048.0),
+		new FarRegionalBandSpec("ScaledFarLod10Bridge4096", 625000.0, 1125000.0, 4096.0),
+		new FarRegionalBandSpec("ScaledFarLod10", 1125000.0, 2250000.0, 8192.0),
+		new FarRegionalBandSpec("ScaledFarLod11Bridge16384", 2250000.0, 4500000.0, 16384.0),
+		new FarRegionalBandSpec("ScaledFarLod11", 4500000.0, 7960000.0, 32768.0)
+	};
+
 	/// <summary>Returns contiguous regional coverage while retaining the legacy reach.</summary>
 	internal static IReadOnlyList<FarRegionalBandSpec> GetFarRegionalBandSpecs(bool includeIntermediateTiers)
-	{
-		if (!includeIntermediateTiers)
-			return new[]
-			{
-				new FarRegionalBandSpec("ScaledFarLod9", 125000.0, 625000.0, 2048.0),
-				new FarRegionalBandSpec("ScaledFarLod10", 625000.0, 2250000.0, 8192.0),
-				new FarRegionalBandSpec("ScaledFarLod11", 2250000.0, 7960000.0, 32768.0)
-			};
-
-		return new[]
-		{
-			new FarRegionalBandSpec("ScaledFarLod9Bridge512", 125000.0, 187500.0, 512.0),
-			new FarRegionalBandSpec("ScaledFarLod9Bridge1024", 187500.0, 250000.0, 1024.0),
-			new FarRegionalBandSpec("ScaledFarLod9", 250000.0, 625000.0, 2048.0),
-			new FarRegionalBandSpec("ScaledFarLod10Bridge4096", 625000.0, 1125000.0, 4096.0),
-			new FarRegionalBandSpec("ScaledFarLod10", 1125000.0, 2250000.0, 8192.0),
-			new FarRegionalBandSpec("ScaledFarLod11Bridge16384", 2250000.0, 4500000.0, 16384.0),
-			new FarRegionalBandSpec("ScaledFarLod11", 4500000.0, 7960000.0, 32768.0)
-		};
-	}
+		=> includeIntermediateTiers ? FarRegionalBandSpecsIntermediate : FarRegionalBandSpecsLegacy;
 
 	public void SetIntermediateLodTiers(bool enabled)
 	{
@@ -2110,6 +2130,9 @@ public partial class RingScaledFarViewport : Node
 		}
 	}
 
+	private static readonly StringName CoverageName = "coverage";
+	private static readonly StringName StormFactorName = "storm_factor";
+	private static readonly StringName WeatherTimeSecondsName = "weather_time_seconds";
 	private void SyncFarCloudClipmap(in RingCanonicalPosition canonical, Vector3 sunDirection)
 	{
 		if (!FarCloudClipmapEnabled || _farCloudClipmapLayers[0] == null) return;
@@ -2143,16 +2166,16 @@ public partial class RingScaledFarViewport : Node
 			if (!_hasFarCloudClipmapState[layer] || state != _lastFarCloudClipmapStates[layer])
 			{
 				if (instance.GlobalTransform != state.Transform) instance.GlobalTransform = state.Transform;
-				material.SetShaderParameter("canonical_origin_km", state.CanonicalOriginKm);
-				material.SetShaderParameter("coverage", state.Coverage);
-				material.SetShaderParameter("storm_factor", state.Storm);
-				material.SetShaderParameter("sun_direction", state.SunDirection);
-				material.SetShaderParameter("surface_up", state.SurfaceUp);
-				material.SetShaderParameter("viewer_height_meters", state.ViewerHeight);
+				material.SetShaderParameter(CanonicalOriginKmName, state.CanonicalOriginKm);
+				material.SetShaderParameter(CoverageName, state.Coverage);
+				material.SetShaderParameter(StormFactorName, state.Storm);
+				material.SetShaderParameter(SunDirectionName, state.SunDirection);
+				material.SetShaderParameter(SurfaceUpName, state.SurfaceUp);
+				material.SetShaderParameter(ViewerHeightMetersName, state.ViewerHeight);
 				_lastFarCloudClipmapStates[layer] = state;
 				_hasFarCloudClipmapState[layer] = true;
 			}
-			material.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
+			material.SetShaderParameter(WeatherTimeSecondsName, ResolveFarWeatherAtlasAgeSeconds());
 			if (!instance.Visible) instance.Visible = true;
 		}
 	}
@@ -2625,8 +2648,9 @@ public partial class RingScaledFarViewport : Node
 			SetShroudVisibility(_cloudMaterial, _farAtmosphereShroudVisibility);
 			_lastSharedMaterialShroudVisibility = _farAtmosphereShroudVisibility;
 		}
-		_cloudMaterial?.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
-		_mainShellMaterial?.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
+		float weatherAge = ResolveFarWeatherAtlasAgeSeconds();
+		_cloudMaterial?.SetShaderParameter(WeatherTimeSecondsName, weatherAge);
+		_mainShellMaterial?.SetShaderParameter(WeatherTimeSecondsName, weatherAge);
 	}
 
 	private void SyncRegionalMaterialUniforms(Vector3 cameraPosition, Vector3 sunDirection)
@@ -2670,11 +2694,15 @@ public partial class RingScaledFarViewport : Node
 			if (terrain.MaterialOverride is ShaderMaterial material) yield return material;
 	}
 
-	private static void SetCameraWorldPosition(ShaderMaterial? material, Vector3 position) => material?.SetShaderParameter("camera_world_position", position);
-	private static void SetRingCenter(ShaderMaterial? material, Vector3 center) => material?.SetShaderParameter("ring_center", center);
-	private static void SetSunDirection(ShaderMaterial? material, Vector3 direction) => material?.SetShaderParameter("sun_direction", direction);
-	private static void SetAtmosphereHalfWidth(ShaderMaterial? material, float halfWidth) => material?.SetShaderParameter("ring_atmosphere_half_width_meters", halfWidth);
-	private static void SetShroudVisibility(ShaderMaterial? material, float visibility) => material?.SetShaderParameter("ring_atmosphere_far_shroud_visibility", visibility);
+	private static readonly StringName CameraWorldPositionName = "camera_world_position";
+	private static readonly StringName SharedRingCenterName = "ring_center";
+	private static readonly StringName RingAtmosphereHalfWidthMetersName = "ring_atmosphere_half_width_meters";
+	private static readonly StringName RingAtmosphereFarShroudVisibilityName = "ring_atmosphere_far_shroud_visibility";
+	private static void SetCameraWorldPosition(ShaderMaterial? material, Vector3 position) => material?.SetShaderParameter(CameraWorldPositionName, position);
+	private static void SetRingCenter(ShaderMaterial? material, Vector3 center) => material?.SetShaderParameter(SharedRingCenterName, center);
+	private static void SetSunDirection(ShaderMaterial? material, Vector3 direction) => material?.SetShaderParameter(SunDirectionName, direction);
+	private static void SetAtmosphereHalfWidth(ShaderMaterial? material, float halfWidth) => material?.SetShaderParameter(RingAtmosphereHalfWidthMetersName, halfWidth);
+	private static void SetShroudVisibility(ShaderMaterial? material, float visibility) => material?.SetShaderParameter(RingAtmosphereFarShroudVisibilityName, visibility);
 
 	private void UpdateFarAtmosphereShroud(in RingCanonicalPosition canonical)
 	{
@@ -3308,28 +3336,84 @@ public partial class RingScaledFarViewport : Node
 		SetLocalVolumetricCloudsEnabled(false);
 	}
 
+	private static readonly StringName ExtraLargeNoisePatternsName = "extra_large_noise_patterns";
+	private static readonly StringName HeightGradientName = "height_gradient";
+	private static readonly StringName LargeScaleNoiseName = "large_scale_noise";
+	private static readonly StringName MediumScaleNoiseName = "medium_scale_noise";
+	private static readonly StringName SmallScaleNoiseName = "small_scale_noise";
+	private static readonly StringName BackgroundAltitudeName = "background_altitude";
+	private static readonly StringName CloudFloorName = "cloud_floor";
+	private static readonly StringName CloudCeilingName = "cloud_ceiling";
+	private static readonly StringName CloudsCoverageName = "clouds_coverage";
+	private static readonly StringName CloudsDensityName = "clouds_density";
+	private static readonly StringName CloudsDetailPowerName = "clouds_detail_power";
+	private static readonly StringName ExtraLargeNoiseScaleName = "extra_large_noise_scale";
+	private static readonly StringName LargeNoiseScaleName = "large_noise_scale";
+	private static readonly StringName MediumNoiseScaleName = "medium_noise_scale";
+	private static readonly StringName SmallNoiseScaleName = "small_noise_scale";
+	private static readonly StringName ExtraLargeScaleCloudsPositionName = "extra_large_scale_clouds_position";
+	private static readonly StringName LargeScaleCloudsPositionName = "large_scale_clouds_position";
+	private static readonly StringName MediumScaleCloudsPositionName = "medium_scale_clouds_position";
+	private static readonly StringName DetailCloudsPositionName = "detail_clouds_position";
+	private static readonly StringName WindDirectionName = "wind_direction";
+	private static readonly StringName WindSweptRangeName = "wind_swept_range";
+	private static readonly StringName WindSweptStrengthName = "wind_swept_strength";
+	private static readonly StringName FarDensityEnabledName = "far_density_enabled";
+	private static readonly StringName FarDensityStrengthName = "far_density_strength";
+	private static readonly StringName FarDensityOpacityMultiplierName = "far_density_opacity_multiplier";
+	private static readonly StringName FarDensityCoverageBiasName = "far_density_coverage_bias";
+	private static readonly StringName FarDensityCloudsCoverageName = "far_density_clouds_coverage";
+	private static readonly StringName FarDensityCloudsDensityName = "far_density_clouds_density";
+	private static readonly StringName FarDensityCloudsDetailPowerName = "far_density_clouds_detail_power";
+	private static readonly StringName FarDensityExtraLargeScaleName = "far_density_extra_large_scale";
+	private static readonly StringName FarDensityLargeScaleName = "far_density_large_scale";
+	private static readonly StringName FarDensityMediumScaleName = "far_density_medium_scale";
+	private static readonly StringName FarDensitySmallScaleName = "far_density_small_scale";
+	private static readonly StringName FarDensityBackgroundAltitudeName = "far_density_background_altitude";
+	private static readonly StringName FarDensityRingCircumferenceMetersName = "far_density_ring_circumference_meters";
+	private static readonly StringName FarDensityExtraLargeNoisePatternsName = "far_density_extra_large_noise_patterns";
+	private static readonly StringName FarDensityHeightGradientName = "far_density_height_gradient";
+	private static readonly StringName FarDensityLargeScaleNoiseName = "far_density_large_scale_noise";
+	private static readonly StringName FarDensityMediumScaleNoiseName = "far_density_medium_scale_noise";
+	private static readonly StringName FarDensitySmallScaleNoiseName = "far_density_small_scale_noise";
+	private static readonly StringName CloudWeatherParamsName = "cloud_weather_params";
+	private static readonly StringName CloudWeatherFrameName = "cloud_weather_frame";
+	private static readonly StringName FarDensityExtraLargePositionName = "far_density_extra_large_position";
+	private static readonly StringName FarDensityLargePositionName = "far_density_large_position";
+	private static readonly StringName FarDensityMediumPositionName = "far_density_medium_position";
+	private static readonly StringName FarDensityDetailPositionName = "far_density_detail_position";
+	private static readonly StringName FarDensityWindDirectionName = "far_density_wind_direction";
+	private static readonly StringName FarDensityWindSweptRangeName = "far_density_wind_swept_range";
+	private static readonly StringName FarDensityWindSweptStrengthName = "far_density_wind_swept_strength";
+	// Reads an object property every frame; the Variant is disposed so it leaves no finalizable Disposer behind.
+	private static T? GetResourceObject<T>(Resource resource, StringName property) where T : GodotObject
+	{
+		using Variant value = resource.Get(property);
+		return value.AsGodotObject() as T;
+	}
+
 	/// <summary>Publishes Sunshine's imported density resources to the cheap,
 	/// curved far tiers.  This never allocates or reads texture pixels.</summary>
 	public void ConfigureSunshineFarCloudDetail(
 		Resource? clouds, bool enabled, float strength, float opacityMultiplier, float radiusMeters, float coverageBias = 0.0f)
 	{
 		ResolveMainShellMaterial();
-		Texture2D? extra = clouds == null ? null : clouds.Get("extra_large_noise_patterns").AsGodotObject() as Texture2D;
-		Texture2D? gradient = clouds == null ? null : clouds.Get("height_gradient").AsGodotObject() as Texture2D;
-		Texture3D? large = clouds == null ? null : clouds.Get("large_scale_noise").AsGodotObject() as Texture3D;
-		Texture3D? medium = clouds == null ? null : clouds.Get("medium_scale_noise").AsGodotObject() as Texture3D;
-		Texture3D? small = clouds == null ? null : clouds.Get("small_scale_noise").AsGodotObject() as Texture3D;
+		Texture2D? extra = clouds == null ? null : GetResourceObject<Texture2D>(clouds, ExtraLargeNoisePatternsName);
+		Texture2D? gradient = clouds == null ? null : GetResourceObject<Texture2D>(clouds, HeightGradientName);
+		Texture3D? large = clouds == null ? null : GetResourceObject<Texture3D>(clouds, LargeScaleNoiseName);
+		Texture3D? medium = clouds == null ? null : GetResourceObject<Texture3D>(clouds, MediumScaleNoiseName);
+		Texture3D? small = clouds == null ? null : GetResourceObject<Texture3D>(clouds, SmallScaleNoiseName);
 		bool texturesReady = extra != null && gradient != null && large != null && medium != null && small != null;
 		bool active = enabled && clouds != null && texturesReady;
 		strength = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 1.0f) : 1.0f;
 		opacityMultiplier = float.IsFinite(opacityMultiplier) ? Mathf.Clamp(opacityMultiplier, 0.0f, 2.0f) : 1.0f;
 		radiusMeters = float.IsFinite(radiusMeters) ? Mathf.Clamp(radiusMeters, 30000.0f, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters) : 180000.0f;
 		coverageBias = float.IsFinite(coverageBias) ? Mathf.Clamp(coverageBias, -1.0f, 1.0f) : 0.0f;
-		Vector4 background = active ? clouds!.Get("background_altitude").AsVector4() : Vector4.Zero;
+		Vector4 background = active ? clouds!.Get(BackgroundAltitudeName).AsVector4() : Vector4.Zero;
 		Vector2 altitude = new(background.X, background.Y);
 		if (!float.IsFinite(altitude.X) || !float.IsFinite(altitude.Y)) altitude = Vector2.Zero;
 		if (altitude.Y <= altitude.X) altitude = active
-			? new Vector2(clouds!.Get("cloud_floor").AsSingle(), clouds.Get("cloud_ceiling").AsSingle())
+			? new Vector2(clouds!.Get(CloudFloorName).AsSingle(), clouds.Get(CloudCeilingName).AsSingle())
 			: Vector2.Zero;
 		bool geometryChanged = active != _sunshineFarCloudDetailEnabled
 			|| !Mathf.IsEqualApprox(radiusMeters, _sunshineFarCloudRadiusMeters)
@@ -3345,13 +3429,13 @@ public partial class RingScaledFarViewport : Node
 		_sunshineBackgroundAltitudeMeters = altitude;
 		_sunshineExtraTexture = extra; _sunshineGradientTexture = gradient; _sunshineLargeTexture = large;
 		_sunshineMediumTexture = medium; _sunshineSmallTexture = small;
-		float sourceCoverage = active ? clouds!.Get("clouds_coverage").AsSingle() : 0.82f;
-		float sourceDensity = active ? clouds!.Get("clouds_density").AsSingle() : 1.0f;
-		float sourceDetail = active ? clouds!.Get("clouds_detail_power").AsSingle() : 1.0f;
+		float sourceCoverage = active ? clouds!.Get(CloudsCoverageName).AsSingle() : 0.82f;
+		float sourceDensity = active ? clouds!.Get(CloudsDensityName).AsSingle() : 1.0f;
+		float sourceDetail = active ? clouds!.Get(CloudsDetailPowerName).AsSingle() : 1.0f;
 		var staticSnapshot = new FarCloudDetailStaticSnapshot(active, strength, opacityMultiplier, sourceCoverage, sourceDensity, sourceDetail,
-			active ? clouds!.Get("extra_large_noise_scale").AsSingle() : 320000.0f, active ? clouds!.Get("large_noise_scale").AsSingle() : 120000.0f,
-			active ? clouds!.Get("medium_noise_scale").AsSingle() : 20000.0f, active ? clouds!.Get("small_noise_scale").AsSingle() : 8500.0f, coverageBias, altitude, (float)_circumferenceMeters);
-		var positionSnapshot = active ? new FarCloudDetailPositionSnapshot(clouds!.Get("extra_large_scale_clouds_position").AsVector3(), clouds.Get("large_scale_clouds_position").AsVector3(), clouds.Get("medium_scale_clouds_position").AsVector3(), clouds.Get("detail_clouds_position").AsVector3(), clouds.Get("wind_direction").AsVector3(), clouds.Get("wind_swept_range").AsSingle(), clouds.Get("wind_swept_strength").AsSingle()) : default;
+			active ? clouds!.Get(ExtraLargeNoiseScaleName).AsSingle() : 320000.0f, active ? clouds!.Get(LargeNoiseScaleName).AsSingle() : 120000.0f,
+			active ? clouds!.Get(MediumNoiseScaleName).AsSingle() : 20000.0f, active ? clouds!.Get(SmallNoiseScaleName).AsSingle() : 8500.0f, coverageBias, altitude, (float)_circumferenceMeters);
+		var positionSnapshot = active ? new FarCloudDetailPositionSnapshot(clouds!.Get(ExtraLargeScaleCloudsPositionName).AsVector3(), clouds.Get(LargeScaleCloudsPositionName).AsVector3(), clouds.Get(MediumScaleCloudsPositionName).AsVector3(), clouds.Get(DetailCloudsPositionName).AsVector3(), clouds.Get(WindDirectionName).AsVector3(), clouds.Get(WindSweptRangeName).AsSingle(), clouds.Get(WindSweptStrengthName).AsSingle()) : default;
 		bool staticChanged = !_hasFarCloudDetailStatic || staticSnapshot != _lastFarCloudDetailStatic;
 		bool positionsChanged = active && (!_hasFarCloudDetailPositions || positionSnapshot != _lastFarCloudDetailPositions);
 		for (int materialIndex = 0; materialIndex < 6; materialIndex++)
@@ -3361,27 +3445,27 @@ public partial class RingScaledFarViewport : Node
 			if (material == null) continue;
 			if (staticChanged)
 			{
-				material.SetShaderParameter("far_density_enabled", active);
-				material.SetShaderParameter("far_density_strength", strength);
-				material.SetShaderParameter("far_density_opacity_multiplier", opacityMultiplier);
-				material.SetShaderParameter("far_density_coverage_bias", coverageBias);
-				material.SetShaderParameter("far_density_clouds_coverage", sourceCoverage);
-				material.SetShaderParameter("far_density_clouds_density", sourceDensity);
-				material.SetShaderParameter("far_density_clouds_detail_power", sourceDetail);
-				material.SetShaderParameter("far_density_extra_large_scale", staticSnapshot.ExtraScale);
-				material.SetShaderParameter("far_density_large_scale", staticSnapshot.LargeScale);
-				material.SetShaderParameter("far_density_medium_scale", staticSnapshot.MediumScale);
-				material.SetShaderParameter("far_density_small_scale", staticSnapshot.SmallScale);
-				material.SetShaderParameter("far_density_background_altitude", altitude);
-				material.SetShaderParameter("far_density_ring_circumference_meters", (float)_circumferenceMeters);
+				material.SetShaderParameter(FarDensityEnabledName, active);
+				material.SetShaderParameter(FarDensityStrengthName, strength);
+				material.SetShaderParameter(FarDensityOpacityMultiplierName, opacityMultiplier);
+				material.SetShaderParameter(FarDensityCoverageBiasName, coverageBias);
+				material.SetShaderParameter(FarDensityCloudsCoverageName, sourceCoverage);
+				material.SetShaderParameter(FarDensityCloudsDensityName, sourceDensity);
+				material.SetShaderParameter(FarDensityCloudsDetailPowerName, sourceDetail);
+				material.SetShaderParameter(FarDensityExtraLargeScaleName, staticSnapshot.ExtraScale);
+				material.SetShaderParameter(FarDensityLargeScaleName, staticSnapshot.LargeScale);
+				material.SetShaderParameter(FarDensityMediumScaleName, staticSnapshot.MediumScale);
+				material.SetShaderParameter(FarDensitySmallScaleName, staticSnapshot.SmallScale);
+				material.SetShaderParameter(FarDensityBackgroundAltitudeName, altitude);
+				material.SetShaderParameter(FarDensityRingCircumferenceMetersName, (float)_circumferenceMeters);
 			}
 			if (active && textureBindingChanged)
 			{
-				material.SetShaderParameter("far_density_extra_large_noise_patterns", extra!);
-				material.SetShaderParameter("far_density_height_gradient", gradient!);
-				material.SetShaderParameter("far_density_large_scale_noise", large!);
-				material.SetShaderParameter("far_density_medium_scale_noise", medium!);
-				material.SetShaderParameter("far_density_small_scale_noise", small!);
+				material.SetShaderParameter(FarDensityExtraLargeNoisePatternsName, extra!);
+				material.SetShaderParameter(FarDensityHeightGradientName, gradient!);
+				material.SetShaderParameter(FarDensityLargeScaleNoiseName, large!);
+				material.SetShaderParameter(FarDensityMediumScaleNoiseName, medium!);
+				material.SetShaderParameter(FarDensitySmallScaleNoiseName, small!);
 			}
 			// Weather policy belongs to the shared far ownership layer, not the
 			// optional imported Sunshine-detail path. Clear it explicitly when
@@ -3389,23 +3473,23 @@ public partial class RingScaledFarViewport : Node
 			// patch settings on these persistent materials.
 			if (clouds != null)
 			{
-				material.SetShaderParameter("cloud_weather_params", clouds.Get("cloud_weather_params").AsVector4());
-				material.SetShaderParameter("cloud_weather_frame", clouds.Get("cloud_weather_frame").AsVector4());
+				material.SetShaderParameter(CloudWeatherParamsName, clouds.Get(CloudWeatherParamsName).AsVector4());
+				material.SetShaderParameter(CloudWeatherFrameName, clouds.Get(CloudWeatherFrameName).AsVector4());
 			}
 			else
 			{
-				material.SetShaderParameter("cloud_weather_params", Vector4.Zero);
-				material.SetShaderParameter("cloud_weather_frame", Vector4.Zero);
+				material.SetShaderParameter(CloudWeatherParamsName, Vector4.Zero);
+				material.SetShaderParameter(CloudWeatherFrameName, Vector4.Zero);
 			}
 			if (positionsChanged)
 			{
-				material.SetShaderParameter("far_density_extra_large_position", positionSnapshot.Extra);
-				material.SetShaderParameter("far_density_large_position", positionSnapshot.Large);
-				material.SetShaderParameter("far_density_medium_position", positionSnapshot.Medium);
-				material.SetShaderParameter("far_density_detail_position", positionSnapshot.Detail);
-				material.SetShaderParameter("far_density_wind_direction", positionSnapshot.WindDirection);
-				material.SetShaderParameter("far_density_wind_swept_range", positionSnapshot.WindRange);
-				material.SetShaderParameter("far_density_wind_swept_strength", positionSnapshot.WindStrength);
+				material.SetShaderParameter(FarDensityExtraLargePositionName, positionSnapshot.Extra);
+				material.SetShaderParameter(FarDensityLargePositionName, positionSnapshot.Large);
+				material.SetShaderParameter(FarDensityMediumPositionName, positionSnapshot.Medium);
+				material.SetShaderParameter(FarDensityDetailPositionName, positionSnapshot.Detail);
+				material.SetShaderParameter(FarDensityWindDirectionName, positionSnapshot.WindDirection);
+				material.SetShaderParameter(FarDensityWindSweptRangeName, positionSnapshot.WindRange);
+				material.SetShaderParameter(FarDensityWindSweptStrengthName, positionSnapshot.WindStrength);
 			}
 		}
 		global::RingworldTechDemo.RingFarWeatherShadowGlobals.PublishBand(altitude);

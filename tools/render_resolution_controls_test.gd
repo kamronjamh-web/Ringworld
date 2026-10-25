@@ -30,15 +30,15 @@ func _run() -> void:
 func _exercise(game: Node, pause: Node, drawer: Node) -> void:
 	var monitor := game.get_node_or_null("CertificationMonitor"); _require(monitor != null, "CertificationMonitor missing")
 	var diagnostics: Dictionary = pause.call("GetRenderResolutionDiagnostics")
-	_require(bool(diagnostics.get("ready", false)) and int(diagnostics.get("preset", -1)) == 0 and is_equal_approx(float(diagnostics.get("requested_scale", 0.0)), 1.0), "default is not Native 100%")
+	_require(bool(diagnostics.get("ready", false)) and int(diagnostics.get("preset", -1)) == 6 and int(diagnostics.get("effective_preset", -1)) >= 0, "default is not Auto (graphics preset)")
 	_require(not bool(diagnostics.get("adaptive_enabled", true)) and bool(diagnostics.get("memory_protection_enabled", false)), "default adaptive/memory protection mismatch")
 	if monitor != null: _require(bool(monitor.get("EnableAdaptiveProtection")) and not bool(monitor.get("EnableAdaptiveRenderResolution")), "monitor default protection state mismatch")
 	await _frames(121); diagnostics = pause.call("GetRenderResolutionDiagnostics")
-	_require(is_equal_approx(float(diagnostics.get("current_scale", 0.0)), 1.0), "Native 100% drifted during renderer frames")
+	_require(is_equal_approx(float(diagnostics.get("current_scale", 0.0)), float(diagnostics.get("requested_scale", 0.0))), "Auto scale drifted during renderer frames")
 	pause.call("SetBenchmarkMenuOpen", true); await _frames(3); _require(paused, "pause menu did not pause")
 	var option := pause.find_child("RenderResolutionPreset", true, false) as OptionButton
 	_require(option != null, "pause render-resolution control missing"); if option == null: return
-	_require(option.item_count == 6, "pause preset chooser does not contain six choices")
+	_require(option.item_count == 7, "pause preset chooser does not contain seven choices")
 	var scroll := _nearest_scroll(option); _require(scroll != null, "pause preset is not inside a ScrollContainer")
 	if scroll != null:
 		scroll.scroll_vertical += roundi(option.global_position.y - scroll.global_position.y - 80.0)

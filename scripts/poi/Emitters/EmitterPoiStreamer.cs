@@ -6,6 +6,7 @@ using System.Text;
 using Godot;
 using RingworldTechDemo.Atmosphere;
 using RingworldTechDemo.Loading;
+using RingworldTechDemo.Shadows;
 using RingworldTechDemo.Terrain.Sites;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
@@ -42,6 +43,10 @@ public partial class EmitterPoiStreamer : Node3D
         public MeshInstance3D? FarProxy;
         public SiteKind Kind;
         public string Label = "";
+        public Aabb LocalBounds;
+        public bool HasBounds;
+        public RingLargePoiShadowExtents.BoundsProvider? ShadowExtent;
+        public bool ShadowExtentRegistered;
     }
 
     [Export] public bool Enabled { get => _enabled; set => SetEnabled(value); }
@@ -121,6 +126,7 @@ public partial class EmitterPoiStreamer : Node3D
     public override void _ExitTree()
     {
         if (_grid != null && _subscribed) { _grid.CanonicalFloatingOriginAnchorChanged -= HandleAnchorChanged; _subscribed = false; }
+        foreach (PoiSlot slot in _slots) SetShadowExtent(slot, false);
         if (_core != null && _standIns != null && GodotObject.IsInstanceValid(_standIns))
             foreach (EmitterPoiSlotState slot in _core.Slots)
                 if (slot.Active) _standIns.SetSitePresented(slot.Site, false);
@@ -281,7 +287,47 @@ public partial class EmitterPoiStreamer : Node3D
         AddChild(root);
         if (_grid != null) RingPoiHaze.RegisterTree(root, _grid.GetCanonicalRingCircumferenceMeters64() / Math.Tau);
         PoiBaseAmbientOcclusion.Apply(root, root, PoiBaseAmbientOcclusion.MeasureHeight(root));
-        _slots.Add(new PoiSlot { Root = root, Collision = collision, FarProxy = farProxy, Kind = kind, Label = label });
+        var poiSlot = new PoiSlot { Root = root, Collision = collision, FarProxy = farProxy, Kind = kind, Label = label };
+        poiSlot.HasBounds = TryMeasureDetailBounds(root, out poiSlot.LocalBounds);
+        poiSlot.ShadowExtent = (out Aabb world) => TryGetShadowExtentBounds(poiSlot, out world);
+        _slots.Add(poiSlot);
+    }
+
+    // ---- Sun shadow map extension (RingLargePoiShadowExtents, same pattern as WeatherLungStreamer) ----------------------------
+
+    /// <summary>The Detail meshes' solid bounds in the slot root's space (computed once at build; the scene never changes shape).</summary>
+    private static bool TryMeasureDetailBounds(Node3D root, out Aabb local)
+    {
+        local = default;
+        Node? detail = root.GetNodeOrNull("Detail");
+        if (detail == null || !root.IsInsideTree()) return false;
+        Transform3D toRoot = root.GlobalTransform.AffineInverse();
+        bool any = false;
+        foreach (Node node in detail.FindChildren("*", "MeshInstance3D", true, false))
+        {
+            if (node is not MeshInstance3D { Mesh: not null } mesh) continue;
+            Aabb box = (toRoot * mesh.GlobalTransform) * mesh.GetAabb();
+            local = any ? local.Merge(box) : box;
+            any = true;
+        }
+        return any;
+    }
+
+    /// <summary>The mounted slot's solid bounds in world space, from its current global transform (so floating-origin rebases need no refresh).</summary>
+    private static bool TryGetShadowExtentBounds(PoiSlot slot, out Aabb world)
+    {
+        world = default;
+        if (!slot.HasBounds || !GodotObject.IsInstanceValid(slot.Root) || !slot.Root.IsInsideTree() || !slot.Root.Visible) return false;
+        world = slot.Root.GlobalTransform * slot.LocalBounds;
+        return true;
+    }
+
+    private static void SetShadowExtent(PoiSlot slot, bool mounted)
+    {
+        if (slot.ShadowExtent == null || slot.ShadowExtentRegistered == mounted) return;
+        if (mounted) { if (!slot.HasBounds) return; RingLargePoiShadowExtents.Register(slot.ShadowExtent); }
+        else RingLargePoiShadowExtents.Unregister(slot.ShadowExtent);
+        slot.ShadowExtentRegistered = mounted;
     }
 
     /// <summary>Max of VisibilityRangeEnd + margin over the geometry under Detail; 0 when nothing has an end.</summary>
@@ -401,12 +447,14 @@ public partial class EmitterPoiStreamer : Node3D
                     snapshot ??= _grid!.CaptureLodGeometrySnapshot();
                     slot.Root.Transform = worldToLayer * _placements!.GetWorldTransform(snapshot.Value, slotEvent.Site);
                     slot.Root.Visible = true;
+                    SetShadowExtent(slot, true);
                     _standIns?.SetSitePresented(slotEvent.Site, true);
                     assignTicks += Stopwatch.GetTimestamp() - started;
                     assigned = true;
                     break;
                 case EmitterPoiSlotEventKind.Release:
                     slot.Root.Visible = false;
+                    SetShadowExtent(slot, false);
                     if (slot.Collision != null) slot.Collision.ProcessMode = ProcessModeEnum.Disabled;
                     if (_standIns != null && GodotObject.IsInstanceValid(_standIns)) _standIns.SetSitePresented(slotEvent.Site, false);
                     break;

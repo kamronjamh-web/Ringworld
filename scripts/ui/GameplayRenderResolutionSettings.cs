@@ -5,6 +5,7 @@ namespace RingworldTechDemo.UI;
 [GlobalClass]
 public partial class GameplayRenderResolutionSettings : Resource
 {
+    // Class default stays Native (0) so saved files that omit the property keep meaning Native; the pause menu supplies Auto as the missing-file default.
     [Export] public int Preset { get; set; } = (int)GameplayRenderResolutionPreset.Native;
     [Export] public bool AdaptiveResolutionEnabled { get; set; }
     /// <summary>Godot FSR sharpness: 0 is sharpest, each whole step halves it (range 0-2).</summary>
@@ -26,5 +27,7 @@ public enum GameplayRenderResolutionPreset
     Fsr2Quality = 2,
     Fsr2Balanced = 3,
     Fsr2Performance = 4,
-    Fsr2UltraPerformance = 5
+    Fsr2UltraPerformance = 5,
+    /// <summary>Resolved at runtime from the graphics preset and output height.</summary>
+    Auto = 6
 }

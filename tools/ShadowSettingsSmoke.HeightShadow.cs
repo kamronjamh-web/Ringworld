@@ -60,10 +60,11 @@ public partial class ShadowSettingsSmoke
         var settings = new GameplayShadowDefaults(heightPath);
         settings.Initialize(controller);
         int revision0 = controller.HeightShadowRevision;
-        bool defaults = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings() && !controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowL0TexelMeters == 4
+        // Preset-owned defaults (N1): VeryHigh = enabled, 4 m texels, 400 m near map, 2 levels.
+        bool defaults = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings { Enabled = true } && controller.EffectiveHeightShadowEnabled && controller.HeightShadowPresetDefaultsActive && controller.EffectiveHeightShadowL0TexelMeters == 4
             && controller.EffectiveHeightShadowRangeMeters == 8000 && controller.EffectiveHeightShadowLevels == 2 && controller.EffectiveHeightShadowRowsPerFrame == 64 && controller.EffectiveHeightShadowFillWorkers == 2
             && Mathf.IsEqualApprox(controller.EffectiveHeightShadowSunStepDegrees, .1f) && Mathf.IsEqualApprox(controller.EffectiveHeightShadowPenumbraDegrees, .5f) && Mathf.IsEqualApprox(controller.EffectiveHeightShadowCrossfadeSeconds, 1f)
-            && Mathf.IsEqualApprox(controller.EffectiveHeightShadowBudgetMs, .15f) && controller.EffectiveHeightShadowStatus.Contains("off")
+            && Mathf.IsEqualApprox(controller.EffectiveHeightShadowBudgetMs, .15f) && controller.EffectiveHeightShadowStatus.Contains("starting")
             && controller.EffectiveHeightShadowNearMapEnabled && controller.EffectiveHeightShadowNearMapDistanceMeters == 400 && !controller.NearSunMapActive
             && controller.EffectiveHeightShadowPlanetNearMapEnabled && controller.EffectiveHeightShadowPlanetNearMapDistanceMeters == 250 && !controller.NearPlanetMapActive
             && Mathf.IsEqualApprox(controller.EffectiveHeightShadowPoiMapDistanceMeters, 20000f) && !controller.PoiSunMapExtensionActive;
@@ -100,9 +101,9 @@ public partial class ShadowSettingsSmoke
         var oldLoaded = new GameplayShadowDefaults(heightPath);
         oldLoaded.Initialize(old);
         bool oldFileOk = oldSaved && oldLoaded.Settings.Overrides.ContainsKey("Split1") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowL0TexelMeters") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowEnabled") && !oldLoaded.Settings.Overrides.ContainsKey("HeightShadowNearMapDistanceMeters")
-            && old.ResolveHeightShadowSettings() == new RingHeightShadowSettings();
+            && old.ResolveHeightShadowSettings() == new RingHeightShadowSettings { Enabled = true };
         settings.Reset(controller);
-        bool reset = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings() && !controller.EffectiveHeightShadowEnabled;
+        bool reset = controller.ResolveHeightShadowSettings() == new RingHeightShadowSettings { Enabled = true } && controller.EffectiveHeightShadowEnabled && controller.HeightShadowPresetDefaultsActive;
         foreach (RingGraphicsQualityController extra in new[] { controller, reloaded, old })
         {
             tree.Root.RemoveChild(extra);

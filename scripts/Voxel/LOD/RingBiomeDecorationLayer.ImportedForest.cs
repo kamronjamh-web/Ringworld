@@ -30,6 +30,27 @@ public partial class RingBiomeDecorationLayer
 	private ulong _lastImportedForestCollisionEditVersion = ulong.MaxValue;
 	private long _lastImportedForestCollisionTileEpoch = long.MinValue;
 	private float _lastImportedForestCollisionRadius = float.NaN;
+	private float _lastImportedForestCollisionEffectiveRadius = float.NaN;
+	// Trunk colliders only matter near the ground: tree canopy plus terrain relief margin above the explorer's terrain altitude.
+	private const float TreeCollisionCanopyAllowanceMeters = 40.0f;
+	// A descent must never reach canopy height before the colliders exist: the reach uses the altitude the explorer will have this many
+	// seconds from now (360 m of lead at 240 m/s; install latency is about one frame plus the 4 m focus quantisation).
+	private const float TreeCollisionLookaheadSeconds = 1.5f;
+	// Reach hysteresis: the radius only shrinks once the new value is this far below the held one; 0 needs this much extra altitude.
+	private const float TreeCollisionShrinkHysteresisMeters = 12.0f;
+	private const float TreeCollisionZeroHysteresisAltitudeMeters = 20.0f;
+	private const float TreeCollisionVerticalSpeedSmoothingSeconds = 0.3f;
+	private const float TreeCollisionTrackingResetAltitudeMeters = 1000.0f;
+	private const float TreeCollisionTrackingResetHorizontalMeters = 500.0f;
+	private bool _importedForestAltitudeTrackingValid;
+	private float _importedForestPreviousAltitude;
+	private double _importedForestPreviousAltitudeSeconds;
+	private double _importedForestPreviousAround;
+	private double _importedForestPreviousAcross;
+	private float _importedForestInstantVerticalSpeed;
+	private float _importedForestSmoothedVerticalSpeed;
+	private float _importedForestHeldCollisionRadius = float.NaN;
+	private float _importedForestHeldConfiguredRadius = float.NaN;
 	private int _lastMaximumImportedForestColliders = int.MinValue;
 	private readonly List<(CachedTree Tree, double DistanceSquared)> _importedForestCollisionCandidates = new();
 	private readonly HashSet<VegetationTileKey> _importedForestCollisionTileKeys = new();
@@ -38,6 +59,36 @@ public partial class RingBiomeDecorationLayer
 	public int ImportedForestCollisionInspectedTileCount { get; private set; }
 	public int ImportedForestCollisionInspectedRootCount { get; private set; }
 	public int ImportedForestCollisionResultCount { get; private set; }
+	public float ImportedForestCollisionEffectiveRadiusMeters { get; private set; }
+	public int ImportedForestColliderCount => _importedForestBodies.Count;
+	public float ImportedForestPredictedAltitudeMeters { get; private set; }
+
+	/// <summary>Test probe: the nearest cached imported tree to a canonical point (horizontal distance) and whether it has a resident collider.</summary>
+	public Godot.Collections.Dictionary ProbeImportedForestNearestTree(double around, double across, float maximumDistanceMeters)
+	{
+		var result = new Godot.Collections.Dictionary { ["found"] = false };
+		if (_grid == null) return result;
+		double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
+		double best = (double)maximumDistanceMeters * maximumDistanceMeters;
+		foreach (VegetationTile tile in _vegetationTiles.Values)
+			foreach (CachedTree tree in tile.Trees)
+			{
+				if (tree.Variant < 0 || tree.Variant >= ImportedTreeCatalog.VariantCount) continue;
+				double da = WrappedVegetationDelta(tree.Around - around, circumference);
+				double dz = tree.Across - across;
+				double distanceSquared = da * da + dz * dz;
+				if (distanceSquared > best) continue;
+				best = distanceSquared;
+				result["found"] = true;
+				result["id"] = tree.Id;
+				result["around"] = (double)tree.Around;
+				result["across"] = (double)tree.Across;
+				result["surface_height"] = tree.SurfaceHeight;
+				result["distance"] = Math.Sqrt(distanceSquared);
+				result["has_collider"] = _importedForestBodies.ContainsKey(tree.Id);
+			}
+		return result;
+	}
 
 	public Godot.Collections.Dictionary GetImportedForestRuntimeDiagnostics()
 	{
@@ -101,9 +152,31 @@ public partial class RingBiomeDecorationLayer
 		Vector3 center = _grid.GetCanonicalRingCenterWorld();
 		float radius = Mathf.Max(10.0f, ImportedForestCollisionRadiusMeters);
 		int maximum = Mathf.Max(16, MaximumImportedForestColliders);
+		// 3D reach: only the part of the sphere that touches the canopy band is reachable
+		// from altitude. Ground level (h == 0) keeps the configured radius exactly.
+		float predictedAltitude = TrackImportedForestPredictedAltitude(focus);
+		ImportedForestPredictedAltitudeMeters = predictedAltitude;
+		float effectiveRadius = radius;
+		float reachHeight = Mathf.Max(0.0f, predictedAltitude - TreeCollisionCanopyAllowanceMeters);
+		if (reachHeight > 0.0f)
+		{
+			double reachSquared = (double)radius * radius - (double)reachHeight * reachHeight;
+			effectiveRadius = reachSquared <= 0.0 ? 0.0f : Mathf.Min(radius, (float)(Math.Ceiling(Math.Sqrt(reachSquared) / 4.0) * 4.0));
+		}
+		// Hysteresis: grow immediately, shrink only by a clear margin; 0 only once well above the zero-reach altitude.
+		if (float.IsNaN(_importedForestHeldCollisionRadius) || radius != _importedForestHeldConfiguredRadius || effectiveRadius >= _importedForestHeldCollisionRadius)
+			_importedForestHeldCollisionRadius = effectiveRadius;
+		else if (effectiveRadius > 0.0f
+			? effectiveRadius <= _importedForestHeldCollisionRadius - TreeCollisionShrinkHysteresisMeters
+			: predictedAltitude >= TreeCollisionCanopyAllowanceMeters + radius + TreeCollisionZeroHysteresisAltitudeMeters)
+			_importedForestHeldCollisionRadius = effectiveRadius;
+		_importedForestHeldConfiguredRadius = radius;
+		effectiveRadius = _importedForestHeldCollisionRadius;
+		ImportedForestCollisionEffectiveRadiusMeters = effectiveRadius;
 		if (focusAround == _lastImportedForestCollisionAround && focusAcross == _lastImportedForestCollisionAcross
 			&& _lastImportedForestCollisionEditVersion == _vegetationEditVersion && _lastImportedForestCollisionTileEpoch == _vegetationTileGenerationEpoch
 			&& center == _lastImportedForestCollisionCenter && radius == _lastImportedForestCollisionRadius
+			&& effectiveRadius == _lastImportedForestCollisionEffectiveRadius
 			&& maximum == _lastMaximumImportedForestColliders) return;
 		_lastImportedForestCollisionAround = focusAround;
 		_lastImportedForestCollisionAcross = focusAcross;
@@ -111,10 +184,11 @@ public partial class RingBiomeDecorationLayer
 		_lastImportedForestCollisionTileEpoch = _vegetationTileGenerationEpoch;
 		_lastImportedForestCollisionCenter = center;
 		_lastImportedForestCollisionRadius = radius;
+		_lastImportedForestCollisionEffectiveRadius = effectiveRadius;
 		_lastMaximumImportedForestColliders = maximum;
 		double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
 		using (RingPerformanceTelemetry.MeasureCpu("Trees collision scan/sort"))
-			SelectImportedForestCollisionTrees(focus, CaptureVegetationLayout(circumference), _grid.RingAcrossWidthMeters, radius, maximum);
+			SelectImportedForestCollisionTrees(focus, CaptureVegetationLayout(circumference), _grid.RingAcrossWidthMeters, effectiveRadius, maximum);
 		_importedForestCollisionRequired.Clear();
 		using (RingPerformanceTelemetry.MeasureCpu("Trees collider maintenance"))
 		{
@@ -141,12 +215,52 @@ public partial class RingBiomeDecorationLayer
 			RefreshGpuTreeProtectedFlags();
 	}
 
+	/// <summary>Altitude above terrain plus the descent the explorer will make over the lookahead. Climbing and hovering predict the current altitude.</summary>
+	private float TrackImportedForestPredictedAltitude(RingCanonicalPosition focus)
+	{
+		float altitude = _explorer!.CurrentAltitudeAboveTerrainMeters;
+		double now = Time.GetTicksUsec() * 1e-6;
+		if (!_importedForestAltitudeTrackingValid
+			|| Mathf.Abs(altitude - _importedForestPreviousAltitude) > TreeCollisionTrackingResetAltitudeMeters
+			|| Math.Abs(focus.AroundMeters - _importedForestPreviousAround) > TreeCollisionTrackingResetHorizontalMeters
+			|| Math.Abs(focus.AcrossMeters - _importedForestPreviousAcross) > TreeCollisionTrackingResetHorizontalMeters)
+		{
+			// Teleport-sized jump (or first sample): no speed history.
+			_importedForestAltitudeTrackingValid = true;
+			_importedForestPreviousAltitude = altitude;
+			_importedForestPreviousAltitudeSeconds = now;
+			_importedForestInstantVerticalSpeed = 0.0f;
+			_importedForestSmoothedVerticalSpeed = 0.0f;
+		}
+		else if (altitude != _importedForestPreviousAltitude)
+		{
+			// The explorer publishes altitude on physics ticks, so measure only across actual changes.
+			float dt = (float)Math.Max(now - _importedForestPreviousAltitudeSeconds, 1e-3);
+			_importedForestInstantVerticalSpeed = (altitude - _importedForestPreviousAltitude) / dt;
+			float blend = 1.0f - Mathf.Exp(-dt / TreeCollisionVerticalSpeedSmoothingSeconds);
+			_importedForestSmoothedVerticalSpeed += (_importedForestInstantVerticalSpeed - _importedForestSmoothedVerticalSpeed) * blend;
+			_importedForestPreviousAltitude = altitude;
+			_importedForestPreviousAltitudeSeconds = now;
+		}
+		else if (now - _importedForestPreviousAltitudeSeconds > 0.25)
+		{
+			_importedForestInstantVerticalSpeed = 0.0f;
+			_importedForestSmoothedVerticalSpeed = 0.0f;
+		}
+		_importedForestPreviousAround = focus.AroundMeters;
+		_importedForestPreviousAcross = focus.AcrossMeters;
+		// The more negative of instantaneous and smoothed speed, so a dive is never underestimated.
+		float verticalSpeed = Mathf.Min(_importedForestInstantVerticalSpeed, _importedForestSmoothedVerticalSpeed);
+		return altitude + Mathf.Min(0.0f, verticalSpeed) * TreeCollisionLookaheadSeconds;
+	}
+
 	private void SelectImportedForestCollisionTrees(RingCanonicalPosition focus, in VegetationLayout layout, double ringAcrossWidthMeters, float radius, int maximum)
 	{
 		_importedForestCollisionCandidates.Clear();
 		_importedForestCollisionTileKeys.Clear();
 		ImportedForestCollisionInspectedTileCount = 0;
 		ImportedForestCollisionInspectedRootCount = 0;
+		if (radius <= 0.0f) { ImportedForestCollisionResultCount = 0; return; }
 		double radiusSquared = radius * radius;
 		long centerAroundCell = Math.Clamp((long)Math.Floor(focus.AroundMeters / layout.AroundCellMeters), 0L, layout.AroundCellCount - 1L);
 		long centerAroundTile = centerAroundCell / layout.TileCells;
@@ -265,6 +379,9 @@ public partial class RingBiomeDecorationLayer
 		_lastImportedForestCollisionAcross = long.MinValue;
 		_lastImportedForestCollisionRadius = float.NaN;
 		_lastMaximumImportedForestColliders = int.MinValue;
+		_importedForestAltitudeTrackingValid = false;
+		_importedForestHeldCollisionRadius = float.NaN;
+		ImportedForestCollisionEffectiveRadiusMeters = 0.0f;
 		ImportedForestCollisionInspectedTileCount = 0;
 		ImportedForestCollisionInspectedRootCount = 0;
 		ImportedForestCollisionResultCount = 0;

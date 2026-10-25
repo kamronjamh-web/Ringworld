@@ -14,6 +14,8 @@ public partial class RingGraphicsQualityController
     public const float MaximumNearCascadeMeters = 20000.0f;
     [Export] public NodePath DayNightCyclePath { get; set; } = new("../RingDayNightCycle");
 
+    /// <summary>Marker key in the shadow overrides: present once the pre-N1 explicit HeightShadowEnabled=false has been migrated away (see GameplayShadowDefaults).</summary>
+    public const string HeightShadowMigrationKey = "HeightShadowDefaultMigration";
     private readonly Dictionary<string, Variant> _shadowTuningOverrides = new();
     private bool _shadowBaselineCaptured;
     private float _shadowBaselineBias;
@@ -78,7 +80,9 @@ public partial class RingGraphicsQualityController
     public RingHeightShadowSettings ResolveHeightShadowSettings()
     {
         Dictionary<string, Variant> o = _shadowTuningOverrides;
-        int texel = RingHeightShadowSettings.DefaultL0TexelMeters;
+        // Preset-owned defaults (N1): a key with no explicit override takes the current preset's value; an explicit override wins.
+        (bool presetEnabled, int presetTexel, int presetNearDistance, int presetLevels) = PresetHeightShadow(CurrentPreset);
+        int texel = presetTexel;
         if (o.TryGetValue("HeightShadowL0TexelMeters", out Variant texelValue)) texel = texelValue.AsInt32();
         else if (o.TryGetValue("HeightShadowRangeMeters", out Variant rangeValue))
         {
@@ -87,9 +91,9 @@ public partial class RingGraphicsQualityController
         }
         return new RingHeightShadowSettings
         {
-            Enabled = o.TryGetValue("HeightShadowEnabled", out Variant enabled) && enabled.AsBool(),
+            Enabled = o.TryGetValue("HeightShadowEnabled", out Variant enabled) ? enabled.AsBool() : presetEnabled,
             L0TexelMeters = texel,
-            Levels = o.TryGetValue("HeightShadowLevels", out Variant levels) ? levels.AsInt32() : RingHeightShadowSettings.DefaultLevels,
+            Levels = o.TryGetValue("HeightShadowLevels", out Variant levels) ? levels.AsInt32() : presetLevels,
             SunStepDegrees = o.TryGetValue("HeightShadowSunStepDegrees", out Variant step) ? step.AsSingle() : RingHeightShadowSettings.DefaultSunStepDegrees,
             RowsPerFrame = o.TryGetValue("HeightShadowRowsPerFrame", out Variant rows) ? rows.AsInt32() : RingHeightShadowSettings.DefaultRowsPerFrame,
             PenumbraDegrees = o.TryGetValue("HeightShadowPenumbraDegrees", out Variant penumbra) ? penumbra.AsSingle() : RingHeightShadowSettings.DefaultPenumbraDegrees,
@@ -97,13 +101,15 @@ public partial class RingGraphicsQualityController
             FillWorkers = o.TryGetValue("HeightShadowFillWorkers", out Variant workers) ? workers.AsInt32() : RingHeightShadowSettings.DefaultFillWorkers,
             BudgetMs = o.TryGetValue("HeightShadowBudgetMs", out Variant budget) ? budget.AsSingle() : RingHeightShadowSettings.DefaultBudgetMs,
             NearMapEnabled = !o.TryGetValue("HeightShadowNearMapEnabled", out Variant nearEnabled) || nearEnabled.AsBool(),
-            NearMapDistanceMeters = o.TryGetValue("HeightShadowNearMapDistanceMeters", out Variant nearDistance) ? nearDistance.AsInt32() : RingHeightShadowSettings.DefaultNearMapDistanceMeters,
+            NearMapDistanceMeters = o.TryGetValue("HeightShadowNearMapDistanceMeters", out Variant nearDistance) ? nearDistance.AsInt32() : presetNearDistance,
             PoiMapDistanceMeters = o.TryGetValue("HeightShadowPoiMapDistanceMeters", out Variant poiDistance) ? poiDistance.AsSingle() : RingHeightShadowSettings.DefaultPoiMapDistanceMeters,
             PlanetNearMapEnabled = !o.TryGetValue("HeightShadowPlanetNearMapEnabled", out Variant planetNearEnabled) || planetNearEnabled.AsBool(),
             PlanetNearMapDistanceMeters = o.TryGetValue("HeightShadowPlanetNearMapDistanceMeters", out Variant planetNearDistance) ? planetNearDistance.AsInt32() : RingHeightShadowSettings.DefaultPlanetNearMapDistanceMeters,
         }.Normalized();
     }
     public bool EffectiveHeightShadowEnabled => ResolveHeightShadowSettings().Enabled;
+    /// <summary>True while no explicit HeightShadowEnabled override exists, so the preset default (on) applies.</summary>
+    public bool HeightShadowPresetDefaultsActive => !_shadowTuningOverrides.ContainsKey("HeightShadowEnabled");
     public int EffectiveHeightShadowL0TexelMeters => ResolveHeightShadowSettings().L0TexelMeters;
     public int EffectiveHeightShadowRangeMeters => ResolveHeightShadowSettings().RangeMeters;
     public int EffectiveHeightShadowLevels => ResolveHeightShadowSettings().Levels;
@@ -386,8 +392,9 @@ public partial class RingGraphicsQualityController
             // This runs before the sun baseline capture on the first apply, so read the live sun mode until it exists.
             int requestedSunCascades = _shadowTuningOverrides.TryGetValue("CascadeCount", out Variant sunCascadeOverride) ? sunCascadeOverride.AsInt32()
                 : (_shadowBaselineCaptured ? _shadowBaselineMode : _sun?.DirectionalShadowMode ?? DirectionalLight3D.ShadowMode.Parallel4Splits) == DirectionalLight3D.ShadowMode.Parallel2Splits ? 2 : 4;
-            atmosphere.Set("planet_light_shadow_distance_meters", near ? nearDistance : _shadowTuningOverrides.TryGetValue("PlanetShadowDistanceMeters", out Variant distance) ? distance.AsSingle() : Mathf.Min(_planetShadowBaselineDistanceMeters, requestedSunDistance));
-            atmosphere.Set("planet_light_shadow_cascades", near ? 2 : _shadowTuningOverrides.TryGetValue("PlanetCascadeCount", out Variant cascades) ? cascades.AsInt32() : Mathf.Min(_planetShadowBaselineCascades, requestedSunCascades));
+            (float distanceMeters, int cascades) presetPlanet = PresetPlanetLight(CurrentPreset);
+            atmosphere.Set("planet_light_shadow_distance_meters", near ? nearDistance : _shadowTuningOverrides.TryGetValue("PlanetShadowDistanceMeters", out Variant distance) ? distance.AsSingle() : Mathf.Min(Mathf.Min(_planetShadowBaselineDistanceMeters, presetPlanet.distanceMeters), requestedSunDistance));
+            atmosphere.Set("planet_light_shadow_cascades", near ? 2 : _shadowTuningOverrides.TryGetValue("PlanetCascadeCount", out Variant cascades) ? cascades.AsInt32() : Mathf.Min(Mathf.Min(_planetShadowBaselineCascades, presetPlanet.cascades), requestedSunCascades));
             if (near || _planetFadeRatioTouched)
             {
                 atmosphere.Set("planet_light_shadow_fade_ratio", near ? NearSunMapFadeStart : _planetShadowBaselineFadeRatio);
@@ -406,6 +413,15 @@ public partial class RingGraphicsQualityController
             _planetSplitSaved = false;
         }
     }
+
+    /// <summary>The preset's planet-light ceiling (distance metres, cascades); the scene baseline and the requested sun range still cap it, and explicit planet overrides win.</summary>
+    public static (float distanceMeters, int cascades) PresetPlanetLight(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    {
+        RingTerrainLodCoordinator.QualityPreset.Low => (2000.0f, 2),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (3000.0f, 2),
+        RingTerrainLodCoordinator.QualityPreset.High => (4000.0f, 3),
+        _ => (6000.0f, 4),
+    };
 
     /// <summary>Near cascade distance in metres as the sun uses it: NearCascadeMeters, or Split1 x the requested sun distance, or the default.</summary>
     private float ResolveNearCascadeMeters()
@@ -520,6 +536,7 @@ public partial class RingGraphicsQualityController
     {
         clean = default;
         if (key == "Enabled" || key == "TerrainMacroEnabled" || key == "TerrainMacroWallShadowsEnabled" || key == "LocalShadowHandoffEnabled") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
+        if (key == HeightShadowMigrationKey) { if (value.VariantType is not (Variant.Type.Int or Variant.Type.Float) || value.AsDouble() != 1.0) return false; clean = 1; return true; }
         if (key is "HeightShadowEnabled" or "HeightShadowNearMapEnabled" or "HeightShadowPlanetNearMapEnabled" or "ContactShadowEnabled" or "VegetationShadowInstanceEnabled" or "VegetationUnifiedShadowCompose") { if (value.VariantType != Variant.Type.Bool) return false; clean = value.AsBool(); return true; }
         if ((key == "HeightShadowL0TexelMeters" || key == "HeightShadowRangeMeters" || key == "HeightShadowLevels" || key == "HeightShadowNearMapDistanceMeters") && value.VariantType is Variant.Type.Int or Variant.Type.Float)
         {

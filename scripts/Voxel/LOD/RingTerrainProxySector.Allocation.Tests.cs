@@ -34,7 +34,7 @@ public partial class RingTerrainProxySector
         ulong OceanIndexHash,
         ulong ShorelineHash);
 
-    public sealed class AllocationFixtureSession
+    public sealed class AllocationFixtureSession : IDisposable
     {
         private readonly RingLodSurfaceEditSnapshot _edits;
         private readonly RingTerrainSampler _sampler;
@@ -54,6 +54,8 @@ public partial class RingTerrainProxySector
             _geometry = geometry;
             _ringWidth = ringWidth;
         }
+
+        public void Dispose() => _cache.Dispose();
 
         public AllocationFixtureSnapshot Build(
             RingTerrainSectorCoordinate coordinate,

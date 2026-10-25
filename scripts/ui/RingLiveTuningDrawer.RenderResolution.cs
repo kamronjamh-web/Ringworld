@@ -18,9 +18,9 @@ public partial class RingLiveTuningDrawer
 
     private void BuildRenderResolutionControls(VBoxContainer tab)
     {
-        VBoxContainer section = TuningMenuUi.CreateSection(tab, "Render resolution", "Internal 3D render scale. Native is the default.");
+        VBoxContainer section = TuningMenuUi.CreateSection(tab, "Render resolution", "Internal 3D render scale. Auto follows the graphics preset and screen height.");
         _renderResolutionOptions = new OptionButton { Name = "RenderResolutionPreset", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
-        for (int preset = 0; preset <= 5; preset++)
+        for (int preset = 0; preset <= 6; preset++)
             _renderResolutionOptions.AddItem(RingLodPauseMenu.GetRenderResolutionPresetLabel(preset), preset);
         _renderResolutionOptions.ItemSelected += index =>
         {

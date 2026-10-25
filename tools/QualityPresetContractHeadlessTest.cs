@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Tools;
@@ -15,6 +16,33 @@ namespace RingworldTechDemo.Tools;
 public partial class QualityPresetContractHeadlessTest : RefCounted
 {
     private static readonly string[] Names = { "Low", "Medium", "High", "VeryHigh", "UltraVideo" };
+    // Height-shadow preset defaults (shadow-revamp N1): texel (m), near sun map distance (m) for Low..Cinematic5090.
+    private static readonly int[] HeightTexel = { 8, 8, 4, 4, 4, 2 };
+    private static readonly int[] HeightNearMap = { 300, 300, 400, 400, 500, 500 };
+
+    // WO-3 matrix (Low, Medium, High, VeryHigh, UltraVideo).
+    private static readonly int[] AtlasSizes = { 2048, 4096, 4096, 8192, 8192 };
+    private static readonly float[] SunDistances = { 4000f, 6000f, 10000f, 14000f, 16000f };
+    private static readonly float[] PlanetDistances = { 2000f, 3000f, 4000f, 6000f, 6000f };
+    private static readonly int[] PlanetCascades = { 2, 2, 3, 4, 4 };
+    private static readonly bool[] SsrEnabled = { false, false, true, true, true };
+    private static readonly int[] SsrSteps = { 12, 12, 12, 24, 32 };
+    private static readonly float[] SsrRay = { 120f, 120f, 120f, 250f, 400f };
+    private static readonly float[] SsrCamera = { 250f, 250f, 250f, 450f, 600f };
+    private static readonly float[] SsaoDetail = { 0f, 0.75f, 0.85f, 0.92f, 0.96f };
+    private static readonly float[] FarScale = { 0.5f, 0.75f, 1f, 1f, 1f };
+    private static readonly int[] RainParticles = { 1024, 2048, 3072, 4096, 6144 };
+    private static readonly int[] BoltBranches = { 1, 2, 3, 3, 4 };
+    private static readonly int[] BoltDepth = { 0, 1, 1, 1, 2 };
+    private static readonly float[] TreeNearEnd = { 25f, 30f, 40f, 40f, 60f };
+    private static readonly float[] TreeBillboardStart = { 200f, 250f, 300f, 300f, 550f };
+    private static readonly float[] TreeBillboardEnd = { 240f, 300f, 350f, 350f, 650f };
+    private static readonly float[] TreeSunShadow = { 160f, 240f, 360f, 480f, 700f };
+
+    private static void CheckMonotonic<T>(Action<bool, string> check, string name, IReadOnlyList<T> values) where T : IComparable<T>
+    {
+        for (int i = 1; i < values.Count; i++) check(values[i - 1].CompareTo(values[i]) <= 0, $"WO3 {name} not monotonic Low..Ultra at {i}: {values[i - 1]} > {values[i]}");
+    }
 
     public int Run()
     {
@@ -30,12 +58,21 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
         RingTerrainGlobalLod? globalLod = null;
         RingGraphicsQualityController? controller = null;
         DirectionalLight3D? sun = null;
+        WorldEnvironment? environmentNode = null;
+        global::RingworldTechDemo.RingLocalWeatherEffects? weather = null;
         try
         {
             controller = new RingGraphicsQualityController();
             sun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true };
             controller.AddChild(sun);
             controller.SunLightPath = new NodePath("Sun");
+            // WO-3: a bare environment (SSAO) and weather node let the preset-driven settings be observed headless.
+            environmentNode = new WorldEnvironment { Name = "Env", Environment = new Godot.Environment { SsaoEnabled = true } };
+            controller.AddChild(environmentNode);
+            controller.WorldEnvironmentPath = new NodePath("Env");
+            weather = new global::RingworldTechDemo.RingLocalWeatherEffects { Name = "Weather" };
+            controller.AddChild(weather);
+            controller.WeatherEffectsPath = new NodePath("Weather");
             globalLod = new RingTerrainGlobalLod { Name = "GlobalTerrainLod3", EnableMacroTerrainShadows = true, EnableMacroTerrainWallShadows = false };
             tree.Root.AddChild(globalLod);
             tree.Root.AddChild(controller);
@@ -66,6 +103,91 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
                 // C3
                 Check(RingAtmosphereModel.Enabled, $"C3 {tag} RingAtmosphereModel.Enabled=false");
                 Check(RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical, $"C3 {tag} HazeModel={RingAtmosphereModel.HazeModel} (want Physical)");
+                // WO-3 matrix
+                var preset = (RingTerrainLodCoordinator.QualityPreset)p;
+                Check(controller.RequestedDirectionalShadowAtlasSize == AtlasSizes[p], $"WO3 {tag} requested atlas={controller.RequestedDirectionalShadowAtlasSize} want {AtlasSizes[p]}");
+                Check(Mathf.IsEqualApprox(sun.DirectionalShadowMaxDistance, SunDistances[p]), $"WO3 {tag} sun distance={sun.DirectionalShadowMaxDistance} want {SunDistances[p]}");
+                (float planetDistance, int planetCascades) = RingGraphicsQualityController.PresetPlanetLight(preset);
+                Check(planetDistance == PlanetDistances[p] && planetCascades == PlanetCascades[p], $"WO3 {tag} planet light {planetDistance}/{planetCascades} want {PlanetDistances[p]}/{PlanetCascades[p]}");
+                Check(controller.WaterSsrEnabled == SsrEnabled[p] && controller.WaterSsrCoarseSteps == SsrSteps[p] && controller.WaterSsrMaxRayDistance == SsrRay[p] && controller.WaterSsrCameraDistance == SsrCamera[p],
+                    $"WO3 {tag} SSR enabled={controller.WaterSsrEnabled} steps={controller.WaterSsrCoarseSteps} ray={controller.WaterSsrMaxRayDistance} camera={controller.WaterSsrCameraDistance}");
+                Godot.Environment? environment = environmentNode!.Environment;
+                Check(environment != null && environment.SsaoEnabled == (SsaoDetail[p] > 0f) && Mathf.IsEqualApprox(environment.SsaoDetail, SsaoDetail[p]), $"WO3 {tag} SSAO enabled={environment?.SsaoEnabled} detail={environment?.SsaoDetail} want {SsaoDetail[p]}");
+                Check(Mathf.IsEqualApprox(RingGraphicsQualityController.PresetFarRendering(preset).scale, FarScale[p]), $"WO3 {tag} far viewport scale want {FarScale[p]}");
+                Check(weather!.MaximumParticleCount == RainParticles[p] && weather.MaximumParticleCount >= 512 && weather.EnableLightning && weather.BoltMaximumBranches == BoltBranches[p] && weather.BoltSecondaryBranchDepth == BoltDepth[p],
+                    $"WO3 {tag} weather particles={weather.MaximumParticleCount} lightning={weather.EnableLightning} branches={weather.BoltMaximumBranches}/{weather.BoltSecondaryBranchDepth}");
+                var trees = RingGraphicsQualityController.PresetTrees(preset);
+                Check(trees.NearEnd == TreeNearEnd[p] && trees.BillboardStart == TreeBillboardStart[p] && trees.BillboardEnd == TreeBillboardEnd[p] && trees.SunShadow == TreeSunShadow[p] && trees.NearStart < trees.NearEnd && trees.NearEnd <= trees.BillboardStart,
+                    $"WO3 {tag} trees near={trees.NearStart}-{trees.NearEnd} billboard={trees.BillboardStart}-{trees.BillboardEnd} shadow={trees.SunShadow}");
+                var vegetation = new GameplayVegetationDefaults(null) { Preset = preset };
+                Check(vegetation.TreeNearDetailFadeEndMeters == TreeNearEnd[p] && vegetation.TreeBillboardFadeStartMeters == TreeBillboardStart[p] && vegetation.TreeSunShadowDistanceMeters == TreeSunShadow[p], $"WO3 {tag} vegetation defaults do not follow the preset");
+            }
+
+            CheckMonotonic(Check, "atlas", AtlasSizes); CheckMonotonic(Check, "sun distance", SunDistances); CheckMonotonic(Check, "planet distance", PlanetDistances); CheckMonotonic(Check, "planet cascades", PlanetCascades);
+            CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr ray", SsrRay); CheckMonotonic(Check, "ssr camera", SsrCamera); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
+            CheckMonotonic(Check, "rain particles", RainParticles); CheckMonotonic(Check, "bolt branches", BoltBranches); CheckMonotonic(Check, "bolt depth", BoltDepth);
+            CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow);
+
+            // N1: height shadows + near sun map are preset-owned defaults on every preset (Low..Cinematic5090); an explicit override wins.
+            string migrationPath = $"res://.godot/qp_contract_hs_{Time.GetTicksUsec()}.tres";
+            for (int p = 0; p <= 5; p++)
+            {
+                string tag = $"p={p}({(RingTerrainLodCoordinator.QualityPreset)p})";
+                controller.SetShadowTuningOverrides(new Godot.Collections.Dictionary());
+                controller.ApplyPreset((RingTerrainLodCoordinator.QualityPreset)p, applyTerrainPreset: false);
+                Check(controller.EffectiveHeightShadowEnabled, $"N1 {tag} EffectiveHeightShadowEnabled=false");
+                Check(controller.HeightShadowPresetDefaultsActive, $"N1 {tag} HeightShadowPresetDefaultsActive=false");
+                Check(controller.EffectiveHeightShadowL0TexelMeters == HeightTexel[p], $"N1 {tag} L0 texel={controller.EffectiveHeightShadowL0TexelMeters} want {HeightTexel[p]}");
+                Check(controller.EffectiveHeightShadowRangeMeters == HeightTexel[p] * 2000, $"N1 {tag} range={controller.EffectiveHeightShadowRangeMeters}");
+                Check(controller.EffectiveHeightShadowNearMapDistanceMeters == HeightNearMap[p], $"N1 {tag} near map={controller.EffectiveHeightShadowNearMapDistanceMeters} want {HeightNearMap[p]}");
+                Check(controller.EffectiveHeightShadowLevels == 2, $"N1 {tag} levels={controller.EffectiveHeightShadowLevels} want 2");
+                Check(controller.EffectiveHeightShadowNearMapEnabled && controller.EffectiveHeightShadowPlanetNearMapEnabled && controller.EffectiveHeightShadowPlanetNearMapDistanceMeters == 250, $"N1 {tag} near map switches / planet near map changed");
+                // Explicit overrides win over the preset values, and a preset change re-resolves the rest.
+                int revision = controller.HeightShadowRevision;
+                Check(controller.SetShadowTuningOverride("HeightShadowEnabled", false) && !controller.EffectiveHeightShadowEnabled && !controller.HeightShadowPresetDefaultsActive, $"N1 {tag} explicit Enabled=false did not win");
+                int otherTexel = HeightTexel[p] == 2 ? 8 : 2, otherNear = HeightNearMap[p] == 300 ? 500 : 300;
+                Check(controller.SetShadowTuningOverride("HeightShadowL0TexelMeters", otherTexel) && controller.EffectiveHeightShadowL0TexelMeters == otherTexel, $"N1 {tag} explicit texel did not win");
+                Check(controller.SetShadowTuningOverride("HeightShadowNearMapDistanceMeters", otherNear) && controller.EffectiveHeightShadowNearMapDistanceMeters == otherNear, $"N1 {tag} explicit near map did not win");
+                Check(controller.HeightShadowRevision > revision, $"N1 {tag} HeightShadowRevision did not advance");
+                controller.SetShadowTuningOverrides(new Godot.Collections.Dictionary());
+                Check(controller.EffectiveHeightShadowEnabled && controller.EffectiveHeightShadowL0TexelMeters == HeightTexel[p], $"N1 {tag} clearing overrides did not restore preset defaults");
+            }
+            // A preset change takes effect immediately for keys without an override.
+            controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, applyTerrainPreset: false);
+            int revisionBefore = controller.HeightShadowRevision;
+            controller.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Cinematic5090, applyTerrainPreset: false);
+            Check(controller.HeightShadowRevision > revisionBefore && controller.EffectiveHeightShadowL0TexelMeters == 2 && controller.EffectiveHeightShadowNearMapDistanceMeters == 500, "N1 preset change did not re-resolve height shadow defaults");
+
+            // N2: explicit HeightShadowEnabled=false without the marker is migrated once to "no override"; with the marker a later explicit false is honoured.
+            string migrationAbs = ProjectSettings.GlobalizePath(migrationPath);
+            try
+            {
+                var legacy = new GameplayShadowSettings();
+                legacy.Overrides["HeightShadowEnabled"] = false;
+                legacy.Overrides["Split1"] = .18f;
+                Check(ResourceSaver.Save(legacy, migrationPath) == Error.Ok, "N2 could not save the legacy fixture");
+                var migrated = new GameplayShadowDefaults(migrationPath);
+                migrated.Initialize(controller);
+                Check(!migrated.Settings.Overrides.ContainsKey("HeightShadowEnabled") && migrated.Settings.Overrides.ContainsKey(RingGraphicsQualityController.HeightShadowMigrationKey) && migrated.Settings.Overrides.ContainsKey("Split1") && migrated.Dirty, "N2 legacy explicit false was not migrated (or touched another key)");
+                Check(controller.EffectiveHeightShadowEnabled && controller.HeightShadowPresetDefaultsActive, "N2 migrated file did not leave the preset default on");
+                Check(migrated.Save(), "N2 could not save the migrated file");
+                var marked = new GameplayShadowDefaults(migrationPath);
+                marked.Initialize(controller);
+                Check(!marked.Settings.Overrides.ContainsKey("HeightShadowEnabled") && !marked.Dirty, "N2 migrated file was migrated again or left dirty");
+                Check(marked.SetOverride(controller, "HeightShadowEnabled", false) && marked.Save(), "N2 could not save an explicit false after migration");
+                var honoured = new GameplayShadowDefaults(migrationPath);
+                honoured.Initialize(controller);
+                Check(honoured.Settings.Overrides.ContainsKey("HeightShadowEnabled") && !honoured.Settings.Overrides["HeightShadowEnabled"].AsBool() && !controller.EffectiveHeightShadowEnabled && !honoured.Dirty, "N2 explicit false with the marker was not honoured");
+                honoured.Reset(controller);
+                Check(honoured.Save(), "N2 could not save the reset file");
+                var afterReset = new GameplayShadowDefaults(migrationPath);
+                afterReset.Initialize(controller);
+                Check(afterReset.Settings.Overrides.ContainsKey(RingGraphicsQualityController.HeightShadowMigrationKey) && controller.EffectiveHeightShadowEnabled, "N2 reset file lost the marker");
+            }
+            finally
+            {
+                controller.SetShadowTuningOverrides(new Godot.Collections.Dictionary());
+                if (File.Exists(migrationAbs)) File.Delete(migrationAbs);
             }
         }
         catch (Exception e) { Console.Error.WriteLine(e.ToString()); failures.Add("exception " + e.Message); }

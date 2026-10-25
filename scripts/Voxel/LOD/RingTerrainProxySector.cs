@@ -298,6 +298,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private Image? _oceanReplacementAtlasImage;
     private ImageTexture? _oceanReplacementAtlasTexture;
     private byte[]? _oceanReplacementAtlasBytes;
+    private bool _oceanReplacementAtlasDirty;
+    private bool _deferOceanReplacementAtlasFlush;
+    // Main-thread-only buffers for BuildOceanReplacementMasks; the returned
+    // dictionary is consumed (copied) by ApplyOceanReplacementMasks and never retained.
+    private readonly OceanReplacementMaskScratch _oceanReplacementMaskScratch = new();
     private ulong _oceanReplacementFinerRevision = ulong.MaxValue;
     private RingTerrainProxySector? _oceanReplacementFinerSource;
     private readonly Dictionary<RingTerrainSectorCoordinate, FftShorelineTile> _activeFftShorelineTiles = new();
@@ -316,6 +321,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private static long _partialCoverageRetainedBytesAllLevels;
     private const long MaximumPartialCoverageRetainedBytesAllLevels = 64L * 1024L * 1024L;
     private readonly Queue<MeshInstance3D> _pool = new();
+    // Nodes whose Mesh this class installed (non-null) and has not yet cleared; lets
+    // ComputeSectorVisuallyCovered skip the native Mesh getter. Mesh swaps only assign non-null meshes.
+    private readonly HashSet<MeshInstance3D> _installedMeshNodes = new();
+    // Managed copy of each installed sector node's local Position (identity
+    // basis) so coverage query passes avoid the native GlobalTransform getter.
+    private readonly Dictionary<MeshInstance3D, Vector3> _installedLocalPositions = new();
     private Image? _coverageAtlasImage;
     private ImageTexture? _coverageAtlasTexture;
     private int _coverageAtlasTileSize;
@@ -408,6 +419,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
             => other != null && ProxyQuadCells == other.ProxyQuadCells
                 && QuadsPerProviderCell == other.QuadsPerProviderCell
                 && CoveredCells.AsSpan().SequenceEqual(other.CoveredCells);
+    }
+    private sealed class OceanReplacementMaskScratch
+    {
+        public readonly Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> Result = new();
+        public readonly Dictionary<RingTerrainSectorCoordinate, bool[]> Work = new();
+        public readonly HashSet<RingTerrainSectorCoordinate> FallbackParents = new();
+        public readonly List<RingTerrainSectorCoordinate> Coordinates = new();
+        public readonly List<bool[]> Pool = new();
     }
     private sealed record FinerOceanSnapshot(
         Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> Masks,
@@ -538,23 +557,170 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private readonly record struct TerrainColumnKey(long Around, int Across);
 
-    private sealed class TerrainBuildSampleCache
+    /// <summary>
+    /// Backing collections of a <see cref="TerrainBuildSampleCache"/>. A batch
+    /// lane grows these to tens of thousands of entries, so they are rented
+    /// from a small pool instead of being regrown from empty for every batch.
+    /// Never published: entries are copied out by value (Get / EndCapture).
+    /// </summary>
+    private sealed class TerrainSampleStore
+    {
+        // One store per concurrent batch lane is enough; each can hold tens of MB of reference-free entries.
+        private const int MaxPooledStores = 8;
+        private const int MaxPooledCapacity = 1 << 20;
+        private const int MaxReservedCapacity = 1 << 18;
+        private static readonly ConcurrentBag<TerrainSampleStore> Pool = new();
+        private static int _pooledCount;
+
+        public readonly Dictionary<TerrainColumnKey, CachedTerrainPoint> Points = new();
+        public readonly HashSet<TerrainColumnKey> CapturedKeys = new();
+
+        public static TerrainSampleStore Rent(int expectedPoints)
+        {
+            TerrainSampleStore? store = null;
+            if (Pool.TryTake(out TerrainSampleStore? pooled))
+            {
+                Interlocked.Decrement(ref _pooledCount);
+                store = pooled;
+            }
+            store ??= new TerrainSampleStore();
+            if (expectedPoints > 0) store.Points.EnsureCapacity(Math.Min(expectedPoints, MaxReservedCapacity));
+            return store;
+        }
+
+        public static void Return(TerrainSampleStore store)
+        {
+            store.Points.Clear();
+            store.CapturedKeys.Clear();
+            if (store.Points.EnsureCapacity(0) > MaxPooledCapacity
+                || store.CapturedKeys.EnsureCapacity(0) > MaxPooledCapacity)
+                return;
+            if (Interlocked.Increment(ref _pooledCount) > MaxPooledStores)
+            {
+                Interlocked.Decrement(ref _pooledCount);
+                return;
+            }
+            Pool.Add(store);
+        }
+    }
+
+    /// <summary>
+    /// Per-thread scratch for BuildRawSector / BuildRawBlockySector. Everything
+    /// here is copied into fresh arrays (ToArray) before the sector is returned,
+    /// so nothing in this class may ever be stored in SectorData, captured by a
+    /// lambda or kept across a yield. Each worker thread owns its own instance
+    /// and a build never re-enters itself on the same thread.
+    /// </summary>
+    private sealed class SectorBuildScratch
+    {
+        private const int MaxRetainedElements = 1 << 20;
+
+        [ThreadStatic] private static SectorBuildScratch? _current;
+
+        public readonly List<Vector3> Vertices = new();
+        public readonly List<Vector3> Normals = new();
+        public readonly List<Color> Colors = new();
+        public readonly List<Vector2> Uvs = new();
+        public readonly List<Vector2> MorphData = new();
+        public readonly List<Vector3> ParentChordOffsets = new();
+        public readonly List<int> Indices = new();
+        public readonly List<int> OceanIndices = new();
+        public readonly List<PartialWaterTriangle> PartialWaterTriangles = new();
+        public readonly Dictionary<TerrainColumnKey, Color> BiomeWeightCache = new();
+        public bool[] WaterVertices = Array.Empty<bool>();
+        public float[] TerrainGeometryHeights = Array.Empty<float>();
+        public double[] AroundCoordinates = Array.Empty<double>();
+        public float[] AcrossCoordinates = Array.Empty<float>();
+        public CachedTerrainPoint[] TerrainPoints = Array.Empty<CachedTerrainPoint>();
+
+        /// <summary>Returns this thread's scratch reset to the state of freshly constructed empty collections.</summary>
+        public static SectorBuildScratch Acquire()
+        {
+            SectorBuildScratch scratch = _current ??= new SectorBuildScratch();
+            scratch.Reset();
+            return scratch;
+        }
+
+        private void Reset()
+        {
+            Vertices.Clear(); Normals.Clear(); Colors.Clear(); Uvs.Clear();
+            MorphData.Clear(); ParentChordOffsets.Clear();
+            Indices.Clear(); OceanIndices.Clear();
+            PartialWaterTriangles.Clear();
+            BiomeWeightCache.Clear();
+            // Do not let one unusually large sector pin memory on this thread forever.
+            if (Vertices.Capacity > MaxRetainedElements)
+            {
+                Vertices.Capacity = 0; Normals.Capacity = 0; Colors.Capacity = 0; Uvs.Capacity = 0;
+                MorphData.Capacity = 0; ParentChordOffsets.Capacity = 0;
+            }
+            if (Indices.Capacity > MaxRetainedElements) Indices.Capacity = 0;
+            if (OceanIndices.Capacity > MaxRetainedElements) OceanIndices.Capacity = 0;
+        }
+
+        /// <summary>Count == count with every element default, as CollectionsMarshal.SetCount on a new list gives.</summary>
+        public static void SetZeroedCount<T>(List<T> list, int count)
+        {
+            CollectionsMarshal.SetCount(list, count);
+            CollectionsMarshal.AsSpan(list).Clear();
+        }
+
+        /// <summary>Ensures each lattice array holds at least count elements and zeroes the first count.</summary>
+        public void PrepareLattice(int count)
+        {
+            Prepare(ref WaterVertices, count);
+            Prepare(ref TerrainGeometryHeights, count);
+            Prepare(ref AroundCoordinates, count);
+            Prepare(ref AcrossCoordinates, count);
+            Prepare(ref TerrainPoints, count);
+        }
+
+        private static void Prepare<T>(ref T[] array, int count)
+        {
+            if (array.Length < count) array = new T[count];
+            else Array.Clear(array, 0, count);
+        }
+    }
+
+    private sealed class TerrainBuildSampleCache : IDisposable
     {
         private readonly RingLodSurfaceEditSnapshot _edits;
         private readonly RingTerrainSampler _sampler;
         private readonly int _ringWidth;
-        private readonly Dictionary<TerrainColumnKey, CachedTerrainPoint> _points = new();
-        private readonly HashSet<TerrainColumnKey> _capturedKeys = new();
+        private TerrainSampleStore? _store;
+        private Dictionary<TerrainColumnKey, CachedTerrainPoint> _points;
+        private HashSet<TerrainColumnKey> _capturedKeys;
         private bool _captureAccesses;
 
         public TerrainBuildSampleCache(
             RingLodSurfaceEditSnapshot edits,
             RingTerrainSampler sampler,
             int ringWidth)
+            : this(edits, sampler, ringWidth, 0)
+        {
+        }
+
+        public TerrainBuildSampleCache(
+            RingLodSurfaceEditSnapshot edits,
+            RingTerrainSampler sampler,
+            int ringWidth,
+            int expectedPoints)
         {
             _edits = edits;
             _sampler = sampler;
             _ringWidth = ringWidth;
+            _store = TerrainSampleStore.Rent(expectedPoints);
+            _points = _store.Points;
+            _capturedKeys = _store.CapturedKeys;
+        }
+
+        /// <summary>Returns the backing collections to the pool. The cache must not be used afterwards.</summary>
+        public void Dispose()
+        {
+            TerrainSampleStore? store = _store;
+            if (store == null) return;
+            _store = null;
+            TerrainSampleStore.Return(store);
         }
 
         public bool UsesPresentationSurface => _edits.UsesFloatSurface || _sampler.UsesRuntimeSurfaceGeneration;
@@ -1117,8 +1283,28 @@ public partial class RingTerrainProxySector : MeshInstance3D
         => FinestOceanGeometryInstance?.IsFftOceanGeometryAvailable(position) == true;
 
     public static float FinestRuntimeSafeFftGeometryDistanceMeters
-        => FftOceanGeometryInstances.Count == 0 ? 0.0f
-            : FftOceanGeometryInstances.Max(instance => instance.RuntimeSafeFftGeometryDistanceMeters);
+    {
+        get
+        {
+            // Hand-rolled Enumerable.Max<float> (NaN propagates, as LINQ does): the LINQ form boxed the HashSet enumerator per call.
+            if (FftOceanGeometryInstances.Count == 0) return 0.0f;
+            bool first = true;
+            float value = 0.0f;
+            foreach (RingTerrainProxySector instance in FftOceanGeometryInstances)
+            {
+                float candidate = instance.RuntimeSafeFftGeometryDistanceMeters;
+                if (first)
+                {
+                    value = candidate;
+                    first = false;
+                    if (float.IsNaN(value)) return value;
+                }
+                else if (candidate > value) value = candidate;
+                else if (float.IsNaN(candidate)) return candidate;
+            }
+            return value;
+        }
+    }
 
     public bool IsFftOceanGeometryAvailable(in RingCanonicalPosition position)
     {
@@ -1196,7 +1382,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         Transform3D ownerInverse = GlobalTransform.AffineInverse();
         foreach ((RingTerrainSectorCoordinate coordinate, MeshInstance3D node) in _active)
-            node.Position = ResolveSectorLocalOrigin(coordinate, geometry, ownerInverse);
+        {
+            Vector3 localOrigin = ResolveSectorLocalOrigin(coordinate, geometry, ownerInverse);
+            node.Position = localOrigin;
+            if (_installedMeshNodes.Contains(node)) _installedLocalPositions[node] = localOrigin;
+        }
     }
 
     private Vector3 ResolveSectorLocalOrigin(
@@ -2268,9 +2458,16 @@ public partial class RingTerrainProxySector : MeshInstance3D
         var changed = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>();
         int size = Mathf.Max(32, SectorSizeMeters);
         int spacing = Mathf.Max(1, size / Mathf.Max(1, size / Mathf.Max(1, SampleSpacingMeters)));
+        // The loop below only reads this level and queries the finer level, so the
+        // finer level's state is constant for the pass. ApplyCoverageMasks and the
+        // _innerExcluded loop (which mutate this level) run after the pass ends.
+        RingTerrainProxySector finerLevel = _finerCoverageLevel;
+        finerLevel.BeginCoverageQueryPass();
+        try
+        {
         foreach ((RingTerrainSectorCoordinate coordinate, SurfaceCoverageMask mask) in _activeCoverageMasks)
         {
-            if (!mask.CoveredCells.Any(covered => covered)) continue;
+            if (Array.IndexOf(mask.CoveredCells, true) < 0) continue;
             bool[]? safeCells = null;
             int providerCells = (mask.ProxyQuadCells + mask.QuadsPerProviderCell - 1) / mask.QuadsPerProviderCell;
             double providerMeters = spacing * (double)mask.QuadsPerProviderCell;
@@ -2283,7 +2480,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 double around1 = Math.Min(around0 + providerMeters, coordinate.AroundSector * (double)size + size);
                 double across0 = coordinate.AcrossSector * (double)size + z * providerMeters;
                 double across1 = Math.Min(across0 + providerMeters, coordinate.AcrossSector * (double)size + size);
-                if (_finerCoverageLevel.IsSurfaceRegionVisuallyCovered(around0, around1, across0, across1)) continue;
+                if (finerLevel.IsSurfaceRegionVisuallyCovered(around0, around1, across0, across1)) continue;
                 safeCells ??= (bool[])mask.CoveredCells.Clone();
                 safeCells[index] = false;
             }
@@ -2291,6 +2488,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 changed[coordinate] = new SurfaceCoverageMask(mask.ProxyQuadCells,
                     mask.QuadsPerProviderCell, safeCells, mask.FftDeepWaterVertexDepths);
         }
+        }
+        finally { finerLevel.EndCoverageQueryPass(); }
         if (changed.Count > 0) ApplyCoverageMasks(changed, Mathf.Max(1, size / spacing));
 
         bool innerChanged = false;
@@ -2314,7 +2513,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _oceanReplacementFinerRevision = _finerCoverageLevel._coverageRevision;
         return BuildOceanReplacementMasks(snapshot, coordinates, size, spacing,
             _finerCoverageLevel.SectorSizeMeters, _finerCoverageLevel.RingWidthMeters,
-            _finerCoverageLevel.ResolveAroundCircumferenceMeters());
+            _finerCoverageLevel.ResolveAroundCircumferenceMeters(),
+            _oceanReplacementMaskScratch, _latestOceanReplacementMasks);
     }
 
     private void NotifyOceanReplacementDependents()
@@ -2342,16 +2542,49 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private static Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> BuildOceanReplacementMasks(
         FinerOceanSnapshot snapshot, IEnumerable<RingTerrainSectorCoordinate> coordinates,
-        int size, int spacing, int fineSize, int ringWidth, double circumference)
+        int size, int spacing, int fineSize, int ringWidth, double circumference,
+        OceanReplacementMaskScratch? scratch = null,
+        IReadOnlyDictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>? previous = null)
     {
-        var coordinateList = coordinates.ToArray();
-        var result = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>();
+        // With a scratch the per-coordinate cells are staged in reusable arrays and a
+        // coordinate whose cells match its previous mask keeps that mask object.
+        List<RingTerrainSectorCoordinate> coordinateList;
+        Dictionary<RingTerrainSectorCoordinate, bool[]> work;
+        Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> result;
+        HashSet<RingTerrainSectorCoordinate> fallbackParents;
+        if (scratch == null)
+        {
+            coordinateList = new List<RingTerrainSectorCoordinate>(coordinates);
+            work = new Dictionary<RingTerrainSectorCoordinate, bool[]>();
+            result = new Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>();
+            fallbackParents = new HashSet<RingTerrainSectorCoordinate>();
+        }
+        else
+        {
+            coordinateList = scratch.Coordinates; coordinateList.Clear(); coordinateList.AddRange(coordinates);
+            work = scratch.Work; work.Clear();
+            result = scratch.Result; result.Clear();
+            fallbackParents = scratch.FallbackParents; fallbackParents.Clear();
+        }
         int coarseCells = Mathf.Max(1, size / spacing);
+        int cellCount = coarseCells * coarseCells;
         foreach (RingTerrainSectorCoordinate coordinate in coordinateList)
-            result[coordinate] = new SurfaceCoverageMask(coarseCells, 1, new bool[coarseCells * coarseCells]);
+        {
+            if (work.ContainsKey(coordinate)) continue;
+            bool[] cellBuffer;
+            if (scratch == null) cellBuffer = new bool[cellCount];
+            else
+            {
+                int slot = work.Count;
+                if (slot == scratch.Pool.Count) scratch.Pool.Add(new bool[cellCount]);
+                else if (scratch.Pool[slot].Length != cellCount) scratch.Pool[slot] = new bool[cellCount];
+                else Array.Clear(scratch.Pool[slot]);
+                cellBuffer = scratch.Pool[slot];
+            }
+            work[coordinate] = cellBuffer;
+        }
         bool aligned = fineSize > 0 && size % fineSize == 0 && fineSize % spacing == 0;
-        var fallbackParents = new HashSet<RingTerrainSectorCoordinate>();
-        foreach (RingTerrainSectorCoordinate parent in result.Keys)
+        foreach (RingTerrainSectorCoordinate parent in work.Keys)
             if (parent.AroundSector * (double)size + size > circumference
                 || parent.AcrossSector * size + size > ringWidth)
                 fallbackParents.Add(parent);
@@ -2362,8 +2595,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 long parentAround = (long)Math.Floor(fineCoordinate.AroundSector * (double)fineSize / size);
                 int parentAcross = (int)Math.Floor(fineCoordinate.AcrossSector * (double)fineSize / size);
                 var parent = new RingTerrainSectorCoordinate(parentAround, parentAcross);
-                if (!result.TryGetValue(parent, out SurfaceCoverageMask? parentMask)) continue;
-                bool[] bits = parentMask.CoveredCells;
+                if (!work.TryGetValue(parent, out bool[]? bits)) continue;
                 int x0 = (int)((fineCoordinate.AroundSector * (long)fineSize - parentAround * (long)size) / spacing);
                 int z0 = (fineCoordinate.AcrossSector * fineSize - parentAcross * size) / spacing;
                 int span = fineSize / spacing;
@@ -2392,7 +2624,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         }
         foreach (RingTerrainSectorCoordinate coordinate in coordinateList)
         {
-            bool[] covered = result[coordinate].CoveredCells;
+            bool[] covered = work[coordinate];
             if (aligned && !fallbackParents.Contains(coordinate)) continue;
             long aroundOrigin = coordinate.AroundSector * (long)size;
             int acrossOrigin = coordinate.AcrossSector * size;
@@ -2410,7 +2642,15 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 covered[index] = IsSnapshotOceanCovered(snapshot, a0, a1, z0, z1,
                     fineSize, ringWidth, circumference);
             }
-            result[coordinate] = new SurfaceCoverageMask(coarseCells, 1, covered);
+        }
+        foreach ((RingTerrainSectorCoordinate coordinate, bool[] covered) in work)
+        {
+            // Same outcome as SurfaceCoverageMask.Matches against the previous mask.
+            if (previous != null && previous.TryGetValue(coordinate, out SurfaceCoverageMask? old)
+                && old.ProxyQuadCells == coarseCells && old.QuadsPerProviderCell == 1
+                && old.CoveredCells.AsSpan().SequenceEqual(covered))
+                result[coordinate] = old;
+            else result[coordinate] = new SurfaceCoverageMask(coarseCells, 1, scratch == null ? covered : (bool[])covered.Clone());
         }
         return result;
     }
@@ -2458,7 +2698,6 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void ApplyOceanReplacementMasks(IReadOnlyDictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask> masks)
     {
-        bool dirty = false;
         foreach ((RingTerrainSectorCoordinate coordinate, SurfaceCoverageMask mask) in masks)
         {
             _latestOceanReplacementMasks[coordinate] = mask;
@@ -2486,14 +2725,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
             float atlasSize = tileSize * _coverageAtlasColumns;
             node.SetInstanceShaderParameter("ocean_replacement_coverage_rect", new Vector4(sx / atlasSize, sy / atlasSize, tileSize / atlasSize, tileSize / atlasSize));
             _activeOceanReplacementMasks[coordinate] = mask;
-            dirty = true;
+            _oceanReplacementAtlasDirty = true;
         }
-        if (dirty && _oceanReplacementAtlasImage != null && _oceanReplacementAtlasTexture != null && _oceanReplacementAtlasBytes != null)
-        {
-            int side = _oceanReplacementAtlasImage.GetWidth();
-            _oceanReplacementAtlasImage.SetData(side, side, false, Image.Format.R8, _oceanReplacementAtlasBytes);
-            _oceanReplacementAtlasTexture.Update(_oceanReplacementAtlasImage);
-        }
+        if (!_deferOceanReplacementAtlasFlush) FlushOceanReplacementAtlas();
         bool oceanReplacementFresh = _oceanReplacementAtlasTexture != null
             && StreamingActive && !_transitHidden
             && ReferenceEquals(_oceanReplacementFinerSource, _finerCoverageLevel)
@@ -2502,7 +2736,17 @@ public partial class RingTerrainProxySector : MeshInstance3D
         SetOceanReplacementDistanceMeters(OceanReplacementDistanceMeters);
     }
 
-    private float OceanReplacementDistanceMeters => _finerCoverageLevel == null ? 0.0f
+    private void FlushOceanReplacementAtlas()
+    {
+        if (!_oceanReplacementAtlasDirty) return;
+        _oceanReplacementAtlasDirty = false;
+        if (_oceanReplacementAtlasImage == null || _oceanReplacementAtlasTexture == null || _oceanReplacementAtlasBytes == null) return;
+        int side = _oceanReplacementAtlasImage.GetWidth();
+        _oceanReplacementAtlasImage.SetData(side, side, false, Image.Format.R8, _oceanReplacementAtlasBytes);
+        _oceanReplacementAtlasTexture.Update(_oceanReplacementAtlasImage);
+    }
+
+    private float OceanReplacementDistanceMeters =>_finerCoverageLevel == null ? 0.0f
         : !_finerCoverageLevel.EnableFarFade ? float.MaxValue
         : Mathf.Max(0.0f, (_finerCoverageLevel.FadeOutStartMeters
             + Mathf.Max(_finerCoverageLevel.FadeOutStartMeters + 1.0f, _finerCoverageLevel.FadeOutEndMeters)) * 0.5f - 2.0f);
@@ -2732,10 +2976,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_focus == null) return false;
         // Terrain3D owns only its shader-discard disk, not the whole finer
         // level. Mesh residency cannot prove visibility inside that disk.
-        if (ResolveTerrain3DNearFadeEnabled() && _focus != null)
+        if (ResolveQueryPassNearFadeEnabled() && _focus != null)
         {
-            RingCanonicalPosition focus = _velocityProvider?.CanonicalPosition
-                ?? _grid!.WorldToCanonicalRingPosition64(_focus.GlobalPosition);
+            RingCanonicalPosition focus = ResolveQueryPassDiscardFocus();
             float radius = (FadeStartMeters + Mathf.Max(FadeEndMeters, FadeStartMeters + 1f)) * .5f;
             if (RectangleIntersectsTerrain3DDiscard(aroundStart, aroundEnd, acrossStart, acrossEnd,
                 focus.AroundMeters, focus.AcrossMeters, ResolveAroundCircumferenceMeters(), radius)) return false;
@@ -2752,24 +2995,117 @@ public partial class RingTerrainProxySector : MeshInstance3D
             var coordinate = new RingTerrainSectorCoordinate(
                 WrapAroundSector(x, aroundSectorLength),
                 z);
-            if (_warmUntil.ContainsKey(coordinate)) return false;
-            // An excluded sector has no mesh of its own. It can certify this
-            // query only if the immediately finer representation still proves
-            // the same region visible right now.
-            if (_innerExcluded.Contains(coordinate))
-            {
-                if (!IsCoveredByFinerRepresentation(coordinate, size)) return false;
-                continue;
-            }
-            if (!_active.TryGetValue(coordinate, out MeshInstance3D? node)
-                || node.Mesh == null)
-                return false;
-            if (!_activeVisualBounds.TryGetValue(coordinate, out Aabb localVisualBounds)
-                || !IsCompleteVisualBoundInsideFarHandoff(node, localVisualBounds))
-                return false;
+            if (!IsSectorVisuallyCoveredMemoized(coordinate, size)) return false;
         }
         return true;
     }
+
+    // Per-sector verdict of IsSurfaceRegionVisuallyCovered. Inside a query pass
+    // the verdict is evaluated once per coordinate; outside a pass it is evaluated
+    // on every call exactly as before.
+    private bool IsSectorVisuallyCoveredMemoized(RingTerrainSectorCoordinate coordinate, int size)
+    {
+        if (!_coverageQueryPassActive) return ComputeSectorVisuallyCovered(coordinate, size);
+        if (_coverageQueryVerdicts.TryGetValue(coordinate, out bool verdict)) return verdict;
+        verdict = ComputeSectorVisuallyCovered(coordinate, size);
+        _coverageQueryVerdicts[coordinate] = verdict;
+        return verdict;
+    }
+
+    private bool ComputeSectorVisuallyCovered(RingTerrainSectorCoordinate coordinate, int size)
+    {
+        if (_warmUntil.ContainsKey(coordinate)) return false;
+        // An excluded sector has no mesh of its own. It can certify this
+        // query only if the immediately finer representation still proves
+        // the same region visible right now.
+        if (_innerExcluded.Contains(coordinate))
+            return IsCoveredByFinerRepresentation(coordinate, size);
+        if (!_active.TryGetValue(coordinate, out MeshInstance3D? node)
+            || (!_installedMeshNodes.Contains(node) && node.Mesh == null))
+            return false;
+        return _activeVisualBounds.TryGetValue(coordinate, out Aabb localVisualBounds)
+            && IsCompleteVisualBoundInsideFarHandoff(node, localVisualBounds);
+    }
+
+    // A query pass freezes nothing; it only lets a caller that provably does not
+    // mutate this level (ServiceCoverageSafetyInvalidation's mask loop) share the
+    // per-sector verdicts and the focus/near-fade resolutions between queries.
+    private void BeginCoverageQueryPass()
+    {
+        _coverageQueryPassActive = true;
+        _coverageQueryVerdicts.Clear();
+        _coverageQueryNearFadeResolved = false;
+        _coverageQueryDiscardFocusResolved = false;
+        _coverageQueryViewerResolved = false;
+        _coverageQueryLevelTransformResolved = false;
+    }
+
+    private void EndCoverageQueryPass()
+    {
+        _coverageQueryPassActive = false;
+        _coverageQueryVerdicts.Clear();
+    }
+
+    private bool ResolveQueryPassNearFadeEnabled()
+    {
+        if (!_coverageQueryPassActive) return ResolveTerrain3DNearFadeEnabled();
+        if (!_coverageQueryNearFadeResolved)
+        {
+            _coverageQueryNearFade = ResolveTerrain3DNearFadeEnabled();
+            _coverageQueryNearFadeResolved = true;
+        }
+        return _coverageQueryNearFade;
+    }
+
+    private RingCanonicalPosition ResolveQueryPassDiscardFocus()
+    {
+        if (!_coverageQueryPassActive)
+            return _velocityProvider?.CanonicalPosition
+                ?? _grid!.WorldToCanonicalRingPosition64(_focus!.GlobalPosition);
+        if (!_coverageQueryDiscardFocusResolved)
+        {
+            _coverageQueryDiscardFocus = _velocityProvider?.CanonicalPosition
+                ?? _grid!.WorldToCanonicalRingPosition64(_focus!.GlobalPosition);
+            _coverageQueryDiscardFocusResolved = true;
+        }
+        return _coverageQueryDiscardFocus;
+    }
+
+    private Vector3 ResolveQueryPassViewer()
+    {
+        if (!_coverageQueryPassActive) return _focus!.GlobalPosition;
+        if (!_coverageQueryViewerResolved)
+        {
+            _coverageQueryViewer = _focus!.GlobalPosition;
+            _coverageQueryViewerResolved = true;
+        }
+        return _coverageQueryViewer;
+    }
+
+    private bool _coverageQueryPassActive;
+    private readonly Dictionary<RingTerrainSectorCoordinate, bool> _coverageQueryVerdicts = new();
+    private bool _coverageQueryNearFadeResolved, _coverageQueryNearFade;
+    private bool _coverageQueryDiscardFocusResolved;
+    private RingCanonicalPosition _coverageQueryDiscardFocus;
+    private bool _coverageQueryViewerResolved;
+    private bool _coverageQueryLevelTransformResolved;
+    private Transform3D _coverageQueryLevelTransform;
+
+    // Sector nodes are plain children of this level with identity basis; only
+    // Position is ever written, so parent global * (identity, Position) is the
+    // same product Godot computes natively. Non-production nodes stay native.
+    private Transform3D ResolveQuerySectorGlobalTransform(MeshInstance3D node)
+    {
+        if (!_coverageQueryPassActive || !_installedLocalPositions.TryGetValue(node, out Vector3 localPosition))
+            return node.GlobalTransform;
+        if (!_coverageQueryLevelTransformResolved)
+        {
+            _coverageQueryLevelTransform = GlobalTransform;
+            _coverageQueryLevelTransformResolved = true;
+        }
+        return _coverageQueryLevelTransform * new Transform3D(Basis.Identity, localPosition);
+    }
+    private Vector3 _coverageQueryViewer;
 
     // The terrain shader evaluates this fade from each vertex's true world 3D
     // position. A camera-height sample cannot prove every point on a mountain
@@ -2785,11 +3121,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             || !localVisualBounds.Position.IsFinite() || !localVisualBounds.Size.IsFinite()
             || localVisualBounds.Size.X < 0.0f || localVisualBounds.Size.Y < 0.0f || localVisualBounds.Size.Z < 0.0f)
             return false;
-        Vector3 viewer = _focus!.GlobalPosition;
+        Vector3 viewer = ResolveQueryPassViewer();
         if (!viewer.IsFinite()) return false;
         Vector3 position = localVisualBounds.Position;
         Vector3 end = position + localVisualBounds.Size;
-        Transform3D transform = node.GlobalTransform;
+        Transform3D transform = ResolveQuerySectorGlobalTransform(node);
         for (int z = 0; z < 2; z++)
         for (int y = 0; y < 2; y++)
         for (int x = 0; x < 2; x++)
@@ -2858,6 +3194,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         return null;
     }
 
+    // Upper-bound-ish number of distinct columns a lane samples: each sector
+    // touches (cells + 3)^2 columns including the normal / parent halo.
+    private static int EstimateBatchSampleCount(int sectorCount, int cells)
+    {
+        long side = Math.Max(1, cells) + 3;
+        return (int)Math.Min(1 << 18, Math.Max(0, sectorCount) * side * side);
+    }
+
     private static BuildBatch BuildRawBatch(ulong requestVersion, RingLodSurfaceEditSnapshot editSnapshot, List<RingTerrainSectorCoordinate> coordinates, RingTerrainSampler sampler, Action<SectorData> publishSector, RingLodGeometrySnapshot geometry, Transform3D ownerInverse, int size, int spacing, int parentSpacing, RingTerrainGlobalMorphSnapshot? globalMorphTarget, int cells, float underlay, float parentUnderlay, bool parentRestoresWaterUnderlay, int ringWidth, bool buildWalls, bool buildSkirts, float skirtDepth, bool blocky, bool alignSurfaceToTerrainSdf, int heightQuantum, Color low, Color high, string cacheDirectory, bool readDiskCache, bool writeDiskCache, Dictionary<RingTerrainSectorCoordinate, SurfaceCoverageMask>? coverageMasks, int parallelism, CancellationToken cancellation)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy build", worker: true);
@@ -2867,7 +3211,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int cacheWrites = 0;
         if (parallelism <= 1 || coordinates.Count <= 1)
         {
-            var sampleCache = new TerrainBuildSampleCache(editSnapshot, sampler, ringWidth);
+            using var sampleCache = new TerrainBuildSampleCache(
+                editSnapshot, sampler, ringWidth, EstimateBatchSampleCount(coordinates.Count, cells));
             foreach (RingTerrainSectorCoordinate coordinate in coordinates)
             {
                 cancellation.ThrowIfCancellationRequested();
@@ -2905,7 +3250,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 () =>
                 {
                     RingTerrainSampler laneSampler = sampler.CreateIndependentCopy();
-                    return (laneSampler, new TerrainBuildSampleCache(editSnapshot, laneSampler, ringWidth));
+                    return (laneSampler, new TerrainBuildSampleCache(
+                        editSnapshot, laneSampler, ringWidth,
+                        EstimateBatchSampleCount((coordinates.Count + parallelism - 1) / parallelism, cells)));
                 },
                 trackAllValues: true);
             try
@@ -2950,7 +3297,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
             }
             finally
             {
-                foreach (var context in contexts.Values) context.Sampler.Dispose();
+                foreach (var context in contexts.Values)
+                {
+                    context.Sampler.Dispose();
+                    context.Cache.Dispose();
+                }
             }
         }
         watch.Stop();
@@ -3318,31 +3669,34 @@ public partial class RingTerrainProxySector : MeshInstance3D
         int row = cells + 1;
         int surfaceVertexCount = row * row;
         int initialVertexCount = surfaceVertexCount * 2;
-        var vertices = new List<Vector3>(initialVertexCount);
-        var normals = new List<Vector3>(initialVertexCount);
-        var colors = new List<Color>(initialVertexCount);
-        var uvs = new List<Vector2>(initialVertexCount);
-        var morphData = new List<Vector2>(initialVertexCount);
-        var parentChordOffsets = new List<Vector3>(initialVertexCount);
-        CollectionsMarshal.SetCount(vertices, initialVertexCount);
-        CollectionsMarshal.SetCount(normals, initialVertexCount);
-        CollectionsMarshal.SetCount(colors, initialVertexCount);
-        CollectionsMarshal.SetCount(uvs, initialVertexCount);
-        CollectionsMarshal.SetCount(morphData, initialVertexCount);
-        CollectionsMarshal.SetCount(parentChordOffsets, initialVertexCount);
+        SectorBuildScratch scratch = SectorBuildScratch.Acquire();
+        List<Vector3> vertices = scratch.Vertices;
+        List<Vector3> normals = scratch.Normals;
+        List<Color> colors = scratch.Colors;
+        List<Vector2> uvs = scratch.Uvs;
+        List<Vector2> morphData = scratch.MorphData;
+        List<Vector3> parentChordOffsets = scratch.ParentChordOffsets;
+        SectorBuildScratch.SetZeroedCount(vertices, initialVertexCount);
+        SectorBuildScratch.SetZeroedCount(normals, initialVertexCount);
+        SectorBuildScratch.SetZeroedCount(colors, initialVertexCount);
+        SectorBuildScratch.SetZeroedCount(uvs, initialVertexCount);
+        SectorBuildScratch.SetZeroedCount(morphData, initialVertexCount);
+        SectorBuildScratch.SetZeroedCount(parentChordOffsets, initialVertexCount);
         // The terminal world-ring snapshot uses the same CUSTOM0 chord path as
         // runtime Terrain3D, but samples the receiver's published triangles.
         bool runtimeParentChord = sampler.UsesRuntimeSurfaceGeneration || globalMorphTarget != null;
-        var waterVertices = new bool[surfaceVertexCount];
-        var terrainGeometryHeights = new float[surfaceVertexCount];
-        var aroundCoordinates = new double[surfaceVertexCount];
-        var acrossCoordinates = new float[surfaceVertexCount];
-        var terrainPoints = new CachedTerrainPoint[surfaceVertexCount];
+        // Lattice scratch may be longer than surfaceVertexCount; only [0, surfaceVertexCount) is meaningful.
+        scratch.PrepareLattice(surfaceVertexCount);
+        bool[] waterVertices = scratch.WaterVertices;
+        float[] terrainGeometryHeights = scratch.TerrainGeometryHeights;
+        double[] aroundCoordinates = scratch.AroundCoordinates;
+        float[] acrossCoordinates = scratch.AcrossCoordinates;
+        CachedTerrainPoint[] terrainPoints = scratch.TerrainPoints;
         // Match SmoothTerrainGrid's compact, deterministic 16 m sampling
         // lattice.  This keeps the LOD handoff continuous while avoiding a
         // fresh climate/hydrology query for every high-detail proxy vertex.
         const int biomeSampleSpacing = 16;
-        var biomeWeightCache = new Dictionary<TerrainColumnKey, Color>();
+        Dictionary<TerrainColumnKey, Color> biomeWeightCache = scratch.BiomeWeightCache;
         for (int z = 0; z <= cells; z++)
         for (int x = 0; x <= cells; x++)
         {
@@ -3420,9 +3774,11 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 underlay, alignSurfaceToTerrainSdf, water: true);
         }
 
-        var indexList = new List<int>(cells * cells * 6);
-        var oceanIndexList = new List<int>(cells * cells * 6);
-        var partialWaterTriangles = new List<PartialWaterTriangle>();
+        List<int> indexList = scratch.Indices;
+        List<int> oceanIndexList = scratch.OceanIndices;
+        List<PartialWaterTriangle> partialWaterTriangles = scratch.PartialWaterTriangles;
+        indexList.EnsureCapacity(cells * cells * 6);
+        oceanIndexList.EnsureCapacity(cells * cells * 6);
         var oceanSurfaceCells = new bool[cells * cells];
         var oceanDeepWaterVertexDepths = new byte[row * row];
         for (int z = 0; z <= cells; z++)
@@ -3509,6 +3865,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 aroundCoordinates,
                 acrossCoordinates,
                 terrainPoints,
+                surfaceVertexCount,
                 uvs,
                 morphData,
                 sampler,
@@ -3725,16 +4082,17 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private static SectorData BuildRawBlockySector(ulong requestVersion, RingTerrainSectorCoordinate coordinate, RingLodSurfaceEditSnapshot editSnapshot, RingTerrainSampler sampler, TerrainBuildSampleCache sampleCache, RingLodGeometrySnapshot geometry, Transform3D ownerInverse, Vector3 localOrigin, int size, int spacing, int cells, float underlay, int ringWidth, bool buildWalls, bool buildSkirts, float skirtDepth, int heightQuantum, Color low, Color high, SurfaceCoverageMask? coverageMask)
     {
-        var vertices = new List<Vector3>();
-        var normals = new List<Vector3>();
-        var colors = new List<Color>();
-        var blockyUvs = new List<Vector2>();
-        var indices = new List<int>();
-        var oceanIndices = new List<int>();
+        SectorBuildScratch scratch = SectorBuildScratch.Acquire();
+        List<Vector3> vertices = scratch.Vertices;
+        List<Vector3> normals = scratch.Normals;
+        List<Color> colors = scratch.Colors;
+        List<Vector2> blockyUvs = scratch.Uvs;
+        List<int> indices = scratch.Indices;
+        List<int> oceanIndices = scratch.OceanIndices;
         long aroundOrigin = coordinate.AroundSector * size;
         int acrossOrigin = coordinate.AcrossSector * size;
         const int biomeSampleSpacing = 16;
-        var biomeWeightCache = new Dictionary<TerrainColumnKey, Color>();
+        Dictionary<TerrainColumnKey, Color> biomeWeightCache = scratch.BiomeWeightCache;
 
         float QuantizedHeight(long around, int across)
         {
@@ -3803,7 +4161,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             }
         }
 
-        var blockyMorphs = Enumerable.Repeat(Vector2.Zero, vertices.Count).ToList();
+        List<Vector2> blockyMorphs = scratch.MorphData;
+        SectorBuildScratch.SetZeroedCount(blockyMorphs, vertices.Count);
         if (buildSkirts)
             AppendSectorSkirts(vertices, normals, colors, blockyUvs, blockyMorphs, indices, coordinate, sampleCache, sampler, geometry, ownerInverse, size, spacing, spacing * 2, underlay, parentUnderlay: 0.0f, ringWidth, skirtDepth, buildWalls, low, high, geomorph: false);
 
@@ -3957,6 +4316,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double[] aroundCoordinates,
         float[] acrossCoordinates,
         CachedTerrainPoint[] terrainPoints,
+        int surfaceVertexCount,
         IReadOnlyList<Vector2> uvs,
         IReadOnlyList<Vector2> morphData,
         RingTerrainSampler sampler,
@@ -4013,7 +4373,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 uvs[sourceIndex],
                 // The source index addresses the terrain half of the lattice;
                 // shoreline water must inherit the matching water morph.
-                ResolveClippedWaterMorph(morphData, terrainPoints.Length, sourceIndex)));
+                ResolveClippedWaterMorph(morphData, surfaceVertexCount, sourceIndex)));
         }
 
         var clipped = new List<ShorelineClipVertex>(5);
@@ -5042,7 +5402,20 @@ public partial class RingTerrainProxySector : MeshInstance3D
         normals[a] += normal; normals[b] += normal; normals[c] += normal;
     }
 
+    // Per-sector ocean replacement installs only stage bytes; the atlas is
+    // uploaded once when the batch ends (nothing in between reads its contents).
     private int ApplyCompletedBatch(int uploadBudget, double uploadBudgetMilliseconds)
+    {
+        _deferOceanReplacementAtlasFlush = true;
+        try { return ApplyCompletedBatchCore(uploadBudget, uploadBudgetMilliseconds); }
+        finally
+        {
+            _deferOceanReplacementAtlasFlush = false;
+            FlushOceanReplacementAtlas();
+        }
+    }
+
+    private int ApplyCompletedBatchCore(int uploadBudget, double uploadBudgetMilliseconds)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy install");
         DrainCompletedWorkerSectors();
@@ -5167,12 +5540,15 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 mesh.SurfaceSetMaterial(mesh.GetSurfaceCount() - 1, _oceanMaterial);
             }
             node.Mesh = mesh;
+            _installedMeshNodes.Add(node);
             // Worker data is sector-local and may have been built before a
             // floating-origin change.  Always resolve its placement from the
             // current geometry at upload time.
-            node.Position = _grid != null
+            Vector3 installedLocalOrigin = _grid != null
                 ? ResolveSectorLocalOrigin(data.Coordinate, _grid.CaptureLodGeometrySnapshot(), GlobalTransform.AffineInverse())
                 : data.LocalOrigin;
+            node.Position = installedLocalOrigin;
+            _installedLocalPositions[node] = installedLocalOrigin;
             // A sector can arrive after the last FFT settings change; apply
             // the cached conservative margin without rescanning existing nodes.
             node.ExtraCullMargin = data.OceanIndices.Length > 0 && SampleSpacingMeters is 2 or 4 or 8
@@ -5231,7 +5607,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         if (_pendingUploads.Count == 0 && _pending == null && _completedWorkerSectors.IsEmpty)
         {
             using var departedScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy departed sectors");
-            ApplyDepartedSectors(desired);
+            // The uploaded > 0 block below notifies after the departures anyway.
+            ApplyDepartedSectors(desired, deferNotify: uploaded > 0);
         }
         if (uploaded > 0)
         {
@@ -5249,7 +5626,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _pendingWorkerSampler = null;
     }
 
-    private void ApplyDepartedSectors(HashSet<RingTerrainSectorCoordinate> desired)
+    private void ApplyDepartedSectors(HashSet<RingTerrainSectorCoordinate> desired, bool deferNotify = false)
     {
         bool coverageChanged = false;
         var leaving = new List<RingTerrainSectorCoordinate>();
@@ -5280,7 +5657,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             // Publish the removal before this update returns; the coarser
             // shader keeps its last atlas enabled between these publications.
             if (ReferenceEquals(FinestOceanGeometryInstance, this)) UpdateSharedFftOceanCoverage();
-            NotifyOceanReplacementDependents();
+            if (!deferNotify) NotifyOceanReplacementDependents();
         }
     }
 
@@ -5439,6 +5816,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         node.SetInstanceShaderParameter("fft_distant_ocean_mask_rect", Vector4.Zero);
         node.GetNodeOrNull<MeshInstance3D>("OpaqueShadowCaster")?.SetInstanceShaderParameter("coverage_atlas_rect", Vector4.Zero);
         node.Visible = false;
+        _installedMeshNodes.Remove(node);
+        _installedLocalPositions.Remove(node);
         node.Mesh = null;
         _pool.Enqueue(node);
     }

@@ -89,7 +89,7 @@ public partial class RingScaledFarViewport
         _farWeatherCloudBakeRequested = false;
         _farWeatherCloudBakeElapsed = 0.0;
         // Every strip of one bake uses the same weather clock.
-        _farWeatherCloudBakeMaterial.SetShaderParameter("weather_time_seconds", ResolveFarWeatherAtlasAgeSeconds());
+        _farWeatherCloudBakeMaterial.SetShaderParameter(WeatherTimeSecondsName, ResolveFarWeatherAtlasAgeSeconds());
         DrawFarWeatherCloudBakeStrip(0);
     }
 

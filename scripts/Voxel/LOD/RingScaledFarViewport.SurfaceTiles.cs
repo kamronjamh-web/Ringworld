@@ -63,7 +63,14 @@ public partial class RingScaledFarViewport
     private readonly Dictionary<SurfaceTileKey, SurfaceTileEntry> _surfaceTileCache = new();
     private readonly List<SurfaceTileJob> _surfaceTileJobs = new();
     private readonly Dictionary<ShaderMaterial, Dictionary<string, Variant>> _surfaceTileTemplateValues = new();
-    private readonly Dictionary<Shader, string[]> _surfaceTileUniformNames = new();
+    private readonly Dictionary<Shader, (string Name, StringName Id)[]> _surfaceTileUniformNames = new();
+    private static readonly StringName SurfaceTileEnabledName = "surface_tile_enabled";
+    private static readonly StringName SurfaceTileColorName = "surface_tile_color";
+    private static readonly StringName SurfaceTileNormalName = "surface_tile_normal";
+    private static readonly StringName SurfaceTileResolutionName = "surface_tile_resolution";
+    private static readonly StringName SurfaceTileBlendName = "surface_tile_blend";
+    private static readonly StringName SurfaceTileAngleStartName = "surface_tile_angle_start";
+    private static readonly StringName SurfaceTileAngleSpanName = "surface_tile_angle_span";
     // Template -> duplicated bindings, rebuilt only when bindings are added or released.
     private readonly List<(ShaderMaterial Template, List<SurfaceTileBinding> Bindings)> _surfaceTileTemplateGroups = new();
     private bool _surfaceTileGroupsDirty = true;
@@ -81,16 +88,33 @@ public partial class RingScaledFarViewport
     private (ulong Definition, ulong Edits, int Resolution, Color Low, Color High)? _surfaceTileIdentity;
     public int SurfaceTileResidentCount => _surfaceTileCache.Values.Count(v => v.Color != null);
     public int SurfaceTilePendingCount => _surfaceTileJobs.Count;
-    public long SurfaceTileCpuBytes => _surfaceTileCache.Values.Sum(v => v.Pixels?.Bytes ?? 0)
-        + _surfaceTileJobs.Sum(job => (long)(job.Key.Resolution + 2) * (job.Key.Resolution + 2) * 8);
-    public long SurfaceTileGpuBytes => _surfaceTileCache.Values.Sum(v => v.GpuBytes);
+    // Plain loops: these run every frame from MakeSurfaceTileRoom, and LINQ boxes the enumerators.
+    public long SurfaceTileCpuBytes
+    {
+        get
+        {
+            long total = 0;
+            foreach (var entry in _surfaceTileCache.Values) total += entry.Pixels?.Bytes ?? 0;
+            foreach (var job in _surfaceTileJobs) total += (long)(job.Key.Resolution + 2) * (job.Key.Resolution + 2) * 8;
+            return total;
+        }
+    }
+    public long SurfaceTileGpuBytes
+    {
+        get
+        {
+            long total = 0;
+            foreach (var entry in _surfaceTileCache.Values) total += entry.GpuBytes;
+            return total;
+        }
+    }
 
     private ShaderMaterial BindFarSurfaceMaterial(ShaderMaterial template,
         double aroundStartMeters, double acrossStartMeters, double aroundExtentMeters, double acrossExtentMeters,
         bool duplicate = true, bool displayWater = false)
     {
         var material = duplicate ? (ShaderMaterial)template.Duplicate() : template;
-        material.SetShaderParameter("surface_tile_enabled", false);
+        material.SetShaderParameter(SurfaceTileEnabledName, false);
         RingMaterialWriteCounters.Record(RingMaterialWriteCounters.Site.FarSurfaceTileApply);
         var binding = new SurfaceTileBinding(template, material, aroundStartMeters, acrossStartMeters,
             Math.Max(0.001, aroundExtentMeters), Math.Max(0.001, acrossExtentMeters), displayWater);
@@ -112,7 +136,7 @@ public partial class RingScaledFarViewport
         _surfaceTileBindings.RemoveAll(binding => binding.Material == material);
         _surfaceTileGroupsDirty = true;
         _surfaceTileTemplateValues.Clear();
-        material.SetShaderParameter("surface_tile_enabled", false);
+        material.SetShaderParameter(SurfaceTileEnabledName, false);
         RingMaterialWriteCounters.Record(RingMaterialWriteCounters.Site.FarSurfaceTileApply);
     }
 
@@ -135,7 +159,7 @@ public partial class RingScaledFarViewport
     {
         SurfaceTileApplied applied = binding.Applied;
         if (applied.Has && applied.Enabled == enabled) return;
-        binding.Material.SetShaderParameter("surface_tile_enabled", enabled);
+        binding.Material.SetShaderParameter(SurfaceTileEnabledName, enabled);
         applied.Has = true;
         applied.Enabled = enabled;
         RingMaterialWriteCounters.Record(RingMaterialWriteCounters.Site.FarSurfaceTileApply);
@@ -165,16 +189,23 @@ public partial class RingScaledFarViewport
         {
             if (!_surfaceTileTemplateValues.TryGetValue(template, out var previous))
                 _surfaceTileTemplateValues[template] = previous = new();
-            if (!_surfaceTileUniformNames.TryGetValue(template.Shader, out string[]? uniforms))
+            if (!_surfaceTileUniformNames.TryGetValue(template.Shader, out (string Name, StringName Id)[]? uniforms))
                 _surfaceTileUniformNames[template.Shader] = uniforms = template.Shader.GetShaderUniformList()
                     .Select(uniform => uniform.AsGodotDictionary()["name"].AsString())
-                    .Where(name => !name.StartsWith("surface_tile_", StringComparison.Ordinal)).ToArray();
-            foreach (string name in uniforms)
+                    .Where(name => !name.StartsWith("surface_tile_", StringComparison.Ordinal))
+                    .Select(name => (name, new StringName(name))).ToArray();
+            // StringNames are cached with the names so no string -> StringName conversion runs per frame.
+            foreach (var (name, id) in uniforms)
             {
-                Variant value = template.GetShaderParameter(name);
-                if (previous.TryGetValue(name, out Variant old) && RingVariantEquality.Same(old, value)) continue;
+                Variant value = template.GetShaderParameter(id);
+                if (previous.TryGetValue(name, out Variant old))
+                {
+                    // Object/array values carry a finalizable Disposer; release the one that is no longer kept.
+                    if (RingVariantEquality.Same(old, value)) { value.Dispose(); continue; }
+                    old.Dispose();
+                }
                 previous[name] = value;
-                foreach (var binding in group) binding.Material.SetShaderParameter(name, value);
+                foreach (var binding in group) binding.Material.SetShaderParameter(id, value);
                 RingMaterialWriteCounters.Record(RingMaterialWriteCounters.Site.FarSurfaceTileTemplateSync, group.Count,
                     value.VariantType == Variant.Type.Object ? group.Count : 0);
             }
@@ -242,7 +273,7 @@ public partial class RingScaledFarViewport
             if (!wanted.Contains(pair.Key)) _surfaceTileUnwanted.Add(pair);
         foreach (var pair in _surfaceTileUnwanted) RemoveSurfaceTile(pair.Key, pair.Value);
         _surfaceTileUnwanted.Clear();
-        var timer = Stopwatch.StartNew();
+        long uploadTimerStart = Stopwatch.GetTimestamp();
         int uploads = 0;
         foreach (var binding in ordered)
         {
@@ -251,7 +282,7 @@ public partial class RingScaledFarViewport
             {
                 entry.LastUsed = _surfaceTileClock;
                 if (entry.Color == null && entry.Pixels != null && uploads < Math.Clamp(FarSurfaceTileUploadsPerFrame, 1, 8)
-                    && timer.Elapsed.TotalMilliseconds < Math.Max(0.25f, FarSurfaceTileUploadBudgetMilliseconds))
+                    && Stopwatch.GetElapsedTime(uploadTimerStart).TotalMilliseconds < Math.Max(0.25f, FarSurfaceTileUploadBudgetMilliseconds))
                 {
                     long gpuBytes = entry.Pixels.Bytes * 4 / 3 + 64; // full RGBA mip chains
                     if (MakeSurfaceTileRoom(0, gpuBytes, binding.Key))
@@ -274,17 +305,22 @@ public partial class RingScaledFarViewport
             // Warm the terrain palette on the main thread before any worker can
             // trigger its texture-reading static initializer.
             RingTerrainVisuals.PreloadTexturePalette();
-            var worker = sampler.CreateIndependentCopy();
-            var edits = _grid.CaptureLodSurfaceEditSnapshot();
-            var cancellation = new CancellationTokenSource();
-            SurfaceTileKey key = binding.Key;
-            _surfaceTileJobs.Add(new(key, cancellation, Task.Run(() =>
-            {
-                try { return BuildSurfaceTilePixels(key, worker, edits, cancellation.Token); }
-                finally { worker.Dispose(); }
-            })));
+            StartSurfaceTileJob(binding.Key, sampler);
         }
         MakeSurfaceTileRoom(0, 0, default);
+    }
+
+    // Separate method so the Task.Run closure is only allocated when a job actually starts.
+    private void StartSurfaceTileJob(SurfaceTileKey key, RingTerrainSampler sampler)
+    {
+        var worker = sampler.CreateIndependentCopy();
+        var edits = _grid!.CaptureLodSurfaceEditSnapshot();
+        var cancellation = new CancellationTokenSource();
+        _surfaceTileJobs.Add(new(key, cancellation, Task.Run(() =>
+        {
+            try { return BuildSurfaceTilePixels(key, worker, edits, cancellation.Token); }
+            finally { worker.Dispose(); }
+        })));
     }
 
     private bool HasSurfaceTileJob(SurfaceTileKey key)
@@ -330,41 +366,41 @@ public partial class RingScaledFarViewport
         int writes = 0, textureWrites = 0;
         if (!ReferenceEquals(applied.Color, entry.Color))
         {
-            material.SetShaderParameter("surface_tile_color", entry.Color!);
+            material.SetShaderParameter(SurfaceTileColorName, entry.Color!);
             applied.Color = entry.Color;
             writes++; textureWrites++;
         }
         if (!ReferenceEquals(applied.Normal, entry.Normal))
         {
-            material.SetShaderParameter("surface_tile_normal", entry.Normal!);
+            material.SetShaderParameter(SurfaceTileNormalName, entry.Normal!);
             applied.Normal = entry.Normal;
             writes++; textureWrites++;
         }
         int resolution = binding.Key.Resolution;
         if (applied.Resolution != resolution)
         {
-            material.SetShaderParameter("surface_tile_resolution", resolution);
+            material.SetShaderParameter(SurfaceTileResolutionName, resolution);
             applied.Resolution = resolution;
             writes++;
         }
         float blend = Math.Clamp((Time.GetTicksMsec() - entry.UploadedAtMilliseconds) / 200f, 0, 1);
         if (applied.Blend != blend)
         {
-            material.SetShaderParameter("surface_tile_blend", blend);
+            material.SetShaderParameter(SurfaceTileBlendName, blend);
             applied.Blend = blend;
             writes++;
         }
         float angleStart = (float)(binding.Key.Around / binding.Key.Circumference * Math.Tau);
         if (applied.AngleStart != angleStart)
         {
-            material.SetShaderParameter("surface_tile_angle_start", angleStart);
+            material.SetShaderParameter(SurfaceTileAngleStartName, angleStart);
             applied.AngleStart = angleStart;
             writes++;
         }
         float angleSpan = (float)(binding.Key.AroundExtent / binding.Key.Circumference * Math.Tau);
         if (applied.AngleSpan != angleSpan)
         {
-            material.SetShaderParameter("surface_tile_angle_span", angleSpan);
+            material.SetShaderParameter(SurfaceTileAngleSpanName, angleSpan);
             applied.AngleSpan = angleSpan;
             writes++;
         }
@@ -392,9 +428,9 @@ public partial class RingScaledFarViewport
     {
         foreach (var binding in _surfaceTileBindings.Where(binding => binding.Key == key))
         {
-            binding.Material.SetShaderParameter("surface_tile_enabled", false);
-            binding.Material.SetShaderParameter("surface_tile_color", default(Variant));
-            binding.Material.SetShaderParameter("surface_tile_normal", default(Variant));
+            binding.Material.SetShaderParameter(SurfaceTileEnabledName, false);
+            binding.Material.SetShaderParameter(SurfaceTileColorName, default(Variant));
+            binding.Material.SetShaderParameter(SurfaceTileNormalName, default(Variant));
             SurfaceTileApplied applied = binding.Applied;
             applied.Has = true;
             applied.Enabled = false;

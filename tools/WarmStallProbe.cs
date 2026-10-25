@@ -24,16 +24,40 @@ public partial class WarmStallProbe : Node
 {
     public double DetailThresholdMs { get; set; } = 50.0;
 
-    private sealed class MarkEntry { public string Label = ""; public ulong T; public bool Physics; }
+    /// <summary>A-B experiment only (quality presets WO-4 / N5): induce a blocking GC of this generation right after the frame's
+    /// draw submission (post_draw, CPU slack while GPU-bound) once GcPaceMegabytes have been allocated since the last GC, or every
+    /// GcPaceFrames frames. -1 = off.</summary>
+    public int GcPaceGeneration { get; set; } = -1;
+    public double GcPaceMegabytes { get; set; } = 0.0;
+    public int GcPaceFrames { get; set; } = 0;
+    public int GcPaceCollections { get; private set; }
+    private long _gcPaceAllocAtLast;
+    private int _gcPaceCountAtLast;
+    private int _gcPaceFrameCounter;
+
+    /// <summary>A-B experiment only: GCSettings.LatencyMode name applied at Begin ("SustainedLowLatency", "Interactive", ...); empty = unchanged.</summary>
+    public string GcLatencyMode { get; set; } = "";
+
+    private struct MarkEntry { public string Label; public ulong T; public bool Physics; public long MainAlloc; }
 
     private sealed class Frame
     {
         public ulong Start, FirstPhysics, ProcessSignal, FirstNode, LastNode, PreDraw, PostDraw;
+        public long StartMainAlloc;
         public int PhysicsSteps;
-        public readonly List<MarkEntry> Marks = new();
+        public readonly List<MarkEntry> Marks = new(128);
+
+        public void Reset()
+        {
+            Start = FirstPhysics = ProcessSignal = FirstNode = LastNode = PreDraw = PostDraw = 0;
+            StartMainAlloc = 0;
+            PhysicsSteps = 0;
+            Marks.Clear();
+        }
     }
 
     private Frame _frame = new();
+    private Frame _spareFrame = new();
     private ulong _lastPostDraw;
     private ulong _startUsec;
     private int _frameIndex;
@@ -51,6 +75,18 @@ public partial class WarmStallProbe : Node
     private Node? _warm;
     private string _context = "";
     private bool _started;
+    // Main-thread allocation per owner gap (bytes, ms, frames) keyed by context and gap target; written to alloc_owners.csv.
+    // Key: (context, previous mark label or null for a world-child gap, previous is physics, mark label, mark is physics). Strings are built at
+    // WriteReport so the per-frame bookkeeping stays allocation-free; the probe's own CloseFrame allocation is excluded and reported as probe_self.
+    private readonly Dictionary<(string ctx, string? prev, bool prevPhysics, string label, bool physics), (long bytes, double ms, int frames)> _ownerAlloc = new();
+    private readonly List<(double ms, int index)> _gaps = new();
+    private long _lastMainAlloc;
+    private long _probeSelfBytes;
+    private const int MaxPrintsPerContext = 20;
+    private string? _printContext;
+    private int _printedInContext;
+
+    private static long MainAllocNow() => GC.GetAllocatedBytesForCurrentThread();
 
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
 
@@ -61,10 +97,20 @@ public partial class WarmStallProbe : Node
     {
         if (_started) return;
         _started = true;
+        if (!string.IsNullOrEmpty(GcLatencyMode) && Enum.TryParse(GcLatencyMode, true, out System.Runtime.GCLatencyMode mode))
+        {
+            System.Runtime.GCSettings.LatencyMode = mode;
+            GD.Print($"STALL_PROBE gc latency mode={System.Runtime.GCSettings.LatencyMode}");
+        }
+        if (GcPaceGeneration >= 0) GD.Print($"STALL_PROBE gc pace gen={GcPaceGeneration} mb={GcPaceMegabytes} frames={GcPaceFrames}");
+        _gcPaceAllocAtLast = GC.GetTotalAllocatedBytes(false);
+        _gcPaceCountAtLast = GC.CollectionCount(0);
         MainThreadOsId = OperatingSystem.IsWindows() ? GetCurrentThreadId() : 0;
         _startUsec = Time.GetTicksUsec();
         _lastPostDraw = _startUsec;
         _frame.Start = _startUsec;
+        _lastMainAlloc = MainAllocNow();
+        _frame.StartMainAlloc = _lastMainAlloc;
         SnapshotCounters(out _, out _, out _, out _, out _, out _);
         SceneTree tree = GetTree();
         tree.PhysicsFrame += OnPhysicsFrame;
@@ -77,7 +123,7 @@ public partial class WarmStallProbe : Node
         tree.Root.AddChild(last);
         _markers.Add(first);
         _markers.Add(last);
-        _csv.Append("frame,t_ms,total_ms,pre_physics_ms,physics_ms,physics_steps,signal_handlers_ms,nodes_ms,post_process_ms,draw_ms,gc0,gc1,gc2,gc_pause_ms,alloc_mb,pipe_surface,pipe_mesh,pipe_canvas,pipe_draw,pipe_spec,tex_mem_mb_delta,buf_mem_mb_delta,jit_ms,jit_methods,context,top_gap\n");
+        _csv.Append("frame,t_ms,total_ms,pre_physics_ms,physics_ms,physics_steps,signal_handlers_ms,nodes_ms,post_process_ms,draw_ms,gc0,gc1,gc2,gc_pause_ms,alloc_mb,pipe_surface,pipe_mesh,pipe_canvas,pipe_draw,pipe_spec,tex_mem_mb_delta,buf_mem_mb_delta,jit_ms,jit_methods,context,top_gap,main_alloc_mb\n");
     }
 
     /// <summary>Burns about <paramref name="milliseconds"/> on the calling (main) thread so a sampled trace can be aligned to Time.get_ticks_usec.</summary>
@@ -145,7 +191,7 @@ public partial class WarmStallProbe : Node
     internal void Mark(string label, bool physics)
     {
         ulong now = Time.GetTicksUsec();
-        _frame.Marks.Add(new MarkEntry { Label = label, T = now, Physics = physics });
+        _frame.Marks.Add(new MarkEntry { Label = label, T = now, Physics = physics, MainAlloc = MainAllocNow() });
         if (!physics)
         {
             if (_frame.FirstNode == 0) _frame.FirstNode = now;
@@ -158,29 +204,54 @@ public partial class WarmStallProbe : Node
         ulong now = Time.GetTicksUsec();
         if (_frame.FirstPhysics == 0) _frame.FirstPhysics = now;
         _frame.PhysicsSteps++;
-        _frame.Marks.Add(new MarkEntry { Label = "physics_frame_signal", T = now, Physics = true });
+        _frame.Marks.Add(new MarkEntry { Label = "physics_frame_signal", T = now, Physics = true, MainAlloc = MainAllocNow() });
     }
 
     private void OnProcessFrame()
     {
         ulong now = Time.GetTicksUsec();
         _frame.ProcessSignal = now;
-        _frame.Marks.Add(new MarkEntry { Label = "process_frame_signal", T = now });
+        _frame.Marks.Add(new MarkEntry { Label = "process_frame_signal", T = now, MainAlloc = MainAllocNow() });
     }
 
     private void OnPreDraw()
     {
         ulong now = Time.GetTicksUsec();
         _frame.PreDraw = now;
-        _frame.Marks.Add(new MarkEntry { Label = "pre_draw", T = now });
+        _frame.Marks.Add(new MarkEntry { Label = "pre_draw", T = now, MainAlloc = MainAllocNow() });
     }
 
     private void OnPostDraw()
     {
         ulong now = Time.GetTicksUsec();
         _frame.PostDraw = now;
-        _frame.Marks.Add(new MarkEntry { Label = "post_draw", T = now });
+        _frame.Marks.Add(new MarkEntry { Label = "post_draw", T = now, MainAlloc = MainAllocNow() });
         CloseFrame(now);
+        PaceGc();
+    }
+
+    private void PaceGc()
+    {
+        if (GcPaceGeneration < 0) return;
+        _gcPaceFrameCounter++;
+        long alloc = GC.GetTotalAllocatedBytes(false);
+        int count = GC.CollectionCount(0);
+        if (count != _gcPaceCountAtLast)
+        {
+            // Any GC (natural or induced) resets the budget window.
+            _gcPaceCountAtLast = count;
+            _gcPaceAllocAtLast = alloc;
+            _gcPaceFrameCounter = 0;
+            return;
+        }
+        bool due = (GcPaceMegabytes > 0.0 && alloc - _gcPaceAllocAtLast >= (long)(GcPaceMegabytes * 1024 * 1024))
+            || (GcPaceFrames > 0 && _gcPaceFrameCounter >= GcPaceFrames);
+        if (!due) return;
+        GC.Collect(Math.Clamp(GcPaceGeneration, 0, 2), GCCollectionMode.Forced, blocking: true);
+        GcPaceCollections++;
+        _gcPaceCountAtLast = GC.CollectionCount(0);
+        _gcPaceAllocAtLast = GC.GetTotalAllocatedBytes(false);
+        _gcPaceFrameCounter = 0;
     }
 
     private void SnapshotCounters(out int[] gcDelta, out double pauseMs, out double allocMb, out long[] pipeDelta, out double texMb, out double bufMb)
@@ -251,24 +322,38 @@ public partial class WarmStallProbe : Node
 
         // Largest gap between consecutive marks (what ran between them).
         f.Marks.Sort((a, b) => a.T.CompareTo(b.T));
-        var gaps = new List<(double ms, string what)>();
+        List<(double ms, int index)> gaps = _gaps;
+        gaps.Clear();
         ulong previous = f.Start;
-        string previousLabel = "prev_post_draw";
-        foreach (MarkEntry mark in f.Marks)
+        long previousAlloc = f.StartMainAlloc;
+        string ctxKey = _context;
+        for (int i = 0; i < f.Marks.Count; i++)
         {
+            MarkEntry mark = f.Marks[i];
             double ms = Ms(previous, mark.T);
-            gaps.Add((ms, $"{previousLabel} -> {(mark.Physics ? "P:" : "")}{mark.Label}"));
+            gaps.Add((ms, i));
+            // Owner of the gap: the marker placed after a world child closes that child's subtree; engine marks name the phase before them.
+            bool engine = mark.Label.StartsWith("__") || mark.Label is "physics_frame_signal" or "process_frame_signal" or "pre_draw" or "post_draw";
+            string? prevLabel = engine ? (i > 0 ? f.Marks[i - 1].Label : "prev_post_draw") : null;
+            bool prevPhysics = engine && i > 0 && f.Marks[i - 1].Physics;
+            long bytes = Math.Max(0, mark.MainAlloc - previousAlloc);
+            var key = (ctxKey, prevLabel, prevPhysics, mark.Label, mark.Physics);
+            _ownerAlloc.TryGetValue(key, out var acc);
+            _ownerAlloc[key] = (acc.bytes + bytes, acc.ms + ms, acc.frames + 1);
             previous = mark.T;
-            previousLabel = (mark.Physics ? "P:" : "") + mark.Label;
+            previousAlloc = mark.MainAlloc;
         }
+        long frameMainAlloc = f.Marks.Count > 0 ? Math.Max(0, f.Marks[^1].MainAlloc - f.StartMainAlloc) : 0;
         gaps.Sort((a, b) => b.ms.CompareTo(a.ms));
-        string topGap = gaps.Count > 0 ? $"{gaps[0].ms:0.0}ms {gaps[0].what}" : "";
+        string GapText(int index) => (index > 0 ? (f.Marks[index - 1].Physics ? "P:" : "") + f.Marks[index - 1].Label : "prev_post_draw")
+            + " -> " + (f.Marks[index].Physics ? "P:" : "") + f.Marks[index].Label;
+        string topGap = gaps.Count > 0 ? string.Format(CultureInfo.InvariantCulture, "{0:0.0}ms {1}", gaps[0].ms, GapText(gaps[0].index)) : "";
 
         double tMs = (now - _startUsec) / 1000.0;
         _csv.Append(string.Format(CultureInfo.InvariantCulture,
-            "{0},{1:0.0},{2:0.00},{3:0.00},{4:0.00},{5},{6:0.00},{7:0.00},{8:0.00},{9:0.00},{10},{11},{12},{13:0.00},{14:0.00},{15},{16},{17},{18},{19},{20:0.0},{21:0.0},{24:0.0},{25},\"{22}\",\"{23}\"\n",
+            "{0},{1:0.0},{2:0.00},{3:0.00},{4:0.00},{5},{6:0.00},{7:0.00},{8:0.00},{9:0.00},{10},{11},{12},{13:0.00},{14:0.00},{15},{16},{17},{18},{19},{20:0.0},{21:0.0},{24:0.0},{25},\"{22}\",\"{23}\",{26:0.000}\n",
             _frameIndex, tMs, total, prePhysics, physics, f.PhysicsSteps, handlers, nodes, post, draw, gc[0], gc[1], gc[2], pauseMs, allocMb,
-            pipes[0], pipes[1], pipes[2], pipes[3], pipes[4], texMb, bufMb, context, topGap.Replace("\"", "'"), jitMs, jitMethods));
+            pipes[0], pipes[1], pipes[2], pipes[3], pipes[4], texMb, bufMb, context, topGap.Replace("\"", "'"), jitMs, jitMethods, frameMainAlloc / (1024.0 * 1024.0)));
 
         if (total >= DetailThresholdMs)
         {
@@ -280,15 +365,26 @@ public partial class WarmStallProbe : Node
             foreach (var gap in gaps)
             {
                 if (gap.ms < 2.0 || shown >= 10) break;
-                _detail.Append(string.Format(CultureInfo.InvariantCulture, "    {0,8:0.0} ms  {1}\n", gap.ms, gap.what));
+                _detail.Append(string.Format(CultureInfo.InvariantCulture, "    {0,8:0.0} ms  {1}\n", gap.ms, GapText(gap.index)));
                 shown++;
             }
-            GD.Print(string.Format(CultureInfo.InvariantCulture, "STALL_PROBE_FRAME t_ms={0:0} total={1:0.0} top={2} ctx={3}", tMs, total, topGap, context));
+            // Console printing costs ~1 ms per line on the main thread; cap it per context so hitch-heavy windows (flights) are not inflated.
+            if (!ReferenceEquals(_printContext, _context)) { _printContext = _context; _printedInContext = 0; }
+            if (_printedInContext++ < MaxPrintsPerContext)
+                GD.Print(string.Format(CultureInfo.InvariantCulture, "STALL_PROBE_FRAME t_ms={0:0} total={1:0.0} top={2} ctx={3}", tMs, total, topGap, context));
         }
 
         _frameIndex++;
         _lastPostDraw = now;
-        _frame = new Frame();
+        // Swap in the cleared spare frame (no per-frame List allocation).
+        Frame next = _spareFrame;
+        next.Reset();
+        _spareFrame = f;
+        _frame = next;
+        // Everything allocated since the post_draw mark is the probe's own bookkeeping; keep it out of the next frame's first gap.
+        long closeEnd = MainAllocNow();
+        if (f.Marks.Count > 0) _probeSelfBytes += Math.Max(0, closeEnd - f.Marks[^1].MainAlloc);
+        _frame.StartMainAlloc = closeEnd;
     }
 
     /// <summary>Writes stall_frames.csv (every frame) and stall_detail.txt (frames over the threshold) to <paramref name="directory"/>.</summary>
@@ -297,6 +393,17 @@ public partial class WarmStallProbe : Node
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, "stall_frames.csv"), _csv.ToString());
         File.WriteAllText(Path.Combine(directory, "stall_detail.txt"), _detail.ToString());
+        var owners = new StringBuilder("context,owner,frames,main_alloc_mb,ms\n");
+        foreach (var pair in _ownerAlloc)
+        {
+            var k = pair.Key;
+            string target = (k.physics ? "P:" : "") + k.label;
+            string owner = k.prev == null ? target : (k.prevPhysics ? "P:" : "") + k.prev + "->" + target;
+            owners.Append(string.Format(CultureInfo.InvariantCulture, "\"{0}\",\"{1}\",{2},{3:0.000},{4:0.0}\n",
+                k.ctx.Replace("\"", "'"), owner.Replace("\"", "'"), pair.Value.frames, pair.Value.bytes / (1024.0 * 1024.0), pair.Value.ms));
+        }
+        owners.Append(string.Format(CultureInfo.InvariantCulture, "\"(all)\",\"probe_self\",{0},{1:0.000},0\n", _frameIndex, _probeSelfBytes / (1024.0 * 1024.0)));
+        File.WriteAllText(Path.Combine(directory, "alloc_owners.csv"), owners.ToString());
     }
 
     public void End()

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Godot;
 using RingworldTechDemo.Rendering;
+using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.UI;
 
@@ -17,6 +18,8 @@ public sealed class GameplayVegetationDefaults
     public bool Dirty { get; private set; }
     public string LastError { get; private set; } = "";
     public GameplayVegetationDefaults(string? path = null) => _path = path;
+    /// <summary>Graphics preset supplying the tree distance fallbacks; a stored override still wins. Very High equals the historical defaults.</summary>
+    public RingTerrainLodCoordinator.QualityPreset Preset { get; set; } = RingTerrainLodCoordinator.QualityPreset.VeryHigh;
     public string Path => _path ?? UserPath;
     public bool UseGpuCulling => Get("UseGpuCulling", true).AsBool();
     public bool SkipUnchangedGpuCulling => Get("SkipUnchangedGpuCulling", true).AsBool();
@@ -24,10 +27,10 @@ public sealed class GameplayVegetationDefaults
     public bool MergeFarGpuTreeBatches => Get("MergeFarGpuTreeBatches", true).AsBool();
     public bool UseSharedFarTreeImpostors => Get("UseSharedFarTreeImpostors", true).AsBool();
     public bool UseCompactTreeLodProfile => Get("UseCompactTreeLodProfile", true).AsBool();
-    public float TreeNearDetailFadeStartMeters => (float)Get("TreeNearDetailFadeStartMeters", 25.0f).AsDouble();
-    public float TreeNearDetailFadeEndMeters => (float)Get("TreeNearDetailFadeEndMeters", 40.0f).AsDouble();
-    public float TreeBillboardFadeStartMeters => (float)Get("TreeBillboardFadeStartMeters", 300.0f).AsDouble();
-    public float TreeBillboardFadeEndMeters => (float)Get("TreeBillboardFadeEndMeters", 350.0f).AsDouble();
+    public float TreeNearDetailFadeStartMeters => (float)Get("TreeNearDetailFadeStartMeters", RingGraphicsQualityController.PresetTrees(Preset).NearStart).AsDouble();
+    public float TreeNearDetailFadeEndMeters => (float)Get("TreeNearDetailFadeEndMeters", RingGraphicsQualityController.PresetTrees(Preset).NearEnd).AsDouble();
+    public float TreeBillboardFadeStartMeters => (float)Get("TreeBillboardFadeStartMeters", RingGraphicsQualityController.PresetTrees(Preset).BillboardStart).AsDouble();
+    public float TreeBillboardFadeEndMeters => (float)Get("TreeBillboardFadeEndMeters", RingGraphicsQualityController.PresetTrees(Preset).BillboardEnd).AsDouble();
     public bool MergeMidGpuTreeBatches => Get("MergeMidGpuTreeBatches", true).AsBool();
     public int MidTreeBatchTileSpan => (int)Get("MidTreeBatchTileSpan", 2).AsInt64();
     public bool PruneEmptyGpuTreeBatches => Get("PruneEmptyGpuTreeBatches", true).AsBool();
@@ -40,7 +43,7 @@ public sealed class GameplayVegetationDefaults
 	public float TreeSunShadowSuspendSpeedMetersPerSecond => (float)Get("TreeSunShadowSuspendSpeedMetersPerSecond", 250.0f).AsDouble();
 	public float TreeSunShadowResumeSpeedMetersPerSecond => (float)Get("TreeSunShadowResumeSpeedMetersPerSecond", 25.0f).AsDouble();
 	public float TreeSunShadowSettleHoldSeconds => (float)Get("TreeSunShadowSettleHoldSeconds", 0.5f).AsDouble();
-	public float TreeSunShadowDistanceMeters => (float)Get("TreeSunShadowDistanceMeters", 480.0f).AsDouble();
+	public float TreeSunShadowDistanceMeters => (float)Get("TreeSunShadowDistanceMeters", RingGraphicsQualityController.PresetTrees(Preset).SunShadow).AsDouble();
 	public int MaximumTreeSunShadowBatches => (int)Get("MaximumTreeSunShadowBatches", DefaultMaximumTreeSunShadowBatches).AsInt64();
     public float TreeStreamingBudgetMilliseconds => (float)Get("TreeStreamingBudgetMilliseconds", DefaultTreeStreamingBudgetMilliseconds).AsDouble();
     public float TreeCullingMovementThresholdMeters => (float)Get("TreeCullingMovementThresholdMeters", .5f).AsDouble();

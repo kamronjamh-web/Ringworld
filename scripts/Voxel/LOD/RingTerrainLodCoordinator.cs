@@ -249,7 +249,7 @@ public partial class RingTerrainLodCoordinator : Node
         ConfigureVoxelTransition(_voxelFadeStart, _voxelFadeEnd);
     }
 
-    public bool ApplyMemoryPressureFallback()
+    public bool ApplyMemoryPressureFallback(string reason = "")
     {
         if (_manualPresetSelected && !AllowAdaptiveFallbackAfterManualSelection)
             return false;
@@ -266,7 +266,7 @@ public partial class RingTerrainLodCoordinator : Node
         string previous = CurrentPresetName;
         ApplyQualityPreset(next);
         AdaptiveFallbackCount++;
-        GD.PushWarning($"Adaptive terrain fallback: {previous} -> {CurrentPresetName} due to memory pressure.");
+        GD.PushWarning($"Adaptive terrain fallback: {previous} -> {CurrentPresetName} due to memory pressure{(reason.Length > 0 ? " (" + reason + ")" : "")}.");
         return true;
     }
 

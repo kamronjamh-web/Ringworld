@@ -119,6 +119,14 @@ func run() -> void:
 	if local_weather != null: local_weather.set("Enabled", false)
 	var bridge := game.get_node_or_null("SunshineCloudBridge")
 	if bridge != null: bridge.set("CloudWindMultiplier", 0.0)
+	# Quality-presets WO-8 (N4 under FSR2): --cloud-interleave=<n> sets the Sunshine interleave; --keep-interleave-under-fsr turns the
+	# DisableCloudInterleaveUnderFsr safety off so the interleave stays active in the fsr2_* configurations.
+	for argument in OS.get_cmdline_user_args():
+		if argument == "--keep-interleave-under-fsr":
+			pause_menu.call("SetDisableCloudInterleaveUnderFsr", false)
+		elif argument.begins_with("--cloud-interleave=") and bridge != null:
+			bridge.set("CloudInterleave", int(argument.get_slice("=", 1)))
+			bridge.call("ApplyTemporalQualityTuning", true)
 	for node_name in hide_nodes:
 		var hidden := game.get_node_or_null(str({"grass": "StandingGrass", "trees": "BiomeDecorations"}.get(node_name, node_name)))
 		if hidden is Node3D: (hidden as Node3D).visible = false
