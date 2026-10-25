@@ -41,7 +41,7 @@ public sealed class GameplayFarRenderingDefaults
     public bool SetOverride(string key, Variant value)
     {
         if (!TrySanitize(key, value, out Variant clean)) return false;
-        if (Settings.Overrides.TryGetValue(key, out Variant previous) && previous.Equals(clean)) return false;
+        if (Settings.Overrides.TryGetValue(key, out Variant previous) && RingVariantEquality.Same(previous, clean)) return false;
         Settings.Overrides[key] = clean;
         NormalizeMipOverrides();
         Dirty = true;
@@ -58,14 +58,15 @@ public sealed class GameplayFarRenderingDefaults
         if (finest > coarsest) Settings.Overrides["NativeTextureStreamingFinestMip"] = coarsest;
     }
 
-    public void Apply(RingScaledFarViewport? far)
+    public void Apply(RingScaledFarViewport? far, float presetResolutionScale = DefaultResolutionScale,
+        int presetAroundSegments = DefaultAroundSegments, int presetAcrossSegments = DefaultAcrossSegments)
     {
         if (far == null) return;
         far.GeometryMaxVertices = Value("GeometryMaxVertices", 750000).AsInt32();
         far.GeometryUploadsPerFrame = Value("GeometryUploadsPerFrame", 2).AsInt32();
         far.GeometryUploadBudgetMilliseconds = Value("GeometryUploadBudgetMilliseconds", 2f).AsSingle();
-        far.ApplyRuntimeRenderQuality(Value("ResolutionScale", DefaultResolutionScale).AsSingle(),
-            Value("AroundSegments", DefaultAroundSegments).AsInt32(), Value("AcrossSegments", DefaultAcrossSegments).AsInt32());
+        far.ApplyRuntimeRenderQuality(Value("ResolutionScale", presetResolutionScale).AsSingle(),
+            Value("AroundSegments", presetAroundSegments).AsInt32(), Value("AcrossSegments", presetAcrossSegments).AsInt32());
         far.ConfigureAdaptiveGeometry(Value("AdaptiveGeometryEnabled", true).AsBool(),
             Value("GeometryTargetPixelError", 2f).AsSingle(), Value("GeometryMaxAngularSegments", 384).AsInt32(),
             Value("GeometrySectorCount", 16).AsInt32(), Value("GeometryRefinementHysteresis", .25f).AsSingle());

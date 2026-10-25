@@ -16,6 +16,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="RingworldTechDemo"
 run/main_scene="res://scenes/StartMenu.tscn"
+run/main_scene.qp_perf_harness="res://tools/quality_preset_capture_entry.tscn"
 config/features=PackedStringArray("4.8", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 

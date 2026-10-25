@@ -380,8 +380,14 @@ public partial class RingGraphicsQualityController
             }
             atmosphere.Set("planet_light_cast_shadows", _shadowTuningOverrides.TryGetValue("PlanetShadowsEnabled", out Variant enabled) ? enabled.AsBool() : _planetShadowBaselineEnabled);
             // Near planet map (S7a): the PlanetShadowDistanceMeters and PlanetCascadeCount overrides are ignored while it is active; the baseline fade ratio comes back on exit.
-            atmosphere.Set("planet_light_shadow_distance_meters", near ? nearDistance : _shadowTuningOverrides.TryGetValue("PlanetShadowDistanceMeters", out Variant distance) ? distance.AsSingle() : _planetShadowBaselineDistanceMeters);
-            atmosphere.Set("planet_light_shadow_cascades", near ? 2 : _shadowTuningOverrides.TryGetValue("PlanetCascadeCount", out Variant cascades) ? cascades.AsInt32() : _planetShadowBaselineCascades);
+            // The planet light never reaches farther or uses more cascades than the sun's requested settings (explicit planet overrides still win).
+            float requestedSunDistance = _shadowTuningOverrides.TryGetValue("MaxDistanceMeters", out Variant sunDistanceOverride) ? sunDistanceOverride.AsSingle()
+                : _presetShadowDistanceMeters > 0.0f ? _presetShadowDistanceMeters : _planetShadowBaselineDistanceMeters;
+            // This runs before the sun baseline capture on the first apply, so read the live sun mode until it exists.
+            int requestedSunCascades = _shadowTuningOverrides.TryGetValue("CascadeCount", out Variant sunCascadeOverride) ? sunCascadeOverride.AsInt32()
+                : (_shadowBaselineCaptured ? _shadowBaselineMode : _sun?.DirectionalShadowMode ?? DirectionalLight3D.ShadowMode.Parallel4Splits) == DirectionalLight3D.ShadowMode.Parallel2Splits ? 2 : 4;
+            atmosphere.Set("planet_light_shadow_distance_meters", near ? nearDistance : _shadowTuningOverrides.TryGetValue("PlanetShadowDistanceMeters", out Variant distance) ? distance.AsSingle() : Mathf.Min(_planetShadowBaselineDistanceMeters, requestedSunDistance));
+            atmosphere.Set("planet_light_shadow_cascades", near ? 2 : _shadowTuningOverrides.TryGetValue("PlanetCascadeCount", out Variant cascades) ? cascades.AsInt32() : Mathf.Min(_planetShadowBaselineCascades, requestedSunCascades));
             if (near || _planetFadeRatioTouched)
             {
                 atmosphere.Set("planet_light_shadow_fade_ratio", near ? NearSunMapFadeStart : _planetShadowBaselineFadeRatio);

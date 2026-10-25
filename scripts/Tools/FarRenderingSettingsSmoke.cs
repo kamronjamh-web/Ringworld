@@ -79,11 +79,13 @@ public partial class FarRenderingSettingsSmoke : RefCounted
             bool reset = reloaded.Settings.Overrides.Count == 0 && reloaded.Dirty
                 && far.ResolutionScale == 1 && far.AroundSegments == 4096 && far.AcrossSegments == 64
                 && far.AdaptiveGeometryEnabled && far.GeometryTargetPixelError == 2 && reloaded.Save();
+            // With no stored override, the far viewport equals the preset's own tuple.
             bool presetsKeepDefaults = true;
             foreach (var preset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
             {
                 graphics.ApplyPreset(preset, applyTerrainPreset: false);
-                presetsKeepDefaults &= far.ResolutionScale == 1 && far.AroundSegments == 4096 && far.AcrossSegments == 64;
+                (float scale, int around, int across) = RingGraphicsQualityController.PresetFarRendering(preset);
+                presetsKeepDefaults &= far.ResolutionScale == scale && far.AroundSegments == around && far.AcrossSegments == across;
             }
             result["pass"] = missing && sanitation && changed && mipOrder && saved && noOp && persisted && overrideApplied && presetsKeepOverrides && invalidSafe && reset && presetsKeepDefaults;
             result["detail"] = $"missing={missing} sanitation={sanitation} changed={changed} mipOrder={mipOrder} saved={saved} noOp={noOp} persisted={persisted} applied={overrideApplied} presetOverrides={presetsKeepOverrides} invalid={invalidSafe} reset={reset} presetDefaults={presetsKeepDefaults}";

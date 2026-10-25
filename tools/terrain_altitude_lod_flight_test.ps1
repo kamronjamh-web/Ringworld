@@ -8,7 +8,7 @@
   # perf + screenshots only, moving leg at 16 km, reusing the profile left by the previous run
   .\tools\terrain_altitude_lod_flight_test.ps1 -Label high -Preset 2 -Cache reuse -ScriptArgs '--alts=16000,23000,60000 --pitches=-25,-70 --shots --move=16000 --quiet-only'
 .NOTES
-  -Preset 0 Low, 1 Medium, 2 High, 3 Desktop High. ALWAYS pass it: a saved slot may carry a different TerrainQuality.
+  -Preset 0 Low, 1 Medium, 2 High, 3 Very High. ALWAYS pass it: a saved slot may carry a different TerrainQuality.
   -Cache none | copy | reuse as for tools\menu_altitude_perf_capture.ps1.
   Output: .godot\terrain_altitude_lod\<OutLabel>\ (results.json, PNGs, console.log). Exit code 1 when a pose fails.
 #>
@@ -27,6 +27,8 @@ $project = Split-Path -Parent $PSScriptRoot
 $realProfile = Join-Path $env:APPDATA "Godot\app_userdata\$ProjectName"
 $base = Join-Path $project ".godot\terrain_altitude_lod"
 $isoRoot = Join-Path $base "appdata_$Label"
+# Bound .godot test output (stale isolated profiles and old captures); keeps the profile this run may reuse.
+& (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude (Split-Path -Leaf $isoRoot) | Out-Host
 $isoProfile = Join-Path $isoRoot "Godot\app_userdata\$ProjectName"
 if (-not $OutLabel) { $OutLabel = $Label }
 $outDir = Join-Path $base $OutLabel

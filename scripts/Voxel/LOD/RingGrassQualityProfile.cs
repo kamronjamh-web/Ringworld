@@ -69,8 +69,9 @@ public partial class RingGrassQualityProfile : Resource
 
     public static RingGrassQualityProfile For(RingTerrainLodCoordinator.QualityPreset preset, string hardwareTier = "desktop_mid_high")
     {
+        // The laptop tier follows the preset table, clamped to the fixed profile it used before presets drove it.
         if (string.Equals(hardwareTier, "laptop_140v_baseline", StringComparison.OrdinalIgnoreCase))
-            return Create(8, 2, 16, 28, 12, 28, 3, 49, 1500, 73500, 1, 1, 1.5f).WithCards(400, 14);
+            return For(preset, "desktop_mid_high").ClampToLaptopCeiling();
         return preset switch
         {
         RingTerrainLodCoordinator.QualityPreset.Low => Create(4, 1, 16, 28, 12, 28, 3, 49, 1500, 73500, 1, 1, 1.5f).WithCards(300, 14),
@@ -84,6 +85,22 @@ public partial class RingGrassQualityProfile : Resource
         RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => Create(96, 24, 16, 64, 32, 64, 8, 169, 24576, 4154000, 6, 6, 7).WithCards(600, 20),
         _ => For(RingTerrainLodCoordinator.QualityPreset.Medium, hardwareTier)
         };
+    }
+
+    private RingGrassQualityProfile ClampToLaptopCeiling()
+    {
+        NearDensity = Math.Min(NearDensity, 8); FarDensity = Math.Min(FarDensity, 2);
+        VisibilityRadiusMeters = Math.Min(VisibilityRadiusMeters, 28);
+        NearDistanceMeters = Math.Min(NearDistanceMeters, 12); FarDistanceMeters = Math.Min(FarDistanceMeters, 28);
+        TransitionWidthMeters = Math.Min(TransitionWidthMeters, 3);
+        MaximumResidentTiles = Math.Min(MaximumResidentTiles, 49);
+        MaximumInstancesPerTile = Math.Min(MaximumInstancesPerTile, 1500);
+        MaximumInstances = Math.Min(MaximumInstances, 73500);
+        MaximumBuildsInFlight = Math.Min(MaximumBuildsInFlight, 1); MaximumUploadsPerFrame = Math.Min(MaximumUploadsPerFrame, 1);
+        UploadBudgetMilliseconds = Math.Min(UploadBudgetMilliseconds, 1.5f);
+        CardReachMeters = Math.Min(CardReachMeters, 400); CardNearDensity = Math.Min(CardNearDensity, 14);
+        TileMeters = 16;
+        return this;
     }
 
     private RingGrassQualityProfile WithCards(float reachMeters, float nearDensity)

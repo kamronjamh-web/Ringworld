@@ -1,0 +1,6 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://tools/quality_preset_capture_entry.gd" id="1_entry"]
+
+[node name="QualityPresetCaptureEntry" type="Node"]
+script = ExtResource("1_entry")

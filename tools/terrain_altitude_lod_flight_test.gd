@@ -12,7 +12,7 @@ extends SceneTree
 ## Run through tools/terrain_altitude_lod_flight_test.ps1 (isolated APPDATA). Arguments after `--`:
 ##   --out=<name>            results folder under .godot/terrain_altitude_lod/ (default manual)
 ##   --slot=1                saved world slot inside the isolated profile
-##   --preset=2              coordinator quality preset: 0 Low, 1 Medium, 2 High, 3 Desktop High (set explicitly per run)
+##   --preset=2              coordinator quality preset: 0 Low, 1 Medium, 2 High, 3 Very High (set explicitly per run)
 ##   --alts=500,2000,8000,16000,23000,60000   --pitches=-15,-45,-89
 ##   --shots                 plain + tier-debug-colour screenshots at every pose (review only, not goldens)
 ##   --move=16000            moving leg altitude (omit for none); --move-seconds=30 --speed=1100

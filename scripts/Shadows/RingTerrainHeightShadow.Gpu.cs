@@ -6,6 +6,7 @@ using Godot;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Rendering;
 
 namespace RingworldTechDemo.Shadows;
 
@@ -359,7 +360,7 @@ public partial class RingTerrainHeightShadow
 
     private void SetGlobal(string name, Variant value)
     {
-        if (_globalCache.TryGetValue(name, out Variant cached) && cached.VariantType == value.VariantType && cached.Equals(value)) return;
+        if (_globalCache.TryGetValue(name, out Variant cached) && RingVariantEquality.Same(cached, value)) return;
         _globalCache[name] = value;
         RenderingServer.GlobalShaderParameterSet(name, value);
     }

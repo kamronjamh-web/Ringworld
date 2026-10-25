@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using RingworldTechDemo.Rendering;
 
 namespace RingworldTechDemo.Terrain.Surface;
 
@@ -81,7 +82,7 @@ public sealed class RingSurfaceFollowerRegistry
 
     private void Write(Entry entry, StringName name, Variant value)
     {
-        if (entry.Written.TryGetValue(name, out Variant last) && last.Equals(value)) return;
+        if (entry.Written.TryGetValue(name, out Variant last) && RingVariantEquality.Same(last, value)) return;
         entry.Follower.SetSurfaceParameter(name, value);
         entry.Written[name] = value;
         WriteCount++;

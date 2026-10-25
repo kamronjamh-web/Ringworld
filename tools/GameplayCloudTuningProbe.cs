@@ -2,6 +2,7 @@ using System;
 using System.Reflection;
 using Godot;
 using RingworldTechDemo.UI;
+using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo;
 
@@ -60,6 +61,60 @@ public partial class GameplayCloudTuningProbe : RefCounted
             && Verify(defaults, bridge, "DayCloudAmbientColor", new Color(.71f, .63f, .54f, 1.0f))
             && Verify(defaults, bridge, "DayCloudAmbientColor", new Color(.62f, .74f, .83f, 1.0f))
             && !defaults.SetOverride(bridge, "DayCloudAmbientColor", new Color(.62f, .74f, .83f, 1.0f));
+    }
+
+    /// <summary>
+    /// Preset ownership of the 12 profile keys: with the factory file loaded read-only, every graphics preset leaves the bridge on that
+    /// preset's tuple (the factory file no longer owns them), and a sparse user override survives ApplyUserPreset.
+    /// </summary>
+    public string VerifyPresetOwnership(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal) || isolatedPath.Contains("..", StringComparison.Ordinal)) return "bad path";
+        FieldInfo? defaultsField = typeof(RingSunshineCloudBridge).GetField("<GameplayCloudDefaults>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic);
+        FieldInfo? cloudsField = typeof(RingGraphicsQualityController).GetField("_sunshineClouds", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (defaultsField is null || cloudsField is null) return "reflection fields missing";
+        string absolute = ProjectSettings.GlobalizePath(isolatedPath);
+        using var bridge = new RingSunshineCloudBridge();
+        using var graphics = new RingGraphicsQualityController();
+        try
+        {
+            System.IO.File.Delete(absolute);
+            // Factory file, never saved from here: no SetOverride is called on this instance.
+            var factory = new GameplayCloudDefaults();
+            defaultsField.SetValue(bridge, factory);
+            cloudsField.SetValue(graphics, bridge);
+            factory.Initialize(bridge);
+            foreach (string key in new[] { "RaymarchSteps", "LightingSteps", "GpuNearShadowMapResolution", "GpuNearShadowUpdatesPerSecond", "GpuFarShadowMapResolution", "GpuFarShadowUpdatesPerSecond", "GpuShadowVerticalSamples", "CloudResolutionScale", "CloudResolutionJitter", "CloudInterleave", "WeatherSystemUploadCount" })
+                if (factory.Settings.Overrides.ContainsKey(key)) return "factory file still owns " + key;
+            foreach (RingTerrainLodCoordinator.QualityPreset preset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
+            {
+                graphics.ApplyPreset(preset, applyTerrainPreset: false);
+                (float stepMeters, int maxSamples) = preset switch
+                {
+                    RingTerrainLodCoordinator.QualityPreset.Low => (400f, 32),
+                    RingTerrainLodCoordinator.QualityPreset.VeryHigh => (200f, 96),
+                    RingTerrainLodCoordinator.QualityPreset.UltraVideo or RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (150f, 128),
+                    _ => (250f, 64)
+                };
+                bool tuple = bridge.CloudResolutionScale == 0 && bridge.RaymarchSteps == 328 && bridge.GpuNearShadowMapResolution == 512
+                    && bridge.GpuFarShadowMapResolution == 128 && bridge.GpuNearShadowUpdatesPerSecond == 5f && bridge.GpuFarShadowUpdatesPerSecond == 2.5f
+                    && bridge.GpuShadowVerticalSamples == 24 && bridge.GpuShadowStepMeters == stepMeters && bridge.GpuShadowMaxSamples == maxSamples
+                    && !bridge.CloudResolutionJitter && bridge.CloudInterleave == 1 && bridge.WeatherSystemUploadCount == 64 && bridge.LightingSteps == 30;
+                if (!tuple) return $"preset {preset} tuple mismatch raymarch={bridge.RaymarchSteps} lighting={bridge.LightingSteps} near={bridge.GpuNearShadowMapResolution} far={bridge.GpuFarShadowMapResolution} vertical={bridge.GpuShadowVerticalSamples} upload={bridge.WeatherSystemUploadCount}";
+            }
+            // A sparse override (saved in an isolated file, as the drawer does) wins over the preset.
+            var sparse = new GameplayCloudDefaults(isolatedPath);
+            defaultsField.SetValue(bridge, sparse);
+            sparse.Initialize(bridge);
+            if (!sparse.SetOverride(bridge, "RaymarchSteps", 200)) return "sparse override rejected";
+            foreach (RingTerrainLodCoordinator.QualityPreset preset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
+            {
+                graphics.ApplyUserPreset(preset);
+                if (bridge.RaymarchSteps != 200 || bridge.LightingSteps != 30) return $"sparse override lost on {preset}: raymarch={bridge.RaymarchSteps} lighting={bridge.LightingSteps}";
+            }
+            return "";
+        }
+        finally { System.IO.File.Delete(absolute); }
     }
 
     public bool VerifyCullingPreferenceContract(string isolatedPath)

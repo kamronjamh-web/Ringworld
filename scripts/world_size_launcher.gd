@@ -1317,10 +1317,6 @@ func _configure_mega_ring_game(game: Node) -> void:
 			far_lod_node.visible = false
 
 	var scaled_far_viewport := game.get_node("ScaledFarViewport")
-	# The graphics controller applies its default preset after this launcher
-	# configures the game. Mark Mega so that controller preserves this dedicated
-	# whole-ring backdrop target instead of restoring its normal preset mesh.
-	game.get_node("GraphicsQuality").set("UseMegaRegionalFarBackdrop", true)
 	scaled_far_viewport.set("Enabled", true)
 	scaled_far_viewport.set("RegionalFarLodsEnabled", true)
 	scaled_far_viewport.set("CoordinateScale", 0.0000001)

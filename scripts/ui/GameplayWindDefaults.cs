@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Godot;
 using RingworldTechDemo.Weather;
+using RingworldTechDemo.Rendering;
 
 namespace RingworldTechDemo.UI;
 
@@ -69,7 +70,7 @@ public sealed class GameplayWindDefaults
     public bool SetOverride(string key, Variant value)
     {
         if (!TryValidate(key, value, out Variant clean)) return false;
-        if (Settings.Overrides.TryGetValue(key, out Variant old) && old.Equals(clean) && RingWindSettings.Current.Get(key).Equals(clean)) return false;
+        if (Settings.Overrides.TryGetValue(key, out Variant old) && RingVariantEquality.Same(old, clean) && RingVariantEquality.Same(RingWindSettings.Current.Get(key), clean)) return false;
         RingWindSettings.Current.Set(key, clean);
         Settings.Overrides[key] = clean;
         Dirty = true;

@@ -62,15 +62,17 @@ func _run() -> void:
 	_drawer.call("SetBenchmarkDrawerOpen", true)
 	await process_frame
 
-	var enabled := _drawer.find_child("AtmosphereEnabled", true, false) as CheckButton
+	# Haze is a contract system (docs/quality-presets-plan.md C3): the menu has no on/off row.
+	if _drawer.find_child("AtmosphereEnabled", true, false) != null:
+		return _fail("atmosphere drawer still exposes a haze on/off row")
 	var preset := _drawer.find_child("AtmospherePreset", true, false) as OptionButton
 	var density := _drawer.find_child("AtmosphereDensity", true, false) as HSlider
 	var status := _drawer.find_child("AtmosphereStatus", true, false) as Label
 	var save := _drawer.find_child("AtmosphereSaveNow", true, false) as Button
 	var reset := _drawer.find_child("AtmosphereReset", true, false) as Button
-	if enabled == null or preset == null or density == null or status == null or save == null or reset == null:
+	if preset == null or density == null or status == null or save == null or reset == null:
 		return _fail("atmosphere controls were not built for drawer-before-controller startup")
-	if enabled.disabled or preset.disabled or density.editable == false:
+	if preset.disabled or density.editable == false:
 		return _fail("atmosphere controls stayed disabled with a live controller")
 	# This is read-only. It must pass before an isolated profile is installed;
 	# original code cached null here because GraphicsQuality had not readied.
@@ -164,9 +166,9 @@ func _run() -> void:
 	# An outside runtime change must refresh the menu without calling its helper.
 	_graphics.call("SetAtmosphereEnabled", false)
 	await create_timer(0.3).timeout
-	if enabled.button_pressed or bool((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("enabled", true)) or not status.text.to_lower().contains("off"):
+	if bool((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("enabled", true)) or not status.text.to_lower().contains("off"):
 		return _fail("external haze state did not synchronize the menu")
-	enabled.button_pressed = true
+	_drawer.call("SetAtmosphereEnabled", true)
 	await process_frame
 	density.value = 0.0
 	await process_frame
@@ -208,7 +210,7 @@ func _run() -> void:
 	# controller still cached by unrelated tabs in this minimal fixture.
 	_graphics.name = "UnavailableGraphicsQuality"
 	await create_timer(0.3).timeout
-	if not enabled.disabled or not preset.disabled or density.editable or not status.text.to_lower().contains("unavailable"):
+	if not preset.disabled or density.editable or not status.text.to_lower().contains("unavailable"):
 		return _fail("atmosphere controls did not disable when their controller disappeared")
 
 	print("ATMOSPHERE_MENU_SMOKE_TEST=PASS")

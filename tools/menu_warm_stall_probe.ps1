@@ -33,6 +33,8 @@ $realProfile = Join-Path $env:APPDATA "Godot\app_userdata\$ProjectName"
 $base = Join-Path $project ".godot\phase_c_live"
 if ($Profile -eq "") { $Profile = $Label }
 $isoRoot = Join-Path $base "appdata_$Profile"
+# Bound .godot test output (stale isolated profiles and old captures); keeps the profile this run may reuse.
+& (Join-Path $PSScriptRoot "prune_test_output.ps1") -Apply -Quiet -Exclude (Split-Path -Leaf $isoRoot) | Out-Host
 $isoProfile = Join-Path $isoRoot "Godot\app_userdata\$ProjectName"
 $outDir = Join-Path $base $Label
 New-Item -ItemType Directory -Force $outDir | Out-Null

@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Godot;
+using RingworldTechDemo.Rendering;
 
 namespace RingworldTechDemo.UI;
 
@@ -63,7 +64,7 @@ public sealed class GameplayVegetationDefaults
     public bool Set(string key, Variant value)
     {
         if (!TryValidate(key, value, out Variant clean)) return false;
-        if (Settings.Overrides.TryGetValue(key, out Variant old) && old.Equals(clean)) return false;
+        if (Settings.Overrides.TryGetValue(key, out Variant old) && RingVariantEquality.Same(old, clean)) return false;
         Settings.Overrides[key] = clean;
         Dirty = true;
         return true;

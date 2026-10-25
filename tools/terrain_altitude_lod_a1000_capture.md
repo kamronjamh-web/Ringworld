@@ -11,7 +11,7 @@ against an isolated copy of one saved world, so your real saves, caches and sett
 
 ## 1. Invariant + perf run (about 8 minutes per preset)
 From the repo root in PowerShell. `-Preset` is the coordinator quality preset (0 Low, 1 Medium, 2 High,
-3 Desktop High). Always pass it: a saved slot may carry a different terrain quality.
+3 Very High). Always pass it: a saved slot may carry a different terrain quality.
 
 ```powershell
 # first run copies the slot and your shader/ring caches into .godot\terrain_altitude_lod\appdata_a1000

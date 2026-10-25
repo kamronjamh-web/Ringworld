@@ -13,6 +13,7 @@ public partial class GrassGpuGeometryTest : RefCounted
             Validate(RingGrassMeshFactory.CreateIntermediateClump(), RingGrassMeshFactory.CreateIntermediateClump(true), 16, 8, 32, 16);
             ValidateGates();
             ValidateGameplayDefaults();
+            ValidateLaptopGrassProfiles();
             return true;
         }
         catch (Exception error) { GD.PushError("GRASS_GPU_GEOMETRY=FAIL " + error.Message); return false; }
@@ -101,6 +102,36 @@ public partial class GrassGpuGeometryTest : RefCounted
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    /// <summary>The laptop tier follows the preset table, clamped to its former fixed profile.</summary>
+    private static void ValidateLaptopGrassProfiles()
+    {
+        const string laptop = "laptop_140v_baseline";
+        using var low = RingGrassQualityProfile.For(RingTerrainLodCoordinator.QualityPreset.Low, laptop);
+        using var medium = RingGrassQualityProfile.For(RingTerrainLodCoordinator.QualityPreset.Medium, laptop);
+        using var high = RingGrassQualityProfile.For(RingTerrainLodCoordinator.QualityPreset.High, laptop);
+        Require(low.NearDensity < medium.NearDensity && low.CardReachMeters < medium.CardReachMeters, "laptop Low is not cheaper than laptop Medium");
+        // The fixed profile the laptop tier used before presets drove it.
+        Require(medium.NearDensity == 8 && medium.FarDensity == 2 && medium.TileMeters == 16 && medium.VisibilityRadiusMeters == 28
+            && medium.NearDistanceMeters == 12 && medium.FarDistanceMeters == 28 && medium.TransitionWidthMeters == 3
+            && medium.MaximumResidentTiles == 49 && medium.MaximumInstancesPerTile == 1500 && medium.MaximumInstances == 73500
+            && medium.MaximumBuildsInFlight == 1 && medium.MaximumUploadsPerFrame == 1 && medium.UploadBudgetMilliseconds == 1.5f
+            && medium.CardReachMeters == 400 && medium.CardNearDensity == 14, "laptop Medium differs from the old fixed laptop profile");
+        Require(high.NearDensity == medium.NearDensity && high.FarDensity == medium.FarDensity && high.VisibilityRadiusMeters == medium.VisibilityRadiusMeters
+            && high.NearDistanceMeters == medium.NearDistanceMeters && high.FarDistanceMeters == medium.FarDistanceMeters
+            && high.TransitionWidthMeters == medium.TransitionWidthMeters && high.MaximumResidentTiles == medium.MaximumResidentTiles
+            && high.MaximumInstancesPerTile == medium.MaximumInstancesPerTile && high.MaximumInstances == medium.MaximumInstances
+            && high.MaximumBuildsInFlight == medium.MaximumBuildsInFlight && high.MaximumUploadsPerFrame == medium.MaximumUploadsPerFrame
+            && high.UploadBudgetMilliseconds == medium.UploadBudgetMilliseconds && high.CardReachMeters == medium.CardReachMeters
+            && high.CardNearDensity == medium.CardNearDensity, "laptop High is not clamped to the laptop ceiling");
+        foreach (var preset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
+        {
+            using var profile = RingGrassQualityProfile.For(preset, laptop);
+            Require(profile.HasSufficientInstanceBudget(), $"laptop {preset} grass budget is insufficient");
+            using var desktop = RingGrassQualityProfile.For(preset, "desktop_mid_high");
+            Require(desktop.HasSufficientInstanceBudget(), $"desktop {preset} grass budget is insufficient");
+        }
     }
 
     private static void ValidateGameplayDefaults()

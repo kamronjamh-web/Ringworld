@@ -1,4 +1,4 @@
-If a request lacks key details, do not guess, Ask up to 3 clarifying questions.
+If a request lacks key details, do not guess; ask clarifying questions. Aim for 3 or fewer (soft cap); go beyond 3 only when each extra question would change what you do and cannot be answered from the code, docs or sensible defaults. Never ask more than 9 (hard cap).
 
 ## Agent roles
 
@@ -35,3 +35,10 @@ Only expose a value in the grave-key menu when it is a genuine tunable someone w
 - Good: haze as a whole (density, falloff, color).
 - Bad: separate "POI haze" or "POI shadows" toggles. POIs must automatically receive regular haze, shadows and lighting like every other world surface.
 - Debug or A/B switches belong in debug tooling, not the menu.
+
+## Test output
+
+Isolated APPDATA profiles copy a saved world plus the shader, Vulkan and ring caches (up to ~2.5 GB each), and `.godot` once grew to 160 GB from leftover runs.
+- Reuse one profile per task (a fixed label, `-Cache reuse` where the runner supports it) instead of a new `appdata_<label>` per run.
+- Run `tools/prune_test_output.ps1 -Apply` when a task finishes. The `tools/*.ps1` runners already call it before each run; ad-hoc scripts that create profiles or captures must do the same.
+- Never delete the project caches or baselines the script keeps (`imported`, `mono`, `editor`, `shader_cache`, `shadow_baseline`, `s5_before`, ...).

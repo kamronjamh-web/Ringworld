@@ -30,7 +30,6 @@ public partial class RingLodPauseMenu : CanvasLayer
     [Export] public NodePath ScaledFarViewportPath { get; set; } = new("../ScaledFarViewport");
     [Export] public NodePath SunshineCloudBridgePath { get; set; } = new("../SunshineCloudBridge");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
-    [Export] public bool HazeEnabledByDefault { get; set; } = false;
     [Export(PropertyHint.Range, "2,32,1")] public int DefaultChunkRadius { get; set; } = 7;
     [Export(PropertyHint.Range, "2,32,1")] public int DefaultVerticalChunkRadius { get; set; } = 7;
     [Export] public UpscalingPreset DefaultUpscalingPreset { get; set; } = UpscalingPreset.Native;
@@ -74,7 +73,6 @@ public partial class RingLodPauseMenu : CanvasLayer
     private bool _displayApplyPending;
     private Vector2I _pendingResolution;
     private CheckButton? _debugColors;
-    private CheckButton? _hazeToggle;
     private readonly Dictionary<GeometryInstance3D, Material?> _debugOriginalMaterials = new();
     private readonly Dictionary<CanvasLayer, bool> _suppressedHudVisibility = new();
     private readonly Dictionary<CanvasItem, bool> _suppressedItemVisibility = new();
@@ -106,8 +104,6 @@ public partial class RingLodPauseMenu : CanvasLayer
         BuildMenu();
         ApplySavedRenderResolution(updateStatus: false);
         _renderResolutionReady = true;
-        SetAtmosphericHaze(HazeEnabledByDefault);
-        SyncAtmosphericHazeToggle();
         ApplyLodProfile(DefaultChunkRadius, DefaultVerticalChunkRadius);
         SetMenuOpen(false);
     }
@@ -150,7 +146,6 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (_renderResolutionStatusElapsed >= 0.25)
             {
                 _renderResolutionStatusElapsed = 0.0;
-                SyncAtmosphericHazeToggle();
                 UpdateRenderResolutionStatus();
                 UpdateProxyCoverageCullingStatus();
             }
@@ -286,17 +281,20 @@ public partial class RingLodPauseMenu : CanvasLayer
         _qualityOptions.AddItem("Medium");
         _qualityOptions.AddItem("High");
         _qualityOptions.AddItem("Very High");
-        _qualityOptions.AddItem("Ultra / Video");
-        _qualityOptions.AddItem("Cinematic / RTX 5090");
-        _qualityOptions.Select((int)(_graphicsQuality?.CurrentPreset
+        _qualityOptions.AddItem("Ultra");
+        var currentQuality = _graphicsQuality?.CurrentPreset
             ?? _coordinator?.CurrentPreset
-            ?? RingTerrainLodCoordinator.QualityPreset.Medium));
+            ?? RingTerrainLodCoordinator.QualityPreset.Medium;
+        // Cinematic is command-line only (--graphics-preset=cinematic-5090); list it only while it is active.
+        if (currentQuality == RingTerrainLodCoordinator.QualityPreset.Cinematic5090)
+            _qualityOptions.AddItem("Cinematic / RTX 5090 (command line)");
+        _qualityOptions.Select(Mathf.Min((int)currentQuality, _qualityOptions.ItemCount - 1));
         _qualityOptions.ItemSelected += OnQualitySelected;
         qualityRow.AddChild(_qualityOptions);
         column.AddChild(qualityRow);
         var qualityNote = new Label
         {
-            Text = "Ultra / Video matches the recording pass. Cinematic / RTX 5090 enables a 16K shadow atlas, 24 km cascades, 240 km terrain shadows, and 2048px cloud shadows; it deliberately targets 24 GB+ VRAM and can overwhelm an RTX 4070.",
+            Text = "Ultra matches the recording pass. Cinematic / RTX 5090 is command line only (--graphics-preset=cinematic-5090); it enables a 16K shadow atlas, 24 km cascades, 240 km terrain shadows, and 2048px cloud shadows, and targets 24 GB+ VRAM.",
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         qualityNote.Modulate = RingUiStyle.Muted;
@@ -403,16 +401,6 @@ public partial class RingLodPauseMenu : CanvasLayer
         _partialCoverageMeshCullingStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart };
         _partialCoverageMeshCullingStatus.Modulate = RingUiStyle.Muted;
         column.AddChild(_partialCoverageMeshCullingStatus);
-
-        column.AddChild(new HSeparator());
-        column.AddChild(new Label { Text = "Atmosphere" });
-        _hazeToggle = new CheckButton
-        {
-            Text = "Distant atmospheric haze",
-            ButtonPressed = HazeEnabledByDefault
-        };
-        _hazeToggle.Toggled += SetAtmosphericHaze;
-        column.AddChild(_hazeToggle);
 
         column.AddChild(new HSeparator());
         column.AddChild(new Label { Text = "Terrain Layer Debug" });
@@ -592,47 +580,6 @@ public partial class RingLodPauseMenu : CanvasLayer
         if (recovered) SetMenuOpen(false);
     }
 
-    private void SetAtmosphericHaze(bool enabled)
-    {
-        RingAtmosphereModel.Enabled = enabled;
-        ProjectSettings.SetSetting("ringworld/runtime/haze_enabled", enabled);
-        if (_worldEnvironment?.Environment is { } environment)
-            environment.FogEnabled = false;
-        ApplyAtmosphereSettingRecursively(GetTree().CurrentScene, enabled);
-    }
-
-    private void SyncAtmosphericHazeToggle()
-    {
-        _hazeToggle?.SetPressedNoSignal(RingAtmosphereModel.Enabled);
-    }
-
-    private static void ApplyAtmosphereSettingRecursively(Node? node, bool enabled)
-    {
-        if (node == null) return;
-        if (node is GeometryInstance3D geometry)
-        {
-            SetAtmosphereOnMaterial(geometry.MaterialOverride, enabled);
-            SetAtmosphereOnMaterial(geometry.MaterialOverlay, enabled);
-            if (geometry is MeshInstance3D meshInstance && meshInstance.Mesh != null)
-            {
-                for (int surface = 0; surface < meshInstance.Mesh.GetSurfaceCount(); surface++)
-                {
-                    SetAtmosphereOnMaterial(meshInstance.GetSurfaceOverrideMaterial(surface), enabled);
-                    SetAtmosphereOnMaterial(meshInstance.Mesh.SurfaceGetMaterial(surface), enabled);
-                }
-            }
-        }
-        foreach (Node child in node.GetChildren())
-            ApplyAtmosphereSettingRecursively(child, enabled);
-    }
-
-    private static void SetAtmosphereOnMaterial(Material? material, bool enabled)
-    {
-        if (material is not ShaderMaterial shaderMaterial || shaderMaterial.Shader == null) return;
-        if (!shaderMaterial.Shader.Code.Contains("ring_atmosphere_enabled")) return;
-        shaderMaterial.SetShaderParameter("ring_atmosphere_enabled", enabled);
-    }
-
     private void SetDiagnosticColors(bool enabled)
     {
         Color[] levelColors = { Colors.Lime, Colors.Cyan, Colors.DodgerBlue, Colors.MediumPurple, Colors.Orange, Colors.HotPink, Colors.Gold, Colors.White };
@@ -685,7 +632,9 @@ public partial class RingLodPauseMenu : CanvasLayer
         if (_graphicsQuality != null) _graphicsQuality.ApplyUserPreset(quality);
         else _coordinator?.ApplyUserQualityPreset(quality);
         int workers = Mathf.Clamp(Mathf.RoundToInt(_workerSlider?.Value ?? 2.0), 1, 32);
-        if (_coordinator != null) _coordinator.MaxConcurrentWorkerBuilds = workers;
+        // The LOD profile owns the worker count; only an explicit slider change is a session override.
+        if (_coordinator != null && workers != _coordinator.GetProfileConcurrentWorkers(quality))
+            _coordinator.MaxConcurrentWorkerBuilds = workers;
         ApplyLodProfile(chunks, verticalChunks);
 
         QueueDisplaySettingsApply();
@@ -975,19 +924,11 @@ public partial class RingLodPauseMenu : CanvasLayer
     private void OnQualitySelected(long index)
     {
         if (_workerSlider == null) return;
-        int workers = (RingTerrainLodCoordinator.QualityPreset)Mathf.Clamp(
+        var preset = (RingTerrainLodCoordinator.QualityPreset)Mathf.Clamp(
             (int)index,
             0,
-            (int)RingTerrainLodCoordinator.QualityPreset.Cinematic5090) switch
-        {
-            RingTerrainLodCoordinator.QualityPreset.Low => 2,
-            RingTerrainLodCoordinator.QualityPreset.Medium => 2,
-            RingTerrainLodCoordinator.QualityPreset.High => 4,
-            RingTerrainLodCoordinator.QualityPreset.VeryHigh => 6,
-            RingTerrainLodCoordinator.QualityPreset.UltraVideo => 16,
-            RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => 24,
-            _ => 2
-        };
+            (int)RingTerrainLodCoordinator.QualityPreset.Cinematic5090);
+        int workers = _coordinator?.GetProfileConcurrentWorkers(preset) ?? 2;
         _workerSlider.Value = workers;
     }
 
@@ -1072,7 +1013,6 @@ public partial class RingLodPauseMenu : CanvasLayer
             if (open)
             {
                 SuppressGameplayHud();
-                SyncAtmosphericHazeToggle();
                 _renderResolutionStatusElapsed = 0.0;
                 UpdateRenderResolutionStatus();
                 UpdateProxyCoverageCullingStatus();

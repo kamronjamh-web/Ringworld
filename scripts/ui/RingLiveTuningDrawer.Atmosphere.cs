@@ -13,7 +13,6 @@ public partial class RingLiveTuningDrawer
     private OptionButton? _atmosphereHazeModel;
     private OptionButton? _atmosphereHazeQuality;
     private VBoxContainer? _atmospherePhysicalGroup;
-    private CheckButton? _atmosphereEnabled;
     private CheckButton? _atmosphereSkyHazeLut;
     private CheckButton? _atmosphereVegetationInstanceHaze;
     private Label? _atmosphereStatus;
@@ -81,6 +80,7 @@ public partial class RingLiveTuningDrawer
         RefreshAtmosphereControls();
     }
 
+    /// <summary>Debug/test API only; not in the menu. Haze is a contract system (docs/quality-presets-plan.md C3).</summary>
     public void SetAtmosphereEnabled(bool enabled)
     {
         GetAtmosphereController()?.SetAtmosphereEnabled(enabled);
@@ -128,16 +128,6 @@ public partial class RingLiveTuningDrawer
     {
         VBoxContainer tab = CreateTab(tabs, "Atmosphere");
         AtmosphereVisualSettings settings = _atmosphereDefaults?.Settings ?? new AtmosphereVisualSettings();
-
-        _atmosphereEnabled = new CheckButton
-        {
-            Name = "AtmosphereEnabled",
-            Text = "Atmospheric haze",
-            ButtonPressed = RingAtmosphereModel.Enabled
-        };
-        _atmosphereEnabled.Toggled += SetAtmosphereEnabled;
-        _atmosphereControls.Add(_atmosphereEnabled);
-        tab.AddChild(_atmosphereEnabled);
 
         _atmospherePreset = new OptionButton { Name = "AtmospherePreset" };
         _atmospherePreset.AddItem("Natural", 0);
@@ -233,7 +223,6 @@ public partial class RingLiveTuningDrawer
             if (control is BaseButton button) button.Disabled = !available;
             if (control is HSlider slider) slider.Editable = available;
         }
-        _atmosphereEnabled?.SetPressedNoSignal(RingAtmosphereModel.Enabled);
         if (!available) { UpdateAtmosphereStatus(); return; }
 
         AtmosphereVisualSettings s = _atmosphereDefaults!.Settings;

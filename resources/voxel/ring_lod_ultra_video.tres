@@ -4,7 +4,7 @@
 
 [resource]
 script = ExtResource("1")
-DisplayName = "Ultra / Video"
+DisplayName = "Ultra"
 ActiveLevelCount = 8
 Lod1OutMeters = Vector2(650, 800)
 Lod2OutMeters = Vector2(1500, 1900)

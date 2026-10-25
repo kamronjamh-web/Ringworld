@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using Godot;
 using RingworldTechDemo.Weather;
+using RingworldTechDemo.Rendering;
 namespace RingworldTechDemo.UI;
 
 public sealed class GameplayRainHazeDefaults
@@ -39,7 +40,7 @@ public sealed class GameplayRainHazeDefaults
     public bool SetOverride(string key, Variant value)
     {
         if (!TryValidate(key, value, out Variant clean)) return false;
-        if (Settings.Overrides.TryGetValue(key, out Variant old) && old.Equals(clean) && RingRainHazeSettings.Current.Get(key).Equals(clean)) return false;
+        if (Settings.Overrides.TryGetValue(key, out Variant old) && RingVariantEquality.Same(old, clean) && RingVariantEquality.Same(RingRainHazeSettings.Current.Get(key), clean)) return false;
         Settings.Overrides[key] = clean; RingRainHazeSettings.Current.Set(key, clean); Dirty = true; return true;
     }
     public void Reset()

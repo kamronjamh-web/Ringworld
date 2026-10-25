@@ -21,6 +21,7 @@ public partial class RingWorldSaveManager : Node
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath CoordinatorPath { get; set; } = new("../TerrainLodCoordinator");
+    [Export] public NodePath GraphicsQualityPath { get; set; } = new("../GraphicsQuality");
     [Export] public NodePath CloudPath { get; set; } = new("../RingVolumetricClouds");
     [Export] public NodePath SmoothTerrainPath { get; set; } = new("../SmoothTerrainGrid");
     [Export] public NodePath ConstructionOverlayPath { get; set; } = new("../SmoothConstructionOverlay");
@@ -89,6 +90,7 @@ public partial class RingWorldSaveManager : Node
     private VoxelChunkGridManager? _grid;
     private RingVoxelExplorerController? _explorer;
     private RingTerrainLodCoordinator? _coordinator;
+    private RingGraphicsQualityController? _graphicsQuality;
     private RingworldTechDemo.RingVolumetricCloudLayer? _clouds;
     private SmoothTerrainGrid? _smoothTerrain;
     private SmoothConstructionOverlay? _constructionOverlay;
@@ -162,7 +164,7 @@ public partial class RingWorldSaveManager : Node
         public int TerrainWorkers { get; set; } = 2;
         public int SurfaceChunkRadius { get; set; } = 7;
         public int VerticalChunkRadius { get; set; } = 7;
-        public bool AtmosphericHaze { get; set; }
+        public bool AtmosphericHaze { get; set; } = true;
         public int CloudQuality { get; set; } = 1;
         // Optional for backwards-compatible save documents. Old saves restore
         // at zero and then advance normally.
@@ -179,6 +181,7 @@ public partial class RingWorldSaveManager : Node
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _coordinator = GetNodeOrNull<RingTerrainLodCoordinator>(CoordinatorPath);
+        _graphicsQuality = GetNodeOrNull<RingGraphicsQualityController>(GraphicsQualityPath);
         _clouds = GetNodeOrNull<RingworldTechDemo.RingVolumetricCloudLayer>(CloudPath);
         _smoothTerrain = GetNodeOrNull<SmoothTerrainGrid>(SmoothTerrainPath);
         _constructionOverlay = GetNodeOrNull<SmoothConstructionOverlay>(ConstructionOverlayPath);
@@ -1038,17 +1041,19 @@ public partial class RingWorldSaveManager : Node
             StringComparison.Ordinal);
         if (hardwareTierChanged)
         {
-            ApplyHardwareBaseline(runtime, activeHardwareTier);
+            ApplyHardwareBaseline(runtime, activeHardwareTier, _coordinator);
             GD.Print($"World performance settings adapted for hardware tier: {activeHardwareTier}.");
         }
-        if (_coordinator != null)
+        if (_coordinator != null || _graphicsQuality != null)
         {
+            // One preset everywhere: the controller drives the coordinator, clouds, shadows and haze defaults.
+            // Saved TerrainWorkers/CloudQuality are not applied; the LOD profile and the preset own them.
             var preset = (RingTerrainLodCoordinator.QualityPreset)Math.Clamp(
                 runtime.TerrainQuality,
                 (int)RingTerrainLodCoordinator.QualityPreset.Low,
-                (int)RingTerrainLodCoordinator.QualityPreset.VeryHigh);
-            _coordinator.ApplyUserQualityPreset(preset);
-            _coordinator.MaxConcurrentWorkerBuilds = Math.Clamp(runtime.TerrainWorkers, 1, 32);
+                (int)RingTerrainLodCoordinator.QualityPreset.UltraVideo);
+            if (_graphicsQuality != null) _graphicsQuality.ApplyUserPreset(preset);
+            else _coordinator!.ApplyUserQualityPreset(preset);
         }
         if (_smoothBackendActive && _smoothTerrain != null)
         {
@@ -1063,15 +1068,13 @@ public partial class RingWorldSaveManager : Node
             _grid!.ApplySurfaceStreamingRadius(Math.Clamp(runtime.SurfaceChunkRadius, 2, 32));
             _grid.ApplyVerticalStreamingRadius(Math.Clamp(runtime.VerticalChunkRadius, 2, 32));
         }
-        RingAtmosphereModel.Enabled = runtime.AtmosphericHaze;
-        ProjectSettings.SetSetting("ringworld/runtime/haze_enabled", runtime.AtmosphericHaze);
+        // Haze is a contract system (docs/quality-presets-plan.md C3): always on, whatever an old save recorded.
+        if (!runtime.AtmosphericHaze)
+            GD.Print("World load: migrated saved atmospheric haze=false to on (haze is always on; docs/quality-presets-plan.md C3).");
+        RingAtmosphereModel.Enabled = true;
+        ProjectSettings.SetSetting("ringworld/runtime/haze_enabled", true);
         if (_clouds != null)
         {
-            var quality = (RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality)Math.Clamp(
-                runtime.CloudQuality,
-                (int)RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.Off,
-                (int)RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.Ultra);
-            _clouds.SetQuality(quality);
             _clouds.CloudSimulationTimeSeconds = Math.Max(0.0, runtime.CloudSimulationTimeSeconds);
         }
         if (_celestialClock != null && _celestialClock.HasMethod("set_simulation_seconds"))
@@ -1098,14 +1101,16 @@ public partial class RingWorldSaveManager : Node
             "ringworld/runtime/hardware_tier",
             "laptop_140v_baseline").AsString();
 
-    private static void ApplyHardwareBaseline(RuntimeDocument runtime, string tier)
+    private static void ApplyHardwareBaseline(RuntimeDocument runtime, string tier, RingTerrainLodCoordinator? coordinator)
     {
         bool desktop = string.Equals(tier, "desktop_mid_high", StringComparison.Ordinal);
         runtime.HardwareTier = tier;
         runtime.TerrainQuality = (int)(desktop
             ? RingTerrainLodCoordinator.QualityPreset.VeryHigh
-            : RingTerrainLodCoordinator.QualityPreset.High);
-        runtime.TerrainWorkers = desktop ? 8 : 3;
+            : RingTerrainLodCoordinator.QualityPreset.Medium);
+        // Informational only (the LOD profile owns the worker count on load); kept for file compatibility.
+        runtime.TerrainWorkers = coordinator?.GetProfileConcurrentWorkers((RingTerrainLodCoordinator.QualityPreset)runtime.TerrainQuality)
+            ?? (desktop ? 8 : 2);
         runtime.SurfaceChunkRadius = 7;
         runtime.VerticalChunkRadius = 7;
         runtime.CloudQuality = (int)(desktop

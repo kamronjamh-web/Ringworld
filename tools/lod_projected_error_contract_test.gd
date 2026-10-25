@@ -1,7 +1,7 @@
 extends SceneTree
 
 # Headless projected-error contract for the terrain proxy chain on the Certified ring
-# (docs/terrain-altitude-lod-coverage-plan.md). For Low, Medium, High and Desktop High,
+# (docs/terrain-altitude-lod-coverage-plan.md). For Low, Medium, High and Very High,
 # every visible proxy tier must stay within 2.5x the target pixel error, and the global
 # backdrop within 5x, at 0.5, 2, 8, 16, 23 and 60 km altitude.
 

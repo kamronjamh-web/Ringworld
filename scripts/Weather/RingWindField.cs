@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Rendering;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 
@@ -37,11 +38,13 @@ public sealed class RingWindField : IDisposable
         texture = null;
         lastGlobals.Clear();
     }
+    public int GlobalWriteCount { get; private set; }
     public void SetCached(string name, Variant value)
     {
-        if (lastGlobals.TryGetValue(name, out var old) && old.Equals(value)) return;
+        if (lastGlobals.TryGetValue(name, out var old) && RingVariantEquality.Same(old, value)) return;
         lastGlobals[name] = value;
         RenderingServer.GlobalShaderParameterSet(name, value);
+        GlobalWriteCount++;
     }
     public double AroundPeriodMeters { get; private set; } = 600;
     public double AcrossPeriodMeters { get; private set; } = 600;

@@ -888,6 +888,10 @@ public partial class RingTerrainLodCoordinator : Node
         ApplyFastTravelTierPolicy();
     }
 
+    /// <summary>Worker count the LOD profile for <paramref name="preset"/> owns. Pure read.</summary>
+    public int GetProfileConcurrentWorkers(QualityPreset preset) =>
+        Mathf.Clamp(ResolveProfile(preset)?.ConcurrentWorkers ?? MaxConcurrentWorkerBuilds, 1, 32);
+
     private RingLodQualityProfile? ResolveProfile(QualityPreset preset) => preset switch
     {
         _ when EnableMegaRegionalExtension && MegaRegionalProfile != null => MegaRegionalProfile,

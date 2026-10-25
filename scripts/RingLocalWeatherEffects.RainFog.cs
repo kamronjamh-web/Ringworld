@@ -4,6 +4,7 @@ using Godot;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Weather;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.Rendering;
 
 namespace RingworldTechDemo;
 
@@ -104,7 +105,7 @@ public partial class RingLocalWeatherEffects
 
     private void SetRainHazeParameter(StringName name, Variant value)
     {
-        if (_rainHazeParameters.TryGetValue(name, out Variant previous) && previous.Equals(value)) return;
+        if (_rainHazeParameters.TryGetValue(name, out Variant previous) && RingVariantEquality.Same(previous, value)) return;
         _rainHazeParameters[name] = value;
         _rainHazeMaterial!.SetShaderParameter(name, value);
         _rainHazeParameterPushes++;

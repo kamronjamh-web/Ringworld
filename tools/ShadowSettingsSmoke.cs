@@ -319,7 +319,39 @@ public partial class ShadowSettingsSmoke : RefCounted
         bool legacyKeepsMode = legacySun.DirectionalShadowMode == DirectionalLight3D.ShadowMode.Parallel4Splits && Mathf.IsEqualApprox(legacySun.DirectionalShadowMaxDistance, 14000f);
         tree.Root.RemoveChild(fakeAtmosphere);
         fakeAtmosphere.Free();
-        bool shadowMapKeys = planetScriptOk && mapKeysValid && mapKeysRejected && mapDefaultsUnchanged && mapLight && mapSurvivesPreset && mapRoundTrip && mapReset && mapResetDistance && legacyKeepsMode;
+        // The planet light follows the sun's requested range and cascades: per preset min(6000 m scene baseline, sun range); explicit overrides still win.
+        bool planetCap = true;
+        var capScript = new GDScript { SourceCode = "extends Node\nvar planet_light_cast_shadows := true\nvar planet_light_shadow_distance_meters := 6000.0\nvar planet_light_shadow_cascades := 4\nvar planet_light_shadow_fade_ratio := 0.85\nfunc _update_planet_light() -> void:\n\tpass\n" };
+        planetCap &= capScript.Reload() == Error.Ok;
+        var capAtmosphere = new Node { Name = "DaySideAtmosphere" };
+        capAtmosphere.SetScript(capScript);
+        tree.Root.AddChild(capAtmosphere);
+        var capController = new RingGraphicsQualityController();
+        var capSun = new DirectionalLight3D { Name = "Sun", ShadowEnabled = true };
+        capController.AddChild(capSun);
+        capController.SunLightPath = new NodePath("Sun");
+        tree.Root.AddChild(capController);
+        string planetCapDetail = "";
+        foreach (RingTerrainLodCoordinator.QualityPreset capPreset in Enum.GetValues<RingTerrainLodCoordinator.QualityPreset>())
+        {
+            capController.ApplyPreset(capPreset, applyTerrainPreset: false);
+            float expectedPlanet = Mathf.Min(6000f, capController.EffectiveShadowDistanceMeters);
+            planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, expectedPlanet) && capController.EffectivePlanetCascadeCount == 4;
+            planetCapDetail += $"{capPreset}={capController.EffectivePlanetShadowDistanceMeters:0}/{capController.EffectivePlanetCascadeCount} ";
+        }
+        capController.ApplyPreset(RingTerrainLodCoordinator.QualityPreset.Low, applyTerrainPreset: false);
+        planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 4000f)
+            && capController.SetShadowTuningOverride("PlanetShadowDistanceMeters", 8000f)
+            && Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 8000f);
+        // An explicit shorter sun range caps the planet range too (no planet override stored).
+        capController.SetShadowTuningOverrides(new Godot.Collections.Dictionary { ["MaxDistanceMeters"] = 2500f });
+        planetCap &= Mathf.IsEqualApprox(capController.EffectivePlanetShadowDistanceMeters, 2500f);
+        capController.SetShadowTuningOverrides(new Godot.Collections.Dictionary());
+        tree.Root.RemoveChild(capController);
+        capController.Free();
+        tree.Root.RemoveChild(capAtmosphere);
+        capAtmosphere.Free();
+        bool shadowMapKeys = planetScriptOk && mapKeysValid && mapKeysRejected && mapDefaultsUnchanged && mapLight && mapSurvivesPreset && mapRoundTrip && mapReset && mapResetDistance && legacyKeepsMode && planetCap;
         (bool heightShadowKeys, string heightShadowDetail) = RunHeightShadowKeys(path, tree);
         (bool contactShadowKeys, string contactShadowDetail) = RunContactShadowKeys(path, tree);
         (bool vegetationShadowKeys, string vegetationShadowDetail) = RunVegetationShadowKeys(path, tree);
@@ -330,7 +362,8 @@ public partial class ShadowSettingsSmoke : RefCounted
         result["pass"] = heightShadowKeys && contactShadowKeys && vegetationShadowKeys && supportedAtlas && expandedAtlases && rejectedAtlas && rejectedFractionalAtlas && rejectedPreciseFractionalAtlas && rejectedNanAtlas && rejectedOversizedAtlas && rejectedNegativeAtlas && resolver && memoryEstimates && depthValidation && nearValidation && supportedFilter && rejectedFilter && rejectedDistance && rejectedNaN && stabilizationEnabled && rejectedStabilizationType && stepRange && stepClamped && softnessRange && rejectedSoftness && handoffValidation && terrainMacroValidation && debugModeValidation && debugModeSet && defaultNearFocus && formatToggleSameAtlas && directSwitching && mixedPrecedence && upperNearClamped && directUnsupportedRejected && unsupportedPreferenceRejected && set && macroRuntimeApplied && effective && survivesPreset && reset && missingInputsKeepsRequestedSun && saved && roundTrip && legacyLoadCompatibility && highSaved && portableHighClamped && shadowMapKeys;
         result["unsupportedPreferenceRejected"] = unsupportedPreferenceRejected;
         result["shadowMapKeys"] = shadowMapKeys;
-        result["detail"] = $"{heightShadowDetail} {contactShadowDetail} {vegetationShadowDetail} atlas={supportedAtlas}/{expandedAtlases}/{rejectedAtlas}/{rejectedFractionalAtlas}/{rejectedPreciseFractionalAtlas}/{rejectedNanAtlas}/{rejectedOversizedAtlas}/{rejectedNegativeAtlas} resolver={resolver} memory={memoryEstimates} depth={depthValidation}/{formatToggleSameAtlas} near={nearValidation}/{defaultNearFocus}/{directSwitching}/{mixedPrecedence}/{upperNearClamped} filter={supportedFilter}/{rejectedFilter} rangeRejected={rejectedDistance} nan={rejectedNaN} stabilization={stabilizationEnabled}/{rejectedStabilizationType} step={stepRange}/{stepClamped} softness={softnessRange}/{rejectedSoftness} handoff={handoffValidation} terrainMacro={terrainMacroValidation}/{macroRuntimeApplied} debugMode={debugModeValidation}/{debugModeSet} directUnsupportedRejected={directUnsupportedRejected} set={set} effective={effective} survivesPreset={survivesPreset} reset={reset}/{missingInputsKeepsRequestedSun} saved={saved} roundTrip={roundTrip} legacyLoad={legacyLoadCompatibility} highSaved={highSaved} portableHighClamped={portableHighClamped} shadowMapKeys={shadowMapKeys}[{planetScriptOk}/{mapKeysValid}/{mapKeysRejected}/{mapDefaultsUnchanged}/{mapLight}/{mapSurvivesPreset}/{mapRoundTrip}/{mapReset}/{mapResetDistance}/{legacyKeepsMode}]; fixture path={path}";
+        result["planetCap"] = planetCap;
+        result["detail"] = $"planetCap={planetCap}[{planetCapDetail}] {heightShadowDetail} {contactShadowDetail} {vegetationShadowDetail} atlas={supportedAtlas}/{expandedAtlases}/{rejectedAtlas}/{rejectedFractionalAtlas}/{rejectedPreciseFractionalAtlas}/{rejectedNanAtlas}/{rejectedOversizedAtlas}/{rejectedNegativeAtlas} resolver={resolver} memory={memoryEstimates} depth={depthValidation}/{formatToggleSameAtlas} near={nearValidation}/{defaultNearFocus}/{directSwitching}/{mixedPrecedence}/{upperNearClamped} filter={supportedFilter}/{rejectedFilter} rangeRejected={rejectedDistance} nan={rejectedNaN} stabilization={stabilizationEnabled}/{rejectedStabilizationType} step={stepRange}/{stepClamped} softness={softnessRange}/{rejectedSoftness} handoff={handoffValidation} terrainMacro={terrainMacroValidation}/{macroRuntimeApplied} debugMode={debugModeValidation}/{debugModeSet} directUnsupportedRejected={directUnsupportedRejected} set={set} effective={effective} survivesPreset={survivesPreset} reset={reset}/{missingInputsKeepsRequestedSun} saved={saved} roundTrip={roundTrip} legacyLoad={legacyLoadCompatibility} highSaved={highSaved} portableHighClamped={portableHighClamped} shadowMapKeys={shadowMapKeys}[{planetScriptOk}/{mapKeysValid}/{mapKeysRejected}/{mapDefaultsUnchanged}/{mapLight}/{mapSurvivesPreset}/{mapRoundTrip}/{mapReset}/{mapResetDistance}/{legacyKeepsMode}]; fixture path={path}";
         tree.Root.RemoveChild(controller);
         controller.Free();
         tree.Root.RemoveChild(reloaded);

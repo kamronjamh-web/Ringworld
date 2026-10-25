@@ -4,7 +4,7 @@
 
 [resource]
 script = ExtResource("1")
-DisplayName = "Desktop High"
+DisplayName = "Very High"
 ActiveLevelCount = 8
 Lod1OutMeters = Vector2(500, 600)
 Lod2OutMeters = Vector2(1200, 1500)

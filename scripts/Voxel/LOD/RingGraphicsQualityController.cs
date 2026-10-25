@@ -54,7 +54,6 @@ public partial class RingGraphicsQualityController : Node
     [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
     [Export] public NodePath PlanetLightPath { get; set; } = new("../PlanetLight");
     [Export] public NodePath WorldEnvironmentPath { get; set; } = new("../WorldEnvironment");
-    [Export] public bool UseMegaRegionalFarBackdrop { get; set; }
 
     [ExportGroup("Shadow Transition Overrides")]
     [Export] public bool UseInspectorShadowTransitionOverrides { get; set; }
@@ -192,7 +191,7 @@ public partial class RingGraphicsQualityController : Node
         = RingTerrainLodCoordinator.QualityPreset.Medium;
     public string CurrentPresetName => CurrentPreset switch
     {
-        RingTerrainLodCoordinator.QualityPreset.UltraVideo => "Ultra / Video",
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => "Ultra",
         RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => "Cinematic / RTX 5090",
         _ => _coordinator?.CurrentPresetName ?? CurrentPreset.ToString()
     };
@@ -236,8 +235,19 @@ public partial class RingGraphicsQualityController : Node
         }
     }
 
-    public void ApplyFarRenderingDefaults() => FarRenderingDefaults.Apply(
-        _scaledFarViewport ?? GetNodeOrNull<RingScaledFarViewport>(ScaledFarViewportPath));
+    public void ApplyFarRenderingDefaults()
+    {
+        Tuning tuning = ResolveTuning(CurrentPreset);
+        FarRenderingDefaults.Apply(_scaledFarViewport ?? GetNodeOrNull<RingScaledFarViewport>(ScaledFarViewportPath),
+            tuning.FarViewportResolutionScale, tuning.FarAroundSegments, tuning.FarAcrossSegments);
+    }
+
+    /// <summary>The preset's FAR viewport tuple (resolution scale, around segments, across segments) before sparse player overrides.</summary>
+    public static (float scale, int around, int across) PresetFarRendering(RingTerrainLodCoordinator.QualityPreset preset)
+    {
+        Tuning tuning = ResolveTuning(preset);
+        return (tuning.FarViewportResolutionScale, tuning.FarAroundSegments, tuning.FarAcrossSegments);
+    }
 
     public void InstallFarRenderingDefaults(string isolatedPath)
     {
@@ -459,9 +469,9 @@ public partial class RingGraphicsQualityController : Node
         // FAR uses the Cinematic target independently of grass, clouds and shadows.
         // Sparse player overrides reapply after every graphics preset change.
         ApplyFarRenderingDefaults();
-        float farViewportResolutionScale = FarRenderingDefaults.Value("ResolutionScale", GameplayFarRenderingDefaults.DefaultResolutionScale).AsSingle();
-        int farAroundSegments = FarRenderingDefaults.Value("AroundSegments", GameplayFarRenderingDefaults.DefaultAroundSegments).AsInt32();
-        int farAcrossSegments = FarRenderingDefaults.Value("AcrossSegments", GameplayFarRenderingDefaults.DefaultAcrossSegments).AsInt32();
+        float farViewportResolutionScale = FarRenderingDefaults.Value("ResolutionScale", tuning.FarViewportResolutionScale).AsSingle();
+        int farAroundSegments = FarRenderingDefaults.Value("AroundSegments", tuning.FarAroundSegments).AsInt32();
+        int farAcrossSegments = FarRenderingDefaults.Value("AcrossSegments", tuning.FarAcrossSegments).AsInt32();
 
         if (_worldEnvironment?.Environment is { } environment)
         {
@@ -675,18 +685,19 @@ public partial class RingGraphicsQualityController : Node
 	private void ApplySunshineCloudQuality(RingTerrainLodCoordinator.QualityPreset preset)
 	{
 		if (_sunshineClouds == null) return;
+		// WO-2: today's effective values on every preset (previously forced by the factory cloud file); WO-3 retunes per preset.
 		(int resolutionScale, int raymarchSteps, int nearShadowResolution,
 			int farShadowResolution, float nearShadowUpdatesPerSecond,
 			float farShadowUpdatesPerSecond, int shadowVerticalSamples,
-				float shadowStepMeters, int shadowMaxSamples, bool resolutionJitter, int interleave, int weatherSystemUploadCount) = preset switch
+				float shadowStepMeters, int shadowMaxSamples, bool resolutionJitter, int interleave, int weatherSystemUploadCount, int lightingSteps) = preset switch
 		{
-			RingTerrainLodCoordinator.QualityPreset.Low => (0, 128, 256, 128, 2.0f, 0.25f, 2, 400.0f, 32, false, 1, 40),
-			RingTerrainLodCoordinator.QualityPreset.Medium => (0, 128, 1024, 256, 10.0f, 0.5f, 4, 250.0f, 64, false, 1, 48),
-			RingTerrainLodCoordinator.QualityPreset.High => (0, 128, 1024, 256, 10.0f, 0.75f, 4, 250.0f, 64, false, 1, 48),
-			RingTerrainLodCoordinator.QualityPreset.VeryHigh => (0, 160, 1024, 384, 10.0f, 1.0f, 5, 200.0f, 96, false, 1, 64),
-			RingTerrainLodCoordinator.QualityPreset.UltraVideo => (0, 256, 1024, 512, 10.0f, 1.25f, 6, 150.0f, 128, false, 1, 64),
-			RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (0, 256, 1536, 768, 10.0f, 1.5f, 8, 150.0f, 128, false, 1, 64),
-			_ => (0, 128, 1024, 256, 10.0f, 0.5f, 4, 250.0f, 64, false, 1, 48)
+			RingTerrainLodCoordinator.QualityPreset.Low => (0, 328, 512, 128, 5.0f, 2.5f, 24, 400.0f, 32, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.Medium => (0, 328, 512, 128, 5.0f, 2.5f, 24, 250.0f, 64, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.High => (0, 328, 512, 128, 5.0f, 2.5f, 24, 250.0f, 64, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.VeryHigh => (0, 328, 512, 128, 5.0f, 2.5f, 24, 200.0f, 96, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.UltraVideo => (0, 328, 512, 128, 5.0f, 2.5f, 24, 150.0f, 128, false, 1, 64, 30),
+			RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (0, 328, 512, 128, 5.0f, 2.5f, 24, 150.0f, 128, false, 1, 64, 30),
+			_ => (0, 328, 512, 128, 5.0f, 2.5f, 24, 250.0f, 64, false, 1, 64, 30)
 		};
 		_sunshineClouds.CloudResolutionScale = resolutionScale;
 		_sunshineClouds.RaymarchSteps = raymarchSteps;
@@ -700,6 +711,7 @@ public partial class RingGraphicsQualityController : Node
 		_sunshineClouds.CloudResolutionJitter = resolutionJitter;
 		_sunshineClouds.CloudInterleave = interleave;
 		_sunshineClouds.WeatherSystemUploadCount = weatherSystemUploadCount;
+		_sunshineClouds.LightingSteps = lightingSteps;
 		string[] profileKeys =
 		{
 			nameof(RingSunshineCloudBridge.CloudResolutionScale),
@@ -713,7 +725,8 @@ public partial class RingGraphicsQualityController : Node
 			nameof(RingSunshineCloudBridge.GpuShadowMaxSamples),
 			nameof(RingSunshineCloudBridge.CloudResolutionJitter),
 			nameof(RingSunshineCloudBridge.CloudInterleave),
-			nameof(RingSunshineCloudBridge.WeatherSystemUploadCount)
+			nameof(RingSunshineCloudBridge.WeatherSystemUploadCount),
+			nameof(RingSunshineCloudBridge.LightingSteps)
 		};
 		_sunshineClouds.GameplayCloudDefaults.OnGraphicsPresetApplied(_sunshineClouds, profileKeys);
 		// The bridge detects actual resolution changes and retires receivers once.
@@ -729,35 +742,35 @@ public partial class RingGraphicsQualityController : Node
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.High,
             8000.0f, 40000.0f, 256, 3500.0f, 0.38f, 0.48f,
             2200.0f, 4500.0f, 4500.0f, 12000.0f, 1,
-            0.50f, 768, 12, 64, 0.60f, 2, 1, 1.5f),
+            1.0f, 4096, 64, 64, 0.60f, 2, 1, 1.5f),
         RingTerrainLodCoordinator.QualityPreset.Medium => new(
             4096, RenderingServer.ShadowQuality.SoftVeryLow, 6000.0f, 0.06f,
             0.36f, 3500.0f, 6500.0f, 10, 96000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.High,
             10000.0f, 50000.0f, 512, 6500.0f, 0.45f, 0.58f,
             3500.0f, 7000.0f, 7000.0f, 18000.0f, 2,
-            0.75f, 1024, 16, 96, 0.75f, 2, 1, 2.0f),
+            1.0f, 4096, 64, 96, 0.75f, 2, 1, 2.0f),
         RingTerrainLodCoordinator.QualityPreset.High => new(
             8192, RenderingServer.ShadowQuality.SoftLow, 12000.0f, 0.08f,
             0.46f, 6500.0f, 11000.0f, 14, 128000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.High,
             12000.0f, 70000.0f, 768, 10000.0f, 0.56f, 0.68f,
             6500.0f, 12500.0f, 12500.0f, 30000.0f, 2,
-            0.75f, 1536, 24, 128, 0.85f, 4, 2, 4.0f),
+            1.0f, 4096, 64, 128, 0.85f, 4, 2, 4.0f),
         RingTerrainLodCoordinator.QualityPreset.VeryHigh => new(
             8192, RenderingServer.ShadowQuality.SoftMedium, 14000.0f, 0.12f,
             0.49f, 8000.0f, 13000.0f, 16, 144000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.VeryHigh,
             24000.0f, 120000.0f, 768, 11000.0f, 0.58f, 0.70f,
             7500.0f, 14500.0f, 14500.0f, 32000.0f, 2,
-            1.0f, 2048, 32, 160, 0.92f, 6, 3, 5.0f),
+            1.0f, 4096, 64, 160, 0.92f, 6, 3, 5.0f),
         RingTerrainLodCoordinator.QualityPreset.UltraVideo => new(
             8192, RenderingServer.ShadowQuality.SoftHigh, 16000.0f, 0.16f,
             0.52f, 9000.0f, 15000.0f, 16, 160000.0f,
             global::RingworldTechDemo.RingVolumetricCloudLayer.CloudQuality.Ultra,
             28000.0f, 140000.0f, 1024, 12000.0f, 0.62f, 0.74f,
             8500.0f, 16500.0f, 16500.0f, 35000.0f, 2,
-            1.0f, 2048, 32, 192, 0.96f, 6, 4, 6.0f),
+            1.0f, 4096, 64, 192, 0.96f, 6, 4, 6.0f),
         RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => new(
             16384, RenderingServer.ShadowQuality.SoftUltra, 24000.0f, 0.22f,
             0.58f, 14000.0f, 23000.0f, 24, 240000.0f,

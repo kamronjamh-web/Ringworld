@@ -84,6 +84,8 @@ func _exercise_drawer() -> bool:
 	if bool(_probe.Status().get("dirty", true)): return _fail("drawer open/close dirtied defaults")
 	if str(_drawer.call("GetCloudTuningDiagnostics").get("path", "")) != ISOLATED_PATH: return _fail("drawer is not using isolated shared service")
 	if not bool(_probe.VerifySupportedOverrideEquality()): return _fail("supported override equality regression")
+	var ownership: String = str(_probe.VerifyPresetOwnership(ISOLATED_PATH + ".ownership.tres"))
+	if ownership != "": return _fail("preset ownership of cloud profile keys: " + ownership)
 	if not bool(_probe.VerifyCullingPreferenceContract(ISOLATED_PATH + ".culling.tres")): return _fail("culling preference defaults/false/preset/reset contract failed")
 	if not bool(_probe.VerifyTerrainHistoryPreferenceContract(ISOLATED_PATH + ".terrain-history.tres")): return _fail("terrain/history preference false/zero/validation/preset/reset contract failed")
 	# Exercise actual control signals, including all shadow controls that were
