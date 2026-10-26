@@ -105,6 +105,7 @@ float ring_terrain_direct_visibility(
 		is_directional ? cloud_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	terms.storm = is_directional ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
 	terms.contact = ring_contact_visibility(frag_coord, viewport_size, inv_projection, primary_sun_weight, contact_flags);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, day_factor, ringworld_hub_light_weight, shadow_floor);

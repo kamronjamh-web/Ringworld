@@ -16,9 +16,9 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="RingworldTechDemo"
 run/main_scene="res://scenes/StartMenu.tscn"
-run/main_scene.qp_perf_harness="res://tools/quality_preset_capture_entry.tscn"
 config/features=PackedStringArray("4.8", "C#", "Forward Plus")
 config/icon="res://icon.svg"
+run/main_scene.qp_perf_harness="res://tools/quality_preset_capture_entry.tscn"
 
 [audio]
 
@@ -142,6 +142,26 @@ ringworld_height_shadow_light={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ring_precip_occlusion={
+"type": "sampler2D",
+"value": ""
+}
+ring_precip_occlusion_origin={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_precip_occlusion_around={
+"type": "vec4",
+"value": Vector4(0, 0, 1, 64)
+}
+ring_precip_occlusion_across={
+"type": "vec4",
+"value": Vector4(1, 0, 0, 0.25)
+}
+ring_precip_occlusion_state={
+"type": "vec4",
+"value": Vector4(0, 512, 0, 0)
+}
 ringworld_contact_shadow={
 "type": "sampler2D",
 "value": ""
@@ -163,6 +183,10 @@ ringworld_air_sun_visibility={
 "value": 1.0
 }
 ringworld_haze_sun_irradiance={
+"type": "vec3",
+"value": Vector3(12.566, 12.566, 12.566)
+}
+ringworld_haze_sun_irradiance_remote={
 "type": "vec3",
 "value": Vector3(12.566, 12.566, 12.566)
 }
@@ -437,4 +461,64 @@ ring_water_far_group_translation_main={
 ring_water_far_group_translation_far={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
+}
+ringworld_storm_map={
+"type": "sampler2DArray",
+"value": ""
+}
+ringworld_storm_map_frame={
+"type": "vec4",
+"value": Vector4(1000, 0, 0.6, 0)
+}
+ringworld_storm_map_size={
+"type": "vec4",
+"value": Vector4(0, 0, 1024, 512)
+}
+ringworld_storm_frame={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ringworld_storm_light={
+"type": "vec4",
+"value": Vector4(0.85, 0.35, 0.7, 0)
+}
+ring_wet_map={
+"type": "sampler2D",
+"value": ""
+}
+ring_wet_map_frame={
+"type": "vec4",
+"value": Vector4(0, 0, 64, 256)
+}
+ring_wet_frame={
+"type": "mat4",
+"value": Projection(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+}
+ring_wet_params={
+"type": "vec4",
+"value": Vector4(1, 0.18, 1, 0)
+}
+ring_wet_clock={
+"type": "vec4",
+"value": Vector4(0, 4, 8192, 1000)
+}
+ring_wet_events={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_wet_wind={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ring_wet_ripple_tex={
+"type": "sampler2D",
+"value": ""
+}
+ring_wet_noise_tex={
+"type": "sampler2D",
+"value": ""
+}
+ring_wet_debug_mode={
+"type": "float",
+"value": 0.0
 }

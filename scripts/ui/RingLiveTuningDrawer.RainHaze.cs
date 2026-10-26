@@ -17,9 +17,14 @@ public partial class RingLiveTuningDrawer
     }
     private void BuildRainHazeControls(VBoxContainer tab)
     {
-        var group = TuningMenuUi.CreateSection(tab, "Rain haze", "Soft gray haze thickens with rainfall. The near-clear distance keeps nearby surfaces visible.");
+        var group = TuningMenuUi.CreateSection(tab, "Rain", "Rain streaks and splashes follow the weather, wind and scene light. The grey haze veil is reserved for violent storms.");
         var enabled = new CheckButton { Name = "RainHazeEnabled", Text = "Enable rain haze", ButtonPressed = RingRainHazeSettings.Current.Enabled };
         enabled.Toggled += value => SetRainHazeTuningValue("Enabled", value); group.AddChild(enabled);
+        AddRainHazeNumber(group, "StreakDensity", "Streak density", .01);
+        AddRainHazeNumber(group, "StreakBrightness", "Streak brightness", .01);
+        AddRainHazeNumber(group, "StreakLength", "Streak length", .01);
+        AddRainHazeNumber(group, "SplashAmount", "Splash amount", .01);
+        AddRainHazeNumber(group, "HazeOnset", "Haze onset (storm level)", .01);
         AddRainHazeNumber(group, "Density", "Rain haze density", .0001);
         AddRainHazeNumber(group, "NearClearDistanceMeters", "Near-clear distance (m)", 1);
         AddRainHazeNumber(group, "MaximumOpacity", "Maximum haze opacity", .01);

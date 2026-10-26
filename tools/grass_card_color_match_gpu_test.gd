@@ -291,7 +291,6 @@ func _apply_pose(pose: Dictionary) -> void:
 	_orient_light(sun, pose.sun)
 	planet.visible = bool(pose.get("planet", false))
 	surface.call("SetSurfaceLighting", -0.2, 0.35, Color(0.30, 0.45, 0.70), 0.12, 1.15, 0.10)
-	surface.call("SetSurfaceWetness", 0.0)
 	if haze_defaults.is_empty():
 		var m := _terrain_material()
 		for k in HAZE:

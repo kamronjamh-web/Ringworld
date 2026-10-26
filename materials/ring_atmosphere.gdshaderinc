@@ -47,6 +47,7 @@ uniform float ring_atmosphere_half_width_meters = 1000000000.0;
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
 #include "res://materials/ring_haze_shared.gdshaderinc"
 #include "res://materials/ring_atmosphere_paths.gdshaderinc"
+#include "res://materials/ring_storm_light.gdshaderinc"
 
 // Physical haze (P2a of docs/atmosphere-haze-revamp-plan.md). A/B toggle until the Legacy model is removed (P8):
 // 0 = Legacy (smoothstep distance ramp, sample_ring_atmosphere), 1 = Physical (ring_haze_eval). Default Legacy.
@@ -70,6 +71,7 @@ uniform vec3 ring_haze_sun_tint = vec3(1.0);
 // globals whenever the sun colour/energy or ambient change (cheaper than rewriting every registered material).
 // Units: see the comment on ring_haze_sample.
 global uniform vec3 ringworld_haze_sun_irradiance;
+global uniform vec3 ringworld_haze_sun_irradiance_remote;
 global uniform vec3 ringworld_haze_ambient_day;
 global uniform vec3 ringworld_haze_ambient_night;
 // Storm grey-Mie haze (P9): (strength 0-1, aerosol extinction 1/m at strength 1, single-scatter albedo, Mie g). Single producer:
@@ -530,6 +532,15 @@ RingHazeParams ring_haze_uniform_params(vec3 to_sun, vec3 outward) {
 	return p;
 }
 
+// Storm light, path darkening (docs/storm-revamp-s0-storm-light-design.md WO-6): the sun in-scatter fades with the shadow fade F(Dp) and the ambient in-scatter
+// follows the sky factor (ring_storm_sky) of Dp, where Dp is the storm level averaged along the view ray (ring_storm_path_level). The published haze sun carries only the camera-column cloud
+// shadow while the storm map is valid, so a storm ahead dims the air in front of it and the sky above it by one rule. Dp = 0 returns before any multiply.
+void ring_haze_apply_storm_path(inout RingHaze haze, float path_level) {
+	if (path_level <= 0.0) return;
+	haze.S_sun *= 1.0 - ring_storm_shadow_fade(path_level) * ringworld_storm_light.x;
+	haze.S_amb *= ring_storm_sky(path_level);
+}
+
 RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_world, float day_factor) {
 	if (ring_haze_debug_mode == 1) {
 		RingHaze identity;
@@ -550,8 +561,11 @@ RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_worl
 		if (probe_length > probe_cap) haze_target = ring_atmosphere_camera_world_position + probe_delta * (probe_cap / probe_length);
 	}
 	RingHazeParams p = ring_haze_uniform_params(ring_atmosphere_to_sun, ring_atmosphere_outward_world);
-	// Storm haze thickens the local air only; the far-arch remote shell keeps the clear params.
-	RingHaze haze = ring_haze_eval_target_split(ring_haze_apply_storm(p, ringworld_haze_storm), p, ring_atmosphere_to_sun, ringworld_hub_light_weight, ringworld_hub_day, ringworld_solar_visibility, haze_target, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
+	// Storm haze thickens the local air only; the far-arch remote shell keeps the clear params and the undimmed sun
+	// (a storm or cloud shadow at the camera must not darken the far arch's sunlit air).
+	RingHazeParams p_remote = p;
+	p_remote.E_sun = ringworld_haze_sun_irradiance_remote * ring_haze_sun_tint;
+	RingHaze haze = ring_haze_eval_target_split(ring_haze_apply_storm(p, ringworld_haze_storm), p_remote, ring_atmosphere_to_sun, ringworld_hub_light_weight, ringworld_hub_day, ringworld_solar_visibility, haze_target, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters,
 		ring_atmosphere_outward_world, ring_atmosphere_axis_world, ring_atmosphere_sidewall_negative_meters,
 		ring_atmosphere_sidewall_positive_meters, scale, ring_radius_meters / scale, atmosphere_floor_depth_meters / scale);
 	// Per-material density multiplier (clouds and distant props bind < 1): scales optical depth, tau' = m * tau.
@@ -562,6 +576,11 @@ RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_worl
 		haze.T = t_scaled;
 		haze.S_sun *= gain;
 		haze.S_amb *= gain;
+	}
+	if (ringworld_storm_light.w > 0.5) {
+		vec3 storm_delta = haze_target - ring_atmosphere_camera_world_position;
+		float storm_length = length(storm_delta);
+		if (storm_length > 0.0001) ring_haze_apply_storm_path(haze, ring_storm_path_level(storm_delta / storm_length, storm_length / scale));
 	}
 	return haze;
 }

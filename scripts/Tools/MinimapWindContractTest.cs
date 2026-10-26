@@ -40,10 +40,16 @@ public partial class MinimapWindContractTest : RefCounted
         drawer.InstallMotionDefaults(directory + "/motion.tres");
         drawer.InstallWaterDefaults(directory + "/water.tres");
         drawer.InstallWindDefaults(directory + "/wind.tres");
+        drawer.InstallStormArrivalDefaults(directory + "/storm-arrival.tres");
         drawer.InstallRainHazeDefaults(directory + "/rain-haze.tres");
+        drawer.InstallWetWorldDefaults(directory + "/wet-world.tres", directory + "/surface.tres");
+        world.GetNodeOrNull<RingWetWorld>("WetWorld")?.Set("PreferencesPath", directory + "/wet-world.tres");
+        drawer.InstallWeatherAudioDefaults(directory + "/weather-audio.tres");
+        drawer.InstallLightningDefaults(directory + "/lightning.tres");
         world.GetNode<RingLocalWeatherEffects>("LocalWeatherEffects").RainHazePreferencesPath = directory + "/rain-haze.tres";
         var weather = world.GetNode<RingVolumetricCloudLayer>("RingVolumetricClouds");
         weather.Set("WindPreferencesPath", directory + "/wind.tres");
+        weather.Set("StormArrivalPreferencesPath", directory + "/storm-arrival.tres");
         weather.Set("LegacyGrassPreferencesPath", directory + "/legacy-grass.tres");
         drawer.InstallGrassDefaults(directory + "/grass.tres");
         drawer.InstallVegetationDefaults(directory + "/vegetation.tres");

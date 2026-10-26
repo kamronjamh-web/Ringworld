@@ -4,6 +4,15 @@
 cutoff_hz = 1450.0
 resonance = 0.18
 
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_rain_bed"]
+cutoff_hz = 18000.0
+
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_rain_field"]
+cutoff_hz = 18000.0
+
+[sub_resource type="AudioEffectLowPassFilter" id="AudioEffectLowPassFilter_wind"]
+cutoff_hz = 18000.0
+
 [resource]
 bus/1/name = &"WaterAbove"
 bus/1/solo = false
@@ -37,9 +46,27 @@ bus/5/mute = false
 bus/5/bypass_fx = false
 bus/5/volume_db = 0.0
 bus/5/send = &"Master"
+bus/5/effect/0/effect = SubResource("AudioEffectLowPassFilter_wind")
+bus/5/effect/0/enabled = true
 bus/6/name = &"DistantStorm"
 bus/6/solo = false
 bus/6/mute = false
 bus/6/bypass_fx = false
 bus/6/volume_db = 0.0
 bus/6/send = &"Master"
+bus/7/name = &"RainBed"
+bus/7/solo = false
+bus/7/mute = false
+bus/7/bypass_fx = false
+bus/7/volume_db = 0.0
+bus/7/send = &"Rain"
+bus/7/effect/0/effect = SubResource("AudioEffectLowPassFilter_rain_bed")
+bus/7/effect/0/enabled = true
+bus/8/name = &"RainField"
+bus/8/solo = false
+bus/8/mute = false
+bus/8/bypass_fx = false
+bus/8/volume_db = 0.0
+bus/8/send = &"Rain"
+bus/8/effect/0/effect = SubResource("AudioEffectLowPassFilter_rain_field")
+bus/8/effect/0/enabled = true

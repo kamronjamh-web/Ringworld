@@ -20,6 +20,9 @@ public partial class RingSunshineCloudBridge
 	public const int WeatherSystemsBlockBytes = 64 + MaximumWeatherSystemUploadCount * 64;
 	private static readonly StringName SetWeatherSystemsMethod = new("set_weather_systems");
 	private static readonly StringName SetMacroWeatherMapMethod = new("set_macro_weather_map");
+	private static readonly StringName SetStormProfileMapMethod = new("set_storm_profile_map");
+	/// <summary>Largest half extent of the baked storm profile map (m): 1024 texels over 2 x this is a 293 m texel, fine enough for mammatus pouches. Storms beyond it fall back to background cloud only.</summary>
+	private const double StormMapMaxHalfExtentMeters = 150000.0;
 	// Smoothing time of the camera-local ambient factors (variant (a) of the plan's ambient A/B).
 	private const float CameraIndependentAmbientSmoothingSeconds = 1.0f;
 
@@ -56,6 +59,29 @@ public partial class RingSunshineCloudBridge
 	public long MacroMapSlicesDispatched => _clouds != null && GodotObject.IsInstanceValid(_clouds) ? (long)_clouds.Get("macro_map_slices_dispatched").AsInt64() : 0;
 	/// <summary>True while the shaders read the front map (false: direct per-system evaluation).</summary>
 	public bool MacroMapActive => _clouds != null && GodotObject.IsInstanceValid(_clouds) && _clouds.Get("macro_map_valid").AsBool();
+
+	/// <summary>The Sunshine storm profile map driver (RingStormProfileMap.gd: valid, texture, front_* state), for test readback only.</summary>
+	public GodotObject? GetStormProfileMapDriver()
+		=> _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get("storm_profile_map").AsGodotObject() : null;
+
+	/// <summary>Debug ablation (harness only): overrides Sunshine's atmospheric density (its own haze on clouds).</summary>
+	public void DebugSetCloudAtmosphericDensity(float density)
+	{
+		if (_clouds != null && GodotObject.IsInstanceValid(_clouds)) _clouds.Set("atmospheric_density", density);
+	}
+
+	/// <summary>The per-ray storm ambient uniform as Sunshine holds it (rgb colour, w strength), for test readback only.</summary>
+	public Vector4 GetStormAmbientUniform()
+		=> _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get("ring_storm_ambient").AsVector4() : Vector4.Zero;
+
+	/// <summary>Storm floor / ceiling (canonical metres) of the first uploaded weather system, from the block Sunshine holds (test readback only).</summary>
+	public Vector2 GetFirstWeatherSystemBand()
+	{
+		if (_clouds == null || !GodotObject.IsInstanceValid(_clouds)) return Vector2.Zero;
+		byte[] bytes = _clouds.Get("weather_systems_bytes").AsByteArray();
+		if (bytes.Length < 64 + 64) return Vector2.Zero;
+		return new Vector2(BitConverter.ToSingle(bytes, 64 + 32), BitConverter.ToSingle(bytes, 64 + 36));
+	}
 
 	/// <summary>Systems currently uploaded (0 while the flag is off).</summary>
 	public int UploadedWeatherSystemCount { get; private set; }
@@ -316,6 +342,7 @@ public partial class RingSunshineCloudBridge
 			Array.Clear(_ciBlock);
 			_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
 			PublishMacroWeatherMap(false);
+			PublishStormProfileMap(false);
 			return;
 		}
 
@@ -334,9 +361,11 @@ public partial class RingSunshineCloudBridge
 		// header1: heavy-overcast start, sculpt strength, envelope floor/ceiling
 		WriteFloat(16, HeavyOvercastStartCoverage);
 		WriteFloat(20, sculptStrength);
-		// z carries CameraIndependentDebugMask (small int, exact as a float); the envelope floor is CPU-side only (no shader reads it).
+		// z carries CameraIndependentDebugMask (small int, exact as a float); w is the downwind angle of the weather wind (radians,
+		// canonical around/across frame) the storm shape shears toward.
 		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 63));
-		WriteFloat(28, _ciEnvelopeCeilingMeters);
+		Vector2 stormWind = weather.WeatherWindMetersPerSecond;
+		WriteFloat(28, stormWind.LengthSquared() > 1e-8f ? MathF.Atan2(stormWind.Y, stormWind.X) : 0.0f);
 		// header2: background floor/ceiling, selection radius, revision
 		WriteFloat(32, _backgroundCloudFloorMeters);
 		WriteFloat(36, _backgroundCloudCeilingMeters);
@@ -371,10 +400,13 @@ public partial class RingSunshineCloudBridge
 			WriteFloat(offset + 48, system.ManualCoverageTarget);
 			WriteFloat(offset + 52, system.SupportMultiplier);
 			WriteFloat(offset + 56, entry.Fade);
+			// d.w: storm lifecycle code (birth 0-0.3, develop 0.3-1, mature 1-2, dissipate 2-3; 1.5 for manual systems).
+			WriteFloat(offset + 60, RingVolumetricCloudLayer.StormLifecycleOverride ?? system.Lifecycle);
 		}
 		_ciUploadedEnabled = true;
 		_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
 		PublishMacroWeatherMap(MacroWeatherMap);
+		PublishStormProfileMap(!DebugLegacyStormShape);
 	}
 
 	/// <summary>
@@ -394,6 +426,31 @@ public partial class RingSunshineCloudBridge
 		_clouds.Call(SetMacroWeatherMapMethod, true, _explorer.CanonicalPosition.AroundMeters, (double)_ciSelectionRadiusMeters,
 			-1000.0, width + 1000.0, (double)Mathf.Clamp(MacroMapResolution, 250.0f, 4000.0f),
 			Math.Clamp(MacroMapSlices, 1, 32), (double)Mathf.Clamp(MacroMapRefreshSeconds, 0.05f, 2.0f));
+	}
+
+	/// <summary>
+	/// Tells Sunshine where to bake the storm profile map (docs/storm-revamp-s4-sculpt-v2-design.md): a square around the camera with the
+	/// macro map's half extent, plus the shape settings the bake reads (pillar radius, anvil multiplier / start, shear, mammatus) and the
+	/// downwind direction and lean of the sheared towers. DebugLegacyStormShape (RING_STORM_SHAPE_LEGACY=1) switches the map off, which
+	/// returns the shaders to HEAD's analytic storm loop (the debug A/B).
+	/// </summary>
+	private void PublishStormProfileMap(bool enabled)
+	{
+		if (_clouds == null || !GodotObject.IsInstanceValid(_clouds) || !_clouds.HasMethod(SetStormProfileMapMethod)) return;
+		if (!enabled || _explorer == null || _grid == null || _weather == null)
+		{
+			_clouds.Call(SetStormProfileMapMethod, false, 0.0, 0.0, 1000.0, 4200.0, 2.6, 0.7, 0.65, 0.6, 0.0, 0.0, 0.0, 4, 0.25);
+			return;
+		}
+		float pillar = Mathf.Clamp(StormPillarRadiusMeters, 1000.0f, 8000.0f);
+		float shear = SanitizeFinite(AnvilShear, 0.65f, 0.0f, 1.0f);
+		Vector2 wind = _weather.WeatherWindMetersPerSecond;
+		float angle = wind.LengthSquared() > 1e-8f ? MathF.Atan2(wind.Y, wind.X) : 0.0f;
+		RingCanonicalPosition camera = _explorer.CanonicalPosition;
+		_clouds.Call(SetStormProfileMapMethod, true, camera.AroundMeters, camera.AcrossMeters, (double)Math.Min(_ciSelectionRadiusMeters, StormMapMaxHalfExtentMeters),
+			(double)pillar, (double)Mathf.Clamp(AnvilRadiusMultiplier, 1.2f, 4.0f), (double)Mathf.Clamp(AnvilStartFraction, 0.5f, 0.9f),
+			(double)shear, (double)SanitizeFinite(MammatusStrength, 0.6f, 0.0f, 1.0f), (double)MathF.Cos(angle), (double)MathF.Sin(angle),
+			(double)(shear * pillar), 4, (double)Mathf.Clamp(MacroMapRefreshSeconds, 0.05f, 2.0f));
 	}
 
 	private void WriteFloat(int offset, float value)

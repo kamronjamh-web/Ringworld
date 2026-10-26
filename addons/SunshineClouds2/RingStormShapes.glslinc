@@ -1,0 +1,242 @@
+// Storm (cumulonimbus / storm tower) shape, BAKE ONLY (docs/storm-revamp-s4-sculpt-v2-design.md). RingStormProfileBake.glsl evaluates
+// this per texel of the world-anchored storm profile map; the ray-march and shadow computes never include it, they read the
+// baked map (RingStormProfileSample.glslinc), so no storm shape code is inlined into the march kernel.
+//
+// The including shader declares, before this include: the RingWeatherSystem struct (CloudsInc.comp), the snapshot block
+// `ringWeatherSystems` and RingWeatherSystems.glslinc (RING_WS_MACRO_BUILD section).
+//
+// A cell is a column with up to two disjoint cloud intervals, in absolute canonical altitude (metres):
+//   body   (tower, deck)         base .. top, a barrel with a cauliflower dome top
+//   canopy (tower flare + anvil) underside .. top, a sheared teardrop with mammatus pouches under it
+// The footprint is encoded by collapsing an interval toward its mid-height (top' = mid + (top - mid) * coverage), so bilinear
+// filtering of the map tapers edges vertically. Every height field here is continuous in position; cells and systems combine by a
+// smooth thickness-weighted average, never by a hard max, so the map has no steps and no skirts.
+
+// Bake constant: closed storm deck under the whole system ellipse (S0 WO-5). Stays off until V3 has its light shortcut.
+const float RING_STORM_DECK_ENABLED = 1.0;
+
+uvec4 ring_storm_pcg4(uvec4 v) {
+	v = v * 1664525u + 1013904223u;
+	v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+	v ^= v >> 16u;
+	v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+	return v;
+}
+
+vec4 ring_storm_rand4(ivec2 cell, uint seed, uint salt) {
+	uvec4 h = ring_storm_pcg4(uvec4(uint(cell.x), uint(cell.y), seed, salt));
+	return vec4(h >> 8u) * (1.0 / 16777216.0);
+}
+
+// Smooth value noise in 0..1 (cubic interpolation of a hashed lattice).
+float ring_storm_vnoise(vec2 p, uint seed, uint salt) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	ivec2 c = ivec2(i);
+	float a = ring_storm_rand4(c, seed, salt).x;
+	float b = ring_storm_rand4(c + ivec2(1, 0), seed, salt).x;
+	float d = ring_storm_rand4(c + ivec2(0, 1), seed, salt).x;
+	float e = ring_storm_rand4(c + ivec2(1, 1), seed, salt).x;
+	return mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+}
+
+// Weighted-average accumulator of intervals: x = sum(w * base), y = sum(w * top), z = sum(w). The weight grows steeply with the
+// (collapsed) thickness, so a thick interval dominates a thin one smoothly. Fully collapsed intervals still carry their base height,
+// so the average stays defined and continuous where nothing exists.
+void ring_storm_add(inout vec3 acc, float base, float top, float cover) {
+	// Anchored collapse: the bottom surface stays put (a flat cloud base / anvil underside) and only the top descends onto it, so a
+	// footprint edge is a wall that rises over one or two texels and bilinear filtering can never open a skirt.
+	float b = base;
+	float t = base + (top - base) * cover;
+	float w = 0.05 + max(t - b, 0.0) * 0.001;
+	w *= w;
+	acc += vec3(w * b, w * t, w);
+}
+
+vec2 ring_storm_resolve(vec3 acc) {
+	return acc.z > 0.0 ? acc.xy / acc.z : vec2(0.0);
+}
+
+// Per-system bake inputs.
+struct StormBakeParams {
+	vec4 shape;   // x pillar radius (m), y anvil radius multiplier, z anvil start (band fraction), w shear 0..1
+	vec4 extra;   // x mammatus 0..1
+};
+
+// One lattice cell. `q` is the position in the wind frame (x downwind, y across), `core` jitter and the hashed cell parameters
+// come from the cell index. sysCover is the system's mask * influence * fade (it only collapses intervals).
+void ring_storm_cell(
+		vec2 q, ivec2 cell, uint seed, float cellWidth, float pillarRadius, float anvilScale0, float anvilStartBand, float shear, float mammatus,
+		float floorY, float bandMeters, bool isOrigin, bool cumulonimbus, float sysCover, float canopySysCover, float sizeK, float systemLifecycle,
+		inout vec3 bodyAcc, inout vec3 canopyAcc, inout vec4 aux) {
+	vec4 r0 = ring_storm_rand4(cell, seed, 11u);
+	vec4 r1 = ring_storm_rand4(cell, seed, 23u);
+	float exists = (isOrigin || r0.x <= 0.72) ? 1.0 : 0.0;
+	vec2 core = vec2((r0.y - 0.5) * 0.4, (r0.z - 0.5) * 0.16) * cellWidth;
+	vec2 local = q - vec2(cell) * cellWidth - core;
+	float L = systemLifecycle + (r1.y - 0.5) * 0.6; // per-cell maturity offset
+	float R = pillarRadius * 1.35 * mix(0.7, 1.3, r0.w) * sizeK; // sizeK: big systems grow massive towers (look pass 2026-10-26)
+	float anvilScale = mix(0.65, 1.0, r1.x) * anvilScale0;
+	float htop = mix(0.86, 0.97, r1.z);
+	if (!cumulonimbus) htop *= 0.9;
+
+	// Lifecycle (L: birth 0-0.3, develop 0.3-1, mature 1-2, dissipate 2-3): the tower grows through birth/develop and collapses while
+	// dissipating; the canopy appears after L = 0.6, spreads downwind through the mature stage, then drifts, thins and lifts.
+	float grow = smoothstep(0.02, 1.0, L);
+	float collapse = smoothstep(2.0, 2.9, L);
+	float life = grow * (1.0 - 0.85 * collapse);
+	float radiusLife = mix(0.55, 1.0, grow) * (1.0 - 0.6 * collapse);
+	float spread = cumulonimbus ? smoothstep(0.6, 1.8, L) : 0.0;
+	float thin = 1.0 - smoothstep(2.0, 3.0, L);
+
+	// ---- Tower: a barrel from near the cloud base to a cauliflower dome that rises above the canopy ----
+	float baseY = floorY + bandMeters * 0.045;
+	float domeTopY = min(baseY + (floorY + bandMeters * htop - baseY) * life, floorY + bandMeters - 300.0);
+	float overshoot = mix(2500.0, 4000.0, r1.w) * life;
+	float shoulderY = domeTopY - overshoot; // canopy top level
+	float towerRadius = 0.55 * R * radiusLife; // 8-15 km wide, 14-18 km tall: about 1.5-2:1
+	// Lumpy footprint: the wall radius wobbles with low-frequency noise, so the tower reads as bulging cauliflower, not a cylinder.
+	float d = length(local) + (ring_storm_vnoise(local / (0.3 * max(R, 1.0)), seed, 33u) - 0.5) * 0.6 * towerRadius;
+	float towerLinear = clamp((towerRadius - d) / (0.75 * towerRadius), 0.0, 1.0); // horizontal depth proxy (aux)
+	float towerCover = exists * sysCover * smoothstep(0.0, 1.0, clamp((towerRadius - d) / (0.3 * towerRadius), 0.0, 1.0));
+	float domeRadius = max(0.68 * R * radiusLife, 1.0);
+	float dome = sqrt(clamp(1.0 - (d * d) / (domeRadius * domeRadius), 0.0, 1.0));
+	// 3-5 lobes across the dome, +-800 m, riding the dome weight so they fade out at the rim.
+	float lump = (ring_storm_vnoise(local / (0.35 * max(R, 1.0)), seed, 31u) - 0.5) * 2.0 * 1500.0;
+	float bodyBase = baseY + (ring_storm_vnoise(local / 1800.0, seed, 37u) - 0.5) * 500.0;
+	float bodyTop = clamp(shoulderY + (overshoot + lump) * dome, bodyBase + 1.0, floorY + bandMeters - 150.0);
+	ring_storm_add(bodyAcc, bodyBase, bodyTop, towerCover);
+	float towerMax = exists * sysCover * towerLinear;
+
+	// ---- Canopy: tower flare plus a sheared teardrop anvil with mammatus ----
+	float canopyCover = 0.0;
+	float mammatusMask = 0.0;
+	if (cumulonimbus) {
+		float drift = max(L - 2.0, 0.0) * 0.6 * R * anvilScale;
+		vec2 a = local - vec2(drift, 0.0);
+		float Ld = min((6.0 + 6.0 * shear) * R * anvilScale * spread, 1.4 * cellWidth);
+		float Lu = 1.2 * R * anvilScale * spread;
+		float Wc = 3.2 * R * anvilScale * mix(0.55, 1.0, spread);
+		float x = a.x >= 0.0 ? a.x / max(Ld, 1.0) : a.x / max(Lu, 1.0);
+		float Wy = min(Wc * (0.75 + 0.5 * clamp(a.x / max(Ld, 1.0), 0.0, 1.0)), 0.75 * cellWidth);
+		float dn = length(vec2(x, a.y / max(Wy, 1.0))) + (ring_storm_vnoise(a / 3500.0, seed, 49u) - 0.5) * 0.18;
+		// Slightly domed over the core, billowed lumps on top.
+		float canopyTop = shoulderY + 1200.0 * clamp(1.0 - dn, 0.0, 1.0)
+			+ (ring_storm_vnoise(a / 1600.0, seed, 41u) - 0.5) * 2.0 * 700.0
+			+ (ring_storm_vnoise(a / 4800.0, seed, 43u) - 0.5) * 2.0 * 900.0;
+		// Thickness: 1.2-1.8 km at the rim, flaring down toward the deck level over the core.
+		float thickRim = max(canopyTop - (floorY + bandMeters * (anvilStartBand - 0.08 * r1.x)), 2200.0);
+		float thickCore = max(canopyTop - (floorY + bandMeters * 0.32), thickRim);
+		float flare = clamp(1.0 - length(local) / (2.2 * R), 0.0, 1.0);
+		flare *= flare;
+		float underside = canopyTop - (thickRim + (thickCore - thickRim) * flare);
+		// Mammatus: hemispherical pouches (r 0.9-1.4 km) on a staggered hashed lattice lower the underside only.
+		float mamBand = smoothstep(0.2, 0.35, dn) * (1.0 - smoothstep(0.7, 0.85, dn));
+		float maturity = smoothstep(1.4, 1.7, L) * (1.0 - smoothstep(2.0, 2.4, L));
+		mammatusMask = mamBand * maturity;
+		if (mammatusMask * mammatus > 0.001) {
+			vec2 g = a / 3400.0;
+			float drop = 0.0;
+			float row0 = floor(g.y);
+			for (int j = -1; j <= 1; j++) {
+				float row = row0 + float(j);
+				float stagger = 0.5 * mod(row, 2.0);
+				float col0 = floor(g.x - stagger);
+				for (int i = -1; i <= 1; i++) {
+					ivec2 lc = ivec2(int(col0) + i, int(row));
+					vec4 h = ring_storm_rand4(lc, seed ^ 0x5bd1e995u, 53u);
+					vec2 center = vec2(float(lc.x) + stagger + 0.5, row + 0.5) + (h.xy - 0.5) * 0.4;
+					float pouchRadius = mix(1200.0, 1900.0, h.z) / 3400.0;
+					float dd = length(g - center) / pouchRadius;
+					drop = max(drop, sqrt(max(1.0 - dd * dd, 0.0)) * mix(0.6, 1.0, h.w));
+				}
+			}
+			underside -= mammatus * 1700.0 * drop * mammatusMask;
+		}
+		float canopyLinear = exists * canopySysCover * spread * thin * clamp((1.0 - dn) / 0.65, 0.0, 1.0); // horizontal depth proxy (aux)
+		// Wedge: the top descends onto the underside over the outer 70% of the footprint, thick over the tower and feathered at the rim.
+		// The downwind tail frays into streaks elongated along the wind (noise stretched along x, narrow across).
+		float streaks = mix(1.0, ring_storm_vnoise(vec2(a.x / 7000.0, a.y / 650.0), seed, 47u), smoothstep(0.5, 0.95, dn));
+		float canopyWall = exists * canopySysCover * spread * thin * smoothstep(0.0, 1.0, clamp((1.0 - dn) / 0.7, 0.0, 1.0)) * streaks;
+		canopyCover = canopyLinear;
+		ring_storm_add(canopyAcc, min(underside, canopyTop - 1.0), min(canopyTop, floorY + bandMeters - 150.0), canopyWall);
+	}
+	// Aux (debug / harness readback): x canopy coverage, y mammatus mask, z lifecycle of the dominant cell, w tower coverage.
+	if (canopyCover + towerMax > aux.x + aux.w) aux.z = L;
+	aux.x = max(aux.x, canopyCover);
+	aux.y = max(aux.y, mammatusMask * canopyCover);
+	aux.w = max(aux.w, towerMax);
+}
+
+// One storm system (physical profile 2 StormTower / 3 Cumulonimbus) at the texel. `position` is the canonical position (around,
+// across in .xz) already shifted into the system's frame for natural systems.
+void ring_storm_system(
+		int index, vec3 position, float circumference, StormBakeParams bake, float influence,
+		inout vec3 bodyAcc, inout vec3 canopyAcc, inout vec4 aux) {
+	vec4 a = ringWeatherSystems.systems[index].a;
+	vec4 b = ringWeatherSystems.systems[index].b;
+	vec4 c = ringWeatherSystems.systems[index].c;
+	vec4 d = ringWeatherSystems.systems[index].d;
+	float aroundDelta = ring_ws_wrap(position.x - a.x, circumference);
+	float acrossDelta = position.z - a.y;
+	vec2 systemPosition = vec2(b.x * aroundDelta + b.y * acrossDelta, -b.y * aroundDelta + b.x * acrossDelta);
+	float normalizedDistance = length(vec2(systemPosition.x / max(a.z, 1.0), systemPosition.y / max(a.w, 1.0)));
+	// Ragged edge: the deck and the cells fade out along a noisy outline instead of a clean ellipse.
+	normalizedDistance += (ring_storm_vnoise(position.xz / 9000.0, 0x1f3d5b79u, 77u) - 0.5) * 0.22
+		+ (ring_storm_vnoise(position.xz / 2600.0, 0x1f3d5b79u, 79u) - 0.5) * 0.08;
+	float systemMask = 1.0 - smoothstep(0.76, 1.0, normalizedDistance);
+	float canopyMask = 1.0 - smoothstep(0.76, 1.0, normalizedDistance * 0.8); // the canopy reaches past the ellipse: it fades over a 1.25x larger outline
+	if (systemMask <= 0.0 && canopyMask <= 0.0) return;
+	// The sculpt strength setting scales the collapse; 1.2x lets the default 0.92 reach full thickness inside the ellipse.
+	float sysCover = systemMask * clamp(influence * 1.2, 0.0, 1.0) * d.z;
+	int physicalProfile = int(round(c.z));
+	bool cumulonimbus = physicalProfile == 3;
+	float floorY = c.x;
+	float ceilingY = c.y;
+	if (ceilingY <= floorY + 1.0) {
+		floorY = ringWeatherSystems.header2.x;
+		ceilingY = ringWeatherSystems.header2.y;
+	}
+	float bandMeters = max(ceilingY - floorY, 1.0);
+
+	float pillarRadius = max(1000.0, bake.shape.x);
+	float anvilMultiplier = max(1.2, bake.shape.y);
+	// Massive storms (look pass): tower and anvil scale with the system size (36-70 km majors, 70+ km exceptionals), the lattice with them.
+	float sizeK = 2.3 * clamp(sqrt(a.z * a.w) / 45000.0, 0.9, 1.3); // 2.3: massive towers (about 10 km wide) and 60-100 km anvils even for the 50 x 40 km preview system
+	float cellWidth = max(pillarRadius * 3.5, pillarRadius * anvilMultiplier * 2.35) * 1.63 * sizeK;
+	float canopySysCover = canopyMask * clamp(influence * 1.2, 0.0, 1.0) * d.z;
+	float anvilScale0 = clamp(anvilMultiplier / 2.6, 0.5, 1.6);
+
+	// Downwind axis in the system frame.
+	float windAngle = ringWeatherSystems.header1.w;
+	vec2 windWorld = vec2(cos(windAngle), sin(windAngle));
+	vec2 downwind = vec2(b.x * windWorld.x + b.y * windWorld.y, -b.y * windWorld.x + b.x * windWorld.y);
+	vec2 q = vec2(dot(systemPosition, downwind), dot(systemPosition, vec2(-downwind.y, downwind.x)));
+	q.x += sin(q.y / cellWidth * 6.28318530718 + 1.7) * pillarRadius * 0.3;
+	q.y += sin(q.x / cellWidth * 6.28318530718 + 4.1) * pillarRadius * 0.25;
+	uint seed = (floatBitsToUint(a.x) * 1597334677u) ^ (floatBitsToUint(a.y) * 3812015801u)
+		^ uint(floatBitsToInt(ringWeatherSystems.header3.w));
+	ivec2 centerCell = ivec2(floor(q / cellWidth + 0.5));
+	// The own cell plus its 8 neighbours cover every footprint (canopy reach <= 1.1 cell downwind, <= 0.6 cell across).
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			ivec2 cell = centerCell + ivec2(i, j);
+			ring_storm_cell(q, cell, seed, cellWidth, pillarRadius, anvilScale0, clamp(bake.shape.z, 0.5, 0.9), bake.shape.w, bake.extra.x,
+				floorY, bandMeters, cell == ivec2(0), cumulonimbus, sysCover, canopySysCover, sizeK, d.w, bodyAcc, canopyAcc, aux);
+		}
+	}
+
+	if (RING_STORM_DECK_ENABLED > 0.5) {
+		// Closed deck under the system ellipse: base at band 0.07 (+-250 m), top at 0.30-0.38 (+-600 m billows); it grows over
+		// develop (L 0.3-1), stays through mature and thins in dissipate.
+		float L = d.w;
+		float deckLife = smoothstep(0.3, 1.0, L) * (1.0 - 0.7 * smoothstep(2.0, 3.0, L));
+		float deckBase = floorY + bandMeters * 0.07 + (ring_storm_vnoise(position.xz / 2200.0, seed, 61u) - 0.5) * 500.0;
+		float deckTopFull = floorY + bandMeters * mix(0.30, 0.38, ring_storm_vnoise(position.xz / 9000.0, seed, 67u))
+			+ (ring_storm_vnoise(position.xz / 3200.0, seed, 71u) - 0.5) * 1200.0;
+		float deckTop = max(deckBase + (deckTopFull - deckBase) * deckLife, deckBase + 1.0);
+		ring_storm_add(bodyAcc, deckBase, deckTop, sysCover);
+		aux.w = max(aux.w, sysCover * deckLife); // horizontal depth of the deck (erosion)
+	}
+}

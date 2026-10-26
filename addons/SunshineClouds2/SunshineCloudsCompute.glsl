@@ -19,6 +19,10 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 // 2 / 4 = each thread marches one pixel of an n x n block per frame and SunshineCloudsInterleaveFill.glsl reconstructs the rest.
 // Set per pipeline variant by the compositor (specialization constant 0).
 layout(constant_id = 0) const int RING_INTERLEAVE = 0;
+// Storm shape fallback (specialization constant 1): 0 = the default kernel carries NO analytic pillar/anvil shape (storms come from the
+// baked storm profile map), 1 = HEAD's pillar/anvil lattice is compiled in. The driver selects the fallback pipeline only while the map is
+// invalid (camera-independent clouds off, map not built yet, debug A/B), so the map-on kernel never pays for the legacy code.
+layout(constant_id = 1) const int RING_STORM_FALLBACK = 0;
 
 layout(rgba16f, binding = 0) uniform image2D output_data_image;
 layout(rgba16f, binding = 1) uniform image2D output_color_image;
@@ -80,6 +84,14 @@ layout(binding = 22, std140) uniform RingMacroMapBlock {
 	vec4 b;
 } ringMacroMap;
 layout(binding = 23) uniform sampler2DArray ring_macro_map;
+// Storm profile map (RingStormProfileBake.glsl): world-anchored 2.5D storm columns baked outside the march, one fetch per primary
+// sample while valid. Params: see RingStormProfileSample.glslinc.
+layout(binding = 24, std140) uniform RingStormMapBlock {
+	vec4 a;
+	vec4 b;
+	vec4 c;
+} ringStormMap;
+layout(binding = 25) uniform sampler2DArray ring_storm_map;
 // CloudInterleave block images (one texel per marched pixel; only written when RING_INTERLEAVE > 0): steady light rgba,
 // transient light rgb, and march data (initial distance, traveled distance, cloud body distance, opaque depth metadata).
 layout(rgba16f, binding = 26) uniform writeonly image2D interleave_steady_image;
@@ -87,6 +99,8 @@ layout(rgba16f, binding = 27) uniform writeonly image2D interleave_transient_ima
 layout(rgba32f, binding = 28) uniform writeonly image2D interleave_data_image;
 #define RING_WS_MACRO_MAP
 #include "./RingWeatherSystems.glslinc"
+#define RING_STORM_SUN_LIGHT
+#include "./RingStormProfileSample.glslinc"
 
 float terrain_cloud_direct_sun_visibility(vec3 worldPosition) {
 	if (genericData.data.terrain_cloud_sun_profile[3].y <= 0.5
@@ -349,6 +363,9 @@ float storm_system_density(StormSystemParams stormParams, vec3 cloudPosition, fl
 	if (physicalProfile != 2 && physicalProfile != 3 && profile < 1.5) {
 		return 0.0;
 	}
+	if (RING_STORM_FALLBACK == 0) {
+		return 0.0;
+	}
 	float pillarRadius = max(1000.0, stormParams.detail.x);
 	float anvilRadiusMultiplier = max(1.2, stormParams.detail.y);
 	float anvilRadius = pillarRadius * anvilRadiusMultiplier;
@@ -397,6 +414,10 @@ float sampleEffectorAdditive(vec3 worldPosition) {
 	return effectorAdditive;
 }
 
+// Per-sample storm bookkeeping for the per-ray storm ambient: the storm and total density the last sampleScene call returned.
+float g_last_storm_density = 0.0;
+float g_last_total_density = 0.0;
+
 float sampleScene(
 	vec3 largeNoisePos, 
 	vec3 mediumNoisePos, 
@@ -415,6 +436,8 @@ float sampleScene(
 	bool ambientsample,
 	bool coarseSunLighting)
 	{
+	g_last_storm_density = 0.0;
+	g_last_total_density = 0.0;
 	worldPosition = to_cloud_space(worldPosition);
 	vec3 canonicalCloudPosition = worldPosition;
 	float wallMask = ring_side_wall_mask(canonicalCloudPosition.z);
@@ -508,7 +531,7 @@ float sampleScene(
 	float weatherGate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
 		genericData.data.cloud_weather_params);
 	float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
-		? mix(0.70, 0.90, weatherCoverage) : coverage;
+		? mix(mix(0.70, 0.90, weatherCoverage), 1.05, smoothstep(0.35, 0.80, weatherStorm)) : coverage;
 	largeShape = smoothstep(1.0 - weatherBackgroundThreshold,
 		1.1 - weatherBackgroundThreshold, largeShape * gradientSample.r)
 		+ max(effectorAdditive, 0.0);
@@ -519,8 +542,8 @@ float sampleScene(
 	float mediumshape = 1.0 - mediumShapes.b;
 	// Only directional sun transmittance may omit fine erosion. Keep the
 	// original pre-warp coordinates when deferring this texture read.
-	float smallShape = coarseSunLighting ? 0.0 : texture(noise_small, (canonicalCloudPosition - smallNoisePos) / smallnoisescale).r;
-	smallShape = smallShape * gradientSample.g * pow((1.0 - mediumshape), smallscalePower);
+	float smallRaw = coarseSunLighting ? 0.0 : texture(noise_small, (canonicalCloudPosition - smallNoisePos) / smallnoisescale).r;
+	float smallShape = smallRaw * gradientSample.g * pow((1.0 - mediumshape), smallscalePower);
 	
 
 	float backgroundDensity = 0.0;
@@ -533,10 +556,16 @@ float sampleScene(
 	}
 	// At exactly zero large shape, the original remap has equal input bounds
 	// and can produce NaN. This branch is mathematically empty background.
-	stormDensity *= mix(0.62, 1.0, mediumShapes.r);
+	if (cameraIndependent && g_storm_map_density > 0.0) {
+		// Baked storm columns: profile-driven erosion (billowy tops and sides, smooth underside); the other sculpt profiles keep HEAD's modulation.
+		stormDensity = max(g_storm_other * mix(0.62, 1.0, mediumShapes.r), ring_storm_eroded(mediumshape, smallRaw));
+	} else {
+		stormDensity *= mix(0.62, 1.0, mediumShapes.r);
+	}
 
-	return clamp(max(backgroundDensity, stormDensity), 0.0, 1.0)
-		* wallMask;
+	g_last_storm_density = clamp(stormDensity, 0.0, 1.0) * wallMask;
+	g_last_total_density = clamp(max(backgroundDensity, stormDensity), 0.0, 1.0) * wallMask;
+	return g_last_total_density;
 }
 
 float sampleSceneCoarse(
@@ -579,12 +608,19 @@ float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgr
 	vec3 detail = genericData.data.storm_detail.xyz;
 	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
 	float result = 0.0;
+	// Storm towers and cumulonimbus come from the baked profile map (fetched once per primary sample); only the other sculpt
+	// profiles, or every profile while the map is invalid, run the analytic loop below.
+	bool stormMap = ring_storm_map_valid();
+	float other = 0.0;
+	g_storm_map_density = 0.0;
+	if (stormMap) result = ring_storm_map_density(canonical.y);
 	for (int word = 0; word < 2; word++) {
 		// The per-primary sub-mask: only the masked sculpt systems whose ellipse (plus light reach) covers the primary sample.
 		uint bits = word == 0 ? g_ws_sub_mask.x : g_ws_sub_mask.y;
 		while (bits != 0u) {
 			int index = word * 32 + findLSB(bits);
 			bits &= bits - 1u;
+			if (stormMap && ring_storm_is_storm_profile(index)) continue;
 			vec4 c = ringWeatherSystems.systems[index].c;
 			float stormFloor = c.x;
 			float stormCeiling = c.y;
@@ -602,9 +638,12 @@ float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgr
 				vec4(detail.x, detail.y, detail.z, c.z));
 			vec3 position = canonical;
 			if ((ring_ws_flags(index) & RING_WS_FLAG_STATIC) == 0u) position.xz += shift;
-			result = max(result, storm_system_density(systemParams, position, stormHeight) * altitudeMask * ringWeatherSystems.systems[index].d.z);
+			float systemDensity = storm_system_density(systemParams, position, stormHeight) * altitudeMask * ringWeatherSystems.systems[index].d.z;
+			other = max(other, systemDensity);
+			result = max(result, systemDensity);
 		}
 	}
+	g_storm_other = other;
 	return result;
 }
 
@@ -754,6 +793,13 @@ float sampleLighting(
 	float lod,
 	bool coarseSunLighting)
 	{
+	// Storm light shortcut: a closed-form optical depth through the storm column the sun ray crosses, plus (for samples that are storm
+	// cloud themselves) only two noise steps. Only the directional sun march (coarseSunLighting) takes it.
+	float stormTau = 0.0;
+	if (ring_ws_enabled() && coarseSunLighting && g_storm_primary_active) {
+		stormTau = ring_storm_sun_tau(to_cloud_space(worldPosition), sunDirection);
+		if (g_storm_primary_dominant) stepCount = min(stepCount, 2);
+	}
 	float density = 0.0;
 	float stepCountFloat = max(float(stepCount) * lod, 2.0);
 	float actualDistance = mix(stepDistance * 4.0, stepDistance, lod);
@@ -818,7 +864,7 @@ float sampleLighting(
 		}
 	}
 
-	return density;
+	return density + stormTau / max(stepDistance, 1.0);
 }
 
 float sampleAO(
@@ -1204,6 +1250,7 @@ void main() {
 	bool ciClouds = ring_ws_enabled();
 	// With a valid macro map the per-sample macro terms are one fetch, so the per-ray list only needs the sculpt systems.
 	bool ciMap = ciClouds && ring_ws_map_valid();
+	bool ciStormMap = ciClouds && ring_storm_map_valid();
 	// Background band (flag on) and the light reach used for the per-primary sculpt sub-mask: the longest light march
 	// (4 x the lighting step distance, point lights 4 x min(maxstep, distance)) plus slack for the ambient offset and curvature.
 	vec2 ciBackground = vec2(cloudfloor, cloudceiling);
@@ -1268,6 +1315,10 @@ void main() {
 	float ambient = 0.0;
 	float depthFade = 1.0;
 	float newdensity = 0.0;
+	// Storm share of the ray's opacity: sum(storm density * visibility) / sum(density * visibility) over the primary samples.
+	float primaryStormShare = 0.0;
+	float stormShareNum = 0.0;
+	float stormShareDen = 0.0;
 	vec3 curPos = vec3(0.0);
 	float previousCloudAltitude = cloud_altitude(rayOrigin);
 	bool cameraStartsInsideCloudAltitudeBand = previousCloudAltitude >= cloudfloor
@@ -1286,6 +1337,7 @@ void main() {
 			curPos = SamplePoints[i].xyz;
 			vec3 cloudPos = to_cloud_space(curPos);
 			if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
+			if (ciStormMap) ring_storm_update_primary(cloudPos, g_ws_sub_mask);
 			vec4 maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 			//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
 			//ceilingSample = cloudceiling;
@@ -1420,6 +1472,12 @@ void main() {
 			} else {
 			// Sculpt sub-mask for this primary sample (light and ambient samples reuse it).
 			if (ciClouds) ring_ws_update_sub_mask(cloudPos, ciLightReach, ciBackground, ciWidenBand);
+			// One storm profile fetch per primary sample (only when a storm system is in reach); light and ambient samples reuse it.
+			if (ciStormMap) {
+				ring_storm_update_primary(cloudPos, g_ws_sub_mask);
+				g_storm_primary_active = g_storm_heights.y > g_storm_heights.x || g_storm_heights.w > g_storm_heights.z;
+				g_storm_primary_dominant = false;
+			}
 			// One macro-weather evaluation per primary sample; its coverage, density and light multipliers (and the
 			// g_ws_* storm/base-coverage globals) are reused by every light and ambient sample taken from this point.
 			if (ciClouds && (ring_ws_debug() & 8) != 0) ring_ws_apply_macro(vec4(ringWeatherSystems.header0.z, 0.0, 0.0, 0.0), coverage, densityMultiplier, lightingdensityMultiplier); // debug: constant macro
@@ -1427,6 +1485,10 @@ void main() {
 			else if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
 			// newdensity = sampleSceneCoarse(largeNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, coverage, curLod);
 			newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false, false) * densityMultiplier, sharpness) * depthFade;
+			primaryStormShare = g_last_total_density > 0.0001 ? clamp(g_last_storm_density / g_last_total_density, 0.0, 1.0) : 0.0;
+			// Storm-lit background (the lifted overcast under a storm) is storm cloud as far as darkness goes.
+			primaryStormShare = max(primaryStormShare, smoothstep(0.35, 0.80, ring_ws_storm_level()) * min(1.0, newdensity * 4.0));
+			g_storm_primary_dominant = g_last_storm_density > 0.5 * g_last_total_density && g_last_storm_density > 0.0;
 			if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
 				&& genericData.data.cloud_handoff.x > 0.0) {
 				newdensity *= ring_cloud_handoff_near_weight(traveledDistance,
@@ -1462,7 +1524,9 @@ void main() {
 					float densitySample = sampleLighting(thislightingStepCount, curPos, extralargeNoisePos, largeNoisePos, mediumNoisePos, smallNoisePos, sundir, densityMultiplier * lightingdensityMultiplier, sunUpWeight, lightingStepDistance, cloudceiling, cloudfloor, extralargenoiseScale, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, true);
 					densitySample = BeersLaw(lightingStepDistance, densitySample * henyeygreenstein);
 					//densitySample = Powder(lightingStepDistance, densitySample);
-					float thisStepLightingWeight = (pow(densitySample, lightingSharpness)) * sunUpWeight * terrain_cloud_direct_sun_visibility(curPos);
+					// Storm cloud (tower, canopy, deck, the storm-lit overcast) takes only part of the direct sun: a dark, dramatic storm even where the sun reaches it.
+					float thisStepLightingWeight = (pow(densitySample, lightingSharpness)) * sunUpWeight * terrain_cloud_direct_sun_visibility(curPos)
+						* (1.0 - 0.85 * genericData.data.ring_storm_ambient.w * primaryStormShare);
 					
 
 					lightColor.rgb += pow(directionalLights[lightI].color.rgb * directionalLights[lightI].color.a * thisStepLightingWeight, vec3(2.2)) * powderEffect;
@@ -1579,6 +1643,9 @@ void main() {
 			}
 
 			ring_cloud_depth_accumulate(depthWeightSum, depthWeightedDistanceSum, density, newdensity * terminalDensityWeight, traveledDistance);
+			float stormVisible = newdensity * terminalDensityWeight * (1.0 - density);
+			stormShareNum += stormVisible * primaryStormShare;
+			stormShareDen += stormVisible;
 			density += newdensity * terminalDensityWeight;
 			if (density >= 1.0){
 				densityBreak = true;
@@ -1666,7 +1733,12 @@ void main() {
 	// Keep clouds readable without imposing a fixed daytime-blue floor. The
 	// bridge supplies a ring-local day/night ambient color, so this floor now
 	// follows the viewer's side of the ring.
-	ambientLight = max(ambientLight, genericData.data.ambientLightColor.rgb * 0.35);
+	// Per-ray storm ambient: rays whose opacity is mostly storm cloud (tower, canopy, deck) take the dark storm ambient and lose the
+	// 0.35 floor for that share, so the underside of a storm is dark however bright the sky ambient is.
+	float stormShare = stormShareDen > 0.0001 ? clamp(stormShareNum / stormShareDen, 0.0, 1.0) : 0.0;
+	float stormAmbientStrength = genericData.data.ring_storm_ambient.w * stormShare;
+	ambientLight = max(ambientLight, genericData.data.ambientLightColor.rgb * 0.35 * (1.0 - stormAmbientStrength));
+	ambientLight = mix(ambientLight, genericData.data.ring_storm_ambient.rgb, stormAmbientStrength);
 	if (any(isnan(lightColor.rgb)) || any(isinf(lightColor.rgb))) {
 		lightColor.rgb = vec3(0.0);
 	}
@@ -1676,6 +1748,7 @@ void main() {
 	lightColor.a = clamp(density, 0.0, 1.0);
 
 	vec3 physicalFogColor = lightColor.rgb;
+	vec3 unfoggedColor = lightColor.rgb; // storm cloud keeps its dark colour with distance (look pass)
 	float fogweight = 0.0;
 	
 	if (atmosphericDensity > 0.0 && linear_depth > maxstep && directionalLightCount > 0.0){
@@ -1702,6 +1775,8 @@ void main() {
 	if (any(isnan(lightColor.rgb)) || any(isinf(lightColor.rgb))) {
 		lightColor.rgb = ambientLight;
 	}
+	// Storm cloud (tower, canopy, deck) is a dark mass against the hazy horizon: its own colour wins back part of the aerial perspective.
+	lightColor.rgb = mix(lightColor.rgb, unfoggedColor, 0.6 * stormShare);
 	lightColor.rgb = max(lightColor.rgb, ambientLight);
 	//lightColor.rgb = physicalFogColor;
 	// initialdistanceSample = max(initialdistanceSample, 0.0);

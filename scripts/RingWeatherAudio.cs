@@ -17,6 +17,12 @@ public partial class RingWeatherAudio : Node
     [Export] public bool Enabled { get; set; } = true;
     [Export(PropertyHint.Range, "-48,12,0.5")] public float ThunderVolumeDb { get; set; } = -8.0f;
     [Export] public AudioStream[] ThunderSamples { get; set; } = Array.Empty<AudioStream>();
+    /// <summary>Thunder heard within <see cref="NearMaxMeters"/>; empty fills by convention from thunder_near_NN.ogg.</summary>
+    [Export] public AudioStream[] ThunderNearSamples { get; set; } = Array.Empty<AudioStream>();
+    /// <summary>Thunder heard beyond <see cref="FarMinMeters"/>; empty fills by convention from thunder_far_NN.ogg.</summary>
+    [Export] public AudioStream[] ThunderFarSamples { get; set; } = Array.Empty<AudioStream>();
+    public const double NearMaxMeters = 1500.0;
+    public const double FarMinMeters = 8000.0;
     [Export(PropertyHint.Range, "1000,100000,1000")] public float MaxAudibleDistanceMeters { get; set; } = 25_000.0f;
     [Export] public NodePath WeatherSourcePath { get; set; } = new("../RingVolumetricClouds");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
@@ -24,6 +30,10 @@ public partial class RingWeatherAudio : Node
 
     /// <summary>Underground-mode enclosure blend (0..1): thunder is low-passed and attenuated by 12 dB, never muted or restarted.</summary>
     public float UndergroundBlend { get; set; }
+    /// <summary>Cover muffle from the rain sound field (0..1 maps to 0..16 dB); the stronger of this and the underground blend wins. The ambience node pushes it every frame.</summary>
+    public float ShelterMuffleAmount { get; set; }
+    /// <summary>Cutoff the current shelter class allows thunder (Hz); the lower of this and the distance/underground cutoff wins.</summary>
+    public float ShelterCutoffHz { get; set; } = 18_000.0f;
     private readonly ThunderPropagation _propagation = new();
     private readonly List<ThunderArrival> _arrivals = new();
     private readonly List<AudioStreamPlayer3D> _voices = new();
@@ -49,6 +59,7 @@ public partial class RingWeatherAudio : Node
     private readonly HashSet<long> _suppressedIds = new();
     private readonly HashSet<long> _observedActiveIds = new();
     private ulong _lastTicks;
+    private string _lastPool = "mid";
 
     public override void _Ready()
     {
@@ -69,6 +80,8 @@ public partial class RingWeatherAudio : Node
             }
             ThunderSamples = samples.ToArray();
         }
+        if (ThunderNearSamples.Length == 0) ThunderNearSamples = LoadPool("thunder_near");
+        if (ThunderFarSamples.Length == 0) ThunderFarSamples = LoadPool("thunder_far");
         _lastTicks = Time.GetTicksUsec();
         for (int i = 0; i < 8; i++)
         {
@@ -161,6 +174,8 @@ public partial class RingWeatherAudio : Node
         ["pending_count"] = _propagation.PendingCount, ["history_count"] = _propagation.HistoryCount,
         ["voice_count"] = _voices.Count, ["active_voice_count"] = _voices.Count(v => v.Playing),
         ["asset_count"] = ThunderSamples.Count(s => s != null && s.GetLength() > 0.0),
+        ["near_asset_count"] = ThunderNearSamples.Count(s => s != null && s.GetLength() > 0.0),
+        ["far_asset_count"] = ThunderFarSamples.Count(s => s != null && s.GetLength() > 0.0), ["last_pool"] = _lastPool,
         ["reset_count"] = _resetCount, ["can_hear"] = _canHear, ["played_count"] = _playedCount,
         ["last_id"] = _lastId, ["last_distance_meters"] = _lastDistance,
         ["last_delay_seconds"] = _lastDelay, ["audio_clock"] = _audioClock,
@@ -173,7 +188,7 @@ public partial class RingWeatherAudio : Node
     private void Play(in ThunderArrival arrival)
     {
         if (arrival.Strike.Energy <= 0.0f) return;
-        AudioStream? stream = LoadSample(arrival.Strike.ShapeSeed);
+        AudioStream? stream = LoadSample(arrival.Strike.ShapeSeed, arrival.DistanceMeters, out string pool);
         if (stream == null) return;
         if (!double.IsFinite(stream.GetLength()) || arrival.LateSeconds >= stream.GetLength()) return;
         AudioStreamPlayer3D? voice = _voices.Find(v => !v.Playing);
@@ -184,6 +199,7 @@ public partial class RingWeatherAudio : Node
         ApplyVoiceMix(voice, arrival.DistanceMeters, arrival.Strike.Energy);
         voice.Play((float)Math.Max(0.0, arrival.LateSeconds));
         _playedCount++;
+        _lastPool = pool;
         _lastId = arrival.Strike.EventId;
         _lastDistance = arrival.DistanceMeters;
         _lastDelay = arrival.TravelSeconds;
@@ -197,9 +213,13 @@ public partial class RingWeatherAudio : Node
         voice.VolumeDb = ResolveVolume() + Mathf.LinearToDb(Mathf.Clamp(energy, 0.01f, 1.0f))
             + (float)Math.Clamp(-distance / 3_000.0, -18.0, 0.0);
         float distant = Mathf.SmoothStep(500.0f, 10_000.0f, (float)distance);
-        float muffle = Mathf.Clamp(UndergroundBlend, 0.0f, 1.0f);
-        voice.VolumeDb -= 12.0f * muffle;
-        voice.AttenuationFilterCutoffHz = Mathf.Lerp(Mathf.Lerp(18_000.0f, 1_000.0f, distant), 600.0f, muffle);
+        float underground = Mathf.Clamp(UndergroundBlend, 0.0f, 1.0f);
+        float shelter = float.IsFinite(ShelterMuffleAmount) ? Mathf.Clamp(ShelterMuffleAmount, 0.0f, 1.0f) : 0.0f;
+        float muffle = Mathf.Max(underground, shelter);
+        voice.VolumeDb -= Mathf.Max(12.0f * underground, 16.0f * shelter);
+        float cutoff = Mathf.Lerp(Mathf.Lerp(18_000.0f, 1_000.0f, distant), 600.0f, muffle);
+        if (float.IsFinite(ShelterCutoffHz) && ShelterCutoffHz > 0.0f) cutoff = Mathf.Min(cutoff, ShelterCutoffHz);
+        voice.AttenuationFilterCutoffHz = cutoff;
         voice.AttenuationFilterDb = Mathf.Lerp(Mathf.Lerp(0.0f, -24.0f, distant), -24.0f, muffle);
     }
 
@@ -215,9 +235,26 @@ public partial class RingWeatherAudio : Node
         MinimumAltitudeMeters: -RingAtmosphereModel.FloorDepthMeters,
         DatumInwardOffsetMeters: _grid.RingVerticalBaseOffsetMeters);
 
-    private AudioStream? LoadSample(int shapeSeed)
+    private static AudioStream[] LoadPool(string prefix)
     {
-        AudioStream? stream = ThunderSamples.Length == 0 ? null : ThunderSamples[Math.Abs(shapeSeed % ThunderSamples.Length)];
+        var samples = new List<AudioStream>();
+        for (int index = 1; index <= 8; index++)
+        {
+            string path = $"res://resources/audio/weather/{prefix}_{index:00}.ogg";
+            if (!ResourceLoader.Exists(path)) break;
+            AudioStream? stream = ResourceLoader.Load<AudioStream>(path);
+            if (stream != null && double.IsFinite(stream.GetLength()) && stream.GetLength() > 0.0) samples.Add(stream);
+        }
+        return samples.ToArray();
+    }
+
+    private AudioStream? LoadSample(int shapeSeed, double distanceMeters, out string pool)
+    {
+        AudioStream[] samples = ThunderSamples;
+        pool = "mid";
+        if (distanceMeters < NearMaxMeters && ThunderNearSamples.Length > 0) { samples = ThunderNearSamples; pool = "near"; }
+        else if (distanceMeters > FarMinMeters && ThunderFarSamples.Length > 0) { samples = ThunderFarSamples; pool = "far"; }
+        AudioStream? stream = samples.Length == 0 ? null : samples[Math.Abs(shapeSeed % samples.Length)];
         if (stream == null && !_warnedMissingAssets) { GD.PushWarning("Thunder audio assets are missing; thunder playback is safely disabled."); _warnedMissingAssets = true; }
         return stream;
     }

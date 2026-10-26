@@ -1,6 +1,7 @@
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled, cull_disabled, fog_disabled;
 #include "res://materials/ring_wind_field.gdshaderinc"
+#include "res://materials/ring_precip_occlusion.gdshaderinc"
 uniform sampler2D scene_depth : hint_depth_texture, repeat_disable, filter_nearest;
 uniform float rain_intensity = 0.0;
 uniform float haze_density = 0.004;
@@ -11,6 +12,22 @@ uniform float variation_strength = 0.25;
 uniform vec3 haze_tint = vec3(0.195994, 0.242867, 0.295700);
 uniform float daylight = 1.0;
 uniform float sky_distance = 750.0;
+
+// Metres of the ray inside rain-exposed air: the first 64 m after the near-clear distance are weighted by the precipitation occlusion map (6 samples), the rest counts fully.
+float exposed_path(vec3 view_ray, float distance_m, float near_clear, vec3 camera_world, mat4 inv_view) {
+    float s0 = near_clear;
+    float s1 = min(distance_m, 64.0);
+    float path = 0.0;
+    if (s1 > s0) {
+        float step_len = (s1 - s0) / 6.0;
+        for (int i = 0; i < 6; i++) {
+            float t = s0 + (float(i) + 0.5) * step_len;
+            vec3 w = camera_world + (inv_view * vec4(view_ray * t, 0.0)).xyz;
+            path += ring_precip_exposure(w) * step_len;
+        }
+    }
+    return path + max(0.0, distance_m - max(near_clear, 64.0));
+}
 
 void vertex() {
     // Forward+ reverse-Z: the overlay is in front of the scene, while the
@@ -33,7 +50,7 @@ void fragment() {
         && !any(isnan(scene_h)) && !any(isinf(scene_h))) {
         scene_distance = min(length(scene_h.xyz / scene_h.w), sky_distance);
     }
-    float wet_path = max(0.0, scene_distance - near_clear_distance);
+    float wet_path = exposed_path(view_ray, scene_distance, near_clear_distance, CAMERA_POSITION_WORLD, INV_VIEW_MATRIX);
     // One broad shared wind sample is sufficient for veils. No independent
     // TIME animation or screen-space streaks can drift during a paused clock.
     vec3 sample_world = CAMERA_POSITION_WORLD

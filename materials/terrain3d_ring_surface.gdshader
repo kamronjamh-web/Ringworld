@@ -11,6 +11,7 @@ render_mode blend_mix,depth_draw_opaque,cull_back,diffuse_burley,specular_schlic
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_terrain_surface_albedo.gdshaderinc"
 #include "res://materials/ring_terrain_lighting.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 #define SKIP_PASS 0
 #define VERTEX_PASS 1
@@ -48,10 +49,8 @@ uniform bool biome_texture_weights_enabled = false;
 // Biome samplers and biome_texture_scale: ring_terrain_surface_albedo.gdshaderinc.
 // Weather is supplied separately from the packed biome weights. The COLOR map's
 // alpha channel remains the alpine biome weight.
-uniform float surface_wetness : hint_range(0.0, 1.0) = 0.0;
-uniform float surface_wetness_strength : hint_range(0.0, 1.0) = 1.0;
+// Wetness (darkening, gloss, puddles, ripples) comes from the per-location wet map: ring_wetness.gdshaderinc. Only the dry roughness is a terrain look.
 uniform float surface_dry_roughness : hint_range(0.65, 0.98) = 0.92;
-uniform float surface_wet_roughness : hint_range(0.10, 0.75) = 0.35;
 uniform bool flat_terrain_normals = false;
 // Presentation-only smoothing over the authoritative RF lattice. Disable for
 // the former per-cell normal and nearest biome-weight A/B reference.
@@ -257,10 +256,40 @@ void fragment() {
         ground = mix(dirt, ring_terrain_biome_mix(grass, desert, forest, tundra, alpine, packed), ground_facing);
     }
     float ground_facing = smoothstep(.45, .78, planar_normal.y);
-    float wet = clamp(surface_wetness * surface_wetness_strength, 0.0, 1.0) * ground_facing;
     // Keep exposed rock subtly smoother while preserving a matte dry surface.
     float dry_roughness = surface_dry_roughness - slope * .08;
-    vec3 dry_albedo = ground * (1.0 - wet * .15);
+    // Wet world: per-location wetness (map x shelter) darkens the ground (soil 1, rock 0.5), glosses it, and collects puddles with ripples on flat hollows.
+    float terrain_roughness = dry_roughness;
+    float terrain_specular = .18;
+    float wet_gloss = 0.0;
+    vec3 dry_albedo = ground;
+    if (ring_wet_params.w > 0.5) {
+        RingWet wet_state = ring_wet_sample(v_vertex, ring_normal, up);
+        ring_wet_apply(wet_state, mix(0.5, 1.0, ground_facing), dry_albedo, terrain_roughness, terrain_specular);
+        wet_gloss = ring_wet_gloss(wet_state);
+        float wet_distance = distance(v_vertex, ring_viewer_world_position);
+        float flatness = ring_wet_flatness(ring_normal, up);
+        if (wet_state.standing > 0.0 && ring_wet_params.z > 0.0 && flatness > 0.0 && wet_distance < 150.0) {
+            // Cavity from four height taps (8 m): hollows fill first and empty last.
+            float cavity = 0.5;
+            if (wet_distance < 120.0) {
+                float taps = height_or(get_index_coord(index_id + vec2(4.0, 0.0), SKIP_PASS), surface_height)
+                    + height_or(get_index_coord(index_id + vec2(-4.0, 0.0), SKIP_PASS), surface_height)
+                    + height_or(get_index_coord(index_id + vec2(0.0, 4.0), SKIP_PASS), surface_height)
+                    + height_or(get_index_coord(index_id + vec2(0.0, -4.0), SKIP_PASS), surface_height);
+                cavity = clamp(0.5 + 0.9 * (0.25 * taps - surface_height), 0.0, 1.0);
+            }
+            vec2 wet_plane = ring_wet_plane(v_vertex);
+            vec2 puddle = ring_wet_puddle(wet_state, wet_plane, flatness, cavity, wet_distance);
+            vec3 puddle_normal = ring_normal;
+            ring_wet_apply_puddle(puddle, wet_state, wet_plane, up, wet_distance, dry_albedo, terrain_roughness, terrain_specular, puddle_normal);
+            if (puddle.x > 0.0) NORMAL = mat3(VIEW_MATRIX) * puddle_normal;
+            wet_gloss = max(wet_gloss, max(puddle.x, puddle.y));
+        }
+        float puddle_far = ring_wet_puddle_average(wet_state, flatness, wet_distance);
+        terrain_roughness = mix(terrain_roughness, 0.12, puddle_far);
+        wet_gloss = max(wet_gloss, puddle_far);
+    }
     float grass_coverage = ring_terrain_grass_coverage(
         v_vertex,
         distance(v_vertex, ring_viewer_world_position),
@@ -284,22 +313,21 @@ void fragment() {
         ring_day_factor);
     ALBEDO = lit_albedo;
     EMISSION = atmosphere_emission;
-    ROUGHNESS = mix(dry_roughness, surface_wet_roughness, wet);
-    // Match the proxy's dry environment-reflection coefficient. Rain alone
+    ROUGHNESS = terrain_roughness;
+    // Match the proxy's dry environment-reflection coefficient. Wet gloss alone
     // enables the added direct-light highlight below.
-    float terrain_specular = mix(.18, .50, wet);
     SPECULAR = terrain_specular;
     // A custom light() function has no SPECULAR input, so carry the fragment
     // material's dielectric reflectance into that stage explicitly.
     terrain_specular_f0 = .16 * terrain_specular * terrain_specular;
-    terrain_direct_specular_weight = wet;
+    terrain_direct_specular_weight = wet_gloss;
     combined_cloud_shadow_occlusion = sample_local_cloud_shadow(v_vertex) * ring_day_factor;
     terrain_shadow_uv = vec2(
         ring_terrain_shadow_anchor_uv.x
             + UV.x / max(_vertex_density, 0.000001) / (6.28318530718 * ring_radius_meters),
         ring_terrain_shadow_anchor_uv.y
             + UV.y / max(_vertex_density, 0.000001) * ring_across_direction / max(ring_width_meters, 1.0));
-    AO = 1.0 - combined_cloud_shadow_occlusion * .72;
+    AO = min(1.0 - combined_cloud_shadow_occlusion * .72, ring_storm_ambient(ring_storm_level(v_vertex))); // storm light: ambient follows the storm level under the surface
     AO_LIGHT_AFFECT = 0.0;
     if (ring_shadow_debug_enabled()) {
         // Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).

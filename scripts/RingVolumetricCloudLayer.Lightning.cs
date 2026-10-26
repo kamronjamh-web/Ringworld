@@ -210,7 +210,7 @@ public partial class RingVolumetricCloudLayer
         if (!TryResolveLightningSlot(seed, present.SystemId, now, out long slot, out double start)) return false;
         if (!TryBuildWeatherSystem(a,z,seed,start,out WeatherSystemDefinition s) || s.SystemId != present.SystemId) return false;
         LocalWeatherState weather=ToLightningWeather(s,start);
-        if (!IsLightningEligible(weather) || Unit(LightningHash(seed,s.SystemId,slot,33)) > 0.18f+weather.PrecipitationPotential*.42f) return false;
+        if (!IsLightningEligible(weather) || Unit(LightningHash(seed,s.SystemId,slot,33)) > (0.18f+weather.PrecipitationPotential*.42f)*LightningVisualPolicy.NaturalStrikeChanceScale) return false;
         uint hash = LightningHash(seed, s.SystemId, slot, 8);
         long id = ((long)(hash & 0x7fffffff) << 32) | LightningHash(seed ^ 0x51ed, s.SystemId, slot, 9);
         if (id <= 0) id = 1;
@@ -230,7 +230,8 @@ public partial class RingVolumetricCloudLayer
         ["cloud_vertical_meters"] = e.CloudPosition.VerticalMeters,
         ["cloud_across_meters"] = e.CloudPosition.AcrossMeters,
         ["plane_angle_radians"] = e.PlaneAngleRadians, ["energy"] = e.Energy,
-        ["flash_radius_meters"] = e.FlashRadiusMeters, ["is_preview"] = e.IsPreview,
+        ["flash_radius_meters"] = e.FlashRadiusMeters, ["is_preview"] = e.IsPreview, ["system_kind"] = e.SystemKind,
+        ["upper_atmosphere_kind"] = (int)(UpperAtmosphereLightning.TryDerive(e, CloudTopMeters, out UpperAtmosphereSprite sprite) ? sprite.Kind : UpperAtmosphereKind.None),
         ["pulse"] = RingLightningEvent.PulseAtAge(now - e.StartTimeSeconds)
     };
     private void TryScheduleManualLightning(LocalWeatherState weather, double now)
@@ -246,7 +247,8 @@ public partial class RingVolumetricCloudLayer
     /// <summary>Cadence/phase slot of a system's lightning; false when no slot is live at <paramref name="now"/>.</summary>
     private static bool TryResolveLightningSlot(int seed, int systemId, double now, out long slot, out double start)
     {
-        double cadence = 7.0 + Unit(LightningHash(seed, systemId, 0, 31)) * 17.0;
+        // Frequency above 1 shortens the cadence (below 1 it thins strikes in TryCreateNaturalEvent instead), so strong storms also speed up.
+        double cadence = (7.0 + Unit(LightningHash(seed, systemId, 0, 31)) * 17.0) / Math.Max(1.0f, LightningVisualPolicy.FrequencyScale);
         double phase = Unit(LightningHash(seed, systemId, 0, 32)) * cadence;
         slot = (long)Math.Floor((now - phase) / cadence);
         start = phase + slot * cadence;
@@ -300,7 +302,7 @@ public partial class RingVolumetricCloudLayer
 		RingCanonicalPosition ground = new RingCanonicalPosition(around, surface + (floatSurface ? 0.0 : 1.0), across);
         RingCanonicalPosition cloud = ground with { VerticalMeters = Math.Max(ground.VerticalMeters + 250.0, Math.Max(weather.CloudBaseAltitudeMeters, CloudBaseMeters) + 180.0) };
         return new RingLightningEvent(id, systemId, start, ground, cloud, unchecked((int)hash), Unit(hash ^ 0xa31f) * Mathf.Tau,
-            Mathf.Clamp(0.45f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f), 2500.0f + Unit(hash ^ 0xf00d) * 9000.0f, preview);
+            Mathf.Clamp(0.45f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f), 2500.0f + Unit(hash ^ 0xf00d) * 9000.0f, preview, (int)weather.SystemKind);
     }
 
     private static uint LightningHash(int seed, int system, long slot, int salt)

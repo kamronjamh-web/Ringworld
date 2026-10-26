@@ -19,6 +19,7 @@ instance uniform float poi_base_ao_height = 0.0;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_poi_lighting.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 // Ambient floor at the ground contact and the share of the direct sun that survives there (both rise to 1 at poi_base_ao_height).
 const float BASE_AO_MIN = 0.45;
@@ -48,11 +49,29 @@ void fragment() {
 			poi_ring_lighting_valid ? poi_ring_center_world : vec3(0.0), poi_day);
 	}
 	vec3 night_tint = poi_ring_lighting_valid ? mix(poi_night_tint, vec3(1.0), poi_day) : vec3(1.0);
-	ALBEDO = albedo_color.rgb * night_tint * haze.T;
+	vec3 poi_albedo = albedo_color.rgb * night_tint;
+	float poi_roughness = roughness_value;
+	float poi_specular_value = specular_value;
+	// Wet world: the facade or roof is as wet as the ground beside it unless sheltered (walls: windward side, undersides dry). Roofs and plazas collect puddles with ripples.
+	if (ring_wet_params.w > 0.5) {
+		vec3 wet_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 wet_up = poi_local_up(poi_world_position);
+		RingWet wet_state = ring_wet_sample(poi_world_position, wet_normal, wet_up);
+		ring_wet_apply(wet_state, 0.5 * (1.0 - metallic_value), poi_albedo, poi_roughness, poi_specular_value);
+		float wet_distance = distance(poi_world_position, INV_VIEW_MATRIX[3].xyz);
+		float flatness = ring_wet_flatness(wet_normal, wet_up);
+		if (wet_state.standing > 0.0 && flatness > 0.0 && wet_distance < 150.0) {
+			vec2 wet_plane = ring_wet_plane(poi_world_position);
+			vec2 puddle = ring_wet_puddle(wet_state, wet_plane, flatness, 0.5, wet_distance);
+			ring_wet_apply_puddle(puddle, wet_state, wet_plane, wet_up, wet_distance, poi_albedo, poi_roughness, poi_specular_value, wet_normal);
+			if (puddle.x > 0.0) NORMAL = mat3(VIEW_MATRIX) * wet_normal;
+		}
+	}
+	ALBEDO = poi_albedo * haze.T;
 	METALLIC = metallic_value;
-	ROUGHNESS = roughness_value;
+	ROUGHNESS = poi_roughness;
 	// Dielectric F0 scales with SPECULAR^2, so sqrt(mean T) attenuates it linearly by T.
-	SPECULAR = specular_value * sqrt(dot(haze.T, vec3(1.0 / 3.0)));
+	SPECULAR = poi_specular_value * sqrt(dot(haze.T, vec3(1.0 / 3.0)));
 	poi_specular = SPECULAR;
 	EMISSION = emission_color.rgb * emission_energy * haze.T + ring_haze_inscatter(haze);
 	poi_cloud_occlusion = sample_local_cloud_shadow(poi_world_position) * poi_day;
@@ -65,7 +84,7 @@ void fragment() {
 	}
 	poi_base_direct = mix(BASE_DIRECT_MIN, 1.0, base_visibility);
 	// Cloud shadow darkens the ambient here and the sun in light(); the base occlusion rides on the ambient too.
-	AO = (1.0 - poi_cloud_occlusion * 0.72) * mix(BASE_AO_MIN, 1.0, base_visibility);
+	AO = min((1.0 - poi_cloud_occlusion * 0.72) * mix(BASE_AO_MIN, 1.0, base_visibility), ring_storm_ambient(ring_storm_level(poi_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -89,6 +108,7 @@ void light() {
 		direct = mix(poi_lighting_params.z, poi_lighting_params.w, poi_day);
 	}
 	RingShadowTerms terms = ring_shadow_terms(poi_world_position, SCREEN_UV, max(ATTENUATION, poi_shadow_floor), 0.0, 0.0, RING_SHADOW_DEFAULT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
 	terms.cloud = mix(1.0, 1.0 - poi_cloud_occlusion, primary_sun);
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, primary_sun, RING_SHADOW_DEFAULT);
 	// Terrain height-shadow clipmap (S5/S7a), same gating as ring_terrain_lighting.gdshaderinc: only with a POI ground anchor (poi_height_rel >= 0), the heightfield

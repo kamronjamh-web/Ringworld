@@ -188,8 +188,6 @@ public partial class RingLiveTuningDrawer
     {
         AddSurfaceTerrainSmoothShadingToggle(parent);
         AddSurfaceTerrainSlider(parent, "Dry roughness", GameplaySurfaceTerrainDefaults.MinimumDryRoughness, GameplaySurfaceTerrainDefaults.MaximumDryRoughness, .01, _surfaceTerrainDefaults.Settings.DryRoughness, value => _surfaceTerrainDefaults.SetDryRoughness((float)value));
-        AddSurfaceTerrainSlider(parent, "Wet roughness", GameplaySurfaceTerrainDefaults.MinimumWetRoughness, GameplaySurfaceTerrainDefaults.MaximumWetRoughness, .01, _surfaceTerrainDefaults.Settings.WetRoughness, value => _surfaceTerrainDefaults.SetWetRoughness((float)value));
-        AddSurfaceTerrainSlider(parent, "Rain wetness strength", GameplaySurfaceTerrainDefaults.MinimumRainWetnessStrength, GameplaySurfaceTerrainDefaults.MaximumRainWetnessStrength, .01, _surfaceTerrainDefaults.Settings.RainWetnessStrength, value => _surfaceTerrainDefaults.SetRainWetnessStrength((float)value));
         AddSurfaceTerrainSlider(parent, "Terrain albedo", GameplaySurfaceTerrainDefaults.MinimumAlbedoScale, GameplaySurfaceTerrainDefaults.MaximumAlbedoScale, .01, _surfaceTerrainDefaults.Settings.TerrainAlbedoScale, value => _surfaceTerrainDefaults.SetTerrainAlbedoScale((float)value));
         AddSurfaceTerrainSlider(parent, "Grass albedo", GameplaySurfaceTerrainDefaults.MinimumAlbedoScale, GameplaySurfaceTerrainDefaults.MaximumAlbedoScale, .01, _surfaceTerrainDefaults.Settings.GrassAlbedoScale, value => _surfaceTerrainDefaults.SetGrassAlbedoScale((float)value));
     }

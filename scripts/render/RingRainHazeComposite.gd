@@ -3,6 +3,7 @@ extends CompositorEffect
 var _mutex := Mutex.new()
 var _frame := PackedByteArray()
 var _gust: Texture2D
+var _occ: Texture2D
 var _active := false
 var ready := false
 var dispatches := 0
@@ -23,9 +24,11 @@ func _init() -> void:
 	access_resolved_color = true
 	access_resolved_depth = true
 
-func publish_frame(data: PackedByteArray, texture: Texture2D, active: bool) -> void:
+const FRAME_SIZE := 304  # 240 + the precipitation occlusion map frame (4 vec4)
+
+func publish_frame(data: PackedByteArray, texture: Texture2D, active: bool, occlusion: Texture2D = null) -> void:
 	_mutex.lock()
-	_frame = data; _gust = texture; _active = active
+	_frame = data; _gust = texture; _active = active; _occ = occlusion
 	_mutex.unlock()
 
 func publish_gpu_markers(enabled: bool, begin: String, end: String) -> void:
@@ -76,12 +79,12 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	if not pipeline.is_valid(): return
 	ready = true
 	_mutex.lock()
-	var data := _frame; var texture := _gust; var active := _active
+	var data := _frame; var texture := _gust; var active := _active; var occlusion := _occ
 	var timestamps := gpu_timestamp_diagnostics_enabled
 	var timestamp_begin := gpu_timestamp_begin_marker
 	var timestamp_end := gpu_timestamp_end_marker
 	_mutex.unlock()
-	if not active or data.size() != 240 or texture == null: return
+	if not active or data.size() != FRAME_SIZE or texture == null: return
 	var buffers := render_data.get_render_scene_buffers() as RenderSceneBuffersRD
 	var scene := render_data.get_render_scene_data() as RenderSceneData
 	if buffers == null or scene == null: return
@@ -92,26 +95,28 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	for column in [inverse.x, inverse.y, inverse.z, inverse.w]:
 		for value in [column.x,column.y,column.z,column.w]: data.encode_float(offset,value); offset += 4
 	var gust_rid := RenderingServer.texture_get_rd_texture(texture.get_rid())
-	if not gust_rid.is_valid(): return
-	while views.size() < buffers.get_view_count(): views.append({"buffer": RID(),"set": RID(),"color": RID(),"depth": RID(),"gust": RID()})
+	var occ_rid := RenderingServer.texture_get_rd_texture((occlusion if occlusion != null else texture).get_rid())
+	if not gust_rid.is_valid() or not occ_rid.is_valid(): return
+	while views.size() < buffers.get_view_count(): views.append({"buffer": RID(),"set": RID(),"color": RID(),"depth": RID(),"gust": RID(),"occ": RID()})
 	var timestamp_started := false
 	for index in buffers.get_view_count():
 		var view := views[index]
 		var buffer: RID = view["buffer"]
-		if not buffer.is_valid(): view["buffer"] = rd.uniform_buffer_create(240,data)
-		else: rd.buffer_update(view["buffer"],0,240,data)
+		if not buffer.is_valid(): view["buffer"] = rd.uniform_buffer_create(FRAME_SIZE,data)
+		else: rd.buffer_update(view["buffer"],0,FRAME_SIZE,data)
 		var color := buffers.get_color_layer(index,false)
 		var depth := buffers.get_depth_layer(index,false)
 		if not color.is_valid() or not depth.is_valid(): continue
 		var set: RID = view["set"]
-		if not set.is_valid() or not rd.uniform_set_is_valid(set) or view["color"] != color or view["depth"] != depth or view["gust"] != gust_rid:
+		if not set.is_valid() or not rd.uniform_set_is_valid(set) or view["color"] != color or view["depth"] != depth or view["gust"] != gust_rid or view["occ"] != occ_rid:
 			if set.is_valid(): retired.append({"set":set,"frames":max(2,rd.get_frame_delay()+2)})
 			var uniforms: Array[RDUniform] = []
 			var target := RDUniform.new(); target.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE; target.binding = 0; target.add_id(color); uniforms.append(target)
 			var d := RDUniform.new(); d.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE; d.binding = 1; d.add_id(sampler); d.add_id(depth); uniforms.append(d)
 			var g := RDUniform.new(); g.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE; g.binding = 2; g.add_id(gust_sampler); g.add_id(gust_rid); uniforms.append(g)
 			var b := RDUniform.new(); b.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER; b.binding = 3; b.add_id(view["buffer"]); uniforms.append(b)
-			set = rd.uniform_set_create(uniforms,shader,0); view["set"] = set; view["color"] = color; view["depth"] = depth; view["gust"] = gust_rid
+			var o := RDUniform.new(); o.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE; o.binding = 4; o.add_id(sampler); o.add_id(occ_rid); uniforms.append(o)
+			set = rd.uniform_set_create(uniforms,shader,0); view["set"] = set; view["color"] = color; view["depth"] = depth; view["gust"] = gust_rid; view["occ"] = occ_rid
 		if not set.is_valid(): continue
 		# One interval spans all dispatched views, outside active compute lists.
 		# A dry frame or a frame with no valid views emits no owned markers.

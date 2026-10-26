@@ -3684,9 +3684,10 @@ public partial class RingVolumetricCloudLayer : Node3D
     }
 
     private enum WeatherLifecycleStage { Static, Birth, Develop, Mature, Dissipate, Quiet }
+    /// <summary>StageProgress: 0..1 through the current stage (feeds StormLifecycleCode, the GPU storm shape's lifecycle code).</summary>
     private readonly record struct WeatherLifecycle(
         int Generation, float Envelope, WeatherLifecycleStage Stage,
-        double CycleSeconds, double OffsetSeconds);
+        double CycleSeconds, double OffsetSeconds, float StageProgress = 0.0f);
 
     /// <summary>Generation counter of EvaluateWeatherLifecycle, without the envelope work.</summary>
     private int ResolveWeatherGeneration(int a, int z, int seed, double t)
@@ -3729,15 +3730,48 @@ public partial class RingVolumetricCloudLayer : Node3D
         develop *= normalization;
         mature *= normalization;
         dissipate *= normalization;
-        if (phase < birth) return new WeatherLifecycle(generation, SmoothUnit(phase / Mathf.Max(0.001f, birth)) * 0.30f, WeatherLifecycleStage.Birth, cycle, offset);
+        if (phase < birth) return new WeatherLifecycle(generation, SmoothUnit(phase / Mathf.Max(0.001f, birth)) * 0.30f, WeatherLifecycleStage.Birth, cycle, offset, phase / Mathf.Max(0.001f, birth));
         phase -= birth;
-        if (phase < develop) return new WeatherLifecycle(generation, Mathf.Lerp(0.30f, 1.0f, SmoothUnit(phase / Mathf.Max(0.001f, develop))), WeatherLifecycleStage.Develop, cycle, offset);
+        if (phase < develop) return new WeatherLifecycle(generation, Mathf.Lerp(0.30f, 1.0f, SmoothUnit(phase / Mathf.Max(0.001f, develop))), WeatherLifecycleStage.Develop, cycle, offset, phase / Mathf.Max(0.001f, develop));
         phase -= develop;
-        if (phase < mature) return new WeatherLifecycle(generation, 1.0f, WeatherLifecycleStage.Mature, cycle, offset);
+        if (phase < mature) return new WeatherLifecycle(generation, 1.0f, WeatherLifecycleStage.Mature, cycle, offset, phase / Mathf.Max(0.001f, mature));
         phase -= mature;
-        if (phase < dissipate) return new WeatherLifecycle(generation, 1.0f - SmoothUnit(phase / Mathf.Max(0.001f, dissipate)), WeatherLifecycleStage.Dissipate, cycle, offset);
+        if (phase < dissipate) return new WeatherLifecycle(generation, 1.0f - SmoothUnit(phase / Mathf.Max(0.001f, dissipate)), WeatherLifecycleStage.Dissipate, cycle, offset, phase / Mathf.Max(0.001f, dissipate));
         return new WeatherLifecycle(generation, 0.0f, WeatherLifecycleStage.Quiet, cycle, offset);
     }
+
+    /// <summary>
+    /// Continuous lifecycle code the storm shape reads from a render system's d.w: birth 0-0.3, develop 0.3-1, mature 1-2,
+    /// dissipate 2-3 (quiet holds 3). Lifecycles off, manual systems and the legacy path use 1.5 (mature).
+    /// </summary>
+    public const float StormLifecycleMature = 1.5f;
+    private static float StormLifecycleCode(in WeatherLifecycle lifecycle)
+    {
+        float progress = Mathf.Clamp(lifecycle.StageProgress, 0.0f, 1.0f);
+        return lifecycle.Stage switch
+        {
+            WeatherLifecycleStage.Birth => 0.3f * progress,
+            WeatherLifecycleStage.Develop => 0.3f + 0.7f * progress,
+            WeatherLifecycleStage.Mature => 1.0f + progress,
+            WeatherLifecycleStage.Dissipate => 2.0f + progress,
+            WeatherLifecycleStage.Quiet => 3.0f,
+            _ => StormLifecycleMature
+        };
+    }
+
+    /// <summary>Lifecycle code of the natural system in a macro cell at a time (test and capture hook; see StormLifecycleCode).</summary>
+    public float EvaluateStormLifecycleCode(int aroundCell, int acrossCell, int seed, double timeSeconds)
+        => StormLifecycleCode(EvaluateWeatherLifecycle(aroundCell, acrossCell, seed, timeSeconds));
+
+    /// <summary>
+    /// Debug-only (capture harness, or the RING_STORM_L environment variable): forces the lifecycle code uploaded for every storm.
+    /// Null = natural lifecycle.
+    /// </summary>
+    public static float? StormLifecycleOverride { get; set; } = ReadStormLifecycleEnvironment();
+
+    private static float? ReadStormLifecycleEnvironment()
+        => float.TryParse(System.Environment.GetEnvironmentVariable("RING_STORM_L"), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float forced) ? forced : null;
 
     private static float VariedLifecycleDuration(float baseSeconds, int aroundCell, int acrossCell, int seed, int generation, int salt, float variation)
         => Mathf.Max(0.001f, baseSeconds * Mathf.Lerp(1.0f - variation, 1.0f + variation,
@@ -3832,7 +3866,8 @@ public partial class RingVolumetricCloudLayer : Node3D
         CloudFormationProfile PhysicalProfile,
         uint Flags,
         float ManualCoverageTarget,
-        float SupportMultiplier)
+        float SupportMultiplier,
+        float Lifecycle = StormLifecycleMature)
     {
         public bool IsStatic => (Flags & RenderWeatherFlagStatic) != 0u;
         public bool Sculpts => (Flags & RenderWeatherFlagSculpt) != 0u;
@@ -3941,7 +3976,8 @@ public partial class RingVolumetricCloudLayer : Node3D
     {
         // Density/precipitation arrive scaled by the lifecycle envelope. The profile must be a property of the whole
         // system for its whole life, so roll it from the mature (unscaled) values.
-        float envelope = Math.Max(0.0001f, EvaluateWeatherLifecycle(aroundCell, acrossCell, seed, time).Envelope);
+        WeatherLifecycle lifecycle = EvaluateWeatherLifecycle(aroundCell, acrossCell, seed, time);
+        float envelope = Math.Max(0.0001f, lifecycle.Envelope);
         float matureDensity = Mathf.Min(1.0f, system.Density / envelope);
         float maturePrecipitation = Mathf.Min(1.0f, system.PrecipitationPotential / envelope);
         CloudFormationProfile profile = ResolveSystemFormationProfile(
@@ -3974,7 +4010,8 @@ public partial class RingVolumetricCloudLayer : Node3D
             profile,
             sculpt ? RenderWeatherFlagSculpt : 0u,
             0.0f,
-            1.0f);
+            1.0f,
+            StormLifecycleCode(lifecycle));
     }
 
     /// <summary>

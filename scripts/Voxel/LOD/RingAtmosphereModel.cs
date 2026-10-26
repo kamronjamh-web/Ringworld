@@ -159,6 +159,70 @@ public static class RingAtmosphereModel
             Mathf.Clamp(FiniteOrDefault(skyTint.Y, 1.0f), 0.0f, 2.0f), Mathf.Clamp(FiniteOrDefault(skyTint.Z, 1.0f), 0.0f, 2.0f));
         HazeQuality = quality <= 6 ? 4 : quality <= 11 ? 8 : 16;
     }
+    // ---- S3 post-rain mist (docs/storm-revamp-s3-storm-arrival-design.md section 5, WO-E1). The weather owner multiplies the user's mist density and
+    // height by a pair of factors; at strength 0 both are exactly 1, so the physical profile is bit-identical to before. Changes are quantised and rate-limited
+    // and go through the same Revision + ApplyAll path as the Atmosphere tab, so Sunshine, the sky, objects and the CPU irradiance stay consistent. ----
+    /// <summary>Weather mist mapping (retuned 2026-10-26): the weather ADDS ground mist extinction <see cref="WeatherMistSigmaPerStrength"/> x M (1/m) to sigma_M0 and shrinks the mist scale height by
+    /// max(<see cref="WeatherMistMinHeightFactor"/>, 1 - <see cref="WeatherMistHeightDrop"/> M). It is additive, not a multiplier, because the user's mist (aerosol control) can be zero or tiny
+    /// and a multiplier then makes no fog at all. M = 1 gives sigma_M0 of about 1e-2 (ground visibility about 390 m) over a 60% scale height.</summary>
+    public const float WeatherMistSigmaPerStrength = 1.0e-2f, WeatherMistHeightDrop = 0.6f, WeatherMistMinHeightFactor = 0.15f;
+    /// <summary>Extinction (1/m, at the floor) the weather adds to the mist layer: <see cref="WeatherMistSigmaPerStrength"/> x M.</summary>
+    public static float WeatherMistAddedSigma { get; private set; }
+    /// <summary>Multiplier on the mist scale height from the weather: 1 - 0.6 M (never below 0.15), so the mist pools in the lowlands.</summary>
+    public static float WeatherMistHeightFactor { get; private set; } = 1.0f;
+    /// <summary>The published (quantised) weather mist strength M, 0..2.</summary>
+    public static float WeatherMist { get; private set; }
+    /// <summary>Quantisation of the weather mist strength.</summary>
+    public const float WeatherMistStep = 1.0f / 32.0f;
+    /// <summary>Minimum seconds between two publishes, and the most publishes in any <see cref="WeatherMistWindowSeconds"/>.</summary>
+    public const double WeatherMistMinPublishSeconds = 2.0, WeatherMistWindowSeconds = 600.0;
+    public const int WeatherMistMaxPublishesPerWindow = 30;
+    public static int WeatherMistPublishCount { get; private set; }
+    private static readonly double[] WeatherMistPublishTimes = new double[WeatherMistMaxPublishesPerWindow];
+    private static int _weatherMistPublishHead;
+
+    /// <summary>
+    /// Sets the target weather mist strength M (0..2; the post-rain mist setting included). Quantised to 1/32; a change is published (Revision++, ApplyAll)
+    /// at most every 2 s and at most 30 times per 10 minutes (the target is simply retried by the caller's next call). Returns true when it published.
+    /// <paramref name="nowSeconds"/> is any monotonic clock.
+    /// </summary>
+    public static bool SetWeatherMist(float strength, double nowSeconds)
+    {
+        float m = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 2.0f) : 0.0f;
+        m = Mathf.Round(m / WeatherMistStep) * WeatherMistStep;
+        if (m == WeatherMist) return false;
+        if (WeatherMistPublishCount > 0)
+        {
+            double last = WeatherMistPublishTimes[(_weatherMistPublishHead + WeatherMistMaxPublishesPerWindow - 1) % WeatherMistMaxPublishesPerWindow];
+            if (nowSeconds - last < WeatherMistMinPublishSeconds) return false;
+            if (WeatherMistPublishCount >= WeatherMistMaxPublishesPerWindow
+                && nowSeconds - WeatherMistPublishTimes[_weatherMistPublishHead] < WeatherMistWindowSeconds) return false;
+        }
+        WeatherMist = m;
+        WeatherMistAddedSigma = WeatherMistSigmaPerStrength * m;
+        WeatherMistHeightFactor = m <= 0.0f ? 1.0f : Mathf.Max(WeatherMistMinHeightFactor, 1.0f - WeatherMistHeightDrop * m);
+        WeatherMistPublishTimes[_weatherMistPublishHead] = nowSeconds;
+        _weatherMistPublishHead = (_weatherMistPublishHead + 1) % WeatherMistMaxPublishesPerWindow;
+        WeatherMistPublishCount++;
+        ApplyProfile();
+        Revision++;
+        ApplyAll();
+        return true;
+    }
+
+    /// <summary>Removes the weather mist and forgets the publish history (the haze is exactly the user's again); publishes once if a mist was active. Used when the weather world is torn down and by tests.</summary>
+    public static void ClearWeatherMist()
+    {
+        bool active = WeatherMist != 0.0f;
+        WeatherMist = 0.0f; WeatherMistAddedSigma = 0.0f; WeatherMistHeightFactor = 1.0f;
+        WeatherMistPublishCount = 0; _weatherMistPublishHead = 0;
+        Array.Clear(WeatherMistPublishTimes);
+        if (!active) return;
+        ApplyProfile();
+        Revision++;
+        ApplyAll();
+    }
+
     /// <summary>Top of the integrated air: the controller's upper shell height (AtmosphereUpperHeightMeters export).</summary>
     public static float HazeCapHeightMeters => UpperHeightMeters;
     /// <summary>Physical meteorological visibility (km) implied by the current art controls at density 1.</summary>
@@ -395,10 +459,10 @@ public static class RingAtmosphereModel
         float heightScale = Mathf.Pow(2.0f, 2.0f * (0.5f - Mathf.Clamp(_altitudeFalloff, 0.0f, 1.0f)));
         HazeSigmaRayleigh = BaseSigmaRayleigh * (density * HazeRayleighStrength);
         HazeSigmaAerosol = sigmaAerosol * density;
-        HazeSigmaMist = sigmaMist * density * HazeMistDensityScale;
+        HazeSigmaMist = sigmaMist * density * HazeMistDensityScale + WeatherMistAddedSigma * density;
         HazeRayleighHeightMeters = BaseRayleighHeightMeters;
         HazeAerosolHeightMeters = HazeAerosolBaseHeightMeters * heightScale;
-        HazeMistHeightMeters = HazeMistBaseHeightMeters * heightScale;
+        HazeMistHeightMeters = HazeMistBaseHeightMeters * heightScale * WeatherMistHeightFactor;
         HazeOmegaAerosol = BaseOmegaAerosol;
         HazeOmegaMist = BaseOmegaMist;
         HazeG = Mathf.Clamp(BaseMieG + (_forwardScattering - ForwardControlDefault) * 0.4545f, 0.0f, 0.95f);

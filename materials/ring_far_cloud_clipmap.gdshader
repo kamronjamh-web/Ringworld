@@ -105,7 +105,7 @@ void fragment() {
 		cloud_weather_params, cloud_weather_frame);
 	float weather_gate = ring_cloud_weather_clear_gate(resolved_coverage,
 		resolved_storm_factor, cloud_weather_params);
-	float shared_atlas_coverage = mix(0.70, 0.90, resolved_coverage);
+	float shared_atlas_coverage = mix(mix(0.70, 0.90, resolved_coverage), 1.05, smoothstep(0.35, 0.80, resolved_storm_factor)); // storm lift, as Sunshine's sampleScene
 	// The fallback field retains sparse cloud detail where weather permits it;
 	// the shared clear gate removes genuinely cloud-free weather regions.
 	float threshold = mix(0.62, 0.34, resolved_coverage) - resolved_storm_factor * 0.10;

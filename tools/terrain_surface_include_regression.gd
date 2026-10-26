@@ -61,6 +61,24 @@ func _init() -> void:
 	create_timer(240.0).timeout.connect(func() -> void: _fail("timeout"))
 
 
+# Wet world: the surface reads the wet map global, not a material uniform. 0 = valid 0 (the dry identity path); otherwise a uniform 2x2 map with film = soak = amount
+# under an identity frame, so the "wet" poses exercise the new darkening and gloss.
+var _wet_texture: ImageTexture
+
+
+func _set_wet(amount: float) -> void:
+	if amount <= 0.0:
+		RenderingServer.global_shader_parameter_set("ring_wet_params", Vector4(1, 0.18, 1, 0))
+		return
+	var image := Image.create(2, 2, false, Image.FORMAT_RGBAH)
+	image.fill(Color(amount, amount, 0.0, 0.0))
+	_wet_texture = ImageTexture.create_from_image(image)
+	RenderingServer.global_shader_parameter_set("ring_wet_map", _wet_texture)
+	RenderingServer.global_shader_parameter_set("ring_wet_map_frame", Vector4(8192, 8192, 64, 256))
+	RenderingServer.global_shader_parameter_set("ring_wet_frame", Projection(Vector4(1, 0, 0, 0), Vector4(0, 0, 1, 0), Vector4(0, 1, 0, 0), Vector4(0, 0, 0, 0)))
+	RenderingServer.global_shader_parameter_set("ring_wet_params", Vector4(1, 0.18, 1, 1))
+
+
 func _local_height(x: float, z: float) -> float:
 	# Local meters about the window origin (sample index 128 is local 0).
 	var h := 8.0 + 2.5 * sin(x * 0.045) + 1.8 * cos(z * 0.071 + x * 0.013)
@@ -232,7 +250,7 @@ func _apply_pose(pose: Dictionary) -> void:
 	_planet.visible = bool(pose.get("planet", false))
 	# Non-default lighting contract values so every forwarded lighting uniform is exercised.
 	_surface.call("SetSurfaceLighting", -0.2, 0.35, Color(0.30, 0.45, 0.70), 0.12, 1.15, 0.10)
-	_surface.call("SetSurfaceWetness", float(pose.get("wet", 0.0)))
+	_set_wet(float(pose.get("wet", 0.0)))
 	var material := _terrain_material()
 	var macro := bool(pose.get("macro", false))
 	material.call("set_shader_param", "terrain_macro_shadow_enabled", macro)

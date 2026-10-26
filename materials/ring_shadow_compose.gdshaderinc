@@ -6,8 +6,9 @@
 // ring_height_shadow.gdshaderinc), cloud = projected / analytic cloud shadow.
 #include "res://materials/ring_cloud_shadow.gdshaderinc" // shadow_overlap_darkening
 #include "res://materials/ring_height_shadow.gdshaderinc"
+#include "res://materials/ring_storm_light.gdshaderinc" // storm level D: fades the sun and (in the receivers) darkens the ambient
 
-// 0 off, 1 sun visibility, 2 geometry, 3 contact, 4 terrain (min of height-shadow clipmap and macro), 5 cloud. Written by the Shadows > Debug menu (ShadowDebugMode).
+// 0 off, 1 sun visibility, 2 geometry, 3 contact, 4 terrain (min of height-shadow clipmap and macro), 5 cloud, 6 storm level D (storm light). Written by the Shadows > Debug menu (ShadowDebugMode).
 global uniform int ringworld_shadow_debug_mode;
 
 const uint RING_SHADOW_DEFAULT = 0u;
@@ -29,6 +30,7 @@ struct RingShadowTerms {
 	float terrain;
 	float cloud;
 	float height; // S5: terrain height-shadow clipmap, joins the close term (full strength, floored by the caller)
+	float storm; // storm light: storm level D at the receiver (0 = none). ring_shadow_terms fills it from the world position; ring_shadow_sun_visibility fades the sun with it
 };
 
 // Contact-shadow visibility of the fragment at frag_coord (1 = lit). Returns 1 when the receiver opts out, the feature is off, the light is not the primary sun,
@@ -61,20 +63,30 @@ RingShadowTerms ring_shadow_terms(vec3 world, vec2 screen_uv, float attenuation,
 	t.cloud = 1.0 - clamp(cloud_occlusion, 0.0, 1.0);
 	t.terrain = 1.0 - clamp(terrain_occlusion, 0.0, 1.0);
 	t.height = 1.0;
+	t.storm = ring_storm_level(world);
 	return t;
 }
 
 // DEFAULT reproduces combine_ring_shadow_visibility exactly (strongest single estimate, blended toward the compounded product by
 // shadow_overlap_darkening). COMBINE_PRODUCT is the legacy vegetation path.
 float ring_shadow_sun_visibility(RingShadowTerms t, uint flags) {
+	// Storm light: under a storm the close (shadow-map / contact) terms fade to 1 (no crisp tree or object shadow survives) and the whole visibility
+	// fades to the storm's shadowless residual 1 - strength (the sun scattered into overcast skylight: 0 at full darkness). storm = 0 takes neither
+	// branch (bitwise the pre-storm-light result).
+	float storm_fade = ring_storm_shadow_fade(t.storm);
 	if ((flags & RING_SHADOW_COMBINE_PRODUCT) != 0u) {
+		if (storm_fade > 0.0) {
+			return mix(mix(t.geometry, 1.0, storm_fade) * mix(t.contact, 1.0, storm_fade) * t.cloud, 1.0 - ringworld_storm_light.x, storm_fade);
+		}
 		return t.geometry * t.contact * t.cloud;
 	}
 	float close = clamp(min(min(t.geometry, t.contact), t.height), 0.0, 1.0);
-	return mix(
+	if (storm_fade > 0.0) close = mix(close, 1.0, storm_fade);
+	float visibility = mix(
 		min(close, min(t.cloud, t.terrain)),
 		close * t.cloud * t.terrain,
 		clamp(shadow_overlap_darkening, 0.0, 1.0));
+	return storm_fade > 0.0 ? mix(visibility, 1.0 - ringworld_storm_light.x, storm_fade) : visibility;
 }
 
 bool ring_shadow_debug_enabled() {
@@ -87,6 +99,7 @@ float ring_shadow_debug_value(RingShadowTerms t, float sun_visibility) {
 	if (mode == 2) return clamp(t.geometry, 0.0, 1.0);
 	if (mode == 3) return t.contact;
 	if (mode == 4) return min(t.height, t.terrain);
+	if (mode == 6) return t.storm; // storm level D
 	return t.cloud;
 }
 #endif

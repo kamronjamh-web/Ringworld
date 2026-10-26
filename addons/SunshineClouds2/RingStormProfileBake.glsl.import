@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://duj5inhuusk8n"
+path="res://.godot/imported/RingStormProfileBake.glsl-b8ac20cd60e8c112f9fe9d345658a881.res"
+
+[deps]
+
+source_file="res://addons/SunshineClouds2/RingStormProfileBake.glsl"
+dest_files=["res://.godot/imported/RingStormProfileBake.glsl-b8ac20cd60e8c112f9fe9d345658a881.res"]
+
+[params]
+

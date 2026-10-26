@@ -238,6 +238,11 @@ var surface_sun_color: Color = Color.WHITE
 var surface_sun_color_captured: bool = false
 var underwater_optics_test_reported: bool = false
 var current_cloud_ambient_transmittance: float = 1.0
+# Storm light (docs/storm-revamp-s0-storm-light-design.md WO-4): while the bridge publishes the storm map, receivers darken per location
+# and the Environment ambient stays clear. current_storm_ambient is the smoothed ambient multiplier A(D) at the camera (haze ambient and the
+# StandardMaterial3D tint); current_storm_eye_cap pulls eye adaptation from its maximum toward its minimum sensitivity so a storm never brightens.
+var current_storm_ambient: float = 1.0
+var current_storm_eye_cap: float = 0.0
 var current_eclipse_coverage: float = 0.0
 var current_gameplay_eclipse_darkness: float = 0.0
 var current_giant_direction: Vector3 = Vector3.ZERO
@@ -265,8 +270,11 @@ var current_hub_halo_intensity: float = 0.0
 var current_hub_in_scatter: float = 0.0
 var _published_hub_day: float = 0.0
 var _published_haze_sun: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_haze_sun_remote: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_air_sun_visibility: float = -1.0
 var _published_haze_ambient_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_haze_sun_global: Vector3 = Vector3(-1.0, -1.0, -1.0)
+var _published_haze_ambient_day_global: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_haze_ambient_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _haze_bridge_pending: bool = false
 # Model-derived haze ambient (RingHazeSkyIrradiance); recomputed only when its inputs move (see _publish_haze_lighting).
@@ -308,6 +316,8 @@ var _published_hub_weight: float = 0.0
 # cloud_lighting_blend_speed. current_air_sun_visibility scales the published haze sun irradiance only (never ambient or transmittance).
 @export_range(0.0, 1.0, 0.01) var haze_cloud_shadowing: float = 1.0
 var current_air_sun_visibility: float = 1.0
+# Same smoothing without the storm cap: the camera-column cloud shadow only (the global haze sun while the storm map is valid).
+var current_air_cloud_sun_visibility: float = 1.0
 # P9 storm grey-Mie haze. haze_storm_strength is the Atmosphere-tab gain on the bridge's storm factor; current_haze_storm (smoothed like the
 # air sun visibility) is pushed to RingAtmosphereModel through the sky helper. A storm also removes up to STORM_SUN_OCCLUSION of the direct
 # sun in the air (same value as RingAtmosphereModel.StormSunOcclusion). Physical model only; 0 is bit-identical to clear weather.
@@ -363,6 +373,7 @@ func _process(delta: float) -> void:
 		_publish_hub_light(0.0, 0.0)
 		return
 	_configure_hdr_output(environment)
+	_update_storm_light_state(delta)
 	_configure_eye_adaptation()
 	_ensure_ring_sky(environment)
 
@@ -429,6 +440,10 @@ func _process(delta: float) -> void:
 	current_air_sun_visibility = lerpf(
 		current_air_sun_visibility,
 		_get_air_sun_visibility_target(),
+		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
+	current_air_cloud_sun_visibility = lerpf(
+		current_air_cloud_sun_visibility,
+		_get_air_sun_visibility_target(true),
 		1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta))
 	var haze_storm_target := _get_haze_storm_target()
 	current_haze_storm = lerpf(
@@ -590,7 +605,7 @@ func _apply_underground_lighting(environment: Environment, sky_access: float, ca
 		attributes.auto_exposure_enabled = storm_auto_exposure_enabled and adaptation_access > 0.0
 		attributes.auto_exposure_max_sensitivity = lerpf(
 			attributes.auto_exposure_min_sensitivity,
-			maxf(attributes.auto_exposure_min_sensitivity, auto_exposure_max_sensitivity),
+			maxf(attributes.auto_exposure_min_sensitivity, _storm_capped_max_sensitivity(attributes.auto_exposure_min_sensitivity)),
 			adaptation_access)
 		attributes.auto_exposure_scale = lerpf(
 			minf(0.10, auto_exposure_scale),
@@ -801,11 +816,11 @@ func _configure_eye_adaptation() -> void:
 	if attributes != _eye_write_owner:
 		_eye_write_owner = attributes
 		_eye_write_cache.clear()
-	var min_sensitivity := maxf(1.0, auto_exposure_min_sensitivity)
+	var min_sensitivity := _storm_capped_min_sensitivity(maxf(1.0, auto_exposure_min_sensitivity))
 	var eye_values := {
 		"auto_exposure_enabled": storm_auto_exposure_enabled,
 		"auto_exposure_min_sensitivity": min_sensitivity,
-		"auto_exposure_max_sensitivity": maxf(min_sensitivity, auto_exposure_max_sensitivity),
+		"auto_exposure_max_sensitivity": maxf(min_sensitivity, _storm_capped_max_sensitivity(min_sensitivity)),
 		"auto_exposure_speed": maxf(0.01, auto_exposure_speed),
 		"auto_exposure_scale": clampf(auto_exposure_scale, 0.05, 1.0),
 	}
@@ -816,8 +831,46 @@ func _configure_eye_adaptation() -> void:
 		attributes.set(key, eye_values[key])
 
 
+# Smooths the bridge's storm-light state: A(D) at the camera and the eye-adaptation cap (both 1 / 0 while the storm map is not published).
+func _update_storm_light_state(delta: float) -> void:
+	var ambient_target := 1.0
+	var cap_target := 0.0
+	if _storm_light_valid():
+		ambient_target = clampf(float(cloud_lighting_bridge.call("GetStormAmbientAtCamera")), 0.0, 1.0)
+		cap_target = clampf(float(cloud_lighting_bridge.call("GetStormEyeCap")), 0.0, 1.0)
+	var blend := 1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta)
+	current_storm_ambient = lerpf(current_storm_ambient, ambient_target, blend)
+	current_storm_eye_cap = lerpf(current_storm_eye_cap, cap_target, blend)
+	if absf(current_storm_ambient - 1.0) < 0.001:
+		current_storm_ambient = 1.0
+	if current_storm_eye_cap < 0.001:
+		current_storm_eye_cap = 0.0
+
+
+# True while the bridge publishes the storm map: every ring receiver then reads the storm level per fragment and the camera-global
+# ambient dimming below is only the fallback for a missing map.
+func _storm_light_valid() -> bool:
+	return cloud_filtered_lighting_enabled and cloud_lighting_bridge != null \
+		and cloud_lighting_bridge.has_method("IsStormLightValid") and bool(cloud_lighting_bridge.call("IsStormLightValid"))
+
+
+# Storm look pass: under a heavy storm the whole sensitivity range also slides down (STORM_EYE_MIN_SCALE x the clear minimum), because at the
+# clear minimum auto exposure still lifted a closed storm deck from luma 0.16 to 0.39 (the sky and ground must read dark, not mid-grey).
+var STORM_EYE_MIN_SCALE := float(OS.get_environment("RING_EYE_MIN_SCALE")) if OS.get_environment("RING_EYE_MIN_SCALE") != "" else 0.4
+func _storm_capped_min_sensitivity(min_sensitivity: float) -> float:
+	return lerpf(min_sensitivity, maxf(1.0, min_sensitivity * STORM_EYE_MIN_SCALE), clampf(current_storm_eye_cap, 0.0, 1.0))
+
+
+# Eye adaptation never brightens a storm: the maximum sensitivity slides toward the minimum with the storm cap.
+func _storm_capped_max_sensitivity(min_sensitivity: float) -> float:
+	return lerpf(auto_exposure_max_sensitivity, min_sensitivity, clampf(current_storm_eye_cap, 0.0, 1.0))
+
+
 func _get_cloud_ambient_transmittance() -> float:
 	if not cloud_filtered_lighting_enabled or cloud_lighting_bridge == null:
+		return 1.0
+	# Storm map valid: the Environment ambient stays at its clear value, receivers darken themselves (per-location storm level).
+	if _storm_light_valid():
 		return 1.0
 	if cloud_lighting_bridge.has_method("GetCameraAmbientTransmittance"):
 		return clampf(
@@ -833,14 +886,14 @@ func _get_cloud_ambient_transmittance() -> float:
 
 
 # Fraction of sunlight reaching the air around the camera: the bridge's camera direct-sun transmittance, blended by haze_cloud_shadowing.
-func _get_air_sun_visibility_target() -> float:
+func _get_air_sun_visibility_target(cloud_only := false) -> float:
 	var transmittance := 1.0
 	if cloud_filtered_lighting_enabled and cloud_lighting_bridge != null:
 		if cloud_lighting_bridge.has_method("GetCameraDirectSunTransmittance"):
 			transmittance = clampf(float(cloud_lighting_bridge.call("GetCameraDirectSunTransmittance")), 0.0, 1.0)
 		elif cloud_lighting_bridge.has_method("get_camera_direct_sun_transmittance"):
 			transmittance = clampf(float(cloud_lighting_bridge.call("get_camera_direct_sun_transmittance")), 0.0, 1.0)
-	return air_sun_visibility_for(transmittance, current_haze_storm)
+	return air_sun_visibility_for(transmittance, 0.0 if cloud_only else current_haze_storm)
 
 
 # Air sun visibility for a camera-column cloud transmittance and a storm strength: the cloud shadow blended by haze_cloud_shadowing, capped by
@@ -1013,16 +1066,30 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 				_haze_lup_planet = Vector3.ZERO
 	var night_floor := Vector3(haze_night_floor.r, haze_night_floor.g, haze_night_floor.b) * eclipse_atmosphere_night_multiplier
 	# current_cloud_ambient_transmittance stands in for the storm's sky occlusion until the cloud-feedback step (P9).
-	var day_ambient := _haze_ambient_day_raw * current_cloud_ambient_transmittance
+	# With the storm map valid the Environment ambient is no longer dimmed, so the haze ambient follows the storm ambient A(D) at the camera instead.
+	# Storm light WO-6: with the storm map valid the shaders darken the haze per view ray (ring_haze_apply_storm_path), so the global sun carries only the
+	# camera-column cloud shadow and the global ambient stays clear. Sunshine's CPU-built profile keeps the camera-local storm values (the clouds do not march D).
+	var storm_path := _storm_light_valid()
+	var bridge_ambient := _haze_ambient_day_raw * minf(current_cloud_ambient_transmittance, current_storm_ambient)
+	var day_ambient := _haze_ambient_day_raw * current_cloud_ambient_transmittance if storm_path else bridge_ambient
+	var global_sun := sun * current_air_cloud_sun_visibility if storm_path else published_sun
 	var night_ambient := _haze_ambient_planet + night_floor
 	var changed := false
 	if _relative_change(published_sun, _published_haze_sun) > 0.005:
 		_published_haze_sun = published_sun
 		changed = true
-		RenderingServer.global_shader_parameter_set("ringworld_haze_sun_irradiance", published_sun)
-	if _relative_change(day_ambient, _published_haze_ambient_day) > 0.005:
-		_published_haze_ambient_day = day_ambient
+	if _relative_change(global_sun, _published_haze_sun_global) > 0.005:
+		_published_haze_sun_global = global_sun
+		RenderingServer.global_shader_parameter_set("ringworld_haze_sun_irradiance", global_sun)
+	# Far-arch remote shell: same sun without the camera-column cloud/storm visibility.
+	if _relative_change(sun, _published_haze_sun_remote) > 0.005:
+		_published_haze_sun_remote = sun
+		RenderingServer.global_shader_parameter_set("ringworld_haze_sun_irradiance_remote", sun)
+	if _relative_change(bridge_ambient, _published_haze_ambient_day) > 0.005:
+		_published_haze_ambient_day = bridge_ambient
 		changed = true
+	if _relative_change(day_ambient, _published_haze_ambient_day_global) > 0.005:
+		_published_haze_ambient_day_global = day_ambient
 		RenderingServer.global_shader_parameter_set("ringworld_haze_ambient_day", day_ambient)
 	if _relative_change(night_ambient, _published_haze_ambient_night) > 0.005:
 		_published_haze_ambient_night = night_ambient

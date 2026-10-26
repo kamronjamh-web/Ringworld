@@ -145,22 +145,23 @@ public sealed class RingWindField : IDisposable
         VelocityMetersPerSecond = transport * travel;
         OffsetMeters = new Vector2((float)Wrap(integratedX, AroundPeriodMeters), (float)Wrap(integratedY, AcrossPeriodMeters));
     }
-    public float SampleAtTime(RingCanonicalPosition position, Vector2 transport, double time, double circumference, RingWindSettings settings)
+    public float SampleAtTime(RingCanonicalPosition position, Vector2 transport, double time, double circumference, RingWindSettings settings, float gustStrengthScale = 1f, float gustBaseAdd = 0f)
     {
         float travel = float.IsFinite(settings.GustTravelMultiplier) ? Math.Clamp(settings.GustTravelMultiplier, 0, 4) : 1;
         double scale = float.IsFinite(settings.GustScaleMeters) ? Math.Clamp(settings.GustScaleMeters, 48, 8000) : 600;
         time = double.IsFinite(time) ? time : 0;
         if (!transport.IsFinite()) transport = Vector2.Zero;
         double around = circumference > 0 ? circumference / Math.Max(1, Math.Round(circumference / scale)) : scale;
-        return SampleCoordinates((position.AroundMeters - transport.X * time * travel) / around, (position.AcrossMeters - transport.Y * time * travel) / scale, settings);
+        return SampleCoordinates((position.AroundMeters - transport.X * time * travel) / around, (position.AcrossMeters - transport.Y * time * travel) / scale, settings, gustStrengthScale, gustBaseAdd);
     }
-    public float Sample(RingCanonicalPosition position, RingWindSettings settings) => SampleCoordinates((position.AroundMeters - OffsetMeters.X) / AroundPeriodMeters, (position.AcrossMeters - OffsetMeters.Y) / AcrossPeriodMeters, settings);
+    public float Sample(RingCanonicalPosition position, RingWindSettings settings, float gustStrengthScale = 1f, float gustBaseAdd = 0f) => SampleCoordinates((position.AroundMeters - OffsetMeters.X) / AroundPeriodMeters, (position.AcrossMeters - OffsetMeters.Y) / AcrossPeriodMeters, settings, gustStrengthScale, gustBaseAdd);
     public float SampleNoise(RingCanonicalPosition position, float lagSeconds = 0) => SampleNoiseCoordinates(
         (position.AroundMeters - OffsetMeters.X + VelocityMetersPerSecond.X * lagSeconds) / AroundPeriodMeters,
         (position.AcrossMeters - OffsetMeters.Y + VelocityMetersPerSecond.Y * lagSeconds) / AcrossPeriodMeters);
 
-    float SampleCoordinates(double u, double v, RingWindSettings settings) =>
-        Mathf.Clamp(settings.GustBaseBreeze + settings.GustStrength * SampleNoiseCoordinates(u, v) * 1.6f, 0, 4);
+    // The scale/add pair is the storm-arrival gust multiplier (RingStormArrivalSettings, B1); 1 and 0 reproduce the plain field exactly.
+    float SampleCoordinates(double u, double v, RingWindSettings settings, float gustStrengthScale = 1f, float gustBaseAdd = 0f) =>
+        Mathf.Clamp(settings.GustBaseBreeze + gustBaseAdd + settings.GustStrength * gustStrengthScale * SampleNoiseCoordinates(u, v) * 1.6f, 0, 4);
 
     float SampleNoiseCoordinates(double u, double v)
     {
@@ -172,7 +173,7 @@ public sealed class RingWindField : IDisposable
         float n = Mathf.Lerp(Mathf.Lerp(P(ix, iy), P(ix + 1, iy), fx), Mathf.Lerp(P(ix, iy + 1), P(ix + 1, iy + 1), fx), fy);
         return n;
     }
-    public void Publish(RingLodGeometrySnapshot geometry, RingCanonicalPosition anchor, Vector2 transport, Vector2 mean, RingWindSettings settings, bool enabled)
+    public void Publish(RingLodGeometrySnapshot geometry, RingCanonicalPosition anchor, Vector2 transport, Vector2 mean, RingWindSettings settings, bool enabled, float gustStrengthScale = 1f, float gustBaseAdd = 0f)
     {
         float travel = float.IsFinite(settings.GustTravelMultiplier) ? Math.Clamp(settings.GustTravelMultiplier, 0, 4) : 1;
         texture ??= ImageTexture.CreateFromImage(Image.CreateFromData(Size, Size, false, Image.Format.R8, pixels));
@@ -191,8 +192,8 @@ public sealed class RingWindField : IDisposable
         }
         Set("ring_wind_gust_texture", textureVariant);
         Set("ring_wind_mean_vector", mean);
-        Set("ring_wind_gust_strength", settings.GustStrength);
-        Set("ring_wind_gust_base", settings.GustBaseBreeze);
+        Set("ring_wind_gust_strength", settings.GustStrength * gustStrengthScale);
+        Set("ring_wind_gust_base", settings.GustBaseBreeze + gustBaseAdd);
         Set("ring_wind_anchor_world", geometry.CanonicalToWorld(anchor.AroundMeters, anchor.VerticalMeters, anchor.AcrossMeters));
         Set("ring_wind_around_covector", new Vector4(around.X, around.Y, around.Z, (float)(1 / AroundPeriodMeters)));
         Set("ring_wind_across_covector", new Vector4(across.X, across.Y, across.Z, (float)(1 / AcrossPeriodMeters)));

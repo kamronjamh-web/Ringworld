@@ -1,0 +1,153 @@
+// Storm profile map sampling (docs/storm-revamp-s4-sculpt-v2-design.md, WO-V1), shared by SunshineCloudsCompute.glsl and
+// SunshineCloudShadowCompute.glsl. The including shader declares, after `genericData`, `ringWeatherSystems` and
+// RingWeatherSystems.glslinc:
+//
+//   layout(binding = N, std140) uniform RingStormMapBlock {
+//       vec4 a;   // x/y = canonical around/across of the map's texel-grid corner (metres), z = texel size (m), w = front buffer (0/1)
+//       vec4 b;   // x/y = used width/height in texels, z = ring circumference (m, 0 = no wrap), w = valid (> 0.5)
+//       vec4 c;   // x/y = downwind direction (cos, sin) in the canonical around/across frame, z = lean at the band top (m), w = 0
+//   } ringStormMap;
+//   layout(binding = N + 1) uniform sampler2DArray ring_storm_map;   // RGBA16F, layer = buffer * 2 (heights) / + 1 (aux)
+//
+// Heights texel (the only fetch): (body base, body top, canopy underside, canopy top) in absolute canonical metres. The footprint is
+// encoded by collapsing each interval toward its mid-height, so the hardware bilinear filter tapers edges vertically and an empty
+// interval has base == top. Storm physical profiles 2 (StormTower) and 3 (Cumulonimbus) come from the map while it is valid; every
+// other sculpt profile and the invalid-map fallback keep the analytic per-system loop (the debug A/B).
+//
+// One fetch per PRIMARY sample (ring_storm_update_primary); light, ambient and shadow-probe samples taken from it reuse the texel
+// (lateral error is at most 1-2 texels over the light reach, the vertical coordinate stays exact).
+#ifndef RING_STORM_PROFILE_SAMPLE_GLSLINC
+#define RING_STORM_PROFILE_SAMPLE_GLSLINC
+
+// Vertical fade of an interval's bottom and top. At least 1.5 x the largest primary step (958 m) so the march cannot alias a sharp
+// surface into rings or terraces.
+const float RING_STORM_FADE_METERS = 1500.0;
+// Depth over which the erosion profile builds up from an interval's surfaces: the erosion isosurface lives within this depth, so the
+// storm surface is noise-defined (billows) instead of a smooth fade.
+const float RING_STORM_ERODE_METERS = 4000.0;
+
+vec4 g_storm_heights = vec4(0.0);
+vec4 g_storm_aux = vec4(0.0); // (canopy horizontal depth, mammatus, lifecycle, tower horizontal depth), each 0 at a footprint edge
+
+bool ring_storm_map_valid() { return ringStormMap.b.w > 0.5; }
+
+bool ring_storm_is_storm_profile(int index) {
+	int profile = int(round(ringWeatherSystems.systems[index].c.z));
+	return profile == 2 || profile == 3;
+}
+
+// Map texture coordinate of a column at (around, across) read for altitude y. Lean: the column is read from upwind of the sample by
+// a height-dependent offset, so the tower tilts downwind. False outside the used rectangle.
+bool ring_storm_map_uv(vec2 xz, float y, out vec2 uv) {
+	vec2 band = genericData.data.storm_altitude.xy;
+	if (band.y <= band.x + 1.0) band = genericData.data.background_altitude.xy;
+	float s = clamp((y - band.x) / max(band.y - band.x, 1.0), 0.0, 1.0);
+	vec2 position = xz - ringStormMap.c.xy * (ringStormMap.c.z * s * sqrt(s));
+	float circumference = ringStormMap.b.z;
+	float texel = max(ringStormMap.a.z, 1.0);
+	float dx = position.x - ringStormMap.a.x;
+	if (circumference > 1.0) dx -= circumference * floor(dx / circumference);
+	vec2 t = vec2(dx, position.y - ringStormMap.a.y) / texel;
+	vec2 size = ringStormMap.b.xy;
+	uv = t / vec2(textureSize(ring_storm_map, 0).xy);
+	return t.x >= 0.5 && t.y >= 0.5 && t.x <= size.x - 0.5 && t.y <= size.y - 0.5;
+}
+
+// Fetches the heights texel for a primary sample at `canonical` (cloud space: around, altitude, across). `mask` is the sculpt-system
+// subset in reach of the sample: the fetch only happens when it holds a storm system, so samples away from storms pay nothing.
+void ring_storm_update_primary(vec3 canonical, uvec2 mask) {
+	g_storm_heights = vec4(0.0);
+	g_storm_aux = vec4(0.0);
+	bool anyStorm = false;
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? mask.x : mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			if (ring_storm_is_storm_profile(index)) { anyStorm = true; break; }
+		}
+		if (anyStorm) break;
+	}
+	if (!anyStorm) return;
+	vec2 uv;
+	if (ring_storm_map_uv(canonical.xz, canonical.y, uv)) {
+		g_storm_heights = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0), 0.0);
+		// Second tap: the horizontal depth of the footprint, which erosion needs to roughen walls (heights alone only know vertical depth).
+		g_storm_aux = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0 + 1.0), 0.0);
+	}
+}
+
+// Profile of one interval at altitude h: 0 outside, ramping to 1 over RING_STORM_FADE_METERS from either surface (a thin interval
+// peaks below 1, which is how a collapsed footprint edge thins out).
+float ring_storm_profile(float h, float base, float top) {
+	return clamp(min(h - base, top - h) / RING_STORM_FADE_METERS, 0.0, 1.0);
+}
+
+// Outputs of the last ring_storm_map_density call (read by the erosion below): the linear profile P of the denser interval, how much
+// that sample sits in the interval's underside (1 within its lowest two fades while the underside is the nearer surface), the mapped
+// density, and the density of the analytic profiles that are not in the map (the includer's per-system loop).
+float g_storm_profile = 0.0;
+float g_storm_bottom = 0.0;
+float g_storm_map_density = 0.0;
+float g_storm_other = 0.0;
+
+// Density of the fetched column at altitude h: the denser of the body and the canopy.
+float ring_storm_map_density(float h) {
+	float p0 = ring_storm_profile(h, g_storm_heights.x, g_storm_heights.y);
+	float p1 = ring_storm_profile(h, g_storm_heights.z, g_storm_heights.w);
+	bool canopy = p1 > p0;
+	float p = canopy ? p1 : p0;
+	vec2 interval = canopy ? g_storm_heights.zw : g_storm_heights.xy;
+	float horizontalDepth = canopy ? g_storm_aux.x : g_storm_aux.w;
+	float erodeDepth = clamp(0.5 * (interval.y - interval.x), RING_STORM_FADE_METERS, RING_STORM_ERODE_METERS); // thin sheets keep a dense middle
+	g_storm_profile = min(clamp(min(h - interval.x, interval.y - h) / erodeDepth, 0.0, 1.0), clamp(horizontalDepth / 0.6, 0.0, 1.0));
+	g_storm_bottom = (h - interval.x) < (interval.y - h) ? 1.0 - smoothstep(0.0, 2.0 * RING_STORM_FADE_METERS, h - interval.x) : 0.0;
+	g_storm_map_density = p * p * (3.0 - 2.0 * p);
+	return g_storm_map_density;
+}
+
+// Nubis-style erosion of the mapped storm: the profile P is remapped against the medium noise (billows) and then the small noise
+// (fine detail). Erosion is strongest where P is small (tops and sides, where the baked footprint thins), weak on the underside
+// (at most 25% of the top erosion, a smooth belly) and absent deep inside (dense core, no holes). `mediumshape` is
+// 1 - noise_medium.b (the same field the background remaps against), `smallRaw` the raw small noise (0 skips the fine pass).
+float ring_storm_eroded(float mediumshape, float smallRaw) {
+	float strength = mix(1.0, 0.25, g_storm_bottom);
+	float lowMedium = strength * 0.90 * (1.0 - mediumshape);
+	float shaped = clamp((g_storm_profile - lowMedium) / max(1.0 - lowMedium, 0.001), 0.0, 1.0);
+	float lowSmall = strength * 0.60 * smallRaw;
+	shaped = clamp((shaped - lowSmall) / max(1.0 - lowSmall, 0.001), 0.0, 1.0);
+	return shaped * shaped * (3.0 - 2.0 * shaped);
+}
+
+#ifdef RING_STORM_SUN_LIGHT
+// Storm light shortcut (WO-V3). Per primary: whether a storm column is in reach and whether storm cloud dominates the sample.
+bool g_storm_primary_active = false;
+bool g_storm_primary_dominant = false;
+// Optical depth coefficient (1/m) of a dense storm interval as seen by the sun, applied inside sampleLighting's Beer term (which
+// also multiplies by the phase function): a 4 km chord is well over 99% opaque.
+const float RING_STORM_SUN_EXTINCTION = 3.0e-3;
+
+// Closed-form optical depth along the sun ray from `canonical` (cloud space) through the storm column it crosses: one extra fetch at
+// the column the sun ray passes 2.5 km above the sample, then the overlap of the sun path with the body and canopy intervals above the
+// sample. A collapsed interval (thin footprint edge) is shorter, so coverage is already in the numbers. `sunWorld` is the world-space
+// direction towards the sun.
+float ring_storm_sun_tau(vec3 canonical, vec3 sunWorld) {
+	float dUp = dot(sunWorld, genericData.data.cloud_frame_up.xyz);
+	if (dUp < 0.06) return 0.0;
+	vec2 dh = vec2(dot(sunWorld, genericData.data.cloud_frame_around.xyz), dot(sunWorld, genericData.data.cloud_frame_across.xyz));
+	vec2 band = genericData.data.storm_altitude.xy;
+	if (band.y <= band.x + 1.0) band = genericData.data.background_altitude.xy;
+	float h = canonical.y;
+	// 2.5 km up the sun ray: the column the ray passes there tells whether it is still inside cloud or has left through a side or the
+	// underside (mammatus pouch flanks facing the sun stay lit).
+	float reference = h + 2500.0;
+	vec2 xz = canonical.xz + dh * ((reference - h) / dUp);
+	vec2 uv;
+	if (!ring_storm_map_uv(xz, reference, uv)) return 0.0;
+	vec4 hts = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0), 0.0);
+	float overlap = max(hts.y - max(hts.x, h), 0.0) + max(hts.w - max(hts.z, h), 0.0);
+	return RING_STORM_SUN_EXTINCTION * overlap / dUp;
+}
+#endif
+
+#endif

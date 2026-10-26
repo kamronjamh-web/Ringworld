@@ -41,6 +41,7 @@ instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_far_weather_shadow.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 vec2 ring_fft_distant_ocean_factors(vec2 mesh_uv) {
 	if (fft_distant_ocean_mask_rect.z <= 0.0 || fft_distant_ocean_mask_rect.w <= 0.0)
@@ -460,6 +461,21 @@ void fragment() {
 		float small_residual = max(0.0, small.z - dot(small.xy, small.xy));
 		fft_detail.w += small_residual * fft_normal_strength * fft_normal_strength * water_gust_response * water_gust_response * small_shading_fade * small_shading_fade;
 	}
+	// Wet world: rain, fat drops and hail ripple the surface within 40 m (the sheltered share of the surface under a roof or bank does not ripple); beyond that, rain
+	// and hail only matte the roughness below. Water gets no darkening: the sky and the haze carry the storm.
+	float rain_matte = 0.0;
+	float hail_chop = 0.0;
+	if (ring_wet_params.w > 0.5) {
+		vec3 rain_up = normalize(smooth_water_normal_world);
+		RingWet rain_state = ring_wet_sample(world_position, rain_up, rain_up);
+		float rain_exposure = ring_wet_exposure(world_position, rain_up, rain_up);
+		rain_matte = rain_state.rain;
+		hail_chop = ring_wet_events.y * rain_exposure;
+		if (distance_to_camera < 40.0) {
+			vec2 ripple_gradient = ring_rain_ripple_gradient(ring_wet_plane(world_position), rain_state.rain, ring_wet_events.x * rain_exposure, hail_chop, distance_to_camera);
+			water_normal_world = normalize(water_normal_world - (ring_wet_frame[0].xyz * ripple_gradient.x + ring_wet_frame[1].xyz * ripple_gradient.y) * 0.22);
+		}
+	}
 	if (!FRONT_FACING) water_normal_world *= -1.0;
 	vec3 water_normal_view = normalize((VIEW_MATRIX * vec4(water_normal_world, 0.0)).xyz);
 	NORMAL = water_normal_view;
@@ -549,9 +565,15 @@ void fragment() {
 			+ wave_slope * 0.10 + sqrt(max(fft_detail.w, 0.0)) * 0.07,
 		0.02,
 		1.0);
+	base_roughness = clamp(base_roughness + 0.08 * rain_matte * smoothstep(30.0, 50.0, distance_to_camera) + 0.15 * hail_chop, 0.02, 1.0);
 	float ssr_step_ratio;
 	vec4 ssr = ring_water_ssr(VERTEX + water_normal_view * water_ssr_ray_bias, water_normal_view, base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, ssr_step_ratio);
-	float ssr_weight = clamp(ssr.a * water_ssr_strength, 0.0, 1.0);
+	// Storm light: Sunshine composites AFTER the water, so the screen-space reflection sees the clear sky (sun halo and all) behind a closed storm and
+	// paints it as sun glints. Under a storm the SSR fades out and the fallback sky colour dims with the sky factor.
+	float storm_water_level = ring_storm_level(world_position);
+	float storm_ssr_keep = 1.0 - ring_storm_shadow_fade(storm_water_level) * ringworld_storm_light.x * 0.95;
+	reflection_color *= ring_storm_sky(storm_water_level);
+	float ssr_weight = clamp(ssr.a * water_ssr_strength, 0.0, 1.0) * storm_ssr_keep;
 	if (water_ssr_debug_mode == 1) grazing_color = vec3(ssr.a);
 	else if (water_ssr_debug_mode == 2) grazing_color = vec3(ssr.a > 0.001 ? 1.0 : 0.0);
 	else if (water_ssr_debug_mode == 3) grazing_color = vec3(ssr_step_ratio);
@@ -566,10 +588,13 @@ void fragment() {
 	ROUGHNESS = max(base_roughness, specular_aa_roughness);
 	// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
 	// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.
-	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze);
+	float storm_reflection = ring_storm_ambient(ring_storm_level(world_position)); // storm light: the sky reflection and the ambient follow the storm level
+	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
+	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
+		* mix(1.0, 0.02, ring_storm_shadow_fade(ring_storm_level(world_position)) * ringworld_storm_light.x);
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
-	AO = 1.0 - combined_cloud_shadow_occlusion * 0.60;
+	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level
 	AO_LIGHT_AFFECT = 0.0;
 	// ALBEDO already contains the refracted scene. Near-opacity prevents it being
 	// blended with that same scene again; deep water therefore fails closed.
@@ -636,6 +661,7 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
 	// No contact term on water (RING_SHADOW_NO_CONTACT): the proxy is blend_mix, so the depth texel under it holds the seabed.
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
@@ -643,6 +669,8 @@ void light() {
 		terms.height = ring_height_shadow_planet_term(height_shadow, planet_height_weight, shadow_floor);
 	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
+	// Storm light: the sun fade keeps a shadowless residual (1 - strength) for the ground, but sun-facing wave facets turn even that into bright glitter, and a closed storm has no sun glint at all.
+	combined_visibility *= 1.0 - 0.9 * ring_storm_shadow_fade(terms.storm) * ringworld_storm_light.x;
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && (primary_sun_weight > 0.5 || (ring_height_shadow_enabled() && planet_height_weight > 0.5))) {
 			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, combined_visibility));

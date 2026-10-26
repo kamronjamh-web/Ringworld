@@ -20,6 +20,7 @@ render_mode cull_disabled, diffuse_lambert, specular_disabled, skip_vertex_trans
 #include "res://materials/ring_grass_card_color.gdshaderinc"
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
 #include "res://materials/ring_vegetation_shadow.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 uniform sampler2D grass_card_atlas : filter_linear_mipmap, repeat_disable;
 uniform float grass_card_alpha_cutoff = 0.5;
@@ -57,9 +58,11 @@ varying vec3 v_haze_S;
 varying vec4 v_modifier;
 varying vec3 v_ground_world;
 varying flat vec4 v_biome;
+varying float v_wet; // wet world, per vertex: darkening amount (cards only darken, they have no specular)
 varying flat vec4 v_ground_hs; // per-instance heightfield term of the card root: visibility, weight, unknown, valid (S7b)
 
 void vertex() {
+	v_wet = 0.0;
 	float k = UV2.y;
 	float lx = UV2.x;
 	float yv = VERTEX.y;
@@ -165,6 +168,7 @@ void vertex() {
 	v_haze_T = haze.T;
 	v_haze_S = ring_haze_inscatter(haze);
 	v_modifier = grass_modifier_tint(root);
+	if (ring_wet_params.w > 0.5) v_wet = smoothstep(0.0, 0.5, ring_wet_sample_up(gp, ground_up).soak) * ring_wet_params.x;
 	}
 }
 
@@ -180,6 +184,7 @@ void fragment() {
 		col = mix(col, grass_card_blade_color(ground, m.b, m.g, v_shape.y), v_shape.z);
 	}
 	col = mix(col, v_modifier.rgb, clamp(v_modifier.a, 0.0, 1.0));
+	col *= 1.0 - 0.55 * 0.4 * min(v_wet, 1.0); // wet world: blades darken less than soil
 	vec3 emission;
 	ALBEDO = grass_card_finish_albedo(col, v_light.x, v_haze_T, v_haze_S, emission);
 	EMISSION = emission;
@@ -189,7 +194,7 @@ void fragment() {
 	vec3 bent = v_up_view + v_u_view * (v_shape.x * grass_card_normal_out) + f * grass_card_normal_face;
 	NORMAL = normalize(mix(v_up_view, bent, smoothstep(0.0, max(grass_card_normal_tip_start, 0.01), m.g)));
 	BACKLIGHT = col * grass_card_backlight;
-	AO = 1.0 - v_light.y * 0.72;
+	AO = min(1.0 - v_light.y * 0.72, ring_storm_ambient(ring_storm_level(v_ground_world))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).

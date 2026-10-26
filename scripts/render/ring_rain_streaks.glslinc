@@ -1,0 +1,175 @@
+// Shared by both stages of ring_rain_streaks.glsl (docs/storm-revamp-s1-design.md sections 2-3).
+// The frame block is filled by RingRainStreaksComposite.gd (render-thread part: camera) and RingRainStreaks.cs (everything else, double-precision phases).
+layout(set = 0, binding = 0, std140) uniform Frame {
+	mat4 proj; mat4 inv_proj;
+	vec4 cam_x; vec4 cam_y; vec4 cam_z; vec4 cam_pos;
+	vec4 viewport;      // x,y: internal size in px
+	vec4 near_origin;   // xyz: world position of the near lattice base-cell corner at the observer height, w: fall phase (metres, 0..P)
+	vec4 mid_origin;    // xyz: same for the mid lattice, w: mid vertical period (m)
+	vec4 axis_around;   // xyz: unit around axis, w: fall speed (m/s)
+	vec4 axis_across;   // xyz: unit across axis, w: cloud base relative to the observer (m)
+	vec4 axis_up;       // xyz: unit up axis, w: mid lattice fall phase (m)
+	vec4 near_cfg;      // x: cell size, y: cells per side, z: radius, w: base cell i
+	vec4 near_cfg2;     // x: base cell j, y: salt, z: drops per cell (1 or 2), w: near vertical period (m)
+	vec4 mid_cfg;
+	vec4 mid_cfg2;      // w: splash radius for the mid lattice
+	vec4 rain;          // x: density scale, y: streak length (m), z: alpha, w: mid layer weight
+	vec4 rain2;         // x: streak width (m), y: slope cap, z: min width (px), w: gust enabled
+	vec4 wind;          // x: mean wind around, y: mean wind across (m/s), z: gust base, w: gust strength
+	vec4 gust_anchor; vec4 gust_around; vec4 gust_across; vec4 gust_uv;
+	vec4 map_origin;    // xyz: map plane centre (world), w: far depth
+	vec4 map_around;    // xyz: image up axis, w: half extent
+	vec4 map_across;    // xyz: image right axis, w: texel size
+	vec4 map_state;     // x: 1 when the occlusion map is usable, y: resolution
+	vec4 light;         // rgb: lit radiance (sun, sky, storm, night already applied), w: lightning pulse
+	vec4 lightning;     // rgb: lightning colour
+	vec4 splash;        // x: life (s), y: start radius, z: end radius, w: fraction of drops that splash
+	vec4 grid_center;   // xyz: world centre of the local intensity grid, w: spacing (m)
+	vec4 grid[7];       // 5x5 local rain intensity (25 floats), row major (v rows over across, u columns over around)
+	mat4 storm_frame;   // ringworld_storm_frame (world -> storm map metres), columns as published by RingSunshineCloudBridge.StormLight.cs
+	vec4 storm_map_frame; // ringworld_storm_map_frame: x texel m, y front layer, z heavy-overcast start coverage
+	vec4 storm_map_size;  // ringworld_storm_map_size: used w/h, texture w/h (texels)
+	vec4 storm_light;   // ringworld_storm_light: x darkness strength, y shadow-fade start, z end, w valid
+	vec4 sky;           // rgb: sky radiance a streak is lit with before the storm ambient (daylight applied), w: 1 = light each streak from the storm map, 0 = use light.rgb
+	vec4 sun;           // rgb: direct sun radiance (colour x energy x cloud transmittance, daylight applied)
+	vec4 storm;         // S3 arrival: x fat drop weight, y core weight, z trailing weight, w severity
+	vec4 hail;          // S3 hail: x intensity, y size 0..1, z near hail fall phase (m), w mid hail fall phase (m)
+} F;
+layout(set = 0, binding = 2) uniform sampler2D gust_tex;
+layout(set = 0, binding = 3) uniform sampler2D occ_map;
+layout(set = 0, binding = 4) uniform sampler2DArray storm_map;
+
+uint hash_u(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+uint hash_cell(int i, int j, uint salt) { return hash_u(uint(i) * 0x9e3779b9u ^ hash_u(uint(j) * 0x85ebca6bu + salt)); }
+float u01(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
+
+float gust_at(vec3 world) {
+	if (F.rain2.w < 0.5) return 1.0;
+	vec3 delta = world - F.gust_anchor.xyz;
+	vec2 uv = F.gust_uv.xy + vec2(dot(delta, F.gust_around.xyz) * F.gust_around.w, dot(delta, F.gust_across.xyz) * F.gust_across.w);
+	return clamp(F.wind.z + F.wind.w * textureLod(gust_tex, uv, 0.0).r * 1.6, 0.0, 4.0);
+}
+
+// Mirrors RainPrecipitationProfile.StreakDensity.
+float rain_density(float i) {
+	i = clamp(i, 0.0, 1.0);
+	float steady = smoothstep(0.22, 0.62, i);
+	float heavy = smoothstep(0.60, 0.92, i);
+	return smoothstep(0.0, 0.06, i) * ((1.0 - steady) * (1.0 - heavy) * 0.30 + steady * (1.0 - heavy) * 0.70 + heavy);
+}
+
+float grid_at(int u, int v) {
+	int k = clamp(v, 0, 4) * 5 + clamp(u, 0, 4);
+	vec4 row = F.grid[k >> 2];
+	int c = k & 3;
+	return c == 0 ? row.x : (c == 1 ? row.y : (c == 2 ? row.z : row.w));
+}
+// Bilinear local rain intensity at a world position (the field is world anchored; outside the grid it clamps to the edge).
+float local_intensity(vec3 world) {
+	vec3 delta = world - F.grid_center.xyz;
+	vec2 g = vec2(dot(delta, F.axis_around.xyz), dot(delta, F.axis_across.xyz)) / F.grid_center.w + 2.0;
+	g = clamp(g, vec2(0.0), vec2(4.0));
+	ivec2 b = ivec2(min(floor(g), vec2(3.0)));
+	vec2 f = g - vec2(b);
+	return mix(mix(grid_at(b.x, b.y), grid_at(b.x + 1, b.y), f.x), mix(grid_at(b.x, b.y + 1), grid_at(b.x + 1, b.y + 1), f.x), f.y);
+}
+
+// Depth below the map plane of the first opaque surface above/under this world position's column; false when the map is off, the point lies outside it or nothing was drawn there.
+bool map_depth(vec3 world, out float depth) {
+	depth = 0.0;
+	if (F.map_state.x < 0.5) return false;
+	vec3 rel = world - F.map_origin.xyz;
+	float half_extent = F.map_around.w;
+	vec2 uv = vec2(dot(rel, F.map_across.xyz) / (2.0 * half_extent) + 0.5, 0.5 - dot(rel, F.map_around.xyz) / (2.0 * half_extent));
+	if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return false;
+	float res = F.map_state.y;
+	depth = texelFetch(occ_map, ivec2(uv * res), 0).r;
+	return depth > 0.0;
+}
+// Same quantity as a height in "up" metres relative to the observer-height plane through `origin`.
+bool map_surface(vec3 world, vec3 origin, out float surface_rel) {
+	float depth;
+	surface_rel = -1.0e6;
+	if (!map_depth(world, depth)) return false;
+	float plane_rel = dot(F.map_origin.xyz - origin, F.axis_up.xyz);
+	surface_rel = plane_rel - depth;
+	return true;
+}
+
+// Per-location tiers (mirror RainPrecipitationProfile): the stage weights of the LOCAL intensity pick length, brightness and how much of the mid layer is drawn.
+vec3 rain_stage(float i) {
+	i = clamp(i, 0.0, 1.0);
+	float steady = smoothstep(0.22, 0.62, i);
+	float heavy = smoothstep(0.60, 0.92, i);
+	return vec3((1.0 - steady) * (1.0 - heavy), steady * (1.0 - heavy), heavy);
+}
+float rain_mid_weight(float i) { return dot(rain_stage(i), vec3(0.15, 0.7, 1.0)); }
+float rain_length_scale(float i) { return dot(rain_stage(i), vec3(0.8, 1.0, 1.3)); }
+float rain_brightness_scale(float i) { return dot(rain_stage(i), vec3(0.85, 1.1, 1.5)); }
+
+// Storm level D at a world position: GLSL port of ring_storm_level in materials/ring_storm_light.gdshaderinc (same map, same frame, same arithmetic).
+float storm_arc_angle(float tangent, float outward) {
+	float q = tangent / outward;
+	if (outward > 0.0 && abs(q) <= 0.05) {
+		float q2 = q * q;
+		return q * (1.0 - q2 * (1.0 / 3.0 - q2 * (1.0 / 5.0 - q2 * (1.0 / 7.0))));
+	}
+	return atan(tangent, outward);
+}
+float storm_level(vec3 world) {
+	if (F.storm_light.w < 0.5) return 0.0;
+	vec3 relative = world - F.storm_frame[3].xyz;
+	float tangent = dot(relative, F.storm_frame[0].xyz);
+	float across = dot(relative, F.storm_frame[1].xyz);
+	float inward = dot(relative, F.storm_frame[2].xyz);
+	float ring_radius = F.storm_frame[2].w;
+	float arc = ring_radius > 1.0 ? ring_radius * storm_arc_angle(tangent, ring_radius - inward) : tangent;
+	vec2 texel = vec2(F.storm_frame[0].w + arc, F.storm_frame[1].w + across) / max(F.storm_map_frame.x, 1.0);
+	texel = clamp(texel, vec2(0.5), max(F.storm_map_size.xy - 0.5, vec2(0.5)));
+	vec4 s = textureLod(storm_map, vec3(texel / F.storm_map_size.zw, F.storm_map_frame.y), 0.0);
+	float heavy_start = F.storm_map_frame.z;
+	float h = clamp((s.x - heavy_start) / max(0.01, 1.0 - heavy_start), 0.0, 1.0);
+	return max(s.y, h * h * (3.0 - 2.0 * h));
+}
+// Radiance a streak at `world` is lit with. Per streak: sky ambient dimmed by the storm ambient A(D) = 1 - 0.9 * strength * D, plus the sun faded by the storm shadow fade F(D)
+// (the same D and fade every receiver uses). With the map unavailable (or a test override) the CPU scalar radiance in light.rgb is used.
+vec3 streak_radiance(vec3 world) {
+	if (F.sky.w < 0.5) return F.light.rgb;
+	float d = storm_level(world);
+	float ambient = 1.0 - 0.9 * F.storm_light.x * d;
+	float fade = d <= 0.0 ? 0.0 : smoothstep(F.storm_light.y, F.storm_light.z, d);
+	return F.sky.rgb * ambient + F.sun.rgb * (1.0 - fade);
+}
+
+// ---- S3 storm arrival hooks (mirror RainPrecipitationProfile / RainStreakLattice). All weights 0 leave every function below the identity. ----
+const float FAT_FLOOR = 0.10;                       // RainPrecipitationProfile.FatDropFloorDensity
+const float HAIL_NEAR_PERIOD = 36.0, HAIL_MID_PERIOD = 60.0, HAIL_FALL = 30.0;
+const float HAIL_FRACTION = 0.6, HAIL_SLANT = 0.35, HAIL_PUFF_LIFE = 0.28;
+// Core bias (+0.15 x Core x Severity where it rains) then the trailing cap at Steady (RainPrecipitationProfile.ArrivalTierIntensity).
+float tier_intensity(float i) {
+	i = clamp(i, 0.0, 1.0);
+	float bias = 0.15 * min(max(F.storm.y * F.storm.w, 0.0), 1.0) * smoothstep(0.02, 0.1, i);
+	return min(min(i + bias, 1.0), mix(1.0, 0.6, clamp(F.storm.z, 0.0, 1.0)));
+}
+float fat_fraction() { return FAT_FLOOR * clamp(F.storm.x, 0.0, 1.0); }
+// A lattice drop is a hail pellet when its own hash falls under the hail fraction; hail only falls where it rains (local intensity gate).
+bool is_hail(uint h1, float local_i) {
+	if (F.hail.x <= 0.0) return false;
+	float fr = HAIL_FRACTION * clamp(F.hail.x, 0.0, 1.0) * smoothstep(0.1, 0.3, local_i);
+	return u01(hash_u(h1 ^ 0x3c6ef372u)) < fr;
+}
+// Hail pellet height relative to the observer plane (own period and fall speed), and the height it lands at (map surface, 3 fixed-point steps like the splash class).
+float hail_yrel(bool is_near, float hp) {
+	float period = is_near ? HAIL_NEAR_PERIOD : HAIL_MID_PERIOD;
+	float phase = is_near ? F.hail.z : F.hail.w;
+	return fract((hp * period - phase) / period + 0.5) * period - 0.5 * period;
+}
+bool hail_landing(vec2 cell2, vec3 origin, vec3 around, vec3 across, vec3 up, vec2 sl2, out float yl) {
+	float ys = 0.0; yl = 0.0;
+	for (int it = 0; it < 3; it++) {
+		vec2 q = cell2 - sl2 * yl;
+		if (!map_surface(origin + around * q.x + across * q.y + up * yl, origin, ys)) return false;
+		yl = ys;
+	}
+	return true;
+}

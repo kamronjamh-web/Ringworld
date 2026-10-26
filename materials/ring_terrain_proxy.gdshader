@@ -46,6 +46,7 @@ uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_aniso
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 // Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float ring_width_meters = 20000.0;
@@ -63,6 +64,8 @@ varying vec3 surface_up_world;
 // Both ambient occlusion and the directional-light path consume the same
 // day-gated strongest cloud estimate for this fragment.
 varying float combined_cloud_shadow_occlusion;
+// Wet gloss for the custom light(): weight, roughness, specular reflectance.
+varying vec3 proxy_wet_specular_state;
 
 float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor) {
 	// The Sunshine projected maps own their footprint; the far weather shell
@@ -173,6 +176,22 @@ void fragment() {
 		grass_coverage_eligibility);
 	terrain_color = ring_apply_terrain_grass_coverage(terrain_color, grass_coverage);
 	if (!structural_surface) terrain_color = ring_terrain_albedo_scaled(terrain_color);
+	// Wet world: per-location wetness darkens and glosses the proxy ground; puddles are only an averaged roughness drop (no normals, no mask shapes).
+	float surface_roughness = mix(roughness_value, max(roughness_value, .90), grass_coverage);
+	float surface_specular = 0.18;
+	float wet_gloss = 0.0;
+	if (ring_wet_params.w > 0.5) {
+		vec3 wet_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 wet_up = normalize(surface_up_world);
+		RingWet wet_state = ring_wet_sample(world_position, wet_normal, wet_up);
+		float flatness = ring_wet_flatness(wet_normal, wet_up);
+		ring_wet_apply(wet_state, mix(0.5, 1.0, smoothstep(0.45, 0.78, dot(wet_normal, wet_up))), terrain_color, surface_roughness, surface_specular);
+		wet_gloss = ring_wet_gloss(wet_state);
+		float puddle_far = ring_wet_puddle_average(wet_state, flatness, max(distance_to_camera, 100.0));
+		surface_roughness = mix(surface_roughness, 0.12, puddle_far);
+		wet_gloss = max(wet_gloss, puddle_far);
+	}
+	proxy_wet_specular_state = vec3(wet_gloss, surface_roughness, surface_specular);
 	// Keep a spatially varying night tint, but leave brightness to Godot's
 	// environment ambient light and directional-light pipeline.
 	vec3 lit_color = terrain_color * mix(night_tint, vec3(1.0), ring_day_factor);
@@ -181,11 +200,11 @@ void fragment() {
 	EMISSION = ring_haze_inscatter(haze);
 	// Every water kind now uses a separate transparent surface, leaving this
 	// material responsible only for dry and submerged solid terrain.
-	ROUGHNESS = mix(roughness_value, max(roughness_value, .90), grass_coverage);
-	SPECULAR = 0.18;
+	ROUGHNESS = surface_roughness;
+	SPECULAR = surface_specular;
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
-	AO = 1.0 - combined_cloud_shadow_occlusion * 0.72;
+	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -248,6 +267,7 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, primary_sun_weight, RING_SHADOW_DEFAULT);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
@@ -265,5 +285,9 @@ void light() {
 			* n_dot_l
 			* combined_visibility
 			* hemisphere_direct;
+		if (proxy_wet_specular_state.x > 0.0) {
+			SPECULAR_LIGHT += ring_wet_direct_specular(NORMAL, LIGHT, VIEW, proxy_wet_specular_state.y, proxy_wet_specular_state.z, proxy_wet_specular_state.x)
+				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT;
+		}
 	}
 }

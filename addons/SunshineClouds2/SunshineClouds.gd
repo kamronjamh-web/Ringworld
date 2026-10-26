@@ -87,6 +87,8 @@ signal external_texture_retirement_requested(generation_id: int)
 @export var gpu_timestamp_cloud_shadow_far_end_marker : String = ""
 @export var gpu_timestamp_macro_map_begin_marker : String = ""
 @export var gpu_timestamp_macro_map_end_marker : String = ""
+@export var gpu_timestamp_storm_map_begin_marker : String = ""
+@export var gpu_timestamp_storm_map_end_marker : String = ""
 @export var gpu_timestamp_interleave_begin_marker : String = ""
 @export var gpu_timestamp_interleave_end_marker : String = ""
 # SunshineTestRig alone enables this opt-in reconstruction shortcut.
@@ -220,6 +222,11 @@ var macro_map_snapshot_revision : int = -1
 var macro_map_builds_completed : int = 0
 var macro_map_slices_dispatched : int = 0
 
+# RingworldTechDemo extension: the storm profile map (RingStormProfileMap.gd, docs/storm-revamp-s4-sculpt-v2-design.md). A baked,
+# world-anchored 2.5D map of the storm shape; the main compute reads it at bindings 24/25, the shadow compute at 11/12.
+const StormProfileMapScript = preload("res://addons/SunshineClouds2/RingStormProfileMap.gd")
+var storm_profile_map = StormProfileMapScript.new()
+
 var positionQueries : Array[Vector3] = []
 var positionQueryCallables : Array[Callable] = []
 var positionQuerying : bool = false
@@ -228,7 +235,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 312
+const GENERAL_DATA_FLOAT_COUNT := 316
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -416,6 +423,8 @@ var general_data : PackedByteArray
 # Cave/underwater Godot exp fog applied to clouds at cloud depth (P6): x fog density, y fog sky affect, z weight (x gain), w reserved.
 # Zero weight = no effect.
 @export var ring_enclosed_fog : Vector4 = Vector4.ZERO
+# Append-only per-ray storm ambient: rgb = storm ambient colour, w = strength (0 = off).
+@export var ring_storm_ambient : Vector4 = Vector4.ZERO
 @export var skip_empty_cloud_mask_samples : bool = true
 @export var depth_history_rejection_enabled : bool = true
 @export_range(0.25, 4.0) var history_depth_tolerance_multiplier : float = 1.0
@@ -1279,6 +1288,8 @@ func _notification(what):
 	# A bound clear_compute callable targets an object that is being destroyed.
 	# Capture owned resources now; the queued release must not access that object.
 	var device := rd
+	var storm_map_rids : Array[RID] = storm_profile_map.owned_rids() if storm_profile_map else []
+	var storm_map_set : RID = storm_profile_map.build_set if storm_profile_map else RID()
 	var sets: Array[RID] = uniform_sets.duplicate()
 	for ring_sets in general_data_uniform_sets:
 		sets.append_array(ring_sets)
@@ -1286,6 +1297,7 @@ func _notification(what):
 	sets.append_array(cloud_shadow_xfade_sets)
 	sets.append(_terrain_sun_set)
 	sets.append(macro_map_build_set)
+	sets.append(storm_map_set)
 	for ring_fill_sets in interleave_fill_sets:
 		sets.append_array(ring_fill_sets)
 	var rids: Array[RID] = []
@@ -1303,6 +1315,7 @@ func _notification(what):
 		cloud_shadow_shader, _terrain_sun_neutral, weather_systems_buffer,
 		macro_map_pipeline, macro_map_shader, macro_map_texture, macro_map_params_buffer,
 		macro_map_build_params_buffer, macro_map_snapshot_buffer])
+	rids.append_array(storm_map_rids)
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
 	rids.append_array(blit_screen_images)
@@ -1622,6 +1635,7 @@ func initialize_compute():
 	clear_compute(preserve_general_data_buffers, retire_generation)
 	_ensure_weather_systems_buffer()
 	_ensure_macro_map_buffers()
+	storm_profile_map.ensure_resources(rd)
 	
 	var sampler_state = RDSamplerState.new()
 	sampler_state.min_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
@@ -1830,6 +1844,29 @@ func _ensure_interleave_pipelines(block: int) -> bool:
 			return false
 		interleave_fill_pipelines[block] = fill_variant
 	return true
+
+# Main-shader pipeline with RING_STORM_FALLBACK = 1 (HEAD's analytic storm shape compiled in), created on first use. Stored in
+# interleave_main_pipelines under a negative key so it is released and reset together with the interleave variants.
+func _storm_fallback_pipeline(block: int) -> RID:
+	var key := -1 - block
+	if interleave_main_pipelines.has(key):
+		return interleave_main_pipelines[key]
+	if not shader.is_valid():
+		return RID()
+	var fallback := RDPipelineSpecializationConstant.new()
+	fallback.constant_id = 1
+	fallback.value = 1
+	var constants : Array[RDPipelineSpecializationConstant] = []
+	if block > 0:
+		var block_constant := RDPipelineSpecializationConstant.new()
+		block_constant.constant_id = 0
+		block_constant.value = block
+		constants.append(block_constant)
+	constants.append(fallback)
+	var variant := rd.compute_pipeline_create(shader, constants)
+	if variant.is_valid():
+		interleave_main_pipelines[key] = variant
+	return variant
 
 # Steady light (rgba16f), transient light (rgba16f) and march data (rgba32f) for one view. Sized for the largest block (2x2);
 # a 4x4 block uses the top-left part. 1x1 placeholders while interleave has not been requested.
@@ -2305,6 +2342,19 @@ func _render_callback(effect_callback_type, render_data):
 					macro_map_uniform.add_id(macro_map_texture)
 					uniforms_array.append(macro_map_uniform)
 
+					var storm_map_params_uniform = RDUniform.new()
+					storm_map_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					storm_map_params_uniform.binding = 24
+					storm_map_params_uniform.add_id(storm_profile_map.params_buffer)
+					uniforms_array.append(storm_map_params_uniform)
+
+					var storm_map_uniform = RDUniform.new()
+					storm_map_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					storm_map_uniform.binding = 25
+					storm_map_uniform.add_id(linear_sampler_no_repeat)
+					storm_map_uniform.add_id(storm_profile_map.texture)
+					uniforms_array.append(storm_map_uniform)
+
 					# CloudInterleave block images (bindings 26-28). 1x1 placeholders keep the descriptor set valid while it is off.
 					var block_images := _create_interleave_block_images(new_size, interleave_wanted)
 					interleave_block_images.append_array(block_images)
@@ -2486,6 +2536,7 @@ func _render_callback(effect_callback_type, render_data):
 			if weather_systems_dirty:
 				update_weather_systems()
 			update_macro_weather_map()
+			update_storm_profile_map()
 			dispatch_gpu_cloud_shadows()
 			update_gpu_cloud_shadow_crossfades()
 			if lights_updated or directional_lights_data.size() == 0:
@@ -2545,6 +2596,11 @@ func _render_callback(effect_callback_type, render_data):
 					march_pipeline = interleave_main_pipelines[interleave_active_block]
 					march_x_groups = (((new_size.x + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
 					march_y_groups = (((new_size.y + interleave_active_block - 1) / interleave_active_block - 1) / 8) + 1
+				if not storm_profile_map.valid:
+					# Map invalid: the kernel variant that still carries HEAD's analytic storm shape (see RING_STORM_FALLBACK).
+					var fallback_pipeline := _storm_fallback_pipeline(interleave_active_block)
+					if fallback_pipeline.is_valid():
+						march_pipeline = fallback_pipeline
 				var compute_list = rd.compute_list_begin()
 				rd.compute_list_bind_compute_pipeline(compute_list, march_pipeline)
 				rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
@@ -3202,6 +3258,8 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		jitter_uv = Vector2(view_proj.z.x, view_proj.z.y) * (0.5 * engine_jitter_uv_sign)
 	for component in [jitter_uv.x, jitter_uv.y, 1.0 if (jitter_active and history_jitter_depth_neighborhood) else 0.0, 0.0]:
 		general_data.encode_float(idx, component); idx += 4
+	for component in [ring_storm_ambient.x, ring_storm_ambient.y, ring_storm_ambient.z, ring_storm_ambient.w]:
+		general_data.encode_float(idx, component); idx += 4
 	last_engine_jitter_ndc = Vector2(view_proj.z.x, view_proj.z.y)
 	last_engine_jitter_active = jitter_active
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
@@ -3486,6 +3544,25 @@ func _dispatch_macro_map_slice() -> void:
 	macro_map_build_active = false
 	macro_map_builds_completed += 1
 
+# Called by the bridge at its weather refresh (see RingStormProfileMap.configure). enabled = false returns every shader to the analytic
+# storm loop. Parameters: camera canonical (around, across), the square's half extent, the bake shape (pillar radius, anvil radius
+# multiplier, anvil start, shear), mammatus, downwind (cos, sin) and lean at the band top.
+func set_storm_profile_map(enabled : bool, center_around : float, center_across : float, half_extent : float, pillar_radius : float,
+		anvil_multiplier : float, anvil_start : float, shear : float, mammatus : float, wind_cos : float, wind_sin : float,
+		lean_meters : float, slices : int, refresh_seconds : float) -> void:
+	storm_profile_map.configure(enabled, Vector2(center_around, center_across), half_extent,
+		Vector4(pillar_radius, anvil_multiplier, anvil_start, shear), mammatus, Vector3(wind_cos, wind_sin, lean_meters),
+		slices, refresh_seconds)
+
+func update_storm_profile_map() -> void:
+	var begin_marker := ""
+	var end_marker := ""
+	if gpu_timestamp_diagnostics_enabled:
+		begin_marker = gpu_timestamp_storm_map_begin_marker
+		end_marker = gpu_timestamp_storm_map_end_marker
+	storm_profile_map.update(rd, weather_systems_bytes, weather_systems_revision, cloud_weather_frame, cloud_frame_up.w,
+		begin_marker, end_marker)
+
 func update_lights():
 	lights_updated = false
 	
@@ -3607,4 +3684,15 @@ func _build_cloud_shadow_uniform_set(output_texture: RID, param_buffer: RID) -> 
 	macro_map_uniform.add_id(linear_sampler_no_repeat)
 	macro_map_uniform.add_id(macro_map_texture)
 	uniforms.append(macro_map_uniform)
+	var storm_map_params_uniform := RDUniform.new()
+	storm_map_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	storm_map_params_uniform.binding = 11
+	storm_map_params_uniform.add_id(storm_profile_map.params_buffer)
+	uniforms.append(storm_map_params_uniform)
+	var storm_map_uniform := RDUniform.new()
+	storm_map_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	storm_map_uniform.binding = 12
+	storm_map_uniform.add_id(linear_sampler_no_repeat)
+	storm_map_uniform.add_id(storm_profile_map.texture)
+	uniforms.append(storm_map_uniform)
 	return rd.uniform_set_create(uniforms, cloud_shadow_shader, 0)

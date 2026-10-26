@@ -1454,6 +1454,15 @@ public partial class VoxelChunkGridManager : Node3D
 		return material != BlockType.Air;
 	}
 
+	/// <summary>True when a retained constructed (edited, non-air) block occupies this voxel; natural terrain is not consulted. Cheap: one dictionary lookup.</summary>
+	public bool HasConstructedBlockAt(long aroundVoxel, int verticalVoxel, int acrossVoxel)
+	{
+		if (acrossVoxel < 0 || acrossVoxel >= RingAcrossWidthMeters) return false;
+		long length = GetAroundRingVoxelLength();
+		if (length > 0) { aroundVoxel %= length; if (aroundVoxel < 0) aroundVoxel += length; }
+		return _rainColumnTops.TryGetValue(new RingTerrainColumnCoordinate(aroundVoxel, acrossVoxel), out RainColumnHeights? heights) && heights.Contains(verticalVoxel);
+	}
+
 	private void RebuildRainColumnTops()
 	{
 		_rainColumnTops.Clear();
@@ -1477,6 +1486,7 @@ public partial class VoxelChunkGridManager : Node3D
 	private sealed class RainColumnHeights
 	{
 		private readonly SortedDictionary<int, BlockType> _heights = new();
+		public bool Contains(int height) => _heights.ContainsKey(height);
 		public int Count => _heights.Count; public int TopHeight { get; private set; } = int.MinValue; public BlockType TopMaterial { get; private set; } = BlockType.Air;
 		public void Set(int height, BlockType material) { _heights[height] = material; if (height >= TopHeight) { TopHeight = height; TopMaterial = material; } }
 		public void Remove(int height) { if (!_heights.Remove(height)) return; if (height != TopHeight) return; TopHeight = int.MinValue; TopMaterial = BlockType.Air; foreach ((int y, BlockType material) in _heights) { TopHeight = y; TopMaterial = material; } }

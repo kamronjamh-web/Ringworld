@@ -29,6 +29,7 @@ uniform float crown_glow_emission = 3.0;
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_poi_lighting.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -88,10 +89,20 @@ void fragment() {
 		EMISSION += vec3(0.70, 0.92, 1.0) * crown_glow_amount * crown_glow_emission * ring_haze_visibility(haze);
 	}
 	METALLIC = metallic_value;
-	ROUGHNESS = roughness_value;
-	SPECULAR = 0.68;
+	float surface_roughness = roughness_value;
+	float surface_specular = 0.68;
+	// Wet world: darkens and glosses like POI architecture (concrete porosity 0.5, metal 0).
+	if (ring_wet_params.w > 0.5) {
+		vec3 wet_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		RingWet wet_state = ring_wet_sample(world_position, wet_normal, ring_wet_frame[2].xyz);
+		vec3 wet_albedo = vec3(1.0);
+		ring_wet_apply(wet_state, 0.5 * (1.0 - metallic_value), wet_albedo, surface_roughness, surface_specular);
+		ALBEDO *= wet_albedo;
+	}
+	ROUGHNESS = surface_roughness;
+	SPECULAR = surface_specular;
 	float cloud_occlusion = sample_local_cloud_shadow(world_position) * ring_day_factor;
-	AO = 1.0 - cloud_occlusion;
+	AO = min(1.0 - cloud_occlusion, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 1.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view (no light() here): the only shadow term this material owns is the cloud one, shown for modes 1 and 5.

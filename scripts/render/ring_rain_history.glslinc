@@ -1,0 +1,87 @@
+// GLSL port of the S3 rain proxy and history reduction (scripts/Weather/StormArrival.cs: StormArrivalMath.RainProxy, ReduceHistory), used per texel by the
+// wet map (ring_wet_map.glsl). Pinned against StormArrivalMath at 64 points by rain_history_parity_test (C# reference) and wet_world_gpu_test (GPU).
+// Lag index 0 is "now", then the eight history lags; every lag carries up to RW_MAX_SYSTEMS systems.
+
+#define RW_LAGS 9
+#define RW_MAX_SYSTEMS 32
+#define RW_NO_RAIN_SECONDS 1.0e9
+
+float rw_smooth(float e0, float e1, float x) {
+	float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+float rw_smooth_unit(float v) {
+	float t = clamp(v, 0.0, 1.0);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+float rw_influence(float n) { return 1.0 - rw_smooth_unit((n - 0.32) / 0.68); }
+
+float rw_mean_coverage(float influence, float density, float base_coverage) {
+	return clamp(base_coverage + (influence - 0.28) * 0.46 + influence * (density - 0.5) * 0.24, 0.015, 0.985);
+}
+
+float rw_rain_proxy(float n, float density, float potential, float base_coverage) {
+	if (n >= 1.0) return 0.0;
+	float ci = rw_influence(n) * density;
+	float cov = rw_mean_coverage(ci, density, base_coverage);
+	return clamp(potential * ci * rw_smooth_unit((cov - 0.35) / 0.55), 0.0, 1.0);
+}
+
+// Normalised elliptical distance of StormArrivalMath.NormalizedDistance (offset = point minus system centre, m; cs = (cos, sin) of the orientation).
+float rw_normalized_distance(vec2 offset, vec2 cs, float major_r, float minor_r) {
+	float along = cs.x * offset.x + cs.y * offset.y;
+	float cross_d = -cs.y * offset.x + cs.x * offset.y;
+	float a = max(1.0, major_r);
+	float b = max(1.0, minor_r);
+	float n = sqrt(along * along / (a * a) + cross_d * cross_d / (b * b));
+	if (n < 1e-5 || length(offset) < 1e-3) return 0.0;
+	return n;
+}
+
+float rw_wetness_of_proxy(float proxy, float start) { return rw_smooth(start, start + 0.25, proxy); }
+
+// StormArrivalMath.ReduceHistory: recent = exp(-lag/600)-weighted mean wetness, time_since = trapezoid area of the running-minimum dryness C(l) (continuous in the lags).
+void rw_reduce_history(float proxies[RW_LAGS], float lag_seconds[RW_LAGS], float start, out float recent, out float time_since) {
+	float sum = 0.0, weight_sum = 0.0;
+	float running = 1.0, previous_c = 1.0, previous_lag = 0.0, area = 0.0;
+	for (int i = 0; i < RW_LAGS; i++) {
+		float lag = i == 0 ? 0.0 : lag_seconds[i];
+		float w = exp(-lag / 600.0);
+		sum += rw_wetness_of_proxy(proxies[i], start) * w;
+		weight_sum += w;
+		running = min(running, 1.0 - rw_smooth(0.5 * start, start, proxies[i]));
+		if (i > 0) area += 0.5 * (previous_c + running) * (lag - previous_lag);
+		previous_c = running;
+		previous_lag = lag;
+	}
+	recent = clamp(weight_sum > 0.0 ? sum / weight_sum : 0.0, 0.0, 1.0);
+	time_since = running > 0.98 ? RW_NO_RAIN_SECONDS : area;
+}
+
+// WetnessModel.PriorRain: mean wetness of the lags older than the time since rain (how heavy the rain was before it stopped), continuous in the time since rain.
+float rw_prior_rain(float proxies[RW_LAGS], float lag_seconds[RW_LAGS], float start, float time_since) {
+	if (time_since >= RW_NO_RAIN_SECONDS) return 0.0;
+	float sum = 0.0, weight = 0.0;
+	for (int i = 1; i < RW_LAGS; i++) {
+		float lag = lag_seconds[i];
+		float s = clamp((lag - time_since) / (0.25 * lag + 15.0), 0.0, 1.0);
+		sum += s * rw_wetness_of_proxy(proxies[i], start);
+		weight += s;
+	}
+	return weight > 0.0 ? sum / weight * min(1.0, weight / 1.5) : 0.0;
+}
+
+// WetnessModel.Evaluate (scripts/Weather/WetnessModel.cs).
+vec4 rw_wetness_model(float recent, float prior, float time_since, float rain_now, float sun, float wind_mps, float drying_speed, bool snowing) {
+	if (snowing) return vec4(0.0);
+	float amount = max(recent, prior);
+	float k = max(0.0, drying_speed) * (0.3 + 0.7 * clamp(sun, 0.0, 1.0) + 0.05 * max(0.0, wind_mps));
+	float rain_term = rw_smooth(0.0, 0.3, rain_now) * rw_smooth(0.0, 0.05, recent + rain_now);
+	float horizon = 1.0 - rw_smooth(1125.0, 1500.0, time_since);
+	float film = max(rain_term, rw_smooth(0.02, 0.15, amount) * exp(-k * time_since / 90.0) * horizon);
+	float soak = max(0.8 * rain_term, rw_smooth(0.05, 0.4, amount) * exp(-k * time_since / 300.0) * horizon);
+	float standing = rw_smooth(0.35, 0.8, prior) * exp(-k * time_since / 600.0) * horizon;
+	return vec4(film, soak, standing, rain_term);
+}

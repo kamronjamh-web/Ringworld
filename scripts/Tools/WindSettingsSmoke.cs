@@ -68,18 +68,25 @@ public partial class WindSettingsSmoke : RefCounted
             var prefs = new GameplayRainHazeDefaults(hazePath); prefs.Initialize();
             bool edits = prefs.SetOverride("Enabled", false) && prefs.SetOverride("Density", 0f)
                 && prefs.SetOverride("NearClearDistanceMeters", 0f) && prefs.SetOverride("MaximumOpacity", 0f)
-                && prefs.SetOverride("VariationStrength", 0f) && prefs.SetOverride("Tint", new Color(.2f,.3f,.4f,.25f));
+                && prefs.SetOverride("VariationStrength", 0f) && prefs.SetOverride("Tint", new Color(.2f,.3f,.4f,.25f))
+                && prefs.SetOverride("HazeOnset", .9f) && prefs.SetOverride("StreakDensity", 1.5f) && prefs.SetOverride("StreakBrightness", .25f)
+                && prefs.SetOverride("StreakLength", 1.75f) && prefs.SetOverride("SplashAmount", .5f);
             bool validation = !prefs.SetOverride("Density", double.NaN) && !prefs.SetOverride("Enabled", 1)
                 && !prefs.SetOverride("Tint", new Color(float.PositiveInfinity,0,0))
                 && !prefs.SetOverride("Tint", new Color(0,0,0,float.NaN))
+                && !prefs.SetOverride("StreakDensity", float.NaN) && !prefs.SetOverride("SplashAmount", float.PositiveInfinity) && !prefs.SetOverride("StreakLength", "long")
+                && GameplayRainHazeDefaults.TryValidate("StreakLength", 50f, out Variant streakLength) && streakLength.AsSingle() == 2f
+                && GameplayRainHazeDefaults.TryValidate("StreakLength", 0f, out Variant shortStreak) && shortStreak.AsSingle() == .5f
                 && GameplayRainHazeDefaults.TryValidate("MaximumOpacity", 50f, out Variant opacity) && opacity.AsSingle() == .9f;
             bool save = prefs.Save();
             runtime.Enabled = true; runtime.Density = .02f;
             var loaded = new GameplayRainHazeDefaults(hazePath); loaded.Initialize();
             bool roundtrip = !runtime.Enabled && runtime.Density == 0 && runtime.NearClearDistanceMeters == 0
-                && runtime.MaximumOpacity == 0 && runtime.VariationStrength == 0 && runtime.Tint == new Color(.2f,.3f,.4f);
+                && runtime.MaximumOpacity == 0 && runtime.VariationStrength == 0 && runtime.Tint == new Color(.2f,.3f,.4f)
+                && Math.Abs(runtime.HazeOnset - .9f) < 1e-5f && runtime.StreakDensity == 1.5f && runtime.StreakBrightness == .25f && runtime.StreakLength == 1.75f && runtime.SplashAmount == .5f;
             prefs.Reset();
-            bool reset = runtime.Enabled && runtime.Density == .004f && runtime.NearClearDistanceMeters == 8 && prefs.Save();
+            bool reset = runtime.Enabled && runtime.Density == .004f && runtime.NearClearDistanceMeters == 8 && Math.Abs(runtime.HazeOnset - .78f) < 1e-5f
+                && runtime.StreakDensity == 1f && runtime.StreakBrightness == .5f && runtime.StreakLength == 1f && runtime.SplashAmount == 1f && prefs.Save();
             var blocked = new GameplayRainHazeDefaults(hazePath + "/blocked.tres"); blocked.Initialize(); blocked.SetOverride("Enabled", false);
             bool failure = !blocked.Save() && blocked.Dirty && blocked.LastError.Length > 0;
             return edits && validation && save && roundtrip && reset && failure;

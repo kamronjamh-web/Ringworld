@@ -46,6 +46,10 @@ func run() -> void:
     driver.call("SetShelterForFixture", world.get_node("WeatherAmbience"), false)
     driver.call("SetUnderwaterForFixture", world.get_node("Explorer"), false)
     driver.call("SetDaylightForFixture", world.get_node("RingDayNightCycle"), 1.0)
+    # The shelter checks below exercise the CPU fallback (the ambience cover flag); with a ready occlusion map the haze integrates only exposed ray parts instead.
+    world.get_node("PrecipitationOcclusion").set("Enabled", false)
+    driver.call("SetStreakSettingForFixture", "StreakDensity", 0.0)
+    driver.call("SetStreakSettingForFixture", "SplashAmount", 0.0)
     setup_view()
     target(0.0)
     var baseline := await capture("clear")
@@ -61,6 +65,10 @@ func run() -> void:
         var sky_delta := region_delta(baseline, image, Rect2i(480, 30, 120, 70))
         print("RAIN_HAZE_DEPTH intensity=%.2f near_delta=%.6f far_delta=%.6f sky_delta=%.6f near_clear=%.3f near_before=%s near_after=%s" % [intensity, near_delta, far_delta, sky_delta, float(driver.call("GetHazeControl", "NearClearDistanceMeters")), str(baseline.get_pixel(200, 180)), str(image.get_pixel(200, 180))])
         if not require(near_delta < .001, "near opaque foreground was fogged: %.6f" % near_delta): return
+        # WO4: the grey veil is reserved for violent storms. Light and moderate rain leave the view exactly as dry (streaks are switched off here; they have their own test).
+        if intensity < .6:
+            if not require(near_delta < .001 and far_delta < .001 and sky_delta < .001 and not bool(local.call("GetRainHazeDiagnostics").visible), "light/moderate rain shows the grey haze veil: far=%.6f sky=%.6f" % [far_delta, sky_delta]): return
+            continue
         if not require(far_delta > previous_far + .002 and sky_delta > .005, "rain density did not visibly thicken distant/sky view"): return
         previous_far = far_delta
     var heavy := await capture("heavy_paused_a")

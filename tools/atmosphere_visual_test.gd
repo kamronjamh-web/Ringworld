@@ -29,6 +29,7 @@ var copy_dir := ""
 var albedo_overrides := {}
 var haze_brightness_override := -1.0
 var quick := false
+var storm_at_camera := false
 var only_label := ""
 var only_labels: PackedStringArray = []
 
@@ -49,6 +50,7 @@ func run() -> void:
 		elif argument.begins_with("--grass-albedo="): albedo_overrides["ringworld_grass_albedo_scale"] = float(argument.get_slice("=", 1))
 		elif argument.begins_with("--haze-brightness="): haze_brightness_override = float(argument.get_slice("=", 1))
 		elif argument == "--quick": quick = true
+		elif argument == "--storm": storm_at_camera = true
 		elif argument.begins_with("--only="): only_label = argument.get_slice("=", 1)
 		elif argument.begins_with("--labels="): only_labels = argument.get_slice("=", 1).split(",")
 	if copy_dir != "": DirAccess.make_dir_recursive_absolute(copy_dir)
@@ -94,6 +96,14 @@ func run() -> void:
 	# ground and high-altitude captures during their temporal settling window.
 	explorer.process_mode = Node.PROCESS_MODE_DISABLED
 	RenderingServer.viewport_set_measure_render_time(root.get_viewport_rid(), true)
+	if storm_at_camera:
+		# --storm: a storm front centred on the camera, settled 14 s so the storm haze / air sun visibility have converged.
+		var bridge := game.get_node_or_null("SunshineCloudBridge")
+		if bridge == null: return fail("--storm needs SunshineCloudBridge")
+		bridge.set("SpawnDistanceMeters", 0.0)
+		bridge.call("SpawnStormFrontAhead")
+		var storm_end := Time.get_ticks_msec() + 14000
+		while Time.get_ticks_msec() < storm_end: await process_frame
 	var phases := select_visual_phases()
 	for profile in ([[0, "natural"]] if quick or only_label != "" or not only_labels.is_empty() else [[0, "natural"], [1, "cinematic"]]):
 		drawer.call("SetAtmospherePreset", int(profile[0]))

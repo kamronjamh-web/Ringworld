@@ -32,7 +32,7 @@ float ring_far_weather_cloud_amount_resolved(
 	float shell_density = RING_FAR_WEATHER_DENSITY_SAMPLE(vec3(
 		canonical_meters.x,
 		(far_density_background_altitude.x + far_density_background_altitude.y) * 0.5,
-		canonical_meters.z), mix(0.70, 0.90, resolved_coverage));
+		canonical_meters.z), mix(mix(0.70, 0.90, resolved_coverage), 1.05, smoothstep(0.35, 0.80, storm_factor))); // storm lift: same closure as Sunshine's sampleScene
 	if (shell_density >= 0.0) cloud = max(mix(cloud, shell_density * weather_gate, far_density_strength), storm_factor * RING_FAR_WEATHER_STORM_FLOOR);
 	weather_out = vec2(resolved_coverage, weather_gate);
 	return cloud;

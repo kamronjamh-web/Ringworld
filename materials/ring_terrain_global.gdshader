@@ -40,6 +40,7 @@ uniform float shadow_floor : hint_range(0.0, 1.0) = 0.0;
 #include "res://materials/ring_far_weather_shadow.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 // Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
 uniform float ring_width_meters = 20000.0;
@@ -124,14 +125,23 @@ void fragment() {
 	}
 	float hemisphere_brightness = mix(night_brightness, 1.0, ring_day_factor);
 	vec3 lit_color = ring_terrain_albedo_scaled(terrain_color) * mix(night_tint, vec3(1.0), ring_day_factor) * hemisphere_brightness;
+	// Wet world: the far ground only ever sees the rain-now fallback beyond the wet window, plus the map inside it: darkening and an averaged gloss, no highlights.
+	float surface_roughness = 1.0;
+	float surface_specular = 0.18;
+	if (ring_wet_params.w > 0.5) {
+		vec3 wet_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 wet_up = normalize(surface_up_world);
+		RingWet wet_state = ring_wet_sample(world_position, wet_normal, wet_up);
+		ring_wet_apply(wet_state, mix(0.5, 1.0, smoothstep(0.45, 0.78, dot(wet_normal, wet_up))), lit_color, surface_roughness, surface_specular);
+	}
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
-	ROUGHNESS = 1.0;
-	SPECULAR = 0.18;
+	ROUGHNESS = surface_roughness;
+	SPECULAR = surface_specular;
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
-	AO = 1.0 - combined_cloud_shadow_occlusion * 0.72;
+	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -212,6 +222,7 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale) : 0.0; // storm light fades the sun only, never a point or spot light; far viewport positions are scaled
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, primary_sun_weight, RING_SHADOW_DEFAULT);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);

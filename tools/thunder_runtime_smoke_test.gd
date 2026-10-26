@@ -7,6 +7,7 @@ const SCENE := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 var _scene: Node
 var _started_usec := 0
 var _previewed := false
+var _frames_since_preview := 0
 var _failed := false
 
 func _initialize() -> void:
@@ -23,7 +24,11 @@ func _process(_delta: float) -> bool:
 		# from the local lightning renderer's presentation state.
 		weather.call("TriggerSharedLightningPreviewAt", 1000.0, 1000.0, -99002, 1.0, 45000.0)
 		_previewed = true
-	if elapsed > 3.0:
+		return false
+	if _previewed:
+		_frames_since_preview += 1
+	# The first frame can arrive seconds after _initialize (scene start-up), before the audio node has run a single _process: wait for it to tick a few times.
+	if _previewed and _frames_since_preview >= 8 and elapsed > 3.0 or elapsed > 40.0:
 		if audio == null or not _previewed:
 			_fail("WeatherAudio or preview source missing")
 		else:

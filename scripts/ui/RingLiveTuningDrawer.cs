@@ -148,6 +148,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeWaterTuning();
         InitializeWindTuning();
         InitializeRainHazeTuning();
+        InitializeWetWorldTuning();
         InitializeGrassTuning();
         InitializeVegetationTuning();
         InitializeShadowTuning();
@@ -160,6 +161,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeUndergroundModeTuning();
         InitializeEmitterSiteTuning();
         InitializeWeatherLungTuning();
+        InitializeWeatherAudioTuning();
+        InitializeLightningTuning();
         if (_surfaceTerrainGameplay != null)
             InitializeSurfaceTerrainTuning();
         // The bridge owns the shared, startup-initialized sparse overrides.
@@ -206,6 +209,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushWaterDefaults();
         FlushWindDefaults();
         FlushRainHazeDefaults();
+        FlushWetWorldDefaults();
         FlushGrassDefaults();
         _vegetationDefaults?.Save();
         FlushShadowDefaults();
@@ -218,6 +222,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         FlushUndergroundModeDefaults();
         FlushEmitterSiteDefaults();
         FlushWeatherLungDefaults();
+        FlushWeatherAudioDefaults();
+        FlushLightningDefaults();
         FlushSurfaceTerrainDefaults();
         GetTree().Root.SetMeta(MouseOwnershipMeta, false);
         if (_open)
@@ -248,6 +254,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessWaterTuning(delta);
         ProcessWindTuning(delta);
         ProcessRainHazeTuning(delta);
+        ProcessWetWorldTuning(delta);
         ProcessShadowTuning(delta);
         ProcessAtmosphereTuning(delta);
         ProcessFarRenderingTuning(delta);
@@ -258,6 +265,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessUndergroundModeTuning(delta);
         ProcessEmitterSiteTuning(delta);
         ProcessWeatherLungTuning(delta);
+        ProcessWeatherAudioTuning(delta);
+        ProcessLightningTuning(delta);
         ProcessAntiAliasingTuning(delta);
         ProcessMotionTuning(delta);
         if (_surfaceTerrainGameplay != null)
@@ -388,12 +397,9 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         };
         lightningButton.Pressed += SpawnLightningStrike;
         weather.AddChild(lightningButton);
-        AddToggle(weather, "Thunder", _weatherAudio?.Enabled ?? false, value => { if (_weatherAudio != null) _weatherAudio.Enabled = value; });
-        AddSlider(weather, "Thunder volume", -48, 12, 0.5, _weatherAudio?.ThunderVolumeDb ?? -8, value => { if (_weatherAudio != null) _weatherAudio.ThunderVolumeDb = (float)value; });
-        AddToggle(weather, "Weather ambience", _weatherAmbience?.Enabled ?? false, value => { if (_weatherAmbience != null) _weatherAmbience.Enabled = value; });
-        AddSlider(weather, "Rain volume", -48, 6, 0.5, _weatherAmbience?.RainVolumeDb ?? -10, value => { if (_weatherAmbience != null) _weatherAmbience.RainVolumeDb = (float)value; });
-        AddSlider(weather, "Wind volume", -48, 6, 0.5, _weatherAmbience?.WindVolumeDb ?? -13, value => { if (_weatherAmbience != null) _weatherAmbience.WindVolumeDb = (float)value; });
-        AddSlider(weather, "Distant storm volume", -48, 6, 0.5, _weatherAmbience?.DistantStormVolumeDb ?? -18, value => { if (_weatherAmbience != null) _weatherAmbience.DistantStormVolumeDb = (float)value; });
+        BuildWeatherAudioControls(weather);
+        VBoxContainer lightning = TuningMenuUi.CreateSection(tab, "Lightning");
+        BuildLightningControls(lightning);
         VBoxContainer sun = TuningMenuUi.CreateSection(tab, "Sun / ambient");
         AddSlider(sun, "Sun energy", 0, 8, 0.05, _sun?.LightEnergy ?? 3, value => { if (_sun != null) _sun.LightEnergy = (float)value; });
         AddDayNightSpeedControl(sun);
@@ -529,8 +535,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         VBoxContainer distant = TuningMenuUi.CreateSection(tab, "Distant clouds");
         AddPersistentToggle(distant, "FarCloudPatchCullingEnabled", "Cull off-screen distant cloud patches", _cloudBridge?.FarCloudPatchCullingEnabled ?? true);
         AddPersistentToggle(distant, "FarCloudDetailEnabled", "Reuse Sunshine density", _cloudBridge?.FarCloudDetailEnabled ?? true); AddPersistentSlider(distant, "FarCloudDetailStrength", "Shared detail strength", 0, 1, .01, _cloudBridge?.FarCloudDetailStrength ?? 1); AddPersistentSlider(distant, "FarCloudOpacityMultiplier", "Distant opacity", 0, 2, .01, _cloudBridge?.FarCloudOpacityMultiplier ?? 1); AddPersistentSlider(distant, "FarCloudRadiusMeters", "Distant cloud radius", 30000, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters, 5000, _cloudBridge?.FarCloudRadiusMeters ?? 180000); AddPersistentSlider(distant, "CloudPatchiness", "Coverage variation", 0, 1, .01, _cloudBridge?.CloudPatchiness ?? 1); AddPersistentSlider(distant, "CloudPatchScaleMeters", "Weather patch size", 16000, 256000, 1000, _cloudBridge?.CloudPatchScaleMeters ?? 64000); AddPersistentSlider(distant, "ClearSkyThreshold", "Clear-sky threshold", 0, .6, .01, _cloudBridge?.ClearSkyThreshold ?? .12);
-        VBoxContainer storm = TuningMenuUi.CreateSection(tab, "Storm shaping"); AddPersistentToggle(storm, "SculptLocalizedStorms", "Sculpt local storms", _cloudBridge?.SculptLocalizedStorms ?? true); AddPersistentSlider(storm, "StormSculptStrength", "Storm sculpt strength", 0, 1, .01, _cloudBridge?.StormSculptStrength ?? .92); AddPersistentSlider(storm, "StormPillarRadiusMeters", "Storm pillar radius", 1000, 8000, 250, _cloudBridge?.StormPillarRadiusMeters ?? 4200); AddPersistentSlider(storm, "AnvilRadiusMultiplier", "Storm anvil spread", 1.2, 4, .1, _cloudBridge?.AnvilRadiusMultiplier ?? 2.6);
-        VBoxContainer lighting = TuningMenuUi.CreateSection(tab, "Lighting & history"); AddPersistentColorSlider(lighting, "DayCloudAmbientColor", "Cloud ambient day", _cloudBridge?.DayCloudAmbientColor ?? Colors.White); AddPersistentColorSlider(lighting, "NightCloudAmbientColor", "Cloud ambient night", _cloudBridge?.NightCloudAmbientColor ?? Colors.White); AddPersistentSlider(lighting, "DitherSpeed", "Blue-noise motion", 0, 60, 1, _cloudBridge?.DitherSpeed ?? 0); AddPersistentSlider(lighting, "RayStartJitterStrength", "Ray-start jitter", 0, 1, .01, _cloudBridge?.RayStartJitterStrength ?? 1); AddPersistentSlider(lighting, "StationaryHistoryWeight", "Stationary history", 0, .95, .01, _cloudBridge?.StationaryHistoryWeight ?? .95); AddPersistentSlider(lighting, "MovingHistoryWeight", "Moving history", 0, .95, .01, _cloudBridge?.MovingHistoryWeight ?? .13); AddPersistentSlider(lighting, "ShadowExtinctionPerKilometer", "Shadow extinction / km", .05, 2, .05, _cloudBridge?.ShadowExtinctionPerKilometer ?? 1.4); AddPersistentSlider(lighting, "StormAmbientFloor", "Storm ambient floor", .02, .5, .01, _cloudBridge?.StormAmbientFloor ?? .14); AddPersistentSlider(lighting, "StormAmbientOcclusionStrength", "Storm ambient occlusion", 0, 1, .01, _cloudBridge?.StormAmbientOcclusionStrength ?? .86);
+        VBoxContainer storm = TuningMenuUi.CreateSection(tab, "Storm shaping"); AddPersistentToggle(storm, "SculptLocalizedStorms", "Sculpt local storms", _cloudBridge?.SculptLocalizedStorms ?? true); AddPersistentSlider(storm, "StormSculptStrength", "Storm sculpt strength", 0, 1, .01, _cloudBridge?.StormSculptStrength ?? .92); AddPersistentSlider(storm, "StormPillarRadiusMeters", "Storm pillar radius", 1000, 8000, 250, _cloudBridge?.StormPillarRadiusMeters ?? 4200); AddPersistentSlider(storm, "AnvilRadiusMultiplier", "Storm anvil spread", 1.2, 4, .1, _cloudBridge?.AnvilRadiusMultiplier ?? 2.6); AddPersistentSlider(storm, "AnvilShear", "Anvil shear", 0, 1, .01, _cloudBridge?.AnvilShear ?? .65); AddPersistentSlider(storm, "MammatusStrength", "Mammatus", 0, 1, .01, _cloudBridge?.MammatusStrength ?? .6);
+        VBoxContainer lighting = TuningMenuUi.CreateSection(tab, "Lighting & history"); AddPersistentColorSlider(lighting, "DayCloudAmbientColor", "Cloud ambient day", _cloudBridge?.DayCloudAmbientColor ?? Colors.White); AddPersistentColorSlider(lighting, "NightCloudAmbientColor", "Cloud ambient night", _cloudBridge?.NightCloudAmbientColor ?? Colors.White); AddPersistentSlider(lighting, "DitherSpeed", "Blue-noise motion", 0, 60, 1, _cloudBridge?.DitherSpeed ?? 0); AddPersistentSlider(lighting, "RayStartJitterStrength", "Ray-start jitter", 0, 1, .01, _cloudBridge?.RayStartJitterStrength ?? 1); AddPersistentSlider(lighting, "StationaryHistoryWeight", "Stationary history", 0, .95, .01, _cloudBridge?.StationaryHistoryWeight ?? .95); AddPersistentSlider(lighting, "MovingHistoryWeight", "Moving history", 0, .95, .01, _cloudBridge?.MovingHistoryWeight ?? .13); AddPersistentSlider(lighting, "ShadowExtinctionPerKilometer", "Shadow extinction / km", .05, 2, .05, _cloudBridge?.ShadowExtinctionPerKilometer ?? 1.4); AddPersistentSlider(lighting, "StormDarkness", "Storm darkness", 0, 1, .01, _cloudBridge?.StormDarkness ?? .9); AddPersistentSlider(lighting, "StormShadowFade", "Storm shadow fade", 0, 1, .01, _cloudBridge?.StormShadowFade ?? .35);
         AddCloudHistoryPolicyControls(lighting);
         VBoxContainer cameraIndependent = TuningMenuUi.CreateSection(tab, "Camera-independent clouds");
         AddPersistentToggle(cameraIndependent, "CameraIndependentClouds", "Camera-independent clouds", _cloudBridge?.CameraIndependentClouds ?? true);
@@ -546,6 +552,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentSlider(cameraIndependent, "CameraIndependentDebugMask", "Debug: ablation bit mask (0 = normal)", 0, 63, 1, _cloudBridge?.CameraIndependentDebugMask ?? 0);
         VBoxContainer showcase = TuningMenuUi.CreateSection(tab, "Showcase"); AddCloudShowcaseControls(showcase);
         BuildRainHazeControls(tab);
+        BuildWetWorldControls(tab);
         AddCloudDefaultsFooter(tab);
         AddCloudProviderControls(TuningMenuUi.CreateSection(tab, "Provider"));
     }
@@ -1069,8 +1076,8 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             _drawer.Visible = open;
             return;
         }
-        if (open) { _cloudRefreshDelay = 0; _surfaceTerrainDiagnosticsRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushLodSchedulingDefaults(); FlushUndergroundModeDefaults(); FlushEmitterSiteDefaults(); FlushWeatherLungDefaults(); }
+        if (open) { _cloudRefreshDelay = 0; _surfaceTerrainDiagnosticsRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshWetWorldControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); FlushWetWorldDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushLodSchedulingDefaults(); FlushUndergroundModeDefaults(); FlushEmitterSiteDefaults(); FlushWeatherLungDefaults(); FlushWeatherAudioDefaults(); FlushLightningDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

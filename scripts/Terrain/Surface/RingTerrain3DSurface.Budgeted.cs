@@ -133,8 +133,7 @@ public partial class RingTerrain3DSurface
             candidate._preparedMeshLods = _preparedMeshLods;
             candidate._preparedMeshSize = _preparedMeshSize;
             candidate.SetSmoothTerrainShading(_smoothTerrainShading);
-            candidate.SetSurfaceAppearance(_surfaceDryRoughness, _surfaceWetRoughness, _rainWetnessStrength);
-            candidate.SetSurfaceWetness(_surfaceWetness);
+            candidate.SetSurfaceAppearance(_surfaceDryRoughness);
             candidate._budgetGeometry = geometry;
             candidate._budgetImages = copies;
             candidate._budgetBiomeImages = biomeCopies;

@@ -33,7 +33,10 @@ instance uniform bool grass_gpu_culled = false;
 #include "res://materials/ring_grass_interaction.gdshaderinc"
 #include "res://materials/ring_grass_debug.gdshaderinc"
 #include "res://materials/ring_grass_lighting.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 varying float grass_cloud_occlusion;
+varying float grass_storm_level; // storm light: D at the blade, read once per vertex
+varying vec2 grass_wet_state; // wet world, per vertex: (darkening amount, gloss)
 // Terrain height-shadow clipmap, planet layer only (S7a): per-vertex ground term (1 = lit, always 1 outside the night planet layer).
 varying float grass_planet_height_term;
 varying float grass_tint_variation;
@@ -274,6 +277,13 @@ void vertex() {
 	RingVegetationShadowInstance shadow_instance = ring_vegetation_shadow_instance(RING_VEGETATION_SHADOW_GRASS, INSTANCE_ID);
 	grass_cloud_occlusion = ring_vegetation_shadow_cloud_vertex(shadow_instance, (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz);
 	grass_planet_height_term = ring_vegetation_shadow_planet_point(shadow_instance, (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, CAMERA_POSITION_WORLD);
+	grass_storm_level = ring_storm_level((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz);
+	grass_wet_state = vec2(0.0);
+	if (ring_wet_params.w > 0.5) {
+		// The camera up axis stands in for the local up (the blade is within a few hundred metres of the camera).
+		RingWet wet_state = ring_wet_sample_up((MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz, ring_wet_frame[2].xyz);
+		grass_wet_state = vec2(smoothstep(0.0, 0.5, wet_state.soak) * ring_wet_params.x, ring_wet_gloss(wet_state));
+	}
 }
 
 void fragment() {
@@ -306,15 +316,17 @@ void fragment() {
 		}
 	}
 	float cloud = grass_cloud_occlusion;
-	ALBEDO = albedo * (1.0 - cloud * .32);
+	albedo *= 1.0 - 0.55 * 0.4 * min(grass_wet_state.x, 1.0); // wet world: blades darken less than soil
+	ALBEDO = albedo; // cloud shadow reaches the direct light in light() (storm revamp WO-1), so the albedo is no longer dimmed here
 	ROUGHNESS = 1.0;
-	SPECULAR = grass_blade_shading_enabled ? .05 * (1.0 - terrain_lighting) : 0.0;
+	SPECULAR = grass_blade_shading_enabled ? mix(.05, .25, grass_wet_state.y) * (1.0 - terrain_lighting) : 0.0;
 	grass_light_specular = SPECULAR;
 	grass_light_full_shading = grass_blade_shading_enabled
 		&& !(grass_simplified_intermediate_shading && grass_lod_pass != 0) ? 1.0 : 0.0;
 	// Darker roots ground the meadow while leaving tips responsive to the sun.
 	AO = (grass_blade_shading_enabled ? mix(mix(.72, 1.0, blade), 1.0, terrain_lighting) : 1.0)
 		* (1.0 - cloud * .70);
+	AO = min(AO, ring_storm_ambient(grass_storm_level)); // storm light
 	AO_LIGHT_AFFECT = grass_blade_shading_enabled ? 1.0 - terrain_lighting : 0.0;
 	BACKLIGHT = grass_blade_shading_enabled
 		? albedo * mix(.07, .20, blade) * (1.0 - cloud * .55) * (1.0 - terrain_lighting) : vec3(0.0);
@@ -345,8 +357,9 @@ void light() {
 	// Keep this in the stage entry point: Godot's LIGHT, ATTENUATION and output
 	// accumulators are stage-local shader built-ins.
 	vec3 sun_view = normalize((VIEW_MATRIX * vec4(grass_primary_sun_direction, 0.0)).xyz);
-	// Cloud shadow stays in the grass's AO/albedo only (never direct light), so the composition is geometry * 1 (COMBINE_PRODUCT).
-	RingShadowTerms terms = ring_shadow_terms(vec3(0.0), SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT); // world unused until S5 (no world varying here)
+	// Cloud shadow darkens the direct light like terrain (storm revamp WO-1): geometry * contact * cloud (COMBINE_PRODUCT); AO still carries the ambient share.
+	RingShadowTerms terms = ring_shadow_terms(vec3(0.0), SCREEN_UV, ATTENUATION, grass_cloud_occlusion, 0.0, RING_SHADOW_COMBINE_PRODUCT); // world unused until S5 (no world varying here)
+	terms.storm = LIGHT_IS_DIRECTIONAL ? grass_storm_level : 0.0;
 	float contact_sun_weight = LIGHT_IS_DIRECTIONAL ? smoothstep(.90, .995, dot(normalize(LIGHT), sun_view)) : 0.0;
 	terms.geometry = ring_height_shadow_vegetation_planet_geometry(terms.geometry, grass_planet_height_term, LIGHT_IS_DIRECTIONAL, LIGHT, VIEW_MATRIX, contact_sun_weight);
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, contact_sun_weight, RING_SHADOW_CONTACT_GRASS);

@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://015hvscjmtjw"
+path="res://.godot/imported/ring_rain_streaks.glsl-41e96e331d215cffa135071be0131982.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_rain_streaks.glsl"
+dest_files=["res://.godot/imported/ring_rain_streaks.glsl-41e96e331d215cffa135071be0131982.res"]
+
+[params]
+

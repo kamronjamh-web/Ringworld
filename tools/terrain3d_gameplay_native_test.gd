@@ -18,14 +18,13 @@ func _run() -> void:
 	var world_a := Transform3D(Basis(Vector3.UP, .1), Vector3(20, 30, 40))
 	var world_b := Transform3D(Basis(Vector3.UP, -.15), Vector3(276, 50, 40))
 	var first := _fixture(-8100.0, Color(.1, .2, .3, 1.0))
-	surface.call("SetSurfaceAppearance", .81, .29, .63)
-	surface.call("SetSurfaceWetness", .42)
+	surface.call("SetSurfaceAppearance", .81)
 	_expect(_begin(surface, first, 0, 192, -8100.0, 1, -8192.0, 8000.0), "begin min-bound gameplay window")
 	surface.call("SetGameplayWorldFrames", Transform3D.IDENTITY, world_a)
 	await _prepare(surface)
 	await physics_frame
 	_expect(surface.call("ActivateStagedWindow", 1), "activate first prepared window")
-	_expect(_appearance_or_renderer_skip(surface, .42, .81, .29, .63, false), "first active owner inherits wetness appearance")
+	_expect(_appearance_or_renderer_skip(surface, .81, false), "first active owner inherits dry roughness")
 	surface.call("SetGameplayWorldFrames", world_a, world_a)
 	await physics_frame
 	_expect(_ray_matches(world_a), "first transformed collider supports its anchor")
@@ -33,10 +32,9 @@ func _run() -> void:
 	var native: Object = surface.get("TerrainNativeData")
 	_expect(native != null and native.call("get_regions_active").size() == 9, "native has nine regions")
 	var second := _fixture(-8099.0, Color(.8, .1, .4, 1.0))
-	surface.call("SetSurfaceAppearance", .77, .25, .71)
-	surface.call("SetSurfaceWetness", .58)
+	surface.call("SetSurfaceAppearance", .77)
 	_expect(_begin(surface, second, 256, 192, -8099.0, 2, -8192.0, 8000.0), "stage translated second window")
-	_expect(_appearance_or_renderer_skip(surface, .58, .77, .25, .71, false), "active owner retains updated wetness appearance")
+	_expect(_appearance_or_renderer_skip(surface, .77, false), "active owner retains updated dry roughness")
 	surface.call("SetGameplayWorldFrames", world_a, world_b)
 	_expect(_ray_matches(world_a), "old collider remains supported while replacement begins")
 	_expect(absf(float(surface.call("SampleCommittedHeight", 0, 192)) + 8100.0) < .001, "active world remains first while second prepares")
@@ -44,7 +42,7 @@ func _run() -> void:
 	await physics_frame
 	_expect(_ray_matches(world_a), "old collider stays at its own transform until activation")
 	_expect(surface.call("CanActivateStagedWindow", 256, 192, 0.0), "second staged coverage ready")
-	_expect(_appearance_or_renderer_skip(surface, .58, .77, .25, .71, true), "new staged owner inherits wetness appearance")
+	_expect(_appearance_or_renderer_skip(surface, .77, true), "new staged owner inherits dry roughness")
 	await physics_frame
 	_expect(surface.call("ActivateStagedWindow", 2), "activate second only after preparation")
 	surface.call("SetGameplayWorldFrames", world_b, world_b)
@@ -53,15 +51,14 @@ func _run() -> void:
 	_expect(not _ray_matches(world_a), "retired collider is disabled")
 	_expect(absf(float(surface.call("SampleCommittedHeight", 256, 192)) + 8099.0) < .001, "second revision height active")
 	var third := _fixture(-8098.5, Color(.2, .4, .1, .37))
-	surface.call("SetSurfaceAppearance", .74, .22, .54)
-	surface.call("SetSurfaceWetness", .31)
+	surface.call("SetSurfaceAppearance", .74)
 	_expect(_begin(surface, third, 512, 317806, -8098.5, 3, -8192.0, 8000.0), "stage near-width boundary window")
 	surface.call("SetGameplayWorldFrames", world_b, world_a)
 	await _prepare(surface)
 	_expect(surface.call("CanActivateStagedWindow", 512, 317806, 0.0), "near-width staged coverage ready")
 	await physics_frame
 	_expect(surface.call("ActivateStagedWindow", 3), "activate reused owner with new color")
-	_expect(_appearance_or_renderer_skip(surface, .31, .74, .22, .54, false), "reused owner retains wetness appearance")
+	_expect(_appearance_or_renderer_skip(surface, .74, false), "reused owner retains dry roughness")
 	surface.call("SetGameplayWorldFrames", world_a, world_a)
 	await physics_frame
 	_expect(_ray_matches(world_a), "reused collider supports its transformed anchor")
@@ -107,31 +104,33 @@ func _ray_matches(world: Transform3D) -> bool:
 	var hit := root.get_world_3d().direct_space_state.intersect_ray(query)
 	return not hit.is_empty() and (hit.position as Vector3).distance_to(world.origin) < .03
 
-func _appearance_matches(surface: Node, wetness: float, dry: float, wet: float, strength: float) -> bool:
+func _appearance_matches(surface: Node, dry: float) -> bool:
 	var terrain: Object = surface.get("TerrainNode")
-	return _material_appearance_matches(terrain.call("get_material") if terrain != null else null, wetness, dry, wet, strength, "active")
+	return _material_appearance_matches(terrain.call("get_material") if terrain != null else null, dry, "active")
 
-func _appearance_or_renderer_skip(surface: Node, wetness: float, dry: float, wet: float, strength: float, staged: bool) -> bool:
+func _appearance_or_renderer_skip(surface: Node, dry: float, staged: bool) -> bool:
 	if DisplayServer.get_name() == "headless":
-		print("SKIP renderer-only Terrain3D wetness uniform assertion (headless): ", "staged" if staged else "active")
+		print("SKIP renderer-only Terrain3D dry roughness uniform assertion (headless): ", "staged" if staged else "active")
 		return true
-	return _staged_appearance_matches(surface, wetness, dry, wet, strength) if staged else _appearance_matches(surface, wetness, dry, wet, strength)
+	return _staged_appearance_matches(surface, dry) if staged else _appearance_matches(surface, dry)
 
-func _staged_appearance_matches(surface: Node, wetness: float, dry: float, wet: float, strength: float) -> bool:
-	return _material_appearance_matches(surface.call("GetStagedTerrainMaterialForDiagnostics"), wetness, dry, wet, strength, "staged")
+func _staged_appearance_matches(surface: Node, dry: float) -> bool:
+	return _material_appearance_matches(surface.call("GetStagedTerrainMaterialForDiagnostics"), dry, "staged")
 
-func _material_appearance_matches(material: Variant, wetness: float, dry: float, wet: float, strength: float, owner: String) -> bool:
+# Wetness is no longer forwarded to the material (the shader reads the wet map); only the dry roughness is, and the retired uniforms must be gone.
+func _material_appearance_matches(material: Variant, dry: float, owner: String) -> bool:
 	if material == null:
 		push_error("TERRAIN3D_GAMEPLAY_NATIVE: %s material unavailable" % owner)
 		return false
-	var values := []
-	for parameter in ["surface_wetness", "surface_dry_roughness", "surface_wet_roughness", "surface_wetness_strength"]:
-		var value: Variant = material.call("get_shader_param", parameter)
-		if typeof(value) != TYPE_FLOAT:
-			push_error("TERRAIN3D_GAMEPLAY_NATIVE: %s %s unavailable (type %s)" % [owner, parameter, typeof(value)])
+	var value: Variant = material.call("get_shader_param", "surface_dry_roughness")
+	if typeof(value) != TYPE_FLOAT:
+		push_error("TERRAIN3D_GAMEPLAY_NATIVE: %s surface_dry_roughness unavailable (type %s)" % [owner, typeof(value)])
+		return false
+	for retired in ["surface_wetness", "surface_wet_roughness", "surface_wetness_strength"]:
+		if typeof(material.call("get_shader_param", retired)) == TYPE_FLOAT:
+			push_error("TERRAIN3D_GAMEPLAY_NATIVE: %s still exposes retired uniform %s" % [owner, retired])
 			return false
-		values.append(value)
-	return is_equal_approx(values[0], wetness) and is_equal_approx(values[1], dry) and is_equal_approx(values[2], wet) and is_equal_approx(values[3], strength)
+	return is_equal_approx(value, dry)
 
 func _expect(value: bool, label: String) -> void:
 	checks += 1

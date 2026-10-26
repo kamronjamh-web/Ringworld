@@ -87,12 +87,20 @@ public partial class RingLocalWeatherEffects
     {
         if (_rainHaze == null || !GodotObject.IsInstanceValid(_rainHaze) || _rainHazeMaterial == null) return;
         RingRainHazeSettings settings = RingRainHazeSettings.Current;
+        bool hazeMapReady = RingPrecipitationOcclusion.Instance is { Ready: true } && PrecipitationPhase == PrecipitationPhase.Below;
         bool eligible = _activeRainHazeOwner == _rainHazeOwner && Enabled && !UndergroundSuspended && _weatherSource?.Enabled == true
             && settings.Enabled && !Snowing && _explorer?.IsCameraUnderwater != true
-            && _rainHazeAmbience?.IsRainSheltered != true
+            && (hazeMapReady || _rainHazeAmbience?.IsRainSheltered != true)
             && _rainHazeCamera != null && GodotObject.IsInstanceValid(_rainHazeCamera) && _rainHazeCamera.Current;
-        float intensity = float.IsFinite(PrecipitationIntensity) ? Mathf.Clamp(PrecipitationIntensity, 0, 1) : 0;
-        float density = FiniteHaze(settings.Density, 0, .03f, .004f);
+        float rawIntensity = float.IsFinite(PrecipitationIntensity) ? Mathf.Clamp(PrecipitationIntensity, 0, 1) : 0;
+        // The grey veil is reserved for violent storms: light and moderate rain show streaks and splashes only (HazeOnset).
+        // S3: the heavy-core rule is Core x Severity >= 0.7 of the arrival state (it replaces the system-kind rule); manual weather and the absence of an arrival state keep the kind rule.
+        StormArrivalState arrival = StreakArrivalOverride ?? StormArrivalMath.Observer;
+        _rainHazeGate = arrival.Valid && !_externalWeatherOverrideActive
+            ? RainHazeOnsetFactor(rawIntensity, RainPrecipitationProfile.HeavyCoreWeight(arrival.Core, arrival.Severity), settings.HazeOnset)
+            : RainHazeOnsetFactor(rawIntensity, LastResolvedWeather.SystemKind >= RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront, settings.HazeOnset);
+        float intensity = rawIntensity * _rainHazeGate;
+        float density = FiniteHaze(settings.Density, 0, .03f, .004f) * Mathf.Clamp(PrecipitationHazeFactor, 0, 4);
         float maximumOpacity = FiniteHaze(settings.MaximumOpacity, 0, .9f, .6f);
         RefreshRainHazeCompositorOwner();
         bool compositorReady = _rainHazeWorldEnvironment != null && _rainHazeCompositor?.Get(ReadyName).AsBool() == true;
@@ -110,6 +118,22 @@ public partial class RingLocalWeatherEffects
         SetRainHazeParameter(HazeTintName, new Vector3(Mathf.Clamp(tint.R, 0, 1), Mathf.Clamp(tint.G, 0, 1), Mathf.Clamp(tint.B, 0, 1)));
         SetRainHazeParameter(DaylightName, FiniteHaze(_rainHazeDayNight?.DaylightFactor ?? 1, 0, 1, 1));
         SetRainHazeParameter(SkyDistanceName, Mathf.Min(750, _rainHazeCamera!.Far));
+    }
+
+    private float _rainHazeGate;
+
+    /// <summary>
+    /// Smooth 0..1 weight of the grey rain haze: 0 for light and moderate rain, 1 for violent storms. Severe systems (kind ExceptionalFront and above) count their intensity fully, every other
+    /// system at 92 percent, so its heavy core only just reaches the veil. The ramp is smoothstep(onset, onset + 0.2, effective intensity).
+    /// </summary>
+    public static float RainHazeOnsetFactor(float intensity, bool severeSystem, float onset)
+        => RainHazeOnsetFactor(intensity, severeSystem ? 1.0f : 0.0f, onset);
+
+    /// <summary>Same ramp with a continuous heavy-core weight (0..1, see RainPrecipitationProfile.HeavyCoreWeight: Core x Severity >= 0.7 is 1) in place of the severe-system flag.</summary>
+    public static float RainHazeOnsetFactor(float intensity, float heavyCoreWeight, float onset)
+    {
+        float i = FiniteHaze(intensity, 0, 1, 0), o = FiniteHaze(onset, 0, 1, .78f), w = FiniteHaze(heavyCoreWeight, 0, 1, 0);
+        return Mathf.SmoothStep(o, o + .2f, i * (w >= 1.0f ? 1.0f : w <= 0.0f ? .92f : Mathf.Lerp(.92f, 1.0f, w)));
     }
 
     private void SetRainHazeParameter(StringName name, Variant value)
@@ -144,10 +168,11 @@ public partial class RingLocalWeatherEffects
     {
         _rainHazeCompositeActive = false;
         _rainHazeFramePublished = false;
+        _rainHazeFrameOcclusion = null;
         if (_rainHazeCompositor != null)
         {
             Variant neutralTexture = _rainHazeNeutral == null ? default : Variant.From(_rainHazeNeutral);
-            _rainHazeCompositor.Call("publish_frame", new byte[240], neutralTexture, false);
+            _rainHazeCompositor.Call("publish_frame", new byte[RainHazeFrameBytes], neutralTexture, false);
             DetachRainHazeCompositor();
             _rainHazeCompositor.Dispose(); _rainHazeCompositor = null;
             _rainHazeGpuMarkersEnabled = null;
@@ -179,12 +204,18 @@ public partial class RingLocalWeatherEffects
         environment.Compositor ??= new Compositor();
         var effects = environment.Compositor.CompositorEffects;
         using Godot.Collections.Array effectsLifetime = (Godot.Collections.Array)effects;
-        if (effects.Count > 0 && effects[^1] == owner._rainHazeCompositor) return;
-        effects.Remove(owner._rainHazeCompositor); effects.Add(owner._rainHazeCompositor);
+        // Order: Sunshine (anything else), then the rain streak raster pass, then the rain haze composite last.
+        CompositorEffect? streaks = owner._streakCompositor;
+        if (effects.Count > 0 && effects[^1] == owner._rainHazeCompositor && (streaks == null || (effects.Count > 1 && effects[^2] == streaks))) return;
+        if (streaks != null) effects.Remove(streaks);
+        effects.Remove(owner._rainHazeCompositor);
+        if (streaks != null) effects.Add(streaks);
+        effects.Add(owner._rainHazeCompositor);
         environment.Compositor.CompositorEffects = effects;
     }
     private void DetachRainHazeCompositor()
     {
+        DetachRainStreaksCompositor();
         if (_rainHazeWorldEnvironment != null && GodotObject.IsInstanceValid(_rainHazeWorldEnvironment) && _rainHazeWorldEnvironment.Compositor != null)
         {
             var effects = _rainHazeWorldEnvironment.Compositor.CompositorEffects;
@@ -228,11 +259,20 @@ public partial class RingLocalWeatherEffects
         Vector(new(FiniteHaze(settings.VariationStrength,0,1,.25f),Mathf.Min(750,_rainHazeCamera.Far),wind.Enabled ? 1 : 0,0));
         Vector(new(wind.Anchor.X,wind.Anchor.Y,wind.Anchor.Z,0)); Vector(wind.Around); Vector(wind.Across);
         Vector(new(wind.Uv.X,wind.Uv.Y,wind.Base,wind.Strength));
+        // Precipitation occlusion map frame: only the exposed parts of each ray are integrated (state.x = 0 reads as fully exposed).
+        var occlusion = RingPrecipitationOcclusion.Instance;
+        bool mapReady = occlusion != null && occlusion.Ready && occlusion.PublishedTexture != null && PrecipitationPhase == PrecipitationPhase.Below;
+        Transform3D map = mapReady ? occlusion!.PublishedTransform : Transform3D.Identity;
+        Vector(new(map.Origin.X, map.Origin.Y, map.Origin.Z, mapReady ? occlusion!.PublishedFarMeters : 0));
+        Vector(new(map.Basis.Y.X, map.Basis.Y.Y, map.Basis.Y.Z, PrecipitationOcclusionFrame.HalfExtentMeters));
+        Vector(new(map.Basis.X.X, map.Basis.X.Y, map.Basis.X.Z, PrecipitationOcclusionFrame.TexelMeters));
+        Vector(new(mapReady ? 1 : 0, PrecipitationOcclusionFrame.Resolution, 0, 0));
+        Texture2D? occlusionTexture = mapReady ? occlusion!.PublishedTexture : null;
         Texture2D? texture = wind.Texture ?? _rainHazeNeutral;
         // The compositor keeps the last published frame until it is replaced, so an identical payload (static camera, same gust
         // texture, same active flag) is not re-sent. Nothing else publishes to this compositor instance.
         if (_rainHazeFramePublished && ReferenceEquals(_rainHazeFrameCompositor, _rainHazeCompositor) && _rainHazeFrameActive == active
-            && ReferenceEquals(_rainHazeFrameTexture, texture) && data.AsSpan().SequenceEqual(_rainHazeFrameLast)) return;
+            && ReferenceEquals(_rainHazeFrameTexture, texture) && ReferenceEquals(_rainHazeFrameOcclusion, occlusionTexture) && data.AsSpan().SequenceEqual(_rainHazeFrameLast)) return;
         // Variant.From(object) allocates a finalizable Disposer, so the texture Variant is rebuilt only when the reference changes.
         if (!_rainHazeFrameTextureVariantValid || !ReferenceEquals(_rainHazeFrameTextureVariantSource, texture))
         {
@@ -243,8 +283,11 @@ public partial class RingLocalWeatherEffects
         _rainHazeFrameArgs[0] = data;
         _rainHazeFrameArgs[1] = _rainHazeFrameTextureVariant;
         _rainHazeFrameArgs[2] = active;
+        _rainHazeFrameArgs[3] = occlusionTexture == null ? default : Variant.From(occlusionTexture);
         _rainHazeCompositor.Call(PublishFrameName, _rainHazeFrameArgs);
         _rainHazeFrameArgs[0].Dispose();
+        _rainHazeFrameArgs[3].Dispose();
+        _rainHazeFrameOcclusion = occlusionTexture;
         data.CopyTo(_rainHazeFrameLast, 0);
         _rainHazeFrameCompositor = _rainHazeCompositor;
         _rainHazeFrameActive = active;
@@ -252,9 +295,11 @@ public partial class RingLocalWeatherEffects
         _rainHazeFramePublished = true;
     }
 
-    private readonly byte[] _rainHazeFrameScratch = new byte[240];
-    private readonly byte[] _rainHazeFrameLast = new byte[240];
-    private readonly Variant[] _rainHazeFrameArgs = new Variant[3];
+    private const int RainHazeFrameBytes = 304;
+    private Texture2D? _rainHazeFrameOcclusion;
+    private readonly byte[] _rainHazeFrameScratch = new byte[RainHazeFrameBytes];
+    private readonly byte[] _rainHazeFrameLast = new byte[RainHazeFrameBytes];
+    private readonly Variant[] _rainHazeFrameArgs = new Variant[4];
     private CompositorEffect? _rainHazeFrameCompositor;
     private Texture2D? _rainHazeFrameTexture, _rainHazeFrameTextureVariantSource;
     private Variant _rainHazeFrameTextureVariant;
@@ -270,6 +315,9 @@ public partial class RingLocalWeatherEffects
         ["compositor_dispatches"] = _rainHazeCompositor?.Get("dispatches").AsInt64() ?? 0,
         ["compositor_timestamp_scopes"] = _rainHazeCompositor?.Get("timestamp_scopes").AsInt64() ?? 0,
         ["rain_intensity"] = PrecipitationIntensity,
+        ["haze_gate"] = _rainHazeGate,
+        ["haze_factor"] = PrecipitationHazeFactor,
+        ["map_ready"] = RingPrecipitationOcclusion.Instance is { Ready: true } && PrecipitationPhase == PrecipitationPhase.Below,
         ["parameter_pushes"] = _rainHazeParameterPushes,
         ["snow"] = Snowing,
         ["underwater"] = _explorer?.IsCameraUnderwater == true,

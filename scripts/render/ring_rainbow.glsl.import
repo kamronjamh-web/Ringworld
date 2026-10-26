@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://crectniw3p3cf"
+path="res://.godot/imported/ring_rainbow.glsl-63e56c695b4327fc2532508cf9ba0a81.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_rainbow.glsl"
+dest_files=["res://.godot/imported/ring_rainbow.glsl-63e56c695b4327fc2532508cf9ba0a81.res"]
+
+[params]
+

@@ -4,7 +4,7 @@ render_mode unshaded, blend_disabled;
 // around, SCREEN_UV.y across; the bake draws in vertical strips over frames) for the far weather cloud shadow (ring_far_weather_shadow.gdshaderinc).
 // RingScaledFarViewport binds the same weather atlas, wind clock and Sunshine
 // density resources as the visible shell, so the baked amount is the shell's
-// own field at its mid-band slice. R = cloud amount 0..1.
+// own field at its mid-band slice. R = cloud amount 0..1, G = far weather storm level 0..1 (storm light fallback, docs/storm-revamp-s0-storm-light-design.md).
 uniform float ring_circumference_km = 31415.9;
 uniform float ring_width_km = 318.0;
 uniform float coverage : hint_range(0.0, 1.0) = 0.46;
@@ -66,15 +66,17 @@ void fragment() {
 		// 2x2 box supersample: the texel stores the mean cloud amount over its
 		// footprint, so bilinear receivers see soft cloud edges, not texel steps.
 		float cloud = 0.0;
+		float storm = 0.0;
 		for (int i = 0; i < 4; i++) {
 			vec2 uv = SCREEN_UV + (vec2(float(i & 1), float(i >> 1)) - 0.5) * 0.5 * SCREEN_PIXEL_SIZE;
 			vec2 weather_uv = vec2(
 				fract(uv.x - weather_wind_uv_per_second.x * weather_time_seconds),
 				clamp(uv.y - weather_wind_uv_per_second.y * weather_time_seconds, 0.0, 1.0));
 			vec4 weather = textureLod(weather_atlas, weather_uv, 0.0);
+			storm += weather.g;
 			vec3 canonical_meters = vec3(fract(uv.x) * ring_circumference_km * 1000.0, 0.0, uv.y * ring_width_km * 1000.0);
 			cloud += ring_far_weather_cloud_amount(weather, canonical_meters, coverage, softness);
 		}
-		COLOR = vec4(clamp(cloud * 0.25, 0.0, 1.0), 0.0, 0.0, 1.0);
+		COLOR = vec4(clamp(cloud * 0.25, 0.0, 1.0), clamp(storm * 0.25, 0.0, 1.0), 0.0, 1.0);
 	}
 }

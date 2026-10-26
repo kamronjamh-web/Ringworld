@@ -30,6 +30,7 @@ uniform float ring_width_meters = 20000.0;
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_far_weather_shadow.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 // Enables the whole-ring far weather cloud shadow (ring_far_weather_shadow.gdshaderinc) beyond the Sunshine maps.
 uniform bool analytic_cloud_shadow_enabled = true;
 
@@ -113,13 +114,22 @@ void fragment() {
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = grazing_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
+	float rain_matte = 0.0;
+	if (ring_wet_params.w > 0.5) {
+		// Wet world: rain mattes the far water (rain now only, from the rain fallback of the wet map); hail adds a white-noise chop near a storm core.
+		RingWet rain_state = ring_wet_sample(world_position, normalize(surface_up_world), normalize(surface_up_world));
+		rain_matte = 0.08 * rain_state.rain + 0.15 * ring_wet_events.y;
+	}
 	ROUGHNESS = clamp(max(ocean_roughness, far_water_roughness)
-		+ sqrt(max(filtered_far_wave.z * wave_normal_strength * wave_normal_strength, 0.0)) * 0.10, 0.02, 1.0);
+		+ sqrt(max(filtered_far_wave.z * wave_normal_strength * wave_normal_strength, 0.0)) * 0.10 + rain_matte, 0.02, 1.0);
 	// Physical haze also attenuates the environment reflection; exactly 1 in Legacy.
-	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze);
+	float storm_reflection = ring_storm_ambient(ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale)); // storm light: the sky reflection and the ambient follow the storm level
+	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
+	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
+		* mix(1.0, 0.02, ring_storm_shadow_fade(ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale)) * ringworld_storm_light.x);
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
-	AO = 1.0 - combined_cloud_shadow_occlusion * 0.60;
+	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -184,6 +194,7 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale) : 0.0; // storm light fades the sun only, never a point or spot light; far viewport positions are scaled
 	// No contact term on water (RING_SHADOW_NO_CONTACT): the proxy is blend_mix, so the depth texel under it holds the seabed.
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
@@ -191,6 +202,8 @@ void light() {
 		terms.height = ring_height_shadow_planet_term(height_shadow, planet_height_weight, shadow_floor);
 	}
 	float combined_visibility = ring_shadow_sun_visibility(terms, RING_SHADOW_DEFAULT);
+	// Storm light: the sun fade keeps a shadowless residual (1 - strength) for the ground, but sun-facing wave facets turn even that into bright glitter, and a closed storm has no sun glint at all.
+	combined_visibility *= 1.0 - 0.9 * ring_storm_shadow_fade(terms.storm) * ringworld_storm_light.x;
 	if (ring_shadow_debug_enabled()) {
 		if (LIGHT_IS_DIRECTIONAL && (primary_sun_weight > 0.5 || (ring_height_shadow_enabled() && planet_height_weight > 0.5))) {
 			DIFFUSE_LIGHT += vec3(ring_shadow_debug_value(terms, combined_visibility));

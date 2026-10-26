@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bpmh38uo6sokc"
+path="res://.godot/imported/ring_wet_map.glsl-6a0a2b7612d0cd0767918d0a879ae9db.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_wet_map.glsl"
+dest_files=["res://.godot/imported/ring_wet_map.glsl-6a0a2b7612d0cd0767918d0a879ae9db.res"]
+
+[params]
+

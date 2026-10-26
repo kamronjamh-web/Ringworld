@@ -65,7 +65,8 @@ public sealed class GameplayRainHazeDefaults
     }
     public static readonly Dictionary<string, (float Min, float Max)> Limits = new()
     {
-        ["Density"]=(0,.03f), ["NearClearDistanceMeters"]=(0,100), ["MaximumOpacity"]=(0,.9f), ["VariationStrength"]=(0,1)
+        ["Density"]=(0,.03f), ["NearClearDistanceMeters"]=(0,100), ["MaximumOpacity"]=(0,.9f), ["VariationStrength"]=(0,1),
+        ["HazeOnset"]=(0,1), ["StreakDensity"]=(0,2), ["StreakBrightness"]=(0,1), ["StreakLength"]=(.5f,2), ["SplashAmount"]=(0,2)
     };
     public static IEnumerable<string> Keys { get { yield return "Enabled"; yield return "Tint"; foreach (string key in Limits.Keys) yield return key; } }
     public static bool TryValidate(string key, Variant value, out Variant clean)

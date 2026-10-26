@@ -38,8 +38,17 @@ layout(binding = 9, std140) uniform RingMacroMapBlock {
     vec4 b;
 } ringMacroMap;
 layout(binding = 10) uniform sampler2DArray ring_macro_map;
+// Storm profile map (RingStormProfileBake.glsl), the same front map the main compute samples; bindings 11/12 are free. Params: see
+// RingStormProfileSample.glslinc. Invalid (b.w = 0) keeps the analytic storm shape below.
+layout(binding = 11, std140) uniform RingStormMapBlock {
+    vec4 a;
+    vec4 b;
+    vec4 c;
+} ringStormMap;
+layout(binding = 12) uniform sampler2DArray ring_storm_map;
 #define RING_WS_MACRO_MAP
 #include "./RingWeatherSystems.glslinc"
+#include "./RingStormProfileSample.glslinc"
 
 // center_radius.xyz is the ground datum at the cascade centre; w is its
 // half-width. The three axes are world-space unit vectors. Axis .w values hold
@@ -244,11 +253,21 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
     vec3 detail = genericData.data.storm_detail.xyz;
     vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
     float result = 0.0;
+    // Storm towers and cumulonimbus come from the baked profile map (one fetch per sample, like the visible march's primary
+    // samples); other sculpt profiles, or every profile while the map is invalid, run the analytic loop below.
+    bool storm_map = ring_storm_map_valid();
+    float other = 0.0;
+    g_storm_map_density = 0.0;
+    if (storm_map) {
+        ring_storm_update_primary(canonical, g_ws_sculpt_mask);
+        result = ring_storm_map_density(canonical.y);
+    }
     for (int word = 0; word < 2; word++) {
         uint bits = word == 0 ? g_ws_sculpt_mask.x : g_ws_sculpt_mask.y;
         while (bits != 0u) {
             int index = word * 32 + findLSB(bits);
             bits &= bits - 1u;
+            if (storm_map && ring_storm_is_storm_profile(index)) continue;
             vec4 c = ringWeatherSystems.systems[index].c;
             float storm_floor = c.x;
             float storm_ceiling = c.y;
@@ -268,10 +287,13 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
                 vec4(detail.x, detail.y, detail.z, c.z));
             vec3 position = canonical;
             if ((ring_ws_flags(index) & RING_WS_FLAG_STATIC) == 0u) position.xz += shift;
-            result = max(result, storm_system_density(systemParams, position, storm_height) * altitude_mask
-                * ringWeatherSystems.systems[index].d.z);
+            float system_density = storm_system_density(systemParams, position, storm_height) * altitude_mask
+                * ringWeatherSystems.systems[index].d.z;
+            other = max(other, system_density);
+            result = max(result, system_density);
         }
     }
+    g_storm_other = other;
     return result;
 }
 
@@ -347,7 +369,7 @@ float sample_sunshine_density(vec3 world_position) {
         genericData.data.cloud_weather_params, weather_frame);
     float legacyCoverage = genericData.data.cloud_coverage * 1.01;
     float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
-        ? mix(0.70, 0.90, weatherCoverage) : legacyCoverage;
+        ? mix(mix(0.70, 0.90, weatherCoverage), 1.05, smoothstep(0.35, 0.80, weatherStorm)) : legacyCoverage;
     large = smoothstep(1.0 - weatherBackgroundThreshold,
         1.1 - weatherBackgroundThreshold, large * gradient.r);
     float weather_gate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
@@ -362,6 +384,10 @@ float sample_sunshine_density(vec3 world_position) {
         (cloud_position - genericData.data.mediumnoiseposition) /
         max(genericData.data.medium_noise_scale, 1.0));
     float storm_density = storm_silhouette * mix(0.62, 1.0, medium.r);
+    if (camera_independent && g_storm_map_density > 0.0) {
+        // Baked storm columns: the same profile-driven erosion as the visible march, medium noise only.
+        storm_density = max(g_storm_other * mix(0.62, 1.0, medium.r), ring_storm_eroded(1.0 - medium.b, 0.0));
+    }
     float background_density = 0.0;
     if (background_coverage > 0.0) {
         float medium_shape = 1.0 - medium.b;

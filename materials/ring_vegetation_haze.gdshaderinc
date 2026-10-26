@@ -39,7 +39,14 @@ RingHaze ring_vegetation_haze_sample(int channel, int instance_id, vec3 camera_w
 		}
 		if (abs(texel0.w - vegetation_haze_slot.y) < 0.5 && texel1.w > 0.5) {
 			RingHazeParams p = ring_haze_uniform_params(ring_atmosphere_to_sun, ring_atmosphere_outward_world);
-			return ring_vegetation_haze_assemble(p, ring_vegetation_haze_unpack(texel0, texel1), atmosphere_opacity_multiplier);
+			RingHaze atlas_haze = ring_vegetation_haze_assemble(p, ring_vegetation_haze_unpack(texel0, texel1), atmosphere_opacity_multiplier);
+			// Storm path darkening (the atlas stores clear-sun terms; the path level is per view ray, so it is applied here, same as ring_haze_sample).
+			if (ringworld_storm_light.w > 0.5) {
+				vec3 storm_delta = vertex_world - ring_atmosphere_camera_world_position;
+				float storm_length = length(storm_delta);
+				if (storm_length > 0.0001) ring_haze_apply_storm_path(atlas_haze, ring_storm_path_level(storm_delta / storm_length, storm_length));
+			}
+			return atlas_haze;
 		}
 	}
 	return ring_haze_sample(camera_world, vertex_world, center_world, day_factor);

@@ -641,6 +641,13 @@ public partial class RingScaledFarViewport : Node
 			if (written++ == 0) { first = encoded; firstId = (float)(lightning.EventId & 0x00ffffff); firstWeight = weight; }
 			else { second = encoded; secondId = (float)(lightning.EventId & 0x00ffffff); secondWeight = weight; }
 		}
+		// Reduced flashes: the two selected storms share one brightness ceiling instead of adding up.
+		if (LightningVisualPolicy.ReducedFlashes)
+		{
+			Span<float> flashLevels = stackalloc float[] { first.W, second.W };
+			LightningVisualPolicy.LimitSummed(flashLevels);
+			first.W = flashLevels[0]; second.W = flashLevels[1];
+		}
 		const RingMaterialWriteCounters.Site site = RingMaterialWriteCounters.Site.FarLightning;
 		_farLightningEventA.Set(material, FarLightningEventAName, first, site);
 		_farLightningEventB.Set(material, FarLightningEventBName, second, site);

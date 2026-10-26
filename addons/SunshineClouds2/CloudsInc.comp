@@ -368,6 +368,9 @@ struct GenericData{
 	// y = fog sky affect, z = weight (already scaled by the menu gain), w reserved. z = 0 disables it.
 	vec4 ring_enclosed_fog;
 	vec4 ring_jitter_controls;
+	// Append-only per-ray storm ambient (storm profile map, docs/storm-revamp-s4-sculpt-v2-design.md WO-V3): rgb = the dark storm ambient colour,
+	// w = strength (Storm darkness; 0 disables). The march darkens the ambient by the storm share of each ray's opacity.
+	vec4 ring_storm_ambient;
 };
 
 struct DirectionalLight {

@@ -246,9 +246,12 @@ void sky() {
 	// The giant mask below already removes the covered photosphere. Keep the
 	// uncovered crescent at full surface brightness and attenuate only its halo;
 	// scaling both would count the same occulted area twice.
+	// Storm light: a closed overcast hides the sun disc and halo. The cloud composite already covers them in the main view, but this sky also
+	// feeds the radiance map the water reflects, where an unfaded disc is a sharp sun glint under a fully closed storm.
+	float sun_storm_hide = 1.0 - smoothstep(0.08, 0.40, ring_storm_path_level(view_direction, RING_STORM_PATH_MAX_METERS)) * smoothstep(0.0, 0.5, ringworld_storm_light.x);
 	color += sun_color * (
 		sun_disk * sun_disk_intensity
-		+ sun_halo * sun_halo_intensity * local_solar_day);
+		+ sun_halo * sun_halo_intensity * local_solar_day) * sun_storm_hide;
 
 	if (hub_level > 0.0001) {
 		float hub_alignment = max(dot(view_direction, normalize(hub_direction)), 0.0);
@@ -305,6 +308,8 @@ void sky() {
 			haze = ring_haze_eval_sky(hp, view_direction, vec3(0.0), sky_camera_height_meters, outward, axis,
 				half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);
 		}
+		// Storm light WO-6: the same path darkening as ring_haze_sample, over the first 40 km of this view ray (camera at the map's camera texel).
+		ring_haze_apply_storm_path(haze, ring_storm_path_level(view_direction, RING_STORM_PATH_MAX_METERS));
 		vec3 in_scatter = haze.S_sun + haze.S_amb;
 		// No additive hub in-scatter here: the model already carries the hub through day = max(geo * vis, hub_day) and the cool hub
 		// multiplier on E_sun, and terrain/clouds never got the extra term, so adding it double-counted the hub and broke convergence.

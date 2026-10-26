@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bbhoihthf7era"
+path="res://.godot/imported/ring_precip_occlusion_capture.glsl-ccb08d903a937e7df250aa2d8318355d.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_precip_occlusion_capture.glsl"
+dest_files=["res://.godot/imported/ring_precip_occlusion_capture.glsl-ccb08d903a937e7df250aa2d8318355d.res"]
+
+[params]
+

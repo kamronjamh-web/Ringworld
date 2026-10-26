@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://2keyif3g73pm"
+path="res://.godot/imported/ring_precip_probe.glsl-01f4e67ec068035924470126d8218b79.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_precip_probe.glsl"
+dest_files=["res://.godot/imported/ring_precip_probe.glsl-01f4e67ec068035924470126d8218b79.res"]
+
+[params]
+

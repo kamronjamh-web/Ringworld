@@ -5,6 +5,7 @@ using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
+using RingworldTechDemo.Weather;
 
 namespace RingworldTechDemo;
 
@@ -200,14 +201,16 @@ public partial class RingDistantRainCurtains : Node3D
         c.Wind = weather.WindMetersPerSecond;
         bool naturalFront = weather.SystemKind is RingVolumetricCloudLayer.WeatherSystemKind.MajorFront
             or RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront;
-        c.CloudBase = weather.SystemId < 0
-            ? weather.CloudBaseAltitudeMeters + (weather.SystemId == -1003 ? _sunshine!.FixedCloudAltitudeDatumMeters : 0.0f)
-            : _sunshine!.FixedCloudAltitudeDatumMeters + Mathf.Max(100.0f,
-                naturalFront ? _sunshine.StormFrontCloudBaseAltitudeMeters : _sunshine.NaturalCloudBaseAltitudeMeters);
+        (double cloudBase, double cloudTop) = PrecipitationAltitude.ResolveCloudBounds(weather.SystemId, naturalFront,
+            weather.CloudBaseAltitudeMeters, weather.CloudTopAltitudeMeters, _sunshine!.FixedCloudAltitudeDatumMeters,
+            _sunshine.NaturalCloudBaseAltitudeMeters, _sunshine.NaturalCloudTopAltitudeMeters, _sunshine.StormFrontCloudBaseAltitudeMeters);
+        c.CloudBase = (float)cloudBase;
+        // The curtain stands on the ground: only a column whose surface is Below the cloud base rains.
+        bool belowCloud = PrecipitationAltitude.Resolve(c.Surface, cloudBase, cloudTop) == PrecipitationPhase.Below;
         float start = Mathf.Clamp(PrecipitationStart, 0.0f, .99f);
         float value = Mathf.Clamp((weather.PrecipitationPotential - start) / (1.0f - start), 0, 1);
         c.Target = c.Temperature <= SnowTemperatureThreshold || c.Surface >= _localEffects!.SnowGuaranteedAboveAltitudeMeters
-            || c.CloudBase <= c.Surface + 40.0f ? 0.0f : value * value * (3.0f - 2.0f * value);
+            || !belowCloud ? 0.0f : value * value * (3.0f - 2.0f * value);
         // Retain the last wet footprint while a removed storm fades away.
         if (c.Target > 0)
         {

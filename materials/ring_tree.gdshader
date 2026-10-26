@@ -23,6 +23,7 @@ uniform bool tree_foliage_attachments = false;
 #include "res://materials/ring_vegetation_haze.gdshaderinc"
 #include "res://materials/ring_vegetation_shadow.gdshaderinc"
 #include "res://materials/ring_local_wind.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 varying float tree_cloud_occlusion;
 varying float tree_day_factor;
@@ -30,6 +31,7 @@ varying float tree_height_term;
 varying vec3 tree_world_position;
 varying vec3 tree_haze_T;
 varying vec3 tree_haze_S;
+varying vec2 tree_wet_state; // wet world, per vertex: (darkening amount, gloss)
 
 void vertex() {
 	vec3 tree_root_world = MODEL_MATRIX[3].xyz;
@@ -60,6 +62,11 @@ void vertex() {
 		ring_atmosphere_camera_world_position, world_position, ring_center, tree_day_factor);
 	tree_haze_T = vertex_haze.T;
 	tree_haze_S = ring_haze_inscatter(vertex_haze);
+	tree_wet_state = vec2(0.0);
+	if (ring_wet_params.w > 0.5) {
+		RingWet wet_state = ring_wet_sample_up(world_position, surface_up);
+		tree_wet_state = vec2(smoothstep(0.0, 0.5, wet_state.soak) * ring_wet_params.x, ring_wet_gloss(wet_state));
+	}
 }
 
 void fragment() {
@@ -72,6 +79,7 @@ void fragment() {
 	ALBEDO = sampled_color * tree_tint * mix(night_tint, vec3(1.0), tree_day_factor)
 		* (1.0 - cloud_occlusion * cloud_shadow_albedo_strength);
 	ALBEDO *= tree_haze_T;
+	ALBEDO *= 1.0 - 0.55 * 0.5 * min(tree_wet_state.x, 1.0); // wet world: bark and foliage darken half as much as soil
 	vec3 haze_emission = tree_haze_S;
 	if (atmosphere_haze_model == 0) {
 		// Legacy: scattering colour from the fragment position, opacity from the vertex.
@@ -80,10 +88,10 @@ void fragment() {
 		haze_emission = atmosphere.rgb * (1.0 - tree_haze_T.g) * atmosphere_scattering_energy;
 	}
 	EMISSION += haze_emission;
-	ROUGHNESS = 0.92;
-	SPECULAR = 0.04;
+	ROUGHNESS = 0.92 * mix(1.0, 0.6, tree_wet_state.y);
+	SPECULAR = mix(0.04, 0.1, tree_wet_state.y);
 	METALLIC = 0.0;
-	AO = 1.0 - cloud_occlusion * cloud_shadow_ao_strength;
+	AO = min(1.0 - cloud_occlusion * cloud_shadow_ao_strength, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light
 	// AO handles the daytime ambient term. Direct solar cloud attenuation is
 	// handled in light(), avoiding an extra AO multiplier on all direct lights.
 	AO_LIGHT_AFFECT = 0.0;
@@ -113,6 +121,7 @@ void light() {
 		: 1.0;
 	// Vegetation keeps its legacy product (geometry * cloud, no macro/terrain term): COMBINE_PRODUCT.
 	RingShadowTerms terms = ring_shadow_terms(tree_world_position, SCREEN_UV, ATTENUATION, 0.0, 0.0, RING_SHADOW_COMBINE_PRODUCT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
 	terms.cloud = mix(1.0, cloud_visibility, primary_sun_weight);
 	terms.geometry = ring_height_shadow_vegetation_geometry(terms.geometry, tree_height_term, LIGHT_IS_DIRECTIONAL, primary_sun_weight, tree_day_factor);
 	terms.geometry = ring_height_shadow_vegetation_planet_geometry(terms.geometry, tree_height_term, LIGHT_IS_DIRECTIONAL, LIGHT, VIEW_MATRIX, primary_sun_weight);

@@ -186,7 +186,7 @@ void fragment() {
 		// Bound it (grazing views, and the canonical wrap where the derivative jumps for one pixel).
 		canonical_offset *= min(1.0, 2.0 * half_band / max(length(canonical_offset), 0.001));
 		if (weather_atlas_enabled && far_density_enabled) {
-			float threshold = mix(0.70, 0.90, resolved_coverage);
+			float threshold = mix(mix(0.70, 0.90, resolved_coverage), 1.05, smoothstep(0.35, 0.80, weather.g)); // storm lift: same closure as Sunshine's sampleScene
 			float mid = 0.5 * (band_x.x + band_x.y);
 			// The extra-large mask (320 km) is the same at both taps; canonical metres stay unwrapped within the patch.
 			float extra = texture(far_density_extra_large_noise_patterns,

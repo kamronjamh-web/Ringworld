@@ -76,6 +76,14 @@ public partial class RingLocalWeatherEffects : Node3D
     [Export(PropertyHint.Range, "0,32,0.5")] public float BoltGlowEmissionEnergy { get; set; } = 5.0f;
 
     public float PrecipitationIntensity { get; private set; }
+    /// <summary>Observer phase against the local cloud base/top (docs/storm-revamp-s1-design.md section 4). Above removes local precipitation.</summary>
+    public PrecipitationPhase PrecipitationPhase { get; private set; }
+    /// <summary>Phase multipliers for streak density and rain haze (InCloud 0.5 / 2.0). Exposed for consumers; not applied here.</summary>
+    public float PrecipitationStreakFactor { get; private set; } = 1.0f;
+    public float PrecipitationHazeFactor { get; private set; } = 1.0f;
+    public float PrecipitationInCloudDepthMeters { get; private set; }
+    /// <summary>Cloud base (canonical vertical metres) of the weather at the observer; the precipitation occlusion map plane follows it. NaN until the first update.</summary>
+    public double PrecipitationCloudBaseMeters { get; private set; } = double.NaN;
     /// <summary>The exact resolved local wind currently driving snow particles and rain haze.</summary>
     public Vector2 ResolvedWindMetersPerSecond { get; private set; }
     public RingVolumetricCloudLayer.LocalWeatherState LastResolvedWeather { get; private set; }
@@ -115,12 +123,13 @@ public partial class RingLocalWeatherEffects : Node3D
     private VoxelChunkGridManager? _grid;
     private RingVolumetricCloudLayer? _weatherSource;
     private RingSunshineCloudBridge? _sunshineBridge;
+    private Func<RingCanonicalPosition, PrecipitationColumn>? _columnProvider;
     private RingLocalVolumetricCloudRenderer? _cloudRenderer;
     private RingScaledFarViewport? _farViewport;
     private GpuParticles3D? _particles;
     private ParticleProcessMaterial? _particleProcess;
     private QuadMesh? _particleMesh;
-    private StandardMaterial3D? _particleMaterial;
+    private ShaderMaterial? _particleMaterial;
     private OmniLight3D? _lightningLight;
     private Node3D? _boltRoot;
     private MeshInstance3D? _boltCore;
@@ -176,10 +185,13 @@ public partial class RingLocalWeatherEffects : Node3D
         }
         _vegetationWindClaimed = true;
         _activeVegetationWindOwner = _vegetationWindOwner;
+        _columnProvider = QueryPrecipitationColumn;
+        PrecipitationAltitude.ColumnProvider = _columnProvider;
         _weatherSource.SharedWindField.InvalidatePublication();
 
         CreatePrecipitationParticles();
         CreateRainHaze();
+        CreateRainStreaks();
         if (GetParent().GetNodeOrNull<RingDistantRainCurtains>("DistantRainCurtains") == null)
         {
             var curtains = new RingDistantRainCurtains { Name = "DistantRainCurtains" };
@@ -397,14 +409,20 @@ public partial class RingLocalWeatherEffects : Node3D
         PublishVegetationWind();
         bool localCloudsVisible = LocalCloudsVisible();
         float start = Mathf.Clamp(PrecipitationStart, 0.0f, 0.99f);
+        PrecipitationColumn column = ResolvePrecipitationColumn(weather, _explorer.CanonicalPosition);
+        PrecipitationPhase = column.Phase;
+        PrecipitationStreakFactor = column.StreakFactor;
+        PrecipitationHazeFactor = column.HazeFactor;
+        PrecipitationInCloudDepthMeters = column.InCloudDepthMeters;
+        PrecipitationCloudBaseMeters = ResolveCloudBounds(weather).Base;
         float targetIntensity = Enabled && localCloudsVisible
-            ? SmoothUnit((weather.PrecipitationPotential - start) / (1.0f - start))
+            ? SmoothUnit((weather.PrecipitationPotential - start) / (1.0f - start)) * PrecipitationAltitude.IntensityFactor(column.Phase)
             : 0.0f;
         PrecipitationIntensity = Mathf.MoveToward(
             PrecipitationIntensity,
             targetIntensity,
             dt * (targetIntensity > PrecipitationIntensity ? 0.85f : 0.42f));
-        Snowing = PrecipitationIntensity > 0.01f && ResolveSnowing();
+        Snowing = PrecipitationIntensity > 0.01f && ResolveSnowing(PrecipitationPhase);
         if (Snowing != _lastSnowing) ConfigureParticleAppearance();
         _lastSnowing = Snowing;
 
@@ -413,6 +431,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _particles.Visible = _particles.Emitting;
         UpdateSnowParticleProfile();
         UpdateRainHaze();
+        UpdateRainStreaks();
         UpdateParticleMotion(weather);
         UpdatePrecipitationTransform(force: false);
         UpdateWetness(dt);
@@ -457,7 +476,7 @@ public partial class RingLocalWeatherEffects : Node3D
         float enabled = active && (wind.LengthSquared() + _treeTrunkWind.LengthSquared() + _treeCanopyWind.LengthSquared() > .0001f) ? 1f : 0f;
         if (_grid != null && _weatherSource != null) {
             var settings = _weatherSource.WindSettings;
-            _weatherSource.SharedWindField.Publish(_grid.CaptureLodGeometrySnapshot(), _explorer?.CanonicalPosition ?? default, CurrentWindSnapshot.MeanWind, CurrentWindSnapshot.MeanWind, settings, active);
+            _weatherSource.SharedWindField.Publish(_grid.CaptureLodGeometrySnapshot(), _explorer?.CanonicalPosition ?? default, CurrentWindSnapshot.MeanWind, CurrentWindSnapshot.MeanWind, settings, active, _weatherSource.LastArrivalGustModifiers.StrengthScale, _weatherSource.LastArrivalGustModifiers.BaseAdd);
             _weatherSource.SharedWindField.SetCached("ring_tree_wind_response", new Vector4(settings.TreeBendStrength,settings.TreeMaximumBendRatio,settings.TreeTrunkResponseSeconds,settings.TreeCanopyResponseSeconds));
             _weatherSource.SharedWindField.SetCached("ring_tree_wind_parts", new Vector2(
                 float.IsFinite(settings.TreeTrunkBendStrength) ? Mathf.Clamp(settings.TreeTrunkBendStrength, 0, 1) : .15f,
@@ -519,6 +538,9 @@ public partial class RingLocalWeatherEffects : Node3D
 
     public override void _ExitTree()
     {
+        if (_columnProvider != null && PrecipitationAltitude.ColumnProvider == _columnProvider) PrecipitationAltitude.ColumnProvider = null;
+        _columnProvider = null;
+        ReleaseRainStreaks();
         ReleaseRainHaze();
         HasCurrentWindSnapshot = false;
         if (_vegetationWindClaimed && _activeVegetationWindOwner == _vegetationWindOwner)
@@ -532,6 +554,41 @@ public partial class RingLocalWeatherEffects : Node3D
             RenderingServer.GlobalShaderParameterSet("ring_wind_gust_texture", ResourceLoader.Load<Texture2D>("res://materials/ring_wind_neutral.tres"));
             _activeVegetationWindOwner = 0;
         }
+    }
+
+    private (double Base, double Top) ResolveCloudBounds(in RingVolumetricCloudLayer.LocalWeatherState weather)
+    {
+        bool front = weather.SystemKind is RingVolumetricCloudLayer.WeatherSystemKind.MajorFront
+            or RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront;
+        if (_sunshineBridge != null)
+            return PrecipitationAltitude.ResolveCloudBounds(weather.SystemId, front, weather.CloudBaseAltitudeMeters, weather.CloudTopAltitudeMeters,
+                _sunshineBridge.FixedCloudAltitudeDatumMeters, _sunshineBridge.NaturalCloudBaseAltitudeMeters,
+                _sunshineBridge.NaturalCloudTopAltitudeMeters, _sunshineBridge.StormFrontCloudBaseAltitudeMeters);
+        float fallbackBase = _weatherSource?.CloudBaseMeters ?? 2000.0f;
+        return PrecipitationAltitude.ResolveCloudBounds(weather.SystemId, front, weather.CloudBaseAltitudeMeters, weather.CloudTopAltitudeMeters,
+            0.0f, fallbackBase, _weatherSource?.CloudTopMeters ?? 6000.0f, Mathf.Min(fallbackBase, 500.0f));
+    }
+
+    private PrecipitationColumn ResolvePrecipitationColumn(in RingVolumetricCloudLayer.LocalWeatherState weather, RingCanonicalPosition position)
+    {
+        (double cloudBase, double cloudTop) = ResolveCloudBounds(weather);
+        PrecipitationPhase phase = PrecipitationAltitude.Resolve(position.VerticalMeters, cloudBase, cloudTop);
+        float start = Mathf.Clamp(PrecipitationStart, 0.0f, 0.99f);
+        float intensity = SmoothUnit((weather.PrecipitationPotential - start) / (1.0f - start)) * PrecipitationAltitude.IntensityFactor(phase);
+        return new PrecipitationColumn(intensity, phase, false, PrecipitationAltitude.InCloudDepth(phase, position.VerticalMeters, cloudBase),
+            PrecipitationAltitude.StreakFactor(phase), PrecipitationAltitude.HazeFactor(phase));
+    }
+
+    /// <summary>Flight-hook provider: the column at any canonical position. Snow uses the high-altitude rule (not above cloud top) or a terrain temperature sample.</summary>
+    private PrecipitationColumn QueryPrecipitationColumn(RingCanonicalPosition position)
+    {
+        if (_weatherSource == null || _grid?.TerrainSampler == null) return default;
+        PrecipitationColumn column = ResolvePrecipitationColumn(_weatherSource.QueryLocalWeather(position), position);
+        bool snow = column.Intensity > 0.0f && column.Phase != PrecipitationPhase.Above
+            && (position.VerticalMeters >= SnowGuaranteedAboveAltitudeMeters
+                || _grid.TerrainSampler.GetTerrainSample((long)Math.Round(position.AroundMeters),
+                    Mathf.Clamp(Mathf.RoundToInt((float)position.AcrossMeters), 0, Mathf.Max(0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters)))).Temperature <= SnowTemperatureThreshold);
+        return column with { Snow = snow };
     }
 
     private bool LocalCloudsVisible() => _externalWeatherOverrideActive
@@ -552,13 +609,8 @@ public partial class RingLocalWeatherEffects : Node3D
             InitialVelocityMax = 3.8f,
             Gravity = new Vector3(0.0f, -.8f, 0.0f)
         };
-        _particleMaterial = new StandardMaterial3D
-        {
-            Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-            ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
-            BillboardMode = BaseMaterial3D.BillboardModeEnum.Disabled,
-            AlbedoColor = SnowColor
-        };
+        _particleMaterial = new ShaderMaterial { Shader = GD.Load<Shader>("res://materials/ring_snow_particle.gdshader") };
+        _particleMaterial.SetShaderParameter("snow_color", SnowColor);
         _particleMesh = new QuadMesh
         {
             Size = new Vector2(.11f, .11f),
@@ -652,9 +704,8 @@ public partial class RingLocalWeatherEffects : Node3D
         if (Snowing)
         {
             _particles.TransformAlign = GpuParticles3D.TransformAlignEnum.Disabled;
-            _particleMaterial.BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled;
             _particleMesh.Size = new Vector2(0.11f, 0.11f);
-            _particleMaterial.AlbedoColor = SnowColor;
+            _particleMaterial.SetShaderParameter("snow_color", SnowColor);
             _particles.Lifetime = 6.0;
             _particles.Randomness = 0.82f;
         }
@@ -714,7 +765,7 @@ public partial class RingLocalWeatherEffects : Node3D
             ["presentation"] = Snowing ? "Snow particles" : "Rain haze",
             ["allocated_pool"] = _particles?.Amount ?? 0,
             ["streak_size"] = _particleMesh?.Size ?? Vector2.Zero,
-            ["material_alpha"] = _particleMaterial?.AlbedoColor.A ?? 0.0f,
+            ["material_alpha"] = _particleMaterial != null ? SnowColor.A : 0.0f,
             ["fall_velocity"] = (velocityMin + velocityMax) * .5f,
             ["initial_velocity_min"] = velocityMin,
             ["initial_velocity_max"] = velocityMax,
@@ -758,11 +809,12 @@ public partial class RingLocalWeatherEffects : Node3D
             _lightningLight.GlobalTransform = new Transform3D(basis, center + upAxis * 800.0f);
     }
 
-    private bool ResolveSnowing()
+    private bool ResolveSnowing(PrecipitationPhase phase)
     {
         if (_grid?.TerrainSampler == null || _explorer == null) return false;
         RingCanonicalPosition position = _explorer.CanonicalPosition;
-        if (position.VerticalMeters >= SnowGuaranteedAboveAltitudeMeters) return true;
+        // High-altitude guarantee applies in and below cloud, never above its top.
+        if (phase != PrecipitationPhase.Above && position.VerticalMeters >= SnowGuaranteedAboveAltitudeMeters) return true;
         long around = (long)Math.Round(position.AroundMeters);
         int across = Mathf.Clamp(
             Mathf.RoundToInt((float)position.AcrossMeters),

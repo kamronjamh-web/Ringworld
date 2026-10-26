@@ -13,6 +13,13 @@ public partial class VoxelChunkNode : Node3D
 
     private MeshInstance3D? _meshInstance;
     private MeshInstance3D? _fluidMeshInstance;
+    // Shaded fluid surface shared by every chunk; registered with the storm light tint (RingStormLightTint inventory).
+    private static readonly StandardMaterial3D FluidMaterial = global::RingworldTechDemo.RingStormLightTint.Register(new StandardMaterial3D
+    {
+        AlbedoColor = new Color(0.04f, 0.33f, 0.52f, 0.78f),
+        Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+        Roughness = 0.12f
+    });
     private StaticBody3D? _staticBody;
     private CollisionShape3D? _collisionShape;
     private Func<int, int, int, BlockType>? _externalBlockSampler;
@@ -594,12 +601,7 @@ public partial class VoxelChunkNode : Node3D
         if (_fluidMeshInstance == null)
         {
             _fluidMeshInstance = new MeshInstance3D { Name = "FluidMesh", CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-            _fluidMeshInstance.MaterialOverride = new StandardMaterial3D
-            {
-                AlbedoColor = new Color(0.04f, 0.33f, 0.52f, 0.78f),
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
-                Roughness = 0.12f
-            };
+            _fluidMeshInstance.MaterialOverride = FluidMaterial;
             AddChild(_fluidMeshInstance);
         }
 

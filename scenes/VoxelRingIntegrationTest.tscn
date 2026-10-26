@@ -38,7 +38,12 @@
 [ext_resource type="Script" uid="uid://c3lgd3me5trln" path="res://scripts/RingSunshineCloudBridge.cs" id="36"]
 [ext_resource type="Script" path="res://scripts/RingTerrainCloudSunVisibility.cs" id="terrain_cloud_sun"]
 [ext_resource type="Script" path="res://scripts/Shadows/RingTerrainHeightShadow.cs" id="terrain_height_shadow"]
+[ext_resource type="Script" path="res://scripts/Weather/RingPrecipitationOcclusion.cs" id="precip_occlusion"]
+[ext_resource type="Script" path="res://scripts/Weather/RingWetWorld.cs" id="wet_world"]
+[ext_resource type="Script" path="res://scripts/Weather/RingLensDroplets.cs" id="lens_droplets"]
 [ext_resource type="Script" path="res://scripts/Shadows/RingContactShadows.cs" id="contact_shadows"]
+[ext_resource type="Script" path="res://scripts/Weather/RingPostRainMist.cs" id="storm_post_rain_mist"]
+[ext_resource type="Script" path="res://scripts/Weather/RingRainbow.cs" id="storm_rainbow"]
 [ext_resource type="Script" uid="uid://dldopq76731f8" path="res://scripts/Voxel/LOD/RingTerrainCoarseSdfPilot.cs" id="37"]
 [ext_resource type="Script" uid="uid://cqkmuatyta2xh" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="38"]
 [ext_resource type="Resource" path="res://resources/voxel/ring_lod_mega_regional.tres" id="39"]
@@ -63,18 +68,22 @@
 [ext_resource type="AudioStream" path="res://resources/audio/weather/thunder_02.ogg" id="58_thunder_02"]
 [ext_resource type="AudioStream" path="res://resources/audio/weather/thunder_03.ogg" id="59_thunder_03"]
 [ext_resource type="Script" path="res://scripts/RingWeatherAmbience.cs" id="60_weather_ambience"]
-[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_light_spatial_loop.ogg" id="61_rain_light"]
-[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_heavy_spatial_loop.ogg" id="62_rain_heavy"]
-[ext_resource type="AudioStream" path="res://resources/audio/weather/wind_loop.ogg" id="63_wind"]
-[ext_resource type="AudioStream" path="res://resources/audio/weather/storm_distant_loop.ogg" id="64_distant_storm"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_light_loop.ogg" id="61_rain_light"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_heavy_loop.ogg" id="62_rain_heavy"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/wind_spatial_loop.ogg" id="63_wind"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/storm_distant_spatial_loop.ogg" id="64_distant_storm"]
 [ext_resource type="AudioStream" path="res://resources/audio/weather/rain_surface_soil.ogg" id="65_rain_surface_soil"]
 [ext_resource type="AudioStream" path="res://resources/audio/weather/rain_surface_hard.ogg" id="66_rain_surface_hard"]
 [ext_resource type="AudioStream" path="res://resources/audio/weather/rain_surface_water.ogg" id="67_rain_surface_water"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_surface_foliage.ogg" id="rain_surface_foliage"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_surface_metal.ogg" id="rain_surface_metal"]
+[ext_resource type="AudioStream" path="res://resources/audio/weather/rain_roof_drum.ogg" id="rain_roof_drum"]
 [ext_resource type="Script" path="res://scripts/Voxel/LOD/RingWaterFftController.cs" id="68_water_fft"]
 [ext_resource type="Script" path="res://scripts/diagnostics/RingPerformanceMonitor.cs" id="69_performance_monitor"]
 [ext_resource type="Script" path="res://scripts/Underground/RingUndergroundModeController.cs" id="70_underground_mode"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterStandInLayer.cs" id="71_emitter_standins"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterGridBeamLayer.cs" id="emitter_grid_beam_layer"]
+[ext_resource type="Script" path="res://scripts/Lightning/RingUpperAtmosphereLightningLayer.cs" id="upper_atmosphere_lightning_layer"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseEventDirector.cs" id="eclipse_event_director"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBeamLayer.cs" id="eclipse_hub_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBody.cs" id="eclipse_hub_body"]
@@ -200,6 +209,9 @@ DistantStormStream = ExtResource("64_distant_storm")
 RainSoilStream = ExtResource("65_rain_surface_soil")
 RainHardStream = ExtResource("66_rain_surface_hard")
 RainWaterStream = ExtResource("67_rain_surface_water")
+RainFoliageStream = ExtResource("rain_surface_foliage")
+RainMetalStream = ExtResource("rain_surface_metal")
+RainRoofStream = ExtResource("rain_roof_drum")
 
 [node name="WaterAmbience" type="Node" parent="."]
 script = ExtResource("47_water_ambience")
@@ -648,12 +660,27 @@ script = ExtResource("52_cloud_provider")
 script = ExtResource("33")
 Enabled = true
 
+[node name="PostRainMist" type="Node" parent="."]
+script = ExtResource("storm_post_rain_mist")
+
+[node name="Rainbow" type="Node" parent="."]
+script = ExtResource("storm_rainbow")
+
 [node name="LocalStormFlash" type="OmniLight3D" parent="LocalWeatherEffects" unique_id=1330968394]
 top_level = true
 light_color = Color(0.72, 0.86, 1, 1)
 light_energy = 0.0
 light_volumetric_fog_energy = 2.4
 omni_range = 6000.0
+
+[node name="PrecipitationOcclusion" type="Node" parent="."]
+script = ExtResource("precip_occlusion")
+
+[node name="WetWorld" type="Node" parent="."]
+script = ExtResource("wet_world")
+
+[node name="LensDroplets" type="CanvasLayer" parent="."]
+script = ExtResource("lens_droplets")
 
 [node name="ScaledFarViewport" type="Node" parent="." unique_id=12184627]
 script = ExtResource("21")
@@ -669,6 +696,9 @@ script = ExtResource("71_emitter_standins")
 
 [node name="EmitterGrid" type="Node3D" parent="."]
 script = ExtResource("emitter_grid_beam_layer")
+
+[node name="UpperAtmosphereLightning" type="Node3D" parent="."]
+script = ExtResource("upper_atmosphere_lightning_layer")
 
 [node name="EclipseEvent" type="Node" parent="."]
 script = ExtResource("eclipse_event_director")

@@ -130,6 +130,12 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "1000,8000,250")] public float StormPillarRadiusMeters { get; set; } = 4200.0f;
     [Export(PropertyHint.Range, "1.2,4.0,0.1")] public float AnvilRadiusMultiplier { get; set; } = 2.6f;
     [Export(PropertyHint.Range, "0.5,0.9,0.01")] public float AnvilStartFraction { get; set; } = 0.70f;
+    /// <summary>Anvil shear: how far downwind the anvil tail is stretched and the pillar leans (0 = symmetric disc, 1 = long sheared tail).</summary>
+    [Export(PropertyHint.Range, "0,1,0.01")] public float AnvilShear { get; set; } = 0.65f;
+    /// <summary>Strength of the mammatus pouches under mature anvils (0 = smooth underside).</summary>
+    [Export(PropertyHint.Range, "0,1,0.01")] public float MammatusStrength { get; set; } = 0.6f;
+    /// <summary>Debug A/B only (RING_STORM_SHAPE_LEGACY=1): switch the baked storm profile map off, so storms render with HEAD's analytic pillar/anvil lattice.</summary>
+    public static bool DebugLegacyStormShape { get; set; } = System.Environment.GetEnvironmentVariable("RING_STORM_SHAPE_LEGACY") == "1";
     [Export(PropertyHint.Range, "0,1,0.01")] public float StormSculptStrength { get; set; } = 0.92f;
 
     [ExportGroup("Cloud altitude anchoring")]
@@ -556,6 +562,7 @@ public partial class RingSunshineCloudBridge : Node
         }
 
         CancelCloudShadowBuild();
+        PublishStormLight(forceInvalid: true);
         if (_terrainCloudSunVisibility != null && GodotObject.IsInstanceValid(_terrainCloudSunVisibility))
             _terrainCloudSunVisibility.UnregisterRequiredAltitudeRange("sunshine");
         RingCloudShadowProjector.ReleaseTextures();
@@ -592,6 +599,7 @@ public partial class RingSunshineCloudBridge : Node
             _clouds.Disconnect("external_texture_retirement_requested", callback);
         CancelCloudShadowBuild();
         RingCloudShadowProjector.ReleaseTextures();
+        ReleaseStormLight();
         _weather?.SetExternalLocalVolumetricCloudsState(false, false, EffectiveHandoffStartMeters, EffectiveHandoffEndMeters);
         _weather?.UnregisterManualWeather(SunshinePreviewWeatherOwnerKey);
         if (_clouds != null) _clouds.Set("enabled", false);
@@ -641,6 +649,7 @@ public partial class RingSunshineCloudBridge : Node
         UpdateVisibility(force: false);
         UpdateCloudShadows(delta, force: false);
         UpdateCameraLightingState(delta);
+        PublishStormLight();
     }
 
     private void SyncGpuTimestampDiagnostics()
@@ -658,6 +667,8 @@ public partial class RingSunshineCloudBridge : Node
         _clouds.Set("gpu_timestamp_cloud_shadow_far_end_marker", RingPerformanceGpu.CloudShadowFarEndMarker);
         _clouds.Set("gpu_timestamp_macro_map_begin_marker", RingPerformanceGpu.CloudMacroMapBeginMarker);
         _clouds.Set("gpu_timestamp_macro_map_end_marker", RingPerformanceGpu.CloudMacroMapEndMarker);
+        _clouds.Set("gpu_timestamp_storm_map_begin_marker", RingPerformanceGpu.CloudStormMapBeginMarker);
+        _clouds.Set("gpu_timestamp_storm_map_end_marker", RingPerformanceGpu.CloudStormMapEndMarker);
         _clouds.Set("gpu_timestamp_interleave_begin_marker", RingPerformanceGpu.CloudInterleaveBeginMarker);
         _clouds.Set("gpu_timestamp_interleave_end_marker", RingPerformanceGpu.CloudInterleaveEndMarker);
         _clouds.Set("gpu_timestamp_diagnostics_enabled", enabled);
@@ -1186,6 +1197,12 @@ public partial class RingSunshineCloudBridge : Node
             ambient.B * CloudAmbientMultiplier,
             ambient.A));
         _clouds.Set(CloudAmbientTintName, nightTint.Lerp(dayTint, _localDayFactor));
+        // Per-ray storm ambient (storm profile map): the dark storm colour at this time of day, scaled by the S0 Storm darkness value.
+        // Neutral grey with only a faint cool cast: a blue storm underside reads as sky.
+        float stormLuma = (stormAmbient.R * 0.2126f + stormAmbient.G * 0.7152f + stormAmbient.B * 0.0722f) * CloudAmbientMultiplier;
+        _clouds.Set("ring_storm_ambient", new Vector4(
+            stormLuma * 0.96f, stormLuma, stormLuma * 1.06f,
+            _stormPublishedValid ? Mathf.Clamp(StormDarkness, 0.0f, 1.0f) : 0.0f));
     }
 
     // Mirrors the inputs of Sunshine's own lighting (directional light data from the driver, ambient colour x tint,
@@ -1606,7 +1623,7 @@ public partial class RingSunshineCloudBridge : Node
         _driver?.Set("directional_light_power_multiplier",
             (_hasAuthoredDirectionalLightPowerMultiplier
                 ? _authoredDirectionalLightPowerMultiplier
-                : 1.0f) * CloudDirectLightMultiplier);
+                : 1.0f) * CloudDirectLightMultiplier * _stormCloudDirectFactor);
     }
 
     private void ApplyLightingStepsToDriver()

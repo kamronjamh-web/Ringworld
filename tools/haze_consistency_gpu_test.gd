@@ -89,8 +89,15 @@ var _arch_results: Array = []
 # P9: the sun irradiance the consumers see, overridden with the production DaySideAtmosphere value (haze_sun_irradiance_published).
 var _sun_override_active := false
 var _sun_override := Vector3.ZERO
+# Pins the remote-shell sun (ringworld_haze_sun_irradiance_remote) independently of _sun_override.
+var _remote_override_active := false
+var _remote_override := Vector3.ZERO
 # P9 storm haze: the ringworld_haze_storm vector the compute probe's globals use (RingAtmosphereModel.HazeStormVector while a storm is set).
 var _storm_override_active := false
+# Storm light path darkening (WO-6): the compute probe has no storm-map sampler (RING_STORM_NO_MAP); a synthetic level
+# D(m) = gain * smoothstep(10 km, 25 km, around metres from the camera) stands in for it, with the storm frame's around axis along TANGENT.
+var _storm_path_active := false
+var _storm_path_gain := 0.0
 var _storm_override := Vector4.ZERO
 
 func _initialize() -> void:
@@ -133,6 +140,11 @@ func _run() -> void:
 		if _failed: return
 		storm_contracts = _run_p9_storm(results)
 		if _failed: return
+		storm_contracts.append_array(_run_storm_path(results))
+		if _failed: return
+		var remote_contract := _run_remote_shell_visibility()
+		if _failed: return
+		storm_contracts.append(remote_contract)
 	var lut_contracts: Array = []
 	if _luts_mode:
 		if not _physical:
@@ -310,8 +322,18 @@ func _uniforms_to_globals(source: String, material: ShaderMaterial) -> String:
 		var value: Variant = material.get_shader_parameter(name)
 		if name == "ringworld_haze_sun_irradiance" and _sun_override_active:
 			value = _sun_override
+		elif name == "ringworld_haze_sun_irradiance_remote" and (_remote_override_active or _sun_override_active):
+			# The remote shell follows the sun override unless a test pins it separately (production: undimmed by camera visibility).
+			value = _remote_override if _remote_override_active else _sun_override
 		elif name == "ringworld_haze_storm" and _storm_override_active:
 			value = _storm_override
+		elif name == "ringworld_storm_light" and _storm_path_active:
+			value = Vector4(0.85, 0.35, 0.7, 1.0)
+		elif name == "ringworld_storm_frame":
+			# around axis = TANGENT, across = ring axis, up = outward; camera at map metres 0 / 0, no ring curvature.
+			out += "mat4 ringworld_storm_frame = mat4(vec4(0.0, 0.0, 1.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 0.0, 0.0, 0.0));
+"
+			continue
 		elif value == null and line.strip_edges().begins_with("global"):
 			# global_shader_parameter_get is editor-only; the project defaults are what an unpublished global holds.
 			var declared: Variant = ProjectSettings.get_setting("shader_globals/" + name, null)
@@ -338,7 +360,8 @@ func _build_compute_source() -> String:
 		_fail("cannot read RingAtmosphereCompute.glslinc")
 		return ""
 	var globals_source := _uniforms_to_globals(sky_source, _sky_material)
-	var header := "#version 450\n#define RING_HAZE_NO_LUTS\nvec3 EYEDIR; vec3 COLOR; vec4 DBG_AIR; bool AT_CUBEMAP_PASS = false;\n"
+	var header := "#version 450\n#define RING_HAZE_NO_LUTS\n#define RING_STORM_NO_MAP\nvec3 EYEDIR; vec3 COLOR; vec4 DBG_AIR; bool AT_CUBEMAP_PASS = false;\n"
+	header += "float ring_storm_test_gain = %s;\nfloat ring_storm_test_level(vec2 m) { return ring_storm_test_gain * smoothstep(10000.0, 25000.0, m.x); }\n" % _f(_storm_path_gain)
 	var object_call := """	RingHaze oh = ring_haze_sample(vec3(0.0), dir * dist, vec3(0.0), 0.0);
 	results.v[i * 4u] = vec4(oh.S_sun + oh.S_amb, 1.0 - oh.T.g);""" if _physical else """	vec4 o = sample_ring_atmosphere(vec3(0.0), dir * dist, vec3(0.0), 0.0);
 	results.v[i * 4u] = vec4(o.rgb * atmosphere_scattering_energy, o.a);"""
@@ -573,6 +596,70 @@ func _run_p9_air_visibility() -> Dictionary:
 	var passed := worst_linear <= P9_TOL_LINEAR and worst_agree <= TOL_INSCATTER_REL and worst_conv <= TOL_CONVERGENCE_REL and dimmed_checked > 20
 	return _contract("air_sun_visibility_scales_s_sun", passed, "v=%.1f: max linear/share error %.4f (%s), tol %.2f; object-vs-cloud max rel %.4f; 800 km convergence gap %.4f; %d sun-share checks" % [P9_VISIBILITY, worst_linear, worst_case, P9_TOL_LINEAR, worst_agree, worst_conv, dimmed_checked])
 
+## Object S (standard + arch cases) with the near sun and the remote-shell sun pinned independently.
+func _remote_eval(near_sun: Vector3, remote_sun: Vector3) -> Array:
+	_sun_override = near_sun
+	_sun_override_active = true
+	_remote_override = remote_sun
+	_remote_override_active = true
+	_helper.SetHazeSunIrradiance(near_sun)
+	var saved_arch := _arch_results
+	var standard := _evaluate(1.0)
+	var all: Array = standard.duplicate()
+	all.append_array(_arch_results)
+	_arch_results = saved_arch
+	return all
+
+## A storm / cloud shadow at the camera (air sun visibility v) dims only the near air. S(near, remote) = A + near*B + remote*C is linear in
+## the two suns (S_sun terms are linear in E_sun, ambient is the constant), so four evaluations predict S(v*E, E) exactly: the remote
+## term C must be independent of v while the near term B scales with it. Also the remote term must really exist (arch cases).
+const REMOTE_TOL := 0.00001
+
+func _run_remote_shell_visibility() -> Dictionary:
+	var base: Vector3 = _helper.GetHazeSunIrradiance()
+	var full := _global_default_raw("ringworld_haze_sun_irradiance")
+	var dim := _p9_sun(P9_VISIBILITY, full)
+	var r00 := _remote_eval(Vector3.ZERO, Vector3.ZERO)
+	var r10 := _remote_eval(full, Vector3.ZERO) if not _failed else []
+	var r01 := _remote_eval(Vector3.ZERO, full) if not _failed else []
+	var r_dim := _remote_eval(dim, full) if not _failed else []
+	var r_dim_dim := _remote_eval(dim, dim) if not _failed else []
+	_sun_override_active = false
+	_remote_override_active = false
+	_helper.SetHazeSunIrradiance(base)
+	if _failed: return {}
+	var worst := 0.0
+	var worst_case := ""
+	var remote_cases := 0
+	var remote_change := 0.0
+	var near_checked := 0
+	var scale := dim.y / full.y
+	for i in r00.size():
+		var c: Dictionary = r00[i]["case"]
+		var a: Vector3 = r00[i]["obj_s"]
+		var b: Vector3 = r10[i]["obj_s"] - a
+		var cc: Vector3 = r01[i]["obj_s"] - a
+		var expected := a + b * scale + cc
+		var actual: Vector3 = r_dim[i]["obj_s"]
+		var err := _max_component((actual - expected).abs()) / maxf(_max_component(r10[i]["obj_s"]), 0.001)
+		if err > worst:
+			worst = err
+			worst_case = _case_label(c)
+		if _lum(cc) > 0.0005:
+			remote_cases += 1
+			# Dimming the remote sun as well must visibly darken these cases, i.e. the old behaviour is distinguishable.
+			remote_change = maxf(remote_change, _lum(r_dim[i]["obj_s"] - r_dim_dim[i]["obj_s"]) / maxf(_lum(r10[i]["obj_s"]), 0.001))
+		if _lum(b) > 0.0005 and c.has("arch") == false:
+			near_checked += 1
+	var passed := worst <= REMOTE_TOL and remote_cases > 0 and remote_change > 0.01 and near_checked > 20
+	return _contract("remote_shell_ignores_camera_visibility", passed, "v=%.1f: max rel error vs A + v*B + C %.6f (%s), tol %s; %d remote-shell cases, remote-sun dimming would change S by up to %.3f; %d near-sun cases" % [P9_VISIBILITY, worst, worst_case, REMOTE_TOL, remote_cases, remote_change, near_checked])
+
+func _global_default_raw(name: String) -> Vector3:
+	var declared: Variant = ProjectSettings.get_setting("shader_globals/" + name, null)
+	if declared is Dictionary and declared.has("value"):
+		return declared["value"]
+	return Vector3.ZERO
+
 # --- P9: storm grey-Mie haze -----------------------------------------------------------------------------------
 
 const STORM_STRENGTH := 0.8
@@ -677,6 +764,55 @@ func _run_p9_storm(clear_results: Array) -> Array:
 		zero_vector.x == 0.0 and profile_identical and identical and visibility_zero and visibility_storm,
 		"vector.x=%.1f; profile 11.z/11.w/13.x bitwise clear=%s; full clear re-evaluation identical=%s %s; air_sun_visibility_for(t,0) exact=%s; (1,1)=%.4f (0.15) (0.1,1)=%.4f (0.1) ok=%s" % [
 			zero_vector.x, profile_identical, identical, first_diff, visibility_zero, _day_side.air_sun_visibility_for(1.0, 1.0), _day_side.air_sun_visibility_for(0.1, 1.0), visibility_storm]))
+	return contracts
+
+## Storm light WO-6, path darkening: with the storm map valid the object haze and the sky both scale S_sun by 1 - F(Dp) and S_amb by A(Dp), where Dp
+## is the storm level averaged over four taps of the first 40 km of the view ray. D = 0 everywhere must be bitwise identical to the map being off,
+## and the object haze converges on the sky radiance exactly as it does without a storm.
+func _run_storm_path(clear_results: Array) -> Array:
+	var contracts: Array = []
+	_storm_path_active = true
+	_storm_path_gain = 0.0
+	var zero_results := _evaluate(1.0)
+	_storm_path_gain = 1.0
+	var storm_results := _evaluate(1.0)
+	_storm_path_active = false
+	_storm_path_gain = 0.0
+	if _failed: return contracts
+	var identical := zero_results.size() == clear_results.size()
+	var first_diff := ""
+	for i in (zero_results.size() if identical else 0):
+		for key in ["obj_alpha", "cld_alpha", "obj_s", "cld_s", "sky", "sky_air_alpha"]:
+			if zero_results[i][key] != clear_results[i][key]:
+				identical = false
+				first_diff = "%s %s" % [key, _case_label(zero_results[i]["case"])]
+				break
+		if not identical:
+			break
+	contracts.append(_contract("storm_path_identity", identical, "map valid with D = 0 everywhere is bitwise identical to the map off over %d cases %s" % [zero_results.size(), first_diff]))
+
+	var metrics := _compute_metrics(storm_results)
+	var worst_gap := 0.0
+	var worst_gap_case := ""
+	for m in metrics:
+		if float(m["case"]["dist_km"]) != 800.0 or not (float(m["case"]["elev"]) in [0.0, 2.0, 10.0, 45.0, 90.0]):
+			continue
+		var gap := absf(float(m["conv_ratio"]) - 1.0)
+		if gap > worst_gap:
+			worst_gap = gap
+			worst_gap_case = "%s obj/sky lum=%.3f" % [m["label"], m["conv_ratio"]]
+	# Rays with a storm ahead darken (object and sky by the same factor), the vertical ray sees D = 0 and stays bit for bit clear.
+	var clear_h := _find_result(clear_results, "noon", 0.0, 800.0)
+	var storm_h := _find_result(storm_results, "noon", 0.0, 800.0)
+	var clear_up := _find_result(clear_results, "noon", 90.0, 800.0)
+	var storm_up := _find_result(storm_results, "noon", 90.0, 800.0)
+	var obj_ratio := _lum(storm_h["obj_s"]) / maxf(_lum(clear_h["obj_s"]), 0.000001)
+	var sky_ratio := _lum(storm_h["sky"]) / maxf(_lum(clear_h["sky"]), 0.000001)
+	var darker: bool = obj_ratio < 0.85 and sky_ratio < 0.85 and absf(obj_ratio - sky_ratio) < 0.1
+	var vertical_clear: bool = storm_up["obj_s"] == clear_up["obj_s"] and storm_up["sky"] == clear_up["sky"]
+	contracts.append(_contract("storm_path_object_eq_sky", worst_gap <= TOL_CONVERGENCE_REL and darker and vertical_clear,
+		"800 km convergence gap %.3f (%s), tol %.2f; noon e=0 storm/clear lum: object %.3f sky %.3f (need < 0.85, within 0.1); vertical ray unchanged=%s" % [
+			worst_gap, worst_gap_case, TOL_CONVERGENCE_REL, obj_ratio, sky_ratio, vertical_clear]))
 	return contracts
 
 # --- metrics ----------------------------------------------------------------------------------------------

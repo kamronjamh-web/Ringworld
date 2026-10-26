@@ -1,6 +1,7 @@
 shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
 #include "res://materials/celestial_lighting.gdshaderinc"
+#include "res://materials/ring_precip_occlusion.gdshaderinc"
 uniform vec4 rain_tint : source_color;
 uniform float opacity = 0.0;
 uniform float wind_phase = 0.0;
@@ -32,6 +33,12 @@ float storm_weight(vec2 offset) {
 	return 1.0 - smoothstep(storm_edges.x, storm_edges.y, length(rotated));
 }
 
+varying vec3 v_world;
+
+void vertex() {
+	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+}
+
 void fragment() {
 	float across = across_extent.x + (UV.x - 0.5) * across_extent.y;
 	if (across < 0.0 || across > ring_width) discard;
@@ -47,5 +54,6 @@ void fragment() {
 	ALBEDO = rain_tint.rgb * mix(0.035, 0.65, effective_day);
 	float edge = smoothstep(0.0, 0.2, UV.x) * smoothstep(0.0, 0.2, 1.0 - UV.x)
 		* smoothstep(0.0, 0.16, UV.y) * smoothstep(0.0, 0.12, 1.0 - UV.y);
-	ALPHA = clamp(opacity * body * edge * footprint * 0.65, 0.0, 0.8);
+	// Within range of the precipitation occlusion map (about 128 m) a curtain does not draw under a roof, POI overhang or cave ceiling; elsewhere exposure is 1 (S1 WO7).
+	ALPHA = clamp(opacity * body * edge * footprint * 0.65, 0.0, 0.8) * ring_precip_exposure(v_world);
 }

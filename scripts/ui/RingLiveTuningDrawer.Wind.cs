@@ -18,6 +18,7 @@ public partial class RingLiveTuningDrawer
         _windDefaults = _windDefaultsPathOverride != null ? new GameplayWindDefaults(_windDefaultsPathOverride)
             : GameplayWindDefaults.StartupDefaults ?? new GameplayWindDefaults();
         _windDefaults.Initialize();
+        InitializeStormArrivalTuning();
     }
     private void BuildWindTab(TabContainer tabs)
     {
@@ -58,6 +59,7 @@ public partial class RingLiveTuningDrawer
         _windRuntimeStatus = new Label { Name = "WindRuntimeStatus", Modulate = RingUiStyle.Muted, AutowrapMode = TextServer.AutowrapMode.WordSmart };
         tab.AddChild(_windRuntimeStatus);
         UpdateWindRuntimeStatus();
+        BuildStormArrivalControls(tab);
         var row = new HBoxContainer();
         var save = new Button { Name = "WindSaveNow", Text = "Save wind settings", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         save.Pressed += () => FlushWindDefaults(); row.AddChild(save);
@@ -103,10 +105,12 @@ public partial class RingLiveTuningDrawer
     {
         bool saved = _windDefaults?.Save() ?? true;
         if (_grassDefaults != null) saved = FlushGrassDefaults() && saved;
+        saved = FlushStormArrivalDefaults() && saved;
         UpdateWindSaveStatus(); return saved;
     }
     private void ProcessWindTuning(double delta)
     {
+        ProcessStormArrivalTuning(delta);
         if (_open)
         {
             _windRuntimeRefreshDelay -= delta;
@@ -137,6 +141,7 @@ public partial class RingLiveTuningDrawer
     private void RefreshWindControls()
     {
         if (_drawer != null) RefreshWindControlsRecursive(_drawer);
+        RefreshStormArrivalControls();
         UpdateWindSaveStatus();
         UpdateWindRuntimeStatus();
     }

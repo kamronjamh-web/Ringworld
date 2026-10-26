@@ -39,6 +39,7 @@ func run() -> void:
     particles = local.get_node("CameraLocalPrecipitation")
     driver = DRIVER.new()
     if not check(bool(driver.call("CheckProfileMath")), "profile math"): return
+    if not check(bool(driver.call("CheckStreakModel")), "streak model"): return
     target(0.0); step(220)
     ids = identities()
     if not rain_has_no_particles(): return
@@ -51,11 +52,25 @@ func run() -> void:
         var d := diag()
         if not check(absf(float(d.shared_intensity) - amount) < .0001, "authoritative rain intensity changed meaning"): return
         if not check(absf(float(d.scattered_weight) + float(d.steady_weight) + float(d.heavy_weight) - 1.0) < .000001, "profile blend"): return
+        # WO4: the grey veil is reserved for violent storms; light and moderate rain show no haze, only the top tier fades it in.
+        if amount < .6:
+            if not check(float(haze().haze_gate) == 0.0 and not bool(haze().visible), "light/moderate rain shows the grey haze veil"): return
+        elif not check(float(haze().haze_gate) > .5 and bool(haze().visible), "heavy storm rain lost its haze veil"): return
         var opacity := float(haze().opacity_100m)
         if not check(opacity > previous_opacity and opacity <= .9, "haze does not thicken with rainfall"): return
         previous_opacity = opacity
     if not check(float(local.get("SurfaceWetness")) > wetness_before, "haze removed liquid wetness"): return
     if not check(float(driver.call("HazeOpacity", 1.0, 3.0)) == 0.0, "near foreground is fogged"): return
+    # WO5: the preset budget fixes the streak lattice; more budget never means fewer drop columns, and the snow pool is untouched by it.
+    var last_cells := 0
+    for budget: int in [2000, 4000, 6000, 8000, 12000]:
+        local.set("MaximumStreakCount", budget)
+        var streaks: Dictionary = local.call("GetRainStreakDiagnostics")
+        var cells := int(streaks.near_cells) + int(streaks.mid_cells)
+        if not check(cells >= last_cells and int(streaks.budget) == budget and absf(cells - budget) < budget * .15, "streak budget -> lattice cells not monotonic"): return
+        last_cells = cells
+    local.set("MaximumStreakCount", 6000)
+    if not invariant(): return
     # Snow keeps the original stable pool, and the liquid-rain veil is hidden.
     target(.5, true); step(220)
     if not check(bool(diag().snow) and particles.emitting and particles.visible and particles.amount_ratio > 0 and particles.lifetime == 6.0 and not bool(haze().visible), "snow presentation"): return
@@ -80,7 +95,7 @@ func run() -> void:
     driver.call("SetHazeControl", "MaximumOpacity", .6)
     local.set("Enabled", false); step(220)
     if not rain_has_no_particles() or not check(not bool(haze().visible), "disabled weather retained haze"): return
-    local.set("Enabled", true); target(.5); step(220)
+    local.set("Enabled", true); target(1.0); step(220)
     if not rain_has_no_particles(): return
     if not check(bool(haze().visible), "re-enabled rain did not recover haze"): return
     var camera := world.get_node("Explorer/Head/Camera3D")

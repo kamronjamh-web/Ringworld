@@ -25,6 +25,7 @@ uniform float pilot_texture_scale : hint_range(0.01, 2.0) = 0.20;
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_terrain_grass_coverage.gdshaderinc"
 #include "res://materials/ring_surface_albedo_scale.gdshaderinc"
+#include "res://materials/ring_wetness.gdshaderinc"
 
 varying float ring_day_factor;
 varying vec3 world_position;
@@ -33,6 +34,8 @@ varying vec3 surface_up_world;
 // per fragment so each directional light (sun and planet) does not repeat the
 // cascade projection, ring wrapping, and texture lookup.
 varying float local_cloud_shadow_occlusion;
+// Wet gloss for the custom light() (the engine adds no specular once light() is defined): weight, roughness, specular reflectance.
+varying vec3 voxel_wet_specular_state;
 
 void vertex() {
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -64,6 +67,7 @@ void fragment() {
 	vec3 base_color = ring_vertex_color_to_linear(COLOR.rgb);
 	float grass_coverage_eligibility = 0.0;
 	float grass_coverage_upward = 0.0;
+	float wet_soil = 1.0;
 	if (pilot_triplanar_enabled) {
 		vec3 world_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 		vec3 blend = pow(abs(world_normal), vec3(8.0));
@@ -96,6 +100,7 @@ void fragment() {
 			// shell on the material-safe dirt/rock path.
 			soil_surface = smoothstep(1.5, 1.9, UV2.x);
 		}
+		wet_soil = soil_surface;
 		float upward = smoothstep(0.45, 0.78, dot(world_normal, normalize(surface_up_world)));
 		grass_coverage_upward = upward * soil_surface;
 		float biome_surface = upward * soil_surface;
@@ -112,6 +117,30 @@ void fragment() {
 		grass_coverage_upward,
 		grass_coverage_eligibility);
 	base_color = ring_terrain_albedo_scaled(ring_apply_terrain_grass_coverage(base_color, grass_coverage));
+	// Wet world: per-location wetness darkens soil (rock and caves less), glosses it and collects puddles with ripples on flat soil.
+	float surface_roughness = mix(1.0, .90, grass_coverage);
+	float surface_specular = 0.18;
+	float wet_gloss = 0.0;
+	if (ring_wet_params.w > 0.5) {
+		vec3 wet_normal = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+		vec3 wet_up = normalize(surface_up_world);
+		RingWet wet_state = ring_wet_sample(world_position, wet_normal, wet_up);
+		float wet_distance = distance(world_position, camera_world_position);
+		ring_wet_apply(wet_state, mix(0.5, 1.0, wet_soil), base_color, surface_roughness, surface_specular);
+		wet_gloss = ring_wet_gloss(wet_state);
+		float flatness = ring_wet_flatness(wet_normal, wet_up) * wet_soil;
+		if (wet_state.standing > 0.0 && flatness > 0.0 && wet_distance < 150.0) {
+			vec2 wet_plane = ring_wet_plane(world_position);
+			vec2 puddle = ring_wet_puddle(wet_state, wet_plane, flatness, 0.5, wet_distance);
+			ring_wet_apply_puddle(puddle, wet_state, wet_plane, wet_up, wet_distance, base_color, surface_roughness, surface_specular, wet_normal);
+			if (puddle.x > 0.0) NORMAL = mat3(VIEW_MATRIX) * wet_normal;
+			wet_gloss = max(wet_gloss, max(puddle.x, puddle.y));
+		}
+		float puddle_far = ring_wet_puddle_average(wet_state, flatness, wet_distance);
+		surface_roughness = mix(surface_roughness, 0.12, puddle_far);
+		wet_gloss = max(wet_gloss, puddle_far);
+	}
+	voxel_wet_specular_state = vec3(wet_gloss, surface_roughness, surface_specular);
 	vec3 lit_color = base_color
 		* mix(night_tint, vec3(1.0), ring_day_factor);
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
@@ -119,11 +148,11 @@ void fragment() {
 	// radiance, so add it unlit instead of feeding it back through the sun.
 	ALBEDO = lit_color * haze.T;
 	EMISSION = ring_haze_inscatter(haze);
-	ROUGHNESS = mix(1.0, .90, grass_coverage);
-	SPECULAR = 0.18;
+	ROUGHNESS = surface_roughness;
+	SPECULAR = surface_specular;
 	METALLIC = 0.0;
 	local_cloud_shadow_occlusion = sample_local_cloud_shadow(world_position);
-	AO = 1.0 - local_cloud_shadow_occlusion * ring_day_factor * 0.72;
+	AO = min(1.0 - local_cloud_shadow_occlusion * ring_day_factor * 0.72, ring_storm_ambient(ring_storm_level(world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -175,6 +204,7 @@ void light() {
 		cloud_shadow,
 		0.0,
 		RING_SHADOW_DEFAULT);
+	terms.storm = LIGHT_IS_DIRECTIONAL ? terms.storm : 0.0; // storm light fades the sun only, never a point or spot light
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, primary_sun_weight, RING_SHADOW_DEFAULT);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);
@@ -189,5 +219,9 @@ void light() {
 	} else {
 		// Built-in convention (see ring_tree): Godot multiplies DIFFUSE_LIGHT by ALBEDO and LIGHT_COLOR carries the PI factor.
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * combined_visibility * hemisphere_direct;
+		if (voxel_wet_specular_state.x > 0.0) {
+			SPECULAR_LIGHT += ring_wet_direct_specular(NORMAL, LIGHT, VIEW, voxel_wet_specular_state.y, voxel_wet_specular_state.z, voxel_wet_specular_state.x)
+				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT;
+		}
 	}
 }
