@@ -1,0 +1,38 @@
+{
+  "DialogueRevision": "dialogue-r1",
+  "GlobalStatus": "draft_fixture_catalog",
+  "Notes": [
+    "Author-directed drafts for review, not final shipping dialogue.",
+    "All numeric values are benchmark samples. This catalog adds no live runtime hooks and does not verify gameplay features.",
+    "Sensor, vitals, inventory, scanning and transit statements are prototype fixtures, not new implemented features."
+  ],
+  "VoiceGuide": [
+    "Speak as a practical, observant suit assistant with restrained warmth and supportive companionship.",
+    "Put the fact first, then useful guidance when available. Keep critical warnings brief.",
+    "Show warmth through plain language and support, not baby talk or filler reassurance.",
+    "State uncertainty honestly. Do not invent sensor readings, route promises, builders or lore.",
+    "Keep the suit-PDA identity: no jokes, omniscient ring AI or chatter for every minor action."
+  ],
+  "Entries": [
+    { "EventId": "eclipse_warning_5min", "Category": "eclipse", "Priority": 1, "Facts": { "minutes_to_eclipse": 5 }, "Text": "Eclipse in 5 minutes. Check your light before it gets dark.", "Status": "draft_fixture", "Notes": "Countdown is a benchmark sample, not a live timer binding." },
+    { "EventId": "eclipse_warning_1min", "Category": "eclipse", "Priority": 0, "Facts": { "minutes_to_eclipse": 1 }, "Text": "Eclipse in 1 minute. Have your lamp ready.", "Status": "draft_fixture", "Notes": "Countdown is a benchmark sample, not a live timer binding." },
+    { "EventId": "eclipse_begun", "Category": "eclipse", "Priority": 0, "Facts": { "ambient_light_pct": 0 }, "Text": "Eclipse underway. External light at 0 percent. Switch on your suit lamp.", "Status": "draft_fixture", "Notes": "The 0 percent reading is a fixture, not calibrated runtime photometry." },
+    { "EventId": "sun_ignited", "Category": "eclipse", "Priority": 1, "Facts": { "event": "artificial sun ignited" }, "Text": "An artificial sun has ignited. Surface light is returning.", "Status": "draft_fixture", "Notes": "Event wording fixture; no new runtime hook." },
+    { "EventId": "eclipse_ending", "Category": "eclipse", "Priority": 2, "Facts": { "seconds_to_light": 30 }, "Text": "Eclipse ending. Natural light returns in 30 seconds.", "Status": "draft_fixture", "Notes": "Countdown is a benchmark sample, not a live timer binding." },
+    { "EventId": "caves_first_entry", "Category": "exploration", "Priority": 2, "Facts": { "location": "cave system", "first_time": true }, "Text": "Entering a cave system. Keep track of your way back.", "Status": "draft_fixture", "Notes": "Removes the unverified signal-degradation claim. No route or navigation promise." },
+    { "EventId": "deep_cave_milestone", "Category": "exploration", "Priority": 2, "Facts": { "depth_m": 450 }, "Text": "Depth 450 meters below the surface.", "Status": "draft_fixture", "Notes": "Depth sensor sample fixture; removes the unsupported structural-pressure claim." },
+    { "EventId": "emitter_discovered", "Category": "discovery", "Priority": 1, "Facts": { "distance_km": 1.2, "bearing": "north" }, "Text": "An emitter structure, 1.2 kilometers north. I can't identify its origin.", "Status": "draft_fixture", "Notes": "Distance, compass mapping and origin knowledge are prototype fixtures." },
+    { "EventId": "reactor_discovered", "Category": "discovery", "Priority": 1, "Facts": { "output_pct": 0, "status": "offline" }, "Text": "Reactor located. It's offline, with output at 0 percent.", "Status": "draft_fixture", "Notes": "Reactor sensing/output readings are prototype fixtures, not verified gameplay features." },
+    { "EventId": "reactor_restored", "Category": "discovery", "Priority": 1, "Facts": { "output_pct": 85 }, "Text": "Reactor back online. Output at 85 percent.", "Status": "draft_fixture", "Notes": "Reactor/output fixture; makes no stability claim." },
+    { "EventId": "low_oxygen", "Category": "vitals", "Priority": 0, "Facts": { "oxygen_pct": 15 }, "Text": "Oxygen at 15 percent. It's time to get back to breathable air.", "Status": "draft_fixture", "Notes": "Oxygen/vitals fixture, not an implemented physiological reading or a promised safe route." },
+    { "EventId": "low_health", "Category": "vitals", "Priority": 0, "Facts": { "health_pct": 20 }, "Text": "Health at 20 percent. You'll need treatment before pressing on.", "Status": "draft_fixture", "Notes": "Health/vitals fixture, not an implemented physiological reading." },
+    { "EventId": "storm_incoming", "Category": "weather", "Priority": 1, "Facts": { "minutes_to_arrival": 4 }, "Text": "Storm front closing in. Rain in 4 minutes. Best find some cover.", "Status": "draft_fixture", "Notes": "The 4-minute rain forecast is a fixture. weatherTimeToRainSeconds is a possible future real hook, not connected here." },
+    { "EventId": "fall_damage", "Category": "vitals", "Priority": 1, "Facts": { "damage": 35 }, "Text": "Hard landing. 35 points of damage recorded.", "Status": "draft_fixture", "Notes": "Game-stat fixture; shipping physical wording needs the actual vitals design." },
+    { "EventId": "hub_first_sight", "Category": "discovery", "Priority": 2, "Facts": { "distance_km": 12, "landmark": "ring hub" }, "Text": "Ring hub detected, 12 kilometers away.", "Status": "draft_fixture", "Notes": "Landmark-detection and distance sensor fixture." },
+    { "EventId": "inventory_full", "Category": "inventory", "Priority": 3, "Facts": { "slots_used": 40, "slots_total": 40 }, "Text": "Storage full. 40 of 40 slots in use.", "Status": "draft_fixture", "Notes": "Inventory/capacity fixture, not a new inventory feature." },
+    { "EventId": "poi_scanned", "Category": "discovery", "Priority": 2, "Facts": { "poi": "collapsed relay station" }, "Text": "Scan complete. Collapsed relay station cataloged.", "Status": "draft_fixture", "Notes": "Scanning/cataloging fixture, not a new scan feature." },
+    { "EventId": "returned_to_surface", "Category": "exploration", "Priority": 3, "Facts": { "location": "surface" }, "Text": "Back at the surface.", "Status": "draft_fixture", "Notes": "Removes the unsupported nominal-systems claim." },
+    { "EventId": "fast_travel", "Category": "system", "Priority": 3, "Facts": { "transit_seconds": 14 }, "Text": "Fast travel complete. Transit took 14 seconds.", "Status": "draft_fixture", "Notes": "Transit-time fixture, not a verified travel timer or new feature." },
+    { "EventId": "save_complete", "Category": "system", "Priority": 3, "Facts": { "result": "saved" }, "Text": "Save complete.", "Status": "draft_fixture", "Notes": "Consider a UI-only notice when integrating. No runtime change here." }
+  ]
+}
