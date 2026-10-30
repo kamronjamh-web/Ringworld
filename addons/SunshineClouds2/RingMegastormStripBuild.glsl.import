@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b65uwhtqp8od6"
+path="res://.godot/imported/RingMegastormStripBuild.glsl-5451cf1dd3c3c5507bad25ce794e4a05.res"
+
+[deps]
+
+source_file="res://addons/SunshineClouds2/RingMegastormStripBuild.glsl"
+dest_files=["res://.godot/imported/RingMegastormStripBuild.glsl-5451cf1dd3c3c5507bad25ce794e4a05.res"]
+
+[params]
+
