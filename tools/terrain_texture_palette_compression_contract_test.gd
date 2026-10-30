@@ -39,9 +39,9 @@ func _init() -> void:
 			return
 		image = null
 
-	print("Terrain texture palette compression contract passed")
+	print("TERRAIN_TEXTURE_PALETTE_COMPRESSION_CONTRACT=PASS")
 	quit(0)
 
 func _fail(message: String) -> void:
-	push_error(message)
+	push_error("TERRAIN_TEXTURE_PALETTE_COMPRESSION_CONTRACT=FAIL " + message)
 	quit(1)

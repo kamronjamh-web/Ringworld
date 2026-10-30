@@ -86,7 +86,7 @@ func _run() -> void:
 		return
 	if OS.get_cmdline_user_args().has("--capture-only"):
 		game.queue_free(); await _frames(3)
-		print("terrain_generation_world_capture: PASS ", _fixture)
+		print("TERRAIN_GENERATION_WORLD_SMOKE=CAPTURED ", _fixture)
 		quit(0)
 		return
 	var frozen_settings := _session.active_settings.duplicate(true)
@@ -149,7 +149,7 @@ func _run() -> void:
 		_fail("old occupied slot was implicitly migrated into runtime world")
 		return
 	occupied.queue_free(); await _frames(2)
-	print("terrain_generation_world_smoke: PASS")
+	print("TERRAIN_GENERATION_WORLD_SMOKE=PASS")
 	quit(0)
 
 func _create_runtime_game() -> Node:
@@ -272,5 +272,5 @@ func _frames(count: int) -> void:
 	for ignored in count: await process_frame
 
 func _fail(message: String) -> void:
-	push_error("terrain_generation_world_smoke: " + message)
+	push_error("TERRAIN_GENERATION_WORLD_SMOKE=FAIL " + message)
 	quit(1)

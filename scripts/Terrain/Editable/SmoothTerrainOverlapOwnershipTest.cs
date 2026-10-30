@@ -97,12 +97,12 @@ public partial class SmoothTerrainOverlapOwnershipTest : Node
             AssertExclusiveFine(grid, nextChild, "floating-origin rebase");
             Require(grid.CaptureDiagnostics()[nextChild].LastInstalledMeshHash == meshHash,
                 "translation-only rebase changed canonical mesh identity");
-            GD.Print("SMOOTH_TERRAIN_OVERLAP_OWNERSHIP_TEST_PASS pending/fine/hot/edit/rebase");
+            GD.Print("SMOOTH_TERRAIN_OVERLAP_OWNERSHIP_TEST=PASS pending/fine/hot/edit/rebase");
         }
         catch (Exception exception)
         {
             exitCode = 1;
-            GD.PushError("SMOOTH_TERRAIN_OVERLAP_OWNERSHIP_TEST_FAIL " + exception);
+            GD.PushError("SMOOTH_TERRAIN_OVERLAP_OWNERSHIP_TEST=FAIL " + exception);
         }
         finally
         {

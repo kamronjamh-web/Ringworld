@@ -74,9 +74,9 @@ func _init() -> void:
 	if data[0] != 0: fail("jitter crossing control skipped an already in-band first sample"); return
 	if data[3] <= 0: fail("positive control did not skip"); return
 	if not skipped: fail("vacuous fixture: no case skipped"); return
-	print("Sunshine entry-skip GPU fixture: PASS (%d cases)" % CASES)
+	print("SUNSHINE_ENTRY_SKIP_GPU=PASS (%d cases)" % CASES)
 	quit(0)
 
 func fail(message: String) -> void:
-	push_error(message)
+	push_error("SUNSHINE_ENTRY_SKIP_GPU=FAIL " + message)
 	quit(1)

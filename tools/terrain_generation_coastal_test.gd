@@ -32,7 +32,8 @@ func _init() -> void:
 	passed = _local_strip_is_smooth(sampler) and passed
 	passed = _shore_transects(sampler, legacy_sampler) and passed
 	sampler.Release(); legacy_sampler.Release()
-	print("Terrain coastal profile contract: ", "PASS" if passed else "FAIL", " | 2m=", depth_2, " 6m=", depth_6)
+	if passed: print("TERRAIN_GENERATION_COASTAL=PASS 2m=", depth_2, " 6m=", depth_6)
+	else: push_error("TERRAIN_GENERATION_COASTAL=FAIL 2m=%s 6m=%s" % [depth_2, depth_6])
 	quit(0 if passed else 1)
 
 func _require(condition: bool, label: String) -> bool:

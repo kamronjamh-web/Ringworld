@@ -11,8 +11,8 @@ func _run() -> void:
 	var result: Dictionary = probe.Run(PATH)
 	probe = null
 	if not bool(result.get("pass", false)):
-		push_error("TERRAIN_STREAMING_SETTINGS_SMOKE_TEST_FAIL " + str(result.get("detail", "preferences failed")))
+		push_error("TERRAIN_STREAMING_SETTINGS_SMOKE_TEST=FAIL " + str(result.get("detail", "preferences failed")))
 		quit(1)
 		return
-	print("TERRAIN_STREAMING_SETTINGS_SMOKE_TEST_PASS %s" % str(result.get("detail", "")))
+	print("TERRAIN_STREAMING_SETTINGS_SMOKE_TEST=PASS %s" % str(result.get("detail", "")))
 	quit(0)

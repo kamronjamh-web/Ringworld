@@ -42,7 +42,7 @@ Next projects (design only, nothing implemented): [megastorm](megastorm-design.m
 - WO7: diurnal cumulus only (the front sequence is tabled by the user).
 - WO8: "Fair-weather cloud base" (800-3000 m) and "Weather cloud base" (300-1500 m) renamed rows; `NaturalCloudTopAltitudeMeters` retired (dropped on load, gone on the next save; migration covered by `gameplay_cloud_tuning_smoke_test`); new "Low/Mid/High cloud amount" and "Daytime cumulus".
 
-**Other.** The local weather cache signature includes `NaturalWeatherLifecyclesEnabled`; POI light cull masks include bit 19; the loading list (`RingWorldLoadingResources`) carries the revamp's `.gdshader` files and compositor scripts (no `.glsl` RDShaderFiles, see the batch close record); terrain regression goldens regenerated on the 4070 (2026-10-29); GPU FIFO queue for parallel agents (`<scratchpad>/gpu_queue.ps1`).
+**Other.** The local weather cache signature includes `NaturalWeatherLifecyclesEnabled`; POI light cull masks include bit 19; the loading list (`RingWorldLoadingResources`) carries the revamp's `.gdshader` files and compositor scripts (no `.glsl` RDShaderFiles, see the batch close record); terrain regression goldens regenerated on the 4070 (2026-10-29); GPU FIFO queue for parallel agents (`tools/gpu_queue.ps1` (tickets in `.godot/gpu_queue/`)).
 
 ### How to A/B it
 
@@ -191,7 +191,7 @@ Design docs (each has its own status/handoff notes appended):
 
 **Other**
 - Fixed a pre-existing bug: the local weather cache signature now includes `NaturalWeatherLifecyclesEnabled` (`RingVolumetricCloudLayer.Wind.cs`).
-- New GPU FIFO queue for parallel agents: `<scratchpad>/gpu_queue.ps1`. See memory `agent-watchdog-and-gpu-coordination`.
+- New GPU FIFO queue for parallel agents: `tools/gpu_queue.ps1` (tickets in `.godot/gpu_queue/`). See memory `agent-watchdog-and-gpu-coordination`.
 
 #### Implemented but not accepted (needs work)
 

@@ -65,11 +65,11 @@ func _process(_delta: float) -> bool:
 			return fail("disabling local lightning did not immediately clear the active visual")
 		weather.set("EnableSharedLightning", false)
 		weather.set_process(true)
-		print("Shared local lightning smoke passed: dry seam observer, exact shared id/seed, rebase, no duplicate, disable clear")
+		print("SHARED_LIGHTNING_LOCAL_SMOKE=PASS dry seam observer, exact shared id/seed, rebase, no duplicate, disable clear")
 		quit(0)
 	return false
 
 func fail(message: String) -> bool:
-	push_error("SHARED_LIGHTNING_LOCAL_SMOKE_FAIL: " + message)
+	push_error("SHARED_LIGHTNING_LOCAL_SMOKE=FAIL " + message)
 	quit(1)
 	return true

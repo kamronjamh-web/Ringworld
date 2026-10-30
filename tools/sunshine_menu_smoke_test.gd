@@ -28,7 +28,7 @@ func _initialize() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_DEFAULTS))
 	var preset_probe: RefCounted = CLOUD_PROBE.new()
 	if not preset_probe.InstallShared(_bridge, ISOLATED_DEFAULTS):
-		push_error("Could not isolate live-menu cloud defaults")
+		push_error("SUNSHINE_MENU_SMOKE=FAIL Could not isolate live-menu cloud defaults")
 		quit(1)
 		return
 	# Keep the integration smoke inexpensive; the menu still begins from the
@@ -74,7 +74,7 @@ func _process(_delta: float) -> bool:
 			or _stationary_history_slider == null
 			or _moving_history_slider == null
 		):
-			push_error("Sunshine live-menu cloud or history controls are missing or incomplete")
+			push_error("SUNSHINE_MENU_SMOKE=FAIL Sunshine live-menu cloud or history controls are missing or incomplete")
 			quit(1)
 			return false
 		_stationary_history_slider.value = 0.42
@@ -101,7 +101,7 @@ func _process(_delta: float) -> bool:
 			or not is_equal_approx(compositor_decay, applied)
 		):
 			push_error(
-				"History sliders did not reach Sunshine immediately: requested=%s/%s effective=%s applied=%s compositor=%s count=%s->%s"
+				"SUNSHINE_MENU_SMOKE=FAIL History sliders did not reach Sunshine immediately: requested=%s/%s effective=%s applied=%s compositor=%s count=%s->%s"
 				% [requested_stationary, requested_moving, effective, applied, compositor_decay, _history_apply_count_before, apply_count])
 			quit(1)
 			return false
@@ -114,7 +114,7 @@ func _process(_delta: float) -> bool:
 			or (_menu_scroll != null and _menu_scroll.get_h_scroll_bar().visible)
 		):
 			push_error(
-				"Live tuning drawer is horizontally clipped: viewport=%s panel=%s horizontalScroll=%s"
+				"SUNSHINE_MENU_SMOKE=FAIL Live tuning drawer is horizontally clipped: viewport=%s panel=%s horizontalScroll=%s"
 				% [viewport_rect, panel_rect, _menu_scroll.get_h_scroll_bar().visible if _menu_scroll != null else true])
 			quit(1)
 			return false
@@ -138,7 +138,7 @@ func _process(_delta: float) -> bool:
 	elif _frame == 22:
 		if _catalog_button == null or not _catalog_button.is_hovered():
 			push_error(
-				"Sunshine live-menu pointer hit-test missed the visual button center: mouse=%s rect=%s"
+				"SUNSHINE_MENU_SMOKE=FAIL Sunshine live-menu pointer hit-test missed the visual button center: mouse=%s rect=%s"
 				% [root.get_mouse_position(), _catalog_button.get_global_rect() if _catalog_button != null else Rect2()])
 			quit(1)
 			return false
@@ -146,13 +146,13 @@ func _process(_delta: float) -> bool:
 		var image := root.get_texture().get_image()
 		var error := image.save_png(_capture_path)
 		if error != OK:
-			push_error("Sunshine live-menu capture failed: %s (%s)" % [_capture_path, error])
+			push_error("SUNSHINE_MENU_SMOKE=FAIL Sunshine live-menu capture failed: %s (%s)" % [_capture_path, error])
 			quit(1)
 			return false
 		_call_bridge("ClearSpawnedWeather", "clear_spawned_weather")
 		_menu.call("SetBenchmarkDrawerOpen", false)
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_DEFAULTS))
-		print("Sunshine live-menu smoke test complete: %s" % _capture_path)
+		print("SUNSHINE_MENU_SMOKE=PASS capture=%s" % _capture_path)
 		quit(0)
 	return false
 
@@ -160,7 +160,7 @@ func _process(_delta: float) -> bool:
 func _call_bridge(pascal_name: StringName, snake_name: StringName, arguments: Array = []) -> void:
 	var method_name := pascal_name if _bridge.has_method(pascal_name) else snake_name
 	if not _bridge.has_method(method_name):
-		push_error("Sunshine bridge smoke method is unavailable: %s / %s" % [pascal_name, snake_name])
+		push_error("SUNSHINE_MENU_SMOKE=FAIL Sunshine bridge smoke method is unavailable: %s / %s" % [pascal_name, snake_name])
 		quit(1)
 		return
 	_bridge.callv(method_name, arguments)

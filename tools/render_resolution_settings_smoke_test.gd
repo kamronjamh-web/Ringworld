@@ -14,10 +14,10 @@ func _run() -> void:
 	await process_frame
 	_cleanup()
 	if not bool(result.get("pass", false)):
-		push_error("RENDER_RESOLUTION_SETTINGS_SMOKE_TEST_FAIL %s" % str(result.get("detail", "unknown failure")))
+		push_error("RENDER_RESOLUTION_SETTINGS_SMOKE_TEST=FAIL %s" % str(result.get("detail", "unknown failure")))
 		quit(1)
 		return
-	print("RENDER_RESOLUTION_SETTINGS_SMOKE_TEST_PASS %s" % str(result.get("detail", "")))
+	print("RENDER_RESOLUTION_SETTINGS_SMOKE_TEST=PASS %s" % str(result.get("detail", "")))
 	quit(0)
 
 func _cleanup() -> void:

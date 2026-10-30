@@ -70,6 +70,7 @@ func _initialize() -> void:
 		rd.free_rid(shader)
 		print("Sunshine source compile PASS: %s" % source_path)
 	rd.free()
+	print("SUNSHINE_SHADER_COMPILE=PASS files=%d" % SOURCES.size())
 	quit(0)
 
 func _stage_source(expanded: String, stage: String) -> String:
@@ -114,5 +115,5 @@ func _expand_includes(path: String, stack: Array[String]) -> String:
 	return result
 
 func _fail(message: String) -> void:
-	push_error(message)
+	push_error("SUNSHINE_SHADER_COMPILE=FAIL " + message)
 	quit(1)

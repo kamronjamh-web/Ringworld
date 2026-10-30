@@ -179,7 +179,7 @@ func _process(_delta: float) -> bool:
 	if _frame == 2:
 		_day_night.call("set_cycle_fraction", 0.0)
 	if _frame >= MAX_FRAMES:
-		push_error("Timed out in stage %d: %s" % [_stage, str(_status())])
+		push_error("CLOUD_SHADOW_CROSSFADE=FAIL Timed out in stage %d: %s" % [_stage, str(_status())])
 		quit(1)
 		return true
 	if _frame < 40:
@@ -276,7 +276,8 @@ func _report() -> void:
 		push_error("Display map did not settle exactly on the front map (%d/%d mismatches)" % [_equal_fail, _equal_checks])
 		failed = true
 	if failed:
+		push_error("CLOUD_SHADOW_CROSSFADE=FAIL see the errors above")
 		quit(1)
 		return
-	print("Cloud shadow crossfade test passed")
+	print("CLOUD_SHADOW_CROSSFADE=PASS")
 	quit(0)

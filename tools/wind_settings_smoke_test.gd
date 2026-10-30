@@ -12,7 +12,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PATH))
 	var result: Dictionary = SMOKE.new().Run(PATH)
 	if not bool(result.get("pass", false)):
-		push_error("WIND_SETTINGS_SMOKE_TEST_FAIL " + str(result.get("detail", "")))
+		push_error("WIND_SETTINGS_SMOKE_TEST=FAIL " + str(result.get("detail", "")))
 		quit(1)
 		return
 	var drawer := DRAWER.new()
@@ -64,8 +64,8 @@ func _run() -> void:
 	for group in ISOLATED_GROUPS:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path("res://.godot/wind-settings-smoke/" + str(group) + ".tres"))
 	if not menu_ok:
-		push_error("WIND_SETTINGS_SMOKE_TEST_FAIL menu binding/preset/reset")
+		push_error("WIND_SETTINGS_SMOKE_TEST=FAIL menu binding/preset/reset")
 		quit(1)
 		return
-	print("WIND_SETTINGS_SMOKE_TEST_PASS " + str(result.get("detail", "")) + " menu=true")
+	print("WIND_SETTINGS_SMOKE_TEST=PASS " + str(result.get("detail", "")) + " menu=true")
 	quit(0)

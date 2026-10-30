@@ -2127,12 +2127,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
         try
         {
             RunSmoothProxyNormalSeamContract();
-            GD.Print("PROXY_SURFACE_NORMAL_CONTRACT_PASS: canonical stencil normals face increasing height and match at shared edges.");
+            GD.Print("PROXY_SURFACE_NORMAL_CONTRACT=PASS canonical stencil normals face increasing height and match at shared edges.");
             return true;
         }
         catch (Exception exception)
         {
-            GD.PushError($"PROXY_SURFACE_NORMAL_CONTRACT_FAIL: {exception.Message}");
+            GD.PushError($"PROXY_SURFACE_NORMAL_CONTRACT=FAIL {exception.Message}");
             return false;
         }
     }
@@ -2206,7 +2206,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         }
         catch (Exception exception)
         {
-            GD.PushError($"FFT_OCEAN_COVERAGE_CONTRACT_FAIL: {exception.Message}");
+            GD.PushError($"FFT_OCEAN_COVERAGE_CONTRACT=FAIL {exception.Message}");
             return false;
         }
     }
@@ -2267,7 +2267,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             throw new InvalidOperationException("FFT ocean coverage contract: dense real-mask workload did not cover its center.");
         RunFftDistantOceanVertexFieldContract();
         _fftOceanCoverageContractPassed = true;
-        GD.Print($"FFT_OCEAN_COVERAGE_CONTRACT_PASS: exact-byte parity with reference; SetPixel={referenceTimer.Elapsed.TotalMilliseconds / benchmarkRepeats:0.00}ms, byte-atlas={optimizedTimer.Elapsed.TotalMilliseconds / benchmarkRepeats:0.00}ms, repeats={benchmarkRepeats}, sources={denseMasks.Count}, cellsPerSource=16384.");
+        GD.Print($"FFT_OCEAN_COVERAGE_CONTRACT=PASS exact-byte parity with reference; SetPixel={referenceTimer.Elapsed.TotalMilliseconds / benchmarkRepeats:0.00}ms, byte-atlas={optimizedTimer.Elapsed.TotalMilliseconds / benchmarkRepeats:0.00}ms, repeats={benchmarkRepeats}, sources={denseMasks.Count}, cellsPerSource=16384.");
     }
 
     private static void RunFftDistantOceanVertexFieldContract()
@@ -4735,12 +4735,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     || face.Dot(wall.Normals[a]) <= 0.0f)
                     return false;
             }
-            GD.Print("STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT_PASS: seam prediction requests a bounded local strip.");
+            GD.Print("STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT=PASS seam prediction requests a bounded local strip.");
             return true;
         }
         catch (Exception exception)
         {
-            GD.PushError($"STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT_FAIL: {exception.Message}");
+            GD.PushError($"STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT=FAIL {exception.Message}");
             return false;
         }
     }
@@ -6801,8 +6801,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         };
         passed &= AssertRasterParity(new FinerOceanSnapshot(largeMasks, new HashSet<RingTerrainSectorCoordinate>()),
             new[] { new RingTerrainSectorCoordinate(largeParentAround, 0) }, 64, 32, 4, 64, 1_500_000_000.0);
-        if (!passed) GD.PushError("OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT_FAIL");
-        else GD.Print("OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT_PASS");
+        if (!passed) GD.PushError("OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT=FAIL");
+        else GD.Print("OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT=PASS");
         return passed;
     }
 
@@ -6857,8 +6857,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
         SeedMixedTriangle(0, 1, 2, wet, valid, seeds);
         passed &= seeds[0] && seeds[1] && seeds[2];
         passed &= RunFftShorelineStreamingPublicationContract();
-        if (!passed) GD.PushError("FFT_SHORELINE_FIELD_CONTRACT_FAIL");
-        else GD.Print("FFT_SHORELINE_FIELD_CONTRACT_PASS");
+        if (!passed) GD.PushError("FFT_SHORELINE_FIELD_CONTRACT=FAIL");
+        else GD.Print("FFT_SHORELINE_FIELD_CONTRACT=PASS");
         return passed;
     }
 

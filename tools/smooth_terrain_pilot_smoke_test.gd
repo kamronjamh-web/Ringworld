@@ -35,7 +35,7 @@ func _process(_delta: float) -> bool:
 		var error := image.save_png(_capture_path)
 		if error != OK:
 			return _fail("Smooth terrain pilot capture failed: %s" % error)
-		print("Smooth terrain pilot passed: loaded=%d, capture=%s" % [loaded, _capture_path])
+		print("SMOOTH_TERRAIN_PILOT_SMOKE=PASS loaded=%d, capture=%s" % [loaded, _capture_path])
 		quit(0)
 		return true
 	if _frame >= MAX_FRAMES:
@@ -44,6 +44,6 @@ func _process(_delta: float) -> bool:
 
 
 func _fail(message: String) -> bool:
-	push_error(message)
+	push_error("SMOOTH_TERRAIN_PILOT_SMOKE=FAIL " + message)
 	quit(1)
 	return true

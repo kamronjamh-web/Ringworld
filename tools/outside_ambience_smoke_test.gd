@@ -89,7 +89,7 @@ func _initialize() -> void:
 	ambience.stream = null
 	player_stub.free()
 	scene.free()
-	print("Outside ambience smoke test passed: wiring, loop, altitude/fades, weather/water duck independence, invalid metadata, cleanup, underwater mute.")
+	print("OUTSIDE_AMBIENCE_SMOKE=PASS wiring, loop, altitude/fades, weather/water duck independence, invalid metadata, cleanup, underwater mute.")
 	call_deferred("_finish_success")
 
 
@@ -98,7 +98,7 @@ func _finish_success() -> void:
 
 
 func _fail(message: String, scene: Node, player_stub: Node = null) -> void:
-	push_error("Outside ambience smoke test failed: %s" % message)
+	push_error("OUTSIDE_AMBIENCE_SMOKE=FAIL %s" % message)
 	if is_instance_valid(player_stub):
 		player_stub.free()
 	if is_instance_valid(scene):

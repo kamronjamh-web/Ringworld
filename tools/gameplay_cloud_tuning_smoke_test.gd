@@ -44,7 +44,7 @@ func _process(_delta: float) -> bool:
 	if _finishing:
 		_teardown_frames += 1
 		if _teardown_frames > 120:
-			push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_FAIL: teardown timed out")
+			push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST=FAIL teardown timed out")
 			quit(1)
 		return false
 	_frame += 1
@@ -300,7 +300,7 @@ func _verify_live() -> bool:
 func _fail(reason: String) -> bool:
 	if _failed: return false
 	_failed = true
-	push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_FAIL: " + reason)
+	push_error("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST=FAIL " + reason)
 	if not _finishing:
 		_finishing = true
 		_teardown.call_deferred()
@@ -323,7 +323,7 @@ func _teardown() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(ISOLATED_PATH))
 	for name in ["aa", "motion", "water", "wind", "legacy-grass", "grass", "vegetation", "shadows", "surface", "atmosphere", "resolution", "lod", "coverage", "clouds", "rain-haze"]:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(EXTRA_PREFS + "/" + str(name) + ".tres"))
-	if not _failed: print("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST_PASS widths=%s" % str(_widths))
+	if not _failed: print("GAMEPLAY_CLOUD_TUNING_SMOKE_TEST=PASS widths=%s" % str(_widths))
 	quit(1 if _failed else 0)
 
 # Reset restores the active graphics preset baseline: Low (0) and Medium (1) render clouds at half resolution (1), the rest native (0).

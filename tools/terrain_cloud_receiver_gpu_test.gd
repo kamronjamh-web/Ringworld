@@ -154,7 +154,7 @@ func _run() -> void:
 	if file == null: return _fail("cannot write results")
 	file.store_string(JSON.stringify(_results, "\t"))
 	file.close()
-	print("PASS terrain cloud actual receiver tiers=7 output=%s native fog emission preserved; native scattering remains outside mask contract" % _output)
+	print("TERRAIN_CLOUD_RECEIVER_GPU=PASS tiers=7 output=%s native fog emission preserved; native scattering remains outside mask contract" % _output)
 	quit(0)
 
 func _build(tier: String) -> void:
@@ -262,5 +262,5 @@ func _capture(state: String, label := "") -> Image:
 func _fail(detail: String) -> void:
 	if _failed: return
 	_failed = true
-	push_error("FAIL terrain cloud receiver %s/%s: %s" % [_tier, _phase, detail])
+	push_error("TERRAIN_CLOUD_RECEIVER_GPU=FAIL %s/%s: %s" % [_tier, _phase, detail])
 	quit(1)

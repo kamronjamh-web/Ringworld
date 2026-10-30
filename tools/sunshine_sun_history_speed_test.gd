@@ -31,7 +31,7 @@ func _initialize() -> void:
 	_assert(is_zero_approx(_history_agreement_decay(0.95, 0.80)), "new cloud silhouette retained stale history")
 	var source := FileAccess.get_file_as_string("res://addons/SunshineClouds2/SunshineCloudsCompute.glsl")
 	_assert(source.contains("smoothstep(0.20, 0.65, alphaMismatch)"), "compute shader history-agreement policy drifted from the deterministic test")
-	print("Sunshine sun-history angular-speed deterministic test: PASS")
+	print("SUNSHINE_SUN_HISTORY_SPEED=PASS")
 	quit(0)
 
 func _angular_distance_degrees(previous: Vector3, current: Vector3) -> float:
@@ -51,5 +51,5 @@ func _history_agreement_decay(decay: float, alpha_mismatch: float) -> float:
 func _assert(condition: bool, message: String) -> void:
 	if condition:
 		return
-	push_error(message)
+	push_error("SUNSHINE_SUN_HISTORY_SPEED=FAIL " + message)
 	quit(1)

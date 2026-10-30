@@ -158,7 +158,7 @@ func _process(_delta: float) -> bool:
 				return false
 		_call_bridge("ClearCatalogCloudShowcase", "clear_catalog_cloud_showcase")
 		print(
-			"Sunshine fixed-altitude/catalog test passed: natural=2000-6000m, storm=%.0f-%.0fm, all 10 catalog types, handoff=36-48km, maxStep=560m"
+			"SUNSHINE_STORM_PERSISTENCE=PASS natural=2000-6000m, storm=%.0f-%.0fm, all 10 catalog types, handoff=36-48km, maxStep=560m"
 			% [_respawned_altitude.x, _respawned_altitude.y])
 		quit(0)
 	return false
@@ -182,5 +182,5 @@ func _call_bridge(pascal_name: StringName, snake_name: StringName, arguments: Ar
 
 
 func _fail(message: String) -> void:
-	push_error("Sunshine storm persistence test failed: %s" % message)
+	push_error("SUNSHINE_STORM_PERSISTENCE=FAIL %s" % message)
 	quit(1)

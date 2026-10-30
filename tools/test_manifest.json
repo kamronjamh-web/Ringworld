@@ -1,0 +1,5770 @@
+{
+  "schema": 1,
+  "note": "Test-suite manifest (see docs/test-suite-tooling-design.md section 4). Validate with tools/testing/validate_manifest.ps1. Known failures: tools/test_known_failures.json. marker_fix lists tests whose verdict line WO5 still has to normalise.",
+  "engine": "artifacts/engine-upgrade/Godot_v4.8-dev7_mono_win64/Godot_v4.8-dev7_mono_win64_console.exe",
+  "defaults": {
+    "headless_parallel": 6,
+    "gpu_local_parallel": 3,
+    "timeout_rule": "max(60, 3 x expected_s) rounded up to 10 s, capped at 900; unknown 300 gpu / 120 headless"
+  },
+  "tags": {
+    "clouds": {
+      "globs": [
+        "scripts/clouds/**",
+        "addons/SunshineClouds2/**",
+        "scripts/RingSunshineCloudBridge*",
+        "scripts/*Cloud*",
+        "scripts/**/*Cloud*",
+        "materials/ring_cloud*",
+        "materials/*cloud*",
+        "addons/clouds_lp/**",
+        "resources/**/*cloud*"
+      ]
+    },
+    "sunshine-compute": {
+      "globs": [
+        "addons/SunshineClouds2/**",
+        "scripts/RingSunshineCloudBridge*",
+        "materials/ring_terrain_cloud_sun*"
+      ]
+    },
+    "cloud-history": {
+      "globs": [
+        "scripts/**/*History*",
+        "scripts/diagnostics/*CloudHistory*",
+        "addons/SunshineClouds2/*Post*",
+        "addons/SunshineClouds2/*Interleave*"
+      ]
+    },
+    "far-viewport": {
+      "globs": [
+        "scripts/Voxel/LOD/RingScaledFarViewport*",
+        "scripts/Voxel/LOD/RingFarViewport*",
+        "scripts/**/*FarRing*",
+        "scripts/**/*Far[A-Z]*",
+        "materials/ring_far_*",
+        "scripts/render/RingFar*",
+        "scripts/render/ring_far*"
+      ]
+    },
+    "terrain": {
+      "globs": [
+        "scripts/Terrain/**",
+        "scripts/Voxel/LOD/RingTerrain*",
+        "scripts/Voxel/LOD/*Lod*",
+        "scripts/Voxel/LOD/*Proxy*",
+        "scripts/Voxel/LOD/*Surface*",
+        "addons/terrain_3d/**",
+        "materials/ring_terrain*",
+        "materials/terrain3d*",
+        "materials/ring_surface*",
+        "materials/voxel*",
+        "native/**",
+        "materials/ring_hull*",
+        "materials/ring_scale_anchor*",
+        "scripts/Voxel/LOD/RingScaleAnchor*",
+        "scripts/Voxel/LOD/RingCertification*",
+        "scripts/Voxel/LOD/RingMachineMemory*",
+        "scripts/Voxel/LOD/RingAnalyticGlobalLod*"
+      ]
+    },
+    "voxel-caves": {
+      "globs": [
+        "scripts/Voxel/Core/**",
+        "scripts/Voxel/Phase*/**",
+        "scripts/Voxel/Save/**",
+        "scripts/Underground/**",
+        "scripts/Terrain/Editable/**",
+        "resources/voxel/**"
+      ]
+    },
+    "weather": {
+      "globs": [
+        "scripts/Weather/**",
+        "scripts/RingVolumetricCloudLayer*",
+        "scripts/RingWeather*",
+        "scripts/**/*Storm*",
+        "scripts/**/*Climate*",
+        "materials/ring_far_weather*",
+        "materials/*storm*"
+      ]
+    },
+    "rain": {
+      "globs": [
+        "scripts/**/*Rain*",
+        "scripts/**/*Precip*",
+        "scripts/RingLocalWeatherEffects*",
+        "materials/ring_rain*",
+        "materials/*_rain*",
+        "scripts/render/*rain*",
+        "scripts/render/*Rain*",
+        "scripts/render/*Precip*"
+      ]
+    },
+    "wet-world": {
+      "globs": [
+        "scripts/**/*Wet*",
+        "materials/*wet*",
+        "materials/ring_surface*"
+      ]
+    },
+    "lightning": {
+      "globs": [
+        "scripts/Lightning/**",
+        "scripts/**/*Lightning*",
+        "scripts/**/*Thunder*",
+        "materials/*lightning*",
+        "scripts/**/*Sprite*"
+      ]
+    },
+    "audio": {
+      "globs": [
+        "scripts/RingWeatherAudio*",
+        "scripts/RingWeatherAmbience*",
+        "scripts/**/*Sound*",
+        "scripts/**/*Audio*",
+        "scripts/**/*Ambience*",
+        "scripts/*ambience*",
+        "resources/audio/**",
+        "default_bus_layout.tres"
+      ]
+    },
+    "ui-menu": {
+      "globs": [
+        "scripts/ui/*Menu*",
+        "scripts/ui/*Drawer*",
+        "scripts/ui/*Hud*",
+        "scripts/ui/*HUD*",
+        "scripts/ui/*Popup*",
+        "scripts/ui/*Loading*",
+        "scripts/ui/*Showcase*",
+        "scripts/ui/*Card*",
+        "scripts/ui/*Panel*",
+        "scripts/ui/*Theme*",
+        "scripts/ui/*.gd",
+        "materials/menu_*",
+        "scripts/world_presets.gd",
+        "scripts/start_menu.gd",
+        "scripts/world_size_launcher.gd",
+        "scenes/StartMenu.tscn",
+        "scenes/WorldSizeLauncher.tscn",
+        "resources/menu/**",
+        "scripts/Voxel/LOD/RingLodPauseMenu*"
+      ]
+    },
+    "settings": {
+      "globs": [
+        "scripts/ui/*Defaults.cs",
+        "scripts/ui/*Settings.cs",
+        "scripts/ui/*Drawer*",
+        "scripts/ui/*Tuning*"
+      ]
+    },
+    "poi": {
+      "globs": [
+        "scripts/poi/**",
+        "scenes/poi/**",
+        "assets/poi/**",
+        "scripts/Atmosphere/RingPoiHaze*",
+        "materials/ring_poi*",
+        "materials/ring_emitter*",
+        "materials/ring_eclipse_hub*",
+        "scripts/Sunblocker*"
+      ]
+    },
+    "vegetation": {
+      "globs": [
+        "scripts/Vegetation/**",
+        "scripts/**/*Grass*",
+        "scripts/**/*Tree*",
+        "scripts/**/*Vegetation*",
+        "scripts/**/*BiomeDecoration*",
+        "materials/ring_grass*",
+        "materials/*grass*",
+        "materials/*tree*",
+        "materials/vegetation_gpu/**",
+        "materials/ring_vegetation*",
+        "materials/vegetation*",
+        "materials/grass*",
+        "resources/grass/**",
+        "resources/trees/**",
+        "scripts/Biomes/**"
+      ]
+    },
+    "water": {
+      "globs": [
+        "scripts/**/*Water*",
+        "scripts/**/*Ocean*",
+        "scripts/**/*Fft*",
+        "scripts/**/*Shore*",
+        "scripts/water_ambience.gd",
+        "materials/ring_water*",
+        "materials/ring_ocean*",
+        "materials/*water*"
+      ]
+    },
+    "atmosphere-haze": {
+      "globs": [
+        "scripts/Atmosphere/**",
+        "scripts/**/*Atmosphere*",
+        "scripts/**/*Haze*",
+        "materials/atmosphere/**",
+        "materials/ring_atmosphere*",
+        "materials/*haze*",
+        "scripts/day_side_atmosphere.gd"
+      ]
+    },
+    "shadows": {
+      "globs": [
+        "scripts/Shadows/**",
+        "scripts/**/*Shadow*",
+        "materials/shadows/**",
+        "materials/*shadow*"
+      ]
+    },
+    "celestial": {
+      "globs": [
+        "scripts/Celestial/**",
+        "scripts/*Celestial*",
+        "scripts/*DayNight*",
+        "scripts/ring_day_night_cycle.gd",
+        "scripts/sun_visual_anchor.gd",
+        "scripts/RingSunDirectionThrottle*",
+        "materials/celestial*",
+        "materials/ring_eclipse*"
+      ]
+    },
+    "wind": {
+      "globs": [
+        "scripts/**/*Wind*",
+        "scripts/**/*Gust*",
+        "materials/ring_wind*",
+        "materials/ring_gust*"
+      ]
+    },
+    "loading": {
+      "globs": [
+        "scripts/Loading/**",
+        "scripts/world_session.gd",
+        "scripts/Voxel/Save/**",
+        "scripts/Voxel/LOD/RingVoxelExplorerController.Loading*",
+        "scripts/**/*Warm*",
+        "scripts/**/*Startup*"
+      ]
+    },
+    "quality-presets": {
+      "globs": [
+        "scripts/**/RingGraphicsQualityController*",
+        "scripts/**/*Quality*",
+        "scripts/ui/*Preset*"
+      ]
+    },
+    "render-core": {
+      "globs": [
+        "scripts/render/**",
+        "scripts/Rendering/**",
+        "scripts/**/*AntiAliasing*",
+        "scripts/**/*Resolution*",
+        "scripts/**/*Fsr*",
+        "scripts/**/*Compositor*"
+      ]
+    },
+    "perf-telemetry": {
+      "globs": [
+        "scripts/diagnostics/**",
+        "scripts/**/*Performance*"
+      ]
+    },
+    "tooling-policy": {
+      "globs": [
+        "tools/*.ps1",
+        "scripts/RingGeneratedOutputPaths*",
+        "tools/generated_output*"
+      ]
+    }
+  },
+  "core_globs": [
+    "project.godot",
+    "*.csproj",
+    "*.sln",
+    "scenes/VoxelRingIntegrationTest.tscn",
+    "scenes/Main.tscn",
+    "scenes/RingWorld.tscn",
+    "scripts/Voxel/Integration/**",
+    "scripts/Voxel/LOD/RingVoxelExplorerController.cs",
+    "export_presets.cfg",
+    "artifacts/engine-upgrade/**"
+  ],
+  "ignore_globs": [
+    "docs/**",
+    "*.md",
+    "**/*.md",
+    ".claude/**",
+    ".codex/**",
+    "captures/**",
+    "prototypes/**",
+    "onedrive_conflict_archive/**",
+    "**/*.uid",
+    "**/*.import"
+  ],
+  "smoke": {
+    "headless": [
+      "quality_preset_ownership_test",
+      "visual_settings_ui_smoke_test",
+      "world_loading_startup_contract",
+      "cloud_layer_column_test",
+      "performance_diagnostics_contract_test",
+      "terrain_generation_shared_math_test",
+      "variant_equality_test",
+      "storm_lifecycle_code_test"
+    ],
+    "gpu": [
+      "sunshine_shader_compile_gpu_test",
+      "gameplay_cloud_tuning_smoke_test"
+    ]
+  },
+  "tests": {
+    "anti_aliasing_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "render-core"
+      ],
+      "marker": "ANTI_ALIASING_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "atmosphere_lut_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "atmosphere-haze"
+      ],
+      "marker": "ATMOSPHERE_LUT_GPU",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "atmosphere_menu_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "ui-menu",
+        "atmosphere-haze",
+        "settings"
+      ],
+      "marker": "ATMOSPHERE_MENU_SMOKE_TEST",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "atmosphere_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "atmosphere-haze"
+      ],
+      "marker": "ATMOSPHERE_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "atmosphere_visual_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "atmosphere-haze"
+      ],
+      "world": "certified",
+      "marker": "ATMOSPHERE_VISUAL_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "biome_authoring_preview_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "biome-preview",
+      "marker": "BIOME_AUTHORING_PREVIEW",
+      "expected_s": 7,
+      "timeout_s": 60
+    },
+    "biome_authoring_regression_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "BIOME_AUTHORING_REGRESSION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "celestial_eclipse_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "marker": "CELESTIAL_DAYLIGHT_PARTIAL_SCAN",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "celestial_runtime_integration_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial",
+        "atmosphere-haze"
+      ],
+      "world": "integration",
+      "marker": "CELESTIAL_RUNTIME_INTEGRATION_TEST",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "celestial_visual_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "celestial"
+      ],
+      "world": "certified",
+      "marker": "CELESTIAL_VISUAL_SMOKE_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "certified_performance_diagnostics_smoke": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "world": "certified",
+      "marker": "CERTIFIED_PERFORMANCE_DIAGNOSTICS_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "certified_terrain_macro_shadow_visual_smoke": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "shadows"
+      ],
+      "world": "certified",
+      "marker": "CERTIFIED_TERRAIN_MACRO_SHADOW_VISUAL",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "certified_terrain_water_seam_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "world": "certified",
+      "marker": "CERTIFIED_TERRAIN_WATER_SHARED_EDGES",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "climate_launcher_toggle_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "CLIMATE_LAUNCHER_TOGGLE",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "climate_machine_registry_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "marker": "CLIMATE_MACHINE_REGISTRY",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "climate_terrain_v6_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "weather"
+      ],
+      "marker": "CLIMATE_V6",
+      "expected_s": 12,
+      "timeout_s": 60
+    },
+    "cloud_atmosphere_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "atmosphere-haze",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_ATMOSPHERE_GPU",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "cloud_compositor_cleanup_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "render-core"
+      ],
+      "marker": "CLOUD_COMPOSITOR_CLEANUP_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_density_fastpath_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "clouds"
+      ],
+      "marker": "CLOUD_DENSITY_FASTPATH",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "cloud_depth_weighting_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_DEPTH_WEIGHTING_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_empty_mask_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "clouds"
+      ],
+      "marker": "CLOUD_EMPTY_MASK_GPU_TEST",
+      "expected_s": 17,
+      "timeout_s": 60
+    },
+    "cloud_foliage_edge_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "vegetation",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_FOLIAGE_EDGE_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_gameplay_history_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "sunshine-compute"
+      ],
+      "marker": "GAMEPLAY_CLOUD_HISTORY_GPU_TEST",
+      "expected_s": 42,
+      "timeout_s": 130
+    },
+    "cloud_haze_color_space_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "atmosphere-haze",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_HAZE_COLOR_SPACE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_haze_gameplay_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "atmosphere-haze",
+        "sunshine-compute"
+      ],
+      "world": "certified",
+      "marker": "CLOUD_HAZE_GAMEPLAY_TEST",
+      "expected_s": 20,
+      "timeout_s": 60,
+      "batch": "certified@default"
+    },
+    "cloud_history_continuity_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "sunshine-compute",
+        "wind"
+      ],
+      "marker": "CLOUD_HISTORY_CONTINUITY_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "cloud_history_frame_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history"
+      ],
+      "marker": "CLOUD_HISTORY_FRAME_CONTRACT_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "cloud_history_motion_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_HISTORY_MOTION_GPU_TEST",
+      "expected_s": 21,
+      "timeout_s": 70
+    },
+    "cloud_history_policy_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_HISTORY_POLICY_GPU",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "cloud_layer_column_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "clouds"
+      ],
+      "marker": "CLOUD_LAYER_COLUMN",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "cloud_layers_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds"
+      ],
+      "world": "certified",
+      "marker": "CLOUD_LAYERS_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_layers_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "CLOUD_LAYERS",
+      "args": "--resolution 1280x720",
+      "expected_s": 46,
+      "timeout_s": 140,
+      "batch": "certified@1280x720"
+    },
+    "cloud_layers_map_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "CLOUD_LAYERS_MAP",
+      "args": "--resolution 1280x720",
+      "expected_s": 36,
+      "timeout_s": 110,
+      "batch": "certified@1280x720"
+    },
+    "cloud_lighting_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "shadows"
+      ],
+      "world": "integration",
+      "marker": "CLOUD_LIGHTING_SMOKE",
+      "expected_s": 25,
+      "timeout_s": 80,
+      "batch": "integration@default"
+    },
+    "cloud_mountain_depth_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds"
+      ],
+      "marker": "CLOUD_MOUNTAIN_DEPTH_GPU_TEST",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "cloud_profiler_gpu_smoke": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "CLOUD_PROFILER_GPU_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_shadow_crossfade_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "shadows"
+      ],
+      "world": "integration",
+      "marker": "CLOUD_SHADOW_CROSSFADE",
+      "args": "--resolution 1280x720",
+      "expected_s": 54,
+      "timeout_s": 170,
+      "batch": "integration@1280x720"
+    },
+    "cloud_spatial_atmosphere_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "atmosphere-haze"
+      ],
+      "marker": "CLOUD_SPATIAL_ATMOSPHERE_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "cloud_terrain_history_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "terrain"
+      ],
+      "marker": "CLOUD_TERRAIN_HISTORY_GPU_TEST",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "cloud_weather_distribution_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "marker": "CLOUD_WEATHER_DISTRIBUTION_GPU_TEST",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "contact_shadow_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "CONTACT_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "contact_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "CONTACT_SHADOW",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "distant_rain_curtains_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "clouds"
+      ],
+      "world": "certified",
+      "marker": "DISTANT_RAIN_CURTAINS_GPU",
+      "expected_s": 21,
+      "timeout_s": 70,
+      "batch": "certified@default"
+    },
+    "distant_rain_curtains_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "rain"
+      ],
+      "world": "certified",
+      "marker": "DISTANT_RAIN_CURTAINS_STATE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "eclipse_cloud_light_feeder_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "celestial"
+      ],
+      "marker": "ECLIPSE_CLOUD_LIGHT",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "eclipse_darkness_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "celestial"
+      ],
+      "world": "certified",
+      "marker": "ECLIPSE_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "eclipse_darkness_parity_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "world": "integration",
+      "marker": "ECLIPSE_DARKNESS_PARITY",
+      "expected_s": 64,
+      "timeout_s": 200
+    },
+    "eclipse_darkness_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "marker": "ECLIPSE_DARKNESS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "eclipse_event_director_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "marker": "ECLIPSE_EVENT_DIRECTOR",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "eclipse_event_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "celestial"
+      ],
+      "marker": "ECLIPSE_EVENT_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "eclipse_event_stream_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "marker": "ECLIPSE_EVENT_STREAM",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "eclipse_event_timeline_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "marker": "ECLIPSE_EVENT_TIMELINE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "eclipse_hub_beam_layer_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi",
+        "celestial"
+      ],
+      "marker": "ECLIPSE_HUB_BEAM_LAYER",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "eclipse_hub_beam_shader_parity_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "poi",
+        "celestial"
+      ],
+      "marker": "ECLIPSE_HUB_BEAM_SHADER_PARITY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "eclipse_hub_body_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi",
+        "celestial"
+      ],
+      "marker": "ECLIPSE_HUB_BODY",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "eclipse_hub_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "poi",
+        "celestial"
+      ],
+      "world": "certified",
+      "marker": "HUB_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "eclipse_hub_light_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi",
+        "celestial"
+      ],
+      "marker": "ECLIPSE_HUB_LIGHT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "eclipse_window_solver_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "celestial"
+      ],
+      "marker": "ECLIPSE_WINDOW_SOLVER",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "emitter_bore_aperture_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_BORE_APERTURE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "emitter_bore_gameplay_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "poi"
+      ],
+      "world": "certified",
+      "marker": "EMITTER_BORE_GAMEPLAY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "emitter_capture_route": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "poi"
+      ],
+      "world": "certified",
+      "marker": "EMITTER_CAPTURE_ROUTE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "emitter_far_standin_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_FAR_STANDIN",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "emitter_fresh_spawn_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "poi"
+      ],
+      "world": "certified",
+      "marker": "EMITTER_FRESH_SPAWN",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "emitter_grid_g1_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_GRID_G1",
+      "expected_s": 16,
+      "timeout_s": 60
+    },
+    "emitter_grid_layer_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_GRID_LAYER",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "emitter_grid_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "poi"
+      ],
+      "marker": "EMITTER_GRID_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "emitter_grid_shader_parity_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_GRID_SHADER_PARITY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "emitter_poi_streamer_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_POI_STREAMER",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "emitter_site_baseline_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_BASELINE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "emitter_site_hole_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_HOLE",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "emitter_site_navigator_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_NAVIGATOR",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "emitter_site_placement_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_PLACEMENT",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "emitter_site_registry_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_REGISTRY",
+      "expected_s": 18,
+      "timeout_s": 60
+    },
+    "emitter_site_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "emitter_site_surface_operator_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_OPERATOR",
+      "expected_s": 15,
+      "timeout_s": 60
+    },
+    "emitter_site_teleport_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "poi"
+      ],
+      "world": "certified",
+      "marker": "EMITTER_SITE_TELEPORT",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "emitter_site_terrain_v5_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "poi"
+      ],
+      "marker": "EMITTER_V5",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "emitter_site_underground_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "voxel-caves",
+        "poi"
+      ],
+      "marker": "EMITTER_SITE_UNDERGROUND",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "emitter_underground_bake_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "voxel-caves",
+        "poi"
+      ],
+      "marker": "EMITTER_UNDERGROUND_BAKE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "fallback_cloud_mask_atmosphere_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "atmosphere-haze"
+      ],
+      "marker": "FALLBACK_CLOUD_MASK_ATMOSPHERE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "far_adaptive_geometry_contract": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "far-viewport"
+      ],
+      "marker": "FAR_ADAPTIVE_GEOMETRY_CHECK",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "far_async_geometry_lifecycle_contract": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "far-viewport"
+      ],
+      "world": "integration",
+      "marker": "FAR_ASYNC_REGIONAL_GEOMETRY_CONTRACT",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "far_cloud_density_parity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "far-viewport",
+        "sunshine-compute"
+      ],
+      "marker": "FAR_CLOUD_LAYERS_PARITY",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "far_cloud_detail_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "far-viewport"
+      ],
+      "world": "certified",
+      "marker": "FAR_CLOUD_DETAIL_GPU_TEST",
+      "expected_s": 24,
+      "timeout_s": 80,
+      "batch": "certified@default"
+    },
+    "far_cloud_detail_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "far-viewport"
+      ],
+      "world": "certified",
+      "marker": "FAR_CLOUD_DETAIL_TEST",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "far_cloud_patch_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "far-viewport"
+      ],
+      "marker": "FAR_CLOUD_PATCH_CONTRACT",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "far_rendering_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "far-viewport",
+        "settings"
+      ],
+      "marker": "FAR_RENDERING_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "far_ring_ablation_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "far-viewport"
+      ],
+      "world": "certified",
+      "marker": "FAR_RING_ABLATION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "far_ring_gameplay_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "far-viewport"
+      ],
+      "world": "certified",
+      "marker": "FAR_RING_GAMEPLAY_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "far_storm_lightning_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "far-viewport",
+        "weather",
+        "lightning",
+        "clouds"
+      ],
+      "world": "integration",
+      "marker": "FAR_STORM_LIGHTNING_SMOKE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "far_weather_refresh_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "far-viewport",
+        "weather"
+      ],
+      "world": "integration",
+      "marker": "FAR_WEATHER_REFRESH_SMOKE_TEST",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "fft_ocean_coverage_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "FFT_OCEAN_COVERAGE_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "fft_shoreline_field_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "FFT_SHORELINE_FIELD_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "forest_dive_collision_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "forest_region_preview_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "scene",
+      "marker": "FOREST_REGION_PREVIEW",
+      "expected_s": 6,
+      "timeout_s": 60
+    },
+    "forest_region_regression_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "FOREST_REGION_REGRESSION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "forest_route_discovery_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "FOREST_ROUTE_DISCOVERY",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "fsr2_minimal_stability_probe": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "render-core"
+      ],
+      "marker": "FSR2_MINIMAL",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gameplay_cloud_tuning_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "smoke",
+      "tags": [
+        "clouds",
+        "settings"
+      ],
+      "world": "integration",
+      "marker": "GAMEPLAY_CLOUD_TUNING_SMOKE_TEST",
+      "expected_s": 19,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "generate_showcase_world": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "ui-menu"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "generated_output_policy_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "tooling-policy"
+      ],
+      "marker": "GENERATED_OUTPUT_POLICY_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "global_lod_hull_gating_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "HULLGATE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "global_terrain_preparation_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "GLOBAL_TERRAIN_PREPARATION_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "gpu_grass_card_culling_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_CARD_CULLING",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_grass_frustum_culling_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_FRUSTUM_CULLING",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_grass_generation_prototype_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_GENERATION_PROTOTYPE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_grass_generation_shutdown_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_GENERATION_SHUTDOWN",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_grass_grouped_phases_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_GROUPED_PHASES",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_grass_integration_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_INTEGRATION",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "gpu_grass_registration_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_GRASS_REGISTRATION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_tree_integration_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_TREE_INTEGRATION",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "gpu_tree_seam_integration_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_TREE_SEAM_INTEGRATION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_vegetation_diagnostics": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_VEGETATION_DIAGNOSTICS",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_vegetation_driver_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_VEGETATION_DRIVER",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_vegetation_optimized_scene_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GPU_VEGETATION_OPTIMIZED_SCENE_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_vegetation_parameter_layout_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "PARAM_LAYOUT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "gpu_vegetation_scene_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GPU_VEGETATION_SCENE_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "gpu_vegetation_snapshot_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GPU_VEGETATION_SNAPSHOT_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_adaptive_grouping_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GRASS_ADAPTIVE_GROUPING_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_adaptive_grouping_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_ADAPTIVE_GROUPING",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_appearance_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_APPEARANCE_GPU",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "grass_camera_facing_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CAMERA_FACING",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_card_assets_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CARD_ASSETS",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "grass_card_color_match_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_S4_COLOR_MATCH",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_card_grouping_walk_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CARD_WALK",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_card_layer_gpu_smoke": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CARD_LAYER_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_card_placement_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CARD_PLACEMENT",
+      "expected_s": 59,
+      "timeout_s": 180
+    },
+    "grass_card_style_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CARD_STYLE",
+      "expected_s": 56,
+      "timeout_s": 170
+    },
+    "grass_cards_spike_measure": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_cards_spike_sbs": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "grass_clump_validation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CLUMP_VALIDATION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_compute_benchmark": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_COMPUTE_BENCHMARK",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_cost_gameplay_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "perf-telemetry"
+      ],
+      "world": "certified",
+      "marker": "GRASS_COST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_culling_frustum_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_CULLING_FRUSTUM",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "grass_exclusion_validation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_EXCLUSION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_generation_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GRASS_GENERATION_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_gpu_geometry_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_GPU_GEOMETRY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_gust_state_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "wind"
+      ],
+      "marker": "GRASS_GUST_STATE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_instancing_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GRASS_GENERATION_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_interaction_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_INTERACTION_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_lifecycle_gameplay_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GRASS_LIFECYCLE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_lifecycle_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_LIFECYCLE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_live_tuning_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "vegetation",
+        "ui-menu"
+      ],
+      "world": "integration",
+      "marker": "GRASS_MEADOW_TUNING",
+      "expected_s": 22,
+      "timeout_s": 70,
+      "batch": "integration@default"
+    },
+    "grass_lod_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "vegetation"
+      ],
+      "marker": "GRASS_LOD_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_material_update_cache_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_MATERIAL_UPDATE_CACHE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_modifier_state_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_MODIFIER_STATE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_modifier_streaming_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_PRESENTATION_CACHE",
+      "expected_s": 6,
+      "timeout_s": 60
+    },
+    "grass_modifier_tint_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_MODIFIER_TINT",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_motion_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GRASS_MOTION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_night_lighting_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "celestial"
+      ],
+      "marker": "GRASS_NIGHT_LIGHTING",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_output_residency_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_OUTPUT_RESIDENCY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_production_optimization_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "GRASS_PRODUCTION_OPTIMIZATION_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_quality_gameplay_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "quality-presets"
+      ],
+      "world": "certified",
+      "marker": "GRASS_QUALITY_GAMEPLAY",
+      "expected_s": 18,
+      "timeout_s": 60
+    },
+    "grass_render_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "world": "certified",
+      "marker": "GRASS_RENDER_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grass_streaming_contract_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_STREAMING_CONTRACT",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "grass_streaming_hysteresis_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_STREAMING_HYSTERESIS",
+      "expected_s": 108,
+      "timeout_s": 330,
+      "parallel_safe": false
+    },
+    "grass_surface_validation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "GRASS_GPU_CACHE_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "grass_terrain_blend_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "vegetation"
+      ],
+      "marker": "GRASS_TERRAIN_BLEND_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "grave_menu_interaction_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "ui-menu",
+        "settings"
+      ],
+      "world": "certified",
+      "marker": "GRAVE_MENU_INTERACTION_GAMEPLAY",
+      "expected_s": 17,
+      "timeout_s": 60,
+      "batch": null,
+      "batch_note": "drives real input and the menu tree; leaves UI state"
+    },
+    "gust_front_debris_headless_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wind"
+      ],
+      "marker": "GUST_FRONT_DEBRIS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "haze_consistency_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "atmosphere-haze",
+        "clouds"
+      ],
+      "marker": "HAZE_CONSISTENCY_GPU",
+      "user_args": "--model=physical",
+      "expected_s": 7,
+      "timeout_s": 60
+    },
+    "height_shadow_budget_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows",
+        "perf-telemetry",
+        "terrain"
+      ],
+      "marker": "HEIGHT_SHADOW_BUDGET",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "height_shadow_gameplay_smoke": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows",
+        "terrain"
+      ],
+      "marker": "HEIGHT_SHADOW_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "height_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "HEIGHT_SHADOW_LATTICE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "height_shadow_lattice_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "HEIGHT_SHADOW_LATTICE",
+      "expected_s": 13,
+      "timeout_s": 60
+    },
+    "height_shadow_publish_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "HEIGHT_SHADOW_SCHEDULE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "height_shadow_receiver_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows",
+        "terrain",
+        "vegetation"
+      ],
+      "marker": "HEIGHT_SHADOW_RECEIVER",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "height_shadow_reference_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "HEIGHT_SHADOW_REFERENCE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "height_shadow_schedule_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "HEIGHT_SHADOW_SCHEDULE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "height_shadow_texture_array_probe": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "TEXTURE_ARRAY_PROBE",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "imported_forest_collision_regression_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "IMPORTED_FOREST_COLLISION_REGRESSION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "imported_forest_edit_regression_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "IMPORTED_FOREST_EDIT_REGRESSION",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "imported_forest_placement_regression_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "IMPORTED_FOREST_PLACEMENT_REGRESSION",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "imported_tree_catalog_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "scene",
+      "marker": "IMPORTED_TREE_CATALOG_SMOKE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "imported_tree_gpu_regression": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "IMPORTED_TREE_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "imported_tree_impostor_catalog_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "scene",
+      "marker": "IMPORTED_TREE_IMPOSTOR_CATALOG_SMOKE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "intermediate_lod_topology_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "INTERMEDIATE_LOD_TOPOLOGY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "landform_terrain_v7_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "slow",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "LANDFORM_V7_RECIPE",
+      "expected_s": 224,
+      "timeout_s": 680,
+      "parallel_safe": false
+    },
+    "legacy_terrain_isolation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "LEGACY_TERRAIN_ISOLATION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lens_wetness_model_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wet-world"
+      ],
+      "marker": "LENS_WETNESS_MODEL",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lightning_blend_visual_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "lightning",
+        "clouds"
+      ],
+      "marker": "LIGHTNING_BLEND_VISUAL_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "lightning_handoff_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning"
+      ],
+      "world": "certified",
+      "marker": "LIGHTNING_HANDOFF_SMOKE_TEST",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "lightning_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "settings"
+      ],
+      "marker": "LIGHTNING_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lightning_visibility_stress_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "lightning"
+      ],
+      "world": "certified",
+      "marker": "LIGHTNING_VISIBILITY_STRESS_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "loading_hologram_preview": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "loading"
+      ],
+      "marker": "LOADING_HOLOGRAM_PREVIEW",
+      "marker_fix": "suffix",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "loading_presentation_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "loading"
+      ],
+      "marker": "LOADING_PRESENTATION_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "local_mist_diagnostic_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "atmosphere-haze"
+      ],
+      "world": "certified",
+      "marker": "LOCAL_MIST_DIAGNOSTIC",
+      "expected_s": 103,
+      "timeout_s": 310,
+      "batch": "certified@default"
+    },
+    "lod_altitude_activation_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "LOD_ALTITUDE_ACTIVATION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lod_build_start_scheduling_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "LOD_BUILD_START_SCHEDULING",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lod_projected_error_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "integration",
+      "marker": "LOD_PROJECTED_ERROR_CONTRACT",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "lod_radial_morph_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "LOD_RADIAL_MORPH_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lod_scheduling_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "settings"
+      ],
+      "marker": "LOD_SCHEDULING_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "lod_transition_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "settings"
+      ],
+      "marker": "LOD_TRANSITION_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "main_menu_space_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "ui-menu"
+      ],
+      "world": "start-menu",
+      "marker": "MAIN_MENU_SPACE_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "meadow_grass_comparison": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "MEADOW_COMPARISON",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "meadow_grass_gameplay_visibility_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "MEADOW_GAMEPLAY_VISIBILITY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "meadow_grass_mesh_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "MEADOW_GRASS_MESH",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "memory_guard_scaling_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "ui-menu"
+      ],
+      "marker": "MEMORY_GUARD_SCALING_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "menu_altitude_perf_capture": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "ui-menu",
+        "perf-telemetry"
+      ],
+      "marker": "P0_RESULT_FILE",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "menu_cloud_history_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history",
+        "ui-menu",
+        "sunshine-compute"
+      ],
+      "marker": "MENU_CLOUD_HISTORY_GPU_TEST",
+      "expected_s": 7,
+      "timeout_s": 60
+    },
+    "menu_continue_transition_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tags": [
+        "loading",
+        "ui-menu"
+      ],
+      "runner": "tools/menu_continue_transition_test.ps1",
+      "marker": "MENU_CONTINUE_TRANSITION",
+      "tier": "gate",
+      "expected_s": 120,
+      "timeout_s": 360
+    },
+    "menu_flight_director_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "ui-menu"
+      ],
+      "world": "start-menu",
+      "marker": "MENU_FLIGHT_DIRECTOR",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "menu_suspend_perf_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "ui-menu",
+        "perf-telemetry"
+      ],
+      "world": "start-menu",
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "menu_wall_probe": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "ui-menu"
+      ],
+      "world": "start-menu",
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "menu_warm_stall_probe": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "ui-menu",
+        "loading"
+      ],
+      "world": "start-menu",
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "menu_warm_world_lifecycle_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tags": [
+        "loading",
+        "ui-menu"
+      ],
+      "runner": "tools/menu_warm_world_lifecycle_test.ps1",
+      "tier": "extended",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "minimap_wind_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wind"
+      ],
+      "world": "integration",
+      "marker": "MINIMAP_WIND_SMOKE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "native_texture_streaming_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "render-core"
+      ],
+      "marker": "NATIVE_TEXTURE_STREAMING_CPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "natural_weather_lifecycle_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "NATURAL_WEATHER_LIFECYCLE_SMOKE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "night_horizon_attribution_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "celestial"
+      ],
+      "world": "certified",
+      "marker": "NIGHT_HORIZON_ATTRIBUTION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "night_rendering_comparison": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "vegetation",
+        "wind"
+      ],
+      "world": "certified",
+      "marker": "NIGHT_RENDERING_COMPARISON",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "ocean_replacement_ownership_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "OCEAN_REPLACEMENT_OWNERSHIP_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "opposite_ring_lightning_visual_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "far-viewport",
+        "lightning"
+      ],
+      "world": "certified",
+      "marker": "OPPOSITE_RING_LIGHTNING_VISUAL_SMOKE_TEST",
+      "expected_s": 22,
+      "timeout_s": 70,
+      "batch": null,
+      "batch_note": "lightning history state"
+    },
+    "outside_ambience_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "audio"
+      ],
+      "world": "integration",
+      "marker": "OUTSIDE_AMBIENCE_SMOKE",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "performance_attribution_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "marker": "PERFORMANCE_ATTRIBUTION",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "performance_diagnostics_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "marker": "PERFORMANCE_DIAGNOSTICS_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "performance_far_viewport_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "marker": "PERFORMANCE_FAR_VIEWPORT_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "performance_far_viewport_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "perf-telemetry"
+      ],
+      "marker": "PERFORMANCE_FAR_VIEWPORT_GPU",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "playable_forest_runtime_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "integration",
+      "marker": "PLAYABLE_FOREST_RUNTIME",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "poi_haze_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "poi",
+        "atmosphere-haze"
+      ],
+      "marker": "POI_HAZE_GPU",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "poi_haze_registry_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "poi",
+        "atmosphere-haze"
+      ],
+      "marker": "POI_HAZE_REGISTRY",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "post_rain_mist_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "atmosphere-haze"
+      ],
+      "marker": "POST_RAIN_MIST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "precip_occlusion_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "rain",
+        "shadows",
+        "terrain",
+        "poi"
+      ],
+      "marker": "PRECIP_OCCLUSION_GPU",
+      "args": "--resolution 960x540",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "precip_occlusion_world_probe": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "weather",
+        "rain",
+        "shadows"
+      ],
+      "world": "integration",
+      "marker": "PRECIP_WORLD",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "precipitation_altitude_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "rain"
+      ],
+      "marker": "PRECIP_ALTITUDE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "precipitation_occlusion_frame_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "rain",
+        "shadows"
+      ],
+      "marker": "PRECIP_OCCLUSION_FRAME",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "proxy_build_allocation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_BUILD_ALLOCATION_BASELINE",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "proxy_coverage_culling_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "settings"
+      ],
+      "marker": "PROXY_COVERAGE_CULLING_SETTINGS_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "proxy_partial_coverage_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_PARTIAL_COVERAGE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "proxy_seam_geometry_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_SEAM_GEOMETRY_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "proxy_surface_normal_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_SURFACE_NORMAL_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "proxy_terrain_normals_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "PROXY_TERRAIN_NORMALS_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "quality_preset_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "quality-presets"
+      ],
+      "marker": "QP_BASELINE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "quality_preset_capture_entry": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "quality-presets"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "quality_preset_contract_headless_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "quality-presets"
+      ],
+      "marker": "QP_CONTRACT_HEADLESS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "quality_preset_contract_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "slow",
+      "tags": [
+        "quality-presets",
+        "ui-menu",
+        "settings",
+        "shadows",
+        "loading"
+      ],
+      "marker": "QP_CONTRACT",
+      "expected_s": 256,
+      "timeout_s": 770
+    },
+    "quality_preset_ownership_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "quality-presets",
+        "ui-menu"
+      ],
+      "marker": "QP_OWNERSHIP",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "rain_cloud_compositing_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "rain",
+        "sunshine-compute",
+        "weather"
+      ],
+      "world": "integration",
+      "marker": "RAIN_CLOUD_COMPOSITING_GPU",
+      "expected_s": 17,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "rain_history_parity_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "cloud-history",
+        "rain"
+      ],
+      "marker": "RAIN_HISTORY_PARITY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "rain_precipitation_profiles_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "rain",
+        "atmosphere-haze"
+      ],
+      "world": "certified",
+      "marker": "RAIN_PRECIPITATION_PROFILES_GPU",
+      "expected_s": 14,
+      "timeout_s": 60,
+      "batch": "certified@default"
+    },
+    "rain_precipitation_profiles_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "rain"
+      ],
+      "world": "certified",
+      "marker": "RAIN_PRECIPITATION_PROFILE_MATH",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "rain_real_world_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "rain"
+      ],
+      "world": "certified",
+      "marker": "RAIN_REAL",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "rain_sound_field_behavior_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "slow",
+      "tags": [
+        "rain",
+        "audio",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "RAIN_FIELD_MAP",
+      "expected_s": 284,
+      "timeout_s": 860,
+      "batch": null,
+      "batch_note": "constructs geometry edits in the live world"
+    },
+    "rain_sound_field_continuity_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "audio"
+      ],
+      "world": "certified",
+      "marker": "RAIN_SOUND_FIELD_CONTINUITY",
+      "expected_s": 56,
+      "timeout_s": 170
+    },
+    "rain_streaks_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "clouds",
+        "weather",
+        "atmosphere-haze"
+      ],
+      "world": "integration",
+      "marker": "RAIN_STREAKS_GPU",
+      "args": "--resolution 960x540",
+      "expected_s": 31,
+      "timeout_s": 100,
+      "batch": "integration@960x540"
+    },
+    "rain_surface_column_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "rain"
+      ],
+      "world": "integration",
+      "marker": "RAIN_SURFACE_COLUMN_SMOKE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "rainbow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "celestial",
+        "weather"
+      ],
+      "marker": "RAINBOW_GPU",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "realistic_tree_import_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "scene",
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "render_feature_cost_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "render-core",
+        "perf-telemetry"
+      ],
+      "world": "certified",
+      "marker": "RENDER_FEATURE_COST_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "render_resolution_controls_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "atmosphere-haze",
+        "render-core"
+      ],
+      "world": "certified",
+      "marker": "RENDER_RESOLUTION_CONTROLS_TEST",
+      "marker_fix": "suffix",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "render_resolution_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "atmosphere-haze",
+        "render-core"
+      ],
+      "marker": "RENDER_RESOLUTION_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "render_uniform_rebuild_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "render-core",
+        "clouds",
+        "sunshine-compute",
+        "settings",
+        "vegetation",
+        "water"
+      ],
+      "world": "certified",
+      "marker": "RENDER_UNIFORM_REBUILD",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "ring_atmosphere_ray_frame_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "atmosphere-haze"
+      ],
+      "marker": "HAZE_GODOT_SHADER_COMPILE",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "ring_cloud_shadow_receiver_cache_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "shadows"
+      ],
+      "marker": "SHADOW_RECEIVER_CACHE_BEHAVIOR",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_grass_mesh_validation_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "RING_GRASS_MESH",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_rainbow_math_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "rain",
+        "celestial"
+      ],
+      "marker": "RING_RAINBOW_MATH",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_surface_frame_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "RING_SURFACE_FRAME",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_surface_height_field_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "RING_SURFACE_HEIGHT_FIELD",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_surface_lod_bridge_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "RING_SURFACE_LOD_BRIDGE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_terrain_shadow_geometry_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "shadows"
+      ],
+      "marker": "RING_TERRAIN_SHADOW_GEOMETRY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "ring_wind_query_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wind",
+        "weather"
+      ],
+      "world": "integration",
+      "marker": "RING_WIND_QUERY",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "runtime_surface_cache_benchmark": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "RUNTIME_SURFACE_CACHE",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "runtime_surface_definition_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "RUNTIME_SURFACE_DEFINITION",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "runtime_terrain_cpu_pass2_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "RUNTIME_TERRAIN_CPU_PASS2",
+      "expected_s": 7,
+      "timeout_s": 60
+    },
+    "shadow_attribution_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "shadows"
+      ],
+      "marker": "SHADOW_ATTRIBUTION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "shadow_compose_identity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "shadows",
+        "clouds"
+      ],
+      "marker": "SHADOW_COMPOSE_IDENTITY",
+      "user_args": "--compare --golden=res://.godot/shadow_compose_identity_storm_revamp_4070 --max-diff=0 --out=res://.godot/batch_close/shadow_compose_out",
+      "expected_s": 6,
+      "timeout_s": 60
+    },
+    "shadow_quality_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "shadows",
+        "quality-presets"
+      ],
+      "marker": "SHADOW_QUALITY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "shadow_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "shadows"
+      ],
+      "marker": "SHADOW_SETTINGS_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "shared_lightning_core_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning"
+      ],
+      "world": "integration",
+      "marker": "SHARED_LIGHTNING_CORE_SMOKE",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "shared_lightning_far_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning"
+      ],
+      "world": "integration",
+      "marker": "SHARED_LIGHTNING_FAR_SMOKE_TEST",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "shared_lightning_local_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning"
+      ],
+      "world": "integration",
+      "marker": "SHARED_LIGHTNING_LOCAL_SMOKE",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "shared_wind_core_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wind"
+      ],
+      "marker": "SHARED_WIND_CORE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "shared_wind_integration_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "wind"
+      ],
+      "world": "integration",
+      "marker": "SHARED_WIND_GPU_CPU",
+      "expected_s": 12,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "shoreline_clip_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "SHORELINE_CLIP_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "showcase_snapshot_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "ui-menu",
+        "atmosphere-haze",
+        "render-core"
+      ],
+      "world": "start-menu",
+      "marker": "SHOWCASE_SNAPSHOT",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "showcase_world_definition_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "ui-menu"
+      ],
+      "marker": "SHOWCASE_DEFINITION_TEST",
+      "expected_s": 2,
+      "timeout_s": 60,
+      "profile": "own-runner",
+      "runner": "tools/showcase_world_definition_test.ps1"
+    },
+    "smooth_runtime_spike_benchmark": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "voxel-caves"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "smooth_runtime_spike_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "voxel-caves"
+      ],
+      "marker": "SMOOTH_RUNTIME_SPIKE",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "smooth_runtime_spike_world": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "voxel-caves"
+      ],
+      "world": "certified",
+      "marker": "SPIKE_WORLD",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "smooth_terrain_overlap_ownership_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "SMOOTH_TERRAIN_OVERLAP_OWNERSHIP_TEST",
+      "user_args": "--smooth-terrain-overlap-ownership-test",
+      "expected_s": 1,
+      "timeout_s": 60,
+      "parallel_safe": false
+    },
+    "smooth_terrain_pilot_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "integration",
+      "marker": "SMOOTH_TERRAIN_PILOT_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300,
+      "batch": "integration@default"
+    },
+    "storm_anvil_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "STORM_ANVIL",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "storm_arrival_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "STORM_ARRIVAL_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "storm_arrival_math_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "marker": "STORM_ARRIVAL_MATH",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "storm_arrival_production_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "rain",
+        "cloud-history"
+      ],
+      "world": "integration",
+      "marker": "STORM_ARRIVAL_PRODUCTION",
+      "expected_s": 15,
+      "timeout_s": 60
+    },
+    "storm_arrival_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "settings",
+        "ui-menu"
+      ],
+      "marker": "STORM_ARRIVAL_SETTINGS",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "storm_lifecycle_code_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "marker": "STORM_LIFECYCLE_CODE",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "storm_light_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "STORM_LIGHT_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "storm_profile_map_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "atmosphere-haze"
+      ],
+      "world": "certified",
+      "marker": "STORM_PROFILE_MAP",
+      "args": "--resolution 1280x720",
+      "expected_s": 39,
+      "timeout_s": 120,
+      "batch": "certified@1280x720"
+    },
+    "storm_sprites_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "weather",
+        "lightning"
+      ],
+      "world": "certified",
+      "marker": "STORM_SPRITES_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "storm_sprites_distance_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "weather",
+        "lightning"
+      ],
+      "world": "certified",
+      "marker": "STORM_SPRITES_DISTANCE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "structural_wall_periodic_range_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "marker": "STRUCTURAL_WALL_PERIODIC_RANGE_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "sun_shadow_ownership_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "shadows",
+        "celestial"
+      ],
+      "marker": "SUN_SHADOW_OWNERSHIP_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "sun_shadow_stability_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "shadows",
+        "celestial"
+      ],
+      "marker": "SUN_SHADOW_STABILITY_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "sunshine_arc_smoke_test": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "celestial"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "sunshine_blur_depth_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "extended",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "SUNSHINE_BLUR_DEPTH_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "sunshine_blur_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "SUNSHINE_BLUR_GPU",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "sunshine_camera_independence_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "SUNSHINE_CAMERA_INDEPENDENCE",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "sunshine_entry_skip_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "SUNSHINE_ENTRY_SKIP_GPU",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "sunshine_far_depth_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "RING_FAR_DEPTH_GPU_TEST",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "sunshine_gpu_benchmark": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "world": "integration",
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "sunshine_gpu_shadow_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "shadows"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_GPU_SHADOW_SMOKE",
+      "expected_s": 17,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "sunshine_inside_cloud_seam_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "world": "certified",
+      "marker": "SUNSHINE_INSIDE_CLOUD_SEAM",
+      "expected_s": null,
+      "timeout_s": 300,
+      "batch": null,
+      "batch_note": "known hang"
+    },
+    "sunshine_menu_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "ui-menu",
+        "settings",
+        "quality-presets"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_MENU_SMOKE",
+      "expected_s": 13,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "sunshine_night_shell_exit_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "celestial"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_NIGHT_SHELL_EXIT_SMOKE",
+      "expected_s": 17,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "sunshine_shader_compile_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "smoke",
+      "tags": [
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "SUNSHINE_SHADER_COMPILE",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "sunshine_shadow_performance_benchmark": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "shadows",
+        "perf-telemetry"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_SHADOW_PERFORMANCE_BENCHMARK",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "sunshine_shadow_slice_equivalence_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "shadows"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_SHADOW_SLICE_EQUIVALENCE",
+      "expected_s": 17,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "sunshine_shadow_toggle_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "shadows"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_SHADOW_TOGGLE_SMOKE",
+      "expected_s": 17,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "sunshine_storm_persistence_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "weather",
+        "loading"
+      ],
+      "world": "integration",
+      "marker": "SUNSHINE_STORM_PERSISTENCE",
+      "expected_s": 12,
+      "timeout_s": 60,
+      "batch": "integration@default"
+    },
+    "sunshine_sun_history_speed_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "cloud-history",
+        "celestial"
+      ],
+      "marker": "SUNSHINE_SUN_HISTORY_SPEED",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "sunshine_water_order_test": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "sunshine-compute",
+        "water"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "surface_terrain_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "settings"
+      ],
+      "marker": "SURFACE_TERRAIN_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain3d_addon_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN3D_ADDON_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain3d_diagonal_gpu_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN3D_DIAGONAL_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "terrain3d_gameplay_movement_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN3D_MOVEMENT",
+      "expected_s": 68,
+      "timeout_s": 210,
+      "batch": null,
+      "batch_note": "long traversal; mutates streaming state"
+    },
+    "terrain3d_gameplay_native_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN3D_GAMEPLAY_NATIVE",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "terrain3d_gameplay_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN3D_GAMEPLAY_SMOKE",
+      "expected_s": 26,
+      "timeout_s": 80
+    },
+    "terrain3d_gameplay_stream_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN3D_GAMEPLAY_STREAM",
+      "expected_s": 6,
+      "timeout_s": 60
+    },
+    "terrain3d_gameplay_travel_benchmark": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN3D_TRAVEL",
+      "marker_fix": "suffix",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain3d_godot48_compatibility_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN3D_GODOT48_COMPATIBILITY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain3d_launcher_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "integration",
+      "marker": "TERRAIN3D_LAUNCHER",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain3d_ring_visibility_gpu_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "terrain3d_surface_pilot_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN3D_SURFACE_PILOT_SMOKE",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "terrain_altitude_lod_flight_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tags": [
+        "terrain",
+        "far-viewport"
+      ],
+      "runner": "tools/terrain_altitude_lod_flight_test.ps1",
+      "tier": "extended",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_cloud_receiver_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "terrain"
+      ],
+      "marker": "TERRAIN_CLOUD_RECEIVER_GPU",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "terrain_cloud_sun_visibility_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "terrain",
+        "celestial"
+      ],
+      "marker": "TERRAIN_CLOUD_SUN_VISIBILITY_GPU_TEST",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "terrain_cloud_sun_visibility_state_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "terrain",
+        "celestial"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_CLOUD_SUN_VISIBILITY_STATE_TEST",
+      "expected_s": 36,
+      "timeout_s": 110,
+      "batch": null,
+      "batch_note": "world reload inside the test"
+    },
+    "terrain_generation_budgeted_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "perf-telemetry"
+      ],
+      "marker": "TERRAIN_GENERATION_BUDGETED",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "terrain_generation_coastal_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_COASTAL",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_generation_cpu_benchmark": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_DETAIL_CPU_BENCHMARK",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "terrain_generation_cpu_parity_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_CPU_PARITY",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "terrain_generation_detail_playable_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_GENERATION_DETAIL_PLAYABLE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_generation_detail_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_DETAIL",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_generation_enhanced_erosion_ui_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "ui-menu"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_ENHANCED_EROSION_UI",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "terrain_generation_erosion_v4_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_GENERATION_EROSION_V4",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "terrain_generation_landform_ui_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "ui-menu"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_LANDFORM_UI",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "terrain_generation_native_adapter_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_NATIVE_ADAPTER",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_generation_packing_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_PACKING",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_generation_performance_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "perf-telemetry"
+      ],
+      "marker": "TERRAIN_GENERATION_PERFORMANCE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_generation_playable_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_GENERATION_PLAYABLE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_generation_prepared_visibility_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_PREPARED_VISIBILITY",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_generation_preview_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_GENERATION_PREVIEW_SMOKE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "terrain_generation_reference_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_REFERENCE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_generation_shared_math_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_SHARED_MATH",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_generation_staging_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_STAGING",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "terrain_generation_stream_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_STREAM",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "terrain_generation_streaming_playable_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_GENERATION_STREAMING_PLAYABLE",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "terrain_generation_travel_benchmark": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_GENERATION_TRAVEL",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "terrain_generation_window_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_GENERATION_WINDOW",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "terrain_generation_world_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_GENERATION_WORLD_SMOKE",
+      "expected_s": 28,
+      "timeout_s": 90
+    },
+    "terrain_layer_overlap_probe": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_LAYER_TRIANGLE_PROBE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_lod_shadow_coverage_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "shadows"
+      ],
+      "marker": "TERRAIN_LOD_SHADOW_COVERAGE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_macro_shadow_uv_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "shadows"
+      ],
+      "marker": "TERRAIN_MACRO_SHADOW_UV_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_near_color_diagnostic": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_NEAR_COLOR_DIAGNOSTIC",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_near_lod_parity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_NEAR_LOD_PARITY_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_near_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "shadows"
+      ],
+      "marker": "TERRAIN_NEAR_SHADOW_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_recipe_freeze_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_RECIPE_FREEZE",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "terrain_render_attribution_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "render-core",
+        "atmosphere-haze"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_RENDER_ATTRIBUTION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_shadow_hitch_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "shadows",
+        "perf-telemetry"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_SHADOW_HITCH_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_shadow_lod_gameplay_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "shadows"
+      ],
+      "world": "certified",
+      "marker": "TERRAIN_SHADOW_LOD_GAMEPLAY_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_skirt_coverage_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_SKIRT_COVERAGE_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_storm_shadow_parity_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "weather",
+        "shadows",
+        "clouds"
+      ],
+      "marker": "TERRAIN_STORM_SHADOW_PARITY",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "terrain_streaming_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "settings"
+      ],
+      "marker": "TERRAIN_STREAMING_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_surface_follower_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_SURFACE_FOLLOWER_TEST",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "terrain_surface_include_regression": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "vegetation",
+        "atmosphere-haze",
+        "shadows"
+      ],
+      "marker": "TERRAIN_SURFACE_INCLUDE_REGRESSION",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "terrain_surface_shading_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "world": "scene",
+      "marker": "TERRAIN_SURFACE_SHADING",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "terrain_texture_palette_compression_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_TEXTURE_PALETTE_COMPRESSION_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_vertical_lod_coverage_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "TERRAIN_VERTICAL_LOD_COVERAGE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "terrain_water_seam_diagnostic": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "marker": "TERRAIN_WATER_SEAM_DIAGNOSTIC",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "thunder_audio_capture_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "audio"
+      ],
+      "world": "certified",
+      "marker": "THUNDER_AUDIO_CAPTURE",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "thunder_behavior_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "audio"
+      ],
+      "world": "certified",
+      "marker": "THUNDER_BEHAVIOR_SMOKE",
+      "expected_s": 33,
+      "timeout_s": 100
+    },
+    "thunder_propagation_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "audio"
+      ],
+      "marker": "THUNDER_PROPAGATION_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "thunder_runtime_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "audio",
+        "weather",
+        "settings"
+      ],
+      "world": "integration",
+      "marker": "THUNDER_RUNTIME_SMOKE",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "tree_atmosphere_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "atmosphere-haze"
+      ],
+      "marker": "TREE_ATMOSPHERE_GPU",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
+    "tree_compute_optimization_regression": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_COMPUTE_OPTIMIZATION_REGRESSION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_cpu_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "world": "certified",
+      "marker": "TREE_CPU_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_gpu_benchmark": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_GPU_BENCHMARK",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_gpu_frame_cache_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_GPU_FRAME_CACHE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "tree_gpu_preparation_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_GPU_PREPARATION_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "tree_gpu_rebase_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_GPU_REBASE_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "tree_lighting_shadow_behavior_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "shadows"
+      ],
+      "marker": "TREE_LIGHTING_SHADOW_BEHAVIOR",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "tree_lighting_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "shadows",
+        "clouds"
+      ],
+      "marker": "TREE_LIGHTING_SHADOW_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_lod_compute_regression": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "vegetation"
+      ],
+      "marker": "TREE_LOD_COMPUTE_REGRESSION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_lod_dither_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "vegetation"
+      ],
+      "marker": "TREE_LOD_DITHER_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_render_optimization_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "world": "certified",
+      "marker": "TREE_RENDER_OPTIMIZATION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_render_policy_regression": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "marker": "TREE_RENDER_POLICY_REGRESSION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_render_production_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "world": "certified",
+      "marker": "TREE_RENDER_PRODUCTION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_shared_impostor_integration": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_SHARED_IMPOSTOR_INTEGRATION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "tree_streaming_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_STREAMING_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "tuning_popup_isolation_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "ui-menu",
+        "settings"
+      ],
+      "marker": "TUNING_POPUP_ISOLATION",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "ui_scaling_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "ui-menu"
+      ],
+      "world": "start-menu",
+      "marker": "UI_SCALING_SMOKE",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "underground_mode_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "voxel-caves",
+        "settings"
+      ],
+      "marker": "UNDERGROUND_MODE_SETTINGS_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "underground_mode_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "voxel-caves"
+      ],
+      "marker": "UNDERGROUND_MODE_SMOKE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "upper_atmosphere_lightning_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "atmosphere-haze"
+      ],
+      "world": "integration",
+      "marker": "UPPER_ATMOSPHERE_LIGHTNING",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "variant_equality_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "quality-presets"
+      ],
+      "marker": "VARIANT_EQUALITY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "vegetation_haze_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "atmosphere-haze"
+      ],
+      "marker": "VEGETATION_HAZE_GPU",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "vegetation_indirect_api_probe": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "VEGETATION_INDIRECT_API",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "vegetation_live_tuning_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "vegetation",
+        "ui-menu"
+      ],
+      "marker": "VEGETATION_LIVE_TUNING",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "vegetation_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "vegetation"
+      ],
+      "marker": "VEGETATION_SETTINGS_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "vegetation_shadow_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "shadows"
+      ],
+      "marker": "VEGETATION_SHADOW_GPU",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "vegetation_wind_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "wind"
+      ],
+      "marker": "VEGETATION_WIND_GPU",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "vegetation_wind_state_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation",
+        "wind",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "VEGETATION_WIND_STATE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "visual_settings_ui_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "ui-menu",
+        "settings"
+      ],
+      "marker": "VISUAL_SETTINGS_UI_SMOKE_TEST",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "water_depth_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_depth_visual_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_DEPTH_VISUAL_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_adaptive_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_ADAPTIVE_GPU_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_adaptive_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_ADAPTIVE_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "water_fft_demand_integration_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_DEMAND_INTEGRATION",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "water_fft_distant_ocean_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_DISTANT_OCEAN_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "water_fft_geometry_visual_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_GEOMETRY_VISUAL_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_gpu_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_GPU_SMOKE",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "water_fft_lod_ownership_visual_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "marker": "WATER_FFT_LOD_OWNERSHIP_VISUAL_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_lod_seam_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "marker": "WATER_FFT_LOD_SEAM_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_shoreline_visual_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_SHORELINE_VISUAL_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_surface_gpu_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_FFT_SURFACE_GPU_SMOKE",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "water_fft_swimming_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "world": "certified",
+      "marker": "WATER_FFT_SWIMMING_SMOKE_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_fft_terrain_shore_smoke": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "world": "certified",
+      "marker": "WATER_FFT_TERRAIN_SHORE_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_optics_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_OPTICS_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "water_pattern_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_PATTERN_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_rendering_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "world": "certified",
+      "marker": "WATER_RENDERING_SMOKE_TEST",
+      "expected_s": 58,
+      "timeout_s": 180,
+      "batch": "certified@default"
+    },
+    "water_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "water"
+      ],
+      "marker": "WATER_SETTINGS_SMOKE_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_shared_wind_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water",
+        "wind"
+      ],
+      "marker": "WATER_SHARED_WIND_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "water_ssr_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water"
+      ],
+      "marker": "WATER_SSR_CONTRACT",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "water_ssr_live_controls_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water"
+      ],
+      "world": "certified",
+      "marker": "WATER_SSR_LIVE_CONTROLS_GPU_TEST",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "water_traversal_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "water"
+      ],
+      "world": "certified",
+      "marker": "WATER_TRAVERSAL",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "weather_ambience_core_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "audio"
+      ],
+      "marker": "WEATHER_AMBIENCE_CORE_SMOKE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "weather_ambience_runtime_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "audio"
+      ],
+      "world": "certified",
+      "marker": "WEATHER_AMBIENCE_RUNTIME_SMOKE",
+      "expected_s": 37,
+      "timeout_s": 120
+    },
+    "weather_audio_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "audio",
+        "settings"
+      ],
+      "marker": "WEATHER_AUDIO_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "weather_lifecycle_visual_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "WEATHER_LIFECYCLE_VISUAL",
+      "expected_s": 41,
+      "timeout_s": 130,
+      "batch": null,
+      "batch_note": "advances the natural weather clock by epochs"
+    },
+    "weather_lung_breath_math_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "marker": "WEATHER_LUNG_BREATH_MATH",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "weather_lung_launcher_toggle_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "WEATHER_LUNG_LAUNCHER_TOGGLE",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "weather_lung_placement_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "marker": "WEATHER_LUNG_PLACEMENT_TEST",
+      "expected_s": 9,
+      "timeout_s": 60
+    },
+    "weather_lung_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "settings"
+      ],
+      "marker": "WEATHER_LUNG_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "weather_lung_streamer_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather"
+      ],
+      "marker": "WEATHER_LUNG_STREAMER",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "weather_lung_terrain_v8_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "weather"
+      ],
+      "marker": "WEATHER_LUNG_V8",
+      "expected_s": 8,
+      "timeout_s": 60
+    },
+    "weather_lung_world_bind_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "WEATHER_LUNG_WORLD",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "wet_map_frame_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wet-world"
+      ],
+      "marker": "WET_MAP_FRAME",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "wet_world_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "wet-world"
+      ],
+      "world": "certified",
+      "marker": "WET_WORLD_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "wet_world_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "wet-world",
+        "rain",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "WET_WORLD_GPU",
+      "expected_s": 11,
+      "timeout_s": 60,
+      "batch": "certified@default"
+    },
+    "wet_world_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wet-world",
+        "settings",
+        "rain",
+        "ui-menu"
+      ],
+      "marker": "WET_WORLD_SETTINGS",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "wetness_model_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "wet-world"
+      ],
+      "marker": "WETNESS_MODEL",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "wind_settings_smoke_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "settings",
+        "wind",
+        "ui-menu"
+      ],
+      "marker": "WIND_SETTINGS_SMOKE_TEST",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "world_loading_lifecycle_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "world": "certified",
+      "marker": "WORLD_LOADING_LIFECYCLE",
+      "expected_s": 1,
+      "timeout_s": 60,
+      "profile": "fresh"
+    },
+    "world_loading_save_contract": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "world": "certified",
+      "marker": "WORLD_LOADING_SAVE_CONTRACT",
+      "expected_s": 11,
+      "timeout_s": 60
+    },
+    "world_loading_smoke_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "world": "certified",
+      "marker": "WORLD_LOADING_SMOKE",
+      "expected_s": null,
+      "timeout_s": 300,
+      "profile": "fresh",
+      "batch": null,
+      "batch_note": "tests the loading path itself"
+    },
+    "world_loading_startup_contract": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "smoke",
+      "tags": [
+        "loading"
+      ],
+      "marker": "WORLD_LOADING_STARTUP_STATE",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
+    "world_save_exit_lifecycle_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "world": "certified",
+      "marker": "WORLD_SAVE_EXIT_LIFECYCLE",
+      "expected_s": 1,
+      "timeout_s": 60,
+      "profile": "fresh"
+    },
+    "world_session_metadata_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "loading"
+      ],
+      "world": "integration",
+      "marker": "WORLD_SESSION_METADATA",
+      "expected_s": 2,
+      "timeout_s": 60
+    },
+    "menu_main_scene_boot_check": {
+      "kind": "test",
+      "mode": "gpu",
+      "tags": [
+        "loading",
+        "ui-menu"
+      ],
+      "runner": "tools/menu_main_scene_boot_check.ps1",
+      "marker": "MENU_MAIN_SCENE_BOOT",
+      "tier": "gate",
+      "expected_s": 60,
+      "timeout_s": 180
+    }
+  }
+}

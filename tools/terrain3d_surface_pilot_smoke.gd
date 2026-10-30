@@ -105,7 +105,7 @@ func _init() -> void:
 		_fail("reloaded terrain collider height did not retain edited mound: %s" % reload_ray)
 		return
 	_finished = true
-	print("Terrain3D surface pilot smoke: PASS ", after)
+	print("TERRAIN3D_SURFACE_PILOT_SMOKE=PASS ", after)
 	quit(0)
 
 func _terrain_ray_y(pilot: Node) -> float:
@@ -150,5 +150,5 @@ func _fail(message: String) -> void:
 	if _finished:
 		return
 	_finished = true
-	push_error(message)
+	push_error("TERRAIN3D_SURFACE_PILOT_SMOKE=FAIL " + message)
 	quit(1)

@@ -65,3 +65,7 @@ If the problem remains genuinely difficult after substantial investigation, reco
 Do not escalate simply because the task is large. Escalate because the reasoning is unusually difficult, ambiguous, unresolved, or risky.
 
 Return concise distilled findings to the primary agent. Do not dump unnecessary raw exploration logs.
+
+Testing:
+- Run tests with `tools/run_tests.ps1` (godot-test-run skill): `-Changed -Label <task>` during a step; report the `results.md` summary line and any non-pass rows; do not re-triage known failures; register new tests in `tools/test_manifest.json`.
+- Work orders name the runner command and the expected selection (`-DryRun` output).

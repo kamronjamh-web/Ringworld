@@ -135,11 +135,11 @@ func _run() -> void:
 	var status := drawer.find_child("ShadowRuntimeStatus", true, false) as Label
 	var filter := drawer.find_child("ShadowFilter", true, false) as OptionButton
 	if status == null or not status.text.contains("Shadow settings saved.") or not status.text.contains("total range 10000 m") or not status.text.contains("estimated raw depth") or not status.text.contains("near cascade 60 m") or filter == null or filter.get_selected_id() != 2: return _fail("quality refresh did not update shadow status/filter")
-	print("VISUAL_SETTINGS_UI_SMOKE_TEST_PASS")
+	print("VISUAL_SETTINGS_UI_SMOKE_TEST=PASS")
 	_finish(0)
 
 func _fail(reason: String) -> void:
-	push_error("VISUAL_SETTINGS_UI_SMOKE_TEST_FAIL " + reason)
+	push_error("VISUAL_SETTINGS_UI_SMOKE_TEST=FAIL " + reason)
 	_finish(1)
 
 func _finish(code: int) -> void:

@@ -85,11 +85,11 @@ func _process(_delta: float) -> bool:
 	weather.call("unregister_manual_weather", "core_smoke_a")
 	weather.call("unregister_manual_weather", "core_smoke_b")
 	if int((weather.call("get_shared_lightning_diagnostics") as Dictionary)["manual_weather_count"]) != 0: return fail("manual clear did not restore registry")
-	print("Shared lightning core smoke passed: natural replay, expiry, registry, bounded scan")
+	print("SHARED_LIGHTNING_CORE_SMOKE=PASS natural replay, expiry, registry, bounded scan")
 	quit(0)
 	return false
 
 func fail(message: String) -> bool:
-	push_error("SHARED_LIGHTNING_CORE_SMOKE_FAIL: " + message)
+	push_error("SHARED_LIGHTNING_CORE_SMOKE=FAIL " + message)
 	quit(1)
 	return true

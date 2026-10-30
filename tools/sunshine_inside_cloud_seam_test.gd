@@ -133,7 +133,9 @@ func _run() -> void:
 		print("CLOUD_SEAM_STATE camera=%s water_metadata_override=true actual_scale=%s mask_mode=%s" % [camera.global_position, world.get_viewport().scaling_3d_scale, far.get("ExactSunshineBackdropActive")])
 	Engine.time_scale = 1.0
 	if "--cloud-seam-fixed" in OS.get_cmdline_user_args():
-		print("Sunshine inside-cloud horizontal-ray GPU regression PASS")
+		print("SUNSHINE_INSIDE_CLOUD_SEAM=PASS horizontal-ray regression enforced")
+	else:
+		print("SUNSHINE_INSIDE_CLOUD_SEAM=PASS baseline capture (--cloud-seam-fixed not set, opacity not enforced)")
 	quit()
 
 func _capture(viewport: Viewport, name: String) -> Image:
@@ -196,5 +198,5 @@ func _is_grayscale(image: Image) -> bool:
 	return true
 
 func _fail(message: String) -> void:
-	push_error(message)
+	push_error("SUNSHINE_INSIDE_CLOUD_SEAM=FAIL " + message)
 	quit(1)

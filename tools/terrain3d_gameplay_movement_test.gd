@@ -60,7 +60,9 @@ func run() -> void:
 		if not await _travel("diagonal_plus_%s" % speed, Vector2(1, 1).normalized(), speed, distance): return
 		if not await _travel("diagonal_reverse_%s" % speed, Vector2(-1, -1).normalized(), speed, distance): return
 	_report()
-	game.queue_free(); await process_frame; quit(0)
+	game.queue_free(); await process_frame
+	if not failed: print("TERRAIN3D_MOVEMENT=PASS")
+	quit(0)
 
 func _create_game() -> Node:
 	var launcher := LAUNCHER.instantiate(); root.add_child(launcher); await _frames(2)
@@ -248,4 +250,4 @@ func _fail(message: String) -> void:
 	if failed: return
 	failed = true; _stop_motion()
 	if is_instance_valid(surface): print("TERRAIN3D_MOVEMENT_FAILURE_STATE=", JSON.stringify(surface.call("GetSurfaceDiagnostics")))
-	push_error("terrain3d_gameplay_movement_test: " + message); quit(1)
+	push_error("TERRAIN3D_MOVEMENT=FAIL " + message); quit(1)

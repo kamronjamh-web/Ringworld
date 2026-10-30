@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "note": "Known failures, quarantined and flaky tests (design section 6.1). A failure counts as known only if it matches `match`; optional \"machines\" scopes an entry. Reference machine: RTX 4070 desktop (desktop_mid_high). sunshine_shadow_slice_equivalence_test was unverified and passed 3 of 3 WO4 runs (SLICE_EQUIVALENCE identical=true), so it was removed from this list.",
+  "failures": {
+    "generated_output_policy_test": {
+      "status": "known-fail",
+      "match": "GENERATED_OUTPUT_POLICY_TEST=FAIL \\(30 violations\\)",
+      "evidence": "storm-revamp-plan.md batch close record: 30 res://artifacts literals in untouched files; same on main 3110b7e (batch_close/main_baseline_clean)",
+      "since": "2026-10-29"
+    },
+    "grass_clump_validation_test": {
+      "status": "known-fail",
+      "match": "near clump triangle contract failed",
+      "evidence": "batch close record; same on main 3110b7e (main_baseline_clean)",
+      "since": "2026-10-29"
+    },
+    "grass_streaming_contract_smoke": {
+      "status": "known-fail",
+      "match": "dense buffered root height diverged",
+      "evidence": "batch close record; main_baseline_clean",
+      "since": "2026-10-29"
+    },
+    "grass_quality_gameplay_test": {
+      "status": "known-fail",
+      "match": "grass did not settle",
+      "evidence": "batch close record; main_baseline_clean",
+      "since": "2026-10-29"
+    },
+    "distant_rain_curtains_smoke_test": {
+      "status": "known-fail",
+      "match": "time discontinuity never repopulated rain",
+      "evidence": "batch close record; main_baseline_clean",
+      "since": "2026-10-29"
+    },
+    "legacy_terrain_isolation_test": {
+      "status": "known-fail",
+      "match": "Parse Error|SCRIPT ERROR",
+      "evidence": "batch close record: GDScript parse error; main_baseline_clean",
+      "since": "2026-10-29"
+    },
+    "rain_surface_column_smoke_test": {
+      "status": "known-fail",
+      "match": "edit rejected: Concrete",
+      "evidence": "batch close record; main_baseline_clean",
+      "since": "2026-10-29"
+    },
+    "biome_authoring_preview_test": {
+      "status": "known-fail",
+      "match": "preset name editor missing/focus disabled",
+      "evidence": "batch close record; main_baseline_clean, main_gpu2",
+      "since": "2026-10-29"
+    },
+    "world_loading_smoke_test": {
+      "status": "known-fail",
+      "match": "world entered before a structural owner was ready",
+      "evidence": "batch close record: the activation diagnostics entry (425871c) has no ready key; main_baseline_clean_wl; reproduced through tools/run_tests.ps1 on 2026-10-30 after the fresh-profile fix (no slot_1 copy)",
+      "since": "2026-10-29"
+    },
+    "terrain3d_gameplay_movement_test": {
+      "status": "known-fail",
+      "match": "TERRAIN3D_MOVEMENT",
+      "evidence": "batch close record: reverse after handoff 21.5 s vs 10 s limit; main_gpu2",
+      "since": "2026-10-29"
+    },
+    "smooth_terrain_pilot_smoke_test": {
+      "status": "known-fail",
+      "match": "did not settle",
+      "evidence": "godot-test-run skill known list; close-out headless log: Sky-view LUT unavailable, pilot did not settle",
+      "since": "2026-10-29"
+    },
+    "rain_cloud_compositing_gpu_test": {
+      "status": "known-fail",
+      "match": "cloud source drift|raw cloud source changed",
+      "evidence": "batch close record: frozen-scene cloud source not bitwise stable on main and e2485b7; passes with --tolerate-cloud-source-drift",
+      "since": "2026-10-29"
+    },
+    "distant_rain_curtains_gpu_test": {
+      "status": "known-fail",
+      "match": "no stable rain contribution",
+      "evidence": "batch close record; main_gpu2",
+      "since": "2026-10-29"
+    },
+    "water_fft_demand_integration_test": {
+      "status": "known-fail",
+      "match": "WATER_FFT_DEMAND_INTEGRATION=FAIL",
+      "evidence": "batch close record; main_gpu2",
+      "since": "2026-10-29"
+    },
+    "cloud_lighting_smoke_test": {
+      "status": "known-fail",
+      "match": "CLOUD_LIGHTING_SMOKE=FAIL",
+      "evidence": "batch close record; main_gpu2",
+      "since": "2026-10-29"
+    },
+    "sunshine_gpu_shadow_smoke_test": {
+      "status": "known-fail",
+      "match": "SUNSHINE_GPU_SHADOW_SMOKE=FAIL",
+      "evidence": "batch close record; main_gpu2",
+      "since": "2026-10-29"
+    },
+    "sunshine_storm_persistence_test": {
+      "status": "known-fail",
+      "match": "SUNSHINE_STORM_PERSISTENCE=FAIL",
+      "evidence": "batch close record; main_gpu2",
+      "since": "2026-10-29"
+    },
+    "sunshine_menu_smoke_test": {
+      "status": "known-fail",
+      "match": "SUNSHINE_MENU_SMOKE=FAIL",
+      "evidence": "batch close record; main_gpu2; skill known list",
+      "since": "2026-10-29"
+    },
+    "opposite_ring_lightning_visual_smoke_test": {
+      "status": "known-fail",
+      "match": "lacked localized positive contrast",
+      "evidence": "batch close record: the same localized-contrast check fails on e2485b7 (head_gpu)",
+      "since": "2026-10-29"
+    },
+    "sunshine_inside_cloud_seam_test": {
+      "status": "quarantined",
+      "match": "",
+      "timeout_s": 60,
+      "evidence": "batch close record: stale FarRingBackdrop/FarRingTexture node path; hangs (901 s gpu_run1, 421 s main_gpu2)",
+      "since": "2026-10-29"
+    },
+    "quality_preset_contract_test": {
+      "status": "flaky",
+      "match": "C6 .*p=0",
+      "retries": 1,
+      "evidence": "batch close record: C6 p=0 failed once, 150/150 on two reruns",
+      "since": "2026-10-29"
+    },
+    "rain_streaks_gpu_test": {
+      "status": "flaky",
+      "match": "paused_clock_identical FAIL",
+      "retries": 1,
+      "evidence": "2026-10-29 tooling measurement: 1 of 2 runs failed paused_clock_identical (mean delta 0.0014); WO4 reruns on main-equivalent tree: 5 of 5 passed first attempt (4070), so 1 failure in 7 runs total",
+      "since": "2026-10-29"
+    },
+    "sunshine_night_shell_exit_smoke_test": {
+      "status": "known-fail",
+      "match": "Texture \\(binding: \\d+, index 0\\) needs to have the same type as the uniform",
+      "evidence": "2026-10-29 WO4 (RTX 4070): 3 of 3 runs crash 0xC0000005 (-1073741819) after Vulkan uniform_set_create errors (expected 2DArray, actual 2D); the latest runs print SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS first and then crash during teardown, which the runner reports as crash (a crash after PASS is not a fix); also at close-out gpu_run1",
+      "since": "2026-10-29",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "cloud_layers_map_gpu_test": {
+      "status": "flaky",
+      "match": "max difference 1 > 0\\.001",
+      "evidence": "WO6 baseline 2026-10-30 (RTX 4070): 1 fail in 6 runs, CPU-vs-GPU map texel (193,113) differs by 1; passed both before-repeat and both after-change runs",
+      "retries": 1,
+      "since": "2026-10-30"
+    }
+  }
+}

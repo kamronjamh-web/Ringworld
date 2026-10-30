@@ -34,8 +34,8 @@ func _init() -> void:
 		and not helper.contains("fft_distant_ocean_certified") \
 		and not proxy.contains("fft_distant_ocean_certified")
 	if not passed:
-		push_error("WATER_FFT_DISTANT_OCEAN_CONTRACT_FAIL")
+		push_error("WATER_FFT_DISTANT_OCEAN_CONTRACT=FAIL")
 		quit(1)
 		return
-	print("WATER_FFT_DISTANT_OCEAN_CONTRACT_PASS")
+	print("WATER_FFT_DISTANT_OCEAN_CONTRACT=PASS")
 	quit(0)

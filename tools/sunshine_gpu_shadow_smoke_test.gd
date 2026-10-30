@@ -112,7 +112,7 @@ func _process(_delta: float) -> bool:
 			"IsCloudShadowProjectorEnabled", "is_cloud_shadow_projector_enabled", false))
 		if projector_restored and sunrise_dispatches > _dispatches_before_night:
 			print(
-				"Sunshine GPU shadow smoke passed: scale=%s, near=512x512/%d dispatches/range=%.4f-%.4f, far=256x256/%d dispatches/range=%.4f-%.4f, receivers=%d, nightGate=pass, sunriseRebake=pass, status=%s"
+				"SUNSHINE_GPU_SHADOW_SMOKE=PASS scale=%s, near=512x512/%d dispatches/range=%.4f-%.4f, far=256x256/%d dispatches/range=%.4f-%.4f, receivers=%d, nightGate=pass, sunriseRebake=pass, status=%s"
 				% [_ring_scale_label, sunrise_dispatches,
 					_verified_near_map_minimum, _verified_near_map_maximum,
 					_passed_far_dispatches, _verified_far_map_minimum,
@@ -296,6 +296,6 @@ func _combined_temporal_occlusion(value: Color) -> float:
 
 
 func _fail(message: String) -> bool:
-	push_error(message)
+	push_error("SUNSHINE_GPU_SHADOW_SMOKE=FAIL " + message)
 	quit(1)
 	return true

@@ -43,21 +43,20 @@ func _run():
 		return
 	helper = load("res://tools/StormAnvilCapture.cs").new()
 	probe = load("res://tools/CloudLayersMapProbe.cs").new()
-	world = load("res://scenes/VoxelRingIntegrationTest.tscn").instantiate()
-	var launcher = load("res://scenes/WorldSizeLauncher.tscn").instantiate()
-	root.add_child(launcher)
-	launcher.call("_on_certified_preset_pressed")
-	launcher.call("_configure_game", world, 5000000.0)
-	launcher.free()
-	if not far.Prepare(world, "res://.godot/far-ring-gameplay/storm_anvils_prep"):
-		_fail(far.ErrorText)
+	var test_world = load("res://tools/testing/RingTestWorld.cs").new()
+	world = test_world.BootCertified(self, far, "res://.godot/far-ring-gameplay/storm_anvils_prep", 5000000.0)
+	if world == null:
+		_fail(test_world.ErrorText)
 		return
-	root.add_child(world)
 	await process_frame
 	if not helper.Setup(world, 0.6, 1500.0):
 		_fail(helper.ErrorText)
 		return
-	await create_timer(20.0).timeout
+	test_world.AwaitSettled(world, 40.0)
+	if not await test_world.Settled:
+		_fail("world never settled: " + test_world.LastReport)
+		return
+	print("WORLD_SETTLED ", test_world.LastReport)
 	helper.SetLifecycle(1.6)
 	helper.PlaceStorm(world, 0.0, 0.0, 0.0, 40000.0)
 	helper.PlaceCamera(world, 1500.0, 0.0, 0.0)

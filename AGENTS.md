@@ -40,6 +40,15 @@ Only expose a value in the grave-key menu when it is a genuine tunable someone w
 - Bad: separate "POI haze" or "POI shadows" toggles. POIs must automatically receive regular haze, shadows and lighting like every other world surface.
 - Debug or A/B switches belong in debug tooling, not the menu.
 
+## Testing
+
+Run tests through `tools/run_tests.ps1` (details in the `godot-test-run` skill); it builds, selects from `tools/test_manifest.json`, takes the GPU queue itself and writes `.godot/test_runs/<label>/<run id>/results.md`.
+- During development: `tools/run_tests.ps1 -Changed -Label <task>` (`-DryRun` first to see the selection). Quick check: `-Suite smoke`. Batch or commit point: `-Suite gate`. Full suite (`-Suite full`) only before merges or overnight.
+- Read `results.md` (summary line and non-pass rows), not the logs. Open a log only for `fail`, `timeout`, `crash` or `error`, with the `log-triage` skill.
+- `tools/test_known_failures.json` lists known failures. Do not re-triage `known-fail` rows; report `fixed` so the list is updated.
+- Other agents may share the GPU. The queue is `tools/gpu_queue.ps1` (`-Status` shows it); never kill another agent's Godot.
+- Every new test needs an entry in `tools/test_manifest.json` (tags, mode, tier, marker, expected_s, timeout_s); `tools/testing/validate_manifest.ps1` enforces it. See the `test-scaffold` skill.
+
 ## Test output
 
 Isolated APPDATA profiles copy a saved world plus the shader, Vulkan and ring caches (up to ~2.5 GB each), and `.godot` once grew to 160 GB from leftover runs.

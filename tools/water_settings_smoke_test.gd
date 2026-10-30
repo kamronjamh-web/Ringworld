@@ -16,8 +16,8 @@ func _run() -> void:
 	fallback.queue_free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PATH))
 	if not bool(result.get("pass", false)) or not headless_fallback:
-		push_error("WATER_SETTINGS_SMOKE_TEST_FAIL " + str(result.get("detail", "")))
+		push_error("WATER_SETTINGS_SMOKE_TEST=FAIL " + str(result.get("detail", "")))
 		quit(1)
 		return
-	print("WATER_SETTINGS_SMOKE_TEST_PASS " + str(result.get("detail", "")))
+	print("WATER_SETTINGS_SMOKE_TEST=PASS " + str(result.get("detail", "")))
 	quit(0)

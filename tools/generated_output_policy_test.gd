@@ -35,12 +35,12 @@ func _initialize() -> void:
 		_scan_directory(source_root, failures)
 
 	if failures.is_empty():
-		print("GENERATED_OUTPUT_POLICY_TEST: PASS")
+		print("GENERATED_OUTPUT_POLICY_TEST=PASS")
 		quit(0)
 		return
 	for failure in failures:
 		push_error(failure)
-	print("GENERATED_OUTPUT_POLICY_TEST: FAIL (%d violations)" % failures.size())
+	print("GENERATED_OUTPUT_POLICY_TEST=FAIL (%d violations)" % failures.size())
 	quit(1)
 
 

@@ -12,8 +12,8 @@ func _run() -> void:
 	probe = null
 	await process_frame
 	if not bool(result.get("pass", false)):
-		push_error("FAR_RENDERING_SETTINGS_SMOKE_TEST_FAIL %s" % str(result.get("detail", "")))
+		push_error("FAR_RENDERING_SETTINGS_SMOKE_TEST=FAIL %s" % str(result.get("detail", "")))
 		quit(1)
 		return
-	print("FAR_RENDERING_SETTINGS_SMOKE_TEST_PASS %s" % str(result.get("detail", "")))
+	print("FAR_RENDERING_SETTINGS_SMOKE_TEST=PASS %s" % str(result.get("detail", "")))
 	quit(0)

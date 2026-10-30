@@ -40,7 +40,7 @@ func _process(_delta: float) -> bool:
 			elif not bool(diagnostics.get("can_hear", false)):
 				_fail("listener unexpectedly cannot hear")
 			else:
-				print("Thunder runtime fixture: PASS ", diagnostics)
+				print("THUNDER_RUNTIME_SMOKE=PASS ", diagnostics)
 				quit(0)
 	return false
 
@@ -48,5 +48,5 @@ func _fail(message: String) -> void:
 	if _failed:
 		return
 	_failed = true
-	push_error("Thunder runtime fixture failed: " + message)
+	push_error("THUNDER_RUNTIME_SMOKE=FAIL " + message)
 	quit(1)

@@ -64,10 +64,10 @@ func _init() -> void:
 		_fail("Terrain3DData returned an unexpected second imported height: expected=%s actual=%s" % [SECOND_HEIGHT, second_import_height])
 		return
 
-	print("Terrain3D native addon smoke: PASS (height %s -> %s -> %s)" % [before, first_import_height, second_import_height])
+	print("TERRAIN3D_ADDON_SMOKE=PASS (height %s -> %s -> %s)" % [before, first_import_height, second_import_height])
 	quit(0)
 
 
 func _fail(message: String) -> void:
-	push_error(message)
+	push_error("TERRAIN3D_ADDON_SMOKE=FAIL " + message)
 	quit(1)

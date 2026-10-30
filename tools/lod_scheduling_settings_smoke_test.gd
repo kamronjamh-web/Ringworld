@@ -11,8 +11,8 @@ func _run() -> void:
 	var result: Dictionary = probe.Run(PATH)
 	probe = null
 	if not bool(result.get("pass", false)):
-		push_error("LOD_SCHEDULING_SETTINGS_SMOKE_TEST_FAIL " + str(result.get("detail", "preferences failed")))
+		push_error("LOD_SCHEDULING_SETTINGS_SMOKE_TEST=FAIL " + str(result.get("detail", "preferences failed")))
 		quit(1)
 		return
-	print("LOD_SCHEDULING_SETTINGS_SMOKE_TEST_PASS %s" % str(result.get("detail", "")))
+	print("LOD_SCHEDULING_SETTINGS_SMOKE_TEST=PASS %s" % str(result.get("detail", "")))
 	quit(0)

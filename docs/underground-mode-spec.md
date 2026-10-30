@@ -189,7 +189,7 @@ Controls:
 ## 5. Validation
 
 ### Automated (headless)
-1. **`UndergroundModeSmoke`** (`scripts/Tools/UndergroundModeSmoke.cs` + `tools/underground_mode_smoke_test.gd`, prints `UNDERGROUND_MODE_SMOKE_TEST_PASS`):
+1. **`UndergroundModeSmoke`** (`scripts/Tools/UndergroundModeSmoke.cs` + `tools/underground_mode_smoke_test.gd`, prints `UNDERGROUND_MODE_SMOKE_TEST=PASS`):
    - State machine: openness oscillating ±0.02 around both thresholds at 60 Hz for 30 s → ≤1 transition; enter requires full hold; exit within ExitHold; blend reaches 1 in BlendSeconds ±1 frame; forced exit sets blend 0 in one step; `SuspensionActive` only at blend=1; `ModeChanged` fires exactly once per transition.
    - Probe with synthetic `IUndergroundProbeSource` lambdas: sealed roof → o=0; vertical shaft → o>0 (vertical ray escapes); horizontal tunnel to a mouth 200 m away → 10° rays escape; mouth 600 m away → o=0 (documents freeze-only tier); 1 m plug → documented fail-safe "open"; sample budget never exceeded per frame.
 2. **Settings smoke** (`GameplayUndergroundModeSettingsSmoke`, mirrors `TerrainStreamingSettingsSmoke`): save/load round trip, clamps, corrupt file → defaults + LastError.

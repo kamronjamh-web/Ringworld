@@ -49,9 +49,9 @@ func _run() -> void:
 	if not progress_ok or not info_ok or not arrival or not monotonic or not failed or not cancellation or not finish_ok:
 		_fail("view progress=%s info=%s arrival=%s monotonic=%s failure=%s cancellation=%s finish=%s" % [progress_ok, info_ok, arrival, monotonic, failed, cancellation, finish_ok])
 		return
-	print("LOADING_PRESENTATION_SETTINGS_SMOKE_TEST_PASS %s view=true" % str(result.get("detail", "")))
+	print("LOADING_PRESENTATION_SETTINGS_SMOKE_TEST=PASS %s view=true" % str(result.get("detail", "")))
 	quit(0)
 
 func _fail(message: String) -> void:
-	push_error("LOADING_PRESENTATION_SETTINGS_SMOKE_TEST_FAIL " + message)
+	push_error("LOADING_PRESENTATION_SETTINGS_SMOKE_TEST=FAIL " + message)
 	quit(1)

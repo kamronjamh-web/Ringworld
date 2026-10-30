@@ -60,4 +60,12 @@ Avoid doing large amounts of mechanical implementation yourself when
 
 Return conclusions and supporting evidence, not an enormous transcript
 of your investigation.
+
+Testing:
+- Run tests with `tools/run_tests.ps1` (godot-test-run skill):
+  `-Changed -Label <task>` during a step; report the `results.md`
+  summary line and any non-pass rows; do not re-triage known failures;
+  register new tests in `tools/test_manifest.json`.
+- Work orders name the runner command and the expected selection
+  (`-DryRun` output).
 """

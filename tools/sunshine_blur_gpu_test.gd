@@ -76,6 +76,6 @@ func _init() -> void:
 			fail("blur kernel produced no measurable delta for case %d" % case_index)
 			return
 		print("Blur case %d: old-new mean=%f max=%f; start-new mean=%f max=%f" % [case_index, old_new_total / (4096.0 * 4.0), old_new_maximum, start_new_total / (4096.0 * 4.0), start_new_maximum])
-	print("Sunshine blur GPU fixture PASS")
+	print("SUNSHINE_BLUR_GPU=PASS")
 	quit()
-func fail(s:String)->void: push_error(s);quit(1)
+func fail(s:String)->void: push_error("SUNSHINE_BLUR_GPU=FAIL "+s);quit(1)

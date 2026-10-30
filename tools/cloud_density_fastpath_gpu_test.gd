@@ -72,7 +72,7 @@ func _init() -> void:
 			_fail("density mismatch at %d: reference=%f optimized=%f delta=%f" % [i, old, current, delta]); return
 	if finite == 0 or positive_background == 0 or positive_storm == 0:
 		_fail("vacuous parity fixture: finite=%d background=%d storm=%d" % [finite, positive_background, positive_storm]); return
-	print("Cloud density fast-path GPU parity: PASS (%d finite, %d reference non-finite, background=%d storm=%d, max delta=%f)" % [finite, nonfinite_reference, positive_background, positive_storm, worst])
+	print("CLOUD_DENSITY_FASTPATH=PASS (%d finite, %d reference non-finite, background=%d storm=%d, max delta=%f)" % [finite, nonfinite_reference, positive_background, positive_storm, worst])
 	quit(0)
 
 func _function(source: String, start_marker: String, end_marker: String) -> String:
@@ -156,4 +156,4 @@ func _make_effector_data() -> PackedFloat32Array:
 	return out
 
 func _fail(message: String) -> void:
-	push_error(message); quit(1)
+	push_error("CLOUD_DENSITY_FASTPATH=FAIL " + message); quit(1)

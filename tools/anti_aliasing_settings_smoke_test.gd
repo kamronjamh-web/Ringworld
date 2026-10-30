@@ -18,8 +18,8 @@ func _run() -> void:
 	if FileAccess.file_exists(ISOLATED_PATH):
 		DirAccess.remove_absolute(absolute_path)
 	if not bool(result.get("pass", false)):
-		push_error("ANTI_ALIASING_SETTINGS_SMOKE_TEST_FAIL %s" % str(result.get("detail", "unknown failure")))
+		push_error("ANTI_ALIASING_SETTINGS_SMOKE_TEST=FAIL %s" % str(result.get("detail", "unknown failure")))
 		call_deferred("quit", 1)
 		return
-	print("ANTI_ALIASING_SETTINGS_SMOKE_TEST_PASS %s" % str(result.get("detail", "")))
+	print("ANTI_ALIASING_SETTINGS_SMOKE_TEST=PASS %s" % str(result.get("detail", "")))
 	call_deferred("quit", 0)

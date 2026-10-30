@@ -137,7 +137,7 @@ func _process(_delta: float) -> bool:
 		if peak_after <= 0.00001:
 			fail("capture backend produced no post-arrival PCM")
 			return false
-		print("Thunder audio capture test: PASS ", {"delay_seconds": expected_delay, "pre_arrival_peak": peak_before, "post_arrival_peak": peak_after, "event_id": event_id})
+		print("THUNDER_AUDIO_CAPTURE=PASS ", {"delay_seconds": expected_delay, "pre_arrival_peak": peak_before, "post_arrival_peak": peak_after, "event_id": event_id})
 		cleanup_and_quit(0)
 	return false
 
@@ -172,7 +172,7 @@ func stop_fixture_loops() -> void:
 			player.call("stop")
 
 func fail(message: String) -> void:
-	push_error("Thunder audio capture test failed: " + message)
+	push_error("THUNDER_AUDIO_CAPTURE=FAIL " + message)
 	cleanup_and_quit(1)
 
 func cleanup_and_quit(code: int) -> void:

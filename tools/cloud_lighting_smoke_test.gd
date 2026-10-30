@@ -59,7 +59,7 @@ func _process(_delta: float) -> bool:
 		var recovered_energy := _environment.environment.ambient_light_energy
 		if recovered_sun > 0.90 and recovered_ambient > 0.90 and recovered_energy > 0.32:
 			print(
-				"Cloud lighting recovery passed: sun=%.3f, ambient=%.3f, environment=%.3f"
+				"CLOUD_LIGHTING_SMOKE=PASS recovered sun=%.3f, ambient=%.3f, environment=%.3f"
 				% [recovered_sun, recovered_ambient, recovered_energy])
 			quit(0)
 			return true
@@ -147,6 +147,6 @@ func _call_bridge_result(
 
 
 func _fail(message: String) -> bool:
-	push_error(message)
+	push_error("CLOUD_LIGHTING_SMOKE=FAIL " + message)
 	quit(1)
 	return true

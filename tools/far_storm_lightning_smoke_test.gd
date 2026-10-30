@@ -71,7 +71,7 @@ func _process(_delta: float) -> bool:
 			_fail("event B was not encoded as a bounded canonical storm flash")
 			return false
 		print(
-			"Far storm lightning smoke passed: frame=%d, clock=%.2fs, eventA=%s, eventB=%s, synchronizedMaterials=%d"
+			"FAR_STORM_LIGHTNING_SMOKE=PASS frame=%d, clock=%.2fs, eventA=%s, eventB=%s, synchronizedMaterials=%d"
 			% [_frame, float(_weather.get("CloudSimulationTimeSeconds")), event_a, event_b, _clipmap_materials.size() + 1])
 		quit(0)
 		return false
@@ -110,5 +110,5 @@ func _materials_share_events(event_a: Vector4, event_b: Vector4) -> bool:
 
 
 func _fail(message: String) -> void:
-	push_error("Far storm lightning smoke failed: %s" % message)
+	push_error("FAR_STORM_LIGHTNING_SMOKE=FAIL %s" % message)
 	quit(1)

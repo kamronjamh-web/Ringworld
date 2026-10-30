@@ -31,7 +31,7 @@ if (-not (Test-Path $godotDir)) { return }
 $keep = @(
   ".gdignore", "editor", "extension_list.cfg", "global_script_class_cache.cfg", "imported", "mono",
   "scene_groups_cache.cfg", "shader_cache", "uid_cache.bin",
-  "shadow_baseline", "s5_before", "shadow_compose_identity_head_clouds", "shadow_compose_identity_storm_revamp_4070",
+  "gpu_queue", "shadow_baseline", "s5_before", "shadow_compose_identity_head_clouds", "shadow_compose_identity_storm_revamp_4070",
   "terrain3d-native-src", "terrain3d-native-tools"
 ) + $Exclude
 
@@ -59,6 +59,9 @@ foreach ($top in Get-ChildItem -LiteralPath $godotDir -Force) {
       $candidates.Add([pscustomobject]@{ Entry = $child; Profile = $true; Size = (Get-EntrySize $child); Newest = (Get-Newest $child) })
     }
   }
+  # test_runs/ holds tools/run_tests.ps1 run directories (results.json, logs); the runner keeps the newest 10 per label for 7 days
+  # itself, so only its nested appdata_* profiles (added above) are prune candidates here.
+  if ($top.Name -eq "test_runs") { continue }
   $candidates.Add([pscustomobject]@{ Entry = $top; Profile = ($top.Name -like "appdata_*"); Size = 0; Newest = (Get-Newest $top) })
 }
 # Size of a top-level folder excludes its nested profiles (they are separate candidates).

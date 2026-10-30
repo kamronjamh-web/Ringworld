@@ -51,7 +51,7 @@ func _process(_delta: float) -> bool:
 	var error := image.save_png(_capture_path)
 	if error != OK:
 		return _fail("Night horizon capture failed: %s (%s)" % [_capture_path, error])
-	print("Sunshine night shell-exit smoke passed: compositor attached, night=0.5, capture=%s" % _capture_path)
+	print("SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS compositor attached, night=0.5, capture=%s" % _capture_path)
 	quit(0)
 	return true
 
@@ -109,6 +109,6 @@ func _terminates_first_band_traversal(altitudes: Array, motions: Array, starts_i
 
 
 func _fail(message: String) -> bool:
-	push_error(message)
+	push_error("SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=FAIL " + message)
 	quit(1)
 	return true

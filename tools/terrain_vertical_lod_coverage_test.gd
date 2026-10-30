@@ -13,8 +13,8 @@ func _run() -> void:
 	sector.queue_free()
 	await process_frame
 	if not bool(result.get("passed", false)):
-		push_error("terrain vertical LOD coverage contract failed: %s" % result)
+		push_error("TERRAIN_VERTICAL_LOD_COVERAGE=FAIL %s" % result)
 		quit(1)
 		return
-	print("terrain vertical LOD coverage contract passed: %s" % result)
+	print("TERRAIN_VERTICAL_LOD_COVERAGE=PASS %s" % result)
 	quit(0)

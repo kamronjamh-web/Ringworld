@@ -177,7 +177,7 @@ func _init() -> void:
 		_fail("malformed Terrain3D state or saved edit bytes were overwritten during blocked teardown")
 		return
 	_finished = true
-	print("Terrain3D gameplay smoke: PASS ", reload)
+	print("TERRAIN3D_GAMEPLAY_SMOKE=PASS ", reload)
 	quit(0)
 
 
@@ -348,5 +348,5 @@ func _legacy_sentinels_preserved() -> bool:
 func _fail(message: String) -> void:
 	if _finished: return
 	_finished = true
-	push_error(message)
+	push_error("TERRAIN3D_GAMEPLAY_SMOKE=FAIL " + message)
 	quit(1)

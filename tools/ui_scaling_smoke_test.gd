@@ -48,7 +48,7 @@ func _process(_delta: float) -> bool:
 			return _fail("Button visual-center hover failed at %s." % TEST_SIZES[_size_index])
 		_size_index += 1
 		if _size_index >= TEST_SIZES.size():
-			print("UI scaling smoke test passed at all window sizes.")
+			print("UI_SCALING_SMOKE=PASS sizes=%d" % TEST_SIZES.size())
 			quit(0)
 			return true
 		_frame = 3
@@ -96,7 +96,7 @@ func _find_button(node: Node) -> Button:
 
 
 func _fail(message: String) -> bool:
-	push_error(message)
+	push_error("UI_SCALING_SMOKE=FAIL " + message)
 	_failed = true
 	quit(1)
 	return true

@@ -67,7 +67,7 @@ func _process(_delta: float) -> bool:
 			weather.set("CloudSimulationPaused", true)
 		_scene.get_node("SunshineCloudsDriver").set_process(false)
 	if _frame >= MAX_FRAMES:
-		push_error("Timed out in stage %d: %s" % [_stage, str(_status())])
+		push_error("SUNSHINE_SHADOW_SLICE_EQUIVALENCE=FAIL Timed out in stage %d: %s" % [_stage, str(_status())])
 		quit(1)
 		return true
 	if _frame < 40:
@@ -101,7 +101,7 @@ func _process(_delta: float) -> bool:
 				_saw_progress = true
 				_torn_checks += 1
 				if _read_front() != _legacy:
-					push_error("Front map changed while slices were still in flight")
+					push_error("SUNSHINE_SHADOW_SLICE_EQUIVALENCE=FAIL Front map changed while slices were still in flight")
 					quit(1)
 					return true
 			if dispatches > _legacy_dispatches and not pending:
@@ -109,12 +109,12 @@ func _process(_delta: float) -> bool:
 				_final_dispatches = dispatches
 				_stage = 2
 			elif _frame > _stage_frame + 400:
-				push_error("Sliced refresh never completed: %s" % str(status))
+				push_error("SUNSHINE_SHADOW_SLICE_EQUIVALENCE=FAIL Sliced refresh never completed: %s" % str(status))
 				quit(1)
 				return true
 		2:
 			if not _saw_progress:
-				push_error("Never observed slice progress; slicing did not engage")
+				push_error("SUNSHINE_SHADOW_SLICE_EQUIVALENCE=FAIL Never observed slice progress; slicing did not engage")
 				quit(1)
 				return true
 			var same_size := _legacy.size() == _sliced.size() and _legacy.size() > 0
@@ -135,10 +135,10 @@ func _process(_delta: float) -> bool:
 			print("SLICE_EQUIVALENCE bytes=%d identical=%s differing=%d nonzero_samples=%d torn_checks=%d slices=%d dispatches=%d->%d"
 				% [_legacy.size(), str(identical), differing, nonzero, _torn_checks, SLICES, _legacy_dispatches, _final_dispatches])
 			if not identical or nonzero == 0:
-				push_error("Sliced map differs from the legacy single-dispatch map (or map is blank)")
+				push_error("SUNSHINE_SHADOW_SLICE_EQUIVALENCE=FAIL Sliced map differs from the legacy single-dispatch map (or map is blank)")
 				quit(1)
 				return true
-			print("Sunshine shadow slice equivalence passed")
+			print("SUNSHINE_SHADOW_SLICE_EQUIVALENCE=PASS")
 			quit(0)
 			return true
 	return false

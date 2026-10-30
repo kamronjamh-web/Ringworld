@@ -102,7 +102,7 @@ func _run() -> void:
 					return _fail("facing capture lost live compass needle")
 				var label := "expanded_%s_facing_%d" % ["heading_up" if heading_up else "north_up", yaw]
 				if not await _capture(label): return _fail("facing capture failed: " + label)
-	print("Minimap wind smoke: PASS (default map, M details, stable viewport/terrain, fixed live wind follows character yaw/wrap independent of map orientation and pitch/roll, calm/disabled/preference)")
+	print("MINIMAP_WIND_SMOKE=PASS (default map, M details, stable viewport/terrain, fixed live wind follows character yaw/wrap independent of map orientation and pitch/roll, calm/disabled/preference)")
 	_finished = true
 	await _cleanup()
 	quit(0)
@@ -127,6 +127,6 @@ func _cleanup() -> void:
 func _fail(message: String) -> void:
 	if _finished: return
 	_finished = true
-	push_error("Minimap wind smoke: " + message)
+	push_error("MINIMAP_WIND_SMOKE=FAIL " + message)
 	await _cleanup()
 	quit(1)
