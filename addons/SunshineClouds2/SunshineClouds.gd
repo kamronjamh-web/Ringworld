@@ -89,6 +89,8 @@ signal external_texture_retirement_requested(generation_id: int)
 @export var gpu_timestamp_macro_map_end_marker : String = ""
 @export var gpu_timestamp_storm_map_begin_marker : String = ""
 @export var gpu_timestamp_storm_map_end_marker : String = ""
+@export var gpu_timestamp_megastorm_strip_begin_marker : String = ""
+@export var gpu_timestamp_megastorm_strip_end_marker : String = ""
 @export var gpu_timestamp_interleave_begin_marker : String = ""
 @export var gpu_timestamp_interleave_end_marker : String = ""
 # SunshineTestRig alone enables this opt-in reconstruction shortcut.
@@ -241,6 +243,24 @@ var macro_map_slices_dispatched : int = 0
 # world-anchored 2.5D map of the storm shape; the main compute reads it at bindings 24/25, the shadow compute at 11/12.
 const StormProfileMapScript = preload("res://addons/SunshineClouds2/RingStormProfileMap.gd")
 var storm_profile_map = StormProfileMapScript.new()
+# The megastorm strip map (RingMegastormStrip.gd, docs/megastorm-design.md 3.2): a moving-frame near-wall column map; the main compute
+# reads it at bindings 31/32, the shadow compute at 15/16. It stays a 1x1 placeholder until the megastorm is first near.
+const MegastormStripScript = preload("res://addons/SunshineClouds2/RingMegastormStrip.gd")
+var megastorm_strip = MegastormStripScript.new()
+var last_megastorm_strip_texture_generation : int = -1
+var cloud_shadow_strip_generations : Array[int] = [-1, -1, -1, -1]
+# Per-frame megastorm frame from the bridge (set_megastorm_frame): s hi / lo, direction (0 = off), wall travel (double metres), reproject.
+var megastorm_input : Dictionary = {"s_hi": 0.0, "s_lo": 0.0, "dir": 0.0, "travel": 0.0, "reproject": false}
+var previous_callback_megastorm_travel : float = 0.0
+var previous_callback_megastorm_active : bool = false
+# Megastorm prewarm (set_megastorm_prewarm; WO4b): once a megastorm exists anywhere on the ring, the next render callbacks allocate the real
+# strip texture and create the megastorm march variants, so the wall's first approach does not stall on a pipeline compile.
+var megastorm_prewarm_requested : bool = false
+# Diagnostics: worker time spent compiling megastorm march variants in the prewarm (microseconds, cumulative; read by the capture harness).
+var megastorm_prewarm_usec : int = 0
+var _megastorm_prewarm_task : int = -1
+var _megastorm_prewarm_mutex := Mutex.new()
+var _megastorm_prewarm_results : Array = [] # [key, pipeline RID, shader RID] finished on the worker, adopted on the render thread
 
 var positionQueries : Array[Vector3] = []
 var positionQueryCallables : Array[Callable] = []
@@ -250,7 +270,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 316
+const GENERAL_DATA_FLOAT_COUNT := 324
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -934,7 +954,7 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 	var resolution := Vector2i(configuration["resolution"], configuration["resolution"])
 	var want_xfade := bool(configuration.get("crossfade_enabled", false)) and _ensure_cloud_shadow_xfade_pipeline()
 	if cloud_shadow_textures[cascade].is_valid() and cloud_shadow_resolutions[cascade] == resolution and cloud_shadow_uniform_sets[cascade].is_valid() \
-			and cloud_shadow_xfade_active[cascade] == want_xfade:
+			and cloud_shadow_xfade_active[cascade] == want_xfade and cloud_shadow_strip_generations[cascade] == megastorm_strip.texture_generation:
 		return true
 	var texture_format := RDTextureFormat.new()
 	texture_format.texture_type = RenderingDevice.TEXTURE_TYPE_2D
@@ -980,6 +1000,7 @@ func ensure_gpu_cloud_shadow_cascade(cascade: int, configuration: Dictionary) ->
 		cloud_shadow_xfade_buffers[GPU_CLOUD_SHADOW_CASCADES + cascade] = xfade["blend_buffer"]
 		cloud_shadow_xfade_active[cascade] = true
 	cloud_shadow_resolutions[cascade] = resolution
+	cloud_shadow_strip_generations[cascade] = megastorm_strip.texture_generation
 	cloud_shadow_reset_history[cascade] = true
 	cloud_shadow_phase[cascade] = 0
 	cloud_shadow_last_error = ""
@@ -1303,8 +1324,15 @@ func _notification(what):
 	# A bound clear_compute callable targets an object that is being destroyed.
 	# Capture owned resources now; the queued release must not access that object.
 	var device := rd
+	# A megastorm prewarm compile still running uses the shader: finish it, then release what it made with the variants below.
+	if _megastorm_prewarm_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_megastorm_prewarm_task)
+		_megastorm_prewarm_task = -1
+		_megastorm_prewarm_adopt()
 	var storm_map_rids : Array[RID] = storm_profile_map.owned_rids() if storm_profile_map else []
 	var storm_map_set : RID = storm_profile_map.build_set if storm_profile_map else RID()
+	var strip_rids : Array[RID] = megastorm_strip.owned_rids() if megastorm_strip else []
+	var strip_set : RID = megastorm_strip.build_set if megastorm_strip else RID()
 	var sets: Array[RID] = uniform_sets.duplicate()
 	for ring_sets in general_data_uniform_sets:
 		sets.append_array(ring_sets)
@@ -1313,6 +1341,7 @@ func _notification(what):
 	sets.append(_terrain_sun_set)
 	sets.append(macro_map_build_set)
 	sets.append(storm_map_set)
+	sets.append(strip_set)
 	for ring_fill_sets in interleave_fill_sets:
 		sets.append_array(ring_fill_sets)
 	var rids: Array[RID] = []
@@ -1331,6 +1360,7 @@ func _notification(what):
 		macro_map_pipeline, macro_map_shader, macro_map_texture, macro_map_params_buffer,
 		macro_map_build_params_buffer, macro_map_snapshot_buffer, cloud_layers_buffer, cloud_layers_live_buffer])
 	rids.append_array(storm_map_rids)
+	rids.append_array(strip_rids)
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
 	rids.append_array(blit_screen_images)
@@ -1652,6 +1682,7 @@ func initialize_compute():
 	_ensure_cloud_layers_live_buffer()
 	_ensure_macro_map_buffers()
 	storm_profile_map.ensure_resources(rd)
+	megastorm_strip.ensure_resources(rd)
 	
 	var sampler_state = RDSamplerState.new()
 	sampler_state.min_filter = RenderingDevice.SAMPLER_FILTER_NEAREST
@@ -1887,6 +1918,103 @@ func _storm_fallback_pipeline(block: int) -> RID:
 		interleave_main_pipelines[key] = variant
 	return variant
 
+# Main-shader pipeline with RING_MEGASTORM = 1 (the megastorm strip path compiled in; docs/megastorm-design.md 3.2), optionally combined with
+# RING_STORM_FALLBACK. Created on first use (the first time the megastorm wall is near) and stored in interleave_main_pipelines under keys
+# 1000 + block * 2 + fallback, so it is released and reset together with the interleave variants. Untriggered worlds never create it.
+func _megastorm_march_pipeline(block: int, fallback: bool) -> RID:
+	var key := 1000 + block * 2 + (1 if fallback else 0)
+	if interleave_main_pipelines.has(key):
+		return interleave_main_pipelines[key]
+	if not shader.is_valid():
+		return RID()
+	var variant := rd.compute_pipeline_create(shader, _megastorm_constants(block, fallback))
+	if variant.is_valid():
+		interleave_main_pipelines[key] = variant
+	return variant
+
+# Specialization constants of a megastorm march variant (RING_INTERLEAVE = block, RING_STORM_FALLBACK, RING_MEGASTORM = 1).
+func _megastorm_constants(block: int, fallback: bool) -> Array[RDPipelineSpecializationConstant]:
+	var constants : Array[RDPipelineSpecializationConstant] = []
+	if block > 0:
+		var block_constant := RDPipelineSpecializationConstant.new()
+		block_constant.constant_id = 0
+		block_constant.value = block
+		constants.append(block_constant)
+	if fallback:
+		var fallback_constant := RDPipelineSpecializationConstant.new()
+		fallback_constant.constant_id = 1
+		fallback_constant.value = 1
+		constants.append(fallback_constant)
+	var megastorm_constant := RDPipelineSpecializationConstant.new()
+	megastorm_constant.constant_id = 2
+	megastorm_constant.value = 1
+	constants.append(megastorm_constant)
+	return constants
+
+# Called by the bridge once a megastorm exists anywhere on the ring (WO4b; false is never needed: the variants stay until the shader
+# generation retires them). The next render callbacks prewarm everything the wall's first approach would otherwise create mid-flight.
+func set_megastorm_prewarm(enabled : bool) -> void:
+	megastorm_prewarm_requested = enabled
+
+# Megastorm prewarm (WO4b): the real strip texture (its descriptor sets are rebuilt by this callback's accumulation rebuild, one history
+# seed at the trigger instead of on approach), the strip build pipeline, and the megastorm march variants for the full march (block 0: camera
+# motion, history resets) and for the configured interleave block, with the storm map on. A first compile of a march variant takes seconds
+# (the whole cloud kernel), so the variants compile on a WorkerThreadPool task (RenderingDevice pipeline creation is thread safe) and this
+# render-thread hook only adopts the finished ones into interleave_main_pipelines (re-requested if a shader generation retired them). If the
+# wall comes near before the task finishes, _megastorm_march_pipeline compiles the variant in place as before and the duplicate is freed.
+func _megastorm_prewarm() -> void:
+	megastorm_strip.ever_enabled = true
+	megastorm_strip.prewarm(rd)
+	if not shader.is_valid():
+		return
+	if _megastorm_prewarm_task >= 0:
+		if not WorkerThreadPool.is_task_completed(_megastorm_prewarm_task):
+			return
+		WorkerThreadPool.wait_for_task_completion(_megastorm_prewarm_task)
+		_megastorm_prewarm_task = -1
+		_megastorm_prewarm_adopt()
+	# Queue the compile only once the real strip texture is in place: its first allocation rebuilds the accumulation resources, and that
+	# re-creates the main shader, so a compile queued before it would target a retired shader.
+	if not megastorm_strip.real_texture or megastorm_strip.texture_generation != last_megastorm_strip_texture_generation:
+		return
+	var configured_block := 2 if cloud_interleave == 1 else (4 if cloud_interleave >= 2 else 0)
+	var blocks : Array[int] = []
+	for block in [0, configured_block]:
+		if not interleave_main_pipelines.has(1000 + block * 2) and not blocks.has(block):
+			blocks.append(block)
+	if blocks.is_empty():
+		return
+	var jobs : Array = []
+	for block in blocks:
+		jobs.append([1000 + block * 2, _megastorm_constants(block, false)])
+	_megastorm_prewarm_task = WorkerThreadPool.add_task(_megastorm_prewarm_compile.bind(rd, shader, jobs), false, "Megastorm march prewarm")
+
+# WorkerThreadPool task: compiles the queued variants of `shader_rid` and hands each to the render thread (_megastorm_prewarm_adopt).
+func _megastorm_prewarm_compile(device: RenderingDevice, shader_rid: RID, jobs: Array) -> void:
+	for job in jobs:
+		var started := Time.get_ticks_usec()
+		var variant := device.compute_pipeline_create(shader_rid, job[1])
+		_megastorm_prewarm_mutex.lock()
+		_megastorm_prewarm_results.append([job[0], variant, shader_rid])
+		megastorm_prewarm_usec += Time.get_ticks_usec() - started
+		_megastorm_prewarm_mutex.unlock()
+
+# Render thread: adopts finished prewarm variants. One compiled for a retired shader generation goes with that shader (the
+# RenderingDevice frees a shader's pipelines with it); one the approach already compiled in place meanwhile is freed.
+func _megastorm_prewarm_adopt() -> void:
+	_megastorm_prewarm_mutex.lock()
+	var results := _megastorm_prewarm_results.duplicate()
+	_megastorm_prewarm_results.clear()
+	_megastorm_prewarm_mutex.unlock()
+	for result in results:
+		var variant : RID = result[1]
+		if not variant.is_valid():
+			continue
+		if result[2] == shader and shader.is_valid() and not interleave_main_pipelines.has(result[0]):
+			interleave_main_pipelines[result[0]] = variant
+		elif rd and result[2] == shader and shader.is_valid():
+			rd.free_rid(variant)
+
 # Steady light (rgba16f), transient light (rgba16f) and march data (rgba32f) for one view. Sized for the largest block (2x2);
 # a 4x4 block uses the top-left part. 1x1 placeholders while interleave has not been requested.
 func _create_interleave_block_images(raster_size: Vector2i, real: bool) -> Array[RID]:
@@ -2079,7 +2207,14 @@ func _render_callback(effect_callback_type, render_data):
 			# current raymarch, then restore the configured decay next callback.
 			var accumulation_resources_rebuilt := false
 			
-			if size != last_size or uniform_sets == null or uniform_sets.size() != view_count * 4 or color_images.size() == 0 or color_images[0] != buffers.get_color_layer(0) or blit_screen_images.size() == 0 or msaa_mode != last_msaa_mode 					or (cloud_interleave > 0 and not interleave_block_images_real and not interleave_fill_unavailable):
+			# The strip texture is replaced once, the first time the megastorm is near (placeholder -> full size), or when the megastorm is
+			# triggered (prewarm): every descriptor set that binds it is rebuilt through the normal accumulation rebuild (one history seed,
+			# never per frame).
+			if megastorm_prewarm_requested:
+				_megastorm_prewarm()
+			megastorm_strip.ensure_resources(rd)
+			var megastorm_strip_texture_changed : bool = megastorm_strip.texture_generation != last_megastorm_strip_texture_generation
+			if megastorm_strip_texture_changed or size != last_size or uniform_sets == null or uniform_sets.size() != view_count * 4 or color_images.size() == 0 or color_images[0] != buffers.get_color_layer(0) or blit_screen_images.size() == 0 or msaa_mode != last_msaa_mode 					or (cloud_interleave > 0 and not interleave_block_images_real and not interleave_fill_unavailable):
 				accumulation_resources_rebuilt = true
 				previous_callback_gameplay_cloud_frame = {}
 				temporal_history_accumulation_rebuild_count += 1
@@ -2095,6 +2230,8 @@ func _render_callback(effect_callback_type, render_data):
 					temporal_history_last_rebuild_reason = "color_attachment"
 				elif blit_screen_images.size() == 0:
 					temporal_history_last_rebuild_reason = "blit"
+				elif megastorm_strip_texture_changed:
+					temporal_history_last_rebuild_reason = "megastorm_strip"
 				elif msaa_mode == last_msaa_mode:
 					temporal_history_last_rebuild_reason = "interleave"
 				else:
@@ -2374,6 +2511,19 @@ func _render_callback(effect_callback_type, render_data):
 					storm_map_uniform.add_id(storm_profile_map.texture)
 					uniforms_array.append(storm_map_uniform)
 
+					var megastorm_strip_params_uniform = RDUniform.new()
+					megastorm_strip_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					megastorm_strip_params_uniform.binding = 31
+					megastorm_strip_params_uniform.add_id(megastorm_strip.params_buffer)
+					uniforms_array.append(megastorm_strip_params_uniform)
+
+					var megastorm_strip_uniform = RDUniform.new()
+					megastorm_strip_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					megastorm_strip_uniform.binding = 32
+					megastorm_strip_uniform.add_id(linear_sampler_no_repeat)
+					megastorm_strip_uniform.add_id(megastorm_strip.texture)
+					uniforms_array.append(megastorm_strip_uniform)
+
 					var cloud_layers_uniform = RDUniform.new()
 					cloud_layers_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
 					cloud_layers_uniform.binding = 29
@@ -2557,6 +2707,7 @@ func _render_callback(effect_callback_type, render_data):
 			
 			
 			last_size = size
+			last_megastorm_strip_texture_generation = megastorm_strip.texture_generation
 			
 			# Encode a bounded batch before publishing samplePointsCount. Previously
 			# the full queued count could be sent to a 32-element SSBO, which let a
@@ -2571,6 +2722,7 @@ func _render_callback(effect_callback_type, render_data):
 				update_cloud_layers_live()
 			update_macro_weather_map()
 			update_storm_profile_map()
+			update_megastorm_strip()
 			dispatch_gpu_cloud_shadows()
 			update_gpu_cloud_shadow_crossfades()
 			if lights_updated or directional_lights_data.size() == 0:
@@ -2635,6 +2787,11 @@ func _render_callback(effect_callback_type, render_data):
 					var fallback_pipeline := _storm_fallback_pipeline(interleave_active_block)
 					if fallback_pipeline.is_valid():
 						march_pipeline = fallback_pipeline
+				if megastorm_strip.valid:
+					# Megastorm strip valid (the wall is near): the kernel variant with the strip path compiled in (RING_MEGASTORM = 1).
+					var megastorm_pipeline := _megastorm_march_pipeline(interleave_active_block, not storm_profile_map.valid)
+					if megastorm_pipeline.is_valid():
+						march_pipeline = megastorm_pipeline
 				var compute_list = rd.compute_list_begin()
 				rd.compute_list_bind_compute_pipeline(compute_list, march_pipeline)
 				rd.compute_list_bind_uniform_set(compute_list, general_data_uniform_sets[general_data_ring_index][view * 3 + 1], 0)
@@ -3294,6 +3451,28 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 		general_data.encode_float(idx, component); idx += 4
 	for component in [ring_storm_ambient.x, ring_storm_ambient.y, ring_storm_ambient.z, ring_storm_ambient.w]:
 		general_data.encode_float(idx, component); idx += 4
+	# Append-only megastorm frame: ring_megastorm_frame (s hi, s lo, direction, wall shift since the previous callback; direction 0 = off)
+	# then ring_megastorm_noise (travel modulo the large / medium / small noise scales). Travel stays a double end to end.
+	var megastorm_frame := Vector4.ZERO
+	var megastorm_noise := Vector4.ZERO
+	var megastorm_direction : float = megastorm_input["dir"]
+	if megastorm_direction != 0.0:
+		var megastorm_travel : float = megastorm_input["travel"]
+		var megastorm_shift := 0.0
+		if megastorm_input["reproject"] and previous_callback_megastorm_active:
+			megastorm_shift = megastorm_travel - previous_callback_megastorm_travel
+			if absf(megastorm_shift) > 2000.0:
+				megastorm_shift = 0.0
+		megastorm_frame = Vector4(megastorm_input["s_hi"], megastorm_input["s_lo"], megastorm_direction, megastorm_shift)
+		megastorm_noise = Vector4(fposmod(megastorm_travel, maxf(large_noise_scale, 1.0)),
+			fposmod(megastorm_travel, maxf(medium_noise_scale, 1.0)), fposmod(megastorm_travel, maxf(small_noise_scale, 1.0)), 0.0)
+		previous_callback_megastorm_travel = megastorm_travel
+		previous_callback_megastorm_active = true
+	else:
+		previous_callback_megastorm_active = false
+	for component in [megastorm_frame.x, megastorm_frame.y, megastorm_frame.z, megastorm_frame.w,
+			megastorm_noise.x, megastorm_noise.y, megastorm_noise.z, megastorm_noise.w]:
+		general_data.encode_float(idx, component); idx += 4
 	last_engine_jitter_ndc = Vector2(view_proj.z.x, view_proj.z.y)
 	last_engine_jitter_active = jitter_active
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
@@ -3650,6 +3829,26 @@ func set_storm_profile_map(enabled : bool, center_around : float, center_across 
 		Vector4(pillar_radius, anvil_multiplier, anvil_start, shear), mammatus, Vector3(wind_cos, wind_sin, lean_meters),
 		slices, refresh_seconds)
 
+# Called by the bridge every frame (see update_matrices). direction 0 = megastorm off. travel = unwrapped wall position along the around
+# axis in metres (double), used for the moving-frame noise and the history shift.
+func set_megastorm_frame(s_hi : float, s_lo : float, direction : float, travel : float, reproject : bool) -> void:
+	megastorm_input = {"s_hi": s_hi, "s_lo": s_lo, "dir": direction, "travel": travel, "reproject": reproject}
+
+# Called by the bridge at its weather refresh (see RingMegastormStrip.configure). enabled = false skips the strip fetch in the shaders.
+func set_megastorm_strip(enabled : bool, t : float, level : float, strength : float, seed : float, width : float, bow : float,
+		meander_amp : float, meander_wavelength : float, meander_phase : float, ceiling : float, datum : float,
+		slices : int, refresh_seconds : float) -> void:
+	megastorm_strip.configure(enabled, t, level, strength, seed, width, bow, meander_amp, meander_wavelength, meander_phase,
+		ceiling, datum, slices, refresh_seconds)
+
+func update_megastorm_strip() -> void:
+	var begin_marker := ""
+	var end_marker := ""
+	if gpu_timestamp_diagnostics_enabled:
+		begin_marker = gpu_timestamp_megastorm_strip_begin_marker
+		end_marker = gpu_timestamp_megastorm_strip_end_marker
+	megastorm_strip.update(rd, begin_marker, end_marker)
+
 func update_storm_profile_map() -> void:
 	var begin_marker := ""
 	var end_marker := ""
@@ -3791,6 +3990,17 @@ func _build_cloud_shadow_uniform_set(output_texture: RID, param_buffer: RID) -> 
 	storm_map_uniform.add_id(linear_sampler_no_repeat)
 	storm_map_uniform.add_id(storm_profile_map.texture)
 	uniforms.append(storm_map_uniform)
+	var megastorm_strip_params_uniform := RDUniform.new()
+	megastorm_strip_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	megastorm_strip_params_uniform.binding = 15
+	megastorm_strip_params_uniform.add_id(megastorm_strip.params_buffer)
+	uniforms.append(megastorm_strip_params_uniform)
+	var megastorm_strip_uniform := RDUniform.new()
+	megastorm_strip_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	megastorm_strip_uniform.binding = 16
+	megastorm_strip_uniform.add_id(linear_sampler_no_repeat)
+	megastorm_strip_uniform.add_id(megastorm_strip.texture)
+	uniforms.append(megastorm_strip_uniform)
 	# S6 cloud layers: the live layer table block and the layer height gradient (the main march's bindings 29 / 30).
 	_ensure_cloud_layers_live_buffer()
 	_ensure_layer_gradient()

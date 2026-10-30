@@ -199,8 +199,7 @@ public partial class RingDistantRainCurtains : Node3D
         c.Sampled = true;
         c.Precipitation = weather.PrecipitationPotential;
         c.Wind = weather.WindMetersPerSecond;
-        bool naturalFront = weather.SystemKind is RingVolumetricCloudLayer.WeatherSystemKind.MajorFront
-            or RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront;
+        bool naturalFront = RingVolumetricCloudLayer.IsFrontKind(weather.SystemKind);
         (double cloudBase, double cloudTop) = PrecipitationAltitude.ResolveCloudBounds(weather.SystemId, naturalFront,
             weather.CloudBaseAltitudeMeters, weather.CloudTopAltitudeMeters, _sunshine!.FixedCloudAltitudeDatumMeters,
             _sunshine.NaturalCloudBaseAltitudeMeters, _sunshine.NaturalCloudTopAltitudeMeters, _sunshine.StormFrontCloudBaseAltitudeMeters);

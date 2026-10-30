@@ -24,6 +24,7 @@
 [ext_resource type="Script" uid="uid://cpc5ha57npjpq" path="res://scripts/Voxel/LOD/RingTerrainMinimap.cs" id="22"]
 [ext_resource type="Script" uid="uid://dgyclc1eeg4nl" path="res://scripts/RingVolumetricCloudLayer.cs" id="23"]
 [ext_resource type="Script" uid="uid://dy0ghjo3cmywq" path="res://scripts/Voxel/Save/RingWorldSaveManager.cs" id="24"]
+[ext_resource type="Script" path="res://scripts/Weather/Megastorm/RingMegastorm.cs" id="megastorm_script"]
 [ext_resource type="Script" uid="uid://duu22c4card0s" path="res://scripts/RingAmbientOcclusionController.cs" id="25"]
 [ext_resource type="Script" uid="uid://drmnaq0urpjcn" path="res://scripts/ui/RingPresentationHud.cs" id="26"]
 [ext_resource type="Script" uid="uid://d01x5wi1ycbc8" path="res://scripts/ui/RingShortsCaptureDirector.cs" id="27"]
@@ -618,6 +619,9 @@ script = ExtResource("32")
 [node name="RingVolumetricClouds" type="Node3D" parent="." unique_id=1514532413]
 script = ExtResource("23")
 SunshineCloudsPrimaryRenderer = true
+
+[node name="RingMegastorm" type="Node" parent="."]
+script = ExtResource("megastorm_script")
 
 [node name="SunshineCloudsDriver" type="Node" parent="." unique_id=1176026951 node_paths=PackedStringArray("tracked_directional_lights", "tracked_point_lights")]
 script = ExtResource("34")

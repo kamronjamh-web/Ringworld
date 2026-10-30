@@ -371,6 +371,12 @@ struct GenericData{
 	// Append-only per-ray storm ambient (storm profile map, docs/storm-revamp-s4-sculpt-v2-design.md WO-V3): rgb = the dark storm ambient colour,
 	// w = strength (Storm darkness; 0 disables). The march darkens the ambient by the storm share of each ray's opacity.
 	vec4 ring_storm_ambient;
+	// Append-only megastorm moving frame (docs/megastorm-design.md 3.2, 3.6; WO4). All zero = no megastorm: every megastorm branch is skipped.
+	// frame: x = s(t) (absolute canonical around of the reference line) as a float, y = the double remainder s - x, z = direction (+1 / -1;
+	//        0 = off), w = the wall's world shift along +around since the previous callback (m; 0 = reprojection term off)
+	// noise: x / y / z = moving-frame offsets of the large / medium / small detail noise along around (m, wrapped by each noise scale), w = 0
+	vec4 ring_megastorm_frame;
+	vec4 ring_megastorm_noise;
 };
 
 struct DirectionalLight {

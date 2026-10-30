@@ -35,7 +35,9 @@ public partial class RingVolumetricCloudLayer : Node3D
         CumulusCluster = 1,
         CloudBank = 2,
         MajorFront = 3,
-        ExceptionalFront = 4
+        ExceptionalFront = 4,
+        /// <summary>The scripted megastorm's wall and anvil records (docs/megastorm-design.md); 5 is reserved for the superstorm class. Never produced by TryBuildWeatherSystem.</summary>
+        Megastorm = 6
     }
 
     public readonly record struct LocalWeatherState(
@@ -3279,6 +3281,12 @@ public partial class RingVolumetricCloudLayer : Node3D
     private LocalWeatherState QueryRawWeatherAtTime(
         in RingCanonicalPosition position,
         double timeSeconds, bool windHistory = false, bool ignoreManual = false)
+        => QueryRawWeatherCore(position, timeSeconds, windHistory, ignoreManual, true);
+
+    /// <summary>QueryRawWeatherAtTime with the megastorm switch (kept separate so the reflection-bound fingerprint signature stays unchanged); the far atlases pass false.</summary>
+    private LocalWeatherState QueryRawWeatherCore(
+        in RingCanonicalPosition position,
+        double timeSeconds, bool windHistory, bool ignoreManual, bool includeMegastorm)
     {
         if (_grid == null) return default;
         timeSeconds = double.IsFinite(timeSeconds) ? Math.Max(0.0, timeSeconds) : 0.0;
@@ -3310,7 +3318,8 @@ public partial class RingVolumetricCloudLayer : Node3D
             timeSeconds,
             seed,
             0.0f,
-            _queryWeatherSystemsScratch ??= new List<WeatherSystemDefinition>());
+            _queryWeatherSystemsScratch ??= new List<WeatherSystemDefinition>(),
+            includeMegastorm);
         MacroWeatherSample macro = EvaluateMacroWeather(
             position.AroundMeters,
             position.AcrossMeters,
@@ -3498,6 +3507,11 @@ public partial class RingVolumetricCloudLayer : Node3D
         int seed,
         in MacroWeatherSample macro)
     {
+        // Megastorm bundle records carry fixed profiles (docs/megastorm-design.md 3.2): the wall and anvil are Cumulonimbus to the CPU weather, the
+        // trailing deck Nimbostratus and the precursor Altostratus, whatever the cell hash rolls.
+        if (macro.Kind == WeatherSystemKind.Megastorm) return CloudFormationProfile.Cumulonimbus;
+        if (macro.SystemId == MegastormModel.TrailingRecordId) return CloudFormationProfile.Nimbostratus;
+        if (macro.SystemId == MegastormModel.PrecursorRecordId) return CloudFormationProfile.Altostratus;
         float roll = Hash01(aroundCell, acrossCell, seed, 13);
         float precipitation = macro.PrecipitationPotential * macro.StrongestInfluence;
         return macro.Kind switch
@@ -3668,7 +3682,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         chance += macro.Kind switch
         {
             WeatherSystemKind.MajorFront => 0.10f,
-            WeatherSystemKind.ExceptionalFront => 0.22f,
+            WeatherSystemKind.ExceptionalFront or WeatherSystemKind.Megastorm => 0.22f,
             _ => 0.0f
         };
         if (Hash01(aroundCell, acrossCell, seed, 11) > Mathf.Clamp(chance, 0.0f, 0.75f))
@@ -3676,7 +3690,7 @@ public partial class RingVolumetricCloudLayer : Node3D
 
         float maximum = Mathf.Clamp(MaximumMultiCellFormationScale, 1.5f, 8.0f);
         float tail = Hash01(aroundCell, acrossCell, seed, 12);
-        float exponent = macro.Kind == WeatherSystemKind.ExceptionalFront ? 1.8f : 3.1f;
+        float exponent = macro.Kind is WeatherSystemKind.ExceptionalFront or WeatherSystemKind.Megastorm ? 1.8f : 3.1f;
         return Mathf.Lerp(1.55f, maximum, Mathf.Pow(tail, exponent));
     }
 
@@ -3790,7 +3804,8 @@ public partial class RingVolumetricCloudLayer : Node3D
         double timeSeconds,
         int seed,
         float queryRadiusMeters,
-        List<WeatherSystemDefinition>? reuse = null)
+        List<WeatherSystemDefinition>? reuse = null,
+        bool includeMegastorm = true)
     {
         var systems = reuse ?? new List<WeatherSystemDefinition>();
         systems.Clear();
@@ -3823,6 +3838,8 @@ public partial class RingVolumetricCloudLayer : Node3D
                 systems.Add(system);
         }
 
+        if (includeMegastorm && MegastormSource != null)
+            AppendMegastormSystems(centerAroundMeters, centerAcrossMeters, timeSeconds, queryRadiusMeters, systems);
         return systems;
     }
 
@@ -3836,8 +3853,11 @@ public partial class RingVolumetricCloudLayer : Node3D
     public const uint RenderWeatherFlagLowersBase = 16u;     // bit4: the system lowers the low layer's base to the weather base (CloudLayerTable genus row); drives the macro map's weatherness
     public const uint RenderWeatherFlagFront = 32u;          // bit5: MajorFront / ExceptionalFront kind: a non-sculpt front darkens the storm light D by its rain (RingMacroWeatherMap.glsl storm-light layer, S0 doc)
 
-    /// <summary>Front kinds (MajorFront, ExceptionalFront): when they are not storm sculpt systems, their rain drives the storm light D (S0 "fronts dark by rain").</summary>
-    public static bool IsFrontKind(WeatherSystemKind kind) => kind is WeatherSystemKind.MajorFront or WeatherSystemKind.ExceptionalFront;
+    /// <summary>Front kinds (MajorFront, ExceptionalFront, Megastorm): when they are not storm sculpt systems, their rain drives the storm light D (S0 "fronts dark by rain"); their rain falls from the storm-front base.</summary>
+    public static bool IsFrontKind(WeatherSystemKind kind) => kind is WeatherSystemKind.MajorFront or WeatherSystemKind.ExceptionalFront or WeatherSystemKind.Megastorm;
+
+    /// <summary>Severe kinds (ExceptionalFront and above, including the Megastorm): the arrival kind weight, the haze onset and the sprite chance already switch on the same ordering.</summary>
+    public static bool IsSevere(WeatherSystemKind kind) => kind >= WeatherSystemKind.ExceptionalFront;
 
     // New salts: the per-system rolls must never alias the per-camera-cell rolls (13/14/15) or the weather salts (100-114, 117+).
     private const int SystemProfileSalt = 213;
@@ -3893,7 +3913,8 @@ public partial class RingVolumetricCloudLayer : Node3D
         double time,
         List<RenderWeatherSystem> output,
         float altitudeDatumMeters = 0.0f,
-        float stormFrontBaseMeters = 500.0f)
+        float stormFrontBaseMeters = 500.0f,
+        bool includeMegastorm = true)
     {
         if (_grid == null || output == null) return 0;
         time = double.IsFinite(time) ? Math.Max(0.0, time) : 0.0;
@@ -3972,6 +3993,9 @@ public partial class RingVolumetricCloudLayer : Node3D
             appended++;
         }
 
+        // The megastorm bundle (docs/megastorm-design.md 3.2): slab records, appended after the natural systems. The far atlases pass includeMegastorm = false.
+        if (includeMegastorm && MegastormSource != null)
+            appended += AppendMegastormSystems(center, radiusMeters, time, output, altitudeDatumMeters, stormFrontBaseMeters);
         return appended;
     }
 
@@ -3981,7 +4005,7 @@ public partial class RingVolumetricCloudLayer : Node3D
     /// genus row (docs/storm-revamp-s6-cloud-layers-design.md section 3.8).
     /// </summary>
     public static bool IsStormSculptProfile(CloudFormationProfile profile)
-        => profile is CloudFormationProfile.StormTower or CloudFormationProfile.Cumulonimbus;
+        => profile is CloudFormationProfile.StormTower or CloudFormationProfile.Cumulonimbus or CloudFormationProfile.MegastormWall;
 
     private RenderWeatherSystem BuildNaturalRenderSystem(
         in WeatherSystemDefinition system, int aroundCell, int acrossCell, int seed, double time,
@@ -3990,7 +4014,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         // Density/precipitation arrive scaled by the lifecycle envelope. The profile must be a property of the whole
         // system for its whole life, so roll it from the mature (unscaled) values.
         WeatherLifecycle lifecycle = EvaluateWeatherLifecycle(aroundCell, acrossCell, seed, time);
-        float envelope = Math.Max(0.0001f, lifecycle.Envelope);
+        float envelope = Math.Max(0.0001f, EffectiveSystemEnvelope(system, lifecycle.Envelope, time));   // megastorm suppression (4.3); identity when none
         float matureDensity = Mathf.Min(1.0f, system.Density / envelope);
         float maturePrecipitation = Mathf.Min(1.0f, system.PrecipitationPotential / envelope);
         CloudFormationProfile profile = ResolveSystemFormationProfile(
@@ -4301,20 +4325,32 @@ public partial class RingVolumetricCloudLayer : Node3D
                     WeatherHash01(systemAroundCell, systemAcrossCell, seed, lifecycle.Generation, 108)),
                 _ => 0.0f
             };
+            // Megastorm suppression (docs/megastorm-design.md 4.3): the lifecycle envelope times (1 - S) at the system's advected centre. Exactly the
+            // lifecycle envelope, bit for bit, while no megastorm source is installed or S is 0.
+            float envelope = lifecycle.Envelope;
+            if (MegastormSource != null)
+            {
+                float suppression = MegastormSuppressionAtSource(centerAround, centerAcross, timeSeconds);
+                if (suppression > 0.0f)
+                {
+                    envelope *= 1.0f - suppression;
+                    if (envelope <= 0.0001f) return false;
+                }
+            }
             system = new WeatherSystemDefinition(
                 WeatherSystemIdForGeneration(systemAroundCell, systemAcrossCell, seed, lifecycle.Generation),
                 kind,
                 centerAround,
                 centerAcross,
-                majorRadius * lifecycle.Envelope,
-                minorRadius * lifecycle.Envelope,
+                majorRadius * envelope,
+                minorRadius * envelope,
                 orientation,
                 Mathf.Cos(orientation),
                 Mathf.Sin(orientation),
-                1.0 / Math.Max(1.0, majorRadius * lifecycle.Envelope * majorRadius * lifecycle.Envelope),
-                1.0 / Math.Max(1.0, minorRadius * lifecycle.Envelope * minorRadius * lifecycle.Envelope),
-                density * lifecycle.Envelope,
-                precipitation * lifecycle.Envelope);
+                1.0 / Math.Max(1.0, majorRadius * envelope * majorRadius * envelope),
+                1.0 / Math.Max(1.0, minorRadius * envelope * minorRadius * envelope),
+                density * envelope,
+                precipitation * envelope);
         return true;
     }
 

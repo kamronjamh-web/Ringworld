@@ -20,7 +20,11 @@ public enum CloudFormationProfile
     Altostratus = 7,
     Altocumulus = 8,
     Stratus = 9,
-    Nimbostratus = 10
+    Nimbostratus = 10,
+    /// <summary>Megastorm wall and leading anvil (docs/megastorm-design.md 3.2): a sculpt body drawn from the moving-frame strip map, never from the storm profile bake. Shader profile 12.</summary>
+    MegastormWall = 12,
+    /// <summary>Megastorm trailing stratiform deck (record T): a closed Ns deck with the Cs sheet above, drawn by the S6 layers (genus table row).</summary>
+    MegastormTrailing = 13
 }
 
 public static class CloudFormationProfiles
@@ -44,6 +48,8 @@ public static class CloudFormationProfiles
         CloudFormationProfile.StormTower => 2,
         CloudFormationProfile.Cumulonimbus => 3,
         CloudFormationProfile.Nimbostratus => 2,
+        CloudFormationProfile.MegastormWall => 12,
+        CloudFormationProfile.MegastormTrailing => 2,
         CloudFormationProfile.Stratocumulus
             or CloudFormationProfile.Cirrostratus
             or CloudFormationProfile.Altostratus

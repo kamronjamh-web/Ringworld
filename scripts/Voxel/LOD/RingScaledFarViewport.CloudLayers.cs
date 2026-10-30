@@ -266,10 +266,10 @@ public partial class RingScaledFarViewport
                 // Any system whose support reaches a texel of this column is within W/2 + one texel of the column's centre line.
                 _farFineColumnSystems.Clear();
                 _weatherSource!.CollectRenderWeatherSystems(new RingCanonicalPosition(around, 0.0, 0.5 * RingWidthMeters), 0.5 * RingWidthMeters + _farFineBuildTexel,
-                    _farFineBuildSnapshotTime, _farFineColumnSystems, 0.0f, 500.0f);
+                    _farFineBuildSnapshotTime, _farFineColumnSystems, 0.0f, 500.0f, includeMegastorm: false);
             }
             float coverage = _weatherSource?.QueryLocalWeatherCoverageAtTime(
-                new RingCanonicalPosition(around, 0.0, across), _farFineBuildSnapshotTime).CloudCoverage ?? 0.0f;
+                new RingCanonicalPosition(around, 0.0, across), _farFineBuildSnapshotTime, includeMegastorm: false).CloudCoverage ?? 0.0f;
             Vector4 layers = ComputeFarLayerSample(around, across, _farFineBuildSnapshotTime, coverage, DebugFarFineExact ? null : _farFineColumnSystems);
             int pixel = (y * FarFineAtlasWidth + x) * 4;
             _farFinePixels[pixel] = Rgba8Channel(layers.X);
@@ -291,7 +291,7 @@ public partial class RingScaledFarViewport
                 double a = _farFineBuildOrigin + (vx + 0.5) * _farFineBuildTexel;
                 a -= circumference * Math.Floor(a / circumference);
                 double c = (vy + 0.5) * acrossTexel;
-                float cov = _weatherSource!.QueryLocalWeatherCoverageAtTime(new RingCanonicalPosition(a, 0.0, c), _farFineBuildSnapshotTime).CloudCoverage;
+                float cov = _weatherSource!.QueryLocalWeatherCoverageAtTime(new RingCanonicalPosition(a, 0.0, c), _farFineBuildSnapshotTime, includeMegastorm: false).CloudCoverage;
                 Vector4 l = ComputeFarLayerSample(a, c, _farFineBuildSnapshotTime, cov, null);
                 int px = (vy * FarFineAtlasWidth + vx) * 4;
                 int d = Math.Max(Math.Max(Math.Abs(_farFinePixels[px] - Rgba8Channel(l.X)), Math.Abs(_farFinePixels[px + 1] - Rgba8Channel(l.Y))),
@@ -521,7 +521,7 @@ public partial class RingScaledFarViewport
         else
         {
             systems.Clear();
-            _weatherSource.CollectRenderWeatherSystems(new RingCanonicalPosition(around, 0.0, across), 0.0, time, systems, 0.0f, 500.0f);
+            _weatherSource.CollectRenderWeatherSystems(new RingCanonicalPosition(around, 0.0, across), 0.0, time, systems, 0.0f, 500.0f, includeMegastorm: false);
         }
         var layerSystems = _farLayerScratchLayerSystems;
         layerSystems.Clear();

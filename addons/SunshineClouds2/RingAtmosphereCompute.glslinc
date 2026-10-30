@@ -19,6 +19,26 @@ void ring_cloud_atmosphere_haze_physical(vec3 ray_origin, vec3 ray_direction, fl
 	S = haze.S_sun + haze.S_amb;
 }
 
+// Megastorm path shade (docs/megastorm-design.md 2.3; WO4b): the haze in front of a cloud whose view path runs under the megastorm's anvil
+// and wall. That air is in the column's shadow, so its sun in-scatter is gone, and the overhang hides most of the sky that lights it, so
+// its ambient in-scatter dims too. `shade` (0..1) is the shaded share of the path (the march's ring_megastorm_path_shade) and
+// `strength` the Storm darkness the storm light uses (genericData ring_storm_ambient.w). The ambient in-scatter takes the storm-light path
+// rule's sky factor at level L = shade (materials/ring_atmosphere.gdshaderinc ring_haze_apply_storm_path: x (1 - 0.97 s L)); the sun
+// in-scatter goes with the shaded share itself (x (1 - s L)): an umbra, where the terrain rule fades it with the storm level.
+// Callers take this only while shade > 0; with shade 0 it is ring_cloud_atmosphere_apply below.
+vec3 ring_cloud_atmosphere_apply_shaded(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16], float shade, float strength) {
+	float level = clamp(shade, 0.0, 1.0) * clamp(strength, 0.0, 1.0);
+	if (ring_haze_profile_physical(p)) {
+		if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return color;
+		vec3 target = ray_origin + normalize(ray_direction) * distance_m;
+		RingHaze haze = ring_haze_from_profile(target, ray_origin, p, ring_haze_profile_day(p));
+		return color * haze.T + haze.S_sun * (1.0 - level) + haze.S_amb * (1.0 - 0.97 * level);
+	}
+	// Legacy: the haze colour is all in-scatter; it dims like the ambient term.
+	vec4 haze = ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p);
+	return mix(color, haze.rgb * (1.0 - 0.97 * level), haze.a);
+}
+
 // Applies the active haze model to a cloud colour. Legacy is the pre-P2b mix(color, haze.rgb, haze.a), bit for bit.
 vec3 ring_cloud_atmosphere_apply(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16]) {
 	if (ring_haze_profile_physical(p)) {

@@ -5,5 +5,6 @@ func _initialize():
   quit(1))
  var driver=load("res://tools/SharedWindCoreTests.cs").new()
  var result=driver.Run()
- print("SHARED_WIND_CORE=",result)
- quit(0 if result.get("passed",false) else 1)
+ var ok = bool(result.get("passed",false))
+ print("SHARED_WIND_CORE=%s %s" % ["PASS" if ok else "FAIL", JSON.stringify(result)])
+ quit(0 if ok else 1)

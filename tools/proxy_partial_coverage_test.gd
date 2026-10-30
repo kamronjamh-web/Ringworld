@@ -6,5 +6,6 @@ func _init() -> void:
 	var sector: Node = SECTOR.new()
 	var result: Dictionary = sector.call("RunPartialCoverageMeshCullingContractTest")
 	sector.free()
-	print("PROXY_PARTIAL_COVERAGE_TEST=" + JSON.stringify(result))
-	quit(0 if bool(result.get("passed", false)) else 1)
+	var ok := bool(result.get("passed", false))
+	print("PROXY_PARTIAL_COVERAGE_TEST=%s %s" % ["PASS" if ok else "FAIL", JSON.stringify(result)])
+	quit(0 if ok else 1)

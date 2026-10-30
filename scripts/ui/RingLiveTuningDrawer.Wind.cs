@@ -19,6 +19,7 @@ public partial class RingLiveTuningDrawer
             : GameplayWindDefaults.StartupDefaults ?? new GameplayWindDefaults();
         _windDefaults.Initialize();
         InitializeStormArrivalTuning();
+        InitializeMegastormTuning();
     }
     private void BuildWindTab(TabContainer tabs)
     {
@@ -106,11 +107,13 @@ public partial class RingLiveTuningDrawer
         bool saved = _windDefaults?.Save() ?? true;
         if (_grassDefaults != null) saved = FlushGrassDefaults() && saved;
         saved = FlushStormArrivalDefaults() && saved;
+        saved = FlushMegastormDefaults() && saved;
         UpdateWindSaveStatus(); return saved;
     }
     private void ProcessWindTuning(double delta)
     {
         ProcessStormArrivalTuning(delta);
+        ProcessMegastormTuning(delta);
         if (_open)
         {
             _windRuntimeRefreshDelay -= delta;
@@ -142,6 +145,7 @@ public partial class RingLiveTuningDrawer
     {
         if (_drawer != null) RefreshWindControlsRecursive(_drawer);
         RefreshStormArrivalControls();
+        RefreshMegastormControls();
         UpdateWindSaveStatus();
         UpdateWindRuntimeStatus();
     }

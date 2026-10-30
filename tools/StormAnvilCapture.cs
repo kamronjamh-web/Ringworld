@@ -138,7 +138,7 @@ public partial class StormAnvilCapture : RefCounted
         // amort = mean * n / frames: the per-frame cost of scopes that only run on some frames (map slices).
         int frames = 1;
         foreach (var row in snapshot.Rows) if (row.Gpu && row.Name == "GPU.Clouds") frames = Math.Max(1, row.Count);
-        foreach (string name in new[] { "GPU.Clouds", "GPU.CloudRaymarch", "GPU.CloudPrepass", "GPU.CloudReconstruct", "GPU.CloudComposite", "GPU.CloudShadowNear", "GPU.CloudShadowFar", "GPU.CloudMacroMap", "GPU.CloudStormMap" })
+        foreach (string name in new[] { "GPU.Clouds", "GPU.CloudRaymarch", "GPU.CloudPrepass", "GPU.CloudReconstruct", "GPU.CloudComposite", "GPU.CloudShadowNear", "GPU.CloudShadowFar", "GPU.CloudMacroMap", "GPU.CloudStormMap", "GPU.CloudMegastormStrip" })
             foreach (var row in snapshot.Rows)
                 if (row.Gpu && row.Name == name) parts.Add($"{name}=mean {row.MeanMilliseconds:F3} p95 {row.P95Milliseconds:F3} n {row.Count} amort {row.MeanMilliseconds * row.Count / frames:F3}");
         var gpu = new System.Collections.Generic.List<double>();

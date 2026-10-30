@@ -553,6 +553,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         VBoxContainer showcase = TuningMenuUi.CreateSection(tab, "Showcase"); AddCloudShowcaseControls(showcase);
         BuildRainHazeControls(tab);
         BuildWetWorldControls(tab);
+        BuildMegastormControls(tab);
         AddCloudDefaultsFooter(tab);
         AddCloudProviderControls(TuningMenuUi.CreateSection(tab, "Provider"));
     }

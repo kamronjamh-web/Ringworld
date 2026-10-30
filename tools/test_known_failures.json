@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "note": "Known failures, quarantined and flaky tests (design section 6.1). A failure counts as known only if it matches `match`; optional \"machines\" scopes an entry. Reference machine: RTX 4070 desktop (desktop_mid_high). sunshine_shadow_slice_equivalence_test was unverified and passed 3 of 3 WO4 runs (SLICE_EQUIVALENCE identical=true), so it was removed from this list.",
+  "note": "Known failures, quarantined and flaky tests (design section 6.1). A failure counts as known only if it matches `match`; optional \"machines\" scopes an entry. Reference machine: RTX 4070 desktop (desktop_mid_high). sunshine_shadow_slice_equivalence_test was unverified and passed 3 of 3 WO4 runs (SLICE_EQUIVALENCE identical=true), so it was removed from this list; it is back as flaky (crash after PASS on main, 2026-10-30). flaky with retries 0 = tolerate a matching intermittent failure without a retry.",
   "failures": {
     "generated_output_policy_test": {
       "status": "known-fail",
@@ -111,10 +111,60 @@
       "since": "2026-10-29"
     },
     "opposite_ring_lightning_visual_smoke_test": {
-      "status": "known-fail",
+      "status": "flaky",
       "match": "lacked localized positive contrast",
-      "evidence": "batch close record: the same localized-contrast check fails on e2485b7 (head_gpu)",
+      "retries": 0,
+      "evidence": "batch close record: the same localized-contrast check fails on e2485b7 (head_gpu). Intermittent, not fixed: 2026-10-30 passed on main b8b175a (worktree, mainbase 083004) and in WO3's megastorm3b run, but failed with the same message on the megastorm tree (megastorm 050118 and 083409). retries 0: a pass is a pass, a matching failure is known-fail",
       "since": "2026-10-29"
+    },
+    "menu_continue_transition_test": {
+      "status": "known-fail",
+      "match": "pose jumped [0-9.]+ m when the scripted flight ended",
+      "evidence": "2026-10-30 (RTX 4070): case=main fails identically on main b8b175a (worktree) and on the megastorm tree: end_jump=246850.646 m (limit 2.0), MENU_UNLOCK reason=cap; the ground/prep cases pass. Depends on the local real save slots 1 and 2 the script copies",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "cloud_shadow_crossfade_test": {
+      "status": "flaky",
+      "match": "CLOUD_SHADOW_CROSSFADE=PASS",
+      "retries": 0,
+      "evidence": "Teardown crash after PASS (exit -1073741819 after the 2DArray/'us is null' uniform errors, storm-revamp-plan.md Deferred). 2026-10-30 (RTX 4070): main b8b175a worktree 2 of 2 runs crashed after PASS; megastorm tree crashed 2 of 3. The match only covers a crash after the PASS marker; a FAIL or a crash before PASS stays new",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "weather_lifecycle_visual_smoke_test": {
+      "status": "flaky",
+      "match": "WEATHER_LIFECYCLE_VISUAL=PASS",
+      "retries": 0,
+      "evidence": "Teardown crash after PASS (exit -1073741819 after the 2DArray/'us is null' uniform errors, storm-revamp-plan.md Deferred). 2026-10-30 (RTX 4070): main b8b175a worktree 2 of 2 runs crashed after PASS; megastorm tree 3 of 3. The match only covers a crash after the PASS marker",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "precip_occlusion_gpu_test": {
+      "status": "flaky",
+      "match": "PRECIP_OCCLUSION_GPU=PASS",
+      "retries": 0,
+      "evidence": "Exit crash after PASS (exit -1073741819, no 2DArray errors; synthetic fixture, no world scene). 2026-10-30 (RTX 4070): main b8b175a worktree 2 of 2 runs crashed after PASS; megastorm tree 2 of 3. The match only covers a crash after the PASS marker",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "sunshine_shadow_slice_equivalence_test": {
+      "status": "flaky",
+      "match": "SUNSHINE_SHADOW_SLICE_EQUIVALENCE=PASS",
+      "retries": 0,
+      "evidence": "Teardown crash after PASS (exit -1073741819 after the 2DArray/'us is null' uniform errors). Passed 3 of 3 WO4 runs, but 2026-10-30 (RTX 4070): main b8b175a worktree crashed after PASS 1 of 2 runs; megastorm tree crashed 2 of 3 in full runs. The match only covers a crash after the PASS marker",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
     },
     "sunshine_inside_cloud_seam_test": {
       "status": "quarantined",
@@ -152,6 +202,16 @@
       "evidence": "WO6 baseline 2026-10-30 (RTX 4070): 1 fail in 6 runs, CPU-vs-GPU map texel (193,113) differs by 1; passed both before-repeat and both after-change runs",
       "retries": 1,
       "since": "2026-10-30"
+    },
+    "megastorm_capture": {
+      "status": "flaky",
+      "match": "MEGASTORM_CAPTURE=PASS",
+      "retries": 0,
+      "evidence": "Teardown crash after PASS (exit -1073741819 after the 2DArray/'us is null' uniform errors, the class of cloud_shadow_crossfade_test and weather_lifecycle_visual_smoke_test). Predates WO4b: the WO4 lead's 'megastorm perf' capture (scratch round2.log, 2026-10-30 11:1x) and its first after1 capture exited -1073741819 after PASS. 2026-10-30 WO4b (RTX 4070): 9 of 23 capture runs crashed after PASS, with and without the megastorm prewarm and with the WO4 shaders (megaperfA2). The match only covers a crash after the PASS marker",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
     }
   }
 }

@@ -43,6 +43,11 @@
 #ifndef RING_WS_MASK_LOWERS_BASE
 #define RING_WS_MASK_LOWERS_BASE 0
 #endif
+// Megastorm strip path compiled in (docs/megastorm-design.md 3.2). The main compute ties it to its specialization constant 2; other includers
+// keep it on (uniform-gated by the strip's valid flag).
+#ifndef RING_MEGASTORM_ENABLED
+#define RING_MEGASTORM_ENABLED true
+#endif
 
 // True storm support (S6 section 3.3): the bake's canopy reaches past the ellipse (`canopyMask` fades out at 1.25x and the ragged edge
 // adds up to 0.15 of the normalised distance, so the footprint ends before 1.45x). Every emptiness test on a sculpt system's footprint
@@ -223,6 +228,9 @@ vec2 g_ws_sub_band = vec2(0.0);
 // Column mode (ring_ws_update_sub_mask with mapColumn): map storms in reach of the primary are kept out of g_ws_sub_mask and flagged
 // here instead; the includer fetches their baked column once and treats it as their exact extent (see ring_ws_update_sub_mask).
 bool g_ws_sub_map_storm = false;
+// The megastorm records (profile 12, MegastormWall) are always column systems: their column comes from the moving-frame megastorm strip
+// (RingStormProfileSample.glslinc), so they never enter g_ws_sub_mask; this says one is in reach of the primary.
+bool g_ws_sub_strip = false;
 
 // Perf-diagnostic bit mask (bridge CameraIndependentDebugMask, header1.z; 0 = normal): 1 background band only (no ray intervals,
 // no sub-mask band widening), 2 no sculpt systems, 4 skip the ray mask, 8 constant macro, 16 light march breaks on the background
@@ -336,6 +344,7 @@ void ring_ws_update_sub_mask(vec3 canonical, float reachMeters, vec2 backgroundB
 	uvec2 sub = uvec2(0u);
 	vec2 band = backgroundBand;
 	bool mapStorm = false;
+	bool strip = false;
 	float owned = 0.0;
 	float circumference = ring_ws_circumference();
 	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
@@ -352,8 +361,10 @@ void ring_ws_update_sub_mask(vec3 canonical, float reachMeters, vec2 backgroundB
 			owned = max(owned, ring_ws_storm_owned_weight(q));
 			if (dot(q, q) <= limit * limit) {
 				int profile = int(round(ringWeatherSystems.systems[index].c.z));
-				bool column = mapColumn && (profile == 2 || profile == 3);
-				if (column) mapStorm = true;
+				bool stripColumn = RING_MEGASTORM_ENABLED && profile == 12;
+				bool column = stripColumn || (mapColumn && (profile == 2 || profile == 3));
+				if (stripColumn) strip = true;
+				else if (column) mapStorm = true;
 				else sub |= ring_ws_bit(index);
 				if (widenBand) {
 					vec2 own = ring_ws_system_band(index, backgroundBand);
@@ -365,6 +376,7 @@ void ring_ws_update_sub_mask(vec3 canonical, float reachMeters, vec2 backgroundB
 	g_ws_sub_mask = sub;
 	g_ws_sub_band = band;
 	g_ws_sub_map_storm = mapStorm;
+	g_ws_sub_strip = strip;
 	g_ws_storm_owned = owned;
 }
 

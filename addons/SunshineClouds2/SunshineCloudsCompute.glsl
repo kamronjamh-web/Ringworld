@@ -24,6 +24,19 @@ layout(constant_id = 0) const int RING_INTERLEAVE = 0;
 // baked storm profile map), 1 = HEAD's pillar/anvil lattice is compiled in. The driver selects the fallback pipeline only while the map is
 // invalid (camera-independent clouds off, map not built yet, debug A/B), so the map-on kernel never pays for the legacy code.
 layout(constant_id = 1) const int RING_STORM_FALLBACK = 0;
+// Megastorm strip path (specialization constant 2; docs/megastorm-design.md 3.2): 0 = the default kernel carries NO megastorm strip code (it
+// compiles away, so an untriggered world runs the pre-megastorm kernel), 1 = the strip fetch, moving-frame noise and storm-share rules are
+// compiled in. The driver selects the variant only while the strip is valid (the wall is near).
+layout(constant_id = 2) const int RING_MEGASTORM = 0;
+#define RING_MEGASTORM_ENABLED (RING_MEGASTORM != 0)
+// Megastorm light under the overhang (docs/megastorm-design.md 2.3, WO4b; RingStormProfileSample.glslinc ring_megastorm_open_light):
+// the open-sky term runs for the visible front of a ray only (accumulated opacity below this), and the storm ambient of a fully buried /
+// fully open megastorm sample is scaled by SHADE / OPEN (the horizon band at grazing vs normal incidence, about 4:1).
+#define RING_MEGASTORM_OPEN_DEPTH 0.85
+#define RING_MEGASTORM_SHADE_AMBIENT 0.45
+#define RING_MEGASTORM_OPEN_AMBIENT 1.8
+// Erosion relief: +-this share of the light factor between the deepest recesses (medium noise b = 1) and the strongest bulges (b = 0).
+#define RING_MEGASTORM_RELIEF 0.35
 
 layout(rgba16f, binding = 0) uniform image2D output_data_image;
 layout(rgba16f, binding = 1) uniform image2D output_color_image;
@@ -101,6 +114,13 @@ layout(rgba32f, binding = 28) uniform writeonly image2D interleave_data_image;
 // S6 cloud layers (RingCloudLayers.glslinc): the layer table block (live copy, published next to the weather systems) and the generated
 // layer height gradient (8 rows, see RingCloudLayerSample.glslinc). Bindings 29 and 30 of set 0.
 layout(binding = 30) uniform sampler2D layer_heightmask;
+// Megastorm strip (RingMegastormStripBuild.glsl, docs/megastorm-design.md 3.2): the moving-frame wall columns, one fetch per primary sample
+// while a megastorm record is in reach. Params: see RingStormProfileSample.glslinc.
+layout(binding = 31, std140) uniform RingMegastormStripBlock {
+	vec4 a;
+	vec4 b;
+} ringMegastormStrip;
+layout(binding = 32) uniform sampler2DArray ring_megastorm_strip;
 #define RING_WS_MACRO_MAP
 // The ray mask also keeps base-lowering systems (not only sculpt ones) so the ray's floor is the weather base wherever weatherness can be > 0.
 #define RING_WS_MASK_LOWERS_BASE 1
@@ -576,11 +596,20 @@ float sampleScene(
 		return 0.0;
 	}
 	}
-	vec4 mediumShapes = texture(noise_medium, (worldPosition - mediumNoisePos) / mediumnoisescale).rgba;
+	// Megastorm strip columns erode with moving-frame noise (docs/megastorm-design.md 3.2): the medium and small detail noise travel
+	// with the wall (offsets along around, wrapped by each noise scale), so its shape does not slide over static texture. Without a strip
+	// column the coordinates are the original expressions exactly (no zero term enters the arithmetic, so the kernel is bit-identical).
+	vec3 mediumCoord = worldPosition - mediumNoisePos;
+	vec3 smallCoord = canonicalCloudPosition - smallNoisePos;
+	if (RING_MEGASTORM_ENABLED && g_storm_strip) {
+		mediumCoord.x -= genericData.data.ring_megastorm_noise.y;
+		smallCoord.x -= genericData.data.ring_megastorm_noise.z;
+	}
+	vec4 mediumShapes = texture(noise_medium, mediumCoord / mediumnoisescale).rgba;
 	float mediumshape = 1.0 - mediumShapes.b;
 	// Only directional sun transmittance may omit fine erosion. Keep the
 	// original pre-warp coordinates when deferring this texture read.
-	float smallRaw = coarseSunLighting ? 0.0 : texture(noise_small, (canonicalCloudPosition - smallNoisePos) / smallnoisescale).r;
+	float smallRaw = coarseSunLighting ? 0.0 : texture(noise_small, smallCoord / smallnoisescale).r;
 	float smallShape = smallRaw * gradientSample.g * pow((1.0 - mediumshape), smallscalePower);
 	
 
@@ -653,7 +682,8 @@ float ring_ws_sculpt_density(vec3 canonical, float backgroundFloor, float backgr
 	bool stormMap = ring_storm_map_valid();
 	float other = 0.0;
 	g_storm_map_density = 0.0;
-	if (stormMap) result = ring_storm_map_density(canonical.y);
+	// The fetched column (storm map and / or megastorm strip; zero when neither is in reach).
+	if (stormMap || ring_megastorm_strip_valid()) result = ring_storm_map_density(canonical.y);
 	for (int word = 0; word < 2; word++) {
 		// The per-primary sub-mask: only the masked sculpt systems whose ellipse (plus light reach) covers the primary sample.
 		uint bits = word == 0 ? g_ws_sub_mask.x : g_ws_sub_mask.y;
@@ -1128,6 +1158,18 @@ float coherent_history_decay(vec4 history, vec4 current, float decay,
 
 #include "./SunshineCloudsHistory.glslinc"
 
+// Megastorm path shade (docs/megastorm-design.md 2.3, WO4b): the share of the view path, camera -> distanceM, whose air lies in the
+// megastorm column's shadow (ring_megastorm_shade_at at the centres of four equal pieces). Under the anvil overhang the whole path is
+// shaded; the haze in front of the wall then loses its sun in-scatter and most of its sky in-scatter (ring_cloud_atmosphere_apply_shaded).
+float ring_megastorm_path_shade(vec3 rayOrigin, vec3 rayDirection, float distanceM, vec3 sunWorld) {
+	if (!(distanceM > 0.0)) return 0.0;
+	float shade = 0.0;
+	for (int k = 0; k < 4; k++) {
+		shade += ring_megastorm_shade_at(to_cloud_space(rayOrigin + rayDirection * (distanceM * (0.125 + 0.25 * float(k)))), sunWorld);
+	}
+	return 0.25 * shade;
+}
+
 void main() {
 	//SETTING UP UVS/RAY DATA
 	ivec2 uv = ivec2(gl_GlobalInvocationID.xy);
@@ -1361,6 +1403,8 @@ void main() {
 	// With a valid macro map the per-sample macro terms are one fetch, so the per-ray list only needs the sculpt systems.
 	bool ciMap = ciClouds && ring_ws_map_valid();
 	bool ciStormMap = ciClouds && ring_storm_map_valid();
+	// Column sources: the storm map and / or the megastorm strip (docs/megastorm-design.md 3.2). Without a megastorm ciColumns == ciStormMap.
+	bool ciColumns = ciStormMap || (ciClouds && ring_megastorm_strip_valid());
 	// Background band (flag on) and the light reach used for the per-primary sculpt sub-mask: the longest light march
 	// (4 x the lighting step distance, point lights 4 x min(maxstep, distance)) plus slack for the ambient offset and curvature.
 	vec2 ciBackground = vec2(cloudfloor, cloudceiling);
@@ -1455,6 +1499,10 @@ void main() {
 	float primaryStormShare = 0.0;
 	float stormShareNum = 0.0;
 	float stormShareDen = 0.0;
+	// Megastorm light under the overhang (WO4b): sum(visibility * open-sky light) / sum(visibility) over the samples inside or under the
+	// strip column; the denominator over stormShareDen is the megastorm share of the ray's opacity. Megastorm kernel variant only.
+	float megaOpenNum = 0.0;
+	float megaOpenDen = 0.0;
 	// Layer shade share (S6): sum(visibility * sun share taken by the layers above) / sum(visibility), for the ambient term. The visibility
 	// sum is stormShareDen (identical: a sample with no density adds a zero visibility).
 	float layerShadeNum = 0.0;
@@ -1487,7 +1535,7 @@ void main() {
 				g_ws_storm = ring_ws_eval_owned_storm_level();
 				ring_layers_set_closure(g_ws_storm);
 			}
-			if (ciStormMap) ring_storm_update_primary(cloudPos, g_ws_sub_mask);
+			if (ciColumns) ring_storm_update_primary(cloudPos, g_ws_sub_mask);
 			vec4 maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 			//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
 			//ceilingSample = cloudceiling;
@@ -1564,6 +1612,9 @@ void main() {
 		// Flag on: the band at this ray distance (background band widened only inside active sculpt intervals); the exact
 		// emptiness test then skips the macro-map fetch and sampleScene for steps that cannot hold density.
 		bool ciEmptyStep = false;
+		// This primary lies inside or under the megastorm strip column, more than one fade below its top (set below; the megastorm kernel
+		// variant only).
+		bool megaSample = false;
 		if (ciClouds) {
 			vec2 ciStepBand = ring_ws_ray_band_at(traveledDistance, ciBackground);
 			inCloudAltitudeBand = clamp(cloudPos.y, ciStepBand.x, ciStepBand.y) == cloudPos.y;
@@ -1618,9 +1669,9 @@ void main() {
 			if (ciClouds) ring_ws_update_sub_mask(cloudPos, ciLightReach, ciBackground, ciWidenBand, ciStormMap);
 			// One storm profile fetch per primary sample (only when a storm system is in reach); light and ambient samples reuse it.
 			bool ciColumnEmpty = false;
-			if (ciStormMap) {
-				if (g_ws_sub_map_storm) ring_storm_fetch_column(cloudPos);
-				else { g_storm_heights = vec4(0.0); g_storm_aux = vec4(0.0); }
+			if (ciColumns) {
+				if (g_ws_sub_map_storm || g_ws_sub_strip) ring_storm_fetch_columns(cloudPos, g_ws_sub_map_storm, g_ws_sub_strip);
+				else { g_storm_heights = vec4(0.0); g_storm_aux = vec4(0.0); g_storm_strip = false; }
 				g_storm_primary_active = g_storm_heights.y > g_storm_heights.x || g_storm_heights.w > g_storm_heights.z;
 				g_storm_primary_dominant = false;
 				// The fetched column is the map storms' exact extent for this primary and its light samples (ring_ws_update_sub_mask).
@@ -1634,7 +1685,7 @@ void main() {
 				// column is exactly empty: no macro fetch, no mask fetch, no sampleScene. The layer hull is wider than the layers themselves.
 				ring_layers_update(cloudPos);
 				ciColumnEmpty = !ring_layers_contain(cloudPos.y) && !ring_ws_density_possible(cloudPos.y, vec2(1e30, -1e30))
-					&& !(ciStormMap && ring_storm_column_contains(cloudPos.y));
+					&& !(ciColumns && ring_storm_column_contains(cloudPos.y));
 				if (!ciColumnEmpty) maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 			}
 			if (ciColumnEmpty) {
@@ -1658,6 +1709,19 @@ void main() {
 			// Only a storm-owned column counts (S6 3.8): a non-storm deck keeps its layer lighting. Layers off keep the S4 rule.
 			primaryStormShare = max(primaryStormShare, smoothstep(0.35, 0.80, ring_ws_storm_level()) * min(1.0, newdensity * 4.0));
 			g_storm_primary_dominant = g_last_storm_density > 0.5 * g_last_total_density && g_last_storm_density > 0.0;
+			if (RING_MEGASTORM_ENABLED && g_storm_strip && cloudPos.y <= ring_storm_column_top()) {
+				// Megastorm wall and anvil (docs/megastorm-design.md 3.2): everything inside the strip column, including the closed layer deck the
+				// W/A ownership lifts there, is the storm's own cloud. Its macro storm level only peaks deep behind the face (record W's natural
+				// falloff), so without this the face would take the deck's sky-chroma ambient and read as open sky. Below the column's top fade
+				// (WO4b) nothing sees the open sky dome: the face under the overhang, the overhang's underside and the fair layer cumulus below it
+				// are lit only by the dim light under the storm (ring_megastorm_open_light), however thin the cloud, so they take the storm ambient
+				// in full and its open-sky factor (megaSample); the column's top layer, under the open sky, keeps the thin-cloud ramp and the plain
+				// storm ambient. Their sun is already gone (ring_storm_sun_tau).
+				bool megaInColumn = ring_storm_column_contains(cloudPos.y);
+				megaSample = ring_storm_column_top() - cloudPos.y > RING_STORM_FADE_METERS;
+				primaryStormShare = megaSample ? 1.0 : min(1.0, newdensity * 4.0);
+				g_storm_primary_dominant = megaInColumn || g_storm_primary_dominant;
+			}
 			g_layer_light_stride = ring_layers_light_stride(g_layers_on && g_last_storm_density <= 0.0, cloudPos.y, traveledDistance);
 			// A non-storm stratiform layer sample is deck cloud (S6 3.8); a storm-owned column keeps the S4 look.
 			g_layer_deck = g_layers_on && g_last_storm_density <= 0.0
@@ -1675,6 +1739,8 @@ void main() {
 			
 			
 			float sampleDeckOvercast = 0.0;
+			// Storm-ambient light factor of a megastorm sample (megaSample only; RING_MEGASTORM_SHADE_AMBIENT for buried samples).
+			float sampleMegaOpen = RING_MEGASTORM_SHADE_AMBIENT;
 			if (newdensity > 0.0){
 				if (initialdistanceSample == 0.0){
 					initialdistanceSample = traveledDistance;
@@ -1811,6 +1877,18 @@ void main() {
 				g_layer_deck = mix(1.0, ring_layers_column_light(cloudPos.y) * ring_layers_deck_patch(deckAbove), g_layer_deck);
 				}
 
+				if (RING_MEGASTORM_ENABLED && megaSample && density < RING_MEGASTORM_OPEN_DEPTH) {
+					// Megastorm light under the overhang (docs/megastorm-design.md 2.3, WO4b): this sample's storm-ambient factor, from buried
+					// (SHADE) to facing the open sky beyond the anvil's leading edge (OPEN; ring_megastorm_open_light), times the relief of the
+					// eroded surface: where the medium erosion noise (b) carves deep the surface is a recess, shaded by the bulges around it; where
+					// it barely erodes, the surface bulges into the open light. The noise is read at the primary itself, in the strip's moving frame
+					// (sampleScene's wind sweep and curl warp left out, and sampleScene left untouched: a store there cost the default kernel),
+					// not by a probe, so it follows the erosion pattern rather than the march's step lattice. Only the visible front of the ray pays
+					// (accumulated opacity below RING_MEGASTORM_OPEN_DEPTH); deeper samples count as buried.
+					sampleMegaOpen = mix(RING_MEGASTORM_SHADE_AMBIENT, RING_MEGASTORM_OPEN_AMBIENT, ring_megastorm_open_light(cloudPos))
+						* (1.0 + RING_MEGASTORM_RELIEF * (1.0 - 2.0 * texture(noise_medium, (cloudPos - mediumNoisePos
+							- vec3(genericData.data.ring_megastorm_noise.y, 0.0, 0.0)) / mediumnoiseScale).b));
+				}
 				
 				newStep = mix(mix(maxstep, minstep, pow(newdensity, 0.1)), maxstep, float(i) / float(stepCount));
 				if (newdensity > highestDensity){
@@ -1830,6 +1908,10 @@ void main() {
 			float stormVisible = newdensity * terminalDensityWeight * (1.0 - density);
 			stormShareNum += stormVisible * primaryStormShare;
 			stormShareDen += stormVisible;
+			if (RING_MEGASTORM_ENABLED && megaSample && newdensity > 0.0) {
+				megaOpenNum += stormVisible * sampleMegaOpen;
+				megaOpenDen += stormVisible;
+			}
 			if (newdensity > 0.0) {
 				layerShadeNum += stormVisible * g_layer_shade;
 				deckLightNum += stormVisible * (aobase.a > 0.0 ? g_layer_deck : 1.0);
@@ -1965,7 +2047,15 @@ void main() {
 	float stormShare = stormShareDen > 0.0001 ? clamp(stormShareNum / stormShareDen, 0.0, 1.0) : 0.0;
 	float stormAmbientStrength = genericData.data.ring_storm_ambient.w * stormShare;
 	ambientLight = max(ambientLight, genericData.data.ambientLightColor.rgb * 0.35 * (1.0 - stormAmbientStrength));
-	ambientLight = mix(ambientLight, genericData.data.ring_storm_ambient.rgb, stormAmbientStrength);
+	vec3 stormAmbientColour = genericData.data.ring_storm_ambient.rgb;
+	if (RING_MEGASTORM_ENABLED && megaOpenDen > 0.0001) {
+		// Megastorm (WO4b): the storm ambient of the megastorm share of the ray follows the open-sky light its samples see. A face below the
+		// overhang lit by the horizon band takes RING_MEGASTORM_OPEN_AMBIENT x the storm ambient, the underside and the interior
+		// RING_MEGASTORM_SHADE_AMBIENT x (normal vs grazing incidence of that band, about 4:1).
+		float megaShare = clamp(megaOpenDen / max(stormShareDen, 0.0001), 0.0, 1.0);
+		stormAmbientColour *= mix(1.0, megaOpenNum / megaOpenDen, megaShare);
+	}
+	ambientLight = mix(ambientLight, stormAmbientColour, stormAmbientStrength);
 	// Layers above the cloud (an As deck over Cu) darken its ambient the way the storm share does, at half strength.
 	float layerShade = stormShareDen > 0.0001 ? clamp(layerShadeNum / stormShareDen, 0.0, 1.0) : 0.0;
 	ambientLight = mix(ambientLight, genericData.data.ring_storm_ambient.rgb, 0.5 * genericData.data.ring_storm_ambient.w * layerShade);
@@ -2086,6 +2176,13 @@ void main() {
 
 	//accumulation preperation:
 	float finalDensityDistance = ring_cloud_depth_resolve(depthWeightSum, depthWeightedDistanceSum, max(traveledDistance, shellDepthEnd), highestDensityDistance);
+	// Megastorm path shade (WO4b) of this ray's haze path (camera -> its cloud depth); the interleave fill reads it from the block's transient
+	// alpha. 0 in the default kernel and whenever the strip is off.
+	float megaPathShade = 0.0;
+	if (RING_MEGASTORM_ENABLED && ring_megastorm_strip_valid()) {
+		vec3 shadeSun = directionalLightCount > 0 ? directionalLights[0].direction.xyz : genericData.data.cloud_frame_up.xyz;
+		megaPathShade = ring_megastorm_path_shade(rayOrigin, raydirection, clamp(finalDensityDistance, 0.0, max(0.0, linear_depth)), shadeSun);
+	}
 	vec3 delta = rayOrigin - genericData.data.previous_camera_origin.xyz;
 
 	// Reprojection of the cloud body and the opaque-surface metadata the history is validated against live in
@@ -2326,7 +2423,7 @@ void main() {
 		ivec2 blockUV = ivec2(gl_GlobalInvocationID.xy);
 		vec3 blockTransient = (any(isnan(transientLightColor)) || any(isinf(transientLightColor))) ? vec3(0.0) : transientLightColor;
 		imageStore(interleave_steady_image, blockUV, lightColor);
-		imageStore(interleave_transient_image, blockUV, vec4(blockTransient, 0.0));
+		imageStore(interleave_transient_image, blockUV, vec4(blockTransient, megaPathShade));
 		imageStore(interleave_data_image, blockUV, vec4(initialdistanceSample, traveledDistance, finalDensityDistance, opaqueDepthMetadata));
 	}
 	
@@ -2346,7 +2443,12 @@ void main() {
 		// live-profile independent, while the published backdrop matches display.
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(currentDataAccumilation.b, 0.0, max(0.0, linear_depth));
-			currentColorAccumilation.rgb = ring_cloud_atmosphere_apply(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
+			if (RING_MEGASTORM_ENABLED && megaPathShade > 0.0) {
+				currentColorAccumilation.rgb = ring_cloud_atmosphere_apply_shaded(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance,
+					genericData.data.ring_atmosphere_profile, megaPathShade, genericData.data.ring_storm_ambient.w);
+			} else {
+				currentColorAccumilation.rgb = ring_cloud_atmosphere_apply(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
+			}
 		}
 		imageStore(output_color_image, uv, currentColorAccumilation);
 	}

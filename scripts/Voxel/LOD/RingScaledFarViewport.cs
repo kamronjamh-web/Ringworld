@@ -838,7 +838,7 @@ public partial class RingScaledFarViewport : Node
 			double around = sx / (double)sampleWidth * _circumferenceMeters;
 			double across = sy / (double)(sampleHeight - 1) * RingWidthMeters;
 			global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeatherCoverageAtTime(
-				new RingCanonicalPosition(around, 0.0, across), build.SnapshotTime) ?? default;
+				new RingCanonicalPosition(around, 0.0, across), build.SnapshotTime, includeMegastorm: false) ?? default;
 			float storm = Mathf.Clamp(weather.SystemInfluence * 0.65f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
 			build.Samples[index] = new Vector2(weather.CloudCoverage, storm);
 			build.LayerSamples[index] = ComputeFarLayerSample(around, across, build.SnapshotTime, weather.CloudCoverage);

@@ -157,10 +157,28 @@ High = 0.9
 LowersBase = 1
 FrontType = 2
 
+[sub_resource type="Resource" id="Resource_genus11"]
+script = ExtResource("3_genus")
+Profile = 12
+Low = 0.8
+Mid = 0.6
+High = 0.9
+LowersBase = 1
+FrontType = 0
+
+[sub_resource type="Resource" id="Resource_genus12"]
+script = ExtResource("3_genus")
+Profile = 13
+Low = 1.0
+Mid = 1.0
+High = 0.9
+LowersBase = 1
+FrontType = 0
+
 [resource]
 script = ExtResource("1_table")
 Layers = Array[ExtResource("2_layer")]([SubResource("Resource_layer0"), SubResource("Resource_layer1"), SubResource("Resource_layer2")])
-Genera = Array[ExtResource("3_genus")]([SubResource("Resource_genus0"), SubResource("Resource_genus1"), SubResource("Resource_genus2"), SubResource("Resource_genus3"), SubResource("Resource_genus4"), SubResource("Resource_genus5"), SubResource("Resource_genus6"), SubResource("Resource_genus7"), SubResource("Resource_genus8"), SubResource("Resource_genus9"), SubResource("Resource_genus10")])
+Genera = Array[ExtResource("3_genus")]([SubResource("Resource_genus0"), SubResource("Resource_genus1"), SubResource("Resource_genus2"), SubResource("Resource_genus3"), SubResource("Resource_genus4"), SubResource("Resource_genus5"), SubResource("Resource_genus6"), SubResource("Resource_genus7"), SubResource("Resource_genus8"), SubResource("Resource_genus9"), SubResource("Resource_genus10"), SubResource("Resource_genus11"), SubResource("Resource_genus12")])
 MidFairScale = 0.35
 HighFairScale = 0.5
 MidClusterSalts = Vector2i(231, 232)

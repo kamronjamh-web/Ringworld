@@ -112,8 +112,7 @@ public partial class CloudLayerTable : Resource
     {
         CloudGenusRow? row = Genus(profile);
         if (row == null) return false;
-        bool front = kind is RingVolumetricCloudLayer.WeatherSystemKind.MajorFront
-            or RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront;
+        bool front = RingVolumetricCloudLayer.IsFrontKind(kind);
         return row.LowersBase switch
         {
             CloudLowersBase.Always => true,

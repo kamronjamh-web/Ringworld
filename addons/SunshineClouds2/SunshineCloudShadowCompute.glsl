@@ -49,6 +49,13 @@ layout(binding = 12) uniform sampler2DArray ring_storm_map;
 // S6 cloud layers (RingCloudLayers.glslinc): the live layer table block (the main march's binding 29) and the layer height gradient
 // (the main march's binding 30); bindings 13/14 are free (0-12 are used).
 layout(binding = 14) uniform sampler2D layer_heightmask;
+// Megastorm strip (RingMegastormStripBuild.glsl), the same front strip the main compute samples (its bindings 31/32); 15/16 are free here.
+// Params: see RingStormProfileSample.glslinc.
+layout(binding = 15, std140) uniform RingMegastormStripBlock {
+    vec4 a;
+    vec4 b;
+} ringMegastormStrip;
+layout(binding = 16) uniform sampler2DArray ring_megastorm_strip;
 #define RING_WS_MACRO_MAP
 // The ray mask also keeps base-lowering systems at their weatherness reach, so the layer hull's floor is the weather base wherever weatherness can be > 0.
 #define RING_WS_MASK_LOWERS_BASE 1
@@ -265,7 +272,8 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
     bool storm_map = ring_storm_map_valid();
     float other = 0.0;
     g_storm_map_density = 0.0;
-    if (storm_map) {
+    // Megastorm records (profile 12) take their column from the strip (docs/megastorm-design.md 3.2); no analytic fallback.
+    if (storm_map || ring_megastorm_strip_valid()) {
         ring_storm_update_primary(canonical, g_ws_sculpt_mask);
         result = ring_storm_map_density(canonical.y);
     }
@@ -275,6 +283,7 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
             int index = word * 32 + findLSB(bits);
             bits &= bits - 1u;
             if (storm_map && ring_storm_is_storm_profile(index)) continue;
+            if (ring_storm_is_strip_profile(index)) continue;
             vec4 c = ringWeatherSystems.systems[index].c;
             float storm_floor = c.x;
             float storm_ceiling = c.y;
@@ -518,9 +527,10 @@ float sample_sunshine_density(vec3 world_position) {
     float storm_density = 0.0;
     vec4 medium = vec4(0.0);
     if (storm_silhouette > 0.0 || !g_layers_on) {
-        medium = texture(medium_noise,
-            (cloud_position - genericData.data.mediumnoiseposition) /
-            max(genericData.data.medium_noise_scale, 1.0));
+        // Megastorm strip columns erode with the moving-frame noise of the visible march (docs/megastorm-design.md 3.2).
+        vec3 medium_coord = cloud_position - genericData.data.mediumnoiseposition;
+        if (g_storm_strip) medium_coord.x -= genericData.data.ring_megastorm_noise.y;
+        medium = texture(medium_noise, medium_coord / max(genericData.data.medium_noise_scale, 1.0));
         storm_density = storm_silhouette * mix(0.62, 1.0, medium.r);
         if (camera_independent && g_storm_map_density > 0.0) {
             // Baked storm columns: the same profile-driven erosion as the visible march, medium noise only.

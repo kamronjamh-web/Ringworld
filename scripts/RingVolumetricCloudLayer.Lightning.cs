@@ -266,10 +266,10 @@ public partial class RingVolumetricCloudLayer
         float rho = 0.0f;
         if (NaturalWeatherLifecyclesEnabled)
         {
-            float envelope = EvaluateWeatherLifecycle(a, z, seed, start).Envelope;
+            float envelope = EffectiveSystemEnvelope(s, EvaluateWeatherLifecycle(a, z, seed, start).Envelope, start);   // megastorm suppression (4.3); identity when none
             if (envelope > 1e-4f)
             {
-                float ahead = EvaluateWeatherLifecycle(a, z, seed, start + 1.0).Envelope, behind = EvaluateWeatherLifecycle(a, z, seed, Math.Max(0.0, start - 1.0)).Envelope;
+                float ahead = EffectiveSystemEnvelope(s, EvaluateWeatherLifecycle(a, z, seed, start + 1.0).Envelope, start + 1.0), behind = EffectiveSystemEnvelope(s, EvaluateWeatherLifecycle(a, z, seed, Math.Max(0.0, start - 1.0)).Envelope, Math.Max(0.0, start - 1.0));
                 rho = (float)((ahead - behind) / (start >= 1.0 ? 2.0 : 1.0 + start) / envelope);
             }
         }

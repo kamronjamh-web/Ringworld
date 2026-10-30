@@ -89,7 +89,8 @@ public partial class RingVolumetricCloudLayer
 
     /// <summary>
     /// Natural systems within reach of a point at one time, as arrival geometry (offset = observer minus centre, enveloped radii, drift, rho from a
-    /// +/-1 s central difference of the lifecycle envelope). Manual (preview/test) systems are not included in v1.
+    /// +/-1 s central difference of the lifecycle envelope). Manual (preview/test) systems are not included in v1. The megastorm bundle
+    /// (docs/megastorm-design.md) is appended last, as slab records with their own drift (<see cref="AppendMegastormSystems(double, double, double, List{StormSystemGeometry})"/>).
     /// </summary>
     private void CollectStormGeometry(double aroundMeters, double acrossMeters, double timeSeconds, List<StormSystemGeometry> into)
     {
@@ -122,20 +123,22 @@ public partial class RingVolumetricCloudLayer
             var offset = new Vector2((float)ShortestAroundDelta(centre.Around, aroundMeters, circumference), (float)(acrossMeters - centre.Across));
             WeatherLifecycle life = EvaluateWeatherLifecycle(cellAround, cellAcross, seed, timeSeconds);
             float rho = 0.0f;
-            if (NaturalWeatherLifecyclesEnabled && life.Envelope > 1e-4f)
+            float envelope = EffectiveSystemEnvelope(system, life.Envelope, timeSeconds);   // megastorm suppression (4.3); identity when none
+            if (NaturalWeatherLifecyclesEnabled && envelope > 1e-4f)
             {
-                float ahead = EvaluateWeatherLifecycle(cellAround, cellAcross, seed, timeSeconds + 1.0).Envelope;
-                float behind = EvaluateWeatherLifecycle(cellAround, cellAcross, seed, Math.Max(0.0, timeSeconds - 1.0)).Envelope;
+                float ahead = EffectiveSystemEnvelope(system, EvaluateWeatherLifecycle(cellAround, cellAcross, seed, timeSeconds + 1.0).Envelope, timeSeconds + 1.0);
+                float behind = EffectiveSystemEnvelope(system, EvaluateWeatherLifecycle(cellAround, cellAcross, seed, Math.Max(0.0, timeSeconds - 1.0)).Envelope, Math.Max(0.0, timeSeconds - 1.0));
                 double span = timeSeconds >= 1.0 ? 2.0 : 1.0 + timeSeconds;
-                rho = (float)((ahead - behind) / span / life.Envelope);
+                rho = (float)((ahead - behind) / span / envelope);
             }
             var geometry = new StormSystemGeometry(system.SystemId, (int)system.Kind, offset, system.MajorRadiusMeters, system.MinorRadiusMeters,
-                system.OrientationCosine, system.OrientationSine, life.Envelope, rho, StormSystemDriftMetersPerSecond(system),
+                system.OrientationCosine, system.OrientationSine, envelope, rho, StormSystemDriftMetersPerSecond(system),
                 system.Density, system.PrecipitationPotential, StormLifecycleCode(life));
             float n = StormArrivalMath.NormalizedDistance(geometry, out float ray, out float dist);
             if (dist - ray > StormArrivalCullMeters) continue;
             into.Add(geometry);
         }
+        if (MegastormSource != null) AppendMegastormSystems(aroundMeters, acrossMeters, timeSeconds, into);
     }
 
     private static void CopyToSnapshot(RainHistorySnapshot snapshot, int lag, List<StormSystemGeometry> systems)

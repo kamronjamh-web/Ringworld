@@ -93,6 +93,8 @@ void main() {
 
 	vec4 spatialColor = vec4(0.0);
 	vec3 spatialTransient = vec3(0.0);
+	// Megastorm path shade of the block samples (transient alpha; 0 without a megastorm), upsampled like the colour (WO4b).
+	float spatialMegaShade = 0.0;
 	vec4 spatialData = vec4(0.0);
 	float spatialWeight = 0.0;
 	vec4 statMean = vec4(0.0);
@@ -112,7 +114,9 @@ void main() {
 			float tapWeight = bilinearX * bilinearY * (tapAgrees ? 1.0 : 0.02);
 			if (tapWeight > 0.0) {
 				spatialColor += tapColor * tapWeight;
-				spatialTransient += imageLoad(interleave_transient_image, tap).rgb * tapWeight;
+				vec4 tapTransient = imageLoad(interleave_transient_image, tap);
+				spatialTransient += tapTransient.rgb * tapWeight;
+				spatialMegaShade += tapTransient.a * tapWeight;
 				spatialData += tapData * tapWeight;
 				spatialWeight += tapWeight;
 			}
@@ -126,6 +130,7 @@ void main() {
 	float inverseWeight = 1.0 / max(spatialWeight, 0.000001);
 	spatialColor *= inverseWeight;
 	spatialTransient *= inverseWeight;
+	spatialMegaShade *= inverseWeight;
 	spatialData *= inverseWeight;
 	float initialdistanceSample = spatialData.r;
 	float traveledDistance = spatialData.g;
@@ -253,7 +258,13 @@ void main() {
 		}
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(resultData.b, 0.0, max(0.0, linear_depth));
-			outputColor.rgb = ring_cloud_atmosphere_apply(outputColor.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
+			if (spatialMegaShade > 0.0) {
+				// Haze under the megastorm overhang (docs/megastorm-design.md 2.3, WO4b): the march pass's path shade, upsampled.
+				outputColor.rgb = ring_cloud_atmosphere_apply_shaded(outputColor.rgb, rayOrigin, raydirection, haze_distance,
+					genericData.data.ring_atmosphere_profile, spatialMegaShade, genericData.data.ring_storm_ambient.w);
+			} else {
+				outputColor.rgb = ring_cloud_atmosphere_apply(outputColor.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
+			}
 		}
 		imageStore(output_color_image, uv, outputColor);
 	}

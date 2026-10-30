@@ -159,7 +159,41 @@ struct CloudHistoryReproject {
 	float opaqueDepthTolerance;
 	ivec2 opaqueHistoryPixel;
 	bool opaqueHistoryOutside;
+	bool megastormMotion;        // the reprojected point lies in the moving megastorm wall and was shifted by its motion (diagnostic; the doc's
+	                             // "raise the current-frame weight over 2 px" fallback is not applied: total pixel motion includes camera rotation,
+	                             // so it halved history on every wall pixel during any turn and made the wall grainy)
 };
+
+// Megastorm strip extent along x (reference-line distance, MegastormProfile.StripMinX / StripMaxX) and the hard cloud ceiling.
+const float RING_MEGASTORM_HISTORY_X_MIN = -72000.0;
+const float RING_MEGASTORM_HISTORY_X_MAX = 56000.0;
+const float RING_MEGASTORM_HISTORY_TOP = 18500.0;
+
+// docs/megastorm-design.md 3.6: clouds are not static inside the megastorm. When the reprojected density point lies in the wall's strip
+// column (analytic slab test on x plus the column top), last frame's cloud was ring_megastorm_frame.w metres back along +around. Returns
+// the shift to subtract (zero vector outside, and whenever the frame or its shift is zero: untriggered, paused clock, reprojection off).
+// The march pass compiles it in only in its megastorm variant (RING_MEGASTORM_ENABLED = specialization constant 2); the fill pass keeps it
+// uniform-gated.
+#ifndef RING_MEGASTORM_ENABLED
+#define RING_MEGASTORM_ENABLED true
+#endif
+vec3 ring_megastorm_history_shift(vec3 worldPoint) {
+	vec4 frame = genericData.data.ring_megastorm_frame;
+	if (!RING_MEGASTORM_ENABLED || frame.z == 0.0 || frame.w == 0.0) return vec3(0.0);
+	vec3 delta = worldPoint - genericData.data.cloud_frame_origin.xyz;
+	float radius = max(genericData.data.cloud_frame_up.w, 1.0);
+	float tangent = dot(delta, genericData.data.cloud_frame_around.xyz);
+	float outward = radius - dot(delta, genericData.data.cloud_frame_up.xyz);
+	float altitude = radius - length(vec2(tangent, outward));
+	if (altitude > RING_MEGASTORM_HISTORY_TOP) return vec3(0.0);
+	float around = genericData.data.cloud_frame_around.w + radius * atan(tangent, outward);
+	float circumference = genericData.data.cloud_weather_frame.x > 1.0 ? genericData.data.cloud_weather_frame.x : radius * 6.28318530718;
+	float d = (frame.x - around) + frame.y;
+	d -= circumference * floor(d / circumference + 0.5);
+	float x = frame.z * d;
+	if (x < RING_MEGASTORM_HISTORY_X_MIN || x > RING_MEGASTORM_HISTORY_X_MAX) return vec3(0.0);
+	return genericData.data.cloud_frame_around.xyz * frame.w;
+}
 
 CloudHistoryReproject ring_cloud_history_reproject(ivec2 uv, ivec2 size, vec2 depthUV, vec3 rayOrigin, vec3 raydirection,
 		float finalDensityDistance, float linear_depth, bool has_opaque_depth) {
@@ -195,6 +229,9 @@ CloudHistoryReproject ring_cloud_history_reproject(ivec2 uv, ivec2 size, vec2 de
 			+ genericData.data.cloud_frame_up.xyz * inwardDelta
 			+ genericData.data.cloud_frame_across.xyz * genericData.data.menu_optimization_controls.w;
 	}
+	vec3 megastormShift = ring_megastorm_history_shift(worldFinalPos);
+	bool megastormMotion = megastormShift != vec3(0.0);
+	previousWorldFinalPos -= megastormShift;
 	vec4 reprojectedClipPos = genericData.data.previous_camera_view * vec4(previousWorldFinalPos, 1.0);
 	reprojectedClipPos.z -= 0.01;
 	if (reprojectedClipPos.z > 0.0){
@@ -312,6 +349,7 @@ CloudHistoryReproject ring_cloud_history_reproject(ivec2 uv, ivec2 size, vec2 de
 	h.opaqueDepthTolerance = opaqueDepthTolerance;
 	h.opaqueHistoryPixel = opaqueHistoryPixel;
 	h.opaqueHistoryOutside = opaqueHistoryOutside;
+	h.megastormMotion = megastormMotion;
 	return h;
 }
 

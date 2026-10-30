@@ -12,6 +12,9 @@ const SOURCES := [
 	"res://addons/SunshineClouds2/SunshineCloudsDisplay.msaa.glsl",
 	"res://scripts/render/ring_rain_haze_composite.glsl",
 	"res://materials/ring_terrain_cloud_sun_generate.glsl",
+	"res://addons/SunshineClouds2/RingMacroWeatherMap.glsl",
+	"res://addons/SunshineClouds2/RingStormProfileBake.glsl",
+	"res://addons/SunshineClouds2/RingMegastormStripBuild.glsl",
 ]
 
 func _initialize() -> void:

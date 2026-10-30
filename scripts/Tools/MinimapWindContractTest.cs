@@ -41,6 +41,8 @@ public partial class MinimapWindContractTest : RefCounted
         drawer.InstallWaterDefaults(directory + "/water.tres");
         drawer.InstallWindDefaults(directory + "/wind.tres");
         drawer.InstallStormArrivalDefaults(directory + "/storm-arrival.tres");
+        drawer.InstallMegastormDefaults(directory + "/megastorm.tres");
+        world.GetNodeOrNull<Node>("RingMegastorm")?.Set("MegastormPreferencesPath", directory + "/megastorm.tres");
         drawer.InstallRainHazeDefaults(directory + "/rain-haze.tres");
         drawer.InstallWetWorldDefaults(directory + "/wet-world.tres", directory + "/surface.tres");
         world.GetNodeOrNull<RingWetWorld>("WetWorld")?.Set("PreferencesPath", directory + "/wet-world.tres");

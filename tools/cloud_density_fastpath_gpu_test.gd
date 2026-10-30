@@ -86,7 +86,7 @@ func _function_to_eof(source: String, start_marker: String) -> String:
 
 func _rewrite(source: String) -> String:
 	var index := "[gl_GlobalInvocationID.x]"
-	var replacements := {"genericData.data.WindDirection": "testData" + index + ".wind.xy", "genericData.data.pointEffectorCount": "testData" + index + ".wind.z", "genericData.data.windSweptRange": "testData" + index + ".wind.w", "genericData.data.windSweptPower": "testData" + index + ".wind_power.x", "genericData.data.cloud_frame_origin": "testData" + index + ".cloud_frame_origin", "genericData.data.cloud_frame_around": "testData" + index + ".cloud_frame_around", "genericData.data.cloud_frame_up": "testData" + index + ".cloud_frame_up", "genericData.data.cloud_frame_across": "testData" + index + ".cloud_frame_across", "genericData.data.storm_system": "testData" + index + ".storm_system", "genericData.data.storm_shape": "testData" + index + ".storm_shape", "genericData.data.storm_detail": "testData" + index + ".storm_detail", "genericData.data.background_altitude": "testData" + index + ".background_altitude", "genericData.data.storm_altitude": "testData" + index + ".storm_altitude", "genericData.data.temporal_controls": "testData" + index + ".temporal_controls", "genericData.data.cloud_handoff": "testData" + index + ".cloud_handoff", "genericData.data.cloud_weather_params": "testData" + index + ".cloud_weather_params", "genericData.data.cloud_weather_frame": "testData" + index + ".cloud_weather_frame"}
+	var replacements := {"genericData.data.WindDirection": "testData" + index + ".wind.xy", "genericData.data.pointEffectorCount": "testData" + index + ".wind.z", "genericData.data.windSweptRange": "testData" + index + ".wind.w", "genericData.data.windSweptPower": "testData" + index + ".wind_power.x", "genericData.data.cloud_frame_origin": "testData" + index + ".cloud_frame_origin", "genericData.data.cloud_frame_around": "testData" + index + ".cloud_frame_around", "genericData.data.cloud_frame_up": "testData" + index + ".cloud_frame_up", "genericData.data.cloud_frame_across": "testData" + index + ".cloud_frame_across", "genericData.data.storm_system": "testData" + index + ".storm_system", "genericData.data.storm_shape": "testData" + index + ".storm_shape", "genericData.data.storm_detail": "testData" + index + ".storm_detail", "genericData.data.background_altitude": "testData" + index + ".background_altitude", "genericData.data.storm_altitude": "testData" + index + ".storm_altitude", "genericData.data.temporal_controls": "testData" + index + ".temporal_controls", "genericData.data.cloud_handoff": "testData" + index + ".cloud_handoff", "genericData.data.cloud_weather_params": "testData" + index + ".cloud_weather_params", "genericData.data.cloud_weather_frame": "testData" + index + ".cloud_weather_frame", "genericData.data.ring_megastorm_noise": "vec4(0.0)"}
 	for key in replacements: source = source.replace(key, replacements[key])
 	return source.replace("pointEffectors[i]", "effectors[gl_GlobalInvocationID.x * 2u + uint(i)]")
 
@@ -114,6 +114,9 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
 const int RING_STORM_FALLBACK = 1;
 float g_storm_map_density = 0.0;
 float g_storm_other = 0.0;
+// Megastorm strip path (docs/megastorm-design.md WO4) is compiled out here, as in the live kernel's default variant.
+#define RING_MEGASTORM_ENABLED false
+bool g_storm_strip = false;
 float ring_storm_eroded(float mediumshape, float small_raw) { return 0.0; }
 // S6 cloud layers (RingCloudLayerSample.glslinc) are off in this legacy-parity harness: the live sampleScene branches on g_layers_on.
 bool g_layers_on = false;

@@ -12,7 +12,7 @@ public readonly record struct RingPerformanceGpuDiagnostics(bool Enabled, string
 /// <summary>Non-blocking main-RD timestamp bridge. Samples are asynchronous partial GPU intervals, never frame totals.</summary>
 public static class RingPerformanceGpu
 {
-    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite", CloudShadowNear = "CloudShadowNear", CloudShadowFar = "CloudShadowFar", CloudMacroMap = "CloudMacroMap", CloudStormMap = "CloudStormMap", CloudInterleave = "CloudInterleave", RainHaze = "RainHaze", RainStreaks = "RainStreaks", TerrainCloudSunVisibility = "TerrainCloudSunVisibility", HeightShadow = "HeightShadow", ContactShadow = "ContactShadow";
+    public const string WaterFft = "WaterFft", Vegetation = "Vegetation", TreeCulling = "TreeCulling", GrassCulling = "GrassCulling", Clouds = "Clouds", CloudPrepass = "CloudPrepass", CloudRaymarch = "CloudRaymarch", CloudReconstruct = "CloudReconstruct", CloudComposite = "CloudComposite", CloudShadowNear = "CloudShadowNear", CloudShadowFar = "CloudShadowFar", CloudMacroMap = "CloudMacroMap", CloudStormMap = "CloudStormMap", CloudMegastormStrip = "CloudMegastormStrip", CloudInterleave = "CloudInterleave", RainHaze = "RainHaze", RainStreaks = "RainStreaks", TerrainCloudSunVisibility = "TerrainCloudSunVisibility", HeightShadow = "HeightShadow", ContactShadow = "ContactShadow";
     private const string Prefix = "RingPerfGpu:";
     private const int MaximumCSharpMarkersPerFrame = 30, MaximumTimestampScan = 512, EngineTimestampScan = 4096;
     private static int _enabled, _generation, _pendingGeneration, _markersThisFrame, _engineTimestamps;
@@ -35,6 +35,8 @@ public static class RingPerformanceGpu
     public static string CloudMacroMapEndMarker => Marker(Volatile.Read(ref _generation), CloudMacroMap, 'E');
     public static string CloudStormMapBeginMarker => Marker(Volatile.Read(ref _generation), CloudStormMap, 'B');
     public static string CloudStormMapEndMarker => Marker(Volatile.Read(ref _generation), CloudStormMap, 'E');
+    public static string CloudMegastormStripBeginMarker => Marker(Volatile.Read(ref _generation), CloudMegastormStrip, 'B');
+    public static string CloudMegastormStripEndMarker => Marker(Volatile.Read(ref _generation), CloudMegastormStrip, 'E');
     public static string CloudInterleaveBeginMarker => Marker(Volatile.Read(ref _generation), CloudInterleave, 'B');
     public static string CloudInterleaveEndMarker => Marker(Volatile.Read(ref _generation), CloudInterleave, 'E');
     public static string RainHazeBeginMarker => Marker(Volatile.Read(ref _generation), RainHaze, 'B');
@@ -152,7 +154,7 @@ public static class RingPerformanceGpu
     }
 
     private static string Marker(int generation, string category, char boundary) => Prefix + generation + ":" + category + ":" + boundary;
-    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite or CloudShadowNear or CloudShadowFar or CloudMacroMap or CloudStormMap or CloudInterleave or RainHaze or RainStreaks or TerrainCloudSunVisibility or HeightShadow or ContactShadow;
+    private static bool KnownCategory(string category) => category is WaterFft or Vegetation or TreeCulling or GrassCulling or Clouds or CloudPrepass or CloudRaymarch or CloudReconstruct or CloudComposite or CloudShadowNear or CloudShadowFar or CloudMacroMap or CloudStormMap or CloudMegastormStrip or CloudInterleave or RainHaze or RainStreaks or TerrainCloudSunVisibility or HeightShadow or ContactShadow;
     private static bool TryParseMarker(string name, int expectedGeneration, out string category, out char boundary)
     {
         category = string.Empty; boundary = '\0'; if (!name.StartsWith(Prefix, StringComparison.Ordinal)) return false;

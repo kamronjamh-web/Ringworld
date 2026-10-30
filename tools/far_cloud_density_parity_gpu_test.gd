@@ -78,7 +78,7 @@ func _function(source: String, start_marker: String, end_marker: String) -> Stri
 
 func _rewrite(source: String) -> String:
 	var i := "[gl_GlobalInvocationID.x]"
-	var r := {"genericData.data.WindDirection":"testData"+i+".wind.xy", "genericData.data.pointEffectorCount":"testData"+i+".wind.z", "genericData.data.windSweptRange":"testData"+i+".wind.w", "genericData.data.windSweptPower":"testData"+i+".wind_power.x", "genericData.data.cloud_frame_origin":"testData"+i+".cloud_frame_origin", "genericData.data.cloud_frame_around":"testData"+i+".cloud_frame_around", "genericData.data.cloud_frame_up":"testData"+i+".cloud_frame_up", "genericData.data.cloud_frame_across":"testData"+i+".cloud_frame_across", "genericData.data.storm_system":"testData"+i+".storm_system", "genericData.data.storm_shape":"testData"+i+".storm_shape", "genericData.data.storm_detail":"testData"+i+".storm_detail", "genericData.data.background_altitude":"testData"+i+".background_altitude", "genericData.data.storm_altitude":"testData"+i+".storm_altitude", "genericData.data.temporal_controls":"testData"+i+".temporal_controls", "genericData.data.cloud_handoff":"testData"+i+".cloud_handoff", "genericData.data.cloud_weather_params":"testData"+i+".cloud_weather_params", "genericData.data.cloud_weather_frame":"testData"+i+".cloud_weather_frame"}
+	var r := {"genericData.data.WindDirection":"testData"+i+".wind.xy", "genericData.data.pointEffectorCount":"testData"+i+".wind.z", "genericData.data.windSweptRange":"testData"+i+".wind.w", "genericData.data.windSweptPower":"testData"+i+".wind_power.x", "genericData.data.cloud_frame_origin":"testData"+i+".cloud_frame_origin", "genericData.data.cloud_frame_around":"testData"+i+".cloud_frame_around", "genericData.data.cloud_frame_up":"testData"+i+".cloud_frame_up", "genericData.data.cloud_frame_across":"testData"+i+".cloud_frame_across", "genericData.data.storm_system":"testData"+i+".storm_system", "genericData.data.storm_shape":"testData"+i+".storm_shape", "genericData.data.storm_detail":"testData"+i+".storm_detail", "genericData.data.background_altitude":"testData"+i+".background_altitude", "genericData.data.storm_altitude":"testData"+i+".storm_altitude", "genericData.data.temporal_controls":"testData"+i+".temporal_controls", "genericData.data.cloud_handoff":"testData"+i+".cloud_handoff", "genericData.data.cloud_weather_params":"testData"+i+".cloud_weather_params", "genericData.data.cloud_weather_frame":"testData"+i+".cloud_weather_frame", "genericData.data.ring_megastorm_noise":"vec4(0.0)"}
 	for key in r: source = source.replace(key, r[key])
 	return source.replace("pointEffectors[i]", "effectors[gl_GlobalInvocationID.x]")
 
@@ -111,6 +111,9 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
 const int RING_STORM_FALLBACK = 1;
 float g_storm_map_density = 0.0;
 float g_storm_other = 0.0;
+// Megastorm strip path (docs/megastorm-design.md WO4) is compiled out here, as in the live kernel's default variant.
+#define RING_MEGASTORM_ENABLED false
+bool g_storm_strip = false;
 float ring_storm_eroded(float mediumshape, float small_raw) { return 0.0; }
 bool g_layers_on = false; // S6 cloud layers are off in this legacy-parity harness (RingCloudLayerSample.glslinc)
 float ring_layers_background(vec3 canonical, float weather_storm, float extra_large, vec3 large_pos, vec3 medium_pos, vec3 small_pos, float large_scale, float medium_scale, float small_scale, float small_power, float curl_power, float lod, bool ambient, bool coarse) { return 0.0; }

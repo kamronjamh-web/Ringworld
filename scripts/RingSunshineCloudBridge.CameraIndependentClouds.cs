@@ -22,6 +22,9 @@ public partial class RingSunshineCloudBridge
 	private static readonly StringName SetMacroWeatherMapMethod = new("set_macro_weather_map");
 	private static readonly StringName SetCloudLayersMethod = new("set_cloud_layers");
 	private static readonly StringName SetStormProfileMapMethod = new("set_storm_profile_map");
+	private static readonly StringName SetMegastormStripMethod = new("set_megastorm_strip");
+	private static readonly StringName SetMegastormFrameMethod = new("set_megastorm_frame");
+	private static readonly StringName SetMegastormPrewarmMethod = new("set_megastorm_prewarm");
 	/// <summary>Largest half extent of the baked storm profile map (m): 1024 texels over 2 x this is a 293 m texel, fine enough for mammatus pouches. Storms beyond it fall back to background cloud only.</summary>
 	private const double StormMapMaxHalfExtentMeters = 150000.0;
 	// Smoothing time of the camera-local ambient factors (variant (a) of the plan's ambient A/B).
@@ -41,8 +44,8 @@ public partial class RingSunshineCloudBridge
 	/// <summary>Top of the constant ray envelope (the floor is the lowest storm base, 500 m by default).</summary>
 	[Export(PropertyHint.Range, "5000,18000,500")] public float StormEnvelopeCeilingMeters { get; set; } = RingCloudLayers.CeilingMeters;
 
-	/// <summary>Perf ablation bits (0 = normal): 1 background band only (no per-ray sculpt intervals, no sub-mask band widening), 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on the background band instead of the sub-mask band, 32 legacy shader path, 64 single legacy background band (no S6 cloud layers), 128 no cirrus shell (High layer), 256 S6 deck colour off (layer-deck ambient keeps the sky chroma; A/B only). Re-uploaded every weather refresh.</summary>
-	[Export(PropertyHint.Range, "0,511,1")] public int CameraIndependentDebugMask { get; set; } = 0;
+	/// <summary>Perf ablation bits (0 = normal): 1 background band only (no per-ray sculpt intervals, no sub-mask band widening), 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on the background band instead of the sub-mask band, 32 legacy shader path, 64 single legacy background band (no S6 cloud layers), 128 no cirrus shell (High layer), 256 S6 deck colour off (layer-deck ambient keeps the sky chroma; A/B only), 512 megastorm strip fetch off (the strip is never enabled, so the wall body does not draw; A/B only). Re-uploaded every weather refresh.</summary>
+	[Export(PropertyHint.Range, "0,1023,1")] public int CameraIndependentDebugMask { get; set; } = 0;
 
 	[ExportSubgroup("Macro weather map")]
 	/// <summary>Build the world-anchored macro weather map (frame-sliced compute) and read it with one fetch per cloud sample. Off = every sample loops over its ray's systems.</summary>
@@ -68,6 +71,10 @@ public partial class RingSunshineCloudBridge
 	/// <summary>The Sunshine storm profile map driver (RingStormProfileMap.gd: valid, texture, front_* state), for test readback only.</summary>
 	public GodotObject? GetStormProfileMapDriver()
 		=> _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get("storm_profile_map").AsGodotObject() : null;
+
+	/// <summary>The Sunshine megastorm strip driver (RingMegastormStrip.gd: valid, texture, builds_completed, front_config), for test readback only.</summary>
+	public GodotObject? GetMegastormStripDriver()
+		=> _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get("megastorm_strip").AsGodotObject() : null;
 
 	/// <summary>Debug ablation (harness only): overrides Sunshine's atmospheric density (its own haze on clouds).</summary>
 	public void DebugSetCloudAtmosphericDensity(float density)
@@ -111,6 +118,17 @@ public partial class RingSunshineCloudBridge
 	private readonly List<UploadedWeatherSystem> _ciUploaded = new(MaximumWeatherSystemUploadCount);
 	private readonly byte[] _ciBlock = new byte[WeatherSystemsBlockBytes];
 	private readonly byte[] _ciLayersBlock = new byte[RingCloudLayers.BlockBytes];
+	// Megastorm near state (docs/megastorm-design.md 3.6): true while the wall or anvil record is in the uploaded block.
+	private bool _megastormNear;
+	private bool _megastormStripEnabledApplied;
+	private bool _megastormFrameActiveApplied;
+	// The Sunshine resource the megastorm prewarm was requested on (null = not yet).
+	private GodotObject? _megastormPrewarmOwner;
+	private readonly List<int> _ciMegastormSlots = new(4);
+	private readonly List<RingVolumetricCloudLayer.RenderWeatherSystem> _ciMegastormScratch = new(4);
+	private const float MegastormFastMacroRefreshSeconds = 0.05f;
+	private const int MegastormFastMacroSlices = 2;
+	private const float MegastormFastShadowUpdatesPerSecond = 6.7f;
 	private float _ciEnvelopeFloorMeters = 500.0f;
 	private float _ciEnvelopeCeilingMeters = RingCloudLayers.CeilingMeters;
 	private float _ciSelectionRadiusMeters;
@@ -122,6 +140,18 @@ public partial class RingSunshineCloudBridge
 	private float _ciSmoothedStorm;
 	private float _ciSmoothedHeavy;
 	private ulong _ciLastAmbientMsec;
+
+	private MegastormModel? MegastormRenderModel => _weather?.MegastormSource switch
+	{
+		RingMegastorm node => node.Model,
+		MegastormModel model => model,
+		_ => null
+	};
+
+	/// <summary>GPU near cloud shadow refresh rate: raised to at least 6.7 Hz while the megastorm wall is near (anvil shadow edges move at 350 m/s; the
+	/// crossfade hides the 52 m steps, see the WO4b motion check).</summary>
+	private float EffectiveGpuNearShadowUpdatesPerSecond
+		=> _megastormNear ? Mathf.Max(GpuNearShadowUpdatesPerSecond, MegastormFastShadowUpdatesPerSecond) : GpuNearShadowUpdatesPerSecond;
 
 	/// <summary>Light-march reach: the longest directional light ray is four lighting step distances.</summary>
 	private float CameraIndependentLightReachMeters => 4.0f * Mathf.Max(0.5f, LightingTravelKm) * 1000.0f;
@@ -348,6 +378,9 @@ public partial class RingSunshineCloudBridge
 			_ciHasAmbientState = false;
 			Array.Clear(_ciBlock);
 			_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
+			_megastormNear = false;
+			_ciMegastormSlots.Clear();
+			PublishMegastormStrip();
 			PublishMacroWeatherMap(false);
 			PublishStormProfileMap(false);
 			return;
@@ -370,7 +403,7 @@ public partial class RingSunshineCloudBridge
 		WriteFloat(20, sculptStrength);
 		// z carries CameraIndependentDebugMask (small int, exact as a float); w is the downwind angle of the weather wind (radians,
 		// canonical around/across frame) the storm shape shears toward.
-		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 511));
+		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 1023));
 		Vector2 stormWind = weather.WeatherWindMetersPerSecond;
 		WriteFloat(28, stormWind.LengthSquared() > 1e-8f ? MathF.Atan2(stormWind.Y, stormWind.X) : 0.0f);
 		// header2: background floor/ceiling, selection radius, revision
@@ -383,11 +416,36 @@ public partial class RingSunshineCloudBridge
 		WriteFloat(52, weather.WeatherClusteringStrength);
 		WriteFloat(56, smallCells + 256 * largeCells);
 		BinaryPrimitives.WriteInt32LittleEndian(_ciBlock.AsSpan(60, 4), seed);
+		bool megastormNear = false;
+		_ciMegastormSlots.Clear();
 		for (int i = 0; i < count; i++)
 		{
 			UploadedWeatherSystem entry = _ciUploaded[i];
+			WriteWeatherSystemSlot(i, entry);
+			int systemId = entry.System.SystemId;
+			if (RingVolumetricCloudLayer.IsMegastormRecordId(systemId))
+			{
+				_ciMegastormSlots.Add(i);
+				megastormNear |= systemId == MegastormModel.WallRecordId || systemId == MegastormModel.AnvilRecordId;
+			}
+		}
+		_megastormNear = megastormNear;
+		// Near: the records were collected at the refresh time; rewrite them at the predicted publish time so the refresh is not a step back.
+		if (megastormNear) RefreshMegastormSlots(PredictedMegastormPublishTime());
+		_ciUploadedEnabled = true;
+		_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
+		PublishMegastormStrip();
+		PublishMacroWeatherMap(MacroWeatherMap);
+		PublishCloudLayers();
+		PublishStormProfileMap(!DebugLegacyStormShape);
+	}
+
+	/// <summary>Packs one uploaded system into its std140 slot (4 x vec4) of the block.</summary>
+	private void WriteWeatherSystemSlot(int index, in UploadedWeatherSystem entry)
+	{
+		{
 			RingVolumetricCloudLayer.RenderWeatherSystem system = entry.System;
-			int offset = 64 + i * 64;
+			int offset = 64 + index * 64;
 			WriteFloat(offset + 0, (float)system.CenterAroundMeters);
 			WriteFloat(offset + 4, (float)system.CenterAcrossMeters);
 			WriteFloat(offset + 8, system.MajorRadiusMeters);
@@ -410,11 +468,115 @@ public partial class RingSunshineCloudBridge
 			// d.w: storm lifecycle code (birth 0-0.3, develop 0.3-1, mature 1-2, dissipate 2-3; 1.5 for manual systems).
 			WriteFloat(offset + 60, RingVolumetricCloudLayer.StormLifecycleOverride ?? system.Lifecycle);
 		}
-		_ciUploadedEnabled = true;
+	}
+
+	/// <summary>Weather-clock time the next publish will show: now plus two frames of latency and the shadow/map slack (now on a paused clock).</summary>
+	private double PredictedMegastormPublishTime()
+		=> _weather == null ? 0.0 : _weather.CloudSimulationTimeSeconds
+			+ (_weather.CloudSimulationPaused ? 0.0 : 2.0 * Math.Clamp(_megastormFrameDelta, 0.0, 0.1) + 0.025);
+
+	private double _megastormFrameDelta;
+
+	/// <summary>
+	/// Re-evaluates the megastorm records at <paramref name="timeSeconds"/> and rewrites their slots in the uploaded block (keeping each slot's
+	/// fade). No upload; allocation-free (reused scratch lists).
+	/// </summary>
+	private void RefreshMegastormSlots(double timeSeconds)
+	{
+		if (_weather == null || _explorer == null || _ciMegastormSlots.Count == 0) return;
+		_ciMegastormScratch.Clear();
+		_weather.CollectMegastormRenderSystems(_explorer.CanonicalPosition, _ciSelectionRadiusMeters, timeSeconds, _ciMegastormScratch,
+			FixedCloudAltitudeDatumMeters, StormFrontCloudBaseAltitudeMeters);
+		for (int s = 0; s < _ciMegastormSlots.Count; s++)
+		{
+			int slot = _ciMegastormSlots[s];
+			UploadedWeatherSystem entry = _ciUploaded[slot];
+			for (int c = 0; c < _ciMegastormScratch.Count; c++)
+			{
+				if (_ciMegastormScratch[c].SystemId != entry.System.SystemId) continue;
+				entry = entry with { System = _ciMegastormScratch[c] };
+				_ciUploaded[slot] = entry;
+				WriteWeatherSystemSlot(slot, entry);
+				break;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Per-frame megastorm work (called from _Process after UpdateCloudFrame): the megastorm frame uniform for Sunshine (direction 0 = off) and,
+	/// while the wall is near, the predicted-time record refresh plus one block upload. Costs a few field reads when no megastorm exists.
+	/// </summary>
+	private void UpdateMegastormPerFrame(double delta)
+	{
+		_megastormFrameDelta = delta;
+		PublishMegastormFrame();
+		if (!_megastormNear || !_ciUploadedEnabled || _clouds == null || !GodotObject.IsInstanceValid(_clouds)) return;
+		RefreshMegastormSlots(PredictedMegastormPublishTime());
 		_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
-		PublishMacroWeatherMap(MacroWeatherMap);
-		PublishCloudLayers();
-		PublishStormProfileMap(!DebugLegacyStormShape);
+	}
+
+	private void PublishMegastormFrame()
+	{
+		if (_clouds == null || !GodotObject.IsInstanceValid(_clouds) || !_clouds.HasMethod(SetMegastormFrameMethod)) return;
+		MegastormModel? model = CameraIndependentClouds ? MegastormRenderModel : null;
+		MegastormFrame frame = default;
+		double t = 0.0;
+		if (model != null && _weather != null)
+		{
+			t = _weather.CloudSimulationTimeSeconds;
+			frame = model.Evaluate(t);
+		}
+		if (model == null || !frame.Active)
+		{
+			if (_megastormFrameActiveApplied)
+			{
+				_megastormFrameActiveApplied = false;
+				_clouds.Call(SetMegastormFrameMethod, 0.0, 0.0, 0.0, 0.0, false);
+			}
+			return;
+		}
+		_megastormFrameActiveApplied = true;
+		// Prewarm (WO4b): from the first frame a megastorm exists (its trigger, or the load of a save that has one), Sunshine allocates the strip
+		// and compiles the megastorm march variants, so the wall's first approach does not stall on them. Once per Sunshine resource.
+		if (!ReferenceEquals(_megastormPrewarmOwner, _clouds) && _clouds.HasMethod(SetMegastormPrewarmMethod))
+		{
+			_clouds.Call(SetMegastormPrewarmMethod, true);
+			_megastormPrewarmOwner = _clouds;
+		}
+		double s = frame.AroundMeters;
+		float sHi = (float)s;
+		_clouds.Call(SetMegastormFrameMethod, (double)sHi, s - sHi, (double)frame.Direction, model.UnwrappedAroundAt(t), !RingMegastorm.DebugReprojectOff);
+	}
+
+	/// <summary>
+	/// Publishes the megastorm strip configuration (docs/megastorm-design.md 3.2): enabled only while a megastorm is active, its wall or anvil
+	/// record is uploaded and the A/B debug bit 512 is clear. Disabled is sent once on the transition.
+	/// </summary>
+	private void PublishMegastormStrip()
+	{
+		if (_clouds == null || !GodotObject.IsInstanceValid(_clouds) || !_clouds.HasMethod(SetMegastormStripMethod)) return;
+		MegastormModel? model = CameraIndependentClouds ? MegastormRenderModel : null;
+		MegastormFrame frame = default;
+		double t = 0.0;
+		if (model != null && _weather != null)
+		{
+			t = _weather.CloudSimulationTimeSeconds;
+			frame = model.Evaluate(t);
+		}
+		bool enabled = model != null && frame.Active && _megastormNear && (CameraIndependentDebugMask & 512) == 0;
+		if (!enabled)
+		{
+			if (!_megastormStripEnabledApplied) return;
+			_megastormStripEnabledApplied = false;
+			_clouds.Call(SetMegastormStripMethod, false, 0.0, 0.0, 0.0, 0.0, 318000.0, 0.0, 0.0, 40000.0, 0.0, 0.0, 0.0, 8, 2.0);
+			return;
+		}
+		_megastormStripEnabledApplied = true;
+		MegastormSettings settings = model!.Settings;
+		// The ceiling is the hard cloud cap; the containment field's ceiling helper replaces this when field WO6 lands.
+		_clouds.Call(SetMegastormStripMethod, true, t, (double)frame.Level, (double)frame.Strength, (double)model.State.Seed,
+			settings.WidthMeters, settings.BowMeters, settings.MeanderAmplitudeMeters, settings.MeanderWavelengthMeters,
+			model.MeanderPhaseWrapped(t), (double)RingCloudLayers.CeilingMeters, (double)FixedCloudAltitudeDatumMeters, 8, 2.0);
 	}
 
 	/// <summary>
@@ -446,9 +608,12 @@ public partial class RingSunshineCloudBridge
 			return;
 		}
 		double width = Math.Max(1.0, _grid.RingAcrossWidthMeters);
+		// Megastorm near (3.6): 2 slices every 0.05 s so the D / rain / deck coverage edge steps about 29 m instead of 130 m per build.
+		int slices = _megastormNear ? MegastormFastMacroSlices : Math.Clamp(MacroMapSlices, 1, 32);
+		double refresh = _megastormNear ? MegastormFastMacroRefreshSeconds : (double)Mathf.Clamp(MacroMapRefreshSeconds, 0.05f, 2.0f);
 		_clouds.Call(SetMacroWeatherMapMethod, true, _explorer.CanonicalPosition.AroundMeters, (double)_ciSelectionRadiusMeters,
 			-1000.0, width + 1000.0, (double)Mathf.Clamp(MacroMapResolution, 250.0f, 4000.0f),
-			Math.Clamp(MacroMapSlices, 1, 32), (double)Mathf.Clamp(MacroMapRefreshSeconds, 0.05f, 2.0f));
+			slices, refresh);
 	}
 
 	/// <summary>
@@ -504,6 +669,14 @@ public partial class RingSunshineCloudBridge
 			double across = -system.OrientationSine * deltaAround + system.OrientationCosine * deltaAcross;
 			double major = Math.Max(1.0, system.MajorRadiusMeters * system.SupportMultiplier);
 			double minor = Math.Max(1.0, system.MinorRadiusMeters * system.SupportMultiplier);
+			if (RingVolumetricCloudLayer.IsMegastormRecordId(system.SystemId))
+			{
+				// Full-width slab: only the minor (around) axis bounds it; its across extent is 1e7 m.
+				if (Math.Abs(across) >= minor) continue;
+				reachMeters = Mathf.Max(reachMeters, (float)Math.Abs(across) + system.MinorRadiusMeters + 4000.0f);
+				anvil |= system.PhysicalProfile == CloudFormationProfile.Cumulonimbus;
+				continue;
+			}
 			if (along * along / (major * major) + across * across / (minor * minor) >= 1.0) continue;
 			float distance = (float)Math.Sqrt(deltaAround * deltaAround + deltaAcross * deltaAcross);
 			reachMeters = Mathf.Max(reachMeters, distance + Mathf.Max(system.MajorRadiusMeters, system.MinorRadiusMeters) + 4000.0f);

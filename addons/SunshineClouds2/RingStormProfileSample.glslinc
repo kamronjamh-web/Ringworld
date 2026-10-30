@@ -16,6 +16,18 @@
 //
 // One fetch per PRIMARY sample (ring_storm_update_primary); light, ambient and shadow-probe samples taken from it reuse the texel
 // (lateral error is at most 1-2 texels over the light reach, the vertical coordinate stays exact).
+//
+// Megastorm (docs/megastorm-design.md 3.2, WO4): profile 12 (MegastormWall, records W and A) takes its column from the MOVING-FRAME
+// megastorm strip (RingMegastormStripBuild.glsl) instead of the storm map. The includer also declares
+//   layout(binding = M, std140) uniform RingMegastormStripBlock {
+//       vec4 a;   // x = strip x min (m), y = x texel (m), z = across texel (m), w = front layer base (buffer * 2)
+//       vec4 b;   // x/y = used width/height in texels, z = valid (> 0.5), w = 0
+//   } ringMegastormStrip;
+//   layout(binding = M + 1) uniform sampler2DArray ring_megastorm_strip;   // RGBA16F: heights (raw, absent = 0) / aux
+// and reads genericData.data.ring_megastorm_frame (CloudsInc.comp) for the per-frame reference line. The strip texel is collapsed into
+// the storm map's height convention after the bilinear filter (ring_megastorm_strip_fetch), so every reader below (density, erosion,
+// column top, light break band, sun optical depth) works on either source unchanged. Where both are in reach the thicker column wins
+// (natural storms are suppressed under the megastorm, so the overlap is empty in practice). Profile 12 never enters the storm bake.
 #ifndef RING_STORM_PROFILE_SAMPLE_GLSLINC
 #define RING_STORM_PROFILE_SAMPLE_GLSLINC
 
@@ -29,11 +41,57 @@ const float RING_STORM_ERODE_METERS = 4000.0;
 vec4 g_storm_heights = vec4(0.0);
 vec4 g_storm_aux = vec4(0.0); // (canopy horizontal depth, mammatus, lifecycle, tower horizontal depth), each 0 at a footprint edge
 
+// True when the fetched column came from the megastorm strip (set per primary; its light and ambient samples reuse it): the storm
+// erosion then reads the moving-frame noise (docs/megastorm-design.md 3.2) and the sun optical depth reads the strip.
+bool g_storm_strip = false;
+
 bool ring_storm_map_valid() { return ringStormMap.b.w > 0.5; }
 
 bool ring_storm_is_storm_profile(int index) {
 	int profile = int(round(ringWeatherSystems.systems[index].c.z));
 	return profile == 2 || profile == 3;
+}
+
+// Profile 12 (MegastormWall): a strip column. Without a valid strip it has no density (the analytic fallback returns 0).
+bool ring_storm_is_strip_profile(int index) {
+	return int(round(ringWeatherSystems.systems[index].c.z)) == 12;
+}
+
+// The strip is published and the megastorm frame is live (ring_megastorm_frame.z = direction, 0 when there is no megastorm).
+bool ring_megastorm_strip_valid() {
+	return RING_MEGASTORM_ENABLED && ringMegastormStrip.b.z > 0.5 && genericData.data.ring_megastorm_frame.z != 0.0;
+}
+
+// Reference-line distance x = dir * wrap(s(t) - around) of a canonical around coordinate (negative ahead of the line). s arrives as a
+// float plus its double remainder, so the subtraction is exact near the wall and the line moves continuously frame to frame.
+float ring_megastorm_x(float around) {
+	vec4 frame = genericData.data.ring_megastorm_frame;
+	float circumference = ring_ws_circumference();
+	float d = (frame.x - around) + frame.y;
+	if (circumference > 1.0) d -= circumference * floor(d / circumference + 0.5);
+	return frame.z * d;
+}
+
+// Strip column at canonical (around, across) in the storm map's convention: each interval collapsed onto its base by its coverage (after
+// the bilinear filter, so footprint edges taper), scaled by the sculpt strength like the storm bake. False outside the strip.
+bool ring_megastorm_strip_fetch(vec2 aroundAcross, out vec4 heights, out vec4 aux) {
+	heights = vec4(0.0);
+	aux = vec4(0.0);
+	vec2 t = vec2((ring_megastorm_x(aroundAcross.x) - ringMegastormStrip.a.x) / max(ringMegastormStrip.a.y, 1.0),
+		aroundAcross.y / max(ringMegastormStrip.a.z, 1.0));
+	vec2 size = ringMegastormStrip.b.xy;
+	if (t.x < 0.5 || t.y < 0.5 || t.x > size.x - 0.5 || t.y > size.y - 0.5) return false;
+	vec2 uv = t / vec2(textureSize(ring_megastorm_strip, 0).xy);
+	vec4 raw = textureLod(ring_megastorm_strip, vec3(uv, ringMegastormStrip.a.w), 0.0);
+	aux = textureLod(ring_megastorm_strip, vec3(uv, ringMegastormStrip.a.w + 1.0), 0.0);
+	float sculpt = clamp(ringWeatherSystems.header1.y * 1.2, 0.0, 1.0);
+	heights = vec4(raw.x, raw.x + max(raw.y - raw.x, 0.0) * clamp(1.25 * aux.w * sculpt, 0.0, 1.0),
+		raw.z, raw.z + max(raw.w - raw.z, 0.0) * clamp(1.25 * aux.x * sculpt, 0.0, 1.0));
+	return true;
+}
+
+float ring_storm_column_thickness(vec4 heights) {
+	return max(heights.y - heights.x, 0.0) + max(heights.w - heights.z, 0.0);
 }
 
 // Lean ramp altitudes (camera-independent mode, where storm_altitude is uploaded as zero): the lean grows as s^1.5 from 0 at the floor
@@ -71,23 +129,48 @@ void ring_storm_fetch_column(vec3 canonical) {
 	}
 }
 
+// The column of a primary sample from the sources in reach: `storm` = a map storm (profiles 2 / 3, map valid), `strip` = a megastorm
+// record (profile 12). With strip false this is exactly ring_storm_fetch_column.
+void ring_storm_fetch_columns(vec3 canonical, bool storm, bool strip) {
+	g_storm_strip = false;
+	if (storm) ring_storm_fetch_column(canonical);
+	else {
+		g_storm_heights = vec4(0.0);
+		g_storm_aux = vec4(0.0);
+	}
+	if (strip && ring_megastorm_strip_valid()) {
+		vec4 heights;
+		vec4 aux;
+		if (ring_megastorm_strip_fetch(canonical.xz, heights, aux)
+			&& (!storm || ring_storm_column_thickness(heights) > ring_storm_column_thickness(g_storm_heights))) {
+			g_storm_heights = heights;
+			g_storm_aux = aux;
+			g_storm_strip = true;
+		}
+	}
+}
+
 // Fetches the heights texel for a primary sample at `canonical` (cloud space: around, altitude, across). `mask` is the sculpt-system
-// subset in reach of the sample: the fetch only happens when it holds a storm system, so samples away from storms pay nothing.
+// subset in reach of the sample: the fetch only happens when it holds a storm system (map storms while the map is valid, megastorm
+// records while the strip is valid), so samples away from storms pay nothing.
 void ring_storm_update_primary(vec3 canonical, uvec2 mask) {
 	g_storm_heights = vec4(0.0);
 	g_storm_aux = vec4(0.0);
+	g_storm_strip = false;
+	bool mapValid = ring_storm_map_valid();
 	bool anyStorm = false;
+	bool anyStrip = false;
 	for (int word = 0; word < 2; word++) {
 		uint bits = word == 0 ? mask.x : mask.y;
 		while (bits != 0u) {
 			int index = word * 32 + findLSB(bits);
 			bits &= bits - 1u;
-			if (ring_storm_is_storm_profile(index)) { anyStorm = true; break; }
+			if (mapValid && ring_storm_is_storm_profile(index)) anyStorm = true;
+			else if (RING_MEGASTORM_ENABLED && ring_storm_is_strip_profile(index)) anyStrip = true;
 		}
-		if (anyStorm) break;
 	}
-	if (!anyStorm) return;
-	ring_storm_fetch_column(canonical);
+	if (!anyStorm && !anyStrip) return;
+	ring_storm_fetch_columns(canonical, anyStorm, anyStrip);
 }
 
 // Top of the fetched column's non-empty intervals (-1e30 when both are empty). The map density is exactly zero above it.
@@ -126,6 +209,9 @@ float ring_storm_map_density(float h) {
 	vec2 interval = canopy ? g_storm_heights.zw : g_storm_heights.xy;
 	float horizontalDepth = canopy ? g_storm_aux.x : g_storm_aux.w;
 	float erodeDepth = clamp(0.5 * (interval.y - interval.x), RING_STORM_FADE_METERS, RING_STORM_ERODE_METERS); // thin sheets keep a dense middle
+	// The megastorm wall is a continuous body from 500 m to the ceiling (docs/megastorm-design.md 2.1): its erosion stays within one fade of
+	// the surfaces, so the lower kilometres are not hollowed out the way a tower's skirt is.
+	if (RING_MEGASTORM_ENABLED && g_storm_strip) erodeDepth = RING_STORM_FADE_METERS;
 	g_storm_profile = min(clamp(min(h - interval.x, interval.y - h) / erodeDepth, 0.0, 1.0), clamp(horizontalDepth / 0.6, 0.0, 1.0));
 	g_storm_bottom = (h - interval.x) < (interval.y - h) ? 1.0 - smoothstep(0.0, 2.0 * RING_STORM_FADE_METERS, h - interval.x) : 0.0;
 	g_storm_map_density = p * p * (3.0 - 2.0 * p);
@@ -166,11 +252,65 @@ float ring_storm_sun_tau(vec3 canonical, vec3 sunWorld) {
 	// underside (mammatus pouch flanks facing the sun stay lit).
 	float reference = h + 2500.0;
 	vec2 xz = canonical.xz + dh * ((reference - h) / dUp);
-	vec2 uv;
-	if (!ring_storm_map_uv(xz, reference, uv)) return 0.0;
-	vec4 hts = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0), 0.0);
+	vec4 hts;
+	if (RING_MEGASTORM_ENABLED && g_storm_strip) {
+		// Megastorm primary: the sun ray crosses the strip column there.
+		vec4 unusedAux;
+		if (!ring_megastorm_strip_fetch(xz, hts, unusedAux)) return 0.0;
+	} else {
+		vec2 uv;
+		if (!ring_storm_map_uv(xz, reference, uv)) return 0.0;
+		hts = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0), 0.0);
+	}
 	float overlap = max(hts.y - max(hts.x, h), 0.0) + max(hts.w - max(hts.z, h), 0.0);
 	return RING_STORM_SUN_EXTINCTION * overlap / dUp;
+}
+
+// ---- Megastorm light under the overhang (docs/megastorm-design.md 2.3; WO4b) ----
+// Shade of the AIR at `canonical` (cloud space) under the megastorm column: 1 - the sun transmittance of the strip column the sun ray crosses
+// 2.5 km higher, read exactly as ring_storm_sun_tau reads it (overhead when the sun is low or down), so the air and the cloud beside it share
+// one shadow. 0 outside the strip. The haze in-scatter of the view path takes it (ring_cloud_atmosphere_apply_shaded).
+float ring_megastorm_shade_at(vec3 canonical, vec3 sunWorld) {
+	float dUp = dot(sunWorld, genericData.data.cloud_frame_up.xyz);
+	vec2 xz = canonical.xz;
+	if (dUp >= 0.06) {
+		vec2 dh = vec2(dot(sunWorld, genericData.data.cloud_frame_around.xyz), dot(sunWorld, genericData.data.cloud_frame_across.xyz));
+		xz += dh * (2500.0 / dUp);
+	}
+	vec4 hts;
+	vec4 unusedAux;
+	if (!ring_megastorm_strip_fetch(xz, hts, unusedAux)) return 0.0;
+	float h = canonical.y;
+	float overlap = max(hts.y - max(hts.x, h), 0.0) + max(hts.w - max(hts.z, h), 0.0);
+	return 1.0 - exp(-RING_STORM_SUN_EXTINCTION * overlap / max(dUp, 0.06));
+}
+
+// Open-sky light of a megastorm sample (docs/megastorm-design.md 2.3; WO4b). Under the overhang the sun is gone (ring_storm_sun_tau) and the
+// only bright sky is the band beyond the anvil's leading edge: ahead of the wall (towards -xi), within a few degrees of the horizon. How much
+// of it a sample at `canonical` sees, from the column it belongs to (the primary's fetch, g_storm_heights / g_storm_aux) and the strip
+// coverage 1.5 km towards that edge:
+//  - cloud below the column (the fair layer cumulus under the overhang) sees the band with its side facing it and the dark wall and
+//    overhang with the rest: RING_MEGASTORM_UNDER_OPEN;
+//  - the overhang (its canopy interval) faces down, so it takes the band at grazing incidence (RING_MEGASTORM_UNDERSIDE_OPEN), except
+//    along its thin leading edge (canopy coverage at the tap below 1);
+//  - the wall body faces the open side with its outer layer (1) and is buried inside (the body coverage at the tap): 1 - coverage.
+// Coverages, not density profiles, so the result does not depend on how deep the march's first dense sample happens to sit (a probe of
+// the eroded density there turned the march's step lattice into bands). 0 = buried .. 1 = facing the open band.
+const float RING_MEGASTORM_UNDERSIDE_OPEN = 0.15;
+const float RING_MEGASTORM_UNDER_OPEN = 0.6;
+const float RING_MEGASTORM_OPEN_TAP_METERS = 1500.0;
+float ring_megastorm_open_light(vec3 canonical) {
+	float h = canonical.y;
+	if (!ring_storm_column_contains(h)) return RING_MEGASTORM_UNDER_OPEN;
+	vec4 tapHeights;
+	vec4 tapAux;
+	// Towards -xi is +around for direction +1 (x = dir * (s - around)).
+	if (!ring_megastorm_strip_fetch(vec2(canonical.x + genericData.data.ring_megastorm_frame.z * RING_MEGASTORM_OPEN_TAP_METERS, canonical.z),
+		tapHeights, tapAux)) return 1.0;
+	if (ring_storm_profile(h, g_storm_heights.z, g_storm_heights.w) > ring_storm_profile(h, g_storm_heights.x, g_storm_heights.y)) {
+		return mix(1.0, RING_MEGASTORM_UNDERSIDE_OPEN, clamp(tapAux.x, 0.0, 1.0));
+	}
+	return 1.0 - clamp(tapAux.w, 0.0, 1.0);
 }
 #endif
 

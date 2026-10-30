@@ -558,8 +558,7 @@ public partial class RingLocalWeatherEffects : Node3D
 
     private (double Base, double Top) ResolveCloudBounds(in RingVolumetricCloudLayer.LocalWeatherState weather)
     {
-        bool front = weather.SystemKind is RingVolumetricCloudLayer.WeatherSystemKind.MajorFront
-            or RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront;
+        bool front = RingVolumetricCloudLayer.IsFrontKind(weather.SystemKind);
         if (_sunshineBridge != null)
             return PrecipitationAltitude.ResolveCloudBounds(weather.SystemId, front, weather.CloudBaseAltitudeMeters, weather.CloudTopAltitudeMeters,
                 _sunshineBridge.FixedCloudAltitudeDatumMeters, _sunshineBridge.NaturalCloudBaseAltitudeMeters,

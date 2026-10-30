@@ -23,6 +23,7 @@ public partial class RingWorldSaveManager : Node
     [Export] public NodePath CoordinatorPath { get; set; } = new("../TerrainLodCoordinator");
     [Export] public NodePath GraphicsQualityPath { get; set; } = new("../GraphicsQuality");
     [Export] public NodePath CloudPath { get; set; } = new("../RingVolumetricClouds");
+    [Export] public NodePath MegastormPath { get; set; } = new("../RingMegastorm");
     [Export] public NodePath SmoothTerrainPath { get; set; } = new("../SmoothTerrainGrid");
     [Export] public NodePath ConstructionOverlayPath { get; set; } = new("../SmoothConstructionOverlay");
     [Export] public NodePath SurfaceTerrainPath { get; set; } = new("../Terrain3DGameplay");
@@ -92,6 +93,7 @@ public partial class RingWorldSaveManager : Node
     private RingTerrainLodCoordinator? _coordinator;
     private RingGraphicsQualityController? _graphicsQuality;
     private RingworldTechDemo.RingVolumetricCloudLayer? _clouds;
+    private RingworldTechDemo.RingMegastorm? _megastorm;
     private SmoothTerrainGrid? _smoothTerrain;
     private SmoothConstructionOverlay? _constructionOverlay;
     private RingTerrain3DGameplay? _surfaceTerrain;
@@ -174,6 +176,8 @@ public partial class RingWorldSaveManager : Node
         public double CelestialSimulationTimeSeconds { get; set; }
         public bool CelestialPaused { get; set; }
         public float CelestialTimeScale { get; set; } = 1.0f;
+        // Optional (docs/megastorm-design.md 6.2): absent in old saves, which load untriggered. SaveFormatVersion stays 3.
+        public RingworldTechDemo.MegastormDocument? Megastorm { get; set; }
     }
 
     public override void _Ready()
@@ -183,6 +187,7 @@ public partial class RingWorldSaveManager : Node
         _coordinator = GetNodeOrNull<RingTerrainLodCoordinator>(CoordinatorPath);
         _graphicsQuality = GetNodeOrNull<RingGraphicsQualityController>(GraphicsQualityPath);
         _clouds = GetNodeOrNull<RingworldTechDemo.RingVolumetricCloudLayer>(CloudPath);
+        _megastorm = GetNodeOrNull<RingworldTechDemo.RingMegastorm>(MegastormPath);
         _smoothTerrain = GetNodeOrNull<SmoothTerrainGrid>(SmoothTerrainPath);
         _constructionOverlay = GetNodeOrNull<SmoothConstructionOverlay>(ConstructionOverlayPath);
         _surfaceTerrain = GetNodeOrNull<RingTerrain3DGameplay>(SurfaceTerrainPath);
@@ -338,7 +343,8 @@ public partial class RingWorldSaveManager : Node
                 CloudSimulationTimeSeconds = _clouds?.CloudSimulationTimeSeconds ?? 0.0,
                 CelestialSimulationTimeSeconds = GetCelestialSimulationTimeSeconds(),
                 CelestialPaused = GetCelestialPaused(),
-                CelestialTimeScale = GetCelestialTimeScale()
+                CelestialTimeScale = GetCelestialTimeScale(),
+                Megastorm = _megastorm?.ToDocument()
             }
         };
         if (_surfaceRuntimeGenerationActive)
@@ -1077,6 +1083,8 @@ public partial class RingWorldSaveManager : Node
         {
             _clouds.CloudSimulationTimeSeconds = Math.Max(0.0, runtime.CloudSimulationTimeSeconds);
         }
+        // Restored right after the weather clock and before the first weather refresh; a null document (old save) means untriggered.
+        _megastorm?.RestoreFrom(runtime.Megastorm);
         if (_celestialClock != null && _celestialClock.HasMethod("set_simulation_seconds"))
             _celestialClock.Call("set_simulation_seconds", Math.Max(0.0, runtime.CelestialSimulationTimeSeconds));
         if (_celestialClock != null)

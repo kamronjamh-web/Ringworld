@@ -647,6 +647,7 @@ public partial class RingSunshineCloudBridge : Node
         _weatherElapsed += Math.Max(0.0, delta);
         if (_weatherElapsed >= Math.Max(0.05, WeatherRefreshSeconds)) RefreshWeather();
         UpdateCloudFrame();
+        UpdateMegastormPerFrame(delta);
         PublishFarCloudLighting();
         PublishTerrainCloudSunVisibility();
         PublishFarCloudDetail();
@@ -674,6 +675,8 @@ public partial class RingSunshineCloudBridge : Node
         _clouds.Set("gpu_timestamp_macro_map_end_marker", RingPerformanceGpu.CloudMacroMapEndMarker);
         _clouds.Set("gpu_timestamp_storm_map_begin_marker", RingPerformanceGpu.CloudStormMapBeginMarker);
         _clouds.Set("gpu_timestamp_storm_map_end_marker", RingPerformanceGpu.CloudStormMapEndMarker);
+        _clouds.Set("gpu_timestamp_megastorm_strip_begin_marker", RingPerformanceGpu.CloudMegastormStripBeginMarker);
+        _clouds.Set("gpu_timestamp_megastorm_strip_end_marker", RingPerformanceGpu.CloudMegastormStripEndMarker);
         _clouds.Set("gpu_timestamp_interleave_begin_marker", RingPerformanceGpu.CloudInterleaveBeginMarker);
         _clouds.Set("gpu_timestamp_interleave_end_marker", RingPerformanceGpu.CloudInterleaveEndMarker);
         _clouds.Set("gpu_timestamp_diagnostics_enabled", enabled);
@@ -1914,9 +1917,7 @@ public partial class RingSunshineCloudBridge : Node
         in RingVolumetricCloudLayer.LocalWeatherState weather,
         in CloudAltitudeRange backgroundAltitude)
     {
-        if (weather.SystemKind is not (
-                RingVolumetricCloudLayer.WeatherSystemKind.MajorFront
-                or RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront))
+        if (!RingVolumetricCloudLayer.IsFrontKind(weather.SystemKind))
             return backgroundAltitude;
 
         return ResolveCloudAltitude(
@@ -2176,7 +2177,7 @@ public partial class RingSunshineCloudBridge : Node
         {
             _gpuShadowElapsed[cascade] += Math.Max(0.0, delta);
             float radius = cascade == 0 ? GpuNearShadowRadiusMeters : GpuFarShadowRadiusMeters;
-            float frequency = cascade == 0 ? GpuNearShadowUpdatesPerSecond : GpuFarShadowUpdatesPerSecond;
+            float frequency = cascade == 0 ? EffectiveGpuNearShadowUpdatesPerSecond : GpuFarShadowUpdatesPerSecond;
             int resolution = cascade == 0 ? GpuNearShadowMapResolution : GpuFarShadowMapResolution;
             float refreshDistance = Mathf.Clamp(radius * 0.08f, 500.0f, 4000.0f);
             bool relocate = !_hasGpuShadowCenter[cascade]
@@ -2385,7 +2386,7 @@ public partial class RingSunshineCloudBridge : Node
     {
         if (GpuShadowCrossfadeSeconds > 0.0f)
             return Mathf.Clamp(GpuShadowCrossfadeSeconds, 0.05f, 5.0f);
-        float rate = cascade == 0 ? GpuNearShadowUpdatesPerSecond : GpuFarShadowUpdatesPerSecond;
+        float rate = cascade == 0 ? EffectiveGpuNearShadowUpdatesPerSecond : GpuFarShadowUpdatesPerSecond;
         return Mathf.Clamp(1.0f / Mathf.Max(0.1f, rate), 0.05f, 5.0f);
     }
 

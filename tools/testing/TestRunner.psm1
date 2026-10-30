@@ -1,23 +1,26 @@
 # Test runner core (WO2 of docs/test-suite-tooling-design.md). Use tools/run_tests.ps1; this module holds the logic.
 # Works on Windows PowerShell 5.1 and PowerShell 7. No Python. Windows only (taskkill, Win32 process tree).
 #
+# Elapsed/duration use unbiased interrupt time (no sleep); the system is kept awake during a run. .ps1 runner entries always get
+# the REAL APPDATA in their environment (they isolate themselves); -AppData carries the runner's profile where declared.
 # Sections: process helper (C#) | manifest + globs | selection (4.5) | profiles (8.2) | launch + verdict (5.4/5.5)
 #           | reporting (6) | Invoke-TestRun.
 
 $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
-if (-not ('RingTestProc' -as [type])) {
+if (-not ('RingTestProcV2' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
 // Launches one child process, merges stdout and stderr into one timestamped log (flushed per line, so a killed runner
 // still leaves logs behind) and keeps the raw lines in memory for verdicts. Real exit codes via System.Diagnostics.Process.
-public class RingTestProc
+public class RingTestProcV2
 {
     Process p;
     StreamWriter w;
@@ -26,6 +29,18 @@ public class RingTestProc
     bool completed;
     public string StartError = "";
     public int Pid = 0;
+    // Unbiased interrupt time (100 ns units) excludes sleep/hibernate, so timeouts and durations count active time only.
+    [DllImport("kernel32.dll")]
+    static extern bool QueryUnbiasedInterruptTime(out ulong t);
+    ulong startU;
+    ulong exitU;
+
+    static ulong NowU()
+    {
+        ulong t;
+        QueryUnbiasedInterruptTime(out t);
+        return t;
+    }
 
     public bool Start(string exe, string args, string workDir, string logPath, string[] envPairs)
     {
@@ -56,6 +71,7 @@ public class RingTestProc
             p.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) { Add(e.Data); };
             w.WriteLine("# " + exe + " " + args);
             p.Start();
+            startU = NowU();
             Pid = p.Id;
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
@@ -87,10 +103,44 @@ public class RingTestProc
         lock (lk) { if (w != null) w.WriteLine("# " + text); }
     }
 
-    public bool HasExited { get { return p == null || p.HasExited; } }
+    public bool HasExited
+    {
+        get
+        {
+            if (p == null) return true;
+            if (!p.HasExited) return false;
+            MarkExit();
+            return true;
+        }
+    }
     public int ExitCode { get { return p.ExitCode; } }
-    public double Elapsed { get { return (DateTime.Now - p.StartTime).TotalSeconds; } }
-    public double Duration { get { return (p.ExitTime - p.StartTime).TotalSeconds; } }
+
+    void MarkExit()
+    {
+        lock (lk) { if (exitU == 0) exitU = NowU(); }
+    }
+
+    // Active (sleep-free) seconds since start; frozen once the exit has been observed.
+    public double Elapsed
+    {
+        get
+        {
+            ulong end = exitU != 0 ? exitU : NowU();
+            return (end - startU) / 10000000.0;
+        }
+    }
+    public double Duration { get { return Elapsed; } }
+
+    // Wall-clock seconds minus active seconds: time the machine spent asleep during the run.
+    public double SleptSeconds
+    {
+        get
+        {
+            double wall = p.HasExited ? (p.ExitTime - p.StartTime).TotalSeconds : (DateTime.Now - p.StartTime).TotalSeconds;
+            double s = wall - Elapsed;
+            return s > 0 ? s : 0;
+        }
+    }
 
     public string[] Lines()
     {
@@ -122,11 +172,29 @@ public class RingTestProc
     {
         if (completed) return;
         completed = true;
+        try { if (p.HasExited) MarkExit(); } catch (Exception) { }
         try { Task t = Task.Factory.StartNew(delegate() { p.WaitForExit(); }); t.Wait(5000); } catch (Exception) { }
         lock (lk)
         {
             if (w != null) { w.WriteLine("# " + footer); w.Dispose(); w = null; }
         }
+    }
+}
+'@
+}
+
+# Keeps Windows from going to sleep while a run is in progress (a sleep used to count towards test timeouts).
+if (-not ('RingTestPower' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class RingTestPower
+{
+    [DllImport("kernel32.dll")]
+    static extern uint SetThreadExecutionState(uint flags);
+    public static void KeepAwake(bool on)
+    {
+        // ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 0x1
+        SetThreadExecutionState(on ? 0x80000001u : 0x80000000u);
     }
 }
 '@
@@ -396,11 +464,14 @@ function Get-Estimate($Specs, [int]$Parallel, [int]$LocalLanes) {
 
 # ---------------------------------------------------------------- profiles (design 8.2)
 
-function Get-RealProfileDir {
+function Get-RealAppDataRoot {
     $appdata = [Environment]::GetEnvironmentVariable('APPDATA')
     # A shell that was isolated by another runner would point APPDATA into .godot; use the real roaming folder.
     if (-not $appdata -or $appdata -like '*\.godot\*') { $appdata = Join-Path $env:USERPROFILE 'AppData\Roaming' }
-    return (Join-Path $appdata 'Godot\app_userdata\RingworldTechDemo')
+    return $appdata
+}
+function Get-RealProfileDir {
+    return (Join-Path (Get-RealAppDataRoot) 'Godot\app_userdata\RingworldTechDemo')
 }
 
 # Creates (or reuses) .godot\test_runs\appdata_<label><suffix>. Returns the APPDATA root to hand to the process.
@@ -523,7 +594,9 @@ function Get-LaunchPlan($Ctx, $Spec) {
         if ($pn -contains 'Cache') { $a += @('-Cache', 'reuse') }
         if ($pn -contains 'AppData') { $a += @('-AppData', $appRoot) }
         $a += $Spec.UserArgs
-        if ($appRoot -and $Spec.Profile -ne 'own-runner') { $env_ += "APPDATA=$appRoot" }
+        # .ps1 runners isolate themselves from the REAL APPDATA (some refuse -AppData equal to $env:APPDATA), so the child
+        # always sees the real roaming folder, never the runner's isolated profile.
+        $env_ += "APPDATA=$(Get-RealAppDataRoot)"
         return @{ Exe = (Get-PsHost); Args = (Join-ProcessArgs $a); Env = $env_ }
     }
     $appRoot = $Ctx.ProfileRoot
@@ -556,7 +629,13 @@ function Get-MarkerMatch($Lines, [string]$Marker, [bool]$Tolerant) {
 }
 
 function Get-FirstErrorLine($Lines) {
-    foreach ($l in $Lines) { if ($l -match '^(SCRIPT ERROR|ERROR:|Parse Error)') { return $l } }
+    # Skips the known startup noise of the missing ring_voxel_mesher GDExtension (not the cause of any verdict).
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $l = $Lines[$i]
+        if ($l -match 'GDExtension dynamic library not found|Error loading extension') { continue }
+        if ($l -match '!FileAccess::exists\(path\)' -and ($i + 1) -lt $Lines.Count -and $Lines[$i + 1] -match 'open_dynamic_library') { continue }
+        if ($l -match '^(SCRIPT ERROR|ERROR:|Parse Error)') { return $l }
+    }
     return ''
 }
 
@@ -724,7 +803,7 @@ function Start-TestItem($Ctx, $Spec) {
     $rec.attempts = [int]$rec.attempts + 1
     $plan = Get-LaunchPlan $Ctx $Spec
     $log = Join-Path $Ctx.RunDir $rec.log
-    $proc = New-Object RingTestProc
+    $proc = New-Object RingTestProcV2
     $ok = $proc.Start($plan.Exe, $plan.Args, $script:Root, $log, [string[]]$plan.Env)
     if (-not $ok) {
         $rec.status = 'error'; $rec.detail = "could not start: $($proc.StartError)"
@@ -739,12 +818,18 @@ function Start-TestItem($Ctx, $Spec) {
 
 function Complete-TestItem($Ctx, $Item, [bool]$TimedOut) {
     $spec = $Item.Spec; $proc = $Item.Proc; $rec = $Ctx.Results[$spec.Name]
-    if ($TimedOut) { $proc.KillTree(); [void]$proc.Complete("TIMEOUT after $([int]$Item.Timeout) s; process tree killed by runner") }
-    else { [void]$proc.Complete("exit code $($proc.ExitCode)") }
+    $slept = $proc.SleptSeconds
+    $sleptNote = if ($slept -ge 5) { "; system slept $([int]$slept) s during this test" } else { '' }
+    if ($TimedOut) { $proc.KillTree(); [void]$proc.Complete("TIMEOUT after $([int]$Item.Timeout) s; process tree killed by runner$sleptNote") }
+    else { [void]$proc.Complete("exit code $($proc.ExitCode)$sleptNote") }
     $v = Get-Verdict $spec $proc $TimedOut $Item.Timeout
-    $dur = if ($TimedOut) { $proc.Elapsed } else { $proc.Duration }
+    $dur = $proc.Elapsed   # active (sleep-free) seconds
     $rec.duration_s = [math]::Round($dur, 1)
     $rec.exit_code = $v.exit_code; $rec.exit_anomaly = $v.exit_anomaly; $rec.detail = $v.detail
+    if ($slept -ge 5) {
+        $rec['slept_s'] = [math]::Round($slept, 1)
+        $rec.detail = "system slept $([int]$slept) s during this test; $($rec.detail)"
+    }
     $status = $v.status
     # quarantined tests launched by -Suite full: a pass means fixed, anything else stays quarantined.
     if ($spec.KnownStatus -eq 'quarantined') { if ($status -eq 'pass') { $status = 'fixed' } else { $status = 'quarantined' } }
@@ -983,6 +1068,7 @@ function Invoke-TestRun {
     Write-Host ("Run {0}  ->  {1}" -f $runId, $runDir)
 
     $exitCode = 0
+    [RingTestPower]::KeepAwake($true)
     try {
         # ----- build, profile, prune (design 8.2)
         if (-not $NoBuild) {
@@ -1019,6 +1105,7 @@ function Invoke-TestRun {
         throw
     } finally {
         Stop-ActiveTests $ctx
+        [RingTestPower]::KeepAwake($false)
     }
 
     Save-Results $ctx $true
