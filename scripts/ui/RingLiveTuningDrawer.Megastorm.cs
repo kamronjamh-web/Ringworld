@@ -22,6 +22,7 @@ public partial class RingLiveTuningDrawer
         AddMegastormNumber(group, "SpeedMetersPerSecond", "Megastorm speed (m/s)", 1, "Wall speed. 350 m/s laps the ring in about 20 in-game days; the 390 km pass over a point then lasts about a quarter day.");
         AddMegastormNumber(group, "TrailingLengthKm", "Megastorm trailing length (km)", 1, "Length of the trailing rain behind the wall. The whole pass is 50 km plus this (390 km by default).");
         AddMegastormNumber(group, "WarningReachKm", "Megastorm warning reach (km)", 1, "How early the world warns: the precursor sky extent and the ground-hum stages (hum from 10x this distance, water and wildlife at 2x).");
+        AddMegastormNumber(group, "SoundVolumeDb", "Megastorm sound volume (dB)", 0.5, "Level of the megastorm's own sound: the ground hum, the singing walls, the edge boom and the roar. The weather volumes above it are separate.");
         var row = new HBoxContainer();
         var save = new Button { Name = "MegastormSaveNow", Text = "Save megastorm", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         save.Pressed += () => FlushMegastormDefaults(); row.AddChild(save);

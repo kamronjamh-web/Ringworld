@@ -6,6 +6,10 @@ render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled,
 // (depth texture) or the whole-ring shell's crossfade, weighted by the complement of the near march's handoff weight, so the near and
 // far owners split every ray by distance (no seam, no double cloud). Density is the near layer density (ring_far_cloud_layers.gdshaderinc,
 // same map texels, table, gradient and noise); the cirrus shell is the near's own include, composited at its crossing by ray order.
+// Megastorm (docs/megastorm-design.md 3.3, 3.4; WO5; one uniform branch, far_megastorm_enabled): the layers gain the trailing / precursor
+// coverage analytically (the atlases exclude the megastorm), beyond the disk fade a short march draws that coverage alone (the whole-ring
+// shell has no megastorm), and the integration ends at the wall body's entry (megastorm_body_entry), so the layers in front of the wall
+// composite over the wedge pass (drawn before this one) and nothing behind it is drawn.
 uniform sampler2D far_layers_depth : hint_depth_texture, filter_nearest;
 uniform float terrain_cloud_receiver_height_meters = 3000.0;
 #include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
@@ -31,6 +35,8 @@ global uniform vec4 ring_far_cloud_ambient;
 #include "res://materials/ring_far_cloud_density.gdshaderinc"
 #include "res://materials/ring_cloud_weather_shared.gdshaderinc"
 #include "res://materials/ring_far_cloud_layers.gdshaderinc"
+#include "res://materials/ring_megastorm_profile.gdshaderinc"
+#include "res://materials/ring_far_megastorm_geometry.gdshaderinc"
 #define RING_CIRRUS_TEX2D(uv, lod) textureLod(far_density_extra_large_noise_patterns, (uv), (lod)).a
 #define RING_CIRRUS_TEX2D_SIZE float(textureSize(far_density_extra_large_noise_patterns, 0).x)
 #include "res://materials/ring_cirrus_shell.gdshaderinc"
@@ -115,6 +121,12 @@ void fragment() {
 		vec4 view = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, depth, 1.0);
 		t_terrain = length(view.xyz / view.w) / scale;
 	}
+	RingFarMsRay msray;
+	// The megastorm geometry takes the ring radius in physical metres (ring_far_ms_radius: this material's ring_radius_meters is in scaled
+	// units), so its altitudes and around offsets are exact whatever R the layer march above uses.
+	msray.rc = ray.rc; msray.h = ring_far_ms_radius() - ray.rc; msray.dr = ray.dr; msray.dt = ray.dt; msray.dy = ray.dy; msray.a = ray.a;
+	msray.across_c = across_c;
+	if (far_megastorm_enabled) t_terrain = min(t_terrain, megastorm_body_entry(msray, 0.0, min(t_terrain, 2.0e7)));
 	float t_end = min(t_terrain, disk_fade.y);
 	bool near_owned = near_handoff.z > 0.5 && near_handoff.y > near_handoff.x && near_handoff.w < 0.001;
 	float t_start = near_owned ? near_handoff.x : 0.0;
@@ -156,7 +168,32 @@ void fragment() {
 		if (t_ci < t_start || t_ci > t_terrain || far_near_complement(t_ci) <= 0.0) t_ci = -1.0;
 	}
 	if (t_end <= t_start) { ta = 1e30; tb = -1.0; }
-	if (tb <= ta && t_ci < 0.0) discard;
+
+	// Megastorm beyond the disk fade: its T / P coverage alone (the natural layers there are the whole-ring shell's), fading in as the
+	// volumetric layers fade out. The wedge of the coverage table's xi range, bowed by at most bow + meander.
+	vec2 ms0 = vec2(1e30, -1.0);
+	vec2 ms1 = vec2(1e30, -1.0);
+	float ms_l0 = 0.0;
+	float ms_l1 = 0.0;
+	if (far_megastorm_enabled) {
+		vec2 w = ring_far_ms_wedge(msray, far_megastorm_frame.z - far_megastorm_b.y - far_megastorm_b.z, far_megastorm_frame.w + far_megastorm_b.z);
+		vec2 sl = ring_far_ms_slab(msray);
+		float lo = max(max(w.x, sl.x), max(disk_fade.x, t_start));
+		float hi = min(min(w.y, sl.y), t_terrain);
+		if (hi > lo) {
+			vec2 b0;
+			vec2 b1;
+			ring_far_ms_band(msray, hull_lo, hull_hi, b0, b1);
+			ms0 = vec2(max(lo, b0.x), min(hi, b0.y));
+			ms1 = vec2(max(lo, b1.x), min(hi, b1.y));
+			ms_l0 = max(ms0.y - ms0.x, 0.0);
+			ms_l1 = max(ms1.y - ms1.x, 0.0);
+			if (ms_l0 <= 0.0) { ms0 = ms1; ms_l0 = ms_l1; ms_l1 = 0.0; }
+		}
+	}
+	int ms_n = ms_l0 + ms_l1 >= 100.0 ? 8 : 0;
+	float ms_dt = (ms_l0 + ms_l1) / 8.0;
+	if (tb <= ta && t_ci < 0.0 && ms_n == 0) discard;
 
 	float step_ref = max(far_layers_march.z, 1.0);
 	float density_mul = far_layers_march.x;
@@ -182,9 +219,18 @@ void fragment() {
 		dt = (tb - ta) / float(n);
 	}
 	float lowpass = smoothstep(2000.0, 5000.0, dt);
-	for (int i = 0; i <= 16; i++) {
-		bool vol = i < n;
-		float t = vol ? ta + (float(i) + 0.5) * dt : 1e30;
+	for (int i = 0; i <= 24; i++) {
+		bool vol = i < n + ms_n;
+		bool ms_only = i >= n;
+		float sample_dt = ms_only ? ms_dt : dt;
+		float t = 1e30;
+		if (vol) {
+			if (!ms_only) t = ta + (float(i) + 0.5) * dt;
+			else {
+				float uu = (float(i - n) + 0.5) * ms_dt;
+				t = uu < ms_l0 ? ms0.x + uu : ms1.x + (uu - ms_l0);
+			}
+		}
 		// The cirrus shell composites at its ray position, in front of the volumetric samples behind it.
 		if (!ci_done && t_ci <= t) {
 			ci_done = true;
@@ -196,7 +242,10 @@ void fragment() {
 				clamp(across / W - weather_wind_uv_per_second.y * weather_time_seconds, 0.0, 1.0));
 			float atlas_storm = weather_atlas_enabled ? textureLod(weather_atlas, atlas_uv, 0.0).g : 0.0;
 			vec4 layers; vec4 storm;
-			far_layers_column(xz, atlas_uv, atlas_storm, shift, C, layers, storm);
+			vec4 ms_cov = vec4(0.0);
+			if (far_megastorm_enabled)
+				ms_cov = ring_far_ms_coverage(ring_far_ms_x(msray, t_ci) - ring_megastorm_lead_offset(across, ring_far_ms_params()));
+			far_layers_column(xz, atlas_uv, atlas_storm, shift, C, far_megastorm_enabled, ms_cov, layers, storm);
 			vec4 high = far_layers_resolve(2, layers);
 			if (high.x > 0.0) {
 				vec3 up = far_ray_up(ray, u, t_ci);
@@ -225,11 +274,12 @@ void fragment() {
 		}
 		if (!vol) { if (ci_done) break; else continue; }
 		if (trans < 0.01) break;
-		float alt = far_ray_altitude(ray, t);
+		float alt = ms_only ? ring_far_ms_altitude(msray, t) : far_ray_altitude(ray, t);
 		if (alt < hull_lo || alt > hull_hi) continue;
-		float owner = far_owner_weight(t);
+		float owner = ms_only ? far_near_complement(t) * smoothstep(disk_fade.x, max(disk_fade.y, disk_fade.x + 1.0), t) : far_owner_weight(t);
 		if (owner <= 0.0) continue;
-		float around = around_c + R * atan(t * ray.dt, ray.rc + t * ray.dr);
+		float around = (ms_only ? atan(u.y, u.x) * ring_far_ms_radius() + ring_far_ms_radius() * atan(t * ray.dt, ray.rc + t * ray.dr)
+			: around_c + R * atan(t * ray.dt, ray.rc + t * ray.dr));
 		float across = across_c + t * ray.dy;
 		around -= C * floor(around / C);
 		vec2 xz = vec2(around, across);
@@ -237,7 +287,15 @@ void fragment() {
 			clamp(across / W - weather_wind_uv_per_second.y * weather_time_seconds, 0.0, 1.0));
 		float atlas_storm = weather_atlas_enabled ? textureLod(weather_atlas, atlas_uv, 0.0).g : 0.0;
 		vec4 layers; vec4 storm;
-		far_layers_column(xz, atlas_uv, atlas_storm, shift, C, layers, storm);
+		vec4 ms_cov = vec4(0.0);
+		if (far_megastorm_enabled)
+			ms_cov = ring_far_ms_coverage(ring_far_ms_x(msray, t) - ring_megastorm_lead_offset(across, ring_far_ms_params()));
+		if (ms_only) {
+			layers = ms_cov;
+			storm = vec4(0.0);
+		} else {
+			far_layers_column(xz, atlas_uv, atlas_storm, shift, C, far_megastorm_enabled, ms_cov, layers, storm);
+		}
 		vec4 low = far_layers_resolve(0, layers);
 		vec4 mid = far_layers_resolve(1, layers);
 		vec3 p = vec3(around, alt, across);
@@ -246,12 +304,12 @@ void fragment() {
 		float closure_low = far_layers_closure(low, layers.w, storm.y, storm.x);
 		float closure_mid = far_layers_closure(mid, layers.w, storm.y, storm.x);
 		if (alt >= low.y && alt <= low.z)
-			d_low = far_layer_density(0, low, p, storm.z, closure_low, lowpass);
+			d_low = far_layer_density(0, low, p, storm.z, closure_low, ms_only ? 1.0 : lowpass);
 		if (alt >= mid.y && alt <= mid.z)
-			d_mid = far_layer_density(1, mid, p, storm.z, closure_mid, lowpass);
+			d_mid = far_layer_density(1, mid, p, storm.z, closure_mid, ms_only ? 1.0 : lowpass);
 		float d = max(d_low, d_mid);
 		if (d <= 0.0) continue;
-		float a = clamp(pow(clamp(d * density_mul, 0.0, 4.0), sharp) * dt / step_ref * far_layers_opacity_gain, 0.0, 1.0) * owner;
+		float a = clamp(pow(clamp(d * density_mul, 0.0, 4.0), sharp) * sample_dt / step_ref * far_layers_opacity_gain, 0.0, 1.0) * owner;
 		if (a <= 0.0) continue;
 		// Lighting: the layer containing the denser sample.
 		bool in_low = d_low >= d_mid;

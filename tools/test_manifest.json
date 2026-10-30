@@ -129,6 +129,14 @@
         "default_bus_layout.tres"
       ]
     },
+    "pda": {
+      "globs": [
+        "scripts/Pda/**",
+        "resources/pda/**",
+        "scripts/Weather/Megastorm/MegastormPda*",
+        "scripts/Weather/Megastorm/MegastormSound*"
+      ]
+    },
     "ui-menu": {
       "globs": [
         "scripts/ui/*Menu*",
@@ -2691,6 +2699,67 @@
       "expected_s": 3,
       "timeout_s": 60
     },
+    "megastorm_sound_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "audio"
+      ],
+      "marker": "MEGASTORM_SOUND",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "megastorm_audio_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "audio"
+      ],
+      "marker": "MEGASTORM_AUDIO",
+      "expected_s": 6,
+      "timeout_s": 120
+    },
+    "megastorm_tremor_shader_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "wet-world"
+      ],
+      "marker": "MEGASTORM_TREMOR_SHADER",
+      "expected_s": 12,
+      "timeout_s": 120
+    },
+    "megastorm_hazard_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "wind",
+        "pda"
+      ],
+      "marker": "MEGASTORM_HAZARD",
+      "expected_s": 6,
+      "timeout_s": 60
+    },
+    "megastorm_pda_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "pda"
+      ],
+      "marker": "MEGASTORM_PDA",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
     "megastorm_weather_test": {
       "kind": "test",
       "mode": "headless",
@@ -2704,6 +2773,19 @@
       "world": "integration",
       "marker": "MEGASTORM_WEATHER",
       "expected_s": 25,
+      "timeout_s": 180
+    },
+    "megastorm_far_coverage_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "world": "integration",
+      "marker": "MEGASTORM_FAR_COVERAGE",
+      "expected_s": 15,
       "timeout_s": 180
     },
     "megastorm_save_load_test": {
@@ -2747,6 +2829,18 @@
       "expected_s": 45,
       "timeout_s": 140,
       "batch": "certified@1280x720"
+    },
+    "megastorm_far_parity_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "marker": "MEGASTORM_FAR_PARITY",
+      "expected_s": 20,
+      "timeout_s": 90
     },
     "menu_altitude_perf_capture": {
       "kind": "tool",

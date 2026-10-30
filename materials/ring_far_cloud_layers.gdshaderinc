@@ -85,10 +85,19 @@ float far_layers_storm_owned(vec2 xz, vec2 shift, float circumference) {
 	return owned;
 }
 
+// The megastorm's trailing / precursor layers (docs/megastorm-design.md 3.4; WO5) composed onto a natural layer column: `megastorm` is
+// (1 - remaining low, mid, high, weatherness) of records T and P at the column (MegastormFarCoverage), RingCloudLayers.EvaluateMap's product.
+vec4 far_layers_add_megastorm(vec4 layers, vec4 megastorm) {
+	return vec4(vec3(1.0) - (vec3(1.0) - layers.xyz) * (vec3(1.0) - megastorm.xyz), max(layers.w, megastorm.w));
+}
+
 // The column at canonical (around, across) metres: layers = (low, mid, high, weatherness) and storm = (owned storm level, ownership,
 // the weather-shared "storm" input of the layer density, 0). Inside the Sunshine macro map: its front texels (exact near parity),
 // faded over the last 6 texels to the whole-ring atlas (atlas_uv: the advected far weather atlas UV, atlas_storm its storm channel).
-void far_layers_column(vec2 xz, vec2 atlas_uv, float atlas_storm, vec2 shift, float circumference, out vec4 layers, out vec4 storm) {
+// megastorm_on / megastorm: the analytic T / P coverage of the megastorm (the atlases exclude it); it joins the atlas side only, since the
+// macro map already holds the records, so the map edge fade blends map and analytic. Off, the column is exactly the pre-megastorm one.
+void far_layers_column(vec2 xz, vec2 atlas_uv, float atlas_storm, vec2 shift, float circumference, bool megastorm_on, vec4 megastorm,
+		out vec4 layers, out vec4 storm) {
 	vec4 atlas_layers = far_layer_atlas_enabled ? textureLod(far_layer_atlas, atlas_uv, 0.0) : vec4(0.0);
 	if (far_fine_a.w > 0.5) {
 		// Where the content now at xz sat at the fine atlas's snapshot; the window position wraps around the ring about its centre.
@@ -104,6 +113,7 @@ void far_layers_column(vec2 xz, vec2 atlas_uv, float atlas_storm, vec2 shift, fl
 			atlas_layers = mix(atlas_layers, textureLod(far_fine_atlas, fine_uv, 0.0), w_fine);
 		}
 	}
+	if (megastorm_on) atlas_layers = far_layers_add_megastorm(atlas_layers, megastorm);
 	// Beyond the map the atlas's high coverage is already suppressed under storms; its storm level is the far weather storm channel.
 	layers = atlas_layers;
 	storm = vec4(atlas_storm, smoothstep(0.35, 0.80, atlas_storm), atlas_storm, 0.0);

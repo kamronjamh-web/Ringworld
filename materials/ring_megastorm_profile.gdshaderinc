@@ -86,23 +86,33 @@ float ring_megastorm_lead_offset(float across, RingMegastormParams p) {
 	return -p.b.y * (1.0 - u * u) - meander;
 }
 
+// The across-only noise terms of the column (MegastormProfile.AcrossTerms): x = tower noise, y = mammatus noise, both raw value noise
+// 0..1 before the rim merge and the mammatus scaling. The far wedge pass (WO5) reads them from a 1D across table built by the C# twin.
+vec2 ring_megastorm_across_noise(float across, RingMegastormParams p) {
+	int seed = int(round(p.a.w));
+	return vec2(ring_ms_noise(seed, 11, across / RING_MS_TOWER_SCALE, p.a.x, 1200.0, 1200.0),
+		ring_ms_noise(seed, 13, across / RING_MS_MAMMATUS_SCALE, p.a.x, 600.0, 600.0));
+}
+
+// The raw rain-shaft noise at `across` (MegastormProfile.AcrossTerms z): ring_megastorm_rain_shaft is wallCov x (0.6 + 0.4 x this) x strength.
+float ring_megastorm_shaft_noise(float across, RingMegastormParams p) {
+	return ring_ms_noise(int(round(p.a.w)), 12, across / RING_MS_SHAFT_SCALE, p.a.x, 900.0, 900.0);
+}
+
 // Rain shaft 0..1 (x strength) at the column (MegastormColumn.RainShaft); WO5 reads it, the strip does not store it.
 float ring_megastorm_rain_shaft(float x, float across, RingMegastormParams p) {
 	float xi = x - ring_megastorm_lead_offset(across, p);
 	float wallCov = ring_ms_smooth((xi + 300.0) / 800.0)
 		* (1.0 - ring_ms_smooth((xi - RING_MS_WALL_END_XI) / (RING_MS_TRANSITION_END_XI - RING_MS_WALL_END_XI)));
-	int seed = int(round(p.a.w));
-	return wallCov * (0.6 + 0.4 * ring_ms_noise(seed, 12, across / RING_MS_SHAFT_SCALE, p.a.x, 900.0, 900.0)) * p.a.z;
+	return wallCov * (0.6 + 0.4 * ring_megastorm_shaft_noise(across, p)) * p.a.z;
 }
 
-// The strip column at (x, across). MegastormProfile.Column, line for line.
-void ring_megastorm_column(float x, float across, RingMegastormParams p, out vec4 heights, out vec4 aux) {
+// The strip column at (x, across) from its across noise terms (ring_megastorm_across_noise). MegastormProfile.Column, line for line.
+void ring_megastorm_column_terms(float x, float across, vec2 noise, RingMegastormParams p, out vec4 heights, out vec4 aux) {
 	heights = vec4(0.0);
 	aux = vec4(0.0);
-	float t = p.a.x;
 	float level = p.a.y;
 	float strength = p.a.z;
-	int seed = int(round(p.a.w));
 	float width = p.b.x;
 	float xi = x - ring_megastorm_lead_offset(across, p);
 	float ceilingH = min(18000.0, p.c.y);
@@ -112,7 +122,7 @@ void ring_megastorm_column(float x, float across, RingMegastormParams p, out vec
 		* (1.0 - ring_ms_smooth((xi - RING_MS_WALL_END_XI) / (RING_MS_TRANSITION_END_XI - RING_MS_WALL_END_XI)));
 	float rim = min(across, width - across);
 	float merge = ring_ms_smooth((15000.0 - rim) / 15000.0);
-	float tower = max(ring_ms_noise(seed, 11, across / RING_MS_TOWER_SCALE, t, 1200.0, 1200.0), merge);
+	float tower = max(noise.x, merge);
 	float dome = tower > 0.8 ? (tower - 0.8) * 5.0 * 1500.0 * (1.0 - merge) : 0.0;
 	float wallTop = 15000.0 + 2000.0 * tower + dome;
 	float transition = ring_ms_smooth((xi - RING_MS_WALL_END_XI) / (RING_MS_TRANSITION_END_XI - RING_MS_WALL_END_XI));
@@ -126,7 +136,7 @@ void ring_megastorm_column(float x, float across, RingMegastormParams p, out vec
 	float under = 9000.0 + 3000.0 * ring_ms_smooth(xi / RING_MS_ANVIL_START_XI);
 	float canopyTop = min(RING_MS_FORMING_TOP + (RING_MS_FULL_TOP - RING_MS_FORMING_TOP) * level, ceilingH);
 	float mamm = ring_ms_smooth((xi + 25000.0) / 5000.0) * (1.0 - ring_ms_smooth((xi + 8000.0) / 5000.0))
-		* (0.5 + 0.5 * ring_ms_noise(seed, 13, across / RING_MS_MAMMATUS_SCALE, t, 600.0, 600.0));
+		* (0.5 + 0.5 * noise.y);
 
 	if (wallCov > 0.0) {
 		heights.x = baseH;
@@ -137,6 +147,11 @@ void ring_megastorm_column(float x, float across, RingMegastormParams p, out vec
 		heights.w = canopyTop;
 	}
 	aux = vec4(canopyCov, mamm, wallCov * tower, wallCov) * strength;
+}
+
+// The strip column at (x, across). MegastormProfile.Column, line for line.
+void ring_megastorm_column(float x, float across, RingMegastormParams p, out vec4 heights, out vec4 aux) {
+	ring_megastorm_column_terms(x, across, ring_megastorm_across_noise(across, p), p, heights, aux);
 }
 
 #endif

@@ -210,6 +210,10 @@ public partial class RingWeatherAmbience : Node
     }
     public void ClearArrivalOverrideForFixture() => _arrivalOverride = null;
 
+    /// <summary>Megastorm airborne gate (1 with no megastorm): multiplies the distant-storm sectors. <see cref="RingMegastormAudio"/> pushes it every frame (0 while sound cannot outrun the wall).</summary>
+    public float MegastormAirGate { get; set; } = 1f;
+    /// <summary>Megastorm gust swell (0..1, 0 with no megastorm): joins the arrival gust weight, so the S3 gust-roar voices carry the brief swell riding the outflow ahead of the wall.</summary>
+    public float MegastormGustSwell { get; set; }
     /// <summary>Underground-mode enclosure blend (0..1); fades the exterior beds without stopping their streams.</summary>
     public float UndergroundBlend { get; set; }
     /// <summary>Underground-mode hold: skips exposure probing while fully enclosed and treats the listener as deep underground.</summary>
@@ -825,7 +829,7 @@ public partial class RingWeatherAmbience : Node
             Drive(_wind[s], _scratchSector[s] * RainSoundField.GustMultiplier(_gustSeed, s, _audioClock) * p.WindGain * WindLevel * windDuck, windDb, dt, tau, cap);
 
         // Gust front roar (toward the storm), the hail bed (by sector exposure; the roof owns it under cover) and the leaf skitter (biome and gust).
-        RainSoundField.GustRoarSectorGains(_arrivalGust, _stormAngle, _scratchSector);
+        RainSoundField.GustRoarSectorGains(Math.Max(_arrivalGust, FiniteUnit(MegastormGustSwell)), _stormAngle, _scratchSector);
         float gustLevel = 0f;
         for (int s = 0; s < RainSoundField.SectorCount; s++)
         {
@@ -853,7 +857,7 @@ public partial class RingWeatherAmbience : Node
         for (int s = 0; s < RainSoundField.SectorCount; s++)
         {
             _distantShare[s] = RainSoundField.SlewGain(_distantShare[s], _scratchSector[s], dt, 3f, 1f);
-            Drive(_distant[s], _current[3] * _distantShare[s] * DistantLevel, distantDb, dt, tau, cap);
+            Drive(_distant[s], _current[3] * _distantShare[s] * DistantLevel * FiniteUnit(MegastormAirGate), distantDb, dt, tau, cap);
         }
     }
 

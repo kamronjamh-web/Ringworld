@@ -15,7 +15,10 @@ namespace RingworldTechDemo;
 /// </summary>
 public readonly record struct MegastormSample(bool Active, MegastormPhase Phase, double XiMeters, double DistanceToEdgeMeters /* > 0 ahead */,
     double TimeToArrivalSeconds, double TimeToClearSeconds, double TimeSincePassageSeconds, float Danger /* 0..1 */, float Suppression,
-    float SpeedMetersPerSecond, int Direction, long EpisodeId /* passage key for the PDA once-per-approach rules; 0 when inactive */);
+    float SpeedMetersPerSecond, int Direction, long EpisodeId /* passage key for the PDA once-per-approach rules; 0 when inactive */,
+    float HumLevel = 0.0f, float WallSingLevel = 0.0f, AirSoundState AirSound = AirSoundState.Silent, float AirGain = 0.0f, float BoomEnvelope = 0.0f,
+    float GustSwell = 0.0f, float TremorLevel = 0.0f, float WildlifeQuiet = 0.0f /* audio fields: MegastormSound, docs/megastorm-design.md 5.2; all 0 when inactive */,
+    MegastormHazards Hazards = default /* docs/megastorm-design.md 5.5 (WO10); MegastormHazards.None when inactive */);
 
 /// <summary>
 /// Runtime owner of the megastorm (docs/megastorm-design.md 6.1, WO2): holds the <see cref="MegastormModel"/>, follows the weather clock
@@ -26,6 +29,7 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
 {
     [Export] public NodePath CloudPath { get; set; } = new("../RingVolumetricClouds");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
+    [Export] public NodePath AmbiencePath { get; set; } = new("../WeatherAmbience");
     [Export] public string MegastormPreferencesPath { get; set; } = GameplayMegastormDefaults.UserPath;
 
     /// <summary>Test seam: replaces the weather clock.</summary>
@@ -34,6 +38,23 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     public Func<RingCanonicalPosition?>? ObserverPositionProvider { get; set; }
     /// <summary>(old phase, new phase) at the observer.</summary>
     public event Action<MegastormPhase, MegastormPhase>? ObserverPhaseChanged;
+
+    // ---- Hazard events and seams (5.5, WO10) ----
+    /// <summary>The observer crossed xi = 0 (edge-triggered; open-air peak and impulse at the observer).</summary>
+    public event Action<MegastormBoomEvent>? BoomPassed;
+    /// <summary>The observer entered / left the vacuum wake (xi 25-60 km); the argument is the episode id.</summary>
+    public event Action<long>? WakeEntered;
+    public event Action<long>? WakeExited;
+    /// <summary>A registered structure's position crossed xi = 0.</summary>
+    public event Action<MegastormStructure, MegastormBoom>? StructureBoomPassed;
+    /// <summary>Registered by a future building system; null today, so nothing is polled.</summary>
+    public IMegastormStructureSource? StructureSource { get; set; }
+    /// <summary>The observer's shelter class and wind-aligned rain exposure as of the last 4 Hz probe (open and 1 when there is no probe).</summary>
+    public MegastormObserver ObserverContext => _observer;
+    /// <summary>Test seam: replaces the rain-exposure provider's solid test used by the wind-aligned cover probe.</summary>
+    public Func<double, double, double, bool>? SolidProbe { get; set; }
+    /// <summary>Test seam: forces the shelter class instead of reading the ambience classifier.</summary>
+    public Func<RainShelterClass>? ShelterClassProvider { get; set; }
 
     /// <summary>PDA database hook (5.4): persisted unlock of the "structural resonance" entry.</summary>
     public bool ResonanceEntryUnlocked { get; set; }
@@ -49,6 +70,16 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     private MegastormPhase _observerPhase = MegastormPhase.Inactive;
     private (double Around, int Direction, double Age, float Speed)? _debugTrigger;
     private double? _debugXiMeters;
+    // The debug request as read at startup, so a save restore without a megastorm (which resets the model and may jump the clock) re-arms it.
+    private (double Around, int Direction, double Age, float Speed)? _debugTriggerRequest;
+    private double? _debugXiRequest;
+    private RingWeatherAmbience? _ambience;
+    private MegastormObserver _observer = MegastormObserver.Open;
+    private double _probeTimer;
+    private readonly MegastormHazardEventTracker _hazardEvents = new();
+    private readonly System.Collections.Generic.Dictionary<long, MegastormHazardEventTracker> _structureEvents = new();
+    private readonly MegastormStructure[] _structureBuffer = new MegastormStructure[64];
+    private const double StructureRadiusMeters = 20000.0, ProbeIntervalSeconds = 0.25;
 
     public RingMegastorm() { _model = new MegastormModel(SettingsFromMenu()); }
 
@@ -72,6 +103,7 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     {
         _clouds = GetNodeOrNull<RingVolumetricCloudLayer>(CloudPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
+        _ambience = GetNodeOrNull<RingWeatherAmbience>(AmbiencePath);
         ReadDebugEnvironment();
     }
 
@@ -80,13 +112,87 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
         ApplySettings();
         if (_debugTrigger != null || _debugXiMeters != null) ApplyDebugTrigger();
         SyncWeatherSource();
-        if (!_model.Triggered) { _observerPhase = MegastormPhase.Inactive; return; }
+        if (!_model.Triggered) { _observerPhase = MegastormPhase.Inactive; ResetHazards(); return; }
         RingCanonicalPosition? observer = ObserverPosition();
         if (observer == null) return;
+        UpdateHazards(delta, observer.Value);
         MegastormPhase phase = Query(observer.Value, Now).Phase;
         if (phase == _observerPhase) return;
         MegastormPhase old = _observerPhase; _observerPhase = phase;
         ObserverPhaseChanged?.Invoke(old, phase);
+    }
+
+    // ---- Hazards (5.5, WO10): observer context, edge events, registered structures ----
+    private void ResetHazards()
+    {
+        _hazardEvents.Reset();
+        if (_structureEvents.Count > 0) _structureEvents.Clear();
+        _observer = MegastormObserver.Open;
+    }
+
+    private void UpdateHazards(double delta, RingCanonicalPosition observer)
+    {
+        double t = Now;
+        MegastormPointSample ps = _model.Query(observer.AroundMeters, observer.AcrossMeters, t);
+        if (!ps.Active) { ResetHazards(); return; }
+        _probeTimer -= delta;
+        bool tick = _probeTimer <= 0.0;
+        if (tick) { _probeTimer = ProbeIntervalSeconds; _observer = ProbeObserver(observer, ps.XiMeters, t); }
+        MegastormHazardEdges edges = _hazardEvents.Update(ps.XiMeters);
+        if (edges != MegastormHazardEdges.None)
+        {
+            long episode = EpisodeId(observer.AroundMeters, t);
+            if ((edges & MegastormHazardEdges.BoomPassed) != 0)
+            {
+                MegastormBoom boom = MegastormHazardMath.BoomAt(_model, observer.AroundMeters, observer.AcrossMeters, t);
+                BoomPassed?.Invoke(new MegastormBoomEvent(episode, observer, boom.PeakKPa, boom.ImpulseKPaS, boom.TimeSeconds));
+            }
+            if ((edges & MegastormHazardEdges.WakeEntered) != 0) WakeEntered?.Invoke(episode);
+            if ((edges & MegastormHazardEdges.WakeExited) != 0) WakeExited?.Invoke(episode);
+        }
+        if (tick && StructureSource != null) UpdateStructures(observer, t);
+    }
+
+    /// <summary>Shelter class from the ambience classifier; the lee and the rain exposure from the two wind-aligned probes (travel direction ahead of the edge, the wind behind it).</summary>
+    private MegastormObserver ProbeObserver(RingCanonicalPosition observer, double xi, double t)
+    {
+        RainShelterClass cls = ShelterClassProvider?.Invoke() ?? _ambience?.ShelterClass ?? RainShelterClass.Open;
+        bool enclosed = cls == RainShelterClass.Indoors || cls == RainShelterClass.Cave || cls == RainShelterClass.DeepCave;
+        if (enclosed) return new MegastormObserver(MegastormShelter.Enclosed, 0.0f);
+        if (xi < -30000.0 || xi >= MegastormHazardMath.WakeEndXi) return MegastormObserver.Open;
+        Func<double, double, double, bool>? solid = SolidProbe ?? SolidFromExposureProvider();
+        if (solid == null) return MegastormObserver.Open;
+        float level = _model.Evaluate(t).Level;
+        int dir = _model.State.Direction;
+        float exposure = 1.0f;
+        if (xi >= 0.0)
+            exposure = WindAlignedCoverProbe.Exposure(observer.AroundMeters, observer.VerticalMeters, observer.AcrossMeters,
+                new Vector2(dir * MegastormHazardMath.WindAlong(xi) * level, 0.0f), solid);
+        // The blast comes from the wall: the lee is a body upwind of the observer along the travel direction.
+        float blast = xi <= 0.0
+            ? WindAlignedCoverProbe.Exposure(observer.AroundMeters, observer.VerticalMeters, observer.AcrossMeters, new Vector2(dir * 100.0f, 0.0f), solid) : 1.0f;
+        return new MegastormObserver(blast < 0.5f ? MegastormShelter.Lee : MegastormShelter.Open, exposure);
+    }
+
+    private Func<double, double, double, bool>? SolidFromExposureProvider()
+    {
+        IRainExposureProvider? provider = _ambience?.ExposureProvider;
+        if (provider == null) return null;
+        return (around, vertical, across) => provider.IsSolidAt((long)Math.Floor(around), vertical, (int)Math.Floor(across));
+    }
+
+    private void UpdateStructures(RingCanonicalPosition observer, double t)
+    {
+        int n = StructureSource!.CollectNear(observer, StructureRadiusMeters, _structureBuffer);
+        if (_structureEvents.Count > 512) _structureEvents.Clear();
+        for (int i = 0; i < n && i < _structureBuffer.Length; i++)
+        {
+            MegastormStructure st = _structureBuffer[i];
+            if (!_structureEvents.TryGetValue(st.Id, out MegastormHazardEventTracker? tracker)) _structureEvents[st.Id] = tracker = new MegastormHazardEventTracker();
+            double xi = _model.Xi(st.Base.AroundMeters, st.Base.AcrossMeters, t);
+            if ((tracker.Update(xi) & MegastormHazardEdges.BoomPassed) != 0)
+                StructureBoomPassed?.Invoke(st, MegastormHazardMath.BoomAt(_model, st.Base.AroundMeters, st.Base.AcrossMeters, t));
+        }
     }
 
     // ---- Weather seam (WO3) -----------------------------------------------------------------------------------------
@@ -144,15 +250,42 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     public void SetSpeed(float metersPerSecond) => _model.SetSpeed(Now, metersPerSecond);
     public void Stop(double atTimeSeconds, float fadeSeconds) => _model.Stop(atTimeSeconds, fadeSeconds);
 
-    public MegastormSample QueryNow(RingCanonicalPosition p) => Query(p, Now);
+    /// <summary>The boom passage at any point (open air, pure): peak, impulse and the peak time; None when subsonic.</summary>
+    public MegastormBoom BoomAt(RingCanonicalPosition p, double t) => MegastormHazardMath.BoomAt(_model, p.AroundMeters, p.AcrossMeters, t);
+    public MegastormBoom BoomAt(RingCanonicalPosition p) => BoomAt(p, Now);
 
-    /// <summary>Pure of (state, p, t); allocation-free.</summary>
-    public MegastormSample Query(RingCanonicalPosition p, double t)
+    /// <summary>Per-passage scythe cut chance for a body of this height (5.5.4): sweep rate x dt x F(h_eff) x exposure. <paramref name="groundBelowSkimMeters"/> is the local ground depth below the smoothed skim surface (a trench is negative).</summary>
+    public float ScytheCutProbability(RingCanonicalPosition p, float heightAboveGroundMeters, float exposure, double t, double dt, float groundBelowSkimMeters = 0.0f)
+    {
+        MegastormFrame f = _model.Evaluate(t);
+        if (!f.Active) return 0.0f;
+        float rate = MegastormHazardMath.ScytheSweepRatePerSecond(_model.Xi(p.AroundMeters, p.AcrossMeters, t), _model.Settings.WidthMeters) * f.Level;
+        return MegastormHazardMath.ScytheCutProbability(rate, heightAboveGroundMeters, groundBelowSkimMeters, exposure, dt);
+    }
+
+    /// <summary>The query at the weather clock; a point within 5 m of the observer gets the observer's shelter class and cover-probe exposure.</summary>
+    public MegastormSample QueryNow(RingCanonicalPosition p)
+    {
+        RingCanonicalPosition? o = ObserverPosition();
+        bool atObserver = o != null && Math.Abs(MegastormModel.WrapSigned(o.Value.AroundMeters - p.AroundMeters, _model.Settings.CircumferenceMeters)) < 5.0
+            && Math.Abs(o.Value.AcrossMeters - p.AcrossMeters) < 5.0;
+        return Query(p, Now, atObserver ? _observer : null);
+    }
+
+    /// <summary>
+    /// Pure of (state, p, t); allocation-free. <paramref name="observer"/> carries the observer-only inputs (shelter class, wind-aligned rain exposure);
+    /// null means open ground and full exposure.
+    /// </summary>
+    public MegastormSample Query(RingCanonicalPosition p, double t, MegastormObserver? observer = null)
     {
         MegastormPointSample s = _model.Query(p.AroundMeters, p.AcrossMeters, t);
-        if (!s.Active) return new MegastormSample(false, MegastormPhase.Inactive, 0.0, 0.0, double.PositiveInfinity, double.PositiveInfinity, 0.0, 0.0f, 0.0f, 0.0f, _model.State.Direction, 0);
+        if (!s.Active) return new MegastormSample(false, MegastormPhase.Inactive, 0.0, 0.0, double.PositiveInfinity, double.PositiveInfinity, 0.0, 0.0f, 0.0f, 0.0f, _model.State.Direction, 0, Hazards: MegastormHazards.None);
+        float speed = _model.SpeedAt(t);
+        MegastormSoundSample a = MegastormSound.Evaluate(_model, s.XiMeters, p.AcrossMeters, speed);
         return new MegastormSample(true, s.Phase, s.XiMeters, s.DistanceToEdgeMeters, s.TimeToArrivalSeconds, s.TimeToClearSeconds, s.TimeSincePassageSeconds,
-            s.Danger, s.Suppression, _model.SpeedAt(t), _model.State.Direction, EpisodeId(p.AroundMeters, t));
+            s.Danger, s.Suppression, speed, _model.State.Direction, EpisodeId(p.AroundMeters, t),
+            a.HumLevel, a.WallSingLevel, a.AirSound, a.AirGain, a.BoomEnvelope, a.GustSwell, a.TremorLevel, a.WildlifeQuiet,
+            MegastormHazardMath.Evaluate(_model, p.AroundMeters, p.AcrossMeters, t, s.XiMeters, _model.Evaluate(t), observer ?? MegastormObserver.Open));
     }
 
     /// <summary>
@@ -186,9 +319,15 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     {
         MegastormState? state = document?.ToState();
         _model = state != null ? new MegastormModel(state) : new MegastormModel(SettingsFromMenu());
+        if (state == null && (_debugTriggerRequest != null || _debugXiRequest != null))
+        {
+            // The save has no megastorm: re-place the debug storm against the restored clock and position.
+            _debugTrigger = _debugTriggerRequest; _debugXiMeters = _debugXiRequest;
+        }
         ResonanceEntryUnlocked = document?.ResonanceEntryUnlocked ?? false;
         _applied = MenuValues();
         _observerPhase = MegastormPhase.Inactive;
+        ResetHazards();
     }
 
     // ---- GDScript wrappers (snake_case, like register_manual_weather_at) ---------------------------------------------
@@ -208,7 +347,13 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
         ["active"] = s.Active, ["phase"] = (int)s.Phase, ["phase_name"] = s.Phase.ToString(), ["xi_meters"] = s.XiMeters,
         ["distance_to_edge_meters"] = s.DistanceToEdgeMeters, ["time_to_arrival_seconds"] = s.TimeToArrivalSeconds,
         ["time_to_clear_seconds"] = s.TimeToClearSeconds, ["time_since_passage_seconds"] = s.TimeSincePassageSeconds,
-        ["danger"] = s.Danger, ["suppression"] = s.Suppression, ["speed"] = s.SpeedMetersPerSecond, ["direction"] = s.Direction, ["episode_id"] = s.EpisodeId
+        ["danger"] = s.Danger, ["suppression"] = s.Suppression, ["speed"] = s.SpeedMetersPerSecond, ["direction"] = s.Direction, ["episode_id"] = s.EpisodeId,
+        ["hum_level"] = s.HumLevel, ["wall_sing_level"] = s.WallSingLevel, ["air_sound"] = s.AirSound.ToString(), ["air_gain"] = s.AirGain,
+        ["boom_envelope"] = s.BoomEnvelope, ["gust_swell"] = s.GustSwell, ["tremor_level"] = s.TremorLevel, ["wildlife_quiet"] = s.WildlifeQuiet,
+        ["overpressure_kpa"] = s.Hazards.OverpressureKPa, ["boom_peak_kpa"] = s.Hazards.BoomPeakKPa, ["boom_impulse_kpa_s"] = s.Hazards.BoomImpulseKPaS,
+        ["boom_time_seconds"] = s.Hazards.BoomTimeSeconds, ["rain_impact_power_wm2"] = s.Hazards.RainImpactPowerWm2, ["rain_drop_speed_ms"] = s.Hazards.RainDropSpeedMs,
+        ["rain_exposure"] = s.Hazards.RainExposure, ["pressure_deficit_kpa"] = s.Hazards.PressureDeficitKPa, ["pressure_rate_kpa_s"] = s.Hazards.PressureRateKPaPerS,
+        ["wake_fog"] = s.Hazards.WakeFog, ["scythe_sweep_rate"] = s.Hazards.ScytheSweepRatePerSecond
     };
 
     /// <summary>Weather-HUD / debug dictionary: triggered state, line position, speed and the observer's phase.</summary>
@@ -245,9 +390,19 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
 
     private void ReadDebugEnvironment()
     {
-        if (TryParseDebugTrigger(System.Environment.GetEnvironmentVariable("RING_MEGASTORM"), out var trigger)) _debugTrigger = trigger;
+        string? spec = System.Environment.GetEnvironmentVariable("RING_MEGASTORM");
         string? xi = System.Environment.GetEnvironmentVariable("RING_MEGASTORM_XI");
+        // Command-line forms (after "--"): --megastorm=around_km,dir,age_s[,speed] and --megastorm-xi=km.
+        foreach (string arg in OS.GetCmdlineUserArgs())
+        {
+            if (arg.StartsWith("--megastorm-xi=", StringComparison.Ordinal)) xi = arg["--megastorm-xi=".Length..];
+            else if (arg.StartsWith("--megastorm=", StringComparison.Ordinal)) spec = arg["--megastorm=".Length..];
+        }
+        if (TryParseDebugTrigger(spec, out var trigger)) _debugTrigger = trigger;
         if (!string.IsNullOrWhiteSpace(xi) && double.TryParse(xi, NumberStyles.Float, CultureInfo.InvariantCulture, out double km) && double.IsFinite(km)) _debugXiMeters = km * 1000.0;
+        _debugTriggerRequest = _debugTrigger; _debugXiRequest = _debugXiMeters;
+        if (_debugTrigger != null || _debugXiMeters != null)
+            GD.Print($"Megastorm debug: requested (xi_km={(_debugXiMeters / 1000.0)?.ToString(CultureInfo.InvariantCulture) ?? "-"}, spec={spec ?? "-"}); waiting for the explorer.");
     }
 
     private void ApplyDebugTrigger()
@@ -265,5 +420,7 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
         _debugTrigger = null; _debugXiMeters = null;
         // The line is at `around` now and was age seconds earlier at around - dir * v * age; the old trigger time skips the formation ramp.
         _model.Trigger(new MegastormTrigger("debug_env", MegastormModel.WrapPositive(around - t.Direction * speed * t.Age, _model.Settings.CircumferenceMeters), t.Direction, now - t.Age, speed, 1800f, 0));
+        GD.Print($"Megastorm debug: triggered at weather t={now:0.0} s, line around={around / 1000.0:0.0} km, dir={t.Direction}, speed={speed:0} m/s"
+            + (observer != null ? $", observer around={observer.Value.AroundMeters / 1000.0:0.0} km across={observer.Value.AcrossMeters / 1000.0:0.0} km, xi={(Query(observer.Value, now).XiMeters / 1000.0):0.0} km." : "."));
     }
 }

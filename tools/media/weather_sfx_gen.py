@@ -595,6 +595,83 @@ def thunder_far(rng, ffmpeg, sources):
     return normalise_peak(fade_out(out, 1200), -4)
 
 
+# ---- megastorm (docs/megastorm-design.md 5.2) -----------------------------------------------------------------------
+
+def whole_cycle_sines(rng, seconds, freqs, amps, am_periods, am_depth):
+    """Sine partials snapped to whole cycles per loop (exactly periodic), each with its own whole-cycle amplitude wobble."""
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    for f, a in zip(freqs, amps):
+        f = max(1, round(f * seconds)) / seconds
+        cycles = max(1, round(seconds / rng.choice(am_periods)))
+        am = 1.0 - am_depth * (0.5 + 0.5 * np.sin(2 * np.pi * cycles * t / seconds + rng.uniform(0, 2 * np.pi)))
+        out += a * am * np.sin(2 * np.pi * f * t + rng.uniform(0, 2 * np.pi))
+    return out
+
+
+def megastorm_ground_hum(rng, seconds=24.0):
+    # Structure-borne bed: 20-60 Hz partials with slow beating, weak 2nd/3rd harmonics so small speakers still carry it, and a
+    # 15-90 Hz noise floor. Whole-cycle modulations only, so the loop is exact.
+    base = [21.0, 27.5, 34.0, 41.5, 49.0, 58.0]
+    out = whole_cycle_sines(rng, seconds, base, [1.0, 0.8, 0.9, 0.6, 0.45, 0.3], [24.0, 12.0, 8.0, 6.0], 0.45)
+    out += whole_cycle_sines(rng, seconds, [2 * f for f in base[1:5]], [0.2] * 4, [12.0, 8.0], 0.6)
+    out += whole_cycle_sines(rng, seconds, [3 * f for f in base[2:5]], [0.08] * 3, [8.0, 6.0], 0.7)
+    out += 0.45 * noise(rng, int(seconds * SR), 15, 90, order=3)
+    return normalise_loop(out, -22, -6)
+
+
+def megastorm_wall_sing(rng, seconds=30.0):
+    # The rim walls singing: a slightly inharmonic metallic drone (detuned pairs beat slowly), with air moving through the
+    # structure as narrow-band noise on top of the partials.
+    n = int(seconds * SR)
+    ratios = [1.0, 2.003, 3.01, 4.02, 5.97, 7.9, 10.1]
+    amps = [1.0, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12]
+    f0 = 98.0
+    freqs, a = [], []
+    for r, amp in zip(ratios, amps):
+        for d in (-0.35, 0.35):
+            freqs.append(f0 * r + d * rng.uniform(0.6, 1.4))
+            a.append(amp * 0.5)
+    out = whole_cycle_sines(rng, seconds, freqs, a, [30.0, 15.0, 10.0, 7.5], 0.7)
+    breath = noise(rng, n, 180, 1500, order=3) * periodic_lfo(rng, seconds, [10.0, 6.0], 0.6)
+    out += 0.12 * breath
+    return normalise_loop(out, -24, -6)
+
+
+def megastorm_boom(rng, seconds=4.4):
+    # The Mach pile-up arriving at once: a crack, a sub thump with a pitch drop, then low rolling bursts that darken and thin
+    # out. Shape follows MegastormSound.BoomEnvelope (fast attack, decaying roll, taper into the roar crossfade).
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    sweep = 28.0 + 44.0 * np.exp(-t / 0.35)
+    out += 1.0 * np.sin(2 * np.pi * np.cumsum(sweep) / SR) * np.exp(-t / 0.9)
+    out += 0.45 * noise(rng, n, 300, 3500) * np.exp(-t / 0.12)
+    bursts = np.sort(rng.uniform(0.05, 3.0, rng.integers(9, 14)))
+    for c in bursts:
+        width = rng.uniform(0.22, 0.6)
+        cutoff = rng.uniform(110, 420) * np.exp(-c / 3.0)
+        env = np.exp(-0.5 * ((t - c) / width) ** 2) * np.exp(-c / 1.8)
+        layer = fft_filter(noise(rng, n, 30, cutoff, order=3), lambda f: butter_mag(f, 25, cutoff, 3))
+        out += rng.uniform(0.35, 0.8) * layer * env
+    out *= attack(n, 90)
+    taper = 1.0 - np.clip((t - 0.6 * 4.0) / (0.4 * 4.0 + 0.4), 0.0, 1.0) ** 2 * (3 - 2 * np.clip((t - 2.4) / 2.0, 0, 1))
+    out *= np.clip(taper, 0.0, 1.0)
+    out = fft_filter(out, lambda f: butter_mag(f, 18, 2600, 2), pad=SR)
+    return normalise_peak(fade_out(out, 600), -3)
+
+
+def megastorm_roar(rng, seconds=30.0):
+    # The wall roar bed: a dark turbulent rush (35-900 Hz) with a mid growl and a thin hiss, three independently swelling bands.
+    n = int(seconds * SR)
+    low = noise(rng, n, 35, 420, order=3, tilt=-0.4) * periodic_lfo(rng, seconds, [9.0, 5.0, 3.3], 0.35)
+    mid = noise(rng, n, 160, 900, order=2) * periodic_lfo(rng, seconds, [6.0, 3.75, 2.5], 0.5)
+    hiss = noise(rng, n, 1500, 6500, order=2) * periodic_lfo(rng, seconds, [7.5, 4.0], 0.6)
+    out = 1.0 * low + 0.55 * mid + 0.14 * hiss
+    return normalise_loop(out, -20, -4)
+
+
 # ---- driver -------------------------------------------------------------------------------------------------------
 
 def write_wav(path, x):
@@ -628,6 +705,12 @@ def build_jobs(ffmpeg, src_dir):
         jobs[name] = (lambda name=name, i=i: thunder_near(rng_for(name), ffmpeg, srcs[(i - 1) % 3]))
         name = f"thunder_far_{i:02d}"
         jobs[name] = (lambda name=name, i=i: thunder_far(rng_for(name), ffmpeg, [srcs[(i - 1) % 3], srcs[i % 3]]))
+    jobs["megastorm_ground_hum_loop"] = lambda: megastorm_ground_hum(rng_for("megastorm_ground_hum_loop"))
+    jobs["megastorm_wall_sing_loop"] = lambda: megastorm_wall_sing(rng_for("megastorm_wall_sing_loop"))
+    jobs["megastorm_roar_loop"] = lambda: megastorm_roar(rng_for("megastorm_roar_loop"))
+    for i in range(1, 4):
+        name = f"megastorm_boom_{i}"
+        jobs[name] = (lambda name=name: megastorm_boom(rng_for(name)))
     return jobs
 
 

@@ -306,7 +306,7 @@ public sealed class MegastormModel : IMegastormWeatherSource
         return xi < AftermathEndXi ? MegastormPhase.Aftermath : MegastormPhase.Clear;
     }
 
-    /// <summary>Danger 0..1 (documented, unused now): max of wall, gust front, transition, trailing and precursor terms, each x (0.5 + 0.5 x shelterless).</summary>
+    /// <summary>Danger 0..1 (documented, unused now): max of wall, gust front, transition, trailing, precursor and wake-pressure terms, each x (0.5 + 0.5 x shelterless).</summary>
     public float Danger(double xi, double timeToArrivalSeconds, double speed, float shelterless = 1.0f)
     {
         double band = MegastormBands.BandWidthMeters(speed, Settings.GustFrontLeadSeconds);
@@ -315,7 +315,8 @@ public sealed class MegastormModel : IMegastormWeatherSource
         double transition = xi >= WallEndXi && xi < TransitionEndXi ? 0.5 : 0.0;
         double trailing = xi >= TransitionEndXi && xi < TrailingEndXi ? 0.25 : 0.0;
         double precursor = xi < 0.0 ? 0.15 * Smooth((600.0 - timeToArrivalSeconds) / 600.0) : 0.0;
-        double d = Math.Max(Math.Max(wall, gust), Math.Max(Math.Max(transition, trailing), precursor));
+        double wake = MegastormHazardMath.WakeDanger(MegastormHazardMath.PressureDeficitKPa(xi));   // 5.5.3: 0.6 x smoothstep(2, 6, deficit)
+        double d = Math.Max(Math.Max(Math.Max(wall, gust), Math.Max(Math.Max(transition, trailing), precursor)), wake);
         return (float)(d * (0.5 + 0.5 * Math.Clamp(shelterless, 0.0f, 1.0f)));
     }
 
@@ -409,7 +410,7 @@ public static class MegastormProfile
         double wallCov = MegastormModel.Smooth((xi + 300.0) / 800.0) * (1.0 - MegastormModel.Smooth((xi - wallEnd) / (transEnd - wallEnd)));
         double rim = Math.Min(across, s.WidthMeters - across);
         double merge = MegastormModel.Smooth((15000.0 - rim) / 15000.0);
-        double tower = Math.Max(Noise(seed, 11, across / TowerScale, t, 1200.0, 1200.0), merge);
+        double tower = Math.Max(TowerNoise(seed, across, t), merge);
         double dome = tower > 0.8 ? (tower - 0.8) * 5.0 * 1500.0 * (1.0 - merge) : 0.0;
         double wallTop = 15000.0 + 2000.0 * tower + dome;
         double transition = MegastormModel.Smooth((xi - wallEnd) / (transEnd - wallEnd));
@@ -423,14 +424,29 @@ public static class MegastormProfile
         float under = (float)(9000.0 + 3000.0 * MegastormModel.Smooth(xi / MegastormModel.AnvilStartXi));
         float canopyTop = (float)Math.Min(MegastormModel.FormingTopMeters + (MegastormModel.FullTopMeters - MegastormModel.FormingTopMeters) * f.Level, ceil);
         double mamm = MegastormModel.Smooth((xi + 25000.0) / 5000.0) * (1.0 - MegastormModel.Smooth((xi + 8000.0) / 5000.0))
-            * (0.5 + 0.5 * Noise(seed, 13, across / MammatusScale, t, 600.0, 600.0));
-        double shaft = wallCov * (0.6 + 0.4 * Noise(seed, 12, across / ShaftScale, t, 900.0, 900.0));
+            * (0.5 + 0.5 * MammatusNoise(seed, across, t));
+        double shaft = wallCov * (0.6 + 0.4 * ShaftNoise(seed, across, t));
 
         float k = f.Strength;
         bool body = wallCov > 0.0, canopy = canopyCov > 0.0;
         return new MegastormColumn(body ? (float)baseH : 0.0f, body ? bodyTop : 0.0f, canopy ? Math.Min(under, canopyTop) : 0.0f, canopy ? canopyTop : 0.0f,
             (float)(canopyCov * k), (float)(mamm * k), (float)(wallCov * tower * k), (float)(shaft * k), (float)(wallCov * k));
     }
+
+    /// <summary>
+    /// The across-only noise terms of the column (ring_megastorm_across_noise / ring_megastorm_shaft_noise in the include): raw tower, mammatus and
+    /// rain-shaft value noise 0..1 at <paramref name="across"/>, before the rim merge and the mammatus / shaft scaling. The far wedge pass (WO5) reads
+    /// them from a 1D across table built from this.
+    /// </summary>
+    public static (double Tower, double Mammatus, double Shaft) AcrossTerms(MegastormModel model, double across, double t)
+    {
+        int seed = model.State.Seed;
+        return (TowerNoise(seed, across, t), MammatusNoise(seed, across, t), ShaftNoise(seed, across, t));
+    }
+
+    private static double TowerNoise(int seed, double across, double t) => Noise(seed, 11, across / TowerScale, t, 1200.0, 1200.0);
+    private static double MammatusNoise(int seed, double across, double t) => Noise(seed, 13, across / MammatusScale, t, 600.0, 600.0);
+    private static double ShaftNoise(int seed, double across, double t) => Noise(seed, 12, across / ShaftScale, t, 900.0, 900.0);
 
     /// <summary>1D value noise whose nodes re-seed on a hashed cycle (cMin + cSpan * h seconds) with a crossfade over the last 20%.</summary>
     private static double Noise(int seed, int salt, double coord, double t, double cMin, double cSpan)

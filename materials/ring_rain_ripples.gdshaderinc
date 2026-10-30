@@ -5,6 +5,7 @@
 // evaluates an expanding ring with a fading amplitude at the world-anchored plane position; layers are offset in space and time.
 // Active rain layers scale with the rain (1 drizzle .. 4 downpour) capped by the preset (ring_wet_clock.y); fat drops add one sparse layer of large slow rings; hail adds
 // a fast layer of sharp short-lived crowns. Zero beyond 40 m. The clock is the weather sim clock modulo 64 s (every rate below divides 64 s), so a paused clock gives identical frames.
+#include "res://materials/ring_ground_tremor.gdshaderinc"
 global uniform sampler2D ring_wet_ripple_tex : filter_linear_mipmap, repeat_enable;
 global uniform vec4 ring_wet_clock; // x: ripple phase (sim clock mod 64 s), y: ripple layers (1..4), z: wet window half extent (m), w: far blend (m)
 
@@ -36,6 +37,8 @@ vec2 ring_rain_ripple_gradient(vec2 plane_m, float rain, float fat, float hail, 
 	}
 	if (fat > 0.0) g += fat * ring_rain_ripple_layer(plane_m, 8.0, 0.3125, 1.0, 7.0, lod);
 	if (hail > 0.0) g += hail * 1.5 * ring_rain_ripple_layer(plane_m, 2.0, 1.25, 0.6, 9.0, lod);
+	// Megastorm ground tremor: a fine shiver on any ripple surface (puddles and water), exactly nothing at amplitude 0.
+	if (ring_ground_tremor.x > 0.0) g += ring_tremor_gradient(plane_m);
 	return g * fade;
 }
 #endif

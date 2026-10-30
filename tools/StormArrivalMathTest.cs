@@ -131,6 +131,7 @@ public partial class StormArrivalMathTest : RefCounted
         var tuning = StormArrivalTuning.Default;
         try
         {
+            RunMegastorm(Check, verbose);
             // ---- analytic dn/dt vs finite difference (envelope changing, drift on) ----
             int ratePoints = 0; double worstRate = 0;
             foreach (double t in new[] { 150.0, 300.0, 410.0, 1500.0, 1800.0 })

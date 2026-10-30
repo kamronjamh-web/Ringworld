@@ -28,6 +28,8 @@ public partial class RingWeatherAudio : Node
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
     [Export] public NodePath GridPath { get; set; } = new("../ChunkGridManager");
 
+    /// <summary>Megastorm airborne gate (1 with no megastorm): thunder that arrives while it is 0 is not heard (sound cannot outrun the wall), and a playing voice follows it. <see cref="RingMegastormAudio"/> pushes it every frame.</summary>
+    public float MegastormAirGate { get; set; } = 1f;
     /// <summary>Underground-mode enclosure blend (0..1): thunder is low-passed and attenuated by 12 dB, never muted or restarted.</summary>
     public float UndergroundBlend { get; set; }
     /// <summary>Cover muffle from the rain sound field (0..1 maps to 0..16 dB); the stronger of this and the underground blend wins. The ambience node pushes it every frame.</summary>
@@ -187,7 +189,7 @@ public partial class RingWeatherAudio : Node
 
     private void Play(in ThunderArrival arrival)
     {
-        if (arrival.Strike.Energy <= 0.0f) return;
+        if (arrival.Strike.Energy <= 0.0f || !(MegastormAirGate > 0.001f)) return;
         AudioStream? stream = LoadSample(arrival.Strike.ShapeSeed, arrival.DistanceMeters, out string pool);
         if (stream == null) return;
         if (!double.IsFinite(stream.GetLength()) || arrival.LateSeconds >= stream.GetLength()) return;
@@ -212,6 +214,8 @@ public partial class RingWeatherAudio : Node
         voice.MaxDistance = ResolveMaximumDistance();
         voice.VolumeDb = ResolveVolume() + Mathf.LinearToDb(Mathf.Clamp(energy, 0.01f, 1.0f))
             + (float)Math.Clamp(-distance / 3_000.0, -18.0, 0.0);
+        float gate = float.IsFinite(MegastormAirGate) ? Mathf.Clamp(MegastormAirGate, 0.0f, 1.0f) : 1.0f;
+        if (gate < 1.0f) voice.VolumeDb += gate > 0.001f ? Mathf.LinearToDb(gate) : -80.0f;
         float distant = Mathf.SmoothStep(500.0f, 10_000.0f, (float)distance);
         float underground = Mathf.Clamp(UndergroundBlend, 0.0f, 1.0f);
         float shelter = float.IsFinite(ShelterMuffleAmount) ? Mathf.Clamp(ShelterMuffleAmount, 0.0f, 1.0f) : 0.0f;

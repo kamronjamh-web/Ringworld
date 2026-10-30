@@ -1,7 +1,8 @@
 extends SceneTree
 # Megastorm captures (docs/megastorm-design.md WO4 near wall; WO9 extends this harness). Windowed GPU run, certified world.
 #   Godot --path . --resolution 1600x900 --script res://tools/megastorm_capture.gd -- --out=res://.godot/captures/megastorm/wo4/<label> --shots=inside,leading
-# Args: --out=<res dir> --shots=<list> [--cycle=<0..1> (0.6 noon)] [--no-haze] [--matte] [--speed=<m/s> (350)] [--seed=<n> (7)] [--rain] [--deterministic]
+# Args: --out=<res dir> --shots=<list> [--far-filter=<substring of the far shot names>] [--save-far (also save the far viewport)] [--no-trigger (untriggered identity captures)]
+#       [--layer-sky-shader=<res path> (debug: swap the far layer sky shader)] [--cycle=<0..1> (0.6 noon)] [--no-haze] [--matte] [--speed=<m/s> (350)] [--seed=<n> (7)] [--rain] [--deterministic]
 #       [--settle=<frames> (120)] [--motion-frames=<n> (420)] [--motion-from=<km> (-3)] [--motion-yaw=<deg> (180)] [--motion-pitch=<deg> (20)]
 #       [--orbit-frames=<n> (300)] [--perf-seconds=<s> (10)] [--trigger-xi=<m> (10000): where the wall is when it is triggered]
 #       [--perf-cases=<list> (clear,natural,inside,leading x3)] [--set=Prop=value (bridge)]
@@ -20,6 +21,16 @@ extends SceneTree
 #   orbit     2 km up at xi -2.5 km under the shelf: a 360 degree yaw orbit over --orbit-frames frames while the wall moves (orbit/frame%08d)
 #   prewarm   (with --trigger-xi=-600000) the megastorm march variants exist before the wall comes near; longest frame while they compile
 #             and on the approach (WO4b)
+#   far       WO5 far wedge pass: towards the wall from xi -50 km (pitch 4, 10), -200 km (3, 6), -1000 km (6.5, 9), the quarter ring
+#             (xi -C/4, pitch 45) and the antipode (xi -C/2, straight up). Run once with --cycle=0.6 (camera noon) and once at night
+#             (--cycle=0.1): at the antipode the wall's local time is the camera's opposite.
+#   handoff   WO5 seam calibration: the wall at --handoff-xi km (-25) with the default handoff (the near march owns it) and with
+#             --handoff=<start,end> km (5,10: the far wedge pass owns it); compare the pair (handoff_near / handoff_far)
+#   flight    WO5: the camera "flies" from xi -30 to -80 km over --flight-frames frames (300) while the wall moves at --speed (the
+#             weather clock steps 1/30 s per frame and the wall is re-placed each frame): flight/frame%08d.png for flicker and a sheet
+#   farhold   WO5: a fixed far camera for --hold-seconds (60) at 30 fps, xi from --hold-xi km (-150), the wall moving at --speed: no 8 s
+#             atlas pops (farhold/frame%08d.png). Sequences are saved at --seq-scale (0.4) of the window size.
+#   farperf   WO5: far viewport GPU time with the wedge pass drawn / suppressed (A-B-A-B-A) at 200 km, 1000 km and 50 km
 #   perf      GPU windows: clear (megastorm 600 km away: triggered, beyond the selection radius), natural (the same plus the S4 preview storm
 #             over the camera, the "natural storm at the same pose"), inside (xi +10 km, yaw 0, pitch 10), leading (xi -1.5 km, yaw pi, pitch 15)
 
@@ -103,7 +114,9 @@ func _run():
 		bridge.call("SetDiagnosticDensityMattes", true, false)
 	helper.PlaceCamera(world, BASE_H, 0.0, 8.0)
 	await _frames(60)
-	if not mega.Trigger(world, float(_arg("trigger-xi", "10000")), float(_arg("speed", "350")), int(_arg("seed", "7"))):
+	if _arg("layer-sky-shader", "") != "":
+		print("MEGASTORM_CAPTURE layer sky shader swapped=", mega.SetLayerSkyShader(world, _arg("layer-sky-shader", "")))
+	if _arg("no-trigger", "") == "" and not mega.Trigger(world, float(_arg("trigger-xi", "10000")), float(_arg("speed", "350")), int(_arg("seed", "7"))):
 		_fail(mega.ErrorText)
 		return
 	# The 90 frames after the trigger are timed: the megastorm prewarm (WO4b) runs in them (prewarm shot).
@@ -122,14 +135,35 @@ func _run():
 	finished = true
 	quit(0)
 
+func _save_frame(dir: String, i: int):
+	await RenderingServer.frame_post_draw
+	var image := root.get_texture().get_image()
+	var k := float(_arg("seq-scale", "0.4"))
+	if k > 0.0 and k < 1.0:
+		image.resize(int(image.get_width() * k), int(image.get_height() * k), Image.INTERPOLATE_BILINEAR)
+	image.save_png(ProjectSettings.globalize_path(dir + "/frame%08d.png" % i))
+
 func _save(name: String):
 	await RenderingServer.frame_post_draw
 	var image := root.get_texture().get_image()
 	var path := out_dir + "/" + name + ".png"
 	image.save_png(ProjectSettings.globalize_path(path))
+	if _arg("save-far", "") != "":
+		# Debug: the scaled far viewport's own colour (before the main view composites over it).
+		var far_vp = world.get_node("ScaledFarViewport").get("OuterViewportForDiagnostics")
+		if far_vp != null:
+			far_vp.get_texture().get_image().save_png(ProjectSettings.globalize_path(out_dir + "/" + name + "_farvp.png"))
 	print("MEGASTORM_CAPTURE saved ", name, " xi=%.0f" % mega.Xi(world))
 
+func _hide_overlays():
+	# HUD layers, including ones created after start-up (PDA subtitles), stay out of the captures.
+	for parent in [world, root]:
+		for n in parent.get_children():
+			if n is CanvasLayer:
+				n.visible = false
+
 func _view(xi: float, yaw: float, pitch: float, height := BASE_H, frames := -1):
+	_hide_overlays()
 	mega.SetXi(world, xi)
 	helper.PlaceCamera(world, height, yaw, pitch)
 	await _frames(settle if frames < 0 else frames)
@@ -279,6 +313,85 @@ func _shoot(shot: String):
 				longest = maxf(longest, float(now - last) / 1000.0)
 				last = now
 			print("MEGASTORM_CAPTURE prewarm approach longest_frame_ms=%.1f" % longest, " compile_ms=%.1f" % (float(sun_res.get("megastorm_prewarm_usec")) / 1000.0), " ", mega.StripState(world))
+		"far":
+			var circumference := 31415936.0
+			for v in [[-50000.0, 4.0, "far_ahead50_p04"], [-50000.0, 10.0, "far_ahead50_p10"], [-200000.0, 3.0, "far_ahead200_p03"],
+					[-200000.0, 6.0, "far_ahead200_p06"], [-1000000.0, 6.5, "far_ahead1000_p065"], [-1000000.0, 9.0, "far_ahead1000_p09"],
+					[-circumference * 0.25, 45.0, "far_quarter_p45"], [-circumference * 0.5 + 1000.0, 89.0, "far_antipode_up"]]:
+				if _arg("far-filter", "") != "" and not str(v[2]).contains(_arg("far-filter", "")):
+					continue
+				await _view(v[0], PI, v[1])
+				var far_node = world.get_node_or_null("ScaledFarViewport")
+				print("MEGASTORM_CAPTURE far ", v[2], " ", far_node.get("FarMegastormStatus") if far_node != null else "")
+				if far_node != null and _arg("ray-probe", "") != "":
+					print("MEGASTORM_CAPTURE probe ", v[2], " ", far_node.call("FarMegastormRayProbe"))
+				await _save(v[2])
+		"identity":
+			# WO5 untriggered identity (run with --no-trigger): each far pose with the live far layer sky, then with --identity-shader
+			# (the HEAD copy) swapped in, in one session; compare the pairs.
+			var poses := [[-200000.0, 3.0, "id_ahead200"], [-1000000.0, 6.5, "id_ahead1000"], [-50000.0, 10.0, "id_ahead50"], [0.0, 45.0, "id_up45"]]
+			for v in poses:
+				mega.SetLayerSkyShader(world, "res://materials/ring_far_cloud_layer_sky.gdshader")
+				await _view(v[0], PI, v[1])
+				await _save(v[2] + "_live")
+				mega.SetLayerSkyShader(world, _arg("identity-shader", ""))
+				await _frames(settle)
+				await _save(v[2] + "_head")
+				if _arg("rfix-shader", "") != "":
+					# Experiment: the far layer sky with its ring radius in metres (it reads ring_radius_meters in scaled units).
+					mega.SetLayerSkyShader(world, _arg("rfix-shader", ""))
+					await _frames(settle)
+					await _save(v[2] + "_rfix")
+			mega.SetLayerSkyShader(world, "res://materials/ring_far_cloud_layer_sky.gdshader")
+		"handoff":
+			var xi := float(_arg("handoff-xi", "-25")) * 1000.0
+			var bridge_h = world.get_node("SunshineCloudBridge")
+			await _view(xi, PI, float(_arg("handoff-pitch", "6")))
+			await _save("handoff_near")
+			var hv := _arg("handoff", "5,10").split(",")
+			var auto_before = bridge_h.get("AutomaticCloudHandoff")
+			var start_before = bridge_h.get("HandoffStartMeters")
+			var end_before = bridge_h.get("HandoffEndMeters")
+			bridge_h.set("AutomaticCloudHandoff", false)
+			bridge_h.set("HandoffStartMeters", float(hv[0]) * 1000.0)
+			bridge_h.set("HandoffEndMeters", float(hv[1]) * 1000.0)
+			await _frames(settle)
+			await _save("handoff_far")
+			bridge_h.set("AutomaticCloudHandoff", auto_before)
+			bridge_h.set("HandoffStartMeters", start_before)
+			bridge_h.set("HandoffEndMeters", end_before)
+			await _frames(60)
+		"flight":
+			var dir := out_dir + "/flight"
+			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+			var frames := int(_arg("flight-frames", "300"))
+			var pitch := float(_arg("flight-pitch", "5"))
+			await _view(-30000.0, PI, pitch)
+			for i in frames:
+				mega.StepClock(world, 1.0 / 30.0)
+				mega.SetXi(world, -30000.0 - 50000.0 * float(i) / float(max(frames - 1, 1)))
+				await _save_frame(dir, i)
+			print("MEGASTORM_CAPTURE flight frames=", frames, " end xi=%.0f" % mega.Xi(world))
+		"farhold":
+			var dir := out_dir + "/farhold"
+			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+			var frames := int(float(_arg("hold-seconds", "60")) * 30.0)
+			await _view(float(_arg("hold-xi", "-150")) * 1000.0, PI, float(_arg("hold-pitch", "4")))
+			for i in frames:
+				mega.StepClock(world, 1.0 / 30.0)
+				await _save_frame(dir, i)
+			print("MEGASTORM_CAPTURE farhold frames=", frames, " end xi=%.0f" % mega.Xi(world))
+		"farperf":
+			# WO5: far wedge pass cost, A-B-A within one run (the pass suppressed vs drawn) at the 200 km, 1000 km and 50 km views.
+			for v in [[-200000.0, 3.0, "far200"], [-1000000.0, 6.5, "far1000"], [-50000.0, 10.0, "far50"]]:
+				await _view(v[0], PI, v[1], BASE_H, 150)
+				for case in ["on", "off", "on", "off", "on"]:
+					mega.SetFarPassSuppressed(world, case == "off")
+					await _frames(30)
+					helper.PerfBegin(world)
+					await create_timer(float(_arg("perf-seconds", "8"))).timeout
+					print("MEGASTORM_CAPTURE farperf ", v[2], " ", case, " ", mega.FarPerfEnd(world))
+				mega.SetFarPassSuppressed(world, false)
 		"perf":
 			var cases := _arg("perf-cases", "clear,natural,inside,leading,clear,natural,inside,leading,clear,natural,inside,leading").split(",")
 			for case in cases:

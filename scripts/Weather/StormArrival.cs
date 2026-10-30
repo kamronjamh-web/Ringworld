@@ -25,7 +25,13 @@ public readonly record struct StormSystemGeometry(
     Vector2 DriftMetersPerSecond,
     float Density,                      // already enveloped (as in WeatherSystemDefinition)
     float PrecipitationPotential,       // already enveloped
-    float LifecycleCode);               // 0..3, see RingVolumetricCloudLayer.StormLifecycleCode
+    float LifecycleCode,                // 0..3, see RingVolumetricCloudLayer.StormLifecycleCode
+    // Megastorm slab records only (kind 6): the slab's across centre is the query point, so OffsetMeters.Y is 0 (or a displacement delta) and the absolute across
+    // position the hail swaths need is CenterAcrossMeters + OffsetMeters.Y. NaN (the default) = unknown. HailCycle / HailCycleSeconds are the weather-clock hail cycle
+    // index and the seconds into it (StormArrivalMath.MegastormHailCycleSeconds long), the seed and the cross-fade of the swath set.
+    float CenterAcrossMeters = float.NaN,
+    int HailCycle = 0,
+    float HailCycleSeconds = 0.0f);
 
 /// <summary>Per-call tuning. Only Gust front lead, Hail and the coverage baseline matter to the maths; the rest are constants.</summary>
 public readonly record struct StormArrivalTuning(
@@ -76,6 +82,17 @@ public readonly record struct StormArrivalState(
 public static class StormArrivalMath
 {
     public const float ApproachReachMeters = 18000.0f;
+    /// <summary>Weather kind of the megastorm records (<c>WeatherSystemKind.Megastorm</c>): they use time-based arrival bands (design 5.1) and the wall hail placement.</summary>
+    public const int MegastormKindCode = 6;
+    /// <summary>
+    /// The Approach weight of a kind-6 record ramps over [band, band + reach x this]: the phase threshold (0.05) is crossed at 13.7% of the ramp from its far end,
+    /// so scaling the outer edge by 1 / (1 - 0.1367) puts the start of the Approach phase on the nominal reach (the 5.1 table's T-194 s at 350 m/s).
+    /// </summary>
+    public const float MegastormApproachRampScale = 1.158f, MegastormGustEdgeShift = 0.12f;
+    /// <summary>Hail cycle of the wall (design 2.1: cells re-seed on a 20-40 min cycle, 30 min here) and the cross-fade at each end of it.</summary>
+    public const float MegastormHailCycleSeconds = 1800.0f, MegastormHailFadeSeconds = 90.0f;
+    /// <summary>Ring width the wall hail swaths are spread over, and the wall record's xi centre (MegastormModel.BuildBundle: W at +18 km).</summary>
+    public const float MegastormHailAcrossMeters = 318000.0f, MegastormWallCenterXiMeters = 18000.0f;
     public const float MinBandMeters = 400.0f;
     public const float MaxBandMeters = 6000.0f;
     public const float DryRainRimN = 0.85f;
@@ -111,6 +128,23 @@ public static class StormArrivalMath
 
     public static float KindWeight(int kind) => kind switch { <= 0 => 0.0f, 1 => 0.15f, 2 => 0.45f, 3 => 1.0f, 4 => 1.25f, _ => 1.5f };
     static float GustKindScale(int kind) => kind switch { <= 0 => 0.0f, 1 => 0.15f, 2 => 0.4f, _ => 1.0f };
+
+    /// <summary>Width of a gust / rain band (m): the distance cap of ordinary storms, or for the megastorm the time-based width v x 0.75 x lead clamped to 2-20 km.</summary>
+    static float BandMeters(float speed, float leadSeconds, bool timeBased)
+        => timeBased ? (float)MegastormBands.BandWidthMeters(speed, leadSeconds) : Mathf.Clamp(speed * leadSeconds, MinBandMeters, MaxBandMeters);
+
+    /// <summary>
+    /// "Trailing" share of a megastorm record. The wall record switches from Core to Trailing at the end of the wall zone (xi 25 km, T+71 s; the 5.1 table) instead of
+    /// at its centre; the trailing deck record (an ExceptionalFront) is trailing rain throughout, never a second core.
+    /// </summary>
+    static float MegastormTrail(in StormSystemGeometry g, float rimSpeed)
+    {
+        if (g.SystemId == MegastormModel.TrailingRecordId) return 1.0f;
+        if (g.SystemId != MegastormModel.WallRecordId) return SmoothStep(0.5f, 7.0f, -rimSpeed);
+        float dir = g.DriftMetersPerSecond.X < 0.0f ? -1.0f : 1.0f;
+        float xi = MegastormWallCenterXiMeters - dir * g.OffsetMeters.X;
+        return SmoothStep((float)MegastormModel.WallEndXi - 3000.0f, (float)MegastormModel.WallEndXi + 3000.0f, xi);
+    }
 
     public static float Severity(in StormSystemGeometry g)
         => Mathf.Clamp(g.PrecipitationPotential * g.Density * KindWeight(g.KindCode), 0.0f, 1.5f);
@@ -298,25 +332,35 @@ public static class StormArrivalMath
         float vRain = RimSpeed(g, Mathf.Max(nRain, 0.02f), rainRate);
         float severity = Severity(g);
         float lag = Mathf.Max(20.0f, tuning.GustFrontLeadSeconds);
+        // Kind 6 (megastorm): time-based bands, not distance caps (design 5.1). At 350 m/s the 400 m - 6 km caps would make the gust front last 17 s and the calm 51 s.
+        bool timeBands = g.KindCode == MegastormKindCode;
+        float fullEnvelope = Mathf.Max(g.Envelope, 1e-3f);
+        float fullPeak = RainProxy(0.0f, Mathf.Min(1.0f, g.Density / fullEnvelope), g.PrecipitationPotential / fullEnvelope, tuning.BaseCoverage);
+        float rainmaker = Mathf.Max(presence, SmoothStep(1.0f, 2.0f, fullPeak / Mathf.Max(1e-4f, tuning.PrecipitationStart)));
+        // The dry anvil record of the megastorm announces nothing of its own: the calm and the gust front belong to the wall (whose rain rim they are timed from).
+        float announce = timeBands ? rainmaker : 1.0f;
+        float reachSpan = timeBands ? (float)MegastormBands.ApproachReachMeters(Mathf.Abs(vGust), lag) * MegastormApproachRampScale : ApproachReachMeters;
 
         // Gust rim: Approach and GustFront.
         float dGust = dist - nGust * ray;                   // signed rim distance along the radial ray, > 0 outside
         float lead = SmoothStep(0.0f, 3.0f, vGust);
-        float uGust = dGust / Mathf.Clamp(Mathf.Abs(vGust) * lag, MinBandMeters, MaxBandMeters);
-        float band = Mathf.Clamp(Mathf.Abs(vGust) * lag, MinBandMeters, MaxBandMeters);
+        float band = BandMeters(Mathf.Abs(vGust), lag, timeBands);
+        float uGust = dGust / band;
+        float gustEdge = timeBands ? MegastormGustEdgeShift : 0.0f;      // the megastorm's gust front reaches full weight at the band edge (u = 1), not at 0.88, so the GustFront phase starts at the nominal band
         float outside = SmoothStep(-0.15f, 0.0f, uGust);
         float alive = SmoothStep(0.05f, 0.25f, g.Envelope);      // a system that is still a speck (or nearly gone) announces nothing
-        float approach = alive * outside * SmoothStep(band + ApproachReachMeters, band, dGust) * lead;
-        float gust = alive * SmoothStep(1.0f, 0.88f, uGust) * SmoothStep(-0.35f, 0.0f, uGust) * Mathf.Lerp(0.35f, 1.0f, lead) * GustKindScale(g.KindCode);
+        float approach = alive * outside * SmoothStep(band + reachSpan, band, dGust) * lead * announce;
+        float gust = alive * SmoothStep(1.0f + gustEdge, 0.88f + gustEdge, uGust) * SmoothStep(-0.35f, 0.0f, uGust) * Mathf.Lerp(0.35f, 1.0f, lead) * GustKindScale(g.KindCode) * announce;
 
         // Rain rim: FatDrop, Core, Trailing.
         float dRain = dist - nRain * ray;
+        float trail = timeBands || g.SystemId == MegastormModel.TrailingRecordId ? MegastormTrail(g, vRain) : SmoothStep(0.5f, 7.0f, -vRain);
         float leadRain = SmoothStep(0.0f, 3.0f, vRain);
-        float trail = SmoothStep(0.5f, 7.0f, -vRain);
-        float uRain = dRain / Mathf.Clamp(Mathf.Abs(vRain) * lag, MinBandMeters, MaxBandMeters);
+        if (timeBands) leadRain = Mathf.Max(leadRain, 1.0f - trail);      // the wall keeps blowing its outflow until its trailing edge, not just to its centre
+        float uRain = dRain / BandMeters(Mathf.Abs(vRain), lag, timeBands);
         float proxy = RainProxy(n, g.Density, g.PrecipitationPotential, tuning.BaseCoverage);
         float wet = SmoothStep(0.5f * tuning.PrecipitationStart, tuning.PrecipitationStart, proxy);
-        float nearCloud = SmoothStep(1.02f, 0.95f, n);
+        float nearCloud = timeBands ? 1.0f : SmoothStep(1.02f, 0.95f, n);      // the megastorm's anvil and shelf cover the approach: its fat drops are timed from the rain edge alone
         float fat = presence * nearCloud * (1.0f - trail) * SmoothStep(0.35f, 0.1f, uRain) * SmoothStep(-0.4f, -0.1f, uRain)
             * Mathf.Lerp(1.0f, Mathf.Lerp(0.0f, 1.0f, leadRain), SmoothStep(-0.1f, 0.1f, uRain));
         float inside = SmoothStep(nRain, nRain - 0.06f, n);
@@ -324,9 +368,6 @@ public static class StormArrivalMath
         float trailing = presence * wet * inside * trail;
         // Sustained outflow: from the front edge on, through the gap before the fat drops and the whole core, until the trailing rain eases it (the wind modifier holds a high wind with this).
         // A system that will rain at full size (a rainmaker) already blows its outflow while still young and dry; only a never-raining cloud has none.
-        float fullEnvelope = Mathf.Max(g.Envelope, 1e-3f);
-        float fullPeak = RainProxy(0.0f, Mathf.Min(1.0f, g.Density / fullEnvelope), g.PrecipitationPotential / fullEnvelope, tuning.BaseCoverage);
-        float rainmaker = Mathf.Max(presence, SmoothStep(1.0f, 2.0f, fullPeak / Mathf.Max(1e-4f, tuning.PrecipitationStart)));
         // The gust rim contracts onto the rain rim as the rain develops, which would leave the observer outside it; the cloud skirt (n below the dry rim,
         // which the gust rim has already crossed) keeps the outflow on until the rain arrives.
         float inSkirt = Mathf.Max(SmoothStep(1.0f, 0.88f, uGust), SmoothStep(DryRainRimN, DryRainRimN - 0.05f, n));
@@ -515,10 +556,33 @@ public static class StormArrivalMath
         if (baseWind.LengthSquared() > 1e-4f) angle = Mathf.LerpAngle(angle, baseWind.Angle(), 0.5f * t);
         Vector2 result = Vector2.FromAngle(angle) * speed;
         if (s.StormBearing.LengthSquared() > 1e-6f) result += s.StormBearing.Normalized() * (3.0f * a);   // inflow toward the storm
+        bool megastorm = s.Kind == MegastormKindCode;
+        if (megastorm) result = MegastormWallWind(s, result);
         if (!result.IsFinite()) return StormWindModifier.Identity(mean);
         // Gust texture: x0.7 approaching, x(1 + 0.8 g) and +0.15 g base at the front, gusty through the fat drops and core (x1.5, +0.1 base), x0.6 once clearing (trailing x1).
         float strengthScale = 1.0f + (0.7f - 1.0f) * a + 0.8f * g + 0.5f * Mathf.Max(Mathf.Max(f, o), c) * (1.0f - g) + (0.6f - 1.0f) * cl;
-        return new StormWindModifier(result.LimitLength(80.0f), Mathf.Max(0.1f, strengthScale), 0.15f * g + 0.1f * Mathf.Max(Mathf.Max(f, o), c) * (1.0f - t));
+        return new StormWindModifier(result.LimitLength(megastorm ? MegastormMaxWindMetersPerSecond : 80.0f), Mathf.Max(0.1f, strengthScale), 0.15f * g + 0.1f * Mathf.Max(Mathf.Max(f, o), c) * (1.0f - t));
+    }
+
+    /// <summary>Wind speed limit of a kind-6 mean wind (the in-wall peak is 140 m/s, design 5.5.2); every other kind keeps the 80 m/s limit.</summary>
+    public const float MegastormMaxWindMetersPerSecond = 150.0f;
+
+    /// <summary>
+    /// The megastorm override of the sustained wind (design 5.5.2 / 5.5.3): from the rain edge on the around-axis wind follows <see cref="MegastormHazardMath.WindAlong"/>
+    /// (41 m/s at the edge, 140 m/s for xi 2-15 km, 40 m/s at 25 km, then the reversal and the inflow toward the departing wall), replacing the sustained 37 m/s.
+    /// xi comes from the arrival state's rim distance (<see cref="RingWindQuery.MegastormWallXi"/>, approximate while the wall forms); the direction of travel is the outflow direction
+    /// until the observer passes the wall record's centre and the bearing after it. The weather layer replaces this with the exact model xi when a megastorm source is present.
+    /// </summary>
+    static Vector2 MegastormWallWind(in StormArrivalState s, Vector2 result)
+    {
+        float xi = RingWindQuery.MegastormWallXi(s);
+        if (!float.IsFinite(xi)) return result;
+        float weight = (float)MegastormHazardMath.WindWeight(xi);
+        if (weight <= 0.0f) return result;
+        Vector2 travel = s.RimSpeedMetersPerSecond >= 0.0f ? s.OutflowDirection : s.StormBearing;
+        if (travel.LengthSquared() < 1e-6f) return result;
+        float along = MegastormHazardMath.WindAlong(xi) * Mathf.Clamp(s.Severity, 0.0f, 1.0f);
+        return result.Lerp(travel.Normalized() * along, weight);
     }
 
     // ---- hail ----
@@ -539,6 +603,7 @@ public static class StormArrivalMath
     {
         size = 0.0f;
         if (hailScale <= 0.0f || g.KindCode < 3 || g.Envelope <= 0.0001f) return 0.0f;
+        if (g.KindCode == MegastormKindCode) return MegastormHailAt(g, severity, rainProxy, cooling, hailScale, out size);
         float L = g.LifecycleCode;
         if (L < 0.8f || L > 2.3f) return 0.0f;
         float h0 = Hash01(g.SystemId, 0, 200);
@@ -575,6 +640,42 @@ public static class StormArrivalMath
             if (v > best) { best = v; bestHash = Hash01(g.SystemId, k, 207); }
         }
         float intensity = Mathf.Clamp(best * Mathf.Clamp(severity * 2.0f, 0.0f, 1.0f) * gate, 0.0f, 1.0f);   // severity 0.5 (a strong MajorFront) is full
+        if (intensity <= 0.0f) return 0.0f;
+        size = Mathf.Clamp(0.25f + 0.65f * bestHash + (-cooling) * 1.5f, 0.0f, 1.0f);
+        return intensity;
+    }
+
+    /// <summary>
+    /// Megastorm wall hail (design 5): 3-6 swaths spread uniformly over the ring width, centred 2-15 km behind the edge in the moving frame (so they travel with the wall),
+    /// each 1.8-11 km long in xi (a 5-40 s hit at 350 m/s) and 3-8 km wide. The set is seeded by <see cref="StormSystemGeometry.HailCycle"/> and cross-fades at the cycle ends.
+    /// Only the wall record (id -30001) hails, and only when its absolute across position is known (<see cref="StormSystemGeometry.CenterAcrossMeters"/>).
+    /// </summary>
+    static float MegastormHailAt(in StormSystemGeometry g, float severity, float rainProxy, float cooling, float hailScale, out float size)
+    {
+        size = 0.0f;
+        if (g.SystemId != MegastormModel.WallRecordId || float.IsNaN(g.CenterAcrossMeters)) return 0.0f;
+        int cycle = g.HailCycle;
+        int baseCount = 3 + (int)(Hash01(cycle, 0, 300) * 4.0f);
+        int count = Math.Min(10, (int)(hailScale * baseCount));
+        if (count <= 0) return 0.0f;
+        float gate = SmoothStep(0.4f, 0.6f, rainProxy);
+        float fade = SmoothStep(0.0f, MegastormHailFadeSeconds, g.HailCycleSeconds) * SmoothStep(MegastormHailCycleSeconds, MegastormHailCycleSeconds - MegastormHailFadeSeconds, g.HailCycleSeconds);
+        if (gate <= 0.0f || fade <= 0.0f) return 0.0f;
+        float dir = g.DriftMetersPerSecond.X < 0.0f ? -1.0f : 1.0f;
+        float xi = MegastormWallCenterXiMeters - dir * g.OffsetMeters.X;      // metres behind the edge (negative ahead of it)
+        float across = g.CenterAcrossMeters + g.OffsetMeters.Y;
+        float best = 0.0f; float bestHash = 0.0f;
+        for (int k = 0; k < count; k++)
+        {
+            float acrossC = Hash01(cycle, k, 301) * MegastormHailAcrossMeters;
+            float xiC = Mathf.Lerp(2000.0f, 15000.0f, Hash01(cycle, k, 302));
+            float semiLong = Mathf.Lerp(900.0f, 5500.0f, Hash01(cycle, k, 303));
+            float semiWide = Mathf.Lerp(1500.0f, 4000.0f, Hash01(cycle, k, 304));
+            float qa = (xi - xiC) / semiLong, qw = (across - acrossC) / semiWide;
+            float profile = 1.0f - SmoothStep(0.55f, 1.0f, Mathf.Sqrt(qa * qa + qw * qw));
+            if (profile > best) { best = profile; bestHash = Hash01(cycle, k, 305); }
+        }
+        float intensity = Mathf.Clamp(best * fade * Mathf.Clamp(severity * 2.0f, 0.0f, 1.0f) * gate, 0.0f, 1.0f);
         if (intensity <= 0.0f) return 0.0f;
         size = Mathf.Clamp(0.25f + 0.65f * bestHash + (-cooling) * 1.5f, 0.0f, 1.0f);
         return intensity;

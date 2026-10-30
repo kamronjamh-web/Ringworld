@@ -15,4 +15,6 @@ public partial class RingMegastormSettings : Resource
     [Export(PropertyHint.Range, "100,600,1")] public float TrailingLengthKm { get; set; } = 340f;
     /// <summary>Warning reach R in km: precursor extent and the ground-hum stages (hum at 10 R, water and wildlife at 2 R).</summary>
     [Export(PropertyHint.Range, "50,600,1")] public float WarningReachKm { get; set; } = 220f;
+    /// <summary>Master level of the megastorm's own sound (ground hum, wall singing, boom, roar) in dB, before the shelter muffling. Older files load 0.</summary>
+    [Export(PropertyHint.Range, "-24,6,0.5")] public float SoundVolumeDb { get; set; } = 0f;
 }

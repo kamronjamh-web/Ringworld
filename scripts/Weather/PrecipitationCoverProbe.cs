@@ -1,3 +1,4 @@
+using System;
 namespace RingworldTechDemo.Weather;
 
 /// <summary>
@@ -21,4 +22,43 @@ public interface IPrecipitationCoverProbe
 public static class PrecipitationCover
 {
     public static IPrecipitationCoverProbe? Probe { get; internal set; }
+}
+
+/// <summary>
+/// Wind-aligned cover for bullet rain (docs/megastorm-design.md 5.5.2): the top-down occlusion map cannot shelter the lee of a wall from near-horizontal rain,
+/// so eight rays (four body heights x two lateral angles) march upwind along the drop path (rising by fall speed / wind speed per metre) and test solid matter.
+/// Pure of the world: the caller supplies the solid test. Exposure is the share of rays that reach 48 m upwind unobstructed.
+/// </summary>
+public static class WindAlignedCoverProbe
+{
+    public const int RayCount = 8;
+    public const float LateralAngleRadians = 0.12f, MaxSlope = 2.0f, FallSpeedMetersPerSecond = 9.0f;
+    private static readonly float[] Distances = { 1.0f, 2.0f, 3.0f, 4.5f, 6.0f, 8.0f, 11.0f, 15.0f, 20.0f, 28.0f, 40.0f };
+    private static readonly float[] HeightOffsets = { -1.4f, -0.9f, -0.4f, 0.1f };
+
+    /// <param name="windAroundAcross">Horizontal wind (around, across), m/s: the drops travel along it, so the rays go the opposite way.</param>
+    /// <param name="isSolid">(around, vertical, across) in ring space: true when solid matter occupies the point.</param>
+    public static float Exposure(double around, double vertical, double across, Godot.Vector2 windAroundAcross, Func<double, double, double, bool> isSolid)
+    {
+        float speed = windAroundAcross.Length();
+        if (!(speed > 0.5f)) return 1.0f;           // no wind-driven rain: the overhead cover (occlusion map, shelter class) decides
+        Godot.Vector2 upwind = -windAroundAcross / speed;
+        float slope = Math.Min(MaxSlope, FallSpeedMetersPerSecond / speed);
+        int open = 0;
+        for (int lateral = -1; lateral <= 1; lateral += 2)
+        {
+            Godot.Vector2 dir = upwind.Rotated(lateral * LateralAngleRadians);
+            for (int h = 0; h < HeightOffsets.Length; h++)
+            {
+                bool blocked = false;
+                for (int i = 0; i < Distances.Length && !blocked; i++)
+                {
+                    float d = Distances[i];
+                    blocked = isSolid(around + dir.X * d, vertical + HeightOffsets[h] + d * slope, across + dir.Y * d);
+                }
+                if (!blocked) open++;
+            }
+        }
+        return open / (float)RayCount;
+    }
 }

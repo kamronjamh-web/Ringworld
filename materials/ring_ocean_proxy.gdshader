@@ -476,6 +476,11 @@ void fragment() {
 			water_normal_world = normalize(water_normal_world - (ring_wet_frame[0].xyz * ripple_gradient.x + ring_wet_frame[1].xyz * ripple_gradient.y) * 0.22);
 		}
 	}
+	// Megastorm ground tremor: a fine shiver of the near surface (same fade and strength as the rain ripples; exactly nothing at amplitude 0).
+	if (ring_ground_tremor.x > 0.0 && distance_to_camera < 40.0) {
+		vec2 tremor_gradient = ring_tremor_gradient(ring_wet_plane(world_position)) * (1.0 - smoothstep(25.0, 40.0, distance_to_camera));
+		water_normal_world = normalize(water_normal_world - (ring_wet_frame[0].xyz * tremor_gradient.x + ring_wet_frame[1].xyz * tremor_gradient.y) * 0.22);
+	}
 	if (!FRONT_FACING) water_normal_world *= -1.0;
 	vec3 water_normal_view = normalize((VIEW_MATRIX * vec4(water_normal_world, 0.0)).xyz);
 	NORMAL = water_normal_view;

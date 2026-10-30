@@ -124,6 +124,62 @@ public partial class RingWindQueryTest : RefCounted
         Check(worstDown <= -4f && worstDown >= -12.01f && RingWindQuery.PrecipitationDownDraft(core, 100f, 100f) == 0f, $"downdraft {worstDown}");
         Check(RingWindQuery.CoreUpdraftPeak(3) == 15f && RingWindQuery.CoreUpdraftPeak(4) == 30f && RingWindQuery.CoreUpdraftPeak(5) == 40f && RingWindQuery.CoreUpdraftPeak(1) == 0f, "updraft peaks by kind");
 
+        // Megastorm (kind 6) wall updraft and rear downdraft (design 5, WO6a): 40 m/s over xi 3-20 km, -12 m/s over xi 15-40 km, in the cloud layer / below the base only.
+        {
+            static StormArrivalState Wall(double xi) => Storm(6, 1f, 0.2f, 1.5f, -30001) with
+            {
+                RimDistanceMeters = (float)(xi < 18000.0 ? -xi : xi - 36000.0), RimSpeedMetersPerSecond = xi < 18000.0 ? 350f : -350f, Phase = StormArrivalPhase.Core
+            };
+            Check(RingWindQuery.MegastormWallXi(Wall(-8000.0)) is > -8001f and < -7999f && RingWindQuery.MegastormWallXi(Wall(30000.0)) is > 29999f and < 30001f, "megastorm xi from rim distance and speed sign");
+            Check(RingWindQuery.MegastormWallXi(StormArrivalState.Calm with { RimDistanceMeters = float.PositiveInfinity }) == float.NegativeInfinity, "megastorm xi of an infinite rim distance");
+            float msBestUp = 0f, bestUpXi = 0f, minUpInBand = float.MaxValue, outsideBand = 0f, msOutsideCloud = 0f;
+            for (double xi = -20000; xi <= 60000; xi += 250)
+            {
+                RingWindColumn wall = Column(Wall(xi));
+                float peakHere = 0f;
+                for (double across = 0; across < 40000; across += 500)
+                    for (float alt = 1700f; alt < 7800f; alt += 100f) peakHere = Math.Max(peakHere, RingWindQuery.StormUpdraft(wall, 1000.0, across, alt));
+                if (peakHere > msBestUp) { msBestUp = peakHere; bestUpXi = (float)xi; }
+                if (xi >= 4000 && xi <= 19000) minUpInBand = Math.Min(minUpInBand, peakHere);
+                if (xi < 0 || xi > 25000) outsideBand = Math.Max(outsideBand, peakHere);
+                msOutsideCloud = Math.Max(msOutsideCloud, Math.Abs(RingWindQuery.StormUpdraft(wall, 1000.0, 5000.0, 9000f)) + Math.Abs(RingWindQuery.StormUpdraft(wall, 1000.0, 5000.0, 1000f)));
+            }
+            Check(msBestUp > 36f && msBestUp <= 40.01f && bestUpXi >= 3000f && bestUpXi <= 20000f, $"megastorm wall updraft peak {msBestUp} at xi {bestUpXi}");
+            Check(minUpInBand > 24f, $"megastorm wall updraft sags to {minUpInBand} inside xi 4-19 km (continuous wall)");
+            Check(outsideBand == 0f && msOutsideCloud == 0f, $"megastorm updraft outside xi 1-24 km {outsideBand} / outside the cloud layer {msOutsideCloud}");
+            float msWorstDown = 0f, worstDownXi = 0f, downOutside = 0f;
+            for (double xi = -20000; xi <= 70000; xi += 250)
+            {
+                RingWindColumn wall = Column(Wall(xi));
+                float d = 0f;
+                for (float alt = 350f; alt < 1700f; alt += 50f) d = Math.Min(d, RingWindQuery.PrecipitationDownDraft(wall, alt, alt));
+                if (d < msWorstDown) { msWorstDown = d; worstDownXi = (float)xi; }
+                if (xi < 9000 || xi > 46000) downOutside = Math.Min(downOutside, d);
+            }
+            Check(msWorstDown <= -11.5f && msWorstDown >= -12.01f && worstDownXi >= 15000f && worstDownXi <= 40000f, $"megastorm rear downdraft {msWorstDown} at xi {worstDownXi}");
+            Check(downOutside == 0f, $"megastorm downdraft outside xi 10-45 km: {downOutside}");
+            Check(RingWindQuery.PrecipitationDownDraft(Column(Wall(30000.0)), 100f, 100f) == 0f, "megastorm downdraft stops at 300 m AGL");
+            // The jet over the wall is x1.8 (WindAltitudeProfile.JetKindMultiplier) and everything stays finite.
+            Check(WindAltitudeProfile.JetKindMultiplier(6) == 1.8f, "megastorm jet multiplier");
+            bool wallFinite = true;
+            for (double xi = -5000; xi <= 50000; xi += 5000) for (int i = 0; i <= 40; i++)
+            {
+                RingWindSample sample = RingWindQuery.Compose(Column(Wall(xi)), 777, -100f + i * 1500f, 888, 5);
+                wallFinite &= float.IsFinite(sample.UpdraftMetersPerSecond) && float.IsFinite(sample.MeanWind.X) && float.IsFinite(sample.TurbulenceSigma);
+            }
+            Check(wallFinite, "megastorm samples not finite");
+            // Smooth across the 10 km tower lattice: no step above 3 m/s per 100 m along the across axis.
+            float jump = 0f; float previous = RingWindQuery.StormUpdraft(Column(Wall(10000.0)), 0.0, 0.0, 4750f);
+            for (double across = 100; across < 60000; across += 100)
+            {
+                float u = RingWindQuery.StormUpdraft(Column(Wall(10000.0)), 0.0, across, 4750f);
+                jump = Math.Max(jump, Math.Abs(u - previous)); previous = u;
+            }
+            Check(jump < 3f, $"megastorm updraft steps {jump} m/s per 100 m along the wall");
+            // Ordinary kinds are unchanged: the 5 km lattice with 30% fill still gives at most the kind's peak.
+            Check(RingWindQuery.StormUpdraft(Column(Storm(5, 1f, 0f, 1.5f)), 1000.0, 2000.0, 4750f) <= 40.01f, "kind 5 updraft bound");
+        }
+
         // Cost: at most 3 us per sample, a 32-altitude column at most 0.1 ms (pure maths, column given).
         RingWindColumn stormColumn = Column(Storm(3, 1f, 0.5f, 0.9f));
         float sink = 0f;

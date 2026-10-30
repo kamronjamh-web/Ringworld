@@ -539,6 +539,7 @@ public partial class RingScaledFarViewport : Node
 			{
 				SyncCameraAndLighting();
 				UpdateFarCloudLayers(delta);
+				UpdateFarMegastorm(delta);
 			}
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring cloud masks and materials"))
 		{
@@ -2503,6 +2504,7 @@ public partial class RingScaledFarViewport : Node
 			foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
 				_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, material, wholeRingSite);
 			if (_farLayerSkyMaterial != null) _atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _farLayerSkyMaterial, wholeRingSite);
+			if (_farMegastormMaterial != null) _atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _farMegastormMaterial, wholeRingSite);
 		}
 		SyncRegionalCameraAndLighting(
 			canonical,

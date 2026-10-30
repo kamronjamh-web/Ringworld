@@ -134,6 +134,43 @@ public partial class MegastormCapture : RefCounted
         return string.Join(" ", parts) + frame;
     }
 
+    /// <summary>Debug experiment: replaces the far layer sky material's shader (e.g. a scratch copy with a fix); false when the material is missing.</summary>
+    public bool SetLayerSkyShader(Node world, string path)
+    {
+        var far = world.GetNode<RingworldTechDemo.Voxel.LOD.RingScaledFarViewport>("ScaledFarViewport");
+        var field = typeof(RingworldTechDemo.Voxel.LOD.RingScaledFarViewport).GetField("_farLayerSkyMaterial", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        if (field?.GetValue(far) is not ShaderMaterial material) return false;
+        Shader? shader = GD.Load<Shader>(path);
+        if (shader == null) return false;
+        material.Shader = shader;
+        return true;
+    }
+
+    /// <summary>Perf A/B: suppresses (true) or restores the far wedge pass.</summary>
+    public void SetFarPassSuppressed(Node world, bool suppressed)
+        => world.GetNode<RingworldTechDemo.Voxel.LOD.RingScaledFarViewport>("ScaledFarViewport").FarMegastormSuppressed = suppressed;
+
+    /// <summary>Ends a perf window opened with StormAnvilCapture.PerfBegin: median / p95 of the far (outer) and main viewport GPU time and the CPU frame.</summary>
+    public string FarPerfEnd(Node world)
+    {
+        var monitor = world.GetNode<RingworldTechDemo.Diagnostics.RingPerformanceMonitor>("RingPerformanceMonitor");
+        var snapshot = monitor.GetSnapshot();
+        var far = new System.Collections.Generic.List<double>();
+        var main = new System.Collections.Generic.List<double>();
+        foreach (var frame in snapshot.History)
+        {
+            if (frame.FarViewportGpuMilliseconds is { } f && f > 0.0) far.Add(f);
+            if (frame.ViewportGpuMilliseconds is { } m && m > 0.0) main.Add(m);
+        }
+        string Stat(System.Collections.Generic.List<double> v)
+        {
+            if (v.Count == 0) return "n 0";
+            v.Sort();
+            return $"median {v[v.Count / 2]:F3} p95 {v[(int)(v.Count * 0.95)]:F3} n {v.Count}";
+        }
+        return $"far_gpu={Stat(far)} | main_gpu={Stat(main)}";
+    }
+
     public double RingWidth(Node world) => world.GetNode<RingworldTechDemo.Voxel.Phase2.VoxelChunkGridManager>("ChunkGridManager").RingAcrossWidthMeters;
 
     /// <summary>Strip driver state (valid, builds) as one line.</summary>

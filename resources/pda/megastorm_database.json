@@ -1,0 +1,21 @@
+{
+  "_note": "Megastorm PDA database entry (draft text, docs/megastorm-design.md 5.4; the user edits the wording). Unlocked by the first megastorm_resonance_detected and persisted as MegastormDocument.ResonanceEntryUnlocked.",
+  "entry": {
+    "id": "megastorm_structural_resonance",
+    "title": "Structural resonance",
+    "unlocked_by": "megastorm_resonance_detected",
+    "paragraphs": [
+      "The ring floor is a continuous solid structure. It conducts mechanical energy at five to six kilometres per second, about fifteen times faster than sound moves through air.",
+      "Storm fronts of sufficient scale load the floor continuously: pressure, downbursts, lightning. The structure carries that energy far ahead of the front. It is perceived as a low hum underfoot. The rim walls resonate at higher frequencies and are often heard first.",
+      "Field note: when the floor hums, the wall is coming.",
+      "Airborne sound behaves differently. The observed front advances at approximately 350 metres per second, slightly faster than sound in air, so nothing it produces can travel ahead of it. Observers in its path report an acoustic dead zone in the final minutes: still air, no thunder, only the floor.",
+      "Every sound the front produced while closing on an observer reaches that observer at once, as the wall arrives. Expect a rolling pressure wave several seconds long, followed by the sustained roar of the storm.",
+      "The arrival is not only sound. The pile-up is a true overpressure wave, strong enough to flatten unreinforced structures. Unsheltered exposure is not considered survivable. Enclosed shelter, or at minimum the lee of solid terrain, reduces it to tolerable levels.",
+      "Inside the wall, wind-driven rain strikes at projectile speeds. Exposed surfaces erode; poorly maintained structures fail first.",
+      "Behind the wall the air pressure collapses. Expect a violent wind reversal, sudden fog, and pressure pain in the ears, followed by inflow toward the departing wall. Stay low and anchored until the trough has passed.",
+      "Lightning inside the wall does not stay vertical. The front outruns its own discharges and drags each channel sideways into a sheet of plasma that skims the ground for kilometres. Anything standing is in its path. Get low; a trench or hollow is better.",
+      "Discharges from the tops of the wall do not escape upward. They climb to the canopy and end there. The canopy visibly takes the lightning, flaring along its underside where each bolt lands.",
+      "Recommendation: treat any detectable floor resonance as advance warning. Reach enclosed, rated shelter before the dead zone begins, and stay there until the pressure recovers."
+    ]
+  }
+}

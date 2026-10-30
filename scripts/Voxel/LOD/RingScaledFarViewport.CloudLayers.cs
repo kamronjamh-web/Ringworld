@@ -428,13 +428,19 @@ public partial class RingScaledFarViewport
         using (Variant value = clouds.Get("max_step_count")) maxStepCount = (float)value.AsDouble();
         using (Variant value = clouds.Get("cloud_handoff")) handoff = value.AsVector4();
         float referenceStep = Mathf.Max(maxStepDistance, handoff.Y / Mathf.Max(1.0f, maxStepCount));
-        _farLayersMarchApplied.Set(material, FarLayersMarchName, new Vector4(density, sharpness, referenceStep, 0.0f));
-        _nearHandoffApplied.Set(material, NearHandoffName, new Vector4(handoff.X, handoff.Y, _nearCloudOwnershipEnabled ? 1.0f : 0.0f,
-            Mathf.Clamp(global::RingworldTechDemo.RingFarWeatherShadowGlobals.Frame.Z, 0.0f, 1.0f)));
+        _farLayersMarchValue = new Vector4(density, sharpness, referenceStep, 0.0f);
+        _nearHandoffValue = new Vector4(handoff.X, handoff.Y, _nearCloudOwnershipEnabled ? 1.0f : 0.0f,
+            Mathf.Clamp(global::RingworldTechDemo.RingFarWeatherShadowGlobals.Frame.Z, 0.0f, 1.0f));
+        _farLayersMarchApplied.Set(material, FarLayersMarchName, _farLayersMarchValue);
+        _nearHandoffApplied.Set(material, NearHandoffName, _nearHandoffValue);
         float outer = GetEffectiveFarCloudClipmapRadiusMeters();
         _diskFadeApplied.Set(material, DiskFadeName, new Vector2(outer * 0.78f, outer));
         _farLayerReceiverHeightApplied.Set(material, TerrainCloudReceiverHeightName, FarLayerReceiverHeightMeters);
     }
+
+    // The far layer sky's march and handoff uniforms (UpdateFarLayerMarch), shared with the megastorm wedge pass.
+    private Vector4 _farLayersMarchValue = new(1.0f, 0.746f, 958.0f, 0.0f);
+    private Vector4 _nearHandoffValue;
 
     private void RefreshFarWeatherSystems(Resource clouds, ShaderMaterial material)
     {

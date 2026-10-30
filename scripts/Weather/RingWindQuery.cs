@@ -81,6 +81,7 @@ public static class RingWindQuery
     public static float StormUpdraft(in RingWindColumn column, double around, double across, float altitudeMeters)
     {
         StormArrivalState a = column.Arrival;
+        if (a.Valid && a.Kind == StormArrivalMath.MegastormKindCode) return MegastormWallUpdraft(column, across, altitudeMeters);
         if (!a.Valid || a.Kind < 3 || a.Core <= 0.001f) return 0.0f;
         float depth = column.CloudTopMeters - column.CloudBaseMeters;
         if (depth < 200.0f || altitudeMeters <= column.CloudBaseMeters || altitudeMeters >= column.CloudTopMeters) return 0.0f;
@@ -94,14 +95,54 @@ public static class RingWindQuery
         return CoreUpdraftPeak(a.Kind) * Mathf.Clamp(a.Core, 0.0f, 1.0f) * profile * vertical;
     }
 
+    /// <summary>Megastorm wall updraft peak and rear downdraft (m/s), design 5: updraft 40 m/s over xi 3-20 km, downdraft -12 m/s over xi 15-40 km. These are wind speeds, not the wall's 350 m/s.</summary>
+    public const float MegastormWallUpdraftPeak = 40.0f, MegastormWallDowndraft = 12.0f;
+    public const float MegastormTowerCellMeters = 10000.0f;
+
+    /// <summary>
+    /// Metres behind the megastorm's rain edge (negative ahead of it) of the observer of a kind-6 arrival state, from the rim distance and the sign of the rim speed
+    /// (approaching = ahead of the wall record's centre). The wall record's rain rim sits half-depth x 0.75 = 18 km either side of its centre (design 3.2), so
+    /// ahead xi = -d and behind xi = d + 36 km. Approximate while the wall is still forming (the rain rim is smaller then); the ramps that use it are km wide.
+    /// </summary>
+    public static float MegastormWallXi(in StormArrivalState a)
+    {
+        float d = a.RimDistanceMeters;
+        if (!float.IsFinite(d)) return float.NegativeInfinity;
+        return a.RimSpeedMetersPerSecond >= 0.0f ? -d : d + 2.0f * StormArrivalMath.MegastormWallCenterXiMeters;
+    }
+
+    /// <summary>
+    /// The wall updraft: a continuous ascent over xi 3-20 km (ramps 1-3 km and 20-24 km), sin-shaped over the column, modulated along the across axis by a smooth
+    /// 10 km tower lattice (0.7-1.0) so it follows the visible towers. Inside the cloud layer only, like <see cref="StormUpdraft"/>.
+    /// </summary>
+    static float MegastormWallUpdraft(in RingWindColumn column, double across, float altitudeMeters)
+    {
+        StormArrivalState a = column.Arrival;
+        float xi = MegastormWallXi(a);
+        float weight = Smooth(1000.0f, 3000.0f, xi) * (1.0f - Smooth(20000.0f, 24000.0f, xi));
+        if (weight <= 0.0f) return 0.0f;
+        float depth = column.CloudTopMeters - column.CloudBaseMeters;
+        if (depth < 200.0f || altitudeMeters <= column.CloudBaseMeters || altitudeMeters >= column.CloudTopMeters) return 0.0f;
+        double x = across / MegastormTowerCellMeters;
+        int cell = (int)Math.Floor(x);
+        float f = Smooth(0.0f, 1.0f, (float)(x - cell));
+        float tower = Mathf.Lerp(0.7f, 1.0f, Mathf.Lerp(Hash01(cell, 0, a.SystemId), Hash01(cell + 1, 0, a.SystemId), f));
+        float vertical = Mathf.Sin(Mathf.Pi * (altitudeMeters - column.CloudBaseMeters) / depth);
+        return MegastormWallUpdraftPeak * Mathf.Clamp(a.Severity, 0.0f, 1.0f) * weight * tower * vertical;
+    }
+
     /// <summary>Precipitation downdraft (-5 to -12 m/s) from cloud base down to 300 m AGL, where it turns into the surface outflow carried by the mean wind.</summary>
     public static float PrecipitationDownDraft(in RingWindColumn column, float altitudeMeters, float heightAboveGround)
     {
         StormArrivalState a = column.Arrival;
         if (!a.Valid || a.Kind < 3) return 0.0f;
-        float weight = Mathf.Clamp(a.Core * 0.8f + a.FatDrop * 0.4f, 0.0f, 1.0f);
+        bool megastorm = a.Kind == StormArrivalMath.MegastormKindCode;
+        float xi = megastorm ? MegastormWallXi(a) : 0.0f;
+        float weight = megastorm
+            ? Smooth(10000.0f, 15000.0f, xi) * (1.0f - Smooth(40000.0f, 45000.0f, xi))
+            : Mathf.Clamp(a.Core * 0.8f + a.FatDrop * 0.4f, 0.0f, 1.0f);
         if (weight <= 0.001f) return 0.0f;
-        float strength = Mathf.Lerp(5.0f, 12.0f, Mathf.Clamp(a.Severity, 0.0f, 1.0f));
+        float strength = megastorm ? MegastormWallDowndraft * Mathf.Clamp(a.Severity, 0.0f, 1.0f) : Mathf.Lerp(5.0f, 12.0f, Mathf.Clamp(a.Severity, 0.0f, 1.0f));
         float belowBase = 1.0f - Smooth(column.CloudBaseMeters - 200.0f, column.CloudBaseMeters + 500.0f, altitudeMeters);
         return -strength * weight * belowBase * Smooth(300.0f, 600.0f, heightAboveGround);
     }

@@ -334,3 +334,21 @@ Thunder near is 4.3-5.5 s at -1.0 to -1.4 dBFS peak; thunder far is 10 s at -4 d
 | `shots/roof_plink_06.ogg` | `FB0B781AB712D8A872579DEC3969B8FF1B2E9E272A169B549B48B9E1BC89D9DC` |
 | `shots/roof_plink_07.ogg` | `8BF19C5C2BC2E304274919FFAEA6307A5B9BE6B746BE0098A5DD6BFC571D024C` |
 | `shots/roof_plink_08.ogg` | `ACF7E27DB7E2BC75B5A2F60A51AFA394A5D39E0458B1B903B03BD3F02AEBEAB5` |
+
+### Megastorm sounds (procedurally generated) - 2026-10-30
+
+The megastorm's own voices (docs/megastorm-design.md 5.2) are **original synthesised work generated for this project**, from seeded noise and sine
+partials only: no recordings, no downloaded audio and none of the CC0 thunder clips. Generator: the same `tools/media/weather_sfx_gen.py`
+(`--only megastorm`), seeded by the CRC-32 of the output name, encoded like the other weather assets (mono, 44.1 kHz, `libvorbis -q:a 5`).
+
+| File | Length | Model | SHA-256 |
+| --- | ---: | --- | --- |
+| `megastorm_ground_hum_loop.ogg` | 24 s | Structure-borne bed: six 20-60 Hz partials with slow whole-cycle beating, weak 2nd/3rd harmonics, a 15-90 Hz noise floor. Exactly periodic. | `F9171207EB8B0F3CE5D31669A9299697983A2064BA8F7C2E838BC71813A84C9A` |
+| `megastorm_wall_sing_loop.ogg` | 30 s | Rim-wall singing: a slightly inharmonic metallic drone (98 Hz fundamental, 7 partials as detuned pairs) plus narrow-band breath noise. Exactly periodic. | `8753754663103CD5E5CA34A414983D52EDBAF3C75DDEA3A54B58D7758946FB9D` |
+| `megastorm_roar_loop.ogg` | 30 s | Wall roar: three independently swelling bands (35-420 Hz rush, 160-900 Hz growl, 1.5-6.5 kHz hiss). Exactly periodic. | `07E72440BA7F4C8B8F4102CB29ABE8BDD323C3E2A7E3FFD12DCBC068A7F2E4B0` |
+| `megastorm_boom_1.ogg` | 4.4 s | The Mach pile-up: a 3.5 kHz-band crack, a sub thump gliding 72 to 28 Hz, then 9-13 darkening rolling noise bursts; the shape follows `MegastormSound.BoomEnvelope`. | `7E8BEDAFC6C5115BC48667A3CA647038CC3C093D2BD70EC497092FEA94E7072F` |
+| `megastorm_boom_2.ogg` | 4.4 s | As above, other seed. | `605BAED53B23C76CCCBABB5CD70613EBC5EEEDD6952AFCA4BFD007086B43048E` |
+| `megastorm_boom_3.ogg` | 4.4 s | As above, other seed. | `452A0FF9FDF6F30484A6DDFBE5F5AF49484403518D284914DDF434404A9AD3C7` |
+
+Wiring: `RingMegastormAudio` (scripts/Weather/Megastorm). Subjective listening is still pending; `tools/media/megastorm_audio_render.py` renders a
+passage from the test's gain timeline for that.

@@ -34,8 +34,8 @@ namespace RingworldTechDemo;
 /// <item><term>ResolveFormationProfile (CPU local weather)</term><description>Megastorm records resolve to Cumulonimbus; the T record (id -30003) to Nimbostratus and P (id -30004) to Altostratus, so the CPU profile matches the render record's table row.</description></item>
 /// <item><term>ResolveFormationScale (legacy multi-cell chance)</term><description>kind 6 takes the ExceptionalFront terms.</description></item>
 /// <item><term>ResolveSystemFormationProfile, BuildNaturalRenderSystem's front flag, lightning scanners (<c>TryBuildWeatherSystem</c> kinds), TryGetRandomActiveStormCell, IsLightningEligible</term><description>natural systems only: kind 6 is never produced by TryBuildWeatherSystem, so the megastorm is excluded from the natural scanner and sampler by construction (its strikes come from the megastorm stream, WO10). The T record is an ExceptionalFront by kind but has a negative id and never enters those scanners either.</description></item>
-/// <item><term>StormArrivalMath.KindWeight / GustKindScale / HailAt</term><description>already treat kinds &gt;= 5 as superstorm (weight 1.5, full gust scale). HailAt places generic swaths by the slab ellipse rule; megastorm hail placement and the kind-6 time-based bands are WO6.</description></item>
-/// <item><term>Wind StormFactor, RingWindQuery</term><description>kind 6 falls into the default weight (0.3) until WO6 sets 1.25 and adds the wall updrafts.</description></item>
+/// <item><term>StormArrivalMath.KindWeight / GustKindScale / HailAt</term><description>already treat kinds &gt;= 5 as superstorm (weight 1.5, full gust scale). kind 6 has time-based bands and its own wall hail placement (WO6a: StormArrivalMath.MegastormHailAt).</description></item>
+/// <item><term>Wind StormFactor, RingWindQuery</term><description>StormFactor weight 1.25 for kind 6; RingWindQuery has the wall updraft / downdraft (WO6a).</description></item>
 /// <item><term>RingLocalWeatherEffects.RainFog (haze onset), UpperAtmosphereSprite (chance), StormArrivalMath.KindWeight</term><description>already ">= ExceptionalFront" / ">= 5": kind 6 is severe with no change.</description></item>
 /// </list>
 /// </para>
@@ -195,12 +195,17 @@ public partial class RingVolumetricCloudLayer
         List<MegastormRecord>? bundle = BuildMegastormBundle(timeSeconds, acrossMeters);
         if (bundle == null) return;
         double circumference = WorldCircumference();
+        // The wall hail swaths (StormArrivalMath.MegastormHailAt) are seeded per 30 min weather-clock cycle and need the absolute across position.
+        double cycleIndex = Math.Floor(timeSeconds / StormArrivalMath.MegastormHailCycleSeconds);
+        int hailCycle = (int)(cycleIndex % 1000000.0);
+        float hailCycleSeconds = (float)(timeSeconds - cycleIndex * StormArrivalMath.MegastormHailCycleSeconds);
         for (int i = 0; i < bundle.Count; i++)
         {
             MegastormRecord record = bundle[i];
             var offset = new Vector2((float)ShortestAroundDelta(record.CenterAroundMeters, aroundMeters, circumference), (float)(acrossMeters - record.CenterAcrossMeters));
             var geometry = new StormSystemGeometry(record.Id, record.Kind, offset, (float)record.SemiAcrossMeters, (float)record.SemiAlongMeters,
-                0.0f, 1.0f, 1.0f, 0.0f, MegastormRecordDrift(record), record.Density, record.Precipitation, StormLifecycleMature);
+                0.0f, 1.0f, 1.0f, 0.0f, MegastormRecordDrift(record), record.Density, record.Precipitation, StormLifecycleMature,
+                (float)record.CenterAcrossMeters, hailCycle, hailCycleSeconds);
             StormArrivalMath.NormalizedDistance(geometry, out float ray, out float dist);
             if (dist - ray > StormArrivalCullMeters) continue;
             into.Add(geometry);

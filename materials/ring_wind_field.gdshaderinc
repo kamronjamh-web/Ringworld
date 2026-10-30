@@ -1,5 +1,6 @@
 #ifndef RING_WIND_FIELD_INCLUDED
 #define RING_WIND_FIELD_INCLUDED
+#include "res://materials/ring_ground_tremor.gdshaderinc"
 global uniform float ring_wind_field_enabled;
 global uniform sampler2D ring_wind_gust_texture : filter_linear, repeat_enable;
 global uniform vec2 ring_wind_mean_vector;
@@ -22,6 +23,7 @@ float ring_wind_noise_at_world(vec3 position,float lag_seconds) {
 }
 float ring_wind_gust_at_world(vec3 position,float lag_seconds) {
  if(ring_wind_field_enabled<0.5)return 1.0;
+ if(ring_ground_tremor.x>0.0)return clamp(ring_wind_gust_base+ring_wind_gust_strength*ring_wind_noise_at_world(position,lag_seconds)*1.6+ring_tremor_sway(position),0.0,4.0);
  return clamp(ring_wind_gust_base+ring_wind_gust_strength*ring_wind_noise_at_world(position,lag_seconds)*1.6,0.0,4.0);
 }
 vec2 ring_wind_at_world(vec3 position,float lag_seconds) {return ring_wind_mean_vector*ring_wind_gust_at_world(position,lag_seconds);}

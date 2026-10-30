@@ -91,6 +91,16 @@ public partial class RingVolumetricCloudLayer
     /// <summary>The storm-arrival wind modifier at a point and time; also returns the gust-field multipliers (1 and 0 when inactive).</summary>
     private Vector2 ApplyStormArrivalWind(RingCanonicalPosition position, double time, Vector2 mean, out float gustStrengthScale, out float gustBaseAdd)
     {
+        Vector2 result = ApplyStormArrivalWindCore(position, time, mean, out gustStrengthScale, out gustBaseAdd);
+        // Megastorm in-wall and wake wind (design 5.5.2 / 5.5.3) with the exact model xi; no source (every untriggered world) skips this entirely.
+        if (MegastormSource != null && WindSettings.Enabled && MegastormHazardModel is MegastormModel model
+            && MegastormHazardMath.WindOverride(model, position.AroundMeters, position.AcrossMeters, time, out Vector2 target, out float weight))
+            result = result.Lerp(target, weight);
+        return result;
+    }
+    private MegastormModel? MegastormHazardModel => MegastormSource switch { RingMegastorm node => node.Model, MegastormModel model => model, _ => null };
+    private Vector2 ApplyStormArrivalWindCore(RingCanonicalPosition position, double time, Vector2 mean, out float gustStrengthScale, out float gustBaseAdd)
+    {
         gustStrengthScale = 1f; gustBaseAdd = 0f;
         float strength = RingStormArrivalSettings.Current.GustFrontStrength;
         if (!(strength > 0f) || !WindSettings.Enabled) return mean;
@@ -150,7 +160,7 @@ public partial class RingVolumetricCloudLayer
             gust = weather.InheritWind ? SharedWindField.SampleAtTime(position, weather.WindMetersPerSecond, time, _grid?.GetCanonicalRingCircumferenceMeters64() ?? 0, WindSettings, scale, add) : 1;
         }
         bool enabled = Enabled && WindSettings.Enabled;
-        return new(enabled ? weather.WindMetersPerSecond : Vector2.Zero, enabled ? (weather.WindMetersPerSecond * gust).LimitLength(80) : Vector2.Zero, StormFactor(weather), time, gust, enabled);
+        return new(enabled ? weather.WindMetersPerSecond : Vector2.Zero, enabled ? (weather.WindMetersPerSecond * gust).LimitLength(Mathf.Max(80f, weather.WindMetersPerSecond.Length())) : Vector2.Zero, StormFactor(weather), time, gust, enabled);
     }
     public RingWindSnapshot CaptureWindSnapshot(RingCanonicalPosition position, LocalWeatherState weather, double time, bool external = false)
     {
@@ -172,7 +182,7 @@ public partial class RingVolumetricCloudLayer
         }
         return new(enabled ? mean : Vector2.Zero, enabled ? (mean * gust).LimitLength(80) : Vector2.Zero, StormFactor(weather), time, gust, enabled);
     }
-    static float StormFactor(LocalWeatherState weather) => Mathf.Clamp(weather.SystemInfluence * weather.PrecipitationPotential * (weather.SystemKind == WeatherSystemKind.ExceptionalFront ? 1.25f : weather.SystemKind == WeatherSystemKind.MajorFront ? 1f : .3f), 0, 1);
+    static float StormFactor(LocalWeatherState weather) => Mathf.Clamp(weather.SystemInfluence * weather.PrecipitationPotential * (weather.SystemKind == WeatherSystemKind.Megastorm ? 1.25f : weather.SystemKind == WeatherSystemKind.ExceptionalFront ? 1.25f : weather.SystemKind == WeatherSystemKind.MajorFront ? 1f : .3f), 0, 1);
     LocalWeatherState ResolveSurfaceWind(LocalWeatherState weather, double time)
     {
         if (!weather.InheritWind) return weather;

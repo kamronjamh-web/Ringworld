@@ -87,8 +87,12 @@ public static class RingCloudLayers
         }
     }
 
-    /// <summary>Layer coverages (low, mid, high) and weatherness (0..1) at the point: the macro map's second array layer.</summary>
-    public static Vector4 EvaluateMap(in CloudLayerPoint point, IReadOnlyList<CloudLayerSystem> systems, CloudLayerTable table)
+    /// <summary>
+    /// The per-system part of <see cref="EvaluateMap"/>: the multiplicative remaining (1 - coverage) per layer and the weatherness (clamped) over the systems.
+    /// Combining two system lists is remaining = remainingA * remainingB and weatherness = max, which is what the far layer's analytic megastorm table relies on.
+    /// </summary>
+    public static void AccumulateSystems(in CloudLayerPoint point, IReadOnlyList<CloudLayerSystem> systems, CloudLayerTable table,
+        out float remainingLow, out float remainingMid, out float remainingHigh, out float weatherness)
     {
         float circumference = point.CircumferenceMeters;
         float sourceAround = point.CanonicalAround + point.Shift.X;
@@ -97,10 +101,10 @@ public static class RingCloudLayers
         float windY = MathF.Sin(point.WindAngleRadians);
         Vector2 densityRamp = table.WeathernessDensityRamp;
 
-        float remainingLow = 1.0f;
-        float remainingMid = 1.0f;
-        float remainingHigh = 1.0f;
-        float weatherness = 0.0f;
+        remainingLow = 1.0f;
+        remainingMid = 1.0f;
+        remainingHigh = 1.0f;
+        weatherness = 0.0f;
         for (int i = 0; i < systems.Count; i++)
         {
             RingVolumetricCloudLayer.RenderWeatherSystem system = systems[i].System;
@@ -181,6 +185,13 @@ public static class RingCloudLayers
             }
         }
         weatherness = Math.Clamp(weatherness, 0.0f, 1.0f);
+    }
+
+    /// <summary>Layer coverages (low, mid, high) and weatherness (0..1) at the point: the macro map's second array layer.</summary>
+    public static Vector4 EvaluateMap(in CloudLayerPoint point, IReadOnlyList<CloudLayerSystem> systems, CloudLayerTable table)
+    {
+        float circumference = point.CircumferenceMeters;
+        AccumulateSystems(point, systems, table, out float remainingLow, out float remainingMid, out float remainingHigh, out float weatherness);
 
         float diurnal = DiurnalCoverageFactor(point.CanonicalAround, circumference, point.SunLocal, table);
         float lowFair = point.Coverage * (diurnal + (1.0f - diurnal) * weatherness);
