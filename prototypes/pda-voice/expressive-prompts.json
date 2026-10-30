@@ -1,0 +1,13 @@
+{
+  "Persona": "An adult British English female voice with a contemporary standard southern English accent, a clear medium register, smooth grounded resonance, and crisp natural articulation. A composed, intelligent suit computer with a warm conversational manner. Speak clearly with a fully voiced, well-supported normal speaking volume. Maintain a natural comfortable pace and restrained expression.",
+  "Styles": [
+    { "Id": "neutral", "Label": "Neutral", "Prompt": "Use friendly, matter-of-fact delivery with natural intonation." },
+    { "Id": "reassuring", "Label": "Reassuring", "Prompt": "Use supportive warmth and a reassuring conversational manner while remaining fully voiced." },
+    { "Id": "urgent", "Label": "Urgent", "Prompt": "Use controlled urgency with firmer emphasis on key numbers. Stay composed at normal speaking volume without shouting." }
+  ],
+  "Lines": [
+    { "EventId": "storm_incoming", "Text": "A storm front is on the way. It'll be here in 4 minutes.", "Seed": 4101, "Facts": { "minutes_to_arrival": 4 } },
+    { "EventId": "emitter_discovered", "Text": "There's an emitter structure 1.2 kilometers north of you. Its origin is unknown.", "Seed": 4102, "Facts": { "distance_km": 1.2, "bearing": "north" } },
+    { "EventId": "low_oxygen", "Text": "Your oxygen is at 15 percent. Let's get you back to breathable air.", "Seed": 4103, "Facts": { "oxygen_pct": 15 } }
+  ]
+}

@@ -11,12 +11,18 @@ switch (cmd)
         return await LlmBench.RunWorker(Cli.Value(rest, "--model")!, int.Parse(Cli.Value(rest, "--threads")!), Cli.Value(rest, "--out")!);
     case "tts":
         return await TtsBench.RunAll(rest);
+    case "audition":
+        return VoiceAudition.Run(rest);
+    case "audition-emma":
+        return VoiceAudition.RunEmma(rest);
+    case "audition-expressive-report":
+        return VoiceAudition.RunExpressiveReport(rest);
     case "tts-worker":
         return await TtsBench.RunWorker(Cli.Value(rest, "--engine")!, Cli.Value(rest, "--out")!);
     case "all":
         await LlmBench.RunAll(rest);
         return await TtsBench.RunAll(rest);
     default:
-        Console.WriteLine("usage: run.ps1 llm [--models qwen2-0.5b,qwen2.5-0.5b,qwen3-0.6b] [--threads 8,4] | tts | all");
+        Console.WriteLine("usage: run.ps1 llm [--models qwen2-0.5b,qwen2.5-0.5b,qwen3-0.6b] [--threads 8,4] | tts | audition | audition-emma | audition-expressive-report | all");
         return 1;
 }

@@ -67,6 +67,33 @@ public static class RadioDsp
         return outBuf;
     }
 
+    /// <summary>Gentle audition alternative: 75% dry, 25% broad 120-7500 Hz band-pass; no saturation or cues.</summary>
+    public static float[] ProcessLight(float[] input, int rate)
+    {
+        var hp = Biquad.HighPass(rate, 120, 0.7071);
+        var lp = Biquad.LowPass(rate, 7500, 0.7071);
+        var body = new float[input.Length];
+        for (int i = 0; i < input.Length; i++)
+            body[i] = 0.75f * input[i] + 0.25f * lp.Process(hp.Process(input[i]));
+        return body;
+    }
+
+    /// <summary>Explicit Emma audition profiles; saturation acts on the filtered amplitude without a peak boost.</summary>
+    public static float[] ProcessProfile(float[] input, int rate, double lowHz, double highHz, double wet, double drive)
+    {
+        var hp = new[] { Biquad.HighPass(rate, lowHz, 0.7071), Biquad.HighPass(rate, lowHz, 0.7071) };
+        var lp = new[] { Biquad.LowPass(rate, highHz, 0.7071), Biquad.LowPass(rate, highHz, 0.7071) };
+        var body = new float[input.Length];
+        for (int i = 0; i < input.Length; i++)
+        {
+            float x = input[i];
+            foreach (var f in hp) x = f.Process(x);
+            foreach (var f in lp) x = f.Process(x);
+            body[i] = (float)((1 - wet) * input[i] + wet * Math.Tanh(x * drive));
+        }
+        return body;
+    }
+
     static float[] Beep(int rate, double hz, double seconds, double amp)
     {
         int n = (int)(seconds * rate), fade = (int)(0.006 * rate);
