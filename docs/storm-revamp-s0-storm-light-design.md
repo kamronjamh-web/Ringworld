@@ -111,3 +111,27 @@ Captures (contact sheets): `.godot/captures/storm_dark/run2/seqA` (ground and sh
 - **Balance:** the sun fades to a shadowless residual `1 - strength` (not 0), receivers' ambient `A = 1 - 0.55 * strength * D`, the sky / haze radiance `1 - 0.97 * strength * D`, Sunshine's sun scaled by `1 - F(D at camera) * strength` through the driver's directional light multiplier (`UpdateStormCloudLighting`), eye adaptation gives up 0.9 x F x strength of its range. Default "Storm darkness" 0.9. Reason: with the sun at 0 the ground was 0.11x clear while the cloud deck stayed bright; ground = albedo x sky, so the sky has to dim harder than the ground.
 - **Not done:** a distant storm (25-45 km) still shows no dark mass or band from outside; that needs the Sunshine storm deck (WO-5).
 - **Global fix:** the `Texture2DArrayRD` global is only bound once it holds a valid RID (a Texture2DArrayRD without one resolves to a 2D texture and fails uniform-set creation). The ~400 "needs to be 2DArray, actual 2D" errors per run are NOT from this global: they persist with it never registered.
+
+## Storm-owned D (2026-10-29, RTX 4070, uncommitted; user decisions "storm-owned D" and "fronts dark by rain")
+Problem: D was `max(G, heavy(R))`, and G = `0.65 * influence + 0.55 * precipitation` counts every system. A dry manual Cs or As therefore darkened the sky and sun disc and took the sun off receivers, as if it were a storm.
+
+**Rule.** Only storms and raining fronts darken the world:
+- `D = max(owned * max(G, heavy), front, heavy * (1 - smoothstep(0, 0.25, influence)))`
+- **owned** is the S6 section 3.8 ownership weight over sculpt systems (StormTower / Cumulonimbus, natural or manual): 1 within 1.3 ellipse radii, 0 by `RING_STORM_SUPPORT` (1.45). Inside a storm, D is bit-for-bit the old D.
+- **front** is the rain term of a non-sculpt front (MajorFront / ExceptionalFront, natural or manual, flag `RenderWeatherFlagFront` = 32): `smoothstep(0.25, 0.65, P_front)`.
+  - `P_front` is the front's own precipitation, with the same per-system falloff and coverage gate as the macro precipitation. It is capped by the point's precipitation potential (map B), so D follows the rain that actually falls there.
+  - Without that cap, a manual dry deck that raised the coverage over a nearby natural front lifted the front's term to 0.17.
+  - Heavy frontal rain goes dark, drizzle stays grey, and a dry front gives 0.
+- **The heavy term** keeps plain heavy cluster overcast only where no system is present (map influence below 0.25).
+  - S6's `ring_ws_eval_owned_storm_level` scales it by `1 - influence` instead.
+  - With that factor, a dry deck that raised the coverage leaked through it: a manual dry As at influence 0.83 gave D 0.17.
+- Every other system (dry Cs/As/Ns, banks, clusters, and any non-front system even when it rains) gives D = 0. Its overcast darkens the ground only through the WO4 layer cloud shadows.
+
+**Where.**
+- **Macro map.** `RingMacroWeatherMap.glsl` writes the storm-light layers 4 / 5 (front / back) = `(owned, front, 0, 0)`. `SunshineClouds.gd` has 6 array layers and `macro_map_storm_light_layer_offset` = 4.
+  - G itself is unchanged, so the cloud computes are untouched.
+- **Receivers.** `ring_storm_light.gdshaderinc` `ring_storm_owned_level` reads the layer at `ringworld_storm_map_frame.w` (front + 4). An index of 0 means the map has no such layer and reads owned 1, front 0, the old D. GLSL twins: `ring_rain_streaks.glslinc storm_level` and `ring_wet_map.glsl` (layer in `prev.w`).
+- **CPU.** `RingSunshineCloudBridge.StormLight.cs`:
+  - `EvaluateStormLightTerms` and `StormOwnedLevel` serve `GetStormLevelAt`.
+  - `SmoothCameraStormLevel` sets `_localStormFactor` (camera D). The front and system-free heavy terms are smoothed; the ownership weight is not, because it is already a spatial ramp. So wherever `owned` is 1, camera D equals the old value, transients included.
+- **Camera D consumers follow automatically:** eye-adaptation cap, Sunshine sun factor and camera cloud ambient colour, StandardMaterial3D tint, wet world, haze storm factor and rain streaks. Under a non-storm deck the cloud ambient no longer goes to the storm colour.

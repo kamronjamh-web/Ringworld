@@ -43,3 +43,17 @@ int cloud_entry_skip_steps(vec3 origin, vec3 direction, vec3 around, vec3 up,
 	if (!same_side || (pre_altitude < floor_altitude && pre_next_altitude <= pre_altitude) || (pre_altitude > ceiling_altitude && pre_next_altitude >= pre_altitude)) return 0;
 	return clamp(skip, 0, step_count - 1);
 }
+
+// Boundary-list form (S6 section 3.3). One entry of U(t): a band floor..ceiling that exists only from ray distance `start_distance`
+// on (a sculpt interval; any value <= from_distance for a layer, which exists along the whole ray). Returns the whole maxstep lattice
+// intervals from `from_distance` that may be skipped without missing the band: while the ray is before the entry's start, or outside
+// its altitude range heading toward it (cloud_entry_skip_steps). The caller takes the minimum over every entry of U, so the skip never
+// passes the next boundary of U, and lands on the same lattice an unskipped march would walk.
+int cloud_band_skip_steps(vec3 origin, vec3 direction, vec3 around, vec3 up,
+	float ring_radius, float floor_altitude, float ceiling_altitude, float start_distance,
+	float from_distance, float max_step, int step_count, float depth_limit) {
+	int altitude_skip = cloud_entry_skip_steps(origin, direction, around, up, ring_radius, floor_altitude, ceiling_altitude,
+		from_distance, max_step, step_count, depth_limit);
+	int before_skip = int(clamp(floor((min(start_distance, depth_limit) - from_distance) / max_step), 0.0, float(step_count - 1)));
+	return max(altitude_skip, before_skip);
+}

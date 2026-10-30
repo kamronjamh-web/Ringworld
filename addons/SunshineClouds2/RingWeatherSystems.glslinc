@@ -15,7 +15,8 @@
 // RingWeatherSystem is declared in CloudsInc.comp (a = centre around/across + major/minor, b = cos/sin + density +
 // precipitation, c = storm floor/ceiling + physical profile + flags, d = manual coverage target + support multiplier +
 // overflow fade weight 0..1, which scales the system's macro influence and its sculpt silhouette).
-// Flag bits: 1 static/manual (centre is world space, no wind advection), 2 sculpt, 4 manual falloff, 8 reserved.
+// Flag bits: 1 static/manual (centre is world space, no wind advection), 2 sculpt, 4 manual falloff, 8 reserved, 16 lowers base
+// (the system pulls the low cloud layer's base down to the weather base; feeds the macro map's weatherness, RingCloudLayers.glslinc).
 //
 // With header0.y <= 0.5 none of this is used and the legacy single-system uniforms drive the shaders unchanged.
 //
@@ -38,6 +39,15 @@
 #define RING_WS_MAX 64
 #define RING_WS_FLAG_STATIC 1u
 #define RING_WS_FLAG_SCULPT 2u
+#define RING_WS_FLAG_LOWERS_BASE 16u
+#ifndef RING_WS_MASK_LOWERS_BASE
+#define RING_WS_MASK_LOWERS_BASE 0
+#endif
+
+// True storm support (S6 section 3.3): the bake's canopy reaches past the ellipse (`canopyMask` fades out at 1.25x and the ragged edge
+// adds up to 0.15 of the normalised distance, so the footprint ends before 1.45x). Every emptiness test on a sculpt system's footprint
+// (ray mask, ray intervals, sub-mask, shadow ellipse subset) uses this multiple of the ellipse plus its own slack.
+#define RING_STORM_SUPPORT 1.45
 
 // ---- Position-pure core (also compiled by RingMacroWeatherMap.glsl) ----------------------------------------------------
 uint ring_ws_flags(int index) { return uint(ringWeatherSystems.systems[index].c.w + 0.5); }
@@ -85,8 +95,9 @@ float ring_ws_weather_noise(float cellX, float cellZ, uint seed, int scaleCells,
 	return a + (b - a) * fz;
 }
 
-// sourceAround / sourceAcross: the source-space (wind-subtracted) canonical position, as the CPU queries it.
-float ring_ws_cluster_term(float sourceAround, float sourceAcross, float circumference) {
+// sourceAround / sourceAcross: the source-space (wind-subtracted) canonical position, as the CPU queries it. The salts pick the noise
+// (background coverage uses 30 / 40; the S6 mid and high layers use their own pairs, so the layers are uncorrelated).
+float ring_ws_cluster_term_salted(float sourceAround, float sourceAcross, float circumference, int smallSalt, int largeSalt) {
 	vec4 h = ringWeatherSystems.header3;
 	if (h.x < 1.0 || h.y == 0.0) return 0.0;
 	float wrapped = circumference > 1.0 ? sourceAround - circumference * floor(sourceAround / circumference) : sourceAround;
@@ -96,9 +107,13 @@ float ring_ws_cluster_term(float sourceAround, float sourceAcross, float circumf
 	int smallCells = max(2, packedScales & 255);
 	int largeCells = max(4, packedScales >> 8);
 	uint seed = uint(floatBitsToInt(h.w));
-	float small = ring_ws_weather_noise(cellAround, cellAcross, seed, smallCells, 30);
-	float large = ring_ws_weather_noise(cellAround, cellAcross, seed, largeCells, 40);
+	float small = ring_ws_weather_noise(cellAround, cellAcross, seed, smallCells, smallSalt);
+	float large = ring_ws_weather_noise(cellAround, cellAcross, seed, largeCells, largeSalt);
 	return (small * 0.62 + large * 0.38 - 0.5) * h.y;
+}
+
+float ring_ws_cluster_term(float sourceAround, float sourceAcross, float circumference) {
+	return ring_ws_cluster_term_salted(sourceAround, sourceAcross, circumference, 30, 40);
 }
 
 
@@ -193,24 +208,53 @@ uvec2 g_ws_mask = uvec2(0u);
 uvec2 g_ws_sculpt_mask = uvec2(0u);
 float g_ws_frame_coverage = 0.0;
 float g_ws_storm = 0.0;
+// The macro point (cov, storm, precip, influence) the last ring_ws_apply_macro consumed; the cloud layers' direct path reads its coverage.
+vec4 g_ws_macro_point = vec4(0.0);
 // Main compute only. Sculpt-band intervals of the current ray: x/y = ray distance [t0, t1] (m) over which the ray is inside a
 // masked sculpt system's ellipse (plus slack), z/w = that system's own storm band. More systems than slots merge into the last slot.
 // g_ws_sub_mask is the per-primary-sample subset of g_ws_sculpt_mask whose ellipse (plus light reach) covers the sample, and
-// g_ws_sub_band the background band widened by the own bands of that subset (the light march's break band).
+// g_ws_sub_band the background band widened by the own bands of that subset (the light march's break band; map storms widen it
+// only up to their fetched column's top, see ring_ws_update_sub_mask).
 #define RING_WS_RAY_BANDS 3
 vec4 g_ws_ray_band[RING_WS_RAY_BANDS];
 int g_ws_ray_band_count = 0;
 uvec2 g_ws_sub_mask = uvec2(0u);
 vec2 g_ws_sub_band = vec2(0.0);
+// Column mode (ring_ws_update_sub_mask with mapColumn): map storms in reach of the primary are kept out of g_ws_sub_mask and flagged
+// here instead; the includer fetches their baked column once and treats it as their exact extent (see ring_ws_update_sub_mask).
+bool g_ws_sub_map_storm = false;
 
 // Perf-diagnostic bit mask (bridge CameraIndependentDebugMask, header1.z; 0 = normal): 1 background band only (no ray intervals,
 // no sub-mask band widening), 2 no sculpt systems, 4 skip the ray mask, 8 constant macro, 16 light march breaks on the background
 // band (not the sub-mask band), 32 = every shader that includes this file takes its legacy (flag-off) path while the bridge's
-// constant uniforms stay in place.
+// constant uniforms stay in place,
+// 64 = no cloud layers (the single legacy background band), 128 = no cirrus shell, 256 = no S6 deck colour (layer-deck ambient keeps
+// the sky chroma; SunshineCloudsCompute.glsl RING_LAYER_DECK_COLOUR).
 int ring_ws_debug() { return int(ringWeatherSystems.header1.z + 0.5); }
 bool ring_ws_enabled() { return ringWeatherSystems.header0.y > 0.5 && (ring_ws_debug() & 32) == 0; }
 int ring_ws_count() { return clamp(int(ringWeatherSystems.header0.x + 0.5), 0, RING_WS_MAX); }
 float ring_ws_storm_level() { return g_ws_storm; }
+
+// S6 deck ownership (docs/storm-revamp-s6-cloud-layers-design.md section 3.8). Only real storms (sculpt systems: StormTower, Cumulonimbus)
+// own the storm look of the background around them: the threshold lift to 1.05 (closed overcast under the storm) and the per-ray storm
+// ambient share. g_ws_storm_owned is 1 within 1.3 ellipse radii of a masked sculpt system (where its own storm level can be nonzero:
+// natural systems reach 1.0, manual ones 1.3), fades to 0 at the true storm support (1.45) and is 0 elsewhere, so non-storm decks
+// (Ns, As, St, Sc, heavy cluster overcast) keep layer lighting. Set per primary sample by ring_ws_update_sub_mask (light and ambient
+// samples reuse it), per probe / shadow sample by ring_ws_storm_owned_at.
+float g_ws_storm_owned = 0.0;
+float ring_ws_storm_owned_weight(vec2 q) {
+	return 1.0 - smoothstep(1.69, RING_STORM_SUPPORT * RING_STORM_SUPPORT, dot(q, q));
+}
+// The storm level the S4 storm look reads: the macro storm level where a storm owns the column. Elsewhere only the heavy cluster
+// overcast term (coverage alone, no system) keeps its pre-S6 lift, scaled down by the map's system influence, so a system's own
+// non-storm deck (Ns, As, St, Sc) is layer-lit while plain heavy overcast and every storm look exactly as before. The main compute
+// evaluates it once per primary (after the macro update, with the layers on) and stores it in g_ws_storm, which the primary's light and
+// ambient samples then read through ring_ws_storm_level(); the shadow compute evaluates it per sample.
+float ring_ws_eval_owned_storm_level() {
+	float heavyStart = ringWeatherSystems.header1.x;
+	float heavy = ring_ws_smooth_unit((g_ws_macro_point.x - heavyStart) / max(0.01, 1.0 - heavyStart));
+	return max(g_ws_storm * g_ws_storm_owned, heavy * (1.0 - clamp(g_ws_macro_point.w, 0.0, 1.0)));
+}
 float ring_ws_frame_coverage() { return g_ws_frame_coverage; }
 
 float ring_ws_circumference() {
@@ -249,7 +293,8 @@ void ring_ws_set_mask(uvec2 mask) {
 	g_ws_sub_mask = g_ws_sculpt_mask;
 }
 
-// Union of the background band and the storm bands of the masked sculpt systems. A sculpt system without a band of its
+// Union of the background band and the storm bands of the masked sculpt systems (the shadow compute passes the mask refined by
+// ring_ws_sculpt_ellipse_subset, i.e. at RING_STORM_SUPPORT). A sculpt system without a band of its
 // own (storm ceiling <= floor + 1: a CumulusCluster that rolled Cumulonimbus) sculpts inside the background band.
 vec2 ring_ws_band(vec2 backgroundBand, uvec2 sculptMask) {
 	vec2 band = backgroundBand;
@@ -283,9 +328,15 @@ vec2 ring_ws_ellipse_normalize(int index, vec2 delta) {
 // (the farthest a light or ambient sample of this primary can be), and the background band widened by their own bands. A point
 // at distance d from an ellipse with semi-axes (a, b) is within d / min(a, b) of the unit disc in the ellipse frame, so
 // |q| <= 1 + reach / min(a, b) is a conservative cover test. Light and ambient samples reuse the result.
-void ring_ws_update_sub_mask(vec3 canonical, float reachMeters, vec2 backgroundBand, bool widenBand) {
+// mapColumn (the storm profile map is valid): storm profiles 2 / 3 get their density only from the one column fetched for this
+// primary, which every light and ambient sample reuses, so that column is their exact extent. They are left out of g_ws_sub_mask
+// (g_ws_sub_map_storm says one is in reach) and widen only the band floor here; the includer raises the ceiling to the column top
+// after the fetch. Nothing above the column top can be dense, so the light march can stop there instead of at the storm ceiling.
+void ring_ws_update_sub_mask(vec3 canonical, float reachMeters, vec2 backgroundBand, bool widenBand, bool mapColumn) {
 	uvec2 sub = uvec2(0u);
 	vec2 band = backgroundBand;
+	bool mapStorm = false;
+	float owned = 0.0;
 	float circumference = ring_ws_circumference();
 	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
 	for (int word = 0; word < 2; word++) {
@@ -297,23 +348,49 @@ void ring_ws_update_sub_mask(vec3 canonical, float reachMeters, vec2 backgroundB
 			vec2 offset = (ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
 			vec2 q = ring_ws_ellipse_normalize(index, vec2(
 				ring_ws_wrap(canonical.x + offset.x - a.x, circumference), canonical.z + offset.y - a.y));
-			float limit = 1.0 + reachMeters / max(1.0, min(a.z, a.w));
+			float limit = RING_STORM_SUPPORT + reachMeters / max(1.0, min(a.z, a.w));
+			owned = max(owned, ring_ws_storm_owned_weight(q));
 			if (dot(q, q) <= limit * limit) {
-				sub |= ring_ws_bit(index);
+				int profile = int(round(ringWeatherSystems.systems[index].c.z));
+				bool column = mapColumn && (profile == 2 || profile == 3);
+				if (column) mapStorm = true;
+				else sub |= ring_ws_bit(index);
 				if (widenBand) {
 					vec2 own = ring_ws_system_band(index, backgroundBand);
-					band = vec2(min(band.x, own.x), max(band.y, own.y));
+					band = vec2(min(band.x, own.x), column ? band.y : max(band.y, own.y));
 				}
 			}
 		}
 	}
 	g_ws_sub_mask = sub;
 	g_ws_sub_band = band;
+	g_ws_sub_map_storm = mapStorm;
+	g_ws_storm_owned = owned;
+}
+
+// g_ws_storm_owned for one sample over the sculpt systems of `sculptMask` (point probes, the shadow compute).
+float ring_ws_storm_owned_at(vec3 canonical, uvec2 sculptMask) {
+	float owned = 0.0;
+	float circumference = ring_ws_circumference();
+	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? sculptMask.x : sculptMask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			vec4 a = ringWeatherSystems.systems[index].a;
+			vec2 offset = (ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
+			owned = max(owned, ring_ws_storm_owned_weight(ring_ws_ellipse_normalize(index, vec2(
+				ring_ws_wrap(canonical.x + offset.x - a.x, circumference), canonical.z + offset.y - a.y))));
+		}
+	}
+	return owned;
 }
 
 // Exact emptiness test for a light/ambient sample at `altitude`: sampleScene is exactly zero outside the background band (its
 // edge fade) and outside the storm band of every sculpt system (altitude mask), so a sample outside all of them needs no
-// density evaluation. Uses the per-primary sub-mask.
+// density evaluation. Uses the per-primary sub-mask; map storms (column mode) are not in it, and the main compute adds their fetched
+// column (ring_storm_column_contains).
 bool ring_ws_density_possible(float altitude, vec2 backgroundBand) {
 	if (altitude >= backgroundBand.x && altitude <= backgroundBand.y) return true;
 	for (int word = 0; word < 2; word++) {
@@ -362,13 +439,26 @@ bool ring_ws_primary_possible(float altitude, float t, vec2 backgroundBand) {
 	return false;
 }
 
-// True while a sculpt interval has yet to start beyond ray distance t (the march must not take its terminal exit yet).
-bool ring_ws_band_ahead(float t) {
+// Start of the nearest sculpt interval beyond ray distance t (1e30 when none).
+float ring_ws_next_interval_start(float t) {
+	float start = 1e30;
 	for (int k = 0; k < RING_WS_RAY_BANDS; k++) {
 		if (k >= g_ws_ray_band_count) break;
-		if (g_ws_ray_band[k].x > t) return true;
+		if (g_ws_ray_band[k].x > t) start = min(start, g_ws_ray_band[k].x);
 	}
-	return false;
+	return start;
+}
+
+// True while a sculpt interval has yet to start beyond ray distance t (the march must not take its terminal exit yet).
+bool ring_ws_band_ahead(float t) {
+	return ring_ws_next_interval_start(t) < 1e29;
+}
+
+// Rule 2 of the generalised exit rule (S6 section 3.3): a gap step lies inside the ray's hull (`hull`, the union of every band and
+// interval this ray touches) but outside U(t), the layers and active intervals at ray distance t. It holds no density and is never a
+// terminal exit; the march skips whole lattice intervals to the next boundary of U (ring_ws_boundary_skip in the main compute).
+bool ring_ws_gap_step(float altitude, float t, vec2 hull, vec2 backgroundBand) {
+	return altitude >= hull.x && altitude <= hull.y && !ring_ws_primary_possible(altitude, t, backgroundBand);
 }
 
 float ring_ws_segment_distance2(vec2 a, vec2 b) {
@@ -391,11 +481,21 @@ uvec2 ring_ws_mask(vec3 p0, vec3 p1, vec3 p2, float margin, bool sculptOnly) {
 	vec2 shift = vec2(genericData.data.cloud_weather_frame.y, genericData.data.cloud_weather_frame.z);
 	for (int i = 0; i < count; i++) {
 		uint flags = ring_ws_flags(i);
+#if RING_WS_MASK_LOWERS_BASE
+		// The cloud layers' weatherness (RingCloudLayers.glslinc) also needs every base-lowering system near the ray: it sets the ray's floor.
+		if (sculptOnly && (flags & (RING_WS_FLAG_SCULPT | RING_WS_FLAG_LOWERS_BASE)) == 0u) continue;
+#else
 		if (sculptOnly && (flags & RING_WS_FLAG_SCULPT) == 0u) continue;
+#endif
 		vec4 a = ringWeatherSystems.systems[i].a;
 		vec4 d = ringWeatherSystems.systems[i].d;
 		vec2 offset = (flags & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
-		float reach = a.z * max(d.y, 1.0) + margin;
+#if RING_WS_MASK_LOWERS_BASE
+		// A static system's weatherness reaches 1.3 ellipse radii.
+		float reach = a.z * max(d.y, (flags & RING_WS_FLAG_SCULPT) != 0u ? RING_STORM_SUPPORT : ((flags & RING_WS_FLAG_LOWERS_BASE) != 0u ? 1.3 : 1.0)) + margin;
+#else
+		float reach = a.z * max(d.y, (flags & RING_WS_FLAG_SCULPT) != 0u ? RING_STORM_SUPPORT : 1.0) + margin;
+#endif
 		vec2 q0 = vec2(ring_ws_wrap(p0.x + offset.x - a.x, circumference), p0.z + offset.y - a.y);
 		vec2 q1 = vec2(ring_ws_wrap(p1.x + offset.x - a.x, circumference), p1.z + offset.y - a.y);
 		vec2 q2 = vec2(ring_ws_wrap(p2.x + offset.x - a.x, circumference), p2.z + offset.y - a.y);
@@ -424,7 +524,7 @@ uvec2 ring_ws_sculpt_ellipse_subset(uvec2 sculptMask, vec3 p0, vec3 p1, vec3 p2,
 			vec2 q0 = ring_ws_ellipse_normalize(index, vec2(ring_ws_wrap(p0.x + offset.x - a.x, circumference), p0.z + offset.y - a.y));
 			vec2 q1 = ring_ws_ellipse_normalize(index, vec2(ring_ws_wrap(p1.x + offset.x - a.x, circumference), p1.z + offset.y - a.y));
 			vec2 q2 = ring_ws_ellipse_normalize(index, vec2(ring_ws_wrap(p2.x + offset.x - a.x, circumference), p2.z + offset.y - a.y));
-			float limit = 1.0 + margin / max(1.0, min(a.z, a.w));
+			float limit = RING_STORM_SUPPORT + margin / max(1.0, min(a.z, a.w));
 			float limit2 = limit * limit;
 			if (ring_ws_segment_distance2(q0, q1) <= limit2 || ring_ws_segment_distance2(q1, q2) <= limit2) result |= ring_ws_bit(index);
 		}
@@ -445,7 +545,7 @@ bool ring_ws_support_covers(vec3 canonical, float slack, uvec2 mask) {
 			vec4 d = ringWeatherSystems.systems[index].d;
 			vec2 offset = (ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
 			vec2 q = vec2(ring_ws_wrap(canonical.x + offset.x - a.x, circumference), canonical.z + offset.y - a.y);
-			float reach = a.z * max(d.y, 1.0) + slack;
+			float reach = a.z * max(d.y, (ring_ws_flags(index) & RING_WS_FLAG_SCULPT) != 0u ? RING_STORM_SUPPORT : 1.0) + slack;
 			if (dot(q, q) <= reach * reach) return true;
 		}
 	}
@@ -457,6 +557,7 @@ bool ring_ws_support_covers(vec3 canonical, float slack, uvec2 mask) {
 // Outputs replace the sky-wide uniforms: `coverage` = clouds_coverage * 1.01, `densityMultiplier` = clouds_density,
 // `lightingMultiplier` = cloud_lighting_power * (1 + 3 * coverage).
 void ring_ws_apply_macro(vec4 point, out float coverage, out float densityMultiplier, out float lightingMultiplier) {
+	g_ws_macro_point = point;
 	float cov = point.x;
 	float storm = point.y;
 	float bias = ringWeatherSystems.header0.w;

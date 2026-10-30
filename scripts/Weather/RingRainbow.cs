@@ -89,8 +89,11 @@ public static class RingRainbowMath
         }
     }
 
-    /// <summary>Global gate on the sun reaching the observer: direct-sun visibility (cloud shadow and storm occlusion), fading in between 0.1 and 0.6.</summary>
-    public static float SunReach(float airSunVisibility) => StormArrivalMath.SmoothStep(0.1f, 0.6f, airSunVisibility);
+    /// <summary>Lower edge of <see cref="SunReach"/>: just above the full-storm floor of the air sun visibility (1 - <see cref="RingAtmosphereModel.StormSunOcclusion"/> = 0.15),
+    /// so no bow survives under a closed storm core (with 0.1 a 3-5% bow stayed visible through the whole core).</summary>
+    public const float SunReachLow = 1.0f - RingAtmosphereModel.StormSunOcclusion + 0.03f;
+    /// <summary>Global gate on the sun reaching the observer: direct-sun visibility (cloud shadow and storm occlusion), fading in between <see cref="SunReachLow"/> (0.18) and 0.6.</summary>
+    public static float SunReach(float airSunVisibility) => StormArrivalMath.SmoothStep(SunReachLow, 0.6f, airSunVisibility);
 
     /// <summary>The 80-byte CPU payload of ring_rainbow.glsl: anti, top, side, five azimuth strengths, depth fade (near 30 m, range 200 m).</summary>
     public static byte[] Payload(in Bow bow, ReadOnlySpan<float> azimuthStrength, float globalStrength, float lightScale)

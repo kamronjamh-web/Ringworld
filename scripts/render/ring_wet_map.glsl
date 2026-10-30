@@ -20,7 +20,7 @@ layout(set = 0, binding = 3, std140) uniform Params {
 	vec4 tuning;       // x: precipitation start, y: base coverage, z: display filter alpha, w: snowing (1/0)
 	vec4 env;          // x: day factor, y: wind m/s, z: drying speed, w: force enabled (1/0)
 	vec4 force_value;  // film, soak, standing, rain (used when env.w > 0.5)
-	vec4 prev;         // xy: previous texel = texel + shift, z: previous valid (1/0)
+	vec4 prev;         // xy: previous texel = texel + shift, z: previous valid (1/0), w: storm map storm-light layer (owned, front rain; 0 = none)
 	ivec4 counts[3];   // systems per lag (9 lags)
 	vec4 lags[3];      // lag seconds (9)
 } params;
@@ -63,7 +63,9 @@ void main() {
 			float start = params.tuning.x;
 			rain_now = rw_smooth_unit((m.z - start) / max(1.0 - start, 0.01));
 			float heavy = rw_smooth_unit((m.x - params.storm_tex.z) / max(0.01, 1.0 - params.storm_tex.z));
-			float d = max(m.y, heavy);
+			// Storm level D as ring_storm_owned_level (materials/ring_storm_light.gdshaderinc): storm-light layer prev.w (owned, front rain); 0 = none (old D).
+			vec2 o = params.prev.w > 0.5 ? textureLod(storm_map, vec3(map_texel / params.storm_tex.xy, params.prev.w), 0.0).xy : vec2(1.0, 0.0);
+			float d = max(max(o.x * max(m.y, heavy), o.y), heavy * (1.0 - rw_smooth_unit(m.w / 0.25)));
 			sun = (1.0 - rw_smooth(0.35, 0.85, m.x)) * (1.0 - d) * params.env.x;
 		}
 		bool snowing = params.tuning.w > 0.5;

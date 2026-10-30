@@ -311,3 +311,38 @@ Built: WO1-WO5, WO7, WO8 (WO6 drips, WO10 shelter memory and WO11 hail whitening
 - No `RingWetWorld.Debug.cs` map overlay: `ring_wet_debug_mode` (1 film, 2 soak, 3 standing, 4 rain, as albedo) is the debug view.
 
 Tests: `wetness_model_test`, `rain_history_parity_test` (C# transcription of the GLSL), `wet_map_frame_test`, `lens_wetness_model_test`, `wet_world_settings_smoke_test`, `QualityPresetContractHeadlessTest` (ripple layers and drips), `terrain3d_gameplay_native_test` (dry roughness only, retired uniforms absent), `wet_world_gpu_test.gd` (synthetic and `--world`), `wet_world_capture.gd/.ps1` (`--mode=timeline|movie|night|perf|scout`).
+
+### 10.1 Perf and sun-glint follow-up (2026-10-29, RTX 4070)
+
+**Harness.** `tools/wet_world_capture.gd --mode=perf` (720p, A = WetWorld disabled, B = on, lens off; 300-frame medians in A-B-A-B-A-B rounds; noise about +-0.03 ms):
+- The scan now picks a heavy lowland storm (peak natural precipitation >= 0.55, ground 3-400 m above sea, the pose at its peak). The old pose had drifted after the S6 weather changes into a light-rain pose. `--first-storm` keeps the first storm (772 km: a forest at the core, wet map saturated, little rain now): the tree worst case. `--preset=<n>` applies a graphics preset. `--arms=` takes extra arms, and `--mode=sunglint` aims at the sun's mirror point.
+- Godot 4.8's HiZ SSR traces every pixel with roughness < 0.7 (the cut is in the engine's `screen_space_reflection` shader). So the wet world adds SSR work on every glossy wet pixel, independent of the wet gloss value.
+
+**Where the cost was** (ablation, Very High, 720p): forest view +1.13 ms. Of this:
+- tree per-vertex wet sample, about 0.53 (0.35 of it the shelter lookup and fat-drop spots);
+- SSR on wet foliage (roughness 0.9 x 0.6), about 0.2;
+- Terrain3D, about 0.3, of which film-gloss SSR is about 0.18 (kept: the reflected trunks and haze on wet ground are the wet look);
+- the rest about 0.1.
+
+Grass, puddles, ripples, the wet-specular light() term, the 2 Hz map compute and the shadow passes were each at noise level. The lens costs +0.12-0.14 ms while it draws (L > 0).
+
+**Changes**
+- Trees (`imported_tree`, `imported_tree_impostor`, `ring_tree`) read `ring_wet_sample_vegetation`: the map (or its far fallback) only, with no shelter (trees are outside the occlusion map) and no per-vertex fat-drop spots.
+- Wet foliage keeps its output ROUGHNESS at `RING_WET_SSR_MIN_ROUGHNESS` 0.71 (`ring_wet_ssr_roughness`), which leaves it above the SSR cut. This applies to imported leaves (`use_alpha_cutout`), impostors and `ring_tree`. Bark keeps its full gloss and its SSR sheen. The direct Blinn highlight keeps the full wet gloss through `tree_highlight_roughness`.
+- Graphics presets Low/Medium/High run the engine SSR at half size while the wet world is valid (`PresetWetWorld` third field, `RingWetWorldSettings.HalfSizeSsr`, applied by `RingWetWorld.ApplySsrHalfSize`). Very High and up stay full size, which is the coordinator's decision. Dry frames keep the project or hardware-tier value, so dry identity holds.
+
+| Pose (720p) | Preset | before | after |
+|---|---|---|---|
+| open field, heavy rain (11024 km, rain 0.68) | Very High | +0.19 | +0.23 (noise) |
+| forest (772 km) | Very High | +1.13 | +0.60 (accepted at Very High+, coordinator) |
+| open field | High | n/a | +0.16 |
+| forest | High | n/a | +0.29 |
+| open field | Medium | n/a | +0.09 |
+
+No visible change from the tree edits (`compare` B vs map-only + foliage floor: SSIM 0.994, differences only in cloud noise and specks). Half-size SSR does change the reflections visibly (more sky, fewer dark tree reflections), so it applies to Low/Medium/High only.
+
+**Sun glint in puddles.** At the closed core (D 0.93) no glint shows, even with forced standing water. At the trailing edge (D 0.47, F 0.27) a saturated sun disc remained. It came from the direct light() highlight; it was unchanged with SSR off and with environment reflections off.
+- Cause: a wet GGX glint is tens of times the white point (more under the storm exposure), so the linear `1 - F` keep did not visibly fade it.
+- `ring_storm_specular_keep` is now `(1 - F)^4`, on the same F(D) ramp.
+- The POI and construction-concrete sun highlights now use it too: POI roof puddles kept the 0.1 sun residual.
+- Widening the lobe with F was tried and rejected: it spread the glint into a large bright sheen.

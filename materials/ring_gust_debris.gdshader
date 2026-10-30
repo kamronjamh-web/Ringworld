@@ -22,18 +22,20 @@ void vertex() {
 	DebPlace d = deb_place(INSTANCE_ID, 0u, MODEL_MATRIX[3].xyz);
 	// Leaves: green to olive to brown, drier ones where the dust share is high.
 	float dry = clamp(d.kinds.y * 2.0, 0.0, 1.0);
-	vec3 green = vec3(0.10, 0.20, 0.045), olive = vec3(0.22, 0.24, 0.05), brown = vec3(0.30, 0.17, 0.06);
+	vec3 green = vec3(0.025, 0.06, 0.012), olive = vec3(0.055, 0.07, 0.015), brown = vec3(0.085, 0.05, 0.02);
 	float pick = d.rnd.z;
 	vec3 albedo = pick < 0.5 - 0.3 * dry ? mix(green, olive, pick * 2.0) : mix(olive, brown, clamp((pick - 0.4) * 1.7 + 0.5 * dry, 0.0, 1.0));
-	float size = mix(0.07, 0.15, d.rnd.y);
+	float size = mix(0.08, 0.17, d.rnd.y) * d.alive;   // grows in with alive: no binary pop
 	float lift = pow(d.hover, 1.5) * (0.4 + 0.6 * deb_level);
 	float hover_m = 0.12 + lift * 3.2 + 0.18 * sin(deb_time * (2.0 + 3.0 * d.rnd.w) + d.rnd.x * 40.0);
 	vec3 axis = normalize(vec3(d.rnd.x - 0.5, d.rnd.y - 0.5, d.rnd.w - 0.5) * 2.0 + vec3(0.001, 0.0, 0.0));
 	float spin = mix(2.0, 9.0, d.rnd.z) * (0.5 + 0.8 * deb_level + 0.05 * length(deb_wind));
 	float angle = deb_time * spin + d.rnd.w * 6.2831853;
+	vec3 centre = d.rel + deb_up * hover_m;
+	// A leaf never fills the view: it shrinks to nothing inside 0.8 m of the camera (before the quad corners are built from size).
+	size *= smoothstep(0.8, 3.0, length(centre));
 	vec3 local = vec3((UV.x - 0.5) * 2.0 * size, (UV.y - 0.5) * 2.0 * size * 1.3, 0.0);
 	vec3 normal = deb_rotate(vec3(0.0, 0.0, 1.0), axis, angle);
-	vec3 centre = d.rel + deb_up * hover_m;
 	vec3 world = MODEL_MATRIX[3].xyz + centre + deb_rotate(local, axis, angle);
 	if (d.alive <= 0.001) world = MODEL_MATRIX[3].xyz;
 	// Biome: a leaf exists where the cell's leaf share covers this particle's biome draw.

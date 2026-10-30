@@ -247,8 +247,9 @@ void sky() {
 	// uncovered crescent at full surface brightness and attenuate only its halo;
 	// scaling both would count the same occulted area twice.
 	// Storm light: a closed overcast hides the sun disc and halo. The cloud composite already covers them in the main view, but this sky also
-	// feeds the radiance map the water reflects, where an unfaded disc is a sharp sun glint under a fully closed storm.
-	float sun_storm_hide = 1.0 - smoothstep(0.08, 0.40, ring_storm_path_level(view_direction, RING_STORM_PATH_MAX_METERS)) * smoothstep(0.0, 0.5, ringworld_storm_light.x);
+	// feeds the radiance map the water reflects, where an unfaded disc is a sharp sun glint under a fully closed storm. Gated by the sun fade F (the
+	// same ramp that removes the receivers' sun), so a light overcast below the fade start keeps the sun.
+	float sun_storm_hide = 1.0 - ring_storm_shadow_fade(ring_storm_path_level(view_direction, RING_STORM_PATH_MAX_METERS)) * smoothstep(0.0, 0.5, ringworld_storm_light.x);
 	color += sun_color * (
 		sun_disk * sun_disk_intensity
 		+ sun_halo * sun_halo_intensity * local_solar_day) * sun_storm_hide;

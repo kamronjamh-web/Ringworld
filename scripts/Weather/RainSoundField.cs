@@ -117,6 +117,13 @@ public static class RainSoundField
         }
     }
 
+    /// <summary>Surface wetness above which exposure and shelter probing keep running after the rain stops, so eave drips under a roof continue through the aftermath.</summary>
+    public const float PostRainProbeWetness = 0.05f;
+
+    /// <summary>True while the rain field must keep probing terrain: rain (or a storm-arrival downpour) is falling, or the post-rain wetness is still above <see cref="PostRainProbeWetness"/>. Snow and an underground suspension always stop it.</summary>
+    public static bool ShouldProbeExposure(bool snowing, bool undergroundSuspended, float rainIntensity, float arrivalFat, float wetness)
+        => !snowing && !undergroundSuspended && (rainIntensity > .0001f || arrivalFat > .02f || wetness > PostRainProbeWetness);
+
     /// <summary>Surface wetness: one-pole toward the rain intensity, fast while rising (tau 10 s) and slow while falling (tau 90 s).</summary>
     public static float UpdateWetness(float wetness, float intensity, double dt)
     {

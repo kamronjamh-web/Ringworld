@@ -23,6 +23,9 @@ uniform float storm_factor : hint_range(0.0, 1.0) = 0.0;
 uniform float ring_circumference_km = 31415.0;
 uniform sampler2D weather_atlas : hint_default_white, filter_linear_mipmap, repeat_enable;
 uniform bool weather_atlas_enabled = false;
+// S6 WO6: the far cloud layer sky (ring_far_cloud_layer_sky.gdshader) owns the cloud body beyond the Sunshine handoff; this tier then only
+// carries the far lightning glow.
+uniform bool far_layers_enabled = false;
 uniform float weather_time_seconds = 0.0;
 uniform vec2 weather_wind_uv_per_second = vec2(0.0);
 uniform vec4 far_lightning_event_a = vec4(0.0);
@@ -117,6 +120,7 @@ void fragment() {
 		: mix(far_density_clouds_coverage, shared_atlas_coverage, near_fade);
 	float shared_density = far_density_sample_coverage(vec3(p.x * 1000.0, mix(far_density_background_altitude.x, far_density_background_altitude.y, layer_index * 0.3 + 0.2), p.y * 1000.0), shared_coverage);
 	if (shared_density >= 0.0) cloud = max(mix(cloud, shared_density * weather_gate, far_density_strength), resolved_storm_factor * 0.45);
+	if (far_layers_enabled) cloud = 0.0;
 	float edge = 1.0 - smoothstep(0.72, 1.0, length((UV - vec2(0.5)) * 2.0));
 	float ring_edge = smoothstep(0.0, 1.5, p.y)
 		* (1.0 - smoothstep(ring_width_km - 1.5, ring_width_km, p.y));

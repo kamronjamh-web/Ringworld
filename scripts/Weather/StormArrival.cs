@@ -251,6 +251,34 @@ public static class StormArrivalMath
     public static float RimLeadingWeight(Vector2 drift, float rho, Vector2 pointFromCentre, float cosO, float sinO, float majorRadius, float minorRadius)
         => RimLeadingWeight(RimNormalSpeed(drift, rho, pointFromCentre, cosO, sinO, majorRadius, minorRadius));
 
+    /// <summary>
+    /// G1 leading-arc lightning placement (pure, deterministic in <paramref name="systemId"/> and <paramref name="slot"/>): rejection-samples a strike point
+    /// at normalised distance n in [0.55, 1.0] on the part of the rim that is advancing (accept probability = <see cref="RimLeadingWeight(Vector2, float, Vector2, float, float, float, float)"/>
+    /// at the rim point), with 10% "bolts from the blue" at n 1.0-1.08 ahead of the rain. Returns the offset from the system centre; false when every attempt was rejected.
+    /// </summary>
+    public static bool SampleLeadingArc(int systemId, long slot, Vector2 drift, float rho, float cosO, float sinO, float majorRadius, float minorRadius,
+        out Vector2 offsetFromCentre, out float n)
+    {
+        offsetFromCentre = Vector2.Zero; n = 0.0f;
+        int key = unchecked((int)slot ^ (int)(slot >> 32) * 31);
+        for (int attempt = 0; attempt < 12; attempt++)
+        {
+            int k = unchecked(key * 16 + attempt);
+            float theta = Hash01(systemId, k, 140) * Mathf.Tau;
+            float ex = majorRadius * Mathf.Cos(theta), ez = minorRadius * Mathf.Sin(theta);               // rim point in the ellipse frame
+            var rim = new Vector2(cosO * ex - sinO * ez, sinO * ex + cosO * ez);
+            if (Hash01(systemId, k, 141) >= RimLeadingWeight(drift, rho, rim, cosO, sinO, majorRadius, minorRadius)) continue;
+            bool blue = Hash01(systemId, k, 142) < LeadingArcBlueShare;
+            float u = Hash01(systemId, k, 143);
+            n = blue ? Mathf.Lerp(1.0f, 1.08f, u) : Mathf.Lerp(0.55f, 1.0f, Mathf.Sqrt(u));
+            offsetFromCentre = rim * n;
+            return true;
+        }
+        return false;
+    }
+
+    public const float LeadingArcBlueShare = 0.1f;
+
     // ---- one system ----
     /// <summary>Weights, rim, bearings, hail and instantaneous cooling of one system (no rain-history terms).</summary>
     public static StormArrivalState Evaluate(in StormSystemGeometry g, in StormArrivalTuning tuning)
@@ -295,7 +323,14 @@ public static class StormArrivalMath
         float core = presence * wet * Mathf.Max(SmoothStep(nRain, nRain - 0.30f, n), SmoothStep(-0.3f, -1.0f, uRain)) * (1.0f - trail);
         float trailing = presence * wet * inside * trail;
         // Sustained outflow: from the front edge on, through the gap before the fat drops and the whole core, until the trailing rain eases it (the wind modifier holds a high wind with this).
-        float outflow = presence * alive * SmoothStep(1.0f, 0.88f, uGust) * Mathf.Lerp(0.35f, 1.0f, lead) * GustKindScale(g.KindCode) * (1.0f - trail);
+        // A system that will rain at full size (a rainmaker) already blows its outflow while still young and dry; only a never-raining cloud has none.
+        float fullEnvelope = Mathf.Max(g.Envelope, 1e-3f);
+        float fullPeak = RainProxy(0.0f, Mathf.Min(1.0f, g.Density / fullEnvelope), g.PrecipitationPotential / fullEnvelope, tuning.BaseCoverage);
+        float rainmaker = Mathf.Max(presence, SmoothStep(1.0f, 2.0f, fullPeak / Mathf.Max(1e-4f, tuning.PrecipitationStart)));
+        // The gust rim contracts onto the rain rim as the rain develops, which would leave the observer outside it; the cloud skirt (n below the dry rim,
+        // which the gust rim has already crossed) keeps the outflow on until the rain arrives.
+        float inSkirt = Mathf.Max(SmoothStep(1.0f, 0.88f, uGust), SmoothStep(DryRainRimN, DryRainRimN - 0.05f, n));
+        float outflow = rainmaker * alive * inSkirt * Mathf.Lerp(0.35f, 1.0f, Mathf.Max(lead, leadRain)) * GustKindScale(g.KindCode) * (1.0f - trail);
 
         float rimDistance = Mathf.Lerp(dGust, dRain, presence);
         float rimSpeed = Mathf.Lerp(vGust, vRain, presence);

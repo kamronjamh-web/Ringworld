@@ -80,7 +80,7 @@ environment = SubResource("Environment_yd5sq")
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=2134404703]
 transform = Transform3D(0.81915206, -0.38379756, 0.42625037, 0, 0.7431448, 0.6691306, -0.57357645, -0.5481197, 0.6087486, 0, 0, 0)
 light_energy = 1.6
-light_cull_mask = 1
+light_cull_mask = 262145
 shadow_enabled = true
 directional_shadow_max_distance = 700.0
 
@@ -110,14 +110,14 @@ mesh = SubResource("CylinderMesh_7xfg8")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4000, 0)
 light_color = Color(0.35, 1, 0.9, 1)
 light_energy = 12.0
-light_cull_mask = 2
+light_cull_mask = 262146
 omni_range = 1400.0
 
 [node name="ArrivalLight" type="OmniLight3D" parent="Regular" unique_id=776377396]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3890, 1385)
 light_color = Color(0.7, 0.95, 0.95, 1)
 light_energy = 2.5
-light_cull_mask = 2
+light_cull_mask = 262146
 omni_range = 500.0
 
 [node name="Bookmarks" type="Node3D" parent="Regular" unique_id=1897868052]
@@ -163,14 +163,14 @@ mesh = SubResource("CylinderMesh_xl52i")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -4000, 0)
 light_color = Color(0.35, 1, 0.9, 1)
 light_energy = 12.0
-light_cull_mask = 2
+light_cull_mask = 262146
 omni_range = 2800.0
 
 [node name="ArrivalLight" type="OmniLight3D" parent="Main" unique_id=1336175704]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -3780, 2770)
 light_color = Color(0.7, 0.95, 0.95, 1)
 light_energy = 2.5
-light_cull_mask = 2
+light_cull_mask = 262146
 omni_range = 1000.0
 
 [node name="Bookmarks" type="Node3D" parent="Main" unique_id=429604305]

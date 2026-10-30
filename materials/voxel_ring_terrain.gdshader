@@ -221,7 +221,7 @@ void light() {
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * combined_visibility * hemisphere_direct;
 		if (voxel_wet_specular_state.x > 0.0) {
 			SPECULAR_LIGHT += ring_wet_direct_specular(NORMAL, LIGHT, VIEW, voxel_wet_specular_state.y, voxel_wet_specular_state.z, voxel_wet_specular_state.x)
-				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT;
+				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT * ring_storm_specular_keep(terms.storm); // storm light: no sun glint under an overcast
 		}
 	}
 }

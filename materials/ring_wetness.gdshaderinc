@@ -93,10 +93,8 @@ float ring_wet_exposure(vec3 world, vec3 normal_world, vec3 up_world) {
 	return ring_precip_exposure(probe);
 }
 
-// Wetness at a surface point (zero when !valid): wet map (or the rain-now far fallback beyond its window) x shelter, plus fat-drop spots on exposed up-facing surfaces.
-RingWet ring_wet_sample(vec3 world, vec3 normal_world, vec3 up_world) {
-	RingWet w = RingWet(0.0, 0.0, 0.0, 0.0);
-	if (ring_wet_params.w < 0.5) return w;
+// The wet map at a world position (film, soak, standing, rain now), blended into the rain-now far fallback beyond its window. No shelter.
+vec4 ring_wet_map_sample(vec3 world) {
 	vec2 offset = ring_wet_offset(world);
 	vec2 map_m = ring_wet_map_frame.xy + offset;
 	float extent = ring_wet_map_frame.z * ring_wet_map_frame.w;
@@ -109,6 +107,14 @@ RingWet ring_wet_sample(vec3 world, vec3 normal_world, vec3 up_world) {
 		float term = smoothstep(0.0, 0.3, far_rain);
 		sampled = mix(vec4(term, term, 0.0, far_rain), sampled, inside);
 	}
+	return sampled;
+}
+
+// Wetness at a surface point (zero when !valid): wet map (or the rain-now far fallback beyond its window) x shelter, plus fat-drop spots on exposed up-facing surfaces.
+RingWet ring_wet_sample(vec3 world, vec3 normal_world, vec3 up_world) {
+	RingWet w = RingWet(0.0, 0.0, 0.0, 0.0);
+	if (ring_wet_params.w < 0.5) return w;
+	vec4 sampled = ring_wet_map_sample(world);
 	float exposure = ring_wet_exposure(world, normal_world, up_world);
 	float n_up = dot(normal_world, up_world);
 	if (n_up <= 0.5) {
@@ -133,6 +139,23 @@ RingWet ring_wet_sample(vec3 world, vec3 normal_world, vec3 up_world) {
 // Vegetation and other receivers without a meaningful normal: treated as up-facing (the canopy is open to the sky unless something solid is above it).
 RingWet ring_wet_sample_up(vec3 world, vec3 up_world) {
 	return ring_wet_sample(world, up_world, up_world);
+}
+
+// Tree vertices: the wet map (or its far fallback) only. Trees are left out of the precipitation occlusion map and stand in the open, so the shelter
+// lookup is skipped, and a 0.25 m fat-drop spot lattice sampled per vertex would only be noise on a canopy. Dense tree meshes made the full per-vertex
+// sample the largest wet world cost (the shelter and spot part was about 0.35 ms on a forest view at 720p, RTX 4070; docs/storm-revamp-s2-wet-world-design.md section 10).
+RingWet ring_wet_sample_vegetation(vec3 world) {
+	if (ring_wet_params.w < 0.5) return RingWet(0.0, 0.0, 0.0, 0.0);
+	vec4 sampled = ring_wet_map_sample(world);
+	return RingWet(sampled.x, sampled.y, 0.0, sampled.w);
+}
+
+// Engine SSR (Godot 4.8 HiZ trace) skips only pixels with roughness >= 0.7, so a wet roughness below that makes every such pixel trace. Wet foliage
+// (roughness 0.9 x 0.6) traced across the whole canopy for an invisible reflection (about 0.2 ms on a forest view). Receivers whose wet gloss gains
+// nothing from SSR keep their output roughness at this floor (or their dry value, if lower); their direct highlight keeps the full wet gloss.
+const float RING_WET_SSR_MIN_ROUGHNESS = 0.71;
+float ring_wet_ssr_roughness(float wet_roughness, float dry_roughness) {
+	return max(wet_roughness, min(dry_roughness, RING_WET_SSR_MIN_ROUGHNESS));
 }
 
 // Gloss 0..1 from film: smoothstep(0.25, 0.85, film) x strength (gloss saturates at 1, the strength above 1 only deepens the darkening).

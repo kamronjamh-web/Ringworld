@@ -400,6 +400,7 @@ void light() {
             * LIGHT_COLOR
             * direct_visibility
             * terrain_direct_specular_weight
-            * SPECULAR_AMOUNT;
+            * SPECULAR_AMOUNT
+            * (LIGHT_IS_DIRECTIONAL ? ring_storm_specular_keep(ring_storm_level(v_vertex)) : 1.0); // storm light: no sun glint under an overcast
     }
 }

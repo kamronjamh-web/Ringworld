@@ -5,7 +5,7 @@
 // Height: the precipitation occlusion map supplies the surface under each particle (terrain as drawn, roofs, POIs), so debris rides over whatever is below.
 #include "res://materials/ring_precip_occlusion.gdshaderinc"
 
-const float DEB_DOMAIN = 128.0;
+const float DEB_DOMAIN = 96.0;
 uniform vec3 deb_around = vec3(0.0, 0.0, 1.0);
 uniform vec3 deb_across = vec3(0.0, 1.0, 0.0);
 uniform vec3 deb_up = vec3(-1.0, 0.0, 0.0);
@@ -14,14 +14,17 @@ uniform vec2 deb_drift = vec2(0.0);        // accumulated wind displacement (aro
 uniform vec2 deb_wind = vec2(0.0);         // current wind (around, across) m/s
 uniform float deb_time = 0.0;              // seconds, wrapped
 uniform float deb_level = 0.0;             // 0..1 share of the pool that is alive (gust strength)
-uniform float deb_ground_fallback = 1.7;   // metres from the camera down to the ground when the occlusion map is unusable
-uniform vec4 deb_kinds[9];                 // 3x3 biome cells over the domain: x leaf share, y dust share, z spray share
+uniform float deb_ground_fallback = 1.7;   // placeholder height for dead particles (occlusion map unusable)
+uniform vec2 deb_agl_fade = vec2(18.0, 30.0);   // camera height above the surface under a particle (m) where it starts to fade and where it is gone (flight)
+uniform vec4 deb_kinds[9];                 // 3x3 biome cells over the domain: x leaf share, y dust share, z spray share, w snow share (dust puffs become white spindrift)
 
-uint deb_hash(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
-float deb_u(uint h) { return float(h >> 8) * (1.0 / 16777216.0); }
+uint deb_hash(uint x) { x ^= x >> 16u; x *= 0x7feb352du; x ^= x >> 15u; x *= 0x846ca68bu; x ^= x >> 16u; return x; }
+float deb_u(uint h) { return float(h >> 8u) * (1.0 / 16777216.0); }
 
-// Surface height relative to the camera plane under a point given relative to the camera.
-float deb_ground(vec3 cam_world, vec3 rel_flat) {
+// Surface height relative to the camera plane under a point given relative to the camera. ok is false when the occlusion map is unready or the point lies off it:
+// those particles are dead (alive 0) instead of being placed at a guessed ground.
+float deb_ground(vec3 cam_world, vec3 rel_flat, out bool ok) {
+	ok = false;
 	if (ring_precip_occlusion_state.x < 0.5) return -deb_ground_fallback;
 	vec3 world = cam_world + rel_flat;
 	vec3 image_x = ring_precip_occlusion_across.xyz;
@@ -33,6 +36,7 @@ float deb_ground(vec3 cam_world, vec3 rel_flat) {
 	if (uv.x < 0.0 || uv.y < 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return -deb_ground_fallback;
 	float surface = textureLod(ring_precip_occlusion, uv, 0.0).r;
 	if (surface <= 0.0) return -deb_ground_fallback;
+	ok = true;
 	return dot(ring_precip_occlusion_origin.xyz - cam_world, mup) - surface;
 }
 
@@ -43,6 +47,7 @@ struct DebPlace {
 	float hover;     // 0..1 random lift factor
 	float kind_select;   // random used to pick dust against spray
 	vec3 kinds;
+	float snow;
 };
 
 DebPlace deb_place(int id, uint salt, vec3 cam_world) {
@@ -63,14 +68,19 @@ DebPlace deb_place(int id, uint salt, vec3 cam_world) {
 	float edge = max(abs(rel.x), abs(rel.y)) / (0.5 * DEB_DOMAIN);
 	float fade = 1.0 - smoothstep(0.72, 1.0, edge);
 	ivec2 cell = ivec2(clamp(floor((rel / DEB_DOMAIN + 0.5) * 3.0), vec2(0.0), vec2(2.0)));
-	d.kinds = deb_kinds[cell.y * 3 + cell.x].xyz;
+	vec4 cell_kinds = deb_kinds[cell.y * 3 + cell.x];
+	d.kinds = cell_kinds.xyz;
+	d.snow = cell_kinds.w;
 	float vis_hash = deb_u(deb_hash(h5 ^ 0x5bd1e995u));
 	float live = smoothstep(vis_hash, vis_hash + 0.12, deb_level);
 	d.alive = live * fade;
 	d.hover = deb_u(deb_hash(h4 ^ 0x2c1b3c6du));
 	d.kind_select = deb_u(deb_hash(h3 ^ 0x3c6ef372u));
 	vec3 flat_rel = deb_around * rel.x + deb_across * rel.y;
-	float ground = deb_ground(cam_world, flat_rel);
+	bool ground_ok;
+	float ground = deb_ground(cam_world, flat_rel, ground_ok);
+	// Dead without a valid surface (off the map or map unready, e.g. high above the clouds) and faded out above ~30 m AGL: debris is a ground-level effect.
+	d.alive *= ground_ok ? 1.0 - smoothstep(deb_agl_fade.x, deb_agl_fade.y, -ground) : 0.0;
 	d.rel = flat_rel + deb_up * ground;   // callers add the hover above the surface
 	return d;
 }

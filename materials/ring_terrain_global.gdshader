@@ -141,7 +141,7 @@ void fragment() {
 	SPECULAR = surface_specular;
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
-	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale))); // storm light
+	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.72, ring_storm_ambient(ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view: only the selected shadow term reaches the screen (see ring_shadow_compose.gdshaderinc).
@@ -222,7 +222,7 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
-	terms.storm = LIGHT_IS_DIRECTIONAL ? ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale) : 0.0; // storm light fades the sun only, never a point or spot light; far viewport positions are scaled
+	terms.storm = LIGHT_IS_DIRECTIONAL ? ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale) : 0.0; // storm light fades the sun only, never a point or spot light; far viewport positions are scaled
 	terms.contact = ring_contact_visibility(FRAGCOORD.xy, VIEWPORT_SIZE, INV_PROJECTION_MATRIX, primary_sun_weight, RING_SHADOW_DEFAULT);
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);

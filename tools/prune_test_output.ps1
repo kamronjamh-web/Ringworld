@@ -31,7 +31,7 @@ if (-not (Test-Path $godotDir)) { return }
 $keep = @(
   ".gdignore", "editor", "extension_list.cfg", "global_script_class_cache.cfg", "imported", "mono",
   "scene_groups_cache.cfg", "shader_cache", "uid_cache.bin",
-  "shadow_baseline", "s5_before", "shadow_compose_identity_head_clouds",
+  "shadow_baseline", "s5_before", "shadow_compose_identity_head_clouds", "shadow_compose_identity_storm_revamp_4070",
   "terrain3d-native-src", "terrain3d-native-tools"
 ) + $Exclude
 

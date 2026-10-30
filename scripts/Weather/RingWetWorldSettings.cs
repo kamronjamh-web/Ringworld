@@ -22,4 +22,6 @@ public partial class RingWetWorldSettings : Resource
     public int RippleLayers { get; set; } = 4;
     /// <summary>Drip instance budget (128 Low .. 512 Ultra); drips are not built yet, the value is carried for the preset contract.</summary>
     public int DripBudget { get; set; } = 512;
+    /// <summary>Engine SSR at half size while the wet world is active (Low, Medium, High). Wet ground and puddles trace SSR on every glossy pixel; full size stays on Very High and up.</summary>
+    public bool HalfSizeSsr { get; set; }
 }

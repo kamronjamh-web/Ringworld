@@ -385,8 +385,11 @@ public partial class RingScaledFarViewport : Node
 		public readonly int Width;
 		public readonly int Height;
 		public readonly Vector2[] Samples;
+		public readonly Vector4[] LayerSamples;
 		public readonly Image Image;
+		public readonly Image LayerImage;
 		public readonly byte[] Pixels;
+		public readonly byte[] LayerPixels;
 		public int SampleIndex;
 		public int TexelIndex;
 		public ulong ContentHash = 1469598103934665603UL;
@@ -397,8 +400,11 @@ public partial class RingScaledFarViewport : Node
 			Width = width;
 			Height = height;
 			Samples = new Vector2[128 * 32];
+			LayerSamples = new Vector4[Samples.Length];
 			Image = Image.CreateEmpty(width, height, true, Image.Format.Rgba8);
+			LayerImage = Image.CreateEmpty(width, height, false, Image.Format.Rgba8);
 			Pixels = new byte[width * height * 4];
+			LayerPixels = new byte[width * height * 4];
 		}
 	}
 
@@ -529,7 +535,11 @@ public partial class RingScaledFarViewport : Node
 			UpdateFarWeatherAtlas();
 			UpdateFarWeatherCloudBake(delta);
 		}
-		using (RingPerformanceTelemetry.MeasureCpu("Far ring camera and lighting")) SyncCameraAndLighting();
+		using (RingPerformanceTelemetry.MeasureCpu("Far ring camera and lighting"))
+			{
+				SyncCameraAndLighting();
+				UpdateFarCloudLayers(delta);
+			}
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring cloud masks and materials"))
 		{
 			_sunshineClouds?.SetFarOpaqueDepthTexture(GetOpaquePhysicalDepthTexture());
@@ -559,6 +569,7 @@ public partial class RingScaledFarViewport : Node
 		if (_sunshineClouds != null && GodotObject.IsInstanceValid(_sunshineClouds))
 			_sunshineClouds.SetFarOpaqueDepthTexture(null);
 		_farWeatherAtlasBuild?.Image.Dispose();
+		_farWeatherAtlasBuild?.LayerImage.Dispose();
 		_farWeatherAtlasBuild = null;
 		global::RingworldTechDemo.RingFarWeatherShadowGlobals.Clear();
 		if (_backdropEffect != null)
@@ -596,7 +607,7 @@ public partial class RingScaledFarViewport : Node
 			wind.Y / Math.Max(1.0f, RingWidthMeters)));
 		// Lightning ownership is split between the scaled shell and the clipmap; the main-view
 		// shell and the shadow bake only mirror the cloud body.
-		if (!ReferenceEquals(material, _mainShellMaterial) && !ReferenceEquals(material, _farWeatherCloudBakeMaterial))
+		if (!ReferenceEquals(material, _mainShellMaterial) && !ReferenceEquals(material, _farWeatherCloudBakeMaterial) && !ReferenceEquals(material, _farLayerSkyMaterial))
 			ConfigureFarStormLightningMaterial(material);
 	}
 
@@ -804,6 +815,7 @@ public partial class RingScaledFarViewport : Node
 		if (_farWeatherAtlasBuild != null && (time < _farWeatherAtlasBuild.SnapshotTime || discontinuity || manualWeatherChanged))
 		{
 			_farWeatherAtlasBuild.Image.Dispose();
+			_farWeatherAtlasBuild.LayerImage.Dispose();
 			_farWeatherAtlasBuild = null;
 			rebuildRequested = true;
 		}
@@ -829,6 +841,7 @@ public partial class RingScaledFarViewport : Node
 				new RingCanonicalPosition(around, 0.0, across), build.SnapshotTime) ?? default;
 			float storm = Mathf.Clamp(weather.SystemInfluence * 0.65f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
 			build.Samples[index] = new Vector2(weather.CloudCoverage, storm);
+			build.LayerSamples[index] = ComputeFarLayerSample(around, across, build.SnapshotTime, weather.CloudCoverage);
 			completedItems++;
 		}
 		uint seed = unchecked((uint)terrainSeed) ^ 0x9e3779b9u;
@@ -841,6 +854,7 @@ public partial class RingScaledFarViewport : Node
 			float u = x / (float)build.Width;
 			float v = y / (float)Math.Max(1, build.Height - 1);
 			Vector2 weather = SampleWeatherGrid(build.Samples, sampleWidth, sampleHeight, u, v);
+			Vector4 layers = SampleWeatherGrid(build.LayerSamples, sampleWidth, sampleHeight, u, v);
 			float coverage = Mathf.Clamp(weather.X, 0.0f, 1.0f);
 			float storm = Mathf.Clamp(weather.Y, 0.0f, 1.0f);
 			int pixel = index * 4;
@@ -848,6 +862,10 @@ public partial class RingScaledFarViewport : Node
 			build.Pixels[pixel + 1] = Rgba8Channel(storm);
 			build.Pixels[pixel + 2] = Rgba8Channel(SeedUnit(seed ^ 0x27d4eb2du, x / 7, y / 5));
 			build.Pixels[pixel + 3] = Rgba8Channel(SeedUnit(seed ^ 0x165667b1u, x / 3, y / 3));
+			build.LayerPixels[pixel] = Rgba8Channel(layers.X);
+			build.LayerPixels[pixel + 1] = Rgba8Channel(layers.Y);
+			build.LayerPixels[pixel + 2] = Rgba8Channel(layers.Z);
+			build.LayerPixels[pixel + 3] = Rgba8Channel(layers.W);
 			build.ContentHash = (build.ContentHash ^ (uint)BitConverter.SingleToInt32Bits(coverage)) * 1099511628211UL;
 			build.ContentHash = (build.ContentHash ^ (uint)BitConverter.SingleToInt32Bits(storm)) * 1099511628211UL;
 			completedItems++;
@@ -864,6 +882,7 @@ public partial class RingScaledFarViewport : Node
 		_farWeatherAtlasNextRefreshTime = build.SnapshotTime + Mathf.Max(1.0f, FarWeatherAtlasRefreshSeconds);
 		_farWeatherAtlasBuild = null;
 		build.Image.Dispose();
+		PublishFarLayerAtlas(build);
 		FarWeatherAtlasLastUploadMilliseconds = uploadStopwatch.Elapsed.TotalMilliseconds;
 		FarWeatherAtlasPublicationCount++;
 		FarWeatherAtlasContentHash = build.ContentHash;
@@ -893,6 +912,7 @@ public partial class RingScaledFarViewport : Node
 		if (_farWeatherCloudBakeMaterial != null) ConfigureFarWeatherMaterial(_farWeatherCloudBakeMaterial);
 		foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
 			if (material != null) ConfigureFarWeatherMaterial(material);
+		if (_farLayerSkyMaterial != null) ConfigureFarWeatherMaterial(_farLayerSkyMaterial);
 	}
 
 	private static Vector2 SampleWeatherGrid(Vector2[] values, int width, int height, float u, float v)
@@ -1023,6 +1043,11 @@ public partial class RingScaledFarViewport : Node
 			KeepAspect = _sourceCamera.KeepAspect
 		};
 		_farViewport.AddChild(_farCamera);
+		// The far camera is moved in _Process (SyncCameraAndLighting). With SceneTree physics interpolation on, Godot would interpolate it between
+		// physics ticks: after a 20 km teleport its rendered transform was 12-19 km off target for a frame (tools/cloud_layers_capture.gd, shot
+		// "interp"). Same bug class as RingPrecipitationOcclusion.
+		_farViewport.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;
+		_farCamera.PhysicsInterpolationMode = Node.PhysicsInterpolationModeEnum.Off;
 	}
 
 	private void CreateFarEnvironment()
@@ -2365,7 +2390,10 @@ public partial class RingScaledFarViewport : Node
 		if (!IsUsableBasis(worldToCanonical)) worldToCanonical = Basis.Identity;
 		SyncTerrainMacroShadowReceiverDirections(worldToCanonical);
 
-		Transform3D sourceTransform = _sourceCamera.GetCameraTransform();
+		// Use the transform the main view actually renders this frame (interpolated when physics interpolation is on).
+		Transform3D sourceTransform = _sourceCamera.IsPhysicsInterpolatedAndEnabled()
+			? _sourceCamera.GetGlobalTransformInterpolated()
+			: _sourceCamera.GetCameraTransform();
 		// The explorer canonical position tracks feet. The render camera can be
 		// offset by head bob, vehicle mounts, or a free camera, so derive the
 		// ray origin from the actual renderer eye.
@@ -2474,6 +2502,7 @@ public partial class RingScaledFarViewport : Node
 			_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _cloudMaterial, wholeRingSite);
 			foreach (ShaderMaterial? material in _farCloudClipmapMaterials)
 				_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, material, wholeRingSite);
+			if (_farLayerSkyMaterial != null) _atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _farLayerSkyMaterial, wholeRingSite);
 		}
 		SyncRegionalCameraAndLighting(
 			canonical,
@@ -2658,6 +2687,7 @@ public partial class RingScaledFarViewport : Node
 		float weatherAge = ResolveFarWeatherAtlasAgeSeconds();
 		_cloudMaterial?.SetShaderParameter(WeatherTimeSecondsName, weatherAge);
 		_mainShellMaterial?.SetShaderParameter(WeatherTimeSecondsName, weatherAge);
+		_farLayerSkyMaterial?.SetShaderParameter(WeatherTimeSecondsName, weatherAge);
 	}
 
 	private void SyncRegionalMaterialUniforms(Vector3 cameraPosition, Vector3 sunDirection)
@@ -3445,10 +3475,10 @@ public partial class RingScaledFarViewport : Node
 		var positionSnapshot = active ? new FarCloudDetailPositionSnapshot(clouds!.Get(ExtraLargeScaleCloudsPositionName).AsVector3(), clouds.Get(LargeScaleCloudsPositionName).AsVector3(), clouds.Get(MediumScaleCloudsPositionName).AsVector3(), clouds.Get(DetailCloudsPositionName).AsVector3(), clouds.Get(WindDirectionName).AsVector3(), clouds.Get(WindSweptRangeName).AsSingle(), clouds.Get(WindSweptStrengthName).AsSingle()) : default;
 		bool staticChanged = !_hasFarCloudDetailStatic || staticSnapshot != _lastFarCloudDetailStatic;
 		bool positionsChanged = active && (!_hasFarCloudDetailPositions || positionSnapshot != _lastFarCloudDetailPositions);
-		for (int materialIndex = 0; materialIndex < 6; materialIndex++)
+		for (int materialIndex = 0; materialIndex < 7; materialIndex++)
 		{
 			ShaderMaterial? material = materialIndex < 3 ? _farCloudClipmapMaterials[materialIndex]
-				: materialIndex == 3 ? _cloudMaterial : materialIndex == 4 ? _mainShellMaterial : _farWeatherCloudBakeMaterial;
+				: materialIndex == 3 ? _cloudMaterial : materialIndex == 4 ? _mainShellMaterial : materialIndex == 5 ? _farWeatherCloudBakeMaterial : _farLayerSkyMaterial;
 			if (material == null) continue;
 			if (staticChanged)
 			{

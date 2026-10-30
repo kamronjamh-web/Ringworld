@@ -73,8 +73,13 @@ func capture(label: String) -> Image:
 func luma(c: Color) -> float:
 	return c.r * .2126 + c.g * .7152 + c.b * .0722
 
+# Clips a sampling region to both captures, so a region sized for another resolution never reads past the image edge.
+func clip(a: Image, b: Image, region: Rect2i) -> Rect2i:
+	return region.intersection(Rect2i(Vector2i.ZERO, a.get_size())).intersection(Rect2i(Vector2i.ZERO, b.get_size()))
+
 # Pixels whose luma changed by more than the threshold between two captures, inside a region.
 func changed_pixels(a: Image, b: Image, region: Rect2i, threshold := 0.01) -> int:
+	region = clip(a, b, region)
 	var count := 0
 	for y in range(region.position.y, region.end.y):
 		for x in range(region.position.x, region.end.x):
@@ -82,6 +87,7 @@ func changed_pixels(a: Image, b: Image, region: Rect2i, threshold := 0.01) -> in
 	return count
 
 func mean_abs_delta(a: Image, b: Image, region: Rect2i) -> float:
+	region = clip(a, b, region)
 	var total := 0.0
 	for y in range(region.position.y, region.end.y, 2):
 		for x in range(region.position.x, region.end.x, 2): total += absf(luma(a.get_pixel(x, y)) - luma(b.get_pixel(x, y)))
@@ -129,6 +135,7 @@ func run() -> void:
 	viewport.size = Vector2i(1920, 1080) if "--perf" in args else (Vector2i(1280, 720) if "--movie" in args else Vector2i(960, 540)); viewport.own_world_3d = true
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	root.add_child(viewport)
+	full = Rect2i(Vector2i.ZERO, viewport.size)
 	rig = Node3D.new(); viewport.add_child(rig)
 	var rig_environment := Environment.new()
 	rig_environment.background_mode = Environment.BG_COLOR
@@ -176,12 +183,12 @@ var cloud: Resource
 
 # Streak pixels = pixels that differ between the rain frame and the same frame with streaks switched off (haze, clouds and splashes stay identical).
 func pair(label: String, region := Rect2i(0, 0, 0, 0)) -> Dictionary:
-	var r := region if region.size.x > 0 else Rect2i(Vector2i.ZERO, Vector2i(root.get_visible_rect().size))
 	driver.call("SetStreakSettingForFixture", "StreakDensity", 1.0)
 	var on := await capture(label + "_on")
 	driver.call("SetStreakSettingForFixture", "StreakDensity", 0.0)
 	var off := await capture(label + "_off")
 	driver.call("SetStreakSettingForFixture", "StreakDensity", 1.0)
+	var r := region if region.size.x > 0 else Rect2i(Vector2i.ZERO, on.get_size())   # the rig viewport, not the root window (which follows the profile's window size)
 	return {"on": on, "off": off, "count": changed_pixels(on, off, r), "mean": mean_abs_delta(on, off, r)}
 
 func set_day(day: float) -> void:
@@ -194,6 +201,7 @@ func rain(intensity: float, wind := Vector2.ZERO) -> void:
 # Median streak slant from vertical in degrees (positive = head displaced to the image right). Each isolated, elongated blob of the streak difference mask is one streak;
 # its principal axis gives the slant. (A gradient structure tensor is biased towards the pixel diagonals for 1.5 px lines.)
 func slant_angles(on: Image, off: Image, region: Rect2i) -> Array[float]:
+	region = clip(on, off, region)
 	var w := region.size.x; var h := region.size.y
 	var mask := PackedByteArray(); mask.resize(w * h)
 	for y in h:

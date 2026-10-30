@@ -338,6 +338,11 @@ public partial class RingPrecipitationOcclusion : Node, IPrecipitationCoverProbe
         var effects = new Godot.Collections.Array<CompositorEffect> { _capture };
         using Godot.Collections.Array lifetime = (Godot.Collections.Array)effects;
         _camera.Compositor.CompositorEffects = effects;
+        // The map camera jumps (recentre, plane change) and renders once. With physics interpolation (on by default in gameplay) the first render of a new frame
+        // came from part of the way between the old and the new transform, so after a cloud-base jump the published map put every surface hundreds of metres
+        // too high for one refresh: the cover probe read "sheltered" and the wet world dried the ground for a second (S3 time-lapse, 2026-10-29). Never interpolate it.
+        _viewport.PhysicsInterpolationMode = PhysicsInterpolationModeEnum.Off;
+        _camera.PhysicsInterpolationMode = PhysicsInterpolationModeEnum.Off;
         _viewport.AddChild(_camera);
         _camera.Current = true;
         AddChild(_viewport);

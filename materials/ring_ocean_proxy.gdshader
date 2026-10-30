@@ -569,10 +569,12 @@ void fragment() {
 	float ssr_step_ratio;
 	vec4 ssr = ring_water_ssr(VERTEX + water_normal_view * water_ssr_ray_bias, water_normal_view, base_roughness, PROJECTION_MATRIX, INV_PROJECTION_MATRIX, ssr_step_ratio);
 	// Storm light: Sunshine composites AFTER the water, so the screen-space reflection sees the clear sky (sun halo and all) behind a closed storm and
-	// paints it as sun glints. Under a storm the SSR fades out and the fallback sky colour dims with the sky factor.
+	// paints it as sun glints. Under a storm the SSR fades out and the fallback sky colour dims with the sky factor. Both follow the sun fade F(D), so a
+	// light overcast (D below the fade start) leaves the water reflection exactly as in clear air.
 	float storm_water_level = ring_storm_level(world_position);
-	float storm_ssr_keep = 1.0 - ring_storm_shadow_fade(storm_water_level) * ringworld_storm_light.x * 0.95;
-	reflection_color *= ring_storm_sky(storm_water_level);
+	float storm_water_fade = ring_storm_shadow_fade(storm_water_level);
+	float storm_ssr_keep = 1.0 - storm_water_fade * ringworld_storm_light.x * 0.95;
+	reflection_color *= mix(1.0, ring_storm_sky(storm_water_level), storm_water_fade);
 	float ssr_weight = clamp(ssr.a * water_ssr_strength, 0.0, 1.0) * storm_ssr_keep;
 	if (water_ssr_debug_mode == 1) grazing_color = vec3(ssr.a);
 	else if (water_ssr_debug_mode == 2) grazing_color = vec3(ssr.a > 0.001 ? 1.0 : 0.0);
@@ -588,10 +590,10 @@ void fragment() {
 	ROUGHNESS = max(base_roughness, specular_aa_roughness);
 	// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
 	// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.
-	float storm_reflection = ring_storm_ambient(ring_storm_level(world_position)); // storm light: the sky reflection and the ambient follow the storm level
+	float storm_reflection = ring_storm_ambient(storm_water_level); // storm light: the sky reflection and the ambient follow the storm level
 	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
 	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
-		* mix(1.0, 0.02, ring_storm_shadow_fade(ring_storm_level(world_position)) * ringworld_storm_light.x);
+		* mix(1.0, 0.02, storm_water_fade * ringworld_storm_light.x);
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level

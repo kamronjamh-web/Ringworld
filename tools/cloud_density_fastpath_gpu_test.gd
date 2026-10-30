@@ -115,6 +115,9 @@ const int RING_STORM_FALLBACK = 1;
 float g_storm_map_density = 0.0;
 float g_storm_other = 0.0;
 float ring_storm_eroded(float mediumshape, float small_raw) { return 0.0; }
+// S6 cloud layers (RingCloudLayerSample.glslinc) are off in this legacy-parity harness: the live sampleScene branches on g_layers_on.
+bool g_layers_on = false;
+float ring_layers_background(vec3 canonical, float weather_storm, float extra_large, vec3 large_pos, vec3 medium_pos, vec3 small_pos, float large_scale, float medium_scale, float small_scale, float small_power, float curl_power, float lod, bool ambient, bool coarse) { return 0.0; }
 """ + weather + helpers + reference + optimized + """
 void main() { uint i=gl_GlobalInvocationID.x; float f=float(i); bool control=i<128u; vec3 p=control?vec3(2000.0,1200.0,5000.0):vec3(mod(f*137.0, 16000.0)-8000.0, 250.0+mod(f*71.0, 2100.0), mod(f*97.0, 14000.0)-1000.0); vec3 a=vec3(f*3.1, 0.0, f*1.7); float lod=(i&1u)==0u?0.0:1.0; float curl=(i%5u)==0u?0.0:72.0; bool ambient=(i%3u)==0u; bool coarse=(i%7u)==0u; float coverage=control?(1.1+float(i%2u)*0.1):((i%6u)==0u?0.0:((i%6u)==1u?0.33:((i%6u)==2u?0.67:(0.74+float(i%3u)*0.05)))); float old=sampleSceneReference(a,a*1.3,a*1.7,p,2400.0,100.0,1.0,900.0,600.0,240.0,coverage,0.8,curl,lod,ambient,coarse); float now=sampleSceneOptimized(a,a*1.3,a*1.7,p,2400.0,100.0,1.0,900.0,600.0,240.0,coverage,0.8,curl,lod,ambient,coarse); float background=(testData[i].storm_shape.z<=0.001&&old>0.001)?1.0:0.0; float storm=(testData[i].storm_shape.z>0.001&&now>0.001)?2.0:0.0; outData[i]=vec4(old,now,background+storm,abs(old-now)); }
 """

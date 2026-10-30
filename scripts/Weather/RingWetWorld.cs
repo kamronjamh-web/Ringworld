@@ -116,6 +116,23 @@ public partial class RingWetWorld : Node
         ReleaseGpu();
     }
 
+    private const string SsrHalfSizeSetting = "rendering/environment/screen_space_reflection/half_size";
+    private int _ssrHalfSizeApplied = -1; // -1 never set by the wet world, 0 / 1 last value it set
+    /// <summary>True while the wet world holds the engine SSR at half size (tests and perf captures).</summary>
+    public bool SsrHalfSizeActive => _ssrHalfSizeApplied == 1;
+
+    /// <summary>Half-size engine SSR while wet on the presets that ask for it (<see cref="RingWetWorldSettings.HalfSizeSsr"/>); otherwise, and when dry, the project / hardware-tier value.
+    /// Dry frames therefore keep the exact pre-wet-world SSR. Only writes on a change (the renderer setting is global).</summary>
+    private void ApplySsrHalfSize(bool wet)
+    {
+        bool projectHalf = ProjectSettings.GetSetting(SsrHalfSizeSetting, false).AsBool();
+        bool want = projectHalf || (wet && RingWetWorldSettings.Current.HalfSizeSsr);
+        int value = want ? 1 : 0;
+        if (value == _ssrHalfSizeApplied || (_ssrHalfSizeApplied < 0 && want == projectHalf)) return;
+        _ssrHalfSizeApplied = value;
+        RenderingServer.EnvironmentSetSsrHalfSize(want);
+    }
+
     /// <summary>Test/tool hook: bypasses the history and the storm map; every texel gets exactly these values (and the map stays valid).</summary>
     public void ForceUniform(float film, float soak, float standing, float rain)
     {
@@ -205,6 +222,7 @@ public partial class RingWetWorld : Node
         float gloss = Mathf.Clamp(float.IsFinite(s.WetGloss) ? s.WetGloss : 0.18f, 0.05f, 0.6f);
         float puddles = Mathf.Clamp(float.IsFinite(s.Puddles) ? s.Puddles : 1.0f, 0.0f, 2.0f);
         Valid = valid && strength > 0.0f;
+        ApplySsrHalfSize(Valid);
         var value = new Vector4(strength, gloss, puddles, Valid ? 1.0f : 0.0f);
         if (value != _paramsPublished) { _paramsPublished = value; RenderingServer.GlobalShaderParameterSet(GlobalParams, value); }
     }

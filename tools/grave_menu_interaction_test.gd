@@ -188,7 +188,8 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 		await _frames(1)
 		_require(not bool(first.get("folded")) and _section_body_visible(first), label + " section did not restore content")
 		if title == "Wind":
-			_require(folds.size() == 6, "Wind must expose storm, gust, grass, tree, water and radar sections")
+			# Storm revamp S3 added the "Storm arrival" group (RingLiveTuningDrawer.StormArrival.cs).
+			_require(folds.size() == 7, "Wind must expose storm, gust, grass, tree, water, radar and storm arrival sections")
 			await _wheel_guard(drawer, tabs.get_child(index), label + " Wind")
 			var wind_scroll := _first_descendant(tabs.get_child(index), ScrollContainer) as ScrollContainer
 			if wind_scroll != null: wind_scroll.scroll_vertical = 0

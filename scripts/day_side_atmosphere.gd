@@ -854,9 +854,12 @@ func _storm_light_valid() -> bool:
 		and cloud_lighting_bridge.has_method("IsStormLightValid") and bool(cloud_lighting_bridge.call("IsStormLightValid"))
 
 
-# Storm look pass: under a heavy storm the whole sensitivity range also slides down (STORM_EYE_MIN_SCALE x the clear minimum), because at the
-# clear minimum auto exposure still lifted a closed storm deck from luma 0.16 to 0.39 (the sky and ground must read dark, not mid-grey).
-var STORM_EYE_MIN_SCALE := float(OS.get_environment("RING_EYE_MIN_SCALE")) if OS.get_environment("RING_EYE_MIN_SCALE") != "" else 0.4
+# Storm look pass: under a heavy storm the minimum sensitivity rises (up to STORM_EYE_MIN_SCALE x the clear minimum, by the eye cap), so auto exposure
+# stops lifting a closed storm deck to mid-grey (at the clear minimum it took the deck from luma 0.16 to 0.39). Measured with AE on (storm_anvil_capture
+# "under" vs "clear", display luma of the bottom quarter, RTX 4070, 2026-10-28, after the wet-ground sun glint fix): ground under a closed storm at
+# 1.0 -> 0.27x clear, 1.25 -> 0.20-0.27x (mean 0.23x), 2.0 -> 0.14x, 4.0 -> 0.10x; target 0.18-0.30x. (0.4 read 0.84x before the glint fix.)
+# The eye cap already scales with the Storm darkness setting, so this is a fixed shape constant, not a separate tunable.
+const STORM_EYE_MIN_SCALE := 1.25
 func _storm_capped_min_sensitivity(min_sensitivity: float) -> float:
 	return lerpf(min_sensitivity, maxf(1.0, min_sensitivity * STORM_EYE_MIN_SCALE), clampf(current_storm_eye_cap, 0.0, 1.0))
 

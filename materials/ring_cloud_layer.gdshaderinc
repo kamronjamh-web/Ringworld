@@ -49,6 +49,10 @@ uniform float local_handoff_end_meters = 12000.0;
 // entire ring instead of evaluating unrelated per-pixel fields.
 uniform sampler2D weather_atlas : hint_default_white, filter_linear_mipmap, repeat_enable;
 uniform bool weather_atlas_enabled = false;
+// S6 WO6: the whole-ring layer atlas (low, mid, high, weatherness; RingScaledFarViewport.CloudLayers). With it the shell's body follows
+// the low + mid layer coverages, 1 - (1 - low)(1 - mid) (fair weather: low = the weather coverage, unchanged; non-storm decks now show).
+uniform sampler2D far_layer_atlas : hint_default_black, filter_linear, repeat_enable;
+uniform bool far_layer_atlas_enabled = false;
 uniform float weather_time_seconds = 0.0;
 uniform vec2 weather_wind_uv_per_second = vec2(0.0);
 uniform vec4 far_lightning_event_a = vec4(0.0);
@@ -147,6 +151,10 @@ void fragment() {
 	weather_uv.x = fract(weather_uv.x - weather_wind_uv_per_second.x * weather_time_seconds);
 	weather_uv.y = clamp(weather_uv.y - weather_wind_uv_per_second.y * weather_time_seconds, 0.0, 1.0);
 	vec4 weather = texture(weather_atlas, weather_uv);
+	if (far_layer_atlas_enabled) {
+		vec4 far_layers = texture(far_layer_atlas, weather_uv);
+		weather.r = 1.0 - (1.0 - far_layers.x) * (1.0 - far_layers.y);
+	}
 	vec3 canonical_meters = vec3(fract(UV.x) * ring_circumference_km * 1000.0, 0.0, UV.y * ring_width_km * 1000.0);
 	// Until the whole-ring weather atlas exists the shell stays clear: there is
 	// no second, unrelated weather field to show instead. The far cloud shadow

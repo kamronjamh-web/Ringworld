@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Weather;
 
 namespace RingworldTechDemo.Tools;
@@ -60,6 +61,7 @@ public partial class RingRainbowMathTest : RefCounted
             Check(!RingRainbowMath.Compute(SunAt(-2f), up).Active && !RingRainbowMath.Compute(SunAt(0f), up).Active, "no bow with the sun at or below the horizon");
             Check(!RingRainbowMath.Compute(Vector3.Up, up).Active && !RingRainbowMath.Compute(Vector3.Zero, up).Active, "degenerate sun directions give no bow");
             Check(RingRainbowMath.SunReach(0f) == 0f && RingRainbowMath.SunReach(0.05f) == 0f && RingRainbowMath.SunReach(1f) == 1f && RingRainbowMath.SunReach(0.35f) > 0.3f && RingRainbowMath.SunReach(0.35f) < 0.7f, "sun reach gate");
+            Check(RingRainbowMath.SunReach(1.0f - RingAtmosphereModel.StormSunOcclusion) == 0f && RingRainbowMath.SunReach(0.17f) == 0f, "no bow at the full-storm air sun floor (0.15)");
 
             // Rain illumination along an azimuth.
             float[] none = new float[5];

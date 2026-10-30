@@ -90,7 +90,7 @@ public static class CloudPhysicalCatalog
             CloudDensityClass.Medium, CloudOccurrence.Common, CloudVerticalBehavior.ModerateVerticalGrowth),
         new("Cumulonimbus", "Cb", CloudFormationProfile.Cumulonimbus,
             "A huge vertical tower with a dark flat base, stacked domes, and a broad spreading anvil.",
-            500, 18000, 500, 20000, 5000, 30000, 12000, 18000,
+            500, 18000, 500, 18000, 5000, 30000, 12000, 18000,
             CloudDensityClass.ExtremelyDense, CloudOccurrence.Rare, CloudVerticalBehavior.StrongVerticalDevelopment)
     };
 

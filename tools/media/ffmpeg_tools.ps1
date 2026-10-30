@@ -80,7 +80,16 @@ switch ($Mode) {
   "compare" {
     if (-not $Reference) { throw "compare needs -Reference" }
     $referenceSource = Resolve-Source $Reference
-    $log = & $ffmpeg -hide_banner @($source.Args) @($referenceSource.Args) -lavfi "[0:v][1:v]ssim;[0:v][1:v]psnr" -f null - 2>&1 | Out-String
+    # ffmpeg prints the SSIM/PSNR summary on stderr. Under Windows PowerShell 5.1 with ErrorActionPreference Stop, 2>&1 turns each
+    # stderr line into a terminating NativeCommandError, so read it with Continue and stringify the records.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+      $log = & $ffmpeg -hide_banner @($source.Args) @($referenceSource.Args) -lavfi "[0:v][1:v]ssim;[0:v][1:v]psnr" -f null - 2>&1 | ForEach-Object { "$_" } | Out-String
+    } finally {
+      $ErrorActionPreference = $previousPreference
+    }
+    if ($LASTEXITCODE -ne 0) { throw "ffmpeg ssim/psnr failed: $log" }
     $ssim = [regex]::Match($log, 'SSIM .*All:([\d.]+)').Groups[1].Value
     $psnr = [regex]::Match($log, 'PSNR .*average:([\w.]+)').Groups[1].Value
     $out = Default-Output "_diff.png"

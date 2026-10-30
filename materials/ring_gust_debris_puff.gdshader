@@ -2,7 +2,7 @@ shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, skip_vertex_transform;
 // Gust front dust and spray (docs/storm-revamp-s3-storm-arrival-design.md WO-D1): soft camera-facing puffs, dust (tan) on bare and dry ground, spray (white) over water.
 // Motion and placement: ring_gust_debris_common.gdshaderinc. Drawn unshaded but lit by hand with the same terms every receiver uses (sun colour and shadow come from the
-// directional light the CPU copies in, storm shade, cloud shadow) and the per-fragment physical haze, so they take regular haze and lighting without a lit-transparent pass.
+// directional light the CPU copies in, storm shade, cloud shadow, sampled per vertex) and the per-fragment physical haze, so they take regular haze and lighting without a lit-transparent pass.
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_gust_debris_common.gdshaderinc"
@@ -28,21 +28,23 @@ void vertex() {
 	bool spray = d.kind_select < spray_w / max(total, 1.0e-4);
 	float present = (total > 0.001 && biome_draw < min(total, 1.0)) ? 1.0 : 0.0;
 	float grow = 0.75 + 0.5 * sin(deb_time * 0.7 + d.rnd.y * 40.0);
-	float size = spray ? mix(0.35, 0.8, d.rnd.y) * grow : mix(0.9, 2.3, d.rnd.y) * grow;
+	float size = spray ? mix(0.35, 0.8, d.rnd.y) * grow : mix(0.9, 2.3, d.rnd.y) * grow * mix(1.0, 0.6, d.snow);   // spindrift puffs are smaller
 	float hover_m = spray ? 0.1 + d.hover * 0.7 : 0.25 + d.hover * 2.4 * (0.5 + 0.5 * deb_level);
 	vec3 centre = d.rel + deb_up * hover_m;
 	vec3 right = INV_VIEW_MATRIX[0].xyz, upv = INV_VIEW_MATRIX[1].xyz;
 	vec3 world = MODEL_MATRIX[3].xyz + centre + (right * VERTEX.x + upv * VERTEX.y) * size;
 	float alpha = d.alive * present * (spray ? deb_spray_alpha : deb_dust_alpha) * (0.6 + 0.4 * d.rnd.z);
+	alpha *= smoothstep(2.0, 7.0, length(centre));   // no big blobs in the face
 	if (alpha <= 0.002) world = MODEL_MATRIX[3].xyz;
-	vec3 dust_color = vec3(0.50, 0.42, 0.32), spray_color = vec3(0.85, 0.9, 0.95);
+	vec3 dust_color = mix(vec3(0.50, 0.42, 0.32), vec3(0.86, 0.90, 0.96), d.snow), spray_color = vec3(0.85, 0.9, 0.95);
 	v_world = world;
 	v_day = deb_day_factor(world);
 	float storm = ring_storm_level(world);
 	float storm_ambient = ring_storm_ambient(storm);
-	float sun_vis = v_day * (1.0 - ring_storm_shadow_fade(storm));
-	// Hand lighting: ambient sky (limited by the storm ambient) plus the sun at 40% (puffs are diffuse, no direction).
-	vec3 lit = (deb_sky_color * storm_ambient * mix(0.04, 1.0, v_day) + deb_sun_color * sun_vis * 0.4) * (spray ? spray_color : dust_color);
+	float cloud_shadow = sample_local_cloud_shadow(world) * v_day;
+	float sun_vis = v_day * (1.0 - ring_storm_shadow_fade(storm)) * (1.0 - cloud_shadow);
+	// Hand lighting: ambient sky (limited by the storm ambient) plus the sun (puffs are diffuse, no direction; the diffuse scale is in deb_sun_color, set by the CPU).
+	vec3 lit = (deb_sky_color * storm_ambient * mix(0.04, 1.0, v_day) + deb_sun_color * sun_vis) * (spray ? spray_color : dust_color);
 	v_color = vec4(lit, alpha);
 	v_uv = UV;
 	vec3 view_pos = (VIEW_MATRIX * vec4(world, 1.0)).xyz;

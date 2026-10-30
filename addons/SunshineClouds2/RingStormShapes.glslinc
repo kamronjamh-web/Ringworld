@@ -15,6 +15,12 @@
 // Bake constant: closed storm deck under the whole system ellipse (S0 WO-5). Stays off until V3 has its light shortcut.
 const float RING_STORM_DECK_ENABLED = 1.0;
 
+// Hard cloud ceiling (S6, matches RingCloudLayers.CeilingMeters): storm bodies stop here and anvil canopies top out 1.5 km below it.
+#ifndef RING_CLOUD_CEILING_METERS
+#define RING_CLOUD_CEILING_METERS 18000.0
+#endif
+const float RING_CANOPY_TOP_MAX_METERS = 16500.0;
+
 uvec4 ring_storm_pcg4(uvec4 v) {
 	v = v * 1664525u + 1013904223u;
 	v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
@@ -125,6 +131,7 @@ void ring_storm_cell(
 		float canopyTop = shoulderY + 1200.0 * clamp(1.0 - dn, 0.0, 1.0)
 			+ (ring_storm_vnoise(a / 1600.0, seed, 41u) - 0.5) * 2.0 * 700.0
 			+ (ring_storm_vnoise(a / 4800.0, seed, 43u) - 0.5) * 2.0 * 900.0;
+		canopyTop = min(canopyTop, RING_CANOPY_TOP_MAX_METERS);
 		// Thickness: 1.2-1.8 km at the rim, flaring down toward the deck level over the core.
 		float thickRim = max(canopyTop - (floorY + bandMeters * (anvilStartBand - 0.08 * r1.x)), 2200.0);
 		float thickCore = max(canopyTop - (floorY + bandMeters * 0.32), thickRim);
@@ -198,6 +205,8 @@ void ring_storm_system(
 		floorY = ringWeatherSystems.header2.x;
 		ceilingY = ringWeatherSystems.header2.y;
 	}
+	// Hard 18 km cloud ceiling (S6): the dome and body clamps below are relative to it.
+	ceilingY = min(ceilingY, RING_CLOUD_CEILING_METERS);
 	float bandMeters = max(ceilingY - floorY, 1.0);
 
 	float pillarRadius = max(1000.0, bake.shape.x);

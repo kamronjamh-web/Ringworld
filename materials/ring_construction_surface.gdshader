@@ -52,5 +52,5 @@ void light() {
 	DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
 	// Dry specular as the engine's (roughness 0.9, F0 from specular 0.5) plus the wet highlight.
 	vec3 f = ring_wet_direct_specular(NORMAL, LIGHT, VIEW, construction_wet_state.y, construction_wet_state.z, 1.0);
-	SPECULAR_LIGHT += f * LIGHT_COLOR * visibility * SPECULAR_AMOUNT;
+	SPECULAR_LIGHT += f * LIGHT_COLOR * visibility * SPECULAR_AMOUNT * (LIGHT_IS_DIRECTIONAL ? ring_storm_specular_keep(construction_storm) : 1.0); // no sun glint on wet concrete under an overcast
 }

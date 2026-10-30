@@ -5,6 +5,9 @@ extends SceneTree
 #                               last rain, plus a concrete overhang for the shelter line during the storm and in the aftermath
 #   --mode=movie                rain on a puddle, walking out from under the overhang (lens burst), looking up in rain, looking down at the puddle: write it with --write-movie
 #   --mode=night                lightning glints on wet ground at night (storm core, sun down)
+#   --mode=sunglint             sun reflection in puddles: storm core and trailing (natural puddles) vs clear sky with forced standing water
+#   --preset=<n>                graphics quality preset (0 Low, 1 Medium, 2 High, 3 Very High) applied after boot
+#   --mode=perf                 A-B-A cost (--first-storm: keep the first storm the scan finds instead of searching for a heavy lowland one) at the storm core (arms below; --arms=A,B,E,H,... to choose the sequence)
 #   --out=<dir> --elev=<sun elevation> --scan=<scan start> --around= --across=   --no-lens (keep the lens droplets off)
 # Windowed GPU only; run it through tools/wet_world_capture.ps1. Prints WET_WORLD_CAPTURE=PASS.
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
@@ -34,6 +37,8 @@ var storm := {}
 var ground := 0.0
 var elevation_target := 40.0
 var day_fraction := 0.5
+var perf_arms: Array = ["A", "B", "C", "D", "F", "G", "B", "A"]
+var preset_override := -1
 
 class SessionStub extends Node:
 	var settings := {}
@@ -64,6 +69,8 @@ func run() -> void:
 		if argument.begins_with("--mode="): mode = argument.get_slice("=", 1)
 		if argument.begins_with("--elev="): elevation_target = float(argument.get_slice("=", 1))
 		if argument.begins_with("--scan="): scan_start = float(argument.get_slice("=", 1))
+		if argument.begins_with("--arms="): perf_arms = Array(argument.get_slice("=", 1).split(","))
+		if argument.begins_with("--preset="): preset_override = int(argument.get_slice("=", 1))
 	if mode == "night" and elevation_target > 0.0: elevation_target = -25.0
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	fixture = "res://.godot/atmosphere_visual/wet_world_%s" % Time.get_ticks_usec()
@@ -90,6 +97,12 @@ func run() -> void:
 	bridge = game.get_node_or_null("SunshineCloudBridge")
 	if explorer == null or surface == null or drawer == null or clock == null or camera == null or weather == null or wet == null or bridge == null:
 		return fail("missing nodes (explorer=%s surface=%s drawer=%s clock=%s camera=%s weather=%s wet=%s bridge=%s)" % [explorer != null, surface != null, drawer != null, clock != null, camera != null, weather != null, wet != null, bridge != null])
+	if preset_override >= 0:
+		# Graphics quality preset (0 Low, 1 Medium, 2 High, 3 Very High, ...) applied before the pose so streaming settles under it.
+		var quality := game.get_node_or_null("GraphicsQuality")
+		if quality == null: return fail("missing GraphicsQuality for --preset")
+		quality.call("ApplyPreset", preset_override, true, false)
+		await frames(5)
 	drawer.call("SetAtmosphereEnabled", true)
 	drawer.call("SetAtmosphereHazeModel", 1)
 	weather.set("CloudSimulationPaused", true)
@@ -97,6 +110,25 @@ func run() -> void:
 		await scout_mode()
 		return
 	storm = helper.call("FindStorm", weather, 1800.0, scan_start) as Dictionary
+	if (mode == "perf" or mode == "sunglint") and not OS.get_cmdline_user_args().has("--first-storm"):
+		# Heavy storm pose: the first storm (from the scan start on) over lowland (3-400 m above sea) whose natural precipitation peaks at 0.55 or more; peak_time is that moment.
+		for attempt in 24:
+			if not bool(storm["ok"]): break
+			var peak := 0.0
+			var peak_time := float(storm["first_rain"])
+			var t := float(storm["first_rain"])
+			while t <= float(storm["last_rain"]):
+				var precip := float((weather.call("GetNaturalWeatherDiagnosticAtTime", float(storm["around"]), float(storm["across"]), t) as Dictionary).get("precipitation", 0.0))
+				if precip > peak: peak = precip; peak_time = t
+				t += 10.0
+			storm["peak_precip"] = peak
+			storm["peak_time"] = peak_time
+			var sea := float((surface.call("GetSurfaceDiagnostics") as Dictionary).get("sea_level", 0.0))
+			var land := float(surface.call("SampleHeight", float(storm["around"]), float(storm["across"])))
+			storm["land_above_sea"] = land - sea
+			print("STORM_CANDIDATE ", JSON.stringify(storm))
+			if peak >= 0.55 and land - sea > 3.0 and land - sea < 400.0: break
+			storm = helper.call("FindStorm", weather, 1800.0, float(storm["around"]) + 50000.0) as Dictionary
 	report["storm"] = storm
 	if not bool(storm["ok"]): return fail("no mature MajorFront found")
 	print("STORM ", JSON.stringify(storm))
@@ -117,6 +149,7 @@ func run() -> void:
 	elif mode == "movie": await movie_mode()
 	elif mode == "night": await night_mode()
 	elif mode == "perf": await perf_mode()
+	elif mode == "sunglint": await sunglint_mode()
 	elif mode == "scout": await scout_mode()
 	report.status = "PASS"
 	var f2 := FileAccess.open(out_dir.path_join("report.json"), FileAccess.WRITE)
@@ -282,9 +315,9 @@ func movie_mode() -> void:
 # hidden (map compute + receiver fetches + puddles + ripples + engine SSR on the new smooth pixels), C = B plus the lens droplets at L = 0.8. GPU/CPU render time of the root viewport,
 # median and p95 over 400 frames per round after 120 settle frames.
 func perf_mode() -> void:
-	var first_rain := float(storm["first_rain"]); var last_rain := float(storm["last_rain"])
-	await jump_time(0.5 * (first_rain + last_rain))
+	await jump_time(float(storm.get("peak_time", 0.5 * (float(storm["first_rain"]) + float(storm["last_rain"])))))
 	await settle_seconds(8.0)
+	report["perf_state"] = wet_state()
 	var viewport_rid := root.get_viewport().get_viewport_rid()
 	RenderingServer.viewport_set_measure_render_time(viewport_rid, true)
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
@@ -297,13 +330,19 @@ func perf_mode() -> void:
 	if world_environment != null: environment = world_environment.environment
 	var ssr_was := environment.ssr_enabled if environment != null else false
 	perf["ssr_enabled"] = ssr_was
-	for label in ["A", "B", "C", "D", "F", "G", "B", "A"]:
+	perf["ssr_max_steps"] = environment.ssr_max_steps if environment != null else 0
+	perf["preset"] = int(game.get_node("GraphicsQuality").get("CurrentPreset")) if game.get_node_or_null("GraphicsQuality") != null else -1
+	for label in perf_arms:
 		print("PERF_ROUND ", label, " fps=", Engine.get_frames_per_second())
 		# F / G: the engine SSR is off (F = wet world disabled, G = wet world on), isolating the shader cost from the extra SSR traces on glossy ground.
+		# E / H (diagnostic, --arms=): wet gloss 0.6 so film-gloss ground no longer traces SSR (E puddles on, H puddles off).
 		if environment != null: environment.ssr_enabled = ssr_was and label != "F" and label != "G"
 		wet.set("Enabled", label != "A" and label != "F")
 		lens.set("LensWetnessOverride", 0.8 if label == "C" else 0.0)
-		drawer.call("SetWetWorldTuningValue", "Puddles", 0.0 if label == "D" else 1.0)
+		drawer.call("SetWetWorldTuningValue", "Puddles", 0.0 if label == "D" or label == "H" else 1.0)
+		drawer.call("SetWetWorldTuningValue", "WetGloss", 0.6 if label == "E" or label == "H" else 0.18)
+		# M<n> (diagnostic): wet world on as B with RingWetWorld.DebugMode = n (debug views / temporary ablation masks).
+		wet.set("DebugMode", int(label.substr(1)) if label.begins_with("M") and label.length() > 1 else 0)
 		await frames(120)
 		var gpu := []
 		var cpu := []
@@ -316,26 +355,98 @@ func perf_mode() -> void:
 			last = now
 			gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(viewport_rid))
 			cpu.append(RenderingServer.viewport_get_measured_render_time_cpu(viewport_rid))
-		rounds.append({"arm": label, "gpu_median": median_of(gpu), "gpu_p95": percentile_of(gpu, 0.95), "cpu_median": median_of(cpu), "wall_median": median_of(wall), "valid": wet.get("Valid"), "lens_drawing": lens.get("Drawing")})
+		var arm_png := out_dir.path_join("perf_%s.png" % label)
+		if not FileAccess.file_exists(arm_png): root.get_viewport().get_texture().get_image().save_png(arm_png)
+		rounds.append({"arm": label, "gpu_median": median_of(gpu), "gpu_p95": percentile_of(gpu, 0.95), "cpu_median": median_of(cpu), "wall_median": median_of(wall), "valid": wet.get("Valid"), "ssr_half": wet.get("SsrHalfSizeActive"), "lens_drawing": lens.get("Drawing")})
 	wet.set("Enabled", true)
 	lens.set("LensWetnessOverride", 0.0)
 	if environment != null: environment.ssr_enabled = ssr_was
 	drawer.call("SetWetWorldTuningValue", "Puddles", 1.0)
+	drawer.call("SetWetWorldTuningValue", "WetGloss", 0.18)
+	wet.set("DebugMode", 0)
 	perf["rounds"] = rounds
-	for arm in ["A", "B", "C", "D", "F", "G"]:
+	for arm in ["A", "B", "C", "D", "E", "F", "G", "H"]:
 		var medians := []
 		for r in rounds:
 			if r.arm == arm: medians.append(r.gpu_median)
-		perf[arm + "_gpu_median_ms"] = median_of(medians)
-	perf["B_minus_A_gpu_ms"] = float(perf["B_gpu_median_ms"]) - float(perf["A_gpu_median_ms"])
-	perf["C_minus_B_gpu_ms"] = float(perf["C_gpu_median_ms"]) - float(perf["B_gpu_median_ms"])
-	perf["G_minus_F_gpu_ms_ssr_off"] = float(perf["G_gpu_median_ms"]) - float(perf["F_gpu_median_ms"])
-	perf["B_minus_D_gpu_ms"] = float(perf["B_gpu_median_ms"]) - float(perf["D_gpu_median_ms"])
-	perf["D_minus_A_gpu_ms"] = float(perf["D_gpu_median_ms"]) - float(perf["A_gpu_median_ms"])
-	perf["A_repeat_spread_gpu_ms"] = absf(float(rounds[0].gpu_median) - float(rounds[7].gpu_median))
-	perf["B_repeat_spread_gpu_ms"] = absf(float(rounds[1].gpu_median) - float(rounds[6].gpu_median))
+		if not medians.is_empty(): perf[arm + "_gpu_median_ms"] = median_of(medians)
+	for r in rounds:
+		if str(r.arm).begins_with("M"): perf[str(r.arm) + "_gpu_ms"] = r.gpu_median
+	for pair in [["B", "A"], ["C", "B"], ["G", "F"], ["B", "D"], ["D", "A"], ["E", "A"], ["H", "A"], ["B", "E"]]:
+		if perf.has(pair[0] + "_gpu_median_ms") and perf.has(pair[1] + "_gpu_median_ms"):
+			perf[pair[0] + "_minus_" + pair[1] + "_gpu_ms"] = float(perf[pair[0] + "_gpu_median_ms"]) - float(perf[pair[1] + "_gpu_median_ms"])
+	# Repeat spread: first vs last round of A and of B (noise floor).
+	for arm in ["A", "B"]:
+		var seen := []
+		for r in rounds:
+			if r.arm == arm: seen.append(float(r.gpu_median))
+		if seen.size() >= 2: perf[arm + "_repeat_spread_gpu_ms"] = seen.max() - seen.min()
 	report["perf"] = perf
 	print("WET_WORLD_PERF ", JSON.stringify(perf))
+
+# Sun glint in puddles (S2 look bug): the storm core with the camera facing the sun's mirror point, natural puddles; the same view under clear sky with forced
+# standing water (the sun reflection must remain there); variants with the engine SSR off to separate SSR from the radiance-map and direct-light paths.
+func sunglint_mode() -> void:
+	var first_gust := float(storm["first_gust"]); var first_rain := float(storm["first_rain"]); var last_rain := float(storm["last_rain"])
+	lens.set("LensWetnessOverride", 0.0)
+	var environment: Environment = null
+	var world_environment := game.find_child("WorldEnvironment", true, false) as WorldEnvironment
+	if world_environment != null: environment = world_environment.environment
+	var ssr_was := environment.ssr_enabled if environment != null else false
+	# Yaw of the sun's azimuth from the default view (sign convention of SetPresentationView unknown, so both signs are shot; the mirror point is at pitch -elevation).
+	explorer.call("SetPresentationView", 0.0, 0.0)
+	await frames(2)
+	var up: Vector3 = wet.get("CameraUpWorld")
+	var forward := -camera.global_basis.z
+	var sun_node := game.get_node_or_null("StarLight") as Node3D
+	var to_sun := sun_node.global_basis.z.normalized() if sun_node != null else Vector3.UP
+	var sun_h := (to_sun - up * to_sun.dot(up)).normalized()
+	var fwd_h := (forward - up * forward.dot(up)).normalized()
+	var sun_yaw := rad_to_deg(atan2(fwd_h.cross(sun_h).dot(up), fwd_h.dot(sun_h)))
+	var elev := float(clock.get("SunElevationDegrees"))
+	report["sun_yaw"] = sun_yaw
+	var views := [[sun_yaw, -elev + 6.0], [-sun_yaw, -elev + 6.0], [0.0, -35.0]]
+	await jump_time(float(storm.get("peak_time", 0.5 * (first_rain + last_rain))))
+	await settle_seconds(8.0)
+	report["core_storm_level"] = bridge.call("GetCameraStormLevel")
+	for i in views.size(): await shot("g0_core_%d" % i, float(views[i][0]), float(views[i][1]))
+	if environment != null: environment.ssr_enabled = false
+	await shot("g0_core_nossr_0", float(views[0][0]), float(views[0][1]))
+	if environment != null: environment.ssr_enabled = ssr_was
+	# Storm core with forced standing water everywhere (puddles guaranteed at the mirror point).
+	wet.call("ForceUniform", 1.0, 1.0, 1.0, 1.0)
+	await settle_seconds(3.0)
+	await shot("g0_core_forced_%d" % 1, float(views[1][0]), float(views[1][1]))
+	await shot("g0_core_forced_%d" % 0, float(views[0][0]), float(views[0][1]))
+	wet.call("ClearForce")
+	await jump_time(last_rain - 25.0)
+	await settle_seconds(7.0)
+	report["trailing_storm_level"] = bridge.call("GetCameraStormLevel")
+	for i in views.size(): await shot("g1_trailing_%d" % i, float(views[i][0]), float(views[i][1]))
+	# Source split at the trailing edge: no SSR, then no environment reflections (radiance map) either; what is left is the direct light highlight.
+	if environment != null:
+		environment.ssr_enabled = false
+		await shot("g1_trailing_nossr_1", float(views[1][0]), float(views[1][1]))
+		var reflection_was := environment.reflected_light_source
+		environment.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+		await shot("g1_trailing_norefl_1", float(views[1][0]), float(views[1][1]))
+		environment.reflected_light_source = reflection_was
+		environment.ssr_enabled = ssr_was
+	# Storm level ramp: shots through the dissipating edge (camera storm level and rain recorded per shot).
+	for k in 4:
+		await jump_time(last_rain - 25.0 + 60.0 * float(k + 1))
+		await settle_seconds(5.0)
+		report["edge_%d_storm_level" % k] = bridge.call("GetCameraStormLevel")
+		await shot("g1_edge_%d" % k, float(views[1][0]), float(views[1][1]))
+	await jump_time(maxf(0.0, first_gust - 1300.0))
+	wet.call("ForceUniform", 1.0, 1.0, 1.0, 0.0)
+	await settle_seconds(7.0)
+	report["clear_storm_level"] = bridge.call("GetCameraStormLevel")
+	for i in views.size(): await shot("g2_clear_forced_%d" % i, float(views[i][0]), float(views[i][1]))
+	if environment != null: environment.ssr_enabled = false
+	await shot("g2_clear_forced_nossr_0", float(views[0][0]), float(views[0][1]))
+	if environment != null: environment.ssr_enabled = ssr_was
+	wet.call("ClearForce")
 
 func median_of(values: Array) -> float:
 	if values.is_empty(): return 0.0

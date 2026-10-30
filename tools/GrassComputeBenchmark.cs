@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Godot;
 using RingworldTechDemo.Diagnostics;
+using RingworldTechDemo.Rendering;
 using RingworldTechDemo.Voxel.LOD;
 
 namespace RingworldTechDemo.Tests;
@@ -175,7 +176,7 @@ public partial class GrassComputeBenchmark : Node3D
         _compute.Initialize();
         foreach (Node node in _renderers)
         {
-            if (node is MultiMeshInstance3D renderer) renderer.Layers = p.Hidden ? 0u : 1u;
+            if (node is MultiMeshInstance3D renderer) renderer.Layers = p.Hidden ? 0u : RingRenderLayers.NoPrecipitationOcclusion;
         }
         if (p.Hidden && _renderers.OfType<MultiMeshInstance3D>().Any(x => x.Layers != 0))
             throw new InvalidOperationException("hidden grass still has active draw layers");
@@ -249,12 +250,12 @@ public partial class GrassComputeBenchmark : Node3D
         {
             foreach (var view in new[] { (Name: "near", Pass: 0), (Name: "intermediate", Pass: 1) })
             {
-                foreach (int id in _ids) _rendererById[id].Layers = !p.Hidden && _passById[id] == view.Pass ? 1u : 0u;
+                foreach (int id in _ids) _rendererById[id].Layers = !p.Hidden && _passById[id] == view.Pass ? RingRenderLayers.NoPrecipitationOcclusion : 0u;
                 await Frames(8);
                 await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
                 await SaveCapture(p, repetition, view.Name);
             }
-            foreach (int id in _ids) _rendererById[id].Layers = p.Hidden ? 0u : 1u;
+            foreach (int id in _ids) _rendererById[id].Layers = p.Hidden ? 0u : RingRenderLayers.NoPrecipitationOcclusion;
         }
     }
 

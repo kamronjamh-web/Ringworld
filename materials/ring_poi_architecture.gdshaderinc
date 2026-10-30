@@ -141,6 +141,7 @@ void light() {
 		float visibility = sun_visibility * mix(1.0, direct * poi_base_direct, primary_sun);
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
 		vec3 f0 = mix(vec3(0.16 * poi_specular * poi_specular), ALBEDO, METALLIC);
-		SPECULAR_LIGHT += poi_ggx_specular(NORMAL, LIGHT, VIEW, ROUGHNESS, f0) * LIGHT_COLOR * visibility * SPECULAR_AMOUNT;
+		// Storm light: the sun highlight fades with F like the terrain's (wet roof puddles kept a saturated sun disc on the residual sun).
+		SPECULAR_LIGHT += poi_ggx_specular(NORMAL, LIGHT, VIEW, ROUGHNESS, f0) * LIGHT_COLOR * visibility * SPECULAR_AMOUNT * ring_storm_specular_keep(terms.storm);
 	}
 }

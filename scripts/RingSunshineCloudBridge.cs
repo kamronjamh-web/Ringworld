@@ -142,8 +142,8 @@ public partial class RingSunshineCloudBridge : Node
     [Export(PropertyHint.Range, "-5000,10000,50")] public float FixedCloudAltitudeDatumMeters { get; set; } = 0.0f;
     // The ordinary field stays above the playable skyline; localized fronts
     // deliberately retain their own lower 500 m bases.
-    [Export(PropertyHint.Range, "0,19000,50")] public float NaturalCloudBaseAltitudeMeters { get; set; } = 2000.0f;
-    [Export(PropertyHint.Range, "500,20000,50")] public float NaturalCloudTopAltitudeMeters { get; set; } = 6000.0f;
+    [Export(PropertyHint.Range, "0,18000,50")] public float NaturalCloudBaseAltitudeMeters { get; set; } = 2000.0f;
+    [Export(PropertyHint.Range, "500,18000,50")] public float NaturalCloudTopAltitudeMeters { get; set; } = 6000.0f;
     [Export(PropertyHint.Range, "0,5000,50")] public float StormFrontCloudBaseAltitudeMeters { get; set; } = 500.0f;
 
     [ExportGroup("Temporal quality")]
@@ -171,6 +171,11 @@ public partial class RingSunshineCloudBridge : Node
     [ExportGroup("Gameplay cloud appearance")]
     [Export] public bool CloudRenderingEnabled { get; set; } = true;
     [Export(PropertyHint.Range, "-1,1,0.01")] public float CloudCoverageBias { get; set; } = 0.0f;
+    /// <summary>S6 layer amounts: fair-weather coverage bias per layer (0 = unchanged) and the daytime-cumulus swing scale (1 = full). Pushed to <see cref="CloudLayerTable.Shared"/>.</summary>
+    [Export(PropertyHint.Range, "-1,1,0.01")] public float LowCloudAmount { get; set; } = 0.0f;
+    [Export(PropertyHint.Range, "-1,1,0.01")] public float MidCloudAmount { get; set; } = 0.0f;
+    [Export(PropertyHint.Range, "-1,1,0.01")] public float HighCloudAmount { get; set; } = 0.0f;
+    [Export(PropertyHint.Range, "0,1,0.01")] public float DaytimeCumulus { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,3,0.01")] public float CloudDensityMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,3,0.01")] public float CloudWindMultiplier { get; set; } = 1.0f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float CloudDirectLightMultiplier { get; set; } = 1.0f;
@@ -1604,9 +1609,24 @@ public partial class RingSunshineCloudBridge : Node
     private static float SanitizeFinite(float value, float fallback, float minimum, float maximum)
         => float.IsFinite(value) ? Mathf.Clamp(value, minimum, maximum) : fallback;
 
+    /// <summary>Pushes the layer amount biases and daytime cumulus to the shared layer table (the near build, the far atlas and the CPU twin all read it).</summary>
+    private void SyncCloudLayerTuning()
+    {
+        CloudLayerTable table = CloudLayerTable.Shared;
+        table.LowAmountBias = LowCloudAmount;
+        table.MidAmountBias = MidCloudAmount;
+        table.HighAmountBias = HighCloudAmount;
+        table.DaytimeCumulus = DaytimeCumulus;
+    }
+
     private void SanitizeCloudAppearanceTuning()
     {
         CloudCoverageBias = SanitizeFinite(CloudCoverageBias, 0.0f, -1.0f, 1.0f);
+        LowCloudAmount = SanitizeFinite(LowCloudAmount, 0.0f, -1.0f, 1.0f);
+        MidCloudAmount = SanitizeFinite(MidCloudAmount, 0.0f, -1.0f, 1.0f);
+        HighCloudAmount = SanitizeFinite(HighCloudAmount, 0.0f, -1.0f, 1.0f);
+        DaytimeCumulus = SanitizeFinite(DaytimeCumulus, 1.0f, 0.0f, 1.0f);
+        SyncCloudLayerTuning();
         CloudDensityMultiplier = SanitizeFinite(CloudDensityMultiplier, 1.0f, 0.0f, 3.0f);
         CloudWindMultiplier = SanitizeFinite(CloudWindMultiplier, 1.0f, 0.0f, 3.0f);
         CloudDirectLightMultiplier = SanitizeFinite(CloudDirectLightMultiplier, 1.0f, 0.0f, 2.0f);

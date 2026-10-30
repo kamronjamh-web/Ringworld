@@ -42,6 +42,7 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/ring_volumetric_cloud.gdshader",
         "res://materials/ring_local_volumetric_cloud.gdshader",
         "res://materials/ring_far_cloud_clipmap.gdshader",
+        "res://materials/ring_far_cloud_layer_sky.gdshader",
         "res://materials/ring_cloud_transmittance_mask.gdshader",
         "res://materials/ring_far_backdrop_cloud_composite.gdshader",
         "res://materials/ring_lightning_bolt.gdshader",
@@ -57,6 +58,13 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/terrain3d_ring_surface.gdshader",
         "res://materials/ring_distant_rain_curtain.gdshader",
         "res://materials/ring_rain_haze.gdshader",
+        "res://materials/ring_gust_debris.gdshader",
+        "res://materials/ring_gust_debris_puff.gdshader",
+        "res://materials/ring_lens_droplets.gdshader",
+        "res://materials/ring_snow_particle.gdshader",
+        "res://materials/ring_upper_atmosphere_lightning.gdshader",
+        "res://materials/ring_far_weather_cloud_bake.gdshader",
+        "res://materials/ring_construction_surface.gdshader",
         "res://materials/ring_emitter_standin.gdshader",
         "res://materials/ring_poi_architecture.gdshader",
         "res://materials/ring_poi_architecture_double_sided.gdshader",
@@ -65,7 +73,11 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/ring_eclipse_hub_beam_far.gdshader",
         "res://materials/ring_eclipse_hub_body.gdshader",
         "res://materials/ring_wind_neutral.tres",
-        "res://scripts/render/RingFarDepthCapture.gd"
+        "res://scripts/render/RingFarDepthCapture.gd",
+        "res://scripts/render/RingPrecipOcclusionCapture.gd",
+        "res://scripts/render/RingRainHazeComposite.gd",
+        "res://scripts/render/RingRainStreaksComposite.gd",
+        "res://scripts/render/RingRainbowComposite.gd"
     };
     private readonly Dictionary<string, Resource> _retained = new(StringComparer.Ordinal);
     private readonly RingThreadedResourceClaims _claims = new();

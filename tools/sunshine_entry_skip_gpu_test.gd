@@ -17,7 +17,7 @@ func _init() -> void:
 	var source := "#version 450\n" + helper + "\nlayout(local_size_x=1) in;\n" + \
 		"layout(set=0,binding=0,std430) readonly buffer In { vec4 d[]; } input_data;\n" + \
 		"layout(set=0,binding=1,std430) writeonly buffer Out { int s[]; } output_data;\n" + \
-		"float old_alt(vec3 p,vec3 ar,vec3 up,float r){return r-length(vec2(dot(p,ar),r-dot(p,up)));}\nvoid main(){ uint i=gl_GlobalInvocationID.x; vec4 a=input_data.d[i*6u]; vec4 b=input_data.d[i*6u+1u]; vec4 c=input_data.d[i*6u+2u]; vec4 e=input_data.d[i*6u+3u]; vec4 up=input_data.d[i*6u+4u]; vec4 ar=input_data.d[i*6u+5u]; int n=int(c.y); int skip=cloud_entry_skip_steps(a.xyz,b.xyz,ar.xyz,up.xyz,a.w,c.w,e.x,b.w,c.x,n,e.y); int bad=(skip<0||skip>=n)?1:0; int stop=n; float d=b.w; for(int k=0;k<n;k++,d+=c.x){ float h=old_alt(a.xyz+b.xyz*d,ar.xyz,up.xyz,a.w); float hn=old_alt(a.xyz+b.xyz*(d+c.x),ar.xyz,up.xyz,a.w); bool exit=(h>e.x&&hn>h)||(h<c.w&&hn<h); if(d>e.y||exit){stop=k;break;} if(k<skip && h>=c.w && h<=e.x) bad=1; } if(skip>stop) bad=1; output_data.s[i*3u]=skip; output_data.s[i*3u+1u]=bad; output_data.s[i*3u+2u]=stop; }\n"
+		"float old_alt(vec3 p,vec3 ar,vec3 up,float r){return r-length(vec2(dot(p,ar),r-dot(p,up)));}\nvoid main(){ uint i=gl_GlobalInvocationID.x; vec4 a=input_data.d[i*6u]; vec4 b=input_data.d[i*6u+1u]; vec4 c=input_data.d[i*6u+2u]; vec4 e=input_data.d[i*6u+3u]; vec4 up=input_data.d[i*6u+4u]; vec4 ar=input_data.d[i*6u+5u]; int n=int(c.y); int skip=cloud_entry_skip_steps(a.xyz,b.xyz,ar.xyz,up.xyz,a.w,c.w,e.x,b.w,c.x,n,e.y); int bad=(skip<0||skip>=n)?1:0; int stop=n; float d=b.w; for(int k=0;k<n;k++,d+=c.x){ float h=old_alt(a.xyz+b.xyz*d,ar.xyz,up.xyz,a.w); float hn=old_alt(a.xyz+b.xyz*(d+c.x),ar.xyz,up.xyz,a.w); bool exit=(h>e.x&&hn>h)||(h<c.w&&hn<h); if(d>e.y||exit){stop=k;break;} if(k<skip && h>=c.w && h<=e.x) bad=1; } if(skip>stop) bad=1; output_data.s[i*4u]=skip; output_data.s[i*4u+1u]=bad; output_data.s[i*4u+2u]=stop; output_data.s[i*4u+3u]=cloud_band_skip_steps(a.xyz,b.xyz,ar.xyz,up.xyz,a.w,c.w,e.x,b.w+c.x*3.0+7.0,b.w,c.x,n,e.y); }\n"
 	var shader_source := RDShaderSource.new()
 	shader_source.source_compute = source
 	var spirv := rd.shader_compile_spirv_from_source(shader_source)
@@ -31,6 +31,8 @@ func _init() -> void:
 	# ceiling/depth, up basis, and around basis.
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 918273
+	var jitters := PackedFloat32Array()
+	var depths := PackedFloat32Array()
 	for i in CASES:
 		var radius := 80000.0 if i % 2 == 0 else 5000000.0
 		var altitude := rng.randf_range(-2000.0, 4000.0)
@@ -45,9 +47,11 @@ func _init() -> void:
 		var up := Vector3.UP
 		var count := 1.0 if i == 4 else float(32 + (i % 96))
 		var depth := 300.0 if i == 5 else rng.randf_range(2000., 1000000.)
+		jitters.append(jitter)
+		depths.append(depth)
 		input.append_array([0.0, altitude, 0.0, radius, direction.x, direction.y, direction.z, jitter, 500.0 + float(i % 4) * 500.0, count, altitude, 500.0, 2000.0, depth, 0.0, 0.0, up.x, up.y, up.z, 0.0, around.x, around.y, around.z, 0.0])
 	var in_buffer := rd.storage_buffer_create(input.size() * 4, input.to_byte_array())
-	var out_buffer := rd.storage_buffer_create(CASES * 12)
+	var out_buffer := rd.storage_buffer_create(CASES * 16)
 	var u0 := RDUniform.new(); u0.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER; u0.binding = 0; u0.add_id(in_buffer)
 	var u1 := RDUniform.new(); u1.uniform_type = RenderingDevice.UNIFORM_TYPE_STORAGE_BUFFER; u1.binding = 1; u1.add_id(out_buffer)
 	var set := rd.uniform_set_create([u0, u1], shader, 0)
@@ -57,10 +61,16 @@ func _init() -> void:
 	rd.free_rid(pipeline); rd.free_rid(set); rd.free_rid(in_buffer); rd.free_rid(out_buffer); rd.free_rid(shader); rd.free()
 	var skipped := false
 	for i in CASES:
-		var value := data[i * 3]
+		var value := data[i * 4]
 		if value < 0 or value > 127: fail("GPU skip outside budget at %d" % i); return
-		if data[i * 3 + 1] != 0: fail("GPU helper skipped original in-band/terminal lattice sample at %d" % i); return
+		if data[i * 4 + 1] != 0: fail("GPU helper skipped original in-band/terminal lattice sample at %d" % i); return
 		if value > 0: skipped = true
+		# S6 boundary-list form: a band that starts 3 steps + 7 m ahead is skipped up to max(altitude skip, steps before its start), depth-limited.
+		var n := 1 if i == 4 else 32 + (i % 96)
+		var step := 500.0 + float(i % 4) * 500.0
+		var depth_limit := 300.0 if i == 5 else depths[i]
+		var before := clampi(int(floorf((minf(jitters[i] + step * 3.0 + 7.0, depth_limit) - jitters[i]) / step)), 0, n - 1)
+		if data[i * 4 + 3] != maxi(value, before): fail("band skip %d != max(entry %d, before %d) at case %d" % [data[i * 4 + 3], value, before, i]); return
 	if data[0] != 0: fail("jitter crossing control skipped an already in-band first sample"); return
 	if data[3] <= 0: fail("positive control did not skip"); return
 	if not skipped: fail("vacuous fixture: no case skipped"); return

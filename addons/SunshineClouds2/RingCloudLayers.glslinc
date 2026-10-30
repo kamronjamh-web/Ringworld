@@ -1,0 +1,219 @@
+// RingworldTechDemo extension (S6 cloud vertical structure; docs/storm-revamp-s6-cloud-layers-design.md sections 2 and 3.2).
+//
+// The cloud layer table (CloudLayerTable.cs / resources/clouds/cloud_layer_table.tres) as a uniform block, plus the position-pure layer
+// build that RingMacroWeatherMap.glsl runs once per map texel. ring_cloud_layers_point is the exact GLSL twin of
+// RingCloudLayers.EvaluateMap (scripts/clouds/RingCloudLayers.cs): change one, change the other.
+//
+// The includer defines RING_CLOUD_LAYERS_BINDING (and RING_CLOUD_LAYERS_SET when not 0) and includes this file AFTER
+// RingWeatherSystems.glslinc (it needs ringWeatherSystems, ring_ws_flags, ring_ws_wrap and ring_ws_cluster_term_salted).
+// The block is 41 vec4 = 656 bytes (std140); RingSunshineCloudBridge.PublishCloudLayers writes it, SunshineClouds.gd uploads it.
+//
+//   header0: x ceiling (m), y mid fair scale, z high fair scale, w diurnal strength (table strength x menu daytime cumulus)
+//   header1: x diurnal floor, y diurnal peak (hours after local noon), z storm support factor, w low amount bias
+//   header2: x weatherness density ramp start, y ramp span, z mid cluster small salt, w mid cluster large salt
+//   header3: x high cluster small salt, y high cluster large salt, z mid amount bias, w high amount bias
+//   sun:     xyz direction to the sun in the ring-grid frame (ring axis = +Y), w 1 when valid
+//   layers[4] (slot order low, mid, high, reserved), 4 vec4 each:
+//     a  fair base, weather base, top cap, gradient row
+//     b  convective thickness (min, max), stratiform thickness (min, max)
+//     c  stratiform noise stretch, erosion scale (cellular, stratiform), extinction per metre
+//     d  phase g, ambient scale, shadow weight, render mode (0 volumetric, 1 shell)
+//   genus[16] indexed by CloudFormationProfile: x low, y mid, z high weight, w lowers_base + 4 * front_type
+//   noise[4] (slot order): xyz per-layer offset of the large/medium/small noise positions, w reserved
+//
+// Map layer values (stored in array layers 2 / 3 of the macro map, front / back): (low, mid, high coverage, weatherness).
+#ifndef RING_CLOUD_LAYERS_GLSLINC
+#define RING_CLOUD_LAYERS_GLSLINC
+
+#ifndef RING_CLOUD_CEILING_METERS
+#define RING_CLOUD_CEILING_METERS 18000.0
+#endif
+
+#ifndef RING_CLOUD_LAYERS_SET
+#define RING_CLOUD_LAYERS_SET 0
+#endif
+
+layout(set = RING_CLOUD_LAYERS_SET, binding = RING_CLOUD_LAYERS_BINDING, std140) uniform RingCloudLayersBlock {
+	vec4 header0;
+	vec4 header1;
+	vec4 header2;
+	vec4 header3;
+	vec4 sun;
+	vec4 layers[16];
+	vec4 genus[16];
+	vec4 noise[4];
+} ringCloudLayers;
+
+float ring_cl_smooth(float value) {
+	float t = clamp(value, 0.0, 1.0);
+	return t * t * (3.0 - 2.0 * t);
+}
+
+// 1 at s <= to, 0 at s >= from (from > to), smooth between.
+float ring_cl_ramp_down(float s, float from, float to) {
+	return ring_cl_smooth((from - s) / (from - to));
+}
+
+// Daytime-cumulus factor on fair-weather low coverage (1 = unchanged); see RingCloudLayers.DiurnalCoverageFactor.
+float ring_cloud_layers_diurnal(float aroundMeters, float circumference) {
+	vec3 sunLocal = ringCloudLayers.sun.xyz;
+	float strength = ringCloudLayers.header0.w;
+	float planar = sqrt(sunLocal.x * sunLocal.x + sunLocal.z * sunLocal.z);
+	if (planar < 0.0001 || circumference < 1.0 || strength <= 0.0 || ringCloudLayers.sun.w < 0.5) return 1.0;
+	float wrapped = aroundMeters - circumference * floor(aroundMeters / circumference);
+	float angle = wrapped / circumference * 6.28318530718;
+	float upX = -cos(angle);
+	float upZ = -sin(angle);
+	float sunX = sunLocal.x / planar;
+	float sunZ = sunLocal.z / planar;
+	float elevation = upX * sunX + upZ * sunZ;
+	float rate = upX * sunZ + upZ * -sunX;
+	float hourAngle = atan(-rate, elevation);
+	float d = ring_cl_smooth(0.5 + 0.5 * cos(hourAngle - ringCloudLayers.header1.y * 3.14159265359 / 12.0));
+	float floorValue = ringCloudLayers.header1.x;
+	float scaled = floorValue + (1.0 - floorValue) * d;
+	return 1.0 + (scaled - 1.0) * strength;
+}
+
+// Menu amount bias on a layer's fair-weather coverage; twin of RingCloudLayers.ApplyAmountBias (0 returns the input exactly).
+float ring_cloud_layers_amount_bias(float coverage, float bias) {
+	return bias > 0.0 ? coverage + (1.0 - coverage) * bias : (bias < 0.0 ? coverage * (1.0 + bias) : coverage);
+}
+
+// canonical: x around, z across (metres). mask / shift / circumference as ring_ws_macro_point. coverage is that function's R.
+vec4 ring_cloud_layers_point(vec3 canonical, uvec2 mask, vec2 shift, float circumference, float coverage) {
+	vec2 source = vec2(canonical.x + shift.x, canonical.z + shift.y);
+	float windAngle = ringWeatherSystems.header1.w;
+	vec2 wind = vec2(cos(windAngle), sin(windAngle));
+	float rampStart = ringCloudLayers.header2.x;
+	float rampSpan = ringCloudLayers.header2.y;
+	float remainingLow = 1.0;
+	float remainingMid = 1.0;
+	float remainingHigh = 1.0;
+	float weatherness = 0.0;
+	for (int word = 0; word < 2; word++) {
+		uint bits = word == 0 ? mask.x : mask.y;
+		while (bits != 0u) {
+			int index = word * 32 + findLSB(bits);
+			bits &= bits - 1u;
+			vec4 a = ringWeatherSystems.systems[index].a;
+			vec4 b = ringWeatherSystems.systems[index].b;
+			vec4 c = ringWeatherSystems.systems[index].c;
+			vec4 d = ringWeatherSystems.systems[index].d;
+			uint flags = ring_ws_flags(index);
+			vec4 row = ringCloudLayers.genus[clamp(int(c.z + 0.5), 0, 15)];
+			int frontType = int(row.w + 0.5) >> 2;
+			bool lowersBase = (flags & 16u) != 0u;
+			float density = b.z;
+			float fade = d.z;
+			float influenceLow;
+			float influenceUpper;
+			float frontLow = 1.0, frontMid = 1.0, frontHigh = 1.0, frontWeather = 1.0;
+			if ((flags & RING_WS_FLAG_STATIC) != 0u) {
+				float deltaAround = ring_ws_wrap(canonical.x - a.x, circumference);
+				float deltaAcross = canonical.z - a.y;
+				float x = deltaAround * b.x + deltaAcross * b.y;
+				float z = -deltaAround * b.y + deltaAcross * b.x;
+				float normalized = sqrt(x * x / (a.z * a.z) + z * z / (a.w * a.w));
+				influenceLow = (1.0 - ring_cl_smooth((normalized - 0.55) / 0.75)) * density * fade;
+				if (influenceLow <= 0.0001) continue;
+				influenceUpper = influenceLow;
+			} else {
+				float support = max(1.0, d.y);
+				float deltaAround = ring_ws_wrap(a.x - source.x, circumference);
+				float deltaAcross = a.y - source.y;
+				float reach = a.z * support;
+				if (deltaAround * deltaAround + deltaAcross * deltaAcross >= reach * reach) continue;
+				float along = b.x * deltaAround + b.y * deltaAcross;
+				float across = -b.y * deltaAround + b.x * deltaAcross;
+				float normalized = sqrt(along * along / max(1.0, a.z * a.z) + across * across / max(1.0, a.w * a.w));
+				if (normalized >= support) continue;
+				influenceLow = normalized >= 1.0 ? 0.0 : (1.0 - ring_cl_smooth((normalized - 0.32) / 0.68)) * density * fade;
+				influenceUpper = (1.0 - ring_cl_smooth((normalized / support - 0.32) / 0.68)) * density * fade;
+				if (frontType != 0) {
+					// Position along the downwind axis in units of the ellipse's extent along it (+1 = leading edge).
+					float downwindX = b.x * wind.x + b.y * wind.y;
+					float downwindY = -b.y * wind.x + b.x * wind.y;
+					float q = -along * downwindX + -across * downwindY;
+					float s = q * sqrt(downwindX * downwindX / (a.z * a.z) + downwindY * downwindY / (a.w * a.w));
+					if (frontType == 1) {
+						float lowRamp = ring_cl_ramp_down(s, 0.5, 0.0);
+						float behind = ring_cl_smooth((-0.6 - s) / 0.4);
+						frontHigh = ring_cl_ramp_down(s, 2.0, 0.8);
+						frontMid = ring_cl_ramp_down(s, 1.2, 0.3);
+						frontLow = lowRamp * (1.0 + (0.6 - 1.0) * behind);
+						frontWeather = lowRamp * (1.0 - behind);
+					} else {
+						float band = 1.0 - ring_cl_smooth((abs(s) - 0.4) / 0.25);
+						frontLow = band;
+						frontMid = band;
+						frontWeather = band;
+						frontHigh = ring_cl_ramp_down(s, 1.6, 0.2);
+					}
+				}
+			}
+			remainingLow *= 1.0 - clamp(row.x * frontLow * influenceLow, 0.0, 1.0);
+			remainingMid *= 1.0 - clamp(row.y * frontMid * influenceUpper, 0.0, 1.0);
+			remainingHigh *= 1.0 - clamp(row.z * frontHigh * influenceUpper, 0.0, 1.0);
+			if (lowersBase) {
+				float densityGate = clamp((density - rampStart) / max(rampSpan, 0.0001), 0.0, 1.0);
+				weatherness = max(weatherness, influenceLow * densityGate * frontWeather);
+			}
+		}
+	}
+	weatherness = clamp(weatherness, 0.0, 1.0);
+
+	float diurnal = ring_cloud_layers_diurnal(canonical.x, circumference);
+	float baseCoverage = ringWeatherSystems.header0.z;
+	float clusterMid = ring_ws_cluster_term_salted(source.x, source.y, circumference,
+		int(ringCloudLayers.header2.z + 0.5), int(ringCloudLayers.header2.w + 0.5));
+	float clusterHigh = ring_ws_cluster_term_salted(source.x, source.y, circumference,
+		int(ringCloudLayers.header3.x + 0.5), int(ringCloudLayers.header3.y + 0.5));
+	float lowFair = coverage * (diurnal + (1.0 - diurnal) * weatherness);
+	float midFair = clamp(baseCoverage + clusterMid, 0.015, 0.985) * ringCloudLayers.header0.y;
+	float highFair = clamp(baseCoverage + clusterHigh, 0.015, 0.985) * ringCloudLayers.header0.z;
+	lowFair = ring_cloud_layers_amount_bias(lowFair, ringCloudLayers.header1.w);
+	midFair = ring_cloud_layers_amount_bias(midFair, ringCloudLayers.header3.z);
+	highFair = ring_cloud_layers_amount_bias(highFair, ringCloudLayers.header3.w);
+	return vec4(
+		clamp(1.0 - (1.0 - lowFair) * remainingLow, 0.0, 1.0),
+		clamp(1.0 - (1.0 - midFair) * remainingMid, 0.0, 1.0),
+		clamp(1.0 - (1.0 - highFair) * remainingHigh, 0.0, 1.0),
+		weatherness);
+}
+
+// ---- Layer resolve (S6 WO3b) ------------------------------------------------------------------------------------------------
+// GLSL twin of RingCloudLayers.Resolve: map = (low, mid, high coverage, weatherness); returns (coverage, base, top, stratiformity)
+// of layer `layer` (0 low, 1 mid, 2 high). The march resolves the primary sample's map value once and dispatches by altitude.
+vec4 ring_cloud_layer_resolve(int layer, vec4 map) {
+	vec4 a = ringCloudLayers.layers[layer * 4];
+	vec4 b = ringCloudLayers.layers[layer * 4 + 1];
+	float weatherness = map.w;
+	float coverage = layer == 0 ? map.x : (layer == 1 ? map.y : map.z);
+	float baseMeters = mix(a.x, a.y, weatherness);
+	float stratiformity = layer == 0
+		? clamp(ring_cl_smooth((coverage - 0.4) / 0.45) * 0.6 + weatherness * 0.8, 0.0, 1.0)
+		: ring_cl_smooth((coverage - 0.4) / 0.4);
+	float convective = mix(b.x, b.y, coverage);
+	float stratiform = mix(b.z, b.w, coverage);
+	float topMeters = baseMeters + convective + (stratiform - convective) * stratiformity;
+	topMeters = max(baseMeters, min(min(topMeters, a.z), ringCloudLayers.header0.x));
+	return vec4(coverage, baseMeters, topMeters, stratiformity);
+}
+
+// Hull of the volumetric layers (those with a top cap and render mode 0): the lowest base (the weather base when `weather`) to the
+// highest top cap. A ray's band is exactly this hull, widened by its sculpt intervals; whatever the column resolves to lies inside it.
+vec2 ring_cloud_layers_hull(bool weather) {
+	float lowest = 1e30;
+	float highest = 0.0;
+	for (int layer = 0; layer < 3; layer++) {
+		vec4 a = ringCloudLayers.layers[layer * 4];
+		if (a.z <= 0.0 || ringCloudLayers.layers[layer * 4 + 3].w > 0.5) continue;
+		lowest = min(lowest, weather ? a.y : a.x);
+		highest = max(highest, min(a.z, ringCloudLayers.header0.x));
+	}
+	return vec2(lowest, max(highest, lowest + 1.0));
+}
+
+
+#endif

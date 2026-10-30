@@ -1,5 +1,6 @@
 #[compute]
 #version 450
+#extension GL_EXT_control_flow_attributes : enable
 #define PI 3.141592
 #define ABSORPTION_COEFFICIENT 0.9
 
@@ -97,10 +98,27 @@ layout(binding = 25) uniform sampler2DArray ring_storm_map;
 layout(rgba16f, binding = 26) uniform writeonly image2D interleave_steady_image;
 layout(rgba16f, binding = 27) uniform writeonly image2D interleave_transient_image;
 layout(rgba32f, binding = 28) uniform writeonly image2D interleave_data_image;
+// S6 cloud layers (RingCloudLayers.glslinc): the layer table block (live copy, published next to the weather systems) and the generated
+// layer height gradient (8 rows, see RingCloudLayerSample.glslinc). Bindings 29 and 30 of set 0.
+layout(binding = 30) uniform sampler2D layer_heightmask;
 #define RING_WS_MACRO_MAP
+// The ray mask also keeps base-lowering systems (not only sculpt ones) so the ray's floor is the weather base wherever weatherness can be > 0.
+#define RING_WS_MASK_LOWERS_BASE 1
 #include "./RingWeatherSystems.glslinc"
 #define RING_STORM_SUN_LIGHT
 #include "./RingStormProfileSample.glslinc"
+#define RING_CLOUD_LAYERS_BINDING 29
+// S6 3.8 deck colour (the ambient chroma of layer-deck samples follows the light through the cloud above); 0 = the blue-sky ambient.
+// Runtime A/B: CameraIndependentDebugMask bit 256 skips it (per-sample overhead fraction and the final blend).
+#ifndef RING_LAYER_DECK_COLOUR
+#define RING_LAYER_DECK_COLOUR 1
+#endif
+#include "./RingCloudLayers.glslinc"
+#include "./RingCloudLayerSample.glslinc"
+// S6 WO5: the High layer's analytic cirrus shell (composited after the march; the includer supplies its noise reads).
+#define RING_CIRRUS_TEX2D(uv, lod) textureLod(extra_large_noise, (uv), (lod)).a
+#define RING_CIRRUS_TEX2D_SIZE float(textureSize(extra_large_noise, 0).x)
+#include "../../materials/ring_cirrus_shell.gdshaderinc"
 
 float terrain_cloud_direct_sun_visibility(vec3 worldPosition) {
 	if (genericData.data.terrain_cloud_sun_profile[3].y <= 0.5
@@ -482,6 +500,20 @@ float sampleScene(
 		stormDensity = localized_storm_density(canonicalCloudPosition, stormHeight)
 			* stormAltitudeMask;
 	}
+	// S6 cloud layers: one call site (the layer function is large; each sampleScene copy inlines it once).
+	float layered = 0.0;
+	if (g_layers_on) {
+		// The storm level lifts the layers only where a real storm owns the column (S6 3.8); non-storm decks close by weatherness instead.
+		// With the layers on, ring_ws_storm_level() is the primary's owned storm level (S6 3.8), set after its macro update.
+		layered = ring_layers_background(canonicalCloudPosition, max(stormDensity, ring_ws_storm_level()), extralargeNoiseValue,
+			largeNoisePos, mediumNoisePos, smallNoisePos, largenoisescale, mediumnoisescale, smallnoisescale,
+			smallscalePower, curlPower, lod, ambientsample, coarseSunLighting);
+	}
+	if (g_layers_on && stormDensity <= 0.0) {
+		// No storm sculpt here: the altitude-dispatched low / mid layers are the whole density (no single-band fetches).
+		g_last_total_density = clamp(layered, 0.0, 1.0) * wallMask;
+		return g_last_total_density;
+	}
 	if (edgeFade == 0.0 && stormDensity == 0.0) {
 		return 0.0;
 	}
@@ -515,7 +547,12 @@ float sampleScene(
 		}
 	}
 
-	float largeShape = texture(large_noise, (worldPosition - largeNoisePos) / largenoisescale).r * extraLargeShape;
+	// With the S6 layers on (and storm sculpt here) the background comes from `layered` above; this single-band block then only
+	// supplies the storm's own warped noise positions.
+	float largeShape = 0.0;
+	float weatherGate = 1.0;
+	if (!g_layers_on) {
+	largeShape = texture(large_noise, (worldPosition - largeNoisePos) / largenoisescale).r * extraLargeShape;
 	// Background uses shared physical weather. Localized storm volume remains
 	// independently dense, so a strong front cannot be erased by a clear gate.
 	float weatherStorm = max(stormDensity, genericData.data.cloud_handoff.z);
@@ -528,7 +565,7 @@ float sampleScene(
 	float weatherCoverage = ring_cloud_weather_resolved_coverage(
 		weatherFrame.w, weatherStorm, canonicalCloudPosition,
 		genericData.data.cloud_weather_params, weatherFrame);
-	float weatherGate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
+	weatherGate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
 		genericData.data.cloud_weather_params);
 	float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
 		? mix(mix(0.70, 0.90, weatherCoverage), 1.05, smoothstep(0.35, 0.80, weatherStorm)) : coverage;
@@ -537,6 +574,7 @@ float sampleScene(
 		+ max(effectorAdditive, 0.0);
 	if ((largeShape <= 0.0 || weatherGate <= 0.0) && stormDensity <= 0.0) {
 		return 0.0;
+	}
 	}
 	vec4 mediumShapes = texture(noise_medium, (worldPosition - mediumNoisePos) / mediumnoisescale).rgba;
 	float mediumshape = 1.0 - mediumShapes.b;
@@ -547,7 +585,9 @@ float sampleScene(
 	
 
 	float backgroundDensity = 0.0;
-	if (largeShape > 0.0) {
+	if (g_layers_on) {
+		backgroundDensity = layered;
+	} else if (largeShape > 0.0) {
 		float shape = mediumshape + max(effectorAdditive, 0.0);
 		shape = clamp(remap(shape, 1.0 - largeShape, 1.0, 0.0, 1.0), 0.0, 1.0);
 		shape = clamp(remap(shape, smallShape, 1.0, 0.0, 1.0), 0.0, 1.0);
@@ -715,8 +755,8 @@ void ring_ws_build_ray_sculpt(vec3 rayOrigin, vec3 rayDirection, float rayEnd, f
 			vec4 c = ringWeatherSystems.systems[index].c;
 			vec2 offset = (ring_ws_flags(index) & RING_WS_FLAG_STATIC) != 0u ? vec2(0.0) : shift;
 			float minRadius = max(1.0, min(a.z, a.w));
-			float reachLimit = 1.0 + reachMargin / minRadius;
-			float sliceLimit = 1.0 + intervalSlack / minRadius;
+			float reachLimit = RING_STORM_SUPPORT + reachMargin / minRadius;
+			float sliceLimit = RING_STORM_SUPPORT + intervalSlack / minRadius;
 			bool hasBand = buildIntervals && c.y > c.x + 1.0;
 			// Unwrapped centre-relative offsets: wrap the first point once, then accumulate wrapped differences.
 			float deltaAround = ring_ws_wrap(points[0].x + offset.x - a.x, circumference);
@@ -770,6 +810,44 @@ void ring_ws_build_ray_sculpt(vec3 rayOrigin, vec3 rayDirection, float rayEnd, f
 	g_ws_sculpt_mask = kept;
 }
 
+// In-loop gap skip (rule 2): implemented and measured, off by default. It removes only empty iterations, but the extra inlined skip
+// (one quadratic) costs +0.09 ms (one call) to +0.2 ms (boundary list) of march registers at 40 km, more than the gap steps cost.
+#ifndef RING_WS_GAP_SKIP
+#define RING_WS_GAP_SKIP 0
+#endif
+
+// Analytic curved-cylinder altitude derivative along a ray at `position` (per metre of ray length). At Certified radii subtracting
+// two R-length altitude samples quantizes near a tangent and can falsely reverse a ray.
+float cloud_altitude_motion(vec3 position, vec3 direction) {
+	vec3 radialDelta = position - genericData.data.cloud_frame_origin.xyz;
+	float tangent = dot(radialDelta, genericData.data.cloud_frame_around.xyz);
+	float inward = dot(radialDelta, genericData.data.cloud_frame_up.xyz);
+	float radialLength = max(length(vec2(tangent, genericData.data.cloud_frame_up.w - inward)), 1.0);
+	return ((genericData.data.cloud_frame_up.w - inward)
+		* dot(direction, genericData.data.cloud_frame_up.xyz)
+		- tangent * dot(direction, genericData.data.cloud_frame_around.xyz)) / radialLength;
+}
+
+// Whole maxstep lattice intervals the march may skip from ray distance `fromDistance` (S6 section 3.3, rule 2 gap skip and the
+// pre-entry skip): the minimum over every entry of U of its own skip, i.e. the background band plus each sculpt interval that has not
+// ended. The result never passes the next boundary of U (an altitude crossing or an interval start), so it only removes empty
+// iterations; the jitter lattice (t_k = fromDistance + k * maxStep) is untouched. `origin` is relative to the cloud frame origin.
+int ring_ws_boundary_skip(vec3 origin, vec3 direction, vec2 backgroundBand, float fromDistance, float maxStep, int stepCountRemaining, float depthLimit) {
+	vec3 around = genericData.data.cloud_frame_around.xyz;
+	vec3 up = genericData.data.cloud_frame_up.xyz;
+	float radius = genericData.data.cloud_frame_up.w;
+	int skip = cloud_entry_skip_steps(origin, direction, around, up, radius, backgroundBand.x, backgroundBand.y,
+		fromDistance, maxStep, stepCountRemaining, depthLimit);
+	for (int k = 0; k < RING_WS_RAY_BANDS; k++) {
+		if (k >= g_ws_ray_band_count || skip <= 0) break;
+		vec4 slot = g_ws_ray_band[k];
+		if (slot.y < fromDistance) continue; // the interval is behind the ray
+		skip = min(skip, cloud_band_skip_steps(origin, direction, around, up, radius, slot.z, slot.w, slot.x,
+			fromDistance, maxStep, stepCountRemaining, depthLimit));
+	}
+	return skip;
+}
+
 float sampleLighting(
 	int stepCount, 
 	vec3 worldPosition,
@@ -803,11 +881,23 @@ float sampleLighting(
 	float density = 0.0;
 	float stepCountFloat = max(float(stepCount) * lod, 2.0);
 	float actualDistance = mix(stepDistance * 4.0, stepDistance, lod);
+	// S6 layers: the sun ray's part above the march's reach, through the layers above this sample, as a closed-form transmittance
+	// (g_layer_sun, multiplied into the caller's Beer term).
+	bool layerLight = ring_ws_enabled() && g_layers_on;
+	g_layer_sun = 1.0;
+	if (layerLight && coarseSunLighting) {
+		float sunElevation = cloud_altitude_motion(worldPosition, sunDirection);
+		g_layer_sun = ring_layers_sun_above(to_cloud_space(worldPosition).y, sunElevation, actualDistance);
+		g_layer_shade = max(g_layer_shade, 1.0 - g_layer_sun);
+	}
 	float eachShortStep = actualDistance / (float(stepCount) / stepCountFloat) / stepCountFloat;
 	float traveledDistance = 0.0;
 	
 	float sunUpValue = 1.0 - sunUpWeight;
-	float eachStepWeight = 1.0 / stepCountFloat;
+	// S6: a layer-only primary's sun march takes every lightStride-th step of the same lattice; the steps taken share the weight the
+	// full lattice carries (ceil(n) / n), so a stride coarsens the sampling but keeps the expected optical depth.
+	float lightStride = coarseSunLighting ? g_layer_light_stride : 1.0;
+	float eachStepWeight = ceil(stepCountFloat) / (stepCountFloat * ceil(stepCountFloat / lightStride));
 
 	float heightGradient = 0.0;
 	float thisDensity = 0.0;
@@ -836,17 +926,32 @@ float sampleLighting(
 		}
 	}
 	// With sculpt systems in reach, samples inside the break band can still lie outside every band that holds density.
-	bool ciLightSkipEmpty = ciLight && g_ws_sub_mask != uvec2(0u);
-	for (float i = 0.0; i < stepCountFloat; i++) {
+	// Map storms are not in the sub-mask; their fetched column (ring_storm_column_contains) is their extent, so the test runs always.
+	bool ciLightSkipEmpty = ciLight;
+	for (float i = 0.0; i < stepCountFloat; i += lightStride) {
 		traveledDistance = mix(eachShortStep, actualDistance, clamp(quadraticOut(i / stepCountFloat), 0.0, 1.0));
 		curPos = worldPosition + sunDirection * traveledDistance;
 		vec3 cloudPos = to_cloud_space(curPos);
 
 		if (density < 1.0 && clamp(cloudPos.y, breakFloor, breakCeiling) == cloudPos.y){
-			heightGradient = remap(cloudPos.y, gradientFloor, gradientCeiling, 0.0, 1.0);
+			bool layerEmpty = false;
+			vec2 gradientBand = vec2(gradientFloor, gradientCeiling);
+			if (layerLight) {
+				// Layers on: a sample inside a layer shades by that layer's own band (the sun-up height hack); storm samples keep the
+				// legacy 2-6 km band so the storm look is unchanged; clear air between or above the layers adds nothing.
+				vec3 layerBand = ring_layers_light_band(cloudPos.y);
+				bool stormHere = ring_ws_density_possible(cloudPos.y, vec2(1e30, -1e30)) || ring_storm_column_contains(cloudPos.y);
+				if (layerBand.z > 0.5 && !stormHere) gradientBand = layerBand.xy;
+				layerEmpty = layerBand.z < 0.5 && !stormHere;
+			}
+			heightGradient = remap(cloudPos.y, gradientBand.x, gradientBand.y, 0.0, 1.0);
 			
 			heightGradient = clamp(smoothstep(sunUpValue - 0.1, sunUpValue, heightGradient), 0.0, 1.0);
-			if (ciLightSkipEmpty && !ring_ws_density_possible(cloudPos.y, vec2(gradientFloor, gradientCeiling))) {
+			if (layerEmpty) {
+				// Exactly empty clear air (no layer, no storm band): adds no density.
+				thisDensity = 0.0;
+				heightGradient = 1.0;
+			} else if (ciLightSkipEmpty && !layerLight && !ring_ws_density_possible(cloudPos.y, vec2(gradientFloor, gradientCeiling)) && !ring_storm_column_contains(cloudPos.y)) {
 				// Exactly empty (see ring_ws_density_possible): sampleScene would return 0.
 				thisDensity = 0.0;
 			} else {
@@ -1248,6 +1353,11 @@ void main() {
 	// background band unioned with the storm bands of the masked sculpt systems, instead of the sky-wide envelope.
 	// The margin covers the longest light march (4 x the lighting step distance) plus the light-sample offsets.
 	bool ciClouds = ring_ws_enabled();
+	// S6 volumetric low / mid layers (RingCloudLayerSample.glslinc): on whenever the layer table is published; debug mask bit 64 returns
+	// to the single legacy background band.
+	g_layers_on = ciClouds && ringCloudLayers.header0.x > 1.0 && (ring_ws_debug() & 64) == 0 && ring_ws_map_valid();
+	bool ciLayersRay = g_layers_on;
+	bool ciLayersProbe = ciClouds && ringCloudLayers.header0.x > 1.0 && (ring_ws_debug() & 64) == 0;
 	// With a valid macro map the per-sample macro terms are one fetch, so the per-ray list only needs the sculpt systems.
 	bool ciMap = ciClouds && ring_ws_map_valid();
 	bool ciStormMap = ciClouds && ring_storm_map_valid();
@@ -1270,10 +1380,25 @@ void main() {
 		float ciMargin = ciLightReach + 600.0;
 		int ciDebug = ring_ws_debug();
 		if ((ciDebug & 4) != 0) ring_ws_set_mask(uvec2(0u)); // debug: skip the ray mask build
-		else ring_ws_set_mask(ring_ws_ray_mask(rayOrigin, raydirection, ciRayEnd, ciMargin, cloudfloor, 2.0 * maxstep + 500.0, ciMap));
+		else ring_ws_set_mask(ring_ws_ray_mask(rayOrigin, raydirection, ciRayEnd, ciMargin,
+			g_layers_on ? min(cloudfloor, ring_cloud_layers_hull(true).x) : cloudfloor, 2.0 * maxstep + 500.0, ciMap));
 		if ((ciDebug & 2) != 0 || ringWeatherSystems.header1.y <= 0.001) g_ws_sculpt_mask = uvec2(0u); // debug: no sculpt systems; zero sculpt strength has no sculpt density
 		ciBackground = vec2(genericData.data.background_altitude.x, genericData.data.background_altitude.y);
 		if (ciBackground.y <= ciBackground.x + 1.0) ciBackground = vec2(cloudfloor, cloudceiling);
+		if (g_layers_on) {
+			// S6: the ray's base band is the volumetric layer hull. Its floor is the weather base only when a base-lowering system is
+			// near the ray (the mask margin covers the map's bilinear bleed); otherwise the fair base. The sculpt intervals widen it as before.
+			bool ciLowersBase = false;
+			for (int word = 0; word < 2; word++) {
+				uint bits = word == 0 ? g_ws_mask.x : g_ws_mask.y;
+				while (bits != 0u) {
+					int index = word * 32 + findLSB(bits);
+					bits &= bits - 1u;
+					if ((ring_ws_flags(index) & RING_WS_FLAG_LOWERS_BASE) != 0u) ciLowersBase = true;
+				}
+			}
+			ciBackground = ring_cloud_layers_hull(ciLowersBase);
+		}
 		ciWidenBand = (ciDebug & 1) == 0; // debug bit 1: no band widening
 		// Tight per-ray band: the background band, widened by a sculpt system's own band only over the ray interval where the ray
 		// is inside that system's ellipse; the sub-mask / sculpt mask are refined by the ellipses as well.
@@ -1285,6 +1410,17 @@ void main() {
 		vec2 ciHull = ring_ws_ray_band_hull(ciBackground);
 		cloudfloor = ciHull.x;
 		cloudceiling = ciHull.y;
+	}
+
+	// S6 WO5 cirrus shell: ciShellT is the shell's ray distance when it lies in front of the opaque depth (1e30 = none). The march
+	// only records the opacity in front of it (one loop-carried float); every shell fetch happens after the loop.
+	bool ciShellOn = g_layers_on && ringCloudLayers.layers[11].w > 0.5 && (ring_ws_debug() & 128) == 0;
+	float ciShellT = 1e30;
+	if (ciShellOn) {
+		float s = ring_cirrus_shell_distance(rayOrigin - genericData.data.cloud_frame_origin.xyz, raydirection,
+			genericData.data.cloud_frame_around.xyz, genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
+			ringCloudLayers.layers[8].x);
+		if (s >= 0.0 && s < linear_depth) ciShellT = s;
 	}
 
 	vec3 directionalLightSunUpPower[4] = vec3[4](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0));
@@ -1319,6 +1455,13 @@ void main() {
 	float primaryStormShare = 0.0;
 	float stormShareNum = 0.0;
 	float stormShareDen = 0.0;
+	// Layer shade share (S6): sum(visibility * sun share taken by the layers above) / sum(visibility), for the ambient term. The visibility
+	// sum is stormShareDen (identical: a sample with no density adds a zero visibility).
+	float layerShadeNum = 0.0;
+	// Deck light (S6 3.8): sum(visibility * column light of deck samples) over the same weights; 1 for non-deck samples.
+	float deckLightNum = 0.0;
+	// Deck colour (S6 3.8): sum(visibility * overhead cloud fraction of non-storm layer samples) over the same weights.
+	float deckOvercastNum = 0.0;
 	vec3 curPos = vec3(0.0);
 	float previousCloudAltitude = cloud_altitude(rayOrigin);
 	bool cameraStartsInsideCloudAltitudeBand = previousCloudAltitude >= cloudfloor
@@ -1337,14 +1480,33 @@ void main() {
 			curPos = SamplePoints[i].xyz;
 			vec3 cloudPos = to_cloud_space(curPos);
 			if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
+			if (ciClouds) g_ws_storm_owned = ring_ws_storm_owned_at(cloudPos, g_ws_sculpt_mask);
+			g_layers_on = ciLayersProbe;
+			if (ciLayersProbe) {
+				ring_layers_update_direct(cloudPos);
+				g_ws_storm = ring_ws_eval_owned_storm_level();
+				ring_layers_set_closure(g_ws_storm);
+			}
 			if (ciStormMap) ring_storm_update_primary(cloudPos, g_ws_sub_mask);
 			vec4 maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 			//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
 			//ceilingSample = cloudceiling;
 			
 			SamplePoints[i].w = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, 1.0, false, false) * densityMultiplier, sharpness);
+			// A probe exactly at the shell altitude reads the shell's vertical opacity (test hook).
+			if (ciLayersProbe && ringCloudLayers.layers[11].w > 0.5 && (ring_ws_debug() & 128) == 0
+				&& abs(cloudPos.y - ringCloudLayers.layers[8].x) <= 0.5) {
+				float probeCov = g_layer_high_cov;
+				vec4 probeHigh = ring_cloud_layer_resolve(2, vec4(0.0, 0.0, probeCov, g_layer_weather));
+				vec2 probeWind = vec2(cos(ringWeatherSystems.header1.w), sin(ringWeatherSystems.header1.w));
+				float probeTau = ring_cirrus_density(cloudPos.xz + ringCloudLayers.noise[2].xz - genericData.data.mediumnoiseposition.xz,
+					probeCov, ring_cirrus_stratiformity(probeCov), probeWind, 0.0)
+					* ringCloudLayers.layers[10].w * max(probeHigh.z - probeHigh.y, 1.0) * RING_CIRRUS_TAU_SCALE;
+				SamplePoints[i].w = max(SamplePoints[i].w, 1.0 - exp(-probeTau));
+			}
 		}
 		if (ciClouds) ring_ws_set_mask(ciRayMask);
+		g_layers_on = ciLayersRay;
 	}
 
 	// Skip only empty, whole maxstep lattice intervals before the first local
@@ -1353,24 +1515,9 @@ void main() {
 	vec3 entryOrigin = rayOrigin - genericData.data.cloud_frame_origin.xyz;
 	int entrySkip = 0;
 	if (ciClouds) {
-		// Per-ray band entry: a leading step may be skipped only if it is outside the background band AND, for each sculpt
-		// interval, either outside that system's band or before the interval starts (t_k = jitter + k * maxstep).
-		entrySkip = cloud_entry_skip_steps(
-			entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
-			genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
-			ciBackground.x, ciBackground.y, newStep, maxstep,
-			stepCount, linear_depth);
-		for (int k = 0; k < RING_WS_RAY_BANDS; k++) {
-			if (k >= g_ws_ray_band_count || entrySkip <= 0) break;
-			vec4 ciSlot = g_ws_ray_band[k];
-			int bandSkip = cloud_entry_skip_steps(
-				entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
-				genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
-				ciSlot.z, ciSlot.w, newStep, maxstep,
-				stepCount, linear_depth);
-			int beforeSkip = int(clamp(floor((ciSlot.x - newStep) / maxstep), 0.0, float(stepCount - 1)));
-			entrySkip = min(entrySkip, max(bandSkip, beforeSkip));
-		}
+		// The boundary-list skip over U: the background band and each sculpt interval (a leading step may be skipped only if it is
+		// outside the band AND, for each interval, either outside that system's band or before the interval starts; t_k = jitter + k * maxstep).
+		entrySkip = ring_ws_boundary_skip(entryOrigin, raydirection, ciBackground, newStep, maxstep, stepCount, linear_depth);
 	} else {
 		entrySkip = cloud_entry_skip_steps(
 			entryOrigin, raydirection, genericData.data.cloud_frame_around.xyz,
@@ -1388,6 +1535,8 @@ void main() {
 			&& traveledDistance > genericData.data.cloud_handoff.y) {
 			break;
 		}
+		// Cirrus shell: the first step at or past it records the opacity in front of the shell; the value is negative afterwards.
+		if (traveledDistance >= ciShellT && ciShellT >= 0.0) ciShellT = -1.0 - density;
 		bool terminalDepthInterval = false;
 		float terminalDensityWeight = 1.0;
 		if (traveledDistance > linear_depth){
@@ -1433,13 +1582,7 @@ void main() {
 			// radii subtracting two R-length samples quantizes near a tangent and
 			// can falsely reverse a ray before its first density sample.
 			if (!cameraStartsInsideCloudAltitudeBand) {
-				vec3 radialDelta = curPos - genericData.data.cloud_frame_origin.xyz;
-				float tangent = dot(radialDelta, genericData.data.cloud_frame_around.xyz);
-				float inward = dot(radialDelta, genericData.data.cloud_frame_up.xyz);
-				float radialLength = max(length(vec2(tangent, genericData.data.cloud_frame_up.w - inward)), 1.0);
-				float analyticAltitudeMotion = ((genericData.data.cloud_frame_up.w - inward)
-					* dot(raydirection, genericData.data.cloud_frame_up.xyz)
-					- tangent * dot(raydirection, genericData.data.cloud_frame_around.xyz)) / radialLength;
+				float analyticAltitudeMotion = cloud_altitude_motion(curPos, raydirection);
 				if (abs(cloudBandTraversalDirection) <= 0.000001
 					&& abs(analyticAltitudeMotion) > 0.000001) {
 					cloudBandTraversalDirection = sign(analyticAltitudeMotion);
@@ -1453,7 +1596,8 @@ void main() {
 		// This mask cannot affect density or lighting outside the altitude band.
 		// The disabled path retains the original fetch for parity comparisons.
 		vec4 maskSample = vec4(0.0);
-		if ((genericData.data.cloud_mask_controls.x <= 0.5 || inCloudAltitudeBand) && !ciEmptyStep) {
+		// With the layers on the fetch waits until the column is known to hold density (below).
+		if ((genericData.data.cloud_mask_controls.x <= 0.5 || inCloudAltitudeBand) && !ciEmptyStep && !g_layers_on) {
 			maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
 		}
 		//ceilingSample = mix(halfCeiling, cloudceiling, maskSample.a);
@@ -1471,28 +1615,58 @@ void main() {
 				newdensity = 0.0;
 			} else {
 			// Sculpt sub-mask for this primary sample (light and ambient samples reuse it).
-			if (ciClouds) ring_ws_update_sub_mask(cloudPos, ciLightReach, ciBackground, ciWidenBand);
+			if (ciClouds) ring_ws_update_sub_mask(cloudPos, ciLightReach, ciBackground, ciWidenBand, ciStormMap);
 			// One storm profile fetch per primary sample (only when a storm system is in reach); light and ambient samples reuse it.
+			bool ciColumnEmpty = false;
 			if (ciStormMap) {
-				ring_storm_update_primary(cloudPos, g_ws_sub_mask);
+				if (g_ws_sub_map_storm) ring_storm_fetch_column(cloudPos);
+				else { g_storm_heights = vec4(0.0); g_storm_aux = vec4(0.0); }
 				g_storm_primary_active = g_storm_heights.y > g_storm_heights.x || g_storm_heights.w > g_storm_heights.z;
 				g_storm_primary_dominant = false;
+				// The fetched column is the map storms' exact extent for this primary and its light samples (ring_ws_update_sub_mask).
+				if (ciWidenBand) g_ws_sub_band.y = max(g_ws_sub_band.y, ring_storm_column_top());
+				// Exactly empty: outside the background band, the column and every other sculpt band in reach (e.g. an anvil interval
+				// step beside the canopy), so sampleScene would return 0. Skips the macro fetch and sampleScene.
+				ciColumnEmpty = !g_layers_on && !ring_ws_density_possible(cloudPos.y, ciBackground) && !ring_storm_column_contains(cloudPos.y);
 			}
+			if (g_layers_on) {
+				// S6: the column's low / mid layers (one map fetch). A primary outside both layers, every sculpt band in reach and the storm
+				// column is exactly empty: no macro fetch, no mask fetch, no sampleScene. The layer hull is wider than the layers themselves.
+				ring_layers_update(cloudPos);
+				ciColumnEmpty = !ring_layers_contain(cloudPos.y) && !ring_ws_density_possible(cloudPos.y, vec2(1e30, -1e30))
+					&& !(ciStormMap && ring_storm_column_contains(cloudPos.y));
+				if (!ciColumnEmpty) maskSample = texture(extra_large_noise, (cloudPos.xz - extralargeNoisePos.xz) / extralargenoiseScale);
+			}
+			if (ciColumnEmpty) {
+				newdensity = 0.0;
+			} else {
 			// One macro-weather evaluation per primary sample; its coverage, density and light multipliers (and the
 			// g_ws_* storm/base-coverage globals) are reused by every light and ambient sample taken from this point.
 			if (ciClouds && (ring_ws_debug() & 8) != 0) ring_ws_apply_macro(vec4(ringWeatherSystems.header0.z, 0.0, 0.0, 0.0), coverage, densityMultiplier, lightingdensityMultiplier); // debug: constant macro
 			else if (ciMap) ring_ws_update_macro_map(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
 			else if (ciClouds) ring_ws_update_macro(cloudPos, coverage, densityMultiplier, lightingdensityMultiplier);
+			if (g_layers_on) {
+				// S6 3.8: from here on this primary's storm level is the owned one (storms and plain heavy overcast keep theirs).
+				g_ws_storm = ring_ws_eval_owned_storm_level();
+				ring_layers_set_closure(g_ws_storm);
+			}
 			// newdensity = sampleSceneCoarse(largeNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, coverage, curLod);
+			if (g_layers_on) g_layer_extent = abs(cloud_altitude_motion(curPos, raydirection)) * maxstep;
 			newdensity = pow(sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false, false) * densityMultiplier, sharpness) * depthFade;
 			primaryStormShare = g_last_total_density > 0.0001 ? clamp(g_last_storm_density / g_last_total_density, 0.0, 1.0) : 0.0;
 			// Storm-lit background (the lifted overcast under a storm) is storm cloud as far as darkness goes.
+			// Only a storm-owned column counts (S6 3.8): a non-storm deck keeps its layer lighting. Layers off keep the S4 rule.
 			primaryStormShare = max(primaryStormShare, smoothstep(0.35, 0.80, ring_ws_storm_level()) * min(1.0, newdensity * 4.0));
 			g_storm_primary_dominant = g_last_storm_density > 0.5 * g_last_total_density && g_last_storm_density > 0.0;
+			g_layer_light_stride = ring_layers_light_stride(g_layers_on && g_last_storm_density <= 0.0, cloudPos.y, traveledDistance);
+			// A non-storm stratiform layer sample is deck cloud (S6 3.8); a storm-owned column keeps the S4 look.
+			g_layer_deck = g_layers_on && g_last_storm_density <= 0.0
+				? ring_layers_deck(cloudPos.y) * (1.0 - g_ws_storm_owned) * (1.0 - smoothstep(0.35, 0.80, ring_ws_storm_level())) : 0.0;
 			if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x
 				&& genericData.data.cloud_handoff.x > 0.0) {
 				newdensity *= ring_cloud_handoff_near_weight(traveledDistance,
 					genericData.data.cloud_handoff);
+			}
 			}
 			}
 			// if (newdensity > 0.0) {
@@ -1500,10 +1674,12 @@ void main() {
 			// }
 			
 			
+			float sampleDeckOvercast = 0.0;
 			if (newdensity > 0.0){
 				if (initialdistanceSample == 0.0){
 					initialdistanceSample = traveledDistance;
 				}
+				g_layer_shade = 0.0;
 
 				float powderEffect = pow(newdensity, genericData.data.powderStrength * 2.0);
 
@@ -1522,7 +1698,7 @@ void main() {
 					int thislightingStepCount = min(int(directionalLights[lightI].direction.w), lightingStepCount);
 					float henyeygreenstein =  pow(HenyeyGreenstein(genericData.data.anisotropy, directionalLightSunUpPower[lightI].b), mix(1.0, 2.0, 1.0 - genericData.data.anisotropy)); 
 					float densitySample = sampleLighting(thislightingStepCount, curPos, extralargeNoisePos, largeNoisePos, mediumNoisePos, smallNoisePos, sundir, densityMultiplier * lightingdensityMultiplier, sunUpWeight, lightingStepDistance, cloudceiling, cloudfloor, extralargenoiseScale, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, true);
-					densitySample = BeersLaw(lightingStepDistance, densitySample * henyeygreenstein);
+					densitySample = BeersLaw(lightingStepDistance, densitySample * henyeygreenstein) * g_layer_sun;
 					//densitySample = Powder(lightingStepDistance, densitySample);
 					// Storm cloud (tower, canopy, deck, the storm-lit overcast) takes only part of the direct sun: a dark, dramatic storm even where the sun reaches it.
 					float thisStepLightingWeight = (pow(densitySample, lightingSharpness)) * sunUpWeight * terrain_cloud_direct_sun_visibility(curPos)
@@ -1624,7 +1800,15 @@ void main() {
 				}
 				
 				if (aobase.a > 0.0){
-				ambient += sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos + genericData.data.cloud_frame_up.xyz * minstep, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, true, false) * densityMultiplier * lightingdensityMultiplier ;
+				// Deck samples take the unsaturated density above (structure: darker patches under denser cloud); the rest is unchanged.
+				float deckAbove = sampleScene(largeNoisePos, mediumNoisePos, smallNoisePos, curPos + genericData.data.cloud_frame_up.xyz * minstep, cloudceiling, cloudfloor, maskSample.a, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, true, false);
+				ambient += deckAbove * mix(densityMultiplier * lightingdensityMultiplier, RING_LAYER_DECK_AO_SCALE, g_layer_deck);
+#if RING_LAYER_DECK_COLOUR
+				// Not for storm cloud: its share of the primary (storm-owned columns also have no closure and no deck weight).
+				if (g_layers_on && (ring_ws_debug() & 256) == 0) sampleDeckOvercast = (1.0 - primaryStormShare) * ring_layers_deck_overcast(cloudPos.y, deckAbove, g_layer_deck);
+#endif
+				// From here g_layer_deck holds this primary's deck light factor (column light x patch), 1 for non-deck samples.
+				g_layer_deck = mix(1.0, ring_layers_column_light(cloudPos.y) * ring_layers_deck_patch(deckAbove), g_layer_deck);
 				}
 
 				
@@ -1646,6 +1830,13 @@ void main() {
 			float stormVisible = newdensity * terminalDensityWeight * (1.0 - density);
 			stormShareNum += stormVisible * primaryStormShare;
 			stormShareDen += stormVisible;
+			if (newdensity > 0.0) {
+				layerShadeNum += stormVisible * g_layer_shade;
+				deckLightNum += stormVisible * (aobase.a > 0.0 ? g_layer_deck : 1.0);
+#if RING_LAYER_DECK_COLOUR
+				deckOvercastNum += stormVisible * sampleDeckOvercast;
+#endif
+			}
 			density += newdensity * terminalDensityWeight;
 			if (density >= 1.0){
 				densityBreak = true;
@@ -1661,11 +1852,28 @@ void main() {
 			// remote shell and incorrectly admit the inverted night-side layer.
 			// Flag on: a sculpt interval that has not started yet can still hold density, so this is not the terminal exit.
 			bool ciExitDeferred = ciClouds && ring_ws_band_ahead(traveledDistance);
+			// Rule 2 (S6 section 3.3): inside the ray's hull but outside U(t) is a gap step (the gap beside a storm interval, below the
+			// background band, between layers). It holds no density and is never terminal; it skips whole lattice intervals to the next
+			// boundary of U. Rule 3: a gap step heading away from U with nothing ahead is the terminal exit, and so is a gap step that
+			// returns toward U after the ray's apex (the remote ring shell, which the far layer owns).
+			bool ciGap = ciClouds && ring_ws_gap_step(cloudPos.y, traveledDistance, vec2(cloudfloor, cloudceiling), ciBackground);
+			bool ciGapSkip = false;
+			vec2 ciGapBand = vec2(0.0);
+			bool ciGapTerminal = false;
+			if (ciGap) {
+				float gapMotion = cloud_altitude_motion(curPos, raydirection);
+				vec2 gapBand = ring_ws_ray_band_at(traveledDistance, ciBackground);
+				ciGapBand = gapBand;
+				bool gapToward = (cloudPos.y < gapBand.x && gapMotion > 0.0) || (cloudPos.y > gapBand.y && gapMotion < 0.0);
+				bool gapPastApex = gapMotion < 0.0 && cloud_altitude_motion(rayOrigin, raydirection) > 0.0; // the ray started ascending
+				ciGapTerminal = !ciExitDeferred && (!gapToward || gapPastApex);
+				ciGapSkip = gapToward && !gapPastApex;
+			}
 			float nextAltitude = ciExitDeferred ? cloudPos.y : cloud_altitude(curPos + raydirection * maxstep);
 			float exitAltitudeDirection = nextAltitude - cloudPos.y;
 			bool leavingAbove = cloudPos.y > cloudceiling && exitAltitudeDirection > 0.0;
 			bool leavingBelow = cloudPos.y < cloudfloor && exitAltitudeDirection < 0.0;
-			if (!ciExitDeferred && (enteredCloudAltitudeBand || leavingAbove || leavingBelow)){
+			if (ciGapTerminal || (!ciExitDeferred && !ciGap && (enteredCloudAltitudeBand || leavingAbove || leavingBelow))){
 				// Preserve density collected while traversing the layer. The stock
 				// path jumped to max distance on exit, and the range fade below then
 				// erased the completed cloud ray.
@@ -1678,6 +1886,25 @@ void main() {
 			}
 			
 			newStep = maxstep;
+#if RING_WS_GAP_SKIP
+			// Gap skip: whole lattice intervals up to just before the next boundary of U, i.e. the altitude crossing into U's band at this
+			// distance or the next interval start, whichever comes first (never past either, never off the lattice). One skip call only
+			// (not the boundary list): a second inlined copy of the quadratic costs registers in the whole march.
+			if (ciGapSkip && !terminalDepthInterval) {
+				int gapRemaining = stepCount - i - 1;
+				float gapFrom = traveledDistance + maxstep;
+				int gapSkip = cloud_entry_skip_steps(
+					rayOrigin - genericData.data.cloud_frame_origin.xyz, raydirection, genericData.data.cloud_frame_around.xyz,
+					genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
+					ciGapBand.x, ciGapBand.y, gapFrom, maxstep, gapRemaining, linear_depth);
+				float gapNextStart = min(ring_ws_next_interval_start(traveledDistance), linear_depth);
+				gapSkip = min(gapSkip, int(clamp(floor((gapNextStart - gapFrom) / maxstep), 0.0, float(max(gapRemaining - 1, 0)))));
+				if (gapSkip > 0) {
+					traveledDistance += float(gapSkip) * maxstep;
+					i += gapSkip;
+				}
+			}
+#endif
 		}
 
 		if (terminalDepthInterval) {
@@ -1739,10 +1966,85 @@ void main() {
 	float stormAmbientStrength = genericData.data.ring_storm_ambient.w * stormShare;
 	ambientLight = max(ambientLight, genericData.data.ambientLightColor.rgb * 0.35 * (1.0 - stormAmbientStrength));
 	ambientLight = mix(ambientLight, genericData.data.ring_storm_ambient.rgb, stormAmbientStrength);
+	// Layers above the cloud (an As deck over Cu) darken its ambient the way the storm share does, at half strength.
+	float layerShade = stormShareDen > 0.0001 ? clamp(layerShadeNum / stormShareDen, 0.0, 1.0) : 0.0;
+	ambientLight = mix(ambientLight, genericData.data.ring_storm_ambient.rgb, 0.5 * genericData.data.ring_storm_ambient.w * layerShade);
+	// Deck column light (S6 3.8), after the floor: a closed deck's colour is this ambient, so its structure must survive the floor.
+	ambientLight *= stormShareDen > 0.0001 ? clamp(deckLightNum / stormShareDen, 0.0, 2.0) : 1.0;
+#if RING_LAYER_DECK_COLOUR
+	// Deck colour (S6 3.8): the light under a deck is the sun and sky light its cloud has scattered (flat in wavelength), so the overhead
+	// cloud fraction of the ray's samples (ring_layers_deck_overcast) moves the ambient's chroma from the sky's toward the sun + sky
+	// irradiance on the deck top (the unshadowed sun term of a lit sample x the sun's cosine, plus the sky ambient). Brightness (column
+	// light, patches, floor) is kept. Fair cumulus (no closure, no deck weight) and storm-owned cloud keep their ambient exactly.
+	float deckOvercast = stormShareDen > 0.0001 ? clamp(deckOvercastNum / stormShareDen, 0.0, 1.0) : 0.0;
+	if (deckOvercast > 0.0) {
+		vec3 deckSource = genericData.data.ambientLightColor.rgb * max(totalLightPower, 0.62) + genericData.data.ambientfogdistancecolor.rgb * 0.08;
+		for (int lightI = 0; lightI < directionalLightCount; lightI++) {
+			if (directionalLights[lightI].color.a > 0.0 && directionalLightSunUpPower[lightI].r > 0.0) {
+				deckSource += pow(directionalLights[lightI].color.rgb * directionalLights[lightI].color.a, vec3(2.2)) * directionalLightSunUpPower[lightI].r
+					* max(dot(directionalLights[lightI].direction.xyz, genericData.data.cloud_frame_up.xyz), 0.0);
+			}
+		}
+		const vec3 deckLuma = vec3(0.2126, 0.7152, 0.0722);
+		ambientLight = mix(ambientLight, deckSource * (dot(ambientLight, deckLuma) / max(dot(deckSource, deckLuma), 1e-6)), deckOvercast);
+	}
+#endif
 	if (any(isnan(lightColor.rgb)) || any(isinf(lightColor.rgb))) {
 		lightColor.rgb = vec3(0.0);
 	}
 	lightColor.rgb += ambientLight;
+	// Cirrus shell composite (S6 WO5): by ray distance against the volumetric march. The march kept the opacity in front of the shell
+	// (ciShellT, negative once recorded) or ended before reaching it. `density` already holds cloudRangeFade.
+	float shellDepthEnd = 0.0;
+	if (ciShellOn && ciShellT < 1e29) {
+		float shellFront = ciShellT < -0.5 ? -1.0 - ciShellT : clamp(density, 0.0, 1.0);
+		float shellT = ring_cirrus_shell_distance(rayOrigin - genericData.data.cloud_frame_origin.xyz, raydirection,
+			genericData.data.cloud_frame_around.xyz, genericData.data.cloud_frame_up.xyz, genericData.data.cloud_frame_up.w,
+			ringCloudLayers.layers[8].x);
+		float shellNear = 1.0;
+		if (genericData.data.cloud_handoff.y > genericData.data.cloud_handoff.x && genericData.data.cloud_handoff.x > 0.0) {
+			shellNear = ring_cloud_handoff_near_weight(shellT, genericData.data.cloud_handoff);
+		} else {
+			shellNear = 1.0 - smoothstep(minstep * float(stepCount), maxstep * float(stepCount), shellT);
+		}
+		if (shellT >= 0.0 && shellNear > 0.0 && shellFront < 1.0) {
+			vec3 shellPos = rayOrigin + raydirection * shellT;
+			vec3 shellCanon = to_cloud_space(shellPos);
+			vec4 shellCol = ring_cloud_layer_resolve(2, ring_layers_map_at(shellCanon)); // (coverage, base, top, stratiformity)
+			// A real storm owns its anvil (S6 3.8): no cirrus shell inside a sculpt storm's support, so storms look exactly as before.
+			if (ciClouds) shellCol.x *= 1.0 - ring_ws_storm_owned_at(shellCanon, g_ws_sculpt_mask);
+			if (shellCol.x > 0.0) {
+				vec2 shellWind = vec2(cos(ringWeatherSystems.header1.w), sin(ringWeatherSystems.header1.w));
+				vec2 shellXZ = shellCanon.xz + ringCloudLayers.noise[2].xz - genericData.data.mediumnoiseposition.xz;
+				float shellMu = cloud_altitude_motion(shellPos, raydirection);
+				// Pixel footprint at the shell: the angle between the rays of two vertically adjacent pixels.
+				vec4 shellP0 = genericData.data.current_camera_inv_projection * vec4(0.0, 0.0, 0.0, 1.0);
+				vec4 shellP1 = genericData.data.current_camera_inv_projection * vec4(0.0, 2.0 / float(size.y), 0.0, 1.0);
+				float shellAngle = length(normalize(shellP1.xyz / shellP1.w) - normalize(shellP0.xyz / shellP0.w));
+				float shellFootprint = shellT * shellAngle / max(abs(shellMu), 0.05);
+				float shellDensity = ring_cirrus_density(shellXZ, shellCol.x, shellCol.w, shellWind, shellFootprint);
+				float shellAlpha = ring_cirrus_alpha(shellDensity, max(shellCol.z - shellCol.y, 1.0), ringCloudLayers.layers[10].w, shellMu) * shellNear;
+				vec3 shellColour = (genericData.data.ambientLightColor.rgb * max(totalLightPower, 0.62)
+					+ genericData.data.ambientfogdistancecolor.rgb * 0.08) * ringCloudLayers.layers[11].y;
+				for (int shellLight = 0; shellLight < directionalLightCount; shellLight++) {
+					if (directionalLights[shellLight].color.a > 0.0 && directionalLightSunUpPower[shellLight].r > 0.0) {
+						shellColour += pow(directionalLights[shellLight].color.rgb * directionalLights[shellLight].color.a
+								* directionalLightSunUpPower[shellLight].r, vec3(2.2))
+							* ring_cirrus_phase(directionalLightSunUpPower[shellLight].b, ringCloudLayers.layers[11].x, shellCol.w, shellCol.x)
+							* RING_CIRRUS_SUN_SCALE;
+					}
+				}
+				float shellW = shellAlpha * (1.0 - shellFront);
+				float shellVolA = clamp(density, 0.0, 1.0);
+				if (shellW > 0.0) {
+					lightColor.rgb = (lightColor.rgb * shellVolA + shellColour * shellW) / max(shellVolA + shellW, 1e-5);
+					ring_cloud_depth_accumulate(depthWeightSum, depthWeightedDistanceSum, shellFront, shellAlpha, shellT);
+					density = min(shellVolA + shellW, 1.0);
+					shellDepthEnd = shellT;
+				}
+			}
+		}
+	}
 	// lightColor.rgb = ambientLight + clamp(lightColor.rgb / lightingSamples, vec3(0.0), vec3(1.0));
 	// Keep the temporal opacity input physical; display compositing clamps later.
 	lightColor.a = clamp(density, 0.0, 1.0);
@@ -1783,7 +2085,7 @@ void main() {
 
 
 	//accumulation preperation:
-	float finalDensityDistance = ring_cloud_depth_resolve(depthWeightSum, depthWeightedDistanceSum, traveledDistance, highestDensityDistance);
+	float finalDensityDistance = ring_cloud_depth_resolve(depthWeightSum, depthWeightedDistanceSum, max(traveledDistance, shellDepthEnd), highestDensityDistance);
 	vec3 delta = rayOrigin - genericData.data.previous_camera_origin.xyz;
 
 	// Reprojection of the cloud body and the opaque-surface metadata the history is validated against live in

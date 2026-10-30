@@ -4,7 +4,7 @@ extends SceneTree
 #   Godot --path . --resolution 1280x720 --script res://tools/storm_profile_map_gpu_test.gd
 # Prints STORM_PROFILE_MAP=PASS. Checks, on the front layers read back with texture_get_data:
 #   - two bakes of one snapshot are byte-identical;
-#   - heights are finite and inside the storm band;
+#   - heights are finite and inside the storm band, body tops <= 18000 m and canopy tops <= 16500 m (S6 ceiling);
 #   - neighbouring texels with coverage > 0.05 differ by at most 1.5 km in base and top (continuity);
 #   - the map is invalid when camera-independent clouds are off (and valid again when they are back on).
 

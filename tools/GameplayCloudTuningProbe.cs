@@ -156,6 +156,42 @@ public partial class GameplayCloudTuningProbe : RefCounted
         finally { System.IO.File.Delete(ProjectSettings.GlobalizePath(isolatedPath)); }
     }
 
+    /// <summary>S6 WO8 migration: a saved file holding the retired NaturalCloudTopAltitudeMeters loads with no error, keeps its
+    /// other overrides, does not apply the retired value, and the next save rewrites the file without the key.</summary>
+    public string VerifyRetiredKeyMigration(string isolatedPath)
+    {
+        if (!isolatedPath.StartsWith("res://.godot/", StringComparison.Ordinal) || isolatedPath.Contains("..", StringComparison.Ordinal)) return "bad path";
+        string absolute = ProjectSettings.GlobalizePath(isolatedPath);
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(absolute)!);
+        using var bridge = new RingSunshineCloudBridge();
+        try
+        {
+            // A pre-WO8 save, written as text the way ResourceSaver wrote it before the key was retired.
+            System.IO.File.WriteAllText(absolute,
+                "[gd_resource type=\"Resource\" script_class=\"GameplayCloudSettings\" format=3]\n\n"
+                + "[ext_resource type=\"Script\" path=\"res://scripts/ui/GameplayCloudSettings.cs\" id=\"1_d41de\"]\n\n"
+                + "[resource]\nscript = ExtResource(\"1_d41de\")\nOverrides = {\n"
+                + "\"CloudSharpness\": 0.4,\n\"NaturalCloudBaseAltitudeMeters\": 2000.0,\n\"NaturalCloudTopAltitudeMeters\": 7000.0\n}\n");
+            float topBefore = bridge.NaturalCloudTopAltitudeMeters;
+            var defaults = new GameplayCloudDefaults(isolatedPath); defaults.Initialize(bridge);
+            if (defaults.LastError != "") return "load error: " + defaults.LastError;
+            if (defaults.Settings.Overrides.ContainsKey("NaturalCloudTopAltitudeMeters")) return "retired key kept in overrides";
+            if (!defaults.Settings.Overrides.ContainsKey("CloudSharpness") || !defaults.Settings.Overrides.ContainsKey("NaturalCloudBaseAltitudeMeters"))
+                return "valid overrides dropped with the retired key";
+            if (Math.Abs(bridge.NaturalCloudTopAltitudeMeters - topBefore) > 0.01f) return "retired value applied: " + bridge.NaturalCloudTopAltitudeMeters;
+            if (defaults.Dirty) return "load marked the defaults dirty";
+            if (!defaults.SetOverride(bridge, "CloudSharpness", 0.45f) || !defaults.Save()) return "save failed: " + defaults.LastError;
+            string text = System.IO.File.ReadAllText(absolute);
+            if (text.Contains("NaturalCloudTopAltitudeMeters", StringComparison.Ordinal)) return "retired key still in the saved file";
+            if (!text.Contains("NaturalCloudBaseAltitudeMeters", StringComparison.Ordinal)) return "saved file lost a valid key";
+            var reloaded = new GameplayCloudDefaults(isolatedPath); reloaded.Load();
+            if (reloaded.LastError != "" || reloaded.Settings.Overrides.ContainsKey("NaturalCloudTopAltitudeMeters")) return "reload after save: " + reloaded.LastError;
+            return "";
+        }
+        catch (Exception error) { return error.Message; }
+        finally { System.IO.File.Delete(absolute); }
+    }
+
     private static bool Verify(GameplayCloudDefaults defaults, RingSunshineCloudBridge bridge, string key, Variant value)
     {
         if (!defaults.SetOverride(bridge, key, value)) return false;

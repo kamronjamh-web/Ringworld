@@ -706,41 +706,44 @@ public partial class RingGraphicsQualityController : Node
         foreach (Variant key in _waterSsrOverrides.Keys) Set(key.AsString(), _waterSsrOverrides[key]);
     }
 
-    /// <summary>Rain particle pool and lightning bolt complexity per preset (rain and lightning stay enabled everywhere: contract C7/C8).</summary>
-    public static (int particles, int branches, int secondaryDepth, int streaks) PresetWeather(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    /// <summary>Rain particle pool, rain streak budget, gust front debris count (S3 D1) and lightning bolt complexity per preset (rain and lightning stay enabled everywhere: contract C7/C8).</summary>
+    public static (int particles, int branches, int secondaryDepth, int streaks, int debris) PresetWeather(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
     {
-        RingTerrainLodCoordinator.QualityPreset.Low => (1024, 1, 0, 4000),
-        RingTerrainLodCoordinator.QualityPreset.Medium => (2048, 2, 1, 8000),
-        RingTerrainLodCoordinator.QualityPreset.High => (3072, 3, 1, 12000),
-        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (6144, 4, 2, 20000),
-        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (4096, 3, 1, 20000),
-        _ => (4096, 3, 1, 16000),
+        RingTerrainLodCoordinator.QualityPreset.Low => (1024, 1, 0, 4000, 128),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (2048, 2, 1, 8000, 256),
+        RingTerrainLodCoordinator.QualityPreset.High => (3072, 3, 1, 12000, 512),
+        RingTerrainLodCoordinator.QualityPreset.UltraVideo => (6144, 4, 2, 20000, 1024),
+        RingTerrainLodCoordinator.QualityPreset.Cinematic5090 => (4096, 3, 1, 20000, 1024),
+        _ => (4096, 3, 1, 16000, 768),
     };
 
     private void ApplyWeatherQuality(RingTerrainLodCoordinator.QualityPreset preset)
     {
+        (int particles, int branches, int secondaryDepth, int streaks, int debris) = PresetWeather(preset);
+        RingGustFrontDebris.PresetBudget = debris;
         if (_weatherEffects == null || !GodotObject.IsInstanceValid(_weatherEffects)) return;
-        (int particles, int branches, int secondaryDepth, int streaks) = PresetWeather(preset);
         _weatherEffects.MaximumParticleCount = particles;
         _weatherEffects.MaximumStreakCount = streaks;
         _weatherEffects.BoltMaximumBranches = branches;
         _weatherEffects.BoltSecondaryBranchDepth = secondaryDepth;
     }
 
-    /// <summary>Wet world presets (docs/storm-revamp-s2-wet-world-design.md section 4): ripple layers per surface (Low 1, Medium 2, High 3, Very High / Ultra 4) and the drip instance budget (128 Low .. 512 Ultra).</summary>
-    public static (int RippleLayers, int DripBudget) PresetWetWorld(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
+    /// <summary>Wet world presets (docs/storm-revamp-s2-wet-world-design.md section 4): ripple layers per surface (Low 1, Medium 2, High 3, Very High / Ultra 4), the drip instance budget
+    /// (128 Low .. 512 Ultra) and half-size engine SSR while wet (Low, Medium, High; the SSR traces of wet ground and puddles are the largest wet world cost, section 10).</summary>
+    public static (int RippleLayers, int DripBudget, bool HalfSizeSsr) PresetWetWorld(RingTerrainLodCoordinator.QualityPreset preset) => preset switch
     {
-        RingTerrainLodCoordinator.QualityPreset.Low => (1, 128),
-        RingTerrainLodCoordinator.QualityPreset.Medium => (2, 256),
-        RingTerrainLodCoordinator.QualityPreset.High => (3, 384),
-        _ => (4, 512),
+        RingTerrainLodCoordinator.QualityPreset.Low => (1, 128, true),
+        RingTerrainLodCoordinator.QualityPreset.Medium => (2, 256, true),
+        RingTerrainLodCoordinator.QualityPreset.High => (3, 384, true),
+        _ => (4, 512, false),
     };
 
     private static void ApplyWetWorldQuality(RingTerrainLodCoordinator.QualityPreset preset)
     {
-        (int layers, int drips) = PresetWetWorld(preset);
+        (int layers, int drips, bool halfSsr) = PresetWetWorld(preset);
         RingWetWorldSettings.Current.RippleLayers = layers;
         RingWetWorldSettings.Current.DripBudget = drips;
+        RingWetWorldSettings.Current.HalfSizeSsr = halfSsr;
     }
 
     private void ApplyWaterSsrQuality(RingTerrainLodCoordinator.QualityPreset preset)

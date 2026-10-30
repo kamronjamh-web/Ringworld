@@ -30,6 +30,12 @@ uniform float far_weather_shadow_meters_per_unit = 1.0;
 // the Sunshine maps over the same ground (see RingFarWeatherShadowGlobals).
 const float RING_FAR_WEATHER_SHADOW_BAND_FILL = 1.7;
 
+// S6 WO6 cirrus term: the High layer's weak closed-form shadow (CloudLayerTable High ShadowWeight 0.12; the near GPU shadow and the
+// layer sun march use the same value): occlusion 1 - (1 - band) * (1 - weight * high coverage at the sun ray's shell crossing). The
+// bake's B channel holds the storm-owned-suppressed High coverage; 0 (no layer atlas) leaves the band term exactly as before.
+const float RING_FAR_WEATHER_CIRRUS_SHADOW_WEIGHT = 0.12;
+const float RING_FAR_WEATHER_CIRRUS_ALTITUDE = 9500.0;
+
 // Cubic B-spline reconstruction of the ~2 km baked map from four bilinear taps.
 // Plain bilinear shows each texel's straight edges as a stair-stepped grid on
 // the ground from altitude; the B-spline is smooth (C2) at texel boundaries.
@@ -88,7 +94,15 @@ float ring_far_weather_cloud_occlusion(vec3 receiver_world, vec3 receiver_ring_c
 	float cloud = ring_far_weather_cloud_map_bspline(vec2(fract(around / circumference), across / width));
 	float optical_depth = ring_far_weather_shadow.y * cloud * (band.y - band.x)
 		* RING_FAR_WEATHER_SHADOW_BAND_FILL / sun_up;
-	return (1.0 - exp(-optical_depth)) * strength;
+	float band_occlusion = 1.0 - exp(-optical_depth);
+	// Cirrus at the sun ray's crossing of the shell altitude.
+	float rise_ci = (RING_FAR_WEATHER_CIRRUS_ALTITUDE - receiver_altitude) / sun_up;
+	float around_ci = angle * radius_meters + dot(sun, tangent) * rise_ci;
+	float across_ci = radial.y * meters_per_unit + width * 0.5 + sun.y * rise_ci;
+	float high = across_ci >= 0.0 && across_ci <= width
+		? textureLod(ring_far_weather_cloud_map, vec2(fract(around_ci / circumference), across_ci / width), 0.0).b : 0.0;
+	float occlusion = 1.0 - (1.0 - band_occlusion) * (1.0 - RING_FAR_WEATHER_CIRRUS_SHADOW_WEIGHT * clamp(high, 0.0, 1.0));
+	return occlusion * strength;
 }
 
 // Cloud occlusion for a far-weather receiver: the Sunshine projected maps over

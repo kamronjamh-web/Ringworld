@@ -14,6 +14,9 @@ namespace RingworldTechDemo.Tools;
 /// </summary>
 public partial class StormProfileMapProbe : RefCounted
 {
+    /// <summary>RING_CANOPY_TOP_MAX_METERS in RingStormShapes.glslinc.</summary>
+    const float CanopyTopMaxMeters = 16500.0f;
+
     private const int Capacity = 1024; // RingStormProfileMap.gd CAPACITY
     private byte[]? _heights;
     private byte[]? _aux;
@@ -88,13 +91,14 @@ public partial class StormProfileMapProbe : RefCounted
 
     /// <summary>
     /// Contract checks on the last readback: finite, nonempty intervals inside [floor - 1, ceiling + 1], and neighbouring texels with
-    /// coverage above 0.05 differ by at most 1.5 km in base and top (continuity). Returns "PASS ..." or "FAIL ...".
+    /// coverage above 0.05 differ by at most 1.5 km in base and top (continuity). S6: every body top is at most the 18 km cloud ceiling and every
+    /// canopy top at most 16.5 km. Returns "PASS ..." or "FAIL ...".
     /// </summary>
     public string Analyze(double bandFloor, double bandCeiling)
     {
         if (_heights == null || _aux == null) return "FAIL no readback: " + ErrorText;
         int nonempty = 0, towerTexels = 0, canopyTexels = 0;
-        float maxStepBody = 0.0f, maxStepCanopy = 0.0f, maxTop = 0.0f;
+        float maxStepBody = 0.0f, maxStepCanopy = 0.0f, maxTop = 0.0f, maxCanopyTop = 0.0f;
         for (int y = 0; y < _size.Y; y++)
         {
             for (int x = 0; x < _size.X; x++)
@@ -111,11 +115,14 @@ public partial class StormProfileMapProbe : RefCounted
                     float b = H(_heights, x, y, 0), t = H(_heights, x, y, 1);
                     if (t - b > 100.0f) { nonempty++; if (b < bandFloor - 1.0 || t > bandCeiling + 1.0) return $"FAIL body outside the band at ({x},{y}): {b}..{t}"; }
                     maxTop = Math.Max(maxTop, t);
+                    if (t > RingCloudLayers.CeilingMeters + 1.0f) return $"FAIL body top above the 18 km ceiling at ({x},{y}): {t}";
                 }
                 if (canopy > 0.05f)
                 {
                     canopyTexels++;
                     float b = H(_heights, x, y, 2), t = H(_heights, x, y, 3);
+                    maxCanopyTop = Math.Max(maxCanopyTop, t);
+                    if (t > CanopyTopMaxMeters + 1.0f) return $"FAIL canopy top above {CanopyTopMaxMeters:F0} m at ({x},{y}): {t}";
                     if (t - b > 100.0f) { nonempty++; if (b < bandFloor - 1.0 || t > bandCeiling + 1.0) return $"FAIL canopy outside the band at ({x},{y}): {b}..{t}"; }
                 }
                 foreach (var (dx, dy) in new[] { (1, 0), (0, 1) })
@@ -132,7 +139,7 @@ public partial class StormProfileMapProbe : RefCounted
         if (maxStepBody > 1500.0f) return $"FAIL body base discontinuity {maxStepBody:F0} m between neighbouring texels";
         if (maxStepCanopy > 3000.0f) return $"FAIL canopy underside discontinuity {maxStepCanopy:F0} m between neighbouring texels";
         if (towerTexels == 0) return "FAIL no tower texels (no storm in the map)";
-        return $"PASS texel={_texel:F0} size={_size.X}x{_size.Y} tower_texels={towerTexels} canopy_texels={canopyTexels} intervals={nonempty} max_base_step={maxStepBody:F0} max_underside_step={maxStepCanopy:F0} max_top={maxTop:F0}";
+        return $"PASS texel={_texel:F0} size={_size.X}x{_size.Y} tower_texels={towerTexels} canopy_texels={canopyTexels} intervals={nonempty} max_base_step={maxStepBody:F0} max_underside_step={maxStepCanopy:F0} max_top={maxTop:F0} max_canopy_top={maxCanopyTop:F0}";
     }
 
     /// <summary>Writes grayscale previews of the last readback: body / canopy thickness, body top, canopy underside, aux coverage (debug).</summary>
@@ -151,8 +158,8 @@ public partial class StormProfileMapProbe : RefCounted
                     {
                         "body_thickness" => (H(_heights, x, y, 1) - H(_heights, x, y, 0)) / 16000.0f,
                         "canopy_thickness" => (H(_heights, x, y, 3) - H(_heights, x, y, 2)) / 6000.0f,
-                        "body_top" => H(_heights, x, y, 1) / 20000.0f,
-                        "canopy_underside" => H(_heights, x, y, 2) / 20000.0f,
+                        "body_top" => H(_heights, x, y, 1) / RingCloudLayers.CeilingMeters,
+                        "canopy_underside" => H(_heights, x, y, 2) / RingCloudLayers.CeilingMeters,
                         "canopy_cover" => H(_aux, x, y, 0),
                         _ => H(_aux, x, y, 3),
                     };

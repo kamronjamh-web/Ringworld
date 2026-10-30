@@ -183,7 +183,7 @@ var weather_systems_dirty : bool = true
 
 # RingworldTechDemo extension (camera-independent clouds): the macro weather map. Coverage, storm level and precipitation depend only on
 # the world position, the system list and the snapshot time, so RingMacroWeatherMap.glsl evaluates them once per texel of a world-anchored
-# RGBA16F texture instead of the raymarch looping over the ray systems at every sample. The texture is a 2-layer array (front/back) of fixed
+# RGBA16F texture instead of the raymarch looping over the ray systems at every sample. The texture is a 6-layer array (front/back, plus the S6 layers and the S0 storm-light layers) of fixed
 # capacity (allocated once, so no uniform set is ever rebuilt for it); a build writes the BACK layer one slice (a band of 8-row groups) per
 # render callback, all slices reading one snapshot (the system block bytes and the wind frame offset captured when the build began), and
 # swaps layers only when the last slice is done. The raymarch and shadow shaders read the front layer through the params UBO
@@ -191,6 +191,16 @@ var weather_systems_dirty : bool = true
 # direct per-system path.
 const MACRO_MAP_CAPACITY := Vector2i(1024, 512)
 const MACRO_MAP_PARAM_BYTES := 32
+# S0 storm-owned D (docs/storm-revamp-s0-storm-light-design.md "Storm-owned D"): layers 4 / 5 (front / back, i.e. layer + this offset) hold the storm-light
+# terms (owned, front rain, 0, 0) written by RingMacroWeatherMap.glsl. Read by RingSunshineCloudBridge.StormLight.cs (0 / missing = no such layer).
+var macro_map_storm_light_layer_offset : int = 4
+# S6 cloud layers (RingCloudLayers.glslinc): the map texture is a 4-layer array, 0 / 1 = cov, storm, precip, influence (front / back) and
+# 2 / 3 = low, mid, high coverage, weatherness (front / back). The layer table block (656 bytes) is bound to the build (binding 3, captured into
+# cloud_layers_buffer when a build begins) and to the main march (binding 29, cloud_layers_live_buffer, updated whenever set_cloud_layers
+# is called); the march also reads a generated 8-row layer height gradient (binding 30, _build_layer_gradient). Bytes come from set_cloud_layers.
+const CLOUD_LAYERS_BYTES := 656
+const LAYER_GRADIENT_WIDTH := 256
+const LAYER_GRADIENT_ROWS := 8
 const MACRO_MAP_BUILD_PARAM_BYTES := 48
 const MACRO_MAP_SNAPSHOT_PAD_TEXELS := 2
 @export var macro_map_compute_shader : RDShaderFile
@@ -198,6 +208,11 @@ var macro_map_texture : RID = RID()
 var macro_map_params_buffer : RID = RID()
 var macro_map_build_params_buffer : RID = RID()
 var macro_map_snapshot_buffer : RID = RID()
+var cloud_layers_buffer : RID = RID()
+var cloud_layers_bytes : PackedByteArray = PackedByteArray()
+var cloud_layers_live_buffer : RID = RID()
+var cloud_layers_live_dirty : bool = true
+var layer_gradient_texture : ImageTexture
 var macro_map_shader : RID = RID()
 var macro_map_pipeline : RID = RID()
 var macro_map_build_set : RID = RID()
@@ -1314,7 +1329,7 @@ func _notification(what):
 		resized_depth, far_opaque_depth_fallback, cloud_shadow_pipeline,
 		cloud_shadow_shader, _terrain_sun_neutral, weather_systems_buffer,
 		macro_map_pipeline, macro_map_shader, macro_map_texture, macro_map_params_buffer,
-		macro_map_build_params_buffer, macro_map_snapshot_buffer])
+		macro_map_build_params_buffer, macro_map_snapshot_buffer, cloud_layers_buffer, cloud_layers_live_buffer])
 	rids.append_array(storm_map_rids)
 	rids.append_array(general_data_buffers)
 	rids.append_array(accumulation_textures)
@@ -1634,6 +1649,7 @@ func initialize_compute():
 	var retire_generation := pipeline.is_valid() or prepass_pipeline.is_valid() or postpass_pipeline.is_valid()
 	clear_compute(preserve_general_data_buffers, retire_generation)
 	_ensure_weather_systems_buffer()
+	_ensure_cloud_layers_live_buffer()
 	_ensure_macro_map_buffers()
 	storm_profile_map.ensure_resources(rd)
 	
@@ -1648,6 +1664,8 @@ func initialize_compute():
 	var linear_sampler_state = RDSamplerState.new()
 	linear_sampler_state.min_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
 	linear_sampler_state.mag_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
+	# The cirrus shell samples the extra-large noise with explicit LODs; every other read through this sampler is at LOD 0 (compute), so it is unaffected.
+	linear_sampler_state.mip_filter = RenderingDevice.SAMPLER_FILTER_LINEAR
 	linear_sampler_state.repeat_u = RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT
 	linear_sampler_state.repeat_v = RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT
 	linear_sampler_state.repeat_w = RenderingDevice.SAMPLER_REPEAT_MODE_REPEAT
@@ -1665,6 +1683,7 @@ func initialize_compute():
 		dither_noise = ResourceLoader.load("res://addons/SunshineClouds2/NoiseTextures/bluenoise_Dither.png")
 	if not height_gradient:
 		height_gradient = ResourceLoader.load("res://addons/SunshineClouds2/NoiseTextures/HeightGradient.tres")
+	_ensure_layer_gradient()
 	if not extra_large_noise_patterns:
 		extra_large_noise_patterns = ResourceLoader.load("res://addons/SunshineClouds2/NoiseTextures/ExtraLargeScaleNoise.tres")
 	if not large_scale_noise:
@@ -2355,6 +2374,19 @@ func _render_callback(effect_callback_type, render_data):
 					storm_map_uniform.add_id(storm_profile_map.texture)
 					uniforms_array.append(storm_map_uniform)
 
+					var cloud_layers_uniform = RDUniform.new()
+					cloud_layers_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+					cloud_layers_uniform.binding = 29
+					cloud_layers_uniform.add_id(cloud_layers_live_buffer)
+					uniforms_array.append(cloud_layers_uniform)
+
+					var layer_gradient_uniform = RDUniform.new()
+					layer_gradient_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+					layer_gradient_uniform.binding = 30
+					layer_gradient_uniform.add_id(linear_sampler_no_repeat)
+					layer_gradient_uniform.add_id(RenderingServer.texture_get_rd_texture(layer_gradient_texture.get_rid()))
+					uniforms_array.append(layer_gradient_uniform)
+
 					# CloudInterleave block images (bindings 26-28). 1x1 placeholders keep the descriptor set valid while it is off.
 					var block_images := _create_interleave_block_images(new_size, interleave_wanted)
 					interleave_block_images.append_array(block_images)
@@ -2535,6 +2567,8 @@ func _render_callback(effect_callback_type, render_data):
 			update_matrices(cameraTR, viewProj, new_size)
 			if weather_systems_dirty:
 				update_weather_systems()
+			if cloud_layers_live_dirty:
+				update_cloud_layers_live()
 			update_macro_weather_map()
 			update_storm_profile_map()
 			dispatch_gpu_cloud_shadows()
@@ -3366,6 +3400,58 @@ func set_macro_weather_map(enabled : bool, center_around : float, half_around : 
 		"texel": maxf(texel_meters, 50.0), "slices": maxi(slices, 1), "refresh_usec": int(maxf(refresh_seconds, 0.02) * 1000000.0),
 	}
 
+# S6: the cloud layer table block (CLOUD_LAYERS_BYTES), published by the bridge next to the weather systems. The next map build captures it.
+func set_cloud_layers(bytes : PackedByteArray) -> void:
+	if bytes.size() != CLOUD_LAYERS_BYTES:
+		printerr("set_cloud_layers expects %d bytes, got %d." % [CLOUD_LAYERS_BYTES, bytes.size()])
+		return
+	cloud_layers_bytes = bytes
+	cloud_layers_live_dirty = true
+
+# The march's copy of the layer table block (binding 29). Created once like the weather systems buffer, so the uniform sets of every
+# compositor generation reference the same RID. Zeros (header ceiling 0) tell the shader the table is not published: single-band path.
+func _ensure_cloud_layers_live_buffer() -> void:
+	if cloud_layers_live_buffer.is_valid() or not rd:
+		return
+	var zeros := PackedByteArray()
+	zeros.resize(CLOUD_LAYERS_BYTES)
+	cloud_layers_live_buffer = rd.uniform_buffer_create(CLOUD_LAYERS_BYTES, zeros)
+	cloud_layers_live_dirty = true
+
+func update_cloud_layers_live() -> void:
+	cloud_layers_live_dirty = false
+	if cloud_layers_live_buffer.is_valid() and cloud_layers_bytes.size() == CLOUD_LAYERS_BYTES:
+		rd.buffer_update(cloud_layers_live_buffer, 0, CLOUD_LAYERS_BYTES, cloud_layers_bytes)
+
+# The 8-row layer height gradient (RingCloudLayerSample.glslinc): rows 2k / 2k + 1 are layer k's convective and stratiform profile
+# (r coverage shape, g small-scale erosion, b extra-large mask influence, a 1 - curl strength). Row 0 is the project's height gradient, so a
+# fair-weather cumulus layer keeps its established profile; the sheet rows (Sc/St, As) are flatter with less erosion and no curl, and the
+# altocumulus row is a mid-band cell with full erosion. The linear filter blends a layer's two rows by its stratiformity.
+func _build_layer_gradient() -> ImageTexture:
+	var source : Image = null
+	if height_gradient:
+		source = height_gradient.get_image()
+	var image := Image.create(LAYER_GRADIENT_WIDTH, LAYER_GRADIENT_ROWS, false, Image.FORMAT_RGBA8)
+	for x in range(LAYER_GRADIENT_WIDTH):
+		var u := float(x) / float(LAYER_GRADIENT_WIDTH - 1)
+		var cumulus := Color(0.0, 0.0, 0.0, 0.0)
+		if source and source.get_width() > 0:
+			cumulus = source.get_pixel(clampi(roundi(u * float(source.get_width() - 1)), 0, source.get_width() - 1), 0)
+		else:
+			cumulus = Color(smoothstep(0.0, 0.07, u) * (1.0 - smoothstep(0.88, 1.0, u)), 0.9, 1.0, smoothstep(0.0, 0.18, u))
+		var sheet_low := Color(0.95 * smoothstep(0.0, 0.18, u) * (1.0 - smoothstep(0.78, 1.0, u)), lerpf(0.3, 0.6, u), 0.85,
+				0.4 + 0.6 * smoothstep(0.0, 0.15, u))
+		var cells := Color(smoothstep(0.05, 0.3, u) * (1.0 - smoothstep(0.6, 0.95, u)), 1.0, 1.0, 0.5 + 0.5 * smoothstep(0.0, 0.3, u))
+		var sheet_mid := Color(smoothstep(0.0, 0.2, u) * (1.0 - smoothstep(0.8, 1.0, u)), 0.3, 1.0, 1.0)
+		var rows : Array[Color] = [cumulus, sheet_low, cells, sheet_mid, cells, sheet_mid, cumulus, sheet_low]
+		for row in range(LAYER_GRADIENT_ROWS):
+			image.set_pixel(x, row, rows[row])
+	return ImageTexture.create_from_image(image)
+
+func _ensure_layer_gradient() -> void:
+	if layer_gradient_texture == null:
+		layer_gradient_texture = _build_layer_gradient()
+
 func _ensure_macro_map_buffers() -> void:
 	if not rd or macro_map_unavailable:
 		return
@@ -3380,7 +3466,7 @@ func _ensure_macro_map_buffers() -> void:
 		texture_format.format = RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT
 		texture_format.width = MACRO_MAP_CAPACITY.x
 		texture_format.height = MACRO_MAP_CAPACITY.y
-		texture_format.array_layers = 2
+		texture_format.array_layers = 6
 		texture_format.usage_bits = RenderingDevice.TEXTURE_USAGE_STORAGE_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT \
 			| RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT
 		macro_map_texture = rd.texture_create(texture_format, RDTextureView.new())
@@ -3413,6 +3499,9 @@ func _ensure_macro_map_pipeline() -> bool:
 	zeros.resize(WEATHER_SYSTEMS_BYTES)
 	macro_map_snapshot_buffer = rd.uniform_buffer_create(WEATHER_SYSTEMS_BYTES, zeros)
 	macro_map_build_params_buffer = rd.uniform_buffer_create(MACRO_MAP_BUILD_PARAM_BYTES)
+	var layers_zeros := PackedByteArray()
+	layers_zeros.resize(CLOUD_LAYERS_BYTES)
+	cloud_layers_buffer = rd.uniform_buffer_create(CLOUD_LAYERS_BYTES, layers_zeros)
 	var uniforms : Array[RDUniform] = []
 	var image_uniform := RDUniform.new()
 	image_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_IMAGE
@@ -3429,8 +3518,13 @@ func _ensure_macro_map_pipeline() -> bool:
 	build_uniform.binding = 2
 	build_uniform.add_id(macro_map_build_params_buffer)
 	uniforms.append(build_uniform)
+	var layers_uniform := RDUniform.new()
+	layers_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	layers_uniform.binding = 3
+	layers_uniform.add_id(cloud_layers_buffer)
+	uniforms.append(layers_uniform)
 	macro_map_build_set = rd.uniform_set_create(uniforms, macro_map_shader, 0)
-	if not macro_map_build_set.is_valid() or not macro_map_snapshot_buffer.is_valid() or not macro_map_build_params_buffer.is_valid():
+	if not macro_map_build_set.is_valid() or not macro_map_snapshot_buffer.is_valid() or not macro_map_build_params_buffer.is_valid() 			or not cloud_layers_buffer.is_valid():
 		printerr("Macro weather map descriptor set could not be created; using the direct per-system path.")
 		macro_map_unavailable = true
 		return false
@@ -3493,6 +3587,8 @@ func _begin_macro_map_build(now_usec : int) -> void:
 	var origin_across : float = floorf(config["across_min"] / texel) * texel
 	var groups_y := int((size.y + 7) / 8)
 	rd.buffer_update(macro_map_snapshot_buffer, 0, WEATHER_SYSTEMS_BYTES, weather_systems_bytes)
+	if cloud_layers_bytes.size() == CLOUD_LAYERS_BYTES:
+		rd.buffer_update(cloud_layers_buffer, 0, CLOUD_LAYERS_BYTES, cloud_layers_bytes)
 	macro_map_build = {
 		"origin": Vector2(origin_around, origin_across), "texel": texel, "size": size, "circumference": circumference,
 		"shift": Vector2(cloud_weather_frame.y, cloud_weather_frame.z), "layer": 1 - macro_map_front_layer,
@@ -3695,4 +3791,18 @@ func _build_cloud_shadow_uniform_set(output_texture: RID, param_buffer: RID) -> 
 	storm_map_uniform.add_id(linear_sampler_no_repeat)
 	storm_map_uniform.add_id(storm_profile_map.texture)
 	uniforms.append(storm_map_uniform)
+	# S6 cloud layers: the live layer table block and the layer height gradient (the main march's bindings 29 / 30).
+	_ensure_cloud_layers_live_buffer()
+	_ensure_layer_gradient()
+	var cloud_layers_uniform := RDUniform.new()
+	cloud_layers_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	cloud_layers_uniform.binding = 13
+	cloud_layers_uniform.add_id(cloud_layers_live_buffer)
+	uniforms.append(cloud_layers_uniform)
+	var layer_gradient_uniform := RDUniform.new()
+	layer_gradient_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_SAMPLER_WITH_TEXTURE
+	layer_gradient_uniform.binding = 14
+	layer_gradient_uniform.add_id(linear_sampler_no_repeat)
+	layer_gradient_uniform.add_id(RenderingServer.texture_get_rd_texture(layer_gradient_texture.get_rid()))
+	uniforms.append(layer_gradient_uniform)
 	return rd.uniform_set_create(uniforms, cloud_shadow_shader, 0)

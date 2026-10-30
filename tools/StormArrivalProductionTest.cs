@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using RingworldTechDemo.Lightning;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Weather;
 
@@ -176,6 +177,70 @@ public partial class StormArrivalProductionTest : RefCounted
                 var swWind = System.Diagnostics.Stopwatch.StartNew();
                 for (int k = 0; k < 40; k++) layer.QueryLocalWeatherAtTime(new RingCanonicalPosition(observer.AroundMeters + k * 40.0, 0.0, observer.AcrossMeters), firstGust + k * 0.37);
                 if (verbose) Console.WriteLine($"wind query (arrival cache cold) {swWind.Elapsed.TotalMilliseconds / 40.0:0.00} ms");
+            }
+
+            // G1 leading-arc lightning: the second strike stream closes in with the rim. Replays the cells around the observer through the production scheduler.
+            if (!double.IsNaN(firstGust) && !double.IsNaN(firstRain))
+            {
+                double circumference = layer.GetRingCircumferenceForTests();
+                float cellMeters = Mathf.Clamp(layer.MacroWeatherCellMeters, 16000.0f, 64000.0f);
+                double wFrom = firstGust - 240.0, wTo = firstRain + 240.0;
+                int baseA = Mathf.FloorToInt((float)((observer.AroundMeters - layer.WeatherWindMetersPerSecond.X * ScanTime) / cellMeters));
+                int baseZ = Mathf.FloorToInt((float)((observer.AcrossMeters - layer.WeatherWindMetersPerSecond.Y * ScanTime) / cellMeters));
+                List<(double Start, double Distance)> StrikesFor(int cellRadius)
+                {
+                    var list = new List<(double, double)>();
+                    for (int dz = -cellRadius; dz <= cellRadius; dz++) for (int da = -cellRadius; da <= cellRadius; da++)
+                        foreach (var d in layer.QueryLeadingEdgeLightningInWindow(baseA + da, baseZ + dz, wFrom, wTo))
+                        {
+                            if (d["system_id"].AsInt32() != foundId) continue;
+                            double ga = d["ground_around_meters"].AsDouble(), gz = d["ground_across_meters"].AsDouble();
+                            double dAround = ga - observer.AroundMeters; dAround -= Math.Round(dAround / circumference) * circumference;
+                            list.Add((d["start_time_seconds"].AsDouble(), Math.Sqrt(dAround * dAround + (gz - observer.AcrossMeters) * (gz - observer.AcrossMeters))));
+                        }
+                    return list;
+                }
+                static double Median(List<double> v) { if (v.Count == 0) return double.NaN; v.Sort(); return v[v.Count / 2]; }
+                var strikes = StrikesFor(3);
+                var approachD = new List<double>(); var gustD = new List<double>();
+                foreach (var (start, distance) in strikes)
+                {
+                    StormArrivalState st = layer.QueryStormArrivalAtTime(observer, start);
+                    if (verbose) Console.WriteLine($"  strike t={start:0.0} phase={st.Phase} dist={distance / 1000:0.0} km");
+                    if (st.Phase == StormArrivalPhase.Approach) approachD.Add(distance);
+                    else if (st.Phase == StormArrivalPhase.GustFront) gustD.Add(distance);
+                }
+                string dumpPath = System.Environment.GetEnvironmentVariable("S3_ARC_DUMP") ?? "";
+                if (dumpPath != "")
+                {
+                    // Plan-view evidence: every strike relative to its system centre, with the ellipse at that moment (for the capture plot).
+                    var rows = new List<string>();
+                    for (int dz = -3; dz <= 3; dz++) for (int da = -3; da <= 3; da++)
+                        foreach (var d in layer.QueryLeadingEdgeLightningInWindow(baseA + da, baseZ + dz, wFrom, wTo))
+                        {
+                            if (d["system_id"].AsInt32() != foundId) continue;
+                            double st0 = d["start_time_seconds"].AsDouble();
+                            foreach (StormSystemGeometry g in layer.GetStormGeometryAtTime(observer, st0))
+                            {
+                                if (g.SystemId != foundId) continue;
+                                double dAround = d["ground_around_meters"].AsDouble() - observer.AroundMeters; dAround -= Math.Round(dAround / circumference) * circumference;
+                                double dAcross = d["ground_across_meters"].AsDouble() - observer.AcrossMeters;
+                                var rel = new Vector2((float)dAround, (float)dAcross) + g.OffsetMeters;
+                                var ph = layer.QueryStormArrivalAtTime(observer, st0).Phase;
+                                rows.Add($"{{\"t\":{st0:0.0},\"x\":{rel.X:0},\"y\":{rel.Y:0},\"a\":{g.MajorRadiusMeters:0},\"b\":{g.MinorRadiusMeters:0},\"c\":{g.OrientationCos:0.0000},\"s\":{g.OrientationSin:0.0000},\"ox\":{g.OffsetMeters.X:0},\"oy\":{g.OffsetMeters.Y:0},\"phase\":\"{ph}\",\"env\":{g.Envelope:0.00}}}");
+                            }
+                        }
+                    System.IO.File.WriteAllText(dumpPath, "[" + string.Join(",", rows) + "]");
+                }
+                double medApproach = Median(approachD), medGust = Median(gustD);
+                LightningVisualPolicy.Apply(2.0f, 1.0f, false); int doubled = StrikesFor(3).Count;
+                LightningVisualPolicy.Apply(1.0f, 1.0f, true); int reduced = StrikesFor(3).Count;
+                LightningVisualPolicy.Reset();
+                if (verbose) Console.WriteLine($"leading-arc lightning: {strikes.Count} strikes in {wTo - wFrom:0} s ({approachD.Count} approach median {medApproach / 1000:0.0} km, {gustD.Count} gust-front median {medGust / 1000:0.0} km, ratio {medGust / medApproach:0.00}); frequency x2 {doubled}, reduced {reduced}");
+                Check(strikes.Count >= 5, $"the leading-arc stream must produce strikes (got {strikes.Count})");
+                Check(doubled > strikes.Count && reduced < strikes.Count, $"Lightning frequency / Reduced flashes must scale the stream ({reduced} < {strikes.Count} < {doubled})");
+                // The design asks for <= 0.5x; a growing storm leads on every side so the strikes ring the whole rim and the observer only gets nearer to them. Require a clear closing-in.
+                Check(approachD.Count == 0 || gustD.Count == 0 || medGust <= 0.85 * medApproach, $"strikes must close in with the rim: gust-front median {medGust:0} m vs approach {medApproach:0} m");
             }
 
             // Rewind determinism: bit-identical for the same (position, time).

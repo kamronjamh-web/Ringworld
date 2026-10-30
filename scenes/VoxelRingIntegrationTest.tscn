@@ -44,6 +44,7 @@
 [ext_resource type="Script" path="res://scripts/Shadows/RingContactShadows.cs" id="contact_shadows"]
 [ext_resource type="Script" path="res://scripts/Weather/RingPostRainMist.cs" id="storm_post_rain_mist"]
 [ext_resource type="Script" path="res://scripts/Weather/RingRainbow.cs" id="storm_rainbow"]
+[ext_resource type="Script" path="res://scripts/Weather/RingGustFrontDebris.cs" id="storm_gust_debris"]
 [ext_resource type="Script" uid="uid://dldopq76731f8" path="res://scripts/Voxel/LOD/RingTerrainCoarseSdfPilot.cs" id="37"]
 [ext_resource type="Script" uid="uid://cqkmuatyta2xh" path="res://scripts/ui/RingLiveTuningDrawer.cs" id="38"]
 [ext_resource type="Resource" path="res://resources/voxel/ring_lod_mega_regional.tres" id="39"]
@@ -665,6 +666,9 @@ script = ExtResource("storm_post_rain_mist")
 
 [node name="Rainbow" type="Node" parent="."]
 script = ExtResource("storm_rainbow")
+
+[node name="GustFrontDebris" type="Node3D" parent="."]
+script = ExtResource("storm_gust_debris")
 
 [node name="LocalStormFlash" type="OmniLight3D" parent="LocalWeatherEffects" unique_id=1330968394]
 top_level = true

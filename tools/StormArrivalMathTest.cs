@@ -396,6 +396,73 @@ public partial class StormArrivalMathTest : RefCounted
             Check(fatWind.GustStrengthScale > 1.3f && coreWind.GustStrengthScale > 1.3f, "fat drops and core must stay gusty");
             var gap = StormArrivalState.Calm with { Valid = true, Severity = 1f, Outflow = 0.9f, StormBearing = new Vector2(0f, 1f), OutflowDirection = new Vector2(0f, -1f), Phase = StormArrivalPhase.Clear };
             Check(StormArrivalMath.ModifyWind(gap, calmMean, baseWind, 28f, 1f).Mean.Length() >= 0.8f * peak, "outflow alone must hold the wind in the gap between the front and the fat drops");
+
+            // G1 leading-arc lightning placement: growth strikes ring the rim, drift-only strikes sit on the advancing side, dissipation thins them, all deterministic.
+            {
+                float c0 = Mathf.Cos(Orientation), s0 = Mathf.Sin(Orientation);
+                int grown = 0, blue = 0, tried = 0; double nSum = 0; float nMin = 9f, nMax = 0f; var quadrants = new int[4];
+                for (long slot = 0; slot < 600; slot++)
+                {
+                    tried++;
+                    if (!StormArrivalMath.SampleLeadingArc(4242, slot, new Vector2(2.2f, 0.7f), 0.004f, c0, s0, 30000f, 12000f, out Vector2 lOff, out float n)) continue;
+                    grown++; nSum += n; nMin = Math.Min(nMin, n); nMax = Math.Max(nMax, n); if (n > 1f) blue++;
+                    float along = c0 * lOff.X + s0 * lOff.Y, cross = -s0 * lOff.X + c0 * lOff.Y;
+                    quadrants[(along >= 0 ? 0 : 1) + (cross >= 0 ? 0 : 2)]++;
+                    Check(Math.Abs(NDouble(new StormSystemGeometry(1, 3, lOff, 30000f, 12000f, c0, s0, 1f, 0f, Vector2.Zero, 1f, 1f, 1f)) - n) < 1e-3f, "leading arc point must lie at its reported n");
+                }
+                float meanN = (float)(nSum / Math.Max(1, grown));
+                if (verbose) Console.WriteLine($"leadingarc growth: accepted={grown}/{tried} meanN={meanN:0.000} range=[{nMin:0.00},{nMax:0.00}] blue={blue} quadrants=[{string.Join(",", quadrants)}]");
+                Check(grown > 0.9f * tried, $"growing storm should place nearly every strike (accepted {grown}/{tried})");
+                Check(nMin >= 0.55f - 1e-4f && nMax <= 1.08f + 1e-4f, $"leading arc n range [{nMin},{nMax}]");
+                Check(meanN > 0.78f, $"leading arc strikes must crowd the rim (mean n {meanN}; the uniform natural stream has 0.4)");
+                Check(blue > 0.05f * grown && blue < 0.16f * grown, $"about 10% bolts from the blue (got {blue}/{grown})");
+                Check(quadrants.All(q => q > grown / 10), $"growth strikes must surround the storm ({string.Join(",", quadrants)})");
+
+                var drift = new Vector2(15f, 0f); int driftHits = 0; bool allAhead = true; double dotSum = 0;
+                for (long slot = 0; slot < 600; slot++)
+                {
+                    if (!StormArrivalMath.SampleLeadingArc(777, slot, drift, 0f, c0, s0, 30000f, 12000f, out Vector2 lOff, out float n)) continue;
+                    driftHits++; dotSum += lOff.Normalized().Dot(drift.Normalized());
+                    allAhead &= StormArrivalMath.RimLeadingWeight(drift, 0f, lOff / n, c0, s0, 30000f, 12000f) > 0f;
+                }
+                if (verbose) Console.WriteLine($"leadingarc drift: accepted={driftHits} meanCosToDrift={dotSum / Math.Max(1, driftHits):0.00}");
+                Check(driftHits > 100 && allAhead && dotSum / Math.Max(1, driftHits) > 0.3, "drift-only strikes must sit on the advancing rim");
+                int dying = 0;
+                for (long slot = 0; slot < 600; slot++) if (StormArrivalMath.SampleLeadingArc(777, slot, new Vector2(2.2f, 0.7f), -0.005f, c0, s0, 30000f, 12000f, out _, out _)) dying++;
+                Check(dying < grown / 3, $"a dissipating storm has no advancing rim (accepted {dying})");
+                bool same = StormArrivalMath.SampleLeadingArc(4242, 17, new Vector2(2.2f, 0.7f), 0.004f, c0, s0, 30000f, 12000f, out Vector2 o1, out float n1)
+                    & StormArrivalMath.SampleLeadingArc(4242, 17, new Vector2(2.2f, 0.7f), 0.004f, c0, s0, 30000f, 12000f, out Vector2 o2, out float n2);
+                Check(same && o1 == o2 && n1 == n2, "leading arc placement must be deterministic");
+            }
+
+            // Wind profile across the whole arrival sequence of a growing storm (calm base wind in): no gust gap from the first gust front to the end of the core.
+            {
+                double tStart = 120, tEnd = Birth + Develop + Mature;
+                double tFront = double.NaN, tCoreEnd = double.NaN; float windPeak = 0f, minHeld = float.MaxValue, worstDrop = 0f, prevSpeed = -1f;
+                double tMinHeld = 0, tFatStart = double.NaN; bool inFatOrCore = false;
+                for (double t = tStart; t <= tEnd; t += 1.0)
+                {
+                    StormArrivalState st = StateAt(growth, t, tuning);
+                    float speed = StormArrivalMath.ModifyWind(st, calmMean, baseWind, 28f, 1f).Mean.Length();
+                    if (double.IsNaN(tFront) && st.GustFront > 0.9f) tFront = t;
+                    if (!double.IsNaN(tFront)) windPeak = Math.Max(windPeak, speed);
+                    if (!double.IsNaN(tFront) && st.Trailing < 0.2f && st.Core > 0.2f) tCoreEnd = t;
+                    if (st.FatDrop > 0.05f && double.IsNaN(tFatStart)) tFatStart = t;
+                    // From the first full gust front to the last core second, the wind may not fall below 0.6 of the peak, nor drop faster than 4 m/s per second.
+                    if (!double.IsNaN(tFront) && (double.IsNaN(tCoreEnd) || t <= tCoreEnd) && st.Trailing < 0.2f)
+                    {
+                        if (speed < minHeld) { minHeld = speed; tMinHeld = t; }
+                        if (prevSpeed >= 0f) worstDrop = Math.Max(worstDrop, prevSpeed - speed);
+                        inFatOrCore |= st.FatDrop > 0.3f || st.Core > 0.3f;
+                    }
+                    prevSpeed = speed;
+                    if (verbose && ((int)t % 15) == 0) Console.WriteLine($"wp t={t:0} ph={st.Phase} A={st.Approach:0.00} G={st.GustFront:0.00} O={st.Outflow:0.00} F={st.FatDrop:0.00} C={st.Core:0.00} T={st.Trailing:0.00} v={speed:0.0} rim={st.RimSpeedMetersPerSecond:0.0}");
+                }
+                if (verbose) Console.WriteLine($"windprofile: front@{tFront:0} fat@{tFatStart:0} coreEnd@{tCoreEnd:0} peak={windPeak:0.0} minHeld={minHeld:0.0}@{tMinHeld:0} worstDrop/s={worstDrop:0.00}");
+                Check(!double.IsNaN(tFront) && !double.IsNaN(tCoreEnd) && inFatOrCore, "wind profile: the sequence must contain a gust front followed by fat drops or a core");
+                Check(minHeld >= 0.6f * windPeak, $"wind profile: gust gap, min {minHeld} at t={tMinHeld} vs peak {windPeak}");
+                Check(worstDrop <= 4.0f, $"wind profile: wind drops {worstDrop} m/s in one second");
+            }
         }
         catch (Exception e) { Console.Error.WriteLine(e.ToString()); return 1; }
         if (failures.Count != 0) { Console.Error.WriteLine("STORM_ARRIVAL_MATH=FAIL " + string.Join(" | ", failures.Take(20))); return 1; }

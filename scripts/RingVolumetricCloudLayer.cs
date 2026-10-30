@@ -3601,10 +3601,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         float baseRoll = Hash01(aroundCell, acrossCell, seed, 14);
         float topRoll = Hash01(aroundCell, acrossCell, seed, 15);
         CloudPhysicalDefinition physical = CloudPhysicalCatalog.Get(profile);
-        float maximumAltitude = profile == CloudFormationProfile.Cumulonimbus
-            && macro.Kind != WeatherSystemKind.ExceptionalFront
-            ? Math.Min(18000.0f, physical.MaximumAltitudeMeters)
-            : physical.MaximumAltitudeMeters;
+        float maximumAltitude = Math.Min(RingCloudLayers.CeilingMeters, physical.MaximumAltitudeMeters);
         float availableDepth = Math.Max(
             100.0f,
             maximumAltitude - physical.MinimumAltitudeMeters);
@@ -3836,6 +3833,11 @@ public partial class RingVolumetricCloudLayer : Node3D
     public const uint RenderWeatherFlagSculpt = 2u;          // bit1: sculpted storm (StormTower/Cumulonimbus profile, or manual/preview)
     public const uint RenderWeatherFlagManualFalloff = 4u;   // bit2: manual falloff (n-0.55)/0.75 and merge-by-max
     public const uint RenderWeatherFlagSuppressorReserved = 8u; // bit3: reserved (suppressor)
+    public const uint RenderWeatherFlagLowersBase = 16u;     // bit4: the system lowers the low layer's base to the weather base (CloudLayerTable genus row); drives the macro map's weatherness
+    public const uint RenderWeatherFlagFront = 32u;          // bit5: MajorFront / ExceptionalFront kind: a non-sculpt front darkens the storm light D by its rain (RingMacroWeatherMap.glsl storm-light layer, S0 doc)
+
+    /// <summary>Front kinds (MajorFront, ExceptionalFront): when they are not storm sculpt systems, their rain drives the storm light D (S0 "fronts dark by rain").</summary>
+    public static bool IsFrontKind(WeatherSystemKind kind) => kind is WeatherSystemKind.MajorFront or WeatherSystemKind.ExceptionalFront;
 
     // New salts: the per-system rolls must never alias the per-camera-cell rolls (13/14/15) or the weather salts (100-114, 117+).
     private const int SystemProfileSalt = 213;
@@ -3872,6 +3874,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         public bool IsStatic => (Flags & RenderWeatherFlagStatic) != 0u;
         public bool Sculpts => (Flags & RenderWeatherFlagSculpt) != 0u;
         public bool ManualFalloff => (Flags & RenderWeatherFlagManualFalloff) != 0u;
+        public bool IsFront => (Flags & RenderWeatherFlagFront) != 0u;
         /// <summary>Value for the shader's physicalProfile slot (storm_shape.w mapping).</summary>
         public int ShaderProfile => CloudFormationProfiles.ToShaderProfile(PhysicalProfile);
     }
@@ -3959,9 +3962,11 @@ public partial class RingVolumetricCloudLayer : Node3D
                 manual.SystemInfluence,
                 manual.PrecipitationPotential,
                 altitudeDatumMeters + Math.Max(100.0f, baseAbove),
-                altitudeDatumMeters + Math.Max(baseAbove + 500.0f, manual.CloudTopAltitudeMeters),
+                Math.Min(RingCloudLayers.CeilingMeters, altitudeDatumMeters + Math.Max(baseAbove + 500.0f, manual.CloudTopAltitudeMeters)),
                 manual.DominantFormationProfile,
-                RenderWeatherFlagStatic | RenderWeatherFlagSculpt | RenderWeatherFlagManualFalloff,
+                RenderWeatherFlagStatic | (IsStormSculptProfile(manual.DominantFormationProfile) ? RenderWeatherFlagSculpt : 0u)
+                    | RenderWeatherFlagManualFalloff | (IsFrontKind(manual.SystemKind) ? RenderWeatherFlagFront : 0u)
+                    | (CloudLayerTable.Shared.LowersBase(manual.DominantFormationProfile, manual.SystemKind) ? RenderWeatherFlagLowersBase : 0u),
                 manual.CloudCoverage,
                 manualSupport));
             appended++;
@@ -3969,6 +3974,14 @@ public partial class RingVolumetricCloudLayer : Node3D
 
         return appended;
     }
+
+    /// <summary>
+    /// Only real storms are S4 sculpt bodies (StormTower, Cumulonimbus: towers, anvils and the closed deck under the storm, baked into the
+    /// storm profile map). Every other genus, natural or manual (preview, tests), renders through the S6 cloud layers via the CloudLayerTable
+    /// genus row (docs/storm-revamp-s6-cloud-layers-design.md section 3.8).
+    /// </summary>
+    public static bool IsStormSculptProfile(CloudFormationProfile profile)
+        => profile is CloudFormationProfile.StormTower or CloudFormationProfile.Cumulonimbus;
 
     private RenderWeatherSystem BuildNaturalRenderSystem(
         in WeatherSystemDefinition system, int aroundCell, int acrossCell, int seed, double time,
@@ -3991,9 +4004,10 @@ public partial class RingVolumetricCloudLayer : Node3D
             FormationVerticalProfile vertical = ResolveSystemVerticalProfile(
                 seed, system.SystemId, system.Kind, profile);
             stormFloor = altitudeDatumMeters + Math.Max(100.0f, stormFrontBaseMeters);
-            stormCeiling = altitudeDatumMeters + Math.Max(stormFrontBaseMeters + 500.0f, vertical.TopAltitudeMeters);
+            stormCeiling = Math.Min(RingCloudLayers.CeilingMeters,
+                altitudeDatumMeters + Math.Max(stormFrontBaseMeters + 500.0f, vertical.TopAltitudeMeters));
         }
-        bool sculpt = profile is CloudFormationProfile.StormTower or CloudFormationProfile.Cumulonimbus;
+        bool sculpt = IsStormSculptProfile(profile);
         return new RenderWeatherSystem(
             system.SystemId,
             system.Kind,
@@ -4008,7 +4022,8 @@ public partial class RingVolumetricCloudLayer : Node3D
             stormFloor,
             stormCeiling,
             profile,
-            sculpt ? RenderWeatherFlagSculpt : 0u,
+            (sculpt ? RenderWeatherFlagSculpt : 0u) | (IsFrontKind(system.Kind) ? RenderWeatherFlagFront : 0u)
+                | (CloudLayerTable.Shared.LowersBase(profile, system.Kind) ? RenderWeatherFlagLowersBase : 0u),
             0.0f,
             1.0f,
             StormLifecycleCode(lifecycle));
@@ -4093,10 +4108,7 @@ public partial class RingVolumetricCloudLayer : Node3D
         float baseRoll = Hash01(systemId, 0, seed, SystemBaseSalt);
         float topRoll = Hash01(systemId, 0, seed, SystemTopSalt);
         CloudPhysicalDefinition physical = CloudPhysicalCatalog.Get(profile);
-        float maximumAltitude = profile == CloudFormationProfile.Cumulonimbus
-            && kind != WeatherSystemKind.ExceptionalFront
-            ? Math.Min(18000.0f, physical.MaximumAltitudeMeters)
-            : physical.MaximumAltitudeMeters;
+        float maximumAltitude = Math.Min(RingCloudLayers.CeilingMeters, physical.MaximumAltitudeMeters);
         float availableDepth = Math.Max(100.0f, maximumAltitude - physical.MinimumAltitudeMeters);
         float thickness = Mathf.Lerp(
             physical.MinimumThicknessMeters,
@@ -4147,15 +4159,15 @@ public partial class RingVolumetricCloudLayer : Node3D
     /// h *= 0x846CA68B; h ^= h >> 16; result = (h &amp; 0xFFFFFF) / 16777215. The around coordinate wraps at the ring
     /// circumference, so (like the CPU) the term is not continuous across the seam unless it is a multiple of the cell.
     /// </summary>
-    public float SampleContinuousClusterTerm(double aroundMeters, double acrossMeters, double timeSeconds)
+    public float SampleContinuousClusterTerm(double aroundMeters, double acrossMeters, double timeSeconds, int smallSalt = 30, int largeSalt = 40)
     {
         timeSeconds = double.IsFinite(timeSeconds) ? Math.Max(0.0, timeSeconds) : 0.0;
         int seed = _grid?.TerrainSampler?.Seed ?? 1337;
         double cellSize = Mathf.Max(1000.0f, FormationCellMeters);
         float cellAround = (float)(WrapAround(aroundMeters - WeatherWindMetersPerSecond.X * timeSeconds) / cellSize);
         float cellAcross = (float)((acrossMeters - WeatherWindMetersPerSecond.Y * timeSeconds) / cellSize);
-        float small = SampleWeatherNoiseContinuous(cellAround, cellAcross, seed, Mathf.Max(2, SmallWeatherClusterCells), 30);
-        float large = SampleWeatherNoiseContinuous(cellAround, cellAcross, seed, Mathf.Max(4, LargeWeatherClusterCells), 40);
+        float small = SampleWeatherNoiseContinuous(cellAround, cellAcross, seed, Mathf.Max(2, SmallWeatherClusterCells), smallSalt);
+        float large = SampleWeatherNoiseContinuous(cellAround, cellAcross, seed, Mathf.Max(4, LargeWeatherClusterCells), largeSalt);
         return (small * 0.62f + large * 0.38f - 0.5f) * WeatherClusteringStrength;
     }
 

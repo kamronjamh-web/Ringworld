@@ -5,6 +5,7 @@ using Godot;
 using RingworldTechDemo.Lightning;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.LOD;
+using RingworldTechDemo.Weather;
 
 namespace RingworldTechDemo;
 
@@ -153,6 +154,7 @@ public partial class RingVolumetricCloudLayer
         {
             _lightningCandidatesEvaluatedLastUpdate++;
             TryScheduleNaturalLightning(entry.Key.Around, entry.Key.Across, now);
+            TryScheduleLeadingEdgeLightning(entry.Key.Around, entry.Key.Across, now);
         }
         foreach (LocalWeatherState manual in _manualWeather.Values) TryScheduleManualLightning(manual, now);
     }
@@ -219,6 +221,83 @@ public partial class RingVolumetricCloudLayer
         if (!TrySampleStormPosition(weather, slot, out RingCanonicalPosition target)) return false;
         created=CreateLightningEvent(s.SystemId,start,target,weather,false,slot); return true;
     }
+    // ---- G1 leading-arc stream: a second, independent strike stream per Major+ system, concentrated on the advancing rim (closing in with the rain) ----
+    /// <summary>The leading stream starts earlier than the natural one (a growing front is not yet at the full precipitation threshold), at this share of it.</summary>
+    private const float LeadingEdgePotentialShare = 0.35f;
+    /// <summary>Distinguishes leading-stream slots from natural slots in event ids.</summary>
+    private const long LeadingEdgeSlotTag = 1L << 40;
+
+    private void TryScheduleLeadingEdgeLightning(int a, int z, double now)
+    {
+        if (_activeLightningEvents.Count >= 128) return;
+        if (TryCreateLeadingEdgeEvent(a, z, now, out RingLightningEvent e) && FindActiveLightningIndex(e.EventId) < 0) _activeLightningEvents.Add(e);
+    }
+
+    /// <summary>Cadence/phase slot of the leading stream: (10 + 20 hash) s, shortened by the frequency setting (same convention as the natural slot), salts 140/141.</summary>
+    private static bool TryResolveLeadingEdgeSlot(int seed, int systemId, double now, out long slot, out double start)
+    {
+        double cadence = (10.0 + Unit(LightningHash(seed, systemId, 0, 140)) * 20.0) / Math.Max(1.0f, LightningVisualPolicy.FrequencyScale);
+        double phase = Unit(LightningHash(seed, systemId, 0, 141)) * cadence;
+        slot = (long)Math.Floor((now - phase) / cadence);
+        start = phase + slot * cadence;
+        return !(start < 0.0 || now - start > RingLightningEvent.LifetimeSeconds);
+    }
+
+    private bool TryCreateLeadingEdgeEvent(int a, int z, double now, out RingLightningEvent created)
+    {
+        created = default;
+        int seed = _grid!.TerrainSampler?.Seed ?? 1337;
+        int predictedId = WeatherSystemIdForGeneration(a, z, seed, ResolveWeatherGeneration(a, z, seed, now));
+        if (!TryResolveLeadingEdgeSlot(seed, predictedId, now, out _, out _)) return false;
+        if (!TryBuildWeatherSystem(a, z, seed, now, out WeatherSystemDefinition present)) return false;
+        if (!TryResolveLeadingEdgeSlot(seed, present.SystemId, now, out long slot, out double start)) return false;
+        if (!TryBuildWeatherSystem(a, z, seed, start, out WeatherSystemDefinition s) || s.SystemId != present.SystemId) return false;
+        LocalWeatherState weather = ToLightningWeather(s, start);
+        if (weather.SystemId == 0 || weather.SystemKind is not (WeatherSystemKind.MajorFront or WeatherSystemKind.ExceptionalFront)
+            || weather.PrecipitationPotential < SharedLightningPrecipitationThreshold * LeadingEdgePotentialShare
+            || weather.SystemRadiiMeters.X <= 1.0f || weather.SystemRadiiMeters.Y <= 1.0f) return false;
+        if (Unit(LightningHash(seed, s.SystemId, slot, 143)) > (0.25f + weather.PrecipitationPotential * 0.5f) * LightningVisualPolicy.NaturalStrikeChanceScale) return false;
+        long taggedSlot = slot | LeadingEdgeSlotTag;
+        uint hash = LightningHash(seed, s.SystemId, taggedSlot, 8);
+        long id = ((long)(hash & 0x7fffffff) << 32) | LightningHash(seed ^ 0x51ed, s.SystemId, taggedSlot, 9);
+        if (id <= 0) id = 1;
+        int liveIndex = FindActiveLightningIndex(id);
+        if (liveIndex >= 0) { created = _activeLightningEvents[liveIndex]; return true; }
+        float rho = 0.0f;
+        if (NaturalWeatherLifecyclesEnabled)
+        {
+            float envelope = EvaluateWeatherLifecycle(a, z, seed, start).Envelope;
+            if (envelope > 1e-4f)
+            {
+                float ahead = EvaluateWeatherLifecycle(a, z, seed, start + 1.0).Envelope, behind = EvaluateWeatherLifecycle(a, z, seed, Math.Max(0.0, start - 1.0)).Envelope;
+                rho = (float)((ahead - behind) / (start >= 1.0 ? 2.0 : 1.0 + start) / envelope);
+            }
+        }
+        if (!StormArrivalMath.SampleLeadingArc(s.SystemId, slot, WeatherWindMetersPerSecond, rho, s.OrientationCosine, s.OrientationSine,
+                weather.SystemRadiiMeters.X, weather.SystemRadiiMeters.Y, out Vector2 offset, out _)) return false;
+        double across = weather.SystemCenterMeters.Y + offset.Y;
+        if (across < 0.0 || across > (_grid?.RingAcrossWidthMeters ?? 0.0)) return false;
+        var target = new RingCanonicalPosition(WrapAround(weather.SystemCenterMeters.X + offset.X), 0.0, across);
+        created = CreateLightningEvent(s.SystemId, start, target, weather, false, taggedSlot);
+        return true;
+    }
+
+    /// <summary>
+    /// Pure production-path replay of one cell's leading-arc strikes in [t0, t1] (diagnostics and tests; steps below the 0.72 s event lifetime so no slot is missed).
+    /// Each entry is the same dictionary as <see cref="QueryLightningCellAtTime"/>, de-duplicated by event id.
+    /// </summary>
+    public Godot.Collections.Array<Godot.Collections.Dictionary> QueryLeadingEdgeLightningInWindow(int aroundCell, int acrossCell, double t0, double t1)
+    {
+        var result = new Godot.Collections.Array<Godot.Collections.Dictionary>();
+        if (_grid == null) return result;
+        int cells = Math.Max(1, Mathf.CeilToInt((float)(_grid.GetCanonicalRingCircumferenceMeters64() / Mathf.Clamp(MacroWeatherCellMeters, 16000, 64000))));
+        aroundCell = PositiveModulo(aroundCell, cells);
+        var seen = new HashSet<long>();
+        for (double t = Math.Max(0.0, t0); t <= t1; t += 0.5)
+            if (TryCreateLeadingEdgeEvent(aroundCell, acrossCell, t, out RingLightningEvent e) && seen.Add(e.EventId)) result.Add(ToDiagnostic(e, e.StartTimeSeconds));
+        return result;
+    }
+
     private Godot.Collections.Dictionary ToDiagnostic(in RingLightningEvent e, double now) => new()
     {
         ["event_id"] = e.EventId, ["system_id"] = e.SystemId,

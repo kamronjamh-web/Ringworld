@@ -17,6 +17,10 @@ const EMITTER_GLB := "res://assets/poi/beam_emitter/Surface_Spire_and_Facility_G
 const REACTOR_GLB := "res://assets/poi/reactor/Reactor_Architecture_Godot.glb"
 const EMITTER_MERGED := "res://assets/poi/beam_emitter/merged/BeamEmitterMerged.tscn"
 const REACTOR_MERGED := "res://assets/poi/reactor/merged/ReactorMerged.tscn"
+# Light cull masks keep render layer 19 (RingRenderLayers.NoPrecipitationOcclusion: grass, trees, player, weather meshes) so those stay lit.
+const NO_PRECIP_OCCLUSION_LAYER := 1 << 18
+const REACTOR_LIGHT_CULL_MASK := 2 | NO_PRECIP_OCCLUSION_LAYER
+const SUN_LIGHT_CULL_MASK := 1 | NO_PRECIP_OCCLUSION_LAYER
 
 # Visibility ranges (metres). The detailed spire hands over to the far proxy around 12 km.
 const SPIRE_DETAIL_END := 12500.0
@@ -810,14 +814,14 @@ func _build_pair(pair: Node3D, root: Node, cfg: Dictionary) -> void:
 	l1.light_color = Color(0.35, 1.0, 0.9)
 	l1.light_energy = 12.0
 	l1.omni_range = cfg.core_light_range
-	l1.light_cull_mask = 2
+	l1.light_cull_mask = REACTOR_LIGHT_CULL_MASK
 	_add_node(pair, root, l1, "ReactorCoreLight")
 	var l2 := OmniLight3D.new()
 	l2.position = cfg.arrival_light_pos
 	l2.light_color = Color(0.7, 0.95, 0.95)
 	l2.light_energy = 2.5
 	l2.omni_range = cfg.arrival_light_range
-	l2.light_cull_mask = 2
+	l2.light_cull_mask = REACTOR_LIGHT_CULL_MASK
 	_add_node(pair, root, l2, "ArrivalLight")
 
 	var bm := Node3D.new()
@@ -870,7 +874,7 @@ func _build_test_scene() -> void:
 	sun.light_energy = 1.6
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 700.0  # the script raises this for the main pair
-	sun.light_cull_mask = 1  # reactor geometry lives on layer 2 and is not sunlit
+	sun.light_cull_mask = SUN_LIGHT_CULL_MASK  # reactor geometry lives on layer 2 and is not sunlit
 	_add_node(root, root, sun, "Sun")
 
 	# Regular pair (default) and main pair (key M); the script shows one at a time.

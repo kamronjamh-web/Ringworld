@@ -36,11 +36,17 @@ bool ring_storm_is_storm_profile(int index) {
 	return profile == 2 || profile == 3;
 }
 
+// Lean ramp altitudes (camera-independent mode, where storm_altitude is uploaded as zero): the lean grows as s^1.5 from 0 at the floor
+// to ringStormMap.c.z at the top and stays there above it. These are the altitudes the S4 look pass tuned against (it normalised over
+// the then 2-6 km background band); they are fixed so the S6 layer table and envelope cannot move the lean.
+const float RING_STORM_LEAN_FLOOR_METERS = 2000.0;
+const float RING_STORM_LEAN_TOP_METERS = 6000.0;
+
 // Map texture coordinate of a column at (around, across) read for altitude y. Lean: the column is read from upwind of the sample by
 // a height-dependent offset, so the tower tilts downwind. False outside the used rectangle.
 bool ring_storm_map_uv(vec2 xz, float y, out vec2 uv) {
 	vec2 band = genericData.data.storm_altitude.xy;
-	if (band.y <= band.x + 1.0) band = genericData.data.background_altitude.xy;
+	if (band.y <= band.x + 1.0) band = vec2(RING_STORM_LEAN_FLOOR_METERS, RING_STORM_LEAN_TOP_METERS);
 	float s = clamp((y - band.x) / max(band.y - band.x, 1.0), 0.0, 1.0);
 	vec2 position = xz - ringStormMap.c.xy * (ringStormMap.c.z * s * sqrt(s));
 	float circumference = ringStormMap.b.z;
@@ -51,6 +57,18 @@ bool ring_storm_map_uv(vec2 xz, float y, out vec2 uv) {
 	vec2 size = ringStormMap.b.xy;
 	uv = t / vec2(textureSize(ring_storm_map, 0).xy);
 	return t.x >= 0.5 && t.y >= 0.5 && t.x <= size.x - 0.5 && t.y <= size.y - 0.5;
+}
+
+// Unconditional heights + aux fetch for a primary sample at `canonical` (zero outside the map's used rectangle).
+void ring_storm_fetch_column(vec3 canonical) {
+	g_storm_heights = vec4(0.0);
+	g_storm_aux = vec4(0.0);
+	vec2 uv;
+	if (ring_storm_map_uv(canonical.xz, canonical.y, uv)) {
+		g_storm_heights = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0), 0.0);
+		// Second tap: the horizontal depth of the footprint, which erosion needs to roughen walls (heights alone only know vertical depth).
+		g_storm_aux = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0 + 1.0), 0.0);
+	}
 }
 
 // Fetches the heights texel for a primary sample at `canonical` (cloud space: around, altitude, across). `mask` is the sculpt-system
@@ -69,12 +87,20 @@ void ring_storm_update_primary(vec3 canonical, uvec2 mask) {
 		if (anyStorm) break;
 	}
 	if (!anyStorm) return;
-	vec2 uv;
-	if (ring_storm_map_uv(canonical.xz, canonical.y, uv)) {
-		g_storm_heights = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0), 0.0);
-		// Second tap: the horizontal depth of the footprint, which erosion needs to roughen walls (heights alone only know vertical depth).
-		g_storm_aux = textureLod(ring_storm_map, vec3(uv, ringStormMap.a.w * 2.0 + 1.0), 0.0);
-	}
+	ring_storm_fetch_column(canonical);
+}
+
+// Top of the fetched column's non-empty intervals (-1e30 when both are empty). The map density is exactly zero above it.
+float ring_storm_column_top() {
+	float top = -1e30;
+	if (g_storm_heights.y > g_storm_heights.x) top = g_storm_heights.y;
+	if (g_storm_heights.w > g_storm_heights.z) top = max(top, g_storm_heights.w);
+	return top;
+}
+
+// True when altitude h lies in one of the fetched column's intervals (the only place the map density can be nonzero).
+bool ring_storm_column_contains(float h) {
+	return (h >= g_storm_heights.x && h <= g_storm_heights.y) || (h >= g_storm_heights.z && h <= g_storm_heights.w);
 }
 
 // Profile of one interval at altitude h: 0 outside, ramping to 1 over RING_STORM_FADE_METERS from either surface (a thin interval
@@ -135,8 +161,6 @@ float ring_storm_sun_tau(vec3 canonical, vec3 sunWorld) {
 	float dUp = dot(sunWorld, genericData.data.cloud_frame_up.xyz);
 	if (dUp < 0.06) return 0.0;
 	vec2 dh = vec2(dot(sunWorld, genericData.data.cloud_frame_around.xyz), dot(sunWorld, genericData.data.cloud_frame_across.xyz));
-	vec2 band = genericData.data.storm_altitude.xy;
-	if (band.y <= band.x + 1.0) band = genericData.data.background_altitude.xy;
 	float h = canonical.y;
 	// 2.5 km up the sun ray: the column the ray passes there tells whether it is still inside cloud or has left through a side or the
 	// underside (mammatus pouch flanks facing the sun stay lit).

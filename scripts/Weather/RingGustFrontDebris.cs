@@ -30,8 +30,16 @@ public partial class RingGustFrontDebris : Node3D
     public float ForcedLevel { get; set; } = -1.0f;
     /// <summary>Capture and test hook: forces the biome shares (leaf, dust, spray) for every cell. Null = sample the terrain under the observer.</summary>
     public Vector3? ForcedShares { get; set; }
+    /// <summary>Capture and test hook: snow share (0..1) used together with <see cref="ForcedShares"/>.</summary>
+    public float ForcedSnow { get; set; }
 
-    public const float DomainMeters = 128.0f;
+    /// <summary>Capture hook callable from GDScript (call): forces the biome shares for every cell, snow 0..1 turns the dust cells into spindrift.</summary>
+    public void ForceShares(Vector3 shares, float snow) { ForcedShares = shares; ForcedSnow = snow; }
+    /// <summary>Capture hook: sets the preset budget (perf capture at High = 512).</summary>
+    public void SetBudgetForCapture(int budget) { PresetBudget = budget; }
+    public void ClearForcedShares() { ForcedShares = null; ForcedSnow = 0.0f; }
+
+    public const float DomainMeters = 96.0f;
     private const int Cells = 9;
     private const float CellSpacing = DomainMeters / 3.0f;
 
@@ -47,7 +55,6 @@ public partial class RingGustFrontDebris : Node3D
     private float _level, _smoothedLevel;
     private readonly Vector4[] _kinds = new Vector4[Cells];
     private readonly Vector4[] _kindTargets = new Vector4[Cells];
-    private readonly Godot.Collections.Array _kindsVariant = new();
     private int _sampleCursor;
     private bool _kindsSeeded;
     private bool _registered;
@@ -87,7 +94,6 @@ public partial class RingGustFrontDebris : Node3D
         _puffs = MakeRenderer("Puffs", new QuadMesh { Size = Vector2.One }, _puffMaterial);
         AddChild(_leaves); AddChild(_puffs);
         _leaves.Visible = false; _puffs.Visible = false;
-        for (int i = 0; i < Cells; i++) _kindsVariant.Add(Vector4.Zero);
     }
 
     private static MultiMeshInstance3D MakeRenderer(string name, Mesh mesh, Material material)
@@ -131,6 +137,9 @@ public partial class RingGustFrontDebris : Node3D
         };
     }
 
+    /// <summary>Snow share of a terrain sample: the dust puffs of these cells are drawn as white spindrift instead of tan dust (Tundra and Alpine ground is snow).</summary>
+    public static float SnowShare(TerrainBiomeId biome, bool surfaceWater) => !surfaceWater && biome is TerrainBiomeId.Tundra or TerrainBiomeId.Alpine ? 1.0f : 0.0f;
+
     /// <summary>Dust is suppressed once the ground is wet (recent rain, fat drops, core); leaves lose half their share in the core.</summary>
     public static Vector2 WetScales(in StormArrivalState arrival)
     {
@@ -151,7 +160,12 @@ public partial class RingGustFrontDebris : Node3D
         _smoothedLevel = Mathf.Lerp(_smoothedLevel, _level, 1.0f - Mathf.Exp(-rate * (float)delta));
         int budget = Math.Clamp(PresetBudget, 16, 4096);
         bool show = _smoothedLevel > 0.012f && _grid != null && _layer != null && budget > 0;
-        if (!show) { if (_leaves.Visible) { _leaves.Visible = false; _puffs.Visible = false; } return; }
+        if (!show)
+        {
+            if (_leaves.Visible) { _leaves.Visible = false; _puffs.Visible = false; }
+            _time = 0.0;   // restart the motion clock while hidden (float precision, no visible wrap)
+            return;
+        }
         if (!_layer!.TryGetObserverCanonicalPosition(out RingCanonicalPosition observer)) return;
         Camera3D? camera = GetViewport()?.GetCamera3D();
         if (camera == null) return;
@@ -161,6 +175,7 @@ public partial class RingGustFrontDebris : Node3D
             RingPoiHaze.RegisterMaterial(_leafMaterial, _ringRadius);
             RingPoiHaze.RegisterMaterial(_puffMaterial, _ringRadius);
             RingCloudShadowProjector.Register(_leafMaterial);
+            RingCloudShadowProjector.Register(_puffMaterial);
             _registered = true;
         }
         RingPoiHaze.Tick(this, _grid, _sun);
@@ -179,13 +194,18 @@ public partial class RingGustFrontDebris : Node3D
         // Debris travels with the wind it sees, slightly slower than the air.
         _drift += wind * (float)delta * 0.85f;
         _drift = new Vector2(Mathf.PosMod(_drift.X, DomainMeters), Mathf.PosMod(_drift.Y, DomainMeters));
-        _time = (_time + delta) % 3600.0;
+        _time += delta;
         UpdateKinds(observer, arrival, (float)delta);
 
         Vector3 cameraPosition = camera.GlobalPosition;
         _leaves.GlobalTransform = new Transform3D(Basis.Identity, cameraPosition);
         _puffs.GlobalTransform = new Transform3D(Basis.Identity, cameraPosition);
-        Vector2 cameraAc = new((float)Mod(observer.AroundMeters, DomainMeters), (float)Mod(observer.AcrossMeters, DomainMeters));
+        // The lattice is anchored to the ring (around/across of the observer) but the MultiMeshes sit at the camera: shift the lattice origin by the camera's offset from
+        // the observer along the ring axes so both agree when the camera is not at the observer (third person, free camera).
+        Vector3 cameraOffset = cameraPosition - origin;
+        Vector2 cameraAc = new((float)Mod(observer.AroundMeters + cameraOffset.Dot(around), DomainMeters), (float)Mod(observer.AcrossMeters + cameraOffset.Dot(across), DomainMeters));
+        float dayStart = _grid.RingDayStartDot, dayFull = Mathf.Max(dayStart + 0.001f, _grid.RingDayFullDot);
+        Vector3 ringCenter = _grid.GetCanonicalRingCenterWorld();
         foreach (ShaderMaterial material in new[] { _leafMaterial, _puffMaterial })
         {
             material.SetShaderParameter("deb_around", around);
@@ -196,7 +216,10 @@ public partial class RingGustFrontDebris : Node3D
             material.SetShaderParameter("deb_wind", wind);
             material.SetShaderParameter("deb_time", (float)_time);
             material.SetShaderParameter("deb_level", _smoothedLevel);
-            material.SetShaderParameter("deb_kinds", _kindsVariant);
+            material.SetShaderParameter("deb_kinds", _kinds);
+            material.SetShaderParameter("ring_center", ringCenter);
+            material.SetShaderParameter("deb_day_start_dot", dayStart);
+            material.SetShaderParameter("deb_day_full_dot", dayFull);
         }
         PublishLight(observer);
     }
@@ -216,7 +239,7 @@ public partial class RingGustFrontDebris : Node3D
     private void UpdateKinds(RingCanonicalPosition observer, in StormArrivalState arrival, float delta)
     {
         Vector2 wet = WetScales(arrival);
-        if (ForcedShares.HasValue) for (int i = 0; i < Cells; i++) _kindTargets[i] = new Vector4(ForcedShares.Value.X, ForcedShares.Value.Y, ForcedShares.Value.Z, 0.0f);
+        if (ForcedShares.HasValue) for (int i = 0; i < Cells; i++) _kindTargets[i] = new Vector4(ForcedShares.Value.X, ForcedShares.Value.Y, ForcedShares.Value.Z, ForcedSnow);
         else if (_grid?.TerrainSampler != null)
         {
             int count = _kindsSeeded ? 1 : Cells;
@@ -228,16 +251,15 @@ public partial class RingGustFrontDebris : Node3D
                 TerrainSample sample = _grid.TerrainSampler.GetTerrainSample((long)Math.Floor(around), Mathf.FloorToInt((float)across));
                 Vector3 shares = BiomeShares(sample.Biome, sample.HasSurfaceWater);
                 LastShares[cell] = shares;
-                _kindTargets[cell] = new Vector4(shares.X, shares.Y, shares.Z, 0.0f);
+                _kindTargets[cell] = new Vector4(shares.X, shares.Y, shares.Z, SnowShare(sample.Biome, sample.HasSurfaceWater));
             }
         }
         float ease = _kindsSeeded ? 1.0f - Mathf.Exp(-1.5f * delta) : 1.0f;
         for (int i = 0; i < Cells; i++)
         {
             Vector4 target = _kindTargets[i];
-            target = new Vector4(target.X * wet.X, target.Y * wet.Y, target.Z, 0.0f);
+            target = new Vector4(target.X * wet.X, target.Y * wet.Y, target.Z, target.W);
             _kinds[i] = _kinds[i].Lerp(target, ease);
-            _kindsVariant[i] = _kinds[i];
         }
         _kindsSeeded = true;
     }

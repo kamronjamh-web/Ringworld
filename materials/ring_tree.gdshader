@@ -64,7 +64,7 @@ void vertex() {
 	tree_haze_S = ring_haze_inscatter(vertex_haze);
 	tree_wet_state = vec2(0.0);
 	if (ring_wet_params.w > 0.5) {
-		RingWet wet_state = ring_wet_sample_up(world_position, surface_up);
+		RingWet wet_state = ring_wet_sample_vegetation(world_position);
 		tree_wet_state = vec2(smoothstep(0.0, 0.5, wet_state.soak) * ring_wet_params.x, ring_wet_gloss(wet_state));
 	}
 }
@@ -88,7 +88,7 @@ void fragment() {
 		haze_emission = atmosphere.rgb * (1.0 - tree_haze_T.g) * atmosphere_scattering_energy;
 	}
 	EMISSION += haze_emission;
-	ROUGHNESS = 0.92 * mix(1.0, 0.6, tree_wet_state.y);
+	ROUGHNESS = ring_wet_ssr_roughness(0.92 * mix(1.0, 0.6, tree_wet_state.y), 0.92); // wet world: glossier, held above the SSR cut (light() has no highlight)
 	SPECULAR = mix(0.04, 0.1, tree_wet_state.y);
 	METALLIC = 0.0;
 	AO = min(1.0 - cloud_occlusion * cloud_shadow_ao_strength, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light

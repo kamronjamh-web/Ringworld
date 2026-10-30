@@ -46,9 +46,16 @@ layout(binding = 11, std140) uniform RingStormMapBlock {
     vec4 c;
 } ringStormMap;
 layout(binding = 12) uniform sampler2DArray ring_storm_map;
+// S6 cloud layers (RingCloudLayers.glslinc): the live layer table block (the main march's binding 29) and the layer height gradient
+// (the main march's binding 30); bindings 13/14 are free (0-12 are used).
+layout(binding = 14) uniform sampler2D layer_heightmask;
 #define RING_WS_MACRO_MAP
+// The ray mask also keeps base-lowering systems at their weatherness reach, so the layer hull's floor is the weather base wherever weatherness can be > 0.
+#define RING_WS_MASK_LOWERS_BASE 1
 #include "./RingWeatherSystems.glslinc"
 #include "./RingStormProfileSample.glslinc"
+#define RING_CLOUD_LAYERS_BINDING 13
+#include "./RingCloudLayers.glslinc"
 
 // center_radius.xyz is the ground datum at the cascade centre; w is its
 // half-width. The three axes are world-space unit vectors. Axis .w values hold
@@ -297,6 +304,119 @@ float ring_ws_sculpt_density(vec3 canonical, float background_floor, float backg
     return result;
 }
 
+// ---- S6 cloud layers (the shadow twin of RingCloudLayerSample.glslinc) ----------------------------------------------------------
+// On for a camera-independent march with a published layer table and a valid macro map (debug mask bit 64 clears it: the single legacy
+// background band). The low / mid layers use the main march's density function without the view-only terms (curl warp, effectors,
+// thin-layer overlap, ambient samples), scaled by the table's per-layer ShadowWeight. Cirrus (the high shell layer) adds no volumetric
+// shadow here; main() adds its closed-form term (shadow weight * high coverage at the sun ray's crossing of the shell altitude) as
+// cirrus_occlusion, the same term ring_layers_sun_above gives the layers below it in the main compute.
+bool g_layers_on = false;
+vec4 g_layer_low = vec4(0.0);
+float g_layer_weather = 0.0; // the column's weatherness (map.w), for the deck closure (RingCloudLayerSample.glslinc ring_layer_closure)
+vec4 g_layer_mid = vec4(0.0);
+
+// The macro map's layer value (low, mid, high coverage, weatherness) at a canonical position (one bilinear fetch); outside the map
+// there are none.
+vec4 ring_layers_map_at(vec3 canonical) {
+    vec4 map = vec4(0.0);
+    float circumference = ringMacroMap.b.z;
+    float texel = max(ringMacroMap.a.z, 1.0);
+    float dx = canonical.x - ringMacroMap.a.x;
+    if (circumference > 1.0) dx -= circumference * floor(dx / circumference);
+    vec2 t = vec2(dx, canonical.z - ringMacroMap.a.y) / texel;
+    vec2 size = ringMacroMap.b.xy;
+    if (t.x >= 0.5 && t.y >= 0.5 && t.x <= size.x - 0.5 && t.y <= size.y - 0.5) {
+        map = textureLod(ring_macro_map, vec3(t / vec2(textureSize(ring_macro_map, 0).xy), ringMacroMap.a.w + 2.0), 0.0);
+    }
+    return map;
+}
+
+// Resolves the sample's layers from the front macro map (ring_layers_map_at).
+void ring_layers_update(vec3 canonical) {
+    vec4 map = ring_layers_map_at(canonical);
+    g_layer_low = ring_cloud_layer_resolve(0, map);
+    g_layer_mid = ring_cloud_layer_resolve(1, map);
+    g_layer_weather = map.w;
+}
+
+// Shadow density of one layer (0 low, 1 mid) at a sample; col is the layer's resolved (coverage, base, top, stratiformity).
+float ring_layer_shadow_density(int layer, vec4 col, vec3 canonical, float weather_storm) {
+    float thickness = col.z - col.y;
+    if (thickness < 1.0 || canonical.y < col.y || canonical.y > col.z) return 0.0;
+    vec4 layer_a = ringCloudLayers.layers[layer * 4];
+    vec4 layer_c = ringCloudLayers.layers[layer * 4 + 2];
+    float shadow_weight = ringCloudLayers.layers[layer * 4 + 3].z;
+    if (shadow_weight <= 0.0) return 0.0;
+    vec3 offset = ringCloudLayers.noise[layer].xyz;
+    float stratiformity = col.w;
+    // The weather gate is pure ALU on the sample's position: a cleared gate skips every fetch below.
+    vec4 weather_params = genericData.data.cloud_weather_params;
+    float patch_factor = 1.0;
+    if (weather_params.y > 0.0) {
+        float field = ring_cloud_weather_noise(canonical + offset, weather_params, genericData.data.cloud_weather_frame);
+        patch_factor = mix(1.0, mix(0.05, 2.0, smoothstep(0.20, 0.80, field)), clamp(weather_params.x, 0.0, 1.0));
+    }
+    // Deck closure (twin of ring_layer_closure / ring_layer_density, RingCloudLayerSample.glslinc): a floor on the patch factor and on
+    // the threshold. weather_storm is this sample's owned storm level (or the storm silhouette).
+    float closure = max(smoothstep(0.25, 0.85, g_layer_weather), smoothstep(0.75, 0.98, col.x) * smoothstep(0.5, 0.9, col.w))
+        * (1.0 - g_ws_storm_owned) * (1.0 - smoothstep(0.35, 0.80, weather_storm));
+    patch_factor = max(patch_factor, closure);
+    float resolved = clamp(max(clamp(col.x + ringWeatherSystems.header0.w, 0.0, 1.0) * patch_factor, weather_storm), 0.0, 1.0);
+    float gate = ring_cloud_weather_clear_gate(resolved, weather_storm, weather_params);
+    if (gate <= 0.0) return 0.0;
+    float threshold = max(mix(mix(0.70, 0.90, resolved), 1.05, smoothstep(0.35, 0.80, weather_storm)), 0.97 * closure * clamp(col.x, 0.0, 1.0));
+
+    float height = (canonical.y - col.y) / thickness;
+    float edge_fade = min(smoothstep(0.0, 0.1, height), smoothstep(1.0, 0.9, height));
+    if (edge_fade <= 0.0) return 0.0;
+    float gradient_v = (2.0 * layer_a.w + 0.5 + stratiformity) / 8.0;
+    vec4 gradient = texture(layer_heightmask, vec2(height, gradient_v));
+
+    float extra = texture(extra_large_noise,
+        (canonical.xz + offset.xz - genericData.data.extralargenoiseposition.xz) /
+        max(genericData.data.extralargenoisescale, 1.0)).a * gradient.b;
+    vec3 position = canonical;
+    vec2 wind_direction = genericData.data.WindDirection;
+    float wind_swept = 1.0 - clamp(height / genericData.data.windSweptRange, 0.0, 1.0);
+    position += vec3(wind_direction.x, 0.0, wind_direction.y) * genericData.data.windSweptPower * wind_swept * wind_swept;
+
+    vec3 large_position = (position + offset - genericData.data.largenoiseposition) / max(genericData.data.large_noise_scale, 1.0);
+    // Stratiform stretch: constant-factor lookup cross-faded by stratiformity (RingCloudLayerSample.glslinc ring_layer_density; a
+    // stratiformity-dependent divisor of the absolute noise coordinate streaks the noise along stratiformity gradients).
+    float large_scale = extra * gradient.r;
+    float large_shape = 0.0;
+    if (stratiformity < 1.0)
+        large_shape = smoothstep(1.0 - threshold, 1.1 - threshold, texture(large_noise, large_position).r * large_scale);
+    if (stratiformity > 0.0) {
+        vec3 stretched_position = vec3(large_position.x / layer_c.x, large_position.y, large_position.z / layer_c.x);
+        large_shape = mix(large_shape, smoothstep(1.0 - threshold, 1.1 - threshold, texture(large_noise, stretched_position).r * large_scale),
+            stratiformity);
+    }
+    if (large_shape <= 0.0) return 0.0;
+    float medium_shape = 1.0 - texture(medium_noise,
+        (position + offset - genericData.data.mediumnoiseposition) / max(genericData.data.medium_noise_scale, 1.0)).b;
+    float small_raw = texture(small_noise,
+        (canonical + offset - genericData.data.smallnoiseposition) / max(genericData.data.small_noise_scale, 1.0)).r;
+    float small_shape = small_raw * gradient.g * mix(layer_c.y, layer_c.z, stratiformity)
+        * pow(1.0 - medium_shape, genericData.data.small_noise_strength);
+    float shape = clamp((medium_shape - (1.0 - large_shape)) / large_shape, 0.0, 1.0);
+    shape = clamp((shape - small_shape) / (1.0 - small_shape), 0.0, 1.0);
+    return clamp(shape * edge_fade, 0.0, 1.0) * gate * shadow_weight;
+}
+
+// Background shadow density: the max over the layers whose altitude range contains the sample.
+float ring_layers_shadow_background(vec3 canonical, float weather_storm) {
+    ring_layers_update(canonical);
+    float density = 0.0;
+    if (canonical.y >= g_layer_low.y && canonical.y <= g_layer_low.z) {
+        density = ring_layer_shadow_density(0, g_layer_low, canonical, weather_storm);
+    }
+    if (canonical.y >= g_layer_mid.y && canonical.y <= g_layer_mid.z) {
+        density = max(density, ring_layer_shadow_density(1, g_layer_mid, canonical, weather_storm));
+    }
+    return density;
+}
+
 float sample_sunshine_density(vec3 world_position) {
 	// A disabled density field is guaranteed empty. Test this before any noise
 	// fetches, without broadening the condition to low positive densities.
@@ -329,14 +449,18 @@ float sample_sunshine_density(vec3 world_position) {
     }
     float height = remap(cloud_position.y, floor_height, ceiling_height, 0.0, 1.0);
 
-    vec4 gradient = texture(heightmask, vec2(clamp(height, 0.0, 1.0), 0.5));
     float edge_fade = min(smoothstep(0.0, 0.1, height), smoothstep(1.0, 0.9, height));
-    float extra = texture(extra_large_noise,
-        (cloud_position.xz - genericData.data.extralargenoiseposition.xz) /
-        max(genericData.data.extralargenoisescale, 1.0)).a * gradient.b;
-    float large = texture(large_noise,
-        (cloud_position - genericData.data.largenoiseposition) /
-        max(genericData.data.large_noise_scale, 1.0)).r * extra;
+    vec4 gradient = vec4(0.0);
+    float large = 0.0;
+    if (!g_layers_on) {
+        gradient = texture(heightmask, vec2(clamp(height, 0.0, 1.0), 0.5));
+        float extra = texture(extra_large_noise,
+            (cloud_position.xz - genericData.data.extralargenoiseposition.xz) /
+            max(genericData.data.extralargenoisescale, 1.0)).a * gradient.b;
+        large = texture(large_noise,
+            (cloud_position - genericData.data.largenoiseposition) /
+            max(genericData.data.large_noise_scale, 1.0)).r * extra;
+    }
     // This is the exact pre-medium background coverage. smoothstep returns
     // literal zero in clear cells, so those cells can skip the expensive 3D
     // detail textures without introducing a visibility threshold.
@@ -364,32 +488,47 @@ float sample_sunshine_density(vec3 world_position) {
         weatherStorm = max(storm_silhouette, ring_ws_storm_level());
         weather_frame.w = ring_ws_frame_coverage();
     }
-    float weatherCoverage = ring_cloud_weather_resolved_coverage(
-        weather_frame.w, weatherStorm, cloud_position,
-        genericData.data.cloud_weather_params, weather_frame);
-    float legacyCoverage = genericData.data.cloud_coverage * 1.01;
-    float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
-        ? mix(mix(0.70, 0.90, weatherCoverage), 1.05, smoothstep(0.35, 0.80, weatherStorm)) : legacyCoverage;
-    large = smoothstep(1.0 - weatherBackgroundThreshold,
-        1.1 - weatherBackgroundThreshold, large * gradient.r);
-    float weather_gate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
-        genericData.data.cloud_weather_params);
-    float background_coverage = large * edge_fade;
-    if ((background_coverage <= 0.0 || weather_gate <= 0.0)
-        && storm_silhouette <= 0.0) return 0.0;
+    float layered = 0.0;
+    float weather_gate = 1.0;
+    float background_coverage = 0.0;
+    if (g_layers_on) {
+        // The altitude-dispatched low / mid layers are the whole background; the storm sculpt keeps its own density below.
+        // Only a storm-owned column takes the storm lift (S6 3.8), exactly as the main compute's sampleScene.
+        g_ws_storm_owned = ring_ws_storm_owned_at(cloud_position, g_ws_sculpt_mask);
+        layered = ring_layers_shadow_background(cloud_position, max(storm_silhouette, ring_ws_eval_owned_storm_level()));
+        if (layered <= 0.0 && storm_silhouette <= 0.0) return 0.0;
+    } else {
+        float weatherCoverage = ring_cloud_weather_resolved_coverage(
+            weather_frame.w, weatherStorm, cloud_position,
+            genericData.data.cloud_weather_params, weather_frame);
+        float legacyCoverage = genericData.data.cloud_coverage * 1.01;
+        float weatherBackgroundThreshold = genericData.data.cloud_weather_params.y > 0.0
+            ? mix(mix(0.70, 0.90, weatherCoverage), 1.05, smoothstep(0.35, 0.80, weatherStorm)) : legacyCoverage;
+        large = smoothstep(1.0 - weatherBackgroundThreshold,
+            1.1 - weatherBackgroundThreshold, large * gradient.r);
+        weather_gate = ring_cloud_weather_clear_gate(weatherCoverage, weatherStorm,
+            genericData.data.cloud_weather_params);
+        background_coverage = large * edge_fade;
+        if ((background_coverage <= 0.0 || weather_gate <= 0.0)
+            && storm_silhouette <= 0.0) return 0.0;
+    }
 
     // Storm-only samples need the medium channel for the existing storm
     // modulation, but not the small erosion texture used only by background.
-    vec4 medium = texture(medium_noise,
-        (cloud_position - genericData.data.mediumnoiseposition) /
-        max(genericData.data.medium_noise_scale, 1.0));
-    float storm_density = storm_silhouette * mix(0.62, 1.0, medium.r);
-    if (camera_independent && g_storm_map_density > 0.0) {
-        // Baked storm columns: the same profile-driven erosion as the visible march, medium noise only.
-        storm_density = max(g_storm_other * mix(0.62, 1.0, medium.r), ring_storm_eroded(1.0 - medium.b, 0.0));
+    float storm_density = 0.0;
+    vec4 medium = vec4(0.0);
+    if (storm_silhouette > 0.0 || !g_layers_on) {
+        medium = texture(medium_noise,
+            (cloud_position - genericData.data.mediumnoiseposition) /
+            max(genericData.data.medium_noise_scale, 1.0));
+        storm_density = storm_silhouette * mix(0.62, 1.0, medium.r);
+        if (camera_independent && g_storm_map_density > 0.0) {
+            // Baked storm columns: the same profile-driven erosion as the visible march, medium noise only.
+            storm_density = max(g_storm_other * mix(0.62, 1.0, medium.r), ring_storm_eroded(1.0 - medium.b, 0.0));
+        }
     }
-    float background_density = 0.0;
-    if (background_coverage > 0.0) {
+    float background_density = layered;
+    if (!g_layers_on && background_coverage > 0.0) {
         float medium_shape = 1.0 - medium.b;
         float small = texture(small_noise,
             (cloud_position - genericData.data.smallnoiseposition) /
@@ -483,6 +622,11 @@ bool sunshine_cloud_possible(vec3 world_position, float slack) {
     // at field + slack gives an upper bound over the whole slack radius.
     float field = ring_cloud_weather_noise(cloud_position, weather_params,
         genericData.data.cloud_weather_frame);
+    // S6: the mid layer evaluates the patch field at its own noise offset; the larger field bounds both layers.
+    if (g_layers_on) {
+        field = max(field, ring_cloud_weather_noise(cloud_position + ringCloudLayers.noise[1].xyz, weather_params,
+            genericData.data.cloud_weather_frame));
+    }
     field = min(field + 3.0 * slack / max(weather_params.y, 1.0), 1.0);
     // Mirrors ring_cloud_weather_resolved_coverage; keep the two in sync.
     float shaped = mix(0.05, 2.0, smoothstep(0.20, 0.80, field));
@@ -515,6 +659,21 @@ void main() {
     if (sun_up <= 0.0001) { imageStore(shadow_output, pixel, vec4(0.0)); return; }
     float band_floor = shadow.sun_floor.w;
     float band_ceiling = shadow.ceiling_steps_extinction.x;
+    // S6 volumetric low / mid layers (see ring_layers_shadow_background); debug mask bit 64 returns to the single legacy background band.
+    g_layers_on = ring_ws_enabled() && ringCloudLayers.header0.x > 1.0 && (ring_ws_debug() & 64) == 0 && ring_ws_map_valid();
+    if (g_layers_on) {
+        // The envelope reaches at least the layers' hull (weather base to top cap).
+        vec2 layer_hull = ring_cloud_layers_hull(true);
+        band_floor = min(band_floor, layer_hull.x);
+        band_ceiling = max(band_ceiling, layer_hull.y);
+    }
+    // Closed-form weak cirrus shadow (design 3.6): shadow weight * the high coverage where the sun ray crosses the shell altitude; the
+    // same term as ring_layers_sun_above in the main compute. Receivers combine R/G as a transmittance product.
+    float cirrus_occlusion = 0.0;
+    if (g_layers_on && ringCloudLayers.layers[11].w > 0.5 && (ring_ws_debug() & 128) == 0) {
+        vec3 cirrus_point = ground + sun_direction * (ringCloudLayers.layers[8].x / sun_up);
+        cirrus_occlusion = ringCloudLayers.layers[11].z * clamp(ring_layers_map_at(to_cloud_space(cirrus_point)).z, 0.0, 1.0);
+    }
     if (ring_ws_enabled()) {
         // Camera-independent clouds: mask the systems whose support reaches this pixel's sun ray across the whole
         // envelope, then march the background band unioned with the storm bands of the masked sculpt systems. The margin
@@ -534,9 +693,28 @@ void main() {
         g_ws_sculpt_mask = ring_ws_sculpt_ellipse_subset(g_ws_sculpt_mask, mask_p0, mask_p1, mask_p2, margin);
         vec2 background_band = vec2(genericData.data.background_altitude.x, genericData.data.background_altitude.y);
         if (background_band.y <= background_band.x + 1.0) background_band = vec2(band_floor, band_ceiling);
+        if (g_layers_on) {
+            // The base band is the layer hull; its floor is the weather base only when a base-lowering system reaches this sun ray
+            // (the mask margin covers the map's bilinear bleed), otherwise the fair base. The sculpt bands widen it as before.
+            bool lowers_base = false;
+            for (int word = 0; word < 2; word++) {
+                uint bits = word == 0 ? g_ws_mask.x : g_ws_mask.y;
+                while (bits != 0u) {
+                    int index = word * 32 + findLSB(bits);
+                    bits &= bits - 1u;
+                    if ((ring_ws_flags(index) & RING_WS_FLAG_LOWERS_BASE) != 0u) lowers_base = true;
+                }
+            }
+            background_band = ring_cloud_layers_hull(lowers_base);
+        }
         vec2 band = ring_ws_band(background_band, g_ws_sculpt_mask);
         band_floor = band.x;
         band_ceiling = band.y;
+        // A real storm owns its anvil (S6 3.8): no cirrus shell term inside a sculpt storm's support (as in the main compute).
+        if (cirrus_occlusion > 0.0) {
+            cirrus_occlusion *= 1.0 - ring_ws_storm_owned_at(
+                to_cloud_space(ground + sun_direction * (ringCloudLayers.layers[8].x / sun_up)), g_ws_sculpt_mask);
+        }
     }
     float floor_distance = band_floor / sun_up;
     float ceiling_distance = band_ceiling / sun_up;
@@ -573,7 +751,7 @@ void main() {
                 last_possible = k;
             }
         }
-        if (first_possible < 0) { imageStore(shadow_output, pixel, vec4(0.0)); return; }
+        if (first_possible < 0) { imageStore(shadow_output, pixel, vec4(cirrus_occlusion, 0.0, 0.0, 0.0)); return; }
         // Widen by one coarse segment on each side before the fine march.
         int lo = max(first_possible - 1, 0);
         int hi = min(last_possible + 1, probe_count - 1);
@@ -607,6 +785,7 @@ void main() {
     // Bridge tuning is expressed per kilometre; sample geometry is in metres.
     float extinction = 0.001 * max(shadow.ceiling_steps_extinction.z, 0.0);
     float even_occlusion = 1.0 - clamp(exp(-even_optical_depth * extinction), 0.0, 1.0);
+    even_occlusion = 1.0 - (1.0 - even_occlusion) * (1.0 - cirrus_occlusion);
     float odd_occlusion = 1.0 - clamp(exp(-odd_optical_depth * extinction), 0.0, 1.0);
     imageStore(shadow_output, pixel, vec4(even_occlusion, odd_occlusion, 0.0, 0.0));
 }

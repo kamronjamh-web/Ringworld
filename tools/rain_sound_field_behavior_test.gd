@@ -632,7 +632,8 @@ func lifecycle(site: Dictionary) -> bool:
 	paused = false
 	await wait_real(.2)
 	if not check(not voice.stream_paused, "resume"): return false
-	# Dry weather: no queries, true silence from the loops. The surfaces stay wet and drip for a while (tau 90 s), so wetness decays slowly.
+	# Dry weather: true silence from the loops. The surfaces stay wet and drip for a while (tau 90 s), so wetness decays slowly,
+	# and exposure/shelter probing keeps running until wetness drops under 0.05 (the dry no-query contract is covered by the core diagnostics).
 	rain(0.0)
 	await wait_real(3.0)
 	var wet_a := float(diag().wetness)
@@ -648,8 +649,10 @@ func lifecycle(site: Dictionary) -> bool:
 	await wait_real(5.0)
 	queries = int(diag().surface_query_total)
 	await wait_real(.4)
-	if not check(int(diag().surface_query_total) == queries and await peak() <= .000001, "dry weather queried terrain or leaked PCM"): return false
+	if not check(float(diag().wetness) > .05 and int(diag().surface_query_total) > queries and await peak() <= .000001, "post-rain wetness stopped probing or the loops leaked PCM"): return false
 	rain(1.0, true)
+	await wait_real(.5)
+	queries = int(diag().surface_query_total)
 	await wait_real(2.0)
 	if not check(int(diag().surface_query_total) == queries and await peak() <= .000001, "snow queried terrain or played rain"): return false
 	for prop in SHOT_LIBRARIES: ambience.set(prop, drip_saved[prop])

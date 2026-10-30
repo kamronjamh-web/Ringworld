@@ -531,7 +531,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentSlider(handoff, "AltitudeFadeEndMeters", "Volumetric off altitude", 6000, 200000, 1000, _cloudBridge?.AltitudeFadeEndMeters ?? 60000);
         _effectiveCloudHandoffStatus = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
         handoff.AddChild(_effectiveCloudHandoffStatus);
-        AddPersistentSlider(handoff, "NaturalCloudBaseAltitudeMeters", "Cloud base altitude", 0, 19000, 50, _cloudBridge?.NaturalCloudBaseAltitudeMeters ?? 2000); AddPersistentSlider(handoff, "NaturalCloudTopAltitudeMeters", "Cloud top altitude", 500, 20000, 50, _cloudBridge?.NaturalCloudTopAltitudeMeters ?? 6000); AddPersistentSlider(handoff, "StormFrontCloudBaseAltitudeMeters", "Storm-front base altitude", 0, 5000, 50, _cloudBridge?.StormFrontCloudBaseAltitudeMeters ?? 500);
+        AddPersistentSlider(handoff, "NaturalCloudBaseAltitudeMeters", "Fair-weather cloud base", 800, 3000, 50, _cloudBridge?.NaturalCloudBaseAltitudeMeters ?? 2000); AddPersistentSlider(handoff, "StormFrontCloudBaseAltitudeMeters", "Weather cloud base", 300, 1500, 50, _cloudBridge?.StormFrontCloudBaseAltitudeMeters ?? 500);
         VBoxContainer distant = TuningMenuUi.CreateSection(tab, "Distant clouds");
         AddPersistentToggle(distant, "FarCloudPatchCullingEnabled", "Cull off-screen distant cloud patches", _cloudBridge?.FarCloudPatchCullingEnabled ?? true);
         AddPersistentToggle(distant, "FarCloudDetailEnabled", "Reuse Sunshine density", _cloudBridge?.FarCloudDetailEnabled ?? true); AddPersistentSlider(distant, "FarCloudDetailStrength", "Shared detail strength", 0, 1, .01, _cloudBridge?.FarCloudDetailStrength ?? 1); AddPersistentSlider(distant, "FarCloudOpacityMultiplier", "Distant opacity", 0, 2, .01, _cloudBridge?.FarCloudOpacityMultiplier ?? 1); AddPersistentSlider(distant, "FarCloudRadiusMeters", "Distant cloud radius", 30000, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters, 5000, _cloudBridge?.FarCloudRadiusMeters ?? 180000); AddPersistentSlider(distant, "CloudPatchiness", "Coverage variation", 0, 1, .01, _cloudBridge?.CloudPatchiness ?? 1); AddPersistentSlider(distant, "CloudPatchScaleMeters", "Weather patch size", 16000, 256000, 1000, _cloudBridge?.CloudPatchScaleMeters ?? 64000); AddPersistentSlider(distant, "ClearSkyThreshold", "Clear-sky threshold", 0, .6, .01, _cloudBridge?.ClearSkyThreshold ?? .12);
@@ -544,12 +544,12 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         AddPersistentSlider(cameraIndependent, "WeatherSystemSelectionMarginMeters", "System selection margin (m)", 0, 30000, 500, _cloudBridge?.WeatherSystemSelectionMarginMeters ?? 8000);
         AddPersistentSlider(cameraIndependent, "OverflowFadeMeters", "Overflow fade distance (m)", 1000, 50000, 500, _cloudBridge?.OverflowFadeMeters ?? 15000);
         AddPersistentSlider(cameraIndependent, "SunshineBaseCoverageOffset", "Base coverage offset", -.3, .3, .01, _cloudBridge?.SunshineBaseCoverageOffset ?? 0);
-        AddPersistentSlider(cameraIndependent, "StormEnvelopeCeilingMeters", "Storm envelope ceiling (m)", 6000, 25000, 500, _cloudBridge?.StormEnvelopeCeilingMeters ?? 20000);
+        AddPersistentSlider(cameraIndependent, "StormEnvelopeCeilingMeters", "Storm envelope ceiling (m)", 6000, 18000, 500, _cloudBridge?.StormEnvelopeCeilingMeters ?? 18000);
         AddPersistentToggle(cameraIndependent, "MacroWeatherMap", "Macro weather map", _cloudBridge?.MacroWeatherMap ?? true);
         AddPersistentSlider(cameraIndependent, "MacroMapResolution", "Macro map texel size (m)", 250, 4000, 50, _cloudBridge?.MacroMapResolution ?? 1000);
         AddPersistentSlider(cameraIndependent, "MacroMapSlices", "Macro map build slices", 1, 32, 1, _cloudBridge?.MacroMapSlices ?? 8);
         AddPersistentSlider(cameraIndependent, "MacroMapRefreshSeconds", "Macro map refresh (s)", .05, 2, .05, _cloudBridge?.MacroMapRefreshSeconds ?? .25);
-        AddPersistentSlider(cameraIndependent, "CameraIndependentDebugMask", "Debug: ablation bit mask (0 = normal)", 0, 63, 1, _cloudBridge?.CameraIndependentDebugMask ?? 0);
+        AddPersistentSlider(cameraIndependent, "CameraIndependentDebugMask", "Debug: ablation bit mask (0 = normal)", 0, 511, 1, _cloudBridge?.CameraIndependentDebugMask ?? 0);
         VBoxContainer showcase = TuningMenuUi.CreateSection(tab, "Showcase"); AddCloudShowcaseControls(showcase);
         BuildRainHazeControls(tab);
         BuildWetWorldControls(tab);
@@ -574,6 +574,10 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         tab.AddChild(new Label { Text = "Gameplay appearance", Modulate = RingUiStyle.Muted });
         AddPersistentToggle(tab, "CloudRenderingEnabled", "Sunshine local rendering", _cloudBridge?.CloudRenderingEnabled ?? true);
         AddPersistentSlider(tab, "CloudCoverageBias", "Coverage bias", -1, 1, .01, _cloudBridge?.CloudCoverageBias ?? 0);
+        AddPersistentSlider(tab, "LowCloudAmount", "Low cloud amount", -1, 1, .01, _cloudBridge?.LowCloudAmount ?? 0);
+        AddPersistentSlider(tab, "MidCloudAmount", "Mid cloud amount", -1, 1, .01, _cloudBridge?.MidCloudAmount ?? 0);
+        AddPersistentSlider(tab, "HighCloudAmount", "High cloud amount", -1, 1, .01, _cloudBridge?.HighCloudAmount ?? 0);
+        AddPersistentSlider(tab, "DaytimeCumulus", "Daytime cumulus", 0, 1, .01, _cloudBridge?.DaytimeCumulus ?? 1);
         AddPersistentSlider(tab, "CloudDensityMultiplier", "Density multiplier", 0, 3, .01, _cloudBridge?.CloudDensityMultiplier ?? 1);
         AddPersistentSlider(tab, "CloudWindMultiplier", "Cloud travel multiplier", 0, 3, .01, _cloudBridge?.CloudWindMultiplier ?? 1);
         AddPersistentSlider(tab, "CloudDirectLightMultiplier", "Direct light multiplier", 0, 2, .01, _cloudBridge?.CloudDirectLightMultiplier ?? 1);
@@ -687,12 +691,16 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         "WeatherSystemSelectionMarginMeters" => "Extra distance added to the cloud handoff end plus light reach when picking weather systems, so a system is already loaded before it can become visible.",
         "OverflowFadeMeters" => "When more systems exist than the upload cap, systems within this distance of the first excluded system fade to zero weight.",
         "SunshineBaseCoverageOffset" => "Added to the weather layer's base coverage for camera-independent clouds. Calibrated to match the legacy look; small values are normal.",
+        "LowCloudAmount" => "Fair-weather coverage of the low (cumulus and stratocumulus) layer. Negative thins it, positive fills the sky; weather systems keep their own cloud.",
+        "MidCloudAmount" => "Fair-weather coverage of the mid (altocumulus) layer. Negative thins it, positive adds more; weather systems keep their own cloud.",
+        "HighCloudAmount" => "Fair-weather coverage of the high (cirrus) layer. Negative thins it, positive adds more; weather systems keep their own cloud.",
+        "DaytimeCumulus" => "Scales how much fair-weather cumulus builds by day and fades by night. 0 holds a steady cover, 1 is the full daily swing.",
         "StormEnvelopeCeilingMeters" => "Top of the constant ray envelope the cloud shader marches within. Lower is cheaper but clips tall storm towers.",
         "MacroWeatherMap" => "Builds a world-anchored macro weather map over several frames so each cloud sample needs one texture fetch instead of looping over its ray's systems. Off evaluates every system directly (slower).",
         "MacroMapResolution" => "Macro weather map texel size in metres. Smaller is finer but costs more build work; raised automatically if the region would exceed the map texture.",
         "MacroMapSlices" => "Render callbacks one macro map build is spread over. More slices lower the per-frame cost but delay map updates.",
         "MacroMapRefreshSeconds" => "Minimum time between macro map build starts. A build always finishes before the next one starts.",
-        "CameraIndependentDebugMask" => "Debug only. Performance ablation bits (0 = normal): 1 background band only, 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on background band, 32 legacy shader path.",
+        "CameraIndependentDebugMask" => "Debug only. Performance ablation bits (0 = normal): 1 background band only, 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on background band, 32 legacy shader path, 64 no S6 cloud layers, 128 no cirrus shell, 256 S6 deck colour off.",
         "CloudInterleave" => "Marches one pixel of every 2x2 or 4x4 block per frame at full cloud resolution and rebuilds the rest from history and neighbouring samples. Cuts raymarch cost roughly 3x / 10x for a steady camera; fast camera motion, history resets and the menu fall back to a full march. Can ghost at terrain silhouettes and reacts slower to lighting changes. 2x2 by default in every preset.",
         "CloudInterleaveHistoryCompensation" => "How strongly marched pixels shorten their history to account for being sampled once per block cycle (history weight is raised to this fraction of the cycle length). Higher refreshes interleaved pixels faster.",
         "CloudInterleaveHistoryClamp" => "Width, in standard deviations of the neighbouring current samples, that held history may differ from them before it is clipped. Lower removes ghosting but reintroduces noise.",

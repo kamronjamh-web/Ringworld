@@ -215,6 +215,8 @@ func _run() -> void:
 	await exposure_check()
 	# ---- probe
 	await probe_check()
+	# ---- plane change under physics interpolation: the first map of a new frame must be exact
+	await plane_change_check()
 	# ---- rebase: transform republish only, no re-render
 	await rebase_check()
 	# ---- per-update cost
@@ -297,6 +299,42 @@ func probe_check() -> void:
 	await frames(25)
 	check("probe_outside_map_not_fresh", not bool(occlusion.get("IsFresh")), "")
 	occlusion.call("ClearProbeListener")
+
+# Plane change under physics interpolation (S3 time-lapse "dry pop", 2026-10-29). When the cloud base moves the map camera jumps to a new plane height; an
+# interpolated map camera rendered the first map of the new frame from part of the way between the old and the new plane, so the published map put every surface
+# hundreds of metres too high for one refresh (the cover probe read "sheltered", the wet world dried the ground). The first publication after each jump must be exact.
+func plane_change_check() -> void:
+	var ticks := Engine.physics_ticks_per_second
+	physics_interpolation = true
+	Engine.physics_ticks_per_second = 2   # a slow tick leaves the render early in the interpolation step, so a stale camera is caught every time
+	await frames(4)
+	var map_basis := Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
+	var bad := 0; var worst := 0.0; var renders := 0
+	for step in 4:
+		var plane := PLANE_Y + (300.0 if step % 2 == 0 else 0.0)
+		var before := int(occlusion.get("RenderCount"))
+		occlusion.call("SubmitManualFrame", Transform3D(map_basis, Vector3(0, plane, 0)), plane - 1.7)
+		if not await wait_for_render(before): break
+		renders += 1
+		var map := await read_map()
+		if map.size() != MAP * MAP: break
+		for ty in range(40, MAP - 40, 16):
+			for tx in range(40, MAP - 40, 16):
+				var w := texel_world(tx, ty)
+				var near_box := false
+				for r: Rect2 in [Rect2(15, -15, 10, 10), Rect2(-31, 9, 12, 12), Rect2(-30, -40, 20, 20), Rect2(-51.5, 48.5, 3, 3)]:
+					if r.grow(1.5).has_point(w): near_box = true
+				if near_box: continue
+				var d := map[ty * MAP + tx]
+				var error := absf((plane - d) - ground(w.x, w.y)) if d > 0.0 else 1000.0
+				worst = maxf(worst, error)
+				if error > 0.3: bad += 1
+	physics_interpolation = false
+	Engine.physics_ticks_per_second = ticks
+	var restore := int(occlusion.get("RenderCount"))
+	occlusion.call("SubmitManualFrame", Transform3D(map_basis, Vector3(0, PLANE_Y, 0)), PLANE_Y - 1.7)
+	await wait_for_render(restore); await frames(6)
+	check("plane_change_first_map_exact", renders == 4 and bad == 0, "renders=%d bad texels=%d worst error=%.2f m" % [renders, bad, worst])
 
 func rebase_check() -> void:
 	var requests := int(occlusion.get("RenderRequests")); var renders := int(occlusion.get("RenderCount"))

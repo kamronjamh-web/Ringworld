@@ -126,10 +126,15 @@ float storm_level(vec3 world) {
 	float arc = ring_radius > 1.0 ? ring_radius * storm_arc_angle(tangent, ring_radius - inward) : tangent;
 	vec2 texel = vec2(F.storm_frame[0].w + arc, F.storm_frame[1].w + across) / max(F.storm_map_frame.x, 1.0);
 	texel = clamp(texel, vec2(0.5), max(F.storm_map_size.xy - 0.5, vec2(0.5)));
-	vec4 s = textureLod(storm_map, vec3(texel / F.storm_map_size.zw, F.storm_map_frame.y), 0.0);
+	vec2 uv = texel / F.storm_map_size.zw;
+	vec4 s = textureLod(storm_map, vec3(uv, F.storm_map_frame.y), 0.0);
+	// storm-light layer (owned, front rain); index 0 = none (old D). Same as ring_storm_owned_level in ring_storm_light.gdshaderinc.
+	vec2 o = F.storm_map_frame.w > 0.5 ? textureLod(storm_map, vec3(uv, F.storm_map_frame.w), 0.0).xy : vec2(1.0, 0.0);
 	float heavy_start = F.storm_map_frame.z;
 	float h = clamp((s.x - heavy_start) / max(0.01, 1.0 - heavy_start), 0.0, 1.0);
-	return max(s.y, h * h * (3.0 - 2.0 * h));
+	h = h * h * (3.0 - 2.0 * h);
+	float free_t = clamp(s.w / 0.25, 0.0, 1.0); // heavy overcast only where no system is present
+	return max(max(o.x * max(s.y, h), o.y), h * (1.0 - free_t * free_t * (3.0 - 2.0 * free_t)));
 }
 // Radiance a streak at `world` is lit with. Per streak: sky ambient dimmed by the storm ambient A(D) = 1 - 0.9 * strength * D, plus the sun faded by the storm shadow fade F(D)
 // (the same D and fade every receiver uses). With the map unavailable (or a test override) the CPU scalar radiance in light.rgb is used.

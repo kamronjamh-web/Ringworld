@@ -6,7 +6,7 @@ namespace RingworldTechDemo.Weather;
 /// <summary>
 /// Drives the post-rain mist of the physical haze (docs/storm-revamp-s3-storm-arrival-design.md section 5, WO-E1): M = PostRainMist x Clearing x calm x cool,
 /// with calm = 1 - smoothstep(3, 8 m/s, wind) and cool = smoothstep(0, -0.1, CoolingOffset). The strength is published to RingAtmosphereModel.SetWeatherMist, which
-/// quantises and rate-limits it. No GPU work of its own; at 0 the haze is exactly unchanged. Evaluated at 4 Hz.
+/// quantises, slew-limits and rate-limits it. No GPU work of its own; at 0 the haze is exactly unchanged. Evaluated at 4 Hz.
 /// </summary>
 public partial class RingPostRainMist : Node
 {
@@ -51,7 +51,7 @@ public partial class RingPostRainMist : Node
         if (setting <= 0.0f || _layer == null)
         {
             TargetMist = 0.0f;
-            RingAtmosphereModel.SetWeatherMist(0.0f, Time.GetTicksMsec() * 0.001);
+            RingAtmosphereModel.SetWeatherMist(0.0f, Time.GetTicksMsec() * 0.001, immediate: true);
             return;
         }
         StormArrivalState state = _layer.ObserverStormArrival;

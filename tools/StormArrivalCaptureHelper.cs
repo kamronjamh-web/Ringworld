@@ -54,16 +54,17 @@ public partial class StormArrivalCaptureHelper : RefCounted
     /// <summary>
     /// Finds an observer inside a mature natural MajorFront that gets the whole arrival sequence at one fixed point: gust front, fat drops, core and then hail (S3 captures).
     /// Candidates lie on a 2 km grid within 14 km of the storm cell found like <see cref="FindStorm"/>. Returns {ok, around, across, ground_m, first_gust, first_fat, first_core, hail_start, hail_peak,
-    /// hail_peak_intensity, hail_end, last_core}; times are cloud-clock seconds.
+    /// hail_peak_intensity, hail_end, last_core, last_rain, clearing_peak}; times are cloud-clock seconds. A non-zero <paramref name="preferBearing"/> (ring frame, around/across) only accepts
+    /// observers whose storm bearing at the gust front lies within about 70 degrees of it (the time-lapse wants the storm ahead of the low sun's antisolar point).
     /// </summary>
-    public Godot.Collections.Dictionary FindArrivalSequence(Node layerNode, double scanTime, double aroundStart, float maxGroundMeters = 1.0e9f)
+    public Godot.Collections.Dictionary FindArrivalSequence(Node layerNode, double scanTime, double aroundStart, float maxGroundMeters = 1.0e9f, Vector2 preferBearing = default)
     {
         var layer = (RingVolumetricCloudLayer)layerNode;
         StormArrivalTuning tuning = RingStormArrivalSettings.Current.ToTuning(RingVolumetricCloudLayer.StormArrivalPrecipitationStart, layer.Coverage);
         var result = new Godot.Collections.Dictionary { ["ok"] = false };
         var centres = new List<RingCanonicalPosition>();
-        for (double around = aroundStart; around < aroundStart + 12_000_000 && centres.Count < 14; around += 24000)
-        for (double across = 20000; across < 300000 && centres.Count < 14; across += 16000)
+        for (double around = aroundStart; around < aroundStart + 12_000_000 && centres.Count < (preferBearing == Vector2.Zero ? 14 : 40); around += 24000)
+        for (double across = 20000; across < 300000 && centres.Count < (preferBearing == Vector2.Zero ? 14 : 40); across += 16000)
         {
             var p = new RingCanonicalPosition(around, 0.0, across);
             bool near = false;
@@ -88,22 +89,24 @@ public partial class StormArrivalCaptureHelper : RefCounted
             float groundHere = layer.GetGroundHeightForTests(p.AroundMeters, p.AcrossMeters);
             if (groundHere > maxGroundMeters || groundHere < 3.0f) continue;   // land only
             landCandidates++;
-            double peak = 0.0; bool gust = false, fat = false;
+            double peak = 0.0; bool gust = false, fat = false, bearingOk = preferBearing == Vector2.Zero;
             for (double t = Math.Max(0.0, scanTime - 1500.0); t <= scanTime + 1500.0; t += 12.0)
             {
                 StormArrivalState s = layer.QueryStormArrivalAtTime(p, t);
+                if (!gust && s.GustFront > 0.5f && preferBearing != Vector2.Zero) bearingOk = s.StormBearing.Normalized().Dot(preferBearing.Normalized()) > 0.3f;
                 if (s.GustFront > 0.5f) gust = true;
                 if (s.FatDrop > 0.3f) fat = true;
                 anyHail = Math.Max(anyHail, s.HailIntensity);
-                if (gust && fat) peak = Math.Max(peak, s.HailIntensity);
+                if (gust && fat && bearingOk) peak = Math.Max(peak, s.HailIntensity + 1e-6);
             }
             if (gust) gustCandidates++; if (fat) fatCandidates++;
+            if (preferBearing != Vector2.Zero && gust && fat && bearingOk) peak += 10.0;   // the bearing wins; hail is a bonus
             if (peak > bestPeak) { bestPeak = peak; best = p; }
         }
-        if (bestPeak >= 0.6) break;
+        if (bestPeak >= 10.6 || (preferBearing == Vector2.Zero && bestPeak >= 0.6)) break;
         }
         if (bestPeak < 0.3) { result["best_peak"] = bestPeak; result["land_candidates"] = landCandidates; result["gust_candidates"] = gustCandidates; result["fat_candidates"] = fatCandidates; result["any_hail"] = anyHail; result["centre_around"] = centre.Value.AroundMeters; return result; }
-        double firstGust = double.NaN, firstFat = double.NaN, firstCore = double.NaN, hailStart = double.NaN, hailPeakTime = double.NaN, hailEnd = double.NaN, lastCore = double.NaN, hailPeak = 0.0;
+        double firstGust = double.NaN, firstFat = double.NaN, firstCore = double.NaN, hailStart = double.NaN, hailPeakTime = double.NaN, hailEnd = double.NaN, lastCore = double.NaN, hailPeak = 0.0, lastRain = double.NaN, bestClearing = 0.0, clearingTime = double.NaN;
         for (double t = Math.Max(0.0, scanTime - 1500.0); t <= scanTime + 1500.0; t += 2.0)
         {
             StormArrivalState s = layer.QueryStormArrivalAtTime(best, t);
@@ -113,11 +116,49 @@ public partial class StormArrivalCaptureHelper : RefCounted
             if (s.Core > 0.3f) lastCore = t;
             if (s.HailIntensity > 0.3f) { if (double.IsNaN(hailStart)) hailStart = t; hailEnd = t; }
             if (s.HailIntensity > hailPeak) { hailPeak = s.HailIntensity; hailPeakTime = t; }
+            if (layer.GetNaturalWeatherDiagnosticAtTime(best.AroundMeters, best.AcrossMeters, t)["precipitation"].AsDouble() >= RingVolumetricCloudLayer.StormArrivalPrecipitationStart) lastRain = t;
+            if (!double.IsNaN(lastRain) && t > lastRain && s.Clearing > bestClearing) { bestClearing = s.Clearing; clearingTime = t; }
         }
+        result["last_rain"] = lastRain; result["clearing_peak"] = clearingTime;
         result["ok"] = true; result["around"] = best.AroundMeters; result["across"] = best.AcrossMeters; result["ground_m"] = layer.GetGroundHeightForTests(best.AroundMeters, best.AcrossMeters);
         result["first_gust"] = firstGust; result["first_fat"] = firstFat; result["first_core"] = firstCore; result["last_core"] = lastCore;
         result["hail_start"] = hailStart; result["hail_peak"] = hailPeakTime; result["hail_peak_intensity"] = hailPeak; result["hail_end"] = hailEnd;
         return result;
+    }
+
+    /// <summary>
+    /// Strikes (natural and leading-arc streams) of the cells around an observer in [t0, t1]: {times: [start...], leading: [bool...], distance_m: [...]}, sorted by start.
+    /// Used by the time-lapse to run its lightning segment at 1x over a window that really has strikes.
+    /// </summary>
+    public Godot.Collections.Dictionary StrikeTimes(Node layerNode, double around, double across, double refTime, double t0, double t1)
+    {
+        var layer = (RingVolumetricCloudLayer)layerNode;
+        float cell = Mathf.Clamp(layer.MacroWeatherCellMeters, 16000.0f, 64000.0f);
+        double circumference = layer.GetRingCircumferenceForTests();
+        int baseA = Mathf.FloorToInt((float)((around - layer.WeatherWindMetersPerSecond.X * refTime) / cell));
+        int baseZ = Mathf.FloorToInt((float)((across - layer.WeatherWindMetersPerSecond.Y * refTime) / cell));
+        var found = new List<(double Start, bool Leading, double Distance)>();
+        var seen = new HashSet<long>();
+        for (int dz = -3; dz <= 3; dz++) for (int da = -3; da <= 3; da++)
+        {
+            foreach (var d in layer.QueryLeadingEdgeLightningInWindow(baseA + da, baseZ + dz, t0, t1)) AddStrike(d, true);
+            for (double t = t0; t <= t1; t += 0.5)
+            {
+                var d = layer.QueryLightningCellAtTime(baseA + da, baseZ + dz, t);
+                if (d.Count > 0) AddStrike(d, false);
+            }
+        }
+        void AddStrike(Godot.Collections.Dictionary d, bool leading)
+        {
+            if (!seen.Add(d["event_id"].AsInt64())) return;
+            double dAround = d["ground_around_meters"].AsDouble() - around; dAround -= Math.Round(dAround / circumference) * circumference;
+            double dAcross = d["ground_across_meters"].AsDouble() - across;
+            found.Add((d["start_time_seconds"].AsDouble(), leading, Math.Sqrt(dAround * dAround + dAcross * dAcross)));
+        }
+        found.Sort((x, y) => x.Start.CompareTo(y.Start));
+        var times = new Godot.Collections.Array(); var lead = new Godot.Collections.Array(); var dist = new Godot.Collections.Array();
+        foreach (var f in found) { times.Add(f.Start); lead.Add(f.Leading); dist.Add(f.Distance); }
+        return new Godot.Collections.Dictionary { ["times"] = times, ["leading"] = lead, ["distance_m"] = dist };
     }
 
     /// <summary>
@@ -237,4 +278,32 @@ public partial class StormArrivalCaptureHelper : RefCounted
         ["height_factor"] = RingAtmosphereModel.WeatherMistHeightFactor, ["revision"] = (long)RingAtmosphereModel.Revision,
         ["publishes"] = RingAtmosphereModel.WeatherMistPublishCount
     };
+
+    /// <summary>Diagnostic: the observer rain-history snapshot S2 reads (per-lag counts, proxies and the PriorRain it gives) next to the observer history.</summary>
+    public Godot.Collections.Dictionary SnapshotState(Node layerNode)
+    {
+        var layer = (RingVolumetricCloudLayer)layerNode;
+        var d = new Godot.Collections.Dictionary();
+        RainHistorySample history = layer.ObserverRainHistory;
+        d["tsr"] = history.TimeSinceRainSeconds; d["recent"] = history.RecentRainAmount;
+        if (!layer.TryGetRainHistorySnapshot(out RainHistorySnapshot snapshot)) { d["ok"] = false; return d; }
+        StormArrivalTuning tuning = RingStormArrivalSettings.Current.ToTuning(RingVolumetricCloudLayer.StormArrivalPrecipitationStart, layer.Coverage);
+        float[] proxies = WetnessModel.LagProxies(snapshot, Vector2.Zero, tuning);
+        var counts = new Godot.Collections.Array(); var px = new Godot.Collections.Array(); var ids = new Godot.Collections.Array();
+        for (int l = 0; l < snapshot.LagCount; l++)
+        {
+            counts.Add(snapshot.Counts[l]); px.Add(proxies[l]);
+            int best = -1; float bp = 0.0f;
+            for (int i = 0; i < snapshot.Counts[l]; i++)
+            {
+                StormSystemGeometry g = snapshot.Systems[l * RainHistorySnapshot.MaxSystemsPerLag + i];
+                float p = StormArrivalMath.RainProxyAtObserver(g, tuning);
+                if (p > bp) { bp = p; best = g.SystemId; }
+            }
+            ids.Add(best);
+        }
+        d["ok"] = true; d["time"] = snapshot.Time; d["counts"] = counts; d["proxies"] = px; d["best_ids"] = ids;
+        d["prior"] = WetnessModel.PriorRain(proxies, history.TimeSinceRainSeconds, tuning);
+        return d;
+    }
 }

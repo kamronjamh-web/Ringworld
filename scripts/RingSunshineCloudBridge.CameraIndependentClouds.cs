@@ -20,6 +20,7 @@ public partial class RingSunshineCloudBridge
 	public const int WeatherSystemsBlockBytes = 64 + MaximumWeatherSystemUploadCount * 64;
 	private static readonly StringName SetWeatherSystemsMethod = new("set_weather_systems");
 	private static readonly StringName SetMacroWeatherMapMethod = new("set_macro_weather_map");
+	private static readonly StringName SetCloudLayersMethod = new("set_cloud_layers");
 	private static readonly StringName SetStormProfileMapMethod = new("set_storm_profile_map");
 	/// <summary>Largest half extent of the baked storm profile map (m): 1024 texels over 2 x this is a 293 m texel, fine enough for mammatus pouches. Storms beyond it fall back to background cloud only.</summary>
 	private const double StormMapMaxHalfExtentMeters = 150000.0;
@@ -38,10 +39,10 @@ public partial class RingSunshineCloudBridge
 	/// <summary>Added to the weather layer's base Coverage for the shader's per-sample coverage.</summary>
 	[Export(PropertyHint.Range, "-0.5,0.5,0.01")] public float SunshineBaseCoverageOffset { get; set; } = 0.0f;
 	/// <summary>Top of the constant ray envelope (the floor is the lowest storm base, 500 m by default).</summary>
-	[Export(PropertyHint.Range, "5000,40000,500")] public float StormEnvelopeCeilingMeters { get; set; } = 20000.0f;
+	[Export(PropertyHint.Range, "5000,18000,500")] public float StormEnvelopeCeilingMeters { get; set; } = RingCloudLayers.CeilingMeters;
 
-	/// <summary>Perf ablation bits (0 = normal): 1 background band only (no per-ray sculpt intervals, no sub-mask band widening), 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on the background band instead of the sub-mask band, 32 legacy shader path. Re-uploaded every weather refresh.</summary>
-	[Export(PropertyHint.Range, "0,63,1")] public int CameraIndependentDebugMask { get; set; } = 0;
+	/// <summary>Perf ablation bits (0 = normal): 1 background band only (no per-ray sculpt intervals, no sub-mask band widening), 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on the background band instead of the sub-mask band, 32 legacy shader path, 64 single legacy background band (no S6 cloud layers), 128 no cirrus shell (High layer), 256 S6 deck colour off (layer-deck ambient keeps the sky chroma; A/B only). Re-uploaded every weather refresh.</summary>
+	[Export(PropertyHint.Range, "0,511,1")] public int CameraIndependentDebugMask { get; set; } = 0;
 
 	[ExportSubgroup("Macro weather map")]
 	/// <summary>Build the world-anchored macro weather map (frame-sliced compute) and read it with one fetch per cloud sample. Off = every sample loops over its ray's systems.</summary>
@@ -59,6 +60,10 @@ public partial class RingSunshineCloudBridge
 	public long MacroMapSlicesDispatched => _clouds != null && GodotObject.IsInstanceValid(_clouds) ? (long)_clouds.Get("macro_map_slices_dispatched").AsInt64() : 0;
 	/// <summary>True while the shaders read the front map (false: direct per-system evaluation).</summary>
 	public bool MacroMapActive => _clouds != null && GodotObject.IsInstanceValid(_clouds) && _clouds.Get("macro_map_valid").AsBool();
+
+	/// <summary>The Sunshine clouds resource, for test readback only (macro map texture and state, uploaded blocks).</summary>
+	public GodotObject? GetSunshineCloudsForTests()
+		=> _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds : null;
 
 	/// <summary>The Sunshine storm profile map driver (RingStormProfileMap.gd: valid, texture, front_* state), for test readback only.</summary>
 	public GodotObject? GetStormProfileMapDriver()
@@ -105,8 +110,9 @@ public partial class RingSunshineCloudBridge
 	private readonly List<UploadedWeatherSystem> _ciNatural = new(96);
 	private readonly List<UploadedWeatherSystem> _ciUploaded = new(MaximumWeatherSystemUploadCount);
 	private readonly byte[] _ciBlock = new byte[WeatherSystemsBlockBytes];
+	private readonly byte[] _ciLayersBlock = new byte[RingCloudLayers.BlockBytes];
 	private float _ciEnvelopeFloorMeters = 500.0f;
-	private float _ciEnvelopeCeilingMeters = 20000.0f;
+	private float _ciEnvelopeCeilingMeters = RingCloudLayers.CeilingMeters;
 	private float _ciSelectionRadiusMeters;
 	private bool _ciUploadedEnabled;
 	private bool? _ciLastAppliedFlag;
@@ -151,7 +157,8 @@ public partial class RingSunshineCloudBridge
 		// changes are structural (they bump the revision below).
 		float stormBase = FixedCloudAltitudeDatumMeters + Mathf.Max(100.0f, StormFrontCloudBaseAltitudeMeters);
 		float envelopeFloor = Mathf.Min(backgroundAltitude.FloorMeters, stormBase);
-		float envelopeCeiling = Mathf.Max(Mathf.Max(StormEnvelopeCeilingMeters, backgroundAltitude.CeilingMeters), envelopeFloor + 1.0f);
+		float envelopeCeiling = Mathf.Min(RingCloudLayers.CeilingMeters,
+			Mathf.Max(Mathf.Max(StormEnvelopeCeilingMeters, backgroundAltitude.CeilingMeters), envelopeFloor + 1.0f));
 		_ciManual.Clear();
 		_ciNatural.Clear();
 		foreach (RingVolumetricCloudLayer.RenderWeatherSystem system in _ciCollected)
@@ -168,7 +175,7 @@ public partial class RingSunshineCloudBridge
 				if (system.StormCeilingMeters > system.StormFloorMeters + 1.0f)
 				{
 					envelopeFloor = Mathf.Min(envelopeFloor, system.StormFloorMeters);
-					envelopeCeiling = Mathf.Max(envelopeCeiling, system.StormCeilingMeters);
+					envelopeCeiling = Mathf.Min(RingCloudLayers.CeilingMeters, Mathf.Max(envelopeCeiling, system.StormCeilingMeters));
 				}
 			}
 			else
@@ -244,7 +251,7 @@ public partial class RingSunshineCloudBridge
 		_ciSmoothedStorm = Mathf.Lerp(_ciSmoothedStorm, storm, blend);
 		_ciSmoothedHeavy = Mathf.Lerp(_ciSmoothedHeavy, heavy, blend);
 		_heavyOvercastFactor = _ciSmoothedHeavy;
-		_localStormFactor = Mathf.Max(_ciSmoothedStorm, _ciSmoothedHeavy);
+		_localStormFactor = SmoothCameraStormLevel(camera, time, circumference, wind, coverage, heavy, blend); // storm-owned D (StormLight.cs)
 	}
 
 	/// <summary>
@@ -363,7 +370,7 @@ public partial class RingSunshineCloudBridge
 		WriteFloat(20, sculptStrength);
 		// z carries CameraIndependentDebugMask (small int, exact as a float); w is the downwind angle of the weather wind (radians,
 		// canonical around/across frame) the storm shape shears toward.
-		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 63));
+		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 511));
 		Vector2 stormWind = weather.WeatherWindMetersPerSecond;
 		WriteFloat(28, stormWind.LengthSquared() > 1e-8f ? MathF.Atan2(stormWind.Y, stormWind.X) : 0.0f);
 		// header2: background floor/ceiling, selection radius, revision
@@ -406,7 +413,23 @@ public partial class RingSunshineCloudBridge
 		_ciUploadedEnabled = true;
 		_clouds.Call(SetWeatherSystemsMethod, _ciBlock);
 		PublishMacroWeatherMap(MacroWeatherMap);
+		PublishCloudLayers();
 		PublishStormProfileMap(!DebugLegacyStormShape);
+	}
+
+	/// <summary>
+	/// S6: publishes the cloud layer table (resources/clouds/cloud_layer_table.tres) and the sun direction in the ring-grid frame to the macro map
+	/// build, which writes the layer coverages and weatherness into array layers 2 / 3. The march does not read them yet.
+	/// </summary>
+	private void PublishCloudLayers()
+	{
+		if (_clouds == null || !GodotObject.IsInstanceValid(_clouds) || !_clouds.HasMethod(SetCloudLayersMethod)) return;
+		Vector3 sunLocal = Vector3.Zero;
+		if (_sunLight != null && _grid != null)
+			sunLocal = _grid.CaptureLodGeometrySnapshot().GridGlobalTransform.Basis.Orthonormalized().Inverse() * _sunLight.GlobalBasis.Z.Normalized();
+		SyncCloudLayerTuning();
+		RingCloudLayers.BuildBlock(CloudLayerTable.Shared, sunLocal, _ciLayersBlock);
+		_clouds.Call(SetCloudLayersMethod, _ciLayersBlock);
 	}
 
 	/// <summary>

@@ -181,7 +181,7 @@ public partial class RingWetWorld
         WriteFloats(parameters, 48, RingVolumetricCloudLayer.StormArrivalPrecipitationStart, coverage, alpha, snowing ? 1.0f : 0.0f);
         WriteFloats(parameters, 64, SunOverride >= 0.0f ? SunOverride : _cameraDay, _windMetersPerSecond, settings.DryingSpeed, _forced ? 1.0f : 0.0f);
         WriteFloats(parameters, 80, _forceValue.X, _forceValue.Y, _forceValue.Z, _forceValue.W);
-        WriteFloats(parameters, 96, shift.X, shift.Y, prevValid ? 1.0f : 0.0f, 0.0f);
+        WriteFloats(parameters, 96, shift.X, shift.Y, prevValid ? 1.0f : 0.0f, stormMap ? _bridge!.StormLightLayer : 0.0f); // w: storm-light layer (storm-owned D)
         for (int i = 0; i < 12; i++) BitConverter.TryWriteBytes(parameters.AsSpan(112 + i * 4), counts[i]);
         WriteFloats(parameters, 160, lags);
 

@@ -331,6 +331,15 @@ public partial class WeatherAmbienceDiagnosticRunner : RefCounted
         wet = 0f;
         for (int i = 0; i < 10 * 60; i++) wet = RainSoundField.UpdateWetness(wet, 1f, 1.0 / 60.0);
         Require(MathF.Abs(wet - (1f - MathF.Exp(-1f))) < .02f, "wetness rises with tau 10 s");
+        // Shelter probing outlives the rain until the aftermath wetness drops under 0.05 (about 4.3 tau, roughly 4 min after the rain stops).
+        Require(RainSoundField.ShouldProbeExposure(false, false, .5f, 0f, 0f) && RainSoundField.ShouldProbeExposure(false, false, 0f, .5f, 0f), "probing while it rains");
+        Require(RainSoundField.ShouldProbeExposure(false, false, 0f, 0f, .06f) && !RainSoundField.ShouldProbeExposure(false, false, 0f, 0f, .05f)
+            && !RainSoundField.ShouldProbeExposure(false, false, 0f, 0f, 0f), "probing continues while post-rain wetness is above 0.05");
+        Require(!RainSoundField.ShouldProbeExposure(true, false, 1f, 0f, 1f) && !RainSoundField.ShouldProbeExposure(false, true, 1f, 0f, 1f), "no probing while snowing or underground");
+        wet = 1f;
+        int probingFrames = 0;
+        for (int i = 0; i < 20 * 60 * 60 && RainSoundField.ShouldProbeExposure(false, false, 0f, 0f, wet); i++) { wet = RainSoundField.UpdateWetness(wet, 0f, 1.0 / 60.0); probingFrames++; }
+        Require(probingFrames > 60 * 60 && probingFrames < 20 * 60 * 60 && wet <= RainSoundField.PostRainProbeWetness + 1e-3f, "post-rain probing ends once wetness decays below 0.05");
         Require(RainSoundField.UpdateWetness(float.NaN, 1f, .1) >= 0f && RainSoundField.UpdateWetness(.5f, float.NaN, .1) <= .5f
             && RainSoundField.UpdateWetness(2f, 5f, 1) <= 1f && RainSoundField.UpdateWetness(-1f, -1f, 1) == 0f, "wetness is NaN and range safe");
 

@@ -3,6 +3,7 @@ using Godot;
 using RingworldTechDemo;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
+using RingworldTechDemo.Voxel.LOD;
 using RingworldTechDemo.Voxel.Phase2;
 
 /// <summary>
@@ -148,10 +149,74 @@ public partial class StormAnvilCapture : RefCounted
     }
 
     /// <summary>Storm level D (CPU mirror of the receivers' map fetch), the D at the camera and the eye-adaptation cap, as one line (look pass diagnostics).</summary>
+    /// <summary>Perf A/B only: republishes ringworld_storm_map_frame with (on) or without (off: w = 0) the storm-light layer, so receivers skip
+    /// the second (ownership / front rain) map fetch. The bridge only republishes on change, so the override holds until the map frame moves.
+    /// Returns the w now published.</summary>
+    public float SetStormLightFetch(Node world, bool on)
+    {
+        var bridge = world.GetNode<RingSunshineCloudBridge>("SunshineCloudBridge");
+        var field = typeof(RingSunshineCloudBridge).GetField("_stormPublishedMapFrame", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        if (field?.GetValue(bridge) is not Vector4 frame) return -1.0f;
+        var published = on ? frame : new Vector4(frame.X, frame.Y, frame.Z, 0.0f);
+        RenderingServer.GlobalShaderParameterSet("ringworld_storm_map_frame", published);
+        return published.W;
+    }
+
     public string StormLevels(Node world, double offsetAround, double offsetAcross)
     {
         var bridge = world.GetNode<RingSunshineCloudBridge>("SunshineCloudBridge");
         return $"D_at={bridge.GetStormLevelAt(BaseAround + offsetAround, BaseAcross + offsetAcross):F3} D_camera={bridge.GetCameraStormLevel():F3} eye_cap={bridge.GetStormEyeCap():F3} ambient_A={bridge.GetStormAmbientAtCamera():F3}";
+    }
+
+    /// <summary>
+    /// Far-viewport storm-map mapping check (CPU float mirror of ring_storm_light.gdshaderinc). For canonical points around the camera it compares the map
+    /// position the main-world receivers compute (ring_storm_level, from the published storm frame) and the one the scaled far viewport computes
+    /// (ring_storm_level_far, from ScaledPoint positions) against the exact canonical map position (point - published map origin). Returns one line.
+    /// </summary>
+    public string FarStormMappingCheck(Node world)
+    {
+        var bridge = world.GetNode<RingSunshineCloudBridge>("SunshineCloudBridge");
+        var far = world.GetNode<RingScaledFarViewport>("ScaledFarViewport");
+        var explorer = world.GetNode<RingVoxelExplorerController>("Explorer");
+        var grid = world.GetNode<VoxelChunkGridManager>("ChunkGridManager");
+        if (!bridge.TryGetStormShaderState(out _, out Projection frame, out _, out _, out _)
+            || !bridge.TryGetStormMapDescription(out _, out Vector2 origin, out _, out _, out _, out _, out double circumference, out _))
+            return "far_map_check=unavailable";
+        float scale = far.CoordinateScale;
+        RingCanonicalPosition camera = explorer.CanonicalPosition;
+        Vector3 farCamera = far.ScaledPoint(camera.AroundMeters, camera.VerticalMeters, camera.AcrossMeters);
+        double maxMain = 0.0, maxFar = 0.0;
+        string worst = "";
+        foreach (double da in new[] { -150000.0, -60000.0, -5000.0, 0.0, 3000.0, 40000.0, 120000.0, 200000.0 })
+        foreach (double dc in new[] { -100000.0, -2000.0, 0.0, 1500.0, 80000.0 })
+        {
+            double around = camera.AroundMeters + da, across = camera.AcrossMeters + dc;
+            if (across < 0.0 || across > grid.RingAcrossWidthMeters) continue;
+            double expectAround = around - origin.X; expectAround -= circumference * Math.Floor(expectAround / circumference);
+            if (expectAround > circumference * 0.5) expectAround -= circumference;
+            double expectAcross = across - origin.Y;
+            // main world (ring_storm_level)
+            Vector3 w = bridge.GetStormProbeWorldPosition(around, 0.0, across);
+            Vector3 rel = w - new Vector3(frame.W.X, frame.W.Y, frame.W.Z);
+            float tangent = rel.Dot(new Vector3(frame.X.X, frame.X.Y, frame.X.Z));
+            float acrossM = rel.Dot(new Vector3(frame.Y.X, frame.Y.Y, frame.Y.Z));
+            float inward = rel.Dot(new Vector3(frame.Z.X, frame.Z.Y, frame.Z.Z));
+            float radius = frame.Z.W;
+            float arc = radius * Mathf.Atan2(tangent, radius - inward);
+            double mainErr = Math.Max(Math.Abs(frame.X.W + arc - expectAround), Math.Abs(frame.Y.W + acrossM - expectAcross));
+            // far viewport (ring_storm_level_far, shared tier: ring centre at the origin)
+            Vector3 fw = far.ScaledPoint(around, 0.0, across);
+            Vector2 camRadial = new(farCamera.X, farCamera.Z);
+            Vector2 outward = camRadial / camRadial.Length();
+            Vector3 off = (fw - farCamera) / scale;
+            float t2 = new Vector2(off.X, off.Z).Dot(new Vector2(-outward.Y, outward.X));
+            float o2 = new Vector2(off.X, off.Z).Dot(outward);
+            float arc2 = radius * Mathf.Atan2(t2, camRadial.Length() / scale + o2);
+            double farErr = Math.Max(Math.Abs(frame.X.W + arc2 - expectAround), Math.Abs(frame.Y.W + off.Y - expectAcross));
+            if (farErr > maxFar) { maxFar = farErr; worst = $"da={da:F0} dc={dc:F0}"; }
+            maxMain = Math.Max(maxMain, mainErr);
+        }
+        return $"far_map_check max_err_main_m={maxMain:F1} max_err_far_m={maxFar:F1} worst_far=({worst}) scale={scale} radius_m={frame.Z.W:F0}";
     }
 
     /// <summary>Sun elevation in degrees above the local horizontal plane at the camera (diagnostic).</summary>

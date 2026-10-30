@@ -287,7 +287,7 @@ void light() {
 			* hemisphere_direct;
 		if (proxy_wet_specular_state.x > 0.0) {
 			SPECULAR_LIGHT += ring_wet_direct_specular(NORMAL, LIGHT, VIEW, proxy_wet_specular_state.y, proxy_wet_specular_state.z, proxy_wet_specular_state.x)
-				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT;
+				* LIGHT_COLOR * combined_visibility * hemisphere_direct * SPECULAR_AMOUNT * ring_storm_specular_keep(terms.storm); // storm light: no sun glint under an overcast
 		}
 	}
 }

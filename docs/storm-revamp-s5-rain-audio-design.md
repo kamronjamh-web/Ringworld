@@ -116,4 +116,4 @@ Deviations from the design:
   - Wetness rises with tau 10 s and falls with tau 90 s.
   - Shot level = rain volume + `Near detail volume` + a per-kind level + jitter of +/-3 dB; pitch +/-8%. Shots never count toward `voice_start_count` or the gain-step checks.
 - **Thunder:** `thunder_near_*` for strikes under 1.5 km and `thunder_far_*` over 8 km; the original three stay as the middle pool.
-- **Known limit:** when it is dry the shelter class relaxes to Open (no probing while dry). So the eaves-dribble aftermath under a porch ends when the rain stops; leaf aftermath drips in the open continue. Keeping the probe alive while wet would change the "dry = no terrain queries" contract.
+- **Post-rain probing:** exposure and shelter probing keep running while the aftermath wetness is above 0.05 (`RainSoundField.ShouldProbeExposure`), so eave drips under a roof continue after the rain stops. Fully dry (wetness <= 0.05), snowing or underground still means no terrain queries and the class relaxes to Open.

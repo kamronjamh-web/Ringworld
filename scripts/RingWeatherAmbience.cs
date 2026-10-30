@@ -584,10 +584,11 @@ public partial class RingWeatherAmbience : Node
 
     private void UpdateExposure(in ThunderAcousticContext context, double realDelta)
     {
-        bool active = !_sourceSnow && (_sourceRain > .0001f || _arrivalFat > .02f) && !UndergroundSuspended;
-        if (UndergroundSuspended || !active)
+        bool active = RainSoundField.ShouldProbeExposure(_sourceSnow, UndergroundSuspended, _sourceRain, _arrivalFat, _wetness);
+        if (!active)
         {
-            // Dry, snowing or fully enclosed: no terrain queries at all. The stale field is dropped when rain returns.
+            // Dry (wetness under 0.05), snowing or fully enclosed: no terrain queries at all. The stale field is dropped when rain returns.
+            // Post-rain wetness above 0.05 keeps probing so the shelter class and eave drips continue after the rain stops.
             _rainActive = false;
             _sweepRemaining = 0;
             return;
@@ -726,7 +727,7 @@ public partial class RingWeatherAmbience : Node
 
     private void UpdateShelter(double dt)
     {
-        // Dry or snowing weather does not probe, so the class relaxes to open air rather than keeping stale cover.
+        // Dry (wetness under 0.05) or snowing weather does not probe, so the class relaxes to open air rather than keeping stale cover.
         RainShelterInput input = _rainActive
             ? new RainShelterInput(UndergroundSuspended, _overhead.HasCover, _overhead.Natural, _overhead.Depth, _exposure.MeanExposure())
             : new RainShelterInput(UndergroundSuspended, false, false, 0, 1f);

@@ -70,9 +70,18 @@ public partial class RingSunshineCloudBridge
             _terrainCloudSunVisibility.UnregisterRequiredAltitudeRange("sunshine");
             return;
         }
+        // S6: the volumetric cloud layers' hull (weather base to top cap) shadows the terrain too; cirrus (shell mode) does not extend it.
+        float layerFloor = float.MaxValue;
+        float layerTop = 0.0f;
+        foreach (CloudLayerDefinition layer in CloudLayerTable.Shared.Layers)
+        {
+            if (layer == null || layer.RenderMode != CloudLayerRenderMode.Volumetric) continue;
+            layerFloor = Mathf.Min(layerFloor, layer.WeatherBaseMeters);
+            layerTop = Mathf.Max(layerTop, layer.TopCapMeters);
+        }
         _terrainCloudSunVisibility.RegisterRequiredAltitudeRange("sunshine",
-            Mathf.Min(Mathf.Min(NaturalCloudBaseAltitudeMeters, StormFrontCloudBaseAltitudeMeters), _clouds.Get(CloudFloorName).AsSingle()),
-            Mathf.Max(NaturalCloudTopAltitudeMeters, _clouds.Get(CloudCeilingName).AsSingle()));
+            Mathf.Min(Mathf.Min(Mathf.Min(NaturalCloudBaseAltitudeMeters, StormFrontCloudBaseAltitudeMeters), layerFloor), _clouds.Get(CloudFloorName).AsSingle()),
+            Mathf.Max(Mathf.Max(NaturalCloudTopAltitudeMeters, layerTop), _clouds.Get(CloudCeilingName).AsSingle()));
         _terrainCloudSunVisibility.BindToResource(_clouds);
     }
 

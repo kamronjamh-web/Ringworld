@@ -39,3 +39,6 @@ Desktop.ini
 # PDA voice prototype: model/voice binaries and generated audio are local only.
 /prototypes/pda-voice/models/
 /prototypes/pda-voice/output/
+
+# Python bytecode from tool scripts
+__pycache__/

@@ -4,6 +4,7 @@ param(
   [int]$TimeoutMin = 40,
   [string]$Lock = "",          # optional path of the shared FIFO queue script gpu_queue.ps1 (acquire / release with label storm_s2)
   [string]$Profile = "storm_s2",
+  [string]$Resolution = "1280x720",
   [switch]$Movie               # record the run with Godot Movie Maker (30 fps PNG sequence next to the screenshots: <out>\movie\frame00000000.png ...)
 )
 # Runs tools/wet_world_capture.gd (windowed) in the fixed isolated profile .godot\appdata_<Profile>, output in .godot\captures\wet_world\<Label>.
@@ -36,7 +37,7 @@ try {
   New-Item -ItemType Directory -Force $outDir | Out-Null
   $log = Join-Path $outDir "console.log"; $errLog = Join-Path $outDir "stderr.log"
   $outAbs = $outDir.Replace([string][char]92, "/")
-  $argList = @("--path", $project, "--resolution", "1280x720")
+  $argList = @("--path", $project, "--resolution", $Resolution)
   if ($Movie) {
     $movieDir = Join-Path $outDir "movie"
     New-Item -ItemType Directory -Force $movieDir | Out-Null

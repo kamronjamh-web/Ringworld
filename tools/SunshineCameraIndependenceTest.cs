@@ -209,7 +209,10 @@ public partial class SunshineCameraIndependenceTest : RefCounted
         if (near.SystemId != -9001) Fail("manual system -9001 inside 1.3x support was not collected");
         else
         {
-            const uint expectedFlags = RingVolumetricCloudLayer.RenderWeatherFlagStatic | RingVolumetricCloudLayer.RenderWeatherFlagSculpt | RingVolumetricCloudLayer.RenderWeatherFlagManualFalloff;
+            // The manual system is a MajorFront with a Cumulonimbus profile: it also carries the front flag (S0 storm-light D ownership) and the
+            // lowers-base flag (S6 WO1, Cb's genus row lowers the low layer's base).
+            const uint expectedFlags = RingVolumetricCloudLayer.RenderWeatherFlagStatic | RingVolumetricCloudLayer.RenderWeatherFlagSculpt | RingVolumetricCloudLayer.RenderWeatherFlagManualFalloff
+                | RingVolumetricCloudLayer.RenderWeatherFlagFront | RingVolumetricCloudLayer.RenderWeatherFlagLowersBase;
             if (near.Flags != expectedFlags || near.SupportMultiplier != 1.3f) Fail($"manual flags/support wrong: flags={near.Flags} support={near.SupportMultiplier}");
             if (Math.Abs(near.CenterAroundMeters - nearAround) > 1.0 || near.MajorRadiusMeters != manualRadius) Fail("manual centre/radius not carried through");
         }

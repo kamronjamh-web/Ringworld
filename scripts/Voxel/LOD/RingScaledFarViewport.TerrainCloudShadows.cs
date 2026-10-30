@@ -57,6 +57,12 @@ public partial class RingScaledFarViewport
             field.BindToMaterial(material);
         }
 
+        if (_farLayerSkyMaterial != null)
+        {
+            _farLayerReceiverHeightApplied.Set(_farLayerSkyMaterial, TerrainCloudReceiverHeightName, FarLayerReceiverHeightMeters);
+            field.BindToMaterial(_farLayerSkyMaterial);
+        }
+
         foreach (ShaderMaterial? material in _cloudMaskMaterials)
             if (material != null) field.BindToMaterial(material);
 

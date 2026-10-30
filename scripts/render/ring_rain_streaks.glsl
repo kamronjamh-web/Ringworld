@@ -4,6 +4,7 @@
 // lattice, its height comes from a CPU double-precision phase, so there is no state, no snapping pop, and a paused clock gives identical frames.
 // Drawn by RingRainStreaksComposite.gd after the Sunshine cloud composite, so clouds can never overdraw near rain.
 layout(push_constant, std430) uniform Push { uint mode; uint layer; uint pad0; uint pad1; } pc; // mode 0 streak, 1 splash; layer 0 near, 1 mid
+// storm_level reads the storm-owned D (storm-light layer in ringworld_storm_map_frame.w, system-free heavy term; see ring_rain_streaks.glslinc).
 #include "res://scripts/render/ring_rain_streaks.glslinc"
 
 layout(location = 0) out vec4 v_color;
@@ -13,7 +14,7 @@ layout(location = 3) flat out float v_kind;
 
 void cull() { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); v_color = vec4(0.0); v_uv = vec3(0.0); v_viewz = 0.0; v_kind = 0.0; }
 vec3 to_view(vec3 world) { vec3 rel = world - F.cam_pos.xyz; return vec3(dot(rel, F.cam_x.xyz), dot(rel, F.cam_y.xyz), dot(rel, F.cam_z.xyz)); }
-vec3 lit_radiance(vec3 world) { return min(F.light.rgb + F.lightning.rgb * F.light.w, vec3(4.0)); }
+vec3 lit_radiance(vec3 world) { return min(streak_radiance(world) + F.lightning.rgb * F.light.w, vec3(4.0)); }
 
 // HOOK for S2 wet world drips (S2 WO6): a third instance class drawn by this pass (push constant mode 2; RingRainStreaksComposite.gd draws counts[4] instances of counts[5] vertices
 // after the splashes). Write the vertex here: gl_InstanceIndex is the drip id; use map_surface(), local_intensity(), streak_radiance(), to_view() and F.proj as the streak and splash code does,

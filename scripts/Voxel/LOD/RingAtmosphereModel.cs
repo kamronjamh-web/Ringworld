@@ -160,12 +160,12 @@ public static class RingAtmosphereModel
         HazeQuality = quality <= 6 ? 4 : quality <= 11 ? 8 : 16;
     }
     // ---- S3 post-rain mist (docs/storm-revamp-s3-storm-arrival-design.md section 5, WO-E1). The weather owner multiplies the user's mist density and
-    // height by a pair of factors; at strength 0 both are exactly 1, so the physical profile is bit-identical to before. Changes are quantised and rate-limited
+    // height by a pair of factors; at strength 0 both are exactly 1, so the physical profile is bit-identical to before. Changes are quantised, rate-limited and slew-limited (2 steps per publish unless immediate)
     // and go through the same Revision + ApplyAll path as the Atmosphere tab, so Sunshine, the sky, objects and the CPU irradiance stay consistent. ----
     /// <summary>Weather mist mapping (retuned 2026-10-26): the weather ADDS ground mist extinction <see cref="WeatherMistSigmaPerStrength"/> x M (1/m) to sigma_M0 and shrinks the mist scale height by
     /// max(<see cref="WeatherMistMinHeightFactor"/>, 1 - <see cref="WeatherMistHeightDrop"/> M). It is additive, not a multiplier, because the user's mist (aerosol control) can be zero or tiny
-    /// and a multiplier then makes no fog at all. M = 1 gives sigma_M0 of about 1e-2 (ground visibility about 390 m) over a 60% scale height.</summary>
-    public const float WeatherMistSigmaPerStrength = 1.0e-2f, WeatherMistHeightDrop = 0.6f, WeatherMistMinHeightFactor = 0.15f;
+    /// and a multiplier then makes no fog at all. M = 1 gives sigma_M0 of about 2e-3 (ground visibility about 1.9 km: mist, not fog; retuned 2026-10-29 from 1e-2 / 390 m, which read as a white-out) over a 40% scale height.</summary>
+    public const float WeatherMistSigmaPerStrength = 2.0e-3f, WeatherMistHeightDrop = 0.6f, WeatherMistMinHeightFactor = 0.15f;
     /// <summary>Extinction (1/m, at the floor) the weather adds to the mist layer: <see cref="WeatherMistSigmaPerStrength"/> x M.</summary>
     public static float WeatherMistAddedSigma { get; private set; }
     /// <summary>Multiplier on the mist scale height from the weather: 1 - 0.6 M (never below 0.15), so the mist pools in the lowlands.</summary>
@@ -177,16 +177,20 @@ public static class RingAtmosphereModel
     /// <summary>Minimum seconds between two publishes, and the most publishes in any <see cref="WeatherMistWindowSeconds"/>.</summary>
     public const double WeatherMistMinPublishSeconds = 2.0, WeatherMistWindowSeconds = 600.0;
     public const int WeatherMistMaxPublishesPerWindow = 30;
+    /// <summary>At most 2/32 of M per publish, so with the 2 s spacing a 0 to 1 ramp takes at least 32 s and 16 publishes, well inside the 30-per-10-min cap.</summary>
+    public const int WeatherMistMaxStepsPerPublish = 2;
     public static int WeatherMistPublishCount { get; private set; }
     private static readonly double[] WeatherMistPublishTimes = new double[WeatherMistMaxPublishesPerWindow];
     private static int _weatherMistPublishHead;
 
     /// <summary>
     /// Sets the target weather mist strength M (0..2; the post-rain mist setting included). Quantised to 1/32; a change is published (Revision++, ApplyAll)
-    /// at most every 2 s and at most 30 times per 10 minutes (the target is simply retried by the caller's next call). Returns true when it published.
+    /// at most every 2 s and at most 30 times per 10 minutes (the target is simply retried by the caller's next call). Unless <paramref name="immediate"/>,
+    /// each publish moves M at most <see cref="WeatherMistMaxStepsPerPublish"/> steps toward the target, so repeated calls ramp smoothly instead of popping;
+    /// <paramref name="immediate"/> jumps straight to the quantised target (still rate-limited). Returns true when it published.
     /// <paramref name="nowSeconds"/> is any monotonic clock.
     /// </summary>
-    public static bool SetWeatherMist(float strength, double nowSeconds)
+    public static bool SetWeatherMist(float strength, double nowSeconds, bool immediate = false)
     {
         float m = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 2.0f) : 0.0f;
         m = Mathf.Round(m / WeatherMistStep) * WeatherMistStep;
@@ -197,6 +201,11 @@ public static class RingAtmosphereModel
             if (nowSeconds - last < WeatherMistMinPublishSeconds) return false;
             if (WeatherMistPublishCount >= WeatherMistMaxPublishesPerWindow
                 && nowSeconds - WeatherMistPublishTimes[_weatherMistPublishHead] < WeatherMistWindowSeconds) return false;
+        }
+        if (!immediate)
+        {
+            int cur = (int)MathF.Round(WeatherMist / WeatherMistStep), tgt = (int)MathF.Round(m / WeatherMistStep);
+            m = (cur + Math.Clamp(tgt - cur, -WeatherMistMaxStepsPerPublish, WeatherMistMaxStepsPerPublish)) * WeatherMistStep;
         }
         WeatherMist = m;
         WeatherMistAddedSigma = WeatherMistSigmaPerStrength * m;

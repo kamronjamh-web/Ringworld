@@ -14,9 +14,15 @@ extends SceneTree
 #   plan / plan_wide     camera straight above H at 25 / 45 km
 #   life                 lifecycle strip (debug L override) from the side30 view
 #   orbit                10 s orbit (--orbit-frames 300, --orbit-h 9000, --orbit-dist 60000) around H, one frame per saved image (flicker / mp4)
+#   wall                 (S6) under the storm edge looking out at yaw 0/90/180/270 x pitch 5/15, storm then clear (--wall-d km)
 #   under                looking up from under the storm, camera at 0 / 6 / 12 / 18 km downwind of H: up60, up85 and level views
 #   outside              45 km outside views
-#   perf                 GPU timing windows (--perf-dist, --perf-seconds, --perf-cases)
+#   perf                 GPU timing windows (--perf-dist, --perf-seconds, --perf-cases: new, legacy, clear (storm moved off), dfetch_off
+#                        (storm-light D without its ownership/front fetch))
+#   glintdbg             the ocean-glint pose (6 km downwind of H, 1.5 km up) in the normal render and the storm-level debug view
+#                        (ringworld_shadow_debug_mode 6), CPU D along the view, then the same pose in clear weather (glintdbg_clear)
+#   farstorm / farclear  far-viewport check: --far-dist (200 km) downwind of H, --far-h (20 km) up, looking back; normal + debug view 6, plus the
+#                        CPU float mirror of the far-viewport storm-map mapping (far_map_check); farclear moves the storm off the ring
 #   flat                 (reserved)
 
 var world: Node
@@ -166,7 +172,9 @@ func _find_hero(wind: Vector2):
 		await process_frame
 		if probe.ReadbackReady:
 			break
-	hero_info = probe.FindHero(world, wind, 0.0, 0.0, float(_arg("hero-radius", "9000")))
+	# 30 km: since the look pass scaled the cell lattice with the system size (sizeK, cells about 90 km wide) the nearest qualifying tower
+	# of the preview storm sits about 12 km from its centre, outside the old 9 km default.
+	hero_info = probe.FindHero(world, wind, 0.0, 0.0, float(_arg("hero-radius", "30000")))
 	if bool(hero_info.get("found", false)):
 		hero = Vector2(hero_info["around"], hero_info["across"])
 	print("STORM_ANVIL hero ", hero_info)
@@ -273,6 +281,34 @@ func _shoot(shot: String, wind: Vector2):
 				await _save("under_%02d_up85" % d)
 				await _camera_at(spot2, 1500.0, _yaw(-wind), 8.0, 0)
 				await _save("under_%02d_level" % d)
+		"edge":
+			# Invisible-wall check: camera inside the storm footprint looking OUTWARD across the edge at low pitch, then the same poses with the storm moved away.
+			helper.SetLifecycle(float(_arg("life", "1.6")))
+			for d in [20, 30, 38]:
+				var spot4 := hero + cross * (float(d) * 1000.0)
+				await _camera_at(spot4, 1500.0, _yaw(cross), 6.0, far_extra if d == 20 else 30)
+				await _save("edge_%02d" % d)
+			_storm(Vector2(0.0, 400000.0))
+			for d in [20, 30, 38]:
+				await _camera_at(hero + cross * (float(d) * 1000.0), 1500.0, _yaw(cross), 6.0, far_extra + 60 if d == 20 else 30)
+				await _save("edge_%02d_clear" % d)
+			_storm(Vector2.ZERO)
+			await _frames(60)
+		"wall":
+			# S6 WO3a wall check: camera under the storm near its edge (--wall-d km from H across the wind, 1.5 km up) looking out at yaw 0 / 90 /
+			# 180 / 270 relative to the wind and pitch 5 / 15; clouds beyond the edge must be present with the storm and without the wall.
+			helper.SetLifecycle(float(_arg("life", "1.6")))
+			var wall_spot := hero + cross * (float(_arg("wall-d", "30")) * 1000.0)
+			var wall_dirs := [wind, cross, -wind, -cross]
+			for pass_index in 2:
+				if pass_index == 1:
+					_storm(Vector2(0.0, 400000.0))
+				for yi in 4:
+					for pitch in [5.0, 15.0]:
+						await _camera_at(wall_spot, 1500.0, _yaw(wall_dirs[yi]), pitch, far_extra if (yi == 0 and pitch == 5.0) else 20)
+						await _save("wall_%s_y%03d_p%02d" % ["clear" if pass_index == 1 else "storm", yi * 90, int(pitch)])
+			_storm(Vector2.ZERO)
+			await _frames(60)
 		"glint":
 			# Look pass diagnostic: the ocean sun glint under a closed storm, with the sky sun disc and the StarLight toggled.
 			helper.SetLifecycle(float(_arg("life", "1.6")))
@@ -300,6 +336,48 @@ func _shoot(shot: String, wind: Vector2):
 			await _frames(20)
 			await _save("glint_nostar")
 			star.light_energy = energy
+		"glintdbg":
+			# Look pass diagnostic: the glint pose in the normal render and in the storm-level debug view (ringworld_shadow_debug_mode 6), with the
+			# CPU storm level D along the view for comparison.
+			helper.SetLifecycle(float(_arg("life", "1.6")))
+			var spot5 := hero + wind * 6000.0
+			await _camera_at(spot5, 1500.0, _yaw(-wind), 8.0, far_extra + 30)
+			for k in [0.0, 2000.0, 5000.0, 10000.0, 20000.0, 40000.0]:
+				print("STORM_ANVIL levels glintdbg ahead=", k, " ", helper.StormLevels(world, spot5.x - wind.x * k, spot5.y - wind.y * k))
+			await _save("glintdbg_base")
+			RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 6)
+			await _frames(20)
+			await _save("glintdbg_d6")
+			RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 0)
+			await _frames(20)
+			# The same pose in clear weather (preview storm moved off the ring): the sun glint must still be there.
+			_storm(Vector2(0.0, 400000.0))
+			await _frames(far_extra + 60)
+			await _save("glintdbg_clear")
+			_storm(Vector2.ZERO)
+			await _frames(60)
+		"farstorm", "farclear":
+			# Far-viewport check: camera 200 km downwind of the storm, 20 km up, looking back at it; normal render and the storm-level debug view.
+			# farclear: the same poses with the preview storm moved off the ring.
+			helper.SetLifecycle(float(_arg("life", "1.6")))
+			if shot == "farclear":
+				_storm(Vector2(0.0, 400000.0))
+			var far_dist := float(_arg("far-dist", "200000"))
+			var far_h := float(_arg("far-h", "20000"))
+			var spot6 := hero + wind * far_dist
+			var far_pitch := -rad_to_deg(atan2(far_h, far_dist)) + rad_to_deg(far_dist / 2.0 / 5000000.0)
+			await _camera_at(spot6, far_h, _yaw(-wind), far_pitch, far_extra + 60)
+			print("STORM_ANVIL ", helper.FarStormMappingCheck(world))
+			for k in [0.0, 50000.0, 100000.0, 150000.0, 200000.0, 250000.0]:
+				print("STORM_ANVIL levels ", shot, " ahead=", k, " ", helper.StormLevels(world, spot6.x - wind.x * k, spot6.y - wind.y * k))
+			await _save(shot + "_base")
+			RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 6)
+			await _frames(20)
+			await _save(shot + "_d6")
+			RenderingServer.global_shader_parameter_set("ringworld_shadow_debug_mode", 0)
+			if shot == "farclear":
+				_storm(Vector2.ZERO)
+			await _frames(30)
 		"clear":
 			# Reference for the under-storm balance: the same level / up views with the preview storm moved 400 km away.
 			_storm(Vector2(0.0, 400000.0))
@@ -327,10 +405,18 @@ func _shoot(shot: String, wind: Vector2):
 			helper.PlaceCamera(world, 1500.0, _yaw(center.normalized()), rad_to_deg(atan2(9000.0 - 1500.0, center.length())))
 			for case in _arg("perf-cases", "new,legacy,new,legacy,new,legacy").split(","):
 				helper.SetLegacyShape(case == "legacy")
+				# "clear": the same pose with the storm moved off (400 km across), so a storm-path delta can be separated from the scene's
+				# natural weather.
+				_storm(Vector2(0.0, 400000.0) if case == "clear" else center)
 				await _frames(150)
+				# "dfetch_off": the storm-light D's second map fetch (ownership / front rain layer) skipped by publishing the map frame with no
+				# storm-light layer (w = 0; receivers then read the pre-2026-10-29 D). Cost A/B only; restored after the window.
+				var fetch_w: float = helper.SetStormLightFetch(world, case != "dfetch_off")
 				helper.PerfBegin(world)
 				await create_timer(float(_arg("perf-seconds", "10"))).timeout
-				print("STORM_ANVIL perf ", case, " ", helper.PerfEnd(world))
+				print("STORM_ANVIL perf ", case, " ", helper.PerfEnd(world), " | storm_map_frame.w=%.0f" % fetch_w)
+				if case == "dfetch_off":
+					helper.SetStormLightFetch(world, true)
 			await _save("perf_view")
 		_:
 			_fail("unknown shot " + shot)

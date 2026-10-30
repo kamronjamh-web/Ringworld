@@ -123,10 +123,11 @@ void fragment() {
 	ROUGHNESS = clamp(max(ocean_roughness, far_water_roughness)
 		+ sqrt(max(filtered_far_wave.z * wave_normal_strength * wave_normal_strength, 0.0)) * 0.10 + rain_matte, 0.02, 1.0);
 	// Physical haze also attenuates the environment reflection; exactly 1 in Legacy.
-	float storm_reflection = ring_storm_ambient(ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale)); // storm light: the sky reflection and the ambient follow the storm level
+	float storm_water_level = ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale);
+	float storm_reflection = ring_storm_ambient(storm_water_level); // storm light: the sky reflection and the ambient follow the storm level
 	// Storm light: a closed overcast has no sun to mirror, so the reflection also fades by the sun fade F(D) (the sun disc in the radiance map is a sharp glint otherwise).
 	SPECULAR = ring_water_dielectric_specular() * ocean_specular * ring_haze_specular_scale(haze) * storm_reflection
-		* mix(1.0, 0.02, ring_storm_shadow_fade(ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale)) * ringworld_storm_light.x);
+		* mix(1.0, 0.02, ring_storm_shadow_fade(storm_water_level) * ringworld_storm_light.x);
 	METALLIC = 0.0;
 	combined_cloud_shadow_occlusion = sample_combined_cloud_shadow(world_position, ring_day_factor);
 	AO = min(1.0 - combined_cloud_shadow_occlusion * 0.60, storm_reflection); // storm light: ambient follows the storm level
@@ -194,7 +195,7 @@ void light() {
 		LIGHT_IS_DIRECTIONAL ? combined_cloud_shadow_occlusion : 0.0,
 		terrain_shadow,
 		RING_SHADOW_DEFAULT);
-	terms.storm = LIGHT_IS_DIRECTIONAL ? ring_storm_level_scaled(world_position, ring_atmosphere_coordinate_scale) : 0.0; // storm light fades the sun only, never a point or spot light; far viewport positions are scaled
+	terms.storm = LIGHT_IS_DIRECTIONAL ? ring_storm_level_far(world_position, camera_world_position, ring_center, ring_atmosphere_coordinate_scale) : 0.0; // storm light fades the sun only, never a point or spot light; far viewport positions are scaled
 	// No contact term on water (RING_SHADOW_NO_CONTACT): the proxy is blend_mix, so the depth texel under it holds the seabed.
 	if (height_active) {
 		terms.height = ring_height_shadow_term(height_shadow, primary_sun_weight, ring_day_factor, ringworld_hub_light_weight, shadow_floor);

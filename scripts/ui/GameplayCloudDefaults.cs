@@ -16,6 +16,10 @@ public sealed class GameplayCloudDefaults
     private static readonly Dictionary<string, (float min, float max, bool integer)> Ranges = new()
     {
         ["CloudCoverageBias"] = (-1, 1, false),
+        ["LowCloudAmount"] = (-1, 1, false),
+        ["MidCloudAmount"] = (-1, 1, false),
+        ["HighCloudAmount"] = (-1, 1, false),
+        ["DaytimeCumulus"] = (0, 1, false),
         ["CloudPatchiness"] = (0, 1, false),
         ["CloudPatchScaleMeters"] = (16000, 256000, false),
         ["ClearSkyThreshold"] = (0, .6f, false),
@@ -43,9 +47,8 @@ public sealed class GameplayCloudDefaults
         ["AltitudeFadeEndMeters"] = (6000, 200000, false),
         ["CloudHandoffOverlapMeters"] = (2000, RingSunshineCloudBridge.MaximumCloudHandoffOverlapMeters, false),
         ["NearCloudRangeExtensionMeters"] = (0, RingSunshineCloudBridge.MaximumNearCloudRangeExtensionMeters, false),
-        ["NaturalCloudBaseAltitudeMeters"] = (0, 19000, false),
-        ["NaturalCloudTopAltitudeMeters"] = (500, 20000, false),
-        ["StormFrontCloudBaseAltitudeMeters"] = (0, 5000, false),
+        ["NaturalCloudBaseAltitudeMeters"] = (800, 3000, false),
+        ["StormFrontCloudBaseAltitudeMeters"] = (300, 1500, false),
         ["FarCloudDetailStrength"] = (0, 1, false),
         ["FarCloudOpacityMultiplier"] = (0, 2, false),
         ["FarCloudRadiusMeters"] = (30000, RingSunshineCloudBridge.MaximumFarCloudRadiusMeters, false),
@@ -100,12 +103,14 @@ public sealed class GameplayCloudDefaults
         ["WeatherSystemSelectionMarginMeters"] = (0, 30000, false),
         ["OverflowFadeMeters"] = (1000, 50000, false),
         ["SunshineBaseCoverageOffset"] = (-.3f, .3f, false),
-        ["StormEnvelopeCeilingMeters"] = (6000, 25000, false),
+        ["StormEnvelopeCeilingMeters"] = (6000, 18000, false),
         ["MacroMapResolution"] = (250, 4000, false),
         ["MacroMapSlices"] = (1, 32, true),
         ["MacroMapRefreshSeconds"] = (.05f, 2, false),
-        ["CameraIndependentDebugMask"] = (0, 63, true)
+        ["CameraIndependentDebugMask"] = (0, 511, true)
     };
+    // Keys removed from the menu; saved values are dropped silently on load (and so vanish on the next save).
+    private static readonly HashSet<string> RetiredKeys = new() { "NaturalCloudTopAltitudeMeters" };
     private static readonly HashSet<string> Bools = new() { "CloudRenderingEnabled", "CastCloudShadows", "PreferGpuCloudShadows", "GpuShadowAdaptiveSteps", "GpuShadowClearAirSkip", "GpuShadowCrossfadeEnabled", "SculptLocalizedStorms", "FastReconstruction", "FarCloudDetailEnabled", "AutomaticCloudHandoff", "SkipEmptyCloudMaskSamples", "FarCloudPatchCullingEnabled", "TerrainCloudShadowEnabled", "DepthHistoryRejectionEnabled", "CloudHistoryCompatibilityEnabled", "LightningHistoryIsolationEnabled", "CloudResolutionJitter", "CameraIndependentClouds", "MacroWeatherMap" };
     private static readonly HashSet<string> Colors = new() { "DayCloudAmbientColor", "NightCloudAmbientColor", "NightCloudAmbientTint", "StormCloudAmbientColor" };
     private readonly Dictionary<string, Variant> _baseline = new();
@@ -259,7 +264,6 @@ public sealed class GameplayCloudDefaults
             "MinStepDistanceMeters" or "MaxStepDistanceMeters" => new[] { "MinStepDistanceMeters", "MaxStepDistanceMeters" },
             "HandoffStartMeters" or "HandoffEndMeters" => new[] { "HandoffStartMeters", "HandoffEndMeters" },
             "AltitudeFadeStartMeters" or "AltitudeFadeEndMeters" => new[] { "AltitudeFadeStartMeters", "AltitudeFadeEndMeters" },
-            "NaturalCloudBaseAltitudeMeters" or "NaturalCloudTopAltitudeMeters" => new[] { "NaturalCloudBaseAltitudeMeters", "NaturalCloudTopAltitudeMeters" },
             "StationaryHistoryWeight" or "MovingHistoryWeight" => new[] { "StationaryHistoryWeight", "MovingHistoryWeight" },
             "CloudHistoryGateAlphaLow" or "CloudHistoryGateAlphaHigh" => new[] { "CloudHistoryGateAlphaLow", "CloudHistoryGateAlphaHigh" },
             _ => Array.Empty<string>()
@@ -330,6 +334,7 @@ public sealed class GameplayCloudDefaults
             }
             foreach (Variant key in source.Overrides.Keys)
             {
+                if (key.VariantType == Variant.Type.String && RetiredKeys.Contains(key.AsString())) continue;
                 if (key.VariantType == Variant.Type.String && TryValidate(key.AsString(), source.Overrides[key], out Variant clean))
                     Settings.Overrides[key] = clean;
                 else

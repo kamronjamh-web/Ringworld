@@ -36,6 +36,8 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
     private static readonly int[] RainStreaks = { 4000, 8000, 12000, 16000, 20000 };
     private static readonly int[] RippleLayers = { 1, 2, 3, 4, 4 };
     private static readonly int[] DripBudget = { 128, 256, 384, 512, 512 };
+    private static readonly bool[] WetHalfSizeSsr = { true, true, true, false, false };
+    private static readonly int[] GustDebris = { 128, 256, 512, 768, 1024 };
     private static readonly int[] BoltBranches = { 1, 2, 3, 3, 4 };
     private static readonly int[] BoltDepth = { 0, 1, 1, 1, 2 };
     private static readonly float[] TreeNearEnd = { 25f, 30f, 40f, 40f, 60f };
@@ -121,8 +123,10 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
                 Check(weather!.MaximumStreakCount == RainStreaks[p] && RingGraphicsQualityController.PresetWeather(preset).streaks == RainStreaks[p], $"WO5 {tag} rain streak budget={weather.MaximumStreakCount} want {RainStreaks[p]}");
                 Check(weather.MaximumParticleCount == RainParticles[p] && weather.MaximumParticleCount >= 512 && weather.EnableLightning && weather.BoltMaximumBranches == BoltBranches[p] && weather.BoltSecondaryBranchDepth == BoltDepth[p],
                     $"WO3 {tag} weather particles={weather.MaximumParticleCount} lightning={weather.EnableLightning} branches={weather.BoltMaximumBranches}/{weather.BoltSecondaryBranchDepth}");
-                Check(RingWetWorldSettings.Current.RippleLayers == RippleLayers[p] && RingWetWorldSettings.Current.DripBudget == DripBudget[p] && RingGraphicsQualityController.PresetWetWorld(preset) == (RippleLayers[p], DripBudget[p]),
-                    $"S2 {tag} wet world ripple layers={RingWetWorldSettings.Current.RippleLayers} drips={RingWetWorldSettings.Current.DripBudget} want {RippleLayers[p]}/{DripBudget[p]}");
+                Check(RingWetWorldSettings.Current.RippleLayers == RippleLayers[p] && RingWetWorldSettings.Current.DripBudget == DripBudget[p] && RingWetWorldSettings.Current.HalfSizeSsr == WetHalfSizeSsr[p]
+                    && RingGraphicsQualityController.PresetWetWorld(preset) == (RippleLayers[p], DripBudget[p], WetHalfSizeSsr[p]),
+                    $"S2 {tag} wet world ripple layers={RingWetWorldSettings.Current.RippleLayers} drips={RingWetWorldSettings.Current.DripBudget} half-size SSR={RingWetWorldSettings.Current.HalfSizeSsr} want {RippleLayers[p]}/{DripBudget[p]}/{WetHalfSizeSsr[p]}");
+                Check(RingGustFrontDebris.PresetBudget == GustDebris[p] && RingGraphicsQualityController.PresetWeather(preset).debris == GustDebris[p], $"S3 {tag} gust debris budget={RingGustFrontDebris.PresetBudget} want {GustDebris[p]}");
                 var trees = RingGraphicsQualityController.PresetTrees(preset);
                 Check(trees.NearEnd == TreeNearEnd[p] && trees.BillboardStart == TreeBillboardStart[p] && trees.BillboardEnd == TreeBillboardEnd[p] && trees.SunShadow == TreeSunShadow[p] && trees.NearStart < trees.NearEnd && trees.NearEnd <= trees.BillboardStart,
                     $"WO3 {tag} trees near={trees.NearStart}-{trees.NearEnd} billboard={trees.BillboardStart}-{trees.BillboardEnd} shadow={trees.SunShadow}");
@@ -133,7 +137,7 @@ public partial class QualityPresetContractHeadlessTest : RefCounted
             CheckMonotonic(Check, "atlas", AtlasSizes); CheckMonotonic(Check, "sun distance", SunDistances); CheckMonotonic(Check, "planet distance", PlanetDistances); CheckMonotonic(Check, "planet cascades", PlanetCascades);
             CheckMonotonic(Check, "ssr steps", SsrSteps); CheckMonotonic(Check, "ssr ray", SsrRay); CheckMonotonic(Check, "ssr camera", SsrCamera); CheckMonotonic(Check, "ssao", SsaoDetail); CheckMonotonic(Check, "far scale", FarScale);
             CheckMonotonic(Check, "rain particles", RainParticles); CheckMonotonic(Check, "rain streaks", RainStreaks); CheckMonotonic(Check, "bolt branches", BoltBranches); CheckMonotonic(Check, "bolt depth", BoltDepth);
-            CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow); CheckMonotonic(Check, "ripple layers", RippleLayers); CheckMonotonic(Check, "drip budget", DripBudget);
+            CheckMonotonic(Check, "tree near end", TreeNearEnd); CheckMonotonic(Check, "tree billboard start", TreeBillboardStart); CheckMonotonic(Check, "tree billboard end", TreeBillboardEnd); CheckMonotonic(Check, "tree sun shadow", TreeSunShadow); CheckMonotonic(Check, "ripple layers", RippleLayers); CheckMonotonic(Check, "drip budget", DripBudget); CheckMonotonic(Check, "gust debris", GustDebris);
 
             // N1: height shadows + near sun map are preset-owned defaults on every preset (Low..Cinematic5090); an explicit override wins.
             string migrationPath = $"res://.godot/qp_contract_hs_{Time.GetTicksUsec()}.tres";

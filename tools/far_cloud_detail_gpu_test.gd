@@ -171,6 +171,13 @@ func _apply_weather_material(material: ShaderMaterial, atlas: ImageTexture, para
 	material.set_shader_parameter("cloud_weather_params", params)
 	material.set_shader_parameter("cloud_weather_frame", frame)
 	material.set_shader_parameter("far_density_coverage_bias", 0.0)
+	# This fixture drives the legacy clipmap / shell body with a synthetic atlas. The S6 WO6 far layer sky (FarCloudLayerSky, fed by the
+	# live macro map and layer atlas) owns that body in production and is covered by far_cloud_density_parity (layer pass) and the
+	# cloud_layers_capture handoff shots; here it is hidden and the clipmap keeps its own body.
+	material.set_shader_parameter("far_layers_enabled", false)
+	material.set_shader_parameter("far_layer_atlas_enabled", false)
+	var sky := _far.get_node_or_null("FarRingViewport/FarCloudLayerSky") as GeometryInstance3D
+	if sky != null: sky.visible = false
 
 func _capture(label: String, hide_clouds := false, sync_far := true, hide_shell := false) -> Image:
 	if _failed: return Image.new()

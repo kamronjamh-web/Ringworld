@@ -13,7 +13,7 @@ namespace RingworldTechDemo;
 /// mirror is <see cref="GetStormLevelAt"/>. valid = 0 (the map is off, the bridge is disabled or Sunshine has not published a build) makes
 /// every receiver read D = 0, i.e. today's output.
 /// Globals: ringworld_storm_map (sampler2DArray, Sunshine's front/back macro map), ringworld_storm_map_frame = (texel m, front layer,
-/// heavy-overcast start coverage, 0), ringworld_storm_map_size = (used width, used height, texture width, texture height) in texels,
+/// heavy-overcast start coverage, storm-light layer = front + 4 holding (owned, front rain), or 0 when the map has none), ringworld_storm_map_size = (used width, used height, texture width, texture height) in texels,
 /// ringworld_storm_frame (mat4: column 0 = around axis.xyz + camera canonical around relative to the map origin, column 1 = across axis.xyz +
 /// camera canonical across relative to the map origin, column 2 = up axis.xyz + ring radius, column 3 = camera-ring centre in world),
 /// ringworld_storm_light = (darkness strength, shadow-fade start, shadow-fade end, valid).
@@ -71,10 +71,119 @@ public partial class RingSunshineCloudBridge
     {
         if (_weather == null || _grid == null) return 0.0f;
         double circumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
-        EvaluateCameraIndependentMacro(WrapCircumference(aroundMeters, circumference), acrossMeters, _weather.CloudSimulationTimeSeconds, circumference,
-            _weather.WeatherWindMetersPerSecond, out float coverage, out float storm);
+        double around = WrapCircumference(aroundMeters, circumference);
+        double time = _weather.CloudSimulationTimeSeconds;
+        Vector2 wind = _weather.WeatherWindMetersPerSecond;
+        EvaluateCameraIndependentMacro(around, acrossMeters, time, circumference, wind, out float coverage, out float storm);
         float heavy = SmoothUnit((coverage - HeavyOvercastStartCoverage) / Mathf.Max(0.01f, 1.0f - HeavyOvercastStartCoverage));
-        return Mathf.Max(storm, heavy);
+        if (!_stormOwnershipAvailable) return Mathf.Max(storm, heavy);
+        EvaluateStormLightTerms(around, acrossMeters, time, circumference, wind, coverage, GetPrecipitationPotentialAt(around, acrossMeters),
+            out float owned, out float front, out float influence);
+        return StormOwnedLevel(storm, heavy, influence, owned, front);
+    }
+
+    // ---- Storm-owned D (2026-10-29; S0 doc "Storm-owned D", user decision "fronts dark by rain") ----
+    // D = max(owned x max(storm, heavy), front, heavy x (1 - smoothstep(0, 0.25, influence))). owned: the S6 ownership weight of StormTower / Cumulonimbus sculpt
+    // systems (1 inside 1.3 ellipse radii, 0 by 1.45); front: a non-sculpt MajorFront / ExceptionalFront's own precipitation through the StormFrontRain ramp;
+    // influence: the macro system influence (map A): plain heavy overcast counts only where no system is present. Mirrors RingMacroWeatherMap.glsl (storm-light layer) and ring_storm_owned_level (materials/ring_storm_light.gdshaderinc).
+    /// <summary>Front rain ramp of the storm-owned D: a non-storm front's own precipitation potential maps to D through smoothstep(start, start + width). Mirrors RING_STORM_FRONT_RAIN_* in RingMacroWeatherMap.glsl.</summary>
+    public const float StormFrontRainStart = 0.25f;
+    public const float StormFrontRainWidth = 0.40f;
+    private const float StormOwnedInnerSquared = 1.69f;                                        // 1.3 ellipse radii (ring_ws_storm_owned_weight)
+    private const float StormOwnedSupportSquared = 1.45f * 1.45f;                              // RING_STORM_SUPPORT
+    private const string StormLightLayerOffsetName = "macro_map_storm_light_layer_offset";     // SunshineClouds.gd; 0 / missing = the map has no storm-light layer
+    private bool _stormOwnershipAvailable;
+    private int _stormLightLayerOffset;
+    private float _ciSmoothedFront, _ciSmoothedHeavyUnowned;
+
+    /// <summary>The storm-owned D from its terms (GPU twin: ring_storm_owned_level). owned = 1, front = 0 is exactly the pre-ownership max(storm, heavy).</summary>
+    public static float StormOwnedLevel(float storm, float heavy, float influence, float owned, float front)
+        => Mathf.Max(Mathf.Max(owned * Mathf.Max(storm, heavy), front), heavy * SystemFreeWeight(influence));
+
+    /// <summary>Weight of the plain heavy-overcast term: 1 with no system present, 0 once the map's system influence reaches 0.25 (GPU: RING_STORM_SYSTEM_FREE_INFLUENCE).</summary>
+    public const float StormSystemFreeInfluence = 0.25f;
+    private static float SystemFreeWeight(float influence) => 1.0f - SmoothUnit(influence / StormSystemFreeInfluence);
+
+    /// <summary>Terms of the CPU storm-owned D at a canonical position (diagnostics and captures): coverage, storm (G), heavy, owned, front, influence, D.</summary>
+    public Godot.Collections.Dictionary GetStormLightTermsAt(double aroundMeters, double acrossMeters)
+    {
+        var result = new Godot.Collections.Dictionary();
+        if (_weather == null || _grid == null) return result;
+        double circumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
+        double around = WrapCircumference(aroundMeters, circumference);
+        double time = _weather.CloudSimulationTimeSeconds;
+        Vector2 wind = _weather.WeatherWindMetersPerSecond;
+        EvaluateCameraIndependentMacro(around, acrossMeters, time, circumference, wind, out float coverage, out float storm);
+        float heavy = SmoothUnit((coverage - HeavyOvercastStartCoverage) / Mathf.Max(0.01f, 1.0f - HeavyOvercastStartCoverage));
+        float precipitation = GetPrecipitationPotentialAt(around, acrossMeters);
+        EvaluateStormLightTerms(around, acrossMeters, time, circumference, wind, coverage, precipitation, out float owned, out float front, out float influence);
+        result["precipitation"] = precipitation;
+        result["coverage"] = coverage; result["storm"] = storm; result["heavy"] = heavy; result["owned"] = owned; result["front"] = front;
+        result["influence"] = influence; result["ownership_available"] = _stormOwnershipAvailable; result["D"] = GetStormLevelAt(aroundMeters, acrossMeters);
+        return result;
+    }
+
+    /// <summary>Storm-map layer that holds (owned, front rain) for the receivers (front layer + offset), 0 while the map has no such layer or storm light is invalid.</summary>
+    public float StormLightLayer => _stormPublishedValid ? _stormPublishedMapFrame.W : 0.0f;
+
+    /// <summary>
+    /// C# twin of the macro map build's storm-light layer (RingMacroWeatherMap.glsl ring_storm_light_point) plus the map's system influence (A), at one canonical
+    /// position over the uploaded systems. `coverage` is the macro coverage at that point (the build's value.x), which gates a natural front's precipitation;
+    /// `precipitation` the point's precipitation potential (map B, <see cref="GetPrecipitationPotentialAt"/>), which caps the front's own rain.
+    /// </summary>
+    private void EvaluateStormLightTerms(double aroundMeters, double acrossMeters, double time, double circumference, Vector2 wind, float coverage,
+        float precipitation, out float owned, out float front, out float influence)
+    {
+        double sourceAround = WrapCircumference(aroundMeters - wind.X * time, circumference);
+        double sourceAcross = acrossMeters - wind.Y * time;
+        float coverageRamp = SmoothUnit((coverage - 0.35f) / 0.55f);
+        float combined = 0.0f, manual = 0.0f, frontRain = 0.0f;
+        owned = 0.0f;
+        foreach (UploadedWeatherSystem entry in _ciUploaded)
+        {
+            RingVolumetricCloudLayer.RenderWeatherSystem system = entry.System;
+            bool isStatic = system.IsStatic;
+            double deltaAround = isStatic ? ShortestCircumferenceDelta(system.CenterAroundMeters, aroundMeters, circumference)
+                : ShortestCircumferenceDelta(sourceAround, system.CenterAroundMeters, circumference);
+            double deltaAcross = isStatic ? acrossMeters - system.CenterAcrossMeters : system.CenterAcrossMeters - sourceAcross;
+            double along = system.OrientationCosine * deltaAround + system.OrientationSine * deltaAcross;
+            double across = -system.OrientationSine * deltaAround + system.OrientationCosine * deltaAcross;
+            double major = Math.Max(1.0, system.MajorRadiusMeters), minor = Math.Max(1.0, system.MinorRadiusMeters);
+            float normalizedSquared = (float)(along * along / (major * major) + across * across / (minor * minor));
+            if (system.Sculpts)
+                owned = Mathf.Max(owned, 1.0f - SmoothUnit((normalizedSquared - StormOwnedInnerSquared) / (StormOwnedSupportSquared - StormOwnedInnerSquared)));
+            float systemInfluence;
+            if (isStatic)
+            {
+                systemInfluence = (1.0f - SmoothUnit((MathF.Sqrt(normalizedSquared) - 0.55f) / 0.75f)) * system.Influence * entry.Fade;
+                if (systemInfluence <= 0.0001f) systemInfluence = 0.0f;
+                manual = Mathf.Max(manual, systemInfluence);
+            }
+            else
+            {
+                systemInfluence = normalizedSquared >= 1.0f ? 0.0f : (1.0f - SmoothUnit((MathF.Sqrt(normalizedSquared) - 0.32f) / 0.68f)) * system.Influence * entry.Fade;
+                combined = 1.0f - (1.0f - combined) * (1.0f - systemInfluence);
+            }
+            if (system.IsFront && !system.Sculpts)
+                frontRain = Mathf.Max(frontRain, system.Precipitation * systemInfluence * (isStatic ? 1.0f : coverageRamp));
+        }
+        influence = Mathf.Max(Mathf.Clamp(combined, 0.0f, 1.0f), manual);
+        front = SmoothUnit((Mathf.Min(frontRain, precipitation) - StormFrontRainStart) / StormFrontRainWidth);
+    }
+
+    /// <summary>
+    /// The camera storm level (<see cref="_localStormFactor"/>) from the smoothed terms, called by UpdateCameraIndependentAmbient after it has smoothed the storm and
+    /// heavy terms with `blend`. The front and system-free heavy terms are smoothed on their own; the ownership weight is NOT smoothed (it is a spatial weight that
+    /// already ramps over 0.15 ellipse radii), so wherever owned is 1 this is exactly the old max(smoothed storm, smoothed heavy), transients included.
+    /// </summary>
+    private float SmoothCameraStormLevel(in RingCanonicalPosition camera, double time, double circumference, Vector2 wind, float coverage, float heavy, float blend)
+    {
+        if (!_stormOwnershipAvailable) return Mathf.Max(_ciSmoothedStorm, _ciSmoothedHeavy);
+        EvaluateStormLightTerms(camera.AroundMeters, camera.AcrossMeters, time, circumference, wind, coverage, GetPrecipitationPotentialAt(camera.AroundMeters, camera.AcrossMeters),
+            out float owned, out float front, out float influence);
+        _ciSmoothedFront = Mathf.Lerp(_ciSmoothedFront, front, blend);
+        _ciSmoothedHeavyUnowned = Mathf.Lerp(_ciSmoothedHeavyUnowned, heavy * SystemFreeWeight(influence), blend);
+        return Mathf.Max(Mathf.Max(owned * Mathf.Max(_ciSmoothedStorm, _ciSmoothedHeavy), _ciSmoothedFront), _ciSmoothedHeavyUnowned);
     }
 
     /// <summary>True while <see cref="GetPrecipitationPotentialAt"/> reads the uploaded camera-independent systems (CameraIndependentClouds on and uploaded).</summary>
@@ -140,6 +249,8 @@ public partial class RingSunshineCloudBridge
     private void PublishStormLight(bool forceInvalid = false)
     {
         EnsureStormMapGlobal();
+        _stormLightLayerOffset = _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get(StormLightLayerOffsetName).AsInt32() : 0;
+        _stormOwnershipAvailable = _stormLightLayerOffset > 0;
         bool valid = !forceInvalid && Enabled && CameraIndependentClouds && MacroWeatherMap && _clouds != null && GodotObject.IsInstanceValid(_clouds)
             && _explorer != null && _grid != null && _clouds.Get(MacroMapValidName).AsBool();
         if (valid) valid = RefreshStormFront();
@@ -166,7 +277,8 @@ public partial class RingSunshineCloudBridge
                 _stormFramePublished = true;
                 RenderingServer.GlobalShaderParameterSet(StormFrameGlobal, frame);
             }
-            var mapFrame = new Vector4(_stormFrontTexel, _stormFrontLayer, Mathf.Clamp(HeavyOvercastStartCoverage, 0.0f, 0.99f), 0.0f);
+            var mapFrame = new Vector4(_stormFrontTexel, _stormFrontLayer, Mathf.Clamp(HeavyOvercastStartCoverage, 0.0f, 0.99f),
+                _stormOwnershipAvailable ? _stormFrontLayer + _stormLightLayerOffset : 0.0f);
             var mapSize = new Vector4(_stormFrontSize.X, _stormFrontSize.Y, MacroMapCapacity.X, MacroMapCapacity.Y);
             if (mapFrame != _stormPublishedMapFrame) { _stormPublishedMapFrame = mapFrame; RenderingServer.GlobalShaderParameterSet(StormMapFrameGlobal, mapFrame); }
             if (mapSize != _stormPublishedMapSize) { _stormPublishedMapSize = mapSize; RenderingServer.GlobalShaderParameterSet(StormMapSizeGlobal, mapSize); }

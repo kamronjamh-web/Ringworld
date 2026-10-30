@@ -35,6 +35,7 @@ varying vec3 tree_world_position;
 varying vec3 tree_haze_T;
 varying vec3 tree_haze_S;
 varying vec2 tree_wet_state; // wet world, per vertex: (darkening amount, gloss)
+varying float tree_highlight_roughness; // wet world: the direct highlight keeps the full wet gloss (ROUGHNESS may be held at the SSR floor)
 varying flat int tree_variant;
 varying vec4 tree_parameters;
 varying flat float tree_dither_coverage;
@@ -94,7 +95,7 @@ void vertex() {
 	tree_haze_S = ring_haze_inscatter(vertex_haze);
 	tree_wet_state = vec2(0.0);
 	if (ring_wet_params.w > 0.5) {
-		RingWet wet_state = ring_wet_sample_up(world_position, surface_up);
+		RingWet wet_state = ring_wet_sample_vegetation(world_position);
 		tree_wet_state = vec2(smoothstep(0.0, 0.5, wet_state.soak) * ring_wet_params.x, ring_wet_gloss(wet_state));
 	}
 }
@@ -124,7 +125,10 @@ void fragment() {
 		METALLIC = mr.b * tree_parameters.g;
 		ROUGHNESS = mr.g * tree_parameters.b;
 	}
+	float dry_roughness = ROUGHNESS;
 	ROUGHNESS *= mix(1.0, 0.6, tree_wet_state.y); // wet world: glossier when wet
+	tree_highlight_roughness = ROUGHNESS;
+	ROUGHNESS = ring_wet_ssr_roughness(ROUGHNESS, dry_roughness); // distant canopy: no SSR on wet impostors
 	AO = min(1.0 - tree_cloud_occlusion * tree_day_factor * .72, ring_storm_ambient(ring_storm_level(tree_world_position))); // storm light
 	AO_LIGHT_AFFECT = 0.0;
 	if (ring_shadow_debug_enabled()) {
@@ -135,6 +139,7 @@ void fragment() {
 		SPECULAR = 0.0;
 		METALLIC = 0.0;
 		ROUGHNESS = 1.0;
+		tree_highlight_roughness = 1.0;
 	}
 }
 
@@ -160,7 +165,7 @@ void light() {
 		DIFFUSE_LIGHT += (LIGHT_COLOR / PI) * n_dot_l * visibility;
 		if (!simplified_tree_shading) {
 			vec3 half_vector = normalize(LIGHT + VIEW);
-			float gloss = mix(8.0, 128.0, 1.0 - ROUGHNESS);
+			float gloss = mix(8.0, 128.0, 1.0 - tree_highlight_roughness);
 			float specular = pow(max(dot(NORMAL, half_vector), 0.0), gloss) * mix(mix(.04, .1, tree_wet_state.y), 1.0, METALLIC);
 			SPECULAR_LIGHT += (LIGHT_COLOR / PI) * specular * n_dot_l * visibility * tree_haze_T;
 		}
