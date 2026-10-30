@@ -26,6 +26,10 @@ Until the user revokes this instruction, the primary agent acts as lead planner 
   - `flicker -Path ...`: per-frame luma change with the largest spikes listed; use to catch single-frame pops and flashes.
   - `mp4 -Path ...`: an H.264 video for the user to watch.
 - Keep captures under `.godot/` or the scratchpad, never in tracked folders. Cloud noise alone gives SSIM around 0.997 between identical scenes, so judge the heatmap, not just the number.
+- Clean up after every ffmpeg use, before handing back. Delete what you made and no longer need:
+  - raw frame sequences once a sheet, comparison or mp4 has been made from them;
+  - extracted frames, intermediate crops, temporary videos and any ffmpeg scratch files.
+  Keep only the evidence your report cites, and say where it is. Never delete another agent's captures or the baselines `tools/prune_test_output.ps1` protects. Run `tools/prune_test_output.ps1 -Apply` at the end.
 
 ## Feature conventions
 

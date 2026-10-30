@@ -31,7 +31,7 @@ Approach difficult problems systematically.
 3. Trace relevant execution/data flow.
 4. Generate competing explanations where appropriate.
 5. Eliminate explanations using code or runtime evidence.
-   For visual symptoms (pops, flicker, transition glitches), capture runtime evidence with ffmpeg through `tools/media/ffmpeg_tools.ps1` (see "Tools" in AGENTS.md).
+   For visual symptoms (pops, flicker, transition glitches), capture runtime evidence with ffmpeg through `tools/media/ffmpeg_tools.ps1` (see "Tools" in AGENTS.md), then clean up the ffmpeg output you no longer need (keep only cited evidence).
 6. Identify the most likely actual root cause.
 7. Determine the smallest technically sound correction.
 8. Identify potential regressions.
