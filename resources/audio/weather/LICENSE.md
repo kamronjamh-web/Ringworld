@@ -349,6 +349,9 @@ partials only: no recordings, no downloaded audio and none of the CC0 thunder cl
 | `megastorm_boom_1.ogg` | 4.4 s | The Mach pile-up: a 3.5 kHz-band crack, a sub thump gliding 72 to 28 Hz, then 9-13 darkening rolling noise bursts; the shape follows `MegastormSound.BoomEnvelope`. | `7E8BEDAFC6C5115BC48667A3CA647038CC3C093D2BD70EC497092FEA94E7072F` |
 | `megastorm_boom_2.ogg` | 4.4 s | As above, other seed. | `605BAED53B23C76CCCBABB5CD70613EBC5EEEDD6952AFCA4BFD007086B43048E` |
 | `megastorm_boom_3.ogg` | 4.4 s | As above, other seed. | `452A0FF9FDF6F30484A6DDFBE5F5AF49484403518D284914DDF434404A9AD3C7` |
+| `megastorm_scythe_crackle_1.ogg` | 0.9 s | Lightning-scythe tear (WO12, 5.5.4): a dense burst of sharp 1.5-12 kHz clicks (about 1,100 per second falling to 60) over a short hissing bed, 2-4 low pops, fast decay. One per path segment, each fired at its own d / 343 delay. Seeded by the output name. | `88F784298CC16585CCB60774D0E236558173437B1554A9375C13FC46EF0E21FF` |
+| `megastorm_scythe_crackle_2.ogg` | 0.9 s | As above, other seed. | `700D990C0B13AFAC1F94C7499268CE3BC373BF883E1BEC2E5706B37D6598008C` |
+| `megastorm_scythe_crackle_3.ogg` | 0.9 s | As above, other seed. | `3CF3C9C068CD37343B9AC5A9215119BEA330248BCB6B3963A8527F379F09CB4D` |
 
-Wiring: `RingMegastormAudio` (scripts/Weather/Megastorm). Subjective listening is still pending; `tools/media/megastorm_audio_render.py` renders a
+Wiring: `RingMegastormAudio` (scripts/Weather/Megastorm). The scythe crackles are played by `RingMegastormScythes` (same folder) on the `MegastormAir` bus. Subjective listening is still pending; `tools/media/megastorm_audio_render.py` renders a
 passage from the test's gain timeline for that.

@@ -31,7 +31,7 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 	vec4 storm_map_size;  // ringworld_storm_map_size: used w/h, texture w/h (texels)
 	vec4 storm_light;   // ringworld_storm_light: x darkness strength, y shadow-fade start, z end, w valid
 	vec4 sky;           // rgb: sky radiance a streak is lit with before the storm ambient (daylight applied), w: 1 = light each streak from the storm map, 0 = use light.rgb
-	vec4 sun;           // rgb: direct sun radiance (colour x energy x cloud transmittance, daylight applied)
+	vec4 sun;           // rgb: direct sun radiance (colour x energy x cloud transmittance, daylight applied), w: megastorm k_min_eff (ringworld_storm_light_mega.x; 1 = no darkening)
 	vec4 storm;         // S3 arrival: x fat drop weight, y core weight, z trailing weight, w severity
 	vec4 hail;          // S3 hail: x intensity, y size 0..1, z near hail fall phase (m), w mid hail fall phase (m)
 } F;
@@ -107,7 +107,9 @@ float rain_mid_weight(float i) { return dot(rain_stage(i), vec3(0.15, 0.7, 1.0))
 float rain_length_scale(float i) { return dot(rain_stage(i), vec3(0.8, 1.0, 1.3)); }
 float rain_brightness_scale(float i) { return dot(rain_stage(i), vec3(0.85, 1.1, 1.5)); }
 
-// Storm level D at a world position: GLSL port of ring_storm_level in materials/ring_storm_light.gdshaderinc (same map, same frame, same arithmetic).
+// Extended storm level L = D + E at a world position: GLSL port of ring_storm_level in materials/ring_storm_light.gdshaderinc (same map, same frame, same
+// arithmetic; E is the storm-light layer's z, the megastorm darkness). Streaks live within metres of the camera, always inside the map, so the analytic
+// E beyond the map is not needed here.
 float storm_arc_angle(float tangent, float outward) {
 	float q = tangent / outward;
 	if (outward > 0.0 && abs(q) <= 0.05) {
@@ -129,21 +131,23 @@ float storm_level(vec3 world) {
 	vec2 uv = texel / F.storm_map_size.zw;
 	vec4 s = textureLod(storm_map, vec3(uv, F.storm_map_frame.y), 0.0);
 	// storm-light layer (owned, front rain); index 0 = none (old D). Same as ring_storm_owned_level in ring_storm_light.gdshaderinc.
-	vec2 o = F.storm_map_frame.w > 0.5 ? textureLod(storm_map, vec3(uv, F.storm_map_frame.w), 0.0).xy : vec2(1.0, 0.0);
+	vec3 o = F.storm_map_frame.w > 0.5 ? textureLod(storm_map, vec3(uv, F.storm_map_frame.w), 0.0).xyz : vec3(1.0, 0.0, 0.0);
 	float heavy_start = F.storm_map_frame.z;
 	float h = clamp((s.x - heavy_start) / max(0.01, 1.0 - heavy_start), 0.0, 1.0);
 	h = h * h * (3.0 - 2.0 * h);
 	float free_t = clamp(s.w / 0.25, 0.0, 1.0); // heavy overcast only where no system is present
-	return max(max(o.x * max(s.y, h), o.y), h * (1.0 - free_t * free_t * (3.0 - 2.0 * free_t)));
+	return max(max(o.x * max(s.y, h), o.y), h * (1.0 - free_t * free_t * (3.0 - 2.0 * free_t))) + o.z;
 }
 // Radiance a streak at `world` is lit with. Per streak: sky ambient dimmed by the storm ambient A(D) = 1 - 0.9 * strength * D, plus the sun faded by the storm shadow fade F(D)
 // (the same D and fade every receiver uses). With the map unavailable (or a test override) the CPU scalar radiance in light.rgb is used.
 vec3 streak_radiance(vec3 world) {
 	if (F.sky.w < 0.5) return F.light.rgb;
-	float d = storm_level(world);
-	float ambient = 1.0 - 0.9 * F.storm_light.x * d;
+	float level = storm_level(world);
+	float d = min(level, 1.0);
+	float k = 1.0 - (1.0 - F.sun.w) * max(level - 1.0, 0.0); // megastorm darkness K (ring_storm_darkness); exactly 1 for every ordinary storm
+	float ambient = (1.0 - 0.9 * F.storm_light.x * d) * k;
 	float fade = d <= 0.0 ? 0.0 : smoothstep(F.storm_light.y, F.storm_light.z, d);
-	return F.sky.rgb * ambient + F.sun.rgb * (1.0 - fade);
+	return F.sky.rgb * ambient + F.sun.rgb * ((1.0 - fade) * k);
 }
 
 // ---- S3 storm arrival hooks (mirror RainPrecipitationProfile / RainStreakLattice). All weights 0 leave every function below the identity. ----

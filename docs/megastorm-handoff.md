@@ -42,7 +42,26 @@ Read this first, then `docs/megastorm-design.md` (user decisions at the top, the
 
 Doc order for what remains: WO14 → WO11 + WO12 → WO13 → the far-look pass (user: "after the rest") → WO9.
 
-## In flight when this was written
+## Update (2026-10-30, about 23:30)
+
+The three in-flight agents below all finished and were committed in the checkpoint after `014246e`. Status blocks for each are in `docs/megastorm-design.md`.
+- **WO14 (darkness):** done.
+  - Real-game noon sheet: `.godot/captures/megastorm/wo14/sheet_real_path_noon.png`.
+  - Under the wall it is about 0.05-0.08x a clear day.
+  - Ordinary storms are bit-identical.
+  - Deviations, all needed to meet the accept list: the eye-lock mechanism; a flash term in the haze; the rain veil and distant curtains now take K.
+  - Open: darkness lands a few km after the boom, because D is only about 0.3 at xi 0-5 km.
+- **WO12 (scythes):** done.
+  - Rate, geometry and the cut table are all within spec.
+  - Open:
+    - far-view streaks are left for the far-look pass;
+    - near the ground the sheet is often hidden by terrain or trees (a user look check);
+    - a reduced-flashes capture is unproven.
+- **S6 natural far layer march:** off by default (`RING_FAR_LAYERS_NATURAL=1` turns it on). Untriggered cost is back to pre-fix; turning it on costs +0.21 ms on the test shots.
+
+Next is WO11, then WO13, then the far-look pass, perf and WO9.
+
+## In flight when this was written (historical)
 
 Three background agents were started at about 20:10 on 2026-10-30. If this session ended, assume their work may be **partly done and uncommitted**. Check `git status` and `git diff` against `266e76d`.
 

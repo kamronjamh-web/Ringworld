@@ -115,12 +115,16 @@ public partial class RingLocalWeatherEffects
         SetRainHazeParameter(NearClearDistanceName, FiniteHaze(settings.NearClearDistanceMeters, 0, 100, 8));
         SetRainHazeParameter(MaximumOpacityName, maximumOpacity);
         SetRainHazeParameter(VariationStrengthName, FiniteHaze(settings.VariationStrength, 0, 1, .25f));
-        SetRainHazeParameter(HazeTintName, new Vector3(Mathf.Clamp(tint.R, 0, 1), Mathf.Clamp(tint.G, 0, 1), Mathf.Clamp(tint.B, 0, 1)));
+        float darknessK = RainHazeDarkness();
+        SetRainHazeParameter(HazeTintName, new Vector3(Mathf.Clamp(tint.R, 0, 1) * darknessK, Mathf.Clamp(tint.G, 0, 1) * darknessK, Mathf.Clamp(tint.B, 0, 1) * darknessK));
         SetRainHazeParameter(DaylightName, FiniteHaze(_rainHazeDayNight?.DaylightFactor ?? 1, 0, 1, 1));
         SetRainHazeParameter(SkyDistanceName, Mathf.Min(750, _rainHazeCamera!.Far));
     }
 
     private float _rainHazeGate;
+
+    /// <summary>Megastorm darkness for the near rain veil, which is lit by its tint alone (docs/megastorm-design.md 5.6; bridge GetMegastormRainVeilFactor): exactly 1 without a megastorm.</summary>
+    private float RainHazeDarkness() => _sunshineBridge != null ? Mathf.Clamp(_sunshineBridge.GetMegastormRainVeilFactor(), 0.0f, 1.0f) : 1.0f;
 
     /// <summary>
     /// Smooth 0..1 weight of the grey rain haze: 0 for light and moderate rain, 1 for violent storms. Severe systems (kind ExceptionalFront and above) count their intensity fully, every other
@@ -255,7 +259,8 @@ public partial class RingLocalWeatherEffects
         Vector(new(camera.Origin.X, camera.Origin.Y, camera.Origin.Z, 1));
         Color tint = LinearRainHazeTint(settings.Tint);
         Vector(new(intensity, density, FiniteHaze(settings.NearClearDistanceMeters,0,100,8), maximumOpacity));
-        Vector(new(Math.Clamp(tint.R,0,1),Math.Clamp(tint.G,0,1),Math.Clamp(tint.B,0,1),FiniteHaze(_rainHazeDayNight?.DaylightFactor ?? 1,0,1,1)));
+        float darknessK = RainHazeDarkness();
+        Vector(new(Math.Clamp(tint.R,0,1)*darknessK,Math.Clamp(tint.G,0,1)*darknessK,Math.Clamp(tint.B,0,1)*darknessK,FiniteHaze(_rainHazeDayNight?.DaylightFactor ?? 1,0,1,1)));
         Vector(new(FiniteHaze(settings.VariationStrength,0,1,.25f),Mathf.Min(750,_rainHazeCamera.Far),wind.Enabled ? 1 : 0,0));
         Vector(new(wind.Anchor.X,wind.Anchor.Y,wind.Anchor.Z,0)); Vector(wind.Around); Vector(wind.Across);
         Vector(new(wind.Uv.X,wind.Uv.Y,wind.Base,wind.Strength));

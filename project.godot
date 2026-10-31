@@ -482,6 +482,14 @@ ringworld_storm_light={
 "type": "vec4",
 "value": Vector4(0.85, 0.35, 0.7, 0)
 }
+ringworld_storm_light_mega={
+"type": "vec4",
+"value": Vector4(1, 0, 0, 0)
+}
+ringworld_megastorm_darkness={
+"type": "mat4",
+"value": Projection(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+}
 ring_wet_map={
 "type": "sampler2D",
 "value": ""

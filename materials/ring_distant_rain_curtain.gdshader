@@ -2,6 +2,7 @@ shader_type spatial;
 render_mode unshaded, blend_mix, depth_draw_never, cull_disabled;
 #include "res://materials/celestial_lighting.gdshaderinc"
 #include "res://materials/ring_precip_occlusion.gdshaderinc"
+#include "res://materials/ring_storm_light.gdshaderinc"
 uniform vec4 rain_tint : source_color;
 uniform float opacity = 0.0;
 uniform float wind_phase = 0.0;
@@ -52,6 +53,9 @@ void fragment() {
 		/ max(0.001, storm_weight(storm_offset)), 0.0, 1.0);
 	float effective_day = ringworld_effective_solar_day(geometric_day) * clamp(sun_energy, 0.0, 1.0);
 	ALBEDO = rain_tint.rgb * mix(0.035, 0.65, effective_day);
+	// Megastorm darkness (docs/megastorm-design.md 5.6): a curtain inside the megastorm takes the darkness K where it stands. One uniform branch; nothing
+	// changes without a megastorm (K = 1 for every ordinary storm).
+	if (ring_storm_mega_active()) ALBEDO *= ring_storm_darkness(ring_storm_level(v_world));
 	float edge = smoothstep(0.0, 0.2, UV.x) * smoothstep(0.0, 0.2, 1.0 - UV.x)
 		* smoothstep(0.0, 0.16, UV.y) * smoothstep(0.0, 0.12, 1.0 - UV.y);
 	// Within range of the precipitation occlusion map (about 128 m) a curtain does not draw under a roof, POI overhang or cave ceiling; elsewhere exposure is 1 (S1 WO7).

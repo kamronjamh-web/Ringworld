@@ -13,6 +13,7 @@ extends SceneTree
 ## --speed=V      set the menu megastorm speed (m/s) through the drawer before spawning (shortens the approach).
 ## --look-up-xi-km=K  once the observer is K km behind the edge (inside), save one shot pitched up 80 degrees.
 ## --hide-hud     hide the HUD canvas layers in the saved frames.
+## --noon        set the celestial clock to the observer's local noon (paused) before spawning (WO14 daytime sheets).
 ## Prints MEGASTORM_REAL=DONE at the end (this is a capture tool, not a pass/fail gate).
 
 const MENU := preload("res://scenes/StartMenu.tscn")
@@ -95,6 +96,8 @@ func _run() -> void:
 		for n in _world.get_children():
 			if n is CanvasLayer and n.name != "LiveTuningDrawer":
 				n.visible = false
+	if _arg("noon", "") != "":
+		await _set_local_noon()
 	var spawn_km := float(_arg("spawn-km", "-1"))
 	if spawn_km > 0.0:
 		await create_timer(float(_arg("settle", "10"))).timeout
@@ -188,3 +191,34 @@ func _prep_ground() -> void:
 	file.close()
 	print("MEGASTORM_REAL prep ground=%.1f around=%.1f across=%.1f path=%s" % [float(spot["ground"]), float(spot["around"]), float(spot["across"]), path])
 	quit(0)
+
+# --noon (WO14 daytime sheets): scans the day-night cycle fraction, keeps the middle of the range where the observer's daylight factor is full
+# (local noon) and pauses the celestial clock there. The weather clock keeps running, so the megastorm still moves.
+func _set_local_noon() -> void:
+	var cycle: Node = _world.get_node_or_null("RingDayNightCycle")
+	if cycle == null:
+		print("MEGASTORM_REAL noon: no RingDayNightCycle")
+		return
+	var full: Array[float] = []
+	for i in 100:
+		var f := float(i) / 100.0
+		cycle.call("set_cycle_fraction", f)
+		await process_frame
+		await process_frame
+		if float(cycle.call("get_daylight_factor")) >= 0.999:
+			full.append(f)
+	if full.is_empty():
+		print("MEGASTORM_REAL noon: no full-daylight fraction found")
+		return
+	# The full-daylight fractions form one arc (possibly wrapping past 1): take its circular middle.
+	var start := full[0]
+	for i in range(1, full.size()):
+		if full[i] - full[i - 1] > 0.015:
+			start = full[i]
+			break
+	var length := full.size() / 100.0
+	var noon := fposmod(start + 0.5 * (length - 0.01), 1.0)
+	cycle.call("set_cycle_fraction", noon)
+	cycle.set("Paused", true)
+	await create_timer(3.0).timeout
+	print("MEGASTORM_REAL noon fraction=%.3f daylight=%.3f full_range=%d%%" % [noon, float(cycle.call("get_daylight_factor")), full.size()])

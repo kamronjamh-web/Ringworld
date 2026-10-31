@@ -25,7 +25,7 @@ public readonly record struct MegastormHazards(float OverpressureKPa, float Boom
     float RainImpactPowerWm2, Vector3 RainImpactDirection /* ring frame (around, up, across), unit, the direction the drops travel */, float RainDropSpeedMs,
     float RainExposure /* observer only; 1 for a point query without observer context */,
     float PressureDeficitKPa, float PressureRateKPaPerS, float WakeFog, float LocalStrikeRatePerSecond, float ScytheSweepRatePerSecond,
-    float NearestScytheDistanceMeters /* NaN = no scythe stream yet (WO12) */, float FieldStrikeRatePerSecond, float FieldGapMeters /* NaN without a field */)
+    float NearestScytheDistanceMeters /* ground-plane distance to the nearest live scythe (WO12); +Infinity when none; NaN only in None */, float FieldStrikeRatePerSecond, float FieldGapMeters /* NaN without a field */)
 {
     public static MegastormHazards None => new(0.0f, 0.0f, 0.0f, 0.0, 0.0f, Vector3.Zero, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, float.NaN, 0.0f, float.NaN);
 }
@@ -223,10 +223,10 @@ public static class MegastormHazardMath
     /// <summary>The Danger wake term: 0.6 x smoothstep(2, 6, deficit).</summary>
     public static float WakeDanger(float deficitKPa) => (float)(0.6 * Smooth((deficitKPa - 2.0) / 4.0));
 
-    // ---- Scythes (5.5.4: only the cut probability; the stream and visuals are WO12) ----
+    // ---- Scythes (5.5.4: rate and cut probability here; the stream is MegastormScythes, WO12) ----
     private static readonly double ScytheProfileIntegral;
 
-    private static double ScytheProfile(double xi) => Smooth((xi - ScytheZoneStartXi) / -ScytheZoneStartXi) * (1.0 - Smooth((xi - 10000.0) / 10000.0));
+    internal static double ScytheProfile(double xi) => Smooth((xi - ScytheZoneStartXi) / -ScytheZoneStartXi) * (1.0 - Smooth((xi - 10000.0) / 10000.0));
 
     private static double IntegrateScytheProfile()
     {
@@ -288,9 +288,12 @@ public static class MegastormHazardMath
 
         float deficit = PressureDeficitKPa(xi) * frame.Level;
         float rate = PressureRateKPaPerS(xi, speed) * frame.Level;
-        float sweep = ScytheSweepRatePerSecond(xi, s.WidthMeters) * frame.Level;
+        float strikeScale = Lightning.LightningVisualPolicy.NaturalStrikeChanceScale;   // the stream's chance scale: Lightning frequency x the reduced-flashes share
+        float sweep = ScytheSweepRatePerSecond(xi, s.WidthMeters) * frame.Level * strikeScale;
+        float nearest = xi >= ScytheZoneStartXi - 6000.0 && xi <= ScytheZoneEndXi + 6000.0
+            ? MegastormScythes.NearestDistanceMeters(model, around, across, t, strikeScale) : float.PositiveInfinity;
         return new MegastormHazards(overpressure, peak, impulse, boomTime, power, dir, dropSpeed, Math.Clamp(observer.RainExposure, 0.0f, 1.0f),
-            deficit, rate, WakeFog(deficit), 0.0f, sweep, float.NaN, 0.0f, float.NaN);
+            deficit, rate, WakeFog(deficit), 0.0f, sweep, nearest, 0.0f, float.NaN);
     }
 }
 

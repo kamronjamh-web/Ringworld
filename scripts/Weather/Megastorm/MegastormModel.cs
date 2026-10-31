@@ -289,6 +289,39 @@ public sealed class MegastormModel : IMegastormWeatherSource
     public float SuppressionAt(double around, double across, double t)
         => Evaluate(t).Active ? Suppression(Xi(around, across, t)) : 0.0f;
 
+    /// <summary>
+    /// Megastorm darkness term E(xi) in 0..1 (docs/megastorm-design.md 5.6); the C# twin of the GPU ring_megastorm_darkness (keep the constants identical).
+    /// Rises over the 40 km ahead of the edge to 0.55, to 1 by +2 km, holds through the wall, then falls through the trailing region to 0 at <see cref="TrailingEndXi"/>.
+    /// </summary>
+    public float Darkness(double xi)
+    {
+        double e;
+        if (xi < -45000.0) e = 0.0;
+        else if (xi < -5000.0) e = 0.55 * Smooth((xi + 45000.0) / 40000.0);
+        else if (xi < 2000.0) e = 0.55 + 0.45 * Smooth((xi + 5000.0) / 7000.0);
+        else if (xi < 25000.0) e = 1.0;
+        else if (xi < 30000.0) e = 1.0 - 0.1 * Smooth((xi - 25000.0) / 5000.0);
+        else if (xi < 60000.0) e = 0.9;
+        else if (xi < 80000.0) e = 0.9 - 0.2 * Smooth((xi - 60000.0) / 20000.0);
+        else if (xi < TrailingEndXi) e = 0.7 * (1.0 - Smooth((xi - 80000.0) / (TrailingEndXi - 80000.0)));
+        else e = 0.0;
+        return (float)e;
+    }
+
+    /// <summary>"Storm darkness" strength (0 turns the megastorm darkness off, 0.9 = full) times the frame level (formation x stop fade).</summary>
+    public static float DarknessScale(float stormDarkness, float level)
+        => Math.Clamp(stormDarkness / 0.9f, 0.0f, 1.0f) * Math.Clamp(level, 0.0f, 1.0f);
+
+    /// <summary>E at a world position: exactly 0 (identity) when the megastorm is not active.</summary>
+    public float DarknessAt(double around, double across, double t, float stormDarkness)
+    {
+        MegastormFrame frame = Evaluate(t);
+        return frame.Active ? Darkness(Xi(around, across, t)) * DarknessScale(stormDarkness, frame.Level) : 0.0f;
+    }
+
+    /// <summary>K = 1 - (1 - kMin) E' for the extra darkness E' above the ordinary storm ceiling; exactly 1 when extra is 0.</summary>
+    public static float DarknessMultiplier(float extra, float kMin) => 1.0f - (1.0f - kMin) * Math.Clamp(extra, 0.0f, 1.0f);
+
     /// <summary>Observer phase from xi. Forming covers everything ahead of the edge while the formation ramp is still running.</summary>
     public MegastormPhase PhaseAt(double xi, in MegastormFrame frame)
     {

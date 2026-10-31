@@ -114,6 +114,9 @@ public partial class RingScaledFarViewport
     private bool _farLayersEnabled;
     /// <summary>Debug A/B (environment RING_FAR_LAYERS_OFF=1): the pre-WO6 far clouds (no layer sky; the clipmap draws its own body).</summary>
     private static readonly bool DebugFarLayersOff = OS.GetEnvironment("RING_FAR_LAYERS_OFF") == "1";
+    // The natural layer march of the far layer sky is fixed but disabled pending a perf pass (+0.4-0.7 ms); RING_FAR_LAYERS_NATURAL=1 re-enables it.
+    private static readonly bool FarLayersNaturalEnabled = OS.GetEnvironment("RING_FAR_LAYERS_NATURAL") == "1";
+    private static readonly StringName FarLayersNaturalEnabledName = "far_layers_natural_enabled";
     /// <summary>Debug A/B (environment RING_FAR_FINE_OFF=1): no fine layer atlas (the whole-ring atlas beyond the macro map).</summary>
     private static readonly bool DebugFarFineOff = OS.GetEnvironment("RING_FAR_FINE_OFF") == "1";
     private bool _farLayerSkyVisible;
@@ -121,7 +124,7 @@ public partial class RingScaledFarViewport
     private readonly LastUniformValue<Vector4> _farMacroMapAApplied = new(), _farMacroMapBApplied = new(), _farLayersMarchApplied = new(),
         _nearHandoffApplied = new(), _farWsHeaderApplied = new();
     private readonly LastUniformValue<Vector2> _diskFadeApplied = new();
-    private readonly LastUniformValue<bool> _farLayersEnabledApplied = new();
+    private readonly LastUniformValue<bool> _farLayersEnabledApplied = new(), _farLayersNaturalApplied = new();
     private readonly LastUniformValue<int> _farSculptCountApplied = new();
     private readonly LastUniformValue<float> _farLayerReceiverHeightApplied = new();
 
@@ -171,6 +174,7 @@ public partial class RingScaledFarViewport
         _farLayersEnabledApplied.Set(material, FarLayersEnabledName, _farLayersEnabled);
         foreach (ShaderMaterial? clipmap in _farCloudClipmapMaterials)
             _farLayersEnabledApplied.Set(clipmap, FarLayersEnabledName, _farLayersEnabled);
+        _farLayersNaturalApplied.Set(material, FarLayersNaturalEnabledName, FarLayersNaturalEnabled);
 
         bool visible = FarCloudClipmapEnabled && _farLayersEnabled && (_farCloudClipmapLayers[0]?.Visible ?? false);
         _farLayerSkyVisible = visible;

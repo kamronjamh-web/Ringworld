@@ -71,12 +71,12 @@ RingShadowTerms ring_shadow_terms(vec3 world, vec2 screen_uv, float attenuation,
 // shadow_overlap_darkening). COMBINE_PRODUCT is the legacy vegetation path.
 float ring_shadow_sun_visibility(RingShadowTerms t, uint flags) {
 	// Storm light: under a storm the close (shadow-map / contact) terms fade to 1 (no crisp tree or object shadow survives) and the whole visibility
-	// fades to the storm's shadowless residual 1 - strength (the sun scattered into overcast skylight: 0 at full darkness). storm = 0 takes neither
-	// branch (bitwise the pre-storm-light result).
+	// fades to the storm's shadowless residual 1 - strength (the sun scattered into overcast skylight: 0 at full darkness), times the megastorm darkness K
+	// (ring_storm_sun_residual; exactly 1 - strength for every ordinary storm). storm = 0 takes neither branch (bitwise the pre-storm-light result).
 	float storm_fade = ring_storm_shadow_fade(t.storm);
 	if ((flags & RING_SHADOW_COMBINE_PRODUCT) != 0u) {
 		if (storm_fade > 0.0) {
-			return mix(mix(t.geometry, 1.0, storm_fade) * mix(t.contact, 1.0, storm_fade) * t.cloud, 1.0 - ringworld_storm_light.x, storm_fade);
+			return mix(mix(t.geometry, 1.0, storm_fade) * mix(t.contact, 1.0, storm_fade) * t.cloud, ring_storm_sun_residual(t.storm), storm_fade);
 		}
 		return t.geometry * t.contact * t.cloud;
 	}
@@ -86,7 +86,7 @@ float ring_shadow_sun_visibility(RingShadowTerms t, uint flags) {
 		min(close, min(t.cloud, t.terrain)),
 		close * t.cloud * t.terrain,
 		clamp(shadow_overlap_darkening, 0.0, 1.0));
-	return storm_fade > 0.0 ? mix(visibility, 1.0 - ringworld_storm_light.x, storm_fade) : visibility;
+	return storm_fade > 0.0 ? mix(visibility, ring_storm_sun_residual(t.storm), storm_fade) : visibility;
 }
 
 bool ring_shadow_debug_enabled() {

@@ -85,7 +85,7 @@ public partial class RingLocalWeatherEffects
 
     private static float SmoothStepUnit(float edge0, float edge1, float x) => Mathf.SmoothStep(edge0, edge1, x);
 
-    /// <summary>Storm level D at the observer (CPU mirror of the storm-light map value), cached at 10 Hz.</summary>
+    /// <summary>Extended storm level L = D + E at the observer (CPU mirror of the storm-light map value; 0..2, above 1 only inside a megastorm), cached at 10 Hz.</summary>
     private float ResolveStreakStormLevel(RingCanonicalPosition observer)
     {
         if (StormLevelOverride.HasValue) return Mathf.Clamp(StormLevelOverride.Value, 0.0f, 1.0f);
@@ -94,7 +94,7 @@ public partial class RingLocalWeatherEffects
         if (now - _streakStormTime >= 0.1)
         {
             _streakStormTime = now;
-            _streakStormLevel = Mathf.Clamp(_sunshineBridge.GetStormLevelAt(observer.AroundMeters, observer.AcrossMeters), 0.0f, 1.0f);
+            _streakStormLevel = Mathf.Clamp(_sunshineBridge.GetStormLevelAt(observer.AroundMeters, observer.AcrossMeters), 0.0f, 2.0f);
         }
         return _streakStormLevel;
     }
@@ -110,10 +110,12 @@ public partial class RingLocalWeatherEffects
     {
         if (StreakLightOverride.HasValue) { sky = StreakLightOverride.Value; sun = Vector3.Zero; return StreakLightOverride.Value; }
         float daylight = Mathf.Clamp(_rainHazeDayNight?.DaylightFactor ?? 1.0f, 0.0f, 1.0f);
-        float stormLevel = ResolveStreakStormLevel(observer);
+        float level = ResolveStreakStormLevel(observer);
+        float stormLevel = Mathf.Min(level, 1.0f);   // D'
+        float darknessK = MegastormModel.DarknessMultiplier(Mathf.Max(level - 1.0f, 0.0f), _sunshineBridge?.MegastormDarknessFloor ?? 0.06f);   // exactly 1 without a megastorm
         float darkness = _sunshineBridge != null ? _sunshineBridge.StormDarkness : 0.85f;
         float fadeStart = _sunshineBridge != null ? _sunshineBridge.StormShadowFade : 0.35f;
-        float ambient = 1.0f - 0.9f * darkness * stormLevel;
+        float ambient = (1.0f - 0.9f * darkness * stormLevel) * darknessK;
         float shadowFade = stormLevel <= 0.0f ? 0.0f : SmoothStepUnit(fadeStart, fadeStart + RingSunshineCloudBridge.StormShadowFadeWidth, stormLevel);
         float sunTransmittance = _sunshineBridge != null ? Mathf.Clamp(_sunshineBridge.CameraDirectSunTransmittance, 0.0f, 1.0f) : 1.0f;
         _streakStarLight ??= GetNodeOrNull<DirectionalLight3D>("../StarLight");
@@ -121,7 +123,7 @@ public partial class RingLocalWeatherEffects
         float sunEnergy = _streakStarLight != null && GodotObject.IsInstanceValid(_streakStarLight) ? Mathf.Clamp(_streakStarLight.LightEnergy, 0.0f, 2.0f) : 1.0f;
         sky = new Vector3(0.36f, 0.44f, 0.56f) * daylight;
         sun = new Vector3(sunColor.R, sunColor.G, sunColor.B) * (sunEnergy * 0.30f * sunTransmittance * daylight);
-        return sky * ambient + sun * (1.0f - shadowFade);
+        return sky * ambient + sun * ((1.0f - shadowFade) * darknessK);
     }
 
     /// <summary>
@@ -310,7 +312,7 @@ public partial class RingLocalWeatherEffects
         V4(stormFrame.X); V4(stormFrame.Y); V4(stormFrame.Z); V4(stormFrame.W);
         V4(stormMapFrame); V4(stormMapSize); V4(perStreakLight ? stormLight : Vector4.Zero);
         V3(skyLight, perStreakLight ? 1.0f : 0.0f);
-        V3(sunLight, 0);
+        V3(sunLight, perStreakLight && _sunshineBridge != null ? _sunshineBridge.MegastormDarknessFloor : 1.0f);   // w = k_min_eff (GLSL F.sun.w)
         _lastStreakFatDrop = fatDrop; _lastStreakHail = arrival.Valid ? arrival.HailIntensity : 0.0f;
         float hailIntensity = arrival.Valid ? Mathf.Clamp(arrival.HailIntensity, 0.0f, 1.0f) : 0.0f;
         V(arrival.Valid ? fatDrop : 0.0f, arrival.Valid ? Mathf.Clamp(arrival.Core, 0.0f, 1.0f) : 0.0f, arrival.Valid ? Mathf.Clamp(arrival.Trailing, 0.0f, 1.0f) : 0.0f, arrival.Valid ? arrival.Severity : 0.0f);

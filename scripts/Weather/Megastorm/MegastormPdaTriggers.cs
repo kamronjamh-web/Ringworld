@@ -17,7 +17,7 @@ public readonly record struct MegastormPdaHazards(bool ShelterOpen = false, floa
 
     /// <summary>
     /// The hazard lines' inputs at the observer: the shelter-inadequate line needs an Open shelter class and a boom to come; the wall-arrival figure is the open-air peak
-    /// attenuated by the shelter class; the scythe line reads "within 5 km" from the scythe stream, or from the attachment zone (a sweep rate above 0) until the stream (WO12) lands.
+    /// attenuated by the shelter class; the scythe line reads "within 5 km" from the scythe stream (WO12, NearestScytheDistanceMeters); a NaN distance (a hand-built sample without the stream) falls back to the attachment zone (a sweep rate above 0).
     /// </summary>
     public static MegastormPdaHazards FromSample(in MegastormSample s, MegastormShelter shelter)
     {

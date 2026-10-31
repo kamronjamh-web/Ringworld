@@ -10,11 +10,24 @@
 //   ringworld_storm_map_size   (used width, used height, texture width, texture height) in texels
 //   ringworld_storm_frame      world -> map texels: columns 0/1 = around/across axis.xyz + camera position in map metres, column 2 = up axis.xyz + ring radius m, column 3 = centre
 //   ringworld_storm_light      (Storm darkness strength, shadow-fade start, shadow-fade end, valid)
+//   ringworld_storm_light_mega (k_min_eff = mix(0.06, 0.40, night), eye lock, lightning flash 0..1, 0); day_side_atmosphere.gd. Default (1, 0, 0, 0): K = 1.
+//   ringworld_megastorm_darkness  megastorm frame for the analytic E beyond the map (RingSunshineCloudBridge.StormLight.cs): column 0 = (x_cam: the camera's
+//                              reference-line distance m, dir, E scale = clamp(s / 0.9) x formation level (0 = no megastorm), camera canonical across m),
+//                              column 1 = (bow, meander amplitude, meander wavelength, meander phase), column 2 = (W, trailing end xi, circumference, 0).
+//
+// Megastorm darkness (docs/megastorm-design.md 5.6; WO14): the storm-light layer's z holds the megastorm darkness E (0..1, RingMacroWeatherMap.glsl), and every
+// level these functions take is the EXTENDED level L = D + E (0..2). They split it as D = min(L, 1) and E' = max(L - 1, 0) and multiply the sun residual, the
+// ambient A and the sky / haze radiance by K = 1 - (1 - k_min_eff) E'. For every ordinary storm E = 0, so L <= 1: min(L, 1) = L and K = 1, and every term is
+// bitwise unchanged. Lightning is not darkened (K never touches a point or spot light).
 global uniform sampler2DArray ringworld_storm_map : filter_linear, repeat_disable;
 global uniform vec4 ringworld_storm_map_frame;
 global uniform vec4 ringworld_storm_map_size;
 global uniform mat4 ringworld_storm_frame;
 global uniform vec4 ringworld_storm_light;
+global uniform vec4 ringworld_storm_light_mega;
+global uniform mat4 ringworld_megastorm_darkness;
+
+#include "res://materials/ring_megastorm_darkness.gdshaderinc"
 
 // Same small-angle series as ring_cloud_shadow_arc_angle (angles stay below 0.02 rad over the map).
 float ring_storm_arc_angle(float tangent, float outward) {
@@ -45,24 +58,64 @@ float ring_storm_owned_level(float storm, float heavy, float influence, vec2 own
 	return max(max(ownership.x * max(storm, heavy), ownership.y), heavy * (1.0 - ring_storm_smooth_unit(influence / RING_STORM_SYSTEM_FREE_INFLUENCE)));
 }
 
-// Storm level D (0 clear .. 1 violent) at a map position in metres (same axes as ringworld_storm_frame columns 0/1 w). Positions outside the map clamp to its edge.
-float ring_storm_level_at_map(vec2 map_metres) {
+// The ordinary level D (0 clear .. 1 violent) and the map's megastorm darkness E at a map position in metres (same axes as ringworld_storm_frame columns 0/1 w).
+// Positions outside the map clamp to its edge. A map without the storm-light layer reads owned = 1, front = 0, E = 0.
+vec2 ring_storm_terms_at_map(vec2 map_metres) {
 #ifdef RING_STORM_NO_MAP
-	// Compute-shader test harness (tools/haze_consistency_gpu_test.gd): no sampler exists, the test supplies a synthetic level.
-	return ring_storm_test_level(map_metres);
+	return vec2(ring_storm_test_level(map_metres), 0.0);
 #else
 	vec2 texel = map_metres / max(ringworld_storm_map_frame.x, 1.0);
 	texel = clamp(texel, vec2(0.5), max(ringworld_storm_map_size.xy - 0.5, vec2(0.5)));
 	vec2 uv = texel / ringworld_storm_map_size.zw;
 	vec4 storm_sample = textureLod(ringworld_storm_map, vec3(uv, ringworld_storm_map_frame.y), 0.0);
-	vec2 ownership = ringworld_storm_map_frame.w > 0.5 ? textureLod(ringworld_storm_map, vec3(uv, ringworld_storm_map_frame.w), 0.0).xy : vec2(1.0, 0.0);
+	vec3 ownership = ringworld_storm_map_frame.w > 0.5 ? textureLod(ringworld_storm_map, vec3(uv, ringworld_storm_map_frame.w), 0.0).xyz : vec3(1.0, 0.0, 0.0);
 	float heavy_start = ringworld_storm_map_frame.z;
 	float heavy = ring_storm_smooth_unit((storm_sample.x - heavy_start) / max(0.01, 1.0 - heavy_start));
-	return ring_storm_owned_level(storm_sample.y, heavy, storm_sample.w, ownership);
+	return vec2(ring_storm_owned_level(storm_sample.y, heavy, storm_sample.w, ownership.xy), ownership.z);
 #endif
 }
 
-// Storm level D (0 clear .. 1 violent) at a world position. Positions outside the map clamp to its edge.
+// Megastorm darkness active (a megastorm exists and Storm darkness > 0): one uniform branch, false for every ordinary storm.
+bool ring_storm_mega_active() {
+	return ringworld_megastorm_darkness[0].z > 0.0;
+}
+
+// Analytic megastorm darkness E at a map position (metres), from the per-frame frame in ringworld_megastorm_darkness (camera at frame[0].w / frame[1].w).
+float ring_storm_mega_extra(vec2 map_metres) {
+	mat4 m = ringworld_megastorm_darkness;
+	mat4 frame = ringworld_storm_frame;
+	float x = ring_megastorm_darkness_x(m[0].x, m[0].y, map_metres.x - frame[0].w, m[2].z);
+	// The lead offset lies in [-(bow + amplitude), amplitude], so xi = x - lead cannot reach E's support [-45 km, trailing end) from here: skip the sin.
+	if (x + m[1].x + m[1].y < -45000.0 || x - m[1].y >= m[2].y) return 0.0;
+	float across = m[0].w + (map_metres.y - frame[1].w);
+	float xi = x - ring_megastorm_darkness_lead(across, vec4(m[2].x, m[1].xyz), m[1].w);
+	return ring_megastorm_darkness(xi, m[2].y) * m[0].z;
+}
+
+// Weight of the map at a position: 1 inside, 0 two texels outside it.
+float ring_storm_map_inside(vec2 map_metres) {
+	float texel_m = max(ringworld_storm_map_frame.x, 1.0);
+	vec2 outside = max(max(-map_metres, map_metres - ringworld_storm_map_size.xy * texel_m), vec2(0.0));
+	return 1.0 - ring_storm_smooth_unit(max(outside.x, outside.y) / (2.0 * texel_m));
+}
+
+// Extended storm level L = D + E (0 .. 2) at a map position in metres. Positions outside the map clamp D to its edge; E continues analytically beyond
+// the map (blended over two texels) while a megastorm is active, so ground under a distant wall reads dark too.
+float ring_storm_level_at_map(vec2 map_metres) {
+#ifdef RING_STORM_NO_MAP
+	// Compute-shader test harness (tools/haze_consistency_gpu_test.gd): no sampler exists, the test supplies a synthetic level.
+	return ring_storm_test_level(map_metres);
+#else
+	vec2 terms = ring_storm_terms_at_map(map_metres);
+	if (ring_storm_mega_active()) {
+		float inside = ring_storm_map_inside(map_metres);
+		if (inside < 1.0) terms.y = mix(ring_storm_mega_extra(map_metres), terms.y, inside);
+	}
+	return terms.x + terms.y;
+#endif
+}
+
+// Extended storm level L = D + E (0 .. 2) at a world position. Positions outside the map clamp D to its edge.
 float ring_storm_level(vec3 world) {
 	if (ringworld_storm_light.w < 0.5) return 0.0;
 	mat4 frame = ringworld_storm_frame;
@@ -103,6 +156,15 @@ float ring_storm_level_far(vec3 world, vec3 camera_world, vec3 ring_centre, floa
 	float texel_m = max(ringworld_storm_map_frame.x, 1.0);
 	vec2 outside = max(max(-map_metres, map_metres - ringworld_storm_map_size.xy * texel_m), vec2(0.0));
 	float inside = 1.0 - ring_storm_smooth_unit(max(outside.x, outside.y) / (2.0 * texel_m));
+#ifndef RING_STORM_NO_MAP
+	if (ring_storm_mega_active()) {
+		// Megastorm darkness E continues analytically beyond the map (WO14); D still fades out with the map.
+		float extra = ring_storm_mega_extra(map_metres);
+		if (inside <= 0.0) return extra;
+		vec2 terms = ring_storm_terms_at_map(map_metres);
+		return terms.x * inside + mix(extra, terms.y, inside);
+	}
+#endif
 	return inside > 0.0 ? ring_storm_level_at_map(map_metres) * inside : 0.0;
 }
 
@@ -131,7 +193,19 @@ float ring_storm_path_level(vec3 direction, float length_m) {
 // replaced by 1 so no crisp tree or object shadow survives under a storm.
 float ring_storm_shadow_fade(float level) {
 	if (level <= 0.0) return 0.0;
-	return smoothstep(ringworld_storm_light.y, ringworld_storm_light.z, level);
+	return smoothstep(ringworld_storm_light.y, ringworld_storm_light.z, min(level, 1.0));
+}
+
+// Megastorm darkness multiplier K = 1 - (1 - k_min_eff) E', E' = max(L - 1, 0) (docs/megastorm-design.md 5.6). Exactly 1 for every L <= 1.
+// A nearby lightning flash (ringworld_storm_light_mega.z: pulse x proximity) lifts K toward 1 while it lasts: the flash lights the cloud base, which lights
+// the ground and the air, so under the wall the world is seen in flashes (the design's wake-fog flash term, applied to every K receiver).
+float ring_storm_darkness(float level) {
+	return 1.0 - (1.0 - ringworld_storm_light_mega.x) * max(level - 1.0, 0.0) * (1.0 - ringworld_storm_light_mega.z);
+}
+
+// The sun a storm leaves (the shadowless residual every sun visibility fades to at F = 1): (1 - strength) x K.
+float ring_storm_sun_residual(float level) {
+	return (1.0 - ringworld_storm_light.x) * ring_storm_darkness(level);
 }
 
 // Direct sun SPECULAR under a storm: a closed overcast has no sun disc to mirror, so a highlight must not survive on the shadowless residual
@@ -150,17 +224,17 @@ float ring_storm_specular_keep(float level) {
 	return keep8 * keep8;
 }
 
-// Ambient multiplier A(D) = 1 - 0.55 * strength * D. Receivers take min(1 - k * cloud occlusion, A) (never the product) so the terms do not compound.
+// Ambient multiplier A(D) = (1 - 0.55 * strength * D) x K, D = min(L, 1). Receivers take min(1 - k * cloud occlusion, A) (never the product) so the terms do not compound.
 // The ground keeps a readable floor: a storm day is dark mostly because the sun is gone, so the ambient only dims to 0.53 at the defaults.
 const float RING_STORM_AMBIENT_DEPTH = 0.55;
 float ring_storm_ambient(float level) {
-	return 1.0 - RING_STORM_AMBIENT_DEPTH * ringworld_storm_light.x * level;
+	return (1.0 - RING_STORM_AMBIENT_DEPTH * ringworld_storm_light.x * min(level, 1.0)) * ring_storm_darkness(level);
 }
 
 // Sky / haze radiance multiplier under a storm: an overcast sky is far darker than the ground it lights (ground = albedo x sky), so the sky and the air
-// in-scatter dim harder than the receivers' ambient. 0.13 at the defaults.
+// in-scatter dim harder than the receivers' ambient. 0.13 at the defaults; x K under the megastorm.
 const float RING_STORM_SKY_DEPTH = 0.97;
 float ring_storm_sky(float level) {
-	return 1.0 - RING_STORM_SKY_DEPTH * ringworld_storm_light.x * level;
+	return (1.0 - RING_STORM_SKY_DEPTH * ringworld_storm_light.x * min(level, 1.0)) * ring_storm_darkness(level);
 }
 #endif

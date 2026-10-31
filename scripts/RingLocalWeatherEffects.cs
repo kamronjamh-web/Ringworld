@@ -970,6 +970,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _activeBoltStartTime = sharedEvent?.StartTimeSeconds ?? _weatherSource?.CloudSimulationTimeSeconds ?? 0.0;
         _activeSharedEventId = sharedEvent?.EventId ?? 0;
         _activeSharedEvent = sharedEvent;
+        _activeFlashProximity = MegastormFlashProximity(sharedEvent?.GroundPosition ?? new RingCanonicalPosition(targetAround, surface, targetAcross));
         CurrentRenderedLightningEventId = _activeSharedEventId;
         LastRenderedLightningEventId = _activeSharedEventId;
         LastRenderedLightningShapeSeed = seed;
@@ -1085,6 +1086,19 @@ public partial class RingLocalWeatherEffects : Node3D
         surface.AddVertex(c);
     }
 
+    // Megastorm darkness flash (docs/megastorm-design.md 5.6, WO14): the active bolt's pulse x proximity lifts the megastorm darkness K back toward 1 (the flash
+    // lights the cloud base, which lights the ground and the air), so under the wall the world is seen in flashes. Full within 4 km, gone by 30 km.
+    private float _activeFlashProximity;
+    private float MegastormFlashProximity(RingCanonicalPosition ground)
+    {
+        if (_explorer == null || _grid == null) return 0.0f;
+        double circumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
+        double around = ShortestAroundDelta(ground.AroundMeters, _explorer.CanonicalPosition.AroundMeters, circumference);
+        double across = ground.AcrossMeters - _explorer.CanonicalPosition.AcrossMeters;
+        float distance = (float)Math.Sqrt(around * around + across * across);
+        return 1.0f - SmoothUnit((distance - 4000.0f) / 26000.0f);
+    }
+
     private void UpdateActiveBoltPulse()
     {
         if (_activeBolt == null || _lightningLight == null) return;
@@ -1106,6 +1120,7 @@ public partial class RingLocalWeatherEffects : Node3D
             _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy)
                 * Mathf.Max(0.0f, _activeSharedEvent?.Energy ?? 1.0f) * shared * visualWeight * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f));
             _sunshineBridge?.SetLightningFlashIntensity(shared * visualWeight);
+            _sunshineBridge?.SetMegastormFlash(shared * visualWeight * _activeFlashProximity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f)));
             _boltCoreMaterial?.SetShaderParameter("intensity", shared);
             _boltGlowMaterial?.SetShaderParameter("intensity", shared * 0.65f);
             _boltCoreMaterial?.SetShaderParameter("ownership_weight", visualWeight);
@@ -1126,6 +1141,7 @@ public partial class RingLocalWeatherEffects : Node3D
         float sharedIntensity = Mathf.Max(core, glow * 0.42f);
         _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy) * sharedIntensity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f));
         _sunshineBridge?.SetLightningFlashIntensity(sharedIntensity);
+        _sunshineBridge?.SetMegastormFlash(sharedIntensity * _activeFlashProximity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f)));
         _boltCoreMaterial?.SetShaderParameter("intensity", core);
         _boltGlowMaterial?.SetShaderParameter("intensity", glow);
         _boltCoreMaterial?.SetShaderParameter("ownership_weight", 1.0f);
@@ -1153,6 +1169,8 @@ public partial class RingLocalWeatherEffects : Node3D
         CurrentRenderedLightningEventId = 0;
         if (_lightningLight != null) _lightningLight.LightEnergy = 0.0f;
         _sunshineBridge?.SetLightningFlashIntensity(0.0f);
+        _sunshineBridge?.SetMegastormFlash(0.0f);
+        _activeFlashProximity = 0.0f;
         if (_boltRoot != null) _boltRoot.Visible = false;
         _boltCoreMaterial?.SetShaderParameter("intensity", 0.0f);
         _boltGlowMaterial?.SetShaderParameter("intensity", 0.0f);

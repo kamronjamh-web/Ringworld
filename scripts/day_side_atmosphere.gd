@@ -243,6 +243,10 @@ var current_cloud_ambient_transmittance: float = 1.0
 # StandardMaterial3D tint); current_storm_eye_cap pulls eye adaptation from its maximum toward its minimum sensitivity so a storm never brightens.
 var current_storm_ambient: float = 1.0
 var current_storm_eye_cap: float = 0.0
+# Megastorm darkness (docs/megastorm-design.md 5.6): the eye lock holds eye adaptation at its storm cap by day inside the megastorm (smoothed like the cap);
+# ringworld_storm_light_mega = (k_min_eff, eye lock, 0, 0), default (1, 0, 0, 0) = K 1.
+var current_storm_eye_lock: float = 0.0
+var _published_storm_light_mega: Vector4 = Vector4(1.0, 0.0, 0.0, 0.0)
 var current_eclipse_coverage: float = 0.0
 var current_gameplay_eclipse_darkness: float = 0.0
 var current_giant_direction: Vector3 = Vector3.ZERO
@@ -835,16 +839,38 @@ func _configure_eye_adaptation() -> void:
 func _update_storm_light_state(delta: float) -> void:
 	var ambient_target := 1.0
 	var cap_target := 0.0
+	var eye_lock_target := 0.0
+	# Megastorm darkness floor k_min_eff: 0.06 by day, 0.40 at night (so the night floor survives); the eye lock only applies by day.
+	var night := 1.0 - clampf(current_day_factor, 0.0, 1.0)
+	var k_min_eff := lerpf(0.06, 0.40, night)
+	if cloud_lighting_bridge != null and cloud_lighting_bridge.has_method("SetMegastormDarknessFloor"):
+		cloud_lighting_bridge.call("SetMegastormDarknessFloor", k_min_eff)
 	if _storm_light_valid():
 		ambient_target = clampf(float(cloud_lighting_bridge.call("GetStormAmbientAtCamera")), 0.0, 1.0)
 		cap_target = clampf(float(cloud_lighting_bridge.call("GetStormEyeCap")), 0.0, 1.0)
+		if cloud_lighting_bridge.has_method("GetCameraMegastormDarkness"):
+			# The eye-lock target is the megastorm darkness E at the camera (docs/megastorm-design.md 5.6: max(0.9 F s, E_cam)), by day only.
+			var extra := clampf(float(cloud_lighting_bridge.call("GetCameraMegastormDarkness")), 0.0, 1.0)
+			eye_lock_target = extra * (1.0 - night)
+			cap_target = maxf(cap_target, eye_lock_target)
 	var blend := 1.0 - exp(-maxf(0.1, cloud_lighting_blend_speed) * delta)
 	current_storm_ambient = lerpf(current_storm_ambient, ambient_target, blend)
 	current_storm_eye_cap = lerpf(current_storm_eye_cap, cap_target, blend)
+	current_storm_eye_lock = lerpf(current_storm_eye_lock, eye_lock_target, blend)
 	if absf(current_storm_ambient - 1.0) < 0.001:
 		current_storm_ambient = 1.0
 	if current_storm_eye_cap < 0.001:
 		current_storm_eye_cap = 0.0
+	if current_storm_eye_lock < 0.001:
+		current_storm_eye_lock = 0.0
+	# z = the megastorm darkness flash (bridge: active bolt pulse x proximity), which lifts K toward 1 in the shaders while it lasts.
+	var flash := 0.0
+	if cloud_lighting_bridge != null and cloud_lighting_bridge.has_method("GetMegastormFlash"):
+		flash = clampf(float(cloud_lighting_bridge.call("GetMegastormFlash")), 0.0, 1.0)
+	var storm_light_mega := Vector4(k_min_eff, current_storm_eye_lock, flash, 0.0)
+	if absf(k_min_eff - _published_storm_light_mega.x) > 0.001 or absf(current_storm_eye_lock - _published_storm_light_mega.y) > 0.001 			or absf(flash - _published_storm_light_mega.z) > 0.001 or (flash == 0.0 and _published_storm_light_mega.z != 0.0):
+		_published_storm_light_mega = storm_light_mega
+		RenderingServer.global_shader_parameter_set("ringworld_storm_light_mega", storm_light_mega)
 
 
 # True while the bridge publishes the storm map: every ring receiver then reads the storm level per fragment and the camera-global
@@ -861,7 +887,14 @@ func _storm_light_valid() -> bool:
 # The eye cap already scales with the Storm darkness setting, so this is a fixed shape constant, not a separate tunable.
 const STORM_EYE_MIN_SCALE := 1.25
 func _storm_capped_min_sensitivity(min_sensitivity: float) -> float:
-	return lerpf(min_sensitivity, maxf(1.0, min_sensitivity * STORM_EYE_MIN_SCALE), clampf(current_storm_eye_cap, 0.0, 1.0))
+	var capped := lerpf(min_sensitivity, maxf(1.0, min_sensitivity * STORM_EYE_MIN_SCALE), clampf(current_storm_eye_cap, 0.0, 1.0))
+	# Megastorm eye lock (docs/megastorm-design.md 5.6, WO14). The minimum sensitivity is the lower clamp of the scene luminance auto exposure divides by, so
+	# it alone sets how far a dark scene is brightened (the maximum only limits how far a bright one is darkened). By day inside the megastorm it slides up
+	# to the clear eye's maximum sensitivity with the lock: at lock 1 min = max = the darkest exposure clear daylight uses, so auto exposure cannot lift
+	# the wall back up. Smoothed like the cap (no pumping); 0 without a megastorm (bit-identical).
+	if current_storm_eye_lock <= 0.0:
+		return capped
+	return lerpf(capped, maxf(capped, auto_exposure_max_sensitivity), clampf(current_storm_eye_lock, 0.0, 1.0))
 
 
 # Eye adaptation never brightens a storm: the maximum sensitivity slides toward the minimum with the storm cap.
@@ -1076,10 +1109,14 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 	var bridge_ambient := _haze_ambient_day_raw * minf(current_cloud_ambient_transmittance, current_storm_ambient)
 	var day_ambient := _haze_ambient_day_raw * current_cloud_ambient_transmittance if storm_path else bridge_ambient
 	var global_sun := sun * current_air_cloud_sun_visibility if storm_path else published_sun
+	# Megastorm darkness K at the camera for Sunshine's CPU-built profile (the shaders apply K per view ray themselves; 1 without a megastorm).
+	var bridge_sun := published_sun
+	if storm_path and cloud_lighting_bridge.has_method("GetCameraDarknessMultiplier"):
+		bridge_sun = published_sun * float(cloud_lighting_bridge.call("GetCameraDarknessMultiplier"))
 	var night_ambient := _haze_ambient_planet + night_floor
 	var changed := false
-	if _relative_change(published_sun, _published_haze_sun) > 0.005:
-		_published_haze_sun = published_sun
+	if _relative_change(bridge_sun, _published_haze_sun) > 0.005:
+		_published_haze_sun = bridge_sun
 		changed = true
 	if _relative_change(global_sun, _published_haze_sun_global) > 0.005:
 		_published_haze_sun_global = global_sun

@@ -102,7 +102,11 @@ void fragment() {
 	ROUGHNESS = surface_roughness;
 	SPECULAR = surface_specular;
 	float cloud_occlusion = sample_local_cloud_shadow(world_position) * ring_day_factor;
-	AO = min(1.0 - cloud_occlusion, ring_storm_ambient(ring_storm_level(world_position))); // storm light
+	// Storm light. No light() here, so AO_LIGHT_AFFECT = 1 makes AO dim every light; the megastorm darkness K goes on the albedo side instead of into
+	// A (docs/megastorm-design.md 5.6), and A takes the ordinary level D = min(L, 1). K is exactly 1 for every ordinary storm.
+	float storm_level = ring_storm_level(world_position);
+	ALBEDO *= ring_storm_darkness(storm_level);
+	AO = min(1.0 - cloud_occlusion, ring_storm_ambient(min(storm_level, 1.0)));
 	AO_LIGHT_AFFECT = 1.0;
 	if (ring_shadow_debug_enabled()) {
 		// Shadow debug view (no light() here): the only shadow term this material owns is the cloud one, shown for modes 1 and 5.

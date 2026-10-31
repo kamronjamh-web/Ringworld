@@ -672,6 +672,32 @@ def megastorm_roar(rng, seconds=30.0):
     return normalise_loop(out, -20, -4)
 
 
+def megastorm_scythe_crackle(rng, seconds=0.9):
+    # One segment's tear of a lightning scythe (docs/megastorm-design.md 5.5.4): a dense, rising-then-ragged burst of sharp 1.5-12 kHz
+    # clicks (the plasma ripping along the ground) over a short hissing bed, a few low pops, and a quick decay. Dozens of these, each at its
+    # own d / 343 delay, smear into the rip.
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    bed = noise(rng, n, 1800, 9000, order=2) * np.exp(-t / 0.16) * (0.25 + 0.75 * np.sin(np.pi * np.clip(t / 0.25, 0, 1)))
+    out += 0.35 * bed
+    density = 1100.0 * np.exp(-t / 0.2) + 60.0
+    cum = np.cumsum(density) / SR
+    marks = np.searchsorted(cum, np.sort(rng.uniform(0.0, cum[-1], int(cum[-1]))))
+    for m in marks:
+        if m >= n - 64:
+            continue
+        length = int(rng.uniform(0.0004, 0.0016) * SR)
+        out_start = m
+        pk = rng.uniform(0.3, 1.0) * (rng.random() < 0.15 and 2.2 or 1.0)
+        place(out, out_start, pk * click(rng, length, rng.uniform(0.0002, 0.0007), lo=rng.uniform(1500, 4000), hi=rng.uniform(7000, 13000)))
+    for c in np.sort(rng.uniform(0.0, 0.3, rng.integers(2, 5))):
+        place(out, int(c * SR), 0.55 * rng.uniform(0.5, 1.0) * click(rng, int(0.012 * SR), 0.003, lo=120, hi=900))
+    out *= attack(n, 1.0) * np.exp(-t / 0.35)
+    out = fft_filter(out, lambda f: butter_mag(f, 400, 14000, 2), pad=SR)
+    return normalise_peak(fade_out(out, 120), -3)
+
+
 # ---- driver -------------------------------------------------------------------------------------------------------
 
 def write_wav(path, x):
@@ -711,6 +737,9 @@ def build_jobs(ffmpeg, src_dir):
     for i in range(1, 4):
         name = f"megastorm_boom_{i}"
         jobs[name] = (lambda name=name: megastorm_boom(rng_for(name)))
+    for i in range(1, 4):
+        name = f"megastorm_scythe_crackle_{i}"
+        jobs[name] = (lambda name=name: megastorm_scythe_crackle(rng_for(name)))
     return jobs
 
 

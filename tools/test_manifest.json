@@ -476,6 +476,19 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "megastorm_darkness_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "MEGASTORM_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 900
+    },
     "megastorm_capture": {
       "kind": "tool",
       "mode": "gpu",
@@ -2725,6 +2738,18 @@
       "expected_s": 3,
       "timeout_s": 60
     },
+    "megastorm_darkness_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "marker": "MEGASTORM_DARKNESS",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
     "megastorm_sound_test": {
       "kind": "test",
       "mode": "headless",
@@ -2826,6 +2851,19 @@
       "marker": "MEGASTORM_LIGHTNING",
       "expected_s": 20,
       "timeout_s": 180
+    },
+    "megastorm_scythe_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "world": "integration",
+      "marker": "MEGASTORM_SCYTHE",
+      "expected_s": 30,
+      "timeout_s": 240
     },
     "megastorm_save_load_test": {
       "kind": "test",

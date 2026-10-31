@@ -1199,17 +1199,20 @@ public partial class RingSunshineCloudBridge : Node
         Color normalAmbient = nightAmbient.Lerp(dayAmbient, _localDayFactor);
         Color stormAmbient = nightAmbient.Lerp(stormDayAmbient, _localDayFactor);
         Color ambient = normalAmbient.Lerp(stormAmbient, _localStormFactor);
+        // Megastorm darkness K at the camera (1 without a megastorm): the extra darkening of the cloud ambient beyond the ordinary storm.
+        float darknessK = GetCameraDarknessMultiplier();
+        _cloudAmbientAppliedK = darknessK;
         _clouds.Set(CloudAmbientColorName, new Color(
-            ambient.R * CloudAmbientMultiplier,
-            ambient.G * CloudAmbientMultiplier,
-            ambient.B * CloudAmbientMultiplier,
+            ambient.R * CloudAmbientMultiplier * darknessK,
+            ambient.G * CloudAmbientMultiplier * darknessK,
+            ambient.B * CloudAmbientMultiplier * darknessK,
             ambient.A));
         _clouds.Set(CloudAmbientTintName, nightTint.Lerp(dayTint, _localDayFactor));
         // Per-ray storm ambient (storm profile map): the dark storm colour at this time of day, scaled by the S0 Storm darkness value.
         // Neutral grey with only a faint cool cast: a blue storm underside reads as sky.
         float stormLuma = (stormAmbient.R * 0.2126f + stormAmbient.G * 0.7152f + stormAmbient.B * 0.0722f) * CloudAmbientMultiplier;
         _clouds.Set("ring_storm_ambient", new Vector4(
-            stormLuma * 0.96f, stormLuma, stormLuma * 1.06f,
+            stormLuma * 0.96f * darknessK, stormLuma * darknessK, stormLuma * 1.06f * darknessK,
             _stormPublishedValid ? Mathf.Clamp(StormDarkness, 0.0f, 1.0f) : 0.0f));
     }
 

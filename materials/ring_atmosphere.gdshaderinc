@@ -535,9 +535,10 @@ RingHazeParams ring_haze_uniform_params(vec3 to_sun, vec3 outward) {
 // Storm light, path darkening (docs/storm-revamp-s0-storm-light-design.md WO-6): the sun in-scatter fades with the shadow fade F(Dp) and the ambient in-scatter
 // follows the sky factor (ring_storm_sky) of Dp, where Dp is the storm level averaged along the view ray (ring_storm_path_level). The published haze sun carries only the camera-column cloud
 // shadow while the storm map is valid, so a storm ahead dims the air in front of it and the sky above it by one rule. Dp = 0 returns before any multiply.
+// Under the megastorm Dp is the extended level (D + E): both in-scatter terms also take the darkness K (exactly 1 for Dp <= 1; docs/megastorm-design.md 5.6).
 void ring_haze_apply_storm_path(inout RingHaze haze, float path_level) {
 	if (path_level <= 0.0) return;
-	haze.S_sun *= 1.0 - ring_storm_shadow_fade(path_level) * ringworld_storm_light.x;
+	haze.S_sun *= (1.0 - ring_storm_shadow_fade(path_level) * ringworld_storm_light.x) * ring_storm_darkness(path_level);
 	haze.S_amb *= ring_storm_sky(path_level);
 }
 

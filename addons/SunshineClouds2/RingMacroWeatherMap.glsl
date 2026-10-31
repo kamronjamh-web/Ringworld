@@ -38,10 +38,15 @@ layout(binding = 1, std140) uniform RingWeatherSystemsBlock {
 // a = (canonical around, canonical across of the texel-grid corner, texel size m, back layer)
 // b = (used width, used height in texels, first row of this slice, ring circumference m or 0)
 // c = (wind frame offset around, across of the snapshot = cloud_weather_frame.yz, 0, 0)
+// d = (megastorm reference line s hi, s lo, direction (0 = none), darkness scale (0 = off)) at the snapshot (WO14)
+// e = (bow, meander amplitude, meander wavelength, meander phase), f = (W, trailing end xi, 0, 0)
 layout(binding = 2, std140) uniform MacroBuildParams {
 	vec4 a;
 	vec4 b;
 	vec4 c;
+	vec4 d;
+	vec4 e;
+	vec4 f;
 } build;
 
 // The cloud layer table (RingCloudLayers.glslinc): 592 bytes written by RingSunshineCloudBridge.PublishCloudLayers.
@@ -50,6 +55,7 @@ layout(binding = 2, std140) uniform MacroBuildParams {
 #define RING_WS_MACRO_BUILD
 #include "./RingWeatherSystems.glslinc"
 #include "./RingCloudLayers.glslinc"
+#include "../../materials/ring_megastorm_darkness.gdshaderinc"
 
 // S0 storm-owned D (docs/storm-revamp-s0-storm-light-design.md "Storm-owned D"; materials/ring_storm_light.gdshaderinc ring_storm_owned_level). Layers 4 / 5:
 //   x = storm ownership: the S6 section 3.8 weight over sculpt systems (StormTower / Cumulonimbus): 1 within 1.3 ellipse radii, 0 by RING_STORM_SUPPORT
@@ -57,6 +63,8 @@ layout(binding = 2, std140) uniform MacroBuildParams {
 //   y = front rain level: the strongest own precipitation of a non-sculpt front (RING_WS_FLAG_FRONT: MajorFront / ExceptionalFront), capped by the point's
 //       precipitation potential (map B, the rain that actually falls there), through the 0.25 .. 0.65 ramp. Same per-system falloff and coverage gate as
 //       ring_ws_macro_point's precipitation. Dry fronts and other kinds give 0.
+//   z = megastorm darkness E (docs/megastorm-design.md 5.6, WO14): ring_megastorm_darkness(xi) x scale from the snapshot's megastorm frame (build.d-f);
+//       exactly 0 without a megastorm or with Storm darkness 0. Receivers read L = D + E (ring_storm_light.gdshaderinc). CPU twin: MegastormModel.DarknessAt.
 // CPU twin: RingSunshineCloudBridge.EvaluateStormLightTerms (StormLight.cs).
 #define RING_WS_FLAG_FRONT 32u
 #define RING_STORM_OWNED_INNER_SQUARED 1.69
@@ -95,6 +103,15 @@ vec4 ring_storm_light_point(vec3 canonical, uvec2 mask, vec2 shift, float circum
 	return vec4(owned, ring_ws_smooth_unit((min(frontRain, precip) - RING_STORM_FRONT_RAIN_START) / RING_STORM_FRONT_RAIN_WIDTH), 0.0, 0.0);
 }
 
+// Megastorm darkness E at a canonical (around, across): x = dir * wrap(s - around), with s carried as hi + lo (as ring_megastorm_x).
+float ring_storm_light_megastorm_darkness(vec3 canonical, float circumference) {
+	if (build.d.w <= 0.0 || build.d.z == 0.0) return 0.0;
+	float d = (build.d.x - canonical.x) + build.d.y;
+	if (circumference > 1.0) d -= circumference * floor(d / circumference + 0.5);
+	float xi = build.d.z * d - ring_megastorm_darkness_lead(canonical.z, vec4(build.f.x, build.e.xyz), build.e.w);
+	return ring_megastorm_darkness(xi, build.f.y) * build.d.w;
+}
+
 void main() {
 	ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
 	texel.y += int(build.b.z + 0.5);
@@ -112,5 +129,7 @@ void main() {
 	int layer = int(build.a.w + 0.5);
 	imageStore(macro_map, ivec3(texel, layer), value);
 	imageStore(macro_map, ivec3(texel, layer + 2), ring_cloud_layers_point(canonical, uvec2(low, high), build.c.xy, build.b.w, value.x));
-	imageStore(macro_map, ivec3(texel, layer + 4), ring_storm_light_point(canonical, uvec2(low, high), build.c.xy, build.b.w, value.x, value.z));
+	vec4 stormLight = ring_storm_light_point(canonical, uvec2(low, high), build.c.xy, build.b.w, value.x, value.z);
+	stormLight.z = ring_storm_light_megastorm_darkness(canonical, build.b.w);
+	imageStore(macro_map, ivec3(texel, layer + 4), stormLight);
 }

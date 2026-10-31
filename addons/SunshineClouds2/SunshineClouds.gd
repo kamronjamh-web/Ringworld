@@ -194,7 +194,7 @@ var weather_systems_dirty : bool = true
 const MACRO_MAP_CAPACITY := Vector2i(1024, 512)
 const MACRO_MAP_PARAM_BYTES := 32
 # S0 storm-owned D (docs/storm-revamp-s0-storm-light-design.md "Storm-owned D"): layers 4 / 5 (front / back, i.e. layer + this offset) hold the storm-light
-# terms (owned, front rain, 0, 0) written by RingMacroWeatherMap.glsl. Read by RingSunshineCloudBridge.StormLight.cs (0 / missing = no such layer).
+# terms (owned, front rain, megastorm darkness E, 0) written by RingMacroWeatherMap.glsl. Read by RingSunshineCloudBridge.StormLight.cs (0 / missing = no such layer).
 var macro_map_storm_light_layer_offset : int = 4
 # S6 cloud layers (RingCloudLayers.glslinc): the map texture is a 4-layer array, 0 / 1 = cov, storm, precip, influence (front / back) and
 # 2 / 3 = low, mid, high coverage, weatherness (front / back). The layer table block (656 bytes) is bound to the build (binding 3, captured into
@@ -203,7 +203,8 @@ var macro_map_storm_light_layer_offset : int = 4
 const CLOUD_LAYERS_BYTES := 656
 const LAYER_GRADIENT_WIDTH := 256
 const LAYER_GRADIENT_ROWS := 8
-const MACRO_MAP_BUILD_PARAM_BYTES := 48
+# a, b, c (origin / size / wind shift) plus the megastorm darkness snapshot d, e, f (RingMacroWeatherMap.glsl MacroBuildParams; WO14).
+const MACRO_MAP_BUILD_PARAM_BYTES := 96
 const MACRO_MAP_SNAPSHOT_PAD_TEXELS := 2
 @export var macro_map_compute_shader : RDShaderFile
 var macro_map_texture : RID = RID()
@@ -251,6 +252,9 @@ var last_megastorm_strip_texture_generation : int = -1
 var cloud_shadow_strip_generations : Array[int] = [-1, -1, -1, -1]
 # Per-frame megastorm frame from the bridge (set_megastorm_frame): s hi / lo, direction (0 = off), wall travel (double metres), reproject.
 var megastorm_input : Dictionary = {"s_hi": 0.0, "s_lo": 0.0, "dir": 0.0, "travel": 0.0, "reproject": false}
+# Megastorm darkness E for the storm-light layer z (docs/megastorm-design.md 5.6, WO14; set_megastorm_darkness): [E scale (0 = off), W, bow, meander
+# amplitude, meander wavelength, meander phase, trailing end xi]. A map build snapshots it with the megastorm frame when it begins.
+var megastorm_darkness_config : PackedFloat32Array = PackedFloat32Array([0.0, 318000.0, 0.0, 0.0, 40000.0, 0.0, 390000.0])
 var previous_callback_megastorm_travel : float = 0.0
 var previous_callback_megastorm_active : bool = false
 # Megastorm prewarm (set_megastorm_prewarm; WO4b): once a megastorm exists anywhere on the ring, the next render callbacks allocate the real
@@ -3768,10 +3772,16 @@ func _begin_macro_map_build(now_usec : int) -> void:
 	rd.buffer_update(macro_map_snapshot_buffer, 0, WEATHER_SYSTEMS_BYTES, weather_systems_bytes)
 	if cloud_layers_bytes.size() == CLOUD_LAYERS_BYTES:
 		rd.buffer_update(cloud_layers_buffer, 0, CLOUD_LAYERS_BYTES, cloud_layers_bytes)
+	# Megastorm darkness snapshot (WO14): the reference line s (hi + lo), direction and E scale; scale 0 (or no megastorm) writes E = 0 exactly.
+	var dark := megastorm_darkness_config
+	var dark_dir : float = megastorm_input["dir"]
+	var dark_scale : float = dark[0] if dark_dir != 0.0 else 0.0
 	macro_map_build = {
 		"origin": Vector2(origin_around, origin_across), "texel": texel, "size": size, "circumference": circumference,
 		"shift": Vector2(cloud_weather_frame.y, cloud_weather_frame.z), "layer": 1 - macro_map_front_layer,
 		"slice": 0, "slices": mini(int(config["slices"]), groups_y), "groups_y": groups_y,
+		"dark_d": Vector4(megastorm_input["s_hi"], megastorm_input["s_lo"], dark_dir, dark_scale),
+		"dark_e": Vector4(dark[2], dark[3], dark[4], dark[5]), "dark_f": Vector4(dark[1], dark[6], 0.0, 0.0),
 	}
 	macro_map_build_active = true
 	macro_map_build_start_usec = now_usec
@@ -3788,9 +3798,13 @@ func _dispatch_macro_map_slice() -> void:
 	if last_group > first_group:
 		var bytes := PackedByteArray()
 		bytes.resize(MACRO_MAP_BUILD_PARAM_BYTES)
+		var dark_d : Vector4 = build["dark_d"]
+		var dark_e : Vector4 = build["dark_e"]
+		var dark_f : Vector4 = build["dark_f"]
 		var values := [build["origin"].x, build["origin"].y, build["texel"], float(build["layer"]),
 			float(size.x), float(size.y), float(first_group * 8), build["circumference"],
-			build["shift"].x, build["shift"].y, 0.0, 0.0]
+			build["shift"].x, build["shift"].y, 0.0, 0.0,
+			dark_d.x, dark_d.y, dark_d.z, dark_d.w, dark_e.x, dark_e.y, dark_e.z, dark_e.w, dark_f.x, dark_f.y, dark_f.z, dark_f.w]
 		for i in range(values.size()):
 			bytes.encode_float(i * 4, values[i])
 		rd.buffer_update(macro_map_build_params_buffer, 0, MACRO_MAP_BUILD_PARAM_BYTES, bytes)
@@ -3833,6 +3847,13 @@ func set_storm_profile_map(enabled : bool, center_around : float, center_across 
 # axis in metres (double), used for the moving-frame noise and the history shift.
 func set_megastorm_frame(s_hi : float, s_lo : float, direction : float, travel : float, reproject : bool) -> void:
 	megastorm_input = {"s_hi": s_hi, "s_lo": s_lo, "dir": direction, "travel": travel, "reproject": reproject}
+
+# Called by the bridge every frame while a megastorm is active (scale 0 once when it ends): the megastorm darkness E the macro build writes into the
+# storm-light layer z (docs/megastorm-design.md 5.6, WO14). scale = clamp(Storm darkness / 0.9) x formation level; the lead offset parameters are
+# MegastormModel's; trailing_end_xi = 50 km + the trailing length.
+func set_megastorm_darkness(scale : float, width : float, bow : float, meander_amp : float, meander_wavelength : float, meander_phase : float,
+		trailing_end_xi : float) -> void:
+	megastorm_darkness_config = PackedFloat32Array([maxf(scale, 0.0), width, bow, meander_amp, meander_wavelength, meander_phase, trailing_end_xi])
 
 # Called by the bridge at its weather refresh (see RingMegastormStrip.configure). enabled = false skips the strip fetch in the shaders.
 func set_megastorm_strip(enabled : bool, t : float, level : float, strength : float, seed : float, width : float, bow : float,

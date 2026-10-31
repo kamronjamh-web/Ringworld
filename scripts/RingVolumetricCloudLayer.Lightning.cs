@@ -158,6 +158,7 @@ public partial class RingVolumetricCloudLayer
         }
         foreach (LocalWeatherState manual in _manualWeather.Values) TryScheduleManualLightning(manual, now);
         TryScheduleMegastormLightning(now);
+        TryScheduleMegastormScythes(now);
     }
 
     private void ScanLightningCells(double now)
@@ -361,6 +362,59 @@ public partial class RingVolumetricCloudLayer
                 SystemKind = (int)WeatherSystemKind.Megastorm
             });
         }
+    }
+
+    // ---- Megastorm lightning scythes (docs/megastorm-design.md 5.5.4, WO12) ----
+    private readonly List<MegastormScythe> _megastormScytheScratch = new();
+    /// <summary>Attachment strikes are scheduled for scythes whose attachment is within this distance of the explorer (the cost cap: "only while the observer is within 25 km of the attachment zone").</summary>
+    public const double ScytheAttachmentReachMeters = 25000.0;
+
+    /// <summary>
+    /// The attachment strike of each scythe (MegastormScythes stream, <c>RingLightningEvent.Scythe</c> set, id = the scythe id) within 25 km of the explorer
+    /// whose 0.72 s bolt covers <paramref name="now"/>. The sheet itself is drawn from the same pure stream by RingMegastormScythes, which re-derives it from
+    /// the id, so a rewind or reload reproduces both. The bolt goes through the ordinary renderer and thunder (megastorm air gate included).
+    /// </summary>
+    private void TryScheduleMegastormScythes(double now)
+    {
+        if (MegastormSource == null || MegastormHazardModel is not MegastormModel model || !model.Triggered || _explorer == null) return;
+        RingCanonicalPosition observer = _explorer.CanonicalPosition;
+        MegastormScythes.ScythesInWindow(model, now - RingLightningEvent.LifetimeSeconds, Math.BitIncrement(now), observer.AroundMeters, observer.AcrossMeters,
+            ScytheAttachmentReachMeters, LightningVisualPolicy.NaturalStrikeChanceScale, _megastormScytheScratch);
+        foreach (MegastormScythe s in _megastormScytheScratch)
+        {
+            if (_activeLightningEvents.Count >= 128) return;
+            if (FindActiveLightningIndex(s.Id) >= 0) continue;
+            var weather = new LocalWeatherState(MegastormModel.WallRecordId, WeatherSystemKind.Megastorm, 1.0f, 25000.0f,
+                new Vector2((float)s.AttachAroundMeters, (float)s.AttachAcrossMeters), new Vector2(25000.0f, 25000.0f), 0.0f, 1.0f, 1.0f, Vector2.Zero,
+                CloudFormationProfile.MegastormWall, CloudBaseMeters, CloudTopMeters);
+            RingLightningEvent made = CreateLightningEvent(MegastormModel.WallRecordId, s.StartTimeSeconds,
+                new RingCanonicalPosition(s.AttachAroundMeters, 0.0, s.AttachAcrossMeters), weather, false, s.Id);
+            _activeLightningEvents.Add(made with
+            {
+                EventId = s.Id,
+                ShapeSeed = unchecked((int)UpperAtmosphereLightning.Hash(s.Id, 201)),
+                PlaneAngleRadians = UpperAtmosphereLightning.Unit(s.Id, 202) * Mathf.Tau,
+                Energy = s.Energy,
+                SystemKind = (int)WeatherSystemKind.Megastorm,
+                Scythe = true
+            });
+        }
+    }
+
+    /// <summary>A terrain height sampler (around, across) with the surface-edit snapshot captured once, the same surface the strikes land on; null before the grid exists.</summary>
+    public Func<double, double, double>? CreateSurfaceHeightSampler()
+    {
+        if (_grid?.TerrainSampler == null) return null;
+        RingLodSurfaceEditSnapshot edits = _grid.CaptureLodSurfaceEditSnapshot();
+        var sampler = _grid.TerrainSampler;
+        bool floatSurface = sampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface;
+        int maxAcross = Math.Max(0, Mathf.RoundToInt(_grid.RingAcrossWidthMeters));
+        return (around, across) =>
+        {
+            long a = (long)Math.Round(WrapAround(around));
+            int z = Math.Clamp(Mathf.RoundToInt((float)across), 0, maxAcross);
+            return floatSurface ? edits.GetPresentationSurfaceHeight(sampler, a, z) : edits.GetSurfaceHeight(sampler, a, z);
+        };
     }
 
     /// <summary>Cadence/phase slot of a system's lightning; false when no slot is live at <paramref name="now"/>.</summary>

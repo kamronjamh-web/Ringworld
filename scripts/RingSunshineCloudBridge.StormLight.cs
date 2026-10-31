@@ -17,6 +17,10 @@ namespace RingworldTechDemo;
 /// ringworld_storm_frame (mat4: column 0 = around axis.xyz + camera canonical around relative to the map origin, column 1 = across axis.xyz +
 /// camera canonical across relative to the map origin, column 2 = up axis.xyz + ring radius, column 3 = camera-ring centre in world),
 /// ringworld_storm_light = (darkness strength, shadow-fade start, shadow-fade end, valid).
+/// Megastorm darkness (docs/megastorm-design.md 5.6): the extended storm level is L = D + E, E in 0..1 the megastorm darkness term (a pure function of xi, 0 without a megastorm).
+/// <see cref="GetStormLevelAt"/> and the shader's ring_storm_level return L; the receivers use D' = min(L, 1) and E' = max(L - 1, 0), K(E') = 1 - (1 - k_min_eff) E' multiplies
+/// the ambient and sun. ringworld_megastorm_darkness (mat4) carries the megastorm frame for the GPU E: column 0 = (x at the camera, direction, E scale, camera across),
+/// column 1 = (bow, meander amplitude, meander wavelength, meander phase), column 2 = (width, trailing end xi, circumference, 0), column 3 = 0; all zeros = no megastorm darkness.
 /// </summary>
 public partial class RingSunshineCloudBridge
 {
@@ -27,6 +31,7 @@ public partial class RingSunshineCloudBridge
     private const string StormMapSizeGlobal = "ringworld_storm_map_size";
     private const string StormFrameGlobal = "ringworld_storm_frame";
     private const string StormLightGlobal = "ringworld_storm_light";
+    private const string MegastormDarknessGlobal = "ringworld_megastorm_darkness";
     private static readonly StringName MacroMapValidName = "macro_map_valid";
     private static readonly StringName MacroMapTextureName = "macro_map_texture";
     private static readonly StringName MacroMapFrontLayerName = "macro_map_front_layer";
@@ -60,6 +65,11 @@ public partial class RingSunshineCloudBridge
     private bool _stormFramePublished;
     private Projection _stormPublishedFrame;
     private Vector4 _stormPublishedLight, _stormPublishedMapFrame, _stormPublishedMapSize;
+    private float _cameraMegastormDarkness;
+    private float _megastormDarknessFloor = 0.06f;
+    private bool _megastormDarknessPublished;
+    private Projection _megastormDarknessPublishedValue;
+    private float _cloudAmbientAppliedK = 1.0f;
     /// <summary>Last published validity of the storm-light globals (test and diagnostics hook).</summary>
     public bool StormLightValid => _stormPublishedValid;
 
@@ -76,11 +86,16 @@ public partial class RingSunshineCloudBridge
         Vector2 wind = _weather.WeatherWindMetersPerSecond;
         EvaluateCameraIndependentMacro(around, acrossMeters, time, circumference, wind, out float coverage, out float storm);
         float heavy = SmoothUnit((coverage - HeavyOvercastStartCoverage) / Mathf.Max(0.01f, 1.0f - HeavyOvercastStartCoverage));
-        if (!_stormOwnershipAvailable) return Mathf.Max(storm, heavy);
+        float extra = MegastormDarknessAt(around, acrossMeters, time);
+        if (!_stormOwnershipAvailable) return Mathf.Max(storm, heavy) + extra;
         EvaluateStormLightTerms(around, acrossMeters, time, circumference, wind, coverage, GetPrecipitationPotentialAt(around, acrossMeters),
             out float owned, out float front, out float influence);
-        return StormOwnedLevel(storm, heavy, influence, owned, front);
+        return StormOwnedLevel(storm, heavy, influence, owned, front) + extra;
     }
+
+    /// <summary>Megastorm darkness E at a canonical position (0 without an active megastorm or camera-independent clouds).</summary>
+    private float MegastormDarknessAt(double aroundMeters, double acrossMeters, double time)
+        => CameraIndependentClouds && MegastormRenderModel is { } model ? model.DarknessAt(aroundMeters, acrossMeters, time, StormDarkness) : 0.0f;
 
     // ---- Storm-owned D (2026-10-29; S0 doc "Storm-owned D", user decision "fronts dark by rain") ----
     // D = max(owned x max(storm, heavy), front, heavy x (1 - smoothstep(0, 0.25, influence))). owned: the S6 ownership weight of StormTower / Cumulonimbus sculpt
@@ -120,6 +135,7 @@ public partial class RingSunshineCloudBridge
         result["precipitation"] = precipitation;
         result["coverage"] = coverage; result["storm"] = storm; result["heavy"] = heavy; result["owned"] = owned; result["front"] = front;
         result["influence"] = influence; result["ownership_available"] = _stormOwnershipAvailable; result["D"] = GetStormLevelAt(aroundMeters, acrossMeters);
+        result["E"] = MegastormDarknessAt(around, acrossMeters, time);
         return result;
     }
 
@@ -249,11 +265,17 @@ public partial class RingSunshineCloudBridge
     private void PublishStormLight(bool forceInvalid = false)
     {
         EnsureStormMapGlobal();
+        MegastormDarknessInputs.StormDarkness = StormDarkness;
+        MegastormDarknessInputs.DarknessFloor = _megastormDarknessFloor;
         _stormLightLayerOffset = _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get(StormLightLayerOffsetName).AsInt32() : 0;
         _stormOwnershipAvailable = _stormLightLayerOffset > 0;
         bool valid = !forceInvalid && Enabled && CameraIndependentClouds && MacroWeatherMap && _clouds != null && GodotObject.IsInstanceValid(_clouds)
             && _explorer != null && _grid != null && _clouds.Get(MacroMapValidName).AsBool();
         if (valid) valid = RefreshStormFront();
+        _cameraMegastormDarkness = 0.0f;
+        _cameraMegastormExtraMap = 0.0f;
+        Projection megastormDarkness = default;
+        bool megastormDarknessActive = false;
         if (valid)
         {
             RingLodGeometrySnapshot geometry = _grid!.CaptureLodGeometrySnapshot();
@@ -282,6 +304,42 @@ public partial class RingSunshineCloudBridge
             var mapSize = new Vector4(_stormFrontSize.X, _stormFrontSize.Y, MacroMapCapacity.X, MacroMapCapacity.Y);
             if (mapFrame != _stormPublishedMapFrame) { _stormPublishedMapFrame = mapFrame; RenderingServer.GlobalShaderParameterSet(StormMapFrameGlobal, mapFrame); }
             if (mapSize != _stormPublishedMapSize) { _stormPublishedMapSize = mapSize; RenderingServer.GlobalShaderParameterSet(StormMapSizeGlobal, mapSize); }
+            if (CameraIndependentClouds && _weather != null && MegastormRenderModel is { } megastorm)
+            {
+                double time = _weather.CloudSimulationTimeSeconds;
+                MegastormFrame megastormFrame = megastorm.Evaluate(time);
+                float scale = DebugMegastormDarknessOff ? 0.0f : MegastormModel.DarknessScale(StormDarkness, megastormFrame.Level);
+                if (megastormFrame.Active && scale > 0.0f)
+                {
+                    _cameraMegastormDarkness = megastorm.DarknessAt(camera.AroundMeters, camera.AcrossMeters, time, StormDarkness);
+                    // E' for the camera K from the map twin (the L the ground under the camera receives), not the smoothed camera D: inside the wall that
+                    // smoothed D settles near 0.84 while the map reads 1, which left the camera K (clouds, tint, rain veil) at 0.21 against the ground's 0.06.
+                    if (_cameraMegastormDarkness > 0.0f)
+                        _cameraMegastormExtraMap = Mathf.Max(GetStormLevelAt(camera.AroundMeters, camera.AcrossMeters) - 1.0f, 0.0f);
+                    MegastormSettings ms = megastorm.Settings;
+                    megastormDarknessActive = true;
+                    megastormDarkness = new Projection(
+                        new Vector4((float)megastorm.X(camera.AroundMeters, time), megastormFrame.Direction, scale, (float)camera.AcrossMeters),
+                        new Vector4((float)ms.BowMeters, (float)ms.MeanderAmplitudeMeters, (float)ms.MeanderWavelengthMeters, (float)megastorm.MeanderPhaseWrapped(time)),
+                        new Vector4((float)ms.WidthMeters, (float)megastorm.TrailingEndXi, (float)circumference, 0.0f),
+                        Vector4.Zero);
+                }
+            }
+        }
+        if (megastormDarknessActive)
+        {
+            if (!_megastormDarknessPublished || !megastormDarkness.Equals(_megastormDarknessPublishedValue))
+            {
+                _megastormDarknessPublished = true;
+                _megastormDarknessPublishedValue = megastormDarkness;
+                RenderingServer.GlobalShaderParameterSet(MegastormDarknessGlobal, megastormDarkness);
+            }
+        }
+        else if (_megastormDarknessPublished)
+        {
+            _megastormDarknessPublished = false;
+            _megastormDarknessPublishedValue = default;
+            RenderingServer.GlobalShaderParameterSet(MegastormDarknessGlobal, default(Projection));
         }
         float fadeStart = Mathf.Clamp(StormShadowFade, 0.0f, 1.0f);
         var light = new Vector4(Mathf.Clamp(StormDarkness, 0.0f, 1.0f), fadeStart, fadeStart + StormShadowFadeWidth, valid ? 1.0f : 0.0f);
@@ -291,6 +349,8 @@ public partial class RingSunshineCloudBridge
             RenderingServer.GlobalShaderParameterSet(StormLightGlobal, light);
         }
         _stormPublishedValid = valid;
+        // The cloud ambient follows K continuously; ApplyLocalCloudAmbientLighting otherwise only runs on weather refreshes and changes.
+        if (Mathf.Abs(GetCameraDarknessMultiplier() - _cloudAmbientAppliedK) > 0.002f) ApplyLocalCloudAmbientLighting();
         RingStormLightTint.Apply(GetStormAmbientAtCamera());
         RingStormLightTint.ApplySunFade(_stormPublishedValid ? SmoothUnit((GetCameraStormLevel() - Mathf.Clamp(StormShadowFade, 0.0f, 1.0f)) / StormShadowFadeWidth) * Mathf.Clamp(StormDarkness, 0.0f, 1.0f) : 0.0f);
         UpdateStormCloudLighting();
@@ -305,7 +365,7 @@ public partial class RingSunshineCloudBridge
     private void UpdateStormCloudLighting()
     {
         float target = 1.0f;
-        if (_stormPublishedValid) target = 1.0f - SmoothUnit((GetCameraStormLevel() - Mathf.Clamp(StormShadowFade, 0.0f, 1.0f)) / StormShadowFadeWidth) * Mathf.Clamp(StormDarkness, 0.0f, 1.0f);
+        if (_stormPublishedValid) target = (1.0f - SmoothUnit((GetCameraStormLevel() - Mathf.Clamp(StormShadowFade, 0.0f, 1.0f)) / StormShadowFadeWidth) * Mathf.Clamp(StormDarkness, 0.0f, 1.0f)) * GetCameraDarknessMultiplier();
         float blend = 1.0f - Mathf.Exp(-Mathf.Max(0.1f, LightingResponseSpeed) * (float)GetProcessDeltaTime());
         float next = Mathf.Lerp(_stormCloudDirectFactor, target, blend);
         if (Mathf.Abs(next - 1.0f) < 0.002f) next = 1.0f;
@@ -315,14 +375,62 @@ public partial class RingSunshineCloudBridge
     }
 
     /// <summary>Storm level D at the camera (the CPU value the receivers' map fetch reproduces): the local storm factor of whichever weather path is live.</summary>
-    public float GetCameraStormLevel() => Enabled ? Mathf.Clamp(_localStormFactor, 0.0f, 1.0f) : 0.0f;
+    public float GetCameraStormLevel() => Enabled ? Mathf.Min(Mathf.Clamp(_localStormFactor, 0.0f, 1.0f) + _cameraMegastormDarkness, 1.0f) : 0.0f;
+
+    /// <summary>Extended storm level L = D + E at the camera (up to 2 inside a megastorm); equals <see cref="GetCameraStormLevel"/> without one.</summary>
+    public float GetCameraStormLevelExtended() => Enabled ? Mathf.Clamp(_localStormFactor, 0.0f, 1.0f) + _cameraMegastormDarkness : 0.0f;
+
+    /// <summary>Megastorm darkness term E at the camera (0..1, exactly 0 without a megastorm).</summary>
+    public float GetCameraMegastormDarkness() => _cameraMegastormDarkness;
+
+    /// <summary>Extra darkness E' = max(L - 1, 0) beyond the ordinary storm ceiling at the camera, with L from the map twin (<see cref="GetStormLevelAt"/>) at the
+    /// camera position; exactly 0 without megastorm darkness at the camera.</summary>
+    public float GetCameraMegastormExtra() => _cameraMegastormDarkness > 0.0f ? Mathf.Clamp(_cameraMegastormExtraMap, 0.0f, 1.0f) : 0.0f;
+    private float _cameraMegastormExtraMap;
+
+    /// <summary>K(E') = 1 - (1 - k_min_eff) E' at the camera: exactly 1 without a megastorm or while storm light is invalid.</summary>
+    public float GetCameraDarknessMultiplier()
+    {
+        if (!_stormPublishedValid) return 1.0f;
+        float k = MegastormModel.DarknessMultiplier(GetCameraMegastormExtra(), _megastormDarknessFloor);
+        return k + (1.0f - k) * _megastormFlash; // a lightning flash lifts the darkness (ring_storm_darkness); exactly k without a flash
+    }
+
+    /// <summary>
+    /// Light factor for the near rain veil (RingLocalWeatherEffects.RainFog), which is lit by its tint alone. Under the megastorm the veil in-scatters the
+    /// darkened sky, so it takes the sky rule (1 - 0.97 s D') x K, blended in by the megastorm darkness E at the camera so it is exactly 1 without one
+    /// (ordinary storms keep their veil). 1 while storm light is invalid.
+    /// </summary>
+    public float GetMegastormRainVeilFactor()
+    {
+        if (!_stormPublishedValid || _cameraMegastormDarkness <= 0.0f) return 1.0f;
+        float sky = 1.0f - 0.97f * Mathf.Clamp(StormDarkness, 0.0f, 1.0f) * GetCameraStormLevel();
+        return GetCameraDarknessMultiplier() * Mathf.Lerp(1.0f, sky, Mathf.Clamp(_cameraMegastormDarkness, 0.0f, 1.0f));
+    }
+
+    /// <summary>Megastorm darkness flash (0..1): the active bolt's pulse x proximity (RingLocalWeatherEffects), published by day_side_atmosphere.gd as
+    /// ringworld_storm_light_mega.z. It lifts K toward 1 while it lasts; it has no effect where K is 1 (every ordinary storm).</summary>
+    public void SetMegastormFlash(float flash) => _megastormFlash = float.IsFinite(flash) ? Mathf.Clamp(flash, 0.0f, 1.0f) : 0.0f;
+    public float GetMegastormFlash() => _megastormFlash;
+    private float _megastormFlash;
+
+    /// <summary>Effective darkness floor k_min_eff (day_side_atmosphere.gd: 0.06 by day rising to 0.40 at night).</summary>
+    public float MegastormDarknessFloor => _megastormDarknessFloor;
+
+    /// <summary>Debug / perf A-B only (tools/megastorm_darkness_capture.gd darkperf): treats the megastorm darkness scale as 0 (E = 0 in the macro map and the
+    /// analytic receivers, K = 1, no eye lock). Not a setting.</summary>
+    public static bool DebugMegastormDarknessOff { get; set; }
+    public void SetDebugMegastormDarknessOff(bool off) => DebugMegastormDarknessOff = off;
+
+    public void SetMegastormDarknessFloor(float kMinEff)
+        => _megastormDarknessFloor = float.IsFinite(kMinEff) ? Mathf.Clamp(kMinEff, 0.0f, 1.0f) : 0.06f;
 
     /// <summary>True while the storm-light globals carry a published map (receivers read D); false = every receiver reads D = 0.</summary>
     public bool IsStormLightValid() => _stormPublishedValid;
 
     /// <summary>Ambient multiplier A(D) = 1 - 0.55 * strength * D at the camera (1 while storm light is invalid). Shared with the StandardMaterial3D tint.</summary>
     public float GetStormAmbientAtCamera()
-        => _stormPublishedValid ? 1.0f - 0.55f * Mathf.Clamp(StormDarkness, 0.0f, 1.0f) * GetCameraStormLevel() : 1.0f;
+        => _stormPublishedValid ? (1.0f - 0.55f * Mathf.Clamp(StormDarkness, 0.0f, 1.0f) * GetCameraStormLevel()) * GetCameraDarknessMultiplier() : 1.0f;
 
     /// <summary>How far eye adaptation is pulled from its maximum sensitivity toward its minimum: shadow-fade F(D at the camera) times the darkness strength (0 while invalid).</summary>
     public float GetStormEyeCap()

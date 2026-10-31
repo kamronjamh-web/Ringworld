@@ -184,4 +184,93 @@ public partial class MegastormCapture : RefCounted
         if (driver == null) return "strip=none";
         return $"strip valid={driver.Get("valid").AsBool()} builds={driver.Get("builds_completed").AsInt64()} real={driver.Get("real_texture").AsBool()}";
     }
+
+    // ---- Lightning scythes (WO12) ----
+    private MegastormScythe _pick;
+    private double _pickAround, _pickAcross, _pickHeight, _pickYaw, _pickOffsetAround, _pickOffsetAcross;
+    private readonly ScythePoint[] _pickPoints = new ScythePoint[16];
+    private int _pickN;
+
+    /// <summary>
+    /// Picks a scythe of the (triggered, placed) megastorm that starts within <paramref name="searchSeconds"/> of now and attaches within 14 km of the camera
+    /// (the <paramref name="skip"/>-th longest-ish one), and works out a standing pose <paramref name="distanceMeters"/> from the middle of its sheet, 2 m above
+    /// the ground, looking at it. <paramref name="yawAcrossSign"/> (+1 or -1) is the harness's yaw sense toward +across.
+    /// </summary>
+    public bool PickScythe(Node world, double distanceMeters, double yawAcrossSign, double searchSeconds, int skip)
+    {
+        try
+        {
+            RingMegastorm node = Node(world);
+            MegastormModel m = node.Model;
+            double now = Clouds(world).CloudSimulationTimeSeconds, c = m.Settings.CircumferenceMeters, w = m.Settings.WidthMeters;
+            RingCanonicalPosition cam = Camera(world);
+            var list = new System.Collections.Generic.List<MegastormScythe>();
+            MegastormScythes.ScythesInWindow(m, now, now + searchSeconds, cam.AroundMeters, cam.AcrossMeters, 14000.0, RingworldTechDemo.Lightning.LightningVisualPolicy.NaturalStrikeChanceScale, list);
+            var good = new System.Collections.Generic.List<MegastormScythe>();
+            foreach (MegastormScythe candidate in list) if (candidate.LengthMeters >= 3200.0f && candidate.WidthMeters >= 90.0f && candidate.LifetimeSeconds >= 1.6f && candidate.AttachAcrossMeters > 12000.0 && candidate.AttachAcrossMeters < w - 12000.0) good.Add(candidate);
+            if (good.Count <= skip) { ErrorText = $"no scythe to pick ({list.Count} in the window, {good.Count} usable)"; return false; }
+            _pick = good[skip];
+            ScythePoint[] points = _pickPoints;
+            Func<double, double, double>? surface = Clouds(world).CreateSurfaceHeightSampler();
+            int n = _pickN = MegastormScythes.PathPoints(m, _pick, surface != null ? (a, z) => MegastormScythes.SmoothedGround(surface, a, z) : null, points);
+            (double midAround, double midAcross) = MegastormScythes.PositionAt(points, n, _pick, _pick.LengthMeters * 0.5f, c);
+            double fx = _pick.Direction * Math.Cos(_pick.HeadingRadians), fz = Math.Sin(_pick.HeadingRadians);
+            double nx = -fz, nz = fx;                         // perpendicular in (around, across) is (-fz, fx) up to sign
+            double sign = midAcross + nz * distanceMeters < w - 3000.0 && midAcross + nz * distanceMeters > 3000.0 ? 1.0 : -1.0;
+            _pickAround = MegastormModel.WrapPositive(midAround + nx * sign * distanceMeters, c);
+            _pickAcross = midAcross + nz * sign * distanceMeters;
+            Func<double, double, double>? ground = Clouds(world).CreateSurfaceHeightSampler();
+            _pickHeight = (ground != null ? ground(_pickAround, _pickAcross) : 0.0) + 2.0;
+            _pickOffsetAround = MegastormModel.WrapSigned(_pickAround - cam.AroundMeters, c);
+            _pickOffsetAcross = _pickAcross - cam.AcrossMeters;
+            _pickYaw = Math.Atan2(yawAcrossSign * (midAcross - _pickAcross), MegastormModel.WrapSigned(midAround - _pickAround, c));
+            return true;
+        }
+        catch (Exception error) { ErrorText = error.ToString(); return false; }
+    }
+    /// <summary>World position of the picked sheet at a path fraction (0 attachment, 1 end), at its mid thickness.</summary>
+    public Vector3 PickWorld(Node world, double fraction)
+    {
+        var grid = world.GetNode<RingworldTechDemo.Voxel.Phase2.VoxelChunkGridManager>("ChunkGridManager");
+        double c = Node(world).Model.Settings.CircumferenceMeters;
+        float d = (float)(_pick.LengthMeters * fraction);
+        (double a, double z) = MegastormScythes.PositionAt(_pickPoints, _pickN, _pick, d, c);
+        int i = Math.Clamp((int)Math.Round(fraction * (_pickN - 1)), 0, _pickN - 1);
+        return grid.CaptureLodGeometrySnapshot().CanonicalToWorld(a, _pickPoints[i].LowerEdgeMeters + 0.5 * _pick.ThicknessMeters, z);
+    }
+    public void SetReducedFlashes(bool reduced) => RingworldTechDemo.Lightning.LightningVisualPolicy.Apply(1.0f, 1.0f, reduced);
+    public long PickId() => _pick.Id;
+    public int PickStrokeCount(Node world)
+    {
+        Span<float> times = stackalloc float[8], amps = stackalloc float[8];
+        return MegastormScythes.StrokeTimes(Node(world).Model, _pick, times, amps);
+    }
+    public string DescribeScythes(Node world, Vector3 camera) => world.GetNodeOrNull<RingMegastormScythes>("MegastormScythes")?.DescribeActive(camera) ?? "";
+    public double PickStart() => _pick.StartTimeSeconds;
+    public double PickLife() => _pick.LifetimeSeconds;
+    public double PickTipSeconds() => _pick.LengthMeters / _pick.TipSpeedMetersPerSecond;
+    public double PickOffsetAround() => _pickOffsetAround;
+    public double PickOffsetAcross() => _pickOffsetAcross;
+    public double PickHeight() => _pickHeight;
+    public double PickYaw() => _pickYaw;
+    /// <summary>Seconds after the start of the k-th return stroke of the picked scythe.</summary>
+    public double PickStrokeAge(Node world, int k)
+    {
+        Span<float> times = stackalloc float[8], amps = stackalloc float[8];
+        int n = MegastormScythes.StrokeTimes(Node(world).Model, _pick, times, amps);
+        return times[Math.Min(k, n - 1)];
+    }
+    public string PickInfo() => $"id={_pick.Id} start={_pick.StartTimeSeconds:F2} len={_pick.LengthMeters:F0} width={_pick.WidthMeters:F0} thick={_pick.ThicknessMeters:F1} life={_pick.LifetimeSeconds:F2} strokes={_pick.StrokeCount} points={_pick.PointCount}";
+    public void SetScythesEnabled(Node world, bool enabled)
+    {
+        var s = world.GetNodeOrNull<RingMegastormScythes>("MegastormScythes");
+        if (s != null) s.Enabled = enabled;
+    }
+    public double ScythesProcessMicros(Node world) => world.GetNodeOrNull<RingMegastormScythes>("MegastormScythes")?.ProcessMicrosAverage ?? -1.0;
+    public void SetClockTo(Node world, double t) => Clouds(world).CloudSimulationTimeSeconds = t;
+    public string ScytheState(Node world)
+    {
+        var s = world.GetNodeOrNull<RingMegastormScythes>("MegastormScythes");
+        return s == null ? "no node" : s.GetScytheDiagnostics().ToString();
+    }
 }

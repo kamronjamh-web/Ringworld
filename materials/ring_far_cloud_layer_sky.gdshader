@@ -30,6 +30,8 @@ uniform float far_layers_sun_gain = 1.0;
 uniform float far_layers_ambient_gain = 1.0;
 // Deck colour (S6 3.8, mirrors the near RING_LAYER_DECK_COLOUR): 1 moves an overcast deck's ambient chroma toward the sun + sky irradiance, 0 = off.
 uniform float far_layers_deck_colour = 1.0;
+// The natural S6 layer march (volumetric layers + cirrus). Off by default (perf pass pending; +0.4-0.7 ms far GPU); the megastorm parts stay.
+uniform bool far_layers_natural_enabled = false;
 global uniform mat4 ring_far_cloud_lights;
 global uniform vec4 ring_far_cloud_ambient;
 #include "res://materials/ring_atmosphere.gdshaderinc"
@@ -169,7 +171,8 @@ void fragment() {
 		t_ci = c_ci.x > 0.0 ? c_ci.x : c_ci.y;
 		if (t_ci < t_start || t_ci > t_terrain || far_near_complement(t_ci) <= 0.0) t_ci = -1.0;
 	}
-	if (t_end <= t_start) { ta = 1e30; tb = -1.0; }
+	if (t_end <= t_start || !far_layers_natural_enabled) { ta = 1e30; tb = -1.0; }
+	if (!far_layers_natural_enabled) t_ci = -1.0;
 
 	// Megastorm beyond the disk fade: its T / P coverage alone (the natural layers there are the whole-ring shell's), fading in as the
 	// volumetric layers fade out. The wedge of the coverage table's xi range, bowed by at most bow + meander.

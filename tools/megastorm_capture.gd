@@ -10,7 +10,11 @@ extends SceneTree
 # The camera stays at the StormAnvilCapture base position (420 m, terrain stays streamed); the megastorm (fully formed, +around) is moved
 # relative to it by rewriting its anchor (MegastormCapture.SetXi), with clocks paused. yaw 0 = +around = the wall's travel direction, so
 # the wall is behind the camera (yaw pi) when the camera is ahead of it (xi < 0).
+#       [--scythe-km=<km> (1): stand this far from the picked scythe] [--scythe-skip=<n> (0)] [--yaw-across-sign=<+1|-1> (1)] [--scythe-frames=<n> (cover the life + 0.4 s at 30 fps)]
 # Shots:
+#   scythe    WO12: the storm placed 12 km behind the camera's xi, a usable scythe picked from the pure stream, the camera standing --scythe-km from the middle
+#             of its sheet, 2 m up, looking at it: stills at the first return stroke, the second stroke and the end of the sweep, a 30 fps sequence over
+#             the life (scythe/frame%08d.png) and the scorch line at +8 s and +25 s. Use --cycle=0.1 for night.
 #   inside    xi +10 km: up (pitch 80), forward (yaw 0 = towards the leading edge, pitch 8), back (yaw pi, pitch 8)
 #   leading   xi -1.5 km, under the anvil just ahead of the shelf: towards the wall (yaw pi) pitch 15 and 40, straight up (85)
 #   ahead15   xi -15 km: towards the wall, pitch 3 and 15
@@ -186,6 +190,83 @@ func _shoot(shot: String):
 			await _save("inside_forward")
 			await _view(10000.0, PI, 8.0, BASE_H, 60)
 			await _save("inside_back")
+		"scythe":
+			var km: float = float(_arg("scythe-km", "1"))
+			var tag: String = "scythe_%dkm" % int(km)
+			if _arg("reduced-flashes", "") != "": mega.SetReducedFlashes(true)
+			mega.SetXi(world, -12000.0)
+			if not mega.PickScythe(world, km * 1000.0, float(_arg("yaw-across-sign", "1")), 90.0, int(_arg("scythe-skip", "0"))):
+				_fail(mega.ErrorText)
+				return
+			print("MEGASTORM_CAPTURE pick ", mega.PickInfo(), " offset_around=", mega.PickOffsetAround(), " offset_across=", mega.PickOffsetAcross(), " yaw=", mega.PickYaw())
+			var start: float = float(mega.PickStart())
+			if _arg("scythes-off", "") != "": mega.SetScythesEnabled(world, false)
+			mega.SetClockTo(world, start - 1.0)
+			var cam_h: float = float(mega.PickHeight()) + float(_arg("cam-up", "10"))
+			var yaw: float = float(mega.PickYaw())
+			helper.PlaceCameraAt(world, mega.PickOffsetAround(), mega.PickOffsetAcross(), cam_h, yaw, 3.0)
+			await create_timer(25.0).timeout
+			await _frames(settle)
+			# Aim: the harness yaw / pitch senses are not assumed; turn by the measured camera-frame error to the sheet's middle, flipping an axis that got worse.
+			var cam_pitch := 3.0
+			var last_x := 99.0
+			var last_y := 99.0
+			var flip_x := 1.0
+			var flip_y := 1.0
+			for it in 6:
+				var cam: Camera3D = root.get_viewport().get_camera_3d()
+				var target: Vector3 = mega.PickWorld(world, 0.5)
+				var dv: Vector3 = cam.global_transform.affine_inverse() * target
+				var err_yaw: float = atan2(dv.x, -dv.z)
+				var err_pitch: float = atan2(dv.y, sqrt(dv.x * dv.x + dv.z * dv.z))
+				print("MEGASTORM_CAPTURE aim it=", it, " yaw_err_deg=", rad_to_deg(err_yaw), " pitch_err_deg=", rad_to_deg(err_pitch), " dist=", dv.length())
+				if it > 0 and absf(err_yaw) > absf(last_x) * 1.2: flip_x = -flip_x
+				if it > 0 and absf(err_pitch) > absf(last_y) * 1.2: flip_y = -flip_y
+				last_x = err_yaw
+				last_y = err_pitch
+				yaw -= err_yaw * flip_x
+				cam_pitch += rad_to_deg(err_pitch) * flip_y
+				helper.PlaceCameraAt(world, mega.PickOffsetAround(), mega.PickOffsetAcross(), cam_h, yaw, clampf(cam_pitch, -60.0, 60.0))
+				await _frames(20)
+			var life: float = float(mega.PickLife())
+			var seq_dir: String = out_dir + "/" + tag
+			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(seq_dir))
+			var steps: int = int(_arg("scythe-frames", str(int((life + 0.5) * 30.0))))
+			var t0: float = start - 0.1
+			var saved := {}
+			for i in steps:
+				var t: float = t0 + float(i) / 30.0
+				mega.SetClockTo(world, t)
+				await _frames(2)
+				await _save_frame(seq_dir, i)
+				if i == 1 or i == steps - 1: print("MEGASTORM_CAPTURE ", tag, " frame ", i, " ", mega.ScytheState(world))
+			var tip: float = float(mega.PickTipSeconds())
+			var nstrokes: int = int(mega.PickStrokeCount(world))
+			var k_mid := nstrokes - 1
+			var k_late := 0
+			for ks in nstrokes:
+				var sa: float = float(mega.PickStrokeAge(world, ks))
+				if sa >= 0.55 * tip and k_mid == nstrokes - 1: k_mid = ks
+				if sa < life - 0.5: k_late = ks
+			var stills := {"stroke_first": float(mega.PickStrokeAge(world, 0)) + 0.03, "stroke_mid": float(mega.PickStrokeAge(world, k_mid)) + 0.03, "stroke_late": float(mega.PickStrokeAge(world, k_late)) + 0.03}
+			mega.SetClockTo(world, start - 0.05)
+			await _frames(2)
+			for k in stills:
+				mega.SetClockTo(world, start + float(stills[k]))
+				await _frames(3)
+				await _save(tag + "_" + k)
+				var dcam: Camera3D = root.get_viewport().get_camera_3d()
+				print("MEGASTORM_CAPTURE ", tag, " ", k, " pick_id=", mega.PickId(), " cam=", dcam.global_position, " mid=", mega.PickWorld(world, 0.5), " screen=", dcam.unproject_position(mega.PickWorld(world, 0.5)), " active=", mega.DescribeScythes(world, dcam.global_position))
+			# The scorch strip: step the clock on past the life (the node created it at the start).
+			var after: float = start + life
+			for dt in [8.0, 25.0]:
+				while after < start + dt:
+					after = minf(after + 0.5, start + dt)
+					mega.SetClockTo(world, after)
+					await _frames(2)
+				await _frames(10)
+				await _save(tag + "_scorch_%ds" % int(dt))
+			print("MEGASTORM_CAPTURE ", tag, " end ", mega.ScytheState(world))
 		"leading":
 			await _view(-1500.0, PI, 15.0)
 			await _save("leading_p15")
@@ -421,6 +502,34 @@ func _shoot(shot: String):
 					await create_timer(float(_arg("perf-seconds", "8"))).timeout
 					print("MEGASTORM_CAPTURE farperf ", v[2], " ", case, " ", mega.FarPerfEnd(world))
 				mega.SetFarPassSuppressed(world, false)
+		"scythe_perf":
+			# WO12 perf: the camera 1 km from a scythe, the weather clock advancing 1/60 s per frame (the stream runs), the node off / on / off / on / off.
+			mega.SetXi(world, -12000.0)
+			if not mega.PickScythe(world, 1000.0, 1.0, 90.0, 0):
+				_fail(mega.ErrorText)
+				return
+			var pstart: float = float(mega.PickStart())
+			mega.SetClockTo(world, pstart - 2.0)
+			var pyaw: float = float(mega.PickYaw())
+			helper.PlaceCameraAt(world, mega.PickOffsetAround(), mega.PickOffsetAcross(), float(mega.PickHeight()) + 30.0, pyaw, 0.0)
+			await create_timer(25.0).timeout
+			await _frames(settle)
+			var pclock: float = pstart - 2.0
+			var secs: int = int(_arg("perf-frames", "600"))
+			var order := ["off", "on", "off", "on", "off"]
+			for w in order:
+				mega.SetScythesEnabled(world, w == "on")
+				await _frames(30)
+				helper.PerfBegin(world)
+				for i in secs:
+					pclock += 1.0 / 60.0
+					mega.SetClockTo(world, pclock)
+					await process_frame
+				print("MEGASTORM_CAPTURE scythe_perf ", w, " ", helper.PerfEnd(world), " node_us=", mega.ScythesProcessMicros(world), " ", mega.ScytheState(world))
+			mega.SetScythesEnabled(world, true)
+			world.get_node("RingMegastorm").call("remove_megastorm")
+			await _frames(200)
+			print("MEGASTORM_CAPTURE scythe_perf untriggered node_us=", mega.ScythesProcessMicros(world), " ", mega.ScytheState(world))
 		"perf":
 			var cases := _arg("perf-cases", "clear,natural,inside,leading,clear,natural,inside,leading,clear,natural,inside,leading").split(",")
 			for case in cases:

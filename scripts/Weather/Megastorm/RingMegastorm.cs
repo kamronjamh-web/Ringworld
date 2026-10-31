@@ -18,7 +18,18 @@ public readonly record struct MegastormSample(bool Active, MegastormPhase Phase,
     float SpeedMetersPerSecond, int Direction, long EpisodeId /* passage key for the PDA once-per-approach rules; 0 when inactive */,
     float HumLevel = 0.0f, float WallSingLevel = 0.0f, AirSoundState AirSound = AirSoundState.Silent, float AirGain = 0.0f, float BoomEnvelope = 0.0f,
     float GustSwell = 0.0f, float TremorLevel = 0.0f, float WildlifeQuiet = 0.0f /* audio fields: MegastormSound, docs/megastorm-design.md 5.2; all 0 when inactive */,
-    MegastormHazards Hazards = default /* docs/megastorm-design.md 5.5 (WO10); MegastormHazards.None when inactive */);
+    MegastormHazards Hazards = default /* docs/megastorm-design.md 5.5 (WO10); MegastormHazards.None when inactive */,
+    float ExtraDarkness = 0.0f /* E 0..1, 5.6 */, float DarknessMultiplier = 1.0f /* K = 1 - (1 - k_min_eff) E, 5.6 */);
+
+/// <summary>
+/// Megastorm darkness inputs the bridge writes each frame (docs/megastorm-design.md 5.6) for <see cref="RingMegastorm.Query"/>:
+/// the "Storm darkness" strength and the effective darkness floor k_min_eff (day_side_atmosphere.gd, night-dependent).
+/// </summary>
+public static class MegastormDarknessInputs
+{
+    public static float StormDarkness { get; set; } = 0.9f;
+    public static float DarknessFloor { get; set; } = 0.06f;
+}
 
 /// <summary>
 /// Runtime owner of the megastorm (docs/megastorm-design.md 6.1, WO2): holds the <see cref="MegastormModel"/>, follows the weather clock
@@ -254,12 +265,28 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     public MegastormBoom BoomAt(RingCanonicalPosition p, double t) => MegastormHazardMath.BoomAt(_model, p.AroundMeters, p.AcrossMeters, t);
     public MegastormBoom BoomAt(RingCanonicalPosition p) => BoomAt(p, Now);
 
-    /// <summary>Per-passage scythe cut chance for a body of this height (5.5.4): sweep rate x dt x F(h_eff) x exposure. <paramref name="groundBelowSkimMeters"/> is the local ground depth below the smoothed skim surface (a trench is negative).</summary>
-    public float ScytheCutProbability(RingCanonicalPosition p, float heightAboveGroundMeters, float exposure, double t, double dt, float groundBelowSkimMeters = 0.0f)
+    /// <summary>
+    /// Ground height provider (around, across) for the scythe skim surface; the scene wiring sets the terrain sampler. With one, the cut chance takes the
+    /// ground depth below the 100 m smoothed ground from it; without, a flat ground.
+    /// </summary>
+    public Func<double, double, double>? SurfaceHeightProvider { get; set; }
+
+    /// <summary>
+    /// Per-passage scythe cut chance for a body of this height (5.5.4): sweep rate x dt x F(h_eff) x exposure, the rate scaled like the stream (Lightning
+    /// frequency, Reduced flashes). <paramref name="groundBelowSkimMeters"/> is the depth of the local ground below the smoothed skim surface (a trench is positive, which lowers the effective height);
+    /// NaN (the default) reads it from <see cref="SurfaceHeightProvider"/>, else the cloud layer's terrain sampler (smoothed 100 m minus the local height), 0 without one.
+    /// </summary>
+    public float ScytheCutProbability(RingCanonicalPosition p, float heightAboveGroundMeters, float exposure, double t, double dt, float groundBelowSkimMeters = float.NaN)
     {
         MegastormFrame f = _model.Evaluate(t);
         if (!f.Active) return 0.0f;
-        float rate = MegastormHazardMath.ScytheSweepRatePerSecond(_model.Xi(p.AroundMeters, p.AcrossMeters, t), _model.Settings.WidthMeters) * f.Level;
+        if (float.IsNaN(groundBelowSkimMeters))
+            {
+            Func<double, double, double>? ground = SurfaceHeightProvider ?? _clouds?.CreateSurfaceHeightSampler();
+            groundBelowSkimMeters = ground != null ? MegastormScythes.GroundBelowSkimMeters(ground, p.AroundMeters, p.AcrossMeters) : 0.0f;
+        }
+        float rate = MegastormHazardMath.ScytheSweepRatePerSecond(_model.Xi(p.AroundMeters, p.AcrossMeters, t), _model.Settings.WidthMeters) * f.Level
+            * Lightning.LightningVisualPolicy.NaturalStrikeChanceScale;
         return MegastormHazardMath.ScytheCutProbability(rate, heightAboveGroundMeters, groundBelowSkimMeters, exposure, dt);
     }
 
@@ -282,10 +309,12 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
         if (!s.Active) return new MegastormSample(false, MegastormPhase.Inactive, 0.0, 0.0, double.PositiveInfinity, double.PositiveInfinity, 0.0, 0.0f, 0.0f, 0.0f, _model.State.Direction, 0, Hazards: MegastormHazards.None);
         float speed = _model.SpeedAt(t);
         MegastormSoundSample a = MegastormSound.Evaluate(_model, s.XiMeters, p.AcrossMeters, speed);
+        float darkness = _model.DarknessAt(p.AroundMeters, p.AcrossMeters, t, MegastormDarknessInputs.StormDarkness);
         return new MegastormSample(true, s.Phase, s.XiMeters, s.DistanceToEdgeMeters, s.TimeToArrivalSeconds, s.TimeToClearSeconds, s.TimeSincePassageSeconds,
             s.Danger, s.Suppression, speed, _model.State.Direction, EpisodeId(p.AroundMeters, t),
             a.HumLevel, a.WallSingLevel, a.AirSound, a.AirGain, a.BoomEnvelope, a.GustSwell, a.TremorLevel, a.WildlifeQuiet,
-            MegastormHazardMath.Evaluate(_model, p.AroundMeters, p.AcrossMeters, t, s.XiMeters, _model.Evaluate(t), observer ?? MegastormObserver.Open));
+            MegastormHazardMath.Evaluate(_model, p.AroundMeters, p.AcrossMeters, t, s.XiMeters, _model.Evaluate(t), observer ?? MegastormObserver.Open),
+            darkness, MegastormModel.DarknessMultiplier(darkness, MegastormDarknessInputs.DarknessFloor));
     }
 
     /// <summary>

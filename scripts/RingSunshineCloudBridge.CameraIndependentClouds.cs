@@ -24,6 +24,7 @@ public partial class RingSunshineCloudBridge
 	private static readonly StringName SetStormProfileMapMethod = new("set_storm_profile_map");
 	private static readonly StringName SetMegastormStripMethod = new("set_megastorm_strip");
 	private static readonly StringName SetMegastormFrameMethod = new("set_megastorm_frame");
+	private static readonly StringName SetMegastormDarknessMethod = new("set_megastorm_darkness");
 	private static readonly StringName SetMegastormPrewarmMethod = new("set_megastorm_prewarm");
 	/// <summary>Largest half extent of the baked storm profile map (m): 1024 texels over 2 x this is a 293 m texel, fine enough for mammatus pouches. Storms beyond it fall back to background cloud only.</summary>
 	private const double StormMapMaxHalfExtentMeters = 150000.0;
@@ -532,6 +533,7 @@ public partial class RingSunshineCloudBridge
 			{
 				_megastormFrameActiveApplied = false;
 				_clouds.Call(SetMegastormFrameMethod, 0.0, 0.0, 0.0, 0.0, false);
+				if (_clouds.HasMethod(SetMegastormDarknessMethod)) _clouds.Call(SetMegastormDarknessMethod, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 			}
 			return;
 		}
@@ -546,6 +548,13 @@ public partial class RingSunshineCloudBridge
 		double s = frame.AroundMeters;
 		float sHi = (float)s;
 		_clouds.Call(SetMegastormFrameMethod, (double)sHi, s - sHi, (double)frame.Direction, model.UnwrappedAroundAt(t), !RingMegastorm.DebugReprojectOff);
+		if (_clouds.HasMethod(SetMegastormDarknessMethod))
+		{
+			// Storm-light-driven darkness (5.6): Sunshine applies E per ray from this frame; scale 0 (Storm darkness 0) switches it off.
+			MegastormSettings ms = model.Settings;
+			_clouds.Call(SetMegastormDarknessMethod, DebugMegastormDarknessOff ? 0.0 : (double)MegastormModel.DarknessScale(StormDarkness, frame.Level), ms.WidthMeters, ms.BowMeters,
+				ms.MeanderAmplitudeMeters, ms.MeanderWavelengthMeters, model.MeanderPhaseWrapped(t), model.TrailingEndXi);
+		}
 	}
 
 	/// <summary>

@@ -15,7 +15,8 @@ public readonly record struct RingLightningEvent(
     float Energy,
     float FlashRadiusMeters,
     bool IsPreview,
-    int SystemKind = 3)
+    int SystemKind = 3,
+    bool Scythe = false /* megastorm lightning scythe: this is the attachment strike (docs/megastorm-design.md 5.5.4) */)
 {
     public const double LifetimeSeconds = 0.72;
 
