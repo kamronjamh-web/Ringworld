@@ -42,6 +42,50 @@ Read this first, then `docs/megastorm-design.md` (user decisions at the top, the
 
 Doc order for what remains: WO14 → WO11 + WO12 → WO13 → the far-look pass (user: "after the rest") → WO9.
 
+## Update (2026-10-31, morning): WO11, bolts, haze pass, history fade
+
+Everything below is committed in the checkpoint after `410e942`; all 21 megastorm tests pass. Per-item status blocks are in `docs/megastorm-design.md`.
+
+### Done
+- **WO11 (hazard visuals and audio):**
+  - boom blast (trees and grass thrown, water slam, dust);
+  - the shock distortion composite (its garbage-blocks bug is fixed);
+  - wind-aligned bullet-rain lattice with the lee test and spray;
+  - wake debris moving backwards;
+  - rain-hammer bed, ear pop and the wake low-pass.
+
+  New grave sliders: shock distortion and ear-pop level.
+- **Visible lightning bolts:**
+  - **Root cause:** Sunshine composites over the depth-less bolt mesh.
+  - **Fix:** a post-cloud channel overlay (`RingLightningChannelComposite.gd` / `ring_lightning_channel.glsl`), kind 6 only, attenuated by the cloud in front.
+  - **Look:** jagged fractal channels, tapered branches, gaussian core with a violet glow, distance-scaled widths. GPU cost is within noise.
+
+  Natural bolts still use the old mesh.
+- **Haze pass:**
+  - **WO-A:** one monotonic haze rule shared by terrain and wall, which fixes "the mountain hazed but the wall behind it not" at low morning sun. It also fixes the far-frame tap direction and the double dimming.
+  - **WO-B:** wake fog through the mist path.
+  - **WO-D:** D' = max(D, E) under a megastorm, so the leading 0-5 km and the wake are now very dark as the E table intends. **This changes the WO14 look; the user to judge.**
+  - **WO-C:** the Sunshine flash point light uses a tap-free model plus a clamp, to kill the flash speckle and the dark ellipse. **Evidence is weak**: few tiles caught a flash.
+- **Megastorm history fade:** smoothstep of camera E, slewed at 0.25/s, floor 0.15. About 19% more grain; ghosting reduction not clearly shown at noon.
+- **Grave-menu cloud defaults:** the user's in-game history tuning saved into `resources/clouds/gameplay_cloud_defaults.tres` was reverted to the committed defaults at the user's request.
+- **Nightly scheduled task:** disabled by the user to save weekly usage (`Enable-ScheduledTask 'Ringworld nightly full test run'` to restore). Its last run's 5 failures were load flakes plus 3 unregistered capture tools, which are now registered.
+
+### Waiting on the user
+- **Debris:** the user will check the look in the morning. On the sheets, debris renders flat black even in daylight, and near-camera pieces show as large soft ovals. No fix until they say.
+- **Darker look:** the darker wake and leading edge (WO-D), and the very dark morning approach from the anvil's roughly 90 km shadow at low sun.
+- **Grave slider:** whether to add a "Lightning channel brightness" slider (the tunables are already exported on `LocalWeatherEffects`).
+
+### Not done or open
+- **Perf A-B-A not measured:** WO11 (expected about 0.1 ms distortion in its window) and the haze pass (4 taps × 4 slabs per haze evaluation in the mega branch).
+- **Old D rule:** the rain-streak and wet-map twins still use it.
+- **Far look:** 200-1000 km is untouched.
+- **Speckle check:** a dedicated flash before/after capture should confirm WO-C.
+- **Cleanup by hand:**
+  - `C:\Projects\rw_base`, a HEAD worktree from the haze pass. Its `artifacts\engine-upgrade` is a **junction into the main repo**: delete the junction first (`rmdir C:\Projects\rw_base\artifacts\engine-upgrade`), then `git worktree remove --force C:\Projects\rw_base`.
+  - Profiles `.godot/test_runs/appdata_spawncheck*` (about 2 GB each).
+  - The leftover `%TEMP%\claude\...\scratchpad\wtroot\rw`.
+- **Useful scratch helpers** (session scratchpad, may be gone): `hz_run.ps1` (`-Tree base|main -Label X [-Fixed] <tool args>`), `world_state_backup.json` (the spawncheck pose).
+
 ## Update (2026-10-30, about 23:30)
 
 The three in-flight agents below all finished and were committed in the checkpoint after `014246e`. Status blocks for each are in `docs/megastorm-design.md`.

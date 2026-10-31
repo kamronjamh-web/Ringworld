@@ -514,6 +514,22 @@ ring_ground_tremor={
 "type": "vec4",
 "value": Vector4(0, 9, 0, 0)
 }
+ring_megastorm_blast={
+"type": "vec4",
+"value": Vector4(0, 0, 1.309, 0)
+}
+ring_megastorm_blast_n={
+"type": "vec3",
+"value": Vector3(0, 0, 1)
+}
+ring_megastorm_blast_up={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+ring_megastorm_blast_origin={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
 ring_wet_events={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)

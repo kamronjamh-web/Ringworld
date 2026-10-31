@@ -187,10 +187,10 @@ public static class RingAtmosphereModel
     /// Sets the target weather mist strength M (0..2; the post-rain mist setting included). Quantised to 1/32; a change is published (Revision++, ApplyAll)
     /// at most every 2 s and at most 30 times per 10 minutes (the target is simply retried by the caller's next call). Unless <paramref name="immediate"/>,
     /// each publish moves M at most <see cref="WeatherMistMaxStepsPerPublish"/> steps toward the target, so repeated calls ramp smoothly instead of popping;
-    /// <paramref name="immediate"/> jumps straight to the quantised target (still rate-limited). Returns true when it published.
+    /// <paramref name="maxStepsPerPublish"/> overrides that per-publish step limit (the megastorm wake fog uses 4). <paramref name="immediate"/> jumps straight to the quantised target (still rate-limited). Returns true when it published.
     /// <paramref name="nowSeconds"/> is any monotonic clock.
     /// </summary>
-    public static bool SetWeatherMist(float strength, double nowSeconds, bool immediate = false)
+    public static bool SetWeatherMist(float strength, double nowSeconds, bool immediate = false, int maxStepsPerPublish = WeatherMistMaxStepsPerPublish)
     {
         float m = float.IsFinite(strength) ? Mathf.Clamp(strength, 0.0f, 2.0f) : 0.0f;
         m = Mathf.Round(m / WeatherMistStep) * WeatherMistStep;
@@ -205,7 +205,7 @@ public static class RingAtmosphereModel
         if (!immediate)
         {
             int cur = (int)MathF.Round(WeatherMist / WeatherMistStep), tgt = (int)MathF.Round(m / WeatherMistStep);
-            m = (cur + Math.Clamp(tgt - cur, -WeatherMistMaxStepsPerPublish, WeatherMistMaxStepsPerPublish)) * WeatherMistStep;
+            m = (cur + Math.Clamp(tgt - cur, -Math.Max(1, maxStepsPerPublish), Math.Max(1, maxStepsPerPublish))) * WeatherMistStep;
         }
         WeatherMist = m;
         WeatherMistAddedSigma = WeatherMistSigmaPerStrength * m;

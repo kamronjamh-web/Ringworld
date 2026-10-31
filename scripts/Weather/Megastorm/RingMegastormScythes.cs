@@ -54,6 +54,39 @@ public partial class RingMegastormScythes : Node
         public Vector3 LastOrigin = new(float.NaN, 0, 0);
         public float Distance;
         public ScytheState State;
+        public Vector3[]? CoreWorld;   // channel overlay: world positions of the path points at the core height
+        public Vector3 CoreOrigin = new(float.NaN, 0, 0);
+    }
+
+    /// <summary>One scythe core line for the post-cloud lightning channel overlay (RingLocalWeatherEffects.LightningChannels.cs). Points is a reused buffer, valid for Count entries until the next call.</summary>
+    public readonly record struct ChannelCore(Vector3[] Points, int Count, float TipFraction, float Intensity, float LengthMeters, long Id);
+
+    public static RingMegastormScythes? Instance { get; private set; }
+
+    /// <summary>Clears <paramref name="output"/> and adds one core per visible, pulsing scythe. World points refresh only when the floating origin moved.</summary>
+    public int CopyChannelCores(List<ChannelCore> output)
+    {
+        output.Clear();
+        if (_grid == null) return 0;
+        RingLodGeometrySnapshot geometry = default;
+        bool haveGeometry = false;
+        foreach (ActiveScythe a in _active)
+        {
+            float intensity = a.State.Pulse * a.S.Energy;
+            // Kept while visible even between strokes (intensity 0 is culled on the GPU), so a core does not leave and re-enter the set, which would
+            // force a segment rebuild on every stroke gap.
+            if (!a.State.Visible || !(intensity >= 0.0f) || a.N < 2 || a.S.LengthMeters <= 0.0f) continue;
+            a.CoreWorld ??= new Vector3[MegastormScythes.MaxPoints];
+            if (!a.CoreOrigin.IsEqualApprox(a.LastOrigin) || float.IsNaN(a.CoreOrigin.X))
+            {
+                if (!haveGeometry) { geometry = _grid.CaptureLodGeometrySnapshot(); haveGeometry = true; }
+                for (int i = 0; i < a.N; i++)
+                    a.CoreWorld[i] = geometry.CanonicalToWorld(a.Points[i].AroundMeters, a.Points[i].LowerEdgeMeters + 0.5 * a.S.ThicknessMeters, a.Points[i].AcrossMeters);
+                a.CoreOrigin = a.LastOrigin;
+            }
+            output.Add(new ChannelCore(a.CoreWorld, a.N, a.State.TipDistanceMeters / a.S.LengthMeters, intensity, a.S.LengthMeters, a.S.Id));
+        }
+        return output.Count;
     }
 
     private sealed class ScorchStrip
@@ -139,6 +172,7 @@ public partial class RingMegastormScythes : Node
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridPath);
         _clouds = GetNodeOrNull<RingVolumetricCloudLayer>(CloudPath);
         _bridge = GetNodeOrNull<RingSunshineCloudBridge>(BridgePath);
+        Instance = this;
     }
 
     /// <summary>Exponential average (about 60 frames) of this node's own _Process time in microseconds, for the perf captures.</summary>
@@ -163,7 +197,7 @@ public partial class RingMegastormScythes : Node
         Step(_megastorm.Now, observer.Value);
     }
 
-    public override void _ExitTree() => ClearAll();
+    public override void _ExitTree() { if (Instance == this) Instance = null; ClearAll(); }
 
     /// <summary>One update at weather time <paramref name="now"/>; public so a test or capture can drive it.</summary>
     public void Step(double now, RingCanonicalPosition observer)

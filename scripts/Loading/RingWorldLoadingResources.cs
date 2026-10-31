@@ -79,7 +79,8 @@ public partial class RingWorldLoadingResources : Node
         "res://scripts/render/RingPrecipOcclusionCapture.gd",
         "res://scripts/render/RingRainHazeComposite.gd",
         "res://scripts/render/RingRainStreaksComposite.gd",
-        "res://scripts/render/RingRainbowComposite.gd"
+        "res://scripts/render/RingRainbowComposite.gd",
+        "res://scripts/render/RingLightningChannelComposite.gd"
     };
     private readonly Dictionary<string, Resource> _retained = new(StringComparer.Ordinal);
     private readonly RingThreadedResourceClaims _claims = new();

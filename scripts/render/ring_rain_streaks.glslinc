@@ -34,6 +34,13 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 	vec4 sun;           // rgb: direct sun radiance (colour x energy x cloud transmittance, daylight applied), w: megastorm k_min_eff (ringworld_storm_light_mega.x; 1 = no darkening)
 	vec4 storm;         // S3 arrival: x fat drop weight, y core weight, z trailing weight, w severity
 	vec4 hail;          // S3 hail: x intensity, y size 0..1, z near hail fall phase (m), w mid hail fall phase (m)
+	vec4 mega;          // megastorm bullet rain (WO11): x 1 = wind-aligned lattice mode, y time (s, wrapped), z windward spray amount 0..1, w spray fleck count
+	vec4 mega_u;        // xyz: unit horizontal axis perpendicular to the travel, w: near base cell i
+	vec4 mega_v;        // xyz: unit axis perpendicular to the travel and u, w: near base cell j
+	vec4 mega_t;        // xyz: unit direction of travel of a drop, w: path speed (m/s)
+	vec4 mega_near_o;   // xyz: world corner of the near aligned base cell on the plane through the observer perpendicular to the travel, w: near path phase (m)
+	vec4 mega_mid_o;    // xyz: same for the mid lattice, w: mid path phase (m)
+	vec4 mega_cells;    // x: mid base cell i, y: mid base cell j
 } F;
 layout(set = 0, binding = 2) uniform sampler2D gust_tex;
 layout(set = 0, binding = 3) uniform sampler2D occ_map;

@@ -8,7 +8,7 @@
 // holds an around coordinate of the ring's size. xi = x - lead(across) (ring_megastorm_lead_offset). Everything is physical metres.
 //
 // Include after ring_atmosphere.gdshaderinc (ring_radius_meters) and ring_megastorm_profile.gdshaderinc, with the global ring_far_cloud_lights
-// declared (far_ms_path_shade reads the sun from it).
+// declared (far_ms_shade_at callers read the sun from it).
 #ifndef RING_FAR_MEGASTORM_GEOMETRY_GDSHADERINC
 #define RING_FAR_MEGASTORM_GEOMETRY_GDSHADERINC
 
@@ -198,7 +198,7 @@ void far_ms_column(float x, float across, RingMegastormParams p, out vec4 height
 		raw.z, raw.z + max(raw.w - raw.z, 0.0) * clamp(1.25 * aux.x * sculpt, 0.0, 1.0));
 }
 
-// ring_megastorm_shade_at (RingStormProfileSample.glslinc): how much of the sun the megastorm column shades at the ray point t (the column
+// the strip-based sun shade (removed from the march; ring_megastorm_air_shade_ray replaced it for the haze): how much of the sun the megastorm column shades at the ray point t (the column
 // 2.5 km up the sun ray, overhead when the sun is low). 0 outside the strip x range and when the sun is absent or below the local horizon.
 float far_ms_shade_at(RingFarMsRay ray, float t, vec3 L, vec3 up_at_t, RingMegastormParams p) {
 	float sun_up = dot(L, up_at_t);
@@ -220,20 +220,5 @@ float far_ms_shade_at(RingFarMsRay ray, float t, vec3 L, vec3 up_at_t, RingMegas
 	return 1.0 - exp(-FAR_MS_SUN_EXTINCTION * overlap / max(sun_up, 0.06));
 }
 
-
-// ring_megastorm_path_shade: the mean of far_ms_shade_at at the centres of four equal pieces of the path to t_mean (from the camera).
-float far_ms_path_shade(RingFarMsRay ray, vec2 u, float t_mean, RingMegastormParams p) {
-	vec4 ld = ring_far_cloud_lights[0];
-	if (ld.w < 0.5) return 0.0;
-	vec3 L = normalize(ld.xyz);
-	float shade = 0.0;
-	for (int k = 0; k < 4; k++) {
-		float t = t_mean * (0.125 + 0.25 * float(k));
-		vec2 radial = (ray.rc + t * ray.dr) * u + (t * ray.dt) * vec2(-u.y, u.x);
-		vec2 n = normalize(radial);
-		shade += far_ms_shade_at(ray, t, L, vec3(-n.x, 0.0, -n.y), p);
-	}
-	return 0.25 * shade;
-}
 
 #endif

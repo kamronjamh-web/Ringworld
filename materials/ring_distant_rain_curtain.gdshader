@@ -53,9 +53,15 @@ void fragment() {
 		/ max(0.001, storm_weight(storm_offset)), 0.0, 1.0);
 	float effective_day = ringworld_effective_solar_day(geometric_day) * clamp(sun_energy, 0.0, 1.0);
 	ALBEDO = rain_tint.rgb * mix(0.035, 0.65, effective_day);
-	// Megastorm darkness (docs/megastorm-design.md 5.6): a curtain inside the megastorm takes the darkness K where it stands. One uniform branch; nothing
+	// Megastorm darkness (docs/megastorm-design.md 5.6): a curtain inside the megastorm takes the darkness where it stands. One uniform branch; nothing
 	// changes without a megastorm (K = 1 for every ordinary storm).
-	if (ring_storm_mega_active()) ALBEDO *= ring_storm_darkness(ring_storm_level(v_world));
+	if (ring_storm_mega_active()) {
+		// The near rain veil's rule (bridge GetMegastormRainVeilFactor): a curtain standing in the megastorm's darkness takes the sky rule on D and K on L, so
+		// curtains under the wall go near black like the veil.
+		vec2 de = ring_storm_terms(v_world);
+		float level = de.x + de.y;
+		ALBEDO *= mix(1.0, 1.0 - 0.97 * ringworld_storm_light.x * min(level, 1.0), clamp(de.y, 0.0, 1.0)) * ring_storm_darkness(level);
+	}
 	float edge = smoothstep(0.0, 0.2, UV.x) * smoothstep(0.0, 0.2, 1.0 - UV.x)
 		* smoothstep(0.0, 0.16, UV.y) * smoothstep(0.0, 0.12, 1.0 - UV.y);
 	// Within range of the precipitation occlusion map (about 128 m) a curtain does not draw under a roof, POI overhang or cave ceiling; elsewhere exposure is 1 (S1 WO7).

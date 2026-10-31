@@ -25,6 +25,8 @@ public partial class RingLiveTuningDrawer
         AddMegastormNumber(group, "TrailingLengthKm", "Megastorm trailing length (km)", 1, "Length of the trailing rain behind the wall. The whole pass is 50 km plus this (390 km by default).");
         AddMegastormNumber(group, "WarningReachKm", "Megastorm warning reach (km)", 1, "How early the world warns: the precursor sky extent and the ground-hum stages (hum from 10x this distance, water and wildlife at 2x).");
         AddMegastormNumber(group, "SoundVolumeDb", "Megastorm sound volume (dB)", 0.5, "Level of the megastorm's own sound: the ground hum, the singing walls, the edge boom and the roar. The weather volumes above it are separate.");
+        AddMegastormNumber(group, "ShockDistortion", "Megastorm shock distortion", 0.05, "Strength of the screen-space refraction band that sweeps in with the boom, 0 = off. Reduced flashes (Lighting tab) damps it further.");
+        AddMegastormNumber(group, "EarPopLevel", "Megastorm ear pop level", 0.05, "Level of the cosmetic ear pop when the air pressure drops into the wake behind the wall, 0 = off.");
         AddMegastormNumber(group, "SpawnDistanceKm", "Spawn distance ahead (km)", 1, "Debug spawn: how far ahead of you, in the direction you face, \"Spawn megastorm\" places the wall edge. It arrives at the speed above, fully formed.");
         var spawnRow = new HBoxContainer();
         var spawn = new Button { Name = "MegastormSpawn", Text = "Spawn megastorm", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };

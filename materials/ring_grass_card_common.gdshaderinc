@@ -54,6 +54,11 @@ vec3 grass_card_tip_displacement(vec3 root, vec3 up, float height, float flexibi
 		lateral *= grass_texture_gust(root);
 	}
 	if (length(lateral) > lateral_limit) lateral *= lateral_limit / length(lateral);
+	if (ring_megastorm_blast.x > 0.0) {
+		// Megastorm blast (WO11): the front lays the blade over along the direction of travel.
+		float blast_bend = ring_megastorm_blast_bend(root);
+		if (blast_bend > 0.0) lateral = mix(lateral, ring_megastorm_blast_dir(up) * (height * .9), blast_bend);
+	}
 	vec3 total = lateral + grass_interaction_lateral(root, up, height);
 	short_coeff = min(height * .20, dot(total, total) / max(height * 1.45, .05));
 	return total;

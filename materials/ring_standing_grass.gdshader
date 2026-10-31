@@ -243,6 +243,11 @@ void vertex() {
 		lateral *= grass_texture_gust(root);
 	}
 	if (length(lateral) > lateral_limit) lateral *= lateral_limit / length(lateral);
+	if (ring_megastorm_blast.x > 0.0) {
+		// Megastorm blast (WO11): the front lays the blade over along the direction of travel.
+		float blast_bend = ring_megastorm_blast_bend(root);
+		if (blast_bend > 0.0) lateral = mix(lateral, ring_megastorm_blast_dir(up) * (height * .9), blast_bend);
+	}
 	vec3 curve_world = side * ((curve - .5) * height * .34);
 	// Each dense ribbon starts with a real height-scaled lean through its face
 	// plane. Tint supplies a deterministic signed variation without new payload.

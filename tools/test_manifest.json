@@ -476,6 +476,43 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "megastorm_bolt_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "marker": "MEGASTORM_REAL",
+      "expected_s": null,
+      "timeout_s": 900
+    },
+    "megastorm_wo11_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "world": "certified",
+      "marker": "MEGASTORM_CAPTURE",
+      "expected_s": null,
+      "timeout_s": 900
+    },
+    "megastorm_wo11_real": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "marker": "MEGASTORM_REAL",
+      "expected_s": null,
+      "timeout_s": 900
+    },
     "megastorm_darkness_capture": {
       "kind": "tool",
       "mode": "gpu",
@@ -2514,6 +2551,18 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "lightning_channel_segments_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "lightning",
+        "weather"
+      ],
+      "marker": "LIGHTNING_CHANNEL_SEGMENTS_TEST",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
     "lightning_handoff_smoke_test": {
       "kind": "test",
       "mode": "headless",
@@ -2772,6 +2821,31 @@
       ],
       "marker": "MEGASTORM_AUDIO",
       "expected_s": 6,
+      "timeout_s": 120
+    },
+    "megastorm_hazard_fx_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "audio",
+        "wind"
+      ],
+      "marker": "MEGASTORM_HAZARD_FX",
+      "expected_s": 8,
+      "timeout_s": 120
+    },
+    "megastorm_blast_shader_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "wind"
+      ],
+      "marker": "MEGASTORM_BLAST_SHADER",
+      "expected_s": 12,
       "timeout_s": 120
     },
     "megastorm_tremor_shader_gpu_test": {
@@ -3200,6 +3274,18 @@
       ],
       "marker": "POI_HAZE_REGISTRY",
       "expected_s": 2,
+      "timeout_s": 60
+    },
+    "megastorm_history_fade_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "cloud-history"
+      ],
+      "marker": "MEGASTORM_HISTORY_FADE",
+      "expected_s": 1,
       "timeout_s": 60
     },
     "post_rain_mist_test": {

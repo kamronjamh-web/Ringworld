@@ -352,6 +352,8 @@ partials only: no recordings, no downloaded audio and none of the CC0 thunder cl
 | `megastorm_scythe_crackle_1.ogg` | 0.9 s | Lightning-scythe tear (WO12, 5.5.4): a dense burst of sharp 1.5-12 kHz clicks (about 1,100 per second falling to 60) over a short hissing bed, 2-4 low pops, fast decay. One per path segment, each fired at its own d / 343 delay. Seeded by the output name. | `88F784298CC16585CCB60774D0E236558173437B1554A9375C13FC46EF0E21FF` |
 | `megastorm_scythe_crackle_2.ogg` | 0.9 s | As above, other seed. | `700D990C0B13AFAC1F94C7499268CE3BC373BF883E1BEC2E5706B37D6598008C` |
 | `megastorm_scythe_crackle_3.ogg` | 0.9 s | As above, other seed. | `3CF3C9C068CD37343B9AC5A9215119BEA330248BCB6B3963A8527F379F09CB4D` |
+| `megastorm_rain_hammer_loop.ogg` | 24 s | Bullet rain on structures (WO11, 5.5.2): about 2,600 hard 0.4-8 kHz impact clicks per second, a few heavy panel thwacks, over a grainy 150-3500 Hz bed. Events wrap, so the loop is exact. | `D1B1E6D02E1F7C48971C08EEFBB8631312B44C6B2D3C60A5258A1B1091D6761A` |
+| `megastorm_ear_pop.ogg` | 0.7 s | Wake ear pop (WO11, 5.5.3), cosmetic: a soft 70-35 Hz thump, a few tiny clicks and a short low-passed breath. | `0BF888E00AF81F36F337FDBE7657FF46C04DE5B2FFCA9FF66499B2DBED866EA8` |
 
 Wiring: `RingMegastormAudio` (scripts/Weather/Megastorm). The scythe crackles are played by `RingMegastormScythes` (same folder) on the `MegastormAir` bus. Subjective listening is still pending; `tools/media/megastorm_audio_render.py` renders a
 passage from the test's gain timeline for that.

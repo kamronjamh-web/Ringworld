@@ -237,7 +237,8 @@ bool g_ws_sub_strip = false;
 // band (not the sub-mask band), 32 = every shader that includes this file takes its legacy (flag-off) path while the bridge's
 // constant uniforms stay in place,
 // 64 = no cloud layers (the single legacy background band), 128 = no cirrus shell, 256 = no S6 deck colour (layer-deck ambient keeps
-// the sky chroma; SunshineCloudsCompute.glsl RING_LAYER_DECK_COLOUR).
+// the sky chroma; SunshineCloudsCompute.glsl RING_LAYER_DECK_COLOUR), 512 = megastorm strip off (bridge), 1024 = the megastorm variant takes the plain
+// ring_cloud_atmosphere_apply instead of the unified storm haze path factors (the A/B).
 int ring_ws_debug() { return int(ringWeatherSystems.header1.z + 0.5); }
 bool ring_ws_enabled() { return ringWeatherSystems.header0.y > 0.5 && (ring_ws_debug() & 32) == 0; }
 int ring_ws_count() { return clamp(int(ringWeatherSystems.header0.x + 0.5), 0, RING_WS_MAX); }

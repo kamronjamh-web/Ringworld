@@ -113,6 +113,29 @@ public partial class PostRainMistTest : RefCounted
             Check(RingPostRainMist.Target(0f, 1f, 0f, -0.12f) == 0f, "setting 0 gives no mist");
             Check(Math.Abs(RingPostRainMist.Target(2f, 1f, 0f, -0.12f) - 2f) < 1e-6f, "setting 2 doubles the strength");
             Check(RingPostRainMist.Target(1f, 1f, 5.5f, -0.12f) > 0.4f && RingPostRainMist.Target(1f, 1f, 5.5f, -0.12f) < 0.6f, "wind 5.5 m/s halves the mist");
+
+            // Megastorm wake fog drives M with the post-rain setting 0 (no layer bound): 0 to 1 in <= 9 publishes (4 steps each), then releases to 0 within the cap.
+            RingAtmosphereModel.ClearWeatherMist();
+            var mist = new RingPostRainMist();
+            float wakeValue = 1f;
+            mist.WakeFogProvider = () => wakeValue;
+            mist.Tick(0.0);
+            Check(RingAtmosphereModel.WeatherMist == 4f / 32f && mist.LastWakeFog == 1f, $"first wake publish is 4/32: {RingAtmosphereModel.WeatherMist}");
+            int wakeUp = 1; double tUp = 0.0;
+            for (double t = 0.25; t < 40.0 && RingAtmosphereModel.WeatherMist < 1f; t += 0.25) { ulong r = RingAtmosphereModel.Revision; mist.Tick(t); if (RingAtmosphereModel.Revision != r) { wakeUp++; tUp = t; } }
+            Check(RingAtmosphereModel.WeatherMist == 1f && wakeUp <= 9 && tUp <= 18.0, $"wake fog reaches 1 in {wakeUp} publishes at {tUp} s");
+            wakeValue = 0f; int wakeDown = 0; double tDown = 0.0;
+            for (double t = 20.0; t < 60.0 && RingAtmosphereModel.WeatherMist > 0f; t += 0.25) { ulong r = RingAtmosphereModel.Revision; mist.Tick(t); if (RingAtmosphereModel.Revision != r) { wakeDown++; tDown = t; } }
+            Check(RingAtmosphereModel.WeatherMist == 0f && wakeDown <= 9, $"wake fog releases to 0 in {wakeDown} publishes at {tDown} s");
+            Check(wakeUp + wakeDown <= RingAtmosphereModel.WeatherMistMaxPublishesPerWindow, $"wake round trip {wakeUp + wakeDown} publishes exceeds the cap");
+            // Both zero: today's behaviour, no publish, nothing held.
+            ulong revIdle = RingAtmosphereModel.Revision; mist.Tick(70.0);
+            Check(RingAtmosphereModel.Revision == revIdle && RingAtmosphereModel.WeatherMist == 0f && mist.TargetMist == 0f, "both zero must not publish");
+            // Default step limit unchanged for other callers.
+            RingAtmosphereModel.ClearWeatherMist();
+            RingAtmosphereModel.SetWeatherMist(1f, 1000.0);
+            Check(RingAtmosphereModel.WeatherMist == 2f / 32f, $"default slew is still 2/32: {RingAtmosphereModel.WeatherMist}");
+            mist.Free();
         }
         catch (Exception e) { Console.Error.WriteLine(e.ToString()); return 1; }
         finally { RingAtmosphereModel.ClearWeatherMist(); }

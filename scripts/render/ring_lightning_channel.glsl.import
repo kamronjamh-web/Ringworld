@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://cdiy5k046xyt"
+path="res://.godot/imported/ring_lightning_channel.glsl-2ce3ff8d709f57a70504f7d10461f6a7.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_lightning_channel.glsl"
+dest_files=["res://.godot/imported/ring_lightning_channel.glsl-2ce3ff8d709f57a70504f7d10461f6a7.res"]
+
+[params]
+

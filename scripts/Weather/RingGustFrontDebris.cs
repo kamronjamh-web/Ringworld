@@ -37,6 +37,10 @@ public partial class RingGustFrontDebris : Node3D
     public void ForceShares(Vector3 shares, float snow) { ForcedShares = shares; ForcedSnow = snow; }
     /// <summary>Capture hook: sets the preset budget (perf capture at High = 512).</summary>
     public void SetBudgetForCapture(int budget) { PresetBudget = budget; }
+    /// <summary>Megastorm hook (WO11, RingMegastormHazardFx): extra gust level 0..1 for the boom's dust burst and the wall's and wake's wind-carried sheet; 0 changes nothing.</summary>
+    public float MegastormLevel { get; set; }
+    /// <summary>Megastorm hook: 0..1 dust share added over land during the boom burst.</summary>
+    public float MegastormDust { get; set; }
     public void ClearForcedShares() { ForcedShares = null; ForcedSnow = 0.0f; }
 
     public const float DomainMeters = 96.0f;
@@ -155,6 +159,7 @@ public partial class RingGustFrontDebris : Node3D
         StormArrivalState arrival = StormArrivalMath.Observer;
         float strength = Mathf.Clamp(RingStormArrivalSettings.Current.GustFrontStrength, 0.0f, 2.0f);
         _level = ForcedLevel >= 0.0f ? Mathf.Clamp(ForcedLevel, 0.0f, 1.0f) : GustLevel(arrival, strength);
+        if (MegastormLevel > 0.0f) _level = Mathf.Max(_level, Mathf.Clamp(MegastormLevel, 0.0f, 1.0f));
         // Fast rise, slower fall: the front hits at once, the debris thins out as the rain arrives.
         float rate = _level > _smoothedLevel ? 6.0f : 1.2f;
         _smoothedLevel = Mathf.Lerp(_smoothedLevel, _level, 1.0f - Mathf.Exp(-rate * (float)delta));
@@ -259,6 +264,7 @@ public partial class RingGustFrontDebris : Node3D
         {
             Vector4 target = _kindTargets[i];
             target = new Vector4(target.X * wet.X, target.Y * wet.Y, target.Z, target.W);
+            if (MegastormDust > 0.0f) target.Y = Mathf.Max(target.Y, MegastormDust * 0.9f * (1.0f - target.Z));
             _kinds[i] = _kinds[i].Lerp(target, ease);
         }
         _kindsSeeded = true;

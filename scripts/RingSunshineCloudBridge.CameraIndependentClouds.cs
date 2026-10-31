@@ -46,7 +46,7 @@ public partial class RingSunshineCloudBridge
 	[Export(PropertyHint.Range, "5000,18000,500")] public float StormEnvelopeCeilingMeters { get; set; } = RingCloudLayers.CeilingMeters;
 
 	/// <summary>Perf ablation bits (0 = normal): 1 background band only (no per-ray sculpt intervals, no sub-mask band widening), 2 clear sculpt mask, 4 skip ray mask, 8 constant macro, 16 light march breaks on the background band instead of the sub-mask band, 32 legacy shader path, 64 single legacy background band (no S6 cloud layers), 128 no cirrus shell (High layer), 256 S6 deck colour off (layer-deck ambient keeps the sky chroma; A/B only), 512 megastorm strip fetch off (the strip is never enabled, so the wall body does not draw; A/B only). Re-uploaded every weather refresh.</summary>
-	[Export(PropertyHint.Range, "0,1023,1")] public int CameraIndependentDebugMask { get; set; } = 0;
+	[Export(PropertyHint.Range, "0,2047,1")] public int CameraIndependentDebugMask { get; set; } = 0;
 
 	[ExportSubgroup("Macro weather map")]
 	/// <summary>Build the world-anchored macro weather map (frame-sliced compute) and read it with one fetch per cloud sample. Off = every sample loops over its ray's systems.</summary>
@@ -404,7 +404,7 @@ public partial class RingSunshineCloudBridge
 		WriteFloat(20, sculptStrength);
 		// z carries CameraIndependentDebugMask (small int, exact as a float); w is the downwind angle of the weather wind (radians,
 		// canonical around/across frame) the storm shape shears toward.
-		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 1023));
+		WriteFloat(24, Math.Clamp(CameraIndependentDebugMask, 0, 2047));
 		Vector2 stormWind = weather.WeatherWindMetersPerSecond;
 		WriteFloat(28, stormWind.LengthSquared() > 1e-8f ? MathF.Atan2(stormWind.Y, stormWind.X) : 0.0f);
 		// header2: background floor/ceiling, selection radius, revision

@@ -222,6 +222,16 @@ public partial class RingSunshineCloudBridge : Node
     public float SunHistorySuppression => _sunHistorySuppression;
     public bool SunHistoryWasSuppressed => _sunHistoryWasSuppressed;
     public float AppliedHistoryWeight => _lastAppliedHistoryWeight;
+    /// <summary>Megastorm cloud-history fade 0..1 (0 outside a megastorm), for diagnostics.</summary>
+    public float MegastormHistoryFade => _megastormHistoryFade;
+    /// <summary>History weight the fade pulls toward under full megastorm darkness (it never raises a weight).</summary>
+    public const float MegastormHistoryFloor = 0.15f;
+    /// <summary>Linear fade rate per second (4 s for a full ramp), both ways.</summary>
+    public const float MegastormHistoryFadeRate = 0.25f;
+    /// <summary>Debug-only A/B switches (not menu settings): disable the fade, or override the floor (NaN = <see cref="MegastormHistoryFloor"/>).</summary>
+    public bool DebugMegastormHistoryFadeOff { get; set; }
+    public float DebugMegastormHistoryFloorOverride { get; set; } = float.NaN;
+    private float _megastormHistoryFade;
     /// <summary>Most recent camera-motion blend used to resolve temporal history.</summary>
     public float CameraHistoryMotion { get; private set; }
     /// <summary>Number of explicit temporal-quality pushes to the live Sunshine resource.</summary>
@@ -656,6 +666,7 @@ public partial class RingSunshineCloudBridge : Node
         UpdateCloudShadows(delta, force: false);
         UpdateCameraLightingState(delta);
         PublishStormLight();
+        UpdateMegastormHistoryFade(delta);
     }
 
     private void SyncGpuTimestampDiagnostics()
@@ -1874,6 +1885,34 @@ public partial class RingSunshineCloudBridge : Node
         return Mathf.RadToDeg(Mathf.Atan2(sine, cosine));
     }
 
+    /// <summary>Megastorm history fade: exactly the weight at fade 0, else lerps toward min(floor, weight). Pure.</summary>
+    public static float ResolveMegastormHistoryWeight(float weight, float fade, float floor)
+    {
+        if (!(fade > 0.0f)) return weight;
+        return Mathf.Lerp(weight, Mathf.Min(floor, weight), Mathf.Clamp(fade, 0.0f, 1.0f));
+    }
+
+    /// <summary>Fade target for a camera megastorm darkness: SmoothUnit((E - 0.25) / 0.5). Pure.</summary>
+    public static float MegastormHistoryFadeTarget(float cameraDarkness) => SmoothUnit((cameraDarkness - 0.25f) / 0.5f);
+
+    /// <summary>One slew step of the fade toward target at <see cref="MegastormHistoryFadeRate"/> per second; snaps to exactly 0 when the target is 0 and the value is below 1e-4. Pure.</summary>
+    public static float StepMegastormHistoryFade(float fade, float target, float delta)
+    {
+        float step = MegastormHistoryFadeRate * Mathf.Max(0.0f, delta);
+        float next = fade + Mathf.Clamp(target - fade, -step, step);
+        if (target <= 0.0f && next < 1e-4f) return 0.0f;
+        return next;
+    }
+
+    private void UpdateMegastormHistoryFade(double delta)
+    {
+        // Untriggered / ordinary storms: darkness is 0, the fade stays exactly 0 and nothing is applied.
+        float target = DebugMegastormHistoryFadeOff ? 0.0f : MegastormHistoryFadeTarget(GetCameraMegastormDarkness());
+        if (target <= 0.0f && _megastormHistoryFade <= 0.0f) return;
+        _megastormHistoryFade = StepMegastormHistoryFade(_megastormHistoryFade, target, (float)delta);
+        ApplyEffectiveHistoryWeight();
+    }
+
     private void ApplyEffectiveHistoryWeight(bool force = false)
     {
         if (_clouds == null) return;
@@ -1881,6 +1920,8 @@ public partial class RingSunshineCloudBridge : Node
             EffectiveHistoryWeight,
             LightningHistoryIsolationEnabled ? 0 : _lightningHistorySuppression,
             _sunHistorySuppression);
+        historyWeight = ResolveMegastormHistoryWeight(historyWeight, _megastormHistoryFade,
+            float.IsNaN(DebugMegastormHistoryFloorOverride) ? MegastormHistoryFloor : DebugMegastormHistoryFloorOverride);
         if (!force && Mathf.IsEqualApprox(_lastAppliedHistoryWeight, historyWeight)) return;
         _clouds.Set("accumulation_decay", historyWeight);
         _lastAppliedHistoryWeight = historyWeight;

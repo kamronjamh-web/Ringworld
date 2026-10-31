@@ -256,10 +256,15 @@ public partial class RingLocalWeatherEffects : Node3D
             ["flash_count"] = LightningFlashCount,
             ["pulse"] = CurrentRenderedLightningPulse,
             ["visual_weight"] = CurrentRenderedLightningVisualWeight,
+            ["system_kind"] = _activeSharedEvent?.SystemKind ?? -1,
+            ["scythe"] = _activeSharedEvent?.Scythe ?? false,
             ["ground_around_meters"] = ground.AroundMeters, ["ground_across_meters"] = ground.AcrossMeters,
             ["cloud_around_meters"] = cloud.AroundMeters, ["cloud_across_meters"] = cloud.AcrossMeters,
             ["world_ground"] = _grid?.CanonicalRingPositionToWorld(ground) ?? Vector3.Zero,
-            ["world_cloud"] = _grid?.CanonicalRingPositionToWorld(cloud) ?? Vector3.Zero
+            ["world_cloud"] = _grid?.CanonicalRingPositionToWorld(cloud) ?? Vector3.Zero,
+            ["channel_bolts"] = LightningChannelBoltCount,
+            ["channel_segments"] = LightningChannelSegmentCount,
+            ["channel_us"] = LightningChannelMicros
         };
     }
     public Godot.Collections.Dictionary get_local_shared_lightning_diagnostics() => GetLocalSharedLightningDiagnostics();
@@ -436,6 +441,9 @@ public partial class RingLocalWeatherEffects : Node3D
         UpdatePrecipitationTransform(force: false);
         UpdateWetness(dt);
         UpdateLightning(delta, weather, localCloudsVisible);
+        long channelStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        UpdateLightningChannels();
+        LightningChannelMicros = LightningChannelMicros * 0.95 + System.Diagnostics.Stopwatch.GetElapsedTime(channelStart).TotalMicroseconds * 0.05;
         // Underground mode: the omni flash has no shadows and would light cave interiors through rock.
         if (UndergroundFlashSuppression >= 0.999f && _lightningLight != null) _lightningLight.LightEnergy = 0.0f;
     }
@@ -542,6 +550,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _columnProvider = null;
         ReleaseRainStreaks();
         ReleaseRainHaze();
+        ReleaseLightningChannels();
         HasCurrentWindSnapshot = false;
         if (_vegetationWindClaimed && _activeVegetationWindOwner == _vegetationWindOwner)
         {
@@ -977,6 +986,8 @@ public partial class RingLocalWeatherEffects : Node3D
         LastRenderedLightningGroundPosition = sharedEvent?.GroundPosition ?? new RingCanonicalPosition(targetAround, surface, targetAcross);
         LastRenderedLightningCloudPosition = sharedEvent?.CloudPosition ?? new RingCanonicalPosition(sourceAround, sourceVertical, sourceAcross);
         InstallBoltMeshes(_activeBolt, startWorld, sideAxis, downAxis);
+        // Megastorm channels are drawn by the post-cloud overlay (RingLocalWeatherEffects.LightningChannels.cs); the spatial mesh would be clouded over.
+        if (sharedEvent?.SystemKind == 6 && EnableLightningChannels && _boltRoot != null) _boltRoot.Visible = false;
 
         _lightningLight.GlobalPosition = startWorld.Lerp(endWorld, 0.48f);
         _lightningLight.OmniRange = Mathf.Max(100.0f, LightningRangeMeters);
@@ -997,7 +1008,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _boltRoot.GlobalTransform = new Transform3D(Basis.Identity, startWorld);
         _boltCore.Mesh = BuildBoltMesh(bolt, sideAxis, downAxis, Mathf.Max(0.01f, BoltCoreWidthMeters));
         _boltGlow.Mesh = BuildBoltMesh(bolt, sideAxis, downAxis, Mathf.Max(BoltCoreWidthMeters, BoltGlowWidthMeters));
-        _boltRoot.Visible = true;
+        _boltRoot.Visible = _activeSharedEvent?.SystemKind != 6 || !EnableLightningChannels;   // megastorm channels: post-cloud overlay (also on the origin-shift reinstall)
     }
 
     private static ArrayMesh? BuildBoltMesh(

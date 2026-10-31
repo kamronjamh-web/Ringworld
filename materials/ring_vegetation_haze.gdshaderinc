@@ -44,7 +44,16 @@ RingHaze ring_vegetation_haze_sample(int channel, int instance_id, vec3 camera_w
 			if (ringworld_storm_light.w > 0.5) {
 				vec3 storm_delta = vertex_world - ring_atmosphere_camera_world_position;
 				float storm_length = length(storm_delta);
-				if (storm_length > 0.0001) ring_haze_apply_storm_path(atlas_haze, ring_storm_path_level(storm_delta / storm_length, storm_length));
+				if (storm_length > 0.0001) {
+					if (ring_storm_mega_active()) {
+						// Megastorm: the unified haze path factors (ring_storm_haze_path_factors), main-world axes (this branch is scale 1).
+						mat4 storm_frame = ringworld_storm_frame;
+						ring_haze_apply_storm_factors(atlas_haze, ring_storm_haze_path_factors(storm_delta / storm_length, storm_length,
+							storm_frame[0].xyz, storm_frame[1].xyz, storm_frame[2].xyz, ring_atmosphere_to_sun, -log(max(atlas_haze.T.g, 0.000001))));
+					} else {
+						ring_haze_apply_storm_path(atlas_haze, ring_storm_path_level(storm_delta / storm_length, storm_length));
+					}
+				}
 			}
 			return atlas_haze;
 		}

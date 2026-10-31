@@ -8,6 +8,7 @@
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
 #include "../../materials/ring_haze_shared.gdshaderinc"
 #include "../../materials/ring_cloud_weather_shared.gdshaderinc"
+#include "../../materials/ring_megastorm_darkness.gdshaderinc"
 #include "./RingAtmosphereCompute.glslinc"
 #include "./RingCloudHistory.gdshaderinc"
 #include "./SunshineCloudsDepth.glslinc"
@@ -109,7 +110,7 @@ layout(binding = 25) uniform sampler2DArray ring_storm_map;
 // CloudInterleave block images (one texel per marched pixel; only written when RING_INTERLEAVE > 0): steady light rgba,
 // transient light rgb, and march data (initial distance, traveled distance, cloud body distance, opaque depth metadata).
 layout(rgba16f, binding = 26) uniform writeonly image2D interleave_steady_image;
-layout(rgba16f, binding = 27) uniform writeonly image2D interleave_transient_image;
+layout(rgba32f, binding = 27) uniform writeonly image2D interleave_transient_image;
 layout(rgba32f, binding = 28) uniform writeonly image2D interleave_data_image;
 // S6 cloud layers (RingCloudLayers.glslinc): the layer table block (live copy, published next to the weather systems) and the generated
 // layer height gradient (8 rows, see RingCloudLayerSample.glslinc). Bindings 29 and 30 of set 0.
@@ -119,6 +120,9 @@ layout(binding = 30) uniform sampler2D layer_heightmask;
 layout(binding = 31, std140) uniform RingMegastormStripBlock {
 	vec4 a;
 	vec4 b;
+	vec4 c;
+	vec4 d;
+	vec4 e;
 } ringMegastormStrip;
 layout(binding = 32) uniform sampler2DArray ring_megastorm_strip;
 #define RING_WS_MACRO_MAP
@@ -1158,16 +1162,56 @@ float coherent_history_decay(vec4 history, vec4 current, float decay,
 
 #include "./SunshineCloudsHistory.glslinc"
 
-// Megastorm path shade (docs/megastorm-design.md 2.3, WO4b): the share of the view path, camera -> distanceM, whose air lies in the
-// megastorm column's shadow (ring_megastorm_shade_at at the centres of four equal pieces). Under the anvil overhang the whole path is
-// shaded; the haze in front of the wall then loses its sun in-scatter and most of its sky in-scatter (ring_cloud_atmosphere_apply_shaded).
-float ring_megastorm_path_shade(vec3 rayOrigin, vec3 rayDirection, float distanceM, vec3 sunWorld) {
-	if (!(distanceM > 0.0)) return 0.0;
-	float shade = 0.0;
-	for (int k = 0; k < 4; k++) {
-		shade += ring_megastorm_shade_at(to_cloud_space(rayOrigin + rayDirection * (distanceM * (0.125 + 0.25 * float(k)))), sunWorld);
+// ring_storm_owned_level (materials/ring_storm_light.gdshaderinc), the receivers' D.
+float ring_storm_owned_level(float storm, float heavy, float influence, vec2 ownership) {
+	return max(max(ownership.x * max(storm, heavy), ownership.y), heavy * (1.0 - ring_ws_smooth_unit(influence / 0.25)));
+}
+
+// Storm level of the macro map at a canonical position, L = D + E: the same value ring_storm_level_at_map reads for the receivers (D = ring_storm_owned_level of the
+// front layer's coverage / storm / influence and the storm-light layer's ownership (front + 4), E = that layer's z), through the same bilinear fetches. 0 outside
+// the map or without it. heavy start: ringWeatherSystems.header1.x = HeavyOvercastStartCoverage, the CPU publishes ringworld_storm_map_frame.z as its clamp to 0.99.
+float ring_macro_storm_level_at(vec3 canonical) {
+	if (!ring_ws_map_valid()) return 0.0;
+	float circumference = ringMacroMap.b.z;
+	float texel = max(ringMacroMap.a.z, 1.0);
+	float dx = canonical.x - ringMacroMap.a.x;
+	if (circumference > 1.0) dx -= circumference * floor(dx / circumference);
+	vec2 t = vec2(dx, canonical.z - ringMacroMap.a.y) / texel;
+	vec2 size = ringMacroMap.b.xy;
+	if (t.x < 0.5 || t.y < 0.5 || t.x > size.x - 0.5 || t.y > size.y - 0.5) return 0.0;
+	vec2 uv = t / vec2(textureSize(ring_macro_map, 0).xy);
+	vec4 front = textureLod(ring_macro_map, vec3(uv, ringMacroMap.a.w), 0.0);
+	vec3 own = textureLod(ring_macro_map, vec3(uv, ringMacroMap.a.w + 4.0), 0.0).xyz;
+	float heavyStart = ringWeatherSystems.header1.x;
+	float heavy = ring_ws_smooth_unit((front.x - heavyStart) / max(0.01, 1.0 - heavyStart));
+	// D' = max(D, E): L = max(D, E) + E (materials/ring_storm_light.gdshaderinc ring_storm_terms_blended_at_map; E = 0 without a megastorm).
+	float d_level = ring_storm_owned_level(front.y, heavy, front.w, own.xy);
+	return max(d_level, own.z) + own.z;
+}
+
+// Megastorm haze path levels (docs/megastorm-design.md 5.6): the march's twin of materials/ring_storm_light.gdshaderinc ring_storm_haze_path_factors, the one rule the
+// terrain's haze (and the sky's) takes under a megastorm. The levels are read at FIXED absolute distances along the world ray, the midpoints 2.5 / 8.5 / 17 / 31 km of the
+// pieces [0, 5], [5, 12], [12, 22], [22, 40] km (the remainder beyond 40 km reuses the 31 km tap), so every target in a direction shares them; each takes
+// max(L, shade), L = D + E from the macro map and shade the slanted sun ray's shade of the air (ring_megastorm_air_shade_ray, the same function the spatial consumers use; no strip fetch). Pieces that
+// start beyond boundM are left 0 (their weight is 0 for any target within boundM).
+vec4 ring_megastorm_haze_levels(vec3 rayOrigin, vec3 rayDirection, float boundM, vec3 sunWorld) {
+	vec4 levels = vec4(0.0);
+	// The sun's displacement per metre of height in the strip's (x, across), from the cloud frame axes (sign: ring_megastorm_x = dir * (s - around)); both 0 below 0.06.
+	float sunUp = dot(sunWorld, genericData.data.cloud_frame_up.xyz);
+	vec2 sunSlope = vec2(0.0);
+	if (sunUp >= 0.06) {
+		sunSlope = vec2(-genericData.data.ring_megastorm_frame.z * dot(sunWorld, genericData.data.cloud_frame_around.xyz),
+			dot(sunWorld, genericData.data.cloud_frame_across.xyz)) / sunUp;
 	}
-	return 0.25 * shade;
+	for (int k = 0; k < 4; k++) {
+		float start = k == 0 ? 0.0 : (k == 1 ? 5000.0 : (k == 2 ? 12000.0 : 22000.0));
+		if (!(start < boundM)) break;
+		float mid = k == 0 ? 2500.0 : (k == 1 ? 8500.0 : (k == 2 ? 17000.0 : 31000.0));
+		vec3 tap = to_cloud_space(rayOrigin + rayDirection * mid);
+		float shade = ring_megastorm_air_shade_ray(ring_megastorm_x(tap.x), tap.z, sunSlope.x, sunSlope.y, sunUp, ringMegastormStrip.d, ringMegastormStrip.e.x, ringMegastormStrip.e.y);
+		levels[k] = max(ring_macro_storm_level_at(tap), shade);
+	}
+	return levels;
 }
 
 void main() {
@@ -1824,6 +1868,20 @@ void main() {
 					float lightDistanceWeight = length(lightToOriginDelta); 
 					if (pointLights[lightI].color.a > 0.0 && lightDistanceWeight < pointLights[lightI].position.w){
 						lightToOriginDelta = normalize(lightToOriginDelta);
+						vec3 pointContribution;
+						if (genericData.data.history_controls.w > 0.5) {
+							// History-isolated (lightning) point light: the segment lights' tap-free model. The old 3-tap density exponentiated by the light distance in
+							// metres flipped between ~0 and ~1 with the per-frame jitter (raw sparkle, since this branch never reaches history). Transmittance
+							// exp(-density x distance x extinction), the same Henyey-Greenstein blend as the segment lights, the (1 - d/r)^2.2 window and the
+							// density weight mix(density, 1, 0.35); one sample cannot exceed the light colour x intensity.
+							float ptDist = lightDistanceWeight;
+							float ptExtinction = segmentHeader.z > 0.0 ? segmentHeader.z : 0.0015;
+							float ptPhase = mix(1.0, clamp(HenyeyGreenstein(genericData.data.anisotropy, dot(lightToOriginDelta, raydirection)) * 4.0 * PI, 0.2, 4.0), segmentHeader.y);
+							float ptWindow = pow(1.0 - ptDist / pointLights[lightI].position.w, 2.2);
+							float ptWeight = pointLights[lightI].color.a * ptWindow * ptPhase * exp(-newdensity * ptDist * ptExtinction) * mix(newdensity, 1.0, 0.35) * powderEffect;
+							pointContribution = pow(pointLights[lightI].color.rgb * min(ptWeight, pointLights[lightI].color.a), vec3(2.2));
+							transientLightColor += pointContribution;
+						} else {
 						//float densitySample = 1.0 - newdensity;
 						float densitySample = sampleLighting(3, curPos, extralargeNoisePos, largeNoisePos, mediumNoisePos, smallNoisePos, lightToOriginDelta, densityMultiplier, 1.0, min(maxstep, lightDistanceWeight), cloudceiling, cloudfloor, extralargenoiseScale, largenoiseScale, mediumnoiseScale, smallnoiseScale, coverage, smallNoiseMultiplier, curlPower, curLod, false);
 						
@@ -1834,9 +1892,9 @@ void main() {
 						lightDistanceWeight = pointLights[lightI].color.a * pow((1.0 - lightDistanceWeight), 2.2) * densitySample;
 
 
-						vec3 pointContribution = pow(pointLights[lightI].color.rgb * lightDistanceWeight, vec3(2.2));
-						if (genericData.data.history_controls.w > 0.5) transientLightColor += pointContribution;
-						else lightColor.rgb += pointContribution;
+						pointContribution = pow(pointLights[lightI].color.rgb * lightDistanceWeight, vec3(2.2));
+						lightColor.rgb += pointContribution;
+						}
 					}
 				}
 
@@ -2181,12 +2239,19 @@ void main() {
 
 	//accumulation preperation:
 	float finalDensityDistance = ring_cloud_depth_resolve(depthWeightSum, depthWeightedDistanceSum, max(traveledDistance, shellDepthEnd), highestDensityDistance);
-	// Megastorm path shade (WO4b) of this ray's haze path (camera -> its cloud depth); the interleave fill reads it from the block's transient
-	// alpha. 0 in the default kernel and whenever the strip is off.
-	float megaPathShade = 0.0;
-	if (RING_MEGASTORM_ENABLED && ring_megastorm_strip_valid()) {
+	// Megastorm haze path levels (5.6) of this ray (fixed-distance pieces, so independent of the target); with interleave the block's factors travel to the fill
+	// in the transient alpha. All 0 in the default kernel, whenever the strip is off and with CameraIndependentDebugMask bit 1024 (plain haze, the A/B).
+	bool megaHazeOn = RING_MEGASTORM_ENABLED && ring_megastorm_strip_valid() && (ring_ws_debug() & 1024) == 0;
+	vec4 megaLevels = vec4(0.0);
+	float megaPackedFactors = 0.0;
+	if (megaHazeOn) {
 		vec3 shadeSun = directionalLightCount > 0 ? directionalLights[0].direction.xyz : genericData.data.cloud_frame_up.xyz;
-		megaPathShade = ring_megastorm_path_shade(rayOrigin, raydirection, clamp(finalDensityDistance, 0.0, max(0.0, linear_depth)), shadeSun);
+		megaLevels = ring_megastorm_haze_levels(rayOrigin, raydirection, max(0.0, linear_depth), shadeSun);
+		if (RING_INTERLEAVE > 0) {
+			megaPackedFactors = ring_cloud_pack_storm_factors(ring_cloud_atmosphere_storm_factors(rayOrigin, raydirection,
+				clamp(finalDensityDistance, 0.0, max(0.0, linear_depth)), genericData.data.ring_atmosphere_profile, megaLevels,
+				genericData.data.ring_storm_ambient.w, ringMegastormStrip.c));
+		}
 	}
 	vec3 delta = rayOrigin - genericData.data.previous_camera_origin.xyz;
 
@@ -2428,7 +2493,7 @@ void main() {
 		ivec2 blockUV = ivec2(gl_GlobalInvocationID.xy);
 		vec3 blockTransient = (any(isnan(transientLightColor)) || any(isinf(transientLightColor))) ? vec3(0.0) : transientLightColor;
 		imageStore(interleave_steady_image, blockUV, lightColor);
-		imageStore(interleave_transient_image, blockUV, vec4(blockTransient, megaPathShade));
+		imageStore(interleave_transient_image, blockUV, vec4(blockTransient, megaPackedFactors));
 		imageStore(interleave_data_image, blockUV, vec4(initialdistanceSample, traveledDistance, finalDensityDistance, opaqueDepthMetadata));
 	}
 	
@@ -2448,9 +2513,10 @@ void main() {
 		// live-profile independent, while the published backdrop matches display.
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(currentDataAccumilation.b, 0.0, max(0.0, linear_depth));
-			if (RING_MEGASTORM_ENABLED && megaPathShade > 0.0) {
-				currentColorAccumilation.rgb = ring_cloud_atmosphere_apply_shaded(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance,
-					genericData.data.ring_atmosphere_profile, megaPathShade, genericData.data.ring_storm_ambient.w);
+			if (megaHazeOn) {
+				// Every ray of the megastorm variant takes the unified haze path factors (the terrain gets the rule everywhere); all-zero levels give factors 1.
+				currentColorAccumilation.rgb = ring_cloud_atmosphere_apply_storm_levels(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance,
+					genericData.data.ring_atmosphere_profile, megaLevels, genericData.data.ring_storm_ambient.w, ringMegastormStrip.c);
 			} else {
 				currentColorAccumilation.rgb = ring_cloud_atmosphere_apply(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
 			}

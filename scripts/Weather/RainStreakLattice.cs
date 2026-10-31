@@ -75,10 +75,13 @@ public static class RainStreakLattice
     public static float Density(float intensity) => RainPrecipitationProfile.StreakDensity(intensity);
 
     /// <summary>Streak slope (horizontal metres per metre of fall) from the wind at a point, capped.</summary>
-    public static Vector2 Slope(Vector2 windMetersPerSecond)
+    public static Vector2 Slope(Vector2 windMetersPerSecond) => Slope(windMetersPerSecond, MaximumSlope);
+
+    /// <summary>As <see cref="Slope(Vector2)"/> with an explicit cap (the megastorm raises it to 16, docs/megastorm-design.md 5.5.2).</summary>
+    public static Vector2 Slope(Vector2 windMetersPerSecond, float cap)
     {
         if (!windMetersPerSecond.IsFinite()) return Vector2.Zero;
         Vector2 slope = windMetersPerSecond / FallSpeedMetersPerSecond;
-        return slope.Length() > MaximumSlope ? slope.Normalized() * MaximumSlope : slope;
+        return slope.Length() > cap ? slope.Normalized() * cap : slope;
     }
 }

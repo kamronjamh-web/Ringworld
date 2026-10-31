@@ -13,7 +13,7 @@
 //   ringworld_storm_light_mega (k_min_eff = mix(0.06, 0.40, night), eye lock, lightning flash 0..1, 0); day_side_atmosphere.gd. Default (1, 0, 0, 0): K = 1.
 //   ringworld_megastorm_darkness  megastorm frame for the analytic E beyond the map (RingSunshineCloudBridge.StormLight.cs): column 0 = (x_cam: the camera's
 //                              reference-line distance m, dir, E scale = clamp(s / 0.9) x formation level (0 = no megastorm), camera canonical across m),
-//                              column 1 = (bow, meander amplitude, meander wavelength, meander phase), column 2 = (W, trailing end xi, circumference, 0).
+//                              column 1 = (bow, meander amplitude, meander wavelength, meander phase), column 2 = (W, trailing end xi, circumference, formation level 0..1).
 //
 // Megastorm darkness (docs/megastorm-design.md 5.6; WO14): the storm-light layer's z holds the megastorm darkness E (0..1, RingMacroWeatherMap.glsl), and every
 // level these functions take is the EXTENDED level L = D + E (0..2). They split it as D = min(L, 1) and E' = max(L - 1, 0) and multiply the sun residual, the
@@ -80,15 +80,28 @@ bool ring_storm_mega_active() {
 	return ringworld_megastorm_darkness[0].z > 0.0;
 }
 
+// Reference-line distance x of a map position (metres) in the megastorm frame of ringworld_megastorm_darkness (camera at frame[0].w / frame[1].w).
+float ring_storm_mega_x(vec2 map_metres) {
+	mat4 m = ringworld_megastorm_darkness;
+	mat4 frame = ringworld_storm_frame;
+	return ring_megastorm_darkness_x(m[0].x, m[0].y, map_metres.x - frame[0].w, m[2].z);
+}
+
+// xi (distance behind the wall's actual, bowed and meandering edge) of a map position whose reference-line distance is x (ring_storm_mega_x).
+float ring_storm_mega_xi_from_x(vec2 map_metres, float x) {
+	mat4 m = ringworld_megastorm_darkness;
+	mat4 frame = ringworld_storm_frame;
+	float across = m[0].w + (map_metres.y - frame[1].w);
+	return x - ring_megastorm_darkness_lead(across, vec4(m[2].x, m[1].xyz), m[1].w);
+}
+
 // Analytic megastorm darkness E at a map position (metres), from the per-frame frame in ringworld_megastorm_darkness (camera at frame[0].w / frame[1].w).
 float ring_storm_mega_extra(vec2 map_metres) {
 	mat4 m = ringworld_megastorm_darkness;
-	mat4 frame = ringworld_storm_frame;
-	float x = ring_megastorm_darkness_x(m[0].x, m[0].y, map_metres.x - frame[0].w, m[2].z);
+	float x = ring_storm_mega_x(map_metres);
 	// The lead offset lies in [-(bow + amplitude), amplitude], so xi = x - lead cannot reach E's support [-45 km, trailing end) from here: skip the sin.
 	if (x + m[1].x + m[1].y < -45000.0 || x - m[1].y >= m[2].y) return 0.0;
-	float across = m[0].w + (map_metres.y - frame[1].w);
-	float xi = x - ring_megastorm_darkness_lead(across, vec4(m[2].x, m[1].xyz), m[1].w);
+	float xi = ring_storm_mega_xi_from_x(map_metres, x);
 	return ring_megastorm_darkness(xi, m[2].y) * m[0].z;
 }
 
@@ -99,25 +112,34 @@ float ring_storm_map_inside(vec2 map_metres) {
 	return 1.0 - ring_storm_smooth_unit(max(outside.x, outside.y) / (2.0 * texel_m));
 }
 
-// Extended storm level L = D + E (0 .. 2) at a map position in metres. Positions outside the map clamp D to its edge; E continues analytically beyond
-// the map (blended over two texels) while a megastorm is active, so ground under a distant wall reads dark too.
-float ring_storm_level_at_map(vec2 map_metres) {
+// The ordinary level D (x) and the megastorm darkness E (y) at a map position in metres. Positions outside the map clamp D to its edge; E continues analytically
+// beyond the map (blended over two texels) while a megastorm is active, so ground under a distant wall reads dark too.
+vec2 ring_storm_terms_blended_at_map(vec2 map_metres) {
 #ifdef RING_STORM_NO_MAP
 	// Compute-shader test harness (tools/haze_consistency_gpu_test.gd): no sampler exists, the test supplies a synthetic level.
-	return ring_storm_test_level(map_metres);
+	return vec2(ring_storm_test_level(map_metres), 0.0);
 #else
 	vec2 terms = ring_storm_terms_at_map(map_metres);
 	if (ring_storm_mega_active()) {
 		float inside = ring_storm_map_inside(map_metres);
 		if (inside < 1.0) terms.y = mix(ring_storm_mega_extra(map_metres), terms.y, inside);
+		// Under a megastorm the ordinary level a receiver sees is D' = max(D, E), so L = max(D, E) + E: where the storm's own D drops (the wake, the leading 0-5 km) the
+		// megastorm darkness still carries the gloom (docs/megastorm-design.md 5.6, WO-D). Identical for every ordinary storm (E = 0).
+		terms.x = max(terms.x, terms.y);
 	}
-	return terms.x + terms.y;
+	return terms;
 #endif
 }
 
-// Extended storm level L = D + E (0 .. 2) at a world position. Positions outside the map clamp D to its edge.
-float ring_storm_level(vec3 world) {
-	if (ringworld_storm_light.w < 0.5) return 0.0;
+// Extended storm level L = D + E (0 .. 2) at a map position in metres (see ring_storm_terms_blended_at_map).
+float ring_storm_level_at_map(vec2 map_metres) {
+	vec2 terms = ring_storm_terms_blended_at_map(map_metres);
+	return terms.x + terms.y;
+}
+
+// (D, E) at a world position, (0, 0) while the storm light is off. ring_storm_level is their sum.
+vec2 ring_storm_terms(vec3 world) {
+	if (ringworld_storm_light.w < 0.5) return vec2(0.0);
 	mat4 frame = ringworld_storm_frame;
 	vec3 relative = world - frame[3].xyz;
 	float tangent = dot(relative, frame[0].xyz);
@@ -125,7 +147,13 @@ float ring_storm_level(vec3 world) {
 	float inward = dot(relative, frame[2].xyz);
 	float ring_radius = frame[2].w;
 	float arc = ring_radius > 1.0 ? ring_radius * ring_storm_arc_angle(tangent, ring_radius - inward) : tangent;
-	return ring_storm_level_at_map(vec2(frame[0].w + arc, frame[1].w + across));
+	return ring_storm_terms_blended_at_map(vec2(frame[0].w + arc, frame[1].w + across));
+}
+
+// Extended storm level L = D + E (0 .. 2) at a world position. Positions outside the map clamp D to its edge.
+float ring_storm_level(vec3 world) {
+	vec2 terms = ring_storm_terms(world);
+	return terms.x + terms.y;
 }
 
 // Same for ring_terrain_global / ring_ocean_global, which also render in the scaled far viewport (RingScaledFarViewport). That space is not the main
@@ -160,9 +188,10 @@ float ring_storm_level_far(vec3 world, vec3 camera_world, vec3 ring_centre, floa
 	if (ring_storm_mega_active()) {
 		// Megastorm darkness E continues analytically beyond the map (WO14); D still fades out with the map.
 		float extra = ring_storm_mega_extra(map_metres);
-		if (inside <= 0.0) return extra;
+		if (inside <= 0.0) return extra + extra;
 		vec2 terms = ring_storm_terms_at_map(map_metres);
-		return terms.x * inside + mix(extra, terms.y, inside);
+		float extra_blend = mix(extra, terms.y, inside);
+		return max(terms.x * inside, extra_blend) + extra_blend; // D' = max(D, E), as ring_storm_terms_blended_at_map
 	}
 #endif
 	return inside > 0.0 ? ring_storm_level_at_map(map_metres) * inside : 0.0;
@@ -236,5 +265,39 @@ float ring_storm_ambient(float level) {
 const float RING_STORM_SKY_DEPTH = 0.97;
 float ring_storm_sky(float level) {
 	return (1.0 - RING_STORM_SKY_DEPTH * ringworld_storm_light.x * min(level, 1.0)) * ring_storm_darkness(level);
+}
+
+// Megastorm haze path factors (docs/megastorm-design.md 5.6): the dimming every haze consumer applies to its sun and ambient in-scatter while a megastorm is active, so the
+// wall (the Sunshine march, SunshineCloudsCompute.glsl ring_megastorm_haze_levels + RingAtmosphereCompute.glslinc ring_cloud_storm_factors) and terrain at the same
+// distance and direction share one aerial perspective. The path is cut at fixed absolute distances (ring_msd_piece_weights), so the near part is shared by every target
+// in a direction; piece i takes the level max(L, shade) at its midpoint (2.5 / 8.5 / 17 / 31 km), L = D + E from the map and shade = the (the
+// noise-free column read along the sun's slanted ray, ring_megastorm_air_shade_ray). Returns (sun factor, ambient factor) = the weighted sums of
+// (1 - F(level) s) K(level) and ring_storm_sky(level). `direction` is the unit view ray and length_m the target's metric length; around / across / up are the frame the
+// direction is in (ringworld_storm_frame columns 0 / 1 / 2 xyz for main-world materials; the far frame's tangent, +Y and inward for scaled far materials, which also fixes the
+// map directions the old path rule gets wrong there), to_sun the sun in it, tau_total the target's optical depth -ln(T.g) before any storm factor.
+vec2 ring_storm_haze_path_factors(vec3 direction, float length_m, vec3 around_axis, vec3 across_axis, vec3 up_axis, vec3 to_sun, float tau_total) {
+	if (ringworld_storm_light.w < 0.5) return vec2(1.0);
+	mat4 frame = ringworld_storm_frame;
+	vec4 w = ring_msd_piece_weights(length_m, tau_total);
+	mat4 m = ringworld_megastorm_darkness;
+	vec2 unit_m = vec2(dot(direction, around_axis), dot(direction, across_axis));
+	// The sun's displacement per metre of height in the strip's (x, across): x falls with the around coordinate (ring_megastorm_darkness_x), so dx_per_h = -dir s_around / s_up.
+	vec3 sun = normalize(to_sun);
+	float sun_up = dot(sun, up_axis);
+	vec2 sun_slope = vec2(0.0);
+	if (sun_up >= 0.06) sun_slope = vec2(-m[0].y * dot(sun, around_axis), dot(sun, across_axis)) / sun_up;
+	vec4 lead = vec4(m[2].x, m[1].xyz);
+	vec2 sum = vec2(0.0);
+	for (int k = 0; k < 4; k++) {
+		float weight = k == 0 ? w.x : (k == 1 ? w.y : (k == 2 ? w.z : w.w));
+		if (weight <= 0.0) continue;
+		float distance_m = k == 0 ? 2500.0 : (k == 1 ? 8500.0 : (k == 2 ? 17000.0 : 31000.0));
+		vec2 tap = vec2(frame[0].w, frame[1].w) + unit_m * distance_m;
+		float level = ring_storm_level_at_map(tap);
+		float shade = ring_megastorm_air_shade_ray(ring_storm_mega_x(tap), m[0].w + (tap.y - frame[1].w), sun_slope.x, sun_slope.y, sun_up, lead, m[1].w, m[2].w);
+		level = max(level, shade);
+		sum += weight * vec2((1.0 - ring_storm_shadow_fade(level) * ringworld_storm_light.x) * ring_storm_darkness(level), ring_storm_sky(level));
+	}
+	return sum;
 }
 #endif

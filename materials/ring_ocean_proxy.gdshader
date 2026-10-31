@@ -481,6 +481,9 @@ void fragment() {
 		vec2 tremor_gradient = ring_tremor_gradient(ring_wet_plane(world_position)) * (1.0 - smoothstep(25.0, 40.0, distance_to_camera));
 		water_normal_world = normalize(water_normal_world - (ring_wet_frame[0].xyz * tremor_gradient.x + ring_wet_frame[1].xyz * tremor_gradient.y) * 0.22);
 	}
+	// Megastorm blast (WO11): the boom front slams the water, a ringing tilt packet that follows the front. Exactly nothing without a live megastorm.
+	if (ring_megastorm_blast.x > 0.0 && distance_to_camera < 4000.0)
+		water_normal_world = ring_megastorm_blast_water_normal(water_normal_world, world_position);
 	if (!FRONT_FACING) water_normal_world *= -1.0;
 	vec3 water_normal_view = normalize((VIEW_MATRIX * vec4(water_normal_world, 0.0)).xyz);
 	NORMAL = water_normal_view;

@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://bx3p7plxw2p1i"
+path="res://.godot/imported/ring_shock_distortion.glsl-75fdae9d0f3741a09b9cd7339919e683.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_shock_distortion.glsl"
+dest_files=["res://.godot/imported/ring_shock_distortion.glsl-75fdae9d0f3741a09b9cd7339919e683.res"]
+
+[params]
+

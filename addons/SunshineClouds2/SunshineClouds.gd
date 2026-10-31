@@ -2019,12 +2019,12 @@ func _megastorm_prewarm_adopt() -> void:
 		elif rd and result[2] == shader and shader.is_valid():
 			rd.free_rid(variant)
 
-# Steady light (rgba16f), transient light (rgba16f) and march data (rgba32f) for one view. Sized for the largest block (2x2);
+# Steady light (rgba16f), transient light (rgba32f: the alpha carries the packed megastorm haze factors) and march data (rgba32f) for one view. Sized for the largest block (2x2);
 # a 4x4 block uses the top-left part. 1x1 placeholders while interleave has not been requested.
 func _create_interleave_block_images(raster_size: Vector2i, real: bool) -> Array[RID]:
 	var dims := Vector2i(maxi((raster_size.x + 1) / 2, 1), maxi((raster_size.y + 1) / 2, 1)) if real else Vector2i(1, 1)
-	var formats := [RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT]
-	var texel_bytes := [8, 8, 16]
+	var formats := [RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT, RenderingDevice.DATA_FORMAT_R32G32B32A32_SFLOAT]
+	var texel_bytes := [8, 16, 16]
 	var images : Array[RID] = []
 	for index in formats.size():
 		var texture_format := RDTextureFormat.new()
@@ -2074,6 +2074,12 @@ func _create_interleave_fill_set(view: int, general_buffer: RID, camera_data: RI
 	uniforms.append(far_uniform)
 	for index in 3:
 		uniforms.append(_interleave_image_uniform(10 + index, interleave_block_images[view * 3 + index]))
+	# Megastorm strip params (the storm-light constants of the haze path rule, member c).
+	var strip_params_uniform := RDUniform.new()
+	strip_params_uniform.uniform_type = RenderingDevice.UNIFORM_TYPE_UNIFORM_BUFFER
+	strip_params_uniform.binding = 13
+	strip_params_uniform.add_id(megastorm_strip.params_buffer)
+	uniforms.append(strip_params_uniform)
 	return rd.uniform_set_create(uniforms, interleave_fill_shader, 0)
 
 # Worst reprojected camera motion, in raster pixels, over the centre and four corner directions: the points a fixed distance along
@@ -3861,6 +3867,10 @@ func set_megastorm_strip(enabled : bool, t : float, level : float, strength : fl
 		slices : int, refresh_seconds : float) -> void:
 	megastorm_strip.configure(enabled, t, level, strength, seed, width, bow, meander_amp, meander_wavelength, meander_phase,
 		ceiling, datum, slices, refresh_seconds)
+
+# (shadow-fade start, shadow-fade end, k_min_eff, lightning flash): the storm-light constants of the megastorm haze path rule (strip block member c).
+func set_megastorm_haze_light(fade_start : float, fade_end : float, k_min_eff : float, flash : float) -> void:
+	megastorm_strip.set_haze_light(Vector4(fade_start, fade_end, k_min_eff, flash))
 
 func update_megastorm_strip() -> void:
 	var begin_marker := ""

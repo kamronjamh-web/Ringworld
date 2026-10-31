@@ -1,5 +1,6 @@
 // Sunshine adapter for the portable terrain/compute atmosphere math.
-// Includer contract: ring_atmosphere_shared.gdshaderinc and ring_haze_shared.gdshaderinc come first (the latter is plain GLSL 450).
+// Includer contract: ring_atmosphere_shared.gdshaderinc and ring_haze_shared.gdshaderinc come first (the latter is plain GLSL 450), and ring_megastorm_darkness.gdshaderinc
+// (ring_msd_piece_weights; the storm-light include brings it in the materials).
 // Profile layout: 16 vec4, slots 0-9 Legacy, 10-15 physical haze (see ring_haze_from_profile in ring_haze_shared.gdshaderinc).
 vec4 ring_cloud_atmosphere_haze(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16]) {
 	if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return vec4(0.0);
@@ -19,26 +20,6 @@ void ring_cloud_atmosphere_haze_physical(vec3 ray_origin, vec3 ray_direction, fl
 	S = haze.S_sun + haze.S_amb;
 }
 
-// Megastorm path shade (docs/megastorm-design.md 2.3; WO4b): the haze in front of a cloud whose view path runs under the megastorm's anvil
-// and wall. That air is in the column's shadow, so its sun in-scatter is gone, and the overhang hides most of the sky that lights it, so
-// its ambient in-scatter dims too. `shade` (0..1) is the shaded share of the path (the march's ring_megastorm_path_shade) and
-// `strength` the Storm darkness the storm light uses (genericData ring_storm_ambient.w). The ambient in-scatter takes the storm-light path
-// rule's sky factor at level L = shade (materials/ring_atmosphere.gdshaderinc ring_haze_apply_storm_path: x (1 - 0.97 s L)); the sun
-// in-scatter goes with the shaded share itself (x (1 - s L)): an umbra, where the terrain rule fades it with the storm level.
-// Callers take this only while shade > 0; with shade 0 it is ring_cloud_atmosphere_apply below.
-vec3 ring_cloud_atmosphere_apply_shaded(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16], float shade, float strength) {
-	float level = clamp(shade, 0.0, 1.0) * clamp(strength, 0.0, 1.0);
-	if (ring_haze_profile_physical(p)) {
-		if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return color;
-		vec3 target = ray_origin + normalize(ray_direction) * distance_m;
-		RingHaze haze = ring_haze_from_profile(target, ray_origin, p, ring_haze_profile_day(p));
-		return color * haze.T + haze.S_sun * (1.0 - level) + haze.S_amb * (1.0 - 0.97 * level);
-	}
-	// Legacy: the haze colour is all in-scatter; it dims like the ambient term.
-	vec4 haze = ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p);
-	return mix(color, haze.rgb * (1.0 - 0.97 * level), haze.a);
-}
-
 // Applies the active haze model to a cloud colour. Legacy is the pre-P2b mix(color, haze.rgb, haze.a), bit for bit.
 vec3 ring_cloud_atmosphere_apply(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16]) {
 	if (ring_haze_profile_physical(p)) {
@@ -49,4 +30,84 @@ vec3 ring_cloud_atmosphere_apply(vec3 color, vec3 ray_origin, vec3 ray_direction
 	}
 	vec4 haze = ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p);
 	return mix(color, haze.rgb, haze.a);
+}
+
+// Megastorm haze path factors (docs/megastorm-design.md 5.6): the haze in front of a cloud is dimmed by the SAME piecewise storm-light rule the terrain's haze takes
+// (materials/ring_storm_light.gdshaderinc ring_storm_haze_path_factors, applied by ring_haze_apply_storm_factors), so the wall and the terrain at one distance and
+// direction share their aerial perspective, and the near part of a path shared with a nearer target is never dimmed by what lies beyond it. `levels` are the
+// march's ring_megastorm_haze_levels (max(L, strip shade) at the piece midpoints 2.5 / 8.5 / 17 / 31 km), `strength` the Storm darkness s (genericData
+// ring_storm_ambient.w) and `light` = (shadow-fade start, shadow-fade end, k_min_eff, lightning flash) from the strip block. Per piece the maths of
+// ring_storm_shadow_fade / ring_storm_sky / ring_storm_darkness: sun (1 - F(level) s) K, ambient (1 - 0.97 s min(level, 1)) K,
+// F = smoothstep(start, end, min(level, 1)), K = 1 - (1 - k_min) max(level - 1, 0) (1 - flash); the pieces are weighed by ring_msd_piece_weights.
+vec2 ring_cloud_storm_factors(vec4 levels, float length_m, float tau, float strength, vec4 light) {
+	float s = clamp(strength, 0.0, 1.0);
+	vec4 w = ring_msd_piece_weights(length_m, tau);
+	vec2 sum = vec2(0.0);
+	for (int k = 0; k < 4; k++) {
+		float level = levels[k];
+		float fade = level <= 0.0 ? 0.0 : smoothstep(light.x, light.y, min(level, 1.0));
+		float kk = 1.0 - (1.0 - light.z) * max(level - 1.0, 0.0) * (1.0 - light.w);
+		sum += w[k] * vec2((1.0 - fade * s) * kk, (1.0 - 0.97 * s * min(level, 1.0)) * kk);
+	}
+	return sum;
+}
+
+// Optical depth -ln(T.g) of the haze toward distance_m (Legacy: T = 1 - alpha).
+float ring_cloud_atmosphere_tau(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16]) {
+	if (ring_haze_profile_physical(p)) {
+		vec3 T;
+		vec3 S;
+		ring_cloud_atmosphere_haze_physical(ray_origin, ray_direction, distance_m, p, T, S);
+		return -log(max(T.g, 0.000001));
+	}
+	return -log(max(1.0 - ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p).a, 0.000001));
+}
+
+// The factors for a target at distance_m (see ring_cloud_storm_factors); (1, 1) for a degenerate distance or a disabled profile.
+vec2 ring_cloud_atmosphere_storm_factors(vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16], vec4 levels, float strength, vec4 light) {
+	if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return vec2(1.0);
+	return ring_cloud_storm_factors(levels, distance_m, ring_cloud_atmosphere_tau(ray_origin, ray_direction, distance_m, p), strength, light);
+}
+
+// Applies the haze with given sun / ambient in-scatter factors (the interleave fill's upsampled block factors).
+vec3 ring_cloud_atmosphere_apply_storm_factors(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16], vec2 factors) {
+	if (ring_haze_profile_physical(p)) {
+		if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) return color;
+		vec3 target = ray_origin + normalize(ray_direction) * distance_m;
+		RingHaze haze = ring_haze_from_profile(target, ray_origin, p, ring_haze_profile_day(p));
+		return color * haze.T + haze.S_sun * factors.x + haze.S_amb * factors.y;
+	}
+	// Legacy: the haze colour is all in-scatter; it dims like the ambient term.
+	vec4 haze = ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p);
+	return mix(color, haze.rgb * factors.y, haze.a);
+}
+
+// One haze evaluation: factors from the levels at this target, then the apply (the march pass's own pixels).
+vec3 ring_cloud_atmosphere_apply_storm_levels(vec3 color, vec3 ray_origin, vec3 ray_direction, float distance_m, vec4 p[16], vec4 levels, float strength, vec4 light) {
+	if (p[0].x <= 0.5 || isnan(distance_m) || isinf(distance_m) || distance_m <= 0.0) {
+		return ring_haze_profile_physical(p) ? color : ring_cloud_atmosphere_apply(color, ray_origin, ray_direction, distance_m, p);
+	}
+	if (ring_haze_profile_physical(p)) {
+		vec3 target = ray_origin + normalize(ray_direction) * distance_m;
+		RingHaze haze = ring_haze_from_profile(target, ray_origin, p, ring_haze_profile_day(p));
+		vec2 f = ring_cloud_storm_factors(levels, distance_m, -log(max(haze.T.g, 0.000001)), strength, light);
+		return color * haze.T + haze.S_sun * f.x + haze.S_amb * f.y;
+	}
+	vec4 haze = ring_cloud_atmosphere_haze(ray_origin, ray_direction, distance_m, p);
+	vec2 f = ring_cloud_storm_factors(levels, distance_m, -log(max(1.0 - haze.a, 0.000001)), strength, light);
+	return mix(color, haze.rgb * f.y, haze.a);
+}
+
+// The block's factors travel to the interleave fill in the transient image's alpha (rgba32f): 0 = no megastorm haze, else 1 + sun * 4095 * 4096 + ambient * 4095 (both 12 bit,
+// exact in a float32). The fill unpacks every tap before it weighs them.
+float ring_cloud_pack_storm_factors(vec2 f) {
+	return 1.0 + floor(clamp(f.x, 0.0, 1.0) * 4095.0 + 0.5) * 4096.0 + floor(clamp(f.y, 0.0, 1.0) * 4095.0 + 0.5);
+}
+
+// (active, sun factor, ambient factor); (0, 1, 1) for an unpacked 0.
+vec3 ring_cloud_unpack_storm_factors(float packed_value) {
+	if (packed_value < 0.5) return vec3(0.0, 1.0, 1.0);
+	float v = packed_value - 1.0;
+	float sun = floor(v / 4096.0);
+	return vec3(1.0, sun / 4095.0, (v - sun * 4096.0) / 4095.0);
 }

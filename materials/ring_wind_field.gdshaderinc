@@ -1,6 +1,7 @@
 #ifndef RING_WIND_FIELD_INCLUDED
 #define RING_WIND_FIELD_INCLUDED
 #include "res://materials/ring_ground_tremor.gdshaderinc"
+#include "res://materials/ring_megastorm_blast.gdshaderinc"
 global uniform float ring_wind_field_enabled;
 global uniform sampler2D ring_wind_gust_texture : filter_linear, repeat_enable;
 global uniform vec2 ring_wind_mean_vector;

@@ -22,6 +22,9 @@
 //   layout(binding = M, std140) uniform RingMegastormStripBlock {
 //       vec4 a;   // x = strip x min (m), y = x texel (m), z = across texel (m), w = front layer base (buffer * 2)
 //       vec4 b;   // x/y = used width/height in texels, z = valid (> 0.5), w = 0
+//       vec4 c;   // storm-light constants of the haze path rule: shadow-fade start, shadow-fade end, k_min_eff, lightning flash (the main march and the interleave fill read them)
+//       vec4 d;   // megastorm frame of the haze path's slanted-ray shade: W, bow, meander amplitude, meander wavelength (the main march reads it)
+//       vec4 e;   // meander phase, formation level, 0, 0
 //   } ringMegastormStrip;
 //   layout(binding = M + 1) uniform sampler2DArray ring_megastorm_strip;   // RGBA16F: heights (raw, absent = 0) / aux
 // and reads genericData.data.ring_megastorm_frame (CloudsInc.comp) for the per-frame reference line. The strip texel is collapsed into
@@ -267,24 +270,6 @@ float ring_storm_sun_tau(vec3 canonical, vec3 sunWorld) {
 }
 
 // ---- Megastorm light under the overhang (docs/megastorm-design.md 2.3; WO4b) ----
-// Shade of the AIR at `canonical` (cloud space) under the megastorm column: 1 - the sun transmittance of the strip column the sun ray crosses
-// 2.5 km higher, read exactly as ring_storm_sun_tau reads it (overhead when the sun is low or down), so the air and the cloud beside it share
-// one shadow. 0 outside the strip. The haze in-scatter of the view path takes it (ring_cloud_atmosphere_apply_shaded).
-float ring_megastorm_shade_at(vec3 canonical, vec3 sunWorld) {
-	float dUp = dot(sunWorld, genericData.data.cloud_frame_up.xyz);
-	vec2 xz = canonical.xz;
-	if (dUp >= 0.06) {
-		vec2 dh = vec2(dot(sunWorld, genericData.data.cloud_frame_around.xyz), dot(sunWorld, genericData.data.cloud_frame_across.xyz));
-		xz += dh * (2500.0 / dUp);
-	}
-	vec4 hts;
-	vec4 unusedAux;
-	if (!ring_megastorm_strip_fetch(xz, hts, unusedAux)) return 0.0;
-	float h = canonical.y;
-	float overlap = max(hts.y - max(hts.x, h), 0.0) + max(hts.w - max(hts.z, h), 0.0);
-	return 1.0 - exp(-RING_STORM_SUN_EXTINCTION * overlap / max(dUp, 0.06));
-}
-
 // Open-sky light of a megastorm sample (docs/megastorm-design.md 2.3; WO4b). Under the overhang the sun is gone (ring_storm_sun_tau) and the
 // only bright sky is the band beyond the anvil's leading edge: ahead of the wall (towards -xi), within a few degrees of the horizon. How much
 // of it a sample at `canonical` sees, from the column it belongs to (the primary's fetch, g_storm_heights / g_storm_aux) and the strip

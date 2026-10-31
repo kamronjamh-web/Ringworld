@@ -14,9 +14,9 @@ namespace RingworldTechDemo.Tools;
 [GlobalClass]
 public partial class MegastormSettingsSmoke : RefCounted
 {
-    static readonly string[] Keys = { "SpeedMetersPerSecond", "TrailingLengthKm", "WarningReachKm", "SoundVolumeDb", "SpawnDistanceKm" };
+    static readonly string[] Keys = { "SpeedMetersPerSecond", "TrailingLengthKm", "WarningReachKm", "SoundVolumeDb", "SpawnDistanceKm", "ShockDistortion", "EarPopLevel" };
 
-    private static bool Defaults(RingMegastormSettings r) => r.SpeedMetersPerSecond == 350f && r.TrailingLengthKm == 340f && r.WarningReachKm == 220f && r.SoundVolumeDb == 0f && r.SpawnDistanceKm == 60f;
+    private static bool Defaults(RingMegastormSettings r) => r.SpeedMetersPerSecond == 350f && r.TrailingLengthKm == 340f && r.WarningReachKm == 220f && r.SoundVolumeDb == 0f && r.SpawnDistanceKm == 60f && r.ShockDistortion == 1f && r.EarPopLevel == 1f;
 
     public Godot.Collections.Dictionary Run(string path)
     {
@@ -38,11 +38,11 @@ public partial class MegastormSettingsSmoke : RefCounted
             // 3. changed-flag semantics
             bool changed = defaults.SetOverride("SpeedMetersPerSecond", 120f) && !defaults.SetOverride("SpeedMetersPerSecond", 120f) && defaults.Dirty && runtime.SpeedMetersPerSecond == 120f;
             // 4. set, save, reload, compare
-            bool setAll = defaults.SetOverride("TrailingLengthKm", 250f) && defaults.SetOverride("WarningReachKm", 90f) && defaults.SetOverride("SoundVolumeDb", -6f) && defaults.SetOverride("SpawnDistanceKm", 90f);
+            bool setAll = defaults.SetOverride("TrailingLengthKm", 250f) && defaults.SetOverride("WarningReachKm", 90f) && defaults.SetOverride("SoundVolumeDb", -6f) && defaults.SetOverride("SpawnDistanceKm", 90f) && defaults.SetOverride("ShockDistortion", 0.5f) && defaults.SetOverride("EarPopLevel", 0f);
             bool saved = defaults.Save() && !defaults.Dirty && File.Exists(absolute);
-            runtime.SpeedMetersPerSecond = 350f; runtime.TrailingLengthKm = 340f; runtime.WarningReachKm = 220f; runtime.SoundVolumeDb = 0f; runtime.SpawnDistanceKm = 60f;
+            runtime.SpeedMetersPerSecond = 350f; runtime.TrailingLengthKm = 340f; runtime.WarningReachKm = 220f; runtime.SoundVolumeDb = 0f; runtime.SpawnDistanceKm = 60f; runtime.ShockDistortion = 1f; runtime.EarPopLevel = 1f;
             var loaded = new GameplayMegastormDefaults(path); loaded.Initialize();
-            bool roundTrip = runtime.SpeedMetersPerSecond == 120f && runtime.TrailingLengthKm == 250f && runtime.WarningReachKm == 90f && runtime.SoundVolumeDb == -6f && runtime.SpawnDistanceKm == 90f;
+            bool roundTrip = runtime.SpeedMetersPerSecond == 120f && runtime.TrailingLengthKm == 250f && runtime.WarningReachKm == 90f && runtime.SoundVolumeDb == -6f && runtime.SpawnDistanceKm == 90f && runtime.ShockDistortion == 0.5f && runtime.EarPopLevel == 0f;
             // 5. clamps and NaN fallback
             bool clamps = true;
             foreach (string key in Keys)
@@ -55,7 +55,8 @@ public partial class MegastormSettingsSmoke : RefCounted
             }
             // The documented ranges and the exported property ranges must match the table (the drawer sliders use the table).
             bool ranges = GameplayMegastormDefaults.Limits["SpeedMetersPerSecond"] == (5f, 500f) && GameplayMegastormDefaults.Limits["TrailingLengthKm"] == (100f, 600f)
-                && GameplayMegastormDefaults.Limits["WarningReachKm"] == (50f, 600f) && GameplayMegastormDefaults.Limits["SoundVolumeDb"] == (-24f, 6f) && GameplayMegastormDefaults.Limits["SpawnDistanceKm"] == (5f, 600f);
+                && GameplayMegastormDefaults.Limits["WarningReachKm"] == (50f, 600f) && GameplayMegastormDefaults.Limits["SoundVolumeDb"] == (-24f, 6f) && GameplayMegastormDefaults.Limits["SpawnDistanceKm"] == (5f, 600f)
+                && GameplayMegastormDefaults.Limits["ShockDistortion"] == (0f, 1f) && GameplayMegastormDefaults.Limits["EarPopLevel"] == (0f, 1f);
             foreach (string key in Keys)
             {
                 var range = GameplayMegastormDefaults.Limits[key];

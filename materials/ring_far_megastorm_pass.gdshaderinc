@@ -291,12 +291,9 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 	RingHaze haze = ring_haze_sample(cam, target, vec3(0.0), day);
 	if (far_megastorm_debug == 12) return vec4(haze.T, 1.0);
 	if (far_megastorm_debug == 13) return vec4(ring_haze_inscatter(haze), 1.0);
-	// Under the overhang the haze in front of the wall loses its sun in-scatter and most of its sky in-scatter (the near's WO4b rule,
-	// ring_cloud_atmosphere_apply_shaded).
-	float shade = far_ms_path_shade(ray, u, t_mean, p);
-	if (far_megastorm_debug == 14) return vec4(shade, 0.0, 0.0, 1.0);
-	float level = clamp(shade, 0.0, 1.0) * storm_w;
-	return vec4(col_sum * haze.T + (haze.S_sun * (1.0 - level) + haze.S_amb * (1.0 - 0.97 * level)) * alpha, alpha);
+	// The haze in front of the wall takes the unified megastorm haze path factors inside ring_haze_sample (ring_storm_haze_path_factors: the storm level and the
+	// column's shade, with the far frame's axes), the same value the terrain behind it gets and the near march's twin takes; no extra shade here.
+	return vec4(col_sum * haze.T + ring_haze_inscatter(haze) * alpha, alpha);
 }
 
 #endif

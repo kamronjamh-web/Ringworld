@@ -65,7 +65,7 @@ public sealed class GameplayMegastormDefaults
     }
     public static readonly Dictionary<string, (float Min, float Max)> Limits = new()
     {
-        ["SpeedMetersPerSecond"]=(5,500), ["TrailingLengthKm"]=(100,600), ["WarningReachKm"]=(50,600), ["SoundVolumeDb"]=(-24,6), ["SpawnDistanceKm"]=(5,600)
+        ["SpeedMetersPerSecond"]=(5,500), ["TrailingLengthKm"]=(100,600), ["WarningReachKm"]=(50,600), ["SoundVolumeDb"]=(-24,6), ["SpawnDistanceKm"]=(5,600), ["ShockDistortion"]=(0,1), ["EarPopLevel"]=(0,1)
     };
     public static IEnumerable<string> Keys => Limits.Keys;
     public static bool TryValidate(string key, Variant value, out Variant clean)

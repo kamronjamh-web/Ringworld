@@ -3,7 +3,7 @@ extends CompositorEffect
 ## RingLocalWeatherEffects.EnsureRainHazeCompositorLast). Sunshine blends cloud over the whole resolved colour, so any ordinary transparent streak would be clouded
 ## over; this raster pass draws on top of that result with a manual depth test against the resolved depth (docs/storm-revamp-s1-design.md section 2).
 ## No vertex buffers: the shader generates every quad from gl_VertexIndex / gl_InstanceIndex and the frame payload published by RingRainStreaks.cs.
-const PAYLOAD_SIZE := 880  # 208 render-thread bytes (camera) + 42 CPU vec4 below; keep in sync with ring_rain_streaks.glslinc and RingRainStreaks.cs
+const PAYLOAD_SIZE := 992  # 208 render-thread bytes (camera) + 49 CPU vec4 below; keep in sync with ring_rain_streaks.glslinc and RingRainStreaks.cs
 const CAMERA_BYTES := 208
 var _mutex := Mutex.new()
 var _frame := PackedByteArray()
@@ -155,6 +155,8 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 		# Draw order: streaks (mid then near), splashes (ring 6 + crown 72 vertices), then the S2 drip class (mode 2, see drip_vertex in the shader). Push constant: mode, layer.
 		var draw_order := [[0, 1, counts[1], 6], [0, 0, counts[0], 6], [1, 1, counts[3], 78], [1, 0, counts[2], 78]]
 		if counts.size() >= 6 and counts[4] > 0 and counts[5] > 0: draw_order.append([2, 0, counts[4], counts[5]])
+		# Megastorm windward spray flecks (mode 3, 6 vertices each); counts[6] is the instance count, 0 without a megastorm.
+		if counts.size() >= 7 and counts[6] > 0: draw_order.append([3, 0, counts[6], 6])
 		for item in draw_order:
 			if item[2] <= 0: continue
 			var push := PackedInt32Array([item[0], item[1], 0, 0]).to_byte_array()

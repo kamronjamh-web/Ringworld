@@ -13,7 +13,7 @@ const CAPACITY_X := 1024
 const CAPACITY_Y := 1024
 const X_MIN := -72000.0
 const X_MAX := 56000.0
-const PARAM_BYTES := 32
+const PARAM_BYTES := 80
 const BUILD_PARAM_BYTES := 80
 const RETIRE_CALLBACKS := 8
 const SHADER_PATH := "res://addons/SunshineClouds2/RingMegastormStripBuild.glsl"
@@ -44,6 +44,9 @@ var front_config : Dictionary = {}
 var x_texel : float = (X_MAX - X_MIN) / float(CAPACITY_X)
 var across_texel : float = 0.0
 var params_dirty : bool = true
+# Storm-light constants of the haze path rule (block member c): (shadow-fade start, shadow-fade end, k_min_eff, lightning flash). The bridge pushes them
+# every frame while the strip exists; the haze apply (ring_cloud_atmosphere_apply_storm_path) reads them in the march and the interleave fill.
+var haze_light : Vector4 = Vector4(0.35, 0.7, 0.06, 0.0)
 # In-flight build.
 var build : Dictionary = {}
 var build_active : bool = false
@@ -66,6 +69,7 @@ func configure(enabled : bool, t : float, level : float, strength : float, seed 
 		"meander_wavelength": meander_wavelength, "meander_phase": meander_phase, "ceiling": ceiling, "datum": datum,
 		"slices": maxi(slices, 1), "refresh_usec": int(maxf(refresh_seconds, 0.02) * 1000000.0),
 	}
+	params_dirty = true # block members d / e (the haze path's slanted-ray shade) follow the requested config
 
 func ensure_resources(rd : RenderingDevice) -> void:
 	if not rd or unavailable:
@@ -156,6 +160,11 @@ func prewarm(rd : RenderingDevice) -> void:
 	if rd and real_texture and not unavailable:
 		_ensure_pipeline(rd)
 
+func set_haze_light(light : Vector4) -> void:
+	if light != haze_light:
+		haze_light = light
+		params_dirty = true
+
 func _write_params(rd : RenderingDevice) -> void:
 	params_dirty = false
 	if not params_buffer.is_valid():
@@ -163,7 +172,10 @@ func _write_params(rd : RenderingDevice) -> void:
 	var bytes := PackedByteArray()
 	bytes.resize(PARAM_BYTES)
 	var values := [X_MIN, x_texel, across_texel, float(front_buffer * 2),
-		float(CAPACITY_X), float(CAPACITY_Y), 1.0 if valid else 0.0, 0.0]
+		float(CAPACITY_X), float(CAPACITY_Y), 1.0 if valid else 0.0, 0.0,
+		haze_light.x, haze_light.y, haze_light.z, haze_light.w,
+		float(config.get("width", 0.0)), float(config.get("bow", 0.0)), float(config.get("meander_amp", 0.0)), float(config.get("meander_wavelength", 1.0)),
+		float(config.get("meander_phase", 0.0)), float(config.get("level", 0.0)), 0.0, 0.0]
 	for i in range(values.size()):
 		bytes.encode_float(i * 4, values[i])
 	rd.buffer_update(params_buffer, 0, PARAM_BYTES, bytes)

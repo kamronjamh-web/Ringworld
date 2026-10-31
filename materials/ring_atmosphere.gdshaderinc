@@ -542,6 +542,12 @@ void ring_haze_apply_storm_path(inout RingHaze haze, float path_level) {
 	haze.S_amb *= ring_storm_sky(path_level);
 }
 
+// Megastorm: the piecewise factors of ring_storm_haze_path_factors (x sun, y ambient) applied to the in-scatter. T is untouched.
+void ring_haze_apply_storm_factors(inout RingHaze haze, vec2 factors) {
+	haze.S_sun *= factors.x;
+	haze.S_amb *= factors.y;
+}
+
 RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_world, float day_factor) {
 	if (ring_haze_debug_mode == 1) {
 		RingHaze identity;
@@ -581,7 +587,32 @@ RingHaze ring_haze_sample(vec3 camera_world, vec3 target_world, vec3 center_worl
 	if (ringworld_storm_light.w > 0.5) {
 		vec3 storm_delta = haze_target - ring_atmosphere_camera_world_position;
 		float storm_length = length(storm_delta);
-		if (storm_length > 0.0001) ring_haze_apply_storm_path(haze, ring_storm_path_level(storm_delta / storm_length, storm_length / scale));
+		if (storm_length > 0.0001) {
+			vec3 storm_dir = storm_delta / storm_length;
+			if (ring_storm_mega_active()) {
+				// Megastorm (docs/megastorm-design.md 5.6): the one set of haze path factors the Sunshine march takes too (ring_storm_haze_path_factors). Scale 1 is
+				// the main world (the storm frame's own axes); any other scale is the far frame (ring axis +Y, ring_storm_level_far's tangent), whose
+				// directions the old rule dotted with the main-world axes.
+				vec3 around_axis;
+				vec3 across_axis;
+				vec3 up_axis;
+				if (scale == 1.0) {
+					mat4 storm_frame = ringworld_storm_frame;
+					around_axis = storm_frame[0].xyz;
+					across_axis = storm_frame[1].xyz;
+					up_axis = storm_frame[2].xyz;
+				} else {
+					vec3 outward_flat = vec3(ring_atmosphere_outward_world.x, 0.0, ring_atmosphere_outward_world.z);
+					vec3 o = outward_flat / max(length(outward_flat), 0.000001);
+					around_axis = vec3(-o.z, 0.0, o.x);
+					across_axis = vec3(0.0, 1.0, 0.0);
+					up_axis = -o;
+				}
+				ring_haze_apply_storm_factors(haze, ring_storm_haze_path_factors(storm_dir, storm_length / scale, around_axis, across_axis, up_axis, ring_atmosphere_to_sun, -log(max(haze.T.g, 0.000001))));
+			} else {
+				ring_haze_apply_storm_path(haze, ring_storm_path_level(storm_dir, storm_length / scale));
+			}
+		}
 	}
 	return haze;
 }

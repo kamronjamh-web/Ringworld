@@ -87,6 +87,12 @@ void ring_tree_wind_geometry(vec3 root, vec3 source, mat3 basis, vec4 attachment
 	vec3 derivative;
 	float weight = clamp(source.y, 0.0, 1.0);
 	vec3 structure = ring_tree_wind_displacement(root, weight, length(basis[1]), derivative);
+	if (ring_megastorm_blast.x > 0.0) {
+		// Megastorm blast (WO11): the boom front throws the tree over along the direction of travel; exactly nothing without a live megastorm.
+		vec3 blast_offset, blast_derivative;
+		ring_megastorm_blast_tree(root, weight, length(basis[1]), blast_offset, blast_derivative);
+		structure += blast_offset; derivative += blast_derivative;
+	}
 	if (source.y<0.0 || source.y>1.0) derivative=vec3(0.0);
 	vec3 lengths2 = max(vec3(.000001), vec3(dot(basis[0],basis[0]),dot(basis[1],basis[1]),dot(basis[2],basis[2])));
 	vec3 local_structure_derivative = transpose(basis) * derivative / lengths2;

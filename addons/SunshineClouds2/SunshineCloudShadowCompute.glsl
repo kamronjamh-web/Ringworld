@@ -54,6 +54,7 @@ layout(binding = 14) uniform sampler2D layer_heightmask;
 layout(binding = 15, std140) uniform RingMegastormStripBlock {
     vec4 a;
     vec4 b;
+    vec4 c;
 } ringMegastormStrip;
 layout(binding = 16) uniform sampler2DArray ring_megastorm_strip;
 #define RING_WS_MACRO_MAP

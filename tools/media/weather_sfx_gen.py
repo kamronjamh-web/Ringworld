@@ -698,6 +698,38 @@ def megastorm_scythe_crackle(rng, seconds=0.9):
     return normalise_peak(fade_out(out, 120), -3)
 
 
+def megastorm_rain_hammer(rng, seconds=24.0):
+    # Bullet rain on structures (docs/megastorm-design.md 5.5.2): a very dense stream of hard, short impacts (a few thousand per second, 400-7000 Hz clicks with
+    # the odd heavy 'thwack' through a panel), over a grainy 150-3500 Hz bed. Events wrap around the loop end and the bed is periodic, so the loop is exact.
+    L = int(seconds * SR)
+    times = poisson_times(rng, 2600, seconds)
+    amps = np.exp(rng.normal(-0.9, 0.7, len(times)))
+    hits = scatter_loop(L, times, lambda i: amps[i] * click(rng, int(rng.uniform(0.0015, 0.004) * SR), rng.uniform(0.0003, 0.0009), lo=rng.uniform(400, 1500), hi=rng.uniform(4000, 8000)))
+    big = poisson_times(rng, 28, seconds)
+    freqs = plate_modes(rng, 10, 160, 1800)
+    big_amps = np.exp(rng.normal(-0.4, 0.4, len(big)))[:, None] * rng.uniform(0.2, 1, (len(big), len(freqs)))
+    thwack = modal_loop(rng, L, big, big_amps * 0.5, freqs, np.full(len(freqs), 0.035))
+    bed = noise(rng, L, 150, 3500, order=2) * periodic_lfo(rng, seconds, [8.0, 4.8, 3.0], 0.25)
+    out = hits + thwack + 0.55 * bed
+    out = fft_filter(out, lambda f: butter_mag(f, 120, 9000))
+    return normalise_loop(out, -20, -4)
+
+
+def megastorm_ear_pop(rng, seconds=0.7):
+    # The Eustachian pop (docs/megastorm-design.md 5.5.3), cosmetic: a soft low thump (a sealed ear giving way), a tiny crackle of clicks and a short
+    # breath of low-passed air as the pressure equalises.
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    out += 0.9 * np.sin(2 * np.pi * np.cumsum(70.0 - 35.0 * np.clip(t / 0.12, 0, 1)) / SR) * np.exp(-t / 0.05) * attack(n, 4.0)
+    for c in np.sort(rng.uniform(0.0, 0.05, 4)):
+        place(out, int(c * SR), 0.25 * rng.uniform(0.5, 1.0) * click(rng, int(0.003 * SR), 0.0008, lo=500, hi=3000))
+    breath = noise(rng, n, 200, 2600, order=3) * np.exp(-t / 0.18) * (1.0 - np.exp(-t / 0.03))
+    out += 0.22 * breath
+    out = fft_filter(out, lambda f: butter_mag(f, 30, 3500, 2), pad=SR)
+    return normalise_peak(fade_out(out, 80), -6)
+
+
 # ---- driver -------------------------------------------------------------------------------------------------------
 
 def write_wav(path, x):
@@ -737,6 +769,8 @@ def build_jobs(ffmpeg, src_dir):
     for i in range(1, 4):
         name = f"megastorm_boom_{i}"
         jobs[name] = (lambda name=name: megastorm_boom(rng_for(name)))
+    jobs["megastorm_rain_hammer_loop"] = lambda: megastorm_rain_hammer(rng_for("megastorm_rain_hammer_loop"))
+    jobs["megastorm_ear_pop"] = lambda: megastorm_ear_pop(rng_for("megastorm_ear_pop"))
     for i in range(1, 4):
         name = f"megastorm_scythe_crackle_{i}"
         jobs[name] = (lambda name=name: megastorm_scythe_crackle(rng_for(name)))

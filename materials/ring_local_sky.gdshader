@@ -310,7 +310,14 @@ void sky() {
 				half_width_m + across_m, half_width_m - across_m, 1.0, ring_radius_m, atmosphere_floor_depth_meters);
 		}
 		// Storm light WO-6: the same path darkening as ring_haze_sample, over the first 40 km of this view ray (camera at the map's camera texel).
-		ring_haze_apply_storm_path(haze, ring_storm_path_level(view_direction, RING_STORM_PATH_MAX_METERS));
+		if (ring_storm_mega_active()) {
+			// Megastorm: the unified haze path factors (ring_storm_haze_path_factors), main-world axes; the sun fade above keeps the old rule.
+			mat4 storm_frame = ringworld_storm_frame;
+			ring_haze_apply_storm_factors(haze, ring_storm_haze_path_factors(view_direction, RING_STORM_PATH_MAX_METERS,
+				storm_frame[0].xyz, storm_frame[1].xyz, storm_frame[2].xyz, to_sun, -log(max(haze.T.g, 0.000001))));
+		} else {
+			ring_haze_apply_storm_path(haze, ring_storm_path_level(view_direction, RING_STORM_PATH_MAX_METERS));
+		}
 		vec3 in_scatter = haze.S_sun + haze.S_amb;
 		// No additive hub in-scatter here: the model already carries the hub through day = max(geo * vis, hub_day) and the cool hub
 		// multiplier on E_sun, and terrain/clouds never got the extra term, so adding it double-counted the hub and broke convergence.

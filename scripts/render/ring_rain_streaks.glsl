@@ -129,7 +129,141 @@ void hail_puff(bool is_near, vec2 cell2, vec3 origin, vec3 around, vec3 across, 
 	v_kind = 5.0;
 }
 
+// ---- Megastorm bullet rain (docs/megastorm-design.md 5.5.2, WO11) ----
+// Wind-aligned lattice: above a streak slope of 3 the vertical drop columns would leave the near footprint (a drop 20 m up sits 150 m upwind), so the lattice lives on the
+// plane perpendicular to the drops' travel instead and a drop's phase runs along that travel. The cell and period sizes are the vertical lattice's, so the density per volume
+// is unchanged. Sheltering: the top-down occlusion map cannot shade the lee of a wall from near-horizontal rain, so six taps upwind along the travel test the ray against
+// the map surface (a 10 m wall shades about 80 m behind it at slope 7.5).
+const float LEE_TAPS[6] = float[6](6.0, 16.0, 32.0, 56.0, 90.0, 140.0);
+bool lee_blocked(vec3 head, vec3 travel, float up_comp, float yh, vec3 origin) {
+	for (int i = 0; i < 6; i++) {
+		float d = LEE_TAPS[i];
+		float ys;
+		if (map_surface(head - travel * d, origin, ys) && yh + up_comp * d < ys - 0.2) return true;
+	}
+	return false;
+}
+
+void aligned_streak(bool is_near, int vi) {
+	vec4 cfg = is_near ? F.near_cfg : F.mid_cfg;
+	vec4 cfg2 = is_near ? F.near_cfg2 : F.mid_cfg2;
+	float cell = cfg.x; int n = int(cfg.y); float radius = cfg.z;
+	int cells = n * n;
+	int inst = gl_InstanceIndex;
+	int slot = inst / cells;
+	int k = inst - slot * cells;
+	int di = k % n - n / 2; int dj = k / n - n / 2;
+	int ci = int(is_near ? F.mega_u.w : F.mega_cells.x) + di;
+	int cj = int(is_near ? F.mega_v.w : F.mega_cells.y) + dj;
+	uint salt = uint(cfg2.y) + uint(slot) * 0x51ed27u;
+	uint h0 = hash_cell(ci, cj, salt);
+	uint h1 = hash_u(h0 ^ 0x68bc21ebu);
+	float jx = u01(h0), jy = u01(h1);
+	float hp = u01(hash_u(h1 + 0x02e5be93u));
+	float keep = u01(hash_u(h1 ^ 0x1b873593u));
+	float period = is_near ? F.near_cfg2.w : F.mid_origin.w;
+	vec4 corner_phase = is_near ? F.mega_near_o : F.mega_mid_o;
+	vec3 u = F.mega_u.xyz, v = F.mega_v.xyz, travel = F.mega_t.xyz;
+	vec3 origin = F.near_origin.xyz;
+	vec3 up = F.axis_up.xyz;
+	vec2 cell2 = vec2(float(di) + jx, float(dj) + jy) * cell;
+	float srel = fract((hp * period - corner_phase.w) / period + 0.5) * period - 0.5 * period;
+	vec3 base_w = corner_phase.xyz + u * cell2.x + v * cell2.y;
+	vec3 head = base_w - travel * srel;   // srel is measured against the travel (like yrel against down)
+	float up_comp = dot(-travel, up);
+	vec3 radiance = lit_radiance(base_w);
+	float vis = smoothstep(0.0015, 0.03, dot(radiance, vec3(0.2126, 0.7152, 0.0722)));
+	float local_i = tier_intensity(local_intensity(base_w));
+	float dens = rain_density(local_i) * F.rain.x * (is_near ? 1.0 : rain_mid_weight(local_i));
+	float thresh = slot == 0 ? min(dens, 1.0) : max(dens - 1.0, 0.0);
+	if (keep >= thresh || vis <= 0.001) { cull(); return; }
+	float drop_var = mix(0.6, 1.0, u01(hash_u(h1 ^ 0x2c1b3c6du)));
+	// Length is speed / 60 s clamped to 2.5 m (a drop at 140 m/s covers 2.3 m in a 60 Hz frame).
+	float len = min(2.5, F.mega_t.w * (1.0 / 60.0) * mix(0.85, 1.15, drop_var));
+	float yh = dot(head - origin, up);
+	float ys;
+	if (map_surface(head, origin, ys) && yh < ys) {
+		float lc = (ys - yh) / max(up_comp, 0.02);
+		if (lc >= len) { cull(); return; }
+		head -= travel * lc; len -= lc; yh = ys;
+	}
+	float cloud_base = F.axis_across.w;
+	if (yh > cloud_base) { cull(); return; }
+	if (lee_blocked(head, travel, up_comp, yh, origin)) { cull(); return; }
+	vec3 tail = head - travel * len;
+	float comp, vz;
+	float width = F.rain2.x * mix(0.8, 1.4, drop_var);
+	if (!capsule_quad(head, tail, width, vi, comp, vz)) { cull(); return; }
+	float d_cam = length(head - F.cam_pos.xyz);
+	float fade_cb = 1.0 - smoothstep(cloud_base - 8.0, cloud_base, yh + len * up_comp);
+	float fade_cam = smoothstep(0.35, 0.7, d_cam);
+	float fade_rad = 1.0 - smoothstep(0.7 * radius, radius, d_cam);
+	float fade_in = is_near ? 1.0 : smoothstep(0.5 * F.near_cfg.z, F.near_cfg.z + 2.0, d_cam);
+	float alpha = F.rain.z * rain_brightness_scale(local_i) * drop_var * comp * fade_cam * fade_rad * fade_in * fade_cb * vis;
+	v_color = vec4(radiance, alpha);
+	v_uv = vec3(CORNERS[vi % 6], 0.0);
+	v_viewz = vz;
+	v_kind = 0.0;
+}
+
+// Windward spray (mode 3): flecks at random screen pixels whose depth-buffer normal faces into the wind and is not ground; each lives a few tenths of a second, thrown
+// off the face and drooping. Culled unless the sampled surface qualifies, so the count is a ceiling, not a cost per visible fleck.
+layout(set = 0, binding = 1) uniform sampler2D vtx_depth;
+void spray_vertex(int vi) {
+	if (F.mega.z <= 0.001) { cull(); return; }
+	int id = gl_InstanceIndex;
+	uint h0 = hash_u(uint(id) * 0x9e3779b9u + 0x1234567u);
+	float cycle = mix(0.2, 0.45, u01(hash_u(h0 ^ 0x68bc21ebu)));
+	float t = F.mega.y / cycle + u01(hash_u(h0 + 0x02e5be93u));
+	float age = fract(t);
+	uint epoch = uint(floor(t));
+	uint h1 = hash_u(h0 ^ (epoch * 0x85ebca6bu + 0x9e3779b9u));
+	uint h2 = hash_u(h1 + 0x7f4a7c15u);
+	if (u01(hash_u(h2 ^ 0x3c6ef372u)) > F.mega.z) { cull(); return; }
+	ivec2 px = ivec2(vec2(u01(h1), u01(h2)) * (F.viewport.xy - 1.0));
+	float d = texelFetch(vtx_depth, px, 0).r;
+	if (d <= 0.0) { cull(); return; }
+	ivec2 sz = ivec2(F.viewport.xy);
+	ivec2 pa = clamp(px + ivec2(3, 0), ivec2(0), sz - 1), pb = clamp(px + ivec2(0, 3), ivec2(0), sz - 1);
+	float da = texelFetch(vtx_depth, pa, 0).r, db = texelFetch(vtx_depth, pb, 0).r;
+	if (da <= 0.0 || db <= 0.0) { cull(); return; }
+	vec2 uv0 = (vec2(px) + 0.5) / F.viewport.xy, uva = (vec2(pa) + 0.5) / F.viewport.xy, uvb = (vec2(pb) + 0.5) / F.viewport.xy;
+	vec4 p0 = F.inv_proj * vec4(uv0 * 2.0 - 1.0, d, 1.0), p1 = F.inv_proj * vec4(uva * 2.0 - 1.0, da, 1.0), p2 = F.inv_proj * vec4(uvb * 2.0 - 1.0, db, 1.0);
+	vec3 a = p0.xyz / p0.w, b = p1.xyz / p1.w, c = p2.xyz / p2.w;
+	float dist = length(a);
+	if (dist > 70.0 || dist < 0.6) { cull(); return; }
+	vec3 nv = normalize(cross(b - a, c - a));
+	if (nv.z < 0.0) nv = -nv;   // face the camera
+	vec3 nw = F.cam_x.xyz * nv.x + F.cam_y.xyz * nv.y + F.cam_z.xyz * nv.z;
+	vec3 travel = F.mega_t.xyz;
+	float facing = dot(nw, -travel);
+	if (facing < 0.5 || dot(nw, F.axis_up.xyz) > 0.55) { cull(); return; }
+	vec3 world = F.cam_pos.xyz + F.cam_x.xyz * a.x + F.cam_y.xyz * a.y + F.cam_z.xyz * a.z;
+	vec3 radiance = lit_radiance(world);
+	float vis = smoothstep(0.0015, 0.03, dot(radiance, vec3(0.2126, 0.7152, 0.0722)));
+	if (vis <= 0.001) { cull(); return; }
+	vec3 side = normalize(cross(nw, F.axis_up.xyz));
+	float sx = u01(hash_u(h2 ^ 0x1b873593u)) * 2.0 - 1.0;
+	vec3 centre = world + nw * (0.05 + 0.9 * age) + side * sx * 0.5 * age + F.axis_up.xyz * (0.25 * age - 0.8 * age * age);
+	float r = (0.035 + 0.04 * u01(hash_u(h2 ^ 0x2c1b3c6du))) * (1.0 + 1.5 * age);
+	vec2 cn = CORNERS[vi % 6];
+	vec2 cc = vec2(cn.x, cn.y * 2.0 - 1.0);
+	vec3 pos = centre + (F.cam_x.xyz * cc.x + F.cam_y.xyz * cc.y) * r;
+	vec3 vp = to_view(pos);
+	if (vp.z > -0.08) { cull(); return; }
+	gl_Position = F.proj * vec4(vp, 1.0);
+	float fade_cam = smoothstep(0.35, 0.7, length(vp));
+	float fade_far = 1.0 - smoothstep(40.0, 70.0, dist);
+	float fresh = (1.0 - age) * (1.0 - age);
+	v_color = vec4(min(radiance * 2.5 + vec3(0.02), vec3(4.0)), clamp(0.8 * fresh * fade_cam * fade_far * vis * smoothstep(0.5, 0.9, facing), 0.0, 1.0));
+	v_uv = vec3(cc, 0.0);
+	v_viewz = vp.z;
+	v_kind = 5.0;
+}
+
 void main() {
+	if (pc.mode == 3u) { spray_vertex(gl_VertexIndex); return; }
+	if (pc.mode == 0u && F.mega.x > 0.5) { aligned_streak(pc.layer == 0u, gl_VertexIndex); return; }
 	bool is_near = pc.layer == 0u;
 	vec4 cfg = is_near ? F.near_cfg : F.mid_cfg;
 	vec4 cfg2 = is_near ? F.near_cfg2 : F.mid_cfg2;

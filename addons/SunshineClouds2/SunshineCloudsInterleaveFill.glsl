@@ -16,6 +16,7 @@
 #include "./CloudsInc.comp"
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
 #include "../../materials/ring_haze_shared.gdshaderinc"
+#include "../../materials/ring_megastorm_darkness.gdshaderinc"
 #include "./RingAtmosphereCompute.glslinc"
 #include "./RingCloudHistory.gdshaderinc"
 
@@ -46,8 +47,15 @@ layout(binding = 8, std140) uniform SceneDataBlock {
 layout(binding = 9) uniform sampler2D far_opaque_depth_image;
 
 layout(rgba16f, binding = 10) uniform readonly image2D interleave_steady_image;
-layout(rgba16f, binding = 11) uniform readonly image2D interleave_transient_image;
+layout(rgba32f, binding = 11) uniform readonly image2D interleave_transient_image;
 layout(rgba32f, binding = 12) uniform readonly image2D interleave_data_image;
+// Megastorm strip block (the march pass's binding 31): only member c is read here, the storm-light constants of the haze path rule
+// (shadow-fade start, shadow-fade end, k_min_eff, lightning flash; ring_cloud_storm_factors; the transient alpha carries the packed factors).
+layout(binding = 13, std140) uniform RingMegastormStripBlock {
+	vec4 a;
+	vec4 b;
+	vec4 c;
+} ringMegastormStrip;
 
 #include "./SunshineCloudsHistory.glslinc"
 
@@ -93,8 +101,9 @@ void main() {
 
 	vec4 spatialColor = vec4(0.0);
 	vec3 spatialTransient = vec3(0.0);
-	// Megastorm path shade of the block samples (transient alpha; 0 without a megastorm), upsampled like the colour (WO4b).
-	float spatialMegaShade = 0.0;
+	// Megastorm haze path level of the block samples (transient alpha; 0 without a megastorm), upsampled like the colour (WO4b, 5.6).
+	float spatialMegaActive = 0.0;
+	vec2 spatialMegaFactors = vec2(0.0);
 	vec4 spatialData = vec4(0.0);
 	float spatialWeight = 0.0;
 	vec4 statMean = vec4(0.0);
@@ -116,7 +125,9 @@ void main() {
 				spatialColor += tapColor * tapWeight;
 				vec4 tapTransient = imageLoad(interleave_transient_image, tap);
 				spatialTransient += tapTransient.rgb * tapWeight;
-				spatialMegaShade += tapTransient.a * tapWeight;
+				vec3 tapFactors = ring_cloud_unpack_storm_factors(tapTransient.a);
+				spatialMegaActive += tapFactors.x * tapWeight;
+				spatialMegaFactors += tapFactors.yz * tapWeight;
 				spatialData += tapData * tapWeight;
 				spatialWeight += tapWeight;
 			}
@@ -130,7 +141,8 @@ void main() {
 	float inverseWeight = 1.0 / max(spatialWeight, 0.000001);
 	spatialColor *= inverseWeight;
 	spatialTransient *= inverseWeight;
-	spatialMegaShade *= inverseWeight;
+	spatialMegaActive *= inverseWeight;
+	spatialMegaFactors *= inverseWeight;
 	spatialData *= inverseWeight;
 	float initialdistanceSample = spatialData.r;
 	float traveledDistance = spatialData.g;
@@ -258,10 +270,10 @@ void main() {
 		}
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(resultData.b, 0.0, max(0.0, linear_depth));
-			if (spatialMegaShade > 0.0) {
-				// Haze under the megastorm overhang (docs/megastorm-design.md 2.3, WO4b): the march pass's path shade, upsampled.
-				outputColor.rgb = ring_cloud_atmosphere_apply_shaded(outputColor.rgb, rayOrigin, raydirection, haze_distance,
-					genericData.data.ring_atmosphere_profile, spatialMegaShade, genericData.data.ring_storm_ambient.w);
+			// Haze path factors of the megastorm march (docs/megastorm-design.md 5.6), upsampled from the block samples; no block carrying them (every default-kernel block) is the plain apply.
+			if (spatialMegaActive > 0.0) {
+				outputColor.rgb = ring_cloud_atmosphere_apply_storm_factors(outputColor.rgb, rayOrigin, raydirection, haze_distance,
+					genericData.data.ring_atmosphere_profile, spatialMegaFactors);
 			} else {
 				outputColor.rgb = ring_cloud_atmosphere_apply(outputColor.rgb, rayOrigin, raydirection, haze_distance, genericData.data.ring_atmosphere_profile);
 			}

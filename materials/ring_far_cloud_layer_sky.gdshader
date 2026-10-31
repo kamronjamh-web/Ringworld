@@ -380,12 +380,8 @@ void fragment() {
 	vec3 target = cam + dir * (t_mean * scale);
 	float day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(vec3(-u.x, 0.0, -u.y), normalize(ring_atmosphere_to_sun))));
 	RingHaze haze = ring_haze_sample(cam, target, vec3(0.0), day);
+	// ring_haze_sample carries the unified megastorm haze path factors (ring_storm_haze_path_factors), so the air under the overhang needs no extra shade here.
 	vec3 inscatter = ring_haze_inscatter(haze);
-	if (far_megastorm_enabled) {
-		// The air under the megastorm's overhang is in its shadow: the wedge pass's (and the near march's) shaded haze rule.
-		float level = clamp(far_ms_path_shade(msray, u, t_mean, ring_far_ms_params()), 0.0, 1.0) * clamp(far_megastorm_storm_ambient.w, 0.0, 1.0);
-		inscatter = haze.S_sun * (1.0 - level) + haze.S_amb * (1.0 - 0.97 * level);
-	}
 	ALBEDO = col_sum * haze.T + inscatter * alpha;
 	ALPHA = alpha;
 }

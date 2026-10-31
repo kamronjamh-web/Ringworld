@@ -28,7 +28,7 @@ public partial class RingLocalWeatherEffects
     /// <summary>Test and capture hook: replaces the storm arrival state the streaks read (fat drops, core, trailing, hail). Null = the observer's arrival state.</summary>
     public StormArrivalState? StreakArrivalOverride { get; set; }
 
-    private const int StreakPayloadBytes = 672;
+    private const int StreakPayloadBytes = 784;
     private const int StreakGridCells = RainStreakLattice.GridSide * RainStreakLattice.GridSide;
     private static readonly StringName PublishStreakFrameName = "publish_frame";
     private static readonly StringName PublishStreakMarkersName = "publish_gpu_markers";
@@ -50,6 +50,9 @@ public partial class RingLocalWeatherEffects
     private bool _streakPerStreakLight;
     private int _streakNearInstances, _streakMidInstances, _streakSplashInstances;
     private float _lastStreakSlope, _lastStreakFatDrop, _lastStreakHail;
+    private bool _lastStreakAligned;
+    private const int MegastormSprayInstances = 3000;
+    public bool LastStreakAligned => _lastStreakAligned;
     public double LastStreakGridMilliseconds { get; private set; }
     private double _streakGridTotalMs, _streakUpdateTotalMs;
     private long _streakUpdateFrames;
@@ -253,8 +256,16 @@ public partial class RingLocalWeatherEffects
         RingWindField.PublishedFrame gust = _weatherSource.SharedWindField.CapturePublishedFrame();
         Texture2D? gustTexture = gust.Texture ?? _rainHazeNeutral;
         Vector2 meanWind = CurrentWindSnapshot.Enabled && CurrentWindSnapshot.MeanWind.IsFinite() ? CurrentWindSnapshot.MeanWind : Vector2.Zero;
-        Vector2 slope = RainStreakLattice.Slope(meanWind);
+        // Megastorm (WO11): the in-wall wind is 140 m/s but the render snapshot is limited to 80 and eased; the streaks take the exact hazard wind (docs 5.5.2).
+        if (_weatherSource.MegastormSource is RingMegastorm hazardNode && MegastormHazardMath.WindOverride(hazardNode.Model, observer.AroundMeters, observer.AcrossMeters, time, out Vector2 hazardMean, out float hazardWeight) && hazardWeight > 0.0f && hazardMean.IsFinite())
+            meanWind = meanWind.Lerp(hazardMean, hazardWeight);
+        // Megastorm bullet rain (WO11): the slope cap rises to 16 and, from a slope of 3, the lattice runs wind-aligned. Without a megastorm source nothing below changes.
+        bool megaLive = _weatherSource.MegastormSource != null;
+        float slopeCap = MegastormHazardFx.SlopeCap(megaLive, RainStreakLattice.MaximumSlope);
+        Vector2 slope = RainStreakLattice.Slope(meanWind, slopeCap);
         _lastStreakSlope = slope.Length();
+        bool aligned = megaLive && slope.Length() >= MegastormHazardFx.WindAlignedSlope;
+        _lastStreakAligned = aligned;
 
         var occlusion = RingPrecipitationOcclusion.Instance;
         bool mapReady = occlusion != null && occlusion.Ready && occlusion.PublishedTexture != null && PrecipitationPhase == PrecipitationPhase.Below;
@@ -294,7 +305,7 @@ public partial class RingLocalWeatherEffects
         V(densitySetting * PrecipitationStreakFactor,
             RainStreakLattice.StreakLengthMeters * lengthSetting,
             Mathf.Clamp(brightness, 0, 1), 0);
-        V(RainStreakLattice.StreakWidthMeters, RainStreakLattice.MaximumSlope, RainStreakLattice.MinimumWidthPixels, gust.Enabled && gustTexture != null ? 1 : 0);
+        V(RainStreakLattice.StreakWidthMeters, slopeCap, RainStreakLattice.MinimumWidthPixels, gust.Enabled && gustTexture != null ? 1 : 0);
         V(meanWind.X, meanWind.Y, gust.Base, gust.Strength);
         V3(gust.Anchor, 0); V(gust.Around.X, gust.Around.Y, gust.Around.Z, gust.Around.W); V(gust.Across.X, gust.Across.Y, gust.Across.Z, gust.Across.W);
         V(gust.Uv.X, gust.Uv.Y, 0, 0);
@@ -318,11 +329,36 @@ public partial class RingLocalWeatherEffects
         V(arrival.Valid ? fatDrop : 0.0f, arrival.Valid ? Mathf.Clamp(arrival.Core, 0.0f, 1.0f) : 0.0f, arrival.Valid ? Mathf.Clamp(arrival.Trailing, 0.0f, 1.0f) : 0.0f, arrival.Valid ? arrival.Severity : 0.0f);
         V(hailIntensity, Mathf.Clamp(arrival.HailSize, 0.0f, 1.0f), RainStreakLattice.HailPhase(time, vertical, RainStreakLattice.HailNearPeriodMeters), RainStreakLattice.HailPhase(time, vertical, RainStreakLattice.HailMidPeriodMeters));
 
+        // Megastorm block (zeros without a live megastorm): the aligned lattice frame, the windward spray amount and the path phases.
+        float sprayAmount = 0.0f;
+        if (megaLive)
+        {
+            Vector3 tC = new Vector3(slope.X, slope.Y, -1.0f).Normalized();
+            Vector3 uC = aligned ? new Vector3(-slope.Y, slope.X, 0.0f).Normalized() : new Vector3(0.0f, 1.0f, 0.0f);
+            Vector3 vC = tC.Cross(uC).Normalized();
+            double uo = observer.AroundMeters * uC.X + observer.AcrossMeters * uC.Y + vertical * uC.Z;
+            double vo = observer.AroundMeters * vC.X + observer.AcrossMeters * vC.Y + vertical * vC.Z;
+            double to = observer.AroundMeters * tC.X + observer.AcrossMeters * tC.Y + vertical * tC.Z;
+            Vector3 U = aroundAxis * uC.X + acrossAxis * uC.Y + upAxis * uC.Z, W = aroundAxis * vC.X + acrossAxis * vC.Y + upAxis * vC.Z, T = aroundAxis * tC.X + acrossAxis * tC.Y + upAxis * tC.Z;
+            float pathSpeed = RainStreakLattice.FallSpeedMetersPerSecond * new Vector3(slope.X, slope.Y, -1.0f).Length();
+            double Wrap(double x, double period) { double r = x % period; return r < 0 ? r + period : r; }
+            int ni = (int)Math.Floor(uo / layers.NearCellMeters), nj = (int)Math.Floor(vo / layers.NearCellMeters);
+            int mi = (int)Math.Floor(uo / layers.MidCellMeters), mj = (int)Math.Floor(vo / layers.MidCellMeters);
+            Vector3 nearCorner = centre + U * (float)(ni * (double)layers.NearCellMeters - uo) + W * (float)(nj * (double)layers.NearCellMeters - vo);
+            Vector3 midCorner = centre + U * (float)(mi * (double)layers.MidCellMeters - uo) + W * (float)(mj * (double)layers.MidCellMeters - vo);
+            float nearPathPhase = (float)Wrap(time * pathSpeed - to, RainStreakLattice.NearPeriodMeters), midPathPhase = (float)Wrap(time * pathSpeed - to, RainStreakLattice.MidPeriodMeters);
+            float power = MegastormHazardMath.RainImpactPowerWm2(MegastormHazardMath.RainRateWallMmPerHour * Mathf.Clamp(PrecipitationIntensity, 0, 1), meanWind.Length());
+            sprayAmount = aligned ? MegastormHazardFx.SprayAmount(power, 1.0f) : 0.0f;
+            V(aligned ? 1 : 0, (float)(time % 1000.0), sprayAmount, MegastormSprayInstances);
+            V3(U, ni); V3(W, nj); V3(T, pathSpeed); V3(nearCorner, nearPathPhase); V3(midCorner, midPathPhase); V(mi, mj, 0, 0);
+        }
+        else { for (int z = 0; z < 7; z++) V(0, 0, 0, 0); }
+
         _streakNearInstances = layers.NearCells * drops;
         _streakMidInstances = layers.MidCells * drops;
         _streakSplashInstances = splashFraction > 0 ? layers.NearCells + layers.MidCells : 0;
         _streakArgs[0] = data.AsSpan(0, StreakPayloadBytes).ToArray();
-        _streakArgs[1] = new int[] { _streakNearInstances, _streakMidInstances, splashFraction > 0 ? layers.NearCells : 0, splashFraction > 0 ? layers.MidCells : 0 };
+        _streakArgs[1] = new int[] { _streakNearInstances, _streakMidInstances, splashFraction > 0 ? layers.NearCells : 0, splashFraction > 0 ? layers.MidCells : 0, 0, 0, sprayAmount > 0.001f ? MegastormSprayInstances : 0 };
         _streakArgs[2] = gustTexture == null ? default : Variant.From(gustTexture);
         _streakArgs[3] = occlusionTexture == null ? default : Variant.From(occlusionTexture);
         _streakArgs[4] = true;
@@ -362,7 +398,7 @@ public partial class RingLocalWeatherEffects
             ["budget"] = MaximumStreakCount,
             ["near_cells"] = layers.NearCells, ["mid_cells"] = layers.MidCells,
             ["near_instances"] = _streakNearInstances, ["mid_instances"] = _streakMidInstances, ["splash_instances"] = _streakSplashInstances,
-            ["slope"] = _lastStreakSlope,
+            ["slope"] = _lastStreakSlope, ["aligned"] = _lastStreakAligned,
             ["fat_drop"] = _lastStreakFatDrop, ["hail"] = _lastStreakHail,
             ["radiance"] = _lastStreakRadiance, ["per_streak_light"] = _streakPerStreakLight,
             ["grid_ms"] = LastStreakGridMilliseconds, ["grid_mirror"] = _streakGridMirror, ["grid_total_ms"] = _streakGridTotalMs, ["update_total_ms"] = _streakUpdateTotalMs, ["grid_frames"] = _streakUpdateFrames, ["grid_centre"] = _streakGridCentreWorld,
