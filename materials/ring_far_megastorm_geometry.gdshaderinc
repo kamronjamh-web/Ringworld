@@ -7,7 +7,8 @@
 // with x_cam the camera's own reference-line distance, computed by the CPU in double (RingScaledFarViewport.Megastorm), so no float ever
 // holds an around coordinate of the ring's size. xi = x - lead(across) (ring_megastorm_lead_offset). Everything is physical metres.
 //
-// Include after ring_atmosphere.gdshaderinc (ring_radius_meters) and ring_megastorm_profile.gdshaderinc.
+// Include after ring_atmosphere.gdshaderinc (ring_radius_meters) and ring_megastorm_profile.gdshaderinc, with the global ring_far_cloud_lights
+// declared (far_ms_path_shade reads the sun from it).
 #ifndef RING_FAR_MEGASTORM_GEOMETRY_GDSHADERINC
 #define RING_FAR_MEGASTORM_GEOMETRY_GDSHADERINC
 
@@ -168,6 +169,71 @@ vec4 ring_far_ms_coverage(float xi) {
 	float u = (xi - far_megastorm_frame.z) / span;
 	if (u <= 0.0 || u >= 1.0) return vec4(0.0);
 	return textureLod(far_megastorm_coverage, vec2(u, 0.5), 0.0);
+}
+
+// ---- Column sun shade (shared by the wedge pass and the far layer sky) ----
+// Across noise table: (tower, mammatus, shaft) raw value noise over across 0 .. W (MegastormProfile.AcrossTerms).
+uniform sampler2D far_megastorm_across : hint_default_black, filter_linear, repeat_disable;
+// Sunshine's per-ray storm ambient (rgb, w = Storm darkness strength): the wedge pass's storm light, and the layer sky's ambient for cloud
+// in the column's shadow.
+uniform vec4 far_megastorm_storm_ambient = vec4(0.0);
+// The storm-ambient factor of cloud under the overhang (the near's RING_MEGASTORM_UNDER_OPEN between the shade and open factors:
+// mix(0.45, 1.8, 0.6)): ring_megastorm_open_light for fair-layer cumulus below the column.
+const float FAR_MS_UNDER_AMBIENT = 1.26;
+
+const float FAR_MS_SUN_EXTINCTION = 3.0e-3; // RING_STORM_SUN_EXTINCTION
+// The strip extent (MegastormProfile.StripMinX / StripMaxX).
+const float FAR_MS_X_MIN = -72000.0;
+const float FAR_MS_X_MAX = 56000.0;
+
+// The column at (x, across) in the strip sampler's convention (ring_megastorm_strip_fetch): each interval collapsed onto its base by its
+// coverage x sculpt strength. heights = (body base, body top, canopy underside, canopy top), aux = (canopy cov, mammatus, tower, body cov).
+void far_ms_column(float x, float across, RingMegastormParams p, out vec4 heights, out vec4 aux) {
+	float W = max(p.b.x, 1.0);
+	vec2 noise = textureLod(far_megastorm_across, vec2(clamp(across / W, 0.0, 1.0), 0.5), 0.0).xy;
+	vec4 raw;
+	ring_megastorm_column_terms(x, across, noise, p, raw, aux);
+	float sculpt = clamp(p.c.z * 1.2, 0.0, 1.0);
+	heights = vec4(raw.x, raw.x + max(raw.y - raw.x, 0.0) * clamp(1.25 * aux.w * sculpt, 0.0, 1.0),
+		raw.z, raw.z + max(raw.w - raw.z, 0.0) * clamp(1.25 * aux.x * sculpt, 0.0, 1.0));
+}
+
+// ring_megastorm_shade_at (RingStormProfileSample.glslinc): how much of the sun the megastorm column shades at the ray point t (the column
+// 2.5 km up the sun ray, overhead when the sun is low). 0 outside the strip x range and when the sun is absent or below the local horizon.
+float far_ms_shade_at(RingFarMsRay ray, float t, vec3 L, vec3 up_at_t, RingMegastormParams p) {
+	float sun_up = dot(L, up_at_t);
+	if (smoothstep(-0.05, 0.12, dot(normalize(L), up_at_t)) <= 0.0) return 0.0;
+	vec3 tangent = vec3(up_at_t.z, 0.0, -up_at_t.x);
+	float x = ring_far_ms_x(ray, t);
+	float across = ring_far_ms_across(ray, t);
+	if (sun_up >= 0.06) {
+		float k = 2500.0 / sun_up;
+		x += -far_megastorm_frame.y * dot(L, tangent) * k;
+		across += L.y * k;
+	}
+	if (x < FAR_MS_X_MIN || x > FAR_MS_X_MAX) return 0.0;
+	vec4 hts;
+	vec4 unused_aux;
+	far_ms_column(x, across, p, hts, unused_aux);
+	float h = ring_far_ms_altitude(ray, t);
+	float overlap = max(hts.y - max(hts.x, h), 0.0) + max(hts.w - max(hts.z, h), 0.0);
+	return 1.0 - exp(-FAR_MS_SUN_EXTINCTION * overlap / max(sun_up, 0.06));
+}
+
+
+// ring_megastorm_path_shade: the mean of far_ms_shade_at at the centres of four equal pieces of the path to t_mean (from the camera).
+float far_ms_path_shade(RingFarMsRay ray, vec2 u, float t_mean, RingMegastormParams p) {
+	vec4 ld = ring_far_cloud_lights[0];
+	if (ld.w < 0.5) return 0.0;
+	vec3 L = normalize(ld.xyz);
+	float shade = 0.0;
+	for (int k = 0; k < 4; k++) {
+		float t = t_mean * (0.125 + 0.25 * float(k));
+		vec2 radial = (ray.rc + t * ray.dr) * u + (t * ray.dt) * vec2(-u.y, u.x);
+		vec2 n = normalize(radial);
+		shade += far_ms_shade_at(ray, t, L, vec3(-n.x, 0.0, -n.y), p);
+	}
+	return 0.25 * shade;
 }
 
 #endif

@@ -3,9 +3,8 @@
 // (RingFarWeatherShadowGlobals: ring_far_cloud_lights / ring_far_cloud_ambient, declared by the includer).
 //  - remote day: the ambient of a cloud far round the ring follows ITS sun, not the camera's (the far arch can be in night while the
 //    camera is at noon), as a ratio applied to the camera-local ambient;
-//  - storm sun: the sun on a storm sample, Beer through the column's optical depth, with the S4 storm cut faded out with distance (near the
-//    handoff the far matches the Sunshine march, which takes only (1 - 0.85 s) of the sun on storm cloud; across the arch the sunlit tops
-//    read physically bright, decision 2);
+//  - storm sun: the sun on a storm sample, Beer through the column's optical depth; megastorm strip samples (near and far) take no S4 storm
+//    cut, only the physical umbra (WO5b-C1; decision 2). ring_far_storm_cut_weight now only weights the storm ambient;
 //  - the megastorm flash field (3.3): 64 segments of 5 km across in the moving frame, one flash chance per 2 s slot per segment. Its CPU
 //    twin is MegastormLightning.FlashesInWindow / GlowAt (scripts/Weather/Megastorm/MegastormLightning.cs): same hashes, same constants.
 // Include after ring_megastorm_profile.gdshaderinc (ring_ms_hash01, ring_megastorm_lead_offset).
@@ -70,9 +69,11 @@ float ring_ms_flash_pulse(float age, bool reduced, float reduced_peak) {
 
 // Flash light at a point of the moving frame (x reference-line distance, across, altitude above the floor), from the flashes of the
 // segments beside it in the current and previous slot. `slot` = floor(t / 2), `slot_time` = t - 2 slot (the CPU splits t in double, so the
-// pulse keeps millisecond precision at any weather time). Returns the summed pulse x energy x Gaussian falloff (times strength).
+// pulse keeps millisecond precision at any weather time). `chance_scale` is the strike-rate multiplier (LightningVisualPolicy.
+// NaturalStrikeChanceScale: Lightning frequency x the reduced-flashes share), applied to the same roll as MegastormLightning.Flash(..., chanceScale),
+// so a scale below 1 keeps a subset of the cells at 1. Returns the summed pulse x energy x Gaussian falloff (times strength).
 float ring_ms_flash_glow(float x, float across, float altitude, int slot, float slot_time, bool reduced, float reduced_peak,
-		RingMegastormParams p) {
+		float chance_scale, RingMegastormParams p) {
 	int seed = int(round(p.a.w));
 	int center = int(floor(across / RING_MS_FLASH_SEGMENT_METERS));
 	float glow = 0.0;
@@ -82,7 +83,7 @@ float ring_ms_flash_glow(float x, float across, float altitude, int slot, float 
 		for (int dseg = -1; dseg <= 1; dseg++) {
 			int seg = center + dseg;
 			if (seg < 0 || seg >= RING_MS_FLASH_SEGMENTS) continue;
-			if (ring_ms_hash01(seed, 1000 + seg, k) >= RING_MS_FLASH_CHANCE) continue;
+			if (ring_ms_hash01(seed, 1000 + seg, k) >= RING_MS_FLASH_CHANCE * max(chance_scale, 0.0)) continue;
 			float age = slot_age - RING_MS_FLASH_SLOT_SECONDS * ring_ms_hash01(seed, 2000 + seg, k);
 			float pulse = ring_ms_flash_pulse(age, reduced, reduced_peak);
 			if (pulse <= 0.0) continue;

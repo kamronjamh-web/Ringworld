@@ -489,6 +489,20 @@
       "expected_s": null,
       "timeout_s": 900
     },
+    "megastorm_real_path_check": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather",
+        "loading"
+      ],
+      "world": "start-menu",
+      "marker": "MEGASTORM_REAL",
+      "expected_s": null,
+      "timeout_s": 1800
+    },
     "certified_terrain_water_seam_capture": {
       "kind": "tool",
       "mode": "gpu",
@@ -2687,6 +2701,18 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "megastorm_field_events_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "marker": "MEGASTORM_FIELD_EVENTS",
+      "expected_s": 15,
+      "timeout_s": 120
+    },
     "megastorm_model_test": {
       "kind": "test",
       "mode": "headless",
@@ -2786,6 +2812,19 @@
       "world": "integration",
       "marker": "MEGASTORM_FAR_COVERAGE",
       "expected_s": 15,
+      "timeout_s": 180
+    },
+    "megastorm_lightning_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "world": "integration",
+      "marker": "MEGASTORM_LIGHTNING",
+      "expected_s": 20,
       "timeout_s": 180
     },
     "megastorm_save_load_test": {

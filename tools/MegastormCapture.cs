@@ -150,6 +150,10 @@ public partial class MegastormCapture : RefCounted
     public void SetFarPassSuppressed(Node world, bool suppressed)
         => world.GetNode<RingworldTechDemo.Voxel.LOD.RingScaledFarViewport>("ScaledFarViewport").FarMegastormSuppressed = suppressed;
 
+    /// <summary>Perf A/B: suppresses (true) or restores only the main-view companion of the wedge pass.</summary>
+    public void SetMainPassSuppressed(Node world, bool suppressed)
+        => world.GetNode<RingworldTechDemo.Voxel.LOD.RingScaledFarViewport>("ScaledFarViewport").FarMegastormMainSuppressed = suppressed;
+
     /// <summary>Ends a perf window opened with StormAnvilCapture.PerfBegin: median / p95 of the far (outer) and main viewport GPU time and the CPU frame.</summary>
     public string FarPerfEnd(Node world)
     {

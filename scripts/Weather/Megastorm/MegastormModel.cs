@@ -320,15 +320,32 @@ public sealed class MegastormModel : IMegastormWeatherSource
         return (float)(d * (0.5 + 0.5 * Math.Clamp(shelterless, 0.0f, 1.0f)));
     }
 
+    /// <summary>
+    /// Signed time offset dt from t at which xi(around, across, t + dt) reaches <paramref name="targetXi"/>. The edge meanders and the front speed can change,
+    /// so -xi/v is only the first guess; a bracket-free secant refinement (deterministic, 6 iterations at most) lands on the true crossing.
+    /// </summary>
+    private double SolveXiCrossing(double around, double across, double t, double xi0, double targetXi, double v)
+    {
+        double a = 0.0, fa = xi0 - targetXi;
+        double b = -fa / v, fb = Xi(around, across, t + b) - targetXi;
+        for (int i = 0; i < 6 && Math.Abs(fb) > 0.01; i++)
+        {
+            double den = fb - fa;
+            double next = Math.Abs(den) < 1e-9 ? b - fb / v : b - fb * (b - a) / den;
+            a = b; fa = fb; b = next; fb = Xi(around, across, t + b) - targetXi;
+        }
+        return b;
+    }
+
     public MegastormPointSample Query(double around, double across, double t, float shelterless = 1.0f)
     {
         MegastormFrame f = Evaluate(t);
         if (!f.Active) return new MegastormPointSample(false, MegastormPhase.Inactive, 0.0, 0.0, double.PositiveInfinity, double.PositiveInfinity, 0.0, 0.0f, 0.0f);
         double xi = Xi(around, across, t);
         double v = f.SpeedMetersPerSecond, c = Settings.CircumferenceMeters;
-        double tta = xi < 0.0 ? -xi / v : (c - xi) / v;
-        double ttc = xi < TrailingEndXi ? (TrailingEndXi - xi) / v : 0.0;
-        double since = xi > 0.0 ? xi / v : 0.0;
+        double tta = xi < 0.0 ? SolveXiCrossing(around, across, t, xi, 0.0, v) : (c - xi) / v;
+        double ttc = xi < TrailingEndXi ? SolveXiCrossing(around, across, t, xi, TrailingEndXi, v) : 0.0;
+        double since = xi > 0.0 ? -SolveXiCrossing(around, across, t, xi, 0.0, v) : 0.0;
         return new MegastormPointSample(true, PhaseAt(xi, f), xi, -xi, tta, ttc, since, Danger(xi, tta, v, shelterless), Suppression(xi));
     }
 

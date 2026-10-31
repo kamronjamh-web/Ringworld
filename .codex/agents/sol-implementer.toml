@@ -39,7 +39,8 @@ Rules:
   temporary videos you no longer need, keep only the evidence your
   report cites, and run `tools/prune_test_output.ps1 -Apply`.
 - Run tests with `tools/run_tests.ps1` (godot-test-run skill):
-  `-Changed -Label <task>` during a step; report the `results.md`
+  `-Since HEAD -Label <task>` during a step (`-Changed` re-selects the
+  whole branch); report the `results.md`
   summary line and any non-pass rows; do not re-triage known failures;
   register new tests in `tools/test_manifest.json`.
 - If the work order is ambiguous, contradicts the code, or hits an

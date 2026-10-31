@@ -31,6 +31,10 @@ extends SceneTree
 #             (250) for --orbit-frames frames (frame%08d), --dolly-case=fair|asdeck|cs, so clouds cross the handoff band.
 #   fineduty  fine far layer atlas duty cycle with the cloud clock running: stationary, then a flight at --duty-speed (250 m/s),
 #             --duty-frames (3600) frames each; prints CLOUD_LAYERS_CAPTURE fineduty (duty, per-frame CPU median/p95). No captures.
+#   s6fix     megastorm WO5b: the far layer sky before / after its ring-radius fix, in one session. Cases --s6fix-cases=fair,overcast,storm
+#             (fair: no system; overcast: a manual Nimbostratus core over the camera; storm: the S4 anvil preview storm 120 km ahead), ground
+#             camera (420 m), headings yaw 0 / 90 / 180 at pitch 3 and the arch (yaw 0, pitch 20): s6fix_<case>_<view>_after with the live
+#             shader, then _before with --before-shader (the pre-fix copy) swapped in.
 #   interp    far camera physics-interpolation check: teleports the camera and prints, for 3 frames, how far the rendered (interpolated)
 #             far and main camera transforms are from their targets (CLOUD_LAYERS_CAPTURE interp ...).
 # Far diagnostics: --handoff=<start>,<end> (automatic handoff off), --far-off=clipmap,shell,main,layers (zero those far cloud tiers;
@@ -555,6 +559,71 @@ func _shoot(shot: String):
 						var md: float = main_cam.get_global_transform_interpolated().origin.distance_to(main_cam.global_transform.origin)
 						print("CLOUD_LAYERS_CAPTURE interp jump=%d frame=%d far_render_vs_target_m=%.1f main_render_vs_target_m=%.1f" % [int(jump), f, fd, md])
 			physics_interpolation = interp_was
+		"s6perf":
+			# WO5b: far viewport GPU of the fixed layer sky vs the pre-fix copy (--before-shader), A-B-A-B-A per case, pitch --perf-pitch (3).
+			var megap = load("res://tools/MegastormCapture.cs").new()
+			var far_vp_node := world.get_node_or_null("ScaledFarViewport/FarRingViewport") as SubViewport
+			var far_rid := far_vp_node.get_viewport_rid() if far_vp_node != null else RID()
+			if far_rid.is_valid():
+				RenderingServer.viewport_set_measure_render_time(far_rid, true)
+			for c in _arg("s6fix-cases", "fair,overcast,storm").split(","):
+				world.get_node("RingVolumetricClouds").UnregisterManualWeather("sunshine_preview")
+				match c:
+					"overcast":
+						await _place(10, 4, 60000.0, 7000.0, fair_pos)
+					"storm":
+						_clear()
+						helper.PlaceStorm(world, fair_pos.x + 120000.0, fair_pos.y, 0.0, 30000.0)
+					_:
+						_clear()
+				await _camera(fair_pos, 420.0, float(_arg("perf-yaw", "0")), float(_arg("perf-pitch", "3")), 150)
+				for variant in ["after", "before", "after", "before", "after"]:
+					megap.SetLayerSkyShader(world, "res://materials/ring_far_cloud_layer_sky.gdshader" if variant == "after" else _arg("before-shader", ""))
+					await _frames(45)
+					var far_ms: Array = []
+					var perf_end := Time.get_ticks_msec() + int(float(_arg("perf-seconds", "8")) * 1000.0)
+					while Time.get_ticks_msec() < perf_end:
+						await process_frame
+						if far_rid.is_valid():
+							far_ms.append(RenderingServer.viewport_get_measured_render_time_gpu(far_rid))
+					far_ms.sort()
+					var med: float = far_ms[far_ms.size() / 2] if far_ms.size() > 0 else -1.0
+					var p95: float = far_ms[int(far_ms.size() * 0.95)] if far_ms.size() > 0 else -1.0
+					print("CLOUD_LAYERS_CAPTURE s6perf %s %s far_viewport_gpu median %.3f p95 %.3f n %d" % [c, variant, med, p95, far_ms.size()])
+				megap.SetLayerSkyShader(world, "res://materials/ring_far_cloud_layer_sky.gdshader")
+			world.get_node("RingVolumetricClouds").UnregisterManualWeather("sunshine_preview")
+			_clear()
+		"s6fix":
+			var mega = load("res://tools/MegastormCapture.cs").new()
+			var live := "res://materials/ring_far_cloud_layer_sky.gdshader"
+			var before := _arg("before-shader", "")
+			var views := [[0.0, 3.0, "y000"], [90.0, 3.0, "y090"], [180.0, 3.0, "y180"], [0.0, 20.0, "arch"]]
+			await _camera(fair_pos, 420.0, 0.0, 0.0, 2)
+			print("CLOUD_LAYERS_CAPTURE s6fix sun yaw/pitch ", probe.SunYawPitch(world))
+			for c in _arg("s6fix-cases", "fair,overcast,storm").split(","):
+				world.get_node("RingVolumetricClouds").UnregisterManualWeather("sunshine_preview")
+				match c:
+					"overcast":
+						await _place(10, 4, 60000.0, 7000.0, fair_pos)
+					"storm":
+						_clear()
+						helper.PlaceStorm(world, fair_pos.x + 120000.0, fair_pos.y, 0.0, 30000.0)
+						await _frames(120)
+					_:
+						_clear()
+						await _frames(60)
+				for i in views.size():
+					var v = views[i]
+					mega.SetLayerSkyShader(world, live)
+					await _camera(fair_pos, 420.0, v[0], v[1], settle if i == 0 else 60)
+					await _save("s6fix_%s_%s_after" % [c, v[2]])
+					if before != "":
+						mega.SetLayerSkyShader(world, before)
+						await _frames(40)
+						await _save("s6fix_%s_%s_before" % [c, v[2]])
+				mega.SetLayerSkyShader(world, live)
+			world.get_node("RingVolumetricClouds").UnregisterManualWeather("sunshine_preview")
+			_clear()
 		"orbit":
 			_clear()
 			var n := int(_arg("orbit-frames", "300"))

@@ -3,6 +3,7 @@ extends SceneTree
 #   Godot --path . --resolution 1600x900 --script res://tools/megastorm_capture.gd -- --out=res://.godot/captures/megastorm/wo4/<label> --shots=inside,leading
 # Args: --out=<res dir> --shots=<list> [--far-filter=<substring of the far shot names>] [--save-far (also save the far viewport)] [--no-trigger (untriggered identity captures)]
 #       [--layer-sky-shader=<res path> (debug: swap the far layer sky shader)] [--cycle=<0..1> (0.6 noon)] [--no-haze] [--matte] [--speed=<m/s> (350)] [--seed=<n> (7)] [--rain] [--deterministic]
+#       [--global-handoff=<start,end> km (automatic handoff off for the run)]
 #       [--settle=<frames> (120)] [--motion-frames=<n> (420)] [--motion-from=<km> (-3)] [--motion-yaw=<deg> (180)] [--motion-pitch=<deg> (20)]
 #       [--orbit-frames=<n> (300)] [--perf-seconds=<s> (10)] [--trigger-xi=<m> (10000): where the wall is when it is triggered]
 #       [--perf-cases=<list> (clear,natural,inside,leading x3)] [--set=Prop=value (bridge)]
@@ -24,6 +25,7 @@ extends SceneTree
 #   far       WO5 far wedge pass: towards the wall from xi -50 km (pitch 4, 10), -200 km (3, 6), -1000 km (6.5, 9), the quarter ring
 #             (xi -C/4, pitch 45) and the antipode (xi -C/2, straight up). Run once with --cycle=0.6 (camera noon) and once at night
 #             (--cycle=0.1): at the antipode the wall's local time is the camera's opposite.
+#   farlook   WO5b: the wall framed from 60 / 100 / 150 km ahead (look<km>_p<pitch>), --farlook-filter=<substring>
 #   handoff   WO5 seam calibration: the wall at --handoff-xi km (-25) with the default handoff (the near march owns it) and with
 #             --handoff=<start,end> km (5,10: the far wedge pass owns it); compare the pair (handoff_near / handoff_far)
 #   flight    WO5: the camera "flies" from xi -30 to -80 km over --flight-frames frames (300) while the wall moves at --speed (the
@@ -108,6 +110,13 @@ func _run():
 			if kv.size() == 2:
 				bridge.set(kv[0], float(kv[1]))
 				print("MEGASTORM_CAPTURE set ", kv[0], "=", kv[1])
+	if _arg("global-handoff", "") != "":
+		# WO5b: a fixed near/far handoff (km) for the whole run, e.g. to put the seam inside the flight range.
+		var gh := _arg("global-handoff", "").split(",")
+		bridge.set("AutomaticCloudHandoff", false)
+		bridge.set("HandoffStartMeters", float(gh[0]) * 1000.0)
+		bridge.set("HandoffEndMeters", float(gh[1]) * 1000.0)
+		print("MEGASTORM_CAPTURE global handoff ", gh)
 	if _arg("no-haze", "") != "":
 		bridge.call("DebugSetCloudAtmosphericDensity", 0.0)
 	if _arg("matte", "") != "":
@@ -243,10 +252,16 @@ func _shoot(shot: String):
 				print("MEGASTORM_CAPTURE axes yaw=", yaw, " ", mega.CameraAxes(world))
 				await _save("dbg_ahead15_yaw%d" % int(round(rad_to_deg(yaw))))
 		"probeline":
-			await _view(-15000.0, PI, 3.0, BASE_H, 60)
+			await _view(float(_arg("probe-xi", "-15")) * 1000.0, PI, 3.0, BASE_H, 60)
 			var clouds_res = world.get_node("SunshineCloudBridge").GetSunshineCloudsForTests()
-			for d in [0.0, 5000.0, 10000.0, 14000.0, 16000.0, 20000.0, 30000.0, 45000.0]:
-				for h in [2000.0, 6000.0]:
+			var ds := [0.0, 5000.0, 10000.0, 14000.0, 16000.0, 20000.0, 30000.0, 45000.0]
+			if _arg("probe-d", "") != "":
+				ds = []
+				for k in _arg("probe-d", "").split(","):
+					ds.append(float(k) * 1000.0)
+			print("MEGASTORM_CAPTURE probeline handoff ", world.get_node("SunshineCloudBridge").call("GetEffectiveCloudHandoff"), " ", mega.StripState(world))
+			for d in ds:
+				for h in [2000.0, 6000.0, 12000.0]:
 					var got := [false, 0.0]
 					clouds_res.add_sample(func(_p, dd): got[0] = true; got[1] = dd, mega.WorldAtOffset(world, -d, h))
 					for i in 30:
@@ -325,6 +340,20 @@ func _shoot(shot: String):
 				print("MEGASTORM_CAPTURE far ", v[2], " ", far_node.get("FarMegastormStatus") if far_node != null else "")
 				if far_node != null and _arg("ray-probe", "") != "":
 					print("MEGASTORM_CAPTURE probe ", v[2], " ", far_node.call("FarMegastormRayProbe"))
+				await _save(v[2])
+		"farlook":
+			# WO5b look: the wall from 60, 100 and 150 km ahead, framed (--farlook-filter=<substring>). Run with RING_MEGASTORM_FAR_DEBUG for
+			# the debug views (9 unhazed, 12 haze T, 13 in-scatter).
+			var looks := [[-60000.0, 5.0, "look060_p05"], [-60000.0, 12.0, "look060_p12"], [-100000.0, 4.0, "look100_p04"], [-100000.0, 8.0, "look100_p08"],
+					[-150000.0, 3.0, "look150_p03"], [-150000.0, 6.0, "look150_p06"]]
+			if _arg("farlook-xis", "") != "":
+				looks = []
+				for k in _arg("farlook-xis", "").split(","):
+					looks.append([-float(k) * 1000.0, float(_arg("farlook-pitch", "6")), "look%03d_p%02d" % [int(k), int(_arg("farlook-pitch", "6"))]])
+			for v in looks:
+				if _arg("farlook-filter", "") != "" and not str(v[2]).contains(_arg("farlook-filter", "")):
+					continue
+				await _view(v[0], PI, v[1])
 				await _save(v[2])
 		"identity":
 			# WO5 untriggered identity (run with --no-trigger): each far pose with the live far layer sky, then with --identity-shader

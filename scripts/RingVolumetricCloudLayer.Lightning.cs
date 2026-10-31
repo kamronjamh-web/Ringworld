@@ -157,6 +157,7 @@ public partial class RingVolumetricCloudLayer
             TryScheduleLeadingEdgeLightning(entry.Key.Around, entry.Key.Across, now);
         }
         foreach (LocalWeatherState manual in _manualWeather.Values) TryScheduleManualLightning(manual, now);
+        TryScheduleMegastormLightning(now);
     }
 
     private void ScanLightningCells(double now)
@@ -321,6 +322,45 @@ public partial class RingVolumetricCloudLayer
             || !TrySampleStormPosition(weather, slot, out RingCanonicalPosition target)) return;
         RingLightningEvent e = CreateLightningEvent(weather.SystemId, start, target, weather, false, slot);
         if (FindActiveLightningIndex(e.EventId) < 0) _activeLightningEvents.Add(e);
+    }
+
+    // ---- Megastorm near strike stream (docs/megastorm-design.md WO7) ----
+    private readonly List<MegastormLightning.NearStrike> _megastormStrikeScratch = new();
+
+    /// <summary>
+    /// Near strikes of the megastorm: the cells of its flash field (and the "bolt from the blue" stream) within 50 km of the explorer whose 0.72 s life
+    /// covers <paramref name="now"/>. Pure in (model, now, explorer, Lightning frequency, Reduced flashes), so rewinds and reloads reproduce ids and times;
+    /// the event id is the flash-field cell id, shared with the far glow, thunder (RingWeatherAudio reads ActiveLightningEvents, so its d/343 delay and the
+    /// megastorm air gate apply) and the sprite layer (UpperAtmosphereLightning derives from the event id, chance for kind 6 is the superstorm one).
+    /// A no-op without an installed, triggered megastorm, so ordinary worlds are unchanged.
+    /// </summary>
+    private void TryScheduleMegastormLightning(double now)
+    {
+        if (MegastormSource == null || MegastormHazardModel is not MegastormModel model || !model.Triggered || _explorer == null) return;
+        RingCanonicalPosition observer = _explorer.CanonicalPosition;
+        MegastormLightning.NearStrikesInWindow(model, now - RingLightningEvent.LifetimeSeconds, Math.BitIncrement(now), observer.AroundMeters, observer.AcrossMeters,
+            LightningVisualPolicy.NaturalStrikeChanceScale, _megastormStrikeScratch);
+        foreach (MegastormLightning.NearStrike strike in _megastormStrikeScratch)
+        {
+            if (_activeLightningEvents.Count >= 128) return;
+            MegastormLightning.MegastormFlash f = strike.Flash;
+            if (FindActiveLightningIndex(f.Id) >= 0) continue;
+            var weather = new LocalWeatherState(MegastormModel.WallRecordId, WeatherSystemKind.Megastorm, 1.0f, 25000.0f,
+                new Vector2((float)strike.AroundMeters, (float)f.AcrossMeters), new Vector2(25000.0f, 25000.0f), 0.0f, 1.0f, 1.0f, Vector2.Zero,
+                CloudFormationProfile.MegastormWall, CloudBaseMeters, CloudTopMeters);
+            RingLightningEvent made = CreateLightningEvent(MegastormModel.WallRecordId, f.StartTimeSeconds,
+                new RingCanonicalPosition(strike.AroundMeters, 0.0, f.AcrossMeters), weather, false, f.Id);
+            _activeLightningEvents.Add(made with
+            {
+                EventId = f.Id,
+                CloudPosition = made.GroundPosition with { VerticalMeters = Math.Max(made.GroundPosition.VerticalMeters + 250.0, f.AltitudeMeters) },
+                ShapeSeed = unchecked((int)UpperAtmosphereLightning.Hash(f.Id, 201)),
+                PlaneAngleRadians = UpperAtmosphereLightning.Unit(f.Id, 202) * Mathf.Tau,
+                Energy = f.Energy,
+                FlashRadiusMeters = 2500.0f + UpperAtmosphereLightning.Unit(f.Id, 203) * 9000.0f,
+                SystemKind = (int)WeatherSystemKind.Megastorm
+            });
+        }
     }
 
     /// <summary>Cadence/phase slot of a system's lightning; false when no slot is live at <paramref name="now"/>.</summary>

@@ -10,6 +10,7 @@ render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled,
 // coverage analytically (the atlases exclude the megastorm), beyond the disk fade a short march draws that coverage alone (the whole-ring
 // shell has no megastorm), and the integration ends at the wall body's entry (megastorm_body_entry), so the layers in front of the wall
 // composite over the wedge pass (drawn before this one) and nothing behind it is drawn.
+// The layers under the megastorm take the column's sun shadow (far_ms_shade_at, the wedge pass's rule), so they are dark like the near march's.
 uniform sampler2D far_layers_depth : hint_depth_texture, filter_nearest;
 uniform float terrain_cloud_receiver_height_meters = 3000.0;
 #include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
@@ -59,7 +60,8 @@ float far_ray_altitude(FarRay r, float t) {
 
 // Both crossings of altitude H (ascending order; -1 when missing).
 vec2 far_ray_crossings(FarRay r, float H) {
-	float R = ring_radius_meters;
+	// ring_radius_meters is in scaled units on far materials (RingAtmosphereModel.ApplyMaterial); the ray geometry is physical metres.
+	float R = ring_radius_meters / max(ring_atmosphere_coordinate_scale, 0.000001);
 	float b = r.rc * r.dr;
 	float c = (H - r.h) * (2.0 * R - r.h - H);
 	float disc = b * b - r.a * c;
@@ -93,7 +95,9 @@ float far_owner_weight(float t) {
 void fragment() {
 	if (!far_layers_enabled) discard;
 	float scale = max(ring_atmosphere_coordinate_scale, 0.000001);
-	float R = ring_radius_meters;
+	// Physical ring radius (this material holds ring_radius_meters in scaled units). Before WO5b it was read as metres (about 5000 m),
+	// so no ray ever crossed the layer hull and this pass drew nothing since S6 WO6.
+	float R = ring_radius_meters / scale;
 	float C = max(ring_circumference_meters, 1.0);
 	float W = max(ring_width_meters, 1.0);
 	vec3 cam = CAMERA_POSITION_WORLD;
@@ -122,9 +126,7 @@ void fragment() {
 		t_terrain = length(view.xyz / view.w) / scale;
 	}
 	RingFarMsRay msray;
-	// The megastorm geometry takes the ring radius in physical metres (ring_far_ms_radius: this material's ring_radius_meters is in scaled
-	// units), so its altitudes and around offsets are exact whatever R the layer march above uses.
-	msray.rc = ray.rc; msray.h = ring_far_ms_radius() - ray.rc; msray.dr = ray.dr; msray.dt = ray.dt; msray.dy = ray.dy; msray.a = ray.a;
+	msray.rc = ray.rc; msray.h = ray.h; msray.dr = ray.dr; msray.dt = ray.dt; msray.dy = ray.dy; msray.a = ray.a;
 	msray.across_c = across_c;
 	if (far_megastorm_enabled) t_terrain = min(t_terrain, megastorm_body_entry(msray, 0.0, min(t_terrain, 2.0e7)));
 	float t_end = min(t_terrain, disk_fade.y);
@@ -262,6 +264,8 @@ void fragment() {
 						if (ld.w < 0.5 || dot(lr, vec3(1.0)) <= 0.0) continue;
 						vec3 L = normalize(ld.xyz);
 						float sun_up = smoothstep(-0.05, 0.12, dot(L, up));
+						// A shell under the megastorm's anvil lies in its shadow (WO5b).
+						if (far_megastorm_enabled && l == 0) sun_up *= 1.0 - far_ms_shade_at(msray, t_ci, L, up, ring_far_ms_params());
 						colour += lr * pow(sun_up, 2.2)
 							* ring_cirrus_phase(dot(L, dir), far_cloud_layers[16].x, high.w, high.x) * RING_CIRRUS_SUN_SCALE;
 					}
@@ -278,8 +282,7 @@ void fragment() {
 		if (alt < hull_lo || alt > hull_hi) continue;
 		float owner = ms_only ? far_near_complement(t) * smoothstep(disk_fade.x, max(disk_fade.y, disk_fade.x + 1.0), t) : far_owner_weight(t);
 		if (owner <= 0.0) continue;
-		float around = (ms_only ? atan(u.y, u.x) * ring_far_ms_radius() + ring_far_ms_radius() * atan(t * ray.dt, ray.rc + t * ray.dr)
-			: around_c + R * atan(t * ray.dt, ray.rc + t * ray.dr));
+		float around = around_c + R * atan(t * ray.dt, ray.rc + t * ray.dr);
 		float across = across_c + t * ray.dy;
 		around -= C * floor(around / C);
 		vec2 xz = vec2(around, across);
@@ -323,6 +326,7 @@ void fragment() {
 		if (terrain_sun < 0.0) terrain_sun = ring_terrain_cloud_receiver_visibility(vec3(around, terrain_cloud_receiver_height_meters, across));
 		vec3 sun = vec3(0.0);
 		vec3 deck_src = ambient_base;
+		float ms_shade = 0.0;
 		for (int l = 0; l < 2; l++) {
 			vec4 ld = ring_far_cloud_lights[l * 2];
 			vec3 lr = ring_far_cloud_lights[l * 2 + 1].rgb;
@@ -331,13 +335,20 @@ void fragment() {
 			float mu_s = dot(L, up);
 			float light_up = smoothstep(-0.05, 0.12, mu_s);
 			if (light_up <= 0.0) continue;
-			deck_src += lr * light_up * max(mu_s, 0.0);
-			float tsun = far_layers_sun_transmittance(alt, mu_s, low, mid, layers.z);
+			if (far_megastorm_enabled && l == 0) ms_shade = far_ms_shade_at(msray, t, L, up, ring_far_ms_params());
+			float ms_sun = l == 0 ? 1.0 - ms_shade : 1.0;
+			deck_src += lr * light_up * max(mu_s, 0.0) * ms_sun;
+			float tsun = far_layers_sun_transmittance(alt, mu_s, low, mid, layers.z) * ms_sun;
 			float cos_theta = dot(dir, L);
 			float hg = (1.0 - g * g) / pow(max(1.0 + g * g - 2.0 * g * cos_theta, 1e-4), 1.5);
 			sun += lr * light_up * tsun * mix(1.0, hg, 0.5);
 		}
 		vec3 amb_term = ambient_base * far_cloud_layers[8 + (in_low ? 0 : 4)].y * ao * far_layers_ambient_gain * mix(1.0, 0.4, storm_dark);
+		// In the megastorm column's shadow the cloud sees only the dim light under the overhang: the storm ambient with the near's factor for
+		// cumulus below the column (the near strip path's ring_megastorm_open_light), weighted by the shade and the Storm darkness.
+		if (ms_shade > 0.0)
+			amb_term = mix(amb_term, far_megastorm_storm_ambient.rgb * FAR_MS_UNDER_AMBIENT * far_layers_ambient_gain,
+				ms_shade * clamp(far_megastorm_storm_ambient.w, 0.0, 1.0));
 		vec3 colour = sun * terrain_sun * far_layers_sun_gain * (1.0 - 0.75 * storm_dark) + amb_term;
 		// Overhead cloud fraction: the closure (it already carries the storm suppression) x coverage of the low / mid layer at or above the sample.
 		float overhead = 0.0;
@@ -366,6 +377,12 @@ void fragment() {
 	vec3 target = cam + dir * (t_mean * scale);
 	float day = ringworld_effective_solar_day(smoothstep(-0.2, 0.35, dot(vec3(-u.x, 0.0, -u.y), normalize(ring_atmosphere_to_sun))));
 	RingHaze haze = ring_haze_sample(cam, target, vec3(0.0), day);
-	ALBEDO = col_sum * haze.T + ring_haze_inscatter(haze) * alpha;
+	vec3 inscatter = ring_haze_inscatter(haze);
+	if (far_megastorm_enabled) {
+		// The air under the megastorm's overhang is in its shadow: the wedge pass's (and the near march's) shaded haze rule.
+		float level = clamp(far_ms_path_shade(msray, u, t_mean, ring_far_ms_params()), 0.0, 1.0) * clamp(far_megastorm_storm_ambient.w, 0.0, 1.0);
+		inscatter = haze.S_sun * (1.0 - level) + haze.S_amb * (1.0 - 0.97 * level);
+	}
+	ALBEDO = col_sum * haze.T + inscatter * alpha;
 	ALPHA = alpha;
 }

@@ -44,6 +44,7 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/ring_far_cloud_clipmap.gdshader",
         "res://materials/ring_far_cloud_layer_sky.gdshader",
         "res://materials/ring_far_megastorm.gdshader",
+        "res://materials/ring_main_megastorm.gdshader",
         "res://materials/ring_cloud_transmittance_mask.gdshader",
         "res://materials/ring_far_backdrop_cloud_composite.gdshader",
         "res://materials/ring_lightning_bolt.gdshader",

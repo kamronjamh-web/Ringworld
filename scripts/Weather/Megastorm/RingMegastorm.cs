@@ -319,9 +319,9 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     {
         MegastormState? state = document?.ToState();
         _model = state != null ? new MegastormModel(state) : new MegastormModel(SettingsFromMenu());
-        if (state == null && (_debugTriggerRequest != null || _debugXiRequest != null))
+        if (_debugTriggerRequest != null || _debugXiRequest != null)
         {
-            // The save has no megastorm: re-place the debug storm against the restored clock and position.
+            // A debug request was given at startup: re-place the debug storm against the restored clock and position, whatever the save holds.
             _debugTrigger = _debugTriggerRequest; _debugXiMeters = _debugXiRequest;
         }
         ResonanceEntryUnlocked = document?.ResonanceEntryUnlocked ?? false;
@@ -339,6 +339,8 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     public void set_megastorm_speed(double meters_per_second) => SetSpeed((float)meters_per_second);
     public void stop_megastorm(double at_time = -1.0, double fade_seconds = 60.0) => Stop(at_time < 0.0 ? Now : at_time, (float)fade_seconds);
     public bool is_megastorm_triggered() => Triggered;
+    public bool spawn_megastorm_ahead(double distance_km) => SpawnAhead(distance_km * 1000.0);
+    public bool remove_megastorm() => RemoveMegastorm();
     public Godot.Collections.Dictionary query_megastorm(double around, double across, double time_seconds = -1.0)
         => ToDictionary(Query(new RingCanonicalPosition(around, 0.0, across), time_seconds < 0.0 ? Now : time_seconds));
 
@@ -392,12 +394,14 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     {
         string? spec = System.Environment.GetEnvironmentVariable("RING_MEGASTORM");
         string? xi = System.Environment.GetEnvironmentVariable("RING_MEGASTORM_XI");
-        // Command-line forms (after "--"): --megastorm=around_km,dir,age_s[,speed] and --megastorm-xi=km.
-        foreach (string arg in OS.GetCmdlineUserArgs())
-        {
-            if (arg.StartsWith("--megastorm-xi=", StringComparison.Ordinal)) xi = arg["--megastorm-xi=".Length..];
-            else if (arg.StartsWith("--megastorm=", StringComparison.Ordinal)) spec = arg["--megastorm=".Length..];
-        }
+        // Command-line forms: --megastorm=around_km,dir,age_s[,speed] and --megastorm-xi=km. They work after "--", after "++" or with no separator
+        // (a PowerShell wrapper swallows a bare "--", leaving them as ordinary engine args); user args win over engine args, which win over env vars.
+        foreach (string[] args in new[] { OS.GetCmdlineArgs(), OS.GetCmdlineUserArgs() })
+            foreach (string arg in args)
+            {
+                if (arg.StartsWith("--megastorm-xi=", StringComparison.Ordinal)) xi = arg["--megastorm-xi=".Length..];
+                else if (arg.StartsWith("--megastorm=", StringComparison.Ordinal)) spec = arg["--megastorm=".Length..];
+            }
         if (TryParseDebugTrigger(spec, out var trigger)) _debugTrigger = trigger;
         if (!string.IsNullOrWhiteSpace(xi) && double.TryParse(xi, NumberStyles.Float, CultureInfo.InvariantCulture, out double km) && double.IsFinite(km)) _debugXiMeters = km * 1000.0;
         _debugTriggerRequest = _debugTrigger; _debugXiRequest = _debugXiMeters;
@@ -409,18 +413,68 @@ public partial class RingMegastorm : Node, IMegastormWeatherSource
     {
         RingCanonicalPosition? observer = ObserverPosition();
         if (_debugXiMeters != null && observer == null) return;   // wait for the explorer
+        if (_model.Triggered)
+        {
+            GD.Print($"Megastorm debug: replacing the saved megastorm (id={_model.State.TriggerId})");
+            _model = new MegastormModel(SettingsFromMenu());
+        }
         double now = Now;
         var t = _debugTrigger ?? (Around: 0.0, Direction: 1, Age: 1.0e6, Speed: float.NaN);
-        float speed = float.IsNaN(t.Speed) ? Math.Clamp(RingMegastormSettings.Current.SpeedMetersPerSecond, MegastormSettings.MinimumSpeed, MegastormSettings.MaximumSpeed)
-            : Math.Clamp(t.Speed, MegastormSettings.MinimumSpeed, MegastormSettings.MaximumSpeed);
-        double around = t.Around;
-        if (_debugXiMeters != null && observer != null)
-            // The edge (xi = 0) is the reference line shifted by the lead offset at the observer's across: put the reference line xi + lead ahead of the observer.
-            around = observer.Value.AroundMeters + t.Direction * (_debugXiMeters.Value + _model.LeadOffset(observer.Value.AcrossMeters, now));
-        _debugTrigger = null; _debugXiMeters = null;
-        // The line is at `around` now and was age seconds earlier at around - dir * v * age; the old trigger time skips the formation ramp.
-        _model.Trigger(new MegastormTrigger("debug_env", MegastormModel.WrapPositive(around - t.Direction * speed * t.Age, _model.Settings.CircumferenceMeters), t.Direction, now - t.Age, speed, 1800f, 0));
+        _debugTrigger = null;
+        double? xi = _debugXiMeters; _debugXiMeters = null;
+        (double around, float speed) = PlaceStorm("debug_env", t.Around, t.Direction, t.Age, t.Speed, now, xi != null ? observer : null, xi ?? 0.0);
         GD.Print($"Megastorm debug: triggered at weather t={now:0.0} s, line around={around / 1000.0:0.0} km, dir={t.Direction}, speed={speed:0} m/s"
             + (observer != null ? $", observer around={observer.Value.AroundMeters / 1000.0:0.0} km across={observer.Value.AcrossMeters / 1000.0:0.0} km, xi={(Query(observer.Value, now).XiMeters / 1000.0):0.0} km." : "."));
+    }
+
+    /// <summary>
+    /// Triggers the model with its reference line at <paramref name="around"/> now, or, when <paramref name="observer"/> is given, placed so the observer's xi is
+    /// <paramref name="xiMeters"/> (negative = ahead of the edge). The line was age seconds earlier at around - dir * v * age; the old trigger time skips the formation ramp.
+    /// </summary>
+    private (double Around, float Speed) PlaceStorm(string id, double around, int direction, double age, float speedOrNaN, double now, RingCanonicalPosition? observer, double xiMeters)
+    {
+        float speed = Math.Clamp(float.IsNaN(speedOrNaN) ? RingMegastormSettings.Current.SpeedMetersPerSecond : speedOrNaN, MegastormSettings.MinimumSpeed, MegastormSettings.MaximumSpeed);
+        if (observer != null)
+            // The edge (xi = 0) is the reference line shifted by the lead offset at the observer's across: put the reference line xi + lead ahead of the observer.
+            around = observer.Value.AroundMeters + direction * (xiMeters + _model.LeadOffset(observer.Value.AcrossMeters, now));
+        _model.Trigger(new MegastormTrigger(id, MegastormModel.WrapPositive(around - direction * speed * age, _model.Settings.CircumferenceMeters), direction, now - age, speed, 1800f, 0));
+        return (around, speed);
+    }
+
+    private void ResetToFreshModel()
+    {
+        _model = new MegastormModel(SettingsFromMenu());
+        _applied = MenuValues();
+        _observerPhase = MegastormPhase.Inactive;
+        _debugTrigger = null; _debugXiMeters = null;
+        ResetHazards();
+    }
+
+    /// <summary>
+    /// Menu / debug spawn: replaces any storm with a fully formed one whose edge is <paramref name="distanceMeters"/> ahead of the observer in the facing direction
+    /// (facing 0 = from the explorer's yaw, +1 without one), approaching at the menu speed.
+    /// </summary>
+    public bool SpawnAhead(double distanceMeters, int facing = 0)
+    {
+        RingCanonicalPosition? observer = ObserverPosition();
+        if (observer == null) { GD.Print("Megastorm: spawn refused (no observer)"); return false; }
+        if (facing == 0) facing = _explorer != null && Math.Cos(_explorer.SavedYaw) < 0.0 ? -1 : 1;
+        facing = facing < 0 ? -1 : 1;
+        ResetToFreshModel();
+        double now = Now;
+        (_, float speed) = PlaceStorm("debug_spawn", 0.0, -facing, 1.0e6, float.NaN, now, observer, -distanceMeters);
+        GD.Print($"Megastorm: spawned {distanceMeters / 1000.0:0.0} km ahead (dir={-facing}, speed={speed:0} m/s, observer around={observer.Value.AroundMeters / 1000.0:0.0} km across={observer.Value.AcrossMeters / 1000.0:0.0} km, xi={Query(observer.Value, now).XiMeters / 1000.0:0.0} km, t={now:0.0} s).");
+        return true;
+    }
+
+    /// <summary>Instant removal (no fade), unlike <see cref="Stop"/>.</summary>
+    public bool RemoveMegastorm()
+    {
+        _debugTrigger = null; _debugXiMeters = null;
+        if (!_model.Triggered) return false;
+        string? id = _model.State.TriggerId;
+        ResetToFreshModel();
+        GD.Print($"Megastorm: stopped (removed id={id})");
+        return true;
     }
 }

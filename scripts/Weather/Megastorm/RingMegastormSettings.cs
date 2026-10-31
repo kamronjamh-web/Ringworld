@@ -17,4 +17,6 @@ public partial class RingMegastormSettings : Resource
     [Export(PropertyHint.Range, "50,600,1")] public float WarningReachKm { get; set; } = 220f;
     /// <summary>Master level of the megastorm's own sound (ground hum, wall singing, boom, roar) in dB, before the shelter muffling. Older files load 0.</summary>
     [Export(PropertyHint.Range, "-24,6,0.5")] public float SoundVolumeDb { get; set; } = 0f;
+    /// <summary>Debug spawn distance in km: how far ahead, in the direction the explorer faces, the menu's "Spawn megastorm" places the wall. The model never reads it. Older files load 60.</summary>
+    [Export(PropertyHint.Range, "5,600,1")] public float SpawnDistanceKm { get; set; } = 60f;
 }

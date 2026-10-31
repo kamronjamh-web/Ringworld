@@ -24,7 +24,7 @@ Rules:
 - For new gameplay or rendering settings, expose them in the grave-key live tuning menu using the existing menu and persistence conventions.
 - Run the validation steps in the work order and report their actual results.
 - For visual checks (transitions, before/after, flicker), use ffmpeg through `tools/media/ffmpeg_tools.ps1` as described under "Tools" in AGENTS.md. Clean up afterwards: delete the frames, extracts and temporary videos you no longer need, keep only the evidence your report cites, and run `tools/prune_test_output.ps1 -Apply`.
-- Run tests with `tools/run_tests.ps1` (godot-test-run skill): `-Changed -Label <task>` during a step; report the `results.md` summary line and any non-pass rows; do not re-triage known failures; register new tests in `tools/test_manifest.json`.
+- Run tests with `tools/run_tests.ps1` (godot-test-run skill): `-Since HEAD -Label <task>` during a step (`-Changed` re-selects the whole branch); report the `results.md` summary line and any non-pass rows; do not re-triage known failures; register new tests in `tools/test_manifest.json`.
 - If the work order is ambiguous, contradicts the code, or hits an escalation condition, stop and report back instead of guessing.
 
 Return a concise summary: files changed, what changed, validation results, and anything left unresolved.

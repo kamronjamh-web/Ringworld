@@ -39,7 +39,7 @@ void fragment() {
 	} else if (field < 13) {
 		// Glow: strength and meander phase at the double time (the CPU splits t into slot and slot_time in double).
 		RingMegastormParams pg = RingMegastormParams(vec4(r1.x, r1.y, r5.x, r1.w), r2, vec4(r5.y, r3.y, 0.0, 0.0));
-		v = ring_ms_flash_glow(r0.x, r0.y, r0.z, int(r3.z), r0.w, field == 12, r3.w, pg);
+		v = ring_ms_flash_glow(r0.x, r0.y, r0.z, int(r3.z), r0.w, field == 12, r3.w, 1.0, pg);
 	}
 	uint bits = floatBitsToUint(v);
 	COLOR = vec4(float(bits & 255u), float((bits >> 8u) & 255u), float((bits >> 16u) & 255u), float(bits >> 24u)) / 255.0;

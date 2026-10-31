@@ -1497,6 +1497,8 @@ void main() {
 	float newdensity = 0.0;
 	// Storm share of the ray's opacity: sum(storm density * visibility) / sum(density * visibility) over the primary samples.
 	float primaryStormShare = 0.0;
+	// Share used for the S4 storm sun cut. Equals primaryStormShare except megastorm strip samples, which take the physical sun.
+	float sunCutShare = 0.0;
 	float stormShareNum = 0.0;
 	float stormShareDen = 0.0;
 	// Megastorm light under the overhang (WO4b): sum(visibility * open-sky light) / sum(visibility) over the samples inside or under the
@@ -1708,6 +1710,7 @@ void main() {
 			// Storm-lit background (the lifted overcast under a storm) is storm cloud as far as darkness goes.
 			// Only a storm-owned column counts (S6 3.8): a non-storm deck keeps its layer lighting. Layers off keep the S4 rule.
 			primaryStormShare = max(primaryStormShare, smoothstep(0.35, 0.80, ring_ws_storm_level()) * min(1.0, newdensity * 4.0));
+			sunCutShare = primaryStormShare;
 			g_storm_primary_dominant = g_last_storm_density > 0.5 * g_last_total_density && g_last_storm_density > 0.0;
 			if (RING_MEGASTORM_ENABLED && g_storm_strip && cloudPos.y <= ring_storm_column_top()) {
 				// Megastorm wall and anvil (docs/megastorm-design.md 3.2): everything inside the strip column, including the closed layer deck the
@@ -1720,6 +1723,7 @@ void main() {
 				bool megaInColumn = ring_storm_column_contains(cloudPos.y);
 				megaSample = ring_storm_column_top() - cloudPos.y > RING_STORM_FADE_METERS;
 				primaryStormShare = megaSample ? 1.0 : min(1.0, newdensity * 4.0);
+				sunCutShare = 0.0;
 				g_storm_primary_dominant = megaInColumn || g_storm_primary_dominant;
 			}
 			g_layer_light_stride = ring_layers_light_stride(g_layers_on && g_last_storm_density <= 0.0, cloudPos.y, traveledDistance);
@@ -1767,8 +1771,9 @@ void main() {
 					densitySample = BeersLaw(lightingStepDistance, densitySample * henyeygreenstein) * g_layer_sun;
 					//densitySample = Powder(lightingStepDistance, densitySample);
 					// Storm cloud (tower, canopy, deck, the storm-lit overcast) takes only part of the direct sun: a dark, dramatic storm even where the sun reaches it.
+						// Megastorm strip cloud takes the physical sun only (sunCutShare 0); its umbra comes from ring_storm_sun_tau.
 					float thisStepLightingWeight = (pow(densitySample, lightingSharpness)) * sunUpWeight * terrain_cloud_direct_sun_visibility(curPos)
-						* (1.0 - 0.85 * genericData.data.ring_storm_ambient.w * primaryStormShare);
+						* (1.0 - 0.85 * genericData.data.ring_storm_ambient.w * sunCutShare);
 					
 
 					lightColor.rgb += pow(directionalLights[lightI].color.rgb * directionalLights[lightI].color.a * thisStepLightingWeight, vec3(2.2)) * powderEffect;

@@ -44,6 +44,7 @@ Only expose a value in the grave-key menu when it is a genuine tunable someone w
 
 Run tests through `tools/run_tests.ps1` (details in the `godot-test-run` skill); it builds, selects from `tools/test_manifest.json`, takes the GPU queue itself and writes `.godot/test_runs/<label>/<run id>/results.md`.
 - During development: `tools/run_tests.ps1 -Changed -Label <task>` (`-DryRun` first to see the selection). Quick check: `-Suite smoke`. Batch or commit point: `-Suite gate`. Full suite (`-Suite full`) only before merges or overnight.
+- On a feature branch, `-Changed` diffs against `main` and so re-selects the whole branch (often ~280 tests, ~60 of them GPU, about an hour). Per work order use `-Since HEAD` (your uncommitted changes) or `-Files <your files>` instead; leave the branch-wide `-Changed` run to the primary agent at a batch or commit point.
 - Read `results.md` (summary line and non-pass rows), not the logs. Open a log only for `fail`, `timeout`, `crash` or `error`, with the `log-triage` skill.
 - `tools/test_known_failures.json` lists known failures. Do not re-triage `known-fail` rows; report `fixed` so the list is updated.
 - Other agents may share the GPU. The queue is `tools/gpu_queue.ps1` (`-Status` shows it); never kill another agent's Godot.

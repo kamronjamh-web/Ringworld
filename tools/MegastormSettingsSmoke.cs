@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using Godot;
 using RingworldTechDemo.UI;
+using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Weather;
 
 namespace RingworldTechDemo.Tools;
@@ -13,9 +14,9 @@ namespace RingworldTechDemo.Tools;
 [GlobalClass]
 public partial class MegastormSettingsSmoke : RefCounted
 {
-    static readonly string[] Keys = { "SpeedMetersPerSecond", "TrailingLengthKm", "WarningReachKm", "SoundVolumeDb" };
+    static readonly string[] Keys = { "SpeedMetersPerSecond", "TrailingLengthKm", "WarningReachKm", "SoundVolumeDb", "SpawnDistanceKm" };
 
-    private static bool Defaults(RingMegastormSettings r) => r.SpeedMetersPerSecond == 350f && r.TrailingLengthKm == 340f && r.WarningReachKm == 220f && r.SoundVolumeDb == 0f;
+    private static bool Defaults(RingMegastormSettings r) => r.SpeedMetersPerSecond == 350f && r.TrailingLengthKm == 340f && r.WarningReachKm == 220f && r.SoundVolumeDb == 0f && r.SpawnDistanceKm == 60f;
 
     public Godot.Collections.Dictionary Run(string path)
     {
@@ -37,11 +38,11 @@ public partial class MegastormSettingsSmoke : RefCounted
             // 3. changed-flag semantics
             bool changed = defaults.SetOverride("SpeedMetersPerSecond", 120f) && !defaults.SetOverride("SpeedMetersPerSecond", 120f) && defaults.Dirty && runtime.SpeedMetersPerSecond == 120f;
             // 4. set, save, reload, compare
-            bool setAll = defaults.SetOverride("TrailingLengthKm", 250f) && defaults.SetOverride("WarningReachKm", 90f) && defaults.SetOverride("SoundVolumeDb", -6f);
+            bool setAll = defaults.SetOverride("TrailingLengthKm", 250f) && defaults.SetOverride("WarningReachKm", 90f) && defaults.SetOverride("SoundVolumeDb", -6f) && defaults.SetOverride("SpawnDistanceKm", 90f);
             bool saved = defaults.Save() && !defaults.Dirty && File.Exists(absolute);
-            runtime.SpeedMetersPerSecond = 350f; runtime.TrailingLengthKm = 340f; runtime.WarningReachKm = 220f; runtime.SoundVolumeDb = 0f;
+            runtime.SpeedMetersPerSecond = 350f; runtime.TrailingLengthKm = 340f; runtime.WarningReachKm = 220f; runtime.SoundVolumeDb = 0f; runtime.SpawnDistanceKm = 60f;
             var loaded = new GameplayMegastormDefaults(path); loaded.Initialize();
-            bool roundTrip = runtime.SpeedMetersPerSecond == 120f && runtime.TrailingLengthKm == 250f && runtime.WarningReachKm == 90f && runtime.SoundVolumeDb == -6f;
+            bool roundTrip = runtime.SpeedMetersPerSecond == 120f && runtime.TrailingLengthKm == 250f && runtime.WarningReachKm == 90f && runtime.SoundVolumeDb == -6f && runtime.SpawnDistanceKm == 90f;
             // 5. clamps and NaN fallback
             bool clamps = true;
             foreach (string key in Keys)
@@ -54,7 +55,7 @@ public partial class MegastormSettingsSmoke : RefCounted
             }
             // The documented ranges and the exported property ranges must match the table (the drawer sliders use the table).
             bool ranges = GameplayMegastormDefaults.Limits["SpeedMetersPerSecond"] == (5f, 500f) && GameplayMegastormDefaults.Limits["TrailingLengthKm"] == (100f, 600f)
-                && GameplayMegastormDefaults.Limits["WarningReachKm"] == (50f, 600f) && GameplayMegastormDefaults.Limits["SoundVolumeDb"] == (-24f, 6f);
+                && GameplayMegastormDefaults.Limits["WarningReachKm"] == (50f, 600f) && GameplayMegastormDefaults.Limits["SoundVolumeDb"] == (-24f, 6f) && GameplayMegastormDefaults.Limits["SpawnDistanceKm"] == (5f, 600f);
             foreach (string key in Keys)
             {
                 var range = GameplayMegastormDefaults.Limits[key];
@@ -131,6 +132,40 @@ public partial class MegastormSettingsSmoke : RefCounted
         speed.Value = 120; reach.Value = 300;
         bool edits = RingMegastormSettings.Current.SpeedMetersPerSecond == 120f && entry.Value == 120 && RingMegastormSettings.Current.WarningReachKm == 300f && drawer.FlushMegastormDefaults();
         drawer.ResetMegastormSettings();
-        return edits && Math.Abs(speed.Value - 350.0) < 1e-5 && Math.Abs(reach.Value - 220.0) < 1e-5 && !drawer.GetMegastormTuningDiagnostics()["dirty"].AsBool();
+        bool reset = edits && Math.Abs(speed.Value - 350.0) < 1e-5 && Math.Abs(reach.Value - 220.0) < 1e-5 && !drawer.GetMegastormTuningDiagnostics()["dirty"].AsBool();
+        // Last: the spawn checks dirty the preferences and swap in the node's settings object.
+        return reset && RunSpawnControls(drawer);
     }
+
+    /// <summary>Spawn distance slider and the Spawn / Stop buttons against a sibling RingMegastorm node (fake clock and observer, no explorer).</summary>
+    private static bool RunSpawnControls(RingLiveTuningDrawer drawer)
+    {
+        if (drawer.FindChild("MegastormSpawnDistanceKm", true, false) is not HSlider dist || drawer.FindChild("MegastormSpawnDistanceKmEntry", true, false) is not SpinBox
+            || drawer.FindChild("MegastormSpawn", true, false) is not Button spawn || drawer.FindChild("MegastormStop", true, false) is not Button stop) return false;
+        if (dist.MinValue != 5 || dist.MaxValue != 600) return false;
+        dist.Value = 75;
+        bool slider = RingMegastormSettings.Current.SpawnDistanceKm == 75f;
+        var observer = new RingCanonicalPosition(500000, 0, 150000);
+        var node = new RingMegastorm { Name = "RingMegastorm", ClockProvider = () => 1000.0, ObserverPositionProvider = () => observer, MegastormPreferencesPath = GetSpawnPrefsPath() };
+        drawer.GetParent().AddChild(node);
+        try
+        {
+            RingMegastormSettings.Current.SpawnDistanceKm = 60f; dist.SetValueNoSignal(60);
+            spawn.EmitSignal(BaseButton.SignalName.Pressed);
+            float menuSpeed = Math.Clamp(RingMegastormSettings.Current.SpeedMetersPerSecond, MegastormSettings.MinimumSpeed, MegastormSettings.MaximumSpeed);
+            MegastormSample s = node.Query(observer, 1000.0);
+            bool first = node.Triggered && Math.Abs(s.XiMeters + 60000.0) < 1.0 && s.Phase == MegastormPhase.Approach && node.Model.Evaluate(1000.0).Level == 1f
+                && node.Model.SpeedAt(1000.0) == menuSpeed && node.Model.State.Direction == -1;
+            RingMegastormSettings.Current.SpawnDistanceKm = 120f;
+            spawn.EmitSignal(BaseButton.SignalName.Pressed);
+            bool second = node.Triggered && Math.Abs(node.Query(observer, 1000.0).XiMeters + 120000.0) < 1.0;
+            bool behind = node.SpawnAhead(30000, -1) && node.Model.State.Direction == 1 && Math.Abs(node.Query(observer, 1000.0).XiMeters + 30000.0) < 1.0;
+            stop.EmitSignal(BaseButton.SignalName.Pressed);
+            bool stopped = !node.Triggered && !node.RemoveMegastorm();
+            GD.Print($"MEGASTORM_SPAWN slider={slider} first={first} (xi={s.XiMeters:0.0} phase={s.Phase}) second={second} behind={behind} stopped={stopped}");
+            return slider && first && second && behind && stopped;
+        }
+        finally { drawer.GetParent().RemoveChild(node); node.Free(); }
+    }
+    private static string GetSpawnPrefsPath() => "res://.godot/megastorm-settings-smoke/spawn_node.tres";
 }

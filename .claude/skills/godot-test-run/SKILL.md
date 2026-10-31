@@ -19,7 +19,7 @@ The runner selects tests from `tools/test_manifest.json`, builds C#, keeps one i
 .\tools\run_tests.ps1 -Files scripts/ui/GameplayGrassDefaults.cs -DryRun   # explicit paths instead of git
 ```
 
-- Cadence: `-Changed` mid-step; `-Suite gate` at a batch or commit point; `-Suite full` only before a merge or overnight (unattended).
+- Cadence: `-Since HEAD` (your uncommitted changes) or `-Files` mid-step on a feature branch, `-Changed` on main (on a branch it diffs against main and re-selects the whole branch, ~280 tests); `-Suite gate` at a batch or commit point; `-Suite full` only before a merge or overnight (unattended).
 - Selection flags: `-Changed [-Base main]`, `-Since <rev|green>` (green = last green run of the label), `-Files`, `-Tags`, `-Tests`, `-Suite`. Smoke always runs with `-Changed` and `-Suite`.
 - Other flags: `-NoBuild` (skip the C# build), `-Cache copy|reuse|none` (default `reuse`; the first run copies the warm caches), `-Parallel` / `-LocalLanes` (lane counts, 0 = default), `-YieldMinutes` (release the GPU between groups when another agent waits).
 - Output: `.godot/test_runs/<label>/<run id>/results.md`, `results.json` and `logs/<test>.log`. Exit 0 = no fail/timeout/crash/error, 1 = failures, 2 = runner error.
@@ -119,7 +119,7 @@ $log = ".godot\<task_label>_<name>.log"
 
 ## 5. Cadence
 
-- Mid-step: `run_tests.ps1 -Changed` (covers the touched files).
+- Mid-step: `run_tests.ps1 -Since HEAD` on a feature branch (`-Changed` on main).
 - At the commit or batch point: `run_tests.ps1 -Suite gate` once.
 - Before a merge: `run_tests.ps1 -Suite full`, unattended.
 - Skip the darkness capture and the storm check unless lighting or beam code changed.

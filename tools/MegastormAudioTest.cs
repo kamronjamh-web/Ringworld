@@ -93,14 +93,7 @@ public partial class MegastormAudioTest : RefCounted
         rig.Storm = new RingMegastorm { ClockProvider = () => rig.Clock };
         if (!rig.Storm.TriggerToReach(rig.Observer, 10800.0, 1, "audio_test_" + name, true)) throw new InvalidOperationException("trigger refused");
         MegastormSample first = rig.Storm.QueryNow(rig.Observer);
-        // TimeToArrival ignores the meander's drift (about 13 s here), so find the edge crossing itself.
-        double lo = rig.Clock + first.TimeToArrivalSeconds - 300.0, hi = rig.Clock + first.TimeToArrivalSeconds + 300.0;
-        for (int i = 0; i < 60; i++)
-        {
-            double mid = 0.5 * (lo + hi);
-            if (rig.Storm.Query(rig.Observer, mid).XiMeters < 0.0) lo = mid; else hi = mid;
-        }
-        rig.Arrival = hi;
+        rig.Arrival = rig.Clock + first.TimeToArrivalSeconds;
         return rig;
     }
 

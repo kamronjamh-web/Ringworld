@@ -111,12 +111,9 @@ public partial class MegastormModelTest : RefCounted
             {
                 double around = MegastormModel.WrapPositive(m.AroundAt(t) + ahead, C);
                 var q = m.Query(around, across, t);
-                double expected = (ahead + m.LeadOffset(across, t)) / v; // edge sits |lead| further ahead than the reference line
-                check(Math.Abs(q.TimeToArrivalSeconds - expected) <= 1e-3 * expected, $"TTA v={v} across={across}: {q.TimeToArrivalSeconds} vs {expected}");
-                // Independent check: advance by TTA and the point sits on the edge (meander drift changes lead slightly: < 1 m per 0.3 km/s).
+                // TTA is the true edge crossing (meander included): advancing by it puts xi within 0.1 s of travel (v +- the meander's ~1 m/s) of zero.
                 double xiAt = m.Xi(around, across, t + q.TimeToArrivalSeconds);
-                check(Math.Abs(xiAt) < Math.Min(6000.0, 3000.0 * q.TimeToArrivalSeconds / 3600.0) + 1.0,
-                    $"xi after TTA v={v}: {xiAt}");
+                check(Math.Abs(xiAt) <= 0.1 * (v - 1.0), $"xi after TTA v={v} across={across}: {xiAt}");
                 check(Math.Abs(q.DistanceToEdgeMeters + q.XiMeters) < 1e-9 && q.Phase != MegastormPhase.Inactive, "distance to edge");
             }
         }

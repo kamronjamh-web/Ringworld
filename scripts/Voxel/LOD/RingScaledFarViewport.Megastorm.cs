@@ -4,9 +4,13 @@ using RingworldTechDemo.Lightning;
 
 namespace RingworldTechDemo.Voxel.LOD;
 
-// Megastorm far wedge pass and analytic far coverage (docs/megastorm-design.md 3.3, 3.4; WO5). Node FarMegastorm: a camera-centred sphere
-// running materials/ring_far_megastorm.gdshader (priority 15: after the whole-ring shell, before the far layer sky), which draws the wall
-// body and the leading anvil from the per-frame moving frame beyond the Sunshine handoff, at any distance. The far layer sky gets the same
+// Megastorm far wedge pass and analytic far coverage (docs/megastorm-design.md 3.3, 3.4; WO5, WO5b). Node FarMegastorm: a convex prism hull
+// around the strip's wedge (a screen-space bound, rebuilt only when the wall's shape changes) running materials/ring_far_megastorm.gdshader
+// (priority 15: after the whole-ring shell, before the far layer sky), which draws the wall body and the leading anvil from the per-frame
+// moving frame beyond the Sunshine handoff, at any distance, on the sky pixels (the far image is injected only where the main view has no
+// depth). Node MainMegastorm is its companion in the main world (ring_main_megastorm.gdshader, priority 127): the same hull moved into main
+// space, running the same shader body on pixels that have main depth, so the wall composites over terrain within the main terrain's
+// 500-750 km reach. Both work in the far frame, so they agree across the terrain silhouette. The far layer sky gets the same
 // frame uniforms (far_megastorm_*: one uniform branch), which add the trailing / precursor coverage analytically (the far atlases exclude
 // the megastorm), draw that coverage beyond the disk fade, and end its integration at the wall body.
 //
@@ -15,6 +19,14 @@ namespace RingworldTechDemo.Voxel.LOD;
 public partial class RingScaledFarViewport
 {
     private const string FarMegastormShaderPath = "res://materials/ring_far_megastorm.gdshader";
+    private const string MainMegastormShaderPath = "res://materials/ring_main_megastorm.gdshader";
+    // The strip's x range (ring_far_megastorm_pass.gdshaderinc FAR_MS_X_MIN / FAR_MS_X_MAX) and the hull's margins.
+    private const double FarMegastormXMin = -72000.0;
+    private const double FarMegastormXMax = 56000.0;
+    private const double FarMegastormHullPadMeters = 2000.0;
+    private const double FarMegastormHullOuterMeters = 2000.0;
+    private const double FarMegastormHullInnerMeters = 20000.0;
+    private const int FarMegastormHullSegments = 16;
     private const int FarMegastormAcrossTexels = 1024;
     private const int FarMegastormAcrossSlices = 4;
     private const double FarMegastormTableRefreshSeconds = 1.0;
@@ -35,8 +47,13 @@ public partial class RingScaledFarViewport
     private static readonly StringName FarMegastormSmallPositionName = "far_megastorm_small_position";
     private static readonly StringName FarMegastormFlashName = "far_megastorm_flash";
     private static readonly StringName FarMegastormFlashSlotName = "far_megastorm_flash_slot";
+    private static readonly StringName FarMegastormFlashChanceName = "far_megastorm_flash_chance";
     private static readonly StringName FarMegastormLookName = "far_megastorm_look";
     private static readonly StringName FarMegastormDebugName = "far_megastorm_debug";
+    private static readonly StringName FarMegastormMainToFarName = "far_megastorm_main_to_far";
+    private static readonly StringName FarMegastormFarCameraName = "far_megastorm_far_camera";
+    /// <summary>Debug A/B (environment RING_MEGASTORM_MAIN_OFF=1): hides the main-view companion. Debug tooling only.</summary>
+    private static readonly bool DebugMainMegastormOff = OS.GetEnvironment("RING_MEGASTORM_MAIN_OFF") == "1";
     /// <summary>Debug view (environment RING_MEGASTORM_FAR_DEBUG=1 wedge interval, 2 coarse occupancy hit). Debug tooling only.</summary>
     private static readonly int DebugFarMegastormView = int.TryParse(OS.GetEnvironment("RING_MEGASTORM_FAR_DEBUG"), out int view) ? view : 0;
     private static readonly StringName FarLayersMarchUniformName = "far_layers_march";
@@ -45,6 +62,15 @@ public partial class RingScaledFarViewport
 
     private MeshInstance3D? _farMegastorm;
     private ShaderMaterial? _farMegastormMaterial;
+    private MeshInstance3D? _mainMegastorm;
+    private ShaderMaterial? _mainMegastormMaterial;
+    private ArrayMesh? _farMegastormHull;
+    private (double Dir, double Width, double Bow, double Meander, double Radius, float Scale) _farMegastormHullKey;
+    // This frame's far -> main mapping, stored by SyncCameraAndLighting (same frame as UpdateFarMegastorm): the canonical -> world basis,
+    // the main camera origin and the far camera position (scaled).
+    private Basis _megastormCanonicalToWorld = Basis.Identity;
+    private Vector3 _megastormMainCameraOrigin;
+    private Vector3 _megastormFarCameraPosition;
     private double _farMegastormNextCreateAttempt;
     private bool _farMegastormActive;
     private bool _farMegastormLayerSkyEnabled;
@@ -75,10 +101,13 @@ public partial class RingScaledFarViewport
     /// <summary>Test diagnostics: whether the wedge pass is drawing and its tables are published.</summary>
     public string FarMegastormStatus => _farMegastorm == null
         ? "FarMegastorm: not created"
-        : $"FarMegastorm: visible={_farMegastorm.Visible} active={_farMegastormActive} layer_sky={_farMegastormLayerSkyEnabled} across_table={_farMegastormAcrossTexture != null} coverage_table={_farMegastormCoverageTexture != null} xi_range=({_farMegastormCoverageRange.X:0},{_farMegastormCoverageRange.Y:0}) debug_off={RingMegastorm.DebugFarOff}";
+        : $"FarMegastorm: visible={_farMegastorm.Visible} main_visible={_mainMegastorm?.Visible} main_suppressed={FarMegastormMainSuppressed} main_off={DebugMainMegastormOff} active={_farMegastormActive} layer_sky={_farMegastormLayerSkyEnabled} across_table={_farMegastormAcrossTexture != null} coverage_table={_farMegastormCoverageTexture != null} xi_range=({_farMegastormCoverageRange.X:0},{_farMegastormCoverageRange.Y:0}) debug_off={RingMegastorm.DebugFarOff}";
 
     /// <summary>Perf A/B only (capture harness): hides the wedge pass and the layer sky's megastorm branch while true. Not a setting.</summary>
     public bool FarMegastormSuppressed { get; set; }
+
+    /// <summary>Perf A/B only (capture harness): hides only the main-view companion of the wedge pass while true. Not a setting.</summary>
+    public bool FarMegastormMainSuppressed { get; set; }
 
     /// <summary>True while the wedge pass is visible (a megastorm is active and the far pass is not debug-disabled).</summary>
     public bool FarMegastormVisible => _farMegastorm?.Visible ?? false;
@@ -104,13 +133,12 @@ public partial class RingScaledFarViewport
         EnsureFarMegastorm();
         if (_farMegastorm == null || _farMegastormMaterial == null) return;
         ShaderMaterial material = _farMegastormMaterial;
-        _farMegastorm.GlobalPosition = _farCamera!.GlobalPosition;
 
         _farMegastormRefreshElapsed += (float)delta;
         if (_farMegastormRefreshElapsed >= FarMegastormRefreshSeconds)
         {
             _farMegastormRefreshElapsed = 0.0f;
-            RefreshFarMegastormSunshineInputs(material);
+            RefreshFarMegastormSunshineInputs();
         }
         UpdateFarMegastormTables(model!, t);
 
@@ -118,19 +146,22 @@ public partial class RingScaledFarViewport
         double c = settings.CircumferenceMeters;
         // The far camera's own around (ScaledPoint: angle = around / R, angle 0 on +X increasing toward +Z), so x_cam and the shader's
         // per-sample angle offsets (R x angle) refer to the same point.
-        Vector3 cam = _farCamera.GlobalPosition;
+        Vector3 cam = _farCamera!.GlobalPosition;
         double angle = Math.Atan2(cam.Z, cam.X);
         double cameraAround = MegastormModel.WrapPositive(angle * _radiusMeters, c);
         double xCam = frame.Direction * MegastormModel.WrapSigned(frame.AroundMeters - cameraAround, c);
+        UpdateFarMegastormHull(model, frame.Direction, angle, xCam);
         var a = new Vector4((float)t, frame.Level, frame.Strength, model.State.Seed);
         var b = new Vector4((float)settings.WidthMeters, (float)settings.BowMeters, (float)settings.MeanderAmplitudeMeters, (float)settings.MeanderWavelengthMeters);
         var cv = new Vector4((float)model.MeanderPhaseWrapped(t), RingCloudLayers.CeilingMeters, _farMegastormSculpt, 0.0f);
         var frameVector = new Vector4((float)xCam, frame.Direction, _farMegastormCoverageRange.X, _farMegastormCoverageRange.Y);
         SetFarMegastormFrame(material, a, b, cv, frameVector);
+        if (_mainMegastormMaterial != null) SetFarMegastormFrame(_mainMegastormMaterial, a, b, cv, frameVector);
         if (_farLayerSkyMaterial != null) SetFarMegastormFrame(_farLayerSkyMaterial, a, b, cv, frameVector);
         if (_farLayerSkyMaterial != null && !_farMegastormLayerSkyEnabled && _farMegastormCoverageTexture != null)
         {
             _farLayerSkyMaterial.SetShaderParameter(FarMegastormCoverageName, _farMegastormCoverageTexture);
+            if (_farMegastormAcrossTexture != null) _farLayerSkyMaterial.SetShaderParameter(FarMegastormAcrossName, _farMegastormAcrossTexture);
             _farLayerSkyMaterial.SetShaderParameter(FarMegastormEnabledName, true);
             _farMegastormLayerSkyEnabled = true;
         }
@@ -139,36 +170,156 @@ public partial class RingScaledFarViewport
         double travel = model.UnwrappedAroundAt(t);
         float mediumScale = Math.Max(1.0f, _lastFarCloudDetailStatic.MediumScale);
         float smallScale = Math.Max(1.0f, _lastFarCloudDetailStatic.SmallScale);
-        material.SetShaderParameter(FarMegastormNoiseName, new Vector4(mediumScale, smallScale,
+        SetFarMegastormParameter(FarMegastormNoiseName, new Vector4(mediumScale, smallScale,
             (float)MegastormModel.WrapPositive(travel, mediumScale), (float)MegastormModel.WrapPositive(travel, smallScale)));
-        material.SetShaderParameter(FarMegastormMediumPositionName, _lastFarCloudDetailPositions.Medium);
-        material.SetShaderParameter(FarMegastormSmallPositionName, _lastFarCloudDetailPositions.Detail);
+        SetFarMegastormParameter(FarMegastormMediumPositionName, _lastFarCloudDetailPositions.Medium);
+        SetFarMegastormParameter(FarMegastormSmallPositionName, _lastFarCloudDetailPositions.Detail);
 
         // Flash field: the slot index and the time within it, split in double.
         double slot = Math.Floor(t / MegastormLightning.SlotSeconds);
-        material.SetShaderParameter(FarMegastormFlashSlotName, (int)Math.Clamp(slot, int.MinValue + 2.0, int.MaxValue));
-        material.SetShaderParameter(FarMegastormFlashName, new Vector4((float)cameraAround, (float)(t - slot * MegastormLightning.SlotSeconds),
+        SetFarMegastormParameter(FarMegastormFlashSlotName, (int)Math.Clamp(slot, int.MinValue + 2.0, int.MaxValue));
+        SetFarMegastormParameter(FarMegastormFlashName, new Vector4((float)cameraAround, (float)(t - slot * MegastormLightning.SlotSeconds),
             LightningVisualPolicy.ReducedFlashes ? 1.0f : 0.0f, LightningVisualPolicy.ReducedPeakScale));
-        material.SetShaderParameter(NearHandoffName, _nearHandoffValue);
-        material.SetShaderParameter(FarLayersMarchUniformName, _farLayersMarchValue);
-        material.SetShaderParameter(FarMegastormLookName, FarMegastormLook);
-        if (DebugFarMegastormView != 0) material.SetShaderParameter(FarMegastormDebugName, DebugFarMegastormView);
-        material.SetShaderParameter(FarMegastormStormAmbientName, _farMegastormStormAmbient);
+        // The menu's Lightning frequency (halved under Reduced flashes), on the same cell roll as the CPU MegastormLightning.Flash(..., chanceScale).
+        SetFarMegastormParameter(FarMegastormFlashChanceName, LightningVisualPolicy.NaturalStrikeChanceScale);
+        SetFarMegastormParameter(NearHandoffName, _nearHandoffValue);
+        SetFarMegastormParameter(FarLayersMarchUniformName, _farLayersMarchValue);
+        SetFarMegastormParameter(FarMegastormLookName, FarMegastormLook);
+        if (DebugFarMegastormView != 0) SetFarMegastormParameter(FarMegastormDebugName, DebugFarMegastormView);
+        SetFarMegastormParameter(FarMegastormStormAmbientName, _farMegastormStormAmbient);
+        _farLayerSkyMaterial?.SetShaderParameter(FarMegastormStormAmbientName, _farMegastormStormAmbient);
 
         bool ready = _farMegastormAcrossTexture != null && _farMegastormCoverageTexture != null;
         if (!_farMegastormActive && ready)
         {
-            material.SetShaderParameter(FarMegastormEnabledName, true);
+            SetFarMegastormParameter(FarMegastormEnabledName, true);
             _farMegastormActive = true;
         }
-        if (_farMegastorm.Visible != (_farMegastormActive && ready)) _farMegastorm.Visible = _farMegastormActive && ready;
+        bool visible = _farMegastormActive && ready;
+        if (_farMegastorm.Visible != visible) _farMegastorm.Visible = visible;
+        UpdateMainMegastorm(visible && !FarMegastormMainSuppressed && !DebugMainMegastormOff);
+    }
+
+    private void SetFarMegastormParameter(StringName name, Variant value)
+    {
+        _farMegastormMaterial?.SetShaderParameter(name, value);
+        _mainMegastormMaterial?.SetShaderParameter(name, value);
+    }
+
+    /// <summary>
+    /// Moves the companion into the main world each frame: its transform is main_from_far x the far node's, with main_from_far mapping far
+    /// (scaled canonical) space to main world space around the camera, and writes the two frame uniforms of ring_main_megastorm.gdshader.
+    /// </summary>
+    private void UpdateMainMegastorm(bool visible)
+    {
+        if (_mainMegastorm == null || _mainMegastormMaterial == null || _farMegastorm == null) return;
+        if (_mainMegastorm.Visible != visible) _mainMegastorm.Visible = visible;
+        if (!visible) return;
+        float scale = Math.Max(CoordinateScale, 0.000001f);
+        Basis canonicalToWorld = _megastormCanonicalToWorld;
+        var mainFromFar = new Transform3D(canonicalToWorld.Scaled(Vector3.One / scale),
+            _megastormMainCameraOrigin - canonicalToWorld * _megastormFarCameraPosition / scale);
+        _mainMegastorm.GlobalTransform = mainFromFar * _farMegastorm.Transform;
+        Basis worldToCanonical = canonicalToWorld.Inverse();
+        _mainMegastormMaterial.SetShaderParameter(FarMegastormMainToFarName, worldToCanonical);
+        _mainMegastormMaterial.SetShaderParameter(FarMegastormFarCameraName, _megastormFarCameraPosition);
+    }
+
+    /// <summary>
+    /// The convex proxy hull (the far node's mesh, shared with the companion): a prism over the strip's x range in the far frame, built in a
+    /// local frame where the wall reference x = 0 sits at angle 0 (angle alpha = -dir x / R) and rotated about +Y to the wall's real angle
+    /// theta0 = theta_cam + dir x_cam / R each frame. The XZ cross-section is convex so every ray exits it once (the shaders draw back
+    /// faces): a 16-segment polyline circumscribing radius R + 2 km outside, one straight chord at R - 20 km inside. Rebuilt only when the
+    /// direction sign, width, bow / meander, radius or coordinate scale changes.
+    /// </summary>
+    private void UpdateFarMegastormHull(MegastormModel model, double direction, double cameraAngle, double xCam)
+    {
+        if (_farMegastorm == null) return;
+        MegastormSettings settings = model.Settings;
+        var key = (direction, settings.WidthMeters, settings.BowMeters, settings.MeanderAmplitudeMeters, _radiusMeters, CoordinateScale);
+        if (_farMegastormHull == null || key != _farMegastormHullKey)
+        {
+            _farMegastormHullKey = key;
+            _farMegastormHull = BuildFarMegastormHull(direction, settings.WidthMeters, settings.BowMeters + settings.MeanderAmplitudeMeters, _radiusMeters, CoordinateScale);
+            _farMegastorm.Mesh = _farMegastormHull;
+            if (_mainMegastorm != null) _mainMegastorm.Mesh = _farMegastormHull;
+        }
+        double theta0 = cameraAngle + direction * xCam / _radiusMeters;
+        theta0 -= Math.Tau * Math.Round(theta0 / Math.Tau);
+        // Godot's rotation about +Y is right-handed (x -> -z), so the local angle alpha (atan2(z, x)) moves to alpha - phi.
+        _farMegastorm.Transform = new Transform3D(new Basis(Vector3.Up, (float)-theta0), Vector3.Zero);
+    }
+
+    private static ArrayMesh BuildFarMegastormHull(double direction, double width, double lead, double radius, float scale)
+    {
+        double pad = lead + FarMegastormHullPadMeters;
+        double alphaA = -direction * (FarMegastormXMin - pad) / radius;
+        double alphaB = -direction * (FarMegastormXMax + pad) / radius;
+        if (alphaA > alphaB) (alphaA, alphaB) = (alphaB, alphaA);
+        int n = FarMegastormHullSegments;
+        double step = (alphaB - alphaA) / n;
+        double outer = (radius + FarMegastormHullOuterMeters) * scale / Math.Cos(0.5 * step);
+        double inner = (radius - FarMegastormHullInnerMeters) * scale;
+        // Convex XZ polygon: the outer polyline (angle increasing), then the inner chord back.
+        var ring = new Vector2[n + 3];
+        for (int i = 0; i <= n; i++)
+        {
+            double alpha = alphaA + i * step;
+            ring[i] = new Vector2((float)(outer * Math.Cos(alpha)), (float)(outer * Math.Sin(alpha)));
+        }
+        ring[n + 1] = new Vector2((float)(inner * Math.Cos(alphaB)), (float)(inner * Math.Sin(alphaB)));
+        ring[n + 2] = new Vector2((float)(inner * Math.Cos(alphaA)), (float)(inner * Math.Sin(alphaA)));
+        float y0 = (float)((-0.5 * width - 2000.0) * scale);
+        float y1 = (float)((0.5 * width + 2000.0) * scale);
+
+        int count = ring.Length;
+        var vertices = new Vector3[count * 2];
+        for (int i = 0; i < count; i++)
+        {
+            vertices[i] = new Vector3(ring[i].X, y0, ring[i].Y);
+            vertices[count + i] = new Vector3(ring[i].X, y1, ring[i].Y);
+        }
+        Vector3 center = Vector3.Zero;
+        foreach (Vector3 v in vertices) center += v;
+        center /= vertices.Length;
+
+        var indices = new System.Collections.Generic.List<int>();
+        void Triangle(int a, int b, int c)
+        {
+            // Godot front faces are clockwise seen from outside: the right-handed normal points inward. The shaders cull_front, so the
+            // near side is culled and the far side drawn, also from inside the hull.
+            Vector3 normal = (vertices[b] - vertices[a]).Cross(vertices[c] - vertices[a]);
+            Vector3 mid = (vertices[a] + vertices[b] + vertices[c]) / 3.0f - center;
+            if (normal.Dot(mid) > 0.0f) (b, c) = (c, b);
+            indices.Add(a);
+            indices.Add(b);
+            indices.Add(c);
+        }
+        for (int i = 0; i < count; i++)
+        {
+            int j = (i + 1) % count;
+            Triangle(i, j, count + j);
+            Triangle(i, count + j, count + i);
+        }
+        for (int i = 1; i < count - 1; i++)
+        {
+            Triangle(0, i, i + 1);
+            Triangle(count, count + i, count + i + 1);
+        }
+        var arrays = new Godot.Collections.Array();
+        arrays.Resize((int)Mesh.ArrayType.Max);
+        arrays[(int)Mesh.ArrayType.Vertex] = vertices;
+        arrays[(int)Mesh.ArrayType.Index] = indices.ToArray();
+        var mesh = new ArrayMesh();
+        mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+        return mesh;
     }
 
     /// <summary>Debug: the wedge pass's ray inputs for the far camera's forward ray (CPU replica of the shader's set-up).</summary>
     public string FarMegastormRayProbe()
     {
         if (_farCamera == null || _farMegastormMaterial == null) return "no far camera / material";
-        Vector3 cam = _farCamera.GlobalPosition;
+        Vector3 cam = _farCamera!.GlobalPosition;
         Vector3 dir = -_farCamera.GlobalBasis.Z.Normalized();
         double scale = CoordinateScale;
         double camR = Math.Sqrt((double)cam.X * cam.X + (double)cam.Z * cam.Z);
@@ -193,7 +344,8 @@ public partial class RingScaledFarViewport
     {
         _farMegastormActive = false;
         if (_farMegastorm != null) _farMegastorm.Visible = false;
-        _farMegastormMaterial?.SetShaderParameter(FarMegastormEnabledName, false);
+        if (_mainMegastorm != null) _mainMegastorm.Visible = false;
+        SetFarMegastormParameter(FarMegastormEnabledName, false);
         if (_farMegastormLayerSkyEnabled) _farLayerSkyMaterial?.SetShaderParameter(FarMegastormEnabledName, false);
         _farMegastormLayerSkyEnabled = false;
         _farMegastormAcrossSlice = -1;
@@ -214,21 +366,36 @@ public partial class RingScaledFarViewport
         var instance = new MeshInstance3D
         {
             Name = "FarMegastorm",
-            Mesh = new SphereMesh { Radius = 4.0f, Height = 8.0f, RadialSegments = 32, Rings = 16 },
             MaterialOverride = material,
             CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
             Visible = false
         };
         _farViewport.AddChild(instance);
         DisableWholeRingFrustumCulling(instance);
-        instance.GlobalPosition = _farCamera.GlobalPosition;
         _farMegastorm = instance;
         _farMegastormMaterial = material;
+        Shader? mainShader = GD.Load<Shader>(MainMegastormShaderPath);
+        if (mainShader != null)
+        {
+            var mainMaterial = new ShaderMaterial { Shader = mainShader, RenderPriority = 127 };
+            RingAtmosphereModel.ConfigureMaterial(mainMaterial, _radiusMeters, CoordinateScale);
+            var mainInstance = new MeshInstance3D
+            {
+                Name = "MainMegastorm",
+                MaterialOverride = mainMaterial,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
+                Visible = false
+            };
+            AddChild(mainInstance);
+            DisableWholeRingFrustumCulling(mainInstance);
+            _mainMegastorm = mainInstance;
+            _mainMegastormMaterial = mainMaterial;
+        }
         _farMegastormRefreshElapsed = float.PositiveInfinity;
     }
 
     /// <summary>Sunshine inputs on the 0.25 s timer: the per-ray storm ambient, the sculpt strength (weather header1.y) and the noise textures.</summary>
-    private void RefreshFarMegastormSunshineInputs(ShaderMaterial material)
+    private void RefreshFarMegastormSunshineInputs()
     {
         Resource? clouds = _sunshineFarCloudResource;
         if (clouds == null) return;
@@ -236,8 +403,8 @@ public partial class RingScaledFarViewport
         byte[] bytes;
         using (Variant value = clouds.Get(WeatherSystemsBytesName)) bytes = value.AsByteArray();
         if (bytes.Length >= 64) _farMegastormSculpt = Math.Clamp(BitConverter.ToSingle(bytes, 5 * 4), 0.0f, 1.0f);
-        if (_sunshineMediumTexture is Texture3D medium) material.SetShaderParameter(FarMegastormMediumNoiseName, medium);
-        if (_sunshineSmallTexture is Texture3D small) material.SetShaderParameter(FarMegastormSmallNoiseName, small);
+        if (_sunshineMediumTexture is Texture3D medium) SetFarMegastormParameter(FarMegastormMediumNoiseName, medium);
+        if (_sunshineSmallTexture is Texture3D small) SetFarMegastormParameter(FarMegastormSmallNoiseName, small);
     }
 
     /// <summary>
@@ -285,7 +452,7 @@ public partial class RingScaledFarViewport
             if (last >= FarMegastormAcrossTexels)
             {
                 Buffer.BlockCopy(_farMegastormAcrossStage, 0, _farMegastormAcrossBytes, 0, _farMegastormAcrossBytes.Length);
-                PublishFarMegastormTable(ref _farMegastormAcrossTexture, _farMegastormAcrossBytes, FarMegastormAcrossTexels, _farMegastormMaterial, FarMegastormAcrossName);
+                PublishFarMegastormTable(ref _farMegastormAcrossTexture, _farMegastormAcrossBytes, FarMegastormAcrossTexels, FarMegastormAcrossName, _farMegastormMaterial, _mainMegastormMaterial, _farLayerSkyMaterial);
                 _farMegastormAcrossPublishedTime = _farMegastormAcrossBuildTime;
                 _farMegastormAcrossSlice = -1;
             }
@@ -299,20 +466,20 @@ public partial class RingScaledFarViewport
             double queryAcross = _explorer != null ? _explorer.CanonicalPosition.AcrossMeters : 0.5 * model.Settings.WidthMeters;
             MegastormFarCoverage.Build(_weatherSource, model, t, queryAcross, Vector3.Zero, _farMegastormCoverage, out double xiMin, out double xiMax);
             Buffer.BlockCopy(_farMegastormCoverage, 0, _farMegastormCoverageBytes, 0, _farMegastormCoverageBytes.Length);
-            PublishFarMegastormTable(ref _farMegastormCoverageTexture, _farMegastormCoverageBytes, MegastormFarCoverage.Texels, _farLayerSkyMaterial, FarMegastormCoverageName);
+            PublishFarMegastormTable(ref _farMegastormCoverageTexture, _farMegastormCoverageBytes, MegastormFarCoverage.Texels, FarMegastormCoverageName, _farLayerSkyMaterial);
             _farMegastormCoverageRange = new Vector2((float)xiMin, (float)xiMax);
             _farMegastormCoverageTime = t;
         }
     }
 
-    private static void PublishFarMegastormTable(ref ImageTexture? texture, byte[] bytes, int width, ShaderMaterial? material, StringName name)
+    private static void PublishFarMegastormTable(ref ImageTexture? texture, byte[] bytes, int width, StringName name, params ShaderMaterial?[] materials)
     {
         Image image = Image.CreateFromData(width, 1, false, Image.Format.Rgbaf, bytes);
         if (texture != null && texture.GetWidth() == width) texture.Update(image);
         else
         {
             texture = ImageTexture.CreateFromImage(image);
-            material?.SetShaderParameter(name, texture);
+            foreach (ShaderMaterial? material in materials) material?.SetShaderParameter(name, texture);
         }
         image.Dispose();
     }

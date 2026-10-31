@@ -2429,6 +2429,9 @@ public partial class RingScaledFarViewport : Node
 			}
 		}
 
+		_megastormCanonicalToWorld = worldToCanonical.Inverse();
+		_megastormMainCameraOrigin = sourceTransform.Origin;
+		_megastormFarCameraPosition = scaledPosition;
 		Transform3D farCameraTransform = new(farCameraBasis, scaledPosition);
 		if (_farCamera.GlobalTransform != farCameraTransform) _farCamera.GlobalTransform = farCameraTransform;
 		float farCameraFov = Mathf.Clamp(IsFinite(_sourceCamera.Fov) ? _sourceCamera.Fov : 75.0f, 1.0f, 179.0f);
@@ -2505,6 +2508,7 @@ public partial class RingScaledFarViewport : Node
 				_atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, material, wholeRingSite);
 			if (_farLayerSkyMaterial != null) _atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _farLayerSkyMaterial, wholeRingSite);
 			if (_farMegastormMaterial != null) _atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _farMegastormMaterial, wholeRingSite);
+			if (_mainMegastormMaterial != null) _atmosphereRayFrameCache.Apply(wholeRingAtmosphereFrame, _mainMegastormMaterial, wholeRingSite);
 		}
 		SyncRegionalCameraAndLighting(
 			canonical,
