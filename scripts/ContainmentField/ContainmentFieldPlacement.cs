@@ -18,7 +18,7 @@ public static class ContainmentFieldPlacement
             new CanonicalVector(0.0, pt.NormalVertical, pt.NormalAcross));
 
     /// <summary>World directions of the canonical around and vertical (up) axes and the across axis at a canonical around.</summary>
-    private static void AxesAt(in RingLodGeometrySnapshot s, double around, out Vector3 aroundDir, out Vector3 upDir, out Vector3 acrossDir)
+    public static void AxesAt(in RingLodGeometrySnapshot s, double around, out Vector3 aroundDir, out Vector3 upDir, out Vector3 acrossDir)
     {
         double wrapped = around % s.CircumferenceMeters;
         if (wrapped < 0.0) wrapped += s.CircumferenceMeters;

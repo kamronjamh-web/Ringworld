@@ -7,6 +7,7 @@ const DRAWER := preload("res://scripts/ui/RingLiveTuningDrawer.cs")
 const GRAPHICS := preload("res://scripts/Voxel/LOD/RingGraphicsQualityController.cs")
 const DAY_NIGHT := preload("res://scripts/RingDayNightCycle.cs")
 const BINDING_SMOKE := preload("res://tools/AtmosphereMenuSmoke.cs")
+const CONTAINMENT_FIELD := preload("res://scripts/ContainmentField/RingContainmentField.cs")
 
 var _fixture: Node3D
 var _drawer: CanvasLayer
@@ -17,6 +18,8 @@ var _shadow_prefs := ""
 var _grass_prefs := ""
 var _water_prefs := ""
 var _motion_prefs := ""
+var _containment_prefs := ""
+var _containment: Node
 
 func _initialize() -> void:
 	call_deferred("_run")
@@ -29,6 +32,7 @@ func _run() -> void:
 	_grass_prefs = base.path_join("grass.tres")
 	_water_prefs = base.path_join("water.tres")
 	_motion_prefs = base.path_join("motion.tres")
+	_containment_prefs = base.path_join("containment-field.tres")
 	_cleanup()
 
 	_fixture = Node3D.new()
@@ -47,6 +51,10 @@ func _run() -> void:
 	_drawer.call("InstallGrassDefaults", _grass_prefs)
 	_drawer.call("InstallWaterDefaults", _water_prefs)
 	_drawer.call("InstallMotionDefaults", _motion_prefs)
+	_drawer.call("InstallContainmentFieldDefaults", _containment_prefs)
+	_containment = CONTAINMENT_FIELD.new()
+	_containment.name = "ContainmentField"
+	_containment.set("LoadSavedDefaults", false)
 	_graphics = GRAPHICS.new()
 	_graphics.name = "GraphicsQuality"
 	_graphics.set("DefaultPreset", 3)
@@ -54,6 +62,7 @@ func _run() -> void:
 	# lazy initialized owner before GraphicsQuality._Ready has run.
 	_fixture.add_child(sun)
 	_fixture.add_child(cycle)
+	_fixture.add_child(_containment)
 	_fixture.add_child(_drawer)
 	_fixture.add_child(_graphics)
 	root.add_child(_fixture)
@@ -206,6 +215,29 @@ func _run() -> void:
 	if not is_equal_approx(float((_graphics.call("GetAtmosphereTuningDiagnostics") as Dictionary).get("density", -1.0)), 0.71):
 		return _fail("drawer did not rebind to the replacement atmosphere owner")
 
+	# Containment field section: three sliders in the Atmosphere tab, driven through the real signal; no enable toggle.
+	var shimmer_strength := _drawer.find_child("ContainmentShimmerStrength", true, false) as HSlider
+	var shimmer_range := _drawer.find_child("ContainmentShimmerRangeKm", true, false) as HSlider
+	var sheen_strength := _drawer.find_child("ContainmentSheenStrength", true, false) as HSlider
+	var lattice_strength := _drawer.find_child("ContainmentLatticeStrength", true, false) as HSlider
+	if shimmer_strength == null or shimmer_range == null or sheen_strength == null or lattice_strength == null:
+		return _fail("containment field sliders missing")
+	if not is_equal_approx(shimmer_range.value, 3.0) or not is_equal_approx(float(_containment.get("ShimmerRangeKm")), 3.0):
+		return _fail("containment field defaults wrong")
+	shimmer_range.value = 5.0
+	sheen_strength.value = 0.5
+	lattice_strength.value = 0.25
+	await process_frame
+	if not is_equal_approx(float(_containment.get("ShimmerRangeKm")), 5.0) or not is_equal_approx(float(_containment.get("SheenStrength")), 0.5) or not is_equal_approx(float(_containment.get("LatticeStrength")), 0.25):
+		return _fail("containment field sliders did not update the field node")
+	_drawer.call("FlushContainmentFieldDefaults")
+	if not FileAccess.file_exists(_containment_prefs):
+		return _fail("containment field defaults were not saved")
+	var containment_nodes := _drawer.find_children("Containment*", "", true, false)
+	for node in containment_nodes:
+		if String(node.name).ends_with("Enabled"):
+			return _fail("containment field must not have an enable toggle")
+
 	# Make the configured provider path unavailable without disposing the
 	# controller still cached by unrelated tabs in this minimal fixture.
 	_graphics.name = "UnavailableGraphicsQuality"
@@ -228,6 +260,6 @@ func _finish(code: int) -> void:
 	call_deferred("quit", code)
 
 func _cleanup() -> void:
-	for path in [_prefs, _aa_prefs, _shadow_prefs, _grass_prefs, _water_prefs, _motion_prefs]:
+	for path in [_prefs, _aa_prefs, _shadow_prefs, _grass_prefs, _water_prefs, _motion_prefs, _containment_prefs]:
 		if not path.is_empty() and FileAccess.file_exists(path):
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))

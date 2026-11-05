@@ -171,6 +171,27 @@ public static class ContainmentFieldGeometry
         return pt with { ArchLengthMeters = s };
     }
 
+    /// <summary>
+    /// Fills <paramref name="rows"/> with <see cref="SurfaceAtArchLength"/> at evenly spaced arch lengths s0..s1 (rows.Length >= 2), sharing one arc lookup and
+    /// one ArchLength; same results as the public call.
+    /// </summary>
+    internal static void SurfaceRows(in ContainmentFieldProfile p, double around, double s0, double s1, ContainmentFieldPoint[] rows)
+    {
+        EllipseArc arc = EllipseArc.For(p.HalfWidth, p.Rise);
+        double skirt = p.SkirtHeightMeters, total = 2.0 * skirt + arc.Total, a = p.HalfWidth, b = p.Rise;
+        int last = rows.Length - 1;
+        for (int j = 0; j <= last; j++)
+        {
+            double s = Math.Clamp(s0 + (s1 - s0) * j / last, 0.0, total);
+            if (s <= skirt) { rows[j] = LeftSkirtPoint(p, around, p.WallTopMeters + s); continue; }
+            if (s >= skirt + arc.Total) { rows[j] = RightSkirtPoint(p, around, p.CrownMeters - (s - skirt - arc.Total), s); continue; }
+            double phi = Math.Clamp(arc.PhiAt(s - skirt), 0.0, Math.PI);
+            (double sin, double cos) = Math.SinCos(phi);
+            double na = cos / a, nv = -sin / b, len = Math.Sqrt(na * na + nv * nv);
+            rows[j] = new ContainmentFieldPoint(around, phi, p.Centre - a * cos, p.CrownMeters + b * sin, nv / len, na / len, s);
+        }
+    }
+
     // ---- Nearest -------------------------------------------------------------------------------------------------------------------------------
 
     private enum Piece { LeftSkirt, Ellipse, RightSkirt }
@@ -191,6 +212,23 @@ public static class ContainmentFieldGeometry
         }
     }
 
+    /// <summary><see cref="Nearest"/> and <see cref="SignedDistance"/> from one solve.</summary>
+    internal static ContainmentFieldPoint NearestAndSigned(in ContainmentFieldProfile p, in RingCanonicalPosition q, out double signedDistance)
+    {
+        NearestCore(p, q.AcrossMeters, q.VerticalMeters, out Piece piece, out double param, out double dist);
+        signedDistance = InsideRegion(p, q.AcrossMeters, q.VerticalMeters) ? -dist : dist;
+        switch (piece)
+        {
+            case Piece.LeftSkirt:
+                return LeftSkirtPoint(p, q.AroundMeters, param);
+            case Piece.RightSkirt:
+                double arch = p.SkirtHeightMeters + EllipseArc.For(p.HalfWidth, p.Rise).Total + (p.CrownMeters - param);
+                return RightSkirtPoint(p, q.AroundMeters, param, arch);
+            default:
+                return SurfaceAtPhi(p, q.AroundMeters, param);
+        }
+    }
+
     private static void NearestCore(in ContainmentFieldProfile p, double across, double vertical, out Piece piece, out double param, out double dist)
     {
         double a = p.HalfWidth, b = p.Rise;
@@ -199,7 +237,11 @@ public static class ContainmentFieldGeometry
         double dL2 = dxL * dxL + dv * dv, dR2 = dxR * dxR + dv * dv;
         piece = Piece.LeftSkirt; param = vClamp; double best2 = dL2;
         if (dR2 < best2) { best2 = dR2; piece = Piece.RightSkirt; }
-        double phi = NearestEllipsePhi(a, b, across - p.Centre, vertical - p.CrownMeters, out double eD2);
+        // Every ellipse point is at or above the crown, so below the crown the ellipse is at least (crown - vertical) away: when a skirt is already
+        // that close, the (expensive) lower-half ellipse scan cannot win. Exact; it only skips work (the wall top and the vacuum side near a wall).
+        double yc = vertical - p.CrownMeters;
+        if (yc < 0.0 && best2 <= yc * yc) { dist = Math.Sqrt(best2); return; }
+        double phi = NearestEllipsePhi(a, b, across - p.Centre, yc, out double eD2);
         if (eD2 < best2) { best2 = eD2; piece = Piece.Ellipse; param = phi; }
         dist = Math.Sqrt(best2);
     }

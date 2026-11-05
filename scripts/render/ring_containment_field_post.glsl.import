@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://dt4ti6gwx7s48"
+path="res://.godot/imported/ring_containment_field_post.glsl-1ead439b17c51b831b13865922512645.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_containment_field_post.glsl"
+dest_files=["res://.godot/imported/ring_containment_field_post.glsl-1ead439b17c51b831b13865922512645.res"]
+
+[params]
+

@@ -13,7 +13,11 @@ extends SceneTree
 ## --settle=S    seconds to wait at each view (default 10).
 ## --walk        after the views, noclip onto the wall top, switch noclip off (V) and walk (W / Space) along and across the cap on both walls.
 ## --no-views    skip the views (walk only).
-## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, anchor, far50, arch).
+## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, anchor, far50, arch); --only=none skips them all.
+## --field       containment field WO3 views (weather clock paused): each pose is shot with the field on, twice (paused clock: identical),
+##               with its coverage tint (DebugMode 1) and off (A/B), with the near patch state; frame-time A-B-A at three poses; 150 frames
+##               at the grazing wall-top pose (flicker) and a 120-frame approach climb. --field-views=a:b limits them (top_up, top_along,
+##               floor, under20, over20, apex_under, apex_over, vacuum, far50, flicker, approach).
 ## Prints RIM_WALL lines, RIM_WALL hull ... triangle counts, RIM_WALL_WALK=PASS|FAIL when --walk, and RIM_WALL=DONE at the end.
 
 const MENU := preload("res://scenes/StartMenu.tscn")
@@ -297,6 +301,8 @@ func _run() -> void:
 				_teleport(line, top + 3000.0, 50000.0, -90.0, -3.0)
 				await create_timer(settle).timeout
 				await _shot("%s_far50" % tod)
+			if _arg("field", "") != "":
+				await _field_views(tod, line, top, width, floor_h, settle)
 			if tod == "noon":
 				_hull_counts()
 			# Habitat floor at the centre line looking up the arch (far shell walls along the far side).
@@ -315,6 +321,196 @@ func _run() -> void:
 		print("RIM_WALL_WALK=%s %s" % ["PASS" if _walk_failures.is_empty() else "FAIL", "; ".join(_walk_failures)])
 	print("RIM_WALL=DONE out=", _out)
 	quit(0)
+
+# ---- Containment field WO3 -----------------------------------------------------------------------------------------------------------------
+
+# Field profile height at an across (runtime value of the WO1 profile: 128 m centre-line roots, 1,600 m skirt, 40 km apex).
+func _field_h(across: float, top: float, width: float) -> float:
+	var r0 := -64.0
+	var rw := width + 64.0
+	if across < r0 or across > rw:
+		return NAN
+	var crown := top + 1600.0
+	var a := (rw - r0) * 0.5
+	var x := (across - (r0 + rw) * 0.5) / a
+	return crown + (40000.0 - crown) * sqrt(maxf(0.0, 1.0 - x * x))
+
+# Across (near the across-0 wall) where the field is at height h (ellipse part).
+func _field_across_at(h: float, top: float, width: float) -> float:
+	var r0 := -64.0
+	var rw := width + 64.0
+	var crown := top + 1600.0
+	var a := (rw - r0) * 0.5
+	var y := clampf((h - crown) / (40000.0 - crown), 0.0, 1.0)
+	return (r0 + rw) * 0.5 - a * sqrt(1.0 - y * y)
+
+func _field_node() -> Node:
+	return _world.get_node_or_null("ContainmentField")
+
+func _field_state() -> String:
+	var f := _field_node()
+	if f == null:
+		return "no field node"
+	return "near=%s post=%s builds=%d post_dispatches=%d cpu_us=%.1f cpu_avg_us=%.1f rebuild_us=%.1f" % [str(f.get("NearPatchVisible")), str(f.get("PostPassActive")),
+		int(f.get("PatchBuildCount")), int(f.get("PostPassDispatches")), float(f.get("LastProcessMicroseconds")), float(f.get("AverageProcessMicroseconds")), float(f.get("LastRebuildMicroseconds"))] + " " + str(f.get("TimingBreakdown"))
+
+func _want_field(view: String) -> bool:
+	var only := _arg("field-views", "")
+	return only == "" or view in only.split(":")
+
+# On, a second "on" frame (paused weather clock), off (A/B), the lattice alone, then the coverage tint and the lattice mask.
+func _field_shots(name: String, settle: float) -> void:
+	var f := _field_node()
+	f.set("Enabled", true)
+	f.set("DebugMode", 0)
+	await create_timer(settle).timeout
+	await _shot(name)
+	print("RIM_WALL field ", name, " ", _field_state())
+	await _shot(name + "_on2")
+	f.set("Enabled", false)
+	await create_timer(1.5).timeout
+	await _shot(name + "_off")
+	f.set("Enabled", true)
+	# The lattice alone (shimmer and sheen 0), to judge it against the "off" shot.
+	var shimmer: float = f.get("ShimmerStrength")
+	var sheen: float = f.get("SheenStrength")
+	f.set("ShimmerStrength", 0.0)
+	f.set("SheenStrength", 0.0)
+	await create_timer(1.0).timeout
+	await _shot(name + "_lattice")
+	f.set("ShimmerStrength", shimmer)
+	f.set("SheenStrength", sheen)
+	# Debug views last, away from the A/B pair.
+	f.set("DebugMode", 1)
+	await create_timer(0.5).timeout
+	await _shot(name + "_dbg")
+	f.set("DebugMode", 3)
+	await create_timer(0.5).timeout
+	await _shot(name + "_dbglattice")
+	f.set("DebugMode", 0)
+	await create_timer(1.0).timeout
+
+func _gpu_ms(frames: int) -> float:
+	var vp := root.get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp, true)
+	for i in 10:
+		await process_frame
+	var total := 0.0
+	for i in frames:
+		await process_frame
+		total += RenderingServer.viewport_get_measured_render_time_gpu(vp)
+	return total / float(frames)
+
+func _field_aba(label: String) -> void:
+	var f := _field_node()
+	var a1 := await _gpu_ms(240)
+	var d1 := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	f.set("Enabled", false)
+	var b := await _gpu_ms(240)
+	var d0 := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	f.set("Enabled", true)
+	var a2 := await _gpu_ms(240)
+	print("RIM_WALL field perf %s gpu_ms on=%.3f off=%.3f on=%.3f draws on=%d off=%d %s" % [label, a1, b, a2, d1, d0, _field_state()])
+
+func _field_views(tod: String, line: float, top: float, width: float, floor_h: float, settle: float) -> void:
+	var f := _field_node()
+	if f == null:
+		print("RIM_WALL field node missing")
+		return
+	var weather: Node = _world.get_node_or_null("RingVolumetricClouds")
+	if weather != null:
+		weather.set("CloudSimulationPaused", true)
+	# Lock auto exposure for the A/B shots (--field-exposure=auto keeps it): with it on, any change in what is on screen, the field's sheen
+	# and lattice included, nudges the exposure of the whole frame, and a debug tint shot bleeds into the next shot.
+	var exposure_owner: Node = null
+	for n in _world.find_children("*", "", true, false):
+		var sc: Variant = n.get_script()
+		if sc != null and (sc as Script).resource_path.ends_with("day_side_atmosphere.gd"):
+			exposure_owner = n
+			break
+	var exposure_was: Variant = exposure_owner.get("storm_auto_exposure_enabled") if exposure_owner != null else null
+	var lock_exposure := exposure_owner != null and _arg("field-exposure", "") != "auto"
+	if lock_exposure:
+		exposure_owner.set("storm_auto_exposure_enabled", false)
+	print("RIM_WALL field exposure owner=", exposure_owner, " locked=", lock_exposure)
+	var x20 := _field_across_at(20000.0, top, width)
+	var mid := width * 0.5
+	print("RIM_WALL field profile crown=%.1f across_at_20km=%.1f h(200)=%.1f" % [top + 1600.0, x20, _field_h(200.0, top, width)])
+	# Wall top, habitat side (across 200 m, 50 m up): looking up and along, the skirt and arch pass 264 m away.
+	if _want_field("top_up"):
+		_teleport(line - 1500.0, top + 50.0, 200.0, -35.0, 30.0)
+		await _field_shots("%s_field_top_up" % tod, settle)
+	# Same place, grazing along the skirt and the wall-top line.
+	if _want_field("top_along"):
+		_teleport(line - 1500.0, top + 50.0, 200.0, -12.0, 3.0)
+		await _field_shots("%s_field_top_along" % tod, settle)
+		if tod == "noon":
+			await _field_aba("near(top_along)")
+	# Habitat floor 1.5 km from the wall, looking at the wall top: the field is >= 10 km away (idle, identity).
+	if _want_field("floor"):
+		_teleport(line, floor_h + 40.0, 1500.0, -90.0, 60.0)
+		await _field_shots("%s_field_floor" % tod, settle)
+		if tod == "noon":
+			await _field_aba("idle(floor)")
+	# Noclip at ~20 km: 400 m under the field looking up and along it, then 400 m above it looking down at the clouds (post-Sunshine pass).
+	if _want_field("under20"):
+		_teleport(line, 20000.0 - 400.0, x20, -60.0, 35.0)
+		await _field_shots("%s_field_under20" % tod, settle)
+		if tod == "noon":
+			await _field_aba("near_below(under20)")
+	if _want_field("over20"):
+		_teleport(line, 20000.0 + 400.0, x20, 60.0, -35.0)
+		await _field_shots("%s_field_over20" % tod, settle)
+		if tod == "noon":
+			await _field_aba("near_above(over20)")
+	# Apex: 300 m under looking up, 300 m above looking down.
+	if _want_field("apex_under"):
+		_teleport(line, 40000.0 - 300.0, mid, 30.0, 40.0)
+		await _field_shots("%s_field_apex_under" % tod, settle)
+	if _want_field("apex_over"):
+		_teleport(line, 40000.0 + 300.0, mid, 30.0, -40.0)
+		await _field_shots("%s_field_apex_over" % tod, settle)
+	# Vacuum side of the wall top (across -400, 300 m up), looking back into the habitat through the skirt.
+	if _want_field("vacuum"):
+		_teleport(line - 1500.0, top + 300.0, -400.0, 70.0, -12.0)
+		await _field_shots("%s_field_vacuum" % tod, settle)
+	# 50 km into the habitat, looking back at the wall and the arch: invisible.
+	if _want_field("far50"):
+		_teleport(line, top + 3000.0, 50000.0, -90.0, 8.0)
+		await _field_shots("%s_field_far50" % tod, settle)
+	# 150 consecutive frames at the grazing wall-top pose with the weather clock running (flicker / TAA check).
+	if _want_field("flicker") and tod == "noon":
+		if weather != null:
+			weather.set("CloudSimulationPaused", false)
+		_teleport(line - 1500.0, top + 50.0, 200.0, -12.0, 3.0)
+		await create_timer(settle).timeout
+		var dir := _out + "/flicker_" + tod
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+		_hide_hud()
+		for i in 150:
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png(ProjectSettings.globalize_path("%s/frame%08d.png" % [dir, i]))
+		print("RIM_WALL field flicker frames=150 dir=", dir, " ", _field_state())
+		if weather != null:
+			weather.set("CloudSimulationPaused", true)
+	# Approach: climb at across 3 km from 6,000 m to 300 m below the field (the patch switches on at 3.3 km clearance).
+	if _want_field("approach") and tod == "noon":
+		var h3 := _field_h(3000.0, top, width)
+		var dir2 := _out + "/approach_" + tod
+		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir2))
+		_teleport(line, h3 - 6000.0, 3000.0, -60.0, 30.0)
+		await create_timer(settle).timeout
+		_hide_hud()
+		for i in 120:
+			var v := lerpf(h3 - 6000.0, h3 - 300.0, float(i) / 119.0)
+			_teleport(line, v, 3000.0, -60.0, 30.0)
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png(ProjectSettings.globalize_path("%s/frame%08d.png" % [dir2, i]))
+		print("RIM_WALL field approach frames=120 dir=", dir2, " ", _field_state())
+	if weather != null:
+		weather.set("CloudSimulationPaused", false)
+	if lock_exposure:
+		exposure_owner.set("storm_auto_exposure_enabled", exposure_was)
 
 func _want(view: String) -> bool:
 	var only := _arg("only", "")

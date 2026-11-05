@@ -1392,6 +1392,18 @@
       "expected_s": 2,
       "timeout_s": 60
     },
+    "containment_field_settings_smoke": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "settings"
+      ],
+      "marker": "CONTAINMENT_FIELD_SETTINGS",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
     "emitter_grid_settings_smoke": {
       "kind": "test",
       "mode": "headless",
@@ -3023,6 +3035,17 @@
         "containment-field"
       ],
       "marker": "CONTAINMENT_FIELD_GEOMETRY",
+      "expected_s": 30,
+      "timeout_s": 120
+    },
+    "containment_field_near_patch_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field"
+      ],
+      "marker": "CONTAINMENT_FIELD_NEAR_PATCH",
       "expected_s": 30,
       "timeout_s": 120
     },
