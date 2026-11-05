@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Lightning;
+using RingworldTechDemo.Poi;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.Phase2;
@@ -23,6 +24,7 @@ public partial class RingContainmentDisturbanceHost : Node
     [Export] public NodePath MegastormPath { get; set; } = new("../RingMegastorm");
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath ExplorerPath { get; set; } = new("../Explorer");
+    [Export] public NodePath EmitterFieldShotsPath { get; set; } = new("../EmitterFieldShots");
 
     public static RingContainmentDisturbanceHost? Instance { get; private set; }
     /// <summary>The live bus of the running game (null before the world is configured). The ripple patches of WO3/WO4 read it.</summary>
@@ -41,6 +43,8 @@ public partial class RingContainmentDisturbanceHost : Node
     private UpperAtmosphereDisturbanceAdapter? _upper;
     private StormContactAdapter? _contact;
     private MegastormDisturbanceAdapter? _megastormAdapter;
+    private EmitterShotDisturbanceAdapter? _emitterAdapter;
+    private EmitterFieldShotLayer? _emitterShots;
     private readonly List<RingVolumetricCloudLayer.RenderWeatherSystem> _stormScratch = new();
     private (double Width, double WallTop, double Circumference) _built;
 
@@ -48,6 +52,7 @@ public partial class RingContainmentDisturbanceHost : Node
     public UpperAtmosphereDisturbanceAdapter? UpperAdapter => _upper;
     public StormContactAdapter? ContactAdapter => _contact;
     public MegastormDisturbanceAdapter? MegastormAdapter => _megastormAdapter;
+    public EmitterShotDisturbanceAdapter? EmitterShotAdapter => _emitterAdapter;
 
     public override void _EnterTree() => Instance = this;
 
@@ -65,6 +70,7 @@ public partial class RingContainmentDisturbanceHost : Node
         _megastorm = GetNodeOrNull<RingMegastorm>(MegastormPath);
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
+        _emitterShots = GetNodeOrNull<EmitterFieldShotLayer>(EmitterFieldShotsPath);
         EnsureInstalled();
     }
 
@@ -85,6 +91,7 @@ public partial class RingContainmentDisturbanceHost : Node
         }
         _contact!.Update(now, observer.Value);
         _megastormAdapter!.Update(now, observer.Value);
+        _emitterAdapter!.Update(now, observer.Value);
     }
 
     /// <summary>Builds (or rebuilds after a world change) the profile, provider, bus and adapters; a no-op while the world is unconfigured.</summary>
@@ -107,12 +114,14 @@ public partial class RingContainmentDisturbanceHost : Node
             _upper = new UpperAtmosphereDisturbanceAdapter(Bus, profile, () => _weather!.CloudTopMeters);
             _contact = new StormContactAdapter(Bus, profile, CollectSystems, () => _weather!.WeatherWindMetersPerSecond, circumference);
             _megastormAdapter = new MegastormDisturbanceAdapter(() => _megastorm?.Model, Bus, profile);
+            _emitterAdapter = new EmitterShotDisturbanceAdapter(Bus, () => _emitterShots != null && IsInstanceValid(_emitterShots) ? _emitterShots.Schedule : null, circumference);
         }
         else
         {
             Bus.Clear();
             Bus.Profile = profile; Bus.CircumferenceMeters = circumference;
             _lightning!.Profile = profile; _upper!.Profile = profile; _contact!.Profile = profile; _megastormAdapter!.Profile = profile;
+            _emitterAdapter!.CircumferenceMeters = circumference;
         }
     }
 

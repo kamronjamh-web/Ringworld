@@ -9,7 +9,8 @@ namespace RingworldTechDemo.ContainmentField;
 // BodyContact (2026-11-04 decision 4): the player or a fast body passing through the sheet. The bus reserves its 2 pool slots and its per-source cooldown now;
 // the adapter that emits it comes with the contact-ripple work order.
 public enum ContainmentDisturbanceKind { Lightning = 1, UpperAtmosphere = 2, StormContact = 3, MegastormContact = 4, Impact = 5, Scripted = 6, UpdraftBurst = 7,
-    FieldStrike = 8, BodyContact = 9 }
+    FieldStrike = 8, BodyContact = 9,
+    EmitterShot = 10 }   // an emitter orb dispersing at the field: lightning-like, its own pool reservation and its own 1/s spawn window
 
 /// <summary>
 /// One transient disturbance. Position is the SOURCE point; the bus projects it onto the field. Time is the weather clock

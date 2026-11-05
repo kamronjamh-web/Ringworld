@@ -727,6 +727,51 @@ def megastorm_ear_pop(rng, seconds=0.7):
     return normalise_peak(fade_out(out, 80), -6)
 
 
+# ---- emitter field shots (docs/containment-field-design.md, emitter orbs) ---------------------------------------------
+
+def emitter_orb_launch(rng, seconds=1.6):
+    # A ground emitter lets an orb go: a soft 40-90 Hz thump (a pressure pulse, gliding down a little) with a long gentle body, and a short rising
+    # band-passed air whoosh as the orb climbs away. Both start from silence with a raised-cosine onset, so there is no click at the start.
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    f0 = rng.uniform(58.0, 90.0)
+    sweep = 40.0 + (f0 - 40.0) * np.exp(-t / 0.22)
+    out += 1.0 * np.sin(2 * np.pi * np.cumsum(sweep) / SR + rng.uniform(0, 2 * np.pi)) * np.exp(-t / 0.42) * attack(n, 28.0)
+    out += 0.35 * np.sin(2 * np.pi * np.cumsum(2.0 * sweep) / SR + rng.uniform(0, 2 * np.pi)) * np.exp(-t / 0.18) * attack(n, 28.0)
+    rise = np.clip(t / 1.1, 0.0, 1.0)
+    env = np.sin(0.5 * np.pi * np.clip(t / 0.9, 0.0, 1.0)) ** 2 * np.exp(-np.clip(t - 0.55, 0.0, None) / 0.35)
+    air = noise(rng, n, 300, 2600, order=2) * env
+    # A band that opens upward over the climb: the high band rides in with the rise.
+    air += 0.6 * noise(rng, n, 1200, 4800, order=2) * env * rise
+    out += 0.45 * air
+    out *= attack(n, 20.0)
+    out = fft_filter(out, lambda f: butter_mag(f, 30, 5200, 2), pad=SR)
+    return normalise_peak(fade_out(out, 220), -6)
+
+
+def field_contact_crackle(rng, seconds=1.8):
+    # The orb meeting the containment field, heard from far off: sparse electrical crackle (1-6 kHz clicks, a few per tenth of a second, thinning out),
+    # darkened as distance does it, over a soft low rumble that outlasts the clicks.
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    density = 90.0 * np.exp(-t / 0.55) + 6.0
+    cum = np.cumsum(density) / SR
+    marks = np.searchsorted(cum, np.sort(rng.uniform(0.0, cum[-1], int(cum[-1]))))
+    for m in marks:
+        if m >= n - 64:
+            continue
+        length = int(rng.uniform(0.0005, 0.002) * SR)
+        pk = rng.uniform(0.25, 1.0) * (rng.random() < 0.12 and 2.0 or 1.0)
+        place(out, m, pk * click(rng, length, rng.uniform(0.0002, 0.0008), lo=rng.uniform(1000, 2500), hi=rng.uniform(3500, 6000)))
+    out *= 0.5 * attack(n, 3.0) * np.exp(-t / 0.8)
+    rumble = noise(rng, n, 25, 220, order=3) * (1.0 - np.exp(-t / 0.12)) * np.exp(-t / 0.7)
+    out += 0.7 * rumble
+    out = fft_filter(out, lambda f: butter_mag(f, 25, 4200, 2), pad=SR)
+    return normalise_peak(fade_out(out, 260), -7)
+
+
 # ---- driver -------------------------------------------------------------------------------------------------------
 
 def write_wav(path, x):
@@ -771,6 +816,11 @@ def build_jobs(ffmpeg, src_dir):
     for i in range(1, 4):
         name = f"megastorm_scythe_crackle_{i}"
         jobs[name] = (lambda name=name: megastorm_scythe_crackle(rng_for(name)))
+    for i in range(1, 4):
+        name = f"emitter_orb_launch_{i}"
+        jobs[name] = (lambda name=name: emitter_orb_launch(rng_for(name)))
+        name = f"field_contact_crackle_{i}"
+        jobs[name] = (lambda name=name: field_contact_crackle(rng_for(name)))
     return jobs
 
 

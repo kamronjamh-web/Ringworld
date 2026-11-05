@@ -12,6 +12,7 @@
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_emitter_grid_layers.gdshaderinc"
 #include "res://materials/ring_beam_ribbon.gdshaderinc"
+#include "res://materials/ring_beam_orb.gdshaderinc"
 #include "res://materials/ring_eclipse_hub_beam_math.gdshaderinc"
 
 // x regular core width (m), y regular halo width (m), z minimum pixel width, w far compensation exponent.
@@ -26,7 +27,6 @@ uniform float base_fade_meters = 400.0;
 uniform float close_soften_m = 1000.0;
 // Sustain refuel orbs (tweaks T3): x halo e-fold radius (m), y HDR emission. The core radius and minimum pixel radius are ev_orb.zw.
 uniform vec2 orb_look = vec2(1500.0, 16.0);
-const float ORB_HALO_AMPLITUDE = 0.25;
 // Depth-writing core (T2): x = coverage * level above which the core writes depth, y = minimum full width of the footprint in pixels.
 uniform vec2 core_depth = vec2(0.35, 4.0);
 
@@ -100,7 +100,7 @@ void vertex() {
 			float orb_halo = max(orb_look.x, 0.001) * world_scale;
 			vec4 orb_profile = ribbon_profile(orb_core, orb_halo, ev_orb.w, orb_mpp, beam_widths.w);
 			float orb_depth_half = ribbon_depth_half(core_depth.y, orb_mpp);
-			float half_size = max(8.0 * orb_profile.y, max(5.0 * orb_profile.x, orb_depth_half + orb_mpp));
+			float half_size = orb_half_size(orb_profile, orb_depth_half, orb_mpp);
 			POSITION = PROJECTION_MATRIX * vec4(view_c + vec3(UV * half_size, 0.0), 1.0);
 			v_x = UV.x * half_size;
 			v_side = UV.y * half_size;
@@ -208,20 +208,17 @@ void fragment() {
 		float orb_level = ehb_orb_level(v_orb.y, ringworld_hub_day, v_atmosphere, layer_weight);
 #ifdef EB_CORE_PASS
 		// Depth only where the lit orb core is bright, widened to the minimum depth footprint: clouds behind an orb do not dim it.
-		if (!ribbon_depth_core_covers(orb_level * v_profile.z, max(core_depth.x, 1.0e-4), v_profile.x, orb_r, v_depth_half)) {
+		if (!orb_depth_core_covers(orb_level, v_profile, core_depth, orb_r, v_depth_half)) {
 			discard;
 		}
 		ALBEDO = vec3(0.0);
 		ALPHA = 1.0;
 #else
-		float orb_total = ribbon_cross_profile(orb_r, v_profile, ORB_HALO_AMPLITUDE);
-		float orb_core_only = ribbon_cross_profile(orb_r, v_profile, 0.0);
-		float orb_edge = 1.0 - smoothstep(0.7, 1.0, orb_r / max(v_orb.z, 1.0e-6));
-		float orb_value = orb_level * orb_total * orb_edge * orb_look.y;
-		if (orb_value < 0.0001) {
+		vec4 orb = orb_radiance(orb_r, orb_level, v_profile, v_orb.z, orb_look.y, beam_color);
+		if (orb.a < 0.0001) {
 			discard;
 		}
-		ALBEDO = mix(beam_color, vec3(1.0), clamp(orb_core_only / max(orb_total, 1.0e-6), 0.0, 1.0)) * orb_value;
+		ALBEDO = orb.rgb;
 		ALPHA = 1.0;
 #endif
 	} else {

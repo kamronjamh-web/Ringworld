@@ -52,4 +52,6 @@ public partial class GameplayEmitterGridSettings : Resource
     [Export] public float CrawlRadiusKm { get; set; } = 8f;
     [Export] public float CrawlLengthKm { get; set; } = 40f;
     [Export] public bool PulseTriggeredStrikes { get; set; }
+    /// <summary>Mean seconds between the orbs each ground emitter fires up to the containment field; below 10 s (the schedule slot) is off, 0 is the off value. Older files without the field load the default.</summary>
+    [Export] public float FieldShotIntervalSeconds { get; set; } = 300f;
 }

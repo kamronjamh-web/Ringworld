@@ -10,7 +10,7 @@ public partial class RingLiveTuningDrawer
     private GameplayEmitterGridDefaults? _emitterGridDefaults;
     private string? _emitterGridDefaultsPathOverride;
     private CheckButton? _emitterGridCore, _emitterGridFar, _emitterGridFollowClouds;
-    private HSlider? _emitterGridCoreThreshold, _emitterGridCoreMinPixels, _emitterGridNearMax, _emitterGridHandoffStart, _emitterGridHandoffEnd;
+    private HSlider? _emitterGridCoreThreshold, _emitterGridCoreMinPixels, _emitterGridNearMax, _emitterGridHandoffStart, _emitterGridHandoffEnd, _emitterGridFieldShotInterval;
     private Label? _emitterGridLive, _emitterGridStatus;
     private double _emitterGridSaveDelay, _emitterGridSaveRetry, _emitterGridLiveDelay;
 
@@ -57,7 +57,7 @@ public partial class RingLiveTuningDrawer
 
     private void BuildEmitterGridSection(VBoxContainer tabRoot)
     {
-        var section = TuningMenuUi.CreateSection(tabRoot, "Emitter relay grid: clouds and far layer",
+        var section = TuningMenuUi.CreateSection(tabRoot, "Emitter relay grid: clouds, far layer and field shots",
             "Clouds dim the relay grid beams behind them unless the lit core writes depth. Far beams are drawn in the far viewport under the far clouds, and the near-to-far handoff band follows the cloud handoff by default.");
         _emitterGridLive = new Label { Name = "EmitterGridLive", AutowrapMode = TextServer.AutowrapMode.WordSmart };
         section.AddChild(_emitterGridLive);
@@ -78,6 +78,8 @@ public partial class RingLiveTuningDrawer
             "Manual handoff band start: beams seen against the far backdrop begin moving to the far layer here. Editable only when 'Handoff follows clouds' is off.");
         _emitterGridHandoffEnd = AddEmitterGridSlider(section, "EmitterGridHandoffEnd", "Handoff end (km)", 20, 700, 1, s.FarHandoffEndKm,
             "Manual handoff band end: the far layer owns the beams beyond this distance. Editable only when 'Handoff follows clouds' is off.");
+        _emitterGridFieldShotInterval = AddEmitterGridSlider(section, "EmitterGridFieldShotInterval", "Emitter field shot interval (s)", 0, 1800, 10, s.FieldShotIntervalSeconds,
+            "Mean seconds between the orbs each ground emitter fires up to the containment field (0 = off). About 12 emitters are within 400 km of the player, so 300 s gives roughly 2-3 shots a minute nearby.");
         var reset = new Button { Name = "EmitterGridReset", Text = "Reset emitter relay grid", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             TooltipText = "Restores the relay grid cloud, depth and far layer settings to their defaults." };
         reset.Pressed += ResetEmitterGrid;
@@ -112,7 +114,7 @@ public partial class RingLiveTuningDrawer
     private void QueueEmitterGridSettings()
     {
         if (_emitterGridDefaults == null || _emitterGridCore == null || _emitterGridCoreThreshold == null || _emitterGridCoreMinPixels == null || _emitterGridFar == null
-            || _emitterGridNearMax == null || _emitterGridFollowClouds == null || _emitterGridHandoffStart == null || _emitterGridHandoffEnd == null) return;
+            || _emitterGridNearMax == null || _emitterGridFollowClouds == null || _emitterGridHandoffStart == null || _emitterGridHandoffEnd == null || _emitterGridFieldShotInterval == null) return;
         bool changed = _emitterGridDefaults.SetDepthWriteCore(_emitterGridCore.ButtonPressed);
         changed |= _emitterGridDefaults.SetCoreDepthThreshold((float)_emitterGridCoreThreshold.Value);
         changed |= _emitterGridDefaults.SetCoreDepthMinPixels((float)_emitterGridCoreMinPixels.Value);
@@ -121,6 +123,7 @@ public partial class RingLiveTuningDrawer
         changed |= _emitterGridDefaults.SetFarHandoffFollowsClouds(_emitterGridFollowClouds.ButtonPressed);
         changed |= _emitterGridDefaults.SetFarHandoffStartKm((float)_emitterGridHandoffStart.Value);
         changed |= _emitterGridDefaults.SetFarHandoffEndKm((float)_emitterGridHandoffEnd.Value);
+        changed |= _emitterGridDefaults.SetFieldShotIntervalSeconds((float)_emitterGridFieldShotInterval.Value);
         _emitterGridDefaults.Apply(_emitterGrid);
         RefreshEmitterGridEditable();
         if (!changed) return;
@@ -148,6 +151,7 @@ public partial class RingLiveTuningDrawer
         _emitterGridFollowClouds?.SetPressedNoSignal(s.FarHandoffFollowsClouds);
         SetEmitterSliderNoSignal(_emitterGridHandoffStart, s.FarHandoffStartKm);
         SetEmitterSliderNoSignal(_emitterGridHandoffEnd, s.FarHandoffEndKm);
+        SetEmitterSliderNoSignal(_emitterGridFieldShotInterval, s.FieldShotIntervalSeconds);
         RefreshEmitterGridEditable();
         RefreshEmitterGridStatus();
     }
@@ -156,7 +160,7 @@ public partial class RingLiveTuningDrawer
     {
         bool present = _emitterGrid != null && GodotObject.IsInstanceValid(_emitterGrid);
         bool manual = present && _emitterGridFollowClouds?.ButtonPressed == false;
-        foreach (HSlider? slider in new[] { _emitterGridCoreThreshold, _emitterGridCoreMinPixels, _emitterGridNearMax })
+        foreach (HSlider? slider in new[] { _emitterGridCoreThreshold, _emitterGridCoreMinPixels, _emitterGridNearMax, _emitterGridFieldShotInterval })
             if (slider != null && slider.Editable != present) slider.Editable = present;
         foreach (HSlider? slider in new[] { _emitterGridHandoffStart, _emitterGridHandoffEnd })
             if (slider != null && slider.Editable != manual) slider.Editable = manual;

@@ -166,6 +166,70 @@ Decisions 4-6 above, on top of the glass revision (commit 8746e3f):
 - **Tests**: 22 of 22 pass (the WO3 set, `rim_wall_top_anchors_test`, the LOD, structural-wall and far-viewport contracts, `shadow_compose_identity_gpu_test`).
 - **Open**: from the wall top at noon the vertical wall faces are near black (sun overhead, the environment ambient above the wall top is space): lit, but dark; brightening them is a hull ambient question. The conduit reads as a 2 px line from 50 km at noon and night; on the far shell it is held at a pixel with 35 % energy. FSR smear check still not done.
 
+### User decision 2026-11-05: emitter field shots
+
+User, verbatim: "all emitters on the ground randomly fire up to the containment field to help keep it powered. we can decide the frequency later. it will fire an orb the same way it does for the false sun. but only reaches the field barrier and disperses energy there. this will cause a ripple just like lightning will hit it." The frequency is a menu tunable until the user picks one (default 300 s per emitter).
+
+### Emitter field shots status (2026-11-05): schedule, orb, flare, ripple, audio done (ripple visuals wait for WO4)
+
+- **Schedule** (`scripts/poi/Emitters/EmitterFieldShots.cs`, pure). The emitters are the 595 hub beams of `EmitterGridTopology` (the main spire plus every regular spire). For each (site, 10 s slot) on the weather clock:
+  - A shot exists iff Hash01(registry identity, site, slot) < 10 s / interval.
+  - Launch = the slot start plus a hashed offset; E = 0.45-0.75; id = a 63-bit hash.
+  - A shorter interval keeps every shot of a longer one. Nothing is stored, so a rewind or a save/load replays the same shots.
+  - Measured over 50 h: 60.02 / 12.02 / 4.00 shots per emitter per hour at 60 / 300 / 900 s.
+  - 12 emitters are within 400 km of a player standing at an emitter, so the default 300 s gives about 2.4 shots a minute nearby (119 a minute ring-wide).
+- **The orb is the false sun's orb.**
+  - Same launch point (`EclipseBeamSettings.BeamOrigin`, default the bore iris) and same direction: straight at the ring hub. The path stays at the emitter's around and is a straight line in the profile's (across, vertical) plane.
+  - Same motion, s = L_hub (age / OrbTravelSeconds)^OrbEaseExponent, and the same fade-in (FlashClimbSeconds).
+  - Same look settings: core 350 m, halo 1,500 m, minimum 2.5 px, emission 16, day visibility, depth core.
+  - The motion stops at the exact 2D crossing with H(across): bisection to 0.1 mm, worst |signed distance| 4e-5 m, and the world-segment `TryIntersectWorldSegment` agrees within 0.7 mm.
+  - The contact is 24.7-40.2 km along the beam, reached 5.1-6.0 s after the launch at the defaults, at about 17 km/s.
+  - The orb maths is shared, not copied. `materials/ring_beam_orb.gdshaderinc` (billboard size, radiance, depth core) is used by both `ring_eclipse_hub_beam_common.gdshaderinc` (moved expression for expression; `eclipse_hub_beam_shader_parity_test` passes) and `ring_emitter_field_shot_common.gdshaderinc`.
+- **Dispersal.**
+  - At the contact the orb core fades over FlashHoldSeconds while a flare adds a halo-only burst (rise 0.12 s, hold to FlashHoldSeconds, fade FlashFadeSeconds). The burst is twice as bright as the orb's halo and spreads to 2.5 times its radius (`flare_look`).
+  - Reduced flashes: a 0.4 s rise and the peak x 0.4 (`LightningVisualPolicy.PeakScale`). The largest step at 60 fps is 0.025.
+  - Field shots only: the halo e-fold is capped at 0.12 x the view distance (`close_halo_ratio`). The false sun's 1,500 m halo washed the whole screen white for 1.7 s at a launch seen from 2 km (`v1/sheet_noon_close.png`). The cap has no effect beyond 12.5 km.
+- **Layers.**
+  - Node `EmitterFieldShots` (`EmitterFieldShotLayer`) in `scenes/VoxelRingIntegrationTest.tscn`.
+  - The near MultiMesh is in world space, with the grid layer's near range and handoff band, and the depth core as its next pass.
+  - `EmitterFieldShotFarLayer` in the far viewport draws every active shot ring-wide.
+  - Underground participant `EmitterFieldShots`: hold and hide, like the hub beams. The shaders are warmed in `RingWorldLoadingResources`.
+  - CPU: about 50 us per frame at the default interval (game build, 23 shots in flight ring-wide); about 310 us at the 10 s stress interval (about 440 in flight).
+- **Ripple.**
+  - New kind `EmitterShot = 10`, published by `Sources/EmitterShotDisturbanceAdapter.cs`, wired in `RingContainmentDisturbanceHost`. One publish per arrival within 400 km.
+  - Payload: SourceId = the shot id, Position = the contact, E as scheduled, Rmax = 3,000 + 5,000 E m, T 2.5 s (the lightning formula), FlashCoupling 1, FlashLevel = the flare. WO4 can render it like a lightning hit and feed the seam `boost` from it.
+  - Bus budget: EmitterShot reserves 1 slot (shared slots go from 10 to 9), has a live cap of 2 and its own 1/s spawn window, and is exempt from, and never counted in, the 6/s total.
+  - An EmitterShot patch above its reservation is the first thing evicted, lit or not, for any other newcomer that is not at its own cap.
+  - With and without a 10 s emitter load, the busy minute's 712 other publishes get identical results.
+- **Audio** (`RingEmitterFieldShotAudio`, node `EmitterFieldShotAudio`).
+  - A launch thump within 8 km of the bore and a distant crackle within 60 km of the contact. Each arrives d / 343 s after its weather-time event, on a real-time audio clock, through `ThunderPropagation.TryDistance`.
+  - Mixed and gated like thunder: megastorm air gate, underground, shelter, underwater. Bus Thunder.
+  - The sounds are generated by `tools/media/weather_sfx_gen.py` (`emitter_orb_launch_1-3`, `field_contact_crackle_1-3`), with LICENSE rows in `resources/audio/weather/LICENSE.md`. Nobody has listened to them yet.
+- **Menu.** `FieldShotIntervalSeconds`, label "Emitter field shot interval (s)": 0-1800, step 10, default 300; 0 (anything below 10) = off. It lives in the emitter grid settings (`GameplayEmitterGridSettings`, `RingLiveTuningDrawer.EmitterGrid.cs`, slider `EmitterGridFieldShotInterval`).
+- **Tests.**
+  - `emitter_field_shot_test` (headless, gate, tags `containment-field` and `poi`, marker `EMITTER_FIELD_SHOT_WIRING`) covers:
+    - determinism and scrub replay;
+    - rate against the interval, nesting and off;
+    - the end point on the field for all beams and both origins;
+    - one disturbance per shot, the payload and reduced flashes;
+    - caps and no starvation;
+    - live wiring: 595 beams, the world cross-check, 36 ripples on the live bus in 60 s;
+    - the near draw count and instance data, and the audio delay.
+  - `containment_disturbance_test` is updated for the reservation.
+  - Capture tool `tools/emitter_field_shot_capture.gd` (manifest `emitter_field_shot_capture`, manual GPU; probe `tools/EmitterFieldShotProbe.cs`).
+- **Captures** in `.godot/captures/field/emitter_shots/`.
+  - Setup: real player path, `appdata_spawncheck_wall`, runtime-surface world, RTX 4070, 1600 x 900, `--fixed-fps 30`. The interval is 10 s so the chosen emitter fires every slot.
+  - Files: `sheet_{noon,night}_{close,near,far}.png` (2 km under the bore; 14 km with the bore and the contact in frame; 150 km), `noon_near.mp4`, `night_near.mp4`. The pre-fix sheets are in `v1/`.
+  - The orb lifts off the bore, accelerates up the beam axis and bursts at the field. From 150 km the shots read as rising points and small glows.
+  - Flicker at 2 km: the largest frame-to-frame luma change is 2.4 (noon) and 4.0 (night) of 255, on the smooth launch ramp.
+  - Perf: one A-B-A at the 14 km noon pose with the default interval, 13.95 / 14.82 / 14.88 ms whole-frame GPU. That is noise; one near and 23 far orbs were drawn.
+- **Open.**
+  - The ripple visuals and the seam boost come with WO4; the payload is complete.
+  - Shot orbs do not light the clouds. The false sun's orbs do, through `EclipseCloudLightFeeder`; a second feeder would compete for the same Sunshine segment slots.
+  - The far-layer handoff showed up in captures but has no headless check (there is no scaled world headless).
+  - The sounds need a listening pass.
+  - The frequency is the user's call.
+
 ## User decisions 2026-10-29
 
 1. **Wall height.**
@@ -957,6 +1021,7 @@ Section "Containment field", Atmosphere tab (`RingLiveTuningDrawer.Atmosphere.cs
 | `ContainmentRippleStrength` | Ripple strength | 0-2 | 1.0 | ripple refraction and reveal; 0 hides ripple patches (the bus still runs, so A/B is deterministic) |
 | `ContainmentSheenStrength` | Sheen strength | 0-2 | 1.0 | faint cool sheen multiplied into the refracted colour (decision 6 of 2026-11-04; built in WO3) |
 | `ContainmentLatticeStrength` | Lattice strength | 0-2 | 1.0 | hexagonal lattice multiplied into the refracted colour (user decision 2026-11-05; built in WO3) |
+| `EmitterGridFieldShotInterval` (`FieldShotIntervalSeconds`, emitter grid settings) | Emitter field shot interval (s) | 0-1800 s, step 10 | 300 | mean seconds between the orbs each ground emitter fires to the field; 0 (below 10) = off (user request 2026-11-05) |
 
 No enable toggle, no per-system toggles, and no quality-preset column (the cost is too small to matter). Shape, apex and pool size are not tunables.
 

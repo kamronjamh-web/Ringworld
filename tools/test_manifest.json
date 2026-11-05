@@ -3049,6 +3049,17 @@
       "expected_s": 30,
       "timeout_s": 120
     },
+    "containment_field_shader_compile_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "smoke",
+      "tags": [
+        "containment-field"
+      ],
+      "marker": "CONTAINMENT_FIELD_SHADER_COMPILE",
+      "expected_s": 5,
+      "timeout_s": 60
+    },
     "containment_disturbance_test": {
       "kind": "test",
       "mode": "headless",
@@ -3061,6 +3072,19 @@
       "marker": "CONTAINMENT_DISTURBANCE",
       "expected_s": 60,
       "timeout_s": 300
+    },
+    "emitter_field_shot_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "poi"
+      ],
+      "world": "integration",
+      "marker": "EMITTER_FIELD_SHOT_WIRING",
+      "expected_s": 25,
+      "timeout_s": 100
     },
     "rim_wall_top_anchors_test": {
       "kind": "test",
@@ -6419,6 +6443,20 @@
       "tier": "gate",
       "expected_s": 60,
       "timeout_s": 180
+    },
+    "emitter_field_shot_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "containment-field",
+        "poi",
+        "loading"
+      ],
+      "world": "start-menu",
+      "marker": "EMITTER_SHOT",
+      "expected_s": null,
+      "timeout_s": 1500
     }
   }
 }

@@ -72,7 +72,7 @@ public sealed class ContainmentFarStrike
 /// It projects each disturbance onto the field, then applies, in order: validity, dedupe by SourceId (BodyContact: a per-source cooldown instead), the 400 km range
 /// (field strikes beyond 350 km go to the 32-entry far list instead), the merge rules (same kind within 0.25 s and closer than Rmax; a field strike inside a live
 /// strike's crawl radius re-triggers that patch), the spawn caps (6/s total, FieldStrike 2/s with natural at most 1/s, megastorm contact plus bursts 4/s) and the pool
-/// of 16 patches with its reservations (4 for FieldStrike, 2 for BodyContact, contact at most 6 live, bursts at most 3) and the eviction order. Everything depends only
+/// of 16 patches with its reservations (4 for FieldStrike, 2 for BodyContact, 1 for EmitterShot, so 9 shared slots; contact at most 6 live, bursts at most 3, EmitterShot at most 2) and the eviction order. An EmitterShot has its own spawn window (1/s) and is neither checked against nor added to the global 6/s one, so it never consumes budget the other sources see. Everything depends only
 /// on the sequence of Publish and <see cref="Advance"/> calls, so a paused clock reproduces the same state and a scrub back removes what had not happened yet.
 /// </summary>
 public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
@@ -81,16 +81,18 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
     public const double RangeMeters = 400_000.0, FarStrikeMeters = 350_000.0;
     public const int GlobalSpawnsPerSecond = 6, StrikeSpawnsPerSecond = 2, NaturalStrikeSpawnsPerSecond = 1, MegastormSpawnsPerSecond = 4;
     public const int StrikeReserve = 4, BodyReserve = 2, ContactLiveCap = 6, BurstLiveCap = 3;
+    public const int EmitterReserve = 1, EmitterLiveCap = 2, EmitterSpawnsPerSecond = 1;
     public const double MergeWindowSeconds = 0.25, BodyContactCooldownSeconds = 1.0, FarStrikeMaxLifeSeconds = 2.0;
     private const double SeenGraceSeconds = 2.0;
 
-    private enum PoolClass { Other, Strike, Contact, Burst, Body }
+    private enum PoolClass { Other, Strike, Contact, Burst, Body, Emitter }
+    private const int PoolClassCount = 6;
 
     private readonly ContainmentRipple?[] _slots = new ContainmentRipple?[PoolSize];
     private readonly List<ContainmentFarStrike> _far = new(FarListSize);
     private readonly Dictionary<long, (double Start, double End)> _seen = new();
     private readonly Dictionary<long, double> _bodyLast = new();
-    private readonly RateWindow _global = new(), _strike = new(), _natural = new(), _megastorm = new();
+    private readonly RateWindow _global = new(), _strike = new(), _natural = new(), _megastorm = new(), _emitter = new();
     private readonly List<long> _scratchIds = new();
     private double _circumference;
 
@@ -167,7 +169,7 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
         foreach (KeyValuePair<long, double> kv in _bodyLast)
             if (now > kv.Value + 10.0 * BodyContactCooldownSeconds || (back && kv.Value > now)) _scratchIds.Add(kv.Key);
         foreach (long id in _scratchIds) _bodyLast.Remove(id);
-        _global.Prune(now, back); _strike.Prune(now, back); _natural.Prune(now, back); _megastorm.Prune(now, back);
+        _global.Prune(now, back); _strike.Prune(now, back); _natural.Prune(now, back); _megastorm.Prune(now, back); _emitter.Prune(now, back);
     }
 
     /// <summary>Frees every patch and forgets everything (a world change).</summary>
@@ -176,7 +178,7 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
         Array.Clear(_slots);
         LiveCount = 0;
         _far.Clear(); _seen.Clear(); _bodyLast.Clear();
-        _global.Clear(); _strike.Clear(); _natural.Clear(); _megastorm.Clear();
+        _global.Clear(); _strike.Clear(); _natural.Clear(); _megastorm.Clear(); _emitter.Clear();
     }
 
     // ---- publish ----
@@ -241,8 +243,9 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
 
         // Spawn caps by start time.
         bool megastorm = d.Kind == ContainmentDisturbanceKind.MegastormContact || d.Kind == ContainmentDisturbanceKind.UpdraftBurst;
+        bool emitter = d.Kind == ContainmentDisturbanceKind.EmitterShot;
         double t = d.StartTimeSeconds;
-        if ((!strike && !_global.Allows(t, GlobalSpawnsPerSecond)) || (strike && !_strike.Allows(t, StrikeSpawnsPerSecond)) || (strike && d.NaturalSource && !_natural.Allows(t, NaturalStrikeSpawnsPerSecond))
+        if ((emitter && !_emitter.Allows(t, EmitterSpawnsPerSecond)) || (!strike && !emitter && !_global.Allows(t, GlobalSpawnsPerSecond)) || (strike && !_strike.Allows(t, StrikeSpawnsPerSecond)) || (strike && d.NaturalSource && !_natural.Allows(t, NaturalStrikeSpawnsPerSecond))
             || (megastorm && !_megastorm.Allows(t, MegastormSpawnsPerSecond)))
         { RateLimited++; return ContainmentPublishResult.RateLimited; }
 
@@ -260,7 +263,7 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
         _slots[slot] = ripple;
         LiveCount++;
         if (LiveCount > PeakLive) PeakLive = LiveCount;
-        _global.Add(t);
+        if (emitter) _emitter.Add(t); else _global.Add(t);
         if (strike) { _strike.Add(t); if (d.NaturalSource) _natural.Add(t); }
         if (megastorm) _megastorm.Add(t);
         if (body) _bodyLast[d.SourceId] = d.StartTimeSeconds; else MarkSeen(d);
@@ -276,11 +279,12 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
         ContainmentDisturbanceKind.MegastormContact => PoolClass.Contact,
         ContainmentDisturbanceKind.UpdraftBurst => PoolClass.Burst,
         ContainmentDisturbanceKind.BodyContact => PoolClass.Body,
+        ContainmentDisturbanceKind.EmitterShot => PoolClass.Emitter,
         _ => PoolClass.Other,
     };
 
-    private static int Reserve(PoolClass c) => c == PoolClass.Strike ? StrikeReserve : c == PoolClass.Body ? BodyReserve : 0;
-    private static int Cap(PoolClass c) => c == PoolClass.Contact ? ContactLiveCap : c == PoolClass.Burst ? BurstLiveCap : c == PoolClass.Body ? BodyReserve : int.MaxValue;
+    private static int Reserve(PoolClass c) => c == PoolClass.Strike ? StrikeReserve : c == PoolClass.Body ? BodyReserve : c == PoolClass.Emitter ? EmitterReserve : 0;
+    private static int Cap(PoolClass c) => c == PoolClass.Contact ? ContactLiveCap : c == PoolClass.Burst ? BurstLiveCap : c == PoolClass.Body ? BodyReserve : c == PoolClass.Emitter ? EmitterLiveCap : int.MaxValue;
 
     public int LiveOf(ContainmentDisturbanceKind kind)
     {
@@ -303,10 +307,10 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
     /// </summary>
     private int Allocate(PoolClass cls, float energy, bool strike, double clock)
     {
-        int[] live = new int[5];
+        int[] live = new int[PoolClassCount];
         foreach (ContainmentRipple? r in _slots) if (r != null) live[(int)Classify(r.Kind)]++;
         int free = PoolSize - LiveCount, unmetOthers = 0;
-        for (int c = 0; c < 5; c++) if ((PoolClass)c != cls) unmetOthers += Math.Max(0, Reserve((PoolClass)c) - live[c]);
+        for (int c = 0; c < PoolClassCount; c++) if ((PoolClass)c != cls) unmetOthers += Math.Max(0, Reserve((PoolClass)c) - live[c]);
         bool atCap = live[(int)cls] >= Cap(cls);
         if (!atCap && free - 1 >= unmetOthers)
         {
@@ -314,6 +318,20 @@ public sealed class ContainmentDisturbanceBus : IContainmentDisturbanceSink
         }
         int victim = -1;
         double best = double.MaxValue;
+        if (!atCap && cls != PoolClass.Emitter && live[(int)PoolClass.Emitter] > EmitterReserve)   // a newcomer at its own live cap only ever takes its own patch
+        {
+            // An emitter patch above its reservation goes first, lit or not: the shots are decoration and never starve the real sources.
+            for (int i = 0; i < PoolSize; i++)
+            {
+                ContainmentRipple? r = _slots[i];
+                if (r == null || Classify(r.Kind) != PoolClass.Emitter) continue;
+                if (victim < 0 || Older(r, _slots[victim]!)) victim = i;
+            }
+            _slots[victim] = null;
+            LiveCount--;
+            Evicted++;
+            return victim;
+        }
         for (int i = 0; i < PoolSize; i++)
         {
             ContainmentRipple? r = _slots[i];

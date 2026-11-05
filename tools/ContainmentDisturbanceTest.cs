@@ -180,7 +180,7 @@ public partial class ContainmentDisturbanceTest : RefCounted
             maxLive = Math.Max(maxLive, bus.LiveCount);
         }
         Check(maxLive <= ContainmentDisturbanceBus.PoolSize && bus.PeakLive <= 16, $"pool cap: peak {bus.PeakLive}");
-        Check(maxLive >= 10, $"the stream never filled the shared slots ({maxLive})");
+        Check(maxLive >= Shared, $"the stream never filled the shared slots ({maxLive})");
         Check(starts.All(a => starts.Count(b => b >= a - 1e-9 && b < a + 1.0 - 1e-9) <= 6), "a sliding second held more than 6 spawns");
         Check(starts.Count >= 1200 / 20 * 5, $"the 6/s limit starved the stream ({starts.Count} spawns in 60 s)");
         Info($"stream 60 s at 20/s: {starts.Count} spawns, peak live {bus.PeakLive}, evictions {bus.Evicted}");
@@ -208,9 +208,10 @@ public partial class ContainmentDisturbanceTest : RefCounted
             Check(bus.Publish(D(10 + i, ContainmentDisturbanceKind.FieldStrike, 1_000_000 + (i - 2) * 90_000 + 40_000, 60_000 + i * 50_000, -5.9 + i * 0.5, 0.6f, 3000, 8.0f)), "eviction: strike fill");
         for (int i = 0; i < 2; i++)
             Check(bus.Publish(D(20 + i, ContainmentDisturbanceKind.BodyContact, 1_000_000 + (i - 1) * 120_000, 100_000 + i * 20_000, -3.5 + i * 0.01, 0.6f, 3000, 8.0f)), "eviction: body fill");
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < Shared; i++)
             Check(bus.Publish(D(30 + i, ContainmentDisturbanceKind.Impact, 1_000_000 + (i - 5) * 30_000 + (i % 2) * 4000, 70_000 + (i % 3) * 20_000, -1.8 + 0.18 * i, 0.3f + 0.05f * i,
                 1000, 6.0f + (i % 3))), $"eviction: fill {i}");
+        Check(bus.Publish(D(40, ContainmentDisturbanceKind.EmitterShot, 1_000_000 + 45_000, 90_000, 0.0, 0.6f, 4000, 6.0f)), "eviction: emitter fill");
         Check(bus.LiveCount == 16, $"eviction: pool full ({bus.LiveCount})");
         List<ContainmentRipple> before = Live(bus);
         double Score(ContainmentRipple r)
@@ -234,6 +235,9 @@ public partial class ContainmentDisturbanceTest : RefCounted
     }
 
     // ---- reservations ----
+    /// <summary>The slots no reservation covers: 16 - strikes - body - emitter shots.</summary>
+    private const int Shared = ContainmentDisturbanceBus.PoolSize - ContainmentDisturbanceBus.StrikeReserve - ContainmentDisturbanceBus.BodyReserve - ContainmentDisturbanceBus.EmitterReserve;
+
     private void Reservations()
     {
         // A saturating load of contact, bursts, lightning and the rest: 4 strike slots (and 2 body slots) stay free; contact <= 6 live, bursts <= 3.
@@ -248,7 +252,7 @@ public partial class ContainmentDisturbanceTest : RefCounted
             bus.Publish(D(5000 + i, cycle[i % cycle.Length], 1_000_000 + ((i * 7) % 29 - 14) * 12_000, 60_000 + (i % 7) * 20_000, t, 0.5f + 0.001f * (i % 50), 800, 12.0f));
             maxContact = Math.Max(maxContact, bus.LiveOf(ContainmentDisturbanceKind.MegastormContact));
             maxBurst = Math.Max(maxBurst, bus.LiveOf(ContainmentDisturbanceKind.UpdraftBurst));
-            maxShared = Math.Max(maxShared, bus.LiveCount - bus.LiveOf(ContainmentDisturbanceKind.FieldStrike) - bus.LiveOf(ContainmentDisturbanceKind.BodyContact));
+            maxShared = Math.Max(maxShared, bus.LiveCount - bus.LiveOf(ContainmentDisturbanceKind.FieldStrike) - bus.LiveOf(ContainmentDisturbanceKind.BodyContact) - bus.LiveOf(ContainmentDisturbanceKind.EmitterShot));
         }
         Check(maxContact >= 2 && maxContact <= 6, $"contact live max {maxContact} (cap 6)");
         Check(maxBurst >= 1 && maxBurst <= 3, $"burst live max {maxBurst} (cap 3)");
@@ -259,8 +263,8 @@ public partial class ContainmentDisturbanceTest : RefCounted
             for (int i = 0; i < 60; i++) { solo.Advance(i * 0.3); solo.Publish(D(9000 + i, kind, 1_000_000 + ((i * 7) % 29 - 14) * 12_000, 60_000 + (i % 7) * 20_000, i * 0.3, 0.5f, 800, 12.0f)); peak = Math.Max(peak, solo.LiveCount); }
             Check(peak == cap && solo.LiveCount == cap, $"{kind} alone: live peak {peak}, expected the cap {cap}");
         }
-        Check(maxShared <= 16 - ContainmentDisturbanceBus.StrikeReserve - ContainmentDisturbanceBus.BodyReserve, $"non-reserved classes held {maxShared} slots (max 10)");
-        Check(bus.LiveCount <= 10, $"the saturated pool holds {bus.LiveCount}");
+        Check(maxShared <= Shared, $"non-reserved classes held {maxShared} slots (max {Shared})");
+        Check(bus.LiveCount <= Shared, $"the saturated pool holds {bus.LiveCount}");
         // Four strikes then fit without evicting anything.
         double t0 = 39.8;
         bus.Advance(t0);
@@ -279,15 +283,17 @@ public partial class ContainmentDisturbanceTest : RefCounted
             bus.Advance(i * 0.2);
             bus.Publish(D(8000 + i, ContainmentDisturbanceKind.Impact, 1_000_000 + ((i * 5) % 23 - 11) * 14_000, 60_000 + (i % 6) * 25_000, i * 0.2, 0.5f, 800, 20.0f));
         }
-        Check(bus.LiveCount == 10, $"shared slots saturate at 10 ({bus.LiveCount})");
+        Check(bus.LiveCount == Shared, $"shared slots saturate at {Shared} ({bus.LiveCount})");
         bus.Advance(10.0);
         int strikeOk = 0;
         for (int j = 0; j < 4; j++)
             if (bus.Publish(D(8500 + j, ContainmentDisturbanceKind.FieldStrike, 1_000_000 + (j - 2) * 70_000 + 20_000, 50_000 + j * 55_000, 10.0 + j * 0.6, 0.8f, 6000, 3.0f))) strikeOk++;
-        Check(strikeOk == 4 && bus.LiveCount == 14, $"4 strikes with the shared slots full: {strikeOk}, live {bus.LiveCount}");
+        Check(strikeOk == 4 && bus.LiveCount == Shared + 4, $"4 strikes with the shared slots full: {strikeOk}, live {bus.LiveCount}");
         // The 2 body slots are free too.
         Check(bus.Publish(D(1, ContainmentDisturbanceKind.BodyContact, 1_000_000, 100_000, 10.0, 0.5f, 5, 1.5f)) && bus.Publish(D(2, ContainmentDisturbanceKind.BodyContact, 1_010_000, 110_000, 10.0, 0.5f, 5, 1.5f))
-            && bus.LiveCount == 16, "the 2 BodyContact slots are reserved");
+            && bus.LiveCount == Shared + 6, "the 2 BodyContact slots are reserved");
+        // After strikes and body, one EmitterShot still gets its reserved slot with the shared slots saturated (and a second one does not: only 1 is reserved).
+        Check(bus.Publish(D(3, ContainmentDisturbanceKind.EmitterShot, 1_020_000, 120_000, 10.0, 0.6f, 4000, 2.5f)) && bus.LiveCount == 16, "the EmitterShot slot is reserved");
     }
 
     // ---- BodyContact: reservation, cooldown ----
@@ -736,13 +742,14 @@ public partial class ContainmentDisturbanceTest : RefCounted
         Func<double, float> lit = t => 1.0f;
         for (int i = 0; i < 4; i++) bus.Publish(D(600 + i, ContainmentDisturbanceKind.FieldStrike, 1_000_000 + (i - 2) * 90_000 + 40_000, 60_000 + i * 50_000, -5.9 + i * 0.5, 0.6f, 3000, 8.0f, 1.0f, lit));
         for (int i = 0; i < 2; i++) bus.Publish(D(610 + i, ContainmentDisturbanceKind.BodyContact, 1_000_000 + (i - 1) * 120_000, 100_000 + i * 20_000, -3.5 + i * 0.01, 0.6f, 3000, 8.0f, 1.0f, lit));
-        for (int i = 0; i < 10; i++) bus.Publish(D(620 + i, ContainmentDisturbanceKind.Impact, 1_000_000 + (i - 5) * 30_000 + (i % 2) * 4000, 70_000 + (i % 3) * 20_000, -1.8 + 0.18 * i, 0.3f + 0.05f * i, 1000, 6.0f + (i % 3), 1.0f, lit));
+        for (int i = 0; i < Shared; i++) bus.Publish(D(620 + i, ContainmentDisturbanceKind.Impact, 1_000_000 + (i - 5) * 30_000 + (i % 2) * 4000, 70_000 + (i % 3) * 20_000, -1.8 + 0.18 * i, 0.3f + 0.05f * i, 1000, 6.0f + (i % 3), 1.0f, lit));
+        bus.Publish(D(640, ContainmentDisturbanceKind.EmitterShot, 1_045_000, 90_000, 0.0, 0.6f, 4000, 6.0f, 1.0f, lit));
         Check(bus.LiveCount == 16, "lit pool full");
         string full = Signature(bus);
         Check(bus.TryPublish(D(700, ContainmentDisturbanceKind.Impact, 1_000_000, 90_000, 2.0, 0.95f, 1000, 5.0f)) == ContainmentPublishResult.NoBudget && Signature(bus) == full, "a lit pool is not evicted for a plain newcomer");
         Check(bus.TryPublish(D(701, ContainmentDisturbanceKind.FieldStrike, 1_100_000, 90_000, 2.0, 0.1f, 1000, 3.0f, 1.0f, lit)) == ContainmentPublishResult.NoBudget && Signature(bus) == full, "a dimmer strike does not evict a lit patch");
         List<ContainmentRipple> before = Live(bus);
-        ContainmentRipple victim = before.Where(r => r.Kind != ContainmentDisturbanceKind.BodyContact && r.Energy < 0.95f)
+        ContainmentRipple victim = before.Where(r => r.Kind != ContainmentDisturbanceKind.BodyContact && r.Kind != ContainmentDisturbanceKind.EmitterShot && r.Energy < 0.95f)
             .OrderBy(r => r.Energy * Math.Clamp(1.0 - Math.Max(0.0, 2.0 - r.StartTimeSeconds) / r.DurationSeconds, 0.0, 1.0)
                 / (1.0 + Math.Sqrt(Math.Pow(WrapSigned(r.Surface.AroundMeters - Observer.AroundMeters, Circumference), 2) + Math.Pow(r.Surface.AcrossMeters - Observer.AcrossMeters, 2)) / 100_000.0)).First();
         Check(bus.TryPublish(D(702, ContainmentDisturbanceKind.FieldStrike, 1_100_000, 90_000, 2.0, 0.95f, 1000, 3.0f, 1.0f, lit)) == ContainmentPublishResult.Accepted, "a brighter strike takes a lit patch");
@@ -1022,10 +1029,10 @@ public partial class ContainmentDisturbanceTest : RefCounted
             maxLive = Math.Max(maxLive, bus.LiveCount);
             maxContact = Math.Max(maxContact, bus.LiveOf(ContainmentDisturbanceKind.MegastormContact));
             maxBurst = Math.Max(maxBurst, bus.LiveOf(ContainmentDisturbanceKind.UpdraftBurst));
-            maxShared = Math.Max(maxShared, bus.LiveCount - bus.LiveOf(ContainmentDisturbanceKind.FieldStrike) - bus.LiveOf(ContainmentDisturbanceKind.BodyContact));
+            maxShared = Math.Max(maxShared, bus.LiveCount - bus.LiveOf(ContainmentDisturbanceKind.FieldStrike) - bus.LiveOf(ContainmentDisturbanceKind.BodyContact) - bus.LiveOf(ContainmentDisturbanceKind.EmitterShot));
         }
         Check(maxLive <= 16 && bus.PeakLive <= 16, $"busy minute: peak live {bus.PeakLive}");
-        Check(maxContact <= 6 && maxBurst <= 3 && maxShared <= 10, $"busy minute: contact {maxContact}, bursts {maxBurst}, shared {maxShared}");
+        Check(maxContact <= 6 && maxBurst <= 3 && maxShared <= Shared, $"busy minute: contact {maxContact}, bursts {maxBurst}, shared {maxShared}");
         Check(seenStrikes.Count >= 15, $"busy minute: only {seenStrikes.Count} strikes (test would be vacuous)");
         int strikesRendered = lightning.StrikesPublished;
         Check(strikesRendered == seenStrikes.Count && bus.FarListed == 0, $"busy minute: {strikesRendered} of {seenStrikes.Count} strikes were rendered (far list {bus.FarListed}, rate limited {bus.RateLimited}, no budget {bus.NoBudget})");
