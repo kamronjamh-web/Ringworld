@@ -6291,6 +6291,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _structuralEdgeWallMaterial.SetShaderParameter("night_tint", new Vector3(NightTint.R, NightTint.G, NightTint.B));
             _structuralEdgeWallMaterial.SetShaderParameter("far_space_enabled", false);
             _structuralEdgeWallMaterial.SetShaderParameter("inner_face_floor_enabled", _structuralInnerFaceFloorEnabled);
+            // Up close the rim walls show their lit hull material; the structural cues fade in over 1.5-5 km (ring_hull_global.gdshader).
+            _structuralEdgeWallMaterial.SetShaderParameter("structural_cue_near_fade_meters", new Vector2(1500.0f, 5000.0f));
             if (_grid != null)
             {
                 _structuralEdgeWallMaterial.SetShaderParameter("structural_wall_top_meters", _grid.GetStructuralWallTopGlobalY());

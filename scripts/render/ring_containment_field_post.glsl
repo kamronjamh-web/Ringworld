@@ -10,9 +10,15 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 	vec4 cam_x; vec4 cam_y; vec4 cam_z;
 	vec4 anchor_rel;   // xyz: patch anchor minus camera position (world), w: quads per side
 	vec4 viewport;     // xy internal size px, z max offset px, w debug mode
-	vec4 params;       // x shimmer strength, y sheen strength, z range m, w haze visibility
+	vec4 params;       // x shimmer strength, y glass strength, z range m, w haze visibility
 	vec4 noise;        // per-octave noise origins (m)
-	vec4 lattice;      // x lattice strength, yz lattice origin (m)
+	vec4 lattice;      // x etch strength, yz lattice origin (m)
+	vec4 to_sun;       // world, xyz; the light terms are RingContainmentField.UpdateLighting's, the same values the spatial pass gets
+	vec4 up;           // world local zenith
+	vec4 sun;          // sun irradiance (linear)
+	vec4 sky;          // sky radiance (reflection looking up)
+	vec4 ground;       // habitat radiance (reflection looking down)
+	vec4 ambient;      // ambient radiance (frosted groove)
 } F;
 struct PatchVertex { vec4 a; vec4 b; vec4 c; };   // a: position (anchor-relative) + uv2.x, b: normal + uv.x, c: around tangent + uv.y
 layout(set = 0, binding = 2, std430) restrict readonly buffer Vertices { PatchVertex v[]; } S;
@@ -49,6 +55,12 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 	vec4 params;
 	vec4 noise;
 	vec4 lattice;
+	vec4 to_sun;
+	vec4 up;
+	vec4 sun;
+	vec4 sky;
+	vec4 ground;
+	vec4 ambient;
 } F;
 layout(set = 0, binding = 1) uniform sampler2D scene_depth;
 layout(set = 0, binding = 3) uniform sampler2D scene_copy;   // the resolved colour after Sunshine, copied by ring_containment_field_copy.glsl
@@ -68,6 +80,8 @@ float view_depth_at(vec2 uv) {
 	return sv.w != 0.0 ? -sv.z / sv.w : 1.0e30;
 }
 
+vec3 to_view(vec3 world_dir) { return vec3(dot(world_dir, F.cam_x.xyz), dot(world_dir, F.cam_y.xyz), dot(world_dir, F.cam_z.xyz)); }
+
 void main() {
 	float dist = length(v_view);
 	vec3 to_camera = -v_view / max(dist, 0.0001);
@@ -75,21 +89,20 @@ void main() {
 	float ndv = abs(dot(n, to_camera));
 	float frag_depth = -v_view.z;
 	vec2 screen_uv = gl_FragCoord.xy / F.viewport.xy;
-	float shimmer = F.params.x, sheen_strength = F.params.y, range_m = F.params.z;
+	float shimmer = F.params.x, glass_strength = F.params.y, range_m = F.params.z;
 	float base = cf_distance_weight(dist, range_m) * cf_grazing_fade(ndv) * cf_root_ramp(v_uv.z);
 	base *= cf_soft_intersection(view_depth_at(screen_uv) - frag_depth);
-	base *= F.params.w;
 	float w_refraction = shimmer * base;
-	float w_sheen = sheen_strength * base;
-	float w_lattice = F.lattice.x * base;
-	float a = cf_alpha(w_refraction, w_sheen, w_lattice);
+	float w_glass = glass_strength * base;
+	float w_etch = F.lattice.x * base;
+	float a = cf_alpha(w_refraction, w_glass, w_etch);
 	vec2 lattice_p = v_uv.xy + F.lattice.yz;
 	vec2 lattice_fw = fwidth(lattice_p);
 	if (a < 1.0 / 1024.0) discard;
-	float lattice = cf_lattice_mask(lattice_p, max(lattice_fw.x, lattice_fw.y));
+	float etch = cf_etch_mask(lattice_p, max(lattice_fw.x, lattice_fw.y));
 	int debug_mode = int(F.viewport.w + 0.5);
 	if (debug_mode > 0) {
-		out_color = vec4(cf_debug_colour(debug_mode, a, dist, range_m, lattice * w_lattice) * a, a);
+		out_color = vec4(cf_debug_colour(debug_mode, a, dist, range_m, etch * w_etch) * a, a);
 		return;
 	}
 	vec3 ta = normalize(v_tangent);
@@ -99,5 +112,7 @@ void main() {
 	vec2 uv = screen_uv + offset / F.viewport.xy;
 	if (view_depth_at(uv) < frag_depth) uv = screen_uv;
 	vec3 refracted = textureLod(scene_copy, uv, 0.0).rgb;
-	out_color = vec4(refracted * cf_sheen_gain(w_sheen * cf_sheen_angle(ndv)) * cf_lattice_gain(w_lattice, lattice, 0.0) * a, a);
+	vec3 shade = cf_glass_shade(refracted, n, to_camera, normalize(to_view(F.to_sun.xyz)), normalize(to_view(F.up.xyz)), F.sun.xyz, F.sky.xyz,
+		F.ground.xyz, F.ambient.xyz, w_glass, w_etch, etch, 0.0, F.params.w);
+	out_color = vec4(shade * a, a);
 }

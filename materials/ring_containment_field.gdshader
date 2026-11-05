@@ -3,9 +3,11 @@ shader_type spatial;
 // camera is BELOW the field (inside the contained volume): Sunshine clouds composite afterwards, so clouds in front of the field are not refracted. With the
 // camera above the field the same patch is drawn after Sunshine by scripts/render/RingContainmentFieldComposite.gd instead (same maths, shared include).
 //
-// No base colour, no glow, no grid, no fresnel rim line: the field only refracts what is behind it and multiplies a faint cool sheen into it.
-// Premultiplied: out = ALBEDO + dst * (1 - ALPHA) with ALBEDO = refracted * sheen gain * a, ALPHA = a. Fragments at or beyond the shimmer range have a = 0
-// and are discarded, so the patch appears and disappears on fully transparent pixels.
+// Clear glass with an etched honeycomb (user decision 2026-11-05): refraction shimmer, a Fresnel reflection of the real sky / habitat light and the
+// sun, and frosted 100 m hex grooves lit by the sun and the ambient light (cf_glass_shade). Physically lit, never emissive: the light inputs are the
+// published scene lighting (RingContainmentField.UpdateLighting), so night, eclipses, storms and the megastorm darkness dim it like any surface.
+// Premultiplied: out = ALBEDO + dst * (1 - ALPHA) with ALBEDO = shade * a, ALPHA = a. Fragments at or beyond the shimmer range have a = 0 and are
+// discarded, so the patch appears and disappears on fully transparent pixels.
 //
 // Mesh (ContainmentFieldNearPatch.Build): VERTEX anchor-relative in world orientation (the instance transform is a pure translation to the anchor),
 // NORMAL = field normal (into the contained volume), TANGENT = around direction, UV = noise domain (m, relative to the anchor), UV2.x = arch length
@@ -19,14 +21,21 @@ uniform sampler2D cf_depth : hint_depth_texture, filter_nearest, repeat_disable;
 #include "res://materials/ring_containment_field_core.gdshaderinc"
 
 uniform float cf_shimmer_strength = 1.0;   // menu ContainmentShimmerStrength (RingContainmentField.DefaultShimmerStrength)
-uniform float cf_sheen_strength = 1.0;     // menu ContainmentSheenStrength
-uniform float cf_lattice_strength = 1.0;   // menu ContainmentLatticeStrength (RingContainmentField.DefaultLatticeStrength)
+uniform float cf_glass_strength = 1.0;     // menu ContainmentSheenStrength ("Glass reflection")
+uniform float cf_lattice_strength = 1.0;   // menu ContainmentLatticeStrength ("Etched lattice", RingContainmentField.DefaultLatticeStrength)
 uniform vec2 cf_lattice_origin = vec2(0.0);   // ContainmentFieldNearPatch.LatticeOrigin (m)
 uniform float cf_range_m = 3000.0;         // menu ContainmentShimmerRangeKm x 1000
 uniform float cf_max_offset_px = 3.0;      // constant cap at 1080 lines, not a tunable
 uniform vec4 cf_noise_origins = vec4(0.0); // per-octave noise origins (m), ContainmentFieldNearPatch.NoiseOrigins: weather clock drift, paused clock = frozen
 uniform vec3 cf_ring_center_world = vec3(0.0);   // legacy haze fallback only (no ray frame)
-uniform int cf_debug_mode = 0;             // --containment-debug: 1 coverage tint, 2 distance heat, 3 lattice mask
+uniform int cf_debug_mode = 0;             // --containment-debug: 1 coverage tint, 2 distance heat, 3 etch mask
+// Scene lighting at the patch, world space and linear (RingContainmentField.UpdateLighting; the post pass gets the same values).
+uniform vec3 cf_to_sun = vec3(0.0, 1.0, 0.0);
+uniform vec3 cf_up = vec3(0.0, 1.0, 0.0);
+uniform vec3 cf_sun_irradiance = vec3(0.0);
+uniform vec3 cf_sky_radiance = vec3(0.0);
+uniform vec3 cf_ground_radiance = vec3(0.0);
+uniform vec3 cf_ambient_radiance = vec3(0.0);
 
 varying vec3 cf_tangent_view;
 varying vec3 cf_normal_view;
@@ -59,18 +68,17 @@ void fragment() {
 	float frag_depth = -VERTEX.z;
 	float base = cf_distance_weight(dist, cf_range_m) * cf_grazing_fade(ndv) * cf_root_ramp(UV2.x);
 	base *= cf_soft_intersection(cf_view_depth_at(SCREEN_UV, INV_PROJECTION_MATRIX) - frag_depth);
-	if (base * max(max(cf_shimmer_strength, cf_sheen_strength), cf_lattice_strength) < 1.0 / 4096.0) discard;
-	base *= cf_haze_visibility;
+	if (base * max(max(cf_shimmer_strength, cf_glass_strength), cf_lattice_strength) < 1.0 / 4096.0) discard;
 	float w_refraction = cf_shimmer_strength * base;
-	float w_sheen = cf_sheen_strength * base;
-	float w_lattice = cf_lattice_strength * base;
-	float a = cf_alpha(w_refraction, w_sheen, w_lattice);
+	float w_glass = cf_glass_strength * base;
+	float w_etch = cf_lattice_strength * base;
+	float a = cf_alpha(w_refraction, w_glass, w_etch);
 	vec2 lattice_p = UV + cf_lattice_origin;
 	vec2 lattice_fw = fwidth(lattice_p);
 	if (a < 1.0 / 1024.0) discard;
-	float lattice = cf_lattice_mask(lattice_p, max(lattice_fw.x, lattice_fw.y));
+	float etch = cf_etch_mask(lattice_p, max(lattice_fw.x, lattice_fw.y));
 	if (cf_debug_mode > 0) {
-		ALBEDO = cf_debug_colour(cf_debug_mode, a, dist, cf_range_m, lattice * w_lattice) * a;
+		ALBEDO = cf_debug_colour(cf_debug_mode, a, dist, cf_range_m, etch * w_etch) * a;
 		ALPHA = a;
 	} else {
 		vec3 ta = normalize(cf_tangent_view);
@@ -81,7 +89,11 @@ void fragment() {
 		// Never pull colour from something in front of the field (no halo around the wall top or a POI).
 		if (cf_view_depth_at(uv, INV_PROJECTION_MATRIX) < frag_depth) uv = SCREEN_UV;
 		vec3 refracted = textureLod(cf_screen, uv, 0.0).rgb;
-		ALBEDO = refracted * cf_sheen_gain(w_sheen * cf_sheen_angle(ndv)) * cf_lattice_gain(w_lattice, lattice, 0.0) * a;
+		vec3 l = normalize((VIEW_MATRIX * vec4(cf_to_sun, 0.0)).xyz);
+		vec3 up = normalize((VIEW_MATRIX * vec4(cf_up, 0.0)).xyz);
+		vec3 shade = cf_glass_shade(refracted, n, to_camera, l, up, cf_sun_irradiance, cf_sky_radiance, cf_ground_radiance, cf_ambient_radiance,
+			w_glass, w_etch, etch, 0.0, cf_haze_visibility);
+		ALBEDO = shade * a;
 		ALPHA = a;
 	}
 }

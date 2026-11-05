@@ -11,7 +11,7 @@ namespace RingworldTechDemo.ContainmentField;
 /// Containment field near patch renderer (docs/containment-field-design.md 3.3-3.7, WO3; decisions 5-7 of 2026-11-04).
 /// <para>Each frame: the camera's canonical position, the exact nearest field point and signed distance (<see cref="ContainmentNearPatchPlanner"/>). Outside
 /// 1.1 x the shimmer range nothing is drawn (no draw call, pixel identity). Inside it, a 48 x 48 patch built on the CPU in double around the nearest point
-/// (<see cref="ContainmentFieldNearPatch.Build"/>, rebuilt when the nearest point moves N/4) carries the shimmer and sheen
+/// (<see cref="ContainmentFieldNearPatch.Build"/>, rebuilt when the nearest point moves N/4) carries the glass: refraction shimmer, Fresnel reflection and the etched honeycomb (user decision 2026-11-05)
 /// (materials/ring_containment_field.gdshader; the per-pixel weight is exactly 0 at the range, so activation never pops).</para>
 /// <para>Draw order (3.7): with the camera BELOW the field (inside the contained volume) the patch is a transparent MeshInstance3D, so Sunshine clouds, which are
 /// in front of the field from there, composite over it. With the camera ABOVE the field every cloud is behind it, so the mesh is hidden and the same patch is
@@ -30,26 +30,35 @@ public partial class RingContainmentField : Node3D
     public const string CompositeScriptPath = "res://scripts/render/RingContainmentFieldComposite.gd";
     private const float MaxOffsetPixels = 3.0f;
 
-    /// <summary>Near refraction amplitude, 0..2 (menu "Shimmer strength"). With the sheen also 0 the patch is hidden.</summary>
+    /// <summary>Near refraction amplitude, 0..2 (menu "Shimmer strength"). With the glass reflection and the etch also 0 the patch is hidden.</summary>
     public float ShimmerStrength { get; set; } = DefaultShimmerStrength;
     /// <summary>Distance N (km) inside which the shimmer shows, 0.5..10 (menu "Shimmer range").</summary>
     public float ShimmerRangeKm { get; set; } = DefaultShimmerRangeKm;
-    /// <summary>Faint cool sheen multiplied into the refracted colour, 0..2 (menu "Sheen strength", decision 6 of 2026-11-04).</summary>
+    /// <summary>Glass reflection strength (Fresnel reflection of the sky, habitat and sun), 0..2 (menu "Glass reflection"; the property keeps its WO3 name).</summary>
     public float SheenStrength { get; set; } = DefaultSheenStrength;
-    /// <summary>Faint hexagonal lattice (about 1 km cells, user decision 2026-11-05), multiplied into the refracted colour, 0..2 (menu "Lattice strength").</summary>
+    /// <summary>Etch strength of the frosted hexagonal lattice (100 m cells, lit by the sun and sky; user decisions 2026-11-05), 0..2 (menu "Etched lattice").</summary>
     public float LatticeStrength { get; set; } = DefaultLatticeStrength;
 
     [Export] public bool Enabled { get; set; } = true;
     [Export] public NodePath GridManagerPath { get; set; } = new("../ChunkGridManager");
     [Export] public NodePath WeatherPath { get; set; } = new("../RingVolumetricClouds");
     [Export] public NodePath SunLightPath { get; set; } = new("../StarLight");
+    /// <summary>The node that publishes the scene lighting (day_side_atmosphere.gd, <c>get_published_lighting</c>).</summary>
+    [Export] public NodePath DaySideAtmospherePath { get; set; } = new("../DaySideAtmosphere");
     /// <summary>Debug: 0 off, 1 coverage tint, 2 distance heat, 3 lattice mask (<c>--containment-debug</c>).</summary>
     [Export] public int DebugMode { get; set; }
     /// <summary>Debug: draw through the post-Sunshine pass from below too (<c>--containment-field-pass=post</c>).</summary>
     [Export] public bool ForcePostPass { get; set; }
 
     private static readonly StringName ShimmerName = "cf_shimmer_strength";
-    private static readonly StringName SheenName = "cf_sheen_strength";
+    private static readonly StringName SheenName = "cf_glass_strength";
+    private static readonly StringName ToSunName = "cf_to_sun";
+    private static readonly StringName UpName = "cf_up";
+    private static readonly StringName SunIrradianceName = "cf_sun_irradiance";
+    private static readonly StringName SkyRadianceName = "cf_sky_radiance";
+    private static readonly StringName GroundRadianceName = "cf_ground_radiance";
+    private static readonly StringName AmbientRadianceName = "cf_ambient_radiance";
+    private static readonly StringName GetPublishedLightingName = "get_published_lighting";
     private static readonly StringName LatticeName = "cf_lattice_strength";
     private static readonly StringName LatticeOriginName = "cf_lattice_origin";
     private static readonly StringName RangeName = "cf_range_m";
@@ -72,7 +81,8 @@ public partial class RingContainmentField : Node3D
     private bool _compositeActive;
     private bool _hazeRegistered;
     private readonly ContainmentNearPatchPlanner _planner = new();
-    private readonly float[] _frameParams = new float[16];
+    private readonly float[] _frameParams = new float[40];
+    private Node? _daySide;
     private ContainmentFieldProfile? _localProfile;
     private (double Width, double WallTop) _localProfileKey;
 
@@ -108,6 +118,7 @@ public partial class RingContainmentField : Node3D
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _weather = GetNodeOrNull<RingVolumetricCloudLayer>(WeatherPath);
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
+        _daySide = GetNodeOrNull(DaySideAtmospherePath);
         _material = new ShaderMaterial { Shader = GD.Load<Shader>(ShaderPath) };
         _material.SetShaderParameter(MaxOffsetName, MaxOffsetPixels);
         _mesh = new ArrayMesh();
@@ -181,14 +192,19 @@ public partial class RingContainmentField : Node3D
         Vector4 noise = ContainmentFieldNearPatch.NoiseOrigins(patch, now);
         Vector2 lattice = ContainmentFieldNearPatch.LatticeOrigin(patch);
         bool above = ForcePostPass || view.Side == ContainmentFieldViewSide.Above;
+        FieldLighting light = UpdateLighting(snapshot, anchor);
+        LastLighting = light;
         if (above)
         {
             if (_patch.Visible) _patch.Visible = false;
+            Array.Clear(_frameParams);
             _frameParams[0] = MaxOffsetPixels; _frameParams[1] = DebugMode;
-            _frameParams[2] = ShimmerStrength; _frameParams[3] = SheenStrength; _frameParams[4] = (float)range;
-            _frameParams[5] = 1.0f;   // haze visibility: above the field the camera-to-patch path (<= 3.3 km) is in vacuum or air at >= 11.6 km (T > 0.99)
-            _frameParams[6] = noise.X; _frameParams[7] = noise.Y; _frameParams[8] = noise.Z; _frameParams[9] = noise.W;
-            _frameParams[10] = LatticeStrength; _frameParams[11] = lattice.X; _frameParams[12] = lattice.Y;
+            _frameParams[4] = ShimmerStrength; _frameParams[5] = SheenStrength; _frameParams[6] = (float)range;
+            _frameParams[7] = 1.0f;   // haze visibility: above the field the camera-to-patch path (<= 3.3 km) is in vacuum or air at >= 11.6 km (T > 0.99)
+            _frameParams[8] = noise.X; _frameParams[9] = noise.Y; _frameParams[10] = noise.Z; _frameParams[11] = noise.W;
+            _frameParams[12] = LatticeStrength; _frameParams[13] = lattice.X; _frameParams[14] = lattice.Y;
+            Pack(16, light.ToSun); Pack(20, light.Up); Pack(24, light.SunIrradiance); Pack(28, light.SkyRadiance); Pack(32, light.GroundRadiance);
+            Pack(36, light.AmbientRadiance);
             SetCompositeActive(true, anchorWorld, _frameParams);
         }
         else
@@ -203,6 +219,12 @@ public partial class RingContainmentField : Node3D
             _material.SetShaderParameter(NoiseName, noise);
             _material.SetShaderParameter(CenterName, _grid.GetCanonicalRingCenterWorld());
             _material.SetShaderParameter(DebugName, DebugMode);
+            _material.SetShaderParameter(ToSunName, light.ToSun);
+            _material.SetShaderParameter(UpName, light.Up);
+            _material.SetShaderParameter(SunIrradianceName, light.SunIrradiance);
+            _material.SetShaderParameter(SkyRadianceName, light.SkyRadiance);
+            _material.SetShaderParameter(GroundRadianceName, light.GroundRadiance);
+            _material.SetShaderParameter(AmbientRadianceName, light.AmbientRadiance);
             if (!_hazeRegistered)
             {
                 RingPoiHaze.RegisterMaterial(_material, snapshot.RingRadiusMeters);
@@ -212,6 +234,57 @@ public partial class RingContainmentField : Node3D
             if (!_patch.Visible) _patch.Visible = true;
         }
         UpdateRipples();
+    }
+
+    /// <summary>Scene lighting at the patch (world space, linear, the units of lit surfaces): what the glass reflects and the etch scatters.</summary>
+    public readonly record struct FieldLighting(Vector3 ToSun, Vector3 Up, Vector3 SunIrradiance, Vector3 SkyRadiance, Vector3 GroundRadiance,
+        Vector3 AmbientRadiance, float Day);
+
+    public FieldLighting LastLighting { get; private set; }
+
+    /// <summary>Albedo of the habitat seen in the glass from above (terrain, sea and cloud tops under the field, averaged).</summary>
+    private const float HabitatAlbedo = 0.2f;
+
+    private void Pack(int index, Vector3 v) { _frameParams[index] = v.X; _frameParams[index + 1] = v.Y; _frameParams[index + 2] = v.Z; _frameParams[index + 3] = 0.0f; }
+
+    private static float SmoothStep(float a, float b, float x)
+    {
+        float t = Mathf.Clamp((x - a) / Mathf.Max(b - a, 1e-6f), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    /// <summary>
+    /// The lighting the glass and the etch receive, from what the scene already publishes (day_side_atmosphere.gd <c>get_published_lighting</c>: the haze
+    /// model's sun irradiance and ambient / sky radiance, eclipse visibility, hub day, megastorm darkness K and storm ambient at the camera) and the real
+    /// sun direction. The local day at the patch anchor uses the grid's day dots like every surface; at night only the night sky light is left, and the
+    /// sky seen in the glass fades to black above 8-20 km like the sky itself. One set of values for both passes, so crossing the sheet does not pop.
+    /// </summary>
+    private FieldLighting UpdateLighting(in RingLodGeometrySnapshot snapshot, in ContainmentFieldPoint anchor)
+    {
+        Vector3 toSun = _sun != null && GodotObject.IsInstanceValid(_sun) ? _sun.GlobalTransform.Basis.Z.Normalized() : Vector3.Up;
+        ContainmentFieldPlacement.AxesAt(snapshot, anchor.AroundMeters, out _, out Vector3 up, out _);
+        up = up.Normalized();
+        Vector3 sunIrr = new(12.566f, 12.566f, 12.566f), ambDay = new(0.2631f, 0.3464f, 0.4922f), ambNight = new(0.004f, 0.005f, 0.008f);
+        Vector3 skyDay = ambDay, skyNight = ambNight;
+        float nightScale = 1.0f, solarVisibility = 1.0f, hubDay = 0.0f, k = 1.0f, stormAmbient = 1.0f;
+        if (_daySide != null && GodotObject.IsInstanceValid(_daySide) && _daySide.HasMethod(GetPublishedLightingName))
+        {
+            float[] v = _daySide.Call(GetPublishedLightingName).AsFloat32Array();
+            if (v.Length >= 20)
+            {
+                sunIrr = new Vector3(v[0], v[1], v[2]); ambDay = new Vector3(v[3], v[4], v[5]); ambNight = new Vector3(v[6], v[7], v[8]);
+                skyDay = new Vector3(v[9], v[10], v[11]); skyNight = new Vector3(v[12], v[13], v[14]);
+                nightScale = v[15]; solarVisibility = v[16]; hubDay = v[17]; k = v[18]; stormAmbient = Mathf.Clamp(v[19], 0.0f, 1.0f);
+            }
+        }
+        float dayStart = _grid?.RingDayStartDot ?? -0.2f, dayFull = Mathf.Max(dayStart + 0.001f, _grid?.RingDayFullDot ?? 0.35f);
+        float day = Mathf.Max(SmoothStep(dayStart, dayFull, up.Dot(toSun)) * Mathf.Clamp(solarVisibility, 0.0f, 1.0f), Mathf.Clamp(hubDay, 0.0f, 1.0f));
+        Vector3 sun = sunIrr * (day * k);
+        Vector3 ambient = (ambNight * (nightScale * (1.0f - day)) + ambDay * day) * stormAmbient;
+        float skyFade = 1.0f - SmoothStep(8_000.0f, 20_000.0f, (float)anchor.VerticalMeters);
+        Vector3 sky = (skyNight * (nightScale * (1.0f - day)) + skyDay * day) * (stormAmbient * skyFade);
+        Vector3 ground = (sun * (Mathf.Max(up.Dot(toSun), 0.0f) / Mathf.Pi) + ambient) * HabitatAlbedo;
+        return new FieldLighting(toSun, up, sun, sky, ground, ambient, day);
     }
 
     /// <summary>WO4 hook: the ripple pool reads <see cref="RingContainmentDisturbanceHost.SharedBus"/> (Slots, Amplitude, FrontRadius, FlashAt) here.</summary>
@@ -284,7 +357,7 @@ public partial class RingContainmentField : Node3D
         if (!active)
         {
             if (!_compositeActive || _composite == null) { _compositeActive = false; return; }
-            _composite.Call(PublishFrameName, Vector3.Zero, new float[16], false);
+            _composite.Call(PublishFrameName, Vector3.Zero, new float[40], false);
             _compositeActive = false;
             return;
         }

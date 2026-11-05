@@ -9,7 +9,7 @@ extends SceneTree
 ##   tools/use_godot_48.ps1 --script res://tools/rim_wall_check.gd ++ --out=res://.godot/captures/field/wo12/after [--walk] [--no-views]
 ##
 ## --out=DIR     shot folder (default res://.godot/captures/field/wo12/raw).
-## --times=a:b   times of day for the views (default noon:night).
+## --times=a:b   times of day for the views (default noon:night; also low = a low afternoon sun).
 ## --settle=S    seconds to wait at each view (default 10).
 ## --walk        after the views, noclip onto the wall top, switch noclip off (V) and walk (W / Space) along and across the cap on both walls.
 ## --no-views    skip the views (walk only).
@@ -130,7 +130,8 @@ func _set_time_of_day(tod: String) -> void:
 	if cycle == null:
 		return
 	var noon := await _find_local_noon(cycle)
-	var f := noon if tod == "noon" else fposmod(noon + 0.5, 1.0)
+	# "low": a low afternoon sun (about 11 degrees up), for the glass glint and the etch sparkle (containment field WO3).
+	var f := noon if tod == "noon" else (fposmod(noon + 0.22, 1.0) if tod == "low" else fposmod(noon + 0.5, 1.0))
 	cycle.call("set_cycle_fraction", f)
 	cycle.set("Paused", true)
 	await create_timer(2.0).timeout

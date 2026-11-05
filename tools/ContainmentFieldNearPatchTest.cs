@@ -207,7 +207,7 @@ public partial class ContainmentFieldNearPatchTest : RefCounted
     {
         double n = 3000.0;
         double scale = ContainmentFieldNearPatch.NoiseAroundScale(circ);
-        Near(L / ContainmentFieldNearPatch.LatticeSpacingMeters, 45.0, 0.0, tag + " noise period is 45 lattice spacings");
+        Near(L / ContainmentFieldNearPatch.LatticeSpacingMeters, 460.0, 1e-9, tag + " noise period is 460 lattice spacings (100 m cells)");
         Near(circ * scale / L, Math.Round(circ * scale / L), 1e-9, tag + " circumference is whole noise periods");
         var pairs = new (RingCanonicalPosition A, RingCanonicalPosition B)[]
         {

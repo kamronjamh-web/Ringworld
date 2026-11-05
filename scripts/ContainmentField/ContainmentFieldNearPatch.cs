@@ -43,8 +43,8 @@ public static class ContainmentFieldNearPatch
     public const double WindowFactor = 1.1;
     public const double RebuildFraction = 0.25;
     public const double NoisePeriodMeters = 46_080.0;   // 256 x 180 m = 1024 x 45 m (the shader's two octaves) = 45 x the lattice spacing
-    /// <summary>Hexagonal lattice (user decision 2026-11-05): centre spacing along around (flat to flat, about 1 km); L is a whole number of them.</summary>
-    public const double LatticeSpacingMeters = 1_024.0;
+    /// <summary>Hexagonal lattice (user decision 2026-11-05): centre spacing along around (flat to flat, about 100 m); L is a whole number of them.</summary>
+    public const double LatticeSpacingMeters = NoisePeriodMeters / 460.0;   // 100.17 m (user decision 2026-11-05, "medium" 100 m cells); L is 460 of them
     /// <summary>The lattice repeats every two rows along the arch: spacing x sqrt(3).</summary>
     public static readonly double LatticeArchPeriodMeters = LatticeSpacingMeters * Math.Sqrt(3.0);
     public static readonly Vector2 DriftOctave1 = new(0.22f, 0.12f);   // m/s, (around, arch)

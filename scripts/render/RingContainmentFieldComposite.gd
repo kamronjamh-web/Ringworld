@@ -5,10 +5,12 @@ extends CompositorEffect
 ## lightning channel overlay and before the rainbow, rain streaks and rain haze (RingContainmentField.EnsureCompositorSlot). Per frame: copy the resolved
 ## colour, then rasterise the patch onto it with premultiplied blending (ring_containment_field_post.glsl), testing the opaque depth by hand.
 ## No GPU work at all while inactive (camera below the field, out of range, field off).
-## UBO (std140) 256 bytes = 176 render-thread bytes (proj, inv_proj, camera basis x/y/z) + 80 CPU bytes (anchor + quads, viewport/max px/debug, params, noise, lattice).
+## UBO (std140) 352 bytes = 176 render-thread bytes (proj, inv_proj, camera basis x/y/z) + 32 mixed (anchor - camera + quads, viewport size + max px + debug)
+## + 144 CPU bytes (params, noise, lattice, to_sun, up, sun, sky, ground, ambient: RingContainmentField.PublishPostFrame).
 ## Vertex records: 48 bytes, vec4(position anchor-relative, uv2.x) vec4(normal, uv.x) vec4(around tangent, uv.y); keep in sync with RingContainmentField.cs.
 const CAMERA_BYTES := 176
-const PARAM_BYTES := 80
+const PARAM_BYTES := 176
+const PARAM_FLOATS := 40   # 2 (max px, debug) + 2 pad + 36 (9 vec4)
 const UBO_SIZE := CAMERA_BYTES + PARAM_BYTES
 const VERTEX_BYTES := 48
 var _mutex := Mutex.new()
@@ -16,7 +18,7 @@ var _vertices := PackedByteArray()
 var _quads := 0
 var _vertices_dirty := false
 var _anchor_world := Vector3.ZERO
-var _params := PackedFloat32Array()   # 16 floats: max px, debug mode, shimmer, sheen, range m, haze visibility, noise x4, lattice strength, lattice origin xy, 0, 0, 0
+var _params := PackedFloat32Array()   # PARAM_FLOATS: max px, debug mode, 0, 0, then the 9 vec4 of the CPU block
 var _active := false
 var ready := false
 var dispatches := 0
@@ -47,7 +49,7 @@ func publish_mesh(vertices: PackedByteArray, quads: int) -> void:
 	_vertices = vertices; _quads = quads; _vertices_dirty = true
 	_mutex.unlock()
 
-## anchor_world: the patch anchor's world position this frame; params: 16 floats (see _params); active false skips every GPU call.
+## anchor_world: the patch anchor's world position this frame; params: PARAM_FLOATS floats (see _params); active false skips every GPU call.
 func publish_frame(anchor_world: Vector3, params: PackedFloat32Array, active: bool) -> void:
 	_mutex.lock()
 	_anchor_world = anchor_world; _params = params; _active = active
@@ -100,7 +102,7 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	var vertices := _vertices; var upload := _vertices_dirty
 	_vertices_dirty = false
 	_mutex.unlock()
-	if not active or quads <= 0 or params.size() != 16:
+	if not active or quads <= 0 or params.size() != PARAM_FLOATS:
 		if upload: _mutex.lock(); _vertices_dirty = true; _mutex.unlock()
 		return
 	if rd == null: rd = RenderingServer.get_rendering_device()
@@ -143,9 +145,10 @@ func _render_callback(_type: int, render_data: RenderData) -> void:
 	for axis in [camera.basis.x, camera.basis.y, camera.basis.z]:
 		bytes.encode_float(offset, axis.x); bytes.encode_float(offset + 4, axis.y); bytes.encode_float(offset + 8, axis.z); bytes.encode_float(offset + 12, 0.0); offset += 16
 	var rel := anchor - camera.origin
-	for value in [rel.x, rel.y, rel.z, float(quads), float(size.x), float(size.y), params[0], params[1],
-			params[2], params[3], params[4], params[5], params[6], params[7], params[8], params[9], params[10], params[11], params[12], 0.0]:
+	for value in [rel.x, rel.y, rel.z, float(quads), float(size.x), float(size.y), params[0], params[1]]:
 		bytes.encode_float(offset, value); offset += 4
+	for i in range(4, PARAM_FLOATS):
+		bytes.encode_float(offset, params[i]); offset += 4
 	rd.buffer_update(ubo_buffer, 0, UBO_SIZE, bytes)
 	for view in buffers.get_view_count():
 		var color := buffers.get_color_layer(view, false)

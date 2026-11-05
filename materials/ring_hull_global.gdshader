@@ -32,6 +32,11 @@ uniform float structural_top_rail_half_width_meters = 350.0;
 uniform vec3 structural_cue_color : source_color = vec3(0.08, 0.72, 0.82);
 uniform float structural_cue_day_energy : hint_range(0.0, 2.0) = 0.16;
 uniform float structural_cue_night_energy : hint_range(0.0, 4.0) = 0.85;
+// Close-up fade of the structural cues (metres from the camera: x = cue gone, y = cue full; x >= y disables it). The cues are bands and rails 0.7-4.8 km
+// wide made to read from tens of kilometres; from the wall top they flooded the cap, the inner face and the WO12 outer face with flat emissive teal, so
+// the near proxy (the only tier drawn that close) fades them in over 1.5-5 km and the walls show their lit hull material up close. The global hull starts
+// at the 4.75 km hand-off, where the fade is already 0.98, so the tiers still match.
+uniform vec2 structural_cue_near_fade_meters = vec2(0.0, 0.0);
 // Proxy rim walls carry UV2 = (terrain floor at the wall foot, vertex vertical) in canonical metres; while enabled, the inner (front-facing) side below that floor is discarded so a coarse shell never paints over terrain the far layer draws in front of it.
 uniform bool inner_face_floor_enabled = false;
 // Above the rim walls the main environment ambient fades to space while the far layer keeps its surface snapshot, so a sun-away
@@ -130,6 +135,8 @@ void fragment() {
 	// World Y is the ring axis: a rim wall face has a normal along it.
 	float wall_face = smoothstep(0.7, 0.9, abs(normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y));
 	float structural_cue = sample_structural_scale_cues(world_position, wall_face);
+	if (structural_cue_near_fade_meters.y > structural_cue_near_fade_meters.x)
+		structural_cue *= smoothstep(structural_cue_near_fade_meters.x, structural_cue_near_fade_meters.y, distance_to_camera);
 	lit_color = mix(lit_color, structural_cue_color, structural_cue * 0.34);
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * haze.T;

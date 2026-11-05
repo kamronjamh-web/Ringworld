@@ -66,10 +66,10 @@ public partial class RingLiveTuningDrawer
             "Refraction of whatever is behind the containment field, close up (within the shimmer range). 0 with sheen 0 hides the near field.");
         _containmentShimmerRange = AddContainmentFieldSlider(section, "ContainmentShimmerRangeKm", "Shimmer range (km)", .5, 10, .1, s.ShimmerRangeKm,
             "Distance from the field inside which the close-up shimmer and sheen show.");
-        _containmentSheenStrength = AddContainmentFieldSlider(section, "ContainmentSheenStrength", "Sheen strength", 0, 2, .05, s.SheenStrength,
-            "Faint cool sheen multiplied into what is seen through the field at grazing angles. Never lights anything; zero against black space.");
-        _containmentLatticeStrength = AddContainmentFieldSlider(section, "ContainmentLatticeStrength", "Lattice strength", 0, 2, .05, s.LatticeStrength,
-            "Faint hexagonal lattice (about 1 km cells) seen close up through the field; multiplied into what is behind it, never lights anything. Ripples and strikes brighten it.");
+        _containmentSheenStrength = AddContainmentFieldSlider(section, "ContainmentSheenStrength", "Glass reflection", 0, 2, .05, s.SheenStrength,
+            "Fresnel reflection of the sky, the habitat below and a small sun glint on the field's glass panes; near zero head-on, stronger at grazing angles. Lit by the real light: dark at night.");
+        _containmentLatticeStrength = AddContainmentFieldSlider(section, "ContainmentLatticeStrength", "Etched lattice", 0, 2, .05, s.LatticeStrength,
+            "Frosted hexagonal etching (100 m cells) in the field's glass, lit by the sun and the sky like any surface; never self-lit. Ripples and strikes brighten it.");
         var reset = new Button { Name = "ContainmentFieldReset", Text = "Reset containment field", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             TooltipText = "Restores the containment field settings to their defaults." };
         reset.Pressed += ResetContainmentField;

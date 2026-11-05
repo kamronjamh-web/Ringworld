@@ -304,6 +304,7 @@ var _haze_lup_planet: Vector3 = Vector3.ZERO
 var _published_haze_lup_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_haze_lup_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_hub_weight: float = 0.0
+var _published_night_light_scale: float = 1.0
 @export var hub_sky_tint_color: Color = Color(0.85, 0.95, 1.0, 1.0)
 
 @export_group("Physical Haze")
@@ -1194,7 +1195,30 @@ func _viewer_atmosphere_frame(surface_up: Vector3) -> Dictionary:
 
 
 func _publish_night_light_scale(scale: float) -> void:
-	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", clampf(scale, 0.0, 1.0))
+	_published_night_light_scale = clampf(scale, 0.0, 1.0)
+	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", _published_night_light_scale)
+
+
+## The lighting this node publishes to the haze globals, for consumers that cannot read global uniforms (the containment field's glass,
+## RingContainmentField.UpdateLighting, whose post-Sunshine raster pass is a RenderingDevice shader):
+## sun irradiance (global, 3), ambient day (global, 3), ambient night (3), sky radiance day L_up (3), sky radiance night (3), night light scale,
+## solar visibility, hub day, megastorm darkness K at the camera (1 without a megastorm), storm ambient A at the camera. 20 floats; unpublished
+## vectors read as 0.
+func get_published_lighting() -> PackedFloat32Array:
+	var k := 1.0
+	if cloud_lighting_bridge != null and is_instance_valid(cloud_lighting_bridge) and cloud_lighting_bridge.has_method("GetCameraDarknessMultiplier"):
+		k = float(cloud_lighting_bridge.call("GetCameraDarknessMultiplier"))
+	var values: Array[Vector3] = [_published_haze_sun_global, _published_haze_ambient_day_global, _published_haze_ambient_night,
+		_haze_lup_day, _haze_lup_planet]
+	var out := PackedFloat32Array()
+	for v in values:
+		out.append(maxf(v.x, 0.0)); out.append(maxf(v.y, 0.0)); out.append(maxf(v.z, 0.0))
+	out.append(_published_night_light_scale)
+	out.append(current_solar_visibility)
+	out.append(current_hub_day)
+	out.append(k)
+	out.append(current_storm_ambient)
+	return out
 
 
 # Pulls the hub lighting outputs from the director (spec C.1). Without a director everything stays 0.
