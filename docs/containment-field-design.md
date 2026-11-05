@@ -25,11 +25,18 @@ Prompted by the atmosphere-shield projector asset (`ringworld_atmosphere_project
 
 The ellipse leaves the root vertically but bends inward at once. Inward offset from the root at height h above the wall top (Certified, rise 30 km): 0.9 m at 100 m, 22 m at 500 m, 72 m at 900 m, 226 m at 1,600 m. The projector's central slit is only 0.9 m wide and the blades reach 40 m each side, so the field would cut through the habitat-side blade from about 100 m up.
 
-**Default (pending user confirmation): a vertical skirt.** The profile becomes a vertical segment from the wall top up to the projector crown (`SkirtHeightMeters`, 1,600 m), then the semi-ellipse from there to the 40 km apex (rise 28.4 km). The field rises straight through the tower stack and the arch starts at the crown, so the towers read as the emitters. It is a profile parameter like the roots, the queries stay exact (segment plus ellipse, still 2D), and the skirt runs along the whole wall, not only at projectors. It barely changes the cloud ceiling: the field moves at most about 230 m outward near the rims. Alternatives: a superellipse with a fuller shoulder (the field still leaves the slot, just higher), or accepting the clash and hiding it with the soft intersection (not recommended, because the field would visibly cut the blades).
+**Decided (user, 2026-11-05): a vertical skirt, 1,600 m.** The profile becomes a vertical segment from the wall top up to the projector crown (`SkirtHeightMeters`, 1,600 m), then the semi-ellipse from there to the 40 km apex (rise 28.4 km). The field rises straight through the tower stack and the arch starts at the crown, so the towers read as the emitters. It is a profile parameter like the roots, the queries stay exact (segment plus ellipse, still 2D), and the skirt runs along the whole wall, not only at projectors. It barely changes the cloud ceiling: the field moves at most about 230 m outward near the rims. Alternatives: a superellipse with a fuller shoulder (the field still leaves the slot, just higher), or accepting the clash and hiding it with the soft intersection (not recommended, because the field would visibly cut the blades).
 
 ### Revised work-order order
 
 WO1 (geometry API with the 128 m centre-line wall description and skirt), then **WO12 (rim wall depth)**, then WO8 (anchors and even respacing), then WO2-WO6, then WO9 (atmosphere lid, now required), then contact ripples (new, after WO4), then WO10 audio (vacuum low-pass plus crossing sound), then WO13/WO14. The post-Sunshine pass for views from above goes with WO3 or straight after it. Projector POI import follows WO12 and WO8. All of it starts after the current megastorm work (`docs/megastorm-handoff.md`).
+
+### WO1 status (2026-11-05): geometry core done
+
+- Files: `scripts/ContainmentField/ContainmentFieldProfile.cs` (profile, `RimWallDescription.Current = (128, CentreLine)`, `RimFieldRoot`), `ContainmentFieldGeometry.cs`, `ContainmentFieldPlacement.cs`, `ContainmentFieldPolicy.cs` (flight and projectile permeability = Pass). Test: `tools/ContainmentFieldGeometryTest.cs` + `containment_field_geometry_test.gd`, manifest `containment_field_geometry_test` (headless, gate, tag `containment-field`, marker `CONTAINMENT_FIELD_GEOMETRY`). Passes.
+- Profile has a fifth/sixth field `SkirtHeightMeters` (default 1,600). Curve = left skirt, upper semi-ellipse from the crown (`WallTop + Skirt`) to the apex, right skirt. `H(root) = WallTop` exactly; just inside the root H is at least the crown (the skirt is vertical, H is not continuous at the root). Arch length runs skirt, ellipse, skirt: Certified with the Current wall is 334,683.595 m (ellipse half 331,483.595 m), runtime-surface 334,377.306 m.
+- Signed distance is negative for the geometric region (between the roots, below the curve, including the wall body below the wall top); `IsContained` additionally excludes the wall body (across outside [0, W] and vertical at or below the wall top). `TryIntersectWorldSegment` rejects sign flips that are not surface zeros, so passing through the wall body below the wall top is not a crossing; walking across the wall top crosses the skirt at the centre line.
+- `WorldTransform` basis is X = around tangent, Y = -N, Z = X x Y (the arch tangent reversed): the spec's Z = arch tangent is left-handed. `Vector3d` does not exist; canonical directions are `CanonicalVector`. `MegastormFieldCoupling.CeilingFromUnderside` is not yet replaced; `CloudCeilingFromUnderside` matches the stub bit for bit (asserted). Cloud ceiling reaches 18 km 4.45 km from the inner face (Certified), 4.03 km (runtime-surface), not 6.2 km, because the skirt moves the arch outward. Nothing is wired into the running game.
 
 ## User decisions 2026-10-29
 
@@ -1073,7 +1080,7 @@ Per-batch gate: full GPU gate suite once (memory "Lean test cadence").
 
 The three original questions (wall height, sprites and jets, POI form) were answered by the user on 2026-10-29. See the "User decisions" section at the top.
 
-2026-11-04: questions 1-3 below are answered (respace evenly to C/126; root on the centre line; depth 128 m). See the 2026-11-04 decisions at the top. Still open: whether to use the vertical skirt (default yes, 1,600 m).
+2026-11-04: questions 1-3 below are answered (respace evenly to C/126; root on the centre line; depth 128 m). See the 2026-11-04 decisions at the top. The vertical skirt (1,600 m) was confirmed by the user on 2026-11-05.
 
 Smaller decisions remain. Each has a default, so none blocks WO1-WO6.
 

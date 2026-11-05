@@ -78,6 +78,13 @@
         "resources/voxel/**"
       ]
     },
+    "containment-field": {
+      "globs": [
+        "scripts/ContainmentField/**",
+        "docs/containment-field-design.md",
+        "tools/ContainmentField*"
+      ]
+    },
     "weather": {
       "globs": [
         "scripts/Weather/**",
@@ -2994,6 +3001,17 @@
       "marker": "MEGASTORM_SOUND",
       "expected_s": 3,
       "timeout_s": 60
+    },
+    "containment_field_geometry_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field"
+      ],
+      "marker": "CONTAINMENT_FIELD_GEOMETRY",
+      "expected_s": 30,
+      "timeout_s": 120
     },
     "megastorm_audio_test": {
       "kind": "test",
