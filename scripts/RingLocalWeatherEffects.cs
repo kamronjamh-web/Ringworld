@@ -177,6 +177,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _sunshineBridge = GetNodeOrNull<RingSunshineCloudBridge>(SunshineBridgePath);
         _cloudRenderer = GetNodeOrNull<RingLocalVolumetricCloudRenderer>(VolumetricCloudRendererPath);
         _farViewport = GetNodeOrNull<RingScaledFarViewport>(FarViewportPath);
+        _farViewport?.BindSurfaceLightning(this);
         if (_explorer == null || _grid?.TerrainSampler == null || _weatherSource == null)
         {
             GD.PushWarning("Local weather effects disabled: explorer, grid, or weather source is missing.");
@@ -386,6 +387,7 @@ public partial class RingLocalWeatherEffects : Node3D
 
     public override void _Process(double delta)
     {
+        UpdateSurfaceLightning();
         if (_explorer == null || _grid == null || _weatherSource == null || _particles == null) return;
         float dt = (float)Math.Clamp(delta, 0.0, 0.25);
         RingVolumetricCloudLayer.LocalWeatherState weather = ResolveCurrentWeather();
@@ -444,8 +446,6 @@ public partial class RingLocalWeatherEffects : Node3D
         long channelStart = System.Diagnostics.Stopwatch.GetTimestamp();
         UpdateLightningChannels();
         LightningChannelMicros = LightningChannelMicros * 0.95 + System.Diagnostics.Stopwatch.GetElapsedTime(channelStart).TotalMicroseconds * 0.05;
-        // Underground mode: the omni flash has no shadows and would light cave interiors through rock.
-        if (UndergroundFlashSuppression >= 0.999f && _lightningLight != null) _lightningLight.LightEnergy = 0.0f;
     }
 
     private RingVolumetricCloudLayer.LocalWeatherState ResolveCurrentWeather()
@@ -546,6 +546,7 @@ public partial class RingLocalWeatherEffects : Node3D
 
     public override void _ExitTree()
     {
+        ReleaseSurfaceLightning();
         if (_columnProvider != null && PrecipitationAltitude.ColumnProvider == _columnProvider) PrecipitationAltitude.ColumnProvider = null;
         _columnProvider = null;
         ReleaseRainStreaks();
@@ -659,7 +660,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _lightningLight.LightEnergy = 0.0f;
         _lightningLight.OmniRange = Mathf.Max(100.0f, LightningRangeMeters);
         _lightningLight.ShadowEnabled = false;
-        _lightningLight.LightVolumetricFogEnergy = 2.4f;
+        _lightningLight.LightVolumetricFogEnergy = 0.0f;
     }
 
     private void CreateBoltVisuals()
@@ -1128,8 +1129,6 @@ public partial class RingLocalWeatherEffects : Node3D
                 : 1.0f;
             CurrentRenderedLightningPulse = shared;
             CurrentRenderedLightningVisualWeight = visualWeight;
-            _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy)
-                * Mathf.Max(0.0f, _activeSharedEvent?.Energy ?? 1.0f) * shared * visualWeight * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f));
             _sunshineBridge?.SetLightningFlashIntensity(shared * visualWeight);
             _sunshineBridge?.SetMegastormFlash(shared * visualWeight * _activeFlashProximity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f)));
             _boltCoreMaterial?.SetShaderParameter("intensity", shared);
@@ -1150,7 +1149,6 @@ public partial class RingLocalWeatherEffects : Node3D
             glow = Mathf.Max(glow, Mathf.Max(0.0f, glowEnvelope) * strike.Intensity);
         }
         float sharedIntensity = Mathf.Max(core, glow * 0.42f);
-        _lightningLight.LightEnergy = Mathf.Max(0.0f, LightningEnergy) * sharedIntensity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f));
         _sunshineBridge?.SetLightningFlashIntensity(sharedIntensity);
         _sunshineBridge?.SetMegastormFlash(sharedIntensity * _activeFlashProximity * (1.0f - Mathf.Clamp(UndergroundFlashSuppression, 0.0f, 1.0f)));
         _boltCoreMaterial?.SetShaderParameter("intensity", core);

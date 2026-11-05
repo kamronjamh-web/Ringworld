@@ -4,14 +4,14 @@ using System.Collections.Generic;
 namespace RingworldTechDemo;
 
 /// <summary>
-/// Deterministic flash-slot ids of the far flash field (docs/megastorm-design.md 3.3): 64 segments of 5 km across, 2 s slots, mean interval 20 s per
+/// Deterministic flash-slot ids of the far flash field (docs/megastorm-design.md 3.3): 64 segments of 5 km across, 2 s slots, mean interval 10 s per
 /// segment, all in the moving frame so they depend only on (seed, segment, slot). WO5 builds the renderer and positions on top of this; WO2 owns the
 /// ids so the save/load replay can assert them.
 /// </summary>
 public static class MegastormLightning
 {
     public const int Segments = 64;
-    public const double SlotSeconds = 2.0, MeanIntervalSeconds = 20.0;
+    public const double SlotSeconds = 2.0, MeanIntervalSeconds = 10.0;
 
     /// <summary>Event id of one (slot, segment) cell; unique per cell.</summary>
     public static long CellId(long slot, int segment) => slot * Segments + segment;
@@ -34,6 +34,7 @@ public static class MegastormLightning
 
     // ---- Far flash field (WO5; the GPU twin is ring_ms_flash_glow in materials/ring_far_storm_lighting.gdshaderinc) ----
     public const double SegmentMeters = 5000.0, FlashRadiusMeters = 6000.0;
+    public const double FlashXiMinMeters = 500.0, FlashXiMaxMeters = 37500.0;
     public const double Chance = SlotSeconds / MeanIntervalSeconds;
 
     /// <summary>
@@ -59,7 +60,7 @@ public static class MegastormLightning
         return new MegastormFlash(CellId(slot, segment), slot, segment,
             slot * SlotSeconds + SlotSeconds * MegastormModel.Hash01(seed, 2000 + segment, slot),
             (segment + 0.15 + 0.7 * MegastormModel.Hash01(seed, 3000 + segment, slot)) * SegmentMeters,
-            2000.0 + 18000.0 * MegastormModel.Hash01(seed, 4000 + segment, slot),
+            FlashXiMinMeters + (FlashXiMaxMeters - FlashXiMinMeters) * MegastormModel.Hash01(seed, 4000 + segment, slot),
             4000.0 + 7000.0 * MegastormModel.Hash01(seed, 5000 + segment, slot),
             (float)(0.6 + 0.4 * MegastormModel.Hash01(seed, 6000 + segment, slot)));
     }

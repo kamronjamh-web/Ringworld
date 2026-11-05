@@ -188,7 +188,7 @@ All of it is analytic per pixel and exact at any distance. The angles come from 
   - The layer sky ends its integration at the analytic wall-body entry (`megastorm_body_entry`), so cloud in front composites over the wall and the deck behind it is not double counted.
   - Against the whole-ring shell (priority 10-14), the wall draws over it.
 - **Night: flash field.**
-  - 64 segments of 5 km across. Each segment fires from `hash(seed, segment, slot)` (slot 2 s, mean interval 20 s per segment, so about 3 flashes/s along the line), using `RingLightningEvent.PulseAtAge` maths and the reduced-flash envelope.
+  - 64 segments of 5 km across. Each segment fires from `hash(seed, segment, slot)` (slot 2 s, mean interval 10 s per segment, so about 6.4 flashes/s along the line), using `RingLightningEvent.PulseAtAge` maths and the reduced-flash envelope. Main flashes are uniform in xi 0.5-37.5 km behind the edge, spanning the wall body and rear transition, at altitude 4-11 km.
   - Segments live in the moving frame, so flashes travel with the wall.
   - The CPU twin `MegastormLightning.FlashesInWindow` drives sprites, rumble density and field ripples.
 
@@ -281,7 +281,7 @@ All of it is analytic per pixel and exact at any distance. The angles come from 
 | Wind (`ModifyWind`, `RingWindQuery`) | GustFront target `28 x (1 + 0.3 x 1.5)` = 40.6 m/s (`StormArrival.cs:504`); sustained 37 m/s (kind 6 replaces the in-wall wind with the 5.5.2 bullet-rain profile, peak 140 m/s, and adds the 5.5.3 wake reversal). The wind history rise and decay (5 s / 18 s) fit a 45 s gust front | `StormFactor` (`RingVolumetricCloudLayer.Wind.cs:175`) weight 1.25 for kind 6. `RingWindQuery`: wall updrafts 40 m/s for xi 3-20 km, downdrafts -12 m/s at 15-40 km, jet x1.8 (`WindAltitudeProfile.cs:25`). These are wind speeds, not the wall speed: the megastorm is a propagating pattern, not an air mass moving at 350 m/s |
 | Debris | `RingGustFrontDebris` reads GustFront: automatic | none |
 | Wet world, mist, rainbow | S3 rain history, S2 wet map, post-rain mist, rainbow: automatic | none |
-| Lightning | `RingLightningEvent` renderers, thunder pools, Sunshine flash, sprite layer (**unchanged, no field clamp**) | `TryScheduleMegastormLightning` in `RingVolumetricCloudLayer.Lightning.cs` (beside `:155-157`): near strikes within 80 km at 0.3-1/s, xi -2..30 km; 10% "bolt from the blue" at xi -15..-5. Far flash field (3.3). Megastorm records are excluded from the natural scanner (`:184`). Sprite chance for kind >= 5 is 0.45 |
+| Lightning | `RingLightningEvent` renderers, thunder pools, Sunshine flash, sprite layer (**unchanged, no field clamp**) | `TryScheduleMegastormLightning` in `RingVolumetricCloudLayer.Lightning.cs` (beside `:155-157`): near strikes within 50 km, main xi 0.5-37.5 km; about 1.2-2.2/s near the middle of the wall (observer dependent); 10% "bolt from the blue" at xi -15..-5. Far flash field (3.3). Both streams follow "Lightning frequency" and "Reduced flashes". Megastorm records are excluded from the natural scanner (`:184`). Sprite chance for kind >= 5 is 0.45 |
 | Audio (S5) | Distant-storm sector gains (`RainSoundField.cs:237-256`) with the megastorm bearing; thunder pools with physical delays; shelter muffling; S3 gust-roar voices | Section 5.2: ground hum, wall singing, speed-aware air sound, the edge boom, tremor and wildlife hooks, PDA lines |
 | Kind audit (from S4 WO-B) | | Helpers `IsFrontKind` (add 6) and `IsSevere(kind) => kind >= ExceptionalFront`. Sites: `RingVolumetricCloudLayer.cs:3426, 3461, 3505, 3671, 3679, 3998, 4044`; `.Lightning.cs:256, 346`; `RingLocalWeatherEffects.cs:562`; `RingSunshineCloudBridge.cs:1899`; `RingDistantRainCurtains.cs:203`; `CloudLayerTable.cs:104` |
 
@@ -911,6 +911,15 @@ Group **"Megastorm"** in the Clouds tab:
 | Megastorm speed (m/s) | 5-500 | 350 | Campaign pacing (lap about 20 days). A change re-anchors at "now", so the position stays continuous |
 | Megastorm trailing length (km) | 100-600 | 340 | Pass length: 50 + L = 390 km, a quarter day at 350 m/s |
 | Megastorm warning reach (km) | 50-600 | 220 | How early the world warns. It sets the precursor P extent (sky; about 12 min at 350 m/s) **and** the ground-hum stages: hum onset at 10x (2,200 km, about 105 min) and water/wildlife at 2x (440 km, about 21 min). One entry serves both, so the sound adds no menu entry |
+
+The Lighting tab's existing Lightning controls also apply to megastorm surface lighting:
+
+| Setting | Range | Default | Purpose |
+|---|---|---|---|
+| Lightning illumination | 0-2 | 1 | Strength of lightning light on terrain, vegetation and other world surfaces; 0 removes the surface light |
+| Illumination reach (km) | 1-40 | 20 | Distance over which the surface light fades; saved in kilometres and applied in metres |
+
+These choices persist with the other lightning settings and apply live. Reduced flashes still limits the lightning pulse; illumination strength and reach do not alter strike frequency or pulse timing.
 
 - **Not in the menu (sound):** hum gain, `BoomSeconds` (4) and the micro-shake amplitude are defaults the user can change later. The hum, singing and boom follow the existing weather audio volumes. PDA settings (`PdaEnabled`, `PdaSubtitles`, ...) belong to the eclipse spec's PDA group.
 - **Not in the menu**, because global settings already cover them: "Storm darkness", "Gust front strength" (and "Gust front lead", which drives the 5.1 bands), "Lightning frequency", "Upper-atmosphere lightning", "Reduced flashes", "Hail", and the audio volumes. No on/off toggle: the story owns it.

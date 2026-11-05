@@ -519,7 +519,7 @@ public partial class RingScaledFarViewport : Node
         using (RingPerformanceTelemetry.MeasureCpu("Far ring startup scene")) UpdateStartupScene();
 		if (StartupError.Length > 0) return;
 		// Underground-mode hold: the far viewports render nothing and the backdrop is hidden, so skip all far-ring work.
-		if (RenderSuspended && StartupComplete) return;
+		if (RenderSuspended && StartupComplete) { ClearSurfaceLightningMirrors(); return; }
 		BeginGeometryUploadFrame();
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring global terrain"))
 		{
@@ -538,6 +538,7 @@ public partial class RingScaledFarViewport : Node
 		using (RingPerformanceTelemetry.MeasureCpu("Far ring camera and lighting"))
 			{
 				SyncCameraAndLighting();
+				UpdateSurfaceLightningMirrors();
 				UpdateFarCloudLayers(delta);
 				UpdateFarMegastorm(delta);
 			}
@@ -562,6 +563,8 @@ public partial class RingScaledFarViewport : Node
 
 	public override void _ExitTree()
 	{
+		ClearSurfaceLightningMirrors();
+		_surfaceLightningSource = null;
         DisposeStartupScene();
 		DisposeGeometryWork();
 		DisposeFarSurfaceTiles();

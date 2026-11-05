@@ -10,7 +10,7 @@ public partial class RingLiveTuningDrawer
     private double _lightningSaveDelay, _lightningSaveRetry;
     private Label? _lightningStatus;
     private CheckButton? _lightningReduced;
-    private HSlider? _lightningFrequency, _lightningUpperAtmosphere;
+    private HSlider? _lightningFrequency, _lightningUpperAtmosphere, _lightningIllumination, _lightningIlluminationReach;
     private bool _lightningRefreshing;
 
     private void InitializeLightningTuning()
@@ -53,6 +53,10 @@ public partial class RingLiveTuningDrawer
             "How often natural storms strike. 0 is silent, 1 is the default, 2 doubles it.");
         _lightningUpperAtmosphere = AddLightningSlider(section, "LightningUpperAtmosphere", "Upper-atmosphere lightning", nameof(GameplayLightningSettings.UpperAtmosphereLightning), s.UpperAtmosphereLightning,
             "How often red sprites and blue jets appear above strong storms, visible across the arch at night. 0 hides them.");
+        _lightningIllumination = AddLightningSlider(section, "LightningIllumination", "Lightning illumination", nameof(GameplayLightningSettings.LightningIllumination), s.LightningIllumination,
+            "How brightly lightning lights the terrain, vegetation and nearby objects. 0 removes this surface lighting, 1 is the default, 2 doubles its strength.");
+        _lightningIlluminationReach = AddLightningSlider(section, "LightningIlluminationReachKm", "Illumination reach (km)", nameof(GameplayLightningSettings.LightningIlluminationReachKm), s.LightningIlluminationReachKm,
+            "How far lightning lights surrounding surfaces, in kilometres. The light fades toward this distance. Default: 20 km.");
         _lightningReduced = new CheckButton
         {
             Name = "LightningReducedFlashes", Text = "Reduced flashes", ButtonPressed = s.ReducedFlashes,
@@ -60,7 +64,7 @@ public partial class RingLiveTuningDrawer
         };
         _lightningReduced.Toggled += _ => QueueLightningSettings();
         section.AddChild(_lightningReduced);
-        var reset = new Button { Name = "LightningReset", Text = "Reset lightning", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Restores lightning frequency, upper-atmosphere lightning and reduced flashes to their defaults." };
+        var reset = new Button { Name = "LightningReset", Text = "Reset lightning", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill, TooltipText = "Restores all lightning settings to their defaults." };
         reset.Pressed += ResetLightning;
         section.AddChild(reset);
         _lightningStatus = new Label { Name = "LightningStatus", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
@@ -82,9 +86,11 @@ public partial class RingLiveTuningDrawer
 
     private void QueueLightningSettings()
     {
-        if (_lightningRefreshing || _lightningDefaults == null || _lightningFrequency == null || _lightningUpperAtmosphere == null || _lightningReduced == null) return;
+        if (_lightningRefreshing || _lightningDefaults == null || _lightningFrequency == null || _lightningUpperAtmosphere == null || _lightningIllumination == null || _lightningIlluminationReach == null || _lightningReduced == null) return;
         bool changed = _lightningDefaults.SetLightningFrequency((float)_lightningFrequency.Value);
         changed |= _lightningDefaults.SetUpperAtmosphereLightning((float)_lightningUpperAtmosphere.Value);
+        changed |= _lightningDefaults.SetLightningIllumination((float)_lightningIllumination.Value);
+        changed |= _lightningDefaults.SetLightningIlluminationReachKm((float)_lightningIlluminationReach.Value);
         changed |= _lightningDefaults.SetReducedFlashes(_lightningReduced.ButtonPressed);
         _lightningDefaults.Apply();
         if (!changed) return;
@@ -107,6 +113,8 @@ public partial class RingLiveTuningDrawer
         _lightningRefreshing = true;
         SetWeatherAudioSlider(_lightningFrequency, s.LightningFrequency);
         SetWeatherAudioSlider(_lightningUpperAtmosphere, s.UpperAtmosphereLightning);
+        SetWeatherAudioSlider(_lightningIllumination, s.LightningIllumination);
+        SetWeatherAudioSlider(_lightningIlluminationReach, s.LightningIlluminationReachKm);
         _lightningReduced?.SetPressedNoSignal(s.ReducedFlashes);
         _lightningRefreshing = false;
         RefreshLightningStatus();

@@ -26,6 +26,7 @@ extends SceneTree
 ## --aba=S       perf: after the spawn, 6 phases of S seconds alternating channels on/off/on/off/on/off (A-B-A-B-A-B), printing the median and
 ##               p95 viewport GPU ms of each phase (MEGASTORM_ABA lines). Run WITHOUT --fixed-fps and only with no other Godot process live.
 ## --pitch=D     hold the camera pitch (degrees) from the spawn on (yaw stays facing the wall).
+## --yaw-offset=D  turn this many degrees from the spawn heading (90 looks along the wall for depth-distribution checks).
 ## Prints MEGASTORM_REAL=DONE at the end (this is a capture tool, not a pass/fail gate).
 
 const MENU := preload("res://scenes/StartMenu.tscn")
@@ -145,9 +146,9 @@ func _run() -> void:
 	var next_shot := 0.0
 	var looked_up := false
 	var explorer: Node = _world.get_node("Explorer")
-	if _arg("pitch", "") != "":
+	if _arg("pitch", "") != "" or _arg("yaw-offset", "") != "":
 		var pose_p: Dictionary = explorer.call("GetCanonicalPoseMeters")
-		explorer.call("SetPresentationView", float(pose_p["yaw_deg"]), float(_arg("pitch", "0")))
+		explorer.call("SetPresentationView", float(pose_p["yaw_deg"]) + float(_arg("yaw-offset", "0")), float(_arg("pitch", str(pose_p["pitch_deg"]))))
 	if _arg("aba", "") != "":
 		await _aba(float(_arg("aba", "8")))
 		print("MEGASTORM_REAL=DONE out=", _out)

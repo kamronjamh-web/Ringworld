@@ -45,7 +45,7 @@ float ring_far_storm_cut_weight(float t, float handoff_end) {
 const int RING_MS_FLASH_SEGMENTS = 64;
 const float RING_MS_FLASH_SEGMENT_METERS = 5000.0;
 const float RING_MS_FLASH_SLOT_SECONDS = 2.0;
-const float RING_MS_FLASH_CHANCE = 0.1;          // slot / mean interval (2 s / 20 s)
+const float RING_MS_FLASH_CHANCE = 0.2;          // slot / mean interval (2 s / 10 s)
 const float RING_MS_FLASH_RADIUS_METERS = 6000.0;
 const float RING_MS_FLASH_LIFETIME = 0.72;       // RingLightningEvent.LifetimeSeconds
 
@@ -88,7 +88,7 @@ float ring_ms_flash_glow(float x, float across, float altitude, int slot, float 
 			float pulse = ring_ms_flash_pulse(age, reduced, reduced_peak);
 			if (pulse <= 0.0) continue;
 			float f_across = (float(seg) + 0.15 + 0.7 * ring_ms_hash01(seed, 3000 + seg, k)) * RING_MS_FLASH_SEGMENT_METERS;
-			float f_xi = 2000.0 + 18000.0 * ring_ms_hash01(seed, 4000 + seg, k);
+			float f_xi = 500.0 + 37000.0 * ring_ms_hash01(seed, 4000 + seg, k);
 			float f_alt = 4000.0 + 7000.0 * ring_ms_hash01(seed, 5000 + seg, k);
 			float energy = 0.6 + 0.4 * ring_ms_hash01(seed, 6000 + seg, k);
 			float f_x = f_xi + ring_megastorm_lead_offset(f_across, p);

@@ -19,12 +19,18 @@ public static class LightningVisualPolicy
     public static float FrequencyScale { get; private set; } = DefaultFrequency;
     /// <summary>Red sprite / blue jet chance multiplier, 0..2.</summary>
     public static float UpperAtmosphereScale { get; private set; } = DefaultUpperAtmosphere;
+    /// <summary>Strength multiplier for native lights illuminating world surfaces, 0..2.</summary>
+    public static float SurfaceIlluminationStrength { get; private set; } = 1f;
+    /// <summary>Reach of native surface lights in metres, 1000..40000.</summary>
+    public static float SurfaceIlluminationReachMeters { get; private set; } = 20000f;
     public static bool ReducedFlashes { get; private set; }
 
-    public static void Apply(float frequency, float upperAtmosphere, bool reducedFlashes)
+    public static void Apply(float frequency, float upperAtmosphere, bool reducedFlashes, float illumination = 1f, float illuminationReachKm = 20f)
     {
         FrequencyScale = Clean(frequency, DefaultFrequency);
         UpperAtmosphereScale = Clean(upperAtmosphere, DefaultUpperAtmosphere);
+        SurfaceIlluminationStrength = Clean(illumination, 1f);
+        SurfaceIlluminationReachMeters = (float.IsFinite(illuminationReachKm) ? Math.Clamp(illuminationReachKm, 1f, 40f) : 20f) * 1000f;
         ReducedFlashes = reducedFlashes;
     }
 

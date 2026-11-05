@@ -14,7 +14,9 @@ public sealed class GameplayLightningDefaults
     private static readonly FloatField[] FloatFields =
     {
         new(nameof(GameplayLightningSettings.LightningFrequency), 1f, 0f, 2f),
-        new(nameof(GameplayLightningSettings.UpperAtmosphereLightning), 1f, 0f, 2f)
+        new(nameof(GameplayLightningSettings.UpperAtmosphereLightning), 1f, 0f, 2f),
+        new(nameof(GameplayLightningSettings.LightningIllumination), 1f, 0f, 2f),
+        new(nameof(GameplayLightningSettings.LightningIlluminationReachKm), 20f, 1f, 40f)
     };
 
     private static readonly string[] BoolFields = { nameof(GameplayLightningSettings.ReducedFlashes) };
@@ -95,13 +97,15 @@ public sealed class GameplayLightningDefaults
 
     public bool SetLightningFrequency(float value) => SetFloat(nameof(GameplayLightningSettings.LightningFrequency), value);
     public bool SetUpperAtmosphereLightning(float value) => SetFloat(nameof(GameplayLightningSettings.UpperAtmosphereLightning), value);
+    public bool SetLightningIllumination(float value) => SetFloat(nameof(GameplayLightningSettings.LightningIllumination), value);
+    public bool SetLightningIlluminationReachKm(float value) => SetFloat(nameof(GameplayLightningSettings.LightningIlluminationReachKm), value);
     public bool SetReducedFlashes(bool value) => SetBool(nameof(GameplayLightningSettings.ReducedFlashes), value);
 
     /// <summary>Publishes the saved choices to the lightning policy read by the scheduler, flash pulse and sprite layer.</summary>
     public void Apply()
     {
         GameplayLightningSettings s = Settings;
-        Lightning.LightningVisualPolicy.Apply(s.LightningFrequency, s.UpperAtmosphereLightning, s.ReducedFlashes);
+        Lightning.LightningVisualPolicy.Apply(s.LightningFrequency, s.UpperAtmosphereLightning, s.ReducedFlashes, s.LightningIllumination, s.LightningIlluminationReachKm);
     }
 
     public void Reset() { Settings = new(); Dirty = true; LastError = ""; }

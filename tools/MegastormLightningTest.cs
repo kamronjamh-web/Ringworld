@@ -9,8 +9,8 @@ using RingworldTechDemo.Voxel.Integration;
 namespace RingworldTechDemo.Tools;
 
 /// <summary>
-/// Megastorm WO7 (docs/megastorm-design.md 3.3 and section 8): the near strike stream. Pure checks (rates against a numeric expectation and the 0.3-1/s doc
-/// range, "Lightning frequency" and "Reduced flashes" scaling, window-split determinism, save/load document round trip, the sprite share) plus a staged
+/// Megastorm WO7 (docs/megastorm-design.md 3.3 and section 8): the near strike stream. Pure checks (rates against a numeric expectation, wall-depth
+/// distribution, "Lightning frequency" and "Reduced flashes" scaling, window-split determinism, save/load document round trip, the sprite share) plus a staged
 /// run through the real layer on the weather clock (strike appears with the shared cell id, expires, reappears identically after a rewind, absent without
 /// a source). Run: tools/megastorm_lightning_test.gd (headless). Prints MEGASTORM_LIGHTNING=PASS.
 /// </summary>
@@ -44,8 +44,9 @@ public partial class MegastormLightningTest : RefCounted
     static double ExpectedRate(MegastormModel model, double around, double across, bool blue, double t)
     {
         double circumference = model.Settings.CircumferenceMeters, rate = 0.0;
-        double chance = MegastormLightning.Chance * (blue ? MegastormLightning.BlueShare : 1.0) / MegastormLightning.SlotSeconds;
-        double xiLo = blue ? MegastormLightning.BlueXiMinMeters : 2000.0, xiHi = blue ? MegastormLightning.BlueXiMaxMeters : 20000.0;
+        // Physical contract, independent of the production constants: one main strike per 10 s per segment, blue at 10%.
+        double chance = blue ? 0.01 : 0.1;
+        double xiLo = blue ? -15000.0 : 500.0, xiHi = blue ? -5000.0 : 37500.0;
         for (int seg = 0; seg < MegastormLightning.Segments; seg++)
         {
             int inside = 0, total = 0;
@@ -77,8 +78,20 @@ public partial class MegastormLightningTest : RefCounted
             Info($"main {mainRate:0.000}/s (expected {mainExpected:0.000}), blue {blueRate:0.000}/s (expected {blueExpected:0.000})");
             Check(Math.Abs(mainRate / mainExpected - 1.0) < 0.10, $"main rate {mainRate:0.000} vs expected {mainExpected:0.000}");
             Check(Math.Abs(blueRate / blueExpected - 1.0) < 0.20, $"blue rate {blueRate:0.000} vs expected {blueExpected:0.000}");
-            Check(mainRate >= 0.3 && mainRate <= 1.0, $"main rate {mainRate:0.000} outside the 0.3-1/s doc range");
-            Check(scratch.All(s => s.Blue ? s.XiMeters is >= -15000.0 and <= -5000.0 : s.XiMeters is >= 2000.0 and <= 20000.0), "xi range");
+            Check(mainRate >= 1.2 && mainRate <= 2.2, $"main rate {mainRate:0.000} outside the 1.2-2.2/s observer range");
+            Check(scratch.All(s => s.Blue ? s.XiMeters is >= -15000.0 and <= -5000.0 : s.XiMeters is >= 500.0 and <= 37500.0), "xi range");
+            // Sample the whole wall so observer reach cannot bias front/middle/rear depth shares.
+            var wallFlashes = new List<MegastormLightning.MegastormFlash>();
+            MegastormLightning.FlashesInWindow(model, 0.0, T1, wallFlashes);
+            double wallRate = wallFlashes.Count / T1;
+            Check(Math.Abs(wallRate / 6.4 - 1.0) < 0.10, $"whole-wall rate {wallRate:0.000} vs 6.4/s");
+            Check(wallFlashes.All(f => f.XiMeters is >= 500.0 and <= 37500.0), "whole-wall xi range");
+            for (int bin = 0; bin < 3; bin++)
+            {
+                double lo = 500.0 + 37000.0 * bin / 3.0, hi = 500.0 + 37000.0 * (bin + 1) / 3.0;
+                double depthShare = (double)wallFlashes.Count(f => f.XiMeters >= lo && f.XiMeters < hi) / Math.Max(1, wallFlashes.Count);
+                Check(Math.Abs(depthShare - 1.0 / 3.0) < 0.03, $"wall depth bin {bin} share {depthShare:0.000} vs 1/3");
+            }
             // Frequency and reduced flashes scale it.
             double half = Count(model, 0.0, T1, ObserverAround, ObserverAcross, 0.5f, false, scratch) / T1;
             double twice = Count(model, 0.0, T1, ObserverAround, ObserverAcross, 2.0f, false, scratch) / T1;
