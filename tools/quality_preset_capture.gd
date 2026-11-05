@@ -5,6 +5,7 @@ extends SceneTree
 ## hitch trace (tools/WarmStallProbe.cs), then at each pose samples a baseline window and A-X-A ablation windows through existing runtime
 ## switches, plus a gameplay-speed flight. GPU power / P-state is logged for the whole run and summarised per window (report "power").
 ## Labels: see ALL_LABELS, plus proc_off:<game child> (process_mode DISABLED) and prop:<game child>:<property>=<int|float|bool>.
+## FSR labels use production menu Quality (85%) / Balanced (75%), including cloud/far runtime options and AA policy.
 ## Args (after --): --preset=3 --res=1920x1080 | --maximized  --poses=a,b  --labels=a,b  --first-pose-labels=a,b  --seconds=8 --warmup=2 --boot-seconds=60
 ##                  --flights=72@150,240@500 (speed m/s @ altitude m, 30 s each)  --flight-seconds=30  --out=<abs dir>  --idle-timeout=150
 ##                  --snap (PNG per window)  --user-prefs
@@ -12,14 +13,17 @@ extends SceneTree
 ##                  --release-note=<text> (stored verbatim as report["build_note"], e.g. the C# build configuration)
 ##                  --hold-seconds=<s> (idle after QP_BASELINE=PASS before quitting, for an attached dotnet-trace rundown)
 ##                  --gc-pace=<gen>:<mb>[:<frames>] (or / separators) / --gc-latency=<GCLatencyMode> (GC A-B experiments in tools/WarmStallProbe.cs)
+##                  --vegetation-render-trace (bounded CPU callback attribution CSV + summary alongside stall_frames.csv)
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
 const BRIDGE := preload("res://tools/ShadowTimingBridge.cs")
 const PROBE := preload("res://tools/WarmStallProbe.cs")
+const TREE_PROFILE := preload("res://tools/ImportedTreeAssetProfile.cs")
+const POLICY := preload("res://tools/quality_preset_capture_policy.gd")
 const HITCH_MS := 25.0
 const ALL_LABELS := ["sun_map_off", "planet_map_off", "cloud_shadow_gen_off", "macro_off", "tree_shadows_off", "hs_near", "sunshine_off", "far_vp_off",
 	"far_process_off", "near_terrain_hidden", "far_terrain_hidden", "grass_hidden", "trees_hidden", "grass_process_off", "trees_process_off",
-	"water_fft_off", "ssao_off", "haze_on", "baseline_repeat", "cloud_steps_128", "cloud_half_res", "cloud_interleave_4x4", "fsr2_quality", "fsr2_balanced",
+	"water_fft_off", "ssao_off", "haze_on", "haze_off", "baseline_repeat", "cloud_steps_128", "cloud_half_res", "cloud_interleave_4x4", "cloud_interleave_off", "fsr2_quality", "fsr2_balanced",
 	"far_vp_half", "atlas_4096", "sun_6km", "haze_physical_q4", "haze_physical_q8", "far_vp_every2", "tree_paused"]
 
 var game: Node
@@ -59,6 +63,10 @@ var power_pid := -1
 var power_path := ""
 var require_a1000 := false
 var run_started := false
+var live_stationary := false
+var validity_errors: Array[String] = []
+var original_clocks := {}
+var tree_loader_bridge: RefCounted
 
 
 func _init() -> void:
@@ -72,6 +80,7 @@ func _run() -> void:
 	if run_started:
 		return
 	run_started = true
+	live_stationary = COMMON.has_flag("--live-stationary")
 	if RenderingServer.get_rendering_device() == null:
 		_fail("RenderingDevice is required"); return
 	window_seconds = float(COMMON.arg_value("--seconds=", "8"))
@@ -92,7 +101,24 @@ func _run() -> void:
 	print("QP_BASELINE adapter=", machine["adapter"], " preset=", preset, " out=", out_dir)
 	report = {"status": "RUNNING", "machine": machine, "args": OS.get_cmdline_user_args(), "preset_requested": preset, "window_seconds": window_seconds,
 		"warmup_seconds": warmup_seconds, "hitch_ms": HITCH_MS, "poses": {}, "windows": [], "skipped": {}, "flights": [],
+		"recipe_requested": COMMON.arg_value("--recipe=", "production"), "capture_completed": false, "baseline_valid": false,
 		"build_note": COMMON.arg_value("--release-note=", ""), "csharp_assembly": {"path": "", "debug_build": OS.is_debug_build()}}
+	report["label_semantics"] = {"version": 2,
+		"fsr2_quality": {"production_preset": 2, "scale": 0.85, "previous_harness_scale": 0.67},
+		"fsr2_balanced": {"production_preset": 3, "scale": 0.75, "previous_harness_scale": 0.59},
+		"note": "FSR labels use production menu options and AA policy; older captures used different scales and are not equivalent label settings."}
+	report["timing_semantics"] = {"aggregate_is_frame_total": false,
+		"legacy_raw_sum_metrics": ["gpu_sum_ms", "sub_gpu_ms", "sub_cpu_ms", "cpu_render_ms"],
+		"warning": "Viewport timing reads return the last measured render. One-shot or disabled viewports can retain older samples. Legacy sums are raw sums of these reads, not per-frame GPU/CPU totals. Root and far viewport timings are reported separately; observed update modes do not prove sample freshness.",
+		"sample_freshness_verified": false, "monotonic_clock": "Time.get_ticks_usec", "window_bounds": "t0_usec/t1_usec",
+		"subviewport_update_mode_names": {str(SubViewport.UPDATE_DISABLED): "disabled", str(SubViewport.UPDATE_ONCE): "once", str(SubViewport.UPDATE_WHEN_VISIBLE): "when_visible", str(SubViewport.UPDATE_WHEN_PARENT_VISIBLE): "when_parent_visible", str(SubViewport.UPDATE_ALWAYS): "always"}}
+	var tree_loader_requested := COMMON.arg_value("--tree-catalog-loader=", "auto")
+	tree_loader_bridge = TREE_PROFILE.new()
+	var tree_configuration: Dictionary = tree_loader_bridge.call("ConfigureGameplayLoader", tree_loader_requested)
+	report["tree_catalog_loader_requested"] = tree_loader_requested
+	report["tree_catalog_configuration"] = tree_configuration
+	if not bool(tree_configuration.get("configured", false)):
+		_fail("tree catalog loader configuration failed: " + str(tree_configuration.get("error", "unknown error"))); return
 	require_a1000 = COMMON.has_flag("--a1000")
 	if require_a1000 and not bool(machine["authoritative"]):
 		_fail("--a1000 requires the RTX A1000"); return
@@ -103,6 +129,7 @@ func _run() -> void:
 	probe = PROBE.new()
 	probe.name = "QpStallProbe"
 	probe.set("DetailThresholdMs", HITCH_MS)
+	probe.set("VegetationRenderTrace", COMMON.has_flag("--vegetation-render-trace"))
 	# GC A-B experiments (debug tooling only): --gc-pace=<gen>:<mb>[:<frames>]  --gc-latency=<GCLatencyMode name>
 	var gc_pace := COMMON.arg_value("--gc-pace=", "")
 	if not gc_pace.is_empty():
@@ -116,11 +143,12 @@ func _run() -> void:
 	probe.call("Begin")
 	probe.call("SetContext", "boot")
 	var boot_start := Time.get_ticks_msec()
-	var fixture_root := "res://.godot/quality-presets-fixture/%d" % Time.get_ticks_usec()
+	var fixture_root := "user://generated/quality-presets-fixture/%d" % Time.get_ticks_usec()
 	game = await _create_game(fixture_root, preset)
 	if game == null:
 		_fail("game boot failed"); return
 	report["boot_ready_seconds"] = (Time.get_ticks_msec() - boot_start) / 1000.0
+	report["tree_catalog_after_game_creation"] = tree_loader_bridge.call("GetGameplayLoaderDiagnostics")
 	if not _bind():
 		return
 	probe.call("InstrumentWorld", game)
@@ -140,6 +168,9 @@ func _run() -> void:
 	_enable_viewport_timing()
 	timing = BRIDGE.new()
 	timing.call("Begin", false)
+	var generation: Dictionary = surface.call("GetSurfaceDiagnostics")
+	var recipe_json := str(generation.get("surface_generation_recipe_json", ""))
+	report["recipe_identity"] = {"canonical_json": recipe_json, "sha256": recipe_json.sha256_text(), "definition_hash": generation.get("terrain_definition_hash", ""), "contract_id": generation.get("surface_generation_contract_id", ""), "generator_version": generation.get("terrain_generator_version", 0)}
 	report["quality"] = _quality_identity()
 	print("QP_BASELINE quality ", JSON.stringify(report["quality"]))
 
@@ -151,12 +182,27 @@ func _run() -> void:
 	print("QP_FIRST_MINUTE ", JSON.stringify(_brief(boot)))
 	var idle_ok: bool = await COMMON.wait_builds_idle(self, game, 180.0, 60)
 	report["initial_idle"] = idle_ok
+	if not idle_ok:
+		validity_errors.append("initial streaming settle timed out")
 	report["initial_idle_seconds"] = (Time.get_ticks_msec() - boot_start) / 1000.0
+	var tree_diagnostics: Dictionary = tree_loader_bridge.call("GetGameplayLoaderDiagnostics")
+	report["tree_catalog_after_boot"] = tree_diagnostics
+	var expected_tree_route := "prepared" if tree_loader_requested == "prepared-required" else "source"
+	if tree_loader_requested != "auto" and str(tree_diagnostics.get("actual_loaded_from", "not_loaded")) != expected_tree_route:
+		_fail("tree catalog loader route mismatch: requested " + tree_loader_requested + ", got " + str(tree_diagnostics)); return
 	_capture_original()
+	var original_cycle := game.get_node_or_null("RingDayNightCycle")
+	var original_weather := game.get_node_or_null("RingVolumetricClouds")
+	if original_cycle != null:
+		original_clocks["cycle_paused"] = original_cycle.get("Paused")
+		original_clocks["cycle_fraction"] = float(original_cycle.call("GetCycleTimeSeconds")) / maxf(1.0, float(original_cycle.get("FullCycleSeconds")))
+	if original_weather != null:
+		original_clocks["weather_paused"] = original_weather.get("CloudSimulationPaused")
+		original_clocks["weather_time"] = original_weather.get("CloudSimulationTimeSeconds")
 	var base: Dictionary = COMMON.pose_now(game)
 	report["base_pose"] = base
 	COMMON.hold_world_clocks(game)
-	atmosphere.set("storm_auto_exposure_enabled", false)
+
 
 	var pose_names: PackedStringArray = COMMON.csv_arg("--poses=")
 	if pose_names.is_empty():
@@ -172,6 +218,7 @@ func _run() -> void:
 		var info: Dictionary = await _go(pose_name, base)
 		if info.has("error"):
 			report["skipped"][pose_name] = info
+			validity_errors.append("requested pose unavailable: " + pose_name)
 			print("QP_POSE %s SKIPPED %s" % [pose_name, str(info["error"])])
 			continue
 		report["poses"][pose_name] = {"info": info, "windows": []}
@@ -194,13 +241,21 @@ func _run() -> void:
 			var external_pause: bool = paused and label != "tree_paused"
 			if external_pause:
 				paused = false
+			if live_stationary:
+				_run_world_clocks()
 			await COMMON.settle(self, warmup_seconds)
 			var w := await _sample_series("%s:%s" % [pose_name, label], window_seconds, false)
 			w["external_pause_cleared"] = external_pause
+			w["clocks_live"] = _clocks_live()
+			var qualification := POLICY.stationary_invalid(bool(info.get("streaming_idle", false)) and bool(info.get("streaming_idle_after", true)), int(w["streaming_busy_frames"]), int(w["frames"]))
+			if not qualification.is_empty():
+				w["invalid"] = qualification
 			if paused and label != "tree_paused":
 				w["invalid"] = "tree paused during window"
 			if require_a1000 and not w.has("invalid") and not bool(w.get("power", {}).get("valid", true)):
 				w["invalid"] = "power: " + str(w["power"].get("verdict", ""))
+			if w.has("invalid"):
+				validity_errors.append(pose_name + ":" + label + ": " + str(w["invalid"]))
 			w["pose"] = pose_name
 			w["label"] = label
 			w["state"] = _state_dump()
@@ -216,9 +271,26 @@ func _run() -> void:
 		_summarize_pose(pose_name)
 		_write()
 
+	var walk_seconds := float(COMMON.arg_value("--walk-seconds=", "0"))
+	if walk_seconds > 0.0:
+		report["walk"] = await _walk(walk_seconds, base)
+	var live_seconds := float(COMMON.arg_value("--live-stationary-seconds=", "0"))
+	if live_seconds > 0.0:
+		var live_info: Dictionary = await _go("forest_noon", base)
+		_run_world_clocks()
+		await COMMON.settle(self, warmup_seconds)
+		var live := await _sample_series("live_stationary", live_seconds, false)
+		var why := POLICY.stationary_invalid(bool(live_info.get("streaming_idle", false)), int(live["streaming_busy_frames"]), int(live["frames"]))
+		if not why.is_empty():
+			live["invalid"] = why
+			validity_errors.append("live_stationary: " + why)
+		live["state"] = _state_dump()
+		report["live_stationary"] = live
 	var flights: PackedStringArray = COMMON.csv_arg("--flights=")
 	for spec in flights:
 		var parts := spec.split("@")
+		if parts.size() > 2 or not parts[0].is_valid_float() or POLICY.flight_tier(float(parts[0])) < 0 or (parts.size() > 1 and not parts[1].is_valid_float()):
+			_fail("flight must use a real 72 or 240 m/s tier: " + spec); return
 		probe.call("SetContext", "flight:" + spec)
 		var flight := await _flight(float(parts[0]), float(parts[1]) if parts.size() > 1 else 150.0, base)
 		flight["state"] = _state_dump()
@@ -226,18 +298,32 @@ func _run() -> void:
 		print("QP_FLIGHT ", JSON.stringify(_brief(flight)))
 		_write()
 
-	report["status"] = "PASS"
+	if COMMON.has_flag("--vegetation-render-trace"):
+		probe.call("StopVegetationRenderTrace")
+		var trace_deadline := Time.get_ticks_msec() + 5000
+		while not bool(probe.get("VegetationRenderTraceComplete")) and Time.get_ticks_msec() < trace_deadline:
+			await process_frame
+		var trace_complete := bool(probe.get("VegetationRenderTraceComplete"))
+		report["vegetation_render_trace"] = {"csv": "vegetation_render_work.csv", "summary": "vegetation_render_summary.json", "complete": trace_complete}
+		if not trace_complete:
+			validity_errors.append("vegetation render trace callbacks did not finish")
+	report["capture_completed"] = true
+	report["baseline_valid"] = validity_errors.is_empty()
+	report["validity_errors"] = validity_errors
+	report["status"] = "PASS" if validity_errors.is_empty() else "INVALID"
 	probe.call("WriteReport", out_dir)
 	probe.call("End")
 	timing.call("End")
 	COMMON.stop_power_log(power_pid)
+	_restore_clocks()
 	_write()
-	print("QP_BASELINE=PASS out=", out_dir)
+	print("QP_CAPTURE=COMPLETE out=", out_dir)
+	print("QP_BASELINE=", report["status"], " out=", out_dir)
 	# --hold-seconds=N keeps the process alive after the report so an attached dotnet-trace session can stop and write its rundown.
 	var hold := float(COMMON.arg_value("--hold-seconds=", "0"))
 	if hold > 0.0:
 		await create_timer(hold).timeout
-	quit(0)
+	quit(0 if validity_errors.is_empty() else 2)
 
 
 # ------------------------------------------------------------------ boot
@@ -251,8 +337,14 @@ func _create_game(fixture_root: String, preset: int) -> Node:
 	root.add_child(session)
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture_root)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
-	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
-	ProjectSettings.set_setting("ringworld/runtime/surface_weather_lung_v8", false)
+	var recipe := COMMON.arg_value("--recipe=", "production")
+	if not recipe in ["production", "legacy"]:
+		push_error("unknown recipe " + recipe)
+		return null
+	if recipe == "legacy":
+		ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
+		ProjectSettings.set_setting("ringworld/runtime/surface_weather_lung_v8", false)
+	report["recipe_settings"] = {"landforms_v7": ProjectSettings.get_setting("ringworld/runtime/surface_landforms_v7", true), "weather_lung_v8": ProjectSettings.get_setting("ringworld/runtime/surface_weather_lung_v8", true)}
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture_root))
 	var launcher := COMMON.LAUNCHER.instantiate()
 	root.add_child(launcher)
@@ -462,12 +554,13 @@ func _apply(label: String) -> bool:
 		"ssao_off":
 			ao.call("SetAmbientOcclusionEnabled", false)
 			restore_stack.append(func(): ao.call("SetAmbientOcclusionEnabled", orig["ssao"]))
-		"haze_on":
-			drawer.call("SetAtmosphereEnabled", true)
-			restore_stack.append(func(): drawer.call("SetAtmosphereEnabled", orig["haze"]))
-		"cloud_steps_128", "cloud_half_res", "cloud_interleave_4x4":
-			var prop: String = {"cloud_steps_128": "RaymarchSteps", "cloud_half_res": "CloudResolutionScale", "cloud_interleave_4x4": "CloudInterleave"}[label]
-			var value: int = {"cloud_steps_128": 128, "cloud_half_res": 1, "cloud_interleave_4x4": 2}[label]
+		"haze_on", "haze_off":
+			var before := POLICY.haze_state(graphics.call("GetAtmosphereTuningDiagnostics"))
+			drawer.call("SetAtmosphereEnabled", label == "haze_on")
+			restore_stack.append(func(): POLICY.restore_haze(drawer, before))
+		"cloud_steps_128", "cloud_half_res", "cloud_interleave_4x4", "cloud_interleave_off":
+			var prop: String = {"cloud_steps_128": "RaymarchSteps", "cloud_half_res": "CloudResolutionScale", "cloud_interleave_4x4": "CloudInterleave", "cloud_interleave_off": "CloudInterleave"}[label]
+			var value: int = {"cloud_steps_128": 128, "cloud_half_res": 1, "cloud_interleave_4x4": 2, "cloud_interleave_off": 0}[label]
 			var before = cloud_bridge.get(prop)
 			cloud_bridge.set(prop, value)
 			cloud_bridge.call("ApplyTemporalQualityTuning", true)
@@ -476,19 +569,47 @@ func _apply(label: String) -> bool:
 				cloud_bridge.call("ApplyTemporalQualityTuning", true))
 			await COMMON.settle(self, 2.0)
 		"fsr2_quality", "fsr2_balanced":
+			var menu := game.get_node_or_null("LodPauseMenu")
+			if menu == null or not menu.has_method("SetRenderResolutionPreset"):
+				return false
+			var resolution: Dictionary = menu.call("GetRenderResolutionDiagnostics")
+			if not bool(resolution.get("ready", false)) or not bool(resolution.get("fsr_available", false)):
+				return false
 			var mode := root.scaling_3d_mode
 			var scale := root.scaling_3d_scale
-			root.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2
-			root.scaling_3d_scale = 0.67 if label == "fsr2_quality" else 0.59
+			var aa := {"taa": root.use_taa, "msaa": root.msaa_3d, "screen": root.screen_space_aa}
+			var sharpness := root.fsr_sharpness
+			var mip_bias := root.texture_mipmap_bias
+			var cloud_options := {"interleave": cloud_bridge.get("DisableCloudInterleaveUnderFsr"), "jitter": cloud_bridge.get("CompositorJitterCompensation")}
+			var far_options := {"follows": scaled_far.get("FarViewportFollowsFsrScale"), "jitter": scaled_far.get("CompositorJitterCompensation")}
+			menu.call("SetAdaptiveRenderResolution", false)
+			# Production presets also apply FSR cloud/far options and reapply the runtime AA preference.
+			menu.call("SetRenderResolutionPreset", 2 if label == "fsr2_quality" else 3)
 			restore_stack.append(func():
+				menu.call("SetAdaptiveRenderResolution", false)
+				menu.call("SetRenderResolutionPreset", int(resolution["preset"]))
+				menu.call("SetAdaptiveRenderResolution", bool(resolution["adaptive_enabled"]))
 				root.scaling_3d_mode = mode
-				root.scaling_3d_scale = scale)
+				root.scaling_3d_scale = scale
+				# Reapply runtime options after restoring an exact adaptive/auto viewport state.
+				menu.call("SetFsrSharpness", float(resolution["fsr_sharpness"]))
+				root.fsr_sharpness = sharpness
+				root.texture_mipmap_bias = mip_bias
+				root.use_taa = aa["taa"]
+				root.msaa_3d = aa["msaa"]
+				root.screen_space_aa = aa["screen"]
+				cloud_bridge.set("DisableCloudInterleaveUnderFsr", cloud_options["interleave"])
+				cloud_bridge.set("CompositorJitterCompensation", cloud_options["jitter"])
+				scaled_far.set("FarViewportFollowsFsrScale", far_options["follows"])
+				scaled_far.set("CompositorJitterCompensation", far_options["jitter"])
+				cloud_bridge.call("ApplyTemporalQualityTuning", true))
 			await COMMON.settle(self, 1.0)
 		"far_vp_half":
-			scaled_far.call("ApplyRuntimeRenderQuality", 0.5, int(scaled_far.get("AroundSegments")), int(scaled_far.get("AcrossSegments")))
+			var scale := float(scaled_far.get("ResolutionScale"))
 			var around := int(scaled_far.get("AroundSegments"))
 			var across := int(scaled_far.get("AcrossSegments"))
-			restore_stack.append(func(): scaled_far.call("ApplyRuntimeRenderQuality", 1.0, around, across))
+			scaled_far.call("ApplyRuntimeRenderQuality", 0.5, around, across)
+			restore_stack.append(func(): scaled_far.call("ApplyRuntimeRenderQuality", scale, around, across))
 			await COMMON.settle(self, 1.0)
 		"far_vp_every2":
 			# Proposal probe: the far viewport renders every other frame (UPDATE_ONCE re-armed on even frames).
@@ -518,13 +639,11 @@ func _apply(label: String) -> bool:
 			graphics.call("SetShadowTuningOverride", "MaxDistanceMeters", 6000.0)
 			restore_stack.append(func(): graphics.call("SetShadowTuningOverride", "MaxDistanceMeters", prev_max))
 		"haze_physical_q4", "haze_physical_q8":
+			var before := POLICY.haze_state(graphics.call("GetAtmosphereTuningDiagnostics"))
 			drawer.call("SetAtmosphereHazeModel", 1)
 			drawer.call("SetAtmosphereHazeQuality", 4 if label == "haze_physical_q4" else 8)
 			drawer.call("SetAtmosphereEnabled", true)
-			restore_stack.append(func():
-				drawer.call("SetAtmosphereHazeModel", 0)
-				drawer.call("SetAtmosphereHazeQuality", 8)
-				drawer.call("SetAtmosphereEnabled", orig["haze"]))
+			restore_stack.append(func(): POLICY.restore_haze(drawer, before))
 			await COMMON.settle(self, 1.0)
 		_:
 			if label.begins_with("proc_off:"):
@@ -598,6 +717,7 @@ func _go(pose_name: String, base: Dictionary) -> Dictionary:
 			var weather := game.get_node_or_null("RingVolumetricClouds")
 			if weather != null:
 				weather.set("CloudSimulationPaused", false)
+			_run_world_clocks()
 			await COMMON.settle(self, 20.0)
 			info["rain"] = _weather_state()
 			if COMMON.has_flag("--snap"):
@@ -625,6 +745,12 @@ func _state_dump() -> Dictionary:
 	var weather := game.get_node_or_null("RingVolumetricClouds")
 	if weather != null:
 		d["weather_sim_paused"] = weather.get("CloudSimulationPaused")
+	var cycle := game.get_node_or_null("RingDayNightCycle")
+	if cycle != null:
+		d["celestial_paused"] = cycle.get("Paused")
+	d["far_readiness"] = {"startup_complete": scaled_far.get("StartupComplete"), "startup_error": scaled_far.get("StartupError"),
+		"global_geometry_ready": scaled_far.get("GlobalGeometryReady"), "pending_terrain_sectors": scaled_far.get("PendingTerrainSectorCount"),
+		"surface_tile_pending": scaled_far.get("SurfaceTilePendingCount"), "all_active_tiles_ready": scaled_far.get("GlobalTerrainTilesReady")}
 	# Effective terrain quality: the certification monitor's memory guard can drop Very High to High mid-run (working set > 90% of its limit).
 	d["lod_preset"] = coordinator.get("CurrentPresetName")
 	d["adaptive_fallbacks"] = coordinator.get("AdaptiveFallbackCount")
@@ -632,6 +758,14 @@ func _state_dump() -> Dictionary:
 	if cert != null:
 		d["working_set_mb"] = int(cert.get("CurrentWorkingSetBytes")) / 1048576
 		d["terrain_est_mb"] = int(cert.get("EstimatedTerrainBytes")) / 1048576
+	d["cloud_quality"] = _quality_identity()
+	d["cloud_renderer"] = cloud_bridge.call("GetCloudRendererDiagnostics")
+	d["cloud_interleave_requested"] = cloud_bridge.get("CloudInterleave")
+	d["effective_interleave_available"] = false
+	if height_shadow != null:
+		d["height_shadow"] = {"phase": height_shadow.get("Phase"), "status": height_shadow.get("Status"),
+			"publish_count": height_shadow.get("PublishCount"), "published_light": height_shadow.get("PublishedLight"),
+			"sun_heightfield_ready": height_shadow.get("IsSunHeightfieldReady")}
 	return d
 
 
@@ -693,15 +827,77 @@ func _key(code: int, down: bool) -> void:
 	Input.parse_input_event(e)
 
 
+func _run_world_clocks() -> void:
+	var weather := game.get_node_or_null("RingVolumetricClouds")
+	var cycle := game.get_node_or_null("RingDayNightCycle")
+	if weather != null:
+		weather.set("CloudSimulationPaused", false)
+	if cycle != null:
+		cycle.set("Paused", false)
+
+
+func _clocks_live() -> bool:
+	var weather := game.get_node_or_null("RingVolumetricClouds")
+	var cycle := game.get_node_or_null("RingDayNightCycle")
+	return weather != null and cycle != null and not bool(weather.get("CloudSimulationPaused")) and not bool(cycle.get("Paused"))
+
+
+func _restore_clocks() -> void:
+	if not is_instance_valid(game):
+		return
+	var weather := game.get_node_or_null("RingVolumetricClouds")
+	var cycle := game.get_node_or_null("RingDayNightCycle")
+	if weather != null and original_clocks.has("weather_time"):
+		weather.set("CloudSimulationTimeSeconds", original_clocks["weather_time"])
+		weather.set("CloudSimulationPaused", original_clocks["weather_paused"])
+	if cycle != null and original_clocks.has("cycle_fraction"):
+		cycle.call("SetCycleFraction", original_clocks["cycle_fraction"])
+		cycle.set("Paused", original_clocks["cycle_paused"])
+
+
+func _walk(seconds: float, base: Dictionary) -> Dictionary:
+	probe.call("SetContext", "walk")
+	COMMON.apply_time(game, {"mode": "noon"})
+	var ground := float(surface.call("SampleHeight", float(base["around"]), float(base["across"])))
+	var accepted := bool(explorer.call("TeleportToCanonicalMeters", float(base["around"]), ground + 1.1, float(base["across"]), float(base["yaw"]), -8.0, false))
+	var settled: bool = await COMMON.wait_builds_idle(self, game, idle_timeout)
+	var deadline := Time.get_ticks_msec() + 30000
+	while not bool(explorer.call("is_on_floor")) and Time.get_ticks_msec() < deadline:
+		await physics_frame
+	var grounded := bool(explorer.call("is_on_floor"))
+	_run_world_clocks()
+	_key(KEY_SHIFT, false)
+	_key(KEY_W, true)
+	await COMMON.settle(self, 2.0)
+	var start_pose: Dictionary = COMMON.pose_now(game)
+	var series := await _sample_series("walk", seconds, true)
+	_key(KEY_W, false)
+	var end_pose: Dictionary = COMMON.pose_now(game)
+	series["start"] = start_pose
+	series["end"] = end_pose
+	series["grounded_before_motion"] = grounded
+	series["settled_before_motion"] = settled
+	series["requested_speed"] = explorer.get("MoveSpeed")
+	series["distance_m"] = Vector2(float(end_pose["around"]) - float(start_pose["around"]), float(end_pose["across"]) - float(start_pose["across"])).length()
+	series["observed_speed_mps"] = float(series["distance_m"]) / maxf(float(series["elapsed_seconds"]), 0.001)
+	series["state"] = _state_dump()
+	var qualification := POLICY.walk_invalid(accepted, settled, grounded, bool(explorer.get("NoclipEnabled")), float(series["observed_speed_mps"]), float(series["grounded_fraction"]), float(series["blocked_fraction"]))
+	if not qualification.is_empty():
+		series["invalid"] = qualification
+		validity_errors.append("walk: " + str(series["invalid"]))
+	COMMON.hold_world_clocks(game)
+	return series
+
+
 func _flight(speed: float, alt: float, base: Dictionary) -> Dictionary:
 	var weather := game.get_node_or_null("RingVolumetricClouds")
 	var cycle := game.get_node_or_null("RingDayNightCycle")
 	COMMON.apply_time(game, {"mode": "noon"})
 	var ground := float(surface.call("SampleHeight", float(base["around"]), float(base["across"])))
-	explorer.call("TeleportToCanonicalMeters", float(base["around"]), ground + alt, float(base["across"]), float(base["yaw"]), -8.0, true)
+	var accepted := bool(explorer.call("TeleportToCanonicalMeters", float(base["around"]), ground + alt, float(base["across"]), float(base["yaw"]), -8.0, true))
 	await COMMON.settle(self, 0.3)
-	await COMMON.wait_builds_idle(self, game, idle_timeout)
-	explorer.call("SelectNoclipSpeedTier", 1 if speed < 150.0 else 2)
+	var settled: bool = await COMMON.wait_builds_idle(self, game, idle_timeout)
+	explorer.call("SelectNoclipSpeedTier", POLICY.flight_tier(speed))
 	if weather != null:
 		weather.set("CloudSimulationPaused", false)
 	if cycle != null:
@@ -714,8 +910,17 @@ func _flight(speed: float, alt: float, base: Dictionary) -> Dictionary:
 	_key(KEY_W, false)
 	COMMON.hold_world_clocks(game)
 	series["requested_speed"] = speed
+	series["settled_before_motion"] = settled
+	series["teleport_accepted"] = accepted
+	var qualification := POLICY.flight_invalid(accepted, settled, speed, _m(series, "travel_speed_mps"))
+	if not qualification.is_empty():
+		series["invalid"] = qualification
+		validity_errors.append(str(series["tag"]) + ": " + qualification)
 	series["altitude"] = alt
+	series["target_speed_mps"] = explorer.get("NoclipTargetSpeedMetersPerSecond")
+	series["current_speed_mps"] = explorer.get("NoclipCurrentSpeedMetersPerSecond")
 	series["distance_m"] = Vector2(float(end_pose["around"]) - float(start_pose["around"]), float(end_pose["across"]) - float(start_pose["across"])).length()
+	series["observed_speed_mps"] = float(series["distance_m"]) / maxf(float(series["elapsed_seconds"]), 0.001)
 	series["start"] = start_pose
 	series["end"] = end_pose
 	return series
@@ -747,10 +952,13 @@ func _sample_series(tag: String, seconds: float, with_streaming: bool) -> Dictio
 	timing.call("ResetWindow")
 	var t0_utc := Time.get_unix_time_from_system()
 	var series := {"wall_ms": [], "root_gpu_ms": [], "root_cpu_ms": [], "sub_gpu_ms": [], "sub_cpu_ms": [], "far_gpu_ms": [], "far_cpu_ms": [], "gpu_sum_ms": [],
-		"cpu_render_ms": [], "frame_setup_ms": [], "process_ms": [], "physics_ms": [], "draw_calls": [], "primitives": [], "objects": []}
+		"cpu_render_ms": [], "frame_setup_ms": [], "process_ms": [], "physics_ms": [], "travel_speed_mps": [], "draw_calls": [], "primitives": [], "objects": []}
 	var per_vp := {}
+	var update_modes := {str(root.name): {"root_window": 0}}
 	var hitches: Array = []
 	var busy_frames := 0
+	var grounded_frames := 0
+	var blocked_frames := 0
 	var start := Time.get_ticks_usec()
 	var last := start
 	var far_vp: SubViewport = scaled_far.get("OuterViewportForDiagnostics")
@@ -761,10 +969,11 @@ func _sample_series(tag: String, seconds: float, with_streaming: bool) -> Dictio
 		last = now
 		var root_gpu := RenderingServer.viewport_get_measured_render_time_gpu(root.get_viewport_rid())
 		var root_cpu := RenderingServer.viewport_get_measured_render_time_cpu(root.get_viewport_rid())
+		update_modes[str(root.name)]["root_window"] += 1
 		var sub_gpu := 0.0
 		var sub_cpu := 0.0
-		var far_gpu := 0.0
-		var far_cpu := 0.0
+		var far_gpu := NAN
+		var far_cpu := NAN
 		for vp in measured_viewports:
 			if vp == root or not is_instance_valid(vp):
 				continue
@@ -773,6 +982,10 @@ func _sample_series(tag: String, seconds: float, with_streaming: bool) -> Dictio
 			sub_gpu += g
 			sub_cpu += c
 			var key := str(vp.name)
+			var mode := str((vp as SubViewport).render_target_update_mode) if vp is SubViewport else "not_subviewport"
+			if not update_modes.has(key):
+				update_modes[key] = {}
+			update_modes[key][mode] = int(update_modes[key].get(mode, 0)) + 1
 			if not per_vp.has(key):
 				per_vp[key] = {"gpu": [], "cpu": []}
 			per_vp[key]["gpu"].append(g)
@@ -781,6 +994,12 @@ func _sample_series(tag: String, seconds: float, with_streaming: bool) -> Dictio
 				far_gpu = g
 				far_cpu = c
 		var setup := RenderingServer.get_frame_setup_time_cpu()
+		series["travel_speed_mps"].append(float(explorer.get("ActualTravelSpeedMetersPerSecond")))
+		if bool(explorer.call("is_on_floor")):
+			grounded_frames += 1
+		# A grounded W-only traversal below 1 m/s is blocked for qualification purposes.
+		if float(explorer.get("ActualTravelSpeedMetersPerSecond")) < 1.0:
+			blocked_frames += 1
 		series["wall_ms"].append(wall)
 		series["root_gpu_ms"].append(root_gpu)
 		series["root_cpu_ms"].append(root_cpu)
@@ -796,15 +1015,20 @@ func _sample_series(tag: String, seconds: float, with_streaming: bool) -> Dictio
 		series["draw_calls"].append(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME))
 		series["primitives"].append(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 		series["objects"].append(Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME))
-		var idle := COMMON.builds_idle(game) if with_streaming else true
+		var idle := COMMON.builds_idle(game)
 		if not idle:
 			busy_frames += 1
 		if wall > HITCH_MS:
 			hitches.append({"t_s": (now - start) * 0.000001, "wall_ms": wall, "gpu_ms": root_gpu + sub_gpu, "setup_ms": setup, "streaming": not idle})
 		timing.call("Sample")
+	var end := Time.get_ticks_usec()
 	var t1_utc := Time.get_unix_time_from_system()
 	var result := {"tag": tag, "seconds": seconds, "frames": series["wall_ms"].size(), "hitch_count": hitches.size(), "hitches": hitches.slice(0, 80),
-		"streaming_busy_frames": busy_frames, "metrics": {}, "viewports": {}, "markers": {}, "t0_utc": t0_utc, "t1_utc": t1_utc}
+		"streaming_busy_frames": busy_frames, "streaming_expected": with_streaming, "elapsed_seconds": (end - start) * 0.000001, "metrics": {}, "viewports": {}, "markers": {}, "t0_utc": t0_utc, "t1_utc": t1_utc,
+		"t0_usec": start, "t1_usec": end, "viewport_update_mode_observation_frames": update_modes}
+	result["grounded_fraction"] = float(grounded_frames) / maxf(float(result["frames"]), 1.0)
+	result["blocked_fraction"] = float(blocked_frames) / maxf(float(result["frames"]), 1.0)
+	result["clocks_live"] = _clocks_live()
 	result["power"] = COMMON.power_window(COMMON.parse_power_log(power_path), t0_utc, t1_utc, machine, COMMON.local_offset_seconds())
 	for key in series:
 		result["metrics"][key] = _dist(series[key])
@@ -835,8 +1059,8 @@ func _m(w: Dictionary, metric: String, stat := "median") -> float:
 
 func _brief(w: Dictionary) -> Dictionary:
 	return {"tag": w.get("tag", ""), "frames": w.get("frames", 0), "wall_med": _m(w, "wall_ms"), "wall_p95": _m(w, "wall_ms", "p95"), "wall_p99": _m(w, "wall_ms", "p99"),
-		"gpu_med": _m(w, "gpu_sum_ms"), "gpu_p95": _m(w, "gpu_sum_ms", "p95"), "root_gpu": _m(w, "root_gpu_ms"), "far_gpu": _m(w, "far_gpu_ms"),
-		"cpu_render": _m(w, "cpu_render_ms"), "setup": _m(w, "frame_setup_ms"), "process": _m(w, "process_ms"), "draws": _m(w, "draw_calls"),
+		"root_gpu": _m(w, "root_gpu_ms"), "root_gpu_p95": _m(w, "root_gpu_ms", "p95"), "far_gpu": _m(w, "far_gpu_ms"), "far_gpu_p95": _m(w, "far_gpu_ms", "p95"),
+		"root_cpu": _m(w, "root_cpu_ms"), "far_cpu": _m(w, "far_cpu_ms"), "setup": _m(w, "frame_setup_ms"), "process": _m(w, "process_ms"), "draws": _m(w, "draw_calls"),
 		"hitches": w.get("hitch_count", 0), "busy": w.get("streaming_busy_frames", 0)}
 
 
@@ -847,23 +1071,25 @@ func _summarize_pose(pose_name: String) -> void:
 		var w: Dictionary = ws[i]
 		if w["label"] == "baseline" or i == 0 or i + 1 >= ws.size():
 			continue
+		if w.has("invalid") or ws[i - 1].has("invalid") or ws[i + 1].has("invalid"):
+			continue
 		var a: Dictionary = ws[i - 1]
 		var b: Dictionary = ws[i + 1]
 		var d := {}
-		for metric in ["wall_ms", "gpu_sum_ms", "root_gpu_ms", "far_gpu_ms", "sub_gpu_ms", "cpu_render_ms", "frame_setup_ms", "process_ms", "root_cpu_ms", "sub_cpu_ms", "draw_calls"]:
+		for metric in ["wall_ms", "gpu_sum_ms", "root_gpu_ms", "far_gpu_ms", "far_cpu_ms", "sub_gpu_ms", "cpu_render_ms", "frame_setup_ms", "process_ms", "root_cpu_ms", "sub_cpu_ms", "draw_calls"]:
 			d[metric] = _m(w, metric) - 0.5 * (_m(a, metric) + _m(b, metric))
 			d[metric + "@drift"] = _m(b, metric) - _m(a, metric)
 		var markers := {}
 		for key in w["markers"]:
-			var ma := float(a["markers"].get(key, {}).get("median", 0.0))
-			var mb := float(b["markers"].get(key, {}).get("median", 0.0))
-			markers[key] = float(w["markers"][key].get("median", 0.0)) - 0.5 * (ma + mb)
+			var ma := float(a["markers"].get(key, {}).get("median", NAN))
+			var mb := float(b["markers"].get(key, {}).get("median", NAN))
+			markers[key] = float(w["markers"][key].get("median", NAN)) - 0.5 * (ma + mb)
 		d["markers"] = markers
 		summary[w["label"]] = d
 	report["poses"][pose_name]["summary"] = summary
 	var line := ""
 	for label in summary:
-		line += " %s:gpu%+.2f/cpu%+.2f/wall%+.2f" % [label, summary[label]["gpu_sum_ms"], summary[label]["cpu_render_ms"], summary[label]["wall_ms"]]
+		line += " %s:root_gpu%+.2f/far_gpu%+.2f/root_cpu%+.2f/far_cpu%+.2f/wall%+.2f" % [label, summary[label]["root_gpu_ms"], summary[label]["far_gpu_ms"], summary[label]["root_cpu_ms"], summary[label]["far_cpu_ms"], summary[label]["wall_ms"]]
 	print("QP_SUMMARY ", pose_name, line)
 
 
@@ -878,6 +1104,10 @@ func _fail(reason: String) -> void:
 	if failed:
 		return
 	failed = true
+	_key(KEY_W, false)
+	_key(KEY_SHIFT, false)
+	_restore()
+	_restore_clocks()
 	report["status"] = "FAIL"
 	report["reason"] = reason
 	COMMON.stop_power_log(power_pid)

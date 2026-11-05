@@ -1,6 +1,176 @@
 # Graphics quality presets: plan and baseline (2026-10-24)
 
-Status: plan and measurements only. No production code, settings or shaders were changed. Measured on the RTX 4070 desktop (i9-14900KF); the RTX A1000 numbers below are estimates until the user runs the A1000 checks.
+Historical status (2026-10-24): plan and measurements only. No production code, settings or shaders were changed. Measured on the RTX 4070 desktop (i9-14900KF); the RTX A1000 numbers below are estimates until the user runs the A1000 checks.
+
+## Current execution: 2026-11-02
+
+This section records the current execution against the user's target of **60 FPS on both RTX 4070 and RTX A1000**. The original October 24 sections below remain historical evidence: their Debug/editor runs and legacy world fixture are not interchangeable with this Release baseline. This update changes the tree asset preparation path; it does not establish overall 60 FPS acceptance. Dates here use the local November 2 session; some raw reports have November 3 UTC timestamps.
+
+### Current RTX 4070 Release baseline
+
+The frozen baseline uses an actual exported Godot Release executable and non-Debug C# assembly, Forward+, Very High, 1920x1080, VSync off and no frame cap. It uses the production `ringworld_surface_weather_lung_v8` recipe, seed 1337, with both landforms-v7 and weather-lung-v8 enabled. Physical haze and heightfield shadows are enabled. The isolated `arch_60fps` APPDATA profile reuses caches; these are **not cold OS/import/shader-cache measurements**.
+
+[The baseline report](../.godot/quality_presets/4070_baseline/report.json) records `capture_completed=true`, `baseline_valid=true`, initial streaming idle, and no validity errors. [Rendered capture validation](../.godot/quality_presets/4070_baseline/capture_validation.json) additionally records `rendered_valid=true` and zero render errors. The GPU is the local RTX 4070; the report's hardware profile label remains non-authoritative. Power/clock telemetry is retained beside the report.
+
+Obtaining this valid export also required including `*.compinc` shader dependencies and correcting typed array-texture placeholders, publication/cleanup ownership and failed height-shadow dispatch handling. Earlier pilots with missing includes or invalid uniform bindings are rejected evidence. The fixes eliminate those errors in the accepted captures; they do not establish that all engine shutdown failures are resolved.
+
+Each pose has three 10-second windows after a 5-second warmup (`baseline`, `baseline_repeat`, `baseline`). The table reports the **median of the three window statistics**, not a pooled percentile across all frames. Non-storm pose clocks are held; storm clocks are live. All pose windows recorded zero streaming-busy frames.
+
+| Pose | Median frame, ms | p95 frame, ms | p99 frame, ms |
+|---|---:|---:|---:|
+| Forest noon | 12.95 | 20.70 | 27.55 |
+| Coast | 14.44 | 24.23 | 29.22 |
+| Emitter rim | 11.26 | 12.00 | 26.42 |
+| 1 km altitude | 15.60 | 25.10 | 31.02 |
+| 30 km altitude / far arch | 15.25 | 16.58 | 18.45 |
+| Planet-lit night | 12.62 | 21.76 | 27.26 |
+| Storm | 14.61 | 23.04 | 29.54 |
+
+The same report includes live-clock motion and stationary windows:
+
+| Workload | Duration | Median frame, ms | p95 frame, ms | p99 frame, ms | Frames over 25 ms |
+|---|---:|---:|---:|---:|---:|
+| Live stationary | 60 s | 13.68 | 22.32 | 28.20 | 140 |
+| Grounded walking | 30 s | 14.21 | 26.44 | 33.04 | 113 |
+| Flight, 72 m/s tier at 150 m | 30 s | 13.84 | 32.82 | 38.52 | 277 |
+| Flight, 240 m/s tier at 500 m | 30 s | 17.69 | 44.37 | 52.89 | 227 |
+
+Walking was grounded throughout and covered 212.7 m (observed 7.09 m/s; requested speed 12 m/s), with 42.3% of samples blocked. This is a collision-limited walk, not an unobstructed 12 m/s traversal. Flights covered 2,139.3 m and 7,134.6 m, with observed travel speeds 71.30 and 237.71 m/s and the requested 72/240 m/s tiers confirmed. The first live minute recorded 276 frames over 25 ms, with first-30-second p95/p99 of 40.71/53.96 ms and a maximum frame of 461.56 ms. The median frame alone therefore cannot establish sustained 60 FPS or hitch acceptance.
+
+**RTX A1000 remains deferred to the user's other machine.** Keep its 1080p Medium target and power-valid measurements pending; none of the RTX 4070 results prove A1000 performance.
+
+### Empty-user-profile startup
+
+[The empty-profile Release capture](../.godot/quality_presets/4070_empty-profile/report.json) uses the frozen source-loader baseline with `Cache none`. It completed with zero rendering errors. Only the isolated user profile was empty; project import caches, OS file caches and driver caches were not flushed. This is a first-user-profile measurement, not a fully cold-machine measurement.
+
+Boot readiness took **14.33 s**, compared with 4.86 s in the warm full baseline. The next 60 seconds averaged 50.16 FPS, with median/p95/p99 frame times of 13.08/34.37/56.28 ms and a **6.61 s maximum frame**. That frame's probe recorded 6.39 s between pre-draw and post-draw, 25 surface and four specialization pipeline creations, and about 288 MB of added texture memory; its GC pause was only 6.26 ms. These events coincide with the stall, but do not isolate a single cause. Preprocessed trees therefore solve only part of first-run loading: native pipeline creation, texture/resource upload and their scheduling remain profiling targets.
+
+Godot distinguishes surface-cache precompilation from background specialization. Its shader baker can move shader-to-intermediate-format compilation into export, but cannot bake hardware/driver-specific pipelines and does not replace scene/feature prewarming. Export shader baking is currently unconfigured here and requires a GPU-capable export rather than `--headless`; it is a separate startup experiment, not an established fix for the measured stall. [Godot pipeline compilation and shader baker documentation](https://docs.godotengine.org/en/latest/tutorials/performance/pipeline_compilations.html).
+
+### Prepared tree catalog: implementation and authoring
+
+The production-preferred artifact is [resources/trees/prepared/lolipop_catalog.res](../resources/trees/prepared/lolipop_catalog.res), **15,703,135 bytes (15.7 MB decimal)**. It preserves all 30 authored variants in their existing ordering, four LODs each (120 ArrayMeshes), 210 surfaces/materials, collision dimensions and lossless wind attachment metadata. `ImportedTreeCatalog.CatalogVersion` remains 1, so this optimization does not change placement/cache identity. Shared impostor construction still runs at startup and is outside this catalog-only change.
+
+The baker reuses the original source normalization/material/wind code, saves an ordinary resource with external shader/texture references, reloads it, and verifies exact mesh-channel/index/format/AABB and material-uniform/path/class parity across all 30 variants/120 LODs. The matched profile inventories retain **78 CompressedTexture2D and 15 StreamedTexture2D resources**, with no conversion of external textures into embedded image textures. The prepared-material GPU test obtains a texture from the reloaded catalog and verifies native residency reduction/recovery under memory budget changes.
+
+Run authoring and the pure check from the repository root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/prepare_tree_assets.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_prepared_tree_assets.ps1
+```
+
+The authoring wrapper builds the pinned toolchain, explicitly reimports the three source glTF scenes in a separate headless editor process, then bakes into staging. It checks exact parity, checks that authoring inputs stayed unchanged, validates the staging manifest, and promotes the completed artifact/manifest. Ordinary `--import` alone is insufficient evidence for an external `.bin`-only change. The source fingerprint covers the nine glTF/bin/scene-import files plus 96 texture import policies (105 inputs), streamed through SHA-256. The compiled implementation identity covers the handwritten bake/schema implementation. Engine identity records `4.8-dev7 (official)|c971f93e7`: the suffix is explicitly a **nine-character commit prefix**.
+
+The pure checker verifies the artifact SHA, manifest, current source inputs and implementation identity without launching Godot or using the GPU. The MSBuild `PrepareForPublish` guard runs it before publishing. Development loading checks the authoring fingerprint once per process; exports use baked schema/engine/compiled implementation identities without reading development source files.
+
+Missing prepared assets permit the existing source path with an explicit diagnostic. A detected authoring fingerprint mismatch rejects fallback and instructs the user to force reimport/rebuild, because cached source imports may themselves be stale after a `.bin` edit. **Missing or unreadable prepared resources do not prove source import freshness**; source fallback diagnostics must not be treated as a freshness guarantee. `prepared-required` diagnostics fail rather than silently fall back. Runtime hydration reads lightweight resource metadata and material references; full mesh-array parity belongs to baking/tests.
+
+### Matched fresh-process Release catalog measurements
+
+[tree-after provenance](../.godot/arch_60fps/tree-after/provenance.json) records the executable/PCK/assembly hashes and the fixed reused APPDATA profile. Source and `prepared-required` samples use the **same exported Release pack**, interleaved in three fresh processes per route for each of synchronous/cooperative loading (12 processes total). All samples validated; prepared samples recorded zero source scene instantiations and zero source LOD bakes, compared with three scene instantiations and 120 LOD bakes for source samples. [The run summary](../.godot/arch_60fps/tree-after/summary.json) and individual JSON reports retain the raw evidence.
+
+Each cell below is the median of three samples. Managed MB are decimal and include all-thread allocations over the measured phase; process startup and post-timing inventory are excluded.
+
+| Catalog route | Phase elapsed, ms | Active loader time, ms | Largest loader step, ms | Managed allocation, MB |
+|---|---:|---:|---:|---:|
+| Synchronous source | 1,012.4 | 1,011.8 | 1,011.8 | 77.123 |
+| Synchronous prepared-required | 176.8 | 176.2 | 176.2 | 0.451 |
+| Cooperative source | 1,025.2 | 806.8 | 60.94 | 77.176 |
+| Cooperative prepared-required | 221.0 | 14.86 | 5.26 | 0.535 |
+
+The synchronous catalog phase is approximately 82.5% shorter with about 99.4% less managed allocation. Cooperative elapsed time includes frame waits and threaded resource loading; its active loader time is not the total load latency. Cooperative largest-step medians improve from 60.94 to 5.26 ms. These measurements demonstrate a startup catalog improvement. They do not measure total world loading, the separate shared impostor phase, steady-state rendering, or streaming flight FPS. Caches were reused and not flushed.
+
+Do **not** infer a flight FPS improvement by comparing the full baseline with `4070_prepared_trace`: those captures have unmatched workload/instrumentation conditions. The following matched comparison is the gameplay check.
+
+### Matched source / prepared / source gameplay
+
+Three fresh processes used the same frozen `release_matched` export, production recipe, reused profile, Very High 1080p settings and workload: 10-second boot sampling, forest pose, 15-second live stationary window, and two 30-second flights. The optional callback trace was disabled. A tool-only selector forced the original source loader, then the prepared loader, then source again. Both source runs recorded three scene instantiations and 120 LOD bakes; prepared recorded zero of each. All three completed with zero rendering errors and required the known dev7 shutdown cleanup after their completed reports.
+
+| Workload | Source A | Prepared | Source B |
+|---|---:|---:|---:|
+| Boot readiness | 4.955 s | 4.001 s | 4.884 s |
+| Live stationary median / p95 | 13.33 / 21.82 ms | 13.26 / 21.71 ms | 13.18 / 22.35 ms |
+| 72 m/s flight average FPS | 61.22 | 62.35 | 60.61 |
+| 72 m/s flight median / p95 | 13.74 / 33.20 ms | 13.58 / 32.84 ms | 13.83 / 32.91 ms |
+| 240 m/s flight average FPS | 29.01 | 28.62 | 28.21 |
+| 240 m/s flight median / p95 | 35.51 / 54.15 ms | 36.50 / 55.33 ms | 35.77 / 55.77 ms |
+| 240 m/s far viewport CPU median | 11.06 ms | 11.32 ms | 11.14 ms |
+| 240 m/s far viewport GPU median | 1.508 ms | 1.504 ms | 1.503 ms |
+
+Evidence: [source A](../.godot/quality_presets/4070_tree_game_source_a/report.json), [prepared](../.godot/quality_presets/4070_tree_game_prepared/report.json), [source B](../.godot/quality_presets/4070_tree_game_source_b/report.json). Average FPS is frames divided by elapsed time, not the inverse of the median frame. Fast-flight throughput with prepared assets lies between the two source controls; there is no demonstrated flight performance gain. Its median is 0.86 ms slower than the mean of the source medians, while its mean frame time differs by only -0.02 ms. This small sample does not establish exact equivalence, but the severe fast-flight slowdown clearly occurs with both loaders.
+
+The short route spends much more time in the expensive far-viewport CPU state than the full seven-pose baseline. The original baseline also recorded a 12.23 ms far CPU p95 during fast flight despite its 0.26 ms median. Workload/cache history therefore matters: the short and full routes cannot be treated as interchangeable before/after measurements. Native frame setup and far-viewport CPU work remain the primary flight investigation; lowering cloud cost alone cannot close this gap.
+
+### Flight callback attribution
+
+The opt-in `--vegetation-render-trace` records bounded numeric CPU timings around vegetation render callbacks. It captures request/callback timestamps, new batch allocation, retirement and remaining callback time. Trace completion waits for all admitted callbacks, including inline nested callbacks. CSV formatting happens after capture. The byte counts are estimates of known buffers, not driver allocations; these timings are CPU wall time, not GPU execution.
+
+[The prepared trace](../.godot/quality_presets/4070_prepared_trace/report.json) completed with zero rendering errors, 21,011 callback records and zero overflow. [The joined analysis](../.godot/arch_60fps/4070_prepared_trace_analysis.json) uses only qualified flight intervals, reconstructing the monotonic window start from 30 matching hitch timestamps per flight (maximum residual 0.065 ms). It excludes two boundary frames per window while retaining every reported hitch. Callback interval unions avoid double counting; no nested callbacks occurred in this run.
+
+| Non-GC frames over 25 ms | 72 m/s flight | 240 m/s flight |
+|---|---:|---:|
+| Analyzed hitch frames | 276 | 554 |
+| All vegetation callbacks, median / p95 | 0.63 / 1.34 ms | 1.16 / 2.35 ms |
+| EnsureBatch creation, p95 / maximum | 0.23 / 0.38 ms | 0.32 / 0.66 ms |
+| Retirement, p95 / maximum | 0.09 / 0.23 ms | 0.15 / 0.25 ms |
+
+No measured vegetation callback overlapped the probe's `pre_draw -> post_draw` gap. Callback queue wait p95 was 0.003 ms in both flights. A few larger callback outliers coincided with GC. This rejects expensive batch creation/retirement CPU work as the dominant cause in this capture, so no speculative scheduling budget or pooling change was made. Resource publication could still cause downstream renderer work; this trace does not attribute that work. The next useful profiling step is native frame-setup and viewport CPU/GPU timings on the same per-frame timeline.
+
+The far CPU interval must not be interpreted as the exclusive cost of distant meshes. In the pinned engine, child viewports render first and Forward+ drains a renderer-wide dirty geometry list while filling a render list. Main-world streaming can therefore cause cache/pipeline housekeeping inside the far viewport interval. CPU timestamps measure elapsed time and can also include worker waits. This is an unproven explanation for the observed flight spikes, consistent with the project's existing [diagnostic timing caveat](performance_diagnostics.md). Sources: [viewport ordering](https://github.com/godotengine/godot/blob/c971f93e7/servers/rendering/renderer_viewport.cpp#L90), [dirty geometry processing](https://github.com/godotengine/godot/blob/c971f93e7/servers/rendering/renderer_rd/forward_clustered/render_forward_clustered.cpp#L4472), [timestamp recording](https://github.com/godotengine/godot/blob/c971f93e7/servers/rendering/rendering_device.cpp#L8087).
+
+The next discriminating capture should hold the same fast-flight route and compare A/X/A with far-controller processing frozen, then with far rendering disabled. If the long CPU interval moves to the next rendered viewport without improving wall time, that supports shared housekeeping attribution. A native stack capture can then separate geometry/cache work, culling worker waits and driver synchronization. Existing stationary ablation labels do not apply to flight windows; a bounded capture-tool hook is needed before running this experiment. Disabled viewports retain old timings and must be excluded from that X interpretation.
+
+### Cloud, haze and upscaling matrix
+
+[The corrected Release matrix](../.godot/quality_presets/4070_prepared_matrix/report.json) contains 30 qualified 15-second windows at coast and 1 km altitude, each after 5 seconds of warmup, with frozen world clocks. Each X is bracketed by native A windows. All 16 native A windows restored Physical q4 haze, native resolution, requested interleave 1, full-size far viewport and zero adaptive fallbacks. [Validation](../.godot/quality_presets/4070_prepared_matrix/capture_validation.json) recorded zero rendering errors. Power stayed P0 at 2805-2835 MHz graphics / 10501 MHz memory, with a 200 W limit and observed draw about 166-186 W. The capture required the known dev7 forced shutdown after its completed, validated report.
+
+Deltas are X minus the mean of adjacent A windows; negative means faster. Main GPU and far GPU are named viewport intervals, not additions to the inclusive cloud marker.
+
+| Change from native Very High | Coast wall | Coast main GPU | 1 km wall | 1 km main GPU |
+|---|---:|---:|---:|---:|
+| Cloud march cap 328 -> 128 | -0.808 ms | -0.800 ms | -0.191 ms | -0.181 ms |
+| Half-resolution clouds, existing jitter/interleave | -1.666 ms | -1.619 ms | -1.539 ms | -1.497 ms |
+| Cloud interleave off | +2.484 ms | +2.506 ms | +2.135 ms | +2.134 ms |
+| Production FSR Quality at 85% | +0.789 ms | +1.057 ms | -0.041 ms | +0.254 ms |
+| Physical haze off (attribution only) | -1.167 ms | -0.903 ms | -1.522 ms | -1.282 ms |
+| Physical haze q4 -> q8 | -0.036 ms | -0.079 ms | +0.255 ms | +0.222 ms |
+
+Baseline-repeat wall noise was 0.142 ms at coast and 0.278 ms at altitude. The altitude steps-128 saving and q8 whole-frame differences are inconclusive against this noise/drift. Half resolution, interleave removal and haze removal have clear effects. Most windows still have wall p95 around 24-28 ms, so these median savings do not solve hitch acceptance.
+
+The project's production Quality/Balanced labels mean **85%/75% linear scale**, not the older capture tool's 67%/59%. Quality used 1632x918 internal and far rendering. It reduced far GPU time by 0.273/0.249 ms (coast/altitude), but the production policy disables cloud interleave under FSR. Inclusive cloud time increased by 1.204/0.957 ms, erasing the scene-resolution saving. This is a result for the combined current policy, not a general finding that FSR cannot help. Effective interleave fallback telemetry remains unavailable; requested settings and the production suppression policy are recorded.
+
+Retain native/interleave as the current reference. Half-resolution cloud screenshots show visibly softer cloud detail; a moving-camera comparison is needed before adopting that tradeoff. A 128-step cap is a narrower candidate for a moving-camera quality check, with about 0.8 ms saving at the coast. Haze-off is only a cost attribution probe. No quality default was changed from this matrix.
+
+**Timing reporting correction:** `gpu_sum_ms`, `sub_gpu_ms` and `cpu_render_ms` in these existing captures sum the latest measured viewport values. They are not reliable per-frame totals. During the coast FSR case, `PrecipitationOcclusionViewport` retained its one-shot 1.946 ms GPU / 0.252 ms CPU reading in later frames, creating a false aggregate jump. Use wall, main GPU and far GPU separately. The far viewport was `UPDATE_ALWAYS` in all 30 matrix windows. The captured named timings remain usable; repeating the matrix is unnecessary. The legacy aggregate caveat also applies when reading the earlier baseline/probe reports.
+
+### Engine decision and research
+
+Keep the current Godot implementation while profiling the remaining native render/streaming stalls. The prepared resource uses Godot's documented background request/status/get loading model; waiting for completed status avoids turning retrieval into a synchronous load. [Godot background loading](https://docs.godotengine.org/en/stable/tutorials/io/background_loading.html).
+
+Unreal remains a credible comparison candidate. World Partition supplies distance-based grid-cell streaming, streaming sources and HLOD integration. Those features justify a representative prototype, but do not establish that this game's curved procedural terrain, edits, collision, weather and long-distance views would run faster after a port. That conclusion requires matched workloads. [Epic World Partition documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/world-partition-in-unreal-engine).
+
+Epic's current Nanite Foliage documentation marks the system experimental and describes an asset pipeline using assemblies, voxelization and skinning. It also identifies alpha-mask overdraw and material WPO as poor fits for that pipeline. A migration evaluation therefore needs representative reauthored foliage rather than assuming the existing card/wind assets gain Nanite's best-case performance unchanged. [Epic Nanite Foliage documentation](https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-foliage). These sources were checked on November 2, 2026; no Unreal workload has been run in this workspace.
+
+### Validation evidence and remaining acceptance
+
+- [20261102-200001 results](../.godot/test_runs/arch_60fps/20261102-200001/results.md): **9 selected, 9 pass**, including full prepared-catalog parity/fallback and forest placement, collision and editing regressions.
+- [20261102-200504 results](../.godot/test_runs/arch_60fps/20261102-200504/results.md): **12 selected, 12 pass**, including the independent source-built Maple pilot, tree rendering, wind, shared impostors, native texture compatibility and prepared-material native residency tests.
+- [20261102-201557 results](../.godot/test_runs/arch_60fps/20261102-201557/results.md): **1 selected, 1 pass**, the capture policy contract.
+- [20261102-205241 gate](../.godot/test_runs/arch_60fps/20261102-205241/results.md): **296 selected, 289 pass, 4 fail, 1 known-fail, 2 crash**. The runner was interrupted after 274 passes; its saved run was resumed to completion. The gate is **not green**.
+- [20261102-221216 isolated follow-up](../.godot/test_runs/arch_60fps/20261102-221216/results.md): the weather timing test passes alone; UI hover still fails. The weather test now has `parallel_safe=false` because it asserts a microsecond-scale CPU budget.
+
+The cloud-haze fixture initially inherited FSR Balanced from the reused profile despite claiming deterministic sampling. It now installs isolated Native render-resolution defaults, disables adaptive resolution, asserts actual scale/mode and inactive engine jitter, and records an unchanged-haze control. The resumed gate passed this corrected fixture with normal exit. [Its report](../.godot/cloud_haze_gameplay/8508760/report.json) records alpha mean absolute differences of 0.004814 for the unchanged control and 0.009084 for normal haze, both below the unchanged 0.012 threshold. This is not a pixel-identical freeze or proof that FSR was the only evolving input.
+
+Unresolved validation findings:
+
+- `gameplay_cloud_tuning_smoke_test`: the existing factory cloud file overrides `CloudResolutionJitter`, conflicting with preset ownership. Those overrides predate this task and were preserved.
+- `megastorm_field_events_test`: saved sprite IDs disagree with the fixture, consistent with the pre-existing lightning interval/range changes. Those changes and their fixture were preserved.
+- `ui_scaling_smoke_test`: both attempts fail hover at 1280x720. The measured layout/scale match, but the cursor remains at viewport `(2691, 791)` instead of the requested button center `(234, 361)`. This leaves the physical-input test unresolved; it does not demonstrate a scaling regression from this work.
+- `sunshine_night_shell_exit_smoke_test` and `weather_lifecycle_visual_smoke_test`: assertions print PASS, then exit with `0xC0000005`. These teardown signatures have historical evidence in `test_known_failures.json`; the former's old matcher expected the array-uniform errors that are now absent. They remain crashes, not clean passes.
+- `opposite_ring_lightning_visual_smoke_test`: the runner reports its existing known contrast failure; it was not re-triaged.
+
+All new prepared-tree, capture-policy, trace-completion and height-shadow failure tests passed, as did the long menu transition test. The prepared-asset publish guard and 490-entry test manifest validation also pass. The cloud configuration matrix, allocation/retirement trace and matched tree-loader gameplay check are complete. Sustained 60 FPS remains unachieved: native render/streaming stalls, first-user-profile loading and the deferred RTX A1000 run remain open. The historical targets and work orders below remain reference material; their older findings must be rechecked against this current Release recipe before driving another refactor.
 
 ## 0. Summary
 

@@ -40,5 +40,9 @@ Desktop.ini
 /prototypes/pda-voice/models/
 /prototypes/pda-voice/output/
 
+# Local audio studio: generated auditions are reviewed before becoming game assets.
+/prototypes/audio-studio/output/
+/prototypes/audio-studio/web/comparison-data.json
+
 # Python bytecode from tool scripts
 __pycache__/

@@ -49,12 +49,22 @@ public static partial class ImportedTreeCatalog
     public static IReadOnlyList<ImportedTreeVariant> Load()
     {
         if (_variants != null) return _variants;
+        if (LoadMode != ImportedTreeCatalogLoadMode.Source && TryLoadPrepared(out var prepared))
+            return _variants ??= prepared!;
+        RequireSourceFallback();
+        _variants ??= BuildSourceForPreparation();
+        LoadedFrom = "source";
+        return _variants;
+    }
+
+    /// <summary>Authoring/validation entry: always builds source assets, without publishing the process catalog.</summary>
+    public static IReadOnlyList<ImportedTreeVariant> BuildSourceForPreparation()
+    {
         var variants = new List<ImportedTreeVariant>(30);
         foreach (TreeSpecies species in OrderedSpecies)
             LoadSpecies(species, variants);
         if (variants.Count != VariantCount) throw new InvalidOperationException($"Imported tree catalog contains {variants.Count}, expected {VariantCount} variants.");
-        _variants = variants.AsReadOnly();
-        return _variants;
+        return variants.AsReadOnly();
     }
 
     public static IReadOnlyList<ImportedTreeVariant> GetVariants(TreeSpecies species)
@@ -72,6 +82,7 @@ public static partial class ImportedTreeCatalog
         PackedScene? packed = ResourceLoader.Load<PackedScene>($"res://resources/trees/lolipop/{folder}/scene.gltf");
         if (packed == null) throw new InvalidOperationException($"Could not load imported {species} tree scene.");
         Node root = packed.Instantiate();
+        SourceSceneInstantiationCount++;
         try
         {
             var anchors = new Dictionary<string, Node3D>(StringComparer.Ordinal);
@@ -130,6 +141,7 @@ public static partial class ImportedTreeCatalog
 
     private static Mesh BakeLod(Node3D anchor, float rootY, float width, float height, List<ShaderMaterial> materials, TreeSpecies species)
     {
+        SourceLodBakeCount++;
         Transform3D anchorTransform = TransformWithoutLayoutTranslation(anchor);
         var output = new ArrayMesh();
         foreach (MeshInstance3D instance in DescendantMeshes(anchor))

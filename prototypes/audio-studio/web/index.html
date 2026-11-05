@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ringworld · Audio Studio</title>
+  <link rel="stylesheet" href="/style.css?v=native-backend">
+  <script src="/studio.js?v=native-backend" defer></script>
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">RINGWORLD / LOCAL TOOLS</p><h1>Audio Studio<span>●</span></h1><p class="subtle">Describe a sound. Listen, refine, and keep the take.</p></div><span class="local">LOCAL · CUDA</span></header>
+    <section class="engine-status" aria-label="Model availability"><div id="stable-status">Checking sound effects model…</div><div id="ace-status">Checking music model…</div></section>
+    <div class="workspace">
+      <section class="composer panel">
+        <form id="generator">
+          <label for="engine">Create</label>
+          <select id="engine" name="engine"><option value="stable-audio-open">Sound effects · Stable Audio Open</option><option value="ace-step">Music · ACE-Step 1.5</option></select>
+          <p id="engine-hint" class="hint"></p>
+          <label for="prompt">Describe your audio</label>
+          <textarea id="prompt" name="prompt" rows="6" required maxlength="2000" placeholder="A heavy sci-fi metal door sliding open, hydraulic hiss, deep mechanical clunk, close microphone, no music."></textarea>
+          <div id="presets" class="presets" aria-label="Prompt starters"></div>
+          <div class="row"><div><label for="duration">Duration · seconds</label><input id="duration" name="duration" type="number" min="0.5" max="47" step="0.5" value="5" required></div><div><label for="variants">Variations</label><select id="variants" name="variants"><option>1</option><option>2</option><option>3</option><option>4</option></select></div></div>
+          <label for="seed">Seed <span class="subtle">/ blank for random</span></label>
+          <input id="seed" name="seed" type="number" min="0" max="4294967295" step="1" placeholder="Random">
+          <details><summary>Generation settings</summary><div class="settings">
+            <div class="stable-only"><label for="backend">Stable Audio implementation</label><select id="backend"><option value="diffusers">Diffusers · default</option><option value="stable-audio-tools">stable-audio-tools · native comparison</option></select><p id="backend-hint" class="hint"></p></div>
+            <div class="stable-only"><label for="negative_prompt">Avoid</label><input id="negative_prompt" value="Low quality, distorted." maxlength="2000"></div>
+            <div class="row stable-only"><div><label for="steps">Steps</label><input id="steps" type="number" min="1" max="200" step="1" value="50"></div><div><label for="guidance_scale">Prompt guidance</label><input id="guidance_scale" type="number" min="1" max="20" step="0.5" value="7"></div></div>
+            <div class="ace-only" hidden><label for="bpm">Tempo · BPM <span class="subtle">/ optional</span></label><input id="bpm" type="number" min="30" max="300" step="1" placeholder="Automatic"><p class="hint">Instrumental · Turbo · 8 steps · no language-model thinking</p></div>
+          </div></details>
+          <button id="generate" class="primary" type="submit" disabled>Queue generation <span>↗</span></button>
+          <p id="feedback" role="status" aria-live="polite" class="hint"></p>
+        </form>
+        <p class="license">Stable Audio Open uses the Stability AI Community License; review its terms for your use. ACE-Step 1.5 uses MIT. Model and license details are saved with every take.</p>
+      </section>
+      <section class="library" aria-label="Generated audio"><div class="library-head"><h2>Your takes</h2><span id="queue-status" class="subtle">Connecting…</span></div><p class="hint">Use a generation or take ID when choosing sounds.</p><p id="empty" class="empty">Your first take starts with a description.<br><span class="subtle">Audio stays on this machine.</span></p><div id="jobs"></div></section>
+    </div>
+    <footer>Generated files live in prototypes/audio-studio/output. Audition and choose assets before adding them to the game.</footer>
+  </main>
+</body>
+</html>

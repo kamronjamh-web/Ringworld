@@ -2,7 +2,34 @@
 
 User request (2026-10-29): an atmospheric containment field emitted from the rim walls, forming a continuous arched canopy across the 318 km habitat. It reaches 40 km above the habitat floor at the centre, follows the circumference and leaves the central hole open. It is invisible in normal play. Close up it shows subtle shimmer and refraction. Extreme storms briefly reveal localized ripples. No permanent glow or grid. Low cost. A POI that runs along the field will follow.
 
-Status: design only. No code has been written. The user answered the three open questions on 2026-10-29 (next section). The rest of the doc is updated to match.
+Status: design only. No field code has been written beyond the megastorm seam (`scripts/ContainmentField/ContainmentDisturbance.cs`). The user answered the three open questions on 2026-10-29. A second round of decisions on 2026-11-04 (next section) **supersedes** parts of sections 1.5, 3.3-3.4, 3.7, 2.1, 5, 6.1, 7, 8 (WO12 and ordering) and 9. Where the body text disagrees with the 2026-11-04 section, the 2026-11-04 section wins until the body is rewritten.
+
+## User decisions 2026-11-04
+
+Prompted by the atmosphere-shield projector asset (`ringworld_atmosphere_projector` bundle: two-blade tower, 80 x 180 x 1600 m, origin at the wall-top centre, shield plane at local X = 0, planned 100 m wall).
+
+1. **Rim wall gets real volume, and it comes first, not last.** WO12 moves to the front of the queue, straight after WO1. The field itself stays a thin sheet (no slab thickness).
+2. **Depth 128 m** (four 32 m voxel chunks). The wall occupies across [-128, 0] and [W, W + 128]; inner faces do not move. With the projector's 80 m body centred, that leaves 24 m of clear wall top on each side.
+3. **Field root: centre line.** `RimWallDescription.Current = new(128, RimFieldRoot.CentreLine)`, so the roots are at across -64 and W + 64 and the profile half-width is `a = (W + 128) / 2` (159,064 m). This matches the projector's X = 0 shield plane. The habitat half of the wall top (64 m) is inside the retained atmosphere; the outer 64 m is vacuum. Walking across the wall top crosses the field. This replaces WO12's OuterEdge recommendation.
+4. **Contact: pass through, with a ripple.** `FlightPermeability = Pass`, `ProjectilePermeability = Pass`. New disturbance kind `BodyContact`: the player/camera and registered fast bodies (projectiles, debris) emit a ripple where their per-frame movement segment crosses the field (`TryIntersectWorldSegment`). Initial values: Rmax 2-30 m scaled by speed and size, T 1.5 s, refraction plus a brief sheen boost, no flash light. A soft membrane "whump" sound on crossing. These count against the ripple pool with their own small reservation (2 slots) and a per-source cooldown, so a player standing in the sheet cannot spam it.
+5. **Visibility range stays 3 km** (the existing `ContainmentShimmerRangeKm` default). A brief change to 10-50 m was considered and reverted by the user the same day.
+6. **Close look: refraction plus a faint sheen.** This adds one term to the near patch (3.4): a faint cool tint (about the ripple tint, 0.55/0.65/1.0) weighted by grazing angle and the same distance weight `w`, at most about 3-4 % over the background. It is still not a glow: it is proportional to what is behind the field (multiplied into the refracted colour, not added), so it is zero against black space and never lights anything. No grid, no fresnel rim line. New menu slider `ContainmentSheenStrength` (0-2, default 1). Strikes and ripples are unchanged.
+7. **Access: flight.** Flight does not exist yet, but the field must be built for it. That pulls several "later" items into scope:
+   - the 3.7 limitation (clouds overwriting the shimmer when seen from above) needs the post-Sunshine field pass when the camera is above the field;
+   - section 2.1's atmosphere lid stops being optional: WO9 builds the clip at the field, not just the audit;
+   - verification uses a debug free-fly camera until real flight lands, including views from above the apex and along the arch.
+8. **Vacuum side: visual and audio only.** Outside the field (`SignedDistance > 0`), haze stops at the field (from the lid in 7), and the weather and ambience buses get a low-pass plus a gain drop that ramps over a few metres around the crossing. No gameplay penalty.
+9. **Respace the cue lines evenly.** Spacing becomes `C / 126` (249,332.8 m on Certified; derive it from the live circumference, not a constant). That gives 126 lines and **126 projector sites per wall, 252 in total**, with no seam gap. Every hull blue line except k = 0 shifts slightly. WO8 owns the shared constant and the hull-shader change. Captures before and after the blue-line move are expected to differ.
+
+### Found while checking the projector: the ellipse curves out of the projector slot
+
+The ellipse leaves the root vertically but bends inward at once. Inward offset from the root at height h above the wall top (Certified, rise 30 km): 0.9 m at 100 m, 22 m at 500 m, 72 m at 900 m, 226 m at 1,600 m. The projector's central slit is only 0.9 m wide and the blades reach 40 m each side, so the field would cut through the habitat-side blade from about 100 m up.
+
+**Default (pending user confirmation): a vertical skirt.** The profile becomes a vertical segment from the wall top up to the projector crown (`SkirtHeightMeters`, 1,600 m), then the semi-ellipse from there to the 40 km apex (rise 28.4 km). The field rises straight through the tower stack and the arch starts at the crown, so the towers read as the emitters. It is a profile parameter like the roots, the queries stay exact (segment plus ellipse, still 2D), and the skirt runs along the whole wall, not only at projectors. It barely changes the cloud ceiling: the field moves at most about 230 m outward near the rims. Alternatives: a superellipse with a fuller shoulder (the field still leaves the slot, just higher), or accepting the clash and hiding it with the soft intersection (not recommended, because the field would visibly cut the blades).
+
+### Revised work-order order
+
+WO1 (geometry API with the 128 m centre-line wall description and skirt), then **WO12 (rim wall depth)**, then WO8 (anchors and even respacing), then WO2-WO6, then WO9 (atmosphere lid, now required), then contact ripples (new, after WO4), then WO10 audio (vacuum low-pass plus crossing sound), then WO13/WO14. The post-Sunshine pass for views from above goes with WO3 or straight after it. Projector POI import follows WO12 and WO8. All of it starts after the current megastorm work (`docs/megastorm-handoff.md`).
 
 ## User decisions 2026-10-29
 
@@ -1045,6 +1072,8 @@ Per-batch gate: full GPU gate suite once (memory "Lean test cadence").
 ## 9. Questions
 
 The three original questions (wall height, sprites and jets, POI form) were answered by the user on 2026-10-29. See the "User decisions" section at the top.
+
+2026-11-04: questions 1-3 below are answered (respace evenly to C/126; root on the centre line; depth 128 m). See the 2026-11-04 decisions at the top. Still open: whether to use the vertical skirt (default yes, 1,600 m).
 
 Smaller decisions remain. Each has a default, so none blocks WO1-WO6.
 

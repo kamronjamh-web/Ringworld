@@ -9,9 +9,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="prototypes/**" />
-    <None Remove="prototypes/**" />
-    <Content Remove="prototypes/**" />
-    <EmbeddedResource Remove="prototypes/**" />
+    <Compile Remove="prototypes/**;artifacts/**" />
+    <None Remove="prototypes/**;artifacts/**" />
+    <Content Remove="prototypes/**;artifacts/**" />
+    <EmbeddedResource Remove="prototypes/**;artifacts/**" />
   </ItemGroup>
+  <Import Project="tools/PreparedTreeAssets.targets" />
 </Project>

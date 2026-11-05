@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audio comparison · Ringworld</title>
+  <link rel="stylesheet" href="/style.css?v=native-backend">
+  <link rel="stylesheet" href="/compare.css">
+  <script src="/compare.js" defer></script>
+</head>
+<body>
+  <main class="comparison">
+    <header><div><p class="eyebrow">RINGWORLD / LOCAL AUDIO COMPARISON</p><h1 id="title">Frozen-lake sounds · A/B</h1><p class="subtle">Listen to each pair and choose by its take ID.</p></div><a href="/">Back to Audio Studio</a></header>
+    <section class="comparison-controls panel">
+      <label class="level-option"><input id="match-levels" type="checkbox" checked> Match playback levels</label>
+      <p class="hint">Playback matching only turns louder takes down. Downloads retain their original levels.</p>
+      <p class="hint">Same prompts, seeds and settings; sampler differs. Same seed does not produce matching waveforms.</p>
+      <p id="note" class="hint"></p>
+    </section>
+    <p id="status" role="status" aria-live="polite">Loading comparison…</p>
+    <div id="pairs"></div>
+  </main>
+</body>
+</html>

@@ -17,6 +17,7 @@ var clock: Node
 var drawer: Node
 var graphics: Node
 var bridge: Node
+var render_menu: Node
 var placement: RefCounted
 var report := {"status":"RUNNING", "captures":[]}
 var backdrop_images := {}
@@ -53,9 +54,12 @@ func run() -> void:
 	drawer = game.get_node_or_null("LiveTuningDrawer")
 	graphics = game.get_node_or_null("GraphicsQuality")
 	bridge = game.get_node_or_null("SunshineCloudBridge")
+	render_menu = game.get_node_or_null("LodPauseMenu")
 	placement = FIXTURE_HELPER.new()
-	if surface == null or explorer == null or camera == null or clock == null or drawer == null or graphics == null or bridge == null:
+	if surface == null or explorer == null or camera == null or clock == null or drawer == null or graphics == null or bridge == null or render_menu == null:
 		return fail("missing gameplay cloud-haze nodes")
+	render_menu.call("SetAdaptiveRenderResolution", false)
+	render_menu.call("SetRenderResolutionPreset", 0)
 	var ground := float(surface.call("SampleHeight", FIXTURE_AROUND, FIXTURE_ACROSS)) + 1.1
 	if not is_finite(ground): return fail("fixture terrain height is non-finite")
 	explorer.call("SetCanonicalSpawnMeters", FIXTURE_AROUND, ground, FIXTURE_ACROSS)
@@ -77,16 +81,26 @@ func run() -> void:
 	# expose whether the haze branch changes opacity rather than colour alone.
 	freeze_cloud_sampling(true)
 	await frames(SETTLE_FRAMES)
+	await RenderingServer.frame_post_draw
+	var rendering := render_configuration()
+	report["rendering"] = rendering
+	if not native_sampling(rendering): return fail("fixture rendering is not native without engine jitter: " + JSON.stringify(rendering))
 	await capture("haze_off", false, 30.0, 1.5)
+	await capture("haze_off_repeat", false, 30.0, 1.5)
 	await capture("cinematic_30km", true, 30.0, 1.5)
 	await capture("cinematic_10km", true, 10.0, 1.5)
 	var off: Dictionary = report.captures[0]
-	var cinematic: Dictionary = report.captures[1]
-	var strong: Dictionary = report.captures[2]
+	var cinematic: Dictionary = report.captures[2]
+	var strong: Dictionary = report.captures[3]
+	var same_haze_delta: Dictionary = compare_backdrops(backdrop_images.get("haze_off"), backdrop_images.get("haze_off_repeat"))
 	var normal_delta: Dictionary = compare_backdrops(backdrop_images.get("haze_off"), backdrop_images.get("cinematic_30km"))
 	var strong_delta: Dictionary = compare_backdrops(backdrop_images.get("haze_off"), backdrop_images.get("cinematic_10km"))
 	report["cinematic_30km_delta"] = normal_delta
 	report["cinematic_10km_delta"] = strong_delta
+	report["same_haze_delta"] = same_haze_delta
+	if float(same_haze_delta.get("cloud_pixels", 0)) <= 0.0: return fail("same-haze control has no nonzero alpha")
+	if float(same_haze_delta.get("mean_alpha_delta", 1.0)) > 0.012:
+		return fail("same-haze repeat changed cloud alpha unexpectedly")
 	if float(normal_delta.get("cloud_pixels", 0)) <= 0.0: return fail("nearby cloud backdrop has no nonzero alpha")
 	if float(normal_delta.get("mean_rgb_delta", 0.0)) <= 0.0005: return fail("30 km cinematic haze did not alter cloud RGB")
 	if float(strong_delta.get("mean_rgb_delta", 0.0)) <= float(normal_delta.get("mean_rgb_delta", 0.0)):
@@ -126,6 +140,11 @@ func create_game() -> Node:
 	return null
 
 func install_isolated_preferences(next: Node) -> void:
+	var menu := next.get_node_or_null("LodPauseMenu")
+	if menu != null:
+		# An absent isolated file must resolve Native, regardless of reused profile preferences or the scene's Auto fallback.
+		menu.set("DefaultUpscalingPreset", 0)
+		menu.call("InstallRenderResolutionDefaults", fixture.path_join("render_resolution.tres"))
 	var target := next.get_node_or_null("LiveTuningDrawer")
 	if target == null: return
 	for item in [["InstallGrassDefaults", "grass.tres"], ["InstallVegetationDefaults", "vegetation.tres"], ["InstallWaterDefaults", "water.tres"], ["InstallAntiAliasingDefaults", "anti_aliasing.tres"], ["InstallShadowDefaults", "shadows.tres"], ["InstallSurfaceTerrainDefaults", "surface.tres"], ["InstallAtmosphereDefaults", "atmosphere.tres"]]:
@@ -188,6 +207,9 @@ func capture(label: String, haze_enabled: bool, visibility_km: float, density: f
 	drawer.call("SetAtmosphereEnabled", haze_enabled)
 	await frames(SETTLE_FRAMES)
 	await RenderingServer.frame_post_draw
+	var rendering := render_configuration()
+	report["last_rendering"] = rendering
+	if not native_sampling(rendering): return fail("rendering changed during " + label + ": " + JSON.stringify(rendering))
 	var final_image := root.get_viewport().get_texture().get_image()
 	var final_path := fixture.path_join(label + "_final.png")
 	if final_image.is_empty() or final_image.save_png(ProjectSettings.globalize_path(final_path)) != OK:
@@ -204,7 +226,18 @@ func capture(label: String, haze_enabled: bool, visibility_km: float, density: f
 		return fail("ring atmosphere profile was not uploaded " + label + ": " + JSON.stringify(profile))
 	if not haze_enabled and bool(profile.get("enabled", true)):
 		return fail("disabled haze left an enabled profile")
-	report.captures.append({"label":label, "final_path":final_path, "backdrop_path":backdrop_path, "backdrop_size":[backdrop_image.get_width(), backdrop_image.get_height()], "backdrop_stats":image_stats(backdrop_image), "profile":profile, "cloud_geometry":cloud_geometry(), "atmosphere":graphics.call("GetAtmosphereTuningDiagnostics"), "camera_position":camera.global_position, "camera_basis":camera.global_transform.basis, "sun_elevation_degrees":clock.get("SunElevationDegrees")})
+	report.captures.append({"label":label, "final_path":final_path, "backdrop_path":backdrop_path, "backdrop_size":[backdrop_image.get_width(), backdrop_image.get_height()], "backdrop_stats":image_stats(backdrop_image), "profile":profile, "cloud_geometry":cloud_geometry(), "atmosphere":graphics.call("GetAtmosphereTuningDiagnostics"), "rendering":rendering, "camera_position":camera.global_position, "camera_basis":camera.global_transform.basis, "sun_elevation_degrees":clock.get("SunElevationDegrees")})
+
+func render_configuration() -> Dictionary:
+	var driver := game.get_node_or_null("SunshineCloudsDriver")
+	var clouds = driver.get("clouds_resource") if driver != null else null
+	return {"render_resolution":render_menu.call("GetRenderResolutionDiagnostics"), "viewport_size":root.size, "scaling_mode":root.scaling_3d_mode, "scale":root.scaling_3d_scale, "taa":root.use_taa, "msaa":root.msaa_3d, "screen_aa":root.screen_space_aa,
+		"last_engine_jitter_active":clouds.get("last_engine_jitter_active") if clouds != null else true, "last_engine_jitter_ndc":clouds.get("last_engine_jitter_ndc") if clouds != null else null,
+		"ray_start_jitter_strength":clouds.get("ray_start_jitter_strength") if clouds != null else null, "diagnostic_disable_temporal_history":clouds.get("diagnostic_disable_temporal_history") if clouds != null else false}
+
+func native_sampling(rendering: Dictionary) -> bool:
+	var resolution: Dictionary = rendering["render_resolution"]
+	return bool(resolution.get("ready", false)) and int(resolution.get("preset", -1)) == 0 and not bool(resolution.get("adaptive_enabled", true)) and int(rendering["scaling_mode"]) == Viewport.SCALING_3D_MODE_BILINEAR and is_equal_approx(float(rendering["scale"]), 1.0) and not bool(rendering["taa"]) and not bool(rendering["last_engine_jitter_active"])
 
 func backdrop_profile() -> Dictionary:
 	var driver := game.get_node_or_null("SunshineCloudsDriver")

@@ -2,6 +2,7 @@
 Usage: python -I tools/quality_preset_report.py <run dir | report.json> [--deltas]
 Windows carrying an "invalid" key (paused tree, A1000 power verdict) are skipped for the baseline medians; the skip count is printed."""
 import json
+import math
 import os
 import statistics
 import sys
@@ -12,18 +13,28 @@ if os.path.isdir(_path):
 r = json.load(open(_path))
 q = r["quality"]
 print("preset=%s window=%s atlas=%s sun_max=%s haze=%s raymarch=%s" % (q["preset"], q["window"], q["atlas"], q["sun_max"], q["haze"]["enabled"], q["raymarch_steps"]))
+print("Timing: root/far viewport reads are separate last-render measurements; update modes alone do not establish freshness.")
+print("Legacy JSON gpu_sum_ms/sub_gpu_ms/sub_cpu_ms/cpu_render_ms are raw sums and are NOT per-frame totals (inactive viewports can retain old samples).")
+print("Unavailable measurements are shown as nan.")
+
+
+def number(value):
+    return float(value) if isinstance(value, (int, float)) else float("nan")
 
 
 def m(w, metric, stat="median"):
-    return w["metrics"].get(metric, {}).get(stat, float("nan"))
+    return number(w.get("metrics", {}).get(metric, {}).get(stat))
 
 
 def brief(w):
-    return [m(w, "wall_ms"), m(w, "wall_ms", "p95"), m(w, "wall_ms", "p99"), m(w, "gpu_sum_ms"), m(w, "gpu_sum_ms", "p95"), m(w, "gpu_sum_ms", "p99"),
-            m(w, "cpu_render_ms"), m(w, "frame_setup_ms"), m(w, "root_cpu_ms"), m(w, "sub_cpu_ms"), m(w, "draw_calls"), w["hitch_count"], w["frames"] / max(w["seconds"], 1e-6)]
+    return [m(w, "wall_ms"), m(w, "wall_ms", "p95"), m(w, "wall_ms", "p99"),
+            m(w, "root_gpu_ms"), m(w, "root_gpu_ms", "p95"), m(w, "root_gpu_ms", "p99"),
+            m(w, "far_gpu_ms"), m(w, "far_gpu_ms", "p95"), m(w, "far_gpu_ms", "p99"),
+            m(w, "root_cpu_ms"), m(w, "far_cpu_ms"), m(w, "frame_setup_ms"), m(w, "draw_calls"),
+            w["hitch_count"], w["frames"] / max(w.get("elapsed_seconds", w["seconds"]), 1e-6)]
 
 
-cols = ["wall", "wall95", "wall99", "gpu", "gpu95", "gpu99", "cpuR", "setup", "rootC", "subC", "draws", "hitch", "fps"]
+cols = ["wall", "wall95", "wall99", "rootG", "rootG95", "rootG99", "farG", "farG95", "farG99", "rootC", "farC", "setup", "draws", "hitch", "fps"]
 print("%-18s" % "pose/run" + "".join("%8s" % c for c in cols))
 fm = r.get("first_minute")
 if fm:
@@ -39,7 +50,8 @@ for pose, p in r["poses"].items():
         continue
     rows = [brief(w) for w in base]
     med = [statistics.median([row[i] for row in rows]) for i in range(len(cols))]
-    med[11] = sum(row[11] for row in rows) / len(rows)
+    hitch_index = cols.index("hitch")
+    med[hitch_index] = sum(row[hitch_index] for row in rows) / len(rows)
     print("%-18s" % pose + "".join("%8.1f" % v for v in med) + "   (%d baseline windows)" % len(base))
 for f in r.get("flights", []):
     print("%-18s" % f["tag"] + "".join("%8.1f" % v for v in brief(f)) + "   dist=%.0f m busy=%d" % (f["distance_m"], f["streaming_busy_frames"]))
@@ -52,14 +64,21 @@ if "--deltas" in sys.argv[2:]:
         for l in p.get("summary", {}):
             if l not in labels:
                 labels.append(l)
-    for metric in ["gpu_sum_ms", "cpu_render_ms", "wall_ms"]:
+    for metric in ["root_gpu_ms", "far_gpu_ms", "root_cpu_ms", "far_cpu_ms", "wall_ms"]:
         print("\nDelta %s (X minus mean of neighbours); drift in []" % metric)
         print("%-22s" % "label" + "".join("%17s" % pose[:16] for pose in r["poses"]))
         for l in labels:
             line = "%-22s" % l
             for pose, p in r["poses"].items():
                 d = p.get("summary", {}).get(l)
-                line += "%17s" % ("" if d is None else "%+.2f [%.2f]" % (d[metric], abs(d[metric + "@drift"])))
+                line += "%17s" % ("" if d is None else "%+.2f [%.2f]" % (number(d.get(metric)), abs(number(d.get(metric + "@drift")))))
             print(line)
-    print("\nGPU.Clouds marker (baseline median):", {pose: round(statistics.median([w["markers"].get("GPU.Clouds", {}).get("median", 0) for w in p["windows"] if w["label"] == "baseline"]), 2) for pose, p in r["poses"].items()})
-    print("Far viewport GPU/CPU (baseline):", {pose: (round(statistics.median([w["viewports"].get("FarRingViewport", {}).get("gpu", {}).get("median", 0) for w in p["windows"] if w["label"] == "baseline"]), 2), round(statistics.median([w["viewports"].get("FarRingViewport", {}).get("cpu", {}).get("median", 0) for w in p["windows"] if w["label"] == "baseline"]), 2)) for pose, p in r["poses"].items()})
+    def available_median(values):
+        values = [value for value in values if math.isfinite(value)]
+        return round(statistics.median(values), 2) if values else float("nan")
+
+    def baselines(pose):
+        return [w for w in pose["windows"] if w["label"] == "baseline" and "invalid" not in w]
+
+    print("\nGPU.Clouds marker (valid baseline median):", {pose: available_median([number(w.get("markers", {}).get("GPU.Clouds", {}).get("median")) for w in baselines(p)]) for pose, p in r["poses"].items()})
+    print("Far viewport GPU/CPU (valid baseline reads, separate):", {pose: (available_median([m(w, "far_gpu_ms") for w in baselines(p)]), available_median([m(w, "far_cpu_ms") for w in baselines(p)])) for pose, p in r["poses"].items()})
