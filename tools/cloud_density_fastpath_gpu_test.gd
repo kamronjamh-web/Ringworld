@@ -25,7 +25,7 @@ func _init() -> void:
 	var optimized := _function(live, "float sampleScene(", "float sampleSceneCoarse(")
 	if helpers.is_empty() or optimized.is_empty():
 		rd.free(); _fail("live sampleScene/helper extraction failed"); return
-	helpers = helpers.replace("#include \"SunshineCloudsEntrySkip.glslinc\"", "")
+	helpers = helpers.replace("#include \"SunshineCloudsEntrySkip.glslinc\"", "").replace("#include \"RingContainmentCeiling.glslinc\"", "float ring_containment_ceiling(float across, float altitude) { return 1.0; } // containment field: no field in this harness")
 	reference = _rewrite(reference.replace("float sampleScene(", "float sampleSceneReference("))
 	optimized = _rewrite(optimized.replace("float sampleScene(", "float sampleSceneOptimized("))
 	helpers = _rewrite(helpers)

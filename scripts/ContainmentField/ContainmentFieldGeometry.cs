@@ -17,6 +17,8 @@ public static class ContainmentFieldGeometry
     /// <summary>The one cloud ceiling cap (RingCloudLayers.CeilingMeters, asserted equal by the test).</summary>
     public const double CloudCeilingMeters = 18_000.0;
     public const double CloudCeilingBelowFieldMeters = 300.0;
+    /// <summary>Density feather under the ceiling (narrows to nothing as the ceiling reaches 18 km) and the band from the roots outside which the factor is exactly 1.</summary>
+    public const double CloudCeilingFeatherMeters = 500.0, CloudCeilingRimBandMeters = 7_000.0;
 
     // ---- Height --------------------------------------------------------------------------------------------------------------------------------
 
@@ -54,6 +56,20 @@ public static class ContainmentFieldGeometry
 
     /// <summary>The same rule for provider consumers that already hold the underside (matches the MegastormFieldCoupling stub).</summary>
     public static double CloudCeilingFromUnderside(double undersideMeters) => Math.Min(CloudCeilingMeters, undersideMeters - CloudCeilingBelowFieldMeters);
+
+    /// <summary>
+    /// CPU twin of RingContainmentCeiling.glslinc <c>ring_containment_ceiling</c>: the cloud density factor at (across, altitude). 1 below the ceiling's
+    /// feather, a smoothstep to 0 at the ceiling, exactly 0 above it, exactly 1 with no field or more than 7 km from both roots.
+    /// </summary>
+    public static double CloudDensityFactor(in ContainmentFieldProfile p, double acrossMeters, double altitudeMeters)
+    {
+        if (Math.Min(acrossMeters - p.RootAcross0, p.RootAcrossW - acrossMeters) > CloudCeilingRimBandMeters) return 1.0;
+        double ceiling = CloudCeilingAt(p, acrossMeters);
+        if (ceiling >= CloudCeilingMeters) return 1.0;
+        double feather = Math.Clamp(CloudCeilingMeters - ceiling, 1.0, CloudCeilingFeatherMeters);
+        double t = Math.Clamp((altitudeMeters - (ceiling - feather)) / feather, 0.0, 1.0);
+        return 1.0 - t * t * (3.0 - 2.0 * t);
+    }
 
     // ---- Arc length ----------------------------------------------------------------------------------------------------------------------------
 

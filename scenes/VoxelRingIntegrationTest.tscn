@@ -93,6 +93,7 @@
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterGridBeamLayer.cs" id="emitter_grid_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Lightning/RingUpperAtmosphereLightningLayer.cs" id="upper_atmosphere_lightning_layer"]
 [ext_resource type="Script" path="res://scripts/Lightning/RingFieldStrikeLayer.cs" id="field_strike_layer"]
+[ext_resource type="Script" path="res://scripts/ContainmentField/RingContainmentDisturbanceHost.cs" id="containment_disturbance_host"]
 [ext_resource type="Script" path="res://scripts/Weather/Megastorm/RingFieldStrikeAudio.cs" id="field_strike_audio"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseEventDirector.cs" id="eclipse_event_director"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBeamLayer.cs" id="eclipse_hub_beam_layer"]
@@ -739,6 +740,9 @@ script = ExtResource("upper_atmosphere_lightning_layer")
 
 [node name="FieldStrikes" type="Node3D" parent="."]
 script = ExtResource("field_strike_layer")
+
+[node name="ContainmentDisturbances" type="Node" parent="."]
+script = ExtResource("containment_disturbance_host")
 
 [node name="EclipseEvent" type="Node" parent="."]
 script = ExtResource("eclipse_event_director")

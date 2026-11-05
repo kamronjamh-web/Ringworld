@@ -12,6 +12,9 @@ extends SceneTree
 #           high coverage, and where the map high coverage <= 0.0005 the shell value must be 0;
 #   cirrus  (manual Cirrostratus over the probe column, after weather): core high coverage > 0.6; the shell value at the base > 0.05 and
 #           the probes at 9250 / 9750 m (no volumetric cirrus) are 0; with CameraIndependentDebugMask 128 (cirrus shell off) the shell value is 0.
+# Containment field WO6 (docs/containment-field-design.md 2.2): with the same mature anvil storm parked 3 km from the across-0 rim and the camera
+#   there, every probe at or above the field ceiling min(18 km, H(across) - 300 m) reads 0 at five across values inside 7 km of the rim, and
+#   the storm really reaches above 8 km below the ceiling somewhere (not vacuous). The same probes with the ceiling off are printed.
 
 const STEP := 250.0
 const TOP := 20000.0
@@ -303,6 +306,56 @@ func _run():
 		storm_top = maxf(storm_top, extent.y)
 	if storm_top < 8000.0:
 		print("CLOUD_LAYERS WARN storm probes found no density above 8 km (top=", storm_top, "): the nothing-above-18000 check is weak")
+
+	# ---- rim: the containment field's cloud ceiling, H(across) - 300 m ----
+	var grid: Node = world.get_node("ChunkGridManager")
+	var width := float(grid.get("RingAcrossWidthMeters"))
+	var wall_top := float(grid.call("GetStructuralWallTopGlobalY"))
+	var crown := wall_top + 1600.0
+	var half_width := (width + 128.0) * 0.5
+	var rim_reach := -1.0
+	probe.ClearWeather(world)
+	helper.PlaceStorm(world, 0.0, 3000.0 - base_across, 0.0, 40000.0)
+	helper.PlaceCameraAt(world, 0.0, 3000.0 - base_across, 1500.0, 0.0, 0.0)
+	builds = int(probe.Builds(world))
+	if not await _wait_builds(builds + 2):
+		_fail("macro map did not rebuild with the rim storm")
+		return
+	await _frames(120)
+	for rim_across in [50.0, 300.0, 1200.0, 2600.0, 4000.0]:
+		var ceiling := minf(18000.0, crown + (40000.0 - crown) * sqrt(maxf((rim_across + 64.0) * (width + 64.0 - rim_across) / (half_width * half_width), 0.0)) - 300.0)
+		var rim_column := await _column(base_around + 4000.0, rim_across)
+		if rim_column.size() == 0:
+			_fail("rim column timed out at across " + str(rim_across))
+			return
+		var rim_above := _max_in(rim_column, ceiling, TOP)
+		var rim_below := _max_in(rim_column, 8000.0, ceiling - 250.0)
+		print("CLOUD_LAYERS rim across=", rim_across, " ceiling=", ceiling, " max_at_or_above_ceiling=", rim_above, " max_8km_to_ceiling=", rim_below)
+		if rim_above > 0.0:
+			_fail("rim column has density at or above the field ceiling " + str(ceiling) + " at across " + str(rim_across) + ": " + str(rim_above))
+			return
+		rim_reach = maxf(rim_reach, rim_below)
+	if rim_reach <= THRESHOLD:
+		_fail("vacuous rim check: the storm put no density between 8 km and the ceiling")
+		return
+	# How hard the ceiling bites: with the ceiling off (the zero profile) does the same storm reach above it? (WARN only: this storm's tops are
+	# about 12.5-13.5 km, barely above the 12.8-13.2 km ceiling at the wall, and the exact twin check is containment_ceiling_parity_gpu_test.)
+	helper.SetFieldCeiling(world, false)
+	await _frames(30)
+	var free_above := 0.0
+	for rim_across in [50.0, 300.0, 1200.0, 2600.0]:
+		var ceiling := minf(18000.0, crown + (40000.0 - crown) * sqrt(maxf((rim_across + 64.0) * (width + 64.0 - rim_across) / (half_width * half_width), 0.0)) - 300.0)
+		var free_column := await _column(base_around + 4000.0, rim_across)
+		if free_column.size() == 0:
+			helper.SetFieldCeiling(world, true)
+			_fail("rim column (ceiling off) timed out at across " + str(rim_across))
+			return
+		var above_free := _max_in(free_column, ceiling, TOP)
+		print("CLOUD_LAYERS rim ceiling off across=", rim_across, " max_at_or_above_ceiling=", above_free)
+		free_above = maxf(free_above, above_free)
+	helper.SetFieldCeiling(world, true)
+	if free_above <= THRESHOLD:
+		print("CLOUD_LAYERS WARN the storm has no density above the field ceiling even with the ceiling off: the rim check only proves the cut is exact, not that it bit")
 	print("CLOUD_LAYERS=PASS")
 	finished = true
 	quit(0)

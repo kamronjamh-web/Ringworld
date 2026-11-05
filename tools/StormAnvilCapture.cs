@@ -113,6 +113,37 @@ public partial class StormAnvilCapture : RefCounted
         catch (Exception error) { ErrorText = error.ToString(); return false; }
     }
 
+    /// <summary>Like <see cref="PlaceStorm"/> but at an absolute canonical (around, across), for worlds whose camera is not at the fixed base (the rim ceiling check).</summary>
+    public bool PlaceStormAbsolute(Node world, double around, double across, double orientationRadians, double radiusMeters)
+    {
+        try
+        {
+            var clouds = world.GetNode<RingVolumetricCloudLayer>("RingVolumetricClouds");
+            float radius = (float)radiusMeters;
+            clouds.RegisterManualWeather(OwnerKey, new RingVolumetricCloudLayer.LocalWeatherState(
+                PreviewSystemId, RingVolumetricCloudLayer.WeatherSystemKind.ExceptionalFront, 1.0f, radius * 1.25f,
+                new Vector2((float)around, (float)across), new Vector2(radius * 1.25f, radius),
+                (float)orientationRadians, 0.97f, 0.94f, Vector2.Zero, CloudFormationProfile.AnvilStorm,
+                500.0f, 18000.0f) { InheritWind = true });
+            return true;
+        }
+        catch (Exception error) { ErrorText = error.ToString(); return false; }
+    }
+
+    /// <summary>
+    /// Containment field WO6 A/B (debug): turns the cloud ceiling under the field off (the zero profile the Sunshine UBO carries with no field) or back on (the
+    /// bridge's last published profile). The bridge only resends on a change, so the override holds. Returns the published exists flag.
+    /// </summary>
+    public bool SetFieldCeiling(Node world, bool on)
+    {
+        var bridge = world.GetNode<RingSunshineCloudBridge>("SunshineCloudBridge");
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var clouds = typeof(RingSunshineCloudBridge).GetField("_clouds", flags)?.GetValue(bridge) as GodotObject;
+        if (typeof(RingSunshineCloudBridge).GetField("_lastContainmentProfile", flags)?.GetValue(bridge) is not RingworldTechDemo.ContainmentField.ContainmentFieldProfile p || clouds == null) return false;
+        clouds.Call("set_containment_field", on && p.IsValid, p.WallTopMeters, p.ApexMeters, p.CrownMeters, p.RootAcross0, p.RootAcrossW);
+        return on && p.IsValid;
+    }
+
     /// <summary>Debug lifecycle code for every uploaded storm (NaN = natural). See RingVolumetricCloudLayer.StormLifecycleOverride.</summary>
     public void SetLifecycle(double code) => RingVolumetricCloudLayer.StormLifecycleOverride = double.IsNaN(code) ? null : (float)code;
 

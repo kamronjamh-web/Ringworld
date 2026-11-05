@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
 using RingworldTechDemo.Voxel.LOD;
@@ -364,6 +365,8 @@ public partial class RingSunshineCloudBridge : Node
     private Vector4 _lastCloudFrameUp = new(float.PositiveInfinity, 0.0f, 0.0f, 0.0f);
     private Vector4 _lastCloudFrameAcross = new(float.PositiveInfinity, 0.0f, 0.0f, 0.0f);
     private float _lastCloudFrameRingWidth = float.NaN;
+    private ContainmentFieldProfile _lastContainmentProfile;
+    private bool _containmentProfileSent;
     private float _lastAppliedHistoryWeight = float.NaN;
     private readonly RingCanonicalPosition[] _gpuShadowCenters = new RingCanonicalPosition[2];
     private readonly bool[] _hasGpuShadowCenter = new bool[2];
@@ -972,6 +975,7 @@ public partial class RingSunshineCloudBridge : Node
     private static readonly StringName CloudFrameAcrossName = "cloud_frame_across";
     private static readonly StringName RingWidthMetersName = "ring_width_meters";
     private static readonly StringName SetGameplayCloudFrameName = "set_gameplay_cloud_frame";
+    private static readonly StringName SetContainmentFieldName = "set_containment_field";
     private static readonly StringName CurrentSolarVisibilityName = "current_solar_visibility";
     private static readonly StringName CurrentHubDayName = "current_hub_day";
     private static readonly StringName RingAtmosphereProfileName = "ring_atmosphere_profile";
@@ -1321,10 +1325,26 @@ public partial class RingSunshineCloudBridge : Node
             _clouds.Set(RingWidthMetersName, ringWidth);
             _lastCloudFrameRingWidth = ringWidth;
         }
+        UpdateContainmentCeilingProfile(geometry, ringWidth);
         UpdateAtmosphereProfile(preciseRadius);
         // This is deliberately a CPU-only, callback-paired contract. The
         // compositor snapshots it once when it uploads its existing UBO.
         _clouds.Call(SetGameplayCloudFrameName, new Transform3D(new Basis(around, up, across), origin), viewer.AroundMeters, viewer.AcrossMeters, preciseRadius);
+    }
+
+    /// <summary>
+    /// Publishes the containment-field profile for the Sunshine and cloud-shadow cloud ceiling (RingContainmentCeiling.glslinc, GenericData
+    /// ring_field_profile0 / 1). The profile is the live snapshot's, so it follows the wall description with no shader change; it is resent only when it
+    /// changes. No separate toggle: the field is part of the world, and the ceiling is exactly 18 km away from the rims.
+    /// </summary>
+    private void UpdateContainmentCeilingProfile(in RingLodGeometrySnapshot geometry, float ringWidth)
+    {
+        ContainmentFieldProfile profile = ContainmentFieldProfile.FromSnapshot(geometry, ringWidth, RimWallDescription.Current);
+        if (_containmentProfileSent && profile.Equals(_lastContainmentProfile)) return;
+        _clouds!.Call(SetContainmentFieldName, profile.IsValid, profile.WallTopMeters, profile.ApexMeters, profile.CrownMeters,
+            profile.RootAcross0, profile.RootAcrossW);
+        _lastContainmentProfile = profile;
+        _containmentProfileSent = true;
     }
 
     // Cost-attribution debug knob (tools/terrain_render_attribution_test.gd --haze-main): packs the all-zero profile (the haze-off

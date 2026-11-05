@@ -67,7 +67,7 @@ vec2 ring_storm_resolve(vec3 acc) {
 // Per-system bake inputs.
 struct StormBakeParams {
 	vec4 shape;   // x pillar radius (m), y anvil radius multiplier, z anvil start (band fraction), w shear 0..1
-	vec4 extra;   // x mammatus 0..1
+	vec4 extra;   // x mammatus 0..1, y containment-field ceiling at the texel (m; 0 = none)
 };
 
 // One lattice cell. `q` is the position in the wind frame (x downwind, y across), `core` jitter and the hashed cell parameters
@@ -207,6 +207,9 @@ void ring_storm_system(
 	}
 	// Hard 18 km cloud ceiling (S6): the dome and body clamps below are relative to it.
 	ceilingY = min(ceilingY, RING_CLOUD_CEILING_METERS);
+	// Containment field (WO6): the dome and body clamps follow the one ceiling min(18 km, H(across) - 300 m) at the texel's canonical across
+	// (bake.extra.y; 0 = no field, 18 km), so storms against a rim bake as flattened shelves rather than as full towers cut at the ceiling.
+	if (bake.extra.y > 1.0) ceilingY = min(ceilingY, bake.extra.y);
 	float bandMeters = max(ceilingY - floorY, 1.0);
 
 	float pillarRadius = max(1000.0, bake.shape.x);

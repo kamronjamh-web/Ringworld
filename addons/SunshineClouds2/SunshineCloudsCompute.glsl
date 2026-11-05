@@ -264,6 +264,8 @@ float cloud_altitude(vec3 worldPosition) {
 	return to_cloud_space(worldPosition).y;
 }
 
+#include "RingContainmentCeiling.glslinc"
+
 float ring_side_wall_mask(float canonicalAcross) {
 	float ringWidth = genericData.data.temporal_controls.y;
 	if (ringWidth <= 1.0) return 1.0;
@@ -482,7 +484,9 @@ float sampleScene(
 	g_last_total_density = 0.0;
 	worldPosition = to_cloud_space(worldPosition);
 	vec3 canonicalCloudPosition = worldPosition;
-	float wallMask = ring_side_wall_mask(canonicalCloudPosition.z);
+	// Side walls and the containment-field cloud ceiling (RingContainmentCeiling.glslinc; 1.0 away from the rims).
+	float wallMask = ring_side_wall_mask(canonicalCloudPosition.z)
+		* ring_containment_ceiling(canonicalCloudPosition.z, canonicalCloudPosition.y);
 	if (wallMask == 0.0) {
 		return 0.0;
 	}

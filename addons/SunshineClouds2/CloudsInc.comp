@@ -377,6 +377,11 @@ struct GenericData{
 	// noise: x / y / z = moving-frame offsets of the large / medium / small detail noise along around (m, wrapped by each noise scale), w = 0
 	vec4 ring_megastorm_frame;
 	vec4 ring_megastorm_noise;
+	// Append-only containment-field cloud ceiling profile (docs/containment-field-design.md WO6; RingContainmentCeiling.glslinc).
+	// profile0: x wall top, y apex, z skirt top (crown = wall top + skirt), w 1 when a field exists (all zero = no field, identity)
+	// profile1: x RootAcross0, y RootAcrossW (the roots, not W, so the wall depth needs no shader change), zw reserved
+	vec4 ring_field_profile0;
+	vec4 ring_field_profile1;
 };
 
 struct DirectionalLight {

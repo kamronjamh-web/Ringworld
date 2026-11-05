@@ -250,6 +250,10 @@ const MegastormStripScript = preload("res://addons/SunshineClouds2/RingMegastorm
 var megastorm_strip = MegastormStripScript.new()
 var last_megastorm_strip_texture_generation : int = -1
 var cloud_shadow_strip_generations : Array[int] = [-1, -1, -1, -1]
+# Containment-field cloud ceiling profile (GenericData ring_field_profile0 / 1; docs/containment-field-design.md WO6). All zero = no field.
+# profile0 = (wall top, apex, skirt top, 1 when a field exists), profile1 = (RootAcross0, RootAcrossW, 0, 0), canonical metres.
+var ring_field_profile0 : Vector4 = Vector4.ZERO
+var ring_field_profile1 : Vector4 = Vector4.ZERO
 # Per-frame megastorm frame from the bridge (set_megastorm_frame): s hi / lo, direction (0 = off), wall travel (double metres), reproject.
 var megastorm_input : Dictionary = {"s_hi": 0.0, "s_lo": 0.0, "dir": 0.0, "travel": 0.0, "reproject": false}
 # Megastorm darkness E for the storm-light layer z (docs/megastorm-design.md 5.6, WO14; set_megastorm_darkness): [E scale (0 = off), W, bow, meander
@@ -274,7 +278,7 @@ const POSITION_QUERY_CAPACITY := 256
 const POSITION_QUERY_BUFFER_BYTES := POSITION_QUERY_CAPACITY * 16
 var positionQueryBatchCount : int = 0
 
-const GENERAL_DATA_FLOAT_COUNT := 324
+const GENERAL_DATA_FLOAT_COUNT := 332
 const GENERAL_DATA_BUFFER_BYTES := GENERAL_DATA_FLOAT_COUNT * 4
 const GENERAL_DATA_MAIN_RING_SIZE := 4
 const GENERAL_DATA_RING_SIZE := GENERAL_DATA_MAIN_RING_SIZE + 1 # slot 0 is shadows only
@@ -3483,6 +3487,10 @@ func update_matrices(camera_tr, view_proj, new_size: Vector2i):
 	for component in [megastorm_frame.x, megastorm_frame.y, megastorm_frame.z, megastorm_frame.w,
 			megastorm_noise.x, megastorm_noise.y, megastorm_noise.z, megastorm_noise.w]:
 		general_data.encode_float(idx, component); idx += 4
+	# Append-only containment-field cloud ceiling profile (ring_field_profile0, ring_field_profile1).
+	for component in [ring_field_profile0.x, ring_field_profile0.y, ring_field_profile0.z, ring_field_profile0.w,
+			ring_field_profile1.x, ring_field_profile1.y, ring_field_profile1.z, ring_field_profile1.w]:
+		general_data.encode_float(idx, component); idx += 4
 	last_engine_jitter_ndc = Vector2(view_proj.z.x, view_proj.z.y)
 	last_engine_jitter_active = jitter_active
 	previous_callback_menu_around_precise = menu_cloud_frame_around_precise
@@ -3849,6 +3857,16 @@ func set_storm_profile_map(enabled : bool, center_around : float, center_across 
 		Vector4(pillar_radius, anvil_multiplier, anvil_start, shear), mammatus, Vector3(wind_cos, wind_sin, lean_meters),
 		slices, refresh_seconds)
 
+# Called by the bridge when the containment field profile changes: the Sunshine density and the cloud shadows multiply in
+# min(18 km, H(across) - 300 m) (RingContainmentCeiling.glslinc). Pass roots, not the habitat width. exists = false is the zero profile.
+func set_containment_field(exists : bool, wall_top : float, apex : float, skirt_top : float, root_across_0 : float, root_across_w : float) -> void:
+	if exists:
+		ring_field_profile0 = Vector4(wall_top, apex, skirt_top, 1.0)
+		ring_field_profile1 = Vector4(root_across_0, root_across_w, 0.0, 0.0)
+	else:
+		ring_field_profile0 = Vector4.ZERO
+		ring_field_profile1 = Vector4.ZERO
+
 # Called by the bridge every frame (see update_matrices). direction 0 = megastorm off. travel = unwrapped wall position along the around
 # axis in metres (double), used for the moving-frame noise and the history shift.
 func set_megastorm_frame(s_hi : float, s_lo : float, direction : float, travel : float, reproject : bool) -> void:
@@ -3887,7 +3905,7 @@ func update_storm_profile_map() -> void:
 		begin_marker = gpu_timestamp_storm_map_begin_marker
 		end_marker = gpu_timestamp_storm_map_end_marker
 	storm_profile_map.update(rd, weather_systems_bytes, weather_systems_revision, cloud_weather_frame, cloud_frame_up.w,
-		begin_marker, end_marker)
+		begin_marker, end_marker, ring_field_profile0, ring_field_profile1)
 
 func update_lights():
 	lights_updated = false

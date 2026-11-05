@@ -17,7 +17,7 @@ func _init() -> void:
 	var helpers := _function(live, "//Helpers", "float sampleScene(")
 	var scene := _function(live, "float sampleScene(", "float sampleSceneCoarse(")
 	if live.is_empty() or far.is_empty() or weather.is_empty() or helpers.is_empty() or scene.is_empty(): rd.free(); _fail("live source extraction failed"); return
-	helpers = _rewrite(helpers.replace("#include \"SunshineCloudsEntrySkip.glslinc\"", ""))
+	helpers = _rewrite(helpers.replace("#include \"SunshineCloudsEntrySkip.glslinc\"", "").replace("#include \"RingContainmentCeiling.glslinc\"", "float ring_containment_ceiling(float across, float altitude) { return 1.0; } // containment field: no field in this harness"))
 	scene = _rewrite(scene.replace("float sampleScene(", "float sampleSceneLive("))
 	far = _strip_uniforms(far)
 	var rd_source := RDShaderSource.new(); rd_source.source_compute = _shader_source(weather, helpers, far, scene)

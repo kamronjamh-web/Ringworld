@@ -108,10 +108,78 @@ public partial class CloudLayerColumnTest : RefCounted
             Check(MathF.Abs(bestHours - table.DiurnalPeakHoursAfterNoon) <= 1.01f, "diurnal: peak at " + bestHours + " h");
 
             CheckRealDayNightCycle(table, Check);
+            CheckContainmentCeiling(table, noon, Check);
 
             return Finish(golden, capture, failures);
         }
         catch (Exception e) { Console.Error.WriteLine(e.ToString()); return 1; }
+    }
+
+    /// <summary>
+    /// Containment field WO6: the one cloud ceiling min(18 km, H - 300 m) (ContainmentFieldGeometry.CloudCeilingAt) in the CPU column and the density factor.
+    /// Identity away from the rims, every top and the density at or below the ceiling near a rim, monotone and continuous, and the megastorm's ceiling
+    /// (MegastormFieldCoupling.CeilingAt through a provider = H) equal to CloudCeilingAt at 64 across samples.
+    /// </summary>
+    static void CheckContainmentCeiling(CloudLayerTable table, Vector3 noon, Action<bool, string> check)
+    {
+        const double Width = 318_000.0;
+        var field = new ContainmentField.ContainmentFieldProfile(Width, 10_400.0, 40_000.0, -64.0, Width + 64.0, 1_600.0);
+        var cold = new[] { new CloudLayerSystem(MakeSystem(table, CloudFormationProfile.Cumulonimbus,
+            RingVolumetricCloudLayer.WeatherSystemKind.MajorFront, 0.9f, 1.0f)) };
+        foreach (float across in new[] { 100_000.0f, 159_000.0f, 12_000.0f, 306_000.0f })
+        {
+            CloudLayerPoint p = Point(CenterAround, across, 0.5f, 0.0f, 0.0f, noon);
+            CloudLayerColumn plain = RingCloudLayers.Evaluate(p, cold, table), under = RingCloudLayers.Evaluate(p, cold, table, field);
+            for (int i = 0; i < 3; i++)
+                check(plain.Layers[i] == under.Layers[i], "field changed the column at across " + across + " layer " + i);
+            for (double altitude = 0.0; altitude <= 20_000.0; altitude += 500.0)
+                check(ContainmentField.ContainmentFieldGeometry.CloudDensityFactor(field, across, altitude) == 1.0, "density factor not 1 at across " + across);
+        }
+        foreach (float across in new[] { 1.0f, 500.0f, 2_000.0f, 4_000.0f, 317_900.0f })
+        {
+            double ceiling = ContainmentField.ContainmentFieldGeometry.CloudCeilingAt(field, across);
+            check(ceiling < 18_000.0 && ceiling > 10_000.0, "near-rim ceiling " + ceiling + " at " + across);
+            CloudLayerPoint p = Point(CenterAround, across, 0.5f, 0.0f, 0.0f, noon);
+            foreach (CloudLayerSlot slot in RingCloudLayers.Evaluate(p, cold, table, field).Layers)
+                check(slot.TopMeters <= (float)ceiling + 0.01f, "top above the field ceiling at " + across);
+            // A custom ceiling below the table caps really clamps every top and keeps base <= top.
+            foreach (CloudLayerSlot slot in RingCloudLayers.Resolve(RingCloudLayers.EvaluateMap(p, cold, table), table, 3_000.0f).Layers)
+                check(slot.TopMeters <= 3_000.0f || slot.BaseMeters > 3_000.0f, "explicit ceiling did not clamp");
+            check(ContainmentField.ContainmentFieldGeometry.CloudDensityFactor(field, across, ceiling) == 0.0, "density not 0 at the ceiling");
+            check(ContainmentField.ContainmentFieldGeometry.CloudDensityFactor(field, across, ceiling + 1.0) == 0.0, "density not 0 above the ceiling");
+            check(ContainmentField.ContainmentFieldGeometry.CloudDensityFactor(field, across, ceiling - 1_000.0) == 1.0, "density below the feather not 1");
+            double previous = 1.0;
+            for (double altitude = 0.0; altitude <= 20_000.0; altitude += 50.0)
+            {
+                double f = ContainmentField.ContainmentFieldGeometry.CloudDensityFactor(field, across, altitude);
+                check(f <= previous + 1e-12, "density factor rises with altitude at " + across);
+                previous = f;
+            }
+        }
+        // Continuity across the rim band's edge and where the ceiling meets 18 km: steps per metre are bounded by the profile slope.
+        double worstStep = 0.0, prevFactor = 1.0;
+        for (double across = 0.0; across <= 7_500.0; across += 1.0)
+        {
+            double f = ContainmentField.ContainmentFieldGeometry.CloudDensityFactor(field, across, 17_900.0);
+            if (across > 0.0) worstStep = Math.Max(worstStep, Math.Abs(f - prevFactor));
+            prevFactor = f;
+        }
+        check(worstStep < 0.1, "density factor jumps by " + worstStep + " per metre of across at 17.9 km");
+
+        // Megastorm parity: its ceiling (provider = H, CeilingFromUnderside) is the field's single rule at 64 samples.
+        Func<double, double>? savedProvider = MegastormFieldCoupling.FieldUndersideProvider;
+        try
+        {
+            MegastormFieldCoupling.FieldUndersideProvider = a => ContainmentField.ContainmentFieldGeometry.HeightAt(field, a);
+            for (int i = 0; i < 64; i++)
+            {
+                double across = -64.0 + (Width + 128.0) * (i + 0.5) / 64.0;
+                if (i < 16) across = 25.0 + i * i * 30.0;
+                check(MegastormFieldCoupling.CeilingAt(across) == ContainmentField.ContainmentFieldGeometry.CloudCeilingAt(field, across),
+                    "megastorm ceiling differs from CloudCeilingAt at across " + across);
+            }
+        }
+        finally { MegastormFieldCoupling.FieldUndersideProvider = savedProvider; }
     }
 
     /// <summary>

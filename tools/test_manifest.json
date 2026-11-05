@@ -1588,6 +1588,19 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "containment_ceiling_parity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "clouds",
+        "sunshine-compute"
+      ],
+      "marker": "CONTAINMENT_CEILING_PARITY",
+      "expected_s": 6,
+      "timeout_s": 60
+    },
     "far_cloud_density_parity_gpu_test": {
       "kind": "test",
       "mode": "gpu-local",
@@ -3013,6 +3026,19 @@
       "expected_s": 30,
       "timeout_s": 120
     },
+    "containment_disturbance_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "weather"
+      ],
+      "world": "integration",
+      "marker": "CONTAINMENT_DISTURBANCE",
+      "expected_s": 60,
+      "timeout_s": 300
+    },
     "rim_wall_top_anchors_test": {
       "kind": "test",
       "mode": "headless",
@@ -3034,6 +3060,19 @@
       ],
       "world": "start-menu",
       "marker": "RIM_WALL",
+      "expected_s": null,
+      "timeout_s": 1500
+    },
+    "rim_cloud_ceiling_check": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "containment-field",
+        "clouds"
+      ],
+      "world": "start-menu",
+      "marker": "RIM_CLOUD",
       "expected_s": null,
       "timeout_s": 1500
     },
