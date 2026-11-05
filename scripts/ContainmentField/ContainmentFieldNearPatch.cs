@@ -23,6 +23,10 @@ public sealed class ContainmentNearPatchMesh
     public double ArchEnd { get; init; }
     public double AroundHalfSpan { get; init; }
     public double NoiseAroundScale { get; init; }
+    /// <summary>Grid quads per side (<see cref="Quads"/> for the near patch, fewer for a ripple patch).</summary>
+    public int QuadsPerSide { get; init; }
+    /// <summary>Surface metres along around per UV.x unit at the anchor's height: radialAnchor / (r x NoiseAroundScale).</summary>
+    public double SurfaceMetresPerUvX { get; init; }
     public Vector2 NoiseOriginMeters { get; init; }
     public Vector3[] Positions { get; init; } = Array.Empty<Vector3>();
     public Vector3[] Normals { get; init; } = Array.Empty<Vector3>();
@@ -90,13 +94,26 @@ public static class ContainmentFieldNearPatch
 
     public static ContainmentNearPatchMesh Build(in ContainmentFieldProfile profile, in RingLodGeometrySnapshot snapshot, in ContainmentFieldPoint anchor, double rangeMeters)
     {
-        const int Q = ContainmentNearPatchMesh.Quads, V = Q + 1;
+        ContainmentNearPatchMesh grid = BuildGrid(profile, snapshot, anchor, WindowFactor * rangeMeters, ContainmentNearPatchMesh.Quads);
+        return new ContainmentNearPatchMesh
+        {
+            Anchor = grid.Anchor, RangeMeters = rangeMeters, ArchStart = grid.ArchStart, ArchEnd = grid.ArchEnd, AroundHalfSpan = grid.AroundHalfSpan,
+            NoiseAroundScale = grid.NoiseAroundScale, QuadsPerSide = grid.QuadsPerSide, SurfaceMetresPerUvX = grid.SurfaceMetresPerUvX, NoiseOriginMeters = grid.NoiseOriginMeters,
+            Positions = grid.Positions, Normals = grid.Normals, Tangents = grid.Tangents, Uv = grid.Uv, Uv2 = grid.Uv2, Indices = grid.Indices,
+            Bounds = grid.Bounds, GridBasis = grid.GridBasis, Profile = grid.Profile, Circumference = grid.Circumference, RingRadius = grid.RingRadius,
+        };
+    }
+
+    /// <summary>Generalised grid: arch window [anchor arch - halfSpan, + halfSpan] clamped to the arch, around half-span = halfSpan x r / radialAnchor, <paramref name="quads"/> quads per side. RangeMeters is left at halfSpan / WindowFactor.</summary>
+    public static ContainmentNearPatchMesh BuildGrid(in ContainmentFieldProfile profile, in RingLodGeometrySnapshot snapshot, in ContainmentFieldPoint anchor, double halfSpanMeters, int quads)
+    {
+        int Q = quads, V = Q + 1;
         double archLength = ContainmentFieldGeometry.ArchLength(profile);
         double c = snapshot.CircumferenceMeters, r = snapshot.RingRadiusMeters;
         double sA = anchor.ArchLengthMeters, aA = anchor.AroundMeters;
-        double archStart = Math.Max(0.0, sA - WindowFactor * rangeMeters), archEnd = Math.Min(archLength, sA + WindowFactor * rangeMeters);
+        double archStart = Math.Max(0.0, sA - halfSpanMeters), archEnd = Math.Min(archLength, sA + halfSpanMeters);
         double radialAnchor = r - (snapshot.RingVerticalBaseOffsetMeters + anchor.VerticalMeters);
-        double half = WindowFactor * rangeMeters * r / radialAnchor;
+        double half = halfSpanMeters * r / radialAnchor;
         double scale = NoiseAroundScale(c);
         // Same maths as AnchoredAt(snapshot, anchor).CanonicalToWorld, with the per-row radii and the anchor's local position hoisted out of the vertex loop.
         (double anchorX, double anchorY, double anchorZ) = snapshot.CanonicalToAbsoluteLocal(aA, anchor.VerticalMeters, anchor.AcrossMeters);
@@ -154,8 +171,8 @@ public static class ContainmentFieldNearPatch
 
         return new ContainmentNearPatchMesh
         {
-            Anchor = anchor, RangeMeters = rangeMeters, ArchStart = archStart, ArchEnd = archEnd, AroundHalfSpan = half,
-            NoiseAroundScale = scale, NoiseOriginMeters = NoiseOrigin(aA, sA, c),
+            Anchor = anchor, RangeMeters = halfSpanMeters / WindowFactor, ArchStart = archStart, ArchEnd = archEnd, AroundHalfSpan = half,
+            NoiseAroundScale = scale, QuadsPerSide = Q, SurfaceMetresPerUvX = radialAnchor / (r * scale), NoiseOriginMeters = NoiseOrigin(aA, sA, c),
             Positions = pos, Normals = nrm, Tangents = tan, Uv = uv, Uv2 = uv2, Indices = idx,
             Bounds = new Aabb(min, max - min), GridBasis = snapshot.GridGlobalTransform.Basis,
             Profile = profile, Circumference = c, RingRadius = r,

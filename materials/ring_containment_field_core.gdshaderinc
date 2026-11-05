@@ -43,6 +43,8 @@ const float CF_SEAM_ROUGHNESS = 0.25;
 const vec3 CF_SEAM_ENERGY_COLOUR = vec3(0.35, 0.8, 1.0);   // faint cool cyan
 const float CF_SEAM_ENERGY = 0.06;              // self-light of a seam crest at etch strength 1 (linear radiance, day); faint
 const float CF_SEAM_BOOST_GAIN = 4.0;           // how strongly the WO4 boost (ripples, strikes) energises the seams
+const float CF_SEAM_ENERGY_MEAN = 0.044;        // cf_seam_energy averaged over a cell (crest integral x edge length per cell area x mean pulse)
+const float CF_RIPPLE_SEAM_REVEAL = 6.0;        // ripple patches only: the unresolved energised honeycomb reads as a glowing band (cf_seam_energy_filtered)
 const vec3 CF_SEAM_TINT = vec3(0.985, 0.99, 1.0);   // the faint tint of the thicker glass
 const float CF_GLASS_F0 = 0.04;                 // Schlick F0 for n = 1.5
 const float CF_GLASS_ROUGHNESS = 0.35;          // a soft sheen, not a mirror glint (an energy field, not real glass)
@@ -150,6 +152,72 @@ float cf_seam_energy(vec2 p, float pixel_m, float flow_phase) {
 	float edge_length = CF_LATTICE_SPACING * 0.57735027;
 	float pulse = 0.5 + 0.5 * cos(6.2831853 * (cf_hex_edge_along(p) / edge_length - flow_phase));
 	return crest * cell_fade * (0.45 + 0.75 * pulse);
+}
+
+// The seams' energy for a ripple patch seen from any distance (WO4): cf_seam_energy while the cells are resolved; as they shrink below a few pixels it
+// converges to a band glow (the lattice's mean crest energy x CF_RIPPLE_SEAM_REVEAL), so an energised ring reads from tens of kilometres without sparkle.
+// The reveal factor stands in for the glare a lit honeycomb would have at a distance; it only acts where a ripple is (the patch weight is the ring band).
+float cf_seam_energy_filtered(vec2 p, float pixel_m, float flow_phase) {
+	float fw = max(pixel_m, 0.001);
+	float cell_fade = 1.0 - smoothstep(CF_LATTICE_SPACING / 16.0, CF_LATTICE_SPACING / 6.0, fw);
+	return cf_seam_energy(p, pixel_m, flow_phase) + (1.0 - cell_fade) * CF_SEAM_ENERGY_MEAN * CF_RIPPLE_SEAM_REVEAL;
+}
+
+// ---- Ripples (docs/containment-field-design.md 3.5, 3.10.2; WO4) ----
+// Needs materials/ring_containment_strike.gdshaderinc included BEFORE this file (cfs_strike_light, CFS_COLOUR).
+// One ripple record (the CPU computes everything time-dependent in double, ContainmentRipplePatches.Evaluate):
+//   wave  = (A x ripple strength, front radius rho m, Rmax m, flash: the source pulse x coupling, summed-capped, reduced-flash aware)
+//   crawl = (Rc m (0 = no crawl), crawl front m, seed, rim bias) (cfs_strike_light)
+//   strike = the strike light level E x flash x ripple strength x tail (0 = no crawl or glow)
+// d = surface metres from the ripple centre (x along around, y along increasing arch length), pixel_m = the footprint of d on screen.
+// Accumulates: slope (dimensionless refraction slope in the same surface frame, about -1..1 per ripple), weight (the field's reveal weight 0..1: refraction,
+// sheen and seams show where the ring is), boost (cf_glass_shade's seam boost), light (additive radiance before haze: the flash-lit reveal ring,
+// the strike crawl and the contact glow). All exactly 0 when wave.x, wave.w and strike are 0, and 0 at the patch edge (1.15 max(Rmax, Rc)).
+const float CF_RIPPLE_LAMBDA = 0.18;          // x Rmax: crest wavelength
+const float CF_RIPPLE_OMEGA = 0.12;           // x Rmax: Gaussian half width of the ring (about 1.5 visible crests)
+const float CF_RIPPLE_PATCH = 1.15;           // patch radius / max(Rmax, Rc)
+const vec3 CF_RIPPLE_TINT = vec3(0.55, 0.65, 1.0);
+const float CF_RIPPLE_REVEAL_GAIN = 1.5;      // linear radiance of the flash-lit ring crest at A = flash = 1
+const float CF_STRIKE_CRAWL_GAIN = 6.0;       // linear radiance of a resolved crawl filament at strike level 1
+const float CF_STRIKE_GLOW_GAIN = 8.0;        // linear radiance of the contact glow core at strike level 1
+const float CF_RIPPLE_MAX_PX = 6.0;           // refraction cap at 1080 lines (the near shimmer has 3)
+
+void cf_ripple_eval(vec2 d, float pixel_m, vec4 wave, vec4 crawl, float strike,
+		inout vec2 slope, inout float weight, inout float boost, inout vec3 light) {
+	float rmax = max(wave.z, 1.0);
+	float patch_r = CF_RIPPLE_PATCH * max(rmax, crawl.x);
+	float s = length(d);
+	float edge = 1.0 - smoothstep(0.85 * patch_r, patch_r, s);
+	if (edge <= 0.0) return;
+	float lambda = CF_RIPPLE_LAMBDA * rmax;
+	float omega = CF_RIPPLE_OMEGA * rmax;
+	float x = s - wave.y;
+	float g = exp(-(x / omega) * (x / omega));
+	float ph = 6.2831853 * x / lambda;
+	float c = cos(ph);
+	// f = cos(ph) g, df/ds = (-sin(ph) 2 pi / lambda - 2 x / omega^2 cos(ph)) g; normalised by 2 pi / lambda so a full ring is about +-1.
+	float dfn = (-sin(ph) - (2.0 * x * lambda / (6.2831853 * omega * omega)) * c) * g;
+	float a = max(wave.x, 0.0) * edge;
+	vec2 dir = s > 0.001 ? d / s : vec2(0.0);
+	slope += dir * (a * dfn * smoothstep(0.0, 0.1 * lambda, s));
+	weight = max(weight, a * g);
+	boost += a * g;
+	light += CF_RIPPLE_TINT * (CF_RIPPLE_REVEAL_GAIN * a * g * g * (0.6 + 0.4 * c) * clamp(wave.w, 0.0, 1.0));
+	if (strike > 0.0 && crawl.x > 0.0) {
+		vec2 sl = cfs_strike_light(d, pixel_m, crawl) * (strike * edge);
+		light += CFS_COLOUR * (CF_STRIKE_CRAWL_GAIN * sl.x + CF_STRIKE_GLOW_GAIN * sl.y);
+		boost += sl.x + sl.y;
+	}
+}
+
+// Refraction offset (px) of the summed ripple slope: tangent_arch_view must be the INCREASING-arch tangent (cross(around, normal)), so the ring
+// bends the background radially. Capped at max_px x weight.
+vec2 cf_ripple_offset_px(vec2 slope, vec3 tangent_around_view, vec3 tangent_arch_view, float weight, float max_px) {
+	vec3 dv = slope.x * tangent_around_view + slope.y * tangent_arch_view;
+	vec2 o = vec2(dv.x, -dv.y);
+	float len = length(o);
+	if (len > 1.0) o /= len;
+	return o * (max_px * clamp(weight, 0.0, 1.0));
 }
 
 // The clear seam (user decision 2026-11-05, revised: transparent, a bit thicker): a parabolic bead CF_SEAM_HALF_WIDTH wide each side of the edge,

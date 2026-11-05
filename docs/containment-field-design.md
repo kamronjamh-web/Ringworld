@@ -230,6 +230,74 @@ User, verbatim: "all emitters on the ground randomly fire up to the containment 
   - The sounds need a listening pass.
   - The frequency is the user's call.
 
+### WO4 status (2026-11-05): ripples, field-strike crawl and glow, post pass, far strike layer
+
+- **Shared maths** (both shading languages; `containment_field_shader_compile_gpu_test`):
+  - `materials/ring_containment_strike.gdshaderinc` (new, pure): `cfs_strike_light` gives the crawl (5-9 seeded branches leaning up to 25 degrees toward the nearer root and up to 1.4x longer that way, one fork each, angular wiggle, pixel-aware 25 m filaments, an advancing front) and the contact glow (core and halo, widened to at least a pixel and energy-preserving).
+  - `ring_containment_field_core.gdshaderinc`:
+    - `cf_ripple_eval` returns the 3.5 ring (Gaussian edge, crests at 0.18 Rmax, slope normalised to about +-1), the reveal weight, the seam boost and the additive light: a flash-lit reveal ring with tint (0.55, 0.65, 1.0), plus the strike crawl and glow (0.75, 0.80, 1.0). Everything is 0 at the patch edge (1.15 max(Rmax, Rc)).
+    - `cf_ripple_offset_px` caps the ring's refraction at 6 px at 1080 lines.
+    - `cf_seam_energy_filtered` shows the resolved seam crests, which become a glowing band (mean crest energy x 6) once the 100 m cells are sub-pixel.
+  - Every consumer includes the strike file before the core.
+- **CPU** (`ContainmentRipplePatches.cs`, pure; `ContainmentFieldNearPatch.BuildGrid` generalises the near build, and the near output is bit-identical):
+  - `Evaluate` computes A x strength, the front, the coupled flash after `LightningVisualPolicy.LimitSummed` over every live ripple and far strike, the crawl front `Rc (1 - exp(-t / 0.12 s))` (0.24 s with reduced flashes) and the strike level E x flash x strength x tail.
+  - The tail fades the strike light over the last 10 % of T, so A and the light both reach exactly 0 at T, whatever the source pulse does.
+  - Crawl: FieldStrike uses the bus's Rc; MegastormContact uses 500 + 1000 E (3.10.2); other kinds have no crawl (EmitterShot ripples get the ring, reveal and boost, like lightning).
+  - Patches are 32 x 32 quads over +-1.15 max(Rmax, Rc), built in double at the projected point (`Surface`), rebuilt on a new ripple or a restrike that grows the radius (at most 2 builds a frame, 0.56 ms each).
+- **Below the field** (`RingContainmentField.Ripples.cs`, `materials/ring_containment_ripple.gdshader`):
+  - The pool is 16 `MeshInstance3D` with one material and 5 instance uniforms each. It uses the same glass and seams as the near patch, weighted by the ring band, with `boost` energising the seams. Per-vertex regular haze; the grazing, root-ramp and soft-intersection fades; own-storm occlusion x 0.15 for storms beyond the 48 km Sunshine handoff.
+  - Near the camera: the near patch evaluates up to 4 overlapping ripples itself (`cf_near_ripples`; refraction, `boost` in `cf_glass_shade`, light) and those ripples' own patches skip the part inside the shimmer range, so the honeycomb is energised in place and nothing is drawn twice.
+  - The field node now runs at ProcessPriority 110, after the disturbance host.
+- **Above the field** (decision 7): every ripple goes through the post pass instead (`RingContainmentField.RipplesPost.cs`, `scripts/render/ring_containment_ripple_post.glsl`). It reuses the one colour copy, draws once per live slot, uploads vertex records only on a rebuild, and has a push-constant slot. The near post pass integrates its ripples like the spatial one. No GPU work when neither is active.
+- **Far** (`RingContainmentFarStrikeLayer`, `materials/ring_containment_strike_far.gdshader`, in the scaled far viewport):
+  - Far-list strikes (> 350 km, never in the pool) are drawn as additive quads in the field's tangent plane at full weight. They carry the crawl and glow, dimmed by `UpperAtmosphereLightning.PathTransmittance`.
+  - Lit pool ripples whose patch reaches the main camera's far fade band (0.9-0.98 x camera far) crossfade per fragment.
+  - The runtime camera far is 1,200 km (the scene file says 220 km), so within the bus's 400 km range the pool never reaches it.
+- **Menu and debug.**
+  - `ContainmentRippleStrength` ("Ripple strength", 0-2, default 1; ripples and field strikes); settings smoke and menu smoke extended.
+  - Diagnostics buttons "Spawn containment ripple" and "Spawn field strike".
+  - Debug API `SpawnDebugRipple`, `SpawnDebugFieldStrike`, `ForceDebugRipples` / `ClearDebugRipples`.
+- **Fixed on the way:** the near shaders' arch tangent was `cross(n, ta)` (the decreasing-arch direction), which mirrored the seam lens and bead tilt on the slanted edges. It is now `cross(ta, n)` in both passes.
+- **Tests:**
+  - new `containment_ripple_patch_test` (headless, gate): placement on the surface (worst 0.6 mm), UV and metric scale, the 400 km anchor, fade to exactly 0 at T for every kind (including a pulse lit forever), reduced flashes (slower crawl, summed cap), an empty pool, near selection, the far rules and the far-strike fade;
+  - new `containment_field_shader_compile_gpu_test` (gpu-local, smoke): both RD passes compiled fresh, plus the three spatial shaders parse;
+  - new tool `containment_ripple_capture` (manual).
+- **Real-path captures** (`tools/containment_ripple_capture.gd`, manual tool; profile `appdata_spawncheck_wall`, runtime-surface world, RTX 4070, `--fixed-fps 30`, exposure locked; evidence in `.godot/captures/field/wo4/`):
+  - **Megastorm field strikes from 64-94 km** (`ms50v_s0..2_sheet.png`, `ms50v_s0.mp4`). The camera is at 19 km at mid-habitat, above every cloud and below the field. The channel climbs to the field; the contact glow, the crawl and the lit ring expand and are gone within about 1.5 s. The megastorm's contact-band ripples show as faint rings along the wall.
+  - **Megastorm strikes from 218-264 km** (`ms200v_*`): small, short flares at a grazing angle.
+  - **Under the anvil or the precursor veil** nothing shows, which is correct (3.8).
+  - **Forced strikes at 50 and 200 km** (`forced50km_*`, `forced50km_v2_*`, `forced200km_*`, `forced50km.mp4`), the reduced-flash set (`reduced/`) and a plain lit ripple (`ripple50km_*`).
+  - **Far-list strikes at 400 and 700 km** (`far400_*`, `far700_*`): drawn by the far layer while lit (`farquads=1` on the 23 lit frames).
+  - **Above the field** (`above_v2_*`, post pass, 3 km above and 8 km away): the crawl, glow, ring and energised honeycomb, then nothing; `abovenoon_*` by day.
+  - **Contact ripples** of a storm parked against the across-0 wall:
+    - from the wall top at noon (`contact_noon_s0_*`);
+    - at night 2 km under the ripple (`contact_close_s0_*`, mp4), where the energised seam band sweeps out smoothly;
+    - at night from the wall top 20 km away, a refraction-only contact ripple is invisible against black space.
+  - **Flicker** (30 fps):
+    - Forced strikes at 50 km give one spike group per strike: the onset and the re-pulse, at most 0.26 luma (x13 the sequence mean). The sequence then returns to the 0.02 baseline, with no residual glow.
+    - Close up the strike is a lightning-scale flash: 24 luma from 8 km (`above_v2` frame 16, the re-pulse). One megastorm frame (`ms50v_s1` frame 20, 15.6) coincides with the megastorm's own channel flash. Both follow the source pulse, which is reduced-flash aware.
+  - **Empty pool**:
+    - Field on vs ripple strength 0 vs field off: SSIM 0.99991 / 0.99985, all ripple diagnostics 0, and no composite or far-layer work.
+    - After vs off once a forced strike has ended: SSIM 0.9992-0.9995 (night star and TAA noise).
+- **Perf** (one A-B-A, 240 frames each, whole-frame GPU ms, RTX 4070, night, weather clock paused):
+
+  | Case | GPU ms ON / OFF / ON | Cost |
+  |---|---|---|
+  | 16 overlapping ripples, 8 of them strikes with crawl and glow lit, 60 km, below | 5.248 / 5.127 / 5.247 | +0.12 ms (gate 0.15, busy-megastorm gate 0.25) |
+  | Same, unlit, below | 5.237 / 5.132 / 5.243 | +0.11 ms |
+  | 16 overlapping, lit, above (post pass; 4 of them in the near patch) | 6.049 / 5.700 / 6.047 | +0.35 ms |
+  | Same, unlit, above | 5.855 / 5.698 / 5.855 | +0.16 ms |
+
+  CPU for the ripple update: about 160 us with 16 live ripples below the field (80 instance-uniform calls and 16 transforms), 36 us above, and 7-9 us idle. The rebuild is 0.56 ms per new ripple, at most 2 a frame.
+- **Open.**
+  - CPU with 16 ripples below the field is over the 3.9 gate (80 us). Packing the 5 instance uniforms into fewer calls would help.
+  - The lit 16-ripple worst case seen from above is +0.35 ms. All 16 crawls are lit over large on-screen patches; the real busy-megastorm case has at most 4 strikes.
+  - The megastorm band occluder (`cf_occluder_band`) is not built: disc occluders only.
+  - The crawl filaments read only up close (from above); from the ground at 50 km the strike reads as a glow plus a lit ring.
+  - Refraction-only ripples (storm contact, bursts) seen from afar at night show only the faint seam band (`CF_RIPPLE_SEAM_REVEAL`); a look call for the user.
+  - The FSR smear check is not done.
+  - The scene file's camera far is 220 km, but the runtime camera far is 1,200 km, so the main view covers the whole 400 km pool range.
+
 ## User decisions 2026-10-29
 
 1. **Wall height.**

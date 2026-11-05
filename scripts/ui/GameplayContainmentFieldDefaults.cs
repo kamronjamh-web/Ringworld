@@ -18,7 +18,8 @@ public sealed class GameplayContainmentFieldDefaults
         new(nameof(GameplayContainmentFieldSettings.ShimmerStrength), 1f, 0f, 2f),
         new(nameof(GameplayContainmentFieldSettings.ShimmerRangeKm), 3f, .5f, 10f),
         new(nameof(GameplayContainmentFieldSettings.SheenStrength), 1f, 0f, 2f),
-        new(nameof(GameplayContainmentFieldSettings.LatticeStrength), 1f, 0f, 2f)
+        new(nameof(GameplayContainmentFieldSettings.LatticeStrength), 1f, 0f, 2f),
+        new(nameof(GameplayContainmentFieldSettings.RippleStrength), 1f, 0f, 2f)
     };
 
     private readonly string _path;
@@ -83,6 +84,7 @@ public sealed class GameplayContainmentFieldDefaults
     public bool SetShimmerRangeKm(float value) => SetFloat(nameof(GameplayContainmentFieldSettings.ShimmerRangeKm), value);
     public bool SetSheenStrength(float value) => SetFloat(nameof(GameplayContainmentFieldSettings.SheenStrength), value);
     public bool SetLatticeStrength(float value) => SetFloat(nameof(GameplayContainmentFieldSettings.LatticeStrength), value);
+    public bool SetRippleStrength(float value) => SetFloat(nameof(GameplayContainmentFieldSettings.RippleStrength), value);
 
     /// <summary>Copies the saved choices onto the containment field node; other nodes are ignored.</summary>
     public void Apply(Node? node)
@@ -92,6 +94,7 @@ public sealed class GameplayContainmentFieldDefaults
         field.ShimmerRangeKm = Settings.ShimmerRangeKm;
         field.SheenStrength = Settings.SheenStrength;
         field.LatticeStrength = Settings.LatticeStrength;
+        field.RippleStrength = Settings.RippleStrength;
     }
 
     public void Reset() { Settings = new(); Dirty = true; LastError = ""; }

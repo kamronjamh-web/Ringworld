@@ -3060,6 +3060,17 @@
       "expected_s": 5,
       "timeout_s": 60
     },
+    "containment_ripple_patch_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field"
+      ],
+      "marker": "CONTAINMENT_RIPPLE_PATCH",
+      "expected_s": 20,
+      "timeout_s": 120
+    },
     "containment_disturbance_test": {
       "kind": "test",
       "mode": "headless",
@@ -3109,6 +3120,18 @@
       "marker": "RIM_WALL",
       "expected_s": null,
       "timeout_s": 1500
+    },
+    "containment_ripple_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "containment-field"
+      ],
+      "world": "start-menu",
+      "marker": "CONTAINMENT_RIPPLE",
+      "expected_s": null,
+      "timeout_s": 1800
     },
     "rim_cloud_ceiling_check": {
       "kind": "tool",

@@ -11,13 +11,15 @@ shader_type spatial;
 //
 // Mesh (ContainmentFieldNearPatch.Build): VERTEX anchor-relative in world orientation (the instance transform is a pure translation to the anchor),
 // NORMAL = field normal (into the contained volume), TANGENT = around direction, UV = noise domain (m, relative to the anchor), UV2.x = arch length
-// from the nearer root (m). Ripple patches (WO4) will share this shader through instance uniforms.
+// from the nearer root (m). Ripples (WO4): up to 4 ripples overlapping this patch are evaluated here (cf_near_ripples) so the honeycomb is energised in place;
+// every ripple is also drawn by its own patch (ring_containment_ripple.gdshader), which skips the part this patch draws.
 render_mode unshaded, cull_disabled, depth_draw_never, blend_premul_alpha, shadows_disabled, fog_disabled;
 
 uniform sampler2D cf_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D cf_depth : hint_depth_texture, filter_nearest, repeat_disable;
 
 #include "res://materials/ring_atmosphere.gdshaderinc"
+#include "res://materials/ring_containment_strike.gdshaderinc"
 #include "res://materials/ring_containment_field_core.gdshaderinc"
 
 uniform float cf_shimmer_strength = 1.0;   // menu ContainmentShimmerStrength (RingContainmentField.DefaultShimmerStrength)
@@ -38,6 +40,10 @@ uniform vec3 cf_ground_radiance = vec3(0.0);
 uniform vec3 cf_ambient_radiance = vec3(0.0);
 uniform float cf_seam_flow_phase = 0.0;    // weather clock / flow period mod 1 (RingContainmentField)
 uniform float cf_seam_energy_scale = 1.0;  // day 1, night 0.35 (the seams' faint self-light)
+
+uniform int cf_near_ripple_count = 0;      // 0..4 (RingContainmentField.Ripples.cs)
+uniform vec4 cf_near_ripples[12];          // per ripple: wave, crawl, (centre x in this patch's UV, centre y, metric k, strike level)
+uniform float cf_ripple_max_px = 6.0;      // CF_RIPPLE_MAX_PX, refraction cap at 1080 lines
 
 varying vec3 cf_tangent_view;
 varying vec3 cf_normal_view;
@@ -77,17 +83,31 @@ void fragment() {
 	float a = cf_alpha(w_refraction, w_glass, w_etch);
 	vec2 lattice_p = UV + cf_lattice_origin;
 	vec2 lattice_fw = fwidth(lattice_p);
-	if (a < 1.0 / 1024.0) discard;
+	// Ripples overlapping this patch (WO4): slope, reveal weight, seam boost and flash / crawl light, all 0 with no ripple.
+	vec2 r_slope = vec2(0.0);
+	float r_weight = 0.0;
+	float r_boost = 0.0;
+	vec3 r_light = vec3(0.0);
+	for (int i = 0; i < 4; i++) {
+		if (i >= cf_near_ripple_count) break;
+		vec4 c = cf_near_ripples[3 * i + 2];
+		vec2 d = (UV - c.xy) * vec2(c.z, 1.0);
+		vec2 fw = fwidth(UV) * vec2(c.z, 1.0);
+		cf_ripple_eval(d, max(fw.x, fw.y), cf_near_ripples[3 * i], cf_near_ripples[3 * i + 1], c.w, r_slope, r_weight, r_boost, r_light);
+	}
+	a = max(a, clamp(4.0 * r_weight * base, 0.0, 1.0));
+	if (a < 1.0 / 1024.0 && max(r_light.x, max(r_light.y, r_light.z)) * base * cf_haze_visibility < 1.0 / 4096.0) discard;
 	vec4 seam = cf_seam(lattice_p, max(lattice_fw.x, lattice_fw.y));
 	if (cf_debug_mode > 0) {
 		ALBEDO = cf_debug_colour(cf_debug_mode, a, dist, cf_range_m, seam.x * w_etch) * a;
 		ALPHA = a;
 	} else {
 		vec3 ta = normalize(cf_tangent_view);
-		vec3 tb = normalize(cross(n, ta));
+		vec3 tb = normalize(cross(ta, n));   // the increasing-arch tangent
 		float max_px = cf_max_offset_px * max(1.0, VIEWPORT_SIZE.y / 1080.0);
 		vec2 offset = cf_offset_px(cf_shimmer_slope(UV, cf_noise_origins), ta, tb, min(w_refraction, 1.0), max_px)
 			+ cf_seam_offset_px(seam, ta, tb, w_etch, max(1.0, VIEWPORT_SIZE.y / 1080.0));
+		if (cf_near_ripple_count > 0) offset += cf_ripple_offset_px(r_slope, ta, tb, base, cf_ripple_max_px * max(1.0, VIEWPORT_SIZE.y / 1080.0));
 		vec2 uv = SCREEN_UV + offset / VIEWPORT_SIZE;
 		// Never pull colour from something in front of the field (no halo around the wall top or a POI).
 		if (cf_view_depth_at(uv, INV_PROJECTION_MATRIX) < frag_depth) uv = SCREEN_UV;
@@ -95,8 +115,8 @@ void fragment() {
 		vec3 l = normalize((VIEW_MATRIX * vec4(cf_to_sun, 0.0)).xyz);
 		vec3 up = normalize((VIEW_MATRIX * vec4(cf_up, 0.0)).xyz);
 		vec3 shade = cf_glass_shade(refracted, n, ta, tb, to_camera, l, up, cf_sun_irradiance, cf_sky_radiance, cf_ground_radiance,
-			w_glass, w_etch, seam, cf_seam_energy(lattice_p, max(lattice_fw.x, lattice_fw.y), cf_seam_flow_phase), cf_seam_energy_scale, 0.0, cf_haze_visibility);
-		ALBEDO = shade * a;
+			w_glass, w_etch, seam, cf_seam_energy(lattice_p, max(lattice_fw.x, lattice_fw.y), cf_seam_flow_phase), cf_seam_energy_scale, r_boost, cf_haze_visibility);
+		ALBEDO = shade * a + r_light * base * cf_haze_visibility;
 		ALPHA = a;
 	}
 }

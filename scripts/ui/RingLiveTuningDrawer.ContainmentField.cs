@@ -9,7 +9,7 @@ public partial class RingLiveTuningDrawer
     private RingContainmentField? _containmentField;
     private GameplayContainmentFieldDefaults? _containmentFieldDefaults;
     private string? _containmentFieldDefaultsPathOverride;
-    private HSlider? _containmentShimmerStrength, _containmentShimmerRange, _containmentSheenStrength, _containmentLatticeStrength;
+    private HSlider? _containmentShimmerStrength, _containmentShimmerRange, _containmentSheenStrength, _containmentLatticeStrength, _containmentRippleStrength;
     private Label? _containmentFieldStatus;
     private double _containmentFieldSaveDelay, _containmentFieldSaveRetry, _containmentFieldBindDelay;
 
@@ -70,6 +70,8 @@ public partial class RingLiveTuningDrawer
             "Soft sheen of the field: a Fresnel-weighted reflection of the sky, the habitat below and the sun, near zero head-on. Lit by the real light: dark at night.");
         _containmentLatticeStrength = AddContainmentFieldSlider(section, "ContainmentLatticeStrength", "Lattice seams", 0, 2, .05, s.LatticeStrength,
             "The 100 m honeycomb seams: clear lens-like beads that bend what is behind them, catch the sky and sun, and carry a faint flowing cyan energy (dimmer at night). Ripples and strikes energise them.");
+        _containmentRippleStrength = AddContainmentFieldSlider(section, "ContainmentRippleStrength", "Ripple strength", 0, 2, .05, s.RippleStrength,
+            "Ripples and field strikes on the containment field seen from below: refraction, the flash-lit reveal ring, the strike crawl and contact glow. 0 hides the patches; the disturbance bus still runs.");
         var reset = new Button { Name = "ContainmentFieldReset", Text = "Reset containment field", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             TooltipText = "Restores the containment field settings to their defaults." };
         reset.Pressed += ResetContainmentField;
@@ -94,11 +96,12 @@ public partial class RingLiveTuningDrawer
 
     private void QueueContainmentFieldSettings()
     {
-        if (_containmentFieldDefaults == null || _containmentShimmerStrength == null || _containmentShimmerRange == null || _containmentSheenStrength == null || _containmentLatticeStrength == null) return;
+        if (_containmentFieldDefaults == null || _containmentShimmerStrength == null || _containmentShimmerRange == null || _containmentSheenStrength == null || _containmentLatticeStrength == null || _containmentRippleStrength == null) return;
         bool changed = _containmentFieldDefaults.SetShimmerStrength((float)_containmentShimmerStrength.Value);
         changed |= _containmentFieldDefaults.SetShimmerRangeKm((float)_containmentShimmerRange.Value);
         changed |= _containmentFieldDefaults.SetSheenStrength((float)_containmentSheenStrength.Value);
         changed |= _containmentFieldDefaults.SetLatticeStrength((float)_containmentLatticeStrength.Value);
+        changed |= _containmentFieldDefaults.SetRippleStrength((float)_containmentRippleStrength.Value);
         _containmentFieldDefaults.Apply(_containmentField);
         if (!changed) return;
         _containmentFieldSaveDelay = .75;
@@ -121,6 +124,8 @@ public partial class RingLiveTuningDrawer
         SetEmitterSliderNoSignal(_containmentShimmerRange, s.ShimmerRangeKm);
         SetEmitterSliderNoSignal(_containmentSheenStrength, s.SheenStrength);
         SetEmitterSliderNoSignal(_containmentLatticeStrength, s.LatticeStrength);
+        SetEmitterSliderNoSignal(_containmentRippleStrength, s.RippleStrength);
+        RefreshDiagnosticsContainmentButtons();
         RefreshContainmentFieldStatus();
     }
 

@@ -14,4 +14,6 @@ public partial class GameplayContainmentFieldSettings : Resource
     [Export] public float SheenStrength { get; set; } = 1f;
     /// <summary>Faint hexagonal lattice seen close up through the field, 0..2.</summary>
     [Export] public float LatticeStrength { get; set; } = 1f;
+    /// <summary>Ripples and field strikes seen on the field from below (refraction, reveal light, crawl and glow), 0..2.</summary>
+    [Export] public float RippleStrength { get; set; } = 1f;
 }

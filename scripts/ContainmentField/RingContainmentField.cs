@@ -85,7 +85,7 @@ public partial class RingContainmentField : Node3D
     private bool _compositeActive;
     private bool _hazeRegistered;
     private readonly ContainmentNearPatchPlanner _planner = new();
-    private readonly float[] _frameParams = new float[40];
+    private readonly float[] _frameParams = new float[92];   // PostParamFloats: RingContainmentFieldComposite.gd PARAM_FLOATS
     private Node? _daySide;
     private ContainmentFieldProfile? _localProfile;
     private (double Width, double WallTop) _localProfileKey;
@@ -111,6 +111,7 @@ public partial class RingContainmentField : Node3D
 
     public override void _Ready()
     {
+        ProcessPriority = 110;   // after the disturbance host (100): the bus has advanced and been fed this frame
         if (LoadSavedDefaults) LoadSettingsFromDisk();
         foreach (string arg in OS.GetCmdlineUserArgs())
         {
@@ -144,6 +145,8 @@ public partial class RingContainmentField : Node3D
     public override void _ExitTree()
     {
         SetCompositeActive(false, default, null);
+        PublishRipplesInactive();
+        FreeFarStrikeLayer();
         RemoveCompositeFromCompositor();
     }
 
@@ -173,6 +176,21 @@ public partial class RingContainmentField : Node3D
 
     private void ProcessField()
     {
+        ProcessNearPatch();
+        UpdateRipples();   // every frame, also when the near patch hid or idle-rejected above
+    }
+
+    // What the near patch learned this frame, reused by the ripple update (RingContainmentField.Ripples.cs).
+    private RingLodGeometrySnapshot _frameSnapshot;
+    private RingCanonicalPosition _frameCameraCanonical;
+    private bool _frameSnapshotValid, _frameCameraValid, _frameLightingFresh, _frameNearDrawn, _frameNearSideKnown;
+    private ContainmentNearPatchMesh? _frameNearMesh;
+    private ContainmentNearPatchView _frameView;
+
+    private void ProcessNearPatch()
+    {
+        _frameSnapshotValid = false; _frameCameraValid = false; _frameLightingFresh = false; _frameNearDrawn = false; _frameNearSideKnown = false;
+        _frameNearMesh = null;
         if (_patch == null || _material == null) return;
         Camera3D? camera = GetViewport()?.GetCamera3D();
         ContainmentFieldProfile? profile = CurrentProfile();
@@ -181,6 +199,7 @@ public partial class RingContainmentField : Node3D
         if (!on) { Hide(); return; }
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         RingCanonicalPosition cameraCanonical = _grid!.WorldToCanonicalRingPosition64(camera!.GlobalPosition);
+        _frameCameraCanonical = cameraCanonical; _frameCameraValid = true;
         double range = ShimmerRangeKm * 1000.0;
         // Cheap idle reject: the field's lowest points are the wall-top roots, so a camera more than 1.1 N below the wall top is out of range
         // (the whole habitat floor; no snapshot, no nearest-point solve).
@@ -193,12 +212,15 @@ public partial class RingContainmentField : Node3D
         long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
         RingLodGeometrySnapshot snapshot = _grid.CaptureLodGeometrySnapshot();
         long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+        _frameSnapshot = snapshot; _frameSnapshotValid = true;
         ContainmentNearPatchView view = _planner.Update(profile!.Value, snapshot, cameraCanonical, range);
         long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
         TimingBreakdown = $"canonical={Us(t0, t1):0.0} snapshot={Us(t1, t2):0.0} planner={Us(t2, t3):0.0}";
         LastView = view;
         ContainmentNearPatchMesh? patch = _planner.Mesh;
+        _frameView = view; _frameNearSideKnown = view.Visible && view.Side != ContainmentFieldViewSide.None;
         if (!view.Visible || patch == null) { Hide(); return; }
+        _frameNearDrawn = true; _frameNearMesh = patch;
         if (view.Rebuilt || _mesh!.GetSurfaceCount() == 0)
         {
             long rebuildStart = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -213,7 +235,7 @@ public partial class RingContainmentField : Node3D
         Vector2 lattice = ContainmentFieldNearPatch.LatticeOrigin(patch);
         bool above = ForcePostPass || view.Side == ContainmentFieldViewSide.Above;
         FieldLighting light = UpdateLighting(snapshot, anchor);
-        LastLighting = light;
+        LastLighting = light; _frameLightingFresh = true;
         double flowCycles = now / SeamFlowPeriodSeconds;
         float flowPhase = (float)(flowCycles - Math.Floor(flowCycles));
         // The seams' faint self-light: full by day, barely visible up close at night.
@@ -229,6 +251,7 @@ public partial class RingContainmentField : Node3D
             _frameParams[12] = LatticeStrength; _frameParams[13] = lattice.X; _frameParams[14] = lattice.Y; _frameParams[15] = flowPhase;
             Pack(16, light.ToSun); Pack(20, light.Up); Pack(24, light.SunIrradiance); Pack(28, light.SkyRadiance); Pack(32, light.GroundRadiance);
             Pack(36, light.AmbientRadiance); _frameParams[39] = energyScale;
+            _postAnchorWorld = anchorWorld;
             SetCompositeActive(true, anchorWorld, _frameParams);
         }
         else
@@ -259,7 +282,6 @@ public partial class RingContainmentField : Node3D
             RingPoiHaze.Tick(this, _grid, _sun);
             if (!_patch.Visible) _patch.Visible = true;
         }
-        UpdateRipples();
     }
 
     /// <summary>Scene lighting at the patch (world space, linear, the units of lit surfaces): what the glass reflects and the etch scatters.</summary>
@@ -383,7 +405,7 @@ public partial class RingContainmentField : Node3D
         if (!active)
         {
             if (!_compositeActive || _composite == null) { _compositeActive = false; return; }
-            _composite.Call(PublishFrameName, Vector3.Zero, new float[40], false);
+            _composite.Call(PublishFrameName, Vector3.Zero, new float[PostParamFloats], false);
             _compositeActive = false;
             return;
         }

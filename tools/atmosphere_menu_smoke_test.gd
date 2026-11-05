@@ -220,14 +220,20 @@ func _run() -> void:
 	var shimmer_range := _drawer.find_child("ContainmentShimmerRangeKm", true, false) as HSlider
 	var sheen_strength := _drawer.find_child("ContainmentSheenStrength", true, false) as HSlider
 	var lattice_strength := _drawer.find_child("ContainmentLatticeStrength", true, false) as HSlider
-	if shimmer_strength == null or shimmer_range == null or sheen_strength == null or lattice_strength == null:
+	var ripple_strength := _drawer.find_child("ContainmentRippleStrength", true, false) as HSlider
+	if shimmer_strength == null or shimmer_range == null or sheen_strength == null or lattice_strength == null or ripple_strength == null:
 		return _fail("containment field sliders missing")
 	if not is_equal_approx(shimmer_range.value, 3.0) or not is_equal_approx(float(_containment.get("ShimmerRangeKm")), 3.0):
 		return _fail("containment field defaults wrong")
 	shimmer_range.value = 5.0
 	sheen_strength.value = 0.5
 	lattice_strength.value = 0.25
+	if not is_equal_approx(ripple_strength.value, 1.0) or not is_equal_approx(float(_containment.get("RippleStrength")), 1.0):
+		return _fail("containment ripple strength default wrong")
+	ripple_strength.value = 0.5
 	await process_frame
+	if not is_equal_approx(float(_containment.get("RippleStrength")), 0.5):
+		return _fail("containment ripple slider did not update the field node")
 	if not is_equal_approx(float(_containment.get("ShimmerRangeKm")), 5.0) or not is_equal_approx(float(_containment.get("SheenStrength")), 0.5) or not is_equal_approx(float(_containment.get("LatticeStrength")), 0.25):
 		return _fail("containment field sliders did not update the field node")
 	_drawer.call("FlushContainmentFieldDefaults")
