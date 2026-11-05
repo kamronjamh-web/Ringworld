@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Godot;
+using RingworldTechDemo.Diagnostics;
 
 namespace RingworldTechDemo.Tools;
 
@@ -23,6 +24,12 @@ namespace RingworldTechDemo.Tools;
 public partial class WarmStallProbe : Node
 {
     public double DetailThresholdMs { get; set; } = 50.0;
+    /// <summary>Opt-in render-thread CPU attribution; fixed storage allocated at Begin, exported after measurement.</summary>
+    public bool VegetationRenderTrace { get; set; }
+    public int VegetationRenderTraceCapacity { get; set; } = 32768;
+    private RingVegetationWorkTrace.Capture? _vegetationTrace;
+    private bool _vegetationTraceStopRequested;
+    public bool VegetationRenderTraceComplete => _vegetationTrace?.Complete ?? true;
 
     /// <summary>A-B experiment only (quality presets WO-4 / N5): induce a blocking GC of this generation right after the frame's
     /// draw submission (post_draw, CPU slack while GPU-bound) once GcPaceMegabytes have been allocated since the last GC, or every
@@ -107,6 +114,7 @@ public partial class WarmStallProbe : Node
         _gcPaceCountAtLast = GC.CollectionCount(0);
         MainThreadOsId = OperatingSystem.IsWindows() ? GetCurrentThreadId() : 0;
         _startUsec = Time.GetTicksUsec();
+        if (VegetationRenderTrace) _vegetationTrace = RingVegetationWorkTrace.Begin(VegetationRenderTraceCapacity);
         _lastPostDraw = _startUsec;
         _frame.Start = _startUsec;
         _lastMainAlloc = MainAllocNow();
@@ -390,6 +398,7 @@ public partial class WarmStallProbe : Node
     /// <summary>Writes stall_frames.csv (every frame) and stall_detail.txt (frames over the threshold) to <paramref name="directory"/>.</summary>
     public void WriteReport(string directory)
     {
+        StopVegetationRenderTrace();
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, "stall_frames.csv"), _csv.ToString());
         File.WriteAllText(Path.Combine(directory, "stall_detail.txt"), _detail.ToString());
@@ -404,10 +413,60 @@ public partial class WarmStallProbe : Node
         }
         owners.Append(string.Format(CultureInfo.InvariantCulture, "\"(all)\",\"probe_self\",{0},{1:0.000},0\n", _frameIndex, _probeSelfBytes / (1024.0 * 1024.0)));
         File.WriteAllText(Path.Combine(directory, "alloc_owners.csv"), owners.ToString());
+        WriteVegetationRenderTrace(directory);
+    }
+
+    /// <summary>Close trace admission and wait for every admitted callback to record/release. Await Complete before writing a complete report.</summary>
+    public void StopVegetationRenderTrace()
+    {
+        RingVegetationWorkTrace.Capture? capture = _vegetationTrace;
+        if (capture == null || _vegetationTraceStopRequested) return;
+        _vegetationTraceStopRequested = true;
+        RingVegetationWorkTrace.Stop(capture);
+    }
+
+    private void WriteVegetationRenderTrace(string directory)
+    {
+        RingVegetationWorkTrace.Capture? capture = _vegetationTrace;
+        if (capture == null) return;
+        int count = capture.Count;
+        double tickMs = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        long newBatches = 0, newBytes = 0, retiredBatches = 0, retiredMirrors = 0;
+        double totalMs = 0, ensureMs = 0, retireMs = 0, maxMs = 0;
+        double outermostMs = 0;
+        int outermostCount = 0;
+        using (var csv = new StreamWriter(Path.Combine(directory, "vegetation_render_work.csv")))
+        {
+            csv.WriteLine("request_process_frame,request_usec,callback_start_usec,callback_end_usec,callback_start_t_ms,queue_wait_ms,instance,channel,callback_depth,new_batches,new_estimated_bytes,ensure_batch_ms,retired_batches,retired_mirrors,retire_ms,other_ms,total_ms,failed");
+            for (int i = 0; i < count; i++)
+            {
+                RingVegetationWorkTrace.Sample row = capture.Samples[i];
+                double total = row.TotalTicks * tickMs, ensure = row.EnsureTicks * tickMs, retire = row.RetireTicks * tickMs;
+                double other = Math.Max(0, total - ensure - retire);
+                csv.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"{row.RequestFrame},{row.RequestUsec},{row.StartUsec},{row.EndUsec},{((long)row.StartUsec - (long)_startUsec) / 1000.0:0.000},{((long)row.StartUsec - (long)row.RequestUsec) / 1000.0:0.000},{row.Instance},{row.Channel},{row.CallbackDepth},{row.NewlyAllocated},{row.AllocatedBytes},{ensure:0.000},{row.RetiredBatches},{row.RetiredMirrors},{retire:0.000},{other:0.000},{total:0.000},{(row.Failed ? 1 : 0)}"));
+                newBatches += row.NewlyAllocated; newBytes += row.AllocatedBytes;
+                retiredBatches += row.RetiredBatches; retiredMirrors += row.RetiredMirrors;
+                totalMs += total; ensureMs += ensure; retireMs += retire; maxMs = Math.Max(maxMs, total);
+                if (row.CallbackDepth == 1) { outermostMs += total; outermostCount++; }
+            }
+        }
+        var summary = new {
+            samples = count, capacity = capture.Samples.Length, overflow = capture.Overflow, complete = capture.Complete,
+            probe_start_usec = _startUsec, stopwatch_frequency = System.Diagnostics.Stopwatch.Frequency,
+            new_batches = newBatches, new_estimated_bytes = newBytes, retired_batches = retiredBatches, retired_mirrors = retiredMirrors,
+            callback_total_ms = totalMs, callback_max_ms = maxMs, ensure_batch_ms = ensureMs, retire_ms = retireMs,
+            outermost_total_ms = outermostMs, outermost_callbacks = outermostCount,
+            other_ms = Math.Max(0, totalMs - ensureMs - retireMs),
+            channels = new { none = -1, grass = 0, trees = 1 },
+            note = "Inclusive CPU wall time of render callbacks, not GPU execution; inline nested callbacks may overlap, so callback totals are not exclusive. Request fields identify callback enqueue, not the latest coalesced FrameRequest or the draw frame. Byte estimates cover newly allocated batch/shared-source buffers, not driver memory. Other includes initialization, mirrors, metadata, haze/shadow resources, dispatch recording and scheduling. Incomplete reports may omit an in-flight callback."
+        };
+        File.WriteAllText(Path.Combine(directory, "vegetation_render_summary.json"), System.Text.Json.JsonSerializer.Serialize(summary, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
     }
 
     public void End()
     {
+        StopVegetationRenderTrace();
         if (!_started) return;
         _started = false;
         SceneTree tree = GetTree();

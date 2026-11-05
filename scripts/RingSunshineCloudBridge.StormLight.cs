@@ -44,6 +44,9 @@ public partial class RingSunshineCloudBridge
     [Export(PropertyHint.Range, "0,1,0.01")] public float StormShadowFade { get; set; } = 0.35f;
 
     private Texture2DArrayRD? _stormMapRd;
+    private static RingSunshineCloudBridge? _stormMapGlobalOwner;
+    // Exit-only retirement; provider deactivation just publishes invalid lighting and may be reversed.
+    private volatile bool _stormLightReleased;
     private Rid _stormMapPlaceholder;
     private Rid _stormMapAssigned;
     private bool _stormMapAssignPending;
@@ -248,7 +251,9 @@ public partial class RingSunshineCloudBridge
 
     private void PublishStormLight(bool forceInvalid = false)
     {
-        EnsureStormMapGlobal();
+        if (_stormLightReleased) return;
+        if (!forceInvalid) EnsureStormMapGlobal();
+        if (_stormMapGlobalOwner != null && !ReferenceEquals(_stormMapGlobalOwner, this)) return;
         _stormLightLayerOffset = _clouds != null && GodotObject.IsInstanceValid(_clouds) ? _clouds.Get(StormLightLayerOffsetName).AsInt32() : 0;
         _stormOwnershipAvailable = _stormLightLayerOffset > 0;
         bool valid = !forceInvalid && Enabled && CameraIndependentClouds && MacroWeatherMap && _clouds != null && GodotObject.IsInstanceValid(_clouds)
@@ -370,6 +375,7 @@ public partial class RingSunshineCloudBridge
     /// <summary>Re-reads the front map description when Sunshine publishes a new build; false until a build exists and the texture is bound.</summary>
     private bool RefreshStormFront()
     {
+        if (_stormLightReleased) return false;
         long builds = _clouds!.Get(MacroMapBuildsCompletedName).AsInt64();
         if (!_stormFrontKnown || builds != _stormBuildsSeen)
         {
@@ -390,6 +396,7 @@ public partial class RingSunshineCloudBridge
             Texture2DArrayRD target = _stormMapRd;
             RenderingServer.CallOnRenderThread(Callable.From(() =>
             {
+                if (_stormLightReleased || !ReferenceEquals(_stormMapRd, target)) return;
                 if (GodotObject.IsInstanceValid(target)) target.TextureRdRid = map;
                 _stormMapAssigned = map;
                 _stormMapAssignPending = false;
@@ -401,15 +408,17 @@ public partial class RingSunshineCloudBridge
     /// <summary>Registers the Texture2DArrayRD global once and points it at a 1x1x2 placeholder: a Texture2DArrayRD without an RID falls back to a plain 2D texture, which would invalidate every material uniform set that bound the 2DArray global.</summary>
     private void EnsureStormMapGlobal()
     {
+        if (_stormLightReleased) return;
         // A Texture2DArrayRD without an RID resolves to a 2D texture, and every material uniform set built while the global holds it fails with
         // "Texture needs to be 2DArray, actual 2D". The global therefore stays on its project default until the render thread has given the
         // texture its placeholder (or the real map) RID, and is only then pointed at the texture.
         if (_stormMapRd != null)
         {
-            if (!_stormMapGlobalBound && _stormMapRidReady)
+            if ((!_stormMapGlobalBound || _stormMapGlobalOwner == null) && _stormMapRidReady)
             {
                 _stormMapGlobalBound = true;
                 RenderingServer.GlobalShaderParameterSet(StormMapGlobal, _stormMapRd);
+                _stormMapGlobalOwner = this;
             }
             return;
         }
@@ -420,7 +429,7 @@ public partial class RingSunshineCloudBridge
         RenderingServer.CallOnRenderThread(Callable.From(() =>
         {
             RenderingDevice? main = RenderingServer.GetRenderingDevice();
-            if (main == null || !GodotObject.IsInstanceValid(target) || _stormMapPlaceholder.IsValid) return;
+            if (main == null || _stormLightReleased || !ReferenceEquals(_stormMapRd, target) || !GodotObject.IsInstanceValid(target) || _stormMapPlaceholder.IsValid) return;
             var format = new RDTextureFormat
             {
                 Format = RenderingDevice.DataFormat.R16G16B16A16Sfloat, Width = 1, Height = 1, Depth = 1, ArrayLayers = 2, Mipmaps = 1,
@@ -428,24 +437,39 @@ public partial class RingSunshineCloudBridge
             };
             _stormMapPlaceholder = main.TextureCreate(format, new RDTextureView(), new Godot.Collections.Array<byte[]> { new byte[8], new byte[8] });
             if (!_stormMapAssigned.IsValid) target.TextureRdRid = _stormMapPlaceholder;
-            _stormMapRidReady = true;
+            _stormMapRidReady = _stormMapPlaceholder.IsValid;
         }));
     }
 
-    /// <summary>Points the global back at the placeholder and frees it; Sunshine owns (and frees) the map texture itself.</summary>
+    /// <summary>Unbinds this owner's global before retiring its wrapper/placeholder; Sunshine owns (and frees) the map texture itself.</summary>
     private void ReleaseStormLight()
     {
-        PublishStormLight(forceInvalid: true);
+        if (_stormLightReleased) return;
+        if (ReferenceEquals(_stormMapGlobalOwner, this))
+        {
+            PublishStormLight(forceInvalid: true);
+            // Restore the typed engine fallback before retiring the wrapper and its owned placeholder.
+            RenderingServer.GlobalShaderParameterSet(StormMapGlobal, Variant.From(default(Rid)));
+            _stormMapGlobalOwner = null;
+        }
+        _stormLightReleased = true;
         Texture2DArrayRD? target = _stormMapRd;
         _stormMapRd = null;
         _stormMapRidReady = false;
+        _stormMapGlobalBound = false;
+        _stormPublishedValid = false;
+        _stormMapAssignPending = false;
         if (target == null) return;
-        Rid placeholder = _stormMapPlaceholder;
-        _stormMapPlaceholder = default;
         _stormMapAssigned = default;
         RenderingServer.CallOnRenderThread(Callable.From(() =>
         {
             if (GodotObject.IsInstanceValid(target)) target.TextureRdRid = default;
+            // Read after any already queued initializer, which may still have created the placeholder at release time.
+            Rid placeholder = _stormMapPlaceholder;
+            _stormMapPlaceholder = default;
+            _stormMapRidReady = false;
+            _stormMapAssigned = default;
+            _stormMapAssignPending = false;
             if (placeholder.IsValid && RenderingServer.GetRenderingDevice() is { } main) main.FreeRid(placeholder);
         }));
     }

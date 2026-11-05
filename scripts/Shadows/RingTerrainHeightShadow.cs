@@ -155,6 +155,7 @@ public partial class RingTerrainHeightShadow : Node
         _sun = GetNodeOrNull<DirectionalLight3D>(SunLightPath);
         _planet = GetNodeOrNull<DirectionalLight3D>(PlanetLightPath);
         _graphics = GetNodeOrNull<RingGraphicsQualityController>(GraphicsPath);
+        RegisterGlobalArrays();
         if (_grid != null) { _grid.CanonicalFloatingOriginAnchorChanged += OnFloatingOriginAnchorChanged; _anchorSubscribed = true; }
     }
 
@@ -179,6 +180,7 @@ public partial class RingTerrainHeightShadow : Node
 
     private void ReleaseOnExit()
     {
+        UnregisterGlobalArrays();
         ShutdownPipeline(true);
         InvalidateGlobals();
     }
@@ -208,6 +210,7 @@ public partial class RingTerrainHeightShadow : Node
 
     private void Step(float delta)
     {
+        RegisterGlobalArrays();
         if (_graphics != null && GodotObject.IsInstanceValid(_graphics) && _graphics.HeightShadowRevision != _settingsRevision)
         {
             _settingsRevision = _graphics.HeightShadowRevision;
@@ -238,6 +241,7 @@ public partial class RingTerrainHeightShadow : Node
         if (!HandleReset(identity)) { PushGlobals(geometry, delta); return; }
         _roles.Advance(delta, Settings.CrossfadeSeconds);
         PollGpuLink();
+        if (_phase == HeightShadowPhase.Failed) return;
 
         switch (_phase)
         {

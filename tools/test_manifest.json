@@ -324,6 +324,112 @@
     ]
   },
   "tests": {
+    "vegetation_work_trace_completion_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "render-core"
+      ],
+      "marker": "VEGETATION_WORK_TRACE_COMPLETION",
+      "expected_s": 1,
+      "timeout_s": 30
+    },
+    "height_shadow_failure_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "shadows",
+        "clouds"
+      ],
+      "marker": "HEIGHT_SHADOW_FAILURE",
+      "expected_s": 5,
+      "timeout_s": 45
+    },
+    "prepare_tree_assets": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": ["vegetation", "loading"],
+      "marker": "PREPARE_TREE_ASSETS",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "prepare_tree_assets_editor": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": ["vegetation", "loading"],
+      "marker": "PREPARE_TREE_IMPORTS",
+      "expected_s": null,
+      "timeout_s": 120
+    },
+    "imported_tree_prepared_catalog_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": ["vegetation", "loading", "render-core"],
+      "marker": "IMPORTED_TREE_PREPARED_CATALOG",
+      "expected_s": 4,
+      "timeout_s": 60
+    },
+    "imported_tree_prepared_fallback_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": ["vegetation", "loading"],
+      "marker": "IMPORTED_TREE_PREPARED_FALLBACK",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "prepared_tree_texture_streaming_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": ["vegetation", "loading", "render-core"],
+      "marker": "PREPARED_TREE_TEXTURE_STREAMING",
+      "expected_s": 10,
+      "timeout_s": 90
+    },
+    "imported_tree_prepared_pilot_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": ["vegetation", "loading", "render-core"],
+      "marker": "IMPORTED_TREE_PREPARED_PILOT",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "imported_tree_asset_profile": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": ["vegetation"],
+      "marker": "IMPORTED_TREE_ASSET_PROFILE",
+      "expected_s": null,
+      "timeout_s": 300
+    },
+    "quality_preset_capture_policy": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": ["quality-presets"],
+      "marker": null,
+      "marker_fix": "none",
+      "expected_s": null,
+      "timeout_s": 60
+    },
+    "quality_preset_capture_policy_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": ["quality-presets"],
+      "marker": "QP_CAPTURE_POLICY",
+      "expected_s": 1,
+      "timeout_s": 60
+    },
     "anti_aliasing_settings_smoke_test": {
       "kind": "test",
       "mode": "headless",
@@ -2289,7 +2395,7 @@
       "tags": [
         "shadows"
       ],
-      "marker": "HEIGHT_SHADOW_SCHEDULE",
+      "marker": "HEIGHT_SHADOW_PUBLISH_GPU",
       "expected_s": null,
       "timeout_s": 300
     },

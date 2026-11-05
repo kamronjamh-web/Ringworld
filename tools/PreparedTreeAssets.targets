@@ -1,0 +1,28 @@
+<Project>
+  <!-- Explicit authoring implementation inputs; prepared outputs and generated assembly code are excluded. -->
+  <ItemGroup>
+    <PreparedTreeImplementationInput Include="scripts/Vegetation/ImportedTreeCatalog.Startup.cs;scripts/Vegetation/ImportedTreeCatalog.cs;scripts/Vegetation/ImportedTreeWindAttachments.cs;scripts/Vegetation/PreparedImportedTreeCatalog.cs;scripts/Vegetation/PreparedImportedTreeCatalogIdentity.cs;scripts/Vegetation/PreparedImportedTreeCatalogValidation.cs;tools/PrepareTreeAssets.cs">
+      <TreeIdentityPath>%(Identity)</TreeIdentityPath>
+    </PreparedTreeImplementationInput>
+  </ItemGroup>
+  <Target Name="ComputePreparedTreeImplementationIdentity" BeforeTargets="GetAssemblyAttributes" DependsOnTargets="PrepareForBuild">
+    <GetFileHash Files="@(PreparedTreeImplementationInput)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="PreparedTreeImplementationHashed" />
+    </GetFileHash>
+    <!-- These paths and hex hashes are ASCII; ASCII emits no BOM and equals UTF8 byte for byte.
+         WriteLinesToFile uses Windows CRLF including the final terminator, matching the authoring contract. -->
+    <WriteLinesToFile File="$(IntermediateOutputPath)prepared_tree_implementation.inputs" Lines="@(PreparedTreeImplementationHashed->'%(TreeIdentityPath)=%(FileHash)')" Overwrite="true" WriteOnlyWhenDifferent="true" Encoding="ASCII" />
+    <GetFileHash Files="$(IntermediateOutputPath)prepared_tree_implementation.inputs" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="PreparedTreeCanonicalHashed" />
+    </GetFileHash>
+    <PropertyGroup>
+      <PreparedTreeImplementationIdentity>@(PreparedTreeCanonicalHashed->'%(FileHash)')</PreparedTreeImplementationIdentity>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyMetadata Include="Ringworld.PreparedTreeImplementation" Value="$(PreparedTreeImplementationIdentity)" />
+    </ItemGroup>
+  </Target>
+  <Target Name="ValidatePreparedTreeAssetsForPublish" BeforeTargets="PrepareForPublish" DependsOnTargets="ComputePreparedTreeImplementationIdentity">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)/tools/check_prepared_tree_assets.ps1&quot; -ProjectRoot &quot;$(MSBuildProjectDirectory)&quot; -ImplementationIdentity &quot;$(PreparedTreeImplementationIdentity)&quot;" />
+  </Target>
+</Project>

@@ -47,6 +47,9 @@ public partial class RingTerrainHeightShadow
     private GpuLink? _link;
     private readonly Texture2DArrayRD?[] _arrays = new Texture2DArrayRD?[2];
     private bool _globalArraysRegistered, _globalsDirty, _statsWanted;
+    private bool _globalArraysInitializationQueued;
+    private bool _globalArraysReleased;
+    private volatile bool _globalArraysReady;
     private readonly Dictionary<string, Variant> _globalCache = new();
     private double[]? _frameRows;
     private long _anchor, _anchorAcross;
@@ -97,8 +100,19 @@ public partial class RingTerrainHeightShadow
 
     private void RegisterGlobalArrays()
     {
-        if (_globalArraysRegistered) return;
-        for (int l = 0; l < 2; l++) _arrays[l] ??= new Texture2DArrayRD();
+        if (_globalArraysRegistered || _globalArraysReleased || !ReferenceEquals(Instance, this)) return;
+        if (!_globalArraysInitializationQueued)
+        {
+            _globalArraysInitializationQueued = true;
+            for (int l = 0; l < 2; l++) _arrays[l] ??= new Texture2DArrayRD();
+            RenderingServer.CallOnRenderThread(Callable.From(() =>
+            {
+                PointArraysAtPlaceholder();
+                _globalArraysReady = _placeholderArray.IsValid;
+            }));
+        }
+        // Until the render thread supplies a typed RID, leave the samplers on their project defaults.
+        if (!_globalArraysReady) return;
         RenderingServer.GlobalShaderParameterSet(GlobalL0, _arrays[0]!);
         RenderingServer.GlobalShaderParameterSet(GlobalL1, _arrays[1]!);
         _globalArraysRegistered = true;
@@ -124,10 +138,10 @@ public partial class RingTerrainHeightShadow
     private Rid _placeholderArray;
 
     /// <summary>A valid 1x1x3 RG16F array texture the global samplers point at while no GPU session exists: a Texture2DArrayRD without an RID falls back to a plain 2D texture, which invalidates every material uniform set that bound the 2DArray global (type mismatch errors every frame).</summary>
-    private void PointArraysAtPlaceholder(bool free)
+    private void PointArraysAtPlaceholder()
     {
         RenderingDevice? main = RenderingServer.GetRenderingDevice();
-        if (main != null && !_placeholderArray.IsValid && !free)
+        if (main != null && !_placeholderArray.IsValid)
         {
             var format = new RDTextureFormat
             {
@@ -137,22 +151,38 @@ public partial class RingTerrainHeightShadow
             _placeholderArray = main.TextureCreate(format, new RDTextureView(), new Godot.Collections.Array<byte[]> { new byte[4], new byte[4], new byte[4] });
         }
         for (int l = 0; l < 2; l++)
-            if (_arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = free ? default : _placeholderArray;
-        if (free && main != null && _placeholderArray.IsValid) { main.FreeRid(_placeholderArray); _placeholderArray = default; }
+            if (_placeholderArray.IsValid && _arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = _placeholderArray;
+    }
+
+    private void UnregisterGlobalArrays()
+    {
+        _globalArraysReleased = true;
+        if (!_globalArraysRegistered) return;
+        // Invalid RID selects the engine's typed array default before the wrappers/backing textures are retired.
+        RenderingServer.GlobalShaderParameterSet(GlobalL0, Variant.From(default(Rid)));
+        RenderingServer.GlobalShaderParameterSet(GlobalL1, Variant.From(default(Rid)));
+        _globalArraysRegistered = false;
     }
 
     private void ReleaseGpu(bool exiting = false)
     {
         GpuLink? link = _link;
         _link = null;
-        if (link == null) return;
-        link.Released = true;
+        if (link == null && !exiting) return;
+        if (link != null) link.Released = true;
         RenderingServer.CallOnRenderThread(Callable.From(() =>
         {
-            if (!exiting) PointArraysAtPlaceholder(false);
-            link.Gpu?.Dispose();
-            if (exiting) PointArraysAtPlaceholder(true);
-            link.Gpu = null;
+            if (!exiting) PointArraysAtPlaceholder();
+            link?.Gpu?.Dispose();
+            if (link != null) link.Gpu = null;
+            if (exiting)
+            {
+                for (int l = 0; l < 2; l++)
+                    if (_arrays[l] != null && GodotObject.IsInstanceValid(_arrays[l])) _arrays[l]!.TextureRdRid = default;
+                if (_placeholderArray.IsValid && RenderingServer.GetRenderingDevice() is { } rd) rd.FreeRid(_placeholderArray);
+                _placeholderArray = default;
+                _globalArraysReady = false;
+            }
         }));
     }
 

@@ -11,6 +11,20 @@ public static partial class ImportedTreeCatalog
     public static IEnumerable<bool> PrepareCooperatively()
     {
         if (_variants != null) yield break;
+        if (LoadMode != ImportedTreeCatalogLoadMode.Source)
+        {
+            foreach (bool unit in PreparePreparedCooperatively()) yield return unit;
+            if (_variants != null) yield break;
+        }
+        RequireSourceFallback();
+        var variants = new List<ImportedTreeVariant>(VariantCount);
+        foreach (bool unit in PrepareSourceCooperatively(variants)) yield return unit;
+        _variants ??= variants.AsReadOnly();
+        LoadedFrom = "source";
+    }
+
+    private static IEnumerable<bool> PrepareSourceCooperatively(List<ImportedTreeVariant> variants)
+    {
         using var claims = new RingThreadedResourceClaims();
         var paths = new List<string>();
         foreach (TreeSpecies species in OrderedSpecies)
@@ -37,13 +51,13 @@ public static partial class ImportedTreeCatalog
         // Consume only completed requests. BakeLod's existing shader load then
         // resolves the cached shader without introducing disk IO during baking.
         _ = claims.Take(paths[^1]);
-        var variants = new List<ImportedTreeVariant>(VariantCount);
         for (int speciesIndex = 0; speciesIndex < OrderedSpecies.Length; speciesIndex++)
         {
             TreeSpecies species = OrderedSpecies[speciesIndex];
             PackedScene packed = claims.Take(paths[speciesIndex]) as PackedScene
                 ?? throw new InvalidOperationException($"Missing loaded {species} tree scene.");
             Node root = packed.Instantiate();
+            SourceSceneInstantiationCount++;
             try
             {
                 var anchors = new Dictionary<string, Node3D>(StringComparer.Ordinal);
@@ -78,6 +92,5 @@ public static partial class ImportedTreeCatalog
             finally { root.Free(); }
         }
         if (variants.Count != VariantCount) throw new InvalidOperationException($"Imported tree catalog contains {variants.Count}, expected {VariantCount} variants.");
-        _variants ??= variants.AsReadOnly();
     }
 }

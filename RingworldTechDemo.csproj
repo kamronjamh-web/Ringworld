@@ -14,4 +14,5 @@
     <Content Remove="prototypes/**" />
     <EmbeddedResource Remove="prototypes/**" />
   </ItemGroup>
+  <Import Project="tools/PreparedTreeAssets.targets" />
 </Project>

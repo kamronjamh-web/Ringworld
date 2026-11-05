@@ -130,6 +130,8 @@ func _run() -> void:
 	# The feature is on by default (preset), so the producer may already have published before the explicit off above:
 	# wait for a publish of the NEW session, not the boot one.
 	var publishes_before := int(_diag()["publishes"])
+	# Isolated preferences can contain saved detail/range overrides; this fixture checks an exact 4 m / 16 m lattice.
+	_check(bool(graphics.call("SetShadowTuningOverride", "HeightShadowL0TexelMeters", 4)) and int(graphics.get("EffectiveHeightShadowL0TexelMeters")) == 4, "fixture pins height-shadow L0 detail to 4 m")
 	_check(bool(graphics.call("SetShadowTuningOverride", "HeightShadowEnabled", true)), "HeightShadowEnabled accepted")
 	var timeout := float(COMMON.arg_value("--publish-timeout=", "240"))
 	var started := Time.get_ticks_msec()
@@ -334,6 +336,9 @@ func _save(image: Image, name: String) -> void:
 
 
 func _night_checks(base: Dictionary) -> void:
+	# Full planet maps normally inherit the requested sun-map caps; define the exact full-map fixture explicitly.
+	_check(bool(graphics.call("SetShadowTuningOverride", "PlanetCascadeCount", 4)), "fixture pins full planet map to 4 cascades")
+	_check(bool(graphics.call("SetShadowTuningOverride", "PlanetShadowDistanceMeters", 6000.0)), "fixture pins full planet map to 6 km")
 	var planet: DirectionalLight3D = game.get_node("PlanetLight")
 	var coordinator := game.get_node_or_null("TerrainLodCoordinator")
 	if coordinator == null:

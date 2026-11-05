@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using Godot;
 using RingworldTechDemo.Atmosphere;
@@ -127,6 +128,10 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private int _pendingGrassFrameRevision, _grassFrameRevision;
     private int _lastDispatchedCandidateCount;
     private bool _queued, _disposed, _ready, _failed;
+    private static int _nextTraceInstance;
+    private readonly int _traceInstance = Interlocked.Increment(ref _nextTraceInstance);
+    private RingVegetationWorkTrace.Capture? _queuedTrace;
+    private ulong _queuedTraceRequestFrame, _queuedTraceRequestUsec;
     private int _nextId;
     private long _completedUpdates, _skippedUnchangedUpdates, _dispatchCount, _barrierCount, _parameterUploads, _estimatedBytes;
     private long _sharedSourceBytes, _outputBytes;
@@ -605,15 +610,45 @@ public sealed class RingGpuVegetationCompute : IDisposable
     {
         if (_queued) return;
         _queued = true;
+        RingVegetationWorkTrace.Capture? trace = RingVegetationWorkTrace.Current;
+        _queuedTrace = trace != null && trace.TryRetain() ? trace : null;
+        if (_queuedTrace != null)
+        {
+            _queuedTraceRequestFrame = Engine.GetProcessFrames();
+            _queuedTraceRequestUsec = Time.GetTicksUsec();
+        }
         RenderingServer.CallOnRenderThread(Callable.From(Work));
     }
 
     private void Work()
     {
+        RingVegetationWorkTrace.Capture? trace = _queuedTrace;
+        _queuedTrace = null;
+        RingVegetationWorkTrace.Sample sample = default;
+        long traceStart = 0;
+        if (trace != null)
+        {
+            sample.RequestFrame = _queuedTraceRequestFrame;
+            sample.RequestUsec = _queuedTraceRequestUsec;
+            sample.Instance = _traceInstance;
+            sample.Channel = (int)HazeChannel;
+            sample.CallbackDepth = trace.EnterCallback();
+            sample.StartUsec = Time.GetTicksUsec();
+            traceStart = Stopwatch.GetTimestamp();
+        }
         try
         {
-            DrainRetired();
-            DrainRetiredMirrors();
+            if (trace == null) { DrainRetired(); DrainRetiredMirrors(); }
+            else
+            {
+                long begin = Stopwatch.GetTimestamp();
+                try
+                {
+                    sample.RetiredBatches = DrainRetired();
+                    sample.RetiredMirrors = DrainRetiredMirrors();
+                }
+                finally { sample.RetireTicks = Stopwatch.GetTimestamp() - begin; }
+            }
             lock (_gate) if (_disposed || _failed) return;
             if (!InitializeDevice()) return;
             Batch[] batches;
@@ -635,7 +670,19 @@ public sealed class RingGpuVegetationCompute : IDisposable
             foreach (Batch batch in batches)
             {
                 if (batch.Retired) continue;
-                EnsureBatch(batch);
+                if (trace == null) EnsureBatch(batch);
+                else
+                {
+                    bool allocated = batch.Allocated;
+                    long bytesBefore = _estimatedBytes, begin = Stopwatch.GetTimestamp();
+                    try { EnsureBatch(batch); }
+                    finally
+                    {
+                        sample.EnsureTicks += Stopwatch.GetTimestamp() - begin;
+                        sample.AllocatedBytes += Math.Max(0, _estimatedBytes - bytesBefore);
+                        if (!allocated && batch.Allocated) sample.NewlyAllocated++;
+                    }
+                }
                 Vector4[]? metadata;
                 lock (_gate) { metadata = batch.PendingMetadata; batch.PendingMetadata = null; }
                 if (metadata is not null)
@@ -687,14 +734,31 @@ public sealed class RingGpuVegetationCompute : IDisposable
         }
         finally
         {
-            lock (_gate)
+            try
             {
-                _queued = false;
-                // Unsupported renderers never spin a render-thread retry loop.
-                bool pendingMirror = false;
-                foreach (KeyValuePair<int, OutputMirror> entry in _mirrors)
-                    if (!entry.Value.Allocated || (entry.Value.PendingCopy && _batches.TryGetValue(entry.Key, out Batch? source) && source.Dispatched)) { pendingMirror = true; break; }
-                if (_retired.Count > 0 || _retiredMirrors.Count > 0 || (!_disposed && !_failed && (_pending is not null || pendingMirror || _hazeRefreshPending || _hazeRepoint || _shadowRefreshPending || _shadowRepoint))) QueueWork();
+                lock (_gate)
+                {
+                    _queued = false;
+                    // Unsupported renderers never spin a render-thread retry loop.
+                    bool pendingMirror = false;
+                    foreach (KeyValuePair<int, OutputMirror> entry in _mirrors)
+                        if (!entry.Value.Allocated || (entry.Value.PendingCopy && _batches.TryGetValue(entry.Key, out Batch? source) && source.Dispatched)) { pendingMirror = true; break; }
+                    if (_retired.Count > 0 || _retiredMirrors.Count > 0 || (!_disposed && !_failed && (_pending is not null || pendingMirror || _hazeRefreshPending || _hazeRepoint || _shadowRefreshPending || _shadowRepoint))) QueueWork();
+                }
+            }
+            finally
+            {
+                if (trace != null)
+                {
+                    try
+                    {
+                        sample.TotalTicks = Stopwatch.GetTimestamp() - traceStart;
+                        sample.EndUsec = Time.GetTicksUsec();
+                        sample.Failed = _failed;
+                        trace.Record(in sample);
+                    }
+                    finally { trace.LeaveCallback(); trace.Release(); }
+                }
             }
         }
     }
@@ -1527,23 +1591,26 @@ public sealed class RingGpuVegetationCompute : IDisposable
         return true;
     }
 
-    private void DrainRetired()
+    private int DrainRetired()
     {
+        int count = 0;
         while (true)
         {
             Batch batch;
-            lock (_gate) { if (_retired.Count == 0) return; batch = _retired.Dequeue(); }
+            lock (_gate) { if (_retired.Count == 0) return count; batch = _retired.Dequeue(); }
             FreeBatch(batch);
+            count++;
         }
     }
 
-    private void DrainRetiredMirrors()
+    private int DrainRetiredMirrors()
     {
-        if (_rd is null) return;
+        if (_rd is null) return 0;
+        int count = 0;
         while (true)
         {
             OutputMirror mirror;
-            lock (_gate) { if (_retiredMirrors.Count == 0) return; mirror = _retiredMirrors.Dequeue(); }
+            lock (_gate) { if (_retiredMirrors.Count == 0) return count; mirror = _retiredMirrors.Dequeue(); }
             if (mirror.Commands.IsValid)
             {
                 // Godot owns the output RID, but command RIDs need the same detach
@@ -1562,6 +1629,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 mirror.Bytes = 0;
             }
             lock (_gate) _retiringMirrorTargets.Remove(mirror.Target);
+            count++;
         }
     }
 

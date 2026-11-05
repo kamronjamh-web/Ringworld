@@ -1,0 +1,433 @@
+﻿{
+    "schema_version":  1,
+    "bake_version":  1,
+    "catalog_version":  1,
+    "engine_identity":  "4.8-dev7 (official)|c971f93e7",
+    "implementation_identity":  "69F22BA4366CCCAA666D69DBC865A1032D5A0EB8365F1C6FD2211B8D43537BA1",
+    "source_fingerprint":  "4736F0F395ED0010A438269B9C982689601C2CD50D5FAC7107017D7B5DA8D3F0",
+    "artifact_sha256":  "B364E1EF801E24ECB71789BFC84E1E3BB0300E5B744D83D9EEA3E496F5C8582C",
+    "artifact_path":  "resources/trees/prepared/lolipop_catalog.res",
+    "parity_verified":  true,
+    "inputs":  [
+                   {
+                       "path":  "resources/trees/lolipop/fir/scene.bin",
+                       "sha256":  "C40A482C8DEC3997AEB099EBE0896B5B91882624C284D4B0EA96EFE79B16F321"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/scene.gltf",
+                       "sha256":  "846F158B6C3BAF72A38656937360C5D476CEB0A1C57310A1EB7D332BCD08FD6E"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/scene.gltf.import",
+                       "sha256":  "C5A4779372CFF40239624A68B12234893CEADB2ABE7FC9D8B8BF6C18937A56B8"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Bark_Mat_baseColor.png.import",
+                       "sha256":  "2EFD0B5727BEE4194EC16500EF6C6AEDE8ED8D0F1E8DE9384AD3A3265671A002"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Bark_Mat_metallicRoughness.png.import",
+                       "sha256":  "94C100C28361A7CE56554DC8C15B7C1579D36BD147FBAA4EFA154FA43C6EE4B6"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Bark_Mat_normal.png.import",
+                       "sha256":  "CDF21501D796F30F1E899AE98C37EB29242C28A6E6F7AACCB23CEC63117CC57C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Brunches_Mat_baseColor.png.import",
+                       "sha256":  "5C39BA67860EFF8CDB4B49AAA2DD83F8EC96A594776A2A9E5ADA0DDC4F191D1F"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Brunches_Mat_metallicRoughness.png.import",
+                       "sha256":  "9052A0AE7DE112097E94509D847A3019F88E0CDFB8C6B5D87F7A9CC22A60162C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Brunches_Mat_normal.png.import",
+                       "sha256":  "5CADDB50C8037CA81D5696C137F69D7F2A2386ED453EFA9401DC4BF710F501A7"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "BDD7ED6AE8EF4F61C1DB6E5CE72F3BDB4D2AE6AD25BFEE9EAF3C7A73E44DEAB7"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_2_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "5D7638364BDABEF8D4CCA7EEA0B6D22A7BDD570437F2E9B5E5856AF144764F41"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "A95403799C41AA0C6EEF52DC5C576D03794EFAE065F50AA45CCC4DAB1B0240F5"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "CE2C78BB42D3E3476CE1594D1D0E68D5DC7025D943AC7ABEC5A043B98B9A7806"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_3_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "420071957216235004CC73330724AE88319353FDCC320DC109B37756271DE5DA"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "12A0F0E65C3EF4D05501F064EDDBAA5DBC60B3794F2817AF68D8430F9680666C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "EAAFDDADC503CCA7DBF15796CA4079F73B950B27B363EC0627365FE208B44482"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "E4A5E30A19975D78341B1C163C66C3E106091F2998EEDC22401253DD78581D38"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/fir/textures/Christmas_tree_Billboard_Mat_normal.png.import",
+                       "sha256":  "C0702051BE0B5FB69FF52FB0420FA9194A8B79C2035A739498D7063BA567EE9A"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/scene.bin",
+                       "sha256":  "115CDFF20126ED6060115AD7BE167C9D7B723B69300C63CFA6DC6CA9B4BD2DFE"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/scene.gltf",
+                       "sha256":  "0BDA9A25B2518C9C228FCE2B370D855EE07727AD7096DC275AD9F7F3167DFE55"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/scene.gltf.import",
+                       "sha256":  "77D0AF3A02732890D1DB1BB667CAEEBED2E1B070A57503581DF2B8A481C7F1A3"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "7D44DF62E761137BB459B1EBBE3D8F35ACAB512361FEF857D45E445AC7781FDB"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_1_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "FD8CD3F6CF8F90FD58F4EDFCF82344EB65CB6E208E726735E68B1D9339EE62B4"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "AFE84CD30179E6C382D9AFFC274E8888921241F64E80E813D55438B8DD438536"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "4A929828727EDCD30135E710DE4482A15CC8B82B25FFE2CC054352173C72ABD0"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_2_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "C9D75E5B8BA577A7476CD08C66F0A74250F98DEB015BCA4A309F6FDD81E0E022"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "30EE9B2A6336BB70C2F4321EDE5A10EF5F932AE6DF2436B98EC287B90B7F6B5F"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "C16756C4952B847505A49162CCC4FEDE35925513EB13BA032F7C06A724836DB2"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_3_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "35D5696E76C78462FC7D5BEB10885DF136FD1BCAD376247EB9BF6241F4B2CBB2"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_Sapling_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "E3DADE2A4A0C6BD3C86B7F13EC3370A07CDDAFE4E4EC7AC0468EAE4691C42843"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "14289CB716074CBE35E0C90C2B3E967860E335905D22A8C96F1BF55B9E51439C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_1_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "045523CBA1A8D0EC660020B1473EB357435527A8BBA6B860AEE968170EF3AF98"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "1B0C1A31A099E7CB75EB4A484CCE14C4C15CC2C1449FACA414ACA0D0AB4D1FC1"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "5FE700FDA40D3BFA6108A7A90F333B8752BB18A8E4F96200D026F28647A1AF60"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_2_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "C05329F9D1EB9330DFD396E64A42E879E87D2A8DA7113BF1A7CAA46B3FDA6813"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "1BB06739AEDAEFCA738C7F80C764276C5DF8D393740EB40F1AE39746D6ADF453"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "E18B9116CC597DF7F313D6375B1C83D474F358603D3B18D57ED197EBE760FF95"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_3_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "92A3E0F4BC438F59758C7EB481019B1A40C4C0C393308983B2375DBE7E7B3A75"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_large_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "9E158B81EEE9CBA6F55CA25442A26727FB8925862BE93B0F8A48858E120793F1"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "BBA697DDB16D089630F32B98CE99940DBFA4AF04883E733532855C77DF2AAA7B"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_1_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "84A7CA3C1FDF60C635E28B9D5B96CD6FCE0B25AA163AACA8F07DB98CD33A6FDB"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "378DC67976700FEC34DBB44FAC5A45D5CA7E5BE53D4D50C54CDFE687E2CF85A0"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "9E81D6722480619B333F47652D9D56FC7CDA62F891B7B326ACD8BF054C106D11"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_2_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "E1B217EEDAAC2933C9158CF307B4843AAB3D13903C2A477BACF7A1BF266773F2"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "C42D1E137F24FBCFB52498BAE308EADD62D1FBD6D2235468776367219FED1B94"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "A53479D0F80E9E3C45627CA7444A68A0859BA1C253CB4E96AC332144C54F8EF4"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_3_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "86F59F5DF56D023CE31018440A80649FBF4593842F73368E54A3B5A7BE6E4E4F"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_medium_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "C6311798F81C6CF45DEE50741F7F8E9CC884524E9F082F81CCC838D21780B44C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "012A33EDA94A76A940A838CA67921BB858DC76C9D03DAFF737530A77F8C758D6"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_1_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "B7247F304247C40C316648093658F731082244D8D8BD73DDE3787AD05163FD4E"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "EF766FD96F21A59B1602CDBE8E5593424AF8CA5DC8827195084A657C9553EFDF"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "6A7A0DBABBCD9F05B13631F405B5667F57B9C2346387772D6F6C0D7D53E17879"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_2_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "2C4E9700E4B8F3230AB39E02F4E85FEBAAF2138B7FCBCC4D9B80338D85F67CDB"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "F3B9434F2A6C86E89C1BFD46DA0551ECB23319F9E89636CFE60D5152B78C8378"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "F9D3257B3D0291182AF3C0D26CAAB1CF160E1B18CEB60B48BBEDD70338AC4F10"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_3_Billboard_Mat_metallicRoughness.png.import",
+                       "sha256":  "52094B681B16963AA37FF93A69E994133438AC34989E3B43F0B95E8445390114"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Acer_small_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "BACF3DD57D91656C6384361B6752A48E3D21928E61F82C6E1DF8A846260A9FAC"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Bark_Mat_baseColor.png.import",
+                       "sha256":  "2DDF5BB7F54527345FB31E830D2D46B201CC50AD1A96514542DFB0A0F66371C1"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Bark_Mat_metallicRoughness.png.import",
+                       "sha256":  "A0D386354487D8AF1BD752E02CE2568BA0B6C262D92BD7374C9C84DC3F5DFB36"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Bark_Mat_normal.png.import",
+                       "sha256":  "D6E693887EAC2BD7583A807154A82594FD1F86A41268CFC21EAA90E7C8EF7A14"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Checker_baseColor.png.import",
+                       "sha256":  "E3FF3766C764A844610ECA36AC966061FDCE72236DDC196AFC4CE686D8AE67C6"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Cluster_Mat_baseColor.png.import",
+                       "sha256":  "6C43632F82C07121DB218E58999BDE871F5EABC82B87B62351D01B0BEB342382"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Cluster_Mat_metallicRoughness.png.import",
+                       "sha256":  "5284E89AD8B0AF9B01520A19D7DD929641091A6FA4A12EF6E8C974A4758A772F"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/maple/textures/Cluster_Mat_normal.png.import",
+                       "sha256":  "7717001C1334B2F5DE6C281DDAD01DE0D7E74C23700029AF20A025ED8B8B7851"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/scene.bin",
+                       "sha256":  "6E8682AFACB4B72F90CDBC0D544437BDEDE150EBC274D6DA879816686357B026"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/scene.gltf",
+                       "sha256":  "B49FB93862D278CCBE37A05EB6868E82DF99A31B2A6F0C4808F9B6A7FB19677A"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/scene.gltf.import",
+                       "sha256":  "93D7826FB3B0C74D2EE07BD039748573F4948F2E4806F71A49615EC5E50F391B"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Bark_Mat_baseColor.png.import",
+                       "sha256":  "D59567FA16EE5109092485C10303AF9F32B178B6A7F13F03C182B3506BC5DDE7"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Bark_Mat_metallicRoughness.png.import",
+                       "sha256":  "6AC7D0C750124A7C82DD73364B03EB55461B73AA381D721B22567123C16281B6"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Bark_Mat_normal.png.import",
+                       "sha256":  "589B2C097C011322DD0936CA47D743A2B1041BA1030DD2F006DE47EBD595D258"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Checker_1m_baseColor.png.import",
+                       "sha256":  "91EC9E144B6B0787525986987763C9E2BF7262B4746B1DE4CB8AD8D3E2C8C4A7"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Clusters_Mat_baseColor.png.import",
+                       "sha256":  "EBED1CF98AB8F51BE7865004E0FA5CBFEF82E242F9CA951DFBA9E20806168E99"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Clusters_Mat_metallicRoughness.png.import",
+                       "sha256":  "E23AFB45F1736EC1840A20CAC91F130501F10B0E932F77DA107D5CF1EA4442AA"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Clusters_Mat_normal.png.import",
+                       "sha256":  "C3E5C9BFB7DD7DB558A575850625EEF978C3F622F7F3BCDBB9D982B0C7C867C2"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_big_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "96605C9B1EB17F4475B77B1DCC56512FD57403B2AF5C1233CBF02B526876CC1C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_big_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "19F0F8776FD04EAE77D9749A3D1CCF3E63E6ABA957EC747B3A377887F23B130A"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_big_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "2BB3C026B317934659E74A1B9C33EFAD0AFCF36543DC3D9D679D6C38D9031B0E"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_big_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "B65C45D8686B8B90230DFB2D7D6811FDD39295FFDE8E525CC816F3D76B7A8CC7"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_big_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "AE97DC346D1E4F79B05D30A5D0398247FF38445E49550EE628F3DC3693D6B49E"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_big_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "5EA48BF02BE2EBE63993DADDD1985C05CAE4862B36BD847BAE363C5F288E3622"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_large_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "0FBB2648C7F594164EE9A5787F828247B37ABE84FC0B152FF78A43B218B645A1"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_large_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "E296F294D97D2852AE03FBADA32F066BECA8D4F359A7028D510BBD1EE55D3971"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_large_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "A0C98E2F46FB1DE9D081400ABCB20A407C2EC92C0D1F40D6E6CEDDCE99FA075D"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_large_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "E17E2C977823ECCC8AE341CE650B0B28F4D321C803D98BDE7158C2BB31A1E8F4"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_large_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "DEA37DABBF7B35EBAB482321C33A23B170266298E858EE5FFA5903359A49163C"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_large_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "2B41B90CA61473D17B7F9AFFAF7687C6179762E6F8BA3B3BC68BA32C9725382E"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_medium_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "3B90BD5F3A8415A552E52E4C83990E3B5AD8BD47168B73F74E8ACA66EE8A9784"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_medium_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "2A649CC9F5492C8D53815096168D3D3B4A9EC5899A279A1A05FA4EFAB6EC7012"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_medium_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "D2DAEC49A76279DB4A1D8E2BC42FDD17CCBE466780D82369060926187F0421E2"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_medium_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "8E23C58B5F5B7CB796CF5D4384B86A13C194B7B35BF0AF29B61DFBCD1C746932"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_medium_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "2AE9285509E590456D2DB8618F45EA0F105C2397A380BEAAB377A73ABC115DBB"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_medium_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "3C29826CBBE5EB3222EE030FC6403BA05882F6B3C572DBC5927DF04515F960F3"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_sapling_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "060A1675DCD4F0E1E7B7E2F17F540805D67F5E0723AFC7560DA9F2A43C8355F7"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_sapling_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "D528EC9B48D19572F4CCFD85F8072D309B676DA682B3AF2ADB4E246CE5415678"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_sapling_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "70C6401C41D83F92A8E40FF52E224EF55725A61802D21E9E6978E1C4B34BF4C8"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_sapling_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "E85D76E2E7F5DCC4A359CE133704C18E3DCF0F9B293C6AD1BB5A052520E511A0"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_sapling_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "C21159B70B2E0397AB376C11C37BE978CCB6EEA661106D70E0DADB0000450C03"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_sapling_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "50DE4DF24ECD82409941A2ACEDAF4A9E26CB11223216979DBFFE53F2AC0CA5F8"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_small_1_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "FD55C0665E3985D7D12607FFD0F1401BF7AE187FD8BE1AF38FCBA2F55A0A0568"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_small_1_Billboard_Mat_normal.png.import",
+                       "sha256":  "C11F4C803EC695BB9767331350500334A3942283FB71CA9AE0CED5E09E3EB6D0"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_small_2_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "29B9C75AC07A3A682462577ABDFDF3BC3FC28B9D33024A85958B5BAE72CB2427"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_small_2_Billboard_Mat_normal.png.import",
+                       "sha256":  "32915A8B70D4EE6121241E58AE070CB0D229EFB792C53EED481449D3C06662B8"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_small_3_Billboard_Mat_baseColor.png.import",
+                       "sha256":  "4C49B3CE5C3339D9914CF81E0E233E26A1354BD6320E8E941479BBA3A000E668"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/Pine_small_3_Billboard_Mat_normal.png.import",
+                       "sha256":  "5DC7ABE03C155B3221AF901C0C92B625DA2338BBF08B8625B432D72D2E83A043"
+                   },
+                   {
+                       "path":  "resources/trees/lolipop/pine/textures/ref_plane_baseColor.png.import",
+                       "sha256":  "9E22CF411B7A4AF9DCA6A0CE261FF0EC3A162C1761F4E54102E413B3498D9819"
+                   }
+               ]
+}
