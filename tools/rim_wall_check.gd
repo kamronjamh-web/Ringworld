@@ -12,6 +12,11 @@ extends SceneTree
 ## --times=a:b   times of day for the views (default noon:night; also low = a low afternoon sun).
 ## --settle=S    seconds to wait at each view (default 10).
 ## --walk        after the views, noclip onto the wall top, switch noclip off (V) and walk (W / Space) along and across the cap on both walls.
+## --contact     contact ripples and WO10 audio real path (use with --no-views): noclip across the field at 20 km (scripted flight, view looking back at
+##               the ripple), then walk on the wall top along the cap (no crossing), across the centre-line root and back. Shots go to <out>/frame%08d.png
+##               (a sequence for ffmpeg_tools sheet); prints CONTACT lines (adapter counters, vacuum weight/cutoff/gain, whump) and CONTACT_REAL=PASS|FAIL.
+## --hum         field hum hook real path (use with --no-views): injects a 220 Hz tone at runtime (nothing shipped) and flies in at the wall-top skirt height from
+##               3.1 km out to the skirt and through it, logging the two voice gains and dB each second (HUM lines, HUM_REAL=PASS|FAIL).
 ## --no-views    skip the views (walk only).
 ## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, anchor, far50, arch); --only=none skips them all.
 ## --field       containment field WO3 views (weather clock paused): each pose is shot with the field on, twice (paused clock: identical),
@@ -21,6 +26,7 @@ extends SceneTree
 ## Prints RIM_WALL lines, RIM_WALL hull ... triangle counts, RIM_WALL_WALK=PASS|FAIL when --walk, and RIM_WALL=DONE at the end.
 
 const MENU := preload("res://scenes/StartMenu.tscn")
+const CONTACT_PROBE := preload("res://tools/ContainmentContactProbe.cs")
 
 var _menu: Control
 var _warm: Node
@@ -317,6 +323,10 @@ func _run() -> void:
 				_teleport(line, mid_h + 40.0, width * 0.25, 0.0, 55.0)
 				await create_timer(settle).timeout
 				await _shot("%s_arch" % tod)
+	if _arg("contact", "") != "":
+		await _contact(line, top, width)
+	if _arg("hum", "") != "":
+		await _hum(line, top, width)
 	if _arg("walk", "") != "":
 		await _walk(line, top, width)
 		print("RIM_WALL_WALK=%s %s" % ["PASS" if _walk_failures.is_empty() else "FAIL", "; ".join(_walk_failures)])
@@ -602,3 +612,226 @@ func _place_anchor_marker(marker: MeshInstance3D, ahead_m: float, down_m: float)
 	marker.global_position = base + up * 400.0
 	marker.global_basis = Basis(Quaternion(Vector3.UP, up))
 	print("RIM_WALL anchor marker base=", base, " pose=", _pose_text())
+
+# ---- Contact ripples and WO10 audio -----------------------------------------------------------------------------------------------------------
+
+var _contact_probe: RefCounted
+var _contact_failures: Array[String] = []
+var _contact_frame := 0
+
+func _cexpect(ok: bool, what: String) -> void:
+	print("CONTACT check %s %s" % ["ok" if ok else "FAILED", what])
+	if not ok:
+		_contact_failures.append(what)
+
+func _cstate() -> Dictionary:
+	return _contact_probe.call("State")
+
+func _cshot() -> void:
+	_hide_hud()
+	for i in 2:
+		await process_frame
+	await RenderingServer.frame_post_draw
+	var image := root.get_texture().get_image()
+	image.save_png(ProjectSettings.globalize_path("%s/frame%08d.png" % [_out, _contact_frame]))
+	_contact_frame += 1
+
+func _clog(tag: String, t: float) -> void:
+	var s := _cstate()
+	var p := _pose()
+	print("CONTACT %s t=%.2f across=%.2f vertical=%.1f crossings=%d published=%d suppressed=%d live_body=%d weight=%.3f cutoff_hz=%.0f gain_db=%.2f whumps=%d playing=%s thunder_fx=%s" % [
+		tag, t, float(p["across_m"]), float(p["vertical_m"]), int(s.get("crossings", -1)), int(s.get("published", -1)), int(s.get("suppressed", -1)), int(s.get("live_body", -1)),
+		float(s.get("weight", -1.0)), float(s.get("cutoff_hz", -1.0)), float(s.get("gain_db", 0.0)), int(s.get("whumps", -1)), str(s.get("whump_playing", false)), str(s.get("engaged_thunder", false))])
+
+func _contact(line: float, top: float, width: float) -> void:
+	_contact_probe = CONTACT_PROBE.new()
+	_contact_frame = 0
+	await _set_time_of_day("noon")
+	var s0 := _cstate()
+	_cexpect(not s0.is_empty(), "contact state available (host, adapter, audio, bus)")
+	# A: noclip across the arch at 20 km (the field is at 20 km about 6.8 km from the across-0 root; start 1.2 km inside it, fly outward at 150 m/s).
+	var cross_across := _field_across_at(20000.0, top, width)
+	_teleport(line, 20000.0, cross_across + 1200.0, -90.0, 0.0)
+	await create_timer(10.0).timeout
+	_explorer.call("BeginScriptedFlight")
+	await process_frame
+	_explorer.call("SetScriptedFlightCommand", Vector3.ZERO, 90.0, 0.0)
+	await create_timer(3.0).timeout
+	var base := _cstate()
+	_clog("A start", 0.0)
+	_cexpect(float(base.get("weight", 1.0)) == 0.0 and not bool(base.get("engaged_thunder", true)), "A: contained side before the crossing (weight 0, buses clean)")
+	_explorer.call("SetScriptedFlightCommand", Vector3(0.0, 0.0, -150.0), 90.0, 0.0)
+	var c0 := int(base.get("crossings", 0))
+	var t := 0.0
+	var t_cross := -1.0
+	var shots_at := [0.1, 0.4, 0.8, 1.3]
+	var shot_i := 0
+	var weight_lo := -1.0
+	var weight_hi := -1.0
+	var pre_shot := false
+	_last_tick_us = 0
+	while t < 14.0:
+		await process_frame
+		t += _frame_dt()
+		var s := _cstate()
+		var p := _pose()
+		var across := float(p["across_m"])
+		if not pre_shot and across < cross_across + 250.0 and t_cross < 0.0:
+			pre_shot = true
+			await _cshot()
+		if weight_lo < 0.0 and float(s.get("weight", 0.0)) > 0.05:
+			weight_lo = across
+		if weight_hi < 0.0 and float(s.get("weight", 0.0)) > 0.95:
+			weight_hi = across
+		if t_cross < 0.0 and int(s.get("crossings", 0)) > c0:
+			t_cross = t
+			_clog("A crossing", 0.0)
+			_cexpect(int(s.get("published", 0)) > int(base.get("published", 0)) and int(s.get("live_body", 0)) >= 1, "A: BodyContact ripple published and live on the bus")
+			_cexpect(int(s.get("whumps", 0)) > int(base.get("whumps", 0)), "A: whump fired (count %d, %.1f dB, pitch %.2f)" % [int(s.get("whumps", 0)), float(s.get("whump_db", 0.0)), float(s.get("whump_pitch", 0.0))])
+			print("CONTACT A crossing speed=%.1f m/s radius=%.1f m energy=%.2f to_vacuum=%s at across=%.1f vertical=%.1f" % [float(s.get("last_speed", 0.0)), float(s.get("last_radius", 0.0)),
+				float(s.get("last_energy", 0.0)), str(s.get("last_to_vacuum", false)), float(s.get("last_across", 0.0)), float(s.get("last_vertical", 0.0))])
+		if t_cross >= 0.0:
+			var since := t - t_cross
+			if shot_i < shots_at.size() and since >= float(shots_at[shot_i]):
+				_clog("A +%.1fs" % since, since)
+				await _cshot()
+				shot_i += 1
+			if since > 4.0:
+				break
+	_explorer.call("SetScriptedFlightCommand", Vector3.ZERO, 90.0, 0.0)
+	await create_timer(1.0).timeout
+	var after := _cstate()
+	_clog("A end", 0.0)
+	_cexpect(t_cross > 0.0 and int(after.get("crossings", 0)) == c0 + 1, "A: exactly one crossing (%d)" % (int(after.get("crossings", 0)) - c0))
+	_cexpect(float(after.get("weight", 0.0)) > 0.99 and absf(float(after.get("cutoff_hz", 0.0)) - 600.0) < 10.0 and absf(float(after.get("gain_db", 0.0)) + 12.0) < 0.2,
+		"A: vacuum low-pass engaged (weight %.3f, %.0f Hz, %.1f dB)" % [float(after.get("weight", 0.0)), float(after.get("cutoff_hz", 0.0)), float(after.get("gain_db", 0.0))])
+	_cexpect(bool(after.get("engaged_thunder", false)) and bool(after.get("engaged_wind", false)) and bool(after.get("engaged_rainbed", false)), "A: effects enabled on Thunder, Wind and RainBed")
+	print("CONTACT A ramp: weight 0.05 at across %.2f, 0.95 at across %.2f (%.2f m)" % [weight_lo, weight_hi, absf(weight_hi - weight_lo)])
+	# Back inside: the weight must return to 0.
+	_explorer.call("SetScriptedFlightCommand", Vector3(0.0, 0.0, 150.0), 90.0, 0.0)
+	await create_timer(14.0).timeout
+	_explorer.call("SetScriptedFlightCommand", Vector3.ZERO, 90.0, 0.0)
+	await create_timer(1.0).timeout
+	var back := _cstate()
+	_clog("A back inside", 0.0)
+	_cexpect(float(back.get("weight", 1.0)) == 0.0 and int(back.get("crossings", 0)) == c0 + 2, "A: back inside, weight 0, second crossing counted (%d)" % (int(back.get("crossings", 0)) - c0))
+	_explorer.call("EndScriptedFlight")
+	await create_timer(1.0).timeout
+	# B: walk on the wall top (the cap spans across -128..0, the root is at -64).
+	_teleport(line - 2500.0, top + 15.0, -100.0, 0.0, -8.0)
+	await create_timer(4.0).timeout
+	var pp := _pose()
+	if bool(pp.get("noclip", false)):
+		await _tap(KEY_V)
+	await create_timer(4.0).timeout
+	pp = _pose()
+	_cexpect(not bool(pp.get("noclip", true)) and absf(float(pp["vertical_m"]) - top) < 0.25, "B: walking on the wall top")
+	var b0 := _cstate()
+	_clog("B start (outboard half)", 0.0)
+	_cexpect(float(b0.get("weight", 0.0)) > 0.99, "B: outboard half of the cap is the vacuum side (weight %.3f)" % float(b0.get("weight", 0.0)))
+	var bc0 := int(b0.get("crossings", 0))
+	_explorer.call("SetPresentationView", 0.0, -8.0)
+	await _hold(KEY_W, 5.0)
+	var along := _cstate()
+	_clog("B along the cap", 0.0)
+	_cexpect(int(along.get("crossings", 0)) == bc0, "B: no false crossing walking along the cap beside the root (%d)" % (int(along.get("crossings", 0)) - bc0))
+	# Toward the habitat (+across), across the root.
+	_explorer.call("SetPresentationView", 90.0, -8.0)
+	var t2 := 0.0
+	var seen := false
+	_last_tick_us = 0
+	_key(KEY_W, true)
+	while t2 < 30.0:
+		await process_frame
+		t2 += _frame_dt()
+		var s := _cstate()
+		if not seen and int(s.get("crossings", 0)) > bc0:
+			seen = true
+			_clog("B crossing inward", t2)
+			_cexpect(int(s.get("whumps", 0)) > int(along.get("whumps", 0)) and int(s.get("live_body", 0)) >= 1, "B: whump and ripple at the root crossing")
+			await _cshot()
+		if seen and float(_pose()["across_m"]) > -64.0 + 12.0:
+			break
+	_key(KEY_W, false)
+	await create_timer(0.5).timeout
+	var inw := _cstate()
+	_clog("B inboard", 0.0)
+	_cexpect(seen and int(inw.get("crossings", 0)) == bc0 + 1, "B: one crossing walking inward (%d)" % (int(inw.get("crossings", 0)) - bc0))
+	_cexpect(float(inw.get("weight", 1.0)) == 0.0, "B: inboard of the root the weight is 0 (%.3f)" % float(inw.get("weight", 1.0)))
+	# And back out.
+	await create_timer(1.5).timeout
+	_explorer.call("SetPresentationView", -90.0, -8.0)
+	seen = false
+	t2 = 0.0
+	_last_tick_us = 0
+	_key(KEY_W, true)
+	while t2 < 30.0:
+		await process_frame
+		t2 += _frame_dt()
+		var s := _cstate()
+		if not seen and int(s.get("crossings", 0)) > bc0 + 1:
+			seen = true
+			_clog("B crossing outward", t2)
+		if seen and float(_pose()["across_m"]) < -64.0 - 12.0:
+			break
+	_key(KEY_W, false)
+	await create_timer(1.5).timeout
+	var outw := _cstate()
+	_clog("B outboard", 0.0)
+	_cexpect(seen and int(outw.get("crossings", 0)) == bc0 + 2 and float(outw.get("weight", 0.0)) > 0.99, "B: one crossing walking back out, vacuum side again")
+	_cexpect(int(outw.get("published", 0)) - int(b0.get("published", 0)) == 2 and int(outw.get("whumps", 0)) - int(b0.get("whumps", 0)) == 2, "B: two ripples and two whumps for the two crossings")
+	print("CONTACT_REAL=%s %s" % ["PASS" if _contact_failures.is_empty() else "FAIL", "; ".join(_contact_failures)])
+
+var _last_tick_us := 0
+
+func _frame_dt() -> float:
+	var now := Time.get_ticks_usec()
+	var dt := 0.0 if _last_tick_us == 0 else float(now - _last_tick_us) / 1000000.0
+	_last_tick_us = now
+	return dt
+
+func _hum(line: float, top: float, width: float) -> void:
+	_contact_probe = CONTACT_PROBE.new()
+	_contact_failures.clear()
+	var injected: bool = _contact_probe.call("InjectTone")
+	_cexpect(injected, "HUM: test tone injected")
+	# Fly in at 800 m above the wall top (inside the 1.6 km skirt) from 3.1 km out, at 150 m/s toward the across-0 skirt (across -64), and through it.
+	_teleport(line, top + 800.0, 3100.0, -90.0, 0.0)
+	await create_timer(10.0).timeout
+	_explorer.call("BeginScriptedFlight")
+	await process_frame
+	_explorer.call("SetScriptedFlightCommand", Vector3.ZERO, -90.0, 0.0)
+	await create_timer(2.0).timeout
+	var far := _cstate()
+	print("HUM far d=%.1f playing=%s pos_gain=%.4f st_gain=%.4f" % [float(far.get("hum_distance", -1.0)), str(far.get("hum_playing", false)), float(far.get("hum_pos_gain", -1.0)), float(far.get("hum_st_gain", -1.0))])
+	_explorer.call("SetScriptedFlightCommand", Vector3(0.0, 0.0, -150.0), -90.0, 0.0)
+	var t := 0.0
+	var next_log := 0.0
+	var max_pos := 0.0
+	var max_st := 0.0
+	var min_pos_when_close := 1.0
+	var seen_stereo_only := false
+	_last_tick_us = 0
+	while t < 30.0:
+		await process_frame
+		t += _frame_dt()
+		var s := _cstate()
+		var across := float(_pose()["across_m"])
+		max_pos = maxf(max_pos, float(s.get("hum_pos_gain", 0.0)))
+		max_st = maxf(max_st, float(s.get("hum_st_gain", 0.0)))
+		if float(s.get("hum_distance", 9999.0)) < 15.0 and float(s.get("hum_pos_gain", 1.0)) < 0.05:
+			seen_stereo_only = true
+		if t >= next_log:
+			next_log += 1.0
+			print("HUM t=%.1f across=%.1f d=%.1f playing=%s pos_gain=%.3f st_gain=%.3f pos_db=%.1f st_db=%.1f src=%s weight=%.2f hum_bus_fx=%s" % [t, across, float(s.get("hum_distance", -1.0)), str(s.get("hum_playing", false)),
+				float(s.get("hum_pos_gain", 0.0)), float(s.get("hum_st_gain", 0.0)), float(s.get("hum_pos_db", -80.0)), float(s.get("hum_st_db", -80.0)), str(s.get("hum_pos", Vector3.ZERO)), float(s.get("weight", 0.0)), str(s.get("engaged_hum_bus", false))])
+		if across < -140.0:
+			break
+	var end := _cstate()
+	_explorer.call("SetScriptedFlightCommand", Vector3.ZERO, -90.0, 0.0)
+	_cexpect(not bool(far.get("hum_playing", true)) and float(far.get("hum_distance", 0.0)) > 3000.0, "HUM: silent beyond 3 km (distance %.0f)" % float(far.get("hum_distance", 0.0)))
+	_cexpect(max_pos > 0.5 and max_st > 0.9, "HUM: positional voice peaks %.2f, stereo voice reaches %.2f" % [max_pos, max_st])
+	_cexpect(seen_stereo_only, "HUM: within 15 m the positional voice is silent (stereo only)")
+	_cexpect(bool(end.get("engaged_hum_bus", false)) and float(end.get("weight", 0.0)) > 0.99, "HUM: past the field the hum bus carries the vacuum low-pass (weight %.2f)" % float(end.get("weight", 0.0)))
+	_explorer.call("EndScriptedFlight")
+	print("HUM_REAL=%s %s" % ["PASS" if _contact_failures.is_empty() else "FAIL", "; ".join(_contact_failures)])

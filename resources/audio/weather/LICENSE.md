@@ -375,3 +375,22 @@ assets (mono, 44.1 kHz, `libvorbis -q:a 5`).
 | `field_contact_crackle_3.ogg` | 1.8 s | As above, other seed. | `4E5A8E65A8D6D52AE5CE7F7D76A34AC5A8FFAF09146328BEB21B7ADEC45ADA1E` |
 
 Wiring: `RingEmitterFieldShotAudio` (scripts/poi/Emitters) on the `Thunder` bus.
+
+### Containment field crossing sound (procedurally generated) - 2026-11-05
+
+The soft membrane "whump" played when the player passes through the containment field (decision 4, contact ripples) is **original synthesised work generated for
+this project**, from seeded noise and sine partials only: no recordings, no downloaded audio and none of the CC0 thunder clips. Generator: the same
+`tools/media/weather_sfx_gen.py` (`--only field_crossing_whump`), seeded by the CRC-32 of the output name, encoded like the other weather assets (mono, 44.1 kHz,
+`libvorbis -q:a 5`).
+
+| File | Length | Model | SHA-256 |
+| --- | ---: | --- | --- |
+| `field_crossing_whump_1.ogg` | 1.4 s | Membrane whump: a 52-70 Hz pressure body gliding down from a 38 Hz base with a 2nd harmonic and a small second swell, plus a short dark 80-900 Hz breath; raised-cosine onset, band-limited to 28-1200 Hz, no clicks. | `8BD962D1E0196D309A4BF8A000B756E02FB48A786134D652706A3A5F951837FC` |
+| `field_crossing_whump_2.ogg` | 1.4 s | As above, other seed. | `3680C2EB54E1AE523FB9303884324CF1CAFB8BA6DBFEE42A60147D82EAA9F094` |
+
+### Containment field hum (user-supplied slot) - 2026-11-05
+
+`field_hum_loop.ogg` (or `field_hum_loop.wav`) in this folder is **reserved for the user's own recording or synthesis** and is not shipped or generated. `RingContainmentFieldAudio` loads
+`res://resources/audio/weather/field_hum_loop.ogg`, else `.wav`; with no file the hum is silently off and nothing logs an error. Expected format: a seamless loop (the code turns
+looping on for Ogg and for a WAV with loop mode off), mono or stereo, any sample rate; keep it a low, steady hum (peak near -6 dBFS: the code applies a -12 dB base plus the
+"Field hum volume (dB)" menu setting). Add a row for the file here when it is dropped in (source, author, licence).

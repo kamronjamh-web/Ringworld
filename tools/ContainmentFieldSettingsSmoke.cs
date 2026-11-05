@@ -17,7 +17,7 @@ public partial class ContainmentFieldSettingsSmoke : Node
     static void Require(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
 
     private static bool IsDefault(GameplayContainmentFieldSettings s) =>
-        Mathf.IsEqualApprox(s.ShimmerStrength, 1) && Mathf.IsEqualApprox(s.ShimmerRangeKm, 3) && Mathf.IsEqualApprox(s.SheenStrength, 1) && Mathf.IsEqualApprox(s.LatticeStrength, 1) && Mathf.IsEqualApprox(s.RippleStrength, 1);
+        Mathf.IsEqualApprox(s.ShimmerStrength, 1) && Mathf.IsEqualApprox(s.ShimmerRangeKm, 3) && Mathf.IsEqualApprox(s.SheenStrength, 1) && Mathf.IsEqualApprox(s.LatticeStrength, 1) && Mathf.IsEqualApprox(s.RippleStrength, 1) && Mathf.IsEqualApprox(s.FieldHumVolumeDb, 0);
 
     private static void Run(string path)
     {
@@ -25,14 +25,14 @@ public partial class ContainmentFieldSettingsSmoke : Node
         Require(IsDefault(first.Settings) && !first.HasSavedFile, "missing containment field preferences did not use defaults");
         Require(first.Save(), "clean defaults should save as a no-op");
         Require(first.SetShimmerStrength(.4f) && !first.SetShimmerStrength(.4f), "Set did not report the changed flag");
-        first.SetShimmerRangeKm(7); first.SetSheenStrength(1.5f); first.SetRippleStrength(.7f);
+        first.SetShimmerRangeKm(7); first.SetSheenStrength(1.5f); first.SetRippleStrength(.7f); first.SetFieldHumVolumeDb(-6);
         Require(first.Dirty && first.Save() && !first.Dirty, "containment field preferences did not save");
         var second = new GameplayContainmentFieldDefaults(path); second.Load();
         var s = second.Settings;
-        Require(Mathf.IsEqualApprox(s.ShimmerStrength, .4f) && Mathf.IsEqualApprox(s.ShimmerRangeKm, 7) && Mathf.IsEqualApprox(s.SheenStrength, 1.5f) && Mathf.IsEqualApprox(s.RippleStrength, .7f), "preferences did not round-trip");
+        Require(Mathf.IsEqualApprox(s.ShimmerStrength, .4f) && Mathf.IsEqualApprox(s.ShimmerRangeKm, 7) && Mathf.IsEqualApprox(s.SheenStrength, 1.5f) && Mathf.IsEqualApprox(s.RippleStrength, .7f) && Mathf.IsEqualApprox(s.FieldHumVolumeDb, -6), "preferences did not round-trip");
 
         // Setter clamps and NaN fallback.
-        second.SetShimmerStrength(99); second.SetShimmerRangeKm(0); second.SetSheenStrength(float.NaN); second.SetRippleStrength(50);
+        second.SetShimmerStrength(99); second.SetShimmerRangeKm(0); second.SetSheenStrength(float.NaN); second.SetRippleStrength(50); second.SetFieldHumVolumeDb(99);
         s = second.Settings;
         var (sMin, sMax) = GameplayContainmentFieldDefaults.RangeOf(nameof(GameplayContainmentFieldSettings.ShimmerStrength));
         var (rMin, rMax) = GameplayContainmentFieldDefaults.RangeOf(nameof(GameplayContainmentFieldSettings.ShimmerRangeKm));
@@ -42,6 +42,7 @@ public partial class ContainmentFieldSettingsSmoke : Node
         Require(Mathf.IsEqualApprox(s.ShimmerStrength, sMax) && Mathf.IsEqualApprox(s.ShimmerRangeKm, rMin), "setter bounds were not enforced");
         Require(Mathf.IsEqualApprox(s.SheenStrength, 1), "NaN did not fall back to the default");
         Require(Mathf.IsEqualApprox(s.RippleStrength, GameplayContainmentFieldDefaults.RangeOf(nameof(GameplayContainmentFieldSettings.RippleStrength)).Max), "ripple strength was not clamped");
+        Require(Mathf.IsEqualApprox(s.FieldHumVolumeDb, GameplayContainmentFieldDefaults.RangeOf(nameof(GameplayContainmentFieldSettings.FieldHumVolumeDb)).Max), "field hum volume was not clamped");
 
         using var dirty = new GameplayContainmentFieldSettings { ShimmerStrength = -5, ShimmerRangeKm = float.PositiveInfinity, SheenStrength = 1e9f };
         using var clean = GameplayContainmentFieldDefaults.Sanitize(dirty);

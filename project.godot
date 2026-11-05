@@ -206,6 +206,14 @@ ringworld_haze_storm={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }
+ringworld_field_profile0={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_field_profile1={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
 ringworld_haze_sky_lut0={
 "type": "sampler2D",
 "value": ""

@@ -41,6 +41,8 @@ public partial class RingHazeSkyIrradiance : RefCounted
         public double HR, SigmaA, OmegaA, HA, SigmaM0, OmegaM, HMist, CapHeight, G;
         public int Quality;
         public double Radius, FloorDepth;
+        // Containment-field lid (WO9): the profile exactly as the shaders read it (ringworld_field_profile0 / 1); None = the box.
+        public RingAtmosphereFieldLid.Profile Field;
     }
 
     private struct Frame
@@ -68,6 +70,7 @@ public partial class RingHazeSkyIrradiance : RefCounted
         p.Quality = qualityOverride > 0 ? qualityOverride : RingAtmosphereModel.HazeQuality;
         p.Radius = radius;
         p.FloorDepth = RingAtmosphereModel.FloorDepthMeters;
+        p.Field = RingAtmosphereModel.FieldProfile.AsPackedFloats();
         return p;
     }
 
@@ -114,9 +117,17 @@ public partial class RingHazeSkyIrradiance : RefCounted
         return (Math.Max(r0, 0.0), Math.Min(r1, maxLength));
     }
 
-    // ring_haze_air_interval
+    // ring_haze_air_interval (with a containment field: the first run under the field, RingAtmosphereFieldLid = ring_haze_field_runs)
     private static (double, double) AirInterval(D3 ray, double length, Frame f, Params p)
     {
+        if (p.Field.Exists)
+        {
+            D3 ax = f.Axis.Normalized();
+            D3 radial = ray - ax * ray.Dot(ax);
+            RingAtmosphereFieldLid.Runs runs = RingAtmosphereFieldLid.Compute(p.Field, length, f.CameraHeight, f.SideNegative, p.Radius, p.FloorDepth,
+                f.Outward.Normalized().Dot(ray), ray.Dot(ax), radial.Dot(radial), false);
+            return (runs.X0, runs.X1);
+        }
         if (length > 0.0001 && length < Math.Min(Math.Min(p.CapHeight - f.CameraHeight, f.CameraHeight + p.FloorDepth), Math.Min(f.SideNegative, f.SidePositive))) return (0.0, length);
         var outer = PathInterval(ray, f, p.Radius, -p.FloorDepth, length);
         var vac = PathInterval(ray, f, p.Radius, p.CapHeight, length);
@@ -172,9 +183,9 @@ public partial class RingHazeSkyIrradiance : RefCounted
         return sum;
     }
 
-    private static D3 SunTransmittanceAt(Params p, double hMid, double cosSun)
+    // cap = the column top: p.CapHeight, or the field over the point with a containment field (ring_haze_sun_transmittance_lid).
+    private static D3 SunTransmittanceAt(Params p, double hMid, double cosSun, double cap)
     {
-        double cap = p.CapHeight;
         double colR = Math.Max(p.HR * (Math.Exp(Math.Min(-hMid / Math.Max(p.HR, 1.0), 80.0)) - Math.Exp(-cap / Math.Max(p.HR, 1.0))), 0.0);
         double colA = Math.Max(p.HA * (Math.Exp(Math.Min(-hMid / Math.Max(p.HA, 1.0), 80.0)) - Math.Exp(-cap / Math.Max(p.HA, 1.0))), 0.0);
         double colM = Math.Max(p.HMist * (Math.Exp(Math.Min(-hMid / Math.Max(p.HMist, 1.0), 80.0)) - Math.Exp(-cap / Math.Max(p.HMist, 1.0))), 0.0);
@@ -232,7 +243,8 @@ public partial class RingHazeSkyIrradiance : RefCounted
         D3 radialMid = outward * radial0 + radialRay * tMid;
         double radialLen = Math.Max(radialMid.Length, 0.001);
         double cosSun = light.Dot(-radialMid / radialLen);
-        D3 tSun = SunTransmittanceAt(p, p.Radius - radialLen, cosSun);
+        double columnTop = RingAtmosphereFieldLid.ColumnTop(p.Field, p.CapHeight, f.SideNegative, ray.Dot(axis), tMid);
+        D3 tSun = SunTransmittanceAt(p, p.Radius - radialLen, cosSun, columnTop);
         r.SSun = oneMinusT * e * tSun * weightSun * inv;
         r.WAmb = oneMinusT * weightAmb * inv;
         return r;
@@ -268,6 +280,21 @@ public partial class RingHazeSkyIrradiance : RefCounted
     public Vector3 GetSunTint() => RingAtmosphereModel.HazeSunTint;
 
     public int GetQuality() => RingAtmosphereModel.HazeQuality;
+
+    /// <summary>Whether a containment field lid is published (RingAtmosphereModel.FieldProfile).</summary>
+    public bool HasContainmentField() => RingAtmosphereModel.FieldProfile.Exists;
+
+    /// <summary>1 inside the containment field, 0 outside, smoothly over +-<paramref name="featherMeters"/> of signed distance to the field
+    /// curve (the field is a surface of revolution, so around = 0). -1 when no field is published.</summary>
+    public float ContainmentInteriorFactor(float acrossMeters, float verticalMeters, float featherMeters)
+    {
+        if (!RingAtmosphereModel.FieldProfile.Exists) return -1.0f;
+        var q = new RingworldTechDemo.Voxel.Core.RingCanonicalPosition(0.0, verticalMeters, acrossMeters);
+        double d = RingworldTechDemo.ContainmentField.ContainmentFieldGeometry.SignedDistance(RingAtmosphereModel.FieldGeometry, q);
+        double f = Math.Max(featherMeters, 1e-3);
+        double t = Math.Clamp((d + f) / (2.0 * f), 0.0, 1.0);
+        return (float)(1.0 - t * t * (3.0 - 2.0 * t));
+    }
 
     public bool IsPhysical() => RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical;
 
@@ -308,7 +335,8 @@ public partial class RingHazeSkyIrradiance : RefCounted
         double count = ElevationCount * AzimuthCount;
         D3 sBar = sSum / count, wBar = wSum / count;
         double cosL = light.Dot(up);
-        D3 eg = eVec * SunTransmittanceAt(p, cameraHeight, cosL) * Math.Max(cosL, 0.0);
+        double cameraColumnTop = p.Field.Exists ? RingAtmosphereFieldLid.Height(p.Field, f.SideNegative) : p.CapHeight;
+        D3 eg = eVec * SunTransmittanceAt(p, cameraHeight, cosL, cameraColumnTop) * Math.Max(cosL, 0.0);
         double rho = groundAlbedo;
         D3 numerator = (sBar * (0.5 * (1.0 + rho)) + eg * (0.5 * rho / Math.PI)) * multiscatterGain;
         D3 denominator = new(

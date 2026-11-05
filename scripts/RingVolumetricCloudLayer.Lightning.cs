@@ -169,6 +169,7 @@ public partial class RingVolumetricCloudLayer
         TryScheduleMegastormLightning(now);
         TryScheduleMegastormScythes(now);
         TryScheduleMegastormFieldStrikes(now);
+        TryScheduleNaturalFieldStrikes(now);
     }
 
     private void ScanLightningCells(double now)

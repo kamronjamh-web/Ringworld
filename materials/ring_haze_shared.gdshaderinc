@@ -117,9 +117,178 @@ float ring_haze_one_minus_exp(float x) {
 	return x < 0.01 ? x * (1.0 - 0.5 * x * (1.0 - x * 0.3333333)) : 1.0 - exp(-x);
 }
 
+// Altitude along the ray, h(t) = R - |radial(p0 + t ray)|, evaluated without the large-number cancellation.
+float ring_haze_height(float t, float h0, float radial0, float b, float a) {
+	float n = b * t + a * t * t;
+	float root = sqrt(max(radial0 * radial0 + n, 0.0));
+	return h0 - n / max(radial0 + root, 0.001);
+}
+
+// ---- Containment-field lid (containment field WO9; docs/containment-field-design.md 2.1, 8 WO9) -------------------------------------------
+// The retained air is the habitat under the field: across strictly between the field roots (the wall-top centre lines) and below H(across),
+// above the floor shell. H is the field of RingContainmentCeiling.glslinc / ContainmentFieldGeometry.HeightAt: the vertical skirt from the wall
+// top to the crown, then the semi-ellipse (half-width (RootW - Root0) / 2, rise apex - crown) to the apex. With a field the 20 km cap and the
+// inner-face side planes are not used; the field is the lid everywhere, so the air fills the habitat right up to it and stops exactly at it.
+// Without a field (profile w = 0, the default) every function here falls through to the original box path, bit for bit.
+// Profile, canonical metres, the layout of Sunshine's GenericData ring_field_profile0 / 1: f0 = (wall top, apex, crown, exists),
+// f1 = (RootAcross0, RootAcrossW, 0, 0). The includer supplies it by defining RING_HAZE_FIELD0 / RING_HAZE_FIELD1 before this file (Godot
+// materials: the ringworld_field_profile0 / 1 globals, ring_atmosphere.gdshaderinc; Sunshine: genericData); left undefined, there is no field.
+// side_negative is the camera's canonical across (its distance to the across-0 inner face) in every ray frame.
+// C# twin: scripts/Atmosphere/RingAtmosphereFieldLid.cs (change one, change the other).
+#ifndef RING_HAZE_FIELD0
+#define RING_HAZE_FIELD0 vec4(0.0)
+#endif
+#ifndef RING_HAZE_FIELD1
+#define RING_HAZE_FIELD1 vec4(0.0)
+#endif
+// Largest altitude error (m) of the chord that stands in for the ray's curved meridian path in one piece of the field scan.
+const float RING_HAZE_FIELD_SAG_METERS = 20.0;
+
+vec4 ring_haze_field_profile0() {
+	return RING_HAZE_FIELD0;
+}
+
+vec4 ring_haze_field_profile1() {
+	return RING_HAZE_FIELD1;
+}
+
+bool ring_haze_field_active(vec4 f0) {
+	return f0.w > 0.5;
+}
+
+// H(across) in metres; the wall top at or beyond the roots. The product form keeps full float precision at the rims.
+float ring_haze_field_height(vec4 f0, vec4 f1, float across) {
+	float from0 = across - f1.x;
+	float fromW = f1.y - across;
+	if (from0 <= 0.0 || fromW <= 0.0) return f0.x;
+	float half_w = 0.5 * (f1.y - f1.x);
+	return f0.z + (f0.y - f0.z) * sqrt(max(from0 * fromW / (half_w * half_w), 0.0));
+}
+
+// Top of the sun's vertical column for a path whose midpoint is t metres along the ray: the field over the midpoint's across; `cap` without a field.
+float ring_haze_field_column_top(float cap, vec3 ray, vec3 axis, float side_negative, float t) {
+	vec4 f0 = ring_haze_field_profile0();
+	if (!ring_haze_field_active(f0)) return cap;
+	return ring_haze_field_height(f0, ring_haze_field_profile1(), side_negative + dot(normalize(ray), normalize(axis)) * t);
+}
+
+// Air-run bookkeeping: runs.xy = first (local) run, runs.zw = second (remote) run; phase 0 = before the first, 1 = in it, 2 = between, 3 = in the
+// second, 4 = done.
+void ring_haze_field_enter(inout vec4 runs, inout int phase, float t) {
+	if (phase == 0) { runs.x = t; phase = 1; }
+	else if (phase == 2) { runs.z = t; phase = 3; }
+}
+
+void ring_haze_field_exit(inout vec4 runs, inout int phase, float t) {
+	if (phase == 1) { runs.y = t; phase = 2; }
+	else if (phase == 3) { runs.w = t; phase = 4; }
+}
+
+bool ring_haze_field_inside(int phase) {
+	return phase == 1 || phase == 3;
+}
+
+// Walks [s0, s1], a stretch of the ray above the crown and below the apex, where the air is the inside of the ellipse. The ray's curved
+// meridian path (across linear in t, altitude ring_haze_height) is cut into pieces whose chord is within RING_HAZE_FIELD_SAG_METERS of it (at
+// most 16), and each chord is cut exactly with the ellipse: G(s) = (w / rise)^2 + (x / half_w)^2 - 1 < 0 inside, w = altitude - crown, with
+// (x / half_w)^2 - 1 = -(from0 + s dx)(fromW - s dx) / half_w^2 (cancellation-free at the rims). Every crossing updates `runs` / `phase`.
+void ring_haze_field_scan(vec4 f0, vec4 f1, float across0, float across_dir, float h0, float radial0, float b, float a, float s0, float s1, inout vec4 runs, inout int phase) {
+	float span = s1 - s0;
+	if (span <= 0.0 || phase >= 4) return;
+	float sag = max(a, 0.0) * span * span / (8.0 * max(radial0, 1.0));
+	int pieces = sag <= RING_HAZE_FIELD_SAG_METERS ? 1 : min(16, int(ceil(sqrt(sag / RING_HAZE_FIELD_SAG_METERS))));
+	float half_w = 0.5 * (f1.y - f1.x);
+	float inv_a2 = 1.0 / max(half_w * half_w, 1.0);
+	float rise = max(f0.y - f0.z, 1.0);
+	float inv_b2 = 1.0 / (rise * rise);
+	float t_start = s0;
+	float w_start = ring_haze_height(s0, h0, radial0, b, a) - f0.z;
+	for (int i = 0; i < 16; i++) {
+		if (i >= pieces || phase >= 4) break;
+		float t_end = i + 1 == pieces ? s1 : s0 + span * float(i + 1) / float(pieces);
+		float w_end = ring_haze_height(t_end, h0, radial0, b, a) - f0.z;
+		float dt = t_end - t_start;
+		float from0 = across0 + across_dir * t_start - f1.x;
+		float fromW = f1.y - across0 - across_dir * t_start;
+		float dx = across_dir * dt;
+		float dw = w_end - w_start;
+		float qa = dw * dw * inv_b2 + dx * dx * inv_a2;
+		float qb = 2.0 * w_start * dw * inv_b2 - dx * (fromW - from0) * inv_a2;
+		float qc = w_start * w_start * inv_b2 - from0 * fromW * inv_a2;
+		bool inside_start = qc < 0.0;
+		if (ring_haze_field_inside(phase) != inside_start) {
+			if (inside_start) ring_haze_field_enter(runs, phase, t_start);
+			else ring_haze_field_exit(runs, phase, t_start);
+		}
+		float disc = qb * qb - 4.0 * qa * qc;
+		if (qa > 0.0 && disc > 0.0) {
+			float q = -0.5 * (qb + (qb >= 0.0 ? 1.0 : -1.0) * sqrt(disc));
+			float r0 = q / qa;
+			float r1 = q != 0.0 ? qc / q : r0;
+			float lo = min(r0, r1);
+			float hi = max(r0, r1);
+			// lo <= 0 < hi with qc >= 0 is a piece that starts exactly on the field (qc == 0, e.g. a vertical ray through the apex) and goes in.
+			if (lo > 0.0 && lo < 1.0 && !ring_haze_field_inside(phase)) ring_haze_field_enter(runs, phase, t_start + lo * dt);
+			else if (lo <= 0.0 && hi > 0.0 && !ring_haze_field_inside(phase)) ring_haze_field_enter(runs, phase, t_start);
+			if (hi > 0.0 && hi < 1.0 && ring_haze_field_inside(phase)) ring_haze_field_exit(runs, phase, t_start + hi * dt);
+		}
+		t_start = t_end;
+		w_start = w_end;
+	}
+}
+
+// Air runs of the ray toward `target` under the field, in metres from the camera: xy = the first (local) run, zw = the next one (the ray left
+// through the field and came back in: the far-arch remote air, or a ray that grazes over the field near a rim). Empty when y <= x / w <= z.
+// The ray splits at the crown and apex shells (exact, as ring_atmosphere_path_interval_shared): under the crown, between the root planes, it
+// is always in the air; above the apex never; between them it is inside iff inside the ellipse (ring_haze_field_scan).
+// want_second = false stops after the first run.
+vec4 ring_haze_field_runs(vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float coordinate_scale, float radius_m, float floor_depth_m, vec4 f0, vec4 f1, bool want_second) {
+	float scale = max(coordinate_scale, 0.000001);
+	float length_m = length(target - camera) / scale;
+	float root_negative = side_negative - f1.x;
+	float root_positive = f1.y - side_negative;
+	// Fast path: a ray shorter than the distance to the floor shell, the crown and both root planes stays under the crown inside the roots.
+	if (length_m > 0.0001 && length_m < min(min(f0.z - camera_height, camera_height + floor_depth_m), min(root_negative, root_positive))) return vec4(0.0, length_m, 1.0, 0.0);
+	vec4 runs = vec4(1.0, 0.0, 1.0, 0.0);
+	vec2 outer = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, root_negative, root_positive, scale, radius_m * scale, -floor_depth_m, length_m);
+	if (outer.y <= outer.x) return runs;
+	vec2 crown = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, root_negative, root_positive, scale, radius_m * scale, f0.z, length_m);
+	crown = vec2(max(crown.x, outer.x), min(crown.y, outer.y));
+	// Never above the crown inside the roots: the whole outer interval is air.
+	if (crown.y <= crown.x) return vec4(outer, 1.0, 0.0);
+	vec2 apex = ring_atmosphere_path_interval_shared(target, camera, camera_height, outward, axis, root_negative, root_positive, scale, radius_m * scale, f0.y, length_m);
+	apex = vec2(max(apex.x, crown.x), min(apex.y, crown.y));
+	bool has_apex = apex.y > apex.x;
+	vec3 ray = normalize(target - camera);
+	vec3 axis_n = normalize(axis);
+	vec3 radial_ray = ray - axis_n * dot(ray, axis_n);
+	float radial0 = radius_m - camera_height;
+	float b = 2.0 * radial0 * dot(normalize(outward), ray);
+	float a = dot(radial_ray, radial_ray);
+	float across_dir = dot(ray, axis_n);
+	int phase = 0;
+	// [outer.x, crown.x): under the crown.
+	if (crown.x > outer.x) ring_haze_field_enter(runs, phase, outer.x);
+	// Rising stretch between the crown and the apex (or the whole stretch above the crown when the ray stays below the apex).
+	ring_haze_field_scan(f0, f1, side_negative, across_dir, camera_height, radial0, b, a, crown.x, has_apex ? apex.x : crown.y, runs, phase);
+	if (has_apex && (want_second || phase < 2)) {
+		// Above the apex: vacuum. Then the falling stretch back to the crown.
+		ring_haze_field_exit(runs, phase, apex.x);
+		ring_haze_field_scan(f0, f1, side_negative, across_dir, camera_height, radial0, b, a, apex.y, crown.y, runs, phase);
+	}
+	// (crown.y, outer.y]: back under the crown.
+	if ((want_second || phase < 2) && crown.y < outer.y && !ring_haze_field_inside(phase)) ring_haze_field_enter(runs, phase, crown.y);
+	if (phase == 1) runs.y = outer.y;
+	else if (phase == 3) runs.w = outer.y;
+	return runs;
+}
+
 // First local air interval along the ray, in metres: (t0, t1), empty (y <= x) when there is none. Same machinery as
-// ring_atmosphere_first_air_paths_shared (outer shell minus the vacuum above the cap, remote shell excluded).
+// ring_atmosphere_first_air_paths_shared (outer shell minus the vacuum above the cap, remote shell excluded). With a containment field, the
+// first run under the field (ring_haze_field_runs); cap_height_m and side_positive are then unused.
 vec2 ring_haze_air_interval(vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m, float cap_height_m) {
+	vec4 field0 = ring_haze_field_profile0();
+	if (ring_haze_field_active(field0)) return ring_haze_field_runs(target, camera, camera_height, outward, axis, side_negative, coordinate_scale, radius_m, floor_depth_m, field0, ring_haze_field_profile1(), false).xy;
 	float scale = max(coordinate_scale, 0.000001);
 	float length_m = length(target - camera) / scale;
 	// Fast path: a ray shorter than the distance to the floor shell, the cap shell and both side walls cannot reach any of them
@@ -134,13 +303,6 @@ vec2 ring_haze_air_interval(vec3 target, vec3 camera, float camera_height, vec3 
 		else air.y = min(air.y, upper_vacuum.x);
 	}
 	return air;
-}
-
-// Altitude along the ray, h(t) = R - |radial(p0 + t ray)|, evaluated without the large-number cancellation.
-float ring_haze_height(float t, float h0, float radial0, float b, float a) {
-	float n = b * t + a * t * t;
-	float root = sqrt(max(radial0 * radial0 + n, 0.0));
-	return h0 - n / max(radial0 + root, 0.001);
 }
 
 // Integral of exp(-h/H) over a flat-ish segment: h ~ hbar + mu (t - tm).
@@ -219,17 +381,24 @@ vec3 ring_haze_sun_transmittance(RingHazeParams p, vec3 ray, vec2 interval, floa
 	return exp(-tau_col * airmass) * smoothstep(-0.06, 0.0, cos_sun);
 }
 
-// Full evaluation toward `target` (coordinate units). camera_height, radius_m, floor_depth_m in metres.
-RingHaze ring_haze_eval(RingHazeParams p, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+// Sun transmittance with the column topped by the field over the path midpoint (ring_haze_field_column_top); without a field it is
+// ring_haze_sun_transmittance exactly.
+vec3 ring_haze_sun_transmittance_lid(RingHazeParams p, vec3 ray, vec2 interval, float camera_height, vec3 outward, vec3 axis, float radius_m, float side_negative) {
+	p.cap_height = ring_haze_field_column_top(p.cap_height, ray, axis, side_negative, 0.5 * (interval.x + interval.y));
+	return ring_haze_sun_transmittance(p, ray, interval, camera_height, outward, axis, radius_m);
+}
+
+RingHaze ring_haze_identity() {
 	RingHaze result;
 	result.T = vec3(1.0);
 	result.S_sun = vec3(0.0);
 	result.S_amb = vec3(0.0);
-	float scale = max(coordinate_scale, 0.000001);
-	vec3 delta = target - camera;
-	if (length(delta) <= 0.0001 * scale) return result;
-	vec3 ray = normalize(delta);
-	vec2 interval = ring_haze_air_interval(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m, floor_depth_m, p.cap_height);
+	return result;
+}
+
+// ring_haze_eval over a given air interval of the unit ray (identity when the interval is empty).
+RingHaze ring_haze_eval_interval(RingHazeParams p, vec3 ray, vec2 interval, float camera_height, vec3 outward, vec3 axis, float side_negative, float radius_m) {
+	RingHaze result = ring_haze_identity();
 	if (interval.y <= interval.x) return result;
 	RingHazeOptics o = ring_haze_optics(p, ray, interval, camera_height, outward, axis, radius_m);
 	float mie_extinction = o.tau_A + o.tau_M;
@@ -241,11 +410,21 @@ RingHaze ring_haze_eval(RingHazeParams p, vec3 target, vec3 camera, float camera
 	float mu = dot(ray, normalize(p.to_sun));
 	vec3 weight_sun = o.tau_R * ring_haze_phase_rayleigh(mu) + vec3(mie_scatter * ring_haze_phase_mie(mu, p.g));
 	vec3 weight_amb = o.tau_R + vec3(mie_scatter);
-	vec3 t_sun = ring_haze_sun_transmittance(p, ray, interval, camera_height, outward, axis, radius_m);
+	vec3 t_sun = ring_haze_sun_transmittance_lid(p, ray, interval, camera_height, outward, axis, radius_m, side_negative);
 	float day = clamp(p.day, 0.0, 1.0);
 	result.S_sun = one_minus_T * p.E_sun * day * t_sun * weight_sun * inv_total;
 	result.S_amb = one_minus_T * mix(p.night_ambient, p.ambient, day) * weight_amb * inv_total;
 	return result;
+}
+
+// Full evaluation toward `target` (coordinate units). camera_height, radius_m, floor_depth_m in metres.
+RingHaze ring_haze_eval(RingHazeParams p, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+	float scale = max(coordinate_scale, 0.000001);
+	vec3 delta = target - camera;
+	if (length(delta) <= 0.0001 * scale) return ring_haze_identity();
+	vec3 ray = normalize(delta);
+	vec2 interval = ring_haze_air_interval(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m, floor_depth_m, p.cap_height);
+	return ring_haze_eval_interval(p, ray, interval, camera_height, outward, axis, side_negative, radius_m);
 }
 
 // ---- Far-arch remote shell (P10) --------------------------------------------------------------------------------------------
@@ -253,7 +432,11 @@ RingHaze ring_haze_eval(RingHazeParams p, vec3 target, vec3 camera, float camera
 // OPPOSITE ring section. Remote interval = [upper_vacuum.y, outer.y]; it exists only when the vacuum starts after the camera's
 // outer chord does (camera in air). The same cylinder frame (ring_haze_height with the camera's h0/radial0/b/a) covers the whole ray.
 // Shortest ray that can leave and re-enter air: tangent to the vacuum core, sqrt(cap (2R - cap)) = 447 km for R = 5000 km, cap 20 km.
+// With a containment field: the second run under the field (ring_haze_field_runs), where a ray that left through the field comes back
+// in (cap_height_m and side_positive are then unused).
 vec2 ring_haze_remote_interval(vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m, float cap_height_m) {
+	vec4 field0 = ring_haze_field_profile0();
+	if (ring_haze_field_active(field0)) return ring_haze_field_runs(target, camera, camera_height, outward, axis, side_negative, coordinate_scale, radius_m, floor_depth_m, field0, ring_haze_field_profile1(), true).zw;
 	float scale = max(coordinate_scale, 0.000001);
 	float length_m = length(target - camera) / scale;
 	if (length_m < 0.98 * sqrt(max(cap_height_m * (2.0 * radius_m - cap_height_m), 0.0))) return vec2(1.0, 0.0);
@@ -268,16 +451,9 @@ vec2 ring_haze_remote_interval(vec3 target, vec3 camera, float camera_height, ve
 // local day, smoothstep(-0.2, 0.35, dot(up_remote, to_sun)) with the ringworld_effective_solar_day semantics (solar_visibility is
 // the global eclipse term, hub_day the eclipse hub), hub-blended sun direction, and the sun transmittance there. raw_to_sun is the
 // unblended direction toward the star; p supplies everything else (p.to_sun / p.day describe the camera's point and are ignored).
-RingHaze ring_haze_eval_remote(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
-	RingHaze result;
-	result.T = vec3(1.0);
-	result.S_sun = vec3(0.0);
-	result.S_amb = vec3(0.0);
-	float scale = max(coordinate_scale, 0.000001);
-	vec3 delta = target - camera;
-	if (length(delta) <= 0.0001 * scale) return result;
-	vec3 ray = normalize(delta);
-	vec2 interval = ring_haze_remote_interval(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m, floor_depth_m, p.cap_height);
+// ring_haze_eval_remote over a given remote interval of the unit ray (identity when it is empty).
+RingHaze ring_haze_eval_remote_interval(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 ray, vec2 interval, float camera_height, vec3 outward, vec3 axis, float side_negative, float radius_m) {
+	RingHaze result = ring_haze_identity();
 	if (interval.y <= interval.x) return result;
 	RingHazeOptics o = ring_haze_optics(p, ray, interval, camera_height, outward, axis, radius_m);
 	// Remote up at the path midpoint, and the sun direction/day it sees.
@@ -298,11 +474,20 @@ RingHaze ring_haze_eval_remote(RingHazeParams p, vec3 raw_to_sun, float hub_weig
 	float mu = dot(ray, q.to_sun);
 	vec3 weight_sun = o.tau_R * ring_haze_phase_rayleigh(mu) + vec3(mie_scatter * ring_haze_phase_mie(mu, q.g));
 	vec3 weight_amb = o.tau_R + vec3(mie_scatter);
-	vec3 t_sun = ring_haze_sun_transmittance(q, ray, interval, camera_height, outward, axis, radius_m);
+	vec3 t_sun = ring_haze_sun_transmittance_lid(q, ray, interval, camera_height, outward, axis, radius_m, side_negative);
 	float day = clamp(q.day, 0.0, 1.0);
 	result.S_sun = one_minus_T * q.E_sun * day * t_sun * weight_sun * inv_total;
 	result.S_amb = one_minus_T * mix(q.night_ambient, q.ambient, day) * weight_amb * inv_total;
 	return result;
+}
+
+RingHaze ring_haze_eval_remote(RingHazeParams p, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
+	float scale = max(coordinate_scale, 0.000001);
+	vec3 delta = target - camera;
+	if (length(delta) <= 0.0001 * scale) return ring_haze_identity();
+	vec3 ray = normalize(delta);
+	vec2 interval = ring_haze_remote_interval(target, camera, camera_height, outward, axis, side_negative, side_positive, scale, radius_m, floor_depth_m, p.cap_height);
+	return ring_haze_eval_remote_interval(p, raw_to_sun, hub_weight, hub_day, solar_visibility, ray, interval, camera_height, outward, axis, side_negative, radius_m);
 }
 
 // Storm grey-Mie haze (P9). storm = (s, sigma_storm, omega_storm, g_storm): s in [0, 1] storm strength, sigma_storm the aerosol
@@ -327,8 +512,25 @@ RingHazeParams ring_haze_apply_storm(RingHazeParams p, vec4 storm) {
 // (T = T_near T_remote, S = S_near + T_near S_remote). Identical to ring_haze_eval for targets whose ray never re-enters air.
 // p_near drives the local air and p_remote the far-arch shell; they differ only under storm haze (the remote shell stays clear).
 RingHaze ring_haze_eval_target_split(RingHazeParams p_near, RingHazeParams p_remote, vec3 raw_to_sun, float hub_weight, float hub_day, float solar_visibility, vec3 target, vec3 camera, float camera_height, vec3 outward, vec3 axis, float side_negative, float side_positive, float coordinate_scale, float radius_m, float floor_depth_m) {
-	RingHaze near_air = ring_haze_eval(p_near, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
-	RingHaze remote = ring_haze_eval_remote(p_remote, raw_to_sun, hub_weight, hub_day, solar_visibility, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+	RingHaze near_air;
+	RingHaze remote;
+	vec4 field0 = ring_haze_field_profile0();
+	if (ring_haze_field_active(field0)) {
+		// One walk of the ray under the field gives both runs.
+		near_air = ring_haze_identity();
+		remote = ring_haze_identity();
+		float scale = max(coordinate_scale, 0.000001);
+		vec3 delta = target - camera;
+		if (length(delta) > 0.0001 * scale) {
+			vec3 ray = normalize(delta);
+			vec4 runs = ring_haze_field_runs(target, camera, camera_height, outward, axis, side_negative, scale, radius_m, floor_depth_m, field0, ring_haze_field_profile1(), true);
+			near_air = ring_haze_eval_interval(p_near, ray, runs.xy, camera_height, outward, axis, side_negative, radius_m);
+			remote = ring_haze_eval_remote_interval(p_remote, raw_to_sun, hub_weight, hub_day, solar_visibility, ray, runs.zw, camera_height, outward, axis, side_negative, radius_m);
+		}
+	} else {
+		near_air = ring_haze_eval(p_near, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+		remote = ring_haze_eval_remote(p_remote, raw_to_sun, hub_weight, hub_day, solar_visibility, target, camera, camera_height, outward, axis, side_negative, side_positive, coordinate_scale, radius_m, floor_depth_m);
+	}
 	near_air.S_sun += near_air.T * remote.S_sun;
 	near_air.S_amb += near_air.T * remote.S_amb;
 	near_air.T *= remote.T;

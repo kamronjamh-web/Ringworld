@@ -16,4 +16,6 @@ public partial class GameplayContainmentFieldSettings : Resource
     [Export] public float LatticeStrength { get; set; } = 1f;
     /// <summary>Ripples and field strikes seen on the field from below (refraction, reveal light, crawl and glow), 0..2.</summary>
     [Export] public float RippleStrength { get; set; } = 1f;
+    /// <summary>Volume of the field hum (a user-supplied loop; no file, no hum) in dB, added to its -12 dB base. Older files without it load 0.</summary>
+    [Export] public float FieldHumVolumeDb { get; set; } = 0f;
 }

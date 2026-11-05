@@ -6,6 +6,12 @@
 
 #include "./CloudsInc.comp"
 #include "../../materials/ring_atmosphere_shared.gdshaderinc"
+// Declared before the haze include: RING_HAZE_FIELD0/1 expand to genericData members inside ring_haze_shared's functions.
+layout(binding = 14) uniform uniformBuffer {
+	GenericData data;
+} genericData;
+#define RING_HAZE_FIELD0 genericData.data.ring_field_profile0
+#define RING_HAZE_FIELD1 genericData.data.ring_field_profile1
 #include "../../materials/ring_haze_shared.gdshaderinc"
 #include "../../materials/ring_cloud_weather_shared.gdshaderinc"
 #include "../../materials/ring_megastorm_darkness.gdshaderinc"
@@ -56,10 +62,6 @@ layout(binding = 10) uniform sampler3D noise_small;
 layout(binding = 11) uniform sampler3D curl_noise;
 layout(binding = 12) uniform sampler3D dither_small;
 layout(binding = 13) uniform sampler2D heightmask;
-
-layout(binding = 14) uniform uniformBuffer {
-	GenericData data;
-} genericData;
 
 layout(binding = 15) uniform LightsBuffer {
 	DirectionalLight directionalLights[4];

@@ -10,7 +10,7 @@ layout(rgba16f, set = 0, binding = 0) uniform restrict writeonly image2D lut0_im
 layout(rgba16f, set = 0, binding = 1) uniform restrict writeonly image2D lut1_image;
 layout(rgba16f, set = 0, binding = 2) uniform restrict writeonly image2D lut2_image;
 
-// Packed by RingAtmosphereLuts.PackBuildParams (9 vec4). Unstormed model values + the storm vector (ring_haze_apply_storm is the producer).
+// Packed by RingAtmosphereLuts.PackBuildParams (11 vec4). Unstormed model values + the storm vector (ring_haze_apply_storm is the producer).
 layout(set = 0, binding = 3, std140) uniform BuildParams {
 	vec4 sigma_R_H_R;     // sigma_R.xyz, H_R
 	vec4 aerosol;         // sigma_A, omega_A, H_A, sigma_M0
@@ -21,7 +21,11 @@ layout(set = 0, binding = 3, std140) uniform BuildParams {
 	vec4 axis;            // xyz
 	vec4 to_sun;          // xyz (hub-blended primary light direction)
 	vec4 storm;           // ringworld_haze_storm
+	vec4 field0;          // containment field lid: wall top, apex, crown, exists (zero = no field)
+	vec4 field1;          // RootAcross0, RootAcrossW, 0, 0
 } build;
+#define RING_HAZE_FIELD0 build.field0
+#define RING_HAZE_FIELD1 build.field1
 
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
 #include "res://materials/ring_haze_shared.gdshaderinc"

@@ -772,6 +772,27 @@ def field_contact_crackle(rng, seconds=1.8):
     return normalise_peak(fade_out(out, 260), -7)
 
 
+def field_crossing_whump(rng, seconds=1.4):
+    # Passing through the containment field (docs/containment-field-design.md, decision 4): a soft membrane "whump", a 45-70 Hz pressure body that gives
+    # way slowly (raised-cosine onset, a gentle downward glide), a small second swell as the sheet settles, and a short dark breath of 80-900 Hz air. No
+    # clicks and nothing above 1.2 kHz: it is felt more than heard.
+    n = int(seconds * SR)
+    t = t_axis(n)
+    out = np.zeros(n)
+    f0 = rng.uniform(52.0, 70.0)
+    sweep = 38.0 + (f0 - 38.0) * np.exp(-t / 0.16)
+    ph = rng.uniform(0, 2 * np.pi)
+    out += np.sin(2 * np.pi * np.cumsum(sweep) / SR + ph) * np.exp(-t / 0.32) * attack(n, 35.0)
+    out += 0.3 * np.sin(2 * np.pi * np.cumsum(2.0 * sweep) / SR + ph * 0.5) * np.exp(-t / 0.14) * attack(n, 35.0)
+    t2 = np.clip(t - rng.uniform(0.17, 0.24), 0.0, None)
+    out += 0.35 * np.sin(2 * np.pi * np.cumsum(sweep * 0.8) / SR) * np.exp(-t2 / 0.25) * (1.0 - np.exp(-t2 / 0.05)) * (t > 0.17)
+    breath = noise(rng, n, 80, 900, order=3) * np.exp(-t / 0.22) * (1.0 - np.exp(-t / 0.045))
+    out += 0.4 * breath
+    out *= attack(n, 30.0)
+    out = fft_filter(out, lambda f: butter_mag(f, 28, 1200, 2), pad=SR)
+    return normalise_peak(fade_out(out, 280), -6)
+
+
 # ---- driver -------------------------------------------------------------------------------------------------------
 
 def write_wav(path, x):
@@ -821,6 +842,9 @@ def build_jobs(ffmpeg, src_dir):
         jobs[name] = (lambda name=name: emitter_orb_launch(rng_for(name)))
         name = f"field_contact_crackle_{i}"
         jobs[name] = (lambda name=name: field_contact_crackle(rng_for(name)))
+    for i in range(1, 3):
+        name = f"field_crossing_whump_{i}"
+        jobs[name] = (lambda name=name: field_crossing_whump(rng_for(name)))
     return jobs
 
 

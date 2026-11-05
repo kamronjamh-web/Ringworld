@@ -44,6 +44,8 @@ public partial class RingContainmentDisturbanceHost : Node
     private StormContactAdapter? _contact;
     private MegastormDisturbanceAdapter? _megastormAdapter;
     private EmitterShotDisturbanceAdapter? _emitterAdapter;
+    private BodyContactDisturbanceAdapter? _bodyAdapter;
+    private RingContainmentFieldAudio? _fieldAudio;
     private EmitterFieldShotLayer? _emitterShots;
     private readonly List<RingVolumetricCloudLayer.RenderWeatherSystem> _stormScratch = new();
     private (double Width, double WallTop, double Circumference) _built;
@@ -53,6 +55,9 @@ public partial class RingContainmentDisturbanceHost : Node
     public StormContactAdapter? ContactAdapter => _contact;
     public MegastormDisturbanceAdapter? MegastormAdapter => _megastormAdapter;
     public EmitterShotDisturbanceAdapter? EmitterShotAdapter => _emitterAdapter;
+    /// <summary>Contact ripples (decision 4): register fast bodies here (<see cref="BodyContactDisturbanceAdapter.Register"/>); the player is always tracked.</summary>
+    public BodyContactDisturbanceAdapter? BodyContactAdapter => _bodyAdapter;
+    public RingContainmentFieldAudio? FieldAudio => _fieldAudio;
 
     public override void _EnterTree() => Instance = this;
 
@@ -71,6 +76,8 @@ public partial class RingContainmentDisturbanceHost : Node
         _grid = GetNodeOrNull<VoxelChunkGridManager>(GridManagerPath);
         _explorer = GetNodeOrNull<RingVoxelExplorerController>(ExplorerPath);
         _emitterShots = GetNodeOrNull<EmitterFieldShotLayer>(EmitterFieldShotsPath);
+        _fieldAudio = new RingContainmentFieldAudio { Name = "FieldAudio" };
+        AddChild(_fieldAudio);
         EnsureInstalled();
     }
 
@@ -92,6 +99,19 @@ public partial class RingContainmentDisturbanceHost : Node
         _contact!.Update(now, observer.Value);
         _megastormAdapter!.Update(now, observer.Value);
         _emitterAdapter!.Update(now, observer.Value);
+        UpdateBodyContact(now, delta);
+    }
+
+    /// <summary>The camera's per-frame segment against the field (contact ripple and whump) and its side of the field (vacuum audio).</summary>
+    private void UpdateBodyContact(double now, double delta)
+    {
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        if (_grid == null || camera == null || Profile is not { } profile) return;
+        RingCanonicalPosition cam = _grid.WorldToCanonicalRingPosition64(camera.GlobalPosition);
+        RingLodGeometrySnapshot snapshot = _grid.CaptureLodGeometrySnapshot();
+        _bodyAdapter!.Update(now, delta, snapshot, cam);
+        _fieldAudio?.UpdateVacuum(profile, cam, delta);
+        _fieldAudio?.UpdateHum(profile, snapshot, cam, delta);
     }
 
     /// <summary>Builds (or rebuilds after a world change) the profile, provider, bus and adapters; a no-op while the world is unconfigured.</summary>
@@ -114,6 +134,8 @@ public partial class RingContainmentDisturbanceHost : Node
             _upper = new UpperAtmosphereDisturbanceAdapter(Bus, profile, () => _weather!.CloudTopMeters);
             _contact = new StormContactAdapter(Bus, profile, CollectSystems, () => _weather!.WeatherWindMetersPerSecond, circumference);
             _megastormAdapter = new MegastormDisturbanceAdapter(() => _megastorm?.Model, Bus, profile);
+            _bodyAdapter = new BodyContactDisturbanceAdapter(Bus, profile, circumference);
+            _bodyAdapter.Crossed += c => { if (c.IsPlayer) _fieldAudio?.PlayWhump(c.Energy, _bodyAdapter!.Crossings); };
             _emitterAdapter = new EmitterShotDisturbanceAdapter(Bus, () => _emitterShots != null && IsInstanceValid(_emitterShots) ? _emitterShots.Schedule : null, circumference);
         }
         else
@@ -122,6 +144,7 @@ public partial class RingContainmentDisturbanceHost : Node
             Bus.Profile = profile; Bus.CircumferenceMeters = circumference;
             _lightning!.Profile = profile; _upper!.Profile = profile; _contact!.Profile = profile; _megastormAdapter!.Profile = profile;
             _emitterAdapter!.CircumferenceMeters = circumference;
+            _bodyAdapter!.Profile = profile; _bodyAdapter.CircumferenceMeters = circumference; _bodyAdapter.Reset();
         }
     }
 

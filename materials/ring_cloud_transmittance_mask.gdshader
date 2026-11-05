@@ -3,6 +3,11 @@ render_mode unshaded;
 #include "res://materials/ring_terrain_cloud_sun_receiver.gdshaderinc"
 #include "res://materials/celestial_lighting.gdshaderinc"
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
+// Containment field lid (WO9): same globals/macros as ring_atmosphere.gdshaderinc.
+global uniform vec4 ringworld_field_profile0;
+global uniform vec4 ringworld_field_profile1;
+#define RING_HAZE_FIELD0 ringworld_field_profile0
+#define RING_HAZE_FIELD1 ringworld_field_profile1
 #include "res://materials/ring_haze_shared.gdshaderinc"
 // Physical-metre profile in the existing mask ray basis. Zero profile preserves
 // standalone fixtures and disabled atmosphere without changing cloud density.

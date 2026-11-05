@@ -65,11 +65,13 @@ public partial class RingAtmosphereLuts : RefCounted
     /// </summary>
     public bool RequestSkyView(float radiusMeters, Vector3 outward, Vector3 axis, float cameraHeightMeters, float sideNegativeMeters, float sidePositiveMeters, Vector3 toSun)
     {
-        float cap = RingAtmosphereModel.HazeCapHeightMeters;
+        RingAtmosphereFieldLid.Profile field = RingAtmosphereModel.FieldProfile;
+        float cap = field.Exists ? (float)field.Apex : RingAtmosphereModel.HazeCapHeightMeters;
         bool inputsFinite = float.IsFinite(radiusMeters) && float.IsFinite(cameraHeightMeters) && float.IsFinite(sideNegativeMeters) && float.IsFinite(sidePositiveMeters)
             && IsFinite(outward) && IsFinite(axis) && IsFinite(toSun) && outward.LengthSquared() > 1e-8f && axis.LengthSquared() > 1e-8f && toSun.LengthSquared() > 1e-8f;
         bool wanted = SkyViewEnabled && inputsFinite && RingAtmosphereModel.HazeModel == RingAtmosphereModel.HazeModelKind.Physical
-            && radiusMeters > 1.0f && cameraHeightMeters < cap - MinimumCapClearanceMeters;
+            && radiusMeters > 1.0f && cameraHeightMeters < cap - MinimumCapClearanceMeters
+            && (!field.Exists || CameraComfortablyInsideField(field, sideNegativeMeters, cameraHeightMeters));
         if (!wanted || _failed)
         {
             PublishKey(new Vector4(0, 0, 0, 0));
@@ -113,7 +115,7 @@ public partial class RingAtmosphereLuts : RefCounted
     public int GetBuildsCompleted() => _buildsCompleted;
     public Vector4 GetPublishedKey() => _publishedKey;
     public float GetGrazeConstant() => _lastGraze;
-    /// <summary>The 36 floats of the last queued build's uniform block (tests feed the same block to their probe shaders).</summary>
+    /// <summary>The 44 floats of the last queued build's uniform block (tests feed the same block to their probe shaders).</summary>
     public float[] GetLastBuildParams() { lock (Gate) return (float[])_lastParams.Clone(); }
     /// <summary>RD texture RIDs of lut0/lut1/lut2 (valid once <see cref="IsReady"/>); tests sample them directly.</summary>
     public Rid GetSkyViewTexture(int index) { lock (Gate) return index is >= 0 and < 3 ? Images[index] : default; }
@@ -129,10 +131,18 @@ public partial class RingAtmosphereLuts : RefCounted
         return Mathf.Clamp((capMeters - heightMeters) * (2.0f * radiusMeters - capMeters - heightMeters) / Mathf.Max(b * b, 1.0f), 0.0f, 0.5f);
     }
 
+    /// <summary>With a containment field the LUT grid cannot resolve the field's skirt and shoulder edges near the camera, so it is used only
+    /// when the camera is inside with 3 km below the lid and 2 km from both roots; otherwise the sky evaluates the analytic function.</summary>
+    private static bool CameraComfortablyInsideField(in RingAtmosphereFieldLid.Profile field, float across, float height)
+        => RingAtmosphereFieldLid.IsInside(field, across, height)
+            && RingAtmosphereFieldLid.Height(field, across) - height >= 3000.0
+            && Math.Min(across - field.Root0, field.RootW - across) >= 2000.0;
+
     private static float[] PackBuildParams(BuildInputs i, float k)
     {
         Vector3 sigmaR = RingAtmosphereModel.HazeSigmaRayleigh;
         Vector4 storm = RingAtmosphereModel.HazeStormVector;
+        Vector4 field0 = RingAtmosphereModel.FieldProfile.Packed0, field1 = RingAtmosphereModel.FieldProfile.Packed1;
         return new[]
         {
             sigmaR.X, sigmaR.Y, sigmaR.Z, RingAtmosphereModel.HazeRayleighHeightMeters,
@@ -144,6 +154,8 @@ public partial class RingAtmosphereLuts : RefCounted
             i.Axis.X, i.Axis.Y, i.Axis.Z, 0.0f,
             i.ToSun.X, i.ToSun.Y, i.ToSun.Z, 0.0f,
             storm.X, storm.Y, storm.Z, storm.W,
+            field0.X, field0.Y, field0.Z, field0.W,
+            field1.X, field1.Y, field1.Z, field1.W,
         };
     }
 
@@ -223,7 +235,7 @@ public partial class RingAtmosphereLuts : RefCounted
             Mipmaps = 1,
             UsageBits = RenderingDevice.TextureUsageBits.StorageBit | RenderingDevice.TextureUsageBits.SamplingBit | RenderingDevice.TextureUsageBits.CanCopyFromBit,
         };
-        _uniformBuffer = _rd.UniformBufferCreate(36 * 4);
+        _uniformBuffer = _rd.UniformBufferCreate(44 * 4);
         var uniforms = new Godot.Collections.Array<RDUniform>();
         for (int i = 0; i < 3; i++)
         {

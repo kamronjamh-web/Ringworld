@@ -1613,6 +1613,18 @@
       "expected_s": 6,
       "timeout_s": 60
     },
+    "atmosphere_field_lid_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "atmosphere-haze"
+      ],
+      "marker": "ATMOSPHERE_FIELD_LID",
+      "expected_s": 15,
+      "timeout_s": 120
+    },
     "far_cloud_density_parity_gpu_test": {
       "kind": "test",
       "mode": "gpu-local",
@@ -3027,6 +3039,18 @@
       "expected_s": 3,
       "timeout_s": 60
     },
+    "containment_body_contact_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "audio"
+      ],
+      "marker": "CONTAINMENT_BODY_CONTACT",
+      "expected_s": 20,
+      "timeout_s": 120
+    },
     "containment_field_geometry_test": {
       "kind": "test",
       "mode": "headless",
@@ -3121,6 +3145,19 @@
       "expected_s": null,
       "timeout_s": 1500
     },
+    "atmosphere_lid_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "containment-field",
+        "atmosphere-haze"
+      ],
+      "world": "start-menu",
+      "marker": "ATMOS_LID",
+      "expected_s": null,
+      "timeout_s": 2400
+    },
     "containment_ripple_capture": {
       "kind": "tool",
       "mode": "gpu",
@@ -3132,6 +3169,19 @@
       "marker": "CONTAINMENT_RIPPLE",
       "expected_s": null,
       "timeout_s": 1800
+    },
+    "natural_field_strike_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "containment-field",
+        "weather"
+      ],
+      "world": "start-menu",
+      "marker": "NATURAL_FIELD",
+      "expected_s": null,
+      "timeout_s": 1500
     },
     "rim_cloud_ceiling_check": {
       "kind": "tool",
@@ -3272,6 +3322,19 @@
       "marker": "MEGASTORM_LIGHTNING",
       "expected_s": 20,
       "timeout_s": 180
+    },
+    "natural_field_strike_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "weather"
+      ],
+      "world": "integration",
+      "marker": "NATURAL_FIELD_STRIKE",
+      "expected_s": 60,
+      "timeout_s": 300
     },
     "megastorm_scythe_test": {
       "kind": "test",

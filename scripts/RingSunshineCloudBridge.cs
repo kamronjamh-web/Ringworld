@@ -366,6 +366,7 @@ public partial class RingSunshineCloudBridge : Node
     private Vector4 _lastCloudFrameAcross = new(float.PositiveInfinity, 0.0f, 0.0f, 0.0f);
     private float _lastCloudFrameRingWidth = float.NaN;
     private ContainmentFieldProfile _lastContainmentProfile;
+    private bool _publishedAtmosphereField;
     private bool _containmentProfileSent;
     private float _lastAppliedHistoryWeight = float.NaN;
     private readonly RingCanonicalPosition[] _gpuShadowCenters = new RingCanonicalPosition[2];
@@ -612,6 +613,12 @@ public partial class RingSunshineCloudBridge : Node
         if (_terrainCloudSunVisibility != null && GodotObject.IsInstanceValid(_terrainCloudSunVisibility))
             _terrainCloudSunVisibility.UnregisterRequiredAltitudeRange("sunshine");
         ResolveEffectiveCloudHandoff();
+        if (_publishedAtmosphereField)
+        {
+            RingAtmosphereModel.ClearContainmentField();
+            _publishedAtmosphereField = false;
+            _containmentProfileSent = false;
+        }
         if (_clouds != null && _externalTextureRetirementCallable is { } callback
             && _clouds.IsConnected("external_texture_retirement_requested", callback))
             _clouds.Disconnect("external_texture_retirement_requested", callback);
@@ -1343,6 +1350,8 @@ public partial class RingSunshineCloudBridge : Node
         if (_containmentProfileSent && profile.Equals(_lastContainmentProfile)) return;
         _clouds!.Call(SetContainmentFieldName, profile.IsValid, profile.WallTopMeters, profile.ApexMeters, profile.CrownMeters,
             profile.RootAcross0, profile.RootAcrossW);
+        RingAtmosphereModel.SetContainmentField(profile);
+        _publishedAtmosphereField = true;
         _lastContainmentProfile = profile;
         _containmentProfileSent = true;
     }
