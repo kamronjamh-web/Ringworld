@@ -4,9 +4,9 @@ using RingworldTechDemo.Weather;
 namespace RingworldTechDemo;
 
 /// <summary>What every megastorm voice should play at one instant (before slewing and the user volume): linear gains in 0..1.</summary>
-public readonly record struct MegastormVoiceTargets(float Hum, float WallSingLow, float WallSingHigh, float Roar, float Swell, float AirborneGate, float Wildlife)
+public readonly record struct MegastormVoiceTargets(float Hum, float Roar, float Swell, float AirborneGate, float Wildlife)
 {
-    public static readonly MegastormVoiceTargets Idle = new(0f, 0f, 0f, 0f, 0f, 1f, 0f);
+    public static readonly MegastormVoiceTargets Idle = new(0f, 0f, 0f, 1f, 0f);
 }
 
 /// <summary>
@@ -57,11 +57,10 @@ public static class MegastormAudioMix
     public static MegastormVoiceTargets Targets(in MegastormSample s)
     {
         if (!s.Active) return MegastormVoiceTargets.Idle;
-        // The singing level of each wall is not in the sample (only the loudest one); the node splits it by the observer's across position.
-        return new MegastormVoiceTargets(s.HumLevel, s.WallSingLevel, s.WallSingLevel, RoarLevel(s), s.GustSwell, AirborneGate(s), s.WildlifeQuiet);
+        return new MegastormVoiceTargets(s.HumLevel, RoarLevel(s), s.GustSwell, AirborneGate(s), s.WildlifeQuiet);
     }
 
-    /// <summary>Gain the shelter class leaves the airborne bus (the structure-borne hum and singing never see it). Deep caves still pass nothing airborne.</summary>
+    /// <summary>Gain the shelter class leaves the airborne bus (the structure-borne hum never sees it). Deep caves still pass nothing airborne.</summary>
     public static float ShelterAirGain(RainShelterClass shelter, float undergroundBlend)
         => RainSoundField.Params(shelter).BedGain * (1f - Math.Clamp(float.IsFinite(undergroundBlend) ? undergroundBlend : 0f, 0f, 1f));
 

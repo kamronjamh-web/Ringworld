@@ -22,9 +22,10 @@ layout(location = 0) out float v_u;
 layout(location = 1) out vec3 v_view;
 layout(location = 2) out vec3 v_px;               // x glow px, y core px, z unclamped core px
 layout(location = 3) out float v_intensity;
+layout(location = 4) out vec2 v_zone;             // field strikes: x channel height fraction, y class + 1 (0 = not a field strike)
 
 const vec2 CORNERS[6] = vec2[6](vec2(-1, 0), vec2(1, 0), vec2(-1, 1), vec2(1, 0), vec2(1, 1), vec2(-1, 1));
-void cull() { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); v_u = 0.0; v_view = vec3(0.0, 0.0, -1.0); v_px = vec3(1.0); v_intensity = 0.0; }
+void cull() { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); v_u = 0.0; v_view = vec3(0.0, 0.0, -1.0); v_px = vec3(1.0); v_intensity = 0.0; v_zone = vec2(0.0); }
 vec3 to_view(vec3 world) { vec3 rel = world - F.cam_pos.xyz; return vec3(dot(rel, F.cam_x.xyz), dot(rel, F.cam_y.xyz), dot(rel, F.cam_z.xyz)); }
 
 void main() {
@@ -35,10 +36,34 @@ void main() {
 	vec3 pa = sg.a.xyz, pb = sg.b.xyz;
 	float wA = max(sg.a.w, 0.05), wB = max(sg.b.w, 0.05);
 	float alongA = sg.c.z, alongB = sg.c.w, tip = 1.0;
+	bool field = false;
+	float zoneA = 0.0, zoneB = 0.0, zoneClass = 0.0;
 	if (bi < 8) {
-		// Branch / run segments (c.w > 0.5) flicker per stroke: c.z is the per-branch hash, tip[] the stroke index.
 		float stroke = F.tip[bi >> 2][bi & 3];
-		if (alongB > 0.5 && fract(sin(alongA * 91.7 + stroke * 17.3) * 43758.5453) <= 0.35) intensity *= 0.15;
+		field = stroke >= 9.5;
+		if (field) {
+			// Field strike (tip = 10 + leader progress): c.z is the height fraction of the segment start, floor(c.w) the class (0 trunk, 1 fan branch, 2 spray) and
+			// its fraction the end height of a trunk piece. The leader reveals what starts below its tip and cuts the trunk piece it is inside.
+			float st = stroke - 10.0;
+			float stroke_index = floor(st * 0.5);
+			float prog = st - 2.0 * stroke_index;   // tip = 10 + progress + 2 x return stroke index
+			zoneClass = floor(alongB + 1.0e-4);
+			float endf = alongB - zoneClass;
+			if (alongA > prog) { cull(); return; }
+			zoneA = alongA; zoneB = alongA;
+			if (zoneClass < 0.5) {
+				zoneB = endf;
+				if (endf > prog) { float t = (prog - alongA) / max(endf - alongA, 1e-6); pb = mix(pa, pb, t); wB = mix(wA, wB, t); zoneB = prog; }
+			}
+			intensity *= 0.3;   // field strikes are tens of km long: a lower radiance than a ground bolt keeps the channel blue instead of white
+			// Branch-level flicker: each fan branch re-rolls on every return stroke.
+			if (zoneClass > 0.5 && zoneClass < 1.5 && fract(sin(alongA * 91.7 + stroke_index * 17.3) * 43758.5453) <= 0.4) intensity *= 0.12;
+			// The growing head is brighter than the channel behind it while the leader rises.
+			if (prog < 0.999 && zoneClass < 0.5) intensity *= 1.0 + 0.8 * smoothstep(0.85, 1.0, zoneB / max(prog, 1e-3));
+		} else {
+			// Branch / run segments (c.w > 0.5) flicker per stroke: c.z is the per-branch hash, tip[] the stroke index.
+			if (alongB > 0.5 && fract(sin(alongA * 91.7 + stroke * 17.3) * 43758.5453) <= 0.35) intensity *= 0.15;
+		}
 	}
 	if (bi >= 8) {
 		// Scythe core: the whole line is uploaded once; the travelling tip cuts it here.
@@ -66,7 +91,7 @@ void main() {
 	float dview = max(-v.z, 0.1);
 	float min_core = mix(1.4, 0.85, smoothstep(1500.0, 20000.0, dview)) * scale * F.min_px.x;
 	float min_glow = mix(9.0, 3.0, smoothstep(1000.0, 25000.0, dview)) * scale * F.min_px.y;
-	float glow_px = max(F.radiance.w * mix(0.6, 1.0, clamp(wrel, 0.0, 1.0)) * factor, min_glow);
+	float glow_px = max(F.radiance.w * mix(0.6, 1.0, clamp(wrel, 0.0, 1.0)) * factor, min_glow * (field ? 0.55 : 1.0));
 	float core_true = F.radiance.z * wrel * factor;
 	float core_px = max(core_true, min_core);
 	vec2 off_px = perp * corner.x * glow_px * 0.5 + (at_b ? dir : -dir) * glow_px * 0.5;
@@ -76,6 +101,7 @@ void main() {
 	v_view = v;
 	v_px = vec3(glow_px, core_px, core_true);
 	v_intensity = bi >= 8 ? intensity * ((at_b ? alongB : alongA) >= 0.85 * tip ? 1.0 : 0.6) : intensity;
+	v_zone = field ? vec2(at_b ? zoneB : zoneA, zoneClass + 1.0) : vec2(0.0);
 }
 
 #[fragment]
@@ -100,11 +126,12 @@ layout(location = 0) in float v_u;
 layout(location = 1) in vec3 v_view;
 layout(location = 2) in vec3 v_px;
 layout(location = 3) in float v_intensity;
+layout(location = 4) in vec2 v_zone;
 layout(location = 0) out vec4 out_color;
 
 void main() {
 	float d = texelFetch(scene_depth, ivec2(gl_FragCoord.xy), 0).r;
-	if (d > 0.0) {
+	if (d > 0.0 && v_zone.y < 0.5) {   // field strikes are high in the sky: no terrain depth test (cloud in front still dims them through Sunshine's data below)
 		vec2 ndc = gl_FragCoord.xy / F.viewport.xy * 2.0 - 1.0;
 		vec4 sv = F.inv_proj * vec4(ndc, d, 1.0);
 		if (sv.z / sv.w > v_view.z + 1.0) discard;   // terrain in front (1 m bias suits km-scale bolts)
@@ -119,7 +146,7 @@ void main() {
 	// (addons/SunshineClouds2/SunshineCloudsPostCompute.comp lines ~425-436).
 	float L = length(v_view);
 	float far_d = texture(far_depth, gl_FragCoord.xy / F.viewport.xy).r;
-	if (far_d > 0.0 && far_d < L - 1.0) discard;   // terrain or trees drawn by the scaled far view in front of the bolt
+	if (v_zone.y < 0.5 && far_d > 0.0 && far_d < L - 1.0) discard;   // terrain or trees drawn by the scaled far view in front of the bolt (not for field strikes: their channels are high in the sky)
 	vec2 uv = gl_FragCoord.xy / F.viewport.xy;
 	vec4 data = texture(sun_data, uv);
 	float dens = clamp(texture(sun_color, uv).a, 0.0, 1.0);
@@ -133,7 +160,17 @@ void main() {
 	float front = F.sun_flags.x > 0.5 ? dens * (1.0 - lerpv) * smoothstep(minstep, minstep * 2.0, L) : 0.0;
 	float vis = 1.0 - front;
 	float dist_fade = mix(1.0, 0.4, smoothstep(5000.0, 60000.0, L));
-	vec3 rgb = v_intensity * (F.colour.rgb * core * F.radiance.x + F.glow_colour.rgb * glow * F.radiance.y) * vis * dist_fade;
+	vec3 core_colour = F.colour.rgb, glow_colour = F.glow_colour.rgb;
+	if (v_zone.y > 0.5) {
+		// Field strike: white-blue leader (lower 30%), deep blue upper trunk and fan, violet-white terminal spray. Air dims it slowly (it is km above the haze).
+		float cls = v_zone.y - 1.0;
+		float up = smoothstep(0.22, 0.38, v_zone.x);
+		core_colour = mix(vec3(0.92, 0.96, 1.0), vec3(0.45, 0.62, 1.0), up);
+		glow_colour = mix(vec3(0.55, 0.70, 1.0), vec3(0.18, 0.30, 1.0), up);
+		if (cls > 1.5) { core_colour = vec3(0.90, 0.88, 1.0); glow_colour = vec3(0.72, 0.40, 1.0); }
+		dist_fade = mix(1.0, 0.55, smoothstep(20000.0, 200000.0, L));
+	}
+	vec3 rgb = v_intensity * (core_colour * core * F.radiance.x + glow_colour * glow * F.radiance.y) * vis * dist_fade;
 	if (any(isnan(rgb)) || any(isinf(rgb))) rgb = vec3(0.0);
 	out_color = vec4(clamp(rgb, vec3(0.0), vec3(60000.0)), 0.0);
 }

@@ -31,10 +31,12 @@ void vertex() {
 	float size = spray ? mix(0.35, 0.8, d.rnd.y) * grow : mix(0.9, 2.3, d.rnd.y) * grow * mix(1.0, 0.6, d.snow);   // spindrift puffs are smaller
 	float hover_m = spray ? 0.1 + d.hover * 0.7 : 0.25 + d.hover * 2.4 * (0.5 + 0.5 * deb_level);
 	vec3 centre = d.rel + deb_up * hover_m;
+	float dist = length(centre);
+	size = min(size, 0.12 * dist);   // a puff never spans more than about 7 degrees of the view
 	vec3 right = INV_VIEW_MATRIX[0].xyz, upv = INV_VIEW_MATRIX[1].xyz;
 	vec3 world = MODEL_MATRIX[3].xyz + centre + (right * VERTEX.x + upv * VERTEX.y) * size;
 	float alpha = d.alive * present * (spray ? deb_spray_alpha : deb_dust_alpha) * (0.6 + 0.4 * d.rnd.z);
-	alpha *= smoothstep(2.0, 7.0, length(centre));   // no big blobs in the face
+	alpha *= smoothstep(6.0, 18.0, dist);   // no big blobs in the face: gone within 6 m, full from 18 m
 	if (alpha <= 0.002) world = MODEL_MATRIX[3].xyz;
 	vec3 dust_color = mix(vec3(0.50, 0.42, 0.32), vec3(0.86, 0.90, 0.96), d.snow), spray_color = vec3(0.85, 0.9, 0.95);
 	v_world = world;

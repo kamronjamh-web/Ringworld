@@ -11,6 +11,11 @@
 //      the storm ambient and the open-sky light under the overhang), weighted by the complement of the near march's handoff weight.
 // The column is the shared texture-free include (ring_megastorm_column_terms) with its across noise from the 1D across table, which the C#
 // twin builds (MegastormProfile.AcrossTerms). Night: the moving-frame flash field (ring_far_storm_lighting.gdshaderinc) lights the wall.
+// Far-look pass (2026-11, docs/megastorm-design.md "Far-look pass status"): the sun reaches a sample along its own slanted ray (three column
+// taps, far_ms_sun_tau_ray) with a multiple-scattering tail, so sunlit tops and the anvil's leading ramp read bright; the anvil's outer surfaces
+// take the sky ambient (only cloud under / inside the storm takes the storm ambient); the underside gets the near's relief cells; flashes deep
+// in the wall diffuse to the visible face (ring_ms_flash_glow_diffuse) and live field strikes light the dome top; deep samples of a mostly
+// opaque ray reuse the last lit colour (perf).
 #ifndef RING_FAR_MEGASTORM_PASS_GDSHADERINC
 #define RING_FAR_MEGASTORM_PASS_GDSHADERINC
 
@@ -30,11 +35,14 @@ uniform vec4 far_megastorm_flash = vec4(0.0, 0.0, 0.0, 0.4);
 uniform int far_megastorm_flash_slot = 0;
 // Strike-rate multiplier of the flash field (LightningVisualPolicy.NaturalStrikeChanceScale; the menu's Lightning frequency).
 uniform float far_megastorm_flash_chance = 1.0;
+// Field-strike dome-top glow (WO13 / 5.5.5): up to four live strikes, columns (x reference-line distance, across, base altitude m, pulse x
+// energy x strength); zero columns are empty. Written by RingScaledFarViewport.Megastorm (BuildFarMegastormStrikes).
+uniform mat4 far_megastorm_strikes = mat4(0.0);
 // Look gains against the near march (handoff compare): x sun, y ambient, z flash, w opacity.
 uniform vec4 far_megastorm_look = vec4(1.0, 1.0, 1.0, 1.0);
 // Debug (RING_MEGASTORM_FAR_DEBUG; not in the menu): 1 = the clipped wedge interval in red, 2 = the coarse occupancy hit in green,
 // 6 = altitude band hit, 9 = the shaded wall without haze, 10 = opacity in green, 11 = march statistics, 12 / 13 haze T / in-scatter,
-// 14 = the under-overhang path shade (red).
+// 14 = the under-overhang path shade (red), 15 = the main-depth tile mask (ring_far_megastorm.gdshader), 16 = no lighting reuse (A/B).
 uniform int far_megastorm_debug = 0;
 global uniform mat4 ring_far_cloud_lights;
 global uniform vec4 ring_far_cloud_ambient;
@@ -51,6 +59,9 @@ const float FAR_MS_OPEN_AMBIENT = 1.8;     // RING_MEGASTORM_OPEN_AMBIENT
 const float FAR_MS_UNDERSIDE_OPEN = 0.15;
 const float FAR_MS_UNDER_OPEN = 0.6;
 const float FAR_MS_OPEN_TAP = 1500.0;
+const float FAR_MS_RELIEF = 0.35;          // RING_MEGASTORM_RELIEF
+const float FAR_MS_RELIGHT_TRANS = 0.3;
+const float FAR_MS_FLASH_DIFFUSE = 0.6;    // weight of the diffused flash glow (ring_ms_flash_glow_diffuse) on the visible face    // below this remaining transmittance a sample reuses the last lit colour
 
 bool far_ms_contains(vec4 heights, float h) {
 	return (h >= heights.x && h <= heights.y && heights.y > heights.x) || (h >= heights.z && h <= heights.w && heights.w > heights.z);
@@ -95,6 +106,39 @@ float far_ms_sun_tau(float x, float across, float h, float sun_x, float sun_c, f
 	far_ms_column(x + sun_x * k, across + sun_c * k, p, hts, unused_aux);
 	float overlap = max(hts.y - max(hts.x, h), 0.0) + max(hts.w - max(hts.z, h), 0.0);
 	return FAR_MS_SUN_EXTINCTION * overlap / sun_up;
+}
+
+// Far look (2026-11 far-look pass): the sun's optical depth along the slanted sun ray itself, from three taps at fixed heights above the
+// sample (FAR_MS_SUN_TAP_DH), each counting the column's cloud there (the profile fade x coverage of the interval that holds the tap). Unlike
+// far_ms_sun_tau (the whole column overlap 2.5 km up the ray, the near's ring_storm_sun_tau twin) a low sun that passes under the anvil reaches
+// the face, and a sample near the top or on the anvil's leading face is shaded only by the cloud really on its sun ray.
+const vec3 FAR_MS_SUN_TAP_DH = vec3(700.0, 2200.0, 5500.0);
+const float FAR_MS_SUN_TAP_MAX_RUN = 60000.0;
+float far_ms_cloud_at(vec4 hts, vec4 aux, float h) {
+	float body = hts.y > hts.x ? far_ms_profile(h, hts.x, hts.y) * clamp(aux.w / 0.6, 0.0, 1.0) : 0.0;
+	float canopy = hts.w > hts.z ? far_ms_profile(h, hts.z, hts.w) * clamp(aux.x / 0.6, 0.0, 1.0) : 0.0;
+	return max(body, canopy);
+}
+float far_ms_sun_tau_ray(float x, float across, float h, float sun_x, float sun_c, float sun_up, float ceiling, RingMegastormParams p) {
+	float up = max(sun_up, 0.03);
+	float tau = 0.0;
+	float prev = 0.0;
+	for (int k = 0; k < 3; k++) {
+		float dh = FAR_MS_SUN_TAP_DH[k];
+		if (h + prev >= ceiling) break;
+		float run = min(dh / up, FAR_MS_SUN_TAP_MAX_RUN);
+		vec4 hts;
+		vec4 aux;
+		far_ms_column(x + sun_x * run, across + sun_c * run, p, hts, aux);
+		float seg = (dh - prev) / up;
+		tau += FAR_MS_SUN_EXTINCTION * far_ms_cloud_at(hts, aux, h + dh) * min(seg, FAR_MS_SUN_TAP_MAX_RUN);
+		prev = dh;
+	}
+	return tau;
+}
+// Multiple scattering keeps light deeper in the cloud than single-scatter Beer (the near's octave look): max of Beer and a softened tail.
+float far_ms_sun_transmit(float tau) {
+	return max(exp(-tau), 0.7 * exp(-0.25 * tau));
 }
 
 // ring_megastorm_open_light: how much of the open sky band beyond the anvil's leading edge (towards -xi) a sample sees.
@@ -191,7 +235,6 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 	vec3 ambient_cam = ring_far_cloud_ambient.rgb;
 	vec3 up_cam = vec3(-u.x, 0.0, -u.y);
 	float storm_w = clamp(far_megastorm_storm_ambient.w, 0.0, 1.0);
-	float cut_w = ring_far_storm_cut_weight(t_entry, near_handoff.y);
 	float dirx = far_megastorm_frame.y;
 	vec3 col_sum = vec3(0.0);
 	float trans = 1.0;
@@ -201,6 +244,8 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 	float dbg_in = 0.0;
 	float dbg_d = 0.0;
 	float dbg_a = 0.0;
+	vec3 lit_colour = vec3(0.0);
+	int lit_count = 0;
 	for (int i = 0; i < 18; i++) {
 		if (uu >= total || trans < 0.01) break;
 		float t = uu < l0 ? s0.x + uu : s1.x + (uu - l0);
@@ -218,6 +263,7 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 		float d = 0.0;
 		bool canopy = false;
 		bool in_column = far_ms_contains(hts, h);
+		float medium_shape = 0.5;
 		if (in_column) {
 			// Noise coordinates: the strip path's moving-frame erosion (canonical around - travel, altitude, across).
 			float around = far_megastorm_flash.x + R * atan(t * ray.dt, ray.rc + t * ray.dr);
@@ -226,7 +272,7 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 			mc.x -= far_megastorm_noise.z;
 			vec3 sc = cpos - far_megastorm_small_position;
 			sc.x -= far_megastorm_noise.w;
-			float medium_shape = 1.0 - texture(far_megastorm_medium_noise, mc / max(far_megastorm_noise.x, 1.0)).b;
+			medium_shape = 1.0 - texture(far_megastorm_medium_noise, mc / max(far_megastorm_noise.x, 1.0)).b;
 			float small_raw = mix(texture(far_megastorm_small_noise, sc / max(far_megastorm_noise.y, 1.0)).r, 0.5, noise_lowpass);
 			d = far_ms_density(hts, aux, h, medium_shape, small_raw, canopy);
 		} else if (h < hts.x && hts.y > hts.x) {
@@ -240,6 +286,15 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 		float a = clamp(pow(clamp(d * density_mul, 0.0, 4.0), sharp) * dt_step / step_ref * far_megastorm_look.w, 0.0, 1.0) * owner;
 		dbg_a = max(dbg_a, a);
 		if (a <= 0.0) continue;
+		// Perf (2026-11): once the ray is mostly opaque its remaining samples (at most FAR_MS_RELIGHT_TRANS of the pixel) reuse the last lit
+		// sample's colour instead of paying the sun taps and the open-sky tap again.
+		if (lit_count >= 2 && trans < FAR_MS_RELIGHT_TRANS && far_megastorm_debug != 16) {
+			col_sum += trans * a * lit_colour;
+			depth_num += trans * a * t;
+			depth_den += trans * a;
+			trans *= 1.0 - a;
+			continue;
+		}
 
 		// Local frame at the sample: up (toward the axis), the around tangent, across (+Y).
 		vec2 radial = (ray.rc + t * ray.dr) * u + (t * ray.dt) * vec2(-u.y, u.x);
@@ -247,12 +302,27 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 		vec3 up = vec3(-n.x, 0.0, -n.y);
 		vec3 tangent = vec3(-n.y, 0.0, n.x);
 		float top = far_ms_column_top(hts);
-		// Below the column's top fade nothing sees the open sky dome: the storm ambient in full with the open-sky factor; the top layer
-		// keeps the plain storm ambient near the handoff and the sky ambient across the arch.
+		// Below the column's top fade (buried) the sample takes the storm ambient with the open-sky band factor; the top layer sees the sky.
 		bool buried = in_column && top - h > FAR_MS_FADE;
-		float open = buried ? far_ms_open_light(x, across, h, hts, p) : 1.0;
-		float storm_mix = buried ? storm_w : storm_w * cut_w;
-		vec3 ambient = mix(ambient_cam, far_megastorm_storm_ambient.rgb * mix(FAR_MS_SHADE_AMBIENT, FAR_MS_OPEN_AMBIENT, open), storm_mix)
+		// Far look: the anvil's outer surfaces (its top fade and its leading face, where the canopy beyond the sample towards -xi thins
+		// out) see the open sky dome, so they take the sky ambient; cloud under or inside the storm keeps the storm ambient x the open-sky
+		// band factor. The relief term (the near's RING_MEGASTORM_RELIEF from the same medium noise) gives the underside its cells.
+		float open = 1.0;
+		float sky_open = buried ? 0.0 : 1.0;
+		if (buried) {
+			vec4 tap_heights;
+			vec4 tap_aux;
+			far_ms_column(x - FAR_MS_OPEN_TAP, across, p, tap_heights, tap_aux);
+			if (canopy) {
+				open = mix(1.0, FAR_MS_UNDERSIDE_OPEN, clamp(tap_aux.x, 0.0, 1.0));
+				sky_open = 1.0 - clamp(tap_aux.x / 0.6, 0.0, 1.0);
+			} else {
+				open = 1.0 - clamp(tap_aux.w, 0.0, 1.0);
+			}
+		}
+		float relief = in_column ? 1.0 + FAR_MS_RELIEF * (2.0 * medium_shape - 1.0) : 1.0;
+		vec3 storm_light = far_megastorm_storm_ambient.rgb * mix(FAR_MS_SHADE_AMBIENT, FAR_MS_OPEN_AMBIENT, open);
+		vec3 ambient = mix(mix(ambient_cam, storm_light, storm_w), ambient_cam, sky_open) * relief
 			* ring_far_remote_day_scale(ring_far_cloud_lights, up, up_cam) * far_megastorm_look.y;
 		vec3 sun = vec3(0.0);
 		for (int l = 0; l < 2; l++) {
@@ -263,11 +333,15 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 			float light_up = ring_far_light_up(L, up);
 			if (light_up <= 0.0) continue;
 			float sun_up = dot(L, up);
-			float tau = in_column ? far_ms_sun_tau(x, across, h, -dirx * dot(L, tangent), L.y, sun_up, p) : 0.0;
-			float weight = light_up * exp(-tau); // no S4 sun cut: the same physical rule as the Sunshine strip samples
+			// The slanted sun ray's own optical depth through the column (rain under the base too), softened by multiple scattering. No S4
+			// sun cut: the physical umbra only, as for the Sunshine strip samples.
+			float tau = far_ms_sun_tau_ray(x, across, h, -dirx * dot(L, tangent), L.y, sun_up, ceiling, p);
+			float weight = light_up * far_ms_sun_transmit(tau);
 			sun += lr * pow(weight, 2.2) * ring_far_storm_phase(dot(dir, L), clamp(ring_far_cloud_lights[1].w, 0.0, 0.9));
 		}
 		vec3 colour = sun * far_megastorm_look.x + ambient;
+		lit_colour = colour;
+		lit_count++;
 		col_sum += trans * a * colour;
 		depth_num += trans * a * t;
 		depth_den += trans * a;
@@ -280,8 +354,22 @@ vec4 far_ms_render(vec3 cam, vec3 dir, float t_far) {
 
 	// Night: the moving-frame flash field lights the wall around the opacity-weighted depth.
 	float x_m = ring_far_ms_x(ray, t_mean);
-	float glow = ring_ms_flash_glow(x_m, ring_far_ms_across(ray, t_mean), ring_far_ms_altitude(ray, t_mean), far_megastorm_flash_slot,
-		far_megastorm_flash.y, far_megastorm_flash.z > 0.5, far_megastorm_flash.w, far_megastorm_flash_chance, p);
+	float across_m = ring_far_ms_across(ray, t_mean);
+	float alt_m = ring_far_ms_altitude(ray, t_mean);
+	bool reduced_m = far_megastorm_flash.z > 0.5;
+	float glow = ring_ms_flash_glow(x_m, across_m, alt_m, far_megastorm_flash_slot, far_megastorm_flash.y, reduced_m, far_megastorm_flash.w,
+		far_megastorm_flash_chance, p);
+	// Far look: flashes deep in the wall (xi up to 37.5 km behind the face) light the visible face through the cloud over 10-20 km, so the
+	// night wall reads as one long flickering band (ring_ms_flash_glow_diffuse: 12 km across / up, 15 km depth fall-off).
+	glow += FAR_MS_FLASH_DIFFUSE * ring_ms_flash_glow_diffuse(x_m, across_m, alt_m, far_megastorm_flash_slot, far_megastorm_flash.y, reduced_m,
+		far_megastorm_flash.w, far_megastorm_flash_chance, 12000.0, 15000.0, p);
+	// Field strikes: the channel leaves the dome top, which glows around its base (9 km across / along, 4 km up; strength already x level).
+	for (int k = 0; k < 4; k++) {
+		vec4 st = far_megastorm_strikes[k];
+		if (st.w <= 0.0) continue;
+		vec3 ds = vec3((x_m - st.x) / 9000.0, (alt_m - st.z) / 4000.0, (across_m - st.y) / 9000.0);
+		glow += st.w * exp(-dot(ds, ds));
+	}
 	col_sum += alpha * glow * far_megastorm_look.z * vec3(0.78, 0.84, 1.0);
 
 	if (far_megastorm_debug == 9) return vec4(col_sum / max(alpha, 1e-4), 1.0);

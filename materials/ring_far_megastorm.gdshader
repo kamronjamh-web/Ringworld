@@ -5,8 +5,13 @@ render_mode unshaded, blend_premul_alpha, depth_draw_never, depth_test_disabled,
 // node FarMegastorm (RingScaledFarViewport.Megastorm) is a convex prism hull around the strip's wedge (a screen-space bound; hidden, so
 // free, while no megastorm is active). The shading is ring_far_megastorm_pass.gdshaderinc, shared with the main-view companion
 // (ring_main_megastorm.gdshader) which draws the same wall over main-view terrain. Here t_far is the far terrain depth.
+// Skip: far_megastorm_main_mask is last frame's 8x8 tile mask of the main view (1 = the tile has main depth everywhere, written by
+// ring_far_backdrop_composite.glsl). The far image is injected only where main has no depth, so pixels whose tile and its 8 neighbours are
+// all covered are discarded here; the C# side clears far_megastorm_main_mask_valid while the camera turns, resizes or the mask is stale.
 // Draw order: after the whole-ring shell (10-14), before the far layer sky (16), which ends its integration at megastorm_body_entry.
 uniform sampler2D far_megastorm_depth : hint_depth_texture, filter_nearest;
+uniform sampler2D far_megastorm_main_mask : filter_nearest;
+uniform float far_megastorm_main_mask_valid = 0.0;
 #include "res://materials/ring_far_megastorm_pass.gdshaderinc"
 
 void vertex() {
@@ -17,6 +22,24 @@ void vertex() {
 
 void fragment() {
 	if (!far_megastorm_enabled) discard;
+	bool mask_skip = false;
+	ivec2 mask_size = textureSize(far_megastorm_main_mask, 0);
+	if (far_megastorm_main_mask_valid > 0.5) {
+		ivec2 tile = ivec2(SCREEN_UV * vec2(mask_size));
+		float covered = 1.0;
+		for (int dy = -1; dy <= 1; dy++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				covered = min(covered, texelFetch(far_megastorm_main_mask, clamp(tile + ivec2(dx, dy), ivec2(0), mask_size - ivec2(1)), 0).r);
+			}
+		}
+		if (covered > 0.999) {
+			// Debug view 15: solid magenta where the mask would discard, green where it is valid but the pixel is kept.
+			if (far_megastorm_debug != 15) discard;
+			mask_skip = true;
+		}
+	}
+	if (far_megastorm_debug == 15 && !mask_skip) { ALBEDO = vec3(0.0, far_megastorm_main_mask_valid * 0.5, 0.0); ALPHA = 0.35 + 0.65 * far_megastorm_main_mask_valid; } // green = mask valid, kept
+	else if (mask_skip) { ALBEDO = vec3(1.0, 0.0, 1.0); ALPHA = 1.0; } else {
 	// Far end: the far terrain (reverse-Z depth), physical metres.
 	float t_far = 1e30;
 	float depth = textureLod(far_megastorm_depth, SCREEN_UV, 0.0).r;
@@ -29,4 +52,5 @@ void fragment() {
 	if (result.a < 0.0) discard;
 	ALBEDO = result.rgb;
 	ALPHA = result.a;
+	}
 }

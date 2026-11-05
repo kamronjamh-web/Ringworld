@@ -530,6 +530,39 @@ func _shoot(shot: String):
 			world.get_node("RingMegastorm").call("remove_megastorm")
 			await _frames(200)
 			print("MEGASTORM_CAPTURE scythe_perf untriggered node_us=", mega.ScythesProcessMicros(world), " ", mega.ScytheState(world))
+		"perfpass":
+			# Perf pass (2026-11): per pose, interleaved windows of the full path ("on") and single ablations: "haze" (Sunshine megastorm haze path
+			# factors off, debug mask 1024), "far" (far wedge pass + layer sky branch + companion hidden), "main" (companion only hidden),
+			# "shock" (shock distortion composite disabled). --pp-poses=<list> (clear,natural,ahead15,ahead50,ahead200,leading,inside,wake),
+			# --pp-order=<list> (on,haze,far,on,haze,far,on), --perf-seconds (6). Lines: MEGASTORM_CAPTURE perfpass <pose> <case> <scopes> || <far/main>.
+			var br_pp = world.get_node("SunshineCloudBridge")
+			var far_pp = world.get_node("ScaledFarViewport")
+			var poses_pp := {"clear": [-600000.0, 0.0, 10.0], "natural": [-600000.0, 0.0, 10.0], "ahead15": [-15000.0, PI, 3.0],
+				"ahead50": [-50000.0, PI, 6.0], "ahead200": [-200000.0, PI, 3.0], "leading": [-1500.0, PI, 15.0], "inside": [10000.0, 0.0, 10.0],
+				"wake": [40000.0, 0.0, 10.0]}
+			for pose in _arg("pp-poses", "clear,natural,ahead15,ahead50,ahead200,leading,inside,wake").replace(":", ",").replace(" ", ",").split(",", false):
+				if pose == "natural":
+					helper.PlaceStorm(world, 0.0, 0.0, 0.0, 24000.0)
+				else:
+					world.get_node("RingVolumetricClouds").UnregisterManualWeather("sunshine_preview")
+				var v: Array = poses_pp[pose]
+				await _view(v[0], v[1], v[2], BASE_H, 240)
+				for case in _arg("pp-order", "on,haze,far,on,haze,far,on").replace(":", ",").replace(" ", ",").split(",", false):
+					br_pp.set("CameraIndependentDebugMask", 1024 if case == "haze" else 0)
+					far_pp.set("FarMegastormSuppressed", case == "far")
+					far_pp.set("FarMegastormMainSuppressed", case == "main")
+					for e in _shock_effects():
+						e.enabled = case != "shock"
+					await _frames(45)
+					helper.PerfBegin(world)
+					await create_timer(float(_arg("perf-seconds", "6"))).timeout
+					print("MEGASTORM_CAPTURE perfpass ", pose, " ", case, " ", helper.PerfEnd(world), " || ", mega.FarPerfEnd(world), " shock_dispatches=", _shock_dispatches())
+				br_pp.set("CameraIndependentDebugMask", 0)
+				far_pp.set("FarMegastormSuppressed", false)
+				far_pp.set("FarMegastormMainSuppressed", false)
+				for e in _shock_effects():
+					e.enabled = true
+			world.get_node("RingVolumetricClouds").UnregisterManualWeather("sunshine_preview")
 		"perf":
 			var cases := _arg("perf-cases", "clear,natural,inside,leading,clear,natural,inside,leading,clear,natural,inside,leading").split(",")
 			for case in cases:
@@ -552,6 +585,28 @@ func _shoot(shot: String):
 		_:
 			_fail("unknown shot " + shot)
 
+
+func _shock_effects() -> Array:
+	var found := []
+	for n in root.find_children("*", "WorldEnvironment", true, false):
+		var c: Compositor = (n as WorldEnvironment).compositor
+		if c != null:
+			for e in c.compositor_effects:
+				if e != null and e.get_script() != null and String(e.get_script().resource_path).contains("RingShockDistortionComposite"):
+					found.append(e)
+	for n in root.find_children("*", "Camera3D", true, false):
+		var c2: Compositor = (n as Camera3D).compositor
+		if c2 != null:
+			for e2 in c2.compositor_effects:
+				if e2 != null and e2.get_script() != null and String(e2.get_script().resource_path).contains("RingShockDistortionComposite"):
+					found.append(e2)
+	return found
+
+func _shock_dispatches() -> int:
+	var n := 0
+	for e in _shock_effects():
+		n += int(e.get("dispatches"))
+	return n
 
 func _fail(reason):
 	if finished:

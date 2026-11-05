@@ -64,9 +64,10 @@ void main() {
 			rain_now = rw_smooth_unit((m.z - start) / max(1.0 - start, 0.01));
 			float heavy = rw_smooth_unit((m.x - params.storm_tex.z) / max(0.01, 1.0 - params.storm_tex.z));
 			// Storm level D as ring_storm_owned_level (materials/ring_storm_light.gdshaderinc): storm-light layer prev.w (owned, front rain, megastorm E); 0 = none (old D).
-			// The drying sun uses the receivers' D = min(D + E, 1) (megastorm WO14); E = 0 leaves it unchanged.
+			// The drying sun uses the receivers' D = min(max(D, E) + E, 1) (megastorm WO14, WO-D rule); E = 0 leaves it unchanged.
 			vec3 o = params.prev.w > 0.5 ? textureLod(storm_map, vec3(map_texel / params.storm_tex.xy, params.prev.w), 0.0).xyz : vec3(1.0, 0.0, 0.0);
-			float d = min(max(max(o.x * max(m.y, heavy), o.y), heavy * (1.0 - rw_smooth_unit(m.w / 0.25))) + o.z, 1.0);
+			float d0 = max(max(o.x * max(m.y, heavy), o.y), heavy * (1.0 - rw_smooth_unit(m.w / 0.25)));
+			float d = min(max(d0, o.z) + o.z, 1.0);   // megastorm rule L = max(D, E) + E; E = 0 gives exactly min(D, 1)
 			sun = (1.0 - rw_smooth(0.35, 0.85, m.x)) * (1.0 - d) * params.env.x;
 		}
 		bool snowing = params.tuning.w > 0.5;

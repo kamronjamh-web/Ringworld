@@ -18,6 +18,7 @@ extends SceneTree
 ## --yaw=D / --pitch=D  after the spawn, hold the camera at this yaw / pitch (degrees; re-applied before every shot). --yaw-rel=D adds D to the
 ##               saved yaw instead (facing stays on the spawn side).
 ## --debug-mask=N  RingSunshineCloudBridge.CameraIndependentDebugMask for A/B shots (debug only).
+## --force-debris=L  force the gust debris level 0..1 (with --debris-shares=leaf:dust:spray) so the debris look can be judged at any distance ahead of the wall.
 ## --xi-names    name shots tNNN_xiK (K = observer xi in km, rounded).
 ## --burst=LO:HI  (WO11 copy) once the observer's xi (km) is in [LO, HI] every frame is saved (burst_NNNN.png) with a BOOMREAL line (hazard node diagnostics, camera shake).
 ## Prints MEGASTORM_REAL=DONE at the end (this is a capture tool, not a pass/fail gate).
@@ -125,6 +126,14 @@ func _run() -> void:
 		drawer.call("SetBenchmarkDrawerOpen", false)
 		await process_frame
 		print("MEGASTORM_REAL spawned ", _probe.State(_world))
+	if _arg("force-debris", "") != "":
+		# Capture hook (debris look check): forces the gust debris level (0..1) at any distance; --debris-shares=leaf:dust:spray (default 0.7:0.3:0).
+		var deb: Node = _world.get_node_or_null("GustFrontDebris")
+		if deb != null:
+			var sh := _arg("debris-shares", "0.7:0.3:0").split(":")
+			deb.call("ForceShares", Vector3(float(sh[0]), float(sh[1]), float(sh[2])), 0.0)
+			deb.set("ForcedLevel", float(_arg("force-debris", "1")))
+			print("MEGASTORM_REAL forced debris level=", _arg("force-debris", "1"))
 	var seconds := float(_arg("seconds", "240"))
 	var log_every := float(_arg("log-every", "5"))
 	var shot_every := float(_arg("shot-every", "20"))

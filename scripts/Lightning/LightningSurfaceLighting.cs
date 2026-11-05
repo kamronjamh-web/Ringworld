@@ -45,6 +45,7 @@ public sealed class LightningSurfaceLighting
 
     void Consider(in RingLightningEvent e, double now, RingCanonicalPosition observer, double circumference, Color color)
     {
+        if (e.FieldStrike) return;   // the contact point is tens of km up: field strikes light the cloud tops (flash consumers), not the surface
         float pulse = RingLightningEvent.PulseAtAge(now - e.StartTimeSeconds) * Math.Max(0.0f, e.Energy);
         if (pulse <= 0.0f) return;
         for (int i = 0; i < Count; i++) if (_lights[i].EventId == e.EventId) return;

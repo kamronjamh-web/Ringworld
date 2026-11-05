@@ -293,7 +293,8 @@ public static class MegastormHazardMath
         float nearest = xi >= ScytheZoneStartXi - 6000.0 && xi <= ScytheZoneEndXi + 6000.0
             ? MegastormScythes.NearestDistanceMeters(model, around, across, t, strikeScale) : float.PositiveInfinity;
         return new MegastormHazards(overpressure, peak, impulse, boomTime, power, dir, dropSpeed, Math.Clamp(observer.RainExposure, 0.0f, 1.0f),
-            deficit, rate, WakeFog(deficit), 0.0f, sweep, nearest, 0.0f, float.NaN);
+            deficit, rate, WakeFog(deficit), 0.0f, sweep, nearest,
+            (float)(MegastormFieldStrikes.FieldStrikeRatePerSecond(across, s.WidthMeters) * strikeScale), (float)MegastormFieldStrikes.GapMeters(across));
     }
 }
 

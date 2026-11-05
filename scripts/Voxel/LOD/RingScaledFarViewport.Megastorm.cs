@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Lightning;
 
@@ -13,6 +14,11 @@ namespace RingworldTechDemo.Voxel.LOD;
 // 500-750 km reach. Both work in the far frame, so they agree across the terrain silhouette. The far layer sky gets the same
 // frame uniforms (far_megastorm_*: one uniform branch), which add the trailing / precursor coverage analytically (the far atlases exclude
 // the megastorm), draw that coverage beyond the disk fade, and end its integration at the wall body.
+//
+// Main-depth skip: while the pass is visible the backdrop composite writes an 8x8 tile mask of the pixels the main view covered with depth
+// (RingFarBackdropComposite.get_mask_texture); it is wrapped in a Texture2DRD (by the GDScript effect: C# has no binding) and bound as far_megastorm_main_mask, and the wedge shader discards
+// pixels whose 3x3 tiles were all covered last frame. far_megastorm_main_mask_valid is 1 only while the mask is fresh and the main camera
+// has rotated less than 0.25 degrees since the previous frame with an unchanged FOV and viewport size.
 //
 // Zero cost when no megastorm is active: the node stays hidden and the layer sky's branch is off (written once on the transition).
 // All positions reach the GPU as camera-relative values computed in double: x_cam is the far camera's own reference-line distance.
@@ -48,6 +54,7 @@ public partial class RingScaledFarViewport
     private static readonly StringName FarMegastormFlashName = "far_megastorm_flash";
     private static readonly StringName FarMegastormFlashSlotName = "far_megastorm_flash_slot";
     private static readonly StringName FarMegastormFlashChanceName = "far_megastorm_flash_chance";
+    private static readonly StringName FarMegastormStrikesName = "far_megastorm_strikes";
     private static readonly StringName FarMegastormLookName = "far_megastorm_look";
     private static readonly StringName FarMegastormDebugName = "far_megastorm_debug";
     private static readonly StringName FarMegastormMainToFarName = "far_megastorm_main_to_far";
@@ -56,6 +63,14 @@ public partial class RingScaledFarViewport
     private static readonly bool DebugMainMegastormOff = OS.GetEnvironment("RING_MEGASTORM_MAIN_OFF") == "1";
     /// <summary>Debug view (environment RING_MEGASTORM_FAR_DEBUG=1 wedge interval, 2 coarse occupancy hit). Debug tooling only.</summary>
     private static readonly int DebugFarMegastormView = int.TryParse(OS.GetEnvironment("RING_MEGASTORM_FAR_DEBUG"), out int view) ? view : 0;
+    /// <summary>Debug view of the wedge pass and its companion (far_megastorm_debug; 0 = off). Starts from RING_MEGASTORM_FAR_DEBUG; capture tools may switch
+    /// it at run time (look probes). Debug tooling only, not a setting.</summary>
+    public int FarMegastormDebugView { get; set; } = DebugFarMegastormView;
+    private static readonly StringName FarMegastormMainMaskName = "far_megastorm_main_mask";
+    private static readonly StringName FarMegastormMainMaskValidName = "far_megastorm_main_mask_valid";
+    private const float FarMegastormMaskMaxTurnDegrees = 0.25f;
+    /// <summary>Debug A/B (environment RING_MEGASTORM_FAR_MASK_OFF=1): never uses the main-depth tile mask. Debug tooling only.</summary>
+    private static readonly bool DebugFarMegastormMaskOff = OS.GetEnvironment("RING_MEGASTORM_FAR_MASK_OFF") == "1";
     private static readonly StringName FarLayersMarchUniformName = "far_layers_march";
     private static readonly StringName RingStormAmbientName = "ring_storm_ambient";
     private static readonly StringName WeatherSystemsBytesName = "weather_systems_bytes";
@@ -77,6 +92,12 @@ public partial class RingScaledFarViewport
     private float _farMegastormRefreshElapsed = float.PositiveInfinity;
     private float _farMegastormSculpt = 1.0f;
     private Vector4 _farMegastormStormAmbient;
+    private Texture2D? _farMegastormMaskTexture;
+    private long _farMegastormMaskWrites = -1;
+    private bool _farMegastormMaskPrevWanted;
+    private Basis _farMegastormMaskPrevBasis = Basis.Identity;
+    private float _farMegastormMaskPrevFov = -1.0f;
+    private Vector2 _farMegastormMaskPrevViewport;
 
     // Across noise table: staged over a few frames, published whole.
     private readonly float[] _farMegastormAcrossStage = new float[FarMegastormAcrossTexels * 4];
@@ -182,10 +203,11 @@ public partial class RingScaledFarViewport
             LightningVisualPolicy.ReducedFlashes ? 1.0f : 0.0f, LightningVisualPolicy.ReducedPeakScale));
         // The menu's Lightning frequency (halved under Reduced flashes), on the same cell roll as the CPU MegastormLightning.Flash(..., chanceScale).
         SetFarMegastormParameter(FarMegastormFlashChanceName, LightningVisualPolicy.NaturalStrikeChanceScale);
+        SetFarMegastormParameter(FarMegastormStrikesName, BuildFarMegastormStrikes(frame, t, c));
         SetFarMegastormParameter(NearHandoffName, _nearHandoffValue);
         SetFarMegastormParameter(FarLayersMarchUniformName, _farLayersMarchValue);
         SetFarMegastormParameter(FarMegastormLookName, FarMegastormLook);
-        if (DebugFarMegastormView != 0) SetFarMegastormParameter(FarMegastormDebugName, DebugFarMegastormView);
+        SetFarMegastormParameter(FarMegastormDebugName, FarMegastormDebugView);
         SetFarMegastormParameter(FarMegastormStormAmbientName, _farMegastormStormAmbient);
         _farLayerSkyMaterial?.SetShaderParameter(FarMegastormStormAmbientName, _farMegastormStormAmbient);
 
@@ -198,6 +220,72 @@ public partial class RingScaledFarViewport
         bool visible = _farMegastormActive && ready;
         if (_farMegastorm.Visible != visible) _farMegastorm.Visible = visible;
         UpdateMainMegastorm(visible && !FarMegastormMainSuppressed && !DebugMainMegastormOff);
+        UpdateFarMegastormMainMask(visible);
+    }
+
+    /// <summary>Binds the composite's tile mask to the wedge material and decides whether last frame's mask may be trusted this frame.</summary>
+    private void UpdateFarMegastormMainMask(bool visible)
+    {
+        bool wanted = visible && !DebugFarMegastormMaskOff;
+        if (_backdropEffect == null || _farMegastormMaterial == null || _sourceCamera == null)
+        {
+            _farMegastormMaterial?.SetShaderParameter(FarMegastormMainMaskValidName, 0.0f);
+            return;
+        }
+        _backdropEffect.Call("set_mask_wanted", wanted);
+        Basis basis = _sourceCamera.GlobalBasis;
+        float fov = _sourceCamera.Fov;
+        Vector2 viewportSize = _sourceCamera.GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero;
+        bool steady = _farMegastormMaskPrevFov == fov && _farMegastormMaskPrevViewport == viewportSize
+            && (_farMegastormMaskPrevBasis.Orthonormalized().Inverse() * basis.Orthonormalized()).GetRotationQuaternion().GetAngle()
+                < Mathf.DegToRad(FarMegastormMaskMaxTurnDegrees);
+        _farMegastormMaskPrevBasis = basis;
+        _farMegastormMaskPrevFov = fov;
+        _farMegastormMaskPrevViewport = viewportSize;
+        bool previousWanted = _farMegastormMaskPrevWanted;
+        _farMegastormMaskPrevWanted = wanted;
+        if (!wanted)
+        {
+            _farMegastormMaterial.SetShaderParameter(FarMegastormMainMaskValidName, 0.0f);
+            return;
+        }
+        using Godot.Collections.Array state = _backdropEffect.Call("get_mask_texture").AsGodotArray();
+        Texture2D? mask = state.Count >= 2 ? state[0].As<Texture2D>() : null;
+        long writes = state.Count >= 2 ? state[1].AsInt64() : 0;
+        bool fresh = mask != null && previousWanted && writes > _farMegastormMaskWrites;
+        _farMegastormMaskWrites = writes;
+        if (!ReferenceEquals(mask, _farMegastormMaskTexture))
+        {
+            _farMegastormMaskTexture = mask;
+            _farMegastormMaterial.SetShaderParameter(FarMegastormMainMaskName, mask);
+            fresh = false; // the mask was just (re)created: its content is not main depth yet
+        }
+        _farMegastormMaterial.SetShaderParameter(FarMegastormMainMaskValidName, fresh && steady ? 1.0f : 0.0f);
+    }
+
+    /// <summary>
+    /// Field-strike dome-top glow (docs/megastorm-design.md 5.5.5, WO13 hand-over to the far-look pass): up to four live flagged strikes
+    /// (RingLightningEvent.FieldStrike, contact arcs excluded) from the weather layer's ActiveLightningEvents, each as (x = reference-line distance of its
+    /// channel base, across, base altitude, PulseAt(now) x Energy x strength), on the flash field's unit scale. Zero columns are skipped by the shader.
+    /// </summary>
+    private Projection BuildFarMegastormStrikes(MegastormFrame frame, double t, double circumference)
+    {
+        Span<Vector4> columns = stackalloc Vector4[4];
+        int n = 0;
+        if (_weatherSource != null)
+        {
+            IReadOnlyList<RingLightningEvent> events = _weatherSource.ActiveLightningEvents;
+            for (int i = 0; i < events.Count && n < 4; i++)
+            {
+                RingLightningEvent e = events[i];
+                if (!e.FieldStrike || e.IsFieldArc) continue;
+                float pulse = e.PulseAt(t);
+                if (pulse <= 0.0001f) continue;
+                double x = frame.Direction * MegastormModel.WrapSigned(frame.AroundMeters - e.CloudPosition.AroundMeters, circumference);
+                columns[n++] = new Vector4((float)x, (float)e.CloudPosition.AcrossMeters, (float)e.CloudPosition.VerticalMeters, pulse * e.Energy * frame.Strength);
+            }
+        }
+        return new Projection(columns[0], columns[1], columns[2], columns[3]);
     }
 
     private void SetFarMegastormParameter(StringName name, Variant value)
@@ -343,6 +431,9 @@ public partial class RingScaledFarViewport
     private void DisableFarMegastorm()
     {
         _farMegastormActive = false;
+        _farMegastormMaskPrevWanted = false;
+        _backdropEffect?.Call("set_mask_wanted", false);
+        _farMegastormMaterial?.SetShaderParameter(FarMegastormMainMaskValidName, 0.0f);
         if (_farMegastorm != null) _farMegastorm.Visible = false;
         if (_mainMegastorm != null) _mainMegastorm.Visible = false;
         SetFarMegastormParameter(FarMegastormEnabledName, false);

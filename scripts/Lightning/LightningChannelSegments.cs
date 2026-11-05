@@ -27,7 +27,7 @@ public static class LightningChannelSegments
         for (int i = 0; i < active.Count; i++)
         {
             RingLightningEvent e = active[i];
-            if (e.SystemKind != MegastormKind) continue;
+            if (e.SystemKind != MegastormKind || e.FieldStrike) continue;   // field strikes: SelectFieldStrikeEvents
             double age = now - e.StartTimeSeconds;
             if (age < 0.0 || age > RingLightningEvent.LifetimeSeconds) continue;
             double d = distanceToObserver(e.GroundPosition);
@@ -217,6 +217,149 @@ public static class LightningChannelSegments
             added += Math.Max(0, take);
         }
         Take(mainSegs); Take(primary); Take(run); Take(secondary);
+        return added;
+    }
+
+    // ---- Field strikes (WO13): upward channel from a dome top to the containment field ----
+    public const int FieldMaxSegments = 900;
+    /// <summary>Bolt-slot tip values at or above this mark a field-strike slot in ring_lightning_channel.glsl: tip = FieldSlotTipBase + leader progress (0..1, 1 = attached).</summary>
+    public const float FieldSlotTipBase = 10.0f;
+
+    /// <summary>
+    /// Field-strike channel from <paramref name="channelBase"/> (the dome top) up to <paramref name="contact"/> (50 m under the field). Segment fields: AlongA = height fraction
+    /// 0..1 of the segment start along the channel axis (the leader reveals everything whose start is below its tip), AlongB = class + end height fraction (class 0 trunk, 1 fan
+    /// branch, 2 terminal spray: floor(AlongB) is the class, the fraction the end height of a trunk piece). A trunk with a lower 30% leader, 5-8 fan branches in the upper
+    /// 40% (a gigantic-jet tree up to 8 km wide, scaled with the channel), and a violet spray at the contact. Contact arcs (<paramref name="arc"/>) are the trunk and two forks.
+    /// Deterministic in the seed; appends at most <see cref="FieldMaxSegments"/> segments and returns the count.
+    /// </summary>
+    public static int BuildFieldStrikeChannel(Vector3 channelBase, Vector3 contact, int seed, bool arc, int slot, List<ChannelSegment> output)
+    {
+        Vector3 axis = contact - channelBase;
+        float length = axis.Length();
+        if (!(length > 5.0f) || !axis.IsFinite()) return 0;
+        Vector3 an = axis / length;
+        Vector3 p1 = an.Cross(Math.Abs(an.Y) < 0.9f ? Vector3.Up : Vector3.Right).Normalized();
+        Vector3 p2 = an.Cross(p1);
+        float Height(Vector3 p) => Math.Clamp((p - channelBase).Dot(an) / length, 0.0f, 1.0f);
+        // Nothing may pass the contact height: the field is there (displaced polylines are pushed back under it).
+        void Cap(List<Vector3> path)
+        {
+            for (int i = 0; i < path.Count; i++)
+            {
+                float over = (path[i] - channelBase).Dot(an) - length;
+                if (over > 0.0f) path[i] -= an * over;
+            }
+        }
+
+        // Tortuous leader: the megastorm bolt midpoint-displacement walk (roughness 0.2 decaying 0.8 per level, forks 0.34), from the dome top to the contact point.
+        int levels = arc ? Math.Clamp((int)Math.Ceiling(Math.Log2(length / 12.0f)), 2, 5) : Math.Clamp((int)Math.Ceiling(Math.Log2(length / 30.0f)), 5, 8);
+        var main = new List<Vector3>(257);
+        Displace(channelBase, contact, levels, 0.2f, seed, 10, false, main);
+        Cap(main);
+        int n = main.Count - 1;
+        var trunk = new List<ChannelSegment>(n);
+        float hPrev = 0.0f;
+        for (int i = 0; i < n; i++)
+        {
+            float t0 = (float)i / n, t1 = (float)(i + 1) / n;
+            float hA = Math.Max(hPrev, Height(main[i])), hB = Math.Max(hA, Height(main[i + 1]));
+            hPrev = hB;
+            float w0 = Mathf.Lerp(0.5f, 0.9f, t0) * (0.8f + 0.4f * Rnd(seed, 2, i)), w1 = Mathf.Lerp(0.5f, 0.9f, t1) * (0.8f + 0.4f * Rnd(seed, 2, i + 1));
+            trunk.Add(new ChannelSegment(main[i], main[i + 1], w0, w1, hA < 0.3f ? 1.0f : 0.85f, slot, hA, Math.Min(hB, 0.999f)));
+        }
+
+        var branches = new List<ChannelSegment>(768);
+        var pts = new List<Vector3>(33);
+        var pts2 = new List<Vector3>(17);
+        var pts3 = new List<Vector3>(9);
+        void EmitBranch(List<Vector3> path, float rootHeight, float wStart, float wEnd, float iStart, float iEnd)
+        {
+            int count = path.Count - 1;
+            for (int i = 0; i < count; i++)
+            {
+                float f0 = (float)i / count, f1 = (float)(i + 1) / count, fm = (f0 + f1) * 0.5f;
+                branches.Add(new ChannelSegment(path[i], path[i + 1], Mathf.Lerp(wStart, wEnd, f0), Mathf.Lerp(wStart, wEnd, f1), Mathf.Lerp(iStart, iEnd, fm), slot, rootHeight, 1.0f));
+            }
+        }
+        // A fork leaving a polyline vertex at an acute 20-50 degrees, tapering into a filament; recurses once into finer forks.
+        void Fork(List<Vector3> from, int v, float lengthMeters, float width, float inten, int stream, int depth)
+        {
+            Vector3 heading = (from[Math.Min(v + 1, from.Count - 1)] - from[Math.Max(v - 1, 0)]).Normalized();
+            Vector3 dir = RotateAbout(heading, RandomPerpendicular(heading, seed, stream + 1, v), Mathf.DegToRad(20.0f + 30.0f * Rnd(seed, stream + 2, v))).Normalized();
+            var path = depth == 0 ? pts2 : pts3;
+            Displace(from[v], from[v] + dir * lengthMeters, depth == 0 ? 4 : 3, 0.34f, seed, stream + 8 + v * 4, true, path);
+            Cap(path);
+            EmitBranch(path, Height(from[v]), width, width * 0.1f, inten, inten * 0.25f);
+            if (depth == 0)
+            {
+                int bn = path.Count - 1;
+                var saved = new List<Vector3>(path);
+                for (int j = 2; j < bn - 1; j++)
+                    if (Rnd(seed, stream + 3, j) < 0.14f)
+                        Fork(saved, j, lengthMeters * (1.0f - (float)j / bn) * (0.35f + 0.25f * Rnd(seed, stream + 4, j)), width * 0.5f, inten * 0.6f, stream + 20 + j, 1);
+            }
+        }
+        if (arc)
+        {
+            for (int k = 0; k < 2; k++)
+            {
+                int v = Math.Clamp((int)(n * (0.25f + 0.5f * Rnd(seed, 90 + k, 0))), 1, Math.Max(1, n - 1));
+                Fork(main, v, length * (0.25f + 0.3f * Rnd(seed, 93 + k, 0)), 0.4f, 0.6f, 100 + k * 40, 0);
+            }
+        }
+        else
+        {
+            // Irregular, asymmetric fan along the field underside: 3-9 forks rooted anywhere in the upper trunk (biased toward the top), each its own length and heading.
+            int fan = 3 + (int)(6.99f * Rnd(seed, 100, 0));
+            for (int b = 0; b < fan; b++)
+            {
+                float u = Rnd(seed, 101, b), tRoot = 0.2f + 0.75f * MathF.Pow(u, 0.55f);
+                int v = Math.Clamp((int)Math.Round(tRoot * n), 1, n - 1);
+                float remaining = Math.Max(0.0f, 1.0f - Height(main[v])) * length;
+                float reach = remaining * (0.15f + 0.9f * Rnd(seed, 104, b)) + 0.01f * length;
+                reach = Math.Min(reach, 4500.0f);   // a fan at most about 8-9 km wide
+                if (reach < 5.0f) continue;
+                Fork(main, v, reach, 0.5f, 0.75f, 300 + b * 60, 0);
+            }
+            // Creepers: a few branches running sideways along the underside from the last tenth of the trunk.
+            int creepers = 1 + (int)(3.0f * Rnd(seed, 130, 0));
+            for (int c = 0; c < creepers; c++)
+            {
+                int v = Math.Clamp((int)Math.Round((0.9f + 0.1f * Rnd(seed, 131, c)) * n), 1, n - 1);
+                float az = Rnd(seed, 132, c) * Tau, reachC = Math.Min(length * (0.03f + 0.12f * Rnd(seed, 133, c)), 3000.0f);
+                Vector3 dir = ((p1 * Mathf.Cos(az) + p2 * Mathf.Sin(az)) * 0.97f - an * 0.12f).Normalized();
+                Displace(main[v], main[v] + dir * reachC, 4, 0.34f, seed, 900 + c * 16, true, pts);
+                Cap(pts);
+                EmitBranch(pts, Height(main[v]), 0.4f, 0.06f, 0.6f, 0.2f);
+            }
+        }
+
+        // Terminal spray: filaments along the field underside (perpendicular to the axis, dipping away from the field), revealed when the leader attaches.
+        var spray = new List<ChannelSegment>(128);
+        int sprayCount = arc ? 2 : 3 + (int)(4.99f * Rnd(seed, 120, 0));
+        float sprayLength = arc ? 0.25f * length : Math.Clamp(0.03f * length, 80.0f, 700.0f);
+        for (int k = 0; k < sprayCount; k++)
+        {
+            float az = (k + Rnd(seed, 121, k)) / sprayCount * Tau, tilt = 0.1f + 0.4f * Rnd(seed, 122, k);
+            Vector3 dir = ((p1 * Mathf.Cos(az) + p2 * Mathf.Sin(az)) * Mathf.Cos(tilt) - an * Mathf.Sin(tilt)).Normalized();
+            Displace(contact, contact + dir * (sprayLength * (0.3f + 0.7f * Rnd(seed, 123, k))), 3, 0.34f, seed, 600 + k * 8, true, pts);
+            Cap(pts);
+            int count = pts.Count - 1;
+            for (int i = 0; i < count; i++)
+            {
+                float f0 = (float)i / count, f1 = (float)(i + 1) / count;
+                spray.Add(new ChannelSegment(pts[i], pts[i + 1], Mathf.Lerp(0.6f, 0.1f, f0), Mathf.Lerp(0.6f, 0.1f, f1), Mathf.Lerp(1.0f, 0.4f, (f0 + f1) * 0.5f), slot, 1.0f, 2.0f));
+            }
+        }
+
+        int added = 0;
+        void Take(List<ChannelSegment> group)
+        {
+            int take = Math.Min(FieldMaxSegments - added, group.Count);
+            for (int i = 0; i < take; i++) output.Add(group[i]);
+            added += Math.Max(0, take);
+        }
+        Take(trunk); Take(spray); Take(branches);
         return added;
     }
 

@@ -168,6 +168,25 @@ public partial class RingWindQueryTest : RefCounted
                 wallFinite &= float.IsFinite(sample.UpdraftMetersPerSecond) && float.IsFinite(sample.MeanWind.X) && float.IsFinite(sample.TurbulenceSigma);
             }
             Check(wallFinite, "megastorm samples not finite");
+            // Wall wind height cap (design 5.5.2, WO10 note): a 140 m/s surface wind follows the power law to 300 m only, so nothing above 300 m exceeds the 300 m value;
+            // an ordinary kind with the same surface wind keeps the uncapped profile (bit-identical to MeanAt without a cap).
+            {
+                RingWindColumn Fast(StormArrivalState arrival) => new(new Vector2(140f, 0f), new Vector2(140f, 0f), new Vector2(2.2f, 0.7f), false, 0f, arrival, 1500f, 8000f, 1337, true);
+                RingWindColumn mega = Fast(Wall(8000.0)), ordinary = Fast(Storm(5, 1f, 0.2f, 1.5f));
+                float at300 = new Vector2(RingWindQuery.Compose(mega, 0, 300.0, 0, 1).MeanWind.X, RingWindQuery.Compose(mega, 0, 300.0, 0, 1).MeanWind.Z).Length(), maxAbove = 0f, ordinaryMax = 0f;
+                for (float h = 300f; h <= 3000f; h += 10f)
+                {
+                    Vector3 m = RingWindQuery.Compose(mega, 0, h, 0, 1).MeanWind;
+                    maxAbove = Math.Max(maxAbove, new Vector2(m.X, m.Z).Length());
+                    Vector3 o = RingWindQuery.Compose(ordinary, 0, h, 0, 1).MeanWind;
+                    ordinaryMax = Math.Max(ordinaryMax, new Vector2(o.X, o.Z).Length());
+                }
+                Check(at300 > 140f && maxAbove <= at300 + 1e-3f, $"megastorm wall wind above 300 m exceeds its 300 m value ({maxAbove} against {at300})");
+                Check(ordinaryMax > at300 + 1f, $"ordinary kind wind profile changed ({ordinaryMax} against the megastorm 300 m value {at300})");
+                Vector2 uncapped = WindAltitudeProfile.MeanAt(new Vector2(140f, 0f), new Vector2(2.2f, 0.7f), 400f, false), capped = WindAltitudeProfile.MeanAt(new Vector2(140f, 0f), new Vector2(2.2f, 0.7f), 400f, false, 1f, WindAltitudeProfile.DefaultJetAltitudeMeters, WindAltitudeProfile.MegastormPowerLawCapMeters);
+                Check(uncapped == WindAltitudeProfile.MeanAt(new Vector2(140f, 0f), new Vector2(2.2f, 0.7f), 400f, false, 1f, WindAltitudeProfile.DefaultJetAltitudeMeters, float.PositiveInfinity) && capped.Length() < uncapped.Length(), "height cap: default must be uncapped, cap must lower the wind above 300 m");
+                Check(WindAltitudeProfile.MeanAt(new Vector2(140f, 0f), new Vector2(2.2f, 0.7f), 200f, false) == WindAltitudeProfile.MeanAt(new Vector2(140f, 0f), new Vector2(2.2f, 0.7f), 200f, false, 1f, WindAltitudeProfile.DefaultJetAltitudeMeters, 300f), "height cap changes the wind below 300 m");
+            }
             // Smooth across the 10 km tower lattice: no step above 3 m/s per 100 m along the across axis.
             float jump = 0f; float previous = RingWindQuery.StormUpdraft(Column(Wall(10000.0)), 0.0, 0.0, 4750f);
             for (double across = 100; across < 60000; across += 100)

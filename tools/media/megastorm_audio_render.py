@@ -2,9 +2,9 @@
 """Offline render of the megastorm audio passage (docs/megastorm-design.md 5.2, WO6c) so it can be listened to without running the game.
 
 Reads the voice-gain timeline that tools/MegastormAudioTest.cs writes (megastorm_wo6c_passage.csv, the real RingMegastormAudio node's gains for a
-350 m/s passage at 0.5 s steps) and mixes the shipped Ogg assets with the same dB calibration the node uses: hum on both ears, the two wall-singing
-voices (pitch 0.97 / 1.03) hard left and right, the roar and the one boom centred. The airborne shelter bus is open (outdoors); --indoors applies the
-Indoors class instead (roar at 0.15 gain through a 1.4 kHz low-pass, hum and singing untouched). The mix is scaled by one common factor to peak
+350 m/s passage at 0.5 s steps) and mixes the shipped Ogg assets with the same dB calibration the node uses: hum, the roar and the one boom
+centred (the rim-wall singing voices were removed 2026-11-04). The airborne shelter bus is open (outdoors); --indoors applies the
+Indoors class instead (roar at 0.15 gain through a 1.4 kHz low-pass, hum untouched). The mix is scaled by one common factor to peak
 at -3 dBFS, so relative levels are kept (pass --scale-db with the outdoors value to level-match the indoors render).
 
 Usage: python -I tools/media/megastorm_audio_render.py --csv <passage.csv> --out <dir> [--from -90 --to 45] [--indoors]
@@ -21,7 +21,7 @@ import numpy as np
 
 SR = 44100
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "resources", "audio", "weather")
-SING_DB, BOOM_DB = -9.0, 0.0
+BOOM_DB = 0.0
 
 
 def decode(ffmpeg, name):
@@ -61,12 +61,8 @@ def main():
     amp_db = lambda db: np.where(db <= -79.0, 0.0, 10 ** (db / 20.0))
     hum = np.interp(ts, t, amp_db(col("hum_db")))
     roar = np.interp(ts, t, amp_db(col("roar_db")))
-    gains = {k: np.interp(ts, t, col(k)) for k in ("sing_low", "sing_high")}
-    sing = {k: np.where(g < 1e-4, 0.0, 10 ** ((SING_DB + 20 * np.log10(np.maximum(g, 1e-6))) / 20.0)) for k, g in gains.items()}
-    hum_x, sing_x, roar_x = decode(args.ffmpeg, "megastorm_ground_hum_loop"), decode(args.ffmpeg, "megastorm_wall_sing_loop"), decode(args.ffmpeg, "megastorm_roar_loop")
+    hum_x, roar_x = decode(args.ffmpeg, "megastorm_ground_hum_loop"), decode(args.ffmpeg, "megastorm_roar_loop")
     humv = hum * loop(hum_x, n, 0.618 * 24)
-    left = sing["sing_low"] * loop(sing_x, n, 0.236 * 30, 0.97)
-    right = sing["sing_high"] * loop(sing_x, n, 0.854 * 30, 1.03)
     roarv = roar * loop(roar_x, n, 0.472 * 30)
     boom = np.zeros(n)
     fired = [i for i in range(1, len(rows)) if int(rows[i]["booms"]) > int(rows[i - 1]["booms"])]
@@ -80,8 +76,7 @@ def main():
     if args.indoors:
         roarv = lowpass(roarv, 1400.0) * 0.15
         boom = lowpass(boom, 1400.0) * 0.15
-    mix_l = humv + left + roarv + boom
-    mix_r = humv + right + roarv + boom
+    mix_l = mix_r = humv + roarv + boom
     peak = max(np.max(np.abs(mix_l)), np.max(np.abs(mix_r)), 1e-9)
     scale = 10 ** (-3 / 20.0) / peak if args.scale_db is None else 10 ** (args.scale_db / 20.0)
     stereo = np.stack([mix_l, mix_r], axis=1) * scale

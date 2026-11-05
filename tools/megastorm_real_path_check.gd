@@ -152,6 +152,16 @@ func _run() -> void:
 		ex.call("SetScriptedFlightCommand", Vector3.ZERO, float(pose_l["yaw_deg"]), float(pose_l["pitch_deg"]))
 		await create_timer(2.0).timeout
 		print("MEGASTORM_REAL lifted ", _probe.State(_world))
+	if _arg("far-probe", "") != "":
+		await _far_probe()
+		print("MEGASTORM_REAL=DONE out=", _out)
+		quit(0)
+		return
+	if _arg("farlook", "") != "":
+		await _farlook()
+		print("MEGASTORM_REAL=DONE out=", _out)
+		quit(0)
+		return
 	var spawn_km := float(_arg("spawn-km", "-1"))
 	if spawn_km > 0.0:
 		await create_timer(float(_arg("settle", "10"))).timeout
@@ -365,6 +375,139 @@ func _prep_ground() -> void:
 	file.close()
 	print("MEGASTORM_REAL prep ground=%.1f around=%.1f across=%.1f path=%s" % [float(spot["ground"]), float(spot["around"]), float(spot["across"]), path])
 	quit(0)
+
+## --farlook=1000:300:150:50 (far-look pass): for each --farlook-times entry (noon:morning:night; morning = --sun-elev, default 8 degrees, on the
+## rising side) and each distance (km), spawn the wall that far ahead through RingMegastorm.spawn_megastorm_ahead (the menu button's call; it is
+## used directly because the menu slider stops at 600 km) at --speed (default 5 m/s, so it barely moves), hold the saved yaw (+ --yaw-rel) at the
+## distance's pitch (--farlook-pitch=50@9:150@5:300@4:1000@4; others 4) and save <time>_<km>km after --farlook-settle seconds (12).
+func _farlook() -> void:
+	var explorer: Node = _world.get_node("Explorer")
+	var mega: Node = _world.get_node("RingMegastorm")
+	var drawer: Node = _world.get_node("LiveTuningDrawer")
+	drawer.call("SetMegastormTuningValue", "SpeedMetersPerSecond", float(_arg("speed", "5")))
+	var pose0: Dictionary = explorer.call("GetCanonicalPoseMeters")
+	var yaw := float(pose0["yaw_deg"]) + float(_arg("yaw-rel", "0"))
+	var pitches := {}
+	for part in _arg("farlook-pitch", "50@9:150@5:300@4:1000@4").split(":"):
+		var kv := part.split("@")
+		if kv.size() == 2:
+			pitches[int(kv[0])] = float(kv[1])
+	for tod in _arg("farlook-times", "noon:morning:night").split(":"):
+		await _set_time_of_day(tod)
+		for km_text in _arg("farlook", "").split(":"):
+			var km := int(km_text)
+			mega.call("spawn_megastorm_ahead", float(km))
+			var pitch := float(pitches.get(km, 4.0))
+			_view(explorer, yaw, pitch)
+			await create_timer(float(_arg("farlook-settle", "12"))).timeout
+			_view(explorer, yaw, pitch)
+			if _arg("hide-hud", "") != "":
+				for n in _world.get_children():
+					if n is CanvasLayer and n.name != "LiveTuningDrawer":
+						n.visible = false
+				for n in root.get_children():
+					if n is CanvasLayer:
+						n.visible = false
+			for i in 4:
+				await process_frame
+			await _shot("%s_%04dkm" % [tod, km])
+	mega.call("remove_megastorm")
+
+## --far-probe=300:1000 (far-look diagnostics): at --farlook-times (default noon), spawn at each distance as --farlook does, then for each wedge-pass
+## debug view in --probe-views (0:9:12:13:10) read the far viewport's HDR image (linear, before the main view's tonemap) and the final frame down the
+## column at --probe-x (fraction of the width, 0.5) between --probe-y0 / --probe-y1 (fractions, 0.40 / 0.56), printing MEGASTORM_REAL probe lines.
+func _far_probe() -> void:
+	var explorer: Node = _world.get_node("Explorer")
+	var mega: Node = _world.get_node("RingMegastorm")
+	var far: Node = _world.get_node("ScaledFarViewport")
+	_world.get_node("LiveTuningDrawer").call("SetMegastormTuningValue", "SpeedMetersPerSecond", float(_arg("speed", "5")))
+	var pose0: Dictionary = explorer.call("GetCanonicalPoseMeters")
+	var yaw := float(pose0["yaw_deg"]) + float(_arg("yaw-rel", "0"))
+	var pitches := {}
+	for part in _arg("farlook-pitch", "50@9:150@5:300@4:1000@4").split(":"):
+		var kv := part.split("@")
+		if kv.size() == 2:
+			pitches[int(kv[0])] = float(kv[1])
+	for tod in _arg("farlook-times", "noon").split(":"):
+		await _set_time_of_day(tod)
+		for km_text in _arg("far-probe", "300").split(":"):
+			var km := int(km_text)
+			mega.call("spawn_megastorm_ahead", float(km))
+			_view(explorer, yaw, float(pitches.get(km, 4.0)))
+			await create_timer(float(_arg("farlook-settle", "12"))).timeout
+			for view_text in _arg("probe-views", "0:9:12:13:10").split(":"):
+				far.set("FarMegastormDebugView", int(view_text))
+				for i in 12:
+					await process_frame
+				await RenderingServer.frame_post_draw
+				var far_vp = far.get("OuterViewportForDiagnostics")
+				var fimg: Image = far_vp.get_texture().get_image()
+				var mimg: Image = root.get_texture().get_image()
+				var px := float(_arg("probe-x", "0.5"))
+				var y0 := float(_arg("probe-y0", "0.40"))
+				var y1 := float(_arg("probe-y1", "0.56"))
+				var rows := 48
+				for r in rows + 1:
+					var fy := y0 + (y1 - y0) * float(r) / float(rows)
+					var fc: Color = fimg.get_pixel(int(px * fimg.get_width()), int(fy * fimg.get_height()))
+					var mc: Color = mimg.get_pixel(int(px * mimg.get_width()), int(fy * mimg.get_height()))
+					print("MEGASTORM_REAL probe %s %dkm view=%s y=%.3f far=(%.4f,%.4f,%.4f,%.3f) final=(%d,%d,%d)" % [tod, km, view_text, fy, fc.r, fc.g, fc.b, fc.a, mc.r8, mc.g8, mc.b8])
+				if view_text == "0":
+					await _shot("probe_%s_%04dkm" % [tod, km])
+			far.set("FarMegastormDebugView", 0)
+			if _arg("probe-sunshine", "") != "":
+				# Attribution: the same frame with the Sunshine near clouds suspended (the far wedge pass and the companion alone).
+				_probe_set("sunshine", true)
+				await create_timer(1.0).timeout
+				await _shot("probe_%s_%04dkm_nosunshine" % [tod, km])
+				_probe_set("sunshine", false)
+				await create_timer(1.0).timeout
+	mega.call("remove_megastorm")
+
+func _set_time_of_day(tod: String) -> void:
+	var cycle: Node = _world.get_node_or_null("RingDayNightCycle")
+	if cycle == null:
+		return
+	var noon := await _find_local_noon(cycle)
+	var f := noon
+	if tod == "night":
+		f = fposmod(noon + 0.5, 1.0)
+	elif tod == "morning":
+		var want := float(_arg("sun-elev", "8"))
+		for i in 200:
+			f = fposmod(noon - 0.0025 * float(i), 1.0)
+			cycle.call("set_cycle_fraction", f)
+			await process_frame
+			await process_frame
+			if float(cycle.get("SunElevationDegrees")) <= want:
+				break
+	cycle.call("set_cycle_fraction", f)
+	cycle.set("Paused", true)
+	await create_timer(3.0).timeout
+	print("MEGASTORM_REAL time %s fraction=%.4f daylight=%.3f sun_elev=%.1f" % [tod, f, float(cycle.call("get_daylight_factor")), float(cycle.get("SunElevationDegrees"))])
+
+var _noon_cache := -1.0
+
+func _find_local_noon(cycle: Node) -> float:
+	if _noon_cache >= 0.0:
+		return _noon_cache
+	var full: Array[float] = []
+	for i in 100:
+		var f := float(i) / 100.0
+		cycle.call("set_cycle_fraction", f)
+		await process_frame
+		await process_frame
+		if float(cycle.call("get_daylight_factor")) >= 0.999:
+			full.append(f)
+	if full.is_empty():
+		return 0.5
+	var start := full[0]
+	for i in range(1, full.size()):
+		if full[i] - full[i - 1] > 0.015:
+			start = full[i]
+			break
+	_noon_cache = fposmod(start + 0.5 * (full.size() / 100.0 - 0.01), 1.0)
+	return _noon_cache
 
 # --noon (WO14 daytime sheets): scans the day-night cycle fraction, keeps the middle of the range where the observer's daylight factor is full
 # (local noon) and pauses the celestial clock there. The weather clock keeps running, so the megastorm still moves.

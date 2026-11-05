@@ -13,7 +13,7 @@ public enum AirSoundState { Silent, Leading, Boom, Inside }
 /// </summary>
 public readonly record struct AirSoundResult(AirSoundState State, float AirGain, float BoomGain, bool SwellAllowed, bool BoomIncludesSwell);
 
-/// <summary>Rim-wall singing level per wall: Low is the across = 0 wall, High the across = W wall.</summary>
+/// <summary>Rim-wall singing level per wall: Low is the across = 0 wall, High the across = W wall. Retired as a sound (2026-11-04, user decision): nothing plays it, the maths stays.</summary>
 public readonly record struct WallSingLevels(float Low, float High)
 {
     public float Max => Math.Max(Low, High);

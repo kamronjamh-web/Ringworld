@@ -593,8 +593,9 @@ void fragment() {
 	}
 	grazing_color = mix(grazing_color, foam_color, foam);
 	ALBEDO = grazing_color * haze.T;
-	// The foam self-light floor scales with the eclipse night light (spec D.1); exactly 1 outside an eclipse.
-	EMISSION = ring_haze_inscatter(haze) + foam_color * foam * (0.16 * ringworld_night_light_scale);
+	// Foam is lit through ALBEDO like every other surface (sun, ambient, cloud shadow, storm light, haze). It used to add a self-light floor
+	// (0.16 x foam colour) that ignored the day factor, so foam glowed at night; removed.
+	EMISSION = ring_haze_inscatter(haze);
 	ROUGHNESS = max(base_roughness, specular_aa_roughness);
 	// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
 	// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.

@@ -156,9 +156,11 @@ public static class RingWindQuery
         float agl = Mathf.Max(0.0f, altitude - column.GroundAltitudeMeters);
         StormArrivalState a = column.Arrival;
         float jetMultiplier = 1.0f + (WindAltitudeProfile.JetKindMultiplier(a.Kind) - 1.0f) * Mathf.Clamp(Mathf.Max(a.Core, a.GustFront), 0.0f, 1.0f);
-        Vector2 mean = WindAltitudeProfile.MeanAt(column.SurfaceMean, column.Drift, agl, column.Forest, jetMultiplier);
+        // A megastorm's wall wind (140 m/s at 10 m, design 5.5.2) follows the power law only up to 300 m: above it the term is held, then the profile blends into the free wind.
+        float heightCap = a.Valid && a.Kind == StormArrivalMath.MegastormKindCode ? WindAltitudeProfile.MegastormPowerLawCapMeters : float.PositiveInfinity;
+        Vector2 mean = WindAltitudeProfile.MeanAt(column.SurfaceMean, column.Drift, agl, column.Forest, jetMultiplier, WindAltitudeProfile.DefaultJetAltitudeMeters, heightCap);
         Vector2 gust = WindAltitudeProfile.GustAt(column.SurfaceMean, column.SurfaceGust, mean, agl);
-        float shear = WindAltitudeProfile.ShearAt(column.SurfaceMean, column.Drift, agl, column.Forest, jetMultiplier);
+        float shear = WindAltitudeProfile.ShearAt(column.SurfaceMean, column.Drift, agl, column.Forest, jetMultiplier, WindAltitudeProfile.DefaultJetAltitudeMeters, heightCap);
 
         float cloudBase = column.CloudBaseMeters, cloudTop = column.CloudTopMeters;
         bool hasCloud = float.IsFinite(cloudBase) && float.IsFinite(cloudTop) && cloudTop > cloudBase;

@@ -888,7 +888,7 @@ public partial class RingLocalWeatherEffects : Node3D
         foreach (RingLightningEvent e in _weatherSource.ActiveLightningEvents)
         {
             double age = now - e.StartTimeSeconds;
-            if (e.EventId == LastRenderedLightningEventId || age < 0.0 || age > RingLightningEvent.LifetimeSeconds) continue;
+            if (e.FieldStrike || e.EventId == LastRenderedLightningEventId || age < 0.0 || age > RingLightningEvent.LifetimeSeconds) continue;   // field strikes are drawn by RingFieldStrikeLayer
             double around = ShortestAroundDelta(e.GroundPosition.AroundMeters, _explorer.CanonicalPosition.AroundMeters, circumference);
             double across = e.GroundPosition.AcrossMeters - _explorer.CanonicalPosition.AcrossMeters;
             double distanceSquared = around * around + across * across;

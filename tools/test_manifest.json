@@ -660,6 +660,18 @@
       "expected_s": null,
       "timeout_s": 900
     },
+    "megastorm_field_strike_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "clouds",
+        "weather"
+      ],
+      "marker": "MEGASTORM_REAL",
+      "expected_s": null,
+      "timeout_s": 900
+    },
     "megastorm_wo11_capture": {
       "kind": "tool",
       "mode": "gpu",
@@ -3111,6 +3123,19 @@
       "marker": "MEGASTORM_SCYTHE",
       "expected_s": 30,
       "timeout_s": 240
+    },
+    "megastorm_field_strike_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "weather",
+        "clouds"
+      ],
+      "world": "integration",
+      "marker": "MEGASTORM_FIELD_STRIKE",
+      "expected_s": 40,
+      "timeout_s": 300
     },
     "megastorm_save_load_test": {
       "kind": "test",

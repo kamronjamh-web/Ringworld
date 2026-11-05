@@ -344,7 +344,6 @@ partials only: no recordings, no downloaded audio and none of the CC0 thunder cl
 | File | Length | Model | SHA-256 |
 | --- | ---: | --- | --- |
 | `megastorm_ground_hum_loop.ogg` | 24 s | Structure-borne bed: six 20-60 Hz partials with slow whole-cycle beating, weak 2nd/3rd harmonics, a 15-90 Hz noise floor. Exactly periodic. | `F9171207EB8B0F3CE5D31669A9299697983A2064BA8F7C2E838BC71813A84C9A` |
-| `megastorm_wall_sing_loop.ogg` | 30 s | Rim-wall singing: a slightly inharmonic metallic drone (98 Hz fundamental, 7 partials as detuned pairs) plus narrow-band breath noise. Exactly periodic. | `8753754663103CD5E5CA34A414983D52EDBAF3C75DDEA3A54B58D7758946FB9D` |
 | `megastorm_roar_loop.ogg` | 30 s | Wall roar: three independently swelling bands (35-420 Hz rush, 160-900 Hz growl, 1.5-6.5 kHz hiss). Exactly periodic. | `07E72440BA7F4C8B8F4102CB29ABE8BDD323C3E2A7E3FFD12DCBC068A7F2E4B0` |
 | `megastorm_boom_1.ogg` | 4.4 s | The Mach pile-up: a 3.5 kHz-band crack, a sub thump gliding 72 to 28 Hz, then 9-13 darkening rolling noise bursts; the shape follows `MegastormSound.BoomEnvelope`. | `7E8BEDAFC6C5115BC48667A3CA647038CC3C093D2BD70EC497092FEA94E7072F` |
 | `megastorm_boom_2.ogg` | 4.4 s | As above, other seed. | `605BAED53B23C76CCCBABB5CD70613EBC5EEEDD6952AFCA4BFD007086B43048E` |
@@ -354,6 +353,7 @@ partials only: no recordings, no downloaded audio and none of the CC0 thunder cl
 | `megastorm_scythe_crackle_3.ogg` | 0.9 s | As above, other seed. | `3CF3C9C068CD37343B9AC5A9215119BEA330248BCB6B3963A8527F379F09CB4D` |
 | `megastorm_rain_hammer_loop.ogg` | 24 s | Bullet rain on structures (WO11, 5.5.2): about 2,600 hard 0.4-8 kHz impact clicks per second, a few heavy panel thwacks, over a grainy 150-3500 Hz bed. Events wrap, so the loop is exact. | `D1B1E6D02E1F7C48971C08EEFBB8631312B44C6B2D3C60A5258A1B1091D6761A` |
 | `megastorm_ear_pop.ogg` | 0.7 s | Wake ear pop (WO11, 5.5.3), cosmetic: a soft 70-35 Hz thump, a few tiny clicks and a short low-passed breath. | `0BF888E00AF81F36F337FDBE7657FF46C04DE5B2FFCA9FF66499B2DBED866EA8` |
+| `megastorm_rim_sizzle_loop.ogg` | 12 s | Near-rim contact-arc sizzle (WO13, 5.5.5): about 1,500 tiny 2-14 kHz clicks per second over a swelling 2.5-9.5 kHz hiss and a faint 100 Hz buzz with 2nd/3rd harmonics. Events wrap, bed and buzz are whole-cycle, so the loop is exact. Played by `RingFieldStrikeAudio` (scripts/Weather/Megastorm) on the `MegastormAir` bus. | `A3BED8B8C1BD224D9B95E6C26C869B3DFD011A7CEC6C863DC6CAB9DF78521AF2` |
 
 Wiring: `RingMegastormAudio` (scripts/Weather/Megastorm). The scythe crackles are played by `RingMegastormScythes` (same folder) on the `MegastormAir` bus. Subjective listening is still pending; `tools/media/megastorm_audio_render.py` renders a
 passage from the test's gain timeline for that.

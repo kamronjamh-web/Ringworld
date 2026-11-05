@@ -36,11 +36,77 @@ Read this first, then `docs/megastorm-design.md` (user decisions at the top, the
 | 9 | Acceptance (captures, perf table, headphone check) | not started |
 | 11 | Hazard visuals and audio (blast, bullet-rain streaks, wake fog, ear pop) | not started |
 | 12 | Lightning scythes | **in flight** |
-| 13 | Field strikes | not started (after 12) |
+| 13 | Field strikes | built against the stub provider (2026-11-04, uncommitted): shared flag / duration / envelope, stream and contact arcs, `RingFieldStrikeLayer` (overlay + far set), rim sizzle; the dome-top glow in the wedge pass is for the far-look lead. See the WO13 status block in the design doc |
 | 14 | Darkness under the wall | **in flight** |
 | — | S6 far layer natural march off (user decision) | **in flight** |
 
 Doc order for what remains: WO14 → WO11 + WO12 → WO13 → the far-look pass (user: "after the rest") → WO9.
+
+## Update (2026-11-05): finish-out batch, ready for acceptance
+
+Everything below is committed in the checkpoint after `8a71b40`. Earlier work on this branch:
+- The user's separate batch was committed as `87635f4` (prepared tree catalog, quality preset capture policy, height shadow, audio studio).
+- `origin/main` (`18bf535`) was merged in as `8a71b40`.
+
+**User decisions (2026-11-04):**
+- **Debris:** fix it (done).
+- **Keep as is:** the darker wake and leading edge (WO-D), and the dark morning approach.
+- **Lightning brightness slider:** already in the user's own lightning work (`27436a8`).
+- **Sound:** remove the rim-wall singing and keep the ground hum/rumble (done). Keep the PDA lore line about walls resonating.
+- **Wind:** about 225 m/s at 300 m altitude under the wall is acceptable.
+- **Far look:** accept as is (a sunlit top band at 300 km or more; a dark silhouette is impossible under the physical haze without breaking the haze rule).
+- **Far flash rate:** leave it.
+
+**Done in this batch:**
+- **Fixes:**
+  - debris albedo and near-camera size cap;
+  - rim-wall singing removed (voice and asset);
+  - rain-streak and wet-map storm level now `max(D, E) + E`;
+  - megastorm wind height cap at 300 m.
+- **WO13 field strikes:**
+  - stream, rate law and contact arcs (`ActiveContactArcs`), queries;
+  - main overlay and far quad channel sets with jagged leaders and fans;
+  - rim sizzle and roll audio;
+  - the far dome-top glow, with far flashes for flagged events using `PulseAt`.
+  - Strikes are not visible from under the leading anvil, by physics: visible from about 200 km ahead or from beside or behind the wall.
+- **Perf pass:**
+  - the Sunshine haze rule overhead down 25-45%;
+  - the far pass reuses lit colour past 70% opacity;
+  - main-depth tile mask for the far wedge.
+- **Far look:**
+  - slanted sun, multiple-scattering tail, sky ambient on anvil outer surfaces, underside relief, night flash glow;
+  - Sunshine megastorm top layer made consistent.
+- **Water foam:** no longer self-lights at night. The emissive "foam floor" in `ring_ocean_proxy.gdshader` was removed.
+- **Known failures:**
+  - `sunshine_night_shell_exit_smoke_test` matches the new teardown message;
+  - `megastorm_wo11_capture` and `megastorm_darkness_capture` are flagged for the same teardown crash as `megastorm_capture`.
+
+**Acceptance record (WO9):**
+- **Tests:** a branch run of 330 megastorm, water, haze and shader tests passed apart from:
+  - known failures;
+  - manual capture tools refusing to run outside `appdata_spawncheck*` profiles, which is expected;
+  - teardown crashes after PASS (known class).
+- **Real-path verification of midnight bolts:** after the batch, bolts draw below the dark wall.
+- **Perf, RTX 4070 1600x900 High:**
+
+  | Measure | Result |
+  |---|---|
+  | Megastorm untriggered | about 0 |
+  | Sunshine near the wall | +0.55 ms over a natural storm, but cheaper than clear sky at the same spot; budget +0.15 not met, overrun is content |
+  | Haze rule | 0.06-0.23 ms |
+  | Far pass + layer-sky branch | 0.05-0.21 ms (budget 0.10) |
+  | Shock distortion | 0.09 ms in its window only |
+  | Bolts and field strikes | within noise |
+
+- **Still the user's:** the headphone listening check (hum build-up, boom, roar; scythe crackle; rim sizzle).
+
+**Open (non-blocking):**
+- **Over budget:** the near-wall and far-pass perf overruns above.
+- **Far-view scythe streaks:** not done.
+- **Natural bolts:** still on the old mesh, which cloud can hide.
+- **Teardown crash:** the -1073741819 teardown crash class.
+- **Far mask:** `get_mask_texture()` allocates per frame.
+- **Cleanup:** the `C:\Projects\rw_base` worktree (delete its `artifacts\engine-upgrade` junction first) and the `appdata_spawncheck*` profiles.
 
 ## Update (2026-10-31, morning): WO11, bolts, haze pass, history fade
 

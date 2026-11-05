@@ -99,4 +99,38 @@ float ring_ms_flash_glow(float x, float across, float altitude, int slot, float 
 	return glow * p.a.z;
 }
 
+// Far-look pass (2026-11): the same flash field seen through the cloud from far away. A flash lights the cloud around it over 10-20 km and the
+// visible face of the wall glows wherever a flash behind it (up to the 37.5 km depth of the field) is within `radius` across / up of the
+// point: the same cells, pulses and energies as ring_ms_flash_glow (so the CPU twin's FlashesInWindow still names every flash), a Gaussian
+// of `radius` in (across, altitude) and an exponential fall-off of `depth_scale` with how far the flash lies behind the point (xi). Wedge
+// pass only; ring_ms_flash_glow (the CPU parity twin) is unchanged.
+float ring_ms_flash_glow_diffuse(float x, float across, float altitude, int slot, float slot_time, bool reduced, float reduced_peak,
+		float chance_scale, float radius, float depth_scale, RingMegastormParams p) {
+	int seed = int(round(p.a.w));
+	int center = int(floor(across / RING_MS_FLASH_SEGMENT_METERS));
+	int reach = int(ceil(2.0 * radius / RING_MS_FLASH_SEGMENT_METERS));
+	float glow = 0.0;
+	for (int ds = 0; ds < 2; ds++) {
+		int k = slot - ds;
+		float slot_age = slot_time + float(ds) * RING_MS_FLASH_SLOT_SECONDS;
+		for (int dseg = -4; dseg <= 4; dseg++) {
+			if (abs(dseg) > reach) continue;
+			int seg = center + dseg;
+			if (seg < 0 || seg >= RING_MS_FLASH_SEGMENTS) continue;
+			if (ring_ms_hash01(seed, 1000 + seg, k) >= RING_MS_FLASH_CHANCE * max(chance_scale, 0.0)) continue;
+			float age = slot_age - RING_MS_FLASH_SLOT_SECONDS * ring_ms_hash01(seed, 2000 + seg, k);
+			float pulse = ring_ms_flash_pulse(age, reduced, reduced_peak);
+			if (pulse <= 0.0) continue;
+			float f_across = (float(seg) + 0.15 + 0.7 * ring_ms_hash01(seed, 3000 + seg, k)) * RING_MS_FLASH_SEGMENT_METERS;
+			float f_xi = 500.0 + 37000.0 * ring_ms_hash01(seed, 4000 + seg, k);
+			float f_alt = 4000.0 + 7000.0 * ring_ms_hash01(seed, 5000 + seg, k);
+			float energy = 0.6 + 0.4 * ring_ms_hash01(seed, 6000 + seg, k);
+			float behind = max(f_xi + ring_megastorm_lead_offset(f_across, p) - x, 0.0);
+			vec2 d = vec2(altitude - f_alt, across - f_across) / radius;
+			glow += pulse * energy * exp(-dot(d, d)) * exp(-behind / depth_scale);
+		}
+	}
+	return glow * p.a.z;
+}
+
 #endif

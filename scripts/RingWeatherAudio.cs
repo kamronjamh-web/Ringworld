@@ -154,7 +154,7 @@ public partial class RingWeatherAudio : Node
         {
             if (_suppressedIds.Contains(strike.EventId) || !_observedActiveIds.Add(strike.EventId)) continue;
             double weatherAge = weatherNow - strike.StartTimeSeconds;
-            if (!double.IsFinite(weatherAge) || weatherAge < 0.0 || weatherAge > RingLightningEvent.LifetimeSeconds) continue;
+            if (!double.IsFinite(weatherAge) || weatherAge < 0.0 || weatherAge > strike.LifeSeconds) continue;
             double timeScale = double.IsFinite(Engine.TimeScale) ? Math.Max(0.001, Engine.TimeScale) : 1.0;
             double realAge = weatherAge / timeScale;
             _propagation.Observe(strike, _audioClock - realAge, _listener, context);

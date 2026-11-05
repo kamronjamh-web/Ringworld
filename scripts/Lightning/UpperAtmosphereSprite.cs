@@ -49,7 +49,7 @@ public static class UpperAtmosphereLightning
     public static bool TryDerive(in RingLightningEvent e, float cloudTopMeters, out UpperAtmosphereSprite sprite, float? chanceScale = null)
     {
         sprite = default;
-        if (e.EventId == 0) return false;
+        if (e.EventId == 0 || e.FieldStrike) return false;   // field strikes are a separate class (megastorm 5.5.5); sprites and jets pass through the field
         float chance = EffectiveChance(e.SystemKind, chanceScale ?? LightningVisualPolicy.UpperAtmosphereChanceScale);
         if (chance <= 0.0f || Unit(e.EventId, 101) >= chance) return false;
         float pick = Unit(e.EventId, 102);

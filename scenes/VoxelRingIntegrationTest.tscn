@@ -92,6 +92,8 @@
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterStandInLayer.cs" id="71_emitter_standins"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterGridBeamLayer.cs" id="emitter_grid_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Lightning/RingUpperAtmosphereLightningLayer.cs" id="upper_atmosphere_lightning_layer"]
+[ext_resource type="Script" path="res://scripts/Lightning/RingFieldStrikeLayer.cs" id="field_strike_layer"]
+[ext_resource type="Script" path="res://scripts/Weather/Megastorm/RingFieldStrikeAudio.cs" id="field_strike_audio"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseEventDirector.cs" id="eclipse_event_director"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBeamLayer.cs" id="eclipse_hub_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBody.cs" id="eclipse_hub_body"]
@@ -635,6 +637,9 @@ script = ExtResource("megastorm_pda_script")
 [node name="MegastormAudio" type="Node" parent="."]
 script = ExtResource("megastorm_audio_script")
 
+[node name="FieldStrikeAudio" type="Node" parent="."]
+script = ExtResource("field_strike_audio")
+
 [node name="GroundTremor" type="Node" parent="."]
 script = ExtResource("megastorm_tremor_script")
 
@@ -731,6 +736,9 @@ script = ExtResource("emitter_grid_beam_layer")
 
 [node name="UpperAtmosphereLightning" type="Node3D" parent="."]
 script = ExtResource("upper_atmosphere_lightning_layer")
+
+[node name="FieldStrikes" type="Node3D" parent="."]
+script = ExtResource("field_strike_layer")
 
 [node name="EclipseEvent" type="Node" parent="."]
 script = ExtResource("eclipse_event_director")

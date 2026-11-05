@@ -284,15 +284,21 @@ float ring_storm_sun_tau(vec3 canonical, vec3 sunWorld) {
 const float RING_MEGASTORM_UNDERSIDE_OPEN = 0.15;
 const float RING_MEGASTORM_UNDER_OPEN = 0.6;
 const float RING_MEGASTORM_OPEN_TAP_METERS = 1500.0;
+// Far-look pass (2026-11): how much of the open sky DOME (not just the horizon band) the last ring_megastorm_open_light sample sees: the
+// anvil's leading face, where the canopy beyond the sample towards -xi thins out (1 - tap canopy coverage / 0.6), as in the far wedge
+// pass (ring_far_megastorm_pass.gdshaderinc). 0 for the body and for cloud below the column.
+float g_mega_sky_open = 0.0;
 float ring_megastorm_open_light(vec3 canonical) {
 	float h = canonical.y;
+	g_mega_sky_open = 0.0;
 	if (!ring_storm_column_contains(h)) return RING_MEGASTORM_UNDER_OPEN;
 	vec4 tapHeights;
 	vec4 tapAux;
 	// Towards -xi is +around for direction +1 (x = dir * (s - around)).
 	if (!ring_megastorm_strip_fetch(vec2(canonical.x + genericData.data.ring_megastorm_frame.z * RING_MEGASTORM_OPEN_TAP_METERS, canonical.z),
-		tapHeights, tapAux)) return 1.0;
+		tapHeights, tapAux)) { g_mega_sky_open = 1.0; return 1.0; }
 	if (ring_storm_profile(h, g_storm_heights.z, g_storm_heights.w) > ring_storm_profile(h, g_storm_heights.x, g_storm_heights.y)) {
+		g_mega_sky_open = 1.0 - clamp(tapAux.x / 0.6, 0.0, 1.0);
 		return mix(1.0, RING_MEGASTORM_UNDERSIDE_OPEN, clamp(tapAux.x, 0.0, 1.0));
 	}
 	return 1.0 - clamp(tapAux.w, 0.0, 1.0);

@@ -172,4 +172,9 @@ public static class MegastormLightning
                 }
         return strikes.Count;
     }
+
+    // ---- Field strikes (WO13; the stream lives in MegastormFieldStrikes) ----
+    /// <summary>Field strikes (upward discharges that end on the containment field) whose START time lies in [t0, t1); empty without an installed field provider.</summary>
+    public static int FieldStrikesInWindow(MegastormModel model, double t0, double t1, float chanceScale, List<MegastormFieldStrike> strikes)
+        => MegastormFieldStrikes.FieldStrikesInWindow(model, t0, t1, chanceScale, strikes);
 }

@@ -271,16 +271,20 @@ public sealed class MegastormFieldPublisher
             var position = new RingCanonicalPosition(around, ceiling, across);
             d = new ContainmentDisturbance(MegastormFieldCoupling.Mix64(side, xiCell, b, 4), ContainmentDisturbanceKind.MegastormContact, position, slotStart,
                 Math.Clamp(frame.Strength * penetration, 0.0f, 1.0f), (float)(10000.0 + 20000.0 * MegastormModel.Hash01(seed, salt + 4, b)),
-                (float)ContactDurationSeconds, ContactFlashCoupling, FlashFollower(around, across, ceiling), position, ContactOccluderRadiusMeters, (float)ceiling);
+                (float)ContactDurationSeconds, ContactFlashCoupling, FlashFollower(around, across, ceiling, true), position, ContactOccluderRadiusMeters, (float)ceiling);
             return true;
         }
         return false;
     }
 
     /// <summary>Flash 0..1 at a fixed world point: the far flash field's glow at the point's moving-frame position at time tt.</summary>
-    private Func<double, float> FlashFollower(double around, double across, double altitude)
+    private Func<double, float> FlashFollower(double around, double across, double altitude, bool contactArcs = false)
     {
         MegastormModel model = _model;
+        // Contact ripples also take the near-rim contact arcs (WO13): the arcs are visual only and publish nothing, so their light reaches the field here.
+        if (contactArcs)
+            return tt => (float)Math.Clamp(MegastormLightning.GlowAt(model, model.X(around, tt), across, altitude, tt, LightningVisualPolicy.ReducedFlashes)
+                + MegastormFieldStrikes.ContactArcFlash(model, around, across, tt, LightningVisualPolicy.NaturalStrikeChanceScale), 0.0, 1.0);
         return tt => (float)Math.Clamp(MegastormLightning.GlowAt(model, model.X(around, tt), across, altitude, tt, LightningVisualPolicy.ReducedFlashes), 0.0, 1.0);
     }
 }

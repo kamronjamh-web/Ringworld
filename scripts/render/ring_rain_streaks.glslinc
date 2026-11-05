@@ -114,7 +114,7 @@ float rain_mid_weight(float i) { return dot(rain_stage(i), vec3(0.15, 0.7, 1.0))
 float rain_length_scale(float i) { return dot(rain_stage(i), vec3(0.8, 1.0, 1.3)); }
 float rain_brightness_scale(float i) { return dot(rain_stage(i), vec3(0.85, 1.1, 1.5)); }
 
-// Extended storm level L = D + E at a world position: GLSL port of ring_storm_level in materials/ring_storm_light.gdshaderinc (same map, same frame, same
+// Extended storm level L = max(D, E) + E at a world position: GLSL port of ring_storm_level in materials/ring_storm_light.gdshaderinc (same map, same frame, same
 // arithmetic; E is the storm-light layer's z, the megastorm darkness). Streaks live within metres of the camera, always inside the map, so the analytic
 // E beyond the map is not needed here.
 float storm_arc_angle(float tangent, float outward) {
@@ -143,7 +143,9 @@ float storm_level(vec3 world) {
 	float h = clamp((s.x - heavy_start) / max(0.01, 1.0 - heavy_start), 0.0, 1.0);
 	h = h * h * (3.0 - 2.0 * h);
 	float free_t = clamp(s.w / 0.25, 0.0, 1.0); // heavy overcast only where no system is present
-	return max(max(o.x * max(s.y, h), o.y), h * (1.0 - free_t * free_t * (3.0 - 2.0 * free_t))) + o.z;
+	float d = max(max(o.x * max(s.y, h), o.y), h * (1.0 - free_t * free_t * (3.0 - 2.0 * free_t)));
+	// Megastorm rule (ring_storm_terms_blended_at_map): the ordinary level under a megastorm is D' = max(D, E), so L = max(D, E) + E. E = 0 (every ordinary storm) gives exactly D.
+	return max(d, o.z) + o.z;
 }
 // Radiance a streak at `world` is lit with. Per streak: sky ambient dimmed by the storm ambient A(D) = 1 - 0.9 * strength * D, plus the sun faded by the storm shadow fade F(D)
 // (the same D and fade every receiver uses). With the map unavailable (or a test override) the CPU scalar radiance in light.rgb is used.

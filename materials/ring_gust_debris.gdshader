@@ -22,7 +22,7 @@ void vertex() {
 	DebPlace d = deb_place(INSTANCE_ID, 0u, MODEL_MATRIX[3].xyz);
 	// Leaves: green to olive to brown, drier ones where the dust share is high.
 	float dry = clamp(d.kinds.y * 2.0, 0.0, 1.0);
-	vec3 green = vec3(0.025, 0.06, 0.012), olive = vec3(0.055, 0.07, 0.015), brown = vec3(0.085, 0.05, 0.02);
+	vec3 green = vec3(0.09, 0.20, 0.035), olive = vec3(0.17, 0.20, 0.04), brown = vec3(0.30, 0.17, 0.07);   // linear albedo like the tree foliage around (the old 0.03-0.08 read black)
 	float pick = d.rnd.z;
 	vec3 albedo = pick < 0.5 - 0.3 * dry ? mix(green, olive, pick * 2.0) : mix(olive, brown, clamp((pick - 0.4) * 1.7 + 0.5 * dry, 0.0, 1.0));
 	float size = mix(0.08, 0.17, d.rnd.y) * d.alive;   // grows in with alive: no binary pop

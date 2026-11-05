@@ -43,10 +43,15 @@ public partial class RingLocalWeatherEffects
     private readonly Dictionary<long, ChannelBoltCache> _channelCache = new();
     private readonly List<long> _channelStale = new();
     private readonly List<RingLightningEvent> _channelSelected = new();
+    private readonly List<RingLightningEvent> _channelFieldEvents = new();
+    private readonly List<float> _channelFieldWeights = new();
+    private readonly float[] _channelWeights = new float[ChannelMaxBolts];
+    private const int ChannelMaxFieldStrikes = 4;
     private readonly List<ChannelSegment> _channelSegments = new(1024);
     private readonly long[] _channelIds = new long[ChannelMaxBolts];
     private readonly Vector3[] _channelStarts = new Vector3[ChannelMaxBolts];
     private readonly Vector3[] _channelGrounds = new Vector3[ChannelMaxBolts];
+    private readonly float[] _channelDebugLengths = new float[ChannelMaxBolts];
     private readonly float[] _channelPulses = new float[ChannelSlots];
     private readonly List<RingMegastormScythes.ChannelCore> _channelCores = new();
     private readonly long[] _channelCoreIds = new long[ChannelMaxCores];
@@ -70,6 +75,25 @@ public partial class RingLocalWeatherEffects
     /// <summary>Exponential average (about 20 frames) of UpdateLightningChannels in microseconds (CPU), for the perf note.</summary>
     public double LightningChannelMicros { get; private set; }
 
+    /// <summary>Debug string of the published overlay state (slot pulses and tips, segment bounds, non-finite count); capture tools only.</summary>
+    public string LightningChannelDebug()
+    {
+        Vector3 lo = new(float.MaxValue, float.MaxValue, float.MaxValue), hi = new(float.MinValue, float.MinValue, float.MinValue);
+        int bad = 0;
+        foreach (ChannelSegment seg in _channelSegments)
+        {
+            if (!seg.A.IsFinite() || !seg.B.IsFinite()) { bad++; continue; }
+            lo = new Vector3(Math.Min(lo.X, seg.A.X), Math.Min(lo.Y, seg.A.Y), Math.Min(lo.Z, seg.A.Z));
+            hi = new Vector3(Math.Max(hi.X, seg.A.X), Math.Max(hi.Y, seg.A.Y), Math.Max(hi.Z, seg.A.Z));
+        }
+        Vector3 eye = GetViewport()?.GetCamera3D()?.GlobalPosition ?? Vector3.Zero;
+        string slots = "";
+        for (int i = 0; i < _channelSelected.Count && i < ChannelMaxBolts; i++)
+            slots += $" [{i}] id={_channelSelected[i].EventId} fs={_channelSelected[i].FieldStrike} start={_channelStarts[i]} ground={_channelGrounds[i]} len={_channelDebugLengths[i]:0}";
+        return slots + $" pulses=[{_channelPulses[0]:0.000},{_channelPulses[1]:0.000},{_channelPulses[2]:0.000}] tips=[{_channelTips[0]:0.00},{_channelTips[1]:0.00},{_channelTips[2]:0.00}] segs={_channelSegments.Count} bad={bad} "
+            + $"bboxLo={lo} bboxHi={hi} eye={eye} active={_channelPublishedActive} compositor={(_channelCompositor != null)} slotOk={_channelSlotOk} selected={_channelSelected.Count} first={(_channelSegments.Count > 0 ? _channelSegments[0].A.ToString() + "->" + _channelSegments[0].B + " slot " + _channelSegments[0].Bolt + " w " + _channelSegments[0].WidthA + " i " + _channelSegments[0].Intensity + " aA " + _channelSegments[0].AlongA + " aB " + _channelSegments[0].AlongB : "none")}";
+    }
+
     private void UpdateLightningChannels()
     {
         if (!EnableLightningChannels || _weatherSource == null || _grid == null || _explorer == null
@@ -78,8 +102,13 @@ public partial class RingLocalWeatherEffects
         double now = _weatherSource.CloudSimulationTimeSeconds;
         _channelCircumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
         _channelDistance ??= ChannelGroundDistance;
+        // Field strikes (any source; RingFieldStrikeLayer owns the handoff to the far set) take the first slots, megastorm bolts the rest.
+        int fieldCount = RingFieldStrikeLayer.SelectMain(_weatherSource.ActiveLightningEvents, _weatherSource.ActiveContactArcs, now, _channelDistance,
+            RingFieldStrikeLayer.FarSetBound, ChannelMaxFieldStrikes, _channelFieldEvents, _channelFieldWeights);
         LightningChannelSegments.SelectMegastormEvents(_weatherSource.ActiveLightningEvents, now, _channelDistance,
-            Math.Max(0.0, ChannelMaxDistanceMeters), ChannelMaxBolts, _channelSelected);
+            Math.Max(0.0, ChannelMaxDistanceMeters), ChannelMaxBolts - fieldCount, _channelSelected);
+        for (int i = 0; i < _channelSelected.Count; i++) _channelWeights[i] = 1.0f;
+        for (int i = 0; i < fieldCount; i++) { _channelWeights[_channelSelected.Count] = _channelFieldWeights[i]; _channelSelected.Add(_channelFieldEvents[i]); }
         RingMegastormScythes.Instance?.CopyChannelCores(_channelCores);
         if (_channelCores.Count == 0 && _channelSelected.Count == 0) { PublishChannelsInactive(); return; }
         if (_channelCompositor == null)
@@ -130,6 +159,7 @@ public partial class RingLocalWeatherEffects
                 if (!valid[i]) continue;
                 int before = _channelSegments.Count;
                 _channelGrounds[i] = _channelStarts[i] + downs[i] * lengths[i];
+                _channelDebugLengths[i] = lengths[i];
                 AppendChannelBolt(e, _channelStarts[i], _channelGrounds[i], i);
                 // Selected is nearest first, so the farthest bolts are the ones dropped over the cap.
                 if (_channelSegments.Count > ChannelMaxSegments) _channelSegments.RemoveRange(before, _channelSegments.Count - before);
@@ -155,7 +185,15 @@ public partial class RingLocalWeatherEffects
         Array.Clear(_channelTips);
         for (int i = 0; i < count; i++)
         {
-            used[i] = LightningChannelSegments.ChannelPulse(_channelSelected[i], now, out int stroke) * suppression;
+            RingLightningEvent selected = _channelSelected[i];
+            if (selected.FieldStrike)
+            {
+                // Field strike: the shared envelope; tip = 10 + leader progress marks the slot for the shader (growing channel, zone colours).
+                used[i] = selected.PulseAt(now) * Math.Max(0.0f, selected.Energy) * _channelWeights[i] * suppression;
+                _channelTips[i] = LightningChannelSegments.FieldSlotTipBase + selected.FieldLeaderProgress(now) + 2.0f * selected.FieldStrokeIndex(now);   // + 2 x return stroke index (branch flicker)
+                continue;
+            }
+            used[i] = LightningChannelSegments.ChannelPulse(selected, now, out int stroke) * suppression;
             _channelTips[i] = stroke;   // bolt slots carry the stroke index in tip[] (flicker seed)
         }
         for (int k = 0; k < coreCount; k++) used[count + k] = Math.Max(0.0f, _channelCores[k].Intensity) * suppression;
@@ -210,7 +248,7 @@ public partial class RingLocalWeatherEffects
     private bool ComputeChannelFrame(in RingLightningEvent e, RingLodGeometrySnapshot geometry, out Vector3 start, out Vector3 side, out Vector3 down, out float length)
     {
         RingCanonicalPosition top = e.CloudPosition;
-        if ((e.EventId & MegastormLightning.BlueIdTag) != 0)
+        if (!e.FieldStrike && (e.EventId & MegastormLightning.BlueIdTag) != 0)
             top = top with { VerticalMeters = Math.Max(top.VerticalMeters, e.GroundPosition.VerticalMeters + ChannelBlueTopAboveGroundMeters) };
         start = _grid!.CanonicalRingPositionToWorld(top);
         Vector3 end = _grid.CanonicalRingPositionToWorld(e.GroundPosition);
@@ -235,7 +273,8 @@ public partial class RingLocalWeatherEffects
         if (!_channelCache.TryGetValue(e.EventId, out ChannelBoltCache? cached))
         {
             cached = new ChannelBoltCache { Ground = ground };
-            LightningChannelSegments.BuildMegastormChannel(top, ground, e.ShapeSeed, 0, cached.Segments);
+            if (e.FieldStrike) LightningChannelSegments.BuildFieldStrikeChannel(top, ground, e.ShapeSeed, e.IsFieldArc, 0, cached.Segments);
+            else LightningChannelSegments.BuildMegastormChannel(top, ground, e.ShapeSeed, 0, cached.Segments);
             _channelCache[e.EventId] = cached;
         }
         Vector3 delta = ground - cached.Ground;

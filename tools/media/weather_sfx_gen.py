@@ -621,24 +621,6 @@ def megastorm_ground_hum(rng, seconds=24.0):
     return normalise_loop(out, -22, -6)
 
 
-def megastorm_wall_sing(rng, seconds=30.0):
-    # The rim walls singing: a slightly inharmonic metallic drone (detuned pairs beat slowly), with air moving through the
-    # structure as narrow-band noise on top of the partials.
-    n = int(seconds * SR)
-    ratios = [1.0, 2.003, 3.01, 4.02, 5.97, 7.9, 10.1]
-    amps = [1.0, 0.7, 0.55, 0.4, 0.3, 0.2, 0.12]
-    f0 = 98.0
-    freqs, a = [], []
-    for r, amp in zip(ratios, amps):
-        for d in (-0.35, 0.35):
-            freqs.append(f0 * r + d * rng.uniform(0.6, 1.4))
-            a.append(amp * 0.5)
-    out = whole_cycle_sines(rng, seconds, freqs, a, [30.0, 15.0, 10.0, 7.5], 0.7)
-    breath = noise(rng, n, 180, 1500, order=3) * periodic_lfo(rng, seconds, [10.0, 6.0], 0.6)
-    out += 0.12 * breath
-    return normalise_loop(out, -24, -6)
-
-
 def megastorm_boom(rng, seconds=4.4):
     # The Mach pile-up arriving at once: a crack, a sub thump with a pitch drop, then low rolling bursts that darken and thin
     # out. Shape follows MegastormSound.BoomEnvelope (fast attack, decaying roll, taper into the roar crossfade).
@@ -715,6 +697,21 @@ def megastorm_rain_hammer(rng, seconds=24.0):
     return normalise_loop(out, -20, -4)
 
 
+def megastorm_rim_sizzle(rng, seconds=12.0):
+    # Near-rim contact arcs (docs/megastorm-design.md 5.5.5, WO13): a continuous electrical sizzle, a dense stream of tiny 2-14 kHz clicks (about 1,500 per
+    # second, the odd harder crack) over a swelling 2.5-9.5 kHz hiss and a faint 100 Hz mains-like buzz with its 2nd/3rd harmonics. Events wrap around the loop
+    # end, the bed and the buzz are whole-cycle periodic, so the loop is exact.
+    L = int(seconds * SR)
+    times = poisson_times(rng, 1500, seconds)
+    amps = np.exp(rng.normal(-0.8, 0.8, len(times)))
+    hits = scatter_loop(L, times, lambda i: amps[i] * click(rng, int(rng.uniform(0.0003, 0.0012) * SR), rng.uniform(0.00015, 0.0005), lo=rng.uniform(2000, 5000), hi=rng.uniform(8000, 14000)))
+    bed = noise(rng, L, 2500, 9500, order=2) * periodic_lfo(rng, seconds, [6.0, 3.0, 2.0], 0.5)
+    buzz = whole_cycle_sines(rng, seconds, [100.0, 200.0, 300.0], [0.5, 0.35, 0.2], [6.0, 4.0], 0.6)
+    out = hits + 0.5 * bed + 0.06 * buzz
+    out = fft_filter(out, lambda f: butter_mag(f, 400, 14000))
+    return normalise_loop(out, -22, -6)
+
+
 def megastorm_ear_pop(rng, seconds=0.7):
     # The Eustachian pop (docs/megastorm-design.md 5.5.3), cosmetic: a soft low thump (a sealed ear giving way), a tiny crackle of clicks and a short
     # breath of low-passed air as the pressure equalises.
@@ -764,13 +761,13 @@ def build_jobs(ffmpeg, src_dir):
         name = f"thunder_far_{i:02d}"
         jobs[name] = (lambda name=name, i=i: thunder_far(rng_for(name), ffmpeg, [srcs[(i - 1) % 3], srcs[i % 3]]))
     jobs["megastorm_ground_hum_loop"] = lambda: megastorm_ground_hum(rng_for("megastorm_ground_hum_loop"))
-    jobs["megastorm_wall_sing_loop"] = lambda: megastorm_wall_sing(rng_for("megastorm_wall_sing_loop"))
     jobs["megastorm_roar_loop"] = lambda: megastorm_roar(rng_for("megastorm_roar_loop"))
     for i in range(1, 4):
         name = f"megastorm_boom_{i}"
         jobs[name] = (lambda name=name: megastorm_boom(rng_for(name)))
     jobs["megastorm_rain_hammer_loop"] = lambda: megastorm_rain_hammer(rng_for("megastorm_rain_hammer_loop"))
     jobs["megastorm_ear_pop"] = lambda: megastorm_ear_pop(rng_for("megastorm_ear_pop"))
+    jobs["megastorm_rim_sizzle_loop"] = lambda: megastorm_rim_sizzle(rng_for("megastorm_rim_sizzle_loop"))
     for i in range(1, 4):
         name = f"megastorm_scythe_crackle_{i}"
         jobs[name] = (lambda name=name: megastorm_scythe_crackle(rng_for(name)))

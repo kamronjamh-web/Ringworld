@@ -33,6 +33,13 @@ public partial class RingVolumetricCloudLayer
 
     public IReadOnlyList<RingLightningEvent> ActiveLightningEvents => _activeLightningEvents;
 
+    private readonly List<RingLightningEvent> _activeContactArcs = new();
+    /// <summary>
+    /// Megastorm near-rim contact arcs (WO13): short visual-only discharges drawn by the field-strike layer. They are deliberately NOT in
+    /// <see cref="ActiveLightningEvents"/>, so no adapter ever publishes a disturbance for them (they only drive the MegastormContact FlashLevel).
+    /// </summary>
+    public IReadOnlyList<RingLightningEvent> ActiveContactArcs => _activeContactArcs;
+
     /// <summary>Registers a stationary canonical storm override; its ellipse also feeds far weather queries.</summary>
     public void RegisterManualWeather(string ownerKey, LocalWeatherState weather)
     {
@@ -143,10 +150,12 @@ public partial class RingVolumetricCloudLayer
         for (int i = _activeLightningEvents.Count - 1; i >= 0; i--)
         {
             RingLightningEvent active = _activeLightningEvents[i];
-            if (active.StartTimeSeconds > now || now - active.StartTimeSeconds > RingLightningEvent.LifetimeSeconds)
+            if (active.StartTimeSeconds > now || now - active.StartTimeSeconds > active.LifeSeconds)
                 _activeLightningEvents.RemoveAt(i);
         }
-        if (!Enabled || !EnableSharedLightning || _grid == null || _explorer == null) { _activeLightningEvents.Clear(); return; }
+        for (int i = _activeContactArcs.Count - 1; i >= 0; i--)
+            if (_activeContactArcs[i].StartTimeSeconds > now || now - _activeContactArcs[i].StartTimeSeconds > _activeContactArcs[i].LifeSeconds) _activeContactArcs.RemoveAt(i);
+        if (!Enabled || !EnableSharedLightning || _grid == null || _explorer == null) { _activeLightningEvents.Clear(); _activeContactArcs.Clear(); return; }
 
         ScanLightningCells(now);
         _lightningCandidatesEvaluatedLastUpdate = 0;
@@ -159,6 +168,7 @@ public partial class RingVolumetricCloudLayer
         foreach (LocalWeatherState manual in _manualWeather.Values) TryScheduleManualLightning(manual, now);
         TryScheduleMegastormLightning(now);
         TryScheduleMegastormScythes(now);
+        TryScheduleMegastormFieldStrikes(now);
     }
 
     private void ScanLightningCells(double now)
@@ -399,6 +409,87 @@ public partial class RingVolumetricCloudLayer
                 Scythe = true
             });
         }
+    }
+
+    // ---- Megastorm field strikes and contact arcs (docs/megastorm-design.md 5.5.5, WO13) ----
+    private readonly List<MegastormFieldStrike> _megastormFieldStrikeScratch = new();
+    private readonly List<MegastormContactArc> _megastormArcScratch = new();
+    /// <summary>Contact arcs are tiny (50-500 m); they are only scheduled within this horizontal distance of the explorer.</summary>
+    public const double ContactArcReachMeters = 60000.0;
+
+    /// <summary>
+    /// Field strikes of the whole wall (an upward channel is visible from anywhere, out to the antipode) whose 0.8-1.9 s life covers <paramref name="now"/>, as
+    /// <c>FieldStrike</c>-flagged events (GroundPosition = contact point, CloudPosition = channel base, own DurationSeconds) so the field's lightning adapter publishes
+    /// exactly one FieldStrike disturbance each (SourceId = EventId). Contact arcs within 60 km go to <see cref="ActiveContactArcs"/>. Pure in (model, now, provider,
+    /// Lightning frequency, Reduced flashes); a no-op without a triggered megastorm and a field provider, so ordinary worlds are unchanged.
+    /// </summary>
+    private void TryScheduleMegastormFieldStrikes(double now)
+    {
+        if (MegastormSource == null || MegastormHazardModel is not MegastormModel model || !model.Triggered || _explorer == null
+            || MegastormFieldCoupling.FieldUndersideProvider == null) { _fieldSlotCache.Clear(); _arcSlotCache.Clear(); return; }
+        float scale = LightningVisualPolicy.NaturalStrikeChanceScale;
+        // The per-slot results are pure in (model, provider, scale), so each slot is derived once and kept for a few seconds (a rewind simply finds or re-derives it).
+        if (!ReferenceEquals(model, _fieldCacheModel) || !ReferenceEquals(MegastormFieldCoupling.FieldUndersideProvider, _fieldCacheProvider) || scale != _fieldCacheScale
+            || model.State.Anchors.Count != _fieldCacheAnchors)
+        {
+            _fieldSlotCache.Clear(); _arcSlotCache.Clear();
+            _fieldCacheModel = model; _fieldCacheProvider = MegastormFieldCoupling.FieldUndersideProvider; _fieldCacheScale = scale; _fieldCacheAnchors = model.State.Anchors.Count;
+        }
+        long firstSlot = Math.Max(0, (long)Math.Floor((now - RingLightningEvent.FieldStrikeMaxSeconds) / MegastormFieldStrikes.SlotSeconds)), lastSlot = (long)Math.Floor(now / MegastormFieldStrikes.SlotSeconds);
+        for (long slot = firstSlot; slot <= lastSlot; slot++)
+        {
+            if (!_fieldSlotCache.TryGetValue(slot, out MegastormFieldStrike[]? strikes))
+            {
+                var made = new List<MegastormFieldStrike>(2);
+                for (int seg = 0; seg < MegastormFieldStrikes.Segments; seg++)
+                    if (MegastormFieldStrikes.Strike(model, slot, seg, scale) is MegastormFieldStrike strike) made.Add(strike);
+                _fieldSlotCache[slot] = strikes = made.ToArray();
+            }
+            foreach (MegastormFieldStrike strike in strikes)
+            {
+                if (_activeLightningEvents.Count >= 128) break;
+                if (strike.StartTimeSeconds > now || now - strike.StartTimeSeconds > strike.DurationSeconds || FindActiveLightningIndex(strike.Id) >= 0) continue;
+                _activeLightningEvents.Add(MegastormFieldStrikes.ToEvent(strike));
+            }
+        }
+        if (_fieldSlotCache.Count > 24) PruneSlotCache(_fieldSlotCache, firstSlot);
+        RingCanonicalPosition observer = _explorer.CanonicalPosition;
+        double circumference = model.Settings.CircumferenceMeters;
+        long arcFirst = Math.Max(0, (long)Math.Floor((now - 0.5) / MegastormFieldStrikes.ArcSlotSeconds)), arcLast = (long)Math.Floor(now / MegastormFieldStrikes.ArcSlotSeconds);
+        for (long slot = arcFirst; slot <= arcLast; slot++)
+        {
+            if (!_arcSlotCache.TryGetValue(slot, out MegastormContactArc[]? arcs))
+            {
+                var made = new List<MegastormContactArc>(2);
+                for (int side = 0; side < 2; side++)
+                    if (MegastormFieldStrikes.Arc(model, slot, side, scale) is MegastormContactArc arc) made.Add(arc);
+                _arcSlotCache[slot] = arcs = made.ToArray();
+            }
+            foreach (MegastormContactArc arc in arcs)
+            {
+                if (arc.StartTimeSeconds > now || now - arc.StartTimeSeconds > arc.DurationSeconds) continue;
+                double da = MegastormModel.WrapSigned(arc.AroundMeters - observer.AroundMeters, circumference), dz = arc.AcrossMeters - observer.AcrossMeters;
+                if (da * da + dz * dz > ContactArcReachMeters * ContactArcReachMeters) continue;
+                bool known = false;
+                for (int i = 0; i < _activeContactArcs.Count && !known; i++) known = _activeContactArcs[i].EventId == arc.Id;
+                if (!known && _activeContactArcs.Count < 32) _activeContactArcs.Add(MegastormFieldStrikes.ToEvent(arc));
+            }
+        }
+        if (_arcSlotCache.Count > 24) PruneSlotCache(_arcSlotCache, arcFirst);
+    }
+
+    private readonly Dictionary<long, MegastormFieldStrike[]> _fieldSlotCache = new();
+    private readonly Dictionary<long, MegastormContactArc[]> _arcSlotCache = new();
+    private MegastormModel? _fieldCacheModel;
+    private Func<double, double>? _fieldCacheProvider;
+    private float _fieldCacheScale = float.NaN;
+    private int _fieldCacheAnchors = -1;
+
+    private static void PruneSlotCache<T>(Dictionary<long, T> cache, long keepFrom)
+    {
+        List<long>? stale = null;
+        foreach (long key in cache.Keys) if (key < keepFrom - 2 || key > keepFrom + 40) (stale ??= new List<long>()).Add(key);
+        if (stale != null) foreach (long key in stale) cache.Remove(key);
     }
 
     /// <summary>A terrain height sampler (around, across) with the surface-edit snapshot captured once, the same surface the strikes land on; null before the grid exists.</summary>

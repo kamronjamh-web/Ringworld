@@ -189,8 +189,8 @@
     },
     "sunshine_night_shell_exit_smoke_test": {
       "status": "known-fail",
-      "match": "Texture \\(binding: \\d+, index 0\\) needs to have the same type as the uniform",
-      "evidence": "2026-10-29 WO4 (RTX 4070): 3 of 3 runs crash 0xC0000005 (-1073741819) after Vulkan uniform_set_create errors (expected 2DArray, actual 2D); the latest runs print SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS first and then crash during teardown, which the runner reports as crash (a crash after PASS is not a fix); also at close-out gpu_run1",
+      "match": "Texture \\(binding: \\d+, index 0\\) (needs to have the same type as the uniform|is not a valid texture)",
+      "evidence": "2026-10-29 WO4 (RTX 4070): 3 of 3 runs crash 0xC0000005 (-1073741819) after Vulkan uniform_set_create errors (expected 2DArray, actual 2D); the latest runs print SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS first and then crash during teardown, which the runner reports as crash (a crash after PASS is not a fix); also at close-out gpu_run1; 2026-11-05: after the far-wedge main-depth mask the teardown also logs \"Texture (binding: 1, index 0) is not a valid texture\" / \"us is null\" before the same crash",
       "since": "2026-10-29",
       "machines": [
         "desktop_mid_high"
@@ -209,6 +209,26 @@
       "retries": 0,
       "evidence": "Teardown crash after PASS (exit -1073741819 after the 2DArray/'us is null' uniform errors, the class of cloud_shadow_crossfade_test and weather_lifecycle_visual_smoke_test). Predates WO4b: the WO4 lead's 'megastorm perf' capture (scratch round2.log, 2026-10-30 11:1x) and its first after1 capture exited -1073741819 after PASS. 2026-10-30 WO4b (RTX 4070): 9 of 23 capture runs crashed after PASS, with and without the megastorm prewarm and with the WO4 shaders (megaperfA2). The match only covers a crash after the PASS marker",
       "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "megastorm_wo11_capture": {
+      "status": "flaky",
+      "match": "MEGASTORM_CAPTURE=PASS",
+      "retries": 0,
+      "evidence": "manual capture tool; same teardown access violation after PASS as megastorm_capture (2026-11-05)",
+      "since": "2026-11-05",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "megastorm_darkness_capture": {
+      "status": "flaky",
+      "match": "MEGASTORM_CAPTURE=PASS",
+      "retries": 0,
+      "evidence": "manual capture tool; same teardown access violation after PASS as megastorm_capture (2026-11-05)",
+      "since": "2026-11-05",
       "machines": [
         "desktop_mid_high"
       ]

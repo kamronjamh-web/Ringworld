@@ -910,6 +910,11 @@ float sampleLighting(
 	float stormTau = 0.0;
 	if (ring_ws_enabled() && coarseSunLighting && g_storm_primary_active) {
 		stormTau = ring_storm_sun_tau(to_cloud_space(worldPosition), sunDirection);
+		// Megastorm strip (far-look pass 2026-11): in the column's top layer (within the top fade) multiple scattering keeps sunlight deeper
+		// than single-scatter Beer, the far wedge pass's max(exp(-tau), 0.7 exp(-0.25 tau)) as an effective depth. Buried samples (the face and
+		// the underside under the overhang, the look from ahead) keep the plain column depth.
+		if (RING_MEGASTORM_ENABLED && g_storm_strip && ring_storm_column_top() - to_cloud_space(worldPosition).y <= RING_STORM_FADE_METERS)
+			stormTau = min(stormTau, 0.25 * stormTau + 0.3567);
 		if (g_storm_primary_dominant) stepCount = min(stepCount, 2);
 	}
 	float density = 0.0;
@@ -1766,7 +1771,10 @@ void main() {
 				// storm ambient. Their sun is already gone (ring_storm_sun_tau).
 				bool megaInColumn = ring_storm_column_contains(cloudPos.y);
 				megaSample = ring_storm_column_top() - cloudPos.y > RING_STORM_FADE_METERS;
-				primaryStormShare = megaSample ? 1.0 : min(1.0, newdensity * 4.0);
+				// Far-look pass (2026-11): the column's top layer sees the open sky dome, so its storm share ramps from 0 at the top surface to
+				// 1 at the top fade's depth (continuous with the buried samples), as in the far wedge pass. It was min(1, 4 density).
+				primaryStormShare = megaSample ? 1.0
+					: smoothstep(0.25 * RING_STORM_FADE_METERS, RING_STORM_FADE_METERS, ring_storm_column_top() - cloudPos.y);
 				sunCutShare = 0.0;
 				g_storm_primary_dominant = megaInColumn || g_storm_primary_dominant;
 			}
@@ -1951,6 +1959,8 @@ void main() {
 					sampleMegaOpen = mix(RING_MEGASTORM_SHADE_AMBIENT, RING_MEGASTORM_OPEN_AMBIENT, ring_megastorm_open_light(cloudPos))
 						* (1.0 + RING_MEGASTORM_RELIEF * (1.0 - 2.0 * texture(noise_medium, (cloudPos - mediumNoisePos
 							- vec3(genericData.data.ring_megastorm_noise.y, 0.0, 0.0)) / mediumnoiseScale).b));
+					// The anvil's leading face sees the open sky dome (far-look pass): that share of the sample takes the sky ambient.
+					primaryStormShare *= 1.0 - g_mega_sky_open;
 				}
 				
 				newStep = mix(mix(maxstep, minstep, pow(newdensity, 0.1)), maxstep, float(i) / float(stepCount));
@@ -2247,11 +2257,6 @@ void main() {
 	if (megaHazeOn) {
 		vec3 shadeSun = directionalLightCount > 0 ? directionalLights[0].direction.xyz : genericData.data.cloud_frame_up.xyz;
 		megaLevels = ring_megastorm_haze_levels(rayOrigin, raydirection, max(0.0, linear_depth), shadeSun);
-		if (RING_INTERLEAVE > 0) {
-			megaPackedFactors = ring_cloud_pack_storm_factors(ring_cloud_atmosphere_storm_factors(rayOrigin, raydirection,
-				clamp(finalDensityDistance, 0.0, max(0.0, linear_depth)), genericData.data.ring_atmosphere_profile, megaLevels,
-				genericData.data.ring_storm_ambient.w, ringMegastormStrip.c));
-		}
 	}
 	vec3 delta = rayOrigin - genericData.data.previous_camera_origin.xyz;
 
@@ -2488,6 +2493,27 @@ void main() {
 
 	currentDataAccumilation.r = min(currentDataAccumilation.r, initialdistanceSample);
 
+	// Megastorm haze (perf pass 2026-11): ONE physical haze evaluation per marched ray, at this pixel's haze distance, serves both the pixel's own
+	// haze below and the interleave block's packed factors (they used two full evaluations, the block's at the raw cloud-body distance).
+	float megaHazeDistance = clamp(currentDataAccumilation.b, 0.0, max(0.0, linear_depth));
+	bool megaHazeDirect = megaHazeOn && ring_haze_profile_physical(genericData.data.ring_atmosphere_profile)
+		&& genericData.data.ring_atmosphere_profile[0].x > 0.5 && !isnan(megaHazeDistance) && !isinf(megaHazeDistance) && megaHazeDistance > 0.0;
+	RingHaze megaHaze;
+	megaHaze.T = vec3(1.0);
+	megaHaze.S_sun = vec3(0.0);
+	megaHaze.S_amb = vec3(0.0);
+	vec2 megaFactors = vec2(1.0);
+	if (megaHazeDirect) {
+		megaHaze = ring_haze_from_profile(rayOrigin + normalize(raydirection) * megaHazeDistance, rayOrigin, genericData.data.ring_atmosphere_profile,
+			ring_haze_profile_day(genericData.data.ring_atmosphere_profile));
+		megaFactors = ring_cloud_storm_factors(megaLevels, megaHazeDistance, -log(max(megaHaze.T.g, 0.000001)),
+			genericData.data.ring_storm_ambient.w, ringMegastormStrip.c);
+	}
+	if (RING_INTERLEAVE > 0 && megaHazeOn) {
+		megaPackedFactors = ring_cloud_pack_storm_factors(megaHazeDirect ? megaFactors : ring_cloud_atmosphere_storm_factors(rayOrigin, raydirection,
+			megaHazeDistance, genericData.data.ring_atmosphere_profile, megaLevels, genericData.data.ring_storm_ambient.w, ringMegastormStrip.c));
+	}
+
 	if (RING_INTERLEAVE > 0) {
 		// CloudInterleave: publish this frame's raw march result for the fill pass (before the history blend and the haze).
 		ivec2 blockUV = ivec2(gl_GlobalInvocationID.xy);
@@ -2513,8 +2539,11 @@ void main() {
 		// live-profile independent, while the published backdrop matches display.
 		if (genericData.data.temporal_controls.z <= 0.0 && genericData.data.temporal_controls.w <= 0.0) {
 			float haze_distance = clamp(currentDataAccumilation.b, 0.0, max(0.0, linear_depth));
-			if (megaHazeOn) {
+			if (megaHazeDirect) {
 				// Every ray of the megastorm variant takes the unified haze path factors (the terrain gets the rule everywhere); all-zero levels give factors 1.
+				// The haze and its factors were evaluated once above (haze_distance == megaHazeDistance).
+				currentColorAccumilation.rgb = currentColorAccumilation.rgb * megaHaze.T + megaHaze.S_sun * megaFactors.x + megaHaze.S_amb * megaFactors.y;
+			} else if (megaHazeOn) {
 				currentColorAccumilation.rgb = ring_cloud_atmosphere_apply_storm_levels(currentColorAccumilation.rgb, rayOrigin, raydirection, haze_distance,
 					genericData.data.ring_atmosphere_profile, megaLevels, genericData.data.ring_storm_ambient.w, ringMegastormStrip.c);
 			} else {

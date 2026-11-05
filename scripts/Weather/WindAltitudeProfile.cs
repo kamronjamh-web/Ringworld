@@ -9,6 +9,7 @@ namespace RingworldTechDemo.Weather;
 /// the free wind so the speed is continuous at 1 km; above that the free wind has the weather drift direction (the direction that shears the anvils) with a speed
 /// that ramps linearly from max(|base|, 4) m/s at 1 km to the jet at the anvil band. The direction veers from the surface (storm-rotated or outflow) to the drift
 /// direction across the boundary layer; a ring has no Coriolis veer, so this is the only turning. The surface gust deviation fades out by 300 m.
+/// <c>heightCapMeters</c> (default none) stops the power law at that height, so the megastorm's 140 m/s wall wind does not keep growing above 300 m.
 /// </summary>
 public static class WindAltitudeProfile
 {
@@ -21,6 +22,8 @@ public static class WindAltitudeProfile
     public const float DefaultJetAltitudeMeters = 9000.0f;
     public const float OpenAlpha = 0.14f;
     public const float ForestAlpha = 0.22f;
+    /// <summary>Height (m AGL) above which the megastorm's wall wind stops growing with the power law (design 5.5.2: power law to 300 m, then the free wind); see <c>heightCapMeters</c>.</summary>
+    public const float MegastormPowerLawCapMeters = 300.0f;
 
     /// <summary>Jet multiplier by storm kind: x1.4 Exceptional, x1.8 Superstorm, 1 otherwise.</summary>
     public static float JetKindMultiplier(int kind) => kind >= 5 ? 1.8f : kind == 4 ? 1.4f : 1.0f;
@@ -32,7 +35,7 @@ public static class WindAltitudeProfile
     }
 
     /// <summary>Mean wind (around, across) at a height above ground.</summary>
-    public static Vector2 MeanAt(Vector2 surfaceMean, Vector2 drift, float heightMeters, bool forest, float jetMultiplier = 1.0f, float jetAltitudeMeters = DefaultJetAltitudeMeters)
+    public static Vector2 MeanAt(Vector2 surfaceMean, Vector2 drift, float heightMeters, bool forest, float jetMultiplier = 1.0f, float jetAltitudeMeters = DefaultJetAltitudeMeters, float heightCapMeters = float.PositiveInfinity)
     {
         if (!surfaceMean.IsFinite()) surfaceMean = Vector2.Zero;
         if (!drift.IsFinite()) drift = Vector2.Zero;
@@ -47,7 +50,7 @@ public static class WindAltitudeProfile
         if (h < BoundaryLayerTopMeters)
         {
             float alpha = forest ? ForestAlpha : OpenAlpha;
-            float power = surfaceSpeed * Mathf.Pow(h / SurfaceHeightMeters, alpha);
+            float power = surfaceSpeed * Mathf.Pow(Mathf.Min(h, heightCapMeters) / SurfaceHeightMeters, alpha);
             float blend = Smooth(0.35f, 1.0f, (h - SurfaceHeightMeters) / (BoundaryLayerTopMeters - SurfaceHeightMeters));
             speed = Mathf.Lerp(power, freeSpeed1km, blend);
         }
@@ -72,9 +75,9 @@ public static class WindAltitudeProfile
     }
 
     /// <summary>Magnitude of the vertical shear |dU/dz| (1/s) by a central difference over 40 m.</summary>
-    public static float ShearAt(Vector2 surfaceMean, Vector2 drift, float heightMeters, bool forest, float jetMultiplier = 1.0f, float jetAltitudeMeters = DefaultJetAltitudeMeters)
+    public static float ShearAt(Vector2 surfaceMean, Vector2 drift, float heightMeters, bool forest, float jetMultiplier = 1.0f, float jetAltitudeMeters = DefaultJetAltitudeMeters, float heightCapMeters = float.PositiveInfinity)
     {
         float lo = Mathf.Max(0.0f, heightMeters - 20.0f), hi = lo + 40.0f;
-        return (MeanAt(surfaceMean, drift, hi, forest, jetMultiplier, jetAltitudeMeters) - MeanAt(surfaceMean, drift, lo, forest, jetMultiplier, jetAltitudeMeters)).Length() / (hi - lo);
+        return (MeanAt(surfaceMean, drift, hi, forest, jetMultiplier, jetAltitudeMeters, heightCapMeters) - MeanAt(surfaceMean, drift, lo, forest, jetMultiplier, jetAltitudeMeters, heightCapMeters)).Length() / (hi - lo);
     }
 }

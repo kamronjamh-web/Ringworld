@@ -22,7 +22,7 @@ namespace RingworldTechDemo.Tools;
 /// </summary>
 public partial class MegastormAudioTest : RefCounted
 {
-    private sealed record Row(double T, double Xi, float Hum, float SingLow, float SingHigh, float Roar, float RoarEff, float Gate, float AirGain, float Swell,
+    private sealed record Row(double T, double Xi, float Hum, float Roar, float RoarEff, float Gate, float AirGain, float Swell,
         float Tremor, float Wildlife, int Booms, float BoomGain, int BoomVariant, float BoomEnv, float HumDb, float RoarDb);
 
     public int Run(string outDir)
@@ -108,11 +108,9 @@ public partial class MegastormAudioTest : RefCounted
     {
         rig.Clock = t;
         MegastormSample s = rig.Storm.QueryNow(rig.Observer);
-        MegastormSettings settings = rig.Storm.Model.Settings;
-        WallSingLevels sing = s.Active ? MegastormSound.WallSing(s.XiMeters, settings.WarningReachMeters, rig.Storm.Model.TrailingEndXi, rig.Observer.AcrossMeters, settings.WidthMeters) : default;
-        rig.Audio.Step(s, sing, shelter, 0f, dt);
+        rig.Audio.Step(s, shelter, 0f, dt);
         var d = rig.Audio.GetMegastormAudioDiagnostics();
-        return new Row(t - rig.Arrival, s.XiMeters, d["hum_gain"].AsSingle(), d["sing_low_gain"].AsSingle(), d["sing_high_gain"].AsSingle(), d["roar_gain"].AsSingle(), d["roar_effective"].AsSingle(),
+        return new Row(t - rig.Arrival, s.XiMeters, d["hum_gain"].AsSingle(), d["roar_gain"].AsSingle(), d["roar_effective"].AsSingle(),
             d["airborne_gate"].AsSingle(), s.AirGain, s.GustSwell, s.TremorLevel, s.WildlifeQuiet, d["boom_count"].AsInt32(), d["boom_gain"].AsSingle(), d["boom_variant"].AsInt32(), s.BoomEnvelope,
             d["hum_volume_db"].AsSingle(), d["roar_volume_db"].AsSingle());
     }
@@ -135,13 +133,13 @@ public partial class MegastormAudioTest : RefCounted
                     check(false, $"{name}: gate not pushed to the ambience and thunder nodes at t={t}");
             }
             var d = rig.Audio.GetMegastormAudioDiagnostics();
-            // No pops: no voice ever changes faster than the roar's cap (1.5 per second); the hum and singing use the slower default cap.
+            // No pops: no voice ever changes faster than the roar's cap (1.5 per second); the hum uses the slower default cap.
             check(d["max_gain_step"].AsSingle() <= 1.5f + 1e-3f, $"{name}: voice gain step {d["max_gain_step"].AsSingle()} per second");
             if (name == "350")
             {
-                check(d["hum_asset"].AsBool() && d["sing_asset"].AsBool() && d["roar_asset"].AsBool() && d["boom_stream_count"].AsInt32() == 3, "voice assets not loaded");
-                check(d["hum_playing"].AsBool() && d["sing_playing"].AsBool() && d["roar_playing"].AsBool(), "hum, singing and roar are not all playing at T+3 min");
-                check(d["voice_starts"].AsInt32() == 4, $"voices (re)started {d["voice_starts"].AsInt32()} times, expected 4 (hum, 2 singing, roar)");
+                check(d["hum_asset"].AsBool() && d["roar_asset"].AsBool() && d["boom_stream_count"].AsInt32() == 3, "voice assets not loaded");
+                check(d["hum_playing"].AsBool() && d["roar_playing"].AsBool(), "hum and roar are not both playing at T+3 min");
+                check(d["voice_starts"].AsInt32() == 2, $"voices (re)started {d["voice_starts"].AsInt32()} times, expected 2 (hum, roar)");
             }
             return rows;
         }
@@ -164,7 +162,7 @@ public partial class MegastormAudioTest : RefCounted
             }
             check(r.Hum >= previousHum - 1e-6f || r.T > 0.0, $"350: hum not ramping up at T{r.T}");
             previousHum = r.Hum;
-            check(float.IsFinite(r.Hum) && r.Hum <= 1f && r.SingLow <= 1f && r.SingHigh <= 1f, "350: non-finite or loud voice");
+            check(float.IsFinite(r.Hum) && r.Hum <= 1f, "350: non-finite or loud voice");
         }
         Row at(double t) => rows.OrderBy(r => Math.Abs(r.T - t)).First();
         check(at(-240).Hum > 0.9f, $"350: hum {at(-240).Hum} not near full 4 minutes ahead (84 km from the edge)");
@@ -221,7 +219,7 @@ public partial class MegastormAudioTest : RefCounted
             check(d["max_gain_step"].AsSingle() <= RainSoundField.MaxGainRatePerSecond + 1e-3f, $"ramp: hum step {d["max_gain_step"].AsSingle()} per second at x10");
             check(!double.IsNaN(firstAudible) && firstAudible < -5000.0 && peak > 0.98f, $"ramp: hum from T{firstAudible}, peak {peak}");
             check(stageTwoQuiet, "ramp: wildlife quiet before 2 R");
-            check(d["hum_playing"].AsBool() && d["voice_starts"].AsInt32() >= 3, "ramp: hum and singing not playing");
+            check(d["hum_playing"].AsBool() && d["voice_starts"].AsInt32() >= 1, "ramp: hum not playing");
         }
         finally { Free(rig); }
     }
@@ -250,8 +248,8 @@ public partial class MegastormAudioTest : RefCounted
             }
             var d = rig.Audio.GetMegastormAudioDiagnostics();
             check(d["max_gain_step"].AsSingle() <= 1.5f + 1e-3f, $"trail: gain step {d["max_gain_step"].AsSingle()} per second at x10");
-            check(d["hum_gain"].AsSingle() == 0f && d["roar_gain"].AsSingle() == 0f && d["sing_low_gain"].AsSingle() == 0f, "trail: voices not silent after clearing");
-            check(!d["hum_playing"].AsBool() && !d["roar_playing"].AsBool() && !d["sing_playing"].AsBool(), "trail: voices still playing after clearing");
+            check(d["hum_gain"].AsSingle() == 0f && d["roar_gain"].AsSingle() == 0f, "trail: voices not silent after clearing");
+            check(!d["hum_playing"].AsBool() && !d["roar_playing"].AsBool(), "trail: voices still playing after clearing");
             check(d["airborne_gate"].AsSingle() == 1f && lastWild < 0.01f, $"trail: gate {d["airborne_gate"].AsSingle()} / wildlife {lastWild} after clearing");
             check(humPlaying, "trail: the hum never sounded behind the storm");
         }
@@ -262,7 +260,7 @@ public partial class MegastormAudioTest : RefCounted
 
     private static void Shelter(Node root, Action<bool, string> check)
     {
-        (float Hum, float Sing, float Roar, float Cutoff) Settle(RainShelterClass shelter)
+        (float Hum, float Roar, float Cutoff) Settle(RainShelterClass shelter)
         {
             Rig rig = Build(root, 350f, "shelter" + shelter);
             try
@@ -271,7 +269,7 @@ public partial class MegastormAudioTest : RefCounted
                 // Standing 60 s behind the edge for ten seconds: the roar is up and everything has settled.
                 for (double t = 60.0; t < 80.0; t += 0.5) last = Step(rig, rig.Arrival + t, 0.5, shelter);
                 var d = rig.Audio.GetMegastormAudioDiagnostics();
-                return (d["hum_effective"].AsSingle(), Math.Max(last.SingLow, last.SingHigh), d["roar_effective"].AsSingle(), d["air_cutoff_hz"].AsSingle());
+                return (d["hum_effective"].AsSingle(), d["roar_effective"].AsSingle(), d["air_cutoff_hz"].AsSingle());
             }
             finally { Free(rig); }
         }
@@ -283,7 +281,6 @@ public partial class MegastormAudioTest : RefCounted
         check(roof.Roar < open.Roar * 0.7f && indoors.Roar < open.Roar * 0.3f && cave.Roar < 0.01f, $"shelter: roar not muffled ({roof.Roar} {indoors.Roar} {cave.Roar} against {open.Roar})");
         check(indoors.Cutoff < 2000f && open.Cutoff > 17000f, $"shelter: roar bus cutoff {indoors.Cutoff} / {open.Cutoff}");
         check(Math.Abs(roof.Hum - open.Hum) < 1e-6f && Math.Abs(indoors.Hum - open.Hum) < 1e-6f && Math.Abs(cave.Hum - open.Hum) < 1e-6f && open.Hum > 0.4f, $"shelter: hum muffled ({open.Hum} {roof.Hum} {indoors.Hum} {cave.Hum})");
-        check(Math.Abs(indoors.Sing - open.Sing) < 1e-6f && open.Sing > 0.2f, "shelter: wall singing muffled");
     }
 
     // ---- The menu volume --------------------------------------------------------------------------------------------
@@ -373,7 +370,7 @@ public partial class MegastormAudioTest : RefCounted
 
     private static void Assets(Action<bool, string> check)
     {
-        foreach ((string name, double min, double max) in new[] { ("megastorm_ground_hum_loop", 23.9, 24.1), ("megastorm_wall_sing_loop", 29.9, 30.1), ("megastorm_roar_loop", 29.9, 30.1),
+        foreach ((string name, double min, double max) in new[] { ("megastorm_ground_hum_loop", 23.9, 24.1), ("megastorm_roar_loop", 29.9, 30.1),
             ("megastorm_boom_1", 3.0, 5.0), ("megastorm_boom_2", 3.0, 5.0), ("megastorm_boom_3", 3.0, 5.0) })
         {
             string path = $"res://resources/audio/weather/{name}.ogg";
@@ -381,14 +378,15 @@ public partial class MegastormAudioTest : RefCounted
             double length = stream?.GetLength() ?? 0.0;
             check(stream != null && length >= min && length <= max, $"asset {name}: {(stream == null ? "missing" : length.ToString("F2", CultureInfo.InvariantCulture) + " s")}");
         }
+        check(!ResourceLoader.Exists("res://resources/audio/weather/megastorm_wall_sing_loop.ogg"), "asset megastorm_wall_sing_loop still present (the rim-wall singing was removed)");
     }
 
     private static void WriteCsv(string path, List<Row> rows)
     {
-        var sb = new StringBuilder("t,xi,hum,sing_low,sing_high,roar,roar_eff,gate,air_gain,swell,tremor,wildlife,booms,boom_gain,boom_variant,boom_env,hum_db,roar_db\n");
+        var sb = new StringBuilder("t,xi,hum,roar,roar_eff,gate,air_gain,swell,tremor,wildlife,booms,boom_gain,boom_variant,boom_env,hum_db,roar_db\n");
         foreach (Row r in rows)
             sb.Append(string.Create(CultureInfo.InvariantCulture,
-                $"{r.T:F3},{r.Xi:F1},{r.Hum:F5},{r.SingLow:F5},{r.SingHigh:F5},{r.Roar:F5},{r.RoarEff:F5},{r.Gate:F5},{r.AirGain:F5},{r.Swell:F5},{r.Tremor:F5},{r.Wildlife:F5},{r.Booms},{r.BoomGain:F4},{r.BoomVariant},{r.BoomEnv:F5},{r.HumDb:F2},{r.RoarDb:F2}\n"));
+                $"{r.T:F3},{r.Xi:F1},{r.Hum:F5},{r.Roar:F5},{r.RoarEff:F5},{r.Gate:F5},{r.AirGain:F5},{r.Swell:F5},{r.Tremor:F5},{r.Wildlife:F5},{r.Booms},{r.BoomGain:F4},{r.BoomVariant},{r.BoomEnv:F5},{r.HumDb:F2},{r.RoarDb:F2}\n"));
         File.WriteAllText(path, sb.ToString());
     }
 }

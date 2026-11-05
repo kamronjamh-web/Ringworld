@@ -55,7 +55,7 @@ public partial class MegastormSoundTest : RefCounted
             worst = Math.Max(worst, Math.Abs(h - previousLevel)); previousLevel = h;
         }
         check(worst < 0.005f, $"hum step {worst} per 25 m");
-        // Wall singing: the nearer wall is louder and the level scales with the hum.
+        // Wall singing maths (retired as a sound 2026-11-04, nothing plays it): the nearer wall is louder and the level scales with the hum.
         WallSingLevels near = MegastormSound.WallSing(-500000.0, R, TrailEnd, 5000.0, 318000.0);
         check(near.Low > near.High && near.Low <= MegastormSound.HumLevel(-500000.0, R, TrailEnd) + 1e-6f, "nearer wall not loudest");
         WallSingLevels far = MegastormSound.WallSing(-3.0e6, R, TrailEnd, 5000.0, 318000.0);

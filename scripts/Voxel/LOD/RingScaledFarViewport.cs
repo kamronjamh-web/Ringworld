@@ -643,7 +643,8 @@ public partial class RingScaledFarViewport : Node
 		SelectVisibleFarLightningEvents(time, limit, _visibleFarLightningEvents);
 		foreach (RingLightningEvent lightning in _visibleFarLightningEvents)
 		{
-			float pulse = RingLightningEvent.PulseAtAge(time - lightning.StartTimeSeconds);
+			// Field strikes (FieldStrike flag) follow their own envelope and duration (PulseAt / LifeSeconds); ordinary events keep PulseAtAge exactly.
+			float pulse = lightning.FieldStrike ? lightning.PulseAt(time) : RingLightningEvent.PulseAtAge(time - lightning.StartTimeSeconds);
 			if (pulse <= 0.0001f) continue;
 			float around = Mathf.PosMod((float)lightning.CloudPosition.AroundMeters, (float)Math.Max(1.0, _circumferenceMeters));
 			float across = Mathf.Clamp((float)lightning.CloudPosition.AcrossMeters, 0.0f, RingWidthMeters);
@@ -757,7 +758,8 @@ public partial class RingScaledFarViewport : Node
 		for (int eventIndex = 0; eventIndex < activeEvents.Count; eventIndex++)
 		{
 			RingLightningEvent lightning = activeEvents[eventIndex];
-			float pulse = RingLightningEvent.PulseAtAge(time - lightning.StartTimeSeconds);
+			// Field strikes (FieldStrike flag) follow their own envelope and duration (PulseAt / LifeSeconds); ordinary events keep PulseAtAge exactly.
+			float pulse = lightning.FieldStrike ? lightning.PulseAt(time) : RingLightningEvent.PulseAtAge(time - lightning.StartTimeSeconds);
 			if (pulse <= 0.0001f) continue;
 			Vector3 world = _grid.CanonicalRingPositionToWorld(lightning.CloudPosition);
 			Vector3 delta = world - cameraPosition;

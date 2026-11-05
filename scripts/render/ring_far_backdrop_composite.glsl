@@ -5,15 +5,28 @@ layout(rgba16f,binding=0) uniform image2D scene_color;
 layout(binding=1) uniform sampler2D scene_depth;
 layout(binding=2) uniform sampler2D far_color;
 layout(binding=3) uniform sampler2D regional_color;
-layout(push_constant) uniform Params { vec4 options; } params; // x = regional layer present, yz = uv offset of the unjittered far layers (FSR2/TAA jitter)
+// One texel per 8x8 tile (= one workgroup) of the main internal-size image: 1 = every pixel of the tile has main depth, 0 = at least one
+// sky (or out-of-bounds) pixel. The megastorm far pass reads last frame's mask (eroded by one tile) to skip pixels main will cover.
+layout(r8,binding=4) uniform writeonly image2D tile_mask;
+layout(push_constant) uniform Params { vec4 options; } params; // x = regional layer present, yz = uv offset of the unjittered far layers (FSR2/TAA jitter), w = 1 to write tile_mask
+shared uint tile_has_sky;
 void main() {
  ivec2 p=ivec2(gl_GlobalInvocationID.xy); ivec2 size=imageSize(scene_color);
- if(any(greaterThanEqual(p,size))) return;
+ bool mask_on=params.options.w>.5;
+ if(mask_on) { if(gl_LocalInvocationIndex==0u) tile_has_sky=0u; memoryBarrierShared(); barrier(); }
+ bool in_bounds=all(lessThan(p,size));
  // Reverse-Z: 0 = nothing was rendered by the main pass (the old canvas-background region).
- if(texelFetch(scene_depth,p,0).r>0.) return;
- vec2 uv=(vec2(p)+.5)/vec2(size)+params.options.yz;
- vec3 rgb=textureLod(far_color,uv,0.).rgb;
- if(params.options.x>.5) { vec4 r=textureLod(regional_color,uv,0.); rgb=mix(rgb,r.rgb,clamp(r.a,0.,1.)); }
- vec4 color=imageLoad(scene_color,p);
- imageStore(scene_color,p,vec4(rgb,color.a));
+ bool sky=in_bounds && !(texelFetch(scene_depth,p,0).r>0.);
+ if(sky) {
+  vec2 uv=(vec2(p)+.5)/vec2(size)+params.options.yz;
+  vec3 rgb=textureLod(far_color,uv,0.).rgb;
+  if(params.options.x>.5) { vec4 r=textureLod(regional_color,uv,0.); rgb=mix(rgb,r.rgb,clamp(r.a,0.,1.)); }
+  vec4 color=imageLoad(scene_color,p);
+  imageStore(scene_color,p,vec4(rgb,color.a));
+ }
+ if(mask_on) {
+  if(sky || !in_bounds) atomicOr(tile_has_sky,1u);
+  memoryBarrierShared(); barrier();
+  if(gl_LocalInvocationIndex==0u) imageStore(tile_mask,ivec2(gl_WorkGroupID.xy),vec4(tile_has_sky==0u?1.:0.));
+ }
 }
