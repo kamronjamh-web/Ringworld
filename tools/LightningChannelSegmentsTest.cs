@@ -63,6 +63,29 @@ public partial class LightningChannelSegmentsTest : RefCounted
         Check(n == 1 && output[0].EventId == 7, "distance filter");
         n = LightningChannelSegments.SelectMegastormEvents(list, now, distance, 60000.0, 2, output);
         Check(n == 2 && output[0].EventId == 7 && output[1].EventId == 1, "maxBolts 2");
+        // Natural selection: kind != 6, not field strikes, appended after what is already in the list (priority), nearest first.
+        var mixed = new List<RingLightningEvent> { Event(200, 3, 99.9, 900), Event(201, 6, 99.9, 100), Event(202, 3, 99.9, 300), Event(203, 4, 99.9, 70000), Event(204, 3, 90.0, 100) };
+        var sel = new List<RingLightningEvent>();
+        int m = LightningChannelSegments.SelectMegastormEvents(mixed, now, distance, 60000.0, 8, sel);
+        int nat = LightningChannelSegments.SelectNaturalEvents(mixed, now, distance, 60000.0, 8, sel);
+        Check(m == 1 && nat == 2 && sel.Count == 3, "natural count " + m + "/" + nat);
+        Check(sel[0].EventId == 201 && sel[1].EventId == 202 && sel[2].EventId == 200, "megastorm first, then natural nearest first");
+        sel.Clear();
+        LightningChannelSegments.SelectNaturalEvents(mixed, now, distance, 60000.0, 1, sel);
+        Check(sel.Count == 1 && sel[0].EventId == 202, "natural slot cap keeps the nearest");
+        Check(LightningChannelSegments.NaturalBranchBudget(1000) == 3 && LightningChannelSegments.NaturalBranchBudget(20000) == 9, "branch budget scales and clamps");
+        var shortBolt = new List<ChannelSegment>(); var longBolt = new List<ChannelSegment>();
+        int brShort = 0, brLong = 0;
+        for (int seed = 1; seed <= 20; seed++)
+        {
+            shortBolt.Clear(); longBolt.Clear();
+            LightningChannelSegments.BuildMegastormChannel(new Vector3(0, 1500, 0), Vector3.Zero, seed, 0, shortBolt, LightningChannelSegments.NaturalBranchBudget(1500));
+            LightningChannelSegments.BuildMegastormChannel(new Vector3(0, 9000, 0), Vector3.Zero, seed, 0, longBolt, LightningChannelSegments.NaturalBranchBudget(9000));
+            Check(shortBolt.Count > 0 && shortBolt.Count <= LightningChannelSegments.MaxBoltSegments, "natural channel segment count " + shortBolt.Count);
+            foreach (ChannelSegment s in shortBolt) if (s.AlongB > 0.5f) { brShort++; break; }
+            foreach (ChannelSegment s in longBolt) if (s.AlongB > 0.5f) { brLong++; break; }
+        }
+        Check(brShort >= 15, "natural channels carry forks, got " + brShort + "/20");
     }
 
     void Building()

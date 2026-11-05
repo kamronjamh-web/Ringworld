@@ -118,6 +118,11 @@ func _run() -> void:
 		await _set_local_noon()
 	elif _arg("midnight", "") != "":
 		await _set_local_noon(true)
+	if float(_arg("natural-km", "-1")) > 0.0:
+		await create_timer(float(_arg("settle", "10")) * 0.5).timeout
+		await _natural_storm(float(_arg("natural-km", "-1")))
+		quit(0)
+		return
 	var spawn_km := float(_arg("spawn-km", "-1"))
 	if spawn_km > 0.0:
 		await create_timer(float(_arg("settle", "10"))).timeout
@@ -348,3 +353,80 @@ func _aba(period: float) -> void:
 		print("MEGASTORM_ABA phase=%d channels=%s frames=%d median_gpu_ms=%.3f p95_gpu_ms=%.3f mean_slots=%.1f" % [phase, "on" if on else "off", frames,
 			gpu[gpu.size() / 2], gpu[int(gpu.size() * 0.95)], float(bolts) / max(frames, 1)])
 	fx.set("EnableLightningChannels", true)
+
+## --natural-km=D: natural-bolts capture. No megastorm: a manual cumulonimbus is registered D km ahead along the ring and --strikes=N shared-lightning previews (ordinary
+## cloud-to-ground events, the real LocalWeatherEffects path) are triggered inside it. The yaw is searched until the first strike is on screen; every frame whose pulse
+## exceeds 0.2 is saved as <out>/sNN_fMM.png and logged (NATURAL_BOLT lines). Use with --noon / --midnight, --channels-off for the A side, and --fixed-fps 30.
+func _natural_storm(km: float) -> void:
+	var explorer: Node = _world.get_node("Explorer")
+	var clouds: Node = _world.get_node("RingVolumetricClouds")
+	var fx: Node = _world.get_node("LocalWeatherEffects")
+	fx.set("EnableLightning", true)
+	var mega_n: Node = _world.get_node_or_null("RingMegastorm")
+	if mega_n != null:
+		mega_n.call("stop_megastorm", -1.0, 0.5)   # a saved profile may carry a megastorm: natural strikes only
+		await create_timer(4.0).timeout
+	var pose: Dictionary = explorer.call("GetCanonicalPoseMeters")
+	var around := float(pose["around_m"]) + km * 1000.0
+	var across := float(pose["across_m"])
+	clouds.call("register_manual_weather_at", "natural_bolts_cap", around, across, 12000.0, -7311)
+	await create_timer(float(_arg("settle", "20"))).timeout
+	if _arg("aba", "") != "":
+		explorer.call("SetPresentationView", float(_arg("yaw", "353.8134")), 16.0)
+		_natural_feed(clouds, around, across)
+		await _aba(float(_arg("aba", "8")))
+		return
+	var strikes := int(_arg("strikes", "4"))
+	var cam := root.get_viewport().get_camera_3d()
+	var sid := -7320
+	var chosen_yaw := NAN
+	for s in strikes:
+		var jitter := (float(s) - float(strikes - 1) * 0.5) * 900.0
+		var ev: Dictionary = {}
+		while ev.is_empty():
+			sid -= 1
+			ev = clouds.call("trigger_shared_lightning_preview_at", around + jitter, across + jitter * 0.6, sid, 1.0, 12000.0)
+			await process_frame
+		if is_nan(chosen_yaw):
+			var best := INF
+			var yaw0 := float(pose["yaw_deg"])
+			for k in 24:
+				var yaw := yaw0 + 15.0 * k
+				explorer.call("SetPresentationView", yaw, 16.0)
+				clouds.call("trigger_shared_lightning_preview_at", around, across, sid - 100 - k, 1.0, 12000.0)
+				for i in 3:
+					await process_frame
+				var diag0: Dictionary = fx.call("get_local_shared_lightning_diagnostics")
+				var g0: Vector3 = diag0.get("world_ground", Vector3.ZERO)
+				if cam != null and not cam.is_position_behind(g0):
+					var d := (cam.unproject_position(g0) - root.get_visible_rect().size * 0.5).length()
+					if d < best:
+						best = d
+						chosen_yaw = yaw
+			print("NATURAL_BOLT yaw=", chosen_yaw)
+			explorer.call("SetPresentationView", chosen_yaw if not is_nan(chosen_yaw) else yaw0, 16.0)
+		var saved := 0
+		var waited := 0
+		while waited < 60:
+			var diag: Dictionary = fx.call("get_local_shared_lightning_diagnostics")
+			var pulse := float(diag.get("pulse", 0.0))
+			if int(diag.get("event_id", 0)) != 0 and pulse > 0.2:
+				var name := "s%02d_f%02d" % [s, saved]
+				saved += 1
+				print("NATURAL_BOLT ", name, " ", _bolt_line(diag, false))
+				await RenderingServer.frame_post_draw
+				root.get_texture().get_image().save_png(ProjectSettings.globalize_path(_out + "/" + name + ".png"))
+			elif saved > 0:
+				break
+			waited += 1
+			await process_frame
+		await create_timer(2.0).timeout
+	print("MEGASTORM_REAL=DONE out=", _out)
+
+## --natural-km with --aba=S: keep a natural strike going (one preview about every 0.9 s) while the channels on/off phases are measured.
+func _natural_feed(clouds: Node, around: float, across: float) -> void:
+	var sid := -7900
+	while true:
+		sid -= 1
+		clouds.call("trigger_shared_lightning_preview_at", around + randf_range(-1500.0, 1500.0), across + randf_range(-1500.0, 1500.0), sid, 1.0, 12000.0)
+		await create_timer(0.9).timeout

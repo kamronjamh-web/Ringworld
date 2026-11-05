@@ -988,7 +988,7 @@ public partial class RingLocalWeatherEffects : Node3D
         LastRenderedLightningCloudPosition = sharedEvent?.CloudPosition ?? new RingCanonicalPosition(sourceAround, sourceVertical, sourceAcross);
         InstallBoltMeshes(_activeBolt, startWorld, sideAxis, downAxis);
         // Megastorm channels are drawn by the post-cloud overlay (RingLocalWeatherEffects.LightningChannels.cs); the spatial mesh would be clouded over.
-        if (sharedEvent?.SystemKind == 6 && EnableLightningChannels && _boltRoot != null) _boltRoot.Visible = false;
+        if (_boltRoot != null && ChannelOverlayDrawsEvent(sharedEvent)) _boltRoot.Visible = false;
 
         _lightningLight.GlobalPosition = startWorld.Lerp(endWorld, 0.48f);
         _lightningLight.OmniRange = Mathf.Max(100.0f, LightningRangeMeters);
@@ -1009,7 +1009,7 @@ public partial class RingLocalWeatherEffects : Node3D
         _boltRoot.GlobalTransform = new Transform3D(Basis.Identity, startWorld);
         _boltCore.Mesh = BuildBoltMesh(bolt, sideAxis, downAxis, Mathf.Max(0.01f, BoltCoreWidthMeters));
         _boltGlow.Mesh = BuildBoltMesh(bolt, sideAxis, downAxis, Mathf.Max(BoltCoreWidthMeters, BoltGlowWidthMeters));
-        _boltRoot.Visible = _activeSharedEvent?.SystemKind != 6 || !EnableLightningChannels;   // megastorm channels: post-cloud overlay (also on the origin-shift reinstall)
+        _boltRoot.Visible = !ChannelOverlayDrawsEvent(_activeSharedEvent);   // megastorm and natural channels: post-cloud overlay (also on the origin-shift reinstall)
     }
 
     private static ArrayMesh? BuildBoltMesh(

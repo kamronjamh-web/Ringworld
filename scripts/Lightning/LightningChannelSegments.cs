@@ -20,14 +20,26 @@ public static class LightningChannelSegments
 
     public static int SelectMegastormEvents(
         IReadOnlyList<RingLightningEvent> active, double now, Func<RingCanonicalPosition, double> distanceToObserver,
-        double maxDistanceMeters, int maxBolts, List<RingLightningEvent> output)
+        double maxDistanceMeters, int maxBolts, List<RingLightningEvent> output) =>
+        SelectEvents(active, now, distanceToObserver, maxDistanceMeters, maxBolts, output, natural: false, append: false);
+
+    /// <summary>Natural cloud-to-ground strikes: every event that is neither a megastorm (kind 6) nor a field strike, nearest first. Appends after the existing entries of <paramref name="output"/>.</summary>
+    public static int SelectNaturalEvents(
+        IReadOnlyList<RingLightningEvent> active, double now, Func<RingCanonicalPosition, double> distanceToObserver,
+        double maxDistanceMeters, int maxBolts, List<RingLightningEvent> output) =>
+        SelectEvents(active, now, distanceToObserver, maxDistanceMeters, maxBolts, output, natural: true, append: true);
+
+    private static int SelectEvents(
+        IReadOnlyList<RingLightningEvent> active, double now, Func<RingCanonicalPosition, double> distanceToObserver,
+        double maxDistanceMeters, int maxBolts, List<RingLightningEvent> output, bool natural, bool append)
     {
-        output.Clear();
+        if (!append) output.Clear();
+        int first = append ? output.Count : 0;
         if (active == null || maxBolts <= 0) return 0;
         for (int i = 0; i < active.Count; i++)
         {
             RingLightningEvent e = active[i];
-            if (e.SystemKind != MegastormKind || e.FieldStrike) continue;   // field strikes: SelectFieldStrikeEvents
+            if (e.FieldStrike || (e.SystemKind == MegastormKind) == natural) continue;   // field strikes: RingFieldStrikeLayer.SelectMain
             double age = now - e.StartTimeSeconds;
             if (age < 0.0 || age > RingLightningEvent.LifetimeSeconds) continue;
             double d = distanceToObserver(e.GroundPosition);
@@ -36,12 +48,12 @@ public static class LightningChannelSegments
         }
         // Insertion sort by (distance, EventId): the list is tiny and this allocates nothing.
         var key = distanceToObserver;
-        for (int i = 1; i < output.Count; i++)
+        for (int i = first + 1; i < output.Count; i++)
         {
             RingLightningEvent item = output[i];
             double di = key(item.GroundPosition);
             int j = i - 1;
-            while (j >= 0)
+            while (j >= first)
             {
                 double dj = key(output[j].GroundPosition);
                 if (dj < di || (dj == di && output[j].EventId < item.EventId)) break;
@@ -50,9 +62,12 @@ public static class LightningChannelSegments
             }
             output[j + 1] = item;
         }
-        if (output.Count > maxBolts) output.RemoveRange(maxBolts, output.Count - maxBolts);
-        return output.Count;
+        if (output.Count - first > maxBolts) output.RemoveRange(first + maxBolts, output.Count - first - maxBolts);
+        return output.Count - first;
     }
+
+    /// <summary>Primary fork count for a natural channel of this length (3 for a 1 km channel, up to the megastorm's 9 at 8 km and more).</summary>
+    public static int NaturalBranchBudget(float heightMeters) => Math.Clamp((int)Math.Round(2.0f + heightMeters / 1200.0f), 3, 9);
 
     public static float Pulse(RingLightningEvent e, double now) =>
         RingLightningEvent.PulseAtAge(now - e.StartTimeSeconds) * Math.Max(0.0f, e.Energy);
@@ -140,7 +155,7 @@ public static class LightningChannelSegments
     /// near-horizontal in-cloud run. Deterministic in seed: all randomness is a hash of (seed, stream, index). Appends at most <see cref="MaxBoltSegments"/> segments (main first) and returns the count.
     /// AlongA is a per-branch hash (0 for the main channel), AlongB is 1 for branch / run segments and 0 for the main channel.
     /// </summary>
-    public static int BuildMegastormChannel(Vector3 top, Vector3 ground, int seed, int slot, List<ChannelSegment> output)
+    public static int BuildMegastormChannel(Vector3 top, Vector3 ground, int seed, int slot, List<ChannelSegment> output, int branchBudget = 0)
     {
         Vector3 axis = ground - top;
         float height = axis.Length();
@@ -169,10 +184,13 @@ public static class LightningChannelSegments
         var pts = new List<Vector3>(33);
         var pts2 = new List<Vector3>(33);
         int branches = 0;
-        for (int v = 1; v < n && branches < 10; v++)
+        // branchBudget 0 = megastorm density (5% of the vertices, at most 10); above 0 (natural, shorter channels) about that many primary forks, whatever the vertex count.
+        float forkChance = branchBudget > 0 ? Math.Min(0.5f, branchBudget / (0.7f * n)) : 0.05f;
+        int maxBranches = branchBudget > 0 ? branchBudget + 2 : 10;
+        for (int v = 1; v < n && branches < maxBranches; v++)
         {
             float t = (float)v / n;
-            if (t < 0.05f || t > 0.75f || Rnd(seed, 200, v) >= 0.05f) continue;
+            if (t < 0.05f || t > 0.75f || Rnd(seed, 200, v) >= forkChance) continue;
             Vector3 heading = (main[v + 1] - main[v - 1]).Normalized();
             Vector3 axisB = RandomPerpendicular(heading, seed, 201, v);
             float angle = Mathf.DegToRad(20.0f + 30.0f * Rnd(seed, 202, v));

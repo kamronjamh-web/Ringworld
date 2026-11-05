@@ -9,9 +9,9 @@ using RingworldTechDemo.Voxel.Phase2;
 namespace RingworldTechDemo;
 
 /// <summary>
-/// Megastorm lightning channel overlay driver. The megastorm bolt mesh (transparent pass) is replaced by cloud wherever Sunshine composites, so the channels
+/// Lightning channel overlay driver (megastorm, field strikes and, since natural-bolts, ordinary cloud-to-ground strikes within ChannelMaxDistanceMeters). The bolt mesh (transparent pass) is replaced by cloud wherever Sunshine composites, so the channels
 /// of megastorm events (SystemKind 6) are drawn by a post-cloud raster pass (scripts/render/RingLightningChannelComposite.gd + ring_lightning_channel.glsl).
-/// Natural lightning is never drawn here. Inactive (no selected event) means zero GPU work.
+/// Slot priority: field strikes, megastorm bolts, nearest natural strikes. Beyond the reach the far-view paths own the strike. Inactive (no selected event) means zero GPU work.
 /// </summary>
 public partial class RingLocalWeatherEffects
 {
@@ -102,11 +102,14 @@ public partial class RingLocalWeatherEffects
         double now = _weatherSource.CloudSimulationTimeSeconds;
         _channelCircumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
         _channelDistance ??= ChannelGroundDistance;
-        // Field strikes (any source; RingFieldStrikeLayer owns the handoff to the far set) take the first slots, megastorm bolts the rest.
+        // Field strikes (any source; RingFieldStrikeLayer owns the handoff to the far set) take the first slots, then megastorm bolts, then the nearest natural strikes.
         int fieldCount = RingFieldStrikeLayer.SelectMain(_weatherSource.ActiveLightningEvents, _weatherSource.ActiveContactArcs, now, _channelDistance,
             RingFieldStrikeLayer.FarSetBound, ChannelMaxFieldStrikes, _channelFieldEvents, _channelFieldWeights);
-        LightningChannelSegments.SelectMegastormEvents(_weatherSource.ActiveLightningEvents, now, _channelDistance,
-            Math.Max(0.0, ChannelMaxDistanceMeters), ChannelMaxBolts - fieldCount, _channelSelected);
+        double reach = Math.Max(0.0, ChannelMaxDistanceMeters);
+        int megastormCount = LightningChannelSegments.SelectMegastormEvents(_weatherSource.ActiveLightningEvents, now, _channelDistance,
+            reach, ChannelMaxBolts - fieldCount, _channelSelected);
+        LightningChannelSegments.SelectNaturalEvents(_weatherSource.ActiveLightningEvents, now, _channelDistance,
+            reach, ChannelMaxBolts - fieldCount - megastormCount, _channelSelected);
         for (int i = 0; i < _channelSelected.Count; i++) _channelWeights[i] = 1.0f;
         for (int i = 0; i < fieldCount; i++) { _channelWeights[_channelSelected.Count] = _channelFieldWeights[i]; _channelSelected.Add(_channelFieldEvents[i]); }
         RingMegastormScythes.Instance?.CopyChannelCores(_channelCores);
@@ -236,6 +239,16 @@ public partial class RingLocalWeatherEffects
         return n;
     }
 
+    /// <summary>True when the post-cloud overlay draws this event's channel, so the spatial bolt mesh stays hidden: megastorm bolts, and natural strikes within the overlay's reach.</summary>
+    private bool ChannelOverlayDrawsEvent(RingLightningEvent? e)
+    {
+        if (!EnableLightningChannels || !e.HasValue) return false;
+        if (e.Value.SystemKind == LightningChannelSegments.MegastormKind) return true;
+        if (e.Value.FieldStrike || _weatherSource == null || !_weatherSource.Enabled || !_weatherSource.EnableSharedLightning || _grid == null || _explorer == null) return false;
+        _channelCircumference = Math.Max(1.0, _grid.GetCanonicalRingCircumferenceMeters64());
+        return ChannelGroundDistance(e.Value.GroundPosition) <= Math.Max(0.0, ChannelMaxDistanceMeters);
+    }
+
     private double ChannelGroundDistance(RingCanonicalPosition p)
     {
         RingCanonicalPosition o = _explorer!.CanonicalPosition;
@@ -274,7 +287,8 @@ public partial class RingLocalWeatherEffects
         {
             cached = new ChannelBoltCache { Ground = ground };
             if (e.FieldStrike) LightningChannelSegments.BuildFieldStrikeChannel(top, ground, e.ShapeSeed, e.IsFieldArc, 0, cached.Segments);
-            else LightningChannelSegments.BuildMegastormChannel(top, ground, e.ShapeSeed, 0, cached.Segments);
+            else if (e.SystemKind == LightningChannelSegments.MegastormKind) LightningChannelSegments.BuildMegastormChannel(top, ground, e.ShapeSeed, 0, cached.Segments);
+            else LightningChannelSegments.BuildMegastormChannel(top, ground, e.ShapeSeed, 0, cached.Segments, LightningChannelSegments.NaturalBranchBudget(top.DistanceTo(ground)));   // natural: forks scale with the channel length
             _channelCache[e.EventId] = cached;
         }
         Vector3 delta = ground - cached.Ground;
