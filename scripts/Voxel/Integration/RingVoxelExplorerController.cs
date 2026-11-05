@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Terrain.Editable;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Core;
@@ -1005,7 +1006,13 @@ public partial class RingVoxelExplorerController : CharacterBody3D
                 -MaxFallSpeed);
         }
 
-        if (UseTerrain3DSurfacePhysics)
+        if (RimWallTopWalk.TryResolveSide(
+                _canonicalPosition.AcrossMeters, _canonicalPosition.VerticalMeters, _grid.RingAcrossWidthMeters,
+                RimWallDescription.Current.DepthMeters, _grid.GetStructuralBottomGlobalY() * VoxelConstants.VoxelSizeMeters, out int rimWallSide))
+        {
+            MoveOnRimWallTop(dt, rimWallSide);
+        }
+        else if (UseTerrain3DSurfacePhysics)
         {
             if (!MoveWithTerrain3DSurfacePhysics(swimming: false))
             {
@@ -1046,6 +1053,23 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         ProcessMegaSpawnSmokeTest();
         ProcessSmoothTerrainTraversalSmokeTest();
         ProcessSmoothDeepShaftSmokeTest();
+    }
+
+    /// <summary>Walks on the flat rim wall top (WO12). Backend independent: the real game has no wall collider and Terrain3D has no coverage over the wall.</summary>
+    private void MoveOnRimWallTop(float dt, int side)
+    {
+        if (_grid == null) return;
+        double around = _canonicalPosition.AroundMeters;
+        double vertical = _canonicalPosition.VerticalMeters;
+        double across = _canonicalPosition.AcrossMeters;
+        RimWallTopWalk.Step(ref around, ref vertical, ref across, ref _canonicalVelocity, dt, side, _grid.RingAcrossWidthMeters,
+            RimWallDescription.Current.DepthMeters, _grid.GetStructuralWallTopGlobalY(), BodyWidth * 0.5, out bool grounded);
+        _canonicalPosition = new RingCanonicalPosition(around, vertical, across);
+        _grounded = grounded;
+        Velocity = Vector3.Zero;
+        WrapCanonicalAround();
+        RecenterCollisionOrigin(force: false);
+        ApplyWorldTransform();
     }
 
     private void UpdateWaterState()
@@ -2501,6 +2525,20 @@ public partial class RingVoxelExplorerController : CharacterBody3D
     private bool ProcessSpawnTerrainSettle(float delta)
     {
         if (!_spawnTerrainSettling || _grid?.TerrainSampler == null) return false;
+        // A pose over a rim wall body (WO12) stands on the flat wall top, which needs no streamed terrain; never wait for (or snap to) terrain there.
+        if (RimWallTopWalk.TryResolveSide(_canonicalPosition.AcrossMeters, _canonicalPosition.VerticalMeters, _grid.RingAcrossWidthMeters,
+                RimWallDescription.Current.DepthMeters, _grid.GetStructuralBottomGlobalY() * VoxelConstants.VoxelSizeMeters, out _))
+        {
+            double wallTop = _grid.GetStructuralWallTopGlobalY();
+            if (_canonicalPosition.VerticalMeters < wallTop) _canonicalPosition = _canonicalPosition with { VerticalMeters = wallTop };
+            _canonicalVelocity = Vector3.Zero;
+            _spawnTerrainSettling = false;
+            _undergroundSpawnSettling = false;
+            _grounded = false;
+            RecenterCollisionOrigin(force: false);
+            ApplyWorldTransform();
+            return false;
+        }
         bool collisionReady;
         if (UseTerrain3DSurfacePhysics)
         {

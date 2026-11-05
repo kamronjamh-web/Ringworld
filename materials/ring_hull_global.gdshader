@@ -76,7 +76,9 @@ float sample_structural_scale_cues(vec3 sample_world_position, float wall_face) 
 		abs(altitude - structural_wall_top_meters));
 	// The cross grid is placed by the across coordinate, which is constant on a rim wall face: keep it off the walls so the
 	// wall at across = 0 is not painted solid (the top rail and longitudinal bars still read there).
-	return clamp(max(top_rail, max(longitudinal, cross_grid * 0.48 * (1.0 - wall_face))), 0.0, 1.0);
+	// The rim wall top cap (WO12) is the only horizontal hull surface above half the wall height (all closures are kilometres below the floor); the across cross grid and the top rail would paint it solid, so only the around-based longitudinal lines continue over it.
+	float wall_top_cap = (1.0 - wall_face) * step(structural_wall_top_meters * 0.5, altitude);
+	return clamp(max(top_rail * (1.0 - wall_top_cap), max(longitudinal, cross_grid * 0.48 * (1.0 - wall_face) * (1.0 - wall_top_cap))), 0.0, 1.0);
 }
 
 void vertex() {

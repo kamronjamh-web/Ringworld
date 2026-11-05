@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
@@ -221,6 +222,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         int aroundCount = Mathf.Max(128, AroundSegments / 2);
         double aroundStep = _grid.GetCanonicalRingCircumferenceMeters64() / aroundCount;
         double top = _grid.GetStructuralWallTopGlobalY();
+        double wallDepth = RimWallDescription.Current.DepthMeters;
         using var surface = new SurfaceTool();
         surface.Begin(Mesh.PrimitiveType.Triangles);
         for (int x = 0; x < aroundCount; x++)
@@ -228,10 +230,20 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             double a0 = x * aroundStep, a1 = (x + 1) * aroundStep;
             double bottom = _grid.GetStructuralBottomGlobalY()
                 * (double)VoxelConstants.VoxelSizeMeters;
-            AddTriangle(surface, Point(a0, bottom, 0.0), Point(a1, bottom, RingWidthMeters), Point(a1, bottom, 0.0), HullColor);
-            AddTriangle(surface, Point(a0, bottom, 0.0), Point(a0, bottom, RingWidthMeters), Point(a1, bottom, RingWidthMeters), HullColor);
+            AddTriangle(surface, Point(a0, bottom, -wallDepth), Point(a1, bottom, RingWidthMeters + wallDepth), Point(a1, bottom, -wallDepth), HullColor);
+            AddTriangle(surface, Point(a0, bottom, -wallDepth), Point(a0, bottom, RingWidthMeters + wallDepth), Point(a1, bottom, RingWidthMeters + wallDepth), HullColor);
             AddWallQuad(surface, a0, a1, 0.0, bottom, top, true);
             AddWallQuad(surface, a0, a1, RingWidthMeters, bottom, top, false);
+            if (wallDepth > 0.0)
+            {
+                // Rim wall volume (WO12): outer faces and flat top caps, flat-shaded so the cap does not bend the existing face normals.
+                surface.SetSmoothGroup(uint.MaxValue);
+                AddWallQuad(surface, a0, a1, -wallDepth, bottom, top, false);
+                AddWallQuad(surface, a0, a1, RingWidthMeters + wallDepth, bottom, top, true);
+                AddCapQuad(surface, a0, a1, 0.0, -wallDepth, top);
+                AddCapQuad(surface, a0, a1, RingWidthMeters + wallDepth, RingWidthMeters, top);
+                surface.SetSmoothGroup(0);
+            }
             if ((x & 31) == 31) yield return true;
         }
         yield return true;
@@ -247,7 +259,7 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
         };
         AddChild(_hull);
         RenderingServer.InstanceSetIgnoreCulling(_hull.GetInstance(), true);
-        EstimatedMeshBytes += (long)aroundCount * 18L * 44L;
+        EstimatedMeshBytes += (long)aroundCount * (wallDepth > 0.0 ? 42L : 18L) * 44L;
         GD.Print($"Analytic global structural shell: depth={StructuralDepthMeters / 1000.0f:0.0}km, around={aroundCount}");
     }
 
@@ -265,6 +277,16 @@ public partial class RingAnalyticGlobalLod : MeshInstance3D
             AddTriangle(surface, p3, p1, p0, HullColor);
             AddTriangle(surface, p1, p3, p2, HullColor);
         }
+    }
+
+    /// <summary>Flat rim wall top cap at top, front face up (radially inward). acrossHigh is the larger across.</summary>
+    private void AddCapQuad(SurfaceTool surface, double a0, double a1, double acrossHigh, double acrossLow, double top)
+    {
+        if (acrossLow > acrossHigh) (acrossHigh, acrossLow) = (acrossLow, acrossHigh);
+        Vector3 q0 = Point(a0, top, acrossHigh), q1 = Point(a1, top, acrossHigh);
+        Vector3 q2 = Point(a1, top, acrossLow), q3 = Point(a0, top, acrossLow);
+        AddTriangle(surface, q0, q1, q3, HullColor);
+        AddTriangle(surface, q1, q2, q3, HullColor);
     }
 
     private Vector3 Point(double around, double vertical, double across)

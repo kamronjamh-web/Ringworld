@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
@@ -1132,7 +1133,7 @@ public partial class VoxelChunkGridManager : Node3D
 			&& (GenerateStructuralBedrockEdgeChunks || GenerateStructuralBedrockUndersideChunks))
 		{
 			int width = Mathf.Max(1, Mathf.RoundToInt(RingAcrossWidthMeters / VoxelConstants.VoxelSizeMeters));
-			int hull = VoxelConstants.ChunkSizeZ;
+			int hull = StructuralHullThicknessVoxels;
 			int bottom = GetStructuralBottomGlobalY();
 			int undersideTop = GetStructuralUndersideTopExclusiveGlobalY();
 			int top = GetStructuralWallTopGlobalY();
@@ -4726,6 +4727,18 @@ public partial class VoxelChunkGridManager : Node3D
 		return globalAcrossVoxel >= 0 && globalAcrossVoxel < widthVoxels;
 	}
 
+	/// <summary>Rim wall (structural hull) depth in voxels on each side of the habitat: the rim wall description's depth, a whole number of chunks.</summary>
+	private static int StructuralHullThicknessVoxels => _structuralHullThicknessVoxels ??= ResolveStructuralHullThicknessVoxels();
+	private static int? _structuralHullThicknessVoxels;
+
+	private static int ResolveStructuralHullThicknessVoxels()
+	{
+		int voxels = (int)Math.Round(RimWallDescription.Current.DepthMeters / VoxelConstants.VoxelSizeMeters);
+		if (voxels <= 0 || voxels % VoxelConstants.ChunkSizeZ != 0)
+			throw new InvalidOperationException($"Rim wall depth {RimWallDescription.Current.DepthMeters} m must be a positive multiple of the {VoxelConstants.ChunkSizeZ}-voxel chunk depth.");
+		return voxels;
+	}
+
 	private bool IsAcrossVoxelInStructuralHull(int globalAcrossVoxel)
 	{
 		if (!UseHabitableRingAxisLayout || !EnforceRingAcrossBounds || !GenerateStructuralBedrockEdgeChunks)
@@ -4734,7 +4747,7 @@ public partial class VoxelChunkGridManager : Node3D
 		}
 
 		int widthVoxels = Mathf.Max(1, Mathf.RoundToInt(RingAcrossWidthMeters / VoxelConstants.VoxelSizeMeters));
-		int hullThickness = VoxelConstants.ChunkSizeZ;
+		int hullThickness = StructuralHullThicknessVoxels;
 		return (globalAcrossVoxel >= -hullThickness && globalAcrossVoxel < 0)
 			|| (globalAcrossVoxel >= widthVoxels && globalAcrossVoxel < widthVoxels + hullThickness);
 	}
@@ -4827,7 +4840,7 @@ public partial class VoxelChunkGridManager : Node3D
 		int start = coordinate.AcrossRingChunk * VoxelConstants.ChunkSizeZ;
 		int endExclusive = start + VoxelConstants.ChunkSizeZ;
 		int widthVoxels = Mathf.Max(1, Mathf.RoundToInt(RingAcrossWidthMeters / VoxelConstants.VoxelSizeMeters));
-		int hullThickness = GenerateStructuralBedrockEdgeChunks ? VoxelConstants.ChunkSizeZ : 0;
+		int hullThickness = GenerateStructuralBedrockEdgeChunks ? StructuralHullThicknessVoxels : 0;
 		return endExclusive > -hullThickness && start < widthVoxels + hullThickness;
 	}
 

@@ -29,6 +29,8 @@ public partial class RingVoxelExplorerController
         ["across_m"] = _canonicalPosition.AcrossMeters,
         ["yaw_deg"] = Mathf.RadToDeg(_yaw),
         ["pitch_deg"] = _pitch,
+        ["grounded"] = _grounded,
+        ["noclip"] = _noclip,
     };
 
     /// <summary>Number of times a scripted physics step moved the floating-origin anchor (a sector boundary was crossed).</summary>

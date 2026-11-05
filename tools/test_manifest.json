@@ -3013,6 +3013,30 @@
       "expected_s": 30,
       "timeout_s": 120
     },
+    "rim_wall_check": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "containment-field",
+        "loading"
+      ],
+      "world": "start-menu",
+      "marker": "RIM_WALL",
+      "expected_s": null,
+      "timeout_s": 1500
+    },
+    "rim_wall_top_walk_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field"
+      ],
+      "marker": "RIM_WALL_TOP_WALK",
+      "expected_s": 5,
+      "timeout_s": 120
+    },
     "megastorm_audio_test": {
       "kind": "test",
       "mode": "headless",
