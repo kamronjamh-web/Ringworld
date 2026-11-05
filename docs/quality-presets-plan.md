@@ -2,6 +2,12 @@
 
 Historical status (2026-10-24): plan and measurements only. No production code, settings or shaders were changed. Measured on the RTX 4070 desktop (i9-14900KF); the RTX A1000 numbers below are estimates until the user runs the A1000 checks.
 
+## Main integration: 2026-11-04
+
+This integration ports the prepared-tree optimization, performance tooling and scoped shadow lifetime fixes onto main without the seven-commit megastorm chain or the source workspace's unrelated dirty changes. The November 2 gameplay metrics below were measured in that source workspace; they are not newly measured main performance. Narrow `.gitattributes` rules preserve the exact raw authoring/input bytes used by the prepared catalog fingerprints, so clean checkouts do not silently invalidate the artifact through line-ending conversion.
+
+Exact-main validation passed on November 4: the pinned C# Debug build completed with zero errors and five existing warnings; all 13 focused tests passed (`arch_main_push/20261104-191732`, including prepared/source catalog parity, stale-input fallback, placement/edit/collision regressions, GPU tree rendering and texture streaming, shadow failure/ownership, capture policy, trace completion, and cloud haze). The 461-entry test manifest validates. The pure prepared-asset check also passes after editor import and from fresh index checkouts with both `core.autocrlf=true` and `false`. These are functional/package checks, not new frame-rate measurements or a replacement for the broader gate results below.
+
 ## Current execution: 2026-11-02
 
 This section records the current execution against the user's target of **60 FPS on both RTX 4070 and RTX A1000**. The original October 24 sections below remain historical evidence: their Debug/editor runs and legacy world fixture are not interchangeable with this Release baseline. This update changes the tree asset preparation path; it does not establish overall 60 FPS acceptance. Dates here use the local November 2 session; some raw reports have November 3 UTC timestamps.

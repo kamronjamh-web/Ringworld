@@ -1,9 +1,9 @@
 [gd_resource type="Resource" script_class="GameplayCloudSettings" format=3]
 
-[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_aotgx"]
+[ext_resource type="Script" path="res://scripts/ui/GameplayCloudSettings.cs" id="1_d41de"]
 
 [resource]
-script = ExtResource("1_aotgx")
+script = ExtResource("1_d41de")
 Overrides = {
 "AnvilRadiusMultiplier": 2.7,
 "AutomaticCloudHandoff": true,
@@ -16,10 +16,8 @@ Overrides = {
 "CloudDirectLightMultiplier": 1.0,
 "CloudHandoffOverlapMeters": 51000.0,
 "CloudHistoryCompatibilityEnabled": true,
-"CloudInterleave": 1,
 "CloudLodBias": 1.65,
 "CloudRenderingEnabled": true,
-"CloudResolutionJitter": true,
 "CloudSharpness": 0.0,
 "CloudWindMultiplier": 3.0,
 "DayCloudAmbientColor": Color(1, 1, 1, 1),

@@ -1,0 +1,12 @@
+# Prepared-tree identities hash raw bytes. Preserve the authoring bytes across clean checkouts.
+/scripts/Vegetation/ImportedTreeCatalog.cs text eol=crlf
+/scripts/Vegetation/ImportedTreeCatalog.Startup.cs text eol=crlf
+/scripts/Vegetation/ImportedTreeWindAttachments.cs text eol=lf
+/scripts/Vegetation/PreparedImportedTreeCatalog.cs text eol=lf
+/scripts/Vegetation/PreparedImportedTreeCatalogIdentity.cs text eol=lf
+/scripts/Vegetation/PreparedImportedTreeCatalogValidation.cs text eol=lf
+/tools/PrepareTreeAssets.cs text eol=lf
+/resources/trees/lolipop/*/scene.gltf text eol=crlf
+/resources/trees/lolipop/**/*.import text eol=lf
+/resources/trees/lolipop/*/scene.bin binary
+/resources/trees/prepared/*.res binary
