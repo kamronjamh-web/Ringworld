@@ -105,8 +105,6 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     public float HullNightBrightness { get; set; } = 0.75f;
     [ExportGroup("Structural scale cues")]
     [Export] public bool StructuralScaleCuesEnabled { get; set; } = true;
-    [Export(PropertyHint.Range, "25000,1000000,5000")]
-    public float StructuralLongitudinalSpacingMeters { get; set; } = 250000.0f;
     [Export(PropertyHint.Range, "100,10000,100")]
     public float StructuralLongitudinalHalfWidthMeters { get; set; } = 1200.0f;
     [Export(PropertyHint.Range, "5000,200000,1000")]
@@ -1507,7 +1505,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             _hullMaterial.SetShaderParameter("night_tint", new Vector3(NightTint.R, NightTint.G, NightTint.B));
             _hullMaterial.SetShaderParameter("structural_wall_top_meters", _grid!.GetStructuralWallTopGlobalY());
             _hullMaterial.SetShaderParameter("structural_scale_cues_enabled", StructuralScaleCuesEnabled);
-            _hullMaterial.SetShaderParameter("structural_longitudinal_spacing_meters", StructuralLongitudinalSpacingMeters);
+            _hullMaterial.SetShaderParameter(
+                "structural_longitudinal_spacing_meters",
+                (float)RingStructuralCues.LongitudinalSpacingMeters(_grid!.GetCanonicalRingCircumferenceMeters64()));
             _hullMaterial.SetShaderParameter("structural_longitudinal_half_width_meters", StructuralLongitudinalHalfWidthMeters);
             _hullMaterial.SetShaderParameter("structural_cross_spacing_meters", StructuralCrossSpacingMeters);
             _hullMaterial.SetShaderParameter("structural_cross_half_width_meters", StructuralCrossHalfWidthMeters);

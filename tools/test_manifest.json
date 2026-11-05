@@ -3013,6 +3013,17 @@
       "expected_s": 30,
       "timeout_s": 120
     },
+    "rim_wall_top_anchors_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field"
+      ],
+      "marker": "RIM_WALL_TOP_ANCHORS",
+      "expected_s": 5,
+      "timeout_s": 120
+    },
     "rim_wall_check": {
       "kind": "tool",
       "mode": "gpu",

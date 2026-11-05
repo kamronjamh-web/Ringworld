@@ -191,8 +191,6 @@ public partial class RingScaledFarViewport : Node
 	public float HullNightBrightness { get; set; } = 0.75f;
 	[ExportGroup("Structural scale cues")]
 	[Export] public bool StructuralScaleCuesEnabled { get; set; } = true;
-	[Export(PropertyHint.Range, "25000,1000000,5000")]
-	public float StructuralLongitudinalSpacingMeters { get; set; } = 250000.0f;
 	[Export(PropertyHint.Range, "100,10000,100")]
 	public float StructuralLongitudinalHalfWidthMeters { get; set; } = 1200.0f;
 	[Export(PropertyHint.Range, "5000,200000,1000")]
@@ -1291,7 +1289,7 @@ public partial class RingScaledFarViewport : Node
 			_hullMaterial.SetShaderParameter("structural_scale_cues_enabled", StructuralScaleCuesEnabled);
 			_hullMaterial.SetShaderParameter(
 				"structural_longitudinal_spacing_meters",
-				StructuralLongitudinalSpacingMeters * CoordinateScale);
+				(float)(RingStructuralCues.LongitudinalSpacingMeters(_circumferenceMeters) * CoordinateScale));
 			_hullMaterial.SetShaderParameter(
 				"structural_longitudinal_half_width_meters",
 				StructuralLongitudinalHalfWidthMeters * CoordinateScale);

@@ -13,7 +13,7 @@ extends SceneTree
 ## --settle=S    seconds to wait at each view (default 10).
 ## --walk        after the views, noclip onto the wall top, switch noclip off (V) and walk (W / Space) along and across the cap on both walls.
 ## --no-views    skip the views (walk only).
-## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, far50, arch).
+## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, anchor, far50, arch).
 ## Prints RIM_WALL lines, RIM_WALL hull ... triangle counts, RIM_WALL_WALK=PASS|FAIL when --walk, and RIM_WALL=DONE at the end.
 
 const MENU := preload("res://scenes/StartMenu.tscn")
@@ -214,7 +214,7 @@ func _run() -> void:
 	var circumference := float(_grid.call("GetCanonicalRingCircumferenceMeters64"))
 	var width := float(_grid.get("RingAcrossWidthMeters"))
 	var top := float(_grid.call("GetStructuralWallTopGlobalY"))
-	var line := _cue_line_around(float(_pose()["around_m"]), circumference, 250000.0)
+	var line := _cue_line_around(float(_pose()["around_m"]), circumference, circumference / 126.0)
 	var terrain: Node = _world.get_node_or_null("Terrain3DGameplay")
 	print("RIM_WALL handed off circumference=%.1f width=%.1f wall_top=%.1f cue_line_around=%.1f %s" % [circumference, width, top, line, _pose_text()])
 	var settle := float(_arg("settle", "10"))
@@ -263,6 +263,35 @@ func _run() -> void:
 				_teleport(line - 2600.0, top + 150.0, -64.0, 0.0, -30.0)
 				await create_timer(settle).timeout
 				await _shot("%s_line" % tod)
+			# WO8: a red marker at the wall-top anchor (around = cue line, across = -64 centre line, vertical = wall top), seen along the wall and from
+			# straight above; the blue line's band must be centred on it.
+			if _want("anchor"):
+				var marker := MeshInstance3D.new()
+				var marker_mesh := CylinderMesh.new()
+				marker_mesh.top_radius = 10.0
+				marker_mesh.bottom_radius = 10.0
+				marker_mesh.height = 800.0
+				marker.mesh = marker_mesh
+				var marker_mat := StandardMaterial3D.new()
+				marker_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				marker_mat.albedo_color = Color(1.0, 0.1, 0.1)
+				marker.material_override = marker_mat
+				_world.add_child(marker)
+				# Along the wall: 1.8 km before the anchor, 250 m above the wall top.
+				_teleport(line - 1800.0, top + 250.0, -64.0, 0.0, -8.0)
+				await create_timer(settle).timeout
+				_place_anchor_marker(marker, 1800.0, 250.0)
+				await _shot("%s_anchor_along" % tod)
+				# Straight above: 60 m before the anchor, 1.5 km up.
+				_teleport(line - 60.0, top + 1500.0, -64.0, 0.0, -89.0)
+				await create_timer(settle).timeout
+				_place_anchor_marker(marker, 60.0, 1500.0)
+				await _shot("%s_anchor_above" % tod)
+				# From the habitat at the anchor's around (2.2 km out, 1.1 km below the wall top), looking at the across-0 face: the band on the face must be symmetric about the view centre. (The marker is not drawn here: it did not show at this range.)
+				_teleport(line, top - 1100.0, 2200.0, -90.0, 26.5)
+				await create_timer(settle).timeout
+				await _shot("%s_anchor_face" % tod)
+				marker.queue_free()
 			# 50 km into the habitat, 3 km above the wall top, looking back at the wall.
 			if _want("far50"):
 				_teleport(line, top + 3000.0, 50000.0, -90.0, -3.0)
@@ -342,3 +371,15 @@ func _walk(line: float, top: float, width: float) -> void:
 		await create_timer(3.0).timeout
 		p = _pose()
 		_expect(lifted > 0.2 and absf(float(p["vertical_m"]) - top) < 0.25, "side%d jumped (%.2f m) and landed on the cap" % [side, lifted])
+
+# Puts the WO8 marker at the wall-top anchor, ahead_m along the wall (the camera's horizontal heading, yaw 0 = increasing around) and down_m below the
+# camera, standing on the anchor (the cylinder is centred 400 m above its base). Short offsets only: the ring's curvature is negligible at 2 km.
+func _place_anchor_marker(marker: MeshInstance3D, ahead_m: float, down_m: float) -> void:
+	var cam := root.get_viewport().get_camera_3d()
+	var up: Vector3 = _explorer.call("GetCanonicalSurfaceUp")
+	var forward := -cam.global_basis.z
+	var tangent := (forward - up * forward.dot(up)).normalized()
+	var base := cam.global_position + tangent * ahead_m - up * down_m
+	marker.global_position = base + up * 400.0
+	marker.global_basis = Basis(Quaternion(Vector3.UP, up))
+	print("RIM_WALL anchor marker base=", base, " pose=", _pose_text())
