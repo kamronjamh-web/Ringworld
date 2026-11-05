@@ -1,0 +1,21 @@
+{
+  "blender_reopen_native": "PASS",
+  "blender_import_glb": "PASS",
+  "imported_meshes": 2,
+  "bounds_min_m": [
+    -40.0,
+    -90.0,
+    0.0
+  ],
+  "bounds_max_m": [
+    40.0,
+    90.0,
+    1600.0
+  ],
+  "dimensions_m": [
+    80.0,
+    180.0,
+    1600.0
+  ],
+  "result": "PASS"
+}

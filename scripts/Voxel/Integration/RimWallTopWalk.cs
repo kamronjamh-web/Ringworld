@@ -2,6 +2,13 @@ using Godot;
 
 namespace RingworldTechDemo.Voxel.Integration;
 
+/// <summary>Analytic obstacles on the wall top (the projector tower footprints). Moves the integrated (around, across) out of solid space.</summary>
+public interface IRimWallTopObstacles
+{
+    void Resolve(int side, double around0, double across0, ref double around1, ref double across1, double vertical, double wallTop, double halfBodyWidth,
+        out bool blockedAround, out bool blockedAcross);
+}
+
 /// <summary>
 /// Pure movement helper for walking on top of a rim wall (WO12). The wall occupies across [-D, 0] (side 0) and [W, W + D] (side 1) from the structural
 /// bottom up to the wall top, so its top is a flat cap at the wall-top altitude. Canonical vectors are (around, vertical, across). No scene access.
@@ -23,7 +30,7 @@ public static class RimWallTopWalk
     /// the 10 km drop to the habitat) and lands on the cap.
     /// </summary>
     public static void Step(ref double around, ref double vertical, ref double across, ref Vector3 velocity, double dt, int side,
-        double widthMeters, double depthMeters, double wallTop, double halfBodyWidth, out bool grounded)
+        double widthMeters, double depthMeters, double wallTop, double halfBodyWidth, out bool grounded, IRimWallTopObstacles? obstacles = null)
     {
         if (vertical < wallTop)
         {
@@ -31,9 +38,17 @@ public static class RimWallTopWalk
             velocity.Y = Mathf.Max(0.0f, velocity.Y);
         }
 
+        double preAround = around, preAcross = across;
         around += velocity.X * dt;
         vertical += velocity.Y * dt;
         across += velocity.Z * dt;
+
+        if (obstacles != null)
+        {
+            obstacles.Resolve(side, preAround, preAcross, ref around, ref across, vertical, wallTop, halfBodyWidth, out bool blockedAround, out bool blockedAcross);
+            if (blockedAround) velocity.X = 0.0f;
+            if (blockedAcross) velocity.Z = 0.0f;
+        }
 
         double low, high;
         if (side == 0)

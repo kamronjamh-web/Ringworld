@@ -1,0 +1,78 @@
+{
+  "atmosphere_shield_projector.blend": {
+    "bytes": 5634704,
+    "sha256": "9be16577307871563e313217f80ee50d9e78dd03a245e99557fd586fc425c3fd"
+  },
+  "atmosphere_shield_projector.glb": {
+    "bytes": 7338840,
+    "sha256": "2ea71d3828767f5d2c93e3065d60765d8f8bcebde8600a90e5f6572a322e6c65"
+  },
+  "README.md": {
+    "bytes": 6502,
+    "sha256": "f4609482bc40ac89f08c1d5876d4b6910f659b6508859b45ee9fe8578aa7ac25"
+  },
+  "build_projector.py": {
+    "bytes": 25892,
+    "sha256": "11ca8811189852236d4e33e097858a4f31e9a13bce8531f3047aef8466a0f486"
+  },
+  "optimize_export.py": {
+    "bytes": 2717,
+    "sha256": "ee90454120a85e341b46e33b41d587d08ac62d5759b37ff85144c7897c237a35"
+  },
+  "previews/01_full_height.png": {
+    "bytes": 1319674,
+    "sha256": "d2c3c489a05a10520b613f3e21b482e21947834ea30d323fd8a59fcb3bcefb35"
+  },
+  "previews/02_emitter_detail.png": {
+    "bytes": 2034629,
+    "sha256": "5346d7be4f6d5dfcfe142da5ed85b1efae322a8896e8a986223c783ef078bb63"
+  },
+  "previews/03_crown_detail.png": {
+    "bytes": 1651935,
+    "sha256": "75fb9f3a4bf067a2756e7042912794f91852930995ec072d5dfca9c661690fff"
+  },
+  "previews/04_base_intake.png": {
+    "bytes": 1837680,
+    "sha256": "58bf7abc180fee1da6f10575afdc71b8038b6a61c4564c04cebd9739e022859c"
+  },
+  "previews/05_wall_transition.png": {
+    "bytes": 2015326,
+    "sha256": "e02c08e71335af2a4b26d28a8b22db81ae121791d5ce599e64b592767d164998"
+  },
+  "qa/build_geometry_report.json": {
+    "bytes": 929,
+    "sha256": "2aa129959df39c48d586b27fd3bb6362c8aa5f7726afb863196ff43ebd36c676"
+  },
+  "qa/dimensional_assertions.json": {
+    "bytes": 1390,
+    "sha256": "da94e7ad764bcaff322890173f35426ebca88660e87277296570d82943064829"
+  },
+  "qa/topology_validation.json": {
+    "bytes": 98,
+    "sha256": "e6954aa1d97f69b809bc30e04b465a1abb4c5cae00822b1a1cea13119e0333cb"
+  },
+  "qa/glb_inspection.json": {
+    "bytes": 931,
+    "sha256": "7c4402f1a2ceb95f3f5c9268ea97f274da7bcb919673776dffac5657a2421770"
+  },
+  "qa/godot_validation.json": {
+    "bytes": 786,
+    "sha256": "0bd985925fddf8e06cc9e35a043dfb0f05575b05db568abef00af0bddebf6dce"
+  },
+  "qa/blender_glb_roundtrip.json": {
+    "bytes": 281,
+    "sha256": "6ded3b075c2443cdc3cf676d5993e8407932c27426472eb3d55b86dc4a5e5af9"
+  },
+  "qa/GLB_roundtrip_preview.png": {
+    "bytes": 572305,
+    "sha256": "b3a02cd858f6c248ffd5c260bc2564623d45104339baa438195a92d67d27ea6f"
+  },
+  "qa/final_native_reopen.log": {
+    "bytes": 175,
+    "sha256": "ceb7d4da7e08a010f8d0f29280302337be6f264a1ea0a235317f598454d00c04"
+  },
+  "qa/godot_import_final.log": {
+    "bytes": 2966,
+    "sha256": "55897fb3f6f572270f8006401ec71643dbaf1f4dd4e7e2d1ad8ac4f3963a7726"
+  }
+}

@@ -3207,6 +3207,18 @@
       "expected_s": 5,
       "timeout_s": 120
     },
+    "atmosphere_projector_sites_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "poi"
+      ],
+      "marker": "ATMOSPHERE_PROJECTOR_SITES",
+      "expected_s": 5,
+      "timeout_s": 120
+    },
     "megastorm_audio_test": {
       "kind": "test",
       "mode": "headless",
@@ -3698,6 +3710,18 @@
       "marker": "POI_HAZE_REGISTRY",
       "expected_s": 2,
       "timeout_s": 60
+    },
+    "atmosphere_projector_streamer_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "containment-field",
+        "poi"
+      ],
+      "marker": "ATMOSPHERE_PROJECTOR_STREAMER",
+      "expected_s": 5,
+      "timeout_s": 120
     },
     "megastorm_history_fade_test": {
       "kind": "test",

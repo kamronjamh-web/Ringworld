@@ -9,6 +9,8 @@ const BACKGROUND := Color(0.015, 0.02, 0.03, 1.0)
 const SHADER := "res://materials/ring_poi_architecture.gdshader"
 const SHADER_DS := "res://materials/ring_poi_architecture_double_sided.gdshader"
 const IDENTITY_TOLERANCE := 2.0 / 255.0
+## Rim wall top altitude above the floor datum (the camera pose of the projector towers).
+const WALL_TOP_HEIGHT_M := 10400.0
 ## The shader owns its light() (local-day gate), so the standalone fallback is Lambert + the ported GGX rather than Godot's Burley + GGX: a few levels of difference against StandardMaterial3D.
 const STANDARD_TOLERANCE := 8.0 / 255.0
 var physical := false
@@ -106,6 +108,22 @@ func _run() -> void:
 		var d := _max_diff(got, want)
 		print("black_inscatter %d km: max diff %.5f (probe center %s)" % [int(km), d, want.get_pixel(SIZE / 2, SIZE / 2)])
 		if d > IDENTITY_TOLERANCE: _fail("black_inscatter_matches_probe at %d km: max diff %.5f" % [int(km), d]); return
+
+	# 4b. the same identity with the camera on the rim wall top (10,400 m above the floor datum), targets 2 km and 20 km away.
+	var black_top := _poi_material(Color(0, 0, 0), 0.0, 1.0, Color(0, 0, 0), 1.0, true)
+	black_top.set_shader_parameter("specular_value", 0.0)
+	_configure(black_top, WALL_TOP_HEIGHT_M)
+	var probe_top := _probe_material(0)
+	_configure(probe_top, WALL_TOP_HEIGHT_M)
+	for km in [2.0, 20.0]:
+		holder.position = Vector3(0, 0, -km * 1000.0)
+		holder.material_override = black_top
+		var got_top := await _capture("black_walltop_%dkm" % int(km))
+		holder.material_override = probe_top
+		var want_top := await _capture("probe_walltop_%dkm" % int(km))
+		var d_top := _max_diff(got_top, want_top)
+		print("black_inscatter wall top %d km: max diff %.5f (probe center %s)" % [int(km), d_top, want_top.get_pixel(SIZE / 2, SIZE / 2)])
+		if d_top > IDENTITY_TOLERANCE: _fail("black_inscatter_matches_probe on the wall top at %d km: max diff %.5f" % [int(km), d_top]); return
 
 	# 5. emission_attenuated at 50 km and 200 km.
 	var tprobe := _probe_material(1)
@@ -205,8 +223,8 @@ func _probe_material(mode: int) -> ShaderMaterial:
 	var m := ShaderMaterial.new(); m.shader = shader; m.set_shader_parameter("probe_mode", mode)
 	return m
 
-func _configure(material: ShaderMaterial) -> void:
-	material.set_shader_parameter("ring_atmosphere_ray_frame_valid", true); material.set_shader_parameter("ring_atmosphere_camera_world_position", Vector3.ZERO); material.set_shader_parameter("ring_atmosphere_camera_height_meters", 300.0 if physical else 0.0); material.set_shader_parameter("ring_atmosphere_outward_world", Vector3.RIGHT); material.set_shader_parameter("ring_atmosphere_axis_world", Vector3.UP); material.set_shader_parameter("ring_atmosphere_sidewall_negative_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_sidewall_positive_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_coordinate_scale", 1.0); material.set_shader_parameter("ring_atmosphere_to_sun", Vector3.LEFT)
+func _configure(material: ShaderMaterial, camera_height_m: float = 300.0) -> void:
+	material.set_shader_parameter("ring_atmosphere_ray_frame_valid", true); material.set_shader_parameter("ring_atmosphere_camera_world_position", Vector3.ZERO); material.set_shader_parameter("ring_atmosphere_camera_height_meters", camera_height_m if physical else 0.0); material.set_shader_parameter("ring_atmosphere_outward_world", Vector3.RIGHT); material.set_shader_parameter("ring_atmosphere_axis_world", Vector3.UP); material.set_shader_parameter("ring_atmosphere_sidewall_negative_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_sidewall_positive_meters", 1000000.0); material.set_shader_parameter("ring_atmosphere_coordinate_scale", 1.0); material.set_shader_parameter("ring_atmosphere_to_sun", Vector3.LEFT)
 	material.set_shader_parameter("ring_radius_meters", 5000000.0); material.set_shader_parameter("atmosphere_clear_distance_meters", 1000.0); material.set_shader_parameter("atmosphere_full_distance_meters", 2000.0); material.set_shader_parameter("atmosphere_boundary_max_opacity", .35); material.set_shader_parameter("atmosphere_upper_max_opacity", .1); material.set_shader_parameter("atmosphere_distance_haze_max_opacity", .65); material.set_shader_parameter("atmosphere_total_max_opacity", .8); material.set_shader_parameter("atmosphere_scattering_energy", .26)
 	material.set_shader_parameter("atmosphere_haze_model", 1 if physical else 0)
 

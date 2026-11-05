@@ -1,0 +1,375 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B0.res" id="1_g7tmd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B1.res" id="2_vcear"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B2.res" id="3_usa6j"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B3.res" id="4_xndv3"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B4.res" id="5_1dw35"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B5.res" id="6_bu2lq"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B6.res" id="7_ibf26"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B7.res" id="8_3u63n"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B0.res" id="9_0he41"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B1.res" id="10_mg5bn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B2.res" id="11_8xjxm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B3.res" id="12_p04av"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B4.res" id="13_sq21f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B5.res" id="14_imes6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B6.res" id="15_mum8u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B7.res" id="16_bs4uf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B0.res" id="17_bmpt0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B1.res" id="18_2eall"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B2.res" id="19_4g152"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B3.res" id="20_pdbdt"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B4.res" id="21_yvtvh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B5.res" id="22_77pno"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B6.res" id="23_uacy0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B7.res" id="24_yhxy6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Intake_black_cavity_B0.res" id="25_knan5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B0.res" id="26_02c2c"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B1.res" id="27_w4pcf"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B2.res" id="28_6iqwh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B3.res" id="29_857jv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B4.res" id="30_kkiv8"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B5.res" id="31_8arrs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B6.res" id="32_gjq6s"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B7.res" id="33_remrb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B0.res" id="34_7qil4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B1.res" id="35_t4ait"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B2.res" id="36_un012"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B3.res" id="37_glr8q"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B4.res" id="38_0ehpn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B5.res" id="39_b1ljn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B6.res" id="40_ih83h"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B7.res" id="41_1ecqw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B0.res" id="42_777t4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B1.res" id="43_80qho"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B2.res" id="44_14srl"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B3.res" id="45_t6vds"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B4.res" id="46_jv47a"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B5.res" id="47_vcl80"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B6.res" id="48_vfw7u"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B7.res" id="49_76j2k"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_FarProxy.res" id="50_n51jb"]
+
+[node name="AtmosphereProjectorPOI" type="Node3D" unique_id=1853475501]
+
+[node name="Detail" type="Node3D" parent="." unique_id=1700008250]
+
+[node name="Tower" type="Node3D" parent="Detail" unique_id=40108055]
+
+[node name="Champagne_structural_trim_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=135371129]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("1_g7tmd")
+
+[node name="Champagne_structural_trim_B1" type="MeshInstance3D" parent="Detail/Tower" unique_id=1226419986]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("2_vcear")
+
+[node name="Champagne_structural_trim_B2" type="MeshInstance3D" parent="Detail/Tower" unique_id=2102145757]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("3_usa6j")
+
+[node name="Champagne_structural_trim_B3" type="MeshInstance3D" parent="Detail/Tower" unique_id=2101917372]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("4_xndv3")
+
+[node name="Champagne_structural_trim_B4" type="MeshInstance3D" parent="Detail/Tower" unique_id=662999584]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("5_1dw35")
+
+[node name="Champagne_structural_trim_B5" type="MeshInstance3D" parent="Detail/Tower" unique_id=173117980]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("6_bu2lq")
+
+[node name="Champagne_structural_trim_B6" type="MeshInstance3D" parent="Detail/Tower" unique_id=1971876030]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("7_ibf26")
+
+[node name="Champagne_structural_trim_B7" type="MeshInstance3D" parent="Detail/Tower" unique_id=1968187286]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("8_3u63n")
+
+[node name="Cyan_energized_conduits_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=1574230623]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("9_0he41")
+
+[node name="Cyan_energized_conduits_B1" type="MeshInstance3D" parent="Detail/Tower" unique_id=321938162]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("10_mg5bn")
+
+[node name="Cyan_energized_conduits_B2" type="MeshInstance3D" parent="Detail/Tower" unique_id=1965622711]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("11_8xjxm")
+
+[node name="Cyan_energized_conduits_B3" type="MeshInstance3D" parent="Detail/Tower" unique_id=1308820358]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("12_p04av")
+
+[node name="Cyan_energized_conduits_B4" type="MeshInstance3D" parent="Detail/Tower" unique_id=459542189]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("13_sq21f")
+
+[node name="Cyan_energized_conduits_B5" type="MeshInstance3D" parent="Detail/Tower" unique_id=1241642206]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("14_imes6")
+
+[node name="Cyan_energized_conduits_B6" type="MeshInstance3D" parent="Detail/Tower" unique_id=527755028]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("15_mum8u")
+
+[node name="Cyan_energized_conduits_B7" type="MeshInstance3D" parent="Detail/Tower" unique_id=1241008910]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("16_bs4uf")
+
+[node name="Gunmetal_mechanisms_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=752260075]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("17_bmpt0")
+
+[node name="Gunmetal_mechanisms_B1" type="MeshInstance3D" parent="Detail/Tower" unique_id=689047117]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("18_2eall")
+
+[node name="Gunmetal_mechanisms_B2" type="MeshInstance3D" parent="Detail/Tower" unique_id=1769579844]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("19_4g152")
+
+[node name="Gunmetal_mechanisms_B3" type="MeshInstance3D" parent="Detail/Tower" unique_id=1258469961]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("20_pdbdt")
+
+[node name="Gunmetal_mechanisms_B4" type="MeshInstance3D" parent="Detail/Tower" unique_id=1410833285]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("21_yvtvh")
+
+[node name="Gunmetal_mechanisms_B5" type="MeshInstance3D" parent="Detail/Tower" unique_id=2087623000]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("22_77pno")
+
+[node name="Gunmetal_mechanisms_B6" type="MeshInstance3D" parent="Detail/Tower" unique_id=1054782972]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("23_uacy0")
+
+[node name="Gunmetal_mechanisms_B7" type="MeshInstance3D" parent="Detail/Tower" unique_id=272935632]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("24_yhxy6")
+
+[node name="Intake_black_cavity_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=1538585620]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("25_knan5")
+
+[node name="Pale_ceramic_titanium_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=28191757]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("26_02c2c")
+
+[node name="Pale_ceramic_titanium_B1" type="MeshInstance3D" parent="Detail/Tower" unique_id=132168260]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("27_w4pcf")
+
+[node name="Pale_ceramic_titanium_B2" type="MeshInstance3D" parent="Detail/Tower" unique_id=1483266088]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("28_6iqwh")
+
+[node name="Pale_ceramic_titanium_B3" type="MeshInstance3D" parent="Detail/Tower" unique_id=639121973]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("29_857jv")
+
+[node name="Pale_ceramic_titanium_B4" type="MeshInstance3D" parent="Detail/Tower" unique_id=2097270760]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("30_kkiv8")
+
+[node name="Pale_ceramic_titanium_B5" type="MeshInstance3D" parent="Detail/Tower" unique_id=312234483]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("31_8arrs")
+
+[node name="Pale_ceramic_titanium_B6" type="MeshInstance3D" parent="Detail/Tower" unique_id=1316754186]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("32_gjq6s")
+
+[node name="Pale_ceramic_titanium_B7" type="MeshInstance3D" parent="Detail/Tower" unique_id=1515556959]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("33_remrb")
+
+[node name="Recessed_graphite_steel_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=1785790511]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("34_7qil4")
+
+[node name="Recessed_graphite_steel_B1" type="MeshInstance3D" parent="Detail/Tower" unique_id=1551041204]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("35_t4ait")
+
+[node name="Recessed_graphite_steel_B2" type="MeshInstance3D" parent="Detail/Tower" unique_id=1144627798]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("36_un012")
+
+[node name="Recessed_graphite_steel_B3" type="MeshInstance3D" parent="Detail/Tower" unique_id=1055127455]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("37_glr8q")
+
+[node name="Recessed_graphite_steel_B4" type="MeshInstance3D" parent="Detail/Tower" unique_id=1350611388]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("38_0ehpn")
+
+[node name="Recessed_graphite_steel_B5" type="MeshInstance3D" parent="Detail/Tower" unique_id=767384421]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("39_b1ljn")
+
+[node name="Recessed_graphite_steel_B6" type="MeshInstance3D" parent="Detail/Tower" unique_id=1550982478]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("40_ih83h")
+
+[node name="Recessed_graphite_steel_B7" type="MeshInstance3D" parent="Detail/Tower" unique_id=1254176190]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("41_1ecqw")
+
+[node name="Warm_edge_alloy_B0" type="MeshInstance3D" parent="Detail/Tower" unique_id=563786905]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("42_777t4")
+
+[node name="Warm_edge_alloy_B1" type="MeshInstance3D" parent="Detail/Tower" unique_id=1611222735]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("43_80qho")
+
+[node name="Warm_edge_alloy_B2" type="MeshInstance3D" parent="Detail/Tower" unique_id=190718924]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("44_14srl")
+
+[node name="Warm_edge_alloy_B3" type="MeshInstance3D" parent="Detail/Tower" unique_id=370811841]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("45_t6vds")
+
+[node name="Warm_edge_alloy_B4" type="MeshInstance3D" parent="Detail/Tower" unique_id=609263911]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("46_jv47a")
+
+[node name="Warm_edge_alloy_B5" type="MeshInstance3D" parent="Detail/Tower" unique_id=1057434845]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("47_vcl80")
+
+[node name="Warm_edge_alloy_B6" type="MeshInstance3D" parent="Detail/Tower" unique_id=1409432536]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("48_vfw7u")
+
+[node name="Warm_edge_alloy_B7" type="MeshInstance3D" parent="Detail/Tower" unique_id=1050017508]
+visibility_range_end = 15000.0
+visibility_range_end_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("49_76j2k")
+
+[node name="FarProxy" type="MeshInstance3D" parent="." unique_id=1654852118]
+cast_shadow = 0
+visibility_range_begin = 14000.0
+visibility_range_begin_margin = 1000.0
+visibility_range_fade_mode = 1
+mesh = ExtResource("50_n51jb")
+
+[node name="Markers" type="Node3D" parent="." unique_id=1896259653]
+
+[node name="WallTopOrigin" type="Marker3D" parent="Markers" unique_id=155697148]
+
+[node name="ShieldPlaneCrown" type="Marker3D" parent="Markers" unique_id=2049893040]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1600, 0)
+
+[node name="TopEmitterSphere" type="Marker3D" parent="Markers" unique_id=1274263888]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1475, 0)
+
+[node name="PowerIntakeSocket_NegativeX" type="Marker3D" parent="Markers" unique_id=310105419]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 19, 39)
+
+[node name="PowerIntakeSocket_PositiveX" type="Marker3D" parent="Markers" unique_id=1331757728]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 19, 39)

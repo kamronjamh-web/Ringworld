@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.ContainmentField;
+using RingworldTechDemo.Poi;
 using RingworldTechDemo.Terrain.Editable;
 using RingworldTechDemo.UI;
 using RingworldTechDemo.Voxel.Core;
@@ -1062,14 +1063,33 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         double around = _canonicalPosition.AroundMeters;
         double vertical = _canonicalPosition.VerticalMeters;
         double across = _canonicalPosition.AcrossMeters;
+        double wallTop = _grid.GetStructuralWallTopGlobalY();
         RimWallTopWalk.Step(ref around, ref vertical, ref across, ref _canonicalVelocity, dt, side, _grid.RingAcrossWidthMeters,
-            RimWallDescription.Current.DepthMeters, _grid.GetStructuralWallTopGlobalY(), BodyWidth * 0.5, out bool grounded);
+            RimWallDescription.Current.DepthMeters, wallTop, BodyWidth * 0.5, out bool grounded, GetProjectorWallObstacles(wallTop));
         _canonicalPosition = new RingCanonicalPosition(around, vertical, across);
         _grounded = grounded;
         Velocity = Vector3.Zero;
         WrapCanonicalAround();
         RecenterCollisionOrigin(force: false);
         ApplyWorldTransform();
+    }
+
+    private AtmosphereProjectorWallObstacles? _projectorWallObstacles;
+
+    /// <summary>Projector tower footprints for the wall-top walk; rebuilt when the ring geometry or wall description changes. Null when the footprint data is missing.</summary>
+    private AtmosphereProjectorWallObstacles? GetProjectorWallObstacles(double wallTop)
+    {
+        AtmosphereProjectorFootprint? footprint = AtmosphereProjectorFootprint.Shared;
+        if (footprint == null || _grid == null) return null;
+        double circumference = _grid.GetCanonicalRingCircumferenceMeters64();
+        double width = _grid.RingAcrossWidthMeters;
+        RimWallDescription wall = RimWallDescription.Current;
+        if (_projectorWallObstacles == null || !_projectorWallObstacles.Sites.Matches(circumference, width, wallTop, wall))
+        {
+            var sites = AtmosphereProjectorSites.Build(_grid.CaptureLodGeometrySnapshot(), width, wall);
+            _projectorWallObstacles = new AtmosphereProjectorWallObstacles(sites, footprint);
+        }
+        return _projectorWallObstacles;
     }
 
     private void UpdateWaterState()

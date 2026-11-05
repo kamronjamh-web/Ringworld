@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_3jw4b"]
+
+[resource]
+resource_name = "Warm edge alloy"
+render_priority = 0
+shader = ExtResource("1_3jw4b")
+shader_parameter/albedo_color = Color(0.91627353, 0.88082504, 0.785777, 1)
+shader_parameter/metallic_value = 0.55
+shader_parameter/roughness_value = 0.28
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

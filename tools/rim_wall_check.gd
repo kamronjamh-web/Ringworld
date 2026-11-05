@@ -17,6 +17,13 @@ extends SceneTree
 ##               (a sequence for ffmpeg_tools sheet); prints CONTACT lines (adapter counters, vacuum weight/cutoff/gain, whump) and CONTACT_REAL=PASS|FAIL.
 ## --hum         field hum hook real path (use with --no-views): injects a 220 Hz tone at runtime (nothing shipped) and flies in at the wall-top skirt height from
 ##               3.1 km out to the skirt and through it, logging the two voice gains and dB each second (HUM lines, HUM_REAL=PASS|FAIL).
+## --projector   atmosphere-shield projector POI views at the cue-line tower (around = line, across = -64, wall top), per time of day:
+##               ptop_up, ptop_base, ptop_across (wall top), pair (300 m over the habitat edge), pfloor5, pfloor20 (habitat floor), pfar50,
+##               pfar100, pfar150 (2 km over the floor, looking back at the wall), pvac (vacuum side). --proj-views=a:b limits them. Use with
+##               --only=none to skip the WO12 views. Prints RIM_WALL projector lines (streamer / stand-in status when present).
+## --projector-perf  with --projector, at noon: one A-B-A (projectors on / off / on, whole-frame GPU ms) at ptop_up, pfloor5 and pfar50.
+## --projector-walk  walk into and around the cue-line tower on the wall top (footprint collision): blocked at the foot and the body, free beside
+##               it and through the central channel; prints PROJ_WALK=PASS|FAIL.
 ## --no-views    skip the views (walk only).
 ## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, anchor, far50, arch); --only=none skips them all.
 ## --field       containment field WO3 views (weather clock paused): each pose is shot with the field on, twice (paused clock: identical),
@@ -37,6 +44,7 @@ var _explorer: Node
 var _grid: Node
 var _noon_cache := -1.0
 var _walk_failures: Array[String] = []
+var _proj_failures: Array[String] = []
 
 func _initialize() -> void:
 	create_timer(1500.0).timeout.connect(func(): print("RIM_WALL watchdog"); quit(3))
@@ -308,6 +316,8 @@ func _run() -> void:
 				_teleport(line, top + 3000.0, 50000.0, -90.0, -3.0)
 				await create_timer(settle).timeout
 				await _shot("%s_far50" % tod)
+			if _arg("projector", "") != "":
+				await _projector_views(tod, line, top, settle, terrain)
 			if _arg("field", "") != "":
 				await _field_views(tod, line, top, width, floor_h, settle)
 			if tod == "noon":
@@ -327,6 +337,9 @@ func _run() -> void:
 		await _contact(line, top, width)
 	if _arg("hum", "") != "":
 		await _hum(line, top, width)
+	if _arg("projector-walk", "") != "":
+		await _projector_walk(line, top, width)
+		print("PROJ_WALK=%s %s" % ["PASS" if _proj_failures.is_empty() else "FAIL", "; ".join(_proj_failures)])
 	if _arg("walk", "") != "":
 		await _walk(line, top, width)
 		print("RIM_WALL_WALK=%s %s" % ["PASS" if _walk_failures.is_empty() else "FAIL", "; ".join(_walk_failures)])
@@ -835,3 +848,132 @@ func _hum(line: float, top: float, width: float) -> void:
 	_cexpect(bool(end.get("engaged_hum_bus", false)) and float(end.get("weight", 0.0)) > 0.99, "HUM: past the field the hum bus carries the vacuum low-pass (weight %.2f)" % float(end.get("weight", 0.0)))
 	_explorer.call("EndScriptedFlight")
 	print("HUM_REAL=%s %s" % ["PASS" if _contact_failures.is_empty() else "FAIL", "; ".join(_contact_failures)])
+
+# ---- Atmosphere-shield projector POIs ---------------------------------------------------------------------------------------------------------
+# The tower at the cue line stands on the across-0 wall: origin around = line, across = -64 (the centre line, the field plane), vertical = wall top.
+# Asset frame: local X = +across (80 m body, |x| <= 40), Z = +around (feet to |z| = 90), 1,600 m tall.
+
+func _want_proj(view: String) -> bool:
+	var only := _arg("proj-views", "")
+	return only == "" or view in only.split(":")
+
+func _floor_at(terrain: Node, around: float, across: float) -> float:
+	var h := 0.0
+	if terrain != null:
+		h = float(terrain.call("SampleHeight", around, across))
+	if not is_finite(h):
+		h = 0.0
+	return maxf(h, 0.0)
+
+# Pitch (degrees) from a camera at height cam_v, horizontal distance dist, to a point at height target_v.
+func _pitch_to(cam_v: float, target_v: float, dist: float) -> float:
+	return rad_to_deg(atan2(target_v - cam_v, dist))
+
+func _projector_status() -> void:
+	for n in ["AtmosphereProjectors", "AtmosphereProjectorStandIns"]:
+		var node: Node = _world.get_node_or_null(n)
+		if node != null and node.has_method("DescribeStatus"):
+			print("RIM_WALL projector ", n, ": ", node.call("DescribeStatus"))
+
+func _proj_view(tod: String, view: String, around: float, vertical: float, across: float, yaw: float, pitch: float, settle: float) -> void:
+	if not _want_proj(view):
+		return
+	_teleport(around, vertical, across, yaw, pitch)
+	await create_timer(settle).timeout
+	_projector_status()
+	await _shot("%s_%s" % [tod, view])
+	if _arg("projector-perf", "") != "" and tod == "noon" and view in ["ptop_up", "pfloor5", "pfar50"]:
+		await _projector_aba(view)
+
+# One A-B-A: projectors on (streamer + stand-ins), both off, on again (whole-frame GPU ms, 240 frames each).
+func _projector_aba(label: String) -> void:
+	var nodes: Array[Node] = []
+	for n in ["AtmosphereProjectors", "AtmosphereProjectorStandIns"]:
+		var node: Node = _world.get_node_or_null(n)
+		if node != null:
+			nodes.append(node)
+	var a1 := await _gpu_ms(240)
+	var d1 := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	var p1 := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
+	for node in nodes:
+		node.set("Enabled", false)
+	var b := await _gpu_ms(240)
+	var d0 := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)
+	var p0 := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
+	for node in nodes:
+		node.set("Enabled", true)
+	var a2 := await _gpu_ms(240)
+	print("RIM_WALL projector perf %s gpu_ms on=%.3f off=%.3f on=%.3f draws on=%d off=%d prims on=%d off=%d" % [label, a1, b, a2, d1, d0, p1, p0])
+
+func _projector_views(tod: String, line: float, top: float, settle: float, terrain: Node) -> void:
+	var mid := top + 800.0
+	# Wall top, habitat-side strip (across -44 = local x +20), 600 m before the tower, looking along the wall and up the stack.
+	await _proj_view(tod, "ptop_up", line - 600.0, top + 1.7, -44.0, 0.0, 40.0, settle)
+	# Wall top, 170 m before the tower beside the field plane: the feet, the central channel and the field rising through the slit.
+	await _proj_view(tod, "ptop_base", line - 170.0, top + 1.7, -50.0, 0.0, 12.0, settle)
+	# Wall top at the habitat edge (across -6), beside the tower, looking across the wall and up through the field plane.
+	await _proj_view(tod, "ptop_across", line, top + 1.7, -6.0, -90.0, 60.0, settle)
+	# 300 m above the habitat edge, 900 m out and 900 m before the tower.
+	await _proj_view(tod, "pair", line - 900.0, top + 300.0, 900.0, -45.0, _pitch_to(top + 300.0, mid, 1300.0), settle)
+	var specs := [["pfloor5", 5000.0, 40.0], ["pfloor20", 20000.0, 40.0], ["pfar50", 50000.0, 2000.0], ["pfar100", 100000.0, 2000.0], ["pfar150", 150000.0, 2000.0]]
+	# --proj-far=d1:d2:... replaces the list with views 2 km over the floor at these across distances (metres), named pdist<km>.
+	if _arg("proj-far", "") != "":
+		specs = []
+		for d in _arg("proj-far", "").split(":"):
+			specs.append(["pdist%d" % int(float(d) / 1000.0), float(d), 2000.0])
+	for spec in specs:
+		var across: float = spec[1]
+		var v := _floor_at(terrain, line, across) + float(spec[2])
+		await _proj_view(tod, spec[0], line, v, across, -90.0, _pitch_to(v, mid, across + 64.0), settle)
+	# Vacuum side: 900 m outside the wall (across -900), 200 m above the wall top, 700 m before the tower, looking back at it and the habitat.
+	await _proj_view(tod, "pvac", line - 700.0, top + 200.0, -900.0, 45.0, _pitch_to(top + 200.0, mid, 1090.0), settle)
+
+func _pexpect(ok: bool, what: String) -> void:
+	print("PROJ_WALK check %s %s :: %s" % ["ok" if ok else "FAILED", what, _pose_text()])
+	if not ok:
+		_proj_failures.append(what)
+
+# Lands on the cap at (around, across) with noclip off, facing yaw.
+func _proj_land(around: float, across: float, top: float, yaw: float) -> void:
+	_teleport(around, top + 15.0, across, yaw, -8.0)
+	await create_timer(4.0).timeout
+	if bool(_pose().get("noclip", false)):
+		await _tap(KEY_V)
+	await create_timer(4.0).timeout
+	_explorer.call("SetPresentationView", yaw, -8.0)
+
+func _projector_walk(line: float, top: float, width: float) -> void:
+	# a) Along the wall into the foot (local x +24 = across -40): blocked at the foot end, z = -90 minus half the body width.
+	await _proj_land(line - 200.0, -40.0, top, 0.0)
+	await _hold(KEY_W, 25.0)
+	var p := _pose()
+	var dz := float(p["around_m"]) - line
+	_pexpect(dz < -89.5 and dz > -92.0, "blocked at the foot end (around - tower %.2f m, expected about -90.3)" % dz)
+	_pexpect(absf(float(p["vertical_m"]) - top) < 0.25, "still on the cap at the foot")
+	await _shot("pwalk_foot")
+	# b) Beside the tower (across -10 = local x +54): free past it.
+	await _proj_land(line - 200.0, -10.0, top, 0.0)
+	await _hold(KEY_W, 50.0)
+	p = _pose()
+	dz = float(p["around_m"]) - line
+	_pexpect(dz > 150.0, "walked past the tower beside it (around - tower %.1f m)" % dz)
+	# c) Through the central channel (across -64 = local x 0): free through the tower.
+	await _proj_land(line - 200.0, -64.0, top, 0.0)
+	await _hold(KEY_W, 50.0)
+	p = _pose()
+	dz = float(p["around_m"]) - line
+	_pexpect(dz > 150.0, "walked through the central channel (around - tower %.1f m)" % dz)
+	await _shot("pwalk_channel_through")
+	# d) Across into the body from the habitat side (around = line, z = 0): blocked at x = +40 plus half the body width (across -23.7).
+	await _proj_land(line, -10.0, top, -90.0)
+	await _hold(KEY_W, 8.0)
+	p = _pose()
+	var ax := float(p["across_m"])
+	_pexpect(ax > -24.5 and ax < -23.0, "blocked at the body face (across %.2f, expected about -23.7)" % ax)
+	await _shot("pwalk_body_face")
+	# e) Same on the far wall (centre line W + 64): walking +across into the body from the habitat side stops at W + 64 - 40.3.
+	await _proj_land(line, width + 10.0, top, 90.0)
+	await _hold(KEY_W, 8.0)
+	p = _pose()
+	ax = float(p["across_m"]) - width
+	_pexpect(ax > 23.0 and ax < 24.5, "far wall: blocked at the body face (across W + %.2f, expected about W + 23.7)" % ax)
