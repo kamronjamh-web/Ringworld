@@ -106,7 +106,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     [ExportGroup("Structural scale cues")]
     [Export] public bool StructuralScaleCuesEnabled { get; set; } = true;
     [Export(PropertyHint.Range, "100,10000,100")]
-    public float StructuralLongitudinalHalfWidthMeters { get; set; } = 1200.0f;
+    public float StructuralLongitudinalHalfWidthMeters { get; set; } = RingStructuralCues.ConduitHalfWidthMeters;
     [Export(PropertyHint.Range, "5000,200000,1000")]
     public float StructuralCrossSpacingMeters { get; set; } = 50000.0f;
     [Export(PropertyHint.Range, "50,5000,50")]

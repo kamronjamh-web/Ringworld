@@ -18,6 +18,10 @@
 // L / 460 = 100.17 m along around, laid out in the same surface coordinates, so the cells stay regular over the curve and the skirt and never swim.
 // Origin from ContainmentFieldNearPatch.LatticeOrigin (no drift).
 //
+// "Glass-like, not actual glass: this is still an energy field" (user decision 2026-11-05, latest): the glass reflection is toned down to a soft sheen,
+// and the clear seams carry a faint cool-cyan energy that flows slowly along the honeycomb edges (cf_seam_energy; faint self-light, never lights anything,
+// dimmer at night; the WO4 boost energises it strongly). The text below describes the glass layer underneath.
+//
 // Glass (user decision 2026-11-05 "a glass looking field with honeycomb pattern etched look", superseding "no fresnel rim, nothing added"): the panes
 // keep the refraction shimmer and add a Fresnel (Schlick, n = 1.5) reflection of the real light: the sky / habitat radiance in the reflected
 // direction and a small GGX glint of the sun. The etched honeycomb is frosted glass: it scatters the incident sun and ambient light diffusely
@@ -30,13 +34,20 @@ const float CF_NOISE_CELL_2 = 45.0;
 const int CF_NOISE_PERIOD_1 = 256;
 const int CF_NOISE_PERIOD_2 = 1024;
 const float CF_LATTICE_SPACING = 100.17391304;  // m, ContainmentFieldNearPatch.LatticeSpacingMeters = 46,080 / 460
-const float CF_ETCH_HALF_WIDTH = 0.6;           // m, half width of the etched groove
-const float CF_FROST_ALBEDO = 0.3;              // diffuse albedo of the frosted groove (thin, pale milky lines)
-const float CF_FROST_TRANSMISSION_LOSS = 0.3;   // share of the background the groove scatters away (it is frosted, not clear)
+const float CF_SEAM_HALF_WIDTH = 3.0;           // m, half width of the clear seam bead
+const float CF_SEAM_TILT = 0.55;                // surface tilt at the bead's flanks (about 29 degrees): the lens and the edge highlights
+const float CF_SEAM_LENS_PX = 5.0;              // background shift across the bead at full tilt (px at 1080 lines): a thick clear bead bends what is behind
+const float CF_SEAM_ENV = 0.5;                  // sky / habitat sheen share on the bead (the flat pane has CF_GLASS_ENV)
+const float CF_SEAM_GLINT = 0.25;               // sun sheen share on the bead
+const float CF_SEAM_ROUGHNESS = 0.25;
+const vec3 CF_SEAM_ENERGY_COLOUR = vec3(0.35, 0.8, 1.0);   // faint cool cyan
+const float CF_SEAM_ENERGY = 0.06;              // self-light of a seam crest at etch strength 1 (linear radiance, day); faint
+const float CF_SEAM_BOOST_GAIN = 4.0;           // how strongly the WO4 boost (ripples, strikes) energises the seams
+const vec3 CF_SEAM_TINT = vec3(0.985, 0.99, 1.0);   // the faint tint of the thicker glass
 const float CF_GLASS_F0 = 0.04;                 // Schlick F0 for n = 1.5
-const float CF_GLASS_ROUGHNESS = 0.08;          // a clean pane: a small sun glint
-const float CF_GLASS_GLINT = 0.3;               // glint share: a thin coated pane, not a mirror
-const float CF_GLASS_ENV = 0.4;                 // sky / habitat reflection share (subtle: a clean pane, not a mirror)
+const float CF_GLASS_ROUGHNESS = 0.35;          // a soft sheen, not a mirror glint (an energy field, not real glass)
+const float CF_GLASS_GLINT = 0.12;              // sun sheen share
+const float CF_GLASS_ENV = 0.3;                 // sky / habitat sheen share
 const float CF_PI = 3.14159265;
 
 uint cf_hash2(int x, int y) {
@@ -91,8 +102,9 @@ vec2 cf_shimmer_slope(vec2 uv, vec4 origins) {
 	return n1.yz * 0.65 + n2.yz * 0.35;
 }
 
-// Distance (m) from p (lattice frame, m: x along around, y along the arch) to the nearest hex edge.
-float cf_hex_edge_distance(vec2 p) {
+// Nearest hex edge from p (lattice frame, m: x along around, y along the arch): x = distance to the edge's centre line (m), yz = the unit direction
+// in the lattice frame that points away from that centre line (into the cell), so a bead profile across the seam can tilt the surface and bend the light.
+vec3 cf_hex_edge(vec2 p) {
 	vec2 q = p / CF_LATTICE_SPACING;
 	vec2 s = vec2(1.0, 1.7320508);
 	vec2 ca = floor(q / s) + 0.5;
@@ -101,24 +113,66 @@ float cf_hex_edge_distance(vec2 p) {
 	vec2 hb = q - (cb * s + vec2(0.5, 0.8660254));
 	vec2 h = dot(ha, ha) < dot(hb, hb) ? ha : hb;
 	vec2 ah = abs(h);
-	float hex = max(ah.x, dot(ah, vec2(0.5, 0.8660254)));
-	return max(0.5 - hex, 0.0) * CF_LATTICE_SPACING;
+	float slant = dot(ah, vec2(0.5, 0.8660254));
+	vec2 grad = ah.x > slant ? vec2(1.0, 0.0) : vec2(0.5, 0.8660254);
+	grad *= vec2(h.x < 0.0 ? -1.0 : 1.0, h.y < 0.0 ? -1.0 : 1.0);
+	return vec3(max(0.5 - max(ah.x, slant), 0.0) * CF_LATTICE_SPACING, -grad);
 }
 
-// Etched groove mask (0..~1): a soft frosted core with a slight inner bevel (the groove wall catches a little more light), anti-aliased with the
-// screen footprint (pixel_m = metres per pixel from fwidth of the lattice coordinates) and energy preserving (a groove narrower than a pixel is
-// drawn one pixel wide and dimmer). Before the cells shrink to a few pixels the etch fades out, so it never turns into moire or shimmer.
-float cf_etch_mask(vec2 p, float pixel_m) {
-	float e = cf_hex_edge_distance(p);
+// Position (m) along the nearest hex edge from its midpoint, measured with the edge's canonical tangent, so both cells sharing the edge agree;
+// -L/2 .. L/2 with L = the edge length (spacing / sqrt 3).
+float cf_hex_edge_along(vec2 p) {
+	vec2 q = p / CF_LATTICE_SPACING;
+	vec2 s = vec2(1.0, 1.7320508);
+	vec2 ca = floor(q / s) + 0.5;
+	vec2 cb = floor((q - vec2(0.5, 0.8660254)) / s) + 0.5;
+	vec2 ha = q - ca * s;
+	vec2 hb = q - (cb * s + vec2(0.5, 0.8660254));
+	vec2 h = dot(ha, ha) < dot(hb, hb) ? ha : hb;
+	vec2 ah = abs(h);
+	float slant = dot(ah, vec2(0.5, 0.8660254));
+	vec2 grad = ah.x > slant ? vec2(1.0, 0.0) : vec2(0.5, 0.8660254);
+	grad *= vec2(h.x < 0.0 ? -1.0 : 1.0, h.y < 0.0 ? -1.0 : 1.0);
+	vec2 tangent = vec2(-grad.y, grad.x);
+	if (tangent.y < 0.0 || (tangent.y == 0.0 && tangent.x < 0.0)) tangent = -tangent;
+	return dot(h - 0.5 * grad, tangent) * CF_LATTICE_SPACING;
+}
+
+// The seams' energy (0..~1.2): a crest along each edge, anti-aliased and faded like the seam itself, whose brightness flows slowly along the edges.
+// One wavelength per edge (the edge length), so the pulse is continuous where three edges meet. flow_phase = weather clock / period mod 1.
+float cf_seam_energy(vec2 p, float pixel_m, float flow_phase) {
+	float e = cf_hex_edge(p).x;
 	float fw = max(pixel_m, 0.001);
-	float w = CF_ETCH_HALF_WIDTH;
-	float drawn = max(w, fw);
-	float core = 1.0 - smoothstep(0.45 * drawn, drawn + fw, e);
-	float bevel_width = 0.35 * w + fw;
-	float bevel = exp(-((e - drawn) / bevel_width) * ((e - drawn) / bevel_width)) * 0.4;
-	float energy = w / drawn;
+	float w = 0.5 * CF_SEAM_HALF_WIDTH;
+	float drawn = max(w, 0.75 * fw);
+	float crest = exp(-(e / drawn) * (e / drawn)) * (w / drawn);
 	float cell_fade = 1.0 - smoothstep(CF_LATTICE_SPACING / 16.0, CF_LATTICE_SPACING / 6.0, fw);
-	return clamp(core * 0.85 + bevel, 0.0, 1.0) * energy * cell_fade;
+	float edge_length = CF_LATTICE_SPACING * 0.57735027;
+	float pulse = 0.5 + 0.5 * cos(6.2831853 * (cf_hex_edge_along(p) / edge_length - flow_phase));
+	return crest * cell_fade * (0.45 + 0.75 * pulse);
+}
+
+// The clear seam (user decision 2026-11-05, revised: transparent, a bit thicker): a parabolic bead CF_SEAM_HALF_WIDTH wide each side of the edge,
+// read through optics only. Returns x = coverage (0..1, anti-aliased with the screen footprint pixel_m), yz = the surface tilt in the lattice frame
+// (0 on the crest, CF_SEAM_TILT at the flanks, pointing away from the crest), w = 1 - roughness widening for the bead's specular (Toksvig-like).
+// When the bead shrinks toward a pixel its tilt flattens (no sparkle) and before the cells shrink to a few pixels the seam fades out (no moire).
+vec4 cf_seam(vec2 p, float pixel_m) {
+	vec3 edge = cf_hex_edge(p);
+	float e = edge.x;
+	float fw = max(pixel_m, 0.001);
+	float w = CF_SEAM_HALF_WIDTH;
+	float cell_fade = 1.0 - smoothstep(CF_LATTICE_SPACING / 16.0, CF_LATTICE_SPACING / 6.0, fw);
+	float coverage = (1.0 - smoothstep(w - 0.5 * fw, w + 0.5 * fw, e)) * min(1.0, w / fw) * cell_fade;
+	float resolve = clamp(w / (2.5 * fw), 0.0, 1.0);
+	float t = clamp(e / w, 0.0, 1.0);
+	vec2 tilt = edge.yz * (CF_SEAM_TILT * t * resolve * cell_fade);
+	return vec4(coverage, tilt, resolve);
+}
+
+// Refraction offset of the bead (px): a thick clear bead bends the background across the seam, like a cylindrical lens.
+vec2 cf_seam_offset_px(vec4 seam, vec3 tangent_around_view, vec3 tangent_arch_view, float weight, float px_scale) {
+	vec3 d = seam.y * tangent_around_view + seam.z * tangent_arch_view;
+	return vec2(d.x, -d.y) * (CF_SEAM_LENS_PX / CF_SEAM_TILT * px_scale * clamp(weight, 0.0, 1.0) * seam.x);
 }
 
 // GGX normal distribution and height-correlated Smith visibility (alpha = roughness^2).
@@ -137,31 +191,45 @@ float cf_fresnel(float c) {
 	return CF_GLASS_F0 + (1.0 - CF_GLASS_F0) * g2 * g2 * g;
 }
 
-// The lit pane (radiance, not premultiplied). All directions in one space (both passes use view space): n = field normal (either side), v = toward
-// the camera, l = toward the sun, up = local zenith. Light inputs (linear, the units of lit surfaces): sun = sun irradiance at the field (day, eclipse
-// and K applied), sky = sky radiance (the reflection looking up), ground = habitat radiance (the reflection looking down), ambient = ambient radiance
-// for the frosted groove. glass = glass strength x the shared fades, etch_w = etch strength x the shared fades, etch = cf_etch_mask, boost = the WO4
-// hook (ripples and strikes brighten the etch near them; the near patch passes 0), haze = the haze transmittance to the fragment.
-vec3 cf_glass_shade(vec3 refracted, vec3 n, vec3 v, vec3 l, vec3 up, vec3 sun, vec3 sky, vec3 ground, vec3 ambient,
-		float glass, float etch_w, float etch, float boost, float haze) {
-	vec3 nf = dot(n, v) < 0.0 ? -n : n;
+// Specular reflection of one surface orientation: Fresnel x (sky looking up | lit habitat looking down) x env share, plus the GGX sun glint.
+vec3 cf_glass_reflect(vec3 nf, vec3 v, vec3 l, vec3 up, vec3 sun, vec3 sky, vec3 ground, float env_share, float glint_share, float roughness) {
 	float nv = clamp(dot(nf, v), 0.0, 1.0);
-	float fresnel = cf_fresnel(nv) * clamp(glass, 0.0, 2.0);
 	vec3 r = reflect(-v, nf);
 	float down = smoothstep(0.1, -0.3, dot(r, up));
-	vec3 reflected = mix(sky, ground, down) * (fresnel * CF_GLASS_ENV);
+	vec3 reflected = mix(sky, ground, down) * (cf_fresnel(nv) * env_share);
 	float nl = dot(nf, l);
 	if (nl > 0.0) {
 		vec3 h = normalize(l + v);
-		float spec = cf_ggx_specular(max(dot(nf, h), 0.0), nl, max(nv, 0.001), CF_GLASS_ROUGHNESS) * cf_fresnel(dot(h, v));
-		reflected += sun * (spec * nl * clamp(glass, 0.0, 2.0) * CF_GLASS_GLINT);
+		reflected += sun * (cf_ggx_specular(max(dot(nf, h), 0.0), nl, max(nv, 0.001), roughness) * cf_fresnel(dot(h, v)) * nl * glint_share);
 	}
-	float frost = clamp(etch * etch_w * (1.0 + max(boost, 0.0)), 0.0, 2.0);
-	float anl = abs(nl);
-	float sparkle = (1.0 - anl) * (1.0 - anl) * (1.0 - anl) * smoothstep(0.0, 0.08, anl);
-	vec3 scattered = frost * CF_FROST_ALBEDO * (sun * (anl + 0.6 * sparkle) / CF_PI + ambient);
-	vec3 transmitted = refracted * (1.0 - min(fresnel * CF_GLASS_ENV, 1.0)) * (1.0 - CF_FROST_TRANSMISSION_LOSS * min(frost, 1.0));
-	return transmitted + (reflected + scattered) * haze;
+	return reflected;
+}
+
+// The lit pane (radiance, not premultiplied). All directions in one space (both passes use view space): n = field normal (either side), ta / tb = the
+// surface tangents along around / the arch (the lattice frame's axes), v = toward the camera, l = toward the sun, up = local zenith. Light inputs
+// (linear, the units of lit surfaces): sun = sun irradiance at the field (day, eclipse and K applied), sky = sky radiance (the reflection looking up),
+// ground = habitat radiance (the reflection looking down). glass = glass strength x the shared fades, seam_w = seam strength x the shared fades,
+// seam = cf_seam, boost = the WO4 hook (ripples and strikes brighten the seams near them; the near patch passes 0), haze = the haze transmittance.
+// The panes are clear glass: a Fresnel reflection near zero head-on. The seams are clear, thicker beads: they bend the background (the caller
+// applies cf_seam_offset_px before sampling `refracted`) and their curved flanks catch the sky and the sun, so the honeycomb reads through distortion
+// and edge highlights, with at most a very faint tint. energy = cf_seam_energy, energy_scale = the day / night scale of the seams' faint self-light.
+vec3 cf_glass_shade(vec3 refracted, vec3 n, vec3 ta, vec3 tb, vec3 v, vec3 l, vec3 up, vec3 sun, vec3 sky, vec3 ground,
+		float glass, float seam_w, vec4 seam, float energy, float energy_scale, float boost, float haze) {
+	vec3 nf = dot(n, v) < 0.0 ? -n : n;
+	float g = clamp(glass, 0.0, 2.0);
+	float pane_f = cf_fresnel(clamp(dot(nf, v), 0.0, 1.0)) * g * CF_GLASS_ENV;
+	vec3 pane = cf_glass_reflect(nf, v, l, up, sun, sky, ground, CF_GLASS_ENV, CF_GLASS_GLINT, CF_GLASS_ROUGHNESS) * g;
+	float m = clamp(seam.x * seam_w, 0.0, 1.0);
+	vec3 bead = vec3(0.0);
+	if (m > 0.0) {
+		vec3 nb = normalize(nf + (seam.y * ta + seam.z * tb) * (dot(nf, n) < 0.0 ? -1.0 : 1.0));
+		if (dot(nb, v) < 0.02) nb = nf;
+		float rough = mix(0.45, CF_SEAM_ROUGHNESS, seam.w);
+		bead = cf_glass_reflect(nb, v, l, up, sun, sky, ground, CF_SEAM_ENV, CF_SEAM_GLINT, rough) * (max(g, 0.5) * (1.0 + max(boost, 0.0)));
+	}
+	vec3 transmitted = refracted * (1.0 - min(pane_f, 1.0)) * mix(vec3(1.0), CF_SEAM_TINT, m);
+	vec3 glow = CF_SEAM_ENERGY_COLOUR * (CF_SEAM_ENERGY * energy * clamp(seam_w, 0.0, 2.0) * energy_scale * (1.0 + CF_SEAM_BOOST_GAIN * max(boost, 0.0)));
+	return transmitted + (mix(pane, bead, m) + glow) * haze;
 }
 
 // Distance weight: 1 near the camera, exactly 0 at and beyond the shimmer range N (so the patch appears and disappears on fully transparent pixels).
@@ -198,7 +266,7 @@ vec2 cf_offset_px(vec2 slope, vec3 tangent_around_view, vec3 tangent_arch_view, 
 	return o * (max_px * weight);
 }
 
-// Debug colours (cf_debug_mode 1: patch coverage tint, 2: distance heat, 3: etch mask x etch weight).
+// Debug colours (cf_debug_mode 1: patch coverage tint, 2: distance heat, 3: seam coverage x seam weight).
 vec3 cf_debug_colour(int mode, float alpha, float dist, float range_m, float lattice) {
 	if (mode == 1) return vec3(1.0, 0.0, 1.0) * alpha;
 	if (mode == 3) return vec3(lattice);

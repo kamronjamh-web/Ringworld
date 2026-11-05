@@ -3,8 +3,8 @@ shader_type spatial;
 // camera is BELOW the field (inside the contained volume): Sunshine clouds composite afterwards, so clouds in front of the field are not refracted. With the
 // camera above the field the same patch is drawn after Sunshine by scripts/render/RingContainmentFieldComposite.gd instead (same maths, shared include).
 //
-// Clear glass with an etched honeycomb (user decision 2026-11-05): refraction shimmer, a Fresnel reflection of the real sky / habitat light and the
-// sun, and frosted 100 m hex grooves lit by the sun and the ambient light (cf_glass_shade). Physically lit, never emissive: the light inputs are the
+// Clear glass with a honeycomb of clear seams (user decisions 2026-11-05): refraction shimmer, a Fresnel reflection of the real sky / habitat light
+// and the sun, and 100 m hex seams that are thicker clear beads: they bend the background and catch sky and sun highlights (cf_seam, cf_glass_shade). Physically lit, never emissive: the light inputs are the
 // published scene lighting (RingContainmentField.UpdateLighting), so night, eclipses, storms and the megastorm darkness dim it like any surface.
 // Premultiplied: out = ALBEDO + dst * (1 - ALPHA) with ALBEDO = shade * a, ALPHA = a. Fragments at or beyond the shimmer range have a = 0 and are
 // discarded, so the patch appears and disappears on fully transparent pixels.
@@ -36,6 +36,8 @@ uniform vec3 cf_sun_irradiance = vec3(0.0);
 uniform vec3 cf_sky_radiance = vec3(0.0);
 uniform vec3 cf_ground_radiance = vec3(0.0);
 uniform vec3 cf_ambient_radiance = vec3(0.0);
+uniform float cf_seam_flow_phase = 0.0;    // weather clock / flow period mod 1 (RingContainmentField)
+uniform float cf_seam_energy_scale = 1.0;  // day 1, night 0.35 (the seams' faint self-light)
 
 varying vec3 cf_tangent_view;
 varying vec3 cf_normal_view;
@@ -76,23 +78,24 @@ void fragment() {
 	vec2 lattice_p = UV + cf_lattice_origin;
 	vec2 lattice_fw = fwidth(lattice_p);
 	if (a < 1.0 / 1024.0) discard;
-	float etch = cf_etch_mask(lattice_p, max(lattice_fw.x, lattice_fw.y));
+	vec4 seam = cf_seam(lattice_p, max(lattice_fw.x, lattice_fw.y));
 	if (cf_debug_mode > 0) {
-		ALBEDO = cf_debug_colour(cf_debug_mode, a, dist, cf_range_m, etch * w_etch) * a;
+		ALBEDO = cf_debug_colour(cf_debug_mode, a, dist, cf_range_m, seam.x * w_etch) * a;
 		ALPHA = a;
 	} else {
 		vec3 ta = normalize(cf_tangent_view);
 		vec3 tb = normalize(cross(n, ta));
 		float max_px = cf_max_offset_px * max(1.0, VIEWPORT_SIZE.y / 1080.0);
-		vec2 offset = cf_offset_px(cf_shimmer_slope(UV, cf_noise_origins), ta, tb, min(w_refraction, 1.0), max_px);
+		vec2 offset = cf_offset_px(cf_shimmer_slope(UV, cf_noise_origins), ta, tb, min(w_refraction, 1.0), max_px)
+			+ cf_seam_offset_px(seam, ta, tb, w_etch, max(1.0, VIEWPORT_SIZE.y / 1080.0));
 		vec2 uv = SCREEN_UV + offset / VIEWPORT_SIZE;
 		// Never pull colour from something in front of the field (no halo around the wall top or a POI).
 		if (cf_view_depth_at(uv, INV_PROJECTION_MATRIX) < frag_depth) uv = SCREEN_UV;
 		vec3 refracted = textureLod(cf_screen, uv, 0.0).rgb;
 		vec3 l = normalize((VIEW_MATRIX * vec4(cf_to_sun, 0.0)).xyz);
 		vec3 up = normalize((VIEW_MATRIX * vec4(cf_up, 0.0)).xyz);
-		vec3 shade = cf_glass_shade(refracted, n, to_camera, l, up, cf_sun_irradiance, cf_sky_radiance, cf_ground_radiance, cf_ambient_radiance,
-			w_glass, w_etch, etch, 0.0, cf_haze_visibility);
+		vec3 shade = cf_glass_shade(refracted, n, ta, tb, to_camera, l, up, cf_sun_irradiance, cf_sky_radiance, cf_ground_radiance,
+			w_glass, w_etch, seam, cf_seam_energy(lattice_p, max(lattice_fw.x, lattice_fw.y), cf_seam_flow_phase), cf_seam_energy_scale, 0.0, cf_haze_visibility);
 		ALBEDO = shade * a;
 		ALPHA = a;
 	}

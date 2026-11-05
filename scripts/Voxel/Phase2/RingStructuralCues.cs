@@ -14,6 +14,15 @@ public static class RingStructuralCues
     /// <summary>Default of the hull shader's <c>structural_longitudinal_spacing_meters</c> (Certified circumference / LineCount, 249,332.8 m); keep equal to the shader.</summary>
     public const float ShaderDefaultSpacingMeters = 249332.8f;
 
+    /// <summary>
+    /// Half width of the power conduit (the longitudinal line, user decision 2026-11-05): half the field projector's along-wall footprint (the
+    /// <c>ringworld_atmosphere_projector</c> asset is 80 x 180 x 1600 m, 180 m along the wall including its feet). The hull shader default equals it.
+    /// </summary>
+    public const float ConduitHalfWidthMeters = 90.0f;
+
+    /// <summary>Period (s) of the conduit's upward power pulse on the weather clock (<c>ring_conduit_phase</c> = t / period mod 1).</summary>
+    public const double ConduitPulsePeriodSeconds = 16.0;
+
     /// <summary>Longitudinal cue spacing for a ring of this circumference (metres, canonical).</summary>
     public static double LongitudinalSpacingMeters(double circumferenceMeters) => circumferenceMeters / LineCount;
 

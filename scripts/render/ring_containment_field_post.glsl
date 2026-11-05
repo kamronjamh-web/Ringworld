@@ -12,13 +12,13 @@ layout(set = 0, binding = 0, std140) uniform Frame {
 	vec4 viewport;     // xy internal size px, z max offset px, w debug mode
 	vec4 params;       // x shimmer strength, y glass strength, z range m, w haze visibility
 	vec4 noise;        // per-octave noise origins (m)
-	vec4 lattice;      // x etch strength, yz lattice origin (m)
+	vec4 lattice;      // x etch strength, yz lattice origin (m), w seam flow phase
 	vec4 to_sun;       // world, xyz; the light terms are RingContainmentField.UpdateLighting's, the same values the spatial pass gets
 	vec4 up;           // world local zenith
 	vec4 sun;          // sun irradiance (linear)
 	vec4 sky;          // sky radiance (reflection looking up)
 	vec4 ground;       // habitat radiance (reflection looking down)
-	vec4 ambient;      // ambient radiance (frosted groove)
+	vec4 ambient;      // xyz ambient radiance (unused since the seams are clear), w seam energy scale (day / night)
 } F;
 struct PatchVertex { vec4 a; vec4 b; vec4 c; };   // a: position (anchor-relative) + uv2.x, b: normal + uv.x, c: around tangent + uv.y
 layout(set = 0, binding = 2, std430) restrict readonly buffer Vertices { PatchVertex v[]; } S;
@@ -99,20 +99,21 @@ void main() {
 	vec2 lattice_p = v_uv.xy + F.lattice.yz;
 	vec2 lattice_fw = fwidth(lattice_p);
 	if (a < 1.0 / 1024.0) discard;
-	float etch = cf_etch_mask(lattice_p, max(lattice_fw.x, lattice_fw.y));
+	vec4 seam = cf_seam(lattice_p, max(lattice_fw.x, lattice_fw.y));
 	int debug_mode = int(F.viewport.w + 0.5);
 	if (debug_mode > 0) {
-		out_color = vec4(cf_debug_colour(debug_mode, a, dist, range_m, etch * w_etch) * a, a);
+		out_color = vec4(cf_debug_colour(debug_mode, a, dist, range_m, seam.x * w_etch) * a, a);
 		return;
 	}
 	vec3 ta = normalize(v_tangent);
 	vec3 tb = normalize(cross(n, ta));
 	float max_px = F.viewport.z * max(1.0, F.viewport.y / 1080.0);
-	vec2 offset = cf_offset_px(cf_shimmer_slope(v_uv.xy, F.noise), ta, tb, min(w_refraction, 1.0), max_px);
+	vec2 offset = cf_offset_px(cf_shimmer_slope(v_uv.xy, F.noise), ta, tb, min(w_refraction, 1.0), max_px)
+		+ cf_seam_offset_px(seam, ta, tb, w_etch, max(1.0, F.viewport.y / 1080.0));
 	vec2 uv = screen_uv + offset / F.viewport.xy;
 	if (view_depth_at(uv) < frag_depth) uv = screen_uv;
 	vec3 refracted = textureLod(scene_copy, uv, 0.0).rgb;
-	vec3 shade = cf_glass_shade(refracted, n, to_camera, normalize(to_view(F.to_sun.xyz)), normalize(to_view(F.up.xyz)), F.sun.xyz, F.sky.xyz,
-		F.ground.xyz, F.ambient.xyz, w_glass, w_etch, etch, 0.0, F.params.w);
+	vec3 shade = cf_glass_shade(refracted, n, ta, tb, to_camera, normalize(to_view(F.to_sun.xyz)), normalize(to_view(F.up.xyz)), F.sun.xyz, F.sky.xyz,
+		F.ground.xyz, w_glass, w_etch, seam, cf_seam_energy(lattice_p, max(lattice_fw.x, lattice_fw.y), F.lattice.w), F.ambient.w, 0.0, F.params.w);
 	out_color = vec4(shade * a, a);
 }

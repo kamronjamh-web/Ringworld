@@ -66,10 +66,10 @@ public partial class RingLiveTuningDrawer
             "Refraction of whatever is behind the containment field, close up (within the shimmer range). 0 with sheen 0 hides the near field.");
         _containmentShimmerRange = AddContainmentFieldSlider(section, "ContainmentShimmerRangeKm", "Shimmer range (km)", .5, 10, .1, s.ShimmerRangeKm,
             "Distance from the field inside which the close-up shimmer and sheen show.");
-        _containmentSheenStrength = AddContainmentFieldSlider(section, "ContainmentSheenStrength", "Glass reflection", 0, 2, .05, s.SheenStrength,
-            "Fresnel reflection of the sky, the habitat below and a small sun glint on the field's glass panes; near zero head-on, stronger at grazing angles. Lit by the real light: dark at night.");
-        _containmentLatticeStrength = AddContainmentFieldSlider(section, "ContainmentLatticeStrength", "Etched lattice", 0, 2, .05, s.LatticeStrength,
-            "Frosted hexagonal etching (100 m cells) in the field's glass, lit by the sun and the sky like any surface; never self-lit. Ripples and strikes brighten it.");
+        _containmentSheenStrength = AddContainmentFieldSlider(section, "ContainmentSheenStrength", "Field sheen", 0, 2, .05, s.SheenStrength,
+            "Soft sheen of the field: a Fresnel-weighted reflection of the sky, the habitat below and the sun, near zero head-on. Lit by the real light: dark at night.");
+        _containmentLatticeStrength = AddContainmentFieldSlider(section, "ContainmentLatticeStrength", "Lattice seams", 0, 2, .05, s.LatticeStrength,
+            "The 100 m honeycomb seams: clear lens-like beads that bend what is behind them, catch the sky and sun, and carry a faint flowing cyan energy (dimmer at night). Ripples and strikes energise them.");
         var reset = new Button { Name = "ContainmentFieldReset", Text = "Reset containment field", SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             TooltipText = "Restores the containment field settings to their defaults." };
         reset.Pressed += ResetContainmentField;

@@ -16,8 +16,8 @@ extends SceneTree
 ## --only=a:b    take only these views (floor, top_along, top_across, top_above, band, line, anchor, far50, arch); --only=none skips them all.
 ## --field       containment field WO3 views (weather clock paused): each pose is shot with the field on, twice (paused clock: identical),
 ##               with its coverage tint (DebugMode 1) and off (A/B), with the near patch state; frame-time A-B-A at three poses; 150 frames
-##               at the grazing wall-top pose (flicker) and a 120-frame approach climb. --field-views=a:b limits them (top_up, top_along,
-##               floor, under20, over20, apex_under, apex_over, vacuum, far50, flicker, approach).
+##               at the grazing wall-top pose (flicker) and a 120-frame approach climb. --field-views=a:b limits them (top_up, top_close, top_along,
+##               floor, under20, over20, apex_under, apex_over, vacuum, conduit10, conduit50, conduit_top, far50, flicker, approach).
 ## Prints RIM_WALL lines, RIM_WALL hull ... triangle counts, RIM_WALL_WALK=PASS|FAIL when --walk, and RIM_WALL=DONE at the end.
 
 const MENU := preload("res://scenes/StartMenu.tscn")
@@ -441,6 +441,10 @@ func _field_views(tod: String, line: float, top: float, width: float, floor_h: f
 	if _want_field("top_up"):
 		_teleport(line - 1500.0, top + 50.0, 200.0, -35.0, 30.0)
 		await _field_shots("%s_field_top_up" % tod, settle)
+	# Close-up: wall top, 300 m from the skirt and 150 m up, looking up at it (the seams at 300-500 m).
+	if _want_field("top_close"):
+		_teleport(line - 1500.0, top + 150.0, 236.0, -70.0, 32.0)
+		await _field_shots("%s_field_top_close" % tod, settle)
 	# Same place, grazing along the skirt and the wall-top line.
 	if _want_field("top_along"):
 		_teleport(line - 1500.0, top + 50.0, 200.0, -12.0, 3.0)
@@ -475,6 +479,24 @@ func _field_views(tod: String, line: float, top: float, width: float, floor_h: f
 	if _want_field("vacuum"):
 		_teleport(line - 1500.0, top + 300.0, -400.0, 70.0, -12.0)
 		await _field_shots("%s_field_vacuum" % tod, settle)
+	# Power conduits (the 180 m blue lines under the projector sites): the across-0 wall at the anchor from the habitat floor 10 km and 50 km out,
+	# and from the wall top standing on the conduit at the anchor.
+	if _want_field("conduit10"):
+		_teleport(line, floor_h + 40.0, 10000.0, -90.0, 30.0)
+		await create_timer(settle).timeout
+		await _shot("%s_conduit_floor10" % tod)
+	if _want_field("conduit50"):
+		# 2 km above the floor so the hills and trees 50 km out do not hide the wall.
+		_teleport(line, floor_h + 2000.0, 50000.0, -90.0, 8.0)
+		await create_timer(settle).timeout
+		await _shot("%s_conduit_floor50" % tod)
+	if _want_field("conduit_top"):
+		_teleport(line - 350.0, top + 60.0, 120.0, -10.0, -24.0)
+		await create_timer(settle).timeout
+		await _shot("%s_conduit_top" % tod)
+		_teleport(line, top + 1.7, -64.0, 90.0, -30.0)
+		await create_timer(settle).timeout
+		await _shot("%s_conduit_on_anchor" % tod)
 	# 50 km into the habitat, looking back at the wall and the arch: invisible.
 	if _want_field("far50"):
 		_teleport(line, top + 3000.0, 50000.0, -90.0, 8.0)

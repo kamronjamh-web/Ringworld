@@ -59,6 +59,10 @@ public partial class RingContainmentField : Node3D
     private static readonly StringName GroundRadianceName = "cf_ground_radiance";
     private static readonly StringName AmbientRadianceName = "cf_ambient_radiance";
     private static readonly StringName GetPublishedLightingName = "get_published_lighting";
+    private static readonly StringName SeamFlowPhaseName = "cf_seam_flow_phase";
+    private static readonly StringName SeamEnergyScaleName = "cf_seam_energy_scale";
+    /// <summary>Seconds for the seam energy to flow one edge length (57.8 m): about 3 m/s, slow.</summary>
+    private const double SeamFlowPeriodSeconds = 20.0;
     private static readonly StringName LatticeName = "cf_lattice_strength";
     private static readonly StringName LatticeOriginName = "cf_lattice_origin";
     private static readonly StringName RangeName = "cf_range_m";
@@ -143,8 +147,24 @@ public partial class RingContainmentField : Node3D
         RemoveCompositeFromCompositor();
     }
 
+    private static readonly StringName ConduitPhaseName = "ring_conduit_phase";
+    private float _publishedConduitPhase = -1.0f;
+
+    /// <summary>The rim-wall power conduits' upward pulse (ring_hull_global.gdshader): weather clock / period mod 1, published here because the conduits feed
+    /// the field projectors. Paused clocks freeze it.</summary>
+    private void PublishConduitPhase()
+    {
+        double t = _weather?.CloudSimulationTimeSeconds ?? 0.0;
+        double phase = t / RingStructuralCues.ConduitPulsePeriodSeconds;
+        float value = (float)(phase - Math.Floor(phase));
+        if (value == _publishedConduitPhase) return;
+        _publishedConduitPhase = value;
+        RenderingServer.GlobalShaderParameterSet(ConduitPhaseName, value);
+    }
+
     public override void _Process(double delta)
     {
+        PublishConduitPhase();
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
         ProcessField();
         LastProcessMicroseconds = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds * 1000.0;
@@ -194,6 +214,10 @@ public partial class RingContainmentField : Node3D
         bool above = ForcePostPass || view.Side == ContainmentFieldViewSide.Above;
         FieldLighting light = UpdateLighting(snapshot, anchor);
         LastLighting = light;
+        double flowCycles = now / SeamFlowPeriodSeconds;
+        float flowPhase = (float)(flowCycles - Math.Floor(flowCycles));
+        // The seams' faint self-light: full by day, barely visible up close at night.
+        float energyScale = Mathf.Lerp(0.35f, 1.0f, light.Day);
         if (above)
         {
             if (_patch.Visible) _patch.Visible = false;
@@ -202,9 +226,9 @@ public partial class RingContainmentField : Node3D
             _frameParams[4] = ShimmerStrength; _frameParams[5] = SheenStrength; _frameParams[6] = (float)range;
             _frameParams[7] = 1.0f;   // haze visibility: above the field the camera-to-patch path (<= 3.3 km) is in vacuum or air at >= 11.6 km (T > 0.99)
             _frameParams[8] = noise.X; _frameParams[9] = noise.Y; _frameParams[10] = noise.Z; _frameParams[11] = noise.W;
-            _frameParams[12] = LatticeStrength; _frameParams[13] = lattice.X; _frameParams[14] = lattice.Y;
+            _frameParams[12] = LatticeStrength; _frameParams[13] = lattice.X; _frameParams[14] = lattice.Y; _frameParams[15] = flowPhase;
             Pack(16, light.ToSun); Pack(20, light.Up); Pack(24, light.SunIrradiance); Pack(28, light.SkyRadiance); Pack(32, light.GroundRadiance);
-            Pack(36, light.AmbientRadiance);
+            Pack(36, light.AmbientRadiance); _frameParams[39] = energyScale;
             SetCompositeActive(true, anchorWorld, _frameParams);
         }
         else
@@ -225,6 +249,8 @@ public partial class RingContainmentField : Node3D
             _material.SetShaderParameter(SkyRadianceName, light.SkyRadiance);
             _material.SetShaderParameter(GroundRadianceName, light.GroundRadiance);
             _material.SetShaderParameter(AmbientRadianceName, light.AmbientRadiance);
+            _material.SetShaderParameter(SeamFlowPhaseName, flowPhase);
+            _material.SetShaderParameter(SeamEnergyScaleName, energyScale);
             if (!_hazeRegistered)
             {
                 RingPoiHaze.RegisterMaterial(_material, snapshot.RingRadiusMeters);
