@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "note": "Authored explanations for debug PDA questions. General rules are not evidence that an event is currently happening. Add only implemented mechanics; current readings are provided separately.",
+  "entries": [
+    {
+      "id": "knowledge.ring_coordinates",
+      "topic": "location",
+      "model_text": "Canonical coordinates measure around/across/vertical ring distance; terrain-relative altitude is separate. Movement/water readings do not measure vitals.",
+      "text": "Canonical ring coordinates describe distance around the ring, distance across its width, and vertical position. Altitude above terrain is a separate local reading. Flight or noclip, swimming and underwater camera state are distinct movement readings. These readings do not include health, oxygen or inventory."
+    },
+    {
+      "id": "knowledge.eclipse",
+      "topic": "celestial",
+      "model_text": "The giant eclipses the real star locally. Coverage varies around the ring; an eclipse alone does not prove hub activation.",
+      "text": "A gas-giant eclipse occurs when the giant blocks the real star from the observer. Coverage is local to the observer and can vary around the ring. An eclipse reading alone does not establish whether the artificial hub light is active."
+    },
+    {
+      "id": "knowledge.hub_light",
+      "topic": "celestial",
+      "model_text": "The eclipse event's emitter network powers an artificial hub light overhead at local zenith. Read current activation/phase; a debug override can force it independently.",
+      "text": "During the configured eclipse event, the ring's emitter network sends energy toward the central hub and sustains an artificial light source. Its lighting direction follows the observer's local zenith. The current hub reading establishes whether it is active. A debug override can force hub lighting independently of the eclipse timeline; when that override is active, identify it as the cause instead of claiming a natural activation."
+    },
+    {
+      "id": "knowledge.weather",
+      "topic": "weather",
+      "model_text": "Local weather potential does not prove rain. Effects expose rain/snow drive and cloud-relative phase. Underground suspension can hide cached drive; nearby streaks may come from neighboring columns. No wetness/injury or whole-ring rain reading.",
+      "text": "Weather queries describe conditions at the player's canonical position, not the entire ring. Cloud coverage, wind and precipitation potential describe the local weather model. Precipitation potential is a propensity for precipitation, not a measurement proving rain or hail is currently falling. Initialized local-effects readings separately expose the smoothed precipitation drive and rain-versus-snow effect mode, with the observer's cloud-relative phase. Underground suspension can hide presentation while its cached drive remains nonzero. Nearby rain streaks can include neighboring columns, even with zero drive at the observer. These readings do not measure player wetness, injury or whole-ring rainfall. A disabled cloud renderer alone does not prove the weather simulation or precipitation system is disabled."
+    },
+    {
+      "id": "knowledge.megastorm",
+      "topic": "megastorm",
+      "model_text": "Travelling front: structural hum precedes airborne sound; fast fronts can outrun their sound. Wall, wake and trailing rain differ. Darkness multiplier 1 is neutral; night/eclipse/enclosure are independent. Shelter measures exposure, not safety.",
+      "text": "The megastorm is a travelling scripted storm front. Its approaching structural resonance can be sensed through the ring before airborne storm noise arrives. At high speed the front can outrun its airborne sound, producing an acoustic dead zone. The wall, trailing rain and wake are different phases; use the local phase and hazard readings. Its darkness outputs describe a modeled contribution to lighting; a darkness multiplier of 1 is neutral. Night, eclipses and underground enclosure can contribute independently. Shelter class describes exposure to the storm's hazards, not a guarantee of safety or a reading of player injury."
+    },
+    {
+      "id": "knowledge.underground",
+      "topic": "underground",
+      "model_text": "Terrain depth/openness inform enclosure. Applied enclosure reduces sun/sky light and uses cave ambient; cave fog can limit visibility. Missing probe means cave location unknown.",
+      "text": "Underground mode uses terrain enclosure, openness and depth. When enclosure lighting is applied, direct sunlight and sky ambient are reduced and cave ambient is used. Cave fog can limit distant visibility. A missing or unavailable underground probe cannot establish that the player is inside a cave."
+    }
+  ]
+}

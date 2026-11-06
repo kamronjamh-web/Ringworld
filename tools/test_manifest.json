@@ -133,6 +133,11 @@
       "globs": [
         "scripts/Pda/**",
         "resources/pda/**",
+        "prototypes/pda-voice/PdaQaWorker.cs",
+        "prototypes/pda-voice/Program.cs",
+        "prototypes/pda-voice/PdaVoicePrototype.csproj",
+        "prototypes/pda-voice/LlmBench.cs",
+        "tools/build_pda_worker.ps1",
         "scripts/Weather/Megastorm/MegastormPda*",
         "scripts/Weather/Megastorm/MegastormSound*"
       ]
@@ -3056,6 +3061,62 @@
       "marker": "MEGASTORM_HAZARD",
       "expected_s": 6,
       "timeout_s": 60
+    },
+    "pda_context_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "pda"
+      ],
+      "marker": "PDA_CONTEXT",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "pda_debug_ui_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "pda",
+        "ui-menu"
+      ],
+      "marker": "PDA_DEBUG_UI",
+      "expected_s": 3,
+      "timeout_s": 60
+    },
+    "pda_latency_test": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "pda"
+      ],
+      "marker": "PDA_LATENCY_RAM",
+      "expected_s": 65,
+      "timeout_s": 240
+    },
+    "pda_latency_gpu_test": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "pda"
+      ],
+      "marker": "PDA_LATENCY_VRAM",
+      "expected_s": 12,
+      "timeout_s": 240
+    },
+    "pda_local_model_test": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "pda"
+      ],
+      "marker": "PDA_LOCAL_MODEL",
+      "expected_s": 30,
+      "timeout_s": 120
     },
     "megastorm_pda_test": {
       "kind": "test",

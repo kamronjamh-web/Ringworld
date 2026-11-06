@@ -802,6 +802,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (RingworldTechDemo.Pda.PdaDebugChatPanel.OwnsInput(this)) return;
         // A flight director owns the body: no key, wheel, mouse look, capture or Esc handling.
         if (_scriptedFlight) return;
         if (@event is InputEventMouseMotion motion && Input.MouseMode == Input.MouseModeEnum.Captured)
@@ -903,6 +904,11 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 
     public override void _PhysicsProcess(double delta)
     {
+        if (RingworldTechDemo.Pda.PdaDebugChatPanel.OwnsInput(this))
+        {
+            _canonicalVelocity = Vector3.Zero;
+            return;
+        }
         if (_grid == null)
         {
             return;

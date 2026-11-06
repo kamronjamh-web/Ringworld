@@ -9,6 +9,8 @@ switch (cmd)
         return await LlmBench.RunAll(rest);
     case "llm-worker":
         return await LlmBench.RunWorker(Cli.Value(rest, "--model")!, int.Parse(Cli.Value(rest, "--threads")!), Cli.Value(rest, "--out")!);
+    case "qa-worker":
+        return await PdaQaWorker.Run(rest);
     case "tts":
         return await TtsBench.RunAll(rest);
     case "audition":
@@ -23,6 +25,6 @@ switch (cmd)
         await LlmBench.RunAll(rest);
         return await TtsBench.RunAll(rest);
     default:
-        Console.WriteLine("usage: run.ps1 llm [--models qwen2-0.5b,qwen2.5-0.5b,qwen3-0.6b] [--threads 8,4] | tts | audition | audition-emma | audition-expressive-report | all");
+        Console.WriteLine("usage: run.ps1 llm [--models qwen2-0.5b,qwen2.5-0.5b,qwen3-0.6b] [--threads 8,4] | qa-worker [--model qwen3-0.6b] [--threads 4] | tts | audition | audition-emma | audition-expressive-report | all");
         return 1;
 }

@@ -176,6 +176,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
 
     public override void _Input(InputEvent @event)
     {
+        if (RingworldTechDemo.Pda.PdaDebugChatPanel.OwnsInput(this)) return;
         if (_cloudResetConfirmation?.Visible == true || BiomeModalActive) return;
         if (TuningMenuUi.HandleNumericWheel(_drawer, @event)) return;
         if (@event is not InputEventKey { Pressed: true, Echo: false } key) return;

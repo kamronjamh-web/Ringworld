@@ -70,6 +70,8 @@
 [ext_resource type="Script" path="res://scripts/RingCloudProviderController.cs" id="52_cloud_provider"]
 [ext_resource type="Script" path="res://scripts/RingCertifiedCloudDiagnosticCaptureDirector.cs" id="53_certified_cloud_diagnostic"]
 [ext_resource type="Script" path="res://scripts/ui/CelestialDebugHud.cs" id="54_celestial_debug_hud"]
+[ext_resource type="Script" path="res://scripts/Pda/Debug/PdaContextFeed.cs" id="pda_context_feed"]
+[ext_resource type="Script" path="res://scripts/Pda/Debug/PdaDebugChatPanel.cs" id="pda_debug_chat"]
 [ext_resource type="Resource" path="res://resources/celestial/celestial_default.tres" id="55_celestial_configuration"]
 [ext_resource type="Script" path="res://scripts/RingWeatherAudio.cs" id="56_thunder_audio"]
 [ext_resource type="AudioStream" path="res://resources/audio/weather/thunder_01.ogg" id="57_thunder_01"]
@@ -813,3 +815,10 @@ script = ExtResource("54_celestial_debug_hud")
 
 [node name="LodPauseMenu" type="CanvasLayer" parent="." unique_id=1060747674]
 script = ExtResource("10")
+
+[node name="PdaContextFeed" type="Node" parent="."]
+script = ExtResource("pda_context_feed")
+
+[node name="PdaDebugChat" type="CanvasLayer" parent="."]
+visible = false
+script = ExtResource("pda_debug_chat")

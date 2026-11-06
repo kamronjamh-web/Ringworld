@@ -76,11 +76,14 @@ public static class LlmBench
         var events = Events.Load();
         try
         {
+            LLama.Native.NativeLibraryConfig.All.WithCuda(false).WithVulkan(false);
             var sw = Stopwatch.StartNew();
             var mp = new ModelParams(path)
             {
                 ContextSize = 1024,
                 GpuLayerCount = 0,
+                NoKqvOffload = true,
+                OpOffload = false,
                 Threads = threads,
                 BatchThreads = threads,
             };
