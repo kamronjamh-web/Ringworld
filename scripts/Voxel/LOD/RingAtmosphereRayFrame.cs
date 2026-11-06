@@ -101,7 +101,7 @@ public readonly record struct RingAtmosphereRayFrame(
         public void Invalidate() => _applied = new();
     }
 
-    private bool WouldPublishValid() => Valid
+    public bool WouldPublishValid() => Valid
         && CameraWorld.IsFinite()
         && float.IsFinite(CameraHeightMeters)
         && OutwardWorld.IsFinite() && OutwardWorld.LengthSquared() > 0.000001f

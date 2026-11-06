@@ -13,6 +13,8 @@ public partial class RingTerrainProxySector
     {
         public ProxyAtmosphereMaterialFrame() { }
         public bool Initialized;
+        public bool Classified;
+        public bool UsesGlobals;
         public RingAtmosphereRayFrame Frame;
         public bool Valid;
     }
@@ -21,6 +23,13 @@ public partial class RingTerrainProxySector
     {
         if (material == null) return;
         ProxyAtmosphereMaterialFrame cached = _proxyAtmosphereFrames.GetOrCreateValue(material);
+        if (!cached.Classified)
+        {
+            cached.UsesGlobals = global::RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.UsesGlobals(material);
+            cached.Classified = true;
+        }
+        // Proxy terrain and ocean read the ray frame from global shader parameters, published by ApplyAtmosphereRayFrame.
+        if (cached.UsesGlobals) return;
         // Record equality uses exact field equality, preserving small rebases.
         if (cached.Initialized && cached.Frame == frame) return;
         bool valid = frame.Valid

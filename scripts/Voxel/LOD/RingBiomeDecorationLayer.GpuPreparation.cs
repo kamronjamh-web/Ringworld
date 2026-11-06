@@ -31,7 +31,7 @@ public partial class RingBiomeDecorationLayer
         public long ProtectionRevision;
         public readonly Dictionary<GpuGroupKey, List<CachedTree>> Selected = new();
         public readonly Dictionary<GpuGroupKey, GpuTreeGroup> Built = new();
-        public readonly Dictionary<ulong, (GpuTreeGroup Group, int Index)> Lookup = new();
+        public Dictionary<ulong, (GpuTreeGroup Group, int Index)> Lookup = new();
         public readonly HashSet<ulong> ProtectedIds = new();
         public readonly Dictionary<int, Dictionary<GpuGroupKey, GpuTreeGroup>> Merged = new();
     }
@@ -191,13 +191,31 @@ public partial class RingBiomeDecorationLayer
             else { foreach (bool _ in BuildGpuTreeGroupSliced(plan, key, roots)) yield return false; TreePreparationGroupsRebuilt++; }
             yield return false;
         }
-        foreach ((GpuGroupKey _, GpuTreeGroup group) in plan.Built)
+        // Reused groups keep their lookup entries (same objects, same indices): start from the committed lookup and only drop retired
+        // groups' roots and add new groups' roots. The committed lookup must still describe exactly the previous groups, else rebuild it all.
+        int previousRoots = 0;
+        foreach (GpuTreeGroup old in plan.Previous.Values) previousRoots += old.Roots.Length;
+        bool incremental = !plan.RebuildAll && previousRoots == _gpuTreeRootLookup.Count;
+        if (incremental)
+        {
+            plan.Lookup = new Dictionary<ulong, (GpuTreeGroup Group, int Index)>(_gpuTreeRootLookup);
+            foreach ((GpuGroupKey key, GpuTreeGroup old) in plan.Previous)
+            {
+                if (plan.Built.TryGetValue(key, out GpuTreeGroup? kept) && ReferenceEquals(kept, old)) continue;
+                for (int i = 0; i < old.Roots.Length; i++) { plan.Lookup.Remove(old.Roots[i].Id); if (++scanned % 128 == 0) yield return false; }
+            }
+        }
+        foreach ((GpuGroupKey key, GpuTreeGroup group) in plan.Built)
+        {
+            if (group.HasProtected)
+                for (int i = 0; i < group.Roots.Length; i++) if (group.Metadata[i].Y > .5f) plan.ProtectedIds.Add(group.Roots[i].Id);
+            if (incremental && plan.Previous.TryGetValue(key, out GpuTreeGroup? was) && ReferenceEquals(was, group)) continue;
             for (int i = 0; i < group.Roots.Length; i++)
             {
                 plan.Lookup[group.Roots[i].Id] = (group, i);
-                if (group.Metadata[i].Y > .5f) plan.ProtectedIds.Add(group.Roots[i].Id);
                 if (++scanned % 128 == 0) yield return false;
             }
+        }
         foreach (bool _ in BuildMergedGpuTreeGroupsSliced(plan)) yield return false;
         // The extra partition cache follows visible/protected residency, not the
         // entire raw-tile LRU. Evicted records cannot accumulate here.
@@ -236,24 +254,66 @@ public partial class RingBiomeDecorationLayer
            && plan.ActualLayerTransform == GlobalTransform && plan.Settings == CaptureGpuTreeSourceSettings()
            && plan.ProtectionRevision == _gpuTreeProtectionRevision;
 
+    // Per root this keeps only cheap arithmetic: the compact record (altitude, yaw, height, variant), the canonical offset and the extent
+    // min/max. The transform itself is expanded on the GPU (ring_gpu_vegetation_indirect.glsl phase 5) from a per-group anchor frame.
     private IEnumerable<bool> BuildGpuTreeGroupSliced(GpuPreparationPlan plan, GpuGroupKey key, CachedTree[] roots)
     {
-        float[] rows = new float[roots.Length * 12]; Vector4[] metadata = new Vector4[roots.Length]; Aabb bounds = default; bool first = true;
-        Vector2 minimum = new(float.PositiveInfinity, float.PositiveInfinity), maximum = -minimum; Transform3D inverse = plan.LayerTransform.AffineInverse(); Aabb prototype = GpuTreePrototypeBounds(key.Variant);
+        var rootParams = new Vector4[roots.Length]; Vector4[] metadata = new Vector4[roots.Length];
+        Vector2 minimum = new(float.PositiveInfinity, float.PositiveInfinity), maximum = -minimum;
+        float minimumAltitude = float.PositiveInfinity, maximumAltitude = float.NegativeInfinity, maximumHeight = 0;
         for (int i = 0; i < roots.Length; i++)
         {
-            CachedTree tree = roots[i]; Transform3D transform = CreateTransform(plan.Geometry, inverse, Vector3.Zero, tree.Around, tree.Across, RootAltitude(tree.SurfaceHeight, plan.Settings.RootEmbed), tree.Width, tree.Height, false, tree.Yaw);
-            WriteGpuTreeTransform(rows, i * 12, transform);
-            // The shader hard-limits tip displacement to .6 of world height.
-            // Include that envelope before merging so tall trees and shadow
-            // mirrors retain their canopy at frustum edges at every live setting.
-            Aabb current = TreeWindDeformationBounds(transform, prototype);
-            bounds = first ? current : bounds.Merge(current); first = false;
+            CachedTree tree = roots[i];
+            float altitude = RootAltitude(tree.SurfaceHeight, plan.Settings.RootEmbed);
+            rootParams[i] = new Vector4(altitude, tree.Yaw, tree.Height, key.Variant);
+            minimumAltitude = Math.Min(minimumAltitude, altitude); maximumAltitude = Math.Max(maximumAltitude, altitude); maximumHeight = Math.Max(maximumHeight, tree.Height);
             Vector2 canonical = new((float)WrappedVegetationDelta(tree.Around - roots[0].Around, plan.Circumference), tree.Across - roots[0].Across); minimum = minimum.Min(canonical); maximum = maximum.Max(canonical);
             metadata[i] = new Vector4(tree.Rank, plan.ProtectedSnapshot.Contains(tree.Id) ? 1 : 0, canonical.X, canonical.Y);
             if (i % 128 == 127) yield return false;
         }
-        plan.Built[key] = new GpuTreeGroup { Key = key, Roots = roots, Rows = rows, Metadata = metadata, Bounds = bounds.Grow(8), AroundOrigin = roots[0].Around, AcrossOrigin = roots[0].Across, CanonicalMin = minimum, CanonicalMax = maximum, HasProtected = Array.Exists(metadata, value => value.Y > .5f) };
+        Aabb bounds = ConservativeGpuTreeBounds(plan.Geometry, plan.LayerTransform, roots[0].Around, roots[0].Across, minimum, maximum, minimumAltitude, maximumAltitude, maximumHeight, GpuTreePrototypeBounds(key.Variant));
+        plan.Built[key] = new GpuTreeGroup { Key = key, Roots = roots, Rows = Array.Empty<float>(), Metadata = metadata, Bounds = bounds.Grow(8), AroundOrigin = roots[0].Around, AcrossOrigin = roots[0].Across, CanonicalMin = minimum, CanonicalMax = maximum, HasProtected = Array.Exists(metadata, value => value.Y > .5f),
+            Expansion = new RingGpuVegetationCompute.TreeExpansion { Roots = rootParams, Frame = BuildGpuTreeExpansionFrame(plan.Geometry, plan.LayerTransform, roots[0].Around, roots[0].Across) } };
+    }
+
+    // Bounds come from the group's canonical extents, never from a per-root transform merge. Every root lies inside the extent box
+    // (altitude range included); the prototype scaled by the tallest root, plus the shader's .6-height tip wind, covers its geometry
+    // whatever its yaw or lean.
+    internal static Aabb ConservativeGpuTreeBounds(in RingLodGeometrySnapshot geometry, Transform3D layerTransform, long aroundOrigin, long acrossOrigin,
+        Vector2 minimum, Vector2 maximum, float minimumAltitude, float maximumAltitude, float maximumHeight, Aabb prototype)
+    {
+        Transform3D inverse = layerTransform.AffineInverse(); Aabb bounds = default; bool first = true;
+        foreach (float around in new[] { minimum.X, maximum.X }) foreach (float across in new[] { minimum.Y, maximum.Y }) foreach (float altitude in new[] { minimumAltitude, maximumAltitude })
+        {
+            Vector3 point = inverse * geometry.CanonicalToWorld(aroundOrigin + (double)around, altitude, acrossOrigin + (double)across);
+            bounds = first ? new Aabb(point, Vector3.Zero) : bounds.Expand(point); first = false;
+        }
+        float prototypeRadius = 0;
+        for (int corner = 0; corner < 8; corner++) prototypeRadius = Math.Max(prototypeRadius, prototype.GetEndpoint(corner).Length());
+        float scale = Math.Max(inverse.Basis.Y.Length(), Math.Max(inverse.Basis.X.Length(), inverse.Basis.Z.Length()));
+        return bounds.Grow(maximumHeight * scale * (prototypeRadius + .6f));
+    }
+
+    /// <summary>Frame words for shader phase 5 (see <see cref="RingGpuVegetationCompute.TreeExpansion"/>), anchored at canonical (around, 0, across).</summary>
+    internal static float[] BuildGpuTreeExpansionFrame(in RingLodGeometrySnapshot geometry, Transform3D layerTransform, long aroundOrigin, long acrossOrigin)
+    {
+        Transform3D inverse = layerTransform.AffineInverse();
+        Vector3 anchor = inverse * geometry.CanonicalToWorld(aroundOrigin, 0, acrossOrigin);
+        double around = aroundOrigin % geometry.CircumferenceMeters; if (around < 0) around += geometry.CircumferenceMeters;
+        double angle = around / geometry.RingRadiusMeters;
+        Basis grid = geometry.GridGlobalTransform.Basis, layerInverse = inverse.Basis, combined = layerInverse * grid;
+        var frame = new float[RingGpuVegetationCompute.TreeExpansion.FrameWords];
+        frame[0] = anchor.X; frame[1] = anchor.Y; frame[2] = anchor.Z;
+        frame[3] = (float)Math.Sin(angle); frame[4] = (float)Math.Cos(angle);
+        frame[5] = (float)geometry.RingRadiusMeters; frame[6] = (float)(geometry.RingRadiusMeters - geometry.RingVerticalBaseOffsetMeters);
+        void Columns(Basis basis, int at)
+        {
+            frame[at] = basis.X.X; frame[at + 1] = basis.X.Y; frame[at + 2] = basis.X.Z;
+            frame[at + 3] = basis.Y.X; frame[at + 4] = basis.Y.Y; frame[at + 5] = basis.Y.Z;
+            frame[at + 6] = basis.Z.X; frame[at + 7] = basis.Z.Y; frame[at + 8] = basis.Z.Z;
+        }
+        Columns(grid, 8); Columns(layerInverse, 17); Columns(combined, 26);
+        return frame;
     }
 
     internal static Aabb TreeWindDeformationBounds(Transform3D transform, Aabb prototype)
@@ -276,8 +336,8 @@ public partial class RingBiomeDecorationLayer
                 members.Sort(static (a,b) => a.Key.Around != b.Key.Around ? a.Key.Around.CompareTo(b.Key.Around) : a.Key.Across != b.Key.Across ? a.Key.Across.CompareTo(b.Key.Across) : a.Key.Variant.CompareTo(b.Key.Variant)); long oa = (long)Math.Floor(key.Around * (double)span); int oz = (int)Math.Floor(key.Across * (double)span);
                 if (plan.PreviousMerged.TryGetValue(lod, out var oldMap) && oldMap.TryGetValue(key, out var retained) && retained.AroundOrigin == oa && retained.AcrossOrigin == oz && retained.SharedImpostor == shared && retained.Members is not null && SameMemberReferences(retained.Members, members)) { result[key] = retained; continue; }
                 int count = members.Sum(x => x.RootCount), dst = 0;
-                int stride = shared ? RingGpuVegetationCompute.TreeCustomFloats : RingGpuVegetationCompute.TreeFloats;
-                float[] rows = new float[count * stride];
+                // Members are always compact here: their records (variant included) concatenate; the GPU expands them against this chunk's anchor.
+                var rootParams = new Vector4[count];
                 Vector4[] meta = new Vector4[count];
                 int[] offsets = new int[members.Count];
                 Aabb bounds = default;
@@ -287,24 +347,19 @@ public partial class RingBiomeDecorationLayer
                 {
                     GpuTreeGroup source = members[member];
                     offsets[member] = dst;
-                    for (int start = 0; start < source.Metadata.Length; start += 128)
+                    // Root offsets are whole metres inside their tile, so shifting by the member's origin delta (taken once, in double) equals the
+                    // per-root double subtraction exactly, and the member's canonical extent shifts the same way.
+                    float shiftAround = (float)WrappedVegetationDelta((double)source.AroundOrigin - oa, plan.Circumference), shiftAcross = (float)((double)source.AcrossOrigin - oz);
+                    var shift = new Vector2(shiftAround, shiftAcross);
+                    minimum = minimum.Min(source.CanonicalMin + shift); maximum = maximum.Max(source.CanonicalMax + shift);
+                    for (int start = 0; start < source.Metadata.Length; start += 1024)
                     {
-                        int length = Math.Min(128, source.Metadata.Length - start);
-                        if (shared)
-                            for (int i = start; i < start + length; i++)
-                            {
-                                Array.Copy(source.Rows, i * source.RowStride, rows, (dst + i) * stride, RingGpuVegetationCompute.TreeFloats);
-                                rows[(dst + i) * stride + RingGpuVegetationCompute.TreeFloats] = source.Key.Variant;
-                            }
-                        else Array.Copy(source.Rows, start * source.RowStride, rows, (dst + start) * stride, length * stride);
+                        int length = Math.Min(1024, source.Metadata.Length - start);
+                        Array.Copy(source.Expansion!.Roots, start, rootParams, dst + start, length);
                         for (int i = start; i < start + length; i++)
                         {
                             Vector4 m = source.Metadata[i];
-                            float around = (float)WrappedVegetationDelta((double)source.AroundOrigin + m.Z - oa, plan.Circumference);
-                            float across = (float)((double)source.AcrossOrigin + m.W - oz);
-                            meta[dst + i] = new Vector4(m.X, m.Y, around, across);
-                            Vector2 canonical = new(around, across);
-                            minimum = minimum.Min(canonical); maximum = maximum.Max(canonical);
+                            meta[dst + i] = new Vector4(m.X, m.Y, m.Z + shiftAround, m.W + shiftAcross);
                             hasProtected |= m.Y > .5f;
                         }
                         yield return false;
@@ -312,9 +367,10 @@ public partial class RingBiomeDecorationLayer
                     bounds = first ? source.Bounds : bounds.Merge(source.Bounds);
                     first = false; dst += source.Metadata.Length;
                 }
-                result[key] = new GpuTreeGroup { Key = key, Roots = Array.Empty<CachedTree>(), Rows = rows, Metadata = meta,
+                result[key] = new GpuTreeGroup { Key = key, Roots = Array.Empty<CachedTree>(), Rows = Array.Empty<float>(), Metadata = meta,
                     Bounds = bounds.Grow(8), AroundOrigin = oa, AcrossOrigin = oz, CanonicalMin = minimum, CanonicalMax = maximum,
-                    HasProtected = hasProtected, SharedImpostor = shared, Members = members.ToArray(), MemberOffsets = offsets };
+                    HasProtected = hasProtected, SharedImpostor = shared, Members = members.ToArray(), MemberOffsets = offsets,
+                    Expansion = new RingGpuVegetationCompute.TreeExpansion { Roots = rootParams, Frame = BuildGpuTreeExpansionFrame(plan.Geometry, plan.LayerTransform, oa, oz) } };
                 yield return false;
             }
             plan.Merged[lod] = result;

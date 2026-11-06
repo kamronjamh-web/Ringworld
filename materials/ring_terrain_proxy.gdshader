@@ -37,6 +37,8 @@ uniform sampler2D biome_desert_albedo : source_color, filter_linear_mipmap_aniso
 uniform sampler2D biome_forest_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D biome_tundra_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
 uniform sampler2D biome_alpine_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+// Main-viewport only: ray frame comes from global shader parameters.
+#define RING_ATMOSPHERE_FRAME_GLOBAL
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
@@ -55,7 +57,12 @@ uniform vec3 debug_color = vec3(1.0, 0.0, 1.0);
 // Shared per-LOD atlas.  Each sector supplies its own rect as an instance
 // uniform, so coverage changes need no unique materials or mesh rebuilds.
 uniform sampler2D coverage_atlas : filter_nearest, repeat_disable;
+// Mirrors EnablePartialCoverageMeshCulling for slot-installed sectors (the vertex-stage covered-quad collapse).
+uniform bool proxy_vertex_collapse_enabled = false;
 instance uniform vec4 coverage_atlas_rect = vec4(0.0, 0.0, 0.0, 0.0);
+// After coverage_atlas_rect on purpose: instance uniforms without an explicit index are numbered in declaration order, and the
+// ocean and shadow shaders (which share these instance parameters) declare coverage_atlas_rect first.
+#include "res://materials/ring_terrain_proxy_vertex_fetch.gdshaderinc"
 
 varying vec3 world_position;
 varying float ring_day_factor;
@@ -75,6 +82,8 @@ float sample_combined_cloud_shadow(vec3 sample_world_position, float day_factor)
 }
 
 void vertex() {
+	vec3 proxy_chord = CUSTOM0.xyz;
+	if (proxy_vertex_table_enabled) proxy_vertex_table_apply(VERTEX_ID, VERTEX, NORMAL, COLOR, UV, UV2, proxy_chord);
 	proxy_coverage_uv = UV;
 	vec3 original_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	if (geomorph_enabled) {
@@ -88,7 +97,7 @@ void vertex() {
 		original_radial.y = 0.0;
 		vec3 morph_surface_up_world = length(original_radial) > 0.0001 ? -normalize(original_radial) : vec3(-1.0, 0.0, 0.0);
 		vec3 surface_up_local = normalize(inverse(mat3(MODEL_MATRIX)) * morph_surface_up_world);
-		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? CUSTOM0.xyz * morph : surface_up_local * UV2.x * morph;
+		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? proxy_chord * morph : surface_up_local * UV2.x * morph;
 	}
 	world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	vec3 radial = world_position - ring_center;
@@ -96,6 +105,29 @@ void vertex() {
 	vec3 surface_up = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
 	ring_day_factor = ringworld_effective_solar_day(smoothstep(day_start_dot, day_full_dot, dot(surface_up, normalize(sun_direction))));
 	surface_up_world = surface_up;
+	if (proxy_vertex_table_enabled && proxy_vertex_collapse_enabled && proxy_slot >= 0 && coverage_atlas_rect.z > 0.0) {
+		// Slot sectors have no CPU triangle filter: a lattice vertex whose (up to four) incident quads are all covered
+		// by a finer level collapses onto the sector origin, so triangles whose three vertices all collapse are
+		// zero-area and never rasterised. A triangle with a surviving vertex stretches toward the origin, but its
+		// varyings (set above, from the uncollapsed vertex) and its quad's covered UVs are unchanged, so the
+		// fragment-stage atlas discard removes it exactly as before. Never write POSITION here: any POSITION write
+		// switches the whole vertex stage to override mode and draws nothing where it is not assigned.
+		int collapse_width = textureSize(proxy_vertex_table_pos, 0).x;
+		if (VERTEX_ID < collapse_width * collapse_width) {
+			ivec2 lattice_id = ivec2(VERTEX_ID % collapse_width, VERTEX_ID / collapse_width);
+			int collapse_cells = collapse_width - 1;
+			bool all_covered = true;
+			for (int dz = -1; dz <= 0 && all_covered; dz++) {
+				for (int dx = -1; dx <= 0 && all_covered; dx++) {
+					ivec2 quad = lattice_id + ivec2(dx, dz);
+					if (quad.x < 0 || quad.y < 0 || quad.x >= collapse_cells || quad.y >= collapse_cells) continue;
+					vec2 quad_uv = (vec2(quad) + 0.5) / float(collapse_cells);
+					all_covered = textureLod(coverage_atlas, coverage_atlas_rect.xy + quad_uv * coverage_atlas_rect.zw, 0.0).r > 0.5;
+				}
+			}
+			if (all_covered) VERTEX = vec3(0.0);
+		}
+	}
 }
 
 vec3 sample_biome_triplanar(sampler2D texture_map, vec3 position, vec3 normal, vec3 blend) {

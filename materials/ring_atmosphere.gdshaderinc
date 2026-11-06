@@ -35,7 +35,11 @@ uniform float atmosphere_forward_scattering : hint_range(0.0, 0.85) = 0.22;
 uniform float atmosphere_sun_warmth : hint_range(0.0, 1.0) = 0.25;
 // Direction from the shaded point toward the star. Facing the star brightens
 // the view ray; the opposite direction contributes no warm forward lobe.
+#ifdef RING_ATMOSPHERE_FRAME_GLOBAL
+global uniform vec3 ring_atmosphere_to_sun;
+#else
 uniform vec3 ring_atmosphere_to_sun = vec3(0.0, 1.0, 0.0);
+#endif
 // Defaults preserve existing materials that do not participate in the
 // celestial presentation bridge.
 uniform vec3 ring_atmosphere_planet_direction = vec3(-1.0, 0.0, 0.0);

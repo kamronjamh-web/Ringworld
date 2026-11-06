@@ -13,10 +13,14 @@ uniform bool runtime_parent_chord_enabled = false;
 uniform float morph_start_meters = 480.0;
 uniform float morph_end_meters = 640.0;
 #include "res://materials/ring_surface_aperture.gdshaderinc"
+#define PROXY_VERTEX_TABLE_SHADOW
+#include "res://materials/ring_terrain_proxy_vertex_fetch.gdshaderinc"
 varying vec2 proxy_coverage_uv;
 varying vec3 aperture_world_position;
 
 void vertex() {
+	vec3 proxy_chord = CUSTOM0.xyz;
+	if (proxy_vertex_table_enabled) proxy_vertex_table_apply(VERTEX_ID, VERTEX, NORMAL, COLOR, UV, UV2, proxy_chord);
 	proxy_coverage_uv = UV;
 	if (geomorph_enabled) {
 		vec3 original_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -26,7 +30,7 @@ void vertex() {
 		vec3 radial = original_world_position - ring_center;
 		radial.y = 0.0;
 		vec3 surface_up_world = length(radial) > 0.0001 ? -normalize(radial) : vec3(-1.0, 0.0, 0.0);
-		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? CUSTOM0.xyz * morph : normalize(inverse(mat3(MODEL_MATRIX)) * surface_up_world) * UV2.x * morph;
+		VERTEX += runtime_parent_chord_enabled && UV2.y < .5 ? proxy_chord * morph : normalize(inverse(mat3(MODEL_MATRIX)) * surface_up_world) * UV2.x * morph;
 	}
 	aperture_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }

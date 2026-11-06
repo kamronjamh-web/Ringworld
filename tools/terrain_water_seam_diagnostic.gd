@@ -141,12 +141,12 @@ func _terrain_diagnostic_source(source: String) -> String:
 	var prefix: String = source.substr(0, shading).replace("render_mode cull_back, depth_draw_opaque;", "render_mode unshaded, cull_back, depth_draw_opaque;")
 	return prefix + "ALBEDO = vec3(1.0, 0.0, 0.0); ROUGHNESS = 1.0; }\n"
 
-func _expand(source: String) -> String:
+func _expand(source: String, seen: Dictionary = {}) -> String:
 	var result: String = ""
 	for line: String in source.split("\n"):
 		if line.begins_with("#include \""):
 			var first: int = line.find("\"") + 1; var last: int = line.find("\"", first)
-			if last > first: result += _expand(FileAccess.get_file_as_string(line.substr(first, last - first))) + "\n"; continue
+			if last > first: result += _expand(_read_once(line.substr(first, last - first), seen), seen) + "\n"; continue
 		result += line + "\n"
 	return result
 
@@ -179,3 +179,11 @@ func _finite(image: Image) -> bool:
 
 func _fail(message: String) -> void:
 	push_error("TERRAIN_WATER_SEAM_DIAGNOSTIC=FAIL " + message); quit(1)
+
+# Include-once, like Godot's shader preprocessor: ring_shadow_compose re-includes
+# ring_cloud_shadow.gdshaderinc, which has no include guard of its own.
+func _read_once(path: String, seen: Dictionary) -> String:
+	if seen.has(path):
+		return ""
+	seen[path] = true
+	return FileAccess.get_file_as_string(path)

@@ -1,0 +1,582 @@
+// Port of TerrainGenerationHeightModel.SampleLandformNaturalDiagnostics (generator v7 and v8, natural path, no emitter-site or Wall Engine
+// operator) for RenderingDevice compute. docs/gpu-offload-plan.md 4.1 and 4.3. WO-G1.
+// Same operation order as the C#, every float operation `precise`. The C# is double after the float noise; here:
+//   - ring projections, the warp offsets, warpedAcross, the gully pivots and cell offsets are df64 (ring_df64.glslinc);
+//   - everything else is float (the plan expects ~1e-6 relative; the parity test measures it).
+// Inputs per sample: anchor (exact integer metres around the ring, 0 <= anchor < C), its cos/sin as df64 (hm_set_anchor), dA (integer
+// metres from the anchor, |dA| < 2^23) and across (integer metres). The recipe constants come from the `recipe` buffer (binding 0),
+// packed by ProxyGpuHeightKernel.PackRecipe; the HM_P_* indices below are the layout contract (the host parses this file).
+// Unsupported (the host rejects them): generators other than v7/v8, mountain_detail_mode bit 0 (Swiss spurs), > 4 erosion octaves.
+#ifndef RING_HEIGHT_MODEL_GLSLINC
+#define RING_HEIGHT_MODEL_GLSLINC
+
+#include "fnl_opensimplex2s.glslinc"
+#include "ring_df64.glslinc"
+
+layout(set = 0, binding = 0, std430) restrict readonly buffer RingRecipe { uint r[]; } recipe;
+
+// Recipe buffer layout (32-bit words; floats / ints stored as raw bits; df64 entries are two consecutive words hi, lo).
+#define HM_P_K 0
+#define HM_P_R 2
+#define HM_P_C 4
+#define HM_P_WARP_AMP 6
+#define HM_P_EPS_CONT 8
+#define HM_P_EPS_GULLY 10
+#define HM_P_EPS_HILL 12
+#define HM_P_JIT_BASE 14
+#define HM_P_JIT_MUL 16
+#define HM_P_JIT_INV 18
+#define HM_P_HAS_WARP 20
+#define HM_P_ACROSS_MAX 21
+#define HM_P_LAND_BALANCE 22
+#define HM_P_MIN_GRADIENT 23
+#define HM_P_TWO_EPS_CONT 24
+#define HM_P_TWO_EPS_GULLY 25
+#define HM_P_EPS_HILL_F 26
+#define HM_P_MOUNT_AMP 27
+#define HM_P_RIDGE_SHARP 28
+#define HM_P_VALLEY_W 29
+#define HM_P_VALLEY_W2 30
+#define HM_P_FLATTENING 31
+#define HM_P_FLATTEN_DEN 32
+#define HM_P_FLATTEN_ON 33
+#define HM_P_CONT_H 34
+#define HM_P_BASIN_DEPTH 41
+#define HM_P_SHELF_W 42
+#define HM_P_SHELF_DEPTH 43
+#define HM_P_SHORE 44
+#define HM_P_BEACH_SLOPE 45
+#define HM_P_M_SHORE 46
+#define HM_P_SLOPE_W 47
+#define HM_P_TRENCH_DEPTH 48
+#define HM_P_TRENCH_THR 49
+#define HM_P_DETAIL_START 50
+#define HM_P_DETAIL_FULL 51
+#define HM_P_SEC_AMP 52
+#define HM_P_MICRO_AMP 53
+#define HM_P_MIN_H 54
+#define HM_P_MAX_H 55
+#define HM_P_FOOT_AMP 56
+#define HM_P_SPUR_AMP 57
+#define HM_P_MODE 58
+#define HM_P_EROSION_STR 59
+#define HM_P_EROSION_OCT 60
+#define HM_P_LOWLAND_OCT 61
+#define HM_P_ERO_PRESERVE 62
+#define HM_P_GULLY_NORM 63
+#define HM_P_SHORE_START 64
+#define HM_P_SHORE_FULL 65
+#define HM_P_PLAINS_THR 66
+#define HM_P_HILLS_THR 67
+#define HM_P_PLATEAU_THR 68
+#define HM_P_PLATEAU_FULL 69
+#define HM_P_HILL_DETAIL_W 70
+#define HM_P_HILL_VALLEY_EXP 71
+#define HM_P_HILL_AMP 72
+#define HM_P_PLAINS_HILL_FRAC 73
+#define HM_P_HILL_VALLEY_FLOOR 74
+#define HM_P_BREAKS_STR 75
+#define HM_P_BREAKS_STEP 76
+#define HM_P_RISER 77
+#define HM_P_PLATEAU_LIFT 78
+#define HM_P_ESC_JITTER 79
+#define HM_P_TERRACE_STR 80
+#define HM_P_PLATEAU_STEP 81
+#define HM_P_LL_DETAIL_FLOOR 82
+#define HM_P_PLAINS_DETAIL_FRAC 83
+#define HM_P_LL_EROSION_STR 84
+#define HM_P_SEED_LO 85
+#define HM_P_SEED_HI 86
+#define HM_P_LACUNARITY 87
+#define HM_P_GAIN 88
+#define HM_P_GULLY_SCALE 89
+#define HM_P_GULLY_SCALE_DF 93
+#define HM_P_GULLY_WEIGHT 101
+#define HM_P_GULLY_COUNT 105
+#define HM_P_GULLY_CELLW_DF 109
+#define HM_P_GULLY_CELLW 117
+#define HM_P_NOISE 121
+#define HM_P_COUNT 185
+
+#define HM_N_CONT 0
+#define HM_N_BELT 1
+#define HM_N_VALLEY 2
+#define HM_N_TRENCH 3
+#define HM_N_RIDGE 4
+#define HM_N_SEC 5
+#define HM_N_MICRO 6
+#define HM_N_WARPX 7
+#define HM_N_WARPZ 8
+#define HM_N_FOOT 9
+#define HM_N_SPUR 10
+#define HM_N_LANDFORM 11
+#define HM_N_PLATEAU 12
+#define HM_N_HILLBASE 13
+#define HM_N_HILLDETAIL 14
+#define HM_N_ESC 15
+
+#define HM_F(i) uintBitsToFloat(recipe.r[(i)])
+#define HM_I(i) int(recipe.r[(i)])
+#define HM_DF(i) vec2(uintBitsToFloat(recipe.r[(i)]), uintBitsToFloat(recipe.r[(i) + 1]))
+
+const float HM_TAU = 6.283185307179586;
+const float HM_HILL_NORMALIZATION = 0.48;
+
+// Per-invocation anchor state.
+int hm_anchor;
+vec2 hm_cos0;
+vec2 hm_sin0;
+vec2 hm_k;
+vec2 hm_R;
+
+void hm_set_anchor(int anchor, vec2 cos0, vec2 sin0)
+{
+	hm_anchor = anchor;
+	hm_cos0 = cos0;
+	hm_sin0 = sin0;
+	hm_k = HM_DF(HM_P_K);
+	hm_R = HM_DF(HM_P_R);
+}
+
+// (X, Y) = (float)(cos/sin(theta0 + arc * tau / C) * R); arc is the df64 metre offset from the anchor.
+vec2 hm_project(vec2 arc)
+{
+	vec2 dtheta = df64_mul(arc, hm_k);
+	vec2 cd, sd;
+	ring_df64_cos_sin_small(dtheta, cd, sd);
+	vec2 cosT = df64_sub(df64_mul(hm_cos0, cd), df64_mul(hm_sin0, sd));
+	vec2 sinT = df64_add(df64_mul(hm_sin0, cd), df64_mul(hm_cos0, sd));
+	vec2 x = df64_mul(hm_R, cosT);
+	vec2 y = df64_mul(hm_R, sinT);
+	return vec2(x.x, y.x);
+}
+
+float hm_noise(int n, vec2 xy, float z)
+{
+	int b = HM_P_NOISE + n * 4;
+	int octaves = HM_I(b + 2);
+	float gain = HM_F(HM_P_GAIN);
+	return fnl_sample(HM_I(b), HM_I(b + 1), octaves, HM_F(b + 3), HM_F(HM_P_LACUNARITY), gain, fnl_fractal_bounding(octaves, gain), vec3(xy, z));
+}
+
+float hm_clamp(float v, float lo, float hi) { return min(max(v, lo), hi); }
+
+float hm_ss(float a, float b, float x)
+{
+	if (a == b) return x < a ? 0.0 : 1.0;
+	precise float t = hm_clamp((x - a) / (b - a), 0.0, 1.0);
+	precise float r = t * t * (3.0 - 2.0 * t);
+	return r;
+}
+
+float hm_lerp(float a, float b, float t)
+{
+	precise float r = a + (b - a) * t;
+	return r;
+}
+
+float hm_unit(float v)
+{
+	precise float r = hm_clamp(v * 0.5 + 0.5, 0.0, 1.0);
+	return r;
+}
+
+// Math.Pow for a non-negative base: pow(0, y > 0) is 0 (GLSL pow(0, y) is undefined).
+float hm_pow(float x, float y)
+{
+	if (x <= 0.0) return 0.0;
+	return pow(x, y);
+}
+
+float hm_flatten(float unit)
+{
+	unit = hm_clamp(unit, 0.0, 1.0);
+	if (HM_I(HM_P_FLATTEN_ON) == 0) return unit;
+	precise float r = (exp(HM_F(HM_P_FLATTENING) * unit) - 1.0) / HM_F(HM_P_FLATTEN_DEN);
+	return r;
+}
+
+float hm_continental_height(float c)
+{
+	const float knots[7] = float[7](-1.0, -0.55, -0.20, -0.06, 0.0, 0.45, 1.0);
+	c = hm_clamp(c, -1.0, 1.0);
+	for (int i = 0; i < 6; i++)
+	{
+		if (c <= knots[i + 1])
+		{
+			precise float u = (c - knots[i]) / (knots[i + 1] - knots[i]);
+			float eased = hm_ss(0.0, 1.0, u);
+			float h0 = HM_F(HM_P_CONT_H + i);
+			float h1 = HM_F(HM_P_CONT_H + i + 1);
+			if (h0 >= 0.0) return hm_lerp(h0, h1, hm_flatten(eased));
+			return hm_lerp(h0, h1, eased);
+		}
+	}
+	return 2000.0;
+}
+
+float hm_hermite(float x, float x0, float x1, float y0, float y1, float m0, float m1)
+{
+	precise float len = max(1e-9, x1 - x0);
+	precise float t = hm_clamp((x - x0) / len, 0.0, 1.0);
+	precise float secant = (y1 - y0) / len;
+	m0 = min(max(m0, 0.0), 3.0 * secant);
+	m1 = min(max(m1, 0.0), 3.0 * secant);
+	precise float t2 = t * t;
+	precise float t3 = t2 * t;
+	precise float r = (2.0 * t3 - 3.0 * t2 + 1.0) * y0 + (t3 - 2.0 * t2 + t) * len * m0 + (-2.0 * t3 + 3.0 * t2) * y1 + (t3 - t2) * len * m1;
+	return r;
+}
+
+float hm_ocean_depth(float distance)
+{
+	float d = (isnan(distance) || isinf(distance)) ? 0.0 : max(0.0, distance);
+	float shelf = HM_F(HM_P_SHELF_W);
+	float depth = HM_F(HM_P_SHELF_DEPTH);
+	float shore = HM_F(HM_P_SHORE);
+	float mShore = HM_F(HM_P_M_SHORE);
+	if (d <= shore) return hm_hermite(d, 0.0, shore, 0.0, 8.0, HM_F(HM_P_BEACH_SLOPE), mShore);
+	if (d <= shelf) return hm_hermite(d, shore, shelf, 8.0, depth, mShore, 0.0);
+	float slopeW = HM_F(HM_P_SLOPE_W);
+	if (d <= shelf + slopeW) return hm_lerp(depth, HM_F(HM_P_BASIN_DEPTH), hm_ss(shelf, shelf + slopeW, d));
+	return HM_F(HM_P_BASIN_DEPTH);
+}
+
+// C1 terrace: flat treads of height `stepM`, risers occupy the first `riser` fraction of each step.
+float hm_terrace(float x, float stepM, float riser)
+{
+	precise float q = x / stepM;
+	float b = floor(q);
+	precise float r = stepM * (b + hm_ss(0.0, riser, q - b));
+	return r;
+}
+
+// sin/cos of x in [-2 pi, 2 pi] to ~1 ULP, independent of the driver sin/cos (Vulkan only guarantees 2^-11 absolute).
+void hm_sincos(float x, out float s, out float c)
+{
+	precise float k = roundEven(x * 0.6366197723675814);
+	precise float r = ((x - k * 1.5703125) - k * 4.837512969970703125e-4) - k * 7.54978995489188216e-8;
+	precise float r2 = r * r;
+	precise float sp = r + r * r2 * (-1.0 / 6.0 + r2 * (1.0 / 120.0 + r2 * (-1.0 / 5040.0 + r2 * (1.0 / 362880.0 - r2 * (1.0 / 39916800.0)))));
+	precise float cp = 1.0 + r2 * (-0.5 + r2 * (1.0 / 24.0 + r2 * (-1.0 / 720.0 + r2 * (1.0 / 40320.0 - r2 * (1.0 / 3628800.0)))));
+	int q = int(k) & 3;
+	if (q == 0) { s = sp; c = cp; }
+	else if (q == 1) { s = cp; c = -sp; }
+	else if (q == 2) { s = -sp; c = -cp; }
+	else { s = -cp; c = sp; }
+}
+
+// TerrainGenerationHeightModel.CellJitter as a df64: 0.3 + 0.4 * (h / uint.MaxValue).
+vec2 hm_cell_jitter(int a, int z, int octave, int axis)
+{
+	uint h = (uint(a) * 0x1f123bb5u) ^ (uint(z) * 0x6d2b79f5u) ^ (uint(octave) * 0x9e3779b9u) ^ (uint(axis) * 0x85ebca6bu) ^ uint(HM_I(HM_P_SEED_LO)) ^ uint(HM_I(HM_P_SEED_HI));
+	h ^= h >> 16;
+	h *= 0x7feb352du;
+	h ^= h >> 15;
+	h *= 0x846ca68bu;
+	h ^= h >> 16;
+	vec2 hv = df64_two_sum(float(h >> 16) * 65536.0, float(h & 0xffffu));
+	vec2 q = df64_mul(hv, HM_DF(HM_P_JIT_INV));
+	return df64_add(df64_mul(q, HM_DF(HM_P_JIT_MUL)), HM_DF(HM_P_JIT_BASE));
+}
+
+// Canonical (wrapped to [0, C)) warped around coordinate as df64: anchor + arc, wrapped.
+vec2 hm_wrapped_around(vec2 arcW)
+{
+	vec2 a0 = vec2(float(hm_anchor), float(hm_anchor - int(float(hm_anchor))));
+	vec2 aw = df64_add(a0, arcW);
+	vec2 ring = HM_DF(HM_P_C);
+	for (int i = 0; i < 2; i++)
+	{
+		if (aw.x < 0.0) aw = df64_add(aw, ring);
+		else if (aw.x > ring.x || (aw.x == ring.x && aw.y >= ring.y)) aw = df64_sub(aw, ring);
+	}
+	return aw;
+}
+
+// EnhancedCellGullyField. aw / wacDf are the df64 warped around (canonical) and warped across.
+bool hm_cell_gully_field(vec2 aw, vec2 wacDf, float scale, int octave, inout float guideA, inout float guideZ, out float field)
+{
+	precise float len = sqrt(guideA * guideA + guideZ * guideZ);
+	field = 0.0;
+	if (len <= 1e-10) return false;
+	guideA /= len;
+	guideZ /= len;
+	int count = HM_I(HM_P_GULLY_COUNT + octave);
+	vec2 cellADf = HM_DF(HM_P_GULLY_CELLW_DF + octave * 2);
+	float cellA = HM_F(HM_P_GULLY_CELLW + octave);
+	vec2 scaleDf = HM_DF(HM_P_GULLY_SCALE_DF + octave * 2);
+	int baseA = int(floor(aw.x / cellA));
+	int baseZ = int(floor(wacDf.x / scale));
+	precise float cosineSum = 0.0, sineSum = 0.0, weightSum = 0.0, gradientA = 0.0, gradientZ = 0.0;
+	bool needsFeedback = octave + 1 < HM_I(HM_P_EROSION_OCT);
+	precise float perpendicularA = -guideZ;
+	precise float perpendicularZ = guideA;
+	for (int z = -1; z <= 1; z++)
+	{
+		for (int a = -1; a <= 1; a++)
+		{
+			int rawA = baseA + a;
+			int wrappedA = rawA;
+			if (wrappedA < 0) wrappedA += count;
+			if (wrappedA >= count) wrappedA -= count;
+			int cellZ = baseZ + z;
+			vec2 pivotA = df64_mul(df64_add(vec2(float(rawA), 0.0), hm_cell_jitter(wrappedA, cellZ, octave, 0)), cellADf);
+			vec2 pivotZ = df64_mul(df64_add(vec2(float(cellZ), 0.0), hm_cell_jitter(wrappedA, cellZ, octave, 1)), scaleDf);
+			float offsetA = df64_sub(aw, pivotA).x;
+			float offsetZ = df64_sub(wacDf, pivotZ).x;
+			precise float normalizedA = offsetA / cellA;
+			precise float normalizedZ = offsetZ / scale;
+			precise float distanceSquared = normalizedA * normalizedA + normalizedZ * normalizedZ;
+			if (distanceSquared >= 1.0) continue;
+			precise float falloff = 1.0 - distanceSquared;
+			precise float localWeight = falloff * falloff * falloff;
+			precise float phase = HM_TAU * (perpendicularA * offsetA + perpendicularZ * offsetZ) / scale;
+			float sine, cosine;
+			hm_sincos(phase, sine, cosine);
+			cosineSum += localWeight * cosine;
+			sineSum += localWeight * sine;
+			weightSum += localWeight;
+			if (needsFeedback)
+			{
+				precise float derivative = -sine * HM_TAU / scale;
+				gradientA += localWeight * derivative * perpendicularA;
+				gradientZ += localWeight * derivative * perpendicularZ;
+			}
+		}
+	}
+	if (weightSum <= 1e-12) return false;
+	precise float legacy = cosineSum / weightSum;
+	precise float magnitude = sqrt(cosineSum * cosineSum + sineSum * sineSum);
+	precise float coherence = magnitude / weightSum;
+	precise float normalized = cosineSum / max(magnitude, 1e-12 * weightSum);
+	precise float blend = HM_F(HM_P_GULLY_NORM) * hm_ss(0.08, 0.25, coherence);
+	field = hm_clamp(hm_lerp(legacy, normalized, blend), -1.0, 1.0);
+	if (needsFeedback)
+	{
+		guideA -= gradientA / weightSum * scale * 0.15;
+		guideZ -= gradientZ / weightSum * scale * 0.15;
+	}
+	return true;
+}
+
+// Per-sample geometry shared by the gully passes.
+struct HmCtx
+{
+	vec2 xyW;     // warped (X, Y)
+	vec2 arcW;    // warped arc offset from the anchor (df64)
+	vec2 wacDf;   // warpedAcross (df64)
+	float wac;    // (float)warpedAcross
+};
+
+float hm_across_offset(HmCtx c, vec2 eps, float sgn)
+{
+	vec2 v = sgn > 0.0 ? df64_add(c.wacDf, eps) : df64_sub(c.wacDf, eps);
+	return v.x;
+}
+
+float hm_enhanced_gullies(HmCtx c, float alpine, float valley, float mask, float macro)
+{
+	vec2 eps = HM_DF(HM_P_EPS_GULLY);
+	float twoEps = HM_F(HM_P_TWO_EPS_GULLY);
+	float rp = hm_noise(HM_N_RIDGE, hm_project(df64_add(c.arcW, eps)), c.wac);
+	float rm = hm_noise(HM_N_RIDGE, hm_project(df64_sub(c.arcW, eps)), c.wac);
+	precise float ridgeA = (rp - rm) / twoEps;
+	float zp = hm_noise(HM_N_RIDGE, c.xyW, hm_across_offset(c, eps, 1.0));
+	float zm = hm_noise(HM_N_RIDGE, c.xyW, hm_across_offset(c, eps, -1.0));
+	precise float ridgeZ = (zp - zm) / twoEps;
+	precise float approximateSlope = sqrt(ridgeA * ridgeA + ridgeZ * ridgeZ) * HM_F(HM_P_MOUNT_AMP) * 0.7 * alpine * (1.0 - 0.7 * valley);
+	float slopeMask = hm_ss(0.01, 0.35, approximateSlope);
+	if (slopeMask <= 0.0) return 0.0;
+
+	vec2 aw = hm_wrapped_around(c.arcW);
+	float guideA = -ridgeA, guideZ = -ridgeZ;
+	precise float appliedCarve = 0.0, weights = 0.0;
+	int octaves = HM_I(HM_P_EROSION_OCT);
+	for (int octave = 0; octave < octaves; octave++)
+	{
+		float scale = HM_F(HM_P_GULLY_SCALE + octave);
+		float weight = HM_F(HM_P_GULLY_WEIGHT + octave);
+		float field;
+		if (!hm_cell_gully_field(aw, c.wacDf, scale, octave, guideA, guideZ, field)) continue;
+		precise float carve = 0.5 * (1.0 - field);
+		float visibility = 1.0;
+		if (weights > 0.0)
+		{
+			precise float coarse = appliedCarve / weights;
+			float gate = hm_ss(0.15, 0.65, coarse);
+			visibility = hm_lerp(1.0, gate, HM_F(HM_P_ERO_PRESERVE));
+		}
+		appliedCarve += weight * carve * visibility;
+		weights += weight;
+	}
+	precise float amplitude = min(HM_F(HM_P_EROSION_STR), max(0.0, macro) * 0.5);
+	precise float r = weights > 0.0 ? -amplitude * mask * slopeMask * hm_clamp(appliedCarve / weights, 0.0, 1.0) : 0.0;
+	return r;
+}
+
+float hm_lowland_gullies(HmCtx c, float hillBase, float hillAmp, float gate, float ruggedness, float landform)
+{
+	vec2 eps = HM_DF(HM_P_EPS_HILL);
+	float epsF = HM_F(HM_P_EPS_HILL_F);
+	float ha = hm_noise(HM_N_HILLBASE, hm_project(df64_add(c.arcW, eps)), c.wac);
+	precise float gradientA = (ha - hillBase) / epsF;
+	float hz = hm_noise(HM_N_HILLBASE, c.xyW, hm_across_offset(c, eps, 1.0));
+	precise float gradientZ = (hz - hillBase) / epsF;
+	precise float slope = sqrt(gradientA * gradientA + gradientZ * gradientZ) * hillAmp * 0.5 / ((1.0 + HM_F(HM_P_HILL_DETAIL_W)) * HM_HILL_NORMALIZATION);
+	float slopeMask = hm_ss(0.03, 0.25, slope);
+	if (slopeMask <= 0.0) return 0.0;
+
+	vec2 aw = hm_wrapped_around(c.arcW);
+	float guideA = -gradientA, guideZ = -gradientZ;
+	precise float appliedCarve = 0.0, weights = 0.0;
+	int octaves = HM_I(HM_P_LOWLAND_OCT);
+	for (int octave = 0; octave < octaves; octave++)
+	{
+		float weight = HM_F(HM_P_GULLY_WEIGHT + octave);
+		float field;
+		if (!hm_cell_gully_field(aw, c.wacDf, HM_F(HM_P_GULLY_SCALE + octave), octave, guideA, guideZ, field)) continue;
+		precise float carve = 0.5 * (1.0 - field);
+		float visibility = 1.0;
+		if (weights > 0.0)
+		{
+			precise float coarse = appliedCarve / weights;
+			visibility = hm_lerp(1.0, hm_ss(0.15, 0.65, coarse), HM_F(HM_P_ERO_PRESERVE));
+		}
+		appliedCarve += weight * carve * visibility;
+		weights += weight;
+	}
+	precise float amplitude = min(HM_F(HM_P_LL_EROSION_STR), 0.5 * landform);
+	precise float r = weights > 0.0 ? -amplitude * gate * hm_lerp(0.3, 1.0, ruggedness) * slopeMask * hm_clamp(appliedCarve / weights, 0.0, 1.0) : 0.0;
+	return r;
+}
+
+struct HmResult
+{
+	float height;
+	float macro;
+	float continental;
+	float ridge;
+	float valley;
+	float gate;
+	float erosion;
+	float landform;
+};
+
+// SampleLandformNaturalDiagnostics(around = anchor + dA, across).
+HmResult hm_sample(int dA, int across)
+{
+	HmResult res;
+	float acrossF = float(across);
+	vec2 arcDA = vec2(float(dA), 0.0);
+	HmCtx c;
+	if (HM_I(HM_P_HAS_WARP) != 0)
+	{
+		vec2 xy0 = hm_project(arcDA);
+		float wx = hm_noise(HM_N_WARPX, xy0, acrossF);
+		float wz = hm_noise(HM_N_WARPZ, xy0, acrossF);
+		vec2 amp = HM_DF(HM_P_WARP_AMP);
+		c.arcW = df64_add(arcDA, df64_mul(vec2(wx, 0.0), amp));
+		c.wacDf = df64_add(vec2(acrossF, 0.0), df64_mul(vec2(wz, 0.0), amp));
+	}
+	else
+	{
+		c.arcW = arcDA;
+		c.wacDf = vec2(acrossF, 0.0);
+	}
+	c.wac = c.wacDf.x;
+	c.xyW = hm_project(c.arcW);
+
+	float continentalRaw = hm_noise(HM_N_CONT, c.xyW, c.wac);
+	precise float continental = hm_clamp(continentalRaw + HM_F(HM_P_LAND_BALANCE), -1.0, 1.0);
+	float macro = hm_continental_height(continental);
+	if (continental < 0.0)
+	{
+		vec2 eps = HM_DF(HM_P_EPS_CONT);
+		float twoEps = HM_F(HM_P_TWO_EPS_CONT);
+		float cp = hm_noise(HM_N_CONT, hm_project(df64_add(c.arcW, eps)), c.wac);
+		float cm = hm_noise(HM_N_CONT, hm_project(df64_sub(c.arcW, eps)), c.wac);
+		precise float da = (cp - cm) / twoEps;
+		float zp = hm_noise(HM_N_CONT, c.xyW, hm_across_offset(c, eps, 1.0));
+		float zm = hm_noise(HM_N_CONT, c.xyW, hm_across_offset(c, eps, -1.0));
+		precise float dz = (zp - zm) / twoEps;
+		precise float gradient = max(sqrt(da * da + dz * dz), HM_F(HM_P_MIN_GRADIENT));
+		macro = -hm_ocean_depth(-continental / gradient);
+	}
+	float land = hm_ss(0.0, 0.12, continental);
+	float belt = hm_ss(0.4, 0.8, hm_unit(hm_noise(HM_N_BELT, c.xyW, c.wac)));
+	precise float alpine = land * belt;
+	precise float lowland = land * (1.0 - belt);
+	float vn = hm_noise(HM_N_VALLEY, c.xyW, c.wac);
+	precise float valley = 1.0 - hm_ss(HM_F(HM_P_VALLEY_W), HM_F(HM_P_VALLEY_W2), abs(vn));
+	float ridge = hm_pow(hm_unit(hm_noise(HM_N_RIDGE, c.xyW, c.wac)), HM_F(HM_P_RIDGE_SHARP));
+	precise float uplift = HM_F(HM_P_MOUNT_AMP) * land * belt * (0.30 + 0.70 * ridge) * (1.0 - 0.70 * valley);
+	float deepOcean = 1.0 - hm_ss(-3000.0, -1000.0, macro);
+	float trenchDepth = HM_F(HM_P_TRENCH_DEPTH);
+	float trenchWeight = (trenchDepth > 0.0 && deepOcean > 0.0) ? hm_ss(HM_F(HM_P_TRENCH_THR), 1.0, hm_unit(hm_noise(HM_N_TRENCH, c.xyW, c.wac))) : 0.0;
+	precise float trench = trenchDepth * trenchWeight * deepOcean;
+	macro += uplift - trench;
+
+	float dStart = HM_F(HM_P_DETAIL_START);
+	float detailMask = 0.0;
+	if (!(alpine <= 0.0 || ridge <= 0.0 || valley >= 1.0))
+		detailMask = hm_clamp(alpine, 0.0, 1.0) * hm_ss(dStart, HM_F(HM_P_DETAIL_FULL), macro) * hm_clamp(ridge, 0.0, 1.0) * (1.0 - hm_clamp(valley, 0.0, 1.0));
+	precise float coast = land * hm_ss(50.0, 250.0, macro);
+	precise float basin = 1.0 - valley;
+	float footAmp = HM_F(HM_P_FOOT_AMP);
+	precise float foothill = (footAmp > 0.0 && coast > 0.0) ? footAmp * coast * basin * (1.0 - 0.65 * belt) * hm_unit(hm_noise(HM_N_FOOT, c.xyW, c.wac)) : 0.0;
+	precise float spurMask = coast * basin * belt;
+	float spurAmp = HM_F(HM_P_SPUR_AMP);
+	precise float spur = (spurAmp > 0.0 && spurMask > 0.0) ? spurAmp * spurMask * hm_unit(hm_noise(HM_N_SPUR, c.xyW, c.wac)) : 0.0;
+	float erosion = 0.0;
+	if (HM_F(HM_P_EROSION_STR) > 0.0 && spurMask > 0.0 && (HM_I(HM_P_MODE) & 2) != 0)
+		erosion = hm_enhanced_gullies(c, alpine, valley, spurMask, macro);
+
+	precise float gate = lowland * hm_ss(HM_F(HM_P_SHORE_START), HM_F(HM_P_SHORE_FULL), macro);
+	float landform = 0.0, lowlandCarve = 0.0;
+	if (gate > 0.0)
+	{
+		precise float ruggedness = hm_ss(HM_F(HM_P_PLAINS_THR), HM_F(HM_P_HILLS_THR), hm_unit(hm_noise(HM_N_LANDFORM, c.xyW, c.wac)));
+		precise float plateauWeight = hm_ss(HM_F(HM_P_PLATEAU_THR), HM_F(HM_P_PLATEAU_FULL), hm_unit(hm_noise(HM_N_PLATEAU, c.xyW, c.wac)));
+		float hillBase = hm_noise(HM_N_HILLBASE, c.xyW, c.wac);
+		float hdw = HM_F(HM_P_HILL_DETAIL_W);
+		float hillDetail = hdw > 0.0 ? hm_noise(HM_N_HILLDETAIL, c.xyW, c.wac) : 0.0;
+		precise float hn = hm_clamp((hillBase + hdw * hillDetail) / ((1.0 + hdw) * HM_HILL_NORMALIZATION), -1.0, 1.0);
+		float profile = hm_pow(0.5 + 0.5 * hn, HM_F(HM_P_HILL_VALLEY_EXP));
+		precise float hillAmp = HM_F(HM_P_HILL_AMP) * hm_lerp(HM_F(HM_P_PLAINS_HILL_FRAC), 1.0, ruggedness);
+		precise float hill = hillAmp * profile * (1.0 - HM_F(HM_P_HILL_VALLEY_FLOOR) * valley);
+		precise float breaksWeight = HM_F(HM_P_BREAKS_STR) * plateauWeight * ruggedness;
+		if (breaksWeight > 0.0)
+		{
+			precise float y = macro + hill;
+			hill += breaksWeight * (hm_terrace(y, HM_F(HM_P_BREAKS_STEP), HM_F(HM_P_RISER)) - y);
+		}
+		float plateau = 0.0;
+		if (plateauWeight > 0.0)
+		{
+			precise float lift = HM_F(HM_P_PLATEAU_LIFT) * plateauWeight;
+			float escJ = HM_F(HM_P_ESC_JITTER);
+			precise float x = macro + lift + (escJ > 0.0 ? escJ * plateauWeight * hm_noise(HM_N_ESC, c.xyW, c.wac) : 0.0);
+			plateau = lift + HM_F(HM_P_TERRACE_STR) * hm_ss(0.0, 0.5, plateauWeight) * (hm_terrace(x, HM_F(HM_P_PLATEAU_STEP), HM_F(HM_P_RISER)) - x);
+		}
+		landform = gate * (hill + plateau);
+		precise float floorMask = HM_F(HM_P_LL_DETAIL_FLOOR) * gate * hm_lerp(HM_F(HM_P_PLAINS_DETAIL_FRAC), 1.0, ruggedness);
+		if (floorMask > detailMask) detailMask = floorMask;
+		if (HM_F(HM_P_LL_EROSION_STR) > 0.0 && landform > 0.0)
+			lowlandCarve = hm_lowland_gullies(c, hillBase, hillAmp, gate, ruggedness, landform);
+	}
+	precise float detail = detailMask > 0.0 ? detailMask * (HM_F(HM_P_SEC_AMP) * hm_noise(HM_N_SEC, c.xyW, c.wac) + HM_F(HM_P_MICRO_AMP) * hm_noise(HM_N_MICRO, c.xyW, c.wac)) : 0.0;
+	precise float total = detail + foothill + spur + erosion + landform + lowlandCarve;
+	precise float raw = macro + total;
+	res.height = hm_clamp(raw, HM_F(HM_P_MIN_H), HM_F(HM_P_MAX_H));
+	res.macro = macro;
+	res.continental = continental;
+	res.ridge = ridge;
+	res.valley = valley;
+	res.gate = gate;
+	res.erosion = erosion;
+	res.landform = landform;
+	return res;
+}
+
+#endif

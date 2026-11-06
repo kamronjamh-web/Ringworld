@@ -111,6 +111,7 @@ public sealed partial class RingTerrainSampler
         value = (float)_runtimeSurfaceModel!.CalculateHeight(around, across);
         block[index] = value;
         _latticeVertexEvaluations++;
+        RingProxyBuildCounters.AddModelEvaluations(1);
         return value;
     }
 }

@@ -30,6 +30,8 @@ instance uniform vec4 coverage_atlas_rect = vec4(0.0, 0.0, 0.0, 0.0);
 uniform sampler2D fft_distant_ocean_mask_atlas : filter_linear, repeat_disable;
 instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 
+// Main-viewport only: ray frame comes from global shader parameters.
+#define RING_ATMOSPHERE_FRAME_GLOBAL
 #include "res://materials/ring_color_space.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_water_common.gdshaderinc"
@@ -42,6 +44,8 @@ instance uniform vec4 fft_distant_ocean_mask_rect = vec4(0.0, 0.0, 0.0, 0.0);
 #include "res://materials/ring_far_weather_shadow.gdshaderinc"
 #include "res://materials/ring_surface_aperture.gdshaderinc"
 #include "res://materials/ring_wetness.gdshaderinc"
+#define PROXY_VERTEX_TABLE_WATER
+#include "res://materials/ring_terrain_proxy_vertex_fetch.gdshaderinc"
 
 vec2 ring_fft_distant_ocean_factors(vec2 mesh_uv) {
 	if (fft_distant_ocean_mask_rect.z <= 0.0 || fft_distant_ocean_mask_rect.w <= 0.0)
@@ -170,6 +174,8 @@ uniform bool fft_ocean_coverage_enabled = false;
 uniform float fft_ocean_coverage_distance_meters = 0.0;
 uniform sampler2D fft_ocean_coverage_atlas : filter_nearest, repeat_disable;
 uniform vec2 fft_ocean_coverage_center_canonical = vec2(0.0);
+// Toroidal atlas: texel of the window's center cell (integer valued).
+uniform vec2 fft_ocean_coverage_origin_texel = vec2(256.0);
 uniform float fft_ocean_coverage_cell_meters = 2.0;
 uniform float fft_surface_base_offset_meters = 0.0;
 
@@ -255,6 +261,8 @@ vec3 ring_fft_parent_triangle_displacement_world(vec3 source_world, vec3 source_
 }
 
 void vertex() {
+	vec3 proxy_chord = vec3(0.0);
+	if (proxy_vertex_table_enabled) proxy_vertex_table_apply(VERTEX_ID, VERTEX, NORMAL, COLOR, UV, UV2, proxy_chord);
 	proxy_coverage_uv = UV;
 	water_kind_profile = ring_water_kind_from_vertex_alpha(COLOR.a);
 	vec3 original_world_position = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -346,10 +354,11 @@ void fragment() {
 	if (fft_ocean_coverage_enabled && fft_ready && water_kind_profile < 1.5
 		&& distance(fft_source_world_position, camera_world_position) < fft_ocean_coverage_distance_meters - 2.0) {
 		vec2 coverage_delta = fft_source_canonical - fft_ocean_coverage_center_canonical;
-		float coverage_span = fft_ocean_coverage_cell_meters * 512.0;
-		vec2 ocean_coverage_uv = coverage_delta / coverage_span + vec2(0.5);
-		if (all(greaterThanEqual(ocean_coverage_uv, vec2(0.0))) && all(lessThan(ocean_coverage_uv, vec2(1.0)))
-			&& texture(fft_ocean_coverage_atlas, ocean_coverage_uv).r > 0.5) discard;
+		vec2 ocean_coverage_cell = floor(coverage_delta / fft_ocean_coverage_cell_meters);
+		if (all(greaterThanEqual(ocean_coverage_cell, vec2(-256.0))) && all(lessThan(ocean_coverage_cell, vec2(256.0)))) {
+			ivec2 ocean_coverage_texel = ivec2(mod(ocean_coverage_cell + fft_ocean_coverage_origin_texel, vec2(512.0)));
+			if (texelFetch(fft_ocean_coverage_atlas, ocean_coverage_texel, 0).r > 0.5) discard;
+		}
 	}
 
 	bool use_fft_surface = ring_fft_ocean_ready(water_kind_profile);
@@ -515,7 +524,7 @@ void fragment() {
 	vec3 seeded_tint = ring_vertex_color_to_linear(COLOR.rgb);
 	vec3 water_tint = mix(shallow_water_tint, deep_water_tint, absorption);
 	water_tint = mix(water_tint, seeded_tint, 0.20) * mix(night_tint, vec3(1.0), ring_day_factor);
-	float shore_foam = depth_contact.y * (1.0 - smoothstep(0.08, max(0.1, shore_foam_depth_meters), water_thickness))
+	float shore_foam = depth_contact.y * (1.0 - smoothstep(0.08, max(0.1, shore_foam_depth_meters), water_thickness)) * smoothstep(0.0, 0.08, water_thickness)
 		* shore_foam_strength
 		* ring_water_profile_shore_foam_scale(water_kind_profile);
 	// Calm periodic crests do not foam. Whitecaps appear only where the filtered
@@ -546,7 +555,7 @@ void fragment() {
         * (water_gust_response - 1.0) * 0.20 * small_shading_fade;
 	float fft_foam = (fft_detail.z * water_gust_response + gust_whitecap) * fft_foam_strength * foam_breakup * distant_nonshore_foam;
 	crest_foam *= distant_nonshore_foam;
-	float foam = clamp(shore_foam + crest_foam + fft_foam, 0.0, 1.0);
+	float foam = clamp(shore_foam * foam_breakup + crest_foam + fft_foam, 0.0, 1.0);
 	// Retain the established shallow/deep alpha controls as artist-facing volume
 	// coverage. They now control how quickly the optical medium replaces the
 	// refracted scene, rather than triggering a second hardware alpha blend.

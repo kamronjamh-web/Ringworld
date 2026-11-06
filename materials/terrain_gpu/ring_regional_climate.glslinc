@@ -1,0 +1,214 @@
+// Port of the runtime climate and biome-weight fields used by proxy sectors (docs/gpu-offload-plan.md 4.1, WO-G1):
+//   RingTerrainSampler.SampleTerrainFieldsLocked (continentalness, mountain shape with integer-rounded warp, moisture, erosion,
+//   latitude temperature), the runtime altitude temperature drop (GetRuntimeTerrainFieldsLocked), ResolveBiomeBlend and
+//   GetNaturalBiomeTextureWeights (soft two-biome blend plus the coastal beach term).
+// All of it is float32 in the C# (Mathf), so the same expressions in the same order are used here with `precise`. The six regional noises
+// are Godot FastNoiseLite defaults (SimplexSmooth, Fbm, 5 octaves, gain 0.5, lacunarity 2) at the per-world frequencies, read from the
+// recipe buffer. X, Y come from df64 ring projection with the sampler radius and circumference (RC_P_K, RC_P_R).
+// Not ported (CPU-routed): emitter-site surface mask (ApplySiteSurfaceMask), edits, non-runtime generation.
+// Needs ring_height_model.glslinc (recipe buffer, anchor state, df64).
+#ifndef RING_REGIONAL_CLIMATE_GLSLINC
+#define RING_REGIONAL_CLIMATE_GLSLINC
+
+#include "ring_height_model.glslinc"
+
+// Recipe buffer layout (32-bit words; floats / ints stored as raw bits; df64 entries are two consecutive words hi, lo).
+#define RC_P_K 185
+#define RC_P_R 187
+#define RC_P_WIDTH 189
+#define RC_P_WIDTH_F 190
+#define RC_P_LAC 191
+#define RC_P_GAIN 192
+#define RC_P_SEC_STR 193
+#define RC_P_CONTRAST 194
+#define RC_P_OCEAN_BIAS 195
+#define RC_P_MOUNT_WARP_DIST 196
+#define RC_P_PEAK_RARITY 197
+#define RC_P_BELT_BROAD 198
+#define RC_P_VALLEY_NARROW 199
+#define RC_P_OCEAN_MOIST 200
+#define RC_P_LAT_INFLUENCE 201
+#define RC_P_BEACH_STRENGTH 202
+#define RC_P_ALT_DROP 203
+#define RC_P_PROFILE_COUNT 204
+#define RC_P_PROFILES 205
+#define RC_P_NOISE 285
+#define RC_P_COUNT 317
+
+#define RC_N_CONT 0
+#define RC_N_EROSION 1
+#define RC_N_RIDGE 2
+#define RC_N_TEMP 3
+#define RC_N_MOIST 4
+#define RC_N_WARPA 5
+#define RC_N_WARPZ 6
+#define RC_N_VALLEY 7
+
+// Profile record (10 words): channel (0 desert, 1 forest, 2 tundra, 3 alpine, -1 none), priority, min/max temperature, min/max moisture,
+// min/max ridge, blend width, selection weight multiplier. Ocean/Lake/River profiles are not packed (ResolveBiomeBlend skips them).
+#define RC_PROFILE_WORDS 10
+
+float rc_noise(int n, vec2 xy, float z)
+{
+	int b = RC_P_NOISE + n * 4;
+	int octaves = HM_I(b + 2);
+	float gain = HM_F(RC_P_GAIN);
+	return fnl_sample(HM_I(b), HM_I(b + 1), octaves, HM_F(b + 3), HM_F(RC_P_LAC), gain, fnl_fractal_bounding(octaves, gain), vec3(xy, z));
+}
+
+vec2 rc_project(float arc)
+{
+	vec2 dtheta = df64_mul(vec2(arc, 0.0), HM_DF(RC_P_K));
+	vec2 cd, sd;
+	ring_df64_cos_sin_small(dtheta, cd, sd);
+	vec2 cosT = df64_sub(df64_mul(hm_cos0, cd), df64_mul(hm_sin0, sd));
+	vec2 sinT = df64_add(df64_mul(hm_sin0, cd), df64_mul(hm_cos0, sd));
+	vec2 radius = HM_DF(RC_P_R);
+	return vec2(df64_mul(radius, cosT).x, df64_mul(radius, sinT).x);
+}
+
+// RingTerrainSampler.SmoothStep (float): InverseLerp with the 0.0001 edge guard.
+float rc_ss(float e0, float e1, float v)
+{
+	precise float hi = max(e0 + 0.0001, e1);
+	precise float t = clamp((v - e0) / (hi - e0), 0.0, 1.0);
+	precise float r = t * t * (3.0 - 2.0 * t);
+	return r;
+}
+
+float rc_clamp(float v, float lo, float hi) { return min(max(v, lo), hi); }
+
+float rc_lerp(float a, float b, float t)
+{
+	precise float r = a + (b - a) * t;
+	return r;
+}
+
+float rc_unit(float v)
+{
+	precise float r = rc_clamp(v * 0.5 + 0.5, 0.0, 1.0);
+	return r;
+}
+
+float rc_pow(float x, float y)
+{
+	if (x <= 0.0) return 0.0;
+	return pow(x, y);
+}
+
+// SampleMountainShapeLocked: warp the coordinate by integer-rounded noise, then ridge and valley strength.
+void rc_mountain(int dA, int across, vec2 xy, float z, out float ridgeStrength, out float valleyStrength)
+{
+	float warpDistance = max(0.0, HM_F(RC_P_MOUNT_WARP_DIST));
+	precise float aroundWarp = rc_noise(RC_N_WARPA, xy, z) * warpDistance;
+	precise float acrossWarp = rc_noise(RC_N_WARPZ, xy, z) * warpDistance * 0.65;
+	int wa = int(roundEven(aroundWarp));
+	int wz = int(roundEven(acrossWarp));
+	vec2 xyw = rc_project(float(dA + wa));
+	float zw = float(across + wz);
+
+	float ridgeNoise = rc_noise(RC_N_RIDGE, xyw, zw);
+	precise float ridgeBase = rc_clamp(1.0 - abs(ridgeNoise), 0.0, 1.0);
+	float rarity = HM_F(RC_P_PEAK_RARITY);
+	float sharpRidge = rc_pow(ridgeBase, max(1.0, rarity));
+	float broadBelt = rc_pow(ridgeBase, max(1.5, rarity * 0.28));
+	float beltBroadness = rc_clamp(HM_F(RC_P_BELT_BROAD), 0.0, 1.0);
+	ridgeStrength = rc_lerp(sharpRidge, broadBelt, beltBroadness);
+
+	float valleyNoise = rc_noise(RC_N_VALLEY, xyw, zw);
+	precise float valleyBase = rc_clamp(1.0 - abs(valleyNoise), 0.0, 1.0);
+	valleyStrength = rc_pow(valleyBase, max(1.0, HM_F(RC_P_VALLEY_NARROW)));
+}
+
+struct RcFields
+{
+	float erosion;
+	float moisture;
+	float temperature; // legacy (before the runtime altitude drop)
+};
+
+// SampleTerrainFieldsLocked for the runtime path: continentalness is only used for the ocean-proximity moisture term; the biome
+// continentalness and ridge come from the height model (CreateRuntimeTerrainSampleLocked).
+RcFields rc_sample_fields(int dA, int across)
+{
+	float z = float(across);
+	vec2 xy = rc_project(float(dA));
+	float continentalBase = rc_noise(RC_N_CONT, xy, z);
+	float continentalSecondary = rc_noise(RC_N_EROSION, xy, z);
+	float secondaryStrength = rc_clamp(HM_F(RC_P_SEC_STR), 0.0, 0.75);
+	precise float continentalness = rc_clamp((continentalBase + continentalSecondary * secondaryStrength) / (1.0 + secondaryStrength) * HM_F(RC_P_CONTRAST) + HM_F(RC_P_OCEAN_BIAS), -1.0, 1.0);
+
+	float mountainRidge, mountainValley;
+	rc_mountain(dA, across, xy, z, mountainRidge, mountainValley);
+	float rawErosion = rc_unit(continentalSecondary);
+	float rawMoisture = rc_unit(rc_noise(RC_N_MOIST, xy, z));
+	precise float oceanProximity = 1.0 - rc_ss(-0.08, 0.62, continentalness);
+	precise float moisture = rc_clamp(rawMoisture * 0.72 + oceanProximity * rc_clamp(HM_F(RC_P_OCEAN_MOIST), 0.0, 1.0) + mountainValley * 0.08, 0.0, 1.0);
+	precise float erosion = rc_clamp(rawErosion * 0.70 + moisture * 0.20 + mountainRidge * 0.10, 0.0, 1.0);
+
+	float width = HM_F(RC_P_WIDTH_F);
+	precise float latitude = HM_I(RC_P_WIDTH) <= 1 ? 0.0 : abs(float(across) / width - 0.5) * 2.0;
+	float climateNoise = rc_unit(rc_noise(RC_N_TEMP, xy, z));
+	float latitudeInfluence = rc_clamp(HM_F(RC_P_LAT_INFLUENCE), 0.0, 1.0);
+	precise float temperature = rc_clamp(climateNoise * (1.0 - latitudeInfluence) + (1.0 - latitude) * latitudeInfluence, 0.0, 1.0);
+	RcFields f;
+	f.erosion = erosion;
+	f.moisture = moisture;
+	f.temperature = temperature;
+	return f;
+}
+
+float rc_range_weight(float value, float minimum, float maximum, float width)
+{
+	precise float r = rc_ss(minimum - width, minimum + width, value) * (1.0 - rc_ss(maximum - width, maximum + width, value));
+	return r;
+}
+
+// GetBiomeTextureWeights(sample) for a natural (site-free) runtime sample: height is the presentation height, continentalness / ridge
+// the height-model values cast to float, erosion / moisture / legacy temperature from rc_sample_fields.
+vec4 rc_biome_weights(float height, float continentalness, float ridgeW, RcFields f)
+{
+	if (height < 0.0) return vec4(1.0, 0.0, 0.0, 0.0);
+	precise float temperature = rc_clamp(f.temperature - max(0.0, height) * HM_F(RC_P_ALT_DROP) / 1000.0, 0.0, 1.0);
+	int count = HM_I(RC_P_PROFILE_COUNT);
+	int bestChannel = -1, secondChannel = -1;
+	bool haveBest = false, haveSecond = false;
+	float bestWeight = -1.0, secondWeight = -1.0;
+	for (int i = 0; i < count; i++)
+	{
+		int b = RC_P_PROFILES + i * RC_PROFILE_WORDS;
+		int channel = HM_I(b);
+		int priority = HM_I(b + 1);
+		float width = max(0.01, HM_F(b + 8));
+		precise float weight = rc_range_weight(temperature, HM_F(b + 2), HM_F(b + 3), width)
+			* rc_range_weight(f.moisture, HM_F(b + 4), HM_F(b + 5), width)
+			* rc_range_weight(ridgeW, HM_F(b + 6), HM_F(b + 7), width);
+		weight = weight * (rc_clamp(HM_F(b + 9), 0.01, 2.0) * (1.0 + float(max(0, priority)) * 0.0025));
+		if (weight > bestWeight)
+		{
+			secondChannel = bestChannel; secondWeight = bestWeight; haveSecond = haveBest;
+			bestChannel = channel; bestWeight = weight; haveBest = true;
+		}
+		else if (weight > secondWeight)
+		{
+			secondChannel = channel; secondWeight = weight; haveSecond = true;
+		}
+	}
+	int primary = haveBest ? bestChannel : -1;
+	int secondary = haveSecond ? secondChannel : primary;
+	precise float total = max(0.0001, bestWeight + max(0.0, secondWeight));
+	precise float secondaryWeight = rc_clamp(max(0.0, secondWeight) / total, 0.0, 0.49);
+	precise float primaryWeight = 1.0 - secondaryWeight;
+	float w[4] = float[4](0.0, 0.0, 0.0, 0.0);
+	if (primary >= 0) w[primary] += primaryWeight;
+	if (secondary >= 0) w[secondary] += secondaryWeight;
+	precise float beachWeight = rc_ss(-0.10, -0.055, continentalness) * (1.0 - rc_ss(-0.008, 0.045, continentalness)) * rc_clamp(HM_F(RC_P_BEACH_STRENGTH), 0.0, 1.0);
+	precise float inlandWeight = 1.0 - beachWeight;
+	precise float desert = w[0] * inlandWeight + beachWeight;
+	precise float forest = w[1] * inlandWeight;
+	precise float tundra = w[2] * inlandWeight;
+	precise float alpine = w[3] * inlandWeight;
+	return vec4(desert, forest, tundra, alpine);
+}
+
+#endif

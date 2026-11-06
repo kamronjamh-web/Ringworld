@@ -1,0 +1,125 @@
+// Double-float (df64) helpers for ring-scale projection on GPUs without native fp64. A value is vec2(hi, lo) with hi = fl(hi + lo).
+// Everything is `precise` (no FMA contraction, no reassociation); two_prod uses the Dekker split so it does not rely on fma().
+// ring_df64_project follows docs/gpu-offload-plan.md 4.3: dtheta = (dA + warp) * (tau / C) in df64, cos/sin(dtheta) by a degree-7
+// Taylor series, the angle-sum formula against the anchor cos/sin (df64), X = R * cos, rounded once to float.
+#ifndef RING_DF64_GLSLINC
+#define RING_DF64_GLSLINC
+
+vec2 df64_quick_two_sum(float a, float b)
+{
+	precise float s = a + b;
+	precise float e = b - (s - a);
+	return vec2(s, e);
+}
+
+vec2 df64_two_sum(float a, float b)
+{
+	precise float s = a + b;
+	precise float v = s - a;
+	precise float e = (a - (s - v)) + (b - v);
+	return vec2(s, e);
+}
+
+vec2 df64_split(float a)
+{
+	precise float t = 4097.0 * a;
+	precise float hi = t - (t - a);
+	precise float lo = a - hi;
+	return vec2(hi, lo);
+}
+
+vec2 df64_two_prod(float a, float b)
+{
+	precise float p = a * b;
+#ifdef RING_DF64_FMA
+	precise float ef = fma(a, b, -p);
+	return vec2(p, ef);
+#endif
+	vec2 sa = df64_split(a);
+	vec2 sb = df64_split(b);
+	precise float e = ((sa.x * sb.x - p) + sa.x * sb.y + sa.y * sb.x) + sa.y * sb.y;
+	return vec2(p, e);
+}
+
+vec2 df64_add(vec2 a, vec2 b)
+{
+	vec2 s = df64_two_sum(a.x, b.x);
+	vec2 t = df64_two_sum(a.y, b.y);
+	precise float lo = s.y + t.x;
+	vec2 u = df64_quick_two_sum(s.x, lo);
+	precise float lo2 = u.y + t.y;
+	return df64_quick_two_sum(u.x, lo2);
+}
+
+vec2 df64_neg(vec2 a) { return vec2(-a.x, -a.y); }
+
+vec2 df64_two_diff(float a, float b)
+{
+	precise float s = a - b;
+	precise float v = s - a;
+	precise float e = (a - (s - v)) - (b + v);
+	return vec2(s, e);
+}
+
+// Explicit difference (not add-of-negation): the negated form mis-rounded on the RTX 4070 driver in the cosine path.
+vec2 df64_sub(vec2 a, vec2 b)
+{
+	vec2 s = df64_two_diff(a.x, b.x);
+	vec2 t = df64_two_diff(a.y, b.y);
+	precise float lo = s.y + t.x;
+	vec2 u = df64_quick_two_sum(s.x, lo);
+	precise float lo2 = u.y + t.y;
+	return df64_quick_two_sum(u.x, lo2);
+}
+
+vec2 df64_mul(vec2 a, vec2 b)
+{
+	vec2 p = df64_two_prod(a.x, b.x);
+	precise float cross = a.x * b.y + a.y * b.x;
+	precise float lo = p.y + cross;
+	return df64_quick_two_sum(p.x, lo);
+}
+
+vec2 df64_add_f(vec2 a, float b)
+{
+	vec2 s = df64_two_sum(a.x, b);
+	precise float lo = s.y + a.y;
+	return df64_quick_two_sum(s.x, lo);
+}
+
+vec2 df64_mul_f(vec2 a, float b)
+{
+	vec2 p = df64_two_prod(a.x, b);
+	precise float lo = p.y + a.y * b;
+	return df64_quick_two_sum(p.x, lo);
+}
+
+// cos and sin of the small angle d (|d| < ~4e-3 rad): c = 1 - t/2 + t^2/24 - t^3/720, s = d - d t/6 + d t^2/120 - d t^3/5040, t = d^2.
+void ring_df64_cos_sin_small(vec2 d, out vec2 c, out vec2 s)
+{
+	vec2 t = df64_mul(d, d);
+	precise float tf = t.x;
+	precise float t2 = tf * tf;
+	precise float cTail = t2 * (1.0 / 24.0) - t2 * tf * (1.0 / 720.0);
+	c = df64_add_f(df64_add(vec2(1.0, 0.0), vec2(-0.5 * t.x, -0.5 * t.y)), cTail);
+	precise float df = d.x;
+	precise float sTail = df * tf * (1.0 / 6.0) - df * t2 * (1.0 / 120.0) + df * t2 * tf * (1.0 / 5040.0);
+	s = df64_add_f(d, -sTail);
+}
+
+// X, Y = (float)(cos/sin(theta0 + dtheta) * R). cos0/sin0: anchor cos/sin(theta0) as df64. k = tau / circumference (df64),
+// radius = R (df64). arcOffset = dA (exact integer metres as float, |dA| < 2^24) and warp (float metres).
+vec2 ring_df64_project(vec2 cos0, vec2 sin0, vec2 k, vec2 radius, float arcOffset, float warp)
+{
+	vec2 arc = df64_two_sum(arcOffset, warp);
+	vec2 dtheta = df64_mul(arc, k);
+	vec2 cd, sd;
+	ring_df64_cos_sin_small(dtheta, cd, sd);
+	vec2 cosT = df64_sub(df64_mul(cos0, cd), df64_mul(sin0, sd));
+	vec2 sinT = df64_add(df64_mul(sin0, cd), df64_mul(cos0, sd));
+	vec2 x = df64_mul(radius, cosT);
+	vec2 y = df64_mul(radius, sinT);
+	return vec2(x.x, y.x);
+}
+
+#endif

@@ -31,7 +31,7 @@ public partial class RingBiomeDecorationLayer
             _vegetationTiles.Clear(); _visibleVegetationTiles.Clear();
             foreach (VegetationTile tile in new[] { first, second, third }) { _vegetationTiles[tile.Key] = tile; _visibleVegetationTiles.Add(tile.Key); }
             PrepareRegressionPlan(geometry); if (!DrainRegressionPlan()) return "FAIL: initial .25ms plan did not converge";
-            if (_gpuTreeGroups.Count != 6 || _gpuTreeGroups.Values.Any(g => g.Rows.Length == 0 || !Finite(g.Rows))) return "FAIL: initial source groups/transforms";
+            if (_gpuTreeGroups.Count != 6 || _gpuTreeGroups.Values.Any(g => g.Expansion == null || g.Expansion.Roots.Length != g.RootCount || !Finite(g.Expansion.Frame) || g.Expansion.Roots.Any(r => !float.IsFinite(r.X + r.Y + r.Z + r.W)) || !g.Bounds.Size.IsFinite())) return "FAIL: initial source groups/transforms";
             if (_gpuTreeRootLookup.Count != 900 || !inputOrder.SequenceEqual(first.Trees)) return "FAIL: root set/input mutation";
             if (_gpuTreeMergedGroups.Values.SelectMany(map => map.Values).Any(g => !g.CanonicalMin.IsFinite()
                 || !g.CanonicalMax.IsFinite() || g.CanonicalMin == g.CanonicalMax)) return "FAIL: merged canonical bounds";

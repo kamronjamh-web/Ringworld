@@ -64,7 +64,9 @@ public partial class RingBiomeDecorationLayer
     {
         public required GpuGroupKey Key;
         public required CachedTree[] Roots;
+        // CPU rows exist only for fixtures. Production groups keep compact roots instead (see Expansion) and the GPU builds the rows.
         public required float[] Rows;
+        public RingGpuVegetationCompute.TreeExpansion? Expansion;
         public required Vector4[] Metadata;
         public required Aabb Bounds;
         public long AroundOrigin;
@@ -803,7 +805,7 @@ public partial class RingBiomeDecorationLayer
             material, castsShadow, castsShadow ? key.Lod : -1);
 		renderer.Visible = false; renderer.CastShadow = GeometryInstance3D.ShadowCastingSetting.Off; renderer.ExtraCullMargin = 8;
         int id = _gpuTreeCompute!.RegisterBatch(new RingGpuVegetationCompute.BatchRegistration(renderer.Name, renderer.Multimesh!, mesh,
-            group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod)));
+            group.Rows, group.Metadata, group.RootCount, group.Bounds, false, group.SharedImpostor, UsesTreeDitherData(key.Lod), group.Expansion));
         if (id < 0) { UnregisterTreeSunShadowRenderer(renderer); renderer.QueueFree(); return false; }
         _gpuTreeOutputs[key] = new GpuTreeOutput { Renderer = renderer, BatchId = id, SourceGroup = group, TreeDitherData = UsesTreeDitherData(key.Lod) };
         if (material is ShaderMaterial) renderer.SetInstanceShaderParameter("vegetation_haze_slot", _gpuTreeCompute.GetHazeSlot(id));

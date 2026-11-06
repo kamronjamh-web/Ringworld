@@ -56,6 +56,7 @@
         "scripts/Voxel/LOD/*Surface*",
         "addons/terrain_3d/**",
         "materials/ring_terrain*",
+        "materials/terrain_gpu/**",
         "materials/terrain3d*",
         "materials/ring_surface*",
         "materials/voxel*",
@@ -1629,6 +1630,44 @@
       "marker": "ATMOSPHERE_FIELD_LID",
       "expected_s": 15,
       "timeout_s": 120
+    },
+    "gpu_noise_parity_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "GPU_NOISE_PARITY",
+      "expected_s": 10,
+      "timeout_s": 300
+    },
+    "proxy_gpu_height_parity_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_GPU_HEIGHT_PARITY",
+      "expected_s": 35,
+      "timeout_s": 600
+    },
+    "far_weather_atlas_gpu_parity_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "gate",
+      "tags": [
+        "clouds",
+        "far-viewport",
+        "weather",
+        "sunshine-compute"
+      ],
+      "world": "integration",
+      "marker": "FAR_WEATHER_ATLAS_GPU_PARITY",
+      "expected_s": 25,
+      "timeout_s": 300,
+      "parallel_safe": false
     },
     "far_cloud_density_parity_gpu_test": {
       "kind": "test",
@@ -3863,6 +3902,17 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "proxy_sample_cache_dedupe_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_SAMPLE_CACHE_DEDUPE",
+      "expected_s": 15,
+      "timeout_s": 120
+    },
     "proxy_build_allocation_test": {
       "kind": "test",
       "mode": "headless",
@@ -3919,6 +3969,18 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "proxy_vertex_table_contract_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "marker": "PROXY_VERTEX_TABLE_CONTRACT",
+      "expected_s": null,
+      "timeout_s": 600
+    },
     "proxy_terrain_normals_gpu_test": {
       "kind": "test",
       "mode": "gpu",
@@ -3930,6 +3992,19 @@
       "marker": "PROXY_TERRAIN_NORMALS_GPU_TEST",
       "expected_s": null,
       "timeout_s": 300
+    },
+    "proxy_vertex_table_flag_off_compare": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "water"
+      ],
+      "world": "certified",
+      "marker": "PROXY_VERTEX_TABLE_FLAG_OFF_COMPARE",
+      "expected_s": null,
+      "timeout_s": 600
     },
     "quality_preset_capture": {
       "kind": "tool",
@@ -5111,6 +5186,7 @@
         "far-viewport"
       ],
       "runner": "tools/terrain_altitude_lod_flight_test.ps1",
+      "marker": "FLIGHT_RESULT",
       "tier": "extended",
       "expected_s": null,
       "timeout_s": 300
@@ -5741,6 +5817,17 @@
       "expected_s": null,
       "timeout_s": 300
     },
+    "tree_gpu_expansion_regression": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "vegetation"
+      ],
+      "marker": "TREE_GPU_EXPANSION_REGRESSION",
+      "expected_s": null,
+      "timeout_s": 120
+    },
     "tree_gpu_benchmark": {
       "kind": "tool",
       "mode": "gpu",
@@ -6189,7 +6276,7 @@
     },
     "water_fft_surface_gpu_test": {
       "kind": "test",
-      "mode": "headless",
+      "mode": "gpu",
       "tier": "extended",
       "tags": [
         "water"

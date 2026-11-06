@@ -144,14 +144,14 @@ func _diagnostic_source(source: String) -> String:
 	shading = diagnostic.find("bool use_fft_surface", diagnostic.find("void fragment()"))
 	return diagnostic.substr(0, shading) + "ALBEDO = vec3(0.2); ALPHA = 1.0; }\n"
 
-func _expand(source: String) -> String:
+func _expand(source: String, seen: Dictionary = {}) -> String:
 	var expanded: String = ""
 	for line: String in source.split("\n"):
 		if line.begins_with("#include \""):
 			var first_quote: int = line.find("\"") + 1
 			var second_quote: int = line.find("\"", first_quote)
 			if second_quote > first_quote:
-				expanded += _expand(FileAccess.get_file_as_string(line.substr(first_quote, second_quote - first_quote))) + "\n"
+				expanded += _expand(_read_once(line.substr(first_quote, second_quote - first_quote), seen), seen) + "\n"
 				continue
 		expanded += line + "\n"
 	return expanded
@@ -189,3 +189,11 @@ func _valid(image: Image) -> bool:
 func _fail(message: String) -> void:
 	push_error("WATER_FFT_LOD_OWNERSHIP_VISUAL_TEST=FAIL " + message)
 	quit(1)
+
+# Include-once, like Godot's shader preprocessor: ring_shadow_compose re-includes
+# ring_cloud_shadow.gdshaderinc, which has no include guard of its own.
+func _read_once(path: String, seen: Dictionary) -> String:
+	if seen.has(path):
+		return ""
+	seen[path] = true
+	return FileAccess.get_file_as_string(path)

@@ -8,6 +8,7 @@ public partial class RingBiomeDecorationLayer
 {
     // Weak keys keep replacement materials from extending the cache lifetime.
     private readonly ConditionalWeakTable<ShaderMaterial, TreeAtmosphereMaterialFrame> _treeAtmosphereFrames = new();
+    private readonly System.Collections.Generic.List<ShaderMaterial> _treePerMaterialFrameMaterials = new();
     private long _treeAtmosphereParameterWrites;
     private RingAtmosphereRayFrame _treeHazeRayFrame = RingAtmosphereRayFrame.Invalid;
 
@@ -36,6 +37,9 @@ public partial class RingBiomeDecorationLayer
         if (_treeMaterials.Contains(material)) return;
         global::RingworldTechDemo.RingCloudShadowProjector.Register(material);
         _treeMaterials.Add(material);
+        // Tree shaders read the ray frame from global shader parameters; only a shader without the opt-in needs per-material writes.
+        if (!global::RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.UsesGlobals(material))
+            _treePerMaterialFrameMaterials.Add(material);
         if (_grid != null)
             RingAtmosphereModel.ConfigureMaterial(material,
                 _grid.GetCanonicalRingCircumferenceMeters64() / System.Math.Tau);
@@ -51,7 +55,10 @@ public partial class RingBiomeDecorationLayer
             : RingAtmosphereRayFrame.FromMainCamera(_grid, camera, sunDirection);
         _treeHazeRayFrame = frame;
         if (_treeMaterials.Count == 0) return;
-        foreach (ShaderMaterial material in _treeMaterials)
+        // Globals take the unthrottled sun (same light the proxy and POI publishers read); the per-material fallback keeps the throttled one.
+        Vector3 freshSun = _treeSunLight != null && GodotObject.IsInstanceValid(_treeSunLight) ? _treeSunLight.GlobalTransform.Basis.Z.Normalized() : sunDirection;
+        global::RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Publish(frame with { ToSun = freshSun });
+        foreach (ShaderMaterial material in _treePerMaterialFrameMaterials)
             ApplyTreeAtmosphereRayFrame(material, frame);
     }
 

@@ -4,7 +4,7 @@ layout(constant_id = 0) const bool VEGETATION_HAZE = false;
 layout(constant_id = 1) const bool VEGETATION_SHADOW = false;
 
 layout(local_size_x = 64) in;
-layout(set = 0, binding = 0, std430) readonly buffer Sources { float source[]; };
+layout(set = 0, binding = 0, std430) buffer Sources { float source[]; }; // written only by the phase 5 expansion (tree sources built from compact roots)
 layout(set = 0, binding = 1, std430) readonly buffer Metadata { vec4 metadata[]; };
 layout(set = 0, binding = 2, std430) buffer OutputRows { float output_row[]; };
 layout(set = 0, binding = 3, std430) buffer Commands { uint command[]; };
@@ -177,11 +177,50 @@ bool accepted(uint id) {
     return int(p[11]) == 0 ? hash >= handoff : hash < handoff;
 }
 
+// Phase 5 (trees only): expands one compact root record into the 12 (16 with the shared-impostor variant) float source row that the
+// culling phases read. Mirrors RingBiomeDecorationLayer.CreateTransform + RingLodGeometrySnapshot.CanonicalToWorld, but relative to a
+// per-group canonical anchor so ring-scale (5e6 m) coordinates never enter float maths. Bindings in this phase: 0 = rows out,
+// 1 = metadata (xy = rank/protected, zw = canonical around/across offset from the anchor), 2 = compact roots (altitude, yaw, height, variant),
+// 4 = frame words. Frame words: [0..2] anchor in layer space, [3] sin(a0), [4] cos(a0), [5] ring radius, [6] radius at altitude 0,
+// [7] row stride, [8..16] grid basis columns, [17..25] layer-inverse basis columns, [26..34] layer-inverse * grid basis columns.
+float expand_sin(float x) { float x2 = x * x; return x * (1.0 - x2 * (1.0 / 6.0 - x2 * (1.0 / 120.0 - x2 / 5040.0))); }
+float expand_cosm1(float x) { float x2 = x * x; return -x2 * (0.5 - x2 * (1.0 / 24.0 - x2 * (1.0 / 720.0 - x2 / 40320.0))); }
+mat3 expand_mat(uint a) { return mat3(vec3(p[a], p[a + 1u], p[a + 2u]), vec3(p[a + 3u], p[a + 4u], p[a + 5u]), vec3(p[a + 6u], p[a + 7u], p[a + 8u])); }
+vec2 expand_rotate(float angle) {
+    // (cos, sin) of a0 + angle; angle is a few metres to kilometres over the ring radius, so the series is exact in float.
+    float sn = expand_sin(angle), cm = expand_cosm1(angle);
+    return vec2(p[4] * (1.0 + cm) - p[3] * sn, p[3] * (1.0 + cm) + p[4] * sn);
+}
+void expand_tree_row(uint id) {
+    if (id >= q.count) return;
+    vec4 root = vec4(output_row[id * 4u], output_row[id * 4u + 1u], output_row[id * 4u + 2u], output_row[id * 4u + 3u]);
+    float inv_radius = 1.0 / p[5];
+    float da = metadata[id].z * inv_radius;
+    float sn = expand_sin(da), cm = expand_cosm1(da);
+    float alt = root.x, r = p[6] - alt;
+    vec3 delta = vec3(-alt * p[4] + r * (p[4] * cm - p[3] * sn), metadata[id].w, -alt * p[3] + r * (p[3] * cm + p[4] * sn));
+    vec3 position = vec3(p[0], p[1], p[2]) + expand_mat(26u) * delta;
+    mat3 grid = expand_mat(8u), inverse_layer = expand_mat(17u);
+    vec2 radial = expand_rotate(da), tangent = expand_rotate(da + 1.5 * inv_radius);
+    vec3 up = normalize(grid * vec3(-radial.x, 0.0, -radial.y));
+    vec3 normal = normalize(grid * vec3(-tangent.y, 0.0, tangent.x));
+    vec3 right = normalize(cross(up, normal));
+    normal = normalize(normal * cos(root.y) + right * sin(root.y));
+    right = normalize(cross(up, normal));
+    vec3 x = inverse_layer * (right * root.z), y = inverse_layer * (up * root.z), z = inverse_layer * (normal * root.z);
+    uint stride = uint(p[7]), b = id * stride;
+    source[b] = x.x; source[b + 1u] = y.x; source[b + 2u] = z.x; source[b + 3u] = position.x;
+    source[b + 4u] = x.y; source[b + 5u] = y.y; source[b + 6u] = z.y; source[b + 7u] = position.y;
+    source[b + 8u] = x.z; source[b + 9u] = y.z; source[b + 10u] = z.z; source[b + 11u] = position.z;
+    if (stride > 12u) source[b + 12u] = root.w;
+}
+
 void main() {
     uint id = gl_GlobalInvocationID.x;
     uint lane = gl_LocalInvocationID.x;
     uint group = gl_WorkGroupID.x;
     uint groups = (q.count + 63u) / 64u;
+    if (q.phase == 5u) { expand_tree_row(id); return; }
     if (q.phase == 4u) {
         if (!VEGETATION_HAZE && !VEGETATION_SHADOW) return;
         uint visible = min(command[1], q.capacity);

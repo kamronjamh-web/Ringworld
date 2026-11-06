@@ -18,6 +18,8 @@ render_mode unshaded, cull_disabled, depth_draw_never, blend_premul_alpha, shado
 uniform sampler2D cf_screen : hint_screen_texture, filter_linear, repeat_disable;
 uniform sampler2D cf_depth : hint_depth_texture, filter_nearest, repeat_disable;
 
+// Main-viewport only: ray frame comes from global shader parameters.
+#define RING_ATMOSPHERE_FRAME_GLOBAL
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_containment_strike.gdshaderinc"
 #include "res://materials/ring_containment_field_core.gdshaderinc"

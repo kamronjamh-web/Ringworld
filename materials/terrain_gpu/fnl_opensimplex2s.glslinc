@@ -1,0 +1,282 @@
+// FastNoiseLite OpenSimplex2S 3D (plus None / Fbm / Ridged fractals), ported for RenderingDevice compute.
+// Source: the FastNoiseLite bundled in Godot (v1.1.x, thirdparty/noise) as shipped in Godot 4.8-dev7: seed handling, 3D default
+// OpenSimplex2 coordinate rotation, FastFloor (negative integers floor one lower), CalculateFractalBounding, weighted strength 0.
+// Every float operation is `precise` so the driver cannot contract a*b+c into an FMA; the result is meant to be bit-identical
+// to the C++ build (Vulkan requires correctly rounded float add/sub/mul). Gradient table extracted from the Godot binary.
+// Usage: fnl_sample(seed, fractal, octaves, frequency, lacunarity, gain, fnl_fractal_bounding(octaves, gain), vec3(x, y, z)).
+// Inputs are the raw (pre-frequency) float coordinates, exactly as passed to FastNoiseLite.GetNoise3D.
+#ifndef FNL_OPENSIMPLEX2S_GLSLINC
+#define FNL_OPENSIMPLEX2S_GLSLINC
+
+#define FNL_FRACTAL_NONE 0
+#define FNL_FRACTAL_FBM 1
+#define FNL_FRACTAL_RIDGED 2
+
+const int FNL_PRIME_X = 501125321;
+const int FNL_PRIME_Y = 1136930381;
+const int FNL_PRIME_Z = 1720413743;
+// PrimeX * 2, PrimeY << 1, PrimeZ << 1 wrapped to int32 as in the C++ build.
+const int FNL_PRIME_X2 = 1002250642;
+const int FNL_PRIME_Y2 = -2021106534;
+const int FNL_PRIME_Z2 = -854139810;
+
+const float FNL_GRADIENTS_3D[256] = float[256](
+	0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
+	1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
+	1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
+	0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
+	1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
+	1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
+	0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
+	1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
+	1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
+	0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
+	1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
+	1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
+	0.0, 1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0,
+	1.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 1.0, 0.0, -1.0, 0.0, -1.0, 0.0, -1.0, 0.0,
+	1.0, 1.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
+	1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0
+);
+
+int fnl_fast_floor(float f)
+{
+	return f >= 0.0 ? int(f) : int(f) - 1;
+}
+
+float fnl_grad_coord(int seed, int xPrimed, int yPrimed, int zPrimed, float xd, float yd, float zd)
+{
+	int hash = seed ^ xPrimed ^ yPrimed ^ zPrimed;
+	hash *= 0x27d4eb2d;
+	hash ^= hash >> 15;
+	hash &= 63 << 2;
+	precise float xg = FNL_GRADIENTS_3D[hash | 0];
+	precise float yg = FNL_GRADIENTS_3D[hash | 1];
+	precise float zg = FNL_GRADIENTS_3D[hash | 2];
+	precise float r = xd * xg + yd * yg + zd * zg;
+	return r;
+}
+
+// Single-octave OpenSimplex2S on already transformed (frequency scaled and rotated) coordinates.
+float fnl_single_opensimplex2s(int seed, float x, float y, float z)
+{
+	int i = fnl_fast_floor(x);
+	int j = fnl_fast_floor(y);
+	int k = fnl_fast_floor(z);
+	precise float xi = x - float(i);
+	precise float yi = y - float(j);
+	precise float zi = z - float(k);
+
+	i *= FNL_PRIME_X;
+	j *= FNL_PRIME_Y;
+	k *= FNL_PRIME_Z;
+	int seed2 = seed + 1293373;
+
+	int xNMask = int(-0.5 - xi);
+	int yNMask = int(-0.5 - yi);
+	int zNMask = int(-0.5 - zi);
+
+	precise float x0 = xi + float(xNMask);
+	precise float y0 = yi + float(yNMask);
+	precise float z0 = zi + float(zNMask);
+	precise float a0 = 0.75 - x0 * x0 - y0 * y0 - z0 * z0;
+	precise float value = (a0 * a0) * (a0 * a0) * fnl_grad_coord(seed, i + (xNMask & FNL_PRIME_X), j + (yNMask & FNL_PRIME_Y), k + (zNMask & FNL_PRIME_Z), x0, y0, z0);
+
+	precise float x1 = xi - 0.5;
+	precise float y1 = yi - 0.5;
+	precise float z1 = zi - 0.5;
+	precise float a1 = 0.75 - x1 * x1 - y1 * y1 - z1 * z1;
+	value += (a1 * a1) * (a1 * a1) * fnl_grad_coord(seed2, i + FNL_PRIME_X, j + FNL_PRIME_Y, k + FNL_PRIME_Z, x1, y1, z1);
+
+	precise float xAFlipMask0 = float((xNMask | 1) << 1) * x1;
+	precise float yAFlipMask0 = float((yNMask | 1) << 1) * y1;
+	precise float zAFlipMask0 = float((zNMask | 1) << 1) * z1;
+	precise float xAFlipMask1 = float(-2 - (xNMask << 2)) * x1 - 1.0;
+	precise float yAFlipMask1 = float(-2 - (yNMask << 2)) * y1 - 1.0;
+	precise float zAFlipMask1 = float(-2 - (zNMask << 2)) * z1 - 1.0;
+
+	bool skip5 = false;
+	precise float a2 = xAFlipMask0 + a0;
+	if (a2 > 0.0)
+	{
+		precise float x2 = x0 - float(xNMask | 1);
+		precise float y2 = y0;
+		precise float z2 = z0;
+		value += (a2 * a2) * (a2 * a2) * fnl_grad_coord(seed, i + (~xNMask & FNL_PRIME_X), j + (yNMask & FNL_PRIME_Y), k + (zNMask & FNL_PRIME_Z), x2, y2, z2);
+	}
+	else
+	{
+		precise float a3 = yAFlipMask0 + zAFlipMask0 + a0;
+		if (a3 > 0.0)
+		{
+			precise float x3 = x0;
+			precise float y3 = y0 - float(yNMask | 1);
+			precise float z3 = z0 - float(zNMask | 1);
+			value += (a3 * a3) * (a3 * a3) * fnl_grad_coord(seed, i + (xNMask & FNL_PRIME_X), j + (~yNMask & FNL_PRIME_Y), k + (~zNMask & FNL_PRIME_Z), x3, y3, z3);
+		}
+
+		precise float a4 = xAFlipMask1 + a1;
+		if (a4 > 0.0)
+		{
+			precise float x4 = float(xNMask | 1) + x1;
+			precise float y4 = y1;
+			precise float z4 = z1;
+			value += (a4 * a4) * (a4 * a4) * fnl_grad_coord(seed2, i + (xNMask & FNL_PRIME_X2), j + FNL_PRIME_Y, k + FNL_PRIME_Z, x4, y4, z4);
+			skip5 = true;
+		}
+	}
+
+	bool skip9 = false;
+	precise float a6 = yAFlipMask0 + a0;
+	if (a6 > 0.0)
+	{
+		precise float x6 = x0;
+		precise float y6 = y0 - float(yNMask | 1);
+		precise float z6 = z0;
+		value += (a6 * a6) * (a6 * a6) * fnl_grad_coord(seed, i + (xNMask & FNL_PRIME_X), j + (~yNMask & FNL_PRIME_Y), k + (zNMask & FNL_PRIME_Z), x6, y6, z6);
+	}
+	else
+	{
+		precise float a7 = xAFlipMask0 + zAFlipMask0 + a0;
+		if (a7 > 0.0)
+		{
+			precise float x7 = x0 - float(xNMask | 1);
+			precise float y7 = y0;
+			precise float z7 = z0 - float(zNMask | 1);
+			value += (a7 * a7) * (a7 * a7) * fnl_grad_coord(seed, i + (~xNMask & FNL_PRIME_X), j + (yNMask & FNL_PRIME_Y), k + (~zNMask & FNL_PRIME_Z), x7, y7, z7);
+		}
+
+		precise float a8 = yAFlipMask1 + a1;
+		if (a8 > 0.0)
+		{
+			precise float x8 = x1;
+			precise float y8 = float(yNMask | 1) + y1;
+			precise float z8 = z1;
+			value += (a8 * a8) * (a8 * a8) * fnl_grad_coord(seed2, i + FNL_PRIME_X, j + (yNMask & FNL_PRIME_Y2), k + FNL_PRIME_Z, x8, y8, z8);
+			skip9 = true;
+		}
+	}
+
+	bool skipD = false;
+	precise float aA = zAFlipMask0 + a0;
+	if (aA > 0.0)
+	{
+		precise float xA = x0;
+		precise float yA = y0;
+		precise float zA = z0 - float(zNMask | 1);
+		value += (aA * aA) * (aA * aA) * fnl_grad_coord(seed, i + (xNMask & FNL_PRIME_X), j + (yNMask & FNL_PRIME_Y), k + (~zNMask & FNL_PRIME_Z), xA, yA, zA);
+	}
+	else
+	{
+		precise float aB = xAFlipMask0 + yAFlipMask0 + a0;
+		if (aB > 0.0)
+		{
+			precise float xB = x0 - float(xNMask | 1);
+			precise float yB = y0 - float(yNMask | 1);
+			precise float zB = z0;
+			value += (aB * aB) * (aB * aB) * fnl_grad_coord(seed, i + (~xNMask & FNL_PRIME_X), j + (~yNMask & FNL_PRIME_Y), k + (zNMask & FNL_PRIME_Z), xB, yB, zB);
+		}
+
+		precise float aC = zAFlipMask1 + a1;
+		if (aC > 0.0)
+		{
+			precise float xC = x1;
+			precise float yC = y1;
+			precise float zC = float(zNMask | 1) + z1;
+			value += (aC * aC) * (aC * aC) * fnl_grad_coord(seed2, i + FNL_PRIME_X, j + FNL_PRIME_Y, k + (zNMask & FNL_PRIME_Z2), xC, yC, zC);
+			skipD = true;
+		}
+	}
+
+	if (!skip5)
+	{
+		precise float a5 = yAFlipMask1 + zAFlipMask1 + a1;
+		if (a5 > 0.0)
+		{
+			precise float x5 = x1;
+			precise float y5 = float(yNMask | 1) + y1;
+			precise float z5 = float(zNMask | 1) + z1;
+			value += (a5 * a5) * (a5 * a5) * fnl_grad_coord(seed2, i + FNL_PRIME_X, j + (yNMask & FNL_PRIME_Y2), k + (zNMask & FNL_PRIME_Z2), x5, y5, z5);
+		}
+	}
+
+	if (!skip9)
+	{
+		precise float a9 = xAFlipMask1 + zAFlipMask1 + a1;
+		if (a9 > 0.0)
+		{
+			precise float x9 = float(xNMask | 1) + x1;
+			precise float y9 = y1;
+			precise float z9 = float(zNMask | 1) + z1;
+			value += (a9 * a9) * (a9 * a9) * fnl_grad_coord(seed2, i + (xNMask & FNL_PRIME_X2), j + FNL_PRIME_Y, k + (zNMask & FNL_PRIME_Z2), x9, y9, z9);
+		}
+	}
+
+	if (!skipD)
+	{
+		precise float aD = xAFlipMask1 + yAFlipMask1 + a1;
+		if (aD > 0.0)
+		{
+			precise float xD = float(xNMask | 1) + x1;
+			precise float yD = float(yNMask | 1) + y1;
+			precise float zD = z1;
+			value += (aD * aD) * (aD * aD) * fnl_grad_coord(seed2, i + (xNMask & FNL_PRIME_X2), j + (yNMask & FNL_PRIME_Y2), k + FNL_PRIME_Z, xD, yD, zD);
+		}
+	}
+
+	precise float result = value * 9.046026385208288;
+	return result;
+}
+
+// FastNoiseLite::CalculateFractalBounding with a positive gain.
+float fnl_fractal_bounding(int octaves, float gain)
+{
+	precise float g = abs(gain);
+	precise float amp = g;
+	precise float ampFractal = 1.0;
+	for (int i = 1; i < octaves; i++)
+	{
+		ampFractal += amp;
+		amp *= g;
+	}
+	precise float bounding = 1.0 / ampFractal;
+	return bounding;
+}
+
+// FastNoiseLite::GetNoise(x, y, z): frequency scale, default 3D OpenSimplex2 rotation, then None / Fbm / Ridged.
+float fnl_sample(int seed, int fractal, int octaves, float frequency, float lacunarity, float gain, float bounding, vec3 p)
+{
+	precise float x = p.x * frequency;
+	precise float y = p.y * frequency;
+	precise float z = p.z * frequency;
+	precise float r = ((x + y) + z) * uintBitsToFloat(0x3f2aaaabu);
+	x = r - x;
+	y = r - y;
+	z = r - z;
+
+	if (fractal == FNL_FRACTAL_NONE)
+		return fnl_single_opensimplex2s(seed, x, y, z);
+
+	precise float sum = 0.0;
+	precise float amp = bounding;
+	for (int i = 0; i < octaves; i++)
+	{
+		precise float n = fnl_single_opensimplex2s(seed++, x, y, z);
+		if (fractal == FNL_FRACTAL_RIDGED)
+		{
+			n = abs(n);
+			sum += (n * -2.0 + 1.0) * amp;
+		}
+		else
+		{
+			sum += n * amp;
+		}
+		x *= lacunarity;
+		y *= lacunarity;
+		z *= lacunarity;
+		amp *= gain;
+	}
+	return sum;
+}
+
+#endif

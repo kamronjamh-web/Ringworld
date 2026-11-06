@@ -413,7 +413,7 @@ public partial class RingScaledFarViewport : Node
 	public bool ExactSunshineBackdropActive { get; private set; }
 	public bool FallbackCloudShellVisible => _scaledCloudShell?.Visible == true;
 	public double FarWeatherAtlasSnapshotTimeSeconds => _farWeatherAtlasSnapshotTime;
-	public bool FarWeatherAtlasRefreshInProgress => _farWeatherAtlasBuild != null;
+	public bool FarWeatherAtlasRefreshInProgress => _farWeatherAtlasBuild != null || _farWeatherGpuJob != 0;
 	public ulong CloudMaskUpdateCount { get; private set; }
 	public Vector2I CloudMaskSize { get; private set; }
 
@@ -477,7 +477,7 @@ public partial class RingScaledFarViewport : Node
 		_radiusMeters = _circumferenceMeters / Math.Tau;
 		BeginFarWeatherAtlasRebuild(ResolveFarWeatherRawTimeSeconds());
 		if (!UseStagedStartup)
-			while (_farWeatherAtlasBuild != null) UpdateFarWeatherAtlas(int.MaxValue);
+			while (_farWeatherAtlasBuild != null || _farWeatherGpuJob != 0) UpdateFarWeatherAtlas(int.MaxValue);
 		string[] userArguments = OS.GetCmdlineUserArgs();
 		_captureUnderside = Array.Exists(
 			userArguments,
@@ -567,6 +567,8 @@ public partial class RingScaledFarViewport : Node
         DisposeStartupScene();
 		DisposeGeometryWork();
 		DisposeFarSurfaceTiles();
+		_farAtlasGpu?.Release();
+		_farAtlasGpu = null;
 		RingTerrainCloudSunVisibility.Instance?.UnregisterRequiredAltitudeRange("far_clouds");
 		// Detach the compositor-owned far texture before its producer is disposed.
 		if (_sunshineClouds != null && GodotObject.IsInstanceValid(_sunshineClouds))
@@ -800,7 +802,8 @@ public partial class RingScaledFarViewport : Node
 
 	private void BeginFarWeatherAtlasRebuild(double snapshotTime)
 	{
-		if (_farWeatherAtlasBuild != null) return;
+		if (_farWeatherAtlasBuild != null || _farWeatherGpuJob != 0) return;
+		if (TryBeginGpuFarWeatherAtlas(snapshotTime)) return;
 		int width = Mathf.Clamp(FarWeatherAtlasWidth, 512, 8192);
 		int height = Mathf.Clamp(FarWeatherAtlasHeight, 32, 512);
 		_farWeatherAtlasBuild = new FarWeatherAtlasBuild(snapshotTime, width, height);
@@ -817,6 +820,7 @@ public partial class RingScaledFarViewport : Node
 		bool rebuildRequested = false;
 		// A load/restore may jump either direction. Discard only unpublished
 		// staging data; the previous atlas/systems remain live until replacement.
+		if (_farWeatherGpuJob != 0 && (time < _farWeatherGpuSnapshot || discontinuity || manualWeatherChanged)) { _farWeatherGpuJob = 0; rebuildRequested = true; }
 		if (_farWeatherAtlasBuild != null && (time < _farWeatherAtlasBuild.SnapshotTime || discontinuity || manualWeatherChanged))
 		{
 			_farWeatherAtlasBuild.Image.Dispose();
@@ -824,60 +828,13 @@ public partial class RingScaledFarViewport : Node
 			_farWeatherAtlasBuild = null;
 			rebuildRequested = true;
 		}
-		if (_farWeatherAtlasBuild == null && (rebuildRequested || manualWeatherChanged || time >= _farWeatherAtlasNextRefreshTime || time < _farWeatherAtlasSnapshotTime))
+		if (_farWeatherAtlasBuild == null && _farWeatherGpuJob == 0 && (rebuildRequested || manualWeatherChanged || time >= _farWeatherAtlasNextRefreshTime || time < _farWeatherAtlasSnapshotTime))
 			BeginFarWeatherAtlasRebuild(time);
+		if (_farWeatherGpuJob != 0) { StepGpuFarWeatherAtlas(forcedBudget != null); return; }
 		FarWeatherAtlasBuild? build = _farWeatherAtlasBuild;
 		if (build == null || _grid?.TerrainSampler == null) return;
 		Stopwatch stopwatch = Stopwatch.StartNew();
-		double workBudgetMilliseconds = FarWeatherAtlasWorkBudgetMilliseconds;
-		int completedItems = 0;
-		int sampleCap = forcedBudget ?? Mathf.Clamp(FarWeatherAtlasWorkBudgetPerFrame, 16, 128);
-		const int sampleWidth = 128, sampleHeight = 32;
-		int terrainSeed = _grid.TerrainSampler.Seed;
-		while (completedItems < sampleCap && build.SampleIndex < build.Samples.Length)
-		{
-			if (forcedBudget == null && stopwatch.Elapsed.TotalMilliseconds >= workBudgetMilliseconds) break;
-			int index = build.SampleIndex++;
-			int sx = index % sampleWidth;
-			int sy = index / sampleWidth;
-			double around = sx / (double)sampleWidth * _circumferenceMeters;
-			double across = sy / (double)(sampleHeight - 1) * RingWidthMeters;
-			global::RingworldTechDemo.RingVolumetricCloudLayer.LocalWeatherState weather = _weatherSource?.QueryLocalWeatherCoverageAtTime(
-				new RingCanonicalPosition(around, 0.0, across), build.SnapshotTime, includeMegastorm: false) ?? default;
-			float storm = Mathf.Clamp(weather.SystemInfluence * 0.65f + weather.PrecipitationPotential * 0.55f, 0.0f, 1.0f);
-			build.Samples[index] = new Vector2(weather.CloudCoverage, storm);
-			build.LayerSamples[index] = ComputeFarLayerSample(around, across, build.SnapshotTime, weather.CloudCoverage);
-			completedItems++;
-		}
-		uint seed = unchecked((uint)terrainSeed) ^ 0x9e3779b9u;
-		while (completedItems < 8192 && build.SampleIndex >= build.Samples.Length && build.TexelIndex < build.Width * build.Height)
-		{
-			if (forcedBudget == null && stopwatch.Elapsed.TotalMilliseconds >= workBudgetMilliseconds) break;
-			int index = build.TexelIndex++;
-			int x = index % build.Width;
-			int y = index / build.Width;
-			float u = x / (float)build.Width;
-			float v = y / (float)Math.Max(1, build.Height - 1);
-			Vector2 weather = SampleWeatherGrid(build.Samples, sampleWidth, sampleHeight, u, v);
-			Vector4 layers = SampleWeatherGrid(build.LayerSamples, sampleWidth, sampleHeight, u, v);
-			float coverage = Mathf.Clamp(weather.X, 0.0f, 1.0f);
-			float storm = Mathf.Clamp(weather.Y, 0.0f, 1.0f);
-			int pixel = index * 4;
-			build.Pixels[pixel] = Rgba8Channel(coverage);
-			build.Pixels[pixel + 1] = Rgba8Channel(storm);
-			build.Pixels[pixel + 2] = Rgba8Channel(SeedUnit(seed ^ 0x27d4eb2du, x / 7, y / 5));
-			build.Pixels[pixel + 3] = Rgba8Channel(SeedUnit(seed ^ 0x165667b1u, x / 3, y / 3));
-			build.LayerPixels[pixel] = Rgba8Channel(layers.X);
-			build.LayerPixels[pixel + 1] = Rgba8Channel(layers.Y);
-			build.LayerPixels[pixel + 2] = Rgba8Channel(layers.Z);
-			build.LayerPixels[pixel + 3] = Rgba8Channel(layers.W);
-			build.ContentHash = (build.ContentHash ^ (uint)BitConverter.SingleToInt32Bits(coverage)) * 1099511628211UL;
-			build.ContentHash = (build.ContentHash ^ (uint)BitConverter.SingleToInt32Bits(storm)) * 1099511628211UL;
-			completedItems++;
-		}
-		FarWeatherAtlasLastWorkMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
-		FarWeatherAtlasLastWorkItems = completedItems;
-		if (build.TexelIndex < build.Width * build.Height) return;
+		if (!AdvanceFarWeatherAtlasCpuBuild(build, forcedBudget, stopwatch)) return;
 		Stopwatch uploadStopwatch = Stopwatch.StartNew();
 		build.Image.SetData(build.Width, build.Height, false, Image.Format.Rgba8, build.Pixels);
 		build.Image.GenerateMipmaps();

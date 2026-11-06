@@ -374,7 +374,7 @@ func _check_poi(p: int, reference: int) -> void:
 	var frame_valid := 0
 	var light_valid := 0
 	for mat in found:
-		if mat.get_shader_parameter("ring_atmosphere_ray_frame_valid") == true:
+		if preload("res://tools/AtmosphereFrameGlobalsProbe.cs").new().call("GetValue", "ring_atmosphere_ray_frame_valid") == true:  # POI shaders read the ray frame from globals
 			frame_valid += 1
 		if mat.get_shader_parameter("poi_ring_lighting_valid") == true:
 			light_valid += 1

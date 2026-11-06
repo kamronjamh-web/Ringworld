@@ -55,23 +55,24 @@ public partial class TreeLightingShadowBehaviorTest : RefCounted
             layer._Process(0.0);
             Require(Approximately((float)material.GetShaderParameter("day_start_dot"), grid.RingDayStartDot),
                 "first process did not synchronize configuration");
-            Require((bool)material.GetShaderParameter("ring_atmosphere_ray_frame_valid")
-                && (Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position") == camera.GlobalPosition,
+            Require((bool)Global("ring_atmosphere_ray_frame_valid")
+                && (Vector3)Global("ring_atmosphere_camera_world_position") == camera.GlobalPosition,
                 "tree atmosphere ray frame did not use the active camera");
-            ValidateAtmosphereFrameWrites(layer, material.Shader!, RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()));
+            ValidateAtmosphereFrameWrites(layer, PerMaterialFrameShader(), RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()));
+            ValidateFrameGlobals(material.Shader!, RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()));
             using (var proxy = new RingTerrainProxySector())
-                ValidateAtmosphereFrameWrites(proxy, material.Shader!, RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()),
+                ValidateAtmosphereFrameWrites(proxy, PerMaterialFrameShader(), RingAtmosphereRayFrame.FromMainCamera(grid, camera, sun.GlobalBasis.Z.Normalized()),
                     "ApplyProxyAtmosphereMaterialFrame", "_proxyAtmosphereParameterWrites", "PROXY");
             RingAtmosphereModel.Enabled = !originalAtmosphereEnabled;
             Require((bool)imported.GetShaderParameter("ring_atmosphere_enabled") == !originalAtmosphereEnabled
                 && (bool)impostor.GetShaderParameter("ring_atmosphere_enabled") == !originalAtmosphereEnabled,
                 "atmosphere profile change did not reach imported tree materials");
             RingAtmosphereModel.Enabled = originalAtmosphereEnabled;
-            Vector3 initialAtmosphereCamera = (Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position");
+            Vector3 initialAtmosphereCamera = (Vector3)Global("ring_atmosphere_camera_world_position");
             camera.GlobalPosition += new Vector3(32, 0, 0);
             layer._Process(0.0);
-            Require((Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position") == camera.GlobalPosition
-                && (Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position") != initialAtmosphereCamera,
+            Require((Vector3)Global("ring_atmosphere_camera_world_position") == camera.GlobalPosition
+                && (Vector3)Global("ring_atmosphere_camera_world_position") != initialAtmosphereCamera,
                 "tree atmosphere ray frame was not refreshed after camera rebase");
             Vector3 initialSun = (Vector3)material.GetShaderParameter("sun_direction");
 
@@ -122,6 +123,45 @@ public partial class TreeLightingShadowBehaviorTest : RefCounted
             RingAtmosphereModel.Enabled = originalAtmosphereEnabled;
             if (GodotObject.IsInstanceValid(harness)) harness.QueueFree();
         }
+    }
+
+    private static Variant Global(string name) => RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.PublishedValue(name);
+
+    /// <summary>
+    /// A shader without the RING_ATMOSPHERE_FRAME_GLOBAL opt-in: it keeps the nine ray-frame uniforms per material, like the
+    /// far-viewport shaders. The production tree and proxy shaders read the globals and must receive no per-material writes.
+    /// </summary>
+    private static Shader PerMaterialFrameShader() => new()
+    {
+        Code = "shader_type spatial;\nuniform bool ring_atmosphere_ray_frame_valid = false;\nuniform vec3 ring_atmosphere_camera_world_position;\n"
+            + "uniform float ring_atmosphere_camera_height_meters;\nuniform vec3 ring_atmosphere_outward_world;\nuniform vec3 ring_atmosphere_axis_world;\n"
+            + "uniform float ring_atmosphere_sidewall_negative_meters;\nuniform float ring_atmosphere_sidewall_positive_meters;\n"
+            + "uniform float ring_atmosphere_coordinate_scale = 1.0;\nuniform vec3 ring_atmosphere_to_sun = vec3(0.0, 1.0, 0.0);\nvoid fragment() { ALBEDO = ring_atmosphere_to_sun; }\n"
+    };
+
+    /// <summary>The shared global publisher: per-field writes, no per-material writes for opted-in shaders.</summary>
+    private static void ValidateFrameGlobals(Shader productionShader, RingAtmosphereRayFrame frame)
+    {
+        using var production = new ShaderMaterial { Shader = productionShader };
+        Require(RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.UsesGlobals(production), "production tree shader must read the ray frame globals");
+        using var legacy = new ShaderMaterial { Shader = PerMaterialFrameShader() };
+        Require(!RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.UsesGlobals(legacy), "per-material shader must not be classified as global");
+        RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Reset();
+        long Writes() => RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Writes;
+        long before = Writes();
+        RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Publish(frame);
+        Require(Writes() - before == 9, "first global publication must write all nine fields");
+        before = Writes();
+        RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Publish(frame);
+        Require(Writes() == before, "stationary frame must not rewrite globals");
+        var moved = frame with { CameraWorld = frame.CameraWorld + Vector3.Right };
+        RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Publish(moved);
+        Require(Writes() - before == 1 && ((Vector3)Global("ring_atmosphere_camera_world_position")).Equals(moved.CameraWorld), "camera movement must write one global");
+        RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Invalidate();
+        Require(!(bool)Global("ring_atmosphere_ray_frame_valid"), "invalid frame must clear the valid global");
+        RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.Publish(moved);
+        Require((bool)Global("ring_atmosphere_ray_frame_valid") && ((Vector3)Global("ring_atmosphere_to_sun")).Equals(moved.ToSun), "recovered frame must republish every field");
+        GD.Print("TREE_ATMOSPHERE_GLOBALS_CONTRACT=PASS");
     }
 
     private static object? Invoke(object instance, string name, params object?[] arguments) =>

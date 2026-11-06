@@ -80,12 +80,6 @@
       "evidence": "batch close record; main_gpu2",
       "since": "2026-10-29"
     },
-    "water_fft_demand_integration_test": {
-      "status": "known-fail",
-      "match": "WATER_FFT_DEMAND_INTEGRATION=FAIL",
-      "evidence": "batch close record; main_gpu2",
-      "since": "2026-10-29"
-    },
     "cloud_lighting_smoke_test": {
       "status": "known-fail",
       "match": "CLOUD_LIGHTING_SMOKE=FAIL",
@@ -192,6 +186,33 @@
       "match": "Texture \\(binding: \\d+, index 0\\) (needs to have the same type as the uniform|is not a valid texture)",
       "evidence": "2026-10-29 WO4 (RTX 4070): 3 of 3 runs crash 0xC0000005 (-1073741819) after Vulkan uniform_set_create errors (expected 2DArray, actual 2D); the latest runs print SUNSHINE_NIGHT_SHELL_EXIT_SMOKE=PASS first and then crash during teardown, which the runner reports as crash (a crash after PASS is not a fix); also at close-out gpu_run1; 2026-11-05: after the far-wedge main-depth mask the teardown also logs \"Texture (binding: 1, index 0) is not a valid texture\" / \"us is null\" before the same crash",
       "since": "2026-10-29",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "sunshine_shadow_toggle_smoke_test": {
+      "status": "known-fail",
+      "match": "# exit code -1073741819",
+      "evidence": "2026-10-30 megastorm3/megastorm6a (RTX 4070): prints PASS then crashes 0xC0000005 during teardown; reconfirmed 2026-11-06 gpu-offload GPU-4 follow-up; same teardown crash family as sunshine_night_shell_exit_smoke_test",
+      "since": "2026-10-30",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "far_weather_atlas_gpu_parity_gpu_test": {
+      "status": "known-fail",
+      "match": "# exit code -1073741819",
+      "evidence": "2026-11-06 gpu-offload GPU-4: FAR_WEATHER_ATLAS_GPU_PARITY=PASS (max 1 LSB) then 0xC0000005 at exit with the integration world; the atlas RD resources alone tear down cleanly (probe exits 0), so the crash is the sunshine teardown family. Read the PASS marker before the crash",
+      "since": "2026-11-06",
+      "machines": [
+        "desktop_mid_high"
+      ]
+    },
+    "far_weather_refresh_smoke_test": {
+      "status": "known-fail",
+      "match": "FAR_WEATHER_REFRESH_SMOKE_TEST=FAIL timeout",
+      "evidence": "2026-11-06 gpu-offload GPU-4: fails at HEAD 5bcff69 too (headless CPU path publishes at frame 447 vs MAX_FRAMES 420; working tree 421). Frame count follows the per-frame CPU budget, so it is load-dependent; needs a time-based limit instead of frames",
+      "since": "2026-11-06",
       "machines": [
         "desktop_mid_high"
       ]

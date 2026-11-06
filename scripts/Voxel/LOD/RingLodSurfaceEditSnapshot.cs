@@ -261,6 +261,72 @@ public sealed class RingLodSurfaceEditSnapshot
     }
 
     /// <summary>
+    /// <see cref="GetPresentationTerrainSample"/> and <see cref="GetPresentationSurfaceHeight(RingTerrainSampler, long, int)"/>
+    /// for the same column, bit-identical to calling both. Runtime surface generation with no edit anywhere in the
+    /// column's presentation footprint takes one model plus one climate evaluation instead of three plus two; an edited
+    /// column, or one whose interpolated lattice vertices are edited, falls back to the two original calls.
+    /// </summary>
+    public void GetPresentationTerrainSampleAndHeight(
+        RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel,
+        out TerrainSample sample, out float presentationHeight)
+    {
+        if (sampler.UsesRuntimeSurfaceGeneration && !PresentationFootprintTouchesEdit(sampler, globalAroundVoxel, globalAcrossVoxel))
+        {
+            sampler.GetRuntimeTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, out sample, out presentationHeight);
+            return;
+        }
+        sample = GetPresentationTerrainSample(sampler, globalAroundVoxel, globalAcrossVoxel);
+        presentationHeight = GetPresentationSurfaceHeight(sampler, globalAroundVoxel, globalAcrossVoxel);
+    }
+
+    /// <summary>
+    /// Height-only variant for halo, normal and shoreline consumers: same height and water fields, climate fields at
+    /// default (runtime generation, unedited footprint). Otherwise the full sample.
+    /// </summary>
+    public void GetPresentationHeightOnlyTerrainSampleAndHeight(
+        RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel,
+        out TerrainSample sample, out float presentationHeight)
+    {
+        if (sampler.UsesRuntimeSurfaceGeneration && !PresentationFootprintTouchesEdit(sampler, globalAroundVoxel, globalAcrossVoxel))
+        {
+            sampler.GetRuntimeHeightOnlyTerrainSampleAndPresentationHeight(globalAroundVoxel, globalAcrossVoxel, out sample, out presentationHeight);
+            return;
+        }
+        GetPresentationTerrainSampleAndHeight(sampler, globalAroundVoxel, globalAcrossVoxel, out sample, out presentationHeight);
+    }
+
+    private bool HasEditAt(long around, int across) =>
+        TryGetEditedSurfaceHeightFloat(around, across, out _) || TryGetEditedSurfaceHeight(around, across, out _);
+
+    /// <summary>True when the column or any lattice vertex its presentation height interpolates is edited.</summary>
+    private bool PresentationFootprintTouchesEdit(RingTerrainSampler sampler, long globalAroundVoxel, int globalAcrossVoxel)
+    {
+        if (!HasEdits) return false;
+        if (HasEditAt(globalAroundVoxel, globalAcrossVoxel)) return true;
+        if (!UsesFloatSurface) return false;
+
+        // Same lattice walk as GetPresentationSurfaceHeight(double, double).
+        const int spacing = 2;
+        double wrappedAround = (double)globalAroundVoxel % _aroundVoxelLength;
+        if (wrappedAround < 0.0) wrappedAround += _aroundVoxelLength;
+        double aroundSample = wrappedAround / spacing;
+        long aroundIndex = checked((long)Math.Floor(aroundSample));
+        double tx = aroundSample - Math.Floor(aroundSample);
+        int finalAcross = Math.Max(0, sampler.RingAcrossWidthMeters - spacing);
+        double across = Math.Clamp((double)globalAcrossVoxel, 0.0, finalAcross);
+        double acrossSample = across / spacing;
+        int acrossIndex = (int)Math.Floor(acrossSample);
+        double tz = acrossSample - acrossIndex;
+        long around0 = CanonicalizeAround(aroundIndex * spacing);
+        long around1 = CanonicalizeAround((aroundIndex + 1L) * spacing);
+        int across0 = acrossIndex * spacing;
+        int across1 = Math.Min(across0 + spacing, finalAcross);
+        if (HasEditAt(around0, across0)) return true;
+        if (tx == 0.0 && tz == 0.0) return false;
+        return HasEditAt(around1, across0) || HasEditAt(around0, across1) || HasEditAt(around1, across1);
+    }
+
+    /// <summary>
     /// Projects sparse one-meter edits onto a coarser proxy lattice. The strongest
     /// local height delta wins when multiple edited columns share one sample.
     /// </summary>

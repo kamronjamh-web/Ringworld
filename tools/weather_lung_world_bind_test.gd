@@ -232,7 +232,7 @@ func _print_poi_haze_state(label: String) -> void:
 		if mesh == null or mesh.get_surface_count() == 0: continue
 		var material := mesh.surface_get_material(0) as ShaderMaterial
 		if material == null: continue
-		print("POI_HAZE_STATE %s %s: valid=%s enabled=%s model=%s camera=%s height=%s radius=%s" % [label, node.name, material.get_shader_parameter("ring_atmosphere_ray_frame_valid"), material.get_shader_parameter("ring_atmosphere_enabled"), material.get_shader_parameter("atmosphere_haze_model"), material.get_shader_parameter("ring_atmosphere_camera_world_position"), material.get_shader_parameter("ring_atmosphere_camera_height_meters"), material.get_shader_parameter("ring_radius_meters")])
+		print("POI_HAZE_STATE %s %s: valid=%s enabled=%s model=%s camera=%s height=%s radius=%s" % [label, node.name, preload("res://tools/AtmosphereFrameGlobalsProbe.cs").new().call("GetValue", "ring_atmosphere_ray_frame_valid"), material.get_shader_parameter("ring_atmosphere_enabled"), material.get_shader_parameter("atmosphere_haze_model"), preload("res://tools/AtmosphereFrameGlobalsProbe.cs").new().call("GetValue", "ring_atmosphere_camera_world_position"), preload("res://tools/AtmosphereFrameGlobalsProbe.cs").new().call("GetValue", "ring_atmosphere_camera_height_meters"), material.get_shader_parameter("ring_radius_meters")])
 		return
 
 func _print_proxy_debug() -> void:

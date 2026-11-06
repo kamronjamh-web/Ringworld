@@ -54,7 +54,7 @@ public partial class RingScaledFarViewport
 
     private MeshInstance3D? _farLayerSky;
     private ShaderMaterial? _farLayerSkyMaterial;
-    private ImageTexture? _farLayerAtlas;
+    private Texture2D? _farLayerAtlas;
     private double _farLayerSkyNextCreateAttempt;
     private double _farLayerBlockElapsed = double.PositiveInfinity;
 
@@ -64,7 +64,7 @@ public partial class RingScaledFarViewport
     private bool _farLayerBlockSet;
     // Fine atlas state (main thread only). The build is staged and published whole, so a frame never sees a half-written window.
     private readonly byte[] _farFinePixels = new byte[FarFineAtlasWidth * FarFineAtlasHeight * 4];
-    private ImageTexture? _farFineAtlas;
+    private Texture2D? _farFineAtlas;
     private bool _farFineBuilding;
     private int _farFineIndex;
     private double _farFineBuildSnapshotTime;
@@ -246,10 +246,12 @@ public partial class RingScaledFarViewport
         _farFineBuildAccumMs = 0.0;
         _farFineBuildFrames = 0;
         _farFineBuilding = true;
+        _farFineGpuJob = 0;
     }
 
     private void StepFarFineLayerAtlasBuild(Stopwatch frame, bool forceComplete)
     {
+        if (StepFarFineGpu(forceComplete)) return;
         double circumference = Math.Max(1.0, _circumferenceMeters);
         double acrossTexel = RingWidthMeters / (double)FarFineAtlasHeight;
         int total = FarFineAtlasWidth * FarFineAtlasHeight;
@@ -308,7 +310,7 @@ public partial class RingScaledFarViewport
         foreach (byte b in _farFinePixels) hash = (hash ^ b) * 16777619u;
         FarFineAtlasContentHash = hash;
         var image = Image.CreateFromData(FarFineAtlasWidth, FarFineAtlasHeight, false, Image.Format.Rgba8, _farFinePixels);
-        if (_farFineAtlas != null) _farFineAtlas.Update(image);
+        if (_farFineAtlas is ImageTexture fineTexture) fineTexture.Update(image);
         else _farFineAtlas = ImageTexture.CreateFromImage(image);
         image.Dispose();
         _farFineBuilding = false;
@@ -587,10 +589,15 @@ public partial class RingScaledFarViewport
     private void PublishFarLayerAtlas(FarWeatherAtlasBuild build)
     {
         build.LayerImage.SetData(build.Width, build.Height, false, Image.Format.Rgba8, build.LayerPixels);
-        if (_farLayerAtlas != null && _farLayerAtlas.GetSize() == new Vector2(build.Width, build.Height)) _farLayerAtlas.Update(build.LayerImage);
+        if (_farLayerAtlas is ImageTexture reusableLayer && reusableLayer.GetSize() == new Vector2(build.Width, build.Height)) reusableLayer.Update(build.LayerImage);
         else _farLayerAtlas = ImageTexture.CreateFromImage(build.LayerImage);
         build.LayerImage.Dispose();
         _farLayerAtlasPublished = true;
+        ApplyFarLayerAtlasToMaterials();
+    }
+
+    private void ApplyFarLayerAtlasToMaterials()
+    {
         foreach (ShaderMaterial? material in new[] { _farLayerSkyMaterial, _cloudMaterial, _mainShellMaterial, _farWeatherCloudBakeMaterial })
         {
             if (material == null) continue;

@@ -30,6 +30,8 @@ public partial class RingVolumetricCloudLayer
     private int _lightningLocalCellsScannedLastUpdate;
     private int _lightningCandidatesEvaluatedLastUpdate;
     public ulong ManualWeatherRevision { get; private set; }
+    /// <summary>Number of manual / preview weather entries (the GPU far weather atlas build covers natural weather only and defers to the CPU build while any exist).</summary>
+    public int ManualWeatherCount => _manualWeather.Count;
 
     public IReadOnlyList<RingLightningEvent> ActiveLightningEvents => _activeLightningEvents;
 

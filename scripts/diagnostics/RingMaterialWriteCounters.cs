@@ -28,6 +28,7 @@ public static class RingMaterialWriteCounters
         EmitterGrid,
         EmitterStandIn,
         PoiAtmosphere,
+        AtmosphereGlobals,
         Count
     }
 

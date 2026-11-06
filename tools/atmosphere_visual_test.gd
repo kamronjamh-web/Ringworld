@@ -10,6 +10,7 @@ const GAME := preload("res://scenes/VoxelRingIntegrationTest.tscn")
 const FIXTURE_HELPER := preload("res://tools/AtmosphereVisualFixtureHelper.cs")
 const FIXTURE_AROUND := 16443476.0
 const FIXTURE_ACROSS := 38692.0
+var frame_probe = preload("res://tools/AtmosphereFrameGlobalsProbe.cs").new()
 const SETTLE_FRAMES := 18
 var fixture := ""
 var game: Node
@@ -277,6 +278,9 @@ func frame_values(material) -> Dictionary:
 	if material == null: return {"valid":false, "reason":"no material"}
 	if material is ShaderMaterial:
 		var shader_material := material as ShaderMaterial
+		# Proxy terrain reads the ray frame from global shader parameters.
+		if shader_material.shader != null and shader_material.shader.code.contains("RING_ATMOSPHERE_FRAME_GLOBAL"):
+			return {"valid":bool(frame_probe.call("GetValue", "ring_atmosphere_ray_frame_valid")), "coordinate_scale":frame_probe.call("GetValue", "ring_atmosphere_coordinate_scale"), "camera_height_meters":frame_probe.call("GetValue", "ring_atmosphere_camera_height_meters"), "camera_world_position":frame_probe.call("GetValue", "ring_atmosphere_camera_world_position")}
 		return {"valid":bool(shader_material.get_shader_parameter("ring_atmosphere_ray_frame_valid")), "coordinate_scale":shader_material.get_shader_parameter("ring_atmosphere_coordinate_scale"), "camera_height_meters":shader_material.get_shader_parameter("ring_atmosphere_camera_height_meters"), "camera_world_position":shader_material.get_shader_parameter("ring_atmosphere_camera_world_position")}
 	if material.has_method("get_shader_param"):
 		return {"valid":bool(material.call("get_shader_param", "ring_atmosphere_ray_frame_valid")), "coordinate_scale":material.call("get_shader_param", "ring_atmosphere_coordinate_scale"), "camera_height_meters":material.call("get_shader_param", "ring_atmosphere_camera_height_meters"), "camera_world_position":material.call("get_shader_param", "ring_atmosphere_camera_world_position")}

@@ -85,8 +85,9 @@ public partial class PoiHazeRegistryTest : RefCounted
             List<ShaderMaterial> materials = RingPoiHaze.Snapshot().Where(PoiMaterialParams.IsPoiShader).ToList();
             foreach (ShaderMaterial material in materials)
             {
-                if (!(bool)material.GetShaderParameter("ring_atmosphere_ray_frame_valid")) { failures.Add(material.ResourceName + ": frame not valid"); break; }
-                if ((Vector3)material.GetShaderParameter("ring_atmosphere_camera_world_position") != frame.CameraWorld) { failures.Add(material.ResourceName + ": camera position"); break; }
+                if (!RingworldTechDemo.Atmosphere.RingAtmosphereFrameGlobals.UsesGlobals(material)) { failures.Add(material.ResourceName + ": POI shader must read the ray frame globals"); break; }
+                if (!(bool)RingAtmosphereFrameGlobals.PublishedValue("ring_atmosphere_ray_frame_valid")) { failures.Add(material.ResourceName + ": frame not valid"); break; }
+                if ((Vector3)RingAtmosphereFrameGlobals.PublishedValue("ring_atmosphere_camera_world_position") != frame.CameraWorld) { failures.Add(material.ResourceName + ": camera position"); break; }
                 if (Math.Abs((double)material.GetShaderParameter("ring_radius_meters") - RingRadius) > 1.0) { failures.Add(material.ResourceName + ": ring_radius_meters"); break; }
             }
 
@@ -115,14 +116,14 @@ public partial class PoiHazeRegistryTest : RefCounted
             RingMaterialWriteCounters.Snapshot(before, textures);
             RingPoiHaze.ApplyFrame(frame with { CameraWorld = new Vector3(110f, 200f, 300f), CameraHeightMeters = 310f });
             RingMaterialWriteCounters.Snapshot(after, textures);
-            long writes = after[(int)RingMaterialWriteCounters.Site.PoiAtmosphere] - before[(int)RingMaterialWriteCounters.Site.PoiAtmosphere];
+            long writes = after[(int)RingMaterialWriteCounters.Site.AtmosphereGlobals] - before[(int)RingMaterialWriteCounters.Site.AtmosphereGlobals]; // POI shaders read the frame from globals: one write per changed field in total, none per material
             int registeredNow = RingPoiHaze.RegisteredCount;
-            if (writes > 2L * registeredNow) failures.Add($"camera-only frame wrote {writes} fields for {registeredNow} materials (> 2 each)");
-            if (writes < 1) failures.Add("camera-only frame wrote nothing");
+            if (writes != 2L) failures.Add($"camera-only frame wrote {writes} global fields (expected 2 for {registeredNow} materials)");
+            if (after[(int)RingMaterialWriteCounters.Site.PoiAtmosphere] != before[(int)RingMaterialWriteCounters.Site.PoiAtmosphere]) failures.Add("POI-shader materials still received per-material frame writes");
             RingMaterialWriteCounters.Snapshot(before, textures);
             RingPoiHaze.ApplyFrame(frame with { CameraWorld = new Vector3(110f, 200f, 300f), CameraHeightMeters = 310f });
             RingMaterialWriteCounters.Snapshot(after, textures);
-            if (after[(int)RingMaterialWriteCounters.Site.PoiAtmosphere] != before[(int)RingMaterialWriteCounters.Site.PoiAtmosphere]) failures.Add("an unchanged frame wrote parameters");
+            if (after[(int)RingMaterialWriteCounters.Site.AtmosphereGlobals] != before[(int)RingMaterialWriteCounters.Site.AtmosphereGlobals]) failures.Add("an unchanged frame wrote parameters");
 
             // Pruning: a freed material leaves the registry.
             int countBefore = RingPoiHaze.RegisteredCount;

@@ -160,7 +160,7 @@ public partial class RingGraphicsQualityController : Node
     [Export(PropertyHint.Range, "0.01,0.4,0.01")] public float WaterSsrEdgeFade { get; set; } = .12f;
     [Export(PropertyHint.Range, "0.02,1,0.01")] public float WaterSsrRoughnessCutoff { get; set; } = .32f;
     [Export(PropertyHint.Range, "0,3,1")] public int WaterSsrDebugMode { get; set; }
-    [Export(PropertyHint.Range, "0.1,20,0.1")] public float WaterShoreFoamDepthMeters { get; set; } = 2.4f;
+    [Export(PropertyHint.Range, "0.1,20,0.1")] public float WaterShoreFoamDepthMeters { get; set; } = 0.5f;
     [Export(PropertyHint.Range, "0,2,0.01")] public float WaterShoreFoamStrength { get; set; } = 0.82f;
     [Export(PropertyHint.Range, "0.05,1.5,0.01")] public float WaterBreakingFoamSlopeStart { get; set; } = 0.28f;
     [Export(PropertyHint.Range, "0.1,2,0.01")] public float WaterBreakingFoamSlopeEnd { get; set; } = 0.48f;

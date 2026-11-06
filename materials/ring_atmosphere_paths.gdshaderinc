@@ -1,5 +1,19 @@
 // Local finite-cylinder air segment. Values are physical metres; only world
 // positions are divided by coordinate_scale. The remote shell is excluded.
+// Shaders that render only in the main viewport define RING_ATMOSPHERE_FRAME_GLOBAL
+// before their includes and read the frame from global shader parameters of the
+// same names (set once per frame by RingAtmosphereFrameGlobals). Far-viewport and
+// plugin materials keep per-material uniforms: their frame has another coordinate scale.
+#ifdef RING_ATMOSPHERE_FRAME_GLOBAL
+global uniform bool ring_atmosphere_ray_frame_valid;
+global uniform vec3 ring_atmosphere_camera_world_position;
+global uniform float ring_atmosphere_camera_height_meters;
+global uniform vec3 ring_atmosphere_outward_world;
+global uniform vec3 ring_atmosphere_axis_world;
+global uniform float ring_atmosphere_sidewall_negative_meters;
+global uniform float ring_atmosphere_sidewall_positive_meters;
+global uniform float ring_atmosphere_coordinate_scale;
+#else
 uniform bool ring_atmosphere_ray_frame_valid = false;
 uniform vec3 ring_atmosphere_camera_world_position;
 uniform float ring_atmosphere_camera_height_meters;
@@ -8,6 +22,7 @@ uniform vec3 ring_atmosphere_axis_world;
 uniform float ring_atmosphere_sidewall_negative_meters;
 uniform float ring_atmosphere_sidewall_positive_meters;
 uniform float ring_atmosphere_coordinate_scale = 1.0;
+#endif
 
 vec2 ring_atmosphere_path_interval(vec3 target_world, float layer_height_m, float max_length_m) {
 	return ring_atmosphere_path_interval_shared(target_world, ring_atmosphere_camera_world_position, ring_atmosphere_camera_height_meters, ring_atmosphere_outward_world, ring_atmosphere_axis_world, ring_atmosphere_sidewall_negative_meters, ring_atmosphere_sidewall_positive_meters, ring_atmosphere_coordinate_scale, ring_radius_meters, layer_height_m, max_length_m);

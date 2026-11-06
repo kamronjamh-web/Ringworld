@@ -1027,6 +1027,10 @@ public partial class RingBiomeDecorationLayer : Node3D
 	internal static Transform3D CreateTransformForRegression(in RingLodGeometrySnapshot geometry, float width, float height)
 		=> CreateTransform(geometry, Transform3D.Identity, Vector3.Zero, 10.0, 10.0, 0.0, width, height, false, 0.0f);
 
+	/// <summary>CPU reference for the GPU tree-row expansion parity test (non-billboard trees only).</summary>
+	internal static Transform3D CreateTreeTransformForRegression(in RingLodGeometrySnapshot geometry, Transform3D worldToLayer, double around, double across, double altitude, float height, float yaw)
+		=> CreateTransform(geometry, worldToLayer, Vector3.Zero, around, across, altitude, height, height, false, yaw);
+
 	private static void Install(MultiMeshInstance3D instance, IReadOnlyList<Transform3D> transforms)
 	{
 		if (instance.Multimesh == null) return;

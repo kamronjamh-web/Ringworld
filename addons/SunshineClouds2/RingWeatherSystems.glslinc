@@ -117,6 +117,23 @@ float ring_ws_cluster_term_salted(float sourceAround, float sourceAcross, float 
 	return (small * 0.62 + large * 0.38 - 0.5) * h.y;
 }
 
+// RING_WS_QUANTIZED_BASE_CLUSTER: the CPU weather query (QueryRawWeatherCore) evaluates the base cluster noise at the integer formation cell of the
+// source-space position (SampleWeatherNoise), not at the fractional position; the far weather atlas build (RingFarWeatherAtlas.glsl) matches it.
+float ring_ws_cluster_term_quantized(float sourceAround, float sourceAcross, float circumference) {
+	vec4 h = ringWeatherSystems.header3;
+	if (h.x < 1.0 || h.y == 0.0) return 0.0;
+	float wrapped = circumference > 1.0 ? sourceAround - circumference * floor(sourceAround / circumference) : sourceAround;
+	float cellAround = floor(wrapped / h.x);
+	float cellAcross = floor(sourceAcross / h.x);
+	int packedScales = int(h.z + 0.5);
+	int smallCells = max(2, packedScales & 255);
+	int largeCells = max(4, packedScales >> 8);
+	uint seed = uint(floatBitsToInt(h.w));
+	float small = ring_ws_weather_noise(cellAround, cellAcross, seed, smallCells, 30);
+	float large = ring_ws_weather_noise(cellAround, cellAcross, seed, largeCells, 40);
+	return (small * 0.62 + large * 0.38 - 0.5) * h.y;
+}
+
 float ring_ws_cluster_term(float sourceAround, float sourceAcross, float circumference) {
 	return ring_ws_cluster_term_salted(sourceAround, sourceAcross, circumference, 30, 40);
 }
@@ -172,7 +189,11 @@ vec4 ring_ws_macro_point(vec3 canonical, uvec2 mask, vec2 shift, float circumfer
 	strongest = clamp(strongest, 0.0, 1.0);
 	float macroBias = (combined - 0.28) * 0.46;
 	float densityBias = strongest * (strongestDensity - 0.5) * 0.24;
+#ifdef RING_WS_QUANTIZED_BASE_CLUSTER
+	float cluster = ring_ws_cluster_term_quantized(source.x, source.y, circumference);
+#else
 	float cluster = ring_ws_cluster_term(source.x, source.y, circumference);
+#endif
 	float cov = clamp(ringWeatherSystems.header0.z + cluster + macroBias + densityBias, 0.015, 0.985);
 	float precip = clamp(strongestPrecip * combined * ring_ws_smooth_unit((cov - 0.35) / 0.55), 0.0, 1.0);
 	float systemInfluence = combined;

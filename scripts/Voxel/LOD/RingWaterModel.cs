@@ -60,7 +60,7 @@ public static partial class RingWaterModel
     public static float SsrEdgeFade { get; private set; } = 0.12f;
     public static float SsrRoughnessCutoff { get; private set; } = 0.32f;
     public static int SsrDebugMode { get; private set; }
-    public static float ShoreFoamDepthMeters { get; private set; } = 2.4f;
+    public static float ShoreFoamDepthMeters { get; private set; } = 0.5f;
     public static float ShoreFoamStrength { get; private set; } = 0.82f;
     public static float BreakingFoamSlopeStart { get; private set; } = 0.28f;
     public static float BreakingFoamSlopeEnd { get; private set; } = 0.48f;

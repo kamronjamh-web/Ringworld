@@ -562,3 +562,39 @@ ring_wet_debug_mode={
 "type": "float",
 "value": 0.0
 }
+ring_atmosphere_ray_frame_valid={
+"type": "bool",
+"value": false
+}
+ring_atmosphere_camera_world_position={
+"type": "vec3",
+"value": Vector3(0, 0, 0)
+}
+ring_atmosphere_camera_height_meters={
+"type": "float",
+"value": 0.0
+}
+ring_atmosphere_outward_world={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}
+ring_atmosphere_axis_world={
+"type": "vec3",
+"value": Vector3(0, 0, -1)
+}
+ring_atmosphere_sidewall_negative_meters={
+"type": "float",
+"value": 0.0
+}
+ring_atmosphere_sidewall_positive_meters={
+"type": "float",
+"value": 0.0
+}
+ring_atmosphere_coordinate_scale={
+"type": "float",
+"value": 1.0
+}
+ring_atmosphere_to_sun={
+"type": "vec3",
+"value": Vector3(0, 1, 0)
+}

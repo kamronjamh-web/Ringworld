@@ -35,9 +35,16 @@ public static class RingPoiHaze
 
     private sealed class Entry
     {
-        public Entry(ShaderMaterial material, bool poiShader) { Material = new WeakReference<ShaderMaterial>(material); IsPoiShader = poiShader; }
+        public Entry(ShaderMaterial material, bool poiShader)
+        {
+            Material = new WeakReference<ShaderMaterial>(material);
+            IsPoiShader = poiShader;
+            UsesFrameGlobals = RingAtmosphereFrameGlobals.UsesGlobals(material);
+        }
         public readonly WeakReference<ShaderMaterial> Material;
         public readonly bool IsPoiShader;
+        /// <summary>The shader reads the ray frame from global shader parameters, so no per-material frame write is needed.</summary>
+        public readonly bool UsesFrameGlobals;
         public bool Initialized;
         public bool Valid;
         public RingAtmosphereRayFrame Frame;
@@ -162,6 +169,7 @@ public static class RingPoiHaze
         ulong frameIndex = Engine.GetProcessFrames();
         if (!force && frameIndex == _lastTickFrame) return;
         _lastTickFrame = frameIndex;
+        using var tickScope = RingPerformanceTelemetry.MeasureCpu("POI haze tick");
         RingAtmosphereRayFrame frame = grid == null || camera == null || !GodotObject.IsInstanceValid(grid) || !GodotObject.IsInstanceValid(camera)
             ? RingAtmosphereRayFrame.Invalid
             : RingAtmosphereRayFrame.FromMainCamera(grid, camera, toSun);
@@ -174,9 +182,10 @@ public static class RingPoiHaze
     {
         Prune();
         bool valid = IsPublishable(frame);
+        RingAtmosphereFrameGlobals.Publish(frame);
         foreach (Entry entry in Entries)
         {
-            if (!entry.Material.TryGetTarget(out ShaderMaterial? material)) continue;
+            if (entry.UsesFrameGlobals || !entry.Material.TryGetTarget(out ShaderMaterial? material)) continue;
             ApplyEntry(entry, material, frame, valid);
         }
     }

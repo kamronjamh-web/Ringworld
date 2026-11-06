@@ -17,6 +17,8 @@ uniform bool vegetation_wind_enabled = true;
 uniform int tree_foliage_mode = 0;
 uniform bool tree_foliage_attachments = false;
 
+// Main-viewport only: ray frame comes from global shader parameters.
+#define RING_ATMOSPHERE_FRAME_GLOBAL
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
 #include "res://materials/ring_atmosphere.gdshaderinc"

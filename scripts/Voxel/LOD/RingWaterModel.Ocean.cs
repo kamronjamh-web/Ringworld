@@ -19,6 +19,7 @@ public static partial class RingWaterModel
         public Texture2DArrayRD? Displacement;
         public Vector3 AnchorWorld;
         public Vector2 CoverageCenter;
+        public Vector2 CoverageOrigin;
         public Vector3 AroundAxis;
         public Vector3 AcrossAxis;
         public Vector2 Period0;
@@ -75,6 +76,7 @@ public static partial class RingWaterModel
     private static readonly StringName FftNormalFoamName = "fft_normal_foam";
     private static readonly StringName FftNormalStrengthName = "fft_normal_strength";
     private static readonly StringName FftOceanCoverageCenterCanonicalName = "fft_ocean_coverage_center_canonical";
+    private static readonly StringName FftOceanCoverageOriginTexelName = "fft_ocean_coverage_origin_texel";
     private static readonly StringName FftPeriod0Name = "fft_period_0";
     private static readonly StringName FftPeriod1Name = "fft_period_1";
     private static readonly StringName FftPeriod2Name = "fft_period_2";
@@ -267,6 +269,7 @@ public static partial class RingWaterModel
     /// <summary>Refresh only the nearby ocean bindings as the canonical frame moves.</summary>
     public static void RefreshOceanMaterials()
     {
+        using var refreshScope = RingworldTechDemo.Diagnostics.RingPerformanceTelemetry.MeasureCpu("Ocean material refresh");
         LastOceanMaterialRefreshPushes = 0;
         for (int index = Materials.Count - 1; index >= 0; index--)
         {
@@ -359,6 +362,7 @@ public static partial class RingWaterModel
         // Resolve after the controller updates its anchor, so a moving or
         // rebased observer cannot shift the coverage proof by one frame.
         SetIfChanged(material, FftOceanCoverageCenterCanonicalName, RingTerrainProxySector.SharedFftCoverageShaderCenter, ref snapshot.CoverageCenter, forceReady);
+        SetIfChanged(material, FftOceanCoverageOriginTexelName, RingTerrainProxySector.SharedFftCoverageOriginTexel, ref snapshot.CoverageOrigin, forceReady);
         SetIfChanged(material, FftAroundAxisName, controller.CanonicalAroundAxis, ref snapshot.AroundAxis, forceReady);
         SetIfChanged(material, FftAcrossAxisName, controller.CanonicalAcrossAxis, ref snapshot.AcrossAxis, forceReady);
         SetIfChanged(material, FftPeriod0Name, controller.Period0, ref snapshot.Period0, forceReady);

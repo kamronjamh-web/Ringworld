@@ -17,9 +17,18 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private const int ParameterBytes = 512;
     private const int ParameterWordCount = ParameterBytes / 4;
     internal const int MaximumRootsPerBatch = 1_048_576;
+    /// <summary>Compact tree roots (altitude, yaw, height, variant) plus the group frame words. The source rows are expanded on the GPU
+    /// (shader phase 5) from these and the batch metadata (canonical around/across offsets), so no per-root transform is built on the CPU.
+    /// One instance feeds every output (LOD) of a group: the shared source is keyed on this reference.</summary>
+    public sealed class TreeExpansion
+    {
+        public const int FrameWords = 35;
+        public required Vector4[] Roots;
+        public required float[] Frame;
+    }
     public sealed record BatchRegistration(string Identity, MultiMesh MultiMesh, Mesh Mesh,
         float[] Candidates, Vector4[]? Metadata, int Capacity, Aabb CustomAabb, bool Grass,
-        bool TreeCustomData = false, bool TreeDitherData = false);
+        bool TreeCustomData = false, bool TreeDitherData = false, TreeExpansion? Expansion = null);
     public readonly record struct BatchFrameParameters(int BatchId, Transform3D LocalToWorld, bool Grass,
         int LodPass, float NearDistance, float FarDistance, float TransitionDistance,
         float NearDensity, float FarDensity, bool EnableLod, float TreeRankGate,
@@ -54,7 +63,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         public int SourceStride => SourceStrideFor(Registration);
         public int OutputStride => OutputStrideFor(Registration);
         public int Stride => SourceStride;
-        public int Count => Registration.Candidates.Length / SourceStride;
+        public int Count => Registration.Expansion?.Roots.Length ?? Registration.Candidates.Length / SourceStride;
         public int Groups => (Count + 63) / 64;
         // Read on the main thread during registration. RenderingDevice work must
         // never query a Godot Mesh.
@@ -80,11 +89,12 @@ public sealed class RingGpuVegetationCompute : IDisposable
     /// Metadata remains per-pass because tree batches can update it independently.</summary>
     private sealed class SharedSource
     {
-        public required float[] Candidates;
+        public required object Key;
         public required int Stride;
         public Rid Rid;
         public int References;
         public long Bytes;
+        public bool Expanded;
     }
 
     private readonly object _gate = new();
@@ -95,7 +105,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private readonly Dictionary<int, OutputMirror> _mirrors = new();
     private readonly Queue<OutputMirror> _retiredMirrors = new();
     private readonly HashSet<MultiMesh> _retiringMirrorTargets = new();
-    private readonly Dictionary<float[], SharedSource> _sharedSources = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, SharedSource> _sharedSources = new(ReferenceEqualityComparer.Instance);
     private readonly Queue<Batch> _retired = new();
     private RenderingDevice? _rd;
     private Rid _shader, _pipeline, _budgets;
@@ -992,6 +1002,11 @@ public sealed class RingGpuVegetationCompute : IDisposable
     private static bool Valid(BatchRegistration r)
     {
         int stride = SourceStrideFor(r);
+        if (r.Expansion is { } expansion)
+            return !r.Grass && r.Metadata is not null && r.MultiMesh is not null && r.Mesh is not null && r.Mesh.GetSurfaceCount() > 0
+                && expansion.Roots.Length is > 0 and <= MaximumRootsPerBatch && expansion.Frame.Length == TreeExpansion.FrameWords
+                && r.Capacity is > 0 && r.Capacity <= expansion.Roots.Length && r.Metadata.Length == expansion.Roots.Length
+                && r.CustomAabb.Size.IsFinite() && r.CustomAabb.Position.IsFinite();
         return r.MultiMesh is not null && r.Mesh is not null && r.Mesh.GetSurfaceCount() > 0
             && r.Capacity is > 0 and <= MaximumRootsPerBatch
             && r.Candidates is { Length: > 0 } && r.Candidates.Length % stride == 0
@@ -1031,10 +1046,11 @@ public sealed class RingGpuVegetationCompute : IDisposable
         b.Commands = RenderingServer.MultimeshGetCommandBufferRdRid(multimesh);
         b.SurfaceCount = r.Mesh.GetSurfaceCount();
         if (!b.Output.IsValid || !b.Commands.IsValid) throw new InvalidOperationException("Indirect MultiMesh buffers unavailable");
+        b.Metadata = rd.StorageBufferCreate((uint)(b.Count * 16), MetadataBytes(r.Metadata, b.Count));
         SharedSource source = AcquireSource(rd, r);
         b.SharedSource = source;
         b.Source = source.Rid;
-        b.Metadata = rd.StorageBufferCreate((uint)(b.Count * 16), MetadataBytes(r.Metadata, b.Count));
+        if (r.Expansion is { } expansion && !source.Expanded) { ExpandSource(rd, source, expansion, b.Metadata, b.Count, SourceStrideFor(r)); source.Expanded = true; }
         b.Parameters = rd.StorageBufferCreate(ParameterBytes, b.ParameterDataBytes);
         b.Flags = rd.StorageBufferCreate((uint)(b.Count * 4));
         b.Counts = rd.StorageBufferCreate((uint)(b.Groups * 4));
@@ -1059,23 +1075,75 @@ public sealed class RingGpuVegetationCompute : IDisposable
 
     private SharedSource AcquireSource(RenderingDevice rd, BatchRegistration registration)
     {
-        if (_sharedSources.TryGetValue(registration.Candidates, out SharedSource? existing))
+        object key = (object?)registration.Expansion ?? registration.Candidates;
+        if (_sharedSources.TryGetValue(key, out SharedSource? existing))
         {
             if (existing.Stride != SourceStrideFor(registration))
                 throw new InvalidOperationException("Vegetation source stride mismatch");
             existing.References++;
             return existing;
         }
-        Rid rid = rd.StorageBufferCreate((uint)(registration.Candidates.Length * 4), FloatBytes(registration.Candidates));
+        // Compact roots: the buffer is allocated empty and filled by the expansion pass, so no row bytes cross from the CPU.
+        long rowBytes = registration.Expansion is { } compact ? (long)compact.Roots.Length * SourceStrideFor(registration) * 4 : registration.Candidates.LongLength * 4;
+        Rid rid = registration.Expansion is null ? rd.StorageBufferCreate((uint)rowBytes, FloatBytes(registration.Candidates)) : rd.StorageBufferCreate((uint)rowBytes);
         if (!rid.IsValid) throw new InvalidOperationException("Vegetation source buffer allocation failed");
-        var source = new SharedSource { Candidates = registration.Candidates,
-            Stride = SourceStrideFor(registration), Rid = rid, References = 1,
-            Bytes = registration.Candidates.LongLength * 4 };
-        _sharedSources.Add(source.Candidates, source);
+        var source = new SharedSource { Key = key, Expanded = registration.Expansion is null,
+            Stride = SourceStrideFor(registration), Rid = rid, References = 1, Bytes = rowBytes };
+        _sharedSources.Add(source.Key, source);
         Interlocked.Increment(ref _sharedSourceCount);
         Interlocked.Add(ref _estimatedBytes, source.Bytes);
         Interlocked.Add(ref _sharedSourceBytes, source.Bytes);
         return source;
+    }
+
+    /// <summary>Render thread. Runs shader phase 5 once per compact source: root records + metadata + frame words in, 12/16-float rows out.
+    /// The temporary buffers are freed straight away; the RD graph orders the writes before the culling reads.</summary>
+    private void ExpandSource(RenderingDevice rd, SharedSource source, TreeExpansion expansion, Rid metadata, int count, int stride)
+    {
+        float[] frame = (float[])expansion.Frame.Clone();
+        frame[7] = stride;
+        Rid roots = rd.StorageBufferCreate((uint)(expansion.Roots.Length * 16), Vector4Bytes(expansion.Roots));
+        Rid frameBuffer = rd.StorageBufferCreate((uint)(frame.Length * 4), FloatBytes(frame));
+        Rid set = default;
+        try
+        {
+            if (!roots.IsValid || !frameBuffer.IsValid) throw new InvalidOperationException("Vegetation expansion buffers unavailable");
+            // Bindings the expansion does not touch still need valid storage buffers; the small budget buffer stands in for them.
+            Rid[] resources = { source.Rid, metadata, roots, _budgets, frameBuffer, _budgets, _budgets, _budgets, _budgets };
+            var uniforms = new Godot.Collections.Array<RDUniform>();
+            for (int i = 0; i < resources.Length; i++)
+            {
+                var uniform = new RDUniform { UniformType = RenderingDevice.UniformType.StorageBuffer, Binding = i };
+                uniform.AddId(resources[i]);
+                uniforms.Add(uniform);
+            }
+            set = rd.UniformSetCreate(uniforms, _shader, 0);
+            if (!set.IsValid) throw new InvalidOperationException("Vegetation expansion bindings invalid");
+            long list = rd.ComputeListBegin();
+            rd.ComputeListBindComputePipeline(list, _pipeline);
+            rd.ComputeListBindUniformSet(list, set, 0);
+            rd.ComputeListBindUniformSet(list, _hazeSet, 1);
+            _boundVariant = -1;
+            Array.Clear(_push);
+            BitConverter.TryWriteBytes(_push.AsSpan(0, 4), 5u);
+            BitConverter.TryWriteBytes(_push.AsSpan(4, 4), (uint)count);
+            rd.ComputeListSetPushConstant(list, _push, PushBytes);
+            rd.ComputeListDispatch(list, (uint)((count + 63) / 64), 1, 1);
+            rd.ComputeListEnd();
+        }
+        finally
+        {
+            Free(ref set, uniform: true);
+            Free(ref roots);
+            Free(ref frameBuffer);
+        }
+    }
+
+    private static byte[] Vector4Bytes(Vector4[] values)
+    {
+        var bytes = new byte[values.Length * 16];
+        System.Runtime.InteropServices.MemoryMarshal.AsBytes(values.AsSpan()).CopyTo(bytes);
+        return bytes;
     }
 
     private void Dispatch(FrameRequest frame, int grassFrameRevision, bool hazeOn)
@@ -1664,7 +1732,7 @@ public sealed class RingGpuVegetationCompute : IDisposable
         batch.SharedSource = null;
         batch.Source = default;
         if (source is null || --source.References > 0) return;
-        _sharedSources.Remove(source.Candidates);
+        _sharedSources.Remove(source.Key);
         Interlocked.Decrement(ref _sharedSourceCount);
         Free(ref source.Rid);
         Interlocked.Add(ref _estimatedBytes, -source.Bytes);
@@ -1693,6 +1761,23 @@ public sealed class RingGpuVegetationCompute : IDisposable
                 instances = new float[rows.Length / 4]; Buffer.BlockCopy(rows, 0, instances, 0, rows.Length);
             }
             Callable.From(() => callback(commands, instances)).CallDeferred();
+        }));
+    }
+
+    /// <summary>Fixtures only: the batch's resident source rows (after any GPU expansion).</summary>
+    public void RequestSourceReadbackForTests(int id, Action<float[]> callback)
+    {
+        RenderingServer.CallOnRenderThread(Callable.From(() =>
+        {
+            float[] rows = Array.Empty<float>();
+            Batch? batch;
+            lock (_gate) _batches.TryGetValue(id, out batch);
+            if (_rd is not null && batch is { Retired: false, Allocated: true } && !_disposed && batch.Source.IsValid)
+            {
+                byte[] bytes = _rd.BufferGetData(batch.Source);
+                rows = new float[bytes.Length / 4]; Buffer.BlockCopy(bytes, 0, rows, 0, bytes.Length);
+            }
+            Callable.From(() => callback(rows)).CallDeferred();
         }));
     }
 

@@ -28,8 +28,8 @@ func _run() -> void:
 	silhouette.code = _silhouette_source(frozen.code).replace("depth_draw_always", "depth_draw_always, unshaded")
 	displacement = _array_texture(false)
 	normal_foam = _array_texture(true)
-	var coverage_image := Image.create(1, 1, false, Image.FORMAT_RGBA8)
-	coverage_image.set_pixel(0, 0, Color.WHITE)
+	var coverage_image := Image.create(512, 512, false, Image.FORMAT_RGBA8)
+	coverage_image.fill(Color.WHITE)
 	coverage = ImageTexture.create_from_image(coverage_image)
 	if displacement == null or normal_foam == null:
 		_fail("could not create deterministic Texture2DArray inputs")
@@ -123,12 +123,12 @@ func _grid(side: float, step: float) -> ArrayMesh:
 			for p: Vector3 in [a,d,b,b,d,e]: st.set_normal(Vector3(0,0,-1)); st.set_color(Color(.12,.42,.68,0)); st.set_uv(Vector2((p.x+half)/side,(p.y+half)/side)); st.add_vertex(p)
 	return st.commit()
 
-func _expand(source: String) -> String:
+func _expand(source: String, seen: Dictionary = {}) -> String:
 	var out := ""
 	for line: String in source.split("\n"):
 		if line.begins_with("#include \""):
 			var start := line.find("\"") + 1; var stop := line.find("\"", start)
-			if stop > start: out += _expand(FileAccess.get_file_as_string(line.substr(start, stop-start))) + "\n"; continue
+			if stop > start: out += _expand(_read_once(line.substr(start, stop-start), seen), seen) + "\n"; continue
 		out += line + "\n"
 	return out
 
@@ -176,3 +176,11 @@ func _occupancy_delta(a: Image, b: Image) -> float:
 
 func _fail(message: String) -> void:
 	push_error("WATER_FFT_GEOMETRY_VISUAL_TEST=FAIL " + message); quit(1)
+
+# Include-once, like Godot's shader preprocessor: ring_shadow_compose re-includes
+# ring_cloud_shadow.gdshaderinc, which has no include guard of its own.
+func _read_once(path: String, seen: Dictionary) -> String:
+	if seen.has(path):
+		return ""
+	seen[path] = true
+	return FileAccess.get_file_as_string(path)

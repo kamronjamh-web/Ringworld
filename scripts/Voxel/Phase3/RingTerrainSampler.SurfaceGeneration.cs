@@ -120,13 +120,68 @@ public sealed partial class RingTerrainSampler
         return (parameters, new TerrainGenerationHeightModel(parameters), settings.AltitudeTemperatureDropPerKilometre);
     }
 
-    private TerrainSample GetRuntimeTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel)
+    /// <summary>
+    /// One model evaluation and one climate evaluation for a lattice column: the terrain sample and the unedited
+    /// presentation height, exactly as <see cref="GetTerrainSample"/> and
+    /// <see cref="GetPresentationSurfaceHeight(long, int)"/> return them separately (which costs two more model evaluations).
+    /// Runtime surface generation only.
+    /// </summary>
+    internal void GetRuntimeTerrainSampleAndPresentationHeight(
+        long globalAroundVoxel,
+        int globalAcrossVoxel,
+        out TerrainSample sample,
+        out float presentationHeight)
     {
-        TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
-        TerrainGenerationHeightModel.Diagnostics diagnostics = model.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel);
+        lock (_noiseLock)
+        {
+            sample = GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, out presentationHeight);
+        }
+    }
+
+    /// <summary>
+    /// As <see cref="GetRuntimeTerrainSampleAndPresentationHeight"/> without the climate evaluation: the height, water and
+    /// model-diagnostic fields are real, Erosion, Temperature, Moisture and Biome are left at default. For consumers
+    /// that read only heights and water (halo, normal and shoreline samples).
+    /// </summary>
+    internal void GetRuntimeHeightOnlyTerrainSampleAndPresentationHeight(
+        long globalAroundVoxel,
+        int globalAcrossVoxel,
+        out TerrainSample sample,
+        out float presentationHeight)
+    {
+        lock (_noiseLock)
+        {
+            TerrainGenerationHeightModel.Diagnostics diagnostics = _runtimeSurfaceModel!.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel);
+            RingProxyBuildCounters.AddModelEvaluations(1);
+            presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics);
+            int terrainHeight = Mathf.FloorToInt(presentationHeight);
+            SurfaceWaterKind water = presentationHeight < 0.0f ? SurfaceWaterKind.Ocean : SurfaceWaterKind.None;
+            sample = new TerrainSample(
+                terrainHeight,
+                ClassifyRegion((float)diagnostics.Continentalness),
+                (float)diagnostics.Continentalness,
+                0.0f,
+                (float)diagnostics.RidgeWeight,
+                0.0f,
+                0.0f,
+                default,
+                water,
+                water == SurfaceWaterKind.Ocean ? 0 : terrainHeight,
+                diagnostics.SiteMask);
+        }
+    }
+
+    private TerrainSample GetRuntimeTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel)
+        => GetRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, out _);
+
+    private float ResolveRuntimePresentationHeightLocked(
+        long globalAroundVoxel,
+        int globalAcrossVoxel,
+        in TerrainGenerationHeightModel.Diagnostics diagnostics)
+    {
         // Presentation sampling wraps before calling the model. Reuse is exact
         // only when this diagnostic already received that canonical around value.
-        float presentationHeight = globalAroundVoxel >= 0
+        return globalAroundVoxel >= 0
             && globalAroundVoxel < _aroundRingVoxelLength
             && (globalAroundVoxel & 1L) == 0
             && (globalAcrossVoxel & 1) == 0
@@ -134,6 +189,14 @@ public sealed partial class RingTerrainSampler
             && globalAcrossVoxel <= _ringAcrossWidthMeters - 2
             ? (float)diagnostics.Height
             : GetRuntimePresentationSurfaceHeightLocked(globalAroundVoxel, globalAcrossVoxel);
+    }
+
+    private TerrainSample GetRuntimeTerrainSampleLocked(long globalAroundVoxel, int globalAcrossVoxel, out float presentationHeight)
+    {
+        TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
+        TerrainGenerationHeightModel.Diagnostics diagnostics = model.SampleDiagnostics(globalAroundVoxel, globalAcrossVoxel);
+        RingProxyBuildCounters.AddModelEvaluations(1);
+        presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics);
         return CreateRuntimeTerrainSampleLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
     }
 
@@ -175,6 +238,7 @@ public sealed partial class RingTerrainSampler
         }
         TerrainGenerationHeightModel model = _runtimeSurfaceModel!;
         float h00 = (float)model.CalculateHeight(around0, across0);
+        RingProxyBuildCounters.AddModelEvaluations(tx == 0.0 && tz == 0.0 ? 1 : 4);
         // Region generation and heightfield baselines query exact vertices.
         // Avoid three redundant noise evaluations for that common path.
         if (tx == 0.0 && tz == 0.0) return h00;
@@ -192,6 +256,7 @@ public sealed partial class RingTerrainSampler
     {
         RegionalCoordinate coordinate = ResolveRegionalCoordinate(globalAroundVoxel, globalAcrossVoxel);
         TerrainFields legacyClimate = SampleTerrainFieldsLocked(globalAroundVoxel, globalAcrossVoxel, coordinate);
+        RingProxyBuildCounters.AddClimateEvaluation();
         float temperature = Mathf.Clamp(
             legacyClimate.Temperature
                 - Mathf.Max(0.0f, presentationHeight ?? (float)diagnostics.Height) * _runtimeAltitudeTemperatureDropPerKilometre / 1000.0f,

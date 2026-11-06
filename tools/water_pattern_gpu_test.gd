@@ -156,14 +156,14 @@ func _frozen_shader(path: String) -> Shader:
 	_frozen_shaders[path] = shader
 	return shader
 
-func _expand_includes(source: String) -> String:
+func _expand_includes(source: String, seen: Dictionary = {}) -> String:
 	var expanded := ""
 	for line: String in source.split("\n"):
 		if line.begins_with("#include \""):
 			var start := line.find("\"") + 1
 			var stop := line.find("\"", start)
 			if stop > start:
-				expanded += _expand_includes(FileAccess.get_file_as_string(line.substr(start, stop - start))) + "\n"
+				expanded += _expand_includes(_read_once(line.substr(start, stop - start), seen), seen) + "\n"
 				continue
 		expanded += line + "\n"
 	return expanded
@@ -283,3 +283,11 @@ func _high_frequency_energy(image: Image) -> float:
 func _fail(message: String) -> void:
 	push_error("WATER_PATTERN_GPU_TEST=FAIL " + message)
 	quit(1)
+
+# Include-once, like Godot's shader preprocessor: ring_shadow_compose re-includes
+# ring_cloud_shadow.gdshaderinc, which has no include guard of its own.
+func _read_once(path: String, seen: Dictionary) -> String:
+	if seen.has(path):
+		return ""
+	seen[path] = true
+	return FileAccess.get_file_as_string(path)
