@@ -2,13 +2,14 @@ extends SceneTree
 # Builds the POI wrapper scenes and the standalone test scene from the imported GLBs and the
 # output of merge_poi_scenes.gd. Run merge_poi_scenes.gd first.
 #
-#   godot --headless --path . --script res://tools/poi/build_poi_scenes.gd [-- emitter|reactor|main_spire|main_spire_proxy|main_reactor|test|all]
+#   godot --headless --path . --script res://tools/poi/build_poi_scenes.gd [-- emitter|reactor|main_spire|main_spire_proxy|main_reactor|projector|test|all]
 #   main_spire_proxy writes only MainSpire_FarProxy.res (no wrapper, merged detail, or collision changes).
 #
 # Writes:
 #   res://assets/poi/beam_emitter/BeamEmitterPOI.tscn  (+ collision/*.res, merged/meshes/BeamEmitter_FarProxy.res)
 #   res://assets/poi/reactor/ReactorPOI.tscn           (+ collision/*.res)
 #   res://assets/poi/main_spire/MainSpirePOI.tscn, res://assets/poi/main_reactor/MainReactorPOI.tscn (+ collision/*.res, MainSpire_FarProxy.res)
+#   res://assets/poi/atmosphere_projector/AtmosphereProjectorPOI.tscn (+ merged/meshes/AtmosphereProjector_FarProxy.res, collision/AtmosphereProjector_Footprint.json)
 #   res://scenes/poi/EmitterReactorTest.tscn           (+ [Main]EmitterReactorGround[Shape].res); holds the regular and the main pair
 #
 # Coordinates: Blender (x, y, z) -> Godot (x, z, -y); the GLB meshes are already in Godot space.
@@ -50,6 +51,17 @@ const MAIN_CROWN_FOCUS_Y := 3989.0   # outer open crown focus ring (Y 3,984..3,9
 const MAIN_ENTRY_APPROACH_R := 930.0 # hall floor ends at R ~890 on the 292.5 deg (Godot XZ 67.5 deg) axis
 const MAIN_BORE_RADIUS := 150.0
 const MAIN_EXTRA_FLOOR_PATTERNS_GROUND := ["Outer_Entrance_Continuous_Walkable_Floor", "Outer_Entrance_Under_Apron_Join_Floor"]
+
+# Atmosphere shield projector (1,600 m wall-top tower pair, origin = wall-top centre, field plane X = 0).
+const PROJECTOR_GLB := "res://assets/poi/atmosphere_projector/Atmosphere_Shield_Projector.glb"
+const PROJECTOR_MERGED := "res://assets/poi/atmosphere_projector/merged/AtmosphereProjectorMerged.tscn"
+const PROJECTOR_DETAIL_END := 15000.0
+const PROJECTOR_PROXY_BEGIN := 14000.0
+const PROJECTOR_RANGE_MARGIN := 1000.0
+const PROJECTOR_FOOTPRINT_SLAB := 3.0
+const PROJECTOR_FOOTPRINT_CELL := 0.5
+const PROJECTOR_FIELD_CLEAR := 0.45
+const PROJECTOR_PROXY_SLICES := [0.0, 15.0, 40.0, 80.0, 140.0, 220.0, 320.0, 380.0, 480.0, 640.0, 800.0, 960.0, 1120.0, 1280.0, 1400.0, 1480.0, 1530.0, 1565.0, 1590.0, 1600.0]
 
 # Imported mesh compression introduces up to 0.055 m of same-profile radial spread and 0.000043 rad
 # of angular displacement in this GLB. These weld tolerances stay well below its distinct profile/row gaps.
@@ -96,6 +108,10 @@ func _init() -> void:
 			return
 	if which in ["all", "main_reactor"]:
 		_build_main_reactor()
+	if which in ["all", "projector"]:
+		if not _build_projector():
+			quit(1)
+			return
 	if which in ["all", "test"]:
 		_build_test_scene()
 	quit()
@@ -716,6 +732,352 @@ func _build_main_reactor() -> void:
 	ResourceSaver.save(ps, "res://assets/poi/main_reactor/MainReactorPOI.tscn")
 	root.free()
 	src.free()
+
+# --------------------------------------------------------------------------------------------
+# Atmosphere shield projector. No Collision body: the wall-top walk is analytic, the footprint JSON is the collision.
+func _build_projector() -> bool:
+	var src := (load(PROJECTOR_GLB) as PackedScene).instantiate()
+	var root := Node3D.new()
+	root.name = "AtmosphereProjectorPOI"
+	var detail := Node3D.new()
+	detail.name = "Detail"
+	root.add_child(detail)
+	detail.owner = root
+	_clone_merged(PROJECTOR_MERGED, detail, root, {"Tower": {"end": PROJECTOR_DETAIL_END, "margin": PROJECTOR_RANGE_MARGIN}})
+
+	var faces := PackedVector3Array()
+	for mi in _collect_meshes(src):
+		faces.append_array(_faces_of(mi, src))
+	if faces.is_empty():
+		push_error("Projector source has no geometry")
+		root.free()
+		src.free()
+		return false
+
+	var proxy_mat := load("res://assets/poi/atmosphere_projector/merged/materials/Pale_ceramic_titanium.tres") as Material
+	if proxy_mat == null:
+		push_error("Missing projector far proxy material")
+		root.free()
+		src.free()
+		return false
+	var proxy_path := "res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_FarProxy.res"
+	var proxy_mesh := _build_projector_proxy(faces, proxy_mat, proxy_path)
+	if proxy_mesh == null:
+		root.free()
+		src.free()
+		return false
+	var proxy := MeshInstance3D.new()
+	proxy.name = "FarProxy"
+	proxy.mesh = proxy_mesh
+	proxy.visibility_range_begin = PROJECTOR_PROXY_BEGIN
+	proxy.visibility_range_begin_margin = PROJECTOR_RANGE_MARGIN
+	proxy.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+	proxy.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(proxy)
+	proxy.owner = root
+
+	var markers := Node3D.new()
+	markers.name = "Markers"
+	root.add_child(markers)
+	markers.owner = root
+	_marker(markers, root, "WallTopOrigin", Vector3.ZERO)
+	_marker(markers, root, "ShieldPlaneCrown", Vector3(0, 1600, 0))
+	_marker(markers, root, "TopEmitterSphere", Vector3(0, 1475, 0))
+	for sock in ["PowerIntakeSocket_NegativeX", "PowerIntakeSocket_PositiveX"]:
+		var sn := src.find_child(sock, true, false) as Node3D
+		if sn == null:
+			push_error("Missing projector marker in source: " + sock)
+			root.free()
+			src.free()
+			return false
+		_marker(markers, root, sock, _local_to_root(sn, src).origin)
+
+	var ps := PackedScene.new()
+	ps.pack(root)
+	ResourceSaver.save(ps, "res://assets/poi/atmosphere_projector/AtmosphereProjectorPOI.tscn")
+	_build_projector_footprint(faces)
+	root.free()
+	src.free()
+	return true
+
+# Clips a convex polygon (XZ points, any winding) to the half-plane a*x + b*z <= c.
+func _clip_poly_xz(poly: Array, a: float, b: float, c: float) -> Array:
+	var out := []
+	for i in poly.size():
+		var p: Vector2 = poly[i]
+		var q: Vector2 = poly[(i + 1) % poly.size()]
+		var dp := a * p.x + b * p.y - c
+		var dq := a * q.x + b * q.y - c
+		if dp <= 0.0:
+			out.append(p)
+		if (dp < 0.0 and dq > 0.0) or (dp > 0.0 and dq < 0.0):
+			out.append(p.lerp(q, dp / (dp - dq)))
+	return out
+
+func _build_projector_proxy(faces: PackedVector3Array, mat: Material, out_path: String) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	st.set_material(mat)
+	var tri_total := 0
+	var bmin := Vector3(1e9, 1e9, 1e9)
+	var bmax := Vector3(-1e9, -1e9, -1e9)
+	for half in [-1, 1]:
+		for si in PROJECTOR_PROXY_SLICES.size() - 1:
+			var h0: float = PROJECTOR_PROXY_SLICES[si]
+			var h1: float = PROJECTOR_PROXY_SLICES[si + 1]
+			var xmin := 1e9
+			var xmax := -1e9
+			var zmin := 1e9
+			var zmax := -1e9
+			var smin := 1e9
+			var smax := -1e9
+			var dmin := 1e9
+			var dmax := -1e9
+			var count := 0
+			# The cross-section of this band: every source triangle of this half clipped to [h0, h1] (not only the vertices inside the band:
+			# the long blade faces span many bands with no vertex in between, and a vertex-only 8-DOP shrank the shaft to the spheres).
+			for t in range(0, faces.size(), 3):
+				var f0 := faces[t]
+				var f1 := faces[t + 1]
+				var f2 := faces[t + 2]
+				if (f0.x + f1.x + f2.x) * half <= 0.0:
+					continue
+				if minf(f0.y, minf(f1.y, f2.y)) > h1 or maxf(f0.y, maxf(f1.y, f2.y)) < h0:
+					continue
+				for v in _clip_poly_y([f0, f1, f2], h0, h1):
+					count += 1
+					xmin = minf(xmin, v.x)
+					xmax = maxf(xmax, v.x)
+					zmin = minf(zmin, v.z)
+					zmax = maxf(zmax, v.z)
+					smin = minf(smin, v.x + v.z)
+					smax = maxf(smax, v.x + v.z)
+					dmin = minf(dmin, v.x - v.z)
+					dmax = maxf(dmax, v.x - v.z)
+			if count == 0:
+				continue
+			var poly := [Vector2(xmin - 1.0, zmin - 1.0), Vector2(xmax + 1.0, zmin - 1.0), Vector2(xmax + 1.0, zmax + 1.0), Vector2(xmin - 1.0, zmax + 1.0)]
+			poly = _clip_poly_xz(poly, 1, 0, xmax)
+			poly = _clip_poly_xz(poly, -1, 0, -xmin)
+			poly = _clip_poly_xz(poly, 0, 1, zmax)
+			poly = _clip_poly_xz(poly, 0, -1, -zmin)
+			poly = _clip_poly_xz(poly, 1, 1, smax)
+			poly = _clip_poly_xz(poly, -1, -1, -smin)
+			poly = _clip_poly_xz(poly, 1, -1, dmax)
+			poly = _clip_poly_xz(poly, -1, 1, -dmin)
+			# Never cross the field plane: keep |x| >= PROJECTOR_FIELD_CLEAR on this half's inner side.
+			poly = _clip_poly_xz(poly, -half, 0, -PROJECTOR_FIELD_CLEAR)
+			var pts := []
+			for p in poly:
+				var dup := false
+				for q in pts:
+					if (p - q).length() < 0.001:
+						dup = true
+						break
+				if not dup:
+					pts.append(p)
+			if pts.size() < 3:
+				continue
+			var ctr := Vector2.ZERO
+			for p in pts:
+				ctr += p
+			ctr /= pts.size()
+			pts.sort_custom(func(a, b): return atan2(a.y - ctr.y, a.x - ctr.x) < atan2(b.y - ctr.y, b.x - ctr.x))
+			var n := pts.size()
+			var centre := Vector3(ctr.x, (h0 + h1) * 0.5, ctr.y)
+			var tv := []
+			for i in n:
+				var j := (i + 1) % n
+				var a0 := Vector3(pts[i].x, h0, pts[i].y)
+				var a1 := Vector3(pts[j].x, h0, pts[j].y)
+				var b0 := Vector3(pts[i].x, h1, pts[i].y)
+				var b1 := Vector3(pts[j].x, h1, pts[j].y)
+				tv.append_array([a0, b0, a1, a1, b0, b1])
+				tv.append_array([Vector3(ctr.x, h0, ctr.y), a0, a1])   # bottom cap fan
+				tv.append_array([Vector3(ctr.x, h1, ctr.y), b0, b1])   # top cap fan
+			for i in range(0, tv.size(), 3):
+				var pn := Plane(tv[i], tv[i + 1], tv[i + 2]).normal
+				var flip_tri := pn.dot((tv[i] + tv[i + 1] + tv[i + 2]) / 3.0 - centre) < 0.0
+				var tri := [tv[i], tv[i + 2] if flip_tri else tv[i + 1], tv[i + 1] if flip_tri else tv[i + 2]]
+				for v in tri:
+					st.add_vertex(v)
+					bmin = bmin.min(v)
+					bmax = bmax.max(v)
+				tri_total += 1
+	st.generate_normals()
+	var mesh := st.commit()
+	mesh.resource_name = out_path.get_file().get_basename()
+	_mkdir(out_path.get_base_dir())
+	var error := ResourceSaver.save(mesh, out_path)
+	if error != OK:
+		push_error("Could not save projector far proxy: " + error_string(error))
+		return null
+	print("projector far proxy: triangles=", tri_total, " surfaces=", mesh.get_surface_count(), " aabb min=", bmin, " max=", bmax)
+	return load(out_path)
+
+# Clips a polygon to y_lo <= y <= y_hi (Sutherland-Hodgman, two planes).
+func _clip_poly_y(poly: Array, y_lo: float, y_hi: float) -> Array:
+	for plane in 2:
+		var out := []
+		for i in poly.size():
+			var p: Vector3 = poly[i]
+			var q: Vector3 = poly[(i + 1) % poly.size()]
+			var dp := (p.y - y_lo) if plane == 0 else (y_hi - p.y)
+			var dq := (q.y - y_lo) if plane == 0 else (y_hi - q.y)
+			if dp >= 0.0:
+				out.append(p)
+			if (dp > 0.0 and dq < 0.0) or (dp < 0.0 and dq > 0.0):
+				out.append(p.lerp(q, dp / (dp - dq)))
+		poly = out
+		if poly.size() < 3:
+			return []
+	return poly
+
+func _build_projector_footprint(faces: PackedVector3Array) -> void:
+	var cell := PROJECTOR_FOOTPRINT_CELL
+	var nx := int(80.0 / cell)    # x in [-40, 40]
+	var nz := int(180.0 / cell)   # z in [-90, 90]
+	var marked := PackedByteArray()
+	marked.resize(nx * nz)
+	for i in range(0, faces.size(), 3):
+		var a := faces[i]
+		var b := faces[i + 1]
+		var c := faces[i + 2]
+		if minf(a.y, minf(b.y, c.y)) > PROJECTOR_FOOTPRINT_SLAB or maxf(a.y, maxf(b.y, c.y)) < 0.0:
+			continue
+		var poly := _clip_poly_y([a, b, c], 0.0, PROJECTOR_FOOTPRINT_SLAB)
+		if poly.size() < 3:
+			continue
+		for k in poly.size():
+			var p: Vector3 = poly[k]
+			var q: Vector3 = poly[(k + 1) % poly.size()]
+			var steps := maxi(1, int(ceil(p.distance_to(q) / 0.1)))
+			for s in steps + 1:
+				_mark_cell(marked, nx, nz, p.lerp(q, float(s) / steps))
+		for k in range(1, poly.size() - 1):
+			var v0: Vector3 = poly[0]
+			var e1: Vector3 = (poly[k] as Vector3) - v0
+			var e2: Vector3 = (poly[k + 1] as Vector3) - v0
+			var m := maxi(1, int(ceil(maxf(e1.length(), e2.length()) / 0.25)))
+			for ii in m + 1:
+				for jj in m + 1 - ii:
+					_mark_cell(marked, nx, nz, v0 + e1 * (float(ii) / m) + e2 * (float(jj) / m))
+	# Flood fill from the padded border through unmarked cells; everything not reached is solid.
+	var pw := nx + 2
+	var ph := nz + 2
+	var reached := PackedByteArray()
+	reached.resize(pw * ph)
+	var queue := PackedInt32Array([0])
+	reached[0] = 1
+	var head := 0
+	while head < queue.size():
+		var cur := queue[head]
+		head += 1
+		var cx := cur % pw
+		var cz := cur / pw
+		for d in [[1, 0], [-1, 0], [0, 1], [0, -1]]:
+			var x2: int = cx + d[0]
+			var z2: int = cz + d[1]
+			if x2 < 0 or z2 < 0 or x2 >= pw or z2 >= ph:
+				continue
+			var ni := z2 * pw + x2
+			if reached[ni] != 0:
+				continue
+			if x2 >= 1 and z2 >= 1 and x2 <= nx and z2 <= nz and marked[(z2 - 1) * nx + (x2 - 1)] != 0:
+				continue
+			reached[ni] = 1
+			queue.append(ni)
+	# Closing with a 5x5 square (dilate 2, erode 2) on a grid padded by 2 empty cells, so the closing does not eat the outer edge.
+	var gw := nx + 4
+	var gh := nz + 4
+	var solid := PackedByteArray()
+	solid.resize(gw * gh)
+	for z in nz:
+		for x in nx:
+			if reached[(z + 1) * pw + (x + 1)] == 0:
+				solid[(z + 2) * gw + (x + 2)] = 1
+	var closed := _morph_box(_morph_box(solid, gw, gh, 2, true), gw, gh, 2, false)
+	var mask := PackedByteArray()
+	mask.resize(nx * nz)
+	var solid_cells := 0
+	for z in nz:
+		for x in nx:
+			if closed[(z + 2) * gw + (x + 2)] != 0:
+				mask[z * nx + x] = 1
+				solid_cells += 1
+	# Greedy rectangles: runs per row, merged with the identical-extent run in the previous row.
+	var rects := []
+	var open := {}  # "x0|x1" -> index into rects
+	for z in nz:
+		var next_open := {}
+		var x := 0
+		while x < nx:
+			if mask[z * nx + x] == 0:
+				x += 1
+				continue
+			var x0 := x
+			while x < nx and mask[z * nx + x] != 0:
+				x += 1
+			var key := "%d|%d" % [x0, x]
+			if open.has(key):
+				var r: Array = rects[open[key]]
+				r[3] = z + 1
+				next_open[key] = open[key]
+			else:
+				rects.append([x0, z, x, z + 1])
+				next_open[key] = rects.size() - 1
+		open = next_open
+	var rects_m := []
+	for r in rects:
+		rects_m.append([r[0] * cell - 40.0, r[1] * cell - 90.0, r[2] * cell - 40.0, r[3] * cell - 90.0])
+	var data := {
+		"version": 1, "source": PROJECTOR_GLB, "slab_top_m": PROJECTOR_FOOTPRINT_SLAB, "cell_m": cell,
+		"x_range": [-40, 40], "z_range": [-90, 90], "solid_cells": solid_cells, "rects": rects_m,
+	}
+	var coll_dir := "res://assets/poi/atmosphere_projector/collision"
+	_mkdir(coll_dir)
+	var f := FileAccess.open(coll_dir + "/AtmosphereProjector_Footprint.json", FileAccess.WRITE)
+	f.store_string(JSON.stringify(data, "\t"))
+	f.close()
+	print("projector footprint: solid_cells=", solid_cells, " rects=", rects.size())
+	var step := int(round(1.0 / cell))
+	for z in range(nz - step, -1, -step):
+		var line := ""
+		for x in range(0, nx, step):
+			line += "#" if mask[z * nx + x] != 0 else "."
+		print(line)
+
+func _mark_cell(marked: PackedByteArray, nx: int, nz: int, p: Vector3) -> void:
+	var ix := clampi(int(floor((p.x + 40.0) / PROJECTOR_FOOTPRINT_CELL)), 0, nx - 1)
+	var iz := clampi(int(floor((p.z + 90.0) / PROJECTOR_FOOTPRINT_CELL)), 0, nz - 1)
+	marked[iz * nx + ix] = 1
+
+# 5x5 box dilation (grow=true) or erosion (grow=false) as two separable passes; out-of-grid counts as empty.
+func _morph_box(src_mask: PackedByteArray, w: int, h: int, radius: int, grow: bool) -> PackedByteArray:
+	var tmp := PackedByteArray()
+	tmp.resize(w * h)
+	var out := PackedByteArray()
+	out.resize(w * h)
+	for pass_i in 2:
+		var from := src_mask if pass_i == 0 else tmp
+		var to := tmp if pass_i == 0 else out
+		for z in h:
+			for x in w:
+				var hit := not grow
+				for d in range(-radius, radius + 1):
+					var xx := x + d if pass_i == 0 else x
+					var zz := z if pass_i == 0 else z + d
+					var v := 0
+					if xx >= 0 and xx < w and zz >= 0 and zz < h:
+						v = from[zz * w + xx]
+					if grow and v != 0:
+						hit = true
+						break
+					if not grow and v == 0:
+						hit = false
+						break
+				to[z * w + x] = 1 if hit else 0
+	return out
 
 # --------------------------------------------------------------------------------------------
 func _build_ground(path_mesh: String, path_shape: String, hole := 75.0) -> void:

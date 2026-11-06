@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Diagnostics;
 
 namespace RingworldTechDemo.UI;
@@ -16,7 +17,7 @@ public partial class RingLiveTuningDrawer
     private HSlider? _diagnosticsHistorySlider, _diagnosticsMemorySlider, _diagnosticsRefreshSlider;
     private readonly Dictionary<HSlider, Label> _diagnosticsSliderValues = new();
     private double _diagnosticsRefreshElapsed;
-    private Button? _diagnosticsFarCaptureButton;
+    private Button? _diagnosticsFarCaptureButton, _diagnosticsSpawnRippleButton, _diagnosticsSpawnStrikeButton;
     private bool _diagnosticsFarCaptureExporting;
 
     private void BuildDiagnosticsTab(TabContainer tabs)
@@ -70,11 +71,33 @@ public partial class RingLiveTuningDrawer
         _diagnosticsFarCaptureButton = new Button { Name = "DiagnosticsCaptureFarRingViewports", Text = "Capture far-ring viewports", Disabled = !available };
         _diagnosticsFarCaptureButton.Pressed += CaptureFarRingViewportsFromDrawer;
         actions.AddChild(_diagnosticsFarCaptureButton);
+        _diagnosticsSpawnRippleButton = new Button { Name = "DiagnosticsSpawnContainmentRipple", Text = "Spawn containment ripple", Disabled = _containmentField == null, TooltipText = "Publishes a lit debug ripple on the containment field straight above the camera." };
+        _diagnosticsSpawnRippleButton.Pressed += () => SpawnContainmentDebug(false);
+        actions.AddChild(_diagnosticsSpawnRippleButton);
+        _diagnosticsSpawnStrikeButton = new Button { Name = "DiagnosticsSpawnFieldStrike", Text = "Spawn field strike", Disabled = _containmentField == null, TooltipText = "Publishes a debug field strike (crawl and contact glow) on the containment field straight above the camera." };
+        _diagnosticsSpawnStrikeButton.Pressed += () => SpawnContainmentDebug(true);
+        actions.AddChild(_diagnosticsSpawnStrikeButton);
         button = new Button { Name = "DiagnosticsCaptureSlowdown", Text = "Capture slowdown report", Disabled = !available }; button.Pressed += () => { if (_diagnosticsStatus != null) _diagnosticsStatus.Text = _performanceMonitor?.CaptureSlowdown() ?? "Monitor unavailable."; }; actions.AddChild(button);
         button = new Button { Name = "DiagnosticsClearHistory", Text = "Clear history", Disabled = !available }; button.Pressed += () => { _performanceMonitor?.ClearHistory(); RefreshDiagnostics(); }; actions.AddChild(button);
         button = new Button { Name = "DiagnosticsSaveSettings", Text = "Save diagnostics settings", Disabled = !available }; button.Pressed += () => { if (_diagnosticsStatus != null) _diagnosticsStatus.Text = _performanceMonitor?.SaveSettings() == true ? "Settings saved." : "Settings could not be saved."; }; actions.AddChild(button);
         button = new Button { Name = "DiagnosticsResetSettings", Text = "Reset diagnostics settings", Disabled = !available }; button.Pressed += () => { _performanceMonitor?.ResetSettings(); SyncDiagnosticsControls(); RefreshDiagnostics(); }; actions.AddChild(button);
         _diagnosticsStatus = new Label { Name = "DiagnosticsStatus", Text = available ? $"Settings: {RingPerformanceMonitor.UserPath}" : "Performance monitor unavailable in this scene.", AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted }; actions.AddChild(_diagnosticsStatus);
+    }
+
+    private void RefreshDiagnosticsContainmentButtons()
+    {
+        bool disabled = _containmentField == null || !GodotObject.IsInstanceValid(_containmentField);
+        if (_diagnosticsSpawnRippleButton != null) _diagnosticsSpawnRippleButton.Disabled = disabled;
+        if (_diagnosticsSpawnStrikeButton != null) _diagnosticsSpawnStrikeButton.Disabled = disabled;
+    }
+
+    private void SpawnContainmentDebug(bool strike)
+    {
+        if (_diagnosticsStatus == null) return;
+        if (_containmentField == null || !GodotObject.IsInstanceValid(_containmentField)) { _diagnosticsStatus.Text = "Containment field unavailable in this scene."; return; }
+        var result = strike ? _containmentField.SpawnDebugFieldStrikeAboveCamera() : _containmentField.SpawnDebugRippleAboveCamera();
+        var bus = RingContainmentDisturbanceHost.SharedBus;
+        _diagnosticsStatus.Text = $"{(strike ? "Field strike" : "Containment ripple")}: {(result?.ToString() ?? "no camera or bus")}. Live ripples {bus?.LiveCount ?? 0}, far strikes {bus?.FarStrikes.Count ?? 0}.";
     }
 
     private void ProcessDiagnosticsTuning(double delta) { if (!_open || _diagnosticsSummary == null) return; if (_diagnosticsFarCaptureButton != null) _diagnosticsFarCaptureButton.Disabled = _performanceMonitor == null || _performanceMonitor.FarRingCaptureBusy || _diagnosticsFarCaptureExporting; _diagnosticsRefreshElapsed += delta; if (_diagnosticsRefreshElapsed < Math.Clamp(_performanceMonitor?.RefreshSeconds ?? .2f, .1f, 1f)) return; _diagnosticsRefreshElapsed = 0; RefreshDiagnostics(); }

@@ -197,6 +197,7 @@ public partial class RingLiveTuningDrawer
         tab.AddChild(reset);
         _atmosphereStatus = new Label { Name = "AtmosphereStatus", Modulate = RingUiStyle.Muted, AutowrapMode = TextServer.AutowrapMode.WordSmart };
         tab.AddChild(_atmosphereStatus);
+        BuildContainmentFieldSection(tab);
         RefreshAtmosphereControls();
     }
 

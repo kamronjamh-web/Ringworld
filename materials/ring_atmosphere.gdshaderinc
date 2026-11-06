@@ -44,6 +44,12 @@ uniform float eclipse_solar_transmittance : hint_range(0.0, 1.0) = 1.0;
 // width guard prevents its haze from continuing beyond the physical side walls.
 // A large default preserves materials that are not ring-width-aware.
 uniform float ring_atmosphere_half_width_meters = 1000000000.0;
+// Containment field lid (WO9): the physical haze air ends at the field (ring_haze_field_runs in ring_haze_shared.gdshaderinc). Published by
+// RingAtmosphereModel.SetContainmentField: (wall top, apex, crown, exists), (RootAcross0, RootAcrossW, 0, 0) in canonical metres; zero = no field.
+global uniform vec4 ringworld_field_profile0;
+global uniform vec4 ringworld_field_profile1;
+#define RING_HAZE_FIELD0 ringworld_field_profile0
+#define RING_HAZE_FIELD1 ringworld_field_profile1
 #include "res://materials/ring_atmosphere_shared.gdshaderinc"
 #include "res://materials/ring_haze_shared.gdshaderinc"
 #include "res://materials/ring_atmosphere_paths.gdshaderinc"

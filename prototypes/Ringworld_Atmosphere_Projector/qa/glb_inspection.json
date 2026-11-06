@@ -1,0 +1,56 @@
+{
+  "file": "/workspace/scratch/06233417d89e/projector_model/atmosphere_shield_projector.glb",
+  "sha256": "2ea71d3828767f5d2c93e3065d60765d8f8bcebde8600a90e5f6572a322e6c65",
+  "bytes": 7338840,
+  "mesh_nodes": 2,
+  "min": [
+    -40.0,
+    0.0,
+    -90.0
+  ],
+  "max": [
+    40.0,
+    1600.0,
+    90.0
+  ],
+  "dimensions": [
+    80.0,
+    1600.0,
+    180.0
+  ],
+  "triangles": 424288,
+  "context_nodes": [],
+  "cameras": 0,
+  "nodes": [
+    {
+      "node": "TowerNegativeX",
+      "min": [
+        -40.0,
+        0.0,
+        -90.0
+      ],
+      "max": [
+        -0.44999998807907104,
+        1600.0,
+        90.0
+      ],
+      "vertices": 114594,
+      "triangles": 212144
+    },
+    {
+      "node": "TowerPositiveX",
+      "min": [
+        0.44999998807907104,
+        0.0,
+        -90.0
+      ],
+      "max": [
+        40.0,
+        1600.0,
+        90.0
+      ],
+      "vertices": 114594,
+      "triangles": 212144
+    }
+  ]
+}

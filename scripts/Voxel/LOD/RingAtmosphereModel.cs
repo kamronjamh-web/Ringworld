@@ -232,8 +232,42 @@ public static class RingAtmosphereModel
         ApplyAll();
     }
 
-    /// <summary>Top of the integrated air: the controller's upper shell height (AtmosphereUpperHeightMeters export).</summary>
+    /// <summary>Top of the integrated air: the controller's upper shell height (AtmosphereUpperHeightMeters export). Not used by the physical
+    /// haze while a containment field is published (<see cref="FieldProfile"/>): the field is then the lid everywhere.</summary>
     public static float HazeCapHeightMeters => UpperHeightMeters;
+
+    // ---- Containment-field lid (containment field WO9). RingAtmosphereModel owns the profile every physical-haze path reads: the
+    // ringworld_field_profile0 / 1 globals (Godot materials and the sky), the CPU sky port (RingHazeSkyIrradiance) and the sky-view LUT build.
+    // Sunshine reads the same values from its GenericData (SunshineClouds.set_containment_field). None (the default) = the original box. ----
+    private static readonly StringName FieldProfile0Global = "ringworld_field_profile0", FieldProfile1Global = "ringworld_field_profile1";
+    /// <summary>The published field profile (<see cref="RingAtmosphereFieldLid.Profile.None"/> = no field, the box).</summary>
+    public static RingworldTechDemo.Atmosphere.RingAtmosphereFieldLid.Profile FieldProfile { get; private set; }
+
+    /// <summary>Publishes the containment-field lid (an invalid profile clears it). Only a change publishes; it bumps <see cref="Revision"/>
+    /// so cached CPU sky results recompute, without re-applying the material uniforms (the profile travels in globals).</summary>
+    public static void SetContainmentField(in RingworldTechDemo.ContainmentField.ContainmentFieldProfile profile)
+    {
+        FieldGeometry = profile;
+        SetFieldProfile(RingworldTechDemo.Atmosphere.RingAtmosphereFieldLid.Profile.From(profile));
+    }
+
+    public static void ClearContainmentField()
+    {
+        FieldGeometry = default;
+        SetFieldProfile(RingworldTechDemo.Atmosphere.RingAtmosphereFieldLid.Profile.None);
+    }
+
+    /// <summary>The full published field geometry (camera-side queries such as the interior factor); default when no field is published.</summary>
+    public static RingworldTechDemo.ContainmentField.ContainmentFieldProfile FieldGeometry { get; private set; }
+
+    private static void SetFieldProfile(RingworldTechDemo.Atmosphere.RingAtmosphereFieldLid.Profile profile)
+    {
+        if (profile == FieldProfile) return;
+        FieldProfile = profile;
+        RenderingServer.GlobalShaderParameterSet(FieldProfile0Global, profile.Packed0);
+        RenderingServer.GlobalShaderParameterSet(FieldProfile1Global, profile.Packed1);
+        Revision++;
+    }
     /// <summary>Physical meteorological visibility (km) implied by the current art controls at density 1.</summary>
     public static float HazeVisibilityKm => Mathf.Clamp(_visibilityFullKm, 10.0f, 400.0f) * VisibilityScale;
 

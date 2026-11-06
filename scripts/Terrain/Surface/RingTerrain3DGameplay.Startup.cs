@@ -145,7 +145,7 @@ public partial class RingTerrain3DGameplay
                 return;
             }
             if (_stream == null || _surface == null) throw new InvalidOperationException("Terrain startup preparation is missing.");
-            RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(_pendingFrame.AnchorAroundMeters, _pendingFrame.AnchorHeight, _pendingFrame.AnchorAcrossMeters);
+            RingCanonicalPosition position = StartupCoveragePosition();
             // Saved poses can arrive after the first request. Never publish an
             // initial map or collider around an obsolete location or edit revision.
             if (!StartupFrameCovers(_pendingFrame, position) || _pendingEditRevision != _field.Revision || _pendingApertureRevision != _apertureRevision)
@@ -200,6 +200,17 @@ public partial class RingTerrain3DGameplay
         catch (Exception error) { FailStagedStartup(error.Message); }
     }
 
+    /// <summary>
+    /// The explorer pose the startup window must cover, clamped into the habitat's across range. A pose saved on a rim wall top (WO12) or beyond
+    /// it has no terrain under it and is never inside a collider frame, so an unclamped startup would re-request its window forever.
+    /// </summary>
+    private RingCanonicalPosition StartupCoveragePosition()
+    {
+        RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(_pendingFrame.AnchorAroundMeters, _pendingFrame.AnchorHeight, _pendingFrame.AnchorAcrossMeters);
+        return _field == null ? position
+            : position with { AcrossMeters = Math.Clamp(position.AcrossMeters, 0.0, (double)(_field.WidthMeters - _field.SpacingMeters)) };
+    }
+
     private bool StartupFrameCovers(in RingSurfaceFrame frame, RingCanonicalPosition position)
         // Full handoff coverage can be unavailable near a physical across edge;
         // the existing proxy fallback stays visible there. That must not strand
@@ -228,7 +239,7 @@ public partial class RingTerrain3DGameplay
         if (!_startupPending || !_stageReady || _initializationFailed || _surface == null || _field == null) return;
         try
         {
-            RingCanonicalPosition position = _explorer?.CanonicalPosition ?? new RingCanonicalPosition(_pendingFrame.AnchorAroundMeters, _pendingFrame.AnchorHeight, _pendingFrame.AnchorAcrossMeters);
+            RingCanonicalPosition position = StartupCoveragePosition();
             if (_pendingEditRevision != _field.Revision || _pendingApertureRevision != _apertureRevision || !StartupFrameCovers(_pendingFrame, position))
             {
                 RequestStagedStartupWindow(position);

@@ -68,7 +68,7 @@ RingVegetationHazeTerms ring_vegetation_haze_terms(RingHazeParams p, vec3 target
 	vec3 inv_total = vec3(1.0) / max(tau_total, vec3(0.00000001));
 	float mu = dot(ray, normalize(p.to_sun));
 	vec3 weight_sun = tau_R * ring_haze_phase_rayleigh(mu) + vec3(t.mie_scatter * ring_haze_phase_mie(mu, p.g));
-	vec3 t_sun = ring_haze_sun_transmittance(p, ray, interval, camera_height, outward, axis, radius_m);
+	vec3 t_sun = ring_haze_sun_transmittance_lid(p, ray, interval, camera_height, outward, axis, radius_m, side_negative);
 	t.K_sun = t_sun * weight_sun * inv_total;
 	return t;
 }

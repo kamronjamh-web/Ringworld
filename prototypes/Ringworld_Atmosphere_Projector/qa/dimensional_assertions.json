@@ -1,0 +1,88 @@
+{
+  "result": "PASS",
+  "revision": "corrected-along-wall-feet",
+  "complete_asset_bounds": {
+    "min": [
+      -40.0,
+      -90.0,
+      0.0
+    ],
+    "max": [
+      40.0,
+      90.0,
+      1600.0
+    ],
+    "dimensions": [
+      80.0,
+      180.0,
+      1600.0
+    ]
+  },
+  "original_body_and_components_excluding_new_feet": {
+    "min": [
+      -40.0,
+      -40.0,
+      0.0
+    ],
+    "max": [
+      40.0,
+      40.0,
+      1600.0
+    ],
+    "dimensions": [
+      80.0,
+      80.0,
+      1600.0
+    ]
+  },
+  "feet_per_half": [
+    {
+      "half": "POS",
+      "min": [
+        22.399999618530273,
+        -90.0,
+        0.0
+      ],
+      "max": [
+        39.599998474121094,
+        90.0,
+        380.0
+      ],
+      "dimensions": [
+        17.19999885559082,
+        180.0,
+        380.0
+      ]
+    },
+    {
+      "half": "NEG",
+      "min": [
+        -39.599998474121094,
+        -90.0,
+        0.0
+      ],
+      "max": [
+        -22.399999618530273,
+        90.0,
+        380.0
+      ],
+      "dimensions": [
+        17.19999885559082,
+        180.0,
+        380.0
+      ]
+    }
+  ],
+  "extension_past_body_end_along_wall_m": 50,
+  "overhang_past_wall_face_across_wall_m": 0,
+  "sphere_count": 20,
+  "all_sphere_pair_envelopes_m": [
+    45,
+    45,
+    45
+  ],
+  "all_19_pitches_m": 70,
+  "all_19_surface_gaps_m": 25,
+  "cross_plane_meshes": 0,
+  "checked_asset_meshes": 1130
+}

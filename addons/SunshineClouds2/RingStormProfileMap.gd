@@ -27,6 +27,8 @@ var compute_shader : RDShaderFile
 # Requested configuration (configure()); a build snapshots it when it begins.
 var requested : bool = false
 var config : Dictionary = {}
+# (crown, apex (0 = no field), RootAcross0, RootAcrossW) of the containment field's cloud ceiling; the apex is 0 with no field.
+var field_snapshot : Vector4 = Vector4.ZERO
 # Front (published) state.
 var valid : bool = false
 var front_buffer : int = 0
@@ -142,7 +144,10 @@ func _write_params(rd : RenderingDevice) -> void:
 # refresh interval has elapsed (or the system structure changed), dispatches exactly one slice of the in-flight build and publishes
 # the back buffer atomically after its last slice. weather_systems_bytes is the uploaded system block (header0.y > 0.5 = enabled).
 func update(rd : RenderingDevice, weather_systems_bytes : PackedByteArray, weather_systems_revision : int, weather_frame : Vector4,
-		ring_radius : float, stamp_begin : String, stamp_end : String) -> void:
+		ring_radius : float, stamp_begin : String, stamp_end : String,
+		field_profile0 : Vector4 = Vector4.ZERO, field_profile1 : Vector4 = Vector4.ZERO) -> void:
+	# field_profile0 / 1: the containment field's cloud ceiling profile (SunshineClouds.gd ring_field_profile0 / 1), snapshotted per build.
+	field_snapshot = Vector4(field_profile0.z, field_profile0.y if field_profile0.w > 0.5 else 0.0, field_profile1.x, field_profile1.y)
 	var snapshot_ready := weather_systems_bytes.size() > 64 and weather_systems_bytes.decode_float(4) > 0.5
 	if not requested or unavailable or not snapshot_ready or config.is_empty():
 		# Off (or nothing to build from): the shaders take the analytic storm loop.
@@ -188,7 +193,7 @@ func _begin_build(rd : RenderingDevice, now_usec : int, weather_systems_bytes : 
 		"origin": Vector2(origin_around, origin_across), "texel": texel, "size": Vector2i(count, count),
 		"circumference": circumference, "shift": Vector2(weather_frame.y, weather_frame.z), "buffer": 1 - front_buffer,
 		"slice": 0, "slices": mini(int(cfg["slices"]), groups_y), "groups_y": groups_y,
-		"shape": cfg["shape"], "mammatus": cfg["mammatus"], "wind": cfg["wind"],
+		"shape": cfg["shape"], "mammatus": cfg["mammatus"], "wind": cfg["wind"], "field": field_snapshot,
 	}
 	build_active = true
 	build_start_usec = now_usec
@@ -207,9 +212,9 @@ func _dispatch_slice(rd : RenderingDevice, stamp_begin : String, stamp_end : Str
 		bytes.resize(BUILD_PARAM_BYTES)
 		var values := [build["origin"].x, build["origin"].y, build["texel"], float(build["buffer"]),
 			float(size.x), float(size.y), float(first_group * 8), build["circumference"],
-			build["shift"].x, build["shift"].y, 0.0, 0.0,
+			build["shift"].x, build["shift"].y, build["field"].x, build["field"].y,
 			shape.x, shape.y, shape.z, shape.w,
-			build["mammatus"], 0.0, 0.0, 0.0]
+			build["mammatus"], build["field"].z, build["field"].w, 0.0]
 		for i in range(values.size()):
 			bytes.encode_float(i * 4, values[i])
 		rd.buffer_update(build_params_buffer, 0, BUILD_PARAM_BYTES, bytes)

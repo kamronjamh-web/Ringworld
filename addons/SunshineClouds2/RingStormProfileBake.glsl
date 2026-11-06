@@ -30,11 +30,15 @@ layout(binding = 1, std140) uniform RingWeatherSystemsBlock {
 	RingWeatherSystem systems[64];
 } ringWeatherSystems;
 
+// Containment-field cloud ceiling profile for the bake (RingContainmentCeiling.glslinc): the pure profile function only, no genericData here.
+#define RING_FIELD_CEILING_PROFILE_ONLY
+#include "./RingContainmentCeiling.glslinc"
+
 // a = (canonical around, canonical across of the texel-grid corner, texel size m, back buffer)
 // b = (used width, used height in texels, first row of this slice, ring circumference m or 0)
-// c = (wind frame offset around, across of the snapshot = cloud_weather_frame.yz, 0, 0)
+// c = (wind frame offset around, across of the snapshot = cloud_weather_frame.yz, field crown m, field apex m; apex 0 = no field)
 // d = (pillar radius m, anvil radius multiplier, anvil start band fraction, anvil shear 0..1)
-// e = (mammatus strength 0..1, 0, 0, 0)
+// e = (mammatus strength 0..1, field RootAcross0, field RootAcrossW, 0)
 layout(binding = 2, std140) uniform StormBuildParams {
 	vec4 a;
 	vec4 b;
@@ -59,7 +63,10 @@ void main() {
 		build.a.y + (float(texel.y) + 0.5) * build.a.z);
 	float circumference = build.b.w;
 	float influence = clamp(ringWeatherSystems.header1.y, 0.0, 1.0);
-	StormBakeParams bake = StormBakeParams(vec4(build.d.x, build.d.y, build.d.z, build.d.w), vec4(build.e.x, 0.0, 0.0, 0.0));
+	// The field's ceiling at this texel's own canonical across (the weather shift moves storms, not the field).
+	float fieldCeiling = ring_containment_ceiling_meters_profile(vec4(build.c.z, build.c.w, build.c.z, build.c.w > build.c.z ? 1.0 : 0.0),
+		vec4(build.e.y, build.e.z, 0.0, 0.0), canonical.z);
+	StormBakeParams bake = StormBakeParams(vec4(build.d.x, build.d.y, build.d.z, build.d.w), vec4(build.e.x, fieldCeiling, 0.0, 0.0));
 
 	vec3 bodyAcc = vec3(0.0);
 	vec3 canopyAcc = vec3(0.0);

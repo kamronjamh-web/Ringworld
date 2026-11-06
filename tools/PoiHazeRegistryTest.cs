@@ -28,6 +28,7 @@ public partial class PoiHazeRegistryTest : RefCounted
         ("res://assets/poi/main_spire/MainSpirePOI.tscn", 11),
         ("res://assets/poi/reactor/ReactorPOI.tscn", 6),
         ("res://assets/poi/main_reactor/MainReactorPOI.tscn", 7),
+        ("res://assets/poi/atmosphere_projector/AtmosphereProjectorPOI.tscn", 7),
     };
 
     public int Run(bool unused)
@@ -213,5 +214,15 @@ public partial class PoiHazeRegistryTest : RefCounted
             if (material == null) { failures.Add("stand-in material missing"); continue; }
             if (!(bool)material.GetShaderParameter("ring_atmosphere_ray_frame_valid")) failures.Add("stand-in material did not receive a valid ray frame");
         }
+
+        // Projector stand-ins: one material, bound the same way.
+        var projectors = new AtmosphereProjectorStandInLayer { Name = "ProjectorStandIns", AutoBind = false };
+        fixture.AddChild(projectors);
+        int projectorBefore = RingPoiHaze.RegisteredCount;
+        if (!projectors.Bind(grid)) { failures.Add("projector stand-in bind failed"); return; }
+        if (RingPoiHaze.RegisteredCount != projectorBefore + 1) failures.Add($"projector stand-in Bind registered {RingPoiHaze.RegisteredCount - projectorBefore} materials, expected 1");
+        RingPoiHaze.Tick(grid, camera, Vector3.Up, true);
+        if (projectors.Material is not { } projectorMaterial) failures.Add("projector stand-in material missing");
+        else if (!(bool)projectorMaterial.GetShaderParameter("ring_atmosphere_ray_frame_valid")) failures.Add("projector stand-in material did not receive a valid ray frame");
     }
 }

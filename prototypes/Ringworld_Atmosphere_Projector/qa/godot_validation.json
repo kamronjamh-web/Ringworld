@@ -1,0 +1,41 @@
+{
+  "bounds_max_m": [
+    40.0,
+    1600.0,
+    90.0
+  ],
+  "bounds_min_m": [
+    -40.0,
+    0.0,
+    -90.0
+  ],
+  "dimensions_m": [
+    80.0,
+    1600.0,
+    180.0
+  ],
+  "godot_version": "4.6.3-stable (official)",
+  "instantiate_scene": true,
+  "issues": [],
+  "load_packed_scene": true,
+  "material_surfaces": 14,
+  "materials": [
+    "Pale ceramic titanium",
+    "Warm edge alloy",
+    "Cyan energized conduits",
+    "Recessed graphite steel",
+    "Champagne structural trim",
+    "Intake black cavity",
+    "Gunmetal mechanisms"
+  ],
+  "mesh_instances": 2,
+  "node_names": [
+    "atmosphere_shield_projector",
+    "AtmosphereShieldProjector",
+    "PowerIntakeSocket_NegativeX",
+    "PowerIntakeSocket_PositiveX",
+    "TowerNegativeX",
+    "TowerPositiveX"
+  ],
+  "result": "PASS"
+}

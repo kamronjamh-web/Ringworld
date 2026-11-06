@@ -95,12 +95,18 @@
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterGridBeamLayer.cs" id="emitter_grid_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Lightning/RingUpperAtmosphereLightningLayer.cs" id="upper_atmosphere_lightning_layer"]
 [ext_resource type="Script" path="res://scripts/Lightning/RingFieldStrikeLayer.cs" id="field_strike_layer"]
+[ext_resource type="Script" path="res://scripts/ContainmentField/RingContainmentDisturbanceHost.cs" id="containment_disturbance_host"]
+[ext_resource type="Script" path="res://scripts/ContainmentField/RingContainmentField.cs" id="containment_field"]
 [ext_resource type="Script" path="res://scripts/Weather/Megastorm/RingFieldStrikeAudio.cs" id="field_strike_audio"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseEventDirector.cs" id="eclipse_event_director"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBeamLayer.cs" id="eclipse_hub_beam_layer"]
 [ext_resource type="Script" path="res://scripts/Celestial/Eclipse/EclipseHubBody.cs" id="eclipse_hub_body"]
+[ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterFieldShotLayer.cs" id="emitter_field_shot_layer"]
+[ext_resource type="Script" path="res://scripts/poi/Emitters/RingEmitterFieldShotAudio.cs" id="emitter_field_shot_audio"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterPoiStreamer.cs" id="72_emitter_poi_streamer"]
 [ext_resource type="Script" path="res://scripts/poi/WeatherLung/WeatherLungStreamer.cs" id="74_weather_lung_streamer"]
+[ext_resource type="Script" path="res://scripts/poi/Projectors/AtmosphereProjectorStandInLayer.cs" id="atmosphere_projector_standins"]
+[ext_resource type="Script" path="res://scripts/poi/Projectors/AtmosphereProjectorStreamer.cs" id="atmosphere_projector_streamer"]
 [ext_resource type="Script" path="res://scripts/poi/Emitters/EmitterBoreLayer.cs" id="73_emitter_bores"]
 
 [sub_resource type="ProceduralSkyMaterial" id="1"]
@@ -742,17 +748,35 @@ script = ExtResource("upper_atmosphere_lightning_layer")
 [node name="FieldStrikes" type="Node3D" parent="."]
 script = ExtResource("field_strike_layer")
 
+[node name="ContainmentDisturbances" type="Node" parent="."]
+script = ExtResource("containment_disturbance_host")
+
+[node name="ContainmentField" type="Node3D" parent="."]
+script = ExtResource("containment_field")
+
 [node name="EclipseEvent" type="Node" parent="."]
 script = ExtResource("eclipse_event_director")
 
 [node name="EclipseBeams" type="Node3D" parent="."]
 script = ExtResource("eclipse_hub_beam_layer")
 
+[node name="EmitterFieldShots" type="Node3D" parent="."]
+script = ExtResource("emitter_field_shot_layer")
+
+[node name="EmitterFieldShotAudio" type="Node" parent="."]
+script = ExtResource("emitter_field_shot_audio")
+
 [node name="EclipseHubBody" type="Node3D" parent="."]
 script = ExtResource("eclipse_hub_body")
 
 [node name="EmitterSites" type="Node3D" parent="."]
 script = ExtResource("72_emitter_poi_streamer")
+
+[node name="AtmosphereProjectorStandIns" type="Node3D" parent="."]
+script = ExtResource("atmosphere_projector_standins")
+
+[node name="AtmosphereProjectors" type="Node3D" parent="."]
+script = ExtResource("atmosphere_projector_streamer")
 
 [node name="WeatherLung" type="Node3D" parent="."]
 script = ExtResource("74_weather_lung_streamer")

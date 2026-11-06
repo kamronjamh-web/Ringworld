@@ -357,3 +357,40 @@ partials only: no recordings, no downloaded audio and none of the CC0 thunder cl
 
 Wiring: `RingMegastormAudio` (scripts/Weather/Megastorm). The scythe crackles are played by `RingMegastormScythes` (same folder) on the `MegastormAir` bus. Subjective listening is still pending; `tools/media/megastorm_audio_render.py` renders a
 passage from the test's gain timeline for that.
+
+### Emitter field shot sounds (procedurally generated) - 2026-11-05
+
+The emitters' field shot voices (the orb a ground emitter fires up to the containment field) are **original synthesised work generated for this project**,
+from seeded noise and sine partials only: no recordings, no downloaded audio and none of the CC0 thunder clips. Generator: the same
+`tools/media/weather_sfx_gen.py` (`--only emitter_orb_launch field_contact_crackle`), seeded by the CRC-32 of the output name, encoded like the other weather
+assets (mono, 44.1 kHz, `libvorbis -q:a 5`).
+
+| File | Length | Model | SHA-256 |
+| --- | ---: | --- | --- |
+| `emitter_orb_launch_1.ogg` | 1.6 s | Orb launch heard near the emitter: a soft 40-90 Hz thump gliding down with a 2nd harmonic, plus a short rising band-passed air whoosh (0.3-2.6 kHz, then 1.2-4.8 kHz as it climbs); raised-cosine onset, no click. | `AC23A06BEBB8B8955597D947EF3E5DAE4AC6030C484D21B9BABE6AE9533FD05D` |
+| `emitter_orb_launch_2.ogg` | 1.6 s | As above, other seed. | `B688B30BF23E0C5446738DE3F06B3292095501F065DDF31775C161D521A893EC` |
+| `emitter_orb_launch_3.ogg` | 1.6 s | As above, other seed. | `1D96D99C6921EE1F8A03B358B4ADAE45163F3A543E529F87873437EBAC32EBB3` |
+| `field_contact_crackle_1.ogg` | 1.8 s | Orb meeting the field, heard from far: sparse 1-6 kHz electrical crackle clicks (about 90 per second thinning to 6), darkened by a 4.2 kHz low-pass, over a soft 25-220 Hz rumble tail. | `5CC9FCC75190AC0BB9A75316FB1B8F780C6509436F0E2D6808F3FCEAAAD36845` |
+| `field_contact_crackle_2.ogg` | 1.8 s | As above, other seed. | `A6764939A6D2A82C48EC33A857833E26C83DA1A9462FD1A2EC24ED7915E9D77B` |
+| `field_contact_crackle_3.ogg` | 1.8 s | As above, other seed. | `4E5A8E65A8D6D52AE5CE7F7D76A34AC5A8FFAF09146328BEB21B7ADEC45ADA1E` |
+
+Wiring: `RingEmitterFieldShotAudio` (scripts/poi/Emitters) on the `Thunder` bus.
+
+### Containment field crossing sound (procedurally generated) - 2026-11-05
+
+The soft membrane "whump" played when the player passes through the containment field (decision 4, contact ripples) is **original synthesised work generated for
+this project**, from seeded noise and sine partials only: no recordings, no downloaded audio and none of the CC0 thunder clips. Generator: the same
+`tools/media/weather_sfx_gen.py` (`--only field_crossing_whump`), seeded by the CRC-32 of the output name, encoded like the other weather assets (mono, 44.1 kHz,
+`libvorbis -q:a 5`).
+
+| File | Length | Model | SHA-256 |
+| --- | ---: | --- | --- |
+| `field_crossing_whump_1.ogg` | 1.4 s | Membrane whump: a 52-70 Hz pressure body gliding down from a 38 Hz base with a 2nd harmonic and a small second swell, plus a short dark 80-900 Hz breath; raised-cosine onset, band-limited to 28-1200 Hz, no clicks. | `8BD962D1E0196D309A4BF8A000B756E02FB48A786134D652706A3A5F951837FC` |
+| `field_crossing_whump_2.ogg` | 1.4 s | As above, other seed. | `3680C2EB54E1AE523FB9303884324CF1CAFB8BA6DBFEE42A60147D82EAA9F094` |
+
+### Containment field hum (user-supplied slot) - 2026-11-05
+
+`field_hum_loop.ogg` (or `field_hum_loop.wav`) in this folder is **reserved for the user's own recording or synthesis** and is not shipped or generated. `RingContainmentFieldAudio` loads
+`res://resources/audio/weather/field_hum_loop.ogg`, else `.wav`; with no file the hum is silently off and nothing logs an error. Expected format: a seamless loop (the code turns
+looping on for Ogg and for a WAV with loop mode off), mono or stereo, any sample rate; keep it a low, steady hum (peak near -6 dBFS: the code applies a -12 dB base plus the
+"Field hum volume (dB)" menu setting). Add a row for the file here when it is dropped in (source, author, licence).

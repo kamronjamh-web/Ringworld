@@ -1,0 +1,14 @@
+[remap]
+
+importer="glsl"
+type="RDShaderFile"
+uid="uid://b5wau21sf55p7"
+path="res://.godot/imported/ring_containment_ripple_post.glsl-658aedd02fafe99bde6d9f53fdd5082f.res"
+
+[deps]
+
+source_file="res://scripts/render/ring_containment_ripple_post.glsl"
+dest_files=["res://.godot/imported/ring_containment_ripple_post.glsl-658aedd02fafe99bde6d9f53fdd5082f.res"]
+
+[params]
+

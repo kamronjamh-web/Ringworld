@@ -3,11 +3,12 @@ extends SceneTree
 const PoiMaterialUtil := preload("res://tools/poi/poi_material_util.gd")
 # Build-time merge of the imported Blender POI GLBs into draw-call friendly scenes.
 #
-#   godot --headless --path . --script res://tools/poi/merge_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|all [sectors=N]]
+#   godot --headless --path . --script res://tools/poi/merge_poi_scenes.gd [-- emitter|reactor|main_spire|main_reactor|projector|all [sectors=N]]
 #
 # Loads the imported .glb scenes (the originals stay untouched), bakes every MeshInstance3D into
 # parent-space, and writes ONE surface per (group, material) with an importer-style LOD chain.
 # Outputs under res://assets/poi/<poi>/merged/: materials/*.tres, meshes/*.res and <Prefix>Merged.tscn.
+# Jobs with "bands" (projector) bin triangles by centroid height (band_height m per band) instead of azimuth sectors.
 # Run after the GLBs are imported. Safe to re-run; outputs are overwritten.
 
 const NORMAL_MERGE_ANGLE := deg_to_rad(60.0)
@@ -54,6 +55,16 @@ const JOBS := {
 		"classify": "_classify_main_reactor",
 		"groups": ["Core", "Routes", "Exhaust"],
 	},
+	# Atmosphere shield projector: 1,600 m wall-top tower pair, 8 height bands of 200 m (culling of a very tall asset).
+	"projector": {
+		"src": "res://assets/poi/atmosphere_projector/Atmosphere_Shield_Projector.glb",
+		"out_dir": "res://assets/poi/atmosphere_projector/merged",
+		"prefix": "AtmosphereProjector",
+		"classify": "_classify_projector",
+		"groups": ["Tower"],
+		"bands": 8,
+		"band_height": 200.0,
+	},
 }
 
 func _init() -> void:
@@ -93,6 +104,9 @@ func _classify_main_reactor(node_name: String) -> String:
 	if u.begins_with("B") and u.length() > 2 and u[1].is_valid_int() and (" | " in u) and not (u.begins_with("B1 UPPER") or u.begins_with("B2 LOWER DAMAGED")):
 		return "Core"  # buttress bodies: sweeping suspension, recessed upper channel, embedded field channel, lower separated root
 	return "Routes"  # terraces, causeways, anchors, entry/arrival tongues, wayfinding
+
+func _classify_projector(_node_name: String) -> String:
+	return "Tower"
 
 func _classify_emitter(node_name: String) -> String:
 	if "Removable" in node_name:
@@ -200,6 +214,8 @@ func _run_job(key: String, job: Dictionary) -> void:
 			# Triangles are binned by the azimuth of their centroid (sectors are centred on the 8 spire arms)
 			# so frustum/shadow culling still works on the merged meshes.
 			var sectors: int = job.get("sectors", 1)
+			var bands: int = job.get("bands", 0)
+			var band_height: float = job.get("band_height", 200.0)
 			var remaps := {}  # sector -> PackedInt32Array(old vertex -> new vertex or -1)
 			for k in range(0, idx.size(), 3):
 				var i0 := idx[k]
@@ -210,6 +226,9 @@ func _run_job(key: String, job: Dictionary) -> void:
 					var cen := (tv[i0] + tv[i1] + tv[i2]) / 3.0
 					var ang := fposmod(atan2(-cen.z, cen.x) + PI / sectors, TAU)
 					sector = mini(int(ang / (TAU / sectors)), sectors - 1)
+				if bands > 0:
+					var cen_y := (tv[i0].y + tv[i1].y + tv[i2].y) / 3.0
+					sector = clampi(int(floor(cen_y / band_height)), 0, bands - 1)
 				var bkey := "%s|%s|%d" % [group, mname, sector]
 				if not buckets.has(bkey):
 					buckets[bkey] = {"group": group, "mat": mname, "sector": sector, "v": PackedVector3Array(), "n": PackedVector3Array(), "i": PackedInt32Array()}
@@ -274,6 +293,8 @@ func _run_job(key: String, job: Dictionary) -> void:
 		im.generate_lods(NORMAL_MERGE_ANGLE, NORMAL_SPLIT_ANGLE, [])
 		var am := im.get_mesh()
 		var suffix: String = "_S%d" % b.sector if job.get("sectors", 1) > 1 else ""
+		if job.get("bands", 0) > 0:
+			suffix = "_B%d" % b.sector
 		var base_name := "%s_%s_%s%s" % [job.prefix, b.group, _sanitize(b.mat), suffix]
 		var mesh_path := "%s/meshes/%s.res" % [out_dir, base_name]
 		am.resource_name = base_name

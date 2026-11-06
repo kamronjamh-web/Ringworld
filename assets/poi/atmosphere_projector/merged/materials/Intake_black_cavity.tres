@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_j22pc"]
+
+[resource]
+resource_name = "Intake black cavity"
+render_priority = 0
+shader = ExtResource("1_j22pc")
+shader_parameter/albedo_color = Color(0.086104214, 0.12315822, 0.14733289, 1)
+shader_parameter/metallic_value = 0.2
+shader_parameter/roughness_value = 0.7
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

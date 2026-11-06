@@ -43,7 +43,8 @@ public sealed class GameplayEmitterGridDefaults
         new(nameof(GameplayEmitterGridSettings.CoreDepthThreshold), .35f, .05f, 2f),
         new(nameof(GameplayEmitterGridSettings.CoreDepthMinPixels), 4f, 1f, 8f),
         new(nameof(GameplayEmitterGridSettings.FarHandoffStartKm), 120f, 10f, 650f),
-        new(nameof(GameplayEmitterGridSettings.FarHandoffEndKm), 172f, 20f, 700f)
+        new(nameof(GameplayEmitterGridSettings.FarHandoffEndKm), 172f, 20f, 700f),
+        new(nameof(GameplayEmitterGridSettings.FieldShotIntervalSeconds), 300f, 0f, 1800f)
     };
 
     private static readonly IntField[] IntFields =
@@ -189,6 +190,7 @@ public sealed class GameplayEmitterGridDefaults
     public bool SetFarHandoffFollowsClouds(bool value) => SetBool(nameof(GameplayEmitterGridSettings.FarHandoffFollowsClouds), value);
     public bool SetFarHandoffStartKm(float value) => SetFloat(nameof(GameplayEmitterGridSettings.FarHandoffStartKm), value);
     public bool SetFarHandoffEndKm(float value) => SetFloat(nameof(GameplayEmitterGridSettings.FarHandoffEndKm), value);
+    public bool SetFieldShotIntervalSeconds(float value) => SetFloat(nameof(GameplayEmitterGridSettings.FieldShotIntervalSeconds), value);
 
     /// <summary>Copies the saved choices onto the beam layer.</summary>
     public void Apply(EmitterGridBeamLayer? layer)

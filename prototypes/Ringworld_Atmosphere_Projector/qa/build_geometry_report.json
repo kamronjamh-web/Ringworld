@@ -1,0 +1,58 @@
+{
+  "asset": "ATMO Projector",
+  "blender_version": "4.3.2",
+  "mesh_objects": 1130,
+  "evaluated_triangles": 424288,
+  "bounds_min_m": [
+    -40.0,
+    -90.0,
+    0.0
+  ],
+  "bounds_max_m": [
+    40.0,
+    90.0,
+    1600.0
+  ],
+  "dimensions_m": [
+    80.0,
+    180.0,
+    1600.0
+  ],
+  "body_footprint_m": [
+    80,
+    80
+  ],
+  "wall_width_m": 100,
+  "foot_extension_past_each_body_end_along_wall_m": 50.0,
+  "sphere_count": 20,
+  "sphere_centers_z_m": [
+    145,
+    215,
+    285,
+    355,
+    425,
+    495,
+    565,
+    635,
+    705,
+    775,
+    845,
+    915,
+    985,
+    1055,
+    1125,
+    1195,
+    1265,
+    1335,
+    1405,
+    1475
+  ],
+  "sphere_diameter_m": 45,
+  "sphere_center_pitch_m": 70,
+  "clear_gap_between_sphere_envelopes_m": 25,
+  "split_clearance_m": 0.9,
+  "notes": [
+    "Bounds include crown, base, intake and all emission trim.",
+    "No shield, beam, highway, wall, lights or cameras in GLB."
+  ]
+}

@@ -27,7 +27,7 @@ public partial class EmitterGridSettingsSmoke : Node
         && s.FarLayerEnabled && s.CloudInteraction == 2 && Mathf.IsEqualApprox(s.CloudSampleHz, 10) && s.DepthWriteCore
         && s.LightningCrawl && Mathf.IsEqualApprox(s.CrawlRadiusKm, 8) && Mathf.IsEqualApprox(s.CrawlLengthKm, 40) && !s.PulseTriggeredStrikes
         && Mathf.IsEqualApprox(s.CoreDepthThreshold, .35f) && Mathf.IsEqualApprox(s.CoreDepthMinPixels, 4) && s.FarHandoffFollowsClouds
-        && Mathf.IsEqualApprox(s.FarHandoffStartKm, 120) && Mathf.IsEqualApprox(s.FarHandoffEndKm, 172);
+        && Mathf.IsEqualApprox(s.FarHandoffStartKm, 120) && Mathf.IsEqualApprox(s.FarHandoffEndKm, 172) && Mathf.IsEqualApprox(s.FieldShotIntervalSeconds, 300);
 
     private static void Run(string path)
     {
@@ -44,6 +44,7 @@ public partial class EmitterGridSettingsSmoke : Node
         first.SetCloudInteraction(3); first.SetCloudSampleHz(20); first.SetDepthWriteCore(false); first.SetLightningCrawl(false);
         first.SetCrawlRadiusKm(12); first.SetCrawlLengthKm(80); first.SetPulseTriggeredStrikes(true);
         first.SetCoreDepthThreshold(.8f); first.SetCoreDepthMinPixels(6); first.SetFarHandoffFollowsClouds(false); first.SetFarHandoffStartKm(90); first.SetFarHandoffEndKm(200);
+        first.SetFieldShotIntervalSeconds(60);
         Require(first.Dirty && first.Save() && !first.Dirty, "grid preferences did not save");
         var second = new GameplayEmitterGridDefaults(path); second.Load();
         var s = second.Settings;
@@ -59,7 +60,7 @@ public partial class EmitterGridSettingsSmoke : Node
             && !s.FarLayerEnabled && s.CloudInteraction == 3 && Mathf.IsEqualApprox(s.CloudSampleHz, 20) && !s.DepthWriteCore && !s.LightningCrawl
             && Mathf.IsEqualApprox(s.CrawlRadiusKm, 12) && Mathf.IsEqualApprox(s.CrawlLengthKm, 80) && s.PulseTriggeredStrikes, "range/cloud/crawl preferences did not round-trip");
         Require(Mathf.IsEqualApprox(s.CoreDepthThreshold, .8f) && Mathf.IsEqualApprox(s.CoreDepthMinPixels, 6) && !s.FarHandoffFollowsClouds
-            && Mathf.IsEqualApprox(s.FarHandoffStartKm, 90) && Mathf.IsEqualApprox(s.FarHandoffEndKm, 200), "core/handoff preferences did not round-trip");
+            && Mathf.IsEqualApprox(s.FarHandoffStartKm, 90) && Mathf.IsEqualApprox(s.FarHandoffEndKm, 200) && Mathf.IsEqualApprox(s.FieldShotIntervalSeconds, 60), "core/handoff preferences did not round-trip");
 
         // Setter clamps and NaN fallback.
         second.SetPulsePeriodSeconds(1); second.SetPulseSpeedKmPerSecond(1e9f); second.SetPulseSpeedMode(9); second.SetPulseDirection(-3);
@@ -67,6 +68,7 @@ public partial class EmitterGridSettingsSmoke : Node
         second.SetHaloWidthMeters(1e9f); second.SetMinPixelWidth(float.PositiveInfinity); second.SetNearLayerMaxKm(5000); second.SetCloudInteraction(77);
         second.SetCloudSampleHz(0); second.SetCrawlLengthKm(1e9f);
         second.SetCoreDepthThreshold(0); second.SetCoreDepthMinPixels(99); second.SetFarHandoffStartKm(1e9f); second.SetFarHandoffEndKm(float.NaN);
+        second.SetFieldShotIntervalSeconds(1e9f);
         s = second.Settings;
         var (pMin, pMax) = GameplayEmitterGridDefaults.RangeOf(nameof(GameplayEmitterGridSettings.PulsePeriodSeconds));
         Require(Mathf.IsEqualApprox(s.PulsePeriodSeconds, pMin) && Mathf.IsEqualApprox(pMax, 1800), "period lower bound not enforced");
@@ -76,23 +78,38 @@ public partial class EmitterGridSettingsSmoke : Node
             && Mathf.IsEqualApprox(s.HaloWidthMeters, 3000) && Mathf.IsEqualApprox(s.MinPixelWidth, 1.5f) && Mathf.IsEqualApprox(s.NearLayerMaxKm, 850)
             && s.CloudInteraction == 3 && Mathf.IsEqualApprox(s.CloudSampleHz, 2) && Mathf.IsEqualApprox(s.CrawlLengthKm, 150), "setter bounds were not enforced");
         Require(Mathf.IsEqualApprox(s.CoreDepthThreshold, .05f) && Mathf.IsEqualApprox(s.CoreDepthMinPixels, 8) && Mathf.IsEqualApprox(s.FarHandoffStartKm, 650)
-            && Mathf.IsEqualApprox(s.FarHandoffEndKm, 172), "core/handoff setter bounds were not enforced");
+            && Mathf.IsEqualApprox(s.FarHandoffEndKm, 172) && Mathf.IsEqualApprox(s.FieldShotIntervalSeconds, 1800), "core/handoff setter bounds were not enforced");
+        second.SetFieldShotIntervalSeconds(-5);
+        Require(Mathf.IsEqualApprox(second.Settings.FieldShotIntervalSeconds, 0), "field shot interval lower bound (0 = off) not enforced");
+        second.SetFieldShotIntervalSeconds(float.NaN);
+        Require(Mathf.IsEqualApprox(second.Settings.FieldShotIntervalSeconds, 300), "field shot interval NaN did not fall back to the default");
 
         using var dirty = new GameplayEmitterGridSettings { PulsePeriodSeconds = 99999, PulseSpeedKmPerSecond = float.NaN, PulseSpeedMode = 5, PulseDirection = -2,
             PulseWakeLevel = float.PositiveInfinity, DayPeakIntensity = -3, BaseEmission = 1e9f, HaloAmplitude = float.NaN, FarCompensation = 9, HeadSpriteNearKm = 1,
-            CloudSampleHz = 1e9f, CrawlRadiusKm = -1, GridEnabled = false, DepthWriteCore = false, CoreDepthThreshold = float.NaN, CoreDepthMinPixels = -4, FarHandoffStartKm = float.NaN, FarHandoffEndKm = 1e9f, FarHandoffFollowsClouds = false };
+            CloudSampleHz = 1e9f, CrawlRadiusKm = -1, GridEnabled = false, DepthWriteCore = false, CoreDepthThreshold = float.NaN, CoreDepthMinPixels = -4, FarHandoffStartKm = float.NaN, FarHandoffEndKm = 1e9f, FarHandoffFollowsClouds = false, FieldShotIntervalSeconds = float.NaN };
         using var clean = GameplayEmitterGridDefaults.Sanitize(dirty);
         Require(Mathf.IsEqualApprox(clean.PulsePeriodSeconds, 1800) && Mathf.IsEqualApprox(clean.PulseSpeedKmPerSecond, 104.7f) && clean.PulseSpeedMode == 1 && clean.PulseDirection == 0
             && Mathf.IsEqualApprox(clean.PulseWakeLevel, .05f) && Mathf.IsEqualApprox(clean.DayPeakIntensity, 0) && Mathf.IsEqualApprox(clean.BaseEmission, 20)
             && Mathf.IsEqualApprox(clean.HaloAmplitude, .12f) && Mathf.IsEqualApprox(clean.FarCompensation, 1) && Mathf.IsEqualApprox(clean.HeadSpriteNearKm, 50)
             && Mathf.IsEqualApprox(clean.CloudSampleHz, 30) && Mathf.IsEqualApprox(clean.CrawlRadiusKm, 1) && !clean.GridEnabled && !clean.DepthWriteCore
             && Mathf.IsEqualApprox(clean.CoreDepthThreshold, .35f) && Mathf.IsEqualApprox(clean.CoreDepthMinPixels, 1) && Mathf.IsEqualApprox(clean.FarHandoffStartKm, 120)
-            && Mathf.IsEqualApprox(clean.FarHandoffEndKm, 700) && !clean.FarHandoffFollowsClouds, "Sanitize bounds were not enforced");
+            && Mathf.IsEqualApprox(clean.FarHandoffEndKm, 700) && !clean.FarHandoffFollowsClouds && Mathf.IsEqualApprox(clean.FieldShotIntervalSeconds, 300), "Sanitize bounds were not enforced");
 
         second.Reset();
         Require(second.Save(), "grid reset did not save");
         var reset = new GameplayEmitterGridDefaults(path); reset.Load();
         Require(IsDefault(reset.Settings), "grid reset did not restore defaults");
+
+        // An older file without the field loads the default.
+        second.SetFieldShotIntervalSeconds(45);
+        Require(second.Save(), "field shot interval save failed");
+        string full = ProjectSettings.GlobalizePath(path);
+        string[] lines = System.IO.File.ReadAllLines(full);
+        string[] kept = Array.FindAll(lines, line => !line.StartsWith("FieldShotIntervalSeconds =", StringComparison.Ordinal));
+        Require(kept.Length < lines.Length, "saved file did not contain the field shot interval line");
+        System.IO.File.WriteAllLines(full, kept);
+        var older = new GameplayEmitterGridDefaults(path); older.Load();
+        Require(Mathf.IsEqualApprox(older.Settings.FieldShotIntervalSeconds, 300), "older file without the field did not load the default");
 
         string invalidParent = path + ".invalid-parent.tres";
         Require(ResourceSaver.Save(new GameplayEmitterGridSettings(), invalidParent) == Error.Ok, "invalid-path fixture write failed");

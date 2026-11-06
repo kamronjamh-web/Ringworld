@@ -1,0 +1,202 @@
+[gd_scene format=3]
+
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B0.res" id="1_o2fyp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B1.res" id="2_diear"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B2.res" id="3_032f4"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B3.res" id="4_qun78"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B4.res" id="5_wxnim"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B5.res" id="6_so3g6"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B6.res" id="7_ln3cx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Champagne_structural_trim_B7.res" id="8_8diyp"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B0.res" id="9_g6c1q"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B1.res" id="10_fjnxw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B2.res" id="11_tf8qm"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B3.res" id="12_wg0wd"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B4.res" id="13_rlxqa"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B5.res" id="14_lsnhs"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B6.res" id="15_5wj2p"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Cyan_energized_conduits_B7.res" id="16_uteae"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B0.res" id="17_yvbib"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B1.res" id="18_8gmqx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B2.res" id="19_c7ywk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B3.res" id="20_mgmxh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B4.res" id="21_5orou"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B5.res" id="22_mhv3n"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B6.res" id="23_mf8ip"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Gunmetal_mechanisms_B7.res" id="24_lblly"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Intake_black_cavity_B0.res" id="25_edu5x"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B0.res" id="26_yi8yk"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B1.res" id="27_8kpg7"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B2.res" id="28_rga0f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B3.res" id="29_s8vxn"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B4.res" id="30_ea1wx"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B5.res" id="31_22ln0"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B6.res" id="32_umr5a"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Pale_ceramic_titanium_B7.res" id="33_kxen1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B0.res" id="34_b65im"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B1.res" id="35_a07ee"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B2.res" id="36_v20s5"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B3.res" id="37_qv3yw"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B4.res" id="38_bod5f"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B5.res" id="39_bwrxu"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B6.res" id="40_v0ndv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Recessed_graphite_steel_B7.res" id="41_ljr5w"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B0.res" id="42_ockx1"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B1.res" id="43_fty4d"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B2.res" id="44_riagg"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B3.res" id="45_vv4sv"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B4.res" id="46_541qh"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B5.res" id="47_lcfrb"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B6.res" id="48_1qclj"]
+[ext_resource type="ArrayMesh" path="res://assets/poi/atmosphere_projector/merged/meshes/AtmosphereProjector_Tower_Warm_edge_alloy_B7.res" id="49_7evb3"]
+
+[node name="AtmosphereProjectorMerged" type="Node3D" unique_id=17976140]
+
+[node name="Tower" type="Node3D" parent="." unique_id=1601067781]
+
+[node name="Champagne_structural_trim_B0" type="MeshInstance3D" parent="Tower" unique_id=317040285]
+mesh = ExtResource("1_o2fyp")
+
+[node name="Champagne_structural_trim_B1" type="MeshInstance3D" parent="Tower" unique_id=1397985501]
+mesh = ExtResource("2_diear")
+
+[node name="Champagne_structural_trim_B2" type="MeshInstance3D" parent="Tower" unique_id=1520920167]
+mesh = ExtResource("3_032f4")
+
+[node name="Champagne_structural_trim_B3" type="MeshInstance3D" parent="Tower" unique_id=726129037]
+mesh = ExtResource("4_qun78")
+
+[node name="Champagne_structural_trim_B4" type="MeshInstance3D" parent="Tower" unique_id=1240660262]
+mesh = ExtResource("5_wxnim")
+
+[node name="Champagne_structural_trim_B5" type="MeshInstance3D" parent="Tower" unique_id=1463954849]
+mesh = ExtResource("6_so3g6")
+
+[node name="Champagne_structural_trim_B6" type="MeshInstance3D" parent="Tower" unique_id=1871825729]
+mesh = ExtResource("7_ln3cx")
+
+[node name="Champagne_structural_trim_B7" type="MeshInstance3D" parent="Tower" unique_id=829142158]
+mesh = ExtResource("8_8diyp")
+
+[node name="Cyan_energized_conduits_B0" type="MeshInstance3D" parent="Tower" unique_id=573688165]
+mesh = ExtResource("9_g6c1q")
+
+[node name="Cyan_energized_conduits_B1" type="MeshInstance3D" parent="Tower" unique_id=1350640193]
+mesh = ExtResource("10_fjnxw")
+
+[node name="Cyan_energized_conduits_B2" type="MeshInstance3D" parent="Tower" unique_id=1131694189]
+mesh = ExtResource("11_tf8qm")
+
+[node name="Cyan_energized_conduits_B3" type="MeshInstance3D" parent="Tower" unique_id=581678314]
+mesh = ExtResource("12_wg0wd")
+
+[node name="Cyan_energized_conduits_B4" type="MeshInstance3D" parent="Tower" unique_id=1924913587]
+mesh = ExtResource("13_rlxqa")
+
+[node name="Cyan_energized_conduits_B5" type="MeshInstance3D" parent="Tower" unique_id=1285955634]
+mesh = ExtResource("14_lsnhs")
+
+[node name="Cyan_energized_conduits_B6" type="MeshInstance3D" parent="Tower" unique_id=563890163]
+mesh = ExtResource("15_5wj2p")
+
+[node name="Cyan_energized_conduits_B7" type="MeshInstance3D" parent="Tower" unique_id=1523963133]
+mesh = ExtResource("16_uteae")
+
+[node name="Gunmetal_mechanisms_B0" type="MeshInstance3D" parent="Tower" unique_id=305485254]
+mesh = ExtResource("17_yvbib")
+
+[node name="Gunmetal_mechanisms_B1" type="MeshInstance3D" parent="Tower" unique_id=418201196]
+mesh = ExtResource("18_8gmqx")
+
+[node name="Gunmetal_mechanisms_B2" type="MeshInstance3D" parent="Tower" unique_id=93491298]
+mesh = ExtResource("19_c7ywk")
+
+[node name="Gunmetal_mechanisms_B3" type="MeshInstance3D" parent="Tower" unique_id=406349052]
+mesh = ExtResource("20_mgmxh")
+
+[node name="Gunmetal_mechanisms_B4" type="MeshInstance3D" parent="Tower" unique_id=113578187]
+mesh = ExtResource("21_5orou")
+
+[node name="Gunmetal_mechanisms_B5" type="MeshInstance3D" parent="Tower" unique_id=421792717]
+mesh = ExtResource("22_mhv3n")
+
+[node name="Gunmetal_mechanisms_B6" type="MeshInstance3D" parent="Tower" unique_id=1197073511]
+mesh = ExtResource("23_mf8ip")
+
+[node name="Gunmetal_mechanisms_B7" type="MeshInstance3D" parent="Tower" unique_id=1212754885]
+mesh = ExtResource("24_lblly")
+
+[node name="Intake_black_cavity_B0" type="MeshInstance3D" parent="Tower" unique_id=1195612184]
+mesh = ExtResource("25_edu5x")
+
+[node name="Pale_ceramic_titanium_B0" type="MeshInstance3D" parent="Tower" unique_id=762712668]
+mesh = ExtResource("26_yi8yk")
+
+[node name="Pale_ceramic_titanium_B1" type="MeshInstance3D" parent="Tower" unique_id=532597727]
+mesh = ExtResource("27_8kpg7")
+
+[node name="Pale_ceramic_titanium_B2" type="MeshInstance3D" parent="Tower" unique_id=138966248]
+mesh = ExtResource("28_rga0f")
+
+[node name="Pale_ceramic_titanium_B3" type="MeshInstance3D" parent="Tower" unique_id=60514591]
+mesh = ExtResource("29_s8vxn")
+
+[node name="Pale_ceramic_titanium_B4" type="MeshInstance3D" parent="Tower" unique_id=1389702395]
+mesh = ExtResource("30_ea1wx")
+
+[node name="Pale_ceramic_titanium_B5" type="MeshInstance3D" parent="Tower" unique_id=1531374791]
+mesh = ExtResource("31_22ln0")
+
+[node name="Pale_ceramic_titanium_B6" type="MeshInstance3D" parent="Tower" unique_id=720678325]
+mesh = ExtResource("32_umr5a")
+
+[node name="Pale_ceramic_titanium_B7" type="MeshInstance3D" parent="Tower" unique_id=1778441143]
+mesh = ExtResource("33_kxen1")
+
+[node name="Recessed_graphite_steel_B0" type="MeshInstance3D" parent="Tower" unique_id=250633868]
+mesh = ExtResource("34_b65im")
+
+[node name="Recessed_graphite_steel_B1" type="MeshInstance3D" parent="Tower" unique_id=1138993538]
+mesh = ExtResource("35_a07ee")
+
+[node name="Recessed_graphite_steel_B2" type="MeshInstance3D" parent="Tower" unique_id=1112064286]
+mesh = ExtResource("36_v20s5")
+
+[node name="Recessed_graphite_steel_B3" type="MeshInstance3D" parent="Tower" unique_id=1768793681]
+mesh = ExtResource("37_qv3yw")
+
+[node name="Recessed_graphite_steel_B4" type="MeshInstance3D" parent="Tower" unique_id=1117444342]
+mesh = ExtResource("38_bod5f")
+
+[node name="Recessed_graphite_steel_B5" type="MeshInstance3D" parent="Tower" unique_id=1612359530]
+mesh = ExtResource("39_bwrxu")
+
+[node name="Recessed_graphite_steel_B6" type="MeshInstance3D" parent="Tower" unique_id=1768754516]
+mesh = ExtResource("40_v0ndv")
+
+[node name="Recessed_graphite_steel_B7" type="MeshInstance3D" parent="Tower" unique_id=1759410531]
+mesh = ExtResource("41_ljr5w")
+
+[node name="Warm_edge_alloy_B0" type="MeshInstance3D" parent="Tower" unique_id=1209738897]
+mesh = ExtResource("42_ockx1")
+
+[node name="Warm_edge_alloy_B1" type="MeshInstance3D" parent="Tower" unique_id=1124580397]
+mesh = ExtResource("43_fty4d")
+
+[node name="Warm_edge_alloy_B2" type="MeshInstance3D" parent="Tower" unique_id=1291023968]
+mesh = ExtResource("44_riagg")
+
+[node name="Warm_edge_alloy_B3" type="MeshInstance3D" parent="Tower" unique_id=1574513986]
+mesh = ExtResource("45_vv4sv")
+
+[node name="Warm_edge_alloy_B4" type="MeshInstance3D" parent="Tower" unique_id=1778713540]
+mesh = ExtResource("46_541qh")
+
+[node name="Warm_edge_alloy_B5" type="MeshInstance3D" parent="Tower" unique_id=549739904]
+mesh = ExtResource("47_lcfrb")
+
+[node name="Warm_edge_alloy_B6" type="MeshInstance3D" parent="Tower" unique_id=13212287]
+mesh = ExtResource("48_1qclj")
+
+[node name="Warm_edge_alloy_B7" type="MeshInstance3D" parent="Tower" unique_id=275750276]
+mesh = ExtResource("49_7evb3")

@@ -24,14 +24,23 @@ uniform float terrain_light_floor : hint_range(0.0, 0.25) = 0.035;
 uniform bool structural_scale_cues_enabled = true;
 uniform float ring_width_meters = 318000.0;
 uniform float structural_wall_top_meters = 10000.0;
-uniform float structural_longitudinal_spacing_meters = 250000.0;
-uniform float structural_longitudinal_half_width_meters = 1200.0;
+uniform float structural_longitudinal_spacing_meters = 249332.8; // Certified circumference / 126 (RingStructuralCues.ShaderDefaultSpacingMeters); the owners push the live value
+uniform float structural_longitudinal_half_width_meters = 90.0;   // the power conduit: half the projector's 180 m along-wall footprint (RingStructuralCues.ConduitHalfWidthMeters)
 uniform float structural_cross_spacing_meters = 50000.0;
 uniform float structural_cross_half_width_meters = 450.0;
 uniform float structural_top_rail_half_width_meters = 350.0;
 uniform vec3 structural_cue_color : source_color = vec3(0.08, 0.72, 0.82);
 uniform float structural_cue_day_energy : hint_range(0.0, 2.0) = 0.16;
 uniform float structural_cue_night_energy : hint_range(0.0, 4.0) = 0.85;
+// Close-up fade of the top rail and the cross grid (metres from the camera: x = cue gone, y = cue full; x >= y disables it). They are 0.7-0.9 km wide,
+// made to read from tens of kilometres; from the wall top they flooded the walls with flat emissive teal, so the near proxy (the only tier drawn that close)
+// fades them in over 1.5-5 km. The global hull starts at the 4.75 km hand-off, where the fade is already 0.98. The power conduits (the longitudinal lines)
+// are only 180 m wide and never fade.
+uniform vec2 structural_cue_near_fade_meters = vec2(0.0, 0.0);
+// Power conduits (user decision 2026-11-05): the longitudinal lines are power running up the rim wall to the field projectors, one per WO8 anchor at C / 126,
+// as wide as the projector's along-wall footprint (180 m), a crisp band up the inner face, over the cap and down the outer face, with a slow upward pulse.
+// ring_conduit_phase = weather clock / period mod 1 (RingContainmentField publishes it; 0 = a static conduit, paused clocks freeze it).
+global uniform float ring_conduit_phase;
 // Proxy rim walls carry UV2 = (terrain floor at the wall foot, vertex vertical) in canonical metres; while enabled, the inner (front-facing) side below that floor is discarded so a coarse shell never paints over terrain the far layer draws in front of it.
 uniform bool inner_face_floor_enabled = false;
 // Above the rim walls the main environment ambient fades to space while the far layer keeps its surface snapshot, so a sun-away
@@ -55,17 +64,21 @@ float periodic_structure_line(float coordinate, float spacing, float half_width)
 		cell_distance);
 }
 
-float sample_structural_scale_cues(vec3 sample_world_position, float wall_face) {
-	if (!structural_scale_cues_enabled) return 0.0;
+// x = the power conduit (longitudinal line) 0..1, anti-aliased with the pixel footprint (around metres per pixel) and kept at least about a pixel wide,
+// energy-preserving down to 35 % so it stays visible on the far tiers; y = the rail and cross grid (the bands that fade up close).
+vec2 sample_structural_scale_cues(vec3 sample_world_position, float wall_face, float pixel_m) {
+	if (!structural_scale_cues_enabled) return vec2(0.0);
 	vec3 relative = sample_world_position - ring_center;
 	float angle = atan(relative.z, relative.x);
 	float around = angle * max(ring_radius_meters, 1.0);
 	float across = relative.y + ring_width_meters * 0.5;
 	float altitude = ring_radius_meters - length(relative.xz);
-	float longitudinal = periodic_structure_line(
-		around,
-		structural_longitudinal_spacing_meters,
-		structural_longitudinal_half_width_meters);
+	float spacing = max(structural_longitudinal_spacing_meters, 1.0);
+	float conduit_distance = abs(mod(around + spacing * 0.5, spacing) - spacing * 0.5);
+	float half_width = max(structural_longitudinal_half_width_meters, 0.001);
+	float fw = max(pixel_m, 0.0001);
+	float drawn = max(half_width, 0.75 * fw);
+	float conduit = (1.0 - smoothstep(drawn - 0.5 * fw, drawn + 0.5 * fw, conduit_distance)) * clamp(half_width / drawn, 0.35, 1.0);
 	float cross_grid = periodic_structure_line(
 		across,
 		structural_cross_spacing_meters,
@@ -75,8 +88,19 @@ float sample_structural_scale_cues(vec3 sample_world_position, float wall_face) 
 		max(structural_top_rail_half_width_meters * 2.0, structural_top_rail_half_width_meters + 1.0),
 		abs(altitude - structural_wall_top_meters));
 	// The cross grid is placed by the across coordinate, which is constant on a rim wall face: keep it off the walls so the
-	// wall at across = 0 is not painted solid (the top rail and longitudinal bars still read there).
-	return clamp(max(top_rail, max(longitudinal, cross_grid * 0.48 * (1.0 - wall_face))), 0.0, 1.0);
+	// wall at across = 0 is not painted solid (the top rail and the conduits still read there).
+	// The rim wall top cap (WO12) is the only horizontal hull surface above half the wall height (all closures are kilometres below the floor); the across cross grid and the top rail would paint it solid, so only the conduits continue over it.
+	float wall_top_cap = (1.0 - wall_face) * step(structural_wall_top_meters * 0.5, altitude);
+	float bands = clamp(max(top_rail * (1.0 - wall_top_cap), cross_grid * 0.48 * (1.0 - wall_face) * (1.0 - wall_top_cap)), 0.0, 1.0);
+	return vec2(clamp(conduit, 0.0, 1.0), bands);
+}
+
+// The conduit's slow upward power pulse (0..1): crests travel up the faces toward the wall top, one every 16 s; 0.5 when the phase is static.
+float structural_conduit_pulse(vec3 sample_world_position) {
+	vec3 relative = sample_world_position - ring_center;
+	float altitude = ring_radius_meters - length(relative.xz);
+	float wavelength = max(structural_wall_top_meters * 0.12, 0.001);
+	return 0.5 + 0.5 * sin(6.2831853 * (altitude / wavelength - ring_conduit_phase));
 }
 
 void vertex() {
@@ -127,8 +151,17 @@ void fragment() {
 		* hemisphere_brightness;
 	// World Y is the ring axis: a rim wall face has a normal along it.
 	float wall_face = smoothstep(0.7, 0.9, abs(normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz).y));
-	float structural_cue = sample_structural_scale_cues(world_position, wall_face);
-	lit_color = mix(lit_color, structural_cue_color, structural_cue * 0.34);
+	// Around metres per pixel for the conduit's anti-aliasing (world-space derivative of the position along the ring).
+	vec3 around_dir = normalize(cross(vec3(0.0, 1.0, 0.0), world_position - ring_center));
+	float pixel_m = max(abs(dot(dFdx(world_position), around_dir)), abs(dot(dFdy(world_position), around_dir)));
+	vec2 cues = sample_structural_scale_cues(world_position, wall_face, pixel_m);
+	float bands = cues.y;
+	if (structural_cue_near_fade_meters.y > structural_cue_near_fade_meters.x)
+		bands *= smoothstep(structural_cue_near_fade_meters.x, structural_cue_near_fade_meters.y, distance_to_camera);
+	float conduit = cues.x;
+	float conduit_glow = conduit * mix(0.7, 1.15, structural_conduit_pulse(world_position));
+	float structural_cue = max(bands, conduit_glow);
+	lit_color = mix(lit_color, structural_cue_color, max(bands * 0.34, conduit * 0.55));
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
 	ALBEDO = lit_color * haze.T;
 	EMISSION = ALBEDO * terrain_light_floor

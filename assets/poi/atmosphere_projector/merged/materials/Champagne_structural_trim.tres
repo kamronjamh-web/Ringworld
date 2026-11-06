@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_rs2mg"]
+
+[resource]
+resource_name = "Champagne structural trim"
+render_priority = 0
+shader = ExtResource("1_rs2mg")
+shader_parameter/albedo_color = Color(0.6651851, 0.57487106, 0.4100209, 1)
+shader_parameter/metallic_value = 0.75
+shader_parameter/roughness_value = 0.28
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0, 0, 0, 1)
+shader_parameter/emission_energy = 1.0

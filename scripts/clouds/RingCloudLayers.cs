@@ -215,8 +215,23 @@ public static class RingCloudLayers
     public static CloudLayerColumn Evaluate(in CloudLayerPoint point, IReadOnlyList<CloudLayerSystem> systems, CloudLayerTable table)
         => Resolve(EvaluateMap(point, systems, table), table);
 
+    /// <summary>
+    /// <see cref="Evaluate"/> under the containment field: every top is also capped at the one cloud ceiling at the point's across,
+    /// ContainmentFieldGeometry.CloudCeilingAt (min(18 km, H - 300 m)). Away from the rims that is exactly 18 km, so the result equals <see cref="Evaluate"/>.
+    /// </summary>
+    public static CloudLayerColumn Evaluate(in CloudLayerPoint point, IReadOnlyList<CloudLayerSystem> systems, CloudLayerTable table,
+        in ContainmentField.ContainmentFieldProfile field)
+        => Resolve(EvaluateMap(point, systems, table), table, (float)ContainmentField.ContainmentFieldGeometry.CloudCeilingAt(field, point.CanonicalAcross));
+
     /// <summary>What the shader derives from the stored map values (the menu bases need no rebuild).</summary>
-    public static CloudLayerColumn Resolve(Vector4 map, CloudLayerTable table)
+    public static CloudLayerColumn Resolve(Vector4 map, CloudLayerTable table) => Resolve(map, table, CeilingMeters);
+
+    /// <summary>
+    /// <see cref="Resolve(Vector4, CloudLayerTable)"/> with the ceiling given (the layers block's header0.x in the shader; the field's
+    /// <c>min(18 km, H - 300 m)</c> under the containment field). The layer table's own top caps (7 km mid, 5 km low) sit far below the lowest field ceiling
+    /// (11.7 km), so this only ever bites a high layer or a custom table.
+    /// </summary>
+    public static CloudLayerColumn Resolve(Vector4 map, CloudLayerTable table, float ceilingMeters)
     {
         var slots = new CloudLayerSlot[CloudLayerTable.MaximumLayers];
         float weatherness = map.W;
@@ -231,7 +246,7 @@ public static class RingCloudLayers
             float convective = layer.ConvectiveThicknessMeters.X + (layer.ConvectiveThicknessMeters.Y - layer.ConvectiveThicknessMeters.X) * coverage;
             float stratiform = layer.StratiformThicknessMeters.X + (layer.StratiformThicknessMeters.Y - layer.StratiformThicknessMeters.X) * coverage;
             float topMeters = baseMeters + convective + (stratiform - convective) * stratiformity;
-            topMeters = MathF.Max(baseMeters, MathF.Min(MathF.Min(topMeters, layer.TopCapMeters), CeilingMeters));
+            topMeters = MathF.Max(baseMeters, MathF.Min(MathF.Min(topMeters, layer.TopCapMeters), MathF.Min(ceilingMeters, CeilingMeters)));
             slots[i] = new CloudLayerSlot(coverage, baseMeters, topMeters, stratiformity);
         }
         return new CloudLayerColumn(weatherness, slots);

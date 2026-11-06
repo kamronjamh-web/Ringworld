@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Lightning;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
@@ -190,10 +191,8 @@ public partial class RingScaledFarViewport : Node
 	public float HullNightBrightness { get; set; } = 0.75f;
 	[ExportGroup("Structural scale cues")]
 	[Export] public bool StructuralScaleCuesEnabled { get; set; } = true;
-	[Export(PropertyHint.Range, "25000,1000000,5000")]
-	public float StructuralLongitudinalSpacingMeters { get; set; } = 250000.0f;
 	[Export(PropertyHint.Range, "100,10000,100")]
-	public float StructuralLongitudinalHalfWidthMeters { get; set; } = 1200.0f;
+	public float StructuralLongitudinalHalfWidthMeters { get; set; } = RingStructuralCues.ConduitHalfWidthMeters;
 	[Export(PropertyHint.Range, "5000,200000,1000")]
 	public float StructuralCrossSpacingMeters { get; set; } = 50000.0f;
 	[Export(PropertyHint.Range, "50,5000,50")]
@@ -1290,7 +1289,7 @@ public partial class RingScaledFarViewport : Node
 			_hullMaterial.SetShaderParameter("structural_scale_cues_enabled", StructuralScaleCuesEnabled);
 			_hullMaterial.SetShaderParameter(
 				"structural_longitudinal_spacing_meters",
-				StructuralLongitudinalSpacingMeters * CoordinateScale);
+				(float)(RingStructuralCues.LongitudinalSpacingMeters(_circumferenceMeters) * CoordinateScale));
 			_hullMaterial.SetShaderParameter(
 				"structural_longitudinal_half_width_meters",
 				StructuralLongitudinalHalfWidthMeters * CoordinateScale);
@@ -1854,6 +1853,7 @@ public partial class RingScaledFarViewport : Node
 			: -Math.Max(1.0, StructuralDepthMeters);
 		double terrainBottom = _grid?.TerrainBottomGlobalY ?? -8192.0;
 		double lowerHullTop = _grid?.GetLowerHullTopGlobalY() ?? bottom;
+		double wallDepth = RimWallDescription.Current.DepthMeters;
 		using var surface = new SurfaceTool();
 		surface.Begin(Mesh.PrimitiveType.Triangles);
 		// Shared wall/plane corner positions must not average the wall normal with the cavity planes.
@@ -1863,8 +1863,8 @@ public partial class RingScaledFarViewport : Node
 			double a0 = x * aroundStep, a1 = (x + 1) * aroundStep;
 			if (BuildStructuralUnderside)
 			{
-				AddTriangle(surface, ScaledPoint(a0, bottom, 0.0), ScaledPoint(a1, bottom, RingWidthMeters), ScaledPoint(a1, bottom, 0.0), HullColor);
-				AddTriangle(surface, ScaledPoint(a0, bottom, 0.0), ScaledPoint(a0, bottom, RingWidthMeters), ScaledPoint(a1, bottom, RingWidthMeters), HullColor);
+				AddTriangle(surface, ScaledPoint(a0, bottom, -wallDepth), ScaledPoint(a1, bottom, RingWidthMeters + wallDepth), ScaledPoint(a1, bottom, -wallDepth), HullColor);
+				AddTriangle(surface, ScaledPoint(a0, bottom, -wallDepth), ScaledPoint(a0, bottom, RingWidthMeters + wallDepth), ScaledPoint(a1, bottom, RingWidthMeters + wallDepth), HullColor);
 			}
 			if (BuildTerrainRoofUnderside)
 			{
@@ -1880,6 +1880,14 @@ public partial class RingScaledFarViewport : Node
 			}
 			AddWall(surface, a0, a1, 0.0, bottom, StructuralWallTopMeters, true);
 			AddWall(surface, a0, a1, RingWidthMeters, bottom, StructuralWallTopMeters, false);
+			if (wallDepth > 0.0)
+			{
+				// Rim wall volume (WO12): outer faces and flat top caps (also the fast-travel backdrop cross-section).
+				AddWall(surface, a0, a1, -wallDepth, bottom, StructuralWallTopMeters, false);
+				AddWall(surface, a0, a1, RingWidthMeters + wallDepth, bottom, StructuralWallTopMeters, true);
+				AddCapQuad(surface, a0, a1, 0.0, -wallDepth, StructuralWallTopMeters);
+				AddCapQuad(surface, a0, a1, RingWidthMeters + wallDepth, RingWidthMeters, StructuralWallTopMeters);
+			}
             if ((x & 31) == 31) yield return true;
 		}
 		yield return true;
@@ -3671,6 +3679,16 @@ public partial class RingScaledFarViewport : Node
 			AddTriangle(surface, p3, p1, p0, HullColor);
 			AddTriangle(surface, p1, p3, p2, HullColor);
 		}
+	}
+
+	/// <summary>Flat rim wall top cap at top, front face up (radially inward). acrossHigh is the larger across.</summary>
+	private void AddCapQuad(SurfaceTool surface, double a0, double a1, double acrossHigh, double acrossLow, double top)
+	{
+		if (acrossLow > acrossHigh) (acrossHigh, acrossLow) = (acrossLow, acrossHigh);
+		Vector3 q0 = ScaledPoint(a0, top, acrossHigh), q1 = ScaledPoint(a1, top, acrossHigh);
+		Vector3 q2 = ScaledPoint(a1, top, acrossLow), q3 = ScaledPoint(a0, top, acrossLow);
+		AddTriangle(surface, q0, q1, q3, HullColor);
+		AddTriangle(surface, q1, q2, q3, HullColor);
 	}
 
 	private static void AddTriangle(SurfaceTool surface, Vector3 a, Vector3 b, Vector3 c, Color color)

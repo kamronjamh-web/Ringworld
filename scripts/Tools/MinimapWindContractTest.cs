@@ -48,6 +48,7 @@ public partial class MinimapWindContractTest : RefCounted
         world.GetNodeOrNull<RingWetWorld>("WetWorld")?.Set("PreferencesPath", directory + "/wet-world.tres");
         drawer.InstallWeatherAudioDefaults(directory + "/weather-audio.tres");
         drawer.InstallLightningDefaults(directory + "/lightning.tres");
+        drawer.InstallContainmentFieldDefaults(directory + "/containment-field.tres");
         world.GetNode<RingLocalWeatherEffects>("LocalWeatherEffects").RainHazePreferencesPath = directory + "/rain-haze.tres";
         var weather = world.GetNode<RingVolumetricCloudLayer>("RingVolumetricClouds");
         weather.Set("WindPreferencesPath", directory + "/wind.tres");

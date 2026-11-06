@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase2;
@@ -104,10 +105,8 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     public float HullNightBrightness { get; set; } = 0.75f;
     [ExportGroup("Structural scale cues")]
     [Export] public bool StructuralScaleCuesEnabled { get; set; } = true;
-    [Export(PropertyHint.Range, "25000,1000000,5000")]
-    public float StructuralLongitudinalSpacingMeters { get; set; } = 250000.0f;
     [Export(PropertyHint.Range, "100,10000,100")]
-    public float StructuralLongitudinalHalfWidthMeters { get; set; } = 1200.0f;
+    public float StructuralLongitudinalHalfWidthMeters { get; set; } = RingStructuralCues.ConduitHalfWidthMeters;
     [Export(PropertyHint.Range, "5000,200000,1000")]
     public float StructuralCrossSpacingMeters { get; set; } = 50000.0f;
     [Export(PropertyHint.Range, "50,5000,50")]
@@ -1506,7 +1505,9 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             _hullMaterial.SetShaderParameter("night_tint", new Vector3(NightTint.R, NightTint.G, NightTint.B));
             _hullMaterial.SetShaderParameter("structural_wall_top_meters", _grid!.GetStructuralWallTopGlobalY());
             _hullMaterial.SetShaderParameter("structural_scale_cues_enabled", StructuralScaleCuesEnabled);
-            _hullMaterial.SetShaderParameter("structural_longitudinal_spacing_meters", StructuralLongitudinalSpacingMeters);
+            _hullMaterial.SetShaderParameter(
+                "structural_longitudinal_spacing_meters",
+                (float)RingStructuralCues.LongitudinalSpacingMeters(_grid!.GetCanonicalRingCircumferenceMeters64()));
             _hullMaterial.SetShaderParameter("structural_longitudinal_half_width_meters", StructuralLongitudinalHalfWidthMeters);
             _hullMaterial.SetShaderParameter("structural_cross_spacing_meters", StructuralCrossSpacingMeters);
             _hullMaterial.SetShaderParameter("structural_cross_half_width_meters", StructuralCrossHalfWidthMeters);
@@ -1602,6 +1603,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             * VoxelConstants.VoxelSizeMeters;
         float hullTop = _grid.GetStructuralWallTopGlobalY();
         float verticalSpacing = (hullTop - hullBottom) / verticalCount;
+        double wallDepth = RimWallDescription.Current.DepthMeters;
         for (int segmentIndex = 0; segmentIndex < segmentCount; segmentIndex++)
         {
             int aroundStartIndex = segmentIndex * aroundCount / segmentCount;
@@ -1610,8 +1612,19 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             surface.Begin(Mesh.PrimitiveType.Triangles);
             if (BuildStructuralEdgeWalls)
             {
+                // Flat normals: the wall top cap must not be averaged with the faces at shared edges (the planar inner faces are unchanged).
+                surface.SetSmoothGroup(uint.MaxValue);
                 AppendHullWallSegment(surface, 0.0f, aroundStartIndex, aroundEndIndex, verticalCount, aroundSpacing, verticalSpacing, hullBottom, reverse: true);
                 AppendHullWallSegment(surface, RingWidthMeters, aroundStartIndex, aroundEndIndex, verticalCount, aroundSpacing, verticalSpacing, hullBottom, reverse: false);
+                if (wallDepth > 0.0)
+                {
+                    // Rim wall volume (WO12): outer faces (one vertical cell) and flat top caps. Outer at -D faces -across, at W+D faces +across.
+                    float outerSpacing = hullTop - hullBottom;
+                    AppendHullWallSegment(surface, -wallDepth, aroundStartIndex, aroundEndIndex, 1, aroundSpacing, outerSpacing, hullBottom, reverse: false);
+                    AppendHullWallSegment(surface, RingWidthMeters + wallDepth, aroundStartIndex, aroundEndIndex, 1, aroundSpacing, outerSpacing, hullBottom, reverse: true);
+                    AppendHullWallCapSegment(surface, 0.0, -wallDepth, aroundStartIndex, aroundEndIndex, aroundSpacing, hullTop);
+                    AppendHullWallCapSegment(surface, RingWidthMeters + wallDepth, RingWidthMeters, aroundStartIndex, aroundEndIndex, aroundSpacing, hullTop);
+                }
                 surface.GenerateNormals();
                 surface.Index();
                 var segment = new MeshInstance3D
@@ -1682,7 +1695,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
             _regionalVisibilityDirty = true;
             yield return true;
         }
-        GD.Print($"Segmented regional structural hull HLOD: segments={segmentCount}, edges={(BuildStructuralEdgeWalls ? 2 : 0)}, underside={BuildStructuralUnderside}, roof={BuildTerrainRoofUnderside}, cavityFloor={BuildLowerHullCavityFloor}, around={aroundCount}, vertical={verticalCount}, depth={-hullBottom:0}m, fade={FadeStartMeters / 1000.0f:0.0}-{FarFadeEndMeters / 1000.0f:0.0}km");
+        GD.Print($"Segmented regional structural hull HLOD: segments={segmentCount}, edges={(BuildStructuralEdgeWalls ? 2 : 0)}, underside={BuildStructuralUnderside}, roof={BuildTerrainRoofUnderside}, cavityFloor={BuildLowerHullCavityFloor}, around={aroundCount}, vertical={verticalCount}, depth={-hullBottom:0}m, rimWallDepth={wallDepth:0}m, fade={FadeStartMeters / 1000.0f:0.0}-{FarFadeEndMeters / 1000.0f:0.0}km");
     }
 
     private void AppendHullWallSegment(SurfaceTool surface, double across, int aroundStartIndex, int aroundEndIndex, int verticalCount, double aroundSpacing, float verticalSpacing, float hullBottom, bool reverse)
@@ -1715,6 +1728,24 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         }
     }
 
+    /// <summary>Flat rim wall top cap at hullTop, one quad per around index, front face up (radially inward). acrossHigh is the larger across.</summary>
+    private void AppendHullWallCapSegment(SurfaceTool surface, double acrossHigh, double acrossLow, int aroundStartIndex, int aroundEndIndex, double aroundSpacing, float hullTop)
+    {
+        if (_grid == null) return;
+        if (acrossLow > acrossHigh) (acrossHigh, acrossLow) = (acrossLow, acrossHigh);
+        for (int aroundIndex = aroundStartIndex; aroundIndex < aroundEndIndex; aroundIndex++)
+        {
+            double a0 = aroundIndex * aroundSpacing;
+            double a1 = (aroundIndex + 1) * aroundSpacing;
+            Vector3 q0 = ToLocal(_grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(a0, hullTop, acrossHigh)));
+            Vector3 q1 = ToLocal(_grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(a1, hullTop, acrossHigh)));
+            Vector3 q2 = ToLocal(_grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(a1, hullTop, acrossLow)));
+            Vector3 q3 = ToLocal(_grid.CanonicalRingPositionToWorld(new RingCanonicalPosition(a0, hullTop, acrossLow)));
+            AddHullVertex(surface, q0); AddHullVertex(surface, q1); AddHullVertex(surface, q3);
+            AddHullVertex(surface, q1); AddHullVertex(surface, q2); AddHullVertex(surface, q3);
+        }
+    }
+
     private void AddHullVertex(SurfaceTool surface, Vector3 vertex)
     {
         surface.SetColor(HullColor);
@@ -1729,18 +1760,19 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         float hullBottom)
     {
         if (_grid == null) return;
+        double wallDepth = RimWallDescription.Current.DepthMeters;
         for (int aroundIndex = aroundStartIndex; aroundIndex < aroundEndIndex; aroundIndex++)
         {
             double a0 = aroundIndex * aroundSpacing;
             double a1 = (aroundIndex + 1) * aroundSpacing;
             Vector3 p00 = ToLocal(_grid.CanonicalRingPositionToWorld(
-                new RingCanonicalPosition(a0, hullBottom, 0.0)));
+                new RingCanonicalPosition(a0, hullBottom, -wallDepth)));
             Vector3 p10 = ToLocal(_grid.CanonicalRingPositionToWorld(
-                new RingCanonicalPosition(a1, hullBottom, 0.0)));
+                new RingCanonicalPosition(a1, hullBottom, -wallDepth)));
             Vector3 p11 = ToLocal(_grid.CanonicalRingPositionToWorld(
-                new RingCanonicalPosition(a1, hullBottom, RingWidthMeters)));
+                new RingCanonicalPosition(a1, hullBottom, RingWidthMeters + wallDepth)));
             Vector3 p01 = ToLocal(_grid.CanonicalRingPositionToWorld(
-                new RingCanonicalPosition(a0, hullBottom, RingWidthMeters)));
+                new RingCanonicalPosition(a0, hullBottom, RingWidthMeters + wallDepth)));
             AddHullVertex(surface, p00); AddHullVertex(surface, p11); AddHullVertex(surface, p10);
             AddHullVertex(surface, p00); AddHullVertex(surface, p01); AddHullVertex(surface, p11);
         }

@@ -304,6 +304,7 @@ var _haze_lup_planet: Vector3 = Vector3.ZERO
 var _published_haze_lup_day: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_haze_lup_night: Vector3 = Vector3(-1.0, -1.0, -1.0)
 var _published_hub_weight: float = 0.0
+var _published_night_light_scale: float = 1.0
 @export var hub_sky_tint_color: Color = Color(0.85, 0.95, 1.0, 1.0)
 
 @export_group("Physical Haze")
@@ -1049,11 +1050,7 @@ func _publish_haze_lighting(surface_up: Vector3, to_sun: Vector3) -> void:
 	if planet_light != null:
 		planet_energy = Vector3(planet_light.light_color.r, planet_light.light_color.g, planet_light.light_color.b) \
 				* (PI * maxf(planet_light.light_energy, 0.0))
-	if _haze_sky == null and not _haze_sky_load_failed:
-		var script := load("res://scripts/Atmosphere/RingHazeSkyIrradiance.cs") as Script
-		if script != null:
-			_haze_sky = script.new() as RefCounted
-		_haze_sky_load_failed = _haze_sky == null
+	_ensure_haze_sky()
 	if _haze_sky != null:
 		var frame := _viewer_atmosphere_frame(surface_up)
 		var up_dot := surface_up.normalized().dot(to_sun.normalized())
@@ -1194,7 +1191,30 @@ func _viewer_atmosphere_frame(surface_up: Vector3) -> Dictionary:
 
 
 func _publish_night_light_scale(scale: float) -> void:
-	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", clampf(scale, 0.0, 1.0))
+	_published_night_light_scale = clampf(scale, 0.0, 1.0)
+	RenderingServer.global_shader_parameter_set("ringworld_night_light_scale", _published_night_light_scale)
+
+
+## The lighting this node publishes to the haze globals, for consumers that cannot read global uniforms (the containment field's glass,
+## RingContainmentField.UpdateLighting, whose post-Sunshine raster pass is a RenderingDevice shader):
+## sun irradiance (global, 3), ambient day (global, 3), ambient night (3), sky radiance day L_up (3), sky radiance night (3), night light scale,
+## solar visibility, hub day, megastorm darkness K at the camera (1 without a megastorm), storm ambient A at the camera. 20 floats; unpublished
+## vectors read as 0.
+func get_published_lighting() -> PackedFloat32Array:
+	var k := 1.0
+	if cloud_lighting_bridge != null and is_instance_valid(cloud_lighting_bridge) and cloud_lighting_bridge.has_method("GetCameraDarknessMultiplier"):
+		k = float(cloud_lighting_bridge.call("GetCameraDarknessMultiplier"))
+	var values: Array[Vector3] = [_published_haze_sun_global, _published_haze_ambient_day_global, _published_haze_ambient_night,
+		_haze_lup_day, _haze_lup_planet]
+	var out := PackedFloat32Array()
+	for v in values:
+		out.append(maxf(v.x, 0.0)); out.append(maxf(v.y, 0.0)); out.append(maxf(v.z, 0.0))
+	out.append(_published_night_light_scale)
+	out.append(current_solar_visibility)
+	out.append(current_hub_day)
+	out.append(k)
+	out.append(current_storm_ambient)
+	return out
 
 
 # Pulls the hub lighting outputs from the director (spec C.1). Without a director everything stays 0.
@@ -1297,7 +1317,7 @@ func _update_sky(
 	_set_sky_param(
 		"ring_half_width_ratio",
 		maxf(_get_ring_width_meters() * 0.5 / ring_radius, 0.000001))
-	_set_sky_param("ring_interior_factor", _structural_shell_atmosphere_factor())
+	_set_sky_param("ring_interior_factor", _sky_ring_interior_factor())
 	var active_day_start_dot := float(_get_celestial_value(
 			"DaylightStartDot", "daylight_start_dot", day_start_dot))
 	var active_day_full_dot := float(_get_celestial_value(
@@ -1624,10 +1644,39 @@ func _get_ring_radius_meters() -> float:
 	return maxf(float(gravity_controller.ring_radius), 1.0)
 
 
+# Lazy load of the CPU haze port (also the containment-field camera queries).
+func _ensure_haze_sky() -> void:
+	if _haze_sky == null and not _haze_sky_load_failed:
+		var script := load("res://scripts/Atmosphere/RingHazeSkyIrradiance.cs") as Script
+		if script != null:
+			_haze_sky = script.new() as RefCounted
+		_haze_sky_load_failed = _haze_sky == null
+
+
+# Containment field interior factor (1 inside the field, 0 outside, 10 m feather) for the canonical camera, or -1 when no field is
+# published (or the haze port is unavailable).
+func _containment_field_factor(across: float, vertical: float) -> float:
+	_ensure_haze_sky()
+	if _haze_sky == null or not bool(_haze_sky.call("HasContainmentField")):
+		return -1.0
+	return float(_haze_sky.call("ContainmentInteriorFactor", across, vertical, 10.0))
+
+
 func _get_ring_width_meters() -> float:
 	if _has_canonical_atmosphere_provider():
 		return maxf(1.0, float(canonical_grid.get("RingAcrossWidthMeters")))
 	return maxf(float(gravity_controller.ring_width), 1.0)
+
+
+# The physical sky clips its rays at the containment field itself, so with a field it only needs the structural-bottom gate (a camera in
+# vacuum looking back into the habitat sees the lit habitat air). Otherwise the old structural shell factor.
+func _sky_ring_interior_factor() -> float:
+	_ensure_haze_sky()
+	if _haze_sky != null and bool(_haze_sky.call("IsPhysical")) and bool(_haze_sky.call("HasContainmentField")) \
+			and _has_canonical_atmosphere_provider() and canonical_grid.has_method("GetStructuralBottomGlobalY"):
+		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
+		return 1.0 if canonical_position.y >= float(canonical_grid.call("GetStructuralBottomGlobalY")) else 0.0
+	return _structural_shell_atmosphere_factor()
 
 
 func _ring_interior_factor() -> float:
@@ -1654,6 +1703,11 @@ func _structural_shell_atmosphere_factor() -> float:
 		if not canonical_grid.has_method("GetStructuralBottomGlobalY"):
 			return 0.0
 		var canonical_position := player.call("GetCanonicalAtmospherePositionMeters") as Vector3
+		var structural_bottom := float(canonical_grid.call("GetStructuralBottomGlobalY"))
+		if canonical_position.y >= structural_bottom:
+			var field_factor := _containment_field_factor(canonical_position.z, canonical_position.y)
+			if field_factor >= 0.0:
+				return field_factor
 		return _ring_interior_factor_for_shell(
 			canonical_position.z,
 			width,

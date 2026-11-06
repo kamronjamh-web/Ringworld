@@ -1,0 +1,14 @@
+[gd_resource type="ShaderMaterial" format=3]
+
+[ext_resource type="Shader" path="res://materials/ring_poi_architecture_double_sided.gdshader" id="1_xc1p0"]
+
+[resource]
+resource_name = "Cyan energized conduits"
+render_priority = 0
+shader = ExtResource("1_xc1p0")
+shader_parameter/albedo_color = Color(0.086104214, 0.82665706, 1, 1)
+shader_parameter/metallic_value = 0.2
+shader_parameter/roughness_value = 0.26
+shader_parameter/specular_value = 0.5
+shader_parameter/emission_color = Color(0.086104214, 0.82665706, 1, 1)
+shader_parameter/emission_energy = 4.0

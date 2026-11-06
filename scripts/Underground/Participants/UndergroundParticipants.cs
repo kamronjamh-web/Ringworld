@@ -17,7 +17,7 @@ public static class UndergroundParticipantFactory
         new CloudSunVisibilityParticipant(), new SunshineCloudsParticipant(), new LocalVolumetricCloudsParticipant(),
         new WeatherEffectsParticipant(), new WeatherAudioParticipant(), new AmbienceFadeParticipant(),
         new WaterFftParticipant(),
-        new TerrainProxyParticipant(), new GlobalTerrainParticipant(), new EmitterStandInParticipant(), new EmitterGridParticipant(), new EclipseHubBeamsParticipant(), new EclipseHubBodyParticipant(), new FarViewportParticipant(),
+        new TerrainProxyParticipant(), new GlobalTerrainParticipant(), new EmitterStandInParticipant(), new EmitterGridParticipant(), new EclipseHubBeamsParticipant(), new EmitterFieldShotsParticipant(), new EclipseHubBodyParticipant(), new FarViewportParticipant(),
         new ShadowParticipant()
     };
 }
@@ -260,6 +260,24 @@ internal sealed class EclipseHubBeamsParticipant : UndergroundParticipant
     }
     public override string Describe() => _layer == null ? "absent"
         : $"hidden={_layer.UndergroundHidden} hold={_layer.UndergroundHold} visible={_layer.Visible} bound={_layer.IsBound} farVisible={_layer.FarLayer?.Visible}";
+    public override ulong[] RetainedInstanceIds() => new[] { IdOf(_layer) };
+}
+
+/// <summary>Emitter field shots (the orbs the ground emitters fire up to the containment field, near and far layers): held while enclosed (no per-frame writes), hidden deep underground.</summary>
+internal sealed class EmitterFieldShotsParticipant : UndergroundParticipant
+{
+    private EmitterFieldShotLayer? _layer;
+    public override string Name => "EmitterFieldShots";
+    public override UndergroundGroups Group => UndergroundGroups.FarTerrain;
+    public override void Bind(Node root) { _layer = Find<EmitterFieldShotLayer>(root, "EmitterFieldShots"); Present = _layer != null; }
+    public override void Apply(in UndergroundParticipantState state)
+    {
+        if (_layer == null || !GodotObject.IsInstanceValid(_layer)) return;
+        _layer.UndergroundHold = state.Suspend;
+        _layer.SetUndergroundHidden(state.Hide);
+    }
+    public override string Describe() => _layer == null ? "absent"
+        : $"hidden={_layer.UndergroundHidden} hold={_layer.UndergroundHold} drawnNear={_layer.DrawnNear} drawnFar={_layer.DrawnFar} farVisible={_layer.FarLayer?.Visible}";
     public override ulong[] RetainedInstanceIds() => new[] { IdOf(_layer) };
 }
 

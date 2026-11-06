@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using Godot;
+using RingworldTechDemo.ContainmentField;
 using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Diagnostics;
 using RingworldTechDemo.Voxel.Core;
@@ -497,6 +498,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         double LowerHullTopGlobalY,
         Color Color,
         ulong Version,
+        double RimWallDepthMeters,
         float[]? EdgeFloorMeters = null);
     private sealed record StructuralWallData(
         Vector3[] Vertices,
@@ -2052,7 +2054,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero,
                 10000.0, 0.0, 0.0, 100000.0, -22304.0, 4096.0, null),
             Transform3D.Identity, 0.0, 64.0, 1, 1.0, 1, 128,
-            false, false, true, false, -8192.0, 0.0, Colors.White, 1);
+            false, false, true, false, -8192.0, 0.0, Colors.White, 1, 0.0);
         roofRequest = roofRequest with { BuildLowerHullCavityFloor = true, LowerHullTopGlobalY = -21504.0 };
         StructuralWallData roof = BuildStructuralWallData(roofRequest);
         if (roof.Vertices.Length != 8 || roof.Indices.Length != 12
@@ -2098,23 +2100,62 @@ public partial class RingTerrainProxySector : MeshInstance3D
             new RingLodGeometrySnapshot(Transform3D.Identity, Vector3.Zero, Vector3.Zero,
                 10000.0, 0.0, 0.0, 100000.0, -22304.0, 4096.0, null),
             Transform3D.Identity, 0.0, 64.0, 2, 1.0, 1, 128,
-            true, false, false, false, -8192.0, 0.0, Colors.White, 1,
+            true, false, false, false, -8192.0, 0.0, Colors.White, 1, 128.0,
             new float[] { 10.0f, 20.0f, 30.0f, 40.0f, 50.0f, 60.0f });
         StructuralWallData floorWall = BuildStructuralWallData(floorFixtureRequest);
         StructuralWallData noFloorWall = BuildStructuralWallData(floorFixtureRequest with { EdgeFloorMeters = null });
-        bool floorContract = floorWall.WallVertexCount == 16 && floorWall.Vertices.Length == 16
-            && floorWall.WallIndexCount == 24 && floorWall.Indices.Length == 24
+        bool floorContract = floorWall.WallVertexCount == 48 && floorWall.Vertices.Length == 48
+            && floorWall.WallIndexCount == 72 && floorWall.Indices.Length == 72
             && floorWall.Uv2[0] == new Vector2(10.0f, floorWall.Uv2[0].Y)
             && floorWall.Uv2[1] == new Vector2(20.0f, floorWall.Uv2[0].Y)
             && floorWall.Uv2[2] == new Vector2(20.0f, floorWall.Uv2[2].Y)
             && floorWall.Uv2[3] == new Vector2(10.0f, floorWall.Uv2[2].Y)
             && floorWall.Uv2[0].Y < floorWall.Uv2[2].Y
             && floorWall.Uv2[8].X == 40.0f
-            && noFloorWall.Uv2.Length == 16;
+            && noFloorWall.Uv2.Length == 48;
         for (int i = 0; floorContract && i < noFloorWall.Uv2.Length; i++)
             floorContract = noFloorWall.Uv2[i].X <= -1.0e6f;
+        for (int i = 16; floorContract && i < floorWall.Uv2.Length; i++)
+            floorContract = floorWall.Uv2[i].X <= -1.0e6f;
         if (!floorContract)
             throw new InvalidOperationException("LOD roof coverage smoke: rim wall floor UV2 contract regressed.");
+        // Rim wall volume (WO12): vertices 16..47 are outer face 0, outer face W, cap 0, cap W (2 around cells each, 4 vertices per cell).
+        RingLodGeometrySnapshot wallGeometry = floorFixtureRequest.Geometry;
+        double wallDepth = floorFixtureRequest.RimWallDepthMeters;
+        double wallWidth = floorFixtureRequest.RingWidth;
+        bool volumeContract = wallDepth == 128.0;
+        for (int i = 16; volumeContract && i < 48; i++)
+        {
+            int group = (i - 16) / 8;
+            int cell = ((i - 16) % 8) / 4;
+            int corner = i % 4;
+            double a = (cell + (corner is 1 or 2 ? 1 : 0)) * 64.0;
+            double top = wallGeometry.StructuralWallTopGlobalY;
+            Vector3 vertex = floorWall.Vertices[i];
+            double across;
+            double vertical;
+            Vector3 expectedNormal;
+            if (group < 2)
+            {
+                across = group == 0 ? -wallDepth : wallWidth + wallDepth;
+                vertical = corner < 2 ? wallGeometry.StructuralBottomGlobalY : top;
+                expectedNormal = new Vector3(0.0f, group == 0 ? -1.0f : 1.0f, 0.0f);
+            }
+            else
+            {
+                // Cap corners 0/1 sit on the larger across, 2/3 on the smaller.
+                double high = group == 2 ? 0.0 : wallWidth + wallDepth;
+                double low = group == 2 ? -wallDepth : wallWidth;
+                across = corner < 2 ? high : low;
+                vertical = top;
+                expectedNormal = (wallGeometry.CanonicalToWorld(a, top + 1.0, across)
+                    - wallGeometry.CanonicalToWorld(a, top, across)).Normalized();
+            }
+            volumeContract = vertex.DistanceTo(wallGeometry.CanonicalToWorld(a, vertical, across)) < 0.05f
+                && floorWall.Normals[i].Dot(expectedNormal) > 0.99f;
+        }
+        if (!volumeContract)
+            throw new InvalidOperationException("LOD roof coverage smoke: rim wall outer face/top cap contract regressed.");
         RunSmoothProxyNormalSeamContract();
         _hierarchyHandoffSmokePassed = true;
         GD.Print("LOD_HIERARCHY_HANDOFF_SMOKE_PASS: coverage atlas updates retain pending neighbours without mesh rebuilds.");
@@ -4712,7 +4753,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     new RingCanonicalPosition(0.0, 0.0, 0.0)),
                 Transform3D.Identity, fixtureRange.StartSector * (double)fixtureSectorSize,
                 fixtureStep, fixtureAroundCells, 1_000.0, 2, 128,
-                true, true, false, false, -1_500.0, 0.0, Colors.White, 1);
+                true, true, false, false, -1_500.0, 0.0, Colors.White, 1, 0.0);
             StructuralWallData wall = BuildStructuralWallData(request);
             if (fixtureRange.SectorCount != 8 || fixtureAroundCells != 16
                 || wall.Vertices.Length != 320 || wall.Indices.Length != 480
@@ -4955,6 +4996,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _grid.GetLowerHullTopGlobalY(),
             HullColor,
             ++_structuralWallRequestVersion,
+            RimWallDescription.Current.DepthMeters,
             edgeFloorMeters);
         if (_pendingStructuralWall != null)
         {
@@ -4984,8 +5026,9 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy structural wall build", worker: true);
         long allocationsBefore = GC.GetAllocatedBytesForCurrentThread();
+        // Rim wall volume (WO12): per around cell one outer face and one top cap per side, after the two inner faces.
         int wallQuads = request.BuildEdgeWalls
-            ? request.AroundCells * request.VerticalCells * 2
+            ? request.AroundCells * request.VerticalCells * 2 + (request.RimWallDepthMeters > 0.0 ? request.AroundCells * 4 : 0)
             : 0;
         int undersideQuads = request.BuildUnderside ? request.AroundCells : 0;
         int roofQuads = request.BuildRoofUnderside ? request.AroundCells : 0;
@@ -5018,6 +5061,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 request.RingWidth,
                 request.AroundCells + 1,
                 reverse: false);
+            if (request.RimWallDepthMeters > 0.0)
+            {
+                // Outer face at -D faces -across (like the inner face at W); at W+D it faces +across (like the inner face at 0).
+                AppendStructuralWallOuterFaceData(vertices, normals, colors, uv2, indices, request, -request.RimWallDepthMeters, reverse: false);
+                AppendStructuralWallOuterFaceData(vertices, normals, colors, uv2, indices, request, request.RingWidth + request.RimWallDepthMeters, reverse: true);
+                AppendStructuralWallCapData(vertices, normals, colors, uv2, indices, request, 0.0, -request.RimWallDepthMeters);
+                AppendStructuralWallCapData(vertices, normals, colors, uv2, indices, request, request.RingWidth + request.RimWallDepthMeters, request.RingWidth);
+            }
         }
         int wallVertexCount = vertices.Count;
         int wallIndexCount = indices.Count;
@@ -5117,6 +5168,70 @@ public partial class RingTerrainProxySector : MeshInstance3D
         }
     }
 
+    /// <summary>One planar quad per around cell from the structural bottom to the wall top. UV2.x = -1e7 keeps the inner-face floor discard off it.</summary>
+    private static void AppendStructuralWallOuterFaceData(
+        List<Vector3> vertices, List<Vector3> normals, List<Color> colors,
+        List<Vector2> uv2, List<int> indices, StructuralWallRequest request,
+        double across, bool reverse)
+    {
+        double y0 = request.Geometry.StructuralBottomGlobalY;
+        double y1 = request.Geometry.StructuralWallTopGlobalY;
+        for (int x = 0; x < request.AroundCells; x++)
+        {
+            double a0 = request.AroundStart + x * request.AroundStep;
+            double a1 = a0 + request.AroundStep;
+            int start = vertices.Count;
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a0, y0, across));
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a1, y0, across));
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a1, y1, across));
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a0, y1, across));
+            for (int vertex = 0; vertex < 4; vertex++)
+            {
+                normals.Add(Vector3.Zero);
+                colors.Add(request.Color);
+                uv2.Add(new Vector2(-1.0e7f, (float)(vertex < 2 ? y0 : y1)));
+            }
+            if (reverse)
+            {
+                AddTriangle(indices, vertices, normals, start, start + 1, start + 3);
+                AddTriangle(indices, vertices, normals, start + 1, start + 2, start + 3);
+            }
+            else
+            {
+                AddTriangle(indices, vertices, normals, start + 3, start + 1, start);
+                AddTriangle(indices, vertices, normals, start + 1, start + 3, start + 2);
+            }
+        }
+    }
+
+    /// <summary>Flat wall-top cap, one quad per around cell, facing up (radially inward). acrossHigh is the larger across.</summary>
+    private static void AppendStructuralWallCapData(
+        List<Vector3> vertices, List<Vector3> normals, List<Color> colors,
+        List<Vector2> uv2, List<int> indices, StructuralWallRequest request,
+        double acrossHigh, double acrossLow)
+    {
+        if (acrossLow > acrossHigh) (acrossHigh, acrossLow) = (acrossLow, acrossHigh);
+        double top = request.Geometry.StructuralWallTopGlobalY;
+        for (int x = 0; x < request.AroundCells; x++)
+        {
+            double a0 = request.AroundStart + x * request.AroundStep;
+            double a1 = a0 + request.AroundStep;
+            int start = vertices.Count;
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a0, top, acrossHigh));
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a1, top, acrossHigh));
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a1, top, acrossLow));
+            vertices.Add(request.OwnerInverse * request.Geometry.CanonicalToWorld(a0, top, acrossLow));
+            for (int vertex = 0; vertex < 4; vertex++)
+            {
+                normals.Add(Vector3.Zero);
+                colors.Add(request.Color);
+                uv2.Add(new Vector2(-1.0e7f, (float)top));
+            }
+            AddTriangle(indices, vertices, normals, start, start + 1, start + 3);
+            AddTriangle(indices, vertices, normals, start + 1, start + 2, start + 3);
+        }
+    }
+
     private static void AppendStructuralUndersideData(
         List<Vector3> vertices,
         List<Vector3> normals,
@@ -5131,13 +5246,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
             double a0 = request.AroundStart + x * request.AroundStep;
             double a1 = a0 + request.AroundStep;
             Vector3 p00 = request.OwnerInverse
-                * request.Geometry.CanonicalToWorld(a0, bottom, 0.0);
+                * request.Geometry.CanonicalToWorld(a0, bottom, -request.RimWallDepthMeters);
             Vector3 p10 = request.OwnerInverse
-                * request.Geometry.CanonicalToWorld(a1, bottom, 0.0);
+                * request.Geometry.CanonicalToWorld(a1, bottom, -request.RimWallDepthMeters);
             Vector3 p11 = request.OwnerInverse
-                * request.Geometry.CanonicalToWorld(a1, bottom, request.RingWidth);
+                * request.Geometry.CanonicalToWorld(a1, bottom, request.RingWidth + request.RimWallDepthMeters);
             Vector3 p01 = request.OwnerInverse
-                * request.Geometry.CanonicalToWorld(a0, bottom, request.RingWidth);
+                * request.Geometry.CanonicalToWorld(a0, bottom, request.RingWidth + request.RimWallDepthMeters);
             int start = vertices.Count;
             vertices.Add(p00);
             vertices.Add(p10);
@@ -6176,6 +6291,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
             _structuralEdgeWallMaterial.SetShaderParameter("night_tint", new Vector3(NightTint.R, NightTint.G, NightTint.B));
             _structuralEdgeWallMaterial.SetShaderParameter("far_space_enabled", false);
             _structuralEdgeWallMaterial.SetShaderParameter("inner_face_floor_enabled", _structuralInnerFaceFloorEnabled);
+            // Up close the rim walls show their lit hull material; the structural cues fade in over 1.5-5 km (ring_hull_global.gdshader).
+            _structuralEdgeWallMaterial.SetShaderParameter("structural_cue_near_fade_meters", new Vector2(1500.0f, 5000.0f));
             if (_grid != null)
             {
                 _structuralEdgeWallMaterial.SetShaderParameter("structural_wall_top_meters", _grid.GetStructuralWallTopGlobalY());

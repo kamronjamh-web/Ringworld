@@ -25,6 +25,11 @@ uniform vec3 distance_pivot = vec3(0.0);
 // Eclipse crown glow (phase E4e, spec E.7): INSTANCE_CUSTOM.b = beam activity 0..1 lights the mesh between crown_glow_band.x and .y (mesh-local Y).
 uniform vec2 crown_glow_band = vec2(0.0, 1.0);
 uniform float crown_glow_emission = 3.0;
+// Opt-in minimum on-screen width (0 = off, emitters unchanged). Atmosphere projector towers are 80 m wide and 1.6 km tall, so far away they
+// would be sub-pixel slivers that shimmer; this widens the mesh in local X/Z and keeps energy via the coverage, like the hull's conduits.
+uniform float object_width_m = 0.0;
+uniform float min_width_pixels = 0.0;
+uniform float width_energy_floor : hint_range(0.0, 1.0) = 0.35;
 #include "res://materials/ring_atmosphere.gdshaderinc"
 #include "res://materials/ring_cloud_shadow.gdshaderinc"
 #include "res://materials/ring_shadow_compose.gdshaderinc"
@@ -55,6 +60,14 @@ void vertex() {
 	crown_glow_amount = use_instance_custom && INSTANCE_CUSTOM.b > 0.0
 		? INSTANCE_CUSTOM.b * smoothstep(crown_glow_band.x, crown_glow_band.y, VERTEX.y)
 		: 0.0;
+	if (min_width_pixels > 0.0 && object_width_m > 0.0) {
+		// Sub-pixel towers far away stay about min_width_pixels wide (only local X/Z; local Y is the tower's up); the energy lost to the
+		// widening is given back through the coverage, down to width_energy_floor.
+		float px_per_m = abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y * 0.5 / max(d, 1.0);
+		float widen = max(1.0, min_width_pixels / max(object_width_m * px_per_m, 1e-6));
+		VERTEX.xz = distance_pivot.xz + (VERTEX.xz - distance_pivot.xz) * widen;
+		standin_coverage *= max(1.0 / widen, width_energy_floor);
+	}
 	if (hidden || d > max_distance || (presented && d < near_start)) {
 		VERTEX = vec3(0.0);
 	}

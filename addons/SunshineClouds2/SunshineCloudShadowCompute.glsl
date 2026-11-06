@@ -109,6 +109,8 @@ vec3 to_cloud_space(vec3 world_position) {
         shadow.across_axis.w + dot(delta, shadow.across_axis.xyz));
 }
 
+#include "RingContainmentCeiling.glslinc"
+
 float ring_side_wall_mask(float canonical_across) {
     float ring_width = genericData.data.temporal_controls.y;
     if (ring_width <= 1.0) return 1.0;
@@ -448,7 +450,8 @@ float sample_sunshine_density(vec3 world_position) {
     // This is intentionally evaluated once per cloud sample: the sun ray can
     // cross a ring edge, so using the ground texel's mask would alter edge
     // shadow semantics.
-    float side_wall_mask = ring_side_wall_mask(cloud_position.z);
+    float side_wall_mask = ring_side_wall_mask(cloud_position.z)
+        * ring_containment_ceiling(cloud_position.z, cloud_position.y);
     if (side_wall_mask <= 0.0) return 0.0;
 
     float floor_height = genericData.data.background_altitude.x;

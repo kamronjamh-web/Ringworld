@@ -73,14 +73,21 @@ public partial class RingWorldLoadingResources : Node
         "res://materials/ring_eclipse_hub_beam.gdshader",
         "res://materials/ring_eclipse_hub_beam_core.gdshader",
         "res://materials/ring_eclipse_hub_beam_far.gdshader",
+        "res://materials/ring_emitter_field_shot.gdshader",
+        "res://materials/ring_emitter_field_shot_core.gdshader",
+        "res://materials/ring_emitter_field_shot_far.gdshader",
         "res://materials/ring_eclipse_hub_body.gdshader",
+        "res://materials/ring_containment_field.gdshader",
+        "res://materials/ring_containment_ripple.gdshader",
+        "res://materials/ring_containment_strike_far.gdshader",
         "res://materials/ring_wind_neutral.tres",
         "res://scripts/render/RingFarDepthCapture.gd",
         "res://scripts/render/RingPrecipOcclusionCapture.gd",
         "res://scripts/render/RingRainHazeComposite.gd",
         "res://scripts/render/RingRainStreaksComposite.gd",
         "res://scripts/render/RingRainbowComposite.gd",
-        "res://scripts/render/RingLightningChannelComposite.gd"
+        "res://scripts/render/RingLightningChannelComposite.gd",
+        "res://scripts/render/RingContainmentFieldComposite.gd"
     };
     private readonly Dictionary<string, Resource> _retained = new(StringComparer.Ordinal);
     private readonly RingThreadedResourceClaims _claims = new();

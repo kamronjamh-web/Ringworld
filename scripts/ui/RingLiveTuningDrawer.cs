@@ -153,6 +153,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         InitializeVegetationTuning();
         InitializeShadowTuning();
         InitializeAtmosphereTuning();
+        InitializeContainmentFieldTuning();
         InitializeFarRenderingTuning();
         InitializeLoadingTuning();
         InitializeMinimapTuning();
@@ -215,6 +216,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         _vegetationDefaults?.Save();
         FlushShadowDefaults();
         FlushAtmosphereDefaults();
+        FlushContainmentFieldDefaults();
         FlushFarRenderingDefaults();
         FlushLoadingPresentationDefaults();
         FlushMinimapDefaults();
@@ -258,6 +260,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
         ProcessWetWorldTuning(delta);
         ProcessShadowTuning(delta);
         ProcessAtmosphereTuning(delta);
+        ProcessContainmentFieldTuning(delta);
         ProcessFarRenderingTuning(delta);
         ProcessLoadingTuning(delta);
         ProcessMinimapTuning(delta);
@@ -1087,7 +1090,7 @@ public partial class RingLiveTuningDrawer : CanvasLayer
             return;
         }
         if (open) { _cloudRefreshDelay = 0; _surfaceTerrainDiagnosticsRefreshDelay = 0; RefreshCloudControls(); RefreshWaterControls(); RefreshWindControls(); RefreshRainHazeControls(); RefreshWetWorldControls(); RefreshGrassControls(); RebindAtmosphereDefaults(); RefreshAtmosphereControls(); RefreshSurfaceTerrainStatus(); RefreshPartialCoverageMeshCullingStatus(); }
-        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); FlushWetWorldDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushLodSchedulingDefaults(); FlushUndergroundModeDefaults(); FlushEmitterSiteDefaults(); FlushWeatherLungDefaults(); FlushWeatherAudioDefaults(); FlushLightningDefaults(); }
+        else { FlushCloudDefaults(); FlushWaterDefaults(); FlushWindDefaults(); FlushRainHazeDefaults(); FlushWetWorldDefaults(); CommitQueuedGrassValues(); FlushGrassDefaults(); FlushAtmosphereDefaults(); FlushContainmentFieldDefaults(); FlushFarRenderingDefaults(); FlushLoadingPresentationDefaults(); FlushTerrainStreamingDefaults(); FlushLodSchedulingDefaults(); FlushUndergroundModeDefaults(); FlushEmitterSiteDefaults(); FlushWeatherLungDefaults(); FlushWeatherAudioDefaults(); FlushLightningDefaults(); }
         _open = open;
         GetTree().Root.SetMeta(MouseOwnershipMeta, open);
         Input.MouseMode = open ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;

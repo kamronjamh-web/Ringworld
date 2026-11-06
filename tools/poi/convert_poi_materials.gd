@@ -2,16 +2,17 @@ extends SceneTree
 # Converts every POI architecture StandardMaterial3D .tres to a POI ShaderMaterial IN PLACE (same path, so the meshes that
 # reference the .tres by path need no rewrite). Idempotent: materials that are already POI shaders are skipped.
 #   godot --headless --path . --script res://tools/poi/convert_poi_materials.gd
-# Expected: 56 materials (33 merged emitter/spire/reactor + 23 Weather Lung). Verifies the saved text and every mesh surface.
+# Expected: 63 materials (33 merged emitter/spire/reactor + 7 atmosphere projector + 23 Weather Lung). Verifies the saved text and every mesh surface.
 const Util := preload("res://tools/poi/poi_material_util.gd")
 const DIRS := [
 	"res://assets/poi/beam_emitter/merged",
 	"res://assets/poi/main_spire/merged",
 	"res://assets/poi/reactor/merged",
 	"res://assets/poi/main_reactor/merged",
+	"res://assets/poi/atmosphere_projector/merged",
 	"res://assets/poi/weather_lung/built",
 ]
-const EXPECTED := 56
+const EXPECTED := 63
 var failures := PackedStringArray()
 
 func _initialize() -> void:

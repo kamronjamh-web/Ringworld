@@ -178,6 +178,10 @@ ringworld_night_light_scale={
 "type": "float",
 "value": 1.0
 }
+ring_conduit_phase={
+"type": "float",
+"value": 0.0
+}
 ringworld_air_sun_visibility={
 "type": "float",
 "value": 1.0
@@ -199,6 +203,14 @@ ringworld_haze_ambient_night={
 "value": Vector3(0.004, 0.005, 0.008)
 }
 ringworld_haze_storm={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_field_profile0={
+"type": "vec4",
+"value": Vector4(0, 0, 0, 0)
+}
+ringworld_field_profile1={
 "type": "vec4",
 "value": Vector4(0, 0, 0, 0)
 }

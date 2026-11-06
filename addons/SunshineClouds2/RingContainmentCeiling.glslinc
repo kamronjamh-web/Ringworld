@@ -1,0 +1,50 @@
+// RingworldTechDemo extension (containment field WO6; docs/containment-field-design.md 2.2, 8 WO6).
+//
+// The cloud ceiling under the atmospheric containment field: min(18 km, H(across) - 300 m), with a feather under it. GLSL twin of
+// ContainmentFieldGeometry.CloudCeilingAt / CloudDensityFactor (scripts/ContainmentField/ContainmentFieldGeometry.cs): change one, change the other.
+// The includer declares genericData (CloudsInc.comp GenericData) first and multiplies ring_containment_ceiling into the density next to
+// ring_side_wall_mask. No field (ring_field_profile0.w = 0, the zero default) or an across more than 7 km from both roots returns exactly 1.0,
+// so every cloud away from the rims is bit-identical to a world without the field.
+//
+// H over the meridian: the vertical skirt runs from the wall top to the crown, then the semi-ellipse (semi-axes a = (RootW - Root0) / 2 along
+// across and rise = apex - crown) to the apex: H = crown + rise * sqrt(1 - x^2) with 1 - x^2 = (across - Root0) * (RootW - across) / a^2
+// (the product form keeps full float precision at the rims).
+#ifndef RING_CONTAINMENT_CEILING_GLSLINC
+#define RING_CONTAINMENT_CEILING_GLSLINC
+
+#define RING_FIELD_CLOUD_CEILING_METERS 18000.0
+#define RING_FIELD_BELOW_METERS 300.0
+#define RING_FIELD_FEATHER_METERS 500.0
+#define RING_FIELD_RIM_BAND_METERS 7000.0
+
+// Ceiling in metres at a canonical across for a profile (p0 = wall top, apex, crown, exists; p1 = RootAcross0, RootAcrossW): 18000 where there is
+// no field, outside the roots, or the field is high enough. The storm profile bake (no genericData) passes its own copy of the profile.
+float ring_containment_ceiling_meters_profile(vec4 p0, vec4 p1, float across) {
+	if (p0.w < 0.5) return RING_FIELD_CLOUD_CEILING_METERS;
+	float fromRoot0 = across - p1.x;
+	float fromRootW = p1.y - across;
+	if (fromRoot0 < 0.0 || fromRootW < 0.0) return RING_FIELD_CLOUD_CEILING_METERS;
+	if (min(fromRoot0, fromRootW) > RING_FIELD_RIM_BAND_METERS) return RING_FIELD_CLOUD_CEILING_METERS;
+	float halfWidth = 0.5 * (p1.y - p1.x);
+	float underside = (fromRoot0 == 0.0 || fromRootW == 0.0)
+		? p0.x
+		: p0.z + (p0.y - p0.z) * sqrt(max(fromRoot0 * fromRootW / (halfWidth * halfWidth), 0.0));
+	return min(RING_FIELD_CLOUD_CEILING_METERS, underside - RING_FIELD_BELOW_METERS);
+}
+
+#ifndef RING_FIELD_CEILING_PROFILE_ONLY
+float ring_containment_ceiling_meters(float across) {
+	return ring_containment_ceiling_meters_profile(genericData.data.ring_field_profile0, genericData.data.ring_field_profile1, across);
+}
+
+// Density factor: 1 below the ceiling's feather, smoothly 0 at the ceiling, exactly 0 above it. The feather is 500 m, narrowing to nothing as
+// the ceiling approaches 18 km so the factor is continuous across the rim band's edge.
+float ring_containment_ceiling(float across, float altitude) {
+	float ceilingMeters = ring_containment_ceiling_meters(across);
+	if (ceilingMeters >= RING_FIELD_CLOUD_CEILING_METERS) return 1.0;
+	float feather = clamp(RING_FIELD_CLOUD_CEILING_METERS - ceilingMeters, 1.0, RING_FIELD_FEATHER_METERS);
+	return 1.0 - smoothstep(ceilingMeters - feather, ceilingMeters, altitude);
+}
+#endif
+
+#endif
