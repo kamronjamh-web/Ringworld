@@ -44,6 +44,7 @@ internal static class RingProxyBuildCounters
     private static readonly long[] GpuInstalledDry = new long[LevelSlots];
     private static readonly long[] GpuInstalledOcean = new long[LevelSlots];
     private static readonly long[] GpuToCpu = new long[LevelSlots];
+    private static readonly long[] GpuLatencySumUs = new long[LevelSlots], GpuLatencyMaxUs = new long[LevelSlots], GpuLatencyCount = new long[LevelSlots];
     private static readonly long[] GpuEditedToCpu = new long[LevelSlots];
     private static long _windowStart = Stopwatch.GetTimestamp();
 
@@ -143,6 +144,16 @@ internal static class RingProxyBuildCounters
         if (ocean) Interlocked.Increment(ref GpuInstalledOcean[slot]); else Interlocked.Increment(ref GpuInstalledDry[slot]);
     }
 
+    /// <summary>Time from a sector first being handed to the GPU backend to its result being taken (queue wait plus the three slice frames).</summary>
+    public static void AddGpuLatency(int spacingMeters, double milliseconds)
+    {
+        int slot = SlotFor(spacingMeters);
+        long us = (long)(milliseconds * 1000.0);
+        Interlocked.Add(ref GpuLatencySumUs[slot], us);
+        Interlocked.Increment(ref GpuLatencyCount[slot]);
+        long seen;
+        while (us > (seen = Interlocked.Read(ref GpuLatencyMaxUs[slot])) && Interlocked.CompareExchange(ref GpuLatencyMaxUs[slot], us, seen) != seen) { }
+    }
     public static void AddGpuToCpu(int spacingMeters) => Interlocked.Increment(ref GpuToCpu[SlotFor(spacingMeters)]);
     /// <summary>A GPU-level sector kept on the CPU because an edit (or emitter site) touches it; counted once per routing pass it is seen in.</summary>
     public static void AddGpuEditedToCpu(int spacingMeters) => Interlocked.Increment(ref GpuEditedToCpu[SlotFor(spacingMeters)]);
@@ -176,6 +187,7 @@ internal static class RingProxyBuildCounters
             Interlocked.Exchange(ref GpuInstalledDry[i], 0);
             Interlocked.Exchange(ref GpuInstalledOcean[i], 0);
             Interlocked.Exchange(ref GpuToCpu[i], 0);
+            Interlocked.Exchange(ref GpuLatencySumUs[i], 0); Interlocked.Exchange(ref GpuLatencyMaxUs[i], 0); Interlocked.Exchange(ref GpuLatencyCount[i], 0);
             Interlocked.Exchange(ref GpuEditedToCpu[i], 0);
         }
         Interlocked.Exchange(ref _shorelineRebuilds, 0);
@@ -243,7 +255,7 @@ internal static class RingProxyBuildCounters
             long d = Interlocked.Read(ref GpuInstalledDry[i]), o = Interlocked.Read(ref GpuInstalledOcean[i]), c = Interlocked.Read(ref GpuToCpu[i]), e = Interlocked.Read(ref GpuEditedToCpu[i]);
             if (b == 0 && s == 0 && d == 0 && o == 0 && c == 0 && e == 0) continue;
             batches += b; sectors += s; dry += d; ocean += o; toCpu += c; editedToCpu += e;
-            levels.Add(new { level = "spacing_" + (1 << i) + "m", batches = b, sectorsDispatched = s, installedDry = d, installedOcean = o, routedToCpuCoastal = c, routedToCpuEdited = e });
+            levels.Add(new { level = "spacing_" + (1 << i) + "m", batches = b, sectorsDispatched = s, installedDry = d, installedOcean = o, routedToCpuCoastal = c, routedToCpuEdited = e, meanLatencyMs = Interlocked.Read(ref GpuLatencyCount[i]) == 0 ? 0.0 : Interlocked.Read(ref GpuLatencySumUs[i]) / 1000.0 / Interlocked.Read(ref GpuLatencyCount[i]), maxLatencyMs = Interlocked.Read(ref GpuLatencyMaxUs[i]) / 1000.0 });
         }
         return new { batches, sectorsDispatched = sectors, installedDry = dry, installedOcean = ocean, routedToCpuCoastal = toCpu, routedToCpuEdited = editedToCpu, levels };
     }

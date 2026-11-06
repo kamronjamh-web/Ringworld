@@ -19,8 +19,8 @@ public partial class RingTerrainProxySector
 {
     public enum ProxyHeightBackendKind { Cpu, Gpu }
 
-    /// <summary>Debug master switch: <c>--proxy-heights=gpu</c> (default cpu). Not a menu setting; read once per process.</summary>
-    internal static bool GpuHeightsEnabled { get; set; } = Array.IndexOf(OS.GetCmdlineUserArgs(), "--proxy-heights=gpu") >= 0;
+    /// <summary>Debug master switch: <c>--proxy-heights=cpu</c> opts out (default gpu). Not a menu setting; read once per process.</summary>
+    internal static bool GpuHeightsEnabled { get; set; } = Array.IndexOf(OS.GetCmdlineUserArgs(), "--proxy-heights=cpu") < 0;
 
     /// <summary>The coarse levels the GPU backend may serve.</summary>
     internal static bool SpacingUsesGpuHeights(int spacingMeters) => spacingMeters is 8 or 16 or 32;
@@ -175,6 +175,8 @@ public partial class RingTerrainProxySector
         bool hasEdits = editSnapshot.EditedColumnCount > 0;
         long aroundLength = sampler.AroundRingVoxelLength;
         var cpu = new List<RingTerrainSectorCoordinate>(missing.Count);
+        // Hybrid routing: the GPU only gets what it can finish within a short horizon; the rest builds on the CPU workers as before.
+        int room = backend.RoutingRoom;
         foreach (RingTerrainSectorCoordinate coordinate in missing)
         {
             if (backend.IsQueued(coordinate.AroundSector, coordinate.AcrossSector)) continue; // already in flight
@@ -183,12 +185,13 @@ public partial class RingTerrainProxySector
             long across0 = (long)coordinate.AcrossSector * size;
             bool touchesSite = sampler.IntersectsSiteInfluence(around0 - 4L * spacing, around0 + size + 4L * spacing, across0 - 4.0 * spacing, across0 + size + 4.0 * spacing);
             if (touchesEdits || touchesSite) RingProxyBuildCounters.AddGpuEditedToCpu(SampleSpacingMeters);
-            if (!GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, _gpuCpuRoute.Contains(coordinate))
+            if (room <= 0 || !GpuSectorRoutable(coordinate, size, spacing, ringWidth, touchesEdits, touchesSite, _gpuCpuRoute.Contains(coordinate))
                 || !pool.TryAcquire(out int slot))
             {
                 cpu.Add(coordinate);
                 continue;
             }
+            room--;
             bool selfCheck = !_gpuSelfCheckQueued;
             _gpuSelfCheckQueued = true;
             backend.Enqueue(new ProxyGpuSectorJob(coordinate.AroundSector, coordinate.AcrossSector, slot, _lastSurfaceEditVersion, pool.Generation, selfCheck));

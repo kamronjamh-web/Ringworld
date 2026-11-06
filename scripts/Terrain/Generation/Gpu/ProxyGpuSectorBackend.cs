@@ -135,9 +135,10 @@ public sealed class ProxyGpuSectorBackend : IDisposable
     private readonly ProxyGpuClimateSettings _climate;
     private readonly List<ProxyGpuSectorJob> _queue = new();
     private readonly HashSet<(long, int)> _queued = new();
+    private readonly Dictionary<(long, int), long> _firstSeen = new();
     private readonly ConcurrentQueue<ProxyGpuSectorResult> _results = new();
     private readonly object _timeGate = new();
-    private int _inFlight;
+    private int _inFlight, _inFlightSectors;
     private bool _disposed;
 
     public int Spacing { get; }
@@ -146,6 +147,15 @@ public sealed class ProxyGpuSectorBackend : IDisposable
     public string Error => _link.Error;
     public int QueuedCount => _queue.Count;
     public int InFlightCount => Volatile.Read(ref _inFlight);
+    /// <summary>Sectors of batches already started and not yet returned (the queue is not counted).</summary>
+    public int InFlightSectors => Volatile.Read(ref _inFlightSectors);
+    /// <summary>Horizon, in batches, the router may load this backend with: about 6 frames of its own three-frame batches.</summary>
+    public const int RoutingHorizonBatches = 2;
+    /// <summary>
+    /// How many more sectors the router may hand this backend so they all finish within a short horizon at the measured batch size.
+    /// Anything beyond that builds on the CPU workers, so a backlog (load, teleport) is never throttled to the GPU's per-frame budget.
+    /// </summary>
+    public int RoutingRoom { get { lock (_timeGate) return Math.Max(0, _targetSectors * RoutingHorizonBatches - InFlightSectors); } }
     public bool Busy => _queue.Count > 0 || _cur != null || InFlightCount > 0 || !_results.IsEmpty;
     public long BatchesDispatched { get; private set; }
     public long SectorsDispatched { get; private set; }
@@ -274,6 +284,9 @@ public sealed class ProxyGpuSectorBackend : IDisposable
     public bool Enqueue(ProxyGpuSectorJob job)
     {
         if (!_queued.Add((job.AroundSector, job.AcrossSector))) return false;
+        // First time this sector was handed to the GPU (re-routing every update re-enqueues it): the start of its time to install.
+        if (_firstSeen.Count > 1024) _firstSeen.Clear();
+        _firstSeen.TryAdd((job.AroundSector, job.AcrossSector), System.Diagnostics.Stopwatch.GetTimestamp());
         _queue.Add(job);
         return true;
     }
@@ -295,6 +308,8 @@ public sealed class ProxyGpuSectorBackend : IDisposable
         if (_results.TryDequeue(out result))
         {
             _queued.Remove((result.Job.AroundSector, result.Job.AcrossSector));
+            if (_firstSeen.Remove((result.Job.AroundSector, result.Job.AcrossSector), out long t0))
+                RingworldTechDemo.Voxel.Phase3.RingProxyBuildCounters.AddGpuLatency(Spacing, (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency);
             return true;
         }
         return false;
@@ -331,6 +346,7 @@ public sealed class ProxyGpuSectorBackend : IDisposable
             _queue.RemoveRange(0, count);
             _cur = new Batch { Jobs = batchJobs, Words = WriteBatch(globals, batchJobs), SelfCheck = batchJobs[0].SelfCheck };
             Interlocked.Increment(ref _inFlight);
+            Interlocked.Add(ref _inFlightSectors, count);
             BatchesDispatched++;
             SectorsDispatched += count;
             LastBatchSectors = count;
@@ -457,7 +473,7 @@ public sealed class ProxyGpuSectorBackend : IDisposable
                 }
                 try { Decode(jobs, summaryData!, heights); }
                 catch (Exception error) { link.Error = "summary decode failed: " + error.Message; link.Failed = true; }
-                finally { done.Busy = false; Interlocked.Decrement(ref _inFlight); }
+                finally { done.Busy = false; Interlocked.Decrement(ref _inFlight); Interlocked.Add(ref _inFlightSectors, -jobs.Count); }
             }
             if (selfCheck)
                 rd.BufferGetDataAsync(ctx.Heights, Callable.From((byte[] data) =>
@@ -484,6 +500,7 @@ public sealed class ProxyGpuSectorBackend : IDisposable
         batch.Aborted = true;
         if (batch.Ctx != null) batch.Ctx.Busy = false;
         Interlocked.Decrement(ref _inFlight);
+        Interlocked.Add(ref _inFlightSectors, -batch.Jobs.Count);
     }
 
     private void RebuildSets(RenderingDevice rd, Core core, Context ctx, ProxyGpuSlotTargets pool)
