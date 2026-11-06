@@ -41,16 +41,17 @@ public partial class RingTerrainProxySector
         => (2 * radiusAround + 1) * (2 * radiusAcross + 1) + Math.Max(0, warmSectors) + 8;
 
     /// <summary>Allocates (or reallocates on a layout change) this level's slot pool. Lazy: nothing calls it with the flag off.</summary>
-    internal VertexTablePool? EnsureVertexTable(bool hasChord, int minimumCapacity = 0)
+    internal VertexTablePool? EnsureVertexTable(bool hasChord, int minimumCapacity = 0, bool gpuWritable = false)
     {
         int cells = Math.Max(1, SectorSizeMeters / Math.Max(1, SampleSpacingMeters));
         int capacity = minimumCapacity > 0 ? minimumCapacity : VertexTableCapacityFor(SectorRadiusAround, SectorRadiusAcross, MaximumWarmSectorCount);
         // Growth only: a pool that is large enough is kept, because reallocating drops every installed slot.
-        if (_vertexTable != null && _vertexTable.Cells == cells && _vertexTable.Capacity >= capacity && _vertexTable.HasChord == hasChord)
+        if (_vertexTable != null && _vertexTable.Cells == cells && _vertexTable.Capacity >= capacity && _vertexTable.HasChord == hasChord
+            && (_vertexTable.GpuWritable || !gpuWritable))
             return _vertexTable;
         DisposeVertexTable();
         if (RenderingServer.GetRenderingDevice() == null) return null;
-        _vertexTable = new VertexTablePool(cells, capacity, hasChord);
+        _vertexTable = new VertexTablePool(cells, capacity, hasChord, gpuWritable);
         GD.Print($"{LodLabel} vertex table pool: capacity={capacity} slots, {_vertexTable.BytesPerSlot / 1024} KiB/slot, reserved={_vertexTable.ReservedBytes / (1024.0 * 1024.0):0.0} MiB (radius {SectorRadiusAround}x{SectorRadiusAcross}, warm {MaximumWarmSectorCount})");
         return _vertexTable;
     }
@@ -99,8 +100,12 @@ public partial class RingTerrainProxySector
         private volatile bool _disposed;
         private readonly long _reservedBytes;
 
-        public VertexTablePool(int cells, int capacity, bool hasChord)
+        private static int _nextGeneration;
+
+        public VertexTablePool(int cells, int capacity, bool hasChord, bool gpuWritable = false)
         {
+            GpuWritable = gpuWritable;
+            Generation = Interlocked.Increment(ref _nextGeneration);
             Layout = new VertexTableLayout(Math.Max(1, cells));
             Capacity = Math.Max(1, capacity);
             HasChord = hasChord;
@@ -113,6 +118,10 @@ public partial class RingTerrainProxySector
         }
 
         public VertexTableLayout Layout { get; }
+        /// <summary>Slot textures carry the storage usage bit so the GPU height backend can write them from compute (docs/gpu-offload-plan.md WO-G2).</summary>
+        public bool GpuWritable { get; }
+        /// <summary>Unique per pool instance: a job or sector that outlives its pool must not touch another pool's slots.</summary>
+        public int Generation { get; }
         public int Cells => Layout.Cells;
         public int Capacity { get; }
         public bool HasChord { get; }
@@ -183,7 +192,8 @@ public partial class RingTerrainProxySector
                 Mipmaps = 1,
                 UsageBits = RenderingDevice.TextureUsageBits.SamplingBit
                     | RenderingDevice.TextureUsageBits.CanUpdateBit
-                    | RenderingDevice.TextureUsageBits.CanCopyFromBit,
+                    | RenderingDevice.TextureUsageBits.CanCopyFromBit
+                    | (GpuWritable ? RenderingDevice.TextureUsageBits.StorageBit : 0),
             };
             return rd.TextureCreate(format, new RDTextureView());
         }
@@ -533,6 +543,9 @@ public partial class RingTerrainProxySector
     internal sealed class SlotInstallPayload
     {
         public required VertexTableSlotBlocks Blocks { get; init; }
+        /// <summary>GPU-built sector (docs/gpu-offload-plan.md WO-G2): K2 already wrote this slot, so install only binds it. -1 for worker-packed sectors.</summary>
+        public int GpuSlot { get; init; } = -1;
+        public int PoolGeneration { get; init; }
         public required int Cells { get; init; }
         public required bool HasChord { get; init; }
         /// <summary>Fully-ocean sector: the shared WaterGrid draws exactly the worker's wet triangles.</summary>
@@ -576,20 +589,22 @@ public partial class RingTerrainProxySector
                 _terrainGridMeshPositive = _terrainGridMeshLegacy = _waterGridMesh = null;
                 BindVertexTableMaterials();
             }
+            RefreshGpuHeightBackend();
             return;
         }
         bool hasChord = UsesRuntimeParentChord();
         int cells = Math.Max(1, SectorSizeMeters / Math.Max(1, SampleSpacingMeters));
         _slotPoolHighWater = Math.Max(_slotPoolHighWater,
             SlotPoolCapacityFor(SampleSpacingMeters, VertexTableCapacityFor(SectorRadiusAround, SectorRadiusAcross, MaximumWarmSectorCount)));
+        bool wantGpuWritable = GpuHeightsEnabled && !_gpuBackendFailed && SpacingUsesGpuHeights(SampleSpacingMeters);
         bool needsNewPool = _vertexTable == null || _vertexTable.Cells != cells || _vertexTable.HasChord != hasChord
-            || _vertexTable.Capacity < _slotPoolHighWater;
+            || _vertexTable.Capacity < _slotPoolHighWater || (wantGpuWritable && !_vertexTable.GpuWritable);
         if (needsNewPool)
         {
             // A new pool starts empty: every sector installed through the old one must be rebuilt.
             DropSlotInstalledSectors();
             _terrainGridMeshPositive = _terrainGridMeshLegacy = _waterGridMesh = null;
-            if (EnsureVertexTable(hasChord, _slotPoolHighWater) == null)
+            if (EnsureVertexTable(hasChord, _slotPoolHighWater, wantGpuWritable) == null)
             {
                 _slotInstallActive = false;
                 _slotPackCells = 0;
@@ -601,6 +616,7 @@ public partial class RingTerrainProxySector
         _slotPackHasChord = hasChord;
         _slotPackCells = cells;
         if (needsNewPool) BindVertexTableMaterials();
+        RefreshGpuHeightBackend();
     }
 
     private void BindVertexTableMaterials()
@@ -734,13 +750,22 @@ public partial class RingTerrainProxySector
         VertexTablePool? pool = _vertexTable;
         if (payload == null || pool == null || !_slotInstallActive) return null;
         int slot = -1;
-        if (payload.Cells != pool.Cells || payload.HasChord != pool.HasChord || payload.HasChord != data.UsesRuntimeParentChord
-            || !pool.TryAcquire(out slot))
+        if (payload.GpuSlot >= 0)
         {
-            RingProxyBuildCounters.AddSlotFallback();
-            return null;
+            // GPU-built sector: K2 wrote the slot on the render thread, the slot is already ours (reserved when the job was queued).
+            if (payload.PoolGeneration != pool.Generation || payload.Cells != pool.Cells) return null;
+            slot = payload.GpuSlot;
         }
-        pool.Upload(slot, payload.Blocks);
+        else
+        {
+            if (payload.Cells != pool.Cells || payload.HasChord != pool.HasChord || payload.HasChord != data.UsesRuntimeParentChord
+                || !pool.TryAcquire(out slot))
+            {
+                RingProxyBuildCounters.AddSlotFallback();
+                return null;
+            }
+            pool.Upload(slot, payload.Blocks);
+        }
         _activeSlots[data.Coordinate] = slot;
         RingProxyBuildCounters.NoteSlotsInUse(SampleSpacingMeters, pool.UsedSlots);
         node.SetInstanceShaderParameter(ProxySlotName, slot);
@@ -902,6 +927,11 @@ public partial class RingTerrainProxySector
 
         public VertexTableSlotBlocks Blocks { get; }
         public bool UsesRuntimeParentChord => _data.UsesRuntimeParentChord;
+        public bool FullyOceanSurface => _data.FullyOceanSurface;
+        public int OceanIndexCount => _data.OceanIndices.Length;
+        public bool[] OceanCells => _data.OceanSurfaceMask?.CoveredCells ?? Array.Empty<bool>();
+        public byte[] OceanDepthBytes => _data.OceanSurfaceMask?.FftDeepWaterVertexDepths ?? Array.Empty<byte>();
+        public Aabb MeshBounds => ComputeVertexBounds(_data.Vertices);
 
         /// <summary>The terrain surface exactly as the mesh-mode install builds it (per-sector ArrayMesh), for render A/B.</summary>
         public ArrayMesh BuildReferenceTerrainMesh()
@@ -1103,15 +1133,21 @@ public partial class RingTerrainProxySector
 
         public VertexTableFixtureSector? Build(RingTerrainSectorCoordinate coordinate, int spacing, int cells,
             RingLodGeometrySnapshot geometry, bool buildWalls, bool buildSkirts)
+            => Build(coordinate, spacing, cells, geometry, buildWalls, buildSkirts, 0.0f, 0.0f, Transform3D.Identity, 32.0f, Colors.Black, Colors.White, false);
+
+        /// <summary>As above with the per-level constants the GPU parity test varies (underlays, owner basis, skirt depth, terrain colours, parent water restore).</summary>
+        public VertexTableFixtureSector? Build(RingTerrainSectorCoordinate coordinate, int spacing, int cells,
+            RingLodGeometrySnapshot geometry, bool buildWalls, bool buildSkirts, float underlay, float parentUnderlay,
+            Transform3D ownerInverse, float skirtDepth, Color low, Color high, bool parentRestoresWaterUnderlay)
         {
             using var cache = new TerrainBuildSampleCache(_edits, _sampler, _ringWidth);
             SectorData data = BuildRawSector(
                 requestVersion: 1, coordinate: coordinate, editSnapshot: _edits, sampler: _sampler, sampleCache: cache,
-                geometry: geometry, ownerInverse: Transform3D.Identity, size: cells * spacing, spacing: spacing,
-                parentSpacing: spacing * 2, globalMorphTarget: null, cells: cells, underlay: 0.0f, parentUnderlay: 0.0f,
-                parentRestoresWaterUnderlay: false, ringWidth: _ringWidth, buildWalls: buildWalls, buildSkirts: buildSkirts,
-                skirtDepth: 32.0f, blocky: false, alignSurfaceToTerrainSdf: false, heightQuantum: 1,
-                low: Colors.Black, high: Colors.White, coverageMask: null);
+                geometry: geometry, ownerInverse: ownerInverse, size: cells * spacing, spacing: spacing,
+                parentSpacing: spacing * 2, globalMorphTarget: null, cells: cells, underlay: underlay, parentUnderlay: parentUnderlay,
+                parentRestoresWaterUnderlay: parentRestoresWaterUnderlay, ringWidth: _ringWidth, buildWalls: buildWalls, buildSkirts: buildSkirts,
+                skirtDepth: skirtDepth, blocky: false, alignSurfaceToTerrainSdf: false, heightQuantum: 1,
+                low: low, high: high, coverageMask: null);
             var plan = new SkirtPlan(cells * spacing, _ringWidth, buildWalls);
             VertexTableSlotBlocks? blocks = PackVertexTableSlot(data, cells, plan);
             return blocks == null ? null : new VertexTableFixtureSector(data, cells, plan, blocks);

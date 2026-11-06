@@ -3902,6 +3902,17 @@
       "expected_s": 1,
       "timeout_s": 60
     },
+    "proxy_gpu_backend_routing_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_GPU_BACKEND_ROUTING",
+      "expected_s": 10,
+      "timeout_s": 120
+    },
     "proxy_sample_cache_dedupe_contract_test": {
       "kind": "test",
       "mode": "headless",
@@ -3968,6 +3979,17 @@
       "marker": "PROXY_SURFACE_NORMAL_CONTRACT",
       "expected_s": 1,
       "timeout_s": 60
+    },
+    "proxy_gpu_sector_parity_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "terrain"
+      ],
+      "marker": "PROXY_GPU_SECTOR_PARITY",
+      "expected_s": null,
+      "timeout_s": 900
     },
     "proxy_vertex_table_contract_test": {
       "kind": "test",

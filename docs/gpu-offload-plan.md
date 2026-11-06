@@ -337,6 +337,14 @@ On the A1000 it is about 60-90 us per frame, with p95 at the 0.15 ms cap. When t
 **stationary adds 0 dispatches and 0 uploads**. The budget should become a share of one streaming-compute arbiter if
 GPU-1/4/5 add their own compute (open question 7).
 
+**Implementation note (WO-G2, 2026-11-06): slicing is by pass with an adaptive batch, not by row range.** In game on the 4070 a
+pass is latency-bound long before it fills a wave: a one-workgroup S slice measured 280-500 us at low GPU clocks, and the whole S-B-A-K
+chain of a 2-3 sector batch about 190 us (p95 0.248 ms per batch with the first, unsliced version). Splitting S and B by rows or thread
+ranges therefore cannot go below that floor (a first attempt with a per-thread cost model spiralled into thousands of tiny slices). Instead
+`ProxyGpuSectorBackend` records a batch over three frames (S, then B, then A+K), one slice per frame across all level backends (a frame
+gate with round-robin priority), and sizes the next batch from the measured slice times: a slice over 150 us shrinks the target (x3/4, min 1),
+a batch whose slices all ran under 60 % of the budget grows it (+1, max 16). The 0.15 ms budget is unchanged.
+
 ### 5.3 CPU measurements for the "lighter first step"
 
 C1-C3 are derived from the ground_fast trace; C4 is answered by the micro-benchmarks in 5.4.

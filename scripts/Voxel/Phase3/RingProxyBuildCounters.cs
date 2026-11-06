@@ -38,6 +38,13 @@ internal static class RingProxyBuildCounters
     private static long _slotFallbacks; // slot-capable sector installed through a mesh (pool exhausted or layout changed)
     private static readonly long[] _slotOceanKinds = new long[3]; // dry, shared water grid, compact coastal mesh
     private static readonly long[] _slotPeakUsed = new long[LevelSlots]; // peak slots in use per level (high-water mark since process start)
+    // GPU height backend (WO-G2): batches and sectors dispatched, sectors installed by class, coastal round trips to the CPU.
+    private static readonly long[] GpuBatches = new long[LevelSlots];
+    private static readonly long[] GpuSectorsDispatched = new long[LevelSlots];
+    private static readonly long[] GpuInstalledDry = new long[LevelSlots];
+    private static readonly long[] GpuInstalledOcean = new long[LevelSlots];
+    private static readonly long[] GpuToCpu = new long[LevelSlots];
+    private static readonly long[] GpuEditedToCpu = new long[LevelSlots];
     private static long _windowStart = Stopwatch.GetTimestamp();
 
     public readonly struct Scope : IDisposable
@@ -122,6 +129,32 @@ internal static class RingProxyBuildCounters
         if (surfaceUploads > 0) Interlocked.Add(ref _installSurfaceUploads, surfaceUploads);
     }
 
+    /// <summary>Main thread: one GPU batch of <paramref name="sectors"/> sectors was recorded for the level at this spacing.</summary>
+    public static void AddGpuBatch(int spacingMeters, int sectors)
+    {
+        int slot = SlotFor(spacingMeters);
+        Interlocked.Increment(ref GpuBatches[slot]);
+        Interlocked.Add(ref GpuSectorsDispatched[slot], sectors);
+    }
+
+    public static void AddGpuSector(int spacingMeters, bool ocean)
+    {
+        int slot = SlotFor(spacingMeters);
+        if (ocean) Interlocked.Increment(ref GpuInstalledOcean[slot]); else Interlocked.Increment(ref GpuInstalledDry[slot]);
+    }
+
+    public static void AddGpuToCpu(int spacingMeters) => Interlocked.Increment(ref GpuToCpu[SlotFor(spacingMeters)]);
+    /// <summary>A GPU-level sector kept on the CPU because an edit (or emitter site) touches it; counted once per routing pass it is seen in.</summary>
+    public static void AddGpuEditedToCpu(int spacingMeters) => Interlocked.Increment(ref GpuEditedToCpu[SlotFor(spacingMeters)]);
+
+    /// <summary>Total GPU batches (compute dispatch groups recorded) since the last reset: the "stationary adds 0 dispatches" check.</summary>
+    public static long GpuBatchTotal()
+    {
+        long total = 0;
+        for (int i = 0; i < LevelSlots; i++) total += Interlocked.Read(ref GpuBatches[i]);
+        return total;
+    }
+
     public static void AddShorelineRebuild() => Interlocked.Increment(ref _shorelineRebuilds);
 
     public static void AddShorelineSkip() => Interlocked.Increment(ref _shorelineSkips);
@@ -138,6 +171,12 @@ internal static class RingProxyBuildCounters
             Interlocked.Exchange(ref Installed[i], 0);
             Interlocked.Exchange(ref DroppedNotDesired[i], 0);
             Interlocked.Exchange(ref DroppedStale[i], 0);
+            Interlocked.Exchange(ref GpuBatches[i], 0);
+            Interlocked.Exchange(ref GpuSectorsDispatched[i], 0);
+            Interlocked.Exchange(ref GpuInstalledDry[i], 0);
+            Interlocked.Exchange(ref GpuInstalledOcean[i], 0);
+            Interlocked.Exchange(ref GpuToCpu[i], 0);
+            Interlocked.Exchange(ref GpuEditedToCpu[i], 0);
         }
         Interlocked.Exchange(ref _shorelineRebuilds, 0);
         Interlocked.Exchange(ref _shorelineSkips, 0);
@@ -183,6 +222,7 @@ internal static class RingProxyBuildCounters
             installMeshSectors = Interlocked.Read(ref _installMeshSectors),
             slotFallbackInstalls = Interlocked.Read(ref _slotFallbacks),
             slotPeakUsedBySpacing = SlotPeakSnapshot(),
+            gpuHeights = GpuSnapshot(),
             slotSectorsDry = Interlocked.Read(ref _slotOceanKinds[0]),
             slotSectorsWaterGrid = Interlocked.Read(ref _slotOceanKinds[1]),
             slotSectorsCompactOcean = Interlocked.Read(ref _slotOceanKinds[2]),
@@ -191,6 +231,21 @@ internal static class RingProxyBuildCounters
             shorelineFieldSkippedRebuilds = Interlocked.Read(ref _shorelineSkips),
             shorelineFieldRebuildsPerSecond = Interlocked.Read(ref _shorelineRebuilds) / seconds,
         };
+    }
+
+    private static object GpuSnapshot()
+    {
+        var levels = new List<object>();
+        long batches = 0, sectors = 0, dry = 0, ocean = 0, toCpu = 0, editedToCpu = 0;
+        for (int i = 0; i < LevelSlots; i++)
+        {
+            long b = Interlocked.Read(ref GpuBatches[i]), s = Interlocked.Read(ref GpuSectorsDispatched[i]);
+            long d = Interlocked.Read(ref GpuInstalledDry[i]), o = Interlocked.Read(ref GpuInstalledOcean[i]), c = Interlocked.Read(ref GpuToCpu[i]), e = Interlocked.Read(ref GpuEditedToCpu[i]);
+            if (b == 0 && s == 0 && d == 0 && o == 0 && c == 0 && e == 0) continue;
+            batches += b; sectors += s; dry += d; ocean += o; toCpu += c; editedToCpu += e;
+            levels.Add(new { level = "spacing_" + (1 << i) + "m", batches = b, sectorsDispatched = s, installedDry = d, installedOcean = o, routedToCpuCoastal = c, routedToCpuEdited = e });
+        }
+        return new { batches, sectorsDispatched = sectors, installedDry = dry, installedOcean = ocean, routedToCpuCoastal = toCpu, routedToCpuEdited = editedToCpu, levels };
     }
 
     private static Dictionary<string, long> SlotPeakSnapshot()

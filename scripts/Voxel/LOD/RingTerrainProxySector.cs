@@ -1322,6 +1322,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         _finerCoverageLevel = null;
         if (ReferenceEquals(FinestOceanGeometryInstance, this)) FinestOceanGeometryInstance = null;
         FftOceanGeometryInstances.Remove(this);
+        DisposeGpuBackend();
         DisposeVertexTable();
         if (_grid != null)
             _grid.CanonicalFloatingOriginAnchorChanged -= HandleCanonicalFloatingOriginAnchorChanged;
@@ -1702,6 +1703,13 @@ public partial class RingTerrainProxySector : MeshInstance3D
             predictedAcross,
             aroundSectorLength));
         missingScope.Dispose();
+
+        if (_gpuBackend != null)
+        {
+            // WO-G2: GPU-routable sectors leave the CPU list; what remains (edited, site, edge, coastal, fallback) builds as before.
+            RouteMissingToGpu(missing, editSnapshot, sampler, size, spacing, ResolveMorphTargetSpacingMeters(), Mathf.Max(1, RingWidthMeters));
+            if (missing.Count == 0) return;
+        }
 
         RingLodGeometrySnapshot geometry = _grid.CaptureLodGeometrySnapshot();
         RingTerrainSampler workerSampler;
@@ -5652,6 +5660,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private int ApplyCompletedBatchCore(int uploadBudget, double uploadBudgetMilliseconds)
     {
         using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy install");
+        PumpGpuHeights();
         DrainCompletedWorkerSectors();
         bool restartQueuedBuild = false;
         bool forceRestart = false;
@@ -5732,12 +5741,18 @@ public partial class RingTerrainProxySector : MeshInstance3D
             EstimatedPendingUploadBytes -= data.EstimatedBytes;
             if (EstimatedPendingUploadBytes < 0L) EstimatedPendingUploadBytes = 0L;
             ReleaseStagedMeshBytes(data.EstimatedBytes);
-            if (!desired.Contains(data.Coordinate)) { RingProxyBuildCounters.AddDroppedNotDesired(SampleSpacingMeters); continue; }
-            if (data.RequestVersion != _requestVersion) { RingProxyBuildCounters.AddDroppedStale(SampleSpacingMeters); continue; }
+            if (!desired.Contains(data.Coordinate)) { ReleaseDroppedGpuSector(data); RingProxyBuildCounters.AddDroppedNotDesired(SampleSpacingMeters); continue; }
+            if (data.RequestVersion != _requestVersion) { ReleaseDroppedGpuSector(data); RingProxyBuildCounters.AddDroppedStale(SampleSpacingMeters); continue; }
             ulong currentEditVersion = _smoothTerrain?.CaptureLodSurfaceEditSnapshot().Version
                 ?? _grid?.LodSurfaceEditVersion
                 ?? 0UL;
-            if (!AcceptsCompletedEditVersion(data.EditVersion, currentEditVersion)) { RingProxyBuildCounters.AddDroppedStale(SampleSpacingMeters); continue; }
+            if (!AcceptsCompletedEditVersion(data.EditVersion, currentEditVersion)) { ReleaseDroppedGpuSector(data); RingProxyBuildCounters.AddDroppedStale(SampleSpacingMeters); continue; }
+            if (data.SlotPayload is { GpuSlot: >= 0 } gpuPayload && (!_slotInstallActive || _vertexTable == null || _vertexTable.Generation != gpuPayload.PoolGeneration))
+            {
+                // The pool changed after the GPU wrote this sector: its slot is gone and there is no mesh to fall back to. Rebuild it.
+                _gpuRefreshRequested = true;
+                continue;
+            }
             _latestCoverageMasks.TryGetValue(data.Coordinate, out SurfaceCoverageMask? replacementMask);
             RecycleActiveSector(data.Coordinate);
             if (replacementMask != null) _latestCoverageMasks[data.Coordinate] = replacementMask;
@@ -5823,7 +5838,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // Retain the previous window until every replacement is installed.
         // Temporary overlap is preferable to exposing a hole when the shared
         // frame budget spreads a clipmap shift across several frames.
-        if (_pendingUploads.Count == 0 && _pending == null && _completedWorkerSectors.IsEmpty)
+        if (_pendingUploads.Count == 0 && _pending == null && _completedWorkerSectors.IsEmpty && !GpuHeightsBusy)
         {
             using var departedScope = RingPerformanceTelemetry.MeasureCpu("Terrain proxy departed sectors");
             // The uploaded > 0 block below notifies after the departures anyway.
@@ -5990,7 +6005,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 || data.RequestVersion != _requestVersion
                 || data.EditVersion != _lastSurfaceEditVersion)
             {
-                if (data != null) RingProxyBuildCounters.AddDroppedStale(SampleSpacingMeters);
+                if (data != null) { ReleaseDroppedGpuSector(data); RingProxyBuildCounters.AddDroppedStale(SampleSpacingMeters); }
                 continue;
             }
 
@@ -6034,6 +6049,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private void ClearPendingUploads()
     {
+        ReleaseAllDroppedGpuSectors();
         lock (_stagedMeshLock)
         {
             _pendingUploads.Clear();
