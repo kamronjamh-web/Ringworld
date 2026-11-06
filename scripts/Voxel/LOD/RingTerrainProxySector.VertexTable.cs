@@ -20,10 +20,10 @@ public partial class RingTerrainProxySector
     private static long _vertexTableReservedBytes;
 
     /// <summary>
-    /// Internal install-backend flag. Off by default and by design not a menu setting; the debug user arg
-    /// <c>--proxy-install=slot</c> turns it on for A/B work. WO-S0 itself never consults it.
+    /// Internal install-backend flag. On by default and by design not a menu setting; the debug user arg
+    /// <c>--proxy-install=mesh</c> turns it off for A/B work. WO-S0 itself never consults it.
     /// </summary>
-    internal static bool VertexTableInstallEnabled { get; set; } = Array.IndexOf(OS.GetCmdlineUserArgs(), "--proxy-install=slot") >= 0;
+    internal static bool VertexTableInstallEnabled { get; set; } = Array.IndexOf(OS.GetCmdlineUserArgs(), "--proxy-install=mesh") < 0;
 
     /// <summary>Debug A/B for GPU cost: <c>--proxy-slot-collapse=on</c> enables the vertex-stage covered-quad collapse. Off by default: on the 4070 it cost 0.05-0.1 ms stationary and about 0.2 ms in flight, while the fragment atlas discard alone already hides covered quads.</summary>
     internal static bool VertexCollapseEnabled { get; set; } = Array.IndexOf(OS.GetCmdlineUserArgs(), "--proxy-slot-collapse=on") >= 0;

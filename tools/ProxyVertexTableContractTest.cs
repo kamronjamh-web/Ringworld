@@ -39,7 +39,7 @@ public partial class ProxyVertexTableContractTest : Node
         RenderingDevice? rd = RenderingServer.GetRenderingDevice();
         if (rd == null) return "FAIL RenderingDevice required";
         Require(RingTerrainProxySector.VertexTableReservedBytes == 0, "flag-off state reserved vertex-table bytes before any pool existed");
-        Require(!RingTerrainProxySector.VertexTableInstallEnabled, "install flag must default to off");
+        Require(RingTerrainProxySector.VertexTableInstallEnabled, "install flag must default to on");
         Require(RingTerrainProxySector.VertexTableColorQuantisationMatchesMesh(out string colorDetail), colorDetail);
         GD.Print("PROXY_VERTEX_TABLE flag_off_reserved_bytes=0 install_flag=off " + colorDetail);
 
