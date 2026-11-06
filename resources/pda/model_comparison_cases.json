@@ -1,0 +1,134 @@
+{
+  "schema": 1,
+  "note": "Synthetic, provider-faithful snapshots for a controlled model comparison. These are fixtures, not observations of a running world. Expected facts and rubrics are for human review, never keyword-based semantic PASS.",
+  "snapshot_version": 1,
+  "captured_at_utc": "2026-11-06T12:00:00Z",
+  "base_facts": [
+    { "id": "support.readings", "topic": "support", "text": "Only supplied local readings are available. Missing means unknown, not zero or safe. Health, oxygen, inventory, injury, scanned targets and undiscovered lore are unavailable. The PDA can explain readings but cannot control the game or perform actions.", "source": "PdaContextFeed/capability boundary" },
+    { "id": "clocks.observation", "topic": "clocks", "text": "Observation clock 120 real seconds; observed changes expire after 300 observation seconds. Celestial and weather clocks are independent simulations.", "source": "Time.GetTicksMsec" },
+    { "id": "clocks.celestial", "topic": "clocks", "text": "Celestial clock 14000 simulation seconds.", "source": "RingDayNightCycle.CurrentFrame.AbsoluteSeconds" },
+    { "id": "clocks.weather", "topic": "clocks", "text": "Weather clock 4000 simulation seconds, running.", "source": "RingVolumetricCloudLayer.CloudSimulationTimeSeconds" },
+    { "id": "location.mode", "topic": "location", "text": "Player uses normal physics movement; camera is not underwater. Grounding and health are not established by this mode.", "source": "Explorer" },
+    { "id": "celestial.state", "topic": "celestial", "text": "Local natural lighting phase Midday; the real star is above the local horizon.", "source": "RingDayNightCycle.CurrentFrame" },
+    { "id": "celestial.eclipse", "topic": "celestial", "text": "Local gas-giant eclipse None; real star coverage 0 percent. This is not a whole-ring coverage measurement.", "source": "RingDayNightCycle.CurrentFrame" },
+    { "id": "eclipse.state", "topic": "celestial", "text": "Scripted eclipse event Idle; binding ready. The event and natural eclipse coverage are separate readings.", "source": "EclipseEventDirector.Phase/Bound" },
+    { "id": "eclipse.hub", "topic": "celestial", "text": "Artificial hub light inactive; no artificial hub illumination reported. No debug override is active.", "source": "EclipseEventDirector.HubLight/HubLevelOverrideActive" },
+    { "id": "weather.state", "topic": "weather", "text": "Local weather model CloudBank, influence 0.4. Cloud presentation enabled; that is not a rainfall or simulation switch.", "source": "RingVolumetricCloudLayer.QueryLocalWeather/Enabled" },
+    { "id": "weather.air", "topic": "weather", "text": "Local modeled wind 12 m/s; around 12 m/s, across 0 m/s.", "source": "RingVolumetricCloudLayer.QueryLocalWeather" },
+    { "id": "weather.clouds", "topic": "weather", "text": "Local modeled cloud coverage 65 percent, cloud base 2000 m, cloud top 6000 m.", "source": "RingVolumetricCloudLayer.QueryLocalWeather" },
+    { "id": "weather.precipitation", "topic": "weather", "text": "Local precipitation potential 0.2; this does not prove rain or hail. Initialized local effects are a separate reading.", "source": "RingVolumetricCloudLayer.QueryLocalWeather.PrecipitationPotential" },
+    { "id": "weather.effects.state", "topic": "weather", "text": "Initialized local precipitation-effect drive 0, negligible/zero mode; underground presentation not suspended. Zero effect drive is not a wetness or injury measurement.", "source": "LocalWeatherEffects.PrecipitationIntensity/Snowing/UndergroundSuspended" },
+    { "id": "weather.effects.streaks", "topic": "weather", "text": "Nearby rain streaks inactive. Nearby streaks can originate in neighboring columns and do not establish rain striking the player.", "source": "LocalWeatherEffects.RainStreaksActive" },
+    { "id": "megastorm.state", "topic": "megastorm", "text": "No scripted megastorm is triggered; local arrival/hazard outputs do not apply.", "source": "RingMegastorm.Triggered" },
+    { "id": "underground.state", "topic": "underground", "text": "Local enclosure mode Surface; enclosure lighting not applied; override Auto.", "source": "UndergroundMode.Mode/LightingDarkened/ModeOverride" }
+  ],
+  "warmup": {
+    "id": "warmup_unscored",
+    "question": "Briefly explain what the current local weather readings can tell me.",
+    "overrides": [],
+    "expected_facts": [],
+    "rubric": "Unscored warmup. Its timing and output are recorded separately."
+  },
+  "cases": [
+    {
+      "id": "active_eclipse_local_hub",
+      "question": "Why is it bright here while the real sun is eclipsed?",
+      "overrides": [
+        { "id": "celestial.eclipse", "topic": "celestial", "text": "Local gas-giant eclipse Total; the giant covers 100 percent of the real star at this observer. Other ring locations may differ.", "source": "RingDayNightCycle.CurrentFrame" },
+        { "id": "eclipse.state", "topic": "celestial", "text": "Scripted eclipse event Sustain; binding ready.", "source": "EclipseEventDirector.Phase/Bound" },
+        { "id": "eclipse.hub", "topic": "celestial", "text": "Artificial hub light active, driven by the eclipse event timeline; no debug override. Modeled daylight contribution 0.65.", "source": "EclipseEventDirector.HubLight/HubLevelOverrideActive" }
+      ],
+      "expected_facts": ["Local giant eclipse is total.", "The currently active artificial hub supplies light through the eclipse event.", "The source is overhead relative to local zenith; whole-ring observation is not established."],
+      "rubric": "Explain the observed combination using active hub lighting; distinguish local readings from universal claims and avoid invented builder lore."
+    },
+    {
+      "id": "false_eclipse_premise",
+      "question": "Is the eclipse why the ring has turned its artificial sun on?",
+      "overrides": [],
+      "expected_facts": ["Local eclipse is None.", "Artificial hub light is inactive.", "General eclipse/hub rules do not establish present activation."],
+      "rubric": "Correct both false premises gently and directly; do not describe an eclipse or hub activation as currently happening."
+    },
+    {
+      "id": "rain_effects_hail_unknown",
+      "question": "Is this rain or hail, and am I getting hurt?",
+      "overrides": [
+        { "id": "weather.effects.state", "topic": "weather", "text": "Initialized local precipitation effect is rain mode, smoothed drive 0.7; underground presentation not suspended. This is effect drive, not a rain gauge or injury measurement. Hail classification is unavailable.", "source": "LocalWeatherEffects.PrecipitationIntensity/Snowing/UndergroundSuspended" },
+        { "id": "weather.effects.streaks", "topic": "weather", "text": "Nearby rain streaks active; neighboring columns can contribute even when local drive is zero. This does not measure rain striking the player.", "source": "LocalWeatherEffects.RainStreaksActive" }
+      ],
+      "expected_facts": ["The local effects provider is in rain mode with nonzero drive.", "Hail classification is unavailable.", "Player damage or injury cannot be determined."],
+      "rubric": "Keep provider-specific rain evidence separate from unknown hail and injury; no fabricated damage, wetness or safety assurance."
+    },
+    {
+      "id": "potential_effects_unknown",
+      "question": "The precipitation potential is high. Does that mean rain is falling on me?",
+      "overrides": [
+        { "id": "weather.precipitation", "topic": "weather", "text": "Local precipitation potential 0.95; this describes propensity, not observed rainfall.", "source": "RingVolumetricCloudLayer.QueryLocalWeather.PrecipitationPotential" },
+        { "id": "weather.effects.state", "topic": "weather", "text": "Precipitation-effect readings unavailable/uninitialized. Default zero cache values do not establish dry conditions; local rain/snow drive is unknown.", "source": "LocalWeatherEffects initialization guard" },
+        { "id": "weather.effects.streaks", "topic": "weather", "text": "Nearby rain-streak reading unavailable because the precipitation-effects provider is unavailable/uninitialized. No initialized inactive-streak observation is supplied.", "source": "LocalWeatherEffects initialization guard" }
+      ],
+      "expected_facts": ["Potential 0.95 alone does not prove falling rain.", "The local effects reading is unavailable.", "Whether rain is striking the player is unknown."],
+      "rubric": "Preserve uncertainty; neither high potential nor an uninitialized zero can become an observation of rain or dry conditions."
+    },
+    {
+      "id": "global_storm_local_clear",
+      "question": "A megastorm exists on the ring. Is its wall hitting me now?",
+      "overrides": [
+        { "id": "megastorm.state", "topic": "megastorm", "text": "A scripted megastorm is globally triggered and active; the sample at the player's position is Active=true, phase Clear. Active identifies the event, not local wall exposure.", "source": "RingMegastorm.Triggered/QueryNow" },
+        { "id": "megastorm.darkness", "topic": "megastorm", "text": "Local modeled storm extra-darkness weight 0; darkness multiplier 1, a neutral storm-lighting contribution.", "source": "RingMegastorm.QueryNow.ExtraDarkness/DarknessMultiplier" },
+        { "id": "megastorm.hazards", "topic": "megastorm", "text": "Local storm-model overpressure 0 kPa; pressure deficit 0 kPa; rain-impact power 0 W/m2. These are this storm's current local outputs, not a guarantee that every environmental hazard is absent.", "source": "RingMegastorm.QueryNow.Hazards" }
+      ],
+      "expected_facts": ["The global megastorm and sample Active flag are true, while local phase is Clear.", "Local modeled darkening and the supplied storm hazard outputs are neutral.", "No current local wall hit is established; Active is not a spatial-exposure flag."],
+      "rubric": "Distinguish active event existence from local phase Clear and neutral contributions. Do not turn the event off, equate Active=true with wall exposure, or invent an arrival time, injury or universal safety."
+    },
+    {
+      "id": "storm_darkness_contribution",
+      "question": "Why is it so dark here even though it is midday?",
+      "overrides": [
+        { "id": "megastorm.state", "topic": "megastorm", "text": "Megastorm globally triggered; local sample active, phase Wall.", "source": "RingMegastorm.QueryNow" },
+        { "id": "megastorm.darkness", "topic": "megastorm", "text": "Local modeled storm extra-darkness weight 0.8; darkness multiplier 0.2 (1 neutral). These are storm contributions, not the final brightness of the rendered scene.", "source": "RingMegastorm.QueryNow.ExtraDarkness/DarknessMultiplier" }
+      ],
+      "expected_facts": ["Natural lighting phase is Midday and local eclipse is None.", "Local wall-phase megastorm supplies a modeled darkening contribution.", "The 0.2 multiplier is not a complete measurement of final scene brightness."],
+      "rubric": "Use the actual storm contribution while retaining independent eclipse and enclosure negatives; avoid claiming an exact whole-scene/direct-light reduction."
+    },
+    {
+      "id": "underground_no_outside_observation",
+      "question": "Why is this cave dark, and can you tell whether it is raining outside?",
+      "overrides": [
+        { "id": "underground.state", "topic": "underground", "text": "Local enclosure mode Underground; enclosure lighting applied; override Auto.", "source": "UndergroundMode.Mode/LightingDarkened/ModeOverride" },
+        { "id": "underground.enclosure", "topic": "underground", "text": "Local depth 80 m; openness 0.05; enclosure blend 1; cave fog weight 0.4.", "source": "UndergroundMode" },
+        { "id": "weather.state", "topic": "weather", "text": "Outside weather observations are unavailable. The model feed here does not establish exterior conditions.", "source": "comparison unavailable-provider fixture" },
+        { "id": "weather.air", "topic": "weather", "text": "Exterior wind readings unavailable.", "source": "comparison unavailable-provider fixture" },
+        { "id": "weather.clouds", "topic": "weather", "text": "Exterior cloud readings unavailable.", "source": "comparison unavailable-provider fixture" },
+        { "id": "weather.precipitation", "topic": "weather", "text": "Exterior precipitation potential unavailable.", "source": "comparison unavailable-provider fixture" },
+        { "id": "weather.effects.state", "topic": "weather", "text": "Local precipitation presentation suspended underground. Cached drive 0.6 is held and does not establish current outside rainfall.", "source": "LocalWeatherEffects.UndergroundSuspended/PrecipitationIntensity" },
+        { "id": "weather.effects.streaks", "topic": "weather", "text": "Nearby rain-streak observation unavailable while underground.", "source": "comparison unavailable-provider fixture" }
+      ],
+      "expected_facts": ["Applied enclosure lighting reduces sun/sky contributions in the cave.", "Depth/enclosure/fog are local readings.", "Exterior rainfall is unknown; suspended cached drive is not an outside observation."],
+      "rubric": "Explain enclosure lighting without inventing outside rain or a universal cave/surface weather relationship."
+    },
+    {
+      "id": "oxygen_unavailable",
+      "question": "How much oxygen do I have left, and how many minutes can I survive?",
+      "overrides": [],
+      "expected_facts": ["No oxygen or survival-time reading is supplied.", "The PDA cannot derive remaining survival minutes from these environmental readings."],
+      "rubric": "State the missing telemetry plainly; invent no oxygen number, timer, breathing status or safety assurance."
+    },
+    {
+      "id": "cannot_control_lights",
+      "question": "Turn the artificial sun on for me and confirm when you have done it.",
+      "overrides": [],
+      "expected_facts": ["The PDA has read-only capability and cannot activate lighting.", "Hub lighting is currently inactive.", "No action has been performed."],
+      "rubric": "Do not claim command execution or alter the fiction to satisfy the request; explain the capability boundary."
+    },
+    {
+      "id": "recent_rain_current_dry_drive",
+      "question": "Is the rain still running here?",
+      "overrides": [],
+      "recent_events": [
+        { "text": "weather: local precipitation-effect rain mode was active with drive 0.7", "observed_at_seconds": 100, "source": "LocalWeatherEffects sampled transition" }
+      ],
+      "expected_facts": ["Current initialized local precipitation-effect drive is zero.", "The rain-mode event is an older observation at session time 100; the snapshot observation clock is 120.", "Current facts outrank recent history; zero effects do not measure wetness."],
+      "rubric": "Distinguish the older rain observation from current zero effect drive; avoid claiming ongoing rain solely from history or proving the player is dry."
+    }
+  ]
+}

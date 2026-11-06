@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -11,6 +12,59 @@ namespace RingworldTechDemo.Pda;
 
 public enum PdaMemoryMode { SystemRam, GpuVram }
 public sealed record PdaBackendInfo(string MemoryMode, string Backend, string Device, int OffloadedLayers, int TotalLayers);
+public sealed record PdaImageInput(byte[] PngBytes, DateTimeOffset CapturedAtUtc, long SnapshotVersion);
+public sealed record PdaPngInfo(int Width, int Height);
+
+/// <summary>Pure input bounds shared by the caller and helper; validation does not decode or trust arbitrary image paths.</summary>
+public static class PdaImageProtocol
+{
+    public const int MaxBytes = 2 * 1024 * 1024, MaxSide = 1024, MaxPixels = 1024 * 1024;
+    private static readonly byte[] Signature = { 137, 80, 78, 71, 13, 10, 26, 10 };
+
+    public static PdaPngInfo ValidatePng(byte[] bytes)
+    {
+        if (bytes == null || bytes.Length < 33 || bytes.Length > MaxBytes) throw new InvalidDataException("PDA image must be a PNG of at most 2 MiB.");
+        if (!bytes.AsSpan(0, 8).SequenceEqual(Signature) || BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)) != 13
+            || !bytes.AsSpan(12, 4).SequenceEqual("IHDR"u8)) throw new InvalidDataException("PDA image has an invalid PNG signature or IHDR.");
+        uint width = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(16, 4)), height = BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(20, 4));
+        if (width == 0 || height == 0 || width > MaxSide || height > MaxSide || (ulong)width * height > MaxPixels)
+            throw new InvalidDataException("PDA image dimensions exceed the 1024-side/pixel budget.");
+        byte depth = bytes[24], color = bytes[25];
+        bool format = color switch { 0 => depth is 1 or 2 or 4 or 8 or 16, 2 or 4 or 6 => depth is 8 or 16, 3 => depth is 1 or 2 or 4 or 8, _ => false };
+        if (!format || bytes[26] != 0 || bytes[27] != 0 || bytes[28] > 1) throw new InvalidDataException("PDA image uses an unsupported PNG header.");
+        return new PdaPngInfo((int)width, (int)height);
+    }
+
+    public static string ImageRoot(string projectRoot) => Path.GetFullPath(Path.Combine(projectRoot, ".godot", "pda_images"));
+
+    public static string ValidateImagePath(string projectRoot, string path)
+    {
+        if (!Path.IsPathFullyQualified(path)) throw new InvalidDataException("PDA image paths must be absolute session-owned files.");
+        string root = ImageRoot(projectRoot), full = Path.GetFullPath(path);
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetExtension(full), ".png", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("PDA image is outside the owned image directory.");
+        string[] parts = Path.GetRelativePath(root, full).Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2 || !Guid.TryParseExact(parts[0], "N", out _) || !Guid.TryParseExact(Path.GetFileNameWithoutExtension(parts[1]), "N", out _))
+            throw new InvalidDataException("PDA image path does not identify one owned session file.");
+        EnsureNoReparsePoints(full);
+        return full;
+    }
+
+    public static void EnsureNoReparsePoints(string path)
+    {
+        for (string? current = Path.GetFullPath(path); !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            try
+            {
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("PDA image paths cannot traverse reparse points.");
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+    }
+}
+
 public sealed record PdaQaReply(string Answer, string Model, double ElapsedMilliseconds, string? Error = null)
 {
     public int PromptTokens { get; init; }
@@ -20,6 +74,17 @@ public sealed record PdaQaReply(string Answer, string Model, double ElapsedMilli
     public double ModelReadyMilliseconds { get; init; }
     public double PrefillMilliseconds { get; init; }
     public double DecodeMilliseconds { get; init; }
+    public string? RenderedPrompt { get; init; }
+    public string? RawAnswer { get; init; }
+    /// <summary>Comparison-only retokenization of the raw text using retained model weights; decoded stream pieces are counted separately.</summary>
+    public int? OutputTokens { get; init; }
+    public bool ImageUsed { get; init; }
+    public DateTimeOffset? ImageCapturedAtUtc { get; init; }
+    public long? ImageSnapshotVersion { get; init; }
+    public int ImagePromptTokenPositions { get; init; }
+    public int ImagePromptTokens { get; init; }
+    public string? ProjectorBackend { get; init; }
+    public string? ProjectorDevice { get; init; }
 }
 
 /// <summary>Owns one resident local helper. All model work and protocol I/O happen away from the game thread.</summary>
@@ -28,11 +93,16 @@ public sealed class LocalPdaQaClient : IDisposable
     public const int MaxQuestionChars = 512, MaxContextChars = 10000;
     private readonly string _projectRoot, _modelKey;
     private readonly int _threads;
+    private readonly int _gpuLayers;
+    private readonly bool _useComparisonHelper;
+    private readonly PdaModelSpec _model;
     private readonly PdaMemoryMode _memoryMode;
     private PdaBackendInfo? _backendInfo;
     private readonly object _processLock = new(), _diagnosticLock = new();
     private readonly SemaphoreSlim _requestGate = new(1, 1);
     private readonly StringBuilder _diagnostics = new();
+    private readonly Dictionary<Process, Task> _ownedExits = new();
+    private readonly string _imageSession = Guid.NewGuid().ToString("N");
     private Process? _process;
     private Task<Process>? _readiness;
     private volatile string _status = "Local model idle";
@@ -56,21 +126,26 @@ public sealed class LocalPdaQaClient : IDisposable
         }
     }
 
-    public LocalPdaQaClient(string projectRoot, string modelKey = "qwen3-0.6b", int threads = 4, PdaMemoryMode memoryMode = PdaMemoryMode.SystemRam)
+    public LocalPdaQaClient(string projectRoot, string modelKey = PdaModelCatalog.DefaultModelKey, int threads = 4,
+        PdaMemoryMode memoryMode = PdaMemoryMode.SystemRam, int gpuLayers = 99, bool useComparisonHelper = false)
     {
         _projectRoot = Path.GetFullPath(projectRoot);
         _modelKey = modelKey;
+        _model = PdaModelCatalog.Get(modelKey);
+        _useComparisonHelper = useComparisonHelper;
         _threads = Math.Clamp(threads, 1, 16);
         _memoryMode = memoryMode;
         if (memoryMode is not (PdaMemoryMode.SystemRam or PdaMemoryMode.GpuVram)) throw new ArgumentOutOfRangeException(nameof(memoryMode));
-        if (modelKey is not ("qwen3-0.6b" or "qwen2-0.5b" or "qwen2.5-0.5b"))
-            throw new ArgumentException("Unknown local PDA model.", nameof(modelKey));
+        if (memoryMode == PdaMemoryMode.GpuVram && (gpuLayers < 1 || gpuLayers > 99)) throw new ArgumentOutOfRangeException(nameof(gpuLayers), "GPU layers must be between 1 and 99.");
+        _gpuLayers = memoryMode == PdaMemoryMode.GpuVram ? gpuLayers : 0;
     }
 
-    public Task<PdaQaReply> AskAsync(string question, string context, CancellationToken token)
+    public Task<PdaQaReply> AskAsync(string question, string context, CancellationToken token, PdaImageInput? image = null)
     {
         int generation = Volatile.Read(ref _generation);
-        return Task.Run(() => AskCoreAsync(question, context, generation, token), CancellationToken.None);
+        PdaImageInput? owned = image;
+        if (image?.PngBytes is { Length: <= PdaImageProtocol.MaxBytes }) owned = image with { PngBytes = (byte[])image.PngBytes.Clone() };
+        return Task.Run(() => AskCoreAsync(question, context, generation, token, owned), CancellationToken.None);
     }
 
     public Task WarmAsync(CancellationToken token = default)
@@ -84,10 +159,13 @@ public sealed class LocalPdaQaClient : IDisposable
         }, CancellationToken.None);
     }
 
-    private async Task<PdaQaReply> AskCoreAsync(string question, string context, int generation, CancellationToken token)
+    private async Task<PdaQaReply> AskCoreAsync(string question, string context, int generation, CancellationToken token, PdaImageInput? image)
     {
         bool entered = false;
         Process? process = null;
+        string? imagePath = null;
+        Task? imageOwnerExit = null;
+        bool requestStarted = false, terminalReceived = false;
         double queueMs = 0, modelReadyMs = 0;
         try
         {
@@ -99,6 +177,12 @@ public sealed class LocalPdaQaClient : IDisposable
                 throw new InvalidDataException($"Enter a question of 1 to {MaxQuestionChars} characters.");
             if (context.Length == 0 || context.Length > MaxContextChars)
                 throw new InvalidDataException($"Prepared context must contain 1 to {MaxContextChars} characters.");
+            if (image != null)
+            {
+                if (_model.Family != PdaModelFamily.Gemma3) throw new InvalidDataException("Images are supported only by the Gemma3 debug model.");
+                PdaImageProtocol.ValidatePng(image.PngBytes);
+                if (image.SnapshotVersion < 0) throw new InvalidDataException("PDA image snapshot version is invalid.");
+            }
             var phaseTimer = Stopwatch.StartNew();
             await _requestGate.WaitAsync(token).ConfigureAwait(false);
             queueMs = phaseTimer.Elapsed.TotalMilliseconds;
@@ -109,14 +193,28 @@ public sealed class LocalPdaQaClient : IDisposable
             modelReadyMs = phaseTimer.Elapsed.TotalMilliseconds;
             token.ThrowIfCancellationRequested();
             long id = Interlocked.Increment(ref _requestId);
-            string request = JsonSerializer.Serialize(new { type = "ask", id, question, context });
+            if (image != null)
+            {
+                string directory = Path.Combine(PdaImageProtocol.ImageRoot(_projectRoot), _imageSession);
+                string candidate = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".png");
+                PdaImageProtocol.ValidateImagePath(_projectRoot, candidate);
+                Directory.CreateDirectory(directory);
+                PdaImageProtocol.ValidateImagePath(_projectRoot, candidate);
+                await using var output = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None, 8192, FileOptions.Asynchronous);
+                imagePath = candidate;
+                lock (_processLock) imageOwnerExit = _ownedExits[process];
+                await output.WriteAsync(image.PngBytes, token).ConfigureAwait(false);
+            }
+            string request = JsonSerializer.Serialize(new { type = "ask", id, question, context, imagePath,
+                imageCapturedAtUtc = image?.CapturedAtUtc.ToUniversalTime(), imageSnapshotVersion = image?.SnapshotVersion });
             _status = "Answering with " + _modelKey;
-            using var responseTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            using var responseTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(_model.RequestTimeoutSeconds));
+            requestStarted = true;
             await process.StandardInput.WriteLineAsync(request.AsMemory(), responseTimeout.Token).ConfigureAwait(false);
             await process.StandardInput.FlushAsync(responseTimeout.Token).ConfigureAwait(false);
             var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var cancellation = token.Register(() => cancelled.TrySetResult());
-            Task<JsonDocument> responseTask = ReadMessageAsync(process.StandardOutput, responseTimeout.Token);
+            Task<JsonDocument> responseTask = ReadMessageAsync(process.StandardOutput, responseTimeout.Token, _model.ComparisonOnly ? 131072 : 8192);
             Task completed = await Task.WhenAny(responseTask, cancelled.Task).ConfigureAwait(false);
             if (completed == cancelled.Task)
             {
@@ -126,7 +224,7 @@ public sealed class LocalPdaQaClient : IDisposable
                 await process.StandardInput.FlushAsync(responseTimeout.Token).ConfigureAwait(false);
                 // Keep consuming the one terminal reply before allowing the next request to use this pipe.
                 // A helper that cannot stop cooperatively gets terminated by this bounded watchdog.
-                try { using JsonDocument discarded = await responseTask.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false); ValidateId(discarded.RootElement, id); }
+                try { using JsonDocument discarded = await responseTask.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false); ValidateId(discarded.RootElement, id); terminalReceived = true; }
                 catch
                 {
                     StopOwned(process);
@@ -140,13 +238,14 @@ public sealed class LocalPdaQaClient : IDisposable
             using JsonDocument response = await responseTask.ConfigureAwait(false);
             JsonElement answer = response.RootElement;
             ValidateId(answer, id);
+            terminalReceived = true;
             token.ThrowIfCancellationRequested();
             string? type = answer.GetProperty("type").GetString();
             if (type == "error")
             {
                 _status = "Answer rejected";
-                return new PdaQaReply("", _modelKey, 0, answer.GetProperty("message").GetString() ?? "Local PDA answer failed.")
-                { QueueMilliseconds = queueMs, ModelReadyMilliseconds = modelReadyMs };
+                return ReadReplyMetrics(new PdaQaReply("", _modelKey, OptionalMilliseconds(answer, "elapsedMs"),
+                    answer.GetProperty("message").GetString() ?? "Local PDA answer failed."), answer, queueMs, modelReadyMs);
             }
             if (type != "answer") throw new InvalidDataException("Unexpected PDA worker response type.");
             string text = answer.GetProperty("text").GetString() ?? "";
@@ -154,13 +253,9 @@ public sealed class LocalPdaQaClient : IDisposable
             if (string.IsNullOrWhiteSpace(text) || text.Length > 1400 || !double.IsFinite(elapsed) || elapsed < 0)
                 throw new InvalidDataException("Local PDA answer was malformed.");
             _status = "Ready: " + _modelKey;
-            return new PdaQaReply(text, _modelKey, elapsed)
-            {
-                PromptTokens = OptionalCount(answer, "promptTokens"), OutputPieces = OptionalCount(answer, "outputPieces"),
-                FirstTokenMilliseconds = OptionalMilliseconds(answer, "firstTokenMilliseconds"),
-                PrefillMilliseconds = OptionalMilliseconds(answer, "prefillMilliseconds"), DecodeMilliseconds = OptionalMilliseconds(answer, "decodeMilliseconds"),
-                QueueMilliseconds = queueMs, ModelReadyMilliseconds = modelReadyMs
-            };
+            PdaQaReply parsed = ReadReplyMetrics(new PdaQaReply(text, _modelKey, elapsed), answer, queueMs, modelReadyMs);
+            return image != null && !parsed.ImageUsed ? parsed with
+                { Answer = "", Error = "The helper did not confirm processing the attached image. Build and reload the image-capable helper." } : parsed;
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested || generation != Volatile.Read(ref _generation) || _disposed)
         {
@@ -179,6 +274,7 @@ public sealed class LocalPdaQaClient : IDisposable
         }
         finally
         {
+            if (imagePath != null) await CleanupImageAsync(imagePath, !requestStarted || terminalReceived, imageOwnerExit).ConfigureAwait(false);
             if (entered) _requestGate.Release();
         }
     }
@@ -192,7 +288,7 @@ public sealed class LocalPdaQaClient : IDisposable
             if (generation != _generation) throw new OperationCanceledException("PDA helper stopped.", token);
             if (_process == null || _process.HasExited)
             {
-                _process?.Dispose();
+                if (_process != null) { _ownedExits.Remove(_process); _process.Dispose(); }
                 _process = null;
                 ProcessStartInfo info = CreateStartInfo();
                 var created = new Process { StartInfo = info };
@@ -200,6 +296,7 @@ public sealed class LocalPdaQaClient : IDisposable
                 {
                     if (!created.Start()) throw new IOException("Could not start the local PDA helper.");
                     _process = created;
+                    _ownedExits[created] = created.WaitForExitAsync();
                 }
                 catch { created.Dispose(); throw; }
                 lock (_diagnosticLock) _diagnostics.Clear();
@@ -217,7 +314,7 @@ public sealed class LocalPdaQaClient : IDisposable
     {
         try
         {
-            using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            using var startup = new CancellationTokenSource(TimeSpan.FromSeconds(_model.StartupTimeoutSeconds));
             using JsonDocument ready = await ReadMessageAsync(process.StandardOutput, startup.Token).ConfigureAwait(false);
             JsonElement root = ready.RootElement;
             if (root.GetProperty("type").GetString() == "error") throw new IOException(root.GetProperty("message").GetString());
@@ -231,7 +328,7 @@ public sealed class LocalPdaQaClient : IDisposable
                 bool gpu = _memoryMode == PdaMemoryMode.GpuVram;
                 if (backend.MemoryMode != (gpu ? "vram" : "ram") || backend.Backend != (gpu ? "cuda" : "cpu") || string.IsNullOrWhiteSpace(backend.Device)
                     || backend.OffloadedLayers < 0 || backend.TotalLayers < 0 || backend.OffloadedLayers > backend.TotalLayers
-                    || (gpu && (backend.OffloadedLayers == 0 || backend.TotalLayers == 0)) || (!gpu && backend.OffloadedLayers != 0))
+                    || (gpu && (backend.OffloadedLayers == 0 || backend.TotalLayers == 0 || backend.OffloadedLayers > _gpuLayers)) || (!gpu && backend.OffloadedLayers != 0))
                     throw new InvalidDataException("PDA helper did not verify the requested memory/backend mode. Select RAM or check the CUDA runtime and available VRAM.");
             }
             else
@@ -270,6 +367,38 @@ public sealed class LocalPdaQaClient : IDisposable
         return number;
     }
 
+    private PdaQaReply ReadReplyMetrics(PdaQaReply reply, JsonElement value, double queueMs, double modelReadyMs)
+    {
+        PdaQaReply result = reply with
+        {
+        PromptTokens = OptionalCount(value, "promptTokens"), OutputPieces = OptionalCount(value, "outputPieces"),
+        FirstTokenMilliseconds = OptionalMilliseconds(value, "firstTokenMilliseconds"),
+        PrefillMilliseconds = OptionalMilliseconds(value, "prefillMilliseconds"), DecodeMilliseconds = OptionalMilliseconds(value, "decodeMilliseconds"),
+        QueueMilliseconds = queueMs, ModelReadyMilliseconds = modelReadyMs,
+        RenderedPrompt = _model.ComparisonOnly ? OptionalEvidence(value, "renderedPrompt", 16000) : null,
+        RawAnswer = _model.ComparisonOnly ? OptionalEvidence(value, "rawAnswer", 4096) : null,
+        OutputTokens = _model.ComparisonOnly && value.TryGetProperty("outputTokens", out JsonElement output) && output.ValueKind != JsonValueKind.Null
+            ? OptionalCount(value, "outputTokens") : null,
+        ImageUsed = value.TryGetProperty("imageUsed", out JsonElement used) && used.GetBoolean(),
+        ImageCapturedAtUtc = value.TryGetProperty("imageCapturedAtUtc", out JsonElement captured) && captured.ValueKind != JsonValueKind.Null ? captured.GetDateTimeOffset() : null,
+        ImageSnapshotVersion = value.TryGetProperty("imageSnapshotVersion", out JsonElement version) && version.ValueKind != JsonValueKind.Null ? version.GetInt64() : null,
+        ImagePromptTokenPositions = OptionalCount(value, "imagePromptTokenPositions"), ImagePromptTokens = OptionalCount(value, "imagePromptTokens"),
+        ProjectorBackend = OptionalEvidence(value, "projectorBackend", 32), ProjectorDevice = OptionalEvidence(value, "projectorDevice", 256)
+        };
+        if (result.ImageUsed && (result.ImageCapturedAtUtc == null || result.ImageSnapshotVersion == null || result.ImageSnapshotVersion < 0
+            || result.ImagePromptTokenPositions <= 0 || result.ImagePromptTokens <= 0 || result.ProjectorBackend is not ("cpu" or "cuda") || string.IsNullOrWhiteSpace(result.ProjectorDevice)))
+            throw new InvalidDataException("PDA helper returned incomplete image-use evidence.");
+        return result;
+    }
+
+    private static string? OptionalEvidence(JsonElement value, string property, int maximum)
+    {
+        if (!value.TryGetProperty(property, out JsonElement text) || text.ValueKind == JsonValueKind.Null) return null;
+        string result = text.GetString() ?? "";
+        if (result.Length > maximum) throw new InvalidDataException("PDA comparison evidence exceeded its size bound: " + property);
+        return result;
+    }
+
     private static int OptionalCount(JsonElement element, string property)
     {
         if (!element.TryGetProperty(property, out JsonElement value)) return 0;
@@ -281,21 +410,18 @@ public sealed class LocalPdaQaClient : IDisposable
     private ProcessStartInfo CreateStartInfo()
     {
         string prototype = Path.Combine(_projectRoot, "prototypes", "pda-voice");
-        string executable = Path.Combine(prototype, "bin", "qa-runtime", "PdaVoicePrototype.exe");
+        string executable = Path.Combine(prototype, "bin", _useComparisonHelper ? "qa-comparison" : "qa-runtime", "PdaVoicePrototype.exe");
         if (!File.Exists(executable))
         {
+            if (_useComparisonHelper) throw new FileNotFoundException("Build the isolated comparison helper first: tools/build_pda_worker.ps1 -Comparison.", executable);
+            if (_model.ComparisonOnly) throw new FileNotFoundException("Build the trial-capable runtime helper first: tools/build_pda_worker.ps1.", executable);
             if (_memoryMode == PdaMemoryMode.GpuVram) throw new FileNotFoundException("GPU VRAM mode needs the new helper. Run tools/build_pda_worker.ps1.", executable);
             executable = Path.Combine(prototype, "bin", "Release", "net10.0", "win-x64", "PdaVoicePrototype.exe");
         }
         string dotnet = Path.Combine(_projectRoot, "artifacts", "engine-upgrade", "dotnet");
         if (!File.Exists(executable)) throw new FileNotFoundException("Build the local helper first: tools/build_pda_worker.ps1.", executable);
         if (!File.Exists(Path.Combine(dotnet, "dotnet.exe"))) throw new DirectoryNotFoundException("The pinned .NET 10 runtime is missing from artifacts/engine-upgrade/dotnet.");
-        string modelFile = _modelKey switch
-        {
-            "qwen2-0.5b" => "qwen2-0_5b-instruct-q4_k_m.gguf",
-            "qwen2.5-0.5b" => "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-            _ => "Qwen3-0.6B-Q8_0.gguf"
-        };
+        string modelFile = _model.RelativeFile;
         if (!File.Exists(Path.Combine(prototype, "models", modelFile)))
             throw new FileNotFoundException("The selected local GGUF model is missing: " + modelFile);
         var info = new ProcessStartInfo(executable)
@@ -308,6 +434,7 @@ public sealed class LocalPdaQaClient : IDisposable
         info.ArgumentList.Add("--model"); info.ArgumentList.Add(_modelKey);
         info.ArgumentList.Add("--threads"); info.ArgumentList.Add(_threads.ToString(System.Globalization.CultureInfo.InvariantCulture));
         info.ArgumentList.Add("--memory"); info.ArgumentList.Add(_memoryMode == PdaMemoryMode.GpuVram ? "vram" : "ram");
+        info.ArgumentList.Add("--gpu-layers"); info.ArgumentList.Add(_gpuLayers.ToString(System.Globalization.CultureInfo.InvariantCulture));
         info.Environment["DOTNET_ROOT"] = dotnet;
         info.Environment["DOTNET_ROOT_X64"] = dotnet;
         if (_memoryMode == PdaMemoryMode.GpuVram) ConfigureCudaRuntime(info);
@@ -349,7 +476,7 @@ public sealed class LocalPdaQaClient : IDisposable
     private static bool HasCudaRuntime(string directory) => File.Exists(Path.Combine(directory, "cublas64_12.dll"))
         && File.Exists(Path.Combine(directory, "cublasLt64_12.dll")) && File.Exists(Path.Combine(directory, "cudart64_12.dll"));
 
-    private static async Task<JsonDocument> ReadMessageAsync(StreamReader reader, CancellationToken token)
+    private static async Task<JsonDocument> ReadMessageAsync(StreamReader reader, CancellationToken token, int maximumCharacters = 8192)
     {
         var text = new StringBuilder();
         var next = new char[1];
@@ -357,7 +484,7 @@ public sealed class LocalPdaQaClient : IDisposable
         {
             if (next[0] == '\n') return JsonDocument.Parse(text.ToString());
             if (next[0] != '\r') text.Append(next[0]);
-            if (text.Length > 8192) throw new InvalidDataException("PDA worker response exceeded the protocol size limit.");
+            if (text.Length > maximumCharacters) throw new InvalidDataException("PDA worker response exceeded the protocol size limit.");
         }
         throw new EndOfStreamException("Local PDA helper exited before returning a response. Rebuild prototypes/pda-voice in Release mode if needed.");
     }
@@ -397,13 +524,59 @@ public sealed class LocalPdaQaClient : IDisposable
 
     private void StopOwned(Process process)
     {
+        Task? exit;
         lock (_processLock)
         {
             if (ReferenceEquals(_process, process)) { _process = null; _readiness = null; Volatile.Write(ref _backendInfo, null); }
+            _ownedExits.TryGetValue(process, out exit);
         }
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException) { }
-        finally { process.Dispose(); }
+        if (exit != null) _ = DisposeAfterExitAsync(process, exit);
+        else process.Dispose();
+    }
+
+    private async Task DisposeAfterExitAsync(Process process, Task exit)
+    {
+        try { await exit.ConfigureAwait(false); }
+        catch (Exception) { return; }
+        lock (_processLock) _ownedExits.Remove(process);
+        process.Dispose();
+    }
+
+    private async Task CleanupImageAsync(string path, bool terminal, Task? exit)
+    {
+        if (!terminal)
+        {
+            if (exit == null) return;
+            try { await exit.WaitAsync(TimeSpan.FromSeconds(3)).ConfigureAwait(false); }
+            catch (Exception)
+            {
+                _ = DeleteImageAfterExitAsync(path, exit);
+                return;
+            }
+        }
+        DeleteOwnImage(path);
+    }
+
+    private async Task DeleteImageAfterExitAsync(string path, Task exit)
+    {
+        try { await exit.ConfigureAwait(false); DeleteOwnImage(path); }
+        catch (Exception) { }
+    }
+
+    private void DeleteOwnImage(string path)
+    {
+        try
+        {
+            string full = PdaImageProtocol.ValidateImagePath(_projectRoot, path);
+            string? directory = Path.GetDirectoryName(full);
+            if (directory != Path.Combine(PdaImageProtocol.ImageRoot(_projectRoot), _imageSession)) return;
+            File.Delete(full);
+            try { Directory.Delete(directory, recursive: false); }
+            catch (IOException) { }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { }
     }
 
     public void Dispose()

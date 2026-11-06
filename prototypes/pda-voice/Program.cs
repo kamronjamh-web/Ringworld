@@ -11,6 +11,10 @@ switch (cmd)
         return await LlmBench.RunWorker(Cli.Value(rest, "--model")!, int.Parse(Cli.Value(rest, "--threads")!), Cli.Value(rest, "--out")!);
     case "qa-worker":
         return await PdaQaWorker.Run(rest);
+    case "qa-compare":
+        return await PdaModelComparison.Run(rest);
+    case "qa-vision-smoke":
+        return await PdaVisionSmoke.Run(rest);
     case "tts":
         return await TtsBench.RunAll(rest);
     case "audition":
@@ -25,6 +29,6 @@ switch (cmd)
         await LlmBench.RunAll(rest);
         return await TtsBench.RunAll(rest);
     default:
-        Console.WriteLine("usage: run.ps1 llm [--models qwen2-0.5b,qwen2.5-0.5b,qwen3-0.6b] [--threads 8,4] | qa-worker [--model qwen3-0.6b] [--threads 4] | tts | audition | audition-emma | audition-expressive-report | all");
+        Console.WriteLine("usage: run.ps1 llm [--models qwen2-0.5b,qwen2.5-0.5b,qwen3-0.6b] [--threads 8,4] | qa-worker [--model qwen3-0.6b] [--threads 4] | qa-compare --model <trial-key> --memory ram|vram [--gpu-layers 8] [--threads 4] [--label pda_8b] [--context baseline|focused] [--guardrails true|false] | qa-vision-smoke --model gemma-3-4b-q4 --memory ram|vram [--gpu-layers 16] [--label pda_memory] | tts | audition | audition-emma | audition-expressive-report | all");
         return 1;
 }
