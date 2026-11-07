@@ -30,6 +30,7 @@ public partial class PdaContextFeed : Node
     private bool _knowledgeLoaded;
     private long _version;
     private double _refresh;
+    private PdaStateEvidence _stateEvidence = new();
     public PdaContextSnapshot? CurrentSnapshot { get; private set; }
 
     public override void _Ready()
@@ -56,6 +57,7 @@ public partial class PdaContextFeed : Node
         if (System.Environment.CurrentManagedThreadId != _ownerThread)
             throw new InvalidOperationException("PDA context must be captured on its owning game thread.");
         LoadKnowledge();
+        _stateEvidence = new PdaStateEvidence();
         var facts = new List<PdaContextFact>();
         double observationSeconds = Time.GetTicksMsec() / 1000d;
         _history.Prune(observationSeconds);
@@ -73,7 +75,7 @@ public partial class PdaContextFeed : Node
         Read("weather", facts, () => CaptureWeatherEffects(Resolve<global::RingworldTechDemo.RingLocalWeatherEffects>(WeatherEffectsPath, "effects"), facts));
         Read("megastorm", facts, () => CaptureMegastorm(Resolve<RingMegastorm>(MegastormPath, "megastorm"), explorer, facts));
         Read("underground", facts, () => CaptureUnderground(Resolve<RingUndergroundModeController>(UndergroundPath, "underground"), facts));
-        CurrentSnapshot = new PdaContextSnapshot(++_version, DateTimeOffset.UtcNow, Array.AsReadOnly(facts.ToArray()), _knowledge, _history.Events);
+        CurrentSnapshot = new PdaContextSnapshot(++_version, DateTimeOffset.UtcNow, Array.AsReadOnly(facts.ToArray()), _knowledge, _history.Events, _stateEvidence);
         return CurrentSnapshot;
     }
 
@@ -137,6 +139,8 @@ public partial class PdaContextFeed : Node
         if (clock == null || clock.CurrentFrame.ToSun.LengthSquared() < .01f)
         { State(facts, "celestial.state", "celestial", "Local celestial readings are unavailable or not initialized.", "RingDayNightCycle", "daynight.state", "unavailable"); return; }
         CelestialFrame f = clock.CurrentFrame;
+        if (float.IsFinite(f.RawEclipseCoverage) && f.RawEclipseCoverage is >= 0f and <= 1f)
+            _stateEvidence = _stateEvidence with { LocalEclipseCoverageFraction = f.RawEclipseCoverage };
         Add(facts, "clocks.celestial", "clocks", $"Celestial simulation clock is {N(f.AbsoluteSeconds)} seconds. This is separate from the weather simulation clock.", "RingDayNightCycle.CurrentFrame.AbsoluteSeconds",
             $"Celestial clock {N(f.AbsoluteSeconds)} simulation seconds.");
         State(facts, "celestial.state", "celestial", $"Local natural lighting phase is {f.LightingPhase}; the real star is {(f.SunAboveHorizon ? "above" : "below")} the local horizon.", "RingDayNightCycle.CurrentFrame", "daynight.state", f.LightingPhase + ":" + f.SunAboveHorizon,
@@ -158,6 +162,7 @@ public partial class PdaContextFeed : Node
         var hub = eclipse.HubLight;
         bool active = hub.Active;
         bool overridden = eclipse.HubLevelOverrideActive || hub.Overridden;
+        if (eclipse.Bound || overridden) _stateEvidence = _stateEvidence with { HubActive = active };
         string cause = overridden ? "A debug override controls it independently of the natural eclipse." : active ? "It is driven by the configured eclipse event timeline." : "No artificial hub illumination is currently reported.";
         string compactCause = overridden ? "Cause: debug override, independent of natural eclipse." : active ? "Cause: eclipse event timeline." : "No hub illumination reported.";
         State(facts, "eclipse.hub", "celestial", $"Artificial hub-light output is {(active ? "active" : "inactive")}. {cause}", "EclipseEventDirector.HubLight/HubLevelOverrideActive", "eclipse.hub", active + ":" + overridden,
@@ -191,6 +196,7 @@ public partial class PdaContextFeed : Node
         if (effects == null || !HasInitializedPrecipitationEffectReading(effects.IsProcessing(), effects.HasCurrentWindSnapshot,
             effects.PrecipitationCloudBaseMeters, effects.PrecipitationIntensity))
         {
+            if (effects != null) _stateEvidence = _stateEvidence with { PrecipitationInitialized = false };
             State(facts, "weather.effects.state", "weather", "Local precipitation-effect readings are unavailable or not initialized; zero-valued defaults cannot establish dry conditions. Rain/snow effect drive is unknown.",
                 "LocalWeatherEffects.IsProcessing/HasCurrentWindSnapshot/PrecipitationCloudBaseMeters", "effects.mode", "unavailable",
                 "Precipitation-effect drive unavailable/uninitialized, not dry.");
@@ -198,6 +204,12 @@ public partial class PdaContextFeed : Node
         }
         float intensity = effects.PrecipitationIntensity;
         bool driven = intensity > .01f;
+        _stateEvidence = _stateEvidence with
+        {
+            PrecipitationInitialized = true, PrecipitationDrive = intensity,
+            PrecipitationMode = !driven ? PdaPrecipitationMode.Negligible : effects.Snowing ? PdaPrecipitationMode.Snow : PdaPrecipitationMode.Rain,
+            PrecipitationSuspended = effects.UndergroundSuspended
+        };
         string mode = !driven ? "negligible or zero local precipitation drive" : effects.Snowing ? "snow" : "rain";
         string presentation = effects.UndergroundSuspended ? "suspended for underground mode; cached drive can remain nonzero" : "not suspended by underground mode";
         State(facts, "weather.effects.state", "weather", $"Cached local precipitation-effect mode is {mode} (drive classification threshold 0.01). Its presentation is {presentation}. This reports effect drive, not player wetness or damage.",

@@ -1,0 +1,50 @@
+[
+  {
+    "Key": "qwen3-8b-q4",
+    "Repo": "Qwen/Qwen3-8B-GGUF",
+    "Revision": "7c41481f57cb95916b40956ab2f0b139b296d974",
+    "SourceFile": "Qwen3-8B-Q4_K_M.gguf",
+    "FileName": "Qwen3-8B-Q4_K_M.gguf",
+    "Family": "qwen3",
+    "Bytes": 5027783488,
+    "Sha256": "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+    "RelativePath": "_comparison/Qwen3-8B-Q4_K_M.gguf",
+    "Url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf?download=true"
+  },
+  {
+    "Key": "granite-3.3-8b-q4",
+    "Repo": "bartowski/ibm-granite_granite-3.3-8b-instruct-GGUF",
+    "Revision": "000bcc0448c24671ca97c24b2daa6dd693abc625",
+    "SourceFile": "ibm-granite_granite-3.3-8b-instruct-Q4_K_M.gguf",
+    "FileName": "granite-3.3-8b-instruct-Q4_K_M.gguf",
+    "Family": "granite",
+    "Bytes": 4942873632,
+    "Sha256": "758fb00abcec89df5cf02932165daf72f0d0b74db5019dbe9f2b3defb1e9295e",
+    "RelativePath": "_comparison/granite-3.3-8b-instruct-Q4_K_M.gguf",
+    "Url": "https://huggingface.co/bartowski/ibm-granite_granite-3.3-8b-instruct-GGUF/resolve/000bcc0448c24671ca97c24b2daa6dd693abc625/ibm-granite_granite-3.3-8b-instruct-Q4_K_M.gguf?download=true"
+  },
+  {
+    "Key": "llama-3.1-8b-q4",
+    "Repo": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+    "Revision": "bf5b95e96dac0462e2a09145ec66cae9a3f12067",
+    "SourceFile": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+    "FileName": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+    "Family": "llama3",
+    "Bytes": 4920739232,
+    "Sha256": "7b064f5842bf9532c91456deda288a1b672397a54fa729aa665952863033557c",
+    "RelativePath": "_comparison/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+    "Url": "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/bf5b95e96dac0462e2a09145ec66cae9a3f12067/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf?download=true"
+  },
+  {
+    "Key": "gemma-3-4b-q4",
+    "Repo": "ggml-org/gemma-3-4b-it-GGUF",
+    "Revision": "d0976223747697cb51e056d85c532013931fe52e",
+    "SourceFile": "gemma-3-4b-it-Q4_K_M.gguf",
+    "FileName": "gemma-3-4b-it-Q4_K_M.gguf",
+    "Family": "gemma3",
+    "Bytes": 2489757856,
+    "Sha256": "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
+    "RelativePath": "_comparison/gemma-3-4b-it-Q4_K_M.gguf",
+    "Url": "https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/d0976223747697cb51e056d85c532013931fe52e/gemma-3-4b-it-Q4_K_M.gguf?download=true"
+  }
+]

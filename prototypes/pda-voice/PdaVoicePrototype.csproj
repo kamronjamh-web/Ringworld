@@ -21,5 +21,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Update="events.json" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../../scripts/Pda/Debug/PdaModelCatalog.cs" Link="Shared/PdaModelCatalog.cs" />
+    <Compile Include="../../scripts/Pda/Debug/LocalPdaQaClient.cs" Link="Shared/LocalPdaQaClient.cs" />
+    <Compile Include="../../scripts/Pda/Debug/PdaContextSnapshot.cs" Link="Shared/PdaContextSnapshot.cs" />
+    <Compile Include="../../scripts/Pda/Debug/PdaAnswerPolicy.cs" Link="Shared/PdaAnswerPolicy.cs" />
   </ItemGroup>
 </Project>

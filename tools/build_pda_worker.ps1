@@ -1,4 +1,4 @@
-param([switch]$NoRestore)
+param([switch]$NoRestore, [switch]$Comparison)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $dotnetRoot = Join-Path $projectRoot 'artifacts/engine-upgrade/dotnet'
@@ -17,7 +17,8 @@ try {
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
     $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
-    $arguments = @('build', (Join-Path $projectRoot 'prototypes/pda-voice/PdaVoicePrototype.csproj'), '-c', 'Release', '-o', (Join-Path $projectRoot 'prototypes/pda-voice/bin/qa-runtime'), '-p:NuGetAudit=false', '-v:minimal')
+    $outputFolder = if ($Comparison) { 'qa-comparison' } else { 'qa-runtime' }
+    $arguments = @('build', (Join-Path $projectRoot 'prototypes/pda-voice/PdaVoicePrototype.csproj'), '-c', 'Release', '-o', (Join-Path $projectRoot "prototypes/pda-voice/bin/$outputFolder"), '-p:NuGetAudit=false', '-v:minimal')
     if ($NoRestore) { $arguments += '--no-restore' }
     & $dotnet @arguments
     $result = $LASTEXITCODE

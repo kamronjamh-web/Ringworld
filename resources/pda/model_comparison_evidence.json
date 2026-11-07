@@ -1,0 +1,94 @@
+{
+  "schema": 1,
+  "note": "Explicit typed evidence matching the unchanged comparison fixture. No values are inferred by parsing fact text. Expected facts and rubrics remain human review only.",
+  "cases": {
+    "warmup_unscored": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "active_eclipse_local_hub": {
+      "HubActive": true,
+      "LocalEclipseCoverageFraction": 1,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "false_eclipse_premise": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "rain_effects_hail_unknown": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0.7,
+      "PrecipitationMode": "Rain",
+      "PrecipitationSuspended": false
+    },
+    "potential_effects_unknown": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": false,
+      "PrecipitationDrive": null,
+      "PrecipitationMode": null,
+      "PrecipitationSuspended": false
+    },
+    "global_storm_local_clear": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "storm_darkness_contribution": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "underground_no_outside_observation": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0.6,
+      "PrecipitationMode": "Rain",
+      "PrecipitationSuspended": true
+    },
+    "oxygen_unavailable": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "cannot_control_lights": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    },
+    "recent_rain_current_dry_drive": {
+      "HubActive": false,
+      "LocalEclipseCoverageFraction": 0,
+      "PrecipitationInitialized": true,
+      "PrecipitationDrive": 0,
+      "PrecipitationMode": "Negligible",
+      "PrecipitationSuspended": false
+    }
+  }
+}

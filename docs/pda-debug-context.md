@@ -6,12 +6,14 @@ The debug PDA lets a developer ask questions about the running game using local 
 
 - In a debug game build, press **F10** to open or close the PDA panel. **Ctrl+F10** remains the precipitation debug shortcut.
 - The local model preloads when the interactive debug game scene starts and remains resident while you play. Type a question and submit it with Enter or **Ask**.
-- Select a model and **System RAM (CPU)** or **VRAM (CUDA)**, then press **Reload model** to apply the selection. The status shows the backend actually loaded, its device, and the number of layers offloaded. Selections remain pending until reload.
+- Select a model and **System RAM (CPU)** or **VRAM (CUDA)**, set a GPU-layer request if applicable, then press **Reload model**. Sixteen requests partial offload; 99 requests all available layers. Status reports actual device/offload, and other allocations still use system RAM. All selections remain pending until reload.
 - Inspect **Context supplied** to see the actual facts and explanations submitted with the question. This records the model's input; it does not certify that the answer used every fact correctly.
-- **Cancel**, **Clear**, and closing the panel cancel a pending answer while keeping the model loaded. **Reload model** and leaving the scene release the owned helper process. Reload replaces that process using the selected configuration.
-- The conversation and debug controls are session-only. Opening the panel releases the cursor and blocks player input while the world continues updating.
+- **Cancel**, **Clear display**, and closing the panel cancel a pending answer while keeping the model loaded. **Reload model** and leaving the scene release the owned helper. Reload replaces it using the selected configuration.
+- **Focused** is the default context mode; **Baseline** retains broader composition for comparison. **Use conversation memory** retrieves accepted turns from the current saved world. **Clear display** preserves memory; **Reset memory** removes that world's stored transcript.
+- Gemma optionally accepts one current-view image. Enable **Attach current view (Gemma)** for on-demand capture; no periodic image inference runs.
+- Debug configuration remains session-only. Conversation memory persists for active saved worlds and stays session-only when no world is eligible. Opening the panel releases the cursor and blocks player input while the world continues updating.
 
-The panel is a debug tool rather than an in-game PDA screen. It does not add gameplay settings or change world saves. This version returns text; speech input and generated audio are separate integrations.
+The panel is a debug tool rather than an in-game PDA screen. It adds no gameplay settings and does not rewrite existing world metadata or its schema. Persistent memory adds a lazy identity sidecar and an external transcript. This version returns text; speech input and generated audio are separate integrations. See [memory, focused context and vision](pda-debug-memory-and-vision.md) and the [2026-11-06 handoff](pda-handoff-2026-11-06.md).
 
 ## Information available
 
@@ -36,13 +38,15 @@ Recent history records categorical changes, such as entering an underground mode
 
 `resources/pda/debug_knowledge.json` holds explanations of supported game mechanics. Each entry has full `text` for inspection and an optional concise `model_text` for inference. Edit this catalog to improve the PDA's understanding of what the readings mean, then reload the game scene to load the edited catalog. Keep live values in the providers; catalog text should explain mechanics without claiming that a condition is currently active. Author explanations from established game behavior and intended lore.
 
-Question preparation selects relevant topics and keeps the prompt bounded. Facts can supply concise `ModelText` while retaining complete `Text` and source provenance in the prepared snapshot and inspector. Current readings and negative facts take priority over background explanations and older events. A previous question can help interpret a short follow-up. The context inspector starts with the exact compact payload supplied to the model, followed by full readings and selection diagnostics. `PdaContextComposer.Compose(..., useCompactText: false)` retains verbose formatting for the opt-in A/B benchmark.
+Focused preparation selects relevant readings and causal systems while keeping the prompt bounded. Explicit conversation recall uses lexical retrieval across the newest 64 accepted turns; older assistant text remains unverified data, never a current reading. Current-state queries withhold stale dialogue/sensor history. Facts can supply concise `ModelText` while retaining full `Text` and provenance in the inspector. Current readings and negative facts take priority over explanations and history. The inspector starts with the exact supplied payload, followed by full readings and diagnostics. `PdaContextComposer.Compose(...)` retains the baseline path; `useCompactText: false` retains verbose formatting for the older opt-in A/B benchmark.
+
+The narrow `PdaAnswerPolicy` can answer recognized typed-state and unavailable-reading questions without inference, refuses explicit game-control requests, and replaces clear generated action confirmations before display/storage. It does not validate arbitrary explanations. Policy-only times must be separated from model-call latency.
 
 ## Local inference
 
 The game launches the standalone `prototypes/pda-voice` helper with its `qa-worker` command. The game assembly has no LLamaSharp dependency. The helper loads one local GGUF model and handles serialized JSONL requests over redirected standard streams. Diagnostics use stderr.
 
-The default is `qwen3-0.6b` in system RAM on the CPU with four inference threads. VRAM mode requests CUDA offload of all model layers and attention work to GPU 0. The helper verifies a CUDA device and positive actual layer offload before reporting VRAM ready; a failed GPU load produces an error rather than silently switching to CPU. GPU mode still needs some host memory for the runtime and model metadata.
+The default remains `qwen3-0.6b` in system RAM on the CPU with four inference threads. The picker also exposes retained Qwen3 8B and Gemma3 4B for testing; neither is a final replacement. VRAM mode requests the selected 1–99 language-layer count and CUDA attention work. The helper verifies a CUDA device and actual layer offload before reporting readiness; a failed GPU load produces an error rather than silently switching to CPU. Host allocations remain even with all language layers offloaded. Gemma's lazily loaded image projector has separately reported placement.
 
 Model inference runs outside the Godot main thread; UI updates and game-state capture stay on the main thread. Loaded weights remain resident between questions and while the panel is closed. Each question still requires prompt processing and answer generation; resident weights remove the repeated model-loading step. The panel reports exact prompt tokens, first-text latency, total inference time, and material queue or loading delays after an answer. First-text latency includes context setup, prompt processing and the first decoded text. The pinned wrapper does not collect native prefill/decode counters; these appear as unavailable rather than zero milliseconds.
 
@@ -54,21 +58,24 @@ The helper must be built after changes to its source. Its executable is expected
 prototypes/pda-voice/bin/qa-runtime/PdaVoicePrototype.exe
 ```
 
-Model files remain under `prototypes/pda-voice/models/`. The debug feature does not download models or build the helper during gameplay. Missing files produce an actionable error in the panel. RAM mode can use the previous Release output when the new helper is absent; VRAM mode requires the new build. The separate output allows the new helper to be built while the previous Release helper is running.
+Model files remain under `prototypes/pda-voice/models/`. The debug feature does not download models or build the helper during gameplay. Missing files produce an actionable error in the panel. Only legacy small-model RAM use can fall back to the older Release output; retained test models and VRAM use require the canonical helper. The separate output permits a new helper build while an older Release helper is running.
 
-Build the helper with the pinned SDK and project-local package cache:
+For a fresh checkout, provision the pinned engine/.NET environment first, then install pinned retained test assets and build with dependency restore:
 
 ```powershell
+.\tools\install_pda_test_models.ps1 -IncludeVisionProjector
 .\tools\build_pda_worker.ps1
 # Once dependencies are restored:
 .\tools\build_pda_worker.ps1 -NoRestore
 ```
 
+The installer defaults to Gemma4B and Qwen8B, not the legacy small-model assets. Select an installed retained model and reload if those older assets are absent. Tracked manifests supply revisions/sizes/hashes; models, helper outputs and `.godot` evidence are ignored. The [handoff bootstrap](pda-handoff-2026-11-06.md#fresh-checkout-bootstrap) also covers verification and the separate comparison build.
+
 If `qa-runtime` itself is already running, leave the debug world before rebuilding so Windows can release its executable. Start the world again after the build. Normal RAM/VRAM selection only needs **Reload model** and does not require rebuilding.
 
 Requests and replies carry IDs. Closing and cancellation invalidate pending answers and request cooperative cancellation while retaining the model. The client drains the terminal reply before another inference starts. An unrecoverable timeout, model switch or scene teardown terminates only the helper owned by this panel. Answers are associated with the snapshot submitted; the world can change while inference is running.
 
-The worker pins LLamaSharp and its CPU/CUDA 12 Windows backends to 0.27.0. VRAM mode uses a compatible CUDA 12 toolkit runtime, or the existing CUDA 12.8 DLLs under the prototype's Torch environment. Runtime DLL search paths are configured only in the child process. A CUDA-12-only selection policy chooses the bundled native backend directly, including when Windows has runtime DLLs without a toolkit `CUDA_PATH`. Normal dependency checks and actual device/layer verification remain enabled. The feature does not install drivers or change global environment variables. Backend installation and GPU-layer configuration follow the [pinned LLamaSharp quick start](https://github.com/SciSharp/LLamaSharp/blob/v0.27.0/docs/QuickStart.md).
+The worker pins LLamaSharp and its CPU/CUDA 12 Windows backends to 0.27.0. CUDA needs real compatible runtime DLLs: the client accepts a CUDA 12 toolkit via `CUDA_PATH`, or its existing ignored Torch-environment fallback. That local fallback is not restored by Git or NuGet; provision the CUDA 12 runtime explicitly on another machine. Child-only search paths, dependency checks and actual device/layer verification remain enabled. The feature does not install drivers/runtime libraries or change global environment variables. Backend setup follows the [pinned LLamaSharp quick start](https://github.com/SciSharp/LLamaSharp/blob/v0.27.0/docs/QuickStart.md).
 
 ## Acceptance
 
@@ -98,7 +105,7 @@ The opt-in latency tools compare verbose and compact contexts from identical syn
 
 Reports are `.godot/pda_latency/latency_ram.json` and `latency_vram.json`. They retain complete inputs and generated answers, actual backend, prompt-token counts, first-text/inference/wall timings and resident PID reuse. Uncollected native prefill/decode timings are null in the summary. A PASS verifies the transport and requested backend; speed ratios and answer correctness require review of the measurements. In-game frame-rate impact is a separate acceptance check.
 
-### Local measurement, 2026-11-05
+### Initial compact-context measurement, 2026-11-05
 
 Qwen3 0.6B, four CPU threads, RTX A1000 6GB Laptop GPU. The comparison uses two identical underlying prepared snapshots, two repetitions per snapshot and format, one unmeasured priming request, and one resident helper per backend. There are four measured requests per format. Figures below are medians; complete-answer time includes client transport.
 
@@ -114,3 +121,5 @@ Compact context reduced model input tokens by about 37 percent in these fixtures
 Generated-answer review still found incorrect causal explanations in the lighting scenario. Backend and latency PASS results do not establish factual accuracy. Native prefill/decode counters were unavailable in the pinned wrapper and were not used to infer the speedup; first-text and complete-answer wall times are measured directly.
 
 For visual acceptance, inspect the panel at normal game resolution, verify typing cannot move or edit the world, and check cursor ownership when opening, closing and switching other debug UI. Keep evidence under `.godot/pda_debug/` and prune disposable output at task completion.
+
+The later memory/vision pass has 11 latest focused PASS verdicts recorded in the [handoff](pda-handoff-2026-11-06.md#validation-checkpoint). The user's slow Gemma4B **CUDA + current-view** case during gameplay remains unresolved. Isolated text/image timings are not live-game FPS acceptance, and the separate CPU baseline is not a diagnosis of that CUDA case.
