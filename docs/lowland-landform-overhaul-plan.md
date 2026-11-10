@@ -1,5 +1,13 @@
 # Lowland Landform Overhaul (recipe v7) — Implementation Plan
 
+> Status note (2026-11-09): a GPU port of the height model now exists
+> (`materials/terrain_gpu/ring_height_model.glslinc`) and is the default for the 8, 16
+> and 32 m proxy levels, so "no shader or native port exists" below is out of date.
+> Climate is still outside the frozen recipe (it was deferred to a "later v8", but v8
+> was used for the Weather Lung); the next free recipe id is v9. See
+> `docs/terrain-vegetation-revamp-plan.md`.
+
+
 Status: **implemented (Steps 0-7), 2026-10-18.** Launcher adoption is live: new Terrain3D runtime-generation
 worlds are created as v7 by default (checkbox "Hill-country landforms (v7)", project setting
 `ringworld/runtime/surface_landforms_v7`, default true). The v7 formula and defaults are now frozen

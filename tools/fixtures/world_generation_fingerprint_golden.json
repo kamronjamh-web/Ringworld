@@ -1,0 +1,194 @@
+{
+  "schema": 1,
+  "rows": [
+    {
+      "generation": 1,
+      "label": "gen1-v8-s1337",
+      "generator_id": "ringworld_surface_weather_lung_v8",
+      "seed": 1337,
+      "definition_hash": "0x1480032CB30B96CA",
+      "pose_fixture": "tools/fixtures/landscape_poses_v8_s1337.json",
+      "heights": {
+        "count": 4096,
+        "lcg_seed": "0x000000005EED1337",
+        "hash": "0xEB8E7C1329848992"
+      },
+      "sampler": {
+        "count": 4096,
+        "lcg_seed": "0x000000005EED1337",
+        "hash": "0x0018E13D59CE4D6A"
+      },
+      "trees": [
+        {
+          "pose": "plains_eye",
+          "tile_around": 7199,
+          "tile_across": 1068,
+          "count": 0,
+          "hash": "0xCBF29CE484222325"
+        },
+        {
+          "pose": "hills_eye",
+          "tile_around": 2945,
+          "tile_across": 1131,
+          "count": 0,
+          "hash": "0xCBF29CE484222325"
+        },
+        {
+          "pose": "coast_eye",
+          "tile_around": 979,
+          "tile_across": 1092,
+          "count": 64,
+          "hash": "0x439C192239211866"
+        },
+        {
+          "pose": "forest_interior_eye",
+          "tile_around": 9811,
+          "tile_across": 785,
+          "count": 296,
+          "hash": "0x1ED38A3BD6829E9A"
+        },
+        {
+          "pose": "forest_edge_eye",
+          "tile_around": 9813,
+          "tile_across": 786,
+          "count": 185,
+          "hash": "0x9130C43C12FF53FE"
+        },
+        {
+          "pose": "forest_clearing_eye",
+          "tile_around": 9813,
+          "tile_across": 787,
+          "count": 70,
+          "hash": "0x94905D8D2C6B3921"
+        },
+        {
+          "pose": "v0_ridge_eye",
+          "tile_around": 656,
+          "tile_across": 1256,
+          "count": 0,
+          "hash": "0xCBF29CE484222325"
+        },
+        {
+          "pose": "v0_centre_eye",
+          "tile_around": 1308,
+          "tile_across": 650,
+          "count": 0,
+          "hash": "0xCBF29CE484222325"
+        }
+      ],
+      "grass_params": {
+        "builder": "RingGrassTileBuilder.Build, Cards placement, tier 0 (RingStandingGrassLayer.BuildWorker arguments)",
+        "render_style_dependence": "none: the hash calls the Cards builder directly with layer defaults; the style setting only selects the builder",
+        "tile_meters": 32,
+        "cell_size_meters": 8,
+        "candidates_per_cell": 9,
+        "blades_per_square_meter": 0,
+        "max_instances_main_cap": 15770,
+        "max_slope_degrees": 25,
+        "source_fraction": 1,
+        "source_tier": 0,
+        "use_grass_clumps": false,
+        "modifier_density_strength": 1,
+        "meadow_tufts": false,
+        "meadow_spread": 1,
+        "minimum_height_m": 0.1,
+        "maximum_height_m": 0.2,
+        "use_configured_height_range": true,
+        "appearance": "RingGrassAppearanceSnapshot.Default",
+        "exclusions": "none",
+        "modifiers": "none",
+        "edit_snapshot": "empty",
+        "reach_m": 400,
+        "resident_tile_setting": 256,
+        "lookahead_m": 0,
+        "hysteresis_override_m": 0,
+        "card_tuning": "RingGrassCardTuning.Default (equal to a default RingStandingGrassLayer; the Medium preset does not set any card value)",
+        "placement_near_density": 14,
+        "placement_include_low_layer": true,
+        "placement_low_density": 18,
+        "placement_low_max_instances": 20276,
+        "placement_tall_m": 0.6,
+        "placement_short_m": 0.3,
+        "placement_lean": 0.12,
+        "placement_biome_grid_m": 2,
+        "placement_fingerprint": "0x9F0C20834832C376"
+      },
+      "grass": [
+        {
+          "pose": "plains_eye",
+          "tile_around": 53995,
+          "tile_across": 8015,
+          "count": 7358,
+          "low_count": 4137,
+          "hash": "0xFBF2EC6646A2FAA0"
+        },
+        {
+          "pose": "hills_eye",
+          "tile_around": 22089,
+          "tile_across": 8484,
+          "count": 4413,
+          "low_count": 2493,
+          "hash": "0x6B830805A750702A"
+        },
+        {
+          "pose": "coast_eye",
+          "tile_around": 7345,
+          "tile_across": 8190,
+          "count": 4921,
+          "low_count": 2821,
+          "hash": "0x7E87C0F85B41939B"
+        },
+        {
+          "pose": "forest_interior_eye",
+          "tile_around": 73588,
+          "tile_across": 5890,
+          "count": 15859,
+          "low_count": 8890,
+          "hash": "0x5276C68A646037EE"
+        },
+        {
+          "pose": "forest_edge_eye",
+          "tile_around": 73599,
+          "tile_across": 5901,
+          "count": 16068,
+          "low_count": 9039,
+          "hash": "0x9C39AA8D519BD6BC"
+        },
+        {
+          "pose": "forest_clearing_eye",
+          "tile_around": 73603,
+          "tile_across": 5904,
+          "count": 16024,
+          "low_count": 9062,
+          "hash": "0x7C2E06C1253447F8"
+        },
+        {
+          "pose": "v0_ridge_eye",
+          "tile_around": 4927,
+          "tile_across": 9422,
+          "count": 2304,
+          "low_count": 1280,
+          "hash": "0x83851B4043397732"
+        },
+        {
+          "pose": "v0_centre_eye",
+          "tile_around": 9817,
+          "tile_across": 4875,
+          "count": 4620,
+          "low_count": 2588,
+          "hash": "0x4E7D93E06D4DD96B"
+        }
+      ],
+      "scatter": {
+        "count": 0,
+        "hash": "none"
+      },
+      "catalog": {
+        "version": 1,
+        "variant_count": 30,
+        "hash": "0x4D4B7E42C2D59D30"
+      },
+      "captured": "2026-11-09"
+    }
+  ]
+}

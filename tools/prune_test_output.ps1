@@ -27,11 +27,11 @@ $ErrorActionPreference = "Stop"
 $godotDir = Join-Path (Split-Path -Parent $PSScriptRoot) ".godot"
 if (-not (Test-Path $godotDir)) { return }
 
-# Engine/editor caches and the reference images other tools compare against (docs/shadow-revamp-plan.md).
+# Engine/editor caches and the reference images other tools compare against (docs/shadow-revamp-plan.md); audit_baseline holds the durable landscape (T0) and vastness (V0) audit tables, maps and look references (docs/landscape-audit-t0-spec.md 2.7).
 $keep = @(
   ".gdignore", "editor", "extension_list.cfg", "global_script_class_cache.cfg", "imported", "mono",
   "scene_groups_cache.cfg", "shader_cache", "uid_cache.bin",
-  "gpu_queue", "shadow_baseline", "s5_before", "shadow_compose_identity_head_clouds", "shadow_compose_identity_storm_revamp_4070",
+  "gpu_queue", "shadow_baseline", "audit_baseline", "s5_before", "shadow_compose_identity_head_clouds", "shadow_compose_identity_storm_revamp_4070",
   "terrain3d-native-src", "terrain3d-native-tools"
 ) + $Exclude
 

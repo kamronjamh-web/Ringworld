@@ -146,6 +146,16 @@ full-game visual and performance gates below.
 
 ## 3. Scalable near-to-far presentation
 
+> Status note (2026-11-09): the items below predate the current renderer. Trees
+> are now GPU-driven (compute culling into indirect MultiMesh draws, per
+> authored LOD), with one shared LOD3 impostor built from the authored LOD3
+> card meshes for far trees (default maximum far-tree distance 5.5 km). The
+> "bounded MultiMesh tiles" and authored-LOD/billboard items are therefore
+> largely delivered even where unchecked. The item that is really still
+> missing is distant canopy coverage. See `docs/terrain-vegetation-revamp-plan.md`
+> section 1.1.
+
+
 - [x] Batch each species/material/LOD into bounded spatial MultiMesh tiles.
 - [ ] Use authored mesh LODs nearby and billboards farther away, with stable
   transitions and quality-dependent render budgets.

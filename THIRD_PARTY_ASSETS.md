@@ -47,10 +47,20 @@ Conversion and loop details are retained in `resources/audio/water/LICENSE.md`.
 
 ## LOLIPOP Tree Packs
 
-The isolated review assets in `resources/trees/lolipop/{fir,pine,maple}/` are
+The production trees in `resources/trees/lolipop/{fir,pine,maple}/` are
 derived from **Realistic Fir Trees Pack (LODS, gameready)**, **Pine trees pack
 (lowpoly, game ready, LODs)**, and **Maple trees pack (lowpoly, game ready,
 LODs)** by LOLIPOP (https://sketchfab.com/lolipop_1707). They are licensed
 under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The original
 per-pack attribution, source links, and license terms are retained verbatim in
 each imported `license.txt`.
+
+These are production assets, not review-only imports: the imported-forest
+catalog (30 variants, four authored LODs each) is drawn by the GPU-driven tree
+renderer, with one shared LOD3 impostor for far trees.
+
+Changes were made to the originals. The prepared catalog
+(`resources/trees/prepared/lolipop_catalog.res`), the composed material
+adaptation, and the shared far impostor built from the authored LOD3 card
+meshes are adaptations of LOLIPOP's work and carry the same credit, with a
+"modified" note. The supplied source files themselves are unmodified.

@@ -20,8 +20,12 @@ Godot currently imports the maple bark base colour on UV0 but does not honour th
 `ImportedTreeCatalog` maps the 30 supplied variants (3 fir, 15 pine, 12 maple)
 to authored LOD meshes and composed source transforms. `RingBiomeDecorationLayer`
 uses those catalog identities in canonical vegetation records, seeded regional
-cover, humidity-aware local spacing, bounded MultiMesh tiles, and nearby
-independent trunk colliders. The catalog/cache identity includes the forest
+cover, humidity-aware local spacing, and nearby independent trunk colliders.
+Trees are drawn by the GPU-driven renderer (`RingBiomeDecorationLayer.Gpu*.cs`,
+`RingGpuVegetationCompute`): resident source buffers are culled and compacted
+on the GPU into indirect MultiMesh draws, per authored LOD, and LOD3 and
+beyond share one far impostor built from the authored LOD3 card meshes (default
+maximum far-tree distance 5.5 km). The catalog/cache identity includes the forest
 algorithm and catalog versions so old vegetation records cannot overlap the
 current layout.
 

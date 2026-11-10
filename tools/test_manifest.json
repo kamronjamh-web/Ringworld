@@ -8,6 +8,22 @@
     "timeout_rule": "max(60, 3 x expected_s) rounded up to 10 s, capped at 900; unknown 300 gpu / 120 headless"
   },
   "tags": {
+    "landscape": {
+      "globs": [
+        "tools/Landscape*",
+        "tools/landscape_*",
+        "tools/WorldGenerationFingerprint*",
+        "tools/world_generation_*",
+        "tools/fixtures/landscape_*",
+        "tools/fixtures/world_generation_*"
+      ]
+    },
+    "vastness": {
+      "globs": [
+        "tools/Vastness*",
+        "tools/vastness_*"
+      ]
+    },
     "clouds": {
       "globs": [
         "scripts/clouds/**",
@@ -2731,6 +2747,18 @@
       "expected_s": 2,
       "timeout_s": 60
     },
+    "landscape_tree_pack_audit_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "vegetation",
+        "landscape"
+      ],
+      "marker": "LANDSCAPE_TREE_PACK",
+      "expected_s": 25,
+      "timeout_s": 150
+    },
     "imported_tree_catalog_smoke": {
       "kind": "test",
       "mode": "headless",
@@ -4168,6 +4196,19 @@
       "expected_s": 15,
       "timeout_s": 120
     },
+    "landscape_inland_water_audit_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water",
+        "terrain",
+        "landscape"
+      ],
+      "marker": "LANDSCAPE_INLAND_WATER",
+      "expected_s": 15,
+      "timeout_s": 180
+    },
     "proxy_build_allocation_test": {
       "kind": "test",
       "mode": "headless",
@@ -4678,6 +4719,104 @@
       "marker": "RUNTIME_TERRAIN_CPU_PASS2",
       "expected_s": 7,
       "timeout_s": 60
+    },
+    "landscape_world_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "landscape",
+        "terrain"
+      ],
+      "marker": "LANDSCAPE_WORLD",
+      "expected_s": 15,
+      "timeout_s": 90
+    },
+    "world_generation_fingerprint_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "landscape",
+        "terrain",
+        "vegetation"
+      ],
+      "marker": "WORLD_GENERATION_FINGERPRINT",
+      "expected_s": 30,
+      "timeout_s": 150
+    },
+    "landscape_harness_smoke": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "landscape"
+      ],
+      "marker": "LANDSCAPE_HARNESS_SMOKE",
+      "expected_s": 300,
+      "timeout_s": 900
+    },
+    "landscape_look_baseline": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "render-core"
+      ],
+      "marker": "LANDSCAPE_LOOK",
+      "expected_s": 1500,
+      "timeout_s": 2400
+    },
+    "landscape_cost_baseline": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "render-core",
+        "perf-telemetry"
+      ],
+      "marker": "LANDSCAPE_COST",
+      "expected_s": 2400,
+      "timeout_s": 3600
+    },
+    "landscape_lod_switch_capture": {
+      "kind": "tool",
+      "mode": "gpu",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "vegetation"
+      ],
+      "marker": "LANDSCAPE_LOD_SWITCH",
+      "expected_s": 400,
+      "timeout_s": 1200
+    },
+    "landscape_drainage_prototype": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "terrain"
+      ],
+      "marker": "LANDSCAPE_DRAINAGE",
+      "expected_s": 120,
+      "timeout_s": 900,
+      "parallel_safe": false
+    },
+    "landscape_relief_audit": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "landscape",
+        "terrain"
+      ],
+      "marker": "LANDSCAPE_RELIEF",
+      "expected_s": 60,
+      "timeout_s": 300
     },
     "shadow_attribution_test": {
       "kind": "test",

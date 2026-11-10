@@ -51,6 +51,7 @@ Target vertical envelope:
 
 - DONE: Add a shared ocean/lake/river surface representation without filling distant water bodies with water voxels.
 - DONE: Keep ocean water at Y=0, bound seeded lake basins to 8-90 m, and carve moisture-gated rivers 3-18 m below their local water surface.
+- NOTE (2026-11-09): the two DONE lines above describe the legacy gen-16 sampler. In the gen-17 runtime path the only water rule is `presentationHeight < 0` is ocean (`RingTerrainSampler.SurfaceGeneration.cs`), so no runtime world currently produces lake or river water. See `docs/terrain-vegetation-revamp-plan.md` section 1.1.
 - DONE: Route the same water classification, surface height, and colour through the minimap, regional terrain, global HLOD, and scaled far ring.
 - TODO: Add near-field swimming, buoyancy, shoreline, and edit behavior.
 - TODO: Decide whether local water becomes a voxel block or a separate volume representation.

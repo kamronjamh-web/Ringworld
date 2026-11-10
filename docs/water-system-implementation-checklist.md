@@ -2,6 +2,8 @@
 
 Updated 2026-09-11. Target: 60 FPS on the current PC, with scalable water detail.
 
+> Status note (2026-11-09): lake and river items here describe the legacy gen-16 sampler. In the gen-17 runtime path the only water rule is `presentationHeight < 0` is ocean (`RingTerrainSampler.SurfaceGeneration.cs`); `WaterKind` Lake and River exist in the data model and shaders but no gen-17 world produces them. See `docs/terrain-vegetation-revamp-plan.md` section 1.1.
+
 ## First playable milestone
 
 The nearby ocean uses GodotOceanWaves spectral displacement for its actual shape, including horizontal choppiness. The existing 2 m mesh samples the filtered large cascade; its normals and crest foam follow that displacement. A bounded asynchronous GPU query supplies the swimming waterline. Lakes, rivers, global/scaled-far water, and disabled/unsupported FFT keep their analytic paths. Generated water columns, terrain edits, and world saves retain their existing contracts.
