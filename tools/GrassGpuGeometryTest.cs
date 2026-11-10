@@ -73,7 +73,7 @@ public partial class GrassGpuGeometryTest : RefCounted
 
     private static void ValidateGates()
     {
-        var layer = new RingStandingGrassLayer();
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades };
         try
         {
             Require(!layer.UseReducedNearGrassGeometry && !layer.UseSingleRibbonIntermediateGrass, "experimental defaults enabled");
@@ -138,7 +138,7 @@ public partial class GrassGpuGeometryTest : RefCounted
     {
         // Inject only the scene lookup for an isolated controller; exercise its
         // public preset/override APIs without terrain streaming or user files.
-        var layer = new RingStandingGrassLayer();
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades };
         var controller = new RingGraphicsQualityController();
         Variant originalTier = ProjectSettings.GetSetting("ringworld/runtime/hardware_tier", "desktop_mid_high");
         try

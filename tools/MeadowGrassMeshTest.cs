@@ -37,7 +37,7 @@ public partial class MeadowGrassMeshTest : RefCounted
                     && spreadFrames[i * 4 + 2] == originalFrames[i * 4 + 2]
                     && spreadFrames[i * 4 + 3] == originalFrames[i * 4 + 3], "spread broke camera-facing source frames");
             }
-            var layer = new RingStandingGrassLayer { BladesPerSquareMeter = 24, MaximumInstances = 18000 };
+            var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, BladesPerSquareMeter = 24, MaximumInstances = 18000 };
             try
             {
                 layer.SetProcess(false);

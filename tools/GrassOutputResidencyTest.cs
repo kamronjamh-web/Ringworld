@@ -46,7 +46,7 @@ public partial class GrassOutputResidencyTest : Node
         _viewport.AddChild(new DirectionalLight3D { RotationDegrees = new Vector3(-60, 20, 0), LightEnergy = 1 });
         _camera = new Camera3D { Far = 2000, Fov = 100 }; _viewport.AddChild(_camera); _camera.Current = true;
         _layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             UseGpuCulling = true, GpuFrustumCulling = false, CullGrassTiles = false,
             EnableHierarchicalCoverage = false, VisibilityRadiusMeters = 72, SpatialTileMeters = 48,
             MaximumInstances = 2000, MaximumInstancesPerTile = 256, MaximumResidentTiles = 8,

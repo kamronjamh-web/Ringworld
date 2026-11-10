@@ -74,7 +74,7 @@ public partial class GrassCameraFacingTest : Node3D
 
     private static void ValidateCameraFacingMaterialCache()
     {
-        var layer = new RingStandingGrassLayer { EnableGrassCameraFacing = true, GrassCameraFacingStrength = .75f,
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, EnableGrassCameraFacing = true, GrassCameraFacingStrength = .75f,
             GrassCameraFacingStartMeters = 12f, GrassCameraFacingEndMeters = 48f };
         var near = new ShaderMaterial(); var intermediate = new ShaderMaterial();
         try

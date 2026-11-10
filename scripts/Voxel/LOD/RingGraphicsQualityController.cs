@@ -603,8 +603,8 @@ public partial class RingGraphicsQualityController : Node
         _grass.GrassModifierPreviewTintStrength = .6f;
         ApplyGrassGeometryGameplayDefaults(preserveOverrides: false);
         _grass.GrassDebugMode = RingStandingGrassLayer.GrassDebugView.Off;
-        // Blades stays the profile default until the in-game A/B is accepted; an explicit saved style still wins.
-        _grass.GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades;
+        // Cards is the profile default (user decision 2026-11-09); an explicit saved style still wins.
+        _grass.GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Cards;
         // Reach and near density come from the quality profile above; the rest of the Cards settings return to variant D.
         _grass.ResetGrassCardSettings();
         _grass.GrassCardComputeMarginMeters = 2f;

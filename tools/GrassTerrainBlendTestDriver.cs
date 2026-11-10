@@ -19,7 +19,7 @@ public partial class GrassTerrainBlendTestDriver : RefCounted
 
     public bool VerifyRuntimeContract()
     {
-        var layer = new RingStandingGrassLayer();
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades };
         try
         {
             using var near = new ShaderMaterial { Shader = GD.Load<Shader>("res://materials/ring_standing_grass.gdshader") };
@@ -137,8 +137,8 @@ public partial class GrassTerrainBlendTestDriver : RefCounted
     {
         if (Engine.GetMainLoop() is not SceneTree tree) throw new InvalidOperationException("publisher test requires SceneTree");
         var parent = new Node3D();
-        var first = new RingStandingGrassLayer { EnableGrassAppearance = true, ProcessMode = Node.ProcessModeEnum.Disabled };
-        var second = new RingStandingGrassLayer { EnableGrassAppearance = true, ProcessMode = Node.ProcessModeEnum.Disabled };
+        var first = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, EnableGrassAppearance = true, ProcessMode = Node.ProcessModeEnum.Disabled };
+        var second = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, EnableGrassAppearance = true, ProcessMode = Node.ProcessModeEnum.Disabled };
         MethodInfo refresh = typeof(RingStandingGrassLayer).GetMethod("RefreshCoordinatedGrassHandoffGlobals", BindingFlags.NonPublic | BindingFlags.Instance)!;
         void Refresh(RingStandingGrassLayer target) => refresh.Invoke(target, null);
         try

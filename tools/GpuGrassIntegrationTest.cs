@@ -43,7 +43,7 @@ public partial class GpuGrassIntegrationTest : Node
         AddChild(_camera);
         _camera.Current = true;
         _layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             UseGpuCulling = true,
             GpuFrustumCulling = false,
             VisibilityRadiusMeters = 72,
@@ -286,7 +286,7 @@ public partial class GpuGrassIntegrationTest : Node
     private async Task VerifyDenseClumpLayerContract()
     {
         var layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             UseGpuCulling = false,
             UseGrassClumps = false,
             EnableMeadowTufts = false,

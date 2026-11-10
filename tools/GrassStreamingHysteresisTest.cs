@@ -38,13 +38,13 @@ public partial class GrassStreamingHysteresisTest : Node
             VerifyFilterEquivalence(sampler);
             // "Defaults": layer defaults with the shipped hierarchical LOD enabled; the resident cap is not reached.
             await RunConfig("defaults", sampler, () => new RingStandingGrassLayer
-            {
+            { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
                 MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 4, MaximumTileUploadMilliseconds = 20,
             }, quality: (true, 48, 115, 12, 1, .45f), saturated: false);
             // "Maxed": the user's saved extreme preferences scaled to a test-sized world: density 96, 1700 roots per
             // tile, three coverage tiers, and a resident cap far below the planning set so the cap ring is saturated.
             await RunConfig("maxed", sampler, () => new RingStandingGrassLayer
-            {
+            { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
                 VisibilityRadiusMeters = 230, BladesPerSquareMeter = 96, MaximumInstancesPerTile = 1700, MaximumInstances = 5_000_000,
                 MaximumResidentTiles = 40, MaximumTileBuildsInFlight = 4, MaximumTileUploadsPerFrame = 8, MaximumTileUploadMilliseconds = 20,
                 LodMidDistanceMeters = 120, LodMidSourceDensity = .49f, LodFarSourceDensity = .09f,

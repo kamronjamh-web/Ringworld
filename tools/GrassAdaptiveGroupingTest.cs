@@ -173,7 +173,7 @@ public partial class GrassAdaptiveGroupingTest : RefCounted
         var tree = (SceneTree)Engine.GetMainLoop();
         // Exact per-frame culling: this contract expects every camera change to invalidate work, which the latched
         // (throttled) culling camera deliberately skips for sub-threshold moves.
-        var layer = new RingStandingGrassLayer { ProcessMode = Node.ProcessModeEnum.Disabled, EnableDistanceLod = true, ThrottleGrassCulling = false };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, ProcessMode = Node.ProcessModeEnum.Disabled, EnableDistanceLod = true, ThrottleGrassCulling = false };
         var camera = new Camera3D();
         tree.Root.AddChild(layer); tree.Root.AddChild(camera);
         try
@@ -226,7 +226,7 @@ public partial class GrassAdaptiveGroupingTest : RefCounted
             ?? throw new InvalidOperationException("terrain fixture missing"));
         using var sampler = new RingTerrainSampler(settings, true, circumference, 5000000, 318000, 8000);
         var layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             ProcessMode = Node.ProcessModeEnum.Disabled, UseGpuCulling = false, CullGrassTiles = false,
             EnableAdaptiveGrassGrouping = false,
             EnableHierarchicalCoverage = false, VisibilityRadiusMeters = 48, SpatialTileMeters = 16,
@@ -280,7 +280,7 @@ public partial class GrassAdaptiveGroupingTest : RefCounted
             ?? throw new InvalidOperationException("group lifecycle terrain fixture missing"));
         using var sampler = new RingTerrainSampler(settings, true, circumference, 5000000, 318000, 8000);
         var layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             ProcessMode = Node.ProcessModeEnum.Disabled, UseGpuCulling = true, CullGrassTiles = false,
             GpuFrustumCulling = false, EnableHierarchicalCoverage = false, EnableAdaptiveGrassGrouping = true,
             EnableGrassGustTexture = false,

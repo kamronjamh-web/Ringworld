@@ -16,7 +16,7 @@ public partial class GrassMaterialUpdateCacheTests : RefCounted
 
     private static void Verify()
     {
-        var layer = new RingStandingGrassLayer();
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades };
         FieldInfo atlasField = typeof(RingStandingGrassLayer).GetField("_grassModifierAtlas", BindingFlags.Instance | BindingFlags.NonPublic)!;
         try
         {

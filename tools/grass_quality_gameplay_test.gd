@@ -46,6 +46,8 @@ func boot() -> void:
 	grass = game.get_node_or_null("StandingGrass")
 	if grass == null:
 		fail("StandingGrass missing"); return
+	# This test validates Blades density and tile coverage; Cards is the profile default, so select Blades explicitly.
+	grass.set("GrassRenderStyle", 0)
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func _process(_delta: float) -> bool:

@@ -87,6 +87,8 @@ func boot() -> void:
 	if not adaptive_grouping_defaults_match(grass): return fail("empty preferences did not restore grouping/cache defaults")
 	var meadow_reason: String = await verify_meadow_tuning(grass, quality)
 	if not meadow_reason.is_empty(): return fail(meadow_reason)
+	# Adaptive grouping and its status text are Blades features; Cards is the default style, so select Blades for these checks.
+	drawer.call("SetGrassTuningValue", "GrassRenderStyle", 0)
 	var pointer_reason: String = await verify_adaptive_pointer_controls(grass, grass_tab)
 	if not pointer_reason.is_empty(): return fail(pointer_reason)
 	var original_density := float(grass.get("BladesPerSquareMeter"))
@@ -473,15 +475,19 @@ func verify_meadow_tuning(grass: Node, quality: Node) -> String:
 	print("GRASS_MEADOW_TUNING=PASS controls, validation, sparse save/reload, quality preservation and reset")
 	return ""
 
-# S5: the grass render style switch (Blades default, explicit saved style wins over the profile, Reset restores Blades).
+# S5: the grass render style switch (Cards default, explicit saved style wins over the profile, Reset restores Cards).
 func verify_render_style(grass: Node, quality: Node) -> String:
 	for key in ["GrassRenderStyle", "GrassCardReachMeters", "GrassCardGreenPull", "GrassCardComputeMarginMeters"]:
 		if drawer.find_child(key, true, false) == null: return "Render style control missing: " + key
-	if int(grass.get("GrassRenderStyle")) != 0 or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 400.0) or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .15) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 2.0): return "Render style did not default to Blades / reach 400 / green pull 0.15 / compute margin 2"
+	if int(grass.get("GrassRenderStyle")) != 1 or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 400.0) or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .15) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 2.0): return "Render style did not default to Cards / reach 400 / green pull 0.15 / compute margin 2"
 	var style_option := drawer.find_child("GrassRenderStyle", true, false) as OptionButton
+	if style_option.selected != 1: return "Render style option did not show the Cards default"
+	style_option.select(0)
+	style_option.item_selected.emit(0)
+	if int(grass.get("GrassRenderStyle")) != 0: return "Render style option did not apply Blades"
 	style_option.select(1)
 	style_option.item_selected.emit(1)
-	if int(grass.get("GrassRenderStyle")) != 1: return "Render style option did not apply Cards"
+	if int(grass.get("GrassRenderStyle")) != 1: return "Render style option did not switch back to Cards"
 	drawer.call("SetGrassTuningValue", "GrassCardGreenPull", .4)
 	drawer.call("SetGrassTuningValue", "GrassCardReachMeters", 9999.0)
 	drawer.call("SetGrassTuningValue", "GrassCardComputeMarginMeters", 99.0)
@@ -490,19 +496,21 @@ func verify_render_style(grass: Node, quality: Node) -> String:
 	if not is_equal_approx(float(grass.get("GrassCardGreenPull")), .4) or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 600.0): return "Card settings did not apply / clamp"
 	drawer.call("SetGrassTuningValue", "GrassRenderStyle", 7)
 	if int(grass.get("GrassRenderStyle")) != 1: return "Out-of-range render style was not clamped to Cards"
+	drawer.call("SetGrassTuningValue", "GrassRenderStyle", -3)
+	if int(grass.get("GrassRenderStyle")) != 0: return "Negative render style was not clamped to Blades"
 	if not bool(drawer.call("FlushGrassDefaults")): return "Render style save failed"
-	drawer.call("SetGrassTuningValue", "GrassRenderStyle", 0)
-	if int(grass.get("GrassRenderStyle")) != 0: return "Live switch back to Blades did not apply"
+	drawer.call("SetGrassTuningValue", "GrassRenderStyle", 1)
+	if int(grass.get("GrassRenderStyle")) != 1: return "Live switch back to Cards did not apply"
 	drawer.call("InstallGrassDefaults", PREFS)
-	if int(grass.get("GrassRenderStyle")) != 1: return "Saved Cards style did not reload over an unsaved live edit"
+	if int(grass.get("GrassRenderStyle")) != 0: return "Saved Blades style did not reload over an unsaved live edit"
 	drawer.call("InstallGrassDefaults", PREFS)
-	if int(grass.get("GrassRenderStyle")) != 1 or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .4) or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 600.0) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 3.5): return "Render style settings did not reload"
+	if int(grass.get("GrassRenderStyle")) != 0 or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .4) or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 600.0) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 3.5): return "Render style settings did not reload"
 	var preset: int = quality.get("CurrentPreset")
 	quality.call("ApplyPreset", 0, true, false)
-	if int(grass.get("GrassRenderStyle")) != 1: return "Quality preset replaced the explicit render style"
+	if int(grass.get("GrassRenderStyle")) != 0: return "Quality preset replaced the explicit render style"
 	quality.call("ApplyPreset", preset, true, false)
 	drawer.call("ResetGrassSettings")
-	if int(grass.get("GrassRenderStyle")) != 0 or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 400.0) or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .15) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 2.0): return "Reset did not restore Blades and the card defaults"
+	if int(grass.get("GrassRenderStyle")) != 1 or not is_equal_approx(float(grass.get("GrassCardReachMeters")), 400.0) or not is_equal_approx(float(grass.get("GrassCardGreenPull")), .15) or not is_equal_approx(float(grass.get("GrassCardComputeMarginMeters")), 2.0): return "Reset did not restore Cards and the card defaults"
 	return ""
 
 # S8: Grass cards settings. Key, default, min, max, test value, rebuild class (label carries "(rebuilds)").

@@ -20,7 +20,7 @@ public partial class GpuGrassRegistrationTest : Node
     private async Task Run()
     {
         _camera = new Camera3D { Current = true, Far = 1000 }; AddChild(_camera);
-        _layer = new RingStandingGrassLayer { UseGpuCulling = true, GpuFrustumCulling = false, MaximumTileUploadsPerFrame = 2, MaximumTileUploadMilliseconds = 20, LodNearDensity = 1, LodFarDensity = .25f, EnableDistanceLod = true };
+        _layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, UseGpuCulling = true, GpuFrustumCulling = false, MaximumTileUploadsPerFrame = 2, MaximumTileUploadMilliseconds = 20, LodNearDensity = 1, LodFarDensity = .25f, EnableDistanceLod = true };
         AddChild(_layer); await Frames(3);
         Check(_layer.IntermediateGpuCapacityForTests(6000) == 2600, "intermediate output capacity math");
         float[] densityFixture = GrassCandidates(6000);

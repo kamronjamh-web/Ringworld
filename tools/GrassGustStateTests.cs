@@ -71,7 +71,7 @@ public partial class GrassGustStateTests : RefCounted
         Require(RingStandingGrassLayer.CalculateGrassGroundCovectors(rebasedGeometry, anchorHeight, center, out Vector3 rebasedAround, out Vector3 rebasedAcross)
             && rebasedAround.IsEqualApprox(aroundDual) && rebasedAcross.IsEqualApprox(acrossDual),
             "floating-origin rebase changed canonical gust covectors");
-        var layer = new RingStandingGrassLayer();
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades };
         Require(layer.VerifyGrassGustMaterialToggleForTests(), "near/intermediate gust material toggle left stale shader state");
         layer.Free();
     }

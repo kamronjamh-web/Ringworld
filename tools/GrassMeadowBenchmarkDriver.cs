@@ -57,7 +57,7 @@ public partial class GrassMeadowBenchmarkDriver : Node3D
         WindAxis = geometry.GridGlobalTransform.Basis.Y;
         var baseline = new MeadowPlaneBaseline(circumference, width);
         _field = new SmoothTerrainVolumetricDensitySnapshot(baseline, new SmoothTerrainEditSnapshot(Array.Empty<SmoothTerrainEditCommand>(), 1, circumference));
-        _layer = new RingStandingGrassLayer {
+        _layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             VisibilityRadiusMeters = 24, SpatialTileMeters = 16, BladesPerSquareMeter = Mathf.Clamp(Density, 1, 96),
             MaximumInstancesPerTile = 24_576, MaximumInstances = 120_000, MaximumResidentTiles = 16,
             MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2, MaximumSlopeDegrees = 35

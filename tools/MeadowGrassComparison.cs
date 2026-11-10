@@ -77,7 +77,7 @@ public partial class MeadowGrassComparison : Node3D
         {
             if (Grass != null) { Grass.QueueFree(); await ToSignal(GetTree(),SceneTree.SignalName.ProcessFrame); }
             bool authored = label == "meadow_short";
-            Grass = new RingStandingGrassLayer {
+            Grass = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
                 EnableMeadowTufts = authored, UseGrassClumps = true, MeadowTuftVariant = 0,
                 UseReducedNearGrassGeometry=true,
                 UseSingleRibbonIntermediateGrass=true,

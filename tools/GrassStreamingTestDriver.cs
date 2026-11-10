@@ -28,7 +28,7 @@ public partial class GrassStreamingTestDriver : Node
         const long circumference = 981_748L * 32L; const int width = 318_000;
         var settings = (VoxelTerrainSettings)(GD.Load<VoxelTerrainSettings>("res://resources/voxel/voxel_terrain_settings_ring_integration.tres")?.Duplicate(true) ?? throw new InvalidOperationException("terrain settings missing"));
         using var sampler = new RingTerrainSampler(settings, true, circumference, 5_000_000.0, width, 8000);
-        var layer = new RingStandingGrassLayer { VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24, MaximumInstances = 12_000, MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2, SuspendStreamingAboveSpeedMetersPerSecond = 100 };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24, MaximumInstances = 12_000, MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2, SuspendStreamingAboveSpeedMetersPerSecond = 100 };
         AddChild(layer); layer.InitializeForTests();
         try
         {
@@ -152,7 +152,7 @@ public partial class GrassStreamingTestDriver : Node
     }
     private async Task VerifyHardCapAndStaleWork(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, long circumference)
     {
-        var layer = new RingStandingGrassLayer { MaximumInstances = 1000, MaximumResidentTiles = 16, CellSizeMeters = 4, CandidatesPerCell = 16, VisibilityRadiusMeters = 115, MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2 };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, MaximumInstances = 1000, MaximumResidentTiles = 16, CellSizeMeters = 4, CandidatesPerCell = 16, VisibilityRadiusMeters = 115, MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2 };
         AddChild(layer); layer.InitializeForTests();
         RingCanonicalPosition oldFocus = new(186_000, 0, 141_000), currentFocus = oldFocus with { AroundMeters = oldFocus.AroundMeters + 528 };
         try
@@ -178,7 +178,7 @@ public partial class GrassStreamingTestDriver : Node
     private async Task VerifyDenseDensity(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, long circumference)
     {
         var layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             VisibilityRadiusMeters = 20, SpatialTileMeters = 16, MaximumResidentTiles = 9,
             MaximumInstances = 512, MaximumInstancesPerTile = 512, MaximumTileBuildsInFlight = 1,
             MaximumTileUploadsPerFrame = 2, BladesPerSquareMeter = 64
@@ -206,14 +206,14 @@ public partial class GrassStreamingTestDriver : Node
     }
     private async Task VerifySeamReload(RingTerrainSampler sampler, RingLodSurfaceEditSnapshot edits, long circumference)
     {
-        var first = new RingStandingGrassLayer { VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24 };
+        var first = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24 };
         AddChild(first); first.InitializeForTests();
         RingCanonicalPosition left = new(circumference - 24, 0, 141_000); RingLodGeometrySnapshot geometry = Geometry(circumference, Vector3.Zero, left);
         try
         {
             await Settle(first, sampler, edits, left, geometry); RingStandingGrassLayer.TileAudit[] a = first.CaptureTileAuditsForTests(); Require(a.Length > 0 && first.ResidentGrassInstanceCount > 0, "seam baseline empty");
             first.QueueFree(); await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
-            var second = new RingStandingGrassLayer { VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24 };
+            var second = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24 };
             AddChild(second); second.InitializeForTests();
             try { await Settle(second, sampler, edits, new RingCanonicalPosition(24, 0, 141_000), geometry); RingStandingGrassLayer.TileAudit[] b = second.CaptureTileAuditsForTests(); Require(second.ResidentGrassInstanceCount > 0, "seam reload empty"); foreach (var leftTile in a) foreach (var rightTile in b) if (leftTile.Around == rightTile.Around && leftTile.Across == rightTile.Across && leftTile.InstanceCount > 0 && rightTile.InstanceCount > 0) { Require(leftTile.PlacementHash == rightTile.PlacementHash, "canonical seam/reload placement changed"); return; } throw new InvalidOperationException("seam views had no shared populated canonical tile"); }
             finally { second.QueueFree(); }
@@ -235,7 +235,7 @@ public partial class GrassStreamingTestDriver : Node
         var field = new SmoothTerrainVolumetricDensitySnapshot(new GrassPlaneBaseline(circumference, width),
             new SmoothTerrainEditSnapshot(Array.Empty<SmoothTerrainEditCommand>(), 711, circumference));
         var layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             VisibilityRadiusMeters = 28, SpatialTileMeters = 16, CellSizeMeters = 8,
             BladesPerSquareMeter = 4, MaximumResidentTiles = 16, MaximumInstances = 20_000,
             GrassAppearanceProfile = new RingGrassAppearanceProfile
@@ -374,7 +374,7 @@ public partial class GrassStreamingTestDriver : Node
         var baseline = new GrassPlaneBaseline(circumference, width);
         var soil = new SmoothTerrainVolumetricDensitySnapshot(baseline,
             new SmoothTerrainEditSnapshot(Array.Empty<SmoothTerrainEditCommand>(), 91, circumference));
-        var layer = new RingStandingGrassLayer { VisibilityRadiusMeters = 28, SpatialTileMeters = 16, CellSizeMeters = 8, CandidatesPerCell = 4, BladesPerSquareMeter = 4, MaximumResidentTiles = 16, MaximumInstances = 20000 };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, VisibilityRadiusMeters = 28, SpatialTileMeters = 16, CellSizeMeters = 8, CandidatesPerCell = 4, BladesPerSquareMeter = 4, MaximumResidentTiles = 16, MaximumInstances = 20000 };
         AddChild(layer); layer.InitializeForTests();
         try
         {
@@ -479,7 +479,7 @@ public partial class GrassStreamingTestDriver : Node
             RingLodGeometrySnapshot geometry = Geometry(circumference, Vector3.Zero, focus);
             var clean = new RingLodSurfaceEditSnapshot(1, circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
             var layer = new RingStandingGrassLayer
-            {
+            { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
                 EnableGrassAppearance = true, EnableCoordinatedGrassHandoff = true, SpatialTileMeters = 16, BladesPerSquareMeter = 1,
                 MaximumResidentTiles = variant == 0 ? 200 : 100, MaximumInstancesPerTile = 1000, MaximumInstances = 50_000,
                 MaximumTileBuildsInFlight = 4, MaximumTileUploadsPerFrame = 8, EnableHierarchicalCoverage = true, EnableDistanceLod = true,
@@ -552,7 +552,7 @@ public partial class GrassStreamingTestDriver : Node
             new SmoothTerrainEditSnapshot(Array.Empty<SmoothTerrainEditCommand>(), 301, circumference));
         var hints = new RingLodSurfaceEditSnapshot(301, circumference,
             new Dictionary<RingTerrainColumnCoordinate, int>());
-        var layer = new RingStandingGrassLayer { MaximumResidentTiles = 4, MaximumInstances = 600, MaximumTileBuildsInFlight = 2 };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, MaximumResidentTiles = 4, MaximumInstances = 600, MaximumTileBuildsInFlight = 2 };
         AddChild(layer); layer.InitializeForTests();
         try
         {

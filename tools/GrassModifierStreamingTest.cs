@@ -30,7 +30,7 @@ public partial class GrassModifierStreamingTest : Node
             ?? throw new InvalidOperationException("terrain settings missing"));
         using var sampler = new RingTerrainSampler(settings, true, circumference, 5_000_000.0, width, 8000);
         var layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumResidentTiles = 24,
             MaximumInstances = 12_000, MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 2,
             SuspendStreamingAboveSpeedMetersPerSecond = 100, EnableGrassModifiers = true,

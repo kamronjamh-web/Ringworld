@@ -43,7 +43,7 @@ public partial class GrassLifecycleTest : Node
         _sampler = new RingTerrainSampler(settings, true, Circumference, 5_000_000d, 318000, 8000);
         _camera = new Camera3D { Far = 2000 }; AddChild(_camera); _camera.Current = true;
         _layer = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades,
             UseGpuCulling = false, GpuFrustumCulling = false, CullGrassTiles = false,
             VisibilityRadiusMeters = 72, SpatialTileMeters = 48, MaximumInstances = 2000,
             MaximumInstancesPerTile = 256, MaximumResidentTiles = 8,

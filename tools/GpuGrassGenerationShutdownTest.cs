@@ -27,7 +27,7 @@ public partial class GpuGrassGenerationShutdownTest : Node
 
     private async Task Run()
     {
-        var layer = new RingStandingGrassLayer { Name = "GpuGrassGenerationShutdownLayer" };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = RingStandingGrassLayer.GrassRenderStyleKind.Blades, Name = "GpuGrassGenerationShutdownLayer" };
         layer.SetProcess(false);
         AddChild(layer);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);

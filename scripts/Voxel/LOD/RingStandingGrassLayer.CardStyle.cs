@@ -12,9 +12,9 @@ public partial class RingStandingGrassLayer
 {
     public enum GrassRenderStyleKind { Blades = 0, Cards = 1 }
 
-    /// <summary>Blades is the established renderer. Cards draws alpha-scissor clump cards coloured from the Terrain3D surface.
+    /// <summary>Cards (the default) draws alpha-scissor clump cards coloured from the Terrain3D surface; Blades is the legacy per-blade renderer.
     /// Changing it resets the layer and rebuilds every tile.</summary>
-    [Export] public GrassRenderStyleKind GrassRenderStyle { get; set; } = GrassRenderStyleKind.Blades;
+    [Export] public GrassRenderStyleKind GrassRenderStyle { get; set; } = GrassRenderStyleKind.Cards;
 
     [ExportGroup("Grass cards")]
     [Export(PropertyHint.Range, "100,600,5")] public float GrassCardReachMeters { get; set; } = 400f;

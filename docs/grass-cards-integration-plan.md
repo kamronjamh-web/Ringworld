@@ -1,4 +1,5 @@
 # Grass "variant D" integration plan (cards + hero blades) — implementation-ready
+Update 2026-11-09: the user chose Cards as the default render style (profile, class and drawer fallback); an explicit saved `GrassRenderStyle` still wins. Text below that says Blades stays default is superseded.
 
 Status: read-only plan. Repo C:\Projects\RingworldTechDemo. Baseline = working tree on 2026-10-15 with the
 streaming-hysteresis change partly applied (uncommitted diff in RingStandingGrassLayer.cs, RingGrassTileBuilder.cs,

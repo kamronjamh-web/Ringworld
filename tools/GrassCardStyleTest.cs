@@ -110,9 +110,9 @@ public partial class GrassCardStyleTest : Node
     private void TestFingerprints(RingTerrainSampler sampler)
     {
         RingLodGeometrySnapshot geometry = Geometry(Vector3.Zero, new RingCanonicalPosition(0, 0, 100));
-        var defaults = new RingStandingGrassLayer();
+        var defaults = new RingStandingGrassLayer { GrassRenderStyle = Blades };
         var maxed = new RingStandingGrassLayer
-        {
+        { GrassRenderStyle = Blades,
             VisibilityRadiusMeters = 230, BladesPerSquareMeter = 96, MaximumInstancesPerTile = 1700, MaximumInstances = 5_000_000, MaximumResidentTiles = 40,
         };
         ulong d = defaults.SettingsFingerprintForTests(sampler, geometry), m = maxed.SettingsFingerprintForTests(sampler, geometry);
@@ -496,7 +496,7 @@ public partial class GrassCardStyleTest : Node
         var clean = new RingLodSurfaceEditSnapshot(1, Circumference, new Dictionary<RingTerrainColumnCoordinate, int>());
         RingCanonicalPosition home = new(186_000.0 + 24, 0, 141_000.0 + 24);
         RingLodGeometrySnapshot geometry = Geometry(Vector3.Zero, home);
-        var layer = new RingStandingGrassLayer { MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 4, MaximumTileUploadMilliseconds = 20, GrassCardReachMeters = 150 };
+        var layer = new RingStandingGrassLayer { GrassRenderStyle = Blades, MaximumTileBuildsInFlight = 2, MaximumTileUploadsPerFrame = 4, MaximumTileUploadMilliseconds = 20, GrassCardReachMeters = 150 };
         AddChild(layer); layer.InitializeForTests();
         layer.ApplyGrassQuality(true, 48, 115, 12, 1, .45f);
         try
