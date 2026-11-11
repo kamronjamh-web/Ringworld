@@ -1,0 +1,412 @@
+{
+  "schema": "ringworld.d4.physical_measurement.v1",
+  "diagnostic_only": true,
+  "graph_sha256": "C5D8C5797A63046DB00CADCE910117DAF733EEF2A43ABEA82BB7C8DBE3D969A9",
+  "mask_sha256": "27DE2A5F70233D99B9FD1B046910F891E3172F02A8862E95AC5F4C611CFF1C46",
+  "evaluator_sha256": "E23C27A5BE21B4E61790310DD3C03F9441286EE9CAD71596055181502025AB46",
+  "helper_sha256": "AF5B932D51E0D29BE6D611651C4C30E7844E02F600B06D9E352F96102E9E9677",
+  "archive_hashes": {
+    "seed": 1337,
+    "generator": "ringworld_surface_weather_lung_v8",
+    "recipe_definition_hash": "1480032CB30B96CA",
+    "case_args": [
+      "--seed=1337",
+      "--strip-start=9804000",
+      "--strip-km=2000",
+      "--cells=1000",
+      "--subsample=2",
+      "--breach-max-length=32",
+      "--min-lake-km2=1",
+      "--tie-jitter=1337",
+      "--conditioning=breach-fill",
+      "--breach-max-depth=40",
+      "--lake-share-target=0.05",
+      "--flats=barnes",
+      "--smooth=0",
+      "--partial-drawdown",
+      "--time-limit=300",
+      "--repair-flat-crossings",
+      "--profile-sampling",
+      "--lake-quotient",
+      "--d4-physical-baseline-export"
+    ],
+    "threshold_km2": 50,
+    "archive": {
+      "quotient_report": "drainage/20261111_051146_5197969_61932/drainage_1000m.json",
+      "quotient_report_sha256": "4AA6E56CA1D15B9C511E1A5E16F44FAF927143C6A44296D0EE69BF82AB29049B",
+      "quotient_overview_png": "drainage/20261111_051146_5197969_61932/river_map_1000m_lake_quotient.png",
+      "quotient_overview_png_sha256": "01FFA73030D420A29C3AF14C1404FD6B5E628C7CC2B80F6AEA4370EA09035DAD",
+      "case_summary": "study/20261111-051108-789-e92da7f1/summary.json",
+      "case_id": "lake-quotient-candidate"
+    },
+    "determinism": {
+      "down_hash": "A824FCADE3EEE92F",
+      "lake_mask_hash": "A6284C2CDCBD1B95",
+      "conditioned_height_hash": "1A34FFAAC4218A21",
+      "area_km2_hash": "1F4EA61B79806AA5",
+      "discharge_hash": "255C7DFB8DFDAB0E",
+      "cut_height_hash": "9B5BB1B5F656CF84",
+      "flood_parent_hash": "3FD097FB1A291E57",
+      "flood_land_order_hash": "F3647D498CA7E703",
+      "routing_land_order_hash": "0BCFB768A9E71185",
+      "full_cut_paths_hash": "6410EDBCCB3A9B99",
+      "partial_cut_paths_hash": "4A9049E08B3F8E56"
+    },
+    "unchanged_conditioning": {
+      "filled": "1A34FFAAC4218A21",
+      "cut": "9B5BB1B5F656CF84",
+      "lake_ids": "D394BBD11D21ACDC",
+      "flood_parent": "3FD097FB1A291E57",
+      "flood_order": "236AFD16E8380E83",
+      "breach_paths": "6410EDBCCB3A9B99",
+      "drawdown_paths": "4A9049E08B3F8E56"
+    },
+    "grid_input_hashes": {
+      "kind": "5EFB9302DF596EE4",
+      "coastal": "0905FCE51CDD6258",
+      "sampled_height": "13DA5F092FDFF6C3",
+      "routing_height": "13DA5F092FDFF6C3",
+      "shaped_height": "93EF59FB16A6BE4A",
+      "moisture": "BB08AD38393D512B",
+      "outlet_routing_height": "71B40EEACBD3DA1F"
+    },
+    "quotient_hashes": {
+      "slot_order": "C1EC88BE8F96B14D",
+      "receiver_slots": "B8AB70D3CB0D16BF",
+      "outlet_contacts": "B9B8CFEC7564DD2D",
+      "exact_terminals": "5F4DACDE290D9EE5",
+      "area_bits": "11B614724F8DA7DF",
+      "discharge_bits": "0692AF9007C0712D"
+    }
+  },
+  "source_png": {
+    "file": "river_map_1000m_lake_quotient.png",
+    "sha256": "01FFA73030D420A29C3AF14C1404FD6B5E628C7CC2B80F6AEA4370EA09035DAD",
+    "width_px": 2000,
+    "height_px": 318,
+    "around_m_per_px": 1000,
+    "across_m_per_px": 1000,
+    "orientation": "around right, across down"
+  },
+  "constants": {
+    "window_m": 6000,
+    "phase_step_m": 250,
+    "minimum_chord_m": 5940,
+    "maximum_deviation_m": 150,
+    "tolerance_m": 1E-06,
+    "bend_step_m": 1000,
+    "sharp_degrees": 90,
+    "parallel_degrees": 5,
+    "alternation_degrees": 22.5,
+    "viewport_around_m": 24000,
+    "viewport_across_m": 18000
+  },
+  "legacy": {
+    "raw": {
+      "edges": 20634,
+      "overall": {
+        "edges": 20634,
+        "length_km": 24223.988945087418,
+        "straight_length_km": 4393.468396369012,
+        "straight_share": 0.18136849411252723,
+        "sources": 2705,
+        "confluences": 619,
+        "mean_source_to_first_end_km": 13.405747084462844,
+        "lake_ending_length_km": 13642.043425247724,
+        "lake_ending_sources": 1969,
+        "first_end": [
+          {
+            "receiver_class": "Lake",
+            "length_km": 13642.043425247724,
+            "sources": 1969
+          },
+          {
+            "receiver_class": "Ocean",
+            "length_km": 10357.666299226119,
+            "sources": 720
+          },
+          {
+            "receiver_class": "Lung",
+            "length_km": 0,
+            "sources": 0
+          },
+          {
+            "receiver_class": "StripOutlet",
+            "length_km": 224.2792206135789,
+            "sources": 16
+          }
+        ]
+      },
+      "coastal": {
+        "edges": 6509,
+        "length_km": 7573.94306886117,
+        "straight_length_km": 2605.3931444750483,
+        "straight_share": 0.3439942868314693,
+        "sources": 427,
+        "confluences": 267,
+        "mean_source_to_first_end_km": 16.4835313553975,
+        "lake_ending_length_km": 1795.0134187980839,
+        "lake_ending_sources": 148,
+        "first_end": [
+          {
+            "receiver_class": "Lake",
+            "length_km": 1795.0134187980839,
+            "sources": 148
+          },
+          {
+            "receiver_class": "Ocean",
+            "length_km": 5705.503243191897,
+            "sources": 275
+          },
+          {
+            "receiver_class": "Lung",
+            "length_km": 0,
+            "sources": 0
+          },
+          {
+            "receiver_class": "StripOutlet",
+            "length_km": 73.42640687119285,
+            "sources": 4
+          }
+        ]
+      }
+    },
+    "quotient": {
+      "edges": 20629,
+      "overall": {
+        "edges": 20629,
+        "length_km": 24216.91787727555,
+        "straight_length_km": 4393.468396369012,
+        "straight_share": 0.18142145167415025,
+        "sources": 2704,
+        "confluences": 619,
+        "mean_source_to_first_end_km": 13.408089791294424,
+        "lake_ending_length_km": 13634.97235743586,
+        "lake_ending_sources": 1968,
+        "first_end": [
+          {
+            "receiver_class": "Lake",
+            "length_km": 13634.97235743586,
+            "sources": 1968
+          },
+          {
+            "receiver_class": "Ocean",
+            "length_km": 10357.666299226119,
+            "sources": 720
+          },
+          {
+            "receiver_class": "Lung",
+            "length_km": 0,
+            "sources": 0
+          },
+          {
+            "receiver_class": "StripOutlet",
+            "length_km": 224.2792206135789,
+            "sources": 16
+          }
+        ]
+      },
+      "coastal": {
+        "edges": 6507,
+        "length_km": 7571.114641736423,
+        "straight_length_km": 2605.3931444750483,
+        "straight_share": 0.3441227966768055,
+        "sources": 426,
+        "confluences": 267,
+        "mean_source_to_first_end_km": 16.51558559068072,
+        "lake_ending_length_km": 1792.1849916733377,
+        "lake_ending_sources": 147,
+        "first_end": [
+          {
+            "receiver_class": "Lake",
+            "length_km": 1792.1849916733377,
+            "sources": 147
+          },
+          {
+            "receiver_class": "Ocean",
+            "length_km": 5705.503243191897,
+            "sources": 275
+          },
+          {
+            "receiver_class": "Lung",
+            "length_km": 0,
+            "sources": 0
+          },
+          {
+            "receiver_class": "StripOutlet",
+            "length_km": 73.42640687119285,
+            "sources": 4
+          }
+        ]
+      }
+    },
+    "basis": "Full D8 edge lengths. Coastal scope uses each edge origin bit."
+  },
+  "physical": {
+    "overall": {
+      "length_km": 23070.023866248994,
+      "flagged_km": 4778.966774773039,
+      "share": 0.20715049115161846,
+      "hypothetical_half_share": 0.10357524557580923
+    },
+    "coastal": {
+      "length_km": 7486.137982333537,
+      "flagged_km": 2780.9854608429664,
+      "share": 0.37148466504435085,
+      "hypothetical_half_share": 0.18574233252217542
+    },
+    "dry_sources": 2704,
+    "dry_confluences": 619,
+    "coastal_origin_sources": 426,
+    "coastal_origin_confluences": 267,
+    "stations": {
+      "phase_starts": 59987,
+      "source_starts": 1383,
+      "phase_passing": 7468,
+      "source_passing": 75
+    },
+    "first_water_classes": [
+      {
+        "first_water_class": "Lake",
+        "overall": {
+          "length_km": 12732.742343333453,
+          "flagged_km": 1290.797727214746,
+          "share": 0.10137625441628256,
+          "hypothetical_half_share": null
+        },
+        "coastal": {
+          "length_km": 1751.306312016897,
+          "flagged_km": 354.345454429505,
+          "share": 0.20233208319875357,
+          "hypothetical_half_share": null
+        }
+      },
+      {
+        "first_water_class": "Ocean",
+        "overall": {
+          "length_km": 10119.744942988813,
+          "flagged_km": 3467.669047558288,
+          "share": 0.3426636804676354,
+          "hypothetical_half_share": null
+        },
+        "coastal": {
+          "length_km": 5662.233690570197,
+          "flagged_km": 2420.0897538817694,
+          "share": 0.4274090202091362,
+          "hypothetical_half_share": null
+        }
+      },
+      {
+        "first_water_class": "Lung",
+        "overall": {
+          "length_km": 0,
+          "flagged_km": 0,
+          "share": null,
+          "hypothetical_half_share": null
+        },
+        "coastal": {
+          "length_km": 0,
+          "flagged_km": 0,
+          "share": null,
+          "hypothetical_half_share": null
+        }
+      },
+      {
+        "first_water_class": "StripOutlet",
+        "overall": {
+          "length_km": 217.53657992645952,
+          "flagged_km": 20.5,
+          "share": 0.09423702444402793,
+          "hypothetical_half_share": null
+        },
+        "coastal": {
+          "length_km": 72.59797974644668,
+          "flagged_km": 6.550252531694168,
+          "share": 0.09022637481884985,
+          "hypothetical_half_share": null
+        }
+      }
+    ],
+    "sharp_turns": {
+      "stations": 20171,
+      "zero_displacement_windows": 0,
+      "overall": {
+        "length_km": 19856.80556334993,
+        "flagged_km": 23,
+        "share": 0.001158293056082068,
+        "hypothetical_half_share": null
+      },
+      "coastal": {
+        "length_km": 6709.995995386612,
+        "flagged_km": 6.763455967290568,
+        "share": 0.0010079672136824988,
+        "hypothetical_half_share": null
+      }
+    },
+    "alternating_bends": {
+      "stations": 17445,
+      "zero_displacement_windows": 0,
+      "overall": {
+        "length_km": 17156.539582065743,
+        "flagged_km": 16,
+        "share": 0.0009325889946201792,
+        "hypothetical_half_share": null
+      },
+      "coastal": {
+        "length_km": 5886.59902576694,
+        "flagged_km": 13,
+        "share": 0.00220840589669793,
+        "hypothetical_half_share": null
+      }
+    },
+    "missing_examples": []
+  },
+  "selections": [
+    {
+      "class": "axial",
+      "file": "axial.png",
+      "window_id": "512501@892.1356237309446",
+      "origin": 512501,
+      "local_start_m": 892.1356237309446,
+      "start_kind": "phase",
+      "arc_m": 6000,
+      "chord_m": 6000,
+      "max_deviation_m": 4.547473508864641E-13,
+      "bearing_degrees": 180,
+      "first_water_class": "Ocean",
+      "crop": {
+        "west_m": 10293500,
+        "south_m": 251392.13562373095,
+        "east_m": 10317500,
+        "north_m": 269392.13562373095,
+        "source_x": 489.5,
+        "source_y": 251.39213562373095,
+        "source_width": 24,
+        "source_height": 18
+      }
+    },
+    {
+      "class": "oblique",
+      "file": "oblique.png",
+      "window_id": "526508@884.7763108502259",
+      "origin": 526508,
+      "local_start_m": 884.7763108502259,
+      "start_kind": "phase",
+      "arc_m": 6000,
+      "chord_m": 6000.000000000066,
+      "max_deviation_m": 6.431098710768743E-13,
+      "bearing_degrees": 225,
+      "first_water_class": "Ocean",
+      "crop": {
+        "west_m": 10297753.048327206,
+        "south_m": 257246.95167279505,
+        "east_m": 10321753.048327206,
+        "north_m": 275246.95167279505,
+        "source_x": 493.75304832720497,
+        "source_y": 257.24695167279503,
+        "source_width": 24,
+        "source_height": 18
+      }
+    }
+  ]
+}

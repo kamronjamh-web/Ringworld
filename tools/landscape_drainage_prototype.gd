@@ -3,6 +3,8 @@ extends SceneTree
 ## .godot/audit_baseline/common/t0/drainage/<stamp>/.
 ## RUN: tools/run_tests.ps1 -Tests landscape_drainage_prototype -Label landscape-t0-drainage -Cache none
 ## Manual: Godot_console.exe --headless --path . --script res://tools/landscape_drainage_prototype.gd [-- --strip-start=<m> --strip-km=2000 --cells=1000,500 --breach=5,15,40 --thresholds=25,50,100 --time-limit=180]
+##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
+##   --seed=<n> and --out-phase=<name> also work with the legacy report.
 ## Prints LANDSCAPE_DRAINAGE=PASS, or LANDSCAPE_DRAINAGE=FAIL <reason> through push_error (exit 1).
 const DRIVER := preload("res://tools/LandscapeDrainagePrototype.cs")
 

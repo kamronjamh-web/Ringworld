@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Godot;
@@ -98,6 +100,46 @@ public partial class LandscapeDrainagePrototype : RefCounted
         return o;
     }
 
+    static string OptionName(string arg)
+    {
+        int equals = arg.IndexOf('=');
+        return equals < 0 ? arg : arg[..equals];
+    }
+
+    static string? ReadOption(string[] args, string name)
+    {
+        string? value = null;
+        foreach (string arg in args)
+        {
+            if (OptionName(arg) != name) continue;
+            if (value != null || arg.Length <= name.Length + 1)
+                throw new ArgumentException($"Use one {name}=<value> flag.");
+            value = arg[(name.Length + 1)..];
+        }
+        return value;
+    }
+
+    static int ReadInt(string name, string value)
+        => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int number)
+            ? number : throw new ArgumentException($"{name} must be an integer.");
+
+    static double ReadNumber(string name, string value, double min = 0, double max = double.PositiveInfinity)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double number) ||
+            !double.IsFinite(number) || number < min || number > max)
+            throw new ArgumentException($"{name} must be a finite number in [{min}, {max}].");
+        return number;
+    }
+
+    static string OutputDirectory(string phase, LandscapeWorld.Spec spec)
+    {
+        string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        if (!spec.IsDefault) stamp += "_" + spec.Tag;
+        string outDir = ProjectSettings.GlobalizePath($"res://.godot/audit_baseline/common/{phase}/drainage/{stamp}");
+        Directory.CreateDirectory(outDir);
+        return outDir;
+    }
+
     public bool Run()
     {
         var failures = new List<string>();
@@ -110,41 +152,53 @@ public partial class LandscapeDrainagePrototype : RefCounted
 
     void RunInternal(List<string> failures, Stopwatch total)
     {
-        Options o = ParseOptions();
+        string[] args = OS.GetCmdlineUserArgs();
+        Options legacy = ParseOptions();
+        double timeLimit = legacy.TimeLimit;
+        string? seedText = ReadOption(args, "--seed");
+        int seed = seedText == null ? LandscapeWorld.Seed : ReadInt("--seed", seedText);
+        string phase = ReadOption(args, "--out-phase") ?? "t0";
+        if (!Regex.IsMatch(phase, @"\A[A-Za-z0-9][A-Za-z0-9_-]{0,63}\z", RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(phase, @"\A(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])\z", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase))
+            throw new ArgumentException("--out-phase must be a single path component containing letters, digits, underscores or hyphens.");
+        LandscapeWorld.Spec spec = LandscapeWorld.FromArgs(args, seed: seed);
         int threads = LandscapeWorld.DefaultWorkerCount;
-        LandscapeWorld.Worker[] workers = LandscapeWorld.CreateWorkers(threads);
+        LandscapeWorld.Worker[] workers = spec.CreateWorkers(threads);
         try
         {
-            var clock = Stopwatch.StartNew();
-            double start = double.IsNaN(o.StripStart) ? AutoStrip(o, workers, out string scanNote) : o.StripStart;
-            string stripNote = double.IsNaN(o.StripStart) ? "auto (most land of 16 windows, pre-scan at 4 km)" : "given";
-            double scanSeconds = clock.Elapsed.TotalSeconds;
-            GD.Print($"LANDSCAPE_DRAINAGE_STRIP start={LandscapeWorld.Num(start)} km={o.StripKm} ({stripNote}) prescan={scanSeconds:F1}s threads={threads}");
-
-            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string outDir = ProjectSettings.GlobalizePath("res://.godot/audit_baseline/common/t0/drainage/" + stamp);
-            Directory.CreateDirectory(outDir);
-
-            double savedPose = 27_984_760.943;
-            bool inside = savedPose >= start && savedPose < start + o.StripKm * 1000.0;
             var summaries = new List<string>();
-
-            foreach (int cell in o.Cells)
-            {
-                RunCell(o, workers, threads, start, cell, stripNote, scanSeconds, inside, outDir, failures, summaries, cell == o.Cells[0]);
-            }
-
+            string outDir = RunLegacy(legacy, spec, workers, threads, phase, seedText != null, failures, summaries);
             double elapsed = total.Elapsed.TotalSeconds;
-            GD.Print($"LANDSCAPE_DRAINAGE_TOTAL seconds={elapsed:F1} limit={o.TimeLimit:F0} out={outDir}");
-            if (elapsed > o.TimeLimit) failures.Add($"run took {elapsed:F1} s, over the {o.TimeLimit:F0} s limit");
-            foreach (string s in summaries) GD.Print(s);
+            GD.Print($"LANDSCAPE_DRAINAGE_TOTAL seconds={elapsed:F1} limit={timeLimit:F0} out={outDir}");
+            if (elapsed > timeLimit) failures.Add($"run took {elapsed:F1} s, over the {timeLimit:F0} s limit");
+            foreach (string summary in summaries) GD.Print(summary);
         }
         finally { foreach (LandscapeWorld.Worker w in workers) w.Dispose(); }
     }
 
+    string RunLegacy(Options o, LandscapeWorld.Spec spec, LandscapeWorld.Worker[] workers, int threads, string phase,
+        bool reportSeed, List<string> failures, List<string> summaries)
+    {
+        var clock = Stopwatch.StartNew();
+        double start = double.IsNaN(o.StripStart) ? AutoStrip(o.StripKm, workers, out _) : o.StripStart;
+        string stripNote = double.IsNaN(o.StripStart) ? "auto (most land of 16 windows, pre-scan at 4 km)" : "given";
+        double scanSeconds = clock.Elapsed.TotalSeconds;
+        GD.Print($"LANDSCAPE_DRAINAGE_STRIP start={LandscapeWorld.Num(start)} km={o.StripKm} ({stripNote}) prescan={scanSeconds:F1}s threads={threads}");
+
+        string outDir = OutputDirectory(phase, spec);
+
+        double savedPose = 27_984_760.943;
+        bool inside = savedPose >= start && savedPose < start + o.StripKm * 1000.0;
+        foreach (int cell in o.Cells)
+        {
+            RunCell(o, spec, workers, threads, start, cell, stripNote, scanSeconds, inside, outDir, failures, summaries, cell == o.Cells[0], reportSeed);
+        }
+        return outDir;
+    }
+
     // ---------------------------------------------------------------- strip choice
 
-    static double AutoStrip(Options o, LandscapeWorld.Worker[] workers, out string note)
+    static double AutoStrip(int stripKm, LandscapeWorld.Worker[] workers, out string note)
     {
         const int cell = 4000;
         int rows = (int)(LandscapeWorld.Circumference / cell);
@@ -160,11 +214,11 @@ public partial class LandscapeDrainagePrototype : RefCounted
                 if (r >= rows) break;
                 int n = 0;
                 for (int j = 0; j < cols; j++)
-                    if (w.Diag((r + 0.5) * cell, (j + 0.5) * cell).Height >= 0d) n++;
+                    if (w.Gen1Shaped.SampleDiagnostics((r + 0.5) * cell, (j + 0.5) * cell).Height >= 0d) n++;
                 land[r] = n;
             }
         });
-        int win = o.StripKm * 1000 / cell;
+        int win = stripKm * 1000 / cell;
         var prefix = new long[rows + 1];
         for (int r = 0; r < rows; r++) prefix[r + 1] = prefix[r] + land[r];
         long best = -1; int bestRow = 0;
@@ -183,8 +237,8 @@ public partial class LandscapeDrainagePrototype : RefCounted
 
     // ---------------------------------------------------------------- per cell size
 
-    void RunCell(Options o, LandscapeWorld.Worker[] workers, int threads, double start, int cell, string stripNote, double scanSeconds, bool inside, string outDir,
-        List<string> failures, List<string> summaries, bool first)
+    void RunCell(Options o, LandscapeWorld.Spec spec, LandscapeWorld.Worker[] workers, int threads, double start, int cell, string stripNote, double scanSeconds, bool inside, string outDir,
+        List<string> failures, List<string> summaries, bool first, bool reportSeed)
     {
         var time = new TimeSplit();
         var sw = Stopwatch.StartNew();
@@ -223,6 +277,18 @@ public partial class LandscapeDrainagePrototype : RefCounted
 
         sw.Restart();
         Dictionary<string, object> json = Statistics(g, f, o, depressions, lake, midBreach, hy, time, threads, start, stripNote, scanSeconds, inside, deterministic, secondHash, out string md, out double[] classShareSf50, out double[] classShareSo50, out double endEdge, out double enclosedShare);
+        if (!spec.IsDefault)
+        {
+            json["generation"] = spec.Recipe.WorldGeneration;
+            json["review_features"] = spec.Recipe.ReviewFeatures;
+            json["world_tag"] = spec.Tag;
+            md += $"\nWorld generation {spec.Recipe.WorldGeneration} ({spec.Tag}).\n";
+        }
+        if (reportSeed)
+        {
+            json["seed"] = spec.Recipe.Seed;
+            md += $"\nWorld seed {spec.Recipe.Seed}.\n";
+        }
         time.Stats = sw.Elapsed.TotalSeconds;
         // refresh timing section now that statistics time is known
         json["timing"] = TimingJson(time, o.StripKm, threads);
