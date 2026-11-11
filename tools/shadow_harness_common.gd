@@ -245,7 +245,10 @@ static func create_game(tree: SceneTree, fixture_root: String) -> Node:
 	launcher.call("_save_selected_slot_settings")
 	var game := GAME.instantiate()
 	launcher.call("_configure_game", game, 5000000.0)
-	_install_isolated_preferences(game, fixture_root)
+	if not _install_isolated_preferences(game, fixture_root):
+		launcher.queue_free()
+		game.queue_free()
+		return null
 	var mon: Node = game.get_node_or_null("RingPerformanceMonitor")
 	if mon != null:
 		mon.call("InstallSettingsPathForTests", fixture_root.path_join("telemetry.tres"))
@@ -265,23 +268,30 @@ static func create_game(tree: SceneTree, fixture_root: String) -> Node:
 
 
 ## Copies the user's live preferences into the isolated fixture (so the run measures the real config) without ever writing back to user://.
-static func _install_isolated_preferences(game: Node, fixture_root: String) -> void:
+static func _install_isolated_preferences(game: Node, fixture_root: String) -> bool:
 	var drawer: Node = game.get_node_or_null("LiveTuningDrawer")
 	if drawer == null:
-		return
-	for item in [["InstallGrassDefaults", "gameplay_grass_defaults.tres"], ["InstallVegetationDefaults", "gameplay_vegetation_defaults.tres"], ["InstallWaterDefaults", "gameplay_water_defaults.tres"], ["InstallAntiAliasingDefaults", "gameplay_anti_aliasing_defaults.tres"], ["InstallShadowDefaults", "gameplay_shadow_defaults.tres"], ["InstallSurfaceTerrainDefaults", "surface_tuning.tres"], ["InstallAtmosphereDefaults", "atmosphere_defaults.tres"]]:
-		var destination := fixture_root.path_join(str(item[1]))
-		var source := "user://" + str(item[1])
+		push_error("LiveTuningDrawer missing for isolated preferences")
+		return false
+	for item in [["InstallGrassDefaults", "gameplay_grass_defaults.tres"], ["InstallVegetationDefaults", "gameplay_vegetation_defaults.tres"], ["InstallWaterDefaults", "gameplay_water_defaults.tres"], ["InstallAntiAliasingDefaults", "gameplay_anti_aliasing_defaults.tres"], ["InstallShadowDefaults", "gameplay_shadow_defaults.tres"], ["InstallSurfaceTerrainDefaults", "gameplay_surface_terrain_defaults.tres"], ["InstallAtmosphereDefaults", "atmosphere_visual_defaults.tres"]]:
+		var filename := str(item[1])
+		var destination := fixture_root.path_join(filename)
+		var source := "user://" + filename
+		var status := "absent"
 		if FileAccess.file_exists(source):
-			var copy := FileAccess.open(destination, FileAccess.WRITE)
-			if copy != null:
-				copy.store_string(FileAccess.get_file_as_string(source))
-				copy.close()
+			var copy_error := DirAccess.copy_absolute(ProjectSettings.globalize_path(source), ProjectSettings.globalize_path(destination))
+			if copy_error != OK:
+				print("PREFS_INSTALLED %s=%s" % [filename, status])
+				push_error("could not copy isolated preference %s: %s" % [filename, error_string(copy_error)])
+				return false
+			status = "copied"
+		print("PREFS_INSTALLED %s=%s" % [filename, status])
 		drawer.call(str(item[0]), destination)
 	if drawer.has_method("InstallEmitterSiteDefaults"):
 		drawer.call("InstallEmitterSiteDefaults", fixture_root.path_join("emitter_tuning.tres"))
 	if drawer.has_method("InstallEclipseDefaults"):
 		drawer.call("InstallEclipseDefaults", fixture_root.path_join("eclipse_tuning.tres"))
+	return true
 
 
 ## True when no terrain / grass / tree / global-LOD build is in flight (residency is not required: altitude poses have no grass).

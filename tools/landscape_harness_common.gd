@@ -2,12 +2,14 @@ extends RefCounted
 
 ## Shared GPU boot and capture module of the landscape (T0) and vastness (V0) tools (docs/landscape-audit-t0-spec.md 2.6). TEST ONLY.
 ## Reuses tools/shadow_harness_common.gd (COMMON) for machine info, power log, stats, time of day and streaming-idle helpers, but has its own boot: it pins the
-## generation 1 world (v7 + v8 on, verified against LandscapeWorldBridge), installs the user's REAL preference files under their real names, and records which ones
+## selected world (pinned v8 by default, verified against LandscapeWorldBridge), installs the user's REAL preference files under their real names, and records which ones
 ## it used. Never calls or modifies COMMON.create_game, never writes to user:// settings.
-## Flags understood here (after `--`):  --prefs=user|defaults|<dir>   --preset=medium|keep   --allow-blades   --res=WxH
+## Flags understood here (after `--`):  --prefs=user|defaults|<dir>   --preset=medium|keep   --allow-blades   --res=WxH   --weather=clear|natural
+## World selection: --generation=N [--review-features=a,b]. Generation 0 selects the pinned v8 world.
 ## Output layout: see docs/landscape-audit-t0-spec.md 2.7 (transient_dir / baseline_dir).
 
 const COMMON := preload("res://tools/shadow_harness_common.gd")
+const GENERATION_PIN := preload("res://tools/world_generation_pin.gd")
 const BRIDGE := preload("res://tools/LandscapeWorldBridge.cs")
 const BANDS := preload("res://tools/landscape_audit_bands.gd")
 const DEPTH_EFFECT := preload("res://tools/shadow_depth_capture_effect.gd")
@@ -26,6 +28,8 @@ const PREF_FILES := [
 	["InstallWindDefaults", "gameplay_wind_defaults.tres"],
 ]
 const MEDIUM_PRESET := 1 # RingTerrainLodCoordinator.QualityPreset.Medium
+const CLEAR_PRECIPITATION_MAX := 0.02
+const MAJOR_FRONT := 3 # WeatherSystemKind in scripts/RingVolumetricCloudLayer.cs:32
 
 static var _fixture := {}
 static var _stamp := ""
@@ -45,13 +49,17 @@ static func _make(path: String) -> String:
 
 
 ## <project>/.godot/captures/landscape/t0/<kind>/<stamp> (transient, pruned by the normal policy).
-static func transient_dir(kind: String) -> String:
-	return _make(ProjectSettings.globalize_path("res://.godot/captures/landscape/t0").path_join(kind).path_join(stamp()))
+static func transient_dir(kind: String, world_tag := "") -> String:
+	return _make(ProjectSettings.globalize_path("res://.godot/captures/landscape/t0").path_join(kind).path_join(_world_stamp(world_tag)))
 
 
 ## <project>/.godot/audit_baseline/<machine>/<phase>/<kind>/<stamp> (durable; machine is "common" for machine-independent headless output).
-static func baseline_dir(machine: String, phase: String, kind: String) -> String:
-	return _make(ProjectSettings.globalize_path("res://.godot/audit_baseline").path_join(machine).path_join(phase).path_join(kind).path_join(stamp()))
+static func baseline_dir(machine: String, phase: String, kind: String, world_tag := "") -> String:
+	return _make(ProjectSettings.globalize_path("res://.godot/audit_baseline").path_join(machine).path_join(phase).path_join(kind).path_join(_world_stamp(world_tag)))
+
+
+static func _world_stamp(world_tag: String) -> String:
+	return stamp() if world_tag.is_empty() else stamp() + "_" + world_tag
 
 
 static func remove_dir_recursive(absolute_path: String) -> void:
@@ -84,12 +92,110 @@ static func pose_by_name(name: String) -> Dictionary:
 	return {}
 
 
+static func report_poses(report: String) -> Array:
+	var poses: Array = []
+	for pose in load_poses().get("poses", []):
+		if report in pose.get("reports", []):
+			poses.append(pose)
+	return poses
+
+
+# ------------------------------------------------------------------ weather
+
+## Call after hold_world_clocks. Natural mode samples the old fixed time without clearing spawned weather.
+static func pin_weather(game: Node, poses: Array) -> Dictionary:
+	var mode := COMMON.arg_value("--weather=", "clear")
+	if mode != "clear" and mode != "natural":
+		return {"error": "unknown --weather=%s (clear|natural)" % mode}
+	if poses.is_empty():
+		return {"error": "no fixture poses for weather sampling"}
+	var clouds := game.get_node_or_null("RingVolumetricClouds")
+	if clouds == null or not clouds.has_method("GetNaturalWeatherDiagnosticAtTime"):
+		return {"error": "RingVolumetricClouds weather diagnostic missing"}
+	var spawned_cleared := false
+	if mode == "clear":
+		var sunshine := game.get_node_or_null("SunshineCloudBridge")
+		if sunshine != null and sunshine.has_method("ClearSpawnedWeather"):
+			sunshine.call("ClearSpawnedWeather")
+			spawned_cleared = true
+
+	var best := {}
+	var best_failures := poses.size() + 1
+	var best_worst_score := INF
+	var candidates := 200 if mode == "clear" else 1
+	for k in candidates:
+		var cloud_time: float = COMMON.FIXED_CLOUD_TIME + 600.0 * k
+		var per_pose := {}
+		var failures := 0
+		var worst_pose := ""
+		var worst_score := -1.0
+		for pose in poses:
+			var name := str(pose["name"])
+			var sample := _weather_at_time(game, clouds, float(pose["around_m"]), float(pose["across_m"]), cloud_time)
+			if sample.has("error"):
+				return {"error": "%s at cloud time %.1f: %s" % [name, cloud_time, sample["error"]]}
+			per_pose[name] = sample
+			var precipitation := float(sample["precipitation"])
+			var storm := int(sample["system_kind"]) >= MAJOR_FRONT
+			if storm or precipitation > CLEAR_PRECIPITATION_MAX:
+				failures += 1
+			# A front outranks rain alone. Break ties on precipitation, then fixture order.
+			var score := precipitation + (1.0 if storm else 0.0)
+			if score > worst_score:
+				worst_score = score
+				worst_pose = name
+		if mode == "natural" or failures == 0:
+			if mode == "clear":
+				clouds.set("CloudSimulationTimeSeconds", cloud_time)
+			var megastorm := {}
+			for name in per_pose:
+				megastorm[name] = per_pose[name]["megastorm"]
+			return {"mode": mode, "cloud_time": cloud_time, "searched": k + 1 if mode == "clear" else 0, "per_pose": per_pose,
+				"spawned_cleared": spawned_cleared, "megastorm": megastorm}
+		if failures < best_failures or (failures == best_failures and worst_score < best_worst_score):
+			best = {"cloud_time": cloud_time, "worst_pose": worst_pose, "weather": per_pose[worst_pose]}
+			best_failures = failures
+			best_worst_score = worst_score
+
+	return {"error": "no clear weather time in 200 candidates; best time %.1f, %d/%d poses failed, worst pose %s (kind=%d, precipitation=%.4f)" %
+		[best["cloud_time"], best_failures, poses.size(), best["worst_pose"], best["weather"]["system_kind"], best["weather"]["precipitation"]],
+		"searched": 200, "best": best, "spawned_cleared": spawned_cleared}
+
+
+static func weather_at(game: Node, around: float, across: float) -> Dictionary:
+	var clouds := game.get_node_or_null("RingVolumetricClouds")
+	if clouds == null or not clouds.has_method("GetNaturalWeatherDiagnosticAtTime"):
+		return {"error": "RingVolumetricClouds weather diagnostic missing"}
+	return _weather_at_time(game, clouds, around, across, float(clouds.get("CloudSimulationTimeSeconds")))
+
+
+static func _weather_at_time(game: Node, clouds: Node, around: float, across: float, cloud_time: float) -> Dictionary:
+	var weather: Dictionary = clouds.call("GetNaturalWeatherDiagnosticAtTime", around, across, cloud_time)
+	if not weather.has("system_kind") or not weather.has("precipitation") or not is_finite(float(weather["precipitation"])):
+		return {"error": "incomplete weather diagnostic"}
+	var megastorm := game.get_node_or_null("RingMegastorm")
+	weather["megastorm"] = "unknown"
+	if megastorm != null and megastorm.has_method("query_megastorm"):
+		var state: Dictionary = megastorm.call("query_megastorm", around, across, cloud_time)
+		if state.has("active") and state.has("phase_name"):
+			# Active describes the whole storm. The phase describes this position.
+			weather["megastorm"] = {"active": state["active"], "phase": state["phase_name"]}
+	return weather
+
+
 # ------------------------------------------------------------------ boot
 
 ## Boots the isolated gameplay world with the pinned generation 1 recipe and the user's preference files. Returns {game, world, prefs, fixture_root} or {} after push_error
 ## ("<marker>=FAIL ..."). The caller removes `fixture_root` (remove_dir_recursive on its globalized path) when it finishes.
 static func boot(tree: SceneTree, marker: String) -> Dictionary:
-	var fixture_root := "res://.godot/captures/landscape/fixture_world/%s" % stamp()
+	var bridge: RefCounted = BRIDGE.new()
+	var selection: Variant = bridge.call("ConfigureFromArgs", OS.get_cmdline_user_args())
+	if not selection is Dictionary or not selection.has("world_tag"):
+		var error := str(selection.get("error", "world selection failed")) if selection is Dictionary else "world selection unavailable"
+		push_error("%s=FAIL %s" % [marker, error])
+		return {}
+	var world_tag: String = selection["world_tag"]
+	var fixture_root := "res://.godot/captures/landscape/fixture_world/%s" % _world_stamp(world_tag)
 	var root := tree.root
 	var prior := root.get_node_or_null("WorldSession")
 	if prior != null:
@@ -99,12 +205,16 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 	root.add_child(session)
 	ProjectSettings.set_setting("ringworld/runtime/active_world_directory", fixture_root)
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
-	# Differs from COMMON.create_game: v7 and v8 are always on, and the loaded recipe is verified against the pinned one below.
+	# Differs from COMMON.create_game: v7 and v8 are always on, and the loaded recipe is verified against the selected one below.
 	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", true)
 	ProjectSettings.set_setting("ringworld/runtime/surface_weather_lung_v8", true)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(fixture_root))
+	GENERATION_PIN.pin(int(selection["generation"]), ",".join(selection["review_features"]))
 	var launcher := COMMON.LAUNCHER.instantiate()
+	if not world_tag.is_empty():
+		launcher.set("use_preview_recipe", false)
 	root.add_child(launcher)
+	GENERATION_PIN.unpin()
 	await tree.process_frame
 	launcher.call("_on_certified_preset_pressed")
 	var selector: OptionButton = launcher.get("terrain_backend_selector")
@@ -139,13 +249,14 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 	if not ready:
 		push_error("%s=FAIL gameplay startup did not become ready" % marker)
 		return {}
-	var bridge: RefCounted = BRIDGE.new()
 	var world: Dictionary = bridge.call("VerifyGame", game)
 	world["pinned_definition_hash"] = str(bridge.call("DefinitionHashHex"))
 	if not bool(world.get("ok", false)):
 		push_error("%s=FAIL world mismatch: %s" % [marker, str(world.get("message", ""))])
 		return {}
-	return {"game": game, "world": world, "prefs": prefs, "fixture_root": fixture_root}
+	var world_record: Dictionary = {} if world_tag.is_empty() else selection
+	return {"game": game, "world": world, "prefs": prefs, "fixture_root": fixture_root, "world_bridge": bridge,
+		"world_tag": world_tag, "world_record": world_record}
 
 
 ## Copies the preference files into the fixture under their REAL names (`--prefs=user|defaults|<dir>`), points every drawer at them, and returns what was used.
@@ -228,7 +339,8 @@ static func apply_preset(tree: SceneTree, game: Node) -> Dictionary:
 ## Teleports to a fixture pose (flight, so gravity cannot drift it), waits for streaming to go idle, applies the named time of day, settles and checks the ground.
 ## `heading` ({yaw, pitch}, e.g. one of the fixture's `headings`) overrides the pose's own heading. Returns {pose, time_name, time, sun_elevation_deg, streaming_idle,
 ## streaming_idle_after, ground, error?}.
-static func go_pose(tree: SceneTree, game: Node, pose: Dictionary, time_name: String, heading: Dictionary = {}, settle_s := 2.0, idle_timeout_s := 300.0) -> Dictionary:
+static func go_pose(tree: SceneTree, game: Node, pose: Dictionary, time_name: String, ground_model: RefCounted = null,
+		heading: Dictionary = {}, settle_s := 2.0, idle_timeout_s := 300.0) -> Dictionary:
 	var info := {"pose": str(pose["name"]), "time_name": time_name}
 	var times: Dictionary = load_poses().get("times", {})
 	if not times.has(time_name):
@@ -242,7 +354,16 @@ static func go_pose(tree: SceneTree, game: Node, pose: Dictionary, time_name: St
 	var around := float(pose["around_m"])
 	var across := float(pose["across_m"])
 	var lift := float(pose["lift_m"])
-	var vertical := float(pose["ground_m"]) + lift if str(pose["vertical_mode"]) == "agl" else lift
+	var agl := str(pose["vertical_mode"]) == "agl"
+	var fixture_ground := float(pose["ground_m"])
+	var expected := fixture_ground
+	if agl and ground_model != null:
+		var chosen_ground: Variant = ground_model.call("GroundHeight", around, across)
+		if not chosen_ground is float or not is_finite(float(chosen_ground)):
+			info["error"] = "selected world ground height unavailable"
+			return info
+		expected = float(chosen_ground)
+	var vertical := expected + lift if agl else lift
 	var yaw := float(heading.get("yaw", pose["yaw_deg"]))
 	var pitch := float(heading.get("pitch", pose["pitch_deg"]))
 	explorer.call("TeleportToCanonicalMeters", around, vertical, across, yaw, pitch, true)
@@ -256,12 +377,13 @@ static func go_pose(tree: SceneTree, game: Node, pose: Dictionary, time_name: St
 	info["sun_elevation_deg"] = float(time_state.get("sun_elevation_deg", NAN))
 	await COMMON.settle(tree, settle_s)
 	info["streaming_idle_after"] = COMMON.builds_idle(game)
-	if str(pose["vertical_mode"]) == "agl":
+	if agl:
 		var sampled := float(surface.call("SampleHeight", around, across))
-		var expected := float(pose["ground_m"])
 		info["ground"] = {"sampled_m": sampled, "expected_m": expected, "ok": absf(sampled - expected) < 0.5}
+		if ground_model != null:
+			info["ground"]["fixture_m"] = fixture_ground
 		if not bool(info["ground"]["ok"]):
-			info["error"] = "ground check failed: game %.3f m vs fixture %.3f m" % [sampled, expected]
+			info["error"] = "ground check failed: game %.3f m vs %s %.3f m" % [sampled, "fixture" if ground_model == null else "selected world", expected]
 	else:
 		info["ground"] = {"ok": true, "note": "absolute pose, not checked"}
 	return info

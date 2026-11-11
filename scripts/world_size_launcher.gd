@@ -54,6 +54,11 @@ const RUNTIME_SURFACE_CONTRACT := "surface_runtime_generation_v1"
 const SURFACE_RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
 const SURFACE_RECIPE_STORE := preload("res://scripts/Terrain/Generation/terrain_generation_preview_store.gd")
 const TERRAIN_GENERATION_SAMPLER := preload("res://scripts/Terrain/Generation/TerrainGenerationSampler.cs")
+const WORLD_GENERATION_BRIDGE := preload("res://scripts/Terrain/Generation/WorldGenerationBridge.cs")
+const WORLD_GENERATION_SETTING := "ringworld/runtime/surface_world_generation"
+const WORLD_REVIEW_SETTING := "ringworld/runtime/surface_review_features"
+const PREVIEW_IDENTITY_FIELDS := ["seed", "generator_id", "domain_id", "circumference_m", "width_m", "min_height_m", "max_height_m", "climate_machines"]
+const LEGACY_CLIMATE_HINT := "Experimental. Places Wall Engine forecourts at the rim walls in runtime generation worlds. Off by default. Existing worlds keep their frozen recipe."
 
 var size_slider: HSlider
 var size_label: Label
@@ -79,6 +84,18 @@ var landforms_toggle: CheckBox
 var _landforms_was_available := false
 var weather_lung_toggle: CheckBox
 var _weather_lung_was_available := false
+var generation_selector: OptionButton
+var _generation_label: Label
+var _review_label: Label
+var _review_rows: VBoxContainer
+var _review_status: Label
+var _review_checkboxes := {}
+var _latest_frozen_generation := 1
+var _generation_item_count := 0
+var _selected_world_generation := 0
+var _selected_review_features := PackedStringArray()
+var use_preview_recipe := true
+var preview_recipe_path := SURFACE_RECIPE_STORE.RECIPE_PATH
 var terrain_backend_selector: OptionButton
 var advanced_popup: PopupPanel
 var advanced_summary_label: Label
@@ -173,6 +190,7 @@ func _ready() -> void:
 	if bool(get_meta("world_loading_transition", false)):
 		hide()
 	launch_defaults = _build_default_values()
+	_initialize_generation_selection()
 	var saved_settings := _get_selected_slot_settings()
 	selected_slot_has_saved_settings = not saved_settings.is_empty()
 	if not saved_settings.is_empty():
@@ -360,7 +378,6 @@ func _build_advanced_menu() -> void:
 	advanced_popup.add_child(margin)
 
 	var column := VBoxContainer.new()
-	column.custom_minimum_size = Vector2(680, 460)
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	column.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_theme_constant_override("separation", 14)
@@ -376,11 +393,13 @@ func _build_advanced_menu() -> void:
 	var subtitle := Label.new()
 	subtitle.text = "These values are applied before generation. Reset restores the selected baseline."
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	subtitle.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	subtitle.modulate = UI_THEME.MUTED
 	column.add_child(subtitle)
 
 	var scroll := ScrollContainer.new()
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.follow_focus = true
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(scroll)
@@ -468,7 +487,7 @@ func _build_advanced_menu() -> void:
 		"Continental contrast",
 		1.0,
 		3.0,
-		0.01,
+		0.0 if _saved_recipe(launch_defaults).get("generator_id") == SURFACE_RECIPE.WORLD_GENERATOR_ID else 0.01,
 		float(launch_defaults.get("continental_contrast", 1.35))
 	)
 	regional_detail_spin = _add_spinbox_row(
@@ -504,7 +523,7 @@ func _build_advanced_menu() -> void:
 		knobs_grid,
 		"Climate machines (v6)",
 		false,
-		"Experimental. New Terrain3D runtime generation worlds use the ringworld_surface_climate_v6 recipe: 200 Wall Engine forecourts at the rim walls (flat quays and terraced cuts). Off by default. Existing worlds keep their frozen recipe."
+		LEGACY_CLIMATE_HINT
 	)
 	landforms_toggle = _add_checkbox_row(
 		knobs_grid,
@@ -518,6 +537,8 @@ func _build_advanced_menu() -> void:
 		_weather_lung_default(),
 		"New Terrain3D runtime generation worlds use the ringworld_surface_weather_lung_v8 recipe: the v7 terrain plus the Weather Lung, a 28 x 18 km flat pad holding a sea-level basin, at a deterministic site near the main spire. On by default; needs the hill-country landforms toggle. Existing worlds keep their frozen recipe."
 	)
+	landforms_toggle.name = "LandformsV7"
+	weather_lung_toggle.name = "WeatherLungV8"
 	var backend_label := Label.new()
 	backend_label.text = "Surface terrain backend\nSurface edits and player state save separately. Caves later."
 	backend_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -530,6 +551,7 @@ func _build_advanced_menu() -> void:
 	terrain_backend_selector.tooltip_text = backend_label.tooltip_text
 	terrain_backend_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	knobs_grid.add_child(terrain_backend_selector)
+	_build_generation_controls(knobs_grid)
 	unified_density_toggle.toggled.connect(_on_knob_changed)
 	designed_caves_toggle.toggled.connect(_on_knob_changed)
 	climate_machines_toggle.toggled.connect(_on_knob_changed)
@@ -811,7 +833,7 @@ func _clear_mega_ring_selection() -> void:
 func _open_advanced_knobs() -> void:
 	if advanced_popup == null:
 		return
-	advanced_popup.popup_centered(Vector2i(760, 560))
+	advanced_popup.popup_centered_clamped(Vector2i(760, 560), 0.9)
 
 
 func _close_advanced_knobs() -> void:
@@ -956,40 +978,48 @@ func _refresh_backend_selector(certified: bool) -> void:
 		unified_density_toggle.disabled = surface or runtime_existing
 		if surface:
 			unified_density_toggle.button_pressed = false
+	var runtime_selected := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
+	var stored := _saved_recipe(_get_selected_slot_settings()) if runtime_existing else {}
+	var stored_id := str(stored.get("generator_id", ""))
+	var world_recipe := runtime_selected and (stored_id == SURFACE_RECIPE.WORLD_GENERATOR_ID if runtime_existing else _world_generation_target() > 0)
+	_refresh_generation_controls(runtime_selected, runtime_existing, stored)
 	if climate_machines_toggle != null:
-		# Only a NEW Terrain3D runtime-generation world can pick the v6 recipe; existing slots keep (and display) their frozen stored recipe.
-		var climate_available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing
+		var climate_available := runtime_selected and not runtime_existing
 		climate_machines_toggle.disabled = not climate_available
+		var climate_label := climate_machines_toggle.get_parent().get_child(climate_machines_toggle.get_index() - 1) as Label
+		climate_label.text = "Climate machines" if world_recipe else "Climate machines (v6)"
+		climate_label.tooltip_text = "Place climate machines in this world. The choice is stored in its world recipe." if world_recipe else LEGACY_CLIMATE_HINT
+		climate_machines_toggle.tooltip_text = climate_label.tooltip_text
 		if runtime_existing:
-			var stored_recipe_json := str(_get_selected_slot_settings().get("surface_generation_recipe_json", ""))
-			climate_machines_toggle.set_pressed_no_signal(stored_recipe_json.contains(SURFACE_RECIPE.CLIMATE_GENERATOR_ID) or ((stored_recipe_json.contains(SURFACE_RECIPE.LANDFORM_GENERATOR_ID) or stored_recipe_json.contains(SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID)) and stored_recipe_json.contains("\"climate_machines\":1")))
+			climate_machines_toggle.set_pressed_no_signal(stored_id == SURFACE_RECIPE.CLIMATE_GENERATOR_ID or stored.get("climate_machines", 0) == 1)
 		elif not climate_available:
 			climate_machines_toggle.set_pressed_no_signal(false)
 	if landforms_toggle != null:
 		# Same rule as the climate toggle: only a NEW runtime-generation world chooses v7; existing slots display their frozen recipe. Becoming available again restores the project-setting default.
-		var landforms_available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing
+		var landforms_available := runtime_selected and not runtime_existing and not world_recipe
+		_set_recipe_row_visible(landforms_toggle, not world_recipe)
 		landforms_toggle.disabled = not landforms_available
-		if runtime_existing:
-			var stored_landform_json := str(_get_selected_slot_settings().get("surface_generation_recipe_json", ""))
-			landforms_toggle.set_pressed_no_signal(stored_landform_json.contains(SURFACE_RECIPE.LANDFORM_GENERATOR_ID) or stored_landform_json.contains(SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID))
+		if world_recipe or runtime_existing:
+			landforms_toggle.set_pressed_no_signal(world_recipe or stored_id in [SURFACE_RECIPE.LANDFORM_GENERATOR_ID, SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID])
 		elif not landforms_available:
 			landforms_toggle.set_pressed_no_signal(false)
 		elif not _landforms_was_available:
 			landforms_toggle.set_pressed_no_signal(_landforms_default())
 		_landforms_was_available = landforms_available
-	_refresh_weather_lung_toggle()
+	_refresh_weather_lung_toggle(stored, world_recipe)
 
 
 ## Weather Lung (v8) toggle state. Like the landforms toggle, only a NEW runtime-generation world chooses it; it additionally needs the landforms toggle ON.
 ## Existing slots display their frozen stored recipe. Becoming available again restores the project-setting default.
-func _refresh_weather_lung_toggle() -> void:
+func _refresh_weather_lung_toggle(stored: Dictionary = {}, world_recipe := false) -> void:
 	if weather_lung_toggle == null:
 		return
 	var runtime_existing := selected_slot_has_saved_settings and _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND
-	var available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing and landforms_toggle != null and landforms_toggle.button_pressed
+	var available := _selected_terrain_backend() == RUNTIME_SURFACE_BACKEND and not runtime_existing and not world_recipe and landforms_toggle != null and landforms_toggle.button_pressed
+	_set_recipe_row_visible(weather_lung_toggle, not world_recipe)
 	weather_lung_toggle.disabled = not available
-	if runtime_existing:
-		weather_lung_toggle.set_pressed_no_signal(str(_get_selected_slot_settings().get("surface_generation_recipe_json", "")).contains(SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID))
+	if world_recipe or runtime_existing:
+		weather_lung_toggle.set_pressed_no_signal(world_recipe or stored.get("generator_id") == SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID)
 	elif not available:
 		weather_lung_toggle.set_pressed_no_signal(false)
 	elif not _weather_lung_was_available:
@@ -998,7 +1028,118 @@ func _refresh_weather_lung_toggle() -> void:
 
 
 func _on_landforms_toggled(_pressed: bool) -> void:
-	_refresh_weather_lung_toggle()
+	if not _runtime_surface_slot_locked() and _world_generation_target() == 0:
+		_refresh_weather_lung_toggle()
+
+
+func _initialize_generation_selection() -> void:
+	var bridge := WORLD_GENERATION_BRIDGE.new()
+	_latest_frozen_generation = int(bridge.get("LatestFrozen"))
+	_selected_world_generation = int(ProjectSettings.get_setting(WORLD_GENERATION_SETTING, -1))
+	if _selected_world_generation < 0:
+		_selected_world_generation = _latest_frozen_generation if _landforms_default() and _weather_lung_default() else 0
+	if OS.is_debug_build() and _selected_world_generation == _latest_frozen_generation:
+		var review := str(ProjectSettings.get_setting(WORLD_REVIEW_SETTING, ""))
+		if not review.is_empty():
+			_selected_review_features = review.split(",")
+
+
+func _world_generation_target() -> int:
+	return _selected_world_generation
+
+
+func _build_generation_controls(grid: GridContainer) -> void:
+	_generation_label = Label.new()
+	_generation_label.text = "World generation"
+	grid.add_child(_generation_label)
+	generation_selector = OptionButton.new()
+	generation_selector.name = "WorldGenerationSelector"
+	generation_selector.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	generation_selector.item_selected.connect(_on_generation_selected)
+	grid.add_child(generation_selector)
+	_review_label = Label.new()
+	_review_label.text = "Review features"
+	grid.add_child(_review_label)
+	_review_rows = VBoxContainer.new()
+	_review_rows.name = "WorldReviewFeatures"
+	_review_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.add_child(_review_rows)
+	_review_status = Label.new()
+	_review_status.name = "WorldReviewStatus"
+	_review_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_review_rows.add_child(_review_status)
+	var bridge := WORLD_GENERATION_BRIDGE.new()
+	generation_selector.add_item("Legacy recipes (v8 and older)", 0)
+	for generation: int in bridge.call("ListFrozenGenerations"):
+		generation_selector.add_item("Generation %d · %s" % [generation, bridge.call("StepForGeneration", generation)], generation)
+	_generation_item_count = generation_selector.item_count
+	for id: String in bridge.call("ListOpenFeatures"):
+		var choice := CheckBox.new()
+		choice.text = id
+		choice.toggled.connect(_on_review_toggled.bind(id))
+		_review_rows.add_child(choice)
+		_review_checkboxes[id] = choice
+
+
+func _refresh_generation_controls(runtime_selected: bool, runtime_existing: bool, stored: Dictionary) -> void:
+	_generation_label.visible = runtime_selected
+	generation_selector.visible = runtime_selected
+	generation_selector.disabled = runtime_existing
+	var target := _world_generation_target()
+	var stored_review := ""
+	if runtime_existing:
+		var stored_id := str(stored.get("generator_id", ""))
+		target = 0 if stored_id in [SURFACE_RECIPE.LEGACY_GENERATOR_ID, SURFACE_RECIPE.GENERATOR_ID, SURFACE_RECIPE.DETAIL_GENERATOR_ID, SURFACE_RECIPE.EROSION_GENERATOR_ID, SURFACE_RECIPE.SITES_GENERATOR_ID, SURFACE_RECIPE.CLIMATE_GENERATOR_ID, SURFACE_RECIPE.LANDFORM_GENERATOR_ID, SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID] else -1
+		if stored_id == SURFACE_RECIPE.WORLD_GENERATOR_ID:
+			var generation: Variant = stored.get("world_generation")
+			if typeof(generation) in [TYPE_INT, TYPE_FLOAT] and float(generation) >= 1.0 and float(generation) <= 2147483647.0 and float(generation) == floorf(float(generation)):
+				target = int(generation)
+			stored_review = str(stored.get("review_features", ""))
+	if generation_selector.item_count > _generation_item_count:
+		generation_selector.remove_item(_generation_item_count)
+	var index := generation_selector.get_item_index(target)
+	if target < 0 or index < 0:
+		index = generation_selector.item_count
+		var unavailable := "Generation %d unavailable" % target if target > 0 else "Invalid saved recipe"
+		generation_selector.add_item(unavailable, target)
+		generation_selector.set_item_disabled(index, true)
+	generation_selector.select(index)
+	var review_editable := runtime_selected and not runtime_existing and OS.is_debug_build() and target == _latest_frozen_generation
+	_review_label.visible = review_editable or not stored_review.is_empty()
+	_review_rows.visible = _review_label.visible
+	_review_status.visible = not stored_review.is_empty() or (review_editable and _review_checkboxes.is_empty())
+	_review_status.text = stored_review if not stored_review.is_empty() else "No open features"
+	for id in _review_checkboxes:
+		var choice: CheckBox = _review_checkboxes[id]
+		choice.visible = review_editable
+		choice.set_pressed_no_signal(_selected_review_features.has(id))
+
+
+func _on_generation_selected(index: int) -> void:
+	_selected_world_generation = generation_selector.get_item_id(index)
+	if _selected_world_generation != _latest_frozen_generation:
+		_selected_review_features.clear()
+	_update_readout(size_slider.value)
+
+
+func _on_review_toggled(pressed: bool, id: String) -> void:
+	var index := _selected_review_features.find(id)
+	if pressed and index < 0:
+		_selected_review_features.append(id)
+	elif not pressed and index >= 0:
+		_selected_review_features.remove_at(index)
+
+
+func _saved_recipe(settings: Dictionary) -> Dictionary:
+	var json := str(settings.get("surface_generation_recipe_json", ""))
+	var parsed: Variant = JSON.parse_string(json) if not json.is_empty() else null
+	return parsed if parsed is Dictionary else {}
+
+
+func _set_recipe_row_visible(toggle: CheckBox, show: bool) -> void:
+	toggle.visible = show
+	var label := toggle.get_parent().get_child(toggle.get_index() - 1) as Label
+	label.visible = show
 
 
 func _matches_certified_dimensions(radius_km: float, width_km: float, floor_y: int, ceiling_y: int, depth_km: float, allow_runtime_surface_ceiling: bool = false) -> bool:
@@ -1173,6 +1314,7 @@ func _configure_certified_walk_precision_probe(game: Node) -> void:
 
 
 func _configure_mega_ring_game(game: Node) -> void:
+	_publish_world_generation(false)
 	var desktop_mid_high := str(ProjectSettings.get_setting(
 		"ringworld/runtime/hardware_tier",
 		"laptop_140v_baseline")) == "desktop_mid_high"
@@ -1414,6 +1556,10 @@ func _build_selected_slot_settings() -> Dictionary:
 		settings["surface_definition_version"] = 1
 		settings["surface_generation_contract_id"] = pending_surface_generation_contract_id
 		settings["surface_generation_recipe_json"] = pending_surface_generation_recipe_json
+		if selected_slot_has_saved_settings:
+			var saved := _get_selected_slot_settings()
+			if _saved_recipe(saved).get("generator_id") == SURFACE_RECIPE.WORLD_GENERATOR_ID and saved.has("continental_contrast"):
+				settings["continental_contrast"] = saved["continental_contrast"]
 	return settings
 
 
@@ -1448,20 +1594,47 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 		if str(bridge.get("CanonicalJson")) != stored_json:
 			bridge.call("Release")
 			return _reject_runtime_surface_launch("Stored runtime surface recipe is not canonical.")
-		var parsed_recipe: Variant = JSON.parse_string(stored_json)
-		var stored_seed := int((parsed_recipe as Dictionary).get("seed", -1)) if parsed_recipe is Dictionary else -1
+		var generation_bridge := WORLD_GENERATION_BRIDGE.new()
+		if not bool(generation_bridge.call("ValidateRecipeJson", stored_json)):
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Stored runtime surface recipe is invalid: %s" % str(generation_bridge.get("LastError")))
+		var parsed_recipe := _saved_recipe(saved)
+		var stored_seed := int(parsed_recipe.get("seed", -1))
 		if stored_seed != int(round(float(saved.get("terrain_seed", -1)))):
 			bridge.call("Release")
 			return _reject_runtime_surface_launch("Stored runtime surface recipe seed does not match the immutable world seed.")
+		if parsed_recipe.get("generator_id") == SURFACE_RECIPE.WORLD_GENERATOR_ID and not _contrast_matches_recipe(saved.get("continental_contrast"), float(parsed_recipe["continental_contrast"])):
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Stored Continental contrast differs from the immutable world recipe.")
 		pending_surface_generation_recipe_json = stored_json
 		pending_surface_generation_contract_id = RUNTIME_SURFACE_CONTRACT
 		bridge.call("Release")
 		return true
-	var loaded: Dictionary = SURFACE_RECIPE_STORE.load_recipe()
+	var loaded: Dictionary = SURFACE_RECIPE_STORE.load_recipe(preview_recipe_path) if use_preview_recipe else {}
 	if not str(loaded.get("error", "")).is_empty():
 		bridge.call("Release")
 		return _reject_runtime_surface_launch("Saved preview recipe is invalid: %s" % str(loaded.get("error", "")))
-	var recipe := loaded.get("recipe", null) as Resource
+	var recipe := loaded.get("recipe", null) as TerrainGenerationRecipe
+	var seed_value := int(round(terrain_seed_spin.value)) if terrain_seed_spin != null else 1337
+	var want_climate := climate_machines_toggle != null and climate_machines_toggle.button_pressed
+	var target := _world_generation_target()
+	if target > 0:
+		var review := _selected_review_features if OS.is_debug_build() and target == _latest_frozen_generation else PackedStringArray()
+		var world_recipe := SURFACE_RECIPE.create_world_default(target, seed_value, review)
+		if world_recipe == null:
+			bridge.call("WorldDefaultFields", target, seed_value, review)
+			var error := str(bridge.get("LastError"))
+			bridge.call("Release")
+			return _reject_runtime_surface_launch("Could not create world recipe: %s" % error)
+		if recipe != null:
+			var fields := SURFACE_RECIPE.create_weather_lung_default().to_normalized_dictionary()
+			var preview_fields := recipe.to_normalized_dictionary()
+			for field in preview_fields:
+				if fields.has(field) and not field in PREVIEW_IDENTITY_FIELDS:
+					world_recipe.set(field, preview_fields[field])
+		world_recipe.climate_machines = int(want_climate)
+		world_recipe.continental_contrast = continental_contrast_spin.value if continental_contrast_spin != null else 1.35
+		return _store_new_runtime_recipe(bridge, world_recipe)
 	if recipe == null:
 		recipe = SURFACE_RECIPE.create_sites_default()
 	elif str(recipe.get("generator_id")) == SURFACE_RECIPE.EROSION_GENERATOR_ID:
@@ -1469,7 +1642,6 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 		# Existing slots keep their frozen stored recipe (handled above), so their terrain never changes.
 		recipe.set("generator_id", SURFACE_RECIPE.SITES_GENERATOR_ID)
 	# v6 (climate machines) is opt-in for new worlds: the launcher toggle (default OFF) is authoritative, so a previewed v6 recipe is created as v5 while it is off. Same field set as v5.
-	var want_climate := climate_machines_toggle != null and climate_machines_toggle.button_pressed
 	var want_landforms := landforms_toggle != null and landforms_toggle.button_pressed
 	var want_weather_lung := want_landforms and weather_lung_toggle != null and weather_lung_toggle.button_pressed
 	if want_landforms and str(recipe.get("generator_id")) in [SURFACE_RECIPE.SITES_GENERATOR_ID, SURFACE_RECIPE.CLIMATE_GENERATOR_ID, SURFACE_RECIPE.LANDFORM_GENERATOR_ID, SURFACE_RECIPE.WEATHER_LUNG_GENERATOR_ID]:
@@ -1484,7 +1656,11 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 			recipe.set("generator_id", SURFACE_RECIPE.CLIMATE_GENERATOR_ID)
 		elif not want_climate and str(recipe.get("generator_id")) == SURFACE_RECIPE.CLIMATE_GENERATOR_ID:
 			recipe.set("generator_id", SURFACE_RECIPE.SITES_GENERATOR_ID)
-	recipe.set("seed", int(round(terrain_seed_spin.value)) if terrain_seed_spin != null else 1337)
+	recipe.seed = seed_value
+	return _store_new_runtime_recipe(bridge, recipe)
+
+
+func _store_new_runtime_recipe(bridge: RefCounted, recipe: TerrainGenerationRecipe) -> bool:
 	if not bool(bridge.call("Configure", recipe.call("to_normalized_dictionary"))):
 		var error := str(bridge.get("LastError"))
 		bridge.call("Release")
@@ -1493,6 +1669,12 @@ func _prepare_runtime_surface_generation(is_certified: bool) -> bool:
 	pending_surface_generation_contract_id = RUNTIME_SURFACE_CONTRACT
 	bridge.call("Release")
 	return not pending_surface_generation_recipe_json.is_empty()
+
+
+func _contrast_matches_recipe(mirror: Variant, recipe_value: float) -> bool:
+	if not typeof(mirror) in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(mirror)):
+		return false
+	return PackedFloat32Array([float(mirror)]).to_byte_array() == PackedFloat32Array([recipe_value]).to_byte_array()
 
 
 ## New-world default for the v7 landforms toggle; harnesses pin v6 by setting this project setting to false.
@@ -1538,6 +1720,15 @@ func _runtime_surface_controls_match_saved(saved: Dictionary) -> bool:
 	return not bool(saved.get("unified_3d_density_terrain", false)) and not bool(saved.get("designed_cave_density_composition", false))
 
 
+func _publish_world_generation(use_runtime_surface_generation: bool) -> void:
+	var bridge := WORLD_GENERATION_BRIDGE.new()
+	if use_runtime_surface_generation and not pending_surface_generation_recipe_json.is_empty():
+		if bool(bridge.call("PublishRecipeJson", pending_surface_generation_recipe_json)):
+			return
+		push_error("Could not publish world generation: %s" % str(bridge.get("LastError")))
+	bridge.call("PublishLegacy", "legacy")
+
+
 func _configure_game(game: Node, requested_radius_m: float) -> void:
 	# Regional HLOD owns normal depth through 850-1000 km. Beyond that, the
 	# certified ring is rendered uniformly scaled in an isolated far viewport.
@@ -1560,6 +1751,7 @@ func _configure_game(game: Node, requested_radius_m: float) -> void:
 	var bedrock_material_y := CERTIFIED_BEDROCK_MATERIAL_Y if is_certified else min_terrain_y
 	var use_surface_terrain := _surface_backend_selected_for_certified(is_certified)
 	var use_runtime_surface_generation := _runtime_surface_backend_selected_for_certified(is_certified)
+	_publish_world_generation(use_runtime_surface_generation)
 	if use_runtime_surface_generation:
 		# Validate Certified dimensions before reserving the surface-only build band.
 		max_build_y = RUNTIME_SURFACE_BUILD_MAX_Y

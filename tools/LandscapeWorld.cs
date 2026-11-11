@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Godot;
@@ -23,7 +24,7 @@ public static class LandscapeWorld
     public const long Circumference = EmitterSiteTestWorlds.Circumference;
     public const int Width = EmitterSiteTestWorlds.Width;
     public const string GeneratorId = TerrainGenerationParameters.WeatherLungGeneratorIdentity;
-    public const string SettingsPath = "res://resources/voxel/voxel_terrain_settings_ring_integration.tres";
+    public const string SettingsPath = EmitterSiteTestWorlds.ProductionSettingsPath;
 
     /// <summary>Lattice used by every scan: around = floor(i * 78539.25) + 0.125 for i in 0..399, across = 9000 + j * 7500 for j in 0..39.</summary>
     public const int LatticeAround = 400;
@@ -31,13 +32,53 @@ public static class LandscapeWorld
     public static double LatticeAroundMeters(int i) => Math.Floor(i * 78539.25) + 0.125;
     public static double LatticeAcrossMeters(int j) => 9000.0 + j * 7500.0;
 
-    static TerrainGenerationParameters? _recipe;
+    /// <summary>The pinned weather-lung (v8) world at seed 1337 with climate machines off.</summary>
+    public static Spec Default { get; } = new(EmitterSiteTestWorlds.Gen17WeatherLungRecipe(Seed));
 
-    /// <summary>The default weather-lung (v8) recipe at seed 1337 with climate_machines off, exactly what the game's new-world path produces for slot_1.</summary>
-    public static TerrainGenerationParameters Recipe => _recipe ??= EmitterSiteTestWorlds.Gen17WeatherLungRecipe(Seed, climate: false);
-    public static string CanonicalJson => Recipe.CanonicalJson;
-    public static string DefinitionHashHex => "0x" + Recipe.DefinitionHash.ToString("X16");
-    public static string JsonSha256 => Sha256Hex(CanonicalJson);
+    public static Spec For(int generation, IReadOnlyList<string>? review = null, int seed = Seed)
+    {
+        if (generation != 0) return new Spec(EmitterSiteTestWorlds.Gen17WorldRecipe(seed, generation, review));
+        if (review?.Count > 0) throw new ArgumentException("The legacy world does not support review features.", nameof(review));
+        return seed == Seed ? Default : new Spec(EmitterSiteTestWorlds.Gen17WeatherLungRecipe(seed));
+    }
+
+    public static Spec FromArgs(IEnumerable<string> args, int seed = Seed)
+    {
+        var selection = ParseGenerationArgs(args);
+        return For(selection.Generation, selection.Review, seed);
+    }
+
+    public static (int Generation, IReadOnlyList<string> Review, bool IsExplicit) ParseGenerationArgs(IEnumerable<string> args)
+    {
+        int? generation = null;
+        string[]? review = null;
+        foreach (string arg in args)
+        {
+            if (arg == "--generation" || arg.StartsWith("--generation=", StringComparison.Ordinal))
+            {
+                if (generation.HasValue || arg == "--generation" ||
+                    !int.TryParse(arg["--generation=".Length..], NumberStyles.None, CultureInfo.InvariantCulture, out int parsed))
+                    throw new ArgumentException("Use one --generation=N flag with a nonnegative integer.");
+                generation = parsed;
+            }
+            else if (arg == "--review-features" || arg.StartsWith("--review-features=", StringComparison.Ordinal))
+            {
+                if (review != null || arg == "--review-features" || arg.Length == "--review-features=".Length)
+                    throw new ArgumentException("Use one --review-features=id[,id] flag with at least one feature ID.");
+                review = arg["--review-features=".Length..].Split(',');
+            }
+        }
+        int latest = WorldGenerationLedger.Production.LatestFrozen;
+        int selected = generation ?? 0;
+        if (review != null && selected != latest)
+            throw new ArgumentException($"Review features need --generation={latest}.");
+        return (selected, review ?? Array.Empty<string>(), generation.HasValue || review != null);
+    }
+
+    public static TerrainGenerationParameters Recipe => Default.Recipe;
+    public static string CanonicalJson => Default.CanonicalJson;
+    public static string DefinitionHashHex => Default.DefinitionHashHex;
+    public static string JsonSha256 => Default.JsonSha256;
 
     public static string Sha256Hex(string text)
     {
@@ -47,52 +88,17 @@ public static class LandscapeWorld
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Production settings resource plus the overrides scripts/world_size_launcher.gd applies for a certified runtime-generation world.
-    /// Caller disposes. Mirrored overrides (launcher line numbers as of 2026-11-09):
-    ///   _build_runtime_terrain_settings (1951-2000): Seed (1971), cave ContractVersion (1981), BedrockY (1982), SeaLevelY (1983), BaseSurfaceHeightVoxels (1984),
-    ///     HeightAmplitudeVoxels (1985), DetailAmplitudeVoxels (1986), ContinentalContrast (1987), RegionalDetailStrength (1988), EnableUnified3dDensityTerrain (1989),
-    ///     EnableDesignedCaveDensityComposition (1990), EnableProceduralCaves (1992), RarePeakY (1997), AutoRaiseRarePeakToBuildLimit (1998).
-    ///   _configure_game (1622-1632): BedrockY -8000 (1625), SeaLevelY 0 (1626), SurfaceGenerationRecipeJson (1627), SurfaceGenerationContractId (1628),
-    ///     EnableProceduralCaves (1629), EnableDesignedCaveDensityComposition (1630), EnableUnified3dDensityTerrain (1631), EnableNaturalOverhangs (1632).
-    /// The certified preset (resources/launcher/certified_ring_config.tres) supplies height_amplitude 180, detail_amplitude 30, rare_peak_height 5200; every other key falls back to the scripts/launcher_default_config.gd defaults (base surface 16, continental contrast 1.35 which differs from the resource's 1.45, regional detail 0.65, cave generator version 1). Found by the in-game 64-point check.
-    /// </summary>
-    public static VoxelTerrainSettings CreateSettings()
-    {
-        var settings = (VoxelTerrainSettings)(GD.Load<VoxelTerrainSettings>(SettingsPath)?.Duplicate(true)
-            ?? throw new InvalidOperationException("production terrain settings resource missing: " + SettingsPath));
-        settings.Seed = Seed;
-        if (settings.DesignedCaveGenerationContractSettings != null) settings.DesignedCaveGenerationContractSettings.ContractVersion = 1;
-        settings.BaseSurfaceHeightVoxels = 16;
-        settings.HeightAmplitudeVoxels = 180;
-        settings.DetailAmplitudeVoxels = 30;
-        settings.ContinentalContrast = 1.35f;
-        settings.RegionalDetailStrength = 0.65f;
-        settings.RarePeakY = 5200;
-        settings.AutoRaiseRarePeakToBuildLimit = false;
-        settings.BedrockY = -8000;
-        settings.SeaLevelY = 0;
-        settings.SurfaceGenerationRecipeJson = CanonicalJson;
-        settings.SurfaceGenerationContractId = EmitterSiteTestWorlds.Contract;
-        settings.EnableProceduralCaves = false;
-        settings.EnableDesignedCaveDensityComposition = false;
-        settings.EnableUnified3dDensityTerrain = false;
-        settings.EnableNaturalOverhangs = false;
-        return settings;
-    }
+    /// <summary>Production settings for the pinned world. Caller disposes.</summary>
+    public static VoxelTerrainSettings CreateSettings() => Default.CreateSettings();
 
     /// <summary>A sampler the way the game builds it for the certified ring (31,415,936 m around, 318 km wide, 8400 m build ceiling).</summary>
-    public static RingTerrainSampler CreateSampler()
-    {
-        using VoxelTerrainSettings settings = CreateSettings();
-        return new RingTerrainSampler(settings, true, Circumference, Circumference / Math.Tau, Width, 8400);
-    }
+    public static RingTerrainSampler CreateSampler() => Default.CreateSampler();
 
     /// <summary>Shaped model (emitter sites and the weather lung applied): the game's height authority. One per worker thread.</summary>
-    public static TerrainGenerationHeightModel CreateShapedModel() => new(Recipe, true);
+    public static TerrainGenerationHeightModel CreateShapedModel() => Default.CreateShapedModel();
 
     /// <summary>Natural (unshaped) model, one per worker thread.</summary>
-    public static TerrainGenerationHeightModel CreateNaturalModel() => new(Recipe, false);
+    public static TerrainGenerationHeightModel CreateNaturalModel() => Default.CreateNaturalModel();
 
     /// <summary>The natural height rebuilt from shaped diagnostics (the shaped call replaces only Height, so Macro and Detail are the natural ones).</summary>
     public static double NaturalHeight(in TerrainGenerationHeightModel.Diagnostics d)
@@ -112,14 +118,61 @@ public static class LandscapeWorld
         return LandscapeClass.Rolling;
     }
 
+    public sealed class Spec
+    {
+        public TerrainGenerationParameters Recipe { get; }
+        public bool IsDefault => !Recipe.IsWorldGenerationRecipe;
+        public string Tag { get; }
+        public string CanonicalJson => Recipe.CanonicalJson;
+        public string DefinitionHashHex => "0x" + Recipe.DefinitionHash.ToString("X16");
+        public string JsonSha256 => Sha256Hex(CanonicalJson);
+
+        internal Spec(TerrainGenerationParameters recipe)
+        {
+            Recipe = recipe;
+            Tag = IsDefault ? "" : $"g{recipe.WorldGeneration:D2}";
+            if (recipe.ReviewFeatures.Count > 0)
+                Tag += "-review-" + string.Join("+", recipe.ReviewFeatures);
+        }
+
+        public VoxelTerrainSettings CreateSettings() => EmitterSiteTestWorlds.CreateProductionSettings(checked((int)Recipe.Seed), Recipe);
+
+        public RingTerrainSampler CreateSampler()
+        {
+            using VoxelTerrainSettings settings = CreateSettings();
+            return new RingTerrainSampler(settings, true, Circumference, Circumference / Math.Tau, Width, 8400);
+        }
+
+        public TerrainGenerationHeightModel CreateShapedModel() => new(Recipe, true);
+        public TerrainGenerationHeightModel CreateNaturalModel() => new(Recipe, false);
+
+        /// <summary>Main thread only: one root sampler, then an independent copy per worker.</summary>
+        public Worker[] CreateWorkers(int count)
+        {
+            using RingTerrainSampler root = CreateSampler();
+            var workers = new Worker[Math.Max(1, count)];
+            for (int i = 0; i < workers.Length; i++) workers[i] = new Worker(this, root.CreateIndependentCopy());
+            return workers;
+        }
+    }
+
     /// <summary>One thread's models and samplers. Create on the main thread with <see cref="CreateWorkers"/>, then hand each worker to exactly one thread.</summary>
     public sealed class Worker : IDisposable
     {
-        public readonly TerrainGenerationHeightModel Shaped = CreateShapedModel();
-        public readonly TerrainGenerationHeightModel Natural = CreateNaturalModel();
+        public readonly TerrainGenerationHeightModel Shaped;
+        public readonly TerrainGenerationHeightModel Natural;
+        public readonly TerrainGenerationHeightModel Gen1Shaped;
         public readonly RingTerrainSampler Sampler;
-        public readonly ForestRegionSampler Forest = new(Seed, Circumference, Width);
-        internal Worker(RingTerrainSampler sampler) { Sampler = sampler; }
+        public readonly ForestRegionSampler Forest;
+        internal Worker(Spec spec, RingTerrainSampler sampler)
+        {
+            int seed = checked((int)spec.Recipe.Seed);
+            Shaped = spec.CreateShapedModel();
+            Natural = spec.CreateNaturalModel();
+            Gen1Shaped = spec.IsDefault ? Shaped : For(0, seed: seed).CreateShapedModel();
+            Sampler = sampler;
+            Forest = new ForestRegionSampler(seed, Circumference, Width);
+        }
 
         public TerrainGenerationHeightModel.Diagnostics Diag(double around, double across) => Shaped.SampleDiagnostics(around, across);
         public double Ground(double around, double across) => Shaped.CalculateHeight(around, across);
@@ -165,17 +218,17 @@ public static class LandscapeWorld
             return Forest.Sample(a, z, terrain, slope);
         }
 
-        public void Dispose() { Shaped.Dispose(); Natural.Dispose(); Sampler.Dispose(); }
+        public void Dispose()
+        {
+            if (!ReferenceEquals(Gen1Shaped, Shaped)) Gen1Shaped.Dispose();
+            Shaped.Dispose();
+            Natural.Dispose();
+            Sampler.Dispose();
+        }
     }
 
     /// <summary>Main thread only: one root sampler, then an independent copy per worker.</summary>
-    public static Worker[] CreateWorkers(int count)
-    {
-        using RingTerrainSampler root = CreateSampler();
-        var workers = new Worker[Math.Max(1, count)];
-        for (int i = 0; i < workers.Length; i++) workers[i] = new Worker(root.CreateIndependentCopy());
-        return workers;
-    }
+    public static Worker[] CreateWorkers(int count) => Default.CreateWorkers(count);
 
     public static int DefaultWorkerCount => Math.Clamp(System.Environment.ProcessorCount, 2, 16);
 

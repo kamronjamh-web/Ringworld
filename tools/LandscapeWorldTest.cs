@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text.Json;
 using Godot;
 using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Vegetation;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Tools;
@@ -111,7 +112,37 @@ public partial class LandscapeWorldTest : RefCounted
             }
         }
         finally { foreach (var worker in workers) worker.Dispose(); }
+        CheckExplicitSeed(failures);
         GD.Print($"LANDSCAPE_WORLD finished in {clock.Elapsed.TotalSeconds:F1} s");
+    }
+
+    static void CheckExplicitSeed(List<string> failures)
+    {
+        const int seed = 90210;
+        const long around = 1_234_567;
+        const int across = 120_000;
+        var legacy = LandscapeWorld.FromArgs(Array.Empty<string>(), seed: seed);
+        var v9 = LandscapeWorld.FromArgs(new[] { "--generation=1" }, seed: seed);
+        using var legacyWorker = legacy.CreateWorkers(1)[0];
+        using var v9Worker = v9.CreateWorkers(1)[0];
+        if (legacy.Recipe.Seed != seed || v9.Recipe.Seed != seed
+            || legacyWorker.Sampler.Seed != seed || v9Worker.Sampler.Seed != seed
+            || v9Worker.Natural.Parameters.Seed != seed || v9Worker.Shaped.Parameters.Seed != seed
+            || v9Worker.Gen1Shaped.Parameters.CanonicalJson != legacy.CanonicalJson)
+            failures.Add("explicit seed did not reach the terrain samplers and matching v8 reference");
+
+        TerrainSample baseline = legacyWorker.Sampler.GetTerrainSample(around, across);
+        TerrainSample actual = v9Worker.Sampler.GetTerrainSample(around, across);
+        if (baseline.SurfaceHeight != actual.SurfaceHeight
+            || BitConverter.SingleToInt32Bits(baseline.Moisture) != BitConverter.SingleToInt32Bits(actual.Moisture)
+            || BitConverter.SingleToInt32Bits(baseline.Temperature) != BitConverter.SingleToInt32Bits(actual.Temperature))
+            failures.Add("explicit-seed v8 and v9 terrain or climate samples differ");
+
+        var temperate = baseline with { Biome = TerrainBiomeId.Forest, Temperature = .62f, Moisture = .68f, WaterKind = SurfaceWaterKind.None };
+        var expectedForest = new ForestRegionSampler(seed, LandscapeWorld.Circumference, LandscapeWorld.Width).Sample(around, across, temperate);
+        if (legacyWorker.Forest.Sample(around, across, temperate) != expectedForest
+            || v9Worker.Forest.Sample(around, across, temperate) != expectedForest)
+            failures.Add("explicit seed did not reach the worker forest samplers");
     }
 
     static void CompareSlot(string worldJsonPath)

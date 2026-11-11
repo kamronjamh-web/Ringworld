@@ -39,7 +39,7 @@ public partial class RingLiveTuningDrawer
         bool detailRecipe = generatorId == "ringworld_surface_detail_v3" || IsErosionFamilyRecipe(generatorId);
         bool enhancedErosion = IsErosionFamilyRecipe(generatorId);
         _generationPreviewRecipeIdentity = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, Modulate = RingUiStyle.Muted };
-        _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId);
+        _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId, recipe.Get("world_generation").AsInt32());
         tab.AddChild(_generationPreviewRecipeIdentity);
         _generationPreviewClimateToggle = new CheckBox
         {
@@ -209,7 +209,8 @@ public partial class RingLiveTuningDrawer
         if (_generationPreviewLandformSection != null) _generationPreviewLandformSection.Visible = detailRecipe;
         if (_generationPreviewUpgradeLandforms != null) _generationPreviewUpgradeLandforms.Visible = enhancedErosion && !landformRecipe;
         if (_generationPreviewUpgradeErosion != null) _generationPreviewUpgradeErosion.Visible = generatorId == "ringworld_surface_detail_v3";
-        if (_generationPreviewRecipeIdentity != null) _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId);
+        if (_generationPreviewRecipeIdentity != null)
+            _generationPreviewRecipeIdentity.Text = RecipeIdentityText(generatorId, recipe.Get("world_generation").AsInt32());
         if (_generationPreviewClimateToggle != null)
         {
             _generationPreviewClimateToggle.Disabled = !IsErosionFamilyRecipe(generatorId);
@@ -240,8 +241,8 @@ public partial class RingLiveTuningDrawer
 
     private static bool IsErosionFamilyRecipe(string generatorId) => generatorId == "ringworld_surface_erosion_v4" || generatorId == "ringworld_surface_sites_v5" || generatorId == "ringworld_surface_climate_v6" || IsLandformRecipe(generatorId);
 
-    /// <summary>v7 and v8 share the lowland-landform field set (v8 adds only the Weather Lung basin operator).</summary>
-    private static bool IsLandformRecipe(string generatorId) => generatorId == "ringworld_surface_landform_v7" || generatorId == "ringworld_surface_weather_lung_v8";
+    /// <summary>v7 through v9 share the lowland-landform field set.</summary>
+    private static bool IsLandformRecipe(string generatorId) => generatorId == "ringworld_surface_landform_v7" || generatorId == "ringworld_surface_weather_lung_v8" || generatorId == "ringworld_surface_world_v9";
 
     /// <summary>v6 carries climate machines in its id; v7 carries them in the climate_machines field.</summary>
     private static bool HasClimateMachinesRecipe(Resource recipe)
@@ -250,7 +251,9 @@ public partial class RingLiveTuningDrawer
         return generatorId == "ringworld_surface_climate_v6" || IsLandformRecipe(generatorId) && recipe.Get("climate_machines").AsInt32() == 1;
     }
 
-    private static string RecipeIdentityText(string generatorId) => generatorId == "ringworld_surface_weather_lung_v8"
+    private static string RecipeIdentityText(string generatorId, int generation) => generatorId == "ringworld_surface_world_v9"
+        ? $"Recipe: ringworld_surface_world_v9, generation {generation} (v8 terrain with features from the generation ledger)."
+        : generatorId == "ringworld_surface_weather_lung_v8"
         ? "Recipe: ringworld_surface_weather_lung_v8 (v7 landforms plus the Weather Lung: a 28 x 18 km flat pad holding a sea-level basin at a deterministic site near the main spire; derived from the seed and frozen with the recipe). The terrain preview does not show the basin; new worlds adopt it from the launcher toggle."
         : generatorId == "ringworld_surface_landform_v7"
         ? "Recipe: ringworld_surface_landform_v7 (climate v6 plus lowland landforms: plains, rolling and hill country, plateaus and escarpments, breaks and lowland gullies; the coast and ocean are unchanged). Reset recipe creates this recipe; new worlds adopt it once the launcher offers v7, and existing worlds keep their frozen recipe."

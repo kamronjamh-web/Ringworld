@@ -7,6 +7,7 @@ extends RefCounted
 ## (tools/showcase_snapshot_capture.ps1): the menu ignores a picture whose showcase_id differs from the definition's.
 
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
+const GENERATION_PIN := preload("res://tools/world_generation_pin.gd")
 const PREVIEW_RECIPE_PATH := "user://terrain_generation_preview/recipe_v3.tres"
 const SHOWCASE_ID := "standard_1337_v1"
 const SHOWCASE_NAME := "Showcase World"
@@ -19,8 +20,10 @@ const OUTPUT_PATH := "res://resources/menu/showcase_world.json"
 static func build(tree: SceneTree) -> Dictionary:
 	if FileAccess.file_exists(PREVIEW_RECIPE_PATH):
 		return {"definition": {}, "error": "A previewed terrain recipe exists in user://; run through an isolated APPDATA."}
+	GENERATION_PIN.pin(0)
 	var launcher := LAUNCHER.instantiate()
 	tree.root.add_child(launcher)
+	GENERATION_PIN.unpin()
 	launcher.call("_apply_new_world_request", {"preset": "standard", "terrain_seed": SHOWCASE_SEED, "auto_start": false})
 	var settings: Dictionary = {}
 	var error := ""

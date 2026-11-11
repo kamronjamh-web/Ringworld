@@ -20,6 +20,8 @@ static func load_recipe(path: String = RECIPE_PATH) -> Dictionary:
 
 static func save_recipe(recipe: TerrainGenerationRecipe, path: String = RECIPE_PATH) -> String:
 	if recipe == null: return "Recipe is missing."
+	if recipe.generator_id == TerrainGenerationRecipe.WORLD_GENERATOR_ID:
+		return "The terrain preview saves v8 and earlier recipes."
 	if path.is_empty() or not (path.begins_with("user://") or path.begins_with("res://")):
 		return "Recipe path is invalid."
 	var errors := recipe.validation_errors()

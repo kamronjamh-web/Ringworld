@@ -94,7 +94,7 @@ func _run() -> void:
 	ProjectSettings.set_setting("ringworld/runtime/terrain_backend", "surface_runtime_generation_v1")
 	ProjectSettings.set_setting("ringworld/runtime/surface_landforms_v7", false)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(unique_root))
-	game = await _create_game()
+	game = await _create_game(unique_root)
 	if failed or game == null:
 		return
 	explorer = game.get_node_or_null("Explorer")
@@ -604,7 +604,7 @@ func _print_main_table(cases: Array, poses: Array) -> void:
 		print("P7_0_MAIN_NOISE %s: haze_off rounds %s (spread %.3f), physical_q8 rounds %s (spread %.3f)" % [pose.name, str(_round_values(rows["haze_off"], "root_gpu_ms")), _spread(_round_values(rows["haze_off"], "root_gpu_ms")), str(_round_values(rows["physical_q8"], "root_gpu_ms")), _spread(_round_values(rows["physical_q8"], "root_gpu_ms"))])
 
 
-func _create_game() -> Node:
+func _create_game(fixture_root: String) -> Node:
 	var prior_session := root.get_node_or_null("WorldSession")
 	if prior_session != null:
 		prior_session.name = "WorldSessionOriginalRenderAttribution"
@@ -627,7 +627,7 @@ func _create_game() -> Node:
 	launcher.call("_save_selected_slot_settings")
 	var next_game := GAME.instantiate()
 	launcher.call("_configure_game", next_game, 5000000.0)
-	_install_isolated_preferences(next_game)
+	_install_isolated_preferences(next_game, fixture_root)
 	if failed:
 		launcher.queue_free()
 		next_game.queue_free()
@@ -644,21 +644,24 @@ func _create_game() -> Node:
 	return null
 
 
-func _install_isolated_preferences(next_game: Node) -> void:
+func _install_isolated_preferences(next_game: Node, fixture_root: String) -> void:
 	var drawer: Node = next_game.get_node_or_null("LiveTuningDrawer")
 	if drawer == null:
 		_fail("LiveTuningDrawer missing for isolated preferences")
 		return
-	for item in [["InstallGrassDefaults", "gameplay_grass_defaults.tres"], ["InstallVegetationDefaults", "gameplay_vegetation_defaults.tres"], ["InstallWaterDefaults", "gameplay_water_defaults.tres"], ["InstallAntiAliasingDefaults", "gameplay_anti_aliasing_defaults.tres"], ["InstallShadowDefaults", "gameplay_shadow_defaults.tres"], ["InstallSurfaceTerrainDefaults", "surface_tuning.tres"], ["InstallAtmosphereDefaults", "atmosphere_defaults.tres"]]:
-		var destination := FIXTURE_ROOT.path_join(str(item[1]))
-		var source := "user://" + str(item[1])
+	for item in [["InstallGrassDefaults", "gameplay_grass_defaults.tres"], ["InstallVegetationDefaults", "gameplay_vegetation_defaults.tres"], ["InstallWaterDefaults", "gameplay_water_defaults.tres"], ["InstallAntiAliasingDefaults", "gameplay_anti_aliasing_defaults.tres"], ["InstallShadowDefaults", "gameplay_shadow_defaults.tres"], ["InstallSurfaceTerrainDefaults", "gameplay_surface_terrain_defaults.tres"], ["InstallAtmosphereDefaults", "atmosphere_visual_defaults.tres"]]:
+		var filename := str(item[1])
+		var destination := fixture_root.path_join(filename)
+		var source := "user://" + filename
+		var status := "absent"
 		if FileAccess.file_exists(source):
-			var copy := FileAccess.open(destination, FileAccess.WRITE)
-			if copy == null:
-				_fail("could not copy isolated preference " + str(item[1]))
+			var copy_error := DirAccess.copy_absolute(ProjectSettings.globalize_path(source), ProjectSettings.globalize_path(destination))
+			if copy_error != OK:
+				print("PREFS_INSTALLED %s=%s" % [filename, status])
+				_fail("could not copy isolated preference %s: %s" % [filename, error_string(copy_error)])
 				return
-			copy.store_string(FileAccess.get_file_as_string(source))
-			copy.close()
+			status = "copied"
+		print("PREFS_INSTALLED %s=%s" % [filename, status])
 		drawer.call(str(item[0]), destination)
 
 

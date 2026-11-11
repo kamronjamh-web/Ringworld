@@ -20,8 +20,6 @@ namespace RingworldTechDemo.Tools;
 /// </summary>
 public static class WorldGenerationFingerprint
 {
-    public const int Generation = 1;
-    public const string Label = "gen1-v8-s1337";
     public const int HeightPoints = 4096;
     public const ulong LcgSeed = 0x5EED_1337UL;
     public static readonly string[] TilePoses =
@@ -67,7 +65,7 @@ public static class WorldGenerationFingerprint
         }
     }
 
-    public static Dictionary<string, object?> Compute(LandscapeWorld.Worker w, LandscapePoseFinder.Fixture fixture, string fixturePath)
+    public static Dictionary<string, object?> Compute(LandscapeWorld.Spec spec, LandscapeWorld.Worker w, LandscapePoseFinder.Fixture fixture, string fixturePath)
     {
         // The tree catalog is not thread safe: load it here, on the main thread, before any tile builds.
         IReadOnlyList<ImportedTreeVariant> catalog = ImportedTreeCatalog.Load();
@@ -77,11 +75,11 @@ public static class WorldGenerationFingerprint
 
         var row = new Dictionary<string, object?>
         {
-            ["generation"] = Generation,
-            ["label"] = Label,
-            ["generator_id"] = LandscapeWorld.GeneratorId,
-            ["seed"] = LandscapeWorld.Seed,
-            ["definition_hash"] = LandscapeWorld.DefinitionHashHex,
+            ["generation"] = spec.Recipe.WorldGeneration,
+            ["label"] = $"gen{spec.Recipe.WorldGeneration}-v{(spec.IsDefault ? 8 : 9)}-s{spec.Recipe.Seed}",
+            ["generator_id"] = spec.Recipe.GeneratorId,
+            ["seed"] = spec.Recipe.Seed,
+            ["definition_hash"] = spec.DefinitionHashHex,
             ["pose_fixture"] = fixturePath,
         };
 

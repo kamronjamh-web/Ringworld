@@ -4,7 +4,8 @@ extends SceneTree
 ## verifies it (recipe + 64 sample points against the in-game sampler), goes to plains_eye at noon, captures, computes the distance-band table and writes
 ## smoke.png, smoke_bands.png and smoke.json to .godot/captures/landscape/t0/smoke/<stamp>/.
 ## RUN (windowed Vulkan, nothing else on the GPU): tools/run_tests.ps1 -Label landscape_gpu -Tests landscape_harness_smoke
-##   or Godot_console.exe --path . --resolution 1920x1080 --script res://tools/landscape_harness_smoke.gd -- [--prefs=user|defaults|<dir>] [--preset=medium|keep] [--allow-blades]
+##   or Godot_console.exe --path . --resolution 1920x1080 --script res://tools/landscape_harness_smoke.gd -- [--prefs=user|defaults|<dir>] [--preset=medium|keep] [--allow-blades] [--weather=clear|natural]
+##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
 ## PASS needs: world verified, ground check holds, >= 3 non-empty distance bands, mean linear luma > 0.02, streaming idle. Prints LANDSCAPE_HARNESS_SMOKE=PASS.
 ## Test-only. The harness world directory is deleted at exit.
 const HARNESS := preload("res://tools/landscape_harness_common.gd")
@@ -45,6 +46,11 @@ func _run() -> void:
 	if monitor != null:
 		monitor.process_mode = Node.PROCESS_MODE_DISABLED
 	HARNESS.COMMON.hold_world_clocks(game)
+	var weather_pin := HARNESS.pin_weather(game, HARNESS.report_poses("t0"))
+	if weather_pin.has("error"):
+		_fail(str(weather_pin["error"]))
+		return
+	print("%s weather=%s cloud_time=%.1f searched=%d" % [MARKER, weather_pin["mode"], weather_pin["cloud_time"], weather_pin["searched"]])
 	var world_environment := game.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	if world_environment == null:
 		_fail("WorldEnvironment missing")
@@ -59,7 +65,8 @@ func _run() -> void:
 	if pose.is_empty():
 		_fail("fixture pose plains_eye missing")
 		return
-	var info: Dictionary = await HARNESS.go_pose(self, game, pose, "noon")
+	var ground_model: RefCounted = null if str(booted["world_tag"]).is_empty() else booted["world_bridge"]
+	var info: Dictionary = await HARNESS.go_pose(self, game, pose, "noon", ground_model)
 	if info.has("error"):
 		_fail(str(info["error"]))
 		return
@@ -73,7 +80,7 @@ func _run() -> void:
 	var h := image.get_height()
 	var distance := BANDS.distance_from_depth(shot["depth"], w, h)
 	var table := BANDS.compute(image, distance, w, h, 2)
-	var out_dir := HARNESS.transient_dir("smoke")
+	var out_dir := HARNESS.transient_dir("smoke", booted["world_tag"])
 	image.save_png(out_dir.path_join("smoke.png"))
 	BANDS.band_image(distance, w, h).save_png(out_dir.path_join("smoke_bands.png"))
 
@@ -85,12 +92,19 @@ func _run() -> void:
 			weight += float(row["share"])
 	var mean_luma := total_luma / maxf(weight, 0.000001)
 	var non_empty := BANDS.non_empty_bands(table)
+	var weather := HARNESS.weather_at(game, float(pose["around_m"]), float(pose["across_m"]))
 	var report := {"marker": MARKER, "machine": machine["label"], "adapter": machine["adapter"], "world": world, "prefs": booted["prefs"], "preset": preset, "pose": info,
+		"weather_pin": weather_pin, "weather": weather,
 		"depth_available": not (shot["depth"] as Dictionary).is_empty(), "size": [w, h], "band_table": table, "adjacent_steps": BANDS.adjacent_steps(table),
 		"non_empty_bands": non_empty, "mean_luma": mean_luma, "streaming_idle": bool(info.get("streaming_idle", false)) and bool(info.get("streaming_idle_after", false)),
 		"status": "RUNNING"}
+	report.merge(booted["world_record"])
 	var failure := ""
-	if not bool(info["ground"]["ok"]):
+	if weather.has("error"):
+		failure = str(weather["error"])
+	elif weather_pin["mode"] == "clear" and float(weather["precipitation"]) > HARNESS.CLEAR_PRECIPITATION_MAX:
+		failure = "weather not clear"
+	elif not bool(info["ground"]["ok"]):
 		failure = "ground check failed"
 	elif non_empty < 3:
 		failure = "only %d non-empty distance bands (depth available: %s)" % [non_empty, str(report["depth_available"])]

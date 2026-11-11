@@ -12,13 +12,14 @@ namespace RingworldTechDemo.Tools;
 /// <summary>Small real-controller fixture. It supplies uploaded-proxy metadata only; it never starts terrain streaming.</summary>
 public partial class WaterFftDemandIntegrationSmoke : Node
 {
+    private const ulong WatchdogTimeoutMs = 30_000;
     private VoxelChunkGridManager? _grid;
     private RingVoxelExplorerController? _explorer;
     private RingTerrainProxySector? _proxy;
     private RingTerrainProxySector? _duplicateProxy;
     private RingWaterFftController? _controller;
     private readonly RingTerrainSectorCoordinate _near = new(0, 0), _far = new(3, 0), _farMore = new(4, 0), _lake = new(1, 0);
-    private int _frame, _stageFrames;
+    private ulong _startedAtMs;
     private bool _stageEntered = true;
     private double _stageSeconds;
     private long _idleSettledUpdates;
@@ -33,6 +34,7 @@ public partial class WaterFftDemandIntegrationSmoke : Node
 
     public override void _Ready()
     {
+        _startedAtMs = Time.GetTicksMsec();
         if (RenderingServer.GetRenderingDevice() is null) { Fail("unsupported GPU renderer"); return; }
         _grid = new VoxelChunkGridManager { Name = "ChunkGridManager", DormantEditableBackend = true, BuildOnReady = false, EnableFloatingOriginBridge = false, RingAcrossWidthMeters = 4096, UseDeterministicTerrainGeneration = true, TerrainSettings = new VoxelTerrainSettings() };
         AddChild(_grid);
@@ -51,7 +53,7 @@ public partial class WaterFftDemandIntegrationSmoke : Node
     public override void _Process(double delta)
     {
         if (Completed || _controller is null || _proxy is null) return;
-        if (++_frame > 1800) { Fail("timeout at " + _stage); return; }
+        if (Time.GetTicksMsec() - _startedAtMs >= WatchdogTimeoutMs) { Fail("timeout at " + _stage); return; }
         _demandMs.Add(_controller.WaterDemandCheckMilliseconds);
         _stageSeconds += Math.Max(0, delta);
         string processedStage = _stage;
@@ -95,7 +97,7 @@ public partial class WaterFftDemandIntegrationSmoke : Node
             ["completed_hz"] = (_controller.CompletedFftUpdates - _stageStartUpdates) / Math.Max(.001, _stageSeconds),
             ["geometry_hz"] = _controller.TargetGeometryUpdatesPerSecond, ["detail_hz"] = _controller.TargetDetailUpdatesPerSecond,
             ["sectors"] = _controller.RelevantWaterSectorCount, ["area_m2"] = _controller.RelevantWaterAreaSquareKilometers * 1_000_000d });
-        _stage = stage; _stageFrames = 0; _stageEntered = true; _stageSeconds = 0; _stageStartUpdates = _controller?.CompletedFftUpdates ?? 0;
+        _stage = stage; _stageEntered = true; _stageSeconds = 0; _stageStartUpdates = _controller?.CompletedFftUpdates ?? 0;
     }
     private void VerifyCollectorCounterpoints()
     {

@@ -63,6 +63,15 @@
         "scripts/render/ring_far*"
       ]
     },
+    "world-generation": {
+      "globs": [
+        "scripts/Terrain/Generation/WorldGeneration*",
+        "tools/WorldGeneration*",
+        "tools/world_generation_*",
+        "tools/new_generation_world*",
+        "tools/fixtures/world_generation_*"
+      ]
+    },
     "terrain": {
       "globs": [
         "scripts/Terrain/**",
@@ -2391,7 +2400,7 @@
         "ui-menu"
       ],
       "world": "integration",
-      "marker": "GRASS_MEADOW_TUNING",
+      "marker": "GRASS_LIVE_TUNING",
       "expected_s": 22,
       "timeout_s": 70,
       "batch": "integration@default"
@@ -4731,6 +4740,90 @@
       "marker": "LANDSCAPE_WORLD",
       "expected_s": 15,
       "timeout_s": 90
+    },
+    "world_generation_recipe_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "world-generation",
+        "terrain"
+      ],
+      "marker": "WORLD_GENERATION_RECIPE",
+      "expected_s": 20,
+      "timeout_s": 120
+    },
+    "world_generation_climate_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "world-generation",
+        "terrain"
+      ],
+      "marker": "WORLD_GENERATION_CLIMATE",
+      "expected_s": 20,
+      "timeout_s": 120
+    },
+    "world_generation_publish_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "world-generation",
+        "loading",
+        "ui-menu"
+      ],
+      "marker": "WORLD_GENERATION_PUBLISH",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "world_generation_contract_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "world-generation",
+        "landscape"
+      ],
+      "marker": "WORLD_GENERATION_CONTRACT",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "world_generation_launcher_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "world-generation",
+        "ui-menu"
+      ],
+      "marker": "WORLD_GENERATION_LAUNCHER",
+      "expected_s": 10,
+      "timeout_s": 60
+    },
+    "world_generation_tool_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "world-generation",
+        "loading"
+      ],
+      "marker": "WORLD_GENERATION_TOOL",
+      "expected_s": 20,
+      "timeout_s": 120
+    },
+    "new_generation_world": {
+      "kind": "tool",
+      "mode": "headless",
+      "tier": "manual",
+      "tags": [
+        "world-generation"
+      ],
+      "marker": "NEW_GENERATION_WORLD",
+      "expected_s": 20,
+      "timeout_s": 120
     },
     "world_generation_fingerprint_test": {
       "kind": "test",

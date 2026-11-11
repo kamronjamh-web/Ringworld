@@ -3,6 +3,7 @@ extends SceneTree
 ## Landscape T0-7 look references (docs/landscape-audit-t0-spec.md WO T0-7): the nine t0 poses at noon and sun_8_set, keeping AA as configured. Writes <pose>__<time>.png, _bands.png, look.json, reference_set.json and the preferences snapshot to .godot/audit_baseline/<machine>/t0/look/<stamp>/. PASS needs every view non-black, the world verified, sun_8_set within 0.5 degrees of 8, streaming idle.
 ## RUN (windowed Vulkan, nothing else on the GPU): tools/run_tests.ps1 -Label landscape_gpu -Tests landscape_look_baseline
 ##   or Godot_console.exe --path . --resolution 1920x1080 --script res://tools/landscape_look_baseline.gd -- [--poses=a,b] [--prefs=user|defaults|<dir>] [--preset=medium|keep] [--allow-blades] [--times=noon,sun_8_set]
+##   Add --generation=N [--review-features=a,b] after -- to select a v9 world.
 ## Machine rule: numbers are only authoritative on the A1000 laptop (P0 / 35 W); on any other GPU the output is stamped "non-authoritative" with the machine tag and adapter name.
 ## Test-only. The harness world directory is deleted at exit. Prints LANDSCAPE_LOOK=PASS.
 const BASE := preload("res://tools/landscape_baseline_common.gd")

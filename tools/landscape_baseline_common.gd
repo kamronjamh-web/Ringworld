@@ -2,7 +2,7 @@ extends RefCounted
 
 ## Shared part bodies of the landscape T0-7 tools (docs/landscape-audit-t0-spec.md WO T0-7): look references, cost baseline and LOD-switch capture. TEST ONLY.
 ## Wrappers (tools/landscape_look_baseline.gd, landscape_cost_baseline.gd, landscape_lod_switch_capture.gd) call setup() then one run_*() and print the marker. Everything boots
-## through tools/landscape_harness_common.gd (pinned generation 1 world, the user's preference files snapshotted, Cards grass checked). The hide cases (near terrain, far terrain,
+## through tools/landscape_harness_common.gd (pinned v8 world by default, the user's preference files snapshotted, Cards grass checked). The hide cases (near terrain, far terrain,
 ## trees, grass) are copied and cut down from tools/terrain_render_attribution_test.gd (_capture_original_state, _apply_case, _restore_original_state, _verify_case and the
 ## draw-call/primitive delta check). Raster passes have no GPU markers (spec fact 6), so terrain/tree/grass cost is an A-B-A hide delta plus exact draw and primitive counts,
 ## with an optional opaque-pass bracket (tools/landscape_pass_timestamp_effect.gd). Machine rule: numbers are only authoritative on the A1000 at P0 / 35 W; anywhere else
@@ -29,8 +29,8 @@ const EYE_M := 1.7
 
 # ------------------------------------------------------------------ setup
 
-## Boots the pinned world and records the run identity. Returns {} after push_error on failure (the caller then calls cleanup).
-static func setup(tree: SceneTree, marker: String) -> Dictionary:
+## Boots the pinned world and records the run identity. On failure, the result lacks "ok" and the caller runs cleanup.
+static func setup(tree: SceneTree, marker: String, weather_pose_report := "t0") -> Dictionary:
 	if RenderingServer.get_rendering_device() == null:
 		push_error("%s=FAIL RenderingDevice is required" % marker)
 		return {}
@@ -49,6 +49,11 @@ static func setup(tree: SceneTree, marker: String) -> Dictionary:
 	if monitor != null:
 		monitor.process_mode = Node.PROCESS_MODE_DISABLED # it re-configures the timestamp bridge every frame and would drain our events
 	COMMON.hold_world_clocks(game)
+	var weather := H.pin_weather(game, H.report_poses(weather_pose_report))
+	if weather.has("error"):
+		push_error("%s=FAIL %s" % [marker, str(weather["error"])])
+		return {"game": game, "fixture_root": booted["fixture_root"]}
+	print("%s weather=%s cloud_time=%.1f searched=%d" % [marker, weather["mode"], weather["cloud_time"], weather["searched"]])
 	var world_environment := game.get_node_or_null("WorldEnvironment") as WorldEnvironment
 	var explorer := game.get_node_or_null("Explorer")
 	var surface := game.get_node_or_null("Terrain3DGameplay")
@@ -64,7 +69,8 @@ static func setup(tree: SceneTree, marker: String) -> Dictionary:
 		push_error("%s=FAIL %s" % [marker, str(preset["error"])])
 		return {"game": game, "fixture_root": booted["fixture_root"]}
 	var ctx := {"tree": tree, "marker": marker, "booted": booted, "game": game, "fixture_root": booted["fixture_root"], "machine": machine, "world_environment": world_environment,
-		"explorer": explorer, "surface": surface, "grass": grass, "trees": trees, "scaled_far": scaled_far, "sun": sun, "preset": preset, "ok": true}
+		"explorer": explorer, "surface": surface, "grass": grass, "trees": trees, "scaled_far": scaled_far, "sun": sun, "preset": preset, "weather": weather, "ok": true}
+	ctx["ground_model"] = null if str(booted["world_tag"]).is_empty() else booted["world_bridge"]
 	ctx["record"] = _common_record(ctx)
 	return ctx
 
@@ -94,19 +100,21 @@ static func _common_record(ctx: Dictionary) -> Dictionary:
 	var prefs: Dictionary = booted["prefs"]
 	var atmosphere_hash := str(files.get("atmosphere_visual_defaults.tres", "absent (shipped defaults)"))
 	var root_window: Window = (ctx["tree"] as SceneTree).root
-	return {"machine": ctx["machine"], "resolution": [root_window.size.x, root_window.size.y], "vsync": "off", "max_fps": 0, "godot": Engine.get_version_info().get("string", ""),
+	var record := {"machine": ctx["machine"], "resolution": [root_window.size.x, root_window.size.y], "vsync": "off", "max_fps": 0, "godot": Engine.get_version_info().get("string", ""),
 		"preset": ctx["preset"], "grass_render_style": ctx["preset"].get("grass_render_style_name", "?"),
 		"tree_fade": {"compact_profile": trees.get("UseCompactTreeLodProfile"), "near_start_m": trees.get("TreeNearDetailFadeStartMeters"), "near_end_m": trees.get("TreeNearDetailFadeEndMeters"),
 			"billboard_start_m": trees.get("TreeBillboardFadeStartMeters"), "billboard_end_m": trees.get("TreeBillboardFadeEndMeters")},
 		"prefs": {"mode": prefs.get("mode", "?"), "used": prefs.get("used", []), "absent": prefs.get("absent", []), "sha256": files, "atmosphere_settings_sha256": atmosphere_hash},
-		"world": booted["world"], "clocks_held": true, "auto_exposure_disabled_for_look": true}
+		"world": booted["world"], "clocks_held": true, "weather": ctx["weather"], "auto_exposure_disabled_for_look": true}
+	record.merge(booted["world_record"])
+	return record
 
 
 static func t0_poses() -> Array:
 	var names := COMMON.csv_arg("--poses=")
 	var result: Array = []
-	for pose in H.load_poses().get("poses", []):
-		if "t0" in pose.get("reports", []) and (names.is_empty() or str(pose["name"]) in names):
+	for pose in H.report_poses("t0"):
+		if names.is_empty() or str(pose["name"]) in names:
 			result.append(pose)
 	return result
 
@@ -132,7 +140,7 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 	var tree: SceneTree = ctx["tree"]
 	var marker: String = ctx["marker"]
 	var machine: Dictionary = ctx["machine"]
-	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "look")
+	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "look", ctx["booted"]["world_tag"])
 	H.copy_prefs_snapshot(ctx["booted"], out_dir)
 	var depth_effect := H.install_depth_effect(ctx["world_environment"])
 	var times := COMMON.csv_arg("--times=")
@@ -143,12 +151,13 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 	var first := true
 	for pose in t0_poses():
 		for time_name in times:
-			var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name)
+			var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
 			if first and not info.has("error"):
 				await _disable_auto_exposure(ctx)
 				first = false
 			var view_name := "%s__%s" % [pose["name"], time_name]
-			var view := {"view": view_name, "pose": pose["name"], "time": time_name, "go_pose": info}
+			var weather := H.weather_at(ctx["game"], float(pose["around_m"]), float(pose["across_m"]))
+			var view := {"view": view_name, "pose": pose["name"], "time": time_name, "go_pose": info, "weather": weather}
 			if info.has("error"):
 				view["failure"] = str(info["error"])
 				failures.append("%s: %s" % [view_name, view["failure"]])
@@ -173,7 +182,11 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 			view.merge({"size": [w, h], "depth_available": not (shot["depth"] as Dictionary).is_empty(), "band_table": table, "adjacent_steps": BANDS.adjacent_steps(table),
 				"non_empty_bands": BANDS.non_empty_bands(table), "mean_luma": mean_luma, "sun_elevation_deg": info.get("sun_elevation_deg", NAN), "streaming_idle": idle})
 			var why := ""
-			if mean_luma <= 0.01:
+			if weather.has("error"):
+				why = str(weather["error"])
+			elif ctx["weather"]["mode"] == "clear" and float(weather["precipitation"]) > H.CLEAR_PRECIPITATION_MAX:
+				why = "weather not clear"
+			elif mean_luma <= 0.01:
 				why = "view is black (mean linear luma %.4f)" % mean_luma
 			elif time_name == "sun_8_set" and absf(float(info.get("sun_elevation_deg", NAN)) - 8.0) > 0.5:
 				why = "sun elevation %.2f is not within 0.5 of 8" % float(info.get("sun_elevation_deg", NAN))
@@ -193,8 +206,10 @@ static func run_look(ctx: Dictionary) -> Dictionary:
 	report.merge({"marker": marker, "tool": "landscape_look_baseline", "views": views, "failures": failures, "status": "FAIL" if not failures.is_empty() or views.is_empty() else "PASS",
 		"output": out_dir})
 	_save_json(out_dir.path_join("look.json"), report)
-	_save_json(out_dir.path_join("reference_set.json"), {"machine": machine["tag"], "adapter": machine["adapter"], "authoritative": machine["authoritative"], "preset": ctx["preset"].get("preset", "?"),
-		"prefs_mode": ctx["booted"]["prefs"].get("mode", "?"), "references": references})
+	var reference_set := {"machine": machine["tag"], "adapter": machine["adapter"], "authoritative": machine["authoritative"], "preset": ctx["preset"].get("preset", "?"),
+		"prefs_mode": ctx["booted"]["prefs"].get("mode", "?"), "weather": ctx["weather"], "references": references}
+	reference_set.merge(ctx["booted"]["world_record"])
+	_save_json(out_dir.path_join("reference_set.json"), reference_set)
 	print("%s output: %s" % [marker, out_dir])
 	return report
 
@@ -488,7 +503,7 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 	var machine: Dictionary = ctx["machine"]
 	var rounds := maxi(1, int(COMMON.arg_value("--rounds=", "2")))
 	var seconds := maxf(1.0, float(COMMON.arg_value("--seconds=", "8")))
-	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "cost")
+	var out_dir := H.baseline_dir(str(machine["tag"]), "t0", "cost", ctx["booted"]["world_tag"])
 	H.copy_prefs_snapshot(ctx["booted"], out_dir)
 	var power_path := out_dir.path_join("power_log.csv")
 	ctx["power_pid"] = COMMON.start_power_log(power_path)
@@ -524,16 +539,19 @@ static func run_cost(ctx: Dictionary) -> Dictionary:
 		var sampler := Callable(timing, "Sample")
 		tree.process_frame.connect(sampler)
 		var fill_start := Time.get_ticks_msec()
-		var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name)
+		var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, time_name, ctx["ground_model"])
 		var fill_wall_s := (Time.get_ticks_msec() - fill_start) / 1000.0
 		tree.process_frame.disconnect(sampler)
+		var weather := H.weather_at(ctx["game"], float(pose["around_m"]), float(pose["across_m"]))
+		var record := {"key": key, "pose": pose["name"], "time": time_name, "go_pose": info, "weather": weather}
 		if info.has("error"):
 			failures.append("%s: %s" % [key, str(info["error"])])
-			results.append({"key": key, "pose": pose["name"], "time": time_name, "go_pose": info, "failure": str(info["error"])})
+			record["failure"] = str(info["error"])
+			results.append(record)
 			continue
 		var cpu_window: Dictionary = timing.call("CpuWindow")
 		var fill := {"wall_s_incl_settle": fill_wall_s, "scopes": _fill_summary(cpu_window), "dropped": cpu_window.get("_meta", {})}
-		var record := {"key": key, "pose": pose["name"], "time": time_name, "sun_elevation_deg": info.get("sun_elevation_deg", NAN), "go_pose": info, "fill": fill, "workload": _workload(ctx), "windows": [], "hide_effect": {}}
+		record.merge({"sun_elevation_deg": info.get("sun_elevation_deg", NAN), "fill": fill, "workload": _workload(ctx), "windows": [], "hide_effect": {}})
 		var state := capture_original_state(ctx)
 		if results.is_empty():
 			record["far_mesh_names"] = state["far_mesh_names"] # evidence for which meshes count as far terrain (first pose only)
@@ -799,13 +817,13 @@ static func run_lod(ctx: Dictionary) -> Dictionary:
 	var pose := H.pose_by_name(COMMON.arg_value("--pose=", "forest_edge_eye"))
 	if pose.is_empty():
 		return {"status": "FAIL", "failure": "pose missing from the fixture"}
-	var out_dir := H.transient_dir("lod_switch")
-	var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, "noon")
+	var out_dir := H.transient_dir("lod_switch", ctx["booted"]["world_tag"])
+	var info: Dictionary = await H.go_pose(tree, ctx["game"], pose, "noon", ctx["ground_model"])
 	if info.has("error"):
 		return {"status": "FAIL", "failure": str(info["error"])}
 	await _disable_auto_exposure(ctx)
 	var finder: RefCounted = TIMING.new()
-	var found: Dictionary = finder.call("NearestTreeAhead", float(pose["around_m"]), float(pose["across_m"]), float(pose["yaw_deg"]), 8.0, 150.0, 8.0, LOD_START_M + LOD_STEPS * LOD_STEP_M + 3.0)
+	var found: Dictionary = finder.call("NearestTreeAhead", ctx["booted"]["world_bridge"], float(pose["around_m"]), float(pose["across_m"]), float(pose["yaw_deg"]), 8.0, 150.0, 8.0, LOD_START_M + LOD_STEPS * LOD_STEP_M + 3.0)
 	if not bool(found.get("found", false)):
 		return {"status": "FAIL", "failure": str(found.get("error", "no tree found")), "tree_search": found}
 	var surface: Node = ctx["surface"]
@@ -841,7 +859,7 @@ static func run_lod(ctx: Dictionary) -> Dictionary:
 			var image := tree.root.get_texture().get_image()
 			image.save_png(dir_path.path_join("frame%08d.png" % step))
 			(record["frames"][sequence] as Array).append({"frame": step, "horizontal_distance_m": distance, "distance_3d_m": sqrt(distance * distance + (target_y - vertical) * (target_y - vertical)),
-				"camera_vertical_m": vertical, "yaw_deg": yaw, "pitch_deg": pitch})
+				"camera_vertical_m": vertical, "yaw_deg": yaw, "pitch_deg": pitch, "weather": H.weather_at(ctx["game"], cam_a, cam_z)})
 	record["status"] = "PASS"
 	_save_json(out_dir.path_join("frames.json"), record)
 	print("%s tree: %s" % [marker, JSON.stringify(found)])

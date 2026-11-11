@@ -16,7 +16,7 @@ using RingworldTechDemo.Voxel.Phase3;
 namespace RingworldTechDemo.Tools;
 
 /// <summary>
-/// WO-G1 of docs/gpu-offload-plan.md (section 4.5). Compares the GPU K1 kernel (materials/terrain_gpu/ring_proxy_height_k1.glsl: v7/v8 natural
+/// WO-G1 of docs/gpu-offload-plan.md (section 4.5). Compares the GPU K1 kernel (materials/terrain_gpu/ring_proxy_height_k1.glsl: v7/v8/v9 natural
 /// height plus regional climate and biome weights) against the C# runtime sampler, which is what TerrainBuildSampleCache.Get reads with edits off:
 /// RingTerrainSampler.GetPresentationSurfaceHeight (height), GetTerrainSample (continentalness, erosion, temperature, moisture, ridge) and
 /// GetBiomeTextureWeights. Fixtures: about 40 sectors per spacing 2, 4, 8, 16 and 32 (deep basin, trench, shelf, coast, plains, hill country,
@@ -82,6 +82,7 @@ public partial class ProxyGpuHeightParityTest : RefCounted
             {
                 CreateRecipe("v8_showcase", TerrainGenerationParameters.FromJson(showcaseJson)),
                 CreateRecipe("v7_default", TerrainGenerationParameters.LandformDefault()),
+                CreateRecipe("v9_generation_1", TerrainGenerationParameters.WorldDefault(1)),
             };
             var timingFixtures = new List<(string Label, long Around, int Across)>();
             foreach (Recipe recipe in recipes)
@@ -135,7 +136,10 @@ public partial class ProxyGpuHeightParityTest : RefCounted
         for (int i = 0; i < workers; i++)
         {
             RingTerrainSampler sampler = CreateSampler(parameters, out VoxelTerrainSettings settings);
-            if (i == 0)
+            if (i == 0 && parameters.IsWorldGenerationRecipe)
+                recipe.Climate = sampler.CreateGpuClimateSettings()
+                    ?? throw new InvalidOperationException("v9 runtime climate pack is missing.");
+            else if (i == 0)
             {
                 var c = new ProxyGpuClimateSettings
                 {

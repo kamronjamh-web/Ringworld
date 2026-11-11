@@ -16,9 +16,9 @@ public static class EmitterSiteHeightSources
             : new Gen16NaturalHeightSource(sampler, false);
     }
 
-    /// <summary>v5 definition hashes include the registry itself, so its natural identity is the recipe-only hash (the shaper cache key).</summary>
+    /// <summary>Site-bearing recipes use their natural site identity, before the registry is mixed into the terrain hash.</summary>
     private static INaturalHeightSource CreateGen17(TerrainGenerationParameters parameters, ulong samplerHash)
-        => new Gen17NaturalHeightSource(parameters, parameters.HasEmitterSites ? parameters.DefinitionHash : samplerHash);
+        => new Gen17NaturalHeightSource(parameters, parameters.HasEmitterSites ? parameters.NaturalSiteIdentity : samplerHash);
 }
 
 /// <summary>Gen-17 heightmap backend: <see cref="TerrainGenerationHeightModel"/> height with no site operator.</summary>

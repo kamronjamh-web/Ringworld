@@ -1,8 +1,8 @@
 # T0 wrap-up. Landscape audit leftovers and vastness V0: work orders
 
 Parent: docs/terrain-vegetation-revamp-plan.md section 11 (T0). Prerequisite reading: `docs/terrain-vegetation-handoff-2026-11-10.md` ("Open items, in order", items 1-5 and 7); `docs/landscape-audit-t0-spec.md` sections 1, 2, 4 and 8.6; `docs/vastness-plan.md` section 7 (V0); `AGENTS.md` (Testing, Test output, Tools/ffmpeg).
-Status: not started
-Depends on: T0-1 to T0-7 (done, uncommitted on branch `gpu-offload`, see the handoff)
+Status: resumed in the Ringworld project on 2026-11-10. T0W-1, T0W-4, T0W-5 triage and T0W-5a are accepted. T0W-5b and the remaining wrap-up are open.
+Depends on: T0-1 to T0-7 (committed on `terrain-vegetation-revamp`, see the handoff)
 Freeze: none (no production change; generation 1 only)
 
 Committing is not part of any work order here. The primary agent commits (handoff item 6).
@@ -25,7 +25,7 @@ Verified against the working tree on 2026-11-10 unless marked **unverified**.
    - `NaturalWeatherLifecyclesEnabled` is exported at `RingVolumetricCloudLayer.cs:114`.
    - `RingSunshineCloudBridge.ClearSpawnedWeather()` is at `scripts/RingSunshineCloudBridge.cs:1625`. The scene node is `SunshineCloudBridge`.
    - The scene also holds `RingMegastorm` and `LocalWeatherEffects` (`scenes/VoxelRingIntegrationTest.tscn:639`, `:701`). **Unverified:** whether the natural-weather diagnostic covers the megastorm and storm-arrival systems.
-6. The coast look reference in `.godot/audit_baseline/rtx4070/t0/look/2026-11-10_00-01-25/` was captured during a passing storm (handoff, open item 1). Spec section 8.6 cites this folder.
+6. The original coast look reference in `.godot/audit_baseline/rtx4070/t0/look/2026-11-10_00-01-25/` was captured during a passing storm. T0W-1 replaced that set with the clear set cited in spec section 8.6.
 7. The fixture `tools/fixtures/landscape_poses_v8_s1337.json` has 14 poses.
    - `t0` reports: `plains_eye`, `hills_eye`, `hills_300m`, `hills_2km`, `coast_eye`, `forest_interior_eye`, `forest_edge_eye`, `forest_clearing_eye`, `saved_18km`.
    - `v0` reports: `hills_2km`, `coast_eye`, `forest_clearing_eye`, `saved_18km`, `v0_centre_eye`, `v0_wall_lo_eye`, `v0_wall_hi_eye`, `v0_ridge_eye`, `v0_alt_12km`.
@@ -89,7 +89,7 @@ Verified against the working tree on 2026-11-10 unless marked **unverified**.
 | T0W-1 Pin weather; re-capture 4070 look references | sol_implementer | S | - | T0W-4 (headless edit), T0W-5 (analysis part) |
 | T0W-2 Crash after PASS at exit (cost run + two gate tests) | sol_lead | M | - | T0W-4, T0W-5 analysis; GPU runs serial |
 | T0W-3 A1000 cost and look run (user checklist) | user | S | T0W-1; the primary's T0 commit; T0W-2 preferred | anything on the desktop |
-| T0W-4 Shadow-harness preference names (**needs user approval before execution**) | sol_implementer | S | user decision | T0W-1, T0W-2 |
+| T0W-4 Shadow-harness preference names (option A approved 2026-11-10) | sol_implementer | S | approved | T0W-1, T0W-2 |
 | T0W-5 Triage `ui_scaling_smoke_test`, `grave_menu_interaction_test`; Cards-grass baseline inventory | sol_lead | S-M | - | T0W-1, T0W-2 (GPU runs serial) |
 | T0W-6 Re-baseline captures that changed only because of Cards grass | sol_implementer | M | T0W-5, the primary's approval of the list | headless work only |
 | T0W-7 Vastness V0-1: views, analytic distance, band and ladder tables | sol_implementer | M | T0W-1 | headless WOs |
@@ -256,7 +256,7 @@ The primary agent pastes `cost.md` into spec 8.6 "A1000 cost run (authoritative)
 ESCALATION CONDITIONS
 The tool fails the world check, more than 20 % of power windows are invalid, or the laptop drops to P5 during the run. Report back; do not retry more than once.
 
-### T0W-4. Shadow-harness preference file names (needs user approval before execution)
+### T0W-4. Shadow-harness preference file names (option A approved 2026-11-10)
 
 ROLE: sol_implementer
 SIZE: S
@@ -492,3 +492,114 @@ The primary agent checks:
    - `pwsh -File tools/testing/validate_manifest.ps1` passes.
    - The primary runs `-Suite gate` at the commit point.
 8. **Cleanup.** `.\tools\prune_test_output.ps1 -Apply` has been run, and only the cited evidence remains under `.godot/audit_baseline/`.
+
+
+## Execution record, 2026-11-10 (paused by user)
+
+The initial gate finished with 316 pass, 2 fail, 3 known-fail and 1 crash out of 322 (`terrain_revamp_start/20261110-104534`). Wind timing still failed when rerun alone; UI scaling and the grave-menu assertion reproduced earlier reports. See `../../terrain-vegetation-handoff-2026-11-10.md` for exact evidence paths and remaining steps.
+
+- T0W-1 accepted. The pinned build, parse checks, two-pose clear and natural probes, generation 1 fingerprint and landscape world passed. The full RTX 4070 look run selected one test and passed in 3m29s with exit 0. All 18 views recorded zero precipitation, system kind 0 and inactive megastorm at 2434.5 s. The coast before/after image shows the rain is gone. Plains depth-band shares and near-terrain luma agree at the recorded precision. The heatmaps show moved clouds and grass-card highlight variation. Spec 8.6 records the active set and the five-view table. The storm-affected folder was retired after review. [Runner result](../../../.godot/test_runs/landscape_gpu/20261110-120504/results.md)
+- T0W-4 accepted. Option A passed the build and parse checks, the absent-profile probe and the gameplay smoke (one selected, one pass, exit 0). The gameplay run copied both canonical preference files. Existing shadow baselines are historical default-haze records. [Runner result](../../../.godot/test_runs/t0w_prefs/20261110-115326/results.md)
+- T1-0 accepted. The design and its feature IDs are recorded in T1 and README/T2-T8.
+- T0W-2, T0W-3 laptop measurements, the remaining T0W-5 inventory, T0W-6 if needed, and V0 are still open. No baselines were replaced to hide a generation 1 difference.
+
+## T0W-5 result
+
+All five stock UI-scaling repeats on the 4070 failed at 1280×720. Each resized to the requested size with identity stretch and 96 DPI. The viewport mouse stayed at `(800, 450)` after the test requested the button center `(234, 361.33)`. Earlier runs passed and failed on the same pre-Cards commits `b8b175a` and `bb9af39`. In some earlier failures the cursor reached the center and no GUI hover arrived. The test depends on native cursor delivery. The logs leave the cause of the failed warp, including window focus, unresolved. The flaky entry matches only the 1280×720 hover failure. The verification run reported it as `known-fail`. [First repeat](../../../.godot/test_runs/t0w_triage/20261110-121659/results.md) · [Last repeat](../../../.godot/test_runs/t0w_triage/20261110-121939/results.md) · [Classification check](../../../.godot/test_runs/t1_recipe/20261110-123503/results.md)
+
+The baseline gate reported `grave_menu_interaction_test` as `CRASH` with exit `-1073741819` after the Atmosphere preset ancestry assertion. The T0W-5a fix passed the standalone runner with final `GRAVE_MENU_INTERACTION=PASS` and exit 0. [Baseline result](../../../.godot/test_runs/terrain_revamp_start/20261110-104534/results.md#L7) · [T0W-5a result](../../../.godot/test_runs/t0w_grave_menu/20261110-120925/results.md)
+
+Commit `a85117d` (2026-09-28) placed `AtmospherePreset` directly in the Atmosphere tab. Commit `10a6143476278ba5cf45d6bda8e870502631eaf1` (2026-11-05, Containment field WO3) added the tab's first fold, **Containment field**. The preset kept its existing parent. The test allows plain Atmosphere controls in its tab policy, but the presence of any fold sends every tuning control through the fold ancestry check. The four relevant working-tree files match `HEAD` after line-ending normalization. See `scripts/ui/RingLiveTuningDrawer.Atmosphere.cs:127-149,189-201`, `RingLiveTuningDrawer.ContainmentField.cs:60-71`, `TuningMenuUi.cs:11-34`, and `tools/grave_menu_interaction_test.gd:142-165,418-424`.
+
+The baseline logs `FAIL` before the native exit. The assertion schedules `quit(1)` while gameplay is still active, ahead of the normal fixture teardown at `tools/grave_menu_interaction_test.gd:113-115,394-401`. The crash cause remains unresolved. T0W-2 tracks crashes after PASS. [Baseline log](../../../.godot/test_runs/terrain_revamp_start/20261110-104534/logs/grave_menu_interaction_test.log#L75)
+
+The stored baselines contain no verified Cards-only mismatch for T0W-6. The available automated comparators passed in the 4070 gate. [Per-test gate results](../../../.godot/test_runs/terrain_revamp_start/20261110-104534/results.json)
+
+| Comparator | Stored input | Result |
+|---|---|---|
+| `shadow_compose_identity_gpu_test` | 44 RTX 4070 PNGs | Pass. The grass receiver builds a fixed Blades mesh directly. |
+| `terrain_surface_include_regression` | Six committed PNGs. Historical equivalent in `.godot/s5_before/t3d`. | Pass. The fixture renders Terrain3D biome textures without grass instances. |
+| `world_generation_fingerprint_test`, `grass_card_placement_test`, `grass_card_style_test` | Generation 1 and grass-placement goldens | Pass. The fingerprint uses the Cards builder directly. The grass tests pin Blades for the legacy checks. |
+| T0 look, cost and LOD | `.godot/audit_baseline/rtx4070/t0/` | Existing reports record Cards. The active look set passed T0W-1. |
+| Shadow captures, wet-world checks, terrain attribution and grass captures | Capture outputs and within-run comparisons | No stored grass-image input to replace. |
+| `eclipse_hub_capture --ref` | Optional historical reference PNGs | Unverified. The documented PNGs are absent from this workspace. |
+
+### T0W-5a. Cover the hybrid Atmosphere tab in the grave-menu test
+
+ROLE: sol_implementer
+SIZE: S
+DEPENDS ON: T0W-5 Atmosphere triage
+
+OBJECTIVE
+
+The real-input smoke test accepts the existing Atmosphere layout and still verifies the base controls and the Containment fold.
+
+CONTEXT / ROOT CAUSE
+
+The Atmosphere tab combines visible base controls with a collapsed Containment section. The test currently interprets the latter as a requirement to fold every control. Moving the preset into a default-collapsed section would add a click to the production UI.
+
+FILES/SYMBOLS
+
+- `tools/grave_menu_interaction_test.gd` · `_exercise_drawer`, `_require_settings_grouped`, `_wheel_numeric`.
+
+REQUIRED CHANGES
+
+1. In gameplay Atmosphere only, allow the existing `Atmosphere*` controls outside a fold. Continue checking the fold ancestry of Containment controls and the controls in other tabs.
+2. Assert that the Atmosphere preset is visible with the Containment section folded. Retain a wheel-input check on the base Atmosphere slider in that state.
+3. Require the named Containment fold and keep the existing checks for its default state and header interaction.
+
+DO-NOT-CHANGE CONSTRAINTS
+
+Keep the production drawer, section builder, settings, captures and goldens untouched. The fix belongs in the test. No known-failure entry is needed for this identified assertion.
+
+VALIDATION STEPS
+
+1. Run `.\tools\run_tests.ps1 -Label t0w_grave_menu -Tests grave_menu_interaction_test -DryRun`. Expect exactly `grave_menu_interaction_test`.
+2. Run the same command without `-DryRun`. Require final `GRAVE_MENU_INTERACTION=PASS` and exit 0. The manifest marker `GRAVE_MENU_INTERACTION_GAMEPLAY` is intermediate.
+
+ESCALATION CONDITIONS
+
+If the process crashes after the final PASS, route the exit symptom to T0W-2. If another layout or input assertion fails, report it separately.
+
+### T0W-5b. Separate native cursor delivery from scaled GUI hit testing
+
+ROLE: sol_implementer
+SIZE: S
+DEPENDS ON: T0W-5 UI-scaling triage
+
+OBJECTIVE
+
+Verify real StartMenu hit routing at the rendered button center across all three window sizes. Record native cursor delivery separately.
+
+FILES/SYMBOLS
+
+- `tools/ui_scaling_smoke_test.gd`, `_apply_test_size` and `_run_coordinate_probe`.
+- `tools/sunshine_menu_smoke_test.gd:126-139` is the native-warp and motion-event precedent.
+
+REQUIRED CHANGES
+
+1. Keep the three window sizes and no-warm-world guard. Wait within a deadline for the resize and layout to settle.
+2. Use the actual transformed button center inside the viewport and map it to window pixels with `root.get_final_transform()`. Report focus, expected and actual pixel and viewport coordinates, and native hover after a warp. Record whether the native probe was unfocused, missed the cursor target, missed hover or delivered hover.
+3. Clear any earlier hover and submit a motion event at the physical center through `root.push_input(event, false)` to exercise the engine's coordinate transform and Control routing. Require the button to be hovered.
+4. Keep the production menu, real slots and unrelated tests untouched.
+
+VALIDATION STEPS
+
+1. Dry-run and run `./tools/run_tests.ps1 -Label t0w_triage -Tests ui_scaling_smoke_test -Cache reuse` five times. Require all three sizes and the native probe diagnostics each time.
+2. In a scratch check, move the injected point outside the target. Require the hover assertion to fail and restore the source. Remove the interim flaky entry after validation passes.
+
+ESCALATION CONDITIONS
+
+Report any deterministically routed hit-test miss at a settled size with the geometry and native probe diagnostics. Route a reproducible miss with real user input to the primary.
+
+## T1 gate follow-up, 2026-11-10
+
+The completed [T1 gate](../../../.godot/test_runs/t1_gate/20261110-191949/results.md) selected 328 tests: 322 pass, 2 fail, 2 known-fail, 2 crash. UI scaling and the updated grave-menu test passed. This does not close T0W-5b's intermittent native cursor investigation.
+
+- **Wind timing remains open:** 0.120 ms against 0.1 ms, matching the pre-T1 0.121 ms result. Do not relax the threshold to make the gate pass.
+- **T0W-2 remains open:** `imported_tree_prepared_fallback_test` printed both final PASS markers before the same `Variant.Disposer` finalizer crash found in three pre-T1 logs. The test dependencies and autoloads checked by the lead were unchanged. [Comparison with hashes](../../../.godot/audit_baseline/common/t1/tree_exit_baseline_comparison.json)
+- **Grass tuning needs a bounded follow-up:** its old manifest marker, `GRASS_MEADOW_TUNING`, only covered a subcheck. Historical full-test failures were consequently reported as pass-with-exit-anomaly. The marker is now `GRASS_LIVE_TUNING`. The T1 gate actually failed on synthetic pointer hover before its native exit; one replay with the corrected marker reached the later resident-window coverage assertion, matching the original T0 gate's full failure, then also exited with `0xC0000005`. The exact pointer symptom is first observed in the T1 gate and remains unresolved. Inspect the coverage assertion and current displayed explanation first; instrument focus, coordinate transforms and hover only if the pointer symptom recurs. Preserve the real-click and coverage assertions and require the full PASS marker plus clean exit. This is not evidence of a full grass test PASS. [Historical comparison](../../../.godot/audit_baseline/common/t1/grass_live_tuning_baseline_comparison.json) · [Correctly classified replay](../../../.godot/test_runs/t1_gate/20261110-194630/results.md)
+- **Water test watchdog fixed:** the old 1,800-frame limit could expire before the test's timed sequence on a fast uncapped GPU. `WaterFftDemandIntegrationSmoke` now uses a 30-second monotonic deadline with the same stage durations and assertions. The primary rebuilt and the focused rerun passed in 14.1 seconds. Production water code is unchanged.
+- **Existing known failures:** cloud-shadow crossfade exit and opposite-ring lightning contrast matched their entries and were not re-triaged.
+
+All runs have finished. No second full gate was run after the water watchdog and grass marker changes; only those two affected tests were repeated. Follow the handoff's lean testing cadence for subsequent work.

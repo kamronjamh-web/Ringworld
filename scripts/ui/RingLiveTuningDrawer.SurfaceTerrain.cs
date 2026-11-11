@@ -355,13 +355,20 @@ public partial class RingLiveTuningDrawer
 		int generator = diagnostics.TryGetValue("terrain_generator_version", out Variant generatorValue) ? generatorValue.AsInt32() : 0;
 		string hash = diagnostics.TryGetValue("terrain_definition_hash", out Variant hashValue) ? hashValue.AsString() : "";
 		string recipeId = "";
+		int worldGeneration = 1;
 		if (diagnostics.TryGetValue("surface_generation_recipe_json", out Variant recipeJsonValue))
 		{
 			Variant parsed = Json.ParseString(recipeJsonValue.AsString());
 			if (parsed.VariantType == Variant.Type.Dictionary)
-				recipeId = parsed.AsGodotDictionary().TryGetValue("generator_id", out Variant idValue) ? idValue.AsString() : "";
+			{
+				var recipe = parsed.AsGodotDictionary();
+				recipeId = recipe.TryGetValue("generator_id", out Variant idValue) ? idValue.AsString() : "";
+				if (recipe.TryGetValue("world_generation", out Variant generationValue))
+					worldGeneration = generationValue.AsInt32();
+			}
 		}
-		string recipeStyle = recipeId == "ringworld_surface_weather_lung_v8" ? "weather lung v8"
+		string recipeStyle = recipeId == "ringworld_surface_world_v9" ? $"world v9, generation {worldGeneration}"
+			: recipeId == "ringworld_surface_weather_lung_v8" ? "weather lung v8"
 			: recipeId == "ringworld_surface_landform_v7" ? "landform v7"
 			: recipeId == "ringworld_surface_climate_v6" ? "climate machines v6"
 			: recipeId == "ringworld_surface_sites_v5" ? "emitter sites v5"

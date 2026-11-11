@@ -49,8 +49,8 @@ public sealed class ProxyGpuHeightKernel : IDisposable
     /// <summary>Whether the recipe is inside the ported scope. v1-v6 (and any recipe with Swiss spur detail) must keep using the CPU model.</summary>
     public static bool IsSupported(TerrainGenerationParameters p, out string reason)
     {
-        if (p.GeneratorId != TerrainGenerationParameters.LandformGeneratorIdentity && p.GeneratorId != TerrainGenerationParameters.WeatherLungGeneratorIdentity)
-        { reason = $"generator '{p.GeneratorId}' is not v7/v8 (CPU model only)"; return false; }
+        if (!p.HasLowlandLandforms)
+        { reason = $"generator '{p.GeneratorId}' is not v7/v8/v9 (CPU model only)"; return false; }
         if ((p.MountainDetailMode & 1) != 0) { reason = "mountain_detail_mode bit 0 (Swiss spurs) is not ported"; return false; }
         if (p.ErosionOctaves > 4) { reason = "erosion_octaves > 4 is not ported"; return false; }
         if (p.WarpAmplitudeM < 0d) { reason = "negative warp amplitude"; return false; }

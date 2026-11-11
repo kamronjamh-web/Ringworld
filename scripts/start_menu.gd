@@ -11,6 +11,7 @@ const CARD_THUMBNAIL := preload("res://scripts/ui/world_card_thumbnail.gd")
 const WARM_WORLD := preload("res://scripts/Loading/ring_warm_world.gd")
 const LIVE_WORLD_DRAWER := preload("res://scripts/ui/MenuLiveWorldTuningDrawer.cs")
 const FLIGHT_DIRECTOR := preload("res://scripts/ui/RingMenuFlightDirector.cs")
+const SURFACE_RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
 
 const INTRO_FADE_SECONDS := 0.8
 const INTRO_PANEL_DELAY_SECONDS := 0.35
@@ -973,7 +974,13 @@ func _refresh_world_cards() -> void:
 			thumbnail_path = str(session.get_slot_thumbnail_path(slot))
 		thumbnail.set_world(int(round(float(settings.get("terrain_seed", slot)))), thumbnail_path)
 		var radius_km := float(settings.get("radius_km", 80.0))
-		kicker.text = "SLOT %d · %s" % [slot, _preset_label_for_radius(radius_km)]
+		var recipe := _stored_surface_recipe(settings)
+		var world_recipe: bool = str(settings.get("terrain_backend", "")) == "surface_runtime_generation_v1" and recipe.get("generator_id") == SURFACE_RECIPE.WORLD_GENERATOR_ID
+		var generation := _card_world_generation(recipe.get("world_generation")) if world_recipe else "1"
+		var review: String = recipe["review_features"] if world_recipe and recipe.get("review_features") is String else ""
+		kicker.text = "SLOT %d · %s · GEN %s" % [slot, _preset_label_for_radius(radius_km), generation]
+		if not review.is_empty():
+			kicker.text += " · REVIEW"
 		title.text = world_name
 		var last_played := int(metadata.get("last_played_unix", 0))
 		var played_text := "Last played " + _relative_time(last_played) if last_played > 0 else "Never played"
@@ -982,17 +989,30 @@ func _refresh_world_cards() -> void:
 			played_text += " · %s played" % _format_playtime(playtime)
 		played.text = played_text
 		size_line.text = "R %s km · W %s km" % [_format_km(radius_km), _format_km(float(settings.get("ring_width_km", 20.0)))]
-		details.text = _details_text(settings)
+		details.text = _details_text(settings, recipe, review)
 
 
-func _details_text(settings: Dictionary) -> String:
+func _stored_surface_recipe(settings: Dictionary) -> Dictionary:
+	var json := str(settings.get("surface_generation_recipe_json", ""))
+	var recipe: Variant = JSON.parse_string(json) if not json.is_empty() else null
+	return recipe if recipe is Dictionary else {}
+
+
+func _card_world_generation(value: Variant) -> String:
+	if typeof(value) not in [TYPE_INT, TYPE_FLOAT]: return "?"
+	var number := float(value)
+	if number < 1.0 or number > 2147483647.0 or number != floorf(number): return "?"
+	return str(int(number))
+
+
+func _details_text(settings: Dictionary, recipe: Dictionary, review: String) -> String:
 	var backend := str(settings.get("terrain_backend", "smooth_terrain_v1"))
 	var text := "SEED %d · BACKEND %s" % [int(round(float(settings.get("terrain_seed", 1337)))), backend]
-	var recipe_json := str(settings.get("surface_generation_recipe_json", ""))
-	if not recipe_json.is_empty():
-		var recipe: Variant = JSON.parse_string(recipe_json)
-		if recipe is Dictionary and recipe.has("generator_id"):
+	if not str(settings.get("surface_generation_recipe_json", "")).is_empty():
+		if recipe.has("generator_id"):
 			text += " · GENERATOR %s" % str(recipe["generator_id"])
+		if not review.is_empty():
+			text += "\nREVIEW FEATURES " + review
 	else:
 		var designed := "ON" if bool(settings.get("designed_cave_density_composition", false)) else "OFF"
 		text += " · CAVE V%d · DESIGNED CAVES %s" % [int(round(float(settings.get("cave_generator_version", 1)))), designed]

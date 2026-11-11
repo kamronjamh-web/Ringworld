@@ -1,6 +1,6 @@
 # Landscape audit (T0) implementation spec
 
-Status: spec, 2026-11-09, written by the Lead role (`claude-lead`) for phase T0 of `docs/terrain-vegetation-revamp-plan.md`. Nothing here is implemented. T0 changes no production code: every file it adds lives under `tools/`. The doc fixes (plan item 7) are being done separately and are not specified here.
+Status: initial T0 audit implemented and recorded in section 8; Codex wrap-up paused by the user on 2026-11-10. Written by the Lead role (`claude-lead`) for phase T0 of `docs/terrain-vegetation-revamp-plan.md`. T0 changes no production code: every file it adds lives under `tools/`. The doc fixes (plan item 7) are being done separately and are not specified here.
 
 Read with: the plan (sections 1, 2.2, 3.1-3.3, 7.1, 11 T0/T1, 12), `docs/vastness-plan.md` (V0 in section 7, section 11), `AGENTS.md` (testing, manifest, captures, pruning, ffmpeg), and the `godot-test-run`, `test-scaffold` and `perf-capture` skills.
 
@@ -1078,7 +1078,7 @@ Grass call values (`grass_params` in the golden): tile 32 m, cell 8 m, 9 candida
 Run 2026-11-09/10 on the **RTX 4070 desktop**. All cost numbers below are "4070, non-authoritative"; the authoritative cost run is still to do on the A1000. Tools: `landscape_look_baseline`, `landscape_cost_baseline`, `landscape_lod_switch_capture` (wrappers in `tools/`, shared body `tools/landscape_baseline_common.gd`, bridge `tools/LandscapeTimingBridge.cs`, optional `tools/landscape_pass_timestamp_effect.gd`). All three booted the pinned world through `landscape_harness_common.gd` (world verified), at 1920x1080, VSync off, preset Medium (grass Cards), the user's grave-key preference files (`--prefs=user`; snapshot and sha256 in each output folder; `gameplay_wet_world_defaults.tres` was absent so its defaults applied), clocks held, RingPerformanceMonitor disabled.
 
 Runner results (profile `landscape_gpu`):
-- Look: `.godot/test_runs/landscape_gpu/20261110-000114/results.md`: "1 selected: 1 pass. Wall 3m04s. Exit 0."
+- Look (`clear`): `.godot/test_runs/landscape_gpu/20261110-120504/results.md` reports “1 selected: 1 pass. Wall 3m29s. Exit 0.”
 - Cost: `.godot/test_runs/landscape_gpu/20261110-000700/results.md`: "1 selected: 1 crash. Wall 28m55s. Exit 1." The row says "PASS marker printed, then crash exit code -1073741819": `LANDSCAPE_COST=PASS` was printed and every output was written, then Godot 4.8-dev7 crashed at exit (the known exit issue; the look run exits 0, so it is probably the timestamp hooks at shutdown; it persisted after detaching them before cleanup).
 - LOD switch: `.godot/test_runs/landscape_gpu/20261110-003622/results.md`: "1 selected: 1 pass. Wall 3m32s. Exit 0." (analysis below uses the earlier by-hand run of the same code, whose frames were kept for the sheets).
 
@@ -1086,7 +1086,11 @@ Runner results (profile `landscape_gpu`):
 
 ##### Look references
 
-Output: `.godot/audit_baseline/rtx4070/t0/look/2026-11-10_00-01-25/` (`<pose>__<time>.png`, `_bands.png`, `look.json`, `reference_set.json`, `prefs_snapshot/`). 18 views, all PASS: mean linear luma above 0.01 (lowest `forest_interior_eye__sun_8_set` 0.018, highest `hills_2km__noon` 0.231), noon sun elevation 75.0, `sun_8_set` 8.00, streaming idle for every view. Auto-exposure is switched off after the first pose so the references are reproducible. The HUD (title card, status box, minimap) is in every image. Reference set: `plains_eye__noon`, `hills_eye__sun_8_set`, `forest_edge_eye__noon`, `coast_eye__noon`, `hills_2km__noon`.
+The active 18-view reference set is `.godot/audit_baseline/rtx4070/t0/look/2026-11-10_12-05-36/`. It contains `<pose>__<time>.png`, `_bands.png`, `look.json`, `reference_set.json` and `prefs_snapshot/`. All views passed with idle streaming, depth data and the requested sun elevation (75° at noon, 8° at `sun_8_set`). Mean linear luma ranged from 0.018 at `forest_interior_eye__sun_8_set` to 0.247 at `coast_eye__noon`. The harness disables auto-exposure on the first view. The title card, status box and minimap are visible in each image.
+
+Clear mode selected `cloud_time=2434.5` s on candidate 3. All nine locations recorded precipitation 0, system kind 0 and an inactive megastorm at both sun elevations. The two-pose natural probe at 1234.5 s recorded precipitation 0.773865 and system kind 4 at the coast. The historical 4070 cost row for `coast_eye` predates the pin.
+
+The old and clear plains captures have the same world identity, preference hashes and depth-band shares to the precision shown below. Their mean linear luma was 0.14330 and 0.14256. FFmpeg measured SSIM 0.895537 and PSNR 29.784069 dB. The heatmap shows moved clouds and grass-card highlights, with no broad change in terrain or exposure. The repeat against the two-pose clear probe shows some frame-to-frame grass variation at the same weather time and gives SSIM 0.982538 and PSNR 42.603866 dB. The forest-edge sky is darker where a bright cloud moved away. Coast rain streaks are gone. The two plains heatmaps and the coast before/after image are under `.godot/audit_baseline/common/t0/revamp_tool_checks_20261110/`.
 
 What the images show (looked at `plains_eye__noon`, `hills_2km__noon`, `forest_interior_eye__sun_8_set`, `saved_18km__noon`):
 - `plains_eye__noon`: a flat olive-green plain with a uniform short-grass and tuft carpet (grass cards, no trees), the ring arch rising as a pale blue vertical band, soft cumulus, a blue-grey mountain range on the horizon.
@@ -1094,17 +1098,17 @@ What the images show (looked at `plains_eye__noon`, `hills_2km__noon`, `forest_i
 - `forest_interior_eye__sun_8_set`: almost black under a dense maple canopy, with one patch of blue sky and thin cloud streaks; the understory is near-black grass. The darkest view, and the most sensitive to exposure and ambient settings.
 - `saved_18km__noon` (16 km up): cloud puffs over bluish terrain with large flat-coloured regions, a hard-edged rectangular pale tile near the top right where the far terrain ends, a bright blue ring arch; the minimap has a black strip at its top.
 
-Band summary of the five reference views (share of screen and mean linear luma per band; empty bands omitted):
+The five reference views show screen share and mean linear luma for each band that covers at least 0.5% of the screen.
 
 | view | bands |
 |---|---|
-| plains_eye__noon | 0-10 m 29 % 0.108; 10-30 m 14 % 0.078; 30-100 m 6 % 0.061; 0.1-0.5 km 6 % 0.062; 8-30 km 1 % 0.194; 30-120 km 1 % 0.294; 120-500 km 1 % 0.457; 500-2,000 km 41 % 0.205 |
-| hills_eye__sun_8_set | 0-10 m 24 % 0.032; 10-30 m 6 % 0.142; 30-100 m 10 % 0.005; 0.1-0.5 km 9 % 0.002; 0.5-2 km 10 % 0.006; 500-2,000 km 41 % 0.149 |
-| forest_edge_eye__noon | 0-10 m 40 % 0.074; 10-30 m 13 % 0.048; 30-100 m 9 % 0.037; 0.1-0.5 km 3 % 0.050; 8-30 km 0 % 0.161; 120-500 km 0 % 0.374; 500-2,000 km 35 % 0.249 |
-| coast_eye__noon | 0-10 m 31 % 0.042; 10-30 m 13 % 0.019; 30-100 m 5 % 0.024; 30-120 km 3 % 0.273; 500-2,000 km 41 % 0.082 |
-| hills_2km__noon | 0.5-2 km 15 % 0.142; 2-8 km 46 % 0.199; 8-30 km 11 % 0.321; 30-120 km 5 % 0.447; 120-500 km 4 % 0.525; 500-2,000 km 19 % 0.211 |
+| plains_eye__noon | 0-10 m 29 % 0.108 · 10-30 m 14 % 0.078 · 30-100 m 6 % 0.061 · 0.1-0.5 km 6 % 0.062 · 8-30 km 1 % 0.193 · 30-120 km 1 % 0.293 · 120-500 km 1 % 0.453 · 500-2,000 km 41 % 0.203 |
+| hills_eye__sun_8_set | 0-10 m 24 % 0.032 · 10-30 m 6 % 0.142 · 30-100 m 10 % 0.005 · 0.1-0.5 km 9 % 0.002 · 0.5-2 km 10 % 0.005 · 500-2,000 km 41 % 0.148 |
+| forest_edge_eye__noon | 0-10 m 40 % 0.074 · 10-30 m 13 % 0.048 · 30-100 m 9 % 0.036 · 0.1-0.5 km 3 % 0.052 · 500-2,000 km 35 % 0.150 |
+| coast_eye__noon | 0-10 m 31 % 0.153 · 10-30 m 13 % 0.155 · 30-100 m 5 % 0.158 · 0.1-0.5 km 4 % 0.207 · 30-120 km 3 % 0.500 · 120-500 km 2 % 0.508 · 500-2,000 km 41 % 0.327 |
+| hills_2km__noon | 0.5-2 km 15 % 0.138 · 2-8 km 46 % 0.202 · 8-30 km 11 % 0.315 · 30-120 km 5 % 0.440 · 120-500 km 4 % 0.535 · 500-2,000 km 19 % 0.211 |
 
-The 500-2,000 km band holds the sky and the ring arch seen through the depth buffer (35-41 % of every ground view). At `sun_8_set` the 30 m to 2 km terrain bands are nearly black (luma 0.002-0.006 at `hills_eye`) while the sky band stays at 0.15, a large tier step.
+The 500-2,000 km band holds the sky and the ring arch seen through the depth buffer (35-41 % of the ground views in this table). At `sun_8_set` the 30 m to 2 km terrain bands at `hills_eye` have luma 0.002-0.005 while the sky band stays at 0.15.
 
 ##### Cost baseline (4070, non-authoritative)
 

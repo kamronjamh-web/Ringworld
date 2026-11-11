@@ -70,6 +70,10 @@ environment/screen_space_reflection/roughness_quality=2
 
 [shader_globals]
 
+ringworld_world_features={
+"type": "int",
+"value": 0
+}
 ringworld_solar_visibility={
 "type": "float",
 "value": 1.0

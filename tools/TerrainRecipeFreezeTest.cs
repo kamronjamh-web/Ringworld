@@ -104,7 +104,7 @@ public partial class TerrainRecipeFreezeTest : RefCounted
         return failures.Count == 0 ? 0 : 1;
     }
 
-    static TerrainGenerationParameters Recipe(string name, int seed) => name switch
+    internal static TerrainGenerationParameters Recipe(string name, int seed) => name switch
     {
         "erosion_v4" => EmitterSiteTestWorlds.Gen17Recipe(seed),
         "sites_v5" => EmitterSiteTestWorlds.Gen17SitesRecipe(seed),
@@ -113,7 +113,7 @@ public partial class TerrainRecipeFreezeTest : RefCounted
         _ => EmitterSiteTestWorlds.Gen17ClimateRecipe(seed),
     };
 
-    static RingTerrainSampler Sampler(string name, int seed) => name switch
+    internal static RingTerrainSampler Sampler(string name, int seed) => name switch
     {
         "erosion_v4" => EmitterSiteTestWorlds.CreateGen17(seed),
         "sites_v5" => EmitterSiteTestWorlds.CreateGen17Sites(seed),
@@ -124,17 +124,21 @@ public partial class TerrainRecipeFreezeTest : RefCounted
 
     static SortedDictionary<string, string> Capture() => Capture(RecipeNames);
 
-    static SortedDictionary<string, string> Capture(string[] recipeNames)
+    internal static SortedDictionary<string, string> Capture(string[] recipeNames)
+        => Capture(recipeNames, Recipe, Sampler);
+
+    internal static SortedDictionary<string, string> Capture(string[] recipeNames,
+        Func<string, int, TerrainGenerationParameters> recipeFactory, Func<string, int, RingTerrainSampler> samplerFactory)
     {
         var entries = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (string name in recipeNames)
             foreach (int seed in Seeds)
             {
                 string prefix = $"{name}/{seed}/";
-                TerrainGenerationParameters p = Recipe(name, seed);
+                TerrainGenerationParameters p = recipeFactory(name, seed);
                 entries[prefix + "canonical_json_sha256"] = Sha(System.Text.Encoding.UTF8.GetBytes(p.CanonicalJson));
                 entries[prefix + "definition_hash"] = p.DefinitionHash.ToString("X16");
-                using (RingTerrainSampler sampler = Sampler(name, seed)) entries[prefix + "terrain_definition_hash"] = sampler.TerrainDefinitionHash.ToString("X16");
+                using (RingTerrainSampler sampler = samplerFactory(name, seed)) entries[prefix + "terrain_definition_hash"] = sampler.TerrainDefinitionHash.ToString("X16");
                 // Representative origins are found with the unshaped natural model; the same model class that is hashed below.
                 var origins = FindOrigins(seed);
                 using var model = new TerrainGenerationHeightModel(p);
@@ -151,11 +155,11 @@ public partial class TerrainRecipeFreezeTest : RefCounted
                     AppendDiagnostics(bytes, model.SampleDiagnostics(around, across));
                 }
                 entries[prefix + "diagnostics64"] = Sha(bytes.ToArray());
-                if (name == "weather_lung_v8")
+                if (p.HasWeatherLung)
                 {
                     // Around the Weather Lung centre (basin, rim, skirt) the v8 output itself is frozen.
-                    using RingTerrainSampler lungSampler = Sampler(name, seed);
-                    WeatherLungSite lung = (lungSampler.WeatherLung ?? throw new InvalidOperationException("v8 sampler has no Weather Lung")).Site;
+                    using RingTerrainSampler lungSampler = samplerFactory(name, seed);
+                    WeatherLungSite lung = (lungSampler.WeatherLung ?? throw new InvalidOperationException("Sampler has no Weather Lung")).Site;
                     entries[prefix + "wl_site"] = $"{lung.Around}/{lung.Across}/{lung.PadHeight}/{lung.YawDegrees}/{lung.SiteHash:X16}";
                     entries[prefix + "wl_grid2m"] = Sha(FloatBytes(model.SampleGrid(lung.Around - 64d, lung.Across - 64d, GridSize, GridSize, 2d)));
                     entries[prefix + "wl_grid512m"] = Sha(FloatBytes(model.SampleGrid(lung.Around - 16_384d, lung.Across - 16_384d, GridSize, GridSize, 512d)));
@@ -170,7 +174,7 @@ public partial class TerrainRecipeFreezeTest : RefCounted
     }
 
     /// <summary>Fixed seam/edge origins plus scanned plains, foothill, mountain, coast and ocean origins for the seed.</summary>
-    static List<(string Label, double Around, double Across)> FindOrigins(int seed)
+    internal static List<(string Label, double Around, double Across)> FindOrigins(int seed)
     {
         double edge = 2d * (GridSize - 1);
         var origins = new List<(string, double, double)>

@@ -1,7 +1,8 @@
 extends SceneTree
 
-## Landscape audit T0-6: generation 1 fingerprint (docs/landscape-audit-t0-spec.md WO T0-6). Recomputes the row and compares it with tools/fixtures/world_generation_fingerprint_golden.json.
-## RUN: Godot_console.exe --headless --path . --script res://tools/world_generation_fingerprint_test.gd [-- --capture | --print | --golden=<path>]
+## Checks all frozen fingerprint rows and v9 generation 1 content parity against tools/fixtures/world_generation_fingerprint_golden.json.
+## RUN: Godot_console.exe --headless --path . --script res://tools/world_generation_fingerprint_test.gd
+## Optional args after --: --golden=<path>, --print [--generation=N] [--review-features=id[,id]], or --capture --generation=N.
 ## Prints WORLD_GENERATION_FINGERPRINT=PASS, or WORLD_GENERATION_FINGERPRINT=FAIL <reason> through push_error (exit 1).
 const TEST := preload("res://tools/WorldGenerationFingerprintTest.cs")
 

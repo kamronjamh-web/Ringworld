@@ -163,6 +163,8 @@ public sealed partial class RingTerrainSampler : IDisposable
     public CaveTopologyDensityComposer CaveTopologyDensityComposer { get; }
     public int TerrainGeneratorVersion => UsesRuntimeSurfaceGeneration ? RuntimeSurfaceGeneratorVersion : GeneratorVersion;
     public bool UsesRuntimeSurfaceGeneration => _runtimeSurfaceModel != null;
+    public int WorldFeatureMask { get; }
+    public int WorldGenerationNumber { get; }
     public string SurfaceGenerationRecipeJson => _runtimeSurfaceParameters?.CanonicalJson ?? string.Empty;
     public string SurfaceGenerationContractId => UsesRuntimeSurfaceGeneration ? RuntimeSurfaceGenerationContractId : string.Empty;
     public float SurfaceHeightOffset => UsesRuntimeSurfaceGeneration ? 0.0f : 0.5f;
@@ -269,6 +271,9 @@ public sealed partial class RingTerrainSampler : IDisposable
                 CreateRuntimeSurfaceGeneration(_settings, periodicAroundRing, aroundRingVoxelLength,
                     ringAcrossWidthMeters, maxBuildGlobalY);
         }
+        WorldGenerationNumber = _runtimeSurfaceParameters?.WorldGeneration ?? 1;
+        if (_runtimeSurfaceParameters is { IsWorldGenerationRecipe: true } worldRecipe)
+            WorldFeatureMask = WorldGenerationLedger.Production.MaskFor(WorldGenerationNumber, worldRecipe.ReviewFeatures);
         if (caveGenerationContractOverride is { } overrideContract)
             overrideContract.ValidateTerrainSeed(_settings.Seed);
         // Validate and freeze the terrain-seed-derived cave identity before

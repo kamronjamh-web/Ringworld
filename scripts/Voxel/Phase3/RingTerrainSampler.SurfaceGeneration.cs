@@ -116,8 +116,35 @@ public sealed partial class RingTerrainSampler
         TerrainGenerationParameters parameters = TerrainGenerationParameters.FromJson(settings.SurfaceGenerationRecipeJson);
         if (unchecked((int)parameters.Seed) != settings.Seed)
             throw new ArgumentException("Surface recipe and world climate seeds must agree.", nameof(settings));
+        // The constructor gives the root its own settings duplicate. Workers reuse the effective settings.
+        if (parameters.IsWorldGenerationRecipe)
+            ApplyRecipeClimate(settings, parameters);
         // TerrainGenerationParameters validates the full-range, Certified, periodic v1 contract.
         return (parameters, new TerrainGenerationHeightModel(parameters), settings.AltitudeTemperatureDropPerKilometre);
+    }
+
+    private static void ApplyRecipeClimate(VoxelTerrainSettings settings, TerrainGenerationParameters recipe)
+    {
+        settings.ContinentalFrequency = (float)recipe.ContinentalFrequency;
+        settings.ErosionFrequency = (float)recipe.ErosionFrequency;
+        settings.RidgeFrequency = (float)recipe.RidgeFrequency;
+        settings.TemperatureFrequency = (float)recipe.TemperatureFrequency;
+        settings.MoistureFrequency = (float)recipe.MoistureFrequency;
+        settings.MountainWarpFrequency = (float)recipe.MountainWarpFrequency;
+        settings.ValleyFrequency = (float)recipe.ValleyFrequency;
+        settings.ContinentalSecondaryStrength = (float)recipe.ContinentalSecondaryStrength;
+        settings.ContinentalContrast = (float)recipe.ContinentalContrast;
+        settings.ContinentalOceanBias = (float)recipe.ContinentalOceanBias;
+        settings.MountainWarpDistanceMeters = (float)recipe.MountainWarpDistanceMeters;
+        settings.PeakRarityExponent = (float)recipe.PeakRarityExponent;
+        settings.MountainBeltBroadness = (float)recipe.MountainBeltBroadness;
+        settings.ValleyNarrowness = (float)recipe.ValleyNarrowness;
+        settings.OceanMoistureInfluence = (float)recipe.OceanMoistureInfluence;
+        settings.ClimateLatitudeInfluence = (float)recipe.ClimateLatitudeInfluence;
+        settings.CoastalBeachStrength = (float)recipe.CoastalBeachStrength;
+        settings.AltitudeTemperatureDropPerKilometre = (float)recipe.AltitudeTemperatureDropPerKilometre;
+        settings.MountainRainShadowStrength = (float)recipe.MountainRainShadowStrength;
+        settings.MacroRegionSizeMeters = recipe.MacroRegionSizeMeters;
     }
 
     /// <summary>

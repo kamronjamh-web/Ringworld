@@ -140,10 +140,12 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 		tabs.current_tab = index
 		await _frames(2)
 		var title := tabs.get_tab_title(index)
-		var folds := _foldables(tabs.get_child(index))
-		# Atmosphere and the prototype-launch tab intentionally use plain controls.
+		var tab := tabs.get_child(index)
+		var folds := _foldables(tab)
+		var gameplay_atmosphere := label == "gameplay" and title == "Atmosphere"
+		# The prototype-launch tab intentionally uses plain controls.
 		# Diagnostics also has sections that contain only readouts.
-		var requires_folds := label == "menu" or title in ["Lighting", "Shadows", "Clouds", "Quality", "Anti-aliasing", "Motion", "LODs", "Terrain", "Water", "Wind", "Grass", "Vegetation", "Diagnostics"]
+		var requires_folds := gameplay_atmosphere or label == "menu" or title in ["Lighting", "Shadows", "Clouds", "Quality", "Anti-aliasing", "Motion", "LODs", "Terrain", "Water", "Wind", "Grass", "Vegetation", "Diagnostics"]
 		if requires_folds:
 			_require(folds.size() > 0, "%s tab %s lacks FoldableContainer" % [label, title])
 		if folds.is_empty():
@@ -157,13 +159,25 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 				await _wheel_guard(drawer, plain_tab, label + " " + title)
 			print("GRAVE_MENU_TAB %s/%s plain=true" % [label, title])
 			continue
+		var containment: Control
 		for fold in folds:
 			_require(bool(fold.get("folded")), "%s section %s is not folded by default" % [label, fold.get("title")])
 			if label == "menu" or title == "Wind":
 				_require(_has_section_controls(fold), "%s section %s has no controls" % [label, fold.get("title")])
-		_require_settings_grouped(tabs.get_child(index), label)
+			if gameplay_atmosphere and fold.get("title") == "Containment field":
+				containment = fold
+		_require_settings_grouped(tab, label, gameplay_atmosphere)
+		if gameplay_atmosphere:
+			_require(containment != null, "gameplay Atmosphere lacks the Containment field section")
+			if containment == null: continue
+			var preset := tab.find_child("AtmospherePreset", true, false) as OptionButton
+			_require(preset != null and preset.is_visible_in_tree(), "gameplay Atmosphere preset is hidden while Containment field is folded")
+			var slider := tab.find_child("AtmosphereVisibility", true, false) as HSlider
+			_require(slider != null and slider.is_visible_in_tree(), "gameplay Atmosphere visibility slider is hidden while Containment field is folded")
+			if slider != null and slider.is_visible_in_tree():
+				await _wheel_numeric(tab, slider, label + " Atmosphere HSlider", false)
 		print("GRAVE_MENU_TAB %s/%s sections=%d" % [label, tabs.get_tab_title(index), folds.size()])
-		var first: Control = folds[0]
+		var first: Control = containment if gameplay_atmosphere else folds[0]
 		_ensure_visible(tabs.get_child(index), first)
 		await _frames(2)
 		await _click_section_header(first)
@@ -171,7 +185,7 @@ func _exercise_drawer(drawer: Node, label: String) -> void:
 		_require(not bool(first.get("folded")), label + " section header did not expand")
 		_require(_section_body_visible(first), label + " expanded section body is hidden")
 		if folds.size() > 1:
-			var second: Control = folds[1]
+			var second: Control = folds[1] if first == folds[0] else folds[0]
 			_ensure_visible(tabs.get_child(index), second)
 			await _frames(2)
 			await _click_section_header(second)
@@ -415,9 +429,10 @@ func _has_section_controls(section: Node) -> bool:
 		if child is BaseButton or child is Slider or child is SpinBox: return true
 	return false
 
-func _require_settings_grouped(tab: Node, label: String) -> void:
+func _require_settings_grouped(tab: Node, label: String, gameplay_atmosphere: bool) -> void:
 	for child in tab.find_children("*", "Control", true, false):
 		if not (child is Slider or child is SpinBox or child is OptionButton or child is CheckButton or child is CheckBox or child is ColorPickerButton): continue
+		if gameplay_atmosphere and str(child.name).begins_with("Atmosphere"): continue
 		var ancestor: Node = child.get_parent()
 		while ancestor != null and ancestor != tab and not ancestor is FoldableContainer:
 			ancestor = ancestor.get_parent()

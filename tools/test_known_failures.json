@@ -174,6 +174,13 @@
       "evidence": "batch close record: C6 p=0 failed once, 150/150 on two reruns",
       "since": "2026-10-29"
     },
+    "ui_scaling_smoke_test": {
+      "status": "flaky",
+      "match": "UI_SCALING_SMOKE=FAIL Button visual-center hover failed at \\(1280, 720\\)\\.",
+      "retries": 0,
+      "evidence": "T0W-5 in docs/work-orders/terrain-vegetation/T0-wrapup.md. Passes and failures on the same pre-Cards heads. All five RTX 4070 repeats on 2026-11-10 reached 1280x720 with identity stretch, but the native cursor stayed at (800, 450) in the viewport after the requested warp to (234, 361.33).",
+      "since": "2026-10-30"
+    },
     "rain_streaks_gpu_test": {
       "status": "flaky",
       "match": "paused_clock_identical FAIL",

@@ -1,21 +1,22 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using Godot;
+using RingworldTechDemo.Terrain.Generation;
 
 namespace RingworldTechDemo.Tools;
 
 /// <summary>
-/// Generation 1 fingerprint test (docs/landscape-audit-t0-spec.md WO T0-6). Recomputes row 1 from the pinned world and compares every field with
-/// tools/fixtures/world_generation_fingerprint_golden.json. Flags (after `--`): --capture (append row 1 if the golden has no row for the generation; never rewrites a row),
-/// --print (print the row JSON), --golden=&lt;path&gt; (compare against another golden file, for the can-it-fail check). Run via tools/world_generation_fingerprint_test.gd.
+/// Verifies the frozen fingerprints and generation 1 v8/v9 content parity. Run via tools/world_generation_fingerprint_test.gd.
+/// Use --print to show the v8 row, --golden=&lt;path&gt; for a scratch fixture, or --capture --generation=N to append a frozen row.
 /// </summary>
 public partial class WorldGenerationFingerprintTest : RefCounted
 {
-    const string GoldenPath = "res://tools/fixtures/world_generation_fingerprint_golden.json";
+    internal const string GoldenPath = "res://tools/fixtures/world_generation_fingerprint_golden.json";
     static readonly JsonSerializerOptions Pretty = new() { WriteIndented = true };
     static readonly HashSet<string> Informational = new() { "captured" };
 
@@ -35,66 +36,117 @@ public partial class WorldGenerationFingerprintTest : RefCounted
     static bool RunChecks()
     {
         var clock = Stopwatch.StartNew();
-        string fixturePath = ProjectSettings.GlobalizePath(LandscapePoseFinder.FixturePath);
-        LandscapePoseFinder.Fixture fixture = LandscapePoseFinder.ReadFixture(fixturePath);
-        LandscapeWorld.Worker[] workers = LandscapeWorld.CreateWorkers(1);
-        Dictionary<string, object?> row;
-        try { row = WorldGenerationFingerprint.Compute(workers[0], fixture, "tools/fixtures/landscape_poses_v8_s1337.json"); }
-        finally { foreach (var w in workers) w.Dispose(); }
-        row["captured"] = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        GD.Print($"WORLD_GENERATION_FINGERPRINT_COMPUTED seconds={clock.Elapsed.TotalSeconds:F1}");
-
         string golden = Arg("--golden=");
-        string path = golden.Length > 0 ? golden : ProjectSettings.GlobalizePath(GoldenPath);
-        if (Flag("--print")) GD.Print(JsonSerializer.Serialize(row, Pretty));
-
+        string path = Path.GetFullPath(golden.Length > 0 ? golden : ProjectSettings.GlobalizePath(GoldenPath));
+        WorldGenerationLedger ledger = WorldGenerationLedger.Production;
+        string[] args = OS.GetCmdlineUserArgs();
+        var selection = LandscapeWorld.ParseGenerationArgs(args);
         if (Flag("--capture"))
         {
-            var rows = new List<object?>();
-            if (File.Exists(path))
-            {
-                using JsonDocument existing = JsonDocument.Parse(File.ReadAllText(path));
-                foreach (JsonElement e in existing.RootElement.GetProperty("rows").EnumerateArray())
-                {
-                    if (e.GetProperty("generation").GetInt32() == WorldGenerationFingerprint.Generation)
-                    { GD.PushError("WORLD_GENERATION_FINGERPRINT=FAIL --capture refused: the golden already has a row for generation " + WorldGenerationFingerprint.Generation); return false; }
-                    rows.Add(JsonSerializer.Deserialize<Dictionary<string, object?>>(e.GetRawText()));
-                }
-            }
-            rows.Add(row);
-            File.WriteAllText(path, JsonSerializer.Serialize(new Dictionary<string, object?> { ["schema"] = 1, ["rows"] = rows }, Pretty) + "\n");
-            GD.Print("WORLD_GENERATION_FINGERPRINT_CAPTURED " + path);
+            if (selection.Review.Count > 0)
+                throw new InvalidOperationException("--capture cannot include review features");
+            int generation = selection.Generation;
+            if (generation < 1 || generation > ledger.LatestFrozen || !ledger.IsLoadable(generation))
+                throw new InvalidOperationException($"--capture requires a loadable frozen --generation=N (latest frozen is {ledger.LatestFrozen})");
+            Capture(path, generation);
             return true;
         }
 
-        if (!File.Exists(path)) { GD.PushError("WORLD_GENERATION_FINGERPRINT=FAIL golden missing: " + path); return false; }
-        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
-        JsonElement? stored = null;
-        foreach (JsonElement e in doc.RootElement.GetProperty("rows").EnumerateArray())
-            if (e.GetProperty("generation").GetInt32() == WorldGenerationFingerprint.Generation) stored = e;
-        if (stored == null) { GD.PushError("WORLD_GENERATION_FINGERPRINT=FAIL golden has no row for generation 1"); return false; }
+        if (selection.IsExplicit)
+        {
+            if (!Flag("--print"))
+                throw new InvalidOperationException("Use --print with generation flags for a diagnostic fingerprint.");
+            GD.Print(JsonSerializer.Serialize(ComputeRow(LandscapeWorld.For(selection.Generation, selection.Review)), Pretty));
+            return true;
+        }
 
+        SortedDictionary<int, JsonElement> rows = ReadRows(path);
+        if (!rows.ContainsKey(ledger.LatestFrozen))
+            throw new InvalidOperationException($"golden has no row for latest frozen generation {ledger.LatestFrozen}");
+        if (!rows.ContainsKey(1)) throw new InvalidOperationException("golden has no row for generation 1");
+
+        JsonElement legacy = ComputeRow(LandscapeWorld.Default);
+        if (Flag("--print")) GD.Print(JsonSerializer.Serialize(legacy, Pretty));
+        if (!Compare(rows[1], legacy, "generation 1 v8", Informational, out int legacyFields)) return false;
+        GD.Print($"WORLD_GENERATION_FINGERPRINT_ROW heights={legacy.GetProperty("heights").GetProperty("hash")} sampler={legacy.GetProperty("sampler").GetProperty("hash")} catalog={legacy.GetProperty("catalog").GetProperty("hash")} fields={legacyFields + 1} seconds={clock.Elapsed.TotalSeconds:F1}");
+
+        var v9Metadata = new HashSet<string>(Informational, StringComparer.Ordinal) { "label", "generator_id", "definition_hash" };
+        if (!Compare(rows[1], ComputeRow(LandscapeWorld.For(1)), "generation 1 v9 content", v9Metadata, out int v9Fields)) return false;
+        GD.Print($"V9_GEN1_EQUALS_ROW1 fields={v9Fields}");
+        foreach (var (generation, stored) in rows)
+        {
+            if (generation == 1) continue;
+            if (generation > ledger.LatestFrozen)
+                throw new InvalidOperationException($"golden contains an unknown generation {generation}");
+            if (!Compare(stored, ComputeRow(LandscapeWorld.For(generation)), $"generation {generation}", Informational, out _)) return false;
+        }
+        return true;
+    }
+
+    static JsonElement ComputeRow(LandscapeWorld.Spec spec)
+    {
+        LandscapePoseFinder.Fixture fixture = LandscapePoseFinder.ReadFixture(ProjectSettings.GlobalizePath(LandscapePoseFinder.FixturePath));
+        using LandscapeWorld.Worker worker = spec.CreateWorkers(1)[0];
+        Dictionary<string, object?> row = WorldGenerationFingerprint.Compute(spec, worker, fixture, "tools/fixtures/landscape_poses_v8_s1337.json");
+        row["captured"] = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return JsonSerializer.SerializeToElement(row);
+    }
+
+    internal static SortedDictionary<int, JsonElement> ReadRows(string path)
+    {
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        if (doc.RootElement.GetProperty("schema").GetInt32() != 1)
+            throw new InvalidOperationException("unsupported fingerprint golden schema");
+        var rows = new SortedDictionary<int, JsonElement>();
+        foreach (JsonElement row in doc.RootElement.GetProperty("rows").EnumerateArray())
+        {
+            int generation = row.GetProperty("generation").GetInt32();
+            if (generation < 1 || !rows.TryAdd(generation, row.Clone()))
+                throw new InvalidOperationException($"invalid or duplicate golden generation {generation}");
+        }
+        return rows;
+    }
+
+    static void Capture(string path, int generation)
+    {
+        string lockPath = path + ".capture.lock";
+        using var captureLock = new FileStream(lockPath, FileMode.CreateNew, System.IO.FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
+        SortedDictionary<int, JsonElement> rows = File.Exists(path) ? ReadRows(path) : new();
+        if (rows.ContainsKey(generation))
+            throw new InvalidOperationException($"--capture refused: the golden already has a row for generation {generation}");
+
+        JsonElement row = ComputeRow(generation == 1 ? LandscapeWorld.Default : LandscapeWorld.For(generation));
+        if (Flag("--print")) GD.Print(JsonSerializer.Serialize(row, Pretty));
+        string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            var document = new { schema = 1, rows = rows.Values.Append(row) };
+            File.WriteAllText(temp, JsonSerializer.Serialize(document, Pretty) + "\n");
+            File.Move(temp, path, overwrite: true);
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
+        GD.Print("WORLD_GENERATION_FINGERPRINT_CAPTURED " + path);
+    }
+
+    static bool Compare(JsonElement stored, JsonElement now, string label, HashSet<string> excluded, out int fields)
+    {
         var expected = new SortedDictionary<string, string>(StringComparer.Ordinal);
         var actual = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        Flatten("", stored.Value, expected);
-        using (JsonDocument now = JsonDocument.Parse(JsonSerializer.Serialize(row))) Flatten("", now.RootElement, actual);
-
+        Flatten("", stored, expected);
+        Flatten("", now, actual);
+        fields = actual.Keys.Count(key => !excluded.Contains(key));
         var differences = new List<string>();
-        foreach (string key in expected.Keys.Union(actual.Keys).OrderBy(k => k, StringComparer.Ordinal))
+        foreach (string key in expected.Keys.Union(actual.Keys).OrderBy(key => key, StringComparer.Ordinal))
         {
-            if (Informational.Contains(key)) continue;
+            if (excluded.Contains(key)) continue;
             expected.TryGetValue(key, out string? e);
             actual.TryGetValue(key, out string? a);
             if (e != a) differences.Add($"{key}: golden {e ?? "<absent>"} now {a ?? "<absent>"}");
         }
-        if (differences.Count > 0)
-        {
-            foreach (string d in differences) GD.PushError("WORLD_GENERATION_FINGERPRINT diff " + d);
-            GD.PushError($"WORLD_GENERATION_FINGERPRINT=FAIL {differences.Count} field(s) differ from the generation 1 golden");
-            return false;
-        }
-        GD.Print($"WORLD_GENERATION_FINGERPRINT_ROW heights={actual["heights.hash"]} sampler={actual["sampler.hash"]} catalog={actual["catalog.hash"]} fields={actual.Count} seconds={clock.Elapsed.TotalSeconds:F1}");
-        return true;
+        if (differences.Count == 0) return true;
+        foreach (string d in differences) GD.PushError("WORLD_GENERATION_FINGERPRINT diff " + d);
+        GD.PushError($"WORLD_GENERATION_FINGERPRINT=FAIL {differences.Count} field(s) differ from the {label} golden");
+        return false;
     }
 
     static void Flatten(string prefix, JsonElement e, SortedDictionary<string, string> into)

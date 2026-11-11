@@ -55,7 +55,7 @@ public sealed class EmitterSiteTerrainShaper
         if (!parameters.HasEmitterSites) throw new ArgumentException("Recipe does not enable emitter sites.", nameof(parameters));
         return Cache.GetOrAdd(parameters.DefinitionHash, _ => new Lazy<EmitterSiteTerrainShaper>(() =>
         {
-            using var source = new Gen17NaturalHeightSource(parameters, parameters.DefinitionHash);
+            using var source = new Gen17NaturalHeightSource(parameters, parameters.NaturalSiteIdentity);
             EmitterSiteRegistry emitters = EmitterSiteRegistry.GetOrBuild(RecipeFor(parameters), source);
             ClimateMachineRegistry? climate = parameters.HasClimateMachines
                 ? ClimateMachineRegistry.GetOrBuild(ClimateRecipeFor(parameters), source, emitters)

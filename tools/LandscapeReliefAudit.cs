@@ -74,7 +74,8 @@ public partial class LandscapeReliefAudit : RefCounted
         // Normalisation proof first (spec escalation condition): 3 m sine must read 3/sqrt(2) in its octave band.
         SineCheck(failures);
 
-        LandscapeWorld.Worker[] workers = LandscapeWorld.CreateWorkers(LandscapeWorld.DefaultWorkerCount);
+        LandscapeWorld.Spec spec = LandscapeWorld.FromArgs(OS.GetCmdlineUserArgs());
+        LandscapeWorld.Worker[] workers = spec.CreateWorkers(LandscapeWorld.DefaultWorkerCount);
         try
         {
             // 1. Class coverage over the whole lattice.
@@ -82,7 +83,7 @@ public partial class LandscapeReliefAudit : RefCounted
             ParallelRows(workers, LandscapeWorld.LatticeAround, (w, i) =>
             {
                 for (int j = 0; j < LandscapeWorld.LatticeAcross; j++)
-                    latticeClass[i * LandscapeWorld.LatticeAcross + j] = (int)w.Class(LandscapeWorld.LatticeAroundMeters(i), LandscapeWorld.LatticeAcrossMeters(j));
+                    latticeClass[i * LandscapeWorld.LatticeAcross + j] = (int)BaselineClass(w, LandscapeWorld.LatticeAroundMeters(i), LandscapeWorld.LatticeAcrossMeters(j));
             });
             var coverage = new int[Enum.GetValues<LandscapeClass>().Length];
             foreach (int c in latticeClass) coverage[c]++;
@@ -118,13 +119,14 @@ public partial class LandscapeReliefAudit : RefCounted
 
             // 4. Report.
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            if (!spec.IsDefault) stamp += "_" + spec.Tag;
             string outDir = Arg("--out=");
             if (outDir.Length == 0) outDir = ProjectSettings.GlobalizePath("res://.godot/audit_baseline/common/t0/relief/" + stamp);
             Directory.CreateDirectory(outDir);
             var stats = BuildStats(anchors, coverage, latticeClass.Length, failures, warnings);
             double seconds = clock.Elapsed.TotalSeconds;
-            File.WriteAllText(Path.Combine(outDir, "relief_spectrum.json"), stats.Json(stamp, seconds));
-            File.WriteAllText(Path.Combine(outDir, "relief_spectrum.md"), stats.Markdown(stamp, seconds));
+            File.WriteAllText(Path.Combine(outDir, "relief_spectrum.json"), stats.Json(spec, stamp, seconds));
+            File.WriteAllText(Path.Combine(outDir, "relief_spectrum.md"), stats.Markdown(spec, stamp, seconds));
             GD.Print($"LANDSCAPE_RELIEF output={outDir} anchors={anchors.Length} seconds={seconds:F1}");
             foreach (LandscapeClass cls in Classes)
             {
@@ -148,9 +150,12 @@ public partial class LandscapeReliefAudit : RefCounted
 
     static double Wrap(double around) => ((around % LandscapeWorld.Circumference) + LandscapeWorld.Circumference) % LandscapeWorld.Circumference;
 
+    static LandscapeClass BaselineClass(LandscapeWorld.Worker w, double around, double across)
+        => LandscapeWorld.Classify(w.Gen1Shaped.SampleDiagnostics(around, across));
+
     static bool SiteFreePoint(LandscapeWorld.Worker w, double around, double across)
     {
-        var d = w.Diag(Wrap(around), across);
+        var d = w.Gen1Shaped.SampleDiagnostics(Wrap(around), across);
         return d.SiteWeight <= 0d && d.WeatherLungWeight <= 0d;
     }
 
@@ -158,7 +163,14 @@ public partial class LandscapeReliefAudit : RefCounted
     {
         if (z < 33000d || z > 285000d) return false;
         bool coastal = cls == LandscapeClass.CoastalBelt;
-        if (!(coastal ? w.ClassRing(a, z, cls, 500d, 6) : w.ClassRing(a, z, cls, 1500d))) return false;
+        double radius = coastal ? 500d : 1500d;
+        int matches = 0;
+        for (int k = 0; k < 8; k++)
+        {
+            double angle = k * Math.PI / 4d;
+            if (BaselineClass(w, a + radius * Math.Cos(angle), z + radius * Math.Sin(angle)) == cls) matches++;
+        }
+        if (matches < (coastal ? 6 : 8)) return false;
         // Both ends and the middle of each of the four transects.
         foreach (double d in new[] { -65536d, -2048d, 0d, 2047d, 65535d })
             if (!SiteFreePoint(w, a + d, z)) return false;
@@ -344,14 +356,22 @@ public partial class LandscapeReliefAudit : RefCounted
     sealed class Stats
     {
         public List<ClassStats> Classes = new();
-        public string Json(string stamp, double seconds)
+        public string Json(LandscapeWorld.Spec spec, string stamp, double seconds)
         {
             using var ms = new MemoryStream();
             using (var j = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = true }))
             {
                 j.WriteStartObject();
                 j.WriteNumber("schema", 1);
-                j.WriteString("world_hash", LandscapeWorld.DefinitionHashHex);
+                j.WriteString("world_hash", spec.DefinitionHashHex);
+                if (!spec.IsDefault)
+                {
+                    j.WriteNumber("generation", spec.Recipe.WorldGeneration);
+                    j.WriteStartArray("review_features");
+                    foreach (string id in spec.Recipe.ReviewFeatures) j.WriteStringValue(id);
+                    j.WriteEndArray();
+                    j.WriteString("world_tag", spec.Tag);
+                }
                 j.WriteNumber("anchors_per_class", AnchorsPerClass);
                 j.WriteString("coastal_note", "CoastalBelt heights are clamped at 0 (water surface)");
                 j.WriteStartArray("bands");
@@ -400,12 +420,12 @@ public partial class LandscapeReliefAudit : RefCounted
         static string BandName(int b) => FormatLen(Math.Pow(2, b + 1)) + "-" + FormatLen(Math.Pow(2, b + 2));
         static string FormatLen(double m) => m >= 1000 ? (m / 1000d).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) + " km" : m.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " m";
 
-        public string Markdown(string stamp, double seconds)
+        public string Markdown(LandscapeWorld.Spec spec, string stamp, double seconds)
         {
             var sb = new StringBuilder();
             string head = "| " + string.Join(" | ", Classes.Select(c => c.Cls.ToString())) + " |";
             string rule = "|---|" + string.Concat(Classes.Select(_ => "---|"));
-            sb.AppendLine($"Relief spectrum, world {LandscapeWorld.DefinitionHashHex}, stamp {stamp}, run time {seconds:F1} s. CoastalBelt heights are clamped at 0 (water surface).");
+            sb.AppendLine($"Relief spectrum, world {spec.DefinitionHashHex}, stamp {stamp}, run time {seconds:F1} s. CoastalBelt heights are clamped at 0 (water surface).");
             sb.AppendLine();
             sb.AppendLine("Anchors per class (lattice share): " + string.Join(", ", Classes.Select(c => $"{c.Cls} {c.AnchorCount} ({c.Coverage * 100:F1} %)")));
             sb.AppendLine();

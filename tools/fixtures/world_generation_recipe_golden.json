@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "rows": [
+    {
+      "generation": 1,
+      "seeds": {
+        "1337": {
+          "canonical_sha256": "2f459ac88d487504346c52a9ad2e4b36a4ec6aa4288dc850be75177bf1829741",
+          "definition_hash": "0x2c18d6dcde37a3d5"
+        },
+        "90210": {
+          "canonical_sha256": "9b92d10889097efa79ec1f01daa996b5607588706f1561fded07f2939aaf5774",
+          "definition_hash": "0x881422633f2b0619"
+        },
+        "2147483000": {
+          "canonical_sha256": "821f5e7c1d7844bb3578971a934073aba2aab002d9bfbfdc71ec9f37c9ee624f",
+          "definition_hash": "0xf98cd9661ccf0b56"
+        }
+      }
+    }
+  ]
+}

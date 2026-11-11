@@ -125,16 +125,16 @@ public partial class LandscapeTimingBridge : RefCounted
     }
 
     /// <summary>
-    /// Nearest large tree ahead of (around, across) for the LOD-switch dolly. Builds the 3 x 3 production tiles (BuildImportedForestReviewTile through the pinned world) around the point,
+    /// Nearest large tree ahead of (around, across) for the LOD-switch dolly. Builds the 3 x 3 production tiles through the selected world around the point,
     /// takes the nearest tree at least <paramref name="minHeight"/> m tall whose offset has a positive component along the yaw and lies between minM and maxM, then picks the dolly
     /// bearing (the direction from the tree out to the camera, nearest to straight back toward the pose) with no other tree near the 0..lineM line. Returns {found, tree_around, tree_across,
     /// surface, height, width, variant, species, distance_to_pose, bearing_deg, clear_radius_m, tree_count, error}.
     /// </summary>
-    public Godot.Collections.Dictionary NearestTreeAhead(double around, double across, double yawDeg, double minM, double maxM, double minHeight, double lineM)
+    public Godot.Collections.Dictionary NearestTreeAhead(LandscapeWorldBridge world, double around, double across, double yawDeg, double minM, double maxM, double minHeight, double lineM)
     {
         var result = new Godot.Collections.Dictionary { ["found"] = false };
         const double Circ = LandscapeWorld.Circumference;
-        using var sampler = LandscapeWorld.CreateSampler();
+        using var sampler = world.SelectedSpec.CreateSampler();
         long cells = (long)Math.Ceiling(Circ / 30d);
         long t0 = (long)Math.Floor((around - 200d) / 240d), t1 = (long)Math.Floor((around + 200d) / 240d);
         long u0 = (long)Math.Floor((across - 200d) / 240d), u1 = (long)Math.Floor((across + 200d) / 240d);

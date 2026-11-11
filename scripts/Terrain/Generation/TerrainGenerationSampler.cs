@@ -13,6 +13,7 @@ public partial class TerrainGenerationSampler : RefCounted
     private TerrainGenerationParameters? _validated;
     public string CanonicalJson => _model?.Parameters.CanonicalJson ?? _validated?.CanonicalJson ?? string.Empty;
     public string DefinitionHash => _model?.Parameters.DefinitionHash.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+    public string DefinitionHashHex => (_model?.Parameters ?? _validated)?.DefinitionHash.ToString("X16") ?? string.Empty;
 
     public bool Configure(GodotDictionary snapshot)
     {
@@ -52,6 +53,53 @@ public partial class TerrainGenerationSampler : RefCounted
         }
         catch(Exception exception) { LastError=exception.Message; return false; }
     }
+
+    public GodotDictionary WorldDefaultFields(int generation, long seed, string[] review)
+    {
+        try
+        {
+            var result = TerrainGenerationParameters.WorldDefault(generation, seed, review).WorldDefaultFields();
+            LastError = string.Empty;
+            return result;
+        }
+        catch (ArgumentException exception)
+        {
+            LastError = exception.Message;
+            return new GodotDictionary();
+        }
+    }
+
+    public Godot.Collections.Array ActiveRecipeFields(int generation, string reviewCsv)
+    {
+        var result = new Godot.Collections.Array();
+        string[] review;
+        try { review = WorldGenerationLedger.ParseReviewFeatures(reviewCsv); }
+        catch (ArgumentException) { return result; }
+        foreach (RecipeFieldSpec field in WorldRecipeSchema.Production.ActiveRecipeFields(generation, review))
+        {
+            bool integer = field.Kind == RecipeFieldKind.Int;
+            result.Add(new GodotDictionary
+            {
+                ["name"] = field.Name,
+                ["kind"] = integer ? "int" : "float",
+                ["default"] = integer ? Variant.From((int)field.Default) : Variant.From(field.Default),
+                ["min"] = field.Min,
+                ["max"] = field.Max
+            });
+        }
+        return result;
+    }
+
+    public string WorldRecipeValidationError(GodotDictionary snapshot)
+    {
+        try
+        {
+            TerrainGenerationParameters recipe = TerrainGenerationParameters.FromDictionary(snapshot);
+            return WorldGenerationLedger.Production.Validate(recipe, out string error) ? "" : error;
+        }
+        catch (Exception exception) { return exception.Message; }
+    }
+
     public double CalculateHeight(double around,double across) => Require().CalculateHeight(around,across);
     public double ContinentalHeight(double continentalness) => Require().ContinentalHeight(continentalness);
     public double OceanDepthForDistance(double distanceMeters) => Require().OceanDepthForDistance(distanceMeters);

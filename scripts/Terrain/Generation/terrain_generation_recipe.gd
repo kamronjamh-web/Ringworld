@@ -14,6 +14,30 @@ const CLIMATE_GENERATOR_ID: String = "ringworld_surface_climate_v6"
 const LANDFORM_GENERATOR_ID: String = "ringworld_surface_landform_v7"
 ## v8: v7 field set plus the Weather Lung basin operator (docs/weather-lung-integration-plan.md D3). New worlds only; climate machines stay the opt-in `climate_machines` field.
 const WEATHER_LUNG_GENERATOR_ID: String = "ringworld_surface_weather_lung_v8"
+const WORLD_GENERATOR_ID: String = "ringworld_surface_world_v9"
+const WORLD_RECIPE_BRIDGE := preload("res://scripts/Terrain/Generation/TerrainGenerationSampler.cs")
+const WORLD_CLIMATE_FIELDS := [
+	"continental_frequency",
+	"erosion_frequency",
+	"ridge_frequency",
+	"temperature_frequency",
+	"moisture_frequency",
+	"mountain_warp_frequency",
+	"valley_frequency",
+	"continental_secondary_strength",
+	"continental_contrast",
+	"continental_ocean_bias",
+	"mountain_warp_distance_m",
+	"peak_rarity_exponent",
+	"mountain_belt_broadness",
+	"valley_narrowness",
+	"ocean_moisture_influence",
+	"climate_latitude_influence",
+	"coastal_beach_strength",
+	"altitude_temperature_drop_per_kilometre",
+	"mountain_rain_shadow_strength",
+	"macro_region_size_m",
+]
 const DOMAIN_ID: String = "canonical_ring_noise_v1"
 const MIN_GEOMETRIC_WAVELENGTH_M: float = 16.0
 const CERTIFIED_CIRCUMFERENCE_M: float = 31415936.0
@@ -108,11 +132,35 @@ const MIN_BASIN_DEPTH_M: float = 1250.0
 @export_range(0.0, 120.0, 0.1) var lowland_erosion_strength_m: float = 24.0
 @export_range(1, 4, 1) var lowland_erosion_octaves: int = 2
 
+@export var world_generation: int = 1
+@export var review_features: String = ""
+@export var continental_frequency: float = 3.5e-6
+@export var erosion_frequency: float = 1.2e-5
+@export var ridge_frequency: float = 8e-6
+@export var temperature_frequency: float = 2.5e-6
+@export var moisture_frequency: float = 5e-6
+@export var mountain_warp_frequency: float = 4e-6
+@export var valley_frequency: float = 1.4e-5
+@export var continental_secondary_strength: float = 0.28
+@export var continental_contrast: float = 1.35
+@export var continental_ocean_bias: float = 0.0
+@export var mountain_warp_distance_m: float = 16000.0
+@export var peak_rarity_exponent: float = 16.0
+@export var mountain_belt_broadness: float = 0.5
+@export var valley_narrowness: float = 7.6
+@export var ocean_moisture_influence: float = 0.25
+@export var climate_latitude_influence: float = 0.55
+@export var coastal_beach_strength: float = 0.82
+@export var altitude_temperature_drop_per_kilometre: float = 0.075
+@export var mountain_rain_shadow_strength: float = 0.18
+@export var macro_region_size_m: int = 128000
+@export var extension_values: Dictionary = {}
+
 var flatten_denominator: float = exp(3.0) - 1.0
 
 func validation_errors() -> PackedStringArray:
 	var errors := PackedStringArray()
-	if generator_id != WEATHER_LUNG_GENERATOR_ID and generator_id != LANDFORM_GENERATOR_ID and generator_id != CLIMATE_GENERATOR_ID and generator_id != SITES_GENERATOR_ID and generator_id != EROSION_GENERATOR_ID and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
+	if not _is_erosion_family(generator_id) and generator_id != DETAIL_GENERATOR_ID and generator_id != GENERATOR_ID and generator_id != LEGACY_GENERATOR_ID:
 		errors.append("Unsupported generator_id: %s" % generator_id)
 	if domain_id != DOMAIN_ID:
 		errors.append("Unsupported domain_id: %s" % domain_id)
@@ -128,6 +176,12 @@ func validation_errors() -> PackedStringArray:
 		errors.append("Height bounds must be finite and ordered.")
 	elif absf(min_height_m - CERTIFIED_MIN_HEIGHT_M) > 0.001 or absf(max_height_m - CERTIFIED_MAX_HEIGHT_M) > 0.001:
 		errors.append("Only the certified -8000 m to +8000 m height contract is supported.")
+	if errors.is_empty() and generator_id == WORLD_GENERATOR_ID:
+		var bridge = WORLD_RECIPE_BRIDGE.new()
+		var error := str(bridge.WorldRecipeValidationError(to_normalized_dictionary()))
+		bridge.Release()
+		if not error.is_empty():
+			errors.append(error)
 	return errors
 
 func snapshot() -> TerrainGenerationRecipe:
@@ -217,6 +271,12 @@ func snapshot() -> TerrainGenerationRecipe:
 		copy.plains_detail_fraction = _finite_or(plains_detail_fraction, 0.2, 0.0, 1.0)
 		copy.lowland_erosion_strength_m = _finite_or(lowland_erosion_strength_m, 24.0, 0.0, 120.0)
 		copy.lowland_erosion_octaves = clampi(lowland_erosion_octaves, 1, copy.erosion_octaves)
+	if generator_id == WORLD_GENERATOR_ID:
+		copy.world_generation = world_generation
+		copy.review_features = review_features
+		for field in WORLD_CLIMATE_FIELDS:
+			copy.set(field, get(field))
+		copy.extension_values = extension_values.duplicate(true)
 	copy.flatten_denominator = exp(copy.flattening) - 1.0
 	return copy
 
@@ -292,6 +352,17 @@ func _normalized_dictionary_fields() -> Dictionary:
 		result["plains_detail_fraction"] = plains_detail_fraction
 		result["lowland_erosion_strength_m"] = lowland_erosion_strength_m
 		result["lowland_erosion_octaves"] = lowland_erosion_octaves
+	if generator_id == WORLD_GENERATOR_ID:
+		result["world_generation"] = world_generation
+		result["review_features"] = review_features
+		for field in WORLD_CLIMATE_FIELDS:
+			result[field] = get(field)
+		var bridge = WORLD_RECIPE_BRIDGE.new()
+		for spec in bridge.ActiveRecipeFields(world_generation, review_features):
+			var name := str(spec["name"])
+			if extension_values.has(name):
+				result[name] = extension_values[name]
+		bridge.Release()
 	return result
 
 static func create_detail_default() -> TerrainGenerationRecipe:
@@ -330,11 +401,11 @@ static func _safe_octaves(requested: int, scale_m: float, lacunarity: float, con
 
 ## True for recipes that carry the full v4 field set (v4 itself, v5 with emitter sites, v6 with climate machines and v7 with lowland landforms).
 static func _is_erosion_family(id: String) -> bool:
-	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID or id == LANDFORM_GENERATOR_ID or id == WEATHER_LUNG_GENERATOR_ID
+	return id == EROSION_GENERATOR_ID or id == SITES_GENERATOR_ID or id == CLIMATE_GENERATOR_ID or _is_landform_family(id)
 
 ## True for recipes that also carry the v7 lowland-landform fields.
 static func _is_landform_family(id: String) -> bool:
-	return id == LANDFORM_GENERATOR_ID or id == WEATHER_LUNG_GENERATOR_ID
+	return id == LANDFORM_GENERATOR_ID or id == WEATHER_LUNG_GENERATOR_ID or id == WORLD_GENERATOR_ID
 
 static func create_sites_default() -> TerrainGenerationRecipe:
 	var recipe := create_erosion_default()
@@ -356,4 +427,22 @@ static func create_landform_default() -> TerrainGenerationRecipe:
 static func create_weather_lung_default() -> TerrainGenerationRecipe:
 	var recipe := create_landform_default()
 	recipe.generator_id = WEATHER_LUNG_GENERATOR_ID
+	return recipe
+
+static func create_world_default(generation := 1, world_seed := 1337, review := PackedStringArray()) -> TerrainGenerationRecipe:
+	var bridge = WORLD_RECIPE_BRIDGE.new()
+	var defaults: Dictionary = bridge.WorldDefaultFields(generation, world_seed, review)
+	var error := str(bridge.LastError)
+	bridge.Release()
+	if defaults.is_empty():
+		push_error(error)
+		return null
+	var recipe := create_weather_lung_default()
+	recipe.generator_id = WORLD_GENERATOR_ID
+	recipe.seed = world_seed
+	for field in defaults:
+		if field == "world_generation" or field == "review_features" or field in WORLD_CLIMATE_FIELDS:
+			recipe.set(field, defaults[field])
+		else:
+			recipe.extension_values[field] = defaults[field]
 	return recipe

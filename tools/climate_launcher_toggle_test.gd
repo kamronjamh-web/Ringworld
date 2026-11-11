@@ -7,6 +7,7 @@ extends SceneTree
 
 const LAUNCHER := preload("res://scenes/WorldSizeLauncher.tscn")
 const RECIPE := preload("res://scripts/Terrain/Generation/terrain_generation_recipe.gd")
+const GENERATION_PIN := preload("res://tools/world_generation_pin.gd")
 const STORE := preload("res://scripts/Terrain/Generation/terrain_generation_preview_store.gd")
 const PREVIEW := preload("res://scripts/Terrain/Generation/terrain_generation_preview.gd")
 
@@ -20,8 +21,10 @@ func _fail(message: String) -> void:
 	failures += 1
 
 func _run() -> void:
+	GENERATION_PIN.pin(0)
 	var launcher := LAUNCHER.instantiate()
 	root.add_child(launcher)
+	GENERATION_PIN.unpin()
 	await process_frame
 	await process_frame
 	launcher.call("_on_certified_preset_pressed")

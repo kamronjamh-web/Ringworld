@@ -385,16 +385,19 @@ func install_defaults(next: Node) -> void:
 	var tuning := next.get_node_or_null("LiveTuningDrawer")
 	if tuning == null:
 		return
-	for item in [["InstallGrassDefaults", "gameplay_grass_defaults.tres"], ["InstallVegetationDefaults", "gameplay_vegetation_defaults.tres"], ["InstallWaterDefaults", "gameplay_water_defaults.tres"], ["InstallAntiAliasingDefaults", "gameplay_anti_aliasing_defaults.tres"], ["InstallShadowDefaults", "gameplay_shadow_defaults.tres"], ["InstallSurfaceTerrainDefaults", "surface_tuning.tres"], ["InstallAtmosphereDefaults", "atmosphere_defaults.tres"]]:
-		var destination := fixture.path_join(str(item[1]))
-		var source := "user://" + str(item[1])
+	for item in [["InstallGrassDefaults", "gameplay_grass_defaults.tres"], ["InstallVegetationDefaults", "gameplay_vegetation_defaults.tres"], ["InstallWaterDefaults", "gameplay_water_defaults.tres"], ["InstallAntiAliasingDefaults", "gameplay_anti_aliasing_defaults.tres"], ["InstallShadowDefaults", "gameplay_shadow_defaults.tres"], ["InstallSurfaceTerrainDefaults", "gameplay_surface_terrain_defaults.tres"], ["InstallAtmosphereDefaults", "atmosphere_visual_defaults.tres"]]:
+		var filename := str(item[1])
+		var destination := fixture.path_join(filename)
+		var source := "user://" + filename
+		var status := "absent"
 		if FileAccess.file_exists(source):
-			var copy := FileAccess.open(destination, FileAccess.WRITE)
-			if copy == null:
-				fail("could not isolate preference " + str(item[1]))
+			var copy_error := DirAccess.copy_absolute(ProjectSettings.globalize_path(source), ProjectSettings.globalize_path(destination))
+			if copy_error != OK:
+				print("PREFS_INSTALLED %s=%s" % [filename, status])
+				fail("could not isolate preference %s: %s" % [filename, error_string(copy_error)])
 				return
-			copy.store_string(FileAccess.get_file_as_string(source))
-			copy.close()
+			status = "copied"
+		print("PREFS_INSTALLED %s=%s" % [filename, status])
 		tuning.call(str(item[0]), destination)
 
 func resolve_nodes() -> bool:

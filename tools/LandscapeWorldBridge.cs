@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Voxel.Phase2;
 using RingworldTechDemo.Voxel.Phase3;
 
@@ -7,27 +8,60 @@ namespace RingworldTechDemo.Tools;
 
 /// <summary>
 /// GDScript-facing view of <see cref="LandscapeWorld"/> (a Godot script class needs its own file named after it). Used by tools/landscape_harness_common.gd to
-/// check that the booted game really runs the pinned generation 1 world.
+/// check that the booted game runs the selected reference world.
 /// </summary>
 public partial class LandscapeWorldBridge : RefCounted
 {
-    RingworldTechDemo.Terrain.Generation.TerrainGenerationHeightModel? _model;
+    LandscapeWorld.Spec _spec = LandscapeWorld.Default;
+    TerrainGenerationHeightModel? _model;
+    internal LandscapeWorld.Spec SelectedSpec => _spec;
 
-    public string CanonicalRecipeJson() => LandscapeWorld.CanonicalJson;
-    public string DefinitionHashHex() => LandscapeWorld.DefinitionHashHex;
-    public string JsonSha256() => LandscapeWorld.JsonSha256;
+    public void Configure(int generation, string reviewCsv)
+    {
+        SetSpec(LandscapeWorld.For(generation,
+            string.IsNullOrEmpty(reviewCsv) ? null : reviewCsv.Split(',')));
+    }
+
+    public Godot.Collections.Dictionary ConfigureFromArgs(string[] args)
+    {
+        try
+        {
+            SetSpec(LandscapeWorld.FromArgs(args));
+            return new Godot.Collections.Dictionary
+            {
+                ["generation"] = _spec.IsDefault ? 0 : _spec.Recipe.WorldGeneration,
+                ["review_features"] = System.Linq.Enumerable.ToArray(_spec.Recipe.ReviewFeatures),
+                ["world_tag"] = _spec.Tag
+            };
+        }
+        catch (Exception exception)
+        {
+            return new Godot.Collections.Dictionary { ["error"] = exception.Message };
+        }
+    }
+
+    void SetSpec(LandscapeWorld.Spec spec)
+    {
+        _model?.Dispose();
+        _model = null;
+        _spec = spec;
+    }
+
+    public string CanonicalRecipeJson() => _spec.CanonicalJson;
+    public string DefinitionHashHex() => _spec.DefinitionHashHex;
+    public string JsonSha256() => _spec.JsonSha256;
 
     /// <summary>Shaped (game) ground height at a metre coordinate; main thread only.</summary>
     public double GroundHeight(double around, double across)
     {
-        _model ??= LandscapeWorld.CreateShapedModel();
+        _model ??= _spec.CreateShapedModel();
         return _model.CalculateHeight(around, across);
     }
 
     /// <summary>Exported-property differences between the game's terrain settings and the pinned ones (diagnostic for a sampler mismatch).</summary>
-    static string DescribeSettingsDifferences(VoxelTerrainSettings game)
+    string DescribeSettingsDifferences(VoxelTerrainSettings game)
     {
-        using VoxelTerrainSettings ours = LandscapeWorld.CreateSettings();
+        using VoxelTerrainSettings ours = _spec.CreateSettings();
         var parts = new System.Collections.Generic.List<string>();
         foreach (var info in typeof(VoxelTerrainSettings).GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
         {
@@ -51,18 +85,18 @@ public partial class LandscapeWorldBridge : RefCounted
             var grid = game.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager");
             if (grid == null) { result["message"] = "game has no ChunkGridManager"; return result; }
             string gameJson = grid.TerrainSettings?.SurfaceGenerationRecipeJson ?? string.Empty;
-            bool recipeEqual = gameJson == LandscapeWorld.CanonicalJson;
+            bool recipeEqual = gameJson == _spec.CanonicalJson;
             result["recipe_equal"] = recipeEqual;
             result["game_recipe_sha256"] = LandscapeWorld.Sha256Hex(gameJson);
-            result["pinned_recipe_sha256"] = LandscapeWorld.JsonSha256;
+            result["pinned_recipe_sha256"] = _spec.JsonSha256;
             if (!recipeEqual)
             {
-                result["message"] = "recipe differs: game " + LandscapeWorld.Sha256Hex(gameJson)[..12] + " vs pinned " + LandscapeWorld.JsonSha256[..12];
+                result["message"] = "recipe differs: game " + LandscapeWorld.Sha256Hex(gameJson)[..12] + " vs pinned " + _spec.JsonSha256[..12];
                 return result;
             }
             using RingTerrainSampler? theirs = grid.CreateIndependentTerrainSampler();
             if (theirs == null) { result["message"] = "game terrain sampler unavailable"; return result; }
-            using RingTerrainSampler ours = LandscapeWorld.CreateSampler();
+            using RingTerrainSampler ours = _spec.CreateSampler();
             int mismatches = 0;
             string first = "";
             const int points = 64;

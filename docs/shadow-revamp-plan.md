@@ -1,6 +1,6 @@
 # Shadow revamp plan (all shadow and occlusion types)
 
-Status: S0-S7b implemented on main (2026-10-20). Every new system is OFF by default; nothing changes until the user review below.
+Status: S0-S7b implemented on main (2026-10-20). Update 2026-11-09: terrain height shadows have been ON in every quality preset since 3110b7e (2026-10-25); the user confirms blockers B3 and B4 were closed before that. The rest of this section is the 2026-10-20 state.
 
 ## Final handoff and user review list (2026-10-20)
 
@@ -261,3 +261,8 @@ Non-blocking:
 - **N1.** Decouple the `ring_ocean_global` planet macro from HeightShadowEnabled.
 - **N2.** Migrate the explicit `"HeightShadowEnabled": false` in saved user settings.
 - **N3.** Move the HS and near-map checkboxes to Debug once the near map is the default.
+
+
+### 2026-11-10 terrain wrap-up: user preference filenames
+
+T0W-4 option A is applied to the shared shadow harness and the night-horizon and terrain-attribution copies. They now install `atmosphere_visual_defaults.tres` and `gameplay_surface_terrain_defaults.tres` and report each file as copied or absent. From this date, runs with those files present include the user's saved haze and surface tuning. Existing `.godot/shadow_baseline` and `.godot/s5_before` captures remain historical default-haze records; future comparisons must capture their own before set. No stored shadow baseline was replaced. Validation and the paused continuation state are in `terrain-vegetation-handoff-2026-11-10.md`.
