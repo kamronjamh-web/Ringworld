@@ -99,6 +99,8 @@ func _run() -> void:
 		quit(4)
 		return
 	result["post_entry"] = await _sample_post_entry(float(_args.get("post-seconds", 10)))
+	if _args.has("shot"):
+		await _capture_views(String(_args["shot"]))
 	_write(out_dir, result)
 	await _shutdown()
 	print("LOAD_BENCHMARK=PASS scenario=%s open_to_ready_ms=%d" % [scenario, int(result["open_to_ready_ms"])])
@@ -128,6 +130,17 @@ func _sample_post_entry(seconds: float) -> Dictionary:
 	return {"seconds": seconds, "frames": count, "pipeline_compilations": compiles,
 		"frame_p50_ms": frames[count / 2] if count > 0 else 0.0, "frame_p95_ms": frames[mini(count - 1, int(count * .95))] if count > 0 else 0.0,
 		"frame_max_ms": frames[count - 1] if count > 0 else 0.0}
+
+## Optional look check (--shot=<dir>): the arrival view, then the same view tilted up at the ring arch.
+func _capture_views(dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(dir)
+	var camera := root.get_viewport().get_camera_3d()
+	for i in 8: await process_frame
+	root.get_viewport().get_texture().get_image().save_png(dir.path_join("spawn.png"))
+	if camera != null:
+		camera.rotate_object_local(Vector3.RIGHT, deg_to_rad(55.0))
+		for i in 8: await process_frame
+		root.get_viewport().get_texture().get_image().save_png(dir.path_join("distant.png"))
 
 func _write(out_dir: String, result: Dictionary) -> void:
 	var file := FileAccess.open(out_dir.path_join("run.json"), FileAccess.WRITE)

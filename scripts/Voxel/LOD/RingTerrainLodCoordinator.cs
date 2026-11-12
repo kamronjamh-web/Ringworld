@@ -69,6 +69,25 @@ public partial class RingTerrainLodCoordinator : Node
     [Export(PropertyHint.Range, "1,16,1")] public int TotalSectorUploadsPerFrame { get; set; } = 3;
     [Export(PropertyHint.Range, "1,32,1")] public int MaxConcurrentWorkerBuilds { get; set; } = 2;
     [Export(PropertyHint.Range, "0.25,8.0,0.05")] public float MaxUploadMillisecondsPerFrame { get; set; } = 2.0f;
+
+    /// <summary>Set by the loading bridge while an opaque loading screen covers the world: more workers and a larger install budget. Never saved; the preset values are untouched.</summary>
+    public bool LoadingScreenBoost { get; set; }
+    private const int LoadingScreenUploadsPerFrame = 16;
+    private const float LoadingScreenUploadMilliseconds = 12.0f;
+    private int EffectiveConcurrentWorkerBuilds => LoadingScreenBoost
+        ? Math.Max(MaxConcurrentWorkerBuilds, Math.Clamp(System.Environment.ProcessorCount / 4, 2, 8))
+        : MaxConcurrentWorkerBuilds;
+
+    /// <summary>True when no active level has a running build, a staged upload or a requested build.</summary>
+    public bool StreamingSettled
+    {
+        get
+        {
+            foreach (RingTerrainProxySector level in _levels)
+                if (level.StreamingActive && (level.ActiveWorkerSlots > 0 || level.PendingUploadCount > 0 || level.CoordinatorBuildRequested)) return false;
+            return true;
+        }
+    }
     [ExportGroup("LOD build starts")]
     // Starting a build costs main-thread time (edit snapshot, sampler copy, cache setup).
     // These bound how many starts happen per frame; starved levels jump the queue.
@@ -344,7 +363,8 @@ public partial class RingTerrainLodCoordinator : Node
             || _grid?.VoxelMeshUploadedThisFrame == true;
         int remaining = reserveRenderQueueForVoxel
             ? 0
-            : Mathf.Max(1, TotalSectorUploadsPerFrame);
+            : Mathf.Max(1, LoadingScreenBoost ? Math.Max(TotalSectorUploadsPerFrame, LoadingScreenUploadsPerFrame) : TotalSectorUploadsPerFrame);
+        float uploadBudgetMs = LoadingScreenBoost ? Math.Max(MaxUploadMillisecondsPerFrame, LoadingScreenUploadMilliseconds) : MaxUploadMillisecondsPerFrame;
         ulong frameStart = Time.GetTicksUsec();
         int initialBudget = remaining;
         int start = _roundRobinStart % _levels.Count;
@@ -355,7 +375,7 @@ public partial class RingTerrainLodCoordinator : Node
                 ? Mathf.Min(Mathf.Max(0, level.MaxSectorUploadsPerFrame), remaining)
                 : 0;
             double elapsedMs = (Time.GetTicksUsec() - frameStart) / 1000.0;
-            double remainingMs = Mathf.Max(0.0, MaxUploadMillisecondsPerFrame - elapsedMs);
+            double remainingMs = Mathf.Max(0.0, uploadBudgetMs - elapsedMs);
             remaining -= level.ServiceStreaming(delta, levelBudget, remainingMs);
         }
         LastFrameUploadCount = initialBudget - remaining;
@@ -1250,8 +1270,8 @@ public partial class RingTerrainLodCoordinator : Node
             return;
         }
         int workerLimit = MeshMemoryPressureActive
-            ? Mathf.Min(MaxConcurrentWorkerBuilds, Mathf.Max(1, MemoryPressureWorkerLimit))
-            : MaxConcurrentWorkerBuilds;
+            ? Mathf.Min(EffectiveConcurrentWorkerBuilds, Mathf.Max(1, MemoryPressureWorkerLimit))
+            : EffectiveConcurrentWorkerBuilds;
         int available = Mathf.Max(0, workerLimit - ActiveWorkerCount);
         if (available == 0 || _levels.Count == 0) return;
         if (_buildStartCandidates.Length < _levels.Count)

@@ -54,6 +54,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _startupOccluderBuild?.Dispose(); _startupOccluderBuild = null;
         _heightPyramidCancellation?.Cancel();
         _pendingSamplingCancellation?.Cancel();
+        DiscardAheadPreparations();
         SetProcess(false);
     }
     private readonly record struct SummaryBuildResult(
@@ -185,6 +186,26 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private CancellationTokenSource? _pendingSamplingCancellation;
     private ulong _pendingPreparationVersion;
     private bool _pendingSamplingReady;
+    // The initial build starts several segments at once. Each owns its sampler
+    // copy and output arrays, so results are identical to the serial build;
+    // ServicePreparedSegment adopts them in queue order and publishes on the main thread.
+    private sealed class AheadPreparation
+    {
+        public required PendingSegmentPreparation State;
+        public required Task Task;
+        public required CancellationTokenSource Cancellation;
+        public required int SegmentCount;
+        public required MeshInstance3D? Existing;
+        public required RingLodSurfaceEditSnapshot Edits;
+    }
+    private readonly Dictionary<int, AheadPreparation> _aheadPreparations = new();
+    private readonly Dictionary<int, ulong> _segmentOutputHashes = new();
+    private static int ResolveGlobalSegmentWorkerCount()
+    {
+        string? overrideValue = System.Environment.GetEnvironmentVariable("RINGWORLD_GLOBAL_SEGMENT_WORKERS");
+        if (int.TryParse(overrideValue, out int forced)) return Math.Clamp(forced, 1, 32);
+        return Math.Clamp(System.Environment.ProcessorCount / 2, 2, 8);
+    }
     private readonly Dictionary<MeshInstance3D, long> _segmentEstimatedBytes = new();
     private RingLodSurfaceEditSnapshot? _initialSegmentEdits;
     private int _initialSegmentCount;
@@ -789,6 +810,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         ulong deadline = start + (ulong)Math.Max(1.0, MaxSegmentRebuildMillisecondsPerFrame * 1000.0);
         int buildCount = 0;
         int buildBudget = Mathf.Max(1, MaxSegmentRebuildsPerFrame);
+        StartAheadPreparations();
         while (buildCount < buildBudget && _initialSegmentQueue.Count > 0)
         {
             int index = _initialSegmentQueue.Peek();
@@ -805,7 +827,10 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _initialSegmentEdits = null;
         TryPublishStagedMorphSnapshot();
         RetireRetainedTerrainSegments();
-        RingLoadTimeline.Mark("global_terrain_ready", $"segments={_terrainSegments.Count}");
+        ulong outputHash = 14695981039346656037UL;
+        for (int hashIndex = 0; hashIndex < _initialSegmentCount; hashIndex++)
+            outputHash = MixMorphHash(outputHash, _segmentOutputHashes.GetValueOrDefault(hashIndex), 1099511628211UL);
+        RingLoadTimeline.Mark("global_terrain_ready", $"segments={_terrainSegments.Count} outputHash={outputHash:X16}");
         GD.Print($"Segmented global terrain HLOD ready: segments={_terrainSegments.Count}, around={AroundSegments}, across={AcrossSegments}");
     }
 
@@ -831,6 +856,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         public required bool[] DisplayedWater;
         public required ulong Version;
         public int NextVertex;
+        public ulong OutputHash;
         public int VertexCount => TerrainVertices.Length;
     }
 
@@ -867,6 +893,7 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
     private void StageGlobalMorphSegment(PendingSegmentPreparation state)
     {
         if (_stagedMorphSegments == null || state.Version != _pendingPreparationVersion) return;
+        _segmentOutputHashes[state.SegmentIndex] = state.OutputHash;
         // The copied height array is the receiver's exact published vertical
         // data. The snapshot owns it and never shares mutable worker buffers.
         float[] heights = (float[])state.TerrainCanonicalHeights.Clone();
@@ -942,6 +969,94 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         _pendingPreparationVersion++;
         _pendingSamplingCancellation?.Cancel();
         _pendingPreparation = null;
+        DiscardAheadPreparations();
+    }
+
+    private void DiscardAheadPreparations()
+    {
+        foreach (AheadPreparation ahead in _aheadPreparations.Values) DiscardAheadPreparation(ahead);
+        _aheadPreparations.Clear();
+    }
+
+    private static void DiscardAheadPreparation(AheadPreparation ahead)
+    {
+        try { ahead.Cancellation.Cancel(); } catch (ObjectDisposedException) { }
+        _ = ahead.Task.ContinueWith(
+            static (completed, state) =>
+            {
+                _ = completed.Exception;
+                ((CancellationTokenSource?)state)?.Dispose();
+            },
+            ahead.Cancellation,
+            TaskScheduler.Default);
+    }
+
+    private static Task StartSegmentSamplingWorker(PendingSegmentPreparation prepared, CancellationToken cancellation)
+    {
+        return Task.Run(() =>
+        {
+            using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu(
+                "Terrain global segment sampling", worker: true);
+            using (prepared.Sampler)
+            {
+                while (prepared.NextVertex < prepared.VertexCount)
+                {
+                    cancellation.ThrowIfCancellationRequested();
+                    SamplePreparedVertex(prepared, prepared.NextVertex++);
+                    if ((prepared.NextVertex & 15) == 0) cancellation.ThrowIfCancellationRequested();
+                }
+            }
+            prepared.OutputHash = ComputePreparedOutputHash(prepared);
+        });
+    }
+
+    private static ulong ComputePreparedOutputHash(PendingSegmentPreparation state)
+    {
+        const ulong prime = 1099511628211UL;
+        ulong hash = 14695981039346656037UL;
+        for (int i = 0; i < state.VertexCount; i++)
+        {
+            // World-space vertices depend on the ring transform at creation time, so hash the canonical heights instead.
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(state.TerrainCanonicalHeights[i]), prime);
+            Color tc = state.TerrainColors[i], wc = state.WaterColors[i];
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.R), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.G), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.B), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(tc.A), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.R), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.G), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.B), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(wc.A), prime);
+            hash = MixMorphHash(hash, state.DisplayedWater[i] ? 1UL : 0UL, prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(state.RawTerrainHeights[i]), prime);
+            hash = MixMorphHash(hash, BitConverter.SingleToUInt32Bits(state.RawWaterHeights[i]), prime);
+        }
+        return hash;
+    }
+
+    private void StartAheadPreparations()
+    {
+        int workers = ResolveGlobalSegmentWorkerCount();
+        if (workers <= 1 || _initialSegmentEdits == null) return;
+        int active = 0;
+        foreach (AheadPreparation entry in _aheadPreparations.Values) if (!entry.Task.IsCompleted) active++;
+        if (_pendingSamplingTask != null && !_pendingSamplingTask.IsCompleted) active++;
+        int budget = workers + 2;
+        foreach (int index in _initialSegmentQueue)
+        {
+            if (active >= workers || _aheadPreparations.Count >= budget) break;
+            if (_aheadPreparations.ContainsKey(index) || _pendingPreparation?.SegmentIndex == index) continue;
+            MeshInstance3D? existing = index < _terrainSegments.Count ? _terrainSegments[index] : null;
+            PendingSegmentPreparation prepared = CreatePendingSegment(index, _initialSegmentCount, existing, _initialSegmentEdits);
+            var cancellation = new CancellationTokenSource();
+            Task task = StartSegmentSamplingWorker(prepared, cancellation.Token);
+            _aheadPreparations[index] = new AheadPreparation
+            {
+                State = prepared, Task = task, Cancellation = cancellation, SegmentCount = _initialSegmentCount,
+                Existing = existing, Edits = _initialSegmentEdits,
+            };
+            active++;
+        }
     }
 
     private PendingSegmentPreparation CreatePendingSegment(int segmentIndex, int segmentCount, MeshInstance3D? existing, RingLodSurfaceEditSnapshot edits)
@@ -1013,26 +1128,25 @@ public partial class RingTerrainGlobalLod : MeshInstance3D
         {
             if (_pendingSamplingTask != null && !_pendingSamplingTask.IsCompleted) return true;
             ObserveCompletedSamplingWorker();
+            if (_aheadPreparations.Remove(segmentIndex, out AheadPreparation? ahead))
+            {
+                if (ahead.SegmentCount == segmentCount && ahead.Existing == existing && ahead.Edits == edits
+                    && ahead.State.Version == _pendingPreparationVersion && !ahead.Cancellation.IsCancellationRequested)
+                {
+                    _pendingPreparation = ahead.State;
+                    _pendingSamplingCancellation?.Dispose();
+                    _pendingSamplingCancellation = ahead.Cancellation;
+                    _pendingSamplingReady = false;
+                    _pendingSamplingTask = ahead.Task;
+                    return true;
+                }
+                DiscardAheadPreparation(ahead);
+            }
             _pendingPreparation = CreatePendingSegment(segmentIndex, segmentCount, existing, edits);
             _pendingSamplingCancellation?.Dispose();
             _pendingSamplingCancellation = new CancellationTokenSource();
             _pendingSamplingReady = false;
-            PendingSegmentPreparation prepared = _pendingPreparation;
-            CancellationToken cancellation = _pendingSamplingCancellation.Token;
-            _pendingSamplingTask = Task.Run(() =>
-            {
-                using var diagnosticScope = RingPerformanceTelemetry.MeasureCpu(
-                    "Terrain global segment sampling", worker: true);
-                using (prepared.Sampler)
-                {
-                    while (prepared.NextVertex < prepared.VertexCount)
-                    {
-                        cancellation.ThrowIfCancellationRequested();
-                        SamplePreparedVertex(prepared, prepared.NextVertex++);
-                        if ((prepared.NextVertex & 15) == 0) cancellation.ThrowIfCancellationRequested();
-                    }
-                }
-            });
+            _pendingSamplingTask = StartSegmentSamplingWorker(_pendingPreparation, _pendingSamplingCancellation.Token);
             return true;
         }
         PendingSegmentPreparation state = _pendingPreparation;

@@ -306,3 +306,33 @@ Each phase reports before and after from the L0 runner. `claude-lead` designs wh
 - **Reload double build removed.** The saved preset is applied before the global terrain is queued. The reload total did not change (23.0 s → 22.9 s) because the single build now runs under contention. Global terrain is still the bottleneck, so L2 is the real win.
 - Medians: reload 22.98 → 22.92 s; new 39.15 → 39.31 s; new-rivers 62.46 → 57.88 s.
 - Not done yet: the 30 fps loading cap and the other L1 items.
+
+## L2-1 results and the entry gate (2026-11-12, uncommitted)
+
+**L2-1 (parallel global terrain segments)** cut the global terrain from 29 s to 10 s on a new world. Segment output is bit-identical to the serial build.
+
+**What it exposed.** The loading screen never waited for the terrain proxy levels (`TerrainLodCoordinator`, 15 levels). They need about 23 s after attach on a new world (8 workers, 1 947 sectors) and about 21 s on a reload (3 workers at High), with or without L2-1. The old 23 to 39 s loads hid this. With L2-1 alone the world was revealed 8 to 13 s too early:
+
+- Look: coarse mid-distance terrain, a coarse near slope and a coarse arch at entry, refining over the next 3 to 13 s (first-frame captures in `.godot/captures/l2/entry_look/`: L2-1 alone, serial, and with the gate).
+- Frames: proxy installs cost up to 30 ms each on the main thread (median 21 ms, p95 46 ms for 8 to 9 s on a new world). "Install ocean publish" is 74 % of install time.
+
+**Fix (L2-1b).** `RingWorldLoadingBridge` holds the reveal until the proxy levels and the far arch geometry have been idle for 0.75 s (30 s timeout, marks `streaming_settled` / `streaming_settle_timeout`). While the loading screen is opaque, `RingTerrainLodCoordinator.LoadingScreenBoost` raises the proxy workers to cores/4 (at most 8, never below the preset) and the install budget to 12 ms and 16 sectors per frame. The menu (background) path has neither.
+
+| Scenario (median of 3) | after L1 | L2-1 alone | L2-1 + gate |
+|---|---|---|---|
+| Reload: total / post-entry p50 / p95 / max | 22.9 s / 8.2 / 13.9 / 30.5 ms | 14.0 s / 7.8 / 17.3 / 32.2 ms | 21.1 s / 8.2 / 9.7 / 26.9 ms |
+| New: same | 39.3 s / 10.7 / 11.6 / 28.2 ms | 20.5 s / 17.8 / 45.4 / 70.1 ms | 30.3 s / 10.8 / 14.1 / 45.3 ms |
+| New with rivers: same | 57.9 s / 10.7 / 11.7 / 28.8 ms | 37.5 s / 21.3 / 48.1 / 77.3 ms | 47.4 s / 11.2 / 16.4 / 36.7 ms |
+
+With the gate the global terrain is ready at 16.6 / 21.1 / 38.8 s and the proxies settle at 20.6 / 29.7 / 46.8 s (reload / new / rivers). No run hit the timeout.
+
+Output: `.godot/audit_baseline/DESKTOP-RAVA9C1/load/after_l2b/`.
+
+**Proxy streaming is now the critical path.** The global terrain no longer holds any load. Next work, in this order (replaces the old L2-3 text):
+
+- **L2-3a Proxy build throughput.** Find the long pole with `RingProxyBuildCounters` per level: one build per level at a time, single builds of up to 5 s, one build start per frame. A floor of 16 workers was no faster than 8 in any scenario and slowed the global terrain by 4 to 7 s, so workers are not the limit; treat the proxy and segment workers as one budget. On a reload, check why 21 s is needed although levels from `FirstPersistentLod` (3) up have a disk cache.
+- **L2-3b Proxy install cost.** Coalesce `UpdateSharedFftOceanCoverage` and `NotifyOceanReplacementDependents` to once per coordinator frame; look at the 27 ms spikes in the coverage mask atlas and in build starts. This also helps travel stutter.
+- **L2-3c Trees.** Tree streaming still runs after entry (about 250 ms/s of installs, up to 14 ms per frame). It is the likely cause of the remaining gap in post-entry p95 on new worlds (14.1 and 16.4 against 11.6 and 11.7 ms); not yet confirmed with a capture. Either gate on it or lower its per-frame slice.
+- **L2-3d Visible-first gate.** If the user accepts refinement outside the arrival view, release on the levels the arrival camera can see. Needs a before/after capture at the entry frame, not 10 s later.
+- The benchmark's `-Shot` captures 10 s after entry. Add a capture on the first revealed frame; that is the frame a look check must compare.
+- Not checked: the menu path (`menu_warm_stall_probe`), the laptop, VSync on.

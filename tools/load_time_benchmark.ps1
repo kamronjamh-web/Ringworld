@@ -23,6 +23,7 @@ param(
   [string]$Stamp = "",
   [int]$PostSeconds = 10,
   [int]$TimeoutSeconds = 420,
+  [string]$Shot = "",
   [switch]$InQueue,
   [string]$ProjectName = "RingworldTechDemo"
 )
@@ -33,7 +34,7 @@ $Scenario = @($Scenario | ForEach-Object { $_ -split "," } | Where-Object { $_ }
 
 if (-not $InQueue) {
   # Re-enter through the GPU queue so the whole benchmark holds the GPU once.
-  $inner = "& '$PSCommandPath' -InQueue -Scenario " + ($Scenario -join ",") + " -Runs $Runs -VSync $VSync -CacheMode $CacheMode -Slot $Slot -Label $Label -Stamp $Stamp -PostSeconds $PostSeconds -TimeoutSeconds $TimeoutSeconds"
+  $inner = "& '$PSCommandPath' -InQueue -Scenario " + ($Scenario -join ",") + " -Runs $Runs -VSync $VSync -CacheMode $CacheMode -Slot $Slot -Label $Label -Stamp $Stamp -PostSeconds $PostSeconds -TimeoutSeconds $TimeoutSeconds" + $(if ($Shot) { " -Shot '$Shot'" } else { "" })
   & (Join-Path $PSScriptRoot "gpu_queue.ps1") -Label "load_bench" -Wrap $inner
   exit $LASTEXITCODE
 }
@@ -69,6 +70,7 @@ function Invoke-Run([string]$Kind, [string]$OutDir) {
   $log = Join-Path $OutDir "console.log"
   $godotArgs = @("--path", "`"$project`"", "--script", "res://tools/load_time_benchmark.gd", "--",
     "--scenario=$Kind", "--out=`"$OutDir`"", "--vsync=$VSync", "--slot=$Slot", "--post-seconds=$PostSeconds")
+  if ($Shot) { $godotArgs += "--shot=`"$Shot`"" }
   $old = $env:APPDATA
   $env:APPDATA = $isoRoot
   try {

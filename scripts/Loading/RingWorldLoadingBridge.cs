@@ -23,6 +23,12 @@ public partial class RingWorldLoadingBridge : Node
     private RingWorldSaveManager? _saves;
     private RingTerrain3DGameplay? _surface;
     private RingScaledFarViewport? _far;
+    private RingTerrainLodCoordinator? _lodCoordinator;
+    private ulong _settleWaitStartUsec;
+    private ulong _settleIdleSinceUsec;
+    private bool _streamingSettled;
+    private const double StreamingSettleDwellSeconds = 0.75;
+    private const double StreamingSettleTimeoutSeconds = 30.0;
     private readonly System.Collections.Generic.Dictionary<Node, ProcessModeEnum> _held = new();
     private readonly List<Node> _structureOwners = new();
     private Godot.Collections.Dictionary _spawn = new() { ["ready"] = false };
@@ -97,6 +103,8 @@ public partial class RingWorldLoadingBridge : Node
             ? world.GetNodeOrNull<RingTerrain3DGameplay>("Terrain3DGameplay") : null;
         _far = world.GetNodeOrNull<RingScaledFarViewport>("ScaledFarViewport");
         if (_far?.ProcessMode == ProcessModeEnum.Disabled) _far = null;
+        _lodCoordinator = world.GetNodeOrNull<RingTerrainLodCoordinator>("TerrainLodCoordinator");
+        if (_lodCoordinator != null && !_background) _lodCoordinator.LoadingScreenBoost = true;
         RingLiveTuningDrawer? drawer = world.GetNodeOrNull<RingLiveTuningDrawer>("LiveTuningDrawer");
         if (drawer != null) drawer.DeferDrawerBuildUntilOpened = true;
         if (_saves != null)
@@ -232,6 +240,7 @@ public partial class RingWorldLoadingBridge : Node
     /// <summary>Prepare one rendered world frame while player input remains held.</summary>
     public void PrepareReveal()
     {
+        EndLoadingScreenBoost();
         foreach (var pair in _renderHolds)
             if (GodotObject.IsInstanceValid(pair.Key)) pair.Key.RenderTargetUpdateMode = pair.Value;
         _renderHolds.Clear();
@@ -344,6 +353,8 @@ public partial class RingWorldLoadingBridge : Node
         if (!farReady || !structureReady)
             return new() { ["ready"] = false, ["stage"] = "surroundings", ["detail"] = surroundingsDetail,
                 ["progress"] = .72f + .16f * structuresReady / System.Math.Max(1, structuresCounted), ["spawn"] = _spawn };
+        if (!StreamingSettledForReveal())
+            return new() { ["ready"] = false, ["stage"] = "surroundings", ["detail"] = "Settling the terrain around your arrival point.", ["progress"] = .89f, ["spawn"] = _spawn };
         if (_background)
             return new() { ["ready"] = _placed, ["stage"] = _placed ? "ready" : "position", ["detail"] = "Your world is ready.",
                 ["progress"] = _placed ? 1f : .9f, ["save_ready"] = saveReady, ["surface_ready"] = surfaceReady, ["far_ready"] = farReady };
@@ -647,6 +658,7 @@ public partial class RingWorldLoadingBridge : Node
     {
         if (_released) return;
         _released = true;
+        EndLoadingScreenBoost();
         if (_saves != null) _saves.HoldSavesUntilWorldReady = false;
         foreach (var pair in _held)
             if (GodotObject.IsInstanceValid(pair.Key)) pair.Key.ProcessMode = pair.Value;
@@ -659,6 +671,29 @@ public partial class RingWorldLoadingBridge : Node
     private void NoteFirst(string name)
     {
         if (_firstMarks.Add(name)) RingLoadTimeline.Mark(name);
+    }
+
+    private void EndLoadingScreenBoost()
+    {
+        if (_lodCoordinator != null && GodotObject.IsInstanceValid(_lodCoordinator)) _lodCoordinator.LoadingScreenBoost = false;
+    }
+
+    /// <summary>
+    /// Loading-screen path only: hold the reveal until proxy streaming and the far arch geometry have been idle for a short dwell.
+    /// Their installs cost up to 30 ms a frame and coarse terrain would pop in after entry. A timeout keeps a load from hanging.
+    /// </summary>
+    private bool StreamingSettledForReveal()
+    {
+        if (_background || _streamingSettled) return true;
+        ulong now = Time.GetTicksUsec();
+        if (_settleWaitStartUsec == 0) _settleWaitStartUsec = now;
+        bool idle = _lodCoordinator == null || !GodotObject.IsInstanceValid(_lodCoordinator) || _lodCoordinator.StreamingSettled;
+        if (idle && _far != null && GodotObject.IsInstanceValid(_far) && _far.Enabled) idle = _far.GlobalGeometryReady && _far.PendingTerrainSectorCount == 0;
+        if (!idle) _settleIdleSinceUsec = 0;
+        else if (_settleIdleSinceUsec == 0) _settleIdleSinceUsec = now;
+        if (idle && (now - _settleIdleSinceUsec) / 1_000_000.0 >= StreamingSettleDwellSeconds) { _streamingSettled = true; NoteFirst("streaming_settled"); return true; }
+        if ((now - _settleWaitStartUsec) / 1_000_000.0 >= StreamingSettleTimeoutSeconds) { _streamingSettled = true; NoteFirst("streaming_settle_timeout"); return true; }
+        return false;
     }
 
     /// <summary>The marks of this load: [{name, detail, usec}] (usec is Time.get_ticks_usec).</summary>
@@ -754,6 +789,7 @@ public partial class RingWorldLoadingBridge : Node
     public void CancelWorld()
     {
         _released = true;
+        EndLoadingScreenBoost();
         // Pending activation steps never run and held children stay disabled; the world is freed by the caller.
         _activationCancelled = true;
         CancelHydrology();

@@ -260,6 +260,12 @@
       "machines": [
         "desktop_mid_high"
       ]
+    },
+    "terrain_near_lod_parity_gpu_test": {
+      "status": "known-fail",
+      "match": "Nonexistent 'float' constructor",
+      "since": "2026-11-12",
+      "evidence": "Reads the surface_wetness global uniform retired in the storm revamp (e2485b7); its wet/dry section tests a removed feature. Found 2026-11-12 during load-time L2; needs that section rewritten."
     }
   }
 }
