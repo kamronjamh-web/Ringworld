@@ -4843,6 +4843,34 @@
       "timeout_s": 400,
       "parallel_safe": false
     },
+    "river_graph_cache_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology",
+        "loading"
+      ],
+      "marker": "RIVER_GRAPH_CACHE",
+      "expected_s": 40,
+      "timeout_s": 180,
+      "parallel_safe": false
+    },
+    "drainage_bake_benchmark": {
+      "kind": "tool",
+      "mode": "gpu-local",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "hydrology",
+        "perf-telemetry"
+      ],
+      "marker": "DRAINAGE_BAKE_BENCHMARK",
+      "expected_s": 90,
+      "timeout_s": 600,
+      "parallel_safe": false
+    },
     "river_recipe_fields_test": {
       "kind": "test",
       "mode": "headless",

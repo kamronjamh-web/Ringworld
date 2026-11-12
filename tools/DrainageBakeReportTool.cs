@@ -60,8 +60,7 @@ public partial class DrainageBakeReportTool : RefCounted
             }
 
             using VoxelTerrainSettings settings = EmitterSiteTestWorlds.CreateProductionSettings(seed, recipe);
-            using var root = new RingTerrainSampler(settings, true, EmitterSiteTestWorlds.Circumference, EmitterSiteTestWorlds.Circumference / Math.Tau, EmitterSiteTestWorlds.Width, 8400);
-            DrainageClimateInputs climate = DrainageClimateInputs.FromSampler(root);
+            DrainageClimateInputs climate = HydrologyBakeInputs.Capture(settings, recipe, workers).Climate;
             IDrainageHeightSource source;
             if (sourceName == "cpu") source = new CpuDrainageHeightSource(recipe, climate, workers);
             else

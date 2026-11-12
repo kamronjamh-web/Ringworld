@@ -1235,6 +1235,10 @@ func _start_game() -> void:
 		return
 	var host := get_parent()
 	loader.prepare_world(game, self)
+	if not await loader.prepare_hydrology():
+		if is_instance_valid(game):
+			game.queue_free()
+		return
 	loader.set_stage("terrain", "Restoring your world and preparing terrain.", .32)
 	await loader.present_frame()
 	if loader.cancelled or loader.failed:
@@ -1272,6 +1276,11 @@ func _start_diagnostic_game() -> void:
 	if "--mega-terrain-variation-smoke-test" in OS.get_cmdline_user_args():
 		game.free()
 		get_tree().quit(0 if mega_terrain_variation_smoke_passed else 1)
+		return
+	var hydrology_error: String = WORLD_LOADING.bake_hydrology_blocking(game)
+	if not hydrology_error.is_empty():
+		push_error(hydrology_error)
+		game.free()
 		return
 	var host := get_parent()
 	host.add_child(game)

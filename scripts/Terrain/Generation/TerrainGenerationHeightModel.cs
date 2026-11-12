@@ -43,7 +43,14 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     public TerrainGenerationHeightModel(TerrainGenerationParameters parameters) : this(parameters, true) { }
 
     /// <param name="applyEmitterSites">False builds the unshaped natural model (used only to build the site registry). Ignored unless the recipe enables emitter sites.</param>
-    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites) : this(parameters, applyEmitterSites, null) { }
+    /// <remarks>With <paramref name="applyEmitterSites"/> and <c>water.rivers</c> the model takes the baked graph of its recipe from <see cref="RiverGraphStore"/> (S12); none baked means none bound.</remarks>
+    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites) : this(parameters, applyEmitterSites, StoredGraph(parameters, applyEmitterSites)) { }
+
+    private static RiverGraph? StoredGraph(TerrainGenerationParameters parameters, bool applyEmitterSites)
+    {
+        if (parameters == null || !applyEmitterSites || !parameters.HasRivers) return null;
+        return RiverGraphStore.TryGet(HydrologyBakeIdentity.Compute(parameters), out RiverGraph? graph) ? graph : null;
+    }
 
     /// <param name="graph">The immutable river graph (S12). Used only when <paramref name="applyEmitterSites"/> is true and the recipe has <c>water.rivers</c>; a model without one behaves as before.</param>
     public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites, RiverGraph? graph)

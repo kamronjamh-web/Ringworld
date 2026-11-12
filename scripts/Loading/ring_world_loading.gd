@@ -271,6 +271,35 @@ func prepare_world(world: Node, launcher: Node) -> void:
 		_cruise = {}
 	_bridge.call("PrepareWorld", world)
 
+## River graph (T2R-9, S12): starts the bake of a world with water.rivers on a worker and waits for it behind the loading screen, before the world is attached.
+## Returns true at once for a world without rivers (its stage fractions are unchanged); an error fails the load; cancellation or a stale generation leaves the bake.
+func prepare_hydrology() -> bool:
+	var generation := _generation
+	var started := Time.get_ticks_usec()
+	var begin: Dictionary = _bridge.call("BeginHydrology")
+	if not bool(begin.get("required", false)):
+		return true
+	while active and not cancelled and not failed and generation == _generation:
+		var status: Dictionary = _bridge.call("CaptureHydrologyStatus")
+		if not str(status.get("error", "")).is_empty():
+			fail(str(status.error))
+			return false
+		if bool(status.get("completed", false)):
+			record_operation("river_graph", started)
+			return true
+		set_stage("terrain", "Mapping rivers and lakes.", .30 + .02 * float(status.get("progress", 0.0)))
+		await get_tree().process_frame
+	if is_instance_valid(_bridge):
+		_bridge.call("CancelHydrology")
+	return false
+
+## The diagnostics launch has no loading screen: bakes the river graph on the calling thread before the world is attached. Returns "" or the error. A world without rivers does nothing.
+static func bake_hydrology_blocking(game: Node) -> String:
+	var bridge: Node = BRIDGE.new()
+	var error := str(bridge.call("BakeHydrologyBlocking", game))
+	bridge.free()
+	return error
+
 func prepare_resources() -> bool:
 	var generation := _generation
 	var started := Time.get_ticks_usec()

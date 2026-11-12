@@ -1,6 +1,7 @@
 using System;
 using RingworldTechDemo.Terrain.Generation;
 using RingworldTechDemo.Terrain.Generation.Gpu;
+using RingworldTechDemo.Terrain.Hydrology;
 
 namespace RingworldTechDemo.Voxel.Phase3;
 
@@ -10,24 +11,14 @@ public sealed partial class RingTerrainSampler
     /// <summary>The runtime-generation recipe, or null for worlds that do not use runtime surface generation.</summary>
     internal TerrainGenerationParameters? RuntimeSurfaceRecipe => _runtimeSurfaceParameters;
 
+    /// <summary>The baked river graph this sampler bound (null without the water.rivers feature).</summary>
+    internal RiverGraph? RuntimeRiverGraph => _runtimeSurfaceModel?.RiverOperator?.Graph;
+
     /// <summary>Everything the GPU regional climate reads from this sampler, as the CPU path uses it.</summary>
     internal ProxyGpuClimateSettings? CreateGpuClimateSettings()
     {
         if (_runtimeSurfaceParameters == null) return null;
-        VoxelTerrainSettings s = _settings;
-        var c = new ProxyGpuClimateSettings
-        {
-            Seed = s.Seed, AroundRingLength = _aroundRingVoxelLength, RingRadius = _aroundRingVoxelLength / Math.Tau, RingWidth = _ringAcrossWidthMeters,
-            ContinentalFrequency = s.ContinentalFrequency, ErosionFrequency = s.ErosionFrequency, RidgeFrequency = s.RidgeFrequency,
-            TemperatureFrequency = s.TemperatureFrequency, MoistureFrequency = s.MoistureFrequency,
-            MountainWarpFrequency = s.MountainWarpFrequency, ValleyFrequency = s.ValleyFrequency,
-            ContinentalSecondaryStrength = s.ContinentalSecondaryStrength, ContinentalContrast = s.ContinentalContrast,
-            ContinentalOceanBias = s.ContinentalOceanBias, MountainWarpDistanceMeters = s.MountainWarpDistanceMeters,
-            PeakRarityExponent = s.PeakRarityExponent, MountainBeltBroadness = s.MountainBeltBroadness,
-            ValleyNarrowness = s.ValleyNarrowness, OceanMoistureInfluence = s.OceanMoistureInfluence,
-            ClimateLatitudeInfluence = s.ClimateLatitudeInfluence, CoastalBeachStrength = s.CoastalBeachStrength,
-            AltitudeTemperatureDropPerKilometre = _runtimeAltitudeTemperatureDropPerKilometre,
-        };
+        ProxyGpuClimateSettings c = BuildGpuClimateSettings(_settings, _aroundRingVoxelLength, _ringAcrossWidthMeters, _runtimeAltitudeTemperatureDropPerKilometre);
         foreach (BiomeProfile p in _biomeProfiles)
         {
             if (p.Id is TerrainBiomeId.Ocean or TerrainBiomeId.Lake or TerrainBiomeId.River) continue;
@@ -36,6 +27,37 @@ public sealed partial class RingTerrainSampler
                 p.MinimumRidge, p.MaximumRidge, p.BlendWidth, p.SelectionWeightMultiplier));
         }
         return c;
+    }
+
+    /// <summary>
+    /// The climate part of <see cref="CreateGpuClimateSettings"/> without biome profiles (moisture needs none), from effective settings (recipe climate applied) and no sampler (T2R-9, S12).
+    /// </summary>
+    internal static ProxyGpuClimateSettings BuildGpuClimateSettings(VoxelTerrainSettings s, long aroundLength, int width, float altitudeDrop)
+        => new()
+        {
+            Seed = s.Seed, AroundRingLength = aroundLength, RingRadius = aroundLength / Math.Tau, RingWidth = width,
+            ContinentalFrequency = s.ContinentalFrequency, ErosionFrequency = s.ErosionFrequency, RidgeFrequency = s.RidgeFrequency,
+            TemperatureFrequency = s.TemperatureFrequency, MoistureFrequency = s.MoistureFrequency,
+            MountainWarpFrequency = s.MountainWarpFrequency, ValleyFrequency = s.ValleyFrequency,
+            ContinentalSecondaryStrength = s.ContinentalSecondaryStrength, ContinentalContrast = s.ContinentalContrast,
+            ContinentalOceanBias = s.ContinentalOceanBias, MountainWarpDistanceMeters = s.MountainWarpDistanceMeters,
+            PeakRarityExponent = s.PeakRarityExponent, MountainBeltBroadness = s.MountainBeltBroadness,
+            ValleyNarrowness = s.ValleyNarrowness, OceanMoistureInfluence = s.OceanMoistureInfluence,
+            ClimateLatitudeInfluence = s.ClimateLatitudeInfluence, CoastalBeachStrength = s.CoastalBeachStrength,
+            AltitudeTemperatureDropPerKilometre = altitudeDrop,
+        };
+
+    /// <summary>
+    /// Regional moisture at a point, read the way <see cref="GetTerrainSample"/> reads it, without the height model (T2R-9, S12). Meant for a climate-only sampler built in legacy mode
+    /// (no recipe, no contract); on a runtime sampler it returns the same value as <c>GetTerrainSample(...).Moisture</c>.
+    /// </summary>
+    internal float SampleClimateMoisture(long around, int across)
+    {
+        lock (_noiseLock)
+        {
+            RegionalCoordinate coordinate = ResolveRegionalCoordinate(around, across);
+            return SampleTerrainFieldsLocked(around, across, coordinate).Moisture;
+        }
     }
 
     /// <summary>

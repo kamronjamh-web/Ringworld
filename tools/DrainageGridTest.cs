@@ -46,6 +46,7 @@ public partial class DrainageGridTest : RefCounted
             using RingTerrainSampler root = CreateSampler(recipe);
             DrainageClimateInputs climate = DrainageClimateInputs.FromSampler(root);
             int workers = Math.Clamp(System.Environment.ProcessorCount, 2, 8);
+            CheckClimateReader(recipe, root, workers);
             foreach ((string label, DrainageGridSpec spec) in Strips(recipe))
             {
                 CheckPositions(label, spec);
@@ -71,6 +72,30 @@ public partial class DrainageGridTest : RefCounted
         if (_failures.Count != 0) { Console.Error.WriteLine("DRAINAGE_GRID=FAIL " + string.Join(" | ", _failures)); return 1; }
         Console.WriteLine("DRAINAGE_GRID=PASS");
         return 0;
+    }
+
+    /// <summary>
+    /// T2R-9 (S12): the climate-only reader built without a sampler (legacy mode) is bit-equal to a runtime sampler's Moisture on 1,000 points. Negative control: a reader built from another seed is not.
+    /// </summary>
+    private void CheckClimateReader(TerrainGenerationParameters recipe, RingTerrainSampler root, int workers)
+    {
+        var points = new (long Around, int Across)[1000];
+        var rng = new Random(20261112);
+        for (int i = 0; i < points.Length; i++) points[i] = ((long)(rng.NextDouble() * EmitterSiteTestWorlds.Circumference), rng.Next((int)EmitterSiteTestWorlds.Width));
+        int Mismatches(int seed)
+        {
+            using VoxelTerrainSettings settings = EmitterSiteTestWorlds.CreateProductionSettings(Seed, recipe);
+            settings.Seed = seed;
+            using IDrainageMoistureReader reader = HydrologyBakeInputs.Capture(settings, recipe, workers).Climate.CreateReader();
+            int bad = 0;
+            foreach ((long around, int across) in points)
+                if (BitConverter.SingleToInt32Bits(reader.Moisture(around, across)) != BitConverter.SingleToInt32Bits(root.GetTerrainSample(around, across).Moisture)) bad++;
+            return bad;
+        }
+        int mismatches = Mismatches(Seed), control = Mismatches(Seed + 1);
+        if (mismatches != 0) Fail($"climate reader: {mismatches} of 1000 points differ from a runtime sampler's Moisture");
+        if (control == 0) Fail("climate reader: negative control did not fail (a reader of another seed matched)");
+        Console.WriteLine($"DRAINAGE_GRID_DETAIL climate reader: mismatches={mismatches} negative_control_mismatches={control}");
     }
 
     private void CheckPositions(string label, DrainageGridSpec spec)

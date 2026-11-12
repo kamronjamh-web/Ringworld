@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using RingworldTechDemo.Terrain.Generation;
+using RingworldTechDemo.Terrain.Hydrology;
 using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Core;
 
@@ -199,7 +200,8 @@ public sealed partial class RingTerrainSampler : IDisposable
             CaveRegionFeatureSnapshotGenerator,
             _runtimeSurfaceParameters,
             _runtimeAltitudeTemperatureDropPerKilometre,
-            UsesRuntimeSurfaceGeneration ? _biomeProfiles : null);
+            UsesRuntimeSurfaceGeneration ? _biomeProfiles : null,
+            RuntimeRiverGraph);
     }
 
     /// <summary>
@@ -247,7 +249,8 @@ public sealed partial class RingTerrainSampler : IDisposable
         CaveRegionFeatureSnapshotGenerator? sharedRegionFeatures = null,
         TerrainGenerationParameters? runtimeSurfaceParametersOverride = null,
         float? runtimeAltitudeTemperatureDropOverride = null,
-        BiomeProfile[]? biomeProfilesOverride = null)
+        BiomeProfile[]? biomeProfilesOverride = null,
+        RiverGraph? riverGraphOverride = null)
     {
         // The root runtime sampler freezes its Godot Resource once on the main
         // thread. Independent worker copies receive that immutable instance with
@@ -261,7 +264,10 @@ public sealed partial class RingTerrainSampler : IDisposable
         if (runtimeSurfaceParametersOverride != null)
         {
             _runtimeSurfaceParameters = runtimeSurfaceParametersOverride;
-            _runtimeSurfaceModel = new TerrainGenerationHeightModel(runtimeSurfaceParametersOverride);
+            // A copy shares its root's river graph (S12); without one the store is asked, as for a root.
+            _runtimeSurfaceModel = RequireRiverGraph(runtimeSurfaceParametersOverride, riverGraphOverride != null
+                ? new TerrainGenerationHeightModel(runtimeSurfaceParametersOverride, true, riverGraphOverride)
+                : new TerrainGenerationHeightModel(runtimeSurfaceParametersOverride));
             _runtimeAltitudeTemperatureDropPerKilometre = runtimeAltitudeTemperatureDropOverride
                 ?? _settings.AltitudeTemperatureDropPerKilometre;
         }

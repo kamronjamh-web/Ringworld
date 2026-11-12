@@ -1,7 +1,10 @@
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Godot;
 using Godot.Collections;
 using RingworldTechDemo.Poi;
+using RingworldTechDemo.Terrain.Hydrology;
 using RingworldTechDemo.Terrain.Surface;
 using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Integration;
@@ -659,11 +662,75 @@ public partial class RingWorldLoadingBridge : Node
         return diagnostics;
     }
 
+    // ---- River graph (T2R-9, S12): baked on a worker while the loading screen shows a stage, before the world is attached.
+    private Task<RiverGraph>? _hydrologyTask;
+    private CancellationTokenSource? _hydrologyCancel;
+    private readonly HydrologyProgress _hydrologyProgress = new();
+    private bool _hydrologyRequired;
+
+    private sealed class HydrologyProgress : System.IProgress<double>
+    {
+        private double _value;
+        public double Value => Volatile.Read(ref _value);
+        public void Report(double value) => Volatile.Write(ref _value, value);
+    }
+
+    private static HydrologyBakeInputs? CaptureHydrologyInputs(Node? world)
+        => HydrologyBakeInputs.CaptureForWorld(world?.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager")?.TerrainSettings);
+
+    /// <summary>
+    /// Starts the river bake of a world with <c>water.rivers</c> (main thread, after <see cref="PrepareWorld"/> and before the world is attached). Returns {required}; a world without rivers does nothing.
+    /// The inputs are captured here; the identity, the file check and the bake run on a worker.
+    /// </summary>
+    public Godot.Collections.Dictionary BeginHydrology()
+    {
+        _hydrologyRequired = false;
+        HydrologyBakeInputs? inputs = CaptureHydrologyInputs(_world);
+        if (inputs == null) return new Godot.Collections.Dictionary { ["required"] = false };
+        _hydrologyRequired = true;
+        _hydrologyCancel = new CancellationTokenSource();
+        CancellationToken token = _hydrologyCancel.Token;
+        System.IProgress<double> progress = _hydrologyProgress;
+        _hydrologyTask = Task.Run(() => RiverGraphStore.GetOrBuildAsync(inputs, token, progress), CancellationToken.None);
+        return new Godot.Collections.Dictionary { ["required"] = true };
+    }
+
+    /// <summary>{required, completed, progress, error} of the river bake; error is empty unless the bake failed.</summary>
+    public Godot.Collections.Dictionary CaptureHydrologyStatus()
+    {
+        var status = new Godot.Collections.Dictionary { ["required"] = _hydrologyRequired, ["completed"] = false, ["progress"] = 0.0, ["error"] = "" };
+        if (!_hydrologyRequired || _hydrologyTask == null) { status["completed"] = true; return status; }
+        status["progress"] = _hydrologyProgress.Value;
+        if (_hydrologyTask.IsFaulted) { status["completed"] = true; status["error"] = "River graph bake failed: " + (_hydrologyTask.Exception?.GetBaseException().Message ?? "unknown error"); }
+        else if (_hydrologyTask.IsCanceled) { status["completed"] = true; status["error"] = "River graph bake was cancelled."; }
+        else if (_hydrologyTask.IsCompletedSuccessfully) { status["completed"] = true; status["progress"] = 1.0; }
+        return status;
+    }
+
+    /// <summary>Leaves the river bake; the last waiter of an identity cancels the build and nothing is published.</summary>
+    public void CancelHydrology()
+    {
+        _hydrologyCancel?.Cancel();
+    }
+
+    /// <summary>The diagnostics launch: bakes (or loads) the river graph on the calling thread before the world is attached. Returns "" or the error. A world without rivers does nothing.</summary>
+    public string BakeHydrologyBlocking(Node world)
+    {
+        try
+        {
+            HydrologyBakeInputs? inputs = CaptureHydrologyInputs(world);
+            if (inputs != null) RiverGraphStore.GetOrBuild(inputs);
+            return "";
+        }
+        catch (System.Exception e) { return "River graph bake failed: " + e.Message; }
+    }
+
     public void CancelWorld()
     {
         _released = true;
         // Pending activation steps never run and held children stay disabled; the world is freed by the caller.
         _activationCancelled = true;
+        CancelHydrology();
         _activationList.Clear();
         _activationHolds.Clear();
         if (_saves != null && GodotObject.IsInstanceValid(_saves)) _saves.CancelWorldLoad();

@@ -120,10 +120,21 @@ public sealed partial class RingTerrainSampler
         if (parameters.IsWorldGenerationRecipe)
             ApplyRecipeClimate(settings, parameters);
         // TerrainGenerationParameters validates the full-range, Certified, periodic v1 contract.
-        return (parameters, new TerrainGenerationHeightModel(parameters), settings.AltitudeTemperatureDropPerKilometre);
+        return (parameters, RequireRiverGraph(parameters, new TerrainGenerationHeightModel(parameters)), settings.AltitudeTemperatureDropPerKilometre);
     }
 
-    private static void ApplyRecipeClimate(VoxelTerrainSettings settings, TerrainGenerationParameters recipe)
+    /// <summary>S12: a water.rivers world needs its baked graph before a runtime sampler exists (the loading stage bakes it; tools install or bake one first).</summary>
+    private static TerrainGenerationHeightModel RequireRiverGraph(TerrainGenerationParameters parameters, TerrainGenerationHeightModel model)
+    {
+        if (parameters.HasRivers && model.RiverOperator == null)
+        {
+            model.Dispose();
+            throw new InvalidOperationException("river graph not baked");
+        }
+        return model;
+    }
+
+    internal static void ApplyRecipeClimate(VoxelTerrainSettings settings, TerrainGenerationParameters recipe)
     {
         settings.ContinentalFrequency = (float)recipe.ContinentalFrequency;
         settings.ErosionFrequency = (float)recipe.ErosionFrequency;
@@ -359,6 +370,8 @@ public sealed partial class RingTerrainSampler
             // water.rivers only, appended AFTER the Weather Lung terms so every recipe without rivers keeps its hash: drainage and carve algorithm versions.
             hash = MixHash(hash, (ulong)Terrain.Hydrology.HydrologyVersions.DrainageAlgorithm);
             hash = MixHash(hash, (ulong)Terrain.Hydrology.HydrologyVersions.CarveOperator);
+            // T2R-9: then the identity hash of the baked graph, so a different bake (a new drainage algorithm, other inputs) is a different definition.
+            hash = MixHash(hash, _runtimeSurfaceModel.RiverOperator!.Graph.IdentityHash);
         }
         foreach (char character in RuntimeSurfaceGenerationContractId)
             hash = MixHash(hash, character);

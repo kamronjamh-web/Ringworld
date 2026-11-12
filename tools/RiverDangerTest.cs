@@ -213,8 +213,7 @@ public partial class RiverDangerTest : RefCounted
         TerrainGenerationParameters recipe = EmitterSiteTestWorlds.Gen17WorldRecipe(seed, 1, new[] { "water.rivers" });
         int workers = Math.Clamp(System.Environment.ProcessorCount, 2, 8);
         using VoxelTerrainSettings settings = EmitterSiteTestWorlds.CreateProductionSettings(seed, recipe);
-        using var root = new RingTerrainSampler(settings, true, EmitterSiteTestWorlds.Circumference, EmitterSiteTestWorlds.Circumference / Math.Tau, EmitterSiteTestWorlds.Width, 8400);
-        var source = new CpuDrainageHeightSource(recipe, DrainageClimateInputs.FromSampler(root), workers);
+        var source = new CpuDrainageHeightSource(recipe, HydrologyBakeInputs.Capture(settings, recipe, workers).Climate, workers);
         DrainageGridSpec spec = DrainageGridSpec.Strip(recipe, StripStartMeters, StripKilometres);
         DrainageGrid grid = source.SampleGrid(spec, null, CancellationToken.None);
         Baked a = Bake(recipe, source, grid, workers);

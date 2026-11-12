@@ -35,6 +35,28 @@ public sealed class DrainageClimateInputs
         return new DrainageClimateInputs(gpu, () => new SamplerReader(root.CreateIndependentCopy()));
     }
 
+    /// <summary>
+    /// Climate inputs without a sampler (S12, T2R-9): the GPU settings from <paramref name="effective"/> (a settings duplicate with the recipe climate applied) and, per worker, a climate-only
+    /// <see cref="RingTerrainSampler"/> in legacy mode (recipe and contract cleared, so no height model and no graph) whose <see cref="RingTerrainSampler.SampleClimateMoisture"/> reads the same value as
+    /// a runtime sampler's <c>Moisture</c>. <paramref name="effective"/> is duplicated here and not touched afterwards.
+    /// </summary>
+    public static DrainageClimateInputs FromSettings(VoxelTerrainSettings effective, long circumferenceMeters, int widthMeters)
+    {
+        VoxelTerrainSettings legacy = effective.Duplicate(true) as VoxelTerrainSettings ?? throw new InvalidOperationException("Climate settings could not be duplicated.");
+        legacy.SurfaceGenerationRecipeJson = string.Empty;
+        legacy.SurfaceGenerationContractId = string.Empty;
+        ProxyGpuClimateSettings gpu = RingTerrainSampler.BuildGpuClimateSettings(effective, circumferenceMeters, widthMeters, effective.AltitudeTemperatureDropPerKilometre);
+        return new DrainageClimateInputs(gpu, () => new LegacyReader(new RingTerrainSampler(legacy, true, circumferenceMeters, circumferenceMeters / Math.Tau, widthMeters, 8400)));
+    }
+
+    private sealed class LegacyReader : IDrainageMoistureReader
+    {
+        private readonly RingTerrainSampler _sampler;
+        public LegacyReader(RingTerrainSampler sampler) => _sampler = sampler;
+        public float Moisture(long around, int across) => _sampler.SampleClimateMoisture(around, across);
+        public void Dispose() => _sampler.Dispose();
+    }
+
     private sealed class SamplerReader : IDrainageMoistureReader
     {
         private readonly RingTerrainSampler _sampler;

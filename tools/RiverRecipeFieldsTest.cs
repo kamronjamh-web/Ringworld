@@ -89,9 +89,16 @@ public partial class RiverRecipeFieldsTest : RefCounted
         var rivers = TerrainGenerationParameters.WorldDefault(1, 1337, Review);
         using var a = CreateSampler(gen1);
         using var b = CreateSampler(gen1);
+        // S12: a water.rivers runtime sampler needs its graph; a strip graph stands in for the ring bake.
+        using var riverSettings = new VoxelTerrainSettings { Seed = checked((int)rivers.Seed), SurfaceGenerationRecipeJson = rivers.CanonicalJson, SurfaceGenerationContractId = EmitterSiteTestWorlds.Contract };
+        RiverTestGraphs.Install(rivers, riverSettings);
         using var c = CreateSampler(rivers);
         Require(a.TerrainDefinitionHash == b.TerrainDefinitionHash, "runtime hash is not stable without rivers");
         Require(a.TerrainDefinitionHash != c.TerrainDefinitionHash, "runtime hash does not change with water.rivers");
+        // T2R-9: the graph identity hash joins the runtime hash, so another bake of the same recipe is another definition.
+        RiverTestGraphs.Install(rivers, riverSettings, 10_200_000d);
+        using var d = CreateSampler(rivers);
+        Require(d.TerrainDefinitionHash != c.TerrainDefinitionHash, "runtime hash does not change with the river graph");
     }
 
     private static RingTerrainSampler CreateSampler(TerrainGenerationParameters recipe)
