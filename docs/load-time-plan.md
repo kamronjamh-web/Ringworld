@@ -336,3 +336,7 @@ Output: `.godot/audit_baseline/DESKTOP-RAVA9C1/load/after_l2b/`.
 - **L2-3d Visible-first gate.** If the user accepts refinement outside the arrival view, release on the levels the arrival camera can see. Needs a before/after capture at the entry frame, not 10 s later.
 - The benchmark's `-Shot` captures 10 s after entry. Add a capture on the first revealed frame; that is the frame a look check must compare.
 - Not checked: the menu path (`menu_warm_stall_probe`), the laptop, VSync on.
+
+## User answer (2026-11-12): visible-first gate (L2-3d)
+
+"Yes, out of view only." At entry, the arrival view must look final. Terrain outside the view (behind and to the sides) may sharpen over the next few seconds. The benchmark first-frame capture must prove the arrival view matches the serial or gated first frame.
