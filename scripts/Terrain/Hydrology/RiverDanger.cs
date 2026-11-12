@@ -2,7 +2,10 @@ using System;
 
 namespace RingworldTechDemo.Terrain.Hydrology;
 
-/// <summary>Every constant of Spec E2 and E3 (docs/work-orders/terrain-vegetation/T3.md). <see cref="Default"/> is the reset's starting set; <see cref="Interim"/> reproduces the T2R-6b law.</summary>
+/// <summary>
+/// Every constant of Spec E2 and E3 (docs/work-orders/terrain-vegetation/T3.md). <see cref="Default"/> is the calibrated set: Nm 0.18, Kd 0.34, E0 0.80, chosen on the production spans
+/// of both seeds (T3R-3 escalation decisions, 2026-11-12; the T3R-2 row Nm 0.20, E0 0.65 was chosen with the reach discharge on every span). <see cref="Interim"/> reproduces the T2R-6b law.
+/// </summary>
 public sealed record RiverDangerConstants
 {
     /// <summary>E2: depth coefficient Kd (d = max(1.2, channel_depth Kd Q^0.4)).</summary>
@@ -11,7 +14,7 @@ public sealed record RiverDangerConstants
     public double MinWidth { get; init; } = 8d;
     /// <summary>E2: roughness at the lowest gradient Np, its limit Nm (the mountain roughness), the reference gradient Sa and the exponent Gn.</summary>
     public double Np { get; init; } = 0.05;
-    public double Nm { get; init; } = 0.20;
+    public double Nm { get; init; } = 0.18;
     public double Sa { get; init; } = 0.0003;
     public double Gn { get; init; } = 0.4;
     /// <summary>E2: cap on the centre speed in pools (U0 is at most Vpool / 1.5 times ferocity).</summary>
@@ -20,7 +23,7 @@ public sealed record RiverDangerConstants
     /// <summary>E3: chute length per metre of drop Lc, chute head per unit of span gradient Ld, speed share E0, reference depth Dref, chute speed cap Vchute.</summary>
     public double Lc { get; init; } = RiverLevel.ChuteMeters;
     public double Ld { get; init; } = 30d;
-    public double E0 { get; init; } = 0.65;
+    public double E0 { get; init; } = 0.80;
     public double Dref { get; init; } = 2.2;
     public double Vchute { get; init; } = 12d;
     /// <summary>Report only: use the reach's grid gradient instead of the window gradient Sh (the interim law).</summary>
@@ -66,9 +69,28 @@ public static class RiverDanger
         double vp = 1.5 * u;
         double chute = Math.Min(1d, c.Lc * sr);
         double head = Math.Max(1d, c.Ld * sr);
-        double eta = c.E0 / landing * Math.Clamp(d / c.Dref, 0.5, 1.6);
+        double eta = Eta(c, d, landing);
         double vc = Math.Max(vp, Math.Min(Math.Sqrt(vp * vp + 2d * Gravity * eta * head), c.Vchute * ferocity));
         return (1d - chute) * vp + chute * vc;
+    }
+
+    /// <summary>E3: the share of the fall that becomes speed, eta = (E0 / L) clamp(d / Dref, 0.5, 1.6).</summary>
+    public static double Eta(RiverDangerConstants c, double d, double landing = 1d) => c.E0 / landing * Math.Clamp(d / c.Dref, 0.5, 1.6);
+
+    /// <summary>
+    /// E4: the smallest landing factor L in [1, 64] with a danger speed of at most <paramref name="speed"/> (bisection, 40 steps); 64 when even that is too fast.
+    /// </summary>
+    public static double LandingFactor(RiverDangerConstants c, double q, double sh, double channelDepth, double ferocity, double sr, double speed)
+    {
+        double Vd(double l)
+        {
+            RiverDangerChannel ch = Channel(c, q, sh, channelDepth, ferocity, l);
+            return DangerSpeed(c, ch.Speed, ch.Depth, sr, ferocity, l);
+        }
+        double lo = 1d, hi = 64d;
+        if (Vd(hi) > speed) return hi;
+        for (int k = 0; k < 40; k++) { double mid = 0.5 * (lo + hi); if (Vd(mid) <= speed) hi = mid; else lo = mid; }
+        return hi;
     }
 
     /// <summary>E3: calm under 1.5 m/s, swift under 4, fierce under 7, torrent above.</summary>

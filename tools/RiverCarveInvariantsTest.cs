@@ -15,6 +15,8 @@ namespace RingworldTechDemo.Tools;
 /// T2R-7 (docs/work-orders/terrain-vegetation/T2.md, S7): the river operator in the height model. A seed-1337 recipe with water.rivers, a 400 km CPU strip graph handed to
 /// the model directly, 200 reaches and 50 confluences picked by hash, cross-sections every 25 m sampled at 0.25 m (the 0.5 m checks use every second sample). Each check
 /// holds at 99.5 % with a hard limit: continuity, containment, level monotonicity and adjacent wet levels, cut and fill, footprint, corridor weight, and the site registry identity.
+/// Containment (T3R-3 escalation decision, T3.md Review notes) is judged on wet-dry pairs whose dry sample lies outside every channel; where the dry sample is a channel's own bank
+/// (at or above its own level) the two levels must differ by at most 0.6 m instead, because the difference there is the fall of the water surface, not a leak.
 /// Negative controls: an identity stand-in (no water, must pass), a stand-in with a 2 m step at the corridor edge (must fail), and the core lower bound switched off with a fabricated
 /// dip in the bank zone (containment must fail). Prints the sample cost near rivers and elsewhere. Set RIVER_CARVE_PICTURES to a folder to also write the before/after relief crops.
 /// Prints RIVER_CARVE_INVARIANTS=PASS|FAIL. Headless: tools/run_tests.ps1 -Tests river_carve_invariants_test.
@@ -58,6 +60,13 @@ public partial class RiverCarveInvariantsTest : RefCounted
     {
         public long Sections, ContPairs, ContOver, WetSamples, ContainPairs, ContainBad, LevelPairs, LevelBad, BankSamples, FillOver3, WeightSamples, WeightBad;
         public double ContMax, ContainMax, LevelStepMax, FillMax;
+        /// <summary>
+        /// The wet-dry pairs split by the dry sample (T3R-3 escalation decision): Leak = it lies outside every channel, so ground below the wet level is a leak (limits 0.05 m at 99.5 %,
+        /// hard 0.5 m); Waterline = it is a channel's own bank at or above its own level, so the difference is the fall of the water surface over 2 m (limit 0.6 m at 99.5 %, hard 1 m).
+        /// Contain* keeps counting every pair against the wet level, printed for the trend only.
+        /// </summary>
+        public long LeakPairs, LeakBad, WaterlinePairs, WaterlineBad;
+        public double LeakMax, WaterlineMax;
         /// <summary>The first few failing samples of each kind, printed so a failure can be read without a rerun.</summary>
         public readonly List<string> Examples = new();
         public void Example(string text) { if (Examples.Count < 40) Examples.Add(text); }
@@ -65,6 +74,8 @@ public partial class RiverCarveInvariantsTest : RefCounted
         {
             Sections += o.Sections; ContPairs += o.ContPairs; ContOver += o.ContOver; WetSamples += o.WetSamples; ContainPairs += o.ContainPairs; ContainBad += o.ContainBad;
             LevelPairs += o.LevelPairs; LevelBad += o.LevelBad; BankSamples += o.BankSamples; FillOver3 += o.FillOver3; WeightSamples += o.WeightSamples; WeightBad += o.WeightBad;
+            LeakPairs += o.LeakPairs; LeakBad += o.LeakBad; WaterlinePairs += o.WaterlinePairs; WaterlineBad += o.WaterlineBad;
+            LeakMax = Math.Max(LeakMax, o.LeakMax); WaterlineMax = Math.Max(WaterlineMax, o.WaterlineMax);
             foreach (string e in o.Examples) Example(e);
             ContMax = Math.Max(ContMax, o.ContMax); ContainMax = Math.Max(ContainMax, o.ContainMax); LevelStepMax = Math.Max(LevelStepMax, o.LevelStepMax); FillMax = Math.Max(FillMax, o.FillMax);
         }
@@ -232,8 +243,21 @@ public partial class RiverCarveInvariantsTest : RefCounted
                 st.ContainPairs++;
                 double violation = p.Level - q.Height;
                 if (violation > 0.05) st.ContainBad++;
-                if (violation > 0.5) st.Example(FormattableString.Invariant($"containment {violation:F2} m: stem {sec.Stem} s {sec.S:F0} x {x:F2} dir {dir} (a {sec.A:F1}, b {sec.B:F1}) wet height {p.Height:F2} level {p.Level:F2}; dry height {q.Height:F2} kind {q.Kind} level {q.Level:F2} delta {q.Delta:F1}"));
                 if (violation > st.ContainMax) st.ContainMax = violation;
+                if (q.Kind == InlandWaterKind.River)
+                {
+                    // The dry sample is a channel's own bank, at or above its own level (it is not wet): nothing can leak there. What can be wrong is a step in the water surface.
+                    double fall = Math.Abs(p.Level - q.Level);
+                    st.WaterlinePairs++;
+                    if (fall > 0.6) st.WaterlineBad++;
+                    if (fall > 1d) st.Example(FormattableString.Invariant($"waterline step {fall:F2} m: stem {sec.Stem} s {sec.S:F0} x {x:F2} dir {dir} (a {sec.A:F1}, b {sec.B:F1}) wet height {p.Height:F2} level {p.Level:F2}; dry height {q.Height:F2} level {q.Level:F2}"));
+                    if (fall > st.WaterlineMax) st.WaterlineMax = fall;
+                    continue;
+                }
+                st.LeakPairs++;
+                if (violation > 0.05) st.LeakBad++;
+                if (violation > 0.5) st.Example(FormattableString.Invariant($"containment {violation:F2} m: stem {sec.Stem} s {sec.S:F0} x {x:F2} dir {dir} (a {sec.A:F1}, b {sec.B:F1}) wet height {p.Height:F2} level {p.Level:F2}; dry height {q.Height:F2} kind {q.Kind} level {q.Level:F2} delta {q.Delta:F1}"));
+                if (violation > st.LeakMax) st.LeakMax = violation;
             }
         }
     }
@@ -255,7 +279,7 @@ public partial class RiverCarveInvariantsTest : RefCounted
     }
 
     private static string Text(string label, Stats s)
-        => FormattableString.Invariant($"{label}: {s.Sections} sections, continuity {s.ContOver}/{s.ContPairs} over 0.6 m (max {s.ContMax:F2} m), containment {s.ContainBad}/{s.ContainPairs} wet-dry pairs below the level (largest {s.ContainMax:F2} m), wet samples {s.WetSamples}, adjacent wet levels {s.LevelBad}/{s.LevelPairs} over 0.6 m (max {s.LevelStepMax:F2} m), fill over 3 m on {s.FillOver3}/{s.BankSamples} bank samples (max {s.FillMax:F1} m), corridor weight {s.WeightBad}/{s.WeightSamples} bad");
+        => FormattableString.Invariant($"{label}: {s.Sections} sections, continuity {s.ContOver}/{s.ContPairs} over 0.6 m (max {s.ContMax:F2} m), containment {s.LeakBad}/{s.LeakPairs} wet-dry pairs with ground outside every channel below the level (largest {s.LeakMax:F2} m), waterline levels {s.WaterlineBad}/{s.WaterlinePairs} wet-bank pairs over 0.6 m (largest {s.WaterlineMax:F2} m), all wet-dry pairs against the wet level {s.ContainBad}/{s.ContainPairs} over 0.05 m (largest {s.ContainMax:F2} m; for the trend, not a check), wet samples {s.WetSamples}, adjacent wet levels {s.LevelBad}/{s.LevelPairs} over 0.6 m (max {s.LevelStepMax:F2} m), fill over 3 m on {s.FillOver3}/{s.BankSamples} bank samples (max {s.FillMax:F1} m), corridor weight {s.WeightBad}/{s.WeightSamples} bad");
 
     // ------------------------------------------------------------------ negative controls
 
@@ -310,8 +334,8 @@ public partial class RiverCarveInvariantsTest : RefCounted
         Stats withCore = Dip(new RiverCarveOperator(_graph)), withoutCore = Dip(noCore);
         Detail(Text("fabricated dip, core lower bound on", withCore));
         Detail(Text("fabricated dip, core lower bound OFF", withoutCore));
-        Check(withoutCore.ContainBad > 0 && withoutCore.ContainMax > 0.05, "negative control: containment did not fail with the core lower bound off on a fabricated dip");
-        Check(withCore.ContainBad <= withCore.ContainPairs * 0.005, "the fabricated dip leaked with the core lower bound on");
+        Check(withoutCore.LeakBad > withoutCore.LeakPairs * 0.005 && withoutCore.LeakMax > 0.5, "negative control: containment did not fail with the core lower bound off on a fabricated dip");
+        Check(withCore.LeakBad <= withCore.LeakPairs * 0.005 && withCore.LeakMax <= 0.5, "the fabricated dip leaked with the core lower bound on");
     }
 
     // ------------------------------------------------------------------ the real operator
@@ -324,7 +348,8 @@ public partial class RiverCarveInvariantsTest : RefCounted
         foreach (string e in real.Examples) Detail("example " + e);
         Check(real.Sections > 1000 && real.WetSamples > 10000, $"too little wet ground sampled ({real.Sections} sections, {real.WetSamples} wet samples)");
         Check(real.ContOver <= real.ContPairs * 0.005 && real.ContMax <= 2d, $"continuity: {real.ContOver}/{real.ContPairs} steps over 0.6 m, largest {real.ContMax:F2} m");
-        Check(real.ContainBad <= real.ContainPairs * 0.005 && real.ContainMax <= 0.5, $"containment: {real.ContainBad}/{real.ContainPairs} pairs, largest violation {real.ContainMax:F2} m");
+        Check(real.LeakBad <= real.LeakPairs * 0.005 && real.LeakMax <= 0.5, $"containment: {real.LeakBad}/{real.LeakPairs} pairs, largest violation {real.LeakMax:F2} m");
+        Check(real.WaterlineBad <= real.WaterlinePairs * 0.005 && real.WaterlineMax <= 1d, $"waterline levels: {real.WaterlineBad}/{real.WaterlinePairs} wet-bank pairs differ by more than 0.6 m, largest {real.WaterlineMax:F2} m");
         Check(real.LevelBad <= real.LevelPairs * 0.005, $"adjacent wet levels: {real.LevelBad}/{real.LevelPairs} differ by more than 0.6 m (largest {real.LevelStepMax:F2} m)");
         Check(real.FillOver3 <= real.BankSamples * 0.02 && real.FillMax <= 15d, $"fill: {real.FillOver3}/{real.BankSamples} bank samples over 3 m, largest {real.FillMax:F1} m");
         Check(real.WeightBad <= real.WeightSamples * 0.0005, $"corridor weight: {real.WeightBad}/{real.WeightSamples} outside [0, 1], discontinuous, or below 1 on the water");

@@ -189,7 +189,7 @@ public static class RiverLevel
         for (int i = 0; i < s.Length; i++)
         {
             net.CentreFrame(stem, s[i], out double around, out double across, out double nx, out double ny);
-            net.Geometry(stem, s[i], out _, out double a, out double b, out _, out _);
+            net.PathGeometry(stem, s[i], out double a, out double b);
             double t = a + b;
             for (int k = 0; k < 3; k++)
             {
@@ -433,7 +433,7 @@ public static class RiverLevel
                 {
                     net.ReceivingLevel[i] = AtStem(net, st.TerminalId, st.JunctionS);
                     int reach = net.ReachAt(st.TerminalId, st.JunctionS);
-                    net.Geometry(st.TerminalId, st.JunctionS, out _, out double a, out double b, out _, out _);
+                    net.PathGeometry(st.TerminalId, st.JunctionS, out double a, out double b);
                     RiverSection sec = net.Sections[reach];
                     net.TailMeters[i] = a + b + RiverHydraulics.FloodplainWidth(sec.Width, sec.Gradient, net.ValleyWidth) + 50d;
                     break;

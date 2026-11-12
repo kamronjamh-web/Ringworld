@@ -19,7 +19,7 @@ public static class WorldRecipeFields
         new("river_valley_width", "water.rivers", RecipeFieldKind.Float, 1, 0.5, 2),
         new("channel_depth", "water.rivers", RecipeFieldKind.Float, 1, 0.5, 2),
         new("meander_strength", "water.rivers", RecipeFieldKind.Float, 1, 0, 2),
-        new("river_ferocity", "water.rivers", RecipeFieldKind.Float, 1, 1, 1),
+        new("river_ferocity", "water.rivers", RecipeFieldKind.Float, 1, 0.6, 1.5),
     };
 }
 

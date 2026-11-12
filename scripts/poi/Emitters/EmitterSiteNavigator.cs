@@ -205,7 +205,7 @@ public sealed class EmitterSiteNavigator
         EmitterSitePlacement p = _placements.GetPlacement(site);
         bool main = p.Kind == SiteKind.Main;
         double aimVertical = p.PadHeightMeters + _placements.GetCrownHeightMeters(site) * 0.5d;
-        double side = Math.Cos(p.BearingDegrees * (Math.PI / 180d)) < 0d ? -1d : 1d;
+        double side = FarSide(p.BearingDegrees);
         double clearance = EmitterSiteFrameMath.DefaultPadClearanceMeters;
         switch (viewpoint)
         {
@@ -236,6 +236,9 @@ public sealed class EmitterSiteNavigator
         }
     }
 
+    /// <summary>Which way along the ring the Far viewpoint lies from a site: -1 when the approach bearing points against the ring direction.</summary>
+    public static double FarSide(double bearingDegrees) => Math.Cos(bearingDegrees * (Math.PI / 180d)) < 0d ? -1d : 1d;
+
     private EmitterViewpointPose GetFarPose(int site, EmitterSitePlacement p, Func<double, double, float>? ground, double farKm, double aimVertical, double side, bool main)
     {
         double distance = farKm * 1000d * (main ? MainFarMultiplier : 1d);
@@ -254,6 +257,20 @@ public sealed class EmitterSiteNavigator
         LookAt(targetAround, hover, targetAcross, p.AroundMeters, aimVertical, p.AcrossMeters, out double hoverYaw, out double hoverPitch);
         return new EmitterViewpointPose(site, EmitterViewpoint.Far, targetAround, hover, targetAcross, hoverYaw, hoverPitch, true,
             p.AroundMeters, aimVertical, p.AcrossMeters, $"{label} hovering (no dry land)");
+    }
+
+    /// <summary>
+    /// T3R-3 (river exclusions): the main spire's Far viewpoint target of a fresh world before the land check, in canonical metres: the point
+    /// <see cref="TryComputeFreshSpawn"/> aims at (<paramref name="farKm"/> times <see cref="MainFarMultiplier"/> along the ring from the main site). False without sites.
+    /// </summary>
+    public static bool TryComputeNominalFreshSpawn(EmitterSiteRegistry? registry, double farKm, out double around, out double across)
+    {
+        around = across = 0d;
+        if (registry == null || registry.Count == 0) return false;
+        EmitterSite main = registry[registry.MainIndex];
+        around = main.Around + FarSide(main.BetaDegrees) * farKm * 1000d * MainFarMultiplier;
+        across = main.Across;
+        return true;
     }
 
     /// <summary>

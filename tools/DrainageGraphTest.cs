@@ -942,7 +942,7 @@ public partial class DrainageGraphTest : RefCounted
             for (double g = 1e-4; g < 0.1; g *= 3)
             {
                 double last = 0;
-                for (double q = 1; q < 1e5; q *= 1.7) { double dep = RiverHydraulics.Section(q, g, 1, 1).Depth; Check(dep >= last - 1e-12, $"depth decreases with Q at S {g}"); last = dep; }
+                for (double q = 1; q < 1e5; q *= 1.7) { double dep = RiverHydraulics.PathSection(q, g, 1, 1).Depth; Check(dep >= last - 1e-12, $"depth decreases with Q at S {g}"); last = dep; }
             }
             // Lateral displacement within the cap, and no centreline point inside a barrier cell or a site's corridor.
             Check(report.MaxNodeShiftMeters <= RiverWander.NodeShiftCapMeters + 1e-6 && report.MaxSmoothMeters <= RiverWander.NodeShiftCapMeters + 1e-6, $"{label}: node shift beyond the 350 m cap (total {report.MaxNodeShiftMeters:F1}, smoothing {report.MaxSmoothMeters:F1})");

@@ -202,6 +202,47 @@ public static class RiverDangerReport
     /// <summary>The acceptance window of E3 (both seeds, after landings): calm at least 30 %, calm plus swift at least 85 %, fierce 6 to 9 %, torrent 1 to 2.5 %.</summary>
     public static bool InWindow(double[] s) => s[0] >= 0.30 && s[0] + s[1] >= 0.85 && s[2] >= 0.06 && s[2] <= 0.09 && s[3] >= 0.01 && s[3] <= 0.025;
 
+    /// <summary>The user's bands for the whole ring (after landings and exclusions): at least 70 % calm or swift, fierce 5 to 10 %, torrent at most 3 %. Not a regional property: a 2,000 km strip may sit outside.</summary>
+    public static bool InUserBands(double[] s) => s[0] + s[1] >= 0.70 && s[2] >= 0.05 && s[2] <= 0.10 && s[3] <= 0.03;
+
+    /// <summary>
+    /// The production mix for other constants: the stored spans (span Q and Sh) re-derived with <paramref name="c"/>, the exit rule and the exclusions resolved again. The graph and
+    /// its table are not changed. With <see cref="RiverDangerConstants.Default"/> it must reproduce the stored table's shares.
+    /// </summary>
+    public static (double[] Share, double LandingShare, double MedianWidth) StoredShares(RiverNetwork net, bool[]? excluded, RiverDangerConstants c)
+    {
+        RiverSpanTable stored = net.SpanTable ?? throw new InvalidOperationException("the network has no spans");
+        RiverSpan[] raw = stored.Spans.Select(x => x with { Landing = 1f }).ToArray();
+        RiverSpanTable t = RiverSpanTable.Create(net, raw, excluded, true, c);
+        var share = new double[4];
+        var len = new double[t.Count];
+        for (int i = 0; i < t.Count; i++) { len[i] = t.Spans[i].SEnd - t.Spans[i].SStart; share[(int)t.Class[i]] += len[i]; }
+        double total = Math.Max(1d, len.Sum());
+        for (int k = 0; k < 4; k++) share[k] /= total;
+        int[] order = Enumerable.Range(0, t.Count).OrderBy(i => t.HalfWidth[i]).ToArray();
+        double acc = 0d, median = 0d;
+        foreach (int i in order) { acc += len[i]; if (acc >= 0.5 * total) { median = 2d * t.HalfWidth[i]; break; } }
+        return (share, t.LandingMeters / total, median);
+    }
+
+    /// <summary>The grid of reset doc 4.5 on the production spans (<see cref="StoredShares"/>): the one the constants are chosen from since T3R-3.</summary>
+    public static string StoredGrid(RiverNetwork net, RiverExclusions? exclusions, out List<(double Nm, double Kd, double E0, double[] Share, double LandingShare)> rows)
+    {
+        rows = new List<(double, double, double, double[], double)>();
+        bool[]? excluded = exclusions?.Mark(net, (net.SpanTable ?? throw new InvalidOperationException("the network has no spans")).Spans);
+        var sb = new StringBuilder();
+        sb.AppendLine("production danger grid (stored spans, span Q, after landings and exclusions; * = inside the acceptance window; median width in m)");
+        foreach (double nm in new[] { 0.16, 0.18, 0.20, 0.22 })
+        foreach (double kd in new[] { 0.30, 0.34, 0.40 })
+        foreach (double e0 in new[] { 0.5, 0.65, 0.8 })
+        {
+            (double[] share, double ls, double median) = StoredShares(net, excluded, RiverDangerConstants.Default with { Nm = nm, Kd = kd, E0 = e0 });
+            rows.Add((nm, kd, e0, share, ls));
+            sb.AppendLine(FormattableString.Invariant($"Nm {nm:F2} Kd {kd:F2} E0 {e0:F2}: {Mix(share)}; landings {ls * 100:F2} % of length; w p50 {median:F1} {(InWindow(share) ? "*" : "")}"));
+        }
+        return sb.ToString();
+    }
+
     /// <summary>The grid of reset doc 4.5: mountain roughness Nm x depth coefficient Kd x eta E0, shares after landings.</summary>
     public static string Grid(RiverNetwork net, RiverDangerSpans sp, out List<(double Nm, double Kd, double E0, double[] Share, double LandingShare)> rows)
     {
@@ -309,6 +350,54 @@ public static class RiverDangerReport
         sb.AppendLine("not applied here: the E4 exclusions near emitter sites, the Wall Engine stadium, the Weather Lung and the fresh spawn (need the site list; T3R-3).");
 
         json = FormattableString.Invariant($"{{\"seed\":{net.Seed},\"spans\":{n},\"length_km\":{total / 1000d:F1},\"interim\":{Arr(interim.Share)},\"before\":{Arr(before.Share)},\"after\":{Arr(after.Share)},\"landings\":{after.Landings},\"landing_km\":{after.LandingMeters / 1000d:F1},\"landing_share\":{after.LandingMeters / total:F5},\"dangerous_runs\":{ends},\"dangerous_km\":{dangerous / 1000d:F1},\"dangerous_over5km_share\":{over5 / Math.Max(1d, dangerous):F4}}}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// T3R-3: the production numbers read from the spans stored in the graph (after landings and exclusions), in the shape of the E3 and E4 tables. <paramref name="exclusions"/> (may be null)
+    /// re-flags the spans inside an exclusion zone for the exclusion count.
+    /// </summary>
+    public static string StoredReport(RiverNetwork net, RiverExclusions? exclusions, out string json)
+    {
+        RiverSpanTable t = net.SpanTable ?? throw new InvalidOperationException("the network has no spans");
+        int n = t.Count;
+        var len = new double[n];
+        var share = new double[4];
+        for (int i = 0; i < n; i++) { len[i] = t.Spans[i].SEnd - t.Spans[i].SStart; share[(int)t.Class[i]] += len[i]; }
+        double total = len.Sum();
+        for (int k = 0; k < 4; k++) share[k] /= Math.Max(1d, total);
+        double[] Doubles(float[] v) => v.Select(x => (double)x).ToArray();
+        double[] width = Enumerable.Range(0, n).Select(i => 2d * t.HalfWidth[i]).ToArray();
+        var sb = new StringBuilder();
+        sb.AppendLine(FormattableString.Invariant($"production (stored spans), seed {net.Seed}: {n} spans, {net.Stems.Length} stems, {net.Reaches.Length} reaches, {total / 1000d:F0} km of river; ferocity {net.Ferocity:G}, channel depth {net.ChannelDepth:G}"));
+        sb.AppendLine("class share by length after landings and exclusions: " + Mix(share));
+        sb.AppendLine("the user's bands (whole ring only: at least 70 % calm or swift, fierce 5-10 %, torrent at most 3 %): " + (InUserBands(share) ? "inside" : "OUTSIDE") + "; the constants window: " + (InWindow(share) ? "inside" : "outside"));
+        sb.AppendLine("percentiles over length (p10/p50/p90/p99): U (m/s) " + Pcts(Doubles(t.Speed), len) + "; w (m) " + Pcts(width, len) + "; d (m) " + Pcts(Doubles(t.Depth), len) + "; Vd (m/s) " + Pcts(Doubles(t.DangerSpeed), len) + "; Sh " + Pcts(Enumerable.Range(0, n).Select(i => (double)t.Spans[i].Sh).ToArray(), len));
+        sb.AppendLine(FormattableString.Invariant($"width: smallest {width.Min():F1} m, largest {width.Max():F0} m, spans at the 400 m limit {width.Count(w => w >= 399.9)}; depth smallest {t.Depth.Min():F2} m"));
+        double landingM = 0d, landingExit = 0d; int landingCount = 0, flagged = 0, flaggedLandings = 0; double flaggedM = 0d, flaggedLandingM = 0d;
+        int[] successor = t.Successors(net);
+        bool[] dangerous = Enumerable.Range(0, n).Select(t.IsDangerous).ToArray();
+        double[] after = RiverSpanTable.DangerousRunAfter(successor, dangerous, len);
+        double dangerousM = 0d, longest = 0d; int over5 = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (t.Spans[i].Landing > 1f) { landingCount++; landingM += len[i]; }
+            if (t.ExitValley[i] && t.Spans[i].Landing <= 1f) landingExit += len[i];
+            if (dangerous[i]) { dangerousM += len[i]; longest = Math.Max(longest, after[i]); if (after[i] > RiverSpanTable.RunLimitMeters) over5++; }
+            if (exclusions != null && exclusions.Touches(net, net.Reaches[t.Spans[i].Reach].Stem, t.Spans[i].SStart, t.Spans[i].SEnd))
+            {
+                flagged++; flaggedM += len[i];
+                if (t.Spans[i].Landing > 1f) { flaggedLandings++; flaggedLandingM += len[i]; }
+            }
+        }
+        sb.AppendLine(FormattableString.Invariant($"landings {landingCount} spans, {landingM / 1000d:F0} km = {landingM / total * 100:F2} % of river length (largest factor {t.Spans.Max(s => s.Landing):F1}); {t.LandingCount} by the table; first calm or swift spans after a dangerous one {landingExit / 1000d:F0} km"));
+        sb.AppendLine(FormattableString.Invariant($"exclusions ({(exclusions == null ? 0 : exclusions.ZoneCount)} zones): {flagged} spans touch a zone, {flaggedM / 1000d:F1} km = {flaggedM / total * 100:F3} % of length; {flaggedLandings} of them are landings ({flaggedLandingM / 1000d:F1} km = {flaggedLandingM / total * 100:F3} % of length), the rest are not dangerous anyway"));
+        sb.AppendLine(FormattableString.Invariant($"dangerous (fierce or torrent, no landing) {dangerousM / 1000d:F0} km = {dangerousM / total * 100:F1} % of length; the most dangerous water that follows any dangerous span's end is {longest / 1000d:F2} km ({over5} spans above the 5 km limit)"));
+        var stored = new double[4]; double storedTotal = 0;
+        for (int r = 0; r < net.Reaches.Length; r++) { double l = net.Reaches[r].SEnd - net.Reaches[r].SStart; if (l <= 0) continue; stored[(int)net.Sections[r].Class] += l; storedTotal += l; }
+        for (int k = 0; k < 4; k++) stored[k] /= Math.Max(1d, storedTotal);
+        sb.AppendLine("interim law on the path sections (for comparison): " + Mix(stored));
+        json = FormattableString.Invariant($"{{\"seed\":{net.Seed},\"spans\":{n},\"length_km\":{total / 1000d:F1},\"share\":{Arr(share)},\"landings\":{landingCount},\"landing_km\":{landingM / 1000d:F1},\"landing_share\":{landingM / total:F5},\"excluded_spans\":{flagged},\"excluded_landing_share\":{flaggedLandingM / total:F5},\"max_run_after_km\":{longest / 1000d:F3}}}");
         return sb.ToString();
     }
 

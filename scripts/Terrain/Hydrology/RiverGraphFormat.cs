@@ -9,7 +9,7 @@ namespace RingworldTechDemo.Terrain.Hydrology;
 /// Binary form of a <see cref="RiverGraph"/> (S5, docs/t2-river-reset.md 4.7). Header: magic <c>RRGF</c>, <see cref="HydrologyVersions.GraphFormat"/> (int32),
 /// <see cref="HydrologyVersions.DrainageAlgorithm"/> (int32), input identity (uint64), source (byte: 0 CPU, 1 GPU; not part of the identity), payload length (int64) and the
 /// content hash (uint64, FNV-1a 64 over the payload bytes: the graph identity hash). Payload, little-endian: the grid and recipe values the hydraulics need, then nodes,
-/// stems, reaches, knots, lakes, inlets, runs, closed basins and dry runs, each prefixed by its count. Stem starts, row starts, curves, sections, tail levels and the index are derived at load by
+/// stems, reaches, spans, knots, lakes, inlets, runs, closed basins and dry runs, each prefixed by its count. Stem starts, row starts, curves, sections, tail levels and the index are derived at load by
 /// the same code the bake ran, so a loaded graph answers exactly like the baked one.
 /// </summary>
 public static class RiverGraphFormat
@@ -34,6 +34,34 @@ public static class RiverGraphFormat
         var parts = new List<(string, long)>();
         WritePayload(graph, parts);
         return parts;
+    }
+
+    /// <summary>
+    /// FNV-1a hash of each stored part of a graph file, read from the bytes (formats 3 and 4; format 3 has no spans part). T3R-3 uses it to show that the path, level and lake parts of a bake
+    /// are byte-identical to a bake made before spans existed.
+    /// </summary>
+    public static IReadOnlyList<(string Part, ulong Hash)> PartHashes(byte[] file)
+    {
+        int format = BitConverter.ToInt32(file, 4);
+        var result = new List<(string, ulong)>();
+        int at = 0;
+        void Take(string name, long bytes) { result.Add((name, Fnv1a(new ReadOnlySpan<byte>(file, HeaderBytes + at, (int)bytes)))); at += (int)bytes; }
+        int Int(int offset) => BitConverter.ToInt32(file, HeaderBytes + offset);
+        Take("header values", 64);
+        Take("nodes", 4L + 8L * Int(at));
+        int stemCount = Int(at), stemsAt = at + 4;
+        Take("stems", 4L + 21L * stemCount);
+        Take("reaches", 4L + 32L * Int(at));
+        if (format >= 4) Take("spans", 4L + 24L * Int(at));
+        long knotBytes = 4;
+        for (int i = 0; i < stemCount; i++) { int knots = Int(stemsAt + 21 * i + 4); if (knots > 0) knotBytes += 8 + 4L * (knots - 1); }
+        Take("knots", knotBytes);
+        Take("lakes", 4L + 64L * Int(at));
+        Take("inlets", 4L + 16L * Int(at));
+        Take("lake cell runs", 4L + 12L * Int(at));
+        Take("closed basins", 4L + 16L * Int(at));
+        Take("dry floor runs", 4L + 12L * Int(at));
+        return result;
     }
 
     public static byte[] Write(RiverGraph graph)
@@ -109,6 +137,10 @@ public static class RiverGraphFormat
         w.Write(n.Reaches.Length);
         foreach (RiverReach r in n.Reaches) { w.Write(r.Stem); w.Write(r.SStart); w.Write(r.SEnd); w.Write(r.AreaKm2); w.Write(r.Q); w.Write(r.S); w.Write(r.MeanderPhase); w.Write(r.UpstreamLake); }
         Part("reaches");
+        RiverSpanTable spanTable = n.SpanTable ?? throw new InvalidOperationException("the network has no spans");
+        w.Write(spanTable.Count);
+        foreach (RiverSpan sp in spanTable.Spans) { w.Write(sp.Reach); w.Write(sp.SStart); w.Write(sp.SEnd); w.Write(sp.Q); w.Write(sp.Sh); w.Write(sp.Landing); }
+        Part("spans");
         w.Write(n.Knots.Count);
         for (int i = 0; i < n.Stems.Length; i++)
         {
@@ -189,6 +221,8 @@ public static class RiverGraphFormat
             reaches[i] = new RiverReach { Stem = r.ReadInt32(), SStart = r.ReadSingle(), SEnd = r.ReadSingle(), AreaKm2 = r.ReadSingle(), Q = r.ReadSingle(), S = r.ReadSingle(), MeanderPhase = r.ReadSingle(), UpstreamLake = r.ReadInt32() };
             if ((uint)reaches[i].Stem >= (uint)stems.Length) throw new InvalidDataException("bad reach stem");
         }
+        var spans = new RiverSpan[Count(r, 24)];
+        for (int i = 0; i < spans.Length; i++) spans[i] = new RiverSpan { Reach = r.ReadInt32(), SStart = r.ReadSingle(), SEnd = r.ReadSingle(), Q = r.ReadSingle(), Sh = r.ReadSingle(), Landing = r.ReadSingle() };
         int knotTotal = Count(r, 4);
         if (knotCursor != knotTotal) throw new InvalidDataException("stem knot counts differ from the knot count");
         var knotCounts = new int[stems.Length];
@@ -261,6 +295,7 @@ public static class RiverGraphFormat
         var levels = new double[lakes.Length];
         for (int i = 0; i < lakes.Length; i++) levels[i] = lakes[i].Level;
         RiverLevel.ComputeTails(net, levels);
+        net.InstallSpans(RiverSpanTable.Create(net, spans, null, false));
         return new RiverGraph(net, lakes, inlets, runs, basins, dryRuns, ringColumns, rows, identity, source, hash);
     }
 }

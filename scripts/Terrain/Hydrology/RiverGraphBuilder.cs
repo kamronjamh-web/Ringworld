@@ -38,7 +38,7 @@ public struct RiverKnot
 }
 
 /// <summary>Channel and valley values of a stem at one arc parameter (S6, S7), as <see cref="RiverNetwork.ChannelAt"/> returns them: blended along the stem, without any footprint.</summary>
-public readonly record struct RiverChannel(int Reach, double HalfWidth, double BankWidth, double Depth, double EdgeDepth, double Floodplain, double ValleySlope, double MeanderAmplitude, double MeanderWavelength);
+public readonly record struct RiverChannel(int Reach, double HalfWidth, double BankWidth, double Depth, double EdgeDepth, double Floodplain, double ValleySlope, double MeanderAmplitude, double MeanderWavelength, int Span = -1);
 
 /// <summary>
 /// The T2R-5 river data (docs/work-orders/terrain-vegetation/T2.md, S5 to S7): nodes (decimetres), stems, reaches and level knots, plus what is derived from
@@ -60,7 +60,10 @@ public sealed class RiverNetwork
     public RiverStem[] Stems { get; }
     public RiverReach[] Reaches { get; }
     public RiverKnotTable Knots { get; internal set; } = RiverKnotTable.Empty;
+    /// <summary>The path section of each reach (Q and the reach gradient S): it feeds the wander, the meander amplitude and wavelength and the confluence tail. Channel and valley values come from <see cref="SpanTable"/>.</summary>
     public RiverSection[] Sections { get; }
+    /// <summary>T3R-3 (E1): the spans with their calibrated channel and danger values. Null until installed (a network being built reads the path sections, which the level build needs unchanged).</summary>
+    public RiverSpanTable? SpanTable { get; private set; }
     public RiverStemCurve[] Curves { get; }
     /// <summary>Level of the receiving water at the end of each stem (tail rule, S7), NaN when the stem has no tail.</summary>
     public double[] ReceivingLevel { get; internal set; }
@@ -91,7 +94,7 @@ public sealed class RiverNetwork
             MetricsEnd[i] = water && c.Pieces >= 2 ? c.S0[c.Pieces - 1] : c.Length;
         }
         Sections = new RiverSection[reaches.Length];
-        for (int r = 0; r < reaches.Length; r++) Sections[r] = RiverHydraulics.Section(reaches[r].Q, reaches[r].S, channelDepth, ferocity);
+        for (int r = 0; r < reaches.Length; r++) Sections[r] = RiverHydraulics.PathSection(reaches[r].Q, reaches[r].S, channelDepth, ferocity);
         BuildChannels();
         ReceivingLevel = new double[stems.Length];
         TailMeters = new double[stems.Length];
@@ -182,11 +185,46 @@ public sealed class RiverNetwork
         }
     }
 
+    /// <summary>Installs the spans (T3R-3). From then on <see cref="ChannelAt"/> reads channel and valley values from them; the meander still comes from the path sections.</summary>
+    internal void InstallSpans(RiverSpanTable table) => SpanTable = table;
+
     /// <summary>
-    /// The one accessor for channel and valley values of a stem at s (S6, S7): the reach's values blended from the upstream reach over the first 200 m. Callers never
-    /// read <see cref="Sections"/> for geometry. T3R-3 moves the values from reaches to spans behind this method.
+    /// The one accessor for channel and valley values of a stem at s (S6, S7, E1): the span's values blended from the upstream span over the first 200 m (across reach boundaries
+    /// too; the first span of a stem does not blend). The meander amplitude and wavelength are the path section's, blended per reach. Callers never read <see cref="Sections"/> for geometry.
+    /// Before spans are installed (the level build) it returns the path section's values.
     /// </summary>
     public void ChannelAt(int stem, double s, out RiverChannel channel)
+    {
+        PathChannelAt(stem, s, out channel);
+        RiverSpanTable? table = SpanTable;
+        if (table == null) return;
+        int i = table.SpanAt(channel.Reach, s);
+        double a = table.HalfWidth[i], b = table.BankWidth[i], depth = table.Depth[i], edge = table.EdgeDepth[i], flood = table.Floodplain[i], slope = table.ValleySlope[i];
+        if (i > table.ReachFirst[Stems[stem].ReachStart])
+        {
+            double t = RiverHydraulics.Smoothstep(table.Spans[i].SStart, table.Spans[i].SStart + RiverHydraulics.BlendMeters, s);
+            if (t < 1d)
+            {
+                int up = i - 1;
+                a += (table.HalfWidth[up] - a) * (1 - t);
+                b += (table.BankWidth[up] - b) * (1 - t);
+                depth += (table.Depth[up] - depth) * (1 - t);
+                edge += (table.EdgeDepth[up] - edge) * (1 - t);
+                flood += (table.Floodplain[up] - flood) * (1 - t);
+                slope += (table.ValleySlope[up] - slope) * (1 - t);
+            }
+        }
+        channel = new RiverChannel(channel.Reach, a, b, depth, edge, flood, slope, channel.MeanderAmplitude, channel.MeanderWavelength, i);
+    }
+
+    /// <summary>Half width and bank width of the path section at s (the reach values blended as before spans existed): the level build and the confluence tails use these, so the stored profile and the displayed level do not depend on the spans.</summary>
+    public void PathGeometry(int stem, double s, out double a, out double b)
+    {
+        PathChannelAt(stem, s, out RiverChannel c);
+        a = c.HalfWidth; b = c.BankWidth;
+    }
+
+    private void PathChannelAt(int stem, double s, out RiverChannel channel)
     {
         int reach = ReachAt(stem, s);
         double a = _chA[reach], b = _chB[reach], depth = _chDepth[reach], edge = _chEdge[reach], flood = _chFlood[reach], slope = _chSlope[reach], amplitude = _chAmp[reach], k = _chK[reach];
@@ -446,6 +484,13 @@ public sealed record RiverBuildReport
     public long GuardMovedNodes { get; init; }
     public double GuardMaxMeters { get; init; }
     public double CutOver15Share { get; init; }
+    /// <summary>T3R-3: spans, landings (spans and km), spans inside an exclusion zone, the zone count and the seconds the span step took (cut, gradients, exclusions, sections, landings).</summary>
+    public int Spans { get; init; }
+    public int SpanLandings { get; init; }
+    public double SpanLandingKm { get; init; }
+    public int SpanExcluded { get; init; }
+    public int ExclusionZones { get; init; }
+    public double SpanSeconds { get; init; }
     public double CentrelineSeconds { get; init; }
     public double LevelSeconds { get; init; }
     public double SampleSeconds { get; init; }
@@ -459,6 +504,7 @@ public sealed record RiverBuildReport
             $"terminals: sea {TerminalSea}, lake {TerminalLake}, confluence {TerminalConfluence}, lung {TerminalLung}, strip end {TerminalStripEnd}, dead {TerminalDead}",
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
+            FormattableString.Invariant($"spans {Spans}, landings {SpanLandings} ({SpanLandingKm:F0} km), spans inside an exclusion zone {SpanExcluded} ({ExclusionZones} zones), span step {SpanSeconds:F2} s"),
             FormattableString.Invariant($"cut depth along paths (ground minus bed): p50 {CutP50:F1} m, p90 {CutP90:F1} m, max {CutMax:F1} m, share of length over 40 m {CutOver40Share:P2}, over 15 m {CutOver15Share:P2}; level filled up to a hold or the receiving level on {FillShareOfLevel:P1} of stations"),
             FormattableString.Invariant($"largest wander shift {MaxWanderMeters:F0} m, meander amplitude cap used {MaxMeanderMeters:F0} m, largest node shift from the eased chain {MaxNodeShiftMeters:F0} m (smoothing {MaxSmoothMeters:F0} m), snapped nodes {SnappedNodes}, barrier guard moved {GuardMovedNodes} nodes (largest {GuardMaxMeters:F0} m); seconds: centrelines {CentrelineSeconds:F2}, ground sampling {SampleSeconds:F2}, levels {LevelSeconds:F2}"),
         });
@@ -809,10 +855,53 @@ public static class RiverGraphBuilder
         {
             RiverLevel.Build(net, f, grid, options, cancellation, ref report);
         }
+        // 6. Spans (T3R-3, E1 to E4): cut after the levels so the gradient reads the stored profile, then the calibrated sections, classes, landings and exclusions.
+        var spanClock = Stopwatch.StartNew();
+        RiverSpan[] spans = CutSpans(net, tmp, reachBase, reachFirst, accumulated);
+        RiverSpanBuilder.FillGradients(net, spans);
+        RiverExclusions? exclusions = RiverExclusions.Build(p);
+        bool[]? excluded = exclusions?.Mark(net, spans);
+        net.InstallSpans(RiverSpanTable.Create(net, spans, excluded, true));
+        report = report with { Spans = spans.Length, SpanLandings = net.SpanTable!.LandingCount, SpanLandingKm = net.SpanTable.LandingMeters / 1000d, SpanExcluded = excluded?.Count(x => x) ?? 0, ExclusionZones = exclusions?.ZoneCount ?? 0, SpanSeconds = spanClock.Elapsed.TotalSeconds };
         report = HydraulicsSummary(net, report);
         return net;
 
         double hashJitter(long sd, int cell, int axis) => JitterMeters * RiverHash.Signed(sd, cell, 0, axis);
+    }
+
+    /// <summary>
+    /// E1: each reach of k channel cells is cut into <c>ceil(k / 2)</c> spans of equal cell count (the cells are spread evenly); a span boundary is the arc length of the node of its first
+    /// cell, the first and last spans keep the reach's own ends so the spans tile it. <c>Q</c> is the discharge at the span's last cell. Gradients are filled in after the levels.
+    /// </summary>
+    private static RiverSpan[] CutSpans(RiverNetwork net, StemTmp[] tmp, int[] reachBase, List<List<int>> reachFirst, double[] accumulated)
+    {
+        var spans = new List<RiverSpan>(net.Reaches.Length * 2);
+        for (int i = 0; i < tmp.Length; i++)
+        {
+            StemTmp s = tmp[i];
+            List<int> starts = reachFirst[i];
+            RiverStemCurve curve = net.Curves[i];
+            for (int r = 0; r < starts.Count; r++)
+            {
+                int reach = reachBase[i] + r, k0 = starts[r], k1 = r + 1 < starts.Count ? starts[r + 1] : s.Cells.Length, cells = k1 - k0;
+                float start = net.Reaches[reach].SStart, end = net.Reaches[reach].SEnd;
+                int m = Math.Max(1, (cells + 1) / 2);
+                if (end - start < 0.02f * m) m = 1;
+                var bound = new float[m + 1];
+                bound[0] = start; bound[m] = end;
+                for (int j = 1; j < m; j++)
+                {
+                    int cell = k0 + (int)((long)j * cells / m);
+                    bound[j] = Math.Max(bound[j - 1] + 0.01f, Math.Min(end - 0.01f * (m - j), curve.S0[cell]));
+                }
+                for (int j = 0; j < m; j++)
+                {
+                    int lastCell = j + 1 < m ? k0 + (int)((long)(j + 1) * cells / m) - 1 : k1 - 1;
+                    spans.Add(new RiverSpan { Reach = reach, SStart = bound[j], SEnd = bound[j + 1], Q = (float)RiverHydraulics.Discharge(accumulated[s.Cells[lastCell]]), Sh = 1e-4f, Landing = 1f });
+                }
+            }
+        }
+        return spans.ToArray();
     }
 
     private const int SnapChunkPoints = 2_000_000;
@@ -1021,6 +1110,20 @@ public static class RiverGraphBuilder
         var u = new List<(double, double)>();
         var share = new double[4];
         double total = 0;
+        RiverSpanTable? table = net.SpanTable;
+        if (table != null)
+        {
+            // T3R-3: the calibrated spans (E2, E3); the class is the danger class.
+            for (int i = 0; i < table.Count; i++)
+            {
+                double len = table.Spans[i].SEnd - table.Spans[i].SStart;
+                q.Add((table.Spans[i].Q, len)); s.Add((table.Spans[i].Sh, len)); dd.Add((table.Depth[i], len)); w.Add((2d * table.HalfWidth[i], len)); u.Add((table.Speed[i], len));
+                share[(int)table.Class[i]] += len;
+                total += len;
+            }
+            for (int i = 0; i < 4; i++) share[i] = total > 0 ? share[i] / total : 0;
+            return r with { Q = Percentiles(q), Gradient = Percentiles(s), Depth = Percentiles(dd), Width = Percentiles(w), Speed = Percentiles(u), ClassShare = share };
+        }
         for (int i = 0; i < net.Reaches.Length; i++)
         {
             double len = net.Reaches[i].SEnd - net.Reaches[i].SStart;

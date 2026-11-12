@@ -2,7 +2,7 @@ using System;
 
 namespace RingworldTechDemo.Terrain.Hydrology;
 
-/// <summary>Interim speed class of a reach (docs/work-orders/terrain-vegetation/T2.md, S6): bands on the centre pool speed 1.5 U. T3-3 replaces it.</summary>
+/// <summary>Speed class of a span or reach: calm, swift, fierce, torrent (T3.md Spec E3, bands on the danger speed; the path section uses the interim bands on 1.5 U).</summary>
 public enum RiverClass : byte { Calm, Swift, Fierce, Torrent }
 
 /// <summary>Discharge, gradient, depth, width and speed of one reach. <c>Q = Speed * Width * Depth</c> holds exactly.</summary>
@@ -38,8 +38,8 @@ public static class RiverHydraulics
 
     public static double Discharge(double accumulatedRunoff) => DischargePerKm2 * accumulatedRunoff;
 
-    /// <summary>d, w, U and the class of a reach from Q and S. <paramref name="channelDepth"/> and <paramref name="ferocity"/> are the recipe fields.</summary>
-    public static RiverSection Section(double q, double gradient, double channelDepth, double ferocity)
+    /// <summary>The path section of a reach (T3R-3; the interim S6 law, formerly <c>Section</c>): d, w, U and the class from Q and the reach gradient S. It feeds the wander, the meander and the confluence tails; the channel is the span's (<see cref="RiverDanger"/>). <paramref name="channelDepth"/> and <paramref name="ferocity"/> are the recipe fields.</summary>
+    public static RiverSection PathSection(double q, double gradient, double channelDepth, double ferocity)
     {
         double s = Math.Max(gradient, MinGradient);
         double d = Math.Max(MinDepth, channelDepth * DepthCoefficient * Math.Pow(q, DepthExponent));

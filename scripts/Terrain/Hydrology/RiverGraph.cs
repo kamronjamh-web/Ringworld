@@ -254,6 +254,7 @@ public sealed class RiverGraph
             ("dry runs and row starts", (long)Unsafe.SizeOf<LakeRun>() * DryRuns.Length + 4L * DryRowStart.Length),
             ("curves (float X, Y, S0, Len per piece)", 16L * nodes),
             ("sections", (long)Unsafe.SizeOf<RiverSection>() * reaches),
+            ("spans (24 B stored, 11 float arrays and 2 byte arrays derived)", n.SpanTable?.ResidentBytes ?? 0L),
             ("per-stem tails, metrics end, meander noise", 8L * stems * 8),
             ("per-stem curve objects and array headers (estimate 150 B)", 150L * stems),
             ("piece to stem", 4L * nodes),

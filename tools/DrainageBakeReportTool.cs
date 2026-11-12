@@ -13,7 +13,7 @@ namespace RingworldTechDemo.Tools;
 /// T2R-4 (docs/work-orders/terrain-vegetation/T2.md): the drainage bake report tool. Runs the production height source (GPU or CPU), the barriers,
 /// conditioning, routing and accumulation on the whole ring or a strip, writes the report (text and JSON) and the river map under
 /// .godot/audit_baseline/&lt;machine&gt;/t2r/bake/&lt;stamp&gt;/. Arguments after `--`: --source=gpu|cpu (default gpu), --ring (default) or --strip=&lt;start m&gt;,&lt;km&gt;,
-/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --danger and --danger-grid (T3R-1; --no-danger-maps), --label=&lt;text&gt;, --no-maps.
+/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --danger and --danger-grid (T3R-1; --no-danger-maps), --part-hashes=<graph file> (T3R-3), --label=&lt;text&gt;, --no-maps.
 /// GPU runs need a windowed Vulkan run (not --headless). Prints DRAINAGE_BAKE_REPORT=PASS|FAIL.
 /// </summary>
 public partial class DrainageBakeReportTool : RefCounted
@@ -32,6 +32,13 @@ public partial class DrainageBakeReportTool : RefCounted
         RenderingDevice? rd = null;
         try
         {
+            string partHashFile = Arg("part-hashes", "");
+            if (partHashFile.Length > 0)
+            {
+                Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL stored part hashes (FNV-1a) of " + partHashFile + ": " + string.Join(", ", RiverGraphFormat.PartHashes(File.ReadAllBytes(partHashFile)).Select(p => $"{p.Part} {p.Hash:X16}")));
+                Console.WriteLine("DRAINAGE_BAKE_REPORT=PASS");
+                return 0;
+            }
             string sourceName = Arg("source", "gpu");
             int seed = int.Parse(Arg("seed", "1337"), System.Globalization.CultureInfo.InvariantCulture);
             double noise = double.Parse(Arg("noise", DrainageBake.DefaultRoutingNoiseMeters.ToString(System.Globalization.CultureInfo.InvariantCulture)), System.Globalization.CultureInfo.InvariantCulture);
@@ -110,7 +117,7 @@ public partial class DrainageBakeReportTool : RefCounted
                 string graphText = GraphReport(net, field, grid, dir, sourceName == "cpu" ? (byte)0 : (byte)1);
                 File.WriteAllText(Path.Combine(dir, "graph_report.txt"), graphText);
                 foreach (string line in graphText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
-                if (Flag("danger") || Flag("danger-grid")) DangerBlock(net, field, grid, dir, seed);
+                if (Flag("danger") || Flag("danger-grid")) DangerBlock(net, field, grid, dir, seed, recipe);
                 if (diag && net.Stations != null)
                 {
                     string diagText = RiverDiagnostics(net, field, grid);
@@ -163,7 +170,7 @@ public partial class DrainageBakeReportTool : RefCounted
     private static readonly (byte R, byte G, byte B)[] DangerColors = { (51, 115, 242), (38, 191, 89), (250, 153, 26), (230, 26, 26) };
 
     /// <summary>T3R-1: --danger re-buckets danger on the baked network (report, JSON, maps, staircase data); --danger-grid prints the 36-combination grid of reset doc 4.5. The graph is not changed.</summary>
-    private static void DangerBlock(RiverNetwork net, DrainageField field, DrainageGrid grid, string dir, int seed)
+    private static void DangerBlock(RiverNetwork net, DrainageField field, DrainageGrid grid, string dir, int seed, TerrainGenerationParameters recipe)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         RiverDangerSpans spans = RiverDangerReport.Cut(net);
@@ -172,6 +179,8 @@ public partial class DrainageBakeReportTool : RefCounted
         text.AppendLine(FormattableString.Invariant($"span cut {cutSeconds:F2} s"));
         if (Flag("danger"))
         {
+            text.Append(RiverDangerReport.StoredReport(net, RiverExclusions.Build(recipe), out string storedJson));
+            File.WriteAllText(Path.Combine(dir, "danger_report_production.json"), storedJson);
             text.Append(RiverDangerReport.Report(net, spans, RiverDangerConstants.Default, out string json));
             File.WriteAllText(Path.Combine(dir, "danger_report.json"), json);
         }
@@ -180,6 +189,12 @@ public partial class DrainageBakeReportTool : RefCounted
             clock.Restart();
             text.Append(RiverDangerReport.Grid(net, spans, out var rows));
             text.AppendLine(FormattableString.Invariant($"grid evaluation {clock.Elapsed.TotalSeconds:F1} s for {rows.Count} combinations; inside the window: {rows.Count(r => RiverDangerReport.InWindow(r.Share))}"));
+            if (net.SpanTable != null)
+            {
+                clock.Restart();
+                text.Append(RiverDangerReport.StoredGrid(net, RiverExclusions.Build(recipe), out var stored));
+                text.AppendLine(FormattableString.Invariant($"production grid evaluation {clock.Elapsed.TotalSeconds:F1} s for {stored.Count} combinations; inside the window: {stored.Count(r => RiverDangerReport.InWindow(r.Share))}"));
+            }
         }
         File.WriteAllText(Path.Combine(dir, "danger_report.txt"), text.ToString());
         foreach (string line in text.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
@@ -187,9 +202,10 @@ public partial class DrainageBakeReportTool : RefCounted
         RiverDangerResult result = RiverDangerReport.Evaluate(net, spans, RiverDangerConstants.Default, true);
         RiverMapWriter.RiverMapColor ColorAt(int stem, double s)
         {
-            int i = spans.SpanAt(stem, s);
-            if (i < 0) return new RiverMapWriter.RiverMapColor(DangerColors[0], false, 0);
-            return new RiverMapWriter.RiverMapColor(DangerColors[(int)result.Class[i]], result.Landing[i] > 1d, (int)result.Class[i], 0.5 * result.W[i]);
+            // T3R-3: the production map reads the stored spans (landings and exclusions included).
+            RiverSpanTable table = net.SpanTable!;
+            int i = table.SpanAt(net.ReachAt(stem, s), s);
+            return new RiverMapWriter.RiverMapColor(DangerColors[(int)table.Class[i]], table.Spans[i].Landing > 1f, (int)table.Class[i], table.HalfWidth[i]);
         }
         string[] crop = Arg("crop", "10134,300").Split(',');
         double cropStartKm = double.Parse(crop[0], System.Globalization.CultureInfo.InvariantCulture), cropKm = double.Parse(crop[1], System.Globalization.CultureInfo.InvariantCulture);
@@ -198,7 +214,7 @@ public partial class DrainageBakeReportTool : RefCounted
         (string cropPath, _) = RiverMapWriter.Write(field, grid, net, dir, "danger", cropStartKm * 1000d, cropKm * 1000d, ColorAt, false);
         File.Move(cropPath, Path.Combine(dir, "danger_map_crop_raw.png"), true);
         File.WriteAllText(Path.Combine(dir, "danger_map_legend.txt"),
-            "Danger map (T3R-1). River colour by danger class of each span of at most 2 km, after landings: blue calm (Vd < 1.5 m/s), green swift (< 4), orange fierce (< 7), red torrent. "
+            "Danger map (T3R-3, production: the stored spans of the graph, at most 2 cells each). River colour by danger class of each span, after landings and exclusions: blue calm (Vd < 1.5 m/s), green swift (< 4), orange fierce (< 7), red torrent. "
             + "White outline: a landing (a span softened by the 5 km exit rule). Line width is the span's modelled width, at least 1 px. Hillshade of the valley floor, dimmed; dark blue sea, light blue lake, tan dry basin floor, violet barrier. "
             + $"Overview: the whole ring as 8 strips of 3927 km stacked top to bottom, around to the right, across downward, 1 px per km. Crop: around {cropStartKm:F0} km, {cropKm:F0} km wide, 6 px per km.\n");
         Console.WriteLine($"DRAINAGE_BAKE_REPORT_DETAIL danger maps seconds={clock.Elapsed.TotalSeconds:F1} overview={overview} crop={Path.Combine(dir, "danger_map_crop_raw.png")}");
@@ -235,6 +251,7 @@ public partial class DrainageBakeReportTool : RefCounted
         sb.AppendLine(FormattableString.Invariant($"graph: format {HydrologyVersions.GraphFormat}, drainage algorithm {HydrologyVersions.DrainageAlgorithm}, source {(source == 0 ? "cpu" : "gpu")}, nodes {net.NodeAroundDm.Length}, stems {net.Stems.Length}, reaches {net.Reaches.Length}, knots {net.Knots.Count}, lakes {graph.Lakes.Length}, inlets {graph.Inlets.Length}, lake runs {graph.Runs.Length}, bucket entries {graph.Index.EntryCount}"));
         sb.AppendLine(FormattableString.Invariant($"graph identity hash {graph.IdentityHash:X16}; file {bytes.Length} bytes ({bytes.Length / 1048576d:F2} MiB); wrap {buildSeconds:F2} s, load and index {loadSeconds:F2} s; read-back {(ok ? "ok" : "FAILED " + error)}, byte-equal re-serialise and same hash {equal}"));
         sb.AppendLine("stored bytes by part: " + string.Join(", ", graph.StoredBytesByPart().Select(p => $"{p.Part} {p.Bytes}")));
+        sb.AppendLine("stored part hashes (FNV-1a): " + string.Join(", ", RiverGraphFormat.PartHashes(bytes).Select(p => $"{p.Part} {p.Hash:X16}")));
         sb.AppendLine(FormattableString.Invariant($"resident estimate {graph.ResidentBytes} bytes ({graph.ResidentBytes / 1048576d:F2} MiB) by part: ") + string.Join(", ", graph.ResidentBytesByPart().Select(p => $"{p.Part} {p.Bytes}")));
         sb.AppendLine(FormattableString.Invariant($"measured GC growth while loading the graph: {retained} bytes ({retained / 1048576d:F2} MiB)"));
         // Lakes.
