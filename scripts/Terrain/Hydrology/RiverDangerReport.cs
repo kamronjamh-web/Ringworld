@@ -314,20 +314,54 @@ public static class RiverDangerReport
 
     private static string Arr(double[] s) => FormattableString.Invariant($"[{s[0]:F4},{s[1]:F4},{s[2]:F4},{s[3]:F4}]");
 
-    /// <summary>Picks a mountain river for the staircase close-up: a fierce span of median discharge and a gradient of about 7 %, with 300 m of stem on each side. Returns the span or -1.</summary>
+    /// <summary>Stored gradient over the 300 m window the staircase picture shows (span middle +- 150 m).</summary>
+    public static double StaircaseWindowGradient(RiverNetwork net, int stem, double mid) => (RiverLevel.Stored(net, stem, mid - 150d) - RiverLevel.Stored(net, stem, mid + 150d)) / 300d;
+
+    /// <summary>Picks a mountain river for the staircase close-up: a fierce span of median discharge whose own 300 m window (the span middle +- 150 m) has a gradient of 3 to 6 %, as near 4.5 % as possible. Returns the span or -1.</summary>
     public static int PickStaircase(RiverNetwork net, RiverDangerSpans sp, RiverDangerResult r)
     {
         int best = -1; double bestScore = double.MaxValue;
         for (int i = 0; i < sp.Count; i++)
         {
-            if (r.Class[i] != RiverClass.Fierce || r.Landing[i] > 1d || sp.Length(i) < 1000d || sp.Q[i] < 40d || sp.Q[i] > 250d || sp.Sr[i] < 0.05 || sp.Sr[i] > 0.10) continue;
+            if (r.Class[i] != RiverClass.Fierce || r.Landing[i] > 1d || sp.Length(i) < 1000d || sp.Q[i] < 40d || sp.Q[i] > 250d) continue;
             int stem = sp.Stem[i];
             double mid = 0.5 * (sp.S0[i] + sp.S1[i]), send = net.Reaches[net.Stems[stem].ReachStart + net.Stems[stem].ReachCount - 1].SEnd;
             if (mid < 1600d || mid > send - 1600d) continue;
-            double score = Math.Abs(Math.Log(sp.Q[i] / 100d)) + 20d * Math.Abs(sp.Sr[i] - 0.07);
+            double grad = StaircaseWindowGradient(net, stem, mid);
+            if (grad < 0.03 || grad > 0.06) continue;
+            double score = Math.Abs(Math.Log(sp.Q[i] / 100d)) + 20d * Math.Abs(grad - 0.045);
             if (score < bestScore) { bestScore = score; best = i; }
         }
         return best;
+    }
+
+    /// <summary>Picks a steep window for the ramp picture: a 100 m stretch of a stem whose stored gradient is above 10 %, as near 14 % as possible. Returns (stem, window middle) or (-1, 0).</summary>
+    public static (int Stem, double Mid) PickSteepWindow(RiverNetwork net)
+    {
+        int bestStem = -1; double bestMid = 0, bestScore = double.MaxValue;
+        for (int stem = 0; stem < net.Stems.Length; stem++)
+        {
+            double length = net.Curves[stem].Length;
+            for (double mid = 100d; mid <= length - 100d; mid += 25d)
+            {
+                double grad = (RiverLevel.Stored(net, stem, mid - 50d) - RiverLevel.Stored(net, stem, mid + 50d)) / 100d;
+                if (grad < 0.10 || grad > 0.20) continue;
+                double score = Math.Abs(grad - 0.14);
+                if (score < bestScore) { bestScore = score; bestStem = stem; bestMid = mid; }
+            }
+        }
+        return (bestStem, bestMid);
+    }
+
+    /// <summary>Profile of the steep window: s relative to the middle, stored and displayed level every 0.25 m over +-50 m.</summary>
+    public static string SteepWindowCsv(RiverNetwork net, int stem, double mid)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(FormattableString.Invariant($"# stem {stem} s_mid {mid:F0} gradient {(RiverLevel.Stored(net, stem, mid - 50d) - RiverLevel.Stored(net, stem, mid + 50d)) / 100d:F4}"));
+        sb.AppendLine("profile,s,stored,displayed");
+        for (double s = mid - 50; s <= mid + 50 + 1e-6; s += 0.25)
+            sb.AppendLine(FormattableString.Invariant($"profile,{s - mid:F2},{RiverLevel.Stored(net, stem, s):F3},{RiverLevel.AtStem(net, stem, s):F3}"));
+        return sb.ToString();
     }
 
     /// <summary>Writes the staircase data: a 3 km plan polyline (metres from the span middle) and a 300 m profile with the stored and the displayed level. A picture script draws them.</summary>

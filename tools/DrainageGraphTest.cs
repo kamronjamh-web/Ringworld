@@ -511,6 +511,98 @@ public partial class DrainageGraphTest : RefCounted
         return rises;
     }
 
+    // ------------------------------------------------------------------ continuous level (T2R-7c)
+
+    private readonly record struct LevelRamp(int Samples, int Windows, int StepBad, int GapBad, double MaxWMinusL, double MaxStep);
+
+    private readonly record struct LevelIdentity(int Total, int Identical, int InRamp);
+
+    /// <summary>Largest s at which the stored profile is at or above <paramref name="level"/> (bisection; NaN if it never goes below, the head if it starts below).</summary>
+    private static double CrossingOf(RiverNetwork net, int stem, double level)
+    {
+        double length = net.Curves[stem].Length;
+        if (RiverLevel.Stored(net, stem, length) >= level) return double.NaN;
+        if (RiverLevel.Stored(net, stem, 0) < level) return 0;
+        double lo = 0, hi = length;
+        for (int i = 0; i < 48; i++)
+        {
+            double mid = 0.5 * (lo + hi);
+            if (RiverLevel.Stored(net, stem, mid) >= level) lo = mid; else hi = mid;
+        }
+        return lo;
+    }
+
+    /// <summary>Length of the chute that ends at the crossing of floor(W) at s: min(10, gap between the crossings of K + 1 and K), or 10 where there is no gap.</summary>
+    private static double ChuteLengthAt(RiverNetwork net, int stem, double s)
+    {
+        double k = Math.Floor(RiverLevel.Stored(net, stem, s));
+        double xk = CrossingOf(net, stem, k), xp = CrossingOf(net, stem, k + 1);
+        return double.IsNaN(xk) || double.IsNaN(xp) ? RiverLevel.ChuteMeters : Math.Clamp(xk - xp, 1e-3, RiverLevel.ChuteMeters);
+    }
+
+    private static LevelRamp SteepLevelCheck(RiverNetwork net, bool legacy)
+    {
+        int samples = 0, windows = 0, stepBad = 0, gapBad = 0;
+        double maxGap = 0, maxStep = 0;
+        double Level(int stem, double s, out double w) => legacy ? RiverLevel.BeforeTailLegacy(net, stem, s, out w) : RiverLevel.BeforeTail(net, stem, s, out w);
+        for (int stem = 0; stem < net.Stems.Length && samples < 400000; stem++)
+        {
+            double length = net.Curves[stem].Length;
+            RiverStemStations st = net.Stations![stem];
+            for (int j = 0; j + 1 < st.S.Length && samples < 400000; j++)
+            {
+                double a = st.S[j], b = st.S[j + 1];
+                if (b - a < 1) continue;
+                double slope = (RiverLevel.Stored(net, stem, a) - RiverLevel.Stored(net, stem, Math.Min(length, a + 20))) / Math.Min(20, length - a);
+                if (slope <= 0.10) continue;
+                windows++;
+                double prev = double.NaN, prevLen = 0;
+                for (double s = a; s <= b + 1e-9; s += 0.5, samples++)
+                {
+                    double level = Level(stem, s, out double w);
+                    double len = ChuteLengthAt(net, stem, s);
+                    maxGap = Math.Max(maxGap, w - level);
+                    if (w - level >= 2) gapBad++;
+                    if (!double.IsNaN(prev))
+                    {
+                        double step = Math.Abs(level - prev);
+                        maxStep = Math.Max(maxStep, step);
+                        if (step > 0.5 / Math.Min(len, prevLen) + 1e-6) stepBad++;
+                    }
+                    prev = level; prevLen = len;
+                }
+            }
+        }
+        return new LevelRamp(samples, windows, stepBad, gapBad, maxGap, maxStep);
+    }
+
+    /// <summary>2,000 hashed samples (half of them inside a chute) where the crossings of K + 1, K and K - 1 are at least 10 m apart: old and new level must be bit-identical.</summary>
+    private static LevelIdentity LevelIdentityBelowTenPercent(RiverNetwork net)
+    {
+        ulong state = 0x9E3779B97F4A7C15UL;
+        double Next() { state ^= state << 13; state ^= state >> 7; state ^= state << 17; return (state >> 11) / (double)(1UL << 53); }
+        int total = 0, identical = 0, inRamp = 0;
+        for (int tries = 0; total < 2000 && tries < 2_000_000; tries++)
+        {
+            int stem = (int)(Next() * net.Stems.Length);
+            double length = net.Curves[stem].Length;
+            double s = Next() * length, w = RiverLevel.Stored(net, stem, s);
+            if (double.IsNaN(w)) continue;
+            double k = Math.Floor(w), xk = CrossingOf(net, stem, k);
+            if (!double.IsNaN(xk) && (tries & 1) == 0) s = Math.Clamp(xk - Next() * 12d, 0, length);
+            w = RiverLevel.Stored(net, stem, s);
+            k = Math.Floor(w);
+            xk = CrossingOf(net, stem, k);
+            double xp = CrossingOf(net, stem, k + 1), xn = CrossingOf(net, stem, k - 1);
+            if (!double.IsNaN(xk) && ((!double.IsNaN(xp) && xk - xp < 10d) || (!double.IsNaN(xn) && xn - xk < 10d))) continue;
+            double now = RiverLevel.BeforeTail(net, stem, s, out _), old = RiverLevel.BeforeTailLegacy(net, stem, s, out _);
+            total++;
+            if (BitConverter.DoubleToInt64Bits(now) == BitConverter.DoubleToInt64Bits(old)) identical++;
+            if (!double.IsNaN(xk) && xk - s < 10d) inRamp++;
+        }
+        return new LevelIdentity(total, identical, inRamp);
+    }
+
     // ------------------------------------------------------------------ graph, index and file (T2R-6)
 
     private static int IndexViolations(RiverNetwork net, RiverSpatialIndex index, RiverGraph graph, (double Around, double Across)[] points, double[] boxCentreAround, double[] boxCentreAcross, double[] boxHalfAround, double[] boxHalfAcross, out int checkedPieces)
@@ -811,6 +903,17 @@ public partial class DrainageGraphTest : RefCounted
                 }
             }
             Check(envBad == 0, $"{label}: {envBad} of {envTotal} stations outside the knot band");
+            // T2R-7c: on steep stems the displayed level is continuous (no step above 0.5 / len + 1e-6 per 0.5 m) and stands under 2 m below the stored profile.
+            LevelRamp ramp = SteepLevelCheck(net, false);
+            Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: steep ramp check: {ramp.Samples} samples on {ramp.Windows} windows over 10 %, largest W - L {ramp.MaxWMinusL:F3} m, largest step {ramp.MaxStep:F3} m (bound 0.5 / len), step violations {ramp.StepBad}, W - L violations {ramp.GapBad}");
+            Check(ramp.Samples > 0, $"{label}: no steep window to check");
+            Check(ramp.StepBad == 0 && ramp.GapBad == 0, $"{label}: level not continuous or too deep on steep profiles ({ramp.StepBad} steps, {ramp.GapBad} W - L over 2 m)");
+            LevelRamp legacy = SteepLevelCheck(net, true);
+            Check(ramp.Samples == 0 || legacy.StepBad + legacy.GapBad > 0, $"{label}: negative control: the pre-T2R-7c level was not flagged");
+            Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: negative control (pre-T2R-7c level): step violations {legacy.StepBad}, W - L violations {legacy.GapBad}, largest W - L {legacy.MaxWMinusL:F3}, largest step {legacy.MaxStep:F3}");
+            LevelIdentity same = LevelIdentityBelowTenPercent(net);
+            Console.WriteLine($"DRAINAGE_GRAPH_DETAIL {label}: level identity where crossings are at least 10 m apart: {same.Identical} of {same.Total} samples bit-identical ({same.InRamp} inside a chute)");
+            Check(same.Total > 0 && same.Identical == same.Total, $"{label}: {same.Total - same.Identical} of {same.Total} samples differ from the old level where crossings are 10 m or more apart");
             // Discharge conserved at every cell with incoming flow. The flow that leaves a spilling basin is replaced by its outflow (the surplus over the evaporation, S8b)
             // at the exit cell, so the links that leave a spilling basin are left out and the cells they reach are skipped (basin balance is checked separately).
             var inflow = new double[field.Count];

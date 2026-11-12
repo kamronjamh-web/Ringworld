@@ -92,7 +92,36 @@ public static class RiverLevel
     /// <summary>Whole-metre pools and chutes of the stored profile, without the tail rule.</summary>
     private static double BeforeTail(RiverNetwork net, int stem, double s) => BeforeTail(net, stem, s, out _);
 
-    private static double BeforeTail(RiverNetwork net, int stem, double s, out double stored)
+    /// <summary>
+    /// T2R-7c (S7): K = floor(W); the chute into K runs from the crossing before K + 1 to the crossing of K and is at most 10 m long, so where crossings
+    /// are closer than 10 m the level is a continuous ramp about 1 m under W instead of dropping with every crossing that enters a 10 m look-ahead.
+    /// </summary>
+    internal static double BeforeTail(RiverNetwork net, int stem, double s, out double stored)
+    {
+        RiverKnotTable knots = net.Knots;
+        double w, ahead;
+        if (knots.KnotCount(stem) == 0) { w = double.NaN; ahead = double.NaN; }
+        else
+        {
+            // One segment lookup serves s and s + 10 m when both lie in it (the same arithmetic as Stored).
+            knots.Segment(stem, s, out double s0, out double w0, out double s1, out double w1);
+            w = Interpolate(s, s0, w0, s1, w1);
+            double sAhead = s + ChuteMeters;
+            ahead = s1 == s0 || (sAhead >= s0 && sAhead < s1) ? Interpolate(sAhead, s0, w0, s1, w1) : Stored(net, stem, sAhead);
+        }
+        stored = w;
+        double level = Math.Floor(w);
+        if (!(level > ahead)) return level; // the next crossing is 10 m or more ahead
+        double xK = LastAtOrAbove(net, stem, level);
+        if (double.IsNaN(xK)) return level;
+        double xPrev = LastAtOrAbove(net, stem, level + 1);
+        double len = Math.Min(ChuteMeters, double.IsNaN(xPrev) ? ChuteMeters : xK - xPrev);
+        if (len <= 1e-9) return level - 1; // coincident crossings (a vertical drop): the chute has no length
+        return Math.Min(level, (level - 1) + (xK - s) / len);
+    }
+
+    /// <summary>The level before T2R-7c (10 m chutes that overlap on steep profiles); kept for the identity and negative-control checks in drainage_graph_test.</summary>
+    internal static double BeforeTailLegacy(RiverNetwork net, int stem, double s, out double stored)
     {
         RiverKnotTable knots = net.Knots;
         double w, ahead;

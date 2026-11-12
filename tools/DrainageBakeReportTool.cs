@@ -209,6 +209,12 @@ public partial class DrainageBakeReportTool : RefCounted
             Console.WriteLine($"DRAINAGE_BAKE_REPORT_DETAIL staircase span {pick} stem {spans.Stem[pick]} csv={Path.Combine(dir, "danger_staircase.csv")}");
         }
         else Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL staircase: no span matched");
+        (int steepStem, double steepMid) = RiverDangerReport.PickSteepWindow(net);
+        if (steepStem >= 0)
+        {
+            File.WriteAllText(Path.Combine(dir, "steep_window.csv"), RiverDangerReport.SteepWindowCsv(net, steepStem, steepMid));
+            Console.WriteLine($"DRAINAGE_BAKE_REPORT_DETAIL steep window stem {steepStem} s {steepMid:F0} csv={Path.Combine(dir, "steep_window.csv")}");
+        }
     }
 
     /// <summary>T2R-6: wraps the network into the graph, writes the file, reads it back and prints counts, bytes by part, the round trip and the lake statistics (the deepest five).</summary>

@@ -4,6 +4,6 @@ namespace RingworldTechDemo.Terrain.Hydrology;
 public static class HydrologyVersions
 {
     public const int DrainageAlgorithm = 3;
-    public const int CarveOperator = 1;
+    public const int CarveOperator = 2;
     public const int GraphFormat = 3;
 }
