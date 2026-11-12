@@ -8,11 +8,11 @@ The terrain and vastness plans share one generation ledger. A generation records
 |---:|---|---|---|---|---|---|
 | 1 | Baseline, every recipe through v8 and v9 at generation 1 | Shared | None | 2026-11-09 fingerprint capture, 2026-11-10 ledger entry | None | `gen1-v8-s1337` |
 
-The production feature table is empty. The following IDs reserve bit positions for their work orders. A feature gets a production entry when its work begins, with `FrozenIn = 0` for open or the generation number once frozen. Generations are assigned in freeze order.
+The production feature table holds only open (unfrozen) features so far; `water.rivers` became open on 2026-11-11 (T2R-2). The following IDs reserve bit positions for their work orders. A feature gets a production entry when its work begins, with `FrozenIn = 0` for open or the generation number once frozen. Generations are assigned in freeze order.
 
 | ID | Bit | Plan | Ledger state |
 |---|---:|---|---|
-| `water.rivers` | 0 | T2 | Reserved |
+| `water.rivers` | 0 | T2 | Open |
 | `water.current` | 1 | T3 | Reserved |
 | `ground.surface` | 2 | T4 | Reserved |
 | `ground.river_beds` | 3 | T4 | Reserved |

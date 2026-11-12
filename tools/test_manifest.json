@@ -72,6 +72,18 @@
         "tools/fixtures/world_generation_*"
       ]
     },
+    "hydrology": {
+      "globs": [
+        "scripts/Terrain/Hydrology/**",
+        "materials/terrain_gpu/ring_drainage*",
+        "tools/*Drainage*",
+        "tools/*drainage*",
+        "tools/*River*",
+        "tools/river_*",
+        "tools/*Floating*",
+        "tools/floating_*"
+      ]
+    },
     "terrain": {
       "globs": [
         "scripts/Terrain/**",
@@ -4740,6 +4752,69 @@
       "marker": "LANDSCAPE_WORLD",
       "expected_s": 15,
       "timeout_s": 90
+    },
+    "drainage_grid_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "DRAINAGE_GRID",
+      "expected_s": 20,
+      "timeout_s": 120,
+      "parallel_safe": false
+    },
+    "drainage_height_source_gpu_test": {
+      "kind": "test",
+      "mode": "gpu-local",
+      "tier": "extended",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "DRAINAGE_HEIGHT_SOURCE_GPU",
+      "expected_s": 40,
+      "timeout_s": 300
+    },
+    "drainage_graph_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "DRAINAGE_GRAPH",
+      "expected_s": 300,
+      "timeout_s": 1500,
+      "parallel_safe": false
+    },
+    "drainage_bake_report": {
+      "kind": "tool",
+      "mode": "gpu-local",
+      "tier": "manual",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "DRAINAGE_BAKE_REPORT",
+      "expected_s": 60,
+      "timeout_s": 400,
+      "parallel_safe": false
+    },
+    "river_recipe_fields_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "RIVER_RECIPE_FIELDS",
+      "expected_s": 8,
+      "timeout_s": 60
     },
     "world_generation_recipe_test": {
       "kind": "test",

@@ -93,8 +93,12 @@ func _checks(session: Node) -> bool:
 	if not _refused(unknown, "Unknown review feature"):
 		return _fail("unknown review did not return the ledger error: " + str(unknown))
 	var none := TOOL.execute(self, session, {"step": "baseline", "slot": 3, "review": ""})
-	if not _refused(none, "no open features"):
-		return _fail("missing review feature did not report no open features: " + str(none))
+	if not _refused(none, "Choose at least one review feature."):
+		return _fail("missing review feature did not ask for a review feature: " + str(none))
+	# The production ledger now has an open feature, so the "no open features" path needs a ledger without one.
+	var bridge := TOOL.BRIDGE.new()
+	if (bridge.call("ListOpenFeatures") as PackedStringArray).is_empty():
+		return _fail("production ledger has no open feature, so the choose-a-feature path is not covered")
 
 	var orphan_path := directory.path_join("slot_3")
 	if DirAccess.make_dir_absolute(ProjectSettings.globalize_path(orphan_path)) != OK:

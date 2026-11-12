@@ -121,6 +121,7 @@ public sealed class TerrainGenerationParameters
     public int MacroRegionSizeMeters => (int)ClimateValue("macro_region_size_m");
 
     public bool HasWorldFeature(string id) => _worldFeatures?.Contains(id) == true;
+    public bool HasRivers => HasWorldFeature("water.rivers");
 
     public double GetExtensionField(string name)
         => _worldFields != null && _worldFields.TryGetValue(name, out double value) ? value

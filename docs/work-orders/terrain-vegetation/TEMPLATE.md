@@ -8,6 +8,8 @@ Every phase file `T<n>.md` in this folder uses this structure. These work orders
 | `sol_lead` | gpt-6.1-sol @ high | Design, investigation, and reviewing implementer output. |
 | `sol_deep` | gpt-6.1-sol @ max | Only for problems that are unusually hard or still unresolved. |
 
+Since 2026-11-11 Claude Code agents also execute these WOs. The roles map to `implementer`, `claude-lead` and `claude-deep` (`.claude/agents/`). The Fable role (`claude-fable`) is for planning only.
+
 ## Phase file layout
 
 ```
@@ -56,6 +58,12 @@ that the test can fail. For visual changes, say which captures the agent sends t
 
 ESCALATION CONDITIONS
 When to stop and report instead of improvising.
+
+STOP RULE
+A budget of watchdog periods (55 min each) and build-plus-test attempts. When it runs out, stop and report
+in at most 15 lines: what worked, what failed, and the one next step you recommend. Do not add tools,
+proofs or acceptance criteria that the WO does not name. (Added 2026-11-11 after the T2 stall; see
+docs/t2-river-reset.md.)
 ```
 
 ## Rules for every WO

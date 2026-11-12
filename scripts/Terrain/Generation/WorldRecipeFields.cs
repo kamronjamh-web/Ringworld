@@ -11,7 +11,16 @@ public sealed record RecipeFieldSpec(string Name, string FeatureId, RecipeFieldK
 public static class WorldRecipeFields
 {
     // Append new fields in their permanent canonical order. Frozen feature fields are immutable.
-    public static IReadOnlyList<RecipeFieldSpec> Specs { get; } = Array.Empty<RecipeFieldSpec>();
+    public static IReadOnlyList<RecipeFieldSpec> Specs { get; } = new RecipeFieldSpec[]
+    {
+        // water.rivers (open; values provisional until the freeze, docs/t2-river-reset.md)
+        new("river_density", "water.rivers", RecipeFieldKind.Float, 1, 0.25, 4),
+        new("lake_abundance", "water.rivers", RecipeFieldKind.Float, 0.5, 0, 1),
+        new("river_valley_width", "water.rivers", RecipeFieldKind.Float, 1, 0.5, 2),
+        new("channel_depth", "water.rivers", RecipeFieldKind.Float, 1, 0.5, 2),
+        new("meander_strength", "water.rivers", RecipeFieldKind.Float, 1, 0, 2),
+        new("river_ferocity", "water.rivers", RecipeFieldKind.Float, 1, 1, 1),
+    };
 }
 
 public sealed class WorldRecipeSchema

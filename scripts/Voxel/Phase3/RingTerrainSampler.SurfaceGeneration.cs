@@ -354,6 +354,12 @@ public sealed partial class RingTerrainSampler
                 hash = MixHash(hash, weatherLung.Identity);
             }
         }
+        if (_runtimeSurfaceParameters.HasRivers)
+        {
+            // water.rivers only, appended AFTER the Weather Lung terms so every recipe without rivers keeps its hash: drainage and carve algorithm versions.
+            hash = MixHash(hash, (ulong)Terrain.Hydrology.HydrologyVersions.DrainageAlgorithm);
+            hash = MixHash(hash, (ulong)Terrain.Hydrology.HydrologyVersions.CarveOperator);
+        }
         foreach (char character in RuntimeSurfaceGenerationContractId)
             hash = MixHash(hash, character);
         hash = MixHash(hash, _aroundRingVoxelLength);

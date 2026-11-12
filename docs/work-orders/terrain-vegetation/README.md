@@ -10,7 +10,7 @@ Written 2026-11-10 by four `claude-lead` agents working in parallel, then cross-
 |---|---|---|---|---|
 | [T0-wrapup.md](T0-wrapup.md) | T0 leftovers (weather pin, the A1000 run, exit crash, shadow-harness prefs, earlier failures, vastness V0) | T0W-1 to T0W-8 | none | now |
 | [T1.md](T1.md) | Recipe v9, generation ledger, test-world tooling | T1-0 to T1-9 | none (plumbing) | implemented/reviewed; uncommitted, gate exceptions in handoff |
-| [T2.md](T2.md) | Rivers and lakes | T2-1 to T2-15 | (open until T3) | T1. Exact batched-neighbour bake measured at 16.5432 s. Facet routing, containment and direct point moisture await validation. |
+| [T2.md](T2.md) | Rivers and lakes (reset 2026-11-11, see `docs/t2-river-reset.md`) | T2R-0 to T2R-16 | (open until T3) | T1. The Codex study (old T2-1 to T2-15) is retired. |
 | [T3.md](T3.md) | Current, danger, floating | T3-1 to T3-16 | "rivers" (gen 2) | T2 core; T3-2 can start any time |
 | [T4.md](T4.md) | Ground surface | T4-1 to T4-8 | "ground" | T1 (alongside T2/T3) |
 | [T5.md](T5.md) | Scatter foundation and rocks | T5-1 to T5-12 | "rocks" | T4-1 design |
@@ -25,13 +25,13 @@ Generation numbers are assigned when a phase freezes, in the order phases freeze
 
 ## Cross-phase rules settled during the cross-check
 
-- **Weather pin.** T0W-1 owns it. It blocks every look golden or comparison capture: T2-15, T3-14, T4-2 onward, T7-13 and T8-9.
+- **Weather pin.** T0W-1 owns it. It blocks every look golden or comparison capture: T2R-16, T3-14, T4-2 onward, T7-13 and T8-9.
 - **Feature IDs.** Use the final IDs and bit assignments in [T1-0 C3](T1.md#c3-shared-feature-ids-and-bits). The low word supports 31 features. The table also defines the overflow rule.
-- **Adding later recipe fields.** T1 design D9 applies: a field exists in a world's recipe only when its feature is frozen at or below the world's generation, or is listed in the world's review features. T7-3 and T2-3 rely on this.
+- **Adding later recipe fields.** T1 design D9 applies: a field exists in a world's recipe only when its feature is frozen at or below the world's generation, or is listed in the world's review features. T7-3 and T2R-2 rely on this.
 - **Tree catalog.** T6-3 creates `ImportedTreeSourceTable`. T6-5 defines the rule for appending catalog entries without changing older generations' fingerprints (`tree_catalog_append_test`). T8-3 extends that table; it does not create one.
-- **Drainage height source.** The drainage bake and site placement read the natural height (`IDrainageHeightSource`, T2-4). Later relief, including T7's meso terms, is never added to it, so a landforms world has the same rivers and sites as the rivers world of the same seed.
+- **Drainage height source.** The drainage bake and site placement read the natural height (`IDrainageHeightSource`, T2R-3). Later relief, including T7's meso terms, is never added to it, so a landforms world has the same rivers and sites as the rivers world of the same seed.
 - **GPU recipe buffer.** New height-model words go at index 317 or later. The height block ends at 185, and the climate block runs from 185 to 317.
-- **River sectors build on the CPU** (T2-10), because the GPU proxy classes cannot represent inland water. The GLSL carve (T2-14) is contingent on gate G1.
+- **River sectors build on the CPU** (T2R-11), because the GPU proxy classes cannot represent inland water. A GPU lake class and the GLSL carve are rungs of the T2R-15 fallback ladder, used only on a measured trigger.
 - **Climate fields (T1-0 C1).** The primary agent decided that the sampler reads them from T1 onward, with defaults equal to today's settings, so generation 1 stays identical.
 
 ## Decisions waiting on the user

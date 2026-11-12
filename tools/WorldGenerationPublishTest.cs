@@ -48,8 +48,12 @@ public partial class WorldGenerationPublishTest : RefCounted
         try
         {
             using var bridge = new WorldGenerationBridge();
-            Require(bridge.ListFrozenGenerations().SequenceEqual(new[] { 1 }) && bridge.ListOpenFeatures().Length == 0,
-                "production ledger is not the generation-1 baseline");
+            WorldGenerationLedger production = WorldGenerationLedger.Production;
+            Require(bridge.ListFrozenGenerations().SequenceEqual(new[] { 1 }) && bridge.LatestFrozen == 1 && production.Rows.Count == 1 && production.Rows[0].Features.Count == 0
+                && production.FeatureSet(1, Array.Empty<string>()).Count == 0,
+                "production ledger is not the generation-1 baseline with no frozen feature bits");
+            Require(production.Features.All(feature => feature.FrozenIn == 0) && bridge.ListOpenFeatures().Length == production.Features.Count,
+                "production ledger has a frozen feature outside generation 1 or an open feature that is not listed as open");
             WorldGenerationState before = WorldGeneration.Current;
             Require(!bridge.PublishRecipeJson("{") && bridge.LastError.Length != 0 && ReferenceEquals(before, WorldGeneration.Current),
                 "a malformed recipe replaced the current world or did not provide an error");

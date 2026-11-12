@@ -204,6 +204,8 @@ Why the recipe and not a per-world render profile or a version field in the save
 
 ## 3. Area 1: water (the centrepiece)
 
+> **Superseded in part (2026-11-11):** `docs/t2-river-reset.md` replaces this section where they differ. Banks may be raised (levees and plugs) instead of a lower-only carve. The bake gate is 30 s with a 20 s target, the graph budget 32 MB, and the near-river sample cost +0.5 us. It also covers the river level, the lakes and the routing.
+
 ### Ideas considered
 
 | Idea | Verdict | Reason |
@@ -789,6 +791,8 @@ Order of work: T0, then T1. After T1, the water track (T2, T3) and the dressing 
 - **T9j Biome Workshop as the authoring front end** for the community table.
 
 ## 12. Budget table (A1000, 1920x1080, Medium, P0 / 35 W)
+
+> **Note (2026-11-11):** for the water rows, the budgets in `docs/t2-river-reset.md` take precedence.
 
 | Phase | GPU gate | Other gates | Measured with |
 |---|---|---|---|
