@@ -3,8 +3,8 @@ using System.Runtime.CompilerServices;
 
 namespace RingworldTechDemo.Terrain.Hydrology;
 
-/// <summary>Role of a drainage cell. Ocean (any sample below 0), Lung (the Weather Lung basin) and StripOutlet (the two end columns of a strip) are outlets.</summary>
-public enum DrainageCellKind : byte { Land, Ocean, Lung, Barrier, StripOutlet }
+/// <summary>Role of a drainage cell. Basin is a terminal value only (S8b: the pit of a closed basin), never the kind of a cell. Ocean (any sample below 0), Lung (the Weather Lung basin) and StripOutlet (the two end columns of a strip) are outlets.</summary>
+public enum DrainageCellKind : byte { Land, Ocean, Lung, Barrier, StripOutlet, Basin }
 
 /// <summary>
 /// The grid the conditioning and routing stages work on (docs/t2-river-reset.md 4.2, D2-D4): cell kinds, the unperturbed valley-floor height

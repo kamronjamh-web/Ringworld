@@ -9,7 +9,7 @@ namespace RingworldTechDemo.Terrain.Hydrology;
 /// Binary form of a <see cref="RiverGraph"/> (S5, docs/t2-river-reset.md 4.7). Header: magic <c>RRGF</c>, <see cref="HydrologyVersions.GraphFormat"/> (int32),
 /// <see cref="HydrologyVersions.DrainageAlgorithm"/> (int32), input identity (uint64), source (byte: 0 CPU, 1 GPU; not part of the identity), payload length (int64) and the
 /// content hash (uint64, FNV-1a 64 over the payload bytes: the graph identity hash). Payload, little-endian: the grid and recipe values the hydraulics need, then nodes,
-/// stems, reaches, knots, lakes, inlets and runs, each prefixed by its count. Stem starts, row starts, curves, sections, tail levels and the index are derived at load by
+/// stems, reaches, knots, lakes, inlets, runs, closed basins and dry runs, each prefixed by its count. Stem starts, row starts, curves, sections, tail levels and the index are derived at load by
 /// the same code the bake ran, so a loaded graph answers exactly like the baked one.
 /// </summary>
 public static class RiverGraphFormat
@@ -122,7 +122,7 @@ public static class RiverGraphFormat
         foreach (RiverLake l in g.Lakes)
         {
             w.Write(l.Level); w.Write(l.RawLevel); w.Write(l.CellCount); w.Write(l.OutletStem); w.Write(l.OutletS); w.Write(l.InletStart); w.Write(l.InletCount);
-            w.Write(l.MinCol); w.Write(l.MinRow); w.Write(l.MaxCol); w.Write(l.MaxRow); w.Write(l.MinHeight); w.Write(l.DeepestCol); w.Write(l.DeepestRow);
+            w.Write(l.MinCol); w.Write(l.MinRow); w.Write(l.MaxCol); w.Write(l.MaxRow); w.Write(l.MinHeight); w.Write(l.DeepestCol); w.Write(l.DeepestRow); w.Write(l.Basin); w.Write(l.Inflow);
         }
         Part("lakes");
         w.Write(g.Inlets.Length);
@@ -131,6 +131,12 @@ public static class RiverGraphFormat
         w.Write(g.Runs.Length);
         foreach (LakeRun r in g.Runs) { w.Write(r.Row); w.Write(r.Col); w.Write(r.Length); w.Write((ushort)0); w.Write(r.LakeId); }
         Part("lake cell runs");
+        w.Write(g.Basins.Length);
+        foreach (RiverBasin b in g.Basins) { w.Write(b.SpillLevel); w.Write(b.FloorLevel); w.Write(b.DryCellCount); w.Write(b.LakeCount); }
+        Part("closed basins");
+        w.Write(g.DryRuns.Length);
+        foreach (LakeRun r in g.DryRuns) { w.Write(r.Row); w.Write(r.Col); w.Write(r.Length); w.Write((ushort)0); w.Write(r.LakeId); }
+        Part("dry floor runs");
         w.Flush();
         return ms.ToArray();
     }
@@ -200,13 +206,13 @@ public static class RiverGraphFormat
             }
         }
         RiverKnotTable knots = RiverKnotTable.FromDeltas(knotCounts, firstS, firstW, dS, dW);
-        var lakes = new RiverLake[Count(r, 56)];
+        var lakes = new RiverLake[Count(r, 64)];
         for (int i = 0; i < lakes.Length; i++)
         {
             lakes[i] = new RiverLake
             {
                 Level = r.ReadSingle(), RawLevel = r.ReadSingle(), CellCount = r.ReadInt32(), OutletStem = r.ReadInt32(), OutletS = r.ReadSingle(), InletStart = r.ReadInt32(), InletCount = r.ReadInt32(),
-                MinCol = r.ReadInt32(), MinRow = r.ReadInt32(), MaxCol = r.ReadInt32(), MaxRow = r.ReadInt32(), MinHeight = r.ReadSingle(), DeepestCol = r.ReadInt32(), DeepestRow = r.ReadInt32(),
+                MinCol = r.ReadInt32(), MinRow = r.ReadInt32(), MaxCol = r.ReadInt32(), MaxRow = r.ReadInt32(), MinHeight = r.ReadSingle(), DeepestCol = r.ReadInt32(), DeepestRow = r.ReadInt32(), Basin = r.ReadInt32(), Inflow = r.ReadSingle(),
             };
             if (lakes[i].OutletStem >= stems.Length) throw new InvalidDataException("bad lake outlet");
         }
@@ -220,7 +226,33 @@ public static class RiverGraphFormat
             runs[i] = new LakeRun { Row = r.ReadUInt16(), Col = r.ReadUInt16(), Length = r.ReadUInt16() };
             r.ReadUInt16();
             runs[i].LakeId = r.ReadInt32();
-            if (runs[i].Row >= rows || runs[i].Col + runs[i].Length > ringColumns || (uint)runs[i].LakeId >= (uint)lakes.Length || (i > 0 && runs[i - 1].Row > runs[i].Row)) throw new InvalidDataException("bad lake run");
+            if (runs[i].Row >= rows || runs[i].Col + runs[i].Length > ringColumns || (uint)runs[i].LakeId >= (uint)lakes.Length || (i > 0 && (runs[i - 1].Row > runs[i].Row || (runs[i - 1].Row == runs[i].Row && runs[i - 1].Col + runs[i - 1].Length > runs[i].Col)))) throw new InvalidDataException("bad lake run");
+        }
+        var basins = new RiverBasin[Count(r, 16)];
+        for (int i = 0; i < basins.Length; i++)
+        {
+            basins[i] = new RiverBasin { SpillLevel = r.ReadSingle(), FloorLevel = r.ReadSingle(), DryCellCount = r.ReadInt32(), LakeCount = r.ReadInt32() };
+            if (basins[i].DryCellCount < 0 || basins[i].LakeCount < 0) throw new InvalidDataException("bad basin");
+        }
+        foreach (RiverLake l in lakes) if (l.Basin < -1 || l.Basin >= basins.Length) throw new InvalidDataException("bad lake basin");
+        var dryRuns = new LakeRun[Count(r, 12)];
+        for (int i = 0; i < dryRuns.Length; i++)
+        {
+            dryRuns[i] = new LakeRun { Row = r.ReadUInt16(), Col = r.ReadUInt16(), Length = r.ReadUInt16() };
+            r.ReadUInt16();
+            dryRuns[i].LakeId = r.ReadInt32();
+            if (dryRuns[i].Row >= rows || dryRuns[i].Length < 1 || dryRuns[i].Col + dryRuns[i].Length > ringColumns || (uint)dryRuns[i].LakeId >= (uint)basins.Length) throw new InvalidDataException("bad dry run");
+            if (i > 0 && (dryRuns[i - 1].Row > dryRuns[i].Row || (dryRuns[i - 1].Row == dryRuns[i].Row && dryRuns[i - 1].Col + dryRuns[i - 1].Length > dryRuns[i].Col))) throw new InvalidDataException("dry runs out of order or overlapping");
+        }
+        // A dry run must not overlap a lake run in the same row (two sorted lists, one sweep).
+        for (int i = 0, j = 0; i < runs.Length && j < dryRuns.Length;)
+        {
+            LakeRun a = runs[i], b = dryRuns[j];
+            if (a.Row < b.Row) i++;
+            else if (b.Row < a.Row) j++;
+            else if (a.Col + a.Length <= b.Col) i++;
+            else if (b.Col + b.Length <= a.Col) j++;
+            else throw new InvalidDataException("a dry run overlaps a lake run");
         }
         if (ms.Position != ms.Length) throw new InvalidDataException("trailing bytes");
         foreach (RiverStem s in stems) if (s.Terminal is RiverTerminal.Lake or RiverTerminal.Confluence && (uint)s.TerminalId >= (uint)(s.Terminal == RiverTerminal.Lake ? lakes.Length : stems.Length)) throw new InvalidDataException("bad stem terminal");
@@ -229,6 +261,6 @@ public static class RiverGraphFormat
         var levels = new double[lakes.Length];
         for (int i = 0; i < lakes.Length; i++) levels[i] = lakes[i].Level;
         RiverLevel.ComputeTails(net, levels);
-        return new RiverGraph(net, lakes, inlets, runs, ringColumns, rows, identity, source, hash);
+        return new RiverGraph(net, lakes, inlets, runs, basins, dryRuns, ringColumns, rows, identity, source, hash);
     }
 }

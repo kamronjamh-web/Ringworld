@@ -13,7 +13,7 @@ namespace RingworldTechDemo.Tools;
 /// T2R-4 (docs/work-orders/terrain-vegetation/T2.md): the drainage bake report tool. Runs the production height source (GPU or CPU), the barriers,
 /// conditioning, routing and accumulation on the whole ring or a strip, writes the report (text and JSON) and the river map under
 /// .godot/audit_baseline/&lt;machine&gt;/t2r/bake/&lt;stamp&gt;/. Arguments after `--`: --source=gpu|cpu (default gpu), --ring (default) or --strip=&lt;start m&gt;,&lt;km&gt;,
-/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --label=&lt;text&gt;, --no-maps.
+/// --seed=1337, --noise=6 (m), --lake-abundance=&lt;0..1&gt; (default: the recipe's 0.5), --crop=&lt;start km&gt;,&lt;km&gt; (default 10134,300), --rim-crop=&lt;start km&gt;,&lt;km&gt;, --evap-sweep (T2R-6b), --label=&lt;text&gt;, --no-maps.
 /// GPU runs need a windowed Vulkan run (not --headless). Prints DRAINAGE_BAKE_REPORT=PASS|FAIL.
 /// </summary>
 public partial class DrainageBakeReportTool : RefCounted
@@ -78,6 +78,29 @@ public partial class DrainageBakeReportTool : RefCounted
             File.WriteAllText(Path.Combine(dir, "bake_report.json"), report.ToJson());
             Console.WriteLine($"DRAINAGE_BAKE_REPORT_DETAIL source={source.Name} seed={seed} noise={noise} dir={dir}");
             foreach (string line in report.ToText().Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
+            if (Flag("evap-sweep"))
+            {
+                double baseAbundance = abundance ?? (recipe.HasRivers ? recipe.GetExtensionField("lake_abundance") : 0.5d);
+                var sweep = new System.Text.StringBuilder();
+                sweep.AppendLine(FormattableString.Invariant($"evap sweep at E0 {DrainageLakeBalance.E0:F1} (routing rerun on the same conditioning; breaching does not depend on lake_abundance)"));
+                sweep.AppendLine("| lake_abundance | lambda | flooded share of land | closed share of basins | depth p99 (m) | lakes | dry floor share of land | balance s |");
+                sweep.AppendLine("|---|---|---|---|---|---|---|---|");
+                foreach (double la in new[] { 0d, 0.25d, 0.5d, 0.75d, 1d })
+                {
+                    DrainageBakeReport row = DrainageBake.Reroute(field, la, 1d, workers).Report;
+                    sweep.AppendLine(FormattableString.Invariant($"| {la:F2} | {row.BalanceLambda:F3} | {row.LakeShareOfLand:P2} | {(double)row.BasinsClosed / Math.Max(1, row.BasinsClosed + row.BasinsSpilling):P1} | {row.LakeDepthP99:F1} | {row.LakeCount} | {row.DryShareOfLand:P2} | {row.BalanceSeconds:F2} |"));
+                }
+                sweep.AppendLine(FormattableString.Invariant($"E0 candidates at lake_abundance {baseAbundance:F2} (target 8 % flooded, band 6-10 %)"));
+                sweep.AppendLine("| E0 | flooded share of land | closed share of basins | depth p99 (m) | lakes |");
+                sweep.AppendLine("|---|---|---|---|---|");
+                foreach (double e0 in new[] { 6d, 8d, 10d, 12d, 15d, 20d })
+                {
+                    DrainageBakeReport row = DrainageBake.Reroute(field, baseAbundance, e0 / DrainageLakeBalance.E0, workers).Report;
+                    sweep.AppendLine(FormattableString.Invariant($"| {e0:F0} | {row.LakeShareOfLand:P2} | {(double)row.BasinsClosed / Math.Max(1, row.BasinsClosed + row.BasinsSpilling):P1} | {row.LakeDepthP99:F1} | {row.LakeCount} |"));
+                }
+                File.WriteAllText(Path.Combine(dir, "evap_sweep.txt"), sweep.ToString());
+                foreach (string line in sweep.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)) Console.WriteLine("DRAINAGE_BAKE_REPORT_DETAIL " + line);
+            }
             if (!Flag("no-rivers"))
             {
                 bool diag = Flag("diag");
@@ -121,6 +144,13 @@ public partial class DrainageBakeReportTool : RefCounted
                 var clockMaps = System.Diagnostics.Stopwatch.StartNew();
                 (string overview, string cropPath, string raw) = DrainageMapWriter.Write(field, dir, "bake", cropStartKm * 1000d, cropKm * 1000d, spec.IsWholeRing);
                 Console.WriteLine($"DRAINAGE_BAKE_REPORT_DETAIL maps seconds={clockMaps.Elapsed.TotalSeconds:F1} overview={overview} crop={cropPath} raw={raw}");
+                string rimText = Arg("rim-crop", "");
+                if (rimText.Length > 0)
+                {
+                    string[] rim = rimText.Split(',');
+                    (_, string rimPath, _) = DrainageMapWriter.Write(field, dir, "rim", double.Parse(rim[0], System.Globalization.CultureInfo.InvariantCulture) * 1000d, double.Parse(rim[1], System.Globalization.CultureInfo.InvariantCulture) * 1000d, false);
+                    Console.WriteLine($"DRAINAGE_BAKE_REPORT_DETAIL rim crop={rimPath}");
+                }
             }
         }
         catch (Exception e) { Console.Error.WriteLine("DRAINAGE_BAKE_REPORT=FAIL exception " + e); return 1; }
@@ -157,6 +187,16 @@ public partial class DrainageBakeReportTool : RefCounted
         double[] depths = graph.Lakes.Select(l => (double)l.Depth).OrderBy(d => d).ToArray();
         string Pct(double q) => depths.Length == 0 ? "-" : depths[Math.Min(depths.Length - 1, (int)(q * depths.Length))].ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
         sb.AppendLine(FormattableString.Invariant($"lakes: count {graph.Lakes.Length}, flooded cells {lakeCells} ({lakeCells * cellArea:F0} km^2, {(double)lakeCells / Math.Max(1, landCells):P2} of land cells, {(double)lakeCells / Math.Max(1, field.Count):P2} of all cells), without an outlet river {noOutlet}; depth (level minus lowest cell) p50/p90/p99/max {Pct(0.5)}/{Pct(0.9)}/{Pct(0.99)}/{Pct(1)} m; over 100 m {graph.Lakes.Count(l => l.Depth > 100)}, over 500 m {graph.Lakes.Count(l => l.Depth > 500)}"));
+        long dryCells = graph.Basins.Sum(b => (long)b.DryCellCount);
+        int dryBad = 0;
+        var dryRng = new Random(5150);
+        for (int i = 0; i < 50_000; i++)
+        {
+            int col = dryRng.Next(field.Width), row = dryRng.Next(field.Height);
+            if (graph.DryBasinAt(grid.Spec.RingColumn(col), row) >= 0 != field.IsDryFloor(row * field.Width + col)) dryBad++;
+        }
+        sb.AppendLine(FormattableString.Invariant($"basins: closed {graph.Basins.Length}, dry floor {dryCells} cells ({dryCells * cellArea:F0} km^2, {(double)dryCells / Math.Max(1, landCells):P2} of land cells) in {graph.DryRuns.Length} runs; DryBasinAt disagrees with the field on {dryBad} of 50000 random cells; lakes of closed basins {graph.Lakes.Count(l => l.Basin >= 0)}, spilling {graph.Lakes.Count(l => l.Basin < 0)}"));
+        sb.AppendLine(FormattableString.Invariant($"stems: {net.Stems.Count(s => s.Terminal == RiverTerminal.Lake)} end in a lake, {net.Stems.Count(s => s.Terminal == RiverTerminal.Dead)} end on a dry pan or nowhere (Dead)"));
         int rank = 0;
         foreach (int i in Enumerable.Range(0, graph.Lakes.Length).OrderByDescending(i => graph.Lakes[i].Depth).Take(5))
         {

@@ -10,8 +10,10 @@ public sealed record DrainageBakeOptions
 {
     /// <summary>Amplitude of the routing noise (D4). 0 turns it off.</summary>
     public double RoutingNoiseMeters { get; init; } = DrainageBake.DefaultRoutingNoiseMeters;
-    /// <summary>Share of feasible breaches left uncut. Null reads the recipe's <c>lake_abundance</c> (0.5 without the rivers feature).</summary>
+    /// <summary>The recipe's <c>lake_abundance</c> (null reads it; 0.5 without the rivers feature). It sets the evaporation scale of the water balance, lambda = 4^(2 la - 1) (S8b); breaching does not read it.</summary>
     public double? LakeAbundance { get; init; }
+    /// <summary>Multiplies E0. 1 in production; only the report tool's sweep changes it.</summary>
+    public double EvaporationScale { get; init; } = 1d;
 }
 
 /// <summary>
@@ -56,8 +58,15 @@ public sealed class DrainageField
     /// <summary>R (S6): accumulated runoff.</summary>
     public ReadOnlySpan<double> RunoffAccumulation => _routed.RunoffAccumulation;
     public ReadOnlySpan<DrainageCellKind> Terminal => _routed.Terminal;
-    public ReadOnlySpan<int> LakeId => _conditioned.LakeId;
-    public ReadOnlyMemory<DrainageLake> Lakes => _conditioned.Lakes;
+    /// <summary>Final lake per cell (S8b): spilling basins as before, closed basins only on their wet cells.</summary>
+    public ReadOnlySpan<int> LakeId => _routed.LakeId;
+    public ReadOnlyMemory<DrainageLake> Lakes => _routed.Lakes;
+    /// <summary>The conditioned basin (a depression at least 2 m deep) of each cell, or -1.</summary>
+    public ReadOnlySpan<int> BasinId => _conditioned.LakeId;
+    /// <summary>One entry per basin, indexed by <see cref="BasinId"/>.</summary>
+    public ReadOnlyMemory<DrainageBasinInfo> Basins => _routed.Basins;
+    public DrainageRouted Routed => _routed;
+    public DrainageConditioned Conditioned => _conditioned;
     public ReadOnlyMemory<DrainageBreach> Cuts => _conditioned.Cuts;
     public ulong DownHash => _routed.DownHash;
     public DrainageDomain Domain => _domain;
@@ -65,8 +74,15 @@ public sealed class DrainageField
     /// <summary>True for a cell that shows lake water: in a lake's flooded set and its lowest sample below the lake level.</summary>
     public bool IsLakeWater(int cell)
     {
-        int lake = _conditioned.LakeId[cell];
-        return lake >= 0 && _conditioned.Effective[cell] < _conditioned.Lakes[lake].Level;
+        int lake = _routed.LakeId[cell];
+        return lake >= 0 && _conditioned.Effective[cell] < _routed.Lakes[lake].Level;
+    }
+
+    /// <summary>True for a cell of a closed basin that is not wet: salt flat or dry lakebed (S8b).</summary>
+    public bool IsDryFloor(int cell)
+    {
+        int basin = _conditioned.LakeId[cell];
+        return basin >= 0 && _routed.Basins[basin].Closed && _routed.LakeId[cell] < 0;
     }
 }
 
@@ -93,23 +109,33 @@ public static class DrainageBake
         float[] route = BuildRoute(grid, kind, parameters.Seed, options.RoutingNoiseMeters, workers);
         double noiseSeconds = clock.Elapsed.TotalSeconds;
         var domain = new DrainageDomain(spec.Columns, spec.Rows, spec.IsWholeRing, spec.AroundStepMeters, spec.AcrossStepMeters, kind, grid.Lowest, route, grid.Moisture);
-        return BakeDomain(spec, domain, lakeAbundance, workers, progress, cancellation, barrierSeconds, noiseSeconds, grid.Hash());
+        return BakeDomain(spec, domain, lakeAbundance, workers, progress, cancellation, barrierSeconds, noiseSeconds, grid.Hash(), null, options.EvaporationScale);
+    }
+
+    /// <summary>Routing, accumulation and the water balance again on an existing conditioning (the report tool's sweep): breaching does not depend on lake_abundance, so nothing else changes.</summary>
+    public static DrainageField Reroute(DrainageField field, double lakeAbundance, double evaporationScale, int workers)
+    {
+        var clock = Stopwatch.StartNew();
+        DrainageRouted routed = DrainageRouting.Route(field.Domain, field.Conditioned, workers, DrainageBalanceParameters.From(lakeAbundance, evaporationScale));
+        double routingSeconds = clock.Elapsed.TotalSeconds;
+        DrainageBakeReport report = DrainageBakeReport.Build(field.Domain, field.Conditioned, routed, lakeAbundance, 0, 0, 0, 0, routingSeconds, evaporationScale);
+        return new DrainageField(field.Spec, field.Domain, field.Conditioned, routed, report);
     }
 
     /// <summary>Conditioning and routing on a prepared domain (synthetic fixtures call this directly).</summary>
     public static DrainageField BakeDomain(DrainageGridSpec? spec, DrainageDomain domain, double lakeAbundance, int workers, IProgress<double>? progress,
-        CancellationToken cancellation, double barrierSeconds = 0, double noiseSeconds = 0, ulong gridHash = 0)
+        CancellationToken cancellation, double barrierSeconds = 0, double noiseSeconds = 0, ulong gridHash = 0, double? breachShare = null, double evaporationScale = 1d)
     {
         var clock = Stopwatch.StartNew();
-        DrainageConditioned conditioned = DrainageConditioning.Condition(domain, lakeAbundance, workers, cancellation);
+        DrainageConditioned conditioned = DrainageConditioning.Condition(domain, breachShare ?? DrainageConditioning.BreachShare, workers, cancellation);
         double conditioningSeconds = clock.Elapsed.TotalSeconds;
         progress?.Report(0.6);
         clock.Restart();
-        DrainageRouted routed = DrainageRouting.Route(domain, conditioned, workers);
+        DrainageRouted routed = DrainageRouting.Route(domain, conditioned, workers, DrainageBalanceParameters.From(lakeAbundance, evaporationScale));
         double routingSeconds = clock.Elapsed.TotalSeconds;
         progress?.Report(0.9);
         DrainageBakeReport report = DrainageBakeReport.Build(domain, conditioned, routed, lakeAbundance, gridHash,
-            barrierSeconds, noiseSeconds, conditioningSeconds, routingSeconds);
+            barrierSeconds, noiseSeconds, conditioningSeconds, routingSeconds, evaporationScale);
         return new DrainageField(spec, domain, conditioned, routed, report);
     }
 

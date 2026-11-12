@@ -218,6 +218,8 @@ public sealed class RiverBuildOptions
     public bool EaseHairpins { get; init; } = true;
     /// <summary>T2R-5c: Gaussian smoothing of the node chain on gentle ground (tools switch it off for comparison).</summary>
     public bool Smooth { get; init; } = true;
+    /// <summary>Keep every centre curve out of barrier clearance (T2R-6b review; on in production).</summary>
+    public bool BarrierGuard { get; init; } = true;
     /// <summary>T2R-5c: snap nodes to the valley floor within their cell's 16 samples (needs <see cref="Source"/>; tools switch it off for comparison).</summary>
     public bool Snap { get; init; } = false; // T2R-5c primary review: off by default. It did not reduce cut depth (17.5 % over 15 m either way) and it raised coastal sharp bends.
     public int Workers { get; init; } = 4;
@@ -259,6 +261,9 @@ public sealed record RiverBuildReport
     public double MaxNodeShiftMeters { get; init; }
     public double MaxSmoothMeters { get; init; }
     public long SnappedNodes { get; init; }
+    /// <summary>Nodes moved by the barrier guard (T2R-6b review) and the largest total move of one node.</summary>
+    public long GuardMovedNodes { get; init; }
+    public double GuardMaxMeters { get; init; }
     public double CutOver15Share { get; init; }
     public double CentrelineSeconds { get; init; }
     public double LevelSeconds { get; init; }
@@ -274,7 +279,7 @@ public sealed record RiverBuildReport
             "hydraulics p10/p50/p90 over reach length: Q " + P(Q) + " m3/s, S " + P(Gradient) + ", d " + P(Depth) + " m, w " + P(Width) + " m, U " + P(Speed) + " m/s",
             FormattableString.Invariant($"class share by length: calm {ClassShare.ElementAtOrDefault(0):P1}, swift {ClassShare.ElementAtOrDefault(1):P1}, fierce {ClassShare.ElementAtOrDefault(2):P1}, torrent {ClassShare.ElementAtOrDefault(3):P1}"),
             FormattableString.Invariant($"cut depth along paths (ground minus bed): p50 {CutP50:F1} m, p90 {CutP90:F1} m, max {CutMax:F1} m, share of length over 40 m {CutOver40Share:P2}, over 15 m {CutOver15Share:P2}; level filled up to a hold or the receiving level on {FillShareOfLevel:P1} of stations"),
-            FormattableString.Invariant($"largest wander shift {MaxWanderMeters:F0} m, meander amplitude cap used {MaxMeanderMeters:F0} m, largest node shift from the eased chain {MaxNodeShiftMeters:F0} m (smoothing {MaxSmoothMeters:F0} m), snapped nodes {SnappedNodes}; seconds: centrelines {CentrelineSeconds:F2}, ground sampling {SampleSeconds:F2}, levels {LevelSeconds:F2}"),
+            FormattableString.Invariant($"largest wander shift {MaxWanderMeters:F0} m, meander amplitude cap used {MaxMeanderMeters:F0} m, largest node shift from the eased chain {MaxNodeShiftMeters:F0} m (smoothing {MaxSmoothMeters:F0} m), snapped nodes {SnappedNodes}, barrier guard moved {GuardMovedNodes} nodes (largest {GuardMaxMeters:F0} m); seconds: centrelines {CentrelineSeconds:F2}, ground sampling {SampleSeconds:F2}, levels {LevelSeconds:F2}"),
         });
     }
 }
@@ -450,7 +455,8 @@ public static class RiverGraphBuilder
             return (around, across);
         };
 
-        double maxWander = 0, maxSmooth = 0, maxNodeShift = 0;
+        double maxWander = 0, maxSmooth = 0, maxNodeShift = 0, guardMax = 0;
+        long guardMoved = 0;
         long snapped = 0;
         var netShell = new RiverNetwork(spec.CircumferenceMeters, widthMeters, seed, meander, valley, depthScale, ferocity,
             new int[0], new int[0], new RiverStem[0], new RiverReach[0]);
@@ -528,6 +534,7 @@ public static class RiverGraphBuilder
             {
                 StemTmp s = tmp[si];
                 maxNodeShift = Math.Max(maxNodeShift, RiverWander.ClampShift(s.X, s.Y, s.OX, s.OY));
+                if (options.BarrierGuard) { (int movedNodes, double movedMax) = GuardBarriers(s, kind, spec, width, f.Height); guardMoved += movedNodes; guardMax = Math.Max(guardMax, movedMax); }
                 int nodes = s.X.Length;
                 double originAround = s.OriginAround, originAcross = s.OriginAcross;
                 // Quantise to decimetres (the stored form) and clamp across the rim.
@@ -616,7 +623,7 @@ public static class RiverGraphBuilder
             ThresholdKm2 = threshold, ChannelCells = channelCells, Stems = stemCount, Reaches = reaches.Length, Nodes = totalNodes, LengthKm = lengthKm,
             TerminalSea = report0[(int)RiverTerminal.Sea], TerminalLake = report0[(int)RiverTerminal.Lake], TerminalConfluence = report0[(int)RiverTerminal.Confluence],
             TerminalLung = report0[(int)RiverTerminal.Lung], TerminalStripEnd = report0[(int)RiverTerminal.StripEnd], TerminalDead = report0[(int)RiverTerminal.Dead],
-            CentrelineSeconds = centrelineSeconds, MaxWanderMeters = maxWander, MaxMeanderMeters = maxMeander, MaxNodeShiftMeters = maxNodeShift, MaxSmoothMeters = maxSmooth, SnappedNodes = snapped,
+            CentrelineSeconds = centrelineSeconds, MaxWanderMeters = maxWander, MaxMeanderMeters = maxMeander, MaxNodeShiftMeters = maxNodeShift, MaxSmoothMeters = maxSmooth, SnappedNodes = snapped, GuardMovedNodes = guardMoved, GuardMaxMeters = guardMax,
         };
         if (options.Levels && options.Source != null)
         {
@@ -629,6 +636,85 @@ public static class RiverGraphBuilder
     }
 
     private const int SnapChunkPoints = 2_000_000;
+
+    /// <summary>Clearance the centreline keeps from barrier cells: the meander cap (applied at query time) plus a margin.</summary>
+    public const double BarrierClearanceMeters = RiverHydraulics.MeanderAmplitudeCapMeters + 5d;
+
+    /// <summary>
+    /// Barrier guard (T2R-6b review): after smoothing, wander and the shift clamp, no sample of the node curve may come closer than <see cref="BarrierClearanceMeters"/> to a barrier cell, so the curve
+    /// plus the meander (at most 100 m, applied at query time) never enters one. Offending samples push the node under them (and half of each neighbour) away from the nearest barrier cell; the last
+    /// node (a junction or the end in water) never moves. Fixed order and fixed passes, so it is deterministic. Returns the number of nodes moved and the largest total move.
+    /// </summary>
+    private static (int Moved, double MaxMove) GuardBarriers(StemTmp s, DrainageCellKind[] kind, DrainageGridSpec spec, int width, int rows)
+    {
+        int n = s.X.Length;
+        if (n < 2) return (0, 0);
+        double stepA = spec.AroundStepMeters, stepC = spec.AcrossStepMeters, circumference = spec.CircumferenceMeters, m = BarrierClearanceMeters;
+        var startX = (double[])s.X.Clone();
+        var startY = (double[])s.Y.Clone();
+        var moved = new bool[n];
+        bool IsBarrier(long ci, int rj)
+        {
+            if ((uint)rj >= (uint)rows) return false;
+            long ring = ((ci % spec.RingColumns) + spec.RingColumns) % spec.RingColumns - spec.ColumnStart;
+            if (ring < 0) ring += spec.RingColumns;
+            return ring < width && kind[rj * width + (int)ring] == DrainageCellKind.Barrier;
+        }
+        // Push vector (away from the nearest barrier cell, length = missing clearance) for a point in absolute around (unwrapped) and across metres.
+        bool Push(double a, double c, out double px, out double py)
+        {
+            px = py = 0;
+            double best = 0;
+            long col = (long)Math.Floor(a / stepA);
+            int row = (int)Math.Floor(c / stepC);
+            for (int dj = -1; dj <= 1; dj++)
+            for (int di = -1; di <= 1; di++)
+            {
+                long ci = col + di; int rj = row + dj;
+                if (!IsBarrier(ci, rj)) continue;
+                double x0 = ci * stepA, x1 = x0 + stepA, y0 = rj * stepC, y1 = y0 + stepC;
+                double qx = Math.Clamp(a, x0, x1), qy = Math.Clamp(c, y0, y1);
+                double dx = a - qx, dy = c - qy, d = Math.Sqrt(dx * dx + dy * dy), deficit, ux, uy;
+                if (d > 1e-9) { deficit = m - d; ux = dx / d; uy = dy / d; }
+                else
+                {
+                    double left = a - x0, right = x1 - a, up = c - y0, down = y1 - c, e = Math.Min(Math.Min(left, right), Math.Min(up, down));
+                    if (e == left) { ux = -1; uy = 0; } else if (e == right) { ux = 1; uy = 0; } else if (e == up) { ux = 0; uy = -1; } else { ux = 0; uy = 1; }
+                    deficit = m + e;
+                }
+                if (deficit > best) { best = deficit; px = ux * deficit; py = uy * deficit; }
+            }
+            return best > 0;
+        }
+        for (int pass = 0; pass < 8; pass++)
+        {
+            var curve = new RiverStemCurve(0, 0, s.X, s.Y);
+            var dxs = new double[n];
+            var dys = new double[n];
+            bool any = false;
+            for (int k = 0; k < n; k++)
+                for (int i = 0; i <= 8; i++)
+                {
+                    curve.EvalPiece(k, i / 8d, out double x, out double y, out _, out _);
+                    if (!Push(s.OriginAround + x, s.OriginAcross + y, out double px, out double py)) continue;
+                    any = true;
+                    foreach ((int node, double w) in new[] { (k, 1d), (k - 1, 0.5), (k + 1, 0.5) })
+                    {
+                        if (node < 0 || node >= n - 1) continue;
+                        if (Math.Abs(px * w) > Math.Abs(dxs[node])) dxs[node] = px * w;
+                        if (Math.Abs(py * w) > Math.Abs(dys[node])) dys[node] = py * w;
+                    }
+                }
+            if (!any) break;
+            for (int k = 0; k < n - 1; k++) { if (dxs[k] != 0 || dys[k] != 0) moved[k] = true; s.X[k] += dxs[k]; s.Y[k] += dys[k]; }
+        }
+        _ = circumference;
+        int count = 0;
+        double max = 0;
+        for (int k = 0; k < n; k++)
+            if (moved[k]) { count++; max = Math.Max(max, Math.Sqrt((s.X[k] - startX[k]) * (s.X[k] - startX[k]) + (s.Y[k] - startY[k]) * (s.Y[k] - startY[k]))); }
+        return (count, max);
+    }
     private const double SnapToleranceMeters = 2d, SnapTriggerMeters = 8d, SnapMaxShiftMeters = RiverWander.NodeShiftCapMeters;
 
     /// <summary>

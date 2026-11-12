@@ -14,7 +14,7 @@ public static class DrainageMapWriter
 {
     public const string Legend =
         "Around increases to the right, across downward, one pixel per 1 km cell (crop: 3x, nearest neighbour). "
-        + "Grey: hillshade of the valley-floor height (lowest sample per cell). Dark blue: sea, darker with depth. Light blue: lake water. "
+        + "Grey: hillshade of the valley-floor height (lowest sample per cell). Dark blue: sea, darker with depth. Light blue: lake water. Pale tan: dry basin floor (salt flat or dry lakebed). "
         + "Violet: barrier (emitter sites, Wall Engines, Weather Lung with clearance). Indigo: Weather Lung basin. Ochre: strip end outlet. "
         + "Orange: cell cut by a breach (cuts over 40 m would be red; none are allowed). "
         + "Green channels at 50 km^2 and above: pale green 50 to 500 km^2, green 500 to 5,000 km^2 (2 px), dark green over 5,000 km^2 (3 px). "
@@ -61,6 +61,7 @@ public static class DrainageMapWriter
                 double dx = exaggeration * (hr - hl) / (2d * step), dz = exaggeration * (hd - hu) / (2d * step);
                 double inv = 1d / Math.Sqrt(dx * dx + 1 + dz * dz);
                 double lit = Math.Max(0, -dx * inv * lx + inv * ly - dz * inv * lz);
+                if (f.IsDryFloor(cell)) { double k = 0.8 + 0.2 * lit; Put(cell, 0.86 * k, 0.78 * k, 0.60 * k); continue; }
                 double v = 0.35 + 0.55 * lit;
                 Put(cell, v, v, v);
             }

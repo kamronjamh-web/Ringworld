@@ -14,7 +14,7 @@ public static class RiverMapWriter
 {
     public const string Legend =
         "Production river centrelines (B-spline through the lowest-sample nodes, wander and meander) over a hillshade of the valley-floor height. "
-        + "Around increases to the right, across downward. Dark blue: sea. Light blue: lake water. Violet: barrier. Curve colour and width by reach class: "
+        + "Around increases to the right, across downward. Dark blue: sea. Light blue: lake water. Pale tan: dry basin floor (salt flat or dry lakebed). Violet: barrier. Curve colour and width by reach class: "
         + "calm, swift, fierce, torrent. Close-up: thin orange line is the cell-to-cell D8 path that the curve replaces.";
 
     private static readonly (byte R, byte G, byte B)[] ClassColors = { (90, 235, 255), (40, 190, 255), (255, 235, 90), (255, 90, 70) };
@@ -79,6 +79,8 @@ public static class RiverMapWriter
                 double inv = 1d / Math.Sqrt(dx * dx + 1 + dz * dz);
                 double lit = Math.Max(0, -dx * inv * lx + inv * ly - dz * inv * lz);
                 double v = 0.35 + 0.55 * lit;
+                if (f.IsDryFloor(cell)) { double k = 0.8 + 0.2 * lit; r = 0.86 * k; g = 0.78 * k; b = 0.60 * k; }
+                else
                 r = g = b = v;
             }
             int i = (py * w + px) * 3;

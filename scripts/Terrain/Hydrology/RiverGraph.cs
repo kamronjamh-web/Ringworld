@@ -19,6 +19,12 @@ public sealed class RiverGraph
     public LakeRun[] Runs { get; }
     /// <summary>Index of the first run of each row, with a final entry holding the run count (derived).</summary>
     public int[] RowStart { get; }
+    /// <summary>Closed basins (S8b), ids by lowest basin cell.</summary>
+    public RiverBasin[] Basins { get; }
+    /// <summary>Dry floor of the closed basins as runs (<see cref="LakeRun.LakeId"/> is the basin id), sorted by row then column.</summary>
+    public LakeRun[] DryRuns { get; }
+    /// <summary>Index of the first dry run of each row, with a final entry holding the run count (derived).</summary>
+    public int[] DryRowStart { get; }
     public int RingColumns { get; }
     public int Rows { get; }
     public double AroundStepMeters { get; }
@@ -31,15 +37,18 @@ public sealed class RiverGraph
     public byte Source { get; }
     public ulong IdentityHash { get; }
 
-    internal RiverGraph(RiverNetwork network, RiverLake[] lakes, RiverInlet[] inlets, LakeRun[] runs, int ringColumns, int rows, ulong inputIdentity, byte source, ulong? knownHash)
+    internal RiverGraph(RiverNetwork network, RiverLake[] lakes, RiverInlet[] inlets, LakeRun[] runs, RiverBasin[] basins, LakeRun[] dryRuns, int ringColumns, int rows, ulong inputIdentity, byte source, ulong? knownHash)
     {
         if (ringColumns > ushort.MaxValue || rows > ushort.MaxValue) throw new ArgumentOutOfRangeException(nameof(ringColumns), "grid does not fit the run record");
-        Network = network; Lakes = lakes; Inlets = inlets; Runs = runs; RingColumns = ringColumns; Rows = rows;
+        Network = network; Lakes = lakes; Inlets = inlets; Runs = runs; Basins = basins; DryRuns = dryRuns; RingColumns = ringColumns; Rows = rows;
         AroundStepMeters = (double)network.CircumferenceM / ringColumns; AcrossStepMeters = network.WidthM / rows;
         InputIdentity = inputIdentity; Source = source;
         RowStart = new int[rows + 1];
         foreach (LakeRun run in runs) RowStart[run.Row + 1]++;
         for (int r = 0; r < rows; r++) RowStart[r + 1] += RowStart[r];
+        DryRowStart = new int[rows + 1];
+        foreach (LakeRun run in dryRuns) DryRowStart[run.Row + 1]++;
+        for (int r = 0; r < rows; r++) DryRowStart[r + 1] += DryRowStart[r];
         PieceStem = new int[network.NodeAroundDm.Length];
         for (int i = 0; i < network.Stems.Length; i++) Array.Fill(PieceStem, i, network.Stems[i].NodeStart, network.Stems[i].NodeCount);
         Index = RiverSpatialIndex.Build(network, ringColumns, rows, runs);
@@ -72,6 +81,24 @@ public sealed class RiverGraph
 
     public int LakeAt(double around, double across) => LakeAt(Index.ColumnOf(around), Index.RowOf(across));
 
+    /// <summary>Id of the closed basin whose dry floor holds the ring column and row (S8b), or -1.</summary>
+    public int DryBasinAt(int col, int row)
+    {
+        if ((uint)row >= (uint)Rows) return -1;
+        int lo = DryRowStart[row], hi = DryRowStart[row + 1] - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) >> 1;
+            LakeRun run = DryRuns[mid];
+            if (col < run.Col) hi = mid - 1;
+            else if (col >= run.Col + run.Length) lo = mid + 1;
+            else return run.LakeId;
+        }
+        return -1;
+    }
+
+    public int DryBasinAt(double around, double across) => DryBasinAt(Index.ColumnOf(around), Index.RowOf(across));
+
     /// <summary>The point where the outlet stem leaves the lake, in ring metres; false when the lake has no outlet.</summary>
     public bool TryGetOutletPoint(int lake, out double around, out double across)
     {
@@ -102,13 +129,21 @@ public sealed class RiverGraph
         DrainageGridSpec spec = grid.Spec;
         int lakeCount = f.Lakes.Length, width = f.Width, rows = f.Height;
         ReadOnlySpan<DrainageLake> conditioned = f.Lakes.Span;
+        ReadOnlySpan<DrainageBasinInfo> basinInfo = f.Basins.Span;
+        var closedOrdinal = new int[basinInfo.Length];
+        int closedCount = 0;
+        for (int b = 0; b < basinInfo.Length; b++) closedOrdinal[b] = basinInfo[b].Closed ? closedCount++ : -1;
+        var basins = new RiverBasin[closedCount];
+        for (int b = 0; b < basinInfo.Length; b++)
+            if (basinInfo[b].Closed) basins[closedOrdinal[b]] = new RiverBasin { SpillLevel = basinInfo[b].SpillLevel, FloorLevel = basinInfo[b].FloorLevel, DryCellCount = basinInfo[b].DryCells, LakeCount = basinInfo[b].Lakes };
         var lakes = new RiverLake[lakeCount];
         for (int i = 0; i < lakeCount; i++)
         {
             lakes[i] = new RiverLake
             {
-                Level = (float)Math.Floor(conditioned[i].Level), RawLevel = conditioned[i].Level, OutletStem = -1,
+                Level = (float)Math.Floor(conditioned[i].Level), RawLevel = conditioned[i].RawLevel, OutletStem = -1,
                 MinCol = int.MaxValue, MinRow = int.MaxValue, MaxCol = -1, MaxRow = -1, MinHeight = float.PositiveInfinity, DeepestCol = -1, DeepestRow = -1,
+                Basin = conditioned[i].Closed ? closedOrdinal[conditioned[i].Basin] : -1, Inflow = (float)conditioned[i].Inflow,
             };
         }
         var runs = new List<LakeRun>();
@@ -141,6 +176,27 @@ public sealed class RiverGraph
         }
         runs.Sort(static (a, b) => a.Row != b.Row ? a.Row.CompareTo(b.Row) : a.Col.CompareTo(b.Col));
 
+        // Dry floor of the closed basins as runs of the basin id (S8b).
+        var dryRuns = new List<LakeRun>();
+        for (int row = 0; row < rows; row++)
+        {
+            int runBasin = -1, runStart = 0, runLength = 0, previousRing = -2;
+            for (int col = 0; col < width; col++)
+            {
+                int cell = row * width + col, id = f.IsDryFloor(cell) ? closedOrdinal[f.BasinId[cell]] : -1;
+                int ringCol = spec.RingColumn(col);
+                if (id >= 0 && id == runBasin && ringCol == previousRing + 1) runLength++;
+                else
+                {
+                    if (runBasin >= 0) dryRuns.Add(new LakeRun { Row = (ushort)row, Col = (ushort)runStart, Length = (ushort)runLength, LakeId = runBasin });
+                    runBasin = id; runStart = ringCol; runLength = id >= 0 ? 1 : 0;
+                }
+                previousRing = ringCol;
+            }
+            if (runBasin >= 0) dryRuns.Add(new LakeRun { Row = (ushort)row, Col = (ushort)runStart, Length = (ushort)runLength, LakeId = runBasin });
+        }
+        dryRuns.Sort(static (a, b) => a.Row != b.Row ? a.Row.CompareTo(b.Row) : a.Col.CompareTo(b.Col));
+
         // Outlets and inlets.
         var inletLists = new List<RiverInlet>[lakeCount];
         var lakeIndicator = new RiverLevel.LakeIndicator(f, grid);
@@ -172,7 +228,7 @@ public sealed class RiverGraph
             if (inletLists[i] != null) { inlets.AddRange(inletLists[i]); lakes[i].InletCount = inletLists[i].Count; }
             if (lakes[i].CellCount == 0) { lakes[i].MinHeight = lakes[i].Level; lakes[i].MinCol = lakes[i].MinRow = lakes[i].MaxCol = lakes[i].MaxRow = lakes[i].DeepestCol = lakes[i].DeepestRow = 0; }
         }
-        return new RiverGraph(net, lakes, inlets.ToArray(), runs.ToArray(), spec.RingColumns, spec.Rows, inputIdentity, source, null);
+        return new RiverGraph(net, lakes, inlets.ToArray(), runs.ToArray(), basins, dryRuns.ToArray(), spec.RingColumns, spec.Rows, inputIdentity, source, null);
     }
 
     // ------------------------------------------------------------------ sizes
@@ -194,6 +250,8 @@ public sealed class RiverGraph
             ("lakes", (long)Unsafe.SizeOf<RiverLake>() * Lakes.Length),
             ("inlets", (long)Unsafe.SizeOf<RiverInlet>() * Inlets.Length),
             ("runs and row starts", (long)Unsafe.SizeOf<LakeRun>() * Runs.Length + 4L * RowStart.Length),
+            ("closed basins", (long)Unsafe.SizeOf<RiverBasin>() * Basins.Length),
+            ("dry runs and row starts", (long)Unsafe.SizeOf<LakeRun>() * DryRuns.Length + 4L * DryRowStart.Length),
             ("curves (float X, Y, S0, Len per piece)", 16L * nodes),
             ("sections", (long)Unsafe.SizeOf<RiverSection>() * reaches),
             ("per-stem tails, metrics end, meander noise", 8L * stems * 8),

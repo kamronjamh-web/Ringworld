@@ -13,7 +13,8 @@ public sealed record DrainageBreach(int PitCell, int[] Path, double MaxDepthMete
 /// A lake of the conditioned grid (docs/t2-river-reset.md 4.4). <see cref="Level"/> is the lowest unperturbed value among the cells that border the
 /// flooded set and that water can flow to (barrier cells and diagonals blocked by a barrier excluded, T2R-5c; a cut cell at its cut height). Its water cells are the flooded cells whose unperturbed lowest sample is below it.
 /// </summary>
-public sealed record DrainageLake(int Id, int PitCell, float Level, float MinHeight, int FloodedCells, int WaterCells)
+public sealed record DrainageLake(int Id, int PitCell, float Level, float MinHeight, int FloodedCells, int WaterCells,
+    float RawLevel = float.NaN, int Basin = -1, bool Closed = false, double Inflow = 0d, double Evaporation = 0d)
 {
     public float DepthMeters => Level - MinHeight;
 }
@@ -50,7 +51,7 @@ public sealed class DrainageConditioned
 
 /// <summary>
 /// D3 (docs/t2-river-reset.md 4.2): priority-flood on the routing height, least-cost breaches of at most <see cref="MaxBreachDepthMeters"/> and
-/// <see cref="MaxBreachSteps"/> cells towards certified lower ground ranked by cut volume, the cheapest <c>1 - lakeAbundance</c> share applied, a second
+/// <see cref="MaxBreachSteps"/> cells towards certified lower ground ranked by cut volume, the cheapest <see cref="BreachShare"/> applied, a second
 /// flood, then lakes (depressions at least <see cref="MinLakeDepthMeters"/> deep; shallower ones are routing fill).
 /// </summary>
 public static class DrainageConditioning
@@ -58,12 +59,14 @@ public static class DrainageConditioning
     public const double MaxBreachDepthMeters = 40d;
     public const int MaxBreachSteps = 32;
     public const double MinLakeDepthMeters = 2d;
+    /// <summary>Share of the feasible breaches that are cut, cheapest first (S8b: breaching no longer reads <c>lake_abundance</c>).</summary>
+    public const double BreachShare = 0.5d;
     private const float DepressionTolerance = 0.01f;
 
     private readonly record struct Basin(int Id, int Pit, int Cells, float Spill);
     private readonly record struct Candidate(Basin Basin, int[] Path, double Cost);
 
-    public static DrainageConditioned Condition(DrainageDomain d, double lakeAbundance, int workers, CancellationToken cancellation = default)
+    public static DrainageConditioned Condition(DrainageDomain d, double breachShare, int workers, CancellationToken cancellation = default)
     {
         int count = d.Count;
         var filled = new float[count];
@@ -109,7 +112,7 @@ public static class DrainageConditioning
         });
         double searchSeconds = clock.Elapsed.TotalSeconds;
 
-        int apply = (int)Math.Round(feasible.Count * Math.Clamp(1d - lakeAbundance, 0d, 1d));
+        int apply = (int)Math.Round(feasible.Count * Math.Clamp(breachShare, 0d, 1d));
         float[] cutRoute = d.Route, effective = d.Lowest;
         var cuts = new List<DrainageBreach>();
         if (apply > 0)
@@ -164,7 +167,7 @@ public static class DrainageConditioning
             if (border - minMember >= MinLakeDepthMeters && water > 0)
             {
                 int index = lakes.Count;
-                lakes.Add(new DrainageLake(index, basin.Pit, border, minMember, component.Count, water));
+                lakes.Add(new DrainageLake(index, basin.Pit, border, minMember, component.Count, water, border, index));
                 foreach (int cell in component) lakeId[cell] = index;
             }
             else { fillBasins++; fillCells += component.Count; }
