@@ -291,3 +291,11 @@ Each phase reports before and after from the L0 runner. `claude-lead` designs wh
 3. **Work on the New World screen:** not asked. Default: yes for the scene preload; decide on a speculative river bake after L2.
 4. **Per-machine cache shared by same-seed worlds:** yes (about 20 MB per recipe, inside the 512 MB budget).
 5. **Loading-screen frame rate:** "30 fps until the world is finished loading." The cap applies only while loading, and normal frame pacing returns at entry.
+
+## L0 results (2026-11-12, RTX 4070, warm caches, VSync off)
+
+- Reload (3 runs, median): 26.1 s. The saved preset is applied at 11.6 s and restarts the global terrain (plan 3.2 confirmed).
+- New world (3 runs, median): 41.2 s. **Caveat:** this used backend 1 (Terrain3D surface), not what the start menu creates. The benchmark now uses backend 2 for `new` as well, so the next `new` baseline must be re-measured.
+- New rivers world (1 run, backend 2): 62.6 s. Terrain stage 25.3 s, of which the river bake is 14.6 s. Surroundings 31.7 s.
+- **New finding: a single frozen frame of 5.5 s at attach in rivers worlds** (0.49 s without rivers). This is probably the T2R-10 lazy sampler being built on the main thread at first read; it is unconfirmed. This goes first in L1: the user sees it as a hang.
+- Output: `.godot/audit_baseline/DESKTOP-RAVA9C1/load/20261112_l0/` and `20261112_l0_rivers_fix/`.

@@ -65,13 +65,15 @@ func _run() -> void:
 			"circumference_m": TAU * float(settings.get("radius_km", 5000.0)) * 1000.0,
 			"width_m": float(settings.get("ring_width_km", 318.0)) * 1000.0, "is_existing": true})
 	else:
-		# Same launch as world_loading_smoke_test; new-rivers sets generation 1 (latest frozen, the one that takes review features) and water.rivers on the launcher.
+		# new and new-rivers: backend 2 (runtime generation), what the start menu's Standard preset creates. Only that backend builds a world recipe and so honours the
+		# generation and review features; generation 1 is the latest frozen, the one that takes them.
 		var launcher := LAUNCHER.instantiate()
 		root.add_child(launcher)
 		current_scene = launcher
 		launcher.call("_on_certified_preset_pressed")
-		launcher.get("terrain_backend_selector").select(1)
-		launcher.call("_on_terrain_backend_selected", 1)
+		var backend := 2
+		launcher.get("terrain_backend_selector").select(backend)
+		launcher.call("_on_terrain_backend_selected", backend)
 		if scenario == "new-rivers":
 			launcher.set("_selected_world_generation", 1)
 			launcher.set("_selected_review_features", PackedStringArray(["water.rivers"]))
