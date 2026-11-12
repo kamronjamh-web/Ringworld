@@ -150,6 +150,14 @@ public partial class InlandSwimProbe : RefCounted
                 var p = (Godot.Collections.Dictionary)points[key];
                 double a = p["around"].AsDouble(), z = p["across"].AsDouble(), da = p["dry_around"].AsDouble(), dz = p["dry_across"].AsDouble();
                 shots[key == "river" ? "river_bank" : "lake_shore"] = Shot(key == "river" ? "river_bank" : "lake_shore", da, dz, p["dry_ground"].AsDouble() + 1.8, YawTo(da, dz, a, z), -4.0);
+                // T2R-11b: the same bank seen from 12 m above the water point, looking down at the waterline (the bank strip check of inland_water_render_gpu_test).
+                shots[key == "river" ? "river_bank_top" : "lake_shore_top"] = BankTopShot(key == "river" ? "river_bank_top" : "lake_shore_top", p);
+            }
+            // T2R-11b: an ocean shore of the same world seen the same way (the no-change reference for the ocean look).
+            if (FindOceanShore(sampler, out Godot.Collections.Dictionary oceanPoint))
+            {
+                shots["ocean_point"] = oceanPoint;
+                shots["ocean_shore_top"] = BankTopShot("ocean_shore_top", oceanPoint);
             }
             {
                 var lp = (Godot.Collections.Dictionary)points["lake"];
@@ -219,6 +227,102 @@ public partial class InlandSwimProbe : RefCounted
         }
         catch (Exception e) { shots["error"] = e.ToString(); }
         return shots;
+    }
+
+    /// <summary>T2R-11b: 12 m above the water on the line from a water point (FindPoints / FindOceanShore layout) to its nearest dry bank, at most 15 m from the bank, looking at the bank with the waterline
+    /// near the screen centre.</summary>
+    private static Godot.Collections.Dictionary BankTopShot(string name, Godot.Collections.Dictionary p)
+    {
+        double a = p["around"].AsDouble(), z = p["across"].AsDouble(), da = p["dry_around"].AsDouble(), dz = p["dry_across"].AsDouble();
+        double length = Math.Max(1.0, Math.Sqrt((da - a) * (da - a) + (dz - z) * (dz - z)));
+        double back = Math.Min(length, 15.0);
+        double ca = da - (da - a) / length * back, cz = dz - (dz - z) / length * back;
+        return Shot(name, ca, cz, p["level"].AsDouble() + 12.0, YawTo(ca, cz, da, dz), -Math.Atan2(12.0, Math.Max(4.0, back)) * 180d / Math.PI);
+    }
+
+    /// <summary>
+    /// T2R-11b: an ocean point 3 to 12 m off a shore, with the nearest dry column along the across axis, in the layout of <see cref="Describe"/> (around, across, level, bed, dry_around, dry_across, dry_ground,
+    /// bank_distance). Scans lines across the ring at hashed arounds for a land-ocean transition; deterministic for a world.
+    /// </summary>
+    private static bool FindOceanShore(RingTerrainSampler s, out Godot.Collections.Dictionary result)
+    {
+        result = new Godot.Collections.Dictionary();
+        long circumference = Math.Max(2L, s.AroundRingVoxelLength);
+        int width = s.RingAcrossWidthMeters;
+        for (int i = 0; i < 64; i++)
+        {
+            long a = (long)(RiverHash.Mix(91, i, 1) % (ulong)circumference) / 2 * 2;
+            bool previousOcean = s.GetTerrainSample(a, 6000).WaterKind == SurfaceWaterKind.Ocean;
+            for (int z = 6064; z < width - 6000; z += 64)
+            {
+                bool ocean = s.GetTerrainSample(a, z).WaterKind == SurfaceWaterKind.Ocean;
+                if (ocean == previousOcean) continue;
+                // Refine to the first ocean column next to land (2 m steps), then step 3 to 12 m out to sea.
+                int direction = ocean ? 1 : -1;
+                int zLand = ocean ? z - 64 : z;
+                int zSea = zLand;
+                while (Math.Abs(zSea - zLand) <= 64 && s.GetTerrainSample(a, zSea).WaterKind != SurfaceWaterKind.Ocean) zSea += 2 * direction;
+                if (Math.Abs(zSea - zLand) > 64) { previousOcean = ocean; continue; }
+                for (int step = 3; step <= 12; step++)
+                {
+                    int zWater = zSea + 2 * step * direction;
+                    TerrainSample sample = s.GetTerrainSample(a, zWater);
+                    float bed = s.GetPresentationSurfaceHeight(a, zWater);
+                    float level = sample.WaterLevel;
+                    if (sample.WaterKind != SurfaceWaterKind.Ocean || level - bed < 0.8f || level - bed > 12f) continue;
+                    int zDry = zSea - 2 * direction;
+                    result = new Godot.Collections.Dictionary
+                    {
+                        ["kind"] = "ocean", ["around"] = (double)a, ["across"] = (double)zWater, ["level"] = level, ["bed"] = bed,
+                        ["dry_around"] = (double)a, ["dry_across"] = (double)zDry, ["dry_ground"] = s.GetPresentationSurfaceHeight(a, zDry), ["bank_distance"] = (double)Math.Abs(zWater - zDry)
+                    };
+                    return true;
+                }
+                previousOcean = ocean;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// T2R-11b bank strip check: samples the straight line from a water point (FindPoints / FindOceanShore layout) to its nearest dry column and <paramref name="beyondMeters"/> past it, every 0.25 m. Each
+    /// entry is [s (m from the water point), wet (1/0), depth (level - bed, m), screen x, screen y, behind camera (1/0)] for the visible surface (water level where wet, ground where dry) projected with the
+    /// current camera. Returns {ok, error, entries, viewport}.
+    /// </summary>
+    public Godot.Collections.Dictionary BankProfile(Node game, Godot.Collections.Dictionary point, double beyondMeters)
+    {
+        var result = new Godot.Collections.Dictionary { ["ok"] = false, ["error"] = "" };
+        try
+        {
+            var grid = game.GetNodeOrNull<VoxelChunkGridManager>("ChunkGridManager");
+            using RingTerrainSampler? sampler = grid?.CreateIndependentTerrainSampler();
+            Camera3D? camera = game.GetViewport()?.GetCamera3D();
+            if (grid == null || sampler == null || camera == null) { result["error"] = "grid, sampler or camera missing"; return result; }
+            RingLodGeometrySnapshot geometry = grid.CaptureLodGeometrySnapshot();
+            double a = point["around"].AsDouble(), z = point["across"].AsDouble(), da = point["dry_around"].AsDouble(), dz = point["dry_across"].AsDouble();
+            double length = Math.Sqrt((da - a) * (da - a) + (dz - z) * (dz - z));
+            if (length < 1.0) { result["error"] = "dry column too close"; return result; }
+            double ua = (da - a) / length, uz = (dz - z) / length;
+            var entries = new Godot.Collections.Array();
+            for (double t = 0.0; t <= length + beyondMeters; t += 0.25)
+            {
+                double ca = a + ua * t, cz = z + uz * t;
+                long ia = (long)Math.Round(ca); int iz = (int)Math.Round(cz);
+                TerrainSample sample = sampler.GetTerrainSample(ia, iz);
+                float bed = sampler.GetPresentationSurfaceHeight(ia, iz);
+                bool wet = sample.HasSurfaceWater && bed < sample.WaterLevel;
+                float depth = sample.HasSurfaceWater ? sample.WaterLevel - bed : 0f;
+                Vector3 world = geometry.CanonicalToWorld(ca, wet ? sample.WaterLevel : bed, cz);
+                bool behind = camera.IsPositionBehind(world);
+                Vector2 screen = behind ? Vector2.Zero : camera.UnprojectPosition(world);
+                entries.Add(new Godot.Collections.Array { t, wet ? 1 : 0, depth, screen.X, screen.Y, behind ? 1 : 0 });
+            }
+            result["entries"] = entries;
+            result["viewport"] = game.GetViewport().GetVisibleRect().Size;
+            result["ok"] = true;
+        }
+        catch (Exception e) { result["error"] = e.ToString(); }
+        return result;
     }
 
     /// <summary>The explorer's swim state: {swimming, surface, depth, vertical}.</summary>

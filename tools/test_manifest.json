@@ -4894,7 +4894,7 @@
         "atmosphere-haze"
       ],
       "marker": "INLAND_WATER_RENDER",
-      "expected_s": 90,
+      "expected_s": 230,
       "timeout_s": 600,
       "user_args": "--generation=1 --review-features=water.rivers"
     },

@@ -168,7 +168,9 @@ float ring_water_profile_height_scale(float water_kind) {
 }
 
 float ring_water_profile_shore_foam_scale(float water_kind) {
-	return water_kind < 1.5 ? 1.0 : (water_kind < 2.5 ? 0.30 : 0.46);
+	// T2R-11b: calm inland water (lakes, rivers) has no surf line. Their former 0.30 / 0.46 of the ocean's shore foam, within the 0.5 m foam depth, lay as a
+	// white band 2 to 3 m wide along gently sloped river banks (and a rim on lake shores) under the ring sun. The ocean keeps its shore foam.
+	return water_kind < 1.5 ? 1.0 : 0.0;
 }
 
 // I0(k) is the mean of exp(k * sin(phase)) over one complete cycle. Removing

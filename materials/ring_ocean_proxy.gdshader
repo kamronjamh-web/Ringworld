@@ -569,6 +569,15 @@ void fragment() {
 		* scene_transmission * shallow_inscatter_strength;
 	vec3 optical_water = refracted_scene * volume_transmission_rgb
 		+ water_tint * (1.0 - volume_transmission_rgb) + shallow_scatter;
+	// Inland water (lakes, rivers; T2R-11b): the refracted scene is radiance the opaque pass has already lit, so its transmitted part is emitted (below) rather
+	// than lit a second time through ALBEDO. Under the ring sun (an 18 % grey albedo renders near white) that second lighting turned thin water over a sand bank
+	// white. The weight is exactly 0 for ocean vertices (kind 1), so the ocean keeps its composition; it ramps in where the interpolated kind runs from 1 to 2 (river mouths).
+	float inland_weight = clamp((water_kind_profile - 1.05) / 0.95, 0.0, 1.0);
+	vec3 inland_transmitted = vec3(0.0);
+	if (inland_weight > 0.0) {
+		inland_transmitted = refracted_scene * volume_transmission_rgb * inland_weight;
+		optical_water -= inland_transmitted;
+	}
 	vec3 reflection_color = vec3(0.34, 0.52, 0.68);
 	vec3 grazing_color = mix(optical_water, reflection_color, reflection_weight);
 	RingHaze haze = ring_haze_sample(camera_world_position, world_position, ring_center, ring_day_factor);
@@ -605,6 +614,9 @@ void fragment() {
 	// Foam is lit through ALBEDO like every other surface (sun, ambient, cloud shadow, storm light, haze). It used to add a self-light floor
 	// (0.16 x foam colour) that ignored the day factor, so foam glowed at night; removed.
 	EMISSION = ring_haze_inscatter(haze);
+	// The inland transmitted scene with the weight the mixes above give the optical water: (1 - reflection) x (1 - foam). Not under the SSR debug views.
+	if (inland_weight > 0.0 && water_ssr_debug_mode == 0)
+		EMISSION += inland_transmitted * (1.0 - reflection_weight) * (1.0 - foam) * haze.T;
 	ROUGHNESS = max(base_roughness, specular_aa_roughness);
 	// Physical haze also attenuates the environment reflection (SPECULAR scales the dielectric F0 of the sky/probe reflection);
 	// the scale is exactly 1 in Legacy. The SSR contribution is already inside grazing_color, hence ALBEDO * T.
