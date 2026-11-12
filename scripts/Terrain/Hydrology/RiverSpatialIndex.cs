@@ -163,8 +163,13 @@ public sealed class RiverSpatialIndex
 
     public int ColumnOf(double around)
     {
-        double a = around % _circumference;
-        if (a < 0) a += _circumference;
+        double a = around;
+        // T2R-7 review: the remainder is skipped for positions already on the ring (the same value, without the fmod on the operator's early exit).
+        if (a < 0 || a >= _circumference)
+        {
+            a %= _circumference;
+            if (a < 0) a += _circumference;
+        }
         return Math.Min((int)(a / _aroundStep), _ringColumns - 1);
     }
 
@@ -179,6 +184,13 @@ public sealed class RiverSpatialIndex
     public ReadOnlySpan<int> PiecesNear(double around, double across)
     {
         int b = RowOf(across) / BucketCells * _bucketColumns + ColumnOf(around) / BucketCells;
+        return new ReadOnlySpan<int>(_entries, _offsets[b], _offsets[b + 1] - _offsets[b]);
+    }
+
+    /// <summary>As <see cref="PiecesNear(double, double)"/> for a cell already resolved with <see cref="ColumnOf"/> and <see cref="RowOf"/>.</summary>
+    public ReadOnlySpan<int> PiecesNear(int col, int row)
+    {
+        int b = row / BucketCells * _bucketColumns + col / BucketCells;
         return new ReadOnlySpan<int>(_entries, _offsets[b], _offsets[b + 1] - _offsets[b]);
     }
 

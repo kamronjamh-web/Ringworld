@@ -37,6 +37,9 @@ public struct RiverKnot
     public float S, W;
 }
 
+/// <summary>Channel and valley values of a stem at one arc parameter (S6, S7), as <see cref="RiverNetwork.ChannelAt"/> returns them: blended along the stem, without any footprint.</summary>
+public readonly record struct RiverChannel(int Reach, double HalfWidth, double BankWidth, double Depth, double EdgeDepth, double Floodplain, double ValleySlope, double MeanderAmplitude, double MeanderWavelength);
+
 /// <summary>
 /// The T2R-5 river data (docs/work-orders/terrain-vegetation/T2.md, S5 to S7): nodes (decimetres), stems, reaches and level knots, plus what is derived from
 /// them at load (stem curves, sections, tail levels). T2R-6 wraps this into the graph file. The centreline of a stem at arc parameter s is the base
@@ -89,6 +92,7 @@ public sealed class RiverNetwork
         }
         Sections = new RiverSection[reaches.Length];
         for (int r = 0; r < reaches.Length; r++) Sections[r] = RiverHydraulics.Section(reaches[r].Q, reaches[r].S, channelDepth, ferocity);
+        BuildChannels();
         ReceivingLevel = new double[stems.Length];
         TailMeters = new double[stems.Length];
         TailDrop = new double[stems.Length];
@@ -130,23 +134,73 @@ public sealed class RiverNetwork
         return lo;
     }
 
+    // Per-reach channel and valley values (S6), derived once from Sections. ChannelAt is the only reader (T2R-7 review, for T3R-3: spans replace reaches behind it).
+    private double[] _chA = Array.Empty<double>(), _chB = Array.Empty<double>(), _chDepth = Array.Empty<double>(), _chEdge = Array.Empty<double>(), _chFlood = Array.Empty<double>(),
+        _chSlope = Array.Empty<double>(), _chAmp = Array.Empty<double>(), _chLambda = Array.Empty<double>(), _chAmpMax = Array.Empty<double>(), _chStretch = Array.Empty<double>();
+
+    private void BuildChannels()
+    {
+        int n = Reaches.Length;
+        _chA = new double[n]; _chB = new double[n]; _chDepth = new double[n]; _chEdge = new double[n]; _chFlood = new double[n];
+        _chSlope = new double[n]; _chAmp = new double[n]; _chLambda = new double[n]; _chAmpMax = new double[n]; _chStretch = new double[n];
+        for (int r = 0; r < n; r++)
+        {
+            RiverSection sec = Sections[r];
+            _chA[r] = RiverHydraulics.HalfWidth(sec.Width);
+            _chB[r] = RiverHydraulics.BankWidth(sec.Width);
+            _chDepth[r] = sec.Depth;
+            _chEdge[r] = RiverHydraulics.EdgeDepth(sec.Depth);
+            _chFlood[r] = RiverHydraulics.FloodplainWidth(sec.Width, sec.Gradient, ValleyWidth);
+            _chSlope[r] = RiverHydraulics.ValleySlope(sec.Gradient, ValleyWidth);
+            _chAmp[r] = RiverHydraulics.MeanderAmplitude(sec.Width, MeanderStrength, sec.Gradient);
+            _chLambda[r] = RiverHydraulics.MeanderWavelength(sec.Width);
+        }
+        for (int r = 0; r < n; r++)
+        {
+            // Bounds of the meander within the reach, blend included: |D| <= ampMax, and |D'| <= 11.2 ampMax / lambda + 0.0075 |A_up - A| (the envelope, the phase and
+            // both tapers of Meander, plus the 200 m amplitude blend).
+            bool blended = r > Stems[Reaches[r].Stem].ReachStart;
+            double up = blended ? _chAmp[r - 1] : _chAmp[r];
+            _chAmpMax[r] = Math.Max(_chAmp[r], up);
+            double slope = 11.2 * _chAmpMax[r] / _chLambda[r] + 1.5 / RiverHydraulics.BlendMeters * Math.Abs(up - _chAmp[r]);
+            _chStretch[r] = Math.Sqrt(1d + slope * slope);
+        }
+    }
+
+    /// <summary>
+    /// The one accessor for channel and valley values of a stem at s (S6, S7): the reach's values blended from the upstream reach over the first 200 m. Callers never
+    /// read <see cref="Sections"/> for geometry. T3R-3 moves the values from reaches to spans behind this method.
+    /// </summary>
+    public void ChannelAt(int stem, double s, out RiverChannel channel)
+    {
+        int reach = ReachAt(stem, s);
+        double a = _chA[reach], b = _chB[reach], depth = _chDepth[reach], edge = _chEdge[reach], flood = _chFlood[reach], slope = _chSlope[reach], amplitude = _chAmp[reach];
+        if (reach > Stems[stem].ReachStart)
+        {
+            double t = RiverHydraulics.Smoothstep(Reaches[reach].SStart, Reaches[reach].SStart + RiverHydraulics.BlendMeters, s);
+            int up = reach - 1;
+            a += (_chA[up] - a) * (1 - t);
+            b += (_chB[up] - b) * (1 - t);
+            depth += (_chDepth[up] - depth) * (1 - t);
+            edge += (_chEdge[up] - edge) * (1 - t);
+            flood += (_chFlood[up] - flood) * (1 - t);
+            slope += (_chSlope[up] - slope) * (1 - t);
+            amplitude += (_chAmp[up] - amplitude) * (1 - t);
+        }
+        channel = new RiverChannel(reach, a, b, depth, edge, flood, slope, amplitude, _chLambda[reach]);
+    }
+
+    /// <summary>
+    /// The largest distance from the base curve at which a point can still have a lateral coordinate |t| below <paramref name="lateralLimit"/> anywhere in the reach
+    /// (the meander shifts and stretches t). Beyond it the operator skips the piece before any meander work.
+    /// </summary>
+    public double LateralReach(int reach, double lateralLimit) => _chAmpMax[reach] + lateralLimit * _chStretch[reach] + 2d;
+
     /// <summary>Half width a, bank width b, meander amplitude and wavelength at s, blended from the upstream reach over the first 200 m of a reach (S6).</summary>
     public void Geometry(int stem, double s, out int reach, out double a, out double b, out double amplitude, out double wavelength)
     {
-        reach = ReachAt(stem, s);
-        RiverSection sec = Sections[reach];
-        a = RiverHydraulics.HalfWidth(sec.Width);
-        b = RiverHydraulics.BankWidth(sec.Width);
-        amplitude = RiverHydraulics.MeanderAmplitude(sec.Width, MeanderStrength, sec.Gradient);
-        wavelength = RiverHydraulics.MeanderWavelength(sec.Width);
-        if (reach > Stems[stem].ReachStart)
-        {
-            RiverSection up = Sections[reach - 1];
-            double t = RiverHydraulics.Smoothstep(Reaches[reach].SStart, Reaches[reach].SStart + RiverHydraulics.BlendMeters, s);
-            a += (RiverHydraulics.HalfWidth(up.Width) - a) * (1 - t);
-            b += (RiverHydraulics.BankWidth(up.Width) - b) * (1 - t);
-            amplitude += (RiverHydraulics.MeanderAmplitude(up.Width, MeanderStrength, up.Gradient) - amplitude) * (1 - t);
-        }
+        ChannelAt(stem, s, out RiverChannel c);
+        reach = c.Reach; a = c.HalfWidth; b = c.BankWidth; amplitude = c.MeanderAmplitude; wavelength = c.MeanderWavelength;
     }
 
     /// <summary>
@@ -158,7 +212,15 @@ public sealed class RiverNetwork
     /// </summary>
     public double Meander(int stem, double s)
     {
-        Geometry(stem, s, out int reach, out _, out _, out double amplitude, out double wavelength);
+        ChannelAt(stem, s, out RiverChannel c);
+        return Meander(stem, s, in c);
+    }
+
+    /// <summary>As <see cref="Meander(int, double)"/> with the channel values at s already fetched by <see cref="ChannelAt"/>.</summary>
+    public double Meander(int stem, double s, in RiverChannel channel)
+    {
+        int reach = channel.Reach;
+        double amplitude = channel.MeanderAmplitude, wavelength = channel.MeanderWavelength;
         RiverReach r = Reaches[reach];
         double tau = RiverHydraulics.Smoothstep(0, 2 * wavelength, s);
         if (Stems[stem].Terminal == RiverTerminal.Confluence) tau *= RiverHydraulics.Smoothstep(0, 2 * wavelength, Curves[stem].Length - s);

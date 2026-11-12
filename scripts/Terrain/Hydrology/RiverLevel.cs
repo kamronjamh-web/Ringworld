@@ -65,9 +65,16 @@ public static class RiverLevel
     /// <summary>Displayed level of reach <paramref name="reach"/> at stem arc parameter s: whole-metre pools, chutes of at most 10 m, never above the stored profile (S7).</summary>
     public static double At(RiverNetwork net, int reach, double s) => AtStem(net, net.Reaches[reach].Stem, s);
 
-    public static double AtStem(RiverNetwork net, int stem, double s)
+    public static double AtStem(RiverNetwork net, int stem, double s) => AtStem(net, stem, s, out _);
+
+    /// <summary>
+    /// The displayed level, and how far the stored profile W stands above the whole-metre pools and chutes there (0 to 1 m, continuous). T2R-7 review: the
+    /// operator lifts the valley floor by it away from the bank, so the floodplain follows the smooth profile instead of stepping with every pool.
+    /// </summary>
+    public static double AtStem(RiverNetwork net, int stem, double s, out double storedAbove)
     {
-        double level = BeforeTail(net, stem, s);
+        double level = BeforeTail(net, stem, s, out double stored);
+        storedAbove = double.IsNaN(stored) ? 0d : Math.Clamp(stored - level, 0d, 1d);
         double recv = net.ReceivingLevel[stem];
         if (!double.IsNaN(recv))
         {
@@ -80,9 +87,12 @@ public static class RiverLevel
     }
 
     /// <summary>Whole-metre pools and chutes of the stored profile, without the tail rule.</summary>
-    private static double BeforeTail(RiverNetwork net, int stem, double s)
+    private static double BeforeTail(RiverNetwork net, int stem, double s) => BeforeTail(net, stem, s, out _);
+
+    private static double BeforeTail(RiverNetwork net, int stem, double s, out double stored)
     {
         double w = Stored(net, stem, s);
+        stored = w;
         double level = Math.Floor(w);
         double ahead = Stored(net, stem, s + ChuteMeters);
         for (int k = (int)Math.Floor(w), n = 0; k > ahead && n < 64; k--, n++)

@@ -1,5 +1,6 @@
 using System;
 using Godot;
+using RingworldTechDemo.Terrain.Hydrology;
 using RingworldTechDemo.Terrain.Sites;
 
 namespace RingworldTechDemo.Terrain.Generation;
@@ -8,7 +9,7 @@ namespace RingworldTechDemo.Terrain.Generation;
 /// <remarks>Each worker must own its model, or callers must serialize access to its mutable gully cache.</remarks>
 public sealed class TerrainGenerationHeightModel : IDisposable
 {
-    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d, double WeatherLungWeight=0d);
+    public readonly record struct Diagnostics(double Height, double MacroHeight, double Continentalness, double SeaWeight, double LowlandWeight, double AlpineWeight, double DetailMask, double ValleyWeight, double RidgeWeight, double MountainUplift, double TrenchDepth, double DetailHeight, bool Clamped, double FoothillHeight=0d, double SpurHeight=0d, double ErosionHeight=0d, int SiteIndex=-1, double SiteWeight=0d, SiteSurfaceMask SiteMask=default, int ClimateMachineIndex=-1, double LandformHeight=0d, double LowlandErosionHeight=0d, double Ruggedness=0d, double PlateauWeight=0d, double LandformGate=0d, double WeatherLungWeight=0d, double WaterLevel=double.NaN, InlandWaterKind InlandWater=InlandWaterKind.None, int RiverReach=-1, double ChannelOffset=0d, double RiverCorridorWeight=0d, double RiverGroundDelta=0d);
     private static readonly double[] ContinentalKnots = { -1d, -.55d, -.20d, -.06d, 0d, .45d, 1d };
     private readonly TerrainGenerationParameters _p;
     private readonly double[] _continentalHeights;
@@ -34,13 +35,21 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     private readonly EmitterSiteTerrainShaper? _sites;
     /// <summary>Shared immutable emitter-site shaper (null unless the recipe is v5/v6 and the model is the shaped one). On v6 it also carries the Wall Engine registry.</summary>
     public EmitterSiteTerrainShaper? EmitterSites => _sites;
+    // T2R-7: the river operator, bound only to a shaped model of a water.rivers recipe that was given a graph. The natural model never has one.
+    private readonly RiverCarveOperator? _river;
+    /// <summary>The river operator (null without a graph or without the water.rivers feature).</summary>
+    public RiverCarveOperator? RiverOperator => _river;
 
     public TerrainGenerationHeightModel(TerrainGenerationParameters parameters) : this(parameters, true) { }
 
     /// <param name="applyEmitterSites">False builds the unshaped natural model (used only to build the site registry). Ignored unless the recipe enables emitter sites.</param>
-    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites)
+    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites) : this(parameters, applyEmitterSites, null) { }
+
+    /// <param name="graph">The immutable river graph (S12). Used only when <paramref name="applyEmitterSites"/> is true and the recipe has <c>water.rivers</c>; a model without one behaves as before.</param>
+    public TerrainGenerationHeightModel(TerrainGenerationParameters parameters, bool applyEmitterSites, RiverGraph? graph)
     {
         _p=parameters ?? throw new ArgumentNullException(nameof(parameters));
+        _river=applyEmitterSites && graph!=null && _p.HasRivers ? new RiverCarveOperator(graph) : null;
         _sites=applyEmitterSites && _p.HasEmitterSites ? EmitterSiteTerrainShaper.GetOrCreate(_p) : null;
         _radius=_p.CircumferenceM/Math.Tau;
         _landforms=_p.HasLowlandLandforms;
@@ -108,8 +117,16 @@ public sealed class TerrainGenerationHeightModel : IDisposable
     }
     public double CalculateHeight(double around, double across)
     {
+        if(_river!=null) return CalculateHeight(around,across,0d);
         if(_sites==null) return SampleNaturalDiagnostics(around,across).Height;
         return _sites.ShapeHeight(around,across,SampleNaturalDiagnostics(around,across).Height);
+    }
+    /// <summary>Shaped height for a sample of the given spacing (T2R-7): natural, then the river operator, then the site operators. The two-argument form means footprint 0.</summary>
+    public double CalculateHeight(double around, double across, double footprintMeters)
+    {
+        if(_river==null) return CalculateHeight(around,across);
+        double carved=_river.Evaluate(around,across,SampleNaturalDiagnostics(around,across).Height,footprintMeters).Height;
+        return _sites==null ? carved : _sites.ShapeHeight(around,across,carved);
     }
     public float[] SampleGrid(double around,double across,int columns,int rows,double spacing)
     { if(columns<0||rows<0||!double.IsFinite(spacing)||spacing<=0) throw new ArgumentOutOfRangeException(nameof(spacing)); checked { var output=new float[columns*rows]; for(int row=0;row<rows;row++) for(int col=0;col<columns;col++) output[row*columns+col]=(float)CalculateHeight(around+col*spacing,across+row*spacing); return output; } }
@@ -130,9 +147,16 @@ public sealed class TerrainGenerationHeightModel : IDisposable
         return _p.BasinDepthM;
     }
     /// <summary>Natural (unshaped) diagnostics plus, for v5 recipes, the emitter-site shaped height, mask and site weight.</summary>
-    public Diagnostics SampleDiagnostics(double around,double across)
+    public Diagnostics SampleDiagnostics(double around,double across) => SampleDiagnostics(around,across,0d);
+    /// <summary>Diagnostics for a sample of the given spacing (T2R-7); the river fields stay at their defaults without a graph.</summary>
+    public Diagnostics SampleDiagnostics(double around,double across,double footprintMeters)
     {
         Diagnostics natural=SampleNaturalDiagnostics(around,across);
+        if(_river!=null)
+        {
+            RiverOperatorResult river=_river.Evaluate(around,across,natural.Height,footprintMeters);
+            natural=natural with { Height=river.Height, WaterLevel=river.WaterLevel, InlandWater=river.Kind, RiverReach=river.Reach, ChannelOffset=river.ChannelOffset, RiverCorridorWeight=river.CorridorWeight, RiverGroundDelta=river.GroundDelta };
+        }
         if(_sites==null) return natural;
         double shaped=_sites.ShapeHeight(around,across,natural.Height,out SiteSurfaceMask mask,out int siteIndex,out double siteWeight,out int climateMachineIndex,out double weatherLungWeight);
         return natural with { Height=shaped, SiteIndex=siteIndex, SiteWeight=siteWeight, SiteMask=mask, ClimateMachineIndex=climateMachineIndex, WeatherLungWeight=weatherLungWeight };

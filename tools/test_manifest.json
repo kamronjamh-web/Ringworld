@@ -4791,6 +4791,19 @@
       "timeout_s": 1500,
       "parallel_safe": false
     },
+    "river_carve_invariants_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "RIVER_CARVE_INVARIANTS",
+      "expected_s": 60,
+      "timeout_s": 240,
+      "parallel_safe": false
+    },
     "drainage_bake_report": {
       "kind": "tool",
       "mode": "gpu-local",
