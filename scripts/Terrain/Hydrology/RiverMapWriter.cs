@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Godot;
 
 namespace RingworldTechDemo.Terrain.Hydrology;
@@ -18,6 +19,9 @@ public static class RiverMapWriter
         + "calm, swift, fierce, torrent. Close-up: thin orange line is the cell-to-cell D8 path that the curve replaces.";
 
     private static readonly (byte R, byte G, byte B)[] ClassColors = { (90, 235, 255), (40, 190, 255), (255, 235, 90), (255, 90, 70) };
+
+    /// <summary>A per-sample colour from a caller (T3R-1 danger map): colour, an optional outline, the draw layer (higher is drawn later) and the half width in metres (0: the reach's).</summary>
+    public readonly record struct RiverMapColor((byte R, byte G, byte B) Color, bool Outline, int Layer, double HalfWidthMeters = 0d);
 
     private sealed class Canvas
     {
@@ -91,31 +95,64 @@ public static class RiverMapWriter
         return canvas;
     }
 
-    private static void Curves(RiverNetwork net, DrainageGridSpec spec, Canvas canvas, double originAround, double scale, double firstColumn, double columns, double thicknessScale)
+    private static void Curves(RiverNetwork net, DrainageGridSpec spec, Canvas canvas, double originAround, double scale, double firstColumn, double columns, double thicknessScale,
+        Func<int, double, RiverMapColor>? colorAt = null, double stepMeters = 25d, double minRadius = 0.7)
     {
         double scalePerMeter = scale / spec.AroundStepMeters;
         double lo = -50 * scalePerMeter, hiX = canvas.W + 50 * scalePerMeter, hiY = canvas.H + 50 * scalePerMeter;
+        var segments = colorAt == null ? null : new List<(double X0, double Y0, double X1, double Y1, double R, RiverMapColor C)>();
         for (int stem = 0; stem < net.Stems.Length; stem++)
         {
             double end = net.MetricsEnd[stem];
             double px = double.NaN, py = double.NaN;
-            for (double s = 0; s <= end + 1e-6; s += 25d)
+            for (double s = 0; s <= end + 1e-6; s += stepMeters)
             {
                 net.Centre(stem, Math.Min(s, end), out double around, out double across, out _, out _);
                 double x = (net.WrapAround(around - originAround)) * scalePerMeter, y = across * scalePerMeter;
-                if (!double.IsNaN(px) && x >= lo && x <= hiX && y >= lo && y <= hiY && Math.Abs(x - px) < canvas.W)
+                if (!double.IsNaN(px) && x >= lo && x <= hiX && y >= lo && y <= hiY && Math.Abs(x - px) < canvas.W * 0.5)
                 {
                     int reach = net.ReachAt(stem, s);
                     RiverSection sec = net.Sections[reach];
-                    canvas.Line(px, py, x, y, Math.Max(0.7, 0.5 * sec.Width * scalePerMeter * thicknessScale), ClassColors[(int)sec.Class]);
+                    if (segments == null) canvas.Line(px, py, x, y, Math.Max(minRadius, 0.5 * sec.Width * scalePerMeter * thicknessScale), ClassColors[(int)sec.Class]);
+                    else
+                    {
+                        RiverMapColor c = colorAt!(stem, Math.Min(s, end));
+                        double half = c.HalfWidthMeters > 0 ? c.HalfWidthMeters : 0.5 * sec.Width;
+                        segments.Add((px, py, x, y, Math.Max(minRadius, half * scalePerMeter * thicknessScale), c));
+                    }
                 }
                 px = x; py = y;
             }
         }
+        if (segments == null) return;
+        foreach (var g in segments.Where(v => v.C.Outline)) canvas.Line(g.X0, g.Y0, g.X1, g.Y1, g.R + 1.5, (255, 255, 255));
+        foreach (var g in segments.OrderBy(v => v.C.Layer)) canvas.Line(g.X0, g.Y0, g.X1, g.Y1, g.R, g.C.Color);
+    }
+
+    /// <summary>The whole ring as stacked strips (around to the right, each strip below the previous), one pixel per cell, rivers coloured by <paramref name="colorAt"/> on a dimmed hillshade.</summary>
+    public static string WriteOverview(DrainageField f, DrainageGrid grid, RiverNetwork net, string path, Func<int, double, RiverMapColor> colorAt, int strips = 8)
+    {
+        DrainageGridSpec spec = grid.Spec;
+        Canvas ring = Base(f, 0, f.Width, f.Height, 1d);
+        for (int i = 0; i < ring.Rgb.Length; i++) ring.Rgb[i] = (byte)(ring.Rgb[i] * 0.6);
+        double originAround = spec.ColumnStart * f.AroundStepMeters;
+        Curves(net, spec, ring, originAround, 1d, 0, f.Width, 1d, colorAt, 100d, 1.6);
+        int stripW = (f.Width + strips - 1) / strips, gap = 6, height = strips * f.Height + (strips - 1) * gap;
+        var sheet = new Canvas(stripW, height);
+        for (int i = 0; i < sheet.Rgb.Length; i += 3) { sheet.Rgb[i] = 12; sheet.Rgb[i + 1] = 12; sheet.Rgb[i + 2] = 16; }
+        for (int k = 0; k < strips; k++)
+        for (int y = 0; y < f.Height; y++)
+        {
+            int x0 = k * stripW, cols = Math.Min(stripW, f.Width - x0);
+            if (cols <= 0) continue;
+            Buffer.BlockCopy(ring.Rgb, (y * f.Width + x0) * 3, sheet.Rgb, ((k * (f.Height + gap) + y) * stripW) * 3, cols * 3);
+        }
+        Save(sheet, path);
+        return path;
     }
 
     /// <summary>The M1 crop with the production curves, and the coastal-plain close-up. Returns (crop path, close-up path).</summary>
-    public static (string Crop, string CloseUp) Write(DrainageField f, DrainageGrid grid, RiverNetwork net, string directory, string label, double cropStartMeters, double cropMeters)
+    public static (string Crop, string CloseUp) Write(DrainageField f, DrainageGrid grid, RiverNetwork net, string directory, string label, double cropStartMeters, double cropMeters, Func<int, double, RiverMapColor>? colorAt = null, bool closeUp = true)
     {
         Directory.CreateDirectory(directory);
         DrainageGridSpec spec = grid.Spec;
@@ -125,9 +162,10 @@ public static class RiverMapWriter
         double scale = 6;
         Canvas crop = Base(f, first, columns, f.Height, scale);
         double originAround = (spec.ColumnStart + first) * f.AroundStepMeters;
-        Curves(net, spec, crop, originAround, scale, first, columns, 12d);
+        Curves(net, spec, crop, originAround, scale, first, columns, 12d, colorAt);
         string cropPath = Path.Combine(directory, $"river_curves_{label}_crop.png");
         Save(crop, cropPath);
+        if (!closeUp) return (cropPath, "");
 
         // Close-up: a 24 x 18 km window on a coastal plain (sea within 12 km), maximising the channel length drawn.
         int winW = 24, winH = 18;
@@ -165,7 +203,7 @@ public static class RiverMapWriter
         DrawD8(f, grid, window, bestX, bestY, zoom);
         double perMeter = zoom / spec.AroundStepMeters;
         var shifted = new RiverNetworkView(net, spec, closeOrigin, bestY * f.AcrossStepMeters);
-        shifted.Draw(window, perMeter, ClassColors, 1d);
+        shifted.Draw(window, perMeter, ClassColors, 1d, colorAt);
         string closePath = Path.Combine(directory, $"river_curves_{label}_closeup.png");
         Save(window, closePath);
         File.WriteAllText(Path.Combine(directory, "river_curves_legend.txt"), Legend + $" Close-up window: columns {bestX}..{bestX + winW}, rows {bestY}..{bestY + winH} (24 x 18 km).");
@@ -195,7 +233,7 @@ public static class RiverMapWriter
         private readonly double _origin, _acrossOrigin;
         public RiverNetworkView(RiverNetwork net, DrainageGridSpec spec, double origin, double acrossOrigin) { _net = net; _spec = spec; _origin = origin; _acrossOrigin = acrossOrigin; }
 
-        public void Draw(Canvas canvas, double perMeter, (byte R, byte G, byte B)[] colors, double thicknessScale)
+        public void Draw(Canvas canvas, double perMeter, (byte R, byte G, byte B)[] colors, double thicknessScale, Func<int, double, RiverMapColor>? colorAt = null)
         {
             double lo = -60 * perMeter, hiX = canvas.W + 60 * perMeter, hiY = canvas.H + 60 * perMeter;
             for (int stem = 0; stem < _net.Stems.Length; stem++)
@@ -209,7 +247,7 @@ public static class RiverMapWriter
                     if (!double.IsNaN(px) && x >= lo && x <= hiX && y >= lo && y <= hiY)
                     {
                         RiverSection sec = _net.Sections[_net.ReachAt(stem, s)];
-                        canvas.Line(px, py, x, y, Math.Max(1.2, 0.5 * sec.Width * perMeter * thicknessScale), colors[(int)sec.Class]);
+                        canvas.Line(px, py, x, y, Math.Max(1.2, 0.5 * sec.Width * perMeter * thicknessScale), colorAt == null ? colors[(int)sec.Class] : colorAt(stem, Math.Min(s, end)).Color);
                     }
                     px = x; py = y;
                 }
