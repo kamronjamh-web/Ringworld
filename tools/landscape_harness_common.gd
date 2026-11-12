@@ -12,6 +12,7 @@ const COMMON := preload("res://tools/shadow_harness_common.gd")
 const GENERATION_PIN := preload("res://tools/world_generation_pin.gd")
 const BRIDGE := preload("res://tools/LandscapeWorldBridge.cs")
 const BANDS := preload("res://tools/landscape_audit_bands.gd")
+const LOADING := preload("res://scripts/Loading/ring_world_loading.gd")
 const DEPTH_EFFECT := preload("res://tools/shadow_depth_capture_effect.gd")
 const POSE_FIXTURE := "res://tools/fixtures/landscape_poses_v8_s1337.json"
 ## Drawer Install*Defaults method -> the file name of the matching GameplayXDefaults.UserPath / AtmosphereVisualDefaults.UserPath constant.
@@ -229,6 +230,11 @@ static func boot(tree: SceneTree, marker: String) -> Dictionary:
 	launcher.call("_save_selected_slot_settings")
 	var game := COMMON.GAME.instantiate()
 	launcher.call("_configure_game", game, 5000000.0)
+	# A water.rivers world needs its baked river graph before the world is attached (T2R-9); the loading screen does this in the real launch, the harness bakes it blocking.
+	var hydrology_error: String = LOADING.bake_hydrology_blocking(game)
+	if not hydrology_error.is_empty():
+		push_error("%s=FAIL %s" % [marker, hydrology_error])
+		return {}
 	var prefs := _install_isolated_preferences(game, fixture_root)
 	var mon: Node = game.get_node_or_null("RingPerformanceMonitor")
 	if mon != null:

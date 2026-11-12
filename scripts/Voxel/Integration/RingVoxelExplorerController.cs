@@ -1147,7 +1147,13 @@ public partial class RingVoxelExplorerController : CharacterBody3D
 			_waterExactAcross = _canonicalPosition.AcrossMeters;
 		}
 		float exactSurface = _waterExactSurface;
-        if (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration)
+        if (_grid.TerrainSampler.HasInlandWater && sample.HasExactWaterLevel)
+        {
+            // S9: inland water keeps the classifier's kind and exact level (no second model evaluation); only the bed at the exact position is refreshed.
+            // generatedWater below still needs the player above that bed and under the level, so a bank column whose exact bed stands above the level is dry.
+            sample = sample with { SurfaceHeight = Mathf.FloorToInt(exactSurface) };
+        }
+        else if (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration)
             sample = sample with
             {
                 SurfaceHeight = Mathf.FloorToInt(exactSurface),
@@ -1165,7 +1171,7 @@ public partial class RingVoxelExplorerController : CharacterBody3D
         // Generated hydrology is a finite surface column, not an infinite
         // "everything below the waterline" volume. A tunnel beneath a
         // lake/ocean bed is dry unless dynamic fluid cells actually fill it.
-		float generatedWaterSurface = sample.WaterSurfaceHeight + (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration ? 0.0f : 1.0f);
+		float generatedWaterSurface = (_grid.TerrainSampler.UsesRuntimeSurfaceGeneration ? sample.WaterLevel : sample.WaterSurfaceHeight + 1.0f);
         // The FFT is an ocean-only surface.  Its offset is relative to the
         // gameplay water top, not the proxy mesh (which is radially underlaid
         // for z-fighting).  Ask before finalizing the finite column so a crest

@@ -251,12 +251,19 @@ public sealed class RingLodSurfaceEditSnapshot
             return sample;
 
         int surfaceHeight = Mathf.FloorToInt(height);
+        if (sampler.HasInlandWater && sample.HasExactWaterLevel && height < sample.ExactWaterLevel)
+        {
+            // S9: hydrology is static and edits never create inland water, but an edited bed below the level stays wet at that level.
+            return sample with { SurfaceHeight = surfaceHeight };
+        }
         SurfaceWaterKind water = height < 0.0f ? SurfaceWaterKind.Ocean : SurfaceWaterKind.None;
         return sample with
         {
             SurfaceHeight = surfaceHeight,
             WaterKind = water,
-            WaterSurfaceHeight = water == SurfaceWaterKind.Ocean ? 0 : surfaceHeight
+            WaterSurfaceHeight = water == SurfaceWaterKind.Ocean ? 0 : surfaceHeight,
+            ExactWaterLevel = 0.0f,
+            HasExactWaterLevel = false
         };
     }
 

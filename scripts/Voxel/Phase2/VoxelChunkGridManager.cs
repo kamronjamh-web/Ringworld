@@ -175,7 +175,18 @@ public partial class VoxelChunkGridManager : Node3D
 	private HashSet<RingChunkCoordinate> _streamingDesiredVisual = new();
 	private HashSet<RingChunkCoordinate> _streamingDesiredCollision = new();
 	private RingTerrainSampler? _terrainSampler;
-	public RingTerrainSampler? TerrainSampler => _terrainSampler;
+	// T2R-10: a water.rivers world is configured before the loading stage bakes its river graph, so the first build fails (RebuildTerrainNoises). The identity of the missing graph is kept
+	// and the sampler is built on the first read after RiverGraphStore holds that graph, so systems that resolve the shared sampler in _Ready (global LOD, far viewport, minimap, clouds, weather) find it.
+	private ulong? _pendingRiverGraphIdentity;
+	public RingTerrainSampler? TerrainSampler
+	{
+		get
+		{
+			if (_terrainSampler == null && _pendingRiverGraphIdentity is ulong identity && RingworldTechDemo.Terrain.Hydrology.RiverGraphStore.TryGet(identity, out _))
+				RebuildTerrainNoises();
+			return _terrainSampler;
+		}
+	}
 	/// <summary>Public immutable sampler handoff for opt-in terrain backends.</summary>
 	public RingTerrainSampler? CreateIndependentTerrainSampler()
 	{
@@ -900,6 +911,7 @@ public partial class VoxelChunkGridManager : Node3D
 		}
 		_terrainSampler?.Dispose();
 		_terrainSampler = null;
+		_pendingRiverGraphIdentity = null;
 	}
 
 	public override void _Process(double delta)
@@ -3824,6 +3836,7 @@ public partial class VoxelChunkGridManager : Node3D
 	{
 		_terrainSampler?.Dispose();
 		_terrainSampler = null;
+		_pendingRiverGraphIdentity = null;
 		lock (_baselineSurfaceTileLock)
 		{
 			_baselineSurfaceTileCache.Clear();
@@ -3844,14 +3857,23 @@ public partial class VoxelChunkGridManager : Node3D
 			domain.LowerHullTopGlobalY,
 			domain.StructuralBottomGlobalY,
 			Math.Max(TerrainSettings.BedrockY + 1, TerrainSettings.DeepOceanFloorY));
-		_terrainSampler = new RingTerrainSampler(
-			TerrainSettings,
-			UseRingCurvedPlacement,
-			GetAroundRingVoxelLength(),
-			GetEffectiveRingRadiusMeters64(),
-			acrossWidth,
-			MaxBuildGlobalY,
-			cavePlacement);
+		try
+		{
+			_terrainSampler = new RingTerrainSampler(
+				TerrainSettings,
+				UseRingCurvedPlacement,
+				GetAroundRingVoxelLength(),
+				GetEffectiveRingRadiusMeters64(),
+				acrossWidth,
+				MaxBuildGlobalY,
+				cavePlacement);
+		}
+		catch (RiverGraphNotBakedException missing)
+		{
+			// A water.rivers world is configured before the loading stage bakes its river graph; the sampler is then built on demand (the TerrainSampler property and EnsureTerrainSampler).
+			_terrainSampler = null;
+			_pendingRiverGraphIdentity = missing.Identity;
+		}
 	}
 
 	private int[] GetOrBuildBaselineSurfaceTile(in RingChunkCoordinate coordinate)

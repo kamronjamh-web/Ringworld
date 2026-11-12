@@ -4857,6 +4857,33 @@
       "timeout_s": 180,
       "parallel_safe": false
     },
+    "inland_water_sampler_test": {
+      "kind": "test",
+      "mode": "headless",
+      "tier": "gate",
+      "tags": [
+        "water",
+        "terrain",
+        "hydrology"
+      ],
+      "marker": "INLAND_WATER_SAMPLER",
+      "expected_s": 60,
+      "timeout_s": 240,
+      "parallel_safe": false
+    },
+    "inland_swim_smoke_gpu_test": {
+      "kind": "test",
+      "mode": "gpu",
+      "tier": "extended",
+      "tags": [
+        "water",
+        "hydrology"
+      ],
+      "marker": "INLAND_SWIM_SMOKE",
+      "expected_s": 90,
+      "timeout_s": 600,
+      "user_args": "--generation=1 --review-features=water.rivers"
+    },
     "drainage_bake_benchmark": {
       "kind": "tool",
       "mode": "gpu-local",

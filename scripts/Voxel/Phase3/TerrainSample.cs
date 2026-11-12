@@ -13,8 +13,12 @@ public readonly record struct TerrainSample(
     TerrainBiomeId Biome,
     SurfaceWaterKind WaterKind,
     int WaterSurfaceHeight,
-    SiteSurfaceMask SiteMask = default)
+    SiteSurfaceMask SiteMask = default,
+    float ExactWaterLevel = 0f,
+    bool HasExactWaterLevel = false)
 {
+    /// <summary>S9: the float surface of inland water. The flag is set only by the sampler, only with Lake or River, a finite level and <c>WaterSurfaceHeight == floor(level)</c>; otherwise this is the whole-metre <see cref="WaterSurfaceHeight"/>.</summary>
+    public float WaterLevel => HasExactWaterLevel ? ExactWaterLevel : WaterSurfaceHeight;
     public bool HasSurfaceWater => WaterKind != SurfaceWaterKind.None;
     public bool IsOcean => WaterKind == SurfaceWaterKind.Ocean;
     public int WaterDepth => HasSurfaceWater
@@ -27,7 +31,7 @@ public readonly record struct TerrainSample(
             : terrainHeight;
 
     public float ResolveDisplayedHeight(float terrainHeight)
-        => HasSurfaceWater && terrainHeight < WaterSurfaceHeight
-            ? WaterSurfaceHeight
+        => HasSurfaceWater && terrainHeight < WaterLevel
+            ? WaterLevel
             : terrainHeight;
 }

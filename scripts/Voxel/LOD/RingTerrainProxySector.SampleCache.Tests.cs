@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using RingworldTechDemo.Voxel.Core;
 using RingworldTechDemo.Voxel.Phase3;
 
 namespace RingworldTechDemo.Voxel.LOD;
@@ -65,6 +66,58 @@ public partial class RingTerrainProxySector
         return "";
     }
 
+    /// <summary>
+    /// T2R-10 (S9): saves the cache points of <paramref name="points"/> to <paramref name="path"/> (which must lie under a folder named lod_cache) with the sampler's record layout, loads them
+    /// into a fresh cache, and returns "" when every point survived bit for bit (exact level and flag included). <paramref name="version"/> is the header version, <paramref name="payloadBytes"/> the
+    /// inflated payload size (4 bytes of count plus the records), <paramref name="staleLoaded"/> whether a file with the other layout's version was accepted (it must not be).
+    /// </summary>
+    public static string RoundTripCacheRecords(
+        string path,
+        RingLodSurfaceEditSnapshot edits,
+        RingTerrainSampler sampler,
+        int ringWidth,
+        IReadOnlyList<(long Around, int Across)> points,
+        out int version,
+        out long payloadBytes,
+        out bool staleLoaded)
+    {
+        version = 0; payloadBytes = 0; staleLoaded = false;
+        var coordinate = new RingTerrainSectorCoordinate(3, 4);
+        string root = System.IO.Path.GetDirectoryName(path)!;
+        System.IO.Directory.CreateDirectory(root);
+        RingGeneratedLodCacheBudget.Schedule(root, 1L << 30, 100, TimeSpan.FromHours(1));
+        using var cache = new TerrainBuildSampleCache(edits, sampler, ringWidth);
+        cache.BeginCapture();
+        foreach ((long around, int across) in points) cache.Get(around, across);
+        CachedTerrainSampleRecord[] captured = cache.EndCapture();
+        if (!TrySaveCachedTerrainSamples(path, coordinate, captured, sampler.HasInlandWater, default))
+            return "the save was refused";
+        byte[] bytes = System.IO.File.ReadAllBytes(path);
+        version = BitConverter.ToInt32(bytes, 4);
+        using (var inflated = new System.IO.MemoryStream())
+        {
+            using (var source = new System.IO.MemoryStream(bytes, 20, bytes.Length - 20))
+            using (var deflate = new System.IO.Compression.DeflateStream(source, System.IO.Compression.CompressionMode.Decompress))
+                deflate.CopyTo(inflated);
+            payloadBytes = inflated.Length;
+        }
+        using var loaded = new TerrainBuildSampleCache(edits, sampler, ringWidth);
+        if (!TryLoadCachedTerrainSamples(path, coordinate, loaded, out int count) || count != captured.Length)
+            return $"the file did not load back (count {count} of {captured.Length})";
+        foreach (CachedTerrainSampleRecord record in captured)
+        {
+            string difference = DescribePointDifference(record.Point, loaded.Get(record.Around, record.Across));
+            if (difference.Length != 0) return $"({record.Around},{record.Across}): {difference}";
+        }
+        // A file written with the other layout's version is stale: it must be refused (and the sector rebuilt).
+        byte[] stale = (byte[])bytes.Clone();
+        BitConverter.GetBytes(version == 12 ? 11 : 12).CopyTo(stale, 4);
+        System.IO.File.WriteAllBytes(path, stale);
+        using var staleCache = new TerrainBuildSampleCache(edits, sampler, ringWidth);
+        staleLoaded = TryLoadCachedTerrainSamples(path, coordinate, staleCache, out _);
+        return "";
+    }
+
     private static CachedTerrainPoint LegacySampleCacheGet(
         RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, int ringWidth, long around, int across)
     {
@@ -110,6 +163,8 @@ public partial class RingTerrainProxySector
         if (es.WaterKind != s.WaterKind) return "Sample.WaterKind";
         if (es.WaterSurfaceHeight != s.WaterSurfaceHeight) return "Sample.WaterSurfaceHeight";
         if (!es.SiteMask.Equals(s.SiteMask)) return "Sample.SiteMask";
+        if (es.HasExactWaterLevel != s.HasExactWaterLevel) return "Sample.HasExactWaterLevel";
+        if (!Same(es.ExactWaterLevel, s.ExactWaterLevel)) return "Sample.ExactWaterLevel";
         if (e.TerrainHeight != a.TerrainHeight) return "TerrainHeight";
         if (e.DisplayedHeight != a.DisplayedHeight) return "DisplayedHeight";
         if (!Same(e.SmoothTerrainHeight, a.SmoothTerrainHeight)) return $"SmoothTerrainHeight {e.SmoothTerrainHeight:R} vs {a.SmoothTerrainHeight:R}";

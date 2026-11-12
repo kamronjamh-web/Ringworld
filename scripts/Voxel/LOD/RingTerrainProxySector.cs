@@ -522,6 +522,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
     // The disk cache stores authoritative terrain samples, not render-time
     // vertex colors, so biome material changes do not invalidate this format.
     private const int LodSectorCacheVersion = 11;
+    // T2R-10 (S9): water.rivers worlds use this version and append footprint, exact level and flag to every record; generation 1 keeps version 11 and its bytes.
+    private const int LodSectorCacheRiverVersion = 12;
     private const float ShorelineOverlapMeters = RingShorelineClip.OverlapMeters;
     private const int MaximumCachedSampleCount = 1_000_000;
     private static readonly ConcurrentDictionary<string, byte> UnavailableCacheDirectories = new();
@@ -536,13 +538,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
         bool UsesRuntimeWaterPlane)
     {
         public bool IsDisplayedWater => Sample.HasSurfaceWater
-            && (UsesPresentationSurface ? PresentationTerrainHeight : TerrainHeight) < Sample.WaterSurfaceHeight;
+            && (UsesPresentationSurface ? PresentationTerrainHeight : TerrainHeight) < Sample.WaterLevel;
     }
 
     private readonly record struct CachedTerrainSampleRecord(
         long Around,
         int Across,
-        CachedTerrainPoint Point);
+        CachedTerrainPoint Point,
+        int Footprint = 0);
 
     private readonly record struct ShorelineClipVertex(
         double Around,
@@ -562,7 +565,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
     private readonly record struct PartialWaterTriangle(int A, int B, int C);
 
-    private readonly record struct TerrainColumnKey(long Around, int Across);
+    /// <summary>Footprint is the river-routing footprint in metres of the sample (S9/S10); 0 until T2R-11 passes coarse footprints, and always 0 without rivers.</summary>
+    private readonly record struct TerrainColumnKey(long Around, int Across, int Footprint = 0);
 
     /// <summary>
     /// Backing collections of a <see cref="TerrainBuildSampleCache"/>. A batch
@@ -738,6 +742,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
 
         public bool UsesPresentationSurface => _edits.UsesFloatSurface || _sampler.UsesRuntimeSurfaceGeneration;
         public bool UsesRuntimeWaterPlane => _sampler.UsesRuntimeSurfaceGeneration;
+        /// <summary>True for a water.rivers world: its disk records are the v12 layout (S9).</summary>
+        public bool UsesInlandWaterRecords => _sampler.HasInlandWater;
 
         public CachedTerrainPoint Get(long around, int across)
         {
@@ -821,7 +827,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
             foreach (CachedTerrainSampleRecord record in records)
             {
                 int clampedAcross = Mathf.Clamp(record.Across, 0, _ringWidth);
-                var key = new TerrainColumnKey(record.Around, clampedAcross);
+                var key = new TerrainColumnKey(record.Around, clampedAcross, record.Footprint);
                 _points[key] = record.Point;
             }
         }
@@ -842,7 +848,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 records[index++] = new CachedTerrainSampleRecord(
                     key.Around,
                     key.Across,
-                    _points[key]);
+                    _points[key],
+                    key.Footprint);
             }
             _capturedKeys.Clear();
             return records;
@@ -3401,7 +3408,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 {
                     CachedTerrainSampleRecord[] captured = sampleCache.EndCapture();
                     if ((!loaded || captured.Length > loadedSampleCount)
-                        && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, cancellation))
+                        && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, sampler.HasInlandWater, cancellation))
                     {
                         cacheWrites++;
                     }
@@ -3452,7 +3459,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                         {
                             CachedTerrainSampleRecord[] captured = context.Cache.EndCapture();
                             if ((!loaded || captured.Length > loadedSampleCount)
-                                && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, cancellation))
+                                && TrySaveCachedTerrainSamples(cachePath, coordinate, captured, context.Sampler.HasInlandWater, cancellation))
                             {
                                 Interlocked.Increment(ref cacheWrites);
                             }
@@ -3506,7 +3513,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
         // captures; mesh, material, lighting, and skirt settings do not.
         string definition = BuildLodSectorCacheDefinition(
             sampler.TerrainGeneratorVersion, sampler.Seed, sampler.TerrainDefinitionHash,
-            sampler.AroundRingVoxelLength, ringWidth, size, spacing, parentSpacing, cells, globalMorphIdentity);
+            sampler.AroundRingVoxelLength, ringWidth, size, spacing, parentSpacing, cells, globalMorphIdentity, sampler.HasInlandWater);
         string activeWorld = ProjectSettings.GetSetting("ringworld/runtime/active_world_directory", "").AsString();
         // Hashing and path globalization only run when the definition or world changes.
         string cacheKey = definition + "|" + activeWorld;
@@ -3525,9 +3532,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
     private static string BuildLodSectorCacheDefinition(
         int terrainGeneratorVersion, int seed, ulong terrainDefinitionHash,
         long aroundLength, int ringWidth, int size, int spacing, int parentSpacing, int cells,
-        RingTerrainGlobalMorphSnapshot.Identity? globalMorphIdentity)
+        RingTerrainGlobalMorphSnapshot.Identity? globalMorphIdentity,
+        bool inlandWater = false)
         => FormattableString.Invariant(
-            $"v{LodSectorCacheVersion}|g{terrainGeneratorVersion}|s{seed}|h{terrainDefinitionHash:X16}|a{aroundLength}|w{ringWidth}|z{size}|p{spacing}|q{parentSpacing}|m{globalMorphIdentity?.TopologyAndHeightHash ?? 0UL:X16}|n{cells}");
+            $"v{(inlandWater ? LodSectorCacheRiverVersion : LodSectorCacheVersion)}|g{terrainGeneratorVersion}|s{seed}|h{terrainDefinitionHash:X16}|a{aroundLength}|w{ringWidth}|z{size}|p{spacing}|q{parentSpacing}|m{globalMorphIdentity?.TopologyAndHeightHash ?? 0UL:X16}|n{cells}");
 
     private static string ResolveLodSectorCachePath(string cacheDirectory, RingTerrainSectorCoordinate coordinate, bool createDirectory)
     {
@@ -3634,13 +3642,14 @@ public partial class RingTerrainProxySector : MeshInstance3D
     {
         sampleCount = 0;
         if (!File.Exists(path)) return false;
+        bool riverRecords = sampleCache.UsesInlandWaterRecords;
         try
         {
             using var stream = new FileStream(path, FileMode.Open, System.IO.FileAccess.Read, FileShare.Read);
             using (var header = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true))
             {
                 if (header.ReadUInt32() != LodSectorCacheMagic
-                    || header.ReadInt32() != LodSectorCacheVersion
+                    || header.ReadInt32() != (riverRecords ? LodSectorCacheRiverVersion : LodSectorCacheVersion)
                     || header.ReadInt64() != coordinate.AroundSector
                     || header.ReadInt32() != coordinate.AcrossSector)
                 {
@@ -3675,6 +3684,23 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 float presentationDisplayedHeight = reader.ReadSingle();
                 bool usesPresentationSurface = reader.ReadBoolean();
                 bool usesRuntimeWaterPlane = reader.ReadBoolean();
+                int footprint = 0;
+                float exactWaterLevel = 0.0f;
+                bool hasExactWaterLevel = false;
+                if (riverRecords)
+                {
+                    footprint = reader.ReadUInt16();
+                    exactWaterLevel = reader.ReadSingle();
+                    hasExactWaterLevel = reader.ReadBoolean();
+                    // S9: a flag needs an inland kind, a finite level whose floor is the whole-metre surface; a stale or corrupt record rebuilds the sector.
+                    if (!float.IsFinite(exactWaterLevel)
+                        || (hasExactWaterLevel
+                            && (waterKindValue < (int)SurfaceWaterKind.Lake
+                                || waterSurfaceHeight != Mathf.FloorToInt(exactWaterLevel))))
+                    {
+                        throw new InvalidDataException("Invalid LOD inland water payload.");
+                    }
+                }
                 if (regionValue < (int)TerrainRegion.DeepOcean
                     || regionValue > (int)TerrainRegion.MountainBelt
                     || biomeValue < (int)TerrainBiomeId.Ocean
@@ -3705,7 +3731,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     moisture,
                     (TerrainBiomeId)biomeValue,
                     (SurfaceWaterKind)waterKindValue,
-                    waterSurfaceHeight);
+                    waterSurfaceHeight,
+                    default,
+                    exactWaterLevel,
+                    hasExactWaterLevel);
                 records[i] = new CachedTerrainSampleRecord(
                     around,
                     across,
@@ -3717,7 +3746,8 @@ public partial class RingTerrainProxySector : MeshInstance3D
                         presentationTerrainHeight,
                         presentationDisplayedHeight,
                         usesPresentationSurface,
-                        usesRuntimeWaterPlane));
+                        usesRuntimeWaterPlane),
+                    footprint);
             }
 
             sampleCache.Import(records);
@@ -3736,9 +3766,10 @@ public partial class RingTerrainProxySector : MeshInstance3D
         string path,
         RingTerrainSectorCoordinate coordinate,
         IReadOnlyList<CachedTerrainSampleRecord> samples,
+        bool riverRecords,
         CancellationToken cancellation)
     {
-        long estimatedBytes = 64L + samples.Count * 64L;
+        long estimatedBytes = 64L + samples.Count * (riverRecords ? 72L : 64L);
         if (!RingGeneratedLodCacheBudget.CanWriteRegistered(path, estimatedBytes)) return false;
         string temporaryPath = path + $".{System.Environment.CurrentManagedThreadId}.tmp";
         bool recorded = false;
@@ -3750,7 +3781,7 @@ public partial class RingTerrainProxySector : MeshInstance3D
                 using (var header = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
                 {
                     header.Write(LodSectorCacheMagic);
-                    header.Write(LodSectorCacheVersion);
+                    header.Write(riverRecords ? LodSectorCacheRiverVersion : LodSectorCacheVersion);
                     header.Write(coordinate.AroundSector);
                     header.Write(coordinate.AcrossSector);
                 }
@@ -3780,6 +3811,12 @@ public partial class RingTerrainProxySector : MeshInstance3D
                     writer.Write(record.Point.PresentationDisplayedHeight);
                     writer.Write(record.Point.UsesPresentationSurface);
                     writer.Write(record.Point.UsesRuntimeWaterPlane);
+                    if (riverRecords)
+                    {
+                        writer.Write((ushort)Math.Clamp(record.Footprint, 0, ushort.MaxValue));
+                        writer.Write(sample.ExactWaterLevel);
+                        writer.Write(sample.HasExactWaterLevel);
+                    }
                 }
             }
             cancellation.ThrowIfCancellationRequested();

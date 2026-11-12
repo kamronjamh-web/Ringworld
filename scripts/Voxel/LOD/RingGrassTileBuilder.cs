@@ -644,7 +644,7 @@ internal static class RingGrassTileBuilder
 	private static float PresentationHeight(RingLodSurfaceEditSnapshot edits, RingTerrainSampler sampler, long around, int across) => sampler.UsesRuntimeSurfaceGeneration || edits.UsesFloatSurface ? edits.GetPresentationSurfaceHeight(sampler, around, across) : edits.GetSurfaceHeight(sampler, around, across);
 
     internal static bool IsWaterCovered(in TerrainSample sample, double surfaceHeight)
-        => sample.HasSurfaceWater && surfaceHeight <= sample.WaterSurfaceHeight;
+        => sample.HasSurfaceWater && (sample.HasExactWaterLevel ? surfaceHeight < sample.ExactWaterLevel : surfaceHeight <= sample.WaterSurfaceHeight);
 
     internal static bool IsSlopeSuitable(Vector3 canonicalNormal, double height, RingLodGeometrySnapshot geometry, float maximumSlope)
     {

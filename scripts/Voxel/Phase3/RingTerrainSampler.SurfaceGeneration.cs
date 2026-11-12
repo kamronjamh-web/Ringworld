@@ -62,8 +62,7 @@ public sealed partial class RingTerrainSampler
         TerrainFields climate = GetRuntimeTerrainFieldsLocked(
             globalAroundVoxel, globalAcrossVoxel, diagnostics, presentationHeight);
         int terrainHeight = Mathf.FloorToInt(presentationHeight);
-        SurfaceWaterKind water = presentationHeight < 0.0f ? SurfaceWaterKind.Ocean : SurfaceWaterKind.None;
-        int waterSurface = water == SurfaceWaterKind.Ocean ? 0 : terrainHeight;
+        (SurfaceWaterKind water, int waterSurface, float exactLevel, bool hasExactLevel) = ClassifyRuntimeWater(diagnostics, presentationHeight, terrainHeight);
         TerrainBiomeId biome = ResolveBiome(climate, water);
         return new TerrainSample(
             terrainHeight,
@@ -76,7 +75,43 @@ public sealed partial class RingTerrainSampler
             biome,
             water,
             waterSurface,
-            diagnostics.SiteMask);
+            diagnostics.SiteMask,
+            exactLevel,
+            hasExactLevel);
+    }
+
+    /// <summary>True for a water.rivers world: its samples can carry inland water with a float level (S9).</summary>
+    internal bool HasInlandWater => _runtimeSurfaceParameters?.HasRivers == true;
+
+    /// <summary>
+    /// S9: the one runtime water classifier, shared by the full, height-only, fused and lattice sample paths. Without rivers it is the sea rule, unchanged. With rivers, in order:
+    /// operator water (River or Lake) where the presentation height is below its level, with the exact level; then the sea rule; then none. The river wins inside its channel where the natural
+    /// ground is at or above 0 because the operator only owns water there (S7); beyond the natural coastline the sea rule applies at the same level 0.
+    /// </summary>
+    private (SurfaceWaterKind Kind, int WaterSurface, float ExactLevel, bool HasExactLevel) ClassifyRuntimeWater(
+        in TerrainGenerationHeightModel.Diagnostics diagnostics,
+        float presentationHeight,
+        int terrainHeight)
+        => ClassifyRuntimeWater(HasInlandWater, diagnostics.InlandWater, diagnostics.WaterLevel, presentationHeight, terrainHeight);
+
+    internal static (SurfaceWaterKind Kind, int WaterSurface, float ExactLevel, bool HasExactLevel) ClassifyRuntimeWater(
+        bool hasRivers,
+        Terrain.Hydrology.InlandWaterKind inland,
+        double operatorLevel,
+        float presentationHeight,
+        int terrainHeight)
+    {
+        if (hasRivers
+            && inland != Terrain.Hydrology.InlandWaterKind.None
+            && double.IsFinite(operatorLevel)
+            && presentationHeight < (float)operatorLevel)
+        {
+            float level = (float)operatorLevel;
+            return (inland == Terrain.Hydrology.InlandWaterKind.Lake ? SurfaceWaterKind.Lake : SurfaceWaterKind.River, Mathf.FloorToInt(level), level, true);
+        }
+        return presentationHeight < 0.0f
+            ? (SurfaceWaterKind.Ocean, 0, 0.0f, false)
+            : (SurfaceWaterKind.None, terrainHeight, 0.0f, false);
     }
 
     private static (TerrainGenerationParameters? Parameters, TerrainGenerationHeightModel? Model, float AltitudeDrop)
@@ -129,7 +164,7 @@ public sealed partial class RingTerrainSampler
         if (parameters.HasRivers && model.RiverOperator == null)
         {
             model.Dispose();
-            throw new InvalidOperationException("river graph not baked");
+            throw new RiverGraphNotBakedException(Terrain.Hydrology.HydrologyBakeIdentity.Compute(parameters));
         }
         return model;
     }
@@ -193,7 +228,7 @@ public sealed partial class RingTerrainSampler
             RingProxyBuildCounters.AddModelEvaluations(1);
             presentationHeight = ResolveRuntimePresentationHeightLocked(globalAroundVoxel, globalAcrossVoxel, diagnostics);
             int terrainHeight = Mathf.FloorToInt(presentationHeight);
-            SurfaceWaterKind water = presentationHeight < 0.0f ? SurfaceWaterKind.Ocean : SurfaceWaterKind.None;
+            (SurfaceWaterKind water, int waterSurface, float exactLevel, bool hasExactLevel) = ClassifyRuntimeWater(diagnostics, presentationHeight, terrainHeight);
             sample = new TerrainSample(
                 terrainHeight,
                 ClassifyRegion((float)diagnostics.Continentalness),
@@ -204,8 +239,10 @@ public sealed partial class RingTerrainSampler
                 0.0f,
                 default,
                 water,
-                water == SurfaceWaterKind.Ocean ? 0 : terrainHeight,
-                diagnostics.SiteMask);
+                waterSurface,
+                diagnostics.SiteMask,
+                exactLevel,
+                hasExactLevel);
         }
     }
 
@@ -382,4 +419,12 @@ public sealed partial class RingTerrainSampler
             hash = MixHash(hash, character);
         return hash == 0 ? 1UL : hash;
     }
+}
+
+/// <summary>A water.rivers world's sampler was requested before its river graph was baked or installed (the loading stage bakes it; callers that build the sampler early catch this and build it on demand later).</summary>
+public sealed class RiverGraphNotBakedException : InvalidOperationException
+{
+    /// <summary>The pre-graph input identity (D14) whose graph RiverGraphStore did not hold.</summary>
+    public ulong Identity { get; }
+    public RiverGraphNotBakedException(ulong identity) : base("river graph not baked") { Identity = identity; }
 }
